@@ -545,9 +545,44 @@ fn packages_resolve_with_nested_features_and_cross_package_requires() {
 }
 
 #[test]
-fn a_feature_provided_by_two_packages_is_a_loud_ambiguity_error() {
-    // Mirrors RubyGems' own `Gem::LoadError "found in multiple gems"` --
-    // stricter than silent $LOAD_PATH-order shadowing.
+fn a_feature_provided_by_two_packages_resolves_to_the_first_and_warns() {
+    // Real Ruby never errors on a squatted feature name: RubyGems'
+    // `find_by_path` answers the name-ascending first provider (alpha here),
+    // Bundler the first activated. zeo follows, and says so once at the
+    // require site -- the warning prints at program startup, where ruby's
+    // own parse warnings print.
+    let result = run_ruby_packages(
+        &[
+            ("packages/alpha/alpha.gemspec",
+                "Gem::Specification.new do |s|\n  s.name = \"alpha\"\n  s.version = \"1.0.0\"\nend\n"),
+            ("packages/alpha/lib/common.rb", "puts 1\n"),
+            ("packages/beta/beta.gemspec",
+                "Gem::Specification.new do |s|\n  s.name = \"beta\"\n  s.version = \"1.0.0\"\nend\n"),
+            ("packages/beta/lib/common.rb", "puts 2\n"),
+            ("main.rb", "require \"common\"\n"),
+        ],
+        "main.rb",
+        &[],
+        &["packages"],
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "1\n");
+    assert!(
+        result.stderr.contains("provided by multiple gems")
+            && result.stderr.contains("alpha 1.0.0")
+            && result.stderr.contains("beta 1.0.0")
+            && result.stderr.contains("resolved to alpha"),
+        "unexpected stderr: {}",
+        result.stderr
+    );
+}
+
+#[test]
+fn strict_mode_restores_the_ambiguity_error() {
+    // `ZEO_STRICT_AMBIGUOUS_REQUIRE=1` keeps the old hard error for callers
+    // who want squatting surfaced loudly. Safe to set here: nextest runs each
+    // test in its own process.
+    unsafe { std::env::set_var("ZEO_STRICT_AMBIGUOUS_REQUIRE", "1") };
     let err = compile_packages(
         &[
             ("packages/alpha/alpha.gemspec",

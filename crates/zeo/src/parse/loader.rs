@@ -94,13 +94,54 @@ pub(super) struct Gem {
     name: String,
     /// Absolute, existence-checked root directories, in `require_paths` order.
     roots: Vec<PathBuf>,
+    /// The gemspec's declared version, when it states one -- disclosure and
+    /// diagnostics; resolution never version-solves (the lockfile already
+    /// did).
+    version: Option<String>,
+    /// Where this gem came from -- what an ambiguity warning names, and what
+    /// separates zeo's own stdlib tier from caller-supplied code.
+    provenance: GemProvenance,
+}
+
+/// Which tier provided a gem. Precedence between tiers is positional (the
+/// `packages` list is precedence-ordered, see `lower_main_file`); this is
+/// carried for reporting, not consulted for ranking.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum GemProvenance {
+    /// A caller-supplied package dir (`--gems`).
+    PackageDir,
+    /// zeo's own bundled library (`gems/`) -- the compiler's stdlib tier.
+    Bundled,
+    /// An external installed store, admitted by a lockfile.
+    Store,
 }
 
 impl Gem {
     /// Build a gem from already-resolved parts -- the external gem store
     /// provider's path (`gem_store`), which has done its own existence checks.
-    pub(super) fn from_parts(name: String, roots: Vec<PathBuf>) -> Self {
-        Gem { name, roots }
+    pub(super) fn from_parts(name: String, roots: Vec<PathBuf>, version: Option<String>) -> Self {
+        Gem {
+            name,
+            roots,
+            version,
+            provenance: GemProvenance::Store,
+        }
+    }
+
+    /// How an ambiguity warning names this gem -- `hashie 5.0.0`,
+    /// `openssl 3.3.0 (bundled)` -- enough to tell squatting providers apart.
+    fn describe(&self) -> String {
+        let mut s = self.name.clone();
+        if let Some(v) = &self.version {
+            s.push(' ');
+            s.push_str(v);
+        }
+        match self.provenance {
+            GemProvenance::PackageDir => {}
+            GemProvenance::Bundled => s.push_str(" (bundled)"),
+            GemProvenance::Store => s.push_str(" (gem store)"),
+        }
+        s
     }
 }
 
@@ -143,9 +184,14 @@ pub(super) struct Loader {
     /// `store_exclusions`) is fully constructed before lowering starts and
     /// never mutated after; the same feature is otherwise re-searched across
     /// every file's resolvability pre-scan AND again at its splice.
-    /// `Err` verdicts (ambiguous feature) are not cached -- they abort the
-    /// compile at first sight.
+    /// `Err` verdicts (only the strict-mode ambiguity error remains) are not
+    /// cached -- they abort the compile at first sight.
     require_memo: std::cell::RefCell<HashMap<String, ResolvedRequire>>,
+    /// Features that resolved out of MULTIPLE providing gems, with every
+    /// provider's description -- recorded once at the (memoized) resolution,
+    /// drained into a compile warning at the require statement that splices
+    /// the feature (the site that owns a file/line to warn at).
+    ambiguous_features: std::cell::RefCell<HashMap<String, Vec<String>>>,
 }
 
 /// `resolve_require`'s success shape: the found path plus the owning
@@ -227,6 +273,7 @@ pub(super) fn lower_main_file(
         .iter()
         .map(|p| p.to_string_lossy().into_owned())
         .collect();
+    let bundled_dir = bundled_gems_dir();
     let mut loader = Loader {
         roots: load_roots.to_vec(),
         // The gems zeo itself ships are ALWAYS discoverable, appended
@@ -240,8 +287,9 @@ pub(super) fn lower_main_file(
             &package_dirs
                 .iter()
                 .cloned()
-                .chain(bundled_gems_dir())
+                .chain(bundled_dir.clone())
                 .collect::<Vec<_>>(),
+            bundled_dir.as_deref(),
         )?,
         required: HashSet::new(),
         splicing: Vec::new(),
@@ -249,6 +297,7 @@ pub(super) fn lower_main_file(
         store_exclusions: HashMap::new(),
         gem_records: Vec::new(),
         require_memo: std::cell::RefCell::new(HashMap::new()),
+        ambiguous_features: std::cell::RefCell::new(HashMap::new()),
     };
     // The external gem store: store dirs (`--gem-path`/`GEM_PATH`) plus a
     // lockfile (via `--bundle-gemfile`/`BUNDLE_GEMFILE`) add the pure-Ruby
@@ -263,7 +312,12 @@ pub(super) fn lower_main_file(
         let resolution = super::gem_store::resolve(gem_paths, &parsed)?;
         for (name, roots) in resolution.roots {
             if !loader.packages.iter().any(|g| g.name == name) {
-                loader.packages.push(Gem::from_parts(name, roots));
+                let version = parsed
+                    .gems
+                    .iter()
+                    .find(|g| g.name == name)
+                    .map(|g| g.version.clone());
+                loader.packages.push(Gem::from_parts(name, roots, version));
             }
         }
         for record in resolution.disclosures {
@@ -276,6 +330,28 @@ pub(super) fn lower_main_file(
             }
             loader.record_gem(record);
         }
+        // Require-precedence, Bundler's semantics: the lockfile's gems rank
+        // in reverse-topological order (Gemfile DEPENDENCIES roots first,
+        // each gem ahead of its own dependencies, ties by name), AHEAD of
+        // every unlocked package -- Bundler activates locked gems and an
+        // activated gem's load path beats a merely-installed one, zeo's
+        // bundled stdlib copies included (`rubygems_integration.rb`). Ranked
+        // by NAME, so a locked gem zeo satisfies from its own bundled copy
+        // still ranks as the lockfile places it. The sort is stable:
+        // unlocked packages keep their discovery order after the ranked
+        // block.
+        let rank = lockfile_precedence(&parsed);
+        loader
+            .packages
+            .sort_by_key(|g| rank.get(&g.name).copied().unwrap_or(usize::MAX));
+    } else {
+        // No lockfile: RubyGems' own `find_by_path` order -- specs sorted by
+        // name ascending, byte-wise (`specification_record.rb`), so an
+        // ambiguous feature resolves to the alphabetically first provider.
+        // Names are unique here (first-name-wins shadowing already applied),
+        // so the version-descending half of RubyGems' `_resort!` never
+        // reaches a comparison.
+        loader.packages.sort_by(|a, b| a.name.cmp(&b.name));
     }
     let result = ruby_prism::parse(source.as_bytes());
     if let Some(err) = result.errors().next() {
@@ -1024,14 +1100,33 @@ impl Loader {
                 return Ok(None);
             }
         }
-        Ok(Some(self.splice_feature(
-            hir,
-            &feature,
-            name,
-            dir,
-            file_idx,
-            current_box,
-        )?))
+        let spliced = self.splice_feature(hir, &feature, name, dir, file_idx, current_box)?;
+        // A feature that resolved out of multiple gems warns HERE -- the
+        // first require statement that splices it, the one site that owns a
+        // file/line. Drained (not peeked), so re-requires stay quiet, like
+        // any once-per-event Ruby warning.
+        if let Some(providers) = self.ambiguous_features.borrow_mut().remove(&feature) {
+            let (file, line) = match hir.lowering_file {
+                Some(f) => {
+                    let sf = &hir.files[f.0 as usize];
+                    (
+                        sf.name.clone(),
+                        sf.line_at(call.location().start_offset() as u32),
+                    )
+                }
+                None => ("-e".to_string(), 0),
+            };
+            hir.warnings.push(crate::diagnostics::CompileWarning {
+                file,
+                line,
+                message: format!(
+                    "`require \"{feature}\"` is provided by multiple gems ({}); resolved to {}",
+                    providers.join(", "),
+                    providers[0],
+                ),
+            });
+        }
+        Ok(Some(spliced))
     }
 
     /// Whether a plain `require "feature"` has a compile-time VERDICT -- either
@@ -1562,7 +1657,7 @@ impl Loader {
                 return Ok(Some((cand, None)));
             }
         }
-        let mut hits: Vec<(PathBuf, &str)> = Vec::new();
+        let mut hits: Vec<(PathBuf, &Gem)> = Vec::new();
         for pkg in &self.packages {
             // At most one hit per package: a package's OWN roots are
             // ordered by its manifest (first wins within the package).
@@ -1572,22 +1667,40 @@ impl Loader {
                 .map(|r| r.join(&fname))
                 .find(|c| c.is_file())
             {
-                hits.push((cand, &pkg.name));
+                hits.push((cand, pkg));
             }
         }
         match hits.len() {
             0 => Ok(None),
             1 => {
                 let (path, pkg) = hits.remove(0);
-                Ok(Some((path, Some(pkg.to_string()))))
+                Ok(Some((path, Some(pkg.name.clone()))))
             }
+            // Multiple providers: the FIRST wins, because `packages` is in
+            // require-precedence order (see `lower_main_file` -- Bundler's
+            // activation semantics under a lockfile, RubyGems' name-ascending
+            // `find_by_path` order without one). That is what real Ruby does
+            // with a squatted feature name; its "found in multiple gems"
+            // error is unreachable for top-level requires and disabled
+            // outright under Bundler. The old unconditional error survives
+            // behind `ZEO_STRICT_AMBIGUOUS_REQUIRE=1` for callers who want
+            // squatting surfaced loudly; everyone else gets a warning at the
+            // require site (via `ambiguous_features`).
             _ => {
-                let names: Vec<&str> = hits.iter().map(|(_, n)| *n).collect();
-                Err(format!(
-                    "`require \"{feature}\"` is ambiguous: found in multiple gems ({})",
-                    names.join(", ")
-                )
-                .into())
+                if strict_ambiguous_require() {
+                    let names: Vec<&str> = hits.iter().map(|(_, g)| g.name.as_str()).collect();
+                    return Err(format!(
+                        "`require \"{feature}\"` is ambiguous: found in multiple gems ({})",
+                        names.join(", ")
+                    )
+                    .into());
+                }
+                let providers: Vec<String> = hits.iter().map(|(_, g)| g.describe()).collect();
+                self.ambiguous_features
+                    .borrow_mut()
+                    .insert(feature.to_string(), providers);
+                let (path, pkg) = hits.remove(0);
+                Ok(Some((path, Some(pkg.name.clone()))))
             }
         }
     }
@@ -1749,10 +1862,64 @@ pub(super) fn bundled_gems_dir() -> Option<PathBuf> {
     dir.is_dir().then_some(dir)
 }
 
-fn discover_packages(package_dirs: &[PathBuf]) -> PResult<Vec<Gem>> {
+/// Whether `ZEO_STRICT_AMBIGUOUS_REQUIRE=1` is set: a feature found in
+/// multiple gems becomes the old hard compile error instead of resolving to
+/// the precedence-first provider with a warning. Real Ruby never errors here
+/// (see `resolve_require_uncached`'s multi-hit arm), so strictness is opt-in.
+fn strict_ambiguous_require() -> bool {
+    static V: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *V.get_or_init(|| std::env::var_os("ZEO_STRICT_AMBIGUOUS_REQUIRE").is_some())
+}
+
+/// The lockfile's require-precedence ranks: gem name -> position, roots
+/// first, then breadth-first down the dependency edges with each gem's deps
+/// visited in name order. This is Bundler's activation order REVERSED --
+/// Bundler activates dependencies before dependents (`spec_set.rb`'s tsort)
+/// and a later activation inserts its load path ahead, so the DEPENDENT wins
+/// an ambiguous feature; ranking dependents first expresses that as plain
+/// first-match. Locked gems no edge reaches (a lockfile always connects, but
+/// a hand-edited one may not) follow in name order, still ahead of anything
+/// unlocked.
+fn lockfile_precedence(lock: &super::lockfile::Lockfile) -> HashMap<String, usize> {
+    let by_name: HashMap<&str, &super::lockfile::LockedGem> =
+        lock.gems.iter().map(|g| (g.name.as_str(), g)).collect();
+    let mut order: Vec<&str> = Vec::new();
+    let mut seen: HashSet<&str> = HashSet::new();
+    let mut queue: std::collections::VecDeque<&str> =
+        lock.roots.iter().map(String::as_str).collect();
+    while let Some(name) = queue.pop_front() {
+        if !seen.insert(name) {
+            continue;
+        }
+        order.push(name);
+        if let Some(gem) = by_name.get(name) {
+            let mut deps: Vec<&str> = gem.deps.iter().map(String::as_str).collect();
+            deps.sort_unstable();
+            queue.extend(deps);
+        }
+    }
+    // `lock.gems` is already name-sorted (the parser's BTreeMap).
+    for gem in &lock.gems {
+        if !seen.contains(gem.name.as_str()) {
+            order.push(&gem.name);
+        }
+    }
+    order
+        .into_iter()
+        .enumerate()
+        .map(|(i, n)| (n.to_string(), i))
+        .collect()
+}
+
+fn discover_packages(package_dirs: &[PathBuf], bundled_dir: Option<&Path>) -> PResult<Vec<Gem>> {
     let mut packages: Vec<Gem> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
     for dir in package_dirs {
+        let provenance = if Some(dir.as_path()) == bundled_dir {
+            GemProvenance::Bundled
+        } else {
+            GemProvenance::PackageDir
+        };
         let Ok(entries) = std::fs::read_dir(dir) else {
             continue;
         };
@@ -1763,7 +1930,7 @@ fn discover_packages(package_dirs: &[PathBuf]) -> PResult<Vec<Gem>> {
             .collect();
         pkg_dirs.sort();
         for pkg_dir in pkg_dirs {
-            let pkg = parse_manifest(&pkg_dir)?;
+            let pkg = parse_manifest(&pkg_dir, provenance)?;
             if seen.insert(pkg.name.clone()) {
                 packages.push(pkg);
             }
@@ -1791,7 +1958,7 @@ fn discover_packages(package_dirs: &[PathBuf]) -> PResult<Vec<Gem>> {
 /// declares `require_paths: [lib]` and ships only a README and a licence, so
 /// rejecting the gem would refuse to compile every program that depends on it.
 /// An unsatisfiable `require` still fails, which is where the real error is.
-fn parse_manifest(pkg_dir: &Path) -> PResult<Gem> {
+fn parse_manifest(pkg_dir: &Path, provenance: GemProvenance) -> PResult<Gem> {
     let manifest_path =
         gemspec_path(pkg_dir).ok_or_else(|| format!("{}: no `.gemspec`", pkg_dir.display()))?;
     let spec = super::gemspec::parse_file(&manifest_path)?;
@@ -1816,6 +1983,8 @@ fn parse_manifest(pkg_dir: &Path) -> PResult<Gem> {
     Ok(Gem {
         name: spec.name,
         roots,
+        version: spec.version,
+        provenance,
     })
 }
 
@@ -2787,6 +2956,24 @@ fn is_default_level(message: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::read_source;
+
+    /// Roots first (Gemfile order), then breadth-first down the edges with
+    /// each gem's deps in name order -- the dependent always outranks its
+    /// dependency, expressing Bundler's last-activated-wins as first-match.
+    #[test]
+    fn lockfile_precedence_ranks_dependents_ahead_of_their_deps() {
+        let lock = crate::parse::lockfile::parse(
+            "GEM\n  remote: https://rubygems.org/\n  specs:\n    hashie (5.0.0)\n    pronto (0.11.4)\n      rugged (>= 0.23.0)\n      thor (>= 0.20.3)\n    rugged (1.9.0)\n    thor (1.4.0)\n\nDEPENDENCIES\n  pronto\n",
+        )
+        .unwrap();
+        let rank = super::lockfile_precedence(&lock);
+        assert_eq!(rank["pronto"], 0);
+        // pronto's deps follow, name-sorted.
+        assert_eq!(rank["rugged"], 1);
+        assert_eq!(rank["thor"], 2);
+        // A locked gem nothing depends on still ranks, after the graph.
+        assert_eq!(rank["hashie"], 3);
+    }
 
     fn write(name: &str, bytes: &[u8]) -> std::path::PathBuf {
         let path = std::env::temp_dir().join(format!("zeo-read-source-{name}.rb"));
