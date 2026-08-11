@@ -4495,7 +4495,10 @@ fn register_method(
     // the map -- inferring here too would only be thrown away.
     let local_types = HashMap::new();
     let mut uses_bare_block = false;
-    for &n in &body {
+    // Default-parameter expressions run inside the method too -- rspec's
+    // `def register_ordering(name, strategy = Custom.new(Proc.new { |l|
+    // yield l }))` yields from one, so they need the same scan as the body.
+    for n in body.iter().copied().chain(params.default_ids()) {
         if scan_bare_block_use(&compiler.hir, n) {
             uses_bare_block = true;
         }

@@ -107,6 +107,36 @@ github = "ruby/resolv"
 tag    = "v0.7.1"
 rev    = "8fc05c1cb6cd36e4a8d0391aeb8cacdcb2368b4c"
 
+[gems.rspec]
+github = "rspec/rspec"
+tag    = "rspec-v3.13.2"
+rev    = "ce5fe4f6521eb957f02e088a1c4c4f778a5c825e"
+subdir = "rspec"
+
+[gems.rspec-core]
+github = "rspec/rspec"
+tag    = "rspec-core-v3.13.6"
+rev    = "4d8e9c3699dbc821b4603c3c01b6e81c85e3784c"
+subdir = "rspec-core"
+
+[gems.rspec-expectations]
+github = "rspec/rspec"
+tag    = "rspec-expectations-v3.13.5"
+rev    = "cafd53dd142b97503b27555ebdb90cd15e0a2e7e"
+subdir = "rspec-expectations"
+
+[gems.rspec-mocks]
+github = "rspec/rspec"
+tag    = "rspec-mocks-v3.13.8"
+rev    = "712e3ca92458b1bbd28931604fac2bb15d304cd2"
+subdir = "rspec-mocks"
+
+[gems.rspec-support]
+github = "rspec/rspec"
+tag    = "rspec-support-v3.13.7"
+rev    = "47ebfe17b2c99ad2acd643d109eb6424dc4eda9d"
+subdir = "rspec-support"
+
 [gems.rubygems]
 github = "rubygems/rubygems"
 tag    = "v4.0.18"

@@ -149,9 +149,22 @@ pub(super) fn enforce_class_method_visibility(
         "private method '{method_name}' called for {kind} {}",
         cx.compiler.fq_name(target)
     );
-    Some(quote! {
-        return Err(zeo_rt::raise_error("NoMethodError", #msg.to_string()))
-    })
+    Some(raise_tokens(&msg))
+}
+
+/// The rejection as an EXPRESSION: a block that raises and, for the type
+/// checker only, yields a `RubyValue` -- so the tokens compose anywhere a
+/// call's value would (`x.priv_method.chomp` puts them in receiver
+/// position, where a bare `return Err(..)` is `!` and `&!` does not coerce).
+fn raise_tokens(msg: &str) -> TokenStream {
+    // The Nil tail types the block `RubyValue` (a bare `return` block is
+    // `!`, and `&!` does not coerce); unreachable_code is crate-allowed.
+    quote! {
+        {
+            return Err(zeo_rt::raise_error("NoMethodError", #msg.to_string()));
+            zeo_rt::RubyValue::Nil
+        }
+    }
 }
 
 /// A visibility violation is RUNTIME behavior in Ruby, not a syntax error:
@@ -165,7 +178,5 @@ fn emit_visibility_error(cx: &Ctx, recv_id: NodeId, kind: &str, method_name: &st
         None => "an instance of Object".to_string(),
     };
     let msg = format!("{kind} method '{method_name}' called for {describe}");
-    quote! {
-        return Err(zeo_rt::raise_error("NoMethodError", #msg.to_string()))
-    }
+    raise_tokens(&msg)
 }
