@@ -3760,7 +3760,10 @@ fn register_class(
                     .own_methods
                     .iter()
                     .any(|&s| compiler.scope(s).name == name);
-                if own {
+                // A FEATURE UNIT's body may never run (or run late), so its
+                // re-marks cannot join the start-of-program override rows --
+                // they stay positional, applied if and when the unit loads.
+                if own || compiler.unit_walk {
                     compiler.runtime_patches.insert(name);
                     compiler.class_body_sites[site_idx].stmts.push(stmt);
                 } else {
@@ -3771,9 +3774,19 @@ fn register_class(
             }
             // The class-method half. See `HirNode::ClassMethodVisibility`.
             HirNode::ClassMethodVisibility { name, visibility } => {
-                compiler.classes[class_id.0 as usize]
-                    .class_visibility_overrides
-                    .push((name.clone(), *visibility));
+                // Same unit rule as the instance half. `Protected` has no
+                // runtime class-method application path and no corpus case,
+                // so it keeps the static row even in a unit.
+                if compiler.unit_walk
+                    && !matches!(visibility, crate::hir::Visibility::Protected)
+                {
+                    compiler.runtime_patches.insert(name.clone());
+                    compiler.class_body_sites[site_idx].stmts.push(stmt);
+                } else {
+                    compiler.classes[class_id.0 as usize]
+                        .class_visibility_overrides
+                        .push((name.clone(), *visibility));
+                }
             }
             // `private_constant :A` / `public_constant :A`. Applied in source
             // order, so a later `public_constant` restores the name.

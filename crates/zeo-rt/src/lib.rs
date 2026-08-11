@@ -180,7 +180,8 @@ pub use runtime_meta::{
     class_maybe_patched, copy_value_singletons, fire_const_added, iter_inline_ok,
     iter_inline_ok_for, mark_global_def_hook, name_runtime_class_if_anonymous,
     register_singleton_surrogate, runtime_class_new, runtime_define_method,
-    runtime_define_singleton_method, runtime_replace_method, runtime_set_visibility,
+    runtime_class_method_visibility, runtime_define_singleton_method, runtime_replace_method,
+    runtime_set_visibility,
     send_super_dynamic, value_extends, with_pending_defs,
 };
 pub use signal::{Signal, catch_break, home_pop, home_push, return_targets_here};

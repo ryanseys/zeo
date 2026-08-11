@@ -240,6 +240,29 @@ fn emit_statement(cx: &Ctx, stmt: NodeId, is_tail: bool, wrap_ok: bool) -> Token
             apply
         };
     }
+    if let HirNode::ClassMethodVisibility { name, visibility } = &cx.compiler.hir[stmt] {
+        // A unit body's `private_class_method :x` applies where it stands (see
+        // analyze's `ClassMethodVisibility` arm: only unit walks route here;
+        // eager bodies keep the start-of-program override row).
+        let cid = cx
+            .defining_class
+            .expect("ClassMethodVisibility sits in a class body")
+            .0;
+        let private = matches!(visibility, crate::hir::Visibility::Private);
+        let apply = quote! {
+            zeo_rt::runtime_class_method_visibility(
+                zeo_rt::ClassId(#cid),
+                &[zeo_rt::RubyValue::Symbol(zeo_rt::Symbol::intern(#name))],
+                #private,
+            )?;
+        };
+        return if is_tail {
+            let nil = tail_nil(wrap_ok);
+            quote! { #apply #nil }
+        } else {
+            apply
+        };
+    }
     if let HirNode::MethodRedefine { class, name, scope } = &cx.compiler.hir[stmt] {
         // A redefinition applied at its document position -- see
         // `analyze::redefs`. The install replaces the overlay body; the
