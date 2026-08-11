@@ -373,6 +373,20 @@ pub fn seed_loaded_features(paths: &[&str]) {
     );
 }
 
+/// Fills `$LOAD_PATH` with the compile-time require-search roots (`-I` +
+/// `RUBYLIB`, as given) -- called once from generated `main()`, after
+/// `seed_default_globals`. COSMETICS, not resolution: every require was
+/// resolved at compile time, but code that READS the array (rspec's
+/// `RubyProject.add_to_load_path` neighborhood) sees what `ruby -I` shows.
+/// Stays a real mutable Array; pushes still affect nothing.
+pub fn seed_load_path(paths: &[&str]) {
+    let values = paths
+        .iter()
+        .map(|p| RubyValue::Str(crate::string_new((*p).to_string())))
+        .collect();
+    global_set(0, "$LOAD_PATH", RubyValue::Array(crate::array_new(values)));
+}
+
 /// Appends one feature to `$LOADED_FEATURES` -- what a unit loaded at RUNTIME
 /// records, so a second `require` of it answers `false` (see
 /// [`crate::features::load_feature`]).

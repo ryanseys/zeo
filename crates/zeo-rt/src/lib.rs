@@ -160,7 +160,8 @@ pub use fiber::{
 };
 pub use frames::{FrameGuard, caller_lines, capture_backtrace, set_line, synthetic_c_frame};
 pub use globals::{
-    global_alias, global_assign, global_defined, global_get, global_set, seed_loaded_features,
+    global_alias, global_assign, global_defined, global_get, global_set, seed_load_path,
+    seed_loaded_features,
 };
 pub use handling::{PropagatingGuard, current_exception, pop_handling, push_handling};
 pub use pools::{LitPool, SymPool};

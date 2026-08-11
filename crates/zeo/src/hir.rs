@@ -238,6 +238,11 @@ pub struct Hir {
     /// flip on `LoadedFile` plus `(box_id, path)`-keyed dedup instead of a
     /// loader rework (see `parse::loader`).
     pub loaded_files: Vec<LoadedFile>,
+    /// The compile-time require-search roots (`-I` + `RUBYLIB`), in search
+    /// order -- seeded into the runtime `$LOAD_PATH` as COSMETICS: requires
+    /// were resolved at compile time, but code that READS the array (rspec's
+    /// `RubyProject`) sees what `ruby -I` would show it.
+    pub search_roots: Vec<String>,
     /// In-tree `ext/` features (`zeo_abi::is_ext_feature`) whose `require`
     /// fired anywhere in the program -- the set that makes a require-gated
     /// builtin's constant resolvable (`Compiler::resolve_class`'s feature

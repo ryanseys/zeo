@@ -2728,6 +2728,16 @@ fn codegen(analyzed: &Analyzed, sink: &mut ItemSink<'_>) -> std::io::Result<()> 
         loaded_features.push(ambient_rbconfig);
     }
 
+    // The `-I`/`RUBYLIB` roots for the cosmetic `$LOAD_PATH` seeding -- see
+    // `Hir::search_roots`.
+    let seed_load_path = match compiler.hir.search_roots.is_empty() {
+        true => quote! {},
+        false => {
+            let roots = compiler.hir.search_roots.iter();
+            quote! { zeo_rt::seed_load_path(&[#(#roots),*]); }
+        }
+    };
+
     // Ruby's own parse warnings, as one literal slice -- emitted only when
     // the program actually has some, so the common binary carries nothing.
     let parse_warnings = (!compiler.hir.warnings.is_empty()).then(|| {
@@ -2892,6 +2902,10 @@ fn codegen(analyzed: &Analyzed, sink: &mut ItemSink<'_>) -> std::io::Result<()> 
             // answers an already-loaded feature, instead of raising LoadError
             // because an AOT binary has no runtime loader.
             zeo_rt::seed_loaded_features(&[#(#loaded_features),*]);
+            // The `-I`/`RUBYLIB` roots, as cosmetics for code that READS
+            // `$LOAD_PATH` -- see `Hir::search_roots`. Emitted only when any
+            // exist, so the common binary carries nothing.
+            #seed_load_path
             // Before the first statement: a `require` on line one must
             // already see the compiled-in load path.
             #install_units

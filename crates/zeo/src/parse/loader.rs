@@ -221,6 +221,12 @@ pub(super) fn lower_main_file(
         ),
         None => None,
     };
+    // The search roots, kept for the runtime's cosmetic `$LOAD_PATH` (see
+    // `Hir::search_roots`) -- as given, the way `ruby -I` reports them.
+    hir.search_roots = load_roots
+        .iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
     let mut loader = Loader {
         roots: load_roots.to_vec(),
         // The gems zeo itself ships are ALWAYS discoverable, appended
