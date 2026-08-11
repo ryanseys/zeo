@@ -58,15 +58,17 @@ struct Args {
     /// `--log-level <off|error|warn|info|debug|trace>`: install a `tracing`
     /// subscriber for the compiler at this level (overrides `ZEO_LOG`/`RUST_LOG`).
     log_level: Option<String>,
-    /// `--run`: compile the input FILE and execute it straight away, the way
-    /// `-e` already does for inline code.
+    /// `--compile`: write the default-named binary (the input path with its
+    /// extension stripped) instead of running.
     ///
-    /// Running is strictly OPT-IN and stays that way. zeo compiles code that
-    /// has not necessarily been read yet, so naming a file must never be
-    /// enough to execute it -- nothing implies this flag, and a bare
-    /// `zeo foo.rb` still only compiles.
-    run: bool,
-    /// ARGV for an immediately-run program (`-e`, or a file with `--run`):
+    /// Running is the DEFAULT: a bare `zeo foo.rb` compiles and executes,
+    /// exactly like `ruby foo.rb` (a deliberate reversal of the original
+    /// opt-in-run decision, user-approved 2026-08-10 -- ruby's mental model
+    /// won). An artifact is what needs asking for now: `-o <path>` or this
+    /// flag. `--run` is still accepted as a no-op so old invocations keep
+    /// working.
+    compile: bool,
+    /// ARGV for an immediately-run program (`-e`, or a file that runs):
     /// positionals and everything after `--`, exactly ruby's
     /// `[--] [args...]` shape.
     program_args: Vec<String>,
@@ -127,27 +129,31 @@ impl Env {
 }
 
 const HELP: &str = "\
-zeo -- compile Ruby to a native binary
+zeo -- compile Ruby to a native binary, or run it like ruby
 
 usage: zeo [options] [--] (<input.rb> | -e <code>) [args...]
 
 modes:
-  <input.rb>            compile the file to a native binary (default output:
-                        the input path with its extension stripped)
-  <input.rb> --run      compile the file and run it immediately, forwarding
-                        stdout/stderr and the exit status; trailing [args...]
-                        become the program's ARGV. Running is opt-in and
-                        nothing implies it -- a bare <input.rb> only compiles
-  -e <code>             compile and run an inline program immediately,
-                        forwarding stdout/stderr and the exit status
+  <input.rb>            compile the file and RUN it immediately, like ruby:
+                        stdout/stderr and the exit status are forwarded, and
+                        trailing [args...] become the program's ARGV. Options
+                        are still parsed after the file name, so ARGV entries
+                        that look like options go after a `--`
+  <input.rb> -o <path>  compile the file to a native binary at <path>
+                        instead of running it
+  <input.rb> --compile  compile to the default output path (the input path
+                        with its extension stripped) without running
+  -e <code>             compile and run an inline program immediately
                         (repeatable; snippets are joined with newlines);
                         trailing [args...] become the program's ARGV;
                         with -o, write the binary instead of running it
 
 options:
   -o <output>           where to write the compiled binary
+  --compile             write the default-named binary instead of running
+  --run                 accepted as a no-op (running is the default now)
   -I <dir>              add a `require` search root, like ruby's -I
-                        (repeatable; `-I<dir>` also accepted)
+                        (repeatable; `-I<dir>` and `-I=<dir>` also accepted)
   --gems <dir>          add a directory of vendored gems: every subdirectory
                         with a `.gemspec` is discovered as a gem (repeatable)
   --gem-path <dir>      an installed RubyGems store (`gem env gemdir`) to
@@ -189,7 +195,8 @@ environment:
                         changes a compile)
   BUNDLE_GEMFILE        the Gemfile for --bundle-gemfile
   ZEO_RUNTIME_PROFILE   `debug` or `release` -- override the runtime profile
-                        (default: debug for -e, release for -o compiles)
+                        (default: debug for immediate runs, release for
+                        -o/--compile artifacts)
   ZEO_LOG / RUST_LOG    a `tracing` EnvFilter directive for finer control than
                         --log-level, e.g. `zeo::analyze=debug,zeo::lower=trace`
   ZEO_MEMORY_LIMIT      bytes of resident memory this compile may use before it
@@ -216,6 +223,7 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
     let mut gemfile: Option<PathBuf> = None;
     let mut log_level = None;
     let mut run = false;
+    let mut compile = false;
     let mut program_args: Vec<String> = Vec::new();
 
     // RUBYOPT first, so the command line wins wherever both touch the same
@@ -228,7 +236,11 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
             if tok == "-I" {
                 let dir = toks.next().ok_or("-I in RUBYOPT requires a directory")?;
                 rubyopt_roots.push(PathBuf::from(dir));
-            } else if let Some(dir) = tok.strip_prefix("-I").filter(|d| !d.is_empty()) {
+            } else if let Some(dir) = tok
+                .strip_prefix("-I")
+                .map(|d| d.strip_prefix('=').unwrap_or(d))
+                .filter(|d| !d.is_empty())
+            {
                 rubyopt_roots.push(PathBuf::from(dir));
             } else if tok == "-w" || tok.starts_with("-W") {
                 warn_flag(tok, &mut nowarn)?;
@@ -254,7 +266,7 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
             } else if input.is_none() {
                 input = Some(PathBuf::from(arg));
             } else {
-                // ARGV for a `--run` file; rejected below if nothing runs.
+                // ARGV for a run file; rejected below if nothing runs.
                 program_args.push(arg);
             }
             continue;
@@ -278,7 +290,10 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
             match name {
                 "help" => return Ok(Parsed::Help),
                 "version" => return Ok(Parsed::Version),
+                // A no-op since running became the default; kept so old
+                // invocations don't break. Still contradicts -o/--compile.
                 "run" => run = true,
+                "compile" => compile = true,
                 "gems" => package_dirs.push(PathBuf::from(value("--gems")?)),
                 "gem-path" => gem_paths.push(PathBuf::from(value("--gem-path")?)),
                 "bundle-gemfile" => {
@@ -355,8 +370,14 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
                 "-v" => return Ok(Parsed::Version),
                 "-S" => return Err("-S was replaced; use --dump=rust".into()),
                 _ => {
-                    // Attached `-I<dir>` (ruby's own spelling, no space).
-                    if let Some(dir) = arg.strip_prefix("-I").filter(|d| !d.is_empty()) {
+                    // Attached `-I<dir>` (ruby's own spelling, no space);
+                    // `-I=<dir>` is accepted too, matching the long options'
+                    // attached-equals convention.
+                    if let Some(dir) = arg
+                        .strip_prefix("-I")
+                        .map(|d| d.strip_prefix('=').unwrap_or(d))
+                        .filter(|d| !d.is_empty())
+                    {
                         load_roots.push(PathBuf::from(dir));
                     } else if arg == "-w" || arg.starts_with("-W") {
                         warn_flag(&arg, &mut nowarn)?;
@@ -374,7 +395,7 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
             input = Some(PathBuf::from(arg));
         } else {
             // Everything after the script name is the program's ARGV, ruby's
-            // shape -- kept for `--run` and rejected below if nothing runs.
+            // shape -- rejected below if nothing runs (an artifact mode).
             program_args.push(arg);
             collecting_argv = true;
         }
@@ -386,22 +407,32 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
         (None, Some(path)) => Source::File(path),
         (None, None) => return Ok(Parsed::NoInput),
     };
-    // `--run` runs instead of producing an artifact, so `-o` contradicts it.
+    // `--run` survives as a no-op, so naming it beside an artifact mode is
+    // still the contradiction it always was.
     if run && output.is_some() {
         return Err("--run executes the program instead of writing a binary; drop -o".to_string());
     }
+    if run && compile {
+        return Err("--run executes the program instead of writing a binary; drop --compile".into());
+    }
+    // `--compile` names the binary after the input file, which `-e` lacks.
+    if compile && matches!(source, Source::Eval(_)) {
+        return Err("--compile with -e has no input filename to name the binary; use -o".into());
+    }
     // Trailing args are ARGV, which only an immediately-run program has.
-    let runs_now = (matches!(source, Source::Eval(_)) || run) && output.is_none();
+    // (`--dump`/`--emit-rust` inspect instead of running, so they have none.)
+    let runs_now = output.is_none() && !compile && !dump_rust && emit_rust.is_none();
     if !program_args.is_empty() && !runs_now {
         return Err(format!("unexpected argument `{}`", program_args[0]));
     }
-    // Bare `--report` derives its path from the output artifact, which the
-    // run-immediately `-e` mode does not have.
-    if matches!(report, Report::DefaultPath)
-        && matches!(source, Source::Eval(_))
-        && output.is_none()
-    {
-        return Err("--report with -e has no artifact directory; use --report=<path>".to_string());
+    // Bare `--report` derives its path from the output artifact, which an
+    // immediately-run program does not have.
+    if matches!(report, Report::DefaultPath) && output.is_none() && !compile {
+        return Err(
+            "--report without an artifact has nowhere to land; use --report=<path>, -o \
+             or --compile"
+                .to_string(),
+        );
     }
 
     // The external gem store: flags first, env fills what flags left unset.
@@ -439,7 +470,7 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
     Ok(Parsed::Run(Box::new(Args {
         source,
         output,
-        run,
+        compile,
         dump_rust,
         emit_rust,
         load_roots: {
@@ -593,7 +624,6 @@ fn run() -> Result<(), MainError> {
         args.lockfile = None;
     }
 
-    let is_eval = matches!(args.source, Source::Eval(_));
     let gem_report = match &args.report {
         Report::Off => None,
         Report::Path(path) => Some(path.clone()),
@@ -655,14 +685,14 @@ fn run() -> Result<(), MainError> {
     // at runtime. The single mapping point for both build paths below.
     let runtime = Runtime::for_prism(compiled.needs_prism_runtime);
 
-    // `-e` without `-o`: compile to a throwaway binary, run it, and exit with
-    // ITS status (stdout/stderr stream straight through) -- the
-    // differential-harness path. Run-once, so it DEFAULTS to the fast-to-build
-    // `Debug` runtime; a harness that compiles thousands of programs can flip
-    // this to `Release` via `ZEO_RUNTIME_PROFILE` for a ~12x faster
-    // per-program link. With `-o`, `-e` produces an artifact like the file
-    // mode below instead of running.
-    if (is_eval || args.run) && args.output.is_none() {
+    // The default mode -- a bare file or `-e`, no artifact asked for:
+    // compile to a throwaway binary, run it, and exit with ITS status
+    // (stdout/stderr stream straight through), like ruby. Run-once, so it
+    // DEFAULTS to the fast-to-build `Debug` runtime; a harness that compiles
+    // thousands of programs can flip this to `Release` via
+    // `ZEO_RUNTIME_PROFILE` for a ~12x faster per-program link. With `-o` or
+    // `--compile`, produce an artifact like the mode below instead.
+    if !args.compile && args.output.is_none() {
         let profile = Profile::from_env_or(Profile::Debug);
         ensure_runtime_built(profile, runtime, linkage)?;
         let bin = std::env::temp_dir().join(format!("zeo-e-{}", std::process::id()));
@@ -685,7 +715,7 @@ fn run() -> Result<(), MainError> {
     let output = args.output.unwrap_or_else(|| {
         let mut p = match &args.source {
             Source::File(path) => path.clone(),
-            Source::Eval(_) => unreachable!("-e without -o is handled above"),
+            Source::Eval(_) => unreachable!("an -e artifact always has -o"),
         };
         p.set_extension("");
         p
@@ -793,29 +823,35 @@ mod tests {
     }
 
     #[test]
-    fn running_a_file_is_opt_in() {
-        // zeo compiles code that has not necessarily been read yet, so naming
-        // a file must never be enough to execute it.
-        assert!(!ok(&["t.rb"]).run);
-        assert!(ok(&["t.rb", "--run"]).run);
-        assert!(ok(&["--run", "t.rb"]).run);
+    fn a_bare_file_runs_and_an_artifact_needs_asking_for() {
+        // ruby's mental model: naming a file runs it. An artifact is the
+        // opt-in now -- `-o <path>`, or `--compile` for the default name.
+        let a = ok(&["t.rb"]);
+        assert!(!a.compile && a.output.is_none());
+        assert!(ok(&["t.rb", "--compile"]).compile);
+        assert!(ok(&["--compile", "t.rb"]).compile);
+        // The old opt-in spelling survives as a no-op.
+        let a = ok(&["t.rb", "--run"]);
+        assert!(!a.compile && a.output.is_none());
+        // ...but --compile can't name a binary for -e.
+        assert!(err(&["-e", "1", "--compile"]).contains("use -o"));
     }
 
     #[test]
     fn a_run_file_takes_argv_but_a_compiled_one_does_not() {
-        let a = ok(&["t.rb", "--run", "alpha", "beta"]);
+        let a = ok(&["t.rb", "alpha", "beta"]);
         assert_eq!(a.program_args, vec!["alpha", "beta"]);
-        assert_eq!(
-            ok(&["--run", "t.rb", "--", "-W0"]).program_args,
-            vec!["-W0"]
-        );
-        // Without `--run` nothing runs, so there is no ARGV to take.
-        assert!(err(&["t.rb", "alpha"]).contains("unexpected argument `alpha`"));
+        assert_eq!(ok(&["t.rb", "--", "-W0"]).program_args, vec!["-W0"]);
+        // An artifact or inspect mode runs nothing, so there is no ARGV.
+        assert!(err(&["t.rb", "--compile", "alpha"]).contains("unexpected argument `alpha`"));
+        assert!(err(&["-o", "app", "t.rb", "alpha"]).contains("unexpected argument `alpha`"));
+        assert!(err(&["--dump=rust", "t.rb", "alpha"]).contains("unexpected argument `alpha`"));
     }
 
     #[test]
-    fn run_and_an_output_path_contradict() {
+    fn run_and_an_artifact_mode_contradict() {
         assert!(err(&["t.rb", "--run", "-o", "app"]).contains("drop -o"));
+        assert!(err(&["t.rb", "--run", "--compile"]).contains("drop --compile"));
     }
 
     #[test]
@@ -913,7 +949,7 @@ mod tests {
     fn report_is_opt_in_and_only_the_attached_form_takes_a_path() {
         assert!(matches!(ok(&["t.rb"]).report, Report::Off));
         assert!(matches!(
-            ok(&["t.rb", "--report"]).report,
+            ok(&["t.rb", "--compile", "--report"]).report,
             Report::DefaultPath
         ));
         match ok(&["t.rb", "--report=out.json"]).report {
@@ -921,11 +957,13 @@ mod tests {
             _ => panic!("expected Report::Path"),
         }
         // `--report x.rb` must not eat x.rb as a value: x.rb is the input.
-        let a = ok(&["--report", "x.rb"]);
+        let a = ok(&["--report", "--compile", "x.rb"]);
         assert!(matches!(a.report, Report::DefaultPath));
         assert!(matches!(a.source, Source::File(ref p) if p == &PathBuf::from("x.rb")));
-        // Bare --report has no artifact dir to land in under run-immediately -e.
+        // Bare --report has no artifact dir to land in when the program runs
+        // immediately instead of leaving a binary behind.
         assert!(err(&["-e", "1", "--report"]).contains("--report=<path>"));
+        assert!(err(&["t.rb", "--report"]).contains("--report=<path>"));
         assert!(parse(&["-e", "1", "-o", "bin", "--report"]).is_ok());
     }
 
@@ -937,9 +975,16 @@ mod tests {
         assert!(a.output.is_none());
         let a = ok(&["-e", "p ARGV", "--", "-x", "b"]);
         assert_eq!(a.program_args, vec!["-x", "b"]);
-        // A compile (file mode, or -e with -o) has no ARGV to give.
-        assert!(err(&["t.rb", "--", "x"]).contains("unexpected argument"));
+        // File mode runs too now, so `--` hands it option-looking ARGV.
+        assert_eq!(ok(&["t.rb", "--", "x"]).program_args, vec!["x"]);
+        // An -e compile (-o given) has no ARGV to give.
         assert!(err(&["-e", "1", "-o", "bin", "x"]).contains("unexpected argument"));
+    }
+
+    #[test]
+    fn dash_i_accepts_all_three_spellings() {
+        let a = ok(&["-I", "a", "-Ib", "-I=c", "t.rb"]);
+        assert_eq!(a.load_roots, ["a", "b", "c"].map(PathBuf::from).to_vec());
     }
 
     #[test]

@@ -65,23 +65,29 @@ arrive with the 0.1.0 release.
 # Build the compiler. This writes target/release/zeo.
 $ cargo build --release -p zeo
 
-# Compile a file to a native binary, then run the binary.
-$ target/release/zeo hello.rb        # writes ./hello (the input path, without the extension)
-$ ./hello
+# Compile a file and run it immediately, as `ruby hello.rb` does.
+$ target/release/zeo hello.rb
 
-# Select a different output path.
+# Compile a file to a native binary instead of running it.
 $ target/release/zeo hello.rb -o build/hello
+$ target/release/zeo hello.rb --compile   # writes ./hello (the input path, without the extension)
 
 # Compile and run a program from the command line, as `ruby -e` does.
 $ target/release/zeo -e 'puts "hello, world"'
+
+# Run a test file, as `ruby -Itest test/foo_test.rb` does.
+$ target/release/zeo -Itest test/foo_test.rb
 
 # Show the generated Rust. This does not build a binary.
 $ target/release/zeo hello.rb --dump=rust
 ```
 
-**Note:** `zeo foo.rb` compiles the program, but it does not run the program.
-Only `-e` compiles and runs. There are no subcommands, and there is no
-`zeo run`. The command line agrees with Ruby's: `zeo <file>` or `zeo -e <code>`.
+**Note:** `zeo foo.rb` compiles the program and runs it, exactly as
+`ruby foo.rb` interprets and runs it: stdout, stderr and the exit status go to
+the caller, and the trailing arguments become `ARGV`. A binary artifact is the
+opt-in: give `-o <path>`, or `--compile` for the default path. There are no
+subcommands. The command line agrees with Ruby's: `zeo <file>` or
+`zeo -e <code>`.
 
 ## Command-line options
 
@@ -95,10 +101,12 @@ Zeo names the replacement for each removed old spelling.
 
 | Option | Function |
 |---|---|
-| `<input.rb>` | Compiles the file to a native binary. The default output path is the input path without its extension. |
-| `-e <code>` | Compiles the given code and runs it immediately. Sends stdout, stderr and the exit status to the caller. You can give this option more than one time; Zeo joins the parts with newlines. The arguments that follow the code (or follow `--`) become the program's `ARGV`, as in `ruby -e`. With `-o`, Zeo writes a binary and does not run it. |
-| `-o <output>` | Sets the path of the compiled binary. |
-| `-I <dir>` | Adds a directory to the `require` search path, as Ruby's `-I` does. You can give this option more than one time. The form `-I<dir>` is also correct. |
+| `<input.rb>` | Compiles the file and runs it immediately, as `ruby` does. Sends stdout, stderr and the exit status to the caller. The trailing arguments become the program's `ARGV`. Zeo parses options after the file name too, so put `ARGV` entries that look like options after a `--`. |
+| `-e <code>` | Compiles the given code and runs it immediately. You can give this option more than one time; Zeo joins the parts with newlines. The arguments that follow the code (or follow `--`) become the program's `ARGV`, as in `ruby -e`. With `-o`, Zeo writes a binary and does not run it. |
+| `-o <output>` | Compiles to a native binary at this path, and does not run it. |
+| `--compile` | Compiles to a native binary at the default path — the input path without its extension — and does not run it. |
+| `--run` | Does nothing. Running is the default. This flag remains so that old commands do not break. |
+| `-I <dir>` | Adds a directory to the `require` search path, as Ruby's `-I` does. You can give this option more than one time. The forms `-I<dir>` and `-I=<dir>` are also correct. |
 | `--gems <dir>` | Adds a directory of vendored gems. Each subdirectory that contains a `.gemspec` file is one gem. You can give this option more than one time. See the search order below. |
 | `--gem-path <dir>` | Adds an installed RubyGems store (`gem env gemdir`). You can give this option more than one time; without it, Zeo reads `GEM_PATH`. A store is only used together with a Gemfile from `--bundle-gemfile` or `BUNDLE_GEMFILE`. |
 | `--bundle-gemfile <path>` | Gives the Gemfile. Zeo reads its lockfile — `Gemfile` → `Gemfile.lock`, `gems.rb` → `gems.locked` — and that lockfile selects the versions in the store. A `<path>` that already ends in `.lock` is read directly. Without this option, Zeo reads `BUNDLE_GEMFILE`. |
@@ -128,7 +136,7 @@ Environment variables:
 | `GEM_PATH` | Gives the gem store directories for `--gem-path`, separated by `:`. An ambient store alone never changes a compile: Zeo uses it only when a Gemfile is also known. |
 | `BUNDLE_GEMFILE` | Gives the Gemfile for `--bundle-gemfile`. |
 | `ZEO_LOG`, `RUST_LOG` | Give a `tracing` `EnvFilter` directive. This gives more control than `--log-level`. Example: `ZEO_LOG=zeo::analyze=debug,zeo::lower=trace`. If you set none of these variables, Zeo installs no subscriber and writes no diagnostics. |
-| `ZEO_RUNTIME_PROFILE` | Selects the profile of the linked runtime: `debug` or `release`. The default is `debug` for `-e`, and `release` for a file or `-o` compile. |
+| `ZEO_RUNTIME_PROFILE` | Selects the profile of the linked runtime: `debug` or `release`. The default is `debug` for an immediate run, and `release` for an `-o` or `--compile` artifact. |
 | `ZEO_GVL` | If you set `ZEO_GVL=1`, the threads in that run use CRuby's schedule. This is a FIFO global lock with a 100 ms timer. The default is parallel OS threads. |
 | `ZEO_BLESS` | If you set `ZEO_BLESS=1`, the test suites record their expected output again from real Ruby. Use this only during development. |
 
