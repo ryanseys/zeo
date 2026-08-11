@@ -1053,6 +1053,25 @@ pub fn build_binary(
     linkage: Linkage,
     gen_opt: GenOpt,
 ) -> Result<(), String> {
+    build_binary_incremental(rust_source, output, profile, runtime, linkage, gen_opt, None)
+}
+
+/// [`build_binary`] with rustc INCREMENTAL state keyed by a stable program
+/// identity (the CLI's run path passes the input file's canonical path).
+/// The content-keyed binary cache above answers "this exact source built
+/// before"; incremental state answers "most of this source built before" --
+/// the case every edit-run-edit loop hits, where rustc reuses the unchanged
+/// codegen units. Measured motivation: an rspec-scale program is 60MB of
+/// generated Rust and 97% of its wall time is rustc.
+pub fn build_binary_incremental(
+    rust_source: &str,
+    output: &Path,
+    profile: Profile,
+    runtime: Runtime,
+    linkage: Linkage,
+    gen_opt: GenOpt,
+    incremental_key: Option<&str>,
+) -> Result<(), String> {
     // Reclaim dead cache generations (old compiler/runtime) once per process,
     // off the hot path -- see `cache::maybe_sweep_stale_cache`.
     cache::maybe_sweep_stale_cache();
@@ -1123,6 +1142,11 @@ pub fn build_binary(
         .arg("-L")
         .arg(format!("dependency={}", deps_dir.display()));
     cmd.args(gen_opt.rustc_flags(profile));
+    if let Some(key) = incremental_key {
+        let dir = cache::incremental_dir(profile, runtime, linkage, gen_opt, key)?;
+        cmd.arg("-C")
+            .arg(format!("incremental={}", dir.display()));
+    }
     if linkage == Linkage::Static {
         // Arms the generated crate's mimalloc `#[global_allocator]` (see
         // codegen's main assembly): a self-contained binary owns every

@@ -670,7 +670,10 @@ fn run() -> Result<(), MainError> {
         return Ok(());
     }
 
-    use zeo::backend::{GenOpt, Linkage, Profile, Runtime, build_binary, ensure_runtime_built};
+    use zeo::backend::{
+        GenOpt, Linkage, Profile, Runtime, build_binary, build_binary_incremental,
+        ensure_runtime_built,
+    };
     zeo::memguard::set_phase(zeo::memguard::Phase::Build);
 
     // The CLI always produces a SELF-CONTAINED binary -- both the run-once `-e`
@@ -696,13 +699,25 @@ fn run() -> Result<(), MainError> {
         let profile = Profile::from_env_or(Profile::Debug);
         ensure_runtime_built(profile, runtime, linkage)?;
         let bin = std::env::temp_dir().join(format!("zeo-e-{}", std::process::id()));
-        build_binary(
+        // The edit-run-edit loop's identity: the input FILE, canonical, so
+        // rustc's incremental state survives edits to it (the content-keyed
+        // binary cache above cannot, by design). `-e` one-liners get no key --
+        // their content IS their identity.
+        let incr_key = match &args.source {
+            Source::File(path) => path
+                .canonicalize()
+                .ok()
+                .map(|p| p.to_string_lossy().into_owned()),
+            Source::Eval(_) => None,
+        };
+        build_binary_incremental(
             &compiled.rust_source,
             &bin,
             profile,
             runtime,
             linkage,
             GenOpt::Optimized,
+            incr_key.as_deref(),
         )?;
         let status = std::process::Command::new(&bin)
             .args(&args.program_args)

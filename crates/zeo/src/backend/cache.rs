@@ -63,6 +63,45 @@ pub(super) fn cache_path(
     Ok(dir.join(format!("{:016x}", fnv1a64(rust_source.as_bytes()))))
 }
 
+/// A per-PROGRAM rustc incremental-state dir, inside the live generation so a
+/// stale-generation sweep reclaims it wholesale. Keyed by the program's STABLE
+/// identity (its canonical path) rather than its content: the whole point is
+/// surviving edits, which the content-keyed binary cache by design cannot.
+/// Prunes the oldest siblings beyond a small cap -- incremental state for a
+/// gem-scale program runs to hundreds of MB, and this machine already fights
+/// disk pressure.
+pub(super) fn incremental_dir(
+    profile: Profile,
+    runtime: Runtime,
+    linkage: Linkage,
+    gen_opt: GenOpt,
+    key: &str,
+) -> Result<PathBuf, String> {
+    let generation = generation_hash(profile, runtime, linkage, gen_opt)?;
+    let root = cache_dir().join(format!("{generation:016x}")).join("incr");
+    std::fs::create_dir_all(&root).map_err(|e| format!("creating {}: {e}", root.display()))?;
+    let dir = root.join(format!("{:016x}", fnv1a64(key.as_bytes())));
+    // Best-effort prune: keep the newest 4 programs' state. Never removes the
+    // dir being asked for (it is about to be touched and becomes newest).
+    if let Ok(entries) = std::fs::read_dir(&root) {
+        let mut dirs: Vec<(std::time::SystemTime, PathBuf)> = entries
+            .flatten()
+            .filter(|e| e.path() != dir)
+            .filter_map(|e| {
+                let m = e.metadata().ok()?;
+                Some((m.modified().ok()?, e.path()))
+            })
+            .collect();
+        if dirs.len() > 3 {
+            dirs.sort_by_key(|(t, _)| *t);
+            for (_, old) in dirs.iter().take(dirs.len() - 3) {
+                let _ = std::fs::remove_dir_all(old);
+            }
+        }
+    }
+    Ok(dir)
+}
+
 /// The cache generation for one (profile, runtime, linkage) combination --
 /// shared by `cache_path` and `sweep_stale_cache_generations` so the writer and
 /// the sweeper can never disagree on a generation's name.
