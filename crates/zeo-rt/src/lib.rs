@@ -85,9 +85,6 @@ pub use builtins::warning::emit_parse_warnings;
 pub use builtins::weak::run_finalizers;
 pub use builtins::weak::{register_weakmap_subclass, register_weakref_subclass};
 pub use runtime_meta::register_module_subclass;
-// Re-exported for the `#[global_allocator]` a STATICALLY-linked generated
-// program declares under the backend's `zeo_static_alloc` cfg -- see
-// `backend::build_binary` and codegen's main assembly.
 pub use civars::{CivarSite, class_ivar_get, class_ivar_names, class_ivar_set};
 pub use collections::*;
 pub use constants::{
@@ -138,6 +135,13 @@ pub use lastmatch::{
 #[inline]
 pub fn trace_frame_self(_f: impl FnOnce() -> RubyValue) {}
 pub use method_meta::{MetaRow, MethodKind, MethodMeta, ParamKind, register_meta_rows};
+// Re-exported for the `#[global_allocator]` a STATICALLY-linked generated
+// program declares under the backend's `zeo_static_alloc` cfg -- see
+// `backend::build_binary` and codegen's main assembly. NOT declared here in
+// zeo-rt itself: with the runtime built as a dylib, rustc's allocator shims
+// resolve inconsistently across the two images (measured: a String allocated
+// through mimalloc freed through system malloc -- libmalloc aborts at
+// bootstrap), so dylib-linked programs must stay on the system allocator.
 pub use mimalloc::MiMalloc;
 
 /// The Ruby class name of any value -- what the generated top level suffixes an

@@ -72,9 +72,9 @@ foldhash = "0.1"
 # The global allocator STATICALLY-linked generated binaries opt into (the
 # `zeo_static_alloc` cfg the backend passes for `-o` builds): Ruby workloads
 # are allocation-heavy (every Arc payload, String, Vec), and mimalloc
-# reliably beats system malloc there. Dynamic-linked test binaries keep the
-# system allocator -- an exe-defined allocator must not free the dylib's
-# allocations.
+# reliably beats system malloc there. Dynamic-linked binaries keep the
+# system allocator -- rustc's allocator shims resolve inconsistently across
+# an exe/dylib pair, and a cross-allocator free aborts in libmalloc.
 mimalloc = "0.1"
 
 # Link-time auto-registration: the `ruby_class!` macro registers each class's

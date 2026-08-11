@@ -1369,9 +1369,11 @@ fn prelude_attrs() -> TokenStream {
         // Statically-linked binaries (`zeo foo.rb -o app`, the bench suite)
         // swap in mimalloc: Ruby workloads are allocation-heavy, and a
         // self-contained binary owns every allocation. The backend passes
-        // the cfg only for `Linkage::Static` -- a dynamic-linked test binary
-        // must never free the shared dylib's allocations with a different
-        // allocator.
+        // the cfg only for `Linkage::Static` -- a dynamic-linked binary must
+        // never free the shared dylib's allocations with a different
+        // allocator (rustc's allocator shims resolve inconsistently across
+        // the exe/dylib pair; declaring the allocator in either image
+        // aborts in libmalloc at bootstrap).
         #[cfg(zeo_static_alloc)]
         #[global_allocator]
         static __ALLOC: zeo_rt::MiMalloc = zeo_rt::MiMalloc;

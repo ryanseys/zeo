@@ -689,13 +689,6 @@ fn run() -> Result<(), MainError> {
     };
     zeo::memguard::set_phase(zeo::memguard::Phase::Build);
 
-    // The CLI always produces a SELF-CONTAINED binary -- both the run-once `-e`
-    // throwaway and the shipped `-o app` -- so it statically links the runtime.
-    // Dynamic linkage (a smaller binary against a shared dylib) is the test
-    // harness's concern, where the dylib always sits in the build tree; a CLI
-    // artifact must not depend on that.
-    let linkage = Linkage::Static;
-
     // Which runtime variant this program's binary links: the lean, parser-free
     // default, or the prism-linked `eval-vm` one iff the program reaches prism
     // at runtime. The single mapping point for both build paths below.
@@ -708,7 +701,13 @@ fn run() -> Result<(), MainError> {
     // thousands of programs can flip this to `Release` via
     // `ZEO_RUNTIME_PROFILE` for a ~12x faster per-program link. With `-o` or
     // `--compile`, produce an artifact like the mode below instead.
+    //
+    // DYNAMIC linkage, unlike the artifact mode below: the binary exists for
+    // milliseconds, runs only from this machine's build tree (whose dylib the
+    // baked rpath resolves), and static linkage made every `zeo file.rb` pay
+    // a ~290ms link of the full runtime just to print and exit.
     if !args.compile && args.output.is_none() {
+        let linkage = Linkage::Dynamic;
         let profile = Profile::from_env_or(Profile::Debug);
         ensure_runtime_built(profile, runtime, linkage)?;
         let bin = std::env::temp_dir().join(format!("zeo-e-{}", std::process::id()));
@@ -748,11 +747,13 @@ fn run() -> Result<(), MainError> {
         p.set_extension("");
         p
     });
-    // `zeo foo.rb -o app` produces a SHIPPED binary: DEFAULT to the
-    // release-profiled runtime (optimized + stripped) so the artifact is small and
-    // fast, rather than embedding the unoptimized debug runtime. One-time `cargo
-    // build --release -p zeo-rt` on first use. Overridable to `debug` via
-    // `ZEO_RUNTIME_PROFILE` (e.g. to symbolicate a runtime panic).
+    // `zeo foo.rb -o app` produces a SHIPPED binary: SELF-CONTAINED (static
+    // runtime -- an artifact must never depend on a dylib in a build tree)
+    // and DEFAULTED to the release-profiled runtime (optimized + stripped) so
+    // it is small and fast, rather than embedding the unoptimized debug
+    // runtime. One-time release runtime build on first use. Overridable to
+    // `debug` via `ZEO_RUNTIME_PROFILE` (e.g. to symbolicate a runtime panic).
+    let linkage = Linkage::Static;
     let profile = Profile::from_env_or(Profile::Release);
     ensure_runtime_built(profile, runtime, linkage)?;
     Ok(build_binary(
