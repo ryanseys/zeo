@@ -2127,20 +2127,30 @@ fn class_receiver_responds(cid: ClassId, name: Symbol) -> bool {
     {
         return true;
     }
-    // The frozen half walks the ancestry too: a REGISTERED class's entry
-    // already carries every inherited `def self.x` (materialization copied
-    // them), so its own entry answers at the first step -- but a RUNTIME
-    // subclass (`Class.new(Base)`, a `describe` group) has no entry at all,
-    // and its inherited class methods live only on the nearest registered
-    // ancestor. Same walk dispatch itself uses.
-    if REGISTRY.get().is_some_and(|r| {
-        ancestors_of_value(cid).iter().any(|&anc| {
-            r.entries
-                .get(&anc.0)
-                .is_some_and(|e| e.class_methods.contains_key(&name))
-        })
-    }) {
-        return true;
+    // The frozen half: a REGISTERED class's entry is COMPLETE -- materialization
+    // flattened every inherited `def self.x` onto it and left `undef`'d names
+    // out -- so its own entry is the whole answer, and walking past it would
+    // resurrect what a singleton-body `undef_method` retired. Only a RUNTIME
+    // subclass (`Class.new(Base)`, a `describe` group) has no entry at all;
+    // ITS inherited class methods live on the nearest registered ancestor, so
+    // the walk runs for exactly the entry-less case.
+    if let Some(r) = REGISTRY.get() {
+        match r.entries.get(&cid.0) {
+            Some(e) => {
+                if e.class_methods.contains_key(&name) {
+                    return true;
+                }
+            }
+            None => {
+                if ancestors_of_value(cid).iter().any(|&anc| {
+                    r.entries
+                        .get(&anc.0)
+                        .is_some_and(|e| e.class_methods.contains_key(&name))
+                }) {
+                    return true;
+                }
+            }
+        }
     }
     let n = name.name();
     let n = n.as_str();
