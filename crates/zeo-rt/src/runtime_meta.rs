@@ -2774,22 +2774,26 @@ pub fn global_def_hook_owner(id: ClassId, name: Symbol) -> bool {
     }
 }
 
-/// Splices `mid`'s ancestry into `cid`'s, at `cid`'s own position, skipping any
-/// ancestor already present. Computes the new chain BEFORE taking the write
-/// lock (`ancestors_of_value` reads it); the old slice leaks, matching this
-/// runtime's no-GC policy for interned ancestries.
-fn splice_module_into(cid: ClassId, mid: ClassId, placement: Placement) {
-    let current: Vec<ClassId> = ancestors_of_value(cid).to_vec();
+/// One chain's version of the splice: `mid`'s ancestry inserted at `target`'s
+/// own position in `current`, skipping ancestors this chain already has.
+/// `None` when the chain doesn't pass through `target` or gains nothing.
+fn splice_into_chain(
+    current: &[ClassId],
+    target: ClassId,
+    fresh_src: &[ClassId],
+    placement: Placement,
+) -> Option<Vec<ClassId>> {
     // Not `current[0]`: after a prepend, self is no longer first.
-    let Some(at) = current.iter().position(|&a| a == cid) else {
-        return;
-    };
+    let at = current.iter().position(|&a| a == target)?;
     let present: HashSet<ClassId> = current.iter().copied().collect();
-    let fresh: Vec<ClassId> = ancestors_of_value(mid)
+    let fresh: Vec<ClassId> = fresh_src
         .iter()
         .copied()
         .filter(|m| !present.contains(m))
         .collect();
+    if fresh.is_empty() {
+        return None;
+    }
     let cut = if placement == Placement::Before {
         at
     } else {
@@ -2799,9 +2803,53 @@ fn splice_module_into(cid: ClassId, mid: ClassId, placement: Placement) {
     new_anc.extend_from_slice(&current[..cut]);
     new_anc.extend_from_slice(&fresh);
     new_anc.extend_from_slice(&current[cut..]);
-    let leaked: &'static [ClassId] = Box::leak(new_anc.into_boxed_slice());
+    Some(new_anc)
+}
+
+/// Splices `mid`'s ancestry into `cid`'s -- and into EVERY chain that passes
+/// through `cid`. CRuby's ancestry is a shared linked structure, so a later
+/// `include` into a superclass is visible to subclasses minted earlier, and
+/// (since Ruby 3.0) an `include` into a module already mixed in elsewhere
+/// reaches its hosts too. zeo chains are flat leaked snapshots, so the splice
+/// must visit each: the target's own chain, every overlay chain containing the
+/// target (runtime-minted subclasses -- rspec's describe-groups gaining the
+/// mock adapter their base class was given at configure time is the corpus
+/// case), and every REGISTERED class whose frozen chain contains the target
+/// (those mint an overlay chain here; the frozen row stays untouched).
+///
+/// Lock discipline: candidate ids are collected under the read lock reading
+/// `ancestors` fields directly; chains are recomputed lock-free through
+/// `ancestors_of_value` (overlay-first); one write installs them all. Old
+/// slices leak, matching this runtime's no-GC policy for interned ancestries.
+fn splice_module_into(cid: ClassId, mid: ClassId, placement: Placement) {
+    let fresh_src: Vec<ClassId> = ancestors_of_value(mid).to_vec();
+    let mut candidates: Vec<u32> = vec![cid.0];
+    {
+        let r = maps().classes.read().unwrap();
+        for (&id, e) in r.iter() {
+            if id != cid.0 && e.ancestors.contains(&cid) {
+                candidates.push(id);
+            }
+        }
+    }
+    for id in crate::dispatch::classes_with_ancestor(cid) {
+        // A registered class with a live overlay chain was already considered
+        // above; only frozen-chain classes join here.
+        if overlay_ancestors(ClassId(id)).is_none() && id != cid.0 {
+            candidates.push(id);
+        }
+    }
+    let mut updates: Vec<(u32, &'static [ClassId])> = Vec::new();
+    for id in candidates {
+        let current = ancestors_of_value(ClassId(id));
+        if let Some(new_anc) = splice_into_chain(current, cid, &fresh_src, placement) {
+            updates.push((id, Box::leak(new_anc.into_boxed_slice())));
+        }
+    }
     let mut w = maps().classes.write().unwrap();
-    w.entry(cid.0).or_insert_with(OverlayEntry::delta).ancestors = leaked;
+    for (id, leaked) in updates {
+        w.entry(id).or_insert_with(OverlayEntry::delta).ancestors = leaked;
+    }
 }
 
 /// The public/protected instance-method names a module contributes to a host
