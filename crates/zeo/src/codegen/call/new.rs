@@ -47,7 +47,30 @@ pub fn emit_new(
     // dynamically; `Object.new`'s copy is a free function in a container).
     // They keep the token path below, which is also the one `raise`'s
     // synthetic-argument caller needs.
-    let Some(cid) = cx.resolve_class(class_name) else {
+    // Construction is a call site like any other: when a runtime site may
+    // have (re)defined `initialize` or `new` -- a lazily-loaded unit's class
+    // (registered but not promised), a computed `define_method` -- the static
+    // tables cannot say which `initialize` this `.new` runs, and resolving
+    // through them fell through to an ANCESTOR's (BasicObject's zero-arity
+    // one, as a baked arity error). Only the dynamic path sees the overlay
+    // rows, so `.new` takes the same runtime-class arm below.
+    let statically_promised = !cx.compiler.may_be_patched_at_runtime("initialize")
+        && !cx.compiler.may_be_patched_at_runtime("new");
+    let resolved = cx.resolve_class(class_name);
+    // The gate routes only the CONSTRUCTION dynamic -- the class itself is
+    // still resolved statically (a registered class's object is a
+    // compile-time fact; re-reading its name through `emit_const_read`'s
+    // bare-name owner map answered the wrong scope for lexically-nested
+    // reads and raised NameError at runtime). And only for STRUCT-BACKED
+    // user classes: `Object.new`'s sentinel, builtins, and modules have
+    // static special forms below with no runtime constructor row to
+    // dispatch to.
+    let statically_constructed = if statically_promised {
+        resolved
+    } else {
+        resolved.filter(|&cid| !cx.compiler.has_generated_struct(cid))
+    };
+    let Some(cid) = statically_constructed else {
         // Not a compile-time class -- a constant bound to a RUNTIME class
         // (`Foo = Class.new`, a native `Struct`/`Data` class -- Batch E). Read
         // the constant at runtime and dispatch `.new` dynamically; a
@@ -80,14 +103,25 @@ pub fn emit_new(
             }
             None => quote! { None },
         };
-        // Resolved exactly as an ordinary constant read is, so a namespaced
+        // A statically-registered class routed here by the runtime-patch
+        // gate keeps its compile-time identity; only a genuinely
+        // runtime-minted class re-reads its constant. That read resolves
+        // exactly as an ordinary constant read does, so a namespaced
         // runtime class (`class NS::Item < Struct.new(:a)`) is found under
         // `NS`, and an unqualified name is found through the lexical cref --
         // `uri/common.rb` calls `Parser.new` inside `module URI` for a `Parser`
         // that only `const_set` ever creates, and reading it under `Object`
         // finds nothing.
-        let path = crate::constpath::ConstPath::parse(class_name);
-        let rtclass = crate::codegen::expr::emit_const_read(cx, path.scope(), path.base());
+        let rtclass = match resolved {
+            Some(cid) => {
+                let id = cid.0;
+                quote! { zeo_rt::RubyValue::Class(zeo_rt::ClassId(#id)) }
+            }
+            None => {
+                let path = crate::constpath::ConstPath::parse(class_name);
+                crate::codegen::expr::emit_const_read(cx, path.scope(), path.base())
+            }
+        };
         let new_sym = super::super::pooled_sym("new");
         return quote! {
             {

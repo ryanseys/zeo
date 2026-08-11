@@ -166,6 +166,9 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
     // its statements simply join the unit's body in place.
     let mut declined_units = std::mem::take(&mut compiler.hir.declined_units);
     let mut feature_units = Vec::new();
+    // Everything a unit's walk REGISTERS is registered-but-not-promised --
+    // see `register_method`'s `runtime_conditional` marking.
+    compiler.unit_walk = true;
     for unit in std::mem::take(&mut compiler.hir.feature_units) {
         let mut stmts = Vec::new();
         let mut unit_pre_exec = Vec::new();
@@ -208,6 +211,7 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
             }
         }
     }
+    compiler.unit_walk = false;
 
     // Stage C invariant: the ids the compiler just assigned the built-in
     // exceptions MUST match `zeo-abi`'s table, because `zeo-rt`'s
@@ -4535,6 +4539,20 @@ fn register_method(
             })
         })
         .map(|i| ClassId(i as u32));
+    // A `def` in a LAZILY-LOADED unit is registered but not PROMISED --
+    // whether it exists at any point of the run is decided by whether its
+    // unit has loaded by then, which only the runtime knows. Its row stays
+    // in the static tables (the runtime MRO walk must find the real body
+    // once the unit loads), but the NAME de-optimizes every call site
+    // (`runtime_patches`): the dynamic walk probes the overlay first, so a
+    // runtime definition wins, and no compile-time decision -- devirt,
+    // visibility, arity -- is baked against a definition that may never
+    // load. minitest's spec DSL (`Kernel#describe` + `private :describe`)
+    // sat in the compiled-in load path of an rspec program and made the
+    // static tables bake a visibility raise into `RSpec.describe`.
+    if compiler.unit_walk {
+        compiler.runtime_patches.insert(name.clone());
+    }
     Ok(compiler.push_scope(Scope {
         name,
         class: Some(owner),

@@ -1571,8 +1571,13 @@ pub fn emit_call(
                 let ctor = new::emit_new(cx, &cx.compiler.fq_name(defining), args, kwargs, None);
                 // A native-backed class has no struct to `new_handle`
                 // -- `emit_new` already yields a fully-boxed `RubyValue`
-                // built by the runtime.
-                if cx.compiler.is_native_backed(defining) {
+                // built by the runtime. So does the dynamic-dispatch route
+                // `emit_new` takes when a runtime site may have (re)defined
+                // `initialize`/`new` (its own gate, mirrored here).
+                if cx.compiler.is_native_backed(defining)
+                    || cx.compiler.may_be_patched_at_runtime("initialize")
+                    || cx.compiler.may_be_patched_at_runtime("new")
+                {
                     return ctor;
                 }
                 let class_ident = super::ident::class_ident(cx.compiler, defining);
@@ -2044,8 +2049,13 @@ pub fn emit_call(
         // real runtime NoMethodError ("for class Widget") -- real Ruby's
         // behavior.
         // Checked BEFORE the resolution below, because
-        // `private_class_method :new` marks a name no body defines.
-        if let Some(err) = visibility::enforce_class_method_visibility(cx, recv_id, target, name) {
+        // `private_class_method :new` marks a name no body defines. No
+        // verdict for a name a runtime site may (re)define -- the dynamic
+        // path re-asks with the live tables (see the ClassObj arm below).
+        if !cx.compiler.may_be_patched_at_runtime(name)
+            && let Some(err) =
+                visibility::enforce_class_method_visibility(cx, recv_id, target, name)
+        {
             return err;
         }
         let is_static = cx.compiler.class_method_in_chain(target, name).is_some()
@@ -2079,8 +2089,13 @@ pub fn emit_call(
             return quote! { { let _ = #recv_expr; #folded } };
         }
         if !safe && kwargs.is_empty() && block.is_none() && block_arg.is_none() {
-            if let Some(err) =
-                visibility::enforce_class_method_visibility(cx, recv_id, target, name)
+            // No compile-time visibility verdict for a name a runtime site
+            // may (re)define -- a lazily-loaded unit's `private :describe`
+            // must not bake a raise into a call the runtime overlay serves.
+            // The dynamic path (below) re-asks with the live tables.
+            if !cx.compiler.may_be_patched_at_runtime(name)
+                && let Some(err) =
+                    visibility::enforce_class_method_visibility(cx, recv_id, target, name)
             {
                 return err;
             }
@@ -3410,6 +3425,12 @@ fn dispatch(
     // never reach this arm).
     if let Some(cid) = infer_any_class(cx, recv_id)
         && cx.compiler.class(cid).is_builtin
+        // Same de-optimization gate as Path 1: a runtime site may replace
+        // this name's body or visibility (a lazily-loaded unit's
+        // `Kernel#describe` + `private :describe` reached even CLASS-value
+        // receivers through Module's chain here), and only the dynamic path
+        // sees the overlay.
+        && !cx.compiler.may_be_patched_at_runtime(name)
         && let Some(entry) = cx.compiler.lookup_method(cid, name).copied()
         && !visibility::defers_to_runtime(cx, entry.visibility, bypass_visibility)
     {

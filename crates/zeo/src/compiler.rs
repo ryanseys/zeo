@@ -675,6 +675,11 @@ pub struct Compiler {
     /// answers "could this name change under us?", and over-answering `true`
     /// costs speed, not correctness.
     pub runtime_patches: std::collections::HashSet<String>,
+    /// Whether the analyze walk is currently inside a FEATURE UNIT's body
+    /// (`analyze`'s unit loop). A `def` registered under it is registered
+    /// but not PROMISED -- see `register_method`'s `runtime_conditional`
+    /// marking, which reads this.
+    pub unit_walk: bool,
     /// Boot-time overlay installs for observable redefinition timelines:
     /// `(class, name, first_scope)`. The static tables carry the FINAL body
     /// (last-`def`-wins, so every compile-time fact -- super inlining,
@@ -965,6 +970,7 @@ impl Compiler {
             top_level_const_aliases: HashMap::new(),
             const_aliases: HashMap::new(),
             runtime_patches: std::collections::HashSet::new(),
+            unit_walk: false,
             positional_redefs: Vec::new(),
             runtime_patches_any_name: false,
             class_index: std::cell::RefCell::new(HashMap::new()),

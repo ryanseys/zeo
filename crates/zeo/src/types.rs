@@ -220,9 +220,17 @@ pub fn infer_type_with_locals(
                 //     free to return anything at all (rubygems'
                 //     `Gem::Package::TarWriter.new` answers nil in its block
                 //     form).
+                //   - a program where a runtime site may (re)define
+                //     `initialize`/`new` (a lazily-loaded unit's class, a
+                //     computed `define_method`): `emit_new` dispatches
+                //     dynamically for the same reason every other call site
+                //     does (`may_be_patched_at_runtime`), and the result is
+                //     a `RubyValue`.
                 Some(cid)
                     if compiler.has_generated_struct(cid)
-                        && compiler.class_method_in_chain(cid, "new").is_none() =>
+                        && compiler.class_method_in_chain(cid, "new").is_none()
+                        && !compiler.may_be_patched_at_runtime("initialize")
+                        && !compiler.may_be_patched_at_runtime("new") =>
                 {
                     TyKind::Object(cid)
                 }
@@ -308,9 +316,18 @@ pub fn infer_type_with_locals(
             // constructs exactly what a literal `Widget.new(...)`
             // does -- and must TYPE the same way, since codegen's ClassObj
             // interception emits the same unboxed `Arc<Concrete>`
-            // construction.
+            // construction -- including the `HirNode::New` arm's
+            // runtime-patch gate above, under which both emit a dynamic
+            // `RubyValue` send instead.
             _ => match infer_type_with_locals(compiler, defining, box_id, locals, *recv) {
-                TyKind::ClassObj(cid) if compiler.has_generated_struct(cid) => TyKind::Object(cid),
+                TyKind::ClassObj(cid)
+                    if compiler.has_generated_struct(cid)
+                        && compiler.class_method_in_chain(cid, "new").is_none()
+                        && !compiler.may_be_patched_at_runtime("initialize")
+                        && !compiler.may_be_patched_at_runtime("new") =>
+                {
+                    TyKind::Object(cid)
+                }
                 _ => TyKind::Poly,
             },
         },

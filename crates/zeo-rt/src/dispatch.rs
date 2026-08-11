@@ -3787,6 +3787,19 @@ pub fn run_initialize(
     args: &[RubyValue],
     block: Option<RubyValue>,
 ) -> Result<(), Signal> {
+    // With a live overlay, `initialize` resolves like any other instance
+    // method -- overlay delta first, per ancestor (`snapshot_instance_method`).
+    // A runtime `define_method :initialize` -- or a lazily-loaded unit's
+    // `def initialize`, registered but not promised -- lives ONLY there, and
+    // the registry walk below would fall through to `BasicObject#initialize`'s
+    // zero-arity reject.
+    if crate::runtime_meta::is_live()
+        && let Some(f) =
+            crate::runtime_meta::snapshot_instance_method(class, crate::symbol::wk::initialize())
+    {
+        f.call(recv, args, block)?;
+        return Ok(());
+    }
     if let Some(f) = registry().lookup_mro(class, crate::symbol::wk::initialize()) {
         f.call(recv, args, block)?;
         return Ok(());
