@@ -2131,6 +2131,20 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
                     if !unresolvable && !site_kept && !hir.deferred_requires.contains(&feature) {
                         return Ok(hir.push(HirNode::BoolLit(true)));
                     }
+                } else if name == "require_relative"
+                    && let Some(dir) = computed_relative_demand_dir(&call)
+                {
+                    // A computed `require_relative` gets a BOUNDED demand, not
+                    // the package-wide one: either the literal directory prefix
+                    // its interpolation starts with, or the requiring file's
+                    // SIDECAR directory (`foo.rb` alongside `foo/`, ruby's
+                    // conventional split). This is what keeps a MAIN-file
+                    // loader working: the main file deliberately demands no
+                    // whole directory (a demander at the tree root would sweep
+                    // everything -- the webrick_not_bundled hazard), but a
+                    // bounded subtree is its own tree.
+                    hir.unit_demand
+                        .insert((hir.lowering_package.clone(), dir));
                 } else {
                     // A COMPUTED target can name any file of the demanding
                     // package -- `Dir[...].each { |t| require t }` is how a
@@ -2770,6 +2784,42 @@ fn current_file_str() -> PResult<String> {
         Some(p) => p.to_string_lossy().into_owned(),
         None => "-e".to_string(),
     })
+}
+
+/// The BOUNDED unit-demand directory for a COMPUTED `require_relative`:
+/// the literal directory prefix its interpolation starts with
+/// (`"unit_tree/#{lib}/#{f}"` names only files under `unit_tree/`), or --
+/// for a wholly-dynamic argument -- the requiring file's SIDECAR directory
+/// (`foo.rb` alongside `foo/`, ruby's conventional file-plus-tree split).
+/// `None` when neither bound exists; the caller falls back to the
+/// package-wide demand.
+fn computed_relative_demand_dir(call: &CallNode<'_>) -> Option<std::path::PathBuf> {
+    let file = context::current_source_file()?;
+    // A bare filename's parent is the empty path; canonicalize needs `.`.
+    let parent = match file.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p,
+        _ => std::path::Path::new("."),
+    };
+    let dir = parent.canonicalize().ok()?;
+    let literal_prefix = || {
+        let args = call.arguments()?;
+        let arg = args.arguments().iter().next()?;
+        let istr = arg.as_interpolated_string_node()?;
+        let first = istr.parts().iter().next()?;
+        let s = first.as_string_node()?;
+        let text = String::from_utf8_lossy(&s.unescaped()).into_owned();
+        let (prefix, _) = text.rsplit_once('/')?;
+        if prefix.is_empty() || prefix.split('/').any(|c| c == "..") {
+            return None;
+        }
+        Some(dir.join(prefix))
+    };
+    let sidecar = || {
+        let stem = file.file_stem()?;
+        let side = dir.join(stem);
+        side.is_dir().then_some(side)
+    };
+    literal_prefix().or_else(sidecar)
 }
 
 /// The require-style feature an `autoload(:Const, <path>)` names, resolved at
