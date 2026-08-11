@@ -1,13 +1,10 @@
-//! Golden-sidecar hygiene for the datatest suites (`tests/`, `tests/gems/`,
-//! `tests/spinel/`, `tests/gaps/`).
+//! Golden-sidecar hygiene for the datatest suites (`tests/`, `tests/spinel/`,
+//! `tests/gaps/`).
 //!
 //! Invariants that have each broken silently before, since none of them fails
 //! loudly on its own -- they degrade into non-hermetic or unprotected tests.
 
 use std::path::{Path, PathBuf};
-
-/// Named once because `.config/nextest.toml` must anchor on the same word.
-const GEM_GOLDEN_DIR: &str = "gems";
 
 fn repo_root() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -18,12 +15,7 @@ fn repo_root() -> &'static Path {
 
 fn suite_dirs() -> Vec<PathBuf> {
     let root = repo_root().join("tests");
-    let mut dirs = vec![
-        root.clone(),
-        root.join(GEM_GOLDEN_DIR),
-        root.join("spinel"),
-        root.join("gaps"),
-    ];
+    let mut dirs = vec![root.clone(), root.join("spinel"), root.join("gaps")];
     // One subdirectory per gem under tests/gemtests/.
     if let Ok(entries) = std::fs::read_dir(root.join("gemtests")) {
         dirs.extend(
@@ -85,31 +77,24 @@ fn no_golden_embeds_a_machine_specific_path() {
     );
 }
 
-/// A datatest name is the golden's path, and the nextest override that grants
-/// these their longer deadline selects on an anchored prefix of it. Renaming
-/// the directory makes that pattern match nothing, with no error anywhere.
+/// `tests/bench/` holds compile-bench INPUT programs (whole-gem require
+/// graphs), deliberately outside every datatest pattern: a golden appearing
+/// there would silently never run, and a bench input gaining a golden means
+/// someone thinks it is a test again -- whole-gem coverage belongs to the gem
+/// probe, which is why `tests/gems/` was retired.
 #[test]
-fn the_gem_goldens_still_match_their_nextest_deadline() {
-    let dir = repo_root().join("tests").join(GEM_GOLDEN_DIR);
-    let count = std::fs::read_dir(&dir)
+fn bench_inputs_carry_no_goldens() {
+    let dir = repo_root().join("tests").join("bench");
+    let stray: Vec<String> = std::fs::read_dir(&dir)
         .unwrap_or_else(|e| panic!("read {}: {e}", dir.display()))
         .filter_map(Result::ok)
-        .filter(|e| e.path().extension().is_some_and(|x| x == "rb"))
-        .count();
-    assert!(count > 0, "{} holds no goldens", dir.display());
-
-    let config_path = repo_root().join(".config/nextest.toml");
-    let config = std::fs::read_to_string(&config_path)
-        .unwrap_or_else(|e| panic!("read {}: {e}", config_path.display()));
-
-    // The `\\/` is the escaped `/` as it appears in the TOML string.
-    let anchor = format!("example::{GEM_GOLDEN_DIR}\\\\/");
+        .map(|e| e.path())
+        .filter(|p| p.to_string_lossy().ends_with(".expected"))
+        .map(|p| p.display().to_string())
+        .collect();
     assert!(
-        config.contains(&anchor),
-        "{} no longer anchors the slow-timeout override on `tests/{}` -- \
-         all {count} vendored-gem goldens just lost their deadline. \
-         Expected a filter containing `{anchor}`.",
-        config_path.display(),
-        GEM_GOLDEN_DIR,
+        stray.is_empty(),
+        "tests/bench/ is not a datatest suite; these goldens would never run:\n{}",
+        stray.join("\n")
     );
 }

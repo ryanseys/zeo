@@ -2,9 +2,11 @@
 //! ships from ONE upstream repo (`rubygems/rubygems`, bundler under its
 //! `bundler/` subdirectory).
 //!
-//! The behavioural proof is the ruby-oracle golden pair -- `tests/gems/rubygems.rb`
-//! and `tests/gems/bundler.rb`, which build real binaries and diff their output.
-//! What lives here is everything cheaper than that: the vendoring is intact,
+//! The end-to-end behavioural proof is the gem probe's (the compile-bench
+//! inputs `tests/bench/rubygems.rb` and `tests/bench/bundler.rb` are the same
+//! whole-graph programs; their golden runs cost minutes each and were retired
+//! from the suite). What lives here is everything cheaper than that: the
+//! vendoring is intact,
 //! the whole require graph still reaches codegen, the classes that matter
 //! survive it, and the disclosure record tells the truth about all of it. Those
 //! are the failures that would otherwise show up only as a 30-minute `rustc`

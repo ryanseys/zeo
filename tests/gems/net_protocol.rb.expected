@@ -1,8 +1,0 @@
-HTTP/1.1 200 OK
-X: 1
-true
-body
-true
-true
-true
-Net::OpenTimeout

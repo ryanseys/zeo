@@ -430,10 +430,10 @@ fn ripper_is_declined_and_the_load_error_says_so() {
     assert!(rescued.status.success(), "stderr: {}", rescued.stderr);
     assert_eq!(rescued.stdout, "no ripper\n");
 
-    // The alternative the message points at is real and already covered:
-    // `tests/gems/prism.rb` compiles `require "prism"` and diffs it against the
-    // oracle. Not re-asserted here: it pulls the gem and the eval-vm runtime,
-    // which cost this test minutes for no coverage the golden lacks.
+    // The alternative the message points at is real and covered by the gem
+    // probe (`require "prism"` compiles as a probed gem; its whole-graph
+    // golden was retired from the suite). Not re-asserted here: it pulls the
+    // gem and the eval-vm runtime, which cost this test minutes.
 }
 
 #[test]

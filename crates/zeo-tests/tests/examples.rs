@@ -1,10 +1,13 @@
-//! The zeo-authored example programs (`tests/*.rb` and the per-gem programs in
-//! `tests/gems/`) as `cargo test`/nextest cases: each compiled by zeo, run, and
-//! diffed against its committed ruby-oracle golden `.rb.expected` (stdout AND
-//! stderr). Replaces the old `xtask test`/`regen`.
+//! The zeo-authored example programs (`tests/*.rb`) as `cargo test`/nextest
+//! cases: each compiled by zeo, run, and diffed against its committed
+//! ruby-oracle golden `.rb.expected` (stdout AND stderr). Replaces the old
+//! `xtask test`/`regen`.
 //!
-//! The pattern matches the top level plus `tests/gems/`, never the
-//! `tests/spinel/` or `tests/gaps/` subdirectories (those are their own suites).
+//! The pattern matches the top level only, never the `tests/spinel/`,
+//! `tests/gaps/`, or `tests/bench/` subdirectories (the first two are their
+//! own suites; `tests/bench/` holds compile-bench INPUTS with no goldens --
+//! whole-gem programs are the gem probe's coverage, not this suite's, since
+//! each one costs minutes of rustc and bogged down every run).
 //!
 //! `cargo xtask bless examples::` re-records the goldens from ruby.
 
@@ -18,5 +21,5 @@ fn example(rb: &Path) -> datatest_stable::Result<()> {
 }
 
 datatest_stable::harness! {
-    { test = example, root = "../../tests", pattern = r"^(?:gems/)?[^/]+\.rb$" },
+    { test = example, root = "../../tests", pattern = r"^[^/]+\.rb$" },
 }
