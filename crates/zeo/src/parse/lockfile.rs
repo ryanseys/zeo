@@ -3,10 +3,13 @@
 //! answer Bundler already wrote (`lockfile_parser.rb` is the reference).
 //!
 //! Only what an AOT compiler needs is kept: the locked `(name, version)` set
-//! across every source section (`GEM`/`GIT`/`PATH`), plus the declared
-//! `PLATFORMS`. Dependency EDGES (the 6-space-indented lines under a spec) are
-//! skipped -- an AOT compiler pulls in only what a `require` actually reaches,
-//! so the edge graph adds nothing over "these gems are available".
+//! across every source section (`GEM`/`GIT`/`PATH`), each spec's dependency
+//! EDGES (the 6-space-indented lines under it), the `DEPENDENCIES` roots, and
+//! the declared `PLATFORMS`. The edges and roots exist for one consumer: the
+//! require-precedence order (Bundler activates a lockfile's gems in reverse-
+//! topological order, roots first -- `spec_set.rb` -- and an ambiguous
+//! feature resolves to the FIRST activated provider, so zeo must rank
+//! candidates the same way).
 //!
 //! Platform handling follows TruffleRuby's `force_ruby_platform`: when a gem is
 //! locked for several platforms (`nokogiri (1.16.0)` AND
@@ -29,6 +32,10 @@ pub(super) struct Lockfile {
     pub platforms: Vec<String>,
     /// `BUNDLED WITH`'s version, when present.
     pub bundler_version: Option<String>,
+    /// The `DEPENDENCIES` section's gem names, in file order (constraints and
+    /// the `!` sourced-elsewhere marker stripped) -- the Gemfile's own
+    /// requests, the roots of the dependency graph.
+    pub roots: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -40,6 +47,9 @@ pub(super) struct LockedGem {
     /// see whether a lockfile even offered a source-platform variant.
     pub platform: Option<String>,
     pub source: GemSource,
+    /// The names this spec depends on (its 6-space-indented lines),
+    /// constraints stripped -- the edges of the precedence graph.
+    pub deps: Vec<String>,
 }
 
 /// Which lockfile section a gem came from -- a `PATH`/`GIT` gem lives outside
@@ -74,7 +84,8 @@ enum Section {
     Specs(GemSourceKind),
     Platforms,
     BundledWith,
-    /// A section we read past without collecting (DEPENDENCIES, CHECKSUMS, ...).
+    Dependencies,
+    /// A section we read past without collecting (CHECKSUMS, ...).
     Ignored,
 }
 
@@ -110,6 +121,11 @@ pub(super) fn parse(text: &str) -> PResult<Lockfile> {
     let mut gems: BTreeMap<String, LockedGem> = BTreeMap::new();
     let mut platforms: Vec<String> = Vec::new();
     let mut bundler_version: Option<String> = None;
+    let mut roots: Vec<String> = Vec::new();
+    // The spec the next 6-space edge lines attach to. Points at the row kept
+    // in `gems`, so a platform variant's edges land on the ruby-platform
+    // winner (identical lists in practice; the push dedups regardless).
+    let mut current_spec: Option<String> = None;
     let mut section = Section::None;
     // Whether a source block has passed its `specs:` line yet (before it, the
     // block still holds `remote:`/`revision:` metadata, not gems).
@@ -135,9 +151,11 @@ pub(super) fn parse(text: &str) -> PResult<Lockfile> {
                 "PATH" => Section::Specs(GemSourceKind::Path),
                 "PLATFORMS" => Section::Platforms,
                 "BUNDLED WITH" => Section::BundledWith,
+                "DEPENDENCIES" => Section::Dependencies,
                 _ => Section::Ignored,
             };
             in_specs = false;
+            current_spec = None;
             continue;
         }
 
@@ -156,6 +174,17 @@ pub(super) fn parse(text: &str) -> PResult<Lockfile> {
                 // A spec line is 4-space-indented; a dependency edge is
                 // 6-space-indented. Only specs carry a locked version.
                 let indent = line.len() - content.len();
+                if indent == 6 {
+                    // An edge under the current spec: `name (constraints)`
+                    // or a bare `name`.
+                    if let (Some(spec), Some(dep)) = (&current_spec, dep_name(content))
+                        && let Some(gem) = gems.get_mut(spec)
+                        && !gem.deps.contains(&dep)
+                    {
+                        gem.deps.push(dep);
+                    }
+                    continue;
+                }
                 if indent != 4 {
                     continue;
                 }
@@ -165,15 +194,17 @@ pub(super) fn parse(text: &str) -> PResult<Lockfile> {
                         version,
                         platform,
                         source: kind.source(),
+                        deps: Vec::new(),
                     };
                     // ruby-platform row (no suffix) wins over a platform variant.
                     match gems.get(&name) {
                         Some(existing) if existing.platform.is_none() && gem.platform.is_some() => {
                         }
                         _ => {
-                            gems.insert(name, gem);
+                            gems.insert(name.clone(), gem);
                         }
                     }
+                    current_spec = Some(name);
                 }
             }
             Section::Platforms => {
@@ -181,6 +212,14 @@ pub(super) fn parse(text: &str) -> PResult<Lockfile> {
             }
             Section::BundledWith => {
                 bundler_version = Some(line.trim().to_string());
+            }
+            Section::Dependencies => {
+                // `  rails (~> 7.1)`, `  my_gem!` -- the Gemfile's requests.
+                if let Some(dep) = dep_name(line.trim_start())
+                    && !roots.contains(&dep)
+                {
+                    roots.push(dep);
+                }
             }
             Section::None | Section::Ignored => {}
         }
@@ -190,7 +229,19 @@ pub(super) fn parse(text: &str) -> PResult<Lockfile> {
         gems: gems.into_values().collect(),
         platforms,
         bundler_version,
+        roots,
     })
+}
+
+/// A dependency line's gem name -- `addressable (>= 2.0.2, < 8.0)` ->
+/// `addressable`, `my_gem!` -> `my_gem` (the `!` marks a GIT/PATH source).
+fn dep_name(line: &str) -> Option<String> {
+    let name = line
+        .split_whitespace()
+        .next()?
+        .trim_end_matches('!')
+        .to_string();
+    (!name.is_empty()).then_some(name)
 }
 
 /// `name (version)` or `name (version-platform)` -> `(name, version, platform)`.
@@ -239,9 +290,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_gem_specs_and_skips_dependency_edges() {
+    fn parses_gem_specs_with_their_dependency_edges() {
         let lock = parse(
-            "GEM\n  remote: https://rubygems.org/\n  specs:\n    addressable (2.9.0)\n      public_suffix (>= 2.0.2, < 8.0)\n    ast (2.4.3)\n\nPLATFORMS\n  arm64-darwin-24\n  ruby\n\nBUNDLED WITH\n   2.5.6\n",
+            "GEM\n  remote: https://rubygems.org/\n  specs:\n    addressable (2.9.0)\n      public_suffix (>= 2.0.2, < 8.0)\n    ast (2.4.3)\n\nPLATFORMS\n  arm64-darwin-24\n  ruby\n\nDEPENDENCIES\n  addressable (~> 2.9)\n\nBUNDLED WITH\n   2.5.6\n",
         )
         .unwrap();
         assert_eq!(lock.gems.len(), 2);
@@ -252,11 +303,24 @@ mod tests {
                 version: "2.9.0".into(),
                 platform: None,
                 source: GemSource::Rubygems,
+                deps: vec!["public_suffix".into()],
             }
         );
         assert_eq!(lock.gems[1].name, "ast");
+        assert!(lock.gems[1].deps.is_empty());
         assert_eq!(lock.platforms, vec!["arm64-darwin-24", "ruby"]);
         assert_eq!(lock.bundler_version.as_deref(), Some("2.5.6"));
+        assert_eq!(lock.roots, vec!["addressable"]);
+    }
+
+    #[test]
+    fn dependency_roots_strip_constraints_and_source_markers() {
+        let lock = parse(
+            "GIT\n  remote: https://github.com/x/local_gem.git\n  revision: abc\n  specs:\n    local_gem (0.1.0)\n      rake\n\nDEPENDENCIES\n  local_gem!\n  rails (~> 7.1)\n  rake\n",
+        )
+        .unwrap();
+        assert_eq!(lock.roots, vec!["local_gem", "rails", "rake"]);
+        assert_eq!(lock.gems[0].deps, vec!["rake"]);
     }
 
     #[test]

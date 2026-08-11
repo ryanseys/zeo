@@ -160,6 +160,7 @@ pub(super) fn installed_as_lockfile(store: &Path) -> PResult<Lockfile> {
                 version: spec.version.unwrap_or_default(),
                 platform,
                 source: GemSource::Rubygems,
+                deps: Vec::new(),
             };
             // One row per name; a ruby-platform (suffix-less) spec wins over a
             // precompiled variant, matching the lockfile's own preference.
@@ -178,6 +179,7 @@ pub(super) fn installed_as_lockfile(store: &Path) -> PResult<Lockfile> {
         gems: gems.into_values().collect(),
         platforms: Vec::new(),
         bundler_version: None,
+        roots: Vec::new(),
     })
 }
 
