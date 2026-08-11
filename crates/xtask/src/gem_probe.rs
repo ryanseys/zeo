@@ -85,7 +85,8 @@ selection (at least one, they add up):
   --failing               re-probe every ledger row that isn't `ok`, except
                           the frontier and the rows no compiler change can
                           move (no-lib-dir, no-entry-point, meta-gem,
-                          ext-only, and invalid-ruby decided at parse);
+                          ext-only, fetch-failed -- yanked gems and registry
+                          drift -- and invalid-ruby decided at parse);
                           --refresh includes those too
   --unprobed              probe ledger rows that have no verdict yet
   --matching <text>       re-probe rows whose outcome detail contains <text>
@@ -1392,6 +1393,13 @@ fn classify_stderr(stderr: &[u8], root: &Path) -> Outcome {
 /// about the gem too -- prism is ruby's own parser, so those gems load under
 /// no ruby either -- but one recorded at any OTHER stage is a legacy row that
 /// never said which pass refused, and a re-probe still has to reach it.
+///
+/// `fetch-failed` is a fact about the REGISTRY: a 403 is a yanked gem and a
+/// checksum mismatch is registry drift (both verified identical across sweeps
+/// days apart), so every sweep that retried them spent a registry request per
+/// row to re-learn the same answer -- 400+ dead downloads per `--failing` run.
+/// A genuinely transient failure is re-reachable via `--refresh`, or by
+/// naming the gem.
 fn terminal_for_a_compiler_change(row: &Row) -> bool {
     matches!(
         row.outcome,
@@ -1400,6 +1408,7 @@ fn terminal_for_a_compiler_change(row: &Row) -> bool {
             | Outcome::MetaGem
             | Outcome::ExtOnly
             | Outcome::PlatformGem(_)
+            | Outcome::FetchFailed(_)
     ) || (matches!(row.outcome, Outcome::InvalidRuby(_)) && row.stage == Stage::Parse)
 }
 
@@ -3277,6 +3286,12 @@ mod tests {
             Stage::Parse,
             Outcome::InvalidRuby("parse error".into())
         )));
+        // A registry fact: a 403 is a yanked gem, a checksum mismatch is
+        // registry drift. Only `--refresh` (or naming the gem) retries one.
+        assert!(terminal_for_a_compiler_change(&row_with(
+            Stage::Fetch,
+            Outcome::FetchFailed("403".into())
+        )));
         for movable in [
             Outcome::LoweringGap("a gap".into()),
             Outcome::MissingDependency("x".into()),
@@ -3286,7 +3301,6 @@ mod tests {
             Outcome::NativeExtension,
             Outcome::Timeout,
             Outcome::OutOfMemory("codegen".into()),
-            Outcome::FetchFailed("404".into()),
             Outcome::AmbiguousRequire("`require \"x\"` is ambiguous".into()),
         ] {
             assert!(
