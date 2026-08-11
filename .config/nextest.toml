@@ -9,6 +9,18 @@
 [test-groups]
 golden = { max-threads = 8 }
 
+# The default run is the DEV loop and stays fast: everything that compiles a
+# whole gem's require graph (minutes of rustc per case) is opted out here and
+# runs only under `-P full` -- `cargo nextest run -p zeo-tests -P full` is the
+# full gate's spelling. The gem probe owns broad whole-gem compile coverage;
+# these four are the survivors with assertions the probe can't make.
+[profile.default]
+default-filter = "not (binary(gemtests) | test(every_bundled_gem_compiles) | test(rspec_end_to_end) | test(prism_surface))"
+
+# The full gate: everything, including the whole-gem cases above.
+[profile.full]
+default-filter = "all()"
+
 # Goldens that splice a whole require graph into one program take minutes in
 # rustc alone. Slow is not stuck, so they get their own deadline instead of
 # raising the backstop for every other golden. (The per-gem programs that
