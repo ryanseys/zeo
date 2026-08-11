@@ -594,8 +594,28 @@ fn ffi_field_accessor(ty: &crate::hir::FfiType) -> PResult<(String, String, usiz
     // The getter/putter named here are the ELEMENT's, which is what the
     // synthesized proxy indexes with.
     if let Array(elem, count) = ty {
+        if matches!(**elem, Struct(_) | Callback(..)) {
+            return Err(
+                "an inline array of structs or callbacks isn't supported yet (zeo limitation)"
+                    .to_string()
+                    .into(),
+            );
+        }
         let (get, put, esize, ealign) = ffi_field_accessor(elem)?;
         return Ok((get, put, esize * count, ealign));
+    }
+    // A nested struct stored BY VALUE has no scalar accessor pair -- the
+    // synthesized reader hands back the struct class VIEWING the field's
+    // bytes in place, and the writer copies bytes -- see `Conv::Struct`.
+    if let Struct(l) = ty {
+        if l.class_path.is_empty() {
+            return Err(
+                "a nested struct field needs a NAMED struct class (zeo limitation)"
+                    .to_string()
+                    .into(),
+            );
+        }
+        return Ok((String::new(), String::new(), l.size, l.align));
     }
     let (get, put) = match ty {
         Int(w) => (format!("get_int{w}"), format!("put_int{w}")),
@@ -608,11 +628,13 @@ fn ffi_field_accessor(ty: &crate::hir::FfiType) -> PResult<(String, String, usiz
         Bool => ("get_int8".into(), "put_int8".into()),
         // A `:string` field is a `char *`: read through the pointer, and NOT
         // writable -- CRuby's ffi raises `Cannot set :string fields`, because
-        // storing one would need somewhere to keep the bytes alive.
-        Str | Pointer => ("get_pointer".into(), "put_pointer".into()),
+        // storing one would need somewhere to keep the bytes alive. A
+        // callback field is a C function pointer in memory; the generated
+        // accessor wraps/unwraps `FFI::Function` -- see `Conv::Callback`.
+        Str | Pointer | Callback(..) => ("get_pointer".into(), "put_pointer".into()),
         other => {
             return Err(format!(
-                "FFI::Struct field type `{other:?}` isn't supported yet (scalar/pointer fields only)"
+                "FFI::Struct field type `{other:?}` isn't supported yet"
             )
             .into());
         }
@@ -621,6 +643,34 @@ fn ffi_field_accessor(ty: &crate::hir::FfiType) -> PResult<(String, String, usiz
     // codegen's `#[repr(C)]` mirror asserts against.
     let s = ty.c_scalar().expect("the unsupported arms returned above");
     Ok((get, put, s.size(), s.align()))
+}
+
+/// A type's spelling in SYNTHESIZED ruby source (an `FFI::Function.new`
+/// signature for a callback field): the canonical scalar keyword, with
+/// `FFI::Type::VOID` for void -- the keyword table deliberately rejects
+/// `:void` in value positions, and the constant resolves to the same kind.
+fn ruby_ffi_type_src(ty: &crate::hir::FfiType) -> PResult<String> {
+    use crate::hir::FfiType::*;
+    Ok(match ty {
+        Void => "::FFI::Type::VOID".to_string(),
+        Enum(_) => ":int32".to_string(),
+        Callback(..) => ":pointer".to_string(),
+        Struct(_) | Array(..) => {
+            return Err(
+                "a callback signature can't pass a struct BY VALUE (zeo limitation) -- \
+                 use `.by_ref`"
+                    .to_string()
+                    .into(),
+            );
+        }
+        scalar => format!(
+            ":{}",
+            scalar
+                .c_scalar()
+                .expect("the aggregate arms returned above")
+                .keyword()
+        ),
+    })
 }
 
 /// Synthesize the Ruby methods for a `class < FFI::Struct` from its `layout`:
@@ -747,6 +797,19 @@ pub(crate) fn synthesize_ffi_struct(
         /// the one that also answers `to_s`), `FFI::Struct::InlineArray`
         /// otherwise, matching the gem.
         Array(&'static str, usize, usize),
+        /// A nested struct stored BY VALUE: `(class path, byte size)`.
+        /// Reading yields the class VIEWING the field's bytes in place (a
+        /// mutation through the view mutates the parent -- oracle-verified);
+        /// writing copies the value's bytes over the field, both exactly as
+        /// the gem does.
+        Struct(String, usize),
+        /// A C function-pointer field: `(ruby arg-type list, ruby return
+        /// type)` as source text. Reading wraps the stored address in an
+        /// `FFI::Function` (the gem's read class); writing accepts a
+        /// pointer/Function as-is or marshals a callable into a Function --
+        /// KEPT in an ivar so the closure outlives the write, which is
+        /// sturdier than the gem's own keep-it-alive-yourself contract.
+        Callback(String, String),
     }
     // (field, getter, putter, offset, conversion) -- offsets come off the
     // recorded layout, whose walk (`ffi_struct_layout`) is the ONE place they
@@ -766,6 +829,14 @@ pub(crate) fn synthesize_ffi_struct(
                     "FFI::Struct::InlineArray"
                 };
                 Conv::Array(class, *count, esize)
+            }
+            crate::hir::FfiType::Struct(l) => Conv::Struct(l.class_path.clone(), l.size),
+            crate::hir::FfiType::Callback(cb_args, cb_ret) => {
+                let args: Vec<String> = cb_args
+                    .iter()
+                    .map(ruby_ffi_type_src)
+                    .collect::<PResult<_>>()?;
+                Conv::Callback(args.join(", "), ruby_ffi_type_src(cb_ret)?)
             }
             _ => Conv::Plain,
         };
@@ -788,6 +859,13 @@ pub(crate) fn synthesize_ffi_struct(
                 // through it writes the struct, which is what the gem does.
                 Conv::Array(class, count, esize) => format!(
                     "{class}.new(@__ffi_ptr, {off}, {count}, :{getter}, :{putter}, {esize})"
+                ),
+                // The nested class VIEWING the field's bytes in place -- the
+                // synthesized `initialize` takes the pointer as-is, so every
+                // inner accessor indexes from parent + offset.
+                Conv::Struct(class, _) => format!("{class}.new(@__ffi_ptr + {off})"),
+                Conv::Callback(args, ret) => format!(
+                    "::FFI::Function.new({ret}, [{args}], @__ffi_ptr.get_pointer({off}))"
                 ),
                 Conv::Enum(m) => {
                     let table = m
@@ -818,10 +896,33 @@ pub(crate) fn synthesize_ffi_struct(
                     "        when :{name} then raise NotImplementedError, \"cannot set array field\"\n"
                 );
             }
+            // A nested struct write COPIES the value's bytes over the field
+            // (oracle-verified memcpy semantics).
+            if let Conv::Struct(_, size) = conv {
+                return format!(
+                    "        when :{name} then @__ffi_ptr.put_bytes({off}, \
+                     __ffi_value.to_ptr.get_bytes(0, {size}))\n"
+                );
+            }
+            // A callback write stores a code pointer: a pointer/Function
+            // as-is, `nil` as NULL, and any other callable marshaled into an
+            // `FFI::Function` -- kept in an ivar so the closure stays alive
+            // as long as the struct.
+            if let Conv::Callback(args, ret) = conv {
+                return format!(
+                    "        when :{name} then begin\n           __zeo_v = __ffi_value\n           \
+                     unless __zeo_v.nil? || __zeo_v.is_a?(::FFI::Pointer)\n             \
+                     __zeo_v = ::FFI::Function.new({ret}, [{args}], __zeo_v)\n             \
+                     (@__zeo_cb_keep ||= {{}})[:{name}] = __zeo_v\n           end\n           \
+                     @__ffi_ptr.put_pointer({off}, __zeo_v)\n         end\n"
+                );
+            }
             let value = match conv {
                 Conv::Plain => "__ffi_value".to_string(),
                 Conv::Bool => "(__ffi_value ? 1 : 0)".to_string(),
-                Conv::Str | Conv::Array(..) => unreachable!("returned above"),
+                Conv::Str | Conv::Array(..) | Conv::Struct(..) | Conv::Callback(..) => {
+                    unreachable!("returned above")
+                }
                 Conv::Enum(m) => {
                     let table = m
                         .iter()

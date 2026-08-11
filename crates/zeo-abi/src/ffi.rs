@@ -76,6 +76,28 @@ impl CScalar {
         }
     }
 
+    /// The CANONICAL gem keyword for this scalar (`:int32`-style exact-width
+    /// spellings) -- what synthesized Ruby source writes in a type position.
+    /// Every one of these round-trips through `from_keyword`.
+    pub const fn keyword(self) -> &'static str {
+        match self {
+            CScalar::Void => "void",
+            CScalar::I8 => "int8",
+            CScalar::I16 => "int16",
+            CScalar::I32 => "int32",
+            CScalar::I64 => "int64",
+            CScalar::U8 => "uint8",
+            CScalar::U16 => "uint16",
+            CScalar::U32 => "uint32",
+            CScalar::U64 => "uint64",
+            CScalar::F32 => "float",
+            CScalar::F64 => "double",
+            CScalar::Bool => "bool",
+            CScalar::Str => "string",
+            CScalar::Pointer => "pointer",
+        }
+    }
+
     /// A type KEYWORD as the gem spells it (`:int`, `:size_t`, `:buffer_in`).
     /// Covers the scalar surface plus the gem's aliases; `None` for a name
     /// only a `typedef`/`enum`/`callback` declaration (or `from_c_typedef`)

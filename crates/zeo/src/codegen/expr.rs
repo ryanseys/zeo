@@ -2934,6 +2934,7 @@ fn emit_repr_c_struct(
 ) -> TokenStream {
     let mut fields = Vec::new();
     let mut asserts = Vec::new();
+    let mut nested = Vec::new();
     let mut cursor = 0usize;
     for (i, (name, ty, off)) in layout.fields.iter().enumerate() {
         if *off > cursor {
@@ -2947,6 +2948,14 @@ fn emit_repr_c_struct(
                 let ecty = ffi_c_type(elem);
                 let count = proc_macro2::Literal::usize_unsuffixed(*count);
                 quote! { [#ecty; #count] }
+            }
+            // A nested struct stored BY VALUE mirrors recursively -- the ABI
+            // needs the REAL field types at every depth (see the type's own
+            // docs on SysV/AArch64 classification).
+            crate::hir::FfiType::Struct(inner) => {
+                let nid = quote::format_ident!("{}F{}", ident, i);
+                nested.push(emit_repr_c_struct(&nid, inner));
+                quote! { #nid }
             }
             other => ffi_c_type(other),
         };
@@ -2964,6 +2973,7 @@ fn emit_repr_c_struct(
     }
     let size = proc_macro2::Literal::usize_unsuffixed(layout.size);
     quote! {
+        #(#nested)*
         #[repr(C)]
         #[derive(Clone, Copy)]
         struct #ident { #(#fields),* }
