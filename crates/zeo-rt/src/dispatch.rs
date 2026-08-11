@@ -1778,7 +1778,19 @@ pub fn rescue_matches_any(exc: &RubyValue, list: &RubyValue) -> Result<bool, Sig
 
 fn rescue_class_matches(cls: &RubyValue, exc: &RubyValue) -> Result<bool, Signal> {
     match cls {
-        RubyValue::Class(cid) => Ok(is_a(exc.as_object_unchecked().class_id(), *cid)),
+        RubyValue::Class(cid) => {
+            // `rescue` matches via `===` (CRuby's rule): `Module#===` is the
+            // ancestry test, taken directly -- unless the matcher OVERRIDES
+            // `self.===`, which is how rspec-support's
+            // `AllExceptionsExceptOnesWeMustNotRescue` catches everything but
+            // NoMemory/SignalException. The override is rare, the probe cheap,
+            // and this path runs only while an exception is in flight.
+            if class_method_owner(*cid, Symbol::intern("===")).is_some() {
+                let verdict = send_value(cls, Symbol::intern("==="), &[exc.clone()], None)?;
+                return Ok(verdict.truthy());
+            }
+            Ok(is_a(exc.as_object_unchecked().class_id(), *cid))
+        }
         _ => Err(raise_error(
             "TypeError",
             "class or module required for rescue clause".to_string(),

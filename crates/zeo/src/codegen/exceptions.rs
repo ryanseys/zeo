@@ -290,6 +290,26 @@ fn emit_rescue_match_cond(cx: &Ctx, classes: &[String], splats: &[NodeId]) -> To
         // exception whose class includes it), which has no generated
         // struct to hang a const off.
         let id = cid.0;
+        // `rescue` matches via `===`: the baked ancestry test IS `Module#===`,
+        // so it stands only while nothing can override `self.===` on the
+        // matcher -- rspec-support's AllExceptionsExceptOnesWeMustNotRescue
+        // does exactly that (and unit-registered defs make the name patchable
+        // program-wide). The dynamic form keeps the class identity static and
+        // re-asks through the runtime, which honors the override; matching
+        // runs only while an exception is in flight.
+        if cx.compiler.class_method_in_chain(cid, "===").is_some()
+            || cx.compiler.may_be_patched_at_runtime("===")
+        {
+            return quote! {
+                match zeo_rt::rescue_matches_any(
+                    &__exc,
+                    &zeo_rt::RubyValue::Class(zeo_rt::ClassId(#id)),
+                ) {
+                    Ok(__m) => __m,
+                    Err(__s) => return Err(__s),
+                }
+            };
+        }
         quote! { zeo_rt::is_a(__exc.as_object_unchecked().class_id(), zeo_rt::ClassId(#id)) }
     });
     // `rescue *errs => e`: evaluate the splat expression (an array of classes,
