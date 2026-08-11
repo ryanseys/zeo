@@ -3207,12 +3207,6 @@ fn register_class(
                             "TypeError",
                             &format!("superclass mismatch for class {name}"),
                         );
-                        ruby_raises(
-                            compiler,
-                            def_node,
-                            "TypeError",
-                            &format!("superclass mismatch for class {name}"),
-                        );
                         return Err(format!("superclass mismatch for class {name}"));
                     }
                     // ... and establishing one that already descends from THIS
@@ -3224,12 +3218,6 @@ fn register_class(
                     // the walk that noticed was `require "active_record"` dying
                     // after twelve minutes.
                     if compiler.superclass_chain_contains(want, cid) {
-                        ruby_raises(
-                            compiler,
-                            def_node,
-                            "TypeError",
-                            &format!("superclass mismatch for class {name}"),
-                        );
                         ruby_raises(
                             compiler,
                             def_node,
@@ -3539,15 +3527,6 @@ fn register_class(
     // inline any decidable-guard `if` wrapping a nested definition (a
     // target-version / feature-probe compat gate) into its taken branch.
     let body = splice_dead_rescues(compiler, body);
-    if compiler.fq_name(class_id) == "O" {
-        for &s in &body {
-            eprintln!(
-                "SPLICE-DEBUG: O body stmt is If={} ClassDef={}",
-                matches!(&compiler.hir[s], HirNode::If { .. }),
-                matches!(&compiler.hir[s], HirNode::ClassDef { .. }),
-            );
-        }
-    }
     let body = splice_decidable_ifs(compiler, &body, &child_cref, box_id);
     // Whatever `if` is LEFT has a condition no compile-time fold can decide, so
     // both branches survive to run at this site -- and a directive in one has no
