@@ -1965,14 +1965,22 @@ fn codegen(analyzed: &Analyzed, sink: &mut ItemSink<'_>) -> std::io::Result<()> 
             let scope = compiler.scope(entry.def);
             let container = ident::class_ident(compiler, ClassId(id));
             let method_ident = ident::class_method_ident(&scope.name);
-            let fn_path = quote! { #container::#method_ident };
+            // A self-observing body registers its DYNAMIC-SELF twin, so a
+            // runtime receiver (a minted subclass, a variable-held class)
+            // runs under its own `self`; a self-free body reuses the one
+            // receiverless emission. See `class_method_observes_self`.
+            let (fn_path, recv_mode) = if class_method_observes_self(compiler, entry.def) {
+                let dyn_ident = format_ident!("{}__dynself", method_ident);
+                (quote! { #container::#dyn_ident }, params::RecvMode::Pass)
+            } else {
+                (quote! { #container::#method_ident }, params::RecvMode::Drop)
+            };
             let tramp = params::emit_value_trampoline(
                 &fn_path,
                 &scope.name,
                 &scope.params,
                 scope.needs_block_param(),
-                // A class method takes no receiver parameter -- see `RecvMode`.
-                params::RecvMode::Drop,
+                recv_mode,
                 &scope_frame_guard(compiler, scope, true),
             );
             // Keyed on the real Ruby name, not the mangled Rust ident.
@@ -2034,7 +2042,7 @@ fn codegen(analyzed: &Analyzed, sink: &mut ItemSink<'_>) -> std::io::Result<()> 
             // ivars are this class's slots.
             let fns = sids
                 .iter()
-                .map(|&sid| emit_class_method_fn(compiler, ClassId(id), sid));
+                .map(|&sid| emit_class_method_fn(compiler, ClassId(id), sid, false));
             sst_containers.push(quote! {
                 #[allow(non_snake_case)]
                 pub mod #container {
@@ -2410,13 +2418,19 @@ fn codegen(analyzed: &Analyzed, sink: &mut ItemSink<'_>) -> std::io::Result<()> 
                 let scope = compiler.scope(entry.def);
                 let mod_ident = ident::class_ident(compiler, ClassId(id));
                 let method_ident = ident::class_method_ident(&scope.name);
-                let fn_path = quote! { #mod_ident::#method_ident };
+                // Same dynamic-self twin rule as the user-class rows above.
+                let (fn_path, recv_mode) = if class_method_observes_self(compiler, entry.def) {
+                    let dyn_ident = format_ident!("{}__dynself", method_ident);
+                    (quote! { #mod_ident::#dyn_ident }, params::RecvMode::Pass)
+                } else {
+                    (quote! { #mod_ident::#method_ident }, params::RecvMode::Drop)
+                };
                 let tramp = params::emit_value_trampoline(
                     &fn_path,
                     &scope.name,
                     &scope.params,
                     scope.needs_block_param(),
-                    params::RecvMode::Drop,
+                    recv_mode,
                     &scope_frame_guard(compiler, scope, true),
                 );
                 push_cm_row(id, &scope.name, tramp);
@@ -3628,10 +3642,12 @@ fn inline_class_markers(
 fn emit_class_methods(compiler: &Compiler, cid: ClassId) -> TokenStream {
     let ci = compiler.class(cid);
     let name_ident = ident::class_ident(compiler, cid);
-    let fns = ci
-        .class_methods
-        .iter()
-        .map(|e| emit_class_method_fn(compiler, e.owner, e.def));
+    let fns = ci.class_methods.iter().flat_map(|e| {
+        let stat = emit_class_method_fn(compiler, e.owner, e.def, false);
+        let dyn_twin = class_method_observes_self(compiler, e.def)
+            .then(|| emit_class_method_fn(compiler, e.owner, e.def, true));
+        std::iter::once(stat).chain(dyn_twin)
+    });
     // A container without a generated struct to attach an `impl` to -- a module,
     // OR a native-backed class (`RubyException`/`ValueSubclass`), OR an immediate
     // subclass (registry-only) -- emits `def self.x` into a `pub mod` of free
@@ -3662,14 +3678,51 @@ fn emit_class_methods(compiler: &Compiler, cid: ClassId) -> TokenStream {
     }
 }
 
+/// Whether a class method's body can OBSERVE its receiver: an explicit
+/// `self`, class-level `@ivar` state, or an implicit-self call (whose
+/// dispatch and whose `boxed_implicit_self` value both depend on which
+/// class was actually called). Such a method gets a DYNAMIC-SELF twin
+/// (see `emit_class_method_fn`'s `dyn_self`) registered in the runtime
+/// dispatch rows, so a runtime-minted subclass (`Class.new(Base)`,
+/// minitest's `describe`) runs the body under ITS OWN `self` instead of
+/// the compile-time class codegen bakes -- the dispatch.rs-documented
+/// divergence this retires. A body that never observes `self` keeps one
+/// receiver-independent emission for both paths.
+///
+/// The walk stops at nested `def`s (their bodies run under their own
+/// `self`) but descends blocks -- a block shares its method's `self`.
+fn class_method_observes_self(compiler: &Compiler, sid: crate::compiler::ScopeId) -> bool {
+    let scope = compiler.scope(sid);
+    let mut work: Vec<crate::hir::NodeId> = scope.body.clone();
+    while let Some(id) = work.pop() {
+        match &compiler.hir[id] {
+            crate::hir::HirNode::SelfRef
+            | crate::hir::HirNode::IvarRead(_)
+            | crate::hir::HirNode::IvarWrite(..) => return true,
+            crate::hir::HirNode::Call { receiver: None, .. } => return true,
+            crate::hir::HirNode::DefMethod { .. } => {}
+            other => other.for_each_child(&mut |c| work.push(c)),
+        }
+    }
+    false
+}
+
 /// `owner` is the class this copy is emitted INTO -- CRuby's `owner`, and what
 /// class-level ivar storage keys on, so `Sub.reg` reads Sub's slot even though
 /// the body came from Base. It is passed in rather than read off the scope
 /// because one definition now serves every class that inherited it.
+///
+/// With `dyn_self`, emits the DYNAMIC-SELF twin instead: same body, but the
+/// receiver arrives as a leading `__self: RubyValue` parameter and the body
+/// runs with `Ctx::self_is_dynamic` -- `self`, class-level ivars, and
+/// implicit-self dispatch all follow the RUNTIME receiver. The twin is what
+/// the Path-2 dispatch rows register (see `class_method_observes_self`);
+/// statically-devirtualized call sites keep calling the receiverless fn.
 fn emit_class_method_fn(
     compiler: &Compiler,
     owner: ClassId,
     sid: crate::compiler::ScopeId,
+    dyn_self: bool,
 ) -> TokenStream {
     let scope = compiler.scope(sid);
     let params = &scope.params;
@@ -3678,8 +3731,13 @@ fn emit_class_method_fn(
     // a class defining both `def x` and `def self.x` (two namespaces in
     // Ruby, ordinary code) would otherwise emit two `fn x` into the same
     // `impl`. See `ident::class_method_ident`'s docs.
-    let method_ident = ident::class_method_ident(&scope.name);
+    let method_ident = if dyn_self {
+        format_ident!("{}__dynself", ident::class_method_ident(&scope.name))
+    } else {
+        ident::class_method_ident(&scope.name)
+    };
     let sig_params = params::emit_signature_params_free(params, needs_block);
+    let self_param = dyn_self.then(|| quote! { __self: zeo_rt::RubyValue, });
     let label_counter = Cell::new(0u32);
     let mut no_captures = captures::collect_escaping_captures(
         compiler,
@@ -3730,9 +3788,13 @@ fn emit_class_method_fn(
         captured_locals: std::borrow::Cow::Borrowed(&no_captures.locals),
         binding_names,
         in_eval_splice: false,
-        self_ident: format_ident!("self"),
+        self_ident: if dyn_self {
+            format_ident!("__self")
+        } else {
+            format_ident!("self")
+        },
         in_real_proc: false,
-        self_is_dynamic: false,
+        self_is_dynamic: dyn_self,
         self_slots: false,
         shared_body: false,
         trace: None,
@@ -3762,8 +3824,13 @@ fn emit_class_method_fn(
     let body_tokens = wrap_method_return(needs_return_catch, body);
     let frame = scope_frame_guard(compiler, scope, true);
     // A class method's traced `self` is the class object itself -- the OWNER,
-    // which is the class the call actually landed on.
-    let self_note = {
+    // which is the class the call actually landed on. The dynamic twin
+    // traces its actual receiver instead, for the same reason it exists.
+    let self_note = if dyn_self {
+        quote! {
+            zeo_rt::trace_frame_self(|| zeo_rt::RubyValue::clone(&__self));
+        }
+    } else {
         let id = owner.0;
         quote! {
             zeo_rt::trace_frame_self(|| zeo_rt::RubyValue::Class(zeo_rt::ClassId(#id)));
@@ -3774,7 +3841,7 @@ fn emit_class_method_fn(
     // driven busy work is killable even with no native loop in sight.
     quote! {
         #[allow(unused_variables)]
-        pub fn #method_ident(#sig_params) -> Result<zeo_rt::RubyValue, zeo_rt::Signal> {
+        pub fn #method_ident(#self_param #sig_params) -> Result<zeo_rt::RubyValue, zeo_rt::Signal> {
             #frame
             #self_note
             zeo_rt::check_ints()?;
@@ -3881,10 +3948,12 @@ fn emit_builtin_reopen(
     // idents (`x` vs `__cm_x`), so a reopen defining both -- `module Kernel;
     // def URI(u); end; module_function :URI; end`, which is what
     // `module_function` produces -- emits cleanly.
-    let class_fns = ci
-        .class_methods
-        .iter()
-        .map(|e| emit_class_method_fn(compiler, e.owner, e.def));
+    let class_fns = ci.class_methods.iter().flat_map(|e| {
+        let stat = emit_class_method_fn(compiler, e.owner, e.def, false);
+        let dyn_twin = class_method_observes_self(compiler, e.def)
+            .then(|| emit_class_method_fn(compiler, e.owner, e.def, true));
+        std::iter::once(stat).chain(dyn_twin)
+    });
     // `use super::*;` for the same reason a module's class-method container
     // needs it (see `emit_class_methods`): a `pub mod` is a real child
     // module, and these bodies reference sibling top-level items.

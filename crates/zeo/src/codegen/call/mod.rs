@@ -1514,7 +1514,14 @@ pub fn emit_call(
         //   - `module H; def helped; name; end; end; class Ext; extend H;
         //     end; Ext.helped` answered "Helper", not "Ext".
         // Neither raised; both just quietly produced the wrong object.
+        // ...but NOT under a dynamic `self` (a class method's dynamic-self
+        // twin, an `instance_exec`-rebindable block): there the receiver is
+        // only known at runtime, and `class_self` is merely the lexical
+        // fallback. Falling through emits a runtime send on the boxed self,
+        // so a minted subclass's overrides win and its `new` constructs
+        // ITSELF -- `Class.new(B).make` must not build a B.
         if cx.current_class.is_none()
+            && !cx.self_is_dynamic
             && let Some(defining) = cx.class_self.or(cx.defining_class)
         {
             if cx.compiler.class_method_in_chain(defining, name).is_some() {
