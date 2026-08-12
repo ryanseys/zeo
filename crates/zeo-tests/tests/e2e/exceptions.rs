@@ -2026,14 +2026,26 @@ fn value_trampoline_wrong_arity_raises_a_rescuable_argument_error() {
 
 #[test]
 fn reopen_guards_mirror_rubys_type_errors() {
-    // `TypeError: superclass mismatch for class Sub` in real Ruby.
-    let err = zeo::compile_to_rust(
-        "class Base\nend\nclass Other\nend\nclass Sub < Base\nend\nclass Sub < Other\nend\n",
-    )
-    .unwrap_err();
-    assert!(
-        err.contains("superclass mismatch for class Sub"),
-        "unexpected error: {err}"
+    // `TypeError: superclass mismatch for class Sub` in real Ruby -- an
+    // exception at the definition, so the program compiles and raises it
+    // there. `Sub` keeps the parent the definition that RAISED never changed.
+    let result = run_ruby(
+        r#"
+        class Base; end
+        class Other; end
+        class Sub < Base; end
+        begin
+          class Sub < Other; end
+        rescue TypeError => e
+          puts e.message
+        end
+        puts Sub.superclass
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "superclass mismatch for class Sub\nBase\n"
     );
 
     // Restating the ORIGINAL superclass is allowed (real Ruby).
@@ -2057,16 +2069,30 @@ fn reopen_guards_mirror_rubys_type_errors() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "explicit matching superclass ok\n");
 
-    // `TypeError: Foo is not a module` / `Bar is not a class` in real Ruby.
-    let err = zeo::compile_to_rust("class Foo\nend\nmodule Foo\nend\n").unwrap_err();
-    assert!(
-        err.contains("Foo is not a module"),
-        "unexpected error: {err}"
+    // A kind collision is `TypeError` too, with ruby's second line naming
+    // where the constant was first bound.
+    let result = run_ruby(
+        r#"
+        class Foo; end
+        module Bar; end
+        begin
+          module Foo; end
+        rescue TypeError => e
+          puts e.message.lines.first
+        end
+        begin
+          class Bar; end
+        rescue TypeError => e
+          puts e.message.lines.first
+        end
+        puts Foo.instance_of?(Class)
+        puts Bar.instance_of?(Module)
+        "#,
     );
-    let err = zeo::compile_to_rust("module Bar\nend\nclass Bar\nend\n").unwrap_err();
-    assert!(
-        err.contains("Bar is not a class"),
-        "unexpected error: {err}"
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "Foo is not a module\nBar is not a class\ntrue\ntrue\n"
     );
 }
 

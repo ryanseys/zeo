@@ -52,8 +52,10 @@ fn an_unsupported_codegen_construct_is_an_error_not_a_panic() {
 /// file that spells it.
 #[test]
 fn an_analyze_error_is_coded_with_its_stage() {
-    let err = zeo::compile_to_rust_with("class Foo\nend\nmodule Foo\nend\n", &Default::default())
-        .expect_err("reopening a class as a module fails analyze");
+    // Subclassing a builtin zeo lays out no struct for. A kind collision used
+    // to be the probe here, but ruby RAISES on one, so it compiles now.
+    let err = zeo::compile_to_rust_with("class Job < Ractor\nend\n", &Default::default())
+        .expect_err("subclassing an unsupported builtin fails analyze");
     insta::assert_snapshot!(render(err));
 }
 

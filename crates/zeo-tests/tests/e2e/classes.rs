@@ -1763,14 +1763,23 @@ fn a_bare_opened_class_can_be_reparented_by_a_later_reopen() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "blocked\nok\nx\n1\n");
 
-    let err = zeo::compile_to_rust(
-        "class A\nend\nclass B\nend\nclass Sub < A\nend\nclass Sub < B\nend\n",
-    )
-    .unwrap_err();
-    assert!(
-        err.contains("superclass mismatch for class Sub"),
-        "a genuine conflict must still error: {err}"
+    // A genuine conflict is still rejected -- as the `TypeError` ruby raises
+    // at the definition, which leaves the first parent standing.
+    let result = run_ruby(
+        r#"
+        class A; end
+        class B; end
+        class Sub < A; end
+        begin
+          class Sub < B; end
+        rescue TypeError => e
+          puts e.message
+        end
+        puts Sub.superclass
+        "#,
     );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "superclass mismatch for class Sub\nA\n");
 }
 
 /// MonitorMixin is the Ruby half of `monitor` over the native reentrant lock.
