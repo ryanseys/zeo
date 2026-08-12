@@ -1925,6 +1925,10 @@ impl Compiler {
                     | FALSE_CLASS
                     | zeo_abi::BIGDECIMAL_CLASS
                     | zeo_abi::METHOD_CLASS
+                    | zeo_abi::BINDING_CLASS
+                    | zeo_abi::ENCODING_CLASS
+                    | zeo_abi::RATIONAL_CLASS
+                    | zeo_abi::MATCH_DATA_CLASS
             )
         })
     }

@@ -1898,6 +1898,13 @@ pub fn emit_call(
                 if let Some(outer) = block_caps
                     .locals
                     .iter()
+                    // A hidden local zeo itself introduced is not a variable
+                    // of the ruby program, so it can never be one this Proc
+                    // shares with an outer scope. `loop do ... end` inside a
+                    // NESTED block is the shape: it desugars to a rescue whose
+                    // `StopIteration` binding `collect_locals` does not
+                    // descend into, leaving the gensym looking like a capture.
+                    .filter(|n| !crate::hir::is_internal_local(n))
                     .filter(|n| cx.captured_locals.contains(*n) || !assigned_here.contains(n))
                     .min()
                 {

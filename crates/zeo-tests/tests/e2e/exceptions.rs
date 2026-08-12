@@ -1414,14 +1414,16 @@ fn unset_constant_raises_a_name_error() {
 
 #[test]
 fn subclassing_an_unsupported_built_in_type_is_a_clean_error() {
-    // The payload-root list has grown well past Array/String/Hash, and even
-    // `Method`/`BigDecimal` now accept a DEFINITION (allocator-undefined in
-    // CRuby too, so no instance is ever built). `Binding` is one of the long
-    // tail still outside all of it: a binding captures a live frame, which no
-    // payload can re-seat through `super`.
+    // The payload-root list has grown well past Array/String/Hash, and the
+    // allocator-undefined builtins (`Method`, `BigDecimal`, `Binding`,
+    // `Encoding`, `Rational`, `MatchData`) now accept a DEFINITION, since
+    // CRuby accepts it too and answers `NoMethodError` to `.new`. `Ractor` is
+    // one of the tail still outside all of it: it IS constructible in CRuby,
+    // so registering the definition alone would promise a `.new` zeo cannot
+    // build.
     let err = zeo::compile_to_rust(
         r#"
-        class MyBinding < Binding
+        class MyRactor < Ractor
         end
         "#,
     )

@@ -3663,6 +3663,16 @@ fn create_class(
                                 // shape (`is_immediate_subclass`).
                                 | zeo_abi::BIGDECIMAL_CLASS
                                 | zeo_abi::METHOD_CLASS
+                                // `Binding`/`Encoding`/`Rational`/`MatchData`:
+                                // the same shape. CRuby accepts the class
+                                // definition and answers `NoMethodError` to
+                                // `.new` -- these carry no allocator, and the
+                                // instances the runtime does make are always
+                                // of the builtin class itself.
+                                | zeo_abi::BINDING_CLASS
+                                | zeo_abi::ENCODING_CLASS
+                                | zeo_abi::RATIONAL_CLASS
+                                | zeo_abi::MATCH_DATA_CLASS
                     );
                 if compiler.class(cid).is_builtin && !subclassable {
                     return Err(format!(

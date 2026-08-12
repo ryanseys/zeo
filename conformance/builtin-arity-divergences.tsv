@@ -22,6 +22,7 @@
 #! reopens the class to add `#find` and `#rmtree`; `Pathname.mktmpdir`
 #! arrives with `tmpdir`. All three are here from the start.
 #! tag	class	kind	name	reason
+zeo-only	FFI::AutoPointer	s	new	the ffi gem defines only `initialize`; zeo's payload-root recipe needs the allocating `new` row (see zeo_abi::PAYLOAD_ROOTS)
 zeo-only	Pathname	i	find	no find in CRuby's chain
 zeo-only	Pathname	i	rmtree	no rmtree in CRuby's chain
 zeo-only	Pathname	s	mktmpdir	no mktmpdir in CRuby's chain
