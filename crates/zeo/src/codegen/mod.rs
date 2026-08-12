@@ -770,6 +770,118 @@ fn push_vis_row(id: u32, key: &str, verb: u8) {
     POOLS.with_borrow_mut(|p| p.vis_rows.push(quote! { (#id, #key, #verb) }));
 }
 
+// The registration facts a USER class and a REOPENED BUILTIN record
+// identically, extracted so the two class loops in `codegen` cannot drift
+// apart -- four regressions came from hand-copying these blocks between
+// them (see the "same rows the user-class loop emits" comments there).
+
+/// One `def self.x`'s dynamic-dispatch row (`__CM_ROWS`), so a class held
+/// in a variable can be sent to. A self-observing body registers its
+/// DYNAMIC-SELF twin, so a runtime receiver (a minted subclass, a
+/// variable-held class) runs under its own `self`; a self-free body reuses
+/// the one receiverless emission. See `class_method_observes_self`.
+fn emit_class_method_dispatch_row(
+    compiler: &Compiler,
+    id: u32,
+    entry: &crate::compiler::MethodEntry,
+) {
+    let scope = compiler.scope(entry.def);
+    let container = ident::class_ident(compiler, ClassId(id));
+    let method_ident = ident::class_method_ident(&scope.name);
+    let (fn_path, recv_mode) = if class_method_observes_self(compiler, entry.def) {
+        let dyn_ident = format_ident!("{}__dynself", method_ident);
+        (quote! { #container::#dyn_ident }, params::RecvMode::Pass)
+    } else {
+        (quote! { #container::#method_ident }, params::RecvMode::Drop)
+    };
+    let tramp = params::emit_value_trampoline(
+        &fn_path,
+        &scope.name,
+        &scope.params,
+        scope.needs_block_param(),
+        recv_mode,
+        &scope_frame_guard(compiler, scope, true),
+    );
+    // Keyed on the real Ruby name, not the mangled Rust ident.
+    push_cm_row(id, &scope.name, tramp);
+}
+
+/// The CLASS-method visibility rows (verbs 3/4): `private_class_method`,
+/// either on a `def self.x` in this body or naming one this class inherits.
+fn emit_class_method_visibility_rows(compiler: &Compiler, id: u32) {
+    for entry in compiler.class_methods_of(ClassId(id)) {
+        if entry.visibility == crate::hir::Visibility::Private {
+            push_vis_row(id, compiler.names.str(entry.name), 3);
+        }
+    }
+    for (name, vis) in &compiler.class(ClassId(id)).class_visibility_overrides {
+        let verb = if *vis == crate::hir::Visibility::Private {
+            3
+        } else {
+            4
+        };
+        push_vis_row(id, name, verb);
+    }
+}
+
+/// `private_constant :A` -- the listing half. The `M::A` reference that
+/// must raise is rejected at compile time (`emit_const_read`), so this
+/// only keeps `Module#constants` and `defined?` honest.
+fn emit_private_constant_listing(
+    compiler: &Compiler,
+    id: u32,
+    registrations: &mut Vec<TokenStream>,
+) {
+    let priv_consts: Vec<&str> = compiler
+        .class(ClassId(id))
+        .private_constants
+        .iter()
+        .map(String::as_str)
+        .collect();
+    if !priv_consts.is_empty() {
+        registrations.push(quote! {
+            zeo_rt::const_set_private(#id, &[#(#priv_consts),*], true);
+        });
+    }
+}
+
+/// `class C; extend M; end` puts M on C's SINGLETON chain, which the
+/// linearized `ancestors` deliberately excludes -- so it is registered
+/// separately, and answers `C.is_a?(M)` and `C.singleton_class.ancestors`.
+fn emit_extends_registration(compiler: &Compiler, id: u32, registrations: &mut Vec<TokenStream>) {
+    let extend_ids: Vec<u32> = compiler
+        .class(ClassId(id))
+        .extends
+        .iter()
+        .map(|m| m.0)
+        .collect();
+    if !extend_ids.is_empty() {
+        registrations.push(quote! {
+            __registry.register_extends(
+                zeo_rt::ClassId(#id),
+                vec![#(zeo_rt::ClassId(#extend_ids)),*],
+            );
+        });
+    }
+}
+
+/// Alias rows whose source is a builtin method (`ClassInfo::builtin_aliases`
+/// and the `class << self` half): name-indirection rows the send miss paths
+/// rewrite through. `target` differs from the class's own id only for a
+/// per-box overlay, whose rows land on the root's entry like its methods do.
+fn alias_registration_rows(class: &crate::compiler::ClassInfo, target: u32) -> Vec<TokenStream> {
+    class
+        .builtin_aliases
+        .iter()
+        .map(|(new, old)| {
+            quote! { __registry.register_alias(zeo_rt::ClassId(#target), #new, #old); }
+        })
+        .chain(class.class_aliases.iter().map(|(new, old)| {
+            quote! { __registry.register_class_alias(zeo_rt::ClassId(#target), #new, #old); }
+        }))
+        .collect()
+}
+
 /// The parameter descriptor entries for one method's `Params`, in Ruby's
 /// canonical `#parameters` order (required, optional, rest, post, keywords,
 /// keyword-rest, block). Internal destructure-slot names (`__destr_N`) are
@@ -1841,21 +1953,7 @@ fn codegen(analyzed: &Analyzed, sink: &mut ItemSink<'_>) -> std::io::Result<()> 
             };
             push_vis_row(id, name, verb);
         }
-        // The CLASS-method half (verb 3/4): `private_class_method`, either on a
-        // `def self.x` in this body or naming one this class inherits.
-        for entry in compiler.class_methods_of(ClassId(id)) {
-            if entry.visibility == crate::hir::Visibility::Private {
-                push_vis_row(id, compiler.names.str(entry.name), 3);
-            }
-        }
-        for (name, vis) in &compiler.class(ClassId(id)).class_visibility_overrides {
-            let verb = if *vis == crate::hir::Visibility::Private {
-                3
-            } else {
-                4
-            };
-            push_vis_row(id, name, verb);
-        }
+        emit_class_method_visibility_rows(compiler, id);
         // Each method DEFINED DIRECTLY on this class (not materialized from an
         // ancestor) is recorded so `instance_methods(false)`/`methods(false)`
         // can report own methods only -- the materialized `methods` list above
@@ -1908,38 +2006,8 @@ fn codegen(analyzed: &Analyzed, sink: &mut ItemSink<'_>) -> std::io::Result<()> 
         // name out of this class's table. See `ClassEntry::undefined_methods`.
         // Sorted: a HashSet has no stable order, and generated source should
         // not vary between compiles of the same program.
-        // `private_constant :A` -- the listing half. The `M::A` reference that
-        // must raise is rejected at compile time (`emit_const_read`), so this
-        // only keeps `Module#constants` and `defined?` honest.
-        let priv_consts: Vec<&str> = compiler
-            .class(ClassId(id))
-            .private_constants
-            .iter()
-            .map(String::as_str)
-            .collect();
-        if !priv_consts.is_empty() {
-            registrations.push(quote! {
-                zeo_rt::const_set_private(#id, &[#(#priv_consts),*], true);
-            });
-        }
-        // `class C; extend M; end` puts M on C's SINGLETON chain, which the
-        // linearized `ancestors` above deliberately excludes -- so it is
-        // registered separately, and answers `C.is_a?(M)` and
-        // `C.singleton_class.ancestors`.
-        let extend_ids: Vec<u32> = compiler
-            .class(ClassId(id))
-            .extends
-            .iter()
-            .map(|m| m.0)
-            .collect();
-        if !extend_ids.is_empty() {
-            registrations.push(quote! {
-                __registry.register_extends(
-                    zeo_rt::ClassId(#id),
-                    vec![#(zeo_rt::ClassId(#extend_ids)),*],
-                );
-            });
-        }
+        emit_private_constant_listing(compiler, id, &mut registrations);
+        emit_extends_registration(compiler, id, &mut registrations);
         // A `refine` holder is a module in every respect but one: its own
         // `.class` is `Refinement`, which is what a refined `Method#owner`
         // reports.
@@ -1963,25 +2031,12 @@ fn codegen(analyzed: &Analyzed, sink: &mut ItemSink<'_>) -> std::io::Result<()> 
                 );
             });
         }
-        // Aliases of inherited BUILTIN methods (`alias_method :raise!,
-        // :raise` -- see `ClassInfo::builtin_aliases`): name-indirection
-        // rows the send miss paths rewrite through. Subclasses need no
-        // copy -- the runtime probe walks the MRO. `validate_aliases`
-        // (emitted at the head of `run_main`'s closure) raises `NameError`
-        // at startup for a source that resolves nowhere.
-        for (new, old) in &compiler.class(ClassId(id)).builtin_aliases {
-            registrations.push(quote! {
-                __registry.register_alias(zeo_rt::ClassId(#id), #new, #old);
-            });
-        }
-        // The same rows for an alias written inside `class << self` whose
-        // source is a builtin CLASS method -- `alias [] new`. They land in the
-        // singleton table, which is the one a class-OBJECT receiver consults.
-        for (new, old) in &compiler.class(ClassId(id)).class_aliases {
-            registrations.push(quote! {
-                __registry.register_class_alias(zeo_rt::ClassId(#id), #new, #old);
-            });
-        }
+        // Aliases of inherited BUILTIN methods, instance and `class << self`
+        // halves both -- `validate_aliases` (emitted at the head of
+        // `run_main`'s closure) raises `NameError` at startup for a source
+        // that resolves nowhere. Subclasses need no copy -- the runtime
+        // probe walks the MRO.
+        registrations.extend(alias_registration_rows(compiler.class(ClassId(id)), id));
         // Every `def self.x` also registers for DYNAMIC dispatch, so a class
         // held in a variable can be sent to (`handler = H1; handler.run(...)`
         // -- the receiver isn't a literal constant, so codegen can't emit a
@@ -1992,29 +2047,7 @@ fn codegen(analyzed: &Analyzed, sink: &mut ItemSink<'_>) -> std::io::Result<()> 
         // (`def self.x` on a module -- `Math.sqrt`-shaped) has no generated
         // `__register` at all, yet needs its class methods reachable too.
         for entry in compiler.class_methods_of(ClassId(id)) {
-            let scope = compiler.scope(entry.def);
-            let container = ident::class_ident(compiler, ClassId(id));
-            let method_ident = ident::class_method_ident(&scope.name);
-            // A self-observing body registers its DYNAMIC-SELF twin, so a
-            // runtime receiver (a minted subclass, a variable-held class)
-            // runs under its own `self`; a self-free body reuses the one
-            // receiverless emission. See `class_method_observes_self`.
-            let (fn_path, recv_mode) = if class_method_observes_self(compiler, entry.def) {
-                let dyn_ident = format_ident!("{}__dynself", method_ident);
-                (quote! { #container::#dyn_ident }, params::RecvMode::Pass)
-            } else {
-                (quote! { #container::#method_ident }, params::RecvMode::Drop)
-            };
-            let tramp = params::emit_value_trampoline(
-                &fn_path,
-                &scope.name,
-                &scope.params,
-                scope.needs_block_param(),
-                recv_mode,
-                &scope_frame_guard(compiler, scope, true),
-            );
-            // Keyed on the real Ruby name, not the mangled Rust ident.
-            push_cm_row(id, &scope.name, tramp);
+            emit_class_method_dispatch_row(compiler, id, entry);
         }
         // A class method's reflection keys on the SINGLETON table, so
         // `Api.method(:fetch)` and `Api.new.method(:fetch)` can't collide --
@@ -2445,24 +2478,7 @@ fn codegen(analyzed: &Analyzed, sink: &mut ItemSink<'_>) -> std::io::Result<()> 
             .iter()
             .map(|entry| {
                 let scope = compiler.scope(entry.def);
-                let mod_ident = ident::class_ident(compiler, ClassId(id));
-                let method_ident = ident::class_method_ident(&scope.name);
-                // Same dynamic-self twin rule as the user-class rows above.
-                let (fn_path, recv_mode) = if class_method_observes_self(compiler, entry.def) {
-                    let dyn_ident = format_ident!("{}__dynself", method_ident);
-                    (quote! { #mod_ident::#dyn_ident }, params::RecvMode::Pass)
-                } else {
-                    (quote! { #mod_ident::#method_ident }, params::RecvMode::Drop)
-                };
-                let tramp = params::emit_value_trampoline(
-                    &fn_path,
-                    &scope.name,
-                    &scope.params,
-                    scope.needs_block_param(),
-                    recv_mode,
-                    &scope_frame_guard(compiler, scope, true),
-                );
-                push_cm_row(id, &scope.name, tramp);
+                emit_class_method_dispatch_row(compiler, id, entry);
                 push_method_meta_row(compiler, ClassId(id), scope, true);
                 &scope.name
             })
@@ -2472,43 +2488,13 @@ fn codegen(analyzed: &Analyzed, sink: &mut ItemSink<'_>) -> std::io::Result<()> 
                 __registry.mark_own_class_method_rows(zeo_rt::ClassId(#id), &[#(#own_cm),*]);
             });
         }
-        // The CLASS-method visibility half (verbs 3/4), the same rows the
-        // user-class loop emits. Without it a `private` inside `class << self`
-        // on a REOPENED BUILTIN was enforced on the call (codegen knows the
-        // def is private) but recorded nowhere, so `respond_to?` and
+        // Without the visibility rows a `private` inside `class << self` on a
+        // REOPENED BUILTIN was enforced on the call (codegen knows the def is
+        // private) but recorded nowhere, so `respond_to?` and
         // `singleton_methods` both reported the method as public.
-        for entry in &class.class_methods {
-            if entry.visibility == crate::hir::Visibility::Private {
-                push_vis_row(id, compiler.names.str(entry.name), 3);
-            }
-        }
-        for (cm_name, vis) in &class.class_visibility_overrides {
-            let verb = if *vis == crate::hir::Visibility::Private {
-                3
-            } else {
-                4
-            };
-            push_vis_row(id, cm_name, verb);
-        }
-        // A reopened builtin's `private_constant`, same listing fact the
-        // user-class loop records.
-        let priv_consts: Vec<&str> = class.private_constants.iter().map(String::as_str).collect();
-        if !priv_consts.is_empty() {
-            registrations.push(quote! {
-                zeo_rt::const_set_private(#id, &[#(#priv_consts),*], true);
-            });
-        }
-        // A reopened builtin's own `extend M`, same singleton-chain fact the
-        // user-class loop records (`class Array; extend M; end`).
-        let extend_ids: Vec<u32> = class.extends.iter().map(|m| m.0).collect();
-        if !extend_ids.is_empty() {
-            registrations.push(quote! {
-                __registry.register_extends(
-                    zeo_rt::ClassId(#id),
-                    vec![#(zeo_rt::ClassId(#extend_ids)),*],
-                );
-            });
-        }
+        emit_class_method_visibility_rows(compiler, id);
+        emit_private_constant_listing(compiler, id, &mut registrations);
+        emit_extends_registration(compiler, id, &mut registrations);
         builtin_class_bodies.extend(hoisted_sites_for(ClassId(id)));
         // Always-on builtins with their DEFAULT ancestors are registered
         // once by `zeo_rt::register_builtins` -- so emit a base register
@@ -2532,24 +2518,13 @@ fn codegen(analyzed: &Analyzed, sink: &mut ItemSink<'_>) -> std::io::Result<()> 
             }
         });
         // Aliases of builtin methods recorded on a REOPENED builtin (or on
-        // `Object` itself, where a top-level `alias_method` lands) -- same
-        // rows the user-class loop emits; an overlay's rows land on the
-        // root's entry like its methods do.
+        // `Object` itself, where a top-level `alias_method` lands); an
+        // overlay's rows land on the root's entry like its methods do.
         let alias_target_id = class.builtin_overlay.map_or(id, |root| root.0);
-        let alias_rows = class.builtin_aliases.iter().map(|(new, old)| {
-            quote! {
-                __registry.register_alias(zeo_rt::ClassId(#alias_target_id), #new, #old);
-            }
-        });
-        let class_alias_rows = class.class_aliases.iter().map(|(new, old)| {
-            quote! {
-                __registry.register_class_alias(zeo_rt::ClassId(#alias_target_id), #new, #old);
-            }
-        });
+        let alias_rows = alias_registration_rows(class, alias_target_id);
         builtin_registrations.push(quote! {
             #register
             #(#alias_rows)*
-            #(#class_alias_rows)*
         });
     }
 
