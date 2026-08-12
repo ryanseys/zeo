@@ -19,6 +19,45 @@ pub struct StrBuf {
     coderange: Cell<CodeRange>,
 }
 
+/// [`StrBuf::chars`]'s iterator: a plain borrow of the bytes whenever they
+/// are directly readable as UTF-8 ([`StrBuf::as_str`]), and the converted
+/// `Vec<char>` only where a conversion actually happens.
+#[derive(Clone)]
+pub enum Chars<'a> {
+    Borrowed(std::str::Chars<'a>),
+    Owned(std::vec::IntoIter<char>),
+}
+
+impl Iterator for Chars<'_> {
+    type Item = char;
+
+    #[inline]
+    fn next(&mut self) -> Option<char> {
+        match self {
+            Chars::Borrowed(i) => i.next(),
+            Chars::Owned(i) => i.next(),
+        }
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        match self {
+            Chars::Borrowed(i) => i.size_hint(),
+            Chars::Owned(i) => i.size_hint(),
+        }
+    }
+}
+
+impl DoubleEndedIterator for Chars<'_> {
+    #[inline]
+    fn next_back(&mut self) -> Option<char> {
+        match self {
+            Chars::Borrowed(i) => i.next_back(),
+            Chars::Owned(i) => i.next_back(),
+        }
+    }
+}
+
 impl StrBuf {
     /// The everyday constructor: a UTF-8 `String` (Ruby's default script
     /// encoding). Keeps `collections::string_new`'s signature unchanged so
@@ -137,12 +176,36 @@ impl StrBuf {
         }
     }
 
+    /// The bytes as `&str`, when they can be read as UTF-8 with no
+    /// conversion at all: a UTF-8/US-ASCII string whose content is valid, or
+    /// any encoding whose content is 7-bit. The answer comes off the cached
+    /// coderange, so asking is O(1) after the first coderange computation.
+    pub fn as_str(&self) -> Option<&str> {
+        let direct = match self.enc.kind() {
+            EncKind::Utf8 => self.valid_encoding(),
+            _ => self.ascii_only(),
+        };
+        if !direct {
+            return None;
+        }
+        debug_assert!(std::str::from_utf8(&self.bytes).is_ok());
+        // SAFETY: the coderange just vouched for the bytes -- `Valid` under
+        // UTF-8 is well-formed UTF-8, and `SevenBit` under any encoding is
+        // pure ASCII, which is well-formed UTF-8 too.
+        Some(unsafe { std::str::from_utf8_unchecked(&self.bytes) })
+    }
+
     /// The characters of the string in order -- encoding-aware, mirroring
     /// `str::chars()` so `.chars().count()`/`.map()`/`.collect()` call sites
     /// keep working. Invalid sequences surface as U+FFFD so callers never
-    /// panic.
-    pub fn chars(&self) -> std::vec::IntoIter<char> {
-        self.to_utf8_lossy().chars().collect::<Vec<_>>().into_iter()
+    /// panic. Borrows straight off the bytes whenever [`StrBuf::as_str`]
+    /// answers -- the everyday UTF-8 case allocated a `Vec<char>` per call
+    /// here, on every `each_char`/`chars`-driven loop.
+    pub fn chars(&self) -> Chars<'_> {
+        match self.as_str() {
+            Some(s) => Chars::Borrowed(s.chars()),
+            None => Chars::Owned(self.to_utf8_lossy().chars().collect::<Vec<_>>().into_iter()),
+        }
     }
 
     /// The characters as an indexable `Vec` -- for random access and splice
