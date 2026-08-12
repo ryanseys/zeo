@@ -2910,8 +2910,29 @@ pub(crate) fn lower_class_body(
     // `synthesize_ffi_struct`. sassc's `SassValue < FFI::Union` is the case.
     // Both anchorings: `consts::constant_path_name` keeps a leading `::` for
     // a root-anchored path, and `class T < ::FFI::Struct` is the same class.
+    // `FFI::ManagedStruct` adds an auto-release finalizer over the same
+    // layout, which is a lifetime concern rather than an ABI one.
     let is_ffi_union = matches!(superclass, Some("FFI::Union" | "::FFI::Union"));
-    let is_ffi_struct = is_ffi_union || matches!(superclass, Some("FFI::Struct" | "::FFI::Struct"));
+    // A subclass of a struct class IS a struct class -- ruby-ffi inherits the
+    // layout, and a gem that wraps `FFI::Struct` once and declares everything
+    // against the wrapper (gssapi's `GssUMStruct`) never names `FFI::Struct`
+    // again.
+    let inherits_struct = superclass.is_some_and(|s| {
+        let leaf = s.rsplit("::").next().unwrap_or(s);
+        hir.is_ffi_struct_class(leaf)
+    });
+    let is_ffi_struct = is_ffi_union
+        || inherits_struct
+        || matches!(
+            superclass,
+            Some(
+                "FFI::Struct"
+                    | "::FFI::Struct"
+                    | "FFI::ManagedStruct"
+                    | "::FFI::ManagedStruct"
+                    | "FFI::Struct::ManagedStruct"
+            )
+        );
     // Recorded even when no `layout` follows (an EMPTY body, or ffi_dry's
     // `dsl_layout` building one at runtime): a SIGNATURE naming this class
     // only needs the by-reference fact -- so this precedes the empty-body
@@ -2919,6 +2940,11 @@ pub(crate) fn lower_class_body(
     if is_ffi_struct && let Some(name) = cref {
         let leaf = name.rsplit("::").next().unwrap_or(name);
         hir.mark_ffi_struct_class(leaf);
+        // Marked, not given the parent's LAYOUT: ruby-ffi does not inherit one
+        // (`class B < A; end` leaves `B.size` at 0 and `B.new` raises "no
+        // Struct layout configured", oracle-verified). The mark is the
+        // by-reference fact a signature needs, which every struct class has
+        // whether or not it declared fields.
     }
     let stmts: Vec<Node<'_>> = match body {
         None => return Ok(Vec::new()),

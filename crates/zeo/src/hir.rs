@@ -654,6 +654,15 @@ impl Hir {
         self.ffi_struct_classes.insert(leaf.to_string());
     }
 
+    /// Whether `leaf` names a class already known to descend from
+    /// `FFI::Struct` -- how `class B < A` is recognized as a struct in its own
+    /// right. gssapi hides `[]`/`[]=` behind `GssUMStruct < FFI::Struct` and
+    /// then declares every real struct against THAT, so nothing in the gem
+    /// names `FFI::Struct` directly except the one intermediate.
+    pub(crate) fn is_ffi_struct_class(&self, leaf: &str) -> bool {
+        self.ffi_struct_classes.contains(leaf)
+    }
+
     /// Whether an already-lowered `class`/`module` definition binds `name` AS
     /// SEEN FROM the cref being lowered: ruby's lexical search, innermost
     /// scope first, then the top level. `::Name` asks at the top level only.
