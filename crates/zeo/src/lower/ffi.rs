@@ -1045,7 +1045,7 @@ fn parse_enum_members<'a>(
 /// an FFI declaration's integers decide marshaling tables and field offsets,
 /// so they are needed at LOWERING time -- this is deliberately not a general
 /// constant folder.
-fn ffi_const_int(node: &Node<'_>, hir: &Hir, body_so_far: &[NodeId]) -> Option<i64> {
+pub(crate) fn ffi_const_int(node: &Node<'_>, hir: &Hir, body_so_far: &[NodeId]) -> Option<i64> {
     if let Some(n) = body_const_int(hir, body_so_far, node) {
         return Some(n);
     }

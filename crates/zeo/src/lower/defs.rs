@@ -3199,18 +3199,18 @@ fn lower_one_class_body_stmt<'a>(
             // vocabulary) -- the FFI::Type constant IS the type.
             hir.declare_ffi_type(&name, &ty);
             st.ffi_aliases.insert(name, ty);
-        } else if let Some(int) = write.value().as_integer_node() {
-            let value = int.value();
-            let (negative, digits) = value.to_u32_digits();
-            if let Some(val) = super::literals::assemble_i64(negative, digits) {
-                match hir.ffi_int_consts.get(&name) {
-                    Some(Some(prev)) if *prev != val => {
-                        hir.ffi_int_consts.insert(name, None);
-                    }
-                    Some(None) => {}
-                    _ => {
-                        hir.ffi_int_consts.insert(name, Some(val));
-                    }
+        } else if let Some(val) = crate::lower::ffi::ffi_const_int(&write.value(), hir, out) {
+            // The same folder an enum member's value goes through, not a bare
+            // integer literal: `RTMP_BUFFER_CACHE_SIZE = (16*1024)` is an
+            // inline array's element COUNT four lines below, and a count is
+            // what decides where every following field starts.
+            match hir.ffi_int_consts.get(&name) {
+                Some(Some(prev)) if *prev != val => {
+                    hir.ffi_int_consts.insert(name, None);
+                }
+                Some(None) => {}
+                _ => {
+                    hir.ffi_int_consts.insert(name, Some(val));
                 }
             }
         }

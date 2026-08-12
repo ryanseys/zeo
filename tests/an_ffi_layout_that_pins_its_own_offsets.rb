@@ -51,3 +51,22 @@ end
 
 p Libc.labs(-9)
 p Libc.abs(-3)
+
+# A third literal-strictness shape in the same family: an inline array's
+# element COUNT held in a constant the class body computed. librtmp writes
+# `RTMP_BUFFER_CACHE_SIZE = (16*1024)` four lines above the field it sizes, and
+# the count is what decides where every following field starts -- so it has to
+# fold at LOWERING time. Only a bare integer literal used to be recorded.
+module Net
+  BUF = (16 * 1024)
+  TAG = (1 << 3)
+
+  class SockBuf < FFI::Struct
+    layout :sock, :int,
+           :buf, [:char, BUF],
+           :tag, [:uint8, TAG]
+  end
+end
+
+p Net::SockBuf.size
+p Net::SockBuf.offset_of(:tag)
