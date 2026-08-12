@@ -516,6 +516,7 @@ fn process_top_stmt_inner(
             &[],
             0,
             Some(stmt),
+            Conditional::No,
         )?;
         // The marker STAYS in the top-level statement stream (non-bootstrap
         // only -- the prelude's bodies keep their hoisted splice): real Ruby
@@ -567,6 +568,7 @@ fn process_top_stmt_inner(
                     &[],
                     bx,
                     Some(s),
+                    Conditional::No,
                 )?;
             }
             // The `ClassDef` marker stays in the box body too (document
@@ -924,6 +926,7 @@ fn register_nested_class_defs(
             cref,
             box_id,
             Some(s),
+            Conditional::No,
         );
         // A definition ruby RAISES on, somewhere a `rescue` can see it, becomes
         // that raise -- see `raise_instead_of_defining`. Anywhere else the
@@ -2379,6 +2382,7 @@ fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(), String> {
         &[],
         0,
         None,
+        Conditional::No,
     )?;
     // `SyntaxError < ScriptError` -- the eval VM's parse-failure
     // class. Pinned here (not in `BUILTIN_EXCEPTIONS_RB`) so it takes the id
@@ -2393,6 +2397,7 @@ fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(), String> {
         &[],
         0,
         None,
+        Conditional::No,
     )?;
     // `UncaughtThrowError < ArgumentError` -- raised by `throw` with no live
     // `catch` for its tag. Pinned right after `SyntaxError` so it takes the
@@ -2406,6 +2411,7 @@ fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(), String> {
         &[],
         0,
         None,
+        Conditional::No,
     )?;
     // The `Exception`-direct tail (`SystemExit`/`SignalException`/`Interrupt`):
     // uncaught by a bare `rescue`, so a program names them explicitly. Order
@@ -2420,6 +2426,7 @@ fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(), String> {
         &[],
         0,
         None,
+        Conditional::No,
     )?;
     register_class(
         compiler,
@@ -2430,6 +2437,7 @@ fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(), String> {
         &[],
         0,
         None,
+        Conditional::No,
     )?;
     register_class(
         compiler,
@@ -2440,6 +2448,7 @@ fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(), String> {
         &[],
         0,
         None,
+        Conditional::No,
     )?;
     // The remaining core `Exception`-tree classes. Each parent is already
     // registered (a builtin exception or, for the nested names, a core class).
@@ -2480,6 +2489,7 @@ fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(), String> {
             &[],
             0,
             None,
+            Conditional::No,
         )?;
     }
     // Every `Errno` class the platform names, in `zeo-abi::ERRNO_CLASSES`
@@ -2496,6 +2506,7 @@ fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(), String> {
             &[],
             0,
             None,
+            Conditional::No,
         )?;
     }
     // `IO::WaitReadable`/`WaitWritable` -- marker MODULES, so a would-block
@@ -2503,7 +2514,17 @@ fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(), String> {
     // mix them in, and the `include` is pushed directly: `register_class`
     // reads includes out of a class BODY, and these have none.
     for name in ["IO::WaitReadable", "IO::WaitWritable"] {
-        register_class(compiler, name.to_string(), None, true, &[], &[], 0, None)?;
+        register_class(
+            compiler,
+            name.to_string(),
+            None,
+            true,
+            &[],
+            &[],
+            0,
+            None,
+            Conditional::No,
+        )?;
     }
     for (name, superclass, marker) in [
         (
@@ -2536,6 +2557,7 @@ fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(), String> {
             &[],
             0,
             None,
+            Conditional::No,
         )?;
         let (Some(cls), Some(module)) = (
             compiler.resolve_class(name, &[], 0),
@@ -2568,7 +2590,17 @@ fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(), String> {
         let Some(target) = compiler.resolve_class(target, &[], 0) else {
             return Err(format!("{target} went missing right after registration"));
         };
-        register_class(compiler, alias.to_string(), None, false, &[], &[], 0, None)?;
+        register_class(
+            compiler,
+            alias.to_string(),
+            None,
+            false,
+            &[],
+            &[],
+            0,
+            None,
+            Conditional::No,
+        )?;
         let Some(cls) = compiler.class_in_scope(
             compiler.class(target).lexical_parent,
             crate::constpath::ConstPath::parse(alias).base(),
@@ -3031,6 +3063,9 @@ fn resolve_or_create_lexical(
 // Every parameter is a distinct piece of the definition site (same
 // posture as `register_method`); `def_node` is the site's own `ClassDef`
 // marker for document-order body execution (`Compiler::class_body_sites`).
+// `conditional` rides through to every `def` the body walk registers -- a
+// class under a guard zeo cannot decide registers, but nothing in it is
+// promised (see `Scope::runtime_conditional`).
 #[allow(clippy::too_many_arguments)]
 fn register_class(
     compiler: &mut Compiler,
@@ -3041,7 +3076,60 @@ fn register_class(
     cref: &[ClassId],
     box_id: u32,
     def_node: Option<NodeId>,
+    conditional: Conditional,
 ) -> Result<(), String> {
+    let Some(target) = resolve_definition_target(
+        compiler,
+        &name,
+        &superclass,
+        is_module,
+        cref,
+        box_id,
+        def_node,
+    )?
+    else {
+        // Deferred to a runtime constant read -- nothing registered.
+        return Ok(());
+    };
+    check_builtin_superclass_restatement(compiler, &name, &superclass, &target, def_node)?;
+    let class_id = match target.existing {
+        Some(cid) => check_reopen_compatibility(
+            compiler,
+            cid,
+            &name,
+            &superclass,
+            is_module,
+            &target,
+            def_node,
+        )?,
+        None => create_class(compiler, &superclass, is_module, target, cref, box_id)?,
+    };
+    walk_class_body(compiler, class_id, body, box_id, def_node, conditional)
+}
+
+/// What a definition site names, resolved before any registration state is
+/// written: the superclass, the lexical container, and the slot (if any)
+/// this definition attaches to. `resolve_definition_target` answers `None`
+/// when the whole site was deferred to a runtime constant read.
+struct DefinitionTarget {
+    resolved_superclass: Option<ClassId>,
+    lexical_parent: Option<ClassId>,
+    leaf: String,
+    qualified_def: bool,
+    existing: Option<ClassId>,
+    overlay_root: Option<ClassId>,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resolve_definition_target(
+    compiler: &mut Compiler,
+    name: &str,
+    superclass: &Option<String>,
+    is_module: bool,
+    cref: &[ClassId],
+    box_id: u32,
+    def_node: Option<NodeId>,
+) -> Result<Option<DefinitionTarget>, String> {
     // A superclass naming a constant NOTHING in the program defines (irb's
     // `class CallTracer < ::CallTracer`, whose `require "tracer"` already
     // raised `LoadError`): real Ruby evaluates that expression when the
@@ -3064,15 +3152,15 @@ fn register_class(
     // raises `NameError` at that line too).
     let resolved_superclass = superclass
         .as_ref()
-        .and_then(|s| resolve_superclass(compiler, s, &name, cref, box_id));
-    if let (Some(s), Some(def_node)) = (&superclass, def_node)
+        .and_then(|s| resolve_superclass(compiler, s, name, cref, box_id));
+    if let (Some(s), Some(def_node)) = (superclass, def_node)
         && resolved_superclass.is_none()
         && !compiler.assigns_const_path(s)
     {
         defer_unresolved_directive(compiler, def_node, s);
-        return Ok(());
+        return Ok(None);
     }
-    let path = crate::constpath::ConstPath::parse(&name);
+    let path = crate::constpath::ConstPath::parse(name);
     let (lexical_parent, leaf, qualified_def) = match path.scope() {
         // `A::B` / `::A::B` -- defined INSIDE a named scope, which must
         // already exist.
@@ -3092,7 +3180,7 @@ fn register_class(
                 && !compiler.assigns_const_path(prefix)
             {
                 defer_unresolved_directive(compiler, def_node, prefix);
-                return Ok(());
+                return Ok(None);
             }
             let parent = compiler
                 .resolve_class(prefix, cref, box_id)
@@ -3114,7 +3202,7 @@ fn register_class(
         // lexical scope, but still an explicitly qualified definition.
         None if path.is_top_anchored() => (None, path.base().to_string(), true),
         // `Foo` -- an ordinary definition in the enclosing lexical scope.
-        None => (cref.last().copied(), name.clone(), false),
+        None => (cref.last().copied(), name.to_string(), false),
     };
     // Reopening a BUILTIN class: `class String ... end` at the
     // top level ATTACHES to the existing builtin `ClassInfo` -- its methods
@@ -3171,7 +3259,27 @@ fn register_class(
         } else {
             None
         };
-    if let Some(cid) = existing.or(overlay_root) {
+    Ok(Some(DefinitionTarget {
+        resolved_superclass,
+        lexical_parent,
+        leaf,
+        qualified_def,
+        existing,
+        overlay_root,
+    }))
+}
+
+/// A definition attaching to a builtin (or `Object`) may RESTATE the
+/// builtin's superclass; CRuby accepts a matching clause and raises
+/// `superclass mismatch` on a wrong one.
+fn check_builtin_superclass_restatement(
+    compiler: &mut Compiler,
+    name: &str,
+    superclass: &Option<String>,
+    target: &DefinitionTarget,
+    def_node: Option<NodeId>,
+) -> Result<(), String> {
+    if let Some(cid) = target.existing.or(target.overlay_root) {
         let ci = compiler.class(cid);
         // NOTE: the implicit `Object` root (id 0) is NOT `is_builtin` (it
         // predates the `zeo_abi::BUILTINS` placeholders -- see
@@ -3191,8 +3299,8 @@ fn register_class(
             // A reopen may RESTATE the builtin's superclass (`class String <
             // Object`); CRuby accepts a matching clause and raises `superclass
             // mismatch` on a wrong one. Mirrors the user-class reopen guard.
-            if let Some(s) = &superclass {
-                let want = resolved_superclass.ok_or_else(|| {
+            if let Some(s) = superclass {
+                let want = target.resolved_superclass.ok_or_else(|| {
                     format!("unknown superclass `{s}` (must be defined earlier in the file)")
                 })?;
                 if compiler.class(cid).parent != Some(want) {
@@ -3207,165 +3315,184 @@ fn register_class(
             }
         }
     }
-    let class_id = match existing {
-        // REOPENING: a second `class Foo`/`module Foo` MERGES into the
-        // existing `ClassInfo` -- the body loop below appends
-        // includes/body-statements and registers methods with real Ruby's
-        // last-`def`-wins rule (see the method arm). Guards mirror CRuby's
-        // own (all oracle-verified): the definition KIND must match
-        // (`TypeError: Foo is not a module`), and a superclass clause, if
-        // written at all, must resolve to the original parent
-        // (`TypeError: superclass mismatch for class Foo`).
-        Some(cid) => {
-            if compiler.class(cid).is_module != is_module {
-                // CRuby names the LEAF (`unmatched_redefinition` takes
-                // `rb_id2str(id)`, the id off the cpath), so `module
-                // Outer::Inner` reports `Inner is not a module`.
-                let leaf = compiler.leaf_name(cid).to_string();
-                let kind = if is_module { "module" } else { "class" };
-                let previously = previous_definition_of(compiler, cid, &leaf);
+    Ok(())
+}
+
+/// REOPENING: a second `class Foo`/`module Foo` MERGES into the
+/// existing `ClassInfo` -- the body walk appends includes/body-statements
+/// and registers methods with real Ruby's last-`def`-wins rule (see the
+/// method arm). Guards mirror CRuby's own (all oracle-verified): the
+/// definition KIND must match (`TypeError: Foo is not a module`), and a
+/// superclass clause, if written at all, must resolve to the original
+/// parent (`TypeError: superclass mismatch for class Foo`).
+#[allow(clippy::too_many_arguments)]
+fn check_reopen_compatibility(
+    compiler: &mut Compiler,
+    cid: ClassId,
+    name: &str,
+    superclass: &Option<String>,
+    is_module: bool,
+    target: &DefinitionTarget,
+    def_node: Option<NodeId>,
+) -> Result<ClassId, String> {
+    if compiler.class(cid).is_module != is_module {
+        // CRuby names the LEAF (`unmatched_redefinition` takes
+        // `rb_id2str(id)`, the id off the cpath), so `module
+        // Outer::Inner` reports `Inner is not a module`.
+        let leaf = compiler.leaf_name(cid).to_string();
+        let kind = if is_module { "module" } else { "class" };
+        let previously = previous_definition_of(compiler, cid, &leaf);
+        ruby_raises(
+            compiler,
+            def_node,
+            "TypeError",
+            &format!("{leaf} is not a {kind}{previously}"),
+        );
+        // The COMPILE error keeps the first line only: the
+        // diagnostic already points a span at the definition that
+        // conflicts, and the second line is a runtime message.
+        return Err(format!("{leaf} is not a {kind}"));
+    }
+    // A user `module OpenSSL; ...; end` reopening a feature-gated
+    // builtin slot MATERIALIZES the constant: clear the gate so the
+    // name resolves even though the ext was never `require`d (the
+    // behavior comes from the user's own methods registered here).
+    if compiler.class(cid).feature_gate.is_some() {
+        compiler.classes[cid.0 as usize].feature_gate = None;
+    }
+    if let Some(s) = superclass {
+        // Same rule as a fresh definition: this "reopen" may be the
+        // FIRST real definition, of a name some other file forward-
+        // referenced into a shell, and ruby resolves the superclass
+        // before binding the name. See `resolve_superclass`.
+        let want = target.resolved_superclass.ok_or_else(|| {
+            format!("unknown superclass `{s}` (must be defined earlier in the file)")
+        })?;
+        if compiler.class(cid).parent != Some(want) {
+            // A class opened BARE first (`class Sub`, often just to
+            // hold a nested class) defaulted its parent to Object
+            // without any `< Super` ever being written. A later reopen
+            // that does declare one ESTABLISHES the link rather than
+            // conflicting with it -- otherwise the parent would be
+            // silently wrong and a subclass override would dispatch
+            // against the wrong chain.
+            //
+            // MRI rejects this split too; it arises in zeo from
+            // wholesale-inlined libraries, so accepting it is a
+            // deliberate divergence (see the checked-in expectation
+            // for `reopen_split_superclass_dispatch`). A genuine
+            // conflict -- `class Sub < A` then `class Sub < B` -- still
+            // errors, because `explicit_superclass` is set by then.
+            if compiler.class(cid).explicit_superclass {
                 ruby_raises(
                     compiler,
                     def_node,
                     "TypeError",
-                    &format!("{leaf} is not a {kind}{previously}"),
+                    &format!("superclass mismatch for class {name}"),
                 );
-                // The COMPILE error keeps the first line only: the
-                // diagnostic already points a span at the definition that
-                // conflicts, and the second line is a runtime message.
-                return Err(format!("{leaf} is not a {kind}"));
+                return Err(format!("superclass mismatch for class {name}"));
             }
-            // A user `module OpenSSL; ...; end` reopening a feature-gated
-            // builtin slot MATERIALIZES the constant: clear the gate so the
-            // name resolves even though the ext was never `require`d (the
-            // behavior comes from the user's own methods registered here).
-            if compiler.class(cid).feature_gate.is_some() {
-                compiler.classes[cid.0 as usize].feature_gate = None;
+            // ... and establishing one that already descends from THIS
+            // class would close a loop: `class A; class B < A; class A <
+            // B` is `superclass mismatch` in ruby too, so this is the
+            // same rejection, not a zeo limitation. It has to be checked
+            // rather than assumed -- a `parent` chain that points back
+            // at itself is what every walk over it runs forever on, and
+            // the walk that noticed was `require "active_record"` dying
+            // after twelve minutes.
+            if compiler.superclass_chain_contains(want, cid) {
+                ruby_raises(
+                    compiler,
+                    def_node,
+                    "TypeError",
+                    &format!("superclass mismatch for class {name}"),
+                );
+                return Err(format!("superclass mismatch for class {name}"));
             }
-            if let Some(s) = &superclass {
-                // Same rule as a fresh definition: this "reopen" may be the
-                // FIRST real definition, of a name some other file forward-
-                // referenced into a shell, and ruby resolves the superclass
-                // before binding the name. See `resolve_superclass`.
-                let want = resolved_superclass.ok_or_else(|| {
+            compiler.classes[cid.0 as usize].parent = Some(want);
+        }
+        compiler.classes[cid.0 as usize].explicit_superclass = true;
+    }
+    // A NESTED reopen carries the full lexical chain a compact or
+    // shell first sighting lacked (`module RSpec::Core::Formatters`
+    // in one file, `module RSpec; module Core; module Formatters;
+    // class BaseFormatter` in another): upgrade the class's cref so
+    // bare-name resolution inside every body -- and inside every
+    // class registered UNDER it -- walks the real enclosing scopes.
+    // CRuby's nesting is per definition SITE; zeo's is per class,
+    // and nested-wins is the approximation that keeps working code
+    // working: the compact site's body then resolves MORE names than
+    // CRuby's cut allows, never fewer.
+    if !target.qualified_def && compiler.class(cid).qualified_def {
+        let ci = &mut compiler.classes[cid.0 as usize];
+        ci.qualified_def = false;
+        ci.cref_parent = target.lexical_parent;
+    }
+    Ok(cid)
+}
+
+/// Fresh creation: resolves the parent (with the subclassable-builtin
+/// gate), mints the `ClassInfo`, and stamps the definition-site facts
+/// (`lexical_parent`/`cref_parent`/`qualified_def`/overlay).
+fn create_class(
+    compiler: &mut Compiler,
+    superclass: &Option<String>,
+    is_module: bool,
+    target: DefinitionTarget,
+    cref: &[ClassId],
+    box_id: u32,
+) -> Result<ClassId, String> {
+    let parent = if is_module {
+        None
+    } else {
+        Some(match superclass {
+            None => OBJECT_CLASS,
+            // Resolved in the ENCLOSING scope (`cref`, not the
+            // class being opened): real Ruby evaluates the
+            // superclass expression before the new class exists.
+            Some(s) => {
+                let cid = target.resolved_superclass.ok_or_else(|| {
                     format!("unknown superclass `{s}` (must be defined earlier in the file)")
                 })?;
-                if compiler.class(cid).parent != Some(want) {
-                    // A class opened BARE first (`class Sub`, often just to
-                    // hold a nested class) defaulted its parent to Object
-                    // without any `< Super` ever being written. A later reopen
-                    // that does declare one ESTABLISHES the link rather than
-                    // conflicting with it -- otherwise the parent would be
-                    // silently wrong and a subclass override would dispatch
-                    // against the wrong chain.
-                    //
-                    // MRI rejects this split too; it arises in zeo from
-                    // wholesale-inlined libraries, so accepting it is a
-                    // deliberate divergence (see the checked-in expectation
-                    // for `reopen_split_superclass_dispatch`). A genuine
-                    // conflict -- `class Sub < A` then `class Sub < B` -- still
-                    // errors, because `explicit_superclass` is set by then.
-                    if compiler.class(cid).explicit_superclass {
-                        ruby_raises(
-                            compiler,
-                            def_node,
-                            "TypeError",
-                            &format!("superclass mismatch for class {name}"),
-                        );
-                        return Err(format!("superclass mismatch for class {name}"));
-                    }
-                    // ... and establishing one that already descends from THIS
-                    // class would close a loop: `class A; class B < A; class A <
-                    // B` is `superclass mismatch` in ruby too, so this is the
-                    // same rejection, not a zeo limitation. It has to be checked
-                    // rather than assumed -- a `parent` chain that points back
-                    // at itself is what every walk over it runs forever on, and
-                    // the walk that noticed was `require "active_record"` dying
-                    // after twelve minutes.
-                    if compiler.superclass_chain_contains(want, cid) {
-                        ruby_raises(
-                            compiler,
-                            def_node,
-                            "TypeError",
-                            &format!("superclass mismatch for class {name}"),
-                        );
-                        return Err(format!("superclass mismatch for class {name}"));
-                    }
-                    compiler.classes[cid.0 as usize].parent = Some(want);
-                }
-                compiler.classes[cid.0 as usize].explicit_superclass = true;
-            }
-            // A NESTED reopen carries the full lexical chain a compact or
-            // shell first sighting lacked (`module RSpec::Core::Formatters`
-            // in one file, `module RSpec; module Core; module Formatters;
-            // class BaseFormatter` in another): upgrade the class's cref so
-            // bare-name resolution inside every body -- and inside every
-            // class registered UNDER it -- walks the real enclosing scopes.
-            // CRuby's nesting is per definition SITE; zeo's is per class,
-            // and nested-wins is the approximation that keeps working code
-            // working: the compact site's body then resolves MORE names than
-            // CRuby's cut allows, never fewer.
-            if !qualified_def && compiler.class(cid).qualified_def {
-                let ci = &mut compiler.classes[cid.0 as usize];
-                ci.qualified_def = false;
-                ci.cref_parent = lexical_parent;
-            }
-            cid
-        }
-        None => {
-            let parent = if is_module {
-                None
-            } else {
-                Some(match &superclass {
-                    None => OBJECT_CLASS,
-                    // Resolved in the ENCLOSING scope (`cref`, not the
-                    // class being opened): real Ruby evaluates the
-                    // superclass expression before the new class exists.
-                    Some(s) => {
-                        let cid = resolved_superclass.ok_or_else(|| {
-                            format!(
-                                "unknown superclass `{s}` (must be defined earlier in the file)"
-                            )
-                        })?;
-                        // Subclassable builtins:
-                        //  - `Struct`/`Data`: subclasses are ordinary
-                        //    ivar-carrying objects (generated struct).
-                        //  - `Numeric`: abstract, so a subclass is likewise a plain
-                        //    ivar object (user-implemented `<=>`/`coerce`, Comparable
-                        //    via the ancestor chain) -- the same struct machinery.
-                        //  - `Array`/`String`/`Hash`: the native `ValueSubclass`
-                        //    (a payload RObj), no struct.
-                        //  - `Integer`/`Float`/`Symbol`/`Nil`/`True`/`FalseClass`
-                        //    (immediates): the DEFINITION is allowed but has no
-                        //    instances -- registry-entry-only, `.new` raises
-                        //    NoMethodError (`is_immediate_subclass`).
-                        // Still rejected: `Class`/`Module` (no per-value
-                        // dispatch to hang a payload on).
-                        use crate::compiler::{
-                            BASIC_OBJECT_CLASS, DATA_CLASS, FALSE_CLASS, FFI_STRUCT_CLASS,
-                            FLOAT_CLASS, INTEGER_CLASS, NIL_CLASS, NUMERIC_CLASS, STRUCT_CLASS,
-                            SYMBOL_CLASS, TRUE_CLASS,
-                        };
-                        // An instantiable value builtin compiles via the
-                        // generic `ValueSubclass` payload bridge; that list
-                        // is `zeo_abi::PAYLOAD_ROOTS` -- ONE list, shared
-                        // with the runtime (see its docs for the recipe for
-                        // adding a root). The `matches!` below is the rest
-                        // of the gate: builtins whose subclasses are NOT
-                        // payload objects.
-                        let subclassable = zeo_abi::is_payload_root(cid)
-                            || matches!(
-                                cid,
-                                // `BasicObject`: the blank-slate root. Its subclass
-                                // is a plain ivar-carrying object with NO payload,
-                                // and the blank slate needs no special gate -- it
-                                // falls out of chain position alone, since CRuby
-                                // splices Kernel in as an ICLASS BETWEEN Object and
-                                // BasicObject (object.c:4550 -> class.c:1853) and
-                                // MRO walks only go up. So `[BO, BasicObject]` is
-                                // the whole ancestry and the Object/Kernel surface
-                                // is simply absent.
-                                BASIC_OBJECT_CLASS
+                // Subclassable builtins:
+                //  - `Struct`/`Data`: subclasses are ordinary
+                //    ivar-carrying objects (generated struct).
+                //  - `Numeric`: abstract, so a subclass is likewise a plain
+                //    ivar object (user-implemented `<=>`/`coerce`, Comparable
+                //    via the ancestor chain) -- the same struct machinery.
+                //  - `Array`/`String`/`Hash`: the native `ValueSubclass`
+                //    (a payload RObj), no struct.
+                //  - `Integer`/`Float`/`Symbol`/`Nil`/`True`/`FalseClass`
+                //    (immediates): the DEFINITION is allowed but has no
+                //    instances -- registry-entry-only, `.new` raises
+                //    NoMethodError (`is_immediate_subclass`).
+                // Still rejected: `Class`/`Module` (no per-value
+                // dispatch to hang a payload on).
+                use crate::compiler::{
+                    BASIC_OBJECT_CLASS, DATA_CLASS, FALSE_CLASS, FFI_STRUCT_CLASS, FLOAT_CLASS,
+                    INTEGER_CLASS, NIL_CLASS, NUMERIC_CLASS, STRUCT_CLASS, SYMBOL_CLASS,
+                    TRUE_CLASS,
+                };
+                // An instantiable value builtin compiles via the
+                // generic `ValueSubclass` payload bridge; that list
+                // is `zeo_abi::PAYLOAD_ROOTS` -- ONE list, shared
+                // with the runtime (see its docs for the recipe for
+                // adding a root). The `matches!` below is the rest
+                // of the gate: builtins whose subclasses are NOT
+                // payload objects.
+                let subclassable = zeo_abi::is_payload_root(cid)
+                    || matches!(
+                        cid,
+                        // `BasicObject`: the blank-slate root. Its subclass
+                        // is a plain ivar-carrying object with NO payload,
+                        // and the blank slate needs no special gate -- it
+                        // falls out of chain position alone, since CRuby
+                        // splices Kernel in as an ICLASS BETWEEN Object and
+                        // BasicObject (object.c:4550 -> class.c:1853) and
+                        // MRO walks only go up. So `[BO, BasicObject]` is
+                        // the whole ancestry and the Object/Kernel surface
+                        // is simply absent.
+                        BASIC_OBJECT_CLASS
                                 // `CGI`: a plain `Object` subclass with no
                                 // payload of its own -- the escape methods are
                                 // all class methods -- so a subclass is an
@@ -3424,43 +3551,55 @@ fn register_class(
                                 // shape (`is_immediate_subclass`).
                                 | zeo_abi::BIGDECIMAL_CLASS
                                 | zeo_abi::METHOD_CLASS
-                            );
-                        if compiler.class(cid).is_builtin && !subclassable {
-                            return Err(format!(
-                                "subclassing the built-in type `{s}` isn't supported yet (zeo limitation, no generated Rust struct exists for it)"
-                            ));
-                        }
-                        cid
-                    }
-                })
-            };
-            let cid = compiler.add_class(leaf, parent, is_module);
-            let ci = &mut compiler.classes[cid.0 as usize];
-            // Record whether `< Super` was actually WRITTEN, so a later reopen
-            // can tell a bare opening (parent defaulted to Object) from a real
-            // declaration -- see the reopen arm above.
-            ci.explicit_superclass = superclass.is_some();
-            ci.lexical_parent = lexical_parent;
-            ci.qualified_def = qualified_def;
-            // The scope this definition is WRITTEN in, which is the naming
-            // parent for a nested form and the enclosing scope for a
-            // qualified one -- see `ClassInfo::cref_parent`.
-            ci.cref_parent = match qualified_def {
-                true => cref.last().copied(),
-                false => lexical_parent,
-            };
-            ci.box_id = box_id;
-            if let Some(root) = overlay_root {
-                // The overlay carries the box's patches; instances keep
-                // the root builtin's identity. `is_builtin` makes the
-                // 16.3 machinery (operator/@ivar guards, value-method
-                // emission, `__bm_` containers) apply unchanged.
-                ci.is_builtin = true;
-                ci.builtin_overlay = Some(root);
+                    );
+                if compiler.class(cid).is_builtin && !subclassable {
+                    return Err(format!(
+                        "subclassing the built-in type `{s}` isn't supported yet (zeo limitation, no generated Rust struct exists for it)"
+                    ));
+                }
+                cid
             }
-            cid
-        }
+        })
     };
+    let cid = compiler.add_class(target.leaf, parent, is_module);
+    let ci = &mut compiler.classes[cid.0 as usize];
+    // Record whether `< Super` was actually WRITTEN, so a later reopen
+    // can tell a bare opening (parent defaulted to Object) from a real
+    // declaration -- see the reopen arm above.
+    ci.explicit_superclass = superclass.is_some();
+    ci.lexical_parent = target.lexical_parent;
+    ci.qualified_def = target.qualified_def;
+    // The scope this definition is WRITTEN in, which is the naming
+    // parent for a nested form and the enclosing scope for a
+    // qualified one -- see `ClassInfo::cref_parent`.
+    ci.cref_parent = match target.qualified_def {
+        true => cref.last().copied(),
+        false => target.lexical_parent,
+    };
+    ci.box_id = box_id;
+    if let Some(root) = target.overlay_root {
+        // The overlay carries the box's patches; instances keep
+        // the root builtin's identity. `is_builtin` makes the
+        // 16.3 machinery (operator/@ivar guards, value-method
+        // emission, `__bm_` containers) apply unchanged.
+        ci.is_builtin = true;
+        ci.builtin_overlay = Some(root);
+    }
+    Ok(cid)
+}
+
+/// The body walk: records this definition site (`Compiler::class_body_sites`)
+/// and registers everything the body declares -- methods, nested classes,
+/// mixins, visibility, aliases -- pushing whatever must run at document
+/// position onto the site's statement list.
+fn walk_class_body(
+    compiler: &mut Compiler,
+    class_id: ClassId,
+    body: &[NodeId],
+    box_id: u32,
+    def_node: Option<NodeId>,
+    conditional: Conditional,
+) -> Result<(), String> {
     // The chain this class's OWN body resolves names against -- what nested
     // definitions and include/extend/prepend targets see. Derived from the
     // registered class (not `cref` + push) so a qualified-def class
@@ -3536,7 +3675,7 @@ fn register_class(
                     singleton: is_class_method,
                 };
                 compiler.class_body_sites[site_idx].defs.push(def);
-                register_body_def_method(compiler, class_id, stmt, Conditional::No)?;
+                register_body_def_method(compiler, class_id, stmt, conditional)?;
             }
             // A nested `class`/`module` definition -- registered
             // recursively under this class's own cref. The `ClassDef` node
@@ -3564,6 +3703,7 @@ fn register_class(
                     &child_cref,
                     box_id,
                     Some(stmt),
+                    conditional,
                 )?;
             }
             // The ancestry edit itself is compile-time; the node ALSO stays on
