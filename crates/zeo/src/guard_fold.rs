@@ -1719,7 +1719,12 @@ fn const_name_fold(
     box_id: u32,
     joined: &str,
 ) -> Option<bool> {
-    if compiler.resolve_class(joined, cref, box_id).is_some() {
+    if let Some(cid) = compiler.resolve_class(joined, cref, box_id) {
+        // Registered but not PROMISED: whether a runtime-conditional class's
+        // constant exists is settled by its guarded body having run.
+        if compiler.class(cid).runtime_conditional {
+            return None;
+        }
         return Some(true);
     }
     // A name startup installs on `Object` is real, but whether THIS question

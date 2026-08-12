@@ -69,7 +69,11 @@ pub fn emit_new(
         resolved
     } else {
         resolved.filter(|&cid| !cx.compiler.has_generated_struct(cid))
-    };
+    }
+    // A runtime-conditional class's `.new` must see the concealment check
+    // (NameError while the guarded body hasn't run) and the overlay
+    // `initialize` rows -- always the dynamic arm.
+    .filter(|&cid| !cx.compiler.class(cid).runtime_conditional);
     let Some(cid) = statically_constructed else {
         // Not a compile-time class -- a constant bound to a RUNTIME class
         // (`Foo = Class.new`, a native `Struct`/`Data` class -- Batch E). Read
@@ -113,6 +117,18 @@ pub fn emit_new(
         // that only `const_set` ever creates, and reading it under `Object`
         // finds nothing.
         let rtclass = match resolved {
+            // Concealment-checked: `Conditional.new` is `uninitialized
+            // constant` until the guarded body ran, exactly as the bare
+            // constant read answers.
+            Some(cid) if cx.compiler.class(cid).runtime_conditional => {
+                let id = cid.0;
+                let fq = cx.compiler.fq_name(cid);
+                let owner = crate::constpath::ConstPath::parse(class_name)
+                    .scope()
+                    .and_then(|s| cx.resolve_class(s))
+                    .map_or(0, |c| c.0);
+                quote! { zeo_rt::conditional_class_ref(zeo_rt::ClassId(#id), #fq, zeo_rt::ClassId(#owner))? }
+            }
             Some(cid) => {
                 let id = cid.0;
                 quote! { zeo_rt::RubyValue::Class(zeo_rt::ClassId(#id)) }

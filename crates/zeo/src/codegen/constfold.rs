@@ -114,7 +114,13 @@ pub(super) fn const_form_resolves(cx: &Ctx, id: NodeId) -> Option<bool> {
             if defined_only_later(cx, id, &scopes, name) {
                 return Some(false);
             }
-            if cx.resolve_class(name).is_some() {
+            if let Some(cid) = cx.resolve_class(name) {
+                // Registered but not PROMISED -- whether a runtime-conditional
+                // class's constant exists is a runtime fact, foldable in
+                // neither direction.
+                if cx.compiler.class(cid).runtime_conditional {
+                    return None;
+                }
                 return Some(true);
             }
             // `DATA` is a genuine top-level constant for a script with an
@@ -142,6 +148,11 @@ pub(super) fn const_form_resolves(cx: &Ctx, id: NodeId) -> Option<bool> {
             let Some(scope_id) = cx.resolve_class(scope) else {
                 return Some(false);
             };
+            // A runtime-conditional SCOPE makes the whole path a runtime
+            // question.
+            if cx.compiler.class(scope_id).runtime_conditional {
+                return None;
+            }
             // `defined?(M::S)` is nil for a private constant -- the same
             // rejection of the scope operator the read itself gets.
             if cx.compiler.class(scope_id).private_constants.contains(name) {
@@ -152,7 +163,11 @@ pub(super) fn const_form_resolves(cx: &Ctx, id: NodeId) -> Option<bool> {
             }
             // The scope OPERATOR, so a top-level constant does not answer:
             // `defined?(K::TOP)` is nil even where `TOP` is set.
-            let known = class_const_in(cx, scope_id, name, ObjectReach::Excluded).is_some()
+            let nested = class_const_in(cx, scope_id, name, ObjectReach::Excluded);
+            if nested.is_some_and(|c| cx.compiler.class(c).runtime_conditional) {
+                return None;
+            }
+            let known = nested.is_some()
                 || value_const_defined_in(cx, scope_id, name, ObjectReach::Excluded);
             known.then_some(true)
         }

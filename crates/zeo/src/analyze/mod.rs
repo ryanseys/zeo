@@ -749,17 +749,19 @@ fn process_top_stmt_inner(
                     }
                     return Ok(());
                 }
-                // A guard whose only definitions are `def self.x` needs no
-                // registration at all -- a top-level `def self.x` desugars to
-                // a runtime `define_singleton_method` on `main` (the
-                // `DefMethod` arm above) -- so both branches, plain
-                // statements included, run as the ordinary `if` they are.
-                // rack's test helper gates two variants of
-                // `def self.separate_testing` on `ENV['SEPARATE']`.
-                if rewrite_guarded_main_singleton_defs(compiler, stmt) {
+                // Everything else that can honor the guard at RUNTIME does:
+                // a `def self.x` rewrites to `define_singleton_method` on
+                // `main` (rack gates two variants of
+                // `def self.separate_testing` on `ENV['SEPARATE']`), and a
+                // whole `class`/`module` registers as runtime-conditional --
+                // concealed until its body runs at document position inside
+                // this very `if` (concurrent-ruby's platform-gated executor
+                // classes). Both branches, plain statements included, keep
+                // their written order.
+                if register_guarded_top_defs(compiler, stmt)? {
                     tracing::debug!(
                         guard = cond_kind(compiler, cond),
-                        "top-level conditional def: undecidable guard over `def self.x` only -- runtime define_singleton_method"
+                        "top-level conditional def: undecidable guard -- runtime-conditional registration"
                     );
                     main_statements.push(stmt);
                     return Ok(());
@@ -769,12 +771,13 @@ fn process_top_stmt_inner(
                     "top-level conditional def: guard UNDECIDABLE -- compile error"
                 );
                 return Err(
-                    "a NEW class/module or a mixin (`include`/`prepend`) inside a top-level \
-                     `if` needs a compile-time-decidable condition (a `defined?` probe, a \
-                     version/platform/engine gate, a feature test). A guarded REOPENING of an \
-                     existing class, and a guarded `def`/`alias`/visibility change, compile \
-                     with the guard deciding at runtime -- only a conditionally-EXISTING class \
-                     or ancestry has no answer under a compile-time MRO"
+                    "a mixin (`include`/`prepend`) inside a top-level `if` needs a \
+                     compile-time-decidable condition (a `defined?` probe, a \
+                     version/platform/engine gate, a feature test) -- a conditionally-edited \
+                     ancestry of an EXISTING class has no answer under a compile-time MRO. A \
+                     guarded NEW class/module, a guarded REOPENING, and a guarded \
+                     `def`/`alias`/visibility change all compile with the guard deciding at \
+                     runtime"
                         .into(),
                 );
             }
@@ -1530,11 +1533,15 @@ fn try_conditional_reopen(
             _ => return None,
         }
     }
-    // A reopening must name an already-registered class (top-level
-    // cref/box). A new class can't be defined conditionally -- codegen has
-    // no runtime create form here.
+    // A reopening must name an already-registered UNCONDITIONAL class
+    // (top-level cref/box). A new class -- and a class that is itself
+    // runtime-conditional, whose reveal must stay inside the live `if` --
+    // goes through `register_guarded_top_defs` instead, which keeps the
+    // whole guard as runtime code rather than pushing it into the body.
     if !parts.iter().all(|p| match p {
-        Guarded::Reopen(name, ..) => compiler.resolve_class(name, &[], 0).is_some(),
+        Guarded::Reopen(name, ..) => compiler
+            .resolve_class(name, &[], 0)
+            .is_some_and(|cid| !compiler.class(cid).runtime_conditional),
         Guarded::Directive(_) => true,
     }) {
         return None;
@@ -1584,20 +1591,25 @@ fn try_conditional_reopen(
     )
 }
 
-/// An undecidable-guard top-level `if` whose only DEFINITIONS are
-/// `def self.x`: rewrite each such def, in place, to the same runtime
-/// `self.define_singleton_method(:x, lambda)` the unguarded top-level
-/// `def self.x` arm desugars to, and report `true` so the caller keeps the
-/// whole `if` as ordinary runtime code. `main`-singleton methods register
-/// nothing at compile time, so both branches -- interleaved plain statements
-/// and all -- keep their written order and semantics. Any OTHER definition
-/// shape in a branch answers `false` (those DO need registration).
-fn rewrite_guarded_main_singleton_defs(compiler: &mut Compiler, stmt: NodeId) -> bool {
+/// An undecidable-guard top-level `if` whose definitions are `def self.x`
+/// on the main object and/or whole `class`/`module` definitions. A
+/// `def self.x` rewrites in place to the same runtime
+/// `self.define_singleton_method(:x, lambda)` the unguarded arm desugars
+/// to. A `class`/`module` -- new or reopening -- REGISTERS here: a fresh
+/// one as `ClassInfo::runtime_conditional` (concealed until its body
+/// runs), every `def` in either as `Conditional::Yes`, while the node
+/// stays put so the body executes at document position inside the
+/// still-live `if`. Interleaved plain statements keep their order.
+/// `Ok(true)` means the caller keeps the whole `if` as ordinary runtime
+/// code; a branch holding any OTHER definition shape (a top-level mixin)
+/// answers `Ok(false)` and keeps the compile-time error.
+fn register_guarded_top_defs(compiler: &mut Compiler, stmt: NodeId) -> Result<bool, String> {
     fn qualifies(compiler: &Compiler, body: &[NodeId]) -> bool {
         body.iter().all(|&s| match &compiler.hir[s] {
             HirNode::DefMethod {
                 is_class_method, ..
             } => *is_class_method,
+            HirNode::ClassDef { .. } => true,
             HirNode::If {
                 then_body,
                 else_body,
@@ -1606,7 +1618,7 @@ fn rewrite_guarded_main_singleton_defs(compiler: &mut Compiler, stmt: NodeId) ->
             _ => !branch_has_top_defs(compiler, std::slice::from_ref(&s)),
         })
     }
-    fn rewrite_body(compiler: &mut Compiler, body: Vec<NodeId>) -> Vec<NodeId> {
+    fn rewrite_body(compiler: &mut Compiler, body: Vec<NodeId>) -> Result<Vec<NodeId>, String> {
         body.into_iter()
             .map(|s| match &compiler.hir[s] {
                 HirNode::DefMethod {
@@ -1624,7 +1636,7 @@ fn rewrite_guarded_main_singleton_defs(compiler: &mut Compiler, stmt: NodeId) ->
                         method_body: true,
                     });
                     let sym = compiler.hir.push(HirNode::SymbolLit(name));
-                    compiler.hir.push(HirNode::Call {
+                    Ok(compiler.hir.push(HirNode::Call {
                         receiver: Some(self_ref),
                         name: "define_singleton_method".to_string(),
                         args: vec![ArrayElem::Single(sym), ArrayElem::Single(lambda)],
@@ -1632,33 +1644,60 @@ fn rewrite_guarded_main_singleton_defs(compiler: &mut Compiler, stmt: NodeId) ->
                         block: None,
                         block_arg: None,
                         safe: false,
-                    })
+                    }))
+                }
+                // A whole `class`/`module` under the guard: REGISTER it here
+                // -- a fresh one as `ClassInfo::runtime_conditional`, a
+                // reopening as-is, every `def` in either `Conditional::Yes`
+                // -- and leave the node in place, so the body runs at its
+                // document position inside the still-live `if`.
+                HirNode::ClassDef {
+                    name,
+                    superclass,
+                    body,
+                    is_module,
+                } => {
+                    let (name, superclass, body, is_module) =
+                        (name.clone(), superclass.clone(), body.clone(), *is_module);
+                    register_class(
+                        compiler,
+                        name,
+                        superclass,
+                        is_module,
+                        &body,
+                        &[],
+                        0,
+                        Some(s),
+                        Conditional::Yes,
+                    )?;
+                    Ok(s)
                 }
                 HirNode::If { .. } => {
-                    rewrite_if(compiler, s);
-                    s
+                    rewrite_if(compiler, s)?;
+                    Ok(s)
                 }
-                _ => s,
+                _ => Ok(s),
             })
             .collect()
     }
-    fn rewrite_if(compiler: &mut Compiler, stmt: NodeId) {
+    fn rewrite_if(compiler: &mut Compiler, stmt: NodeId) -> Result<(), String> {
         let HirNode::If {
             cond,
             then_body,
             else_body,
         } = &compiler.hir[stmt]
         else {
-            return;
+            return Ok(());
         };
         let (cond, then_body, else_body) = (*cond, then_body.clone(), else_body.clone());
-        let then_body = rewrite_body(compiler, then_body);
-        let else_body = rewrite_body(compiler, else_body);
+        let then_body = rewrite_body(compiler, then_body)?;
+        let else_body = rewrite_body(compiler, else_body)?;
         compiler.hir[stmt] = HirNode::If {
             cond,
             then_body,
             else_body,
         };
+        Ok(())
     }
     let HirNode::If {
         then_body,
@@ -1666,13 +1705,13 @@ fn rewrite_guarded_main_singleton_defs(compiler: &mut Compiler, stmt: NodeId) ->
         ..
     } = &compiler.hir[stmt]
     else {
-        return false;
+        return Ok(false);
     };
     if !qualifies(compiler, then_body) || !qualifies(compiler, else_body) {
-        return false;
+        return Ok(false);
     }
-    rewrite_if(compiler, stmt);
-    true
+    rewrite_if(compiler, stmt)?;
+    Ok(true)
 }
 
 /// Walk down a chain of ONE-SIDED `if`s to the statements at the bottom,
@@ -1814,13 +1853,24 @@ fn static_const_defined_in(
         _ => return None,
     };
     let nested = format!("{}::{cname}", compiler.fq_name(target));
-    if compiler.resolve_class(&nested, &[], 0).is_some()
+    let nested_class = compiler.resolve_class(&nested, &[], 0);
+    let bare_class = compiler.resolve_class(&cname, &[], 0);
+    // A runtime-conditional class is registered but whether the constant
+    // EXISTS is settled at run time -- not foldable in either direction.
+    if nested_class
+        .into_iter()
+        .chain(bare_class)
+        .any(|c| compiler.class(c).runtime_conditional)
+    {
+        return None;
+    }
+    if nested_class.is_some()
         || compiler.class(target).const_owners.contains_key(&cname)
         // `inherit` is true by default, and every ancestry ends at Object, so a
         // TOP-LEVEL constant answers too -- `Object.const_defined?("Decimal")`
         // is the whole point of the idiom, and `M.const_defined?(:String)` is
         // true for a bare module as well.
-        || compiler.resolve_class(&cname, &[], 0).is_some()
+        || bare_class.is_some()
     {
         return Some(true);
     }
@@ -2131,26 +2181,39 @@ fn static_top_cond(
             static_const_defined_in(compiler, OBJECT_CLASS, *arg, guarded)
         }
         HirNode::Defined(inner) => match &compiler.hir[*inner] {
-            HirNode::ClassRef(name) => {
-                if compiler.resolve_class(name, cref, box_id).is_some() {
-                    Some(true)
-                } else if const_ever_written(compiler, name)
-                    || (sibling_lag && class_shaped_anywhere(compiler, box_id, name))
+            HirNode::ClassRef(name) => match compiler.resolve_class(name, cref, box_id) {
+                // Registered but not PROMISED: whether a runtime-conditional
+                // class's constant exists is settled when (if) its guarded
+                // body runs -- never foldable here.
+                Some(cid) if compiler.class(cid).runtime_conditional => None,
+                Some(_) => Some(true),
+                None if const_ever_written(compiler, name)
+                    || (sibling_lag && class_shaped_anywhere(compiler, box_id, name)) =>
                 {
                     None
-                } else {
-                    Some(false)
                 }
-            }
+                None => Some(false),
+            },
             HirNode::QualifiedConstRead(scope, name) => {
                 match compiler.resolve_class(scope, cref, box_id) {
+                    // A concealed SCOPE makes the whole path a runtime
+                    // question.
+                    Some(sid) if compiler.class(sid).runtime_conditional => None,
                     Some(sid) => {
                         // Same probe order as `constfold::class_const_in`:
                         // a class nested in `scope`, else (const lookup
                         // inherits through Object) a lexically-visible one.
                         let fq = format!("{}::{name}", compiler.fq_name(sid));
-                        if compiler.resolve_class(&fq, &[], 0).is_some()
-                            || compiler.resolve_class(name, cref, box_id).is_some()
+                        let nested = compiler.resolve_class(&fq, &[], 0);
+                        let lexical = compiler.resolve_class(name, cref, box_id);
+                        if nested
+                            .into_iter()
+                            .chain(lexical)
+                            .any(|c| compiler.class(c).runtime_conditional)
+                        {
+                            None
+                        } else if nested.is_some()
+                            || lexical.is_some()
                             // A VALUE constant `scope` assigns in its OWN body
                             // (`module Psych; VERSION = "5.4.0"`) IS defined here,
                             // even though value constants aren't fully resolved
@@ -3102,7 +3165,15 @@ fn register_class(
             &target,
             def_node,
         )?,
-        None => create_class(compiler, &superclass, is_module, target, cref, box_id)?,
+        None => create_class(
+            compiler,
+            &superclass,
+            is_module,
+            target,
+            cref,
+            box_id,
+            conditional,
+        )?,
     };
     walk_class_body(compiler, class_id, body, box_id, def_node, conditional)
 }
@@ -3433,7 +3504,9 @@ fn check_reopen_compatibility(
 
 /// Fresh creation: resolves the parent (with the subclassable-builtin
 /// gate), mints the `ClassInfo`, and stamps the definition-site facts
-/// (`lexical_parent`/`cref_parent`/`qualified_def`/overlay).
+/// (`lexical_parent`/`cref_parent`/`qualified_def`/overlay). A fresh class
+/// minted under `Conditional::Yes` is registered but not PROMISED -- see
+/// `ClassInfo::runtime_conditional`.
 fn create_class(
     compiler: &mut Compiler,
     superclass: &Option<String>,
@@ -3441,6 +3514,7 @@ fn create_class(
     target: DefinitionTarget,
     cref: &[ClassId],
     box_id: u32,
+    conditional: Conditional,
 ) -> Result<ClassId, String> {
     let parent = if is_module {
         None
@@ -3563,6 +3637,7 @@ fn create_class(
     };
     let cid = compiler.add_class(target.leaf, parent, is_module);
     let ci = &mut compiler.classes[cid.0 as usize];
+    ci.runtime_conditional = conditional == Conditional::Yes;
     // Record whether `< Super` was actually WRITTEN, so a later reopen
     // can tell a bare opening (parent defaulted to Object) from a real
     // declaration -- see the reopen arm above.
@@ -3656,6 +3731,16 @@ fn walk_class_body(
                 is_class_method,
                 ..
             } => {
+                // Under `Conditional::Yes` the whole body runs only if the
+                // guard passed, so the def stays a STATEMENT: it emits a
+                // runtime define at its document position -- the same
+                // treatment a def inside a class-body `if` gets -- and no
+                // `SiteDef` report row (the runtime define drives the hooks).
+                if conditional == Conditional::Yes {
+                    register_body_def_method(compiler, class_id, stmt, conditional)?;
+                    compiler.class_body_sites[site_idx].stmts.push(stmt);
+                    continue;
+                }
                 // The definition is consumed -- it emits nothing here. Its
                 // REPORT still belongs at this position, so record it; see
                 // `ClassBodySite::defs`. `attr_*` and a resolvable `alias`
@@ -3712,6 +3797,7 @@ fn walk_class_body(
             // the hook after the edit, which is automatic here.
             HirNode::Include(m) => {
                 let m = m.clone();
+                reject_guarded_mixin(compiler, class_id, conditional, "include")?;
                 match resolve_module_target(compiler, &m, &child_cref, box_id)? {
                     Some(target) => {
                         // A module that overrides the PRIMITIVE decides for
@@ -3730,6 +3816,7 @@ fn walk_class_body(
             }
             HirNode::Extend(m) => {
                 let m = m.clone();
+                reject_guarded_mixin(compiler, class_id, conditional, "extend")?;
                 match resolve_module_target(compiler, &m, &child_cref, box_id)? {
                     Some(target) => {
                         // Same rule as `Include`'s: an `extend_object` override
@@ -3887,6 +3974,7 @@ fn walk_class_body(
             }
             HirNode::Prepend(m) => {
                 let m = m.clone();
+                reject_guarded_mixin(compiler, class_id, conditional, "prepend")?;
                 match resolve_module_target(compiler, &m, &child_cref, box_id)? {
                     Some(target) => {
                         // A module that overrides the PRIMITIVE decides for
@@ -3911,6 +3999,7 @@ fn walk_class_body(
             // a silently wrong ancestry.
             HirNode::ClassMethodPrepend(m) => {
                 let m = m.clone();
+                reject_guarded_mixin(compiler, class_id, conditional, "prepend")?;
                 match resolve_module_target(compiler, &m, &child_cref, box_id)? {
                     Some(target) => {
                         // Both hooks take the SINGLETON class as their
@@ -4002,6 +4091,27 @@ fn walk_class_body(
                 compiler.class_body_sites[site_idx].stmts.push(stmt);
             }
         }
+    }
+    Ok(())
+}
+
+/// A mixin under a runtime-undecidable guard is honest only when the class
+/// being edited is itself runtime-conditional (concealed until the same
+/// guard passes, so its static edges are unobservable while false). Editing
+/// an EXISTING class's ancestry on a guard has no compile-time MRO answer --
+/// the same rejection the top-level walk gives a guarded bare mixin.
+fn reject_guarded_mixin(
+    compiler: &Compiler,
+    class_id: ClassId,
+    conditional: Conditional,
+    verb: &str,
+) -> Result<(), String> {
+    if conditional == Conditional::Yes && !compiler.class(class_id).runtime_conditional {
+        return Err(format!(
+            "`{verb}` into an existing class under a runtime-undecidable guard isn't \
+             supported (zeo limitation: the conditional ancestry edit has no compile-time \
+             MRO answer)"
+        ));
     }
     Ok(())
 }

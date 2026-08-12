@@ -333,6 +333,19 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
             .unwrap_or(zeo_rt::RubyValue::Nil)
         };
     }
+    // `defined?` of a RUNTIME-CONDITIONAL class: registered, but whether the
+    // constant exists is settled by its guarded body having run. Asked of the
+    // concealment table, the same authority every other by-name path consults.
+    if let Some(cid) = conditional_class_of_defined_form(cx, id) {
+        let cls = cid.0;
+        return quote! {
+            if zeo_rt::class_revealed(zeo_rt::ClassId(#cls)) {
+                zeo_rt::RubyValue::Str(zeo_rt::string_new("constant".to_string()))
+            } else {
+                zeo_rt::RubyValue::Nil
+            }
+        };
+    }
     // `defined?(Scope::NAME)` where the scope is a known class/module but the
     // name isn't statically there. Folding that to nil is wrong the moment
     // anything does `const_set` -- `uri/common.rb`'s `remove_const(:Parser) if
@@ -1047,7 +1060,19 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
                 // statically, never reaching `emit_const_read`'s own guard.
                 let path = crate::constpath::ConstPath::parse(name);
                 let guard = private_const_guard(cx, path.scope(), path.base());
-                quote! { { #guard zeo_rt::RubyValue::Class(zeo_rt::ClassId(#id)) } }
+                if cx.compiler.class(cid).runtime_conditional {
+                    // Registered but not PROMISED: whether this constant
+                    // exists is settled by the guarded body having run --
+                    // `NameError` until `reveal_class` fires there.
+                    let fq = cx.compiler.fq_name(cid);
+                    let owner = path
+                        .scope()
+                        .and_then(|s| cx.resolve_class(s))
+                        .map_or(0, |c| c.0);
+                    quote! { { #guard zeo_rt::conditional_class_ref(zeo_rt::ClassId(#id), #fq, zeo_rt::ClassId(#owner))? } }
+                } else {
+                    quote! { { #guard zeo_rt::RubyValue::Class(zeo_rt::ClassId(#id)) } }
+                }
             }
             // Not a statically known class. A JOINED name (`NS::Item`, the
             // form `constant_path_name` produces) has to read as `Item`
@@ -1062,11 +1087,17 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         HirNode::QualifiedConstRead(scope, name)
             if qualified_const_class(cx, scope, name).is_some() =>
         {
-            let id = qualified_const_class(cx, scope, name)
-                .expect("guarded above")
-                .0;
+            let cid = qualified_const_class(cx, scope, name).expect("guarded above");
+            let id = cid.0;
             let guard = private_const_guard(cx, Some(scope), name);
-            quote! { { #guard zeo_rt::RubyValue::Class(zeo_rt::ClassId(#id)) } }
+            if cx.compiler.class(cid).runtime_conditional {
+                // Same runtime-conditional rule as the `ClassRef` arm above.
+                let fq = cx.compiler.fq_name(cid);
+                let owner = cx.resolve_class(scope).map_or(0, |c| c.0);
+                quote! { { #guard zeo_rt::conditional_class_ref(zeo_rt::ClassId(#id), #fq, zeo_rt::ClassId(#owner))? } }
+            } else {
+                quote! { { #guard zeo_rt::RubyValue::Class(zeo_rt::ClassId(#id)) } }
+            }
         }
         HirNode::New {
             class_name,
@@ -2599,6 +2630,19 @@ pub(super) fn split_const_path(path: &str) -> (Option<&str>, &str) {
 /// `M.public_constant :S` restores the name and only the runtime flag knows.
 /// It costs one probe, and only where the compiler already saw a
 /// `private_constant` -- every ordinary constant read is untouched.
+/// The runtime-conditional class a `defined?(X)` / `defined?(A::B)` form
+/// statically names, if any. Such a form must never fold to the literal
+/// `"constant"` (or to nil): the answer is the concealment table's, the same
+/// authority every other by-name path consults.
+fn conditional_class_of_defined_form(cx: &Ctx, id: NodeId) -> Option<ClassId> {
+    let cid = match &cx.compiler.hir[id] {
+        HirNode::ClassRef(name) => cx.resolve_class(name)?,
+        HirNode::QualifiedConstRead(scope, name) => qualified_const_class(cx, scope, name)?,
+        _ => return None,
+    };
+    cx.compiler.class(cid).runtime_conditional.then_some(cid)
+}
+
 pub(super) fn private_const_guard(
     cx: &Ctx,
     scope: Option<&str>,

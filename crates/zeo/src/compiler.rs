@@ -328,6 +328,18 @@ pub struct ClassInfo {
     /// exactly as in CRuby (see `Compiler::feature_active`). `None` for every
     /// always-on class (all user classes and all core builtins).
     pub feature_gate: Option<&'static str>,
+    /// Registered but not PROMISED -- the class-level lift of
+    /// [`Scope::runtime_conditional`]. `true` for a NEW class/module defined
+    /// under a top-level guard zeo cannot decide: its shape registers (the
+    /// static MRO needs one) and its body still runs at document position
+    /// inside the live `if`, but nothing may treat the constant as existing
+    /// before that body runs. Codegen emits `zeo_rt::conceal_class` in the
+    /// prologue and `zeo_rt::reveal_class` at the head of every body site;
+    /// every `defined?`/constant fold answers at run time instead of compile
+    /// time; every `def` in the body is `Conditional::Yes`, so method rows
+    /// ride the runtime overlay the same way. See
+    /// `analyze`'s guarded-top-definition rewrite for what sets it.
+    pub runtime_conditional: bool,
 }
 
 /// One name, bound on one class -- CRuby's `rb_method_entry_t` (method.h:55).
@@ -977,6 +989,7 @@ impl Compiler {
                 is_builtin: false,
                 builtin_overlay: None,
                 feature_gate: None,
+                runtime_conditional: false,
             }],
             scopes: Vec::new(),
             names: Names::default(),
@@ -1548,6 +1561,7 @@ impl Compiler {
             is_builtin: false,
             builtin_overlay: None,
             feature_gate: None,
+            runtime_conditional: false,
         });
         ClassId((self.classes.len() - 1) as u32)
     }

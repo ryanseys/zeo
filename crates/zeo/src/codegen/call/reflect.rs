@@ -107,6 +107,11 @@ pub(super) fn try_const_reflection(
     // `const_get`/`const_defined?` reach through to `Object`, unlike the
     // scope operator -- `K.const_get(:Errno)` answers where `K::Errno` raises.
     let as_class = class_const_in(cx, target, &cname, ObjectReach::Included);
+    // A runtime-conditional class is the runtime row's to answer: this fold
+    // would bake an existence the concealment table decides.
+    if as_class.is_some_and(|c| cx.compiler.class(c).runtime_conditional) {
+        return None;
+    }
     if name == "const_defined?" {
         // A BUILTIN's ext constants (`Socket::AF_INET6`, `Float::INFINITY`) are
         // seeded straight into `const_owners` by `analyze::seed_ext_const_owners`

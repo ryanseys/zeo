@@ -836,6 +836,15 @@ fn materialize_class_methods(compiler: &mut Compiler, class_id: ClassId) -> Resu
                 singleton_targets.push((m, sid));
             }
         }
+        // NOTE: a runtime-conditional `def self.x` (and a conditional def
+        // reached through `extend`) DOES keep its static row here, unlike the
+        // instance-side rule in `materialize_methods`. That is deliberate:
+        // the row is the compile-time SHIM the extend path dispatches through
+        // (fileutils' `StreamUtils_#fu_windows?`, defined under a `case` and
+        // reached as `FileUtils.fu_windows?`), with last-wins picking the
+        // branch the static target takes. The name still rides
+        // `runtime_patches`, so a live overlay row from the branch that
+        // actually ran outranks the shim at every call site.
         for sid in compiler.class(cid).own_class_methods.clone() {
             let name = compiler.scope(sid).name.clone();
             let name_id = compiler.names.intern(&name);

@@ -226,8 +226,12 @@ pub fn infer_type_with_locals(
                 //     dynamically for the same reason every other call site
                 //     does (`may_be_patched_at_runtime`), and the result is
                 //     a `RubyValue`.
+                //   - a RUNTIME-CONDITIONAL class: `emit_new` always takes
+                //     the dynamic arm (concealment check + overlay rows), so
+                //     the value is a `RubyValue` here too.
                 Some(cid)
                     if compiler.has_generated_struct(cid)
+                        && !compiler.class(cid).runtime_conditional
                         && compiler.class_method_in_chain(cid, "new").is_none()
                         && !compiler.may_be_patched_at_runtime("initialize")
                         && !compiler.may_be_patched_at_runtime("new") =>
@@ -240,18 +244,20 @@ pub fn infer_type_with_locals(
         HirNode::LocalRead(name) => locals.get(name).copied().unwrap_or(TyKind::Poly),
         // A bare/qualified constant that names a class or module is a
         // first-class Class value; one that doesn't stays an
-        // ordinary value constant (type unknown -> Poly).
+        // ordinary value constant (type unknown -> Poly). A
+        // runtime-conditional class stays Poly: the read is a runtime
+        // question (NameError while concealed), so nothing may fold on it.
         HirNode::ClassRef(name) => {
             match compiler.resolve_class(name, &compiler.cref_of(defining), box_id) {
-                Some(cid) => TyKind::ClassObj(cid),
-                None => TyKind::Poly,
+                Some(cid) if !compiler.class(cid).runtime_conditional => TyKind::ClassObj(cid),
+                _ => TyKind::Poly,
             }
         }
         HirNode::QualifiedConstRead(scope, name) => {
             let path = format!("{scope}::{name}");
             match compiler.resolve_class(&path, &compiler.cref_of(defining), box_id) {
-                Some(cid) => TyKind::ClassObj(cid),
-                None => TyKind::Poly,
+                Some(cid) if !compiler.class(cid).runtime_conditional => TyKind::ClassObj(cid),
+                _ => TyKind::Poly,
             }
         }
         // `Fiber.new { }` / `Thread.new { }` / `Mutex.new` / `Queue.new` --

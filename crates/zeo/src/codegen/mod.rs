@@ -1908,6 +1908,13 @@ fn codegen(analyzed: &Analyzed, sink: &mut ItemSink<'_>) -> std::io::Result<()> 
             quote! { #ident::__register(&mut __registry); }
         };
         registrations.push(register);
+        // A runtime-conditional class registers its SHAPE but starts
+        // CONCEALED: the constant does not exist until the guarded body
+        // runs (`reveal_class`, emitted at the head of every body site).
+        if compiler.class(ClassId(idx as u32)).runtime_conditional {
+            let id = idx as u32;
+            registrations.push(quote! { zeo_rt::conceal_class(#id); });
+        }
         // A COMPILED `Struct`: its member list, so `Struct`'s one shared
         // protocol (`to_a`, `[]`, `==`, `each`, `dig`, `inspect`, `Marshal`)
         // finds it by MRO and reaches the members by index, exactly as it does
@@ -3216,6 +3223,14 @@ pub(crate) fn emit_class_body_site_lifted(
     let const_added = emit_declaration_const_added(compiler, site);
     let const_location = emit_declaration_const_location(compiler, site);
     let inherited_hook = emit_inherited_hook(compiler, site);
+    // A runtime-conditional class's guarded definition just RAN: the constant
+    // exists from here on. Before `const_added`/`inherited`, matching
+    // `vm_declare_class`'s order (constant set first) -- and at EVERY site,
+    // since whichever branch runs must reveal.
+    let reveal = compiler.class(cid).runtime_conditional.then(|| {
+        let id = cid.0;
+        quote! { zeo_rt::reveal_class(#id); }
+    });
     let stmts = &site.stmts;
     // A body whose last SOURCE statement analyze consumed -- the emitted
     // statements no longer end where ruby's value comes from. Computed before
@@ -3235,7 +3250,7 @@ pub(crate) fn emit_class_body_site_lifted(
         ),
     };
     if stmts.is_empty() {
-        let head = quote! { #alias_check #const_location #const_added #inherited_hook };
+        let head = quote! { #reveal #alias_check #const_location #const_added #inherited_hook };
         return match value {
             BodyValue::Discard => (quote! {}, head),
             _ => {
@@ -3350,7 +3365,7 @@ pub(crate) fn emit_class_body_site_lifted(
     // one, where the body's result has to outlive the check.
     let inline_form = match value {
         BodyValue::Discard => {
-            quote! { #const_location #const_added #inherited_hook { #frame #body }?; #alias_check }
+            quote! { #reveal #const_location #const_added #inherited_hook { #frame #body }?; #alias_check }
         }
         // `tail_value` overrides the emitted body's own tail when analyze took
         // the last source statement, so what the block evaluates to is the
@@ -3359,7 +3374,7 @@ pub(crate) fn emit_class_body_site_lifted(
             let tail = tail_value(quote! { __body_value });
             quote! {
                 {
-                    #const_location #const_added #inherited_hook
+                    #reveal #const_location #const_added #inherited_hook
                     let __body_value = { #frame #body }?;
                     #alias_check
                     #tail
@@ -3404,7 +3419,7 @@ pub(crate) fn emit_class_body_site_lifted(
             #[inline(never)]
             fn #ident() -> Result<zeo_rt::RubyValue, zeo_rt::Signal> { #frame #body }
         },
-        quote! { #const_location #const_added #inherited_hook #ident()?; #alias_check },
+        quote! { #reveal #const_location #const_added #inherited_hook #ident()?; #alias_check },
     )
 }
 
@@ -3905,7 +3920,16 @@ fn emit_user_module_bridges(compiler: &Compiler) -> Vec<TokenStream> {
         if idx == 0 || class.is_builtin || class.is_bootstrap || !class.is_module {
             continue;
         }
-        if class.own_methods.is_empty() || !compiler.feature_active(ClassId(idx as u32)) {
+        // A runtime-conditional `def`'s bridge would be a live static row for
+        // a body that may never run -- its row is the runtime define's, same
+        // as everywhere else.
+        let bridged: Vec<crate::compiler::ScopeId> = class
+            .own_methods
+            .iter()
+            .copied()
+            .filter(|&sid| !compiler.scope(sid).runtime_conditional)
+            .collect();
+        if bridged.is_empty() || !compiler.feature_active(ClassId(idx as u32)) {
             continue;
         }
         let cid = ClassId(idx as u32);
@@ -3920,15 +3944,14 @@ fn emit_user_module_bridges(compiler: &Compiler) -> Vec<TokenStream> {
             .map(|c| if c.is_alphanumeric() { c } else { '_' })
             .collect();
         let container = format_ident!("__um_{}_{}", idx, flat);
-        let fns = class
-            .own_methods
+        let fns = bridged
             .iter()
             .map(|&sid| emit_builtin_method_fn(compiler, cid, sid));
         containers.push(quote! {
             #[allow(non_snake_case)]
             pub mod #container { #[allow(unused_imports)] use super::*; #(#fns)* }
         });
-        for &sid in &class.own_methods {
+        for &sid in &bridged {
             let scope = compiler.scope(sid);
             let method_ident = safe_ident(&scope.name);
             let fn_path = quote! { #container::#method_ident };
