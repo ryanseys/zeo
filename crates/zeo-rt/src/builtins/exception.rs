@@ -493,14 +493,32 @@ pub(crate) fn report_exception(exc_value: &RubyValue, preamble: Option<&str>) {
         out.push_str(preamble);
         out.push('\n');
     }
+    // A MULTI-LINE message keeps the class tag on the first line and lets the
+    // rest run underneath, unindented -- CRuby's `error_pos`/`print_errinfo`
+    // split. `TypeError: X is not a class\n<file>: previous definition ...` is
+    // the shape that shows it, and it is the one a kind collision raises.
+    let (head, tail) = match msg.split_once('\n') {
+        Some((head, tail)) => (head, Some(tail)),
+        None => (msg.as_str(), None),
+    };
     match backtrace_lines(exc_value) {
         Some(lines) if !lines.is_empty() => {
-            out.push_str(&format!("{}: {} ({})\n", lines[0], msg, cls));
+            out.push_str(&format!("{}: {} ({})\n", lines[0], head, cls));
+            if let Some(tail) = tail {
+                out.push_str(tail);
+                out.push('\n');
+            }
             for l in &lines[1..] {
                 out.push_str(&format!("\tfrom {l}\n"));
             }
         }
-        _ => out.push_str(&format!("{msg} ({cls})\n")),
+        _ => {
+            out.push_str(&format!("{head} ({cls})\n"));
+            if let Some(tail) = tail {
+                out.push_str(tail);
+                out.push('\n');
+            }
+        }
     }
     eprint!("{out}");
 }
