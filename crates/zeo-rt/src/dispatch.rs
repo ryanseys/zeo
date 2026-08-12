@@ -2090,6 +2090,15 @@ pub fn responds_to_or_missing(
             return Ok(f.call(o, &args, None)?.truthy());
         }
     } else {
+        // A CLASS receiver's hook is a CLASS-level `respond_to_missing?`
+        // (`def self.respond_to_missing?`, faker's Base) -- probed through
+        // the same singleton-chain resolution its `method_missing` twin
+        // uses.
+        if let RubyValue::Class(cid) = recv
+            && class_defines_user_hook(*cid, rtm)
+        {
+            return Ok(send_class_walking(*cid, 0, rtm, &args, None)?.truthy());
+        }
         // A builtin-value receiver's hook can only come from a reopen
         // (`class Integer; def respond_to_missing?...`) -- the value-method
         // probe per ancestor.
@@ -5066,10 +5075,50 @@ fn send_value_in_reason(
     if let Some(old) = alias_target(recv.class_id(), name) {
         return send_value_in_reason(box_id, recv, old, args, block, reason);
     }
+    // A CLASS-level `method_missing` (`def self.method_missing`, or one in
+    // `class << self`) catches a missing CLASS method, exactly as an
+    // instance's hook catches an instance miss (`method_missing_or_raise`)
+    // -- the whole public API of Faker-style gems. Guarded on the hook
+    // actually being user-defined so the plain miss below stays one raise,
+    // and on the missing name not being `method_missing` itself.
+    if let RubyValue::Class(cid) = recv {
+        let mm = crate::symbol::wk::method_missing();
+        if name != mm && class_defines_user_hook(*cid, mm) {
+            let mut full_args = Vec::with_capacity(args.len() + 1);
+            full_args.push(RubyValue::Symbol(name));
+            full_args.extend_from_slice(args);
+            return send_class_walking(*cid, 0, mm, &full_args, block);
+        }
+    }
     // Every receiver shape -- class, module, immediate, object -- gets its
     // message from the one method-missing raiser, so the class/module form
     // ("for class Widget") and the instance form stay in step.
     Err(raise_method_missing(recv, &name.to_string(), args, reason))
+}
+
+/// Whether any ancestor supplies a USER-DEFINED class-level `name` -- a
+/// runtime overlay row (defs, singleton prepends) or a registered flattened
+/// class-method row. Builtin class-method tables are deliberately not
+/// consulted: this probes user HOOKS (`method_missing`,
+/// `respond_to_missing?`), which no builtin defines as a class method.
+/// Module ancestors past the receiver itself contribute nothing to a
+/// singleton chain and are skipped, as `send_class_walking` skips them.
+fn class_defines_user_hook(recv_class: ClassId, name: Symbol) -> bool {
+    for &anc in ancestors_of_value(recv_class) {
+        let entry = registry().entries.get(&anc.0);
+        if anc != recv_class && entry.is_some_and(|e| e.is_module) {
+            continue;
+        }
+        if crate::runtime_meta::is_live()
+            && crate::runtime_meta::overlay_class_method(anc, name).is_some()
+        {
+            return true;
+        }
+        if entry.is_some_and(|e| e.class_methods.contains_key(&name)) {
+            return true;
+        }
+    }
+    false
 }
 
 /// What one call site remembered: the receiver class, and the method that
