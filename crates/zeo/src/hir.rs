@@ -384,6 +384,9 @@ pub struct Hir {
     /// singleton, one level beyond the enclosing-class retagging -- see
     /// [`in_singleton_body`](Self::in_singleton_body).
     in_singleton_body: bool,
+    /// How many `def` bodies enclose the node being lowered -- see
+    /// [`is_in_def_body`](Self::is_in_def_body).
+    def_depth: u32,
     /// Receivers zeo SYNTHESIZED for calls ruby writes with no receiver at all
     /// -- see [`is_implicit_self_receiver`](Self::is_implicit_self_receiver).
     implicit_self_receivers: std::collections::HashSet<NodeId>,
@@ -567,6 +570,24 @@ impl Hir {
     /// self` body.
     pub(crate) fn is_in_singleton_body(&self) -> bool {
         self.in_singleton_body
+    }
+
+    /// Lowers a `def`'s body with the method-body context marked. A depth,
+    /// not a flag: a block or lambda inside the `def` is still inside it,
+    /// while a `def` inside a `define_method` block nests one deeper.
+    pub(crate) fn in_def_body<T>(&mut self, body: impl FnOnce(&mut Self) -> T) -> T {
+        self.def_depth += 1;
+        let out = body(self);
+        self.def_depth -= 1;
+        out
+    }
+
+    /// Whether the node being lowered sits inside a `def`'s body -- the one
+    /// position the analyze walk never registers a class-body site in (ruby
+    /// itself rejects a `class` keyword there), so a desugar that would mint
+    /// a `ClassDef` marker must stay a runtime send instead.
+    pub(crate) fn is_in_def_body(&self) -> bool {
+        self.def_depth > 0
     }
 
     /// The innermost enclosing `class`/`module`'s name as written, or `None` at
