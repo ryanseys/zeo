@@ -661,14 +661,32 @@ fn process_top_stmt_inner(
         // spreads M's instance methods (and constants) program-wide and a
         // bare `M`-method call resolves through implicit self.
         let m = m.clone();
-        match resolve_module_target(compiler, &m, &[], 0)? {
-            Some(target) => compiler.classes[OBJECT_CLASS.0 as usize]
+        match resolve_module_target(compiler, &m, &[], 0) {
+            MixinTarget::Static(target) => compiler.classes[OBJECT_CLASS.0 as usize]
                 .includes
                 .push(target),
             // Registration-only otherwise, so the deferred read has to be added
             // to the statements codegen emits or it would never run.
-            None => {
+            MixinTarget::DeferredRead => {
                 defer_unresolved_directive(compiler, stmt, &m);
+                main_statements.push(stmt);
+            }
+            // Top-level `include M` is `Object.include(M)` -- ruby puts a
+            // private `include` on the main object that forwards there, and
+            // zeo's main has no such row, so the receiver is spelled out.
+            MixinTarget::Runtime => {
+                compiler.runtime_patches_any_name = true;
+                let object = compiler.hir.push(HirNode::ClassRef("Object".to_string()));
+                let module = compiler.hir.push(HirNode::ClassRef(m));
+                compiler.hir[stmt] = HirNode::Call {
+                    receiver: Some(object),
+                    name: "include".to_string(),
+                    args: vec![ArrayElem::Single(module)],
+                    kwargs: Vec::new(),
+                    block: None,
+                    block_arg: None,
+                    safe: false,
+                };
                 main_statements.push(stmt);
             }
         }
@@ -3866,8 +3884,8 @@ fn walk_class_body(
                 )? {
                     continue;
                 }
-                match resolve_module_target(compiler, &m, &child_cref, box_id)? {
-                    Some(target) => {
+                match resolve_module_target(compiler, &m, &child_cref, box_id) {
+                    MixinTarget::Static(target) => {
                         // A module that overrides the PRIMITIVE decides for
                         // itself whether the mixin happens at all -- so the
                         // ancestry edit stops being a compile-time fact and
@@ -3879,7 +3897,12 @@ fn walk_class_body(
                         }
                         compiler.class_body_sites[site_idx].stmts.push(stmt);
                     }
-                    None => defer_in_class_body(compiler, class_id, site_idx, stmt, &m),
+                    MixinTarget::DeferredRead => {
+                        defer_in_class_body(compiler, class_id, site_idx, stmt, &m)
+                    }
+                    MixinTarget::Runtime => {
+                        defer_runtime_mixin_in_body(compiler, site_idx, stmt)
+                    }
                 }
             }
             HirNode::Extend(m) => {
@@ -3896,8 +3919,8 @@ fn walk_class_body(
                 )? {
                     continue;
                 }
-                match resolve_module_target(compiler, &m, &child_cref, box_id)? {
-                    Some(target) => {
+                match resolve_module_target(compiler, &m, &child_cref, box_id) {
+                    MixinTarget::Static(target) => {
                         // Same rule as `Include`'s: an `extend_object` override
                         // owns the decision, so the static edit gives way to a
                         // send at this position.
@@ -3908,7 +3931,12 @@ fn walk_class_body(
                         }
                         compiler.class_body_sites[site_idx].stmts.push(stmt);
                     }
-                    None => defer_in_class_body(compiler, class_id, site_idx, stmt, &m),
+                    MixinTarget::DeferredRead => {
+                        defer_in_class_body(compiler, class_id, site_idx, stmt, &m)
+                    }
+                    MixinTarget::Runtime => {
+                        defer_runtime_mixin_in_body(compiler, site_idx, stmt)
+                    }
                 }
             }
             // `refine Target do ... end`. The holder module registered just
@@ -4065,8 +4093,8 @@ fn walk_class_body(
                 )? {
                     continue;
                 }
-                match resolve_module_target(compiler, &m, &child_cref, box_id)? {
-                    Some(target) => {
+                match resolve_module_target(compiler, &m, &child_cref, box_id) {
+                    MixinTarget::Static(target) => {
                         // A module that overrides the PRIMITIVE decides for
                         // itself whether the mixin happens at all -- so the
                         // ancestry edit stops being a compile-time fact and
@@ -4078,7 +4106,12 @@ fn walk_class_body(
                         }
                         compiler.class_body_sites[site_idx].stmts.push(stmt);
                     }
-                    None => defer_in_class_body(compiler, class_id, site_idx, stmt, &m),
+                    MixinTarget::DeferredRead => {
+                        defer_in_class_body(compiler, class_id, site_idx, stmt, &m)
+                    }
+                    MixinTarget::Runtime => {
+                        defer_runtime_mixin_in_body(compiler, site_idx, stmt)
+                    }
                 }
             }
             // The singleton half. See `HirNode::ClassMethodPrepend`. A module
@@ -4106,8 +4139,8 @@ fn walk_class_body(
                 )? {
                     continue;
                 }
-                match resolve_module_target(compiler, &m, &child_cref, box_id)? {
-                    Some(target) => {
+                match resolve_module_target(compiler, &m, &child_cref, box_id) {
+                    MixinTarget::Static(target) => {
                         // Both hooks take the SINGLETON class as their
                         // argument, which zeo has no compile-time class for --
                         // so a module that defines either stays a clean
@@ -4127,7 +4160,15 @@ fn walk_class_body(
                             .class_method_prepends
                             .push(target);
                     }
-                    None => defer_in_class_body(compiler, class_id, site_idx, stmt, &m),
+                    MixinTarget::DeferredRead => {
+                        defer_in_class_body(compiler, class_id, site_idx, stmt, &m)
+                    }
+                    // The singleton spelling (`singleton_class.prepend(M)`)
+                    // hands the hooks the real singleton class at runtime, so
+                    // the rejection above has nothing to guard here.
+                    MixinTarget::Runtime => {
+                        defer_runtime_mixin_in_body(compiler, site_idx, stmt)
+                    }
                 }
             }
             // `IvarWrite`: a bare `@x = expr` in a class body is an ivar on
@@ -4235,17 +4276,20 @@ fn defer_guarded_mixin(
     if conditional != Conditional::Yes || compiler.class(class_id).runtime_conditional {
         return Ok(false);
     }
-    match resolve_module_target(compiler, module, cref, box_id)? {
-        Some(target) => defer_mixin_to_runtime(compiler, target),
+    match resolve_module_target(compiler, module, cref, box_id) {
+        MixinTarget::Static(target) => {
+            defer_mixin_to_runtime(compiler, target);
+            let send = crate::lower::defs::runtime_directive_spelling(&mut compiler.hir, stmt)
+                .expect("a mixin directive is not `refine`")
+                .expect("every mixin directive has a runtime spelling");
+            compiler.class_body_sites[site_idx].stmts.push(send);
+        }
         // A module zeo cannot name at compile time de-optimizes EVERY name
-        // instead -- a static fast path is not worth a wrong override, and
-        // the shape is rare.
-        None => compiler.runtime_patches_any_name = true,
+        // instead -- a static fast path is not worth a wrong override.
+        MixinTarget::DeferredRead | MixinTarget::Runtime => {
+            defer_runtime_mixin_in_body(compiler, site_idx, stmt);
+        }
     }
-    let send = crate::lower::defs::runtime_directive_spelling(&mut compiler.hir, stmt)
-        .expect("a mixin directive is not `refine`")
-        .expect("every mixin directive has a runtime spelling");
-    compiler.class_body_sites[site_idx].stmts.push(send);
     Ok(true)
 }
 
@@ -4557,29 +4601,39 @@ fn register_conditional_defs(
     Ok(())
 }
 
-/// Resolves an `include`/`extend`/`prepend` target name to the class/module it
-/// mixes in -- or `Ok(None)` when the name is nowhere in the program at all, in
-/// which case the caller must let the directive run as ordinary code so the miss
-/// surfaces the way Ruby surfaces it.
+/// What an `include`/`extend`/`prepend` target name resolves to.
+enum MixinTarget {
+    /// A class/module zeo compiled: the ancestry edit is a compile-time fact.
+    Static(ClassId),
+    /// A name nowhere in the program. The directive runs as ordinary code so
+    /// the constant read raises `NameError` the way ruby raises it -- see
+    /// [`defer_unresolved_directive`].
+    DeferredRead,
+    /// A name the program DOES assign, to something no static MRO can name --
+    /// a module MINTED at run time. See [`defer_runtime_mixin`].
+    Runtime,
+}
+
+/// Resolves an `include`/`extend`/`prepend` target name.
 ///
 /// Ruby doesn't reject `extend FFI` when `FFI` is undefined: `include`/`extend`/
 /// `prepend` are ordinary method calls, so the constant is READ first and raises
 /// `NameError` from inside the class body -- and only if the body runs. Reporting
 /// it at compile time instead means a program whose module comes from a native
 /// extension zeo doesn't have, or from a branch that never executes, can't be
-/// built at all. See `defer_unresolved_directive` for the rewrite.
+/// built at all.
 ///
-/// A name the program DOES assign (`M = Module.new; include M`) stays a hard
-/// error: the constant would read back fine at runtime and the mixin would then
-/// vanish silently, because a compiled class dispatches off a static MRO that a
-/// runtime splice can't reach. Unknown SUPERCLASSES stay loud for the same
-/// reason -- zeo has to lay out a struct for one.
+/// A name the program DOES assign (`M = Module.new; include M`) used to be a
+/// hard error, on the grounds that a compiled class dispatches off a static
+/// MRO a runtime splice cannot reach. It reaches it now: the directive keeps
+/// its runtime self-send and every call site widens. Unknown SUPERCLASSES stay
+/// loud, because zeo has to lay out a struct for one.
 fn resolve_module_target(
     compiler: &mut Compiler,
     name: &str,
     cref: &[ClassId],
     box_id: u32,
-) -> Result<Option<ClassId>, String> {
+) -> MixinTarget {
     let resolved = compiler
         .resolve_class(name, cref, box_id)
         // A module defined LATER in the flattened list (hoisted deferred
@@ -4588,19 +4642,44 @@ fn resolve_module_target(
         .or_else(|| resolve_or_create_lexical(compiler, name, cref, box_id, None));
     let resolved = resolved.or_else(|| resolve_const_alias(compiler, name, cref, box_id));
     match resolved {
-        Some(cid) => Ok(Some(cid)),
-        None if !compiler.assigns_const_path(name) => Ok(None),
+        Some(cid) => MixinTarget::Static(cid),
+        None if !compiler.assigns_const_path(name) => MixinTarget::DeferredRead,
         // A second NAME for a module (`Constants = ::Socket::Constants`) that
         // resolves to nothing zeo compiled: spelled directly, that same include
         // defers to the runtime constant read above, and reaching the module
-        // through an alias must not change the answer. The hard error below is
-        // for a constant holding a module MINTED at run time (`M =
-        // Module.new`), which no static MRO can ever reach.
-        None if is_const_path_alias(compiler, name, cref, box_id) => Ok(None),
-        None => Err(format!(
-            "unknown module `{name}` (must be defined earlier in the file)"
-        )),
+        // through an alias must not change the answer.
+        None if is_const_path_alias(compiler, name, cref, box_id) => MixinTarget::DeferredRead,
+        None => MixinTarget::Runtime,
     }
+}
+
+/// A mixin whose module zeo cannot name, kept as the runtime self-send its
+/// class body serves. `runtime_meta::splice_mixin` performs the ancestry edit
+/// and fires the hook when the body executes; the call-site widening has to
+/// happen NOW, or a call folded at compile time reaches the class's own body
+/// underneath an override the splice installed.
+///
+/// The shape is a constant the program assigns a module VALUE to. net-ssh
+/// picks its `Prompt` out of three candidates behind a rescued require;
+/// rspec-rails builds `ControllerAssertionDelegator` by calling
+/// `AssertionDelegator.new(...)`; coderunner's `SYSTEM_MODULE` names whichever
+/// batch system the host runs. All of them then `include` the constant.
+///
+/// Widening EVERY name is the blunt version -- the module's own method list is
+/// what wants de-optimizing, and a runtime module has none to read. It costs
+/// the static fast path in programs that do this and nothing anywhere else.
+fn defer_runtime_mixin(compiler: &mut Compiler, stmt: NodeId) -> NodeId {
+    compiler.runtime_patches_any_name = true;
+    crate::lower::defs::runtime_directive_spelling(&mut compiler.hir, stmt)
+        .expect("a mixin directive is not `refine`")
+        .expect("every mixin directive has a runtime spelling")
+}
+
+/// [`defer_runtime_mixin`] for a directive inside a `class`/`module` body:
+/// the send runs at the site's own document position.
+fn defer_runtime_mixin_in_body(compiler: &mut Compiler, site_idx: usize, stmt: NodeId) {
+    let send = defer_runtime_mixin(compiler, stmt);
+    compiler.class_body_sites[site_idx].stmts.push(send);
 }
 
 /// The class a `class Name < Super` clause names, resolved the way ruby
