@@ -315,9 +315,7 @@ impl VaVal {
             VaInner::F32(_) => Type::f32(),
             VaInner::F64(_) => Type::f64(),
             VaInner::Ptr(_) => Type::pointer(),
-            VaInner::Struct { elements, .. } => {
-                Type::structure(elements.iter().map(elem_type))
-            }
+            VaInner::Struct { elements, .. } => Type::structure(elements.iter().map(elem_type)),
         }
     }
 
