@@ -90,6 +90,9 @@ selection (at least one, they add up):
                           --refresh includes those too
   --unprobed              probe ledger rows that have no verdict yet
   --matching <text>       re-probe rows whose outcome detail contains <text>
+  --outcome <tag>         re-probe rows with exactly this outcome tag
+                          (`no-entry-point`, `no-lib-dir`, ...) -- the
+                          selector for buckets whose detail is empty
                           -- how a landed fix is measured
   --matching-name <text>  re-probe rows whose gem NAME contains <text>, for a
                           stale band no detail substring can select
@@ -2768,6 +2771,7 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
     let (mut limit, mut popular): (Option<usize>, Option<usize>) = (None, None);
     let mut matching: Option<String> = None;
     let mut matching_name: Option<String> = None;
+    let mut outcome_filter: Option<String> = None;
     let mut failing = false;
     let (mut unprobed, mut seed_index) = (false, false);
     let mut positional: Vec<String> = Vec::new();
@@ -2826,6 +2830,13 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             },
+            "--outcome" => match it.next() {
+                Some(v) => outcome_filter = Some(v.clone()),
+                None => {
+                    eprintln!("gem-probe: --outcome needs an outcome tag (e.g. no-entry-point)");
+                    return ExitCode::FAILURE;
+                }
+            },
             "--matching-name" => match it.next() {
                 Some(v) => matching_name = Some(v.clone()),
                 None => {
@@ -2881,6 +2892,7 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
             ("--failing", failing),
             ("--matching", matching.is_some()),
             ("--matching-name", matching_name.is_some()),
+            ("--outcome", outcome_filter.is_some()),
             ("--popular", popular.is_some()),
         ];
         if let Err(why) = run_is_permitted(names.len(), &bulk, allow_run, cfg!(target_os = "macos"))
@@ -2983,6 +2995,17 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
             before
                 .iter()
                 .filter(|(_, r)| r.outcome.detail().contains(pat.as_str()))
+                .map(|(n, r)| (n.clone(), Some(r.version.clone()))),
+        );
+    }
+    // The bucket twin of `--matching`, for outcomes whose detail is empty
+    // (`no-entry-point`, `no-lib-dir`) -- reachable after a HARNESS change
+    // where `--failing` deliberately skips them as compiler-terminal.
+    if let Some(tag) = &outcome_filter {
+        names.extend(
+            before
+                .iter()
+                .filter(|(_, r)| r.outcome.tag() == tag.as_str())
                 .map(|(n, r)| (n.clone(), Some(r.version.clone()))),
         );
     }
