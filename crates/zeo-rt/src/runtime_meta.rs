@@ -66,6 +66,13 @@ struct OverlayEntry {
     /// or builtin method the overlay never carries a body for.
     methods_vis: FMap<Symbol, crate::dispatch::MethodVisibility>,
     /// The class-method half: which of this class's CLASS methods a runtime
+    /// The running default visibility a bare `private`/`public` set in a
+    /// COMPILED `class << self` body -- reached as a rebound send on the
+    /// surrogate, which has no thread-local body frame to record into. Read
+    /// by `runtime_define_method`'s singleton redirect so a `define_method`
+    /// after the directive installs with it; the lowering appends a `public`
+    /// reset at body end, so it dies with the body like a cref cursor.
+    singleton_default_vis: Option<crate::dispatch::MethodVisibility>,
     /// `private_class_method`/`public_class_method` marked. `true` is private,
     /// `false` a `public_class_method` promotion -- both recorded, because
     /// either has to beat whatever the frozen registry baked in.
@@ -155,6 +162,7 @@ impl Default for OverlayEntry {
             methods: FMap::default(),
             prepended: FMap::default(),
             methods_vis: FMap::default(),
+            singleton_default_vis: None,
             class_methods_vis: FMap::default(),
             class_methods: FMap::default(),
             value_bodies: FMap::default(),
@@ -949,10 +957,29 @@ pub fn runtime_define_method(id: ClassId, name: Symbol, body: RProc) -> Result<R
     }
     // A method defined on an object's singleton class (`obj.singleton_class`)
     // is a per-object singleton, not an instance method of a shared class --
-    // redirect to the owner. For a class owner it becomes a class method.
+    // redirect to the owner. For a class owner it becomes a class method,
+    // carrying the body's visibility cursor: a live `class_eval` frame, or
+    // the persistent default a bare `private` in a compiled singleton body
+    // stored (see `runtime_set_visibility`).
     let owner = maps().singleton_owner.read().unwrap().get(&id.0).cloned();
     if let Some(owner) = owner {
-        return runtime_define_singleton_method(&owner, name, body);
+        let vis = current_frame_for(id).map(|f| f.vis).or_else(|| {
+            maps()
+                .classes
+                .read()
+                .unwrap()
+                .get(&id.0)
+                .and_then(|e| e.singleton_default_vis)
+        });
+        let out = runtime_define_singleton_method(&owner, name, body)?;
+        if let (Some(v), RubyValue::Class(cid)) = (vis, &owner) {
+            runtime_class_method_visibility(
+                *cid,
+                &[RubyValue::Symbol(name)],
+                v != crate::dispatch::MethodVisibility::Public,
+            )?;
+        }
+        return Ok(out);
     }
     crate::method_meta::record_runtime_params(id, crate::MethodKind::Instance, name, &body);
     let m = dynamic_from_proc(id, name, body.clone());
@@ -1629,6 +1656,18 @@ pub fn runtime_set_visibility(
         // Bare `private` switches the enclosing body's default for every
         // subsequent `def`.
         update_frame_for(id, |f| f.vis = vis);
+        // A compiled `class << self` body has no frame to record into --
+        // the rebound directive persists as the SURROGATE's body default
+        // (read by `runtime_define_method`'s singleton redirect), and the
+        // lowering's body-end reset clears it.
+        if current_frame_for(id).is_none() && singleton_owner_value(id).is_some() {
+            let mut w = maps().classes.write().unwrap();
+            w.entry(id.0)
+                .or_insert_with(OverlayEntry::delta)
+                .singleton_default_vis = Some(vis);
+            drop(w);
+            mark_live();
+        }
         return Ok(RubyValue::Nil);
     }
     if crate::dispatch::class_frozen(id) {

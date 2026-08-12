@@ -3082,8 +3082,37 @@ fn lower_class_body_statement(
         // calls beside it -- rebound onto `self.singleton_class`, i.e. the
         // surrogate -- then find it.
         let nested = hir.is_in_singleton_body();
-        let inner = hir
+        let mut inner = hir
             .in_singleton_body(|hir| lower_class_body(result, hir, singleton.body(), None, None))?;
+        // A bare visibility directive survived as a marker (see the
+        // `private` arm below): its runtime default on the surrogate must
+        // die with THIS body, as CRuby's cursor dies with the cref --
+        // append a reset for the mapping to rebind alongside the markers.
+        let bare_vis = |hir: &Hir, n: NodeId| {
+            matches!(
+                &hir[n],
+                HirNode::Call { receiver: None, name, args, kwargs, block, block_arg, .. }
+                    if args.is_empty()
+                        && kwargs.is_empty()
+                        && block.is_none()
+                        && block_arg.is_none()
+                        && matches!(name.as_str(), "private" | "public" | "protected")
+            )
+        };
+        if inner.iter().any(|&n| bare_vis(hir, n)) {
+            hir.push_span(crate::hir::Span::SYNTH);
+            let reset = hir.push(HirNode::Call {
+                receiver: None,
+                name: "public".to_string(),
+                args: Vec::new(),
+                kwargs: Vec::new(),
+                block: None,
+                block_arg: None,
+                safe: false,
+            });
+            hir.pop_span();
+            inner.push(reset);
+        }
         let mut mapped = Vec::new();
         map_class_self_items(hir, &inner, &mut mapped)?;
         if nested {
@@ -3215,6 +3244,16 @@ fn lower_class_body_statement(
                 .unwrap_or_default();
             if arg_list.is_empty() {
                 *visibility = new_vis;
+                // In a `class << self` body the cursor must ALSO reach a
+                // runtime `define_method` after it -- keep the directive as
+                // a node, which the singleton mapping rebinds onto
+                // `self.singleton_class` (a runtime send that stores the
+                // surrogate's body default; the mapping appends a reset at
+                // body end). Compiled `def`s beside it keep the
+                // compile-time stamp above either way.
+                if hir.is_in_singleton_body() {
+                    out.push(lower_node(result, hir, node)?);
+                }
                 return Ok(());
             }
             if arg_list.len() == 1 && arg_list[0].as_def_node().is_some() {
