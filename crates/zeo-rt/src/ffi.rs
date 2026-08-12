@@ -157,13 +157,13 @@ pub fn enum_to_int(v: &RubyValue, members: &[(&str, i64)]) -> Result<i64, Signal
 /// integer marshaling waits for this. `enum_store` fills a slot when the class
 /// body executes; every signature lowered under that statement reads it back.
 #[cfg(feature = "ext-ffi")]
-static ENUM_SLOTS: std::sync::OnceLock<
-    std::sync::RwLock<std::collections::HashMap<usize, Vec<(String, i64)>>>,
-> = std::sync::OnceLock::new();
+type EnumSlots = std::sync::RwLock<std::collections::HashMap<usize, Vec<(String, i64)>>>;
 
 #[cfg(feature = "ext-ffi")]
-fn enum_slots() -> &'static std::sync::RwLock<std::collections::HashMap<usize, Vec<(String, i64)>>>
-{
+static ENUM_SLOTS: std::sync::OnceLock<EnumSlots> = std::sync::OnceLock::new();
+
+#[cfg(feature = "ext-ffi")]
+fn enum_slots() -> &'static EnumSlots {
     ENUM_SLOTS.get_or_init(Default::default)
 }
 

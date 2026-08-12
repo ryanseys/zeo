@@ -898,6 +898,7 @@ fn superclass_mismatch(compiler: &mut Compiler, def_node: Option<NodeId>, name: 
 /// class` ruby raises with that exact string. Compiling the program and
 /// aborting where ruby aborts is the same observable behaviour and one fewer
 /// way to be wrong.
+#[allow(clippy::too_many_arguments)] // one wrapper, one signature: `register_class`'s
 fn register_class_or_raise(
     compiler: &mut Compiler,
     name: String,
@@ -920,11 +921,11 @@ fn register_class_or_raise(
         def_node,
         conditional,
     );
-    if let Err(e) = registered {
-        if !raise_instead_of_defining(compiler) {
-            compiler.pending_ruby_raise = None;
-            return Err(e);
-        }
+    if let Err(e) = registered
+        && !raise_instead_of_defining(compiler)
+    {
+        compiler.pending_ruby_raise = None;
+        return Err(e);
     }
     Ok(())
 }
@@ -4255,6 +4256,7 @@ fn walk_class_body(
 /// edge stands): it is concealed until the same guard passes, so its static
 /// edges are unobservable while the guard is false. `Ok(true)` means the
 /// directive was consumed; the send now sits at its document position.
+#[allow(clippy::too_many_arguments)] // the class-body walk's own context, threaded whole
 fn defer_guarded_mixin(
     compiler: &mut Compiler,
     class_id: ClassId,
