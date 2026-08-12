@@ -168,6 +168,14 @@ fn render_rbconfig(manifest_dir: &Path, out_dir: &Path) {
         "linux" => ("pc", "linux-gnu".to_string(), "so", "so", "cc -shared"),
         other => ("unknown", other.to_string(), "so", "so", "cc -shared"),
     };
+    // The same `RbConfig::CONFIG` entries the shim above renders, exported so
+    // a compile-time guard can read them without parsing the shim -- gems
+    // spell the platform question as `RbConfig::CONFIG['host_os'] =~ /linux/`
+    // at least as often as they spell it `RUBY_PLATFORM`.
+    println!("cargo:rustc-env=ZEO_HOST_OS={host_os}");
+    println!("cargo:rustc-env=ZEO_HOST_CPU={arch}");
+    println!("cargo:rustc-env=ZEO_DLEXT={dlext}");
+    println!("cargo:rustc-env=ZEO_SOEXT={soext}");
     let rendered = template
         .replace("@RUBY_PLATFORM@", &format!("{arch}-{os}"))
         .replace("@HOST_TRIPLE@", &format!("{arch}-{vendor}-{host_os}"))

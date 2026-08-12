@@ -636,10 +636,15 @@ fn ffi_runtime_dlopen_failure_is_a_loaderror_at_the_call() {
     assert_eq!(result.stdout, "started\ntrue\n");
 }
 
-/// A BARE `FFI::Struct` subclass in a type list passes the struct BY VALUE
-/// (`.by_ref` is the pointer spelling) -- the gem's semantics. The repr(C)
-/// mirror carries the real field types, so rustc owns the ABI. `inet_ntoa`
-/// takes `struct in_addr` by value on every libc.
+/// `.by_value` is the gem's BY-VALUE spelling: `inet_ntoa` takes `struct
+/// in_addr` by value on every libc, and the repr(C) mirror carries the real
+/// field types so rustc owns the ABI.
+///
+/// A BARE `FFI::Struct` subclass in the same position is the gem's
+/// `StructByReference` -- it passes a POINTER (oracle-checked: ruby-ffi hands
+/// `inet_ntoa` the struct's address and gets an address-shaped dotted quad
+/// back). `gettimeofday` is the honest way to show it, since a C function that
+/// really wants the pointer then works.
 #[test]
 fn ffi_struct_by_value_argument() {
     let result = run_ruby(
@@ -648,18 +653,23 @@ fn ffi_struct_by_value_argument() {
         class InAddr < FFI::Struct
           layout s_addr: :uint32
         end
+        class Timeval < FFI::Struct
+          layout :tv_sec, :long, :tv_usec, :long
+        end
         module L
           extend FFI::Library
           ffi_lib FFI::Library::LIBC
-          attach_function :inet_ntoa, [InAddr], :string
-          attach_function :ntoa_again, :inet_ntoa, [InAddr.by_value], :string
+          attach_function :inet_ntoa, [InAddr.by_value], :string
+          attach_function :gettimeofday, [Timeval, :pointer], :int
         end
         a = InAddr.new
         a[:s_addr] = 16777343
         puts L.inet_ntoa(a)
-        puts L.ntoa_again(a)
+        tv = Timeval.new
+        puts L.gettimeofday(tv, nil)
+        puts tv[:tv_sec] > 1_600_000_000
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(result.stdout, "127.0.0.1\n127.0.0.1\n");
+    assert_eq!(result.stdout, "127.0.0.1\n0\ntrue\n");
 }

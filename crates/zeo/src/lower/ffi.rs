@@ -180,6 +180,209 @@ pub(crate) fn ffi_type_constant_of(path: &str) -> Option<crate::hir::FfiType> {
     ffi_type_constant(path.trim_start_matches("::").strip_prefix("FFI::Type::")?)
 }
 
+/// The elements of the body-local ARRAY a lone `*splat` argument names, read
+/// back from the class-body statements written before `directive`.
+///
+/// Gems build a declaration list conditionally and splat it in one go --
+/// sys-uname's `utsname` layout gains a `domainname` field on linux and an
+/// `__id_number` on hpux, then calls `layout(*members)`. The array is a
+/// compile-time value: literal assignments plus `push`/`<<`/`concat` calls,
+/// under guards this stage already folds. Anything else that so much as
+/// MENTIONS the local declines the whole read, so a list zeo cannot follow
+/// stays the loud rejection it is today instead of becoming a short struct.
+pub(crate) fn splat_local_elements<'a>(
+    args: &[Node<'a>],
+    body: &[Node<'a>],
+    directive: &Node<'_>,
+) -> Option<Vec<Node<'a>>> {
+    let [only] = args else { return None };
+    let name = local_read_name(&only.as_splat_node()?.expression()?)?;
+    let limit = directive.location().start_offset();
+    let mut acc: Option<Vec<Node<'a>>> = None;
+    replay_local_array(&name, body.iter(), limit, &mut acc).then_some(acc)?
+}
+
+/// One pass of [`splat_local_elements`] over a statement list. `false` means
+/// the local was touched in a way this replay cannot follow.
+fn replay_local_array<'a, 'b>(
+    name: &str,
+    stmts: impl Iterator<Item = &'b Node<'a>>,
+    limit: usize,
+    acc: &mut Option<Vec<Node<'a>>>,
+) -> bool
+where
+    'a: 'b,
+{
+    for stmt in stmts {
+        // Statements from the directive onward are not part of the value it
+        // reads -- including the directive itself, and its own siblings when
+        // the walk descends into the `if` that encloses it.
+        if stmt.location().start_offset() >= limit {
+            continue;
+        }
+        // A guard this stage decides contributes the branch it selects, the
+        // same way `lower_one_class_body_stmt` lowers it.
+        if let Some(if_node) = stmt.as_if_node()
+            && let Some(cond) = super::defs::static_guard(&if_node.predicate())
+        {
+            let chosen = if cond {
+                if_node.statements().map(|s| s.as_node())
+            } else {
+                if_node.subsequent()
+            };
+            if !replay_branch(name, chosen, limit, acc) {
+                return false;
+            }
+            continue;
+        }
+        if let Some(unless_node) = stmt.as_unless_node()
+            && let Some(cond) = super::defs::static_guard(&unless_node.predicate())
+        {
+            let chosen = if cond {
+                unless_node.else_clause().map(|e| e.as_node())
+            } else {
+                unless_node.statements().map(|s| s.as_node())
+            };
+            if !replay_branch(name, chosen, limit, acc) {
+                return false;
+            }
+            continue;
+        }
+        match local_array_op(name, stmt) {
+            Some(LocalArrayOp::Assign(elems)) => *acc = Some(elems),
+            // An append before any assignment means the array came from
+            // somewhere this replay never saw.
+            Some(LocalArrayOp::Append(elems)) => match acc.as_mut() {
+                Some(list) => list.extend(elems),
+                None => return false,
+            },
+            None if mentions_local(name, stmt) => return false,
+            None => {}
+        }
+    }
+    true
+}
+
+/// [`replay_local_array`] over the branch a folded guard selected -- a
+/// `StatementsNode`, a final `else`, a nested `elsif`, or nothing.
+fn replay_branch<'a>(
+    name: &str,
+    chosen: Option<Node<'a>>,
+    limit: usize,
+    acc: &mut Option<Vec<Node<'a>>>,
+) -> bool {
+    let Some(node) = chosen else { return true };
+    if let Some(stmts) = node.as_statements_node() {
+        let body: Vec<Node<'a>> = stmts.body().iter().collect();
+        return replay_local_array(name, body.iter(), limit, acc);
+    }
+    if let Some(else_node) = node.as_else_node() {
+        let body: Vec<Node<'a>> = else_node
+            .statements()
+            .map(|s| s.body().iter().collect())
+            .unwrap_or_default();
+        return replay_local_array(name, body.iter(), limit, acc);
+    }
+    replay_local_array(name, std::iter::once(&node), limit, acc)
+}
+
+/// What a statement does to the local array being replayed.
+enum LocalArrayOp<'a> {
+    /// `members = [...]` -- the list starts over from these elements.
+    Assign(Vec<Node<'a>>),
+    /// `members.push(...)` / `members << x` / `members.concat([...])` /
+    /// `members += [...]` -- these elements go on the end.
+    Append(Vec<Node<'a>>),
+}
+
+fn local_array_op<'a>(name: &str, stmt: &Node<'a>) -> Option<LocalArrayOp<'a>> {
+    if let Some(write) = stmt.as_local_variable_write_node() {
+        if String::from_utf8_lossy(write.name().as_slice()) != name {
+            return None;
+        }
+        return Some(LocalArrayOp::Assign(
+            write.value().as_array_node()?.elements().iter().collect(),
+        ));
+    }
+    // `members += [...]` is an operator write, not a call on the local.
+    if let Some(op) = stmt.as_local_variable_operator_write_node() {
+        if String::from_utf8_lossy(op.name().as_slice()) != name
+            || op.binary_operator().as_slice() != b"+"
+        {
+            return None;
+        }
+        return Some(LocalArrayOp::Append(
+            op.value().as_array_node()?.elements().iter().collect(),
+        ));
+    }
+    let call = stmt.as_call_node()?;
+    if local_read_name(&call.receiver()?).as_deref() != Some(name) {
+        return None;
+    }
+    let args: Vec<Node<'a>> = call
+        .arguments()
+        .map(|a| a.arguments().iter().collect())
+        .unwrap_or_default();
+    match call.name().as_slice() {
+        b"push" | b"append" => Some(LocalArrayOp::Append(args)),
+        b"<<" => match args.as_slice() {
+            [_] => Some(LocalArrayOp::Append(args)),
+            _ => None,
+        },
+        b"concat" => match args.as_slice() {
+            [one] => Some(LocalArrayOp::Append(
+                one.as_array_node()?.elements().iter().collect(),
+            )),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// The name a plain local-variable READ spells, or `None` for any other node.
+fn local_read_name(node: &Node<'_>) -> Option<String> {
+    let read = node.as_local_variable_read_node()?;
+    Some(String::from_utf8_lossy(read.name().as_slice()).into_owned())
+}
+
+/// Whether a statement names this local ANYWHERE -- the poison test that keeps
+/// an unreadable build step from silently shortening the list.
+fn mentions_local(name: &str, stmt: &Node<'_>) -> bool {
+    struct Search<'n> {
+        name: &'n str,
+        found: bool,
+    }
+    impl<'pr> ruby_prism::Visit<'pr> for Search<'_> {
+        fn visit_local_variable_read_node(&mut self, node: &ruby_prism::LocalVariableReadNode<'pr>) {
+            self.found |= String::from_utf8_lossy(node.name().as_slice()) == self.name;
+        }
+        fn visit_local_variable_write_node(
+            &mut self,
+            node: &ruby_prism::LocalVariableWriteNode<'pr>,
+        ) {
+            self.found |= String::from_utf8_lossy(node.name().as_slice()) == self.name;
+            self.visit(&node.value());
+        }
+        fn visit_local_variable_target_node(
+            &mut self,
+            node: &ruby_prism::LocalVariableTargetNode<'pr>,
+        ) {
+            self.found |= String::from_utf8_lossy(node.name().as_slice()) == self.name;
+        }
+        fn visit_local_variable_operator_write_node(
+            &mut self,
+            node: &ruby_prism::LocalVariableOperatorWriteNode<'pr>,
+        ) {
+            self.found |= String::from_utf8_lossy(node.name().as_slice()) == self.name;
+            self.visit(&node.value());
+        }
+    }
+    use ruby_prism::Visit as _;
+    let mut search = Search { name, found: false };
+    search.visit(stmt);
+    search.found
+}
+
 /// Flatten a constant reference (`FFI`, `FFI::Library`, `FFI::Library::LIBC`) to
 /// its `::`-joined spelling, or `None` if it isn't a plain constant path.
 pub(crate) fn const_path_string(node: &Node<'_>) -> Option<String> {
@@ -583,11 +786,12 @@ fn enum_int_literal(node: &Node<'_>, hir: &Hir, body_so_far: &[NodeId]) -> Optio
 /// Recognize an FFI `layout :name, :type, :name, :type, ...` directive inside a
 /// `class < FFI::Struct` body and return its `(field, type)` pairs, or `None`
 /// if `node` isn't a `layout` call.
-pub(crate) fn as_ffi_layout(
-    node: &Node<'_>,
+pub(crate) fn as_ffi_layout<'a>(
+    node: &Node<'a>,
     aliases: &std::collections::HashMap<String, crate::hir::FfiType>,
     hir: &Hir,
     body_so_far: &[NodeId],
+    class_body: &[Node<'a>],
 ) -> PResult<Option<Vec<(String, crate::hir::FfiType)>>> {
     let Some(call) = node.as_call_node() else {
         return Ok(None);
@@ -595,10 +799,17 @@ pub(crate) fn as_ffi_layout(
     if call.receiver().is_some() || call.name().as_slice() != b"layout" {
         return Ok(None);
     }
-    let args: Vec<Node<'_>> = call
+    let args: Vec<Node<'a>> = call
         .arguments()
         .map(|a| a.arguments().iter().collect())
         .unwrap_or_default();
+    // `layout(*members)` -- the field list is a body-local array the class
+    // body built up. Reading it back is what lets a conditionally-shaped
+    // struct lower at all.
+    let args = match splat_local_elements(&args, class_body, node) {
+        Some(elems) => elems,
+        None => args,
+    };
     let field =
         |name_node: &Node<'_>, ty_node: &Node<'_>| -> PResult<(String, crate::hir::FfiType)> {
             let name = ffi_symbol_str(name_node)?;

@@ -2307,37 +2307,16 @@ fn baked_constant(node: &ruby_prism::Node<'_>) -> Option<&'static str> {
     }
 }
 
-/// A build-time-known STRING subject: a baked constant, or the
-/// `RbConfig::CONFIG['host_os']` spelling of the same platform question. The
-/// platform string stands in for `host_os` -- the guards this feeds are
-/// `|`-literal substring tests (`/mswin|mingw/`), and every family name those
-/// alternations probe for appears in both spellings or neither.
+/// A build-time-known STRING subject: a baked constant, or a
+/// `RbConfig::CONFIG['host_os']`-style read of an entry this build bakes --
+/// the older spelling of the same platform question, answered from the very
+/// value the generated program's `RbConfig::CONFIG` will hold.
 fn baked_subject(node: &ruby_prism::Node<'_>) -> Option<&'static str> {
     if let Some(s) = baked_constant(node) {
         return Some(s);
     }
-    let call = node.as_call_node()?;
-    if call.name().as_slice() != b"[]" {
-        return None;
-    }
-    let recv = call.receiver()?;
-    let path = recv.as_constant_path_node()?;
-    if path.name()?.as_slice() != b"CONFIG"
-        || !path
-            .parent()
-            .and_then(|p| {
-                p.as_constant_read_node()
-                    .map(|c| c.name().as_slice() == b"RbConfig")
-            })
-            .unwrap_or(false)
-    {
-        return None;
-    }
-    let mut args = call.arguments()?.arguments().iter();
-    let (arg, None) = (args.next()?, args.next()) else {
-        return None;
-    };
-    (arg.as_string_node()?.unescaped() == b"host_os").then_some(env!("ZEO_RUBY_PLATFORM"))
+    let key = crate::lower::defs::rbconfig_key(node)?;
+    crate::guard_fold::rbconfig_string(&key)
 }
 
 /// Whether this build's platform is a windows one -- the answer every

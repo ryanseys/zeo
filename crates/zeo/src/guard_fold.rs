@@ -388,6 +388,23 @@ fn static_string(
             }
             _ => None,
         },
+        // `RbConfig::CONFIG['host_os']` -- the older spelling of the platform
+        // question, read off the same values `build.rs` renders into the
+        // program's own `RbConfig` shim.
+        HirNode::Call {
+            receiver: Some(r),
+            name,
+            args,
+            ..
+        } if matches!(name.as_str(), "[]" | "fetch")
+            && matches!(&compiler.hir[*r],
+                HirNode::QualifiedConstRead(scope, n) if scope == "RbConfig" && n == "CONFIG") =>
+        {
+            let [ArrayElem::Single(key)] = args[..] else {
+                return None;
+            };
+            rbconfig_string(&string_lit(compiler, key)?).map(str::to_string)
+        }
         // `RUBY_PLATFORM.to_s` -- `String#to_s` returns self, and gems write it
         // where the value might have been a symbol under some other engine.
         HirNode::Call {
@@ -1098,6 +1115,23 @@ pub(crate) fn ffi_platform_predicate(name: &str) -> Option<bool> {
             .iter()
             .any(|w| platform.contains(w)),
         "solaris?" => platform.contains("solaris"),
+        _ => return None,
+    })
+}
+
+/// A `RbConfig::CONFIG[key]` entry this build bakes, or `None` for a key whose
+/// value zeo doesn't decide. These are the SAME strings the generated program's
+/// `RbConfig::CONFIG` answers (both come from `build.rs`), so folding a
+/// `RbConfig::CONFIG['host_os'] =~ /linux/` guard picks the branch the program
+/// itself would run. `host_os` is the older spelling of the platform question
+/// `RUBY_PLATFORM` also answers -- sys-uname gates its `utsname` layout on it.
+pub(crate) fn rbconfig_string(key: &str) -> Option<&'static str> {
+    Some(match key {
+        "host_os" => env!("ZEO_HOST_OS"),
+        "host_cpu" => env!("ZEO_HOST_CPU"),
+        "arch" | "sitearch" => env!("ZEO_RUBY_PLATFORM"),
+        "DLEXT" => env!("ZEO_DLEXT"),
+        "SOEXT" => env!("ZEO_SOEXT"),
         _ => return None,
     })
 }

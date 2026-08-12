@@ -27,11 +27,11 @@ use ruby_prism::{Node, ParseResult};
 /// inside the guard still registers, and an FFI `typedef`/`ffi_lib`/
 /// `attach_function` under a platform gate still reaches the FFI dispatch
 /// (vips declares `:GType` under `if FFI::Platform::ADDRESS_SIZE == 64`).
-fn lower_class_body_selected(
+fn lower_class_body_selected<'a>(
     result: &ParseResult,
     hir: &mut Hir,
-    chosen: Option<Node<'_>>,
-    st: &mut LowerBodyStmt<'_>,
+    chosen: Option<Node<'a>>,
+    st: &mut LowerBodyStmt<'a>,
     out: &mut Vec<NodeId>,
 ) -> PResult<()> {
     let Some(node) = chosen else { return Ok(()) };
@@ -993,7 +993,7 @@ const ALWAYS_DEFINED_CONSTS: &[&str] = &["Ractor"];
 /// method. This is the same three-valued evaluation
 /// [`eval_static_class_self_guard`] does for a `class << self` body, over prism
 /// nodes rather than HIR because the class-body path folds before lowering.
-fn static_guard(node: &Node<'_>) -> Option<bool> {
+pub(crate) fn static_guard(node: &Node<'_>) -> Option<bool> {
     if let Some(b) = static_bool(node) {
         return Some(b);
     }
@@ -1139,6 +1139,40 @@ fn static_guard(node: &Node<'_>) -> Option<bool> {
     }
 }
 
+/// The branch a class-body `case` selects when both its subject and EVERY
+/// `when` condition up to the match are compile-time facts -- the case-shaped
+/// spelling of [`static_guard`]'s question. `Some(None)` is a decided case
+/// with nothing to run (no `when` matched and no `else`); `None` is a case
+/// that has to stay.
+///
+/// Every condition before the winning one has to be decidable too: an
+/// undecidable earlier `when` might have matched first, so the branch after it
+/// is not the answer.
+fn static_case_branch<'a>(case_node: &ruby_prism::CaseNode<'a>) -> Option<Option<Node<'a>>> {
+    let subject = case_node.predicate()?;
+    for clause in case_node.conditions().iter() {
+        let when = clause.as_when_node()?;
+        for cond in when.conditions().iter() {
+            if case_condition_matches(&cond, &subject)? {
+                return Some(when.statements().map(|s| s.as_node()));
+            }
+        }
+    }
+    Some(case_node.else_clause().map(|e| e.as_node()))
+}
+
+/// `cond === subject` for the literal forms a platform `case` is written with:
+/// a regexp, a string, an integer. `None` for anything else -- the case stays.
+fn case_condition_matches(cond: &Node<'_>, subject: &Node<'_>) -> Option<bool> {
+    if let Some(pattern) = guard_pattern(cond) {
+        return pattern.matches(&guard_string(subject)?);
+    }
+    if let Some(want) = guard_string(cond) {
+        return Some(guard_string(subject)? == want);
+    }
+    Some(guard_integer(cond)? == guard_integer(subject)?)
+}
+
 /// Reduce a prism node to a compile-time STRING for [`static_guard`]: a plain
 /// string literal, or a constant ruby seeds into every program
 /// (`RUBY_VERSION`, `RUBY_PLATFORM`, ...) -- `guard_fold::seeded_string_const`,
@@ -1154,8 +1188,29 @@ fn guard_string(node: &Node<'_>) -> Option<String> {
     {
         return crate::guard_fold::ffi_platform_string(leaf);
     }
+    if let Some(key) = rbconfig_key(node) {
+        return crate::guard_fold::rbconfig_string(&key).map(str::to_string);
+    }
     let name = String::from_utf8_lossy(node.as_constant_read_node()?.name().as_slice());
     crate::guard_fold::seeded_string_const(&name)
+}
+
+/// The literal key of a `RbConfig::CONFIG['host_os']` read, or `None` for any
+/// other node. Both `[]` and `fetch` spell it.
+pub(crate) fn rbconfig_key(node: &Node<'_>) -> Option<String> {
+    let call = node.as_call_node()?;
+    if !matches!(call.name().as_slice(), b"[]" | b"fetch") {
+        return None;
+    }
+    let path = crate::lower::ffi::const_path_string(&call.receiver()?)?;
+    if path.trim_start_matches("::") != "RbConfig::CONFIG" {
+        return None;
+    }
+    let mut args = call.arguments()?.arguments().iter();
+    let (arg, None) = (args.next()?, args.next()) else {
+        return None;
+    };
+    String::from_utf8(arg.as_string_node()?.unescaped().to_vec()).ok()
 }
 
 /// Reduce a prism node to a compile-time INTEGER for [`static_guard`]: an
@@ -2852,6 +2907,7 @@ pub(crate) fn lower_class_body(
             ffi_aliases: &mut ffi_aliases,
             visibility: &mut visibility,
             module_function: &mut module_function,
+            body: &stmts,
         };
         for stmt in &stmts {
             // Located per STATEMENT, around the whole dispatch below -- an
@@ -2912,6 +2968,11 @@ struct LowerBodyStmt<'a> {
     ffi_aliases: &'a mut std::collections::HashMap<String, crate::hir::FfiType>,
     visibility: &'a mut Visibility,
     module_function: &'a mut bool,
+    /// The whole class body as written. An FFI directive spelled over a
+    /// body-local array -- `layout(*members)` after a run of guarded
+    /// `members.push` calls -- replays the statements that precede it to read
+    /// the array back; see `ffi::splat_local_elements`.
+    body: &'a [Node<'a>],
 }
 
 /// The recorded typedef stream of the FFI-library extender an `extend X`
@@ -2930,11 +2991,11 @@ fn ffi_extender_pairs(hir: &Hir, stmt: &Node<'_>) -> Option<Vec<(String, String)
 /// The three things a class-body statement can be: an FFI directive, an FFI
 /// `layout`, or an ordinary statement. Split out of `lower_class_body`'s loop
 /// so the loop can wrap ALL of them in one span frame.
-fn lower_one_class_body_stmt(
+fn lower_one_class_body_stmt<'a>(
     result: &ParseResult,
     hir: &mut Hir,
-    stmt: &Node<'_>,
-    st: &mut LowerBodyStmt<'_>,
+    stmt: &Node<'a>,
+    st: &mut LowerBodyStmt<'a>,
     out: &mut Vec<NodeId>,
 ) -> PResult<()> {
     // A class-body `if`/`unless` with a statically-decided predicate is folded
@@ -2962,6 +3023,15 @@ fn lower_one_class_body_stmt(
         } else {
             unless_node.else_clause().map(|e| e.as_node())
         };
+        return lower_class_body_selected(result, hir, chosen, st, out);
+    }
+    // `case RbConfig::CONFIG['host_os'] when /linux/i then BUFSIZE = 65 ...` --
+    // the same platform question written as a case. Folded for the same
+    // reason: the branches define ONE constant three times, and a `case` left
+    // to run at runtime hands the FFI vocabulary three conflicting answers.
+    if let Some(case_node) = stmt.as_case_node()
+        && let Some(chosen) = static_case_branch(&case_node)
+    {
         return lower_class_body_selected(result, hir, chosen, st, out);
     }
     // A class-body `CONST = :symbol` / `CONST = <int>` feeds the FFI
@@ -3034,7 +3104,7 @@ fn lower_one_class_body_stmt(
         }
     }
     if st.is_ffi_struct
-        && let Some(fields) = as_ffi_layout(stmt, st.ffi_aliases, hir, out)?
+        && let Some(fields) = as_ffi_layout(stmt, st.ffi_aliases, hir, out, st.body)?
     {
         // Replace `layout ...` in place with the synthesized accessors, so any
         // user methods after it can still override them. The inline-array proxy
