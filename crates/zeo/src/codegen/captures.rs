@@ -1003,6 +1003,25 @@ fn note_first_assign(
     }
 }
 
+/// The position the textual block-local rule compares an escaping block
+/// against: the start of its BODY. A `Block` node's own span begins at the
+/// CALL that owns it (`recv.m(args) do ... end` spans from `recv`), which
+/// sits textually BEFORE the argument list -- so an assignment inside an
+/// argument of the same call (`fetch(name = expr) { name }`, activerecord's
+/// calculations.rb shape) compared as "after" the block and was wrongly
+/// demoted to block-local. The first body statement is the first position
+/// genuinely inside the block; an empty body falls back to the block span
+/// (it touches no names, so the position never matters).
+fn block_body_pos(
+    compiler: &Compiler,
+    body: &[NodeId],
+    block: NodeId,
+) -> Option<(crate::hir::FileId, u32)> {
+    body.iter()
+        .find_map(|&n| start_of(compiler, n))
+        .or_else(|| start_of(compiler, block))
+}
+
 /// The escaping context one level deeper: entering an escaping construct
 /// keeps the OUTERMOST position (that is the one the textual rule compares)
 /// and marks everything below as nested once a second level begins.
@@ -1419,7 +1438,7 @@ fn walk(
                     let next_exclusions: FSet<String> =
                         param_exclusions.union(&own_param_names(params)).cloned().collect();
                     for &n in body {
-                        walk(compiler, n, deepen(escaping_at, || start_of(compiler, *b)), &next_exclusions, caps, self_class);
+                        walk(compiler, n, deepen(escaping_at, || block_body_pos(compiler, body, *b)), &next_exclusions, caps, self_class);
                     }
                 }
         }
@@ -1525,7 +1544,7 @@ fn walk(
                 let next_escaping_at = if is_inline {
                     escaping_at
                 } else {
-                    deepen(escaping_at, || start_of(compiler, *b))
+                    deepen(escaping_at, || block_body_pos(compiler, body, *b))
                 };
                 for &n in body {
                     walk(compiler, n, next_escaping_at, &next_exclusions, caps, self_class);

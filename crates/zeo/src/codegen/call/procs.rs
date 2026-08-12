@@ -333,8 +333,18 @@ fn emit_proc_or_lambda_value_with(
             .iter()
             .find(|n| !block_caps.assigned.contains(n.as_str()))
     {
+        let at = proc_loc
+            .as_ref()
+            .map(|(file, line)| format!(" (block at {file}:{line})"))
+            .unwrap_or_default();
+        tracing::debug!(
+            ?own_only,
+            captured = ?cx.captured_locals.iter().collect::<Vec<_>>(),
+            in_real_proc = cx.in_real_proc,
+            "nested-proc refusal context"
+        );
         return crate::codegen::unsupported(format!(
-            "a nested escaping block capturing its enclosing BLOCK's own local `{outer_block_local}` isn't supported yet (zeo limitation) -- move it to the enclosing method/top level, which makes it a shared Captured cell"
+            "a nested escaping block capturing its enclosing BLOCK's own local `{outer_block_local}` isn't supported yet (zeo limitation) -- move it to the enclosing method/top level, which makes it a shared Captured cell{at}"
         ));
     }
 
