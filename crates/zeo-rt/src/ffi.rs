@@ -147,6 +147,107 @@ pub fn enum_to_int(v: &RubyValue, members: &[(&str, i64)]) -> Result<i64, Signal
     }
 }
 
+/// The DEFERRED tier's enum tables, one per `enum` statement whose member
+/// list only a running process can produce -- ethon's `enum(:easy_code,
+/// easy_codes)` calls a method on a module it `extend`ed, gir_ffi builds its
+/// flags off type information read from a shared library at load time.
+///
+/// The ABI never depended on the members: an enum is an `int` either way, so
+/// the extern signature is decided at compile time and only the symbol<->
+/// integer marshaling waits for this. `enum_store` fills a slot when the class
+/// body executes; every signature lowered under that statement reads it back.
+#[cfg(feature = "ext-ffi")]
+static ENUM_SLOTS: std::sync::OnceLock<
+    std::sync::RwLock<std::collections::HashMap<usize, Vec<(String, i64)>>>,
+> = std::sync::OnceLock::new();
+
+#[cfg(feature = "ext-ffi")]
+fn enum_slots()
+-> &'static std::sync::RwLock<std::collections::HashMap<usize, Vec<(String, i64)>>> {
+    ENUM_SLOTS.get_or_init(Default::default)
+}
+
+/// `enum <tag>, <members>` with the members evaluated at RUN time, numbered by
+/// the gem's rule: a member takes the next value, an Integer following one
+/// sets that member's value and the counter. Nested arrays flatten, which is
+/// what `enum(:easy_option, easy_options(:enum).to_a.flatten)` relies on.
+#[cfg(feature = "ext-ffi")]
+pub fn enum_store(slot: usize, vals: &[RubyValue]) -> Result<RubyValue, Signal> {
+    fn flatten(v: &RubyValue, out: &mut Vec<RubyValue>) {
+        match v {
+            RubyValue::Array(a) => {
+                let elems: Vec<RubyValue> = a.lock().iter().cloned().collect();
+                for e in &elems {
+                    flatten(e, out);
+                }
+            }
+            other => out.push(other.clone()),
+        }
+    }
+    let mut flat = Vec::new();
+    for v in vals {
+        flatten(v, &mut flat);
+    }
+    let mut members: Vec<(String, i64)> = Vec::new();
+    let mut next = 0i64;
+    let mut i = 0;
+    while i < flat.len() {
+        let name = match &flat[i] {
+            RubyValue::Symbol(s) => s.name(),
+            RubyValue::Str(s) => String::from_utf8_lossy(s.lock().bytes()).into_owned(),
+            other => {
+                return Err(type_error!(
+                    "an enum member name must be a Symbol or String, got {}",
+                    crate::builtins::class_name_of(other)
+                ));
+            }
+        };
+        i += 1;
+        let value = match flat.get(i) {
+            Some(RubyValue::Int(n)) => {
+                i += 1;
+                *n
+            }
+            _ => next,
+        };
+        members.push((name, value));
+        next = value + 1;
+    }
+    enum_slots()
+        .write()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(slot, members);
+    Ok(RubyValue::Nil)
+}
+
+/// [`enum_to_int`] against a slot the class body filled. An unfilled slot is
+/// the gem's own "unable to resolve type" -- a signature naming an enum whose
+/// statement never ran.
+#[cfg(feature = "ext-ffi")]
+pub fn enum_to_int_slot(slot: usize, v: &RubyValue) -> Result<i64, Signal> {
+    let table = enum_slots().read().unwrap_or_else(|e| e.into_inner());
+    let Some(members) = table.get(&slot) else {
+        return Err(arg_error!("this enum's members were never declared"));
+    };
+    let borrowed: Vec<(&str, i64)> = members.iter().map(|(n, v)| (n.as_str(), *v)).collect();
+    enum_to_int(v, &borrowed)
+}
+
+/// [`int_to_enum`] against a slot. An unfilled slot hands the integer back
+/// unchanged, which is also what an unnamed value does.
+#[cfg(feature = "ext-ffi")]
+pub fn int_to_enum_slot(slot: usize, i: i64) -> RubyValue {
+    let table = enum_slots().read().unwrap_or_else(|e| e.into_inner());
+    let Some(members) = table.get(&slot) else {
+        return RubyValue::Int(i);
+    };
+    members
+        .iter()
+        .find(|(_, v)| *v == i)
+        .map(|(n, _)| RubyValue::Symbol(crate::Symbol::intern(n)))
+        .unwrap_or(RubyValue::Int(i))
+}
+
 /// An `int` enum return -> its Symbol if the value is a named member, else the
 /// raw Integer (the gem's `Enum#from_native` behavior).
 pub fn int_to_enum(i: i64, members: &[(&str, i64)]) -> RubyValue {

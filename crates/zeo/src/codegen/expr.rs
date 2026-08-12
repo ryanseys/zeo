@@ -3140,6 +3140,17 @@ fn emit_ffi_runtime_call(cx: &Ctx, call: &crate::hir::FfiCall, addr: TokenStream
                     )?);
                 }
             }
+            FfiType::EnumSlot(slot) => {
+                let slot = proc_macro2::Literal::usize_unsuffixed(*slot);
+                quote! {
+                    __vals.push(zeo_rt::ffi::marshal_fixed(
+                        zeo_rt::ffi::FfiKind::I32,
+                        &zeo_rt::RubyValue::Int(
+                            zeo_rt::ffi::enum_to_int_slot(#slot, &(#val))?,
+                        ),
+                    )?);
+                }
+            }
             FfiType::Callback(cb_args, cb_ret) => {
                 has_callback = true;
                 let handle = quote::format_ident!("__ffi_cb{}", i);
@@ -3203,6 +3214,15 @@ fn emit_ffi_runtime_call(cx: &Ctx, call: &crate::hir::FfiCall, addr: TokenStream
             quote! {
                 match __ffi_ret {
                     zeo_rt::RubyValue::Int(__n) => zeo_rt::ffi::int_to_enum(__n, #table),
+                    __other => __other,
+                }
+            }
+        }
+        FfiType::EnumSlot(slot) => {
+            let slot = proc_macro2::Literal::usize_unsuffixed(*slot);
+            quote! {
+                match __ffi_ret {
+                    zeo_rt::RubyValue::Int(__n) => zeo_rt::ffi::int_to_enum_slot(#slot, __n),
                     __other => __other,
                 }
             }
@@ -3291,8 +3311,9 @@ fn ffi_c_type(ty: &crate::hir::FfiType) -> TokenStream {
     use crate::hir::FfiType::*;
     use zeo_abi::ffi::CScalar as S;
     match ty {
-        // An enum's underlying C type is `int`, the gem's default.
-        Enum(_) => quote! { ::std::os::raw::c_int },
+        // An enum's underlying C type is `int`, the gem's default -- true
+        // whether or not the members were knowable at compile time.
+        Enum(_) | EnumSlot(_) => quote! { ::std::os::raw::c_int },
         // A callback is a C function pointer -- passed as an opaque address
         // (`*const`, matching what `CallbackHandle::code_ptr` hands over).
         Callback(..) => quote! { *const ::std::os::raw::c_void },
@@ -3358,6 +3379,11 @@ fn ffi_marshal_in(
             let table = ffi_enum_members(members);
             quote! { let #pname: #cty = zeo_rt::ffi::enum_to_int(&#val, #table)? as #cty; }
         }
+        // Same conversion, against the table the class body filled.
+        EnumSlot(slot) => {
+            let slot = proc_macro2::Literal::usize_unsuffixed(*slot);
+            quote! { let #pname: #cty = zeo_rt::ffi::enum_to_int_slot(#slot, &#val)? as #cty; }
+        }
         // Marshal a Ruby Proc into a libffi closure; its code pointer is the C
         // argument. The `_cb` handle (the live closure) is a block-local kept
         // alive across the call and dropped after it.
@@ -3400,6 +3426,10 @@ fn ffi_wrap_ret(ty: &crate::hir::FfiType) -> TokenStream {
         Enum(members) => {
             let table = ffi_enum_members(members);
             quote! { zeo_rt::ffi::int_to_enum(__ffi_ret as i64, #table) }
+        }
+        EnumSlot(slot) => {
+            let slot = proc_macro2::Literal::usize_unsuffixed(*slot);
+            quote! { zeo_rt::ffi::int_to_enum_slot(#slot, __ffi_ret as i64) }
         }
         Callback(..) => quote! { compile_error!("an FFI callback is not a valid return type") },
         // An integer whatever width the target gave the alias.

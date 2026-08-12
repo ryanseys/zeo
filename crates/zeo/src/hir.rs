@@ -318,6 +318,10 @@ pub struct Hir {
     /// (`zeo_rt::ffi::ffi_lib_store`) to every `attach_function` site
     /// lowered under it. See `FfiLib::Deferred`.
     pub ffi_lib_slots: usize,
+    /// How many DEFERRED enum slots the program has minted -- one per `enum`
+    /// statement whose members only the running process can produce. See
+    /// [`FfiType::EnumSlot`].
+    pub ffi_enum_slots: usize,
     /// Load paths to compile in WHOLE, as callable units rather than splices --
     /// keyed by owning package name, `None` for the `-I`/main roots. A file
     /// lands here when it computes a `require`/`autoload` target zeo cannot
@@ -1861,6 +1865,16 @@ pub enum FfiType {
     /// Integer), exactly as the gem's `Enum` data-converter does. The `Vec`
     /// holds `(symbol_name, value)` members in declaration order.
     Enum(Vec<(String, i64)>),
+    /// An `enum` whose MEMBERS only a running process can produce: ethon's
+    /// `enum(:easy_code, easy_codes)` calls a method on a module it
+    /// `extend`ed, gir_ffi builds its flag sets off type information read out
+    /// of a shared library. The ABI never depended on the members -- an enum
+    /// is an `int` either way -- so the signature is decided here and the
+    /// marshaling table waits for the class body to run. The `usize` ties this
+    /// type to the statement's runtime store
+    /// (`zeo_rt::ffi::enum_store`), exactly as [`FfiLib::Deferred`] does for a
+    /// library. See `Hir::ffi_enum_slots`.
+    EnumSlot(usize),
     /// A `callback :tag, [arg_types], ret_type` -- a C function-pointer type. As
     /// an argument, a Ruby Proc is marshaled into a libffi closure trampolining
     /// into the Proc, and the closure's code pointer is passed. Holds the
@@ -1954,7 +1968,7 @@ impl FfiType {
             FfiType::Bool => S::Bool,
             FfiType::Str => S::Str,
             FfiType::Pointer | FfiType::Callback(..) | FfiType::StructRef(_) => S::Pointer,
-            FfiType::Enum(_) => S::I32,
+            FfiType::Enum(_) | FfiType::EnumSlot(_) => S::I32,
             FfiType::Array(..)
             | FfiType::Struct(_)
             | FfiType::PlatformScalar(_)

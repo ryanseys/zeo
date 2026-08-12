@@ -685,14 +685,7 @@ pub(crate) fn lower_ffi_directive(
             .map(|a| a.arguments().iter().collect())
             .unwrap_or_default();
         let name = String::from_utf8_lossy(write.name().as_slice()).into_owned();
-        let (tag, members) = match (args.first(), args.get(1)) {
-            (Some(t), Some(l)) if t.as_symbol_node().is_some() && l.as_array_node().is_some() => (
-                Some(ffi_symbol_str(t)?),
-                parse_enum_members(std::slice::from_ref(l), hir, out, class_body)?,
-            ),
-            _ => (None, parse_enum_members(&args, hir, out, class_body)?),
-        };
-        let ty = crate::hir::FfiType::Enum(members);
+        let (tag, ty) = enum_declaration(result, hir, &args, out, class_body)?;
         if let Some(tag) = tag {
             hir.declare_ffi_type(&tag, &ty);
             aliases.insert(tag, ty.clone());
@@ -817,27 +810,23 @@ pub(crate) fn lower_ffi_directive(
             // type usable in a later type list. (A bare `enum [...]` statement,
             // whose members become module values with no type name at all, is
             // still a follow-on; the constant-assigned form is handled above.)
-            let (tag, members) = match (args.first(), args.get(1)) {
-                (Some(n), Some(l)) if n.as_symbol_node().is_some() => (
-                    ffi_symbol_str(n)?,
-                    parse_enum_members(std::slice::from_ref(l), hir, out, class_body)?,
-                ),
-                // A NAMELESS `enum [:a, :b]` statement registers no type
-                // name, so nothing later can reference it in a type
-                // position; its one effect -- symbol/int conversion for
-                // arguments typed with THAT enum -- is unreachable without
-                // a name. Validate the members and consume the statement.
-                (Some(l), None) if l.as_array_node().is_some() => {
-                    parse_enum_members(std::slice::from_ref(l), hir, out, class_body)?;
-                    return Ok(true);
-                }
-                _ => {
-                    return Err("enum expects `:tag, [members]` or `[members]`"
-                        .to_string()
-                        .into());
-                }
+            // A NAMELESS `enum [:a, :b]` statement registers no type name, so
+            // nothing later can reference it in a type position; its one
+            // effect -- symbol/int conversion for arguments typed with THAT
+            // enum -- is unreachable without a name. Validate the members and
+            // consume the statement.
+            if let [only] = args.as_slice()
+                && only.as_array_node().is_some()
+            {
+                parse_enum_members(std::slice::from_ref(only), hir, out, class_body)?;
+                return Ok(true);
+            }
+            let (tag, ty) = enum_declaration(result, hir, &args, out, class_body)?;
+            let Some(tag) = tag else {
+                return Err("enum expects `:tag, [members]` or `[members]`"
+                    .to_string()
+                    .into());
             };
-            let ty = crate::hir::FfiType::Enum(members);
             hir.declare_ffi_type(&tag, &ty);
             aliases.insert(tag, ty);
             Ok(true)
@@ -910,6 +899,72 @@ pub(crate) fn lower_ffi_directive(
 /// omitted value auto-increments from the previous (starting at 0), exactly as
 /// the `ffi` gem's `enum` does. A value may also be a constant this class body
 /// already set to an integer (`ffi_const_int`).
+/// One `enum` declaration, in either tier: `(tag, type)`.
+///
+/// The gem decides the shape by RUNTIME CLASS -- `Library#enum` takes the
+/// named form when `args[0]` is a Symbol and `args[1]` is an Array, and reads
+/// every argument as a member otherwise. Syntax can only approximate that, and
+/// the approximation this makes is the one that matches: exactly two
+/// arguments, the first a literal symbol, the second a single unsplatted
+/// expression. A splat cannot be it -- `enum(:level, *levels)` passes the tag
+/// as `args[0]` and the members as `args[1..]`, so `args[1]` is a member, not
+/// an Array, and the gem reads the whole list anonymously (oracle-checked: a
+/// signature naming `:level` then raises "unable to resolve type").
+///
+/// When the members fold, the members ARE the type. When they don't -- a
+/// helper call, a value read out of a shared library -- the declaration
+/// defers: the ABI is `int` either way, so only the marshaling table waits for
+/// the class body to run. See [`crate::hir::FfiType::EnumSlot`].
+fn enum_declaration<'a>(
+    result: &ParseResult,
+    hir: &mut Hir,
+    args: &[Node<'a>],
+    out: &mut Vec<NodeId>,
+    class_body: &[Node<'a>],
+) -> PResult<(Option<String>, crate::hir::FfiType)> {
+    let named = match args {
+        [tag, members] if tag.as_symbol_node().is_some() && members.as_splat_node().is_none() => {
+            Some((ffi_symbol_str(tag)?, members))
+        }
+        _ => None,
+    };
+    let (tag, member_nodes) = match &named {
+        Some((tag, members)) => (Some(tag.clone()), std::slice::from_ref(*members)),
+        None => (None, args),
+    };
+    if let Ok(members) = parse_enum_members(member_nodes, hir, out, class_body) {
+        return Ok((tag, crate::hir::FfiType::Enum(members)));
+    }
+    let slot = hir.ffi_enum_slots;
+    hir.ffi_enum_slots += 1;
+    let slot_lit = hir.push(HirNode::IntegerLit(slot as i64));
+    let mut call_args = vec![crate::hir::ArrayElem::Single(slot_lit)];
+    for m in member_nodes {
+        // A splat needs no marker: `enum_store` flattens every argument, which
+        // is also what `easy_options(:enum).to_a.flatten` relies on.
+        let id = match m.as_splat_node() {
+            Some(s) => {
+                let inner = s.expression().ok_or_else(|| {
+                    "enum can't forward a bare `*` splat (zeo limitation)".to_string()
+                })?;
+                super::lower_node(result, hir, &inner)?
+            }
+            None => super::lower_node(result, hir, m)?,
+        };
+        call_args.push(crate::hir::ArrayElem::Single(id));
+    }
+    out.push(hir.push(HirNode::Call {
+        receiver: None,
+        name: "__zeo_ffi_enum".to_string(),
+        args: call_args,
+        kwargs: Vec::new(),
+        block: None,
+        block_arg: None,
+        safe: false,
+    }));
+    Ok((tag, crate::hir::FfiType::EnumSlot(slot)))
+}
+
 fn parse_enum_members<'a>(
     args: &[Node<'a>],
     hir: &Hir,
@@ -1322,7 +1377,7 @@ fn ffi_field_accessor(ty: &crate::hir::FfiType) -> PResult<(String, String, usiz
         // An enum field is a C `int` in memory, a bool a one-byte `_Bool`.
         // Neither reads back as the number it stores; the generated accessor
         // converts -- see `synthesize_ffi_struct`.
-        Enum(_) => ("get_int32".into(), "put_int32".into()),
+        Enum(_) | EnumSlot(_) => ("get_int32".into(), "put_int32".into()),
         Bool => ("get_int8".into(), "put_int8".into()),
         // A `:string` field is a `char *`: read through the pointer, and NOT
         // writable -- CRuby's ffi raises `Cannot set :string fields`, because
@@ -1348,7 +1403,9 @@ fn ruby_ffi_type_src(ty: &crate::hir::FfiType) -> PResult<String> {
     use crate::hir::FfiType::*;
     Ok(match ty {
         Void => "::FFI::Type::VOID".to_string(),
-        Enum(_) => ":int32".to_string(),
+        // Both enum tiers are an `int` on the wire; a callback trampoline
+        // marshals through the raw value either way.
+        Enum(_) | EnumSlot(_) => ":int32".to_string(),
         Callback(..) => ":pointer".to_string(),
         Struct(_) | Array(..) => {
             return Err(
@@ -1506,6 +1563,11 @@ pub(crate) fn synthesize_ffi_struct(
     enum Conv {
         Plain,
         Enum(Vec<(String, i64)>),
+        /// The deferred twin: the table lives in a runtime slot the class body
+        /// filled, so the accessor calls through instead of carrying a
+        /// literal. ethon's `layout :whatever, :pointer, :code, :easy_code`
+        /// stores an enum whose members come from a method.
+        EnumSlot(usize),
         Bool,
         Str,
         /// `(class, element count, element size, element struct class)` --
@@ -1537,6 +1599,7 @@ pub(crate) fn synthesize_ffi_struct(
         let (getter, putter, _, _) = ffi_field_accessor(ty)?;
         let conv = match ty {
             crate::hir::FfiType::Enum(m) => Conv::Enum(m.clone()),
+            crate::hir::FfiType::EnumSlot(slot) => Conv::EnumSlot(*slot),
             crate::hir::FfiType::Bool => Conv::Bool,
             crate::hir::FfiType::Str => Conv::Str,
             crate::hir::FfiType::Array(elem, count) => {
@@ -1611,6 +1674,7 @@ pub(crate) fn synthesize_ffi_struct(
                         .join(", ");
                     format!("{{{table}}}.fetch({read}) {{ |__v| __v }}")
                 }
+                Conv::EnumSlot(slot) => format!("__zeo_ffi_enum_get({slot}, {read})"),
             };
             format!("        when :{name} then {read}\n")
         })
@@ -1667,6 +1731,7 @@ pub(crate) fn synthesize_ffi_struct(
                         .join(", ");
                     format!("{{{table}}}.fetch(__ffi_value, __ffi_value)")
                 }
+                Conv::EnumSlot(slot) => format!("__zeo_ffi_enum_put({slot}, __ffi_value)"),
             };
             format!("        when :{name} then @__ffi_ptr.{putter}({off}, {value})\n")
         })

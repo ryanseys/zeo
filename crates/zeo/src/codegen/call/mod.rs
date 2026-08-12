@@ -1263,6 +1263,47 @@ pub fn emit_call(
         };
     }
 
+    // A DEFERRED `enum`'s desugar (see `lower::ffi`'s `enum_declaration`): the
+    // member list evaluates here, when the class body runs, and lands in the
+    // slot every signature lowered under it reads. Every argument flattens, so
+    // a splat needs no marker.
+    if name == "__zeo_ffi_enum"
+        && receiver.is_none()
+        && let [slot_id, member_ids @ ..] = args
+        && let HirNode::IntegerLit(slot) = &cx.compiler.hir[*slot_id]
+    {
+        let slot = *slot as usize;
+        let pushes = member_ids.iter().map(|id| {
+            let val = emit_expr(cx, *id);
+            quote! { __members.push(#val); }
+        });
+        return quote! {
+            {
+                let mut __members: Vec<zeo_rt::RubyValue> = Vec::new();
+                #(#pushes)*
+                zeo_rt::ffi::enum_store(#slot, &__members)?
+            }
+        };
+    }
+    // The struct-field halves of the same slot, called from the accessor
+    // source `synthesize_ffi_struct` writes -- see `Conv::EnumSlot`.
+    if matches!(name, "__zeo_ffi_enum_get" | "__zeo_ffi_enum_put")
+        && receiver.is_none()
+        && let [slot_id, value_id] = args
+        && let HirNode::IntegerLit(slot) = &cx.compiler.hir[*slot_id]
+    {
+        let slot = *slot as usize;
+        let val = emit_expr(cx, *value_id);
+        return match name {
+            "__zeo_ffi_enum_get" => quote! {
+                zeo_rt::ffi::int_to_enum_slot(#slot, zeo_rt::ffi::to_i64(&(#val))?)
+            },
+            _ => quote! {
+                zeo_rt::RubyValue::Int(zeo_rt::ffi::enum_to_int_slot(#slot, &(#val))?)
+            },
+        };
+    }
+
     // `send(:eval, src, ...)` -- the reflective spelling, with a receiver or
     // without. CRuby routes it to the same private `Kernel#eval`, which reads
     // its LOCALS from the caller's frame either way and takes `self` from the
