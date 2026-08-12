@@ -36,3 +36,18 @@ end
 p Packed.size
 p Packed.offset_of(:b)
 p Packed.offset_of(:c)
+
+# Unrelated to offsets, and in the same neighbourhood of "the declaration is
+# not all literal": `**opts` where the class body set `opts = { blocking: true }`
+# above. cztop, mosq, jansson and czmq-ffi-gen each hoist the one option they
+# share into a local and splat it into every declaration.
+module Libc
+  extend FFI::Library
+  ffi_lib FFI::Library::LIBC
+  opts = { blocking: true }
+  attach_function :labs, [:long], :long, **opts
+  attach_function :abs, [:int], :int
+end
+
+p Libc.labs(-9)
+p Libc.abs(-3)

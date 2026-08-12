@@ -2064,7 +2064,7 @@ fn lower_attach_function(
     let (arg_types, variadic) = ffi_arg_types(types_node, aliases)?;
     let ret = ffi_type_node(ret_node, aliases, TypePos::Signature)?;
     let blocking = match options {
-        Some(opts) => attach_function_options(opts)?,
+        Some(opts) => attach_function_options(opts, class_body)?,
         None => false,
     };
     // A struct REFERENCE degrades here, at the declaration: an argument is
@@ -2206,14 +2206,35 @@ fn is_options_hash(node: &Node<'_>) -> bool {
 /// distinction -- the real gem ignores it everywhere else, and so does this.
 /// `enums:` and `type_map:` change how VALUES marshal, so an unrecognized or
 /// non-literal option stays a clean rejection rather than a silent drop.
-fn attach_function_options(node: &Node<'_>) -> PResult<bool> {
-    let pairs: Vec<Node<'_>> = match node.as_keyword_hash_node() {
+fn attach_function_options<'a>(node: &Node<'a>, class_body: &[Node<'a>]) -> PResult<bool> {
+    let elements: Vec<Node<'a>> = match node.as_keyword_hash_node() {
         Some(k) => k.elements().iter().collect(),
         None => node
             .as_hash_node()
             .map(|h| h.elements().iter().collect())
             .unwrap_or_default(),
     };
+    // `**opts`, where the class body set `opts = { blocking: true }` above --
+    // cztop, mosq, jansson and czmq-ffi-gen all hoist the one option they
+    // share into a local and splat it into every declaration. Resolved
+    // through the same body-local replay a computed C name uses.
+    let mut pairs: Vec<Node<'a>> = Vec::new();
+    for element in elements {
+        let Some(splat) = element.as_assoc_splat_node() else {
+            pairs.push(element);
+            continue;
+        };
+        let hash = splat
+            .value()
+            .as_ref()
+            .and_then(local_read_name)
+            .and_then(|n| body_local_value(&n, class_body, node.location().end_offset()))
+            .and_then(|v| v.as_hash_node().map(|h| h.elements().iter().collect()))
+            .ok_or_else(|| {
+                "attach_function's options must be literal `key: value` pairs".to_string()
+            })?;
+        pairs.extend::<Vec<Node<'a>>>(hash);
+    }
     let mut blocking = false;
     for pair in pairs {
         let assoc = pair.as_assoc_node().ok_or_else(|| {
