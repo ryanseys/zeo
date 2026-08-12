@@ -2378,8 +2378,14 @@ impl<'pr> ruby_prism::Visit<'pr> for RequireCollector<'pr> {
             {
                 self.optional_rel.push(again);
             }
-            if self.defs == 0
-                && self.runtime_cond > 0
+            // A method-body `require_relative` under an UNDECIDED guard is
+            // conditional twice over -- CRuby loads it only when the method
+            // runs AND the guard passes -- so it takes the gated-unit route,
+            // never the eager splice (puppet's suidmanager loads
+            // `windows/user` this way, and eager splicing compiled the
+            // windows-only FFI vocabulary into every build).
+            if self.runtime_cond > 0
+                && (self.defs == 0 || call.name().as_slice() == b"require_relative")
                 && let Some(again) = node.as_call_node()
             {
                 self.conditional.push(again);
@@ -2387,7 +2393,9 @@ impl<'pr> ruby_prism::Visit<'pr> for RequireCollector<'pr> {
             if self.defs == 0 {
                 self.calls.push(call);
             } else if call.name().as_slice() == b"require_relative" {
-                self.lazy.push(call);
+                if self.runtime_cond == 0 {
+                    self.lazy.push(call);
+                }
             } else {
                 self.deferred.push(call);
             }

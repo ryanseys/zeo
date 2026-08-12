@@ -1977,6 +1977,21 @@ fn literal_truth(compiler: &Compiler, node: NodeId) -> Option<bool> {
     }
 }
 
+/// A BUILTIN constant whose TRUTH is a property of the build --
+/// `File::ALT_SEPARATOR` is `"\\"` on windows and `nil` everywhere else,
+/// the oldest "am I on windows" test there is. The loader's cond fold
+/// answers the same question at the prism level; this is the HIR-level
+/// half, which is what lets a user predicate BODY (`puppet`'s
+/// `Platform.windows?` is `!!File::ALT_SEPARATOR`) fold through
+/// `predicate_fold`, and the whole windows-only require graph behind it
+/// fold away.
+fn seeded_bool_const(scope: &str, name: &str) -> Option<bool> {
+    match (scope.trim_start_matches("::"), name) {
+        ("File", "ALT_SEPARATOR") => win_platform(),
+        _ => None,
+    }
+}
+
 /// Compile-time truth of a guard expression, or `None` when it isn't one of the
 /// decidable target-constant forms (leave the condition to run normally).
 fn static_bool(
@@ -2030,7 +2045,16 @@ fn static_bool(
                 depth,
             )
         }
+        // `File::ALT_SEPARATOR` written as one path -- same seeded truth as
+        // the `QualifiedConstRead` spelling below.
+        HirNode::ClassRef(name) => {
+            let (scope, leaf) = name.rsplit_once("::")?;
+            seeded_bool_const(scope, leaf)
+        }
         HirNode::QualifiedConstRead(scope, name) => {
+            if let Some(b) = seeded_bool_const(scope, name) {
+                return Some(b);
+            }
             let (owner, value) = const_init(compiler, cref, box_id, Some(scope), name)?;
             static_bool(
                 compiler,
