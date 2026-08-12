@@ -402,6 +402,20 @@ impl Gvl {
         self.acquire();
         HoldGuard { gvl: self }
     }
+
+    /// Hold for a FOREIGN re-entry -- an FFI callback trampolining into
+    /// ruby. Acquires only when armed AND this thread is not already the
+    /// holder: a callback invoked synchronously by an ordinary C call
+    /// arrives with the GVL still held (acquiring again would self-deadlock
+    /// on the ticket queue), while one reached under `blocking: true` -- or
+    /// from a thread C spawned itself -- arrives without it. The guard
+    /// releases only what it took.
+    pub fn hold_reentrant(&self) -> Option<HoldGuard<'_>> {
+        if !self.armed || self.holds() {
+            return None;
+        }
+        Some(self.hold())
+    }
 }
 
 impl Drop for HoldGuard<'_> {

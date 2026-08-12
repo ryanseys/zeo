@@ -2893,8 +2893,24 @@ fn emit_ffi_call(cx: &Ctx, call: &crate::hir::FfiCall) -> TokenStream {
         call_idents.push(quote! { #pname });
         has_callback |= matches!(ty, crate::hir::FfiType::Callback(..));
     }
-    let ret_cty = ffi_c_type(&call.ret);
-    let wrap = ffi_wrap_ret(&call.ret);
+    // A struct returned BY VALUE comes back as its `#[repr(C)]` mirror --
+    // rustc owns the ABI classification, same as the argument direction
+    // above. The bytes are copied into a fresh ruby-owned `MemoryPointer`;
+    // the synthesized wrapper's `New` then views it through the struct's own
+    // class (see `lower_attach_function`).
+    let (ret_cty, wrap) = if let crate::hir::FfiType::Struct(layout) = &call.ret {
+        let rid = quote::format_ident!("__FfiSRet");
+        struct_defs.push(emit_repr_c_struct(&rid, layout));
+        let size = proc_macro2::Literal::usize_unsuffixed(layout.size);
+        (
+            quote! { #rid },
+            quote! {
+                unsafe { zeo_rt::ffi::from_struct_ret(&__ffi_ret as *const #rid as *const u8, #size) }
+            },
+        )
+    } else {
+        (ffi_c_type(&call.ret), ffi_wrap_ret(&call.ret))
+    };
     // An exception raised inside a callback can't unwind through C; it was
     // stashed and is re-raised here, after the C function returns.
     let cb_check = if has_callback {
@@ -3237,8 +3253,8 @@ fn ffi_wrap_ret(ty: &crate::hir::FfiType) -> TokenStream {
         Callback(..) => quote! { compile_error!("an FFI callback is not a valid return type") },
         // Confined to a struct layout -- see `FfiType::Array`.
         Array(..) => unreachable!("an inline array type never reaches a call site"),
-        // `lower_attach_function` rejects a by-value struct RETURN.
-        Struct(_) => unreachable!("a by-value struct return is rejected at the declaration"),
+        // Intercepted by `emit_ffi_call` before wrapping -- see above.
+        Struct(_) => unreachable!("a by-value struct return is wrapped by its repr(C) mirror"),
     }
 }
 

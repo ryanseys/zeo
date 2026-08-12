@@ -84,6 +84,18 @@ pub fn from_pointer(p: *const c_void) -> RubyValue {
     crate::ext::ffi::wrap_address(p as usize)
 }
 
+/// A struct returned BY VALUE -> a fresh ruby-owned `MemoryPointer` copying
+/// its `len` bytes; the generated wrapper then constructs the struct's own
+/// class over that backing (the gem wraps a by-value return the same way).
+///
+/// # Safety
+/// `src..src+len` must be readable -- the generated call site passes a
+/// reference to the C return value it just received.
+#[cfg(feature = "ext-ffi")]
+pub unsafe fn from_struct_ret(src: *const u8, len: usize) -> RubyValue {
+    unsafe { crate::ext::ffi::memory_from_bytes(src, len) }
+}
+
 /// A Ruby value bound to an `enum` argument -> the underlying `int`. A Symbol
 /// maps through the enum's member table; an Integer passes through unchanged
 /// (the gem accepts a raw value); an unknown Symbol is an `ArgumentError`, as
@@ -755,6 +767,11 @@ unsafe fn invoke_callback(
         .enumerate()
         .map(|(i, k)| unsafe { read_c_arg(*k, *args.add(i)) })
         .collect();
+    // Under `ZEO_GVL=1` a callback may arrive with the GVL released -- a
+    // `blocking: true` call runs its C body inside `without_gvl` -- and ruby
+    // must not run without it. A no-op in the default parallel mode, and on
+    // the synchronous path where the caller still holds.
+    let _gvl = crate::gvl::process_gvl().hold_reentrant();
     crate::dispatch::send_value(
         &data.callable,
         crate::Symbol::intern("call"),

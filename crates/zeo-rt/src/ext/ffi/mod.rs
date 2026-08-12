@@ -303,6 +303,19 @@ pub fn wrap_address(addr: usize) -> RubyValue {
     RubyValue::Object(Arc::new(RPointer::raw(addr, FFI_POINTER_CLASS)))
 }
 
+/// A fresh `MemoryPointer` holding a COPY of the `len` bytes at `src` -- how
+/// a struct returned BY VALUE becomes the ruby-owned backing an `FFI::Struct`
+/// then views (the generated call site passes a reference to the C return
+/// value it just received, and wraps this in the struct's own class).
+///
+/// # Safety
+/// `src..src+len` must be readable for the duration of the call.
+pub unsafe fn memory_from_bytes(src: *const u8, len: usize) -> RubyValue {
+    let mp = RPointer::owned(len, FFI_MEMORY_POINTER_CLASS);
+    unsafe { std::ptr::copy_nonoverlapping(src, mp.base, len) };
+    RubyValue::Object(Arc::new(mp))
+}
+
 /// The raw C address a pointer-typed argument carries, or `None` if `v` is not
 /// a pointer (`nil` is a NULL pointer -- the gem accepts it for `:pointer`).
 pub fn address_of(v: &RubyValue) -> Option<usize> {

@@ -1315,55 +1315,51 @@ fn lower_attach_function(
         None => false,
     };
     // By-value structs ride the fixed `extern "C"` tier, where rustc owns the
-    // ABI. The three positions that tier cannot express are clean rejections
-    // at the declaration -- never a wrong call.
-    let passes_struct = arg_types
-        .iter()
-        .any(|t| matches!(t, crate::hir::FfiType::Struct(_)));
-    if matches!(ret, crate::hir::FfiType::Struct(_)) {
+    // ABI -- as arguments AND as a return (the wrapper below views the
+    // returned bytes through the struct's own class). The positions the
+    // other tiers cannot express are clean rejections at the declaration --
+    // never a wrong call.
+    let ret_struct_class = match &ret {
+        crate::hir::FfiType::Struct(l) if !l.class_path.is_empty() => Some(l.class_path.clone()),
+        crate::hir::FfiType::Struct(_) => {
+            return Err(
+                "returning a struct BY VALUE needs a NAMED `FFI::Struct` class to wrap it in \
+                 (zeo limitation) -- return `.by_ref` (a pointer) and wrap it"
+                    .to_string()
+                    .into(),
+            );
+        }
+        _ => None,
+    };
+    let by_value = ret_struct_class.is_some()
+        || arg_types
+            .iter()
+            .any(|t| matches!(t, crate::hir::FfiType::Struct(_)));
+    if by_value && variadic {
         return Err(
-            "returning an FFI struct BY VALUE isn't supported yet (zeo limitation) -- return \
-             `.by_ref` (a pointer) and wrap it"
+            "a variadic `attach_function` can't pass or return a struct BY VALUE (zeo \
+             limitation) -- use `.by_ref`"
                 .to_string()
                 .into(),
         );
     }
-    if passes_struct && variadic {
-        return Err(
-            "a variadic `attach_function` can't pass a struct BY VALUE (zeo limitation) -- \
-             use `.by_ref`"
-                .to_string()
-                .into(),
-        );
-    }
-    if passes_struct
+    if by_value
         && matches!(
             lib,
             crate::hir::FfiLib::Runtime(_) | crate::hir::FfiLib::Deferred { .. }
         )
     {
         return Err(
-            "a runtime-resolved `ffi_lib` can't pass a struct BY VALUE (zeo limitation) -- \
-             name the library statically or use `.by_ref`"
+            "a runtime-resolved `ffi_lib` can't pass or return a struct BY VALUE (zeo \
+             limitation) -- name the library statically or use `.by_ref`"
                 .to_string()
                 .into(),
         );
     }
-    // A `blocking: true` call releases the GVL, and the C function may not call
-    // back into ruby while it is released. ffi says the same; here it would be
-    // a callback trampolining into a Proc with no GVL held.
-    if blocking
-        && arg_types
-            .iter()
-            .any(|t| matches!(t, crate::hir::FfiType::Callback(..)))
-    {
-        return Err(
-            "attach_function `blocking: true` can't be combined with a callback argument \
-             (the callback would re-enter ruby with the GVL released)"
-                .to_string()
-                .into(),
-        );
-    }
+    // `blocking: true` beside a callback argument is fine in every mode: the
+    // default parallel mode has no GVL to release, and under `ZEO_GVL=1` the
+    // callback trampoline re-acquires before entering ruby (see
+    // `zeo_rt::ffi::invoke_callback`). rdkafka's poll loop is the shape.
 
     // The wrapper's params: one required positional per FIXED C argument, named
     // so a `LocalRead` in the `Ffi` body reaches it; a variadic function also
@@ -1377,14 +1373,27 @@ fn lower_attach_function(
         .map(|(name, ty)| (hir.push(HirNode::LocalRead(name.clone())), ty))
         .collect();
     let variadic_read = variadic.then(|| hir.push(HirNode::LocalRead("__ffi_rest".to_string())));
-    let body = vec![hir.push(HirNode::Ffi(crate::hir::FfiCall {
+    let ffi_node = hir.push(HirNode::Ffi(crate::hir::FfiCall {
         symbol: c_symbol,
         lib,
         args: call_args,
         ret,
         variadic: variadic_read,
         blocking,
-    }))];
+    }));
+    // A by-value struct return comes out of the call as a fresh ruby-owned
+    // `MemoryPointer` (see codegen's `emit_ffi_call`); the struct class's own
+    // `new(pointer)` then views it -- the same wrap the accessor synthesis
+    // uses for a nested field, resolved lexically from the attach site.
+    let body = match ret_struct_class {
+        Some(class_name) => vec![hir.push(HirNode::New {
+            class_name,
+            args: vec![ffi_node],
+            kwargs: Vec::new(),
+            block: None,
+        })],
+        None => vec![ffi_node],
+    };
     let params = Params {
         required: param_names,
         rest: variadic.then(|| Some("__ffi_rest".to_string())),
