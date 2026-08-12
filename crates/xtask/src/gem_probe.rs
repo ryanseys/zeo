@@ -1043,21 +1043,32 @@ fn rootless_outcome(dir: &Path, meta: &GemMeta) -> Outcome {
     Outcome::NoLibDir
 }
 
-/// Whether any `.rb` exists anywhere under `dir`.
+/// Whether any `.rb` exists anywhere under `dir`. Symlinked directories are
+/// not followed and depth is capped, for the reason `collect_rb_features`
+/// gives: an archive can carry a symlink cycle.
 fn ships_ruby(dir: &Path) -> bool {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return false;
-    };
-    for entry in entries.filter_map(Result::ok) {
-        let p = entry.path();
-        if p.is_file() && p.extension().is_some_and(|x| x == "rb") {
-            return true;
+    fn walk(dir: &Path, depth: u32) -> bool {
+        if depth > 32 {
+            return false;
         }
-        if p.is_dir() && ships_ruby(&p) {
-            return true;
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return false;
+        };
+        for entry in entries.filter_map(Result::ok) {
+            let Ok(ft) = entry.file_type() else {
+                continue;
+            };
+            let p = entry.path();
+            if ft.is_file() && p.extension().is_some_and(|x| x == "rb") {
+                return true;
+            }
+            if ft.is_dir() && walk(&p, depth + 1) {
+                return true;
+            }
         }
+        false
     }
-    false
+    walk(dir, 0)
 }
 
 /// Every feature a top-level file under the roots provides, sorted and
@@ -1102,7 +1113,7 @@ fn require_graph_root_features(roots: &[PathBuf]) -> Vec<String> {
     // first (the load path would resolve it the same way).
     let mut files: Vec<(String, PathBuf)> = Vec::new();
     for root in roots {
-        collect_rb_features(root, root, &mut files);
+        collect_rb_features(root, root, 0, &mut files);
     }
     files.sort();
     files.dedup_by(|a, b| a.0 == b.0);
@@ -1173,16 +1184,29 @@ fn require_graph_root_features(roots: &[PathBuf]) -> Vec<String> {
 }
 
 /// Every `.rb` under `dir` (recursively) as a `(feature, path)` pair, the
-/// feature root-relative with the extension dropped.
-fn collect_rb_features(root: &Path, dir: &Path, out: &mut Vec<(String, PathBuf)>) {
+/// feature root-relative with the extension dropped. Symlinked directories
+/// are NOT followed -- a gem archive can carry a symlink cycle (one spun the
+/// probe forever on the last gem of the first entry-point sweep), and a
+/// feature reached only through a symlink has a real spelling elsewhere. The
+/// depth cap is the backstop for a cycle spelled without symlinks.
+fn collect_rb_features(root: &Path, dir: &Path, depth: u32, out: &mut Vec<(String, PathBuf)>) {
+    if depth > 32 {
+        return;
+    }
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
     for entry in entries.filter_map(Result::ok) {
         let p = entry.path();
-        if p.is_dir() {
-            collect_rb_features(root, &p, out);
-        } else if p.extension().is_some_and(|x| x == "rb")
+        // `file_type()` reads the entry itself and never follows a symlink,
+        // unlike `Path::is_dir`.
+        let Ok(ft) = entry.file_type() else {
+            continue;
+        };
+        if ft.is_dir() {
+            collect_rb_features(root, &p, depth + 1, out);
+        } else if ft.is_file()
+            && p.extension().is_some_and(|x| x == "rb")
             && let Ok(rel) = p.strip_prefix(root)
         {
             let feature = rel.with_extension("");
@@ -3944,6 +3968,22 @@ mod tests {
             entry_point(&under, "ruby-progressbar").as_deref(),
             Some("ruby_progressbar")
         );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A symlink cycle in the archive must not spin the walk -- one did, on
+    /// the last gem of the first entry-point sweep.
+    #[test]
+    #[cfg(unix)]
+    fn a_symlink_cycle_does_not_spin_the_feature_walk() {
+        let root = scratch("symlink-cycle");
+        let libs = lib_with(&root, "loopy", &["ns/real.rb"]);
+        std::os::unix::fs::symlink(libs[0].join("ns"), libs[0].join("ns/back")).unwrap();
+        assert_eq!(
+            require_graph_root_features(&libs),
+            vec!["ns/real".to_string()]
+        );
+        assert!(ships_ruby(&libs[0]));
         let _ = std::fs::remove_dir_all(&root);
     }
 

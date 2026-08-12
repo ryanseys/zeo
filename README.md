@@ -338,18 +338,18 @@ below on every probe, and `cargo xtask gem-probe --check` fails when they
 disagree with the ledger — so this block cannot go stale.
 
 <!-- gem-probe-stats:begin -->
-**172,039 of 195,778 probed gems compile to Rust (87.9%).** The probe runs zeo's full front end (parse, lower, analyze, codegen) on the newest release of every gem on rubygems.org. `ok` means zeo produced Rust; no rustc ran. One row per gem in [`conformance/gem-probe.tsv`](conformance/gem-probe.tsv).
+**182,252 of 195,778 probed gems compile to Rust (93.1%).** The probe runs zeo's full front end (parse, lower, analyze, codegen) on the newest release of every gem on rubygems.org. `ok` means zeo produced Rust; no rustc ran. One row per gem in [`conformance/gem-probe.tsv`](conformance/gem-probe.tsv).
 
 | Verdict | Gems | Share of probed |
 |---|---|---|
-| Compile to Rust (`ok`) | 172,039 | 87.9% |
-| Compiler gaps, zeo's to fix (`lowering-gap`, `compiler-panic`, `rustc-error`) | 1,765 | 0.9% |
-| Unresolved dependency in the probe's view (`missing-dependency`) | 1,278 | 0.7% |
-| Harness limits, not compiler verdicts (`no-entry-point`, `no-lib-dir`, `fetch-failed`, `view-failed`, `ambiguous-require`) | 18,256 | 9.3% |
-| Nothing to compile (`invalid-ruby`, `native-extension`, `ext-only`, `meta-gem`, `platform-gem`) | 2,410 | 1.2% |
-| No verdict reached (`timeout`, `out-of-memory`) | 30 | 0.0% |
+| Compile to Rust (`ok`) | 182,252 | 93.1% |
+| Compiler gaps, zeo's to fix (`lowering-gap`, `compiler-panic`, `rustc-error`) | 1,966 | 1.0% |
+| Unresolved dependency in the probe's view (`missing-dependency`) | 1,319 | 0.7% |
+| Harness limits, not compiler verdicts (`no-entry-point`, `no-lib-dir`, `fetch-failed`, `view-failed`, `ambiguous-require`) | 7,462 | 3.8% |
+| Nothing to compile (`invalid-ruby`, `native-extension`, `ext-only`, `meta-gem`, `platform-gem`) | 2,733 | 1.4% |
+| No verdict reached (`timeout`, `out-of-memory`) | 46 | 0.0% |
 
-Of the 175,112 gems zeo can attempt -- the probed set minus the harness limits and the gems no Ruby loads -- **172,039 compile (98.2%)**.
+Of the 185,583 gems zeo can attempt -- the probed set minus the harness limits and the gems no Ruby loads -- **182,252 compile (98.2%)**.
 <!-- gem-probe-stats:end -->
 
 Read [`docs/GEM_TESTING.md`](docs/GEM_TESTING.md) for the workflow and for
