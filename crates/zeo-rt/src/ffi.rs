@@ -162,8 +162,8 @@ static ENUM_SLOTS: std::sync::OnceLock<
 > = std::sync::OnceLock::new();
 
 #[cfg(feature = "ext-ffi")]
-fn enum_slots()
--> &'static std::sync::RwLock<std::collections::HashMap<usize, Vec<(String, i64)>>> {
+fn enum_slots() -> &'static std::sync::RwLock<std::collections::HashMap<usize, Vec<(String, i64)>>>
+{
     ENUM_SLOTS.get_or_init(Default::default)
 }
 

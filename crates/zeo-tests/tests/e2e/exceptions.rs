@@ -2043,10 +2043,7 @@ fn reopen_guards_mirror_rubys_type_errors() {
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(
-        result.stdout,
-        "superclass mismatch for class Sub\nBase\n"
-    );
+    assert_eq!(result.stdout, "superclass mismatch for class Sub\nBase\n");
 
     // Restating the ORIGINAL superclass is allowed (real Ruby).
     let result = run_ruby(

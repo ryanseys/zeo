@@ -3900,9 +3900,7 @@ fn walk_class_body(
                     MixinTarget::DeferredRead => {
                         defer_in_class_body(compiler, class_id, site_idx, stmt, &m)
                     }
-                    MixinTarget::Runtime => {
-                        defer_runtime_mixin_in_body(compiler, site_idx, stmt)
-                    }
+                    MixinTarget::Runtime => defer_runtime_mixin_in_body(compiler, site_idx, stmt),
                 }
             }
             HirNode::Extend(m) => {
@@ -3934,9 +3932,7 @@ fn walk_class_body(
                     MixinTarget::DeferredRead => {
                         defer_in_class_body(compiler, class_id, site_idx, stmt, &m)
                     }
-                    MixinTarget::Runtime => {
-                        defer_runtime_mixin_in_body(compiler, site_idx, stmt)
-                    }
+                    MixinTarget::Runtime => defer_runtime_mixin_in_body(compiler, site_idx, stmt),
                 }
             }
             // `refine Target do ... end`. The holder module registered just
@@ -4109,9 +4105,7 @@ fn walk_class_body(
                     MixinTarget::DeferredRead => {
                         defer_in_class_body(compiler, class_id, site_idx, stmt, &m)
                     }
-                    MixinTarget::Runtime => {
-                        defer_runtime_mixin_in_body(compiler, site_idx, stmt)
-                    }
+                    MixinTarget::Runtime => defer_runtime_mixin_in_body(compiler, site_idx, stmt),
                 }
             }
             // The singleton half. See `HirNode::ClassMethodPrepend`. A module
@@ -4166,9 +4160,7 @@ fn walk_class_body(
                     // The singleton spelling (`singleton_class.prepend(M)`)
                     // hands the hooks the real singleton class at runtime, so
                     // the rejection above has nothing to guard here.
-                    MixinTarget::Runtime => {
-                        defer_runtime_mixin_in_body(compiler, site_idx, stmt)
-                    }
+                    MixinTarget::Runtime => defer_runtime_mixin_in_body(compiler, site_idx, stmt),
                 }
             }
             // `IvarWrite`: a bare `@x = expr` in a class body is an ivar on
@@ -5790,7 +5782,8 @@ mod tests {
             let [ArrayElem::Single(class), ArrayElem::Single(message)] = args[..] else {
                 continue;
             };
-            let (HirNode::ClassRef(class), HirNode::StringLit(parts)) = (&hir[class], &hir[message])
+            let (HirNode::ClassRef(class), HirNode::StringLit(parts)) =
+                (&hir[class], &hir[message])
             else {
                 continue;
             };
