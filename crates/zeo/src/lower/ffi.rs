@@ -612,10 +612,21 @@ pub(crate) fn as_ffi_layout(
                 },
             };
             // A TYPEDEF'D struct name resolves through `find_type` to the
-            // by-reference wrapper, so as a field it is a plain pointer --
-            // only the bare CLASS name embeds the struct inline.
+            // by-reference wrapper, so as a field it is a plain pointer.
+            // A bare struct CLASS written here means embed INLINE -- which
+            // needs the layout zeo never saw (a DSL-built one), so it stays
+            // a loud rejection rather than a silently mis-shaped field.
             let ty = match ty {
-                crate::hir::FfiType::StructRef(_) => crate::hir::FfiType::Pointer,
+                crate::hir::FfiType::StructRef(path) => {
+                    if const_path_string(ty_node).is_some() {
+                        return Err(format!(
+                            "`{path}`'s layout isn't known to zeo (its `layout` directive \
+                             never lowered), so it can't be embedded inline as a field"
+                        )
+                        .into());
+                    }
+                    crate::hir::FfiType::Pointer
+                }
                 t => t,
             };
             Ok((name, ty))
@@ -694,10 +705,20 @@ fn layout_array_type(
         Some(sym) => ffi_type_of(&sym, aliases)?,
         None => ffi_type_node(&elems[0], aliases, TypePos::Field)?,
     };
-    // Same degrade as a plain field's: a typedef'd struct name is the
-    // by-reference wrapper, one pointer per element.
+    // Same rule as a plain field's: a typedef'd struct name is the
+    // by-reference wrapper (one pointer per element); a bare layout-less
+    // struct CLASS would embed inline, which needs the layout.
     let elem = match elem {
-        crate::hir::FfiType::StructRef(_) => crate::hir::FfiType::Pointer,
+        crate::hir::FfiType::StructRef(path) => {
+            if const_path_string(&elems[0]).is_some() {
+                return Err(format!(
+                    "`{path}`'s layout isn't known to zeo (its `layout` directive never \
+                     lowered), so it can't be embedded inline as an array element"
+                )
+                .into());
+            }
+            crate::hir::FfiType::Pointer
+        }
         t => t,
     };
     let count = ffi_const_int(&elems[1], hir, body_so_far).ok_or_else(|| {

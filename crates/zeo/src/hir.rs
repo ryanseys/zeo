@@ -146,6 +146,12 @@ pub struct Hir {
     /// Module paths that have been `extend FFI::Library`'d -- see
     /// [`Hir::mark_ffi_library`].
     ffi_library_crefs: std::collections::HashSet<String>,
+    /// Leaf names of every `class X < FFI::Struct` the lowering has seen --
+    /// including ones whose `layout` never lowered (a DSL-built layout,
+    /// ffi_dry's `dsl_layout`). A SIGNATURE position only needs the
+    /// by-reference fact, so these enter the type table as [`FfiType::
+    /// StructRef`] when no layout/typedef claims the name.
+    ffi_struct_classes: std::collections::HashSet<String>,
     /// `Call` nodes that are VCALLS (prism's `is_variable_call`: a bare
     /// identifier, implicit self, no args/parens -- something that could have
     /// been a local). A miss on one raises `NameError`, not `NoMethodError`;
@@ -484,6 +490,14 @@ impl Hir {
                 .entry(k.clone())
                 .or_insert_with(|| FfiType::Struct(layout.clone()));
         }
+        // A struct class whose `layout` zeo never saw (DSL-built) still
+        // NAMES a struct; the by-reference entry serves every signature
+        // position. Last, so a real layout or an explicit typedef wins.
+        for k in &self.ffi_struct_classes {
+            types
+                .entry(k.clone())
+                .or_insert_with(|| FfiType::StructRef(k.clone()));
+        }
         types
     }
 
@@ -632,6 +646,12 @@ impl Hir {
 
     pub(crate) fn is_ffi_library(&self, path: &str) -> bool {
         self.ffi_library_crefs.contains(path)
+    }
+
+    /// Records a `class X < FFI::Struct` by leaf name -- see
+    /// [`Hir::ffi_struct_classes`].
+    pub(crate) fn mark_ffi_struct_class(&mut self, leaf: &str) {
+        self.ffi_struct_classes.insert(leaf.to_string());
     }
 
     /// Whether an already-lowered `class`/`module` definition binds `name` AS
