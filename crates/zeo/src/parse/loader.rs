@@ -663,6 +663,21 @@ impl Loader {
                 ));
             }
         }
+        // Class/module-body requires pre-LOWER here, ahead of this file's own
+        // statements: CRuby runs them MID-body, so their declarations -- the
+        // FFI vocabulary above all -- exist before the statements below them.
+        // Their nodes still EMIT at the file-trailing position (appended to
+        // `trailing` below), so runtime order is exactly what the trailing
+        // splice always produced; only the compile-time lowering order moves.
+        let mut nested_spliced = Vec::new();
+        for call in &requires.nested {
+            let name = String::from_utf8_lossy(call.name().as_slice()).into_owned();
+            if let Some(spliced) =
+                self.lower_require_statement(hir, result, call, &name, dir, file_idx, current_box)?
+            {
+                nested_spliced.extend(spliced);
+            }
+        }
 
         for n in body.iter() {
             if let Some(call) = n.as_call_node() {
@@ -984,8 +999,10 @@ impl Loader {
         // The method-body `require_relative`s, plus any require the statement
         // loop could not reach (one written inside an autoload/glob target).
         // The shared `required` table dedups, so everything already spliced
-        // above is a no-op here and only the stragglers land.
-        let mut trailing = Vec::new();
+        // above is a no-op here and only the stragglers land. The
+        // pre-lowered class-body splices land FIRST -- their position in this
+        // list is the one the trailing pass always gave them.
+        let mut trailing = nested_spliced;
         for call in requires.lazy.iter().chain(&requires.calls) {
             let name = String::from_utf8_lossy(call.name().as_slice()).into_owned();
             if let Some(spliced) =
@@ -2182,6 +2199,17 @@ struct RequireCollector<'a> {
     /// CRuby runs these only when the guard passes, so they become gated
     /// feature units rather than eager splices.
     conditional: Vec<ruby_prism::CallNode<'a>>,
+    /// Requires written inside a `class`/`module` BODY (unguarded, outside
+    /// any `def`). CRuby runs these MID-body, so the target's declarations
+    /// -- FFI vocabulary above all (libuv's `require 'libuv/ext/types'`
+    /// three lines above the `attach_function`s that spend its enums) --
+    /// exist before the statements below them. These pre-LOWER ahead of the
+    /// file's own statements; their nodes still emit at the file-trailing
+    /// position, so runtime order is unchanged.
+    nested: Vec<ruby_prism::CallNode<'a>>,
+    /// Enclosing `class`/`module` bodies. Nonzero puts a require in
+    /// `nested`.
+    class_depth: u32,
     /// Enclosing `def`s. Nonzero means a `require` here is deferred.
     defs: u32,
     /// Enclosing `begin` bodies whose rescue catches `LoadError`. Nonzero
@@ -2391,6 +2419,12 @@ impl<'pr> ruby_prism::Visit<'pr> for RequireCollector<'pr> {
                 self.conditional.push(again);
             }
             if self.defs == 0 {
+                if self.class_depth > 0
+                    && self.runtime_cond == 0
+                    && let Some(again) = node.as_call_node()
+                {
+                    self.nested.push(again);
+                }
                 self.calls.push(call);
             } else if call.name().as_slice() == b"require_relative" {
                 if self.runtime_cond == 0 {
@@ -2434,6 +2468,27 @@ impl<'pr> ruby_prism::Visit<'pr> for RequireCollector<'pr> {
         self.defs += 1;
         ruby_prism::visit_def_node(self, node);
         self.defs -= 1;
+    }
+
+    // A `class`/`module` body runs at load time, statement by statement --
+    // a require written there must have DECLARED before the statements below
+    // it lower. See `RequireCollector::nested`.
+    fn visit_class_node(&mut self, node: &ruby_prism::ClassNode<'pr>) {
+        self.class_depth += 1;
+        ruby_prism::visit_class_node(self, node);
+        self.class_depth -= 1;
+    }
+
+    fn visit_module_node(&mut self, node: &ruby_prism::ModuleNode<'pr>) {
+        self.class_depth += 1;
+        ruby_prism::visit_module_node(self, node);
+        self.class_depth -= 1;
+    }
+
+    fn visit_singleton_class_node(&mut self, node: &ruby_prism::SingletonClassNode<'pr>) {
+        self.class_depth += 1;
+        ruby_prism::visit_singleton_class_node(self, node);
+        self.class_depth -= 1;
     }
 
     // A `require` under a statically-false guard (`require 'open3/jruby_windows'
