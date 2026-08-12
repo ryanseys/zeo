@@ -698,8 +698,30 @@ pub fn value_hash_code(v: &RubyValue) -> i64 {
 /// insertion order `IndexMap` maintains regardless of hasher.
 pub type HashPairs = IndexMap<HashKey, (RubyValue, RubyValue), foldhash::fast::RandomState>;
 
+/// One stored entry: the projected key beside the `(original key, value)`
+/// pair -- the same `(K, V)` shape the `IndexMap` holds, so the two reprs
+/// answer every question identically.
+type HashRow = (HashKey, (RubyValue, RubyValue));
+
+/// CRuby keeps a hash under this many entries as a flat array (`ar_table`)
+/// and promotes to a real table on growth; the same trade holds here. A
+/// small hash is the overwhelming shape -- every kwargs bundle, every small
+/// literal -- and a `Vec` of rows is one allocation (none while empty)
+/// against the table's two, with a linear probe that beats hashing at these
+/// lengths.
+const SMALL_HASH_MAX: usize = 8;
+
+/// The two storages behind a Hash. `Small` never holds more than
+/// [`SMALL_HASH_MAX`] rows; growth past that promotes to `Big` and never
+/// demotes (CRuby's own behavior), so a hash that was ever big stays a
+/// table.
+enum HashRepr {
+    Small(Vec<HashRow>),
+    Big(HashPairs),
+}
+
 pub struct RHashData {
-    map: HashPairs,
+    repr: HashRepr,
     pub default: RubyValue,
     pub default_proc: Option<RubyValue>,
     /// `Hash#compare_by_identity`: when set, keys project by object identity
@@ -722,7 +744,8 @@ pub struct RHashData {
 impl RHashData {
     fn new() -> RHashData {
         RHashData {
-            map: HashPairs::default(),
+            // Empty and allocation-free until the first insert.
+            repr: HashRepr::Small(Vec::new()),
             default: RubyValue::Nil,
             default_proc: None,
             compare_by_identity: false,
@@ -730,7 +753,211 @@ impl RHashData {
             kw_marked: false,
         }
     }
+
+    /// Build straight from projected rows, choosing the repr by count.
+    fn from_rows(rows: Vec<HashRow>) -> RHashData {
+        let mut data = RHashData::new();
+        data.repr = if rows.len() <= SMALL_HASH_MAX {
+            HashRepr::Small(rows)
+        } else {
+            HashRepr::Big(rows.into_iter().collect())
+        };
+        data
+    }
+
+    /// `IndexMap::insert`'s exact contract on either repr: an equivalent
+    /// existing key keeps its place (and the stored `HashKey`), its value is
+    /// replaced and the old one returned. A `Small` repr past
+    /// [`SMALL_HASH_MAX`] promotes first, so the vec never grows beyond the
+    /// scan length that makes it worth having.
+    pub fn insert(
+        &mut self,
+        key: HashKey,
+        value: (RubyValue, RubyValue),
+    ) -> Option<(RubyValue, RubyValue)> {
+        match &mut self.repr {
+            HashRepr::Small(rows) => {
+                if let Some((_, slot)) = rows.iter_mut().find(|(k, _)| *k == key) {
+                    return Some(std::mem::replace(slot, value));
+                }
+                if rows.len() < SMALL_HASH_MAX {
+                    rows.push((key, value));
+                    return None;
+                }
+                let mut map: HashPairs = std::mem::take(rows).into_iter().collect();
+                let old = map.insert(key, value);
+                self.repr = HashRepr::Big(map);
+                old
+            }
+            HashRepr::Big(map) => map.insert(key, value),
+        }
+    }
+
+    pub fn get<Q>(&self, key: &Q) -> Option<&(RubyValue, RubyValue)>
+    where
+        Q: std::hash::Hash + indexmap::Equivalent<HashKey> + ?Sized,
+    {
+        match &self.repr {
+            HashRepr::Small(rows) => {
+                rows.iter().find(|(k, _)| key.equivalent(k)).map(|(_, v)| v)
+            }
+            HashRepr::Big(map) => map.get(key),
+        }
+    }
+
+    pub fn contains_key<Q>(&self, key: &Q) -> bool
+    where
+        Q: std::hash::Hash + indexmap::Equivalent<HashKey> + ?Sized,
+    {
+        match &self.repr {
+            HashRepr::Small(rows) => rows.iter().any(|(k, _)| key.equivalent(k)),
+            HashRepr::Big(map) => map.contains_key(key),
+        }
+    }
+
+    pub fn get_index_of<Q>(&self, key: &Q) -> Option<usize>
+    where
+        Q: std::hash::Hash + indexmap::Equivalent<HashKey> + ?Sized,
+    {
+        match &self.repr {
+            HashRepr::Small(rows) => rows.iter().position(|(k, _)| key.equivalent(k)),
+            HashRepr::Big(map) => map.get_index_of(key),
+        }
+    }
+
+    pub fn get_index_mut(&mut self, i: usize) -> Option<(&HashKey, &mut (RubyValue, RubyValue))> {
+        match &mut self.repr {
+            HashRepr::Small(rows) => rows.get_mut(i).map(|(k, v)| (&*k, v)),
+            HashRepr::Big(map) => map.get_index_mut(i),
+        }
+    }
+
+    /// Order-preserving removal, `IndexMap::shift_remove`'s contract.
+    pub fn shift_remove<Q>(&mut self, key: &Q) -> Option<(RubyValue, RubyValue)>
+    where
+        Q: std::hash::Hash + indexmap::Equivalent<HashKey> + ?Sized,
+    {
+        match &mut self.repr {
+            HashRepr::Small(rows) => {
+                let i = rows.iter().position(|(k, _)| key.equivalent(k))?;
+                Some(rows.remove(i).1)
+            }
+            HashRepr::Big(map) => map.shift_remove(key),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        match &self.repr {
+            HashRepr::Small(rows) => rows.len(),
+            HashRepr::Big(map) => map.len(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Clears the entries; the repr stays what it was (a big hash never
+    /// demotes, CRuby's own behavior).
+    pub fn clear(&mut self) {
+        match &mut self.repr {
+            HashRepr::Small(rows) => rows.clear(),
+            HashRepr::Big(map) => map.clear(),
+        }
+    }
+
+    pub fn values(&self) -> HashValuesIter<'_> {
+        match &self.repr {
+            HashRepr::Small(rows) => HashValuesIter::Small(rows.iter()),
+            HashRepr::Big(map) => HashValuesIter::Big(map.values()),
+        }
+    }
+
+    pub fn iter(&self) -> HashPairsIter<'_> {
+        match &self.repr {
+            HashRepr::Small(rows) => HashPairsIter::Small(rows.iter()),
+            HashRepr::Big(map) => HashPairsIter::Big(map.iter()),
+        }
+    }
 }
+
+/// [`RHashData::values`] over either repr -- `&(original key, value)` rows
+/// in insertion order, mirroring `IndexMap::values`.
+pub enum HashValuesIter<'a> {
+    Small(std::slice::Iter<'a, HashRow>),
+    Big(indexmap::map::Values<'a, HashKey, (RubyValue, RubyValue)>),
+}
+
+impl<'a> Iterator for HashValuesIter<'a> {
+    type Item = &'a (RubyValue, RubyValue);
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            HashValuesIter::Small(i) => i.next().map(|(_, v)| v),
+            HashValuesIter::Big(i) => i.next(),
+        }
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        match self {
+            HashValuesIter::Small(i) => i.size_hint(),
+            HashValuesIter::Big(i) => i.size_hint(),
+        }
+    }
+}
+
+impl DoubleEndedIterator for HashValuesIter<'_> {
+    #[inline]
+    fn next_back(&mut self) -> Option<Self::Item> {
+        match self {
+            HashValuesIter::Small(i) => i.next_back().map(|(_, v)| v),
+            HashValuesIter::Big(i) => i.next_back(),
+        }
+    }
+}
+
+impl ExactSizeIterator for HashValuesIter<'_> {}
+
+/// [`RHashData::iter`] over either repr -- `(&HashKey, &(key, value))`
+/// pairs in insertion order, mirroring `IndexMap::iter`.
+pub enum HashPairsIter<'a> {
+    Small(std::slice::Iter<'a, HashRow>),
+    Big(indexmap::map::Iter<'a, HashKey, (RubyValue, RubyValue)>),
+}
+
+impl<'a> Iterator for HashPairsIter<'a> {
+    type Item = (&'a HashKey, &'a (RubyValue, RubyValue));
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            HashPairsIter::Small(i) => i.next().map(|(k, v)| (k, v)),
+            HashPairsIter::Big(i) => i.next(),
+        }
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        match self {
+            HashPairsIter::Small(i) => i.size_hint(),
+            HashPairsIter::Big(i) => i.size_hint(),
+        }
+    }
+}
+
+impl DoubleEndedIterator for HashPairsIter<'_> {
+    #[inline]
+    fn next_back(&mut self) -> Option<Self::Item> {
+        match self {
+            HashPairsIter::Small(i) => i.next_back().map(|(k, v)| (k, v)),
+            HashPairsIter::Big(i) => i.next_back(),
+        }
+    }
+}
+
+impl ExactSizeIterator for HashPairsIter<'_> {}
 
 /// Tag `h` as a keyword set (see [`RHashData::kw_marked`]).
 pub fn hash_mark_kwargs(h: &RHash) {
@@ -740,19 +967,6 @@ pub fn hash_mark_kwargs(h: &RHash) {
 /// Whether the caller wrote keywords to build `h` (see [`RHashData::kw_marked`]).
 pub fn hash_is_kwargs(h: &RHash) -> bool {
     h.lock().kw_marked
-}
-
-impl std::ops::Deref for RHashData {
-    type Target = HashPairs;
-    fn deref(&self) -> &Self::Target {
-        &self.map
-    }
-}
-
-impl std::ops::DerefMut for RHashData {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.map
-    }
 }
 
 pub type RHash = Arc<Freezable<RHashData>>;
@@ -933,14 +1147,10 @@ pub fn hash_new(pairs: Vec<(RubyValue, RubyValue)>) -> RHash {
 /// default block (`Hash.new { |h, k| ... }`) -- the constructor behind
 /// `Hash.new`'s two argument shapes.
 pub fn hash_new_with_default(default: RubyValue, default_proc: Option<RubyValue>) -> RHash {
-    Arc::new(Freezable::new(RHashData {
-        map: HashPairs::default(),
-        default,
-        default_proc,
-        compare_by_identity: false,
-        iterating: 0,
-        kw_marked: false,
-    }))
+    let mut data = RHashData::new();
+    data.default = default;
+    data.default_proc = default_proc;
+    Arc::new(Freezable::new(data))
 }
 
 /// Copy `src`'s per-instance default (value/proc) and `compare_by_identity`
@@ -1152,12 +1362,12 @@ pub fn hash_enable_compare_by_identity(h: &RHash) {
         return;
     }
     g.compare_by_identity = true;
-    // Rebuild the map keyed by identity, preserving insertion order.
-    let old: Vec<(RubyValue, RubyValue)> = g.map.values().cloned().collect();
-    g.map.clear();
+    // Rebuild the entries keyed by identity, preserving insertion order.
+    let old: Vec<(RubyValue, RubyValue)> = g.values().cloned().collect();
+    g.clear();
     for (k, v) in old {
         let ik = hash_key_in(&k, true);
-        g.map.insert(ik, (k, v));
+        g.insert(ik, (k, v));
     }
 }
 
@@ -1218,20 +1428,13 @@ pub fn hash_except_keys(h: &RHash, keys: &[&str]) -> RHash {
         .iter()
         .map(|k| hash_key(&RubyValue::Symbol(crate::Symbol::intern(k))))
         .collect();
-    let pairs: HashPairs = h
+    let rows: Vec<HashRow> = h
         .lock()
         .iter()
         .filter(|(k, _)| !excluded.contains(k))
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
-    Arc::new(Freezable::new(RHashData {
-        map: pairs,
-        default: RubyValue::Nil,
-        default_proc: None,
-        compare_by_identity: false,
-        iterating: 0,
-        kw_marked: false,
-    }))
+    Arc::new(Freezable::new(RHashData::from_rows(rows)))
 }
 
 #[inline]
