@@ -3118,16 +3118,23 @@ fn lower_class_body_statement(
         // $n`), so hoisting it evaluated it too early and answered the value
         // from before the body ran. Same rule, and the same reason, as the
         // `SingletonBody` arm above.
-        let mut had_const = false;
+        let mut minted = false;
         let mut rest = Vec::with_capacity(mapped.len());
         let mut ordered = Vec::with_capacity(mapped.len());
         for n in mapped {
+            if matches!(&hir[n], HirNode::ClassDef { name, .. } if name == SINGLETON_SURROGATE) {
+                // A residual statement's own reopen (the `SingletonBody` arm
+                // above) already IS a surrogate mint.
+                minted = true;
+                ordered.push(n);
+                continue;
+            }
             if !matches!(hir[n], HirNode::ConstWrite { .. }) {
                 rest.push(n);
                 ordered.push(n);
                 continue;
             }
-            had_const = true;
+            minted = true;
             let span = hir.span(n).unwrap_or(crate::hir::Span::SYNTH);
             hir.push_span(span);
             let def = hir.push(HirNode::ClassDef {
@@ -3139,9 +3146,24 @@ fn lower_class_body_statement(
             hir.pop_span();
             ordered.push(def);
         }
-        if had_const {
-            tag_singleton_body_defs(hir, &rest);
+        // EVERY `class << self` body mints the surrogate, not just a
+        // constant-bearing one: the surrogate IS the body's cref, so a `def`
+        // in a block inside a def here must define on the SINGLETON (a class
+        // method of the enclosing class), and `Module.nesting` reports it.
+        // A body that minted nothing above gets one empty reopen up front.
+        if !minted {
+            let span = crate::lower::span_of(hir, node);
+            hir.push_span(span);
+            let def = hir.push(HirNode::ClassDef {
+                name: SINGLETON_SURROGATE.to_string(),
+                superclass: None,
+                body: Vec::new(),
+                is_module: true,
+            });
+            hir.pop_span();
+            ordered.insert(0, def);
         }
+        tag_singleton_body_defs(hir, &rest);
         out.extend(ordered);
         return Ok(());
     }
