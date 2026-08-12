@@ -2716,6 +2716,64 @@ struct Ready {
 /// directory would corrupt it.
 ///
 /// `Err` is a row that already knows its verdict and needs no compile.
+/// How deep the dependency walk goes, and how many gems it will link into one
+/// view. A real graph is shallow (rails reaches everything it needs in three
+/// hops); the caps exist so a pathological one cannot turn a single subject
+/// into a whole-registry fetch.
+const DEP_DEPTH_CAP: u32 = 6;
+const DEP_COUNT_CAP: usize = 200;
+
+/// Every gem the subject needs to LOAD, not just the ones it names.
+///
+/// A one-level list was the probe's largest source of false verdicts: nanoc's
+/// view carried nanoc-core but not nanoc-core's own `ddplugin`, so
+/// `Nanoc::Error = Nanoc::Core::Error` never resolved and 16 gems recorded a
+/// lowering-gap for a program CRuby would have stopped with a LoadError.
+/// Breadth-first with a visited set, so a cycle (a gem that depends on itself,
+/// or two that depend on each other) walks once.
+///
+/// A dependency is a load-path entry, not a subject: it is never recorded, so
+/// its digest is never asked for. Fetches go through the shared gem store, so
+/// a gem every subject depends on is downloaded once for the whole sweep.
+fn dependency_closure(root: &Path, name: &str, meta: Option<&VersionMeta>) -> Vec<String> {
+    let mut queue: std::collections::VecDeque<(String, u32)> = meta
+        .map(|m| m.runtime.clone())
+        .unwrap_or_default()
+        .into_iter()
+        .map(|d| (d, 1))
+        .collect();
+    let mut seen: std::collections::HashSet<String> = [name.to_string()].into_iter().collect();
+    let mut deps = Vec::new();
+    while let Some((dep, depth)) = queue.pop_front() {
+        if deps.len() >= DEP_COUNT_CAP {
+            break;
+        }
+        if !seen.insert(dep.clone()) {
+            continue;
+        }
+        let Ok(version) = latest_version(&dep) else {
+            continue;
+        };
+        if fetch(root, &dep, &version, None).is_err() {
+            continue;
+        }
+        // Recorded even when its OWN dependencies cannot be reached: a
+        // partially satisfied view is what the one-level walk always built,
+        // and it is still strictly better than leaving the gem out.
+        deps.push(dep.clone());
+        if depth >= DEP_DEPTH_CAP {
+            continue;
+        }
+        for next in version_meta(&dep, &version)
+            .map(|m| m.runtime)
+            .unwrap_or_default()
+        {
+            queue.push_back((next, depth + 1));
+        }
+    }
+    deps
+}
+
 fn prepare(root: &Path, name: &str, want: Option<&str>, no_deps: bool) -> Result<Ready, Box<Row>> {
     let version = want
         .map(String::from)
@@ -2735,16 +2793,7 @@ fn prepare(root: &Path, name: &str, want: Option<&str>, no_deps: bool) -> Result
         true => None,
         false => version_meta(name, &version).ok(),
     };
-    let mut deps = Vec::new();
-    for dep in meta.as_ref().map(|m| m.runtime.clone()).unwrap_or_default() {
-        // A dependency is a load-path entry, not a subject: it is never
-        // recorded, so its digest is never asked for.
-        if let Ok(dv) = latest_version(&dep)
-            && fetch(root, &dep, &dv, None).is_ok()
-        {
-            deps.push(dep);
-        }
-    }
+    let deps = dependency_closure(root, name, meta.as_ref());
 
     let digest = meta.and_then(|m| m.sha);
     match fetch(root, name, &version, digest.as_deref()) {
