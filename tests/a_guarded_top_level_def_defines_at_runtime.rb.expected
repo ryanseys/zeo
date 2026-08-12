@@ -1,0 +1,7 @@
+true
+"took 1"
+true
+false
+"took from_method"
+explicit receiver: NoMethodError
+untaken: NoMethodError

@@ -1613,11 +1613,13 @@ fn try_conditional_reopen(
     )
 }
 
-/// An undecidable-guard top-level `if` whose definitions are `def self.x`
-/// on the main object and/or whole `class`/`module` definitions. A
+/// An undecidable-guard top-level `if` whose definitions are `def`s on
+/// the main object/`Object` and/or whole `class`/`module` definitions. A
 /// `def self.x` rewrites in place to the same runtime
 /// `self.define_singleton_method(:x, lambda)` the unguarded arm desugars
-/// to. A `class`/`module` -- new or reopening -- REGISTERS here: a fresh
+/// to; a plain `def x` registers on `Object` as `Conditional::Yes` (a
+/// private instance method exactly when its branch runs). A
+/// `class`/`module` -- new or reopening -- REGISTERS here: a fresh
 /// one as `ClassInfo::runtime_conditional` (concealed until its body
 /// runs), every `def` in either as `Conditional::Yes`, while the node
 /// stays put so the body executes at document position inside the
@@ -1628,10 +1630,7 @@ fn try_conditional_reopen(
 fn register_guarded_top_defs(compiler: &mut Compiler, stmt: NodeId) -> Result<bool, String> {
     fn qualifies(compiler: &Compiler, body: &[NodeId]) -> bool {
         body.iter().all(|&s| match &compiler.hir[s] {
-            HirNode::DefMethod {
-                is_class_method, ..
-            } => *is_class_method,
-            HirNode::ClassDef { .. } => true,
+            HirNode::DefMethod { .. } | HirNode::ClassDef { .. } => true,
             HirNode::If {
                 then_body,
                 else_body,
@@ -1667,6 +1666,23 @@ fn register_guarded_top_defs(compiler: &mut Compiler, stmt: NodeId) -> Result<bo
                         block_arg: None,
                         safe: false,
                     }))
+                }
+                // A guarded top-level PLAIN `def` is a private `Object`
+                // instance method exactly when its branch runs (myrrha gates
+                // `def Boolean(s)` on `Myrrha.core_ext?`). Register it the way
+                // a class-body conditional `def` registers -- visible to
+                // reflection but not promised, the name de-optimized -- and
+                // leave the node in place for its runtime emission at document
+                // position inside the still-live `if`.
+                HirNode::DefMethod {
+                    is_class_method: false,
+                    ..
+                } => {
+                    if let HirNode::DefMethod { visibility, .. } = &mut compiler.hir[s] {
+                        *visibility = crate::hir::Visibility::Private;
+                    }
+                    register_body_def_method(compiler, OBJECT_CLASS, s, Conditional::Yes)?;
+                    Ok(s)
                 }
                 // A whole `class`/`module` under the guard: REGISTER it here
                 // -- a fresh one as `ClassInfo::runtime_conditional`, a
