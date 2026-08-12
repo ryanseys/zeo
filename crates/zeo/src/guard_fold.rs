@@ -992,6 +992,58 @@ pub(crate) fn win_platform() -> Option<bool> {
     )
 }
 
+/// The ffi gem's `FFI::Platform.mac?`/`.windows?`/`.linux?`/`.unix?`/`.bsd?`
+/// predicates, answered from the same baked `RUBY_PLATFORM` (smartcard picks
+/// its `Word` typedef width by `FFI::Platform.mac?`). `unix?` is the gem's
+/// own rule: everything that is not windows. Shared with the lower-stage
+/// class-body guard so both stages pick one branch.
+pub(crate) fn ffi_platform_predicate(name: &str) -> Option<bool> {
+    let platform = seeded_string_const("RUBY_PLATFORM")?;
+    let windows = ["mswin", "mingw", "cygwin"]
+        .iter()
+        .any(|w| platform.contains(w));
+    Some(match name {
+        "mac?" => platform.contains("darwin"),
+        "windows?" => windows,
+        "unix?" => !windows,
+        "linux?" => platform.contains("linux"),
+        "bsd?" => ["freebsd", "openbsd", "netbsd", "dragonfly"]
+            .iter()
+            .any(|w| platform.contains(w)),
+        "solaris?" => platform.contains("solaris"),
+        _ => return None,
+    })
+}
+
+/// `FFI::Platform::ARCH` / `::OS` / `::NAME` as the ffi gem derives them
+/// from the host triple (audio picks `CFIndex`'s width by
+/// `FFI::Platform::ARCH == 'x86_64'`). The gem spells arm64 as `aarch64`.
+pub(crate) fn ffi_platform_string(leaf: &str) -> Option<String> {
+    let platform = seeded_string_const("RUBY_PLATFORM")?;
+    let os = if platform.contains("darwin") {
+        "darwin"
+    } else if ["mswin", "mingw", "cygwin"]
+        .iter()
+        .any(|w| platform.contains(w))
+    {
+        "windows"
+    } else if platform.contains("linux") {
+        "linux"
+    } else {
+        return None;
+    };
+    let arch = match platform.split('-').next()? {
+        "arm64" | "aarch64" => "aarch64",
+        other => other,
+    };
+    Some(match leaf {
+        "ARCH" => arch.to_string(),
+        "OS" => os.to_string(),
+        "NAME" => format!("{arch}-{os}"),
+        _ => return None,
+    })
+}
+
 /// A literal method-name argument (`:validate_for_resolution` / its string
 /// form), the first argument of a `respond_to?`/`method_defined?` probe.
 fn probe_name(compiler: &Compiler, args: &[ArrayElem]) -> Option<String> {
@@ -1338,6 +1390,14 @@ fn call_fold(
                 return Some(false);
             }
             win_platform()
+        }
+        // The ffi gem's own platform facts, same baked source.
+        "mac?" | "windows?" | "unix?" | "linux?" | "bsd?" | "solaris?" if args.is_empty() => {
+            match &compiler.hir[receiver?] {
+                HirNode::ClassRef(rn) if rn.trim_start_matches("::") == "FFI::Platform" => {}
+                _ => return None,
+            }
+            ffi_platform_predicate(name)
         }
         // `unless !defined?(X::VERSION)` -- the pervasive reload guard. Only a
         // condition that folds on its own negates; anything else stays `None`.

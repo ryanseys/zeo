@@ -174,9 +174,15 @@ fn ffi_type_constant(leaf: &str) -> Option<crate::hir::FfiType> {
     zeo_abi::ffi::CScalar::from_type_constant(leaf).map(Into::into)
 }
 
+/// `FFI::Type::LONG_LONG` as a type, from a full constant path spelled with
+/// or without the leading `::` (audio's `CFIndex = FFI::Type::LONG_LONG`).
+pub(crate) fn ffi_type_constant_of(path: &str) -> Option<crate::hir::FfiType> {
+    ffi_type_constant(path.trim_start_matches("::").strip_prefix("FFI::Type::")?)
+}
+
 /// Flatten a constant reference (`FFI`, `FFI::Library`, `FFI::Library::LIBC`) to
 /// its `::`-joined spelling, or `None` if it isn't a plain constant path.
-fn const_path_string(node: &Node<'_>) -> Option<String> {
+pub(crate) fn const_path_string(node: &Node<'_>) -> Option<String> {
     if let Some(c) = node.as_constant_read_node() {
         return Some(String::from_utf8_lossy(c.name().as_slice()).into_owned());
     }

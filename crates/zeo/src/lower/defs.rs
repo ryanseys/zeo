@@ -1058,6 +1058,21 @@ fn static_guard(node: &Node<'_>) -> Option<bool> {
         }
         return crate::guard_fold::win_platform();
     }
+    // `FFI::Platform.mac?` and its siblings -- the ffi gem's platform facts
+    // (smartcard's `Word` typedef picks its width this way), answered from
+    // the same baked values so lower and analyze pick one branch.
+    if matches!(
+        op.as_str(),
+        "mac?" | "windows?" | "unix?" | "linux?" | "bsd?" | "solaris?"
+    ) && args.is_empty()
+    {
+        let recv = call.receiver()?;
+        let path = crate::lower::ffi::const_path_string(&recv)?;
+        if path.trim_start_matches("::") != "FFI::Platform" {
+            return None;
+        }
+        return crate::guard_fold::ffi_platform_predicate(&op);
+    }
     match op.as_str() {
         // Both comparison families reduce their operands the same way ruby
         // would dispatch them: `String#<=>` is bytewise (the RUBY_VERSION /
@@ -1131,6 +1146,13 @@ fn static_guard(node: &Node<'_>) -> Option<bool> {
 fn guard_string(node: &Node<'_>) -> Option<String> {
     if let Some(s) = node.as_string_node() {
         return String::from_utf8(s.unescaped().to_vec()).ok();
+    }
+    // `FFI::Platform::ARCH == 'x86_64'` -- the ffi gem's own strings, baked
+    // from the same platform the seeded constants come from.
+    if let Some(path) = crate::lower::ffi::const_path_string(node)
+        && let Some(leaf) = path.trim_start_matches("::").strip_prefix("FFI::Platform::")
+    {
+        return crate::guard_fold::ffi_platform_string(leaf);
     }
     let name = String::from_utf8_lossy(node.as_constant_read_node()?.name().as_slice());
     crate::guard_fold::seeded_string_const(&name)
@@ -2896,13 +2918,31 @@ fn lower_one_class_body_stmt(
             let val = String::from_utf8_lossy(sym.unescaped()).into_owned();
             match hir.ffi_symbol_consts.get(&name) {
                 Some(Some(prev)) if *prev != val => {
-                    hir.ffi_symbol_consts.insert(name, None);
+                    hir.ffi_symbol_consts.insert(name.clone(), None);
                 }
                 Some(None) => {}
                 _ => {
-                    hir.ffi_symbol_consts.insert(name, Some(val));
+                    hir.ffi_symbol_consts.insert(name.clone(), Some(val.clone()));
                 }
             }
+            // A symbol that spells a TYPE joins the declared vocabulary too,
+            // so a SIGNATURE naming the constant resolves (`Word = :uint32;
+            // attach_function :f, [Word], :void` -- smartcard). ruby-ffi's
+            // own `find_type` resolves the constant's value the same way.
+            if (st.is_ffi || st.is_ffi_struct || st.is_ffi_union)
+                && let Ok(ty) = crate::lower::ffi::ffi_type_of(&val, st.ffi_aliases)
+            {
+                hir.declare_ffi_type(&name, &ty);
+                st.ffi_aliases.insert(name.clone(), ty);
+            }
+        } else if (st.is_ffi || st.is_ffi_struct || st.is_ffi_union)
+            && let Some(ty) = crate::lower::ffi::const_path_string(&write.value())
+                .and_then(|p| crate::lower::ffi::ffi_type_constant_of(&p))
+        {
+            // `CFIndex = FFI::Type::LONG_LONG` (audio's CoreFoundation
+            // vocabulary) -- the FFI::Type constant IS the type.
+            hir.declare_ffi_type(&name, &ty);
+            st.ffi_aliases.insert(name, ty);
         } else if let Some(int) = write.value().as_integer_node() {
             let value = int.value();
             let (negative, digits) = value.to_u32_digits();
