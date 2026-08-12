@@ -555,8 +555,24 @@ pub fn register_weakmap_subclass(
         name,
         false,
         ancestors,
-        Some(weakmap_construct as crate::dispatch::ConstructorFn),
+        Some(weakmap_subclass_construct as crate::dispatch::ConstructorFn),
     );
+}
+
+/// The `ConstructorFn` for a user WeakMap subclass: the native build (which
+/// takes no arguments), then the standard `run_initialize` tail -- so a
+/// subclass's own `initialize` RUNS, with `super()` bottoming out on
+/// `BasicObject#initialize`. Registering the root's own constructor directly
+/// skipped the user body, and the answer was silently wrong (an ivar the
+/// `initialize` was supposed to write simply read back nil).
+fn weakmap_subclass_construct(
+    class: ClassId,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    let obj: crate::dispatch::RObj = WeakMap::new(class);
+    crate::dispatch::run_initialize(class, &obj, args, block)?;
+    Ok(RubyValue::Object(obj))
 }
 
 /// Register a user `class Ref < WeakRef`, the same shape one root over:
