@@ -98,6 +98,30 @@ pub fn materialize(
     compiler.freeze_identity_caches();
     let all_ids: Vec<ClassId> = (0..compiler.classes.len() as u32).map(ClassId).collect();
 
+    // A singleton-PREPENDED module dispatches through the flattened
+    // class-method rows below, but reflection reads the SURROGATE's
+    // registered chain (`K.singleton_class.ancestors`) -- so the owner's
+    // `class_method_prepends` seed the surrogate's own `prepends` before
+    // linearization, putting the module ahead of the singleton head exactly
+    // as CRuby's chain has it.
+    for &cid in &all_ids {
+        let prepends = compiler.class(cid).class_method_prepends.clone();
+        if prepends.is_empty() {
+            continue;
+        }
+        let Some(surrogate) = compiler.classes.iter().position(|c| {
+            c.lexical_parent == Some(cid) && c.name == crate::compiler::SINGLETON_SURROGATE
+        }) else {
+            continue;
+        };
+        let s = &mut compiler.classes[surrogate];
+        for m in prepends {
+            if !s.prepends.contains(&m) {
+                s.prepends.push(m);
+            }
+        }
+    }
+
     for &cid in &all_ids {
         let ancestors = compute_ancestors(compiler, cid);
         compiler.classes[cid.0 as usize].ancestors = ancestors;
