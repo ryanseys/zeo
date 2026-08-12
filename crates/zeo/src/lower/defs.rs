@@ -2987,6 +2987,39 @@ fn lower_class_body_statement(
     // `alias_target_name`. Recorded rather than resolved here: see
     // `HirNode::Undef` for why the inherited case rules out deleting a def.
     if let Some(undef) = node.as_undef_node() {
+        // An INTERPOLATED name has no compile-time spelling to record on
+        // `HirNode::Undef`, but the keyword is still a runtime tombstone on
+        // the default definee -- the same `undef_method` send the
+        // expression-position arm desugars to, as a body statement executing
+        // in class-body order. All of the statement's names ride the send so
+        // they still undefine in written order.
+        if undef
+            .names()
+            .iter()
+            .any(|n| n.as_interpolated_symbol_node().is_some())
+        {
+            let args = undef
+                .names()
+                .iter()
+                .map(|n| match n.as_interpolated_symbol_node() {
+                    Some(_) => Ok(ArrayElem::Single(lower_node(result, hir, &n)?)),
+                    None => {
+                        let name = alias_target_name(&n)?;
+                        Ok(ArrayElem::Single(hir.push(HirNode::SymbolLit(name))))
+                    }
+                })
+                .collect::<PResult<Vec<_>>>()?;
+            out.push(hir.push(HirNode::Call {
+                receiver: None,
+                name: "undef_method".to_string(),
+                args,
+                kwargs: Vec::new(),
+                block: None,
+                block_arg: None,
+                safe: false,
+            }));
+            return Ok(());
+        }
         let names = undef
             .names()
             .iter()
@@ -3880,6 +3913,13 @@ pub(crate) fn try_lower_definition(
             .names()
             .iter()
             .map(|n| {
+                // An INTERPOLATED name (`undef :"#{method}="`,
+                // immutable_struct_ex stripping Struct writers in a loop)
+                // lowers as the runtime expression it is -- `undef_method`
+                // reads its argument at runtime either way.
+                if n.as_interpolated_symbol_node().is_some() {
+                    return Ok(ArrayElem::Single(lower_node(result, hir, &n)?));
+                }
                 let name = alias_target_name(&n)?;
                 Ok(ArrayElem::Single(hir.push(HirNode::SymbolLit(name))))
             })
@@ -3929,7 +3969,7 @@ pub(crate) fn try_lower_definition(
                 // common `@ivar`/param/`self` uses are exact).
                 let recv = lower_node(result, hir, &r)?;
                 let params = lower_params(result, hir, def.parameters())?;
-                let body = lower_body(result, hir, def.body())?;
+                let body = hir.in_def_body(|hir| lower_body(result, hir, def.body()))?;
                 // A method-body lambda: its `yield`/`block_given?`/`&block`
                 // reach the block the METHOD is called with, threaded through
                 // `ProcData`'s call-site block slot (see `HirNode::Lambda`'s
@@ -3952,7 +3992,7 @@ pub(crate) fn try_lower_definition(
             }
         };
         let params = lower_params(result, hir, def.parameters())?;
-        let body = lower_body(result, hir, def.body())?;
+        let body = hir.in_def_body(|hir| lower_body(result, hir, def.body()))?;
         return Ok(Some(hir.push(HirNode::DefMethod {
             name,
             params,
