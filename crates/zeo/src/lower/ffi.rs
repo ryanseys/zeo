@@ -397,6 +397,17 @@ pub(crate) fn lower_ffi_directive(
             };
             let arg_types = ffi_type_array(params, aliases)?;
             let ret_ty = ffi_type_node(ret, aliases)?;
+            // `:strptr` is an attach_function RETURN device; a callback's CIF
+            // marshals through plain kinds and has no pair wrap.
+            if arg_types
+                .iter()
+                .chain(std::iter::once(&ret_ty))
+                .any(|t| matches!(t, crate::hir::FfiType::StrPtr))
+            {
+                return Err("`:strptr` is only usable as an `attach_function` return type"
+                    .to_string()
+                    .into());
+            }
             if arg_types
                 .iter()
                 .chain(std::iter::once(&ret_ty))
@@ -578,7 +589,12 @@ pub(crate) fn as_ffi_layout(
             let name = ffi_symbol_str(name_node)?;
             let ty = match layout_array_type(ty_node, aliases, hir, body_so_far)? {
                 Some(t) => t,
-                None => ffi_type_node(ty_node, aliases)?,
+                // A body constant holding a type symbol resolves to what it
+                // names; anything else takes the ordinary type-node path.
+                None => match body_const_type_symbol(hir, body_so_far, ty_node) {
+                    Some(sym) => ffi_type_of(&sym, aliases)?,
+                    None => ffi_type_node(ty_node, aliases)?,
+                },
             };
             Ok((name, ty))
         };
@@ -650,7 +666,12 @@ fn layout_array_type(
                 .into(),
         );
     }
-    let elem = ffi_type_node(&elems[0], aliases)?;
+    // The element type takes the same body-constant fold as a plain field
+    // (`[WCHAR_T, CCHARW_MAX]` -- both halves are constants in ffi-ncurses).
+    let elem = match body_const_type_symbol(hir, body_so_far, &elems[0]) {
+        Some(sym) => ffi_type_of(&sym, aliases)?,
+        None => ffi_type_node(&elems[0], aliases)?,
+    };
     let count = ffi_const_int(&elems[1], hir, body_so_far).ok_or_else(|| {
         "an inline array field's element COUNT must be an integer literal, or a constant this \
              class body already set to one -- it decides where every following field starts (zeo \
@@ -675,13 +696,35 @@ fn layout_array_type(
 fn body_const_int(hir: &Hir, body_so_far: &[NodeId], node: &Node<'_>) -> Option<i64> {
     let wanted = node.as_constant_read_node()?;
     let wanted = String::from_utf8_lossy(wanted.name().as_slice()).into_owned();
-    body_so_far.iter().rev().find_map(|&id| match &hir[id] {
+    let own = body_so_far.iter().rev().find_map(|&id| match &hir[id] {
         HirNode::ConstWrite { name, value, .. } if *name == wanted => match hir[*value] {
             HirNode::IntegerLit(n) => Some(n),
             _ => None,
         },
         _ => None,
-    })
+    });
+    // An ENCLOSING body's constant (ffi-ncurses spells its counts in the
+    // module wrapping the struct) reaches here through the recorded side
+    // map -- see `Hir::ffi_int_consts` for the poison rule.
+    own.or_else(|| hir.ffi_int_consts.get(&wanted).copied().flatten())
+}
+
+/// A body constant holding a type SYMBOL (`NCURSES_ATTR_T = :int` above a
+/// `layout :attr, NCURSES_ATTR_T` -- ffi-ncurses spells its whole layout
+/// vocabulary this way). The symbol's NAME comes back for the ordinary
+/// keyword resolution; `body_const_int`'s sibling, with the same
+/// enclosing-body fallback.
+fn body_const_type_symbol(hir: &Hir, body_so_far: &[NodeId], node: &Node<'_>) -> Option<String> {
+    let wanted = node.as_constant_read_node()?;
+    let wanted = String::from_utf8_lossy(wanted.name().as_slice()).into_owned();
+    let own = body_so_far.iter().rev().find_map(|&id| match &hir[id] {
+        HirNode::ConstWrite { name, value, .. } if *name == wanted => match &hir[*value] {
+            HirNode::SymbolLit(s) => Some(s.clone()),
+            _ => None,
+        },
+        _ => None,
+    });
+    own.or_else(|| hir.ffi_symbol_consts.get(&wanted).cloned().flatten())
 }
 
 /// The `FFI::MemoryPointer` accessor pair and C layout `(size, align)` for a
@@ -759,6 +802,16 @@ fn ruby_ffi_type_src(ty: &crate::hir::FfiType) -> PResult<String> {
                     .to_string()
                     .into(),
             );
+        }
+        // Synthesized source re-lowers in another body, where the alias
+        // tables differ -- spell the typedef by its own name (it resolves
+        // through the same `PLATFORM_TYPEDEFS` row) and reject the
+        // return-only device.
+        PlatformScalar(name) => format!(":{name}"),
+        StrPtr => {
+            return Err("`:strptr` is only usable as an `attach_function` return type"
+                .to_string()
+                .into());
         }
         scalar => format!(
             ":{}",
@@ -1331,6 +1384,16 @@ fn lower_attach_function(
         }
         _ => None,
     };
+    // `:strptr` reads a RETURNED `char *` twice (string + pointer); the gem
+    // has no argument meaning for it either.
+    if arg_types
+        .iter()
+        .any(|t| matches!(t, crate::hir::FfiType::StrPtr))
+    {
+        return Err("`:strptr` is only usable as an `attach_function` return type"
+            .to_string()
+            .into());
+    }
     // A UNION by value has no honest aggregate descriptor on either tier
     // (the mirror's field asserts would overlap; libffi has no union type),
     // and the extern tier's mirror asserts would reject it at build time
@@ -1615,13 +1678,34 @@ pub(crate) fn ffi_type_of(
     if let Some(s) = zeo_abi::ffi::CScalar::from_keyword(sym) {
         return Ok(s.into());
     }
+    if sym == "strptr" {
+        return Ok(crate::hir::FfiType::StrPtr);
+    }
     if let Some(t) = aliases.get(sym) {
         return Ok(t.clone());
     }
-    match zeo_abi::ffi::CScalar::from_c_typedef(sym) {
-        Some(s) => Ok(s.into()),
-        None => Err(format!(
-            "unsupported FFI type `:{sym}` (expected a scalar keyword, `:pointer`, `:string`, a C typedef whose width is the same on every target zeo builds for, or a declared `typedef`/`enum`/`callback` name)"
-        ).into()),
+    if let Some(s) = zeo_abi::ffi::CScalar::from_c_typedef(sym) {
+        return Ok(s.into());
     }
+    // The POSIX integer typedefs whose width GENUINELY differs between the
+    // targets zeo builds for -- `CScalar::from_c_typedef`'s documented
+    // rejections. Legal in argument/return position, where the generated
+    // code spells the target's own `libc::<name>`; a struct layout still
+    // rejects them (see `ffi_field_accessor`).
+    const PLATFORM_TYPEDEFS: &[&str] = &[
+        "mode_t",
+        "dev_t",
+        "nlink_t",
+        "sa_family_t",
+        "blksize_t",
+        "suseconds_t",
+        "clock_t",
+    ];
+    let bare = sym.strip_prefix("__").unwrap_or(sym);
+    if PLATFORM_TYPEDEFS.contains(&bare) {
+        return Ok(crate::hir::FfiType::PlatformScalar(bare.to_string()));
+    }
+    Err(format!(
+        "unsupported FFI type `:{sym}` (expected a scalar keyword, `:pointer`, `:string`, a C typedef whose width is the same on every target zeo builds for, or a declared `typedef`/`enum`/`callback` name)"
+    ).into())
 }

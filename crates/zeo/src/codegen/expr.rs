@@ -3108,7 +3108,13 @@ fn emit_ffi_runtime_call(cx: &Ctx, call: &crate::hir::FfiCall, addr: TokenStream
             }
         });
     }
-    let ret_kind = ffi_kind_tokens(&call.ret);
+    // `:strptr` calls through the plain Pointer kind; the pair wrap happens
+    // in `post` below, over the already-wrapped `FFI::Pointer`.
+    let ret_kind = if matches!(&call.ret, FfiType::StrPtr) {
+        quote! { zeo_rt::ffi::FfiKind::Pointer }
+    } else {
+        ffi_kind_tokens(&call.ret)
+    };
     let cb_check = if has_callback {
         quote! { zeo_rt::ffi::take_callback_error()?; }
     } else {
@@ -3119,8 +3125,8 @@ fn emit_ffi_runtime_call(cx: &Ctx, call: &crate::hir::FfiCall, addr: TokenStream
     } else {
         quote! { unsafe { zeo_rt::ffi::call_fixed(__addr, __vals, #ret_kind) }? }
     };
-    // The extern tier's `int_to_enum` wrap, applied after the generic
-    // integer wrap `call_fixed` already did.
+    // The extern tier's `int_to_enum`/`strptr` wraps, applied after the
+    // generic wrap `call_fixed` already did.
     let post = match &call.ret {
         FfiType::Enum(members) => {
             let table = ffi_enum_members(members);
@@ -3131,6 +3137,7 @@ fn emit_ffi_runtime_call(cx: &Ctx, call: &crate::hir::FfiCall, addr: TokenStream
                 }
             }
         }
+        FfiType::StrPtr => quote! { unsafe { zeo_rt::ffi::strptr_pair(__ffi_ret) } },
         _ => quote! { __ffi_ret },
     };
     quote! {
@@ -3185,6 +3192,18 @@ fn emit_ffi_variadic(
 /// `FfiKind` IS the shared `CScalar` (re-exported), so the variant name is
 /// the scalar's own.
 fn ffi_kind_tokens(ty: &crate::hir::FfiType) -> TokenStream {
+    // A platform typedef's width is only knowable where the generated code
+    // BUILDS (that is the whole point of the variant) -- so its kind is
+    // computed there, from the target's own libc alias.
+    if let crate::hir::FfiType::PlatformScalar(name) = ty {
+        let id = quote::format_ident!("{}", name.as_str());
+        return quote! {
+            zeo_rt::ffi::platform_kind(
+                ::core::mem::size_of::<zeo_rt::libc::#id>(),
+                zeo_rt::libc::#id::MIN == 0,
+            )
+        };
+    }
     // An inline array is a struct-layout field only (`as_ffi_layout` is the
     // sole producer), and `lower_attach_function` rejects a by-value struct
     // in every position that marshals through kinds (variadic, callback,
@@ -3207,6 +3226,15 @@ fn ffi_c_type(ty: &crate::hir::FfiType) -> TokenStream {
         // A callback is a C function pointer -- passed as an opaque address
         // (`*const`, matching what `CallbackHandle::code_ptr` hands over).
         Callback(..) => quote! { *const ::std::os::raw::c_void },
+        // The TARGET's own libc alias -- rustc supplies the real width where
+        // the generated program builds. See `FfiType::PlatformScalar`.
+        PlatformScalar(name) => {
+            let id = quote::format_ident!("{}", name.as_str());
+            quote! { zeo_rt::libc::#id }
+        }
+        // `:strptr` returns a `char *`; the wrap reads it twice (string AND
+        // pointer). Argument position is rejected at the declaration.
+        StrPtr => quote! { *const ::std::os::raw::c_char },
         // Confined to a struct layout -- see `FfiType::Array`.
         Array(..) => unreachable!("an inline array type never reaches a call site"),
         // `emit_ffi_call` intercepts a by-value struct before asking for a
@@ -3273,6 +3301,12 @@ fn ffi_marshal_in(
             }
         }
         Void => quote! { compile_error!("`:void` is not a valid FFI argument type"); },
+        // An integer under the target's own alias -- same shape as `Int`.
+        PlatformScalar(_) => {
+            quote! { let #pname: #cty = zeo_rt::ffi::to_i64(&#val)? as #cty; }
+        }
+        // Return-only; `lower_attach_function` rejects it as an argument.
+        StrPtr => unreachable!("`:strptr` is rejected in argument position"),
         // Confined to a struct layout -- see `FfiType::Array`.
         Array(..) => unreachable!("an inline array type never reaches a call site"),
         // Intercepted by `emit_ffi_call` before marshaling -- see above.
@@ -3295,6 +3329,19 @@ fn ffi_wrap_ret(ty: &crate::hir::FfiType) -> TokenStream {
             quote! { zeo_rt::ffi::int_to_enum(__ffi_ret as i64, #table) }
         }
         Callback(..) => quote! { compile_error!("an FFI callback is not a valid return type") },
+        // An integer whatever width the target gave the alias.
+        PlatformScalar(_) => quote! { zeo_rt::ffi::from_i64(__ffi_ret as i64) },
+        // The gem's `[String, Pointer]` pair: the decoded string AND the raw
+        // pointer, so the caller can still free it.
+        StrPtr => quote! {
+            {
+                let __s = unsafe { zeo_rt::ffi::from_cstr(__ffi_ret) };
+                zeo_rt::RubyValue::Array(zeo_rt::array_new(vec![
+                    __s,
+                    zeo_rt::ffi::from_pointer(__ffi_ret as *const ::std::os::raw::c_void),
+                ]))
+            }
+        },
         // Confined to a struct layout -- see `FfiType::Array`.
         Array(..) => unreachable!("an inline array type never reaches a call site"),
         // Intercepted by `emit_ffi_call` before wrapping -- see above.

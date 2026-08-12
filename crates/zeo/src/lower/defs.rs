@@ -2889,6 +2889,39 @@ fn lower_one_class_body_stmt(
         };
         return lower_class_body_selected(result, hir, chosen, st, out);
     }
+    // A class-body `CONST = :symbol` / `CONST = <int>` feeds the FFI
+    // vocabulary side maps (poison-on-conflict; see `Hir::ffi_symbol_consts`)
+    // and STILL lowers normally below -- a nested struct's `layout` resolves
+    // its enclosing module's spelling through them.
+    if let Some(write) = stmt.as_constant_write_node() {
+        let name = String::from_utf8_lossy(write.name().as_slice()).into_owned();
+        if let Some(sym) = write.value().as_symbol_node() {
+            let val = String::from_utf8_lossy(sym.unescaped()).into_owned();
+            match hir.ffi_symbol_consts.get(&name) {
+                Some(Some(prev)) if *prev != val => {
+                    hir.ffi_symbol_consts.insert(name, None);
+                }
+                Some(None) => {}
+                _ => {
+                    hir.ffi_symbol_consts.insert(name, Some(val));
+                }
+            }
+        } else if let Some(int) = write.value().as_integer_node() {
+            let value = int.value();
+            let (negative, digits) = value.to_u32_digits();
+            if let Some(val) = super::literals::assemble_i64(negative, digits) {
+                match hir.ffi_int_consts.get(&name) {
+                    Some(Some(prev)) if *prev != val => {
+                        hir.ffi_int_consts.insert(name, None);
+                    }
+                    Some(None) => {}
+                    _ => {
+                        hir.ffi_int_consts.insert(name, Some(val));
+                    }
+                }
+            }
+        }
+    }
     // `FFI.typedef :existing, :alias` -- the GLOBAL registry the gem keeps on
     // the FFI module itself, visible to every library and struct that lowers
     // after it (puppet fills it with the Win32 vocabulary in one file and

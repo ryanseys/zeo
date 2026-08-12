@@ -84,6 +84,38 @@ pub fn from_pointer(p: *const c_void) -> RubyValue {
     crate::ext::ffi::wrap_address(p as usize)
 }
 
+/// The `FfiKind` of a platform-varying integer typedef, decided where the
+/// generated program BUILDS: `platform_kind(size_of::<libc::mode_t>(),
+/// libc::mode_t::MIN == 0)`. Only integer typedefs route here (see
+/// `FfiType::PlatformScalar`), so `size` is 1/2/4/8.
+#[cfg(feature = "ext-ffi")]
+pub fn platform_kind(size: usize, unsigned: bool) -> FfiKind {
+    match (size, unsigned) {
+        (1, false) => FfiKind::I8,
+        (2, false) => FfiKind::I16,
+        (4, false) => FfiKind::I32,
+        (8, false) => FfiKind::I64,
+        (1, true) => FfiKind::U8,
+        (2, true) => FfiKind::U16,
+        (8, true) => FfiKind::U64,
+        _ => FfiKind::U32,
+    }
+}
+
+/// A `:strptr` return, second half: `call_fixed` already wrapped the raw
+/// address as an `FFI::Pointer`; read the C string back beside it and answer
+/// the gem's `[String, Pointer]` pair (`[nil, Pointer]` for NULL).
+///
+/// # Safety
+/// The pointer must be NULL or reference a NUL-terminated string, the
+/// `:strptr` contract itself.
+#[cfg(feature = "ext-ffi")]
+pub unsafe fn strptr_pair(v: RubyValue) -> RubyValue {
+    let addr = crate::ext::ffi::address_of(&v).unwrap_or(0);
+    let s = unsafe { from_cstr(addr as *const c_char) };
+    RubyValue::Array(crate::array_new(vec![s, v]))
+}
+
 /// A struct returned BY VALUE -> a fresh ruby-owned `MemoryPointer` copying
 /// its `len` bytes; the generated wrapper then constructs the struct's own
 /// class over that backing (the gem wraps a by-value return the same way).

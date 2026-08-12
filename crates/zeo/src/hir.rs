@@ -291,6 +291,15 @@ pub struct Hir {
     /// struct passed by value. Source-order like the rest of the FFI table:
     /// the struct's body must lower before the declaration that names it.
     pub ffi_struct_layouts: std::collections::HashMap<String, FfiStructLayout>,
+    /// Class-body `CONST = :symbol` / `CONST = <int>` writes, keyed by LEAF
+    /// name -- how an FFI layout in a NESTED class resolves the type/count
+    /// vocabulary its enclosing module spelled as constants (ffi-ncurses'
+    /// `NCURSES_ATTR_T = :int` ... `layout :attr, NCURSES_ATTR_T`). Same
+    /// poison-on-conflict rule as `ffi_types`: a leaf rebound to a DIFFERENT
+    /// value goes `None`, and the layout's own honest rejection stands.
+    pub ffi_symbol_consts: std::collections::HashMap<String, Option<String>>,
+    /// The integer half of `ffi_symbol_consts`.
+    pub ffi_int_consts: std::collections::HashMap<String, Option<i64>>,
     /// Modules whose `def self.extended(host)` hook runs `host.extend
     /// FFI::Library` (chef's Win32 API indirection), keyed by full cref path.
     /// The value is the hook's flat `host.typedef :src, :alias` stream, which
@@ -1822,6 +1831,19 @@ pub enum FfiType {
     /// just the byte count (a `{float, float}` classifies differently from
     /// `[u8; 8]` on SysV/AArch64).
     Struct(FfiStructLayout),
+    /// A POSIX integer typedef whose width GENUINELY differs between the
+    /// targets zeo builds for (`mode_t` is u16 on macOS, u32 on glibc; also
+    /// `dev_t`, `suseconds_t`, `clock_t`, ...). Legal in argument/return
+    /// position only, where generated code spells the TARGET's own
+    /// `zeo_rt::libc::<name>` and rustc (or a runtime `size_of`) supplies
+    /// the real width at build time. NOT legal in a struct layout: a field
+    /// width that shifts by target would silently shift every later offset
+    /// -- that stays `CScalar::from_c_typedef`'s documented rejection.
+    PlatformScalar(String),
+    /// `:strptr` -- a `char *` RETURN read back as the gem's two-element
+    /// `[String, Pointer]` (the decoded string AND the raw pointer, so the
+    /// caller can still free it). Return position only.
+    StrPtr,
 }
 
 impl From<zeo_abi::ffi::CScalar> for FfiType {
@@ -1873,7 +1895,10 @@ impl FfiType {
             FfiType::Str => S::Str,
             FfiType::Pointer | FfiType::Callback(..) => S::Pointer,
             FfiType::Enum(_) => S::I32,
-            FfiType::Array(..) | FfiType::Struct(_) => return None,
+            FfiType::Array(..)
+            | FfiType::Struct(_)
+            | FfiType::PlatformScalar(_)
+            | FfiType::StrPtr => return None,
         })
     }
 }

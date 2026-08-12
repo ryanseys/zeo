@@ -31,6 +31,10 @@ mod exec;
 mod ext;
 pub mod features;
 pub mod ffi;
+/// Re-exported for GENERATED code, which speaks only `zeo_rt`: an FFI
+/// `PlatformScalar` argument spells the target's own `zeo_rt::libc::mode_t`
+/// so rustc supplies the real width where the program builds.
+pub use libc;
 mod fiber;
 mod flipflop;
 mod frames;
