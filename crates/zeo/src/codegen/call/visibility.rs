@@ -80,8 +80,9 @@ pub(super) enum Caller {
     Static(u32),
     /// A dynamic-`self` context (a re-homed block, a runtime method body):
     /// the caller class is whatever the runtime `self`'s class turns out to
-    /// be, so the site must ask per call -- and must NOT fill a `CallSite`,
-    /// whose vetting is per-site-constant.
+    /// be, so the site must ask per call -- it can't fill a `CallSite`,
+    /// whose vetting is per-site-constant, and takes a `DynCallerSite`
+    /// (caller class as an argument, vet split at fill) instead.
     Runtime(TokenStream),
 }
 

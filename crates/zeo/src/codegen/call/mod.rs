@@ -4062,12 +4062,8 @@ fn dispatch(
         // parameter, an ancestor's return -- is what `bm_rbtree`, `bm_splay`
         // and `bm_linked_list` actually hold, and a third of their time was
         // resolving the same class to the same method on every call. Per-site
-        // inline cache; see `zeo_rt::CallSite`. A SHARED body gets none -- see
-        // `Ctx::shared_body`.
+        // inline cache; see `zeo_rt::CallSite`.
         let caller = visibility::caller_class(cx, recv_id, bypass_visibility);
-        // A runtime caller class (re-homed `self`) can't fill a per-site
-        // cache -- its vetting varies per call -- so it takes the uncached
-        // entry, like a shared body.
         let dyn_call = match caller {
             visibility::Caller::Static(c) if !cx.shared_body => {
                 let site = crate::codegen::pooled_call_site(c);
@@ -4080,12 +4076,19 @@ fn dispatch(
                     )
                 }
             }
+            // A shared body or a runtime caller class (re-homed `self`)
+            // can't fill a `CallSite` -- its vetting varies per call, and a
+            // pooled site INDEX would differ between the group's members.
+            // A function-local static keeps the tokens identical across the
+            // group, and the caller class rides as an argument; see
+            // `zeo_rt::DynCallerSite`.
             caller => {
                 let (bind, arg) = (caller.bind(), caller.bound());
                 quote! {
                     {
                         #bind
-                        zeo_rt::send_value_explicit_in(#__bx,
+                        static __SITE: zeo_rt::DynCallerSite = zeo_rt::DynCallerSite::new();
+                        zeo_rt::send_value_dyn_cached(&__SITE, #__bx,
                             &(#recv_expr),
                             #name_expr,
                             &[#(#arg_exprs,)* #(#kw_hash,)*],
@@ -4184,12 +4187,17 @@ fn dispatch(
                 ))?
             }
         }
+        // Same trade as the Path-2 arm above: a shared body or runtime
+        // caller gets a function-local `DynCallerSite` instead of a pooled
+        // `CallSite`, so the group's tokens stay identical and the caller
+        // class rides as an argument.
         caller => {
             let (bind, caller_arg) = (caller.bind(), caller.bound());
             quote! {
                 {
                     #bind
-                    zeo_rt::catch_break(zeo_rt::send_value_explicit_in(#__bx,
+                    static __SITE: zeo_rt::DynCallerSite = zeo_rt::DynCallerSite::new();
+                    zeo_rt::catch_break(zeo_rt::send_value_dyn_cached(&__SITE, #__bx,
                         &#recv_boxed,
                         #name_expr,
                         &[#(#arg_exprs,)* #(#kw_hash,)*],

@@ -223,10 +223,13 @@ struct Ctx<'a> {
     /// Whether this body is emitted ONCE for a whole group of classes
     /// (`codegen::share`) rather than per class.
     ///
-    /// Two things turn off inside one. A per-site inline cache would serve
-    /// every class in the group from one slot and thrash, and -- worse -- the
-    /// site INDEX differs between two members, so the group's emissions would
-    /// no longer be token-identical and nothing would share at all.
+    /// A POOLED `CallSite` can't appear inside one: its baked caller class
+    /// would vet every member of the group with one class's answer, and --
+    /// worse -- the pooled site INDEX differs between two members, so the
+    /// group's emissions would no longer be token-identical and nothing
+    /// would share at all. Dynamic sites here are function-local
+    /// `DynCallerSite` statics instead (caller class as an argument,
+    /// identical tokens for every member) -- see `call`'s Path-2 arm.
     shared_body: bool,
     /// Where [`Ctx::ask`] records what this emission asked about its receiver
     /// class. `Some` only while `codegen::share` is emitting a candidate body;

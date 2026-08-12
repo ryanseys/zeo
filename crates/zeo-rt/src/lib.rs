@@ -94,7 +94,8 @@ pub use constants::{
 pub use cvars::{cvar_defined, cvar_get, cvar_get_checked, cvar_names_of, cvar_remove, cvar_set};
 pub use dispatch::{
     ARRAY_CLASS, AllocatorFn, BASIC_OBJECT_CLASS, CLASS_CLASS, COMPARABLE_CLASS, COMPLEX_CLASS,
-    CallSite, ClassId, ClassRegistry, ConstructorFn, ENUMERABLE_CLASS, ENUMERATOR_CLASS,
+    CallSite, ClassId, ClassRegistry, ConstructorFn, DynCallerSite, ENUMERABLE_CLASS,
+    ENUMERATOR_CLASS,
     FALSE_CLASS, FCALL, FIBER_CLASS, FLOAT_CLASS, HASH_CLASS, INTEGER_CLASS, KERNEL_CLASS,
     MATCH_DATA_CLASS, MATH_CLASS, MODULE_CLASS, MUTEX_CLASS, MethodFn, MethodVisibility,
     MissingReason, NIL_CLASS, NUMERIC_CLASS, Object, PROC_CLASS, QUEUE_CLASS, RACTOR_CLASS,
@@ -112,7 +113,8 @@ pub use dispatch::{
     refined_responds_to, refined_send_dynamic, refined_send_in, reflect_dispatch_in,
     reject_marked_kwargs, rescue_matches_any, responds_to, responds_to_or_missing,
     responds_to_value, run_initialize, send, send_in, send_super_class_from, send_super_from,
-    send_value, send_value_cached, send_value_explicit_in, send_value_in, send_value_public_in,
+    send_value, send_value_cached, send_value_dyn_cached, send_value_explicit_in, send_value_in,
+    send_value_public_in,
     send_value_vcall_in, stamp_backtrace, super_defined, validate_aliases, validate_class_aliases,
     value_class,
 };

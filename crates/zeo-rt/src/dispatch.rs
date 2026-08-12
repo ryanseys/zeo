@@ -5243,6 +5243,152 @@ fn explicit_call_barrier(
     }
 }
 
+/// What a filled [`DynCallerSite`] must still ask on a hit, given the caller
+/// class that arrives PER CALL. Everything else [`explicit_call_barrier`]
+/// asks is a function of the `(receiver class, name)` pair the cache is
+/// keyed by, so it is answered once, at fill.
+#[derive(Clone, Copy)]
+enum Vet {
+    /// No visibility question at all -- the overwhelmingly common case; a
+    /// hit does zero extra work.
+    Public,
+    /// Reachable only from an `FCALL` caller.
+    Private,
+    /// Reachable when the caller class is kin to the owner -- the one rule
+    /// that still needs the per-call caller, so the owner rides along.
+    Protected(u32),
+}
+
+/// The [`Vet`] for `(class, name)`: [`explicit_call_barrier`]'s instance
+/// walk, split at the caller-dependent step. Only asked for a non-`Class`
+/// receiver -- the class-method half of the barrier never reaches a cache.
+fn method_vet(class: ClassId, name: Symbol) -> Vet {
+    match instance_method_visibility(class, name) {
+        None | Some(MethodVisibility::Public) => Vet::Public,
+        Some(MethodVisibility::Private) => Vet::Private,
+        // No owner row means the barrier waves the call through (its `?`).
+        Some(MethodVisibility::Protected) => match method_owner(class, name) {
+            Some(owner) => Vet::Protected(owner.0),
+            None => Vet::Public,
+        },
+    }
+}
+
+/// Ask `vet` about one caller. `Public` answers before the `FCALL` compare,
+/// so the common case is one branch and done.
+#[inline]
+fn vet_denies(vet: Vet, caller_class: u32) -> Option<MissingReason> {
+    match vet {
+        Vet::Public => None,
+        _ if caller_class == FCALL => None,
+        Vet::Private => Some(MissingReason::Private),
+        Vet::Protected(owner) => {
+            let kin = caller_class == owner
+                || ancestors_of_value(ClassId(caller_class)).contains(&ClassId(owner));
+            (!kin).then_some(MissingReason::Protected)
+        }
+    }
+}
+
+/// A dynamic call site whose CALLER class is a per-call fact rather than a
+/// per-site constant: a site inside a shared body (one emitted function
+/// serving a whole hierarchy, where the runtime `self.class` decides
+/// visibility) or inside a re-homed block. [`CallSite`] bakes the caller in
+/// and vets once at fill; here the vet's caller-independent half is cached
+/// (see [`Vet`]) and the caller-dependent remainder is asked per hit.
+///
+/// Same fill-once discipline as [`CallSite`], for the same reasons; the
+/// emitted site is a function-local `static`, which is what keeps a shared
+/// body's tokens identical across its group's members (a pooled index would
+/// differ per emission -- see `codegen::share`).
+pub struct DynCallerSite {
+    hit: std::sync::OnceLock<(u32, Vet, Cached)>,
+}
+
+impl DynCallerSite {
+    pub const fn new() -> DynCallerSite {
+        DynCallerSite {
+            hit: std::sync::OnceLock::new(),
+        }
+    }
+}
+
+impl Default for DynCallerSite {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// [`send_value_cached`] for a [`DynCallerSite`]: the same cache gates and
+/// fill discipline, with the visibility question split so a hit pays only
+/// the caller-dependent remainder -- nothing at all for a public target.
+/// Every route the cache does not serve funnels into
+/// [`send_value_explicit_in`] unchanged. NOT `#[inline]`, for `CallSite`'s
+/// reason.
+pub fn send_value_dyn_cached(
+    site: &'static DynCallerSite,
+    box_id: u32,
+    recv: &RubyValue,
+    name: Symbol,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+    caller_class: u32,
+) -> Result<RubyValue, Signal> {
+    let gates = crate::runtime_meta::gates();
+    if crate::runtime_meta::gates_moved(gates) && value_moved(recv) {
+        return Err(crate::ractor::moved_object_error());
+    }
+    if !matches!(recv, RubyValue::Class(_))
+        && box_id == 0
+        && !crate::runtime_meta::gates_live(gates)
+    {
+        let id = recv.class_id();
+        if let Some((cached, vet, target)) = site.hit.get() {
+            if *cached == id.0 {
+                if let Some(reason) = vet_denies(*vet, caller_class) {
+                    return Err(raise_method_missing(recv, &name.to_string(), args, reason));
+                }
+                note_dispatch(name);
+                return match (target, recv) {
+                    (Cached::Obj(f), RubyValue::Object(o)) => f(o, args, block),
+                    (Cached::Value(f, label), _) => with_c_frame(*label, || f(recv, args, block)),
+                    _ => send_value_in(box_id, recv, name, args, block),
+                };
+            }
+        } else {
+            // The vet is computed BEFORE the resolution it guards, exactly
+            // as `send_value_cached` runs the barrier before it fills -- and
+            // a denied call fills nothing, so the deny is re-asked (and
+            // re-raised) on every call, the shape the uncached path has.
+            let vet = method_vet(id, name);
+            if let Some(reason) = vet_denies(vet, caller_class) {
+                return Err(raise_method_missing(recv, &name.to_string(), args, reason));
+            }
+            match recv {
+                RubyValue::Object(o) if id != zeo_abi::OBJECT_CLASS => {
+                    if let Some(MethodImpl::Static(f)) =
+                        REGISTRY.get().and_then(|r| r.lookup_mro(id, name))
+                    {
+                        note_dispatch(name);
+                        let _ = site.hit.set((id.0, vet, Cached::Obj(*f)));
+                        return f(o, args, block);
+                    }
+                }
+                RubyValue::Object(_) => {}
+                _ => {
+                    if let Some(Some(hit)) = REGISTRY.get().and_then(|r| r.flat_value_hit(id, name))
+                    {
+                        note_dispatch(name);
+                        let _ = site.hit.set((id.0, vet, Cached::Value(hit.f, hit.frame_label)));
+                        return with_c_frame(hit.frame_label, || (hit.f)(recv, args, block));
+                    }
+                }
+            }
+        }
+    }
+    send_value_explicit_in(box_id, recv, name, args, block, caller_class)
+}
+
 pub fn send(
     recv: &RObj,
     name: Symbol,
