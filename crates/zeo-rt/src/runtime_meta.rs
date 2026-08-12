@@ -215,6 +215,13 @@ struct OverlayMaps {
     /// `o.is_a?(M)` and `o.singleton_class.ancestors` both read this, and
     /// neither can be recovered from a copied method table.
     extended: RwLock<FMap<usize, Vec<ClassId>>>,
+    /// WHICH module a per-object `extend` copied each singleton-table name
+    /// from -- `obj.method(:x).owner`'s record, since the copy itself can't
+    /// say. Cleared per name by every own definition (`def obj.x` shadows
+    /// the module's copy and owns the name from then on), and by an undef.
+    /// The record, not a guess: "an extended module that defines the name
+    /// owns it" is wrong exactly when a later own def shadows one.
+    extended_names: RwLock<FMap<usize, FMap<Symbol, ClassId>>>,
     /// `obj.singleton_class`'s cache: object identity -> the runtime class id
     /// minted for its singleton class (so a second call answers the same id,
     /// matching Ruby's identity).
@@ -261,6 +268,7 @@ fn maps() -> &'static OverlayMaps {
         value_singletons: RwLock::new(FMap::default()),
         singleton_undefs: RwLock::new(FMap::default()),
         extended: RwLock::new(FMap::default()),
+        extended_names: RwLock::new(FMap::default()),
         pinned: RwLock::new(FMap::default()),
         singleton_classes: RwLock::new(FMap::default()),
         singleton_owner: RwLock::new(FMap::default()),
@@ -729,6 +737,14 @@ pub fn copy_value_singletons(from: &RubyValue, to: &RubyValue) {
     {
         maps().value_singletons.write().unwrap().insert(tk, t);
         copied = true;
+    }
+    // The per-name provenance travels with the copied tables, so the
+    // clone's `method(:x).owner` answers as the original's did.
+    let owners = maps().extended_names.read().unwrap().get(&fk).cloned();
+    if let Some(t) = owners
+        && !t.is_empty()
+    {
+        maps().extended_names.write().unwrap().insert(tk, t);
     }
     // `extended` keys through `extend_key`, which for these (non-Class)
     // receivers IS `value_identity` -- a Class never comes through `clone`'s
@@ -1289,6 +1305,7 @@ fn runtime_undef_singleton_method(
                 t.remove(&name);
             }
         }
+        clear_extended_name(key, name);
         maps()
             .singleton_undefs
             .write()
@@ -2109,6 +2126,7 @@ pub fn runtime_define_singleton_method(
                 let mut w = maps().singletons.write().unwrap();
                 w.entry(key).or_default().insert(name, m);
             }
+            clear_extended_name(key, name);
             mark_singletons();
             mark_live();
             // A singleton definition reports to the OBJECT, not to its
@@ -2134,6 +2152,7 @@ pub fn runtime_define_singleton_method(
                 let mut w = maps().value_singletons.write().unwrap();
                 w.entry(key).or_default().insert(name, body);
             }
+            clear_extended_name(key, name);
             mark_singletons();
             mark_live();
             // A singleton definition reports to the OBJECT, not to its
@@ -2213,13 +2232,18 @@ pub fn extend_object_default(recv: &RubyValue, module_val: &RubyValue) -> Result
             crate::builtins::check_frozen(recv)?;
             let key = pin_identity(&RubyValue::Object(o.clone()))
                 .expect("an Object always has an identity");
-            let mut w = maps().singletons.write().unwrap();
-            let table = w.entry(key).or_default();
-            for name in names {
-                if let Some(m) = module_own_method_impl(*mid, name) {
-                    table.insert(name, m);
+            let mut copied = Vec::new();
+            {
+                let mut w = maps().singletons.write().unwrap();
+                let table = w.entry(key).or_default();
+                for name in names {
+                    if let Some(m) = module_own_method_impl(*mid, name) {
+                        table.insert(name, m);
+                        copied.push(name);
+                    }
                 }
             }
+            record_extended_names(key, *mid, &copied);
         }
         RubyValue::Class(cid) => {
             if crate::dispatch::class_frozen(*cid) {
@@ -2267,11 +2291,15 @@ pub fn extend_object_default(recv: &RubyValue, module_val: &RubyValue) -> Result
                 .into_iter()
                 .filter_map(|name| extended_value_method(*mid, name).map(|p| (name, p)))
                 .collect();
-            let mut w = maps().value_singletons.write().unwrap();
-            let table = w.entry(key).or_default();
-            for (name, proc_) in installs {
-                table.insert(name, proc_);
+            let copied: Vec<Symbol> = installs.iter().map(|(n, _)| *n).collect();
+            {
+                let mut w = maps().value_singletons.write().unwrap();
+                let table = w.entry(key).or_default();
+                for (name, proc_) in installs {
+                    table.insert(name, proc_);
+                }
             }
+            record_extended_names(key, *mid, &copied);
         }
     }
     // The method copies above make the module ANSWER on `recv`; this is what
@@ -3921,6 +3949,48 @@ pub fn has_singleton_prepend(id: ClassId, mid: ClassId) -> bool {
 pub fn overlay_own_method(id: ClassId, name: Symbol) -> Option<MethodImpl> {
     let c = maps().classes.read().unwrap();
     c.get(&id.0)?.methods.get(&name).cloned()
+}
+
+/// Record which module supplied each name a per-object `extend` just copied
+/// -- see `OverlayMaps::extended_names`.
+fn record_extended_names(key: usize, mid: ClassId, names: &[Symbol]) {
+    if names.is_empty() {
+        return;
+    }
+    let mut w = maps().extended_names.write().unwrap();
+    let table = w.entry(key).or_default();
+    for &name in names {
+        table.insert(name, mid);
+    }
+}
+
+/// Drop the extended-module record for one name -- every OWN definition (and
+/// undef) of a per-object singleton owns the name from then on.
+fn clear_extended_name(key: usize, name: Symbol) {
+    if let Some(t) = maps().extended_names.write().unwrap().get_mut(&key) {
+        t.remove(&name);
+    }
+}
+
+/// The class a PER-OBJECT singleton method is rooted at for reflection --
+/// `obj.method(:x)`'s home: the module a per-object `extend` copied it from,
+/// or the object's own singleton class for an own `def obj.x` (minted on
+/// demand, as CRuby's `.owner` observably does).
+pub fn per_object_method_home(recv: &RubyValue, name: Symbol) -> Option<ClassId> {
+    let key = value_identity(recv)?;
+    let recorded = maps()
+        .extended_names
+        .read()
+        .unwrap()
+        .get(&key)
+        .and_then(|t| t.get(&name).copied());
+    if let Some(mid) = recorded {
+        return Some(mid);
+    }
+    match runtime_singleton_class(recv) {
+        Ok(RubyValue::Class(sid)) => Some(sid),
+        _ => None,
+    }
 }
 
 /// Whether `recv` (an object) has a per-object singleton method `name` --

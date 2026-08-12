@@ -116,6 +116,17 @@ impl RMethod {
         if let Some(seat) = self.seat {
             return Some(seat);
         }
+        // A PER-OBJECT singleton method's owner IS its recorded home (the
+        // extending module, or the object's own singleton class -- see
+        // `home_of`): the generic scan below walks real class tables, which
+        // cannot see the identity-keyed row and would skip past the
+        // singleton class to whatever ancestor also defines the name.
+        if self.kind == MethodKind::Instance
+            && !matches!(self.recv, RubyValue::Class(_))
+            && crate::runtime_meta::object_has_singleton_method(&self.recv, self.name)
+        {
+            return Some(self.home);
+        }
         match self.kind {
             MethodKind::Instance => crate::dispatch::method_owner(self.home, self.name),
             MethodKind::Singleton => crate::dispatch::class_method_owner(self.home, self.name),
@@ -133,7 +144,20 @@ pub(crate) fn home_of(recv: &RubyValue, name: Symbol) -> (ClassId, MethodKind) {
         RubyValue::Class(cid) if crate::dispatch::class_method_owner(*cid, name).is_some() => {
             (*cid, MethodKind::Singleton)
         }
-        _ => (recv.class_id(), MethodKind::Instance),
+        _ => {
+            // A PER-OBJECT singleton method roots at its real definer -- the
+            // module a per-object `extend` copied it from, or the object's
+            // own singleton class -- so `#owner`/`#unbind` report it and
+            // `#call` seats there (`send_as_defined_in` reaches a module's
+            // bridge, and degrades to the identity-keyed send for an own
+            // def). Everything else keeps the receiver-class root.
+            if crate::runtime_meta::object_has_singleton_method(recv, name)
+                && let Some(home) = crate::runtime_meta::per_object_method_home(recv, name)
+            {
+                return (home, MethodKind::Instance);
+            }
+            (recv.class_id(), MethodKind::Instance)
+        }
     }
 }
 
