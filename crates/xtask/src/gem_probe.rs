@@ -962,6 +962,71 @@ fn entry_point_under(lib: &Path, name: &str) -> Option<String> {
     nested.into_iter().find(|path| squash(path) == target)
 }
 
+/// Load-path roots DISCOVERED from the archive when every declared
+/// `require_path` is missing. In order: the gem directory itself when bare
+/// `.rb` files sit at its top (the archive root IS the load path), a nested
+/// `<sub>/lib` (a gem packed one directory too deep), and any code-shaped
+/// first-level directory (`gem/`, `ruby/`, `src/`). Conventional non-code
+/// directories never become roots, so a tests-only archive still reports
+/// `no-lib-dir` honestly.
+fn discovered_roots(dir: &Path) -> Vec<PathBuf> {
+    const NON_CODE: &[&str] = &[
+        "spec",
+        "test",
+        "tests",
+        "features",
+        "benchmark",
+        "benchmarks",
+        "bin",
+        "exe",
+        "doc",
+        "docs",
+        "example",
+        "examples",
+        "sample",
+        "samples",
+        "vendor",
+        "tasks",
+        "rakelib",
+        "script",
+        "scripts",
+        "man",
+        "data",
+        "assets",
+    ];
+    let mut roots = Vec::new();
+    let has_top_rb = std::fs::read_dir(dir).is_ok_and(|entries| {
+        entries
+            .filter_map(Result::ok)
+            .map(|e| e.path())
+            .any(|p| p.is_file() && p.extension().is_some_and(|x| x == "rb"))
+    });
+    if has_top_rb {
+        roots.push(dir.to_path_buf());
+    }
+    let mut subs: Vec<PathBuf> = std::fs::read_dir(dir)
+        .into_iter()
+        .flat_map(|entries| entries.filter_map(Result::ok))
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .filter(|p| {
+            p.file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .is_some_and(|n| !n.starts_with('.') && !NON_CODE.contains(&n.as_str()))
+        })
+        .collect();
+    subs.sort();
+    for sub in subs {
+        let nested_lib = sub.join("lib");
+        if nested_lib.is_dir() && ships_ruby(&nested_lib) {
+            roots.push(nested_lib);
+        } else if ships_ruby(&sub) {
+            roots.push(sub);
+        }
+    }
+    roots
+}
+
 /// The honest verdict for a gem whose declared load path does not exist in
 /// its archive. Three different facts used to share the `no-lib-dir` tag, and
 /// only one of them ever had Ruby a compiler could reach.
@@ -1009,6 +1074,168 @@ fn top_level_features(roots: &[PathBuf]) -> Vec<String> {
     features.sort();
     features.dedup();
     features
+}
+
+/// The features the gem's own REQUIRE GRAPH publishes -- the tier below
+/// `top_level_features`, for the pre-convention layout that ships
+/// `lib/<dir>/...` with no top-level file at all (`360_services` ships
+/// `lib/sorenson/`, and nothing anywhere carries the gem's name).
+///
+/// Among the gem's own files, an entry point is a file no sibling requires:
+/// in-degree zero in the graph of `require`/`require_relative` edges that
+/// resolve to files INSIDE the gem. Of those roots, the ones whose transitive
+/// closure reaches the most files are the published surface -- the real entry
+/// dominates the stray helper that neither requires nor is required, while
+/// several equal independent roots are all published, exactly as several
+/// top-level files are. Still a resolution rule and not a guess, which is the
+/// distinction `entry_point`'s doc exists to protect: every answer names a
+/// file that exists, and the edges come from the gem's own source.
+///
+/// Empty when the roots hold no Ruby at all, or when every file sits in one
+/// require cycle (no root to stand on).
+fn require_graph_root_features(roots: &[PathBuf]) -> Vec<String> {
+    // Every `.rb` under the roots, keyed by root-relative feature path.
+    // Sorted for determinism; a feature shipped under two roots keeps the
+    // first (the load path would resolve it the same way).
+    let mut files: Vec<(String, PathBuf)> = Vec::new();
+    for root in roots {
+        collect_rb_features(root, root, &mut files);
+    }
+    files.sort();
+    files.dedup_by(|a, b| a.0 == b.0);
+    if files.is_empty() {
+        return Vec::new();
+    }
+    let index: std::collections::HashMap<&str, usize> = files
+        .iter()
+        .enumerate()
+        .map(|(i, (f, _))| (f.as_str(), i))
+        .collect();
+    let mut out_edges: Vec<Vec<usize>> = vec![Vec::new(); files.len()];
+    let mut in_degree = vec![0usize; files.len()];
+    for i in 0..files.len() {
+        let Ok(src) = std::fs::read_to_string(&files[i].1) else {
+            continue;
+        };
+        for (relative, target) in literal_requires(&src) {
+            let feature = if relative {
+                let dir = match files[i].0.rfind('/') {
+                    Some(cut) => &files[i].0[..cut],
+                    None => "",
+                };
+                match normalize_feature(&format!("{dir}/{target}")) {
+                    Some(f) => f,
+                    None => continue,
+                }
+            } else {
+                target
+            };
+            // An edge only when the required feature is one of the gem's own
+            // files -- a dependency's feature resolves elsewhere and says
+            // nothing about which of THESE files is the entry.
+            if let Some(&j) = index.get(feature.as_str())
+                && j != i
+                && !out_edges[i].contains(&j)
+            {
+                out_edges[i].push(j);
+                in_degree[j] += 1;
+            }
+        }
+    }
+    let root_ixs: Vec<usize> = (0..files.len()).filter(|&i| in_degree[i] == 0).collect();
+    if root_ixs.is_empty() {
+        return Vec::new();
+    }
+    let coverage = |start: usize| -> usize {
+        let mut seen = vec![false; files.len()];
+        let mut stack = vec![start];
+        let mut n = 0;
+        while let Some(i) = stack.pop() {
+            if std::mem::replace(&mut seen[i], true) {
+                continue;
+            }
+            n += 1;
+            stack.extend(out_edges[i].iter().copied());
+        }
+        n
+    };
+    let covs: Vec<usize> = root_ixs.iter().map(|&i| coverage(i)).collect();
+    let max = *covs.iter().max().expect("root_ixs is non-empty");
+    root_ixs
+        .iter()
+        .zip(&covs)
+        .filter(|&(_, &c)| c == max)
+        .map(|(&i, _)| files[i].0.clone())
+        .collect()
+}
+
+/// Every `.rb` under `dir` (recursively) as a `(feature, path)` pair, the
+/// feature root-relative with the extension dropped.
+fn collect_rb_features(root: &Path, dir: &Path, out: &mut Vec<(String, PathBuf)>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.filter_map(Result::ok) {
+        let p = entry.path();
+        if p.is_dir() {
+            collect_rb_features(root, &p, out);
+        } else if p.extension().is_some_and(|x| x == "rb")
+            && let Ok(rel) = p.strip_prefix(root)
+        {
+            let feature = rel.with_extension("");
+            let feature = feature.to_string_lossy().replace('\\', "/");
+            out.push((feature, p));
+        }
+    }
+}
+
+/// The `require "x"` / `require_relative "y"` targets a source spells as a
+/// single literal string -- the only forms that name a file this side of
+/// execution. `(relative, feature)` pairs; a computed or interpolated
+/// argument contributes no edge.
+fn literal_requires(src: &str) -> Vec<(bool, String)> {
+    let mut out = Vec::new();
+    for line in src.lines() {
+        let line = line.trim_start();
+        let (relative, rest) = if let Some(r) = line.strip_prefix("require_relative") {
+            (true, r)
+        } else if let Some(r) = line.strip_prefix("require") {
+            (false, r)
+        } else {
+            continue;
+        };
+        let rest = rest.trim_start_matches(['(', ' ', '\t']);
+        let Some(quote) = rest.chars().next().filter(|c| *c == '"' || *c == '\'') else {
+            continue;
+        };
+        let body = &rest[1..];
+        let Some(end) = body.find(quote) else {
+            continue;
+        };
+        let target = &body[..end];
+        if target.is_empty() || target.contains("#{") {
+            continue;
+        }
+        let target = target.strip_suffix(".rb").unwrap_or(target);
+        out.push((relative, target.to_string()));
+    }
+    out
+}
+
+/// Resolves `.` and `..` segments in a feature path textually; `None` when
+/// `..` escapes the root (the file lives outside the load path).
+fn normalize_feature(feature: &str) -> Option<String> {
+    let mut parts: Vec<&str> = Vec::new();
+    for seg in feature.split('/') {
+        match seg {
+            "" | "." => {}
+            ".." => {
+                parts.pop()?;
+            }
+            s => parts.push(s),
+        }
+    }
+    Some(parts.join("/"))
 }
 
 /// A package directory holding ONLY this gem and its declared dependencies.
@@ -1074,12 +1301,25 @@ fn probe(
     let meta = read_spec_stamp(dir).unwrap_or_default();
     // The gem's real load path: its declared `require_paths`, kept to the
     // directories the archive actually ships. RubyGems filters the same way.
-    let roots: Vec<PathBuf> = meta
+    let mut roots: Vec<PathBuf> = meta
         .require_paths
         .iter()
         .map(|rp| dir.join(rp))
         .filter(|p| p.is_dir())
         .collect();
+    // Every declared root missing: discover where the Ruby actually lives
+    // before giving up (`gem/`, `ruby/`, a nested `<name>/lib/`, bare files
+    // at the archive root). The entry ladder below is unchanged; only the
+    // load path is recovered. Discovered roots ALSO ride `-I` on the compile
+    // -- zeo's own loader honours the gemspec's (missing) require_paths, so
+    // without the flag the feature would defer to a runtime require and the
+    // compile would measure nothing (the exact failure `entry_point`'s doc
+    // guards against).
+    let mut discovered: Vec<PathBuf> = Vec::new();
+    if roots.is_empty() {
+        roots = discovered_roots(dir);
+        discovered = roots.clone();
+    }
     if roots.is_empty() {
         return Verdict::stopped(Stage::Unpack, rootless_outcome(dir, &meta));
     }
@@ -1096,13 +1336,18 @@ fn probe(
         Err(e) => return Verdict::stopped(Stage::Unpack, Outcome::ViewFailed(e)),
     };
     // The name ladder first; when no file carries the gem's name, require
-    // every top-level file the roots ship instead. Both keep the rule the
-    // doc on `entry_point` protects: every feature the program names is a
-    // file that exists, so the compile measures the gem and not a guess.
+    // every top-level file the roots ship; when there is no top-level file
+    // at all (the pre-convention `lib/<dir>/` layout), the gem's own require
+    // graph names its roots. All three keep the rule the doc on
+    // `entry_point` protects: every feature the program names is a file
+    // that exists, so the compile measures the gem and not a guess.
     let features = match entry_point(&roots, name) {
         Some(feature) => vec![feature],
         None => {
-            let all = top_level_features(&roots);
+            let mut all = top_level_features(&roots);
+            if all.is_empty() {
+                all = require_graph_root_features(&roots);
+            }
             if all.is_empty() {
                 return Verdict::stopped(Stage::Unpack, Outcome::NoEntryPoint);
             }
@@ -1118,6 +1363,9 @@ fn probe(
     let emitted_path = std::env::temp_dir().join(format!("zeo-gem-probe-{name}-{version}.rs"));
 
     let mut cmd = std::process::Command::new(zeo);
+    for r in &discovered {
+        cmd.arg("-I").arg(r);
+    }
     cmd.arg("-e")
         .arg(&program)
         // The repo's own gems/ come too: a probed gem may require a stdlib
@@ -1210,6 +1458,9 @@ fn probe(
     // how a zeo program is built.
     let out = std::env::temp_dir().join(format!("zeo-gem-probe-{name}-{version}"));
     let mut cmd = std::process::Command::new(zeo);
+    for r in &discovered {
+        cmd.arg("-I").arg(r);
+    }
     cmd.arg("-e")
         .arg(&program)
         .arg("--gems")
@@ -3671,6 +3922,118 @@ mod tests {
             Some("ruby_progressbar")
         );
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A gem whose declared require_paths don't exist in the archive: the
+    /// roots are discovered from where the Ruby actually lives.
+    #[test]
+    fn discovered_roots_recover_the_load_path_a_gemspec_lost() {
+        let root = scratch("rootless");
+        // Bare files at the archive root: the gem dir IS the load path.
+        let bare = vendor_dir(&root).join("bare");
+        std::fs::create_dir_all(&bare).unwrap();
+        std::fs::write(bare.join("bare.rb"), "# x\n").unwrap();
+        assert_eq!(discovered_roots(&bare), vec![bare.clone()]);
+
+        // Packed one directory too deep: `<name>/lib` is the root.
+        let deep = vendor_dir(&root).join("deep");
+        std::fs::create_dir_all(deep.join("deep/lib")).unwrap();
+        std::fs::write(deep.join("deep/lib/deep.rb"), "# x\n").unwrap();
+        assert_eq!(discovered_roots(&deep), vec![deep.join("deep/lib")]);
+
+        // A code-shaped directory under an unconventional name.
+        let odd = vendor_dir(&root).join("odd");
+        std::fs::create_dir_all(odd.join("gem")).unwrap();
+        std::fs::write(odd.join("gem/odd.rb"), "# x\n").unwrap();
+        assert_eq!(discovered_roots(&odd), vec![odd.join("gem")]);
+
+        // Tests-only ships nothing loadable: no root, honestly.
+        let tests = vendor_dir(&root).join("tests-only");
+        std::fs::create_dir_all(tests.join("spec")).unwrap();
+        std::fs::write(tests.join("spec/x_spec.rb"), "# x\n").unwrap();
+        assert_eq!(discovered_roots(&tests), Vec::<PathBuf>::new());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The pre-convention layout: `lib/<dir>/...` with no top-level file and
+    /// no name match anywhere. The gem's own require graph names the entry:
+    /// the file no sibling requires that reaches the rest.
+    #[test]
+    fn the_require_graph_names_the_entry_when_no_convention_does() {
+        let root = scratch("entry-graph");
+        let libs = lib_with(
+            &root,
+            "360_services",
+            &["sorenson/base.rb", "sorenson/client.rb", "sorenson/util.rb"],
+        );
+        std::fs::write(
+            libs[0].join("sorenson/base.rb"),
+            "require \"sorenson/util\"\nrequire_relative \"client\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            require_graph_root_features(&libs),
+            vec!["sorenson/base".to_string()]
+        );
+
+        // Two independent roots tie on coverage: both are published, the
+        // same answer several top-level files get.
+        let twin = lib_with(&root, "twin", &["ns/alpha.rb", "ns/beta.rb"]);
+        assert_eq!(
+            require_graph_root_features(&twin),
+            vec!["ns/alpha".to_string(), "ns/beta".to_string()]
+        );
+
+        // The dominant root wins over a stray helper that neither requires
+        // nor is required... unless the helper ties, which `twin` covers.
+        let dom = lib_with(
+            &root,
+            "dom",
+            &["ns/main.rb", "ns/a.rb", "ns/b.rb", "ns/stray.rb"],
+        );
+        std::fs::write(
+            dom[0].join("ns/main.rb"),
+            "require \"ns/a\"\nrequire \"ns/b\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            require_graph_root_features(&dom),
+            vec!["ns/main".to_string()]
+        );
+
+        // A dependency's feature contributes no edge; `..` escaping the root
+        // contributes none either; a full cycle has no root and declines.
+        let cyc = lib_with(&root, "cyc", &["ns/a.rb", "ns/b.rb"]);
+        std::fs::write(cyc[0].join("ns/a.rb"), "require \"ns/b\"\n").unwrap();
+        std::fs::write(cyc[0].join("ns/b.rb"), "require \"ns/a\"\n").unwrap();
+        assert_eq!(require_graph_root_features(&cyc), Vec::<String>::new());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn literal_requires_reads_only_literal_single_arguments() {
+        let src = r#"
+require "plain"
+require 'single'
+require("parens")
+require_relative "sibling"
+require_relative '../up'
+require "interp#{x}"
+require variable
+requires_grid "not_a_require"
+        "#;
+        assert_eq!(
+            literal_requires(src),
+            vec![
+                (false, "plain".to_string()),
+                (false, "single".to_string()),
+                (false, "parens".to_string()),
+                (true, "sibling".to_string()),
+                (true, "../up".to_string()),
+            ]
+        );
+        assert_eq!(normalize_feature("ns/../up"), Some("up".to_string()));
+        assert_eq!(normalize_feature("../escape"), None);
     }
 
     #[test]
