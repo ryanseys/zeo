@@ -797,9 +797,13 @@ fn process_top_stmt_inner(
         // A reachable `C.prepend(M)` -- recorded as a compile-time ancestry edit
         // (see `try_prepend_call_edit`); the call emits nothing, exactly as a
         // class-body `prepend M` produces no runtime statement.
-    } else if declines_a_singleton_prepend(compiler, stmt, &[], 0) {
-        return Err(UNHONOURED_SINGLETON_PREPEND.into());
     } else {
+        // A singleton prepend on a statically-registered class runs as the
+        // ordinary send it is, AFTER de-optimizing the call sites its
+        // modules can override -- see `defer_singleton_prepend`.
+        if declines_a_singleton_prepend(compiler, stmt, &[], 0) {
+            defer_singleton_prepend(compiler, stmt, &[], 0);
+        }
         register_nested_class_defs(compiler, stmt, &[], 0)?;
         main_statements.push(stmt);
     }
@@ -1252,29 +1256,22 @@ fn try_prepend_call_edit(
 }
 
 /// The class/module a bare-constant expression names (resolved in `cref`), or
-/// `None` for anything that isn't a compile-time-resolvable class reference.
-/// Used to statically resolve a `prepend` call's receiver and module arguments.
-const UNHONOURED_SINGLETON_PREPEND: &str = "`prepend` onto the singleton class of a statically-compiled class needs \
-     modules zeo can name at compile time (constants) -- a runtime module \
-     writes a singleton method table that statically resolved calls never \
-     consult, so it would compile and then override nothing (zeo limitation)";
-
 /// A `<expr>.singleton_class.prepend(...)` that [`try_prepend_call_edit`] just
-/// DECLINED, where letting it run as an ordinary send would come out WRONG --
-/// because the receiver names a STATICALLY-REGISTERED class. Statically
-/// resolved `X.m` call sites on such a class never consult the runtime
-/// singleton tables the send would write, so the prepend would compile and
-/// then override nothing. The whole point of `prepend` is to override a method
-/// that already exists, which is exactly the case that would come out wrong.
-/// Refused for the same reason `lower::defs` refuses `undef :close` in a
-/// singleton body: a silent wrong answer is worse than a rejection.
+/// DECLINED, where letting it run as an ordinary send WITHOUT bookkeeping
+/// would come out wrong -- because the receiver names a STATICALLY-REGISTERED
+/// class. Statically resolved `X.m` call sites on such a class never consult
+/// the runtime singleton tables the send writes
+/// (`prepend_into_class_singleton`), so the prepend would compile and then
+/// override nothing -- and the whole point of `prepend` is to override a
+/// method that already exists. The caller answers a hit with
+/// [`defer_singleton_prepend`], which de-optimizes those call sites and lets
+/// the send run.
 ///
-/// A constant-shaped receiver that does NOT resolve to a static class is the
-/// mirror image: the class only ever exists at runtime (an autoloaded rails
+/// A constant-shaped receiver that does NOT resolve to a static class needs
+/// none of that: the class only ever exists at runtime (an autoloaded rails
 /// class behind a computed feature name, a `K = Class.new` minting), so every
-/// call site on it is already dynamic and the runtime singleton-prepend
-/// machinery (`prepend_into_class_singleton`) is exactly what CRuby does.
-/// Those pass through as the ordinary send they are -- the
+/// call site on it is already dynamic and the runtime machinery is exactly
+/// what CRuby does. Those pass through as the ordinary send they are -- the
 /// `SomeRailsClass.singleton_class.prepend(TheirPatch)` shape behind most of
 /// the rails-plugin band, activerecord-jdbc-adapter and friends.
 fn declines_a_singleton_prepend(
@@ -1318,6 +1315,31 @@ fn declines_a_singleton_prepend(
             // (whose call sites bypass runtime tables) -- keep declining.
             _ => true,
         },
+    }
+}
+
+/// Accept a singleton prepend [`declines_a_singleton_prepend`] flagged, by
+/// de-optimizing the call sites it can override: every own instance method of
+/// each compile-time-resolvable module argument joins `runtime_patches` (the
+/// [`defer_mixin_to_runtime`] currency), so statically resolved `X.m` sites
+/// route through `send_value` and consult the overlay the send writes. A
+/// module zeo cannot name at compile time (a variable, a splat) de-optimizes
+/// EVERY name instead -- the static fast path is not worth a wrong override,
+/// and the shape is rare.
+fn defer_singleton_prepend(compiler: &mut Compiler, stmt: NodeId, cref: &[ClassId], box_id: u32) {
+    let HirNode::Call { args, .. } = &compiler.hir[stmt] else {
+        return;
+    };
+    for arg in args.clone() {
+        let resolved = match arg {
+            crate::hir::ArrayElem::Single(n) => const_node_class(compiler, n, cref, box_id),
+            // A splatted module list is opaque -- the arm below widens.
+            crate::hir::ArrayElem::Splat(_) => None,
+        };
+        match resolved {
+            Some(m) => defer_mixin_to_runtime(compiler, m),
+            None => compiler.runtime_patches_any_name = true,
+        }
     }
 }
 
@@ -4056,7 +4078,9 @@ fn walk_class_body(
                     continue;
                 }
                 if declines_a_singleton_prepend(compiler, stmt, &child_cref, box_id) {
-                    return Err(UNHONOURED_SINGLETON_PREPEND.into());
+                    // Runs at document position as an ordinary send; the
+                    // de-opt makes static call sites see what it writes.
+                    defer_singleton_prepend(compiler, stmt, &child_cref, box_id);
                 }
                 // A `def` nested in an `if`/`case` branch also runs at document
                 // position (the taken branch's runtime `define_method` gives the

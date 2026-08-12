@@ -2294,11 +2294,10 @@ pub fn extend_object_default(recv: &RubyValue, module_val: &RubyValue) -> Result
 /// [`overlay_class_method`] and skipped when a prepended method's own `super`
 /// resumes the walk (`send_super_class_from`).
 ///
-/// Reflection nuances, written down rather than papered over (the posture of
+/// Reflection nuance, written down rather than papered over (the posture of
 /// the singleton-include note in [`mix_in`]): the module is recorded via the
 /// extended list, so `K.singleton_class.ancestors` reports it AFTER the
-/// singleton head where CRuby puts it before; and of two modules prepending
-/// the SAME method name, `super` from the outer skips the inner copy.
+/// singleton head where CRuby puts it before.
 fn prepend_into_class_singleton(owner: ClassId, module_val: &RubyValue) -> Result<(), Signal> {
     let RubyValue::Class(mid) = module_val else {
         return Err(type_error!(
@@ -2308,6 +2307,12 @@ fn prepend_into_class_singleton(owner: ClassId, module_val: &RubyValue) -> Resul
     };
     if crate::dispatch::class_frozen(owner) {
         return Err(crate::dispatch::frozen_class_error(owner));
+    }
+    // Re-prepending a module already in the stack is a no-op, as CRuby's is
+    // -- and overwriting the winner copies would silently hoist it above
+    // later prepends.
+    if has_singleton_prepend(owner, *mid) {
+        return Ok(());
     }
     // Built before the write lock, like `extend_object_default`'s Class arm:
     // `extended_class_method` reads the overlay.
@@ -2321,12 +2326,12 @@ fn prepend_into_class_singleton(owner: ClassId, module_val: &RubyValue) -> Resul
         let entry = w.entry(owner.0).or_insert_with(OverlayEntry::delta);
         for (name, proc_) in installs {
             // A later prepend layers ABOVE an earlier one (CRuby ancestry), so
-            // it wins a name collision -- the extend table's rule.
+            // it wins a name collision -- the extend table's rule. The shadowed
+            // copy stays reachable: a prepended method's `super` resumes down
+            // the recorded stack (`singleton_prepend_super_below`).
             entry.prepended_class_methods.insert(name, proc_);
         }
-        if !entry.singleton_prepends.contains(mid) {
-            entry.singleton_prepends.push(*mid);
-        }
+        entry.singleton_prepends.push(*mid);
     }
     // The method copies make the module ANSWER on the owner; the extended
     // record is what makes the owner BE one (`is_a?`, `===`,
@@ -3876,6 +3881,22 @@ pub fn overlay_class_method(id: ClassId, name: Symbol) -> Option<RProc> {
 pub fn overlay_class_method_below_prepends(id: ClassId, name: Symbol) -> Option<RProc> {
     let c = maps().classes.read().unwrap();
     c.get(&id.0)?.class_methods.get(&name).cloned()
+}
+
+/// The next `name` in `id`'s singleton-PREPEND stack STRICTLY BELOW `mid` --
+/// an EARLIER prepend, which later ones outrank -- or `None` when only the
+/// host's own `def self.x` is left. The resume point for a prepended module
+/// method's `super` when more than one module prepends the same name.
+pub fn singleton_prepend_super_below(id: ClassId, mid: ClassId, name: Symbol) -> Option<RProc> {
+    let below: Vec<ClassId> = {
+        let c = maps().classes.read().unwrap();
+        let stack = &c.get(&id.0)?.singleton_prepends;
+        let pos = stack.iter().position(|&m| m == mid)?;
+        stack[..pos].iter().rev().copied().collect()
+    };
+    below
+        .into_iter()
+        .find_map(|m| extended_class_method(m, name))
 }
 
 /// Whether `mid` was prepended into `id`'s singleton class
