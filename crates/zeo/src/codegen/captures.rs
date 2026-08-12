@@ -1716,9 +1716,25 @@ fn walk_multi_target_group(
     self_class: super::class_query::SelfClass<'_>,
 ) {
     for t in group.before.iter().chain(&group.after) {
-        walk_multi_target(compiler, t, escaping_at, outer_at, param_exclusions, caps, self_class);
+        walk_multi_target(
+            compiler,
+            t,
+            escaping_at,
+            outer_at,
+            param_exclusions,
+            caps,
+            self_class,
+        );
     }
     if let Some(Some(t)) = &group.splat {
-        walk_multi_target(compiler, t, escaping_at, outer_at, param_exclusions, caps, self_class);
+        walk_multi_target(
+            compiler,
+            t,
+            escaping_at,
+            outer_at,
+            param_exclusions,
+            caps,
+            self_class,
+        );
     }
 }

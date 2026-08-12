@@ -404,9 +404,11 @@ pub(crate) fn lower_ffi_directive(
                 .chain(std::iter::once(&ret_ty))
                 .any(|t| matches!(t, crate::hir::FfiType::StrPtr))
             {
-                return Err("`:strptr` is only usable as an `attach_function` return type"
-                    .to_string()
-                    .into());
+                return Err(
+                    "`:strptr` is only usable as an `attach_function` return type"
+                        .to_string()
+                        .into(),
+                );
             }
             if arg_types
                 .iter()
@@ -809,9 +811,11 @@ fn ruby_ffi_type_src(ty: &crate::hir::FfiType) -> PResult<String> {
         // return-only device.
         PlatformScalar(name) => format!(":{name}"),
         StrPtr => {
-            return Err("`:strptr` is only usable as an `attach_function` return type"
-                .to_string()
-                .into());
+            return Err(
+                "`:strptr` is only usable as an `attach_function` return type"
+                    .to_string()
+                    .into(),
+            );
         }
         scalar => format!(
             ":{}",
@@ -1390,17 +1394,19 @@ fn lower_attach_function(
         .iter()
         .any(|t| matches!(t, crate::hir::FfiType::StrPtr))
     {
-        return Err("`:strptr` is only usable as an `attach_function` return type"
-            .to_string()
-            .into());
+        return Err(
+            "`:strptr` is only usable as an `attach_function` return type"
+                .to_string()
+                .into(),
+        );
     }
     // A UNION by value has no honest aggregate descriptor on either tier
     // (the mirror's field asserts would overlap; libffi has no union type),
     // and the extern tier's mirror asserts would reject it at build time
     // anyway -- say it here, at the declaration.
-    let union_by_value = std::iter::once(&ret).chain(arg_types.iter()).any(
-        |t| matches!(t, crate::hir::FfiType::Struct(l) if l.union),
-    );
+    let union_by_value = std::iter::once(&ret)
+        .chain(arg_types.iter())
+        .any(|t| matches!(t, crate::hir::FfiType::Struct(l) if l.union));
     if union_by_value {
         return Err(
             "a union passed or returned BY VALUE isn't supported yet (zeo limitation) -- \

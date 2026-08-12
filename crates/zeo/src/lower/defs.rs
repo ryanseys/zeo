@@ -2719,9 +2719,7 @@ pub(crate) fn lower_class_body(
     }
     let is_ffi = stmts.iter().any(is_extend_ffi_library)
         || ffi_path.as_deref().is_some_and(|p| hir.is_ffi_library(p))
-        || stmts
-            .iter()
-            .any(|s| ffi_extender_pairs(hir, s).is_some());
+        || stmts.iter().any(|s| ffi_extender_pairs(hir, s).is_some());
     if is_ffi && let Some(p) = &ffi_path {
         hir.mark_ffi_library(p);
     }
@@ -2847,8 +2845,7 @@ fn ffi_extender_pairs(hir: &Hir, stmt: &Node<'_>) -> Option<Vec<(String, String)
     let written = extend_target_path(stmt)?;
     let written = written.trim_start_matches("::");
     hir.ffi_extenders.iter().find_map(|(recorded, pairs)| {
-        (recorded == written || recorded.ends_with(&format!("::{written}")))
-            .then(|| pairs.clone())
+        (recorded == written || recorded.ends_with(&format!("::{written}"))).then(|| pairs.clone())
     })
 }
 
