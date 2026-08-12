@@ -61,15 +61,17 @@ fn an_analyze_error_is_coded_with_its_stage() {
 /// lowering it names that line rather than the enclosing `class`/`module`
 /// header. The FFI directives are the case that made it necessary: they never
 /// reach `lower_node` (nor `lower_class_body_statement`), so every one of the
-/// ledger's `ffi_lib` rows used to point at `module Native`, and triaging them
-/// meant re-parsing the files to recover what they said.
+/// ledger's FFI rows used to point at `module Native`, and triaging them
+/// meant re-parsing the files to recover what they said. (A computed
+/// `ffi_lib` no longer rejects -- it defers to class-body time -- so the
+/// probe is an `attach_function` naming an undeclared type.)
 #[test]
 fn a_class_body_directive_names_its_own_line() {
     let err = zeo::compile_to_rust_with(
-        "require 'ffi'\nmodule Native\n  extend FFI::Library\n  ffi_lib whatever\nend\n",
+        "require 'ffi'\nmodule Native\n  extend FFI::Library\n  ffi_lib 'm'\n  attach_function :f, [:nope_type], :int\nend\n",
         &Default::default(),
     )
-    .expect_err("a computed ffi_lib name is rejected");
+    .expect_err("an undeclared argument type is rejected");
     insta::assert_snapshot!(render(err));
 }
 

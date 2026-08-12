@@ -51,6 +51,104 @@ pub(crate) fn is_extend_ffi_data_converter(node: &Node<'_>) -> bool {
     }
 }
 
+/// `FFI.typedef :existing, :alias` -- the GLOBAL type registry the gem keeps
+/// on the FFI module itself, consulted by every library module and struct
+/// layout program-wide (puppet declares the Win32 vocabulary this way in one
+/// file and spends it across sibling files). Returns the resolved type and
+/// the new alias name; `None` (fall through to ordinary call lowering) for
+/// any other statement, or for a source type zeo cannot resolve -- a
+/// platform-varying typedef must stay an honest rejection at its USE site,
+/// not a wrong width registered here.
+pub(crate) fn as_global_ffi_typedef(
+    node: &Node<'_>,
+    aliases: &std::collections::HashMap<String, crate::hir::FfiType>,
+) -> Option<(crate::hir::FfiType, String)> {
+    let call = node.as_call_node()?;
+    let recv = call.receiver()?;
+    if call.name().as_slice() != b"typedef" || const_path_string(&recv).as_deref() != Some("FFI") {
+        return None;
+    }
+    let args: Vec<Node<'_>> = call.arguments()?.arguments().iter().collect();
+    let [existing, alias] = args.as_slice() else {
+        return None;
+    };
+    let existing = ffi_type_node(existing, aliases).ok()?;
+    let alias = ffi_symbol_str(alias).ok()?;
+    Some((existing, alias))
+}
+
+/// A `def self.extended(host)` hook whose body runs `host.extend FFI::Library`
+/// -- the indirection chef's Win32 API modules share one FFI setup through.
+/// The hook makes every module that later `extend`s ITS module an FFI library,
+/// so the recognizer returns the hook's flat `host.typedef :src, :alias`
+/// stream for the extend site to replay into its own alias table. Statements
+/// under a conditional inside the hook are NOT replayed (chef gates two
+/// typedefs on an ENV probe); a type they would have declared stays
+/// undeclared, and a later use of it is an honest rejection.
+pub(crate) fn ffi_extender_hook(node: &Node<'_>) -> Option<Vec<(String, String)>> {
+    let def = node.as_def_node()?;
+    def.receiver()?.as_self_node()?;
+    if def.name().as_slice() != b"extended" {
+        return None;
+    }
+    let requireds: Vec<_> = def.parameters()?.requireds().iter().collect();
+    let [host] = requireds.as_slice() else {
+        return None;
+    };
+    let host = host.as_required_parameter_node()?.name();
+    let stmts = def.body()?.as_statements_node()?;
+    let mut extends_library = false;
+    let mut pairs = Vec::new();
+    for stmt in stmts.body().iter() {
+        let Some(call) = stmt.as_call_node() else {
+            continue;
+        };
+        let Some(recv) = call.receiver() else {
+            continue;
+        };
+        let is_host = recv
+            .as_local_variable_read_node()
+            .is_some_and(|l| l.name().as_slice() == host.as_slice());
+        if !is_host {
+            continue;
+        }
+        let args: Vec<Node<'_>> = call
+            .arguments()
+            .map(|a| a.arguments().iter().collect())
+            .unwrap_or_default();
+        match call.name().as_slice() {
+            b"extend" => {
+                extends_library |= args
+                    .iter()
+                    .any(|a| const_path_string(a).as_deref() == Some("FFI::Library"));
+            }
+            b"typedef" => {
+                if let [src, alias] = args.as_slice()
+                    && let (Ok(src), Ok(alias)) = (ffi_symbol_str(src), ffi_symbol_str(alias))
+                {
+                    pairs.push((src, alias));
+                }
+            }
+            _ => {}
+        }
+    }
+    extends_library.then_some(pairs)
+}
+
+/// The constant path a bare `extend SomeConst` statement names -- how a class
+/// body asks whether the target is a recorded [`ffi_extender_hook`] module.
+pub(crate) fn extend_target_path(node: &Node<'_>) -> Option<String> {
+    let call = node.as_call_node()?;
+    if call.receiver().is_some() || call.name().as_slice() != b"extend" {
+        return None;
+    }
+    let args: Vec<Node<'_>> = call.arguments()?.arguments().iter().collect();
+    let [target] = args.as_slice() else {
+        return None;
+    };
+    const_path_string(target)
+}
+
 /// The native type a `native_type <T>` statement declares, spelled as a
 /// symbol (`native_type :pointer`) or an `FFI::Type::X` constant.
 pub(crate) fn native_type_of(node: &Node<'_>) -> Option<crate::hir::FfiType> {
@@ -1483,7 +1581,7 @@ fn ffi_type_array(
 /// misses to the declared aliases, then to the portable C/Win32 typedef
 /// table (also `CScalar`'s; the doc comments there say why several POSIX
 /// names are deliberately absent). Unknown -> a clean, greppable error.
-fn ffi_type_of(
+pub(crate) fn ffi_type_of(
     sym: &str,
     aliases: &std::collections::HashMap<String, crate::hir::FfiType>,
 ) -> PResult<crate::hir::FfiType> {

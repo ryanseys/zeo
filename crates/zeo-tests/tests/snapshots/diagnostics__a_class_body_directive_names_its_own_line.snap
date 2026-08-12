@@ -1,16 +1,16 @@
 ---
 source: crates/zeo-tests/tests/diagnostics.rs
-assertion_line: 73
 expression: render(err)
 ---
 zeo::lower
 
-  × ffi_lib expects a library name zeo can decide at compile time: a string, a symbol, `FFI::Library::LIBC`, or a `__dir__`/`File.expand_path`-built path -- alone, or as one alternative of an array
-   ╭─[-e:4:3]
- 3 │   extend FFI::Library
- 4 │   ffi_lib whatever
-   ·   ────────┬───────
-   ·           ╰── zeo stops here
- 5 │ end
+  × unsupported FFI type `:nope_type` (expected a scalar keyword, `:pointer`, `:string`, a C typedef whose width is the same on every target zeo builds for, or a declared `typedef`/`enum`/`callback`
+  │ name)
+   ╭─[-e:5:3]
+ 4 │   ffi_lib 'm'
+ 5 │   attach_function :f, [:nope_type], :int
+   ·   ───────────────────┬──────────────────
+   ·                      ╰── zeo stops here
+ 6 │ end
    ╰────
   help: zeo can't compile this yet

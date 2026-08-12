@@ -9,7 +9,8 @@ use super::assign::lower_multi_target_group;
 use super::consts::constant_path_name;
 use super::control::static_bool;
 use super::ffi::{
-    as_ffi_layout, is_extend_ffi_library, lower_ffi_directive, synthesize_ffi_struct,
+    as_ffi_layout, as_global_ffi_typedef, extend_target_path, ffi_extender_hook,
+    is_extend_ffi_library, lower_ffi_directive, synthesize_ffi_struct,
 };
 use super::{
     PResult, lower_body, lower_node, names_enclosing_class, parse_and_lower_into, superclass_name,
@@ -22,34 +23,35 @@ use ruby_prism::{Node, ParseResult};
 /// a `StatementsNode` (the `then`/`unless` body), an `ElseNode` (a final
 /// `else`), a nested `IfNode` (an `elsif`, re-entering the fold), or `None`
 /// (an omitted branch) -- routing each contained statement back through
-/// `lower_class_body_statement` so an `alias`/`def`/visibility directive
-/// inside the guard still registers.
+/// `lower_one_class_body_stmt` so an `alias`/`def`/visibility directive
+/// inside the guard still registers, and an FFI `typedef`/`ffi_lib`/
+/// `attach_function` under a platform gate still reaches the FFI dispatch
+/// (vips declares `:GType` under `if FFI::Platform::ADDRESS_SIZE == 64`).
 fn lower_class_body_selected(
     result: &ParseResult,
     hir: &mut Hir,
     chosen: Option<Node<'_>>,
-    visibility: &mut Visibility,
-    module_function: &mut bool,
+    st: &mut LowerBodyStmt<'_>,
     out: &mut Vec<NodeId>,
 ) -> PResult<()> {
     let Some(node) = chosen else { return Ok(()) };
     if let Some(stmts) = node.as_statements_node() {
         for stmt in stmts.body().iter() {
-            lower_class_body_statement(result, hir, &stmt, visibility, module_function, out)?;
+            lower_one_class_body_stmt(result, hir, &stmt, st, out)?;
         }
         return Ok(());
     }
     if let Some(else_node) = node.as_else_node() {
         if let Some(stmts) = else_node.statements() {
             for stmt in stmts.body().iter() {
-                lower_class_body_statement(result, hir, &stmt, visibility, module_function, out)?;
+                lower_one_class_body_stmt(result, hir, &stmt, st, out)?;
             }
         }
         return Ok(());
     }
     // A nested `elsif` `IfNode`, or any single statement: re-enter the
     // class-body path (which folds the `elsif` in turn).
-    lower_class_body_statement(result, hir, &node, visibility, module_function, out)
+    lower_one_class_body_stmt(result, hir, &node, st, out)
 }
 
 /// `class << obj; def a; ...; end; ...; end` on a NON-`self` receiver:
@@ -1014,29 +1016,153 @@ fn static_guard(node: &Node<'_>) -> Option<bool> {
             .contains(&name.as_ref())
             .then_some(true);
     }
-    let call = node.as_call_node()?;
-    let recv = call.receiver()?;
-    if String::from_utf8_lossy(recv.as_constant_read_node()?.name().as_slice()) != "RUBY_VERSION" {
-        return None;
+    // `a && b` / `a || b`: three-valued short-circuit. One decided side can
+    // decide the whole guard even when the other stays unknown -- `x && false`
+    // is falsy for EITHER x (it returns x when x is falsy, false otherwise),
+    // and `x || true` truthy the same way.
+    if let Some(and) = node.as_and_node() {
+        return match (static_guard(&and.left()), static_guard(&and.right())) {
+            (Some(false), _) => Some(false),
+            (Some(true), r) => r,
+            (None, Some(false)) => Some(false),
+            (None, _) => None,
+        };
     }
-    let args: Vec<_> = call.arguments()?.arguments().iter().collect();
-    let [only] = args.as_slice() else {
-        return None;
-    };
-    let rhs = only.as_string_node()?.unescaped().to_vec();
-    let rhs = String::from_utf8(rhs).ok()?;
-    let ord = TARGET_RUBY_VERSION.cmp(rhs.as_str());
-    use std::cmp::Ordering::{Equal, Greater, Less};
+    if let Some(or) = node.as_or_node() {
+        return match (static_guard(&or.left()), static_guard(&or.right())) {
+            (Some(true), _) => Some(true),
+            (Some(false), r) => r,
+            (None, Some(true)) => Some(true),
+            (None, _) => None,
+        };
+    }
+    let call = node.as_call_node()?;
     let op = String::from_utf8_lossy(call.name().as_slice()).into_owned();
-    Some(match op.as_str() {
-        ">=" => ord != Less,
-        ">" => ord == Greater,
-        "<" => ord == Less,
-        "<=" => ord != Greater,
-        "==" => ord == Equal,
-        "!=" => ord != Equal,
-        _ => return None,
-    })
+    let args: Vec<Node<'_>> = call
+        .arguments()
+        .map(|a| a.arguments().iter().collect())
+        .unwrap_or_default();
+    if op == "!" && args.is_empty() {
+        return Some(!static_guard(&call.receiver()?)?);
+    }
+    // `Gem.win_platform?` / `Gem.java_platform?` -- the platform facts gems
+    // gate whole FFI declaration blocks on, answered from the same baked
+    // values `guard_fold` uses so lower and analyze always pick one branch.
+    if matches!(op.as_str(), "win_platform?" | "java_platform?") && args.is_empty() {
+        let recv = call.receiver()?;
+        if String::from_utf8_lossy(recv.as_constant_read_node()?.name().as_slice()) != "Gem" {
+            return None;
+        }
+        if op == "java_platform?" {
+            return Some(false); // zeo reports MRI's identity
+        }
+        return crate::guard_fold::win_platform();
+    }
+    match op.as_str() {
+        // Both comparison families reduce their operands the same way ruby
+        // would dispatch them: `String#<=>` is bytewise (the RUBY_VERSION /
+        // RUBY_PLATFORM gates), `Integer#<=>` numeric (`FFI::Platform::
+        // ADDRESS_SIZE == 64`, which gates vips' `:GType` typedef).
+        ">=" | ">" | "<" | "<=" | "==" | "!=" => {
+            let recv = call.receiver()?;
+            let [rhs] = args.as_slice() else {
+                return None;
+            };
+            use std::cmp::Ordering::{Equal, Greater, Less};
+            let ord = if let (Some(l), Some(r)) = (guard_string(&recv), guard_string(rhs)) {
+                l.as_bytes().cmp(r.as_bytes())
+            } else if let (Some(l), Some(r)) = (guard_integer(&recv), guard_integer(rhs)) {
+                l.cmp(&r)
+            } else {
+                return None;
+            };
+            Some(match op.as_str() {
+                ">=" => ord != Less,
+                ">" => ord == Greater,
+                "<" => ord == Less,
+                "<=" => ord != Greater,
+                "==" => ord == Equal,
+                _ => ord != Equal,
+            })
+        }
+        // `RUBY_PLATFORM =~ /mswin|mingw/` -- the guard half the windows-only
+        // FFI files sit under. `LiteralPattern` is guard_fold's own parser
+        // (only exact character tests fold), so the two stages agree; either
+        // side may hold the pattern.
+        "=~" | "!~" | "match?" | "match" => {
+            let [arg] = args.as_slice() else {
+                return None;
+            };
+            let recv = call.receiver()?;
+            let (subject, pattern) = match guard_pattern(arg) {
+                Some(p) => (guard_string(&recv)?, p),
+                None => (guard_string(arg)?, guard_pattern(&recv)?),
+            };
+            let hit = pattern.matches(&subject)?;
+            Some(if op == "!~" { !hit } else { hit })
+        }
+        // `RUBY_PLATFORM.include?('mswin')` and the prefix/suffix spellings of
+        // the same question. Ruby's `start_with?`/`end_with?` take any number
+        // of candidates and answer true if ANY matches.
+        "include?" | "start_with?" | "end_with?" => {
+            let s = guard_string(&call.receiver()?)?;
+            if args.is_empty() {
+                return None;
+            }
+            let mut hit = false;
+            for arg in &args {
+                let candidate = guard_string(arg)?;
+                hit |= match op.as_str() {
+                    "include?" => s.contains(&candidate),
+                    "start_with?" => s.starts_with(&candidate),
+                    _ => s.ends_with(&candidate),
+                };
+            }
+            Some(hit)
+        }
+        _ => None,
+    }
+}
+
+/// Reduce a prism node to a compile-time STRING for [`static_guard`]: a plain
+/// string literal, or a constant ruby seeds into every program
+/// (`RUBY_VERSION`, `RUBY_PLATFORM`, ...) -- `guard_fold::seeded_string_const`,
+/// so the lower-stage fold and the analyze-stage fold read the same values.
+fn guard_string(node: &Node<'_>) -> Option<String> {
+    if let Some(s) = node.as_string_node() {
+        return String::from_utf8(s.unescaped().to_vec()).ok();
+    }
+    let name = String::from_utf8_lossy(node.as_constant_read_node()?.name().as_slice());
+    crate::guard_fold::seeded_string_const(&name)
+}
+
+/// Reduce a prism node to a compile-time INTEGER for [`static_guard`]: an
+/// integer literal, or the `FFI::Platform` size constants the `ffi` gem's
+/// platform-gated `typedef`s test (LP64 on every target zeo builds for).
+fn guard_integer(node: &Node<'_>) -> Option<i64> {
+    if let Some(int) = node.as_integer_node() {
+        let value = int.value();
+        let (negative, digits) = value.to_u32_digits();
+        return super::literals::assemble_i64(negative, digits);
+    }
+    let path = constant_path_name(node).ok()?;
+    match path.trim_start_matches("::") {
+        "FFI::Platform::ADDRESS_SIZE" | "FFI::Platform::LONG_SIZE" => Some(64),
+        _ => None,
+    }
+}
+
+/// A regexp LITERAL parsed into `guard_fold`'s exact-fold pattern; `None` for
+/// an interpolated pattern or one carrying real regexp syntax.
+fn guard_pattern(node: &Node<'_>) -> Option<crate::guard_fold::LiteralPattern> {
+    let re = node.as_regular_expression_node()?;
+    let src = String::from_utf8(re.unescaped().to_vec()).ok()?;
+    crate::guard_fold::LiteralPattern::parse(
+        &src,
+        re.is_ignore_case(),
+        re.is_extended(),
+        re.is_multi_line(),
+    )
 }
 
 /// Three-valued static evaluation of a `class << self` conditional-def guard,
@@ -2579,8 +2705,23 @@ pub(crate) fn lower_class_body(
     // `extend FFI::Library` marks the module ONCE; a reopening in another file
     // inherits it by path -- see `Hir::mark_ffi_library`.
     let ffi_path = cref.map(|n| hir.cref_path(n));
+    // A `def self.extended(host)` hook that extends FFI::Library into its
+    // host makes THIS module an FFI-library extender: record it (with its
+    // replayable `host.typedef` stream) so an `extend <this module>` in a
+    // later body is recognized as the FFI marker one step removed -- chef's
+    // Win32 API modules all take that route.
+    if let Some(p) = &ffi_path {
+        for stmt in &stmts {
+            if let Some(pairs) = ffi_extender_hook(stmt) {
+                hir.ffi_extenders.insert(p.clone(), pairs);
+            }
+        }
+    }
     let is_ffi = stmts.iter().any(is_extend_ffi_library)
-        || ffi_path.as_deref().is_some_and(|p| hir.is_ffi_library(p));
+        || ffi_path.as_deref().is_some_and(|p| hir.is_ffi_library(p))
+        || stmts
+            .iter()
+            .any(|s| ffi_extender_pairs(hir, s).is_some());
     if is_ffi && let Some(p) = &ffi_path {
         hir.mark_ffi_library(p);
     }
@@ -2607,10 +2748,35 @@ pub(crate) fn lower_class_body(
     // declaration is already recorded by the time the nested body starts.
     let mut ffi_aliases: std::collections::HashMap<String, crate::hir::FfiType> =
         hir.inherited_ffi_types();
+    // Replay each extender's recorded `host.typedef` stream, in its source
+    // order, before any of this body's own directives lower. A source type
+    // that doesn't resolve is skipped -- the alias it would have made stays
+    // undeclared, and a later use of it is an honest rejection at that site.
+    for stmt in &stmts {
+        let Some(pairs) = ffi_extender_pairs(hir, stmt) else {
+            continue;
+        };
+        for (src, alias) in pairs {
+            if let Ok(ty) = crate::lower::ffi::ffi_type_of(&src, &ffi_aliases) {
+                hir.declare_ffi_type(&alias, &ty);
+                ffi_aliases.insert(alias, ty);
+            }
+        }
+    }
     // This is the ONE place a `class`/`module` body's statements are lowered
     // (the runtime-class desugars route through here too), so it is also the
     // one place the cref chain deepens -- see `Hir::cvar_is_toplevel`.
     let mut lower_stmts = |hir: &mut Hir| {
+        let mut st = LowerBodyStmt {
+            is_ffi,
+            is_ffi_struct,
+            is_ffi_union,
+            cref,
+            ffi_lib: &mut ffi_lib,
+            ffi_aliases: &mut ffi_aliases,
+            visibility: &mut visibility,
+            module_function: &mut module_function,
+        };
         for stmt in &stmts {
             // Located per STATEMENT, around the whole dispatch below -- an
             // `ffi_lib` or a `layout` never reaches `lower_class_body_statement`
@@ -2619,22 +2785,7 @@ pub(crate) fn lower_class_body(
             // that line instead of its own.
             let span = crate::lower::span_of(hir, stmt);
             hir.push_span(span);
-            let done = lower_one_class_body_stmt(
-                result,
-                hir,
-                stmt,
-                LowerBodyStmt {
-                    is_ffi,
-                    is_ffi_struct,
-                    is_ffi_union,
-                    cref,
-                    ffi_lib: &mut ffi_lib,
-                    ffi_aliases: &mut ffi_aliases,
-                    visibility: &mut visibility,
-                    module_function: &mut module_function,
-                },
-                &mut out,
-            );
+            let done = lower_one_class_body_stmt(result, hir, stmt, &mut st, &mut out);
             hir.pop_span();
             done.map_err(|e| e.with_span_if_missing(span))?;
         }
@@ -2687,6 +2838,20 @@ struct LowerBodyStmt<'a> {
     module_function: &'a mut bool,
 }
 
+/// The recorded typedef stream of the FFI-library extender an `extend X`
+/// statement names, or `None` when the statement is anything else. The
+/// extender was recorded under its FULL cref path; the extend site may spell
+/// a shorter relative path, so a trailing-components match answers too
+/// (`extend Win32::API` finds `Chef::ReservedNames::Win32::API`).
+fn ffi_extender_pairs(hir: &Hir, stmt: &Node<'_>) -> Option<Vec<(String, String)>> {
+    let written = extend_target_path(stmt)?;
+    let written = written.trim_start_matches("::");
+    hir.ffi_extenders.iter().find_map(|(recorded, pairs)| {
+        (recorded == written || recorded.ends_with(&format!("::{written}")))
+            .then(|| pairs.clone())
+    })
+}
+
 /// The three things a class-body statement can be: an FFI directive, an FFI
 /// `layout`, or an ordinary statement. Split out of `lower_class_body`'s loop
 /// so the loop can wrap ALL of them in one span frame.
@@ -2694,9 +2859,46 @@ fn lower_one_class_body_stmt(
     result: &ParseResult,
     hir: &mut Hir,
     stmt: &Node<'_>,
-    st: LowerBodyStmt<'_>,
+    st: &mut LowerBodyStmt<'_>,
     out: &mut Vec<NodeId>,
 ) -> PResult<()> {
+    // A class-body `if`/`unless` with a statically-decided predicate is folded
+    // at definition time -- real Ruby runs these guards while the class body
+    // executes, and a `def`/`alias`/FFI directive inside one has no ordinary
+    // value-`if` lowering. Checked HERE rather than in
+    // `lower_class_body_statement` so a directive under a platform gate
+    // re-enters the FULL dispatch (FFI included). A dynamic predicate falls
+    // through to the generic value-`if` path unchanged.
+    if let Some(if_node) = stmt.as_if_node()
+        && let Some(cond) = static_guard(&if_node.predicate())
+    {
+        let chosen = if cond {
+            if_node.statements().map(|s| s.as_node())
+        } else {
+            if_node.subsequent()
+        };
+        return lower_class_body_selected(result, hir, chosen, st, out);
+    }
+    if let Some(unless_node) = stmt.as_unless_node()
+        && let Some(cond) = static_guard(&unless_node.predicate())
+    {
+        let chosen = if !cond {
+            unless_node.statements().map(|s| s.as_node())
+        } else {
+            unless_node.else_clause().map(|e| e.as_node())
+        };
+        return lower_class_body_selected(result, hir, chosen, st, out);
+    }
+    // `FFI.typedef :existing, :alias` -- the GLOBAL registry the gem keeps on
+    // the FFI module itself, visible to every library and struct that lowers
+    // after it (puppet fills it with the Win32 vocabulary in one file and
+    // spends it across the rest). Not gated on `is_ffi`: the enclosing module
+    // is usually a plain namespace.
+    if let Some((existing, alias)) = as_global_ffi_typedef(stmt, st.ffi_aliases) {
+        hir.declare_ffi_type(&alias, &existing);
+        st.ffi_aliases.insert(alias, existing);
+        return Ok(());
+    }
     if st.is_ffi {
         if is_extend_ffi_library(stmt) {
             return Ok(()); // `extend FFI::Library` is the marker, no output
@@ -2754,33 +2956,6 @@ fn lower_class_body_statement(
     // gives each name as a SymbolNode either way), so it reuses
     // `alias_target_name`. Recorded rather than resolved here: see
     // `HirNode::Undef` for why the inherited case rules out deleting a def.
-    // A class-body `if`/`unless` guarding a `def`/`alias`/visibility directive
-    // with a statically-literal predicate (`alias a b if true`) is folded at
-    // definition time -- real Ruby runs these guards while the class body
-    // executes, and an `alias`/`def` inside one has no ordinary value-`if`
-    // lowering (they're class-body-only keywords). A dynamic predicate falls
-    // through to the generic value-`if` path unchanged.
-    if let Some(if_node) = node.as_if_node()
-        && let Some(cond) = static_guard(&if_node.predicate())
-    {
-        let chosen = if cond {
-            if_node.statements().map(|s| s.as_node())
-        } else {
-            if_node.subsequent()
-        };
-        return lower_class_body_selected(result, hir, chosen, visibility, module_function, out);
-    }
-    if let Some(unless_node) = node.as_unless_node()
-        && let Some(cond) = static_guard(&unless_node.predicate())
-    {
-        let chosen = if !cond {
-            unless_node.statements().map(|s| s.as_node())
-        } else {
-            unless_node.else_clause().map(|e| e.as_node())
-        };
-        return lower_class_body_selected(result, hir, chosen, visibility, module_function, out);
-    }
-
     if let Some(undef) = node.as_undef_node() {
         let names = undef
             .names()

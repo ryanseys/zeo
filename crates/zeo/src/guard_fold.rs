@@ -282,7 +282,9 @@ fn is_gem_version(compiler: &Compiler, cref: &[ClassId], box_id: u32, name: &str
 
 /// The value of a string constant ruby seeds into every program. Each is as
 /// fixed for a whole-program target as a literal written in the source.
-fn seeded_string_const(name: &str) -> Option<String> {
+/// Shared with the LOWER-stage class-body guard (`lower::defs::static_guard`),
+/// which answers the same questions over prism nodes before any HIR exists.
+pub(crate) fn seeded_string_const(name: &str) -> Option<String> {
     match name {
         "RUBY_VERSION" | "RUBY_ENGINE_VERSION" => Some(zeo_abi::RUBY_VERSION.to_string()),
         // `if RUBY_ENGINE == "truffleruby"` is the other compat gate a gem
@@ -851,7 +853,7 @@ impl Alternative {
 /// groups, other escapes), an interpolated pattern, or a flag that changes what
 /// the pattern MEANS (`/x`, `/m`). Those stay undecided rather than being
 /// answered by an approximation.
-struct LiteralPattern {
+pub(crate) struct LiteralPattern {
     anchored_start: bool,
     anchored_end: bool,
     /// `/i`. ASCII-folded here, so [`LiteralPattern::matches`] declines a
@@ -862,7 +864,62 @@ struct LiteralPattern {
 }
 
 impl LiteralPattern {
-    fn matches(&self, subject: &str) -> Option<bool> {
+    /// Parse a regexp SOURCE with its flags, independent of where the regexp
+    /// literal was found -- HIR (`literal_pattern`) and the lower-stage
+    /// class-body guard hand their own literal's pieces to this one parser,
+    /// so the two folds can never disagree about what a pattern admits.
+    pub(crate) fn parse(
+        src: &str,
+        ignore_case: bool,
+        extended: bool,
+        multiline: bool,
+    ) -> Option<LiteralPattern> {
+        if extended || multiline {
+            return None;
+        }
+        let mut src = src;
+        let anchored_start = ["\\A", "^"].iter().any(|p| match src.strip_prefix(p) {
+            Some(rest) => {
+                src = rest;
+                true
+            }
+            None => false,
+        });
+        let anchored_end = ["\\z", "$"].iter().any(|s| match src.strip_suffix(s) {
+            Some(rest) => {
+                src = rest;
+                true
+            }
+            None => false,
+        });
+        // An anchor binds only ONE alternative in ruby -- `/^a|b/` is `(^a)|b`,
+        // not `^(a|b)` -- so an anchored pattern that alternates is not this
+        // simple.
+        if (anchored_start || anchored_end) && src.contains('|') {
+            return None;
+        }
+        let alts: Vec<Alternative> = src
+            .split('|')
+            .map(literal_alternative)
+            .collect::<Option<_>>()?;
+        // ASCII case folding is only ruby's answer for an ASCII pattern.
+        if ignore_case
+            && !alts.iter().all(|a| {
+                a.0.iter()
+                    .all(|e| !matches!(e, Elem::Lit(c) if !c.is_ascii()))
+            })
+        {
+            return None;
+        }
+        Some(LiteralPattern {
+            anchored_start,
+            anchored_end,
+            ignore_case,
+            alts,
+        })
+    }
+
+    pub(crate) fn matches(&self, subject: &str) -> Option<bool> {
         if self.ignore_case && !subject.is_ascii() {
             return None;
         }
@@ -917,51 +974,22 @@ fn literal_pattern(compiler: &Compiler, node: NodeId) -> Option<LiteralPattern> 
     let HirNode::RegexpLit(parts, flags) = &compiler.hir[node] else {
         return None;
     };
-    if flags.extended || flags.multiline {
-        return None;
-    }
     let [StrPart::Lit(src)] = parts.as_slice() else {
         return None;
     };
-    let mut src = src.as_str();
-    let anchored_start = ["\\A", "^"].iter().any(|p| match src.strip_prefix(p) {
-        Some(rest) => {
-            src = rest;
-            true
-        }
-        None => false,
-    });
-    let anchored_end = ["\\z", "$"].iter().any(|s| match src.strip_suffix(s) {
-        Some(rest) => {
-            src = rest;
-            true
-        }
-        None => false,
-    });
-    // An anchor binds only ONE alternative in ruby -- `/^a|b/` is `(^a)|b`, not
-    // `^(a|b)` -- so an anchored pattern that alternates is not this simple.
-    if (anchored_start || anchored_end) && src.contains('|') {
-        return None;
-    }
-    let alts: Vec<Alternative> = src
-        .split('|')
-        .map(literal_alternative)
-        .collect::<Option<_>>()?;
-    // ASCII case folding is only ruby's answer for an ASCII pattern.
-    if flags.ignore_case
-        && !alts.iter().all(|a| {
-            a.0.iter()
-                .all(|e| !matches!(e, Elem::Lit(c) if !c.is_ascii()))
-        })
-    {
-        return None;
-    }
-    Some(LiteralPattern {
-        anchored_start,
-        anchored_end,
-        ignore_case: flags.ignore_case,
-        alts,
-    })
+    LiteralPattern::parse(src, flags.ignore_case, flags.extended, flags.multiline)
+}
+
+/// `Gem.win_platform?`'s build-time answer, derived from the baked
+/// `RUBY_PLATFORM` the same way rubygems derives it at runtime. Shared with
+/// the lower-stage class-body guard.
+pub(crate) fn win_platform() -> Option<bool> {
+    let platform = seeded_string_const("RUBY_PLATFORM")?;
+    Some(
+        ["mswin", "mingw", "cygwin"]
+            .iter()
+            .any(|w| platform.contains(w)),
+    )
 }
 
 /// A literal method-name argument (`:validate_for_resolution` / its string
@@ -1309,12 +1337,7 @@ fn call_fold(
                 // zeo reports MRI's identity: `RUBY_ENGINE` is "ruby".
                 return Some(false);
             }
-            let platform = seeded_string_const("RUBY_PLATFORM")?;
-            Some(
-                ["mswin", "mingw", "cygwin"]
-                    .iter()
-                    .any(|w| platform.contains(w)),
-            )
+            win_platform()
         }
         // `unless !defined?(X::VERSION)` -- the pervasive reload guard. Only a
         // condition that folds on its own negates; anything else stays `None`.

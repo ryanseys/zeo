@@ -291,6 +291,12 @@ pub struct Hir {
     /// struct passed by value. Source-order like the rest of the FFI table:
     /// the struct's body must lower before the declaration that names it.
     pub ffi_struct_layouts: std::collections::HashMap<String, FfiStructLayout>,
+    /// Modules whose `def self.extended(host)` hook runs `host.extend
+    /// FFI::Library` (chef's Win32 API indirection), keyed by full cref path.
+    /// The value is the hook's flat `host.typedef :src, :alias` stream, which
+    /// an `extend <that module>` site replays into its own alias table before
+    /// its FFI directives lower. See `lower::ffi::ffi_extender_hook`.
+    pub ffi_extenders: std::collections::HashMap<String, Vec<(String, String)>>,
     /// How many DEFERRED `ffi_lib` slots the program has minted -- one per
     /// `ffi_lib` statement whose candidates only the running process can
     /// evaluate. The slot number ties that statement's runtime store

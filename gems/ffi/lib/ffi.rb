@@ -27,6 +27,19 @@ module FFI
     end
   end
 
+  # A library module `extend`s this and speaks in DIRECTIVES the compiler
+  # resolves at lowering time. The module exists at runtime because a
+  # `def self.extended(host)` hook runs `host.extend FFI::Library` (and then
+  # `host.typedef ...`) for real when the host's class body executes --
+  # chef's Win32 API modules all share their FFI setup that way. By then
+  # every attach site is already compiled, so the directives the hooks call
+  # are no-ops.
+  module Library
+    def typedef(*) end
+
+    def ffi_convention(*) end
+  end
+
   # The custom-parameter-type protocol. zeo's marshaling converts through
   # `#to_ptr` rather than these hooks, so the module only records the declared
   # native type; classes extending it (fiddle's Pointer) override
