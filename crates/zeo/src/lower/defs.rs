@@ -3087,6 +3087,37 @@ fn lower_class_body_statement(
         let mut mapped = Vec::new();
         map_class_self_items(hir, &inner, &mut mapped)?;
         if nested {
+            // The wrapper reopen merges with the ENCLOSING singleton body's
+            // surrogate (same reserved name, same lexical parent once the
+            // outer mapping hoists it), which is where the retagged `def`s
+            // belong: a nested singleton body's method IS a class method of
+            // the outer surrogate. Each CONSTANT wraps ONE level deeper --
+            // the inner reopen registers with the wrapper itself as lexical
+            // parent, minting the surrogate's OWN singleton, where ruby
+            // homes it (`K.singleton_class.singleton_class`, not
+            // `K.singleton_class`). The `def`s beside it are tagged so
+            // their bare reads resolve against that inner class
+            // (`Scope::lexical_home` finds it by lexical parent).
+            let mut body_items = Vec::with_capacity(mapped.len());
+            let mut rest = Vec::new();
+            for n in mapped {
+                if !matches!(hir[n], HirNode::ConstWrite { .. }) {
+                    rest.push(n);
+                    body_items.push(n);
+                    continue;
+                }
+                let cspan = hir.span(n).unwrap_or(crate::hir::Span::SYNTH);
+                hir.push_span(cspan);
+                let inner = hir.push(HirNode::ClassDef {
+                    name: SINGLETON_SURROGATE.to_string(),
+                    superclass: None,
+                    body: vec![n],
+                    is_module: true,
+                });
+                hir.pop_span();
+                body_items.push(inner);
+            }
+            tag_singleton_body_defs(hir, &rest);
             // The reopen carries the nested `class << self`'s own location: a
             // class body takes its backtrace frame from its definition node,
             // and a span-less one is emitted with no frame at all.
@@ -3095,7 +3126,7 @@ fn lower_class_body_statement(
             let def = hir.push(HirNode::ClassDef {
                 name: SINGLETON_SURROGATE.to_string(),
                 superclass: None,
-                body: mapped,
+                body: body_items,
                 is_module: true,
             });
             hir.pop_span();
