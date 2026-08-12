@@ -804,6 +804,16 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         }
         HirNode::NilLit => quote! { zeo_rt::RubyValue::Nil },
         HirNode::BoolLit(b) => quote! { zeo_rt::RubyValue::Bool(#b) },
+        // `private_constant :Hidden` as the last statement of a module body,
+        // which is where rspec-openapi and three others put it. The
+        // visibility itself is a compile-time fact with no emission at all;
+        // what is left is the value ruby answers, which is the module
+        // (oracle-checked). A body with no enclosing class is `main`'s, whose
+        // constants live on Object.
+        HirNode::ConstantVisibility { .. } => {
+            let cid = cx.self_class().cid.unwrap_or(crate::compiler::OBJECT_CLASS).0;
+            quote! { zeo_rt::RubyValue::Class(zeo_rt::ClassId(#cid)) }
+        }
         HirNode::SelfRef => {
             // Inside an escaping block, `self` is the closure's own receiver
             // parameter -- checked FIRST, because the top-level arm below
@@ -1777,12 +1787,11 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         | HirNode::MethodVisibility { .. }
         | HirNode::ClassMethodVisibility { .. }
         | HirNode::ModuleFunction(_)
-        | HirNode::MethodRedefine { .. }
-        | HirNode::ConstantVisibility { .. } => {
+        | HirNode::MethodRedefine { .. } => {
             // Name the construct: each of these has its OWN Ruby value (`undef`
-            // and `alias` answer nil, `private :a` answers `:a`,
-            // `private_constant` answers the module), so the next one to be
-            // wired needs to be told apart from its siblings in the ledger.
+            // and `alias` answer nil, `private :a` answers `:a`), so the next
+            // one to be wired needs to be told apart from its siblings in the
+            // ledger.
             let kind = definition_kind(&cx.compiler.hir[id]);
             crate::codegen::unsupported_at(
                 cx.compiler,

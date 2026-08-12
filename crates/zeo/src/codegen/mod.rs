@@ -3122,6 +3122,13 @@ fn consumed_tail_value(compiler: &Compiler, site: &crate::compiler::ClassBodySit
             let sym = pooled_sym(name);
             TailValue::Known(quote! { zeo_rt::RubyValue::Symbol(#sym) })
         }
+        // `private_constant :Hidden` answers the module it hid the constant
+        // on (oracle-checked), which is the body's own class -- rspec-openapi
+        // and three others end a module body that way.
+        crate::hir::HirNode::ConstantVisibility { .. } => {
+            let id = site.class.0;
+            TailValue::Known(quote! { zeo_rt::RubyValue::Class(zeo_rt::ClassId(#id)) })
+        }
         node => TailValue::Unknown(last, crate::codegen::expr::definition_kind(node)),
     }
 }
