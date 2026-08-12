@@ -190,6 +190,7 @@ pub fn emit_for(cx: &Ctx, target: &MultiTarget, iterable: NodeId, body: &[NodeId
     // reassignment would be a Rust type error against that, not just a
     // semantic gap.
     let bind_array = emit_target_write(cx, target, quote! { __iter[__idx].clone() }, None);
+    let bind_elem = emit_target_write(cx, target, quote! { __elem }, None);
     let bind_range = emit_target_write(cx, target, quote! { zeo_rt::RubyValue::Int(__i) }, None);
 
     // `for` evaluates to the collection it iterated (CRuby: `for x in c; end`
@@ -197,10 +198,15 @@ pub fn emit_for(cx: &Ctx, target: &MultiTarget, iterable: NodeId, body: &[NodeId
     // `__coll` holds that collection once; each arm derives its iteration
     // state from it and breaks with `__coll.clone()` on natural completion.
     match iterable_ty {
+        // The LIVE array, not a snapshot: CRuby's `for` re-reads the length
+        // every step and the element at the current index, so an append
+        // during iteration is visited, a `pop` shortens the walk, and a
+        // rewritten upcoming slot is seen (all oracle-verified). One lock
+        // round-trip per step, released before the body runs -- the body may
+        // mutate the receiver, and the payload Mutex is not reentrant.
         TyKind::Array => quote! {
             {
                 let __coll = #iter_expr;
-                let __iter = __coll.as_array_ref().lock().to_vec();
                 let mut __idx: usize = 0;
                 // The step is at the TOP so `next` (a `continue #outer`) still
                 // advances -- a bottom step is skipped by `next`, spinning
@@ -209,8 +215,14 @@ pub fn emit_for(cx: &Ctx, target: &MultiTarget, iterable: NodeId, body: &[NodeId
                 #outer: loop {
                     if !__first { __idx += 1; }
                     __first = false;
-                    if __idx >= __iter.len() { break #outer __coll.clone(); }
-                    #bind_array
+                    let __elem = {
+                        let __g = __coll.as_array_ref().lock();
+                        match __g.get(__idx) {
+                            Some(__e) => __e.clone(),
+                            None => break #outer __coll.clone(),
+                        }
+                    };
+                    #bind_elem
                     #inner
                 }
             }
@@ -233,33 +245,64 @@ pub fn emit_for(cx: &Ctx, target: &MultiTarget, iterable: NodeId, body: &[NodeId
                 }
             }
         },
-        // `for k, v in hash` / `for pair in hash`: iterate the pairs as
-        // `[k, v]` arrays and reuse the Array arm's element-write, which the
-        // shared `emit_target_write` destructures for a nested target and
-        // binds whole for a single one -- CRuby's `Hash#each` shape.
-        TyKind::Hash => quote! {
+        // `for k, v in hash` / `for pair in hash`: iterate the pairs
+        // snapshot -- CRuby's `Hash#each` shape, and the same snapshot rule
+        // zeo's own `Hash#each` runs under.
+        TyKind::Hash => {
+            // The two-plain-target spelling binds the pair halves DIRECTLY;
+            // boxing a fresh `[k, v]` Array per pair existed only to reuse
+            // the generic destructure, an allocation per entry.
+            if let MultiTarget::Nested(g) = target
+                && g.splat.is_none()
+                && g.after.is_empty()
+                && g.before.len() == 2
             {
-                let __coll = #iter_expr;
-                let __iter: Vec<zeo_rt::RubyValue> = __coll
-                    .as_hash_ref()
-                    .lock()
-                    .values()
-                    .map(|(__k, __v)| {
-                        zeo_rt::RubyValue::Array(zeo_rt::array_new(vec![__k.clone(), __v.clone()]))
-                    })
-                    .collect();
-                let mut __idx: usize = 0;
-                // Top-of-loop step so `next` advances (see the Array arm).
-                let mut __first = true;
-                #outer: loop {
-                    if !__first { __idx += 1; }
-                    __first = false;
-                    if __idx >= __iter.len() { break #outer __coll.clone(); }
-                    #bind_array
-                    #inner
+                let bind_k =
+                    emit_target_write(cx, &g.before[0], quote! { __iter[__idx].0.clone() }, None);
+                let bind_v =
+                    emit_target_write(cx, &g.before[1], quote! { __iter[__idx].1.clone() }, None);
+                return quote! {
+                    {
+                        let __coll = #iter_expr;
+                        let __iter = zeo_rt::hash_pairs_snapshot(__coll.as_hash_ref());
+                        let mut __idx: usize = 0;
+                        // Top-of-loop step so `next` advances (see the Array arm).
+                        let mut __first = true;
+                        #outer: loop {
+                            if !__first { __idx += 1; }
+                            __first = false;
+                            if __idx >= __iter.len() { break #outer __coll.clone(); }
+                            #bind_k
+                            #bind_v
+                            #inner
+                        }
+                    }
+                };
+            }
+            quote! {
+                {
+                    let __coll = #iter_expr;
+                    let __iter: Vec<zeo_rt::RubyValue> = __coll
+                        .as_hash_ref()
+                        .lock()
+                        .values()
+                        .map(|(__k, __v)| {
+                            zeo_rt::RubyValue::Array(zeo_rt::array_new(vec![__k.clone(), __v.clone()]))
+                        })
+                        .collect();
+                    let mut __idx: usize = 0;
+                    // Top-of-loop step so `next` advances (see the Array arm).
+                    let mut __first = true;
+                    #outer: loop {
+                        if !__first { __idx += 1; }
+                        __first = false;
+                        if __idx >= __iter.len() { break #outer __coll.clone(); }
+                        #bind_array
+                        #inner
+                    }
                 }
             }
-        },
+        }
         // ANY other iterable -- a user class with `each`, a Poly local, an
         // Enumerator. This is the GENERAL case, not a fallback: real Ruby's
         // `for` performs no type dispatch whatsoever. `compile_iter`
