@@ -3200,7 +3200,7 @@ fn lower_one_class_body_stmt<'a>(
         if is_extend_ffi_library(stmt) {
             return Ok(()); // `extend FFI::Library` is the marker, no output
         }
-        if lower_ffi_directive(result, hir, stmt, st.ffi_lib, st.ffi_aliases, out)? {
+        if lower_ffi_directive(result, hir, stmt, st.ffi_lib, st.ffi_aliases, out, st.body)? {
             return Ok(());
         }
     }

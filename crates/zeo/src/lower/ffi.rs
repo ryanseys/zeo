@@ -267,6 +267,99 @@ pub(crate) fn splat_local_elements<'a>(
     replay_local_array(&name, body.iter(), limit, &mut acc).then_some(acc)?
 }
 
+/// The C symbol name an FFI declaration position spells, folding the
+/// class-body arithmetic gems build it out of.
+///
+/// A library whose windows entry points carry an `A` suffix writes one
+/// `str_suffix = FFI::Platform.windows? ? 'A' : ''` at the top of the module
+/// and then `'SCardListReaderGroups' + str_suffix` at every declaration --
+/// smartcard does it nine times. The suffix is a compile-time fact (the same
+/// platform question the guards fold), so the symbol is too. Anything that
+/// does not fold falls back to the literal-only reading, whose rejection
+/// names the real rule.
+fn ffi_c_name(node: &Node<'_>, class_body: &[Node<'_>]) -> PResult<String> {
+    match static_ffi_string(node, class_body, 0) {
+        Some(s) => Ok(s),
+        None => ffi_symbol_str(node),
+    }
+}
+
+/// A compile-time STRING in an FFI declaration: a literal, a `+` of two of
+/// them, a body-local holding one, or a guard this stage decides choosing
+/// between two.
+fn static_ffi_string(node: &Node<'_>, class_body: &[Node<'_>], depth: u32) -> Option<String> {
+    if depth > 8 {
+        return None;
+    }
+    if let Some(s) = node.as_string_node() {
+        return String::from_utf8(s.unescaped().to_vec()).ok();
+    }
+    if let Some(sym) = node.as_symbol_node() {
+        return String::from_utf8(sym.unescaped().to_vec()).ok();
+    }
+    // `cond ? 'A' : ''` and its statement form both parse as an `if`.
+    if let Some(if_node) = node.as_if_node() {
+        let taken = match super::defs::static_guard(&if_node.predicate())? {
+            true => if_node.statements().map(|s| s.as_node()),
+            false => if_node.subsequent(),
+        };
+        return static_ffi_string(&sole_statement(taken?)?, class_body, depth + 1);
+    }
+    if let Some(name) = local_read_name(node) {
+        let value = body_local_value(&name, class_body, node.location().start_offset())?;
+        return static_ffi_string(&value, class_body, depth + 1);
+    }
+    let call = node.as_call_node()?;
+    if call.name().as_slice() != b"+" {
+        return None;
+    }
+    let args: Vec<Node<'_>> = call.arguments()?.arguments().iter().collect();
+    let [rhs] = args.as_slice() else {
+        return None;
+    };
+    let lhs = static_ffi_string(&call.receiver()?, class_body, depth + 1)?;
+    Some(lhs + &static_ffi_string(rhs, class_body, depth + 1)?)
+}
+
+/// The single expression a folded branch holds -- an `else` clause or a
+/// statement list of exactly one.
+fn sole_statement<'a>(node: Node<'a>) -> Option<Node<'a>> {
+    let stmts = match node.as_else_node() {
+        Some(e) => e.statements()?,
+        None => node.as_statements_node()?,
+    };
+    let body: Vec<Node<'a>> = stmts.body().iter().collect();
+    match <[Node<'a>; 1]>::try_from(body) {
+        Ok([only]) => Some(only),
+        Err(_) => None,
+    }
+}
+
+/// The expression a body-local was last assigned before `before`, or `None`
+/// when the class body touches the name in a way this replay cannot follow --
+/// the same poison rule [`splat_local_elements`] uses.
+fn body_local_value<'a>(name: &str, body: &[Node<'a>], before: usize) -> Option<Node<'a>> {
+    let mut found: Option<Node<'a>> = None;
+    for stmt in body {
+        // Compared on the END offset: `before` points at the READ, which sits
+        // inside the directive statement itself. Comparing starts would let
+        // that statement poison the very name it is reading.
+        if stmt.location().end_offset() > before {
+            continue;
+        }
+        if let Some(write) = stmt.as_local_variable_write_node()
+            && String::from_utf8_lossy(write.name().as_slice()) == name
+        {
+            found = Some(write.value());
+            continue;
+        }
+        if local_mutated(name, stmt) {
+            return None;
+        }
+    }
+    found
+}
+
 /// One pass of [`splat_local_elements`] over a statement list. `false` means
 /// the local was touched in a way this replay cannot follow.
 fn replay_local_array<'a, 'b>(
@@ -321,7 +414,7 @@ where
                 Some(list) => list.extend(elems),
                 None => return false,
             },
-            None if mentions_local(name, stmt) => return false,
+            None if local_mutated(name, stmt) => return false,
             None => {}
         }
     }
@@ -411,35 +504,78 @@ fn local_read_name(node: &Node<'_>) -> Option<String> {
 }
 
 /// Whether a statement names this local ANYWHERE -- the poison test that keeps
-/// an unreadable build step from silently shortening the list.
-fn mentions_local(name: &str, stmt: &Node<'_>) -> bool {
+/// Whether a statement REBINDS or MUTATES this local -- the poison test that
+/// keeps a build step the replay cannot follow from silently shortening a
+/// value. A plain READ is not poison: a library declares nine functions with
+/// the same `str_suffix` in each of them, and every one of those reads is
+/// still the value the assignment gave it.
+fn local_mutated(name: &str, stmt: &Node<'_>) -> bool {
+    /// Receiver-position calls that change the object in place. Any `!`
+    /// method counts too; everything else leaves the value alone.
+    const MUTATORS: &[&str] = &[
+        "<<", "push", "append", "concat", "replace", "insert", "prepend", "clear", "[]=", "pop",
+        "shift", "unshift", "delete", "delete_at", "delete_if", "keep_if", "fill", "force_encoding",
+    ];
     struct Search<'n> {
         name: &'n str,
         found: bool,
     }
-    impl<'pr> ruby_prism::Visit<'pr> for Search<'_> {
-        fn visit_local_variable_read_node(&mut self, node: &ruby_prism::LocalVariableReadNode<'pr>) {
-            self.found |= String::from_utf8_lossy(node.name().as_slice()) == self.name;
+    impl Search<'_> {
+        fn hit(&mut self, name: &ruby_prism::ConstantId) {
+            self.found |= String::from_utf8_lossy(name.as_slice()) == self.name;
         }
+    }
+    impl<'pr> ruby_prism::Visit<'pr> for Search<'_> {
         fn visit_local_variable_write_node(
             &mut self,
             node: &ruby_prism::LocalVariableWriteNode<'pr>,
         ) {
-            self.found |= String::from_utf8_lossy(node.name().as_slice()) == self.name;
+            self.hit(&node.name());
             self.visit(&node.value());
         }
         fn visit_local_variable_target_node(
             &mut self,
             node: &ruby_prism::LocalVariableTargetNode<'pr>,
         ) {
-            self.found |= String::from_utf8_lossy(node.name().as_slice()) == self.name;
+            self.hit(&node.name());
         }
         fn visit_local_variable_operator_write_node(
             &mut self,
             node: &ruby_prism::LocalVariableOperatorWriteNode<'pr>,
         ) {
-            self.found |= String::from_utf8_lossy(node.name().as_slice()) == self.name;
+            self.hit(&node.name());
             self.visit(&node.value());
+        }
+        fn visit_local_variable_and_write_node(
+            &mut self,
+            node: &ruby_prism::LocalVariableAndWriteNode<'pr>,
+        ) {
+            self.hit(&node.name());
+            self.visit(&node.value());
+        }
+        fn visit_local_variable_or_write_node(
+            &mut self,
+            node: &ruby_prism::LocalVariableOrWriteNode<'pr>,
+        ) {
+            self.hit(&node.name());
+            self.visit(&node.value());
+        }
+        fn visit_call_node(&mut self, node: &ruby_prism::CallNode<'pr>) {
+            if let Some(recv) = node.receiver()
+                && local_read_name(&recv).as_deref() == Some(self.name)
+            {
+                let method = String::from_utf8_lossy(node.name().as_slice()).into_owned();
+                self.found |= method.ends_with('!') || MUTATORS.contains(&method.as_str());
+            }
+            if let Some(recv) = node.receiver() {
+                self.visit(&recv);
+            }
+            if let Some(args) = node.arguments() {
+                self.visit(&args.as_node());
+            }
+            if let Some(block) = node.block() {
+                self.visit(&block);
+            }
         }
     }
     use ruby_prism::Visit as _;
@@ -472,6 +608,7 @@ pub(crate) fn lower_ffi_directive(
     ffi_lib: &mut crate::hir::FfiLib,
     aliases: &mut std::collections::HashMap<String, crate::hir::FfiType>,
     out: &mut Vec<NodeId>,
+    class_body: &[Node<'_>],
 ) -> PResult<bool> {
     // Catch up on types declared since this body's snapshot: a struct or
     // typedef declared by a NESTED class body mid-module (sha3 nests its
@@ -709,6 +846,7 @@ pub(crate) fn lower_ffi_directive(
                 &args,
                 ffi_lib.clone(),
                 aliases,
+                class_body,
             )?);
             Ok(true)
         }
@@ -1709,6 +1847,7 @@ fn lower_attach_function(
     args: &[Node<'_>],
     lib: crate::hir::FfiLib,
     aliases: &std::collections::HashMap<String, crate::hir::FfiType>,
+    class_body: &[Node<'_>],
 ) -> PResult<NodeId> {
     let _ = result;
     // `attach_function(name, func = name, args, returns, options = {})`. The
@@ -1720,12 +1859,12 @@ fn lower_attach_function(
     };
     let (ruby_name, c_symbol, types_node, ret_node) = match positional.len() {
         3 => {
-            let name = ffi_symbol_str(&positional[0])?;
+            let name = ffi_c_name(&positional[0], class_body)?;
             (name.clone(), name, &positional[1], &positional[2])
         }
         4 => (
             ffi_symbol_str(&positional[0])?,
-            ffi_symbol_str(&positional[1])?,
+            ffi_c_name(&positional[1], class_body)?,
             &positional[2],
             &positional[3],
         ),
