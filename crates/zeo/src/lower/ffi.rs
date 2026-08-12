@@ -475,15 +475,21 @@ fn parse_enum_members(
     while i < elems.len() {
         let name = ffi_symbol_str(&elems[i])?;
         i += 1;
-        let value = match elems
-            .get(i)
-            .and_then(|n| ffi_const_int(n, hir, body_so_far))
-        {
-            Some(v) => {
+        // The next element is a VALUE unless it reads as a member name (a
+        // literal symbol/string). Deciding by shape first keeps the error
+        // honest: an unfoldable value used to be re-read as the next member
+        // and rejected as "expected a literal symbol", naming the wrong rule.
+        let value = match elems.get(i) {
+            Some(n) if n.as_symbol_node().is_none() && n.as_string_node().is_none() => {
                 i += 1;
-                v
+                ffi_const_int(n, hir, body_so_far).ok_or_else(|| {
+                    format!(
+                        "enum member `{name}`'s value must be an integer literal or a \
+                         constant already set to one (zeo limitation)"
+                    )
+                })?
             }
-            None => next,
+            _ => next,
         };
         out.push((name, value));
         next = value + 1;
@@ -696,8 +702,7 @@ fn layout_array_type(
 /// width is written beside the layout, and reaching further would mean deciding
 /// a name against a scope chain that is still being built.
 fn body_const_int(hir: &Hir, body_so_far: &[NodeId], node: &Node<'_>) -> Option<i64> {
-    let wanted = node.as_constant_read_node()?;
-    let wanted = String::from_utf8_lossy(wanted.name().as_slice()).into_owned();
+    let wanted = const_leaf_name(node)?;
     let own = body_so_far.iter().rev().find_map(|&id| match &hir[id] {
         HirNode::ConstWrite { name, value, .. } if *name == wanted => match hir[*value] {
             HirNode::IntegerLit(n) => Some(n),
@@ -711,14 +716,22 @@ fn body_const_int(hir: &Hir, body_so_far: &[NodeId], node: &Node<'_>) -> Option<
     own.or_else(|| hir.ffi_int_consts.get(&wanted).copied().flatten())
 }
 
+/// The leaf name of a bare (`LEN`) or QUALIFIED (`Limits::LEN`) constant read.
+/// A qualified read reduces to its leaf on purpose: the side maps these feed
+/// (`ffi_int_consts`/`ffi_symbol_consts`) are leaf-keyed with a
+/// poison-on-conflict rule, the same reduction the FFI type table applies.
+fn const_leaf_name(node: &Node<'_>) -> Option<String> {
+    let path = const_path_string(node)?;
+    Some(path.rsplit("::").next().unwrap_or(&path).to_string())
+}
+
 /// A body constant holding a type SYMBOL (`NCURSES_ATTR_T = :int` above a
 /// `layout :attr, NCURSES_ATTR_T` -- ffi-ncurses spells its whole layout
 /// vocabulary this way). The symbol's NAME comes back for the ordinary
 /// keyword resolution; `body_const_int`'s sibling, with the same
 /// enclosing-body fallback.
 fn body_const_type_symbol(hir: &Hir, body_so_far: &[NodeId], node: &Node<'_>) -> Option<String> {
-    let wanted = node.as_constant_read_node()?;
-    let wanted = String::from_utf8_lossy(wanted.name().as_slice()).into_owned();
+    let wanted = const_leaf_name(node)?;
     let own = body_so_far.iter().rev().find_map(|&id| match &hir[id] {
         HirNode::ConstWrite { name, value, .. } if *name == wanted => match &hir[*value] {
             HirNode::SymbolLit(s) => Some(s.clone()),
@@ -739,13 +752,17 @@ fn ffi_field_accessor(ty: &crate::hir::FfiType) -> PResult<(String, String, usiz
     // The getter/putter named here are the ELEMENT's, which is what the
     // synthesized proxy indexes with.
     if let Array(elem, count) = ty {
-        if matches!(**elem, Struct(_) | Callback(..)) {
+        if matches!(**elem, Callback(..)) {
             return Err(
-                "an inline array of structs or callbacks isn't supported yet (zeo limitation)"
+                "an inline array of callbacks isn't supported yet (zeo limitation)"
                     .to_string()
                     .into(),
             );
         }
+        // A struct element has no scalar accessor pair either -- the proxy
+        // constructs the element class VIEWING each slot in place (see the
+        // `InlineArray` synthesis) -- but its size and alignment place the
+        // following fields the same way a scalar's do.
         let (get, put, esize, ealign) = ffi_field_accessor(elem)?;
         return Ok((get, put, esize * count, ealign));
     }
@@ -848,17 +865,26 @@ module ::FFI
   class Struct
     class InlineArray
       include ::Enumerable
-      def initialize(__p, __off, __n, __get, __put, __esize)
+      def initialize(__p, __off, __n, __get, __put, __esize, __klass = nil)
         @__p, @__off, @__n, @__get, @__put, @__esize = __p, __off, __n, __get, __put, __esize
+        @__klass = __klass
       end
       def size
         @__n
       end
       def [](__i)
-        @__p.send(@__get, @__off + __i * @__esize)
+        if @__klass
+          @__klass.new(@__p + (@__off + __i * @__esize))
+        else
+          @__p.send(@__get, @__off + __i * @__esize)
+        end
       end
       def []=(__i, __v)
-        @__p.send(@__put, @__off + __i * @__esize, __v)
+        if @__klass
+          @__p.put_bytes(@__off + __i * @__esize, __v.to_ptr.get_bytes(0, @__esize))
+        else
+          @__p.send(@__put, @__off + __i * @__esize, __v)
+        end
       end
       def each
         __i = 0
@@ -946,11 +972,13 @@ pub(crate) fn synthesize_ffi_struct(
         Enum(Vec<(String, i64)>),
         Bool,
         Str,
-        /// `(class, element count, element size)` -- the proxy the field reads
-        /// back as. `FFI::StructLayout::CharArray` for an 8-bit element (it is
-        /// the one that also answers `to_s`), `FFI::Struct::InlineArray`
-        /// otherwise, matching the gem.
-        Array(&'static str, usize, usize),
+        /// `(class, element count, element size, element struct class)` --
+        /// the proxy the field reads back as. `FFI::StructLayout::CharArray`
+        /// for an 8-bit element (it is the one that also answers `to_s`),
+        /// `FFI::Struct::InlineArray` otherwise, matching the gem. A STRUCT
+        /// element carries its class path: the proxy then constructs that
+        /// class viewing each slot in place instead of a scalar getter.
+        Array(&'static str, usize, usize, Option<String>),
         /// A nested struct stored BY VALUE: `(class path, byte size)`.
         /// Reading yields the class VIEWING the field's bytes in place (a
         /// mutation through the view mutates the parent -- oracle-verified);
@@ -977,12 +1005,23 @@ pub(crate) fn synthesize_ffi_struct(
             crate::hir::FfiType::Str => Conv::Str,
             crate::hir::FfiType::Array(elem, count) => {
                 let (_, _, esize, _) = ffi_field_accessor(elem)?;
-                let class = if esize == 1 {
+                let elem_class = match &**elem {
+                    crate::hir::FfiType::Struct(l) if l.class_path.is_empty() => {
+                        return Err(
+                            "an inline array of structs needs a NAMED struct class (zeo limitation)"
+                                .to_string()
+                                .into(),
+                        );
+                    }
+                    crate::hir::FfiType::Struct(l) => Some(l.class_path.clone()),
+                    _ => None,
+                };
+                let class = if esize == 1 && elem_class.is_none() {
                     "FFI::StructLayout::CharArray"
                 } else {
                     "FFI::Struct::InlineArray"
                 };
-                Conv::Array(class, *count, esize)
+                Conv::Array(class, *count, esize, elem_class)
             }
             crate::hir::FfiType::Struct(l) => Conv::Struct(l.class_path.clone(), l.size),
             crate::hir::FfiType::Callback(cb_args, cb_ret) => {
@@ -1011,9 +1050,16 @@ pub(crate) fn synthesize_ffi_struct(
                 Conv::Str => format!("((__p = {read}).null? ? nil : __p.read_string)"),
                 // A proxy OVER the struct's own memory, not a copy: writing
                 // through it writes the struct, which is what the gem does.
-                Conv::Array(class, count, esize) => format!(
-                    "{class}.new(@__ffi_ptr, {off}, {count}, :{getter}, :{putter}, {esize})"
-                ),
+                // A struct element passes its CLASS instead of a getter pair:
+                // the proxy then views each slot in place.
+                Conv::Array(class, count, esize, elem_class) => match elem_class {
+                    Some(ec) => format!(
+                        "{class}.new(@__ffi_ptr, {off}, {count}, nil, nil, {esize}, {ec})"
+                    ),
+                    None => format!(
+                        "{class}.new(@__ffi_ptr, {off}, {count}, :{getter}, :{putter}, {esize})"
+                    ),
+                },
                 // The nested class VIEWING the field's bytes in place -- the
                 // synthesized `initialize` takes the pointer as-is, so every
                 // inner accessor indexes from parent + offset.
@@ -1586,12 +1632,48 @@ fn ffi_type_node(
     node: &Node<'_>,
     aliases: &std::collections::HashMap<String, crate::hir::FfiType>,
 ) -> PResult<crate::hir::FfiType> {
+    // An INLINE `callback([...], ret)` in a type position -- the anonymous
+    // twin of the named `callback :tag, [...], ret` declaration, carrying the
+    // same signature without registering a name.
+    if let Some(call) = node.as_call_node()
+        && call.receiver().is_none()
+        && call.name().as_slice() == b"callback"
+        && let Some(arguments) = call.arguments()
+    {
+        let args: Vec<Node<'_>> = arguments.arguments().iter().collect();
+        let [params, ret] = args.as_slice() else {
+            return Err("callback expects `[arg_types], return_type` in a type position"
+                .to_string()
+                .into());
+        };
+        let arg_types = ffi_type_array(params, aliases)?;
+        let ret_ty = ffi_type_node(ret, aliases)?;
+        return Ok(crate::hir::FfiType::Callback(arg_types, Box::new(ret_ty)));
+    }
+    if let Some(call) = node.as_call_node()
+        && call.receiver().is_some()
+    {
+        // The ffi gem's DIRECTION annotations -- `Struct.ptr(:in)`,
+        // `Status.in`/`.out`/`.inout`, `Foo.ptr.out` -- all pass a POINTER;
+        // the direction only tunes the gem's own marshaling copies, never
+        // the ABI, so every spelling is the plain pointer type here.
+        let direction_arg = call.arguments().is_none_or(|a| {
+            let args: Vec<Node<'_>> = a.arguments().iter().collect();
+            matches!(args.as_slice(), [d] if d.as_symbol_node().is_some())
+        });
+        match call.name().as_slice() {
+            b"by_ref" | b"ptr" if direction_arg => return Ok(crate::hir::FfiType::Pointer),
+            b"in" | b"out" | b"inout" if call.arguments().is_none() => {
+                return Ok(crate::hir::FfiType::Pointer);
+            }
+            _ => {}
+        }
+    }
     if let Some(call) = node.as_call_node()
         && let Some(recv) = call.receiver()
         && call.arguments().is_none()
     {
         match call.name().as_slice() {
-            b"by_ref" | b"ptr" => return Ok(crate::hir::FfiType::Pointer),
             b"by_value" | b"val" => {
                 // The receiver must be a struct whose `layout` already
                 // lowered -- the by-value ABI needs the full field list.

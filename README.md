@@ -338,18 +338,18 @@ below on every probe, and `cargo xtask gem-probe --check` fails when they
 disagree with the ledger — so this block cannot go stale.
 
 <!-- gem-probe-stats:begin -->
-**182,818 of 195,778 probed gems compile to Rust (93.4%).** The probe runs zeo's full front end (parse, lower, analyze, codegen) on the newest release of every gem on rubygems.org. `ok` means zeo produced Rust; no rustc ran. One row per gem in [`conformance/gem-probe.tsv`](conformance/gem-probe.tsv).
+**182,830 of 195,778 probed gems compile to Rust (93.4%).** The probe runs zeo's full front end (parse, lower, analyze, codegen) on the newest release of every gem on rubygems.org. `ok` means zeo produced Rust; no rustc ran. One row per gem in [`conformance/gem-probe.tsv`](conformance/gem-probe.tsv).
 
 | Verdict | Gems | Share of probed |
 |---|---|---|
-| Compile to Rust (`ok`) | 182,818 | 93.4% |
+| Compile to Rust (`ok`) | 182,830 | 93.4% |
 | Compiler gaps, zeo's to fix (`lowering-gap`, `compiler-panic`, `rustc-error`) | 1,973 | 1.0% |
 | Unresolved dependency in the probe's view (`missing-dependency`) | 1,326 | 0.7% |
-| Harness limits, not compiler verdicts (`no-entry-point`, `no-lib-dir`, `fetch-failed`, `view-failed`, `ambiguous-require`) | 5,554 | 2.8% |
-| Nothing to compile (`invalid-ruby`, `native-extension`, `ext-only`, `meta-gem`, `platform-gem`) | 4,060 | 2.1% |
+| Harness limits, not compiler verdicts (`no-entry-point`, `no-lib-dir`, `fetch-failed`, `view-failed`, `ambiguous-require`) | 5,075 | 2.6% |
+| Nothing to compile (`invalid-ruby`, `native-extension`, `ext-only`, `meta-gem`, `platform-gem`) | 4,527 | 2.3% |
 | No verdict reached (`timeout`, `out-of-memory`) | 47 | 0.0% |
 
-Of the 186,164 gems zeo can attempt -- the probed set minus the harness limits and the gems no Ruby loads -- **182,818 compile (98.2%)**.
+Of the 186,176 gems zeo can attempt -- the probed set minus the harness limits and the gems no Ruby loads -- **182,830 compile (98.2%)**.
 <!-- gem-probe-stats:end -->
 
 Read [`docs/GEM_TESTING.md`](docs/GEM_TESTING.md) for the workflow and for
