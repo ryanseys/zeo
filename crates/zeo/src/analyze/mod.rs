@@ -507,7 +507,7 @@ fn process_top_stmt_inner(
         let is_module = *is_module;
         let before = compiler.classes.len();
         let scopes_before = compiler.scopes.len();
-        register_class(
+        register_class_or_raise(
             compiler,
             name,
             superclass,
@@ -559,7 +559,7 @@ fn process_top_stmt_inner(
             {
                 let (name, superclass, body, is_module) =
                     (name.clone(), superclass.clone(), body.clone(), *is_module);
-                register_class(
+                register_class_or_raise(
                     compiler,
                     name,
                     superclass,
@@ -857,21 +857,58 @@ fn ruby_raises(compiler: &mut Compiler, def_node: Option<NodeId>, class: &'stati
     }
 }
 
-/// Whether a raise from inside `stmt` could be caught there -- i.e. whether
-/// `stmt` is a `begin` with `rescue` clauses, anywhere in its subtree.
+/// The three ways a reopen can disagree with a class's recorded parent. Ruby
+/// says the same sentence for all of them, and says it as a `TypeError`, so
+/// the runtime raise and the compile diagnostic are one string.
+fn superclass_mismatch(compiler: &mut Compiler, def_node: Option<NodeId>, name: &str) -> String {
+    let msg = format!("superclass mismatch for class {name}");
+    ruby_raises(compiler, def_node, "TypeError", &msg);
+    msg
+}
+
+/// [`register_class`], with a refusal ruby has an exception for turned into
+/// that exception. Every registration site goes through here.
 ///
-/// Only that shape earns the rewrite in [`raise_instead_of_defining`]: with
-/// nothing to catch it, ruby's own behaviour is to abort, and a compile error
-/// that names the same problem is the better version of aborting.
-fn is_rescuable(compiler: &Compiler, stmt: NodeId) -> bool {
-    let mut stack = vec![stmt];
-    while let Some(id) = stack.pop() {
-        if matches!(&compiler.hir[id], HirNode::Begin { rescues, .. } if !rescues.is_empty()) {
-            return true;
+/// The rewrite used to be offered only where a `rescue` was lexically visible
+/// inside the definition's own subtree, on the reasoning that an uncatchable
+/// raise aborts and a compile error naming the same problem is the better
+/// version of aborting. Both halves of that were wrong. The scan could not see
+/// the `rescue TypeError` a CALLER wraps the `require` in, which catches these
+/// perfectly well; and four of the five registration sites never consulted it,
+/// so a top-level `class Foo` after `module Foo` -- the whole of the `hola_*`
+/// gem family -- was a compile error rather than the `TypeError: Foo is not a
+/// class` ruby raises with that exact string. Compiling the program and
+/// aborting where ruby aborts is the same observable behaviour and one fewer
+/// way to be wrong.
+fn register_class_or_raise(
+    compiler: &mut Compiler,
+    name: String,
+    superclass: Option<String>,
+    is_module: bool,
+    body: &[NodeId],
+    cref: &[ClassId],
+    box_id: u32,
+    def_node: Option<NodeId>,
+    conditional: Conditional,
+) -> Result<(), String> {
+    let registered = register_class(
+        compiler,
+        name,
+        superclass,
+        is_module,
+        body,
+        cref,
+        box_id,
+        def_node,
+        conditional,
+    );
+    if let Err(e) = registered {
+        if !raise_instead_of_defining(compiler) {
+            compiler.pending_ruby_raise = None;
+            return Err(e);
         }
-        compiler.hir[id].for_each_child(&mut |child| stack.push(child));
     }
-    false
+    Ok(())
 }
 
 /// Turns a definition ruby would have RAISED on into the raise itself, in
@@ -909,7 +946,6 @@ fn register_nested_class_defs(
     cref: &[ClassId],
     box_id: u32,
 ) -> Result<(), String> {
-    let rescuable = is_rescuable(compiler, stmt);
     let mut nested = Vec::new();
     collect_nested_bodies(compiler, stmt, &mut nested);
     for s in nested {
@@ -924,7 +960,7 @@ fn register_nested_class_defs(
         };
         let (name, superclass, body, is_module) =
             (name.clone(), superclass.clone(), body.clone(), *is_module);
-        let registered = register_class(
+        register_class_or_raise(
             compiler,
             name,
             superclass,
@@ -934,16 +970,7 @@ fn register_nested_class_defs(
             box_id,
             Some(s),
             Conditional::No,
-        );
-        // A definition ruby RAISES on, somewhere a `rescue` can see it, becomes
-        // that raise -- see `raise_instead_of_defining`. Anywhere else the
-        // refusal stands.
-        if let Err(e) = registered
-            && !(rescuable && raise_instead_of_defining(compiler))
-        {
-            compiler.pending_ruby_raise = None;
-            return Err(e);
-        }
+        )?;
     }
     Ok(())
 }
@@ -1697,7 +1724,7 @@ fn register_guarded_top_defs(compiler: &mut Compiler, stmt: NodeId) -> Result<bo
                 } => {
                     let (name, superclass, body, is_module) =
                         (name.clone(), superclass.clone(), body.clone(), *is_module);
-                    register_class(
+                    register_class_or_raise(
                         compiler,
                         name,
                         superclass,
@@ -3413,13 +3440,7 @@ fn check_builtin_superclass_restatement(
                     format!("unknown superclass `{s}` (must be defined earlier in the file)")
                 })?;
                 if compiler.class(cid).parent != Some(want) {
-                    ruby_raises(
-                        compiler,
-                        def_node,
-                        "TypeError",
-                        &format!("superclass mismatch for class {name}"),
-                    );
-                    return Err(format!("superclass mismatch for class {name}"));
+                    return Err(superclass_mismatch(compiler, def_node, name));
                 }
             }
         }
@@ -3493,13 +3514,7 @@ fn check_reopen_compatibility(
             // conflict -- `class Sub < A` then `class Sub < B` -- still
             // errors, because `explicit_superclass` is set by then.
             if compiler.class(cid).explicit_superclass {
-                ruby_raises(
-                    compiler,
-                    def_node,
-                    "TypeError",
-                    &format!("superclass mismatch for class {name}"),
-                );
-                return Err(format!("superclass mismatch for class {name}"));
+                return Err(superclass_mismatch(compiler, def_node, name));
             }
             // ... and establishing one that already descends from THIS
             // class would close a loop: `class A; class B < A; class A <
@@ -3510,13 +3525,7 @@ fn check_reopen_compatibility(
             // the walk that noticed was `require "active_record"` dying
             // after twelve minutes.
             if compiler.superclass_chain_contains(want, cid) {
-                ruby_raises(
-                    compiler,
-                    def_node,
-                    "TypeError",
-                    &format!("superclass mismatch for class {name}"),
-                );
-                return Err(format!("superclass mismatch for class {name}"));
+                return Err(superclass_mismatch(compiler, def_node, name));
             }
             compiler.classes[cid.0 as usize].parent = Some(want);
         }
@@ -3827,7 +3836,7 @@ fn walk_class_body(
                 let (name, superclass, body, is_module) =
                     (name.clone(), superclass.clone(), body.clone(), *is_module);
                 compiler.class_body_sites[site_idx].stmts.push(stmt);
-                register_class(
+                register_class_or_raise(
                     compiler,
                     name,
                     superclass,
@@ -5685,6 +5694,39 @@ mod tests {
         }
     }
 
+    /// `"<class>: <message>"` for the definition `raise` this program compiles
+    /// to -- the reading side of [`raise_instead_of_defining`].
+    pub(super) fn analyze_raise(src: &str) -> String {
+        let a = analyze_src(src);
+        let hir = &a.compiler.hir;
+        let mut stack = a.main_statements.clone();
+        while let Some(id) = stack.pop() {
+            hir[id].for_each_child(&mut |c| stack.push(c));
+            let HirNode::Call { name, args, .. } = &hir[id] else {
+                continue;
+            };
+            if name != "raise" {
+                continue;
+            }
+            let [ArrayElem::Single(class), ArrayElem::Single(message)] = args[..] else {
+                continue;
+            };
+            let (HirNode::ClassRef(class), HirNode::StringLit(parts)) = (&hir[class], &hir[message])
+            else {
+                continue;
+            };
+            let text: String = parts
+                .iter()
+                .map(|p| match p {
+                    StrPart::Lit(s) => s.as_str(),
+                    _ => "",
+                })
+                .collect();
+            return format!("{class}: {text}");
+        }
+        panic!("no definition raise emitted for: {src}");
+    }
+
     pub(super) fn class_named(a: &Analyzed, name: &str) -> ClassId {
         a.compiler
             .resolve_class(name, &[], 0)
@@ -5768,14 +5810,14 @@ mod tests {
     #[test]
     fn reopen_guards_mirror_ruby_type_errors() {
         assert!(
-            analyze_err(
+            analyze_raise(
                 "class Base\nend\nclass Other\nend\nclass Sub < Base\nend\nclass Sub < Other\nend\n"
             )
-            .contains("superclass mismatch for class Sub")
+            .contains("TypeError: superclass mismatch for class Sub")
         );
 
-        assert!(analyze_err("class Foo\nend\nmodule Foo\nend\n").contains("Foo is not a module"));
-        assert!(analyze_err("module Bar\nend\nclass Bar\nend\n").contains("Bar is not a class"));
+        assert!(analyze_raise("class Foo\nend\nmodule Foo\nend\n").contains("Foo is not a module"));
+        assert!(analyze_raise("module Bar\nend\nclass Bar\nend\n").contains("Bar is not a class"));
     }
 
     /// A reopen may RESTATE the original superclass (real Ruby allows it).
@@ -5813,7 +5855,7 @@ mod tests {
 /// ivars) rejects with clean messages.
 #[cfg(test)]
 mod builtin_reopen_tests {
-    use super::tests::{analyze_err, analyze_src, class_named};
+    use super::tests::{analyze_raise, analyze_src, class_named};
     use crate::compiler::{INTEGER_CLASS, STRING_CLASS};
 
     #[test]
@@ -5889,8 +5931,8 @@ mod builtin_reopen_tests {
 
     #[test]
     fn kind_mismatch_keeps_the_typeerror_message_shape() {
-        assert!(analyze_err("module String\nend\n").contains("String is not a module"));
-        assert!(analyze_err("class Enumerable\nend\n").contains("Enumerable is not a class"));
+        assert!(analyze_raise("module String\nend\n").contains("String is not a module"));
+        assert!(analyze_raise("class Enumerable\nend\n").contains("Enumerable is not a class"));
     }
 
     #[test]
@@ -5900,8 +5942,8 @@ mod builtin_reopen_tests {
         let a = analyze_src("class String < Object\n  def x\n    1\n  end\nend\n");
         assert_eq!(class_named(&a, "String"), STRING_CLASS);
         assert!(
-            analyze_err("class String < Array\n  def x\n    1\n  end\nend\n")
-                .contains("superclass mismatch for class String")
+            analyze_raise("class String < Array\n  def x\n    1\n  end\nend\n")
+                .contains("TypeError: superclass mismatch for class String")
         );
     }
 
