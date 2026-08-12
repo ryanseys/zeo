@@ -947,7 +947,18 @@ pub fn runtime_define_method(id: ClassId, name: Symbol, body: RProc) -> Result<R
         e.methods.insert(name, m);
         e.value_bodies.insert(name, body);
         e.undefs.remove(&name);
+        // `initialize` and its copy/clone/dup family are private wherever
+        // they are defined -- CRuby stamps them so in `rb_method_entry_make`
+        // regardless of the visibility cursor.
+        let always_private = matches!(
+            name.name_str(),
+            "initialize" | "initialize_copy" | "initialize_clone" | "initialize_dup"
+        );
         match frame {
+            _ if always_private => {
+                e.methods_vis
+                    .insert(name, crate::dispatch::MethodVisibility::Private);
+            }
             // Outside a class body a runtime definition is public -- drop any
             // earlier `private :name` mark.
             None => {
