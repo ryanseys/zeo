@@ -3001,6 +3001,41 @@ fn emit_repr_c_struct(
     }
 }
 
+/// The `zeo_rt::ffi::FfiElem` descriptor of a by-value struct for the
+/// runtime tier: the real field types in declaration order, inline arrays
+/// expanded to N elements, nested structs recursing. No explicit padding --
+/// libffi computes offsets from the same natural-alignment rules the
+/// recorded layout's offsets came from, so the two always agree.
+fn ffi_elem_slice(layout: &crate::hir::FfiStructLayout) -> TokenStream {
+    let elems: Vec<TokenStream> = layout
+        .fields
+        .iter()
+        .flat_map(|(_, ty, _)| ffi_elems_of(ty))
+        .collect();
+    quote! { &[#(#elems),*] }
+}
+
+fn ffi_elems_of(ty: &crate::hir::FfiType) -> Vec<TokenStream> {
+    use crate::hir::FfiType;
+    match ty {
+        FfiType::Array(elem, count) => {
+            let one = ffi_elems_of(elem);
+            std::iter::repeat_with(|| one.clone())
+                .take(*count)
+                .flatten()
+                .collect()
+        }
+        FfiType::Struct(inner) => {
+            let slice = ffi_elem_slice(inner);
+            vec![quote! { zeo_rt::ffi::FfiElem::Struct(#slice) }]
+        }
+        scalar => {
+            let kind = ffi_kind_tokens(scalar);
+            vec![quote! { zeo_rt::ffi::FfiElem::Scalar(#kind) }]
+        }
+    }
+}
+
 /// A layout field's byte width -- the shared `CScalar` table's widths, which
 /// are also what `lower::ffi::ffi_field_accessor` computed the layout's
 /// offsets from.
@@ -3057,6 +3092,15 @@ fn emit_ffi_runtime_call(cx: &Ctx, call: &crate::hir::FfiCall, addr: TokenStream
                     let #handle = zeo_rt::ffi::make_callback(&(#val), &[#(#arg_kinds),*], #ret_kind)?;
                     __vals.push(zeo_rt::ffi::va_raw_pointer(#handle.code_ptr()));
                 }
+            }
+            // A struct passed BY VALUE: its bytes stay in the ruby object's
+            // own backing; libffi classifies the aggregate from the real
+            // field types, same facts the extern tier's repr(C) mirror
+            // carries. (A by-value RETURN on this tier is still rejected at
+            // the declaration.)
+            FfiType::Struct(layout) => {
+                let elems = ffi_elem_slice(layout);
+                quote! { __vals.push(zeo_rt::ffi::marshal_struct(#elems, &(#val))?); }
             }
             other => {
                 let kind = ffi_kind_tokens(other);

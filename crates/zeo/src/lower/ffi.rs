@@ -1331,6 +1331,21 @@ fn lower_attach_function(
         }
         _ => None,
     };
+    // A UNION by value has no honest aggregate descriptor on either tier
+    // (the mirror's field asserts would overlap; libffi has no union type),
+    // and the extern tier's mirror asserts would reject it at build time
+    // anyway -- say it here, at the declaration.
+    let union_by_value = std::iter::once(&ret).chain(arg_types.iter()).any(
+        |t| matches!(t, crate::hir::FfiType::Struct(l) if l.union),
+    );
+    if union_by_value {
+        return Err(
+            "a union passed or returned BY VALUE isn't supported yet (zeo limitation) -- \
+             use `.by_ref`"
+                .to_string()
+                .into(),
+        );
+    }
     let by_value = ret_struct_class.is_some()
         || arg_types
             .iter()
@@ -1343,15 +1358,18 @@ fn lower_attach_function(
                 .into(),
         );
     }
-    if by_value
+    // Arguments ride the runtime tier through libffi's own aggregate
+    // descriptor; only a by-value RETURN still needs the extern tier (a
+    // dynamic-size return buffer needs the raw libffi call).
+    if ret_struct_class.is_some()
         && matches!(
             lib,
             crate::hir::FfiLib::Runtime(_) | crate::hir::FfiLib::Deferred { .. }
         )
     {
         return Err(
-            "a runtime-resolved `ffi_lib` can't pass or return a struct BY VALUE (zeo \
-             limitation) -- name the library statically or use `.by_ref`"
+            "a runtime-resolved `ffi_lib` can't return a struct BY VALUE (zeo limitation) -- \
+             name the library statically or return `.by_ref` (a pointer) and wrap it"
                 .to_string()
                 .into(),
         );

@@ -237,6 +237,34 @@ enum VaInner {
     F32(f32),
     F64(f64),
     Ptr(*mut c_void),
+    /// A struct passed BY VALUE through the runtime tier: `data` points at
+    /// the ruby struct's own backing bytes (owned by the argument object,
+    /// which the caller's frame keeps alive across the call), and `elements`
+    /// rebuilds libffi's structure descriptor -- the REAL field types, so
+    /// libffi classifies the aggregate exactly as rustc classifies the
+    /// extern tier's `#[repr(C)]` mirror.
+    Struct {
+        data: *mut c_void,
+        elements: &'static [FfiElem],
+    },
+}
+
+/// One element of a by-value struct's libffi descriptor, const-buildable by
+/// generated code (which speaks only `zeo_rt`, never libffi): inline arrays
+/// arrive pre-expanded to N scalar elements, nested structs recurse.
+#[cfg(feature = "ext-ffi")]
+#[derive(Clone, Copy)]
+pub enum FfiElem {
+    Scalar(FfiKind),
+    Struct(&'static [FfiElem]),
+}
+
+#[cfg(feature = "ext-ffi")]
+fn elem_type(e: &FfiElem) -> libffi::middle::Type {
+    match e {
+        FfiElem::Scalar(k) => kind_type(*k),
+        FfiElem::Struct(inner) => libffi::middle::Type::structure(inner.iter().map(elem_type)),
+    }
 }
 
 #[cfg(feature = "ext-ffi")]
@@ -255,6 +283,9 @@ impl VaVal {
             VaInner::F32(_) => Type::f32(),
             VaInner::F64(_) => Type::f64(),
             VaInner::Ptr(_) => Type::pointer(),
+            VaInner::Struct { elements, .. } => {
+                Type::structure(elements.iter().map(elem_type))
+            }
         }
     }
 
@@ -272,6 +303,10 @@ impl VaVal {
             VaInner::F32(v) => Arg::new(v),
             VaInner::F64(v) => Arg::new(v),
             VaInner::Ptr(v) => Arg::new(v),
+            // libffi wants the slot to hold a pointer TO the value; for an
+            // aggregate that IS the data pointer (the type says how many
+            // bytes to read from it).
+            VaInner::Struct { data, .. } => Arg::new(unsafe { &*(*data as *const u8) }),
         }
     }
 }
@@ -342,6 +377,19 @@ pub fn marshal_fixed(kind: FfiKind, v: &RubyValue) -> Result<VaVal, Signal> {
         });
     }
     marshal_va(kind, v)
+}
+
+/// Marshal a struct passed BY VALUE through the runtime tier: the bytes are
+/// the ruby struct's own backing (`#to_ptr`, kept alive by the argument
+/// object across the call), the descriptor is the declaration's real field
+/// types. See `VaInner::Struct`.
+#[cfg(feature = "ext-ffi")]
+pub fn marshal_struct(elements: &'static [FfiElem], v: &RubyValue) -> Result<VaVal, Signal> {
+    let data = to_pointer(v)?;
+    Ok(VaVal {
+        inner: VaInner::Struct { data, elements },
+        _owner: None,
+    })
 }
 
 /// Marshal one PROMOTED variadic argument from a runtime `(type, value)` pair
