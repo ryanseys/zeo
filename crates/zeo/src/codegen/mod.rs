@@ -886,6 +886,12 @@ struct PoolBuilder {
     syms: Vec<String>,
     lit_ix: FMap<String, usize>,
     lits: Vec<String>,
+    /// NON-frozen string literal TEMPLATES (`static __STRS: &[&str]`),
+    /// deduped by text -- the value is still built fresh per evaluation
+    /// (a mutable string must be), only the literal text stops being
+    /// stamped inline at every site. See [`pooled_str_template`].
+    str_ix: FMap<String, usize>,
+    strs: Vec<String>,
     /// Source-file paths named by frame guards (`static __FILES: [&str; n]`),
     /// deduped -- see [`pooled_file`] for why this one matters most.
     file_ix: FMap<String, usize>,
@@ -957,6 +963,25 @@ pub(crate) fn pooled_frozen_str(text: &str) -> TokenStream {
     });
     let i = proc_macro2::Literal::usize_unsuffixed(i);
     quote! { crate::__LITS.s(#i) }
+}
+
+/// `crate::__STRS[i]` -- the pooled TEMPLATE text of a non-frozen string
+/// literal. Each evaluation still allocates its own mutable `String` from
+/// it (`.to_string()` at the emission site); what the pool removes is the
+/// literal text repeating at every site, which at gem scale is the same
+/// emitted-bytes problem `__FILES` solved for frame paths.
+pub(crate) fn pooled_str_template(text: &str) -> TokenStream {
+    let i = POOLS.with_borrow_mut(|p| {
+        if let Some(&i) = p.str_ix.get(text) {
+            return i;
+        }
+        let i = p.strs.len();
+        p.strs.push(text.to_string());
+        p.str_ix.insert(text.to_string(), i);
+        i
+    });
+    let i = proc_macro2::Literal::usize_unsuffixed(i);
+    quote! { crate::__STRS[#i] }
 }
 
 /// `crate::__FILES[i]` -- the pooled source-file PATH a frame guard names.
@@ -3022,6 +3047,13 @@ fn codegen(analyzed: &Analyzed, sink: &mut ItemSink<'_>) -> std::io::Result<()> 
         let n = pools.files.len();
         quote! { static __FILES: [&str; #n] = [#(#paths),*]; }
     });
+    // Same shape for the non-frozen string TEMPLATES: the site builds its own
+    // `String` from the `&'static str`, so a plain slice is all it needs.
+    let strs = (!pools.strs.is_empty()).then(|| {
+        let texts = &pools.strs;
+        let n = pools.strs.len();
+        quote! { static __STRS: [&str; #n] = [#(#texts),*]; }
+    });
     // ONE array, not one static per site: a `static` item each cost rustc
     // 155% on uri and 26% more emitted lines, for storage that is identical
     // either way.
@@ -3057,7 +3089,7 @@ fn codegen(analyzed: &Analyzed, sink: &mut ItemSink<'_>) -> std::io::Result<()> 
         }
     });
     sink.push(quote! {
-        #program #syms #lits #files #(#call_sites)* #(#pps)*
+        #program #syms #lits #files #strs #(#call_sites)* #(#pps)*
         static __META_ROWS: &[zeo_rt::MetaRow] = &[#(#metas),*];
         #vm_rows #cm_rows #vis_rows
     })

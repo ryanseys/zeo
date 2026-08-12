@@ -17,6 +17,21 @@ use proc_macro2::TokenStream;
 /// simple `.extend()` call site -- the splatted value's own `RubyValue`
 /// variant isn't known until `emit_expr` runs).
 pub fn emit_array_lit(cx: &Ctx, elems: &[ArrayElem]) -> TokenStream {
+    // A splat-free literal is one `vec![...]` expression -- element order is
+    // the vec's own left-to-right evaluation, and the per-element `push`
+    // scaffolding (5 emitted lines each; rustc time scales with emitted
+    // bytes) exists only for the splat case below.
+    if elems.iter().all(|e| matches!(e, ArrayElem::Single(_))) {
+        let vals = elems.iter().map(|e| {
+            let ArrayElem::Single(n) = e else {
+                unreachable!("guarded all-Single above")
+            };
+            box_if_object_typed(cx, *n, emit_expr(cx, *n))
+        });
+        return quote! {
+            zeo_rt::RubyValue::Array(zeo_rt::array_new(vec![#(#vals),*]))
+        };
+    }
     let pushes = elems.iter().map(|e| match e {
         ArrayElem::Single(n) => {
             let v = emit_expr(cx, *n);
@@ -89,21 +104,18 @@ pub fn emit_kwarg_inserts(cx: &Ctx, kwargs: &[KwArg], hash_ident: &TokenStream) 
 /// `{}` (unlike a call/yield arg's trailing hash, which drops an empty one).
 pub fn emit_hash_lit(cx: &Ctx, kwargs: &[KwArg]) -> TokenStream {
     if kwargs.iter().all(|kw| matches!(kw, KwArg::Pair(..))) {
-        let inserts = kwargs.iter().map(|kw| {
+        // One `vec![...]` expression, like the array literal: left-to-right
+        // pair evaluation, `hash_new`'s insert loop keeps last-key-wins.
+        let pairs = kwargs.iter().map(|kw| {
             let KwArg::Pair(k, v) = kw else {
                 unreachable!("guarded all-Pair above")
             };
             let k_expr = box_if_object_typed(cx, *k, emit_expr(cx, *k));
             let v_expr = box_if_object_typed(cx, *v, emit_expr(cx, *v));
-            quote! { __pairs.push((#k_expr, #v_expr)); }
+            quote! { (#k_expr, #v_expr) }
         });
         return quote! {
-            zeo_rt::RubyValue::Hash({
-                #[allow(unused_mut)]
-                let mut __pairs: Vec<(zeo_rt::RubyValue, zeo_rt::RubyValue)> = Vec::new();
-                #(#inserts)*
-                zeo_rt::hash_new(__pairs)
-            })
+            zeo_rt::RubyValue::Hash(zeo_rt::hash_new(vec![#(#pairs),*]))
         };
     }
     let inserts = emit_kwarg_inserts(cx, kwargs, &quote! { __h });
@@ -239,7 +251,8 @@ pub fn emit_string_lit(cx: &Ctx, parts: &[StrPart], frozen: bool) -> TokenStream
         if frozen {
             return super::pooled_frozen_str(s);
         }
-        return quote! { zeo_rt::RubyValue::Str(zeo_rt::string_new(#s.to_string())) };
+        let template = super::pooled_str_template(s);
+        return quote! { zeo_rt::RubyValue::Str(zeo_rt::string_new(#template.to_string())) };
     }
     if let [StrPart::Bytes(b)] = parts {
         let bytes = byte_literals(b);
