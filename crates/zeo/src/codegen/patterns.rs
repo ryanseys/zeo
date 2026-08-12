@@ -24,7 +24,7 @@ use super::loops::fresh_label;
 use crate::hir::{HashPatternRest, NodeId, Pattern, PatternArm};
 use crate::types::TyKind;
 use proc_macro2::TokenStream;
-use std::collections::HashMap;
+use crate::compiler::{FMap};
 
 /// A fresh, function-body-unique plain identifier -- the non-lifetime
 /// counterpart to `loops::fresh_label`, sharing the SAME `Ctx::label_counter`
@@ -452,13 +452,13 @@ fn emit_builtin_class_check(
 /// this restriction costs nothing for the common, load-bearing case
 /// (`Integer`/`String`/`Symbol`/`Array`/`Hash`/`Range`/`Proc`) while staying
 /// provably sound for the one it skips.
-fn collect_narrowing(pattern: &Pattern) -> HashMap<String, TyKind> {
-    let mut out = HashMap::new();
+fn collect_narrowing(pattern: &Pattern) -> FMap<String, TyKind> {
+    let mut out = FMap::default();
     collect_narrowing_into(pattern, &mut out);
     out
 }
 
-fn collect_narrowing_into(pattern: &Pattern, out: &mut HashMap<String, TyKind>) {
+fn collect_narrowing_into(pattern: &Pattern, out: &mut FMap<String, TyKind>) {
     match pattern {
         Pattern::Capture(inner, name) => {
             if let Pattern::ClassCheck(class_name) = inner.as_ref()

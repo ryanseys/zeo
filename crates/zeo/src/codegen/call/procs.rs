@@ -10,6 +10,7 @@ use crate::codegen::Ctx;
 use crate::codegen::ident::safe_ident;
 use crate::hir::{HirNode, NodeId, Params};
 use proc_macro2::TokenStream;
+use crate::compiler::{FSet};
 
 /// Whether `body` can raise `Signal::Return` at its own level -- the gate
 /// for capturing a proc home (see the construction site below). Conservative
@@ -191,7 +192,7 @@ fn emit_proc_or_lambda_value_with(
         genuine.extend(extra);
     }
     genuine.sort();
-    let mut own_only: std::collections::HashSet<String> = block_caps
+    let mut own_only: FSet<String> = block_caps
         .locals
         .iter()
         .filter(|n| !cx.captured_locals.contains(*n))
@@ -285,7 +286,7 @@ fn emit_proc_or_lambda_value_with(
         &mut nested_caps,
         false,
     );
-    let nested_captured: std::collections::HashSet<String> = nested_caps.locals;
+    let nested_captured: FSet<String> = nested_caps.locals;
     // ... and it exposes the ENCLOSING scope's locals by name, not by
     // syntactic reference, so every one of those cells is cloned in -- minus
     // any the block's own names shadow, which the block answers itself.
@@ -393,7 +394,7 @@ fn emit_proc_or_lambda_value_with(
     // Note this is NOT the method path's other exclusion: an ASSIGNED name
     // still needs wrapping here, because `emit_proc_param_bindings` always
     // emits a plain `let mut`, never a cell.
-    let destructured: std::collections::HashSet<String> =
+    let destructured: FSet<String> =
         params.destructured_names().into_iter().collect();
     let mut nested_param_names: Vec<&String> = own_params
         .iter()

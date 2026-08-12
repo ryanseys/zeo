@@ -36,6 +36,7 @@ use crate::hir::{ArrayElem, HirNode, NodeId, StrPart};
 use crate::types::TyKind;
 use proc_macro2::TokenStream;
 use quote::quote;
+use crate::compiler::{FSet};
 
 /// The three ways a local/parameter name's storage can be emitted -- see
 /// each variant's docs. A 3-way enum, not a bool, because a real
@@ -718,7 +719,7 @@ pub(super) fn emit_local_decl(cx: &Ctx, name: &str) -> TokenStream {
 /// else in this codebase (see `LocalStorage::Shadowed`'s docs).
 pub fn emit_proc_own_locals_prelude(
     cx: &Ctx,
-    names: &std::collections::HashSet<String>,
+    names: &FSet<String>,
 ) -> TokenStream {
     let mut sorted: Vec<&String> = names.iter().collect();
     sorted.sort();

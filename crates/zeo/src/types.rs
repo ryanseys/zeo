@@ -8,7 +8,7 @@
 
 use crate::compiler::{ClassId, Compiler};
 use crate::hir::{HirNode, NodeId};
-use std::collections::HashMap;
+use crate::compiler::{FMap};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TyKind {
@@ -81,8 +81,8 @@ pub const FLOAT_RESULT_BINARY_OPS: &[&str] = &["+", "-", "*", "/", "%", "**"];
 
 /// An empty locals map, for callers that have no per-scope local-type
 /// context available (or don't need it) -- see `infer_type`.
-fn no_locals() -> HashMap<String, TyKind> {
-    HashMap::new()
+fn no_locals() -> FMap<String, TyKind> {
+    FMap::default()
 }
 
 /// Whether a REOPENED builtin class overrides `name` for a
@@ -165,7 +165,7 @@ pub fn infer_type_with_locals(
     compiler: &Compiler,
     defining: Option<crate::compiler::ClassId>,
     box_id: u32,
-    locals: &HashMap<String, TyKind>,
+    locals: &FMap<String, TyKind>,
     id: NodeId,
 ) -> TyKind {
     match &compiler.hir[id] {

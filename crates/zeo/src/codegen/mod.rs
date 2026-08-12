@@ -38,8 +38,8 @@ use ident::safe_ident;
 use proc_macro2::TokenStream;
 use std::cell::Cell;
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
 use syn::Lifetime;
+use crate::compiler::{FMap, FSet};
 
 #[derive(Clone)]
 struct Ctx<'a> {
@@ -101,7 +101,7 @@ struct Ctx<'a> {
     /// `Cow` (not a plain `&'a HashMap`) so `with_narrowed_locals` can hand a
     /// single `case/in` ARM's own body an OWNED, narrowed overlay (see that
     /// method's docs) without needing a new `Ctx` field of its own.
-    local_types: std::borrow::Cow<'a, HashMap<String, TyKind>>,
+    local_types: std::borrow::Cow<'a, FMap<String, TyKind>>,
     /// Shared by every loop nested inside the same generated `fn`, so each
     /// one gets a function-body-unique label (see `loops::fresh_label`) --
     /// Rust happily lets an inner loop shadow an outer one of the same
@@ -144,7 +144,7 @@ struct Ctx<'a> {
     /// `Cow`, not a plain `&`, for the same reason `local_types` is one: a
     /// block's own Ctx must SHADOW these for its own parameter names (see
     /// `in_proc`), which means owning a modified copy.
-    captured_locals: std::borrow::Cow<'a, HashSet<String>>,
+    captured_locals: std::borrow::Cow<'a, FSet<String>>,
     /// `Some` exactly in a scope that calls `Kernel#binding`, holding that
     /// scope's own local names in `local_variables` order -- what the
     /// `binding` call site hands the runtime (`codegen::call::emit_binding`),
@@ -291,9 +291,9 @@ fn scope_is_define_method(compiler: &Compiler, scope: &crate::compiler::Scope) -
 
 fn binding_scope_local_types<'a>(
     binding_names: Option<&std::rc::Rc<Vec<String>>>,
-    captured: &HashSet<String>,
-    types: &'a HashMap<String, TyKind>,
-) -> std::borrow::Cow<'a, HashMap<String, TyKind>> {
+    captured: &FSet<String>,
+    types: &'a FMap<String, TyKind>,
+) -> std::borrow::Cow<'a, FMap<String, TyKind>> {
     let Some(names) = binding_names else {
         return std::borrow::Cow::Borrowed(types);
     };
@@ -378,7 +378,7 @@ impl<'a> Ctx<'a> {
     /// runtime one) rather than needing a new `Ctx` field, since `Cow`
     /// already models "borrowed until something needs to own a modified
     /// copy" exactly.
-    fn with_narrowed_locals(&self, overlay: HashMap<String, TyKind>) -> Ctx<'a> {
+    fn with_narrowed_locals(&self, overlay: FMap<String, TyKind>) -> Ctx<'a> {
         let mut merged = self.local_types.clone().into_owned();
         merged.extend(overlay);
         Ctx {
@@ -392,7 +392,7 @@ impl<'a> Ctx<'a> {
     /// reset to `None`: a `break`/`next`/`redo`/`for`-variable lexically
     /// inside the closure is never targeting a loop OUTSIDE it (a Rust
     /// closure is its own function boundary, unlike inlined splices).
-    fn in_proc(&self, needs_self_capture: bool, own_params: &HashSet<String>) -> Ctx<'a> {
+    fn in_proc(&self, needs_self_capture: bool, own_params: &FSet<String>) -> Ctx<'a> {
         // A block's own PARAMETERS shadow whatever the enclosing scope calls
         // the same name -- they are fresh bindings, and nothing about the
         // outer name applies to them. Both maps must forget those names, or
@@ -405,7 +405,7 @@ impl<'a> Ctx<'a> {
         //     the param `e` of a LATER `each { |e| }` read as a cell,
         //     emitting `e.lock()` on a plain RubyValue (E0599).
         // Both were live bugs; see the corpus's block_param_shadow family.
-        let shadow = |mut c: std::borrow::Cow<'a, HashSet<String>>| {
+        let shadow = |mut c: std::borrow::Cow<'a, FSet<String>>| {
             if own_params.iter().any(|n| c.contains(n)) {
                 c.to_mut().retain(|n| !own_params.contains(n));
             }
@@ -647,8 +647,8 @@ pub(crate) fn cached_frame_guard(
 thread_local! {
     /// Cleared with the pools at the head of each `codegen` -- see `take_pools`.
     static FRAME_GUARDS: std::cell::RefCell<
-        std::collections::HashMap<(crate::compiler::ScopeId, bool), TokenStream>,
-    > = std::cell::RefCell::new(std::collections::HashMap::new());
+        FMap<(crate::compiler::ScopeId, bool), TokenStream>,
+    > = std::cell::RefCell::new(FMap::default());
 }
 
 /// Whether `scope`'s body (nested blocks included -- they share the method's
@@ -882,18 +882,18 @@ fn take_unsupported() -> Option<(String, Option<crate::hir::Span>)> {
 /// signature for bookkeeping no reader cares about.
 #[derive(Default)]
 struct PoolBuilder {
-    sym_ix: HashMap<String, usize>,
+    sym_ix: FMap<String, usize>,
     syms: Vec<String>,
-    lit_ix: HashMap<String, usize>,
+    lit_ix: FMap<String, usize>,
     lits: Vec<String>,
     /// Source-file paths named by frame guards (`static __FILES: [&str; n]`),
     /// deduped -- see [`pooled_file`] for why this one matters most.
-    file_ix: HashMap<String, usize>,
+    file_ix: FMap<String, usize>,
     files: Vec<String>,
     /// Per-signature `Proc#parameters` tables (`static __PP_N: [ProcParamMeta;
     /// k]`), deduped by rendered signature -- constructing a proc then borrows
     /// one table instead of allocating a `Vec` + interning names per call.
-    pp_ix: HashMap<String, usize>,
+    pp_ix: FMap<String, usize>,
     pps: Vec<TokenStream>,
     /// Every method's reflection row (`push_method_meta_row`), emitted as the
     /// one `__META_ROWS` static and registered in a single batch call.
@@ -1125,7 +1125,7 @@ fn coverage_def_lines(
 fn coverage_install_tokens(compiler: &Compiler) -> Option<TokenStream> {
     let collect = COVERAGE.with_borrow_mut(|c| c.take())?;
     let defs = coverage_def_lines(compiler);
-    let mut seen = std::collections::HashSet::new();
+    let mut seen = FSet::default();
     let rows: Vec<TokenStream> = compiler
         .hir
         .files
@@ -1602,7 +1602,7 @@ fn codegen(analyzed: &Analyzed, sink: &mut ItemSink<'_>) -> std::io::Result<()> 
                 let (item, call) = emit_class_body_site_lifted(
                     compiler,
                     s,
-                    &HashSet::new(),
+                    &FSet::default(),
                     Some(fns.len() as u32),
                     BodyValue::Discard,
                 );
@@ -2158,9 +2158,9 @@ fn codegen(analyzed: &Analyzed, sink: &mut ItemSink<'_>) -> std::io::Result<()> 
     // `super`s included: R ranges over includers, whose chains continue past
     // the module into their own). The reflection/runtime-def shapes below
     // stay name-global -- their receiver is a runtime choice.
-    let mut super_pairs: std::collections::HashSet<(ClassId, &str)> =
-        std::collections::HashSet::new();
-    let mut super_global: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    let mut super_pairs: FSet<(ClassId, &str)> =
+        FSet::default();
+    let mut super_global: FSet<&str> = FSet::default();
     for scope in &compiler.scopes {
         if !scope
             .body
@@ -2216,7 +2216,7 @@ fn codegen(analyzed: &Analyzed, sink: &mut ItemSink<'_>) -> std::io::Result<()> 
     // A `def` some compile-time Scope claims is already covered (precisely)
     // by the pair scan above; only an UNCLAIMED `DefMethod` node is a
     // runtime-defined body whose receiver class is minted at runtime.
-    let claimed_defs: std::collections::HashSet<crate::hir::NodeId> =
+    let claimed_defs: FSet<crate::hir::NodeId> =
         compiler.scopes.iter().filter_map(|s| s.def_node).collect();
     for id in compiler.hir.node_ids() {
         match &compiler.hir[id] {
@@ -3189,7 +3189,7 @@ fn emit_class_def_marker(cx: &Ctx, stmt: crate::hir::NodeId, value: BodyValue) -
 pub(crate) fn emit_class_body_site_lifted(
     compiler: &Compiler,
     site: &crate::compiler::ClassBodySite,
-    enclosing_captured: &HashSet<String>,
+    enclosing_captured: &FSet<String>,
     lift: Option<u32>,
     value: BodyValue,
 ) -> (TokenStream, TokenStream) {
@@ -3275,7 +3275,7 @@ pub(crate) fn emit_class_body_site_lifted(
                 .cloned(),
         );
     }
-    let no_locals = HashMap::new();
+    let no_locals = FMap::default();
     let cx = Ctx {
         compiler,
         box_id: compiler.class(cid).box_id,
@@ -3414,7 +3414,7 @@ pub(crate) fn emit_class_body_site_lifted(
 /// `let mut x` / `let x` both put the name immediately after the keyword --
 /// `mut` is skipped rather than treated as the binding.
 fn lift_is_closed(body: &TokenStream) -> bool {
-    fn walk(ts: &TokenStream, declared: &mut HashSet<String>, used: &mut Vec<String>) {
+    fn walk(ts: &TokenStream, declared: &mut FSet<String>, used: &mut Vec<String>) {
         let mut after_let = false;
         for tt in ts.clone() {
             match tt {
@@ -3444,7 +3444,7 @@ fn lift_is_closed(body: &TokenStream) -> bool {
             }
         }
     }
-    let mut declared = HashSet::new();
+    let mut declared = FSet::default();
     let mut used = Vec::new();
     walk(body, &mut declared, &mut used);
     used.iter().all(|n| declared.contains(n))
@@ -3620,13 +3620,13 @@ fn emit_inherited_hook(compiler: &Compiler, site: &crate::compiler::ClassBodySit
 fn inline_class_markers(
     compiler: &Compiler,
     main_statements: &[crate::hir::NodeId],
-) -> HashSet<crate::hir::NodeId> {
-    let site_by_marker: HashMap<crate::hir::NodeId, &crate::compiler::ClassBodySite> = compiler
+) -> FSet<crate::hir::NodeId> {
+    let site_by_marker: FMap<crate::hir::NodeId, &crate::compiler::ClassBodySite> = compiler
         .class_body_sites
         .iter()
         .filter_map(|s| s.def_node.map(|n| (n, s)))
         .collect();
-    let mut seen = HashSet::new();
+    let mut seen = FSet::default();
     let mut work: Vec<crate::hir::NodeId> = main_statements.to_vec();
     while let Some(s) = work.pop() {
         match &compiler.hir[s] {

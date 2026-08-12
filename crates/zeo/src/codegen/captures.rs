@@ -13,7 +13,7 @@
 use super::call::is_inline_block_fast_path;
 use crate::compiler::Compiler;
 use crate::hir::{ArrayElem, HirNode, NodeId, Params, StrPart};
-use std::collections::HashSet;
+use crate::compiler::{FMap, FSet};
 
 #[derive(Default)]
 pub struct Captures {
@@ -22,7 +22,7 @@ pub struct Captures {
     /// (that block's own, AND every ancestor inline `.times` block's --
     /// see `walk`'s `param_exclusions`, which is what makes this
     /// exclusion correct even for a name shadowed two levels deep).
-    pub locals: HashSet<String>,
+    pub locals: FSet<String>,
     /// The subset of `locals` that is ASSIGNED somewhere in the walked
     /// subtree (`LocalWrite`, a multi-assign/`for` target, a pattern's
     /// bound name, a rescue binding) -- as opposed to only ever read.
@@ -31,7 +31,7 @@ pub struct Captures {
     /// local, while a name NOBODY under this block assigns can only be a
     /// read of some enclosing block's plain (non-cell) per-invocation
     /// `let`, the one genuinely unsupported capture shape.
-    pub assigned: HashSet<String>,
+    pub assigned: FSet<String>,
     /// Whether any escaping block needs the receiver captured: an
     /// `@ivar` reference, a bare/explicit `self`, or a receiverless call
     /// resolving to a method on the enclosing class (`walk`'s `self_class`
@@ -51,19 +51,19 @@ pub struct Captures {
     /// Per captured name, the LATEST `(file, offset)` at which an escaping
     /// construct touching it BEGINS -- the position half of Ruby's textual
     /// block-local rule (see `collect_escaping_captures`'s order filter).
-    pub locals_at: std::collections::HashMap<String, (crate::hir::FileId, u32)>,
+    pub locals_at: FMap<String, (crate::hir::FileId, u32)>,
     /// Names touched under a NESTED escaping construct (an escaping block
     /// inside another). The order filter never demotes these: a nested
     /// closure over an enclosing block's own local is only expressible as a
     /// scope-level Captured cell (the shape `procs.rs` otherwise refuses --
     /// optparse's completion lambdas live on it).
-    pub nested_touch: HashSet<String>,
+    pub nested_touch: FSet<String>,
     /// Per name, the EARLIEST `(file, offset)` of a plain assignment OUTSIDE
     /// any escaping block -- the other half of the same rule. Names assigned
     /// only through shapes this walk doesn't position (params, rescue
     /// bindings, `for` targets) are simply absent, and the order filter
     /// keeps them shared (the pre-order-awareness behavior).
-    pub outer_assigned_at: std::collections::HashMap<String, (crate::hir::FileId, u32)>,
+    pub outer_assigned_at: FMap<String, (crate::hir::FileId, u32)>,
 }
 
 /// Every name a `Params` list itself binds -- the exclusion set for "is this
@@ -80,7 +80,7 @@ pub struct Captures {
 /// rather than captured ones --
 /// silently making `def m((a, b)); -> { a += 1 }; end` read a nil `a` inside
 /// the block. One enumeration, one place to update.
-pub(super) fn own_param_names(params: &Params) -> HashSet<String> {
+pub(super) fn own_param_names(params: &Params) -> FSet<String> {
     params.bound_names().into_iter().collect()
 }
 
@@ -110,7 +110,7 @@ pub fn collect_escaping_captures(
 ) -> Captures {
     let mut raw = Captures::default();
     for &n in body {
-        walk(compiler, n, None, &HashSet::new(), &mut raw, self_class);
+        walk(compiler, n, None, &FSet::default(), &mut raw, self_class);
     }
     let mut outer_names = Vec::new();
     for &n in body {
@@ -127,10 +127,10 @@ pub fn collect_escaping_captures(
     for id in params.default_ids() {
         super::hoisting::collect_locals(compiler, id, &mut outer_names);
     }
-    let mut outer: HashSet<String> = outer_names.into_iter().collect();
+    let mut outer: FSet<String> = outer_names.into_iter().collect();
     let outer_params = own_param_names(params);
     outer.extend(outer_params.iter().cloned());
-    let mut locals: HashSet<String> = raw
+    let mut locals: FSet<String> = raw
         .locals
         .into_iter()
         .filter(|n| outer.contains(n))
@@ -974,7 +974,7 @@ fn start_of(compiler: &Compiler, id: NodeId) -> Option<(crate::hir::FileId, u32)
 /// (a different file simply overwrites -- the order filter then sees a
 /// cross-file pair and keeps the name shared).
 fn note_touch(
-    map: &mut std::collections::HashMap<String, (crate::hir::FileId, u32)>,
+    map: &mut FMap<String, (crate::hir::FileId, u32)>,
     name: &str,
     at: (crate::hir::FileId, u32),
 ) {
@@ -986,7 +986,7 @@ fn note_touch(
 
 /// Records the EARLIEST same-file plain outer assignment of `name`.
 fn note_first_assign(
-    map: &mut std::collections::HashMap<String, (crate::hir::FileId, u32)>,
+    map: &mut FMap<String, (crate::hir::FileId, u32)>,
     name: &str,
     pos: (crate::hir::FileId, u32),
 ) {
@@ -1067,7 +1067,7 @@ fn walk(
     compiler: &Compiler,
     id: NodeId,
     escaping_at: Option<(crate::hir::FileId, u32, bool)>,
-    param_exclusions: &HashSet<String>,
+    param_exclusions: &FSet<String>,
     caps: &mut Captures,
     self_class: super::class_query::SelfClass<'_>,
 ) {
@@ -1145,7 +1145,7 @@ fn walk(
             method_body: _,
         } => {
             nested_proc_binding_needs_self(compiler, escaping_at.is_some(), caps);
-            let next_exclusions: HashSet<String> =
+            let next_exclusions: FSet<String> =
                 param_exclusions.union(&own_param_names(params)).cloned().collect();
             for &n in body {
                 walk(compiler, n, deepen(escaping_at, || start_of(compiler, id)), &next_exclusions, caps, self_class);
@@ -1349,7 +1349,7 @@ fn walk(
             if let Some(b) = block
                 && let HirNode::Block { params, body } = &compiler.hir[*b] {
                     nested_proc_binding_needs_self(compiler, escaping_at.is_some(), caps);
-                    let next_exclusions: HashSet<String> =
+                    let next_exclusions: FSet<String> =
                         param_exclusions.union(&own_param_names(params)).cloned().collect();
                     for &n in body {
                         walk(compiler, n, deepen(escaping_at, || start_of(compiler, *b)), &next_exclusions, caps, self_class);
@@ -1393,7 +1393,7 @@ fn walk(
             // -- same treatment as `Call`'s escaping-block arm above.
             if let Some(b) = block
                 && let HirNode::Block { params, body } = &compiler.hir[*b] {
-                    let next_exclusions: HashSet<String> =
+                    let next_exclusions: FSet<String> =
                         param_exclusions.union(&own_param_names(params)).cloned().collect();
                     for &n in body {
                         walk(compiler, n, deepen(escaping_at, || start_of(compiler, *b)), &next_exclusions, caps, self_class);
@@ -1497,7 +1497,7 @@ fn walk(
                 // (`emit_proc_or_lambda_value`), where it can be detected
                 // precisely rather than banning all nesting wholesale.
                 nested_proc_binding_needs_self(compiler, escaping_at.is_some(), caps);
-                let next_exclusions: HashSet<String> =
+                let next_exclusions: FSet<String> =
                     param_exclusions.union(&own_param_names(params)).cloned().collect();
                 let next_escaping_at = if is_inline {
                     escaping_at
@@ -1533,7 +1533,7 @@ fn walk(
         } => {
             if escaping_at.is_some() || !is_def {
                 caps.self_captured = true;
-                let next_exclusions: HashSet<String> =
+                let next_exclusions: FSet<String> =
                     param_exclusions.union(&own_param_names(params)).cloned().collect();
                 for &n in body {
                     walk(compiler, n, deepen(escaping_at, || start_of(compiler, id)), &next_exclusions, caps, self_class);
@@ -1616,7 +1616,7 @@ fn walk_multi_target(
     compiler: &Compiler,
     target: &crate::hir::MultiTarget,
     escaping_at: Option<(crate::hir::FileId, u32, bool)>,
-    param_exclusions: &HashSet<String>,
+    param_exclusions: &FSet<String>,
     caps: &mut Captures,
     self_class: super::class_query::SelfClass<'_>,
 ) {
@@ -1669,7 +1669,7 @@ fn walk_multi_target_group(
     compiler: &Compiler,
     group: &crate::hir::MultiTargetGroup,
     escaping_at: Option<(crate::hir::FileId, u32, bool)>,
-    param_exclusions: &HashSet<String>,
+    param_exclusions: &FSet<String>,
     caps: &mut Captures,
     self_class: super::class_query::SelfClass<'_>,
 ) {

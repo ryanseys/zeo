@@ -30,6 +30,7 @@ use crate::compiler::Compiler;
 use crate::hir::{ArrayElem, HirNode, KwArg, NodeId, Visibility};
 use crate::types::TyKind;
 use proc_macro2::TokenStream;
+use crate::compiler::{FSet};
 
 /// An inline-spliced block (`n.times { |i| ... }` and friends) inside a
 /// `binding` scope. Such a block shares the enclosing Rust scope, so its own
@@ -42,7 +43,7 @@ use proc_macro2::TokenStream;
 fn inline_block_binding_names(
     cx: &Ctx,
     params: &crate::hir::Params,
-    nested_captured: &mut std::collections::HashSet<String>,
+    nested_captured: &mut FSet<String>,
 ) -> Option<std::rc::Rc<Vec<String>>> {
     let outer = cx.binding_names.as_ref()?;
     let own: Vec<String> = params
@@ -289,7 +290,7 @@ fn emit_counted_block_splice(
     // `emit_proc_or_lambda_value`'s `nested_param_wraps`. Without
     // this, the nested block would fresh-declare the name and read
     // `nil`.
-    let mut nested_captured: std::collections::HashSet<String> =
+    let mut nested_captured: FSet<String> =
         super::captures::collect_escaping_captures(cx.compiler, body, params, cx.self_class())
             .locals;
     let splice_binding = inline_block_binding_names(cx, params, &mut nested_captured);
@@ -458,7 +459,7 @@ fn emit_array_iter_splice(
     let with_index = mode == ArrayIterMode::Each { with_index: true };
     let outer = super::loops::fresh_label(cx, label_stem);
     let redo = super::loops::fresh_label(cx, &format!("{label_stem}_body"));
-    let mut nested_captured: std::collections::HashSet<String> =
+    let mut nested_captured: FSet<String> =
         super::captures::collect_escaping_captures(cx.compiler, body, params, cx.self_class())
             .locals;
     let splice_binding = inline_block_binding_names(cx, params, &mut nested_captured);
@@ -650,7 +651,7 @@ fn emit_hash_each_splice(cx: &Ctx, block_id: NodeId, label_stem: &str) -> TokenS
     };
     let outer = super::loops::fresh_label(cx, label_stem);
     let redo = super::loops::fresh_label(cx, &format!("{label_stem}_body"));
-    let mut nested_captured: std::collections::HashSet<String> =
+    let mut nested_captured: FSet<String> =
         super::captures::collect_escaping_captures(cx.compiler, body, params, cx.self_class())
             .locals;
     let splice_binding = inline_block_binding_names(cx, params, &mut nested_captured);
@@ -1893,7 +1894,7 @@ pub fn emit_call(
                 for &n in body {
                     super::hoisting::collect_locals(cx.compiler, n, &mut assigned_here);
                 }
-                let assigned_here: std::collections::HashSet<&String> =
+                let assigned_here: FSet<&String> =
                     assigned_here.iter().collect();
                 if let Some(outer) = block_caps
                     .locals

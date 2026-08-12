@@ -247,6 +247,7 @@ impl Diagnostic for CodegenDiagnostic {
 /// compiled program. CRuby prints these before the program runs; a zeo binary
 /// prints them at startup, which is the same position relative to any program
 /// output. `Display` is CRuby's exact line.
+#[derive(Clone)]
 pub struct CompileWarning {
     pub file: String,
     pub line: u32,

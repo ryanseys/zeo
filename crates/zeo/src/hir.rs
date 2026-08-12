@@ -53,6 +53,7 @@ impl Span {
 ///
 /// The path is absolutized at compile time, since the binary can run from any
 /// directory.
+#[derive(Clone)]
 pub struct DataSection {
     pub path: String,
     pub offset: u64,
@@ -60,6 +61,7 @@ pub struct DataSection {
 
 /// One registered source file: the name diagnostics display (the path as
 /// given, `"-e"`, ...) plus the full source text a renderer excerpts from.
+#[derive(Clone)]
 pub struct SourceFile {
     pub name: String,
     pub source: String,
@@ -121,7 +123,7 @@ pub fn is_internal_local(name: &str) -> bool {
         .any(|p| name.starts_with(p))
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Hir {
     nodes: Vec<HirNode>,
     /// [`Hir::uses_proc_binding`]'s memo -- computed on first ask, after
@@ -389,6 +391,7 @@ pub struct Hir {
 /// the runtime calls when a `require` names `feature`. Registration is
 /// unaffected -- the classes it defines are in the dispatch tables from
 /// startup, exactly as a spliced file's are.
+#[derive(Clone)]
 pub struct FeatureUnit {
     /// The name a `require` spells: the path under its load-path root, with
     /// no `.rb`.
@@ -401,6 +404,7 @@ pub struct FeatureUnit {
 }
 
 /// One splice instance -- see `Hir::loaded_files`.
+#[derive(Clone)]
 pub struct LoadedFile {
     /// Canonicalized (symlink-resolved) path, mirroring CRuby's separate
     /// realpath dedup layer (`load.c`'s `loaded_features_realpaths`).
@@ -990,6 +994,7 @@ impl Hir {
 /// One element of an `ArrayLit` -- a plain value, or a `*expr` splat whose
 /// contents are flattened in at runtime (its length isn't known until then,
 /// so this can't just be another plain element).
+#[derive(Clone)]
 pub enum ArrayElem {
     Single(NodeId),
     Splat(NodeId),
@@ -1201,6 +1206,7 @@ impl Params {
 /// `f(c: 1, **a)` build different hashes -- which is why a call's keywords
 /// can't be split into a separate `pairs` list and `**` slot. One type serves
 /// `Call`, `New`, `HashLit`, and (via a trailing `HashLit`) `Yield`.
+#[derive(Clone)]
 pub enum KwArg {
     Pair(NodeId, NodeId),
     DoubleSplat(NodeId),
@@ -1275,6 +1281,7 @@ pub enum LastMatch {
 /// value, a range endpoint, a plain literal/expression matched via `===`)
 /// still lower through the ordinary `NodeId`/`lower_node` path -- only the
 /// PATTERN SHAPE itself is bespoke.
+#[derive(Clone)]
 pub enum Pattern {
     /// A bare identifier (`x`, `_`, `_foo`) -- always matches, binding the
     /// scrutinee to this name in the enclosing method scope (exactly like an
@@ -1365,6 +1372,7 @@ pub enum Pattern {
 /// The three shapes a hash pattern's `**` tail can take -- distinct from the
 /// `Option<Option<String>>` shape `Array`/`Find`'s splats use because `**nil`
 /// (explicit "no other keys allowed") has no positional-splat equivalent.
+#[derive(Clone)]
 pub enum HashPatternRest {
     /// No `**` at all -- extra keys in the scrutinee are simply ignored
     /// (real Ruby's default hash-pattern leniency).
@@ -1492,6 +1500,7 @@ impl Pattern {
 }
 
 /// One `in PATTERN [if/unless GUARD]` arm of a `case/in`.
+#[derive(Clone)]
 pub struct PatternArm {
     pub pattern: Pattern,
     /// `(condition, is_unless)` -- `unless` negates the same way `HirNode::While`'s
@@ -1711,6 +1720,7 @@ pub struct RescueClause {
 /// is supported inside `#{}` (mirrors `ParenthesesNode`'s single-statement
 /// restriction) -- a multi-statement interpolation body is a clean lowering
 /// error, not silently truncated to its last statement.
+#[derive(Clone)]
 pub enum StrPart {
     Lit(String),
     /// A literal segment whose bytes are NOT valid UTF-8 -- a `"\xNN"`
@@ -1904,6 +1914,7 @@ pub enum FfiLib {
 /// declares the `extern "C"` symbol fn-locally (with `#[link(name = ..)]`, so no
 /// build-step change is needed), marshals each argument, calls it, and wraps the
 /// result back into a `RubyValue`.
+#[derive(Clone)]
 pub struct FfiCall {
     /// The C symbol to declare and call (the `attach_function` C name, which may
     /// differ from the Ruby method name in the 4-arg rename form).
@@ -1930,6 +1941,7 @@ pub struct FfiCall {
 }
 
 /// A real enum of node kinds; growing it is additive (new variants).
+#[derive(Clone)]
 pub enum HirNode {
     Program(Vec<NodeId>),
     IntegerLit(i64),

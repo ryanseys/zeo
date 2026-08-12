@@ -19,7 +19,7 @@
 use crate::analyze_error::AnalyzeError;
 use crate::compiler::{ClassId, Compiler, MethodEntry, NameId, OBJECT_CLASS, ScopeId};
 use crate::hir::{HirNode, NodeId, Span, Visibility};
-use std::collections::{HashMap, HashSet};
+use crate::compiler::{FMap, FSet};
 
 /// Real Ruby's actual linearization (not classic C3): for `class_id` with
 /// prepends `P1..Pk` and includes `M1..Mn`, both in source order,
@@ -145,11 +145,36 @@ pub fn materialize(
     // the pieces once and composing them gives the identical answer: see
     // `own_ivars`.
     let own_ivars = own_ivars(compiler);
+    // Interned ONCE per definition and per override row. `materialize_methods`
+    // used to clone each ancestor's override list (String and all) and
+    // re-intern each inherited scope's name for every descendant -- a
+    // per-(class x ancestor x method) String hash that this pair of tables
+    // turns into an index read. The scope set is stable through the loop
+    // below (aliases resolved above are the last scope-minting step).
+    let scope_name_ids: Vec<NameId> = {
+        let Compiler { scopes, names, .. } = &mut *compiler;
+        scopes.iter().map(|s| names.intern(&s.name)).collect()
+    };
+    let vis_override_ids: Vec<Vec<(NameId, Visibility)>> = {
+        let Compiler { classes, names, .. } = &mut *compiler;
+        classes
+            .iter()
+            .map(|c| {
+                c.visibility_overrides
+                    .iter()
+                    .map(|(n, v)| (names.intern(n), *v))
+                    .collect()
+            })
+            .collect()
+    };
     for (done, &cid) in all_ids.iter().enumerate() {
         let at = compiler.class_def_span(cid);
         let class_started = std::time::Instant::now();
         if !compiler.class(cid).is_module {
-            at_class(materialize_methods(compiler, cid, &own_ivars), at)?;
+            at_class(
+                materialize_methods(compiler, cid, &own_ivars, &scope_name_ids, &vis_override_ids),
+                at,
+            )?;
         }
         let instance_ms = class_started.elapsed().as_millis();
         at_class(materialize_class_methods(compiler, cid), at)?;
@@ -508,9 +533,10 @@ fn materialize_methods(
     compiler: &mut Compiler,
     class_id: ClassId,
     own_ivars: &[Vec<String>],
+    scope_name_ids: &[NameId],
+    vis_override_ids: &[Vec<(NameId, Visibility)>],
 ) -> Result<(), String> {
-    let ancestors = compiler.class(class_id).ancestors.clone();
-    let mut seen: HashSet<crate::compiler::NameId> = HashSet::new();
+    let mut seen: FSet<crate::compiler::NameId> = FSet::default();
     let mut materialized: Vec<MethodEntry> = Vec::new();
     // Every `private :inherited_method` seen so far in the walk. Ancestors run
     // nearest-first and `or_insert` keeps the first, so by the time a name's
@@ -520,10 +546,10 @@ fn materialize_methods(
     // one lookup per inherited name, against a table with one entry per
     // inherited name, is quadratic per class, and at Rails scale that is one
     // class taking minutes.
-    let mut rescoped: HashMap<crate::compiler::NameId, Visibility> = HashMap::new();
-    for &anc_id in &ancestors {
-        for (name, visibility) in compiler.class(anc_id).visibility_overrides.clone() {
-            let id = compiler.names.intern(&name);
+    let mut rescoped: FMap<crate::compiler::NameId, Visibility> = FMap::default();
+    for anc_ix in 0..compiler.class(class_id).ancestors.len() {
+        let anc_id = compiler.class(class_id).ancestors[anc_ix];
+        for &(id, visibility) in &vis_override_ids[anc_id.0 as usize] {
             rescoped.entry(id).or_insert(visibility);
         }
         // A BUILTIN class never materializes `Object`'s methods (top-level
@@ -538,8 +564,11 @@ fn materialize_methods(
         if compiler.class(class_id).is_builtin && anc_id == crate::compiler::OBJECT_CLASS {
             continue;
         }
-        let own = compiler.class(anc_id).own_methods.clone();
-        for sid in own {
+        // A shared borrow is enough for the whole body now: the name is a
+        // precomputed `NameId` read, not an intern, so nothing here needs
+        // `&mut` and the old per-ancestor `own_methods` clone is gone.
+        for sid_ix in 0..compiler.class(anc_id).own_methods.len() {
+            let sid = compiler.class(anc_id).own_methods[sid_ix];
             // A `def` under a guard zeo cannot decide contributes nothing to
             // this table. It does not claim the name -- so a further ancestor's
             // definition materializes here and answers while the guard is
@@ -551,8 +580,7 @@ fn materialize_methods(
             if compiler.scope(sid).runtime_conditional {
                 continue;
             }
-            let name = compiler.scope(sid).name.clone();
-            let name_id = compiler.names.intern(&name);
+            let name_id = scope_name_ids[sid.0 as usize];
             if !seen.insert(name_id) {
                 continue; // a closer ancestor already won this name
             }
@@ -568,7 +596,11 @@ fn materialize_methods(
             // also block a FURTHER ancestor from supplying it. `class C < B;
             // undef m; end` where both B and Object define `m` must find
             // neither.
-            if compiler.class(class_id).undefined.contains(&name) {
+            if compiler
+                .class(class_id)
+                .undefined
+                .contains(compiler.names.str(name_id))
+            {
                 continue;
             }
             // Inheriting a method BINDS its one definition here; it does not
@@ -620,7 +652,8 @@ fn materialize_methods(
     // variables` and `inspect` report FIRST-ASSIGNMENT order, which
     // `IvarCell`'s per-slot stamp carries independently of the layout.
     let mut ivars: Vec<String> = Vec::new();
-    for &anc_id in ancestors.iter().rev() {
+    for anc_ix in (0..compiler.class(class_id).ancestors.len()).rev() {
+        let anc_id = compiler.class(class_id).ancestors[anc_ix];
         if compiler.class(class_id).is_builtin && anc_id == crate::compiler::OBJECT_CLASS {
             continue;
         }
@@ -643,7 +676,9 @@ fn materialize_methods(
     // read nothing and `instance_variables` would report two names CRuby does
     // not. Nearest ancestor wins, and only a class with none of its own asks.
     if compiler.class(class_id).hidden_ivars.is_empty()
-        && let Some(inherited) = ancestors
+        && let Some(inherited) = compiler
+            .class(class_id)
+            .ancestors
             .iter()
             .skip(1)
             .map(|&a| &compiler.class(a).hidden_ivars)
@@ -752,11 +787,11 @@ fn materialize_class_methods(compiler: &mut Compiler, class_id: ClassId) -> Resu
     // the name first, so an undef also blocks a FURTHER ancestor from
     // supplying it -- the instance-side rule in `materialize_methods`.
     let undefined = compiler.class(class_id).class_undefined.clone();
-    let mut seen: HashSet<crate::compiler::NameId> = HashSet::new();
+    let mut seen: FSet<crate::compiler::NameId> = FSet::default();
     let mut materialized: Vec<MethodEntry> = Vec::new();
     let mut singleton_targets: Vec<(ClassId, crate::compiler::ScopeId)> = Vec::new();
     let mut level = Some(class_id);
-    let mut walked: HashSet<ClassId> = HashSet::new();
+    let mut walked: FSet<ClassId> = FSet::default();
 
     while let Some(cid) = level {
         if !walked.insert(cid) {
@@ -1029,7 +1064,7 @@ fn record_top_level_consts(compiler: &mut Compiler, main_statements: &[NodeId]) 
 /// position, or a constant with no recorded definition position, falls back to
 /// the whole-program answer that was there before.
 fn index_document_order(compiler: &mut Compiler, main_statements: &[NodeId]) {
-    let sites: std::collections::HashMap<NodeId, usize> = compiler
+    let sites: FMap<NodeId, usize> = compiler
         .class_body_sites
         .iter()
         .enumerate()
@@ -1043,7 +1078,7 @@ fn index_stmts(
     compiler: &mut Compiler,
     owner: ClassId,
     stmts: &[NodeId],
-    sites: &std::collections::HashMap<NodeId, usize>,
+    sites: &FMap<NodeId, usize>,
     next: &mut u32,
 ) {
     for &s in stmts {
@@ -1055,7 +1090,7 @@ fn index_node(
     compiler: &mut Compiler,
     owner: ClassId,
     node: NodeId,
-    sites: &std::collections::HashMap<NodeId, usize>,
+    sites: &FMap<NodeId, usize>,
     next: &mut u32,
 ) {
     let pos = *next;

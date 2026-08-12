@@ -19,6 +19,7 @@ use crate::compiler::ClassId;
 use crate::hir::{ArrayElem, HirNode, NodeId};
 use crate::types::{TyKind, infer_type_with_locals};
 use proc_macro2::TokenStream;
+use crate::compiler::{FMap};
 
 /// A node's static type, given the enclosing scope's local-type context --
 /// the one place `codegen` should call into `types::infer_type_with_locals`,
@@ -1306,7 +1307,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         // NO overlay -- its body is arbitrary user code where "the first
         // write's type" isn't a sound stand-in for a branch-merged one.
         HirNode::PreExec(body) | HirNode::Seq(body) => {
-            let mut overlay = std::collections::HashMap::new();
+            let mut overlay = FMap::default();
             for &n in body {
                 if let HirNode::LocalWrite(name, value) = &cx.compiler.hir[n] {
                     overlay.insert(name.clone(), infer(cx, *value));

@@ -36,7 +36,7 @@ use super::class_query::Trace;
 use crate::compiler::{ClassId, Compiler, ScopeId};
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
-use std::collections::HashMap;
+use crate::compiler::{FMap};
 
 /// A body under this many emitted bytes stays materialized. Small bodies are
 /// accessors and one-liners: they are what LLVM most wants to inline into a
@@ -88,7 +88,7 @@ pub(crate) struct SharedBodies {
     /// Keyed by BOTH, not by the definition alone: a group whose members
     /// disagree splits into more than one emitted body, and each class must
     /// reach the one its own answers produced.
-    by_class_def: HashMap<(ClassId, ScopeId), Ident>,
+    by_class_def: FMap<(ClassId, ScopeId), Ident>,
     /// The `__sh` container, absent when nothing shares.
     container: Option<TokenStream>,
 }
@@ -120,12 +120,12 @@ impl SharedBodies {
     pub(crate) fn plan(compiler: &Compiler) -> Self {
         if Self::disabled() {
             return SharedBodies {
-                by_class_def: HashMap::new(),
+                by_class_def: FMap::default(),
                 container: None,
             };
         }
         let verify = crate::analyze::share::verify_enabled();
-        let mut by_class_def = HashMap::new();
+        let mut by_class_def = FMap::default();
         let mut fns: Vec<TokenStream> = Vec::new();
         let mut stats = Stats::default();
 

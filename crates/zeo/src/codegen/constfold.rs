@@ -224,7 +224,7 @@ mod tests {
     use quote::format_ident;
     use std::borrow::Cow;
     use std::cell::Cell;
-    use std::collections::{HashMap, HashSet};
+    use crate::compiler::{FMap, FSet};
 
     /// A compiled-to-`Analyzed` program that can hand out a root-scope [`Ctx`]
     /// borrowing its owned state, for exercising the fold helpers against the
@@ -232,8 +232,8 @@ mod tests {
     struct Fixture {
         analyzed: Analyzed,
         labels: Cell<u32>,
-        empty_captures: HashSet<String>,
-        empty_locals: HashMap<String, crate::types::TyKind>,
+        empty_captures: FSet<String>,
+        empty_locals: FMap<String, crate::types::TyKind>,
         self_ident: Ident,
     }
 
@@ -242,8 +242,8 @@ mod tests {
         Fixture {
             analyzed: analyze(hir, root).expect("analyze"),
             labels: Cell::new(0),
-            empty_captures: HashSet::new(),
-            empty_locals: HashMap::new(),
+            empty_captures: FSet::default(),
+            empty_locals: FMap::default(),
             self_ident: format_ident!("self"),
         }
     }

@@ -7,7 +7,6 @@
 
 use crate::hir::{Hir, NodeId, Params, Visibility};
 use crate::types::TyKind;
-use std::collections::HashMap;
 
 /// The SHARED compiler/runtime class numbering: `ClassId` and
 /// every reserved builtin id are re-exported from `zeo-abi`, the
@@ -132,12 +131,12 @@ pub struct ClassInfo {
     /// `mro::materialize_methods` refuses to materialize them onto this
     /// class, which is what makes an INHERITED name disappear here while
     /// staying live on the ancestor that defined it.
-    pub undefined: std::collections::HashSet<String>,
+    pub undefined: FSet<String>,
     /// The CLASS-method half of [`ClassInfo::undefined`] -- names retired by an
     /// `undef`/`undef_method` inside `class << self` (`HirNode::ClassMethodUndef`).
     /// `mro::materialize_class_methods` skips them, so an inherited class method
     /// disappears here while staying live on the ancestor that defined it.
-    pub class_undefined: std::collections::HashSet<String>,
+    pub class_undefined: FSet<String>,
     /// Names this class's body may `undef_method` at RUNTIME -- an `undef :m`
     /// under a guard zeo can't decide (`undef :to_a if respond_to?(:to_a)`,
     /// drb), which lowers to a real send rather than the compile-time
@@ -147,7 +146,7 @@ pub struct ClassInfo {
     /// direct call it otherwise would: `may_be_undefined_at_runtime` sends these
     /// through dynamic dispatch, where the overlay's tombstone is consulted.
     /// Pay-per-use -- a program with no conditional `undef` is untouched.
-    pub runtime_undefs: std::collections::HashSet<String>,
+    pub runtime_undefs: FSet<String>,
     /// `(new, old, is_class_method, seq)` aliases whose source method is
     /// INHERITED or lives in another body of this class (not defined earlier
     /// in the SAME body -- that form is cloned at lowering, see
@@ -273,14 +272,14 @@ pub struct ClassInfo {
     /// access, unlike zeo -- see `analyze::mro::resolve_cvars`'s docs):
     /// name -> the class/module that actually OWNS the runtime storage
     /// (nearest ancestor, including self, that ever claimed it first).
-    pub cvar_owners: HashMap<String, ClassId>,
+    pub cvar_owners: FMap<String, ClassId>,
     /// Bare-constant storage ownership, resolved once at analyze time --
     /// same scheme as `cvar_owners` (nearest ancestor, including self, that
     /// ever claimed the name first), used by `codegen::expr::const_owner_id_opt`.
     /// Only bare (`scope: None`) constant writes register ownership this way
     /// -- an explicit `Foo::NAME` write always targets `Foo` directly,
     /// regardless of lexical position (see `HirNode::ConstWrite`'s docs).
-    pub const_owners: HashMap<String, ClassId>,
+    pub const_owners: FMap<String, ClassId>,
     /// Class-body top-level statements (`@@x = expr`, `CONST = expr`, and
     /// general side-effecting code) across ALL of this class's definition
     /// sites, flat and in registration order -- what the cvar/const
@@ -419,14 +418,14 @@ fn find_indexed<'a>(
 /// An interned method name. Method tables are the one place in the compiler
 /// with a name per (class, name) pair rather than per definition, so this is
 /// where string comparison and per-entry `String` allocation actually cost
-/// something -- the `HashSet<String>::insert` that was 47% of the Rails-scale
+/// something -- the `FSet<String>::insert` that was 47% of the Rails-scale
 /// profile was exactly this.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub struct NameId(u32);
 
 #[derive(Default)]
 pub struct Names {
-    ids: HashMap<Box<str>, NameId>,
+    ids: FMap<Box<str>, NameId>,
     list: Vec<Box<str>>,
 }
 
@@ -489,7 +488,7 @@ pub struct Scope {
     /// (a forward, single-pass walk -- not the deferred whole-program
     /// fixpoint). Lets codegen resolve `x + y` to native `Int` arithmetic
     /// when `x`/`y` are locals, not just literal-on-literal operands.
-    pub local_types: HashMap<String, TyKind>,
+    pub local_types: FMap<String, TyKind>,
     /// Whether this method's own body (NOT a nested block's) uses a bare
     /// `yield`/`block_given?` -- computed once by `analyze::register_class`'s
     /// `scan_bare_block_use`. Together with `params.block.is_some()`, this
@@ -590,7 +589,7 @@ pub struct Compiler {
     /// constants and doubles as the handle's runtime `RubyValue::Class`
     /// payload. Created by `analyze` (one per box id the loader
     /// allocated), looked up by codegen.
-    pub box_surrogates: HashMap<u32, ClassId>,
+    pub box_surrogates: FMap<u32, ClassId>,
     /// One entry per `class`/`module` DEFINITION SITE (reopens included),
     /// in registration order: the site's `ClassDef` marker node (`None`
     /// for the synthetic/pinned registrations, which have no source
@@ -609,7 +608,7 @@ pub struct Compiler {
     /// Codegen hands these to the runtime, whose own per-class owner scan
     /// cannot see one: such a reopen registers an ordinary instance method
     /// whose owner is the very class the no-op default lives on.
-    pub global_def_hooks: std::collections::HashSet<String>,
+    pub global_def_hooks: FSet<String>,
     /// Hands out [`SiteDef::seq`].
     pub def_seq: u32,
     /// The same record for TOP-LEVEL definitions, which have no site: a bare
@@ -625,7 +624,7 @@ pub struct Compiler {
     /// `module Gem::Security` forward-declaration registers): the container's
     /// KIND is known, so a shell is created on demand. A container absent from
     /// this map is genuinely undefined and still errors.
-    pub shell_kinds: HashMap<(u32, String), bool>,
+    pub shell_kinds: FMap<(u32, String), bool>,
     /// Every constant LEAF name the program assigns anywhere (`NAME = ...`,
     /// `Foo::NAME = ...`), from a read-only scan of the whole node arena --
     /// dead branches and nested scopes included, since it is only ever used to
@@ -638,7 +637,7 @@ pub struct Compiler {
     /// assigned but isn't a compile-time module (`M = Module.new; include M`)
     /// stays a compile error -- deferring that one would silently DROP the
     /// mixin, since zeo's compiled classes dispatch off a static MRO.
-    pub assigned_const_names: std::collections::HashSet<String>,
+    pub assigned_const_names: FSet<String>,
     /// `NAME = <value>` written at the TOP LEVEL (never inside a `class`/
     /// `module` body), leaf name -> the assigned value node. First write wins.
     ///
@@ -649,7 +648,7 @@ pub struct Compiler {
     /// top-level alias. A write's `scope` field cannot answer this -- it is
     /// `None` for `NAME = ...` at any depth, recording only the explicit
     /// `Foo::NAME = ...` prefix -- so the nesting has to come from the walk.
-    pub top_level_const_aliases: HashMap<String, crate::hir::NodeId>,
+    pub top_level_const_aliases: FMap<String, crate::hir::NodeId>,
     /// Every `NAME = <value>` write in the program, keyed by `(box, fully
     /// qualified name)` -- the same question the table above answers, asked
     /// from ANY scope rather than only the top level. It exists because a
@@ -658,7 +657,7 @@ pub struct Compiler {
     /// FilteredAttributes`), and an `include` of that name has to reach the
     /// real module. Read through `analyze`'s `resolve_const_alias`, which
     /// searches innermost scope outward.
-    pub const_aliases: HashMap<(u32, String), crate::hir::NodeId>,
+    pub const_aliases: FMap<(u32, String), crate::hir::NodeId>,
     /// Every method name a RUNTIME site could change out from under a folded
     /// call. Two kinds, because both land in the overlay that only DYNAMIC
     /// dispatch consults:
@@ -674,7 +673,7 @@ pub struct Compiler {
     /// Collected by a flat arena scan, dead branches included: this only ever
     /// answers "could this name change under us?", and over-answering `true`
     /// costs speed, not correctness.
-    pub runtime_patches: std::collections::HashSet<String>,
+    pub runtime_patches: FSet<String>,
     /// Whether the analyze walk is currently inside a FEATURE UNIT's body
     /// (`analyze`'s unit loop). A `def` registered under it is registered
     /// but not PROMISED -- see `register_method`'s `runtime_conditional`
@@ -688,7 +687,7 @@ pub struct Compiler {
     /// that require -- so walk order inverts execution order there. The
     /// corpus case: a spec file's `define_singleton_method` stub over a
     /// lazily-required rspec class lost to the gem's own later-walked def.
-    pub unit_scopes: std::collections::HashSet<ScopeId>,
+    pub unit_scopes: FSet<ScopeId>,
     /// Boot-time overlay installs for observable redefinition timelines:
     /// `(class, name, first_scope)`. The static tables carry the FINAL body
     /// (last-`def`-wins, so every compile-time fact -- super inlining,
@@ -731,11 +730,11 @@ pub struct Compiler {
     /// statement, and anything nested in a container inside one. A `def`'s
     /// body is deliberately absent: it runs whenever the method is called,
     /// which is not a position. See [`Compiler::doc_position`].
-    pub(crate) doc_order: HashMap<crate::hir::NodeId, u32>,
+    pub(crate) doc_order: FMap<crate::hir::NodeId, u32>,
     /// The earliest document position at which `(owner, name)` becomes a
     /// defined constant -- a `class`/`module` marker, or a statement-level
     /// `NAME = ...`. Read with [`Compiler::const_defined_before`].
-    pub(crate) const_def_order: HashMap<(ClassId, String), u32>,
+    pub(crate) const_def_order: FMap<(ClassId, String), u32>,
     /// Every `refine Target do ... end` the program wrote, in registration
     /// order. See [`Refinement`].
     pub(crate) refinements: Vec<Refinement>,
@@ -744,9 +743,9 @@ pub struct Compiler {
     /// Codegen's `Int` operator fast paths consult this and stand down so
     /// the redefinition is honored at every call site; see
     /// `analyze::register_body_def_method`.
-    pub(crate) redefined_int_ops: std::collections::HashSet<String>,
+    pub(crate) redefined_int_ops: FSet<String>,
     /// The `Float` lane of [`Compiler::redefined_int_ops`].
-    pub(crate) redefined_float_ops: std::collections::HashSet<String>,
+    pub(crate) redefined_float_ops: FSet<String>,
     /// Every `using M`, as the LEXICAL byte range it covers. See
     /// [`Activation`] and [`Compiler::refinements_active_at`].
     pub(crate) activations: Vec<Activation>,
@@ -756,7 +755,7 @@ pub struct Compiler {
     /// the dynamic-fallback arm), so the map is purely an optimization hint;
     /// the escaping-block scans deliberately ignore it -- a marked site keeps
     /// escaping-style cell captures, correct in both arms.
-    pub inline_iter_sites: HashMap<crate::hir::NodeId, InlineIterKind>,
+    pub inline_iter_sites: FMap<crate::hir::NodeId, InlineIterKind>,
     /// A compile-time reopen of `Integer#times` / `Range#each` anywhere in
     /// Integer's/Range's ancestry (`analyze::mark_inline_iter_sites` computes
     /// both): the LITERAL fast paths (`3.times`, `(1..9).each`) must then
@@ -816,8 +815,12 @@ pub enum InlineIterKind {
 /// only ever hold program identifiers.
 pub(crate) type FSet<T> = std::collections::HashSet<T, foldhash::fast::RandomState>;
 
+/// [`FSet`]'s map twin -- every compiler-internal `HashMap` keyed by program
+/// identifiers uses this. Ruby-VISIBLE hashing (`Object#hash`) is a runtime
+/// concern and never touches these.
+pub(crate) type FMap<K, V> = std::collections::HashMap<K, V, foldhash::fast::RandomState>;
 /// `class_index`'s shape: `(box, lexical_parent) -> name -> id`.
-type ClassNameIndex = HashMap<(u32, Option<ClassId>), HashMap<String, ClassId>>;
+type ClassNameIndex = FMap<(u32, Option<ClassId>), FMap<String, ClassId>>;
 
 /// Whether `ZEO_DEBUG=verify-class-index` is set: every `class_in_scope`
 /// answer is then shadow-compared against the original linear scan -- the
@@ -945,9 +948,9 @@ impl Compiler {
                 private_constants: Default::default(),
                 extends: Vec::new(),
                 class_method_prepends: Vec::new(),
-                undefined: std::collections::HashSet::new(),
-                class_undefined: std::collections::HashSet::new(),
-                runtime_undefs: std::collections::HashSet::new(),
+                undefined: FSet::default(),
+                class_undefined: FSet::default(),
+                runtime_undefs: FSet::default(),
                 pending_aliases: Vec::new(),
                 method_history: Vec::new(),
                 redef_scopes: Vec::new(),
@@ -966,8 +969,8 @@ impl Compiler {
                 class_methods: Vec::new(),
                 method_index: Vec::new(),
                 class_method_index: Vec::new(),
-                cvar_owners: HashMap::new(),
-                const_owners: HashMap::new(),
+                cvar_owners: FMap::default(),
+                const_owners: FMap::default(),
                 class_body_stmts: Vec::new(),
                 singleton_super_targets: Vec::new(),
                 ancestors: Vec::new(),
@@ -978,32 +981,32 @@ impl Compiler {
             scopes: Vec::new(),
             names: Names::default(),
             pending_ruby_raise: None,
-            box_surrogates: HashMap::new(),
+            box_surrogates: FMap::default(),
             class_body_sites: Vec::new(),
             global_def_hooks: Default::default(),
             def_seq: 0,
             top_level_defs: Vec::new(),
-            shell_kinds: HashMap::new(),
-            assigned_const_names: std::collections::HashSet::new(),
-            top_level_const_aliases: HashMap::new(),
-            const_aliases: HashMap::new(),
-            runtime_patches: std::collections::HashSet::new(),
+            shell_kinds: FMap::default(),
+            assigned_const_names: FSet::default(),
+            top_level_const_aliases: FMap::default(),
+            const_aliases: FMap::default(),
+            runtime_patches: FSet::default(),
             unit_walk: false,
-            unit_scopes: std::collections::HashSet::new(),
+            unit_scopes: FSet::default(),
             positional_redefs: Vec::new(),
             runtime_patches_any_name: false,
-            class_index: std::cell::RefCell::new(HashMap::new()),
+            class_index: std::cell::RefCell::new(FMap::default()),
             indexed_upto: std::cell::Cell::new(0),
             frozen_crefs: None,
             frozen_fq_names: None,
             direct_const_defs: None,
-            doc_order: HashMap::new(),
-            const_def_order: HashMap::new(),
+            doc_order: FMap::default(),
+            const_def_order: FMap::default(),
             refinements: Vec::new(),
-            redefined_int_ops: std::collections::HashSet::new(),
-            redefined_float_ops: std::collections::HashSet::new(),
+            redefined_int_ops: FSet::default(),
+            redefined_float_ops: FSet::default(),
             activations: Vec::new(),
-            inline_iter_sites: HashMap::new(),
+            inline_iter_sites: FMap::default(),
             times_literal_suppressed: false,
             range_each_literal_suppressed: false,
             traces_calls: std::cell::OnceCell::new(),
@@ -1043,7 +1046,7 @@ impl Compiler {
         // Resolved from the ABI names directly, in a second pass, so a parent
         // declared at a LATER id still binds -- `Thread::Backtrace` is exactly
         // that against `Thread::Backtrace::Location`, whose id predates it.
-        let by_abi_name: std::collections::HashMap<&str, ClassId> =
+        let by_abi_name: FMap<&str, ClassId> =
             zeo_abi::BUILTINS.iter().map(|b| (b.name, b.id)).collect();
         for b in zeo_abi::BUILTINS {
             let path = crate::constpath::ConstPath::parse(b.name);
@@ -1516,9 +1519,9 @@ impl Compiler {
             private_constants: Default::default(),
             extends: Vec::new(),
             class_method_prepends: Vec::new(),
-            undefined: std::collections::HashSet::new(),
-            class_undefined: std::collections::HashSet::new(),
-            runtime_undefs: std::collections::HashSet::new(),
+            undefined: FSet::default(),
+            class_undefined: FSet::default(),
+            runtime_undefs: FSet::default(),
             pending_aliases: Vec::new(),
             method_history: Vec::new(),
             redef_scopes: Vec::new(),
@@ -1537,8 +1540,8 @@ impl Compiler {
             class_methods: Vec::new(),
             method_index: Vec::new(),
             class_method_index: Vec::new(),
-            cvar_owners: HashMap::new(),
-            const_owners: HashMap::new(),
+            cvar_owners: FMap::default(),
+            const_owners: FMap::default(),
             class_body_stmts: Vec::new(),
             singleton_super_targets: Vec::new(),
             ancestors: Vec::new(),

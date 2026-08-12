@@ -225,7 +225,29 @@ pub fn parse_and_lower_with(
     lockfile: Option<&std::path::Path>,
     root_gem: Option<&crate::Gem>,
 ) -> Result<(Hir, NodeId, Vec<crate::gem_report::GemRecord>), CompileError> {
-    let mut hir = Hir::default();
+    // The exception-class prefix is the same ~100 lines for every compile,
+    // so it is lowered ONCE into a template arena and cloned in, rather than
+    // re-parsed per compile. Sound because the prefix is always the FIRST
+    // thing in the arena (node/file ids are identical either way) and its
+    // source contains nothing that reads ambient state (`__ENCODING__`).
+    static BUILTIN_PREFIX: std::sync::LazyLock<
+        Result<(Hir, Vec<NodeId>), crate::lower_error::LowerError>,
+    > = std::sync::LazyLock::new(|| {
+        let mut hir = Hir::default();
+        let statements = parse_and_lower_into(&mut hir, BUILTIN_EXCEPTIONS_RB).map_err(|e| {
+            crate::lower_error::LowerError {
+                message: format!(
+                    "internal error in zeo's built-in exception classes (this is a zeo bug): {e}"
+                ),
+                ..e
+            }
+        })?;
+        Ok((hir, statements))
+    });
+    let (mut hir, mut statements) = match &*BUILTIN_PREFIX {
+        Ok((h, s)) => (h.clone(), s.clone()),
+        Err(e) => return Err(CompileError::lower(e.clone(), &[])),
+    };
     if let Some(name) = magic_encoding_comment(source) {
         hir.script_encoding = match encoding_const_name(&name) {
             Ok(n) => n.map(str::to_string),
@@ -233,20 +255,6 @@ pub fn parse_and_lower_with(
         };
     }
     hir.frozen_string_literal = magic_frozen_string_literal(source);
-    let mut statements = match parse_and_lower_into(&mut hir, BUILTIN_EXCEPTIONS_RB) {
-        Ok(stmts) => stmts,
-        Err(e) => {
-            return Err(CompileError::lower(
-                crate::lower_error::LowerError {
-                    message: format!(
-                        "internal error in zeo's built-in exception classes (this is a zeo bug): {e}"
-                    ),
-                    ..e
-                },
-                &hir.files,
-            ));
-        }
-    };
     hir.builtin_exceptions_len = statements.len();
     // This is THE boundary where a located `LowerError` becomes a renderable
     // `CompileError`: the error and the `Hir::files` table it points into

@@ -17,7 +17,7 @@
 
 use crate::compiler::{ClassId, Compiler, DefEvent, SiteDef};
 use crate::hir::{HirNode, NodeId};
-use std::collections::HashMap;
+use crate::compiler::{FMap};
 
 /// The seven names. A definition of one of these ON `Module`/`Class` (the
 /// `method_*` trio and `const_added`) or on `BasicObject` (the
@@ -123,12 +123,12 @@ struct Send {
 /// Keyed on FIRST definition: `def x; end; def x; end` announces twice, and at
 /// the first announcement `x` already exists, so a later redefinition must not
 /// hide it.
-fn future_names(taken: &[(ClassId, Vec<SiteDef>, Target)]) -> HashMap<u32, Vec<String>> {
-    let mut by_class: HashMap<ClassId, Vec<&SiteDef>> = HashMap::new();
+fn future_names(taken: &[(ClassId, Vec<SiteDef>, Target)]) -> FMap<u32, Vec<String>> {
+    let mut by_class: FMap<ClassId, Vec<&SiteDef>> = FMap::default();
     for (class, defs, _) in taken {
         by_class.entry(*class).or_default().extend(defs.iter());
     }
-    let mut out = HashMap::new();
+    let mut out = FMap::default();
     for defs in by_class.values_mut() {
         defs.sort_by_key(|d| d.seq);
         // A class's own instance methods, in the order they come into being.
@@ -165,7 +165,7 @@ fn surviving(
     class: ClassId,
     defs: &[SiteDef],
     global: &[&'static str],
-    future: &HashMap<u32, Vec<String>>,
+    future: &FMap<u32, Vec<String>>,
 ) -> Vec<Send> {
     defs.iter()
         .filter_map(|d| {

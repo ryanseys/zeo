@@ -20,7 +20,7 @@ use crate::hir::{
     ArrayElem, Hir, HirNode, NodeId, Params, Pattern, PatternArm, StrPart, Visibility,
 };
 use crate::types::TyKind;
-use std::collections::HashMap;
+use crate::compiler::{FMap, FSet};
 
 pub struct Analyzed {
     pub compiler: Compiler,
@@ -30,7 +30,7 @@ pub struct Analyzed {
     /// The same per-local `TyKind` tracking `Scope::local_types` does for a
     /// method body, but for `main_statements` -- there's no `Scope` for the
     /// top level to hang this off of.
-    pub main_local_types: HashMap<String, TyKind>,
+    pub main_local_types: FMap<String, TyKind>,
     /// The compiled-in load path (see `Hir::feature_units`): each unit's
     /// top-level statements under the feature name a `require` spells. Walked
     /// exactly like `main_statements` -- their classes register at startup --
@@ -65,7 +65,7 @@ pub fn analyze(hir: Hir, root: NodeId) -> Result<Analyzed, crate::diagnostics::C
 /// so that the error path can still read its source table.
 struct AnalyzedParts {
     main_statements: Vec<NodeId>,
-    main_local_types: HashMap<String, TyKind>,
+    main_local_types: FMap<String, TyKind>,
     feature_units: Vec<(String, String, Vec<NodeId>)>,
     declined_units: Vec<(String, String, String)>,
 }
@@ -83,7 +83,7 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
     // `Compiler::shell_kinds` and `resolve_or_create_container`): a read-only
     // scan of every class/module definition, run before the ordered
     // registration walk below.
-    let mut shell_kinds = HashMap::new();
+    let mut shell_kinds = FMap::default();
     collect_shell_kinds(&compiler.hir, &statements, &[], 0, &mut shell_kinds);
     // A DEFERRED require's body is not in `statements` -- it is walked later,
     // out of this loop (see `feature_units` below) -- so scanning only the main
@@ -98,18 +98,21 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
         collect_shell_kinds(&compiler.hir, &unit.body, &[], 0, &mut shell_kinds);
     }
     compiler.shell_kinds = shell_kinds;
-    compiler.assigned_const_names = collect_assigned_const_names(&compiler.hir);
-    let mut aliases = HashMap::new();
+    let mut aliases = FMap::default();
     collect_top_level_const_aliases(&compiler.hir, &statements, &mut aliases);
     compiler.top_level_const_aliases = aliases;
-    let mut scoped_aliases = HashMap::new();
+    let mut scoped_aliases = FMap::default();
     collect_const_aliases(&compiler.hir, &statements, &[], 0, &mut scoped_aliases);
     for unit in &compiler.hir.feature_units {
         collect_const_aliases(&compiler.hir, &unit.body, &[], 0, &mut scoped_aliases);
     }
     compiler.const_aliases = scoped_aliases;
-    (compiler.runtime_patches, compiler.runtime_patches_any_name) =
-        collect_runtime_patches(&compiler.hir);
+    // ONE flat sweep of the node arena serves both whole-arena questions --
+    // assigned const names and runtime patch verbs -- instead of two.
+    (
+        compiler.assigned_const_names,
+        (compiler.runtime_patches, compiler.runtime_patches_any_name),
+    ) = collect_arena_facts(&compiler.hir);
 
     // Register native-extension constants (`Socket::AF_INET6`, ...) into their
     // builtin class's compile-time const table so `const_defined?`/`defined?`/
@@ -300,7 +303,7 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
 fn mark_inline_iter_sites(
     compiler: &mut Compiler,
     main_statements: &[NodeId],
-    main_local_types: &HashMap<String, TyKind>,
+    main_local_types: &FMap<String, TyKind>,
 ) {
     use crate::compiler::InlineIterKind;
 
@@ -317,8 +320,8 @@ fn mark_inline_iter_sites(
     fn scan(
         compiler: &Compiler,
         id: NodeId,
-        locals: &HashMap<String, TyKind>,
-        out: &mut HashMap<NodeId, InlineIterKind>,
+        locals: &FMap<String, TyKind>,
+        out: &mut FMap<NodeId, InlineIterKind>,
     ) {
         if let HirNode::Call {
             receiver: Some(recv),
@@ -415,7 +418,7 @@ fn mark_inline_iter_sites(
     compiler.times_literal_suppressed = suppressed(&K::TimesInt);
     compiler.range_each_literal_suppressed = suppressed(&K::RangeEachInt);
 
-    let mut sites = HashMap::new();
+    let mut sites = FMap::default();
     for scope in &compiler.scopes {
         for &n in &scope.body {
             scan(compiler, n, &scope.local_types, &mut sites);
@@ -2039,8 +2042,8 @@ fn const_written_into(
 }
 
 /// Every node reachable from `roots`, roots included.
-fn nodes_under(compiler: &Compiler, roots: &[NodeId]) -> std::collections::HashSet<NodeId> {
-    let mut seen: std::collections::HashSet<NodeId> = std::collections::HashSet::new();
+fn nodes_under(compiler: &Compiler, roots: &[NodeId]) -> FSet<NodeId> {
+    let mut seen: FSet<NodeId> = FSet::default();
     let mut stack = roots.to_vec();
     while let Some(id) = stack.pop() {
         if seen.insert(id) {
@@ -2668,29 +2671,50 @@ fn collect_runtime_undefs(compiler: &Compiler, stmt: NodeId) -> Vec<String> {
     out
 }
 
-/// Read-only scan populating [`Compiler::assigned_const_names`]. A flat sweep
-/// of the whole node arena rather than a tree walk: every reachable `ConstWrite`
-/// is in there by construction, and a name written only on a dead branch still
-/// counts (see the field's docs -- over-collection is the safe direction).
-fn collect_assigned_const_names(hir: &Hir) -> std::collections::HashSet<String> {
-    let mut out = std::collections::HashSet::new();
+/// ONE flat sweep of the whole node arena answering both whole-arena
+/// questions: [`Compiler::assigned_const_names`] and
+/// ([`Compiler::runtime_patches`], [`Compiler::runtime_patches_any_name`]).
+/// A flat sweep rather than a tree walk: every reachable node is in the
+/// arena by construction, and a site on a dead branch still counts -- for
+/// const names because over-collection is the safe direction (see the
+/// field's docs), for patches because the answer is "could this name change
+/// under us?".
+fn collect_arena_facts(hir: &Hir) -> (FSet<String>, (FSet<String>, bool)) {
+    let mut consts = FSet::default();
+    let mut names = FSet::default();
+    let mut any = false;
     for node in hir.all_nodes() {
-        // `name` is already the leaf -- an explicit `Foo::NAME = ...` keeps its
-        // namespace in the separate `scope` field.
-        let HirNode::ConstWrite { scope, name, .. } = node else {
-            continue;
-        };
-        out.insert(name.clone());
-        // The QUALIFIED spelling as well, so a reader that names a scope can
-        // ask about that scope rather than settling for "some constant with
-        // this leaf exists somewhere". Anchors are stripped: `::A::B` and
-        // `A::B` name the same constant, and there is only one top level.
-        if let Some(scope) = scope {
-            let scope = crate::constpath::ConstPath::parse(scope).unanchored();
-            out.insert(format!("{scope}::{name}"));
+        match node {
+            // `name` is already the leaf -- an explicit `Foo::NAME = ...`
+            // keeps its namespace in the separate `scope` field.
+            HirNode::ConstWrite { scope, name, .. } => {
+                consts.insert(name.clone());
+                // The QUALIFIED spelling as well, so a reader that names a
+                // scope can ask about that scope rather than settling for
+                // "some constant with this leaf exists somewhere". Anchors
+                // are stripped: `::A::B` and `A::B` name the same constant,
+                // and there is only one top level.
+                if let Some(scope) = scope {
+                    let scope = crate::constpath::ConstPath::parse(scope).unanchored();
+                    consts.insert(format!("{scope}::{name}"));
+                }
+            }
+            // A `def` inside a BLOCK installs when the block runs, not when
+            // the class body does -- `N.class_eval { def e; end }`, and the
+            // same desugared `define_method(:e) { }`. The subtree walk
+            // reaches a def nested several blocks deep.
+            HirNode::Lambda { body, .. } | HirNode::Block { body, .. } => {
+                for &id in body {
+                    names.extend(defs_in_subtree(hir, id));
+                }
+            }
+            HirNode::Call { name, args, .. } => {
+                collect_patch_call(hir, name, args, &mut names, &mut any);
+            }
+            _ => {}
         }
     }
-    out
+    (consts, (names, any))
 }
 
 /// Walk populating [`Compiler::top_level_const_aliases`]: `NAME = <value>`
@@ -2701,7 +2725,7 @@ fn collect_assigned_const_names(hir: &Hir) -> std::collections::HashSet<String> 
 /// exactly the boundary that makes a write "top-level". First write wins, so a
 /// later reassignment does not change which class a reopen attaches to -- the
 /// arena scan this replaces had the same first-match-wins behaviour.
-fn collect_top_level_const_aliases(hir: &Hir, stmts: &[NodeId], out: &mut HashMap<String, NodeId>) {
+fn collect_top_level_const_aliases(hir: &Hir, stmts: &[NodeId], out: &mut FMap<String, NodeId>) {
     for &s in stmts {
         match &hir[s] {
             HirNode::ConstWrite {
@@ -2761,63 +2785,51 @@ const VIS_VERBS: &[&str] = &[
 /// (`Node.send(:define_method, name)`) and so shifts every argument by one.
 const SEND_VERBS: &[&str] = &["send", "__send__", "public_send"];
 
-/// Read-only scan populating [`Compiler::runtime_patches`] and
-/// [`Compiler::runtime_patches_any_name`]. Flat over the whole arena, like
-/// [`collect_assigned_const_names`]: a site on a dead branch still counts,
-/// because the answer is "could this name change under us?".
-fn collect_runtime_patches(hir: &Hir) -> (std::collections::HashSet<String>, bool) {
-    let mut names = std::collections::HashSet::new();
-    let mut any = false;
-    for node in hir.all_nodes() {
-        // A `def` inside a BLOCK installs when the block runs, not when the
-        // class body does -- `N.class_eval { def e; end }`, and the same
-        // desugared `define_method(:e) { }`. The subtree walk reaches a def
-        // nested several blocks deep.
-        if let HirNode::Lambda { body, .. } | HirNode::Block { body, .. } = node {
-            for &id in body {
-                names.extend(defs_in_subtree(hir, id));
-            }
-        }
-        let HirNode::Call { name, args, .. } = node else {
-            continue;
-        };
-        // The names start at the verb's first argument, one slot later when the
-        // verb itself arrives as `send`'s first argument.
-        let verb = |v: &str| REDEF_VERBS.contains(&v) || VIS_VERBS.contains(&v);
-        let (at, verb_name) = if verb(name) {
-            (0, name.as_str())
-        } else if SEND_VERBS.contains(&name.as_str())
-            && let Some(ArrayElem::Single(a)) = args.first()
-            && let Some(sent) = hir.sent_name(*a).filter(|v| verb(v))
-        {
-            (1, sent)
-        } else {
-            continue;
-        };
-        // A definition verb names one method; a visibility verb names a list.
-        let named = match VIS_VERBS.contains(&verb_name) {
-            true => &args[at.min(args.len())..],
-            false => &args[at.min(args.len())..(at + 1).min(args.len())],
-        };
-        // No argument at all: a bare `private` sets the DEFAULT for later defs,
-        // which names nothing this scan can read.
-        if named.is_empty() {
-            any = true;
-        }
-        for arg in named {
-            match arg {
-                ArrayElem::Single(a) => match hir.sent_name(*a) {
-                    Some(patched) => {
-                        names.insert(patched.to_owned());
-                    }
-                    None => any = true,
-                },
-                // A splat: nothing to read the names from.
-                _ => any = true,
-            }
+/// [`collect_arena_facts`]'s runtime-patch half for one `Call` node: a
+/// definition/visibility verb (possibly through `send`) marks the method
+/// names it could install or re-scope at runtime.
+fn collect_patch_call(
+    hir: &Hir,
+    name: &str,
+    args: &[ArrayElem],
+    names: &mut FSet<String>,
+    any: &mut bool,
+) {
+    // The names start at the verb's first argument, one slot later when the
+    // verb itself arrives as `send`'s first argument.
+    let verb = |v: &str| REDEF_VERBS.contains(&v) || VIS_VERBS.contains(&v);
+    let (at, verb_name) = if verb(name) {
+        (0, name)
+    } else if SEND_VERBS.contains(&name)
+        && let Some(ArrayElem::Single(a)) = args.first()
+        && let Some(sent) = hir.sent_name(*a).filter(|v| verb(v))
+    {
+        (1, sent)
+    } else {
+        return;
+    };
+    // A definition verb names one method; a visibility verb names a list.
+    let named = match VIS_VERBS.contains(&verb_name) {
+        true => &args[at.min(args.len())..],
+        false => &args[at.min(args.len())..(at + 1).min(args.len())],
+    };
+    // No argument at all: a bare `private` sets the DEFAULT for later defs,
+    // which names nothing this scan can read.
+    if named.is_empty() {
+        *any = true;
+    }
+    for arg in named {
+        match arg {
+            ArrayElem::Single(a) => match hir.sent_name(*a) {
+                Some(patched) => {
+                    names.insert(patched.to_owned());
+                }
+                None => *any = true,
+            },
+            // A splat: nothing to read the names from.
+            _ => *any = true,
         }
     }
-    (names, any)
 }
 
 /// Every `def`/desugared `define_method` name in `root`'s subtree.
@@ -2843,7 +2855,7 @@ fn collect_shell_kinds(
     stmts: &[NodeId],
     scope: &[String],
     box_id: u32,
-    out: &mut HashMap<(u32, String), bool>,
+    out: &mut FMap<(u32, String), bool>,
 ) {
     for &id in stmts {
         collect_shell_kinds_node(hir, id, scope, box_id, out);
@@ -2863,7 +2875,7 @@ fn collect_shell_kinds_node(
     id: NodeId,
     scope: &[String],
     box_id: u32,
-    out: &mut HashMap<(u32, String), bool>,
+    out: &mut FMap<(u32, String), bool>,
 ) {
     match &hir[id] {
         HirNode::ClassDef {
@@ -4298,7 +4310,7 @@ fn collect_const_aliases(
     stmts: &[NodeId],
     scope: &[String],
     box_id: u32,
-    out: &mut HashMap<(u32, String), NodeId>,
+    out: &mut FMap<(u32, String), NodeId>,
 ) {
     for &id in stmts {
         match &hir[id] {
@@ -4416,7 +4428,7 @@ pub(crate) fn method_local_types(
     defining_class: ClassId,
     params: &Params,
     body: &[NodeId],
-) -> HashMap<String, TyKind> {
+) -> FMap<String, TyKind> {
     let defining_box = compiler.class(defining_class).box_id;
     let mut local_types = locals::infer_locals(compiler, Some(defining_class), defining_box, body);
     for id in params.default_ids() {
@@ -4468,7 +4480,7 @@ fn register_method(
     // Deferred to `mro::reinfer_local_types`, which recomputes every scope
     // against the finished class tables anyway and is the first thing to read
     // the map -- inferring here too would only be thrown away.
-    let local_types = HashMap::new();
+    let local_types = FMap::default();
     let mut uses_bare_block = false;
     // Default-parameter expressions run inside the method too -- rspec's
     // `def register_ordering(name, strategy = Custom.new(Proc.new { |l|

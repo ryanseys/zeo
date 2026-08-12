@@ -16,7 +16,7 @@
 //! the members' emissions actually agree is `codegen::class_query`'s question.
 
 use crate::compiler::{ClassId, Compiler, ScopeId};
-use std::collections::HashMap;
+use crate::compiler::{FMap};
 
 /// One `def`, and every class carrying an entry that points at it.
 pub struct Group {
@@ -41,7 +41,7 @@ pub struct Group {
 /// structless one goes by name -- and `codegen::class_query` asks it as
 /// `HasStruct`, so such a group splits into two bodies on its own.
 pub fn groups(compiler: &Compiler) -> Vec<Group> {
-    let mut by_def: HashMap<ScopeId, Vec<ClassId>> = HashMap::new();
+    let mut by_def: FMap<ScopeId, Vec<ClassId>> = FMap::default();
     for (idx, class) in compiler.classes.iter().enumerate() {
         let cid = ClassId(idx as u32);
         if !emits_instance_bodies(compiler, cid) {

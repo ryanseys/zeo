@@ -17,15 +17,16 @@
 use crate::compiler::{ClassId, Compiler};
 use crate::hir::{ArrayElem, HirNode, NodeId, StrPart};
 use crate::types::{TyKind, infer_type_with_locals};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
+use crate::compiler::{FMap, FSet};
 
 pub fn infer_locals(
     compiler: &Compiler,
     defining: Option<ClassId>,
     box_id: u32,
     body: &[NodeId],
-) -> HashMap<String, TyKind> {
-    let mut locals = HashMap::new();
+) -> FMap<String, TyKind> {
+    let mut locals = FMap::default();
     for &stmt in body {
         track_node(compiler, defining, box_id, &mut locals, stmt);
     }
@@ -47,8 +48,8 @@ pub fn infer_locals(
 /// declared once at the top of the scope and therefore always in scope. The
 /// cost is dynamic dispatch on reads, the same trade `Params::bound_names`
 /// takes for a rebound parameter.
-fn widen_nested_writes(compiler: &Compiler, body: &[NodeId], locals: &mut HashMap<String, TyKind>) {
-    let mut nested = HashSet::new();
+fn widen_nested_writes(compiler: &Compiler, body: &[NodeId], locals: &mut FMap<String, TyKind>) {
+    let mut nested = FSet::default();
     for &stmt in body {
         // A top-level `x = <expr>` binds `x` right here; anything `<expr>`
         // itself assigns is nested all the same. `x` joins them when its
@@ -82,7 +83,7 @@ pub fn track_extra(
     compiler: &Compiler,
     defining: Option<ClassId>,
     box_id: u32,
-    locals: &mut HashMap<String, TyKind>,
+    locals: &mut FMap<String, TyKind>,
     id: NodeId,
 ) {
     track_node(compiler, defining, box_id, locals, id);
@@ -92,8 +93,8 @@ pub fn track_extra(
 /// blocks and `def`s -- an over-approximation on purpose: the only caller
 /// uses it to widen types, where naming one local too many costs a little
 /// dispatch speed and naming one too few is a miscompile.
-fn assigned_in(compiler: &Compiler, root: NodeId) -> HashSet<String> {
-    let mut out = HashSet::new();
+fn assigned_in(compiler: &Compiler, root: NodeId) -> FSet<String> {
+    let mut out = FSet::default();
     let mut stack = vec![root];
     while let Some(id) = stack.pop() {
         if let HirNode::LocalWrite(name, _) = &compiler.hir[id] {
@@ -118,7 +119,7 @@ fn track_node(
     compiler: &Compiler,
     defining: Option<ClassId>,
     box_id: u32,
-    locals: &mut HashMap<String, TyKind>,
+    locals: &mut FMap<String, TyKind>,
     id: NodeId,
 ) {
     match &compiler.hir[id] {
@@ -344,7 +345,7 @@ fn track_node(
         }
         HirNode::CaseIn { subject, arms, else_body } => {
             track_node(compiler, defining, box_id, locals, *subject);
-            let mut branch_locals: Vec<HashMap<String, TyKind>> = Vec::new();
+            let mut branch_locals: Vec<FMap<String, TyKind>> = Vec::new();
             for arm in arms {
                 let mut b = locals.clone();
                 // A pattern-bound name is always `Poly` from this static
@@ -508,10 +509,10 @@ fn join_branches(
     compiler: &Compiler,
     defining: Option<ClassId>,
     box_id: u32,
-    before: &HashMap<String, TyKind>,
+    before: &FMap<String, TyKind>,
     branches: &[&[NodeId]],
-) -> HashMap<String, TyKind> {
-    let branch_locals: Vec<HashMap<String, TyKind>> = branches
+) -> FMap<String, TyKind> {
+    let branch_locals: Vec<FMap<String, TyKind>> = branches
         .iter()
         .map(|&body| {
             let mut b = before.clone();
@@ -530,8 +531,8 @@ fn join_branches(
 /// any disagreement widens to `Poly`. Shared by `join_branches` (`if`/`case`)
 /// and `join_loop` below -- both boil down to "does every possible path
 /// through this control-flow construct agree?".
-fn merge_locals(maps: Vec<HashMap<String, TyKind>>) -> HashMap<String, TyKind> {
-    let keys: HashSet<&String> = maps.iter().flat_map(HashMap::keys).collect();
+fn merge_locals(maps: Vec<FMap<String, TyKind>>) -> FMap<String, TyKind> {
+    let keys: FSet<&String> = maps.iter().flat_map(HashMap::keys).collect();
     keys.into_iter()
         .map(|key| {
             let first = maps[0].get(key).copied();
@@ -559,10 +560,10 @@ fn join_loop(
     compiler: &Compiler,
     defining: Option<ClassId>,
     box_id: u32,
-    before: &HashMap<String, TyKind>,
+    before: &FMap<String, TyKind>,
     body: &[NodeId],
     seed: Option<(&crate::hir::MultiTarget, TyKind)>,
-) -> HashMap<String, TyKind> {
+) -> FMap<String, TyKind> {
     let mut ran = before.clone();
     if let Some((target, elem_ty)) = seed {
         target.for_each_node(&mut |n| track_node(compiler, defining, box_id, &mut ran, n));

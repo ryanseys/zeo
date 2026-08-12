@@ -27,6 +27,7 @@ use super::ident::safe_ident;
 use crate::compiler::{AccessorKind, AccessorShape};
 use crate::hir::{HirNode, KeywordParam, KwArg, NodeId, Params};
 use proc_macro2::TokenStream;
+use crate::compiler::FSet;
 
 /// The callee's extra Rust fn parameters (after `&self`), one per `Params`
 /// entry that gets a real Rust parameter (i.e. every kind except an
@@ -201,7 +202,7 @@ pub fn emit_prologue(cx: &Ctx, params: &Params, body: &[NodeId]) -> TokenStream 
     // has no parameter to turn -- only its `__destr_<i>` slot does.
     // `emit_destructures` already declares each one directly at its storage
     // class (cell included), so wrapping here would wrap the cell in a cell.
-    let destructured: std::collections::HashSet<String> =
+    let destructured: FSet<String> =
         params.destructured_names().into_iter().collect();
     // ASSIGNED names are excluded too: the hoist prelude that follows this
     // prologue (`emit_hoisted_body_with_extra_roots`, same collection roots)
@@ -1669,6 +1670,7 @@ pub fn emit_proc_param_bindings(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compiler::FMap;
     use crate::hir::{Hir, HirNode};
 
     /// A throwaway default-value expression -- `proc_arity`/`auto_splats`
@@ -2280,7 +2282,7 @@ mod tests {
     fn emit_proc_param_bindings_probe(params: &Params, is_lambda: bool) -> String {
         let compiler = crate::compiler::Compiler::new(Hir::default());
         let label_counter = std::cell::Cell::new(0u32);
-        let empty = std::collections::HashSet::new();
+        let empty = FSet::default();
         let cx = Ctx {
             compiler: &compiler,
             box_id: 0,
@@ -2289,7 +2291,7 @@ mod tests {
             class_self: None,
             current_method: None,
             current_method_origin: None,
-            local_types: std::borrow::Cow::Owned(std::collections::HashMap::new()),
+            local_types: std::borrow::Cow::Owned(FMap::default()),
             label_counter: &label_counter,
             loop_labels: None,
             next_yields_value: false,
