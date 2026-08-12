@@ -1125,7 +1125,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             iterable,
             body,
         } => emit_for(cx, target, *iterable, body),
-        HirNode::Break(v) => emit_break(cx, *v),
+        HirNode::Break(v) => emit_break(cx, id, *v),
         HirNode::Next(v) => emit_next(cx, *v),
         HirNode::Redo => emit_redo(cx),
         HirNode::MultiWrite { targets, value } => {

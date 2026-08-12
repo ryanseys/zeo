@@ -345,7 +345,7 @@ pub fn emit_for(cx: &Ctx, target: &MultiTarget, iterable: NodeId, body: &[NodeId
 /// `codegen::params::emit_call_args`'s `catch_break` wrapping), exactly
 /// matching real Ruby: `arr.each { break }` makes the WHOLE `.each(...)`
 /// call evaluate to the break value, not just the block invocation.
-pub fn emit_break(cx: &Ctx, value: Option<NodeId>) -> TokenStream {
+pub fn emit_break(cx: &Ctx, id: NodeId, value: Option<NodeId>) -> TokenStream {
     let value_expr = match value {
         Some(v) => emit_expr(cx, v),
         None => quote! { zeo_rt::RubyValue::Nil },
@@ -353,7 +353,20 @@ pub fn emit_break(cx: &Ctx, value: Option<NodeId>) -> TokenStream {
     match &cx.loop_labels {
         Some((_, outer)) => quote! { break #outer #value_expr },
         None if cx.in_real_proc => quote! { return Err(zeo_rt::Signal::Break(#value_expr)) },
-        None => super::unsupported("`break` outside a supported loop construct (zeo limitation)"),
+        // A `break` at the top of a `define_method` body RETURNS from the
+        // method -- `define_method(:go) { break :early }` answers `:early`
+        // (oracle-verified). The block became the method, so there is no
+        // yielding call left to break out of, and CRuby's own rule for a
+        // block-turned-method is the lambda one. A real `def` never reaches
+        // here: CRuby rejects a bare `break` in a method body outright.
+        // rake's `define_method(:execute) { ... break if @failure ... }`
+        // (cxxproject) is the corpus shape.
+        None if cx.defined_by_define_method => quote! { return Ok(#value_expr) },
+        None => super::unsupported_at(
+            cx.compiler,
+            id,
+            "`break` outside a supported loop construct (zeo limitation)",
+        ),
     }
 }
 
