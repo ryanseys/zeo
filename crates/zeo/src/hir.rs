@@ -474,10 +474,11 @@ impl Hir {
             .iter()
             .filter_map(|(k, v)| v.clone().map(|t| (k.clone(), t)))
             .collect();
-        // Struct layouts join the same table as `Struct` entries, so a bare
-        // struct name in a type list means BY VALUE -- the gem's semantics
-        // (`.by_ref` is the pointer spelling). An explicit typedef of the
-        // same name wins.
+        // Struct layouts join the same table as `Struct` entries. What a
+        // bare struct name MEANS depends on the position -- a signature
+        // reads it back as `StructRef` (ruby-ffi's by-reference semantics),
+        // a layout field keeps the inline by-value struct; see
+        // `ffi_type_node`. An explicit typedef of the same name wins.
         for (k, layout) in &self.ffi_struct_layouts {
             types
                 .entry(k.clone())
@@ -1846,12 +1847,21 @@ pub enum FfiType {
     /// Only legal in a layout; the gem has no inline array in a function
     /// signature either.
     Array(Box<FfiType>, usize),
-    /// A struct passed or stored BY VALUE -- what a BARE `FFI::Struct`
-    /// subclass means in a type list (`.by_ref` is the pointer spelling).
+    /// A struct passed or stored BY VALUE -- `.by_value` in a signature, or
+    /// a bare struct name in a LAYOUT field (an inline nested struct).
     /// Carries the full layout: the ABI needs every field's real type, not
     /// just the byte count (a `{float, float}` classifies differently from
     /// `[u8; 8]` on SysV/AArch64).
     Struct(FfiStructLayout),
+    /// A BARE `FFI::Struct` subclass name in a SIGNATURE position --
+    /// ruby-ffi's `StructByReference`, whose ABI type is a POINTER
+    /// (`find_type` wraps a struct class this way; `.by_value` is the
+    /// by-value spelling). An argument takes a struct instance; a RETURN
+    /// comes back as a plain `FFI::Pointer`, never auto-wrapped in the
+    /// class (oracle-verified). Lowering degrades it to `Pointer` at each
+    /// boundary, so codegen never sees it; the class path rides along for
+    /// the one consumer that rejects it (a callback signature).
+    StructRef(String),
     /// A POSIX integer typedef whose width GENUINELY differs between the
     /// targets zeo builds for (`mode_t` is u16 on macOS, u32 on glibc; also
     /// `dev_t`, `suseconds_t`, `clock_t`, ...). Legal in argument/return
@@ -1914,7 +1924,7 @@ impl FfiType {
             FfiType::Float(_) => S::F32,
             FfiType::Bool => S::Bool,
             FfiType::Str => S::Str,
-            FfiType::Pointer | FfiType::Callback(..) => S::Pointer,
+            FfiType::Pointer | FfiType::Callback(..) | FfiType::StructRef(_) => S::Pointer,
             FfiType::Enum(_) => S::I32,
             FfiType::Array(..)
             | FfiType::Struct(_)

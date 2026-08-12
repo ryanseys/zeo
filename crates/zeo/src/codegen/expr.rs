@@ -3355,6 +3355,9 @@ fn ffi_marshal_in(
         Array(..) => unreachable!("an inline array type never reaches a call site"),
         // Intercepted by `emit_ffi_call` before marshaling -- see above.
         Struct(_) => unreachable!("a by-value struct is marshaled by its repr(C) mirror"),
+        // Degraded to `Pointer` (plus the return's class wrap) during
+        // lowering -- see `FfiType::StructRef`.
+        StructRef(_) => unreachable!("a struct reference lowers to a pointer"),
     }
 }
 
@@ -3390,6 +3393,9 @@ fn ffi_wrap_ret(ty: &crate::hir::FfiType) -> TokenStream {
         Array(..) => unreachable!("an inline array type never reaches a call site"),
         // Intercepted by `emit_ffi_call` before wrapping -- see above.
         Struct(_) => unreachable!("a by-value struct return is wrapped by its repr(C) mirror"),
+        // Degraded to `Pointer` (plus the class wrap) during lowering --
+        // see `FfiType::StructRef`.
+        StructRef(_) => unreachable!("a struct reference lowers to a pointer"),
     }
 }
 

@@ -72,7 +72,7 @@ pub(crate) fn as_global_ffi_typedef(
     let [existing, alias] = args.as_slice() else {
         return None;
     };
-    let existing = ffi_type_node(existing, aliases).ok()?;
+    let existing = ffi_type_node(existing, aliases, TypePos::Signature).ok()?;
     let alias = ffi_symbol_str(alias).ok()?;
     Some((existing, alias))
 }
@@ -275,7 +275,7 @@ pub(crate) fn lower_ffi_directive(
                 )
                 .into());
             }
-            let existing = ffi_type_node(&args[0], aliases)?;
+            let existing = ffi_type_node(&args[0], aliases, TypePos::Signature)?;
             let new_name = ffi_symbol_str(&args[1])?;
             hir.declare_ffi_type(&new_name, &existing);
             aliases.insert(new_name, existing);
@@ -350,7 +350,7 @@ pub(crate) fn lower_ffi_directive(
                 )
                 .into());
             }
-            let existing = ffi_type_node(&args[0], aliases)?;
+            let existing = ffi_type_node(&args[0], aliases, TypePos::Signature)?;
             let new_name = ffi_symbol_str(&args[1])?;
             hir.declare_ffi_type(&new_name, &existing);
             aliases.insert(new_name, existing);
@@ -402,7 +402,7 @@ pub(crate) fn lower_ffi_directive(
                 }
             };
             let arg_types = ffi_type_array(params, aliases)?;
-            let ret_ty = ffi_type_node(ret, aliases)?;
+            let ret_ty = ffi_type_node(ret, aliases, TypePos::Signature)?;
             // `:strptr` is an attach_function RETURN device; a callback's CIF
             // marshals through plain kinds and has no pair wrap.
             if arg_types
@@ -428,6 +428,7 @@ pub(crate) fn lower_ffi_directive(
                         .into(),
                 );
             }
+            reject_callback_struct_refs(&arg_types, &ret_ty)?;
             let ty = crate::hir::FfiType::Callback(arg_types, Box::new(ret_ty));
             hir.declare_ffi_type(&tag, &ty);
             aliases.insert(tag, ty);
@@ -607,8 +608,15 @@ pub(crate) fn as_ffi_layout(
                 // names; anything else takes the ordinary type-node path.
                 None => match body_const_type_symbol(hir, body_so_far, ty_node) {
                     Some(sym) => ffi_type_of(&sym, aliases)?,
-                    None => ffi_type_node(ty_node, aliases)?,
+                    None => ffi_type_node(ty_node, aliases, TypePos::Field)?,
                 },
+            };
+            // A TYPEDEF'D struct name resolves through `find_type` to the
+            // by-reference wrapper, so as a field it is a plain pointer --
+            // only the bare CLASS name embeds the struct inline.
+            let ty = match ty {
+                crate::hir::FfiType::StructRef(_) => crate::hir::FfiType::Pointer,
+                t => t,
             };
             Ok((name, ty))
         };
@@ -684,7 +692,13 @@ fn layout_array_type(
     // (`[WCHAR_T, CCHARW_MAX]` -- both halves are constants in ffi-ncurses).
     let elem = match body_const_type_symbol(hir, body_so_far, &elems[0]) {
         Some(sym) => ffi_type_of(&sym, aliases)?,
-        None => ffi_type_node(&elems[0], aliases)?,
+        None => ffi_type_node(&elems[0], aliases, TypePos::Field)?,
+    };
+    // Same degrade as a plain field's: a typedef'd struct name is the
+    // by-reference wrapper, one pointer per element.
+    let elem = match elem {
+        crate::hir::FfiType::StructRef(_) => crate::hir::FfiType::Pointer,
+        t => t,
     };
     let count = ffi_const_int(&elems[1], hir, body_so_far).ok_or_else(|| {
         "an inline array field's element COUNT must be an integer literal, or a constant this \
@@ -1418,10 +1432,26 @@ fn lower_attach_function(
         }
     };
     let (arg_types, variadic) = ffi_arg_types(types_node, aliases)?;
-    let ret = ffi_type_node(ret_node, aliases)?;
+    let ret = ffi_type_node(ret_node, aliases, TypePos::Signature)?;
     let blocking = match options {
         Some(opts) => attach_function_options(opts)?,
         None => false,
+    };
+    // A struct REFERENCE degrades here, at the declaration: an argument is
+    // the plain pointer (`to_pointer` already auto-converts a struct via
+    // `to_ptr`, the gem's own rule), and a RETURN is a plain `FFI::Pointer`
+    // -- oracle-verified, the gem does NOT auto-wrap a returned pointer in
+    // the class. Codegen never sees `StructRef`.
+    let arg_types: Vec<crate::hir::FfiType> = arg_types
+        .into_iter()
+        .map(|t| match t {
+            crate::hir::FfiType::StructRef(_) => crate::hir::FfiType::Pointer,
+            t => t,
+        })
+        .collect();
+    let ret = match ret {
+        crate::hir::FfiType::StructRef(_) => crate::hir::FfiType::Pointer,
+        ret => ret,
     };
     // By-value structs ride the fixed `extern "C"` tier, where rustc owns the
     // ABI -- as arguments AND as a return (the wrapper below views the
@@ -1634,9 +1664,43 @@ fn ffi_symbol_str(node: &Node<'_>) -> PResult<String> {
 ///    the anonymous `Tag = enum(...)` form is referred to afterwards. Only the
 ///    LEAF name is looked up: the table is keyed by the name as declared, and
 ///    these are always written inside the library module that declared them.
+/// A callback naming a struct class stays a clean rejection: ruby-ffi hands
+/// the Proc a STRUCT instance over that parameter, and zeo's trampoline can
+/// only hand it the raw pointer -- silently different behavior, so it fails
+/// at the declaration instead.
+fn reject_callback_struct_refs(
+    arg_types: &[crate::hir::FfiType],
+    ret_ty: &crate::hir::FfiType,
+) -> PResult<()> {
+    if arg_types
+        .iter()
+        .chain(std::iter::once(ret_ty))
+        .any(|t| matches!(t, crate::hir::FfiType::StructRef(_)))
+    {
+        return Err(
+            "a callback signature naming a struct class isn't supported yet (zeo limitation) \
+             -- take `:pointer` and wrap it in the struct class yourself"
+                .to_string()
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+/// Where a type expression is WRITTEN, which decides what a bare struct name
+/// means: ruby-ffi's `find_type` wraps a struct class as `StructByReference`
+/// (a pointer) in a signature/typedef position, while a layout FIELD naming a
+/// struct class embeds it inline, by value.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TypePos {
+    Signature,
+    Field,
+}
+
 fn ffi_type_node(
     node: &Node<'_>,
     aliases: &std::collections::HashMap<String, crate::hir::FfiType>,
+    pos: TypePos,
 ) -> PResult<crate::hir::FfiType> {
     // An INLINE `callback([...], ret)` in a type position -- the anonymous
     // twin of the named `callback :tag, [...], ret` declaration, carrying the
@@ -1653,7 +1717,8 @@ fn ffi_type_node(
                 .into());
         };
         let arg_types = ffi_type_array(params, aliases)?;
-        let ret_ty = ffi_type_node(ret, aliases)?;
+        let ret_ty = ffi_type_node(ret, aliases, TypePos::Signature)?;
+        reject_callback_struct_refs(&arg_types, &ret_ty)?;
         return Ok(crate::hir::FfiType::Callback(arg_types, Box::new(ret_ty)));
     }
     if let Some(call) = node.as_call_node()
@@ -1700,6 +1765,13 @@ fn ffi_type_node(
     if let Some(path) = const_path_string(node) {
         let leaf = path.rsplit("::").next().unwrap_or(&path);
         return match aliases.get(leaf) {
+            // A bare struct name in a signature is ruby-ffi's
+            // `StructByReference` -- a POINTER, never the by-value ABI
+            // (`.by_value` spells that). A LAYOUT field keeps the inline
+            // by-value struct.
+            Some(crate::hir::FfiType::Struct(l)) if pos == TypePos::Signature => {
+                Ok(crate::hir::FfiType::StructRef(l.class_path.clone()))
+            }
             Some(t) => Ok(t.clone()),
             None => Err(format!(
                 "`{path}` isn't a declared FFI type (expected an `enum`/`typedef`/`callback` \
@@ -1737,7 +1809,7 @@ fn ffi_arg_types(
             }
             variadic = true;
         } else {
-            types.push(ffi_type_node(el, aliases)?);
+            types.push(ffi_type_node(el, aliases, TypePos::Signature)?);
         }
     }
     Ok((types, variadic))
@@ -1755,7 +1827,7 @@ fn ffi_type_array(
     array
         .elements()
         .iter()
-        .map(|el| ffi_type_node(&el, aliases))
+        .map(|el| ffi_type_node(&el, aliases, TypePos::Signature))
         .collect()
 }
 
