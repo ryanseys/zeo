@@ -1117,13 +1117,17 @@ fn enum_int_literal(node: &Node<'_>, hir: &Hir, body_so_far: &[NodeId]) -> Optio
 /// Recognize an FFI `layout :name, :type, :name, :type, ...` directive inside a
 /// `class < FFI::Struct` body and return its `(field, type)` pairs, or `None`
 /// if `node` isn't a `layout` call.
+/// One declared field: name, type, and the byte offset the declaration PINNED
+/// it to, if it named one. See [`as_ffi_layout`].
+pub(crate) type FfiField = (String, crate::hir::FfiType, Option<usize>);
+
 pub(crate) fn as_ffi_layout<'a>(
     node: &Node<'a>,
     aliases: &std::collections::HashMap<String, crate::hir::FfiType>,
     hir: &Hir,
     body_so_far: &[NodeId],
     class_body: &[Node<'a>],
-) -> PResult<Option<Vec<(String, crate::hir::FfiType)>>> {
+) -> PResult<Option<Vec<FfiField>>> {
     let Some(call) = node.as_call_node() else {
         return Ok(None);
     };
@@ -1181,11 +1185,12 @@ pub(crate) fn as_ffi_layout<'a>(
     {
         let mut fields = Vec::new();
         for (k, v) in &pairs {
-            fields.push(field(k, v)?);
+            let (name, ty) = field(k, v)?;
+            fields.push((name, ty, None));
         }
         return Ok(Some(fields));
     }
-    if args.is_empty() || !args.len().is_multiple_of(2) {
+    if args.is_empty() {
         return Err("FFI::Struct `layout` expects `:name, :type` pairs"
             .to_string()
             .into());
@@ -1193,8 +1198,36 @@ pub(crate) fn as_ffi_layout<'a>(
     let mut fields = Vec::new();
     let mut i = 0;
     while i < args.len() {
-        fields.push(field(&args[i], &args[i + 1])?);
+        let Some(ty_node) = args.get(i + 1) else {
+            return Err("FFI::Struct `layout` expects `:name, :type` pairs"
+                .to_string()
+                .into());
+        };
+        let (name, ty) = field(&args[i], ty_node)?;
         i += 2;
+        // The gem's THIRD element per field: an explicit byte offset
+        // (`layout :Type, :int16, 0, :Size, :int32, 2` -- every Win32 header
+        // struct in winwindow). Decided by SHAPE first, like an enum member's
+        // value: a name is a symbol or a string, so anything else in that
+        // slot is the offset, and a non-foldable one is an honest rejection
+        // rather than a mis-read field name.
+        let offset =
+            match args.get(i) {
+                Some(n) if n.as_symbol_node().is_none() && n.as_string_node().is_none() => {
+                    i += 1;
+                    let off = ffi_const_int(n, hir, body_so_far).ok_or_else(|| {
+                        format!(
+                            "field `{name}`'s explicit offset must be an integer literal, or a \
+                         constant already set to one (zeo limitation)"
+                        )
+                    })?;
+                    Some(usize::try_from(off).map_err(|_| {
+                        format!("field `{name}`'s explicit offset can't be negative")
+                    })?)
+                }
+                _ => None,
+            };
+        fields.push((name, ty, offset));
     }
     Ok(Some(fields))
 }
@@ -1515,10 +1548,10 @@ end
 "#;
 
 /// Whether `fields` needs the inline-array proxy classes emitted with them.
-pub(crate) fn needs_inline_array_classes(fields: &[(String, crate::hir::FfiType)]) -> bool {
+pub(crate) fn needs_inline_array_classes(fields: &[FfiField]) -> bool {
     fields
         .iter()
-        .any(|(_, t)| matches!(t, crate::hir::FfiType::Array(..)))
+        .any(|(_, t, _)| matches!(t, crate::hir::FfiType::Array(..)))
 }
 
 /// The one place field offsets, total size and alignment are computed --
@@ -1527,7 +1560,7 @@ pub(crate) fn needs_inline_array_classes(fields: &[(String, crate::hir::FfiType)
 /// same struct cannot disagree.
 pub(crate) fn ffi_struct_layout(
     class_path: &str,
-    fields: &[(String, crate::hir::FfiType)],
+    fields: &[FfiField],
     union: bool,
 ) -> PResult<crate::hir::FfiStructLayout> {
     let round_up = |n: usize, a: usize| -> usize { n.div_ceil(a) * a };
@@ -1537,11 +1570,22 @@ pub(crate) fn ffi_struct_layout(
     // widest member.
     let mut widest = 0usize;
     let mut placed = Vec::new();
-    for (name, ty) in fields {
+    for (name, ty, pinned) in fields {
         let (_, _, size, align) = ffi_field_accessor(ty)?;
-        let off = if union { 0 } else { round_up(offset, align) };
+        // A PINNED offset wins outright -- the gem honours the number the
+        // declaration gave, however it sits against the field's alignment.
+        // Size and alignment still come from the fields themselves, which is
+        // why `layout :a, :int16, 0, :b, :int32, 2, :c, :int16, 6` is 8 bytes
+        // aligned to 4 and not 8 bytes aligned to 2 (oracle-verified).
+        let off = match (union, pinned) {
+            (true, _) => 0,
+            (false, Some(off)) => *off,
+            (false, None) => round_up(offset, align),
+        };
         placed.push((name.clone(), ty.clone(), off));
-        offset = off + size;
+        // The struct's extent, not the last field's end: pinned offsets need
+        // not run in order.
+        offset = offset.max(off + size);
         widest = widest.max(size);
         max_align = max_align.max(align);
     }
@@ -1635,6 +1679,7 @@ pub(crate) fn synthesize_ffi_struct(
         placed.push((name.clone(), getter, putter, *off, conv));
     }
     let total = layout.size;
+    let alignment = layout.align;
 
     // An enum field reads back as its member SYMBOL and accepts either a symbol
     // or the raw integer, which is `Enum#from_native`/`#to_native`. A value with
@@ -1775,6 +1820,9 @@ def to_ptr
 end
 def self.size
   {total}
+end
+def self.alignment
+  {alignment}
 end
 def self.offset_of(__ffi_field)
   case __ffi_field
