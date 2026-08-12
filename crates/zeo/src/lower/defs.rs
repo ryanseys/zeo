@@ -2064,6 +2064,54 @@ pub(crate) fn lower_runtime_class_reopen(
     }))
 }
 
+/// The leaf of a `class self::Task` / `module self::Base` definition, whose
+/// NAMESPACE is the runtime `self` rather than a constant path. Written
+/// inside a hook block (`plugin_included do ... end`, ActiveSupport::
+/// Concern's `included do ... end`), where `self` is whichever class is
+/// being extended -- dk-dumpdb gives every including script its own
+/// `Task` subclass this way. `None` for every ordinary definition name.
+fn self_scoped_definition_name(path: &Node<'_>) -> Option<String> {
+    let cp = path.as_constant_path_node()?;
+    cp.parent()?.as_self_node()?;
+    Some(String::from_utf8_lossy(cp.name()?.as_slice()).into_owned())
+}
+
+/// `class self::Task < Super ... end` -> `self::Task = Class.new(Super) {
+/// body }`, and the `module` half -> `Module.new { body }`. The runtime
+/// namespace is what makes the static path impossible: the constant lands
+/// on whatever `self` is when the enclosing block RUNS, so there is no
+/// compile-time class to register. Same desugar the runtime-superclass form
+/// takes (`lower_runtime_class`), and the same body treatment with it.
+fn lower_self_scoped_definition(
+    result: &ParseResult,
+    hir: &mut Hir,
+    leaf: String,
+    body: Option<Node<'_>>,
+    superclass: Option<NodeId>,
+) -> PResult<NodeId> {
+    let block = lower_runtime_class_body(result, hir, &leaf, body)?;
+    let (builder, args) = match superclass {
+        Some(parent) => ("Class", vec![ArrayElem::Single(parent)]),
+        None => ("Module", Vec::new()),
+    };
+    let builder_ref = hir.push(HirNode::ClassRef(builder.to_string()));
+    let value = hir.push(HirNode::Call {
+        receiver: Some(builder_ref),
+        name: "new".to_string(),
+        args,
+        kwargs: Vec::new(),
+        block: Some(block),
+        block_arg: None,
+        safe: false,
+    });
+    let scope = hir.push(HirNode::SelfRef);
+    Ok(hir.push(HirNode::DynConstWrite {
+        scope,
+        name: leaf,
+        value,
+    }))
+}
+
 /// The shared body half of the two runtime-class desugars: lowers the class
 /// body and wraps it as the block those forms pass. See `lower_runtime_class`
 /// for why a local write in the body is rejected rather than diverging.
@@ -3869,6 +3917,21 @@ pub(crate) fn try_lower_definition(
     node: &Node<'_>,
 ) -> PResult<Option<NodeId>> {
     if let Some(class) = node.as_class_node() {
+        // `class self::Task` -- see `self_scoped_definition_name`.
+        if let Some(leaf) = self_scoped_definition_name(&class.constant_path()) {
+            let parent = match class.superclass() {
+                Some(sc) => lower_node(result, hir, &sc)?,
+                None => hir.push(HirNode::ClassRef("Object".to_string())),
+            };
+            return lower_self_scoped_definition(
+                result,
+                hir,
+                leaf,
+                class.body(),
+                Some(parent),
+            )
+            .map(Some);
+        }
         let name = constant_path_name(&class.constant_path())?;
         // A superclass that isn't a constant path (`class Point <
         // Struct.new(:x, :y)`) names a class that only comes into existence at
@@ -3937,6 +4000,10 @@ pub(crate) fn try_lower_definition(
     // today's existing top-level-only class restriction) -- `constant_name`
     // already rejects anything but a plain `ConstantReadNode`.
     if let Some(module) = node.as_module_node() {
+        // `module self::Base` -- the module half of the same shape.
+        if let Some(leaf) = self_scoped_definition_name(&module.constant_path()) {
+            return lower_self_scoped_definition(result, hir, leaf, module.body(), None).map(Some);
+        }
         let name = constant_path_name(&module.constant_path())?;
         let body = lower_class_body(result, hir, module.body(), None, Some(&name))?;
         hir.record_class_def(&name);
