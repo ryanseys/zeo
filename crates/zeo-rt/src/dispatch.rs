@@ -3930,14 +3930,20 @@ thread_local! {
     static CURRENT_METHOD: std::cell::Cell<Option<Symbol>> = const { std::cell::Cell::new(None) };
 }
 
-/// Whether `ZEO_ARITY_DEBUG` is set -- read once, so `note_dispatch` costs a
+/// Whether `ZEO_ARITY_DEBUG` is set -- read once, so the cold attribution
+/// path (`arity_debug_context`) costs a
 /// bool load per dispatch instead of an unconditional thread-local write.
 static ARITY_DEBUG: std::sync::LazyLock<bool> =
     std::sync::LazyLock::new(|| std::env::var_os("ZEO_ARITY_DEBUG").is_some());
 
-/// Record the method being dispatched (for `ZEO_ARITY_DEBUG`).
+/// Record the method being dispatched (for `ZEO_ARITY_DEBUG`). The guard bit
+/// rides in the gate byte the dispatch path already loads
+/// (`runtime_meta::gates_arity_debug`, armed once at startup) -- the old
+/// `LazyLock<bool>` was a second hot-path flag word, the exact shape that
+/// once measured 2.6% on dispatch.
+#[inline]
 fn note_dispatch(name: Symbol) {
-    if *ARITY_DEBUG {
+    if crate::runtime_meta::gates_arity_debug(crate::runtime_meta::gates()) {
         CURRENT_METHOD.with(|c| c.set(Some(name)));
     }
 }

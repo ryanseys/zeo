@@ -564,7 +564,13 @@ fn emit_array_iter_splice(
     let setup = match mode {
         ArrayIterMode::Each { .. } => quote! {},
         ArrayIterMode::Map | ArrayIterMode::Filter { .. } => {
-            quote! { let mut __iter_out: Vec<zeo_rt::RubyValue> = Vec::new(); }
+            // Sized to the source: exact for map, an upper bound for the
+            // filter modes -- either way the growth reallocations (and their
+            // per-element RubyValue moves) disappear.
+            quote! {
+                let mut __iter_out: Vec<zeo_rt::RubyValue> =
+                    Vec::with_capacity(__iter_arr.lock().len());
+            }
         }
         ArrayIterMode::Sum => {
             quote! { let mut __iter_acc = zeo_rt::SumAcc::new(zeo_rt::RubyValue::Int(0)); }
@@ -4152,7 +4158,10 @@ fn dispatch(
     // nowhere raises NoMethodError at the moment the call runs, which is
     // what real Ruby does anyway.
     let recv_boxed = box_if_object_typed(cx, recv_id, recv_expr.clone());
-    let name_expr = quote! { zeo_rt::Symbol::intern(#name) };
+    // Pooled, not `Symbol::intern(...)`: the intern is a global lock + hash
+    // probe PER CALL, and this is the general dynamic path the object-graph
+    // benchmarks live in.
+    let name_expr = crate::codegen::pooled_sym(name);
     let arg_exprs = args.iter().map(|&a| {
         let e = emit_expr(cx, a);
         box_if_object_typed(cx, a, e)

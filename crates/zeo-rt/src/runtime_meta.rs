@@ -247,6 +247,10 @@ static GATES: AtomicU8 = AtomicU8::new(0);
 const GATE_OVERLAY: u8 = 1;
 const GATE_PENDING: u8 = 2;
 const GATE_MOVED: u8 = 4;
+/// `ZEO_ARITY_DEBUG` is armed -- folded into the gate byte the dispatch path
+/// already loads, per the standing rule: a second flag word beside the gates
+/// measured 2.6% on dispatch.
+const GATE_ARITY_DEBUG: u8 = 8;
 const GATE_LIVE_MASK: u8 = GATE_OVERLAY | GATE_PENDING;
 static OVERLAY: OnceLock<OverlayMaps> = OnceLock::new();
 
@@ -294,6 +298,17 @@ pub(crate) fn gates_live(g: u8) -> bool {
 #[inline(always)]
 pub(crate) fn gates_moved(g: u8) -> bool {
     g & GATE_MOVED != 0
+}
+
+#[inline(always)]
+pub(crate) fn gates_arity_debug(g: u8) -> bool {
+    g & GATE_ARITY_DEBUG != 0
+}
+
+/// Arm the `ZEO_ARITY_DEBUG` breadcrumb bit -- called once from program
+/// startup ([`crate::exec::run_main`]) when the variable is set.
+pub(crate) fn arm_arity_debug() {
+    GATES.fetch_or(GATE_ARITY_DEBUG, Ordering::Release);
 }
 
 /// Whether any `Ractor` move has ever poisoned an object -- the cheap gate

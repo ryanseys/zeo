@@ -49,6 +49,11 @@ pub fn run_main<F>(body: F) -> Result<RubyValue, Signal>
 where
     F: FnOnce() -> Result<RubyValue, Signal> + Send + 'static,
 {
+    // Arm the `ZEO_ARITY_DEBUG` breadcrumb before any Ruby code dispatches --
+    // the bit rides in the dispatch gate byte (see `runtime_meta`).
+    if std::env::var_os("ZEO_ARITY_DEBUG").is_some() {
+        crate::runtime_meta::arm_arity_debug();
+    }
     // A dedicated thread rather than the OS main: the main thread's stack is
     // a ulimit the program doesn't control (8MB typically), and unoptimized
     // native frames blow through it at recursion depths CRuby handles
