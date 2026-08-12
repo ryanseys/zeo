@@ -262,9 +262,39 @@ pub(crate) fn splat_local_elements<'a>(
 ) -> Option<Vec<Node<'a>>> {
     let [only] = args else { return None };
     let name = local_read_name(&only.as_splat_node()?.expression()?)?;
-    let limit = directive.location().start_offset();
+    local_array_elements(&name, body, directive.location().start_offset())
+}
+
+/// [`splat_local_elements`] for a list named WITHOUT a splat -- `enum :colour,
+/// members` hands the array over directly.
+pub(crate) fn local_array_elements<'a>(
+    name: &str,
+    body: &[Node<'a>],
+    before: usize,
+) -> Option<Vec<Node<'a>>> {
     let mut acc: Option<Vec<Node<'a>>> = None;
-    replay_local_array(&name, body.iter(), limit, &mut acc).then_some(acc)?
+    replay_local_array(name, body.iter(), before, &mut acc).then_some(acc)?
+}
+
+/// `%w(160k 320k 96k).map(&:to_sym)` -- an enum member list written as a word
+/// array. `String#to_sym` is what `ffi`'s enum does to a string member anyway,
+/// so the mapped list IS the literal one; spotify spells four of its enums
+/// this way. The elements come back as the STRING nodes, which every member
+/// reader already accepts.
+fn word_list_to_syms<'a>(node: &Node<'a>) -> Option<Vec<Node<'a>>> {
+    let call = node.as_call_node()?;
+    if call.name().as_slice() != b"map" || call.arguments().is_some() {
+        return None;
+    }
+    let block = call.block()?.as_block_argument_node()?.expression()?;
+    if block.as_symbol_node()?.unescaped() != b"to_sym" {
+        return None;
+    }
+    let elements: Vec<Node<'a>> = call.receiver()?.as_array_node()?.elements().iter().collect();
+    elements
+        .iter()
+        .all(|e| e.as_string_node().is_some() || e.as_symbol_node().is_some())
+        .then_some(elements)
 }
 
 /// The C symbol name an FFI declaration position spells, folding the
@@ -637,9 +667,9 @@ pub(crate) fn lower_ffi_directive(
         let (tag, members) = match (args.first(), args.get(1)) {
             (Some(t), Some(l)) if t.as_symbol_node().is_some() && l.as_array_node().is_some() => (
                 Some(ffi_symbol_str(t)?),
-                parse_enum_members(std::slice::from_ref(l), hir, out)?,
+                parse_enum_members(std::slice::from_ref(l), hir, out, class_body)?,
             ),
-            _ => (None, parse_enum_members(&args, hir, out)?),
+            _ => (None, parse_enum_members(&args, hir, out, class_body)?),
         };
         let ty = crate::hir::FfiType::Enum(members);
         if let Some(tag) = tag {
@@ -769,7 +799,7 @@ pub(crate) fn lower_ffi_directive(
             let (tag, members) = match (args.first(), args.get(1)) {
                 (Some(n), Some(l)) if n.as_symbol_node().is_some() => (
                     ffi_symbol_str(n)?,
-                    parse_enum_members(std::slice::from_ref(l), hir, out)?,
+                    parse_enum_members(std::slice::from_ref(l), hir, out, class_body)?,
                 ),
                 // A NAMELESS `enum [:a, :b]` statement registers no type
                 // name, so nothing later can reference it in a type
@@ -777,7 +807,7 @@ pub(crate) fn lower_ffi_directive(
                 // arguments typed with THAT enum -- is unreachable without
                 // a name. Validate the members and consume the statement.
                 (Some(l), None) if l.as_array_node().is_some() => {
-                    parse_enum_members(std::slice::from_ref(l), hir, out)?;
+                    parse_enum_members(std::slice::from_ref(l), hir, out, class_body)?;
                     return Ok(true);
                 }
                 _ => {
@@ -859,15 +889,39 @@ pub(crate) fn lower_ffi_directive(
 /// omitted value auto-increments from the previous (starting at 0), exactly as
 /// the `ffi` gem's `enum` does. A value may also be a constant this class body
 /// already set to an integer (`ffi_const_int`).
-fn parse_enum_members(
-    args: &[Node<'_>],
+fn parse_enum_members<'a>(
+    args: &[Node<'a>],
     hir: &Hir,
     body_so_far: &[NodeId],
+    class_body: &[Node<'a>],
 ) -> PResult<Vec<(String, i64)>> {
+    // NOT splat-expanded: `enum(:level, *levels)` is the gem's ANONYMOUS
+    // form (every argument is a member, `:level` included), not a named enum
+    // over the array -- oracle-checked, it raises "unable to resolve type
+    // 'level'" at the first signature that names the tag.
+    //
     // The members are either one literal array or the argument list itself --
     // `enum :tag, [:a, :b]` and `enum(:a, :b)` both reach here.
-    let unwrapped: Vec<Node<'_>>;
-    let elems: &[Node<'_>] = match args {
+    let unwrapped: Vec<Node<'a>>;
+    let elems: &[Node<'a>] = match args {
+        [one] if word_list_to_syms(one).is_some() => {
+            unwrapped = word_list_to_syms(one).expect("just matched");
+            &unwrapped
+        }
+        // `enum :colour, members` -- the list is a body-local the class body
+        // built up, the same value `layout(*members)` reads.
+        [one]
+            if local_read_name(one)
+                .and_then(|n| {
+                    local_array_elements(&n, class_body, one.location().start_offset())
+                })
+                .is_some() =>
+        {
+            unwrapped = local_read_name(one)
+                .and_then(|n| local_array_elements(&n, class_body, one.location().start_offset()))
+                .expect("just matched");
+            &unwrapped
+        }
         [one] if one.as_array_node().is_some() => {
             unwrapped = one
                 .as_array_node()
