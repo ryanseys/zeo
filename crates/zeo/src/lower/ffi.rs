@@ -290,7 +290,12 @@ fn word_list_to_syms<'a>(node: &Node<'a>) -> Option<Vec<Node<'a>>> {
     if block.as_symbol_node()?.unescaped() != b"to_sym" {
         return None;
     }
-    let elements: Vec<Node<'a>> = call.receiver()?.as_array_node()?.elements().iter().collect();
+    let elements: Vec<Node<'a>> = call
+        .receiver()?
+        .as_array_node()?
+        .elements()
+        .iter()
+        .collect();
     elements
         .iter()
         .all(|e| e.as_string_node().is_some() || e.as_symbol_node().is_some())
@@ -543,8 +548,24 @@ fn local_mutated(name: &str, stmt: &Node<'_>) -> bool {
     /// Receiver-position calls that change the object in place. Any `!`
     /// method counts too; everything else leaves the value alone.
     const MUTATORS: &[&str] = &[
-        "<<", "push", "append", "concat", "replace", "insert", "prepend", "clear", "[]=", "pop",
-        "shift", "unshift", "delete", "delete_at", "delete_if", "keep_if", "fill", "force_encoding",
+        "<<",
+        "push",
+        "append",
+        "concat",
+        "replace",
+        "insert",
+        "prepend",
+        "clear",
+        "[]=",
+        "pop",
+        "shift",
+        "unshift",
+        "delete",
+        "delete_at",
+        "delete_if",
+        "keep_if",
+        "fill",
+        "force_encoding",
     ];
     struct Search<'n> {
         name: &'n str,
@@ -912,9 +933,7 @@ fn parse_enum_members<'a>(
         // built up, the same value `layout(*members)` reads.
         [one]
             if local_read_name(one)
-                .and_then(|n| {
-                    local_array_elements(&n, class_body, one.location().start_offset())
-                })
+                .and_then(|n| local_array_elements(&n, class_body, one.location().start_offset()))
                 .is_some() =>
         {
             unwrapped = local_read_name(one)
@@ -1570,9 +1589,9 @@ pub(crate) fn synthesize_ffi_struct(
                 // A struct element passes its CLASS instead of a getter pair:
                 // the proxy then views each slot in place.
                 Conv::Array(class, count, esize, elem_class) => match elem_class {
-                    Some(ec) => format!(
-                        "{class}.new(@__ffi_ptr, {off}, {count}, nil, nil, {esize}, {ec})"
-                    ),
+                    Some(ec) => {
+                        format!("{class}.new(@__ffi_ptr, {off}, {count}, nil, nil, {esize}, {ec})")
+                    }
                     None => format!(
                         "{class}.new(@__ffi_ptr, {off}, {count}, :{getter}, :{putter}, {esize})"
                     ),
@@ -2194,9 +2213,11 @@ fn ffi_type_node(
     {
         let args: Vec<Node<'_>> = arguments.arguments().iter().collect();
         let [params, ret] = args.as_slice() else {
-            return Err("callback expects `[arg_types], return_type` in a type position"
-                .to_string()
-                .into());
+            return Err(
+                "callback expects `[arg_types], return_type` in a type position"
+                    .to_string()
+                    .into(),
+            );
         };
         let arg_types = ffi_type_array(params, aliases)?;
         let ret_ty = ffi_type_node(ret, aliases, TypePos::Signature)?;

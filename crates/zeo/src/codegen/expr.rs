@@ -811,7 +811,11 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         // (oracle-checked). A body with no enclosing class is `main`'s, whose
         // constants live on Object.
         HirNode::ConstantVisibility { .. } => {
-            let cid = cx.self_class().cid.unwrap_or(crate::compiler::OBJECT_CLASS).0;
+            let cid = cx
+                .self_class()
+                .cid
+                .unwrap_or(crate::compiler::OBJECT_CLASS)
+                .0;
             quote! { zeo_rt::RubyValue::Class(zeo_rt::ClassId(#cid)) }
         }
         HirNode::SelfRef => {

@@ -4246,12 +4246,7 @@ fn defer_guarded_mixin(
 /// rewrote the branch's directives to. Both branches are walked: either may
 /// run. A module the send names but zeo cannot resolve widens to every name,
 /// exactly as `defer_singleton_prepend` widens.
-fn defer_runtime_mixin_sends(
-    compiler: &mut Compiler,
-    stmt: NodeId,
-    cref: &[ClassId],
-    box_id: u32,
-) {
+fn defer_runtime_mixin_sends(compiler: &mut Compiler, stmt: NodeId, cref: &[ClassId], box_id: u32) {
     /// Whether the receiver is a mixin-capable `self` -- absent (the class
     /// body's own `self`) or the receiverless `singleton_class` read the
     /// singleton spelling dispatches through.

@@ -3283,11 +3283,9 @@ pub fn send_super_class_from(
     {
         // Another module prepended the same name BELOW this one resumes
         // first; only past the whole stack does the host's own row answer.
-        if let Some(p) = crate::runtime_meta::singleton_prepend_super_below(
-            ancestors[pos],
-            defining_class,
-            name,
-        ) {
+        if let Some(p) =
+            crate::runtime_meta::singleton_prepend_super_below(ancestors[pos], defining_class, name)
+        {
             return p.call_with_self_and_block(&RubyValue::Class(recv_class), args, block);
         }
         return send_class_walking_inner(recv_class, pos, true, name, args, block);

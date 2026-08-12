@@ -1153,10 +1153,7 @@ fn lower_call_node(
                 }
                 let class_ref = hir.push(HirNode::ClassRef("ArgumentError".to_string()));
                 let message = hir.push(HirNode::StringLit(vec![StrPart::Lit(msg)]));
-                stmts.push(hir.push(HirNode::Raise(
-                    vec![class_ref, message],
-                    RaiseCause::Absent,
-                )));
+                stmts.push(hir.push(HirNode::Raise(vec![class_ref, message], RaiseCause::Absent)));
                 Ok(hir.push(HirNode::Seq(stmts)))
             };
         if positional.len() + collapsed > 3 {

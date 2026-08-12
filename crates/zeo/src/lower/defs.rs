@@ -1285,7 +1285,9 @@ fn guard_string(node: &Node<'_>) -> Option<String> {
     // `FFI::Platform::ARCH == 'x86_64'` -- the ffi gem's own strings, baked
     // from the same platform the seeded constants come from.
     if let Some(path) = crate::lower::ffi::const_path_string(node)
-        && let Some(leaf) = path.trim_start_matches("::").strip_prefix("FFI::Platform::")
+        && let Some(leaf) = path
+            .trim_start_matches("::")
+            .strip_prefix("FFI::Platform::")
     {
         return crate::guard_fold::ffi_platform_string(leaf);
     }
@@ -3149,7 +3151,8 @@ fn lower_one_class_body_stmt<'a>(
                 }
                 Some(None) => {}
                 _ => {
-                    hir.ffi_symbol_consts.insert(name.clone(), Some(val.clone()));
+                    hir.ffi_symbol_consts
+                        .insert(name.clone(), Some(val.clone()));
                 }
             }
             // A symbol that spells a TYPE joins the declared vocabulary too,
@@ -4094,14 +4097,8 @@ pub(crate) fn try_lower_definition(
                 Some(sc) => lower_node(result, hir, &sc)?,
                 None => hir.push(HirNode::ClassRef("Object".to_string())),
             };
-            return lower_self_scoped_definition(
-                result,
-                hir,
-                leaf,
-                class.body(),
-                Some(parent),
-            )
-            .map(Some);
+            return lower_self_scoped_definition(result, hir, leaf, class.body(), Some(parent))
+                .map(Some);
         }
         let name = constant_path_name(&class.constant_path())?;
         // A superclass that isn't a constant path (`class Point <
