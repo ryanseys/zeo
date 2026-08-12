@@ -965,6 +965,34 @@ fn entry_point_under(lib: &Path, name: &str) -> Option<String> {
     nested.into_iter().find(|path| squash(path) == target)
 }
 
+/// The ruby programs a gem ships as EXECUTABLES: files directly under
+/// `bin/` or `exe/` whose first line is a shebang naming ruby. A CLI-only
+/// gem (darb, the whole dorian-* family) publishes nothing else -- no `.rb`
+/// anywhere -- and read as a meta-gem before this looked. Sorted for a
+/// deterministic program.
+fn ruby_executables(dir: &Path) -> Vec<PathBuf> {
+    use std::io::Read;
+    let mut scripts: Vec<PathBuf> = ["bin", "exe"]
+        .iter()
+        .filter_map(|b| std::fs::read_dir(dir.join(b)).ok())
+        .flat_map(|entries| entries.filter_map(Result::ok))
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+        .map(|e| e.path())
+        .filter(|p| {
+            let Ok(mut f) = std::fs::File::open(p) else {
+                return false;
+            };
+            let mut head = [0u8; 128];
+            let n = f.read(&mut head).unwrap_or(0);
+            let head = String::from_utf8_lossy(&head[..n]);
+            let first = head.lines().next().unwrap_or("");
+            first.starts_with("#!") && first.contains("ruby")
+        })
+        .collect();
+    scripts.sort();
+    scripts
+}
+
 /// Load-path roots DISCOVERED from the archive when every declared
 /// `require_path` is missing. In order: the gem directory itself when bare
 /// `.rb` files sit at its top (the archive root IS the load path), a nested
@@ -1347,7 +1375,9 @@ fn probe(
         roots = discovered_roots(dir);
         discovered = roots.clone();
     }
-    if roots.is_empty() {
+    // A gem with no load path anywhere can still publish EXECUTABLES; those
+    // proceed to the program builder below, which `load`s them.
+    if roots.is_empty() && ruby_executables(dir).is_empty() {
         return Verdict::stopped(Stage::Unpack, rootless_outcome(dir, &meta));
     }
     // A DECLARED extension is not decisive either, which is why nothing checks
@@ -1365,9 +1395,12 @@ fn probe(
     // The name ladder first; when no file carries the gem's name, require
     // every top-level file the roots ship; when there is no top-level file
     // at all (the pre-convention `lib/<dir>/` layout), the gem's own require
-    // graph names its roots. All three keep the rule the doc on
-    // `entry_point` protects: every feature the program names is a file
-    // that exists, so the compile measures the gem and not a guess.
+    // graph names its roots; and when the gem publishes NO library at all,
+    // its ruby-shebang executables are the surface (`load`ed by absolute
+    // path, exactly as a RubyGems binstub runs them -- `resolve_load`
+    // splices a literal absolute path statically). All four keep the rule
+    // the doc on `entry_point` protects: every feature the program names is
+    // a file that exists, so the compile measures the gem and not a guess.
     let features = match entry_point(&roots, name) {
         Some(feature) => vec![feature],
         None => {
@@ -1375,16 +1408,24 @@ fn probe(
             if all.is_empty() {
                 all = require_graph_root_features(&roots);
             }
-            if all.is_empty() {
-                return Verdict::stopped(Stage::Unpack, Outcome::NoEntryPoint);
-            }
             all
         }
     };
-    let program = features
-        .iter()
-        .map(|f| format!("require {f:?}\n"))
-        .collect::<String>();
+    let program = if features.is_empty() {
+        let scripts = ruby_executables(dir);
+        if scripts.is_empty() {
+            return Verdict::stopped(Stage::Unpack, Outcome::NoEntryPoint);
+        }
+        scripts
+            .iter()
+            .map(|p| format!("load {:?}\n", p.to_string_lossy()))
+            .collect::<String>()
+    } else {
+        features
+            .iter()
+            .map(|f| format!("require {f:?}\n"))
+            .collect::<String>()
+    };
     // Per-gem, so concurrent workers never share one. Removed on every exit
     // path below except the one that stores it.
     let emitted_path = std::env::temp_dir().join(format!("zeo-gem-probe-{name}-{version}.rs"));
@@ -3967,6 +4008,24 @@ mod tests {
         assert_eq!(
             entry_point(&under, "ruby-progressbar").as_deref(),
             Some("ruby_progressbar")
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A CLI-only gem's published surface is its ruby-shebang executables;
+    /// a shell script or a binary in `bin/` is nobody's Ruby.
+    #[test]
+    fn ruby_executables_read_the_shebang() {
+        let root = scratch("exe-gems");
+        let dir = vendor_dir(&root).join("cli-only");
+        std::fs::create_dir_all(dir.join("bin")).unwrap();
+        std::fs::write(dir.join("bin/tool"), "#!/usr/bin/env ruby\nputs 1\n").unwrap();
+        std::fs::write(dir.join("bin/helper.sh"), "#!/bin/sh\necho 1\n").unwrap();
+        std::fs::create_dir_all(dir.join("exe")).unwrap();
+        std::fs::write(dir.join("exe/other"), "#!/usr/bin/ruby -w\nputs 2\n").unwrap();
+        assert_eq!(
+            ruby_executables(&dir),
+            vec![dir.join("bin/tool"), dir.join("exe/other")]
         );
         let _ = std::fs::remove_dir_all(&root);
     }
