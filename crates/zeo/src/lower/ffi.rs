@@ -846,7 +846,7 @@ pub(crate) fn lower_ffi_directive(
                         .into());
                 }
             };
-            let arg_types = ffi_type_array(params, aliases)?;
+            let arg_types = ffi_type_array(params, aliases, class_body)?;
             let ret_ty = ffi_type_node(ret, aliases, TypePos::Signature)?;
             // `:strptr` is an attach_function RETURN device; a callback's CIF
             // marshals through plain kinds and has no pair wrap.
@@ -2061,7 +2061,7 @@ fn lower_attach_function(
             .into());
         }
     };
-    let (arg_types, variadic) = ffi_arg_types(types_node, aliases)?;
+    let (arg_types, variadic) = ffi_arg_types(types_node, aliases, class_body)?;
     let ret = ffi_type_node(ret_node, aliases, TypePos::Signature)?;
     let blocking = match options {
         Some(opts) => attach_function_options(opts, class_body)?,
@@ -2353,7 +2353,12 @@ fn ffi_type_node(
                     .into(),
             );
         };
-        let arg_types = ffi_type_array(params, aliases)?;
+        // No class body to replay here: `ffi_type_node` is reached from every
+        // type position, and threading one through all of them for the
+        // anonymous-callback arm alone is not worth it. The literal, `%i[..]`
+        // and `[..] * n` spellings still resolve; only a body-local list
+        // written inside an INLINE callback would not.
+        let arg_types = ffi_type_array(params, aliases, &[])?;
         let ret_ty = ffi_type_node(ret, aliases, TypePos::Signature)?;
         reject_callback_struct_refs(&arg_types, &ret_ty)?;
         return Ok(crate::hir::FfiType::Callback(arg_types, Box::new(ret_ty)));
@@ -2424,14 +2429,13 @@ fn ffi_type_node(
 /// `:varargs` marker: `[:string, :varargs]` -> `([Str], true)`. `:varargs` is
 /// only legal as the final element (a variadic function's fixed prototype ends
 /// before it); anywhere else is a clean rejection.
-fn ffi_arg_types(
-    node: &Node<'_>,
+fn ffi_arg_types<'a>(
+    node: &Node<'a>,
     aliases: &std::collections::HashMap<String, crate::hir::FfiType>,
+    class_body: &[Node<'a>],
 ) -> PResult<(Vec<crate::hir::FfiType>, bool)> {
-    let array = node
-        .as_array_node()
+    let (elems, repeat) = type_list(node, class_body)
         .ok_or_else(|| "attach_function's argument list must be a literal array".to_string())?;
-    let elems: Vec<Node<'_>> = array.elements().iter().collect();
     let mut types = Vec::new();
     let mut variadic = false;
     for (i, el) in elems.iter().enumerate() {
@@ -2449,23 +2453,68 @@ fn ffi_arg_types(
             types.push(ffi_type_node(el, aliases, TypePos::Signature)?);
         }
     }
-    Ok((types, variadic))
+    Ok((repeated(types, repeat), variadic))
 }
 
-/// `[:int, :string]` -> `[Int(32), Str]`. The argument-type list of an
-/// `attach_function` (a literal array of type symbols).
-fn ffi_type_array(
-    node: &Node<'_>,
+/// `list` laid end to end `n` times. `[T]::repeat` wants `Copy`, which an
+/// `FfiType` carrying a whole struct layout is not.
+fn repeated(list: Vec<crate::hir::FfiType>, n: usize) -> Vec<crate::hir::FfiType> {
+    match n {
+        1 => list,
+        _ => (0..n).flat_map(|_| list.iter().cloned()).collect(),
+    }
+}
+
+/// The ELEMENTS of a declared type list, and how many times the list repeats.
+///
+/// Three spellings beyond the plain literal array, all of them a gem writing
+/// out a prototype it did not want to spell twice: `[:pointer] * 13` (rbmetis'
+/// METIS bindings, csspool's croco callbacks), a body-local the class set to
+/// one (`params = %i[string int int]`, ires), and a `%i[...]` word list. The
+/// repeat rides back as a COUNT rather than repeated nodes: a prism `Node` is
+/// not `Clone`, and repeating the resolved types is the same answer.
+fn type_list<'a>(node: &Node<'a>, class_body: &[Node<'a>]) -> Option<(Vec<Node<'a>>, usize)> {
+    if let Some(syms) = word_list_to_syms(node) {
+        return Some((syms, 1));
+    }
+    if let Some(array) = node.as_array_node() {
+        return Some((array.elements().iter().collect(), 1));
+    }
+    if let Some(name) = local_read_name(node)
+        && let Some(elems) = local_array_elements(&name, class_body, node.location().start_offset())
+    {
+        return Some((elems, 1));
+    }
+    // `[...] * n`
+    let call = node.as_call_node()?;
+    if call.name().as_slice() != b"*" {
+        return None;
+    }
+    let args: Vec<Node<'a>> = call.arguments()?.arguments().iter().collect();
+    let [count] = args.as_slice() else {
+        return None;
+    };
+    let value = count.as_integer_node()?.value();
+    let (negative, digits) = value.to_u32_digits();
+    let count = usize::try_from(assemble_i64(negative, digits)?).ok()?;
+    let (elems, _) = type_list(&call.receiver()?, class_body)?;
+    Some((elems, count))
+}
+
+/// `[:int, :string]` -> `[Int(32), Str]`. A declared type list in a position
+/// with no `:varargs` marker (a `callback` signature).
+fn ffi_type_array<'a>(
+    node: &Node<'a>,
     aliases: &std::collections::HashMap<String, crate::hir::FfiType>,
+    class_body: &[Node<'a>],
 ) -> PResult<Vec<crate::hir::FfiType>> {
-    let array = node
-        .as_array_node()
+    let (elems, repeat) = type_list(node, class_body)
         .ok_or_else(|| "attach_function's argument list must be a literal array".to_string())?;
-    array
-        .elements()
+    let types: Vec<crate::hir::FfiType> = elems
         .iter()
-        .map(|el| ffi_type_node(&el, aliases, TypePos::Signature))
-        .collect()
+        .map(|el| ffi_type_node(el, aliases, TypePos::Signature))
+        .collect::<PResult<_>>()?;
+    Ok(repeated(types, repeat))
 }
 
 /// Map a real `ffi`-gem type keyword to our `FfiType` -- the scalar keyword

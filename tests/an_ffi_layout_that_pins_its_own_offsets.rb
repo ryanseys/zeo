@@ -70,3 +70,19 @@ end
 
 p Net::SockBuf.size
 p Net::SockBuf.offset_of(:tag)
+
+# And the argument LIST itself, when the gem did not want to spell a prototype
+# twice: `[:pointer] * 13` (rbmetis' METIS bindings, csspool's croco
+# callbacks) and a body-local `%i[...]` (ires).
+module Repeated
+  extend FFI::Library
+  ffi_lib FFI::Library::LIBC
+
+  params = %i[int]
+  attach_function :abs, params, :int
+  attach_function :labs, [:long] * 1, :long
+  callback :pair, [:pointer] * 2, :void
+end
+
+p Repeated.abs(-4)
+p Repeated.labs(-5)
