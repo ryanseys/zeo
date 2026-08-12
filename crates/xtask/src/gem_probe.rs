@@ -1140,8 +1140,7 @@ fn probe(
         // reads into memory, which for the largest gems was a gigabyte in each
         // of them. Streamed to a file, the child's peak drops by a third and
         // this side holds nothing.
-        .arg("--emit-rust")
-        .arg(&emitted_path);
+        .arg(format!("--emit-rust={}", emitted_path.display()));
     budget.apply(&mut cmd);
     let started = std::time::Instant::now();
     let emitted = crate::exec::run_with_timeout(cmd, None, timeout);

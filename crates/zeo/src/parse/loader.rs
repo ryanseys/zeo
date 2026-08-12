@@ -1874,13 +1874,12 @@ pub(super) fn bundled_gems_dir() -> Option<PathBuf> {
     dir.is_dir().then_some(dir)
 }
 
-/// Whether `ZEO_STRICT_AMBIGUOUS_REQUIRE=1` is set: a feature found in
+/// Whether `ZEO_DEBUG=strict-ambiguous-require` is set: a feature found in
 /// multiple gems becomes the old hard compile error instead of resolving to
 /// the precedence-first provider with a warning. Real Ruby never errors here
 /// (see `resolve_require_uncached`'s multi-hit arm), so strictness is opt-in.
 fn strict_ambiguous_require() -> bool {
-    static V: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *V.get_or_init(|| std::env::var_os("ZEO_STRICT_AMBIGUOUS_REQUIRE").is_some())
+    crate::debug_flags::debug(crate::debug_flags::DebugFlag::StrictAmbiguousRequire)
 }
 
 /// The lockfile's require-precedence ranks: gem name -> position, roots

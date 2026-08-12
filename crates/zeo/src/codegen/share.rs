@@ -111,11 +111,10 @@ impl SharedBodies {
         self.container.as_ref()
     }
 
-    /// `ZEO_SHARE=0` restores per-class materialization -- a one-line field
-    /// diagnosis for anything this file is blamed for.
+    /// `ZEO_DEBUG=no-share` restores per-class materialization -- a one-line
+    /// field diagnosis for anything this file is blamed for.
     fn disabled() -> bool {
-        static D: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        *D.get_or_init(|| std::env::var("ZEO_SHARE").is_ok_and(|v| v == "0"))
+        crate::debug_flags::debug(crate::debug_flags::DebugFlag::NoShare)
     }
 
     pub(crate) fn plan(compiler: &Compiler) -> Self {

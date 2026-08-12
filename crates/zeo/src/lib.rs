@@ -18,6 +18,7 @@ pub mod backend;
 pub mod builtin_surface;
 pub mod codegen;
 pub mod compiler;
+pub(crate) mod debug_flags;
 pub mod diagnostics;
 pub mod gem_report;
 pub mod home;

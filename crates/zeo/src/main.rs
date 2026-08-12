@@ -39,12 +39,14 @@ struct Args {
     /// program string (`ruby -e`'s shape). Exactly one is required.
     source: Source,
     output: Option<PathBuf>,
-    /// `--dump=rust`: print the generated Rust source instead of building.
-    dump_rust: bool,
-    /// `--emit-rust <path>`: stream the generated Rust there instead of
-    /// building. Distinct from `dump_rust` in more than destination -- it is
-    /// the compact renderer, and nothing holds the program as text.
-    emit_rust: Option<PathBuf>,
+    /// `--emit-rust[=<path>]`: emit the generated Rust instead of building --
+    /// to the attached path (streamed; nothing holds the program as text) or
+    /// to stdout when bare.
+    emit_rust: Option<EmitTarget>,
+    /// `--pretty`: render `--emit-rust`'s output through prettyplease for a
+    /// person to read (costs a `syn` re-parse and a second whole-program
+    /// copy, so it is opt-in).
+    pretty: bool,
     /// `-I` roots, then RUBYOPT's `-I` roots, then RUBYLIB -- ruby's order.
     load_roots: Vec<PathBuf>,
     /// `--gems <dir>`: vendored-gem directories (repeatable).
@@ -65,23 +67,26 @@ struct Args {
     /// Whether a store FLAG was given (vs env-only): flags demand a strict
     /// "lockfile must exist" check, ambient env degrades quietly.
     store_from_flags: bool,
-    /// `--log-level <off|error|warn|info|debug|trace>`: install a `tracing`
-    /// subscriber for the compiler at this level (overrides `ZEO_LOG`/`RUST_LOG`).
-    log_level: Option<String>,
     /// `--compile`: write the default-named binary (the input path with its
     /// extension stripped) instead of running.
     ///
     /// Running is the DEFAULT: a bare `zeo foo.rb` compiles and executes,
     /// exactly like `ruby foo.rb` (a deliberate reversal of the original
-    /// opt-in-run decision, user-approved 2026-08-10 -- ruby's mental model
-    /// won). An artifact is what needs asking for now: `-o <path>` or this
-    /// flag. `--run` is still accepted as a no-op so old invocations keep
-    /// working.
+    /// opt-in-run decision -- ruby's mental model won). An artifact is what
+    /// needs asking for now: `-o <path>` or this flag.
     compile: bool,
     /// ARGV for an immediately-run program (`-e`, or a file that runs):
     /// positionals and everything after `--`, exactly ruby's
     /// `[--] [args...]` shape.
     program_args: Vec<String>,
+}
+
+/// Where `--emit-rust` sends the generated Rust. The path is ATTACHED-only
+/// (`--emit-rust=out.rs`) -- a spaced value would be ambiguous with the input
+/// file, the same reason `--report` is attached-only.
+enum EmitTarget {
+    Stdout,
+    File(PathBuf),
 }
 
 enum Source {
@@ -161,7 +166,6 @@ modes:
 options:
   -o <output>           where to write the compiled binary
   --compile             write the default-named binary instead of running
-  --run                 accepted as a no-op (running is the default now)
   -I <dir>              add a `require` search root, like ruby's -I
                         (repeatable; `-I<dir>` and `-I=<dir>` also accepted)
   --gems <dir>          add a directory of vendored gems: every subdirectory
@@ -181,14 +185,14 @@ options:
   -W0                   suppress all zeo warnings
   -W:no-<category>      suppress one warning category; `-W:<category>`
                         re-enables it. Categories: zeo-builtin-substitute
-  --dump=rust           print the generated Rust source and exit (no build).
-                        Formatted for a person to read, which costs a `syn`
-                        re-parse and a second copy of the whole program
-  --emit-rust <path>    write the generated Rust to <path> and exit (no build).
-                        Unformatted and streamed, so nothing holds the program
-                        as text -- what a sweep or a build harness wants
-  --log-level <level>   log the compiler's internals to stderr at this level:
-                        off|error|warn|info|debug|trace (overrides ZEO_LOG)
+  --emit-rust[=<path>]  write the generated Rust to <path> -- or stdout when
+                        no path is attached -- and exit (no build). The file
+                        form is unformatted and streamed, so nothing holds
+                        the program as text -- what a sweep or a build
+                        harness wants
+  --pretty              with --emit-rust: format the Rust for a person to
+                        read, which costs a `syn` re-parse and a second copy
+                        of the whole program
   -v, --version         print the version and exit
   -h, --help            show this message
 
@@ -210,8 +214,9 @@ environment:
   ZEO_RUNTIME_PROFILE   `debug` or `release` -- override the runtime profile
                         (default: debug for immediate runs, release for
                         -o/--compile artifacts)
-  ZEO_LOG / RUST_LOG    a `tracing` EnvFilter directive for finer control than
-                        --log-level, e.g. `zeo::analyze=debug,zeo::lower=trace`
+  ZEO_LOG / RUST_LOG    a `tracing` EnvFilter directive for the compiler's
+                        internal logs, e.g. `zeo=debug` or
+                        `zeo::analyze=debug,zeo::lower=trace`
   ZEO_MEMORY_LIMIT      bytes of resident memory this compile may use before it
                         gives up (default: half the machine's RAM, capped at
                         8 GiB; 0 compiles unbounded, which can exhaust the
@@ -226,8 +231,8 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
     let mut input = None;
     let mut eval: Option<String> = None;
     let mut output = None;
-    let mut dump_rust = false;
-    let mut emit_rust: Option<PathBuf> = None;
+    let mut pretty = false;
+    let mut emit_rust: Option<EmitTarget> = None;
     let mut load_roots = Vec::new();
     let mut package_dirs = Vec::new();
     let mut root_gem: Option<String> = None;
@@ -235,8 +240,6 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
     let mut nowarn = HashSet::new();
     let mut gem_paths: Vec<PathBuf> = Vec::new();
     let mut gemfile: Option<PathBuf> = None;
-    let mut log_level = None;
-    let mut run = false;
     let mut compile = false;
     let mut program_args: Vec<String> = Vec::new();
 
@@ -304,9 +307,6 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
             match name {
                 "help" => return Ok(Parsed::Help),
                 "version" => return Ok(Parsed::Version),
-                // A no-op since running became the default; kept so old
-                // invocations don't break. Still contradicts -o/--compile.
-                "run" => run = true,
                 "compile" => compile = true,
                 "gems" => package_dirs.push(PathBuf::from(value("--gems")?)),
                 "root-gem" => root_gem = Some(value("--root-gem")?),
@@ -314,7 +314,6 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
                 "bundle-gemfile" => {
                     gemfile = Some(PathBuf::from(value("--bundle-gemfile")?));
                 }
-                "log-level" => log_level = Some(validate_log_level(&value("--log-level")?)?),
                 // Only the attached form takes a path -- a spaced value would
                 // be ambiguous with the input file.
                 "report" => {
@@ -323,37 +322,15 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
                         None => Report::DefaultPath,
                     };
                 }
-                "dump" => {
-                    for item in value("--dump")?.split(',') {
-                        match item {
-                            "rust" => dump_rust = true,
-                            other => {
-                                return Err(format!(
-                                    "--dump: unknown item `{other}` (expected rust)"
-                                ));
-                            }
-                        }
-                    }
+                // Attached path only, like --report -- a spaced value would
+                // be ambiguous with the input file. Bare means stdout.
+                "emit-rust" => {
+                    emit_rust = Some(match inline {
+                        Some(path) => EmitTarget::File(PathBuf::from(path)),
+                        None => EmitTarget::Stdout,
+                    });
                 }
-                "emit-rust" => emit_rust = Some(PathBuf::from(value("--emit-rust")?)),
-                // The pre-CRuby-convention spellings, kept as pointed errors
-                // so an old script fails with the fix in hand.
-                "packages" => return Err("--packages was renamed; use --gems <dir>".into()),
-                "nowarn" => {
-                    return Err("--nowarn was replaced; use -W:no-<category> \
-                         (e.g. -W:no-zeo-builtin-substitute), or -W0 for all"
-                        .into());
-                }
-                "lockfile" => {
-                    return Err("--lockfile was replaced; use --bundle-gemfile <Gemfile> \
-                         (its `<path>.lock` sibling is read)"
-                        .into());
-                }
-                "no-report" => {
-                    return Err(
-                        "--no-report was removed; the report is opt-in now (see --report)".into(),
-                    );
-                }
+                "pretty" => pretty = true,
                 _ => {
                     return Err(format!(
                         "invalid option: {arg} (-h will show valid options)"
@@ -383,7 +360,6 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
                 }
                 "-h" => return Ok(Parsed::Help),
                 "-v" => return Ok(Parsed::Version),
-                "-S" => return Err("-S was replaced; use --dump=rust".into()),
                 _ => {
                     // Attached `-I<dir>` (ruby's own spelling, no space);
                     // `-I=<dir>` is accepted too, matching the long options'
@@ -422,23 +398,17 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
         (None, Some(path)) => Source::File(path),
         (None, None) => return Ok(Parsed::NoInput),
     };
-    // `--run` survives as a no-op, so naming it beside an artifact mode is
-    // still the contradiction it always was.
-    if run && output.is_some() {
-        return Err("--run executes the program instead of writing a binary; drop -o".to_string());
-    }
-    if run && compile {
-        return Err(
-            "--run executes the program instead of writing a binary; drop --compile".into(),
-        );
-    }
     // `--compile` names the binary after the input file, which `-e` lacks.
     if compile && matches!(source, Source::Eval(_)) {
         return Err("--compile with -e has no input filename to name the binary; use -o".into());
     }
+    // `--pretty` shapes --emit-rust's output and nothing else.
+    if pretty && emit_rust.is_none() {
+        return Err("--pretty only shapes --emit-rust output; add --emit-rust[=<path>]".into());
+    }
     // Trailing args are ARGV, which only an immediately-run program has.
-    // (`--dump`/`--emit-rust` inspect instead of running, so they have none.)
-    let runs_now = output.is_none() && !compile && !dump_rust && emit_rust.is_none();
+    // (`--emit-rust` inspects instead of running, so it has none.)
+    let runs_now = output.is_none() && !compile && emit_rust.is_none();
     if !program_args.is_empty() && !runs_now {
         return Err(format!("unexpected argument `{}`", program_args[0]));
     }
@@ -488,7 +458,7 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
         source,
         output,
         compile,
-        dump_rust,
+        pretty,
         emit_rust,
         load_roots: {
             let mut roots = load_roots;
@@ -505,7 +475,6 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
         store_from_flags: gem_paths_from_flag || gemfile_from_flag,
         gem_paths,
         lockfile: gemfile.map(derive_lockfile),
-        log_level,
         program_args,
     })))
 }
@@ -563,17 +532,6 @@ fn derive_lockfile(gemfile: PathBuf) -> PathBuf {
     }
 }
 
-/// Accept only the standard `tracing` levels, so a typo (`--log-level dbeug`)
-/// is a clear error rather than a silently-ignored filter directive.
-fn validate_log_level(level: &str) -> Result<String, String> {
-    match level {
-        "off" | "error" | "warn" | "info" | "debug" | "trace" => Ok(level.to_string()),
-        other => Err(format!(
-            "--log-level: unknown level `{other}` (expected off|error|warn|info|debug|trace)"
-        )),
-    }
-}
-
 /// The default package-dir candidates appended AFTER any explicit
 /// `--gems` dirs (explicit dirs get first-name-wins priority): the
 /// input file's sibling `gems/` (project-local gems).
@@ -607,7 +565,7 @@ fn run() -> Result<(), MainError> {
             std::process::exit(1);
         }
     };
-    init_tracing(args.log_level.as_deref());
+    init_tracing();
     // Pre-flight: a broken install (payload missing next to the executable)
     // reports here as an ordinary error instead of panicking mid-compile.
     zeo::home::ensure_resolved()?;
@@ -672,22 +630,31 @@ fn run() -> Result<(), MainError> {
         gem_paths: args.gem_paths.clone(),
         lockfile: args.lockfile.clone(),
         root_gem: args.root_gem.clone().map(zeo::Gem::named),
-        pretty: args.dump_rust,
+        pretty: args.pretty,
     };
-    // Ahead of the ordinary compile because it is a DIFFERENT one: nothing
-    // holds the program as text, so there is no `CompileOutput` to branch on
-    // afterwards.
-    if let Some(path) = &args.emit_rust {
-        zeo::compile_to_file(&source, &opts, path)?;
-        return Ok(());
+    // Ahead of the ordinary compile because the file form is a DIFFERENT one:
+    // nothing holds the program as text, so there is no `CompileOutput` to
+    // branch on afterwards. `--pretty` and stdout necessarily collect (syn
+    // has to parse the program as a unit; stdout is a human/pipe consumer),
+    // so those pay for the copy they use.
+    match &args.emit_rust {
+        Some(EmitTarget::File(path)) if !args.pretty => {
+            zeo::compile_to_file(&source, &opts, path)?;
+            return Ok(());
+        }
+        Some(target) => {
+            let compiled = zeo::compile_to_rust_with(&source, &opts)?;
+            match target {
+                EmitTarget::Stdout => println!("{}", compiled.rust_source),
+                EmitTarget::File(path) => std::fs::write(path, &compiled.rust_source)
+                    .map_err(|e| format!("writing {}: {e}", path.display()))?,
+            }
+            return Ok(());
+        }
+        None => {}
     }
 
     let compiled = zeo::compile_to_rust_with(&source, &opts)?;
-
-    if args.dump_rust {
-        println!("{}", compiled.rust_source);
-        return Ok(());
-    }
 
     use zeo::backend::{
         GenOpt, Linkage, Profile, Runtime, build_binary, build_binary_incremental,
@@ -772,27 +739,19 @@ fn run() -> Result<(), MainError> {
     )?)
 }
 
-/// Install a `tracing` subscriber (stderr) for the compiler pipeline. Sources,
-/// highest precedence first: the `--log-level` flag (a bare level applied to the
-/// `zeo` crate -- the front end's `zeo::hir`/`zeo::lower` spans included, now
-/// that it is folded in), then `ZEO_LOG`, then `RUST_LOG` (both full
-/// `EnvFilter` directives, for finer per-module control). With none of them set,
-/// no subscriber is installed, so every `trace!`/`debug!`/`instrument` in the
-/// pipeline compiles to a cheap disabled check -- a normal compile stays silent
-/// and never interleaves with the miette diagnostics. Examples:
-///   zeo prog.rb --log-level debug
-///   ZEO_LOG=zeo::analyze=trace zeo prog.rb
-fn init_tracing(log_level: Option<&str>) {
-    let directive = match log_level {
-        Some(level) => format!("zeo={level}"),
-        None => match std::env::var("ZEO_LOG")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .or_else(|| std::env::var("RUST_LOG").ok().filter(|s| !s.is_empty()))
-        {
-            Some(directive) => directive,
-            None => return,
-        },
+/// Install a `tracing` subscriber (stderr) for the compiler pipeline: `ZEO_LOG`
+/// first, then `RUST_LOG` -- both full `EnvFilter` directives (`zeo=debug`,
+/// `zeo::analyze=trace`). With neither set, no subscriber is installed, so
+/// every `trace!`/`debug!`/`instrument` in the pipeline compiles to a cheap
+/// disabled check -- a normal compile stays silent and never interleaves with
+/// the miette diagnostics.
+fn init_tracing() {
+    let Some(directive) = std::env::var("ZEO_LOG")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| std::env::var("RUST_LOG").ok().filter(|s| !s.is_empty()))
+    else {
+        return;
     };
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::new(directive))
@@ -865,11 +824,10 @@ mod tests {
         assert!(!a.compile && a.output.is_none());
         assert!(ok(&["t.rb", "--compile"]).compile);
         assert!(ok(&["--compile", "t.rb"]).compile);
-        // The old opt-in spelling survives as a no-op.
-        let a = ok(&["t.rb", "--run"]);
-        assert!(!a.compile && a.output.is_none());
-        // ...but --compile can't name a binary for -e.
+        // --compile can't name a binary for -e.
         assert!(err(&["-e", "1", "--compile"]).contains("use -o"));
+        // The old opt-in spelling is gone with the rest of the dead flags.
+        assert!(err(&["t.rb", "--run"]).contains("invalid option"));
     }
 
     #[test]
@@ -880,13 +838,7 @@ mod tests {
         // An artifact or inspect mode runs nothing, so there is no ARGV.
         assert!(err(&["t.rb", "--compile", "alpha"]).contains("unexpected argument `alpha`"));
         assert!(err(&["-o", "app", "t.rb", "alpha"]).contains("unexpected argument `alpha`"));
-        assert!(err(&["--dump=rust", "t.rb", "alpha"]).contains("unexpected argument `alpha`"));
-    }
-
-    #[test]
-    fn run_and_an_artifact_mode_contradict() {
-        assert!(err(&["t.rb", "--run", "-o", "app"]).contains("drop -o"));
-        assert!(err(&["t.rb", "--run", "--compile"]).contains("drop --compile"));
+        assert!(err(&["--emit-rust", "t.rb", "alpha"]).contains("unexpected argument `alpha`"));
     }
 
     #[test]
@@ -921,13 +873,13 @@ mod tests {
     }
 
     #[test]
-    fn removed_flags_point_at_their_replacement() {
-        assert!(err(&["--packages", "d", "t.rb"]).contains("--gems"));
-        assert!(err(&["--nowarn", "x", "t.rb"]).contains("-W:no-"));
-        assert!(err(&["--nowarn=x", "t.rb"]).contains("-W:no-"));
-        assert!(err(&["--lockfile", "l", "t.rb"]).contains("--bundle-gemfile"));
-        assert!(err(&["--no-report", "t.rb"]).contains("--report"));
-        assert!(err(&["-S", "t.rb"]).contains("--dump=rust"));
+    fn dead_flag_spellings_get_the_generic_rejection() {
+        // The pointed migration errors served their year; old spellings now
+        // fail like any other unknown option.
+        for old in ["--packages", "--nowarn", "--lockfile", "--no-report"] {
+            assert!(err(&[old, "t.rb"]).contains("invalid option"), "{old}");
+        }
+        assert!(err(&["-S", "t.rb"]).contains("invalid option"));
     }
 
     #[test]
@@ -1066,8 +1018,19 @@ mod tests {
     }
 
     #[test]
-    fn dump_replaces_dash_s() {
-        assert!(ok(&["--dump=rust", "t.rb"]).dump_rust);
-        assert!(err(&["--dump=insns", "t.rb"]).contains("unknown item"));
+    fn emit_rust_takes_an_attached_path_or_stdout() {
+        assert!(matches!(
+            ok(&["--emit-rust", "t.rb"]).emit_rust,
+            Some(EmitTarget::Stdout)
+        ));
+        match ok(&["--emit-rust=out.rs", "t.rb"]).emit_rust {
+            Some(EmitTarget::File(p)) => assert_eq!(p, PathBuf::from("out.rs")),
+            other => panic!("expected a file target, got {:?}", other.is_some()),
+        }
+        // --pretty modifies --emit-rust and is rejected alone.
+        assert!(ok(&["--emit-rust", "--pretty", "t.rb"]).pretty);
+        assert!(err(&["--pretty", "t.rb"]).contains("--emit-rust"));
+        // The old inspect spellings are gone.
+        assert!(err(&["--dump=rust", "t.rb"]).contains("invalid option"));
     }
 }

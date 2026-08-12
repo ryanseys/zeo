@@ -215,8 +215,7 @@ fn run_one(zeo_bin: &Path, name: &str, rb: &Path, runs: usize) -> Result<Row, St
         let started = Instant::now();
         let out = Command::new(zeo_bin)
             .arg(rb)
-            .arg("--emit-rust")
-            .arg(&emitted)
+            .arg(format!("--emit-rust={}", emitted.display()))
             .arg("-W0")
             .env("ZEO_TIMINGS", "1")
             .output()

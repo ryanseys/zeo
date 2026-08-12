@@ -79,7 +79,7 @@ $ target/release/zeo -e 'puts "hello, world"'
 $ target/release/zeo -Itest test/foo_test.rb
 
 # Show the generated Rust. This does not build a binary.
-$ target/release/zeo hello.rb --dump=rust
+$ target/release/zeo hello.rb --emit-rust --pretty
 ```
 
 **Note:** `zeo foo.rb` compiles the program and runs it, exactly as
@@ -110,7 +110,6 @@ Zeo names the replacement for each removed old spelling.
 | `-e <code>` | Compiles the given code and runs it immediately. You can give this option more than one time; Zeo joins the parts with newlines. The arguments that follow the code (or follow `--`) become the program's `ARGV`, as in `ruby -e`. With `-o`, Zeo writes a binary and does not run it. |
 | `-o <output>` | Compiles to a native binary at this path, and does not run it. |
 | `--compile` | Compiles to a native binary at the default path — the input path without its extension — and does not run it. |
-| `--run` | Does nothing. Running is the default. This flag remains so that old commands do not break. |
 | `-I <dir>` | Adds a directory to the `require` search path, as Ruby's `-I` does. You can give this option more than one time. The forms `-I<dir>` and `-I=<dir>` are also correct. |
 | `--gems <dir>` | Adds a directory of vendored gems. Each subdirectory that contains a `.gemspec` file is one gem. You can give this option more than one time. See the search order below. |
 | `--gem-path <dir>` | Adds an installed RubyGems store (`gem env gemdir`). You can give this option more than one time; without it, Zeo reads `GEM_PATH`. A store is only used together with a Gemfile from `--bundle-gemfile` or `BUNDLE_GEMFILE`. |
@@ -118,8 +117,8 @@ Zeo names the replacement for each removed old spelling.
 | `--report[=<path>]` | Writes the `zeo-gems.json` record. Without a path, the record goes next to the output artifact. The record is off by default. |
 | `-W0` | Stops all Zeo warnings. |
 | `-W:no-<category>` | Stops one category of disclosure warning; `-W:<category>` starts it again. The one category today is `zeo-builtin-substitute`. An unknown category is an error. `-w`, `-W`, `-W1` and `-W2` are accepted and change nothing: the warnings are on by default. |
-| `--dump=rust` | Prints the generated Rust source, then stops. Does not build. |
-| `--log-level <level>` | Writes compiler diagnostics to stderr. The levels are `off`, `error`, `warn`, `info`, `debug` and `trace`. This option has priority over `ZEO_LOG` and `RUST_LOG`. |
+| `--emit-rust[=<path>]` | Writes the generated Rust source to `<path>`, or to stdout without a path, then stops. Does not build. The path form streams and holds no copy of the program in memory. |
+| `--pretty` | With `--emit-rust`: formats the Rust source for a person to read. This costs a re-parse and a second copy of the program. |
 | `-v`, `--version` | Prints the version, then stops. |
 | `-h`, `--help` | Shows the help text, then stops. |
 | `--` | Ends the options. The next argument is the input file (or, with `-e`, the start of `ARGV`). |
@@ -140,7 +139,7 @@ Environment variables:
 | `RUBYLIB` | Adds `require` search roots after every `-I` root. |
 | `GEM_PATH` | Gives the gem store directories for `--gem-path`, separated by `:`. An ambient store alone never changes a compile: Zeo uses it only when a Gemfile is also known. |
 | `BUNDLE_GEMFILE` | Gives the Gemfile for `--bundle-gemfile`. |
-| `ZEO_LOG`, `RUST_LOG` | Give a `tracing` `EnvFilter` directive. This gives more control than `--log-level`. Example: `ZEO_LOG=zeo::analyze=debug,zeo::lower=trace`. If you set none of these variables, Zeo installs no subscriber and writes no diagnostics. |
+| `ZEO_LOG`, `RUST_LOG` | Give a `tracing` `EnvFilter` directive. Example: `ZEO_LOG=zeo::analyze=debug,zeo::lower=trace`. If you set none of these variables, Zeo installs no subscriber and writes no diagnostics. |
 | `ZEO_RUNTIME_PROFILE` | Selects the profile of the linked runtime: `debug` or `release`. The default is `debug` for an immediate run, and `release` for an `-o` or `--compile` artifact. |
 | `ZEO_GVL` | If you set `ZEO_GVL=1`, the threads in that run use CRuby's schedule. This is a FIFO global lock with a 100 ms timer. The default is parallel OS threads. |
 | `ZEO_BLESS` | If you set `ZEO_BLESS=1`, the test suites record their expected output again from real Ruby. Use this only during development. |

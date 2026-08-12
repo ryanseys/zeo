@@ -1224,7 +1224,7 @@ pub fn codegen_to_writer<W: std::io::Write>(
                 ))
             })?;
     }
-    if std::env::var_os("ZEO_VALIDATE").is_some() {
+    if crate::debug_flags::debug(crate::debug_flags::DebugFlag::Validate) {
         let tokens = codegen_to_tokens(analyzed)?;
         syn::parse2::<syn::File>(tokens.clone()).map_err(|e| {
             crate::diagnostics::CompileError::codegen(format!(
@@ -1451,11 +1451,11 @@ impl ItemSink<'_> {
 }
 
 /// Whether to give each emitted class its own module -- see
-/// [`ItemSink::push_partitioned`]. `ZEO_CGU_MODULES=0` restores the flat crate
-/// root, the one-line field diagnosis for anything this is blamed for.
+/// [`ItemSink::push_partitioned`]. `ZEO_DEBUG=no-cgu-modules` restores the
+/// flat crate root, the one-line field diagnosis for anything this is blamed
+/// for.
 fn partition_modules() -> bool {
-    static P: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *P.get_or_init(|| !std::env::var("ZEO_CGU_MODULES").is_ok_and(|v| v == "0"))
+    !crate::debug_flags::debug(crate::debug_flags::DebugFlag::NoCguModules)
 }
 
 fn codegen(analyzed: &Analyzed, sink: &mut ItemSink<'_>) -> std::io::Result<()> {

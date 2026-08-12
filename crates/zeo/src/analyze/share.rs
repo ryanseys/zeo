@@ -83,10 +83,9 @@ fn emits_instance_bodies(compiler: &Compiler, cid: ClassId) -> bool {
         || cid == crate::compiler::OBJECT_CLASS
 }
 
-/// Whether `ZEO_VERIFY_SHARE` is set: every group's member bodies are emitted
-/// and compared against what the trace predicted, and an unexplained difference
-/// aborts the compile.
+/// Whether `ZEO_DEBUG=verify-share` is set: every group's member bodies are
+/// emitted and compared against what the trace predicted, and an unexplained
+/// difference aborts the compile.
 pub fn verify_enabled() -> bool {
-    static V: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *V.get_or_init(|| std::env::var_os("ZEO_VERIFY_SHARE").is_some())
+    crate::debug_flags::debug(crate::debug_flags::DebugFlag::VerifyShare)
 }

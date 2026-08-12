@@ -364,8 +364,9 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 }
 
 /// `fnv1a64` continued from an existing hash, for mixing several inputs into
-/// one key.
-fn fnv1a64_with(seed: u64, bytes: &[u8]) -> u64 {
+/// one key. Shared with `runtime_cache_key` in the parent module -- the ONE
+/// FNV-1a in the backend.
+pub(super) fn fnv1a64_with(seed: u64, bytes: &[u8]) -> u64 {
     let mut hash = seed;
     for b in bytes {
         hash ^= *b as u64;

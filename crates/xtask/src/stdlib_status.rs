@@ -178,8 +178,7 @@ fn classify(zeo: &Path, lib_dir: &Path, file: &Path, budget: crate::jobs::Budget
     cmd.arg(file)
         .arg("-I")
         .arg(lib_dir)
-        .arg("--emit-rust")
-        .arg("/dev/null");
+        .arg("--emit-rust=/dev/null");
     budget.apply(&mut cmd);
     match run_with_timeout(cmd, None, COMPILE_TIMEOUT) {
         Err(e) => Status::HarnessError(e),

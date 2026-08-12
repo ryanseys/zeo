@@ -223,12 +223,9 @@ fn runtime_cache_key() -> &'static str {
             &rustc_version(),
             &rustflags,
         ] {
-            for &b in part.as_bytes() {
-                h ^= u64::from(b);
-                h = h.wrapping_mul(0x0000_0100_0000_01b3);
-            }
-            h ^= 0x3b;
-            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+            // `;` separates parts so ("ab","c") can't collide with ("a","bc").
+            h = cache::fnv1a64_with(h, part.as_bytes());
+            h = cache::fnv1a64_with(h, b";");
         }
         format!("rt-{h:016x}")
     })

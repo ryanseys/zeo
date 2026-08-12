@@ -819,12 +819,12 @@ pub(crate) type FSet<T> = std::collections::HashSet<T, foldhash::fast::RandomSta
 /// `class_index`'s shape: `(box, lexical_parent) -> name -> id`.
 type ClassNameIndex = HashMap<(u32, Option<ClassId>), HashMap<String, ClassId>>;
 
-/// Whether `ZEO_VERIFY_CLASS_INDEX` is set: every `class_in_scope` answer is
-/// then shadow-compared against the original linear scan -- the drift
-/// detector for the index's settle-before-lookup registration invariant.
+/// Whether `ZEO_DEBUG=verify-class-index` is set: every `class_in_scope`
+/// answer is then shadow-compared against the original linear scan -- the
+/// drift detector for the index's settle-before-lookup registration
+/// invariant.
 fn verify_class_index() -> bool {
-    static V: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *V.get_or_init(|| std::env::var_os("ZEO_VERIFY_CLASS_INDEX").is_some())
+    crate::debug_flags::debug(crate::debug_flags::DebugFlag::VerifyClassIndex)
 }
 
 /// One `refine Target do ... end`. The refined methods are ordinary

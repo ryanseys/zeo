@@ -619,10 +619,10 @@ fn the_root_gem_outranks_an_alphabetically_earlier_provider() {
 
 #[test]
 fn strict_mode_restores_the_ambiguity_error() {
-    // `ZEO_STRICT_AMBIGUOUS_REQUIRE=1` keeps the old hard error for callers
-    // who want squatting surfaced loudly. Safe to set here: nextest runs each
-    // test in its own process.
-    unsafe { std::env::set_var("ZEO_STRICT_AMBIGUOUS_REQUIRE", "1") };
+    // `ZEO_DEBUG=strict-ambiguous-require` keeps the old hard error for
+    // callers who want squatting surfaced loudly. Safe to set here: nextest
+    // runs each test in its own process.
+    unsafe { std::env::set_var("ZEO_DEBUG", "strict-ambiguous-require") };
     let err = compile_packages(
         &[
             ("packages/alpha/alpha.gemspec",

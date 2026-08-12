@@ -1216,7 +1216,7 @@ pub(crate) fn const_holds_runtime_class(hir: &Hir, name: &str) -> bool {
 ///   below spells members as accessor `def` names and `@name` ivars, and
 ///   neither can be either of those.
 ///
-/// `ZEO_STRUCT=runtime` turns the whole thing off.
+/// `ZEO_DEBUG=runtime-struct` turns the whole thing off.
 /// Legal `Struct` member names that cannot be spelled as a Rust-side parameter
 /// or `def` name in the synthesized source. `Struct.new(:class)` is real code
 /// -- it even shadows `Kernel#class`, which `issue_2975.rb` pins.
@@ -1228,8 +1228,7 @@ const RUBY_KEYWORDS: &[&str] = &[
 ];
 
 pub(crate) fn as_compiled_struct(value: &Node<'_>) -> Option<Vec<String>> {
-    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    if *OFF.get_or_init(|| std::env::var("ZEO_STRUCT").is_ok_and(|v| v == "runtime")) {
+    if crate::debug_flags::debug(crate::debug_flags::DebugFlag::RuntimeStruct) {
         return None;
     }
     let call = value.as_call_node()?;
