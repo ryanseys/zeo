@@ -1499,6 +1499,12 @@ fn probe(
             let text = String::from_utf8_lossy(&ex.stderr);
             let mut v = Verdict::stopped(front_end_stage(&text), classify_stderr(&ex.stderr, root));
             v.site = site_of(&text, root);
+            if let Some(site) = &v.site
+                && matches!(v.outcome, Outcome::LoweringGap(_))
+                && insists_on_a_native_half(root, site)
+            {
+                v.outcome = Outcome::NativeExtension;
+            }
             return discard(v.timed(codegen_ms));
         }
     }
@@ -1660,6 +1666,86 @@ fn site_of(stderr: &str, root: &Path) -> Option<String> {
     let prefix = format!("{}/", root.display());
     let path = path.strip_prefix(&prefix)?;
     Some(format!("{path}:{line}"))
+}
+
+/// Whether the gem the verdict points INTO cannot run without a compiled
+/// half, making the diagnostic a fact about the gem rather than a zeo gap.
+///
+/// `classify` already re-buckets the two spellings zeo errors on. The third
+/// one it does NOT error on is a bare `require "redcarpet.so"`, which defers
+/// to a catchable runtime `LoadError` -- correct, and it lets the compile
+/// carry on until it dies on `Redcarpet::Render::HTML`, a constant that exists
+/// only inside the `.so`. Twenty-four rows read `unknown superclass HTML`,
+/// which is true and useless: no compiler change moves them.
+///
+/// Keyed off the SITE, not the subject gem: every one of those rows belongs to
+/// a gem that merely depends on redcarpet.
+///
+/// Deliberately narrow. Shipping `ext/` is not the test -- fast_excel and imgui
+/// both build a bundled C library and then bind it through FFI, so their Ruby
+/// is zeo's to compile and their failures are real gaps.
+fn insists_on_a_native_half(root: &Path, site: &str) -> bool {
+    let mut parts = site.split('/');
+    if parts.next() != Some("vendor") || parts.next() != Some("gems") {
+        return false;
+    }
+    let Some(gem) = parts.next() else {
+        return false;
+    };
+    let lib = root.join("vendor/gems").join(gem).join("lib");
+    let mut stack = vec![lib];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if path.extension().is_none_or(|e| e != "rb") {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            if text.lines().any(requires_a_native_object) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// A `require`/`require_relative` naming a compiled object file. Comment lines
+/// are skipped so a gem that merely MENTIONS the spelling in prose does not
+/// count.
+fn requires_a_native_object(line: &str) -> bool {
+    let line = line.trim_start();
+    if line.starts_with('#') {
+        return false;
+    }
+    let Some(rest) = line
+        .strip_prefix("require_relative ")
+        .or_else(|| line.strip_prefix("require "))
+    else {
+        return false;
+    };
+    let rest = rest.trim();
+    let quote = match rest.chars().next() {
+        Some(q @ ('"' | '\'')) => q,
+        _ => return false,
+    };
+    let Some(feature) = rest[1..].split(quote).next() else {
+        return false;
+    };
+    matches!(
+        std::path::Path::new(feature)
+            .extension()
+            .and_then(|e| e.to_str()),
+        Some("so" | "bundle" | "dll")
+    )
 }
 
 /// Whether the compiler gave up on its memory ceiling rather than on the gem.
@@ -3608,6 +3694,27 @@ mod tests {
             o
         );
         assert_ne!(o, Outcome::LoweringGap("internal error: boom".into()));
+    }
+
+    /// The third native-extension spelling: one zeo does NOT error on, so the
+    /// compile carries on and dies later on a constant the `.so` defines.
+    #[test]
+    fn a_bare_native_require_is_recognized_by_its_line() {
+        assert!(requires_a_native_object("require 'redcarpet.so'"));
+        assert!(requires_a_native_object("  require \"foo/bar.bundle\""));
+        assert!(requires_a_native_object("require_relative 'x.dll'"));
+        // Prose, not a require.
+        assert!(!requires_a_native_object("# require 'redcarpet.so'"));
+        assert!(!requires_a_native_object("require 'redcarpet/compat'"));
+        // A computed target names no file this pass can read.
+        assert!(!requires_a_native_object("require File.join(dir, ext)"));
+    }
+
+    #[test]
+    fn a_site_outside_the_probe_tree_is_never_re_bucketed() {
+        let root = Path::new("/tmp/none");
+        assert!(!insists_on_a_native_half(root, "lib/main.rb:3"));
+        assert!(!insists_on_a_native_half(root, "vendor/gems"));
     }
 
     #[test]
