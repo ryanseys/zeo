@@ -296,21 +296,52 @@ fn traced_pop() {
 /// (`dispatch::with_c_frame`) -- without the dedupe every such call showed
 /// twice in a backtrace.
 pub fn synthetic_c_frame(method: &'static str) -> CFrameGuard {
-    let (file, line) = current_location().unwrap_or(("", 0));
-    let duplicate = with_frames(|f| {
-        f.last()
-            .is_some_and(|t| t.method == method && t.file == file && t.line == line)
+    // ONE thread-local access for the whole sequence -- read the innermost
+    // frame (caller location + dedupe), write, bump. The original spelling
+    // (current_location + a dedupe scan + push_frame) paid four TLS
+    // round-trips per builtin call, and this sits on every cached builtin
+    // dispatch: measured as the bulk of a 2-4x regression on the
+    // builtin-call-bound benchmarks (ruby_xor 0.996s -> 3.8s).
+    let pushed = STACK.with(|s| {
+        let top = s.top.get();
+        let base = s.base.get();
+        let (file, line) = if top != base && !top.is_null() {
+            // SAFETY: `top > base`, so `top - 1` is the live innermost frame.
+            let innermost = unsafe { &*top.sub(1) };
+            if innermost.method == method {
+                // An EXACT repeat of the innermost frame: since the location
+                // is CLONED from that same frame, "same label, same location"
+                // reduces to a label match -- one logical C call shows one
+                // frame. See the doc above.
+                return false;
+            }
+            (innermost.file, innermost.line)
+        } else {
+            ("", 0)
+        };
+        if top == s.end.get() {
+            // Full (or the null initial state): take the slow path outside.
+            grow_and_push(Frame {
+                file,
+                line,
+                method,
+                end_line: 0,
+            });
+            return true;
+        }
+        // SAFETY: `top < end`, a live slot.
+        unsafe {
+            top.write(Frame {
+                file,
+                line,
+                method,
+                end_line: 0,
+            })
+        };
+        s.top.set(unsafe { top.add(1) });
+        true
     });
-    if duplicate {
-        return CFrameGuard(false);
-    }
-    push_frame(Frame {
-        file,
-        line,
-        method,
-        end_line: 0,
-    });
-    CFrameGuard(true)
+    CFrameGuard(pushed)
 }
 
 /// [`synthetic_c_frame`]'s guard: pops only what it pushed (a deduped call
