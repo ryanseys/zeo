@@ -1,0 +1,15 @@
+require "ffi"
+
+module Curl
+  extend FFI::Library
+  ffi_lib FFI::Library::LIBC
+
+  def self.status_codes = [:ok, :partial, :failed]
+
+  # The reopen that declares the vocabulary, required from INSIDE the body
+  # that establishes what the module is.
+  require_relative "vocabulary"
+
+  attach_function :pick, :abs, [:status], :status
+  attach_function :widen, :labs, [:ticks], :ticks
+end

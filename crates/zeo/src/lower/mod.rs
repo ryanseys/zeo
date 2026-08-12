@@ -15,7 +15,7 @@ pub(crate) mod control;
 pub mod defs;
 pub mod eval_splice;
 pub mod features;
-mod ffi;
+pub(crate) mod ffi;
 mod literals;
 mod pattern;
 

@@ -663,6 +663,21 @@ impl Loader {
                 ));
             }
         }
+        // ... and the requiring file's OWN declarations are recorded before
+        // they do, because the dependency runs both ways. libuv writes
+        // `require 'libuv/ext/types'` three lines above the `attach_function`s
+        // that spend its enums, which is what the pre-lower below is for;
+        // ethon writes `extend ::FFI::Library` in `curl.rb` and requires
+        // `curls/constants.rb`, which REOPENS that module to declare its
+        // enums, thirteen lines lower. Lowering the required file first left
+        // the reopen looking like a plain namespace, so no directive in it was
+        // recognized at all.
+        //
+        // Only the MARKS are taken here, not the declarations themselves: what
+        // a body IS (an FFI library, a struct class) is a syntactic fact this
+        // walk can read, where what it DECLARES needs the alias tables that
+        // only real lowering has.
+        mark_ffi_bodies(hir, &body, &mut Vec::new());
         // Class/module-body requires pre-LOWER here, ahead of this file's own
         // statements: CRuby runs them MID-body, so their declarations -- the
         // FFI vocabulary above all -- exist before the statements below them.
@@ -2228,6 +2243,61 @@ struct RequireCollector<'a> {
 /// power_assert's TracePoint probe is the shape: `begin ... rescue; raise
 /// LoadError, '...'; end` at the file's top level. Method and lambda bodies
 /// don't run at load, so they don't count.
+/// Records which `module` bodies in this file are FFI LIBRARIES, before any
+/// file they require from inside one gets to lower.
+///
+/// `cref` carries the enclosing names, so a nested `module Curl` inside
+/// `module Ethon` is marked under `Ethon::Curl` -- the same key
+/// `lower::defs` builds through `Hir::cref_path`. A compact path
+/// (`module A::B`) contributes both segments, matching how the real lowering
+/// walks it.
+///
+/// Struct classes are deliberately NOT marked here. A struct name means
+/// different things in different positions -- by-reference in a signature, the
+/// inline layout in a field -- and the per-body alias table takes the first
+/// answer it is given. Marking the class before its `layout` lowered seeded
+/// `by_value` with the by-reference entry, which is a wrong ABI rather than a
+/// missing one.
+fn mark_ffi_bodies(hir: &mut Hir, body: &ruby_prism::NodeList<'_>, cref: &mut Vec<String>) {
+    for node in body.iter() {
+        let (name, inner) = if let Some(m) = node.as_module_node() {
+            (
+                crate::lower::consts::constant_path_name(&m.constant_path()).ok(),
+                m.body(),
+            )
+        } else if let Some(c) = node.as_class_node() {
+            (
+                crate::lower::consts::constant_path_name(&c.constant_path()).ok(),
+                c.body(),
+            )
+        } else {
+            continue;
+        };
+        let Some(name) = name else { continue };
+        let depth = cref.len();
+        cref.extend(
+            name.trim_start_matches("::")
+                .split("::")
+                .map(str::to_string),
+        );
+        let path = match name.strip_prefix("::") {
+            Some(absolute) => absolute.to_string(),
+            None => cref.join("::"),
+        };
+        if let Some(inner) = inner.as_ref().and_then(|b| b.as_statements_node()) {
+            if inner
+                .body()
+                .iter()
+                .any(|s| crate::lower::ffi::is_extend_ffi_library(&s))
+            {
+                hir.mark_ffi_library(&path);
+            }
+            mark_ffi_bodies(hir, &inner.body(), cref);
+        }
+        cref.truncate(depth);
+    }
+}
+
 fn spliced_may_raise_load_error(hir: &Hir, stmts: &[crate::hir::NodeId]) -> bool {
     use crate::hir::HirNode;
     fn mentions(hir: &Hir, id: crate::hir::NodeId) -> bool {
