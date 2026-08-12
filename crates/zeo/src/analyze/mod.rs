@@ -3592,7 +3592,7 @@ fn create_class(
                 // adding a root). The `matches!` below is the rest
                 // of the gate: builtins whose subclasses are NOT
                 // payload objects.
-                let subclassable = zeo_abi::is_payload_root(cid)
+                let subclassable = zeo_abi::payload_root_of(cid).is_some()
                     || matches!(
                         cid,
                         // `BasicObject`: the blank-slate root. Its subclass

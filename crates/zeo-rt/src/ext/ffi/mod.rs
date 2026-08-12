@@ -26,6 +26,7 @@
 //! marshaling has). (2) `#address`/`#inspect` expose a real heap address for an
 //! owned buffer, so they are non-deterministic and never golden-tested.
 
+mod auto_pointer;
 mod dynamic_library;
 mod function;
 mod memory_pointer;
@@ -88,6 +89,13 @@ pub struct RPointer {
     /// this struct -- the whole `Pointer` instance table works on it unchanged.
     func: Option<Arc<function::FuncData>>,
     frozen: AtomicBool,
+    /// `#autorelease?` -- whether this pointer's memory is released with the
+    /// object. True exactly when the object OWNS the memory, which is what
+    /// makes a `MemoryPointer` answer true and a raw `Pointer` false (both
+    /// oracle-verified). Settable, as the gem's is. zeo runs no finalizer,
+    /// so the flag is reported faithfully and `#free` is the release that
+    /// actually happens -- see `Pointer#free`.
+    pub(super) autorelease: AtomicBool,
 }
 
 unsafe impl Send for RPointer {}
@@ -104,6 +112,7 @@ impl RPointer {
             class,
             func: None,
             frozen: AtomicBool::new(false),
+            autorelease: AtomicBool::new(true),
         }
     }
 
@@ -115,6 +124,12 @@ impl RPointer {
     }
 
     /// A `Pointer` over a raw address it does not own.
+    /// [`RPointer::raw`] for the sibling class tables -- `AutoPointer.new`
+    /// builds its own pointer and then flips `autorelease`.
+    pub(super) fn raw_at(addr: usize, class: ClassId) -> RPointer {
+        RPointer::raw(addr, class)
+    }
+
     fn raw(addr: usize, class: ClassId) -> RPointer {
         RPointer {
             base: addr as *mut u8,
@@ -123,6 +138,7 @@ impl RPointer {
             class,
             func: None,
             frozen: AtomicBool::new(false),
+            autorelease: AtomicBool::new(false),
         }
     }
 
@@ -136,6 +152,7 @@ impl RPointer {
             class: FFI_POINTER_CLASS,
             func: None,
             frozen: AtomicBool::new(false),
+            autorelease: AtomicBool::new(false),
         }
     }
 
@@ -261,6 +278,9 @@ impl RubyObject for RPointer {
             class: self.class,
             func: self.func.clone(),
             frozen: AtomicBool::new(false),
+            // A dup is a second handle onto the SAME memory, so it must not
+            // claim ownership of it -- the gem's `#dup` answers false too.
+            autorelease: AtomicBool::new(false),
         };
         if copy_frozen {
             p.set_frozen();

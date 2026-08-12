@@ -1,0 +1,17 @@
+Handle
+[Handle, FFI::AutoPointer, FFI::Pointer, FFI::AbstractMemory]
+4660
+:handle
+true
+false
+true
+false
+false
+true
+Slot
+64
+"meta"
+false
+true
+4242
+still running

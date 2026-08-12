@@ -878,12 +878,38 @@ pub const PAYLOAD_ROOTS: &[ClassId] = &[
     // `Zlib::GzipReader`: the `File` shape -- a reader needs an IO, so a
     // subclass seats the real one through `super(io)`.
     ZLIB_GZIP_READER_CLASS,
+    // `FFI::Pointer`: the NULL pointer is its empty form.
+    FFI_POINTER_CLASS,
+    // `FFI::AutoPointer`: a root of its OWN, nearer than `Pointer`, so a
+    // `class Handle < FFI::AutoPointer` payload is built by its `new` --
+    // the one that answers `#autorelease?` true. The gem's own idiom for a
+    // C handle, and 25 gems in the ledger.
+    FFI_AUTO_POINTER_CLASS,
 ];
 
 /// Whether `id` is an instantiable value-builtin payload root -- see
 /// [`PAYLOAD_ROOTS`].
 pub fn is_payload_root(id: ClassId) -> bool {
     PAYLOAD_ROOTS.contains(&id)
+}
+
+/// The payload root `id` inherits from, `id` itself included -- the
+/// compile-time twin of the runtime's `value_subclass::value_root_of`, over
+/// the DECLARED builtin superclass edges. A builtin between a root and the
+/// user's class is subclassable through that root: `class Handle <
+/// FFI::AutoPointer` is a Pointer payload, because `AutoPointer < Pointer`
+/// and `Pointer` is the root.
+pub fn payload_root_of(id: ClassId) -> Option<ClassId> {
+    let mut at = id;
+    loop {
+        if is_payload_root(at) {
+            return Some(at);
+        }
+        at = BUILTINS
+            .get((at.0 as usize).wrapping_sub(1))
+            .filter(|b| b.id == at)?
+            .superclass?;
+    }
 }
 
 /// Every reserved built-in class/module except `Object` (see

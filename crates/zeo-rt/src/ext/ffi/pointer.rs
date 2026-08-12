@@ -5,6 +5,7 @@
 
 use std::os::raw::c_char;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use super::{
     RPointer, address_of, bytes_to_str, off_arg, ptr_of, read_float_array, read_float_m,
@@ -218,6 +219,27 @@ ruby_class! {
     // -- identity / arithmetic --
     def "null?"(recv) {
         Ok(RubyValue::Bool(ptr_of(recv).address() == 0))
+    }
+    // `#autorelease?` -- whether this pointer's memory goes away with the
+    // object. True exactly when it OWNS that memory, so a `MemoryPointer`
+    // answers true and a raw `Pointer` false, both oracle-verified. zeo
+    // runs no finalizer over an owned buffer: Rust's own `Arc<OwnedBuf>`
+    // drop is what actually frees it, at the same moment the last handle
+    // goes, which is what the flag has always MEANT.
+    def "autorelease?"(recv) {
+        Ok(RubyValue::Bool(ptr_of(recv).autorelease.load(Ordering::Relaxed)))
+    }
+    def "autorelease="(recv, value) {
+        let on = value.truthy();
+        ptr_of(recv).autorelease.store(on, Ordering::Relaxed);
+        Ok(RubyValue::Bool(on))
+    }
+    // `#free` is the gem's EAGER release. An owned buffer is reference
+    // counted here, so the release happens when the last handle drops
+    // rather than at this call -- a use-after-free is a crash in C and a
+    // live read here, which is the safe direction to diverge in.
+    def "free"(_recv) {
+        Ok(RubyValue::Nil)
     }
     // Whether the extent is known (owned buffers yes, raw addresses no) --
     // fiddle sizes its wrappers off this.

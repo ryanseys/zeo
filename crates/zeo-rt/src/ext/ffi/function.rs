@@ -86,6 +86,7 @@ ruby_class! {
             class: FFI_FUNCTION_CLASS,
             func: Some(Arc::new(FuncData { arg_kinds, ret, _closure: closure })),
             frozen: AtomicBool::new(false),
+            autorelease: AtomicBool::new(false),
         })))
     }
 

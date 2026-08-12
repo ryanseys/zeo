@@ -448,6 +448,13 @@ fn empty_payload(root: ClassId) -> RubyValue {
             let empty = RubyValue::Str(string_new(String::new()));
             construct_root_payload(root, &[empty], None).unwrap_or(RubyValue::Nil)
         }
+        // The NULL pointer -- `FFI::Pointer.new(0)` / `AutoPointer.new(0)`,
+        // whose `#null?` is true. A real empty form, so a subclass that
+        // wraps its handle in its own `initialize` still holds a usable
+        // pointer before its `super` re-seats one.
+        zeo_abi::FFI_POINTER_CLASS | zeo_abi::FFI_AUTO_POINTER_CLASS => {
+            construct_root_payload(root, &[RubyValue::Int(0)], None).unwrap_or(RubyValue::Nil)
+        }
         _ => RubyValue::Nil,
     }
 }
