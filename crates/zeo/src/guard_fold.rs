@@ -671,6 +671,55 @@ fn maps_each_to_i(compiler: &Compiler, block: Option<NodeId>, block_arg: Option<
 ///
 /// `None` only where the value would not fit -- a bignum ruby would still
 /// compare exactly, so the guard stays undecided rather than wrap.
+/// `String#to_f`'s reading: the longest leading float, `0.0` when there is
+/// none at all. Underscore separators follow `to_i`'s rule (single, and
+/// flanked by digits). A real exponent (`"1e3"`) would change the value, so
+/// the fold declines it rather than mirror one more grammar corner; a bare
+/// trailing `e` is ignored exactly as ruby ignores it.
+fn leading_float(s: &str) -> Option<f64> {
+    let chars: Vec<char> = s.trim_start().chars().collect();
+    let mut i = 0;
+    let mut out = String::new();
+    if matches!(chars.first(), Some('+' | '-')) {
+        if chars[0] == '-' {
+            out.push('-');
+        }
+        i += 1;
+    }
+    let digits = |out: &mut String, i: &mut usize| {
+        let mut any = false;
+        while let Some(&c) = chars.get(*i) {
+            if c.is_ascii_digit() {
+                out.push(c);
+                any = true;
+                *i += 1;
+            } else if c == '_' && any && chars.get(*i + 1).is_some_and(char::is_ascii_digit) {
+                *i += 1;
+            } else {
+                break;
+            }
+        }
+        any
+    };
+    let int_part = digits(&mut out, &mut i);
+    let mut frac = false;
+    if chars.get(i) == Some(&'.') && chars.get(i + 1).is_some_and(char::is_ascii_digit) {
+        out.push('.');
+        i += 1;
+        frac = digits(&mut out, &mut i);
+    }
+    if !int_part && !frac {
+        return Some(0.0);
+    }
+    if matches!(chars.get(i), Some('e' | 'E')) {
+        let at_digit = i + 1 + usize::from(matches!(chars.get(i + 1), Some('+' | '-')));
+        if chars.get(at_digit).is_some_and(char::is_ascii_digit) {
+            return None;
+        }
+    }
+    out.parse().ok()
+}
+
 fn leading_integer(s: &str) -> Option<i64> {
     let s = s.trim_start();
     let (negative, digits) = match s.strip_prefix('-') {
@@ -800,7 +849,45 @@ fn cmp_fold(
     ) {
         return apply(op, li.cmp(&ri));
     }
+    // The mixed-kind numeric compare ruby does across Integer/Float --
+    // `RUBY_VERSION.to_f >= 2.4` (rampi), `RUBY_VERSION.to_i < 3.0`
+    // (sanity-ruby). Every reduction is a finite value, so the partial
+    // order is total here.
+    if let (Some(lf), Some(rf)) = (
+        static_number(compiler, cref, box_id, l, depth),
+        static_number(compiler, cref, box_id, r, depth),
+    ) {
+        return apply(op, lf.partial_cmp(&rf)?);
+    }
     None
+}
+
+/// Reduce a node to a compile-time NUMBER, for the mixed-kind comparisons the
+/// integer reading above cannot take. Anything that reading answers rides
+/// through as the same value.
+fn static_number(
+    compiler: &Compiler,
+    cref: &[ClassId],
+    box_id: u32,
+    node: NodeId,
+    depth: u32,
+) -> Option<f64> {
+    if depth >= MAX_FOLD_DEPTH {
+        return None;
+    }
+    match &compiler.hir[node] {
+        HirNode::FloatLit(f) => Some(*f),
+        // `"4.0.6".to_f` is 4.0: ruby reads the leading float and stops.
+        HirNode::Call {
+            receiver: Some(r),
+            name,
+            args,
+            ..
+        } if name == "to_f" && args.is_empty() => {
+            leading_float(&static_string(compiler, cref, box_id, *r, depth + 1)?)
+        }
+        _ => static_integer(compiler, cref, box_id, node, depth).map(|i| i as f64),
+    }
 }
 
 /// One position of an alternative.
@@ -2157,6 +2244,33 @@ mod tests {
         // A value no `i64` holds stays undecided rather than wrapping: ruby
         // would compare it exactly.
         assert_eq!(leading_integer(&"9".repeat(30)), None);
+    }
+
+    /// Every case checked against ruby 4.0.6.
+    #[test]
+    fn leading_float_matches_string_to_f() {
+        for (s, want) in [
+            ("4.0.6", 4.0),
+            ("2.4", 2.4),
+            ("8", 8.0),
+            ("  -42.5abc", -42.5),
+            ("+7", 7.0),
+            ("1_2.3_4", 12.34),
+            ("1__2", 1.0),
+            (".5", 0.5),
+            ("5.", 5.0),
+            ("x9", 0.0),
+            ("", 0.0),
+            ("-", 0.0),
+            // A bare trailing `e` is not an exponent; ruby ignores it too.
+            ("3.9e", 3.9),
+        ] {
+            assert_eq!(leading_float(s), Some(want), "{s:?}.to_f");
+        }
+        // A real exponent would change the value ("1e3" is 1000.0); the fold
+        // declines it rather than mirror one more grammar corner.
+        assert_eq!(leading_float("1e3"), None);
+        assert_eq!(leading_float("1.5E-2"), None);
     }
 
     /// Every case checked against ruby 4.0.6.
