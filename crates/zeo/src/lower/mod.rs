@@ -748,7 +748,16 @@ fn lower_call_node(
     // it (`Kernel#define_singleton_method` accepts a block ARGUMENT and a
     // Method/Proc positional alike), so fall through rather than refuse --
     // ddtrace, mcp and datasource all write it that way.
+    // ...and never INSIDE a `def`'s body: the constant-receiver desugar
+    // below mints a `ClassDef` marker, and the analyze walk registers no
+    // class-body site in a method body (ruby itself rejects a `class`
+    // keyword there), so the marker died in codegen as "a position the
+    // analyze walk doesn't register". The generic runtime call is the
+    // honest form -- `Object.define_singleton_method(:const_missing) { }`
+    // inside rails_admin's suppressor method installs through the overlay,
+    // and `collect_patch_call` already de-optimizes the name's call sites.
     if name == "define_singleton_method"
+        && !hir.is_in_def_body()
         && let (Some(args), Some(block_node)) = (call.arguments(), call.block())
         && block_node.as_block_node().is_some()
     {
@@ -1125,15 +1134,44 @@ fn lower_call_node(
             }
         }
         let collapsed = usize::from(!rest.is_empty());
+        // CRuby's `Kernel#raise` rejects a bad shape at RUNTIME: the call
+        // evaluates its arguments, then raises `ArgumentError`, and only
+        // when execution is reached (appnexusapi passes two messages inside
+        // a `rescue` arm that may never fire). A compile error here would
+        // reject a program CRuby loads fine.
+        let runtime_argument_error =
+            |result: &ParseResult, hir: &mut Hir, msg: String| -> PResult<NodeId> {
+                let mut stmts = positional
+                    .iter()
+                    .map(|n| lower_node(result, hir, n))
+                    .collect::<PResult<Vec<_>>>()?;
+                if !rest.is_empty() {
+                    stmts.push(hir.push(HirNode::HashLit(rest.clone())));
+                }
+                if let RaiseCause::Explicit(v) = &cause {
+                    stmts.push(*v);
+                }
+                let class_ref = hir.push(HirNode::ClassRef("ArgumentError".to_string()));
+                let message = hir.push(HirNode::StringLit(vec![StrPart::Lit(msg)]));
+                stmts.push(hir.push(HirNode::Raise(
+                    vec![class_ref, message],
+                    RaiseCause::Absent,
+                )));
+                Ok(hir.push(HirNode::Seq(stmts)))
+            };
         if positional.len() + collapsed > 3 {
-            return Err(format!(
+            let msg = format!(
                 "wrong number of arguments (given {}, expected 0..3)",
                 positional.len() + collapsed
-            )
-            .into());
+            );
+            return runtime_argument_error(result, hir, msg);
         }
         if positional.is_empty() && collapsed == 0 && matches!(cause, RaiseCause::Explicit(_)) {
-            return Err("only cause is given with no arguments".to_string().into());
+            return runtime_argument_error(
+                result,
+                hir,
+                "only cause is given with no arguments".to_string(),
+            );
         }
         let mut args = positional
             .iter()
