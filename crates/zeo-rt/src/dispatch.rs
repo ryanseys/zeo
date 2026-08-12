@@ -3624,6 +3624,9 @@ pub fn class_id_by_name(name: &str) -> Option<ClassId> {
         .get()
         .and_then(|r| r.by_name.get(name))
         .map(|&id| ClassId(id))
+        // A registered-but-CONCEALED class (a definition under a runtime
+        // guard that has not run yet) is no constant of anyone's.
+        .filter(|&ClassId(id)| !crate::constants::class_concealed(id))
         // Runtime-defined classes (e.g. `Struct.new` assigned to a constant)
         // live in the overlay, not the frozen registry -- fall back so
         // `Marshal.load` resolves them by name too.
@@ -3650,7 +3653,9 @@ pub fn nested_class_names(id: ClassId) -> Vec<String> {
     if id == crate::ClassId(0) {
         return registry
             .by_name
-            .keys()
+            .iter()
+            .filter(|&(_, &cid)| !crate::constants::class_concealed(cid))
+            .map(|(name, _)| name)
             .filter(|name| !name.contains("::") && !name.contains('#') && !name.contains('.'))
             .map(String::clone)
             .collect();
@@ -3661,8 +3666,9 @@ pub fn nested_class_names(id: ClassId) -> Vec<String> {
     let prefix = format!("{prefix}::");
     registry
         .by_name
-        .keys()
-        .filter_map(|name| name.strip_prefix(&prefix))
+        .iter()
+        .filter(|&(_, &cid)| !crate::constants::class_concealed(cid))
+        .filter_map(|(name, _)| name.strip_prefix(&prefix))
         // DIRECTLY nested only: `Zlib::GzipFile::Error` belongs to
         // `Zlib::GzipFile`'s list, not to `Zlib`'s.
         .filter(|rest| !rest.contains("::"))

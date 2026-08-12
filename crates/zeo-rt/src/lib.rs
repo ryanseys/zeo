@@ -91,8 +91,9 @@ pub use builtins::weak::{register_weakmap_subclass, register_weakref_subclass};
 pub use civars::{CivarSite, class_ivar_get, class_ivar_names, class_ivar_set};
 pub use collections::*;
 pub use constants::{
-    ConstSite, const_get, const_get_master, const_get_scoped, const_is_private, const_set,
-    const_set_at, const_set_private, record_const_location,
+    ConstSite, class_revealed, conceal_class, conditional_class_ref, const_get, const_get_master,
+    const_get_scoped, const_is_private, const_set, const_set_at, const_set_private,
+    record_const_location, reveal_class,
 };
 pub use cvars::{cvar_defined, cvar_get, cvar_get_checked, cvar_names_of, cvar_remove, cvar_set};
 pub use dispatch::{

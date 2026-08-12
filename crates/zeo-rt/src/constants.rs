@@ -252,6 +252,73 @@ pub fn const_is_private(owner_class_id: u32, name: &str) -> bool {
         .is_some_and(|s| s.contains(name))
 }
 
+/// Class ids REGISTERED but not yet REVEALED: a class/module defined under a
+/// top-level guard zeo cannot decide registers its shape in the prologue (the
+/// static MRO needs one), but CRuby has no such constant until the guarded
+/// body actually runs. Until `reveal_class` fires -- emitted at the head of
+/// the class's body site, which runs at document position inside the
+/// still-live `if` -- every by-name path answers as if the class did not
+/// exist. Kept beside `PRIVATE_CONSTANTS` for the same reason it is: the
+/// registry is frozen after install, and this is a mutable visibility fact.
+static CONCEALED_CLASSES: LazyLock<Mutex<std::collections::HashSet<u32>>> =
+    LazyLock::new(|| Mutex::new(std::collections::HashSet::new()));
+
+/// One relaxed load spares every by-name lookup the lock in the common
+/// program, which conceals nothing. Never cleared: a program that concealed
+/// anything keeps paying the lock, and reveal-all is not distinguishable
+/// cheaply from reveal-most.
+static ANY_CONCEALED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Registers `id` as concealed. Called from `main`'s registration prologue,
+/// before any Ruby statement runs.
+pub fn conceal_class(id: u32) {
+    CONCEALED_CLASSES.lock().insert(id);
+    ANY_CONCEALED.store(true, Ordering::Release);
+}
+
+/// The guarded definition ran: the constant exists from here on. Idempotent
+/// (a reopened conditional class reveals at every site).
+pub fn reveal_class(id: u32) {
+    if ANY_CONCEALED.load(Ordering::Acquire) && CONCEALED_CLASSES.lock().remove(&id) {
+        // Per-site caches may hold a miss-shaped answer for a name this
+        // reveal just made resolvable.
+        bump_const_epoch();
+    }
+}
+
+/// Whether `id` is registered but concealed.
+pub fn class_concealed(id: u32) -> bool {
+    ANY_CONCEALED.load(Ordering::Acquire) && CONCEALED_CLASSES.lock().contains(&id)
+}
+
+/// A constant read of a runtime-conditional class: `NameError` while
+/// concealed (CRuby never had the constant), the class value once revealed.
+/// `owner` is the lexical scope the read names, `Object` for a top-level one
+/// -- it becomes `NameError#receiver`.
+pub fn conditional_class_ref(
+    id: crate::ClassId,
+    fq_name: &str,
+    owner: crate::ClassId,
+) -> Result<RubyValue, crate::Signal> {
+    if class_concealed(id.0) {
+        let leaf = fq_name.rsplit("::").next().unwrap_or(fq_name);
+        Err(crate::Signal::Raise(crate::dispatch::stamp_backtrace(
+            crate::dispatch::make_name_error(
+                format!("uninitialized constant {fq_name}"),
+                leaf,
+                RubyValue::Class(owner),
+            ),
+        )))
+    } else {
+        Ok(RubyValue::Class(id))
+    }
+}
+
+/// The `defined?`/`const_defined?` half of [`conditional_class_ref`].
+pub fn class_revealed(id: crate::ClassId) -> bool {
+    !class_concealed(id.0)
+}
+
 /// The constant names owned DIRECTLY by `owner_class_id` (not its ancestors)
 /// -- the per-class half of `Module#constants`. Order is unspecified (a
 /// `HashMap` iteration), matching CRuby's own id-table nondeterminism; callers
