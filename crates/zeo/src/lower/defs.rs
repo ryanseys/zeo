@@ -30,10 +30,12 @@ use ruby_prism::{Node, ParseResult};
 fn lower_class_body_selected<'a>(
     result: &ParseResult,
     hir: &mut Hir,
+    whole: &Node<'a>,
     chosen: Option<Node<'a>>,
     st: &mut LowerBodyStmt<'a>,
     out: &mut Vec<NodeId>,
 ) -> PResult<()> {
+    bind_pruned_locals(hir, whole, chosen.as_ref(), st, out);
     let Some(node) = chosen else { return Ok(()) };
     if let Some(stmts) = node.as_statements_node() {
         for stmt in stmts.body().iter() {
@@ -52,6 +54,105 @@ fn lower_class_body_selected<'a>(
     // A nested `elsif` `IfNode`, or any single statement: re-enter the
     // class-body path (which folds the `elsif` in turn).
     lower_one_class_body_stmt(result, hir, &node, st, out)
+}
+
+/// Give the locals a folded-away branch would have BOUND their nil binding.
+///
+/// Ruby's parser creates a local for an assignment it never runs -- `if false;
+/// x = 1; end; p x` answers nil, not NameError -- so pruning the dead branch
+/// has to leave the binding behind. resolv.rb reads `hosts` on the line after
+/// the windows-only `if` that assigns it.
+///
+/// A name the body already assigned EARLIER keeps its value (`x = 5; if false;
+/// x = 1; end` is still 5), so those are left alone.
+fn bind_pruned_locals(
+    hir: &mut Hir,
+    whole: &Node<'_>,
+    chosen: Option<&Node<'_>>,
+    st: &LowerBodyStmt<'_>,
+    out: &mut Vec<NodeId>,
+) {
+    let mut pruned = local_writes(whole);
+    if let Some(kept) = chosen {
+        for name in local_writes(kept) {
+            pruned.remove(&name);
+        }
+    }
+    if pruned.is_empty() {
+        return;
+    }
+    let before = whole.location().start_offset();
+    for stmt in st.body {
+        if stmt.location().start_offset() >= before {
+            continue;
+        }
+        for name in local_writes(stmt) {
+            pruned.remove(&name);
+        }
+    }
+    for name in pruned {
+        let nil = hir.push(HirNode::NilLit);
+        out.push(hir.push(HirNode::LocalWrite(name, nil)));
+    }
+}
+
+/// Every local name a subtree ASSIGNS into THIS scope, in any of ruby's write
+/// forms. A `def`/`class`/block/lambda opens a scope of its own, so the walk
+/// stops there -- a name first assigned inside one never becomes a local out
+/// here. (`BTreeSet` so the emitted bindings come out in one order.)
+fn local_writes(node: &Node<'_>) -> std::collections::BTreeSet<String> {
+    struct Collect(std::collections::BTreeSet<String>);
+    impl<'pr> ruby_prism::Visit<'pr> for Collect {
+        fn visit_def_node(&mut self, _: &ruby_prism::DefNode<'pr>) {}
+        fn visit_class_node(&mut self, _: &ruby_prism::ClassNode<'pr>) {}
+        fn visit_module_node(&mut self, _: &ruby_prism::ModuleNode<'pr>) {}
+        fn visit_singleton_class_node(&mut self, _: &ruby_prism::SingletonClassNode<'pr>) {}
+        fn visit_lambda_node(&mut self, _: &ruby_prism::LambdaNode<'pr>) {}
+        fn visit_block_node(&mut self, _: &ruby_prism::BlockNode<'pr>) {}
+        fn visit_local_variable_write_node(
+            &mut self,
+            node: &ruby_prism::LocalVariableWriteNode<'pr>,
+        ) {
+            self.0
+                .insert(String::from_utf8_lossy(node.name().as_slice()).into_owned());
+            self.visit(&node.value());
+        }
+        fn visit_local_variable_target_node(
+            &mut self,
+            node: &ruby_prism::LocalVariableTargetNode<'pr>,
+        ) {
+            self.0
+                .insert(String::from_utf8_lossy(node.name().as_slice()).into_owned());
+        }
+        fn visit_local_variable_operator_write_node(
+            &mut self,
+            node: &ruby_prism::LocalVariableOperatorWriteNode<'pr>,
+        ) {
+            self.0
+                .insert(String::from_utf8_lossy(node.name().as_slice()).into_owned());
+            self.visit(&node.value());
+        }
+        fn visit_local_variable_and_write_node(
+            &mut self,
+            node: &ruby_prism::LocalVariableAndWriteNode<'pr>,
+        ) {
+            self.0
+                .insert(String::from_utf8_lossy(node.name().as_slice()).into_owned());
+            self.visit(&node.value());
+        }
+        fn visit_local_variable_or_write_node(
+            &mut self,
+            node: &ruby_prism::LocalVariableOrWriteNode<'pr>,
+        ) {
+            self.0
+                .insert(String::from_utf8_lossy(node.name().as_slice()).into_owned());
+            self.visit(&node.value());
+        }
+    }
+    use ruby_prism::Visit as _;
+    let mut collect = Collect(Default::default());
+    collect.visit(node);
+    collect.0
 }
 
 /// `class << obj; def a; ...; end; ...; end` on a NON-`self` receiver:
@@ -3013,7 +3114,7 @@ fn lower_one_class_body_stmt<'a>(
         } else {
             if_node.subsequent()
         };
-        return lower_class_body_selected(result, hir, chosen, st, out);
+        return lower_class_body_selected(result, hir, stmt, chosen, st, out);
     }
     if let Some(unless_node) = stmt.as_unless_node()
         && let Some(cond) = static_guard(&unless_node.predicate())
@@ -3023,7 +3124,7 @@ fn lower_one_class_body_stmt<'a>(
         } else {
             unless_node.else_clause().map(|e| e.as_node())
         };
-        return lower_class_body_selected(result, hir, chosen, st, out);
+        return lower_class_body_selected(result, hir, stmt, chosen, st, out);
     }
     // `case RbConfig::CONFIG['host_os'] when /linux/i then BUFSIZE = 65 ...` --
     // the same platform question written as a case. Folded for the same
@@ -3032,7 +3133,7 @@ fn lower_one_class_body_stmt<'a>(
     if let Some(case_node) = stmt.as_case_node()
         && let Some(chosen) = static_case_branch(&case_node)
     {
-        return lower_class_body_selected(result, hir, chosen, st, out);
+        return lower_class_body_selected(result, hir, stmt, chosen, st, out);
     }
     // A class-body `CONST = :symbol` / `CONST = <int>` feeds the FFI
     // vocabulary side maps (poison-on-conflict; see `Hir::ffi_symbol_consts`)
