@@ -2265,6 +2265,15 @@ fn codegen(analyzed: &Analyzed, sink: &mut ItemSink<'_>) -> std::io::Result<()> 
     ) {
         super_global.extend(compiler.scopes.iter().map(|scope| scope.name.as_str()));
     }
+    // A runtime-deferred mixin's `super` walks whatever chain the splice
+    // lands on -- a runtime fact, so every owner of the name gets a bridge.
+    // See `Compiler::runtime_mixin_super_names`.
+    super_global.extend(
+        compiler
+            .runtime_mixin_super_names
+            .iter()
+            .map(String::as_str),
+    );
     // RUNTIME-defined methods with a `super` in their body reach targets by
     // NAME through the method-frame walk, so their names count as
     // super-reachable too. Two shapes, both scanned over the whole arena

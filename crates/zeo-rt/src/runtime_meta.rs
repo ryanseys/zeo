@@ -2518,7 +2518,16 @@ fn mix_in(
                     None,
                 )?;
             }
-            false => splice_module_into(*cid, *mid, placement),
+            false => {
+                splice_module_into(*cid, *mid, placement);
+                // The same overlay copy `Module#prepend_features` makes: a
+                // prepend has to outrank the target's OWN methods, and the
+                // flattened per-class table wins over the spliced chain --
+                // see `overlay_prepended_methods`.
+                if placement == Placement::Before {
+                    overlay_prepended_methods(*cid, *mid);
+                }
+            }
         }
         fire_mixin_hook(module_val, hook, recv)?;
     }

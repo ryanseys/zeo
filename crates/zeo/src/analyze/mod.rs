@@ -3835,7 +3835,18 @@ fn walk_class_body(
             // the hook after the edit, which is automatic here.
             HirNode::Include(m) => {
                 let m = m.clone();
-                reject_guarded_mixin(compiler, class_id, conditional, "include")?;
+                if defer_guarded_mixin(
+                    compiler,
+                    class_id,
+                    site_idx,
+                    stmt,
+                    &m,
+                    conditional,
+                    &child_cref,
+                    box_id,
+                )? {
+                    continue;
+                }
                 match resolve_module_target(compiler, &m, &child_cref, box_id)? {
                     Some(target) => {
                         // A module that overrides the PRIMITIVE decides for
@@ -3854,7 +3865,18 @@ fn walk_class_body(
             }
             HirNode::Extend(m) => {
                 let m = m.clone();
-                reject_guarded_mixin(compiler, class_id, conditional, "extend")?;
+                if defer_guarded_mixin(
+                    compiler,
+                    class_id,
+                    site_idx,
+                    stmt,
+                    &m,
+                    conditional,
+                    &child_cref,
+                    box_id,
+                )? {
+                    continue;
+                }
                 match resolve_module_target(compiler, &m, &child_cref, box_id)? {
                     Some(target) => {
                         // Same rule as `Include`'s: an `extend_object` override
@@ -4012,7 +4034,18 @@ fn walk_class_body(
             }
             HirNode::Prepend(m) => {
                 let m = m.clone();
-                reject_guarded_mixin(compiler, class_id, conditional, "prepend")?;
+                if defer_guarded_mixin(
+                    compiler,
+                    class_id,
+                    site_idx,
+                    stmt,
+                    &m,
+                    conditional,
+                    &child_cref,
+                    box_id,
+                )? {
+                    continue;
+                }
                 match resolve_module_target(compiler, &m, &child_cref, box_id)? {
                     Some(target) => {
                         // A module that overrides the PRIMITIVE decides for
@@ -4037,7 +4070,23 @@ fn walk_class_body(
             // a silently wrong ancestry.
             HirNode::ClassMethodPrepend(m) => {
                 let m = m.clone();
-                reject_guarded_mixin(compiler, class_id, conditional, "prepend")?;
+                // The guarded deferral serves this arm too, and BETTER than
+                // the static path below: its `singleton_class.prepend(M)`
+                // send hands the hooks the real singleton class at runtime,
+                // so the hook-defining modules the static path must reject
+                // simply work.
+                if defer_guarded_mixin(
+                    compiler,
+                    class_id,
+                    site_idx,
+                    stmt,
+                    &m,
+                    conditional,
+                    &child_cref,
+                    box_id,
+                )? {
+                    continue;
+                }
                 match resolve_module_target(compiler, &m, &child_cref, box_id)? {
                     Some(target) => {
                         // Both hooks take the SINGLETON class as their
@@ -4121,6 +4170,13 @@ fn walk_class_body(
                 // `undef_method` send. Whether it fires is a runtime fact, so
                 // the names go on record and codegen stops emitting a DIRECT
                 // call for them. See `ClassInfo::runtime_undefs`.
+                // ...and the mixin SELF-SENDS in those branches -- the runtime
+                // spellings `transform_conditional_class_body` rewrote the
+                // branch's `include`/`extend`/`prepend` directives to. The
+                // splice runs when the branch does; the call-site widening has
+                // to happen NOW, or a statically-resolved call reaches the
+                // class's own body underneath a prepend override.
+                defer_runtime_mixin_sends(compiler, stmt, &child_cref, box_id);
                 let undefs = collect_runtime_undefs(compiler, stmt);
                 compiler.classes[class_id.0 as usize]
                     .runtime_undefs
@@ -4135,25 +4191,106 @@ fn walk_class_body(
     Ok(())
 }
 
-/// A mixin under a runtime-undecidable guard is honest only when the class
-/// being edited is itself runtime-conditional (concealed until the same
-/// guard passes, so its static edges are unobservable while false). Editing
-/// an EXISTING class's ancestry on a guard has no compile-time MRO answer --
-/// the same rejection the top-level walk gives a guarded bare mixin.
-fn reject_guarded_mixin(
-    compiler: &Compiler,
+/// A mixin under a runtime-undecidable guard into an EXISTING class is a
+/// runtime ancestry fact -- the guard decides whether the edit happens at
+/// all, so no compile-time MRO can carry it. The directive rewrites to the
+/// runtime self-send its class body serves (`runtime_meta::splice_mixin`
+/// performs the edit and fires the hook, exactly when the guard passes),
+/// after de-optimizing every call site the module's methods could newly
+/// answer or override -- the `defer_singleton_prepend` treatment.
+///
+/// A runtime-conditional class skips all of this (`Ok(false)`, the static
+/// edge stands): it is concealed until the same guard passes, so its static
+/// edges are unobservable while the guard is false. `Ok(true)` means the
+/// directive was consumed; the send now sits at its document position.
+fn defer_guarded_mixin(
+    compiler: &mut Compiler,
     class_id: ClassId,
+    site_idx: usize,
+    stmt: NodeId,
+    module: &str,
     conditional: Conditional,
-    verb: &str,
-) -> Result<(), String> {
-    if conditional == Conditional::Yes && !compiler.class(class_id).runtime_conditional {
-        return Err(format!(
-            "`{verb}` into an existing class under a runtime-undecidable guard isn't \
-             supported (zeo limitation: the conditional ancestry edit has no compile-time \
-             MRO answer)"
-        ));
+    cref: &[ClassId],
+    box_id: u32,
+) -> Result<bool, String> {
+    if conditional != Conditional::Yes || compiler.class(class_id).runtime_conditional {
+        return Ok(false);
     }
-    Ok(())
+    match resolve_module_target(compiler, module, cref, box_id)? {
+        Some(target) => defer_mixin_to_runtime(compiler, target),
+        // A module zeo cannot name at compile time de-optimizes EVERY name
+        // instead -- a static fast path is not worth a wrong override, and
+        // the shape is rare.
+        None => compiler.runtime_patches_any_name = true,
+    }
+    let send = crate::lower::defs::runtime_directive_spelling(&mut compiler.hir, stmt)
+        .expect("a mixin directive is not `refine`")
+        .expect("every mixin directive has a runtime spelling");
+    compiler.class_body_sites[site_idx].stmts.push(send);
+    Ok(true)
+}
+
+/// De-optimizes every mixin SELF-SEND reachable through a class-body `if`
+/// statement's branches -- the `include M`/`extend M`/`prepend M`/
+/// `singleton_class.prepend(M)` calls `transform_conditional_class_body`
+/// rewrote the branch's directives to. Both branches are walked: either may
+/// run. A module the send names but zeo cannot resolve widens to every name,
+/// exactly as `defer_singleton_prepend` widens.
+fn defer_runtime_mixin_sends(
+    compiler: &mut Compiler,
+    stmt: NodeId,
+    cref: &[ClassId],
+    box_id: u32,
+) {
+    /// Whether the receiver is a mixin-capable `self` -- absent (the class
+    /// body's own `self`) or the receiverless `singleton_class` read the
+    /// singleton spelling dispatches through.
+    fn self_like(compiler: &Compiler, receiver: Option<NodeId>) -> bool {
+        match receiver {
+            None => true,
+            Some(r) => matches!(
+                &compiler.hir[r],
+                HirNode::Call {
+                    receiver: None,
+                    name,
+                    args,
+                    ..
+                } if name == "singleton_class" && args.is_empty()
+            ),
+        }
+    }
+    match &compiler.hir[stmt] {
+        HirNode::If {
+            then_body,
+            else_body,
+            ..
+        } => {
+            let stmts: Vec<NodeId> = then_body.iter().chain(else_body).copied().collect();
+            for s in stmts {
+                defer_runtime_mixin_sends(compiler, s, cref, box_id);
+            }
+        }
+        HirNode::Call {
+            receiver,
+            name,
+            args,
+            ..
+        } if matches!(name.as_str(), "include" | "extend" | "prepend")
+            && self_like(compiler, *receiver) =>
+        {
+            for arg in args.clone() {
+                let resolved = match arg {
+                    crate::hir::ArrayElem::Single(n) => const_node_class(compiler, n, cref, box_id),
+                    crate::hir::ArrayElem::Splat(_) => None,
+                };
+                match resolved {
+                    Some(m) => defer_mixin_to_runtime(compiler, m),
+                    None => compiler.runtime_patches_any_name = true,
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 /// A mixin whose module overrides the PRIMITIVE is no longer a compile-time
@@ -4163,11 +4300,20 @@ fn reject_guarded_mixin(
 /// still reach the class's own body, so the module's method names have to
 /// leave the fold. That is exactly what `runtime_patches` is for.
 fn defer_mixin_to_runtime(compiler: &mut Compiler, module: ClassId) {
-    let names: Vec<String> = compiler.classes[module.0 as usize]
-        .own_methods
-        .iter()
-        .map(|&s| compiler.scopes[s.0 as usize].name.clone())
-        .collect();
+    let mut names: Vec<String> = Vec::new();
+    for &s in &compiler.classes[module.0 as usize].own_methods {
+        let scope = &compiler.scopes[s.0 as usize];
+        // A body that writes `super` will walk the TARGET's chain when the
+        // splice runs -- a runtime fact, so every owner of the name needs
+        // the receiver-generic bridge. See
+        // `Compiler::runtime_mixin_super_names`.
+        if scan_contains_super_body(&compiler.hir, &scope.body) {
+            compiler
+                .runtime_mixin_super_names
+                .insert(scope.name.clone());
+        }
+        names.push(scope.name.clone());
+    }
     compiler.runtime_patches.extend(names);
 }
 

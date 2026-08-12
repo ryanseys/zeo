@@ -686,6 +686,12 @@ pub struct Compiler {
     /// answers "could this name change under us?", and over-answering `true`
     /// costs speed, not correctness.
     pub runtime_patches: FSet<String>,
+    /// Method names a runtime-deferred mixin's bodies reach through `super`.
+    /// The splice happens when the guard/send runs, so WHICH class's chain
+    /// the walk resumes on is a runtime fact -- codegen widens these into
+    /// `super_global`, emitting a receiver-generic bridge on every class
+    /// that owns the name. Filled by `analyze::defer_mixin_to_runtime`.
+    pub runtime_mixin_super_names: FSet<String>,
     /// Whether the analyze walk is currently inside a FEATURE UNIT's body
     /// (`analyze`'s unit loop). A `def` registered under it is registered
     /// but not PROMISED -- see `register_method`'s `runtime_conditional`
@@ -1004,6 +1010,7 @@ impl Compiler {
             top_level_const_aliases: FMap::default(),
             const_aliases: FMap::default(),
             runtime_patches: FSet::default(),
+            runtime_mixin_super_names: FSet::default(),
             unit_walk: false,
             unit_scopes: FSet::default(),
             positional_redefs: Vec::new(),

@@ -2411,7 +2411,7 @@ pub(crate) fn transform_conditional_class_body(hir: &mut Hir, body: &[NodeId]) -
 /// them, and both drifted from [`HirNode::is_class_body_directive`]: three gems
 /// (danger, gitlab-labkit, activeadmin_settings_cached) reached codegen through
 /// a directive neither had a row for.
-fn runtime_directive_spelling(hir: &mut Hir, id: NodeId) -> PResult<Option<NodeId>> {
+pub(crate) fn runtime_directive_spelling(hir: &mut Hir, id: NodeId) -> PResult<Option<NodeId>> {
     /// Classified without holding the `&hir[id]` borrow across the node-building
     /// mutations below (each rewrite pushes fresh nodes).
     enum Rewrite {
