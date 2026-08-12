@@ -3191,7 +3191,7 @@ fn lower_one_class_body_stmt<'a>(
     // after it (puppet fills it with the Win32 vocabulary in one file and
     // spends it across the rest). Not gated on `is_ffi`: the enclosing module
     // is usually a plain namespace.
-    if let Some((existing, alias)) = as_global_ffi_typedef(stmt, st.ffi_aliases) {
+    if let Some((existing, alias)) = as_global_ffi_typedef(stmt, st.ffi_aliases, st.cref) {
         hir.declare_ffi_type(&alias, &existing);
         st.ffi_aliases.insert(alias, existing);
         return Ok(());

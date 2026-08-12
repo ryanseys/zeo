@@ -62,11 +62,28 @@ pub(crate) fn is_extend_ffi_data_converter(node: &Node<'_>) -> bool {
 pub(crate) fn as_global_ffi_typedef(
     node: &Node<'_>,
     aliases: &std::collections::HashMap<String, crate::hir::FfiType>,
+    cref: Option<&str>,
 ) -> Option<(crate::hir::FfiType, String)> {
     let call = node.as_call_node()?;
-    let recv = call.receiver()?;
-    if call.name().as_slice() != b"typedef" || const_path_string(&recv).as_deref() != Some("FFI") {
+    if call.name().as_slice() != b"typedef" {
         return None;
+    }
+    match call.receiver() {
+        Some(recv) => {
+            if const_path_string(&recv).as_deref() != Some("FFI") {
+                return None;
+            }
+        }
+        // A REOPENED `module ::FFI` body: self is the FFI module, so a bare
+        // `typedef :ulong, :XID` is the same global declaration `FFI.typedef`
+        // makes. x11 fills the whole X vocabulary that way, in one file, and
+        // spends it across every other one.
+        None => {
+            let cref = cref?.trim_start_matches("::");
+            if cref != "FFI" && !cref.ends_with("::FFI") {
+                return None;
+            }
+        }
     }
     let args: Vec<Node<'_>> = call.arguments()?.arguments().iter().collect();
     let [existing, alias] = args.as_slice() else {
@@ -178,6 +195,54 @@ fn ffi_type_constant(leaf: &str) -> Option<crate::hir::FfiType> {
 /// or without the leading `::` (audio's `CFIndex = FFI::Type::LONG_LONG`).
 pub(crate) fn ffi_type_constant_of(path: &str) -> Option<crate::hir::FfiType> {
     ffi_type_constant(path.trim_start_matches("::").strip_prefix("FFI::Type::")?)
+}
+
+/// The width and signedness a POSIX integer typedef actually has, read off
+/// the `libc` crate THIS compiler was built against.
+///
+/// These are the typedefs whose width genuinely differs between targets
+/// (`sa_family_t` is one byte on macOS and two on glibc; `dev_t` is signed
+/// 32-bit on one and unsigned 64-bit on the other) -- which is why a
+/// signature spells the target's own `libc::<name>` and lets rustc decide.
+/// A struct FIELD cannot wait that long: its width fixes every following
+/// field's offset at lowering time. Answering from the compiler's own libc is
+/// exact for the one target zeo emits for -- the same assumption the baked
+/// `RUBY_PLATFORM` and `RbConfig::CONFIG` already make, and there is no
+/// cross-compilation mode for them to disagree with.
+pub(crate) fn platform_scalar_of(name: &str) -> Option<zeo_abi::ffi::CScalar> {
+    use zeo_abi::ffi::CScalar;
+    fn scalar(size: usize, signed: bool) -> Option<CScalar> {
+        Some(match (size, signed) {
+            (1, true) => CScalar::I8,
+            (1, false) => CScalar::U8,
+            (2, true) => CScalar::I16,
+            (2, false) => CScalar::U16,
+            (4, true) => CScalar::I32,
+            (4, false) => CScalar::U32,
+            (8, true) => CScalar::I64,
+            (8, false) => CScalar::U64,
+            _ => return None,
+        })
+    }
+    macro_rules! host_widths {
+        ($($spelling:literal => $ty:ty),* $(,)?) => {
+            match name {
+                // `MIN != 0` reads signedness without tripping rustc's
+                // useless-comparison lint on the unsigned rows.
+                $($spelling => scalar(size_of::<$ty>(), <$ty>::MIN != 0),)*
+                _ => None,
+            }
+        };
+    }
+    host_widths! {
+        "mode_t" => libc::mode_t,
+        "dev_t" => libc::dev_t,
+        "nlink_t" => libc::nlink_t,
+        "sa_family_t" => libc::sa_family_t,
+        "blksize_t" => libc::blksize_t,
+        "suseconds_t" => libc::suseconds_t,
+        "clock_t" => libc::clock_t,
+    }
 }
 
 /// The elements of the body-local ARRAY a lone `*splat` argument names, read
@@ -1030,6 +1095,14 @@ fn ffi_field_accessor(ty: &crate::hir::FfiType) -> PResult<(String, String, usiz
             );
         }
         return Ok((String::new(), String::new(), l.size, l.align));
+    }
+    // A platform typedef in a FIELD resolves to the width it has on the one
+    // target zeo emits for -- see `platform_scalar_of`. A signature can leave
+    // it to rustc; an offset cannot wait.
+    if let crate::hir::FfiType::PlatformScalar(name) = ty
+        && let Some(s) = platform_scalar_of(name)
+    {
+        return ffi_field_accessor(&crate::hir::FfiType::from(s));
     }
     let (get, put) = match ty {
         Int(w) => (format!("get_int{w}"), format!("put_int{w}")),
@@ -2090,17 +2163,8 @@ pub(crate) fn ffi_type_of(
     // rejections. Legal in argument/return position, where the generated
     // code spells the target's own `libc::<name>`; a struct layout still
     // rejects them (see `ffi_field_accessor`).
-    const PLATFORM_TYPEDEFS: &[&str] = &[
-        "mode_t",
-        "dev_t",
-        "nlink_t",
-        "sa_family_t",
-        "blksize_t",
-        "suseconds_t",
-        "clock_t",
-    ];
     let bare = sym.strip_prefix("__").unwrap_or(sym);
-    if PLATFORM_TYPEDEFS.contains(&bare) {
+    if platform_scalar_of(bare).is_some() {
         return Ok(crate::hir::FfiType::PlatformScalar(bare.to_string()));
     }
     Err(format!(
