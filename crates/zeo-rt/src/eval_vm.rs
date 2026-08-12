@@ -585,9 +585,7 @@ mod imp {
             };
             for cond in case_node.conditions().iter() {
                 let Some(when) = cond.as_when_node() else {
-                    return Err(internal(
-                        "eval: unsupported clause in a case expression",
-                    ));
+                    return Err(internal("eval: unsupported clause in a case expression"));
                 };
                 for c in when.conditions().iter() {
                     let v = eval_node(&c, env)?;

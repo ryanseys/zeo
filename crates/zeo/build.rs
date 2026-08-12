@@ -82,8 +82,7 @@ fn write_if_changed(path: &Path, content: &str) {
     if std::fs::read_to_string(path).is_ok_and(|old| old == content) {
         return;
     }
-    std::fs::write(path, content)
-        .unwrap_or_else(|e| panic!("writing {}: {e}", path.display()));
+    std::fs::write(path, content).unwrap_or_else(|e| panic!("writing {}: {e}", path.display()));
 }
 
 /// Project `CLASS_SURFACE` from the sibling zeo-rt sources: the core classes

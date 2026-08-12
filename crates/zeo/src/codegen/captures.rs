@@ -12,8 +12,8 @@
 
 use super::call::is_inline_block_fast_path;
 use crate::compiler::Compiler;
-use crate::hir::{ArrayElem, HirNode, NodeId, Params, StrPart};
 use crate::compiler::{FMap, FSet};
+use crate::hir::{ArrayElem, HirNode, NodeId, Params, StrPart};
 
 #[derive(Default)]
 pub struct Captures {
@@ -201,7 +201,14 @@ pub fn block_captures(
     let mut caps = Captures::default();
     let own = own_param_names(params);
     for &n in body {
-        walk(compiler, n, Some((crate::hir::FileId(0), 0, false)), &own, &mut caps, self_class);
+        walk(
+            compiler,
+            n,
+            Some((crate::hir::FileId(0), 0, false)),
+            &own,
+            &mut caps,
+            self_class,
+        );
     }
     caps
 }

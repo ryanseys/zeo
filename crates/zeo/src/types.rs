@@ -6,9 +6,9 @@
 //! class) is what drives the static-vs-dynamic dispatch decision in
 //! `codegen`, even though the *value* itself stays boxed either way.
 
+use crate::compiler::FMap;
 use crate::compiler::{ClassId, Compiler};
 use crate::hir::{HirNode, NodeId};
-use crate::compiler::{FMap};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TyKind {

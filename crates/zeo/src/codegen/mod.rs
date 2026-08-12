@@ -33,13 +33,13 @@ use quote::{format_ident, quote};
 
 use crate::analyze::Analyzed;
 use crate::compiler::{ClassId, Compiler, OBJECT_CLASS};
+use crate::compiler::{FMap, FSet};
 use crate::types::TyKind;
 use ident::safe_ident;
 use proc_macro2::TokenStream;
 use std::cell::Cell;
 use std::cell::RefCell;
 use syn::Lifetime;
-use crate::compiler::{FMap, FSet};
 
 #[derive(Clone)]
 struct Ctx<'a> {
@@ -2183,8 +2183,7 @@ fn codegen(analyzed: &Analyzed, sink: &mut ItemSink<'_>) -> std::io::Result<()> 
     // `super`s included: R ranges over includers, whose chains continue past
     // the module into their own). The reflection/runtime-def shapes below
     // stay name-global -- their receiver is a runtime choice.
-    let mut super_pairs: FSet<(ClassId, &str)> =
-        FSet::default();
+    let mut super_pairs: FSet<(ClassId, &str)> = FSet::default();
     let mut super_global: FSet<&str> = FSet::default();
     for scope in &compiler.scopes {
         if !scope

@@ -15,10 +15,10 @@
 //! times" as one more branch to agree with.
 
 use crate::compiler::{ClassId, Compiler};
+use crate::compiler::{FMap, FSet};
 use crate::hir::{ArrayElem, HirNode, NodeId, StrPart};
 use crate::types::{TyKind, infer_type_with_locals};
 use std::collections::HashMap;
-use crate::compiler::{FMap, FSet};
 
 pub fn infer_locals(
     compiler: &Compiler,

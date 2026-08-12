@@ -32,11 +32,11 @@ use super::Ctx;
 use super::ident::safe_ident;
 use super::stmt::emit_body;
 use crate::compiler::Compiler;
+use crate::compiler::FSet;
 use crate::hir::{ArrayElem, HirNode, NodeId, StrPart};
 use crate::types::TyKind;
 use proc_macro2::TokenStream;
 use quote::quote;
-use crate::compiler::{FSet};
 
 /// The three ways a local/parameter name's storage can be emitted -- see
 /// each variant's docs. A 3-way enum, not a bool, because a real
@@ -717,10 +717,7 @@ pub(super) fn emit_local_decl(cx: &Ctx, name: &str) -> TokenStream {
 /// explicit declaration at all: an Object-typed own-only name still just
 /// gets its natural shadowing `let` at first assignment, same as anywhere
 /// else in this codebase (see `LocalStorage::Shadowed`'s docs).
-pub fn emit_proc_own_locals_prelude(
-    cx: &Ctx,
-    names: &FSet<String>,
-) -> TokenStream {
+pub fn emit_proc_own_locals_prelude(cx: &Ctx, names: &FSet<String>) -> TokenStream {
     let mut sorted: Vec<&String> = names.iter().collect();
     sorted.sort();
     let decls = sorted.iter().filter_map(|n| {

@@ -798,9 +798,7 @@ impl RHashData {
         Q: std::hash::Hash + indexmap::Equivalent<HashKey> + ?Sized,
     {
         match &self.repr {
-            HashRepr::Small(rows) => {
-                rows.iter().find(|(k, _)| key.equivalent(k)).map(|(_, v)| v)
-            }
+            HashRepr::Small(rows) => rows.iter().find(|(k, _)| key.equivalent(k)).map(|(_, v)| v),
             HashRepr::Big(map) => map.get(key),
         }
     }

@@ -21,10 +21,10 @@ use quote::{format_ident, quote};
 use super::Ctx;
 use super::expr::{emit_expr, infer};
 use super::loops::fresh_label;
+use crate::compiler::FMap;
 use crate::hir::{HashPatternRest, NodeId, Pattern, PatternArm};
 use crate::types::TyKind;
 use proc_macro2::TokenStream;
-use crate::compiler::{FMap};
 
 /// A fresh, function-body-unique plain identifier -- the non-lifetime
 /// counterpart to `loops::fresh_label`, sharing the SAME `Ctx::label_counter`

@@ -3296,7 +3296,11 @@ fn send_class_walking_inner(
 ) -> Result<RubyValue, Signal> {
     let recv = RubyValue::Class(recv_class);
     let method_name = name.to_string();
-    for (i, &anc) in ancestors_of_value(recv_class).iter().enumerate().skip(start) {
+    for (i, &anc) in ancestors_of_value(recv_class)
+        .iter()
+        .enumerate()
+        .skip(start)
+    {
         if registry().entries.get(&anc.0).is_some_and(|e| e.is_module) {
             continue;
         }
@@ -5379,7 +5383,9 @@ pub fn send_value_dyn_cached(
                     if let Some(Some(hit)) = REGISTRY.get().and_then(|r| r.flat_value_hit(id, name))
                     {
                         note_dispatch(name);
-                        let _ = site.hit.set((id.0, vet, Cached::Value(hit.f, hit.frame_label)));
+                        let _ = site
+                            .hit
+                            .set((id.0, vet, Cached::Value(hit.f, hit.frame_label)));
                         return with_c_frame(hit.frame_label, || (hit.f)(recv, args, block));
                     }
                 }

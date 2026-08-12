@@ -15,8 +15,8 @@
 //! that means to share must filter (`codegen::share::shareable`), and whether
 //! the members' emissions actually agree is `codegen::class_query`'s question.
 
+use crate::compiler::FMap;
 use crate::compiler::{ClassId, Compiler, ScopeId};
-use crate::compiler::{FMap};
 
 /// One `def`, and every class carrying an entry that points at it.
 pub struct Group {

@@ -60,7 +60,6 @@ pub use builtins::BuiltinMethodFn;
 pub use builtins::binding::{LocalCell, RBinding, binding_new};
 pub use builtins::complex::{RComplex, RComplexData, complex_from_literal, complex_new};
 pub use builtins::enumerable::each_values;
-pub use builtins::method::method_capture_inherited;
 pub use builtins::enumerator::{EnumeratorData, REnumerator};
 pub use builtins::exception::{
     apply_custom_backtrace, attach_backtrace, backtrace_lines, pattern_fail_case_eq,
@@ -76,6 +75,7 @@ pub use builtins::kernel::{
     kernel_printf, kernel_puts, kernel_rand, kernel_rational, kernel_sleep, kernel_srand,
     kernel_string, kernel_throw, kernel_warn, system_exit_status,
 };
+pub use builtins::method::method_capture_inherited;
 pub use builtins::rational::{RRational, RRationalData, rational_from_digits, rational_new};
 pub use builtins::rstruct::register_compiled_struct;
 pub use builtins::value_subclass::{
@@ -84,7 +84,6 @@ pub use builtins::value_subclass::{
 pub use builtins::warning::emit_parse_warnings;
 pub use builtins::weak::run_finalizers;
 pub use builtins::weak::{register_weakmap_subclass, register_weakref_subclass};
-pub use runtime_meta::register_module_subclass;
 pub use civars::{CivarSite, class_ivar_get, class_ivar_names, class_ivar_set};
 pub use collections::*;
 pub use constants::{
@@ -95,26 +94,24 @@ pub use cvars::{cvar_defined, cvar_get, cvar_get_checked, cvar_names_of, cvar_re
 pub use dispatch::{
     ARRAY_CLASS, AllocatorFn, BASIC_OBJECT_CLASS, CLASS_CLASS, COMPARABLE_CLASS, COMPLEX_CLASS,
     CallSite, ClassId, ClassRegistry, ConstructorFn, DynCallerSite, ENUMERABLE_CLASS,
-    ENUMERATOR_CLASS,
-    FALSE_CLASS, FCALL, FIBER_CLASS, FLOAT_CLASS, HASH_CLASS, INTEGER_CLASS, KERNEL_CLASS,
-    MATCH_DATA_CLASS, MATH_CLASS, MODULE_CLASS, MUTEX_CLASS, MethodFn, MethodVisibility,
-    MissingReason, NIL_CLASS, NUMERIC_CLASS, Object, PROC_CLASS, QUEUE_CLASS, RACTOR_CLASS,
-    RANGE_CLASS, RATIONAL_CLASS, REGEXP_CLASS, RObj, Reflect, RubyObject, STRING_CLASS,
-    STRUCT_CLASS, SYMBOL_CLASS, THREAD_CLASS, TRUE_CLASS, ValueMethodFn, YIELDER_CLASS,
-    arity_error, bind_dynamic_kwargs, call_singleton_super_target, check_not_moved_obj,
-    class_is_module, class_name, coerce_raise_arg, coerce_raise_arg_with_message, const_miss,
-    alias_in_default_definee, construct_by_class_id, define_in_default_definee, describe_receiver,
-    downcast_robj,
-    downcast_robj_ref, install_class_registry, instance_variable_get, instance_variable_set,
-    instance_variables, is_a, is_a_value, ivar_defined, ivar_frozen_error, ivar_get_dyn,
-    ivar_name_arg, ivar_set_dyn, ivar_slot_get_dyn, ivar_slot_set_dyn, main_object,
-    make_name_error, method_name_symbol, raise_error, raise_error_details, raise_method_missing,
-    raise_no_block_yield, raise_stop_iteration, raise_with_cause, refined_method,
-    refined_responds_to, refined_send_dynamic, refined_send_in, reflect_dispatch_in,
-    reject_marked_kwargs, rescue_matches_any, responds_to, responds_to_or_missing,
-    responds_to_value, run_initialize, send, send_in, send_super_class_from, send_super_from,
-    send_value, send_value_cached, send_value_dyn_cached, send_value_explicit_in, send_value_in,
-    send_value_public_in,
+    ENUMERATOR_CLASS, FALSE_CLASS, FCALL, FIBER_CLASS, FLOAT_CLASS, HASH_CLASS, INTEGER_CLASS,
+    KERNEL_CLASS, MATCH_DATA_CLASS, MATH_CLASS, MODULE_CLASS, MUTEX_CLASS, MethodFn,
+    MethodVisibility, MissingReason, NIL_CLASS, NUMERIC_CLASS, Object, PROC_CLASS, QUEUE_CLASS,
+    RACTOR_CLASS, RANGE_CLASS, RATIONAL_CLASS, REGEXP_CLASS, RObj, Reflect, RubyObject,
+    STRING_CLASS, STRUCT_CLASS, SYMBOL_CLASS, THREAD_CLASS, TRUE_CLASS, ValueMethodFn,
+    YIELDER_CLASS, alias_in_default_definee, arity_error, bind_dynamic_kwargs,
+    call_singleton_super_target, check_not_moved_obj, class_is_module, class_name,
+    coerce_raise_arg, coerce_raise_arg_with_message, const_miss, construct_by_class_id,
+    define_in_default_definee, describe_receiver, downcast_robj, downcast_robj_ref,
+    install_class_registry, instance_variable_get, instance_variable_set, instance_variables, is_a,
+    is_a_value, ivar_defined, ivar_frozen_error, ivar_get_dyn, ivar_name_arg, ivar_set_dyn,
+    ivar_slot_get_dyn, ivar_slot_set_dyn, main_object, make_name_error, method_name_symbol,
+    raise_error, raise_error_details, raise_method_missing, raise_no_block_yield,
+    raise_stop_iteration, raise_with_cause, refined_method, refined_responds_to,
+    refined_send_dynamic, refined_send_in, reflect_dispatch_in, reject_marked_kwargs,
+    rescue_matches_any, responds_to, responds_to_or_missing, responds_to_value, run_initialize,
+    send, send_in, send_super_class_from, send_super_from, send_value, send_value_cached,
+    send_value_dyn_cached, send_value_explicit_in, send_value_in, send_value_public_in,
     send_value_vcall_in, stamp_backtrace, super_defined, validate_aliases, validate_class_aliases,
     value_class,
 };
@@ -133,6 +130,7 @@ pub use lastmatch::{
     last_match, last_match_group, last_match_last_group, last_match_post, last_match_pre,
     set_last_match, svar_scope,
 };
+pub use runtime_meta::register_module_subclass;
 #[cfg(not(feature = "ext-tracepoint"))]
 #[inline]
 pub fn trace_frame_self(_f: impl FnOnce() -> RubyValue) {}
@@ -187,10 +185,9 @@ pub use rproc::{ProcParamMeta, RProc, block_arg_to_proc, block_auto_splat, to_ha
 pub use runtime_meta::{
     class_maybe_patched, copy_value_singletons, fire_const_added, iter_inline_ok,
     iter_inline_ok_for, mark_global_def_hook, name_runtime_class_if_anonymous,
-    register_singleton_surrogate, runtime_class_new, runtime_define_method,
-    runtime_class_method_visibility, runtime_define_singleton_method, runtime_replace_method,
-    runtime_set_visibility,
-    send_super_dynamic, value_extends, with_pending_defs,
+    register_singleton_surrogate, runtime_class_method_visibility, runtime_class_new,
+    runtime_define_method, runtime_define_singleton_method, runtime_replace_method,
+    runtime_set_visibility, send_super_dynamic, value_extends, with_pending_defs,
 };
 pub use signal::{Signal, catch_break, home_pop, home_push, return_targets_here};
 pub use stack_guard::stack_check;

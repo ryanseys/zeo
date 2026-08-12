@@ -33,10 +33,10 @@
 //! coercion with no reference-count traffic at all.
 
 use super::class_query::Trace;
+use crate::compiler::FMap;
 use crate::compiler::{ClassId, Compiler, ScopeId};
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
-use crate::compiler::{FMap};
 
 /// A body under this many emitted bytes stays materialized. Small bodies are
 /// accessors and one-liners: they are what LLVM most wants to inline into a

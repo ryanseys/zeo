@@ -553,11 +553,15 @@ fn a_feature_provided_by_two_packages_resolves_to_the_first_and_warns() {
     // own parse warnings print.
     let result = run_ruby_packages(
         &[
-            ("packages/alpha/alpha.gemspec",
-                "Gem::Specification.new do |s|\n  s.name = \"alpha\"\n  s.version = \"1.0.0\"\nend\n"),
+            (
+                "packages/alpha/alpha.gemspec",
+                "Gem::Specification.new do |s|\n  s.name = \"alpha\"\n  s.version = \"1.0.0\"\nend\n",
+            ),
             ("packages/alpha/lib/common.rb", "puts 1\n"),
-            ("packages/beta/beta.gemspec",
-                "Gem::Specification.new do |s|\n  s.name = \"beta\"\n  s.version = \"1.0.0\"\nend\n"),
+            (
+                "packages/beta/beta.gemspec",
+                "Gem::Specification.new do |s|\n  s.name = \"beta\"\n  s.version = \"1.0.0\"\nend\n",
+            ),
             ("packages/beta/lib/common.rb", "puts 2\n"),
             ("main.rb", "require \"common\"\n"),
         ],
@@ -611,8 +615,7 @@ fn the_root_gem_outranks_an_alphabetically_earlier_provider() {
     let compiled = zeo::compile_to_rust_with("require \"common\"\n", &opts)
         .unwrap_or_else(|e| panic!("compile failed: {}", String::from(e)));
     assert!(
-        compiled.rust_source.contains("from-zeta")
-            && !compiled.rust_source.contains("from-alpha"),
+        compiled.rust_source.contains("from-zeta") && !compiled.rust_source.contains("from-alpha"),
         "the root gem's copy should have been spliced"
     );
 }

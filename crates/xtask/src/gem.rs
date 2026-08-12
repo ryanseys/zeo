@@ -420,7 +420,12 @@ pub(crate) fn resolve_tag(url: &str, tag: &str) -> Result<String, String> {
 
 /// Fetch `<rev>` (via its tag) into a SHA-stamped cache dir and return the
 /// checkout path. A stamped cache hit short-circuits the network.
-pub(crate) fn fetch_checkout(name: &str, url: &str, tag: &str, rev: &str) -> Result<PathBuf, String> {
+pub(crate) fn fetch_checkout(
+    name: &str,
+    url: &str,
+    tag: &str,
+    rev: &str,
+) -> Result<PathBuf, String> {
     let cache = cache_dir().join(format!("{name}-{rev}"));
     let stamp = cache.join(".zeo-vendor-stamp");
     if stamp.is_file() {

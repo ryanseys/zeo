@@ -15,9 +15,9 @@
 //! searches user scopes only, so they never satisfy it. A program that defines
 //! no hook comes out of this pass byte-identical.
 
+use crate::compiler::FMap;
 use crate::compiler::{ClassId, Compiler, DefEvent, SiteDef};
 use crate::hir::{HirNode, NodeId};
-use crate::compiler::{FMap};
 
 /// The seven names. A definition of one of these ON `Module`/`Class` (the
 /// `method_*` trio and `const_added`) or on `BasicObject` (the

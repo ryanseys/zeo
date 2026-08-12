@@ -39,7 +39,10 @@ const NAMES: &[(&str, DebugFlag)] = &[
     ("no-cgu-modules", DebugFlag::NoCguModules),
     ("no-share", DebugFlag::NoShare),
     ("runtime-struct", DebugFlag::RuntimeStruct),
-    ("strict-ambiguous-require", DebugFlag::StrictAmbiguousRequire),
+    (
+        "strict-ambiguous-require",
+        DebugFlag::StrictAmbiguousRequire,
+    ),
     ("validate", DebugFlag::Validate),
     ("verify-share", DebugFlag::VerifyShare),
     ("verify-class-index", DebugFlag::VerifyClassIndex),
@@ -58,11 +61,7 @@ pub(crate) fn debug(flag: DebugFlag) -> bool {
                 Some((_, f)) => bits |= 1 << (*f as u32),
                 None => eprintln!(
                     "zeo: ZEO_DEBUG: unknown flag `{tok}` (known: {})",
-                    NAMES
-                        .iter()
-                        .map(|(n, _)| *n)
-                        .collect::<Vec<_>>()
-                        .join(", ")
+                    NAMES.iter().map(|(n, _)| *n).collect::<Vec<_>>().join(", ")
                 ),
             }
         }

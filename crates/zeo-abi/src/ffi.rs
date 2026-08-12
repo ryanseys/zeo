@@ -42,11 +42,7 @@ impl CScalar {
             CScalar::I8 | CScalar::U8 | CScalar::Bool => 1,
             CScalar::I16 | CScalar::U16 => 2,
             CScalar::I32 | CScalar::U32 | CScalar::F32 => 4,
-            CScalar::I64
-            | CScalar::U64
-            | CScalar::F64
-            | CScalar::Str
-            | CScalar::Pointer => 8,
+            CScalar::I64 | CScalar::U64 | CScalar::F64 | CScalar::Str | CScalar::Pointer => 8,
         }
     }
 

@@ -18,8 +18,8 @@
 
 use crate::analyze_error::AnalyzeError;
 use crate::compiler::{ClassId, Compiler, MethodEntry, NameId, OBJECT_CLASS, ScopeId};
-use crate::hir::{HirNode, NodeId, Span, Visibility};
 use crate::compiler::{FMap, FSet};
+use crate::hir::{HirNode, NodeId, Span, Visibility};
 
 /// Real Ruby's actual linearization (not classic C3): for `class_id` with
 /// prepends `P1..Pk` and includes `M1..Mn`, both in source order,
@@ -172,7 +172,13 @@ pub fn materialize(
         let class_started = std::time::Instant::now();
         if !compiler.class(cid).is_module {
             at_class(
-                materialize_methods(compiler, cid, &own_ivars, &scope_name_ids, &vis_override_ids),
+                materialize_methods(
+                    compiler,
+                    cid,
+                    &own_ivars,
+                    &scope_name_ids,
+                    &vis_override_ids,
+                ),
                 at,
             )?;
         }

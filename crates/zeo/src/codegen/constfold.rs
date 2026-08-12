@@ -220,11 +220,11 @@ mod tests {
     use super::*;
     use crate::analyze::{Analyzed, analyze};
     use crate::compiler::Compiler;
+    use crate::compiler::{FMap, FSet};
     use proc_macro2::Ident;
     use quote::format_ident;
     use std::borrow::Cow;
     use std::cell::Cell;
-    use crate::compiler::{FMap, FSet};
 
     /// A compiled-to-`Analyzed` program that can hand out a root-scope [`Ctx`]
     /// borrowing its owned state, for exercising the fold helpers against the

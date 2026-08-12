@@ -16,10 +16,10 @@ use super::collections::{
 use super::ident::safe_ident;
 use super::loops::{emit_break, emit_for, emit_loop, emit_next, emit_redo, emit_while};
 use crate::compiler::ClassId;
+use crate::compiler::FMap;
 use crate::hir::{ArrayElem, HirNode, NodeId};
 use crate::types::{TyKind, infer_type_with_locals};
 use proc_macro2::TokenStream;
-use crate::compiler::{FMap};
 
 /// A node's static type, given the enclosing scope's local-type context --
 /// the one place `codegen` should call into `types::infer_type_with_locals`,
@@ -3007,11 +3007,7 @@ fn ffi_field_size(ty: &crate::hir::FfiType) -> usize {
 /// arguments marshaled to `VaVal`s. Slower than the `extern "C"` tier by one
 /// indirect call and the marshal -- and the only tier that can open a
 /// library the BUILD machine never saw.
-fn emit_ffi_runtime_call(
-    cx: &Ctx,
-    call: &crate::hir::FfiCall,
-    addr: TokenStream,
-) -> TokenStream {
+fn emit_ffi_runtime_call(cx: &Ctx, call: &crate::hir::FfiCall, addr: TokenStream) -> TokenStream {
     use crate::hir::FfiType;
     if let Some(rest_id) = call.variadic {
         return crate::codegen::unsupported_at(

@@ -27,10 +27,10 @@ use super::expr::{
 };
 use super::ident::safe_ident;
 use crate::compiler::Compiler;
+use crate::compiler::FSet;
 use crate::hir::{ArrayElem, HirNode, KwArg, NodeId, Visibility};
 use crate::types::TyKind;
 use proc_macro2::TokenStream;
-use crate::compiler::{FSet};
 
 /// An inline-spliced block (`n.times { |i| ... }` and friends) inside a
 /// `binding` scope. Such a block shares the enclosing Rust scope, so its own
@@ -1894,8 +1894,7 @@ pub fn emit_call(
                 for &n in body {
                     super::hoisting::collect_locals(cx.compiler, n, &mut assigned_here);
                 }
-                let assigned_here: FSet<&String> =
-                    assigned_here.iter().collect();
+                let assigned_here: FSet<&String> = assigned_here.iter().collect();
                 if let Some(outer) = block_caps
                     .locals
                     .iter()

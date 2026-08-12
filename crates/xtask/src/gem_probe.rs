@@ -2901,7 +2901,10 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
             let bin_dir = root.join("target").join("probe-bin");
             let snapshot = bin_dir.join(format!("zeo-{sha}"));
             if rebuild_zeo || !snapshot.is_file() {
-                eprintln!("gem-probe: building zeo for snapshot {}...", snapshot.display());
+                eprintln!(
+                    "gem-probe: building zeo for snapshot {}...",
+                    snapshot.display()
+                );
                 let built = std::process::Command::new("cargo")
                     .args(["build", "--quiet", "-p", "zeo"])
                     .current_dir(root)

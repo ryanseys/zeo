@@ -16,11 +16,11 @@ pub(crate) mod share;
 
 use crate::analyze_error::AnalyzeError;
 use crate::compiler::{AccessorKind, AccessorShape, ClassId, Compiler, OBJECT_CLASS, Scope};
+use crate::compiler::{FMap, FSet};
 use crate::hir::{
     ArrayElem, Hir, HirNode, NodeId, Params, Pattern, PatternArm, StrPart, Visibility,
 };
 use crate::types::TyKind;
-use crate::compiler::{FMap, FSet};
 
 pub struct Analyzed {
     pub compiler: Compiler,

@@ -24,10 +24,10 @@ use quote::{format_ident, quote};
 use super::Ctx;
 use super::expr::{box_if_object_typed, emit_expr};
 use super::ident::safe_ident;
+use crate::compiler::FSet;
 use crate::compiler::{AccessorKind, AccessorShape};
 use crate::hir::{HirNode, KeywordParam, KwArg, NodeId, Params};
 use proc_macro2::TokenStream;
-use crate::compiler::FSet;
 
 /// The callee's extra Rust fn parameters (after `&self`), one per `Params`
 /// entry that gets a real Rust parameter (i.e. every kind except an
@@ -202,8 +202,7 @@ pub fn emit_prologue(cx: &Ctx, params: &Params, body: &[NodeId]) -> TokenStream 
     // has no parameter to turn -- only its `__destr_<i>` slot does.
     // `emit_destructures` already declares each one directly at its storage
     // class (cell included), so wrapping here would wrap the cell in a cell.
-    let destructured: FSet<String> =
-        params.destructured_names().into_iter().collect();
+    let destructured: FSet<String> = params.destructured_names().into_iter().collect();
     // ASSIGNED names are excluded too: the hoist prelude that follows this
     // prologue (`emit_hoisted_body_with_extra_roots`, same collection roots)
     // declares every assigned local itself, and for a captured PARAM its

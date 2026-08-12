@@ -364,7 +364,10 @@ fn parse_enum_members(
     while i < elems.len() {
         let name = ffi_symbol_str(&elems[i])?;
         i += 1;
-        let value = match elems.get(i).and_then(|n| ffi_const_int(n, hir, body_so_far)) {
+        let value = match elems
+            .get(i)
+            .and_then(|n| ffi_const_int(n, hir, body_so_far))
+        {
             Some(v) => {
                 i += 1;
                 v
@@ -550,13 +553,12 @@ fn layout_array_type(
         );
     }
     let elem = ffi_type_node(&elems[0], aliases)?;
-    let count = ffi_const_int(&elems[1], hir, body_so_far)
-        .ok_or_else(|| {
-            "an inline array field's element COUNT must be an integer literal, or a constant this \
+    let count = ffi_const_int(&elems[1], hir, body_so_far).ok_or_else(|| {
+        "an inline array field's element COUNT must be an integer literal, or a constant this \
              class body already set to one -- it decides where every following field starts (zeo \
              limitation)"
-                .to_string()
-        })?;
+            .to_string()
+    })?;
     if count < 0 {
         return Err("an inline array field's element count can't be negative"
             .to_string()
@@ -633,10 +635,7 @@ fn ffi_field_accessor(ty: &crate::hir::FfiType) -> PResult<(String, String, usiz
         // accessor wraps/unwraps `FFI::Function` -- see `Conv::Callback`.
         Str | Pointer | Callback(..) => ("get_pointer".into(), "put_pointer".into()),
         other => {
-            return Err(format!(
-                "FFI::Struct field type `{other:?}` isn't supported yet"
-            )
-            .into());
+            return Err(format!("FFI::Struct field type `{other:?}` isn't supported yet").into());
         }
     };
     // Width and alignment come from the one shared table -- the same widths
@@ -864,9 +863,9 @@ pub(crate) fn synthesize_ffi_struct(
                 // synthesized `initialize` takes the pointer as-is, so every
                 // inner accessor indexes from parent + offset.
                 Conv::Struct(class, _) => format!("{class}.new(@__ffi_ptr + {off})"),
-                Conv::Callback(args, ret) => format!(
-                    "::FFI::Function.new({ret}, [{args}], @__ffi_ptr.get_pointer({off}))"
-                ),
+                Conv::Callback(args, ret) => {
+                    format!("::FFI::Function.new({ret}, [{args}], @__ffi_ptr.get_pointer({off}))")
+                }
                 Conv::Enum(m) => {
                     let table = m
                         .iter()
