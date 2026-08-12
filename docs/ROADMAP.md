@@ -472,6 +472,18 @@ diffs beyond the intended shapes.
 
 ### Considered, not scheduled
 
+- **`-C panic=abort` for `-o` binaries** — investigated 2026-08-11 and
+  retired as structurally unsafe, not by measurement: dropping a suspended
+  corosensei coroutine works by force-unwinding its stack (corosensei's own
+  documented contract — "if `force_unwind` fails then the program is
+  aborted"), and Ruby programs drop suspended Fibers/Enumerators routinely
+  (`Enumerator#next`, lazy chains, an unfinished external iteration going
+  out of scope). With the `panic_abort` runtime linked, that forced unwind
+  aborts the process. The runtime's `catch_unwind` boundaries (the dead-proc
+  guard in `rproc`, coroutine panic propagation in `thread`, the Gvl's
+  handler shield) would also silently stop catching — rustc happily links an
+  unwind-built rlib into an abort binary, so nothing would even fail loudly.
+  Revisit only if fibers ever move off unwinding entirely.
 - **Block & proc call overhead** — send_cfunc_block (1.21×) and
   send_rubyfunc_block (1.68×) are no longer losses, but they are the weakest
   call-path ratios that are not object-graph bound. A leaner block-invoke path
