@@ -668,6 +668,7 @@ opt-level = 2
 [profile.release]
 strip = "symbols"
 codegen-units = 16
+lto = "thin"
 "#,
         version = env!("CARGO_PKG_VERSION")
     );

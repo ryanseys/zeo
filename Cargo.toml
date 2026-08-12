@@ -166,11 +166,20 @@ opt-level = 2
 # module -- one thread for minutes, with a memory peak that forced the 6-job
 # caps in .cargo/config.toml and backend::job_cap. Registry installs already
 # built zeo-rt at 16 (in the anchor workspace it is a dependency, so the
-# package."*" override applied); the dev tree now matches. Shipped binaries
-# get single-unit optimization back through [profile.dist].
+# package."*" override applied); the dev tree now matches.
+#
+# `lto = "thin"` is NOT optional next to cgu 16: without it the runtime lost
+# its cross-unit inlining and the bench geomean regressed +23.6% (ruby_xor
+# +290%). For the rlib it mainly means embed-bitcode, so the generated
+# binary's own `-C lto=thin` release link (backend::rustc_flags) can inline
+# across both the unit and the crate boundary -- something the old cgu-1
+# rlib never had.
 [profile.release]
 strip = "symbols"
 codegen-units = 16
+
+[profile.release.package.zeo-rt]
+codegen-units = 1
 
 # `xtask dist` artifacts only: maximum optimization, paid once per release.
 [profile.dist]
