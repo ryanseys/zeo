@@ -13,5 +13,9 @@ Slot
 "meta"
 false
 true
+Buf
+:buf
+8
+true
 4242
 still running

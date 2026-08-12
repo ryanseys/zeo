@@ -51,6 +51,18 @@ p s.label
 p s.null?
 p Slot.new(0, "zero").null?
 
+# A `MemoryPointer` subclass allocates through ITS constructor, not the
+# plain pointer one -- `Buf.new(:int, 2)` is 8 owned bytes, not address 2.
+class Buf < FFI::MemoryPointer
+  def label = :buf
+end
+
+b = Buf.new(:int, 2)
+p b.class
+p b.label
+p b.size
+p b.autorelease?
+
 # The inherited read/write surface works on the subclass instance.
 buf = FFI::MemoryPointer.new(:int, 1)
 buf.write_int(4242)

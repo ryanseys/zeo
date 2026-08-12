@@ -885,6 +885,10 @@ pub const PAYLOAD_ROOTS: &[ClassId] = &[
     // the one that answers `#autorelease?` true. The gem's own idiom for a
     // C handle, and 25 gems in the ledger.
     FFI_AUTO_POINTER_CLASS,
+    // `FFI::MemoryPointer`: a root of its own for the same reason -- its
+    // `new(type, count)` allocates the buffer, which `Pointer.new` would
+    // have read as an ADDRESS.
+    FFI_MEMORY_POINTER_CLASS,
 ];
 
 /// Whether `id` is an instantiable value-builtin payload root -- see

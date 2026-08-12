@@ -455,6 +455,14 @@ fn empty_payload(root: ClassId) -> RubyValue {
         zeo_abi::FFI_POINTER_CLASS | zeo_abi::FFI_AUTO_POINTER_CLASS => {
             construct_root_payload(root, &[RubyValue::Int(0)], None).unwrap_or(RubyValue::Nil)
         }
+        // A zero-byte owned buffer -- `MemoryPointer.new(:char, 0)`. Real,
+        // and re-seated by the subclass's own `super(type, count)`.
+        zeo_abi::FFI_MEMORY_POINTER_CLASS => construct_root_payload(
+            root,
+            &[RubyValue::Symbol(Symbol::intern("char")), RubyValue::Int(0)],
+            None,
+        )
+        .unwrap_or(RubyValue::Nil),
         _ => RubyValue::Nil,
     }
 }
