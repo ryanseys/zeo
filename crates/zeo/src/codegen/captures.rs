@@ -84,6 +84,21 @@ pub(super) fn own_param_names(params: &Params) -> FSet<String> {
     params.bound_names().into_iter().collect()
 }
 
+/// Everything that runs in a scope's OWN frame: its parameter default
+/// expressions, then its body.
+///
+/// A default is evaluated in the callee's frame when the argument is omitted,
+/// so a local it assigns belongs to that scope -- `|name = (given = true)|`,
+/// ruby's idiom for "was an argument passed?", which pantheios and roda both
+/// write inside a `define_method`. Walking the body alone saw the READ of
+/// `given` and no assignment, and read it as a capture of the enclosing
+/// block's own local, which is the one nesting shape codegen refuses.
+fn scope_nodes(params: &Params, body: &[NodeId]) -> Vec<NodeId> {
+    let mut nodes = params.default_ids();
+    nodes.extend_from_slice(body);
+    nodes
+}
+
 /// Scans a WHOLE scope's body (a method's or the top level's) for every
 /// escaping block, unioning their capture requirements -- but ONLY names
 /// genuinely shared with the enclosing scope: assigned somewhere outside
@@ -200,7 +215,7 @@ pub fn block_captures(
 ) -> Captures {
     let mut caps = Captures::default();
     let own = own_param_names(params);
-    for &n in body {
+    for n in scope_nodes(params, body) {
         walk(
             compiler,
             n,
@@ -1173,7 +1188,7 @@ fn walk(
             nested_proc_binding_needs_self(compiler, escaping_at.is_some(), caps);
             let next_exclusions: FSet<String> =
                 param_exclusions.union(&own_param_names(params)).cloned().collect();
-            for &n in body {
+            for n in scope_nodes(params, body) {
                 walk(compiler, n, deepen(escaping_at, || start_of(compiler, id)), &next_exclusions, caps, self_class);
             }
         }
@@ -1393,7 +1408,7 @@ fn walk(
                     nested_proc_binding_needs_self(compiler, escaping_at.is_some(), caps);
                     let next_exclusions: FSet<String> =
                         param_exclusions.union(&own_param_names(params)).cloned().collect();
-                    for &n in body {
+                    for n in scope_nodes(params, body) {
                         walk(compiler, n, deepen(escaping_at, || start_of(compiler, *b)), &next_exclusions, caps, self_class);
                     }
                 }
@@ -1437,7 +1452,7 @@ fn walk(
                 && let HirNode::Block { params, body } = &compiler.hir[*b] {
                     let next_exclusions: FSet<String> =
                         param_exclusions.union(&own_param_names(params)).cloned().collect();
-                    for &n in body {
+                    for n in scope_nodes(params, body) {
                         walk(compiler, n, deepen(escaping_at, || block_body_pos(compiler, body, *b)), &next_exclusions, caps, self_class);
                     }
                 }
@@ -1546,7 +1561,7 @@ fn walk(
                 } else {
                     deepen(escaping_at, || block_body_pos(compiler, body, *b))
                 };
-                for &n in body {
+                for n in scope_nodes(params, body) {
                     walk(compiler, n, next_escaping_at, &next_exclusions, caps, self_class);
                 }
             }
@@ -1577,7 +1592,7 @@ fn walk(
                 caps.self_captured = true;
                 let next_exclusions: FSet<String> =
                     param_exclusions.union(&own_param_names(params)).cloned().collect();
-                for &n in body {
+                for n in scope_nodes(params, body) {
                     walk(compiler, n, deepen(escaping_at, || start_of(compiler, id)), &next_exclusions, caps, self_class);
                 }
             }
