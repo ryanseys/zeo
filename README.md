@@ -338,18 +338,18 @@ below on every probe, and `cargo xtask gem-probe --check` fails when they
 disagree with the ledger — so this block cannot go stale.
 
 <!-- gem-probe-stats:begin -->
-**185,307 of 195,778 probed gems compile to Rust (94.7%).** The probe runs zeo's full front end (parse, lower, analyze, codegen) on the newest release of every gem on rubygems.org. `ok` means zeo produced Rust; no rustc ran. One row per gem in [`conformance/gem-probe.tsv`](conformance/gem-probe.tsv).
+**185,318 of 195,778 probed gems compile to Rust (94.7%).** The probe runs zeo's full front end (parse, lower, analyze, codegen) on the newest release of every gem on rubygems.org. `ok` means zeo produced Rust; no rustc ran. One row per gem in [`conformance/gem-probe.tsv`](conformance/gem-probe.tsv).
 
 | Verdict | Gems | Share of probed |
 |---|---|---|
-| Compile to Rust (`ok`) | 185,307 | 94.7% |
-| Compiler gaps, zeo's to fix (`lowering-gap`, `compiler-panic`, `rustc-error`) | 772 | 0.4% |
+| Compile to Rust (`ok`) | 185,318 | 94.7% |
+| Compiler gaps, zeo's to fix (`lowering-gap`, `compiler-panic`, `rustc-error`) | 761 | 0.4% |
 | Unresolved dependency in the probe's view (`missing-dependency`) | 1,332 | 0.7% |
 | Harness limits, not compiler verdicts (`no-entry-point`, `no-lib-dir`, `fetch-failed`, `view-failed`, `ambiguous-require`) | 843 | 0.4% |
 | Nothing to compile (`invalid-ruby`, `native-extension`, `ext-only`, `meta-gem`, `platform-gem`) | 7,474 | 3.8% |
 | No verdict reached (`timeout`, `out-of-memory`) | 50 | 0.0% |
 
-Of the 187,461 gems zeo can attempt -- the probed set minus the harness limits and the gems no Ruby loads -- **185,307 compile (98.9%)**.
+Of the 187,461 gems zeo can attempt -- the probed set minus the harness limits and the gems no Ruby loads -- **185,318 compile (98.9%)**.
 <!-- gem-probe-stats:end -->
 
 Read [`docs/GEM_TESTING.md`](docs/GEM_TESTING.md) for the workflow and for
