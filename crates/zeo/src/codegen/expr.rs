@@ -3154,20 +3154,33 @@ fn emit_ffi_runtime_call(cx: &Ctx, call: &crate::hir::FfiCall, addr: TokenStream
     }
     // `:strptr` calls through the plain Pointer kind; the pair wrap happens
     // in `post` below, over the already-wrapped `FFI::Pointer`.
-    let ret_kind = if matches!(&call.ret, FfiType::StrPtr) {
-        quote! { zeo_rt::ffi::FfiKind::Pointer }
-    } else {
-        ffi_kind_tokens(&call.ret)
+    // A by-value struct return has no scalar kind at all -- it takes the
+    // aggregate path below, so the kind is never asked for.
+    let ret_kind = match &call.ret {
+        FfiType::StrPtr => quote! { zeo_rt::ffi::FfiKind::Pointer },
+        FfiType::Struct(_) => quote! {},
+        other => ffi_kind_tokens(other),
     };
     let cb_check = if has_callback {
         quote! { zeo_rt::ffi::take_callback_error()?; }
     } else {
         quote! {}
     };
+    // A struct returned BY VALUE takes libffi's aggregate return path: the
+    // same field descriptor the argument direction builds, and a ruby-owned
+    // buffer the wrapper then views through the struct's class.
+    let call_expr = match &call.ret {
+        FfiType::Struct(layout) => {
+            let elems = ffi_elem_slice(layout);
+            let size = proc_macro2::Literal::usize_unsuffixed(layout.size);
+            quote! { zeo_rt::ffi::call_struct_ret(__addr, __vals, #elems, #size) }
+        }
+        _ => quote! { zeo_rt::ffi::call_fixed(__addr, __vals, #ret_kind) },
+    };
     let invoke = if call.blocking {
-        quote! { zeo_rt::gvl::without_gvl(|| unsafe { zeo_rt::ffi::call_fixed(__addr, __vals, #ret_kind) })? }
+        quote! { zeo_rt::gvl::without_gvl(|| unsafe { #call_expr })? }
     } else {
-        quote! { unsafe { zeo_rt::ffi::call_fixed(__addr, __vals, #ret_kind) }? }
+        quote! { unsafe { #call_expr }? }
     };
     // The extern tier's `int_to_enum`/`strptr` wraps, applied after the
     // generic wrap `call_fixed` already did.

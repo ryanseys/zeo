@@ -2007,22 +2007,6 @@ fn lower_attach_function(
                 .into(),
         );
     }
-    // Arguments ride the runtime tier through libffi's own aggregate
-    // descriptor; only a by-value RETURN still needs the extern tier (a
-    // dynamic-size return buffer needs the raw libffi call).
-    if ret_struct_class.is_some()
-        && matches!(
-            lib,
-            crate::hir::FfiLib::Runtime(_) | crate::hir::FfiLib::Deferred { .. }
-        )
-    {
-        return Err(
-            "a runtime-resolved `ffi_lib` can't return a struct BY VALUE (zeo limitation) -- \
-             name the library statically or return `.by_ref` (a pointer) and wrap it"
-                .to_string()
-                .into(),
-        );
-    }
     // `blocking: true` beside a callback argument is fine in every mode: the
     // default parallel mode has no GVL to release, and under `ZEO_GVL=1` the
     // callback trampoline re-acquires before entering ruby (see

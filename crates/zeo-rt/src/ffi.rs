@@ -454,6 +454,45 @@ pub unsafe fn call_fixed(
     Ok(unsafe { call_and_wrap(&cif, code, &args, ret) })
 }
 
+/// Call a fixed-signature C function whose return is a struct passed BY
+/// VALUE, through the runtime tier.
+///
+/// The extern tier lets rustc classify an aggregate return through a
+/// `#[repr(C)]` mirror; here libffi does it, from the same real field types
+/// (`elements`) the by-value ARGUMENT direction already builds. The returned
+/// bytes are copied into a ruby-owned buffer and the generated wrapper views
+/// them through the struct's own class, exactly as the extern tier's
+/// `from_struct_ret` does.
+///
+/// # Safety
+/// `addr` must be a valid C function whose signature is described by the
+/// kinds of `vals` and by `elements`/`size`.
+#[cfg(feature = "ext-ffi")]
+pub unsafe fn call_struct_ret(
+    addr: *const c_void,
+    vals: Vec<VaVal>,
+    elements: &'static [FfiElem],
+    size: usize,
+) -> Result<RubyValue, Signal> {
+    use libffi::middle::{Cif, CodePtr, Ret, Type};
+    if addr.is_null() {
+        return Err(arg_error!("FFI call to a NULL function pointer"));
+    }
+    let ret_ty = Type::structure(elements.iter().map(elem_type));
+    let cif = Cif::new(vals.iter().map(VaVal::ty), ret_ty);
+    let args: Vec<libffi::middle::Arg> = vals.iter().map(VaVal::arg).collect();
+    // `u64` words rather than bytes for two reasons libffi imposes: it writes
+    // at least one full register even for a struct smaller than one, and the
+    // buffer has to satisfy the widest alignment the aggregate's fields ask
+    // for -- 8, since every scalar kind zeo builds a descriptor from is at
+    // most 8 bytes wide.
+    let mut buf: Vec<u64> = vec![0; size.div_ceil(8).max(1)];
+    unsafe {
+        cif.call_return_into(CodePtr::from_ptr(addr), &args, Ret::new(&mut buf[..]));
+        Ok(from_struct_ret(buf.as_ptr().cast::<u8>(), size))
+    }
+}
+
 /// A `VaVal` carrying a raw code/data pointer -- how generated code hands a
 /// libffi closure's `code_ptr` (or any raw address) into `call_fixed` without
 /// allocating an `FFI::Pointer` around it first.
