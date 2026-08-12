@@ -3117,11 +3117,8 @@ pub fn send_below_overlay_at(
     {
         return m.call(obj, args, block);
     }
-    if let Some(f) = value_method(owner, 0, name) {
-        return f(recv, args, block);
-    }
-    if let Some(f) = crate::builtins::class_table(owner).and_then(|t| t(&name.to_string())) {
-        return f(recv, args, block);
+    if let Some(r) = probe_generic_row(recv, owner, name, args, block.clone()) {
+        return r;
     }
     send_value(recv, name, args, block)
 }
@@ -3143,15 +3140,46 @@ pub fn send_as_defined_in(
             return m.call(obj, args, block);
         }
     }
-    if let Some(f) = value_method(owner, 0, name) {
-        return f(recv, args, block);
-    }
-    if let Some(f) = crate::builtins::class_table(owner).and_then(|t| t(&name.to_string())) {
-        return f(recv, args, block);
+    if let Some(r) = probe_generic_row(recv, owner, name, args, block.clone()) {
+        return r;
     }
     // Nothing receiver-generic at the owner: fall back to ordinary dispatch
     // rather than raising, so the call still answers SOMETHING.
     send_value(recv, name, args, block)
+}
+
+/// Probe `anc`'s receiver-generic rows -- its VALUE methods, then its
+/// registered builtin table -- and run the hit. A value subclass reaching an
+/// ancestor its payload owns runs the row against the PAYLOAD and re-wraps a
+/// self-return, the same bridge ordinary dispatch's probes apply: a payload
+/// root's native rows downcast the receiver, and the boxed subclass panicked
+/// them (`super` through an included module into `Array#size`).
+fn probe_generic_row(
+    recv: &RubyValue,
+    anc: ClassId,
+    name: Symbol,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Option<Result<RubyValue, Signal>> {
+    let f = value_method(anc, 0, name)
+        .or_else(|| crate::builtins::class_table(anc).and_then(|t| t(&name.to_string())))?;
+    if let RubyValue::Object(o) = recv
+        && let Some(root) = o.builtin_root()
+        && crate::builtins::value_subclass::payload_owns(root, anc)
+        && let Some(p) = o.builtin_payload()
+    {
+        let result = match f(&p, args, block) {
+            Ok(r) => r,
+            Err(e) => return Some(Err(e)),
+        };
+        return Some(Ok(crate::builtins::value_subclass::rewrap_self_return(
+            result,
+            &p,
+            o,
+            name.name_str(),
+        )));
+    }
+    Some(f(recv, args, block))
 }
 
 /// The shared body of [`send_super_from`] and [`send_as_defined_in`]: walk
@@ -3200,11 +3228,8 @@ fn send_walking(
                 return m.call(obj, args, block);
             }
         }
-        if let Some(f) = value_method(anc, 0, name) {
-            return f(recv, args, block);
-        }
-        if let Some(f) = crate::builtins::class_table(anc).and_then(|t| t(&method_name)) {
-            return f(recv, args, block);
+        if let Some(r) = probe_generic_row(recv, anc, name, args, block.clone()) {
+            return r;
         }
     }
     Err(raise_method_missing(
