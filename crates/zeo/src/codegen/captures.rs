@@ -1210,7 +1210,15 @@ fn walk(
             }
         }
         HirNode::For { target, iterable, body } => {
-            walk_multi_target(compiler, target, escaping_at, param_exclusions, caps, self_class);
+            walk_multi_target(
+                compiler,
+                target,
+                escaping_at,
+                start_of(compiler, id),
+                param_exclusions,
+                caps,
+                self_class,
+            );
             walk(compiler, *iterable, escaping_at, param_exclusions, caps, self_class);
             for &n in body {
                 walk(compiler, n, escaping_at, param_exclusions, caps, self_class);
@@ -1223,7 +1231,15 @@ fn walk(
         }
         HirNode::Redo | HirNode::BlockGiven => {}
         HirNode::MultiWrite { targets, value } => {
-            walk_multi_target_group(compiler, targets, escaping_at, param_exclusions, caps, self_class);
+            walk_multi_target_group(
+                compiler,
+                targets,
+                escaping_at,
+                start_of(compiler, id),
+                param_exclusions,
+                caps,
+                self_class,
+            );
             walk(compiler, *value, escaping_at, param_exclusions, caps, self_class);
         }
         // A global/constant's storage doesn't depend on `self`/enclosing
@@ -1623,6 +1639,7 @@ fn walk_multi_target(
     compiler: &Compiler,
     target: &crate::hir::MultiTarget,
     escaping_at: Option<(crate::hir::FileId, u32, bool)>,
+    outer_at: Option<(crate::hir::FileId, u32)>,
     param_exclusions: &FSet<String>,
     caps: &mut Captures,
     self_class: super::class_query::SelfClass<'_>,
@@ -1630,9 +1647,25 @@ fn walk_multi_target(
     use crate::hir::MultiTarget;
     match target {
         MultiTarget::Local(name) => {
-            if escaping_at.is_some() && !param_exclusions.contains(name) {
-                caps.locals.insert(name.clone());
-                caps.assigned.insert(name.clone());
+            match escaping_at {
+                Some(_) if !param_exclusions.contains(name) => {
+                    caps.locals.insert(name.clone());
+                    caps.assigned.insert(name.clone());
+                }
+                // A multi-assign/`for` target OUTSIDE any escaping block is a
+                // plain outer assignment for the textual block-local rule,
+                // positioned at the enclosing statement (its desugared writes
+                // are synthetic, so the `LocalWrite` arm never sees a span).
+                // Without this, minitest's `level, n_combos = 1, 1` above a
+                // `loop do ... find { level } ... level = 1 ... end` counted
+                // the RE-assignment inside the loop as the first, demoting
+                // `level` to loop-block-local and refusing the nested `find`.
+                None => {
+                    if let Some(pos) = outer_at {
+                        note_first_assign(&mut caps.outer_assigned_at, name, pos);
+                    }
+                }
+                _ => {}
             }
         }
         MultiTarget::Ivar(_) => {
@@ -1665,6 +1698,7 @@ fn walk_multi_target(
             compiler,
             group,
             escaping_at,
+            outer_at,
             param_exclusions,
             caps,
             self_class,
@@ -1676,14 +1710,15 @@ fn walk_multi_target_group(
     compiler: &Compiler,
     group: &crate::hir::MultiTargetGroup,
     escaping_at: Option<(crate::hir::FileId, u32, bool)>,
+    outer_at: Option<(crate::hir::FileId, u32)>,
     param_exclusions: &FSet<String>,
     caps: &mut Captures,
     self_class: super::class_query::SelfClass<'_>,
 ) {
     for t in group.before.iter().chain(&group.after) {
-        walk_multi_target(compiler, t, escaping_at, param_exclusions, caps, self_class);
+        walk_multi_target(compiler, t, escaping_at, outer_at, param_exclusions, caps, self_class);
     }
     if let Some(Some(t)) = &group.splat {
-        walk_multi_target(compiler, t, escaping_at, param_exclusions, caps, self_class);
+        walk_multi_target(compiler, t, escaping_at, outer_at, param_exclusions, caps, self_class);
     }
 }
