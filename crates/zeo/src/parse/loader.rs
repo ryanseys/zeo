@@ -582,6 +582,25 @@ impl Loader {
             }
             hir.deferred_requires.insert(feature);
         }
+        // A `require_relative` of a NATIVE (.so/.bundle) feature names a
+        // compiled extension zeo cannot load, protected or not: keep the
+        // CALL and raise the catchable runtime `LoadError` -- the same
+        // deferral its plain-`require` spelling gets through the static-ext
+        // fallthrough -- instead of failing the whole compile.
+        for call in &requires.calls {
+            if call.name().as_slice() != b"require_relative" {
+                continue;
+            }
+            let Some(feature) = literal_feature(result, hir, call)? else {
+                continue;
+            };
+            if is_native_feature(&feature)
+                && let Some(file) = hir.lowering_file
+            {
+                hir.optional_require_sites
+                    .insert((file, call.location().start_offset() as u32));
+            }
+        }
         // A `require_relative` under a `rescue LoadError` is the pure-Ruby
         // fallback idiom: the gem ships an optional native half and CATCHES
         // its absence. When the target is missing, the call site is recorded
