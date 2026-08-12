@@ -878,6 +878,9 @@ pub const PAYLOAD_ROOTS: &[ClassId] = &[
     // `Zlib::GzipReader`: the `File` shape -- a reader needs an IO, so a
     // subclass seats the real one through `super(io)`.
     ZLIB_GZIP_READER_CLASS,
+    // `Zlib::GzipWriter` -- the same shape as the reader: an IO underneath,
+    // seated by the subclass's own `initialize` through `super`.
+    ZLIB_GZIP_WRITER_CLASS,
     // `FFI::Pointer`: the NULL pointer is its empty form.
     FFI_POINTER_CLASS,
     // `FFI::AutoPointer`: a root of its OWN, nearer than `Pointer`, so a

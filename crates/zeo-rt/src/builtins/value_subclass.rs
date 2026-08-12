@@ -438,7 +438,9 @@ fn empty_payload(root: ClassId) -> RubyValue {
         // `Zlib::GzipReader` needs an IO underneath and `TCPServer` an
         // address to bind -- the `File` shape: the subclass's own
         // `initialize` seats the real payload through `super`.
-        zeo_abi::ZLIB_GZIP_READER_CLASS | zeo_abi::TCPSERVER_CLASS => RubyValue::Nil,
+        zeo_abi::ZLIB_GZIP_READER_CLASS
+        | zeo_abi::ZLIB_GZIP_WRITER_CLASS
+        | zeo_abi::TCPSERVER_CLASS => RubyValue::Nil,
         zeo_abi::SET_CLASS => construct_root_payload(root, &[], None).unwrap_or(RubyValue::Nil),
         // `Regexp.new("")` is a real regexp -- `//`, which matches everywhere --
         // so the empty form exists and a subclass that never calls `super`

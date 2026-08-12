@@ -150,3 +150,26 @@ p [sp.class, sp.width, sp.begin, sp.end, sp.to_s]
 p [(sp + 5).class, (sp + 5).to_s]
 p [sp.is_a?(Range), sp.include?(20), sp.to_a.size]
 p Span.new(1, 3, true).to_a
+
+# `Zlib::GzipWriter` takes the same shape as its reader: the subclass's own
+# `initialize` seats the real IO through `super`, and the whole compressor
+# surface is inherited.
+require "zlib"
+
+class TaggedGz < Zlib::GzipWriter
+  def initialize(io)
+    super(io)
+    @tag = :tagged
+  end
+
+  attr_reader :tag
+end
+
+buf = StringIO.new(+"", "wb")
+gz = TaggedGz.new(buf)
+p gz.class
+p gz.tag
+p gz.is_a?(Zlib::GzipWriter)
+gz.write("hello gzip")
+gz.close
+p Zlib::GzipReader.new(StringIO.new(buf.string, "rb")).read

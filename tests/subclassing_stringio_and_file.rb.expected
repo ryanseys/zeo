@@ -21,3 +21,7 @@ true
 [Span, "(15..45)"]
 [true, true, 31]
 [1, 2]
+TaggedGz
+:tagged
+true
+"hello gzip"
