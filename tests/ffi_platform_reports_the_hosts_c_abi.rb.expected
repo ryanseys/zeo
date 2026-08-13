@@ -1,0 +1,21 @@
+"1.17.4"
+[:ADDRESS_ALIGN, :ADDRESS_SIZE, :ARCH, :BIG_ENDIAN, :BYTE_ORDER, :CONF_DIR, :CPU, :DOUBLE_ALIGN, :DOUBLE_SIZE, :FLOAT_ALIGN, :FLOAT_SIZE, :INT16_ALIGN, :INT16_SIZE, :INT32_ALIGN, :INT32_SIZE, :INT64_ALIGN, :INT64_SIZE, :INT8_ALIGN, :INT8_SIZE, :IS_BSD, :IS_DRAGONFLYBSD, :IS_FREEBSD, :IS_GNU, :IS_LINUX, :IS_MAC, :IS_NETBSD, :IS_OPENBSD, :IS_SOLARIS, :IS_WINDOWS, :LIBC, :LIBPREFIX, :LIBSUFFIX, :LITTLE_ENDIAN, :LONG_ALIGN, :LONG_DOUBLE_ALIGN, :LONG_DOUBLE_SIZE, :LONG_SIZE, :NAME, :OS, :OSVERSION]
+[64, 64, 64, 64, 8, 8, 16, 16, 32, 32, 64, 64, 32, 32, 64, 64, 1234, 4321, 1234]
+["darwin", "aarch64", "aarch64-darwin"]
+["lib", "dylib", "libc.dylib"]
+true
+[[:IS_BSD, true], [:IS_DRAGONFLYBSD, false], [:IS_FREEBSD, false], [:IS_GNU, nil], [:IS_LINUX, false], [:IS_MAC, true], [:IS_NETBSD, false], [:IS_OPENBSD, false], [:IS_SOLARIS, false], [:IS_WINDOWS, false]]
+[true, true, true, true, true]
+true
+[RuntimeError, LoadError, LoadError]
+nil
+["libjpeg.dylib", "libz.dylib", "libz.dylib", "/usr/lib/libz.dylib", "libc.dylib"]
+"libvips.42.dylib"
+"/opt/lib/libvips.dylib"
+[TypeError, "no implicit conversion of Symbol into String"]
+[4, 8, 8]
+true
+[TypeError, "unable to resolve type 'nope'"]
+true
+true
+[:ulong_long, true, true]

@@ -1325,11 +1325,12 @@ fn guard_integer(node: &Node<'_>) -> Option<i64> {
         let (negative, digits) = value.to_u32_digits();
         return super::literals::assemble_i64(negative, digits);
     }
-    let path = constant_path_name(node).ok()?;
-    match path.trim_start_matches("::") {
-        "FFI::Platform::ADDRESS_SIZE" | "FFI::Platform::LONG_SIZE" => Some(64),
-        _ => None,
-    }
+    let leaf = constant_path_name(node)
+        .ok()?
+        .trim_start_matches("::")
+        .strip_prefix("FFI::Platform::")?
+        .to_string();
+    crate::guard_fold::ffi_platform_integer(&leaf)
 }
 
 /// A regexp LITERAL parsed into `guard_fold`'s exact-fold pattern; `None` for

@@ -357,7 +357,7 @@ fn static_string(
             static_string(compiler, cref, box_id, only, depth)
         }
         HirNode::ClassRef(name) if name.contains("::") => {
-            const_string(compiler, cref, box_id, name)
+            const_string(compiler, cref, box_id, name).or_else(|| ffi_platform_leaf(name))
         }
         // A constant the program writes itself SHADOWS the one ruby seeds, for
         // every read whose lexical scope reaches it -- sass defines its own
@@ -374,7 +374,7 @@ fn static_string(
                 // gem reaches the seeded constant from inside the namespace
                 // shadowing its name. A top-level constant lives on `Object`.
                 None if scope == "Object" => seeded_string_const(name),
-                None => None,
+                None => ffi_platform_leaf(&format!("{scope}::{name}")),
             }
         }
         HirNode::Call {
@@ -482,12 +482,14 @@ fn static_integer(
                 Some((s, b)) => (Some(s), b),
                 None => (None, name.as_str()),
             };
-            let (owner, value) = const_init(compiler, cref, box_id, scope, base)?;
-            through(owner, value)
+            const_init(compiler, cref, box_id, scope, base)
+                .and_then(|(owner, value)| through(owner, value))
+                .or_else(|| ffi_platform_leaf_integer(name))
         }
         HirNode::QualifiedConstRead(scope, name) => {
-            let (owner, value) = const_init(compiler, cref, box_id, Some(scope), name)?;
-            through(owner, value)
+            const_init(compiler, cref, box_id, Some(scope), name)
+                .and_then(|(owner, value)| through(owner, value))
+                .or_else(|| ffi_platform_leaf_integer(&format!("{scope}::{name}")))
         }
         // `Chef::VERSION.to_i` is 12: ruby reads the leading integer and stops.
         HirNode::Call {
@@ -1111,7 +1113,9 @@ pub(crate) fn ffi_platform_predicate(name: &str) -> Option<bool> {
         "windows?" => windows,
         "unix?" => !windows,
         "linux?" => platform.contains("linux"),
-        "bsd?" => ["freebsd", "openbsd", "netbsd", "dragonfly"]
+        // `IS_BSD = IS_MAC || IS_FREEBSD || ...` -- macOS counts, which is
+        // what makes `bsd?` and `mac?` both true on darwin.
+        "bsd?" => ["darwin", "freebsd", "openbsd", "netbsd", "dragonfly"]
             .iter()
             .any(|w| platform.contains(w)),
         "solaris?" => platform.contains("solaris"),
@@ -1163,6 +1167,53 @@ pub(crate) fn ffi_platform_string(leaf: &str) -> Option<String> {
         "NAME" => format!("{arch}-{os}"),
         _ => return None,
     })
+}
+
+/// The ffi gem's `FFI::Platform` NUMERIC constants, in the same bits the
+/// runtime half reads back off `FFI::Type::Builtin` (`gems/ffi/lib/ffi.rb`) --
+/// the two have to agree, or a `typedef` folded one way at compile time
+/// contradicts the constant the program prints. vips gates its `:GType`
+/// width on `ADDRESS_SIZE == 64` and crabstone its `:size_t` on
+/// `ADDRESS_SIZE == 32`.
+pub(crate) fn ffi_platform_integer(leaf: &str) -> Option<i64> {
+    let long_double = match seeded_string_const("RUBY_PLATFORM")?.contains("darwin") {
+        // Apple aliases `long double` to `double`; SysV gives it 16 bytes.
+        true => 64,
+        false => 128,
+    };
+    Some(match leaf {
+        "ADDRESS_SIZE" | "ADDRESS_ALIGN" => i64::from(usize::BITS),
+        "LONG_SIZE" | "LONG_ALIGN" | "INT64_SIZE" | "INT64_ALIGN" | "DOUBLE_SIZE"
+        | "DOUBLE_ALIGN" => 64,
+        "INT32_SIZE" | "INT32_ALIGN" | "FLOAT_SIZE" | "FLOAT_ALIGN" => 32,
+        "INT16_SIZE" | "INT16_ALIGN" => 16,
+        "INT8_SIZE" | "INT8_ALIGN" => 8,
+        "LONG_DOUBLE_SIZE" | "LONG_DOUBLE_ALIGN" => long_double,
+        // zeo emits for little-endian targets only.
+        "LITTLE_ENDIAN" | "BYTE_ORDER" => 1234,
+        "BIG_ENDIAN" => 4321,
+        _ => return None,
+    })
+}
+
+/// [`ffi_platform_string`] addressed by a whole constant path, for the
+/// analyze-stage folds -- which reach the constant only when the program
+/// required `ffi` at all, and see an initializer they cannot fold when it did
+/// (`ADDRESS_SIZE` reads its bits back off an `FFI::Type` instance).
+fn ffi_platform_leaf(path: &str) -> Option<String> {
+    ffi_platform_string(
+        path.trim_start_matches("::")
+            .strip_prefix("FFI::Platform::")?,
+    )
+}
+
+/// [`ffi_platform_integer`]'s constant-path spelling, the twin of
+/// [`ffi_platform_leaf`].
+fn ffi_platform_leaf_integer(path: &str) -> Option<i64> {
+    ffi_platform_integer(
+        path.trim_start_matches("::")
+            .strip_prefix("FFI::Platform::")?,
+    )
 }
 
 /// A literal method-name argument (`:validate_for_resolution` / its string
