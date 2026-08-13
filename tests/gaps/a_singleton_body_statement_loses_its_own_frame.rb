@@ -17,6 +17,13 @@
 # frame of their own while still being statements of the enclosing class body
 # -- a frame-only HIR node that analyze's class-body walks recurse into, since
 # the `def`s among them must stay visible to method registration.
+#
+# RULED OUT (2026-08-12): routing the executable items into the surrogate's
+# own `ClassDef` body instead, which would get the frame for free. A class
+# body opens its own LOCAL SCOPE, and a singleton body's locals are shared
+# across the whole of it -- `class << self; x = 1; puts x; end` would break
+# the moment some items moved into the surrogate body and others stayed in
+# the enclosing one. The frame has to arrive without moving the statements.
 begin
   class Config
     class << self
