@@ -454,8 +454,10 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         let recv =
             super::call::boxed_implicit_self(cx).expect("every context has an implicit self");
         let name = name.as_str();
+        // Guarded like a read: `defined?(@zz)` inside a Ractor raises
+        // `Ractor::IsolationError` in CRuby rather than answering nil.
         return quote! {
-            if zeo_rt::ivar_defined(&#recv, #name) {
+            if { let __r = #recv; zeo_rt::ivar_isolation_check(&__r)?; zeo_rt::ivar_defined(&__r, #name) } {
                 zeo_rt::RubyValue::Str(zeo_rt::string_new("instance-variable".to_string()))
             } else {
                 zeo_rt::RubyValue::Nil
@@ -970,9 +972,15 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
                 // RubyValue`) but already a `&RubyValue` inside a Proc
                 // closure. Borrowing covers the first and deref-coerces
                 // `&&RubyValue` back to `&RubyValue` for the second.
+                // The `_isolated` forms carry CRuby's Ractor guard: a dynamic
+                // self is the only receiver that can be a SHAREABLE object
+                // read from a non-main ractor (`Ractor.new { @n }`, whose
+                // isolated Proc runs with the ractor itself as `self`).
                 return match dyn_ivar_slot(cx, name) {
-                    Some(slot) => quote! { zeo_rt::ivar_slot_get_dyn(&#slf, #slot, #key) },
-                    None => quote! { zeo_rt::ivar_get_dyn(&#slf, #key) },
+                    Some(slot) => {
+                        quote! { zeo_rt::ivar_slot_get_dyn_isolated(&#slf, #slot, #key)? }
+                    }
+                    None => quote! { zeo_rt::ivar_get_dyn_isolated(&#slf, #key)? },
                 };
             }
             // `self` is a CLASS object (a class-method body, or a class body

@@ -1,0 +1,13 @@
+the argument still ran
+ArgumentError
+"can not isolate a Proc because it accesses outer variables (outer)."
+["Ractor::IsolationError", "can not access instance variables of shareable objects from non-main Ractors"]
+["Ractor::IsolationError", "can not access instance variables of shareable objects from non-main Ractors"]
+["Ractor::IsolationError", "can not access instance variables of shareable objects from non-main Ractors"]
+["Ractor::IsolationError", "can not access instance variables of shareable objects from non-main Ractors"]
+["Ractor::IsolationError", "can not access instance variables of shareable objects from non-main Ractors"]
+["NameError", "undefined local variable or method 'helper' for an instance of Ractor"]
+["Ractor", true, []]
+6
+7
+[]

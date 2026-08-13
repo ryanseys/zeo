@@ -1452,20 +1452,55 @@ fn an_uncaught_exception_in_a_ractor_wraps_in_remote_error_at_value() {
 }
 
 #[test]
-fn a_ractor_block_capturing_an_outer_local_is_rejected_at_compile_time() {
-    // CRuby raises Ractor::IsolationError at Proc-creation time; the AOT
-    // compiler knows the capture set statically and rejects at COMPILE
-    // time, with CRuby's own message wording.
-    let err = zeo::compile_to_rust(
+fn a_ractor_block_capturing_an_outer_local_is_rejected_where_ruby_rejects_it() {
+    // CRuby's `ArgumentError`, raised by `Ractor.new` itself and catchable
+    // there -- not the compile error zeo used to report. The verdict rides on
+    // the Proc value (`RProc::with_outer_capture`), so a literal block and a
+    // `&proc` argument reach the same raise.
+    let result = run_ruby(
         r#"
         x = 5
-        Ractor.new { x + 1 }
+        begin
+          Ractor.new { x + 1 }
+        rescue => e
+          puts "raised: #{e.class}: #{e.send(:message)}"
+        end
+        puts "still running"
         "#,
-    )
-    .expect_err("the capture is rejected");
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(
-        err,
-        "can not isolate a Proc because it accesses outer variables (x)"
+        result.stdout,
+        "raised: ArgumentError: can not isolate a Proc because it accesses outer variables (x).\n\
+         still running\n"
+    );
+}
+
+#[test]
+fn a_ractor_block_reading_an_enclosing_ivar_raises_inside_the_ractor() {
+    // Ruby isolates the Proc and rebinds its `self` to the RACTOR, so `@n` is
+    // an ivar of a shareable object -- `Ractor::IsolationError` in the ractor,
+    // surfacing as `Ractor::RemoteError` at `#value`. zeo used to refuse to
+    // compile it.
+    let result = run_ruby(
+        r#"
+        Thread.report_on_exception = false
+        class Holder
+          def initialize = @n = 7
+          def go
+            Ractor.new { @n }.value
+          rescue Ractor::RemoteError => e
+            puts "cause: #{e.cause.class}: #{e.cause.send(:message)}"
+          end
+        end
+        Holder.new.go
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "cause: Ractor::IsolationError: can not access instance variables of shareable objects \
+         from non-main Ractors\n"
     );
 }
 

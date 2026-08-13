@@ -109,16 +109,16 @@ pub use dispatch::{
     coerce_raise_arg, coerce_raise_arg_with_message, const_miss, construct_by_class_id,
     define_in_default_definee, describe_receiver, downcast_robj, downcast_robj_ref,
     install_class_registry, instance_variable_get, instance_variable_set, instance_variables, is_a,
-    is_a_value, ivar_defined, ivar_frozen_error, ivar_get_dyn, ivar_name_arg, ivar_set_dyn,
-    ivar_slot_get_dyn, ivar_slot_set_dyn, main_object, make_name_error, method_name_symbol,
-    raise_error, raise_error_details, raise_method_missing, raise_no_block_yield,
-    raise_stop_iteration, raise_with_cause, refined_method, refined_responds_to,
-    refined_send_dynamic, refined_send_in, reflect_dispatch_in, reject_marked_kwargs,
-    rescue_matches_any, responds_to, responds_to_or_missing, responds_to_value, run_initialize,
-    send, send_in, send_super_class_from, send_super_from, send_value, send_value_cached,
-    send_value_dyn_cached, send_value_explicit_in, send_value_in, send_value_public_in,
-    send_value_vcall_in, stamp_backtrace, super_defined, validate_aliases, validate_class_aliases,
-    value_class,
+    is_a_value, ivar_defined, ivar_frozen_error, ivar_get_dyn, ivar_get_dyn_isolated,
+    ivar_name_arg, ivar_set_dyn, ivar_slot_get_dyn, ivar_slot_get_dyn_isolated, ivar_slot_set_dyn,
+    main_object, make_name_error, method_name_symbol, raise_error, raise_error_details,
+    raise_method_missing, raise_no_block_yield, raise_stop_iteration, raise_with_cause,
+    refined_method, refined_responds_to, refined_send_dynamic, refined_send_in,
+    reflect_dispatch_in, reject_marked_kwargs, rescue_matches_any, responds_to,
+    responds_to_or_missing, responds_to_value, run_initialize, send, send_in,
+    send_super_class_from, send_super_from, send_value, send_value_cached, send_value_dyn_cached,
+    send_value_explicit_in, send_value_in, send_value_public_in, send_value_vcall_in,
+    stamp_backtrace, super_defined, validate_aliases, validate_class_aliases, value_class,
 };
 pub use encoding::{EncodingId, StrBuf};
 pub use eval_vm::{eval_string, eval_value, eval_value_in_scope};
@@ -176,9 +176,10 @@ pub use globals::{
 pub use handling::{PropagatingGuard, current_exception, pop_handling, push_handling};
 pub use pools::{LitPool, SymPool};
 pub use ractor::{
-    RRactor, RactorData, cross_boundary, current_ractor, init_main_ractor, make_shareable,
-    make_shareable_value, moved_object_error, ractor_join, ractor_new, ractor_outcome,
-    ractor_receive, ractor_select, ractor_send, ractor_send_mode, ractor_value, shareable,
+    RRactor, RactorData, cross_boundary, current_ractor, in_main_ractor, init_main_ractor,
+    ivar_isolation_check, make_shareable, make_shareable_value, moved_object_error, ractor_join,
+    ractor_new, ractor_outcome, ractor_receive, ractor_select, ractor_send, ractor_send_mode,
+    ractor_value, shareable,
 };
 
 /// `Ractor::MovedObject`'s numeric class id, spelled where `ruby_class!`'s

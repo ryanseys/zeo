@@ -28,10 +28,12 @@
 //! wrong): globals/cvars stay process-shared (CRuby raises IsolationError
 //! on non-main-Ractor access; here they genuinely share -- flagged for the
 //! `Ruby::Box` work, which owns namespace isolation); a receive that can
-//! never be fed blocks forever instead of CRuby's deadlock detection; block
-//! isolation is checked at COMPILE time (`codegen::call`'s `Ractor.new`
-//! interception), strictly earlier than CRuby's own Proc-creation-time
-//! `Ractor::IsolationError`. `move: true` is REAL: the graph transplants and
+//! never be fed blocks forever instead of CRuby's deadlock detection; a
+//! ractor that aborts does not print CRuby's `#<Thread:0x...> terminated with
+//! exception` report on stderr. Block isolation is CRuby's own: an outer-local
+//! capture is [`ractor_new`]'s `ArgumentError`, and an ivar access raises
+//! [`ivar_isolation_check`]'s `Ractor::IsolationError` inside the ractor,
+//! whose `self` is the ractor. `move: true` is REAL: the graph transplants and
 //! every source node is poisoned (`Ractor::MovedError` on any later send) --
 //! [`cross_graph`] documents its own deliberate divergences from CRuby's
 //! traversal accidents.
@@ -282,6 +284,36 @@ pub fn current_ractor() -> RRactor {
     CURRENT_RACTOR
         .with(|c| c.borrow().clone())
         .unwrap_or_else(main_ractor)
+}
+
+/// Whether this thread runs in the MAIN ractor -- the TLS slot alone, with no
+/// `Arc` clone and no lazy build. The hot half of [`ivar_isolation_check`].
+pub fn in_main_ractor() -> bool {
+    CURRENT_RACTOR.with(|c| c.borrow().is_none())
+}
+
+/// CRuby's `rb_ivar_lookup`/`rb_ivar_set` guard: the instance variables of a
+/// SHAREABLE object are unreachable from a non-main Ractor, because two
+/// ractors would otherwise race on one table. `Ractor.new { @n }` is the shape
+/// that meets it -- an isolated Proc's `self` is the ractor, which is
+/// inherently shareable.
+///
+/// A class/module is exempt. CRuby checks those on the VALUE instead (a
+/// class ivar holding an unshareable object is the error there, not the read
+/// itself), and `K.peek` reading an Integer from a non-main ractor answers
+/// normally -- oracle-verified.
+pub fn ivar_isolation_check(recv: &RubyValue) -> Result<(), Signal> {
+    if in_main_ractor() || matches!(recv, RubyValue::Class(_)) {
+        return Ok(());
+    }
+    if shareable(recv) {
+        return Err(raise_error(
+            "Ractor::IsolationError",
+            "can not access instance variables of shareable objects from non-main Ractors"
+                .to_string(),
+        ));
+    }
+    Ok(())
 }
 
 /// Seed the main ractor eagerly at bootstrap so `Ractor.count`/`#inspect`
@@ -603,7 +635,12 @@ pub fn ractor_new(
                 r: for_thread.clone(),
                 armed: true,
             };
-            let result = body.call(&crossed);
+            // An isolated Proc's `self` is the RACTOR, not whatever object
+            // created it -- `Ractor.new { self.class }` answers `Ractor`
+            // (oracle-verified). That is what makes `@n` in the block an ivar
+            // read of a SHAREABLE object, which `ivar_isolation_check` then
+            // turns into the `Ractor::IsolationError` CRuby raises.
+            let result = body.call_with_self(&RubyValue::Ractor(for_thread.clone()), &crossed);
             guard.disarm();
             let aborted = result.is_err();
             finish(&for_thread, result, aborted);

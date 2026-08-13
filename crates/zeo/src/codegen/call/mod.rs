@@ -1917,49 +1917,18 @@ pub fn emit_call(
             }
         }
         let proc = match (block, block_arg) {
-            (Some(block_id), _) => {
-                let HirNode::Block { params, body } = &cx.compiler.hir[block_id] else {
-                    panic!(
-                        "internal error: a Block node should only be reached via the Call that invokes it"
-                    );
-                };
-                let block_caps =
-                    super::captures::block_captures(cx.compiler, params, body, cx.self_class());
-                // `block_captures` reports every referenced non-param
-                // name, INCLUDING the block's own locals (`msg =
-                // Ractor.receive` -- found the hard way). An outer-scope
-                // access is a name that's either a genuine shared
-                // capture (in `cx.captured_locals`) or one this block
-                // never assigns itself (an enclosing param/block-local).
-                let mut assigned_here = Vec::new();
-                for &n in body {
-                    super::hoisting::collect_locals(cx.compiler, n, &mut assigned_here);
-                }
-                let assigned_here: FSet<&String> = assigned_here.iter().collect();
-                if let Some(outer) = block_caps
-                    .locals
-                    .iter()
-                    // A hidden local zeo itself introduced is not a variable
-                    // of the ruby program, so it can never be one this Proc
-                    // shares with an outer scope. `loop do ... end` inside a
-                    // NESTED block is the shape: it desugars to a rescue whose
-                    // `StopIteration` binding `collect_locals` does not
-                    // descend into, leaving the gensym looking like a capture.
-                    .filter(|n| !crate::hir::is_internal_local(n))
-                    .filter(|n| cx.captured_locals.contains(*n) || !assigned_here.contains(n))
-                    .min()
-                {
-                    return crate::codegen::unsupported(format!(
-                        "can not isolate a Proc because it accesses outer variables ({outer})"
-                    ));
-                }
-                if block_caps.self_captured {
-                    return crate::codegen::unsupported(
-                        "can not isolate a Proc because it accesses instance variables of the enclosing object",
-                    );
-                }
-                procs::emit_proc_value(cx, block_id)
-            }
+            // A literal block is built like any other Proc and refused where
+            // CRuby refuses -- inside `Ractor.new`, AFTER the arguments have
+            // been evaluated. `emit_proc_value` records the outer-variable
+            // verdict on the value itself (`RProc::with_outer_capture`), which
+            // is what `zeo_rt::ractor_new` reads.
+            //
+            // Ivar/self access is NOT a refusal at all: ruby isolates such a
+            // Proc fine and rebinds its `self` to the RACTOR, so `@n` inside
+            // becomes an ivar read of a shareable object and raises
+            // `Ractor::IsolationError` there -- see
+            // `zeo_rt::ivar_isolation_check`.
+            (Some(block_id), _) => procs::emit_proc_value(cx, block_id),
             // A dynamic proc (`Ractor.new(val, &@predicate)`) carries its own
             // isolation verdict, recorded at its creation site
             // (`RProc::with_outer_capture`) -- `zeo_rt::ractor_new` refuses

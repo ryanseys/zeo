@@ -4299,8 +4299,7 @@ pub(crate) fn try_lower_definition(
         // the static path can only report `unknown class/module SecretKeys`.
         // Minting this one at runtime too puts the constant inside the parent
         // that does exist by then.
-        if runtime_scoped_definition(hir, &name)
-            && runtime_class_body_keeps_its_scope(class.body())
+        if runtime_scoped_definition(hir, &name) && runtime_class_body_keeps_its_scope(class.body())
         {
             let sc = class.superclass();
             return lower_runtime_class(result, hir, &name, sc.as_ref(), class.body()).map(Some);
@@ -4337,7 +4336,8 @@ pub(crate) fn try_lower_definition(
         }
         let name = constant_path_name(&module.constant_path())?;
         // The module half of the runtime-scope route above.
-        if runtime_scoped_definition(hir, &name) && runtime_class_body_keeps_its_scope(module.body())
+        if runtime_scoped_definition(hir, &name)
+            && runtime_class_body_keeps_its_scope(module.body())
         {
             return lower_runtime_module(result, hir, &name, module.body()).map(Some);
         }

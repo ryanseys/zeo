@@ -499,6 +499,24 @@ pub fn ivar_get_dyn(recv: &RubyValue, name: &str) -> RubyValue {
     }
 }
 
+/// [`ivar_get_dyn`] behind CRuby's Ractor guard -- what codegen emits for a
+/// dynamic self, the only receiver that can be a shareable object read from a
+/// non-main ractor. See [`crate::ractor::ivar_isolation_check`].
+pub fn ivar_get_dyn_isolated(recv: &RubyValue, name: &str) -> Result<RubyValue, Signal> {
+    crate::ractor::ivar_isolation_check(recv)?;
+    Ok(ivar_get_dyn(recv, name))
+}
+
+/// [`ivar_slot_get_dyn`] behind the same guard.
+pub fn ivar_slot_get_dyn_isolated(
+    recv: &RubyValue,
+    slot: usize,
+    name: &str,
+) -> Result<RubyValue, Signal> {
+    crate::ractor::ivar_isolation_check(recv)?;
+    Ok(ivar_slot_get_dyn(recv, slot, name))
+}
+
 /// Read `@name` from a receiver whose class is one of a known set that all
 /// place `@name` at `slot` -- the shared-body form of `ivar_get_dyn`.
 ///
@@ -538,6 +556,7 @@ pub fn ivar_slot_set_dyn(
 /// can't-modify-frozen raise, which the static field-write path emits
 /// inline instead.
 pub fn ivar_set_dyn(recv: &RubyValue, name: &str, v: RubyValue) -> Result<RubyValue, Signal> {
+    crate::ractor::ivar_isolation_check(recv)?;
     match recv {
         RubyValue::Object(o) => {
             crate::builtins::check_frozen(recv)?;
@@ -1871,6 +1890,7 @@ pub fn ivar_name_arg(v: &RubyValue) -> Result<String, Signal> {
 /// immediate (which expose no Ruby-visible ivars in this runtime).
 pub fn instance_variable_get(recv: &RubyValue, name_arg: &RubyValue) -> Result<RubyValue, Signal> {
     let name = ivar_name_arg(name_arg)?;
+    crate::ractor::ivar_isolation_check(recv)?;
     Ok(match recv {
         RubyValue::Object(o) => o
             .ivar_get_named(&name)
@@ -1892,6 +1912,7 @@ pub fn instance_variable_set(
     v: RubyValue,
 ) -> Result<RubyValue, Signal> {
     let name = ivar_name_arg(name_arg)?;
+    crate::ractor::ivar_isolation_check(recv)?;
     match recv {
         RubyValue::Object(o) => {
             crate::builtins::check_frozen(recv)?;
