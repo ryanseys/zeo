@@ -13,7 +13,7 @@
 use super::call::is_inline_block_fast_path;
 use crate::compiler::Compiler;
 use crate::compiler::{FMap, FSet};
-use crate::hir::{ArrayElem, HirNode, NodeId, Params, StrPart};
+use crate::hir::{ArrayElem, HirNode, NodeId, Params};
 
 #[derive(Default)]
 pub struct Captures {
@@ -725,14 +725,42 @@ fn walk(
         // `self` -- unlike an ivar, referencing `@@x` inside an escaping
         // block needs no `self` capture at all.
         HirNode::ClassVarRead(_) => {}
-        HirNode::ClassVarWrite(_, value) => walk(compiler, *value, escaping_at, param_exclusions, caps, self_class),
-        // A lambda literal ALWAYS escapes (never an inline fast path, unlike
-        // `.times`'s block) -- so it recurses with `in_escaping = true`
-        // unconditionally, exactly like the escaping `Call.block`/`New`/
-        // `SuperCall` arms. A lambda nested inside another escaping construct
-        // COMPOSES through this same walk (its captures flow into the outer
-        // block's capture set); the one genuinely unsupported sub-case is
-        // rejected downstream at `emit_proc_or_lambda_value`, not here.
+        // PURE DESCENT: every child inherits this node's state unchanged, so
+        // `for_each_child` expresses them all. Listed by variant rather than
+        // behind a `_`, deliberately: this walk RECORDS things, and a new
+        // `HirNode` that needs to record something must fail to compile here
+        // rather than silently inherit plain descent.
+        HirNode::ClassVarWrite(..)
+        | HirNode::GlobalWrite(..)
+        | HirNode::ConstWrite { .. }
+        | HirNode::DynConstRead { .. }
+        | HirNode::DynConstWrite { .. }
+        | HirNode::Defined(_)
+        | HirNode::And(..)
+        | HirNode::Or(..)
+        | HirNode::FlipFlop { .. }
+        | HirNode::If { .. }
+        | HirNode::CaseWhen { .. }
+        | HirNode::While { .. }
+        | HirNode::Loop { .. }
+        | HirNode::Break(_)
+        | HirNode::Next(_)
+        | HirNode::Return(_)
+        | HirNode::PreExec(_)
+        | HirNode::Seq(_)
+        | HirNode::Eval(_)
+        | HirNode::BoxScope { .. }
+        | HirNode::Yield(_)
+        | HirNode::Raise(..)
+        | HirNode::ArrayLit(_)
+        | HirNode::HashLit(_)
+        | HirNode::RangeLit { .. }
+        | HirNode::StringLit(_)
+        | HirNode::RegexpLit(..) => {
+            compiler.hir[id].for_each_child(&mut |n| {
+                walk(compiler, n, escaping_at, param_exclusions, caps, self_class)
+            });
+        }
         HirNode::Lambda {
             params,
             body,
@@ -743,57 +771,6 @@ fn walk(
                 param_exclusions.union(&own_param_names(params)).cloned().collect();
             for n in scope_nodes(params, body) {
                 walk(compiler, n, deepen(escaping_at, || start_of(compiler, id)), &next_exclusions, caps, self_class);
-            }
-        }
-        HirNode::And(l, r)
-        | HirNode::Or(l, r)
-        | HirNode::FlipFlop {
-            state: _,
-            left: l,
-            right: r,
-            exclusive: _,
-        } => {
-            walk(compiler, *l, escaping_at, param_exclusions, caps, self_class);
-            walk(compiler, *r, escaping_at, param_exclusions, caps, self_class);
-        }
-        HirNode::Defined(v) => walk(compiler, *v, escaping_at, param_exclusions, caps, self_class),
-        HirNode::If { cond, then_body, else_body } => {
-            walk(compiler, *cond, escaping_at, param_exclusions, caps, self_class);
-            for &n in then_body.iter().chain(else_body) {
-                walk(compiler, n, escaping_at, param_exclusions, caps, self_class);
-            }
-        }
-        HirNode::CaseWhen { subject, arms, else_body } => {
-            if let Some(s) = subject {
-                walk(compiler, *s, escaping_at, param_exclusions, caps, self_class);
-            }
-            for (values, body) in arms {
-                for e in values {
-                    let (ArrayElem::Single(v) | ArrayElem::Splat(v)) = e;
-                    walk(compiler, *v, escaping_at, param_exclusions, caps, self_class);
-                }
-                for &n in body {
-                    walk(compiler, n, escaping_at, param_exclusions, caps, self_class);
-                }
-            }
-            for &n in else_body {
-                walk(compiler, n, escaping_at, param_exclusions, caps, self_class);
-            }
-        }
-        HirNode::While {
-            cond,
-            body,
-            negate: _,
-            post: _,
-        } => {
-            walk(compiler, *cond, escaping_at, param_exclusions, caps, self_class);
-            for &n in body {
-                walk(compiler, n, escaping_at, param_exclusions, caps, self_class);
-            }
-        }
-        HirNode::Loop { body } => {
-            for &n in body {
-                walk(compiler, n, escaping_at, param_exclusions, caps, self_class);
             }
         }
         HirNode::For { target, iterable, body } => {
@@ -809,11 +786,6 @@ fn walk(
             walk(compiler, *iterable, escaping_at, param_exclusions, caps, self_class);
             for &n in body {
                 walk(compiler, n, escaping_at, param_exclusions, caps, self_class);
-            }
-        }
-        HirNode::Break(v) | HirNode::Next(v) | HirNode::Return(v) => {
-            if let Some(v) = v {
-                walk(compiler, *v, escaping_at, param_exclusions, caps, self_class);
             }
         }
         HirNode::Redo | HirNode::BlockGiven => {}
@@ -832,33 +804,6 @@ fn walk(
         // A global/constant's storage doesn't depend on `self`/enclosing
         // locals at all -- no capture registration needed, same posture as
         // `ClassVarWrite` just above.
-        HirNode::GlobalWrite(_, value) => walk(compiler, *value, escaping_at, param_exclusions, caps, self_class),
-        HirNode::ConstWrite {
-            scope: _,
-            name: _,
-            value,
-        } => walk(compiler, *value, escaping_at, param_exclusions, caps, self_class),
-        HirNode::DynConstRead { scope, .. } => walk(compiler, *scope, escaping_at, param_exclusions, caps, self_class),
-        HirNode::DynConstWrite { scope, value, .. } => {
-            walk(compiler, *scope, escaping_at, param_exclusions, caps, self_class);
-            walk(compiler, *value, escaping_at, param_exclusions, caps, self_class);
-        }
-        HirNode::PreExec(body) | HirNode::Seq(body) => {
-            for &n in body {
-                walk(compiler, n, escaping_at, param_exclusions, caps, self_class);
-            }
-        }
-        HirNode::Yield(elems) => {
-            for e in elems {
-                let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;
-                walk(compiler, *n, escaping_at, param_exclusions, caps, self_class);
-            }
-        }
-        HirNode::Raise(args, cause) => {
-            for &a in args.iter().chain(crate::hir::raise_cause_node(cause).iter()) {
-                walk(compiler, a, escaping_at, param_exclusions, caps, self_class);
-            }
-        }
         HirNode::CaseIn { subject, arms, else_body } => {
             walk(compiler, *subject, escaping_at, param_exclusions, caps, self_class);
             for arm in arms {
@@ -937,11 +882,6 @@ fn walk(
             }
         }
         HirNode::Retry => {}
-        HirNode::Eval(body) | HirNode::BoxScope { box_id: _, body } => {
-            for &n in body {
-                walk(compiler, n, escaping_at, param_exclusions, caps, self_class);
-            }
-        }
         HirNode::New {
             class_name: _,
             args,
@@ -1009,36 +949,6 @@ fn walk(
                         walk(compiler, n, deepen(escaping_at, || block_body_pos(compiler, body, *b)), &next_exclusions, caps, self_class);
                     }
                 }
-        }
-        HirNode::ArrayLit(elems) => {
-            for e in elems {
-                let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;
-                walk(compiler, *n, escaping_at, param_exclusions, caps, self_class);
-            }
-        }
-        HirNode::HashLit(pairs) => {
-            for n in pairs.iter().flat_map(|kw| kw.node_ids()) {
-                walk(compiler, n, escaping_at, param_exclusions, caps, self_class);
-            }
-        }
-        HirNode::RangeLit {
-            start,
-            end,
-            exclusive: _,
-        } => {
-            if let Some(s) = start {
-                walk(compiler, *s, escaping_at, param_exclusions, caps, self_class);
-            }
-            if let Some(e) = end {
-                walk(compiler, *e, escaping_at, param_exclusions, caps, self_class);
-            }
-        }
-        HirNode::StringLit(parts) | HirNode::RegexpLit(parts, _) => {
-            for p in parts {
-                if let StrPart::Interp(n) = p {
-                    walk(compiler, *n, escaping_at, param_exclusions, caps, self_class);
-                }
-            }
         }
         HirNode::Call {
             receiver,
