@@ -270,7 +270,9 @@ fn weakref_raises_ref_error_once_collected() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(
         result.stdout,
-        "false\n\
+        // `nil`, not `false`: weakref.rb spells it `@@__map.key?(self) or
+        // defined?(@delegate_sd_obj)`, and `defined?` answers nil.
+        "nil\n\
          RefError: Invalid Reference - probably recycled\n\
          getobj: WeakRef::RefError\n\
          StandardError\ntrue\n"

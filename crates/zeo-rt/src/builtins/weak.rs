@@ -32,6 +32,16 @@ use super::{arg_error, local_jump_error, type_error};
 /// (immediates never die anyway, and weak-referencing the rarer heap kinds is
 /// uncommon enough that "never expires" is the accepted best-effort answer).
 pub(super) enum WeakTarget {
+    /// Allocated but not yet seated -- a `WeakRef` between construction and
+    /// the `initialize` that takes the referent. Reads as collected, which is
+    /// what CRuby's own uninitialized `WeakRef` answers.
+    Unset,
+    /// `true`/`false`/`nil` -- CRuby's weakref.rb cannot put these in its
+    /// `WeakMap` at all and stashes them in a `@delegate_sd_obj` IVAR
+    /// instead, which is why they alone survive a `#dup` and why
+    /// `weakref_alive?` answers them with `defined?`'s String rather than
+    /// `true`.
+    Sd(RubyValue),
     Strong(RubyValue),
     Object(Weak<dyn RubyObject>),
     Str(Weak<Freezable<StrBuf>>),
@@ -46,6 +56,7 @@ impl WeakTarget {
             RubyValue::Str(s) => WeakTarget::Str(Arc::downgrade(s)),
             RubyValue::Array(a) => WeakTarget::Array(Arc::downgrade(a)),
             RubyValue::Hash(h) => WeakTarget::Hash(Arc::downgrade(h)),
+            v @ (RubyValue::Nil | RubyValue::Bool(_)) => WeakTarget::Sd(v.clone()),
             other => WeakTarget::Strong(other.clone()),
         }
     }
@@ -53,7 +64,8 @@ impl WeakTarget {
     /// The referent if it's still alive, else `None`.
     pub(super) fn upgrade(&self) -> Option<RubyValue> {
         match self {
-            WeakTarget::Strong(v) => Some(v.clone()),
+            WeakTarget::Unset => None,
+            WeakTarget::Sd(v) | WeakTarget::Strong(v) => Some(v.clone()),
             WeakTarget::Object(w) => w.upgrade().map(RubyValue::Object),
             WeakTarget::Str(w) => w.upgrade().map(RubyValue::Str),
             WeakTarget::Array(w) => w.upgrade().map(RubyValue::Array),
@@ -214,11 +226,15 @@ pub struct WeakRef {
 }
 
 impl WeakRef {
-    fn new(class_id: ClassId, referent: &RubyValue) -> Arc<WeakRef> {
+    /// Allocated with no referent yet -- `initialize` seats one. Splitting
+    /// construction from seating is what lets a SUBCLASS's own `initialize`
+    /// run: it does its work and `super(obj)` reaches `WeakRef#initialize`,
+    /// exactly as CRuby's pure-Ruby `WeakRef` does.
+    fn empty(class_id: ClassId) -> Arc<WeakRef> {
         Arc::new(WeakRef {
             class_id,
             frozen: AtomicBool::new(false),
-            target: Mutex::new(WeakTarget::downgrade(referent)),
+            target: Mutex::new(WeakTarget::Unset),
         })
     }
 }
@@ -243,8 +259,16 @@ impl RubyObject for WeakRef {
         Vec::new()
     }
     fn dup_object(&self, copy_frozen: bool) -> RObj {
-        let referent = self.target.lock().upgrade().unwrap_or(RubyValue::Nil);
-        let d = WeakRef::new(self.class_id, &referent);
+        let d = WeakRef::empty(self.class_id);
+        // A copy loses the referent: CRuby keys the referent on the WeakRef
+        // OBJECT in a shared `WeakMap`, and the copy is a different key. Only
+        // a `true`/`false`/`nil` referent survives, because that one lives in
+        // an ivar `#dup` copies (oracle-verified: `WeakRef.new(true).dup`
+        // answers "instance-variable" and `true`, while any other referent's
+        // copy answers nil and raises `RefError`).
+        if let WeakTarget::Sd(v) = &*self.target.lock() {
+            *d.target.lock() = WeakTarget::Sd(v.clone());
+        }
         if copy_frozen && self.is_frozen() {
             d.set_frozen();
         }
@@ -272,22 +296,21 @@ fn wr_referent(recv: &RubyValue) -> Result<RubyValue, Signal> {
     })
 }
 
-/// `WeakRef.new(referent)`.
+/// `WeakRef.new(referent)` -- allocate unseated, then run `initialize`, which
+/// resolves to the SUBCLASS's own body when there is one and bottoms out on
+/// `WeakRef#initialize`'s seat through its `super(obj)`. Seating straight from
+/// the args here instead skipped a subclass's body entirely, and the answer
+/// was silently wrong (an ivar the `initialize` was supposed to write read
+/// back nil). The WeakMap twin, `weakmap_subclass_construct`, has the same
+/// shape.
 fn weakref_construct(
     class: ClassId,
     args: &[RubyValue],
-    _block: Option<RubyValue>,
+    block: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    let [referent] = args else {
-        return Err(crate::dispatch::raise_error(
-            "ArgumentError",
-            format!(
-                "wrong number of arguments (given {}, expected 1)",
-                args.len()
-            ),
-        ));
-    };
-    Ok(RubyValue::Object(WeakRef::new(class, referent)))
+    let obj: crate::dispatch::RObj = WeakRef::empty(class);
+    crate::dispatch::run_initialize(class, &obj, args, block)?;
+    Ok(RubyValue::Object(obj))
 }
 
 // The DSL emits one method table per block, so the second class in this file
@@ -301,16 +324,46 @@ mod weakref_rows {
         def "__getobj__"(recv, &_block) {
             wr_referent(recv)
         }
-        def "__setobj__"(recv, obj) {
-            *as_weakref(recv)?.target.lock() = WeakTarget::downgrade(obj);
-            Ok(obj.clone())
+        // A no-op that answers nil, exactly as weakref.rb's is: the referent
+        // is seated by `initialize` and lives in a map keyed on this object,
+        // which `__setobj__` never touches. `Delegator` demands the method
+        // exist, which is the only reason it is written at all.
+        def "__setobj__"(_recv, _obj) {
+            Ok(RubyValue::Nil)
         }
+        // `@@__map.key?(self) or defined?(@delegate_sd_obj)` -- so `true` for
+        // a live map entry, `defined?`'s STRING for a true/false/nil
+        // referent, and nil (not false) for a collected or copied one.
         def "weakref_alive?"(recv) {
-            Ok(RubyValue::Bool(
-                as_weakref(recv)?.target.lock().upgrade().is_some(),
-            ))
+            let target = as_weakref(recv)?.target.lock();
+            Ok(match &*target {
+                WeakTarget::Sd(_) => {
+                    RubyValue::Str(crate::string_new("instance-variable".to_string()))
+                }
+                t if t.upgrade().is_some() => RubyValue::Bool(true),
+                _ => RubyValue::Nil,
+            })
         }
     }
+}
+
+/// `WeakRef#initialize(referent)` -- seats the referent on an object
+/// `weakref_construct` allocated unseated. A REGISTRY row (not a table row)
+/// so that `run_initialize` and a subclass's `super(obj)` both reach it
+/// through `lookup_mro`; a table row is invisible to either.
+fn wr_initialize(
+    recv: &RObj,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    let [referent] = args else {
+        return Err(arg_error!(
+            "wrong number of arguments (given {}, expected 1)",
+            args.len()
+        ));
+    };
+    *as_weakref(&RubyValue::Object(recv.clone()))?.target.lock() = WeakTarget::downgrade(referent);
+    Ok(RubyValue::Nil)
 }
 
 /// Delegate an otherwise-unhandled call to the referent (raising `RefError`
@@ -603,6 +656,10 @@ pub fn register_weakref_subclass(
         Symbol::intern("respond_to_missing?"),
         wr_respond_to_missing,
     );
+    // `WeakRef#initialize` has to be reachable from the SUBCLASS's own id
+    // too: a compile-time subclass carries its own registry entry, and a
+    // `super(obj)` inside its `initialize` walks from there.
+    registry.define_method_own(WEAKREF_CLASS, Symbol::intern("initialize"), wr_initialize);
 }
 
 /// `ObjectSpace::WeakMap.new` -- the registered constructor.
@@ -748,6 +805,7 @@ pub fn register_weak(registry: &mut ClassRegistry) {
         wr_ancestors,
         Some(weakref_construct as crate::dispatch::ConstructorFn),
     );
+    registry.define_method_own(WEAKREF_CLASS, Symbol::intern("initialize"), wr_initialize);
     registry.define_method_own(
         WEAKREF_CLASS,
         Symbol::intern("method_missing"),
