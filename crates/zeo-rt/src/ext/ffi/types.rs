@@ -1,9 +1,14 @@
 //! `FFI::Type` / `FFI::Type::Builtin` -- the gem's runtime type objects.
-//! Each canonical scalar type is a single shared instance exposed as a
-//! constant on BOTH classes (the gem aliases them the same way), so identity
-//! comparisons like `ffi_args.last == FFI::Type::Builtin::VARARGS` hold;
-//! `==` also compares by kind, so equal types from different spellings
-//! (`LONG` vs `LONG_LONG` on LP64) compare equal exactly as their C types do.
+//!
+//! There is exactly one instance per CANONICAL type, and the aliases are
+//! extra constants naming the same object: `:char` and `:int8` really are
+//! `Type::Builtin::INT8`, which is why `CHAR.inspect` says `INT8`. The
+//! canonical set is NOT the set of distinct C widths -- `LONG` and `INT64`
+//! are separate objects that compare UNEQUAL although both are eight signed
+//! bytes on every target zeo builds for, and so are `ULONG` and `UINT64`.
+//! Collapsing them by width made `ffi_args.last == FFI::Type::Builtin::LONG`
+//! answer true for an `:int64` argument, which CRuby answers false.
+//!
 //! fiddle's FFI backend derives its whole `SIZEOF_*`/`ALIGN_*` constant set
 //! from `#size`/`#alignment` here.
 
@@ -16,29 +21,134 @@ use crate::{ClassId, RubyValue, Signal};
 use zeo_abi::FFI_TYPE_BUILTIN_CLASS;
 use zeo_macros::ruby_class;
 
-/// An `FFI::Type` instance's payload: the scalar kind it names, or the
-/// `VARARGS` marker (which has no C size -- it terminates a type list).
-pub struct RType {
-    pub kind: TypeKind,
-}
-
+/// The canonical builtin types, one per name the gem's `#inspect` can print.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum TypeKind {
-    Scalar(FfiKind),
+pub enum Builtin {
+    Void,
+    Int8,
+    Uint8,
+    Int16,
+    Uint16,
+    Int32,
+    Uint32,
+    Int64,
+    Uint64,
+    Long,
+    Ulong,
+    Float32,
+    Float64,
+    LongDouble,
+    Pointer,
+    Bool,
+    String,
+    BufferIn,
+    BufferOut,
+    BufferInout,
     Varargs,
 }
 
-impl RType {
-    /// (size, alignment) of the C type, LP64 -- the shared `CScalar` widths.
-    /// `VOID` reports 1/1 as libffi's `ffi_type_void` does; `VARARGS` is
-    /// never asked (0/0 if it were).
-    fn layout(&self) -> (usize, usize) {
-        match self.kind {
-            TypeKind::Varargs => (0, 0),
-            TypeKind::Scalar(FfiKind::Void) => (1, 1),
-            TypeKind::Scalar(k) => (k.size(), k.align()),
+use Builtin::*;
+
+/// Every canonical type, in the order the constant tables list them.
+const ALL: [Builtin; 21] = [
+    Void,
+    Int8,
+    Uint8,
+    Int16,
+    Uint16,
+    Int32,
+    Uint32,
+    Int64,
+    Uint64,
+    Long,
+    Ulong,
+    Float32,
+    Float64,
+    LongDouble,
+    Pointer,
+    Bool,
+    String,
+    BufferIn,
+    BufferOut,
+    BufferInout,
+    Varargs,
+];
+
+impl Builtin {
+    /// The name `#inspect` prints, which is also the constant naming this
+    /// object on `Type::Builtin` and (prefixed with `TYPE_`) on `FFI`.
+    fn name(self) -> &'static str {
+        match self {
+            Void => "VOID",
+            Int8 => "INT8",
+            Uint8 => "UINT8",
+            Int16 => "INT16",
+            Uint16 => "UINT16",
+            Int32 => "INT32",
+            Uint32 => "UINT32",
+            Int64 => "INT64",
+            Uint64 => "UINT64",
+            Long => "LONG",
+            Ulong => "ULONG",
+            Float32 => "FLOAT32",
+            Float64 => "FLOAT64",
+            LongDouble => "LONGDOUBLE",
+            Pointer => "POINTER",
+            Bool => "BOOL",
+            String => "STRING",
+            BufferIn => "BUFFER_IN",
+            BufferOut => "BUFFER_OUT",
+            BufferInout => "BUFFER_INOUT",
+            Varargs => "VARARGS",
         }
     }
+
+    /// The scalar this type marshals as, or `None` for the two the runtime
+    /// tier cannot pass: `VARARGS` terminates a type list rather than
+    /// naming a value, and zeo has no `long double`.
+    fn kind(self) -> Option<FfiKind> {
+        Some(match self {
+            Void => FfiKind::Void,
+            Int8 => FfiKind::I8,
+            Uint8 => FfiKind::U8,
+            Int16 => FfiKind::I16,
+            Uint16 => FfiKind::U16,
+            Int32 => FfiKind::I32,
+            Uint32 => FfiKind::U32,
+            Int64 | Long => FfiKind::I64,
+            Uint64 | Ulong => FfiKind::U64,
+            Float32 => FfiKind::F32,
+            Float64 => FfiKind::F64,
+            Bool => FfiKind::Bool,
+            String => FfiKind::Str,
+            Pointer | BufferIn | BufferOut | BufferInout => FfiKind::Pointer,
+            LongDouble | Varargs => return None,
+        })
+    }
+
+    /// (size, alignment) in bytes. `VOID` and `VARARGS` report 1/1, as
+    /// libffi's `ffi_type_void` does and as the gem prints.
+    fn layout(self) -> (usize, usize) {
+        match self {
+            Void | Varargs => (1, 1),
+            // Apple aliases `long double` to `double`; every other target
+            // zeo builds for gives it a 16-byte slot.
+            LongDouble if cfg!(target_vendor = "apple") => (8, 8),
+            LongDouble => (16, 16),
+            other => {
+                let k = other.kind().expect("every other type marshals");
+                match k {
+                    FfiKind::Void => (1, 1),
+                    k => (k.size(), k.align()),
+                }
+            }
+        }
+    }
+}
+
+/// An `FFI::Type` instance's payload: which canonical type it is.
+pub struct RType {
+    pub builtin: Builtin,
 }
 
 impl RubyObject for RType {
@@ -60,31 +170,27 @@ impl RubyObject for RType {
         Vec::new()
     }
     fn dup_object(&self, _copy_frozen: bool) -> RObj {
-        Arc::new(RType { kind: self.kind })
+        Arc::new(RType {
+            builtin: self.builtin,
+        })
     }
 }
 
-/// The canonical instance for `kind` (one shared `Arc` per kind, so the
-/// constants on `Type` and `Type::Builtin` are the SAME object).
-pub fn type_value(kind: TypeKind) -> RubyValue {
-    static CANON: OnceLock<Vec<(TypeKind, RubyValue)>> = OnceLock::new();
+/// The canonical instance for `b` -- one shared `Arc` per canonical type, so
+/// every constant naming it (`CHAR`, `SCHAR` and `INT8` all name `INT8`) is
+/// the SAME object.
+pub fn type_value(b: Builtin) -> RubyValue {
+    static CANON: OnceLock<Vec<RubyValue>> = OnceLock::new();
     let table = CANON.get_or_init(|| {
-        use FfiKind::*;
-        [
-            Void, I8, U8, I16, U16, I32, U32, I64, U64, F32, F64, Bool, Str, Pointer,
-        ]
-        .into_iter()
-        .map(TypeKind::Scalar)
-        .chain([TypeKind::Varargs])
-        .map(|k| (k, RubyValue::Object(Arc::new(RType { kind: k }))))
-        .collect()
+        ALL.into_iter()
+            .map(|b| RubyValue::Object(Arc::new(RType { builtin: b })))
+            .collect()
     });
-    table
+    let i = ALL
         .iter()
-        .find(|(k, _)| *k == kind)
-        .expect("every TypeKind is seeded")
-        .1
-        .clone()
+        .position(|&x| x == b)
+        .expect("every Builtin is seeded");
+    table[i].clone()
 }
 
 /// The `FfiKind` a Ruby value names as an FFI type: an `FFI::Type` object, or
@@ -92,9 +198,14 @@ pub fn type_value(kind: TypeKind) -> RubyValue {
 /// that accept the varargs marker test with [`is_varargs_type`] first.
 pub fn kind_of_type_value(v: &RubyValue) -> Result<FfiKind, Signal> {
     if let Some(t) = rtype_of(v) {
-        return match t.kind {
-            TypeKind::Scalar(k) => Ok(k),
-            TypeKind::Varargs => Err(type_error!("`:varargs` is not a concrete FFI type")),
+        return match t.builtin.kind() {
+            Some(k) => Ok(k),
+            None if t.builtin == Varargs => {
+                Err(type_error!("`:varargs` is not a concrete FFI type"))
+            }
+            None => Err(type_error!(
+                "`:long_double` isn't supported yet (zeo limitation)"
+            )),
         };
     }
     if let RubyValue::Symbol(s) = v {
@@ -108,12 +219,7 @@ pub fn kind_of_type_value(v: &RubyValue) -> Result<FfiKind, Signal> {
 
 /// Whether `v` is the `FFI::Type::Builtin::VARARGS` marker.
 pub fn is_varargs_type(v: &RubyValue) -> bool {
-    matches!(
-        rtype_of(v),
-        Some(RType {
-            kind: TypeKind::Varargs
-        })
-    )
+    matches!(rtype_of(v), Some(t) if t.builtin == Varargs)
 }
 
 fn rtype_of(v: &RubyValue) -> Option<&RType> {
@@ -127,47 +233,76 @@ fn t_of(recv: &RubyValue) -> &RType {
     rtype_of(recv).expect("the FFI::Type table only dispatches on type receivers")
 }
 
-// Both classes expose the same canonical constants (the gem defines both
-// spellings); each block writes the list out.
-ruby_class! {
-    Type = zeo_abi::FFI_TYPE_CLASS < zeo_abi::OBJECT_CLASS;
+/// What both classes carry, written once. `Type` and `Type::Builtin` hold the
+/// same constants (the gem defines both spellings) and the DSL emits one
+/// `install_constants` per block, so each class expands this list in its own
+/// block. `inspect` is here rather than inherited because `p` and string
+/// interpolation ask the receiver's OWN class -- see `call_user_method`.
+macro_rules! builtin_type_class {
+    ($name:ident = $class:path, $super:path; $($rest:tt)*) => {
+        ruby_class! {
+        $name = $class < $super;
 
-    const VOID = type_value(TypeKind::Scalar(FfiKind::Void));
-    const POINTER = type_value(TypeKind::Scalar(FfiKind::Pointer));
-    const STRING = type_value(TypeKind::Scalar(FfiKind::Str));
-    const BOOL = type_value(TypeKind::Scalar(FfiKind::Bool));
-    const VARARGS = type_value(TypeKind::Varargs);
-    const CHAR = type_value(TypeKind::Scalar(FfiKind::I8));
-    const UCHAR = type_value(TypeKind::Scalar(FfiKind::U8));
-    const SHORT = type_value(TypeKind::Scalar(FfiKind::I16));
-    const USHORT = type_value(TypeKind::Scalar(FfiKind::U16));
-    const INT = type_value(TypeKind::Scalar(FfiKind::I32));
-    const UINT = type_value(TypeKind::Scalar(FfiKind::U32));
-    const LONG = type_value(TypeKind::Scalar(FfiKind::I64));
-    const ULONG = type_value(TypeKind::Scalar(FfiKind::U64));
-    const LONG_LONG = type_value(TypeKind::Scalar(FfiKind::I64));
-    const ULONG_LONG = type_value(TypeKind::Scalar(FfiKind::U64));
-    const INT8 = type_value(TypeKind::Scalar(FfiKind::I8));
-    const UINT8 = type_value(TypeKind::Scalar(FfiKind::U8));
-    const INT16 = type_value(TypeKind::Scalar(FfiKind::I16));
-    const UINT16 = type_value(TypeKind::Scalar(FfiKind::U16));
-    const INT32 = type_value(TypeKind::Scalar(FfiKind::I32));
-    const UINT32 = type_value(TypeKind::Scalar(FfiKind::U32));
-    const INT64 = type_value(TypeKind::Scalar(FfiKind::I64));
-    const UINT64 = type_value(TypeKind::Scalar(FfiKind::U64));
-    const FLOAT = type_value(TypeKind::Scalar(FfiKind::F32));
-    const FLOAT32 = type_value(TypeKind::Scalar(FfiKind::F32));
-    const DOUBLE = type_value(TypeKind::Scalar(FfiKind::F64));
-    const FLOAT64 = type_value(TypeKind::Scalar(FfiKind::F64));
+        const VOID = type_value(Builtin::Void);
+        const POINTER = type_value(Builtin::Pointer);
+        const STRING = type_value(Builtin::String);
+        const BOOL = type_value(Builtin::Bool);
+        const VARARGS = type_value(Builtin::Varargs);
+        const BUFFER_IN = type_value(Builtin::BufferIn);
+        const BUFFER_OUT = type_value(Builtin::BufferOut);
+        const BUFFER_INOUT = type_value(Builtin::BufferInout);
+        const LONGDOUBLE = type_value(Builtin::LongDouble);
+        // `char`/`short`/`int` name the exact-width types; `long` does not.
+        const CHAR = type_value(Builtin::Int8);
+        const SCHAR = type_value(Builtin::Int8);
+        const UCHAR = type_value(Builtin::Uint8);
+        const SHORT = type_value(Builtin::Int16);
+        const SSHORT = type_value(Builtin::Int16);
+        const USHORT = type_value(Builtin::Uint16);
+        const INT = type_value(Builtin::Int32);
+        const SINT = type_value(Builtin::Int32);
+        const UINT = type_value(Builtin::Uint32);
+        const LONG = type_value(Builtin::Long);
+        const SLONG = type_value(Builtin::Long);
+        const ULONG = type_value(Builtin::Ulong);
+        const LONG_LONG = type_value(Builtin::Int64);
+        const SLONG_LONG = type_value(Builtin::Int64);
+        const ULONG_LONG = type_value(Builtin::Uint64);
+        const INT8 = type_value(Builtin::Int8);
+        const UINT8 = type_value(Builtin::Uint8);
+        const INT16 = type_value(Builtin::Int16);
+        const UINT16 = type_value(Builtin::Uint16);
+        const INT32 = type_value(Builtin::Int32);
+        const UINT32 = type_value(Builtin::Uint32);
+        const INT64 = type_value(Builtin::Int64);
+        const UINT64 = type_value(Builtin::Uint64);
+        const FLOAT = type_value(Builtin::Float32);
+        const FLOAT32 = type_value(Builtin::Float32);
+        const DOUBLE = type_value(Builtin::Float64);
+        const FLOAT64 = type_value(Builtin::Float64);
+
+        def "inspect"(recv) {
+            let b = t_of(recv).builtin;
+            let (size, align) = b.layout();
+            Ok(RubyValue::Str(crate::string_new(format!(
+                "#<FFI::Type::Builtin::{} size={size} alignment={align}>",
+                b.name()
+            ))))
+        }
+
+        $($rest)*
+        }
+    };
+}
+
+builtin_type_class! {
+    Type = zeo_abi::FFI_TYPE_CLASS, zeo_abi::OBJECT_CLASS;
 
     def "size"(recv) {
-        Ok(RubyValue::Int(t_of(recv).layout().0 as i64))
+        Ok(RubyValue::Int(t_of(recv).builtin.layout().0 as i64))
     }
     def "alignment"(recv) {
-        Ok(RubyValue::Int(t_of(recv).layout().1 as i64))
-    }
-    def "==" | "eql?"(recv, other) {
-        Ok(RubyValue::Bool(matches!(rtype_of(other), Some(o) if o.kind == t_of(recv).kind)))
+        Ok(RubyValue::Int(t_of(recv).builtin.layout().1 as i64))
     }
 }
 
@@ -176,36 +311,8 @@ ruby_class! {
 mod builtin {
     use super::*;
 
-    ruby_class! {
-    TypeBuiltin = zeo_abi::FFI_TYPE_BUILTIN_CLASS < zeo_abi::FFI_TYPE_CLASS;
-
-    const VOID = type_value(TypeKind::Scalar(FfiKind::Void));
-    const POINTER = type_value(TypeKind::Scalar(FfiKind::Pointer));
-    const STRING = type_value(TypeKind::Scalar(FfiKind::Str));
-    const BOOL = type_value(TypeKind::Scalar(FfiKind::Bool));
-    const VARARGS = type_value(TypeKind::Varargs);
-    const CHAR = type_value(TypeKind::Scalar(FfiKind::I8));
-    const UCHAR = type_value(TypeKind::Scalar(FfiKind::U8));
-    const SHORT = type_value(TypeKind::Scalar(FfiKind::I16));
-    const USHORT = type_value(TypeKind::Scalar(FfiKind::U16));
-    const INT = type_value(TypeKind::Scalar(FfiKind::I32));
-    const UINT = type_value(TypeKind::Scalar(FfiKind::U32));
-    const LONG = type_value(TypeKind::Scalar(FfiKind::I64));
-    const ULONG = type_value(TypeKind::Scalar(FfiKind::U64));
-    const LONG_LONG = type_value(TypeKind::Scalar(FfiKind::I64));
-    const ULONG_LONG = type_value(TypeKind::Scalar(FfiKind::U64));
-    const INT8 = type_value(TypeKind::Scalar(FfiKind::I8));
-    const UINT8 = type_value(TypeKind::Scalar(FfiKind::U8));
-    const INT16 = type_value(TypeKind::Scalar(FfiKind::I16));
-    const UINT16 = type_value(TypeKind::Scalar(FfiKind::U16));
-    const INT32 = type_value(TypeKind::Scalar(FfiKind::I32));
-    const UINT32 = type_value(TypeKind::Scalar(FfiKind::U32));
-    const INT64 = type_value(TypeKind::Scalar(FfiKind::I64));
-    const UINT64 = type_value(TypeKind::Scalar(FfiKind::U64));
-    const FLOAT = type_value(TypeKind::Scalar(FfiKind::F32));
-    const FLOAT32 = type_value(TypeKind::Scalar(FfiKind::F32));
-    const DOUBLE = type_value(TypeKind::Scalar(FfiKind::F64));
-    const FLOAT64 = type_value(TypeKind::Scalar(FfiKind::F64));
+    builtin_type_class! {
+        TypeBuiltin = zeo_abi::FFI_TYPE_BUILTIN_CLASS, zeo_abi::FFI_TYPE_CLASS;
     }
 }
 
@@ -214,38 +321,38 @@ mod tests {
     use super::*;
 
     #[test]
-    fn canonical_instances_are_shared() {
-        let a = type_value(TypeKind::Scalar(FfiKind::I32));
-        let b = type_value(TypeKind::Scalar(FfiKind::I32));
-        let (RubyValue::Object(x), RubyValue::Object(y)) = (&a, &b) else {
-            panic!("type_value answers objects");
+    fn one_instance_per_canonical_type() {
+        let addr = |v: &RubyValue| match v {
+            RubyValue::Object(o) => Arc::as_ptr(o) as *const u8 as usize,
+            _ => panic!("type_value answers objects"),
         };
-        assert_eq!(
-            Arc::as_ptr(x) as *const u8 as usize,
-            Arc::as_ptr(y) as *const u8 as usize
-        );
+        // `:char` IS `:int8` -- one object under two constant names.
+        assert_eq!(addr(&type_value(Int8)), addr(&type_value(Int8)));
+        // `:long` is NOT `:int64`, though both are eight signed bytes.
+        assert_ne!(addr(&type_value(Long)), addr(&type_value(Int64)));
+        assert_eq!(Long.layout(), Int64.layout());
     }
 
     #[test]
     fn layouts_are_lp64() {
-        let t = |k| RType {
-            kind: TypeKind::Scalar(k),
-        };
-        assert_eq!(t(FfiKind::I32).layout(), (4, 4));
-        assert_eq!(t(FfiKind::I64).layout(), (8, 8));
-        assert_eq!(t(FfiKind::Bool).layout(), (1, 1));
-        assert_eq!(t(FfiKind::F32).layout(), (4, 4));
-        assert_eq!(t(FfiKind::Pointer).layout(), (8, 8));
+        assert_eq!(Int32.layout(), (4, 4));
+        assert_eq!(Int64.layout(), (8, 8));
+        assert_eq!(Bool.layout(), (1, 1));
+        assert_eq!(Float32.layout(), (4, 4));
+        assert_eq!(Pointer.layout(), (8, 8));
+        // The gem reports these as one byte rather than zero.
+        assert_eq!(Void.layout(), (1, 1));
+        assert_eq!(Varargs.layout(), (1, 1));
     }
 
     #[test]
     fn kind_resolution_accepts_types_and_symbols() {
-        let v = type_value(TypeKind::Scalar(FfiKind::F64));
+        let v = type_value(Float64);
         assert!(matches!(kind_of_type_value(&v), Ok(FfiKind::F64)));
         let s = RubyValue::Symbol(crate::Symbol::intern("int"));
         assert!(matches!(kind_of_type_value(&s), Ok(FfiKind::I32)));
         // (a Varargs argument errors, but constructing the TypeError needs
         // the exception REGISTRY, absent in a unit test -- e2e covers it)
-        assert!(is_varargs_type(&type_value(TypeKind::Varargs)));
+        assert!(is_varargs_type(&type_value(Varargs)));
     }
 }

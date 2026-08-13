@@ -227,12 +227,79 @@ module FFI
     LibraryPath.wrap(lib).to_s
   end
 
-  def self.find_type(name)
+  # Every canonical type under a second set of names. `NativeType` is the
+  # module the gem's own code reaches through, and `FFI::TYPE_INT32` the
+  # top-level spelling -- all three name ONE object per type.
+  module NativeType
+    Type::Builtin.constants.each do |name|
+      t = Type::Builtin.const_get(name)
+      # Only the canonical names, which are the ones `#inspect` prints.
+      const_set(name, t) if t.is_a?(Type) && t.inspect.include?("::#{name} ")
+    end
+  end
+
+  NativeType.constants.each { |name| const_set("TYPE_#{name}", NativeType.const_get(name)) }
+
+  # The type each keyword spells. The gem's C half also loads the host's
+  # `types.conf` here (`:__darwin_ino_t` and some hundreds of siblings);
+  # zeo resolves those at COMPILE time instead -- see `CScalar::from_c_typedef`
+  # -- so they are absent from this runtime table rather than answered with a
+  # width measured on some other machine.
+  TypeDefs = {
+    void: Type::Builtin::VOID,
+    bool: Type::Builtin::BOOL,
+    string: Type::Builtin::STRING,
+    char: Type::Builtin::CHAR,
+    uchar: Type::Builtin::UCHAR,
+    short: Type::Builtin::SHORT,
+    ushort: Type::Builtin::USHORT,
+    int: Type::Builtin::INT,
+    uint: Type::Builtin::UINT,
+    long: Type::Builtin::LONG,
+    ulong: Type::Builtin::ULONG,
+    long_long: Type::Builtin::LONG_LONG,
+    ulong_long: Type::Builtin::ULONG_LONG,
+    float: Type::Builtin::FLOAT,
+    double: Type::Builtin::DOUBLE,
+    long_double: Type::Builtin::LONGDOUBLE,
+    pointer: Type::Builtin::POINTER,
+    int8: Type::Builtin::INT8,
+    uint8: Type::Builtin::UINT8,
+    int16: Type::Builtin::INT16,
+    uint16: Type::Builtin::UINT16,
+    int32: Type::Builtin::INT32,
+    uint32: Type::Builtin::UINT32,
+    int64: Type::Builtin::INT64,
+    uint64: Type::Builtin::UINT64,
+    buffer_in: Type::Builtin::BUFFER_IN,
+    buffer_out: Type::Builtin::BUFFER_OUT,
+    buffer_inout: Type::Builtin::BUFFER_INOUT,
+    varargs: Type::Builtin::VARARGS,
+  }
+
+  # `FFI.typedef` writes here rather than into `TypeDefs`, which is what
+  # CRuby does too (the C half keeps its own lookup table and leaves the
+  # published constant alone). Reflection only: an `attach_function`
+  # signature naming an alias resolves it at compile time, and a `typedef`
+  # the compiler cannot fold is a compile error rather than a wrong width.
+  @custom_typedefs = {}
+
+  def self.find_type(name, type_map = nil)
     return name if name.is_a?(Type)
 
-    Type::Builtin.const_get(name.to_s.upcase)
-  rescue NameError
-    raise TypeError, "unable to resolve type '#{name}'"
+    t = type_map && type_map[name]
+    t ||= @custom_typedefs[name] || TypeDefs[name]
+    raise TypeError, "unable to resolve type '#{name}'" unless t
+
+    t
+  end
+
+  def self.add_typedef(old, add)
+    @custom_typedefs[add] = find_type(old)
+  end
+
+  def self.typedef(old, add)
+    add_typedef(old, add)
   end
 
   def self.type_size(type)
