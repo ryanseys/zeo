@@ -1,0 +1,6 @@
+[12, [:cbSize, :iBorderWidth, :iScrollWidth], 8]
+[8, [:mode, :threads, :load_all], 6]
+3
+[true, 0]
+"abc"
+size: NameError

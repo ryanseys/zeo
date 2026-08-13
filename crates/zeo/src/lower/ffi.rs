@@ -388,8 +388,45 @@ pub(crate) fn splat_local_elements<'a>(
     directive: &Node<'_>,
 ) -> Option<Vec<Node<'a>>> {
     let [only] = args else { return None };
-    let name = local_read_name(&only.as_splat_node()?.expression()?)?;
+    let expr = only.as_splat_node()?.expression()?;
+    if let Some(elems) = splatted_literal_elements(&expr) {
+        return Some(elems);
+    }
+    let name = local_read_name(&expr)?;
     local_array_elements(&name, body, directive.location().start_offset())
+}
+
+/// The elements a splatted LITERAL contributes, needing no replay at all.
+///
+/// `layout(*[ :cbSize, :uint, ... ])` is the same flat pair list written with
+/// a splat in front of it -- three Win32 gems spell `NONCLIENTMETRICS` that
+/// way. `layout(*{ acceleration_mode: :int32, ... }.to_a.flatten)` is the
+/// documented hash spelling put through the flattening the splat then undoes
+/// (voicevox); `Hash#to_a.flatten` on a hash of symbol keys IS the pair list,
+/// so reading it as one is the value the program computes, not a guess.
+fn splatted_literal_elements<'a>(node: &Node<'a>) -> Option<Vec<Node<'a>>> {
+    if let Some(array) = node.as_array_node() {
+        let elements: Vec<Node<'a>> = array.elements().iter().collect();
+        return elements
+            .iter()
+            .all(|e| e.as_splat_node().is_none())
+            .then_some(elements);
+    }
+    let flatten = node.as_call_node()?;
+    if flatten.name().as_slice() != b"flatten" || flatten.arguments().is_some() {
+        return None;
+    }
+    let to_a = flatten.receiver()?;
+    let to_a = to_a.as_call_node()?;
+    if to_a.name().as_slice() != b"to_a" || to_a.arguments().is_some() {
+        return None;
+    }
+    let mut out = Vec::new();
+    for (k, v) in hash_pairs(&to_a.receiver()?)? {
+        out.push(k);
+        out.push(v);
+    }
+    Some(out)
 }
 
 /// [`splat_local_elements`] for a list named WITHOUT a splat -- `enum :colour,
@@ -1431,10 +1468,16 @@ fn layout_array_type(
         );
     }
     // The element type takes the same body-constant fold as a plain field
-    // (`[WCHAR_T, CCHARW_MAX]` -- both halves are constants in ffi-ncurses).
-    let elem = match body_const_type_symbol(hir, body_so_far, &elems[0]) {
-        Some(sym) => ffi_type_of(&sym, aliases)?,
-        None => ffi_type_node(&elems[0], aliases, TypePos::Field)?,
+    // (`[WCHAR_T, CCHARW_MAX]` -- both halves are constants in ffi-ncurses),
+    // and may itself be an inline array: X11's `XTransform` is `layout
+    // :matrix, [[:XFixed, 3], 3]`, a 3x3 matrix of fixed-point values. C lays
+    // a 2-D array out as rows of rows, which is exactly this nesting.
+    let elem = match layout_array_type(&elems[0], aliases, hir, body_so_far)? {
+        Some(inner) => inner,
+        None => match body_const_type_symbol(hir, body_so_far, &elems[0]) {
+            Some(sym) => ffi_type_of(&sym, aliases)?,
+            None => ffi_type_node(&elems[0], aliases, TypePos::Field)?,
+        },
     };
     // Same rule as a plain field's: a typedef'd struct name is the
     // by-reference wrapper (one pointer per element); a bare layout-less
@@ -1657,6 +1700,8 @@ module ::FFI
       def [](__i)
         if @__klass
           @__klass.new(@__p + (@__off + __i * @__esize))
+        elsif @__get.nil?
+          raise ::ArgumentError, "get not supported for FFI::ArrayType"
         else
           @__p.send(@__get, @__off + __i * @__esize)
         end
@@ -1664,6 +1709,8 @@ module ::FFI
       def []=(__i, __v)
         if @__klass
           @__p.put_bytes(@__off + __i * @__esize, __v.to_ptr.get_bytes(0, @__esize))
+        elsif @__put.nil?
+          raise ::ArgumentError, "set not supported for FFI::ArrayType"
         else
           @__p.send(@__put, @__off + __i * @__esize, __v)
         end
@@ -1680,7 +1727,7 @@ module ::FFI
         ::Array.new(@__n) { |__i| self[__i] }
       end
       def to_ptr
-        @__p
+        @__p + @__off
       end
     end
   end
@@ -1777,6 +1824,13 @@ pub(crate) fn synthesize_ffi_struct(
         /// element carries its class path: the proxy then constructs that
         /// class viewing each slot in place instead of a scalar getter.
         Array(&'static str, usize, usize, Option<String>),
+        /// An inline array whose element is ITSELF an inline array -- X11's
+        /// `layout :matrix, [[:XFixed, 3], 3]`. The layout is real (C lays a
+        /// 2-D array out as rows of rows, and the following fields start
+        /// after all of it), but the gem cannot read one back: indexing the
+        /// proxy raises `ArgumentError: get not supported for FFI::ArrayType`,
+        /// oracle-verified. `(class, element count, row size)`.
+        NestedArray(&'static str, usize, usize),
         /// A nested struct stored BY VALUE: `(class path, byte size)`.
         /// Reading yields the class VIEWING the field's bytes in place (a
         /// mutation through the view mutates the parent -- oracle-verified);
@@ -1802,6 +1856,12 @@ pub(crate) fn synthesize_ffi_struct(
             crate::hir::FfiType::EnumSlot(slot) => Conv::EnumSlot(*slot),
             crate::hir::FfiType::Bool => Conv::Bool,
             crate::hir::FfiType::Str => Conv::Str,
+            crate::hir::FfiType::Array(elem, count)
+                if matches!(**elem, crate::hir::FfiType::Array(..)) =>
+            {
+                let (_, _, esize, _) = ffi_field_accessor(elem)?;
+                Conv::NestedArray("FFI::Struct::InlineArray", *count, esize)
+            }
             crate::hir::FfiType::Array(elem, count) => {
                 let (_, _, esize, _) = ffi_field_accessor(elem)?;
                 let elem_class = match &**elem {
@@ -1860,6 +1920,12 @@ pub(crate) fn synthesize_ffi_struct(
                         "{class}.new(@__ffi_ptr, {off}, {count}, :{getter}, :{putter}, {esize})"
                     ),
                 },
+                // No accessor pair at all: the proxy answers `size`/`to_ptr`
+                // and raises on `[]`, which is the gem's own behaviour for a
+                // row-of-rows element.
+                Conv::NestedArray(class, count, esize) => {
+                    format!("{class}.new(@__ffi_ptr, {off}, {count}, nil, nil, {esize})")
+                }
                 // The nested class VIEWING the field's bytes in place -- the
                 // synthesized `initialize` takes the pointer as-is, so every
                 // inner accessor indexes from parent + offset.
@@ -1892,7 +1958,7 @@ pub(crate) fn synthesize_ffi_struct(
             }
             // Ruby refuses a whole-array assignment too -- the proxy's own
             // `[]=` is how an inline array is written.
-            if matches!(conv, Conv::Array(..)) {
+            if matches!(conv, Conv::Array(..) | Conv::NestedArray(..)) {
                 return format!(
                     "        when :{name} then raise NotImplementedError, \"cannot set array field\"\n"
                 );
@@ -1921,9 +1987,11 @@ pub(crate) fn synthesize_ffi_struct(
             let value = match conv {
                 Conv::Plain => "__ffi_value".to_string(),
                 Conv::Bool => "(__ffi_value ? 1 : 0)".to_string(),
-                Conv::Str | Conv::Array(..) | Conv::Struct(..) | Conv::Callback(..) => {
-                    unreachable!("returned above")
-                }
+                Conv::Str
+                | Conv::Array(..)
+                | Conv::NestedArray(..)
+                | Conv::Struct(..)
+                | Conv::Callback(..) => unreachable!("returned above"),
                 Conv::Enum(m) => {
                     let table = m
                         .iter()
@@ -2431,7 +2499,35 @@ fn attach_function_options<'a>(node: &Node<'a>, class_body: &[Node<'a>]) -> PRes
 
 /// A Symbol node's name (`:abs` -> `"abs"`). FFI names/types are always literal
 /// symbols; anything else is a clean rejection.
+/// The node an FFI declaration position really reads, past the spellings that
+/// only WRAP a value. ffi-tk writes `attach_function :Tk_GetColor, [:pointer,
+/// :pointer, name = :string], :pointer` -- an assignment mid-list, whose value
+/// is the type and whose local is used further down the file. Parentheses wrap
+/// the same way (`typedef (COND ? :long_long : :long), :json_int`).
+fn ffi_written_value<'a>(node: &Node<'a>) -> Option<Node<'a>> {
+    let unwrap_once = |n: &Node<'a>| -> Option<Node<'a>> {
+        if let Some(w) = n.as_local_variable_write_node() {
+            return Some(w.value());
+        }
+        let body: Vec<Node<'a>> = n
+            .as_parentheses_node()?
+            .body()?
+            .as_statements_node()?
+            .body()
+            .iter()
+            .collect();
+        <[Node<'a>; 1]>::try_from(body).ok().map(|[only]| only)
+    };
+    let mut cur = unwrap_once(node)?;
+    while let Some(inner) = unwrap_once(&cur) {
+        cur = inner;
+    }
+    Some(cur)
+}
+
 fn ffi_symbol_str(node: &Node<'_>) -> PResult<String> {
+    let written = ffi_written_value(node);
+    let node = written.as_ref().unwrap_or(node);
     // A string literal names the same thing: the ffi gem calls `.to_sym` on
     // its name arguments, and `attach_function 'rados_seek', ...` is common.
     node.as_symbol_node()
@@ -2503,6 +2599,8 @@ fn ffi_type_node(
     aliases: &std::collections::HashMap<String, crate::hir::FfiType>,
     pos: TypePos,
 ) -> PResult<crate::hir::FfiType> {
+    let written = ffi_written_value(node);
+    let node = written.as_ref().unwrap_or(node);
     // An INLINE `callback([...], ret)` in a type position -- the anonymous
     // twin of the named `callback :tag, [...], ret` declaration, carrying the
     // same signature without registering a name.
