@@ -215,9 +215,10 @@ pub fn materialize(
             )?;
         }
         let instance_ms = class_started.elapsed().as_millis();
-        at_class(materialize_class_methods(compiler, cid), || {
-            compiler.class_def_span(cid)
-        })?;
+        at_class(
+            materialize_class_methods(compiler, cid, &scope_name_ids),
+            || compiler.class_def_span(cid),
+        )?;
         apply_visibility_overrides(compiler, cid);
         // One class that costs more than the whole pass should, named. A
         // per-class cost is a product -- ancestors x their own methods -- and
@@ -266,15 +267,17 @@ pub fn materialize(
             ci.is_builtin && ci.is_module
         };
         if is_builtin_module {
-            let own = compiler.class(cid).own_methods.clone();
-            if !own.is_empty() {
-                let entries = own
-                    .into_iter()
-                    .map(|sid| {
-                        let name = compiler.names.intern(&compiler.scope(sid).name.clone());
-                        entry_for(compiler, name, sid, cid)
-                    })
-                    .collect();
+            // `scope_name_ids` covers every scope and nothing mints one past
+            // the alias pass, so the name is an index read -- which is also
+            // what lets the list be read in place instead of cloned to end
+            // the borrow that `names.intern` needed.
+            let entries: Vec<MethodEntry> = compiler
+                .class(cid)
+                .own_methods
+                .iter()
+                .map(|&sid| entry_for(compiler, scope_name_ids[sid.0 as usize], sid, cid))
+                .collect();
+            if !entries.is_empty() {
                 compiler.classes[cid.0 as usize].methods = entries;
             }
         }
@@ -820,7 +823,16 @@ fn apply_visibility_overrides(compiler: &mut Compiler, class_id: ClassId) {
     }
 }
 
-fn materialize_class_methods(compiler: &mut Compiler, class_id: ClassId) -> Result<(), String> {
+/// `scope_name_ids` is the same table `materialize_methods` takes: every
+/// scope's name, interned once for the whole pass. This side used to clone
+/// each ancestor's method list and each scope's name `String`, then re-intern
+/// that name, for every descendant that inherited it -- the per-(class x
+/// ancestor x method) hash the instance side had already been fixed to avoid.
+fn materialize_class_methods(
+    compiler: &mut Compiler,
+    class_id: ClassId,
+    scope_name_ids: &[NameId],
+) -> Result<(), String> {
     // `undef_method :m` inside this class's `class << self`: the name is not
     // materialized onto it from any position, so it raises NoMethodError here
     // while staying live on the ancestor that defined it. `seen` still claims
@@ -850,18 +862,11 @@ fn materialize_class_methods(compiler: &mut Compiler, class_id: ClassId) -> Resu
         // prepended is closest (reverse, as `extends`/`prepends` expand). Every
         // position's own copy joins `singleton_targets` so a `super` chain finds
         // the receiver's own copy at any position.
-        for &m in compiler
-            .class(cid)
-            .class_method_prepends
-            .clone()
-            .iter()
-            .rev()
-        {
-            for sid in compiler.class(m).own_methods.clone() {
-                let name = compiler.scope(sid).name.clone();
-                let name_id = compiler.names.intern(&name);
+        for &m in compiler.class(cid).class_method_prepends.iter().rev() {
+            for &sid in &compiler.class(m).own_methods {
+                let name_id = scope_name_ids[sid.0 as usize];
                 let is_winner = seen.insert(name_id);
-                if undefined.contains(&name) {
+                if undefined.contains(compiler.scope(sid).name.as_str()) {
                     continue;
                 }
                 if is_winner {
@@ -879,11 +884,10 @@ fn materialize_class_methods(compiler: &mut Compiler, class_id: ClassId) -> Resu
         // branch the static target takes. The name still rides
         // `runtime_patches`, so a live overlay row from the branch that
         // actually ran outranks the shim at every call site.
-        for sid in compiler.class(cid).own_class_methods.clone() {
-            let name = compiler.scope(sid).name.clone();
-            let name_id = compiler.names.intern(&name);
+        for &sid in &compiler.class(cid).own_class_methods {
+            let name_id = scope_name_ids[sid.0 as usize];
             let is_winner = seen.insert(name_id);
-            if undefined.contains(&name) {
+            if undefined.contains(compiler.scope(sid).name.as_str()) {
                 continue;
             }
             if cid == class_id {
@@ -904,18 +908,17 @@ fn materialize_class_methods(compiler: &mut Compiler, class_id: ClassId) -> Resu
                 singleton_targets.push((cid, sid));
             }
         }
-        for &m in compiler.class(cid).extends.clone().iter().rev() {
-            for sid in compiler.class(m).own_methods.clone() {
-                let name = compiler.scope(sid).name.clone();
+        for &m in compiler.class(cid).extends.iter().rev() {
+            for &sid in &compiler.class(m).own_methods {
                 // SHADOWED copies register too (into the singleton-super
                 // pool below, not the flattened winner set): a sibling-
                 // extend `super` chain needs every position's own copy,
                 // emitted in THIS class's context so its own `super`
                 // resumes the chain here -- the `own_impls` distinction,
                 // on the singleton side.
-                let name_id = compiler.names.intern(&name);
+                let name_id = scope_name_ids[sid.0 as usize];
                 let is_winner = seen.insert(name_id);
-                if undefined.contains(&name) {
+                if undefined.contains(compiler.scope(sid).name.as_str()) {
                     continue;
                 }
                 if is_winner {
