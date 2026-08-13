@@ -208,7 +208,19 @@ fn fires(
         where_(compiler.scope(scope).def_node),
         where_(Some(def.node)),
     );
+    // A `BEGIN { ... }` body runs before the whole main program, so written
+    // order is not run order when exactly one of the two sits inside one:
+    // a hook installed in the main program never saw a definition hoisted out
+    // of a `BEGIN`, and a hook installed INSIDE one sees every main
+    // definition however early it is written.
+    let hoisted = |s: &crate::hir::Span| {
+        compiler
+            .pre_exec_spans
+            .iter()
+            .any(|p| p.file == s.file && p.start <= s.start && s.end <= p.end)
+    };
     match (installed, defined) {
+        (Some(i), Some(d)) if i.file == d.file && hoisted(&i) != hoisted(&d) => hoisted(&i),
         (Some(i), Some(d)) if i.file == d.file => i.start <= d.start,
         _ => true,
     }

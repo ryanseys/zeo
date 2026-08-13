@@ -621,6 +621,13 @@ pub struct Compiler {
     /// cannot see one: such a reopen registers an ordinary instance method
     /// whose owner is the very class the no-op default lives on.
     pub global_def_hooks: FSet<String>,
+    /// The source extent of every `BEGIN { ... }` block, recorded as the
+    /// analyze walk hoists it. Ruby runs these before the main program, so
+    /// two definitions written in one file do not run in written order when
+    /// one of them sits in here -- which is what
+    /// [`crate::analyze::def_hooks::fires`] has to know before comparing
+    /// their spans.
+    pub pre_exec_spans: Vec<crate::hir::Span>,
     /// Hands out [`SiteDef::seq`].
     pub def_seq: u32,
     /// The same record for TOP-LEVEL definitions, which have no site: a bare
@@ -1003,6 +1010,7 @@ impl Compiler {
             box_surrogates: FMap::default(),
             class_body_sites: Vec::new(),
             global_def_hooks: Default::default(),
+            pre_exec_spans: Vec::new(),
             def_seq: 0,
             top_level_defs: Vec::new(),
             shell_kinds: FMap::default(),

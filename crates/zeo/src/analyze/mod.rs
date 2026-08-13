@@ -134,25 +134,50 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
     // steal those ids the moment a program allocated a box. See
     // `pin_builtin_exceptions_tail`.
     let mut tail_pinned = false;
-    for (idx, stmt) in statements.into_iter().enumerate() {
-        if idx >= builtin_exceptions_len && !tail_pinned {
-            pin_builtin_exceptions_tail(compiler)?;
-            tail_pinned = true;
+    let statements: Vec<NodeId> = statements.into_iter().collect();
+    let is_pre_exec =
+        |compiler: &Compiler, s: NodeId| matches!(compiler.hir[s], HirNode::PreExec(_));
+    for (idx, &stmt) in statements.iter().enumerate() {
+        if idx >= builtin_exceptions_len {
+            break;
         }
-        process_top_stmt(
-            compiler,
-            stmt,
-            idx < builtin_exceptions_len,
-            &mut main_statements,
-            &mut pre_exec,
-        )?;
+        process_top_stmt(compiler, stmt, true, &mut main_statements, &mut pre_exec)?;
+    }
+    if builtin_exceptions_len < statements.len() {
+        pin_builtin_exceptions_tail(compiler)?;
+        tail_pinned = true;
+    }
+    // The `BEGIN` bodies BEFORE the main statements, because that is the order
+    // ruby runs them in and the walk's own order is what every def-ordering
+    // fact is counted from -- `seq`, and through it which of a class's
+    // definitions `method_added` still has in its future. Walking them at
+    // their source position instead reported a `def` inside a `BEGIN` to a
+    // `method_added` hook the main program had not installed yet.
+    //
+    // Nothing moves for a program without a `BEGIN` block: the partition is
+    // stable and the predicate is false for every statement.
+    let hoisted_start = compiler.top_level_defs.len();
+    for &stmt in statements.iter().skip(builtin_exceptions_len) {
+        if is_pre_exec(compiler, stmt) {
+            process_top_stmt(compiler, stmt, false, &mut main_statements, &mut pre_exec)?;
+        }
+    }
+    let hoisted_defs = hoisted_start..compiler.top_level_defs.len();
+    for &stmt in statements.iter().skip(builtin_exceptions_len) {
+        if !is_pre_exec(compiler, stmt) {
+            process_top_stmt(compiler, stmt, false, &mut main_statements, &mut pre_exec)?;
+        }
     }
     // Every `BEGIN` body runs first, ahead of the main program -- see
-    // `pre_exec`'s declaration. The prepend moves every already-recorded
-    // top-level def, so their `at` indices move with it.
+    // `pre_exec`'s declaration. The prepend moves every def recorded against
+    // the MAIN list, so their `at` indices move with it; a def hoisted out of
+    // a `BEGIN` body already counts from the prefix and stays put.
     if !pre_exec.is_empty() {
-        for d in &mut compiler.top_level_defs {
-            d.at += pre_exec.len();
+        let shift = pre_exec.len();
+        for (i, d) in compiler.top_level_defs.iter_mut().enumerate() {
+            if !hoisted_defs.contains(&i) {
+                d.at += shift;
+            }
         }
         pre_exec.append(&mut main_statements);
         main_statements = pre_exec;
@@ -475,8 +500,22 @@ fn process_top_stmt_inner(
     main_statements: &mut Vec<NodeId>,
     pre_exec: &mut Vec<NodeId>,
 ) -> Result<(), AnalyzeError> {
+    // A `BEGIN { ... }` body's statements ARE top-level statements -- ruby
+    // hoists them to run before the main program, in the same scope and the
+    // same cref. They take the same walk, into the hoisted list instead of the
+    // main one: without it a `class` written there registered nothing and
+    // reached codegen as an unregistered definition (sekrets and telesign both
+    // define their whole API inside one). A nested `BEGIN` keeps flowing to
+    // the same list, which is where ruby runs it.
     if let HirNode::PreExec(body) = &compiler.hir[stmt] {
-        pre_exec.extend(body.clone());
+        if let Some(span) = compiler.hir.span(stmt) {
+            compiler.pre_exec_spans.push(span);
+        }
+        for s in body.clone() {
+            let mut nested = Vec::new();
+            process_top_stmt(compiler, s, bootstrap, pre_exec, &mut nested)?;
+            pre_exec.append(&mut nested);
+        }
         return Ok(());
     }
     // A `Seq` at statement position is a lowering wrapper, not a construct --
