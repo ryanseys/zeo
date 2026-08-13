@@ -12,6 +12,22 @@
 //! final `cargo build` of the *generated* program (and running the
 //! resulting binary), since that's a genuinely separate compilation unit.
 
+#![warn(clippy::wildcard_enum_match_arm)]
+// A `_` arm on an enum silently absorbs new variants. Exhaustiveness checking
+// is what makes adding an `HirNode` safe: the compiler names every walk that
+// must decide about it, instead of one of them quietly defaulting. Three
+// `fix(analyze)` commits were each one missed node kind.
+//
+// Two deliberate exceptions, both marked with an `#[allow]` carrying a reason:
+//   - a STRUCTURAL shape test ("is this node a symbol literal?"), where the
+//     answer for every future variant is unambiguously "no", and listing 78
+//     `=> None` arms would bury the two that matter;
+//   - a module not yet swept, which carries a file-level allow naming this
+//     comment. Those are the burn-down list -- grep for the lint name.
+//
+// A walk that asks "may I descend through this?" should use
+// `HirNode::scope_kind` rather than either, which is exhaustive in one place.
+
 pub mod analyze;
 pub mod analyze_error;
 pub mod backend;

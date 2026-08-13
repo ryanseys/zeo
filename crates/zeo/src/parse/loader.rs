@@ -41,6 +41,11 @@
 //! time; `load`'s `wrap` parameter, native features, and `~`/`./`-prefixed
 //! `require` are clean rejections.
 
+#![allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "not yet swept for wildcard arms -- see the lint's note in lib.rs"
+)]
+
 use crate::hir::{Hir, HirNode, LoadedFile, NodeId};
 use crate::lower::context::{BindingsFrame, SourceFileFrame, current_box_binding};
 use crate::lower::features::{canonical_ext_feature, is_builtin_feature};

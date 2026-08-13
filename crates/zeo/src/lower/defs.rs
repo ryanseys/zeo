@@ -5,6 +5,11 @@
 //! the static and runtime class-lowering paths. Split out of
 //! `parse/mod.rs`.
 
+#![allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "not yet swept for wildcard arms -- see the lint's note in lib.rs"
+)]
+
 use super::assign::lower_multi_target_group;
 use super::consts::constant_path_name;
 use super::control::static_bool;

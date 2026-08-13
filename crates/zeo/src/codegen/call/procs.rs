@@ -4,6 +4,11 @@
 //! `emit_proc_or_lambda_value` machinery (captures, the redo-wrapper loop),
 //! and `emit_lambda_arity_check`.
 
+#![allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "not yet swept for wildcard arms -- see the lint's note in lib.rs"
+)]
+
 use quote::{format_ident, quote};
 
 use crate::codegen::Ctx;

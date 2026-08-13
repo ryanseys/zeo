@@ -6,6 +6,11 @@
 //! wherever a plain `RubyValue`-typed expression is expected, with no
 //! wrapping of their own.
 
+#![allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "not yet swept for wildcard arms -- see the lint's note in lib.rs"
+)]
+
 use quote::quote;
 
 use super::Ctx;

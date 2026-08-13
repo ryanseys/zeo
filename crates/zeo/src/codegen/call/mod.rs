@@ -7,6 +7,11 @@
 //! `Result`-returning method has `?` applied right here, at the call site,
 //! not left to the caller (see `expr.rs`'s module docs).
 
+#![allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "not yet swept for wildcard arms -- see the lint's note in lib.rs"
+)]
+
 mod builtins;
 mod kernel;
 mod new;

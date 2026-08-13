@@ -14,6 +14,11 @@
 //!   body may be MRI-only/uncompilable code (`if defined?(RubyVM::YJIT);
 //!   RubyVM::YJIT.enable; end`) that must never reach Rust emission.
 
+#![allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "not yet swept for wildcard arms -- see the lint's note in lib.rs"
+)]
+
 use super::Ctx;
 use crate::compiler::{ClassId, OBJECT_CLASS};
 use crate::hir::{HirNode, NodeId};

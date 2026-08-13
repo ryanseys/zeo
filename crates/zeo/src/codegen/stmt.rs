@@ -10,6 +10,11 @@
 //! `case` arms, loop bodies, rescue arms), which must stay a bare
 //! `RubyValue` so it composes like any other `emit_expr` fragment.
 
+#![allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "not yet swept for wildcard arms -- see the lint's note in lib.rs"
+)]
+
 use quote::quote;
 
 use super::Ctx;

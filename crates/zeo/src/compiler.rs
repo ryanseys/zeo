@@ -5,6 +5,11 @@
 //! into `zeo_rt::ClassId` by codegen, but the two types are otherwise
 //! unrelated -- `zeo` never links against `zeo-rt` at all.
 
+#![allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "not yet swept for wildcard arms -- see the lint's note in lib.rs"
+)]
+
 use crate::hir::{Hir, NodeId, Params, Visibility};
 use crate::types::TyKind;
 

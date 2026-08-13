@@ -16,6 +16,11 @@
 //! generated Rust text ends up with one copy per class, exactly the same
 //! trade a generic Rust function already makes via monomorphization.
 
+#![allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "not yet swept for wildcard arms -- see the lint's note in lib.rs"
+)]
+
 use crate::analyze_error::AnalyzeError;
 use crate::compiler::{ClassId, Compiler, MethodEntry, NameId, OBJECT_CLASS, ScopeId};
 use crate::compiler::{FMap, FSet};

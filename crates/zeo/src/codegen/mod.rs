@@ -14,6 +14,11 @@
 //! here as a clean `Result::Err`, not later as a confusing `cargo build`
 //! failure in a temp dir.
 
+#![allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "not yet swept for wildcard arms -- see the lint's note in lib.rs"
+)]
+
 mod call;
 mod captures;
 mod class_query;

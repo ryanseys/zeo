@@ -6,6 +6,11 @@
 //! class) is what drives the static-vs-dynamic dispatch decision in
 //! `codegen`, even though the *value* itself stays boxed either way.
 
+#![allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "not yet swept for wildcard arms -- see the lint's note in lib.rs"
+)]
+
 use crate::compiler::FMap;
 use crate::compiler::{ClassId, Compiler};
 use crate::hir::{HirNode, NodeId};

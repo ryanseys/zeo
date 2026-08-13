@@ -19,6 +19,11 @@
 //! special case (see `codegen::call`), so `break`/`next`/`redo` work there
 //! too, for free.
 
+#![allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "not yet swept for wildcard arms -- see the lint's note in lib.rs"
+)]
+
 use quote::quote;
 
 use super::Ctx;

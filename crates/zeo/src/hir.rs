@@ -11,6 +11,11 @@
 //! a compact interned id. Interning them is a possible later optimization,
 //! not a blocker.
 
+#![allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "not yet swept for wildcard arms -- see the lint's note in lib.rs"
+)]
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct NodeId(u32);
 
@@ -797,6 +802,125 @@ impl std::ops::Index<NodeId> for Hir {
     type Output = HirNode;
     fn index(&self, id: NodeId) -> &HirNode {
         &self.nodes[id.0 as usize]
+    }
+}
+
+/// What kind of Ruby scope a node opens, if any.
+///
+/// This is the ONE place that enumerates every [`HirNode`] for the purpose of
+/// "may a walk descend through this?", the way [`HirNode::for_each_child`] is
+/// the one place that enumerates them for "what are its children?". A new
+/// variant must declare itself here, and the predicate walks that consume it
+/// then match on FIVE variants instead of eighty-one -- so each walk's stop
+/// policy is two readable lines, and the differences BETWEEN those policies
+/// are visible side by side. They were not, when each walk buried its stops in
+/// its own copy of the full match, which is how they drifted apart.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ScopeKind {
+    /// An ordinary expression or statement: opens nothing.
+    None,
+    /// A `class`/`module`/`def` body -- a fresh Ruby scope. A `yield`,
+    /// `super` or `return` written inside belongs to it, not to whatever
+    /// encloses it.
+    Definition,
+    /// A lambda literal. It catches its own `Signal::Return`, and has no
+    /// implicit block of its own (see [`HirNode::Lambda`]).
+    Lambda,
+    /// A synthesized `attach_function` wrapper body: contains none of the
+    /// constructs these walks look for.
+    Ffi,
+    /// A block literal. Not a stop for any current walk -- a block has neither
+    /// its own implicit block nor its own `super` target, so both refer to the
+    /// enclosing method -- but it is reached only through the call that
+    /// invokes it, which is where its escaping-ness is decided.
+    Block,
+}
+
+impl HirNode {
+    /// See [`ScopeKind`].
+    pub fn scope_kind(&self) -> ScopeKind {
+        match self {
+            HirNode::Ffi(_) => ScopeKind::Ffi,
+            HirNode::ClassDef { .. } | HirNode::DefMethod { .. } => ScopeKind::Definition,
+            HirNode::Lambda { .. } => ScopeKind::Lambda,
+            HirNode::Block { .. } => ScopeKind::Block,
+            HirNode::Program(..)
+            | HirNode::IntegerLit(..)
+            | HirNode::BigIntegerLit { .. }
+            | HirNode::RationalLit { .. }
+            | HirNode::ImaginaryLit(..)
+            | HirNode::FloatLit(..)
+            | HirNode::SymbolLit(..)
+            | HirNode::NilLit
+            | HirNode::BoolLit(..)
+            | HirNode::And(..)
+            | HirNode::Or(..)
+            | HirNode::Defined(..)
+            | HirNode::If { .. }
+            | HirNode::CaseWhen { .. }
+            | HirNode::ArrayLit(..)
+            | HirNode::HashLit(..)
+            | HirNode::RangeLit { .. }
+            | HirNode::StringLit(..)
+            | HirNode::RegexpLit(..)
+            | HirNode::LocalRead(..)
+            | HirNode::LocalWrite(..)
+            | HirNode::IvarRead(..)
+            | HirNode::IvarWrite(..)
+            | HirNode::ClassVarRead(..)
+            | HirNode::ClassVarWrite(..)
+            | HirNode::ClassRef(..)
+            | HirNode::Call { .. }
+            | HirNode::New { .. }
+            | HirNode::SuperCall { .. }
+            | HirNode::Include(..)
+            | HirNode::Extend(..)
+            | HirNode::Prepend(..)
+            | HirNode::ClassMethodPrepend(..)
+            | HirNode::DefHook { .. }
+            | HirNode::MethodRedefine { .. }
+            | HirNode::Refine { .. }
+            | HirNode::Using(..)
+            | HirNode::While { .. }
+            | HirNode::Loop { .. }
+            | HirNode::For { .. }
+            | HirNode::Break(..)
+            | HirNode::Next(..)
+            | HirNode::Redo
+            | HirNode::MultiWrite { .. }
+            | HirNode::Eval(..)
+            | HirNode::BoxScope { .. }
+            | HirNode::BoxHandle(..)
+            | HirNode::Return(..)
+            | HirNode::Yield(..)
+            | HirNode::BlockGiven
+            | HirNode::SelfRef
+            | HirNode::Raise(..)
+            | HirNode::CaseIn { .. }
+            | HirNode::MatchPredicate { .. }
+            | HirNode::MatchRequired { .. }
+            | HirNode::Begin { .. }
+            | HirNode::Retry
+            | HirNode::GlobalRead(..)
+            | HirNode::GlobalWrite(..)
+            | HirNode::QualifiedConstRead(..)
+            | HirNode::ConstReadOrNil(..)
+            | HirNode::ConstWrite { .. }
+            | HirNode::DynConstRead { .. }
+            | HirNode::DynConstWrite { .. }
+            | HirNode::PreExec(..)
+            | HirNode::AliasGlobal(..)
+            | HirNode::Undef(..)
+            | HirNode::ClassMethodUndef(..)
+            | HirNode::AliasMethod { .. }
+            | HirNode::MethodVisibility { .. }
+            | HirNode::ClassMethodVisibility { .. }
+            | HirNode::ModuleFunction(..)
+            | HirNode::ConstantVisibility { .. }
+            | HirNode::LastMatchRef(..)
+            | HirNode::Seq(..)
+            | HirNode::FlipFlop { .. } => ScopeKind::None,
+        }
     }
 }
 

@@ -10,10 +10,15 @@
 //! (`Arc<parking_lot::Mutex<RubyValue>>`) storage class instead of a plain hoisted `let
 //! mut`?
 
+#![warn(
+    clippy::wildcard_enum_match_arm,
+    reason = "swept: this module's HIR walks are exhaustive. Re-enabled because a\n    parent module's file-level allow is INHERITED by its submodules"
+)]
+
 use super::call::is_inline_block_fast_path;
 use crate::compiler::Compiler;
 use crate::compiler::{FMap, FSet};
-use crate::hir::{ArrayElem, HirNode, NodeId, Params};
+use crate::hir::{ArrayElem, HirNode, NodeId, Params, ScopeKind};
 
 #[derive(Default)]
 pub struct Captures {
@@ -242,12 +247,20 @@ pub fn block_captures(
 /// Descends through blocks and lambdas (a `binding` taken inside one still
 /// exposes the enclosing scope's locals) but stops at a `def`/`class` body,
 /// which is a scope of its own.
+#[allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "structural: `binding`/`eval` is a call, so no other node kind can be one.\n    The scope stops are decided by `scope_kind` at the top of the function"
+)]
 fn scope_calls_binding(compiler: &Compiler, id: NodeId) -> bool {
+    match compiler.hir[id].scope_kind() {
+        // A `def`/`class` body is a scope of its own.
+        ScopeKind::Definition => return false,
+        // A `binding` taken inside a block or lambda still exposes THIS
+        // scope's locals, so those are descended through, not stopped at.
+        ScopeKind::Block | ScopeKind::Lambda if compiler.hir.uses_proc_binding() => return true,
+        ScopeKind::Ffi | ScopeKind::Lambda | ScopeKind::Block | ScopeKind::None => {}
+    }
     match &compiler.hir[id] {
-        HirNode::DefMethod { .. } | HirNode::ClassDef { .. } => return false,
-        HirNode::Block { .. } | HirNode::Lambda { .. } if compiler.hir.uses_proc_binding() => {
-            return true;
-        }
         HirNode::Call {
             receiver,
             name,
@@ -344,10 +357,14 @@ pub fn binding_scope_names(
 /// that needs the name list but no cell promotion. Same walk boundary as
 /// [`scope_calls_binding`].
 fn scope_splices_eval(compiler: &Compiler, id: NodeId) -> bool {
-    match &compiler.hir[id] {
-        HirNode::DefMethod { .. } | HirNode::ClassDef { .. } => return false,
-        HirNode::Eval(_) => return true,
-        _ => {}
+    let node = &compiler.hir[id];
+    if matches!(node, HirNode::Eval(_)) {
+        return true;
+    }
+    match node.scope_kind() {
+        // A `def`/`class` body is a scope of its own.
+        ScopeKind::Definition => return false,
+        ScopeKind::Ffi | ScopeKind::Lambda | ScopeKind::Block | ScopeKind::None => {}
     }
     let mut found = false;
     compiler.hir[id].for_each_child(&mut |n| {
@@ -383,20 +400,17 @@ pub fn body_contains_escaping_return(compiler: &Compiler, body: &[NodeId]) -> bo
 
 fn node_contains_escaping_return(compiler: &Compiler, id: NodeId, in_escaping: bool) -> bool {
     let node = &compiler.hir[id];
-    match node {
-        HirNode::Return(v) => {
-            return in_escaping
-                || v.is_some_and(|n| node_contains_escaping_return(compiler, n, in_escaping));
-        }
-        // An FFI wrapper body contains no `return`.
-        HirNode::Ffi(_) => return false,
-        // A lambda literal catches its own `Signal::Return` unconditionally --
-        // a `return` inside it belongs to the lambda, never the enclosing
-        // method (see `hir::HirNode::Lambda`'s docs), so the walk stops here.
-        HirNode::Lambda { .. } => return false,
-        // A `class`/`def` body is a fresh Ruby scope with its own catch.
-        HirNode::ClassDef { .. } | HirNode::DefMethod { .. } => return false,
-        _ => {}
+    if let HirNode::Return(v) = node {
+        return in_escaping
+            || v.is_some_and(|n| node_contains_escaping_return(compiler, n, in_escaping));
+    }
+    match node.scope_kind() {
+        // An FFI wrapper body contains no `return`. A lambda catches its own
+        // `Signal::Return` -- a `return` inside it belongs to the lambda,
+        // never the enclosing method (see `hir::HirNode::Lambda`'s docs). A
+        // `class`/`def` body is a fresh Ruby scope with its own catch.
+        ScopeKind::Ffi | ScopeKind::Lambda | ScopeKind::Definition => return false,
+        ScopeKind::Block | ScopeKind::None => {}
     }
     // A literal block's body runs at a different escaping-ness than its
     // siblings, and it is the ONLY child that does -- which is what lets one
@@ -406,12 +420,23 @@ fn node_contains_escaping_return(compiler: &Compiler, id: NodeId, in_escaping: b
     // shares this scope, so its `return` is literal and only counts if the
     // walk was already inside an escaping one. `new` and `super` have no
     // inline form, so their blocks always escape.
+    #[allow(
+        clippy::wildcard_enum_match_arm,
+        reason = "structural: these three are the only node kinds carrying a literal \
+                  block, so no other variant has one to treat specially"
+    )]
     let block = match node {
         HirNode::Call { block, .. }
         | HirNode::New { block, .. }
         | HirNode::SuperCall { block, .. } => *block,
         _ => None,
     };
+    #[allow(
+        clippy::wildcard_enum_match_arm,
+        reason = "structural: only a call has an inline fast path. Reached solely when \
+                  `block` above is `Some`, so the default answers for `new`/`super`, \
+                  whose blocks always escape"
+    )]
     let in_block = match node {
         HirNode::Call {
             receiver,
@@ -459,10 +484,20 @@ pub fn body_contains_begin(compiler: &Compiler, body: &[NodeId]) -> bool {
 /// only traps a `Signal::Return` this method's own `return` raised, and a
 /// method with none can only intercept one meant for somebody else.
 fn contains_return(compiler: &Compiler, id: NodeId) -> bool {
-    match &compiler.hir[id] {
-        HirNode::Return(_) => return true,
-        HirNode::Lambda { .. } | HirNode::Ffi(_) => return false,
-        _ => {}
+    let node = &compiler.hir[id];
+    if matches!(node, HirNode::Return(_)) {
+        return true;
+    }
+    match node.scope_kind() {
+        // A lambda catches its own `Signal::Return`; an FFI wrapper body has
+        // no `return` in it.
+        ScopeKind::Lambda | ScopeKind::Ffi => return false,
+        // NOTE: unlike its callers, this walk does NOT stop at a `Definition`.
+        // A `return` inside a nested `def` belongs to that def, so counting it
+        // here over-approximates -- which only ever installs a catch that is
+        // never entered. Kept as-is rather than tightened blind; the shape is
+        // now visible next to the policies that do stop there.
+        ScopeKind::Definition | ScopeKind::Block | ScopeKind::None => {}
     }
     let mut found = false;
     compiler.hir[id].for_each_child(&mut |c| {
@@ -478,23 +513,23 @@ fn contains_return(compiler: &Compiler, id: NodeId) -> bool {
 /// above -- rather than re-listing every `HirNode` variant, which is what
 /// this used to do across 256 lines.
 fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
-    match &compiler.hir[id] {
-        // An FFI wrapper body contains no `begin`.
-        HirNode::Ffi(_) => return false,
-        // The whole subtree is searched for the `return` this `begin` would
-        // catch, so there is nothing further to descend for here.
-        HirNode::Begin { .. } => return contains_return(compiler, id),
-        // Same reasoning as `node_contains_escaping_block`'s `Lambda` arm --
-        // a lambda's own body is a fully self-contained closure boundary,
-        // so a `begin`/`rescue` lexically inside one never requires the
-        // ENCLOSING method to install its own `Signal::Return` catch.
-        HirNode::Lambda { .. } => return false,
-        // A `class`/`def` body is a fresh Ruby scope with its own catch.
-        HirNode::ClassDef { .. } | HirNode::DefMethod { .. } => return false,
-        _ => {}
+    let node = &compiler.hir[id];
+    // The whole subtree is searched for the `return` this `begin` would
+    // catch, so there is nothing further to descend for here.
+    if matches!(node, HirNode::Begin { .. }) {
+        return contains_return(compiler, id);
+    }
+    match node.scope_kind() {
+        // An FFI wrapper body contains no `begin`. A lambda's own body is a
+        // fully self-contained closure boundary, so a `begin`/`rescue`
+        // lexically inside one never requires the ENCLOSING method to install
+        // its own `Signal::Return` catch -- and a `class`/`def` body is a
+        // fresh Ruby scope with its own.
+        ScopeKind::Ffi | ScopeKind::Lambda | ScopeKind::Definition => return false,
+        ScopeKind::Block | ScopeKind::None => {}
     }
     let mut found = false;
-    compiler.hir[id].for_each_child(&mut |c| {
+    node.for_each_child(&mut |c| {
         found = found || node_contains_begin(compiler, c);
     });
     found

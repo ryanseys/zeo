@@ -4,6 +4,11 @@
 //! accessor-method synthesis, and the C type-name mapping shared by both.
 //! Split out of `parse/mod.rs`.
 
+#![allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "not yet swept for wildcard arms -- see the lint's note in lib.rs"
+)]
+
 use super::PResult;
 use super::literals::assemble_i64;
 use crate::hir::{Hir, HirNode, NodeId, Params, Visibility};

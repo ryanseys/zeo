@@ -19,6 +19,11 @@
 //! the Ruby body can ever reference it, so the caller simply evaluates (for
 //! side effects) and discards those values instead of collecting them.
 
+#![allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "not yet swept for wildcard arms -- see the lint's note in lib.rs"
+)]
+
 use quote::{format_ident, quote};
 
 use super::Ctx;

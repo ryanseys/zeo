@@ -8,6 +8,11 @@
 //! walks the whole program and mutates a `Compiler`) is exactly what a real
 //! fixpoint would wrap in `for iter in 0..128 { ... }` later.
 
+#![allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "not yet swept for wildcard arms -- see the lint's note in lib.rs"
+)]
+
 pub(crate) mod def_hooks;
 mod locals;
 pub(crate) mod mro;
@@ -17,7 +22,7 @@ pub(crate) mod share;
 use crate::analyze_error::AnalyzeError;
 use crate::compiler::{AccessorKind, AccessorShape, ClassId, Compiler, OBJECT_CLASS, Scope};
 use crate::compiler::{FMap, FSet};
-use crate::hir::{ArrayElem, Hir, HirNode, NodeId, Params, StrPart, Visibility};
+use crate::hir::{ArrayElem, Hir, HirNode, NodeId, Params, ScopeKind, StrPart, Visibility};
 use crate::types::TyKind;
 
 pub struct Analyzed {
@@ -5257,11 +5262,14 @@ fn scan_body(hir: &Hir, id: NodeId, hit: &impl Fn(&HirNode) -> bool) -> bool {
     if hit(node) {
         return true;
     }
-    if matches!(
-        node,
-        HirNode::Ffi(_) | HirNode::ClassDef { .. } | HirNode::DefMethod { .. }
-    ) {
-        return false;
+    match node.scope_kind() {
+        // `Ffi` is a synthesized wrapper body; a `Definition` is a fresh Ruby
+        // scope, so a `yield` or `super` inside one belongs to it.
+        ScopeKind::Ffi | ScopeKind::Definition => return false,
+        // A block and a lambda have neither an implicit block nor a `super`
+        // target of their own, so both refer to the enclosing method -- which
+        // is what both callers' docs already claimed.
+        ScopeKind::Block | ScopeKind::Lambda | ScopeKind::None => {}
     }
     let mut found = false;
     node.for_each_child(&mut |n| found |= scan_body(hir, n, hit));
