@@ -4413,20 +4413,27 @@ fn walk_class_body(
                     // de-opt makes static call sites see what it writes.
                     defer_singleton_prepend(compiler, stmt, &child_cref, box_id);
                 }
+                // One walk of the statement's nesting answers everything below.
+                let nested = nested_stmts(&compiler.hir, stmt);
+                // The statement ITSELF also counts for the questions that are
+                // about a node rather than about what it contains -- a folded
+                // guard can leave a bare mixin self-send standing AT `stmt`.
+                let subtree: Vec<(NodeId, Reach)> = std::iter::once((stmt, Reach::DIRECT))
+                    .chain(nested.iter().copied())
+                    .collect();
                 // A `def` nested in an `if`/`case` branch also runs at document
                 // position (the taken branch's runtime `define_method` gives the
                 // real body), but must ALSO be registered as an own method so
                 // `instance_methods`/`extend` -- both resolved at COMPILE time --
                 // can see it. This is what lets fileutils' platform-conditional
                 // `StreamUtils_#fu_windows?` reach `FileUtils` via `extend`.
-                register_conditional_defs(compiler, class_id, &[stmt])?;
+                register_conditional_defs(compiler, class_id, &subtree)?;
                 // ...and a `class`/`module` nested in one of those branches --
                 // an undecided `if`, a `begin` whose body may raise
                 // (rubyntlm's `begin; OpenSSL::Cipher.new("rc4"); rescue;
                 // class Rc4`), a block. Registration is a compile-time fact
                 // about shape; the marker stays put and the body still runs at
                 // its document position, exactly as at the top level.
-                let nested = nested_stmts(&compiler.hir, stmt);
                 register_nested_class_defs_in(
                     compiler,
                     &nested,
@@ -4451,7 +4458,7 @@ fn walk_class_body(
                 // splice runs when the branch does; the call-site widening has
                 // to happen NOW, or a statically-resolved call reaches the
                 // class's own body underneath a prepend override.
-                defer_runtime_mixin_sends(compiler, stmt, &child_cref, box_id);
+                defer_runtime_mixin_sends(compiler, &subtree, &child_cref, box_id);
                 let undefs = collect_runtime_undefs(compiler, stmt);
                 compiler.classes[class_id.0 as usize]
                     .runtime_undefs
@@ -4509,13 +4516,21 @@ fn defer_guarded_mixin(
     Ok(true)
 }
 
-/// De-optimizes every mixin SELF-SEND reachable through a class-body `if`
-/// statement's branches -- the `include M`/`extend M`/`prepend M`/
-/// `singleton_class.prepend(M)` calls `transform_conditional_class_body`
-/// rewrote the branch's directives to. Both branches are walked: either may
-/// run. A module the send names but zeo cannot resolve widens to every name,
-/// exactly as `defer_singleton_prepend` widens.
-fn defer_runtime_mixin_sends(compiler: &mut Compiler, stmt: NodeId, cref: &[ClassId], box_id: u32) {
+/// De-optimizes every mixin SELF-SEND anywhere in a class-body statement --
+/// the `include M`/`extend M`/`prepend M`/`singleton_class.prepend(M)` calls
+/// `transform_conditional_class_body` rewrote a branch's directives to. Every
+/// reach counts, conditional or not: an `include` in a `case` arm, a `rescue`
+/// clause or an `each` block edits the ancestry just as one in an `if` branch
+/// does, and only walking `if` left the others' call sites folded against a
+/// chain the module had since overridden. A module the send names but zeo
+/// cannot resolve widens to every name, exactly as `defer_singleton_prepend`
+/// widens.
+fn defer_runtime_mixin_sends(
+    compiler: &mut Compiler,
+    subtree: &[(NodeId, Reach)],
+    cref: &[ClassId],
+    box_id: u32,
+) {
     /// Whether the receiver is a mixin-capable `self` -- absent (the class
     /// body's own `self`) or the receiverless `singleton_class` read the
     /// singleton spelling dispatches through.
@@ -4533,37 +4548,31 @@ fn defer_runtime_mixin_sends(compiler: &mut Compiler, stmt: NodeId, cref: &[Clas
             ),
         }
     }
-    match &compiler.hir[stmt] {
-        HirNode::If {
-            then_body,
-            else_body,
-            ..
-        } => {
-            let stmts: Vec<NodeId> = then_body.iter().chain(else_body).copied().collect();
-            for s in stmts {
-                defer_runtime_mixin_sends(compiler, s, cref, box_id);
-            }
-        }
-        HirNode::Call {
+    for &(s, _) in subtree {
+        let HirNode::Call {
             receiver,
             name,
             args,
             ..
-        } if matches!(name.as_str(), "include" | "extend" | "prepend")
-            && self_like(compiler, *receiver) =>
+        } = &compiler.hir[s]
+        else {
+            continue;
+        };
+        if !matches!(name.as_str(), "include" | "extend" | "prepend")
+            || !self_like(compiler, *receiver)
         {
-            for arg in args.clone() {
-                let resolved = match arg {
-                    crate::hir::ArrayElem::Single(n) => const_node_class(compiler, n, cref, box_id),
-                    crate::hir::ArrayElem::Splat(_) => None,
-                };
-                match resolved {
-                    Some(m) => defer_mixin_to_runtime(compiler, m),
-                    None => compiler.runtime_patches_any_name = true,
-                }
+            continue;
+        }
+        for arg in args.clone() {
+            let resolved = match arg {
+                crate::hir::ArrayElem::Single(n) => const_node_class(compiler, n, cref, box_id),
+                crate::hir::ArrayElem::Splat(_) => None,
+            };
+            match resolved {
+                Some(m) => defer_mixin_to_runtime(compiler, m),
+                None => compiler.runtime_patches_any_name = true,
             }
         }
-        _ => {}
     }
 }
 
@@ -4780,49 +4789,27 @@ fn register_body_def_method(
     Ok(())
 }
 
-/// Registers every `def` reachable through `if`/`case` (`when`) branches in
-/// `stmts` as an own method. A conditional `def` still runs at document
+/// Registers every `def` in `subtree` that a straight-line or branching reach
+/// gets to as an own method. A conditional `def` still runs at document
 /// position via its runtime `define_method` emission (which supplies the taken
 /// branch's body); this makes its NAME visible to `instance_methods`/`extend`,
 /// which are resolved at compile time and would otherwise miss it. When more
 /// than one branch defines the same name, last-wins picks the branch the
-/// static target takes (fileutils' RbConfig is a compile-time shim). Loops and
-/// blocks are deliberately NOT descended -- a `def` whose branch may never run
-/// stays runtime-only, matching CRuby.
+/// static target takes (fileutils' RbConfig is a compile-time shim).
+///
+/// A `Reach::through_block` def is deliberately SKIPPED -- one written in a
+/// loop or a block may never run at all, and CRuby has no method there either
+/// until it does, so it stays runtime-only.
 fn register_conditional_defs(
     compiler: &mut Compiler,
     class_id: ClassId,
-    stmts: &[NodeId],
+    subtree: &[(NodeId, Reach)],
 ) -> Result<(), String> {
-    for &s in stmts {
-        // Clone child bodies before recursing: `register_body_def_method`
-        // borrows `compiler` mutably.
-        match &compiler.hir[s] {
-            HirNode::DefMethod { .. } => {
-                register_body_def_method(compiler, class_id, s, Conditional::Yes)?
-            }
-            HirNode::If {
-                then_body,
-                else_body,
-                ..
-            } => {
-                let (then_body, else_body) = (then_body.clone(), else_body.clone());
-                register_conditional_defs(compiler, class_id, &then_body)?;
-                register_conditional_defs(compiler, class_id, &else_body)?;
-            }
-            HirNode::CaseWhen {
-                arms, else_body, ..
-            } => {
-                let arm_bodies: Vec<Vec<NodeId>> =
-                    arms.iter().map(|(_, body)| body.clone()).collect();
-                let else_body = else_body.clone();
-                for body in &arm_bodies {
-                    register_conditional_defs(compiler, class_id, body)?;
-                }
-                register_conditional_defs(compiler, class_id, &else_body)?;
-            }
-            _ => {}
+    for &(s, reach) in subtree {
+        if reach.through_block || !matches!(compiler.hir[s], HirNode::DefMethod { .. }) {
+            continue;
         }
+        register_body_def_method(compiler, class_id, s, Conditional::Yes)?;
     }
     Ok(())
 }
