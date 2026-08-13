@@ -177,13 +177,14 @@ pub(crate) fn reject_top_level_defs(hir: &Hir, body: &[NodeId]) -> PResult<()> {
 
 /// Whether an eval'd literal's own top level holds a `class`/`module`.
 ///
-/// The same hole as [`reject_top_level_defs`], for the other keyword: the
-/// registration walk never unwraps an `Eval(body)`, so a `class` written
-/// there reaches codegen with no site and dies as "a position the analyze
-/// walk doesn't register". A `Ruby::Box#eval` splices into a `BoxScope`,
-/// which the walk DOES descend into, so only the plain-`eval` inline path
-/// asks this -- and its answer sends the snippet to the runtime eval VM,
-/// which defines the module for real.
+/// The same hole as [`reject_top_level_defs`], for the other keyword -- but
+/// only inside a METHOD body. The top-level registration walk descends an
+/// `Eval` splice, so a `class` written in a top-level eval registers; one
+/// written in an eval inside a `def` reached codegen with no site and died
+/// as "a position the analyze walk doesn't register". A `Ruby::Box#eval`
+/// splices into a `BoxScope`, which the walk also descends, so only the
+/// plain-`eval` inline path asks this -- and its answer sends the snippet to
+/// the runtime eval VM.
 pub(crate) fn defines_a_class(hir: &Hir, body: &[NodeId]) -> bool {
     body.iter()
         .any(|&id| matches!(hir[id], HirNode::ClassDef { .. }))
