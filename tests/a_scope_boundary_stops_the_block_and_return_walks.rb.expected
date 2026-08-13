@@ -1,0 +1,7 @@
+:installed
+"inner got from_installed"
+:defined
+[:from_lambda, :method_continued]
+:returned_at_1
+:through_begin
+"sup!"
