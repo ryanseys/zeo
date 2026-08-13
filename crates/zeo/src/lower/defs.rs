@@ -1014,7 +1014,7 @@ fn map_class_self_items(hir: &mut Hir, ids: &[NodeId], out: &mut Vec<NodeId>) ->
                     name: SINGLETON_SURROGATE.to_string(),
                     superclass: None,
                     body: vec![id],
-                    is_module: true,
+                    is_module: false,
                 });
                 hir.pop_span();
                 out.push(def);
@@ -3631,7 +3631,7 @@ fn lower_class_body_statement(
                     name: SINGLETON_SURROGATE.to_string(),
                     superclass: None,
                     body: vec![n],
-                    is_module: true,
+                    is_module: false,
                 });
                 hir.pop_span();
                 body_items.push(inner);
@@ -3646,7 +3646,7 @@ fn lower_class_body_statement(
                 name: SINGLETON_SURROGATE.to_string(),
                 superclass: None,
                 body: body_items,
-                is_module: true,
+                is_module: false,
             });
             hir.pop_span();
             out.push(def);
@@ -3691,7 +3691,7 @@ fn lower_class_body_statement(
                 name: SINGLETON_SURROGATE.to_string(),
                 superclass: None,
                 body: vec![n],
-                is_module: true,
+                is_module: false,
             });
             hir.pop_span();
             ordered.push(def);
@@ -3708,7 +3708,7 @@ fn lower_class_body_statement(
                 name: SINGLETON_SURROGATE.to_string(),
                 superclass: None,
                 body: Vec::new(),
-                is_module: true,
+                is_module: false,
             });
             hir.pop_span();
             ordered.insert(0, def);

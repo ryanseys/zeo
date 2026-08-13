@@ -1,4 +1,13 @@
 Class
 true
 false
+true
+:a
+true
+false
 "private method 'hidden' called for class #<Class:Priv>"
+Class
+:b
+Module
+false
+Class
