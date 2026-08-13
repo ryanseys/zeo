@@ -77,8 +77,14 @@ fn expand_into(compiler: &Compiler, class_id: ClassId, out: &mut Vec<ClassId>) {
 /// this pass runs after it and iterates CLASSES -- so a refusal here (an alias
 /// with no source, a method that cannot be materialized) would otherwise name
 /// only the construct. `Compiler::class_def_span` is the nearest true answer.
-fn at_class<T>(r: Result<T, String>, at: Option<Span>) -> Result<T, AnalyzeError> {
-    r.map_err(|e| AnalyzeError::from(e).with_span_if_missing(at))
+///
+/// The span arrives as a CLOSURE because computing it is not free:
+/// `class_def_span` is a linear scan over every class-body site in the program,
+/// and this is called four times per class. Taking it eagerly made a successful
+/// compile pay O(classes x definition sites) to build a diagnostic it then threw
+/// away -- at Rails scale, both terms in the ten-thousands.
+fn at_class<T>(r: Result<T, String>, at: impl FnOnce() -> Option<Span>) -> Result<T, AnalyzeError> {
+    r.map_err(|e| AnalyzeError::from(e).with_span_if_missing(at()))
 }
 
 /// Computes `ancestors` for every registered class/module, then
@@ -147,9 +153,12 @@ pub fn materialize(
     // subclasses), so an alias OF an alias resolves against the already-added
     // one. See `HirNode::AliasMethod`.
     for &cid in &all_ids {
-        let at = compiler.class_def_span(cid);
-        at_class(resolve_aliases(compiler, cid), at)?;
-        at_class(resolve_module_functions(compiler, cid), at)?;
+        at_class(resolve_aliases(compiler, cid), || {
+            compiler.class_def_span(cid)
+        })?;
+        at_class(resolve_module_functions(compiler, cid), || {
+            compiler.class_def_span(cid)
+        })?;
     }
     tracing::info!(
         defs = compiler.scopes.len(),
@@ -192,7 +201,6 @@ pub fn materialize(
             .collect()
     };
     for (done, &cid) in all_ids.iter().enumerate() {
-        let at = compiler.class_def_span(cid);
         let class_started = std::time::Instant::now();
         if !compiler.class(cid).is_module {
             at_class(
@@ -203,11 +211,13 @@ pub fn materialize(
                     &scope_name_ids,
                     &vis_override_ids,
                 ),
-                at,
+                || compiler.class_def_span(cid),
             )?;
         }
         let instance_ms = class_started.elapsed().as_millis();
-        at_class(materialize_class_methods(compiler, cid), at)?;
+        at_class(materialize_class_methods(compiler, cid), || {
+            compiler.class_def_span(cid)
+        })?;
         apply_visibility_overrides(compiler, cid);
         // One class that costs more than the whole pass should, named. A
         // per-class cost is a product -- ancestors x their own methods -- and
