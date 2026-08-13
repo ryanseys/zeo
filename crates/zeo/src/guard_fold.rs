@@ -223,31 +223,16 @@ fn const_init(
     // outside any class is a statement of a `Program` rather than of a class
     // body, so it is not in the tables walked above. Only a name written ONCE
     // answers: two writes (log4r's `HAVE_REXML = true` / `= false`, one per
-    // branch of a rescue) have no single initializer to read.
+    // branch of a rescue) have no single initializer to read -- which is
+    // exactly what `unique_top_const_inits` records, collected in the single
+    // arena sweep `analyze` already makes.
     if scope.is_some() {
         return None;
     }
-    let mut found = None;
-    for node in compiler.hir.iter() {
-        let HirNode::Program(stmts) = node else {
-            continue;
-        };
-        for &s in stmts {
-            if let HirNode::ConstWrite {
-                name: n,
-                value,
-                scope: None,
-            } = &compiler.hir[s]
-                && n == name
-            {
-                if found.is_some() {
-                    return None;
-                }
-                found = Some((crate::compiler::OBJECT_CLASS, *value));
-            }
-        }
-    }
-    found
+    compiler
+        .unique_top_const_inits
+        .get(name)
+        .map(|&value| (crate::compiler::OBJECT_CLASS, value))
 }
 
 /// The literal string of `scope::name` when it's a `NAME = "..."` written in

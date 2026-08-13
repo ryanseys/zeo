@@ -677,6 +677,18 @@ pub struct Compiler {
     /// real module. Read through `analyze`'s `resolve_const_alias`, which
     /// searches innermost scope outward.
     pub const_aliases: FMap<(u32, String), crate::hir::NodeId>,
+    /// `NAME = <value>` written as a DIRECT statement of a `Program`, mapped to
+    /// its value node -- and only when the program writes that name exactly
+    /// once. Two writes (log4r's `HAVE_REXML = true` / `= false`, one per branch
+    /// of a rescue) have no single initializer to read, so the name is absent.
+    ///
+    /// Deliberately NOT `top_level_const_aliases`, which answers a similar
+    /// question with two differences that matter here: it descends through the
+    /// statement wrappers a top-level write can hide behind (`if`, `begin`, a
+    /// box scope), and it takes the first write rather than requiring a unique
+    /// one. Folding a constant assigned inside a top-level `if` would read an
+    /// initializer that may never run.
+    pub unique_top_const_inits: FMap<String, crate::hir::NodeId>,
     /// Every method name a RUNTIME site could change out from under a folded
     /// call. Two kinds, because both land in the overlay that only DYNAMIC
     /// dispatch consults:
@@ -1017,6 +1029,7 @@ impl Compiler {
             assigned_const_names: FSet::default(),
             top_level_const_aliases: FMap::default(),
             const_aliases: FMap::default(),
+            unique_top_const_inits: FMap::default(),
             runtime_patches: FSet::default(),
             runtime_mixin_super_names: FSet::default(),
             unit_walk: false,

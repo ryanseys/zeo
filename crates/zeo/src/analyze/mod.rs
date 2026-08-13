@@ -107,12 +107,17 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
         collect_const_aliases(&compiler.hir, &unit.body, &[], 0, &mut scoped_aliases);
     }
     compiler.const_aliases = scoped_aliases;
-    // ONE flat sweep of the node arena serves both whole-arena questions --
-    // assigned const names and runtime patch verbs -- instead of two.
-    (
-        compiler.assigned_const_names,
-        (compiler.runtime_patches, compiler.runtime_patches_any_name),
-    ) = collect_arena_facts(&compiler.hir);
+    // ONE flat sweep of the node arena serves every whole-arena question --
+    // assigned const names, runtime patch verbs, top-level const initializers.
+    let facts = collect_arena_facts(&compiler.hir);
+    compiler.assigned_const_names = facts.assigned_consts;
+    compiler.runtime_patches = facts.patched_names;
+    compiler.runtime_patches_any_name = facts.patches_any_name;
+    compiler.unique_top_const_inits = facts
+        .top_const_inits
+        .into_iter()
+        .filter_map(|(name, value)| Some((name, value?)))
+        .collect();
 
     // Register native-extension constants (`Socket::AF_INET6`, ...) into their
     // builtin class's compile-time const table so `const_defined?`/`defined?`/
@@ -2940,20 +2945,60 @@ fn collect_runtime_undefs(compiler: &Compiler, stmt: NodeId) -> Vec<String> {
     out
 }
 
-/// ONE flat sweep of the whole node arena answering both whole-arena
-/// questions: [`Compiler::assigned_const_names`] and
-/// ([`Compiler::runtime_patches`], [`Compiler::runtime_patches_any_name`]).
+/// What [`collect_arena_facts`] answers in its one sweep. A struct rather than
+/// nested tuples because the sweep is the natural home for any whole-arena
+/// question, and each new one otherwise deepens the tuple at every call site.
+#[derive(Default)]
+struct ArenaFacts {
+    /// [`Compiler::assigned_const_names`].
+    assigned_consts: FSet<String>,
+    /// [`Compiler::runtime_patches`].
+    patched_names: FSet<String>,
+    /// [`Compiler::runtime_patches_any_name`].
+    patches_any_name: bool,
+    /// [`Compiler::unique_top_const_inits`]. `None` records a name seen more
+    /// than once, which is how uniqueness is decided in a single pass.
+    top_const_inits: FMap<String, Option<NodeId>>,
+}
+
+/// ONE flat sweep of the whole node arena answering every whole-arena
+/// question -- see [`ArenaFacts`].
+///
 /// A flat sweep rather than a tree walk: every reachable node is in the
 /// arena by construction, and a site on a dead branch still counts -- for
 /// const names because over-collection is the safe direction (see the
 /// field's docs), for patches because the answer is "could this name change
 /// under us?".
-fn collect_arena_facts(hir: &Hir) -> (FSet<String>, (FSet<String>, bool)) {
-    let mut consts = FSet::default();
-    let mut names = FSet::default();
-    let mut any = false;
+fn collect_arena_facts(hir: &Hir) -> ArenaFacts {
+    let mut facts = ArenaFacts::default();
+    let ArenaFacts {
+        assigned_consts: consts,
+        patched_names: names,
+        patches_any_name: any,
+        top_const_inits,
+    } = &mut facts;
     for node in hir.all_nodes() {
         match node {
+            // A `CONST = ...` written outside any class body is a statement of
+            // a `Program` rather than of a class body, so it is in none of the
+            // per-class tables -- and the top level is where every bare
+            // constant lookup ends. Only DIRECT statements count: a write
+            // nested in a top-level `if` may never run.
+            HirNode::Program(stmts) => {
+                for &s in stmts {
+                    if let HirNode::ConstWrite {
+                        name,
+                        value,
+                        scope: None,
+                    } = &hir[s]
+                    {
+                        top_const_inits
+                            .entry(name.clone())
+                            .and_modify(|e| *e = None)
+                            .or_insert(Some(*value));
+                    }
+                }
+            }
             // `name` is already the leaf -- an explicit `Foo::NAME = ...`
             // keeps its namespace in the separate `scope` field.
             HirNode::ConstWrite { scope, name, .. } => {
@@ -2978,12 +3023,12 @@ fn collect_arena_facts(hir: &Hir) -> (FSet<String>, (FSet<String>, bool)) {
                 }
             }
             HirNode::Call { name, args, .. } => {
-                collect_patch_call(hir, name, args, &mut names, &mut any);
+                collect_patch_call(hir, name, args, names, any);
             }
             _ => {}
         }
     }
-    (consts, (names, any))
+    facts
 }
 
 /// Walk populating [`Compiler::top_level_const_aliases`]: `NAME = <value>`
