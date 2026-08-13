@@ -2198,7 +2198,7 @@ pub(crate) fn lower_runtime_class(
         // constant no compile-time class backs.
         None => hir.push(HirNode::ClassRef("Object".to_string())),
     };
-    let block = lower_runtime_class_body(result, hir, name, body)?;
+    let block = lower_runtime_class_body(result, hir, name, Some(name), body)?;
     let class_class = hir.push(HirNode::ClassRef("Class".to_string()));
     let new_call = hir.push(HirNode::Call {
         receiver: Some(class_class),
@@ -2229,7 +2229,7 @@ fn lower_runtime_module(
     name: &str,
     body: Option<Node<'_>>,
 ) -> PResult<NodeId> {
-    let block = lower_runtime_class_body(result, hir, name, body)?;
+    let block = lower_runtime_class_body(result, hir, name, Some(name), body)?;
     let module_class = hir.push(HirNode::ClassRef("Module".to_string()));
     let new_call = hir.push(HirNode::Call {
         receiver: Some(module_class),
@@ -2275,7 +2275,7 @@ pub(crate) fn lower_runtime_class_reopen(
     name: &str,
     body: Option<Node<'_>>,
 ) -> PResult<NodeId> {
-    let block = lower_runtime_class_body(result, hir, name, body)?;
+    let block = lower_runtime_class_body(result, hir, name, Some(name), body)?;
     let target = hir.push(HirNode::ClassRef(name.to_string()));
     Ok(hir.push(HirNode::Call {
         receiver: Some(target),
@@ -2288,32 +2288,52 @@ pub(crate) fn lower_runtime_class_reopen(
     }))
 }
 
-/// The leaf of a `class self::Task` / `module self::Base` definition, whose
-/// NAMESPACE is the runtime `self` rather than a constant path. Written
-/// inside a hook block (`plugin_included do ... end`, ActiveSupport::
-/// Concern's `included do ... end`), where `self` is whichever class is
-/// being extended -- dk-dumpdb gives every including script its own
-/// `Task` subclass this way. `None` for every ordinary definition name.
-fn self_scoped_definition_name(path: &Node<'_>) -> Option<String> {
+/// The `(namespace expression, leaf)` of a definition whose NAMESPACE is a
+/// runtime VALUE rather than a constant path -- `None` for every ordinary
+/// name, which is what keeps `Foo::Bar` on the static path.
+///
+/// Four shapes in the corpus, all the same thing said differently:
+///
+/// - `class self::Task`, written inside a hook block (`included do ... end`),
+///   where `self` is whichever class is being extended -- dk-dumpdb gives
+///   every including script its own `Task` subclass this way;
+/// - `module Wires.current_network::Namespace` and
+///   `class parent::Pagination` (a local), where the namespace is computed;
+/// - `module Num[16]::Trigonometry`, an index;
+/// - JRuby's lowercase java packages, `class org::jrubyparser::ast::CallNode`
+///   -- `org::jrubyparser` parses as a CALL, not a constant path, so this is
+///   the same shape. CRuby compiles that file and raises `NameError` on `org`
+///   when the definition runs, which is exactly what lowering the namespace as
+///   an expression produces.
+fn runtime_scoped_definition_name<'a>(path: &Node<'a>) -> Option<(Node<'a>, String)> {
     let cp = path.as_constant_path_node()?;
-    cp.parent()?.as_self_node()?;
-    Some(String::from_utf8_lossy(cp.name()?.as_slice()).into_owned())
+    let parent = cp.parent()?;
+    // `Foo::Bar` / `A::B::C` name a compile-time namespace; only a namespace
+    // no constant path can spell belongs here.
+    if parent.as_constant_read_node().is_some() || parent.as_constant_path_node().is_some() {
+        return None;
+    }
+    Some((
+        parent,
+        String::from_utf8_lossy(cp.name()?.as_slice()).into_owned(),
+    ))
 }
 
-/// `class self::Task < Super ... end` -> `self::Task = Class.new(Super) {
+/// `class <expr>::Task < Super ... end` -> `<expr>::Task = Class.new(Super) {
 /// body }`, and the `module` half -> `Module.new { body }`. The runtime
-/// namespace is what makes the static path impossible: the constant lands
-/// on whatever `self` is when the enclosing block RUNS, so there is no
+/// namespace is what makes the static path impossible: the constant lands on
+/// whatever the expression answers when the definition RUNS, so there is no
 /// compile-time class to register. Same desugar the runtime-superclass form
 /// takes (`lower_runtime_class`), and the same body treatment with it.
-fn lower_self_scoped_definition(
+fn lower_scoped_definition(
     result: &ParseResult,
     hir: &mut Hir,
+    scope: NodeId,
     leaf: String,
     body: Option<Node<'_>>,
     superclass: Option<NodeId>,
 ) -> PResult<NodeId> {
-    let block = lower_runtime_class_body(result, hir, &leaf, body)?;
+    let block = lower_runtime_class_body(result, hir, &leaf, None, body)?;
     let (builder, args) = match superclass {
         Some(parent) => ("Class", vec![ArrayElem::Single(parent)]),
         None => ("Module", Vec::new()),
@@ -2328,7 +2348,6 @@ fn lower_self_scoped_definition(
         block_arg: None,
         safe: false,
     });
-    let scope = hir.push(HirNode::SelfRef);
     Ok(hir.push(HirNode::DynConstWrite {
         scope,
         name: leaf,
@@ -2343,6 +2362,7 @@ fn lower_runtime_class_body(
     result: &ParseResult,
     hir: &mut Hir,
     name: &str,
+    cref: Option<&str>,
     body: Option<Node<'_>>,
 ) -> PResult<NodeId> {
     // A runtime class body EMITS as an ordinary block, but it IS a class body
@@ -2367,7 +2387,7 @@ fn lower_runtime_class_body(
     // spelling -- a self-send the runtime class receiver serves -- so the class
     // builds at runtime. See `transform_runtime_class_body`.
     let body = transform_runtime_class_body(hir, body)?;
-    rescope_body_constants(hir, name, &body);
+    rescope_body_constants(hir, cref, &body)?;
     Ok(hir.push(HirNode::Block {
         params: Params::default(),
         body,
@@ -2396,12 +2416,19 @@ fn lower_runtime_class_body(
 ///   constant that holds it. That constant IS bound by the time any such
 ///   method can run.
 ///
-/// Only the `class` KEYWORD spellings reach here (`class Name < <expr>` and a
-/// reopen), and both open a real cref, which is what makes this ruby's answer
-/// rather than a guess. `Class.new do NAME = v end` is a plain block: its cref
-/// is the enclosing one, so ruby writes `Object::NAME` there and no rewrite is
-/// owed.
-fn rescope_body_constants(hir: &mut Hir, cref: &str, body: &[NodeId]) {
+/// Only the `class` KEYWORD spellings reach here (`class Name < <expr>`, a
+/// reopen, and `class <expr>::Name`), and all open a real cref, which is what
+/// makes this ruby's answer rather than a guess. `Class.new do NAME = v end`
+/// is a plain block: its cref is the enclosing one, so ruby writes
+/// `Object::NAME` there and no rewrite is owed.
+///
+/// `cref: None` is the one shape with no answer for the DEF position: a
+/// runtime-SCOPED definition (`module <expr>::Ns`) is reachable only through
+/// the namespace expression, which cannot be re-evaluated at each read. A
+/// body-defined constant read from inside a `def` is refused there rather than
+/// resolved against the wrong scope -- the body position still works, since
+/// `self` is the class being built.
+fn rescope_body_constants(hir: &mut Hir, cref: Option<&str>, body: &[NodeId]) -> PResult<()> {
     // What the body defines, as `transform_runtime_class_body` left it: a
     // `NAME = value` and a nested `class Inner` both become a `DynConstWrite`
     // against the body's `self`. A hand-written `self::NAME = v` is the same
@@ -2437,7 +2464,7 @@ fn rescope_body_constants(hir: &mut Hir, cref: &str, body: &[NodeId]) {
         .filter_map(|&(id, _)| owns(hir, id))
         .collect();
     if defined.is_empty() {
-        return;
+        return Ok(());
     }
     for (id, in_def) in reachable {
         // A bare constant is a `ClassRef`, but `Inner.new(...)` keeps its own
@@ -2452,6 +2479,15 @@ fn rescope_body_constants(hir: &mut Hir, cref: &str, body: &[NodeId]) {
             continue;
         }
         let scope = if in_def {
+            let Some(cref) = cref else {
+                return Err(format!(
+                    "`{name}` is defined in a class/module body whose NAMESPACE is a runtime \
+                     value, and read from a `def` inside it -- no constant path names the \
+                     class, so the read has no scope to resolve against (zeo limitation). \
+                     Move the constant outside the definition, or name the namespace."
+                )
+                .into());
+            };
             hir.push(HirNode::ClassRef(cref.to_string()))
         } else {
             hir.push(HirNode::SelfRef)
@@ -2484,6 +2520,7 @@ fn rescope_body_constants(hir: &mut Hir, cref: &str, body: &[NodeId]) {
             _ => read,
         };
     }
+    Ok(())
 }
 
 /// Rewrites the static-only nodes a lowered class body can hold into the
@@ -4241,13 +4278,15 @@ pub(crate) fn try_lower_definition(
     node: &Node<'_>,
 ) -> PResult<Option<NodeId>> {
     if let Some(class) = node.as_class_node() {
-        // `class self::Task` -- see `self_scoped_definition_name`.
-        if let Some(leaf) = self_scoped_definition_name(&class.constant_path()) {
+        // `class self::Task` / `class parent::Pagination` -- see
+        // `runtime_scoped_definition_name`.
+        if let Some((scope_node, leaf)) = runtime_scoped_definition_name(&class.constant_path()) {
             let parent = match class.superclass() {
                 Some(sc) => lower_node(result, hir, &sc)?,
                 None => hir.push(HirNode::ClassRef("Object".to_string())),
             };
-            return lower_self_scoped_definition(result, hir, leaf, class.body(), Some(parent))
+            let scope = lower_node(result, hir, &scope_node)?;
+            return lower_scoped_definition(result, hir, scope, leaf, class.body(), Some(parent))
                 .map(Some);
         }
         let name = constant_path_name(&class.constant_path())?;
@@ -4331,8 +4370,10 @@ pub(crate) fn try_lower_definition(
     // already rejects anything but a plain `ConstantReadNode`.
     if let Some(module) = node.as_module_node() {
         // `module self::Base` -- the module half of the same shape.
-        if let Some(leaf) = self_scoped_definition_name(&module.constant_path()) {
-            return lower_self_scoped_definition(result, hir, leaf, module.body(), None).map(Some);
+        if let Some((scope_node, leaf)) = runtime_scoped_definition_name(&module.constant_path()) {
+            let scope = lower_node(result, hir, &scope_node)?;
+            return lower_scoped_definition(result, hir, scope, leaf, module.body(), None)
+                .map(Some);
         }
         let name = constant_path_name(&module.constant_path())?;
         // The module half of the runtime-scope route above.

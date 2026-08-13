@@ -1,0 +1,12 @@
+"from a local"
+"Host::Pag"
+"from a method"
+"Host::Ns"
+"from an index"
+String
+"from self"
+"nested inner"
+"nested direct"
+["Deep", "Hooked", "Nested", "Ns", "Pag"]
+undefined local variable or method 'org' for main
+true
