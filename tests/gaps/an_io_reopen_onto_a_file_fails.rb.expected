@@ -1,0 +1,5 @@
+[:missing_w, [true, "created"]]
+[:existing_w, "fresh"]
+[:existing_bare, "bare"]
+[:io_to_io, "dup2"]
+:devnull_ok

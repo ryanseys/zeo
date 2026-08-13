@@ -8,6 +8,27 @@
 # table only tracks in-progress ancestors, so cycles reconstruct but
 # completed siblings husk); zeo's seen-table preserves the duplicate as one
 # moved object. Both zeo behaviors are strictly safer; both are divergences.
+#
+# What reproducing each would COST, since the header calls them deliberate and
+# the next reader will want the price before re-deciding: the first means
+# mutating the graph before validating it, so a refusal destroys data; the
+# second means dropping the seen-table entry once a subtree completes, so a
+# shared object arrives twice with one husk. Both are cheap to implement and
+# both lose a safety property.
+#
+# NOTE the placement rule in this directory's README -- a divergence zeo has
+# DECIDED not to reproduce belongs in a passing test that documents it, not
+# here. These two have never been through that decision explicitly; they are
+# filed as gaps and behave as deliberate. Worth resolving one way or the other
+# rather than leaving the file arguing with the rule.
+#
+# Either way a program that RELIES on an accident (checking `MovedError` to
+# detect a failed move, say) behaves differently under zeo without announcing
+# it.
+#
+# The last line is the sharpest: `got[0].equal?(got[1])` is `false` in CRuby
+# because the second slot is a husk, and `true` here. Identity through a move
+# is preserved by zeo and not by CRuby.
 $stderr.reopen(IO::NULL)
 
 r = Ractor.new { Ractor.receive rescue :refused }

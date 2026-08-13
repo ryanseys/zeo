@@ -13,6 +13,19 @@
 # frame today. Both below are handled in place: the first reaches for `self`,
 # the second names nothing at all.
 #
+# WHICH ARMS OF `map_class_self_items` LAND HERE (the ones a fix has to cover):
+# `Item::SelfSend` -- a receiverless or explicit-`self` call, rebound onto
+# `self.singleton_class` and spliced in place, which is `self.setting =` below;
+# `Item::Passthrough` -- anything `mentions_self` says never consults `self`,
+# which is `[1].each { ... }` below (the `raise` inside the block is a
+# receiverless send, but the scan looks for `self`/ivars, not implicit-self
+# sends); and `Item::RetargetSelf`. `Item::SingletonBody` is the one that
+# already routes into the surrogate's own body and already gets the frame.
+#
+# Only the LABEL and the frame COUNT are wrong -- the line numbers zeo reports
+# are the same ones CRuby reports, so the fix is a frame to push, not a
+# position to correct.
+#
 # SHAPE OF A FIX: the mapped items of a singleton body need to run under a
 # frame of their own while still being statements of the enclosing class body
 # -- a frame-only HIR node that analyze's class-body walks recurse into, since

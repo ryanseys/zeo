@@ -7,6 +7,28 @@
 # zeo-numbered (prism's parse-internal ids are not exposed through its Rust
 # bindings). Each is a deliberate refusal or renumbering, not a missing
 # surface -- see docs/COMPATIBILITY.md.
+#
+# Read the four rows apart -- they are not one gap:
+#
+#   to_a / to_binary / disasm   PERMANENT. There is no bytecode to serialize.
+#                               A faithful answer would mean emitting YARV
+#                               zeo never runs.
+#   InstructionSequence.of      Answers nil for every callable, where CRuby
+#                               builds a real iseq for a Ruby-defined proc.
+#                               Permanent for the same reason; a caller using
+#                               it to ask "was this defined in Ruby?" gets the
+#                               wrong answer rather than a refusal, which is
+#                               the one row here that is quietly wrong instead
+#                               of loudly absent.
+#   YJIT.enable                 Truthful, not a gap in spirit: there is no JIT
+#                               to switch on, so `false` is the honest answer
+#                               where CRuby's `true` reports a real state
+#                               change. Listed so a caller that branches on it
+#                               is not surprised.
+#   AST node_id                 FIXABLE, unlike the rest. The ids are
+#                               zeo-numbered because prism's parse-internal
+#                               ids are not exposed through its Rust bindings;
+#                               if they ever are, this row can match.
 $stderr.reopen(IO::NULL)
 
 iseq = RubyVM::InstructionSequence.compile("40 + 2")
