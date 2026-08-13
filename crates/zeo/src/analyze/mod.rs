@@ -3362,12 +3362,14 @@ fn resolve_or_create_lexical(
         }
         parent = compiler.class(c).lexical_parent;
     }
-    let mut candidates: Vec<String> = scopes
-        .iter()
-        .map(|&s| format!("{}::{name}", compiler.fq_name(s)))
-        .collect();
-    candidates.push(name.to_string());
-    for cand in candidates {
+    // Spelled one at a time rather than as a list built up front: the first
+    // candidate usually answers, and the rest were `format!`ed only to be
+    // dropped. The bare name is the last candidate, where every lookup ends.
+    for i in 0..=scopes.len() {
+        let cand = match scopes.get(i) {
+            Some(&s) => format!("{}::{name}", compiler.fq_name(s)),
+            None => name.to_string(),
+        };
         if off_limits == Some(cand.as_str()) {
             continue;
         }

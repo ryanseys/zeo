@@ -320,7 +320,7 @@ fn track_node(
             }
         }
         HirNode::BoxScope { box_id: bx, body } => {
-            for &s in body.clone().iter() {
+            for &s in body {
                 track_node(compiler, defining, *bx, locals, s);
             }
         }

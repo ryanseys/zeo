@@ -48,21 +48,34 @@ pub fn resolve(compiler: &mut Compiler) {
         {
             continue;
         }
-        let mut seen: Vec<&str> = Vec::new();
+        // Counted in one pass rather than re-filtering the whole history per
+        // entry: with both the dedup scan and the count scan linear in the
+        // history, finding a class's redefined names cost a pass per
+        // definition it had.
+        let mut counts: crate::compiler::FMap<&str, usize> = Default::default();
         for (name, is_class_method, _, _) in &ci.method_history {
-            if *is_class_method || seen.iter().any(|n| n == name) {
+            if !*is_class_method {
+                *counts.entry(name.as_str()).or_default() += 1;
+            }
+        }
+        // Still walked in history order, so `candidates` keeps the order the
+        // scan produced -- the node ids and patch sets downstream follow it.
+        let mut seen: crate::compiler::FSet<&str> = Default::default();
+        for (name, is_class_method, _, _) in &ci.method_history {
+            if *is_class_method || !seen.insert(name.as_str()) {
                 continue;
             }
-            let n = ci
-                .method_history
-                .iter()
-                .filter(|(m, s, _, _)| !s && m == name)
-                .count();
-            if n >= 2 {
+            if counts[name.as_str()] >= 2 {
                 candidates.push((cid, name.clone()));
             }
-            seen.push(name);
         }
+    }
+
+    // Which class-body sites belong to each class, so the per-candidate search
+    // below reads a short list instead of every site in the program.
+    let mut sites_by_class: crate::compiler::FMap<ClassId, Vec<usize>> = Default::default();
+    for (si, site) in compiler.class_body_sites.iter().enumerate() {
+        sites_by_class.entry(site.class).or_default().push(si);
     }
 
     for (cid, name) in candidates {
@@ -81,10 +94,8 @@ pub fn resolve(compiler: &mut Compiler) {
         // same walk). A mismatch means some body has no top-level site record
         // (a `def` inside an `if` branch) -- leave that name fully static.
         let mut defs: Vec<(usize, usize, u32)> = Vec::new(); // (site, def_idx, seq)
-        for (si, site) in compiler.class_body_sites.iter().enumerate() {
-            if site.class != cid {
-                continue;
-            }
+        for &si in sites_by_class.get(&cid).map_or(&[][..], Vec::as_slice) {
+            let site = &compiler.class_body_sites[si];
             for (di, d) in site.defs.iter().enumerate() {
                 if d.event == DefEvent::Added && !d.singleton && d.name == name {
                     defs.push((si, di, d.seq));
