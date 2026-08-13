@@ -4,9 +4,13 @@ expression: render(err)
 ---
 zeo::analyze
 
-  × subclassing the built-in type `Ractor` isn't supported yet (zeo limitation, no generated Rust struct exists for it)
-   ╭─[-e:1:1]
- 1 │ ╭─▶ class Job < Ractor
- 2 │ ├─▶ end
-   · ╰──── rejected here
-   ╰────
+  × `prepend M` inside `class << self` isn't supported when M defines `prepended`/`prepend_features` (zeo limitation: the hook takes the singleton class, which zeo cannot name)
+    ╭─[-e:6:1]
+  5 │     end
+  6 │ ╭─▶ class K
+  7 │ │     class << self
+  8 │ │       prepend M
+  9 │ │     end
+ 10 │ ├─▶ end
+    · ╰──── rejected here
+    ╰────

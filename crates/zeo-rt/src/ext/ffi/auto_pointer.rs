@@ -1,7 +1,7 @@
 //! `FFI::AutoPointer < FFI::Pointer` -- a pointer that releases what it
 //! points at when the object goes. The gem's own idiom for a C handle is to
 //! SUBCLASS it and supply `self.release(ptr)`, which is why this file exists
-//! at all: `AutoPointer` is a payload root (`zeo_abi::PAYLOAD_ROOTS`), so
+//! at all: `AutoPointer` is a payload root (`zeo_abi::is_payload_root`), so
 //! `class Handle < FFI::AutoPointer` compiles through the generic
 //! `ValueSubclass` bridge with the pointer below as its payload. Every
 //! read/write method comes from `FFI::Pointer` through the ancestry walk.

@@ -1760,7 +1760,7 @@ impl Compiler {
             return None;
         }
         // Superclass-chain walk, not `ancestors` -- see `superclass_chain`.
-        // The list is `zeo_abi::PAYLOAD_ROOTS`, shared with the runtime and
+        // The rule is `zeo_abi::is_payload_root`, shared with the runtime and
         // analyze's subclassable gate. This function was the THIRD
         // hand-synced copy, and it was the one that drifted: a root the
         // other two knew and this one didn't made codegen emit direct

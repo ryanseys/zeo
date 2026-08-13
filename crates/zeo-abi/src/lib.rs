@@ -820,84 +820,82 @@ pub const REFINEMENT_CLASS: ClassId = ClassId(145);
 /// which `BasicSocket#getsockopt` answers.
 pub const SOCKET_OPTION_CLASS: ClassId = ClassId(142);
 
-/// Value-builtin PAYLOAD ROOTS: the builtins a user subclass wraps as a
-/// generic `ValueSubclass` payload (one native type, many class ids). This
-/// is the ONE list -- the compiler's subclassable gate (`analyze`) and the
-/// runtime bridge (`zeo-rt`'s `value_subclass`) both read it, because the
-/// two copies it replaced had already drifted. Membership means BOTH sides
-/// are ready: the compiler admits `class Sub < Root`, and the runtime can
-/// seat a payload -- an empty form where the root has one (`Array`, `Time`,
-/// `Queue`), or `super`-seated by the subclass's own `initialize` where it
-/// doesn't (`File`, `Thread`, the sockets). Subclassable builtins that are
-/// NOT payload roots (immediates, `Struct`, `Module`, the
-/// receiver-honouring constructors like `WeakRef`) stay in the compiler's
-/// own gate: their subclasses are not `ValueSubclass` objects.
+/// Builtins that are NOT payload roots, because their subclasses are a
+/// DIFFERENT native shape -- each has its own machinery, and routing one
+/// through the payload bridge would break it.
 ///
-/// Adding one: (1) the id here; (2) an `empty_payload` arm in
-/// `zeo-rt/src/builtins/value_subclass.rs` (a real empty form, or
-/// `RubyValue::Nil` for the `super`-seated shape); (3) a `new` row on the
-/// root's class-method table (or a `ConstructorFn`), which
-/// `construct_root_payload` asserts.
-pub const PAYLOAD_ROOTS: &[ClassId] = &[
-    ARRAY_CLASS,
-    STRING_CLASS,
-    HASH_CLASS,
-    STRING_SCANNER_CLASS,
-    STRINGIO_CLASS,
-    PATHNAME_CLASS,
-    FILE_CLASS,
-    SET_CLASS,
-    ENUMERATOR_CLASS,
-    TIME_CLASS,
-    THREAD_CLASS,
-    QUEUE_CLASS,
-    SIZED_QUEUE_CLASS,
-    MUTEX_CLASS,
-    MONITOR_CLASS,
-    TCPSOCKET_CLASS,
-    // `TCPServer`: seats through `super(host, port)` into its `TCPSocket`
-    // parent's payload chain -- unicorn and puma both subclass it.
-    TCPSERVER_CLASS,
-    UDP_SOCKET_CLASS,
-    UNIX_SOCKET_CLASS,
-    IP_SOCKET_CLASS,
-    SOCKET_CLASS,
-    BASIC_SOCKET_CLASS,
-    IO_CLASS,
-    OPENSSL_SSL_SOCKET_CLASS,
-    OPENSSL_CIPHER_CLASS,
-    OPENSSL_DIGEST_CLASS,
-    FIBER_CLASS,
-    RANGE_CLASS,
-    DIR_CLASS,
-    REGEXP_CLASS,
-    // `Zlib::Inflate`: `Inflate.new` with no arguments is a real empty
-    // form (default window bits) -- the biggest single subclassing ask in
-    // the gem-probe ledger (35 gems).
-    ZLIB_INFLATE_CLASS,
-    // `Zlib::GzipReader`: the `File` shape -- a reader needs an IO, so a
-    // subclass seats the real one through `super(io)`.
-    ZLIB_GZIP_READER_CLASS,
-    // `Zlib::GzipWriter` -- the same shape as the reader: an IO underneath,
-    // seated by the subclass's own `initialize` through `super`.
-    ZLIB_GZIP_WRITER_CLASS,
-    // `FFI::Pointer`: the NULL pointer is its empty form.
-    FFI_POINTER_CLASS,
-    // `FFI::AutoPointer`: a root of its OWN, nearer than `Pointer`, so a
-    // `class Handle < FFI::AutoPointer` payload is built by its `new` --
-    // the one that answers `#autorelease?` true. The gem's own idiom for a
-    // C handle, and 25 gems in the ledger.
-    FFI_AUTO_POINTER_CLASS,
-    // `FFI::MemoryPointer`: a root of its own for the same reason -- its
-    // `new(type, count)` allocates the buffer, which `Pointer.new` would
-    // have read as an ADDRESS.
-    FFI_MEMORY_POINTER_CLASS,
+/// This is the whole of the exception to "every built-in class can be
+/// subclassed". Exceptions need no row: they live in [`EXCEPTION_CLASSES`],
+/// not [`BUILTINS`], so the table lookup in [`is_payload_root`] already
+/// misses them and `is_exception_backed` keeps them.
+pub const NOT_PAYLOAD_ROOTS: &[ClassId] = &[
+    // The roots themselves: a plain user class is a GENERATED STRUCT, which
+    // is the whole point of not wrapping anything.
+    OBJECT_CLASS,
+    BASIC_OBJECT_CLASS,
+    // No per-value dispatch to hang a payload on. A `class X < Module` is a
+    // module FACTORY whose instances are real runtime module ids
+    // (`Compiler::is_module_subclass`); `Class` has no shape at all.
+    MODULE_CLASS,
+    CLASS_CLASS,
+    // The immediates and the allocator-undefined pair: CRuby accepts the
+    // DEFINITION and has no instances (`Compiler::is_immediate_subclass`).
+    INTEGER_CLASS,
+    FLOAT_CLASS,
+    SYMBOL_CLASS,
+    NIL_CLASS,
+    TRUE_CLASS,
+    FALSE_CLASS,
+    NUMERIC_CLASS,
+    BIGDECIMAL_CLASS,
+    METHOD_CLASS,
+    BINDING_CLASS,
+    ENCODING_CLASS,
+    RATIONAL_CLASS,
+    MATCH_DATA_CLASS,
+    // Generated-struct shapes of their own: `Struct`/`Data` subclasses are
+    // ordinary ivar objects, and an `FFI::Struct`/`FFI::Union` subclass is
+    // one whose accessors are synthesized from its `layout`.
+    STRUCT_CLASS,
+    DATA_CLASS,
+    FFI_STRUCT_CLASS,
+    FFI_UNION_CLASS,
+    // Constructors that already honour the RECEIVER class, so the subclass
+    // IS the native type rather than a wrapper around one.
+    WEAKMAP_CLASS,
+    WEAKREF_CLASS,
+    DATE_CLASS,
+    DATETIME_CLASS,
+    // The class rides IN the proc, so a subclass instance is still a
+    // `RubyValue::Proc` and every call-site fast path keeps working.
+    PROC_CLASS,
 ];
 
-/// Whether `id` is an instantiable value-builtin payload root -- see
-/// [`PAYLOAD_ROOTS`].
+/// Whether `id` is a value-builtin payload root: a built-in CLASS whose
+/// user subclass is a generic `ValueSubclass` wrapping the native value.
+///
+/// Every built-in class is one unless [`NOT_PAYLOAD_ROOTS`] says otherwise.
+/// It used to be the other way round -- an opt-in allowlist -- which meant a
+/// gem subclassing any native class zeo had not thought of got a compile
+/// error naming zeo rather than a program. The two halves a root needs are
+/// both generic now: the runtime's `empty_payload` falls back to `nil` (the
+/// `File` shape -- the subclass's own `initialize` seats the real payload
+/// through `super`), and `construct_root_payload` answers rather than
+/// panicking when a root has no `new` row. A hand-written `empty_payload`
+/// arm is now only an IMPROVEMENT on that default, not a prerequisite.
 pub fn is_payload_root(id: ClassId) -> bool {
-    PAYLOAD_ROOTS.contains(&id)
+    if NOT_PAYLOAD_ROOTS.contains(&id) {
+        return false;
+    }
+    builtin_class(id).is_some_and(|b| !b.is_module)
+}
+
+/// The [`BUILTINS`] row for `id` (ids are contiguous from 1), or `None` for
+/// a user class, an exception class, or `Object`.
+pub fn builtin_class(id: ClassId) -> Option<&'static BuiltinClass> {
+    BUILTINS
+        .get((id.0 as usize).wrapping_sub(1))
+        .filter(|b| b.id == id)
 }
 
 /// The payload root `id` inherits from, `id` itself included -- the
@@ -912,10 +910,7 @@ pub fn payload_root_of(id: ClassId) -> Option<ClassId> {
         if is_payload_root(at) {
             return Some(at);
         }
-        at = BUILTINS
-            .get((at.0 as usize).wrapping_sub(1))
-            .filter(|b| b.id == at)?
-            .superclass?;
+        at = builtin_class(at)?.superclass?;
     }
 }
 

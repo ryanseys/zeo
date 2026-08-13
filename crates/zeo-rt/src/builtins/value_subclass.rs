@@ -10,12 +10,16 @@
 //! `def`s register as `define_method` deltas (dynamic self), exactly like an
 //! exception subclass.
 //!
-//! The root list has grown well past the collection roots it started with --
-//! `StringScanner`, `StringIO`, `File`, `Set`, `Enumerator`, `Time`, `Thread`,
-//! `Range`, `Dir`, `Pathname`, `Mutex`, `Monitor` -- because nothing
-//! about the bridge is Array/String/Hash-specific: the payload is just a
-//! `RubyValue`. `Class`/`Module` stay out because a class id has no per-value
-//! dispatch to hang a payload on.
+//! EVERY built-in class is a root, because nothing about the bridge is
+//! Array/String/Hash-specific: the payload is just a `RubyValue`. The list
+//! started as an allowlist and grew one hand-added entry at a time --
+//! `StringScanner`, `StringIO`, `File`, `Set`, `Enumerator`, `Time`,
+//! `Thread`, ... -- which meant a gem subclassing anything nobody had thought
+//! of got a compile error naming zeo. `zeo_abi::NOT_PAYLOAD_ROOTS` holds the
+//! exceptions instead: the builtins whose subclass is a DIFFERENT native
+//! shape (`Class`/`Module` have no per-value dispatch to hang a payload on,
+//! `Struct` subclasses are generated structs, the immediates have no
+//! instances at all).
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -143,19 +147,18 @@ impl RubyObject for ValueSubclass {
     }
 }
 
-/// Whether `id` is an instantiable value-builtin payload root (D3).
+/// Whether `id` is an instantiable value-builtin payload root (D3) --
+/// EVERY built-in class except the shapes `zeo_abi::NOT_PAYLOAD_ROOTS`
+/// names, which is where the rule and its exceptions live (one list, shared
+/// with the compiler's subclassable gate, because two hand-maintained copies
+/// had already drifted).
 ///
-/// `StringScanner` earns a place next to the collection roots because it is the
-/// same shape: an instantiable native object a user class wants to inherit the
-/// behaviour of while adding ivars of its own (`csv`'s
-/// `class Scanner < StringScanner` keeps a `@keeps` stack). Nothing about the
-/// bridge is Array/String/Hash-specific -- the payload is just a `RubyValue`,
-/// and here it is the `RubyValue::Object` holding the native scanner.
+/// Nothing about the bridge is Array/String/Hash-specific -- the payload is
+/// just a `RubyValue`, and for `StringScanner` it is the `RubyValue::Object`
+/// holding the native scanner. That is why the rule can be "all of them":
+/// an `empty_payload` arm below is an IMPROVEMENT on the default `nil`, not
+/// a prerequisite.
 pub fn is_payload_root(id: ClassId) -> bool {
-    // The list lives in `zeo_abi::PAYLOAD_ROOTS` -- ONE list, shared with
-    // the compiler's subclassable gate, because two hand-maintained copies
-    // had already drifted. Adding a root means an `empty_payload` arm below
-    // too; the `payload_roots_are_constructible` test holds the two together.
     zeo_abi::is_payload_root(id)
 }
 
@@ -485,9 +488,15 @@ fn construct_root_payload(
     if let Some(ctor) = crate::builtins::class_method_table(root).and_then(|t| t("new")) {
         return ctor(&RubyValue::Class(root), args, block);
     }
-    let ctor = crate::dispatch::constructor_of(root)
-        .expect("a value payload root has a `new` row or a constructor");
-    ctor(root, args, block)
+    // A root with neither is not an error: every built-in class is a payload
+    // root now, and plenty have no constructor at all (`Ractor`, an abstract
+    // socket, `OpenSSL::X509::Certificate`). Such a root simply has no empty
+    // form -- the `File` shape -- so the caller keeps `nil` and the
+    // subclass's own `initialize` seats the real payload through `super`.
+    match crate::dispatch::constructor_of(root) {
+        Some(ctor) => ctor(root, args, block),
+        None => Ok(RubyValue::Nil),
+    }
 }
 
 /// Whether user Ruby wrote an `initialize` this class answers with. The
@@ -609,36 +618,29 @@ fn value_identity(v: &RubyValue) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
-    /// Every payload root must be CONSTRUCTIBLE: `construct_root_payload`
-    /// panics on a root with neither a `new` class-method row nor a
-    /// `ConstructorFn`, and that panic fires at a user program's first
-    /// `Sub.new` -- far from the list that caused it. Membership in
-    /// `zeo_abi::PAYLOAD_ROOTS` is a claim about BOTH crates, so this is
-    /// where a root added without its runtime half fails loudly instead
-    /// (`OpenSSL::X509::Certificate` is the standing example: implemented,
-    /// but constructorless, so it must not be listed until it gains one).
+    use crate::RubyValue;
+
+    /// A payload root with no constructor at all must ANSWER, not panic.
+    /// Every built-in class is a root now, and several have no way to build
+    /// an instance from nothing (`Ractor`, the abstract sockets,
+    /// `OpenSSL::X509::Certificate`) -- those take the `File` shape, where
+    /// the subclass's own `initialize` seats the payload through `super`.
+    /// The old allowlist made this a panic at a user program's first
+    /// `Sub.new`, far from the list that caused it.
     #[test]
-    fn payload_roots_are_constructible() {
-        // `Pathname.new` is deliberately a `ConstructorFn`, not a table row
-        // (the row would appear in `singleton_methods(false)` where CRuby
-        // has nothing) -- and a bare-library test cannot consult the
-        // generated program's constructor registry, so it is allowlisted.
-        let constructor_fn_roots = [zeo_abi::PATHNAME_CLASS];
-        // `BasicSocket`/`IPSocket` are ABSTRACT in CRuby too -- programs
-        // construct `TCPSocket`/`UDPSocket`, and a subclass of these always
-        // seats through `super` into a concrete child's constructor. The
-        // only path that would want their own `new` is a shape CRuby also
-        // rejects.
-        let abstract_roots = [zeo_abi::BASIC_SOCKET_CLASS, zeo_abi::IP_SOCKET_CLASS];
-        for &root in zeo_abi::PAYLOAD_ROOTS {
-            let has_new = crate::builtins::class_method_table(root)
-                .and_then(|t| t("new"))
-                .is_some();
-            assert!(
-                has_new || constructor_fn_roots.contains(&root) || abstract_roots.contains(&root),
-                "payload root {root:?} has no `new` class-method row -- \
-                 add the constructor before listing it in zeo_abi::PAYLOAD_ROOTS"
-            );
+    fn a_root_without_a_constructor_has_no_empty_form() {
+        for &root in &[zeo_abi::RACTOR_CLASS, zeo_abi::BASIC_SOCKET_CLASS] {
+            assert!(zeo_abi::is_payload_root(root));
+            assert!(matches!(super::empty_payload(root), RubyValue::Nil));
+        }
+    }
+
+    /// The denylist names real built-in CLASSES. A stale id there would
+    /// silently re-refuse a shape that works.
+    #[test]
+    fn the_denylist_names_builtin_classes() {
+        for &id in zeo_abi::NOT_PAYLOAD_ROOTS {
+            assert!(!zeo_abi::is_payload_root(id), "{id:?} is still a root");
         }
     }
 }

@@ -52,10 +52,16 @@ fn an_unsupported_codegen_construct_is_an_error_not_a_panic() {
 /// file that spells it.
 #[test]
 fn an_analyze_error_is_coded_with_its_stage() {
-    // Subclassing a builtin zeo lays out no struct for. A kind collision used
-    // to be the probe here, but ruby RAISES on one, so it compiles now.
-    let err = zeo::compile_to_rust_with("class Job < Ractor\nend\n", &Default::default())
-        .expect_err("subclassing an unsupported builtin fails analyze");
+    // A singleton-class `prepend` of a module carrying the hook. Two probes
+    // have retired from this slot: a kind collision (ruby RAISES on one, so
+    // it compiles into that raise now) and subclassing a built-in class
+    // (every built-in class is subclassable now -- see
+    // `zeo_abi::NOT_PAYLOAD_ROOTS`).
+    let err = zeo::compile_to_rust_with(
+        "module M\n  def self.prepend_features(base)\n    super\n  end\nend\nclass K\n  class << self\n    prepend M\n  end\nend\n",
+        &Default::default(),
+    )
+    .expect_err("a hook-carrying singleton prepend fails analyze");
     insta::assert_snapshot!(render(err));
 }
 

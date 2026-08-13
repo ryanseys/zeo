@@ -3331,6 +3331,7 @@ fn register_class(
             cref,
             box_id,
             conditional,
+            def_node,
         )?,
     };
     walk_class_body(compiler, class_id, body, box_id, def_node, conditional)
@@ -3647,6 +3648,7 @@ fn check_reopen_compatibility(
 /// (`lexical_parent`/`cref_parent`/`qualified_def`/overlay). A fresh class
 /// minted under `Conditional::Yes` is registered but not PROMISED -- see
 /// `ClassInfo::runtime_conditional`.
+#[allow(clippy::too_many_arguments)]
 fn create_class(
     compiler: &mut Compiler,
     superclass: &Option<String>,
@@ -3655,6 +3657,7 @@ fn create_class(
     cref: &[ClassId],
     box_id: u32,
     conditional: Conditional,
+    def_node: Option<NodeId>,
 ) -> Result<ClassId, String> {
     let parent = if is_module {
         None
@@ -3668,118 +3671,32 @@ fn create_class(
                 let cid = target.resolved_superclass.ok_or_else(|| {
                     format!("unknown superclass `{s}` (must be defined earlier in the file)")
                 })?;
-                // Subclassable builtins:
-                //  - `Struct`/`Data`: subclasses are ordinary
-                //    ivar-carrying objects (generated struct).
-                //  - `Numeric`: abstract, so a subclass is likewise a plain
-                //    ivar object (user-implemented `<=>`/`coerce`, Comparable
-                //    via the ancestor chain) -- the same struct machinery.
-                //  - `Array`/`String`/`Hash`: the native `ValueSubclass`
-                //    (a payload RObj), no struct.
-                //  - `Integer`/`Float`/`Symbol`/`Nil`/`True`/`FalseClass`
-                //    (immediates): the DEFINITION is allowed but has no
-                //    instances -- registry-entry-only, `.new` raises
-                //    NoMethodError (`is_immediate_subclass`).
-                // Still rejected: `Class`/`Module` (no per-value
-                // dispatch to hang a payload on).
-                use crate::compiler::{
-                    BASIC_OBJECT_CLASS, DATA_CLASS, FALSE_CLASS, FFI_STRUCT_CLASS, FLOAT_CLASS,
-                    INTEGER_CLASS, NIL_CLASS, NUMERIC_CLASS, STRUCT_CLASS, SYMBOL_CLASS,
-                    TRUE_CLASS,
-                };
-                // An instantiable value builtin compiles via the
-                // generic `ValueSubclass` payload bridge; that list
-                // is `zeo_abi::PAYLOAD_ROOTS` -- ONE list, shared
-                // with the runtime (see its docs for the recipe for
-                // adding a root). The `matches!` below is the rest
-                // of the gate: builtins whose subclasses are NOT
-                // payload objects.
-                let subclassable = zeo_abi::payload_root_of(cid).is_some()
-                    || matches!(
-                        cid,
-                        // `BasicObject`: the blank-slate root. Its subclass
-                        // is a plain ivar-carrying object with NO payload,
-                        // and the blank slate needs no special gate -- it
-                        // falls out of chain position alone, since CRuby
-                        // splices Kernel in as an ICLASS BETWEEN Object and
-                        // BasicObject (object.c:4550 -> class.c:1853) and
-                        // MRO walks only go up. So `[BO, BasicObject]` is
-                        // the whole ancestry and the Object/Kernel surface
-                        // is simply absent.
-                        BASIC_OBJECT_CLASS
-                                // `CGI`: a plain `Object` subclass with no
-                                // payload of its own -- the escape methods are
-                                // all class methods -- so a subclass is an
-                                // ordinary ivar object. thin wraps rails in
-                                // `class CGIWrapper < ::CGI`.
-                                | zeo_abi::CGI_MODULE
-                                | STRUCT_CLASS
-                                // `FFI::Struct`: a subclass is a plain
-                                // ivar object (no native payload) whose `[]`/
-                                // `[]=`/`size`/`offset_of` are synthesized from
-                                // its `layout` over an `FFI::MemoryPointer` ivar
-                                // -- see `parse`'s `synthesize_ffi_struct`.
-                                | FFI_STRUCT_CLASS
-                                // `FFI::Union`: the same synthesis with every
-                                // member at offset 0.
-                                | zeo_abi::FFI_UNION_CLASS
-                                | DATA_CLASS
-                                | NUMERIC_CLASS
-                                | INTEGER_CLASS
-                                | FLOAT_CLASS
-                                | SYMBOL_CLASS
-                                | NIL_CLASS
-                                | TRUE_CLASS
-                                | FALSE_CLASS
-                                // `Module`: NOT a payload root -- a wrapper
-                                // holding a module is not a module. A user
-                                // `class X < Module` is a module FACTORY whose
-                                // instances are real runtime module ids tagged
-                                // as belonging to X. See
-                                // `Compiler::is_module_subclass`.
-                                | crate::compiler::MODULE_CLASS
-                                // `ObjectSpace::WeakMap`: the subclass IS
-                                // the native type -- `weakmap_construct`
-                                // already builds `WeakMap::new(class)` from
-                                // the receiver. activesupport's `WeakSet`.
-                                | zeo_abi::WEAKMAP_CLASS
-                                // `WeakRef`: the same shape one root over --
-                                // its constructor takes the receiver class
-                                // too, and the delegation rows are inherited.
-                                | zeo_abi::WEAKREF_CLASS
-                                // `Date`/`DateTime`: the rows already
-                                // allocate through the receiver, so the
-                                // subclass is the native `RDate` tagged with
-                                // its own id. tzinfo's `DateTimeWithOffset`.
-                                | zeo_abi::DATE_CLASS
-                                | zeo_abi::DATETIME_CLASS
-                                // `Proc`: the class rides IN the proc, so a
-                                // subclass instance is still a
-                                // `RubyValue::Proc` and every call-site fast
-                                // path keeps working on it.
-                                | crate::compiler::PROC_CLASS
-                                // `BigDecimal`/`Method`: allocator-undefined
-                                // in CRuby too -- the DEFINITION is legal
-                                // (`is_a?` tagging, class methods) but no
-                                // instance can be built, the immediates'
-                                // shape (`is_immediate_subclass`).
-                                | zeo_abi::BIGDECIMAL_CLASS
-                                | zeo_abi::METHOD_CLASS
-                                // `Binding`/`Encoding`/`Rational`/`MatchData`:
-                                // the same shape. CRuby accepts the class
-                                // definition and answers `NoMethodError` to
-                                // `.new` -- these carry no allocator, and the
-                                // instances the runtime does make are always
-                                // of the builtin class itself.
-                                | zeo_abi::BINDING_CLASS
-                                | zeo_abi::ENCODING_CLASS
-                                | zeo_abi::RATIONAL_CLASS
-                                | zeo_abi::MATCH_DATA_CLASS
-                    );
-                if compiler.class(cid).is_builtin && !subclassable {
-                    return Err(format!(
-                        "subclassing the built-in type `{s}` isn't supported yet (zeo limitation, no generated Rust struct exists for it)"
-                    ));
+                // Every built-in CLASS can be subclassed. The instance
+                // shape differs -- a generic `ValueSubclass` payload for
+                // most (`zeo_abi::is_payload_root`), a generated struct for
+                // `Struct`/`Data`/`FFI::Struct`, a registry entry alone for
+                // the immediates, the native type itself for the
+                // receiver-honouring constructors -- and
+                // `zeo_abi::NOT_PAYLOAD_ROOTS` is the one place that says
+                // which is which.
+                //
+                // Only two superclasses are refused, and they are RUBY's own
+                // refusals rather than a zeo limitation -- so each compiles
+                // into the raise ruby makes (see `ruby_raises`).
+                if compiler.class(cid).is_module {
+                    let msg =
+                        "superclass must be an instance of Class (given an instance of Module)"
+                            .to_string();
+                    ruby_raises(compiler, def_node, "TypeError", &msg);
+                    return Err(msg);
+                }
+                // The one class CRuby itself refuses: a `Class` subclass
+                // would need an allocator for class objects, and there is
+                // none.
+                if cid == crate::compiler::CLASS_CLASS {
+                    let msg = "can't make subclass of Class".to_string();
+                    ruby_raises(compiler, def_node, "TypeError", &msg);
+                    return Err(msg);
                 }
                 cid
             }

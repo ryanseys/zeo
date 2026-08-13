@@ -1413,22 +1413,34 @@ fn unset_constant_raises_a_name_error() {
 }
 
 #[test]
-fn subclassing_an_unsupported_built_in_type_is_a_clean_error() {
-    // The payload-root list has grown well past Array/String/Hash, and the
-    // allocator-undefined builtins (`Method`, `BigDecimal`, `Binding`,
-    // `Encoding`, `Rational`, `MatchData`) now accept a DEFINITION, since
-    // CRuby accepts it too and answers `NoMethodError` to `.new`. `Ractor` is
-    // one of the tail still outside all of it: it IS constructible in CRuby,
-    // so registering the definition alone would promise a `.new` zeo cannot
-    // build.
-    let err = zeo::compile_to_rust(
+fn a_module_superclass_raises_rubys_own_type_error() {
+    // Every built-in CLASS is subclassable (`zeo_abi::NOT_PAYLOAD_ROOTS` is a
+    // denylist of the shapes that are not payload wrappers, not an allowlist
+    // of the ones that are). What is left is the two superclasses RUBY
+    // refuses, and zeo compiles each into ruby's own raise rather than a
+    // compile error naming zeo.
+    let result = run_ruby(
         r#"
-        class MyRactor < Ractor
+        begin
+          class WantsModule < Comparable
+          end
+        rescue TypeError => e
+          puts "module: #{e.message}"
+        end
+        begin
+          class WantsClass < Class
+          end
+        rescue TypeError => e
+          puts "class: #{e.message}"
         end
         "#,
-    )
-    .unwrap_err();
-    assert!(err.contains("subclassing the built-in type"), "{err}");
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "module: superclass must be an instance of Class (given an instance of Module)\n\
+         class: can't make subclass of Class\n"
+    );
 }
 
 #[test]
