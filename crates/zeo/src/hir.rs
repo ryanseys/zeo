@@ -174,6 +174,12 @@ pub struct Hir {
     /// resolves through the runtime method-frame stack and a BARE `super`
     /// raises ruby's define_method refusal (see `procs::emit_proc_value`).
     pub dynamic_define_method_blocks: std::collections::HashSet<NodeId>,
+    /// `DefMethod` nodes desugared from a literal-symbol `define_method(:x) {
+    /// }` / `define_singleton_method(:x) { }` -- a BLOCK, not a `def`. Ruby
+    /// rejects a `class` keyword inside a `def` and accepts one inside a
+    /// block, so the analyze walk has to tell the two apart even though the
+    /// desugar gives them one node type (`collect_nested_bodies`).
+    pub block_bodied_defs: std::collections::HashSet<NodeId>,
     /// `HashLit` nodes that are a `yield`'s KEYWORD arguments folded into one
     /// trailing hash, rather than a hash the source really wrote. The two are
     /// the same shape but not the same value: `yield(1, **h)` with an empty `h`

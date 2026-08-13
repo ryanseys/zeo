@@ -637,6 +637,11 @@ fn process_top_stmt_inner(
         // top-level call sites.
         let (name, params, body, is_class_method) =
             (name.clone(), params.clone(), body.clone(), *is_class_method);
+        // A `define_method(:x) { module M; end }` body is a block, and ruby
+        // accepts the `module` keyword in one -- see `collect_nested_bodies`.
+        if compiler.hir.block_bodied_defs.contains(&stmt) {
+            register_nested_class_defs(compiler, stmt, &[], 0)?;
+        }
         if is_class_method {
             // A TOP-LEVEL `def self.name` is a SINGLETON method on the
             // `main` object -- CRuby's asymmetry with `def name` above (a
@@ -1177,6 +1182,12 @@ fn collect_nested_bodies(compiler: &Compiler, node: NodeId, out: &mut Vec<NodeId
         // body defines is a registration fact either way (`define_method`
         // bodies and `-> { class Object; ... }` reopens both live here;
         // the marker still executes only when the lambda runs).
+        // ...and a `define_method(:x) { module M; end }` is a BLOCK wearing a
+        // `DefMethod`'s shape, so it descends like one: ruby accepts the
+        // `module` keyword there and gives it the enclosing lexical cref.
+        HirNode::DefMethod { body, .. } if compiler.hir.block_bodied_defs.contains(&node) => {
+            body.clone()
+        }
         HirNode::ClassDef { .. } | HirNode::DefMethod { .. } => return,
         HirNode::Lambda { body, .. } => body.clone(),
         other => {
@@ -3864,6 +3875,13 @@ fn walk_class_body(
         })
         .collect();
     for &stmt in &body {
+        // A `define_method(:x) { module M; end }` body is a block, so the
+        // `module` keyword in it is legal and lands in THIS body's cref.
+        // Registered up front, exactly as the `_` arm below registers one
+        // nested in a plain block.
+        if compiler.hir.block_bodied_defs.contains(&stmt) {
+            register_nested_class_defs(compiler, stmt, &child_cref, box_id)?;
+        }
         match &compiler.hir[stmt] {
             HirNode::DefMethod {
                 name,

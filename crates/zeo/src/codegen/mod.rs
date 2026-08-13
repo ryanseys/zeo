@@ -3665,6 +3665,17 @@ fn inline_class_markers(
         .collect();
     let mut seen = FSet::default();
     let mut work: Vec<crate::hir::NodeId> = main_statements.to_vec();
+    // A `define_method(:x) { module M; end }` body is emitted inside the
+    // method it defines, wherever that method lands -- so its marker is
+    // inline even though the def itself never appears in the statement
+    // stream (a top-level `define_method` is consumed into `Object`'s table).
+    // Without this the body ran twice: once in the method and once more in
+    // the hoisted prelude.
+    for &def in &compiler.hir.block_bodied_defs {
+        if let crate::hir::HirNode::DefMethod { body, .. } = &compiler.hir[def] {
+            work.extend(body.iter().copied());
+        }
+    }
     while let Some(s) = work.pop() {
         match &compiler.hir[s] {
             crate::hir::HirNode::ClassDef { .. } => {
@@ -3679,7 +3690,16 @@ fn inline_class_markers(
             // a loop, a block. A class written inside one runs where it is
             // written, which for a block means each time the block runs. Only
             // a `def`'s body is a separate function that waits to be called,
-            // so that is where the walk stops.
+            // so that is where the walk stops -- but a
+            // `define_method(:x) { module M; end }` is a BLOCK wearing a
+            // `DefMethod`'s shape, and its marker really is inline (missing
+            // it emitted the body once at its own position and once more in
+            // the hoisted prelude).
+            crate::hir::HirNode::DefMethod { body, .. }
+                if compiler.hir.block_bodied_defs.contains(&s) =>
+            {
+                work.extend(body.iter().copied())
+            }
             crate::hir::HirNode::DefMethod { .. } => {}
             other => other.for_each_child(&mut |c| work.push(c)),
         }

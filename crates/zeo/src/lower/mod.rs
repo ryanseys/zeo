@@ -720,7 +720,7 @@ fn lower_call_node(
                     }
                 };
                 let body = lower_body(result, hir, block.body())?;
-                return Ok(hir.push(HirNode::DefMethod {
+                let id = hir.push(HirNode::DefMethod {
                     name: method_name,
                     params,
                     body,
@@ -728,7 +728,9 @@ fn lower_call_node(
                     visibility: Visibility::Public,
                     // An explicit `define_method` call, not a `def`.
                     is_def: false,
-                }));
+                });
+                hir.block_bodied_defs.insert(id);
+                return Ok(id);
             }
         }
     }
@@ -819,6 +821,7 @@ fn lower_call_node(
                     // `block in <class:E>`, not `E.trace`.
                     is_def: false,
                 });
+                hir.block_bodied_defs.insert(def);
                 return Ok(match target {
                     None => def,
                     Some(class_name) => hir.push(HirNode::ClassDef {
@@ -1353,13 +1356,15 @@ fn lower_call_node(
         {
             let src = String::from_utf8_lossy(s.unescaped()).into_owned();
             // Try the zero-cost AOT inline path. If the literal source
-            // doesn't parse, or defines at the top level (which the
-            // inline path can't express), DON'T fail the compile: fall
-            // through to the runtime eval VM so the program still
-            // builds and the error/behaviour surfaces at runtime,
-            // catchably, exactly as CRuby's `eval` does.
+            // doesn't parse, or defines at the top level -- a `def`, or a
+            // `class`/`module` the registration walk never sees inside an
+            // `Eval` node -- DON'T fail the compile: fall through to the
+            // runtime eval VM so the program still builds and the
+            // error/behaviour surfaces at runtime, catchably, exactly as
+            // CRuby's `eval` does.
             if let Ok(body) = parse_and_lower_into(hir, &src)
                 && reject_top_level_defs(hir, &body).is_ok()
+                && !eval_splice::defines_a_class(hir, &body)
             {
                 return Ok(hir.push(HirNode::Eval(body)));
             }

@@ -1,0 +1,7 @@
+defined
+top body
+["top", "top hi", Module]
+["inner", "nested", "Host::Nested"]
+["singleton", nil, nil]
+["SHOUT", "str shout"]
+2
