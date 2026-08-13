@@ -2563,11 +2563,20 @@ fn literal_class_name_is(compiler: &Compiler, call: NodeId, expected: NodeId) ->
 /// a deliberate over-approximation used only to keep `static_top_cond`
 /// honest: a name that might be a value constant somewhere can't be
 /// confidently folded to "undefined".
+///
+/// [`Compiler::assigned_const_names`] is this exact set, already collected by
+/// the one arena sweep `collect_arena_facts` makes before the guard-deciding
+/// walk starts.
+///
+/// A PATH-shaped query is answered `false` rather than looked up. The scan
+/// this replaces compared against `ConstWrite::name`, which is always a leaf
+/// (an explicit `Foo::NAME = ...` keeps its namespace in the separate `scope`
+/// field), so it never matched a path -- while the set also holds qualified
+/// `scope::name` spellings and would. Accepting those would answer `true`
+/// strictly more often, and every extra `true` here turns a guard from decided
+/// into undecidable, which costs compiled gems.
 fn const_ever_written(compiler: &Compiler, name: &str) -> bool {
-    compiler
-        .hir
-        .iter()
-        .any(|n| matches!(n, HirNode::ConstWrite { name: w, .. } if w == name))
+    !name.contains("::") && compiler.assigned_const_names.contains(name)
 }
 
 /// Registers one `class`/`module` definition (or REOPENING) into the
