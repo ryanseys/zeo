@@ -17,9 +17,7 @@ pub(crate) mod share;
 use crate::analyze_error::AnalyzeError;
 use crate::compiler::{AccessorKind, AccessorShape, ClassId, Compiler, OBJECT_CLASS, Scope};
 use crate::compiler::{FMap, FSet};
-use crate::hir::{
-    ArrayElem, Hir, HirNode, NodeId, Params, Pattern, PatternArm, StrPart, Visibility,
-};
+use crate::hir::{ArrayElem, Hir, HirNode, NodeId, Params, StrPart, Visibility};
 use crate::types::TyKind;
 
 pub struct Analyzed {
@@ -5236,592 +5234,91 @@ fn accessor_shape(
     })
 }
 
-/// Scans a method's own control flow (NOT descending into a nested `Block`'s
-/// body -- see below) for a bare `yield`/`block_given?`, returning whether
-/// any was found. Mirrors `collect_ivars`'s traversal shape.
+/// Whether any node under `id` satisfies `hit`, descending through
+/// `HirNode::for_each_child` and stopping where a new Ruby scope begins.
 ///
-/// Descends into nested block and lambda literals too: their
-/// `yield`/`block_given?` refers to THIS enclosing method's implicit block
-/// in real Ruby (blocks and lambdas have none of their own), so a method
-/// whose only `yield` sits inside a `.each { ... }` still needs its
-/// `__blk` parameter -- and the emitted closure clone-captures it (see
+/// The two callers below are the whole reason this exists. Each carried its
+/// own copy of the 81-variant match -- ~270 lines apiece, byte-identical
+/// except for the arms that answer the question -- which is precisely the
+/// drift `for_each_child`'s own docs describe: "each used to carry their own
+/// copy of this walk, and the copies drifted." The copies here had drifted
+/// too. Both skipped a `New`'s block and keyword arguments, so
+/// `def f; Hash.new { |h, k| yield k }; end` reported no bare block use and
+/// the method never got its `__blk` parameter; and both treated a bare
+/// `Block` node as a stop while special-casing a call's block argument to
+/// descend into it, so the same block was walked or skipped depending on how
+/// the walk arrived at it.
+///
+/// The stops are the same three both copies had. `Ffi` is a synthesized
+/// wrapper body with none of this in it. `ClassDef` and `DefMethod` open a
+/// fresh Ruby scope, so a `yield` or `super` inside one belongs to that
+/// scope, not to the body being scanned. `Block` and `Lambda` are NOT stops:
+/// neither has a block or a super target of its own, so both constructs
+/// refer to the enclosing method -- which is what both callers' own docs
+/// already claimed.
+fn scan_body(hir: &Hir, id: NodeId, hit: &impl Fn(&HirNode) -> bool) -> bool {
+    let node = &hir[id];
+    if hit(node) {
+        return true;
+    }
+    if matches!(
+        node,
+        HirNode::Ffi(_) | HirNode::ClassDef { .. } | HirNode::DefMethod { .. }
+    ) {
+        return false;
+    }
+    let mut found = false;
+    node.for_each_child(&mut |n| found |= scan_body(hir, n, hit));
+    found
+}
+
+/// [`scan_body`] over a statement list.
+fn scan_stmts(hir: &Hir, body: &[NodeId], hit: &impl Fn(&HirNode) -> bool) -> bool {
+    body.iter().any(|&n| scan_body(hir, n, hit))
+}
+
+/// A node that reaches for the ENCLOSING method's implicit block.
+///
+/// `yield` and `block_given?` are the obvious two. The third is a bare
+/// `super`: real Ruby forwards the current method's own block to the parent,
+/// and the emitted splice references `__blk` directly (see
+/// `codegen::call::emit_super`), so the method needs the parameter whether or
+/// not the parent turns out to use it -- an unused `Option` costs nothing.
+/// A `super { ... }` with a literal block does NOT, though its block body
+/// still might, which the ordinary descent covers.
+fn wants_enclosing_block(node: &HirNode) -> bool {
+    matches!(
+        node,
+        HirNode::Yield(_) | HirNode::BlockGiven | HirNode::SuperCall { block: None, .. }
+    )
+}
+
+/// Scans a method's own control flow for a use of its implicit block.
+///
+/// Descends into nested block and lambda literals: their `yield`/
+/// `block_given?` refers to THIS enclosing method's implicit block in real
+/// Ruby (blocks and lambdas have none of their own), so a method whose only
+/// `yield` sits inside a `.each { ... }` still needs its `__blk` parameter --
+/// and the emitted closure clone-captures it (see
 /// `codegen::call::emit_proc_or_lambda_value`).
 fn scan_bare_block_use(hir: &Hir, id: NodeId) -> bool {
-    match &hir[id] {
-        // An FFI wrapper body uses no block.
-        HirNode::Ffi(_) => false,
-        HirNode::Yield(_) | HirNode::BlockGiven => true,
-        HirNode::IvarWrite(_, value)
-        | HirNode::LocalWrite(_, value)
-        | HirNode::ClassVarWrite(_, value) => scan_bare_block_use(hir, *value),
-        HirNode::And(l, r)
-        | HirNode::Or(l, r)
-        | HirNode::FlipFlop {
-            state: _,
-            left: l,
-            right: r,
-            exclusive: _,
-        } => {
-            scan_bare_block_use(hir, *l) || scan_bare_block_use(hir, *r)
-        }
-        HirNode::Defined(v) => scan_bare_block_use(hir, *v),
-        HirNode::If {
-            cond,
-            then_body,
-            else_body,
-        } => {
-            scan_bare_block_use(hir, *cond)
-                || scan_bare_block_use_body(hir, then_body)
-                || scan_bare_block_use_body(hir, else_body)
-        }
-        HirNode::CaseWhen {
-            subject,
-            arms,
-            else_body,
-        } => {
-            let mut found = false;
-            if let Some(s) = subject {
-                found |= scan_bare_block_use(hir, *s);
-            }
-            for (values, body) in arms {
-                for e in values {
-                    let (ArrayElem::Single(v) | ArrayElem::Splat(v)) = e;
-                    found |= scan_bare_block_use(hir, *v);
-                }
-                found |= scan_bare_block_use_body(hir, body);
-            }
-            found || scan_bare_block_use_body(hir, else_body)
-        }
-        HirNode::While { cond, body, .. } => {
-            scan_bare_block_use(hir, *cond) || scan_bare_block_use_body(hir, body)
-        }
-        HirNode::Loop { body } => scan_bare_block_use_body(hir, body),
-        HirNode::For { target, iterable, body } => {
-            let mut found = scan_bare_block_use(hir, *iterable);
-            let mut ids = Vec::new();
-            target.for_each_node(&mut |n| ids.push(n));
-            for n in ids {
-                found |= scan_bare_block_use(hir, n);
-            }
-            found || scan_bare_block_use_body(hir, body)
-        }
-        HirNode::Call {
-            receiver,
-            args,
-            kwargs,
-            block,
-            block_arg,
-            ..
-        } => {
-            let mut found = false;
-            if let Some(r) = receiver {
-                found |= scan_bare_block_use(hir, *r);
-            }
-            for a in args {
-                let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = a;
-                found |= scan_bare_block_use(hir, *n);
-            }
-            for n in kwargs.iter().flat_map(|kw| kw.node_ids()) {
-                found |= scan_bare_block_use(hir, n);
-            }
-            if let Some(b) = block_arg {
-                found |= scan_bare_block_use(hir, *b);
-            }
-            // A nested block literal's `yield`/`block_given?` refers to THIS
-            // enclosing method's block in real Ruby (blocks have no implicit
-            // block of their own) -- counted here so the method gets its
-            // `__blk` param, which the emitted closure then clone-captures
-            // (see `codegen::call::emit_proc_or_lambda_value`).
-            if let Some(b) = block
-                && let HirNode::Block { body, .. } = &hir[*b] {
-                    found |= scan_bare_block_use_body(hir, body);
-                }
-            found
-        }
-        HirNode::New { args, .. } => {
-            let mut found = false;
-            for &a in args {
-                found |= scan_bare_block_use(hir, a);
-            }
-            found
-        }
-        HirNode::Raise(args, cause) => {
-            let mut found = false;
-            for &a in args.iter().chain(crate::hir::raise_cause_node(cause).iter()) {
-                found |= scan_bare_block_use(hir, a);
-            }
-            found
-        }
-        HirNode::SuperCall { args, kwargs, block, .. } => {
-            match block {
-                // A literal `super { ... }` block's own `yield` refers to
-                // THIS method's block, same as any nested block literal.
-                Some(b) => {
-                    let mut found = args.iter().any(|a| scan_bare_block_use(hir, a.node_id()))
-                        || kwargs
-                            .iter()
-                            .flat_map(|kw| kw.node_ids())
-                            .any(|a| scan_bare_block_use(hir, a));
-                    if let HirNode::Block { body, .. } = &hir[*b] {
-                        found |= scan_bare_block_use_body(hir, body);
-                    }
-                    found
-                }
-                // No literal block: real Ruby forwards the current method's
-                // own block to the parent, whose body may `yield` it -- the
-                // splice references `__blk` directly (see
-                // `codegen::call::emit_super`), so this method needs
-                // the parameter whether or not the parent turns out to use
-                // it (an unused `Option` costs nothing).
-                None => true,
-            }
-        }
-        HirNode::ArrayLit(elems) => {
-            let mut found = false;
-            for e in elems {
-                let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;
-                found |= scan_bare_block_use(hir, *n);
-            }
-            found
-        }
-        HirNode::HashLit(pairs) => {
-            let mut found = false;
-            for n in pairs.iter().flat_map(|kw| kw.node_ids()) {
-                found |= scan_bare_block_use(hir, n);
-            }
-            found
-        }
-        HirNode::RangeLit { start, end, .. } => {
-            let mut found = false;
-            if let Some(s) = start {
-                found |= scan_bare_block_use(hir, *s);
-            }
-            if let Some(e) = end {
-                found |= scan_bare_block_use(hir, *e);
-            }
-            found
-        }
-        HirNode::StringLit(parts) | HirNode::RegexpLit(parts, _) => {
-            let mut found = false;
-            for p in parts {
-                if let StrPart::Interp(n) = p {
-                    found |= scan_bare_block_use(hir, *n);
-                }
-            }
-            found
-        }
-        HirNode::MultiWrite { targets, value } => {
-            let mut found = scan_bare_block_use(hir, *value);
-            let mut ids = Vec::new();
-            targets.for_each_node(&mut |n| ids.push(n));
-            for n in ids {
-                found |= scan_bare_block_use(hir, n);
-            }
-            found
-        }
-        HirNode::GlobalWrite(_, value) => scan_bare_block_use(hir, *value),
-        HirNode::ConstWrite { value, .. } => scan_bare_block_use(hir, *value),
-        HirNode::DynConstRead { scope, .. } => scan_bare_block_use(hir, *scope),
-        HirNode::DynConstWrite { scope, value, .. } => {
-            scan_bare_block_use(hir, *scope) | scan_bare_block_use(hir, *value)
-        }
-        HirNode::PreExec(body) | HirNode::Seq(body) | HirNode::Eval(body) | HirNode::BoxScope { body, .. } => scan_bare_block_use_body(hir, body),
-        HirNode::Break(v) | HirNode::Next(v) | HirNode::Return(v) => match v {
-            Some(v) => scan_bare_block_use(hir, *v),
-            None => false,
-        },
-        HirNode::CaseIn { subject, arms, else_body } => {
-            let mut found = scan_bare_block_use(hir, *subject);
-            for arm in arms {
-                found |= scan_bare_block_use_pattern_arm(hir, arm);
-            }
-            if let Some(body) = else_body {
-                found |= scan_bare_block_use_body(hir, body);
-            }
-            found
-        }
-        HirNode::MatchPredicate { subject, pattern } | HirNode::MatchRequired { subject, pattern } => {
-            scan_bare_block_use(hir, *subject) || scan_bare_block_use_pattern(hir, pattern)
-        }
-        HirNode::Begin {
-            body,
-            rescues,
-            else_body,
-            ensure_body,
-        } => {
-            let mut found = scan_bare_block_use_body(hir, body);
-            for r in rescues {
-                found |= scan_bare_block_use_body(hir, &r.body);
-            }
-            if let Some(b) = else_body {
-                found |= scan_bare_block_use_body(hir, b);
-            }
-            if let Some(b) = ensure_body {
-                found |= scan_bare_block_use_body(hir, b);
-            }
-            found
-        }
-        // A lambda is its own separate scope for locals, but a bare
-        // `yield`/`block_given?` lexically inside one still refers to THIS
-        // enclosing method's block in real Ruby, same as inside an ordinary
-        // nested block literal -- counted for the same reason as `Call`'s
-        // own block-literal recursion above.
-        HirNode::Lambda { body, .. } => scan_bare_block_use_body(hir, body),
-        HirNode::Retry => false,
-        HirNode::Redo
-        | HirNode::Block { .. }
-        | HirNode::Program(_)
-        | HirNode::IntegerLit(_)
-        | HirNode::BigIntegerLit { .. }
-        | HirNode::RationalLit { .. }
-        // An imaginary literal's inner node is itself a numeric
-        // literal by syntax -- a leaf for this walk's purposes.
-        | HirNode::ImaginaryLit(_)
-        | HirNode::FloatLit(_)
-        | HirNode::SymbolLit(_)
-        | HirNode::NilLit
-        | HirNode::BoxHandle(_)
-        | HirNode::BoolLit(_)
-        | HirNode::SelfRef
-        | HirNode::LocalRead(_)
-        | HirNode::IvarRead(_)
-        | HirNode::ClassVarRead(_)
-        | HirNode::ClassRef(_)
-        | HirNode::GlobalRead(_)
-        | HirNode::LastMatchRef(_)
-        | HirNode::Undef(_)
-        | HirNode::ClassMethodUndef(_)
-        | HirNode::AliasMethod { .. }
-        | HirNode::MethodVisibility { .. }
-        | HirNode::ClassMethodVisibility { .. }
-        | HirNode::ModuleFunction(_)
-        | HirNode::ConstantVisibility { .. }
-        | HirNode::AliasGlobal(..)
-        | HirNode::QualifiedConstRead(..)
-        | HirNode::ConstReadOrNil(..)
-        | HirNode::Include(_)
-        | HirNode::Extend(_)
-        | HirNode::Prepend(_)
-        | HirNode::ClassMethodPrepend(_)
-        | HirNode::Refine { .. }
-        | HirNode::Using(_)
-        | HirNode::DefHook { .. }
-        | HirNode::MethodRedefine { .. }
-        | HirNode::ClassDef { .. }
-        | HirNode::DefMethod { .. } => false,
-    }
-}
-
-/// Every `NodeId` embedded in `pattern` (see `Pattern::for_each_node`), OR'd
-/// through `scan_bare_block_use`.
-fn scan_bare_block_use_pattern(hir: &Hir, pattern: &Pattern) -> bool {
-    let mut ids = Vec::new();
-    pattern.for_each_node(&mut |n| ids.push(n));
-    let mut found = false;
-    for n in ids {
-        found |= scan_bare_block_use(hir, n);
-    }
-    found
-}
-
-fn scan_bare_block_use_pattern_arm(hir: &Hir, arm: &PatternArm) -> bool {
-    let mut found = scan_bare_block_use_pattern(hir, &arm.pattern);
-    if let Some((g, _)) = arm.guard {
-        found |= scan_bare_block_use(hir, g);
-    }
-    found |= scan_bare_block_use_body(hir, &arm.body);
-    found
+    scan_body(hir, id, &wants_enclosing_block)
 }
 
 pub(crate) fn scan_bare_block_use_body(hir: &Hir, body: &[NodeId]) -> bool {
-    let mut found = false;
-    for &n in body {
-        found |= scan_bare_block_use(hir, n);
-    }
-    found
+    scan_stmts(hir, body, &wants_enclosing_block)
 }
 
-/// Whether a method body (or anything nested under it -- blocks and
-/// lambdas included, since a `super` written inside one still targets the
-/// ENCLOSING method) contains a `super` call. Mirrors
-/// `scan_bare_block_use`'s traversal arm-for-arm; consumed by codegen's
-/// super-reachability analysis (which method NAMES need dynamic-self
-/// `super`-target bridges).
+/// Whether a method body (or anything nested under it -- blocks and lambdas
+/// included, since a `super` written inside one still targets the ENCLOSING
+/// method) contains a `super` call. Consumed by codegen's super-reachability
+/// analysis (which method NAMES need dynamic-self `super`-target bridges).
 pub(crate) fn scan_contains_super(hir: &Hir, id: NodeId) -> bool {
-    match &hir[id] {
-        // An FFI wrapper body uses no block.
-        HirNode::Ffi(_) => false,
-        HirNode::BlockGiven => false,
-        HirNode::Yield(args) => args.iter().any(|e| match e {
-            crate::hir::ArrayElem::Single(a) | crate::hir::ArrayElem::Splat(a) => {
-                scan_contains_super(hir, *a)
-            }
-        }),
-        HirNode::IvarWrite(_, value)
-        | HirNode::LocalWrite(_, value)
-        | HirNode::ClassVarWrite(_, value) => scan_contains_super(hir, *value),
-        HirNode::And(l, r)
-        | HirNode::Or(l, r)
-        | HirNode::FlipFlop {
-            state: _,
-            left: l,
-            right: r,
-            exclusive: _,
-        } => {
-            scan_contains_super(hir, *l) || scan_contains_super(hir, *r)
-        }
-        HirNode::Defined(v) => scan_contains_super(hir, *v),
-        HirNode::If {
-            cond,
-            then_body,
-            else_body,
-        } => {
-            scan_contains_super(hir, *cond)
-                || scan_contains_super_body(hir, then_body)
-                || scan_contains_super_body(hir, else_body)
-        }
-        HirNode::CaseWhen {
-            subject,
-            arms,
-            else_body,
-        } => {
-            let mut found = false;
-            if let Some(s) = subject {
-                found |= scan_contains_super(hir, *s);
-            }
-            for (values, body) in arms {
-                for e in values {
-                    let (ArrayElem::Single(v) | ArrayElem::Splat(v)) = e;
-                    found |= scan_contains_super(hir, *v);
-                }
-                found |= scan_contains_super_body(hir, body);
-            }
-            found || scan_contains_super_body(hir, else_body)
-        }
-        HirNode::While { cond, body, .. } => {
-            scan_contains_super(hir, *cond) || scan_contains_super_body(hir, body)
-        }
-        HirNode::Loop { body } => scan_contains_super_body(hir, body),
-        HirNode::For { target, iterable, body } => {
-            let mut found = scan_contains_super(hir, *iterable);
-            let mut ids = Vec::new();
-            target.for_each_node(&mut |n| ids.push(n));
-            for n in ids {
-                found |= scan_contains_super(hir, n);
-            }
-            found || scan_contains_super_body(hir, body)
-        }
-        HirNode::Call {
-            receiver,
-            args,
-            kwargs,
-            block,
-            block_arg,
-            ..
-        } => {
-            let mut found = false;
-            if let Some(r) = receiver {
-                found |= scan_contains_super(hir, *r);
-            }
-            for a in args {
-                let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = a;
-                found |= scan_contains_super(hir, *n);
-            }
-            for n in kwargs.iter().flat_map(|kw| kw.node_ids()) {
-                found |= scan_contains_super(hir, n);
-            }
-            if let Some(b) = block_arg {
-                found |= scan_contains_super(hir, *b);
-            }
-            // A nested block literal's `yield`/`block_given?` refers to THIS
-            // enclosing method's block in real Ruby (blocks have no implicit
-            // block of their own) -- counted here so the method gets its
-            // `__blk` param, which the emitted closure then clone-captures
-            // (see `codegen::call::emit_proc_or_lambda_value`).
-            if let Some(b) = block
-                && let HirNode::Block { body, .. } = &hir[*b] {
-                    found |= scan_contains_super_body(hir, body);
-                }
-            found
-        }
-        HirNode::New { args, .. } => {
-            let mut found = false;
-            for &a in args {
-                found |= scan_contains_super(hir, a);
-            }
-            found
-        }
-        HirNode::Raise(args, cause) => {
-            let mut found = false;
-            for &a in args.iter().chain(crate::hir::raise_cause_node(cause).iter()) {
-                found |= scan_contains_super(hir, a);
-            }
-            found
-        }
-        HirNode::SuperCall { .. } => true,
-        HirNode::ArrayLit(elems) => {
-            let mut found = false;
-            for e in elems {
-                let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;
-                found |= scan_contains_super(hir, *n);
-            }
-            found
-        }
-        HirNode::HashLit(pairs) => {
-            let mut found = false;
-            for n in pairs.iter().flat_map(|kw| kw.node_ids()) {
-                found |= scan_contains_super(hir, n);
-            }
-            found
-        }
-        HirNode::RangeLit { start, end, .. } => {
-            let mut found = false;
-            if let Some(s) = start {
-                found |= scan_contains_super(hir, *s);
-            }
-            if let Some(e) = end {
-                found |= scan_contains_super(hir, *e);
-            }
-            found
-        }
-        HirNode::StringLit(parts) | HirNode::RegexpLit(parts, _) => {
-            let mut found = false;
-            for p in parts {
-                if let StrPart::Interp(n) = p {
-                    found |= scan_contains_super(hir, *n);
-                }
-            }
-            found
-        }
-        HirNode::MultiWrite { targets, value } => {
-            let mut found = scan_contains_super(hir, *value);
-            let mut ids = Vec::new();
-            targets.for_each_node(&mut |n| ids.push(n));
-            for n in ids {
-                found |= scan_contains_super(hir, n);
-            }
-            found
-        }
-        HirNode::GlobalWrite(_, value) => scan_contains_super(hir, *value),
-        HirNode::ConstWrite { value, .. } => scan_contains_super(hir, *value),
-        HirNode::DynConstRead { scope, .. } => scan_contains_super(hir, *scope),
-        HirNode::DynConstWrite { scope, value, .. } => {
-            scan_contains_super(hir, *scope) | scan_contains_super(hir, *value)
-        }
-        HirNode::PreExec(body) | HirNode::Seq(body) | HirNode::Eval(body) | HirNode::BoxScope { body, .. } => scan_contains_super_body(hir, body),
-        HirNode::Break(v) | HirNode::Next(v) | HirNode::Return(v) => match v {
-            Some(v) => scan_contains_super(hir, *v),
-            None => false,
-        },
-        HirNode::CaseIn { subject, arms, else_body } => {
-            let mut found = scan_contains_super(hir, *subject);
-            for arm in arms {
-                found |= scan_contains_super_pattern_arm(hir, arm);
-            }
-            if let Some(body) = else_body {
-                found |= scan_contains_super_body(hir, body);
-            }
-            found
-        }
-        HirNode::MatchPredicate { subject, pattern } | HirNode::MatchRequired { subject, pattern } => {
-            scan_contains_super(hir, *subject) || scan_contains_super_pattern(hir, pattern)
-        }
-        HirNode::Begin {
-            body,
-            rescues,
-            else_body,
-            ensure_body,
-        } => {
-            let mut found = scan_contains_super_body(hir, body);
-            for r in rescues {
-                found |= scan_contains_super_body(hir, &r.body);
-            }
-            if let Some(b) = else_body {
-                found |= scan_contains_super_body(hir, b);
-            }
-            if let Some(b) = ensure_body {
-                found |= scan_contains_super_body(hir, b);
-            }
-            found
-        }
-        // A lambda is its own separate scope for locals, but a bare
-        // `yield`/`block_given?` lexically inside one still refers to THIS
-        // enclosing method's block in real Ruby, same as inside an ordinary
-        // nested block literal -- counted for the same reason as `Call`'s
-        // own block-literal recursion above.
-        HirNode::Lambda { body, .. } => scan_contains_super_body(hir, body),
-        HirNode::Retry => false,
-        HirNode::Redo
-        | HirNode::Block { .. }
-        | HirNode::Program(_)
-        | HirNode::IntegerLit(_)
-        | HirNode::BigIntegerLit { .. }
-        | HirNode::RationalLit { .. }
-        // An imaginary literal's inner node is itself a numeric
-        // literal by syntax -- a leaf for this walk's purposes.
-        | HirNode::ImaginaryLit(_)
-        | HirNode::FloatLit(_)
-        | HirNode::SymbolLit(_)
-        | HirNode::NilLit
-        | HirNode::BoxHandle(_)
-        | HirNode::BoolLit(_)
-        | HirNode::SelfRef
-        | HirNode::LocalRead(_)
-        | HirNode::IvarRead(_)
-        | HirNode::ClassVarRead(_)
-        | HirNode::ClassRef(_)
-        | HirNode::GlobalRead(_)
-        | HirNode::LastMatchRef(_)
-        | HirNode::Undef(_)
-        | HirNode::ClassMethodUndef(_)
-        | HirNode::AliasMethod { .. }
-        | HirNode::MethodVisibility { .. }
-        | HirNode::ClassMethodVisibility { .. }
-        | HirNode::ModuleFunction(_)
-        | HirNode::ConstantVisibility { .. }
-        | HirNode::AliasGlobal(..)
-        | HirNode::QualifiedConstRead(..)
-        | HirNode::ConstReadOrNil(..)
-        | HirNode::Include(_)
-        | HirNode::Extend(_)
-        | HirNode::Prepend(_)
-        | HirNode::ClassMethodPrepend(_)
-        | HirNode::Refine { .. }
-        | HirNode::Using(_)
-        | HirNode::DefHook { .. }
-        | HirNode::MethodRedefine { .. }
-        | HirNode::ClassDef { .. }
-        | HirNode::DefMethod { .. } => false,
-    }
-}
-
-/// Every `NodeId` embedded in `pattern` (see `Pattern::for_each_node`), OR'd
-/// through `scan_contains_super`.
-fn scan_contains_super_pattern(hir: &Hir, pattern: &Pattern) -> bool {
-    let mut ids = Vec::new();
-    pattern.for_each_node(&mut |n| ids.push(n));
-    let mut found = false;
-    for n in ids {
-        found |= scan_contains_super(hir, n);
-    }
-    found
-}
-
-fn scan_contains_super_pattern_arm(hir: &Hir, arm: &PatternArm) -> bool {
-    let mut found = scan_contains_super_pattern(hir, &arm.pattern);
-    if let Some((g, _)) = arm.guard {
-        found |= scan_contains_super(hir, g);
-    }
-    found |= scan_contains_super_body(hir, &arm.body);
-    found
+    scan_body(hir, id, &|n| matches!(n, HirNode::SuperCall { .. }))
 }
 
 pub(crate) fn scan_contains_super_body(hir: &Hir, body: &[NodeId]) -> bool {
-    let mut found = false;
-    for &n in body {
-        found |= scan_contains_super(hir, n);
-    }
-    found
+    scan_stmts(hir, body, &|n| matches!(n, HirNode::SuperCall { .. }))
 }
 
 /// Recursively scans a method body for `@ivar` reads/writes so the class's
