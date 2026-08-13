@@ -1301,6 +1301,18 @@ impl Compiler {
         hit
     }
 
+    /// The `#<Class:self>` surrogate standing in for `owner`'s `class << self`
+    /// body, if it has one.
+    ///
+    /// Both callers used to scan every registered class for it, from inside
+    /// per-class loops -- the same scan written twice, quadratic in the class
+    /// count. `class_in_scope` answers it with the same first-registered-wins
+    /// rule, and the surrogate shares its owner's box because a `class <<
+    /// self` body is lexically inside the owner.
+    pub(crate) fn singleton_surrogate_of(&self, owner: ClassId) -> Option<ClassId> {
+        self.class_in_scope(Some(owner), SINGLETON_SURROGATE, self.class(owner).box_id)
+    }
+
     /// Creates (idempotently) box `box_id`'s top-level surrogate -- see
     /// `box_surrogates`' docs. Registered like any module, so `p box`
     /// prints the surrogate's name through the ordinary Class-value path.

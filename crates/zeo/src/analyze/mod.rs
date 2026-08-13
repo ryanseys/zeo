@@ -5145,13 +5145,7 @@ fn register_method(
                 .hir
                 .has_flag(*n, crate::hir::NodeFlag::SINGLETON_BODY_DEF)
         })
-        .and_then(|_| {
-            compiler.classes.iter().position(|c| {
-                c.lexical_parent == Some(defining_class)
-                    && c.name == crate::compiler::SINGLETON_SURROGATE
-            })
-        })
-        .map(|i| ClassId(i as u32));
+        .and_then(|_| compiler.singleton_surrogate_of(defining_class));
     // A `def` in a LAZILY-LOADED unit is registered but not PROMISED --
     // whether it exists at any point of the run is decided by whether its
     // unit has loaded by then, which only the runtime knows. Its row stays

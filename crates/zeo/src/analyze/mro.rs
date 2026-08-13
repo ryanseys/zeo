@@ -115,12 +115,10 @@ pub fn materialize(
         if prepends.is_empty() {
             continue;
         }
-        let Some(surrogate) = compiler.classes.iter().position(|c| {
-            c.lexical_parent == Some(cid) && c.name == crate::compiler::SINGLETON_SURROGATE
-        }) else {
+        let Some(surrogate) = compiler.singleton_surrogate_of(cid) else {
             continue;
         };
-        let s = &mut compiler.classes[surrogate];
+        let s = &mut compiler.classes[surrogate.0 as usize];
         for m in prepends {
             if !s.prepends.contains(&m) {
                 s.prepends.push(m);
