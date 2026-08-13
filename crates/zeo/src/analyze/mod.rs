@@ -2953,6 +2953,16 @@ fn collect_runtime_undefs(compiler: &Compiler, stmt: NodeId) -> Vec<String> {
     let mut out = Vec::new();
     let mut stack = vec![stmt];
     while let Some(id) = stack.pop() {
+        // A NESTED class collects its own, through this same call on its own
+        // body statements, so descending credited its undefs to the enclosing
+        // class as well -- de-optimizing that name on a class that never
+        // undefs it. A `def` body is NOT stopped at: `def self.setup;
+        // undef_method :m; end` has `self` as the module, so its undef really
+        // does target this class, and missing one emits a direct call to a
+        // method that is gone.
+        if id != stmt && matches!(compiler.hir[id], HirNode::ClassDef { .. }) {
+            continue;
+        }
         if let HirNode::Call {
             receiver: None,
             name,
@@ -3254,6 +3264,17 @@ fn collect_shell_kinds_node(
         // A box's body is a fresh top-level scope under the box's id.
         HirNode::BoxScope { box_id: bx, body } => {
             collect_shell_kinds(hir, body, &[], *bx, out);
+        }
+        // ...and a `define_method(:x) { module M; end }` is a BLOCK wearing a
+        // `DefMethod`'s shape, so it descends like one -- the exception
+        // `collect_nested_bodies` grew in f51b9b40 and this walk did not,
+        // despite the doc above binding the two together. Without it a module
+        // defined in a `define_method` block REGISTERS but is absent from
+        // `shell_kinds`, so no earlier file can forward-resolve it.
+        HirNode::DefMethod { body, .. }
+            if hir.has_flag(id, crate::hir::NodeFlag::BLOCK_BODIED_DEF) =>
+        {
+            collect_shell_kinds(hir, body, scope, box_id, out);
         }
         // The registration walk's own stop: a method body is a separate
         // function ruby rejects a `class` inside. A `Lambda` descends via
