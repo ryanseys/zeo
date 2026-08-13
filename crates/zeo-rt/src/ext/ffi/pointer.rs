@@ -8,12 +8,13 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use super::{
-    RPointer, address_of, bytes_to_str, off_arg, ptr_of, read_float_array, read_float_m,
-    read_int_array, read_int_m, str_bytes, wrap_address, write_float_array, write_float_m,
-    write_int_array, write_int_m,
+    RPointer, address_of, bytes_to_str, memptr_elem_size, method_name_arg, off_arg, ptr_of,
+    read_float_array, read_float_m, read_int_array, read_int_m, read_pointer_array,
+    read_string_array, read_typed_array, str_bytes, wrap_address, write_float_array, write_float_m,
+    write_int_array, write_int_m, write_pointer_array, write_typed_array,
 };
-use crate::RubyValue;
 use crate::builtins::{index_error, type_error};
+use crate::{RubyValue, Symbol};
 use zeo_abi::FFI_POINTER_CLASS;
 use zeo_macros::ruby_class;
 
@@ -201,20 +202,116 @@ ruby_class! {
     }
 
     // -- typed arrays --
-    def "read_array_of_int8"(r, count) { read_int_array(r, count, 1, true) }
-    def "read_array_of_uint8"(r, count) { read_int_array(r, count, 1, false) }
-    def "read_array_of_int16"(r, count) { read_int_array(r, count, 2, true) }
-    def "read_array_of_int32" | "read_array_of_int"(r, count) { read_int_array(r, count, 4, true) }
-    def "read_array_of_uint32" | "read_array_of_uint"(r, count) { read_int_array(r, count, 4, false) }
-    def "read_array_of_int64" | "read_array_of_long"(r, count) { read_int_array(r, count, 8, true) }
-    def "write_array_of_int8"(r, ary) { write_int_array(r, ary, 1) }
-    def "write_array_of_int16"(r, ary) { write_int_array(r, ary, 2) }
-    def "write_array_of_int32" | "write_array_of_int"(r, ary) { write_int_array(r, ary, 4) }
-    def "write_array_of_int64" | "write_array_of_long"(r, ary) { write_int_array(r, ary, 8) }
-    def "read_array_of_double"(r, count) { read_float_array(r, count, 8) }
-    def "read_array_of_float"(r, count) { read_float_array(r, count, 4) }
-    def "write_array_of_double"(r, ary) { write_float_array(r, ary, 8) }
-    def "write_array_of_float"(r, ary) { write_float_array(r, ary, 4) }
+    // Four spellings per type, exactly as ruby-ffi's `AbstractMemory` has
+    // them: `read_`/`write_` start at offset 0, `get_`/`put_` take one.
+    def "read_array_of_int8" | "read_array_of_char"(r, count) { read_int_array(r, 0, count, 1, true) }
+    def "read_array_of_uint8" | "read_array_of_uchar"(r, count) { read_int_array(r, 0, count, 1, false) }
+    def "read_array_of_int16" | "read_array_of_short"(r, count) { read_int_array(r, 0, count, 2, true) }
+    def "read_array_of_uint16" | "read_array_of_ushort"(r, count) { read_int_array(r, 0, count, 2, false) }
+    def "read_array_of_int32" | "read_array_of_int"(r, count) { read_int_array(r, 0, count, 4, true) }
+    def "read_array_of_uint32" | "read_array_of_uint"(r, count) { read_int_array(r, 0, count, 4, false) }
+    def "read_array_of_int64" | "read_array_of_long" | "read_array_of_long_long"(r, count) { read_int_array(r, 0, count, 8, true) }
+    def "read_array_of_uint64" | "read_array_of_ulong" | "read_array_of_ulong_long"(r, count) { read_int_array(r, 0, count, 8, false) }
+    def "write_array_of_int8" | "write_array_of_char"(r, ary) { write_int_array(r, 0, ary, 1) }
+    def "write_array_of_uint8" | "write_array_of_uchar"(r, ary) { write_int_array(r, 0, ary, 1) }
+    def "write_array_of_int16" | "write_array_of_short"(r, ary) { write_int_array(r, 0, ary, 2) }
+    def "write_array_of_uint16" | "write_array_of_ushort"(r, ary) { write_int_array(r, 0, ary, 2) }
+    def "write_array_of_int32" | "write_array_of_int"(r, ary) { write_int_array(r, 0, ary, 4) }
+    def "write_array_of_uint32" | "write_array_of_uint"(r, ary) { write_int_array(r, 0, ary, 4) }
+    def "write_array_of_int64" | "write_array_of_long" | "write_array_of_long_long"(r, ary) { write_int_array(r, 0, ary, 8) }
+    def "write_array_of_uint64" | "write_array_of_ulong" | "write_array_of_ulong_long"(r, ary) { write_int_array(r, 0, ary, 8) }
+    def "read_array_of_double"(r, count) { read_float_array(r, 0, count, 8) }
+    def "read_array_of_float"(r, count) { read_float_array(r, 0, count, 4) }
+    def "write_array_of_double"(r, ary) { write_float_array(r, 0, ary, 8) }
+    def "write_array_of_float"(r, ary) { write_float_array(r, 0, ary, 4) }
+    def "read_array_of_pointer"(r, count) { read_pointer_array(r, 0, count) }
+    def "write_array_of_pointer"(r, ary) { write_pointer_array(r, 0, ary) }
+    def "read_array_of_string" cfunc (r, count?) { read_string_array(r, 0, count) }
+
+    def "get_array_of_int8" | "get_array_of_char"(r, off, count) { read_int_array(r, off_arg(Some(off))?, count, 1, true) }
+    def "get_array_of_uint8" | "get_array_of_uchar"(r, off, count) { read_int_array(r, off_arg(Some(off))?, count, 1, false) }
+    def "get_array_of_int16" | "get_array_of_short"(r, off, count) { read_int_array(r, off_arg(Some(off))?, count, 2, true) }
+    def "get_array_of_uint16" | "get_array_of_ushort"(r, off, count) { read_int_array(r, off_arg(Some(off))?, count, 2, false) }
+    def "get_array_of_int32" | "get_array_of_int"(r, off, count) { read_int_array(r, off_arg(Some(off))?, count, 4, true) }
+    def "get_array_of_uint32" | "get_array_of_uint"(r, off, count) { read_int_array(r, off_arg(Some(off))?, count, 4, false) }
+    def "get_array_of_int64" | "get_array_of_long" | "get_array_of_long_long"(r, off, count) { read_int_array(r, off_arg(Some(off))?, count, 8, true) }
+    def "get_array_of_uint64" | "get_array_of_ulong" | "get_array_of_ulong_long"(r, off, count) { read_int_array(r, off_arg(Some(off))?, count, 8, false) }
+    def "put_array_of_int8" | "put_array_of_char"(r, off, ary) { write_int_array(r, off_arg(Some(off))?, ary, 1) }
+    def "put_array_of_uint8" | "put_array_of_uchar"(r, off, ary) { write_int_array(r, off_arg(Some(off))?, ary, 1) }
+    def "put_array_of_int16" | "put_array_of_short"(r, off, ary) { write_int_array(r, off_arg(Some(off))?, ary, 2) }
+    def "put_array_of_uint16" | "put_array_of_ushort"(r, off, ary) { write_int_array(r, off_arg(Some(off))?, ary, 2) }
+    def "put_array_of_int32" | "put_array_of_int"(r, off, ary) { write_int_array(r, off_arg(Some(off))?, ary, 4) }
+    def "put_array_of_uint32" | "put_array_of_uint"(r, off, ary) { write_int_array(r, off_arg(Some(off))?, ary, 4) }
+    def "put_array_of_int64" | "put_array_of_long" | "put_array_of_long_long"(r, off, ary) { write_int_array(r, off_arg(Some(off))?, ary, 8) }
+    def "put_array_of_uint64" | "put_array_of_ulong" | "put_array_of_ulong_long"(r, off, ary) { write_int_array(r, off_arg(Some(off))?, ary, 8) }
+    def "get_array_of_float64" | "get_array_of_double"(r, off, count) { read_float_array(r, off_arg(Some(off))?, count, 8) }
+    def "get_array_of_float32" | "get_array_of_float"(r, off, count) { read_float_array(r, off_arg(Some(off))?, count, 4) }
+    def "put_array_of_float64" | "put_array_of_double"(r, off, ary) { write_float_array(r, off_arg(Some(off))?, ary, 8) }
+    def "put_array_of_float32" | "put_array_of_float"(r, off, ary) { write_float_array(r, off_arg(Some(off))?, ary, 4) }
+    def "get_array_of_pointer"(r, off, count) { read_pointer_array(r, off_arg(Some(off))?, count) }
+    def "put_array_of_pointer"(r, off, ary) { write_pointer_array(r, off_arg(Some(off))?, ary) }
+    def "get_array_of_string" cfunc (r, off, count?) { read_string_array(r, off_arg(Some(off))?, count) }
+
+    // `read_array_of_type(type, reader, length)` / its writer twin -- the
+    // generic forms ruby-ffi's `pointer.rb` writes in Ruby, over the same
+    // accessors above.
+    def "read_array_of_type"(r, ty, reader, length) {
+        let bytes = memptr_elem_size(ty)?;
+        let name = method_name_arg(reader)?;
+        read_typed_array(r, &name, bytes, length)
+    }
+    def "write_array_of_type"(r, ty, writer, ary) {
+        let bytes = memptr_elem_size(ty)?;
+        let name = method_name_arg(writer)?;
+        write_typed_array(r, &name, bytes, ary)
+    }
+
+    // -- whole-buffer helpers --
+    // `#clear` zeroes the whole extent; a pointer of unknown extent has
+    // nothing to clear and ruby-ffi leaves it alone.
+    def "clear"(recv) {
+        let p = ptr_of(recv);
+        if let Some(n) = p.size {
+            p.check_bounds(0, n)?;
+            for i in 0..n {
+                unsafe { p.write_int(i, 1, 0) };
+            }
+        }
+        Ok(recv.clone())
+    }
+    // `MemoryPointer#type_size` -- the element size `new` was given, so
+    // `ptr[i]` and `#+ type_size` step one element.
+    def "type_size"(recv) {
+        Ok(RubyValue::Int(ptr_of(recv).type_size.load(Ordering::Relaxed) as i64))
+    }
+    // Byte order. zeo builds only for little-endian targets today, and
+    // `order(:big)` would have to swap on every access -- refused loudly
+    // rather than answered wrongly. The no-argument read is exact.
+    def "order" cfunc (recv, want?) {
+        let Some(want) = want else {
+            return Ok(RubyValue::Symbol(Symbol::intern(
+                if cfg!(target_endian = "little") { "little" } else { "big" },
+            )));
+        };
+        let name = method_name_arg(want)?;
+        let native = if cfg!(target_endian = "little") { "little" } else { "big" };
+        if name == native || name == "native" {
+            return Ok(recv.clone());
+        }
+        Err(crate::dispatch::raise_error(
+            "NotImplementedError",
+            format!("FFI::Pointer#order(:{name}) isn't supported yet (zeo limitation) -- \
+                     this target is {native}-endian and no byte-swapping view exists"),
+        ))
+    }
+    // `read_string_length(len)` -- exactly `len` bytes, NULs included, unlike
+    // `read_string`'s NUL-terminated read.
+    def "read_string_length"(recv, len) {
+        let n = crate::ffi::to_i64(len)? as usize;
+        let p = ptr_of(recv);
+        p.check_bounds(0, n)?;
+        Ok(bytes_to_str(unsafe { p.read_bytes_at(0, n) }))
+    }
 
     // -- identity / arithmetic --
     def "null?"(recv) {

@@ -38,7 +38,7 @@ use crate::dispatch::{RObj, RubyObject, raise_error};
 use crate::{ClassId, RubyValue, Signal};
 use std::alloc::{Layout, alloc_zeroed, dealloc};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use zeo_abi::{FFI_MEMORY_POINTER_CLASS, FFI_POINTER_CLASS};
 
 /// A heap buffer an owned pointer allocated, freed when the last pointer
@@ -96,6 +96,10 @@ pub struct RPointer {
     /// so the flag is reported faithfully and `#free` is the release that
     /// actually happens -- see `Pointer#free`.
     pub(super) autorelease: AtomicBool,
+    /// `MemoryPointer#type_size` -- the element size `new(:int, n)` was given,
+    /// so `#+ type_size` steps one element. 1 for a pointer minted from a raw
+    /// address or a byte count, which is what the gem answers there too.
+    pub(super) type_size: AtomicUsize,
 }
 
 unsafe impl Send for RPointer {}
@@ -113,6 +117,7 @@ impl RPointer {
             func: None,
             frozen: AtomicBool::new(false),
             autorelease: AtomicBool::new(true),
+            type_size: AtomicUsize::new(1),
         }
     }
 
@@ -139,6 +144,7 @@ impl RPointer {
             func: None,
             frozen: AtomicBool::new(false),
             autorelease: AtomicBool::new(false),
+            type_size: AtomicUsize::new(1),
         }
     }
 
@@ -153,6 +159,7 @@ impl RPointer {
             func: None,
             frozen: AtomicBool::new(false),
             autorelease: AtomicBool::new(false),
+            type_size: AtomicUsize::new(1),
         }
     }
 
@@ -278,6 +285,7 @@ impl RubyObject for RPointer {
             class: self.class,
             func: self.func.clone(),
             frozen: AtomicBool::new(false),
+            type_size: AtomicUsize::new(self.type_size.load(Ordering::Relaxed)),
             // A dup is a second handle onto the SAME memory, so it must not
             // claim ownership of it -- the gem's `#dup` answers false too.
             autorelease: AtomicBool::new(false),
@@ -411,61 +419,207 @@ fn str_bytes(v: &RubyValue) -> Result<Vec<u8>, Signal> {
 }
 
 fn bytes_to_str(bytes: Vec<u8>) -> RubyValue {
-    RubyValue::Str(crate::string_from_bytes(
-        bytes,
-        crate::encoding::default_external(),
-    ))
+    // ASCII-8BIT, not the default external: every ffi read hands back raw C
+    // bytes, and ruby-ffi tags them BINARY (oracle-verified on `read_string`,
+    // `read_bytes`, `get_string`, `get_bytes` and `read_array_of_string`).
+    RubyValue::Str(crate::string_from_bytes(bytes, crate::encoding::ASCII_8BIT))
 }
 
-/// `read_array_of_<int>(count)` -> an `Array` of `count` integers.
+/// `read_array_of_<int>(count)` / `get_array_of_<int>(offset, count)` -> an
+/// `Array` of `count` integers. The `read_` spelling is the `off = 0` case,
+/// exactly as it is for the scalar accessors.
 fn read_int_array(
     recv: &RubyValue,
+    off: usize,
     count: &RubyValue,
     bytes: usize,
     signed: bool,
 ) -> Result<RubyValue, Signal> {
     let n = crate::ffi::to_i64(count)? as usize;
     let p = ptr_of(recv);
-    p.check_bounds(0, n * bytes)?;
+    p.check_bounds(off, n * bytes)?;
     let out: Vec<RubyValue> = (0..n)
-        .map(|i| RubyValue::Int(unsafe { p.read_int(i * bytes, bytes, signed) }))
+        .map(|i| RubyValue::Int(unsafe { p.read_int(off + i * bytes, bytes, signed) }))
         .collect();
     Ok(RubyValue::Array(crate::array_new(out)))
 }
 
-/// `write_array_of_<int>(array)` -- writes each element sequentially.
-fn write_int_array(recv: &RubyValue, ary: &RubyValue, bytes: usize) -> Result<RubyValue, Signal> {
+/// `write_array_of_<int>(array)` / `put_array_of_<int>(offset, array)` --
+/// writes each element sequentially.
+fn write_int_array(
+    recv: &RubyValue,
+    off: usize,
+    ary: &RubyValue,
+    bytes: usize,
+) -> Result<RubyValue, Signal> {
     let elems = array_elems(ary)?;
     let p = ptr_of(recv);
-    p.check_bounds(0, elems.len() * bytes)?;
+    p.check_bounds(off, elems.len() * bytes)?;
     for (i, e) in elems.iter().enumerate() {
-        unsafe { p.write_int(i * bytes, bytes, crate::ffi::to_i64(e)?) };
+        unsafe { p.write_int(off + i * bytes, bytes, crate::ffi::to_i64(e)?) };
     }
     Ok(recv.clone())
 }
 
 fn read_float_array(
     recv: &RubyValue,
+    off: usize,
     count: &RubyValue,
     bytes: usize,
 ) -> Result<RubyValue, Signal> {
     let n = crate::ffi::to_i64(count)? as usize;
     let p = ptr_of(recv);
-    p.check_bounds(0, n * bytes)?;
+    p.check_bounds(off, n * bytes)?;
     let out: Vec<RubyValue> = (0..n)
-        .map(|i| RubyValue::Float(unsafe { p.read_float(i * bytes, bytes) }))
+        .map(|i| RubyValue::Float(unsafe { p.read_float(off + i * bytes, bytes) }))
         .collect();
     Ok(RubyValue::Array(crate::array_new(out)))
 }
 
-fn write_float_array(recv: &RubyValue, ary: &RubyValue, bytes: usize) -> Result<RubyValue, Signal> {
+fn write_float_array(
+    recv: &RubyValue,
+    off: usize,
+    ary: &RubyValue,
+    bytes: usize,
+) -> Result<RubyValue, Signal> {
     let elems = array_elems(ary)?;
     let p = ptr_of(recv);
-    p.check_bounds(0, elems.len() * bytes)?;
+    p.check_bounds(off, elems.len() * bytes)?;
     for (i, e) in elems.iter().enumerate() {
-        unsafe { p.write_float(i * bytes, bytes, crate::ffi::to_f64(e)?) };
+        unsafe { p.write_float(off + i * bytes, bytes, crate::ffi::to_f64(e)?) };
     }
     Ok(recv.clone())
+}
+
+/// `read_array_of_pointer(count)` / `get_array_of_pointer(offset, count)` --
+/// each slot is a raw address, wrapped as an `FFI::Pointer`.
+fn read_pointer_array(
+    recv: &RubyValue,
+    off: usize,
+    count: &RubyValue,
+) -> Result<RubyValue, Signal> {
+    let n = crate::ffi::to_i64(count)? as usize;
+    let p = ptr_of(recv);
+    p.check_bounds(off, n * 8)?;
+    let out: Vec<RubyValue> = (0..n)
+        .map(|i| wrap_address(unsafe { p.read_int(off + i * 8, 8, false) } as usize))
+        .collect();
+    Ok(RubyValue::Array(crate::array_new(out)))
+}
+
+fn write_pointer_array(recv: &RubyValue, off: usize, ary: &RubyValue) -> Result<RubyValue, Signal> {
+    let elems = array_elems(ary)?;
+    let p = ptr_of(recv);
+    p.check_bounds(off, elems.len() * 8)?;
+    for (i, e) in elems.iter().enumerate() {
+        let addr = address_of(e).unwrap_or(0);
+        unsafe { p.write_int(off + i * 8, 8, addr as i64) };
+    }
+    Ok(recv.clone())
+}
+
+/// `read_array_of_string(count)` / `get_array_of_string(offset, count)` -- an
+/// array of `char *`, each read as a NUL-terminated string (a NULL slot is
+/// `nil`). ruby-ffi has no `put_` twin for this one.
+fn read_string_array(
+    recv: &RubyValue,
+    off: usize,
+    count: Option<&RubyValue>,
+) -> Result<RubyValue, Signal> {
+    let p = ptr_of(recv);
+    // No count: read until the first NULL slot, ruby-ffi's own argv rule.
+    let n = match count {
+        Some(c) => crate::ffi::to_i64(c)? as usize,
+        None => {
+            let mut n = 0usize;
+            loop {
+                p.check_bounds(off + n * 8, 8)?;
+                if unsafe { p.read_int(off + n * 8, 8, false) } == 0 {
+                    break n;
+                }
+                n += 1;
+            }
+        }
+    };
+    p.check_bounds(off, n * 8)?;
+    let out: Vec<RubyValue> = (0..n)
+        .map(|i| {
+            let addr = unsafe { p.read_int(off + i * 8, 8, false) } as usize;
+            if addr == 0 {
+                RubyValue::Nil
+            } else {
+                bytes_to_str(unsafe { c_string_bytes(addr) })
+            }
+        })
+        .collect();
+    Ok(RubyValue::Array(crate::array_new(out)))
+}
+
+/// The NUL-terminated bytes at a raw address.
+///
+/// # Safety
+/// `addr` must point at a NUL-terminated C string the caller owns or
+/// borrows -- the same contract every `:string` return already relies on.
+unsafe fn c_string_bytes(addr: usize) -> Vec<u8> {
+    unsafe { std::ffi::CStr::from_ptr(addr as *const libc::c_char) }
+        .to_bytes()
+        .to_vec()
+}
+
+/// `read_array_of_type(type, :reader, n)` -- ruby-ffi writes this one in Ruby,
+/// over the very accessors above; it names the reader as a Symbol and steps by
+/// the type's own size.
+fn read_typed_array(
+    recv: &RubyValue,
+    reader: &str,
+    bytes: usize,
+    length: &RubyValue,
+) -> Result<RubyValue, Signal> {
+    let n = crate::ffi::to_i64(length)? as usize;
+    let sym = crate::Symbol::intern(reader);
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        let slot = RubyValue::Object(Arc::new(ptr_of(recv).offset(i * bytes)));
+        out.push(crate::dispatch::send_value(&slot, sym, &[], None)?);
+    }
+    Ok(RubyValue::Array(crate::array_new(out)))
+}
+
+/// The writer twin -- and NOT symmetric with the reader: ruby-ffi's own
+/// `write_array_of_type` sends `writer(i * size, val)` to SELF, so the method
+/// it names is the offset-taking `put_` spelling while the reader's is the
+/// offset-0 `read_` one (`pointer.rb`, lines 128-138).
+fn write_typed_array(
+    recv: &RubyValue,
+    writer: &str,
+    bytes: usize,
+    ary: &RubyValue,
+) -> Result<RubyValue, Signal> {
+    let elems = array_elems(ary)?;
+    let sym = crate::Symbol::intern(writer);
+    for (i, e) in elems.iter().enumerate() {
+        let args = [RubyValue::Int((i * bytes) as i64), e.clone()];
+        crate::dispatch::send_value(recv, sym, &args, None)?;
+    }
+    Ok(recv.clone())
+}
+
+/// Record the element size `MemoryPointer.new(:int, n)` was built with, which
+/// is what `#type_size` answers back.
+fn set_type_size(v: &RubyValue, elem: usize) {
+    ptr_of(v).type_size.store(elem, Ordering::Relaxed);
+}
+
+/// A method NAME argument spelled either way (`:read_int` / `"read_int"`).
+fn method_name_arg(v: &RubyValue) -> Result<String, Signal> {
+    match v {
+        RubyValue::Symbol(s) => Ok(s.name().to_string()),
+        RubyValue::Str(s) => Ok(s.lock().to_utf8_lossy().into_owned()),
+        other => Err(type_error!(
+            "{} is not a symbol nor a string",
+            crate::builtins::class_name_of(other)
+        )),
+    }
 }
 
 fn array_elems(v: &RubyValue) -> Result<Vec<RubyValue>, Signal> {

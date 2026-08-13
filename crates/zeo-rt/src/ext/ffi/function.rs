@@ -87,6 +87,7 @@ ruby_class! {
             func: Some(Arc::new(FuncData { arg_kinds, ret, _closure: closure })),
             frozen: AtomicBool::new(false),
             autorelease: AtomicBool::new(false),
+            type_size: std::sync::atomic::AtomicUsize::new(1),
         })))
     }
 

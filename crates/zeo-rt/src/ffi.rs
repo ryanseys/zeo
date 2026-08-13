@@ -282,10 +282,10 @@ pub unsafe fn from_cstr(p: *const c_char) -> RubyValue {
             return RubyValue::Nil;
         }
         let bytes = CStr::from_ptr(p).to_bytes().to_vec();
-        RubyValue::Str(crate::string_from_bytes(
-            bytes,
-            crate::encoding::default_external(),
-        ))
+        // ASCII-8BIT, matching ruby-ffi: a `:string` return is raw C bytes and
+        // the gem tags them BINARY, not the default external (oracle-verified
+        // on `getenv`).
+        RubyValue::Str(crate::string_from_bytes(bytes, crate::encoding::ASCII_8BIT))
     }
 }
 

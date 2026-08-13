@@ -24,6 +24,7 @@ ruby_class! {
             Some(v) => crate::ffi::to_i64(v)? as usize,
         };
         let ptr = new_memory(elem * count);
+        super::set_type_size(&ptr, elem);
         match block {
             Some(p @ RubyValue::Proc(_)) => {
                 crate::dispatch::send_value(&p, Symbol::intern("call"), &[ptr], None)
