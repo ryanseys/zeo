@@ -1404,21 +1404,16 @@ fn eval_static_class_self_guard(hir: &Hir, cond: NodeId) -> Option<bool> {
 
 /// Whether the program ASSIGNS this constant a value anywhere already lowered
 /// (`B = Box.new`, `Foo = Class.new`) -- which makes it a value-holding
-/// constant rather than the name of a compile-time class. Scans the arena
-/// rather than threading a set through lowering: the assignment is lowered
-/// before any later statement that reads it, which is the same
-/// "defined earlier in the file" rule `Compiler::resolve_class` applies.
+/// constant rather than the name of a compile-time class. "Already lowered" is
+/// the point: the assignment is lowered before any later statement that reads
+/// it, which is the same "defined earlier in the file" rule
+/// `Compiler::resolve_class` applies, and `Hir::const_write_values` is
+/// maintained as writes are pushed so it keeps that property.
 ///
-/// `scope` is folded in so a namespaced `M::D` is matched exactly, never by
-/// its leaf alone.
+/// `scope` is folded into the key so a namespaced `M::D` is matched exactly,
+/// never by its leaf alone.
 pub(crate) fn const_is_assigned(hir: &Hir, name: &str) -> bool {
-    hir.nodes().iter().any(|node| match node {
-        HirNode::ConstWrite { scope, name: n, .. } => match scope {
-            Some(s) => format!("{s}::{n}") == name,
-            None => n == name,
-        },
-        _ => false,
-    })
+    !hir.const_write_values(name).is_empty()
 }
 
 /// Whether every statement in a class body can be expressed as the BLOCK the
@@ -1507,20 +1502,9 @@ pub(crate) fn runtime_class_body_keeps_its_scope(body: Option<Node<'_>>) -> bool
 /// (a bare `C = 7` inside `module B`, which lowers to a scope-less `ConstWrite`)
 /// does not misroute a fresh nested `class C` onto the runtime-reopen path.
 pub(crate) fn const_holds_runtime_class(hir: &Hir, name: &str) -> bool {
-    hir.nodes().iter().any(|node| match node {
-        HirNode::ConstWrite {
-            scope,
-            name: n,
-            value,
-        } => {
-            let matches_name = match scope {
-                Some(s) => format!("{s}::{n}") == name,
-                None => n == name,
-            };
-            matches_name && value_mints_runtime_class(hir, *value)
-        }
-        _ => false,
-    })
+    hir.const_write_values(name)
+        .iter()
+        .any(|&v| value_mints_runtime_class(hir, v))
 }
 
 /// The member list of a `Struct.new(:a, :b)` zeo can compile to a REAL class,
@@ -1850,14 +1834,11 @@ pub(crate) fn qualified_const_mints_runtime_class(hir: &Hir, name: &str) -> bool
     if leaf == name {
         return false;
     }
-    hir.nodes().iter().any(|node| match node {
-        HirNode::ConstWrite {
-            scope: None,
-            name: n,
-            value,
-        } => n == leaf && value_mints_runtime_class(hir, *value),
-        _ => false,
-    })
+    // The leaf keys `const_write_values` exactly the SCOPE-LESS writes: an
+    // explicit `M::D = ...` is filed under `"M::D"`, which no leaf equals.
+    hir.const_write_values(leaf)
+        .iter()
+        .any(|&v| value_mints_runtime_class(hir, v))
 }
 
 /// Whether an already-lowered `class`/`module` DEFINES this name HERE, making

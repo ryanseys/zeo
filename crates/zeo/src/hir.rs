@@ -242,6 +242,21 @@ pub struct Hir {
     /// scanning the whole arena. Push order also makes that walk deterministic,
     /// which iterating a `HashSet` never was.
     block_bodied_def_list: Vec<NodeId>,
+    /// Every constant SPELLING the program assigns, mapped to the value nodes
+    /// assigned to it -- see [`Hir::const_write_values`].
+    ///
+    /// The key is the spelling as written: `"M::D"` for an explicit
+    /// `M::D = ...`, the bare leaf otherwise. That is what the three
+    /// "is this constant assigned?" predicates in `lower::defs` matched by
+    /// hand, each sweeping the WHOLE arena per `class` statement and
+    /// `format!`-ing the scoped spelling per visited `ConstWrite` to do it.
+    ///
+    /// Filled during lowering rather than in one sweep afterwards, and that is
+    /// load-bearing rather than incidental: those predicates ask what is
+    /// assigned SO FAR, which is the same "defined earlier in the file" rule
+    /// `Compiler::resolve_class` applies. A map built after lowering would
+    /// answer for later statements too and reroute definitions accordingly.
+    const_writes: crate::compiler::FMap<String, Vec<NodeId>>,
     /// Statements a `class << self` body contributed to its ENCLOSING class
     /// body, mapped to the `class << self` node itself. The singleton
     /// mapping splices them in place (that is the retagging model), so
@@ -790,11 +805,33 @@ impl std::ops::IndexMut<NodeId> for Hir {
 
 impl Hir {
     pub fn push(&mut self, node: HirNode) -> NodeId {
+        self.index_const_write(&node);
         self.nodes.push(node);
         self.spans
             .push(self.span_stack.last().copied().unwrap_or(Span::SYNTH));
         self.flags.push(0);
         NodeId((self.nodes.len() - 1) as u32)
+    }
+
+    /// Records a `ConstWrite` in [`const_writes`](Self::const_writes). Every
+    /// one in the program is born through a `push`, so hooking the two push
+    /// paths keeps the map complete; nothing rewrites a `ConstWrite`'s `scope`
+    /// or `name` in place afterwards (`rename` visits only its `value`).
+    fn index_const_write(&mut self, node: &HirNode) {
+        if let HirNode::ConstWrite { scope, name, value } = node {
+            let key = match scope {
+                Some(s) => format!("{s}::{name}"),
+                None => name.clone(),
+            };
+            self.const_writes.entry(key).or_default().push(*value);
+        }
+    }
+
+    /// The values assigned to the constant spelled `name` so far, in push
+    /// order -- empty when nothing lowered yet assigns it. See
+    /// [`const_writes`](Self::const_writes) for what "spelled" means.
+    pub fn const_write_values(&self, name: &str) -> &[NodeId] {
+        self.const_writes.get(name).map_or(&[], Vec::as_slice)
     }
 
     /// Records `flag` about `id` -- see [`NodeFlag`].
@@ -840,6 +877,7 @@ impl Hir {
     /// wherever the expansion happens to sit.
     pub fn push_from(&mut self, node: HirNode, origin: NodeId) -> NodeId {
         let span = self.spans[origin.0 as usize];
+        self.index_const_write(&node);
         self.nodes.push(node);
         self.spans.push(span);
         self.flags.push(0);
