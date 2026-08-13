@@ -9,6 +9,85 @@ use super::literals::assemble_i64;
 use crate::hir::{Hir, HirNode, NodeId, Params, Visibility};
 use ruby_prism::{Node, ParseResult};
 
+/// One FFI declaration harvested BEFORE lowering, for the program-wide table
+/// only -- see `Loader::lower_file_statements`, which runs this over a file's
+/// own bodies ahead of the class-body requires that pre-lower under them.
+///
+/// Deliberately narrow: only the shapes that need no alias table at all, so
+/// the answer cannot differ from what real lowering will register a moment
+/// later. Anything else is left alone; the real pass is still the one that
+/// decides.
+///
+/// fast_excel is the case this exists for. It declares `enum :error, [...]` at
+/// binding.rb:318 and requires `binding/chart.rb` at 714 -- the source order is
+/// already right, but ALL nested requires pre-lower before ANY of the
+/// requiring file's statements, so the sub-file saw no vocabulary at all.
+pub(crate) fn prescan_declaration(hir: &mut Hir, node: &Node<'_>) {
+    let Some(call) = node.as_call_node() else {
+        return;
+    };
+    if call.receiver().is_some() {
+        return;
+    }
+    let args: Vec<Node<'_>> = call
+        .arguments()
+        .map(|a| a.arguments().iter().collect())
+        .unwrap_or_default();
+    match call.name().as_slice() {
+        // `enum :tag, [:a, 0, :b, 1]` with every member written out. A member
+        // list this pass cannot read is left to the real lowering, which has
+        // the deferred tier for it.
+        b"enum" => {
+            let [tag, members] = args.as_slice() else {
+                return;
+            };
+            let (Ok(tag), Ok(members)) = (
+                ffi_symbol_str(tag),
+                parse_enum_members(std::slice::from_ref(members), hir, &[], &[]),
+            ) else {
+                return;
+            };
+            hir.declare_ffi_type(&tag, &crate::hir::FfiType::Enum(members));
+        }
+        // `typedef :ulong, :XID` -- both sides literal, the source a keyword
+        // the shared table already knows.
+        b"typedef" => {
+            let [src, alias] = args.as_slice() else {
+                return;
+            };
+            let (Ok(src), Ok(alias)) = (ffi_symbol_str(src), ffi_symbol_str(alias)) else {
+                return;
+            };
+            let Ok(ty) = ffi_type_of(&src, &Default::default()) else {
+                return;
+            };
+            hir.declare_ffi_type(&alias, &ty);
+        }
+        _ => {}
+    }
+}
+
+/// [`prescan_declaration`] for a `layout` inside an `FFI::Struct` body.
+///
+/// A field this pass cannot resolve records the CLASS only -- the
+/// by-reference fact every signature position needs, and the one a struct has
+/// whether or not its fields are known yet. The real lowering runs with a
+/// superset of this table and is still the one that decides; a name cannot
+/// come to mean two things, because `declare_ffi_type` poisons a conflicting
+/// redeclaration and a recomputed layout simply overwrites.
+pub(crate) fn prescan_layout(hir: &mut Hir, node: &Node<'_>, class_path: &str, union: bool) {
+    let leaf = class_path.rsplit("::").next().unwrap_or(class_path);
+    hir.mark_ffi_struct_class(leaf);
+    let aliases = hir.inherited_ffi_types();
+    let Ok(Some(fields)) = as_ffi_layout(node, &aliases, hir, &[], &[]) else {
+        return;
+    };
+    let Ok(layout) = ffi_struct_layout(class_path, &fields, union) else {
+        return;
+    };
+    hir.ffi_struct_layouts.insert(leaf.to_string(), layout);
+}
+
 /// `extend FFI::Library` -- the marker that turns a module into an FFI library
 /// (the real `ffi` gem's idiom). Recognized syntactically so the `FFI::Library`
 /// constant never has to resolve at runtime.
@@ -666,7 +745,18 @@ pub(crate) fn lower_ffi_directive(
     // state struct inside the library module, above the `attach_function`s
     // that pass it).
     for (k, v) in hir.inherited_ffi_types() {
-        aliases.entry(k).or_insert(v);
+        match aliases.get(&k) {
+            // A by-reference placeholder YIELDS to a real layout. A struct
+            // class is known before its `layout` lowers -- so a body seeded
+            // when only the name existed held `StructRef`, and a plain
+            // `or_insert` could never replace it, which made a `.by_value`
+            // further down the same body report a layout it now has.
+            Some(crate::hir::FfiType::StructRef(_))
+                if matches!(v, crate::hir::FfiType::Struct(_)) => {}
+            Some(_) => continue,
+            None => {}
+        }
+        aliases.insert(k, v);
     }
     // `SassTag = enum(:sass_boolean, :sass_number, ...)` -- the ANONYMOUS enum,
     // named by the constant it is assigned to rather than by a `:tag` argument.

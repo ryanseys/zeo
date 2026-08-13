@@ -2260,15 +2260,18 @@ struct RequireCollector<'a> {
 /// missing one.
 fn mark_ffi_bodies(hir: &mut Hir, body: &ruby_prism::NodeList<'_>, cref: &mut Vec<String>) {
     for node in body.iter() {
-        let (name, inner) = if let Some(m) = node.as_module_node() {
+        let (name, inner, superclass) = if let Some(m) = node.as_module_node() {
             (
                 crate::lower::consts::constant_path_name(&m.constant_path()).ok(),
                 m.body(),
+                None,
             )
         } else if let Some(c) = node.as_class_node() {
             (
                 crate::lower::consts::constant_path_name(&c.constant_path()).ok(),
                 c.body(),
+                c.superclass()
+                    .and_then(|s| crate::lower::consts::constant_path_name(&s).ok()),
             )
         } else {
             continue;
@@ -2291,6 +2294,18 @@ fn mark_ffi_bodies(hir: &mut Hir, body: &ruby_prism::NodeList<'_>, cref: &mut Ve
                 .any(|s| crate::lower::ffi::is_extend_ffi_library(&s))
             {
                 hir.mark_ffi_library(&path);
+            }
+            let union = matches!(superclass.as_deref(), Some("FFI::Union" | "::FFI::Union"));
+            let is_struct = union
+                || matches!(
+                    superclass.as_deref(),
+                    Some("FFI::Struct" | "::FFI::Struct" | "FFI::ManagedStruct")
+                );
+            for stmt in inner.body().iter() {
+                match is_struct {
+                    true => crate::lower::ffi::prescan_layout(hir, &stmt, &path, union),
+                    false => crate::lower::ffi::prescan_declaration(hir, &stmt),
+                }
             }
             mark_ffi_bodies(hir, &inner.body(), cref);
         }

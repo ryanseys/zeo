@@ -17,3 +17,12 @@ require_relative "ffi_library_marked_before_its_reopen/curl"
 p Curl.pick(:failed)
 p Curl.pick(:ok)
 p Curl.widen(-7)
+
+# The requiring file's OWN declarations reach the file it requires, which is
+# the direction fast_excel needs: it declares `enum :error` at binding.rb:318
+# and `class RepeatRows < FFI::Struct` at 1217, both above the requires at
+# 714 and 1461, and every sub-file passes them by value.
+s = Curl::Stamp.new
+s[:sec] = -12
+p Curl.measure(s)
+p Curl::Frame.size
