@@ -490,6 +490,19 @@ fn construct_root_payload(
     ctor(root, args, block)
 }
 
+/// Whether user Ruby wrote an `initialize` this class answers with. The
+/// frozen registry holds no entry at all for a class `Class.new(Hash) { def
+/// initialize ... }` minted, so asking it alone reported "no initialize" and
+/// the body never ran -- the payload came straight from the root constructor,
+/// and every ivar the method would have set read back `nil`.
+fn defines_initialize(class_id: ClassId) -> bool {
+    let init = Symbol::intern("initialize");
+    has_instance_method(class_id, init)
+        || ancestors_of_value(class_id)
+            .iter()
+            .any(|&anc| crate::runtime_meta::overlay_has_instance_method(anc, init))
+}
+
 /// The `ConstructorFn` behind every value-builtin subclass. With a user
 /// `initialize`, allocate an EMPTY payload and run it (a `super` re-seats via
 /// `value_super`); without one, seed the payload directly from the root
@@ -505,7 +518,7 @@ pub fn value_subclass_construct(
             class_id.0
         )
     });
-    if has_instance_method(class_id, Symbol::intern("initialize")) {
+    if defines_initialize(class_id) {
         let handle = ValueSubclass::alloc(class_id, root, empty_payload(root));
         run_initialize(class_id, &handle, args, block)?;
         Ok(RubyValue::Object(handle))

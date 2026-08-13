@@ -1447,16 +1447,7 @@ pub(crate) fn runtime_class_body_is_expressible(body: Option<Node<'_>>) -> bool 
         {
             return false;
         }
-        // A local write too: a class body opens its OWN scope, while the block
-        // the runtime form becomes closes over the enclosing one. The static
-        // path gets that right, so falling back to it is strictly better than
-        // either diverging or refusing to compile.
-        if stmt.as_local_variable_write_node().is_some()
-            || stmt.as_local_variable_operator_write_node().is_some()
-            || stmt.as_local_variable_and_write_node().is_some()
-            || stmt.as_local_variable_or_write_node().is_some()
-            || stmt.as_multi_write_node().is_some()
-        {
+        if writes_a_local(stmt) {
             return false;
         }
         // `include M` / `private` and friends are receiverless calls, not
@@ -1479,6 +1470,32 @@ pub(crate) fn runtime_class_body_is_expressible(body: Option<Node<'_>>) -> bool 
         }
         true
     })
+}
+
+/// A direct local-variable write in a class body -- the one statement the
+/// runtime forms cannot express at all, rather than merely having to re-spell.
+/// A class body opens its OWN scope, while the block the runtime form becomes
+/// closes over the enclosing one, so `y = 1` here would assign the caller's
+/// `y`. Everything else (`include`, a visibility directive, `alias`, a nested
+/// class) has a runtime spelling -- see `transform_runtime_class_body`.
+fn writes_a_local(stmt: &Node<'_>) -> bool {
+    stmt.as_local_variable_write_node().is_some()
+        || stmt.as_local_variable_operator_write_node().is_some()
+        || stmt.as_local_variable_and_write_node().is_some()
+        || stmt.as_local_variable_or_write_node().is_some()
+        || stmt.as_multi_write_node().is_some()
+}
+
+/// [`writes_a_local`] over a whole class body.
+pub(crate) fn runtime_class_body_keeps_its_scope(body: Option<Node<'_>>) -> bool {
+    let stmts: Vec<Node<'_>> = match body {
+        None => return true,
+        Some(n) => match n.as_statements_node() {
+            Some(s) => s.body().iter().collect(),
+            None => vec![n],
+        },
+    };
+    !stmts.iter().any(writes_a_local)
 }
 
 /// Whether a constant of this name is assigned a value that MINTS a class at
@@ -2171,10 +2188,16 @@ pub(crate) fn lower_runtime_class(
     result: &ParseResult,
     hir: &mut Hir,
     name: &str,
-    superclass: &Node<'_>,
+    superclass: Option<&Node<'_>>,
     body: Option<Node<'_>>,
 ) -> PResult<NodeId> {
-    let parent = lower_node(result, hir, superclass)?;
+    let parent = match superclass {
+        Some(sc) => lower_node(result, hir, sc)?,
+        // No `< Super` clause -- reached only by the runtime-SCOPE route
+        // below, where the class itself is ordinary but its namespace is a
+        // constant no compile-time class backs.
+        None => hir.push(HirNode::ClassRef("Object".to_string())),
+    };
     let block = lower_runtime_class_body(result, hir, name, body)?;
     let class_class = hir.push(HirNode::ClassRef("Class".to_string()));
     let new_call = hir.push(HirNode::Call {
@@ -2196,6 +2219,49 @@ pub(crate) fn lower_runtime_class(
         name: path.base().to_string(),
         value: new_call,
     }))
+}
+
+/// `module NS::Inner` under a runtime-minted `NS` -- the module twin of
+/// [`lower_runtime_class`], writing `Module.new { body }` instead.
+fn lower_runtime_module(
+    result: &ParseResult,
+    hir: &mut Hir,
+    name: &str,
+    body: Option<Node<'_>>,
+) -> PResult<NodeId> {
+    let block = lower_runtime_class_body(result, hir, name, body)?;
+    let module_class = hir.push(HirNode::ClassRef("Module".to_string()));
+    let new_call = hir.push(HirNode::Call {
+        receiver: Some(module_class),
+        name: "new".to_string(),
+        args: Vec::new(),
+        kwargs: Vec::new(),
+        block: Some(block),
+        block_arg: None,
+        safe: false,
+    });
+    let path = crate::constpath::ConstPath::parse(name);
+    Ok(hir.push(HirNode::ConstWrite {
+        scope: path.scope().map(str::to_string),
+        name: path.base().to_string(),
+        value: new_call,
+    }))
+}
+
+/// Whether a definition's NAMESPACE is a constant that mints its class at
+/// runtime -- `class SecretKeys::Encryptor` under `class SecretKeys <
+/// DelegateClass(Hash)`, or `class Kanshi::Collector` under `Kanshi =
+/// Class.new`.
+///
+/// Only the IMMEDIATE prefix is asked, and only when nothing also `class`-
+/// defines it: a namespace some other statement opens statically stays on the
+/// static path, where nesting, `include` and visibility all still work.
+fn runtime_scoped_definition(hir: &Hir, name: &str) -> bool {
+    let Some(prefix) = crate::constpath::ConstPath::parse(name).scope() else {
+        return false;
+    };
+    (const_holds_runtime_class(hir, prefix) || qualified_const_mints_runtime_class(hir, prefix))
+        && !const_is_class_def(hir, prefix)
 }
 
 /// `class D ... end` REOPENING a constant that holds a runtime class
@@ -4206,7 +4272,7 @@ pub(crate) fn try_lower_definition(
                 }
             };
             if runtime_parent {
-                return lower_runtime_class(result, hir, &name, &sc, class.body()).map(Some);
+                return lower_runtime_class(result, hir, &name, Some(&sc), class.body()).map(Some);
             }
         } else if const_holds_runtime_class(hir, &name)
             && !const_is_class_def(hir, &name)
@@ -4225,6 +4291,19 @@ pub(crate) fn try_lower_definition(
             // a program that ran into one that won't build is a worse
             // failure than the one it already had.
             return lower_runtime_class_reopen(result, hir, &name, class.body()).map(Some);
+        }
+        // `class SecretKeys::Encryptor` where `SecretKeys` is itself a runtime
+        // class (`class SecretKeys < DelegateClass(Hash)`, lowered above to a
+        // `Class.new` write). The class being defined here is perfectly
+        // ordinary -- it is its NAMESPACE that no compile-time class backs, so
+        // the static path can only report `unknown class/module SecretKeys`.
+        // Minting this one at runtime too puts the constant inside the parent
+        // that does exist by then.
+        if runtime_scoped_definition(hir, &name)
+            && runtime_class_body_keeps_its_scope(class.body())
+        {
+            let sc = class.superclass();
+            return lower_runtime_class(result, hir, &name, sc.as_ref(), class.body()).map(Some);
         }
         let superclass = match class.superclass() {
             None => None,
@@ -4257,6 +4336,11 @@ pub(crate) fn try_lower_definition(
             return lower_self_scoped_definition(result, hir, leaf, module.body(), None).map(Some);
         }
         let name = constant_path_name(&module.constant_path())?;
+        // The module half of the runtime-scope route above.
+        if runtime_scoped_definition(hir, &name) && runtime_class_body_keeps_its_scope(module.body())
+        {
+            return lower_runtime_module(result, hir, &name, module.body()).map(Some);
+        }
         let body = lower_class_body(result, hir, module.body(), None, Some(&name))?;
         hir.record_class_def(&name);
         return Ok(Some(hir.push(HirNode::ClassDef {

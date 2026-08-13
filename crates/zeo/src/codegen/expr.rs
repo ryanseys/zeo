@@ -1267,6 +1267,25 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             // (A bare `NAME =` never takes this branch: `const_owner_id_opt`
             // falls back to `Object`/the box surrogate for `scope: None`.)
             if const_owner_id_opt(cx, scope.as_deref(), name).is_none() {
+                // ... unless the scope is a name a RUNTIME constant may hold a
+                // class for (`SecretKeys::Encryptor = ...` under
+                // `SecretKeys = Class.new(...)`), which is the write mirror of
+                // `emit_const_read`'s own runtime path. The scope still reads
+                // first, so a genuinely unset one raises the same `NameError`
+                // before the right-hand side runs.
+                if let Some(s) = scope.as_deref() {
+                    let (head, leaf) = split_const_path(s);
+                    let sc = emit_const_read(cx, head.filter(|h| !h.is_empty()), leaf);
+                    let v = emit_expr(cx, *value);
+                    let v = box_if_object_typed(cx, *value, v);
+                    return quote! {
+                        {
+                            let __cscope: zeo_rt::RubyValue = #sc;
+                            let __v: zeo_rt::RubyValue = #v;
+                            zeo_rt::scope_const_set(&__cscope, #name, __v)?
+                        }
+                    };
+                }
                 let err = uninitialized_constant_error(cx, scope.as_deref().unwrap_or(name));
                 return quote! { return Err(zeo_rt::Signal::Raise(#err)) };
             }
@@ -2708,26 +2727,26 @@ pub(super) fn emit_const_read(cx: &Ctx, scope: Option<&str>, name: &str) -> Toke
     // `NameError` on the missing SCOPE (`uninitialized constant OpenSSL`),
     // deferred to runtime so a dead/guarded branch still compiles.
     let Some(owner) = const_owner_id_opt(cx, scope, name) else {
-        // A single-segment scope that isn't a compile-time class may still be a
-        // RUNTIME constant holding a class (`Line = Struct.new(...)` /
-        // `Data.define`), so resolve the path at runtime: read the scope
-        // constant, then the leaf on the class it names. `uninitialized
-        // constant Line::FLAGS` (leaf missing) vs `uninitialized constant Line`
-        // (scope missing) then matches CRuby.
-        if let Some(s) = scope.filter(|s| !s.contains("::")) {
-            let scope_owner = const_owner_id_opt(cx, None, s).unwrap_or(0);
+        // A scope that isn't a compile-time class may still be a RUNTIME
+        // constant holding one (`Line = Struct.new(...)` / `Data.define` /
+        // `class SecretKeys::Encryptor` under a computed superclass), so
+        // resolve the path at runtime: read the scope, then the leaf on the
+        // class it names. `uninitialized constant Line::FLAGS` (leaf missing)
+        // vs `uninitialized constant Line` (scope missing) then matches CRuby.
+        //
+        // Recursive on the scope, so `K::C::P` works the same way `K::C` does:
+        // the inner read is the one that raises for a missing HEAD, and it
+        // reports that head exactly as a bare miss is reported.
+        if let Some(s) = scope {
+            // A TOP-ANCHORED scope (`::Tilt::Template`) splits with an empty
+            // head; that is the anchor, not a namespace to look `Tilt` up in.
+            let (head, leaf) = split_const_path(s);
+            let head = head.filter(|h| !h.is_empty());
+            let scope_expr = emit_const_read(cx, head, leaf);
             let qualified = format!("{s}::{name}");
-            // A missing SCOPE head is reported the way a missing bare constant
-            // is -- qualified by the enclosing cref (`Outer::Wrap::Deep` for a
-            // `Deep::Missing` written inside `module Outer; module Wrap`), which
-            // is what `qualified` below does for the resolved case.
-            let missing_scope = match cx.defining_class {
-                Some(d) => format!("{}::{s}", cx.compiler.fq_name(d)),
-                None => s.to_string(),
-            };
             return quote! {
-                match zeo_rt::const_get(#scope_owner, #s) {
-                    Some(zeo_rt::RubyValue::Class(__cid)) => match zeo_rt::const_get_scoped(__cid.0, #name) {
+                match #scope_expr {
+                    zeo_rt::RubyValue::Class(__cid) => match zeo_rt::const_get_scoped(__cid.0, #name) {
                         Some(__v) => __v,
                         None => return Err(zeo_rt::Signal::Raise(zeo_rt::stamp_backtrace(zeo_rt::make_name_error(
                             format!("uninitialized constant {}", #qualified),
@@ -2735,15 +2754,10 @@ pub(super) fn emit_const_read(cx: &Ctx, scope: Option<&str>, name: &str) -> Toke
                             zeo_rt::RubyValue::Class(__cid),
                         )))),
                     },
-                    Some(__other) => return Err(zeo_rt::raise_error(
+                    __other => return Err(zeo_rt::raise_error(
                         "TypeError",
                         format!("{} is not a class/module", __other.inspect_string()),
                     )),
-                    None => return Err(zeo_rt::Signal::Raise(zeo_rt::stamp_backtrace(zeo_rt::make_name_error(
-                        format!("uninitialized constant {}", #missing_scope),
-                        #s,
-                        zeo_rt::RubyValue::Nil,
-                    )))),
                 }
             };
         }
