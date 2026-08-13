@@ -1,0 +1,18 @@
+[[:a, 0], [:b, 8], [:c, 16], [:d, 24], [:e, 32], [:f, 40], [:g, 48], [:h, 56]]
+true
+[FFI::StructLayout, 64, 8, [:a, :b, :c, :d, :e, :f, :g, :h]]
+[FFI::StructLayout::Number, :a, 0, 4, 4, FFI::Type::Builtin]
+[FFI::StructLayout::Pointer, :b, 8, 8, 8, FFI::Type::Builtin]
+[FFI::StructLayout::Array, :c, 16, 8, 1, FFI::ArrayType]
+[FFI::StructLayout::Number, :d, 24, 8, 8, FFI::Type::Builtin]
+[FFI::StructLayout::InnerStruct, :e, 32, 4, 4, FFI::StructByValue]
+[FFI::StructLayout::String, :f, 40, 8, 8, FFI::Type::Builtin]
+[FFI::StructLayout::Function, :g, 48, 8, 8, FFI::FunctionType]
+[FFI::StructLayout::Number, :h, 56, 1, 1, FFI::Type::Builtin]
+[true, true]
+[24, 32, true]
+[8, "#<FFI::Type::Builtin::INT8 size=1 alignment=1>"]
+[7, 1.5]
+9
+FFI::StructLayout::CharArray
+nil

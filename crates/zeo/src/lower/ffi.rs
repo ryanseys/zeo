@@ -1631,6 +1631,84 @@ fn ffi_field_accessor(ty: &crate::hir::FfiType) -> PResult<(String, String, usiz
 /// signature for a callback field): the canonical scalar keyword, with
 /// `FFI::Type::VOID` for void -- the keyword table deliberately rejects
 /// `:void` in value positions, and the constant resolves to the same kind.
+/// A field's `FFI::StructLayout::Field` DESCRIPTOR -- the Field subclass and
+/// the type object CRuby answers from `.layout.fields`, built from the same
+/// walked layout the accessors are built from.
+///
+/// Divergence recorded once, here: a `:long` field answers
+/// `Type::Builtin::INT64` rather than `LONG`, because both fold to one width
+/// before a layout is recorded and the spelling is gone by now.
+fn ffi_field_descriptor(name: &str, ty: &crate::hir::FfiType, off: usize) -> PResult<String> {
+    use crate::hir::FfiType::*;
+    let (size, align) = {
+        let (_, _, s, a) = ffi_field_accessor(ty)?;
+        (s, a)
+    };
+    let builtin = |n: &str| format!("::FFI::Type::Builtin::{n}");
+    let scalar_name = |ty: &crate::hir::FfiType| match ty {
+        Int(w) => Some(format!("INT{w}")),
+        Uint(w) => Some(format!("UINT{w}")),
+        Float(w) => Some(format!("FLOAT{w}")),
+        Bool => Some("BOOL".to_string()),
+        Str => Some("STRING".to_string()),
+        Pointer => Some("POINTER".to_string()),
+        PlatformScalar(n) => platform_scalar_of(n)
+            .map(crate::hir::FfiType::from)
+            .and_then(|t| match t {
+                Int(w) => Some(format!("INT{w}")),
+                Uint(w) => Some(format!("UINT{w}")),
+                _ => None,
+            }),
+        _ => None,
+    };
+    let (class, type_src) = match ty {
+        Array(elem, count) => {
+            let elem_src = match scalar_name(elem) {
+                Some(n) => builtin(&n),
+                // An array of structs or of arrays: the element's own
+                // descriptor is what `elem_type` should answer with.
+                None => match &**elem {
+                    Struct(l) => format!("::FFI::StructByValue.new({})", l.class_path),
+                    _ => builtin("POINTER"),
+                },
+            };
+            (
+                "Array",
+                format!("::FFI::ArrayType.new({elem_src}, {count})"),
+            )
+        }
+        Struct(l) => (
+            "InnerStruct",
+            format!("::FFI::StructByValue.new({})", l.class_path),
+        ),
+        Callback(args, ret) => {
+            let args: Vec<String> = args.iter().map(ruby_ffi_type_src).collect::<PResult<_>>()?;
+            (
+                "Function",
+                format!(
+                    "::FFI::FunctionType.new({}, [{}])",
+                    ruby_ffi_type_src(ret)?,
+                    args.join(", ")
+                ),
+            )
+        }
+        Enum(_) | EnumSlot(_) => (
+            "Mapped",
+            format!("::FFI::Type::Mapped.new({})", builtin("INT32")),
+        ),
+        Str => ("String", builtin("STRING")),
+        Pointer => ("Pointer", builtin("POINTER")),
+        other => {
+            let n = scalar_name(other)
+                .ok_or_else(|| format!("FFI::Struct field type `{other:?}` has no descriptor"))?;
+            ("Number", builtin(&n))
+        }
+    };
+    Ok(format!(
+        "::FFI::StructLayout::{class}.new(:{name}, {off}, {type_src}, {size}, {align}, self)"
+    ))
+}
+
 fn ruby_ffi_type_src(ty: &crate::hir::FfiType) -> PResult<String> {
     use crate::hir::FfiType::*;
     Ok(match ty {
@@ -2014,6 +2092,18 @@ pub(crate) fn synthesize_ffi_struct(
         .map(|(name, ..)| format!(":{name}"))
         .collect::<Vec<_>>()
         .join(", ");
+    let offsets: String = placed
+        .iter()
+        .map(|(name, _, _, off, _)| format!("[:{name}, {off}]"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let descriptors: String = layout
+        .fields
+        .iter()
+        .zip(&placed)
+        .map(|((name, ty, off), _)| ffi_field_descriptor(name, ty, *off))
+        .collect::<PResult<Vec<_>>>()?
+        .join(",\n    ");
 
     let inline_array_classes = if with_inline_array_classes {
         FFI_INLINE_ARRAY_CLASSES
@@ -2055,6 +2145,24 @@ def self.offset_of(__ffi_field)
 end
 def self.members
   [{members}]
+end
+def self.offsets
+  [{offsets}]
+end
+def offsets
+  self.class.offsets
+end
+def self.layout(*__ffi_args)
+  unless __ffi_args.empty?
+    raise ::NotImplementedError,
+          "a `layout` this class body did not declare isn't supported yet (zeo limitation)"
+  end
+  @__zeo_layout ||= ::FFI::StructLayout.new([
+    {descriptors}
+  ], {total}, {alignment})
+end
+def layout
+  self.class.layout
 end
 "#
     ))

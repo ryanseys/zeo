@@ -306,6 +306,127 @@ module FFI
     find_type(type).size
   end
 
+  # The non-scalar type descriptors, and the layout a struct class answers
+  # from `.layout`. zeo builds all of these from the layout its compiler
+  # already walked, so they describe exactly the bytes the accessors read.
+  #
+  # DIVERGENCE: CRuby makes `StructLayout`, `ArrayType`, `StructByValue` and
+  # `FunctionType` subclasses of `FFI::Type`, which is a native class zeo
+  # cannot subclass yet -- so they are plain classes here and do not carry
+  # `FFI::Type`'s own constants. `StructLayout::Field` is `< Object` in CRuby
+  # too. A second one: a `:long` field reports `Type::Builtin::INT64` rather
+  # than `LONG`, because the compiler folds the two to one width before a
+  # layout is recorded.
+  class ArrayType
+    attr_reader :elem_type, :length
+
+    def initialize(elem_type, length)
+      @elem_type = elem_type
+      @length = length
+    end
+
+    def size = @elem_type.size * @length
+    def alignment = @elem_type.alignment
+
+    def inspect
+      format("#<FFI::ArrayType::0x%016x size=%d alignment=%d>", object_id, size, alignment)
+    end
+  end
+
+  class StructByValue
+    attr_reader :struct_class
+
+    def initialize(struct_class) = @struct_class = struct_class
+    def size = @struct_class.size
+    def alignment = @struct_class.alignment
+
+    def inspect
+      format("#<FFI::StructByValue::0x%016x size=%d alignment=%d>", object_id, size, alignment)
+    end
+  end
+
+  class FunctionType
+    attr_reader :param_types, :result_type
+
+    def initialize(result_type, param_types)
+      @result_type = result_type
+      @param_types = param_types
+    end
+
+    def size = Type::Builtin::POINTER.size
+    def alignment = Type::Builtin::POINTER.alignment
+
+    def inspect
+      format("#<FFI::FunctionType::0x%016x size=%d alignment=%d>", object_id, size, alignment)
+    end
+  end
+
+  class Type
+    # A type that converts on the way in and out -- what an `enum` field's
+    # descriptor is. The conversion itself lives in the struct's generated
+    # accessor; this records the native type underneath it.
+    class Mapped
+      attr_reader :native_type
+
+      def initialize(native_type) = @native_type = native_type
+      def size = @native_type.size
+      def alignment = @native_type.alignment
+
+      def inspect
+        format("#<FFI::Type::Mapped::0x%016x size=%d alignment=%d>", object_id, size, alignment)
+      end
+    end
+  end
+
+  class StructLayout
+    class Field
+      attr_reader :name, :offset, :type, :size, :alignment
+
+      def initialize(name, offset, type, size, alignment, owner)
+        @name = name
+        @offset = offset
+        @type = type
+        @size = size
+        @alignment = alignment
+        @owner = owner
+      end
+
+      # A field's read/write against a pointer to the struct's FIRST byte --
+      # so it goes through a struct viewing those bytes, which is where every
+      # conversion (an enum's symbol, an inline array's proxy, a nested
+      # struct's view) already lives.
+      def get(ptr) = @owner.new(ptr)[@name]
+      def put(ptr, value) = @owner.new(ptr)[@name] = value
+    end
+
+    # The Field subclass names CRuby reports, one per storage shape.
+    class Number < Field; end
+    class Pointer < Field; end
+    class String < Field; end
+    class Array < Field; end
+    class InnerStruct < Field; end
+    class Function < Field; end
+    class Mapped < Field; end
+    class Enum < Field; end
+
+    attr_reader :fields, :size, :alignment
+
+    def initialize(fields, size, alignment)
+      @fields = fields
+      @size = size
+      @alignment = alignment
+    end
+
+    def members = @fields.map(&:name)
+    def offsets = @fields.map { |f| [f.name, f.offset] }
+    def to_a = @fields
+
+    # `nil` for a name this layout has no field for, as the gem answers.
+    def [](name) = @fields.find { |f| f.name == name }
+
+    def offset_of(name) = self[name].offset
+  end
+
   # A library module `extend`s this and speaks in DIRECTIVES the compiler
   # resolves at lowering time. The module exists at runtime because a
   # `def self.extended(host)` hook runs `host.extend FFI::Library` (and then
