@@ -3715,6 +3715,27 @@ fn lower_class_body_statement(
             ordered.insert(0, def);
         }
         tag_singleton_body_defs(hir, &rest);
+        // Ruby gives the whole `class << self` body a backtrace frame of its
+        // own, labelled `singleton class`. These statements are spliced into
+        // the ENCLOSING class body, so codegen has to put the frame back
+        // around them (`emit_body`'s grouping). The surrogate reopens are
+        // excluded: a class body already pushes a frame, and `body_frame_
+        // label` spells the surrogate's the same way, so framing one twice
+        // would report the singleton frame twice.
+        //
+        // The anchor carries the `class << self` keyword's own span, which is
+        // where the frame's line and `end` line come from. It is never
+        // emitted; it exists so the readers stay `source_location` /
+        // `source_end_line`, the pair every other frame uses.
+        hir.push_span(crate::lower::span_of(hir, node));
+        let self_node = hir.push(HirNode::NilLit);
+        hir.pop_span();
+        for &n in &ordered {
+            if matches!(&hir[n], HirNode::ClassDef { name, .. } if name == SINGLETON_SURROGATE) {
+                continue;
+            }
+            hir.singleton_frame_stmts.insert(n, self_node);
+        }
         out.extend(ordered);
         return Ok(());
     }
@@ -4514,7 +4535,16 @@ pub(crate) fn try_lower_definition(
     // methods; this generic path is only top-level/method-body.)
     if let Some(singleton) = node.as_singleton_class_node() {
         let stmts = desugar_singleton_class_defs(result, hir, &singleton)?;
-        return Ok(Some(hir.push(HirNode::Seq(stmts))));
+        let seq = hir.push(HirNode::Seq(stmts));
+        // The body's own `singleton class` frame, as in the class-body
+        // mapping -- one whole `Seq` rather than a run of statements, since
+        // this route keeps them together. Consulted only where the `Seq`
+        // lands as a body STATEMENT; in expression position it is inert.
+        hir.push_span(crate::lower::span_of(hir, node));
+        let anchor = hir.push(HirNode::NilLit);
+        hir.pop_span();
+        hir.singleton_frame_stmts.insert(seq, anchor);
+        return Ok(Some(seq));
     }
 
     Ok(None)

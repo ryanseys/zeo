@@ -180,6 +180,14 @@ pub struct Hir {
     /// block, so the analyze walk has to tell the two apart even though the
     /// desugar gives them one node type (`collect_nested_bodies`).
     pub block_bodied_defs: std::collections::HashSet<NodeId>,
+    /// Statements a `class << self` body contributed to its ENCLOSING class
+    /// body, mapped to the `class << self` node itself. The singleton
+    /// mapping splices them in place (that is the retagging model), so
+    /// without this they would run in the enclosing body's frame and every
+    /// backtrace raised through one would be a frame short -- see
+    /// `codegen::stmt::emit_body`, which groups consecutive entries under one
+    /// `singleton class` frame.
+    pub singleton_frame_stmts: std::collections::HashMap<NodeId, NodeId>,
     /// `HashLit` nodes that are a `yield`'s KEYWORD arguments folded into one
     /// trailing hash, rather than a hash the source really wrote. The two are
     /// the same shape but not the same value: `yield(1, **h)` with an empty `h`

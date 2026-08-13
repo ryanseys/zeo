@@ -21,14 +21,119 @@ pub fn emit_body(cx: &Ctx, body: &[NodeId], wrap_ok: bool) -> TokenStream {
     if body.is_empty() {
         return tail_nil(wrap_ok);
     }
-    let last = body.len() - 1;
     let mut prev_line = None;
+    // A program with no `class << self` anywhere never groups -- and this is
+    // asked once per emitted statement of every body in the compile, so the
+    // whole-table test comes first.
+    if cx.compiler.hir.singleton_frame_stmts.is_empty() {
+        return emit_body_plain(cx, body, &mut prev_line, true, wrap_ok);
+    }
+    let mut out: Vec<TokenStream> = Vec::new();
+    let mut i = 0;
+    while i < body.len() {
+        // A run of statements one `class << self` body contributed to this
+        // one runs under a frame of its own -- see `emit_singleton_frame`.
+        // Every other body has no entry in the table and takes the plain
+        // path unchanged.
+        let origin = cx.compiler.hir.singleton_frame_stmts.get(&body[i]).copied();
+        let Some(origin) = origin else {
+            let tokens = emit_statement(cx, body[i], i + 1 == body.len(), wrap_ok);
+            out.push(stamp_line(
+                cx,
+                body[i],
+                &mut prev_line,
+                tokens,
+                i + 1 == body.len(),
+            ));
+            i += 1;
+            continue;
+        };
+        let mut j = i + 1;
+        while j < body.len() && cx.compiler.hir.singleton_frame_stmts.get(&body[j]) == Some(&origin)
+        {
+            j += 1;
+        }
+        out.push(emit_singleton_frame(
+            cx,
+            origin,
+            &body[i..j],
+            &mut prev_line,
+            j == body.len(),
+            wrap_ok,
+        ));
+        i = j;
+    }
+    quote! { #(#out)* }
+}
+
+/// A `class << self` body's own backtrace frame, around the statements the
+/// singleton mapping spliced into the ENCLOSING class body.
+///
+/// Two positions have to be right, not one. The frame itself is labelled
+/// `singleton class` and tracks the group's own lines; the ENCLOSING frame
+/// is left reading the `class << self` KEYWORD's line, which is what ruby
+/// reports for it -- so the head stamps that line before the guard rather
+/// than letting the first grouped statement stamp its own into the frame
+/// underneath. `lexical_frame_label` carries the label down so a block
+/// written here is `block in singleton class`.
+fn emit_singleton_frame(
+    cx: &Ctx,
+    origin: NodeId,
+    group: &[NodeId],
+    prev_line: &mut Option<(String, u32)>,
+    is_tail: bool,
+    wrap_ok: bool,
+) -> TokenStream {
+    let Some((file, line)) = crate::codegen::source_location(cx.compiler, origin) else {
+        return emit_body_plain(cx, group, prev_line, is_tail, wrap_ok);
+    };
+    let head = match prev_line.as_ref() {
+        Some((f, l)) if *f == file && *l == line => TokenStream::new(),
+        _ => quote! { zeo_rt::set_line(#line); },
+    };
+    *prev_line = Some((file.to_string(), line));
+    let end_line = crate::codegen::source_end_line(cx.compiler, origin);
+    let pooled = crate::codegen::pooled_file(file);
+    let mut inner_cx = cx.clone();
+    inner_cx.lexical_frame_label = Some("singleton class".to_string());
+    // The group's own line tracking starts fresh inside the new frame.
+    let mut inner_prev = None;
+    let body = emit_body_plain(&inner_cx, group, &mut inner_prev, is_tail, false);
+    let framed = quote! {
+        {
+            let __frame = zeo_rt::FrameGuard::push(#pooled, "singleton class", #line, #end_line);
+            #body
+        }
+    };
+    // A group holding the body's TAIL supplies its value, so the frame block
+    // is an expression there and a statement everywhere else.
+    match (is_tail, wrap_ok) {
+        (false, _) => quote! { #head #framed; },
+        (true, false) => quote! { #head #framed },
+        (true, true) => quote! { #head Ok(#framed) },
+    }
+}
+
+/// `emit_body`'s statement loop, without the singleton grouping -- so a group
+/// can reuse it without re-detecting itself.
+fn emit_body_plain(
+    cx: &Ctx,
+    body: &[NodeId],
+    prev_line: &mut Option<(String, u32)>,
+    tail_is_value: bool,
+    wrap_ok: bool,
+) -> TokenStream {
+    if body.is_empty() {
+        return tail_nil(wrap_ok);
+    }
+    let last = body.len() - 1;
     let stmts = body
         .iter()
         .enumerate()
         .map(|(i, &stmt)| {
-            let tokens = emit_statement(cx, stmt, i == last, wrap_ok);
-            stamp_line(cx, stmt, &mut prev_line, tokens, i == last)
+            let is_tail = tail_is_value && i == last;
+            let tokens = emit_statement(cx, stmt, is_tail, wrap_ok);
+            stamp_line(cx, stmt, prev_line, tokens, is_tail)
         })
         .collect::<Vec<_>>();
     quote! { #(#stmts)* }
