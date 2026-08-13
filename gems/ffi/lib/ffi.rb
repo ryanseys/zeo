@@ -310,14 +310,14 @@ module FFI
   # from `.layout`. zeo builds all of these from the layout its compiler
   # already walked, so they describe exactly the bytes the accessors read.
   #
-  # DIVERGENCE: CRuby makes `StructLayout`, `ArrayType`, `StructByValue` and
-  # `FunctionType` subclasses of `FFI::Type`, which is a native class zeo
-  # cannot subclass yet -- so they are plain classes here and do not carry
-  # `FFI::Type`'s own constants. `StructLayout::Field` is `< Object` in CRuby
-  # too. A second one: a `:long` field reports `Type::Builtin::INT64` rather
-  # than `LONG`, because the compiler folds the two to one width before a
-  # layout is recorded.
-  class ArrayType
+  # They are `FFI::Type` subclasses as CRuby's are, so each carries the
+  # builtin type constants and answers `is_a?(FFI::Type)`; only
+  # `StructLayout::Field` is `< Object`, in CRuby too.
+  #
+  # DIVERGENCE: a `:long` field reports `Type::Builtin::INT64` rather than
+  # `LONG`, because the compiler folds the two to one width before a layout
+  # is recorded.
+  class ArrayType < Type
     attr_reader :elem_type, :length
 
     def initialize(elem_type, length)
@@ -333,7 +333,7 @@ module FFI
     end
   end
 
-  class StructByValue
+  class StructByValue < Type
     attr_reader :struct_class
 
     def initialize(struct_class) = @struct_class = struct_class
@@ -345,7 +345,7 @@ module FFI
     end
   end
 
-  class FunctionType
+  class FunctionType < Type
     attr_reader :param_types, :result_type
 
     def initialize(result_type, param_types)
@@ -378,7 +378,7 @@ module FFI
     end
   end
 
-  class StructLayout
+  class StructLayout < Type
     class Field
       attr_reader :name, :offset, :type, :size, :alignment
 

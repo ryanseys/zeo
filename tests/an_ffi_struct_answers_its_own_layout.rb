@@ -4,11 +4,9 @@
 # compiler already walked, so the descriptors describe exactly the bytes the
 # generated accessors read.
 #
-# Two divergences, both stated in `gems/ffi/lib/ffi.rb`: CRuby makes
-# `StructLayout`/`ArrayType`/`StructByValue`/`FunctionType` subclasses of
-# `FFI::Type` (a native class zeo cannot subclass yet), and a `:long` field
-# reports `Type::Builtin::INT64` rather than `LONG` because the compiler
-# folds the two to one width before a layout is recorded. Neither shows here.
+# One divergence, stated in `gems/ffi/lib/ffi.rb` and not visible here: a
+# `:long` field reports `Type::Builtin::INT64` rather than `LONG`, because
+# the compiler folds the two to one width before a layout is recorded.
 require "ffi"
 
 class Inner < FFI::Struct
@@ -31,6 +29,12 @@ p Wide.new.offsets == Wide.offsets
 
 l = Wide.layout
 p [l.class, l.size, l.alignment, l.members]
+
+# A layout IS a type, as are the three non-scalar descriptors -- so each
+# carries the builtin type constants. Only `Field` is a plain object.
+p [l.class.ancestors.first(3), l.is_a?(FFI::Type)]
+p [FFI::ArrayType.superclass, FFI::StructByValue.superclass, FFI::FunctionType.superclass]
+p [FFI::StructLayout::Field.superclass, FFI::StructLayout.const_get(:INT32).inspect]
 l.fields.each { |f| p [f.class, f.name, f.offset, f.size, f.alignment, f.type.class] }
 
 # The reader is memoized, and `to_a` is `fields`.
