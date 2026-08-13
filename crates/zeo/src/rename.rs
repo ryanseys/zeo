@@ -45,7 +45,7 @@
 
 use crate::hir::{
     ArrayElem, HashPatternRest, Hir, HirNode, MultiTarget, MultiTargetGroup, NodeId, Params,
-    Pattern, StrPart,
+    Pattern,
 };
 use std::collections::HashSet;
 
@@ -162,6 +162,7 @@ impl Walker {
         // separate arena slots, so recursion never aliases this node); the
         // placeholder is restored at the end.
         let mut node = std::mem::replace(&mut hir[id], HirNode::NilLit);
+        let mut descend = false;
         match &mut node {
             HirNode::LocalRead(name) => self.read(name),
             // An `attach_function` wrapper body: visit its argument reads
@@ -176,98 +177,45 @@ impl Walker {
                 self.bind(name);
                 self.visit(hir, *value);
             }
-            HirNode::Program(body)
-            | HirNode::Eval(body)
-            | HirNode::PreExec(body)
-            | HirNode::Seq(body)
-            | HirNode::BoxScope { box_id: _, body } => self.visit_all(hir, &body.clone()),
-            HirNode::And(l, r)
-            | HirNode::Or(l, r)
-            | HirNode::FlipFlop {
-                state: _,
-                left: l,
-                right: r,
-                exclusive: _,
-            } => {
-                self.visit(hir, *l);
-                self.visit(hir, *r);
-            }
-            HirNode::Defined(v) => self.visit(hir, *v),
-            HirNode::If {
-                cond,
-                then_body,
-                else_body,
-            } => {
-                self.visit(hir, *cond);
-                self.visit_all(hir, &then_body.clone());
-                self.visit_all(hir, &else_body.clone());
-            }
-            HirNode::CaseWhen {
-                subject,
-                arms,
-                else_body,
-            } => {
-                self.visit_opt(hir, subject);
-                for (values, body) in arms.iter() {
-                    let ids: Vec<_> = values
-                        .iter()
-                        .map(|e| {
-                            let (ArrayElem::Single(v) | ArrayElem::Splat(v)) = e;
-                            *v
-                        })
-                        .collect();
-                    self.visit_all(hir, &ids);
-                    self.visit_all(hir, body);
-                }
-                self.visit_all(hir, &else_body.clone());
-            }
-            HirNode::ArrayLit(elems) => {
-                for e in elems.iter() {
-                    let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;
-                    self.visit(hir, *n);
-                }
-            }
-            HirNode::HashLit(pairs) => {
-                for n in pairs.iter().flat_map(|kw| kw.node_ids()) {
-                    self.visit(hir, n);
-                }
-            }
-            HirNode::RangeLit {
-                start,
-                end,
-                exclusive: _,
-            } => {
-                self.visit_opt(hir, start);
-                self.visit_opt(hir, end);
-            }
-            HirNode::StringLit(parts) | HirNode::RegexpLit(parts, _) => {
-                for p in parts.iter() {
-                    if let StrPart::Interp(n) = p {
-                        self.visit(hir, *n);
-                    }
-                }
-            }
-            HirNode::IvarWrite(_, value)
-            | HirNode::ClassVarWrite(_, value)
-            | HirNode::GlobalWrite(_, value)
-            | HirNode::ConstWrite {
-                scope: _,
-                name: _,
-                value,
-            } => self.visit(hir, *value),
-            HirNode::DynConstRead {
-                scope,
-                name: _,
-                lenient: _,
-            } => self.visit(hir, *scope),
-            HirNode::DynConstWrite {
-                scope,
-                name: _,
-                value,
-            } => {
-                self.visit(hir, *scope);
-                self.visit(hir, *value);
-            }
+            // PURE DESCENT: every child is visited in this same rename scope.
+            // Handled after the match rather than here, because descending
+            // needs `node` back immutably -- which is also what lets it go
+            // through `for_each_child` instead of cloning each body vector to
+            // end the `&mut node` borrow, as these arms used to.
+            //
+            // Listed by variant rather than behind a `_`, deliberately: this
+            // walk REWRITES names, and a new `HirNode` carrying one must fail
+            // to compile here rather than silently inherit plain descent.
+            HirNode::Program(_)
+            | HirNode::Eval(_)
+            | HirNode::PreExec(_)
+            | HirNode::Seq(_)
+            | HirNode::BoxScope { .. }
+            | HirNode::And(..)
+            | HirNode::Or(..)
+            | HirNode::FlipFlop { .. }
+            | HirNode::Defined(_)
+            | HirNode::If { .. }
+            | HirNode::CaseWhen { .. }
+            | HirNode::While { .. }
+            | HirNode::Loop { .. }
+            | HirNode::Break(_)
+            | HirNode::Next(_)
+            | HirNode::Return(_)
+            | HirNode::ArrayLit(_)
+            | HirNode::HashLit(_)
+            | HirNode::RangeLit { .. }
+            | HirNode::StringLit(_)
+            | HirNode::RegexpLit(..)
+            | HirNode::ClassVarWrite(..)
+            | HirNode::ConstWrite { .. }
+            | HirNode::GlobalWrite(..)
+            | HirNode::IvarWrite(..)
+            | HirNode::DynConstRead { .. }
+            | HirNode::DynConstWrite { .. }
+            | HirNode::New { .. }
+            | HirNode::SuperCall { .. }
+            | HirNode::Yield(_) => descend = true,
             HirNode::Call {
                 receiver,
                 name: _,
@@ -285,37 +233,6 @@ impl Walker {
                 for n in kwargs.iter().flat_map(|kw| kw.node_ids()) {
                     self.visit(hir, n);
                 }
-                self.visit_opt(hir, block);
-                self.visit_opt(hir, block_arg);
-            }
-            // Every field is bound by name, `class_name` included: a `..` here
-            // silently swallowed `kwargs`, so `File.new(fd, path: path)` renamed
-            // the local at its write site but not the read inside the keyword
-            // argument, leaving an undeclared identifier behind (tempfile.rb's
-            // `path`, which rustc reports as a collision with the built-in
-            // `#[path]` attribute rather than as the unbound name it is).
-            HirNode::New {
-                class_name: _,
-                args,
-                kwargs,
-                block,
-            } => {
-                self.visit_all(hir, &args.clone());
-                let kw_ids: Vec<_> = kwargs.iter().flat_map(|kw| kw.node_ids()).collect();
-                self.visit_all(hir, &kw_ids);
-                self.visit_opt(hir, block);
-            }
-            HirNode::SuperCall {
-                args,
-                kwargs,
-                zsuper: _,
-                block,
-                block_arg,
-            } => {
-                let arg_ids: Vec<_> = args.iter().map(|a| a.node_id()).collect();
-                self.visit_all(hir, &arg_ids);
-                let kw_ids: Vec<_> = kwargs.iter().flat_map(|kw| kw.node_ids()).collect();
-                self.visit_all(hir, &kw_ids);
                 self.visit_opt(hir, block);
                 self.visit_opt(hir, block_arg);
             }
@@ -366,16 +283,6 @@ impl Walker {
                 self.visit_all(hir, &body);
                 self.names.extend(suspended);
             }
-            HirNode::While {
-                cond,
-                body,
-                negate: _,
-                post: _,
-            } => {
-                self.visit(hir, *cond);
-                self.visit_all(hir, &body.clone());
-            }
-            HirNode::Loop { body } => self.visit_all(hir, &body.clone()),
             HirNode::For {
                 target,
                 iterable,
@@ -385,20 +292,9 @@ impl Walker {
                 self.visit(hir, *iterable);
                 self.visit_all(hir, &body.clone());
             }
-            HirNode::Break(v) | HirNode::Next(v) | HirNode::Return(v) => self.visit_opt(hir, v),
             HirNode::MultiWrite { targets, value } => {
                 self.visit_group(hir, targets);
                 self.visit(hir, *value);
-            }
-            HirNode::Yield(elems) => {
-                let ids: Vec<_> = elems
-                    .iter()
-                    .map(|e| {
-                        let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;
-                        *n
-                    })
-                    .collect();
-                self.visit_all(hir, &ids)
             }
             HirNode::Raise(args, cause) => {
                 // The `cause:` expression can reference locals, so it must be
@@ -510,6 +406,13 @@ impl Walker {
             | HirNode::Retry
             | HirNode::BlockGiven
             | HirNode::SelfRef => {}
+        }
+        // `node` is checked out of the arena above, so descending through it
+        // borrows nothing the recursion touches -- no copy of the child list
+        // is needed to satisfy the borrow checker, which is what the arms
+        // this replaces were cloning a body vector each to do.
+        if descend {
+            node.for_each_child(&mut |c| self.visit(hir, c));
         }
         hir[id] = node;
     }
