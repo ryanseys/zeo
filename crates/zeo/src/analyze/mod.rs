@@ -5044,9 +5044,14 @@ fn lexical_const_alias<'a>(
 
 /// Read-only scan populating [`Compiler::const_aliases`]: every `NAME = <...>`
 /// write in the program, recorded under the fully-qualified name it binds, so
-/// the lookup above can ask about a scope rather than a bare leaf. Descends the
-/// same wrappers `collect_shell_kinds` does, and for the same reason -- a write
-/// inside a conditional still binds the name.
+/// the lookup above can ask about a scope rather than a bare leaf.
+///
+/// Every position counts, not just an `if` branch: a write in a `case` arm, a
+/// `begin` body, a `rescue` clause or an `each` block binds the name just the
+/// same, and the sole reason to record it is that a later definition may READ
+/// it. The three arms below are the ones that change WHERE a write lands --
+/// a `class`/`module` deepens the scope path, a box restarts it -- and every
+/// other node descends into its children.
 fn collect_const_aliases(
     hir: &Hir,
     stmts: &[NodeId],
@@ -5070,27 +5075,31 @@ fn collect_const_aliases(
                 // a later reassignment does not change what the name meant to
                 // the definitions that already read it.
                 out.entry((box_id, path.join("::"))).or_insert(*value);
+                // `M = (class Inner; X = 1; end)` binds `Inner::X` too.
+                collect_const_aliases(hir, std::slice::from_ref(value), scope, box_id, out);
             }
             HirNode::ClassDef { name, body, .. } => {
                 let mut inner = scope.to_vec();
                 inner.push(name.clone());
                 collect_const_aliases(hir, body, &inner, box_id, out);
             }
-            HirNode::If {
-                then_body,
-                else_body,
-                ..
-            } => {
-                collect_const_aliases(hir, then_body, scope, box_id, out);
-                collect_const_aliases(hir, else_body, scope, box_id, out);
-            }
             HirNode::BoxScope { box_id: bx, body } => {
                 collect_const_aliases(hir, body, &[], *bx, out);
             }
-            HirNode::Seq(body) | HirNode::PreExec(body) | HirNode::Eval(body) => {
-                collect_const_aliases(hir, body, scope, box_id, out);
+            // A method body is a separate scope that runs when it is CALLED,
+            // and ruby rejects a constant assignment written in one outright,
+            // so nothing there binds a name here. A block-bodied `def` is a
+            // block, and descends like one.
+            HirNode::DefMethod { body, .. } => {
+                if hir.has_flag(id, crate::hir::NodeFlag::BLOCK_BODIED_DEF) {
+                    collect_const_aliases(hir, body, scope, box_id, out);
+                }
             }
-            _ => {}
+            other => {
+                let mut children = Vec::new();
+                other.for_each_child(&mut |c| children.push(c));
+                collect_const_aliases(hir, &children, scope, box_id, out);
+            }
         }
     }
 }
