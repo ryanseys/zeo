@@ -545,6 +545,44 @@ fn packages_resolve_with_nested_features_and_cross_package_requires() {
 }
 
 #[test]
+fn a_caller_supplied_copy_of_a_substituted_gem_does_not_shadow_zeos_own() {
+    // First-name-wins is the rule for ordinary packages (the test below), and
+    // a caller dir is searched ahead of zeo's bundled tier on purpose. The
+    // curated substitution set is the exception: zeo's native half IS `ffi`,
+    // so the upstream gem's Ruby half is dead code -- it opens by requiring a
+    // C extension zeo does not have, and every class it then defines is one
+    // the native half already owns. Splicing it compiled a program that died
+    // at load on `uninitialized constant FFI::TypeDefs`, while its computed
+    // `require RUBY_VERSION... + "/ffi_c"` demanded the gem's whole load path
+    // as units and dragged `ffi/struct_layout.rb` into the compile.
+    let result = run_ruby_packages(
+        &[
+            (
+                "packages/ffi/ffi.gemspec",
+                "Gem::Specification.new do |s|\n  s.name = \"ffi\"\n  s.version = \"9.9.9\"\nend\n",
+            ),
+            (
+                "packages/ffi/lib/ffi.rb",
+                "module FFI\n  IMPOSTOR = true\nend\n",
+            ),
+            (
+                "main.rb",
+                r#"
+                    require "ffi"
+                    p defined?(FFI::IMPOSTOR)
+                    p FFI::Platform.mac? == RUBY_PLATFORM.include?("darwin")
+                "#,
+            ),
+        ],
+        "main.rb",
+        &[],
+        &["packages"],
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "nil\ntrue\n");
+}
+
+#[test]
 fn a_feature_provided_by_two_packages_resolves_to_the_first_and_warns() {
     // Real Ruby never errors on a squatted feature name: RubyGems'
     // `find_by_path` answers the name-ascending first provider (alpha here),

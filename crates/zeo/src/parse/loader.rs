@@ -1597,6 +1597,7 @@ impl Loader {
                 },
             };
             for root in roots {
+                tracing::debug!(?package, ?root, "unit sweep root");
                 let mut files = Vec::new();
                 collect_rb_files(&root, &mut files);
                 files.sort();
@@ -2086,6 +2087,27 @@ fn discover_packages(package_dirs: &[PathBuf], bundled_dir: Option<&Path>) -> PR
             let pkg = parse_manifest(&pkg_dir, provenance)?;
             if seen.insert(pkg.name.clone()) {
                 packages.push(pkg);
+                continue;
+            }
+            // First-name-wins, EXCEPT for the curated set where zeo's own
+            // native half IS the gem (`gem_report::substitution_note` -- ffi,
+            // json, psych, openssl, ...). There the upstream Ruby half is
+            // dead code: it opens by requiring a C extension zeo does not
+            // have, and every class it then defines is one zeo's native half
+            // already owns. Letting a caller-supplied copy shadow zeo's
+            // compiled a program that died at load -- the real ffi gem's
+            // `ffi/types.rb` raising `uninitialized constant FFI::TypeDefs`
+            // -- and, once that file's computed `require RUBY_VERSION... +
+            // "/ffi_c"` demanded the gem's whole load path as units, dragged
+            // in `ffi/struct_layout.rb`'s `class Enum < Field` and failed the
+            // compile outright. The `zeo-builtin-substitute` warning has
+            // always CLAIMED zeo's implementation is the one in use; this is
+            // what makes the claim true.
+            if provenance == GemProvenance::Bundled
+                && crate::gem_report::substitution_note(&pkg.name).is_some()
+                && let Some(slot) = packages.iter_mut().find(|g| g.name == pkg.name)
+            {
+                *slot = pkg;
             }
         }
     }

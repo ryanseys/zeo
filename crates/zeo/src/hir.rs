@@ -798,6 +798,7 @@ impl Hir {
     pub fn demand_feature_units(&mut self) {
         let package = self.lowering_package.clone();
         let dir = self.lowering_dir.clone().unwrap_or_default();
+        tracing::debug!(?package, ?dir, file = ?self.lowering_file, "demand_feature_units");
         self.unit_demand.insert((package, dir));
     }
 
