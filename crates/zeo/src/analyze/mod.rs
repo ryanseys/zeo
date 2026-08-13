@@ -1037,9 +1037,7 @@ fn register_nested_class_defs_as(
     box_id: u32,
     conditional: Conditional,
 ) -> Result<(), String> {
-    let mut nested = Vec::new();
-    collect_nested_bodies(compiler, stmt, &mut nested);
-    for s in nested {
+    for (s, _) in nested_stmts(&compiler.hir, stmt) {
         let HirNode::ClassDef {
             name,
             superclass,
@@ -1129,20 +1127,64 @@ fn register_nested_refinements(
     cref: &[ClassId],
     box_id: u32,
 ) {
-    let mut nested = Vec::new();
-    collect_nested_bodies(compiler, stmt, &mut nested);
-    for s in nested {
+    for (s, _) in nested_stmts(&compiler.hir, stmt) {
         if matches!(compiler.hir[s], HirNode::Refine { .. }) {
             register_refinement(compiler, class_id, s, cref, box_id);
         }
     }
 }
 
-/// Every statement nested inside `node`'s sub-bodies, in document order. Bound
-/// with explicit fields rather than a `..` rest so a new statement-bearing
-/// variant can't join silently.
-fn collect_nested_bodies(compiler: &Compiler, node: NodeId, out: &mut Vec<NodeId>) {
-    let children: Vec<NodeId> = match &compiler.hir[node] {
+/// How the nested walk arrived at a statement. Every consumer that wants only
+/// part of the nesting expresses the restriction here rather than by omitting
+/// node kinds from a walk of its own -- omitting kinds is what let a `class`
+/// in an unusual position reach codegen unregistered three times over.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Reach {
+    /// Through a branch that may not be taken: an `if`/`unless` arm, a
+    /// `case`/`when` arm, a `rescue` clause.
+    conditional: bool,
+    /// Through a body that runs later, never, or many times: a block, a
+    /// lambda, a loop.
+    through_block: bool,
+}
+
+impl Reach {
+    /// Straight-line: the statement runs exactly when its enclosing body does.
+    const DIRECT: Reach = Reach {
+        conditional: false,
+        through_block: false,
+    };
+
+    fn conditional(self) -> Reach {
+        Reach {
+            conditional: true,
+            ..self
+        }
+    }
+
+    fn through_block(self) -> Reach {
+        Reach {
+            through_block: true,
+            ..self
+        }
+    }
+}
+
+/// Every statement nested inside `node`'s sub-bodies, in document order, each
+/// with the [`Reach`] that got there. Built on
+/// [`HirNode::for_each_child`], with the two scope stops named explicitly, so
+/// a new statement-bearing variant descends by default instead of being
+/// silently skipped.
+fn for_each_nested_stmt(
+    hir: &Hir,
+    node: NodeId,
+    reach: Reach,
+    visit: &mut impl FnMut(NodeId, Reach),
+) {
+    // Document order throughout: `register_nested_class_defs_as` registers as
+    // it goes and the last write wins, so a reordering here would change which
+    // of two same-named nested classes stands.
+    let children: Vec<(NodeId, Reach)> = match &hir[node] {
         HirNode::Begin {
             body,
             rescues,
@@ -1150,28 +1192,45 @@ fn collect_nested_bodies(compiler: &Compiler, node: NodeId, out: &mut Vec<NodeId
             ensure_body,
         } => body
             .iter()
-            .chain(rescues.iter().flat_map(|r| r.body.iter()))
-            .chain(else_body.iter().flatten())
-            .chain(ensure_body.iter().flatten())
-            .copied()
+            .map(|&s| (s, reach))
+            // A `rescue` clause runs only if the body raised.
+            .chain(
+                rescues
+                    .iter()
+                    .flat_map(|r| r.body.iter())
+                    .map(|&s| (s, reach.conditional())),
+            )
+            .chain(
+                else_body
+                    .iter()
+                    .flatten()
+                    .chain(ensure_body.iter().flatten())
+                    .map(|&s| (s, reach)),
+            )
             .collect(),
-        HirNode::Block { params: _, body } | HirNode::Loop { body } => body.clone(),
+        HirNode::Block { params: _, body } | HirNode::Loop { body } => {
+            body.iter().map(|&s| (s, reach.through_block())).collect()
+        }
         HirNode::While {
             cond: _,
             body,
             negate: _,
             post: _,
-        } => body.clone(),
+        } => body.iter().map(|&s| (s, reach.through_block())).collect(),
         HirNode::For {
             target: _,
             iterable: _,
             body,
-        } => body.clone(),
+        } => body.iter().map(|&s| (s, reach.through_block())).collect(),
         HirNode::If {
             cond: _,
             then_body,
             else_body,
-        } => then_body.iter().chain(else_body).copied().collect(),
+        } => then_body
+            .iter()
+            .chain(else_body)
+            .map(|&s| (s, reach.conditional()))
+            .collect(),
         HirNode::CaseWhen {
             subject: _,
             arms,
@@ -1180,7 +1239,7 @@ fn collect_nested_bodies(compiler: &Compiler, node: NodeId, out: &mut Vec<NodeId
             .iter()
             .flat_map(|(_, body)| body.iter())
             .chain(else_body)
-            .copied()
+            .map(|&s| (s, reach.conditional()))
             .collect(),
         // A definition is an EXPRESSION in ruby, so it also reaches here as a
         // value: `__skip__ = module M ... end` (elasticgraph, dodging a type
@@ -1200,26 +1259,32 @@ fn collect_nested_bodies(compiler: &Compiler, node: NodeId, out: &mut Vec<NodeId
         // `DefMethod`'s shape, so it descends like one: ruby accepts the
         // `module` keyword there and gives it the enclosing lexical cref.
         HirNode::DefMethod { body, .. }
-            if compiler
-                .hir
-                .has_flag(node, crate::hir::NodeFlag::BLOCK_BODIED_DEF) =>
+            if hir.has_flag(node, crate::hir::NodeFlag::BLOCK_BODIED_DEF) =>
         {
-            body.clone()
+            body.iter().map(|&s| (s, reach.through_block())).collect()
         }
         HirNode::ClassDef { .. } | HirNode::DefMethod { .. } => return,
-        HirNode::Lambda { body, .. } => body.clone(),
+        HirNode::Lambda { body, .. } => body.iter().map(|&s| (s, reach.through_block())).collect(),
         other => {
             let mut children = Vec::new();
-            other.for_each_child(&mut |c| children.push(c));
+            other.for_each_child(&mut |c| children.push((c, reach)));
             children
         }
     };
     // Each child is itself a candidate and may nest further -- the
     // `File.open { begin ... rescue; module M; end; end }` shape.
-    for child in children {
-        out.push(child);
-        collect_nested_bodies(compiler, child, out);
+    for (child, reach) in children {
+        visit(child, reach);
+        for_each_nested_stmt(hir, child, reach, visit);
     }
+}
+
+/// [`for_each_nested_stmt`] collected, for the callers that then need
+/// `&mut Compiler` and so cannot hold the `&Hir` borrow across the visit.
+fn nested_stmts(hir: &Hir, node: NodeId) -> Vec<(NodeId, Reach)> {
+    let mut out = Vec::new();
+    for_each_nested_stmt(hir, node, Reach::DIRECT, &mut |id, r| out.push((id, r)));
+    out
 }
 
 /// If `stmt` is a `begin/rescue` whose body provably cannot raise -- the
