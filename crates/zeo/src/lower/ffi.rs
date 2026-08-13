@@ -873,7 +873,8 @@ pub(crate) fn lower_ffi_directive(
                         .into(),
                 );
             }
-            reject_callback_struct_refs(&arg_types, &ret_ty)?;
+            let mut arg_types = arg_types;
+            degrade_callback_struct_refs(&mut arg_types, &ret_ty)?;
             let ty = crate::hir::FfiType::Callback(arg_types, Box::new(ret_ty));
             hir.declare_ffi_type(&tag, &ty);
             aliases.insert(tag, ty);
@@ -2299,25 +2300,35 @@ fn ffi_symbol_str(node: &Node<'_>) -> PResult<String> {
 ///    the anonymous `Tag = enum(...)` form is referred to afterwards. Only the
 ///    LEAF name is looked up: the table is keyed by the name as declared, and
 ///    these are always written inside the library module that declared them.
-/// A callback naming a struct class stays a clean rejection: ruby-ffi hands
-/// the Proc a STRUCT instance over that parameter, and zeo's trampoline can
-/// only hand it the raw pointer -- silently different behavior, so it fails
-/// at the declaration instead.
-fn reject_callback_struct_refs(
-    arg_types: &[crate::hir::FfiType],
+/// A callback ARGUMENT naming a struct class degrades to a pointer, which is
+/// what the Proc really receives.
+///
+/// This used to be a clean rejection, on the belief that ruby-ffi hands the
+/// Proc a Struct instance there. It does not. `StructByReference#from_native`
+/// would build one, but the callback path never routes an argument through the
+/// Ruby data converter -- oracle-verified with `qsort` over a `[Pair, Pair]`
+/// comparator, whose block receives an `FFI::Pointer`. The old rejection even
+/// told the author to "take `:pointer` and wrap it yourself", which is exactly
+/// what the gem does for them.
+///
+/// A RETURN in that position stays rejected: nothing here measured it, and a
+/// silently wrong conversion is worse than a refusal.
+fn degrade_callback_struct_refs(
+    arg_types: &mut [crate::hir::FfiType],
     ret_ty: &crate::hir::FfiType,
 ) -> PResult<()> {
-    if arg_types
-        .iter()
-        .chain(std::iter::once(ret_ty))
-        .any(|t| matches!(t, crate::hir::FfiType::StructRef(_)))
-    {
+    if matches!(ret_ty, crate::hir::FfiType::StructRef(_)) {
         return Err(
-            "a callback signature naming a struct class isn't supported yet (zeo limitation) \
-             -- take `:pointer` and wrap it in the struct class yourself"
+            "a callback RETURNING a struct class isn't supported yet (zeo limitation) \
+             -- return `:pointer` and wrap it in the struct class yourself"
                 .to_string()
                 .into(),
         );
+    }
+    for t in arg_types {
+        if matches!(t, crate::hir::FfiType::StructRef(_)) {
+            *t = crate::hir::FfiType::Pointer;
+        }
     }
     Ok(())
 }
@@ -2358,9 +2369,9 @@ fn ffi_type_node(
         // anonymous-callback arm alone is not worth it. The literal, `%i[..]`
         // and `[..] * n` spellings still resolve; only a body-local list
         // written inside an INLINE callback would not.
-        let arg_types = ffi_type_array(params, aliases, &[])?;
+        let mut arg_types = ffi_type_array(params, aliases, &[])?;
         let ret_ty = ffi_type_node(ret, aliases, TypePos::Signature)?;
-        reject_callback_struct_refs(&arg_types, &ret_ty)?;
+        degrade_callback_struct_refs(&mut arg_types, &ret_ty)?;
         return Ok(crate::hir::FfiType::Callback(arg_types, Box::new(ret_ty)));
     }
     if let Some(call) = node.as_call_node()
