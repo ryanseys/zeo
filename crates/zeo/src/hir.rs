@@ -312,6 +312,14 @@ pub struct Hir {
     /// an `extend <that module>` site replays into its own alias table before
     /// its FFI directives lower. See `lower::ffi::ffi_extender_hook`.
     pub ffi_extenders: std::collections::HashMap<String, Vec<(String, String)>>,
+    /// Modules whose `def self.included(base)` hook runs `base.class_eval`
+    /// over a block containing a `layout`, keyed by full cref path. The value
+    /// is that block's SOURCE, which an `include <that module>` inside an
+    /// `FFI::Struct` body re-parses and lowers in place -- gssapi carries the
+    /// layout AND its two readers for every buffer struct in the gem this way.
+    /// Source rather than nodes: a prism `Node` is neither `Clone` nor
+    /// storable past its `ParseResult`. See `lower::ffi::ffi_layout_hook`.
+    pub ffi_layout_hooks: std::collections::HashMap<String, String>,
     /// How many DEFERRED `ffi_lib` slots the program has minted -- one per
     /// `ffi_lib` statement whose candidates only the running process can
     /// evaluate. The slot number ties that statement's runtime store
@@ -625,6 +633,26 @@ impl Hir {
             None if self.cref_names.is_empty() => name.to_string(),
             None => format!("{}::{name}", self.cref_names.join("::")),
         }
+    }
+
+    /// The layout hook `name` names as seen from the cref being lowered:
+    /// ruby's lexical search, innermost scope first, then the top level. A
+    /// `::`-anchored name asks at the top level only. See
+    /// [`Hir::ffi_layout_hooks`].
+    pub(crate) fn ffi_layout_hook_for(&self, name: &str) -> Option<&String> {
+        if let Some(absolute) = name.strip_prefix("::") {
+            return self.ffi_layout_hooks.get(absolute);
+        }
+        for depth in (0..=self.cref_names.len()).rev() {
+            let qualified = match depth {
+                0 => name.to_string(),
+                _ => format!("{}::{name}", self.cref_names[..depth].join("::")),
+            };
+            if let Some(source) = self.ffi_layout_hooks.get(&qualified) {
+                return Some(source);
+            }
+        }
+        None
     }
 
     /// Records one `class`/`module` definition in `class_def_paths`. Call it

@@ -67,6 +67,54 @@ pub(crate) fn prescan_declaration(hir: &mut Hir, node: &Node<'_>) {
     }
 }
 
+/// A `def self.included(base)` hook whose body runs `base.class_eval` over a
+/// block containing a `layout` -- the struct-side twin of
+/// [`ffi_extender_hook`]. Returns the block body's SOURCE, which is what a
+/// later `include <this module>` replays.
+///
+/// Source text rather than nodes: a prism `Node` is neither `Clone` nor
+/// storable past its `ParseResult`, and the replay happens in another file
+/// entirely. gssapi is the case -- `GssBufferDescLayout` carries the layout AND
+/// the two readers for every buffer struct in the gem.
+pub(crate) fn ffi_layout_hook(result: &ParseResult, node: &Node<'_>) -> Option<String> {
+    let def = node.as_def_node()?;
+    def.receiver()?.as_self_node()?;
+    if def.name().as_slice() != b"included" {
+        return None;
+    }
+    let requireds: Vec<_> = def.parameters()?.requireds().iter().collect();
+    let [host] = requireds.as_slice() else {
+        return None;
+    };
+    let host = host.as_required_parameter_node()?.name();
+    for stmt in def.body()?.as_statements_node()?.body().iter() {
+        let Some(call) = stmt.as_call_node() else {
+            continue;
+        };
+        if call.name().as_slice() != b"class_eval"
+            || !call
+                .receiver()
+                .and_then(|r| r.as_local_variable_read_node())
+                .is_some_and(|l| l.name().as_slice() == host.as_slice())
+        {
+            continue;
+        }
+        let body = call.block()?.as_block_node()?.body()?;
+        let stmts = body.as_statements_node()?;
+        // A block with no `layout` is somebody else's DSL, not this one.
+        if !stmts.body().iter().any(|s| {
+            s.as_call_node()
+                .is_some_and(|c| c.receiver().is_none() && c.name().as_slice() == b"layout")
+        }) {
+            continue;
+        }
+        let span = body.location();
+        let src = result.source();
+        return String::from_utf8(src[span.start_offset()..span.end_offset()].to_vec()).ok();
+    }
+    None
+}
+
 /// [`prescan_declaration`] for a `layout` inside an `FFI::Struct` body.
 ///
 /// A field this pass cannot resolve records the CLASS only -- the

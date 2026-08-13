@@ -2977,6 +2977,11 @@ pub(crate) fn lower_class_body(
             if let Some(pairs) = ffi_extender_hook(stmt) {
                 hir.ffi_extenders.insert(p.clone(), pairs);
             }
+            // The struct-side twin: a hook that installs a LAYOUT on whoever
+            // includes it. See `Hir::ffi_layout_hooks`.
+            if let Some(source) = crate::lower::ffi::ffi_layout_hook(result, stmt) {
+                hir.ffi_layout_hooks.insert(p.clone(), source);
+            }
         }
     }
     let is_ffi = stmts.iter().any(is_extend_ffi_library)
@@ -3233,6 +3238,39 @@ fn lower_one_class_body_stmt<'a>(
             return Ok(());
         }
     }
+    // `include <a module whose self.included hook class_evals a layout>` --
+    // the layout, and every `def` beside it, belong to THIS struct. Replayed
+    // from the hook's recorded source (see `Hir::ffi_layout_hooks`): the
+    // statements then take the ordinary struct-body path below, so the layout
+    // synthesizes accessors and records offsets exactly as a written one does.
+    if st.is_ffi_struct
+        && let Some(source) = ffi_layout_hook_source(hir, stmt)
+    {
+        // LEAKED, both of them. `lower_one_class_body_stmt` ties the statement
+        // it lowers to the same lifetime as the class body it lowers against
+        // (`LowerBodyStmt<'a>`), and these statements come from a different
+        // parse entirely -- so they have to outlive it. The cost is the hook's
+        // source and its `ParseResult` per include site: tens of bytes, a
+        // handful of sites in the one gem family that writes this, and the
+        // compiler is a one-shot process.
+        let source: &'static str = Box::leak(source.into_boxed_str());
+        let replayed: &'static ruby_prism::ParseResult<'static> =
+            Box::leak(Box::new(ruby_prism::parse(source.as_bytes())));
+        if let Some(err) = replayed.errors().next() {
+            return Err(format!("replayed layout hook: parse error: {}", err.message()).into());
+        }
+        let program = replayed
+            .node()
+            .as_program_node()
+            .ok_or("expected a top-level ProgramNode")?;
+        let stmts: Vec<Node<'static>> = program.statements().body().iter().collect();
+        // `st.body` stays as it was: a body-local replay inside the hook
+        // resolves against the STRUCT's real class body, not the snippet.
+        for s in &stmts {
+            lower_one_class_body_stmt(replayed, hir, s, st, out)?;
+        }
+        return Ok(());
+    }
     if st.is_ffi_struct
         && let Some(fields) = as_ffi_layout(stmt, st.ffi_aliases, hir, out, st.body)?
     {
@@ -3256,6 +3294,26 @@ fn lower_one_class_body_stmt<'a>(
         return Ok(());
     }
     lower_class_body_statement(result, hir, stmt, st.visibility, st.module_function, out)
+}
+
+/// The recorded hook source an `include M` inside a struct body replays, or
+/// `None` when this is an ordinary mixin.
+///
+/// The module is looked up the way the include site would resolve it --
+/// innermost lexical scope first, then outward -- which is what lets
+/// `include GssBufferDescLayout` inside `GSSAPI::LibGSSAPI::UnManaged…` find
+/// `GSSAPI::LibGSSAPI::GssBufferDescLayout`.
+fn ffi_layout_hook_source(hir: &Hir, stmt: &Node<'_>) -> Option<String> {
+    let call = stmt.as_call_node()?;
+    if call.receiver().is_some() || call.name().as_slice() != b"include" {
+        return None;
+    }
+    let args: Vec<Node<'_>> = call.arguments()?.arguments().iter().collect();
+    let [only] = args.as_slice() else {
+        return None;
+    };
+    let path = crate::lower::ffi::const_path_string(only)?;
+    hir.ffi_layout_hook_for(&path).cloned()
 }
 
 fn lower_class_body_statement(
