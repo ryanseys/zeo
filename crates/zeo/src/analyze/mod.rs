@@ -118,6 +118,9 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
         .into_iter()
         .filter_map(|(name, value)| Some((name, value?)))
         .collect();
+    compiler.const_write_sites = facts.const_write_sites;
+    compiler.global_write_sites = facts.global_write_sites;
+    compiler.const_set_sites = facts.const_set_sites;
 
     // Register native-extension constants (`Socket::AF_INET6`, ...) into their
     // builtin class's compile-time const table so `const_defined?`/`defined?`/
@@ -2080,10 +2083,29 @@ fn static_const_defined_in(
 /// "undecidable" answer), whereas missing a real definition would silently drop
 /// one of the two branches.
 fn const_defined_outside(compiler: &Compiler, guarded: &[NodeId], leaf: &str) -> bool {
+    any_site_outside(
+        compiler,
+        guarded,
+        write_sites(&compiler.const_write_sites, leaf),
+    )
+}
+
+/// The indexed sites for `name`, or an empty slice when there are none.
+fn write_sites<'a>(sites: &'a FMap<String, Vec<NodeId>>, name: &str) -> &'a [NodeId] {
+    sites.get(name).map_or(&[], Vec::as_slice)
+}
+
+/// Whether any of `sites` lies outside the branches `guarded` decides.
+///
+/// [`nodes_under`] walks the guard's whole subtree, so it runs only once
+/// there is a candidate to place -- for most guards the index answers "no
+/// such write anywhere in the program" and the walk never happens.
+fn any_site_outside(compiler: &Compiler, guarded: &[NodeId], sites: &[NodeId]) -> bool {
+    if sites.is_empty() {
+        return false;
+    }
     let inside = nodes_under(compiler, guarded);
-    compiler.hir.iter_with_ids().any(|(id, node)| {
-        !inside.contains(&id) && matches!(node, HirNode::ConstWrite { name, .. } if name == leaf)
-    })
+    sites.iter().any(|id| !inside.contains(id))
 }
 
 /// Whether a chain still yields the TOP-LEVEL constant names, so asking it for
@@ -2178,11 +2200,11 @@ fn renames_each_entry(
 /// branches this guard decides assigns `$name`. Globals have one flat
 /// namespace, so the name alone is the whole question.
 fn global_assigned_outside(compiler: &Compiler, guarded: &[NodeId], name: &str) -> bool {
-    let inside = nodes_under(compiler, guarded);
-    compiler.hir.iter_with_ids().any(|(id, node)| {
-        !inside.contains(&id)
-            && matches!(node, HirNode::GlobalWrite(w, _) | HirNode::AliasGlobal(w, _) if w == name)
-    })
+    any_site_outside(
+        compiler,
+        guarded,
+        write_sites(&compiler.global_write_sites, name),
+    )
 }
 
 /// [`const_defined_outside`] for a SCOPED name -- `defined?(HTTP::VERSION)`.
@@ -2204,12 +2226,20 @@ fn const_written_into(
     target: ClassId,
     leaf: &str,
 ) -> bool {
+    // Both shapes come straight from the arena index: the scoped writes under
+    // this leaf, and every `const_set` in the program. A `const_set` cannot be
+    // keyed by name -- the arm below is what decides whether it could be
+    // writing this one.
+    let writes = write_sites(&compiler.const_write_sites, leaf);
+    if writes.is_empty() && compiler.const_set_sites.is_empty() {
+        return false;
+    }
     let inside = nodes_under(compiler, guarded);
-    compiler.hir.iter_with_ids().any(|(id, node)| {
+    writes.iter().chain(&compiler.const_set_sites).any(|&id| {
         if inside.contains(&id) {
             return false;
         }
-        match node {
+        match &compiler.hir[id] {
             HirNode::ConstWrite {
                 scope: Some(scope),
                 name,
@@ -2959,6 +2989,12 @@ struct ArenaFacts {
     /// [`Compiler::unique_top_const_inits`]. `None` records a name seen more
     /// than once, which is how uniqueness is decided in a single pass.
     top_const_inits: FMap<String, Option<NodeId>>,
+    /// [`Compiler::const_write_sites`].
+    const_write_sites: FMap<String, Vec<NodeId>>,
+    /// [`Compiler::global_write_sites`].
+    global_write_sites: FMap<String, Vec<NodeId>>,
+    /// [`Compiler::const_set_sites`].
+    const_set_sites: Vec<NodeId>,
 }
 
 /// ONE flat sweep of the whole node arena answering every whole-arena
@@ -2976,8 +3012,11 @@ fn collect_arena_facts(hir: &Hir) -> ArenaFacts {
         patched_names: names,
         patches_any_name: any,
         top_const_inits,
+        const_write_sites,
+        global_write_sites,
+        const_set_sites,
     } = &mut facts;
-    for node in hir.all_nodes() {
+    for (id, node) in hir.iter_with_ids() {
         match node {
             // A `CONST = ...` written outside any class body is a statement of
             // a `Program` rather than of a class body, so it is in none of the
@@ -3002,6 +3041,7 @@ fn collect_arena_facts(hir: &Hir) -> ArenaFacts {
             // `name` is already the leaf -- an explicit `Foo::NAME = ...`
             // keeps its namespace in the separate `scope` field.
             HirNode::ConstWrite { scope, name, .. } => {
+                const_write_sites.entry(name.clone()).or_default().push(id);
                 consts.insert(name.clone());
                 // The QUALIFIED spelling as well, so a reader that names a
                 // scope can ask about that scope rather than settling for
@@ -3022,7 +3062,13 @@ fn collect_arena_facts(hir: &Hir) -> ArenaFacts {
                     names.extend(defs_in_subtree(hir, id));
                 }
             }
+            HirNode::GlobalWrite(name, _) | HirNode::AliasGlobal(name, _) => {
+                global_write_sites.entry(name.clone()).or_default().push(id);
+            }
             HirNode::Call { name, args, .. } => {
+                if name == "const_set" {
+                    const_set_sites.push(id);
+                }
                 collect_patch_call(hir, name, args, names, any);
             }
             _ => {}

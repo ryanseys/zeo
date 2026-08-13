@@ -689,6 +689,24 @@ pub struct Compiler {
     /// one. Folding a constant assigned inside a top-level `if` would read an
     /// initializer that may never run.
     pub unique_top_const_inits: FMap<String, crate::hir::NodeId>,
+    /// Every `ConstWrite` in the arena, keyed by its LEAF name -- scope
+    /// ignored, so both `NAME = v` and `Foo::NAME = v` file under `NAME`.
+    ///
+    /// This and the two tables below serve the guard predicates
+    /// (`analyze::const_defined_outside` and its siblings), which ask whether
+    /// a write of some name lies OUTSIDE the branches a guard decides. Each
+    /// re-read every node in the program per undecided guard, and then walked
+    /// the guard's whole subtree to place the hits. Indexed, a guard tests a
+    /// handful of candidate nodes -- and skips the subtree walk entirely when
+    /// there are none, which is the common case.
+    pub const_write_sites: FMap<String, Vec<crate::hir::NodeId>>,
+    /// Every `GlobalWrite`/`AliasGlobal` in the arena, keyed by global name.
+    /// Globals have one flat namespace, so the name is the whole question.
+    pub global_write_sites: FMap<String, Vec<crate::hir::NodeId>>,
+    /// Every `const_set` call in the arena, unkeyed: the name such a call sets
+    /// is often computed, so deciding whether one COULD write a given constant
+    /// takes the call node itself.
+    pub const_set_sites: Vec<crate::hir::NodeId>,
     /// Every method name a RUNTIME site could change out from under a folded
     /// call. Two kinds, because both land in the overlay that only DYNAMIC
     /// dispatch consults:
@@ -1030,6 +1048,9 @@ impl Compiler {
             top_level_const_aliases: FMap::default(),
             const_aliases: FMap::default(),
             unique_top_const_inits: FMap::default(),
+            const_write_sites: FMap::default(),
+            global_write_sites: FMap::default(),
+            const_set_sites: Vec::new(),
             runtime_patches: FSet::default(),
             runtime_mixin_super_names: FSet::default(),
             unit_walk: false,
