@@ -16,7 +16,7 @@
 
 use crate::compiler::{ClassId, Compiler};
 use crate::compiler::{FMap, FSet};
-use crate::hir::{ArrayElem, HirNode, NodeId, StrPart};
+use crate::hir::{ArrayElem, HirNode, NodeId};
 use crate::types::{TyKind, infer_type_with_locals};
 use std::collections::HashMap;
 
@@ -147,21 +147,45 @@ fn track_node(
             };
             locals.insert(name.clone(), joined);
         }
-        HirNode::IvarWrite(_, value) | HirNode::ClassVarWrite(_, value) => {
-            track_node(compiler, defining, box_id, locals, *value)
+        // PURE DESCENT: every child is tracked in this same scope and box, so
+        // `for_each_child` expresses them all. Listed by variant rather than
+        // behind a `_`, deliberately: this walk INFERS types, and a new
+        // `HirNode` that binds or narrows a local must fail to compile here
+        // rather than silently inherit plain descent.
+        //
+        // `Block` and `BoxScope` are absent on purpose -- the first walks only
+        // its body (not its parameter defaults), the second re-homes its body
+        // into a different box.
+        HirNode::ClassVarWrite(..)
+        | HirNode::IvarWrite(..)
+        | HirNode::GlobalWrite(..)
+        | HirNode::ConstWrite { .. }
+        | HirNode::DynConstRead { .. }
+        | HirNode::DynConstWrite { .. }
+        | HirNode::Defined(_)
+        | HirNode::And(..)
+        | HirNode::Or(..)
+        | HirNode::FlipFlop { .. }
+        | HirNode::New { .. }
+        | HirNode::SuperCall { .. }
+        | HirNode::Call { .. }
+        | HirNode::ArrayLit(_)
+        | HirNode::HashLit(_)
+        | HirNode::RangeLit { .. }
+        | HirNode::StringLit(_)
+        | HirNode::RegexpLit(..)
+        | HirNode::Break(_)
+        | HirNode::Next(_)
+        | HirNode::Return(_)
+        | HirNode::PreExec(_)
+        | HirNode::Seq(_)
+        | HirNode::Eval(_)
+        | HirNode::Yield(_)
+        | HirNode::Raise(..) => {
+            compiler.hir[id].for_each_child(&mut |n| {
+                track_node(compiler, defining, box_id, locals, n)
+            });
         }
-        HirNode::And(l, r)
-        | HirNode::Or(l, r)
-        | HirNode::FlipFlop {
-            state: _,
-            left: l,
-            right: r,
-            exclusive: _,
-        } => {
-            track_node(compiler, defining, box_id, locals, *l);
-            track_node(compiler, defining, box_id, locals, *r);
-        }
-        HirNode::Defined(v) => track_node(compiler, defining, box_id, locals, *v),
         HirNode::If {
             cond,
             then_body,
@@ -189,79 +213,6 @@ fn track_node(
             branches.push(else_body);
             *locals = join_branches(compiler, defining, box_id, locals, &branches);
         }
-        HirNode::New { args, block, .. } => {
-            for &a in args {
-                track_node(compiler, defining, box_id, locals, a);
-            }
-            if let Some(b) = block {
-                track_node(compiler, defining, box_id, locals, *b);
-            }
-        }
-        HirNode::SuperCall { args, kwargs, block, block_arg, .. } => {
-            for a in args {
-                track_node(compiler, defining, box_id, locals, a.node_id());
-            }
-            for a in kwargs.iter().flat_map(|kw| kw.node_ids()) {
-                track_node(compiler, defining, box_id, locals, a);
-            }
-            if let Some(b) = block {
-                track_node(compiler, defining, box_id, locals, *b);
-            }
-            if let Some(b) = block_arg {
-                track_node(compiler, defining, box_id, locals, *b);
-            }
-        }
-        HirNode::ArrayLit(elems) => {
-            for e in elems {
-                let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;
-                track_node(compiler, defining, box_id, locals, *n);
-            }
-        }
-        HirNode::HashLit(pairs) => {
-            for n in pairs.iter().flat_map(|kw| kw.node_ids()) {
-                track_node(compiler, defining, box_id, locals, n);
-            }
-        }
-        HirNode::RangeLit { start, end, .. } => {
-            if let Some(s) = start {
-                track_node(compiler, defining, box_id, locals, *s);
-            }
-            if let Some(e) = end {
-                track_node(compiler, defining, box_id, locals, *e);
-            }
-        }
-        HirNode::StringLit(parts) | HirNode::RegexpLit(parts, _) => {
-            for p in parts {
-                if let StrPart::Interp(n) = p {
-                    track_node(compiler, defining, box_id, locals, *n);
-                }
-            }
-        }
-        HirNode::Call {
-            receiver,
-            args,
-            kwargs,
-            block,
-            block_arg,
-            ..
-        } => {
-            if let Some(r) = receiver {
-                track_node(compiler, defining, box_id, locals, *r);
-            }
-            for a in args {
-                let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = a;
-                track_node(compiler, defining, box_id, locals, *n);
-            }
-            for n in kwargs.iter().flat_map(|kw| kw.node_ids()) {
-                track_node(compiler, defining, box_id, locals, n);
-            }
-            if let Some(b) = block {
-                track_node(compiler, defining, box_id, locals, *b);
-            }
-            if let Some(b) = block_arg {
-                track_node(compiler, defining, box_id, locals, *b);
-            }
-        }
         HirNode::Block { body, .. } => {
             for &n in body {
                 track_node(compiler, defining, box_id, locals, n);
@@ -288,11 +239,6 @@ fn track_node(
             };
             *locals = join_loop(compiler, defining, box_id, locals, body, Some((target, elem_ty)));
         }
-        HirNode::Break(v) | HirNode::Next(v) | HirNode::Return(v) => {
-            if let Some(v) = v {
-                track_node(compiler, defining, box_id, locals, *v);
-            }
-        }
         HirNode::Redo | HirNode::BlockGiven | HirNode::SelfRef => {}
         HirNode::MultiWrite { targets, value } => {
             track_node(compiler, defining, box_id, locals, *value);
@@ -305,42 +251,9 @@ fn track_node(
                 locals.insert(n.to_string(), TyKind::Poly);
             });
         }
-        HirNode::GlobalWrite(_, value) => track_node(compiler, defining, box_id, locals, *value),
-        HirNode::ConstWrite { value, .. } => track_node(compiler, defining, box_id, locals, *value),
-        HirNode::DynConstRead { scope, .. } => {
-            track_node(compiler, defining, box_id, locals, *scope)
-        }
-        HirNode::DynConstWrite { scope, value, .. } => {
-            track_node(compiler, defining, box_id, locals, *scope);
-            track_node(compiler, defining, box_id, locals, *value);
-        }
-        HirNode::PreExec(body) | HirNode::Seq(body) => {
-            for &n in body {
-                track_node(compiler, defining, box_id, locals, n);
-            }
-        }
         HirNode::BoxScope { box_id: bx, body } => {
             for &s in body {
                 track_node(compiler, defining, *bx, locals, s);
-            }
-        }
-        HirNode::Eval(body) => {
-            for &n in body {
-                track_node(compiler, defining, box_id, locals, n);
-            }
-        }
-        HirNode::Yield(elems) => {
-            for e in elems {
-                let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;
-                track_node(compiler, defining, box_id, locals, *n);
-            }
-        }
-        HirNode::Raise(args, cause) => {
-            // The `cause:` expression is an ordinary expression: it can read
-            // locals, capture them, or name constants, so every HIR walker
-            // must visit it alongside the positional operands.
-            for &a in args.iter().chain(crate::hir::raise_cause_node(cause).iter()) {
-                track_node(compiler, defining, box_id, locals, a);
             }
         }
         HirNode::CaseIn { subject, arms, else_body } => {
