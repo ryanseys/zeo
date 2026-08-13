@@ -1004,6 +1004,20 @@ fn register_nested_class_defs(
     cref: &[ClassId],
     box_id: u32,
 ) -> Result<(), String> {
+    register_nested_class_defs_as(compiler, stmt, cref, box_id, Conditional::No)
+}
+
+/// [`register_nested_class_defs`] with the conditionality stated. A statement
+/// interleaved in an UNDECIDED guard's branch may not run at all, so a class
+/// its blocks define is registered-but-not-promised -- the same standing a
+/// `class` written directly in that branch already gets.
+fn register_nested_class_defs_as(
+    compiler: &mut Compiler,
+    stmt: NodeId,
+    cref: &[ClassId],
+    box_id: u32,
+    conditional: Conditional,
+) -> Result<(), String> {
     let mut nested = Vec::new();
     collect_nested_bodies(compiler, stmt, &mut nested);
     for s in nested {
@@ -1027,7 +1041,7 @@ fn register_nested_class_defs(
             cref,
             box_id,
             Some(s),
-            Conditional::No,
+            conditional,
         )?;
     }
     Ok(())
@@ -1799,7 +1813,17 @@ fn register_guarded_top_defs(compiler: &mut Compiler, stmt: NodeId) -> Result<bo
                     rewrite_if(compiler, s)?;
                     Ok(s)
                 }
-                _ => Ok(s),
+                // An interleaved plain statement stays as it is, but a
+                // `class`/`module` REACHABLE from it still has to register --
+                // core_ex wraps `module Inflector` in a `silence_warnings do`
+                // block, inside a `unless defined? CORE_EX_LOADED` whose
+                // condition nothing decides. The top level already registers
+                // through blocks this way; only the guarded branch did not,
+                // and the definition reached codegen unregistered.
+                _ => {
+                    register_nested_class_defs_as(compiler, s, &[], 0, Conditional::Yes)?;
+                    Ok(s)
+                }
             })
             .collect()
     }
