@@ -179,6 +179,8 @@ pub(super) struct Loader {
     /// to hang off `Hir`, which made the IR depend on the gem reporter for
     /// bookkeeping no consumer of the arena ever reads.
     gem_records: Vec<crate::gem_report::GemRecord>,
+    /// `gem_records`' names, for the first-wins test -- see `record_gem`.
+    gem_names: std::collections::HashSet<String>,
     /// `resolve_require` results, per feature. Sound as a plain memo because
     /// every input the search reads (`roots`, `packages`,
     /// `store_exclusions`) is fully constructed before lowering starts and
@@ -297,6 +299,7 @@ pub(super) fn lower_main_file(
         in_unit_sweep: false,
         store_exclusions: HashMap::new(),
         gem_records: Vec::new(),
+        gem_names: std::collections::HashSet::new(),
         require_memo: std::cell::RefCell::new(HashMap::new()),
         ambiguous_features: std::cell::RefCell::new(HashMap::new()),
     };
@@ -475,7 +478,10 @@ impl Loader {
     /// name (first-wins): a bundled gem's user-facing `.rb` is recorded before
     /// its internal `.so` require, so the entry point wins.
     fn record_gem(&mut self, record: crate::gem_report::GemRecord) {
-        if self.gem_records.iter().any(|r| r.name == record.name) {
+        // The set decides first-wins; `gem_records` keeps the order, which the
+        // report depends on. Scanning the list per record made recording a
+        // program's gems quadratic in their count.
+        if !self.gem_names.insert(record.name.clone()) {
             return;
         }
         self.gem_records.push(record);
@@ -1469,7 +1475,7 @@ impl Loader {
         Ok(Some(self.splice_source(
             hir,
             &canonical,
-            source.to_string(),
+            source.into(),
             None,
             None,
             box_id,
@@ -1657,7 +1663,7 @@ impl Loader {
                 canonical.display()
             ).into());
         }
-        let source = read_source(canonical)?;
+        let source: std::sync::Arc<str> = read_source(canonical)?.into();
         self.splice_source(hir, canonical, source, required_from, package, box_id)
     }
 
@@ -1665,11 +1671,16 @@ impl Loader {
     /// Split out so a SYNTHESIZED feature (an embedded shim like `rbconfig`,
     /// which has no file on disk) can splice through the same path, under a
     /// virtual `canonical` name that stands in for `__FILE__`/provenance.
+    ///
+    /// `source` is shared rather than owned: `ruby_prism` borrows it for as
+    /// long as the lowering below reads the parse tree, so handing `add_file`
+    /// an owned `String` meant copying every byte of every Ruby file the
+    /// loader touched.
     fn splice_source(
         &mut self,
         hir: &mut Hir,
         canonical: &Path,
-        source: String,
+        source: std::sync::Arc<str>,
         required_from: Option<usize>,
         package: Option<String>,
         box_id: u32,
@@ -1705,7 +1716,10 @@ impl Loader {
         // Popped by the guard's Drop, so the parent's own statements after
         // the splice see their own path again.
         let _file = SourceFileFrame::push(Some(canonical));
-        let file_id = hir.add_file(canonical.display().to_string(), source.clone());
+        let file_id = hir.add_file(
+            canonical.display().to_string(),
+            std::sync::Arc::clone(&source),
+        );
         let prev_file = hir.lowering_file.replace(file_id);
         // `loaded_files` and `files` are indexed independently (splice
         // instances vs. span provenance), so the owning package rides

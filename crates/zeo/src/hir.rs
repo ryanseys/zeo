@@ -134,7 +134,10 @@ pub struct DataSection {
 #[derive(Clone)]
 pub struct SourceFile {
     pub name: String,
-    pub source: String,
+    /// Shared rather than owned: the loader parses from this same text and
+    /// must keep it alive while `ruby_prism` borrows it, so an owned `String`
+    /// here forced a full copy of every Ruby file it read.
+    pub source: std::sync::Arc<str>,
     /// This file's OWN `# frozen_string_literal: true` magic comment (each
     /// required file carries its own, not the entry file's).
     pub frozen_string_literal: bool,
@@ -915,7 +918,11 @@ impl Hir {
 
     /// Registers a source file for span provenance; the caller then sets
     /// `lowering_file` while that file's statements lower.
-    pub fn add_file(&mut self, name: impl Into<String>, source: impl Into<String>) -> FileId {
+    pub fn add_file(
+        &mut self,
+        name: impl Into<String>,
+        source: impl Into<std::sync::Arc<str>>,
+    ) -> FileId {
         let source = source.into();
         let frozen_string_literal = magic_frozen_string_literal(&source);
         let mut line_starts = vec![0u32];

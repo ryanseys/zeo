@@ -1301,6 +1301,25 @@ impl Compiler {
         hit
     }
 
+    /// Whether ANY `class`/`module` in `box_id` is spelled `name` or ends in
+    /// `::name` -- i.e. whether the name is class-shaped SOMEWHERE, whatever
+    /// scope it was written under.
+    ///
+    /// Both callers ask this to stay honest about a definition they cannot see
+    /// yet: `analyze`'s class-body splice folds before the body's own
+    /// statements register, and `guard_fold` may be looking at a name written
+    /// under a scope the reference spells differently (`Psych::Visitors` from
+    /// inside `module Psych`). Neither may answer "not defined" then.
+    ///
+    /// One implementation because it was two, keyed and suffixed identically,
+    /// in files that do not otherwise share code.
+    pub fn class_shaped_anywhere(&self, box_id: u32, name: &str) -> bool {
+        let suffix = format!("::{name}");
+        self.shell_kinds
+            .keys()
+            .any(|(bx, k)| *bx == box_id && (k == name || k.ends_with(&suffix)))
+    }
+
     /// The `#<Class:self>` surrogate standing in for `owner`'s `class << self`
     /// body, if it has one.
     ///

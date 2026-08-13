@@ -2312,11 +2312,7 @@ fn nodes_under(compiler: &Compiler, roots: &[NodeId]) -> FSet<NodeId> {
 /// (any branch, any file) -- `shell_kinds`' whole-program sweep, matched by
 /// leaf or path suffix like `guard_fold`'s `defined_const_fold`.
 fn class_shaped_anywhere(compiler: &Compiler, box_id: u32, name: &str) -> bool {
-    let suffix = format!("::{name}");
-    compiler
-        .shell_kinds
-        .keys()
-        .any(|(bx, k)| *bx == box_id && (k == name || k.ends_with(&suffix)))
+    compiler.class_shaped_anywhere(box_id, name)
 }
 
 fn static_top_cond(

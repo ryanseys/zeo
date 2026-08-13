@@ -46,7 +46,9 @@ impl LowerDiagnostic {
         let located = err.span.map(|s: Span| {
             let f = &files[s.file.0 as usize];
             (
-                Box::new(NamedSource::new(&f.name, f.source.clone())),
+                // `miette` wants an owned source; this is the error path, so
+                // the copy costs nothing a successful compile pays.
+                Box::new(NamedSource::new(&f.name, f.source.to_string())),
                 (s.start as usize, (s.end - s.start) as usize),
             )
         });
@@ -140,7 +142,9 @@ impl AnalyzeDiagnostic {
             // the error path would replace a real diagnostic with a worse one.
             let f = files.get(s.file.0 as usize)?;
             Some((
-                Box::new(NamedSource::new(&f.name, f.source.clone())),
+                // `miette` wants an owned source; this is the error path, so
+                // the copy costs nothing a successful compile pays.
+                Box::new(NamedSource::new(&f.name, f.source.to_string())),
                 (s.start as usize, (s.end - s.start) as usize),
             ))
         });
@@ -204,7 +208,9 @@ impl CodegenDiagnostic {
         let located = span.and_then(|s: Span| {
             let f = files.get(s.file.0 as usize)?;
             Some((
-                Box::new(NamedSource::new(&f.name, f.source.clone())),
+                // `miette` wants an owned source; this is the error path, so
+                // the copy costs nothing a successful compile pays.
+                Box::new(NamedSource::new(&f.name, f.source.to_string())),
                 (s.start as usize, (s.end - s.start) as usize),
             ))
         });

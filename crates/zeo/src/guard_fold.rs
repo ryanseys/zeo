@@ -1957,11 +1957,7 @@ fn const_name_fold(
     // A definition the walk hasn't reached yet, or one written under a scope
     // this reference spells differently (`Psych::Visitors` from inside
     // `module Psych`) -- undecidable, so let the guard run.
-    let suffix = format!("::{}", path.unanchored());
-    let defined_somewhere = compiler
-        .shell_kinds
-        .keys()
-        .any(|(bx, k)| *bx == box_id && (*k == *path.unanchored() || k.ends_with(&suffix)));
+    let defined_somewhere = compiler.class_shaped_anywhere(box_id, path.unanchored());
     if defined_somewhere || compiler.assigned_const_names.contains(path.base()) {
         return None;
     }
