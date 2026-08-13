@@ -1230,6 +1230,23 @@ fn enum_int_literal(node: &Node<'_>, hir: &Hir, body_so_far: &[NodeId]) -> Optio
     {
         return Some(s.size() as i64);
     }
+    // `BreakdownStepStruct.size * MAX_TIERS` -- an EARLIER struct's extent,
+    // which zeo laid out itself, so it is as much a compile-time constant as
+    // the literal the gem could have written. j-law-ruby sizes its inline
+    // storage arrays this way. `.alignment` for the same reason.
+    if args.is_empty()
+        && matches!(call.name().as_slice(), b"size" | b"alignment")
+        && let Some(path) = const_path_string(&recv)
+        && let Some(layout) = hir
+            .ffi_struct_layouts
+            .get(path.rsplit("::").next().unwrap_or(&path))
+    {
+        let n = match call.name().as_slice() {
+            b"size" => layout.size,
+            _ => layout.align,
+        };
+        return i64::try_from(n).ok();
+    }
     let lhs = ffi_const_int(&recv, hir, body_so_far)?;
     match (call.name().as_slice(), args.as_slice()) {
         (b"-@", []) => lhs.checked_neg(),
