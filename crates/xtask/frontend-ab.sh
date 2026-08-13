@@ -63,14 +63,31 @@ case "$PANEL_NAME" in
 esac
 
 TIMINGS=conformance/gem-probe-timings.tsv
+LEDGER=conformance/gem-probe.tsv
 OUT=$(mktemp -d)
-trap 'git checkout -- conformance/ 2>/dev/null || true' EXIT
+# Probing rewrites the ledger and the README stats block; neither is the
+# measurement.
+trap 'git checkout -- conformance/ README.md 2>/dev/null || true' EXIT
 
 probe_one() {   # $1 = binary, $2 = gem -> best-of-RUNS ms on stdout
     local best=""
     for _ in $(seq "$RUNS"); do
-        cargo run -q -p xtask -- gem-probe "$2" --zeo "$1" --refresh >/dev/null 2>&1
-        local ms
+        # --jobs 1 hands the whole memory budget to this one compile. The
+        # budget is derived from PHYSICAL memory and split across jobs, and
+        # the heavy panel's gems sit near its edge -- at the default job
+        # count they exit `out-of-memory` partway through instead of
+        # compiling, which is not the thing being measured.
+        cargo run -q -p xtask -- gem-probe "$2" --zeo "$1" --refresh --jobs 1 >/dev/null 2>&1
+        # A run that did not reach `ok` still writes a `codegen_ms`, and it is
+        # the time until it DIED. Reading it as a compile time makes a binary
+        # that fails sooner look faster -- which is exactly how this harness
+        # first reported a 74% "win" that was two out-of-memory exits.
+        local verdict ms
+        verdict=$(awk -F'\t' -v g="$2" '$1==g {v=$4} END {print v}' "$LEDGER")
+        if [ "$verdict" != "ok" ]; then
+            echo "FAILED: $2 with $1 -> ${verdict:-no row}, not a compile time" >&2
+            exit 3
+        fi
         ms=$(awk -F'\t' -v g="$2" '$1==g {v=$4} END {print v}' "$TIMINGS")
         [ -z "$best" ] && best=$ms
         [ "$ms" -lt "$best" ] && best=$ms
@@ -78,12 +95,22 @@ probe_one() {   # $1 = binary, $2 = gem -> best-of-RUNS ms on stdout
     echo "$best"
 }
 
-printf '%-28s %10s %10s %8s\n' gem baseline candidate delta
+# Emitted-byte counts per gem, printed at the end. Two binaries that emit a
+# different number of bytes are not doing the same work, so their times are
+# not comparable -- this is the panel-scale form of the byte-identical check
+# the header asks for.
+emitted_bytes() { awk -F'\t' -v g="$1" '$1==g {v=$5} END {print v}' "$LEDGER"; }
+
+printf '%-28s %10s %10s %8s %16s\n' gem baseline candidate delta emitted-bytes
 for gem in "${PANEL[@]}"; do
     b=$(probe_one "$BASE" "$gem")
+    bb=$(emitted_bytes "$gem")
     c=$(probe_one "$CAND" "$gem")
-    printf '%-28s %9sms %9sms %7.1f%%\n' \
-        "$gem" "$b" "$c" "$(python3 -c "print(($c/$b-1)*100)")"
+    cb=$(emitted_bytes "$gem")
+    note=$bb
+    [ "$bb" != "$cb" ] && note="$bb vs $cb MISMATCH"
+    printf '%-28s %9sms %9sms %7.1f%% %16s\n' \
+        "$gem" "$b" "$c" "$(python3 -c "print(($c/$b-1)*100)")" "$note"
     echo "$b $c" >> "$OUT/rows"
 done
 
