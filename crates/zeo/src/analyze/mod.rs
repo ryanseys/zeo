@@ -1037,7 +1037,25 @@ fn register_nested_class_defs_as(
     box_id: u32,
     conditional: Conditional,
 ) -> Result<(), String> {
-    for (s, _) in nested_stmts(&compiler.hir, stmt) {
+    register_nested_class_defs_in(
+        compiler,
+        &nested_stmts(&compiler.hir, stmt),
+        cref,
+        box_id,
+        conditional,
+    )
+}
+
+/// [`register_nested_class_defs_as`] over an already-collected nesting, so a
+/// caller that also wants the refinements beside those classes walks once.
+fn register_nested_class_defs_in(
+    compiler: &mut Compiler,
+    nested: &[(NodeId, Reach)],
+    cref: &[ClassId],
+    box_id: u32,
+    conditional: Conditional,
+) -> Result<(), String> {
+    for &(s, _) in nested {
         let HirNode::ClassDef {
             name,
             superclass,
@@ -1123,11 +1141,11 @@ fn register_refinement(
 fn register_nested_refinements(
     compiler: &mut Compiler,
     class_id: ClassId,
-    stmt: NodeId,
+    nested: &[(NodeId, Reach)],
     cref: &[ClassId],
     box_id: u32,
 ) {
-    for (s, _) in nested_stmts(&compiler.hir, stmt) {
+    for &(s, _) in nested {
         if matches!(compiler.hir[s], HirNode::Refine { .. }) {
             register_refinement(compiler, class_id, s, cref, box_id);
         }
@@ -1635,36 +1653,38 @@ fn body_cannot_raise(compiler: &Compiler, body: &[NodeId]) -> bool {
 /// `DefMethod` (which has a runtime `define_method` emission and so
 /// survives inside an ordinary undecided `if` unchanged).
 fn branch_has_top_defs(compiler: &Compiler, body: &[NodeId]) -> bool {
-    body.iter().any(|&s| match &compiler.hir[s] {
-        // A `def` counts for exactly the reason every other definition here
-        // does. Left out, an `if RUBY_ENGINE == "ruby"` whose branches hold
-        // only methods never folded: BOTH branches registered, and the one
-        // written last silently won -- so a compat gate picked the branch
-        // for the engine zeo is not (prism's deserializer has two
-        // `def load_node`s exactly this way).
-        HirNode::DefMethod { .. }
-        | HirNode::ClassDef { .. }
-        | HirNode::Include(_)
-        | HirNode::Extend(_)
-        | HirNode::Prepend(_)
-        | HirNode::ClassMethodPrepend(_)
-        | HirNode::Refine { .. }
-        | HirNode::Using(_)
-        | HirNode::DefHook { .. }
-        | HirNode::MethodRedefine { .. }
-        | HirNode::Undef(_)
-        | HirNode::ClassMethodUndef(_)
-        | HirNode::AliasMethod { .. }
-        | HirNode::MethodVisibility { .. }
-        | HirNode::ClassMethodVisibility { .. }
-        | HirNode::ModuleFunction(_)
-        | HirNode::ConstantVisibility { .. } => true,
-        HirNode::If {
-            then_body,
-            else_body,
-            ..
-        } => branch_has_top_defs(compiler, then_body) || branch_has_top_defs(compiler, else_body),
-        _ => false,
+    body.iter().any(|&s| {
+        let node = &compiler.hir[s];
+        // The class-body directives, asked of the one exhaustive list rather
+        // than re-spelled here -- `HirNode::is_class_body_directive` records
+        // what re-spelling it cost the last time.
+        node.is_class_body_directive()
+            || match node {
+                // A `def` counts for exactly the reason every directive does.
+                // Left out, an `if RUBY_ENGINE == "ruby"` whose branches hold
+                // only methods never folded: BOTH branches registered, and the
+                // one written last silently won -- so a compat gate picked the
+                // branch for the engine zeo is not (prism's deserializer has
+                // two `def load_node`s exactly this way).
+                //
+                // The three that are NOT directives but still register: `using`
+                // edits the compile-time refinement set, and the two definition
+                // REPORTS name methods the walk has to have seen.
+                HirNode::DefMethod { .. }
+                | HirNode::ClassDef { .. }
+                | HirNode::Using(_)
+                | HirNode::DefHook { .. }
+                | HirNode::MethodRedefine { .. } => true,
+                HirNode::If {
+                    then_body,
+                    else_body,
+                    ..
+                } => {
+                    branch_has_top_defs(compiler, then_body)
+                        || branch_has_top_defs(compiler, else_body)
+                }
+                _ => false,
+            }
     })
 }
 
@@ -4406,11 +4426,20 @@ fn walk_class_body(
                 // class Rc4`), a block. Registration is a compile-time fact
                 // about shape; the marker stays put and the body still runs at
                 // its document position, exactly as at the top level.
-                register_nested_class_defs(compiler, stmt, &child_cref, box_id)?;
+                let nested = nested_stmts(&compiler.hir, stmt);
+                register_nested_class_defs_in(
+                    compiler,
+                    &nested,
+                    &child_cref,
+                    box_id,
+                    Conditional::No,
+                )?;
                 // ...and the `refine` markers beside those holder modules,
                 // which is how power_assert's whole refinement set reaches
-                // registration from inside a runtime `if`.
-                register_nested_refinements(compiler, class_id, stmt, &child_cref, box_id);
+                // registration from inside a runtime `if`. Same nesting, walked
+                // once: the classes have to be registered before the markers,
+                // not found by a second traversal.
+                register_nested_refinements(compiler, class_id, &nested, &child_cref, box_id);
                 // ...and, symmetrically, a guarded `undef` (`undef :to_a if
                 // respond_to?(:to_a)`, drb) reaches here as a runtime
                 // `undef_method` send. Whether it fires is a runtime fact, so
