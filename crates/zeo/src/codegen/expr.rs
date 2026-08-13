@@ -1046,7 +1046,11 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             let owner = cvar_owner_id(cx, name);
             // The `@@x ||= v` read half tolerates an unassigned cvar (nil);
             // every other read is ruby's NameError, not nil.
-            if cx.compiler.hir.lenient_cvar_reads.contains(&id) {
+            if cx
+                .compiler
+                .hir
+                .has_flag(id, crate::hir::NodeFlag::LENIENT_CVAR_READ)
+            {
                 quote! { zeo_rt::cvar_get(#owner, #name) }
             } else {
                 quote! { zeo_rt::cvar_get_checked(#owner, #name)? }
@@ -1194,7 +1198,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             *block,
             *block_arg,
             *safe,
-            cx.compiler.hir.vcall_nodes.contains(&id),
+            cx.compiler.hir.has_flag(id, crate::hir::NodeFlag::VCALL),
         ),
         HirNode::Block { .. } => {
             panic!(
@@ -1470,7 +1474,14 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             // is dropped when `h` turns out empty, so its length is a runtime
             // question and the fixed-slice form below cannot carry it.
             let kw_tail = args.last().and_then(|a| match a {
-                ArrayElem::Single(n) if cx.compiler.hir.kwargs_hash_nodes.contains(n) => Some(*n),
+                ArrayElem::Single(n)
+                    if cx
+                        .compiler
+                        .hir
+                        .has_flag(*n, crate::hir::NodeFlag::KWARGS_HASH) =>
+                {
+                    Some(*n)
+                }
                 _ => None,
             });
             // No splat: the arguments are a fixed-length list, so they go

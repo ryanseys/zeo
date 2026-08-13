@@ -639,7 +639,10 @@ fn process_top_stmt_inner(
             (name.clone(), params.clone(), body.clone(), *is_class_method);
         // A `define_method(:x) { module M; end }` body is a block, and ruby
         // accepts the `module` keyword in one -- see `collect_nested_bodies`.
-        if compiler.hir.block_bodied_defs.contains(&stmt) {
+        if compiler
+            .hir
+            .has_flag(stmt, crate::hir::NodeFlag::BLOCK_BODIED_DEF)
+        {
             register_nested_class_defs(compiler, stmt, &[], 0)?;
         }
         if is_class_method {
@@ -1185,7 +1188,11 @@ fn collect_nested_bodies(compiler: &Compiler, node: NodeId, out: &mut Vec<NodeId
         // ...and a `define_method(:x) { module M; end }` is a BLOCK wearing a
         // `DefMethod`'s shape, so it descends like one: ruby accepts the
         // `module` keyword there and gives it the enclosing lexical cref.
-        HirNode::DefMethod { body, .. } if compiler.hir.block_bodied_defs.contains(&node) => {
+        HirNode::DefMethod { body, .. }
+            if compiler
+                .hir
+                .has_flag(node, crate::hir::NodeFlag::BLOCK_BODIED_DEF) =>
+        {
             body.clone()
         }
         HirNode::ClassDef { .. } | HirNode::DefMethod { .. } => return,
@@ -3796,7 +3803,10 @@ fn walk_class_body(
         // `module` keyword in it is legal and lands in THIS body's cref.
         // Registered up front, exactly as the `_` arm below registers one
         // nested in a plain block.
-        if compiler.hir.block_bodied_defs.contains(&stmt) {
+        if compiler
+            .hir
+            .has_flag(stmt, crate::hir::NodeFlag::BLOCK_BODIED_DEF)
+        {
             register_nested_class_defs(compiler, stmt, &child_cref, box_id)?;
         }
         match &compiler.hir[stmt] {
@@ -5020,7 +5030,11 @@ fn register_method(
     // is the singleton's surrogate, registered just before it in the same
     // body walk (lowering pushes the surrogate `ClassDef` first).
     let lexical_home = def_node
-        .filter(|n| compiler.hir.singleton_body_defs.contains(n))
+        .filter(|n| {
+            compiler
+                .hir
+                .has_flag(*n, crate::hir::NodeFlag::SINGLETON_BODY_DEF)
+        })
         .and_then(|_| {
             compiler.classes.iter().position(|c| {
                 c.lexical_parent == Some(defining_class)
@@ -5113,7 +5127,8 @@ fn accessor_shape(
         // an `attr_reader` reads as hand-written here. That is the safe
         // direction (it only keeps today's call shape while tracing) and it
         // matches CRuby, which gives the alias its own method entry.
-        attr_generated: def_node.is_some_and(|n| hir.attr_generated.contains(&n)),
+        attr_generated: def_node
+            .is_some_and(|n| hir.has_flag(n, crate::hir::NodeFlag::ATTR_GENERATED)),
     })
 }
 

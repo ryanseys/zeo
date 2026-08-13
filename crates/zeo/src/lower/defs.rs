@@ -495,9 +495,9 @@ fn desugar_singleton_items(
                     body: vec![id],
                 });
                 // The block runs under the RECEIVER's `self`. Lowering marks
-                // the ones the SOURCE writes (see `Hir::rehomed_blocks`); a
+                // the ones the SOURCE writes (see `NodeFlag::REHOMED_BLOCK`); a
                 // synthesized one has to say so itself.
-                hir.rehomed_blocks.insert(block);
+                hir.set_flag(block, crate::hir::NodeFlag::REHOMED_BLOCK);
                 out.push(hir.push(HirNode::Call {
                     receiver: Some(singleton),
                     name: "class_eval".to_string(),
@@ -1050,12 +1050,12 @@ fn map_class_self_items(hir: &mut Hir, ids: &[NodeId], out: &mut Vec<NodeId>) ->
 
 /// Marks every `DefMethod` in a constant-bearing `class << self` body
 /// (recursing into kept conditional branches) -- see
-/// `Hir::singleton_body_defs`.
+/// `NodeFlag::SINGLETON_BODY_DEF`.
 fn tag_singleton_body_defs(hir: &mut Hir, ids: &[NodeId]) {
     for &id in ids {
         match &hir[id] {
             HirNode::DefMethod { .. } => {
-                hir.singleton_body_defs.insert(id);
+                hir.set_flag(id, crate::hir::NodeFlag::SINGLETON_BODY_DEF);
             }
             HirNode::If {
                 then_body,
@@ -4097,7 +4097,7 @@ fn lower_class_body_statement(
                             visibility: *visibility,
                             is_def: true,
                         });
-                        hir.attr_generated.insert(getter);
+                        hir.set_flag(getter, crate::hir::NodeFlag::ATTR_GENERATED);
                         out.push(getter);
                     }
                     if matches!(name.as_str(), "attr_writer" | "attr_accessor") {
@@ -4115,7 +4115,7 @@ fn lower_class_body_statement(
                             visibility: *visibility,
                             is_def: true,
                         });
-                        hir.attr_generated.insert(setter);
+                        hir.set_flag(setter, crate::hir::NodeFlag::ATTR_GENERATED);
                         out.push(setter);
                     }
                 }

@@ -72,8 +72,11 @@ pub fn emit_proc_value(cx: &Ctx, block_id: NodeId) -> TokenStream {
     // A re-homed block (`recv.instance_eval { }`) always captures `self`,
     // even when its body never mentions one: `instance_eval` rebinding needs
     // the self slot, and the block's call sites read the runtime `self`'s
-    // class for the `protected` barrier (see `Hir::rehomed_blocks`).
-    let force_self = cx.compiler.hir.rehomed_blocks.contains(&block_id);
+    // class for the `protected` barrier (see `NodeFlag::REHOMED_BLOCK`).
+    let force_self = cx
+        .compiler
+        .hir
+        .has_flag(block_id, crate::hir::NodeFlag::REHOMED_BLOCK);
     // A computed-name `define_method` block is a METHOD body at run time:
     // `super` inside it resolves through the runtime method-frame stack
     // (`emit_super_dynamic`), and a bare `super` raises ruby's define_method
@@ -81,8 +84,7 @@ pub fn emit_proc_value(cx: &Ctx, block_id: NodeId) -> TokenStream {
     if cx
         .compiler
         .hir
-        .dynamic_define_method_blocks
-        .contains(&block_id)
+        .has_flag(block_id, crate::hir::NodeFlag::DYNAMIC_DEFINE_METHOD_BLOCK)
     {
         let mut dm_cx = cx.clone();
         dm_cx.runtime_super_params = Some(std::rc::Rc::new(params.clone()));

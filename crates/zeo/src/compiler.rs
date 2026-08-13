@@ -478,7 +478,7 @@ pub struct Scope {
     pub defining_class: ClassId,
     /// The singleton-class SURROGATE this body was lexically written in, when
     /// the `def` sat in a constant-bearing `class << self` body
-    /// (`Hir::singleton_body_defs`). Codegen's method-emission `Ctx` uses it
+    /// (`NodeFlag::SINGLETON_BODY_DEF`). Codegen's method-emission `Ctx` uses it
     /// over `defining_class` for everything lexical -- bare-constant
     /// resolution, `Module.nesting` -- while `class`/`defining_class` keep
     /// owning dispatch, ivars, and `super`. `None` for every other method.
@@ -554,7 +554,7 @@ pub struct AccessorShape {
     pub ivar: String,
     pub kind: AccessorKind,
     /// Synthesized by `attr_reader`/`attr_writer`/`attr_accessor`/`attr`
-    /// rather than written as a `def` (`Hir::attr_generated`). CRuby compiles
+    /// rather than written as a `def` (`NodeFlag::ATTR_GENERATED`). CRuby compiles
     /// those to iseq-less methods that fire no `:call`/`:return` `TracePoint`
     /// event, so devirtualizing one is unobservable even while tracing --
     /// where doing the same to a hand-written `def x; @x; end` would swallow

@@ -14,6 +14,76 @@
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct NodeId(u32);
 
+/// One per-node boolean fact, as a bit in [`Hir`]'s `flags` array. Read and
+/// written through [`Hir::has_flag`]/[`Hir::set_flag`].
+///
+/// Each of these was its own `HashSet<NodeId>` side table. They are facts a
+/// node's own variant cannot express -- two nodes of the same shape that mean
+/// different things -- which is why they live beside the arena rather than in
+/// `HirNode`, and why adding one here does not disturb the dozen walkers that
+/// match on the variant.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct NodeFlag(u16);
+
+impl NodeFlag {
+    /// A `Call` that is a VCALL (prism's `is_variable_call`: a bare identifier,
+    /// implicit self, no args/parens -- something that could have been a
+    /// local). A miss on one raises `NameError`, not `NoMethodError`; codegen
+    /// routes these through `send_value_vcall_in`.
+    pub const VCALL: NodeFlag = NodeFlag(1 << 0);
+    /// A literal block handed to a RE-HOMING call (`recv.instance_eval { }` and
+    /// the exec/class_eval family): its `self` becomes the receiver at run
+    /// time, so codegen forces the self capture (`procs`) and its call sites
+    /// ask the runtime `self`'s class the `protected` question instead of
+    /// baking the lexical one (`visibility::caller_class`).
+    pub const REHOMED_BLOCK: NodeFlag = NodeFlag(1 << 1);
+    /// A `ClassVarRead` born as the READ half of `@@x ||= v`: ruby's ONE
+    /// lenient cvar read -- an unassigned `@@x` reads as nil there and the
+    /// write then defines it, where every other read (including `+=`/`&&=`)
+    /// raises NameError. The `ConstReadOrNil` rule, applied to cvars.
+    pub const LENIENT_CVAR_READ: NodeFlag = NodeFlag(1 << 2);
+    /// A literal block on a COMPUTED-name `define_method(name) { }` call -- the
+    /// literal-symbol form desugars to `DefMethod` and never gets here. The
+    /// block body IS a method body at run time, so `super` inside it resolves
+    /// through the runtime method-frame stack and a BARE `super` raises ruby's
+    /// define_method refusal (see `procs::emit_proc_value`).
+    pub const DYNAMIC_DEFINE_METHOD_BLOCK: NodeFlag = NodeFlag(1 << 3);
+    /// A `DefMethod` desugared from a literal-symbol `define_method(:x) { }` /
+    /// `define_singleton_method(:x) { }` -- a BLOCK, not a `def`. Ruby rejects
+    /// a `class` keyword inside a `def` and accepts one inside a block, so the
+    /// analyze walk has to tell the two apart even though the desugar gives
+    /// them one node type (`collect_nested_bodies`).
+    ///
+    /// The flagged nodes are also enumerated, in push order, through
+    /// [`Hir::block_bodied_defs`].
+    pub const BLOCK_BODIED_DEF: NodeFlag = NodeFlag(1 << 4);
+    /// A `HashLit` that is a `yield`'s KEYWORD arguments folded into one
+    /// trailing hash, rather than a hash the source really wrote. The two are
+    /// the same shape but not the same value: `yield(1, **h)` with an empty `h`
+    /// passes only `1`, where `yield(1, {})` passes the hash.
+    pub const KWARGS_HASH: NodeFlag = NodeFlag(1 << 5);
+    /// A `DefMethod` that `attr_reader`/`attr_writer`/`attr_accessor`/`attr`
+    /// SYNTHESIZED, as opposed to a `def` the source really wrote.
+    ///
+    /// The two are the same shape, and codegen deliberately treats them the
+    /// same everywhere but one place: CRuby compiles an `attr_*` accessor to an
+    /// iseq-less method, which fires no `:call`/`:return` `TracePoint` event,
+    /// where a hand-written `def x; @x; end` is an ordinary method and does. So
+    /// a synthesized accessor may devirtualize even under tracing -- see
+    /// `codegen::emit_class`.
+    pub const ATTR_GENERATED: NodeFlag = NodeFlag(1 << 6);
+    /// A `DefMethod` written inside a CONSTANT-BEARING `class << self` body.
+    /// Its lexical home is the singleton class -- a bare constant there
+    /// resolves against the singleton's surrogate first, and `Module.nesting`
+    /// reports it (`analyze::register_method` sets `Scope::lexical_home` from
+    /// this). Defs in a constant-free singleton body stay untagged: with no
+    /// surrogate there is nothing to resolve differently.
+    pub const SINGLETON_BODY_DEF: NodeFlag = NodeFlag(1 << 7);
+    /// The receiver of a call the SOURCE wrote no receiver for -- see
+    /// [`Hir::note_implicit_self_receiver`].
+    pub const IMPLICIT_SELF_RECEIVER: NodeFlag = NodeFlag(1 << 8);
+}
+
 /// Index into `Hir::files` -- which source file a `Span` points into.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct FileId(pub u32);
@@ -152,34 +222,26 @@ pub struct Hir {
     /// by-reference fact, so these enter the type table as [`FfiType::
     /// StructRef`] when no layout/typedef claims the name.
     ffi_struct_classes: std::collections::HashSet<String>,
-    /// `Call` nodes that are VCALLS (prism's `is_variable_call`: a bare
-    /// identifier, implicit self, no args/parens -- something that could have
-    /// been a local). A miss on one raises `NameError`, not `NoMethodError`;
-    /// codegen routes these through `send_value_vcall_in`.
-    pub vcall_nodes: std::collections::HashSet<NodeId>,
-    /// Literal blocks handed to a RE-HOMING call (`recv.instance_eval { }` and
-    /// the exec/class_eval family): their `self` becomes the receiver at run
-    /// time, so codegen forces the self capture (`procs`) and their call
-    /// sites ask the runtime `self`'s class the `protected` question instead
-    /// of baking the lexical one (`visibility::caller_class`).
-    pub rehomed_blocks: std::collections::HashSet<NodeId>,
-    /// `ClassVarRead` nodes born as the READ half of `@@x ||= v`: ruby's ONE
-    /// lenient cvar read -- an unassigned `@@x` reads as nil there and the
-    /// write then defines it, where every other read (including `+=`/`&&=`)
-    /// raises NameError. The `ConstReadOrNil` rule, applied to cvars.
-    pub lenient_cvar_reads: std::collections::HashSet<NodeId>,
-    /// Literal blocks on a COMPUTED-name `define_method(name) { }` call --
-    /// the literal-symbol form desugars to `DefMethod` and never gets here.
-    /// The block body IS a method body at run time, so `super` inside it
-    /// resolves through the runtime method-frame stack and a BARE `super`
-    /// raises ruby's define_method refusal (see `procs::emit_proc_value`).
-    pub dynamic_define_method_blocks: std::collections::HashSet<NodeId>,
-    /// `DefMethod` nodes desugared from a literal-symbol `define_method(:x) {
-    /// }` / `define_singleton_method(:x) { }` -- a BLOCK, not a `def`. Ruby
-    /// rejects a `class` keyword inside a `def` and accepts one inside a
-    /// block, so the analyze walk has to tell the two apart even though the
-    /// desugar gives them one node type (`collect_nested_bodies`).
-    pub block_bodied_defs: std::collections::HashSet<NodeId>,
+    /// Per-node boolean facts, one `u16` per node and parallel to
+    /// `nodes`/`spans` -- see [`NodeFlag`] for what each bit means and
+    /// [`Hir::set_flag`]/[`Hir::has_flag`] for the accessors.
+    ///
+    /// These were nine separate `HashSet<NodeId>`/`HashMap<NodeId, _>` side
+    /// tables. `NodeId` is a dense `u32`, so every probe hashed a small integer
+    /// -- with SipHash, on paths that ask per node (the class-body walk asks
+    /// `BLOCK_BODIED_DEF` of every statement, codegen asks `VCALL` and
+    /// `KWARGS_HASH` per call site). An array index answers the same question
+    /// with no hash at all, and nine tables' worth of allocation becomes two
+    /// bytes per node.
+    flags: Vec<u16>,
+    /// The [`NodeFlag::BLOCK_BODIED_DEF`] nodes in push order.
+    ///
+    /// `flags` answers "is this one?" in an array index, but codegen's
+    /// inline-marker walk also has to ENUMERATE them
+    /// (`codegen::inline_class_markers`), which a bit array cannot do without
+    /// scanning the whole arena. Push order also makes that walk deterministic,
+    /// which iterating a `HashSet` never was.
+    block_bodied_def_list: Vec<NodeId>,
     /// Statements a `class << self` body contributed to its ENCLOSING class
     /// body, mapped to the `class << self` node itself. The singleton
     /// mapping splices them in place (that is the retagging model), so
@@ -188,40 +250,15 @@ pub struct Hir {
     /// `codegen::stmt::emit_body`, which groups consecutive entries under one
     /// `singleton class` frame.
     pub singleton_frame_stmts: std::collections::HashMap<NodeId, NodeId>,
-    /// `HashLit` nodes that are a `yield`'s KEYWORD arguments folded into one
-    /// trailing hash, rather than a hash the source really wrote. The two are
-    /// the same shape but not the same value: `yield(1, **h)` with an empty `h`
-    /// passes only `1`, where `yield(1, {})` passes the hash. A side table
-    /// rather than a field on `Yield`, so the variant -- and the dozen walkers
-    /// that match it -- keep their shape.
-    pub kwargs_hash_nodes: std::collections::HashSet<NodeId>,
     /// `DefMethod` nodes an `alias` cloned, mapped to the name they were born
     /// under -- see [`record_alias_origin`](Self::record_alias_origin).
     alias_origins: std::collections::HashMap<NodeId, String>,
-    /// `DefMethod` nodes `attr_reader`/`attr_writer`/`attr_accessor`/`attr`
-    /// SYNTHESIZED, as opposed to a `def` the source really wrote.
-    ///
-    /// The two are the same shape, and codegen deliberately treats them the
-    /// same everywhere but one place: CRuby compiles an `attr_*` accessor to
-    /// an iseq-less method, which fires no `:call`/`:return` `TracePoint`
-    /// event, where a hand-written `def x; @x; end` is an ordinary method and
-    /// does. So a synthesized accessor may devirtualize even under tracing --
-    /// see `codegen::emit_class`.
-    pub attr_generated: std::collections::HashSet<NodeId>,
     /// `ClassDef` nodes `lower::defs::synthesize_struct_class` built from a
     /// `NAME = Struct.new(:a, :b)`, mapped to their MEMBER list in declaration
     /// order. `analyze` copies it onto `ClassInfo::hidden_ivars`, which is what
     /// makes those slots invisible to `instance_variables` while `Struct`'s own
     /// shared protocol still reaches them by index.
     pub struct_members: std::collections::HashMap<NodeId, Vec<String>>,
-    /// `DefMethod` nodes written inside a CONSTANT-BEARING `class << self`
-    /// body. Their lexical home is the singleton class -- a bare constant
-    /// there resolves against the singleton's surrogate first, and
-    /// `Module.nesting` reports it (`analyze::register_method` sets
-    /// `Scope::lexical_home` from this). Defs in a constant-free singleton
-    /// body stay untagged: with no surrogate there is nothing to resolve
-    /// differently.
-    pub singleton_body_defs: std::collections::HashSet<NodeId>,
     /// The span of the prism node currently being lowered (innermost last);
     /// `Hir::push` stamps from the top of this stack. Maintained by the
     /// `lower_node` wrapper, empty outside lowering.
@@ -419,9 +456,6 @@ pub struct Hir {
     /// How many `def` bodies enclose the node being lowered -- see
     /// [`is_in_def_body`](Self::is_in_def_body).
     def_depth: u32,
-    /// Receivers zeo SYNTHESIZED for calls ruby writes with no receiver at all
-    /// -- see [`is_implicit_self_receiver`](Self::is_implicit_self_receiver).
-    implicit_self_receivers: std::collections::HashSet<NodeId>,
     /// Whether the inline-array proxy classes an `FFI::Struct` array field
     /// reads back as have already been synthesized -- see
     /// [`claim_ffi_inline_array_classes`](Self::claim_ffi_inline_array_classes).
@@ -582,7 +616,7 @@ impl Hir {
     /// Records that `recv` is a receiver zeo synthesized for a call ruby runs
     /// with an implicit one.
     pub(crate) fn mark_implicit_self_receiver(&mut self, recv: NodeId) {
-        self.implicit_self_receivers.insert(recv);
+        self.set_flag(recv, NodeFlag::IMPLICIT_SELF_RECEIVER);
     }
 
     /// Whether `recv` is a receiver zeo synthesized for a call whose ruby form
@@ -595,7 +629,7 @@ impl Hir {
     /// A receiver the SOURCE wrote is never in here, so a hand-written
     /// `Foo.singleton_class.some_private_method` still raises, as ruby does.
     pub(crate) fn is_implicit_self_receiver(&self, recv: NodeId) -> bool {
-        self.implicit_self_receivers.contains(&recv)
+        self.has_flag(recv, NodeFlag::IMPLICIT_SELF_RECEIVER)
     }
 
     /// Lowers `body` outside any `class << self` run -- see `in_class_body`
@@ -759,7 +793,31 @@ impl Hir {
         self.nodes.push(node);
         self.spans
             .push(self.span_stack.last().copied().unwrap_or(Span::SYNTH));
+        self.flags.push(0);
         NodeId((self.nodes.len() - 1) as u32)
+    }
+
+    /// Records `flag` about `id` -- see [`NodeFlag`].
+    pub fn set_flag(&mut self, id: NodeId, flag: NodeFlag) {
+        let slot = &mut self.flags[id.0 as usize];
+        // The bit answers "was it already set?" in one load, which is what
+        // keeps `block_bodied_def_list` free of duplicates without scanning it
+        // -- the sets these flags replaced deduped for free.
+        let fresh = *slot & flag.0 == 0;
+        *slot |= flag.0;
+        if fresh && flag == NodeFlag::BLOCK_BODIED_DEF {
+            self.block_bodied_def_list.push(id);
+        }
+    }
+
+    /// Whether `flag` was recorded about `id` -- see [`NodeFlag`].
+    pub fn has_flag(&self, id: NodeId, flag: NodeFlag) -> bool {
+        self.flags[id.0 as usize] & flag.0 != 0
+    }
+
+    /// Every [`NodeFlag::BLOCK_BODIED_DEF`] node, in push order.
+    pub fn block_bodied_defs(&self) -> &[NodeId] {
+        &self.block_bodied_def_list
     }
 
     /// Records that the `DefMethod` at `def` is an `alias` of `original` --
@@ -784,6 +842,7 @@ impl Hir {
         let span = self.spans[origin.0 as usize];
         self.nodes.push(node);
         self.spans.push(span);
+        self.flags.push(0);
         NodeId((self.nodes.len() - 1) as u32)
     }
 

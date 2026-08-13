@@ -729,7 +729,7 @@ fn lower_call_node(
                     // An explicit `define_method` call, not a `def`.
                     is_def: false,
                 });
-                hir.block_bodied_defs.insert(id);
+                hir.set_flag(id, crate::hir::NodeFlag::BLOCK_BODIED_DEF);
                 return Ok(id);
             }
         }
@@ -821,7 +821,7 @@ fn lower_call_node(
                     // `block in <class:E>`, not `E.trace`.
                     is_def: false,
                 });
-                hir.block_bodied_defs.insert(def);
+                hir.set_flag(def, crate::hir::NodeFlag::BLOCK_BODIED_DEF);
                 return Ok(match target {
                     None => def,
                     Some(class_name) => hir.push(HirNode::ClassDef {
@@ -1418,10 +1418,10 @@ fn lower_call_node(
     }
     let node = hir.push(built);
     if is_vcall {
-        hir.vcall_nodes.insert(node);
+        hir.set_flag(node, crate::hir::NodeFlag::VCALL);
     }
     // A literal block on a re-homing call runs under the RECEIVER's
-    // `self` -- see `Hir::rehomed_blocks`.
+    // `self` -- see `NodeFlag::REHOMED_BLOCK`.
     if let HirNode::Call {
         receiver: Some(_),
         name,
@@ -1439,10 +1439,10 @@ fn lower_call_node(
         )
     {
         let b = *b;
-        hir.rehomed_blocks.insert(b);
+        hir.set_flag(b, crate::hir::NodeFlag::REHOMED_BLOCK);
     }
     // A computed-name `define_method(name) { }` block IS a method body
-    // at run time -- see `Hir::dynamic_define_method_blocks`.
+    // at run time -- see `NodeFlag::DYNAMIC_DEFINE_METHOD_BLOCK`.
     if let HirNode::Call {
         name,
         block: Some(b),
@@ -1451,7 +1451,7 @@ fn lower_call_node(
         && matches!(name.as_str(), "define_method" | "define_singleton_method")
     {
         let b = *b;
-        hir.dynamic_define_method_blocks.insert(b);
+        hir.set_flag(b, crate::hir::NodeFlag::DYNAMIC_DEFINE_METHOD_BLOCK);
     }
     return Ok(node);
 }

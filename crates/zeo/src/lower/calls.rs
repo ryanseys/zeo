@@ -193,10 +193,10 @@ pub(crate) fn try_lower(
         //
         // The fold is recorded, because a hash that arrived as KEYWORDS is
         // dropped when it turns out empty at runtime while one the source wrote
-        // is not -- see `Hir::kwargs_hash_nodes`.
+        // is not -- see `NodeFlag::KWARGS_HASH`.
         if !kwargs.is_empty() {
             let hash = hir.push(HirNode::HashLit(kwargs));
-            hir.kwargs_hash_nodes.insert(hash);
+            hir.set_flag(hash, crate::hir::NodeFlag::KWARGS_HASH);
             args.push(ArrayElem::Single(hash));
         }
         return Ok(Some(hir.push(HirNode::Yield(args))));

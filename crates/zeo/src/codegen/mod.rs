@@ -3671,7 +3671,7 @@ fn inline_class_markers(
     // stream (a top-level `define_method` is consumed into `Object`'s table).
     // Without this the body ran twice: once in the method and once more in
     // the hoisted prelude.
-    for &def in &compiler.hir.block_bodied_defs {
+    for &def in compiler.hir.block_bodied_defs() {
         if let crate::hir::HirNode::DefMethod { body, .. } = &compiler.hir[def] {
             work.extend(body.iter().copied());
         }
@@ -3696,7 +3696,9 @@ fn inline_class_markers(
             // it emitted the body once at its own position and once more in
             // the hoisted prelude).
             crate::hir::HirNode::DefMethod { body, .. }
-                if compiler.hir.block_bodied_defs.contains(&s) =>
+                if compiler
+                    .hir
+                    .has_flag(s, crate::hir::NodeFlag::BLOCK_BODIED_DEF) =>
             {
                 work.extend(body.iter().copied())
             }
