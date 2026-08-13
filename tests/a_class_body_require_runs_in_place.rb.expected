@@ -1,0 +1,10 @@
+before
+inner runs
+after
+1
+"inner-class"
+[]
+true
+nil
+false
+done

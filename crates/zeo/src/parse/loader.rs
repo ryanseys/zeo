@@ -681,16 +681,60 @@ impl Loader {
         // Class/module-body requires pre-LOWER here, ahead of this file's own
         // statements: CRuby runs them MID-body, so their declarations -- the
         // FFI vocabulary above all -- exist before the statements below them.
-        // Their nodes still EMIT at the file-trailing position (appended to
-        // `trailing` below), so runtime order is exactly what the trailing
-        // splice always produced; only the compile-time lowering order moves.
+        //
+        // The lowered body then becomes its own FEATURE UNIT rather than a
+        // splice, and the CALL stays live: a unit is emitted as a free
+        // function at the top-level cref and the runtime `require` resolves
+        // and calls it, so the body runs at the require's own document
+        // position with its constants landing on `Object` -- exactly CRuby's
+        // order. Appending to `trailing` instead ran it after the whole
+        // enclosing file, so `module M; require_relative "x"; p X; end`
+        // printed before/after/inner and raised `uninitialized constant
+        // M::X`. A target with no unit spelling (a builtin activation, a
+        // synthesized shim) still splices trailing.
         let mut nested_spliced = Vec::new();
         for call in &requires.nested {
             let name = String::from_utf8_lossy(call.name().as_slice()).into_owned();
-            if let Some(spliced) =
+            let unit = self.nested_unit_target(hir, result, call, &name, dir)?;
+            // Whether THIS statement is the one that loads the target, asked
+            // before the splice takes the dedup slot. A re-require keeps its
+            // call and answers `false` off the runtime's loaded set, which is
+            // only right if the first one really did register a unit.
+            let fresh = unit
+                .as_ref()
+                .is_some_and(|(_, _, c)| !self.required.contains(&(current_box, c.clone())));
+            let Some(spliced) =
                 self.lower_require_statement(hir, result, call, &name, dir, file_idx, current_box)?
-            {
-                nested_spliced.extend(spliced);
+            else {
+                continue;
+            };
+            let registered = unit.as_ref().is_some_and(|(_, _, c)| {
+                hir.loaded_files
+                    .iter()
+                    .any(|lf| &lf.canonical == c && lf.is_unit)
+            });
+            match unit {
+                Some((feature, absolute, canonical)) if fresh || registered => {
+                    if let Some(file) = hir.lowering_file {
+                        hir.conditional_require_sites
+                            .insert((file, call.location().start_offset() as u32));
+                    }
+                    if fresh {
+                        for lf in hir
+                            .loaded_files
+                            .iter_mut()
+                            .filter(|lf| lf.canonical == canonical)
+                        {
+                            lf.is_unit = true;
+                        }
+                        hir.feature_units.push(crate::hir::FeatureUnit {
+                            feature,
+                            absolute,
+                            body: spliced,
+                        });
+                    }
+                }
+                _ => nested_spliced.extend(spliced),
             }
         }
 
@@ -1229,6 +1273,53 @@ impl Loader {
     /// literal `feature` and the resolution flavor `name`, short-circuit a
     /// built-in feature, resolve the file, dedup, and splice it into the
     /// arena.
+    /// The `(feature, absolute, canonical)` a class-body require's target
+    /// registers a FEATURE UNIT under, or `None` when the target has no unit
+    /// spelling (a computed argument, an unresolvable name, a builtin
+    /// activation, a synthesized shim) and must keep the trailing splice.
+    ///
+    /// `require_relative` registers under its ABSOLUTE spelling in both
+    /// slots: a bare relative name like "version" recurs in every gem, and
+    /// the runtime `require_relative` absolutizes before it asks -- the same
+    /// rule `lower_require_statement`'s unit-sweep arm applies.
+    fn nested_unit_target(
+        &mut self,
+        hir: &mut Hir,
+        result: &ruby_prism::ParseResult,
+        call: &ruby_prism::CallNode<'_>,
+        name: &str,
+        dir: Option<&Path>,
+    ) -> PResult<Option<(String, String, PathBuf)>> {
+        if name == "load" {
+            return Ok(None);
+        }
+        let Some(feature) = literal_feature(result, hir, call)? else {
+            return Ok(None);
+        };
+        let resolved = if name == "require_relative" {
+            resolve_require_relative(&feature, dir).ok().map(|p| {
+                let abs = p.with_extension("").to_string_lossy().into_owned();
+                (p, abs)
+            })
+        } else {
+            if is_builtin_feature(&feature) {
+                return Ok(None);
+            }
+            self.resolve_require(&feature)
+                .ok()
+                .flatten()
+                .map(|(p, _)| (p, feature.clone()))
+        };
+        let Some((path, unit_feature)) = resolved else {
+            return Ok(None);
+        };
+        let Ok(canonical) = path.canonicalize() else {
+            return Ok(None);
+        };
+        let absolute = canonical.with_extension("").to_string_lossy().into_owned();
+        Ok(Some((unit_feature, absolute, canonical)))
+    }
+
     fn splice_feature(
         &mut self,
         hir: &mut Hir,
