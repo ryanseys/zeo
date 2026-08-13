@@ -237,6 +237,18 @@ pub struct ClassInfo {
     /// docs). Never codegen'd directly except when `methods` reuses one of
     /// these verbatim (this class's own, non-inherited definition).
     pub own_methods: Vec<ScopeId>,
+    /// Where each name sits in `own_methods` / `own_class_methods`.
+    ///
+    /// Registration REPLACES an earlier same-name entry rather than appending
+    /// (real Ruby's last-`def`-wins rule), so it has to find that entry first.
+    /// Scanning the list and comparing scope names made registering a class's
+    /// methods quadratic in their count -- at Rails scale, on classes with
+    /// hundreds of them. `analyze::add_own_method_at` is the only writer of
+    /// either list, so these stay in step with them.
+    pub own_method_at: FMap<String, usize>,
+    /// `own_method_at` for `own_class_methods` -- instance and class methods
+    /// are separate namespaces, hence the separate index.
+    pub own_class_method_at: FMap<String, usize>,
     /// The full MRO-resolved set `codegen::mod::emit_class` actually emits
     /// one Rust method per entry for -- own ∪ every name reachable via
     /// `ancestors` (superclass, `include`, `prepend`). Always populated by
@@ -1019,6 +1031,8 @@ impl Compiler {
                 hidden_ivars: Vec::new(),
                 own_methods: Vec::new(),
                 methods: Vec::new(),
+                own_method_at: FMap::default(),
+                own_class_method_at: FMap::default(),
                 explicit_superclass: false,
                 own_class_methods: Vec::new(),
                 class_methods: Vec::new(),
@@ -1597,6 +1611,8 @@ impl Compiler {
             hidden_ivars: Vec::new(),
             own_methods: Vec::new(),
             methods: Vec::new(),
+            own_method_at: FMap::default(),
+            own_class_method_at: FMap::default(),
             explicit_superclass: false,
             own_class_methods: Vec::new(),
             class_methods: Vec::new(),

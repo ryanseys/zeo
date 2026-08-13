@@ -4522,7 +4522,14 @@ pub(crate) fn add_own_method_at(
     } else {
         &ci.own_methods
     };
-    let replaced = list.iter().position(|&s| compiler.scope(s).name == mname);
+    // `own_method_at` is this list's own name index -- the position a scan
+    // comparing every entry's scope name used to find, which made registering
+    // a class's methods quadratic in their count.
+    let replaced = if is_class_method {
+        ci.own_class_method_at.get(&mname).copied()
+    } else {
+        ci.own_method_at.get(&mname).copied()
+    };
     // Last-`def`-wins is a fact about `def`s that RAN. A conditional one may
     // not have, so it does not displace a body that always does -- dropping
     // that body here would leave the name answering nothing whenever the guard
@@ -4539,15 +4546,18 @@ pub(crate) fn add_own_method_at(
             || (compiler.unit_walk && !compiler.unit_scopes.contains(&list[i]))
     });
     let ci = &mut compiler.classes[class_id.0 as usize];
-    let list = if is_class_method {
-        &mut ci.own_class_methods
+    let (list, index) = if is_class_method {
+        (&mut ci.own_class_methods, &mut ci.own_class_method_at)
     } else {
-        &mut ci.own_methods
+        (&mut ci.own_methods, &mut ci.own_method_at)
     };
     match replaced {
         Some(_) if yields => {}
         Some(i) => list[i] = sid,
-        None => list.push(sid),
+        None => {
+            index.insert(mname.clone(), list.len());
+            list.push(sid);
+        }
     }
     ci.method_history.push((mname, is_class_method, seq, sid));
     if compiler.unit_walk {
