@@ -2998,11 +2998,9 @@ fn collect_top_level_const_aliases(hir: &Hir, stmts: &[NodeId], out: &mut FMap<S
             // A definition's body is a different scope; nothing inside it can
             // be what a top-level `class CONST` reopens.
             HirNode::ClassDef { .. } => {}
-            _ => {
-                let mut children = Vec::new();
-                hir[s].for_each_child(&mut |c| children.push(c));
-                collect_top_level_const_aliases(hir, &children, out);
-            }
+            _ => hir[s].for_each_child(&mut |c| {
+                collect_top_level_const_aliases(hir, std::slice::from_ref(&c), out)
+            }),
         }
     }
 }

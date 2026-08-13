@@ -1181,6 +1181,10 @@ fn index_node(
                 .unwrap_or(OBJECT_CLASS);
             index_stmts(compiler, inner, &body, sites, next);
         }
+        // The one child walk that really does need the intermediate `Vec`:
+        // `index_stmts` takes `&mut Compiler`, so the immutable borrow of
+        // `compiler.hir[node]` that `for_each_child` holds cannot still be
+        // live across the call. Collecting first ends it.
         _ => {
             let mut kids = Vec::new();
             compiler.hir[node].for_each_child(&mut |c| kids.push(c));

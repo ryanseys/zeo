@@ -188,7 +188,7 @@ pub(crate) fn is_extend_ffi_data_converter(node: &Node<'_>) -> bool {
 /// not a wrong width registered here.
 pub(crate) fn as_global_ffi_typedef(
     node: &Node<'_>,
-    aliases: &std::collections::HashMap<String, crate::hir::FfiType>,
+    aliases: &crate::compiler::FMap<String, crate::hir::FfiType>,
     cref: Option<&str>,
 ) -> Option<(crate::hir::FfiType, String)> {
     let call = node.as_call_node()?;
@@ -305,7 +305,7 @@ pub(crate) fn native_type_of(node: &Node<'_>) -> Option<crate::hir::FfiType> {
         return None;
     };
     if let Some(sym) = arg.as_symbol_node() {
-        let empty = std::collections::HashMap::new();
+        let empty = crate::compiler::FMap::default();
         return ffi_type_of(&String::from_utf8_lossy(sym.unescaped()), &empty).ok();
     }
     let path = const_path_string(&arg)?;
@@ -821,7 +821,7 @@ pub(crate) fn lower_ffi_directive(
     hir: &mut Hir,
     node: &Node<'_>,
     ffi_lib: &mut crate::hir::FfiLib,
-    aliases: &mut std::collections::HashMap<String, crate::hir::FfiType>,
+    aliases: &mut crate::compiler::FMap<String, crate::hir::FfiType>,
     out: &mut Vec<NodeId>,
     class_body: &[Node<'_>],
 ) -> PResult<bool> {
@@ -1316,7 +1316,7 @@ pub(crate) type FfiField = (String, crate::hir::FfiType, Option<usize>);
 
 pub(crate) fn as_ffi_layout<'a>(
     node: &Node<'a>,
-    aliases: &std::collections::HashMap<String, crate::hir::FfiType>,
+    aliases: &crate::compiler::FMap<String, crate::hir::FfiType>,
     hir: &Hir,
     body_so_far: &[NodeId],
     class_body: &[Node<'a>],
@@ -1452,7 +1452,7 @@ fn hash_pairs<'a>(node: &Node<'a>) -> Option<Vec<(Node<'a>, Node<'a>)>> {
 /// far more often than not.
 fn layout_array_type(
     node: &Node<'_>,
-    aliases: &std::collections::HashMap<String, crate::hir::FfiType>,
+    aliases: &crate::compiler::FMap<String, crate::hir::FfiType>,
     hir: &Hir,
     body_so_far: &[NodeId],
 ) -> PResult<Option<crate::hir::FfiType>> {
@@ -2364,7 +2364,7 @@ fn lower_attach_function(
     hir: &mut Hir,
     args: &[Node<'_>],
     lib: crate::hir::FfiLib,
-    aliases: &std::collections::HashMap<String, crate::hir::FfiType>,
+    aliases: &crate::compiler::FMap<String, crate::hir::FfiType>,
     class_body: &[Node<'_>],
 ) -> PResult<NodeId> {
     let _ = result;
@@ -2704,7 +2704,7 @@ enum TypePos {
 
 fn ffi_type_node(
     node: &Node<'_>,
-    aliases: &std::collections::HashMap<String, crate::hir::FfiType>,
+    aliases: &crate::compiler::FMap<String, crate::hir::FfiType>,
     pos: TypePos,
 ) -> PResult<crate::hir::FfiType> {
     let written = ffi_written_value(node);
@@ -2803,7 +2803,7 @@ fn ffi_type_node(
 /// before it); anywhere else is a clean rejection.
 fn ffi_arg_types<'a>(
     node: &Node<'a>,
-    aliases: &std::collections::HashMap<String, crate::hir::FfiType>,
+    aliases: &crate::compiler::FMap<String, crate::hir::FfiType>,
     class_body: &[Node<'a>],
 ) -> PResult<(Vec<crate::hir::FfiType>, bool)> {
     let (elems, repeat) = type_list(node, class_body)
@@ -2877,7 +2877,7 @@ fn type_list<'a>(node: &Node<'a>, class_body: &[Node<'a>]) -> Option<(Vec<Node<'
 /// with no `:varargs` marker (a `callback` signature).
 fn ffi_type_array<'a>(
     node: &Node<'a>,
-    aliases: &std::collections::HashMap<String, crate::hir::FfiType>,
+    aliases: &crate::compiler::FMap<String, crate::hir::FfiType>,
     class_body: &[Node<'a>],
 ) -> PResult<Vec<crate::hir::FfiType>> {
     let (elems, repeat) = type_list(node, class_body)
@@ -2897,7 +2897,7 @@ fn ffi_type_array<'a>(
 /// names are deliberately absent). Unknown -> a clean, greppable error.
 pub(crate) fn ffi_type_of(
     sym: &str,
-    aliases: &std::collections::HashMap<String, crate::hir::FfiType>,
+    aliases: &crate::compiler::FMap<String, crate::hir::FfiType>,
 ) -> PResult<crate::hir::FfiType> {
     if let Some(s) = zeo_abi::ffi::CScalar::from_keyword(sym) {
         return Ok(s.into());

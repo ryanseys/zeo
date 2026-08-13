@@ -1801,9 +1801,13 @@ fn names_a_constant(hir: &Hir, id: NodeId) -> bool {
     // `for_each_child` rather than a hand-rolled walk, for the reason
     // `rescope_body_constants` gives: it is the exhaustive one, and a missed
     // variant here is a silent divergence rather than a compile error.
-    let mut kids = Vec::new();
-    hir[id].for_each_child(&mut |c| kids.push(c));
-    kids.into_iter().any(|c| names_a_constant(hir, c))
+    let mut found = false;
+    hir[id].for_each_child(&mut |c| {
+        if !found {
+            found = names_a_constant(hir, c);
+        }
+    });
+    found
 }
 
 /// Whether `value` is a `Data.define(...)` / `Struct.new(...)` / `Class.new(...)`
@@ -2449,11 +2453,7 @@ fn rescope_body_constants(hir: &mut Hir, cref: Option<&str>, body: &[NodeId]) ->
     fn walk(hir: &Hir, id: NodeId, in_def: bool, out: &mut Vec<(NodeId, bool)>) {
         out.push((id, in_def));
         let in_def = in_def || matches!(hir[id], HirNode::DefMethod { .. });
-        let mut kids = Vec::new();
-        hir[id].for_each_child(&mut |c| kids.push(c));
-        for c in kids {
-            walk(hir, c, in_def, out);
-        }
+        hir[id].for_each_child(&mut |c| walk(hir, c, in_def, out));
     }
 
     let mut reachable = Vec::new();
@@ -3115,7 +3115,7 @@ pub(crate) fn lower_class_body(
     // nested in a library module can name that module's `enum`/`typedef`
     // types -- see `Hir::ffi_types`. Bodies lower in source order, so the
     // declaration is already recorded by the time the nested body starts.
-    let mut ffi_aliases: std::collections::HashMap<String, crate::hir::FfiType> =
+    let mut ffi_aliases: crate::compiler::FMap<String, crate::hir::FfiType> =
         hir.inherited_ffi_types();
     // Replay each extender's recorded `host.typedef` stream, in its source
     // order, before any of this body's own directives lower. A source type
@@ -3203,7 +3203,7 @@ struct LowerBodyStmt<'a> {
     /// layout is keyed and reported by.
     cref: Option<&'a str>,
     ffi_lib: &'a mut crate::hir::FfiLib,
-    ffi_aliases: &'a mut std::collections::HashMap<String, crate::hir::FfiType>,
+    ffi_aliases: &'a mut crate::compiler::FMap<String, crate::hir::FfiType>,
     visibility: &'a mut Visibility,
     module_function: &'a mut bool,
     /// The whole class body as written. An FFI directive spelled over a

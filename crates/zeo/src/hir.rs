@@ -212,16 +212,16 @@ pub struct Hir {
     /// and each still resolves it from its OWN map. Only this cross-body
     /// fallback becomes unavailable, so the result is a clean "isn't a declared
     /// FFI type" rejection instead of a silently wrong width.
-    pub ffi_types: std::collections::HashMap<String, Option<FfiType>>,
+    pub ffi_types: crate::compiler::FMap<String, Option<FfiType>>,
     /// Module paths that have been `extend FFI::Library`'d -- see
     /// [`Hir::mark_ffi_library`].
-    ffi_library_crefs: std::collections::HashSet<String>,
+    ffi_library_crefs: crate::compiler::FSet<String>,
     /// Leaf names of every `class X < FFI::Struct` the lowering has seen --
     /// including ones whose `layout` never lowered (a DSL-built layout,
     /// ffi_dry's `dsl_layout`). A SIGNATURE position only needs the
     /// by-reference fact, so these enter the type table as [`FfiType::
     /// StructRef`] when no layout/typedef claims the name.
-    ffi_struct_classes: std::collections::HashSet<String>,
+    ffi_struct_classes: crate::compiler::FSet<String>,
     /// Per-node boolean facts, one `u16` per node and parallel to
     /// `nodes`/`spans` -- see [`NodeFlag`] for what each bit means and
     /// [`Hir::set_flag`]/[`Hir::has_flag`] for the accessors.
@@ -249,16 +249,16 @@ pub struct Hir {
     /// backtrace raised through one would be a frame short -- see
     /// `codegen::stmt::emit_body`, which groups consecutive entries under one
     /// `singleton class` frame.
-    pub singleton_frame_stmts: std::collections::HashMap<NodeId, NodeId>,
+    pub singleton_frame_stmts: crate::compiler::FMap<NodeId, NodeId>,
     /// `DefMethod` nodes an `alias` cloned, mapped to the name they were born
     /// under -- see [`record_alias_origin`](Self::record_alias_origin).
-    alias_origins: std::collections::HashMap<NodeId, String>,
+    alias_origins: crate::compiler::FMap<NodeId, String>,
     /// `ClassDef` nodes `lower::defs::synthesize_struct_class` built from a
     /// `NAME = Struct.new(:a, :b)`, mapped to their MEMBER list in declaration
     /// order. `analyze` copies it onto `ClassInfo::hidden_ivars`, which is what
     /// makes those slots invisible to `instance_variables` while `Struct`'s own
     /// shared protocol still reaches them by index.
-    pub struct_members: std::collections::HashMap<NodeId, Vec<String>>,
+    pub struct_members: crate::compiler::FMap<NodeId, Vec<String>>,
     /// The span of the prism node currently being lowered (innermost last);
     /// `Hir::push` stamps from the top of this stack. Maintained by the
     /// `lower_node` wrapper, empty outside lowering.
@@ -310,7 +310,7 @@ pub struct Hir {
     /// simplification of CRuby's file-ordered visibility that matches how
     /// this loader already splices requires program-wide. See
     /// `activate_feature`.
-    pub activated_features: std::collections::HashSet<String>,
+    pub activated_features: crate::compiler::FSet<String>,
     /// Plain `require "feature"` targets zeo could NOT resolve to a file,
     /// builtin, or shim -- recorded by the loader's resolvability pre-scan.
     /// Their `require` CALL lowers to a runtime `Kernel#require` (which raises
@@ -318,7 +318,7 @@ pub struct Hir {
     /// feature crashes at its require site and the optional-dependency idiom
     /// (`begin; require "x"; rescue LoadError`) is caught at runtime -- exactly
     /// CRuby's semantics. (A missing `require_relative` stays a compile error.)
-    pub unresolvable_requires: std::collections::HashSet<String>,
+    pub unresolvable_requires: crate::compiler::FSet<String>,
     /// `require_relative` CALLS that are lexically inside a `begin` whose
     /// rescue catches `LoadError`, and whose target does not exist -- the
     /// optional-native-half idiom (`begin; require_relative 'geos_c_impl';
@@ -328,7 +328,7 @@ pub struct Hir {
     /// `Kernel#require_relative` raising a catchable `LoadError`, exactly as
     /// plain unresolvable `require`s do; every other missing
     /// `require_relative` stays a loud compile error.
-    pub optional_require_sites: std::collections::HashSet<(FileId, u32)>,
+    pub optional_require_sites: crate::compiler::FSet<(FileId, u32)>,
     /// `require`/`require_relative` CALLS under a runtime-UNDECIDABLE guard
     /// (`require_relative "hell" if ENV["MT_HELL"]`). CRuby loads the target
     /// only when the guard is true; an eager splice ran it unconditionally --
@@ -336,7 +336,7 @@ pub struct Hir {
     /// every compile). These sites keep their CALL, and the target is
     /// compiled in as a feature unit the runtime require loads when the
     /// guard actually passes. Keyed like `optional_require_sites`.
-    pub conditional_require_sites: std::collections::HashSet<(FileId, u32)>,
+    pub conditional_require_sites: crate::compiler::FSet<(FileId, u32)>,
     /// Single files to compile as feature units: (owning package, path,
     /// feature name as required). The per-file companion to `unit_demand`'s
     /// per-directory walk, for a conditional require whose one target is
@@ -347,22 +347,22 @@ pub struct Hir {
     /// name like `ffi_types` -- how a later `attach_function` resolves a
     /// struct passed by value. Source-order like the rest of the FFI table:
     /// the struct's body must lower before the declaration that names it.
-    pub ffi_struct_layouts: std::collections::HashMap<String, FfiStructLayout>,
+    pub ffi_struct_layouts: crate::compiler::FMap<String, FfiStructLayout>,
     /// Class-body `CONST = :symbol` / `CONST = <int>` writes, keyed by LEAF
     /// name -- how an FFI layout in a NESTED class resolves the type/count
     /// vocabulary its enclosing module spelled as constants (ffi-ncurses'
     /// `NCURSES_ATTR_T = :int` ... `layout :attr, NCURSES_ATTR_T`). Same
     /// poison-on-conflict rule as `ffi_types`: a leaf rebound to a DIFFERENT
     /// value goes `None`, and the layout's own honest rejection stands.
-    pub ffi_symbol_consts: std::collections::HashMap<String, Option<String>>,
+    pub ffi_symbol_consts: crate::compiler::FMap<String, Option<String>>,
     /// The integer half of `ffi_symbol_consts`.
-    pub ffi_int_consts: std::collections::HashMap<String, Option<i64>>,
+    pub ffi_int_consts: crate::compiler::FMap<String, Option<i64>>,
     /// Modules whose `def self.extended(host)` hook runs `host.extend
     /// FFI::Library` (chef's Win32 API indirection), keyed by full cref path.
     /// The value is the hook's flat `host.typedef :src, :alias` stream, which
     /// an `extend <that module>` site replays into its own alias table before
     /// its FFI directives lower. See `lower::ffi::ffi_extender_hook`.
-    pub ffi_extenders: std::collections::HashMap<String, Vec<(String, String)>>,
+    pub ffi_extenders: crate::compiler::FMap<String, Vec<(String, String)>>,
     /// Modules whose `def self.included(base)` hook runs `base.class_eval`
     /// over a block containing a `layout`, keyed by full cref path. The value
     /// is that block's SOURCE, which an `include <that module>` inside an
@@ -370,7 +370,7 @@ pub struct Hir {
     /// layout AND its two readers for every buffer struct in the gem this way.
     /// Source rather than nodes: a prism `Node` is neither `Clone` nor
     /// storable past its `ParseResult`. See `lower::ffi::ffi_layout_hook`.
-    pub ffi_layout_hooks: std::collections::HashMap<String, String>,
+    pub ffi_layout_hooks: crate::compiler::FMap<String, String>,
     /// How many DEFERRED `ffi_lib` slots the program has minted -- one per
     /// `ffi_lib` statement whose candidates only the running process can
     /// evaluate. The slot number ties that statement's runtime store
@@ -413,7 +413,7 @@ pub struct Hir {
     /// nothing did. Loading it eagerly instead put it BEFORE the requires the
     /// file itself makes at top level, and dragged every lazy dependency into
     /// the binary.
-    pub deferred_requires: std::collections::HashSet<String>,
+    pub deferred_requires: crate::compiler::FSet<String>,
     /// How many of the root `Program`'s leading statements came from the
     /// built-in exception classes (`parse::BUILTIN_EXCEPTIONS_RB`), set by
     /// `parse_and_lower_with`. `analyze` marks the classes
@@ -467,7 +467,7 @@ pub struct Hir {
     /// from a `TomlRB::Error` that is really a `Class.new` value -- and
     /// answering that wrong sends a subclass down the wrong path. See
     /// [`class_defined_in_scope`](Self::class_defined_in_scope).
-    class_def_paths: std::collections::HashSet<String>,
+    class_def_paths: crate::compiler::FSet<String>,
 }
 
 /// One compiled-in load-path file -- see `Hir::feature_units`. Its statements
@@ -534,8 +534,8 @@ impl Hir {
     /// The alias map a class body starts from: every unpoisoned name declared
     /// by an enclosing (or earlier) FFI library. Bodies lower in source order,
     /// so a nested struct sees what the module above it declared.
-    pub fn inherited_ffi_types(&self) -> std::collections::HashMap<String, FfiType> {
-        let mut types: std::collections::HashMap<String, FfiType> = self
+    pub fn inherited_ffi_types(&self) -> crate::compiler::FMap<String, FfiType> {
+        let mut types: crate::compiler::FMap<String, FfiType> = self
             .ffi_types
             .iter()
             .filter_map(|(k, v)| v.clone().map(|t| (k.clone(), t)))
