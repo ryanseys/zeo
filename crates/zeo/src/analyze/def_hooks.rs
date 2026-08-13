@@ -123,23 +123,21 @@ struct Send {
 /// Keyed on FIRST definition: `def x; end; def x; end` announces twice, and at
 /// the first announcement `x` already exists, so a later redefinition must not
 /// hide it.
-fn future_names(taken: &[(ClassId, Vec<SiteDef>, Target)]) -> FMap<u32, Vec<String>> {
+fn future_names(taken: &[(ClassId, Vec<SiteDef>, Target)]) -> Future {
     let mut by_class: FMap<ClassId, Vec<&SiteDef>> = FMap::default();
     for (class, defs, _) in taken {
         by_class.entry(*class).or_default().extend(defs.iter());
     }
-    let mut out = FMap::default();
-    for defs in by_class.values_mut() {
+    let mut out = Future::default();
+    for (class, defs) in &mut by_class {
         defs.sort_by_key(|d| d.seq);
         // A class's own instance methods, in the order they come into being.
         // A `def self.x` adds no instance method, and neither does an `undef`.
-        let mut first_at: Vec<(&str, usize)> = Vec::new();
+        let mut order: Vec<String> = Vec::new();
+        let mut seen = crate::compiler::FSet::default();
         for d in defs.iter() {
-            if d.event == DefEvent::Added
-                && !d.singleton
-                && !first_at.iter().any(|(n, _)| *n == d.name)
-            {
-                first_at.push((&d.name, first_at.len()));
+            if d.event == DefEvent::Added && !d.singleton && seen.insert(d.name.as_str()) {
+                order.push(d.name.clone());
             }
         }
         let mut installed = 0usize;
@@ -147,17 +145,39 @@ fn future_names(taken: &[(ClassId, Vec<SiteDef>, Target)]) -> FMap<u32, Vec<Stri
             if d.event == DefEvent::Added && !d.singleton {
                 installed += 1;
             }
-            let pending: Vec<String> = first_at
-                .iter()
-                .filter(|(_, i)| *i >= installed)
-                .map(|(n, _)| (*n).to_string())
-                .collect();
-            if !pending.is_empty() {
-                out.insert(d.seq, pending);
-            }
+            out.installed.insert(d.seq, installed);
         }
+        out.names.insert(*class, order);
     }
     out
+}
+
+/// [`future_names`]' answer, stored as a WATERMARK rather than as one name
+/// list per definition.
+///
+/// The names still pending at a definition are always a SUFFIX of its class's
+/// list -- a name enters the list exactly when it is first installed, so
+/// everything from the install count onwards is what the hook cannot see yet.
+/// Materializing that suffix per definition cost a `Vec<String>` and a clone
+/// of every name in it for each of a class's definitions, which is quadratic
+/// in the class's definition count and thrown away entirely for the common
+/// program that defines no hook at all.
+#[derive(Default)]
+struct Future {
+    /// Per class, its own instance-method names in first-definition order.
+    names: FMap<ClassId, Vec<String>>,
+    /// [`SiteDef::seq`] -> how far into that list has been installed.
+    installed: FMap<u32, usize>,
+}
+
+impl Future {
+    /// The names of `class` that are still in the future at `seq`.
+    fn pending(&self, class: ClassId, seq: u32) -> Vec<String> {
+        let (Some(names), Some(&at)) = (self.names.get(&class), self.installed.get(&seq)) else {
+            return Vec::new();
+        };
+        names[at.min(names.len())..].to_vec()
+    }
 }
 
 fn surviving(
@@ -165,7 +185,7 @@ fn surviving(
     class: ClassId,
     defs: &[SiteDef],
     global: &[&'static str],
-    future: &FMap<u32, Vec<String>>,
+    future: &Future,
 ) -> Vec<Send> {
     defs.iter()
         .filter_map(|d| {
@@ -174,7 +194,7 @@ fn surviving(
                 at: d.at,
                 hook,
                 name: d.name.clone(),
-                pending: future.get(&d.seq).cloned().unwrap_or_default(),
+                pending: future.pending(class, d.seq),
             })
         })
         .collect()
