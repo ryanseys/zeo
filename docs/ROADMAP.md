@@ -490,6 +490,32 @@ diffs beyond the intended shapes.
   (no per-call boxing, a direct call for statically-known blocks) would close
   them. Deferred deliberately: it touches the call ABI everywhere, and Tier C
   would rewrite that ABI anyway.
+- **Interning identifier names in the HIR** — retired 2026-08-13 **by
+  measurement**, before any of it was written. The idea was to replace the
+  43 `String`s in `HirNode`, `Params`' six `Vec<String>` fields and
+  `Scope::local_types`' keys with a `NameId`, on the theory that identifier
+  handling was a real share of front-end cost. A `sample` profile of a real
+  compile (activesupport, 61.5 MB emitted, 942 active samples) says it is
+  not:
+
+  | area | share of active samples |
+  |---|---|
+  | `proc_macro2` / `quote` token building | 40.2% |
+  | writing and formatting the output | 21.2% |
+  | allocator + memcpy serving those two | 28.0% |
+  | **everything else** — parse, lower, analyze, mro, guard_fold | **10.5%** |
+
+  Identifier `String` work is a fraction of that last 10.5%, so interning
+  cannot reach the ≥5% gate it was given no matter how well it is done. The
+  MEMORY half of its rationale was answered far more cheaply by boxing the
+  arena's two widest payloads (3a504e8d): `size_of::<HirNode>()` 304 → 112,
+  where interning every name would not have moved the maximum at all, since
+  the widest variant's cost is its two `Vec`s, not its `String`.
+
+  What the profile says instead: the front end is an emitter, and the levers
+  are `proc_macro2` token traffic (`Vec<TokenTree>::clone` and
+  `validate_ident` are visible line items) and the output writer. That is
+  Wave 7b's territory, and it now has a number behind it.
 - **Mixed Integer↔Float comparison exactness** — a pre-existing divergence:
   `num_cmp`'s Flo lane converts via `as f64`, lossy past 2^53
   (`9007199254740993 == 9007199254740992.0` answers true; CRuby compares
