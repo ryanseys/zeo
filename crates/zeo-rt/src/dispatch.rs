@@ -1685,7 +1685,7 @@ impl ClassRegistry {
 /// definition, never from a loop.
 ///
 /// Reads the FROZEN ancestry deliberately: a class whose chain was spliced at
-/// runtime is covered by `ANCESTRY_MUTATED` instead, which is a stronger
+/// runtime is covered by `GATE_ANCESTRY_MUTATED` instead, which is a stronger
 /// statement than anything this could enumerate.
 pub(crate) fn classes_with_ancestor(id: ClassId) -> Vec<u32> {
     let Some(reg) = REGISTRY.get() else {

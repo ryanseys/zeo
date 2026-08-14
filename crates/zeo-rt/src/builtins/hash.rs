@@ -220,8 +220,9 @@ ruby_class! {
         Ok(RubyValue::Bool(recv.rb_eq(other)))
     }
     def "fetch" cfunc (recv, arg1, arg2?, &block) {
-        if crate::hash_has_key(rhash, arg1) {
-            return Ok(crate::hash_get(rhash, arg1));
+        // One probe, not `has_key?` then `[]` -- see `hash_lookup`.
+        if let Some(v) = crate::collections::hash_lookup(rhash, arg1) {
+            return Ok(v);
         }
         if let Some(default) = arg2 {
             return Ok(default.clone());

@@ -50,12 +50,21 @@ fn arm_if_stdio(target: &str) {
 static ALIASES: LazyLock<Mutex<crate::ScopedMap<Box<str>>>> =
     LazyLock::new(|| Mutex::new(FMap::default()));
 
+/// Whether `alias $new $old` has ever run. Every global READ and WRITE calls
+/// `resolve`, which took the `ALIASES` mutex to discover that the map is
+/// empty -- and it is empty in the overwhelming majority of programs, which
+/// never write an alias at all. One relaxed load answers instead.
+static ANY_ALIASES: AtomicBool = AtomicBool::new(false);
+
 /// The name whose storage `name` actually refers to -- itself (borrowed,
 /// the overwhelmingly common case) unless it was aliased. Chains are
 /// followed (`alias $b $a; alias $c $b` makes all three one slot), with a
 /// depth cap: real Ruby resolves the target AT ALIAS TIME, so a cycle
 /// can't arise from Ruby source, but a cap beats hanging if one ever did.
 fn resolve(box_id: u32, name: &'_ str) -> Cow<'_, str> {
+    if !ANY_ALIASES.load(Ordering::Relaxed) {
+        return Cow::Borrowed(name);
+    }
     let aliases = ALIASES.lock();
     let Some(inner) = aliases.get(&box_id) else {
         return Cow::Borrowed(name);
@@ -83,6 +92,10 @@ pub fn global_alias(box_id: u32, new_name: &str, old_name: &str) {
         .entry(box_id)
         .or_default()
         .insert(Box::from(new_name), target.into_boxed_str());
+    // AFTER the insert: `resolve` reads the map only once this is set, so
+    // arming it first could let a concurrent reader see an armed gate and an
+    // empty map -- harmless here, but the other order needs no argument.
+    ANY_ALIASES.store(true, Ordering::Release);
 }
 
 /// `trace_var`'s hooks: global name -> the commands to run whenever RUBY code
@@ -91,6 +104,12 @@ pub fn global_alias(box_id: u32, new_name: &str, old_name: &str) {
 /// name `untrace_var` names too.
 static TRACERS: LazyLock<Mutex<FMap<Box<str>, Vec<RubyValue>>>> =
     LazyLock::new(|| Mutex::new(FMap::default()));
+
+/// Whether `trace_var` has ever run. `fire_tracers` is on every Ruby-level
+/// global ASSIGNMENT and took the `TRACERS` mutex to learn there are no
+/// hooks. Never cleared by `untrace_var`: the flag only has to be
+/// conservative, and a program that traced once is not a fast-path program.
+static ANY_TRACERS: AtomicBool = AtomicBool::new(false);
 
 // The globals whose hooks are running right now. A hook that assigns the
 // variable it watches -- `trace_var(:$g) { $g = clamp($g) }` -- must not
@@ -106,6 +125,7 @@ pub fn trace_var(name: &str, command: RubyValue) {
         .entry(Box::from(name))
         .or_default()
         .insert(0, command);
+    ANY_TRACERS.store(true, Ordering::Release);
 }
 
 /// Whether `name` carries any hook, which is what makes `untrace_var` on a
@@ -142,6 +162,9 @@ pub fn untrace_var(name: &str, command: Option<&RubyValue>) -> Vec<RubyValue> {
 /// to the same variable is stored but fires nothing, so a clamping hook
 /// terminates.
 fn fire_tracers(name: &str, value: &RubyValue) -> Result<(), crate::Signal> {
+    if !ANY_TRACERS.load(Ordering::Relaxed) {
+        return Ok(());
+    }
     let hooks = match TRACERS.lock().get(name) {
         Some(hooks) if !hooks.is_empty() => hooks.clone(),
         _ => return Ok(()),
@@ -276,11 +299,17 @@ pub(crate) fn seed_global(box_id: u32, name: &str, value: RubyValue) {
 }
 
 fn store(box_id: u32, target: Cow<'_, str>, value: RubyValue) {
-    GLOBALS
-        .lock()
-        .entry(box_id)
-        .or_default()
-        .insert(target.into_owned().into_boxed_str(), value);
+    let mut globals = GLOBALS.lock();
+    let slot = globals.entry(box_id).or_default();
+    // Probe before inserting: a global is REASSIGNED far more often than it is
+    // first created, and `insert` minted a fresh `Box<str>` key on every write
+    // only to drop the old one.
+    match slot.get_mut(target.as_ref()) {
+        Some(existing) => *existing = value,
+        None => {
+            slot.insert(target.into_owned().into_boxed_str(), value);
+        }
+    }
 }
 
 /// `$g = value` as written in Ruby. Assigning a read-only special is a

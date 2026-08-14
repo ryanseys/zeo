@@ -421,8 +421,15 @@ pub enum HashKey {
     /// The numeric-tower keys -- `BigInt` never overlaps
     /// `Int` (demotion invariant), `Rational` is always reduced, `Complex`
     /// keys by its component keys.
-    BigInt(num_bigint::BigInt),
-    Rational(num_bigint::BigInt, num_bigint::BigInt),
+    ///
+    /// BOXED, unlike every other small payload here: a `num_bigint::BigInt` is
+    /// 32 bytes and `Rational` carried two of them, which set the width of the
+    /// whole enum -- and so of every `HashRow` -- for two key shapes almost no
+    /// program uses. `HashRepr::Small` linear-scans up to `SMALL_HASH_MAX`
+    /// rows, so the ordinary `Symbol`/`Str`/`Int` hash paid the bignum's
+    /// footprint on every probe.
+    BigInt(Box<num_bigint::BigInt>),
+    Rational(Box<(num_bigint::BigInt, num_bigint::BigInt)>),
     Complex(Box<(HashKey, HashKey)>),
     /// A Hash key, by its PAIRS. Ruby's `Hash#hash`/`#eql?` are order
     /// INSENSITIVE, so the pairs are sorted into a canonical order when the
@@ -503,10 +510,10 @@ impl std::hash::Hash for HashKey {
                 state.write_u8(11);
                 b.hash(state);
             }
-            HashKey::Rational(n, d) => {
+            HashKey::Rational(nd) => {
                 state.write_u8(12);
-                n.hash(state);
-                d.hash(state);
+                nd.0.hash(state);
+                nd.1.hash(state);
             }
             HashKey::Complex(c) => {
                 state.write_u8(13);
@@ -578,8 +585,8 @@ pub(crate) fn hash_key_in(v: &RubyValue, by_identity: bool) -> HashKey {
         RubyValue::Int(i) => HashKey::Int(*i),
         // Canonical thanks to the demotion/reduction invariants: a BigInt
         // never aliases an Int value, a Rational is always reduced.
-        RubyValue::BigInt(b) => HashKey::BigInt((**b).clone()),
-        RubyValue::Rational(r) => HashKey::Rational(r.num.clone(), r.den.clone()),
+        RubyValue::BigInt(b) => HashKey::BigInt(Box::new((**b).clone())),
+        RubyValue::Rational(r) => HashKey::Rational(Box::new((r.num.clone(), r.den.clone()))),
         RubyValue::Complex(c) => HashKey::Complex(Box::new((hash_key(&c.real), hash_key(&c.imag)))),
         RubyValue::Float(f) => HashKey::Float(f.to_bits()),
         RubyValue::Symbol(s) => HashKey::Symbol(*s),
@@ -1170,6 +1177,16 @@ pub fn copy_hash_meta(src: &RHash, dst: &RHash) {
 /// `hash_index`.
 #[inline]
 pub fn hash_get(h: &RHash, key: &RubyValue) -> RubyValue {
+    hash_lookup(h, key).unwrap_or(RubyValue::Nil)
+}
+
+/// One probe answering presence AND value. `Hash#fetch` asked
+/// `hash_has_key` then `hash_get`, projecting the key twice -- and for an
+/// Object key whose class defines its own `#hash`, that second projection
+/// DISPATCHED the user's `#hash` a second time, which is observable if the
+/// method counts its calls.
+#[inline]
+pub fn hash_lookup(h: &RHash, key: &RubyValue) -> Option<RubyValue> {
     let g = h.lock();
     if let RubyValue::Str(s) = key
         && !g.compare_by_identity
@@ -1177,11 +1194,10 @@ pub fn hash_get(h: &RHash, key: &RubyValue) -> RubyValue {
         let sb = s.lock();
         return g
             .get(&StrProbe(sb.bytes(), sb.hash_key_tag()))
-            .map(|(_, v)| v.clone())
-            .unwrap_or(RubyValue::Nil);
+            .map(|(_, v)| v.clone());
     }
     let k = hash_key_in(key, g.compare_by_identity);
-    g.get(&k).map(|(_, v)| v.clone()).unwrap_or(RubyValue::Nil)
+    g.get(&k).map(|(_, v)| v.clone())
 }
 
 /// `Hash#[]`: the stored value, or the per-instance default on a miss -- the
@@ -1203,19 +1219,22 @@ pub fn hash_index(h: &RHash, key: &RubyValue) -> Result<RubyValue, crate::Signal
             return Ok(v.clone());
         }
     }
-    let (default, proc) = {
+    // A hash with no default proc -- which is nearly all of them -- answers
+    // from this one lock. It used to take a second lock and clone BOTH the
+    // default value and the (absent) proc before deciding.
+    let proc = {
         let g = h.lock();
-        (g.default.clone(), g.default_proc.clone())
+        match &g.default_proc {
+            Some(p) => p.clone(),
+            None => return Ok(g.default.clone()),
+        }
     };
-    match proc {
-        Some(p) => crate::dispatch::send_value(
-            &p,
-            crate::symbol::wk::call(),
-            &[RubyValue::Hash(h.clone()), key.clone()],
-            None,
-        ),
-        None => Ok(default),
-    }
+    crate::dispatch::send_value(
+        &proc,
+        crate::symbol::wk::call(),
+        &[RubyValue::Hash(h.clone()), key.clone()],
+        None,
+    )
 }
 
 /// CRuby snapshots a String key on store (`rb_hash_aset` ->

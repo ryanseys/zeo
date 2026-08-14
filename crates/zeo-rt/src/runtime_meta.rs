@@ -266,7 +266,20 @@ const GATE_MOVED: u8 = 4;
 /// already loads, per the standing rule: a second flag word beside the gates
 /// measured 2.6% on dispatch.
 const GATE_ARITY_DEBUG: u8 = 8;
+/// The four latches below used to be separate `AtomicBool`s, which put FOUR
+/// acquire loads in `iter_inline_ok_for` -- a fused loop's entry test, i.e.
+/// the check every inlined `each`/`map` pays before it may splice. They ride
+/// the gate byte for exactly the reason the pending and moved gates do: the
+/// byte is loaded once and masked. That fills the `u8`; a ninth gate needs a
+/// `u16`, not a second word.
+const GATE_PATCHED_ANY: u8 = 16;
+const GATE_ANY_SINGLETONS: u8 = 32;
+const GATE_ANCESTRY_MUTATED: u8 = 64;
+const GATE_ANY_EXTENDED: u8 = 128;
 const GATE_LIVE_MASK: u8 = GATE_OVERLAY | GATE_PENDING;
+/// What forbids a fused-iterator splice, apart from the receiver's own
+/// patched state.
+const GATE_ITER_BLOCKED: u8 = GATE_ANY_SINGLETONS | GATE_ANCESTRY_MUTATED | GATE_MOVED;
 static OVERLAY: OnceLock<OverlayMaps> = OnceLock::new();
 
 fn maps() -> &'static OverlayMaps {
@@ -367,11 +380,12 @@ pub fn iter_inline_ok(box_id: u32) -> bool {
 
 #[inline(always)]
 pub fn iter_inline_ok_for(box_id: u32, recv: ClassId) -> bool {
-    box_id == 0
-        && !ANY_SINGLETONS.load(Ordering::Acquire)
-        && !ANCESTRY_MUTATED.load(Ordering::Acquire)
-        && !any_moved()
-        && !class_maybe_patched(recv)
+    if box_id != 0 {
+        return false;
+    }
+    // ONE load, then masks -- see `GATE_PATCHED_ANY`.
+    let g = GATES.load(Ordering::Acquire);
+    g & GATE_ITER_BLOCKED == 0 && !class_maybe_patched_gated(g, recv)
 }
 
 // ---------------------------------------------------------------------------
@@ -390,10 +404,10 @@ pub fn iter_inline_ok_for(box_id: u32, recv: ClassId) -> bool {
 // Resolution reads `C`'s entry and each `A` in `ancestors(C)`, so touching `A`
 // must mark every `C` below it -- that is what `patch_class` computes --
 // PROVIDED `ancestors(C)` is itself fixed, which is exactly what
-// `ANCESTRY_MUTATED` guards.
+// `GATE_ANCESTRY_MUTATED` guards.
 //
 // **INV-2 (identity resolution).** Per-object singletons are keyed by heap
-// address; no class-id set can express them, so `ANY_SINGLETONS` is a global
+// address; no class-id set can express them, so `GATE_ANY_SINGLETONS` is a global
 // boolean deliberately.
 //
 // **INV-3 (fresh ids).** A runtime-minted id (>= `RUNTIME_CLASS_ID_BASE`) has
@@ -401,30 +415,22 @@ pub fn iter_inline_ok_for(box_id: u32, recv: ClassId) -> bool {
 // as patched by construction, and nothing else is affected by its existence.
 
 /// Frozen class ids whose method resolution may now differ from the registry,
-/// downward-closed over ancestry. Behind `PATCHED_ANY` so the common answer
-/// costs one relaxed load and no lock.
-static PATCHED_ANY: AtomicBool = AtomicBool::new(false);
+/// downward-closed over ancestry. Behind [`GATE_PATCHED_ANY`] so the common
+/// answer costs no lock -- and no load of its own, for a caller that already
+/// holds the gate byte.
 static PATCHED: OnceLock<RwLock<FSet<u32>>> = OnceLock::new();
-
-/// A per-object or per-value singleton exists somewhere. See INV-2.
-static ANY_SINGLETONS: AtomicBool = AtomicBool::new(false);
-
-/// A frozen class's ancestry was spliced at runtime, so INV-1's precondition
-/// no longer holds for anyone.
-static ANCESTRY_MUTATED: AtomicBool = AtomicBool::new(false);
-
-/// Some receiver somewhere has been `extend`ed. This gate is what lets codegen
-/// keep folding `x.is_a?(SomeModule)` to a literal: the static ancestry can
-/// only be made WRONG by an `extend`, so a program that never calls one pays a
-/// single relaxed load for the answer it already knew. See [`value_extends`].
-static ANY_EXTENDED: AtomicBool = AtomicBool::new(false);
 
 #[inline(always)]
 pub fn class_maybe_patched(id: ClassId) -> bool {
+    class_maybe_patched_gated(GATES.load(Ordering::Acquire), id)
+}
+
+#[inline(always)]
+fn class_maybe_patched_gated(gates: u8, id: ClassId) -> bool {
     if id.0 >= RUNTIME_CLASS_ID_BASE {
         return true;
     }
-    PATCHED_ANY.load(Ordering::Acquire)
+    gates & GATE_PATCHED_ANY != 0
         && PATCHED
             .get()
             .is_some_and(|p| p.read().unwrap().contains(&id.0))
@@ -439,15 +445,15 @@ fn patch_class(id: ClassId) {
         w.insert(id.0);
         w.extend(crate::dispatch::classes_with_ancestor(id));
     }
-    PATCHED_ANY.store(true, Ordering::Release);
+    GATES.fetch_or(GATE_PATCHED_ANY, Ordering::Release);
 }
 
 fn mark_singletons() {
-    ANY_SINGLETONS.store(true, Ordering::Release);
+    GATES.fetch_or(GATE_ANY_SINGLETONS, Ordering::Release);
 }
 
 fn mark_ancestry_mutated() {
-    ANCESTRY_MUTATED.store(true, Ordering::Release);
+    GATES.fetch_or(GATE_ANCESTRY_MUTATED, Ordering::Release);
 }
 
 fn mark_live() {
@@ -547,7 +553,7 @@ fn record_extended(recv: &RubyValue, module_id: ClassId) {
             list.push(module_id);
         }
     }
-    ANY_EXTENDED.store(true, Ordering::Release);
+    GATES.fetch_or(GATE_ANY_EXTENDED, Ordering::Release);
 }
 
 /// The modules `extend` mixed into `recv`, in the order they were mixed in.
@@ -559,7 +565,7 @@ pub(crate) fn extended_modules(recv: &RubyValue) -> Vec<ClassId> {
         RubyValue::Class(cid) => crate::dispatch::class_extends(*cid).to_vec(),
         _ => Vec::new(),
     };
-    if !ANY_EXTENDED.load(Ordering::Acquire) {
+    if GATES.load(Ordering::Acquire) & GATE_ANY_EXTENDED == 0 {
         return mods;
     }
     let Some(key) = extend_key(recv) else {
@@ -579,7 +585,7 @@ pub(crate) fn extended_modules(recv: &RubyValue) -> Vec<ClassId> {
 /// it? This is the half of `is_a?` that no class id can answer, since `extend`
 /// changes ONE object's ancestry and leaves its class alone.
 ///
-/// The [`ANY_EXTENDED`] gate is load-bearing, not an optimization: codegen
+/// The [`GATE_ANY_EXTENDED`] gate is load-bearing, not an optimization: codegen
 /// folds a statically-false `x.is_a?(SomeModule)` down to this call, so a
 /// program that never extends anything answers from a single relaxed load.
 pub fn value_extends(recv: &RubyValue, target: ClassId) -> bool {
@@ -596,7 +602,7 @@ pub fn value_extends(recv: &RubyValue, target: ClassId) -> bool {
     {
         return true;
     }
-    if !ANY_EXTENDED.load(Ordering::Acquire) {
+    if GATES.load(Ordering::Acquire) & GATE_ANY_EXTENDED == 0 {
         return false;
     }
     let Some(key) = extend_key(recv) else {

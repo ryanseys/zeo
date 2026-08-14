@@ -990,15 +990,15 @@ fn int_span(recv: &RubyValue, to: Option<&RubyValue>, ascending: bool) -> RubyVa
 /// `enumerator_with_index_i`).
 fn drive_with_index(e: &REnumerator, block: RubyValue, offset: i64) -> Result<RubyValue, Signal> {
     let blk = block.as_proc_unchecked();
-    let counter = Arc::new(Mutex::new(offset));
+    // An `AtomicI64`, not a `Mutex<i64>`: the counter is incremented once per
+    // ELEMENT, and a mutex acquire/release pair per element is real work for a
+    // fetch-add. Relaxed is enough -- nothing else is published through it, and
+    // an interleaved `each_with_index` across threads has no defined order for
+    // this index anyway.
+    let counter = Arc::new(std::sync::atomic::AtomicI64::new(offset));
     let wrapper: RProc = RProc::new(move |raw: &[RubyValue]| {
         let el = pack(raw);
-        let i = {
-            let mut c = counter.lock();
-            let i = *c;
-            *c += 1;
-            i
-        };
+        let i = counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         blk.call(&[el, RubyValue::Int(i)])
     });
     internal_each(&e.source(), RubyValue::Proc(wrapper))
