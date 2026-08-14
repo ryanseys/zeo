@@ -72,7 +72,10 @@ pub(crate) fn lower_block(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) 
         .filter(|n| !bound.contains(n))
         .collect();
     let body = lower_body(result, hir, block.body())?;
-    Ok(hir.push(HirNode::Block { params, body }))
+    Ok(hir.push(HirNode::Block {
+        params: Box::new(params),
+        body,
+    }))
 }
 
 /// Splits a call's raw argument list into (positional `ArrayElem`s, an
@@ -168,7 +171,7 @@ pub(crate) fn try_lower(
         let params = lower_block_like_params(result, hir, lambda.parameters())?;
         let body = lower_body(result, hir, lambda.body())?;
         return Ok(Some(hir.push(HirNode::Lambda {
-            params,
+            params: Box::new(params),
             body,
             method_body: false,
         })));

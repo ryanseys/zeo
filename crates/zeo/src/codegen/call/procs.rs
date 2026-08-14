@@ -92,7 +92,7 @@ pub fn emit_proc_value(cx: &Ctx, block_id: NodeId) -> TokenStream {
         .has_flag(block_id, crate::hir::NodeFlag::DYNAMIC_DEFINE_METHOD_BLOCK)
     {
         let mut dm_cx = cx.clone();
-        dm_cx.runtime_super_params = Some(std::rc::Rc::new(params.clone()));
+        dm_cx.runtime_super_params = Some(std::rc::Rc::new((**params).clone()));
         dm_cx.defined_by_define_method = true;
         return emit_proc_or_lambda_value_with(&dm_cx, params, body, false, false, loc, force_self);
     }

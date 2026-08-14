@@ -2537,7 +2537,7 @@ pub enum HirNode {
         block_arg: Option<NodeId>,
     },
     Block {
-        params: Params,
+        params: Box<Params>,
         body: Vec<NodeId>,
     },
     /// `-> (x) { ... }` / `lambda { ... }` -- a STANDALONE expression
@@ -2551,7 +2551,7 @@ pub enum HirNode {
     /// itself (folded into a normal `Ok` return, like a method boundary)
     /// rather than propagating to the enclosing method/loop.
     Lambda {
-        params: Params,
+        params: Box<Params>,
         body: Vec<NodeId>,
         /// True when this lambda is a METHOD BODY installed at runtime -- the
         /// desugar of a per-object singleton (`def obj.name`, `class << obj`)
@@ -2589,7 +2589,7 @@ pub enum HirNode {
     /// `lower/mod.rs`'s def-receiver arms.
     DefMethod {
         name: String,
-        params: Params,
+        params: Box<Params>,
         body: Vec<NodeId>,
         is_class_method: bool,
         visibility: Visibility,
@@ -2782,7 +2782,7 @@ pub enum HirNode {
     Eval(Vec<NodeId>),
     /// The body of a synthesized `attach_function` wrapper: marshal args,
     /// call the C symbol, wrap the result. See `FfiCall`.
-    Ffi(FfiCall),
+    Ffi(Box<FfiCall>),
     /// A `Ruby::Box` context switch: the universal wrapper every
     /// box-scoped splice lowers into -- a `box.require`d file's statements,
     /// a `box.eval` body, and a `box::X` external-access expression all

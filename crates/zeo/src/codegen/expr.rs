@@ -795,7 +795,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             // "`super` outside a method".
             let mut body_cx = cx.clone();
             if *method_body {
-                body_cx.runtime_super_params = Some(std::rc::Rc::new(params.clone()));
+                body_cx.runtime_super_params = Some(std::rc::Rc::new((**params).clone()));
             }
             super::call::emit_lambda_value(
                 &body_cx,
@@ -1639,7 +1639,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             // under a dynamic `self`, so it never statically dispatches against
             // that class).
             let mut body_cx = cx.clone();
-            body_cx.runtime_super_params = Some(std::rc::Rc::new(params.clone()));
+            body_cx.runtime_super_params = Some(std::rc::Rc::new((**params).clone()));
             body_cx.defined_by_define_method = !is_def;
             // Ruby labels a `define_method` body's frame after where it was
             // WRITTEN (`block in <main>`), a `def`'s after the method it

@@ -646,8 +646,12 @@ fn process_top_stmt_inner(
         // `Object`'s own copy through the builtin-reopen container
         // (`__bm_Object`), dispatched on the runtime `main` object at
         // top-level call sites.
-        let (name, params, body, is_class_method) =
-            (name.clone(), params.clone(), body.clone(), *is_class_method);
+        let (name, params, body, is_class_method) = (
+            name.clone(),
+            (**params).clone(),
+            body.clone(),
+            *is_class_method,
+        );
         // A `define_method(:x) { module M; end }` body is a block, and ruby
         // accepts the `module` keyword in one -- see `collect_nested_bodies`.
         if compiler
@@ -668,7 +672,7 @@ fn process_top_stmt_inner(
             // `method_body` lambda -- Batch G).
             let self_ref = compiler.hir.push(HirNode::SelfRef);
             let lambda = compiler.hir.push(HirNode::Lambda {
-                params,
+                params: Box::new(params),
                 body,
                 method_body: true,
             });
@@ -4721,7 +4725,7 @@ fn register_body_def_method(
     };
     let (name, params, body, is_class_method, visibility) = (
         name.clone(),
-        params.clone(),
+        (**params).clone(),
         body.clone(),
         *is_class_method,
         *visibility,

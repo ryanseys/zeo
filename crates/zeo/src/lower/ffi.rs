@@ -2493,14 +2493,14 @@ fn lower_attach_function(
         .map(|(name, ty)| (hir.push(HirNode::LocalRead(name.clone())), ty))
         .collect();
     let variadic_read = variadic.then(|| hir.push(HirNode::LocalRead("__ffi_rest".to_string())));
-    let ffi_node = hir.push(HirNode::Ffi(crate::hir::FfiCall {
+    let ffi_node = hir.push(HirNode::Ffi(Box::new(crate::hir::FfiCall {
         symbol: c_symbol,
         lib,
         args: call_args,
         ret,
         variadic: variadic_read,
         blocking,
-    }));
+    })));
     // A by-value struct return comes out of the call as a fresh ruby-owned
     // `MemoryPointer` (see codegen's `emit_ffi_call`); the struct class's own
     // `new(pointer)` then views it -- the same wrap the accessor synthesis
@@ -2521,7 +2521,7 @@ fn lower_attach_function(
     };
     Ok(hir.push(HirNode::DefMethod {
         name: ruby_name,
-        params,
+        params: Box::new(params),
         body,
         is_class_method: true,
         visibility: Visibility::Public,

@@ -230,7 +230,7 @@ fn desugar_singleton_items(
                 body,
                 is_class_method: false,
                 ..
-            } => Item::Def(name.clone(), params.clone(), body.clone()),
+            } => Item::Def(name.clone(), (**params).clone(), body.clone()),
             // A constant inside `class << obj` (`class << RANDOM; MAX = ...;
             // def next; MAX; end; end`, tmpdir) lives on the object's singleton
             // class in real Ruby. zeo has no per-object singleton-class
@@ -359,7 +359,7 @@ fn desugar_singleton_items(
             Item::Def(mname, params, body) => {
                 let recv = lower_node(result, hir, recv_node)?;
                 let lambda = hir.push(HirNode::Lambda {
-                    params,
+                    params: Box::new(params),
                     body,
                     method_body: true,
                 });
@@ -496,7 +496,7 @@ fn desugar_singleton_items(
                 let recv = lower_node(result, hir, recv_node)?;
                 let singleton = hir.push(singleton_class_of(recv));
                 let block = hir.push(HirNode::Block {
-                    params: Params::default(),
+                    params: Box::default(),
                     body: vec![id],
                 });
                 // The block runs under the RECEIVER's `self`. Lowering marks
@@ -2380,7 +2380,7 @@ fn lower_runtime_class_body(
     let body = transform_runtime_class_body(hir, body)?;
     rescope_body_constants(hir, cref, &body)?;
     Ok(hir.push(HirNode::Block {
-        params: Params::default(),
+        params: Box::default(),
         body,
     }))
 }
@@ -2843,7 +2843,7 @@ fn runtime_nested_class(
 ) -> PResult<NodeId> {
     let inner = transform_runtime_class_body(hir, body)?;
     let block = hir.push(HirNode::Block {
-        params: Params::default(),
+        params: Box::default(),
         body: inner,
     });
     let (builder, args) = if is_module {
@@ -4077,7 +4077,7 @@ fn lower_class_body_statement(
                         let read = hir.push(HirNode::IvarRead(ivar.clone()));
                         let getter = hir.push(HirNode::DefMethod {
                             name: ivar.clone(),
-                            params: Params::default(),
+                            params: Box::default(),
                             body: vec![read],
                             is_class_method: false,
                             visibility: *visibility,
@@ -4092,10 +4092,10 @@ fn lower_class_body_statement(
                         let write = hir.push(HirNode::IvarWrite(ivar.clone(), read_param));
                         let setter = hir.push(HirNode::DefMethod {
                             name: format!("{ivar}="),
-                            params: Params {
+                            params: Box::new(Params {
                                 required: vec![param],
                                 ..Params::default()
-                            },
+                            }),
                             body: vec![write],
                             is_class_method: false,
                             visibility: *visibility,
@@ -4475,7 +4475,7 @@ pub(crate) fn try_lower_definition(
                 // `ProcData`'s call-site block slot (see `HirNode::Lambda`'s
                 // `method_body`).
                 let lambda = hir.push(HirNode::Lambda {
-                    params,
+                    params: Box::new(params),
                     body,
                     method_body: true,
                 });
@@ -4495,7 +4495,7 @@ pub(crate) fn try_lower_definition(
         let body = hir.in_def_body(|hir| lower_body(result, hir, def.body()))?;
         return Ok(Some(hir.push(HirNode::DefMethod {
             name,
-            params,
+            params: Box::new(params),
             body,
             is_class_method,
             // Only `lower_class_body_statement`'s own class-body-scoped

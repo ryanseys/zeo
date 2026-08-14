@@ -280,7 +280,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
     if let Some(post) = node.as_post_execution_node() {
         let body = lower_body(result, hir, post.statements().map(|s| s.as_node()))?;
         let block = hir.push(HirNode::Block {
-            params: Params::default(),
+            params: Box::default(),
             body,
         });
         return Ok(hir.push(HirNode::Call {
@@ -696,11 +696,11 @@ fn lower_call_node(
                 });
                 return Ok(hir.push(HirNode::DefMethod {
                     name: method_name,
-                    params: Params {
+                    params: Box::new(Params {
                         required: vec!["__sp_recv".to_string()],
                         rest: Some(Some("__sp_args".to_string())),
                         ..Params::default()
-                    },
+                    }),
                     body: vec![call],
                     is_class_method: false,
                     visibility: Visibility::Public,
@@ -727,7 +727,7 @@ fn lower_call_node(
                 let body = lower_body(result, hir, block.body())?;
                 let id = hir.push(HirNode::DefMethod {
                     name: method_name,
-                    params,
+                    params: Box::new(params),
                     body,
                     is_class_method: false,
                     visibility: Visibility::Public,
@@ -809,7 +809,7 @@ fn lower_call_node(
                 let body = lower_body(result, hir, block.body())?;
                 let def = hir.push(HirNode::DefMethod {
                     name: method_name,
-                    params,
+                    params: Box::new(params),
                     body,
                     is_class_method: true,
                     visibility: Visibility::Public,
@@ -1058,7 +1058,7 @@ fn lower_call_node(
             let params = lower_block_like_params(result, hir, block.parameters())?;
             let body = lower_body(result, hir, block.body())?;
             return Ok(hir.push(HirNode::Lambda {
-                params,
+                params: Box::new(params),
                 body,
                 method_body: false,
             }));
