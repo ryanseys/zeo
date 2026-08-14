@@ -656,10 +656,7 @@ fn run() -> Result<(), MainError> {
 
     let compiled = zeo::compile_to_rust_with(&source, &opts)?;
 
-    use zeo::backend::{
-        GenOpt, Linkage, Profile, Runtime, build_binary, build_binary_incremental,
-        ensure_runtime_built,
-    };
+    use zeo::backend::{GenOpt, Linkage, Profile, Runtime, build_binary, ensure_runtime_built};
     zeo::memguard::set_phase(zeo::memguard::Phase::Build);
 
     // Which runtime variant this program's binary links: the lean, parser-free
@@ -684,25 +681,18 @@ fn run() -> Result<(), MainError> {
         let profile = Profile::from_env_or(Profile::Debug);
         ensure_runtime_built(profile, runtime, linkage)?;
         let bin = std::env::temp_dir().join(format!("zeo-e-{}", std::process::id()));
-        // The edit-run-edit loop's identity: the input FILE, canonical, so
-        // rustc's incremental state survives edits to it (the content-keyed
-        // binary cache above cannot, by design). `-e` one-liners get no key --
-        // their content IS their identity.
-        let incr_key = match &args.source {
-            Source::File(path) => path
-                .canonicalize()
-                .ok()
-                .map(|p| p.to_string_lossy().into_owned()),
-            Source::Eval(_) => None,
-        };
-        build_binary_incremental(
+        // An unchanged program is served from the content-keyed binary cache;
+        // a changed one is a full rustc run. The path-keyed incremental state
+        // that used to sit between those two was retired -- it was the cache's
+        // only shared mutable state, and it broke concurrent builds (see
+        // `backend::build_binary`).
+        build_binary(
             &compiled.rust_source,
             &bin,
             profile,
             runtime,
             linkage,
             GenOpt::Optimized,
-            incr_key.as_deref(),
         )?;
         let status = std::process::Command::new(&bin)
             .args(&args.program_args)

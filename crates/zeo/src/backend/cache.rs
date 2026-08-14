@@ -63,43 +63,29 @@ pub(super) fn cache_path(
     Ok(dir.join(format!("{:016x}", fnv1a64(rust_source.as_bytes()))))
 }
 
-/// A per-PROGRAM rustc incremental-state dir, inside the live generation so a
-/// stale-generation sweep reclaims it wholesale. Keyed by the program's STABLE
-/// identity (its canonical path) rather than its content: the whole point is
-/// surviving edits, which the content-keyed binary cache by design cannot.
-/// Prunes the oldest siblings beyond a small cap -- incremental state for a
-/// gem-scale program runs to hundreds of MB, and this machine already fights
-/// disk pressure.
-pub(super) fn incremental_dir(
-    profile: Profile,
-    runtime: Runtime,
-    linkage: Linkage,
-    gen_opt: GenOpt,
-    key: &str,
-) -> Result<PathBuf, String> {
-    let generation = generation_hash(profile, runtime, linkage, gen_opt)?;
-    let root = cache_dir().join(format!("{generation:016x}")).join("incr");
-    std::fs::create_dir_all(&root).map_err(|e| format!("creating {}: {e}", root.display()))?;
-    let dir = root.join(format!("{:016x}", fnv1a64(key.as_bytes())));
-    // Best-effort prune: keep the newest 4 programs' state. Never removes the
-    // dir being asked for (it is about to be touched and becomes newest).
-    if let Ok(entries) = std::fs::read_dir(&root) {
-        let mut dirs: Vec<(std::time::SystemTime, PathBuf)> = entries
-            .flatten()
-            .filter(|e| e.path() != dir)
-            .filter_map(|e| {
-                let m = e.metadata().ok()?;
-                Some((m.modified().ok()?, e.path()))
-            })
-            .collect();
-        if dirs.len() > 3 {
-            dirs.sort_by_key(|(t, _)| *t);
-            for (_, old) in dirs.iter().take(dirs.len() - 3) {
-                let _ = std::fs::remove_dir_all(old);
-            }
-        }
-    }
-    Ok(dir)
+/// Removes the retired `incr/` tree from a live generation.
+///
+/// zeo once kept a per-program rustc incremental-state dir here, keyed by the
+/// program's canonical path so state survived edits. It was RETIRED because it
+/// was the one piece of SHARED, MUTABLE build state in the cache, and both of
+/// its failure modes corrupted concurrent builds:
+///
+/// * it pruned its siblings from the BUILD HOT PATH to bound disk, which is
+///   precisely what `cache_path` above refuses to do and says why -- a
+///   `remove_dir_all` there deletes a directory a sibling process is still
+///   writing rustc output into;
+/// * two processes compiling the same path (a retry after a killed run, whose
+///   rustc is still alive) shared one session dir.
+///
+/// Either way rustc failed with `failed to move dependency graph ... No such
+/// file or directory`, which reads as a compile error and is not one. The
+/// content-keyed binary cache answers the same question safely for an
+/// unchanged program, and it is immutable once published.
+///
+/// This reclaims the leftovers from before the retirement; it is called from
+/// the once-per-process sweep, never from a build.
+fn sweep_retired_incremental_state(generation_dir: &Path) {
+    let _ = std::fs::remove_dir_all(generation_dir.join("incr"));
 }
 
 /// The cache generation for one (profile, runtime, linkage) combination --
@@ -208,6 +194,11 @@ fn sweep_stale_cache_generations() {
     for entry in entries.flatten() {
         let name = entry.file_name();
         if live.iter().any(|l| l.as_str() == name) {
+            // Live generations keep their binaries; only the retired
+            // incremental tree goes. Safe here and unsafe in a build: this runs
+            // once per process before any rustc of ours starts, and the tree it
+            // removes is one nothing writes any more.
+            sweep_retired_incremental_state(&entry.path());
             continue;
         }
         // Stray files (e.g. `.DS_Store`) are swept along with stale dirs.
@@ -300,12 +291,15 @@ pub(super) fn link_or_copy(from: &Path, to: &Path) -> Result<(), String> {
 ///
 /// A fixed crate name also makes `-C incremental` theoretically useful for the
 /// small residue two generated programs still share, letting `rustc` reuse one
-/// program's codegen units for another. It is deliberately NOT enabled: `libtest`
-/// runs each `#[test]` on its own thread, so any per-thread keying produces
-/// one cold directory per test -- measured as a large disk cost and a net
-/// slowdown. It would also buy little: per-program codegen is small, because
-/// the exception prelude lives in the prebuilt runtime, so the emitted crates
-/// share little to dedup.
+/// program's codegen units for another. It is NOT enabled, and has now been
+/// turned down twice. Keying per thread produces one cold directory per test
+/// (`libtest` runs each `#[test]` on its own thread) -- measured as a large
+/// disk cost and a net slowdown. Keying per PROGRAM path was then tried for
+/// the edit-run loop and RETIRED, because a shared mutable directory is unsafe
+/// the moment two zeo processes run at once; that story is on
+/// `sweep_retired_incremental_state`. It would also buy little either way:
+/// per-program codegen is small, because the exception prelude lives in the
+/// prebuilt runtime, so the emitted crates share little to dedup.
 /// The remaining per-program build cost is the link +
 /// codesign of the runtime artifact, not codegen -- so compile-time work
 /// belongs in `zeo-rt`, not here.
