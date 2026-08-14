@@ -1458,7 +1458,7 @@ fn lower_call_node(
         let b = *b;
         hir.set_flag(b, crate::hir::NodeFlag::DYNAMIC_DEFINE_METHOD_BLOCK);
     }
-    return Ok(node);
+    Ok(node)
 }
 
 /// One `elements()` entry of an `ArrayNode` -- either a plain value or a
@@ -1584,7 +1584,7 @@ fn computed_relative_demand_dir(call: &CallNode<'_>) -> Option<std::path::PathBu
         let istr = arg.as_interpolated_string_node()?;
         let first = istr.parts().iter().next()?;
         let s = first.as_string_node()?;
-        let text = String::from_utf8_lossy(&s.unescaped()).into_owned();
+        let text = String::from_utf8_lossy(s.unescaped()).into_owned();
         let (prefix, _) = text.rsplit_once('/')?;
         if prefix.is_empty() || prefix.split('/').any(|c| c == "..") {
             return None;

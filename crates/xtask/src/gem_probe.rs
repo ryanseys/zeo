@@ -625,9 +625,9 @@ fn parse_gem_metadata_yaml(text: &str) -> GemMeta {
     let mut list: Option<&mut Vec<String>> = None;
     for line in text.lines() {
         // A list item belongs to the key above it; anything else ends the list.
-        if line.starts_with("- ") {
+        if let Some(item) = line.strip_prefix("- ") {
             if let Some(items) = list.as_deref_mut() {
-                items.push(unquote(&line[2..]));
+                items.push(unquote(item));
             }
             continue;
         }
@@ -638,10 +638,10 @@ fn parse_gem_metadata_yaml(text: &str) -> GemMeta {
             if v.trim() != "[]" {
                 list = Some(&mut meta.require_paths);
             }
-        } else if let Some(v) = line.strip_prefix("extensions:") {
-            if v.trim() != "[]" {
-                list = Some(&mut meta.extensions);
-            }
+        } else if let Some(v) = line.strip_prefix("extensions:")
+            && v.trim() != "[]"
+        {
+            list = Some(&mut meta.extensions);
         }
     }
     if meta.require_paths.is_empty() {
@@ -2405,7 +2405,7 @@ fn thousands(n: usize) -> String {
     let digits = n.to_string();
     let mut out = String::with_capacity(digits.len() + digits.len() / 3);
     for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i) % 3 == 0 {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
             out.push(',');
         }
         out.push(c);

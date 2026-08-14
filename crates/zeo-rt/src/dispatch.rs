@@ -1820,7 +1820,8 @@ fn rescue_class_matches(cls: &RubyValue, exc: &RubyValue) -> Result<bool, Signal
             // NoMemory/SignalException. The override is rare, the probe cheap,
             // and this path runs only while an exception is in flight.
             if class_method_owner(*cid, Symbol::intern("===")).is_some() {
-                let verdict = send_value(cls, Symbol::intern("==="), &[exc.clone()], None)?;
+                let verdict =
+                    send_value(cls, Symbol::intern("==="), std::slice::from_ref(exc), None)?;
                 return Ok(verdict.truthy());
             }
             Ok(is_a(exc.as_object_unchecked().class_id(), *cid))
@@ -2352,7 +2353,7 @@ fn scan_class_method_owner(cid: ClassId, skip: usize, name: Symbol) -> Option<(C
                         .and_then(|r| r.entries.get(&anc.0))
                         .is_some_and(|e| e.own_class_methods.contains(&name))
                     || crate::builtins::class_method_table(anc)
-                        .is_some_and(|lookup| lookup(&n).is_some()));
+                        .is_some_and(|lookup| lookup(n).is_some()));
             match own {
                 true => Some((anc, false)),
                 false => extended_class_method_owner(anc, name).map(|m| (m, true)),
@@ -5039,10 +5040,9 @@ fn send_value_in_reason(
         // receiver class. See `value_subclass::root_class_method_target`.
         {
             let n = name.name_str();
-            if let Some(root) = crate::builtins::value_subclass::root_class_method_target(*cid, &n)
-            {
+            if let Some(root) = crate::builtins::value_subclass::root_class_method_target(*cid, n) {
                 return crate::builtins::value_subclass::call_root_class_method(
-                    *cid, root, &n, args, block,
+                    *cid, root, n, args, block,
                 );
             }
             // ...and the RECEIVER-HONOURING roots, where the row allocates
@@ -5051,8 +5051,8 @@ fn send_value_in_reason(
             // already did it. See `value_subclass::recv_honouring_root`.
             if let Some(root) = crate::builtins::value_subclass::recv_honouring_root(*cid)
                 && let Some(lookup) = crate::builtins::class_method_table(root)
-                && let Some(f) = lookup(&n)
-                && !crate::builtins::builtin_class_method_is_private(root, &n)
+                && let Some(f) = lookup(n)
+                && !crate::builtins::builtin_class_method_is_private(root, n)
             {
                 return with_c_frame(c_frame_label(root, name, '.'), || f(recv, args, block));
             }

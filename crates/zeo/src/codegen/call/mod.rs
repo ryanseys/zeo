@@ -1205,6 +1205,10 @@ fn class_method_defined_only_later(
     any
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one parameter per syntactic part of a Ruby call site"
+)]
 pub fn emit_call(
     cx: &Ctx,
     receiver: Option<NodeId>,

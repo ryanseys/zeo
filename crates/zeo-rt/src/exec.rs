@@ -30,16 +30,16 @@ pub fn run_at_exit() -> Option<i32> {
     let mut status = None;
     loop {
         let Some(h) = AT_EXIT.lock().pop() else { break };
-        if let RubyValue::Proc(p) = h {
-            if let Err(Signal::Raise(exc)) = p.call(&[]) {
-                status = Some(match crate::system_exit_status(&exc) {
-                    Some(code) => code,
-                    None => {
-                        crate::report_uncaught(&exc);
-                        1
-                    }
-                });
-            }
+        if let RubyValue::Proc(p) = h
+            && let Err(Signal::Raise(exc)) = p.call(&[])
+        {
+            status = Some(match crate::system_exit_status(&exc) {
+                Some(code) => code,
+                None => {
+                    crate::report_uncaught(&exc);
+                    1
+                }
+            });
         }
     }
     status

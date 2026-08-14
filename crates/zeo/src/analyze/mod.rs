@@ -436,17 +436,15 @@ fn mark_inline_iter_sites(
             && let (HirNode::LocalRead(rn), HirNode::Block { params, .. }) =
                 (&compiler.hir[*recv], &compiler.hir[*block])
             && plain_positional(params)
+            && let Some(&ty) = locals.get(rn)
+            && let Some(f) = FUSED.iter().find(|f| {
+                f.ty == ty
+                    && f.names.contains(&name.as_str())
+                    && f.args.contains(&args.len())
+                    && f.params.contains(&params.required.len())
+            })
         {
-            if let Some(&ty) = locals.get(rn)
-                && let Some(f) = FUSED.iter().find(|f| {
-                    f.ty == ty
-                        && f.names.contains(&name.as_str())
-                        && f.args.contains(&args.len())
-                        && f.params.contains(&params.required.len())
-                })
-            {
-                out.insert(*block, f.kind);
-            }
+            out.insert(*block, f.kind);
         }
         compiler.hir[id].for_each_child(&mut |n| scan(compiler, n, locals, out));
     }

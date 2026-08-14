@@ -1435,10 +1435,9 @@ pub(crate) fn as_ffi_layout<'a>(
 fn hash_pairs<'a>(node: &Node<'a>) -> Option<Vec<(Node<'a>, Node<'a>)>> {
     let elements: Vec<Node<'a>> = if let Some(h) = node.as_hash_node() {
         h.elements().iter().collect()
-    } else if let Some(h) = node.as_keyword_hash_node() {
-        h.elements().iter().collect()
     } else {
-        return None;
+        let h = node.as_keyword_hash_node()?;
+        h.elements().iter().collect()
     };
     elements
         .into_iter()
@@ -2241,7 +2240,8 @@ fn fold_lib_string(node: &Node<'_>, hir: &Hir) -> Option<String> {
         for part in interp.parts().iter() {
             if let Some(s) = part.as_string_node() {
                 out.push_str(&String::from_utf8_lossy(s.unescaped()));
-            } else if let Some(embedded) = part.as_embedded_statements_node() {
+            } else {
+                let embedded = part.as_embedded_statements_node()?;
                 let stmts: Vec<Node<'_>> = embedded
                     .statements()
                     .map(|s| s.body().iter().collect())
@@ -2250,8 +2250,6 @@ fn fold_lib_string(node: &Node<'_>, hir: &Hir) -> Option<String> {
                     return None;
                 };
                 out.push_str(&fold_lib_string(only, hir)?);
-            } else {
-                return None;
             }
         }
         return Some(out);
@@ -2664,6 +2662,7 @@ fn ffi_symbol_str(node: &Node<'_>) -> PResult<String> {
 ///    the anonymous `Tag = enum(...)` form is referred to afterwards. Only the
 ///    LEAF name is looked up: the table is keyed by the name as declared, and
 ///    these are always written inside the library module that declared them.
+///
 /// A callback ARGUMENT naming a struct class degrades to a pointer, which is
 /// what the Proc really receives.
 ///

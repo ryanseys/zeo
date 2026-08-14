@@ -252,6 +252,10 @@ pub fn read_source(path: &Path) -> Result<String, String> {
 /// user's own source (the exception prelude and `eval` bodies keep going
 /// through plain `parse_and_lower_into`, where the three call shapes are
 /// rejected by `lower_node` instead).
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one parameter per resolution root the loader searches"
+)]
 pub(super) fn lower_main_file(
     hir: &mut Hir,
     source: &str,
@@ -404,7 +408,7 @@ pub(super) fn lower_main_file(
     // there. A loader that globs its own tree is a REQUIRED file (tzinfo's
     // ts_all.rb, this repo's tests/glob_require_units/loader.rb), and
     // `splice_file` gives those their directory.
-    let prev_dir = std::mem::replace(&mut hir.lowering_dir, None);
+    let prev_dir = hir.lowering_dir.take();
     let lowered = loader
         .lower_file_statements(
             hir,

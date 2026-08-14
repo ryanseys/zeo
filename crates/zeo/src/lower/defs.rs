@@ -4230,51 +4230,6 @@ fn apply_body_defaults_in_branches(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Every class-body directive has to have a runtime spelling: a class built
-    /// at runtime runs its body as an ordinary block, where the static-path node
-    /// has no meaning. `HirNode::is_class_body_directive` is the shared table,
-    /// and it is exhaustive, so the only way to grow the directive set without
-    /// tripping this test is to also teach `transform_runtime_class_body` the
-    /// rewrite -- which is the point.
-    #[test]
-    fn every_class_body_directive_has_a_runtime_rewrite() {
-        let directives = [
-            HirNode::Include("M".to_string()),
-            HirNode::Extend("M".to_string()),
-            HirNode::Prepend("M".to_string()),
-            HirNode::Undef(vec!["m".to_string()]),
-            HirNode::AliasMethod {
-                new_name: "a".to_string(),
-                old_name: "b".to_string(),
-                is_class_method: false,
-            },
-            HirNode::MethodVisibility {
-                name: "m".to_string(),
-                visibility: Visibility::Private,
-            },
-            HirNode::ModuleFunction("m".to_string()),
-        ];
-        for node in directives {
-            assert!(
-                node.is_class_body_directive(),
-                "this test only covers directives"
-            );
-            let mut hir = Hir::default();
-            let id = hir.push(node);
-            let out = transform_runtime_class_body(&mut hir, vec![id])
-                .expect("a directive rewrites rather than erroring");
-            assert!(
-                !hir[out[0]].is_class_body_directive(),
-                "class-body directive left unrewritten for a runtime class body"
-            );
-        }
-    }
-}
-
 /// The definition family of [`super::lower_node_inner`]'s recognizer chain:
 /// `class` (static, runtime-parent, and runtime-reopen paths), `module`,
 /// expression-position `undef`, `def` (instance, `self.`, enclosing-class,
@@ -4534,4 +4489,49 @@ pub(crate) fn try_lower_definition(
     }
 
     Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every class-body directive has to have a runtime spelling: a class built
+    /// at runtime runs its body as an ordinary block, where the static-path node
+    /// has no meaning. `HirNode::is_class_body_directive` is the shared table,
+    /// and it is exhaustive, so the only way to grow the directive set without
+    /// tripping this test is to also teach `transform_runtime_class_body` the
+    /// rewrite -- which is the point.
+    #[test]
+    fn every_class_body_directive_has_a_runtime_rewrite() {
+        let directives = [
+            HirNode::Include("M".to_string()),
+            HirNode::Extend("M".to_string()),
+            HirNode::Prepend("M".to_string()),
+            HirNode::Undef(vec!["m".to_string()]),
+            HirNode::AliasMethod {
+                new_name: "a".to_string(),
+                old_name: "b".to_string(),
+                is_class_method: false,
+            },
+            HirNode::MethodVisibility {
+                name: "m".to_string(),
+                visibility: Visibility::Private,
+            },
+            HirNode::ModuleFunction("m".to_string()),
+        ];
+        for node in directives {
+            assert!(
+                node.is_class_body_directive(),
+                "this test only covers directives"
+            );
+            let mut hir = Hir::default();
+            let id = hir.push(node);
+            let out = transform_runtime_class_body(&mut hir, vec![id])
+                .expect("a directive rewrites rather than erroring");
+            assert!(
+                !hir[out[0]].is_class_body_directive(),
+                "class-body directive left unrewritten for a runtime class body"
+            );
+        }
+    }
 }
