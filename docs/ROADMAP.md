@@ -353,12 +353,21 @@ compensating notes from `tests/e2e/gems_vendored.rs`.
 
 ## Performance
 
-Measured against CRuby 4.0.6 on 2026-07-31, both timed in the same run:
-**1.78× faster over all 58 benchmarks, and 1.23× over the 37 where CRuby takes
-0.10 s or more.** 47 of 58 are faster, 11 slower. The difference between the
-two aggregates is process startup on 13 sub-50 ms benchmarks. Full table and
-method: [`bench/README.md`](../bench/README.md); `bench/baseline.tsv` and
-`bench/compile-baseline.tsv` are the banked records.
+Measured against CRuby 4.0.6 on 2026-08-14, both timed in the same run
+(`--runs 5 --ruby`): **1.71× faster over all 58 benchmarks, and 1.20× over the
+36 where CRuby takes 0.10 s or more.** 42 of 58 are faster, 16 slower. The
+difference between the two aggregates is process startup on 14 sub-50 ms
+benchmarks. Full table and method: [`bench/README.md`](../bench/README.md);
+`bench/baseline.tsv` and `bench/compile-baseline.tsv` are the banked records.
+
+The 2026-07-31 figures were 1.78×/1.23× with 47 faster, and the two runs are
+less different than they look: the CRuby oracle re-timed **5.5% faster**
+(median over 58) while Zeo's median time was unchanged, so several benchmarks
+sitting just above parity crossed below it without Zeo slowing down. What did
+change for real, in both directions: `so_lists` 0.74× → 1.44× and
+`partial_sums` → 1.68×, against a builtin-call-bound group (`template`,
+`matmul`, `structaref`, `csv_process`, `sudoku`) that lost 11–19% to
+builtin-frame fidelity and to making every native class subclassable.
 
 The staged overhaul that produced this is complete. It took the
 compute-bound geomean from 0.86× to 1.23× by replacing the per-call frame

@@ -548,28 +548,45 @@ Zeo gives two results:
 
 | Programs | Geometric mean |
 |---|---|
-| all 58 programs | **1.78 times faster than CRuby** |
-| the 37 programs where CRuby needs 0.10 s or more | **1.23 times faster** |
+| all 58 programs | **1.71 times faster than CRuby** |
+| the 36 programs where CRuby needs 0.10 s or more | **1.20 times faster** |
 
 The difference between the two results is the start time. The CRuby
-interpreter needs approximately 35 ms before it runs the first line of a
-program. A native binary needs less than 1 ms. For the 13 programs that finish
+interpreter needs approximately 30 ms before it runs the first line of a
+program. A native binary needs less than 1 ms. For the 14 programs that finish
 in less than 50 ms, this start time is most of the measurement, so the first
 result mostly measures start time. The second result removes this effect: it
 keeps only the programs that run long enough for the generated code to control
-the time. Zeo is faster for 47 programs, and slower for 11 programs.
+the time. Zeo is faster for 42 programs, and slower for 16 programs.
 
-The largest advantages are `bigint_fib`, `jekyll_lite` and `str_concat` (8.8),
-`pidigits` and `poly_cells` (8.5), and `micro_lisp` and `sinatra_mini` (8.3).
-The start time controls all of these. For programs that calculate, the largest
-advantages are `so_mandelbrot` (3.4), `range_each` (3.1), `nested_loop` (2.5)
-and `object_new` (2.2).
+The largest advantages are `jekyll_lite`, `micro_lisp` and `str_concat` (7.5),
+then `bigint_fib`, `pidigits`, `poly_cells` and `sinatra_mini` (7.2). The start
+time controls all of these. For programs that calculate, the largest advantages
+are `so_mandelbrot` (3.6), `range_each` (3.2), `nested_loop` (2.6) and
+`object_new_no_escape` (2.0).
 
-The largest disadvantages are `life` (0.52), `rbtree` (0.66), `linked_list`
-(0.70), `splay` (0.74) and `so_lists` (0.74). These programs make and release
-many objects. Their time goes into the reference counts and the memory
-allocation, and not into the method calls or the instance variables.
-[`docs/ROADMAP.md`](docs/ROADMAP.md) gives the measurements and the planned work.
+The 16 programs where CRuby is faster are two different groups, and the
+difference is important because each group needs a different fix.
+
+**Five programs build and destroy many objects**: `rbtree` (0.59),
+`structaset` (0.61), `linked_list` (0.63), `life` (0.67) and `splay` (0.77).
+Their time goes into the reference counts and the memory allocation, and not
+into the method calls or the instance variables. The clear next step was to
+make a Ruby value 16 bytes instead of 24. Zeo measured this on 2026-08-14 and
+did not do it: 8 more bytes cost only 1.2 percent on these same programs, so 8
+fewer bytes give about as little.
+
+**Eight programs call many built-in methods**: `ruby_xor` (0.75), `inline`
+(0.83), `template` (0.84), `sudoku` (0.86), `structaref` (0.87), `csv_process`
+(0.88), `ao_render` (0.91) and `matmul` (0.96). This is a cost that Zeo accepts
+for correctness. Each call of a built-in method adds a frame, so an error
+inside a built-in method shows the same lines that CRuby shows. To remove these
+frames completely makes `ruby_xor` 9.2 percent faster, `template` 7.7 percent
+and `matmul` 5.8 percent.
+
+The other three are equal to CRuby inside the measurement error.
+[`docs/ROADMAP.md`](docs/ROADMAP.md) gives both measurements and the planned
+work.
 
 [`bench/README.md`](bench/README.md) gives the full table, the method and the
 limits of these measurements.
@@ -807,8 +824,10 @@ Zeo is experimental. Here are the known limits:
   limit. `GC.start` runs the finalizers that it can.
 - **Four extensions give only a part of their methods.** These are `coverage`,
   `nkf`, `openssl` and `TracePoint`. Read the extension section above.
-- **CRuby is faster for 11 of the 58 benchmark programs.** These programs make
-  and release many objects. Read the benchmark section above.
+- **CRuby is faster for 16 of the 58 benchmark programs.** Five of them make
+  and release many objects; eight call many built-in methods, where Zeo pays
+  for showing the same error lines that CRuby shows. Read the benchmark
+  section above.
 - **`Ruby::Box` allocation is compile-time only.** `box = Ruby::Box.new` works
   as a top-level statement, and `box.eval` isolates its constants. A box that
   the program makes at run time, and a run-time `box.require`, raise a clear
