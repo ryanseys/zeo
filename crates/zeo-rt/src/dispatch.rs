@@ -2859,8 +2859,9 @@ pub fn instance_method_visibility(class: ClassId, name: Symbol) -> Option<Method
     }
     let reg = REGISTRY.get()?;
     // `name_str`, not `name()`: this walk is on the explicit-receiver barrier's
-    // path, so a `String` per call would be a global lock and a heap allocation
-    // on every dynamic call a site's inline cache does not serve.
+    // path, so a `String` per call would be a heap allocation on every dynamic
+    // call a site's inline cache does not serve. `name_str` itself is two
+    // indexes into the published symbol slab -- no lock (see `symbol.rs`).
     let name_str = name.name_str();
     for anc in ancestors_of_value(class) {
         // Runtime marks first: an explicit `class_eval { private :m }` (or an
@@ -4883,10 +4884,12 @@ fn send_value_in_reason(
         return m.call_with_self_and_block(recv, args, block);
     }
     note_dispatch(name);
-    // `name_str` takes the interner's global mutex, and the flat one-probe
-    // path below -- almost every send in almost every program -- resolves on
-    // the `Symbol` alone. So the text is fetched only where a by-NAME builtin
-    // table is actually consulted, never up front.
+    // The flat one-probe path below -- almost every send in almost every
+    // program -- resolves on the `Symbol` alone, so the text is fetched only
+    // where a by-NAME builtin table is actually consulted, never up front.
+    // (`name_str` used to take the interner's global mutex, which made this
+    // load-bearing; it is now two slab indexes, so the ordering is kept for
+    // tidiness rather than for the lock.)
     // CLASS/MODULE-level methods (`File.read`, `Time.now`, `Math.sqrt`):
     // this runtime has no singleton-method tables, so a class value gets its
     // own table probed ahead of the walk. The walk itself describes INSTANCE

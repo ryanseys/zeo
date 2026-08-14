@@ -14,11 +14,17 @@
 //! (never garbage collected), so the leak is the intended lifetime -- and it
 //! is what lets [`Symbol::name_str`] hand out allocation-free `&'static`
 //! names on the dispatch hot path instead of cloning a `String` per send.
+//!
+//! The mutex is on the WRITE path only. Reads go through the published slab
+//! (see `SLAB`) with no lock at all: an entry is written once, never mutated,
+//! and holds nothing but `'static` data, so a reader needs only to observe a
+//! finished entry.
 
 use crate::FMap;
 use crate::encoding::EncodingId;
 use parking_lot::Mutex;
-use std::sync::LazyLock;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{LazyLock, OnceLock};
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct Symbol(u32);
@@ -34,9 +40,53 @@ struct SymEntry {
     enc: EncodingId,
 }
 
+/// The PUBLISHED table, read with no lock at all.
+///
+/// An entry is written once and never mutated, and every field in it is
+/// `'static`, so a reader needs no exclusion -- only to observe an entry
+/// that is fully written. Each slot is a `OnceLock`, which is exactly that
+/// guarantee, and the table is CHUNKED so growth never moves an entry a
+/// reader is looking at the way a `Vec` reallocation would.
+///
+/// `INTERNER`'s mutex still serializes WRITERS (it owns the two by-name
+/// maps); it is simply no longer on the read path. That read path is
+/// `instance_method_visibility`, `responds_to` and `class_method_is_private`
+/// -- all of which ask per ANCESTOR -- so it was a global mutex acquired
+/// several times per dynamic call.
+const SYM_CHUNK: usize = 4096;
+const SYM_CHUNKS: usize = 1024;
+type SymChunk = Box<[OnceLock<&'static SymEntry>]>;
+static SLAB: [OnceLock<SymChunk>; SYM_CHUNKS] = [const { OnceLock::new() }; SYM_CHUNKS];
+static SYM_COUNT: AtomicU32 = AtomicU32::new(0);
+
+/// Publish one entry at `id`. Called only under `INTERNER`'s lock, which is
+/// what makes "no slot is written twice" true.
+fn publish(id: u32, entry: SymEntry) {
+    let (c, i) = (id as usize / SYM_CHUNK, id as usize % SYM_CHUNK);
+    assert!(
+        c < SYM_CHUNKS,
+        "symbol table exhausted at {} symbols -- ruby symbols are immortal, so \
+         this means the program interned unboundedly many distinct names",
+        SYM_CHUNK * SYM_CHUNKS
+    );
+    let chunk = SLAB[c].get_or_init(|| (0..SYM_CHUNK).map(|_| OnceLock::new()).collect());
+    // Leaked to match the module's policy for names: symbols are immortal, so
+    // the entry's lifetime is the process's.
+    let _ = chunk[i].set(Box::leak(Box::new(entry)));
+    SYM_COUNT.store(id + 1, Ordering::Release);
+}
+
+fn entry_of(id: u32) -> &'static SymEntry {
+    let (c, i) = (id as usize / SYM_CHUNK, id as usize % SYM_CHUNK);
+    SLAB[c]
+        .get()
+        .and_then(|chunk| chunk[i].get())
+        .copied()
+        .expect("every Symbol id was minted by the interner, which publishes before returning")
+}
+
 #[derive(Default)]
 struct Interner {
-    entries: Vec<SymEntry>,
     /// Default-encoding symbols (ASCII text normalizes to US-ASCII, valid
     /// UTF-8 to UTF-8 -- CRuby's own rule), keyed by text so the hot
     /// `intern(&str)` path stays one allocation-free probe.
@@ -61,12 +111,15 @@ impl Symbol {
         } else {
             crate::encoding::UTF_8
         };
-        let id = i.entries.len() as u32;
-        i.entries.push(SymEntry {
-            lossy: name,
-            bytes: name.as_bytes(),
-            enc,
-        });
+        let id = SYM_COUNT.load(Ordering::Relaxed);
+        publish(
+            id,
+            SymEntry {
+                lossy: name,
+                bytes: name.as_bytes(),
+                enc,
+            },
+        );
         i.by_lossy.insert(name, id);
         Symbol(id)
     }
@@ -92,12 +145,15 @@ impl Symbol {
             .into_owned();
         let lossy: &'static str = Box::leak(lossy.into_boxed_str());
         let bytes_static: &'static [u8] = Box::leak(bytes.to_vec().into_boxed_slice());
-        let id = i.entries.len() as u32;
-        i.entries.push(SymEntry {
-            lossy,
-            bytes: bytes_static,
-            enc,
-        });
+        let id = SYM_COUNT.load(Ordering::Relaxed);
+        publish(
+            id,
+            SymEntry {
+                lossy,
+                bytes: bytes_static,
+                enc,
+            },
+        );
         i.by_key.insert((enc, bytes.to_vec()), id);
         Symbol(id)
     }
@@ -108,26 +164,27 @@ impl Symbol {
         self.0
     }
 
-    /// The interned text, allocation-free -- what the dispatch path reads.
+    /// The interned text -- what the dispatch path reads. Allocation-free
+    /// AND lock-free: two indexes into the published slab.
     pub fn name_str(self) -> &'static str {
-        INTERNER.lock().entries[self.0 as usize].lossy
+        entry_of(self.0).lossy
     }
 
     /// The exact source bytes -- what `Symbol#to_s` spells back.
     pub fn bytes(self) -> &'static [u8] {
-        INTERNER.lock().entries[self.0 as usize].bytes
+        entry_of(self.0).bytes
     }
 
     /// The encoding the symbol was minted under.
     pub fn encoding(self) -> EncodingId {
-        INTERNER.lock().entries[self.0 as usize].enc
+        entry_of(self.0).enc
     }
 
     /// How many distinct symbols exist. Nothing is ever removed from the
     /// interner, so this only grows -- which is what lets
     /// `ObjectSpace.count_symbols` report the total as `immortal_symbol`.
     pub fn count() -> usize {
-        INTERNER.lock().entries.len()
+        SYM_COUNT.load(Ordering::Acquire) as usize
     }
 
     /// The Symbol with interner id `id` -- the inverse of [`Symbol::to_u32`],
