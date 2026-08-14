@@ -2073,7 +2073,7 @@ pub fn kernel_catch(tag: RubyValue, block: RubyValue) -> Result<RubyValue, Signa
         s.borrow_mut().pop();
     });
     match result {
-        Err(Signal::Throw(t, v)) if t.rb_eq(&tag) => Ok(v),
+        Err(Signal::Throw(t)) if t.tag.rb_eq(&tag) => Ok(t.value),
         other => other,
     }
 }
@@ -2084,10 +2084,10 @@ pub(crate) fn throw_impl(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     // `UncaughtThrowError` right here, catchable by an ordinary `rescue`.
     let has_live_catch = CATCH_TAGS.with(|s| s.borrow().iter().any(|t| t.rb_eq(&tag)));
     if has_live_catch {
-        Err(Signal::Throw(
+        Err(Signal::Throw(Box::new(crate::signal::Thrown {
             tag,
-            args.get(1).cloned().unwrap_or(RubyValue::Nil),
-        ))
+            value: args.get(1).cloned().unwrap_or(RubyValue::Nil),
+        })))
     } else {
         Err(crate::builtins::exception::raise_uncaught_throw(
             tag.clone(),

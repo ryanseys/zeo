@@ -32,10 +32,34 @@ pub enum Signal {
     Return(RubyValue),
     Raise(RubyValue),
     /// `Kernel#throw(tag, value)` unwinding toward the matching
-    /// `Kernel#catch` -- `(tag, value)`. An uncaught throw
-    /// surfaces at the top level as CRuby's UncaughtThrowError would
-    /// (a loud abort; the error-class wrapper is a documented scope-cut).
-    Throw(RubyValue, RubyValue),
+    /// `Kernel#catch`. An uncaught throw surfaces at the top level as CRuby's
+    /// UncaughtThrowError would (a loud abort; the error-class wrapper is a
+    /// documented scope-cut).
+    ///
+    /// BOXED, and the only arm that is. Every other variant carries at most
+    /// one `RubyValue` (24 bytes); this one carried two, and since an enum is
+    /// as wide as its widest variant, that one outlier set the size of
+    /// `Signal` -- and so of `Result<RubyValue, Signal>`, the return type of
+    /// EVERY ruby method call in every generated program:
+    ///
+    ///     size_of::<Result<RubyValue, Signal>>()   48 -> 32
+    ///
+    /// The allocation lands on `throw`, which is rare control flow already
+    /// unwinding through arbitrary frames, instead of on every return.
+    ///
+    /// This is NOT the experiment ROADMAP records measuring worse (4.479 ->
+    /// 5.15 ns): that boxed `Signal` as a WHOLE, putting an allocation on
+    /// `Break`/`Next`/`Return`, which are ordinary block control flow.
+    Throw(Box<Thrown>),
+}
+
+/// [`Signal::Throw`]'s payload. A named struct rather than a tuple because
+/// the two halves are easy to swap at a use site and impossible to tell
+/// apart by type.
+#[derive(Clone, Debug)]
+pub struct Thrown {
+    pub tag: RubyValue,
+    pub value: RubyValue,
 }
 
 /// Catches a `break`/`break value` that unwound out of a real `Proc` (see
