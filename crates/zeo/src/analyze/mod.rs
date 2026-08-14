@@ -447,10 +447,23 @@ fn mark_inline_iter_sites(
     // `may_be_patched_at_runtime` to de-optimize later -- the nomination has
     // to be withheld here. `runtime_patches` is already populated (it is
     // collected before this pass runs).
+    //
+    // Reads the ancestry `mro::materialize` already linearized and stored --
+    // nothing between there and here touches `includes`/`prepends`/`parent`
+    // (`redefs` and `def_hooks` rewrite method tables only), and re-expanding
+    // it per query re-walked every module's own prepends and includes and
+    // allocated a fresh `Vec`, twelve times over.
+    //
+    // Deliberately NOT `method_in_chain`, which searches the MATERIALIZED
+    // table and would answer a different question: a `def each` under an
+    // undecided guard is `runtime_conditional` and so is absent from that
+    // table by design, yet it must still suppress fusion -- a fused loop is
+    // not a call, so there is nothing left to de-optimize once the guard
+    // turns out to be true.
     let reopened = |cname: &str, m: &str| {
         compiler.may_be_patched_at_runtime(m)
             || compiler.resolve_class(cname, &[], 0).is_some_and(|cid| {
-                mro::compute_ancestors(compiler, cid).iter().any(|&a| {
+                compiler.class(cid).ancestors.iter().any(|&a| {
                     compiler
                         .class(a)
                         .own_methods
