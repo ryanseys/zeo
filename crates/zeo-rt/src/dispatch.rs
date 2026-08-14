@@ -767,6 +767,13 @@ struct ClassEntry {
     /// per box. Per-box state on distinct USER classes (their own `ClassId`
     /// per box) and per-box instance-method monkeypatches both work.
     value_methods: FMap<(u32, Symbol), ValueMethodFn>,
+    /// Just the NAMES in `value_methods`, box dimension collapsed.
+    /// `defines_own` and `own_method_visibility` ask "does this class
+    /// reopen this name at all", which the keyed map can only answer by
+    /// scanning every row -- and `String`/`Array` carry ~200 each, once
+    /// per ancestor of every MRO walk. Maintained solely by
+    /// `define_value_method`, the one insertion point.
+    own_value_names: FSet<Symbol>,
     /// This class's OWN method implementations -- what `super` resolution
     /// walks. `methods` above is the FLATTENED instance-dispatch set (an
     /// entry's winner can be a prepended module's or an ancestor's copy),
@@ -1031,6 +1038,7 @@ impl ClassRegistry {
                 methods: FMap::default(),
                 own_impls: FMap::default(),
                 value_methods: FMap::default(),
+                own_value_names: FSet::default(),
                 private_methods: FSet::default(),
                 protected_methods: FSet::default(),
                 private_class_methods: FSet::default(),
@@ -1344,7 +1352,7 @@ impl ClassRegistry {
         let e = self.entries.get(&id.0)?;
         let defines = e.own_methods.contains(&name)
             || e.methods.contains_key(&name)
-            || e.value_methods.keys().any(|(_, n)| *n == name);
+            || e.own_value_names.contains(&name);
         if !defines {
             return None;
         }
@@ -1364,17 +1372,15 @@ impl ClassRegistry {
         name: Symbol,
         f: ValueMethodFn,
     ) {
-        self.entries
-            .get_mut(&id.0)
-            .unwrap_or_else(|| {
-                panic!(
-                    "class {} must be registered before defining `{}` on it",
-                    id.0,
-                    name.name()
-                )
-            })
-            .value_methods
-            .insert((box_id, name), f);
+        let entry = self.entries.get_mut(&id.0).unwrap_or_else(|| {
+            panic!(
+                "class {} must be registered before defining `{}` on it",
+                id.0,
+                name.name()
+            )
+        });
+        entry.value_methods.insert((box_id, name), f);
+        entry.own_value_names.insert(name);
     }
 
     /// Records an `undef name` -- see `ClassEntry::undefined_methods`.
@@ -1577,7 +1583,7 @@ impl ClassRegistry {
         let Some(e) = self.entries.get(&id.0) else {
             return false;
         };
-        e.own_methods.contains(&name) || e.value_methods.keys().any(|(_, n)| *n == name)
+        e.own_methods.contains(&name) || e.own_value_names.contains(&name)
     }
 
     /// This class's registered instance-method names, each tagged private/not,
@@ -4015,7 +4021,16 @@ static ARITY_DEBUG: std::sync::LazyLock<bool> =
 /// once measured 2.6% on dispatch.
 #[inline]
 fn note_dispatch(name: Symbol) {
-    if crate::runtime_meta::gates_arity_debug(crate::runtime_meta::gates()) {
+    note_dispatch_gated(crate::runtime_meta::gates(), name);
+}
+
+/// [`note_dispatch`] for a caller that already has the gates byte in a
+/// register. The two cached send paths load it once at entry to decide the
+/// fast route and then called `note_dispatch`, which loaded it again -- an
+/// atomic re-read per hit on the hottest path in every generated program.
+#[inline]
+fn note_dispatch_gated(gates: u8, name: Symbol) {
+    if crate::runtime_meta::gates_arity_debug(gates) {
         CURRENT_METHOD.with(|c| c.set(Some(name)));
     }
 }
@@ -5246,7 +5261,7 @@ pub fn send_value_cached(
         let id = recv.class_id();
         if let Some((cached, target)) = site.hit.get() {
             if *cached == id.0 {
-                note_dispatch(name);
+                note_dispatch_gated(gates, name);
                 return match (target, recv) {
                     (Cached::Obj(f), RubyValue::Object(o)) => f(o, args, block),
                     (Cached::Value(f, label), _) => with_c_frame(*label, || f(recv, args, block)),
@@ -5269,7 +5284,7 @@ pub fn send_value_cached(
                     if let Some(MethodImpl::Static(f)) =
                         REGISTRY.get().and_then(|r| r.lookup_mro(id, name))
                     {
-                        note_dispatch(name);
+                        note_dispatch_gated(gates, name);
                         let _ = site.hit.set((id.0, Cached::Obj(*f)));
                         return f(o, args, block);
                     }
@@ -5278,7 +5293,7 @@ pub fn send_value_cached(
                 _ => {
                     if let Some(Some(hit)) = REGISTRY.get().and_then(|r| r.flat_value_hit(id, name))
                     {
-                        note_dispatch(name);
+                        note_dispatch_gated(gates, name);
                         let _ = site.hit.set((id.0, Cached::Value(hit.f, hit.frame_label)));
                         return with_c_frame(hit.frame_label, || (hit.f)(recv, args, block));
                     }
@@ -5460,7 +5475,7 @@ pub fn send_value_dyn_cached(
                 if let Some(reason) = vet_denies(*vet, caller_class) {
                     return Err(raise_method_missing(recv, &name.to_string(), args, reason));
                 }
-                note_dispatch(name);
+                note_dispatch_gated(gates, name);
                 return match (target, recv) {
                     (Cached::Obj(f), RubyValue::Object(o)) => f(o, args, block),
                     (Cached::Value(f, label), _) => with_c_frame(*label, || f(recv, args, block)),
@@ -5481,7 +5496,7 @@ pub fn send_value_dyn_cached(
                     if let Some(MethodImpl::Static(f)) =
                         REGISTRY.get().and_then(|r| r.lookup_mro(id, name))
                     {
-                        note_dispatch(name);
+                        note_dispatch_gated(gates, name);
                         let _ = site.hit.set((id.0, vet, Cached::Obj(*f)));
                         return f(o, args, block);
                     }
@@ -5490,7 +5505,7 @@ pub fn send_value_dyn_cached(
                 _ => {
                     if let Some(Some(hit)) = REGISTRY.get().and_then(|r| r.flat_value_hit(id, name))
                     {
-                        note_dispatch(name);
+                        note_dispatch_gated(gates, name);
                         let _ = site
                             .hit
                             .set((id.0, vet, Cached::Value(hit.f, hit.frame_label)));

@@ -156,10 +156,25 @@ pub static BUILTIN_TABLES: [BuiltinClassTable] = [..];
 
 /// The registered tables indexed by `ClassId` for O(1) routing, built once
 /// from the link-time-collected slice.
+///
+/// A DIRECT index, not a hash probe: `ClassId`s are dense small integers, and
+/// the ABI already indexes `BUILTINS` by `id.0 - 1` on the same grounds. This
+/// is asked per ANCESTOR by `instance_method_visibility`, `responds_to` and
+/// `scan_owner`, so the hash was paid once per step of every MRO walk.
 pub(crate) fn registered_table(id: ClassId) -> Option<&'static BuiltinClassTable> {
-    static MAP: LazyLock<crate::FMap<u32, &'static BuiltinClassTable>> =
-        LazyLock::new(|| BUILTIN_TABLES.iter().map(|t| (t.id.0, t)).collect());
-    MAP.get(&id.0).copied()
+    static BY_ID: LazyLock<Vec<Option<&'static BuiltinClassTable>>> = LazyLock::new(|| {
+        let len = BUILTIN_TABLES
+            .iter()
+            .map(|t| t.id.0 as usize)
+            .max()
+            .map_or(0, |m| m + 1);
+        let mut v = vec![None; len];
+        for t in BUILTIN_TABLES {
+            v[t.id.0 as usize] = Some(t);
+        }
+        v
+    });
+    BY_ID.get(id.0 as usize).copied().flatten()
 }
 
 /// The static ClassId -> method-table map. A plain match (rustc compiles it
