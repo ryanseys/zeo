@@ -119,7 +119,7 @@ pub(super) fn zone_offset(zone: &str) -> Option<i64> {
 
 /// `+HH`, `+HHMM`, `+HH:MM`, `+HH:MM:SS` -- and the single-digit hour `-3`,
 /// which is what a `gmt-3` leaves behind.
-fn numeric_offset(text: &str) -> Option<i64> {
+pub(super) fn numeric_offset(text: &str) -> Option<i64> {
     let sign = if text.starts_with('-') { -1 } else { 1 };
     let digits = &text[1..];
     let parts: Vec<&str> = digits.split([':', ',', '.']).collect();
@@ -158,7 +158,7 @@ fn numeric_offset(text: &str) -> Option<i64> {
 /// ever been asked about; this is the RFC 822 set (which `time.rb` re-derives
 /// for itself anyway), the military letters, and the abbreviations a real
 /// timestamp is likely to arrive with.
-fn named_offset(zone: &str) -> Option<i64> {
+pub(super) fn named_offset(zone: &str) -> Option<i64> {
     const NAMED: &[(&str, i64)] = &[
         ("ut", 0),
         ("utc", 0),

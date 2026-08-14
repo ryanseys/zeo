@@ -1,0 +1,23 @@
+{year: 2000, mon: 10, mday: 31}
+{year: 2013, mon: 5, mday: 24, hour: 0, min: 0, sec: 0, zone: "Z", offset: 0}
+{year: 2013, mon: 5, mday: 24, hour: 0, min: 0, sec: 0, zone: "Z", offset: 0}
+{year: 2013, mon: 5, mday: 24}
+nil
+nil
+nil
+{year: 2000, mon: 10, mday: 31, leftover: " extra"}
+{year: 2024, mon: 1, mday: 2, hour: 3, min: 4, sec: 5, sec_fraction: (339/500), zone: "+0530", offset: 19800}
+{sec: 1, sec_fraction: (123456789/1000000000)}
+{seconds: 1369353600}
+{mday: 24, mon: 12, year: 1999}
+{mday: 24, mon: 12, year: 2068}
+{mday: 15, mon: 1, year: 2024}
+{mday: 15, mon: 1, year: 2024}
+{wday: 2}
+{hour: 19, min: 30}
+{hour: 7, min: 30}
+{year: 2024, mon: 1, mday: 2}
+{hour: 3, min: 4, sec: 5}
+nil
+"2000-10-31"
+"2013-05-24T00:00:00Z"

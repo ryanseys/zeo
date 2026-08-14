@@ -13,6 +13,7 @@
 //! not modelled here).
 
 mod parse;
+mod strptime;
 
 use crate::builtins::{arg_error, type_error};
 use crate::dispatch::{RObj, RubyObject};
@@ -323,6 +324,49 @@ ruby_class! {
         let text = s.lock().to_utf8_lossy().into_owned();
         let comp = arg2.is_none_or(RubyValue::truthy);
         Ok(RubyValue::Hash(crate::collections::hash_new(parse::date_parse(&text, comp))))
+    }
+    // The format-DIRECTED scanner, which `Date.strptime` and the `time`
+    // gem's `Time.strptime` read their fields out of. See `strptime.rs`.
+    def self."_strptime" cfunc (_recv, arg1, arg2?) {
+        let s = &crate::builtins::convert::to_rstr(arg1)?;
+        let text = s.lock().to_utf8_lossy().into_owned();
+        let fmt = match arg2 {
+            Some(v) => {
+                let f = crate::builtins::convert::to_rstr(v)?;
+                let owned = f.lock().to_utf8_lossy().into_owned();
+                owned
+            }
+            None => "%F".to_string(),
+        };
+        Ok(match strptime::date_strptime(&text, &fmt) {
+            Some(pairs) => RubyValue::Hash(crate::collections::hash_new(pairs)),
+            None => RubyValue::Nil,
+        })
+    }
+    // `Date.strptime`/`DateTime.strptime` -- the format-directed twin of
+    // `parse`. The default format is `%F`, matching CRuby.
+    def self."strptime" cfunc (recv, arg1?, arg2?) {
+        let text = match arg1 {
+            Some(v) => {
+                let s = crate::builtins::convert::to_rstr(v)?;
+                let owned = s.lock().to_utf8_lossy().into_owned();
+                owned
+            }
+            None => "-4712-01-01".to_string(),
+        };
+        let fmt = match arg2 {
+            Some(v) => {
+                let s = crate::builtins::convert::to_rstr(v)?;
+                let owned = s.lock().to_utf8_lossy().into_owned();
+                owned
+            }
+            None => "%F".to_string(),
+        };
+        let (y, m, d) = strptime::date_strptime(&text, &fmt)
+            .as_deref()
+            .and_then(|p| strptime::civil_from_fragments(p, jdn_to_civil(today_jdn()).0))
+            .ok_or_else(|| crate::dispatch::raise_error("Date::Error", "invalid date".to_string()))?;
+        Ok(RubyValue::Object(RDate::new(civil_to_jdn(y, m, d), class_of(recv))))
     }
     def self."valid_date?" | "valid_civil?" cfunc (_recv, _year, _month, _mday, _start?) {
         // A non-numeric component answers false rather than raising
