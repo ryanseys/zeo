@@ -441,7 +441,11 @@ fn emit_iter_splice(
         None => super::loops::emit_redo_wrapped_body(&loop_cx, body, &redo),
         Some(consume) => {
             let value = super::loops::emit_redo_wrapped_body_value(&loop_cx, body, &redo);
-            quote! { let __iter_y = #value; #consume }
+            // Annotated, not inferred: a consumer that only asks `truthy()`
+            // (`find`, the `all?` family, `count`) leaves rustc with no other
+            // constraint on the redo loop's break type, and the generated
+            // program fails to compile with E0282.
+            quote! { let __iter_y: zeo_rt::RubyValue = #value; #consume }
         }
     };
     let SpliceSpec {
@@ -524,6 +528,24 @@ enum ArrayIterMode {
     /// `sum` (block form): block values accumulate through `zeo_rt::SumAcc`,
     /// the runtime `sum`'s own numeric ladder.
     Sum,
+    /// `find`/`detect`: the first ORIGINAL element whose block value is
+    /// truthy (`Filter`'s reassignment rule, for the same CRuby reason),
+    /// `nil` if none is.
+    Find,
+    /// `all?`/`any?`/`none?`: stop at the first block value whose truthiness
+    /// is `trigger`, answering `on_stop`; an iteration that runs out answers
+    /// `on_exhaust`. The three differ only in those bits.
+    Predicate {
+        trigger: bool,
+        on_stop: bool,
+        on_exhaust: bool,
+    },
+    /// `count` (block form): how many block values were truthy.
+    Count,
+    /// `inject`/`reduce` with an explicit seed, which the caller's match arm
+    /// binds as `__iter_init`. The block's two params are the accumulator and
+    /// the element; its value is the next accumulator.
+    Inject,
 }
 
 /// `emit_counted_block_splice`'s Array twin: iterate a LIVE view of the
@@ -550,7 +572,9 @@ fn emit_array_iter_splice(
         // body-value consumer. `Each` discards the body value and answers the
         // receiver; everything else runs the body in VALUE mode.
         let setup = match mode {
-            ArrayIterMode::Each { .. } => quote! {},
+            ArrayIterMode::Each { .. } | ArrayIterMode::Find | ArrayIterMode::Predicate { .. } => {
+                quote! {}
+            }
             ArrayIterMode::Map | ArrayIterMode::Filter { .. } => {
                 // Sized to the source: exact for map, an upper bound for the
                 // filter modes -- either way the growth reallocations (and their
@@ -563,6 +587,8 @@ fn emit_array_iter_splice(
             ArrayIterMode::Sum => {
                 quote! { let mut __iter_acc = zeo_rt::SumAcc::new(zeo_rt::RubyValue::Int(0)); }
             }
+            ArrayIterMode::Count => quote! { let mut __iter_n: i64 = 0; },
+            ArrayIterMode::Inject => quote! { let mut __iter_acc = __iter_init; },
         };
         let result = match mode {
             ArrayIterMode::Each { .. } => quote! { zeo_rt::RubyValue::Array(__iter_arr.clone()) },
@@ -570,9 +596,26 @@ fn emit_array_iter_splice(
                 quote! { zeo_rt::RubyValue::Array(zeo_rt::array_new(__iter_out)) }
             }
             ArrayIterMode::Sum => quote! { __iter_acc.finish() },
+            ArrayIterMode::Find => quote! { zeo_rt::RubyValue::Nil },
+            ArrayIterMode::Predicate { on_exhaust, .. } => {
+                quote! { zeo_rt::RubyValue::Bool(#on_exhaust) }
+            }
+            ArrayIterMode::Count => quote! { zeo_rt::RubyValue::Int(__iter_n) },
+            ArrayIterMode::Inject => quote! { __iter_acc },
         };
-        let keep_orig = matches!(mode, ArrayIterMode::Filter { .. })
+        let keep_orig = matches!(mode, ArrayIterMode::Filter { .. } | ArrayIterMode::Find)
             .then(|| quote! { let __iter_orig = __iter_e.clone(); });
+        // The accumulator moves into the block's first param, so the local has
+        // to be left holding SOMETHING. Taken after the element fetch, never
+        // before: the fetch is what breaks on exhaustion, and it breaks with
+        // `__iter_acc` -- which must still be the last value the block
+        // produced, not the placeholder.
+        let take_acc = matches!(mode, ArrayIterMode::Inject).then(|| {
+            quote! {
+                let __iter_acc_cur =
+                    ::std::mem::replace(&mut __iter_acc, zeo_rt::RubyValue::Nil);
+            }
+        });
         let consume = match mode {
             ArrayIterMode::Each { .. } => None,
             ArrayIterMode::Map => Some(quote! { __iter_out.push(__iter_y); }),
@@ -580,8 +623,34 @@ fn emit_array_iter_splice(
                 Some(quote! { if __iter_y.truthy() == #keep { __iter_out.push(__iter_orig); } })
             }
             ArrayIterMode::Sum => Some(quote! { __iter_acc = __iter_acc.add(__iter_y)?; }),
+            ArrayIterMode::Find => {
+                Some(quote! { if __iter_y.truthy() { break #outer __iter_orig; } })
+            }
+            ArrayIterMode::Predicate {
+                trigger, on_stop, ..
+            } => Some(quote! {
+                if __iter_y.truthy() == #trigger {
+                    break #outer zeo_rt::RubyValue::Bool(#on_stop);
+                }
+            }),
+            ArrayIterMode::Count => Some(quote! { if __iter_y.truthy() { __iter_n += 1; } }),
+            ArrayIterMode::Inject => Some(quote! { __iter_acc = __iter_y; }),
         };
-        let mut binds: Vec<SpliceBind> = vec![(0, quote! { __iter_e }, None)];
+        // `inject` yields the accumulator FIRST, then the element; every other
+        // kind yields the element first.
+        let mut binds: Vec<SpliceBind> = match mode {
+            ArrayIterMode::Inject => vec![
+                (0, quote! { __iter_acc_cur }, None),
+                (1, quote! { __iter_e }, None),
+            ],
+            ArrayIterMode::Each { .. }
+            | ArrayIterMode::Map
+            | ArrayIterMode::Filter { .. }
+            | ArrayIterMode::Sum
+            | ArrayIterMode::Find
+            | ArrayIterMode::Predicate { .. }
+            | ArrayIterMode::Count => vec![(0, quote! { __iter_e }, None)],
+        };
         if with_index {
             binds.push((
                 1,
@@ -604,6 +673,7 @@ fn emit_array_iter_splice(
                     }
                 };
                 #keep_orig
+                #take_acc
             },
             binds,
             // Advance BEFORE the body so `next` (in value mode: the inner
@@ -811,14 +881,45 @@ fn emit_typed_iter_inline(
         | K::ArrayMap
         | K::ArraySelect
         | K::ArrayReject
-        | K::ArraySum => {
+        | K::ArraySum
+        | K::ArrayFind
+        | K::ArrayAll
+        | K::ArrayAny
+        | K::ArrayNone
+        | K::ArrayCount => {
             let mode = match kind {
                 K::ArrayEach => ArrayIterMode::Each { with_index: false },
                 K::ArrayEachWithIndex => ArrayIterMode::Each { with_index: true },
                 K::ArrayMap => ArrayIterMode::Map,
                 K::ArraySelect => ArrayIterMode::Filter { keep: true },
                 K::ArrayReject => ArrayIterMode::Filter { keep: false },
-                _ => ArrayIterMode::Sum,
+                K::ArraySum => ArrayIterMode::Sum,
+                K::ArrayFind => ArrayIterMode::Find,
+                K::ArrayAll => ArrayIterMode::Predicate {
+                    trigger: false,
+                    on_stop: false,
+                    on_exhaust: true,
+                },
+                K::ArrayAny => ArrayIterMode::Predicate {
+                    trigger: true,
+                    on_stop: true,
+                    on_exhaust: false,
+                },
+                K::ArrayNone => ArrayIterMode::Predicate {
+                    trigger: true,
+                    on_stop: false,
+                    on_exhaust: true,
+                },
+                K::ArrayCount => ArrayIterMode::Count,
+                K::TimesInt
+                | K::UptoInt
+                | K::DowntoInt
+                | K::StepInt
+                | K::RangeEachInt
+                | K::ArrayInject
+                | K::HashEach => {
+                    unreachable!("the enclosing arm admits only the argument-free Array kinds")
+                }
             };
             let splice = emit_array_iter_splice(cx, block_id, mode, name);
             let fallback = fallback(quote! { &[] });
@@ -826,6 +927,22 @@ fn emit_typed_iter_inline(
                 match #recv {
                     zeo_rt::RubyValue::Array(__iter_arr) if zeo_rt::iter_inline_ok_for(#__bx, zeo_rt::ARRAY_CLASS) => #splice,
                     __iter_other => #fallback,
+                }
+            }
+        }
+        K::ArrayInject => {
+            // The seed is evaluated after the receiver, which is the order
+            // Ruby evaluates them in, and lands in the arm's `__iter_init`
+            // whichever way the guard goes -- the fallback forwards it as the
+            // call's one argument.
+            let init = emit_expr(cx, args[0]);
+            let splice = emit_array_iter_splice(cx, block_id, ArrayIterMode::Inject, name);
+            let fallback = fallback(quote! { &[__iter_init] });
+            quote! {
+                match (#recv, #init) {
+                    (zeo_rt::RubyValue::Array(__iter_arr), __iter_init)
+                        if zeo_rt::iter_inline_ok_for(#__bx, zeo_rt::ARRAY_CLASS) => #splice,
+                    (__iter_other, __iter_init) => #fallback,
                 }
             }
         }

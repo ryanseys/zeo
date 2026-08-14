@@ -388,6 +388,21 @@ fn mark_inline_iter_sites(
                 names: &["reject"], args: &[0], params: &[0, 1] },
         Fused { kind: K::ArraySum, ty: TyKind::Array, class: "Array",
                 names: &["sum"], args: &[0], params: &[0, 1] },
+        Fused { kind: K::ArrayFind, ty: TyKind::Array, class: "Array",
+                names: &["find", "detect"], args: &[0], params: &[0, 1] },
+        Fused { kind: K::ArrayAll, ty: TyKind::Array, class: "Array",
+                names: &["all?"], args: &[0], params: &[0, 1] },
+        Fused { kind: K::ArrayAny, ty: TyKind::Array, class: "Array",
+                names: &["any?"], args: &[0], params: &[0, 1] },
+        Fused { kind: K::ArrayNone, ty: TyKind::Array, class: "Array",
+                names: &["none?"], args: &[0], params: &[0, 1] },
+        Fused { kind: K::ArrayCount, ty: TyKind::Array, class: "Array",
+                names: &["count"], args: &[0], params: &[0, 1] },
+        // The accumulator and the element, both required: `inject` yields two
+        // values, so a block that declares any other count takes the dynamic
+        // row rather than binding a param the splice never fills.
+        Fused { kind: K::ArrayInject, ty: TyKind::Array, class: "Array",
+                names: &["inject", "reduce"], args: &[1], params: &[2] },
         Fused { kind: K::HashEach, ty: TyKind::Hash, class: "Hash",
                 names: &["each", "each_pair"], args: &[0], params: &[0, 1, 2] },
     ];

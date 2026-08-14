@@ -878,6 +878,28 @@ pub enum InlineIterKind {
     /// `Array`; accumulates through `zeo_rt::SumAcc`, the runtime `sum`'s
     /// own ladder.
     ArraySum,
+    /// `arr.find { |e| }` / `detect` (no `ifnone` argument), `arr` statically
+    /// `Array`; answers the first element whose block value is truthy, `nil`
+    /// if none is. The ORIGINAL element surfaces even if the body reassigns
+    /// its param -- the same CRuby rule `select`/`reject` obey.
+    ArrayFind,
+    /// `arr.all? { |e| }` (no pattern argument), `arr` statically `Array`;
+    /// stops at the first falsy block value.
+    ArrayAll,
+    /// `arr.any? { |e| }`, `arr` statically `Array`; stops at the first
+    /// truthy block value.
+    ArrayAny,
+    /// `arr.none? { |e| }`, `arr` statically `Array`; stops at the first
+    /// truthy block value, like `any?`, but answers the other way round.
+    ArrayNone,
+    /// `arr.count { |e| }` (block form, no argument), `arr` statically
+    /// `Array`; counts the truthy block values.
+    ArrayCount,
+    /// `arr.inject(init) { |acc, e| }` / `reduce`, `arr` statically `Array`.
+    /// The initial value must be EXPLICIT: the no-argument form seeds the
+    /// accumulator with the first element and does not call the block for it,
+    /// and the splice skeleton has no way to skip a body.
+    ArrayInject,
     /// `h.each { |k, v| }` / `each_pair`, `h` statically `Hash`; walks the
     /// same pairs snapshot the runtime `Hash#each` takes.
     HashEach,

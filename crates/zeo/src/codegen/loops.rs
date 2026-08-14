@@ -39,6 +39,15 @@ use syn::Lifetime;
 pub(super) fn fresh_label(cx: &Ctx, tag: &str) -> Lifetime {
     let n = cx.label_counter.get();
     cx.label_counter.set(n + 1);
+    // The tag is often a Ruby method name, and Ruby method names carry
+    // characters a Rust lifetime cannot (`all?`, `map!`). The counter is what
+    // makes the label unique; the tag only makes the emitted loop readable, so
+    // folding those characters to `_` costs nothing. Without it, fusing
+    // `Array#all?` made `syn::Lifetime::new` panic mid-compile.
+    let tag: String = tag
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '_' })
+        .collect();
     Lifetime::new(&format!("'zeo_{tag}_{n}"), proc_macro2::Span::call_site())
 }
 
