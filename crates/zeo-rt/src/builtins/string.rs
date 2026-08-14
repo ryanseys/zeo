@@ -1072,16 +1072,17 @@ fn slice_bang_impl(
             }
             (start as usize, (start + 1) as usize)
         }
-        (RubyValue::Range(s, e, exclusive), None) => {
-            let start = match s.as_deref() {
+        (RubyValue::Range(__rg), None) => {
+            let (s, e, exclusive) = __rg.parts();
+            let start = match s {
                 Some(RubyValue::Int(v)) => norm(*v),
                 None => 0,
                 _ => return Ok(RubyValue::Nil),
             };
-            let end = match e.as_deref() {
+            let end = match e {
                 Some(RubyValue::Int(v)) => {
                     let v = norm(*v);
-                    if *exclusive { v } else { v + 1 }
+                    if exclusive { v } else { v + 1 }
                 }
                 None => n,
                 _ => return Ok(RubyValue::Nil),
@@ -1188,18 +1189,19 @@ fn index_set_impl(
         (start as usize, (start + len).min(n) as usize)
     } else {
         match index {
-            RubyValue::Range(s, e, exclusive) => {
-                let start = match s.as_deref() {
+            RubyValue::Range(__rg) => {
+                let (s, e, exclusive) = __rg.parts();
+                let start = match s {
                     Some(v) => norm(convert::to_index(v)?),
                     None => 0,
                 };
                 if start < 0 || start > n {
                     return Err(range_error!("{} out of range", index.to_display_string()));
                 }
-                let end = match e.as_deref() {
+                let end = match e {
                     Some(v) => {
                         let v = norm(convert::to_index(v)?);
-                        if *exclusive { v } else { v + 1 }
+                        if exclusive { v } else { v + 1 }
                     }
                     None => n,
                 };
@@ -1443,8 +1445,9 @@ ruby_class! {
         // `byteslice(start..end)` -- a single Range argument cuts on byte
         // boundaries; negative endpoints count from the end, an out-of-range
         // start is nil.
-        if let RubyValue::Range(s, e, exclusive) = arg1 {
-            let start = match s.as_deref() {
+        if let RubyValue::Range(__rg) = arg1 {
+            let (s, e, exclusive) = __rg.parts();
+            let start = match s {
                 Some(RubyValue::Int(v)) => if *v < 0 { *v + n } else { *v },
                 None => 0,
                 _ => return Ok(RubyValue::Nil),
@@ -1452,10 +1455,10 @@ ruby_class! {
             if start < 0 || start > n {
                 return Ok(RubyValue::Nil);
             }
-            let end = match e.as_deref() {
+            let end = match e {
                 Some(RubyValue::Int(v)) => {
                     let v = if *v < 0 { *v + n } else { *v };
-                    if *exclusive { v } else { v + 1 }
+                    if exclusive { v } else { v + 1 }
                 }
                 None => n,
                 _ => return Ok(RubyValue::Nil),
@@ -2286,22 +2289,23 @@ ruby_class! {
         // `orig_index` is the caller's index BEFORE negative normalization,
         // which is what CRuby's out-of-range message reports.
         let (start, len, repl, orig_index) = if is_range_form {
-            let RubyValue::Range(begin, end, exclusive) = &args[0] else {
+            let RubyValue::Range(__rg) = &args[0] else {
                 return Err(type_error!("wrong argument type {} (expected Range)",
                         crate::builtins::class_name_of(&args[0])));
             };
-            let start = match begin.as_deref() {
+            let (begin, end, exclusive) = __rg.parts();
+            let start = match begin {
                 Some(v) => {
                     let v = convert::to_index(v)?;
                     if v < 0 { v + total } else { v }
                 }
                 None => 0,
             };
-            let end_i = match end.as_deref() {
+            let end_i = match end {
                 Some(v) => {
                     let v = convert::to_index(v)?;
                     let v = if v < 0 { v + total } else { v };
-                    if *exclusive { v } else { v + 1 }
+                    if exclusive { v } else { v + 1 }
                 }
                 None => total,
             };
@@ -2427,16 +2431,17 @@ ruby_class! {
             return Ok(wrap(s.char_substr(start, len)));
         }
         match index {
-            RubyValue::Range(start, end, exclusive) => {
-                let start_i = match start.as_deref() {
+            RubyValue::Range(__rg) => {
+                let (start, end, exclusive) = __rg.parts();
+                let start_i = match start {
                     Some(RubyValue::Int(v)) => if *v < 0 { v + n } else { *v },
                     None => 0,
                     _ => return Ok(RubyValue::Nil),
                 };
-                let end_i = match end.as_deref() {
+                let end_i = match end {
                     Some(RubyValue::Int(v)) => {
                         let v = if *v < 0 { v + n } else { *v };
-                        if *exclusive { v - 1 } else { v }
+                        if exclusive { v - 1 } else { v }
                     }
                     None => n - 1,
                     _ => return Ok(RubyValue::Nil),
@@ -3842,9 +3847,9 @@ mod tests {
             )),
             "\"ell\""
         );
-        let range = RubyValue::Range(
-            Some(Box::new(RubyValue::Int(1))),
-            Some(Box::new(RubyValue::Int(3))),
+        let range = crate::builtins::range::range_value(
+            Some(RubyValue::Int(1)),
+            Some(RubyValue::Int(3)),
             false,
         );
         assert_eq!(show(imethod("[]")(&s("hello"), &[range], None)), "\"ell\"");

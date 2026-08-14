@@ -81,16 +81,17 @@ ruby_module! {
             let open = |v: &RubyValue| if v.is_nil() { None } else { Some(v.clone()) };
             (open(min), open(max))
         } else {
-            let RubyValue::Range(lo, hi, exclusive) = min else {
+            let RubyValue::Range(__rg) = min else {
                 return Err(type_error!(
                     "wrong argument type {} (expected Range)",
                     crate::builtins::class_name_of(min)
                 ));
             };
-            if *exclusive && hi.is_some() {
+            let (lo, hi, exclusive) = __rg.parts();
+            if exclusive && hi.is_some() {
                 return Err(arg_error!("cannot clamp with an exclusive range"));
             }
-            (lo.as_deref().cloned(), hi.as_deref().cloned())
+            (lo.cloned(), hi.cloned())
         };
         if let (Some(lo), Some(hi)) = (&lo, &hi)
             && cmp_or_fail(lo, hi)? > 0 {
@@ -175,9 +176,9 @@ mod tests {
     }
 
     fn range(lo: Option<i64>, hi: Option<i64>, exclusive: bool) -> RubyValue {
-        RubyValue::Range(
-            lo.map(|v| Box::new(RubyValue::Int(v))),
-            hi.map(|v| Box::new(RubyValue::Int(v))),
+        crate::builtins::range::range_value(
+            lo.map(RubyValue::Int),
+            hi.map(RubyValue::Int),
             exclusive,
         )
     }

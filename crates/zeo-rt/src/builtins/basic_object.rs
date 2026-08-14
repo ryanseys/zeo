@@ -191,10 +191,10 @@ pub(crate) fn value_identity(a: &RubyValue, b: &RubyValue) -> bool {
         (RubyValue::Thread(x), RubyValue::Thread(y)) => Arc::ptr_eq(x, y),
         (RubyValue::Fiber(x), RubyValue::Fiber(y)) => Arc::ptr_eq(x, y),
         (RubyValue::Ractor(x), RubyValue::Ractor(y)) => Arc::ptr_eq(x, y),
-        // `Range` is an inline value type with no stable shared pointer, so
-        // identity falls back to structure -- `g.equal?(g)` holds; the rare
-        // `(1..2).equal?(1..2)` reads true rather than false (documented).
-        (RubyValue::Range(..), RubyValue::Range(..)) => a.rb_eq(b),
+        // A `Range` is Arc-backed like the rest, so `(1..2).equal?(1..2)`
+        // is now false and `g.equal?(g)` still true -- CRuby's answers. It
+        // used to fall back to structural equality for want of a pointer.
+        (RubyValue::Range(x), RubyValue::Range(y)) => Arc::ptr_eq(x, y),
         (RubyValue::Object(x), RubyValue::Object(y)) => {
             // The same fat-pointer identity `container_identity` uses.
             std::ptr::addr_eq(Arc::as_ptr(x), Arc::as_ptr(y))

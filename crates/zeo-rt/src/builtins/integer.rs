@@ -336,7 +336,8 @@ fn int_bit_ref(
     let val = to_bigint(recv);
     let (shift, width): (BigInt, Option<BigInt>) = if let Some(len) = len {
         (to_bigint(index), Some(to_bigint(len)))
-    } else if let RubyValue::Range(begin, end, exclusive) = index {
+    } else if let RubyValue::Range(__rg) = index {
+        let (begin, end, exclusive) = __rg.parts();
         let Some(b) = begin else {
             return Err(arg_error!(
                 "The beginless range for Integer#[] results in infinity"
@@ -348,7 +349,7 @@ fn int_bit_ref(
             Some(e) => {
                 let last = to_bigint(e);
                 let mut w = &last - &start;
-                if !*exclusive {
+                if !exclusive {
                     w += 1;
                 }
                 (start, Some(w))

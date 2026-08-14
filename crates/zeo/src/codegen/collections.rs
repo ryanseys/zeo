@@ -135,10 +135,10 @@ pub fn emit_range_lit(
     end: Option<NodeId>,
     exclusive: bool,
 ) -> TokenStream {
-    // Endpoints are boxed if Object-typed: they land in
-    // `RubyValue::Range`'s `Box<RubyValue>` payload. `range_endpoint` does the
-    // boxing, and folds an endpoint that EVALUATES to nil into the absent one
-    // -- `nil..5` is `..5`, which ruby treats as the same range.
+    // An Object-typed endpoint is wrapped into a `RubyValue` first, since
+    // that is what `RangeData` holds. `range_endpoint` folds an endpoint that
+    // EVALUATES to nil into the absent one -- `nil..5` is `..5`, which ruby
+    // treats as the same range.
     let endpoint = |n: Option<NodeId>| match n {
         Some(n) => {
             let e = emit_expr(cx, n);
@@ -162,7 +162,7 @@ pub fn emit_range_lit(
         _ => true,
     };
     if statically_comparable {
-        quote! { zeo_rt::RubyValue::Range(#start_expr, #end_expr, #exclusive) }
+        quote! { zeo_rt::range_value(#start_expr, #end_expr, #exclusive) }
     } else {
         quote! { zeo_rt::range_checked(#start_expr, #end_expr, #exclusive)? }
     }

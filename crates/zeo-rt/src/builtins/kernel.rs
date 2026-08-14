@@ -85,6 +85,7 @@ pub(crate) fn object_id_of(recv: &RubyValue) -> RubyValue {
         RubyValue::Str(s) => std::sync::Arc::as_ptr(s) as i64,
         RubyValue::Array(a) => std::sync::Arc::as_ptr(a) as i64,
         RubyValue::Hash(h) => std::sync::Arc::as_ptr(h) as i64,
+        RubyValue::Range(r) => std::sync::Arc::as_ptr(r) as i64,
         RubyValue::Symbol(s) => 0x1000_0000_0000 + i64::from(s.to_u32()),
         // A class/module IS its id, so derive from that. The fallback below
         // cannot serve here: a `Class` is a bare `ClassId`, so `recv` points at
@@ -1736,14 +1737,15 @@ fn caller_window(start: Option<&RubyValue>, length: Option<&RubyValue>) -> (usiz
             };
             ((*s).max(0) as usize, length)
         }
-        (Some(RubyValue::Range(s, e, excl)), _) => {
-            let lo = match s.as_deref() {
+        (Some(RubyValue::Range(__rg)), _) => {
+            let (s, e, excl) = __rg.parts();
+            let lo = match s {
                 Some(RubyValue::Int(v)) => (*v).max(0) as usize,
                 _ => 0,
             };
-            let hi = match e.as_deref() {
+            let hi = match e {
                 Some(RubyValue::Int(v)) => {
-                    Some(((*v).max(0) as usize).saturating_add(usize::from(!*excl)))
+                    Some(((*v).max(0) as usize).saturating_add(usize::from(!excl)))
                 }
                 _ => None,
             };
@@ -1963,8 +1965,9 @@ pub(crate) fn rand_impl(args: &[RubyValue]) -> Result<RubyValue, Signal> {
                 RubyValue::Float(prng_real())
             }
         }
-        Some(RubyValue::Range(lo, hi, exclusive)) => {
-            return kernel_rand_range(lo.as_deref(), hi.as_deref(), *exclusive);
+        Some(RubyValue::Range(__rg)) => {
+            let (lo, hi, exclusive) = __rg.parts();
+            return kernel_rand_range(lo, hi, exclusive);
         }
         Some(other) => {
             return Err(arg_error!(

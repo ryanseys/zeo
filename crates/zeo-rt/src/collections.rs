@@ -567,12 +567,7 @@ pub(crate) fn hash_key_in(v: &RubyValue, by_identity: bool) -> HashKey {
             RubyValue::Rational(r) => Some(Arc::as_ptr(r) as *const () as usize),
             RubyValue::Complex(c) => Some(Arc::as_ptr(c) as *const () as usize),
             RubyValue::Object(o) => Some(Arc::as_ptr(o) as *const () as usize),
-            // `Range` is a value type (inline `Box`es), not an `Arc`-shared
-            // object, so it has no stable shared identity: two distinct
-            // `Range` values key apart (matching `(1..2).equal?(1..2)` being
-            // false), but a reused `Range` binding will NOT alias itself here.
-            // Rare enough to accept; documented.
-            RubyValue::Range(..) => Some(v as *const RubyValue as usize),
+            RubyValue::Range(r) => Some(Arc::as_ptr(r) as *const () as usize),
             _ => None,
         };
         if let Some(p) = ident {
@@ -596,10 +591,10 @@ pub(crate) fn hash_key_in(v: &RubyValue, by_identity: bool) -> HashKey {
         }
         RubyValue::Class(cid) => HashKey::Class(cid.0),
         RubyValue::Array(a) => HashKey::Array(a.lock().iter().map(hash_key).collect()),
-        RubyValue::Range(start, end, exclusive) => HashKey::Range(
-            start.as_ref().map(|b| Box::new(hash_key(b))),
-            end.as_ref().map(|b| Box::new(hash_key(b))),
-            *exclusive,
+        RubyValue::Range(__rg) => HashKey::Range(
+            __rg.start.as_ref().map(|b| Box::new(hash_key(b))),
+            __rg.end.as_ref().map(|b| Box::new(hash_key(b))),
+            __rg.exclusive,
         ),
         RubyValue::Hash(h) => {
             // A SNAPSHOT, not the live map: projecting a value can dispatch a
@@ -1698,9 +1693,9 @@ mod multi_assign_tests {
     #[test]
     fn splatting_a_range_goes_through_its_to_a() {
         let mut out = Vec::new();
-        let r = RubyValue::Range(
-            Some(Box::new(RubyValue::Int(1))),
-            Some(Box::new(RubyValue::Int(3))),
+        let r = crate::builtins::range::range_value(
+            Some(RubyValue::Int(1)),
+            Some(RubyValue::Int(3)),
             false,
         );
         array_splat_into(&mut out, &r).unwrap();

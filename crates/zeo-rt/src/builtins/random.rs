@@ -136,7 +136,10 @@ fn rand_with(state: &Mutex<crate::mt::Mt>, bound: Option<&RubyValue>) -> Result<
             }
             Ok(int_value(random_bigint_below(state, b)))
         }
-        Some(RubyValue::Range(lo, hi, exclusive)) => rand_range(state, lo, hi, *exclusive),
+        Some(RubyValue::Range(__rg)) => {
+            let (lo, hi, exclusive) = __rg.parts();
+            rand_range(state, lo, hi, exclusive)
+        }
         Some(other) => Err(invalid(other)),
     }
 }
@@ -152,14 +155,14 @@ fn random_bigint_below(state: &Mutex<crate::mt::Mt>, n: &BigInt) -> BigInt {
 /// with a Float endpoint yields a Float.
 fn rand_range(
     state: &Mutex<crate::mt::Mt>,
-    lo: &Option<Box<RubyValue>>,
-    hi: &Option<Box<RubyValue>>,
+    lo: Option<&RubyValue>,
+    hi: Option<&RubyValue>,
     exclusive: bool,
 ) -> Result<RubyValue, Signal> {
     // A beginless/endless range is a domain error (Errno::EDOM). Unlike
     // `Kernel#rand` (which answers nil for an empty/reversed range),
     // `Random#rand` raises `ArgumentError: invalid argument - <range>`.
-    let (Some(lo), Some(hi)) = (lo.as_deref(), hi.as_deref()) else {
+    let (Some(lo), Some(hi)) = (lo, hi) else {
         return Err(raise_error(
             "Errno::EDOM",
             "Numerical argument out of domain".to_string(),
@@ -577,9 +580,9 @@ mod tests {
     #[test]
     fn rand_integer_range_bound_is_inclusive_and_typed() {
         let r = r#gen(3);
-        let range = RubyValue::Range(
-            Some(Box::new(RubyValue::Int(5))),
-            Some(Box::new(RubyValue::Int(9))),
+        let range = crate::builtins::range::range_value(
+            Some(RubyValue::Int(5)),
+            Some(RubyValue::Int(9)),
             false,
         );
         for _ in 0..200 {

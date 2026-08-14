@@ -110,7 +110,8 @@ pub(crate) fn reachable_objects_from(v: &RubyValue) -> RubyValue {
                 push_ref(&mut out, &val);
             }
         }
-        RubyValue::Range(begin, end, _) => {
+        RubyValue::Range(__rg) => {
+            let (begin, end, _) = __rg.parts();
             for r in [begin, end].into_iter().flatten() {
                 push_ref(&mut out, r);
             }

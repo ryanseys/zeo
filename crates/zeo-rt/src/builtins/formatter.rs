@@ -288,13 +288,14 @@ fn uuid_v4(recv: &RubyValue) -> Result<RubyValue, Signal> {
 /// honoring `exclude_end?`. A begin-less or end-less range is an invalid
 /// argument (there is no finite span to sample).
 fn random_in_range(recv: &RubyValue, range: &RubyValue) -> Result<RubyValue, Signal> {
-    let RubyValue::Range(begin, end, excl) = range else {
+    let RubyValue::Range(__rg) = range else {
         return Err(type_error!("expected a Range"));
     };
+    let (begin, end, excl) = __rg.parts();
     let invalid = || arg_error!("invalid argument - {}", range.inspect_string());
-    match (begin.as_deref(), end.as_deref()) {
+    match (begin, end) {
         (Some(RubyValue::Int(lo)), Some(RubyValue::Int(hi))) => {
-            let span = hi - lo + if *excl { 0 } else { 1 };
+            let span = hi - lo + if excl { 0 } else { 1 };
             if span <= 0 {
                 return Err(invalid());
             }
@@ -305,7 +306,7 @@ fn random_in_range(recv: &RubyValue, range: &RubyValue) -> Result<RubyValue, Sig
         (Some(b), Some(e)) => {
             let lo = to_f(b)?;
             let hi = to_f(e)?;
-            if hi < lo || (*excl && hi == lo) {
+            if hi < lo || (excl && hi == lo) {
                 return Err(invalid());
             }
             Ok(RubyValue::Float(lo + rand_float_unit(recv)? * (hi - lo)))

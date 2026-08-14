@@ -903,9 +903,10 @@ fn shareable_guarded(v: &RubyValue, seen: &mut Vec<usize>) -> bool {
         // A class handle is inherently shareable: classes are
         // process-wide in real Ruby too.
         | RubyValue::Class(_) => true,
-        RubyValue::Range(start, end, _) => {
-            start.as_deref().is_none_or(|s| shareable_guarded(s, seen))
-                && end.as_deref().is_none_or(|e| shareable_guarded(e, seen))
+        RubyValue::Range(__rg) => {
+            let (start, end, _) = __rg.parts();
+            start.is_none_or(|s| shareable_guarded(s, seen))
+                && end.is_none_or(|e| shareable_guarded(e, seen))
         }
         RubyValue::Str(s) => s.is_frozen(),
         RubyValue::Array(a) => a.is_frozen() && a.lock().iter().all(|e| shareable_guarded(e, seen)),
@@ -975,11 +976,12 @@ fn make_shareable_guarded(v: &RubyValue, seen: &mut Vec<usize>) -> Result<(), St
         | RubyValue::Regexp(_)
         | RubyValue::Ractor(_)
         | RubyValue::Class(_) => {}
-        RubyValue::Range(start, end, _) => {
-            if let Some(s) = start.as_deref() {
+        RubyValue::Range(__rg) => {
+            let (start, end, _) = __rg.parts();
+            if let Some(s) = start {
                 make_shareable_guarded(s, seen)?;
             }
-            if let Some(e) = end.as_deref() {
+            if let Some(e) = end {
                 make_shareable_guarded(e, seen)?;
             }
         }
@@ -1170,17 +1172,22 @@ fn cross_build(v: &RubyValue, st: &mut CrossState) -> Result<RubyValue, CrossFai
             }
             Ok(out)
         }
-        RubyValue::Range(start, end, excl) => {
+        RubyValue::Range(__rg) => {
+            let (start, end, excl) = __rg.parts();
             // A Range is an inline value here (no shared identity): its
             // ENDPOINTS cross -- and move -- while the shell itself
             // survives un-poisoned, unlike CRuby's husked Range object.
-            let mut cross_end = |e: &Option<Box<RubyValue>>| -> Result<_, CrossFail> {
-                Ok(match e.as_deref() {
-                    Some(inner) => Some(Box::new(cross_build(inner, st)?)),
+            let mut cross_end = |e: Option<&RubyValue>| -> Result<_, CrossFail> {
+                Ok(match e {
+                    Some(inner) => Some(cross_build(inner, st)?),
                     None => None,
                 })
             };
-            Ok(RubyValue::Range(cross_end(start)?, cross_end(end)?, *excl))
+            Ok(crate::builtins::range::range_value(
+                cross_end(start)?,
+                cross_end(end)?,
+                excl,
+            ))
         }
         RubyValue::Object(o) => {
             // zeo refuses to move an IO (CRuby moves them; a moved fd's

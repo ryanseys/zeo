@@ -221,8 +221,9 @@ ruby_class! {
         }
         match index {
             // `arr[1..3]` -- Range slicing.
-            RubyValue::Range(start, end, exclusive) => {
-                Ok(range_slice(rary, start.as_deref(), end.as_deref(), *exclusive))
+            RubyValue::Range(__rg) => {
+                let (start, end, exclusive) = __rg.parts();
+                Ok(range_slice(rary, start, end, exclusive))
             }
             // `arr[(1..10).step(2)]` -- an arithmetic sequence slices with a
             // STRIDE (CRuby's `rb_arithmetic_sequence_beg_len_step`).
@@ -251,9 +252,10 @@ ruby_class! {
             array_splice(rary, start, len, value)?;
             return Ok(value.clone());
         }
-        if let RubyValue::Range(s, e, exclusive) = index {
+        if let RubyValue::Range(__rg) = index {
+            let (s, e, exclusive) = __rg.parts();
             let n = crate::array_len(rary);
-            let start = match s.as_deref() {
+            let start = match s {
                 Some(v) => {
                     let v = convert::to_index(v)?;
                     if v < 0 { v + n } else { v }
@@ -269,14 +271,14 @@ ruby_class! {
                     index.inspect_string()
                 ));
             }
-            let end = match e.as_deref() {
+            let end = match e {
                 Some(v) => {
                     let v = convert::to_index(v)?;
                     if v < 0 { v + n } else { v }
                 }
                 None => n - 1,
             };
-            let len = (end - start + if *exclusive { 0 } else { 1 }).max(0);
+            let len = (end - start + if exclusive { 0 } else { 1 }).max(0);
             array_splice(rary, start, len, second)?;
             return Ok(second.clone());
         }
@@ -636,8 +638,9 @@ ruby_class! {
         let len = h.lock().len() as i64;
         // Range form: remove and return the sub-array (nil if the start is
         // past the end).
-        if let RubyValue::Range(s, e, exclusive) = &args[0] {
-            let start = match s.as_deref() {
+        if let RubyValue::Range(__rg) = &args[0] {
+            let (s, e, exclusive) = __rg.parts();
+            let start = match s {
                 Some(RubyValue::Int(v)) => if *v < 0 { v + len } else { *v },
                 None => 0,
                 _ => return Ok(RubyValue::Nil),
@@ -645,10 +648,10 @@ ruby_class! {
             if start < 0 || start > len {
                 return Ok(RubyValue::Nil);
             }
-            let end = match e.as_deref() {
+            let end = match e {
                 Some(RubyValue::Int(v)) => {
                     let v = if *v < 0 { v + len } else { *v };
-                    if *exclusive { v } else { v + 1 }
+                    if exclusive { v } else { v + 1 }
                 }
                 None => len,
                 _ => return Ok(RubyValue::Nil),
@@ -978,8 +981,9 @@ ruby_class! {
         let mut out = Vec::new();
         for a in args {
             match a {
-                RubyValue::Range(start, end, exclusive) => {
-                    let s = match start.as_deref() {
+                RubyValue::Range(__rg) => {
+                    let (start, end, exclusive) = __rg.parts();
+                    let s = match start {
                         Some(v) => {
                             let v = convert::to_index(v)?;
                             if v < 0 { v + n } else { v }
@@ -988,11 +992,11 @@ ruby_class! {
                     };
                     // An endless range stops at the array's end -- it names
                     // no index past it, unlike a bounded one.
-                    let e = match end.as_deref() {
+                    let e = match end {
                         Some(v) => {
                             let v = convert::to_index(v)?;
                             let v = if v < 0 { v + n } else { v };
-                            if *exclusive { v - 1 } else { v }
+                            if exclusive { v - 1 } else { v }
                         }
                         None => n - 1,
                     };
@@ -1035,19 +1039,20 @@ ruby_class! {
         };
         // The position may be a Range (`fill(1..2) { }` / `fill(obj, 1..2)`)
         // or a `start[, length]` pair.
-        let (start, end) = if let Some(RubyValue::Range(rs, re, exclusive)) = span.first() {
-            let start = match rs.as_deref() {
+        let (start, end) = if let Some(RubyValue::Range(__rg)) = span.first() {
+            let (rs, re, exclusive) = __rg.parts();
+            let start = match rs {
                 Some(v) => {
                     let v = convert::to_index(v)?;
                     if v < 0 { v + cur_len } else { v }
                 }
                 None => 0,
             };
-            let end = match re.as_deref() {
+            let end = match re {
                 Some(v) => {
                     let v = convert::to_index(v)?;
                     let v = if v < 0 { v + cur_len } else { v };
-                    if *exclusive { v } else { v + 1 }
+                    if exclusive { v } else { v + 1 }
                 }
                 None => cur_len,
             };
@@ -2284,9 +2289,9 @@ mod tests {
             RubyValue::Int(3),
             RubyValue::Int(4),
         ]);
-        let range = RubyValue::Range(
-            Some(Box::new(RubyValue::Int(1))),
-            Some(Box::new(RubyValue::Int(2))),
+        let range = crate::builtins::range::range_value(
+            Some(RubyValue::Int(1)),
+            Some(RubyValue::Int(2)),
             false,
         );
         imethod("[]=")(&a, &[range, RubyValue::Int(9)], None).unwrap();
@@ -2301,9 +2306,9 @@ mod tests {
             RubyValue::Int(3),
             RubyValue::Int(4),
         ]);
-        let range = RubyValue::Range(
-            Some(Box::new(RubyValue::Int(1))),
-            Some(Box::new(RubyValue::Int(3))),
+        let range = crate::builtins::range::range_value(
+            Some(RubyValue::Int(1)),
+            Some(RubyValue::Int(3)),
             true,
         );
         imethod("[]=")(&a, &[range, RubyValue::Int(9)], None).unwrap();
@@ -2318,7 +2323,7 @@ mod tests {
             RubyValue::Int(2),
             RubyValue::Int(3),
         ]);
-        let endless = RubyValue::Range(Some(Box::new(RubyValue::Int(1))), None, false);
+        let endless = crate::builtins::range::range_value(Some(RubyValue::Int(1)), None, false);
         imethod("[]=")(&a, &[endless, RubyValue::Int(9)], None).unwrap();
         assert_eq!(items_of(&a), ["1", "9"]);
 
@@ -2327,7 +2332,7 @@ mod tests {
             RubyValue::Int(2),
             RubyValue::Int(3),
         ]);
-        let beginless = RubyValue::Range(None, Some(Box::new(RubyValue::Int(1))), false);
+        let beginless = crate::builtins::range::range_value(None, Some(RubyValue::Int(1)), false);
         imethod("[]=")(&b, &[beginless, RubyValue::Int(9)], None).unwrap();
         assert_eq!(items_of(&b), ["9", "3"]);
     }

@@ -2154,9 +2154,9 @@ mod tests {
         let out = enumerable_send(
             &ints(&[1, 2, 3, 4, 5]),
             "grep",
-            &[RubyValue::Range(
-                Some(Box::new(RubyValue::Int(2))),
-                Some(Box::new(RubyValue::Int(4))),
+            &[crate::builtins::range::range_value(
+                Some(RubyValue::Int(2)),
+                Some(RubyValue::Int(4)),
                 false,
             )],
             None,

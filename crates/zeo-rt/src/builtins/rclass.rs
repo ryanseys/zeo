@@ -24,7 +24,7 @@ fn builtin_allocate(cid: crate::ClassId) -> Option<RubyValue> {
         zeo_abi::STRING_CLASS => Some(RubyValue::Str(crate::string_new(String::new()))),
         zeo_abi::ARRAY_CLASS => Some(RubyValue::Array(crate::array_new(Vec::new()))),
         zeo_abi::HASH_CLASS => Some(RubyValue::Hash(crate::hash_new(Vec::new()))),
-        zeo_abi::RANGE_CLASS => Some(RubyValue::Range(None, None, false)),
+        zeo_abi::RANGE_CLASS => Some(crate::builtins::range::range_value(None, None, false)),
         zeo_abi::OBJECT_CLASS | zeo_abi::BASIC_OBJECT_CLASS => {
             Some(crate::runtime_meta::blank_instance(cid))
         }

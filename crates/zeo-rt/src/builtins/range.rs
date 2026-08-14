@@ -12,6 +12,53 @@ use crate::builtins::{arg_error, block_or_enum, inherited_row, range_error, type
 use crate::{RProc, RubyValue, Signal};
 use zeo_macros::ruby_class;
 
+/// `a..b` / `a...b`, as one shared payload. Either endpoint may be absent --
+/// a beginless or endless range -- and `nil` is normalized to absent at
+/// construction (`nil..5` IS `..5`; keeping the two apart once made
+/// `(1..nil).min` hang).
+///
+/// A Ruby Range is immutable: no method mutates one in place, and the
+/// permanently-frozen tier (`value_ivars`) denies it ivars. So the `Arc` here
+/// buys sharing without any of the interior mutability `Array`/`Hash`/`Str`
+/// need -- a `RubyValue::clone` bumps one refcount instead of deep-copying
+/// both endpoints, and the pointer gives `Range` the object identity CRuby
+/// has and zeo's two `Box`es could not: `equal?`, `object_id` and the
+/// identity hash key all read it.
+pub struct RangeData {
+    pub start: Option<RubyValue>,
+    pub end: Option<RubyValue>,
+    pub exclusive: bool,
+}
+
+pub type RRange = Arc<RangeData>;
+
+impl RangeData {
+    /// The three fields as the borrow shape almost every caller wants.
+    #[inline]
+    pub fn parts(&self) -> (Option<&RubyValue>, Option<&RubyValue>, bool) {
+        (self.start.as_ref(), self.end.as_ref(), self.exclusive)
+    }
+}
+
+/// The one Range constructor. Every caller goes through it, so the
+/// nil-normalization above holds everywhere.
+pub fn range_new(start: Option<RubyValue>, end: Option<RubyValue>, exclusive: bool) -> RRange {
+    let strip = |v: Option<RubyValue>| match v {
+        Some(RubyValue::Nil) | None => None,
+        other => other,
+    };
+    Arc::new(RangeData {
+        start: strip(start),
+        end: strip(end),
+        exclusive,
+    })
+}
+
+/// `range_new` as a `RubyValue` -- what codegen emits for a range literal.
+pub fn range_value(start: Option<RubyValue>, end: Option<RubyValue>, exclusive: bool) -> RubyValue {
+    RubyValue::Range(range_new(start, end, exclusive))
+}
+
 /// The values a BOUNDED range covers, walked by the builtin `each` fetched
 /// straight from Range's own table -- never through dispatch, so a runtime
 /// `Range#each` override cannot reach a row ruby owns on Range (`#count`,
@@ -42,7 +89,7 @@ pub(crate) fn finite_values(recv: &RubyValue) -> Option<Vec<RubyValue>> {
 
 fn range_parts(recv: &RubyValue) -> (Option<&RubyValue>, Option<&RubyValue>, bool) {
     match recv {
-        RubyValue::Range(s, e, x) => (s.as_deref(), e.as_deref(), *x),
+        RubyValue::Range(r) => (r.start.as_ref(), r.end.as_ref(), r.exclusive),
         _ => unreachable!("Range table row dispatched on a non-Range receiver"),
     }
 }
@@ -513,12 +560,12 @@ ruby_class! {
     // when either range lies wholly beyond the other's end (CRuby range.c's
     // empty-region test); a beginless/endless bound never bounds that side.
     def "overlap?" (recv, arg) {
-        let RubyValue::Range(ob, oe, ox) = arg else {
+        let RubyValue::Range(__rg) = arg else {
             return Err(type_error!("wrong argument type {} (expected Range)",
                     crate::builtins::class_name_of(arg)));
         };
         let (sb, se, sx) = range_parts(recv);
-        let (ob, oe, ox) = (ob.as_deref(), oe.as_deref(), *ox);
+        let (ob, oe, ox) = __rg.parts();
         // `empty_region(beg, end, excl)`: beg lies past end, so nothing between.
         let empty_region = |beg: Option<&RubyValue>, end: Option<&RubyValue>, excl: bool| {
             match (beg, end) {
@@ -756,9 +803,9 @@ mod tests {
     }
 
     fn int_range(s: i64, e: i64, exclusive: bool) -> RubyValue {
-        RubyValue::Range(
-            Some(Box::new(RubyValue::Int(s))),
-            Some(Box::new(RubyValue::Int(e))),
+        crate::builtins::range::range_value(
+            Some(RubyValue::Int(s)),
+            Some(RubyValue::Int(e)),
             exclusive,
         )
     }

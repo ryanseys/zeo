@@ -252,7 +252,8 @@ impl Writer {
             // registers -- there is no Range arm in `w_object` at all. Without
             // it a Range, and anything CONTAINING one, fails with a TypeError
             // about a C-extension hook the caller never wrote.
-            RubyValue::Range(start, end, excl) => {
+            RubyValue::Range(__rg) => {
+                let (start, end, excl) = __rg.parts();
                 if self.check_link(ptr_of(v)) {
                     return Ok(());
                 }
@@ -262,11 +263,11 @@ impl Writer {
                 self.write_long(3);
                 // The write ORDER is ruby's: excl, begin, end.
                 self.write_symbol("excl");
-                self.write(&RubyValue::Bool(*excl))?;
+                self.write(&RubyValue::Bool(excl))?;
                 self.write_symbol("begin");
-                self.write(start.as_deref().unwrap_or(&RubyValue::Nil))?;
+                self.write(start.unwrap_or(&RubyValue::Nil))?;
                 self.write_symbol("end");
-                self.write(end.as_deref().unwrap_or(&RubyValue::Nil))?;
+                self.write(end.unwrap_or(&RubyValue::Nil))?;
             }
             RubyValue::Class(cid) => {
                 if self.check_link(cid.0 as usize) {
@@ -987,7 +988,7 @@ impl Reader<'_> {
                 _ => {}
             }
         }
-        let v = RubyValue::Range(
+        let v = crate::builtins::range::range_value(
             crate::value::range_endpoint(start),
             crate::value::range_endpoint(end),
             excl,

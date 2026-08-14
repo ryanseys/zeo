@@ -283,7 +283,7 @@ fn emit_range_pattern(
     let start_b = bound(start);
     let end_b = bound(end);
     emit_case_eq_check(
-        quote! { zeo_rt::RubyValue::Range(#start_b, #end_b, #exclusive) },
+        quote! { zeo_rt::range_value(#start_b, #end_b, #exclusive) },
         scrutinee,
     )
 }

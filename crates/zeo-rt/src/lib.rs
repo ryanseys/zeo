@@ -99,9 +99,8 @@ pub use cvars::{cvar_defined, cvar_get, cvar_get_checked, cvar_names_of, cvar_re
 pub use dispatch::{
     ARRAY_CLASS, AllocatorFn, BASIC_OBJECT_CLASS, CLASS_CLASS, COMPARABLE_CLASS, COMPLEX_CLASS,
     CallSite, ClassId, ClassMethodSite, ClassRegistry, ConstructorFn, DynCallerSite,
-    ENUMERABLE_CLASS,
-    ENUMERATOR_CLASS, FALSE_CLASS, FCALL, FIBER_CLASS, FLOAT_CLASS, HASH_CLASS, INTEGER_CLASS,
-    KERNEL_CLASS, MATCH_DATA_CLASS, MATH_CLASS, MODULE_CLASS, MUTEX_CLASS, MethodFn,
+    ENUMERABLE_CLASS, ENUMERATOR_CLASS, FALSE_CLASS, FCALL, FIBER_CLASS, FLOAT_CLASS, HASH_CLASS,
+    INTEGER_CLASS, KERNEL_CLASS, MATCH_DATA_CLASS, MATH_CLASS, MODULE_CLASS, MUTEX_CLASS, MethodFn,
     MethodVisibility, MissingReason, NIL_CLASS, NUMERIC_CLASS, Object, PROC_CLASS, QUEUE_CLASS,
     RACTOR_CLASS, RANGE_CLASS, RATIONAL_CLASS, REGEXP_CLASS, RObj, Reflect, RubyObject,
     STRING_CLASS, STRUCT_CLASS, SYMBOL_CLASS, THREAD_CLASS, TRUE_CLASS, ValueMethodFn,
@@ -116,9 +115,8 @@ pub use dispatch::{
     raise_method_missing, raise_no_block_yield, raise_stop_iteration, raise_with_cause,
     refined_method, refined_responds_to, refined_send_dynamic, refined_send_in,
     reflect_dispatch_in, reject_marked_kwargs, rescue_matches_any, responds_to,
-    responds_to_or_missing, responds_to_value, run_initialize, send, send_in,
-    send_class_cached, send_super_class_from, send_super_from, send_value, send_value_cached,
-    send_value_dyn_cached,
+    responds_to_or_missing, responds_to_value, run_initialize, send, send_class_cached, send_in,
+    send_super_class_from, send_super_from, send_value, send_value_cached, send_value_dyn_cached,
     send_value_explicit_in, send_value_in, send_value_public_in, send_value_vcall_in,
     stamp_backtrace, super_defined, validate_aliases, validate_class_aliases, value_class,
     wrong_arity,
@@ -189,6 +187,7 @@ pub use ractor::{
 /// generated `retag_moved` can reach it through `$crate`.
 pub const MOVED_OBJECT_CLASS_ID: u32 = zeo_abi::RACTOR_MOVED_OBJECT_CLASS.0;
 
+pub use builtins::range::{RRange, RangeData, range_new, range_value};
 pub use regexp::*;
 pub use rproc::{ProcParamMeta, RProc, block_arg_to_proc, block_auto_splat, to_hash_coerce};
 pub use runtime_meta::{
@@ -853,7 +852,7 @@ mod tests {
         assert!(RubyValue::Int(1).is_frozen());
         assert!(RubyValue::Nil.is_frozen());
         assert!(RubyValue::Symbol(Symbol::intern("s")).is_frozen());
-        assert!(RubyValue::Range(None, None, false).is_frozen());
+        assert!(crate::builtins::range::range_value(None, None, false).is_frozen());
 
         let arr = RubyValue::Array(array_new(vec![RubyValue::Int(1)]));
         assert!(!arr.is_frozen());

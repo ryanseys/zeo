@@ -685,14 +685,18 @@ mod imp {
         }
         if let Some(range) = node.as_range_node() {
             let start = match range.left() {
-                Some(n) => Some(Box::new(eval_node(&n, env)?)),
+                Some(n) => Some(eval_node(&n, env)?),
                 None => None,
             };
             let end = match range.right() {
-                Some(n) => Some(Box::new(eval_node(&n, env)?)),
+                Some(n) => Some(eval_node(&n, env)?),
                 None => None,
             };
-            return Ok(RubyValue::Range(start, end, range.is_exclude_end()));
+            return Ok(crate::builtins::range::range_value(
+                start,
+                end,
+                range.is_exclude_end(),
+            ));
         }
 
         // ---- def / class / module -------------------------------------------
@@ -1695,10 +1699,10 @@ mod imp {
         #[test]
         fn range_literal_endpoints() {
             match eval("1..5") {
-                RubyValue::Range(Some(lo), Some(hi), excl) => {
-                    assert!(matches!(*lo, RubyValue::Int(1)));
-                    assert!(matches!(*hi, RubyValue::Int(5)));
-                    assert!(!excl);
+                RubyValue::Range(r) => {
+                    assert!(matches!(r.start, Some(RubyValue::Int(1))));
+                    assert!(matches!(r.end, Some(RubyValue::Int(5))));
+                    assert!(!r.exclusive);
                 }
                 other => panic!("expected range, got {other:?}"),
             }

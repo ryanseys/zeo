@@ -850,9 +850,9 @@ fn emit_typed_iter_inline(
                 quote! { 1i64 },
                 "range_each",
                 quote! {
-                    zeo_rt::RubyValue::Range(
-                        Some(Box::new(zeo_rt::RubyValue::Int(__iter_a))),
-                        Some(Box::new(zeo_rt::RubyValue::Int(__iter_b))),
+                    zeo_rt::range_value(
+                        Some(zeo_rt::RubyValue::Int(__iter_a)),
+                        Some(zeo_rt::RubyValue::Int(__iter_b)),
                         __iter_x,
                     )
                 },
@@ -860,16 +860,20 @@ fn emit_typed_iter_inline(
             let fallback = fallback(quote! { &[] });
             quote! {
                 match #recv {
-                    zeo_rt::RubyValue::Range(Some(__iter_bs), Some(__iter_be), __iter_x)
+                    zeo_rt::RubyValue::Range(__iter_r)
                         if zeo_rt::iter_inline_ok_for(#__bx, zeo_rt::RANGE_CLASS)
-                            && matches!(__iter_bs.as_ref(), zeo_rt::RubyValue::Int(_))
-                            && matches!(__iter_be.as_ref(), zeo_rt::RubyValue::Int(_)) =>
+                            && matches!(__iter_r.start, Some(zeo_rt::RubyValue::Int(_)))
+                            && matches!(__iter_r.end, Some(zeo_rt::RubyValue::Int(_))) =>
                     {
-                        let (zeo_rt::RubyValue::Int(__iter_a), zeo_rt::RubyValue::Int(__iter_b)) =
-                            (*__iter_bs, *__iter_be)
+                        let (
+                            Some(zeo_rt::RubyValue::Int(__iter_a)),
+                            Some(zeo_rt::RubyValue::Int(__iter_b)),
+                            __iter_x,
+                        ) = (&__iter_r.start, &__iter_r.end, __iter_r.exclusive)
                         else {
                             unreachable!()
                         };
+                        let (__iter_a, __iter_b) = (*__iter_a, *__iter_b);
                         #splice
                     }
                     __iter_other => #fallback,
@@ -3672,9 +3676,9 @@ fn dispatch(
             quote! { 1i64 },
             "range_each",
             quote! {
-                zeo_rt::RubyValue::Range(
-                    Some(Box::new(zeo_rt::RubyValue::Int(#s))),
-                    Some(Box::new(zeo_rt::RubyValue::Int(#e))),
+                zeo_rt::range_value(
+                    Some(zeo_rt::RubyValue::Int(#s)),
+                    Some(zeo_rt::RubyValue::Int(#e)),
                     #exclusive,
                 )
             },

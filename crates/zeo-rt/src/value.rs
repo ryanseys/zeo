@@ -43,11 +43,8 @@ pub enum RubyValue {
     Str(RStr),
     Array(RArray),
     Hash(RHash),
-    /// `a..b` / `a...b` -- either endpoint may be absent (a beginless/endless
-    /// range). Unlike `Array`/`Hash`/`Str`, a `Range` is immutable in Ruby
-    /// (no in-place mutation methods exist), so plain `Box` value semantics
-    /// are enough -- no `Rc<RefCell<_>>` sharing needed.
-    Range(Option<Box<RubyValue>>, Option<Box<RubyValue>>, bool),
+    /// `a..b` / `a...b` -- see `builtins::range::RangeData`.
+    Range(crate::builtins::range::RRange),
     Object(RObj),
     /// A real, escaping block/`Proc` -- see `rproc`'s module docs.
     Proc(RProc),
@@ -395,7 +392,8 @@ impl RubyValue {
                 seen.pop();
                 format!("{{{}}}", body?.join(", "))
             }
-            RubyValue::Range(start, end, exclusive) => {
+            RubyValue::Range(r) => {
+                let (start, end, exclusive) = (&r.start, &r.end, r.exclusive);
                 let s = match start {
                     Some(b) => b.display_with(seen)?,
                     None => String::new(),
@@ -404,7 +402,7 @@ impl RubyValue {
                     Some(b) => b.display_with(seen)?,
                     None => String::new(),
                 };
-                let op = if *exclusive { "..." } else { ".." };
+                let op = if exclusive { "..." } else { ".." };
                 format!("{s}{op}{e}")
             }
             // A user-defined `to_s` wins (dispatched through
@@ -565,7 +563,8 @@ impl RubyValue {
                 seen.pop();
                 format!("{{{}}}", body?.join(", "))
             }
-            RubyValue::Range(start, end, exclusive) => {
+            RubyValue::Range(r) => {
+                let (start, end, exclusive) = (&r.start, &r.end, r.exclusive);
                 // An absent endpoint renders as nothing (`..5`, `1..`) -- EXCEPT
                 // when both are absent, which ruby spells `nil..nil` so the
                 // result is not the bare `..` that no literal can produce.
@@ -580,7 +579,7 @@ impl RubyValue {
                     None if both_open => "nil".to_string(),
                     None => String::new(),
                 };
-                let op = if *exclusive { "..." } else { ".." };
+                let op = if exclusive { "..." } else { ".." };
                 format!("{s}{op}{e}")
             }
             RubyValue::Regexp(re) => crate::regexp::regexp_inspect(re).display_with(seen)?,
@@ -862,7 +861,7 @@ impl RubyValue {
     /// raises on a beginless range: see [`RubyValue::range_first_checked`].
     pub fn range_first(&self) -> RubyValue {
         match self {
-            RubyValue::Range(start, ..) => start.as_deref().cloned().unwrap_or(RubyValue::Nil),
+            RubyValue::Range(r) => r.start.clone().unwrap_or(RubyValue::Nil),
             other => panic!("expected a Range, got {}", other.to_display_string()),
         }
     }
@@ -871,7 +870,7 @@ impl RubyValue {
     /// [`RubyValue::range_first`].
     pub fn range_last(&self) -> RubyValue {
         match self {
-            RubyValue::Range(_, end, _) => end.as_deref().cloned().unwrap_or(RubyValue::Nil),
+            RubyValue::Range(r) => r.end.clone().unwrap_or(RubyValue::Nil),
             other => panic!("expected a Range, got {}", other.to_display_string()),
         }
     }
@@ -881,7 +880,7 @@ impl RubyValue {
     /// [`RubyValue::range_first`] so it cannot disagree with the table row.
     pub fn range_first_checked(&self) -> Result<RubyValue, crate::Signal> {
         match self {
-            RubyValue::Range(start, ..) => match start.as_deref() {
+            RubyValue::Range(r) => match r.start.as_ref() {
                 Some(v) => Ok(v.clone()),
                 None => Err(range_endpoint_error(true)),
             },
@@ -893,7 +892,7 @@ impl RubyValue {
     /// [`RubyValue::range_first_checked`], raising on an ENDLESS range.
     pub fn range_last_checked(&self) -> Result<RubyValue, crate::Signal> {
         match self {
-            RubyValue::Range(_, end, _) => match end.as_deref() {
+            RubyValue::Range(r) => match r.end.as_ref() {
                 Some(v) => Ok(v.clone()),
                 None => Err(range_endpoint_error(false)),
             },
@@ -904,7 +903,7 @@ impl RubyValue {
     /// `Range#exclude_end?`.
     pub fn range_exclude_end(&self) -> bool {
         match self {
-            RubyValue::Range(_, _, exclusive) => *exclusive,
+            RubyValue::Range(r) => r.exclusive,
             other => panic!("expected a Range, got {}", other.to_display_string()),
         }
     }
@@ -989,21 +988,21 @@ impl RubyValue {
                     && a.multiline == b.multiline
             }
             // `Range#==`: equal (by `==`) endpoints and the same exclusivity.
-            (
-                RubyValue::Range(a_start, a_end, a_excl),
-                RubyValue::Range(b_start, b_end, b_excl),
-            ) => {
+            (RubyValue::Range(a), RubyValue::Range(b)) => {
+                if std::sync::Arc::ptr_eq(a, b) {
+                    return true;
+                }
                 let bounds_eq =
-                    |x: &Option<Box<RubyValue>>,
-                     y: &Option<Box<RubyValue>>,
+                    |x: &Option<RubyValue>,
+                     y: &Option<RubyValue>,
                      seen: &mut Vec<(usize, usize)>| match (x, y) {
                         (None, None) => true,
                         (Some(x), Some(y)) => x.rb_eq_guarded(y, seen),
                         _ => false,
                     };
-                a_excl == b_excl
-                    && bounds_eq(a_start, b_start, seen)
-                    && bounds_eq(a_end, b_end, seen)
+                a.exclusive == b.exclusive
+                    && bounds_eq(&a.start, &b.start, seen)
+                    && bounds_eq(&a.end, &b.end, seen)
             }
             (RubyValue::Array(a), RubyValue::Array(b)) => {
                 if std::sync::Arc::ptr_eq(a, b) {
@@ -1482,8 +1481,8 @@ impl RubyValue {
         // user `<=>`), and an incomparable subject is `false`, real Ruby's
         // rule (`(1..5) === "x"` is false, not an error; oracle-verified,
         // incl. `(1..6) === 5.5` true and `(1...5) === 5` false).
-        if let RubyValue::Range(start, end, exclusive) = self {
-            return range_covers(start.as_deref(), end.as_deref(), *exclusive, subject);
+        if let RubyValue::Range(r) = self {
+            return range_covers(r.start.as_ref(), r.end.as_ref(), r.exclusive, subject);
         }
         // `Module#===`: `case x when Integer` / `when Widget`
         // is an instance-of-ancestry check, NOT equality (`Widget ===
@@ -1599,10 +1598,10 @@ pub(crate) fn cmp_or_raise(a: &RubyValue, b: &RubyValue) -> Result<i64, crate::S
 /// `min`, `size`, `==` and `inspect` from each having to ask twice; without it
 /// `(1..nil).min` reads a bounded range and iterates forever.
 #[inline]
-pub fn range_endpoint(v: RubyValue) -> Option<Box<RubyValue>> {
+pub fn range_endpoint(v: RubyValue) -> Option<RubyValue> {
     match v {
         RubyValue::Nil => None,
-        other => Some(Box::new(other)),
+        other => Some(other),
     }
 }
 
@@ -1613,8 +1612,8 @@ pub fn range_endpoint(v: RubyValue) -> Option<Box<RubyValue>> {
 /// stays legal. Codegen emits this only where comparability isn't a static
 /// fact; the literal `1..10` keeps the unchecked constructor.
 pub fn range_checked(
-    b: Option<Box<RubyValue>>,
-    e: Option<Box<RubyValue>>,
+    b: Option<RubyValue>,
+    e: Option<RubyValue>,
     exclusive: bool,
 ) -> Result<RubyValue, crate::Signal> {
     if let (Some(x), Some(y)) = (&b, &e)
@@ -1626,7 +1625,7 @@ pub fn range_checked(
             "bad value for range".to_string(),
         ));
     }
-    Ok(RubyValue::Range(b, e, exclusive))
+    Ok(crate::builtins::range::range_value(b, e, exclusive))
 }
 
 /// The RangeError `Range#first`/`#last` raise when the endpoint they want is
@@ -1939,9 +1938,9 @@ mod tests {
             assert!(v.dup_value(false).unwrap().rb_eq(&v));
             assert!(v.dup_value(true).unwrap().rb_eq(&v));
         }
-        let r = RubyValue::Range(
-            Some(Box::new(RubyValue::Int(1))),
-            Some(Box::new(RubyValue::Int(3))),
+        let r = crate::builtins::range::range_value(
+            Some(RubyValue::Int(1)),
+            Some(RubyValue::Int(3)),
             false,
         );
         assert_eq!(r.dup_value(false).unwrap().inspect_string(), "1..3");
