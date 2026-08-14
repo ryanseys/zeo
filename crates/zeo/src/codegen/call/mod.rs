@@ -939,7 +939,13 @@ fn emit_typed_iter_inline(
             // Ruby evaluates them in, and lands in the arm's `__iter_init`
             // whichever way the guard goes -- the fallback forwards it as the
             // call's one argument.
+            // Through the boxer: an Object-typed seed emits as its concrete
+            // `Arc<T>`, and the accumulator this feeds is a `RubyValue` (the
+            // block's value replaces it every iteration). Without this,
+            // `arr.inject(Money.new(0)) { .. }` typed `__iter_acc` as
+            // `Arc<Money>` and the generated program failed to compile.
             let init = emit_expr(cx, args[0]);
+            let init = box_if_object_typed(cx, args[0], init);
             let splice = emit_array_iter_splice(cx, block_id, ArrayIterMode::Inject, name);
             let fallback = fallback(quote! { &[__iter_init] });
             quote! {
