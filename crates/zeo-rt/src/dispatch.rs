@@ -311,7 +311,16 @@ impl RubyObject for Object {
         )
     }
     fn ivar_set_named(&self, name: &str, v: RubyValue) -> bool {
-        self.ivars.lock().insert(name.to_string(), v);
+        // Probe before inserting: an ivar is written far more often than it is
+        // first created, and `insert` allocated a fresh `String` key on every
+        // one of those writes only to drop it again.
+        let mut ivars = self.ivars.lock();
+        match ivars.get_mut(name) {
+            Some(slot) => *slot = v,
+            None => {
+                ivars.insert(name.to_string(), v);
+            }
+        }
         true
     }
     fn ivar_remove_named(&self, name: &str) -> Option<RubyValue> {
@@ -369,7 +378,7 @@ pub fn bind_dynamic_kwargs<'a>(
     };
     let lookup = |name: &str| -> Option<RubyValue> {
         pairs.iter().find_map(|(k, v)| match k {
-            RubyValue::Symbol(s) if s.name() == name => Some(v.clone()),
+            RubyValue::Symbol(s) if s.name_str() == name => Some(v.clone()),
             _ => None,
         })
     };
@@ -389,8 +398,8 @@ pub fn bind_dynamic_kwargs<'a>(
     let mut unknown = Vec::new();
     for (k, v) in &pairs {
         if let RubyValue::Symbol(s) = k {
-            let n = s.name();
-            if required.contains(&n.as_str()) || optional.contains(&n.as_str()) {
+            let n = s.name_str();
+            if required.contains(&n) || optional.contains(&n) {
                 continue;
             }
             if has_kwrest {
@@ -1873,8 +1882,20 @@ pub fn direct_subclasses(cid: ClassId) -> Vec<ClassId> {
 /// universal `Object#instance_variable_*` helpers below (the class-object
 /// table in `builtins::class_module` keeps its own parallel copy).
 pub fn ivar_name_arg(v: &RubyValue) -> Result<String, Signal> {
+    // A symbol's text is already interned and `'static`, so the strip happens
+    // before any allocation: `instance_variable_get(:@x)`, which is how this
+    // is almost always spelled, allocated the name TWICE (once to own the
+    // symbol's text, once for the `@`-stripped tail).
+    if let RubyValue::Symbol(s) = v {
+        let raw = s.name_str();
+        return match raw.strip_prefix('@') {
+            Some(name) => Ok(name.to_string()),
+            None => Err(name_error!(
+                "'{raw}' is not allowed as an instance variable name"
+            )),
+        };
+    }
     let raw = match v {
-        RubyValue::Symbol(s) => s.name().to_string(),
         RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
         _ => {
             return Err(type_error!(
@@ -2080,7 +2101,8 @@ pub fn responds_to_value(recv: &RubyValue, name: Symbol, include_all: bool) -> b
     // inherits but no registry entry records. Same reason this sits out here
     // and not in `class_receiver_responds`: the row lives on the ROOT.
     if let RubyValue::Class(cid) = recv
-        && crate::builtins::value_subclass::root_class_method_target(*cid, &name.name()).is_some()
+        && crate::builtins::value_subclass::root_class_method_target(*cid, name.name_str())
+            .is_some()
     {
         return true;
     }
@@ -2200,8 +2222,7 @@ fn class_receiver_responds(cid: ClassId, name: Symbol) -> bool {
             }
         }
     }
-    let n = name.name();
-    let n = n.as_str();
+    let n = name.name_str();
     if crate::builtins::class_method_table(cid).is_some_and(|lookup| lookup(n).is_some()) {
         return true;
     }
@@ -2286,7 +2307,7 @@ pub(crate) fn class_method_fn(cid: ClassId, name: Symbol) -> Option<ValueMethodF
         .entries
         .get(&owner.0)
         .and_then(|e| e.class_methods.get(&name).copied())
-        .or_else(|| crate::builtins::class_method_table(owner).and_then(|l| l(&name.name())))
+        .or_else(|| crate::builtins::class_method_table(owner).and_then(|l| l(name.name_str())))
 }
 
 /// [`class_method_owner`]'s `#super_method` companion: the next definer
@@ -2306,7 +2327,7 @@ pub fn class_method_owner_after(cid: ClassId, after: ClassId, name: Symbol) -> O
 /// it `extend`ed second, which is the order CRuby's singleton ancestry seats
 /// them in: `#<Class:K>`, then K's extends, then `#<Class:Object>`.
 fn scan_class_method_owner(cid: ClassId, skip: usize, name: Symbol) -> Option<(ClassId, bool)> {
-    let n = name.name();
+    let n = name.name_str();
     // An `undef` written inside `class << self` retires the name here and for
     // every subclass, so the walk must stop rather than reach an ancestor's
     // still-live `def self.x`. Same rule the instance side applies for `undef`.
@@ -2443,8 +2464,7 @@ pub fn responds_to(recv_class: ClassId, name: Symbol, include_all: bool) -> bool
             _ => {}
         }
     }
-    let n = name.name();
-    let n = n.as_str();
+    let n = name.name_str();
     let overlay_live = crate::runtime_meta::is_live();
     for &anc in ancestors_of_value(recv_class) {
         // A method defined at runtime (`define_method`, a runtime class's
@@ -2549,8 +2569,7 @@ pub fn method_owner_after(recv_class: ClassId, after: ClassId, name: Symbol) -> 
 /// The shared MRO scan: the first ancestor from `skip` positions in that
 /// carries a definition of `name` itself.
 fn scan_owner(recv_class: ClassId, skip: usize, name: Symbol) -> Option<ClassId> {
-    let n = name.name();
-    let n = n.as_str();
+    let n = name.name_str();
     let overlay_live = crate::runtime_meta::is_live();
     for &anc in ancestors_of_value(recv_class).iter().skip(skip) {
         if overlay_live {
@@ -2921,11 +2940,11 @@ pub fn class_method_is_private(class: ClassId, name: Symbol) -> bool {
         // (prism's `serialize_parse` and friends), which no registry set knows
         // about. Answering here also STOPS the walk, for the same reason an
         // own definition does.
-        let n = name.name();
+        let n = name.name_str();
         if let Some(lookup) = crate::builtins::class_method_table(*anc)
-            && lookup(n.as_str()).is_some()
+            && lookup(n).is_some()
         {
-            return crate::builtins::builtin_class_method_is_private(*anc, n.as_str());
+            return crate::builtins::builtin_class_method_is_private(*anc, n);
         }
     }
     false
@@ -4624,11 +4643,10 @@ pub fn validate_class_aliases(id: ClassId) -> Result<(), Signal> {
         return Ok(());
     }
     let mut olds: Vec<Symbol> = entry.aliases.values().copied().collect();
-    olds.sort_by_key(|s| s.name());
+    olds.sort_by_key(|s| s.name_str());
     olds.dedup();
     for old in olds {
-        let n = old.name();
-        let n = n.as_str();
+        let n = old.name_str();
         if PARSE_SPECIAL_KERNEL.contains(&n) {
             continue;
         }
@@ -5000,7 +5018,7 @@ fn send_value_in_reason(
         // back re-tagged as the subclass, because CRuby allocates through the
         // receiver class. See `value_subclass::root_class_method_target`.
         {
-            let n = name.name();
+            let n = name.name_str();
             if let Some(root) = crate::builtins::value_subclass::root_class_method_target(*cid, &n)
             {
                 return crate::builtins::value_subclass::call_root_class_method(
