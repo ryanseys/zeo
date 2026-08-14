@@ -923,13 +923,15 @@ fn emit_arity_check(params: &Params, callee_frame: &TokenStream) -> TokenStream 
     };
     // The raise runs with the CALLEE's frame pushed -- CRuby attributes a
     // wrong-argument-count error to the callee's def line.
+    //
+    // One `#[cold]` call, not an inline `format!`: the message is built from
+    // two values and a constant template, and this emitter runs once per
+    // (class x visible method) over the FLATTENED ancestry, so the ~35 tokens
+    // of format machinery multiplied through every inherited row.
     quote! {
         if #cond {
             #callee_frame
-            return Err(zeo_rt::raise_error(
-                "ArgumentError",
-                format!("wrong number of arguments (given {}, expected {})", args.len(), #expected),
-            ));
+            return Err(zeo_rt::wrong_arity(args.len(), #expected));
         }
     }
 }

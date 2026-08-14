@@ -121,6 +121,7 @@ pub use dispatch::{
     send_value_dyn_cached,
     send_value_explicit_in, send_value_in, send_value_public_in, send_value_vcall_in,
     stamp_backtrace, super_defined, validate_aliases, validate_class_aliases, value_class,
+    wrong_arity,
 };
 pub use encoding::{EncodingId, StrBuf};
 pub use eval_vm::{eval_string, eval_value, eval_value_in_scope};

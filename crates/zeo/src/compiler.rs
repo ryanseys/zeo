@@ -1696,6 +1696,17 @@ impl Compiler {
             .get_or_init(|| self.hir.uses_call_tracing())
     }
 
+    /// Whether a method prologue must note its `self` for `TracePoint#self`.
+    ///
+    /// [`Compiler::traces_calls`] plus runtime `eval`, which can name
+    /// `TracePoint` in text the arena scan never sees. Over-approximating is
+    /// the safe direction: the note is one relaxed load when no hook is
+    /// armed, and omitting it where a hook IS armed would answer `#self`
+    /// wrongly.
+    pub fn notes_frame_self(&self) -> bool {
+        self.traces_calls() || self.hir.uses_runtime_eval()
+    }
+
     /// See [`Hir::uses_ractor`](crate::hir::Hir::uses_ractor).
     pub fn uses_ractor(&self) -> bool {
         *self.uses_ractor.get_or_init(|| self.hir.uses_ractor())

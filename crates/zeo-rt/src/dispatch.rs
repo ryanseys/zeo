@@ -4087,6 +4087,23 @@ pub fn raise_error(class_name: &str, msg: String) -> Signal {
     }
 }
 
+/// [`arity_error`] for a signature whose expected count is a RANGE or an
+/// open-ended minimum -- `"1..3"`, `"2+"` -- already spelled by codegen.
+///
+/// `#[cold]`, and deliberately not `#[inline]`: every trampoline and every
+/// lambda emits a call to this on its error leg, and each used to carry ~35
+/// tokens of `format!` machinery that can only run when the program is about
+/// to raise. `emit_dynamic_trampoline` runs once per (class x visible method)
+/// over the FLATTENED ancestry -- 22,623 entries behind 3,624 definitions for
+/// activemodel -- so the machinery was multiplying through inheritance.
+#[cold]
+pub fn wrong_arity(given: usize, expected: &str) -> Signal {
+    raise_error(
+        "ArgumentError",
+        format!("wrong number of arguments (given {given}, expected {expected})"),
+    )
+}
+
 /// The fixed-arity `ArgumentError` (`zeo_tramp!`'s error leg): one call in
 /// the generated program where a `format!` used to be.
 pub fn arity_error(given: usize, expected: usize) -> Signal {

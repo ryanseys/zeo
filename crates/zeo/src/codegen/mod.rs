@@ -3915,7 +3915,12 @@ fn emit_class_method_fn(
     // A class method's traced `self` is the class object itself -- the OWNER,
     // which is the class the call actually landed on. The dynamic twin
     // traces its actual receiver instead, for the same reason it exists.
-    let self_note = if dyn_self {
+    // ...and only where the program can arm a hook at all: see
+    // `Compiler::notes_frame_self`. Nothing reads the note otherwise, and it
+    // was ~20 tokens in every method of every class.
+    let self_note = if !compiler.notes_frame_self() {
+        quote! {}
+    } else if dyn_self {
         quote! {
             zeo_rt::trace_frame_self(|| zeo_rt::RubyValue::clone(&__self));
         }
@@ -4293,6 +4298,9 @@ fn emit_value_self_method_fn(
         || captures::body_contains_begin(compiler, &scope.body);
     let body_tokens = wrap_method_return(needs_return_catch, quote! { #prologue #body });
     let frame = scope_frame_guard(compiler, scope, false);
+    let self_note = compiler
+        .notes_frame_self()
+        .then(|| quote! { zeo_rt::trace_frame_self(|| __self.clone()); });
     // `allow(unused_variables)`: a reopen method that never references
     // `self` leaves `__self` unread -- unlike a real `self` receiver
     // parameter, which rustc never warns about.
@@ -4300,7 +4308,7 @@ fn emit_value_self_method_fn(
         #[allow(unused_variables)]
         pub fn #method_ident(__self: zeo_rt::RubyValue #sig_params) -> Result<zeo_rt::RubyValue, zeo_rt::Signal> {
             #frame
-            zeo_rt::trace_frame_self(|| __self.clone());
+            #self_note
             zeo_rt::check_ints()?;
             #body_tokens
         }
@@ -4417,14 +4425,20 @@ pub(crate) fn emit_instance_method_body(
     let preamble = (!frameless).then(|| {
         let frame = scope_frame_guard(compiler, scope, false);
         // The armed-only `TracePoint#self` note: boxes the receiver ONLY
-        // while a trace hook is on (one relaxed load otherwise). UFCS
-        // `Arc::clone`, never `self.clone()` -- a user method named `clone`
-        // would shadow the handle bump.
+        // while a trace hook is on (one relaxed load otherwise), and is
+        // emitted only where a hook can exist at all (`notes_frame_self`).
+        // UFCS `Arc::clone`, never `self.clone()` -- a user method named
+        // `clone` would shadow the handle bump.
+        let self_note = compiler.notes_frame_self().then(|| {
+            quote! {
+                zeo_rt::trace_frame_self(
+                    || zeo_rt::RubyValue::Object(Self::new_handle(std::sync::Arc::clone(&self))),
+                );
+            }
+        });
         quote! {
             #frame
-            zeo_rt::trace_frame_self(
-                || zeo_rt::RubyValue::Object(Self::new_handle(std::sync::Arc::clone(&self))),
-            );
+            #self_note
             zeo_rt::check_ints()?;
         }
     });
