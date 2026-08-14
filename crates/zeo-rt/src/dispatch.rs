@@ -5327,6 +5327,90 @@ pub fn send_value_cached(
     send_value_explicit_in(box_id, recv, name, args, block, site.caller_class)
 }
 
+/// One CLASS-method call site's monomorphic inline cache -- `Math.sin(x)`,
+/// `Time.now`, `File.read(p)`.
+///
+/// [`CallSite`] rules a `RubyValue::Class` receiver out before it even reads
+/// its cache, because a class value's methods resolve through an arm of their
+/// own; the note there names this exact case. So a site that only ever sees
+/// `Math` paid the full class-method lookup on every call and never filled --
+/// `bm_partial_sums` runs 2.5M iterations of three such sends.
+///
+/// The receiver class is a COMPILE-TIME constant here (the type is
+/// `TyKind::ClassObj(cid)`), so the cache needs no class key on the hot path;
+/// the emitted `cid` is compared against the receiver anyway, which costs one
+/// `u32` and makes a wrong static type a miss rather than a wrong answer.
+/// The caller class is cached alongside, so a shared body -- whose caller
+/// varies per call -- misses instead of skipping a visibility question that
+/// was answered for somebody else.
+pub struct ClassMethodSite {
+    hit: std::sync::OnceLock<(u32, ValueMethodFn, Option<&'static str>)>,
+}
+
+impl Default for ClassMethodSite {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ClassMethodSite {
+    pub const fn new() -> ClassMethodSite {
+        ClassMethodSite {
+            hit: std::sync::OnceLock::new(),
+        }
+    }
+}
+
+/// [`send_value_explicit_in`] with a class-method cache in front of it, for a
+/// receiver whose class `cid` is statically known.
+///
+/// Fills from [`Registry::flat_class_hit`] ONLY. Under `!gates_live` every
+/// probe that precedes it in [`send_value_in_reason`] -- the `class << self`
+/// undef set, a runtime `define_singleton_method`, a value singleton -- is
+/// itself gated off, so a flat hit IS the answer, and the routes that follow
+/// it (an extended module, a minted struct class, the Class/Module table) are
+/// only reached when the flat probe found nothing and so never fill a site.
+pub fn send_class_cached(
+    site: &'static ClassMethodSite,
+    cid: u32,
+    recv: &RubyValue,
+    name: Symbol,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+    caller_class: u32,
+) -> Result<RubyValue, Signal> {
+    let gates = crate::runtime_meta::gates();
+    // One gate-byte load, same as `send_value_cached`: nothing caches while
+    // anything is defined at runtime, and a poisoned (moved) program takes
+    // the slow route so the husk raise stays in one place.
+    if !crate::runtime_meta::gates_live(gates)
+        && !crate::runtime_meta::gates_moved(gates)
+        && matches!(recv, RubyValue::Class(c) if c.0 == cid)
+    {
+        if let Some((cached_caller, f, label)) = site.hit.get() {
+            if *cached_caller == caller_class {
+                note_dispatch_gated(gates, name);
+                return with_c_frame(*label, || f(recv, args, block));
+            }
+        } else {
+            // Vetted BEFORE it fills, exactly as `send_value_cached` does, so
+            // every later hit on the site is vetted too.
+            if let Some(reason) = explicit_call_barrier(recv, name, caller_class) {
+                return Err(raise_method_missing(recv, &name.to_string(), args, reason));
+            }
+            if let Some((f, label)) = REGISTRY
+                .get()
+                .and_then(|r| r.flat_class_hit(ClassId(cid), name))
+            {
+                note_dispatch_gated(gates, name);
+                let _ = site.hit.set((caller_class, f, label));
+                return with_c_frame(label, || f(recv, args, block));
+            }
+        }
+    }
+    send_value_explicit_in(0, recv, name, args, block, caller_class)
+}
+
 /// [`send_value_in`] behind ruby's explicit-receiver barrier. The uncached
 /// entry point, and the one every non-cacheable route funnels into.
 pub fn send_value_explicit_in(

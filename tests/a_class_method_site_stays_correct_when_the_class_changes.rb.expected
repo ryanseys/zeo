@@ -1,0 +1,15 @@
+9 9 9 
+NoMethodError
+[1, 1]
+[2, 2]
+["hi", "hi"]
+[:anything, [1, 2]]
+[:anything, [1, 2]]
+[4, 4]
+[5.0, 5.0]
+["x", "x"]
+[:x, :y]
+[1, 2]
+[3, 4]
+["base", "base"]
+ab ab 

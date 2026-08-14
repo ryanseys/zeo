@@ -4086,6 +4086,32 @@ fn dispatch(
         // resolving the same class to the same method on every call. Per-site
         // inline cache; see `zeo_rt::CallSite`.
         let caller = visibility::caller_class(cx, recv_id, bypass_visibility);
+        // A statically-known CLASS receiver -- `Math.sin(x)`, `Time.now`.
+        // `send_value_cached` rules these out before it reads its cache (a
+        // class value's methods resolve through an arm of their own), so this
+        // shape never filled a site and paid the full class-method lookup on
+        // every call. `bm_partial_sums` is 7.5M such sends. The class id is
+        // the compile-time constant the cache is keyed by, and a
+        // function-local static keeps the tokens identical across a shared
+        // body's members, so this needs no pooled site.
+        if let TyKind::ClassObj(cid) = infer(cx, recv_id) {
+            let cid = cid.0;
+            let (bind, arg) = (caller.bind(), caller.bound());
+            let class_call = quote! {
+                {
+                    #bind
+                    static __CMS: zeo_rt::ClassMethodSite = zeo_rt::ClassMethodSite::new();
+                    zeo_rt::send_class_cached(&__CMS, #cid,
+                        &(#recv_expr),
+                        #name_expr,
+                        &[#(#arg_exprs,)* #(#kw_hash,)*],
+                        #block_value,
+                        #arg,
+                    )
+                }
+            };
+            return wrap_dynamic_result(block.is_some() || block_arg.is_some(), class_call);
+        }
         let dyn_call = match caller {
             visibility::Caller::Static(c) if !cx.shared_body => {
                 let site = crate::codegen::pooled_call_site(c);
