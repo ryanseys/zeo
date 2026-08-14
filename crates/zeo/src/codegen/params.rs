@@ -1661,8 +1661,7 @@ pub fn emit_proc_param_bindings(
                 let __extra = __n.saturating_sub(__min);
             }
         });
-        let opt_bound =
-            opt_bound_live.then(|| quote! { let __opt_bound = __extra.min(#nopt); });
+        let opt_bound = opt_bound_live.then(|| quote! { let __opt_bound = __extra.min(#nopt); });
         let rest_count = rest_count_live.then(|| {
             quote! { let __rest_count = if #has_rest { __extra.saturating_sub(__opt_bound) } else { 0 }; }
         });

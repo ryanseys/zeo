@@ -255,32 +255,58 @@ pub fn is_spliced_block_body(
         || compiler.inline_iter_sites.contains_key(&block)
 }
 
-/// The one native counted-loop splice behind `n.times { }`,
-/// `n.upto/downto/step(..) { }` and `(a..b).each { }`: iterate `__i` from
-/// `start`, advancing by `step` (an `i64` expression; the add is
-/// overflow-CHECKED, so a walk that would leave `i64` just stops -- exactly
-/// where CRuby's next value exceeds every `i64` limit) until `done` (a bool
-/// expression over `__i`), binding the block's first required param as a
-/// fresh `Int` each iteration, and evaluate to `result` (times/upto/...: the
-/// receiver Int; range each: the receiver range). The body is spliced into
-/// this Rust scope -- no closure or `Proc` object is ever allocated --
-/// sharing `codegen::loops`' redo-wrapping so `break`/`next`/`redo` work
-/// exactly as in `while`/`until`/`for`.
-#[allow(clippy::too_many_arguments)]
-fn emit_counted_block_splice(
+/// How one spliced iteration binds one of the block's required params: the
+/// param's index, the value expression, and the type inference should
+/// attribute to it (`None` leaves it untyped). An index the block does not
+/// declare binds nothing.
+type SpliceBind = (usize, TokenStream, Option<TyKind>);
+
+/// Everything that distinguishes one native iterator splice from another.
+///
+/// `emit_iter_splice` owns the rest -- the labels, the nested-capture cell
+/// wrapping, the own-param shadow rule, the block-local declarations, the
+/// implicit-local resets and the redo wrapping. Each of those is a rule about
+/// what a Ruby BLOCK means, not about which method is being fused, so they
+/// belong to the skeleton; the three hand-written splices this replaced each
+/// carried a copy, which is how `next_yields_value` and the shadow retain came
+/// to be spelled three times.
+struct SpliceSpec {
+    /// Runs once, before the loop.
+    prologue: TokenStream,
+    /// Top of each iteration: reach this element, or `break` with the result.
+    advance: TokenStream,
+    /// Which of the block's params this kind binds, and to what.
+    binds: Vec<SpliceBind>,
+    /// Between the bindings and the body: the index step, where there is one.
+    step: TokenStream,
+    /// `None` discards the body's value (`each`); `Some` runs the body in
+    /// VALUE mode and consumes `__iter_y`. That is the same question
+    /// `next_yields_value` asks, so the two can never disagree.
+    consume: Option<TokenStream>,
+}
+
+/// The one native block splice: run `spec`'s loop with the block's body
+/// spliced into this Rust scope -- no closure and no `Proc` object is ever
+/// allocated -- sharing `codegen::loops`' redo-wrapping so `break`/`next`/
+/// `redo` work exactly as in `while`/`until`/`for`.
+///
+/// `build` sees the block's params (the Hash tuple rule needs the count) and
+/// the outer label (its `break`s carry the result). It must not emit any
+/// expression of its own: the labels are already allocated, so a nested
+/// `emit_expr` here would number its labels after this loop's instead of
+/// before. Every caller evaluates its arguments before calling in.
+fn emit_iter_splice(
     cx: &Ctx,
     block_id: NodeId,
-    start: TokenStream,
-    done: TokenStream,
-    step: TokenStream,
     label_stem: &str,
-    result: TokenStream,
+    build: impl FnOnce(&crate::hir::Params, &syn::Lifetime) -> SpliceSpec,
 ) -> TokenStream {
     let HirNode::Block { params, body } = &cx.compiler.hir[block_id] else {
         panic!("the inline splice's argument must be a block");
     };
     let outer = super::loops::fresh_label(cx, label_stem);
     let redo = super::loops::fresh_label(cx, &format!("{label_stem}_body"));
+    let spec = build(params, &outer);
     // This inlined block's OWN param/block-locals that a NESTED
     // escaping block captures (e.g.
     // `arr.each { 3.times { |i| store << ->{ i } } }`). Since the
@@ -301,6 +327,7 @@ fn emit_counted_block_splice(
     let splice_binding = inline_block_binding_names(cx, params, &mut nested_captured);
     let mut loop_cx = cx.in_loop(redo.clone(), outer.clone());
     loop_cx.binding_names = splice_binding;
+    loop_cx.next_yields_value = spec.consume.is_some();
     // This block's OWN param/block-local names shadow a same-named OUTER
     // captured local (`rescue => e` cell-hoisted in the enclosing scope,
     // then `arr.each { |e| ... }` spliced here): the spliced binding is a
@@ -324,41 +351,51 @@ fn emit_counted_block_splice(
             .to_mut()
             .extend(nested_captured.iter().cloned());
     }
-    // The counter param IS an `Int` by construction (bound as
-    // `RubyValue::Int(__i)` below) -- tell inference so body reads
-    // take the typed fast paths: an untyped index in `a[i] = ...`
-    // forced 32M dynamic sends in bm_loops_times (~100x slower than
-    // C). A cell-wrapped (nested-captured) param stays untyped, its
-    // reads route through the Arc<Mutex> cell; and either way any
-    // stale OUTER type under the same name must not leak in. Same
-    // for block-locals, which rebind as plain `RubyValue` nil.
-    if let Some(p) = params.required.first() {
-        if nested_captured.contains(p) {
-            loop_cx.local_types.to_mut().remove(p);
-        } else {
-            loop_cx
-                .local_types
-                .to_mut()
-                .insert(p.clone(), crate::types::TyKind::Int);
+    // Every name this block rebinds drops any stale OUTER type under the same
+    // name -- a param the splice leaves nil included, since a body read must
+    // not take the enclosing local's typed fast path. Then the spec's typed
+    // binds put back what the splice PROVES: a counted loop's index and
+    // `each_with_index`'s index are `Int` by construction, and an untyped
+    // index in `a[i] = ...` cost bm_loops_times 32M dynamic sends (~100x
+    // slower than C). A cell-wrapped (nested-captured) param stays untyped --
+    // its reads route through the `Arc<Mutex>` cell.
+    for name in params.required.iter().chain(&params.block_locals) {
+        if loop_cx.local_types.contains_key(name) {
+            loop_cx.local_types.to_mut().remove(name);
         }
     }
-    for name in &params.block_locals {
-        loop_cx.local_types.to_mut().remove(name);
+    for (idx, _, ty) in &spec.binds {
+        if let Some(ty) = ty
+            && let Some(p) = params.required.get(*idx)
+            && !nested_captured.contains(p)
+        {
+            loop_cx.local_types.to_mut().insert(p.clone(), *ty);
+        }
     }
-    let bind = params.required.first().map(|p| {
-        let ident = safe_ident(p);
-        // `mut`: a block param is an ordinary reassignable local.
-        let plain = quote! { #[allow(unused_mut)] let mut #ident = zeo_rt::RubyValue::Int(__i); };
-        if nested_captured.contains(p) {
-            quote! {
-                #plain
-                let #ident: ::std::sync::Arc<zeo_rt::parking_lot::Mutex<zeo_rt::RubyValue>> =
-                    ::std::sync::Arc::new(zeo_rt::parking_lot::Mutex::new(#ident));
+    let cell_wrap = |ident: &proc_macro2::Ident| {
+        quote! {
+            let #ident: ::std::sync::Arc<zeo_rt::parking_lot::Mutex<zeo_rt::RubyValue>> =
+                ::std::sync::Arc::new(zeo_rt::parking_lot::Mutex::new(#ident));
+        }
+    };
+    let binds: TokenStream = spec
+        .binds
+        .iter()
+        .map(|(idx, value, _)| {
+            let Some(p) = params.required.get(*idx) else {
+                return quote! {};
+            };
+            let ident = safe_ident(p);
+            // `mut`: a block param is an ordinary reassignable local.
+            let plain = quote! { #[allow(unused_mut)] let mut #ident = #value; };
+            if nested_captured.contains(p) {
+                let wrap = cell_wrap(&ident);
+                quote! { #plain #wrap }
+            } else {
+                plain
             }
-        } else {
-            plain
-        }
-    });
+        })
+        .collect();
     // `3.times { |i; n| ... }` -- block-locals get a fresh `nil` per
     // iteration here, exactly as `emit_proc_param_bindings` does for
     // a real Proc. Inside the loop, not outside: the reset-every-
@@ -400,30 +437,77 @@ fn emit_counted_block_splice(
             super::hoisting::emit_local_write(&loop_cx, name, quote! { zeo_rt::RubyValue::Nil })
         });
     let implicit_resets = quote! { #[allow(unused_assignments)] { #(#implicit_resets)* } };
-    let inner = super::loops::emit_redo_wrapped_body(&loop_cx, body, &redo);
+    let inner = match &spec.consume {
+        None => super::loops::emit_redo_wrapped_body(&loop_cx, body, &redo),
+        Some(consume) => {
+            let value = super::loops::emit_redo_wrapped_body_value(&loop_cx, body, &redo);
+            quote! { let __iter_y = #value; #consume }
+        }
+    };
+    let SpliceSpec {
+        prologue,
+        advance,
+        step,
+        ..
+    } = &spec;
     quote! {
         {
+            #prologue
+            #outer: loop {
+                #advance
+                #binds
+                #(#block_locals)*
+                #implicit_resets
+                #step
+                #inner
+            }
+        }
+    }
+}
+
+/// The one native counted-loop splice behind `n.times { }`,
+/// `n.upto/downto/step(..) { }` and `(a..b).each { }`: iterate `__i` from
+/// `start`, advancing by `step` (an `i64` expression; the add is
+/// overflow-CHECKED, so a walk that would leave `i64` just stops -- exactly
+/// where CRuby's next value exceeds every `i64` limit) until `done` (a bool
+/// expression over `__i`), binding the block's first required param as a
+/// fresh `Int` each iteration, and evaluate to `result` (times/upto/...: the
+/// receiver Int; range each: the receiver range). The body is spliced into
+/// this Rust scope -- no closure or `Proc` object is ever allocated --
+/// sharing `codegen::loops`' redo-wrapping so `break`/`next`/`redo` work
+/// exactly as in `while`/`until`/`for`.
+#[allow(clippy::too_many_arguments)]
+fn emit_counted_block_splice(
+    cx: &Ctx,
+    block_id: NodeId,
+    start: TokenStream,
+    done: TokenStream,
+    step: TokenStream,
+    label_stem: &str,
+    result: TokenStream,
+) -> TokenStream {
+    emit_iter_splice(cx, block_id, label_stem, |_params, outer| SpliceSpec {
+        prologue: quote! {
             let mut __i: i64 = #start;
             // Step at the TOP so `next` (a `continue #outer`) still advances --
             // a bottom step is skipped by `next`, spinning forever. `redo`
             // continues the INNER label and never reaches here.
             let mut __first = true;
-            #outer: loop {
-                if !__first {
-                    __i = match __i.checked_add(#step) {
-                        Some(__v) => __v,
-                        None => break #outer #result,
-                    };
-                }
-                __first = false;
-                if #done { break #outer #result; }
-                #bind
-                #(#block_locals)*
-                #implicit_resets
-                #inner
+        },
+        advance: quote! {
+            if !__first {
+                __i = match __i.checked_add(#step) {
+                    Some(__v) => __v,
+                    None => break #outer #result,
+                };
             }
-        }
-    }
+            __first = false;
+            if #done { break #outer #result; }
+        },
+        binds: vec![(0, quote! { zeo_rt::RubyValue::Int(__i) }, Some(TyKind::Int))],
+        step: quote! {},
+        consume: None,
+    })
 }
 /// How an inlined Array-iterator splice CONSUMES each iteration.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -458,167 +542,59 @@ fn emit_array_iter_splice(
     mode: ArrayIterMode,
     label_stem: &str,
 ) -> TokenStream {
-    let HirNode::Block { params, body } = &cx.compiler.hir[block_id] else {
-        panic!("the inline splice's argument must be a block");
-    };
     let with_index = mode == ArrayIterMode::Each { with_index: true };
-    let outer = super::loops::fresh_label(cx, label_stem);
-    let redo = super::loops::fresh_label(cx, &format!("{label_stem}_body"));
-    let mut nested_captured: FSet<String> =
-        super::captures::collect_escaping_captures(cx.compiler, body, params, cx.self_class())
-            .locals;
-    let splice_binding = inline_block_binding_names(cx, params, &mut nested_captured);
-    let mut loop_cx = cx.in_loop(redo.clone(), outer.clone());
-    loop_cx.binding_names = splice_binding;
-    loop_cx.next_yields_value = !matches!(mode, ArrayIterMode::Each { .. });
-    // This block's OWN param/block-local names shadow a same-named OUTER
-    // captured local (`rescue => e` cell-hoisted in the enclosing scope,
-    // then `arr.each { |e| ... }` spliced here): the spliced binding is a
-    // plain per-iteration `let`, so body reads must not route through the
-    // outer cell -- `in_proc`'s exact rule. `nested_captured` re-adds any
-    // of them a nested escaping block really captures.
-    if params
-        .required
-        .iter()
-        .chain(&params.block_locals)
-        .any(|n| loop_cx.captured_locals.contains(n))
-    {
-        loop_cx
-            .captured_locals
-            .to_mut()
-            .retain(|n| !params.required.contains(n) && !params.block_locals.contains(n));
-    }
-    if !nested_captured.is_empty() {
-        loop_cx
-            .captured_locals
-            .to_mut()
-            .extend(nested_captured.iter().cloned());
-    }
-    // The element param is untyped (drop any stale OUTER type under the same
-    // name); the index param is `Int` by construction, unless cell-wrapped.
-    if let Some(p) = params.required.first() {
-        loop_cx.local_types.to_mut().remove(p);
-    }
-    if with_index && let Some(p) = params.required.get(1) {
-        if nested_captured.contains(p) {
-            loop_cx.local_types.to_mut().remove(p);
-        } else {
-            loop_cx
-                .local_types
-                .to_mut()
-                .insert(p.clone(), crate::types::TyKind::Int);
-        }
-    }
-    for name in &params.block_locals {
-        loop_cx.local_types.to_mut().remove(name);
-    }
-    let cell_wrap = |ident: &proc_macro2::Ident| {
-        quote! {
-            let #ident: ::std::sync::Arc<zeo_rt::parking_lot::Mutex<zeo_rt::RubyValue>> =
-                ::std::sync::Arc::new(zeo_rt::parking_lot::Mutex::new(#ident));
-        }
-    };
-    let bind_elem = params.required.first().map(|p| {
-        let ident = safe_ident(p);
-        let plain = quote! { #[allow(unused_mut)] let mut #ident = __iter_e; };
-        if nested_captured.contains(p) {
-            let wrap = cell_wrap(&ident);
-            quote! { #plain #wrap }
-        } else {
-            plain
-        }
-    });
-    let bind_idx = (with_index && params.required.len() >= 2).then(|| {
-        let ident = safe_ident(&params.required[1]);
-        let plain =
-            quote! { #[allow(unused_mut)] let mut #ident = zeo_rt::RubyValue::Int(__iter_i as i64); };
-        if nested_captured.contains(&params.required[1]) {
-            let wrap = cell_wrap(&ident);
-            quote! { #plain #wrap }
-        } else {
-            plain
-        }
-    });
-    let block_locals = params.block_locals.iter().map(|name| {
-        let ident = safe_ident(name);
-        if nested_captured.contains(name) {
-            quote! {
-                let #ident: ::std::sync::Arc<zeo_rt::parking_lot::Mutex<zeo_rt::RubyValue>> =
-                    ::std::sync::Arc::new(zeo_rt::parking_lot::Mutex::new(zeo_rt::RubyValue::Nil));
+    emit_iter_splice(cx, block_id, label_stem, |_params, outer| {
+        // The per-mode pieces: accumulator setup, the exhaustion value, an
+        // element keep-alive for the filter modes (the RESULT collects the
+        // pristine element even if the body reassigns its param), and the
+        // body-value consumer. `Each` discards the body value and answers the
+        // receiver; everything else runs the body in VALUE mode.
+        let setup = match mode {
+            ArrayIterMode::Each { .. } => quote! {},
+            ArrayIterMode::Map | ArrayIterMode::Filter { .. } => {
+                // Sized to the source: exact for map, an upper bound for the
+                // filter modes -- either way the growth reallocations (and their
+                // per-element RubyValue moves) disappear.
+                quote! {
+                    let mut __iter_out: Vec<zeo_rt::RubyValue> =
+                        Vec::with_capacity(__iter_arr.lock().len());
+                }
             }
-        } else {
-            quote! {
-                #[allow(unused_variables, unused_mut)]
-                let mut #ident: zeo_rt::RubyValue = zeo_rt::RubyValue::Nil;
+            ArrayIterMode::Sum => {
+                quote! { let mut __iter_acc = zeo_rt::SumAcc::new(zeo_rt::RubyValue::Int(0)); }
             }
-        }
-    });
-    let implicit_resets = params
-        .implicit_block_locals
-        .iter()
-        .filter(|name| !nested_captured.contains(*name))
-        .map(|name| {
-            // Storage-aware: see the counted splice's identical note.
-            super::hoisting::emit_local_write(&loop_cx, name, quote! { zeo_rt::RubyValue::Nil })
-        });
-    let implicit_resets = quote! { #[allow(unused_assignments)] { #(#implicit_resets)* } };
-    // The per-mode pieces: accumulator setup, the exhaustion value, an
-    // element keep-alive for the filter modes (the RESULT collects the
-    // pristine element even if the body reassigns its param), and the
-    // body-value consumer. `Each` discards the body value and answers the
-    // receiver; everything else runs the body in VALUE mode.
-    let setup = match mode {
-        ArrayIterMode::Each { .. } => quote! {},
-        ArrayIterMode::Map | ArrayIterMode::Filter { .. } => {
-            // Sized to the source: exact for map, an upper bound for the
-            // filter modes -- either way the growth reallocations (and their
-            // per-element RubyValue moves) disappear.
-            quote! {
-                let mut __iter_out: Vec<zeo_rt::RubyValue> =
-                    Vec::with_capacity(__iter_arr.lock().len());
+        };
+        let result = match mode {
+            ArrayIterMode::Each { .. } => quote! { zeo_rt::RubyValue::Array(__iter_arr.clone()) },
+            ArrayIterMode::Map | ArrayIterMode::Filter { .. } => {
+                quote! { zeo_rt::RubyValue::Array(zeo_rt::array_new(__iter_out)) }
             }
+            ArrayIterMode::Sum => quote! { __iter_acc.finish() },
+        };
+        let keep_orig = matches!(mode, ArrayIterMode::Filter { .. })
+            .then(|| quote! { let __iter_orig = __iter_e.clone(); });
+        let consume = match mode {
+            ArrayIterMode::Each { .. } => None,
+            ArrayIterMode::Map => Some(quote! { __iter_out.push(__iter_y); }),
+            ArrayIterMode::Filter { keep } => {
+                Some(quote! { if __iter_y.truthy() == #keep { __iter_out.push(__iter_orig); } })
+            }
+            ArrayIterMode::Sum => Some(quote! { __iter_acc = __iter_acc.add(__iter_y)?; }),
+        };
+        let mut binds: Vec<SpliceBind> = vec![(0, quote! { __iter_e }, None)];
+        if with_index {
+            binds.push((
+                1,
+                quote! { zeo_rt::RubyValue::Int(__iter_i as i64) },
+                Some(TyKind::Int),
+            ));
         }
-        ArrayIterMode::Sum => {
-            quote! { let mut __iter_acc = zeo_rt::SumAcc::new(zeo_rt::RubyValue::Int(0)); }
-        }
-    };
-    let result = match mode {
-        ArrayIterMode::Each { .. } => quote! { zeo_rt::RubyValue::Array(__iter_arr.clone()) },
-        ArrayIterMode::Map | ArrayIterMode::Filter { .. } => {
-            quote! { zeo_rt::RubyValue::Array(zeo_rt::array_new(__iter_out)) }
-        }
-        ArrayIterMode::Sum => quote! { __iter_acc.finish() },
-    };
-    let keep_orig = matches!(mode, ArrayIterMode::Filter { .. })
-        .then(|| quote! { let __iter_orig = __iter_e.clone(); });
-    let (inner, consume) = match mode {
-        ArrayIterMode::Each { .. } => (
-            super::loops::emit_redo_wrapped_body(&loop_cx, body, &redo),
-            quote! {},
-        ),
-        ArrayIterMode::Map => (
-            super::loops::emit_redo_wrapped_body_value(&loop_cx, body, &redo),
-            quote! { __iter_out.push(__iter_y); },
-        ),
-        ArrayIterMode::Filter { keep } => (
-            super::loops::emit_redo_wrapped_body_value(&loop_cx, body, &redo),
-            quote! { if __iter_y.truthy() == #keep { __iter_out.push(__iter_orig); } },
-        ),
-        ArrayIterMode::Sum => (
-            super::loops::emit_redo_wrapped_body_value(&loop_cx, body, &redo),
-            quote! { __iter_acc = __iter_acc.add(__iter_y)?; },
-        ),
-    };
-    let inner = if matches!(mode, ArrayIterMode::Each { .. }) {
-        inner
-    } else {
-        quote! { let __iter_y = #inner; #consume }
-    };
-    quote! {
-        {
-            let mut __iter_i: usize = 0;
-            #setup
-            #outer: loop {
+        SpliceSpec {
+            prologue: quote! {
+                let mut __iter_i: usize = 0;
+                #setup
+            },
+            advance: quote! {
                 #[allow(unused_variables)]
                 let __iter_e = {
                     let __g = __iter_arr.lock();
@@ -628,18 +604,15 @@ fn emit_array_iter_splice(
                     }
                 };
                 #keep_orig
-                #bind_elem
-                #bind_idx
-                #(#block_locals)*
-                #implicit_resets
-                // Advance BEFORE the body so `next` (in value mode: the
-                // inner break) still steps; `redo` re-enters the inner
-                // label with the same bound element.
-                __iter_i += 1;
-                #inner
-            }
+            },
+            binds,
+            // Advance BEFORE the body so `next` (in value mode: the inner
+            // break) still steps; `redo` re-enters the inner label with the
+            // same bound element.
+            step: quote! { __iter_i += 1; },
+            consume,
         }
-    }
+    })
 }
 
 /// The Hash twin: walk the same pairs SNAPSHOT the runtime `Hash#each`
@@ -651,123 +624,44 @@ fn emit_array_iter_splice(
 /// block-raised backtrace. Expects the receiver bound as `__iter_h` by the
 /// caller's match arm.
 fn emit_hash_each_splice(cx: &Ctx, block_id: NodeId, label_stem: &str) -> TokenStream {
-    let HirNode::Block { params, body } = &cx.compiler.hir[block_id] else {
-        panic!("the inline splice's argument must be a block");
-    };
-    let outer = super::loops::fresh_label(cx, label_stem);
-    let redo = super::loops::fresh_label(cx, &format!("{label_stem}_body"));
-    let mut nested_captured: FSet<String> =
-        super::captures::collect_escaping_captures(cx.compiler, body, params, cx.self_class())
-            .locals;
-    let splice_binding = inline_block_binding_names(cx, params, &mut nested_captured);
-    let mut loop_cx = cx.in_loop(redo.clone(), outer.clone());
-    loop_cx.binding_names = splice_binding;
-    // This block's OWN param/block-local names shadow a same-named OUTER
-    // captured local (`rescue => e` cell-hoisted in the enclosing scope,
-    // then `arr.each { |e| ... }` spliced here): the spliced binding is a
-    // plain per-iteration `let`, so body reads must not route through the
-    // outer cell -- `in_proc`'s exact rule. `nested_captured` re-adds any
-    // of them a nested escaping block really captures.
-    if params
-        .required
-        .iter()
-        .chain(&params.block_locals)
-        .any(|n| loop_cx.captured_locals.contains(n))
-    {
-        loop_cx
-            .captured_locals
-            .to_mut()
-            .retain(|n| !params.required.contains(n) && !params.block_locals.contains(n));
-    }
-    if !nested_captured.is_empty() {
-        loop_cx
-            .captured_locals
-            .to_mut()
-            .extend(nested_captured.iter().cloned());
-    }
-    for p in &params.required {
-        loop_cx.local_types.to_mut().remove(p);
-    }
-    for name in &params.block_locals {
-        loop_cx.local_types.to_mut().remove(name);
-    }
-    let cell_wrap = |ident: &proc_macro2::Ident| {
-        quote! {
-            let #ident: ::std::sync::Arc<zeo_rt::parking_lot::Mutex<zeo_rt::RubyValue>> =
-                ::std::sync::Arc::new(zeo_rt::parking_lot::Mutex::new(#ident));
-        }
-    };
-    let bind_one = |p: &String, value: TokenStream| {
-        let ident = safe_ident(p);
-        let plain = quote! { #[allow(unused_mut)] let mut #ident = #value; };
-        if nested_captured.contains(p) {
-            let wrap = cell_wrap(&ident);
-            quote! { #plain #wrap }
-        } else {
-            plain
-        }
-    };
-    let binds = match params.required.len() {
-        0 => quote! {},
-        // One param takes the pair WHOLE (the runtime's `yield_tuple` rule).
-        1 => bind_one(
-            &params.required[0],
-            quote! {
-                zeo_rt::RubyValue::Array(zeo_rt::array_new(vec![__iter_k, __iter_v]))
+    emit_iter_splice(cx, block_id, label_stem, |params, outer| {
+        let result = quote! { zeo_rt::RubyValue::Hash(__iter_h.clone()) };
+        let binds: Vec<SpliceBind> = match params.required.len() {
+            0 => vec![],
+            // One param takes the pair WHOLE (the runtime's `yield_tuple` rule).
+            1 => vec![(
+                0,
+                quote! {
+                    zeo_rt::RubyValue::Array(zeo_rt::array_new(vec![__iter_k, __iter_v]))
+                },
+                None,
+            )],
+            _ => vec![
+                (0, quote! { __iter_k }, None),
+                (1, quote! { __iter_v }, None),
+            ],
+        };
+        SpliceSpec {
+            prologue: quote! {
+                let __iter_frame = zeo_rt::synthetic_c_frame("Hash#each");
+                // The inlined loop marks the hash under iteration exactly as the
+                // runtime row does, so inserting a new key raises mid-`each`.
+                let __iter_guard = zeo_rt::hash_iter_guard(&__iter_h);
+                let __iter_pairs = zeo_rt::hash_pairs_snapshot(&__iter_h);
+                let mut __iter_i: usize = 0;
             },
-        ),
-        _ => {
-            let k = bind_one(&params.required[0], quote! { __iter_k });
-            let v = bind_one(&params.required[1], quote! { __iter_v });
-            quote! { #k #v }
-        }
-    };
-    let block_locals = params.block_locals.iter().map(|name| {
-        let ident = safe_ident(name);
-        if nested_captured.contains(name) {
-            quote! {
-                let #ident: ::std::sync::Arc<zeo_rt::parking_lot::Mutex<zeo_rt::RubyValue>> =
-                    ::std::sync::Arc::new(zeo_rt::parking_lot::Mutex::new(zeo_rt::RubyValue::Nil));
-            }
-        } else {
-            quote! {
-                #[allow(unused_variables, unused_mut)]
-                let mut #ident: zeo_rt::RubyValue = zeo_rt::RubyValue::Nil;
-            }
-        }
-    });
-    let implicit_resets = params
-        .implicit_block_locals
-        .iter()
-        .filter(|name| !nested_captured.contains(*name))
-        .map(|name| {
-            // Storage-aware: see the counted splice's identical note.
-            super::hoisting::emit_local_write(&loop_cx, name, quote! { zeo_rt::RubyValue::Nil })
-        });
-    let implicit_resets = quote! { #[allow(unused_assignments)] { #(#implicit_resets)* } };
-    let inner = super::loops::emit_redo_wrapped_body(&loop_cx, body, &redo);
-    quote! {
-        {
-            let __iter_frame = zeo_rt::synthetic_c_frame("Hash#each");
-            // The inlined loop marks the hash under iteration exactly as the
-            // runtime row does, so inserting a new key raises mid-`each`.
-            let __iter_guard = zeo_rt::hash_iter_guard(&__iter_h);
-            let __iter_pairs = zeo_rt::hash_pairs_snapshot(&__iter_h);
-            let mut __iter_i: usize = 0;
-            #outer: loop {
+            advance: quote! {
                 if __iter_i >= __iter_pairs.len() {
-                    break #outer zeo_rt::RubyValue::Hash(__iter_h.clone());
+                    break #outer #result;
                 }
                 #[allow(unused_variables)]
                 let (__iter_k, __iter_v) = __iter_pairs[__iter_i].clone();
-                #binds
-                #(#block_locals)*
-                #implicit_resets
-                __iter_i += 1;
-                #inner
-            }
+            },
+            binds,
+            step: quote! { __iter_i += 1; },
+            consume: None,
         }
-    }
+    })
 }
 
 /// A typed-receiver iterator site (`Compiler::inline_iter_sites`): emit the
