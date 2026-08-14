@@ -2378,7 +2378,15 @@ fn lower_runtime_class_body(
     // spelling -- a self-send the runtime class receiver serves -- so the class
     // builds at runtime. See `transform_runtime_class_body`.
     let body = transform_runtime_class_body(hir, body)?;
-    rescope_body_constants(hir, cref, &body)?;
+    // The own-name rewrite applies only where the bare name really does name
+    // THIS class: a static constant path (`class Token` in `module JMESPath`,
+    // or a reopen). A runtime-SCOPED definition passes `cref: None`, and there
+    // the leaf names nothing reachable -- `class self::Task` writes onto
+    // whichever object `self` is, so a bare `Task` in its body is the
+    // TOP-LEVEL `Task`, which is the module the body then includes. Rewriting
+    // that to `self` turned `include Task` into `include self`.
+    let own = cref.is_some().then_some(name);
+    rescope_body_constants(hir, cref, own, &body)?;
     Ok(hir.push(HirNode::Block {
         params: Box::default(),
         body,
@@ -2419,7 +2427,12 @@ fn lower_runtime_class_body(
 /// body-defined constant read from inside a `def` is refused there rather than
 /// resolved against the wrong scope -- the body position still works, since
 /// `self` is the class being built.
-fn rescope_body_constants(hir: &mut Hir, cref: Option<&str>, body: &[NodeId]) -> PResult<()> {
+fn rescope_body_constants(
+    hir: &mut Hir,
+    cref: Option<&str>,
+    own: Option<&str>,
+    body: &[NodeId],
+) -> PResult<()> {
     // What the body defines, as `transform_runtime_class_body` left it: a
     // `NAME = value` and a nested `class Inner` both become a `DynConstWrite`
     // against the body's `self`. A hand-written `self::NAME = v` is the same
@@ -2450,7 +2463,7 @@ fn rescope_body_constants(hir: &mut Hir, cref: Option<&str>, body: &[NodeId]) ->
         .iter()
         .filter_map(|&(id, _)| owns(hir, id))
         .collect();
-    if defined.is_empty() {
+    if defined.is_empty() && own.is_none() {
         return Ok(());
     }
     for (id, in_def) in reachable {
@@ -2462,27 +2475,47 @@ fn rescope_body_constants(hir: &mut Hir, cref: Option<&str>, body: &[NodeId]) ->
             HirNode::ClassRef(n) | HirNode::New { class_name: n, .. } => n.clone(),
             _ => continue,
         };
-        if !defined.contains(&name) {
+        // The class's OWN name is the same problem one step out. Ruby binds the
+        // constant BEFORE running the body, so `class Token < Struct.new(...)`
+        // may say `Token.new` in its own body -- jmespath's does, and every
+        // `Struct.new` subclass that names itself. zeo assigns it only when the
+        // whole `Name = Class.new(...) { body }` expression finishes, so the
+        // read raised `uninitialized constant`. In the body `self` IS the class,
+        // which is exact; inside a `def` the constant is bound by the time the
+        // method can run, so that read is left to the ordinary lexical path.
+        let is_own = own.is_some_and(|o| o == name);
+        if is_own && in_def {
             continue;
         }
-        let scope = if in_def {
-            let Some(cref) = cref else {
-                return Err(format!(
-                    "`{name}` is defined in a class/module body whose NAMESPACE is a runtime \
-                     value, and read from a `def` inside it -- no constant path names the \
-                     class, so the read has no scope to resolve against (zeo limitation). \
-                     Move the constant outside the definition, or name the namespace."
-                )
-                .into());
-            };
-            hir.push(HirNode::ClassRef(cref.to_string()))
+        if !is_own && !defined.contains(&name) {
+            continue;
+        }
+        // The own name IS `self` here, not a constant living ON self: the body
+        // of `class T < ...` reads `T` as the class being built. A body-defined
+        // constant is the other shape -- it really is stored on the class, so
+        // it stays a scoped read.
+        let read = if is_own {
+            HirNode::SelfRef
         } else {
-            hir.push(HirNode::SelfRef)
-        };
-        let read = HirNode::DynConstRead {
-            scope,
-            name,
-            lenient: false,
+            let scope = if in_def {
+                let Some(cref) = cref else {
+                    return Err(format!(
+                        "`{name}` is defined in a class/module body whose NAMESPACE is a runtime \
+                         value, and read from a `def` inside it -- no constant path names the \
+                         class, so the read has no scope to resolve against (zeo limitation). \
+                         Move the constant outside the definition, or name the namespace."
+                    )
+                    .into());
+                };
+                hir.push(HirNode::ClassRef(cref.to_string()))
+            } else {
+                hir.push(HirNode::SelfRef)
+            };
+            HirNode::DynConstRead {
+                scope,
+                name,
+                lenient: false,
+            }
         };
         // Taken out of the arena rather than cloned: a `New`'s arguments move
         // straight into the `Call` that replaces it, and `KwArg` is not `Clone`.

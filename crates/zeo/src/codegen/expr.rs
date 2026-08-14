@@ -2847,6 +2847,30 @@ pub(super) fn emit_const_read(cx: &Ctx, scope: Option<&str>, name: &str) -> Toke
         None => quote! { zeo_rt::const_get(#owner, #name) },
     };
     if scope.is_none() {
+        // Ruby searches every entry of `Module.nesting` OUTWARD before it
+        // reaches the top, and this chain used to jump straight from the
+        // innermost cref to it. Any bare name the compile-time owner map cannot
+        // place -- which includes every constant on a class built at runtime --
+        // was then looked for in two scopes out of the three or more Ruby
+        // searches. jmespath reads `Token::BINDING_POWER` inside `class Parser`
+        // in `module JMESPath`, where `Token` is a `Struct.new` subclass and so
+        // has no compile-time owner: the lookup asked `JMESPath::Parser` and
+        // `Object`, skipped `JMESPath` itself, and raised.
+        //
+        // `cref_parent`, not `lexical_parent`: the qualified form `class
+        // Store::Item` does NOT see `Store`'s constants lexically, and only the
+        // cref chain draws that distinction.
+        let mut at = cx
+            .compiler
+            .class(crate::compiler::ClassId(owner))
+            .cref_parent;
+        while let Some(cid) = at {
+            if cid.0 != owner && cid.0 != top {
+                let enclosing = cid.0;
+                lookup = quote! { #lookup.or_else(|| zeo_rt::const_get(#enclosing, #name)) };
+            }
+            at = cx.compiler.class(cid).cref_parent;
+        }
         if owner != top {
             lookup = quote! { #lookup.or_else(|| zeo_rt::const_get(#top, #name)) };
         }
