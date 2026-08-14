@@ -823,6 +823,55 @@ fn cruby_regex_error(source: &str, raw: &str) -> String {
     format!("{reason}: /{source}/")
 }
 
+/// One non-interpolated regexp LITERAL's compiled form, built on first
+/// evaluation and kept.
+///
+/// Ruby compiles a static literal once per SITE: `2.times { p /a/.object_id }`
+/// prints one id twice, while two textually identical literals written in two
+/// places are two objects (`/a/.equal?(/a/)` is false). A `static` beside the
+/// site is exactly that scope -- which is why this is a per-site cell and not
+/// a content-keyed pool like `__LITS`. Frozen strings ARE deduped by content;
+/// regexps are not.
+///
+/// The cost it removes is the larger half: every evaluation used to run
+/// `validate_posix_classes` and a full engine build, inside a hot loop
+/// included.
+///
+/// A pattern that fails to compile is not cached -- it raises, and the raise
+/// is per evaluation, which is what the literal's documented parse-time
+/// approximation already promised.
+pub struct RegexpSite(std::sync::OnceLock<RRegexp>);
+
+impl Default for RegexpSite {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl RegexpSite {
+    pub const fn new() -> Self {
+        RegexpSite(std::sync::OnceLock::new())
+    }
+
+    pub fn get(
+        &self,
+        source: &str,
+        ignore_case: bool,
+        extended: bool,
+        multiline: bool,
+        encoding: zeo_abi::RegexpEncoding,
+    ) -> Result<RubyValue, String> {
+        if let Some(re) = self.0.get() {
+            return Ok(RubyValue::Regexp(re.clone()));
+        }
+        let re = regexp_new_enc(source, ignore_case, extended, multiline, encoding)?;
+        // Frozen at birth, real Ruby since 3.0 -- and set BEFORE publishing,
+        // so no reader can observe the literal unfrozen.
+        re.set_frozen();
+        Ok(RubyValue::Regexp(self.0.get_or_init(|| re).clone()))
+    }
+}
+
 pub fn regexp_new(
     source: &str,
     ignore_case: bool,

@@ -322,21 +322,67 @@ fn string_lit_bytes_piece(cx: &Ctx, part: &StrPart) -> TokenStream {
     }
 }
 
-/// `/pattern/flags` / `%r{pattern}flags`, possibly interpolated -- the
-/// pattern text is assembled exactly like `emit_string_lit`'s general
-/// (interpolated) case, then compiled at the construction site via
-/// `zeo_rt::regexp_new`. A compile failure raises a real, catchable
-/// `RegexpError` -- checked EVERY time this literal is reached, even for a
-/// non-interpolated pattern that could in principle be validated once at
-/// `zeo` compile time instead (a documented, narrower-timing
-/// approximation of real Ruby's own parse-time `SyntaxError` for a static
-/// pattern -- see `hir::HirNode::RegexpLit`'s docs; not silent wrongness,
-/// since an invalid pattern is still caught, just one step later than real
-/// Ruby catches it).
+/// `/pattern/flags` / `%r{pattern}flags`, possibly interpolated.
+///
+/// A NON-interpolated pattern compiles once per site, into a `zeo_rt::
+/// RegexpSite` static beside it -- which is both the cheaper shape (the
+/// engine build used to run on every evaluation, hot loops included) and the
+/// truer one: Ruby caches a static literal per site, so
+/// `2.times { p /a/.object_id }` prints one id twice. It stays per SITE
+/// rather than pooled by content because two identical literals written in
+/// two places are two objects (`/a/.equal?(/a/)` is false) -- the opposite of
+/// the frozen-string rule.
+///
+/// An INTERPOLATED pattern is assembled exactly like `emit_string_lit`'s
+/// general case and rebuilt on every evaluation, which is again what Ruby
+/// does (`/#{x}/.equal?(/#{x}/)` is false; only the `/o` flag would cache,
+/// and lowering does not fold it here).
+///
+/// A compile failure raises a real, catchable `RegexpError` -- a documented,
+/// narrower-timing approximation of real Ruby's own parse-time `SyntaxError`
+/// for a static pattern (see `hir::HirNode::RegexpLit`'s docs; not silent
+/// wrongness, since an invalid pattern is still caught, just one step later
+/// than real Ruby catches it). A failed pattern is not cached, so the raise
+/// still happens every time the literal is reached.
 pub fn emit_regexp_lit(cx: &Ctx, parts: &[StrPart], flags: RegexpFlags) -> TokenStream {
-    let pattern_expr = if let [StrPart::Lit(s)] = parts {
-        quote! { #s.to_string() }
-    } else {
+    let ignore_case = flags.ignore_case;
+    let extended = flags.extended;
+    let multiline = flags.multiline;
+    // The `/n`/`/e`/`/s`/`/u` letter, if any. It changes nothing about
+    // matching (lowering only lets the flag through where the pattern is
+    // ASCII-only) -- it is what the regexp REPORTS: `#options`, `#encoding`,
+    // `#fixed_encoding?`.
+    let encoding = match flags.encoding {
+        zeo_abi::RegexpEncoding::Source => quote! { Source },
+        zeo_abi::RegexpEncoding::None => quote! { None },
+        zeo_abi::RegexpEncoding::EucJp => quote! { EucJp },
+        zeo_abi::RegexpEncoding::Windows31j => quote! { Windows31j },
+        zeo_abi::RegexpEncoding::Utf8 => quote! { Utf8 },
+    };
+    let regexp_error = emit_boxed_new(
+        cx,
+        "RegexpError",
+        vec![quote! { zeo_rt::RubyValue::Str(zeo_rt::string_new(__err)) }],
+    );
+    if let [StrPart::Lit(s)] = parts {
+        let source = super::pooled_str_template(s);
+        return quote! {
+            {
+                static __RE: zeo_rt::RegexpSite = zeo_rt::RegexpSite::new();
+                match __RE.get(
+                    #source,
+                    #ignore_case,
+                    #extended,
+                    #multiline,
+                    zeo_rt::RegexpEncoding::#encoding,
+                ) {
+                    Ok(__re) => __re,
+                    Err(__err) => return Err(zeo_rt::Signal::Raise(#regexp_error)),
+                }
+            }
+        };
+    }
+    let pattern_expr = {
         let pieces = parts.iter().map(|p| match p {
             StrPart::Lit(s) => quote! { __pat.push_str(#s); },
             // A regexp source is UTF-8; a stray raw-byte segment is rendered
@@ -362,25 +408,6 @@ pub fn emit_regexp_lit(cx: &Ctx, parts: &[StrPart], flags: RegexpFlags) -> Token
             }
         }
     };
-    let ignore_case = flags.ignore_case;
-    let extended = flags.extended;
-    let multiline = flags.multiline;
-    // The `/n`/`/e`/`/s`/`/u` letter, if any. It changes nothing about
-    // matching (lowering only lets the flag through where the pattern is
-    // ASCII-only) -- it is what the regexp REPORTS: `#options`, `#encoding`,
-    // `#fixed_encoding?`.
-    let encoding = match flags.encoding {
-        zeo_abi::RegexpEncoding::Source => quote! { Source },
-        zeo_abi::RegexpEncoding::None => quote! { None },
-        zeo_abi::RegexpEncoding::EucJp => quote! { EucJp },
-        zeo_abi::RegexpEncoding::Windows31j => quote! { Windows31j },
-        zeo_abi::RegexpEncoding::Utf8 => quote! { Utf8 },
-    };
-    let regexp_error = emit_boxed_new(
-        cx,
-        "RegexpError",
-        vec![quote! { zeo_rt::RubyValue::Str(zeo_rt::string_new(__err)) }],
-    );
     quote! {
         match zeo_rt::regexp_new_enc(
             &(#pattern_expr),
