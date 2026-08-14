@@ -343,6 +343,55 @@ fn mark_inline_iter_sites(
 ) {
     use crate::compiler::InlineIterKind;
 
+    /// One fused iterator method, as data: the receiver type that nominates
+    /// it, the builtin class a redefinition would have to land on, every name
+    /// that reaches it (aliases are SEPARATE method entries in Ruby, so each
+    /// is listed and redefining any one suppresses the kind -- conservative,
+    /// and vanishingly rare), the argument counts it accepts, and the block
+    /// param counts it can bind.
+    ///
+    /// One table, two consumers: `scan` nominates from it and the suppression
+    /// pass below filters by it. They used to be a match and a hand-written
+    /// `Vec` of `reopened(..) || reopened(..)` unions -- two lists of the same
+    /// twelve methods, which is exactly the shape that drifts.
+    struct Fused {
+        kind: InlineIterKind,
+        ty: TyKind,
+        class: &'static str,
+        names: &'static [&'static str],
+        args: &'static [usize],
+        params: &'static [usize],
+    }
+
+    use InlineIterKind as K;
+    #[rustfmt::skip]
+    const FUSED: &[Fused] = &[
+        Fused { kind: K::TimesInt, ty: TyKind::Int, class: "Integer",
+                names: &["times"], args: &[0], params: &[0, 1] },
+        Fused { kind: K::UptoInt, ty: TyKind::Int, class: "Integer",
+                names: &["upto"], args: &[1], params: &[0, 1] },
+        Fused { kind: K::DowntoInt, ty: TyKind::Int, class: "Integer",
+                names: &["downto"], args: &[1], params: &[0, 1] },
+        Fused { kind: K::StepInt, ty: TyKind::Int, class: "Integer",
+                names: &["step"], args: &[1, 2], params: &[0, 1] },
+        Fused { kind: K::RangeEachInt, ty: TyKind::Range, class: "Range",
+                names: &["each"], args: &[0], params: &[0, 1] },
+        Fused { kind: K::ArrayEach, ty: TyKind::Array, class: "Array",
+                names: &["each"], args: &[0], params: &[0, 1] },
+        Fused { kind: K::ArrayEachWithIndex, ty: TyKind::Array, class: "Array",
+                names: &["each_with_index"], args: &[0], params: &[1, 2] },
+        Fused { kind: K::ArrayMap, ty: TyKind::Array, class: "Array",
+                names: &["map", "collect"], args: &[0], params: &[0, 1] },
+        Fused { kind: K::ArraySelect, ty: TyKind::Array, class: "Array",
+                names: &["select", "filter", "find_all"], args: &[0], params: &[0, 1] },
+        Fused { kind: K::ArrayReject, ty: TyKind::Array, class: "Array",
+                names: &["reject"], args: &[0], params: &[0, 1] },
+        Fused { kind: K::ArraySum, ty: TyKind::Array, class: "Array",
+                names: &["sum"], args: &[0], params: &[0, 1] },
+        Fused { kind: K::HashEach, ty: TyKind::Hash, class: "Hash",
+                names: &["each", "each_pair"], args: &[0], params: &[0, 1, 2] },
+    ];
+
     fn plain_positional(params: &Params) -> bool {
         params.optional.is_empty()
             && params.rest.is_none()
@@ -373,27 +422,15 @@ fn mark_inline_iter_sites(
                 (&compiler.hir[*recv], &compiler.hir[*block])
             && plain_positional(params)
         {
-            use InlineIterKind as K;
-            let key = (locals.get(rn), name.as_str(), args.len());
-            let kind = match (key, params.required.len()) {
-                ((Some(TyKind::Int), "times", 0), 0 | 1) => Some(K::TimesInt),
-                ((Some(TyKind::Int), "upto", 1), 0 | 1) => Some(K::UptoInt),
-                ((Some(TyKind::Int), "downto", 1), 0 | 1) => Some(K::DowntoInt),
-                ((Some(TyKind::Int), "step", 1 | 2), 0 | 1) => Some(K::StepInt),
-                ((Some(TyKind::Range), "each", 0), 0 | 1) => Some(K::RangeEachInt),
-                ((Some(TyKind::Array), "each", 0), 0 | 1) => Some(K::ArrayEach),
-                ((Some(TyKind::Array), "each_with_index", 0), 1 | 2) => Some(K::ArrayEachWithIndex),
-                ((Some(TyKind::Array), "map" | "collect", 0), 0 | 1) => Some(K::ArrayMap),
-                ((Some(TyKind::Array), "select" | "filter" | "find_all", 0), 0 | 1) => {
-                    Some(K::ArraySelect)
-                }
-                ((Some(TyKind::Array), "reject", 0), 0 | 1) => Some(K::ArrayReject),
-                ((Some(TyKind::Array), "sum", 0), 0 | 1) => Some(K::ArraySum),
-                ((Some(TyKind::Hash), "each" | "each_pair", 0), 0..=2) => Some(K::HashEach),
-                _ => None,
-            };
-            if let Some(k) = kind {
-                out.insert(*block, k);
+            if let Some(&ty) = locals.get(rn)
+                && let Some(f) = FUSED.iter().find(|f| {
+                    f.ty == ty
+                        && f.names.contains(&name.as_str())
+                        && f.args.contains(&args.len())
+                        && f.params.contains(&params.required.len())
+                })
+            {
+                out.insert(*block, f.kind);
             }
         }
         compiler.hir[id].for_each_child(&mut |n| scan(compiler, n, locals, out));
@@ -422,35 +459,12 @@ fn mark_inline_iter_sites(
                 })
             })
     };
-    use InlineIterKind as K;
-    let sup: Vec<(K, bool)> = vec![
-        (K::TimesInt, reopened("Integer", "times")),
-        (K::UptoInt, reopened("Integer", "upto")),
-        (K::DowntoInt, reopened("Integer", "downto")),
-        (K::StepInt, reopened("Integer", "step")),
-        (K::RangeEachInt, reopened("Range", "each")),
-        (K::ArrayEach, reopened("Array", "each")),
-        (K::ArrayEachWithIndex, reopened("Array", "each_with_index")),
-        // Aliases are SEPARATE method entries in Ruby; redefining either one
-        // suppresses the whole kind (conservative, and vanishingly rare).
-        (
-            K::ArrayMap,
-            reopened("Array", "map") || reopened("Array", "collect"),
-        ),
-        (
-            K::ArraySelect,
-            reopened("Array", "select")
-                || reopened("Array", "filter")
-                || reopened("Array", "find_all"),
-        ),
-        (K::ArrayReject, reopened("Array", "reject")),
-        (K::ArraySum, reopened("Array", "sum")),
-        (
-            K::HashEach,
-            reopened("Hash", "each") || reopened("Hash", "each_pair"),
-        ),
-    ];
-    let suppressed = |k: &K| sup.iter().any(|(sk, s)| sk == k && *s);
+    let sup: Vec<K> = FUSED
+        .iter()
+        .filter(|f| f.names.iter().any(|m| reopened(f.class, m)))
+        .map(|f| f.kind)
+        .collect();
+    let suppressed = |k: &K| sup.contains(k);
     compiler.times_literal_suppressed = suppressed(&K::TimesInt);
     compiler.range_each_literal_suppressed = suppressed(&K::RangeEachInt);
 
