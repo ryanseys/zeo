@@ -1068,9 +1068,99 @@ pub(crate) fn minmax_own(
     block: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
     reject_args(args, "minmax", "arguments");
-    let lo = min_max(src, &[], block.clone(), true)?;
-    let hi = min_max(src, &[], block, false)?;
-    Ok(RubyValue::Array(array_new(vec![lo, hi])))
+    let blk = match block {
+        Some(RubyValue::Proc(p)) => Some(p),
+        _ => None,
+    };
+    let state: Arc<Mutex<MinMax>> = Arc::new(Mutex::new(MinMax::default()));
+    let (st, cmp_blk) = (state.clone(), blk.clone());
+    for_each(src, move |yielded| {
+        let elem = pack(yielded);
+        let Some(prev) = st.lock().last.take() else {
+            st.lock().last = Some(elem);
+            return Ok(RubyValue::Nil);
+        };
+        // ONE comparison sorts the pair, and the two updates below then know
+        // which half can lower the min and which can raise the max. Two
+        // independent passes asked the block about every element twice.
+        let (lo, hi) = if mm_cmp(&cmp_blk, &prev, &elem)? > 0 {
+            (elem, prev)
+        } else {
+            (prev, elem)
+        };
+        mm_absorb(&st, &cmp_blk, lo, hi)?;
+        Ok(RubyValue::Nil)
+    })?;
+    // An odd-length source leaves one element unpaired; it is its own pair.
+    let leftover = state.lock().last.take();
+    if let Some(v) = leftover {
+        mm_absorb(&state, &blk, v.clone(), v)?;
+    }
+    let s = state.lock();
+    Ok(RubyValue::Array(array_new(vec![
+        s.min.clone().unwrap_or(RubyValue::Nil),
+        s.max.clone().unwrap_or(RubyValue::Nil),
+    ])))
+}
+
+/// [`minmax_own`]'s accumulator. `last` holds the element waiting for a
+/// partner -- CRuby's `minmax_i` buffers in PAIRS, which is what makes the
+/// whole thing one pass over the source and 3n/2 comparisons rather than 2n.
+#[derive(Default)]
+struct MinMax {
+    last: Option<RubyValue>,
+    min: Option<RubyValue>,
+    max: Option<RubyValue>,
+}
+
+/// One comparison, spelled as CRuby spells it: the CANDIDATE is the block's
+/// first argument. A block that records its arguments sees exactly the pairs
+/// `Enumerable#minmax` passes.
+fn mm_cmp(blk: &Option<crate::rproc::RProc>, a: &RubyValue, b: &RubyValue) -> Result<i64, Signal> {
+    match blk {
+        Some(cmp) => {
+            let r = cmp.call(&[a.clone(), b.clone()])?;
+            match crate::value::cmp_int(&r)? {
+                Some(n) => Ok(n),
+                None => Err(crate::value::cmp_error(a, b)),
+            }
+        }
+        None => crate::value::cmp_or_raise(a, b),
+    }
+}
+
+/// Fold one already-ordered pair (`lo <= hi`) into the running min and max.
+/// The very first pair installs both and compares nothing, which is why
+/// `[7].minmax` calls the block zero times.
+///
+/// The lock is released across each comparison: the block is arbitrary Ruby
+/// and may re-enter the driver, exactly as `min_max` allows.
+fn mm_absorb(
+    st: &Arc<Mutex<MinMax>>,
+    blk: &Option<crate::rproc::RProc>,
+    lo: RubyValue,
+    hi: RubyValue,
+) -> Result<(), Signal> {
+    let (cur_min, cur_max) = {
+        let s = st.lock();
+        (s.min.clone(), s.max.clone())
+    };
+    let (Some(cur_min), Some(cur_max)) = (cur_min, cur_max) else {
+        let mut s = st.lock();
+        s.min = Some(lo);
+        s.max = Some(hi);
+        return Ok(());
+    };
+    let lowers = mm_cmp(blk, &lo, &cur_min)? < 0;
+    let raises = mm_cmp(blk, &hi, &cur_max)? > 0;
+    let mut s = st.lock();
+    if lowers {
+        s.min = Some(lo);
+    }
+    if raises {
+        s.max = Some(hi);
+    }
+    Ok(())
 }
 
 pub(crate) fn reverse_each_own(
