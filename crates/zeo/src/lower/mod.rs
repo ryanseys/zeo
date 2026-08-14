@@ -72,6 +72,102 @@ fn lower_statement_list(
 /// `body` from a `def`/`class`/`if` -- may be `None` (empty body), a single
 /// bare statement (prism doesn't wrap a one-statement body in
 /// `StatementsNode`), or a real `StatementsNode`.
+/// Whether a `define_method`/`define_singleton_method` block reads or writes a
+/// local belonging to a scope OUTSIDE itself.
+///
+/// The desugar to a plain `DefMethod` turns the block into a method the class
+/// owns, and a method is a Rust function of its own -- it cannot reach a local
+/// living on the enclosing class-body (or top-level) frame. rubygems writes
+/// exactly that shape:
+///
+/// ```ruby
+/// module Kernel
+///   original_warn = instance_method(:warn)
+///   module_function define_method(:warn) { |*m, **kw| original_warn.bind_call(self, *m, **kw) }
+/// end
+/// ```
+///
+/// which emitted a method body naming `original_warn` and stopped bundler at
+/// rustc with E0425. A capturing block falls through to the generic call
+/// instead, where `Module#define_method` installs a real closure -- the same
+/// path a `define_method` inside a method body already took, and the reason
+/// that one always worked.
+///
+/// Prism answers this directly: a local-variable node carries the number of
+/// scopes it reaches UP, and only `Block`/`Lambda` share the chain -- a
+/// `def`/`class`/`module` starts a fresh one, so nothing inside it can be
+/// reaching a local of ours and the walk stops there. Over-reporting is the
+/// safe direction (the runtime path is correct, just less direct), so any
+/// scope-maker this misses costs optimization rather than correctness.
+fn closes_over_an_enclosing_local(block: &Node<'_>) -> bool {
+    struct Free {
+        nesting: u32,
+        found: bool,
+    }
+    impl<'pr> ruby_prism::Visit<'pr> for Free {
+        fn visit_block_node(&mut self, node: &ruby_prism::BlockNode<'pr>) {
+            self.nesting += 1;
+            ruby_prism::visit_block_node(self, node);
+            self.nesting -= 1;
+        }
+        fn visit_lambda_node(&mut self, node: &ruby_prism::LambdaNode<'pr>) {
+            self.nesting += 1;
+            ruby_prism::visit_lambda_node(self, node);
+            self.nesting -= 1;
+        }
+        // A fresh scope chain: its locals are its own, and prism's depths
+        // inside it are counted from there.
+        fn visit_def_node(&mut self, _: &ruby_prism::DefNode<'pr>) {}
+        fn visit_class_node(&mut self, _: &ruby_prism::ClassNode<'pr>) {}
+        fn visit_module_node(&mut self, _: &ruby_prism::ModuleNode<'pr>) {}
+        fn visit_singleton_class_node(&mut self, _: &ruby_prism::SingletonClassNode<'pr>) {}
+
+        fn visit_local_variable_read_node(&mut self, n: &ruby_prism::LocalVariableReadNode<'pr>) {
+            self.found |= n.depth() >= self.nesting;
+        }
+        fn visit_local_variable_write_node(&mut self, n: &ruby_prism::LocalVariableWriteNode<'pr>) {
+            self.found |= n.depth() >= self.nesting;
+            ruby_prism::visit_local_variable_write_node(self, n);
+        }
+        fn visit_local_variable_target_node(
+            &mut self,
+            n: &ruby_prism::LocalVariableTargetNode<'pr>,
+        ) {
+            self.found |= n.depth() >= self.nesting;
+        }
+        fn visit_local_variable_and_write_node(
+            &mut self,
+            n: &ruby_prism::LocalVariableAndWriteNode<'pr>,
+        ) {
+            self.found |= n.depth() >= self.nesting;
+            ruby_prism::visit_local_variable_and_write_node(self, n);
+        }
+        fn visit_local_variable_or_write_node(
+            &mut self,
+            n: &ruby_prism::LocalVariableOrWriteNode<'pr>,
+        ) {
+            self.found |= n.depth() >= self.nesting;
+            ruby_prism::visit_local_variable_or_write_node(self, n);
+        }
+        fn visit_local_variable_operator_write_node(
+            &mut self,
+            n: &ruby_prism::LocalVariableOperatorWriteNode<'pr>,
+        ) {
+            self.found |= n.depth() >= self.nesting;
+            ruby_prism::visit_local_variable_operator_write_node(self, n);
+        }
+    }
+    // Starts at 0 because the walk enters through the block ITSELF, whose
+    // `visit_block_node` takes it to 1 -- so a read of the block's own local
+    // (depth 0) is under the bar and a read one scope out (depth 1) is at it.
+    let mut free = Free {
+        nesting: 0,
+        found: false,
+    };
+    ruby_prism::Visit::visit(&mut free, block);
+    free.found
+}
+
 fn lower_body(result: &ParseResult, hir: &mut Hir, body: Option<Node<'_>>) -> PResult<Vec<NodeId>> {
     match body {
         None => Ok(Vec::new()),
@@ -654,10 +750,10 @@ fn lower_call_node(
 
     // `define_method(:literal) { block }` -- desugars to a plain
     // `DefMethod`, identical treatment to `def`, mirroring zeo's
-    // `walk_scope`. Every other shape -- a computed name, or a body passed
-    // as a value rather than written as a block -- falls through to the
-    // generic `Call` below and is served at run time by
-    // `Module#define_method`.
+    // `walk_scope`. Every other shape -- a computed name, a body passed
+    // as a value rather than written as a block, or a block that CLOSES OVER
+    // an enclosing local -- falls through to the generic `Call` below and is
+    // served at run time by `Module#define_method`.
     if name == "define_method"
         && receiver.is_none()
         && let (Some(args), Some(block_node)) = (call.arguments(), call.block())
@@ -714,7 +810,17 @@ fn lower_call_node(
             // `Module#define_method` in the runtime; that row installs a
             // Proc, a Method or an UnboundMethod body and exists for
             // exactly the shapes this desugar cannot take.
-            if let Some(block) = block_node.as_block_node() {
+            // Declined only inside a `class`/`module` body. A method body
+            // never needed it (the def is already emitted as a closure there),
+            // and at the TOP LEVEL the generic call would dispatch
+            // `define_method` on `main`, which zeo's runtime has no row for --
+            // trading a compile error for a NoMethodError, which is the wrong
+            // direction. That one stays a gap.
+            if let Some(block) = block_node.as_block_node()
+                && !(hir.enclosing_class().is_some()
+                    && !hir.is_in_def_body()
+                    && closes_over_an_enclosing_local(&block_node))
+            {
                 let params = match block.parameters() {
                     None => Params::default(),
                     Some(p) => {
