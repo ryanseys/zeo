@@ -364,9 +364,15 @@ fn emit_iter_splice(
             loop_cx.local_types.to_mut().remove(name);
         }
     }
+    // A repeated `_` slot proves nothing about the NAME: the readable local is
+    // the first occurrence's, so a later slot's type would be attributed to a
+    // binding it never wrote (`owns_name`).
+    let slot_idents = super::params::required_slot_idents(params);
     for (idx, _, ty) in &spec.binds {
         if let Some(ty) = ty
             && let Some(p) = params.required.get(*idx)
+            && let Some(ident) = slot_idents.get(*idx)
+            && super::params::SlotIdents::owns_name(ident, p)
             && !nested_captured.contains(p)
         {
             loop_cx.local_types.to_mut().insert(p.clone(), *ty);
@@ -382,14 +388,15 @@ fn emit_iter_splice(
         .binds
         .iter()
         .map(|(idx, value, _)| {
-            let Some(p) = params.required.get(*idx) else {
+            let (Some(p), Some(ident)) = (params.required.get(*idx), slot_idents.get(*idx)) else {
                 return quote! {};
             };
-            let ident = safe_ident(p);
             // `mut`: a block param is an ordinary reassignable local.
             let plain = quote! { #[allow(unused_mut)] let mut #ident = #value; };
-            if nested_captured.contains(p) {
-                let wrap = cell_wrap(&ident);
+            // Only the slot that owns the name takes the capture cell; a
+            // repeated `_` is bound under a name no closure can have captured.
+            if nested_captured.contains(p) && super::params::SlotIdents::owns_name(ident, p) {
+                let wrap = cell_wrap(ident);
                 quote! { #plain #wrap }
             } else {
                 plain

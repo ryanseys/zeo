@@ -101,43 +101,111 @@ fn signature_param_idents(params: &Params, needs_block: bool) -> Vec<proc_macro2
         .collect()
 }
 
+/// The Rust ident every parameter SLOT binds, in `Params` order.
+///
+/// Ruby lets a parameter name repeat when it begins with `_`: `def f(_, _)` is
+/// legal where `def f(a, a)` is a SyntaxError. Only the FIRST occurrence owns
+/// the readable local -- `def f(_, _); _; end` answers the first argument, and
+/// so does `proc { |_, _| _ }.call(7, 8)` (both oracle-verified against ruby
+/// 4.0.6) -- so every later slot binds a name the body cannot spell.
+///
+/// One table serves every emitter that binds a slot, because the duplicate
+/// failed differently in each. The fn signature put ONE ident on two Rust
+/// parameters, which is E0415 and is where aws-sdk-core stopped at rustc. The
+/// block and splice paths emit sequential `let`s, which merely SHADOW -- so
+/// they compiled and quietly answered the LAST argument instead of the first.
+pub(super) struct SlotIdents {
+    required: Vec<proc_macro2::Ident>,
+    optional: Vec<proc_macro2::Ident>,
+    rest: Option<proc_macro2::Ident>,
+    post: Vec<proc_macro2::Ident>,
+    keywords: Vec<proc_macro2::Ident>,
+    keyword_rest: Option<proc_macro2::Ident>,
+    block: Option<proc_macro2::Ident>,
+}
+
+impl SlotIdents {
+    /// Assigned in `Params` order, which is the order the argument list fills
+    /// the slots -- so "which occurrence is first" is one question with one
+    /// answer, whatever order an individual emitter writes its bindings in.
+    fn of(params: &Params) -> SlotIdents {
+        let mut seen: FSet<String> = FSet::default();
+        let mut dups = 0usize;
+        let mut slot = |name: &String| {
+            if seen.insert(name.clone()) {
+                return safe_ident(name);
+            }
+            dups += 1;
+            // Leading `_`, so rustc's unused-variable lint passes it over: a
+            // slot nothing can name is unread by construction, and an
+            // `#[allow]` at every binding site would cost tokens in every
+            // emitted program to serve a shape almost none of them have.
+            format_ident!("__dup_param_{}", dups)
+        };
+        // Field order IS the slot order: Rust evaluates a struct literal's
+        // fields top to bottom, and `seen` is threaded through all of them.
+        SlotIdents {
+            required: params.required.iter().map(&mut slot).collect(),
+            optional: params.optional.iter().map(|(n, _)| slot(n)).collect(),
+            rest: params.rest.iter().flatten().map(&mut slot).next(),
+            post: params.post.iter().map(&mut slot).collect(),
+            keywords: params
+                .keywords
+                .iter()
+                .map(|kw| match kw {
+                    KeywordParam::Required(n) | KeywordParam::Optional(n, _) => slot(n),
+                })
+                .collect(),
+            keyword_rest: params.keyword_rest.iter().flatten().map(&mut slot).next(),
+            block: params.block.iter().flatten().map(&mut slot).next(),
+        }
+    }
+
+    /// Whether `name`'s readable local is this slot -- false for a repeated
+    /// `_` after the first, whose binding nothing can reach by name.
+    pub(super) fn owns_name(ident: &proc_macro2::Ident, name: &str) -> bool {
+        *ident == safe_ident(name)
+    }
+}
+
+/// The idents the REQUIRED slots bind, for the fused-iterator splice: a
+/// spliced block binds only those, but it binds them as sequential `let`s, so
+/// it needs the same duplicate rule the rest of `SlotIdents` carries.
+pub(super) fn required_slot_idents(params: &Params) -> Vec<proc_macro2::Ident> {
+    SlotIdents::of(params).required
+}
+
 /// The one place the signature's order and spelling are decided, so a name
 /// list and a typed list can never drift apart.
 fn signature_param_pairs(
     params: &Params,
     needs_block: bool,
 ) -> Vec<(proc_macro2::Ident, TokenStream)> {
+    let slots = SlotIdents::of(params);
     let mut items = Vec::new();
-    for name in &params.required {
-        let ident = safe_ident(name);
+    for ident in slots.required {
         items.push((ident, quote! { zeo_rt::RubyValue }));
     }
-    for (name, _) in &params.optional {
-        let ident = safe_ident(name);
+    for ident in slots.optional {
         items.push((ident, quote! { Option<zeo_rt::RubyValue> }));
     }
-    if let Some(Some(name)) = &params.rest {
-        let ident = safe_ident(name);
+    if let Some(ident) = slots.rest {
         items.push((ident, quote! { Vec<zeo_rt::RubyValue> }));
     }
-    for name in &params.post {
-        let ident = safe_ident(name);
+    for ident in slots.post {
         items.push((ident, quote! { zeo_rt::RubyValue }));
     }
-    for kw in &params.keywords {
+    for (kw, ident) in params.keywords.iter().zip(slots.keywords) {
         match kw {
-            KeywordParam::Required(name) => {
-                let ident = safe_ident(name);
+            KeywordParam::Required(_) => {
                 items.push((ident, quote! { zeo_rt::RubyValue }));
             }
-            KeywordParam::Optional(name, _) => {
-                let ident = safe_ident(name);
+            KeywordParam::Optional(_, _) => {
                 items.push((ident, quote! { Option<zeo_rt::RubyValue> }));
             }
         }
     }
-    if let Some(Some(name)) = &params.keyword_rest {
-        let ident = safe_ident(name);
+    if let Some(ident) = slots.keyword_rest {
         // `(RubyValue, RubyValue)`, not `(Symbol, RubyValue)`: a `**kwrest` hash
         // can hold non-symbol keys (`method HELP_MAPPINGS => :help`).
         items.push((
@@ -226,10 +294,15 @@ pub fn emit_prologue(cx: &Ctx, params: &Params, body: &[NodeId]) -> TokenStream 
     for id in params.default_ids() {
         super::hoisting::collect_locals(cx.compiler, id, &mut assigned);
     }
-    let wrap_if_captured = |name: &str| -> Option<TokenStream> {
+    // A repeated `_` parameter is wrapped ONCE, for the slot that owns the
+    // readable local: the later slots bind names nothing can capture, and
+    // wrapping on their turn would put the cell inside a second cell.
+    let mut wrapped: FSet<String> = FSet::default();
+    let mut wrap_if_captured = |name: &str| -> Option<TokenStream> {
         (cx.captured_locals.contains(name)
             && !destructured.contains(name)
-            && !assigned.contains(name))
+            && !assigned.contains(name)
+            && wrapped.insert(name.to_string()))
         .then(|| {
             let ident = safe_ident(name);
             quote! {
@@ -248,6 +321,7 @@ pub fn emit_prologue(cx: &Ctx, params: &Params, body: &[NodeId]) -> TokenStream 
     // are bound by the Rust signature itself, so only their wraps emit,
     // first.
     // Ahead of every binding: the locals the defaults below themselves assign.
+    let slots = SlotIdents::of(params);
     let mut pieces: Vec<TokenStream> = vec![super::hoisting::emit_param_default_decls(
         cx,
         &params.default_ids(),
@@ -256,12 +330,11 @@ pub fn emit_prologue(cx: &Ctx, params: &Params, body: &[NodeId]) -> TokenStream 
     for name in params.required.iter().chain(&params.post) {
         pieces.extend(wrap_if_captured(name));
     }
-    for (name, default) in &params.optional {
-        pieces.push(emit_lazy_default_shadow(cx, name, *default));
+    for ((name, default), ident) in params.optional.iter().zip(&slots.optional) {
+        pieces.push(emit_lazy_default_shadow(cx, ident, *default));
         pieces.extend(wrap_if_captured(name));
     }
-    if let Some(Some(name)) = &params.rest {
-        let ident = safe_ident(name);
+    if let (Some(Some(name)), Some(ident)) = (&params.rest, &slots.rest) {
         pieces.push(quote! {
             #[allow(unused_mut)]
             let mut #ident: zeo_rt::RubyValue =
@@ -269,17 +342,16 @@ pub fn emit_prologue(cx: &Ctx, params: &Params, body: &[NodeId]) -> TokenStream 
         });
         pieces.extend(wrap_if_captured(name));
     }
-    for kw in &params.keywords {
+    for (kw, ident) in params.keywords.iter().zip(&slots.keywords) {
         match kw {
             KeywordParam::Required(name) => pieces.extend(wrap_if_captured(name)),
             KeywordParam::Optional(name, default) => {
-                pieces.push(emit_lazy_default_shadow(cx, name, *default));
+                pieces.push(emit_lazy_default_shadow(cx, ident, *default));
                 pieces.extend(wrap_if_captured(name));
             }
         }
     }
-    if let Some(Some(name)) = &params.keyword_rest {
-        let ident = safe_ident(name);
+    if let (Some(Some(name)), Some(ident)) = (&params.keyword_rest, &slots.keyword_rest) {
         pieces.push(quote! {
             #[allow(unused_mut)]
             let mut #ident: zeo_rt::RubyValue = zeo_rt::RubyValue::Hash(zeo_rt::hash_new(
@@ -290,8 +362,7 @@ pub fn emit_prologue(cx: &Ctx, params: &Params, body: &[NodeId]) -> TokenStream 
     }
     // `params.block` being `Some(Some(name))` already implies `needs_block`
     // (see `Scope::needs_block_param`), so no extra gate is needed here.
-    if let Some(Some(name)) = &params.block {
-        let ident = safe_ident(name);
+    if let (Some(Some(name)), Some(ident)) = (&params.block, &slots.block) {
         pieces.push(quote! {
             #[allow(unused_mut)]
             let mut #ident: zeo_rt::RubyValue = __blk.clone().unwrap_or(zeo_rt::RubyValue::Nil);
@@ -305,8 +376,7 @@ pub fn emit_prologue(cx: &Ctx, params: &Params, body: &[NodeId]) -> TokenStream 
     quote! { #(#pieces)* #destructures }
 }
 
-fn emit_lazy_default_shadow(cx: &Ctx, name: &str, default: NodeId) -> TokenStream {
-    let ident = safe_ident(name);
+fn emit_lazy_default_shadow(cx: &Ctx, ident: &proc_macro2::Ident, default: NodeId) -> TokenStream {
     let default_expr = {
         let e = emit_expr(cx, default);
         // A default may itself be Object-typed (`def m(o = Widget.new)`).
@@ -1399,6 +1469,7 @@ pub fn emit_proc_param_bindings(
     args_ident: &proc_macro2::Ident,
     is_lambda: bool,
 ) -> TokenStream {
+    let slots = SlotIdents::of(params);
     let nreq = params.required.len();
     let nopt = params.optional.len();
     let npost = params.post.len();
@@ -1436,8 +1507,7 @@ pub fn emit_proc_param_bindings(
         }
     });
 
-    let required_lets = params.required.iter().enumerate().map(|(i, name)| {
-        let ident = safe_ident(name);
+    let required_lets = slots.required.iter().enumerate().map(|(i, ident)| {
         quote! {
             // `allow(unused_variables)`: a block legitimately declares a
             // param its body never reads (`each { |x| n += 1 }` counting
@@ -1448,12 +1518,8 @@ pub fn emit_proc_param_bindings(
             let mut #ident: zeo_rt::RubyValue = __positional.get(#i).cloned().unwrap_or(zeo_rt::RubyValue::Nil);
         }
     });
-    let optional_lets = params
-        .optional
-        .iter()
-        .enumerate()
-        .map(|(i, (name, default))| {
-            let ident = safe_ident(name);
+    let optional_lets = params.optional.iter().zip(&slots.optional).enumerate().map(
+        |(i, ((_, default), ident))| {
             let default_expr = emit_expr(cx, *default);
             quote! {
                 #[allow(unused_mut)]
@@ -1463,9 +1529,9 @@ pub fn emit_proc_param_bindings(
                     #default_expr
                 };
             }
-        });
-    let rest_let = params.rest.iter().flatten().map(|name| {
-        let ident = safe_ident(name);
+        },
+    );
+    let rest_let = slots.rest.iter().map(|ident| {
         quote! {
             // `mut` for the same reason every other parameter binding here
             // carries it: a Ruby parameter is an ordinary reassignable local,
@@ -1484,8 +1550,7 @@ pub fn emit_proc_param_bindings(
     // is `a=1, b=[], c=2, d=nil` (oracle-verified) -- the posts fill
     // left-to-right from what's left and nil-pad the tail. Anchoring from the
     // end instead wrapped back over the lead's own argument and bound `c=1`.
-    let post_lets = params.post.iter().enumerate().map(|(i, name)| {
-        let ident = safe_ident(name);
+    let post_lets = slots.post.iter().enumerate().map(|(i, ident)| {
         quote! {
             #[allow(unused_mut)]
             let mut #ident: zeo_rt::RubyValue = {
@@ -1501,58 +1566,59 @@ pub fn emit_proc_param_bindings(
             KeywordParam::Required(n) | KeywordParam::Optional(n, _) => n.clone(),
         })
         .collect();
-    let keyword_lets = params.keywords.iter().map(|kw| match kw {
-        // A required keyword is bound by PRESENCE (`hash_has_key`), so a
-        // supplied `k: nil` still binds nil; its absence is CRuby's
-        // `ArgumentError: missing keyword: :k`, enforced for lambdas and
-        // ordinary procs alike.
-        KeywordParam::Required(name) => {
-            let ident = safe_ident(name);
-            let name_sym = super::pooled_sym(name);
-            quote! {
-                #[allow(unused_mut)]
-                let mut #ident: zeo_rt::RubyValue = match &__kw_source {
-                    Some(zeo_rt::RubyValue::Hash(__h))
-                        if zeo_rt::hash_has_key(
-                            __h,
-                            &zeo_rt::RubyValue::Symbol(#name_sym),
-                        ) =>
-                    {
-                        zeo_rt::hash_get(
-                            __h,
-                            &zeo_rt::RubyValue::Symbol(#name_sym),
-                        )
-                    }
-                    _ => {
-                        return Err(zeo_rt::raise_error(
-                            "ArgumentError",
-                            format!("missing keyword: :{}", #name),
-                        ))
-                    }
-                };
+    let keyword_lets = params
+        .keywords
+        .iter()
+        .zip(&slots.keywords)
+        .map(|(kw, ident)| match kw {
+            // A required keyword is bound by PRESENCE (`hash_has_key`), so a
+            // supplied `k: nil` still binds nil; its absence is CRuby's
+            // `ArgumentError: missing keyword: :k`, enforced for lambdas and
+            // ordinary procs alike.
+            KeywordParam::Required(name) => {
+                let name_sym = super::pooled_sym(name);
+                quote! {
+                    #[allow(unused_mut)]
+                    let mut #ident: zeo_rt::RubyValue = match &__kw_source {
+                        Some(zeo_rt::RubyValue::Hash(__h))
+                            if zeo_rt::hash_has_key(
+                                __h,
+                                &zeo_rt::RubyValue::Symbol(#name_sym),
+                            ) =>
+                        {
+                            zeo_rt::hash_get(
+                                __h,
+                                &zeo_rt::RubyValue::Symbol(#name_sym),
+                            )
+                        }
+                        _ => {
+                            return Err(zeo_rt::raise_error(
+                                "ArgumentError",
+                                format!("missing keyword: :{}", #name),
+                            ))
+                        }
+                    };
+                }
             }
-        }
-        KeywordParam::Optional(name, default) => {
-            let ident = safe_ident(name);
-            let name_sym = super::pooled_sym(name);
-            let default_expr = emit_expr(cx, *default);
-            quote! {
-                // `mut`: a keyword parameter is reassignable like any other
-                // (tempfile's `def initialize(..., mode: 0, ...)` then does
-                // `mode |= File::RDWR`).
-                #[allow(unused_mut)]
-                let mut #ident: zeo_rt::RubyValue = match &__kw_source {
-                    Some(zeo_rt::RubyValue::Hash(__h)) => {
-                        let __v = zeo_rt::hash_get(__h, &zeo_rt::RubyValue::Symbol(#name_sym));
-                        if __v.is_nil() { #default_expr } else { __v }
-                    }
-                    _ => #default_expr,
-                };
+            KeywordParam::Optional(name, default) => {
+                let name_sym = super::pooled_sym(name);
+                let default_expr = emit_expr(cx, *default);
+                quote! {
+                    // `mut`: a keyword parameter is reassignable like any other
+                    // (tempfile's `def initialize(..., mode: 0, ...)` then does
+                    // `mode |= File::RDWR`).
+                    #[allow(unused_mut)]
+                    let mut #ident: zeo_rt::RubyValue = match &__kw_source {
+                        Some(zeo_rt::RubyValue::Hash(__h)) => {
+                            let __v = zeo_rt::hash_get(__h, &zeo_rt::RubyValue::Symbol(#name_sym));
+                            if __v.is_nil() { #default_expr } else { __v }
+                        }
+                        _ => #default_expr,
+                    };
+                }
             }
-        }
-    });
-    let keyword_rest_let = params.keyword_rest.iter().flatten().map(|name| {
-        let ident = safe_ident(name);
+        });
+    let keyword_rest_let = slots.keyword_rest.iter().map(|ident| {
         quote! {
             #[allow(unused_mut)]
             let mut #ident: zeo_rt::RubyValue = match &__kw_source {
@@ -1606,8 +1672,7 @@ pub fn emit_proc_param_bindings(
     // method body: `->(&b) { b.call(9) }.call { ... }` now threads the block
     // through. A blockless call binds nil (`b.nil?` true).
     let block_source = quote! { __blk.clone().unwrap_or(zeo_rt::RubyValue::Nil) };
-    let block_let = params.block.iter().flatten().map(|name| {
-        let ident = safe_ident(name);
+    let block_let = slots.block.iter().map(|ident| {
         quote! {
             #[allow(unused_variables, unused_mut)]
             let mut #ident: zeo_rt::RubyValue = #block_source;
