@@ -564,22 +564,43 @@ pub(crate) fn min_max(
 /// Hash -- the auto-splat CRuby's rb_yield does at proc-call time),
 /// result collections carry the packed one.
 struct Element {
-    raw: Vec<RubyValue>,
+    /// The raw shape, stored ONLY when it differs from `packed` -- that is,
+    /// when the source yielded anything other than exactly one value.
+    /// `pack` already answers `args[0].clone()` for the single-value case,
+    /// which is every element of an Array, a Range, and anything driven
+    /// through `Own::List`, so the common element is now one `RubyValue` and
+    /// no `Vec` at all. It used to allocate a one-element `Vec` per element,
+    /// on every `sort_by`/`min_by`/`max_by`/`group_by`/`each_slice`.
+    multi: Option<Vec<RubyValue>>,
     packed: RubyValue,
 }
 
+impl Element {
+    /// What the user's block is called with -- the raw yielded shape, which
+    /// for a single value borrows `packed` in place.
+    fn raw(&self) -> &[RubyValue] {
+        match &self.multi {
+            Some(v) => v,
+            None => std::slice::from_ref(&self.packed),
+        }
+    }
+}
+
 fn collect_elements(src: Src<'_>) -> Result<Vec<Element>, Signal> {
-    let out: Arc<Mutex<Vec<Element>>> = Arc::new(Mutex::new(Vec::new()));
-    let out2 = out.clone();
-    for_each(src, move |yielded| {
-        out2.lock().push(Element {
-            raw: yielded.to_vec(),
-            packed: pack(yielded),
-        });
-        Ok(RubyValue::Nil)
-    })?;
-    let items = std::mem::take(&mut *out.lock());
-    Ok(items)
+    fold_each(
+        src,
+        Vec::new(),
+        |yielded| {
+            Ok(Element {
+                multi: (yielded.len() != 1).then(|| yielded.to_vec()),
+                packed: pack(yielded),
+            })
+        },
+        |out: &mut Vec<Element>, e| {
+            out.push(e);
+            Ok(())
+        },
+    )
 }
 
 fn collect_packed(src: Src<'_>) -> Result<Vec<RubyValue>, Signal> {
@@ -615,7 +636,7 @@ fn min_max_by(
     if let Some(n) = count {
         let mut keyed: Vec<(RubyValue, RubyValue)> = Vec::with_capacity(items.len());
         for e in items {
-            let key = blk.call(&e.raw)?;
+            let key = blk.call(e.raw())?;
             keyed.push((key, e.packed));
         }
         // Ascending by key for min_by, descending for max_by; ties are
@@ -633,7 +654,7 @@ fn min_max_by(
 
     let mut best: Option<(RubyValue, RubyValue)> = None;
     for e in items {
-        let key = blk.call(&e.raw)?;
+        let key = blk.call(e.raw())?;
         let e = e.packed;
         let better = match &best {
             None => true,
@@ -722,7 +743,7 @@ pub(crate) fn take_drop_while(
     let items = collect_elements(src)?;
     let mut boundary = items.len();
     for (i, e) in items.iter().enumerate() {
-        if !blk.call(&e.raw)?.truthy() {
+        if !blk.call(e.raw())?.truthy() {
             boundary = i;
             break;
         }
@@ -1265,7 +1286,7 @@ pub(crate) fn reverse_each_own(
     let blk = block_or_enum!(src.recv, "reverse_each", args, block);
     let items = collect_elements(src)?;
     for e in items.iter().rev() {
-        blk.call(&e.raw)?;
+        blk.call(e.raw())?;
     }
     Ok(src.recv.clone())
 }
@@ -1504,7 +1525,7 @@ ruby_module! {
         // Decorate-sort-undecorate, keys ordered by rb_cmp.
         let mut decorated: Vec<(RubyValue, RubyValue)> = Vec::with_capacity(items.len());
         for e in items {
-            let key = blk.call(&e.raw)?;
+            let key = blk.call(e.raw())?;
             decorated.push((key, e.packed));
         }
         let mut failure = false;
@@ -1537,7 +1558,7 @@ ruby_module! {
         let items = collect_elements(Src::sending(recv))?;
         let groups = crate::hash_new(Vec::new());
         for e in items {
-            let key = blk.call(&e.raw)?;
+            let key = blk.call(e.raw())?;
             let e = e.packed;
             let bucket = crate::hash_get(&groups, &key);
             match bucket {
@@ -1557,7 +1578,7 @@ ruby_module! {
         let items = collect_elements(Src::sending(recv))?;
         let (mut yes, mut no) = (Vec::new(), Vec::new());
         for e in items {
-            if blk.call(&e.raw)?.truthy() {
+            if blk.call(e.raw())?.truthy() {
                 yes.push(e.packed);
             } else {
                 no.push(e.packed);
@@ -1574,7 +1595,7 @@ ruby_module! {
         let items = collect_elements(Src::sending(recv))?;
         let mut out = Vec::new();
         for e in items {
-            match blk.call(&e.raw)? {
+            match blk.call(e.raw())? {
                 // ONE level of flattening (real Ruby's rule).
                 RubyValue::Array(a) => out.extend(a.lock().iter().cloned()),
                 other => out.push(other),
@@ -1588,7 +1609,7 @@ ruby_module! {
         let items = collect_elements(Src::sending(recv))?;
         let mut out = Vec::new();
         for e in items {
-            let mapped = blk.call(&e.raw)?;
+            let mapped = blk.call(e.raw())?;
             if mapped.truthy() {
                 out.push(mapped);
             }
@@ -1657,7 +1678,7 @@ ruby_module! {
         let items = collect_elements(Src::sending(recv))?;
         if let Some(RubyValue::Proc(p)) = &block {
             for (i, e) in items.iter().enumerate() {
-                if p.call(&e.raw)?.truthy() {
+                if p.call(e.raw())?.truthy() {
                     return Ok(RubyValue::Int(i as i64));
                 }
             }
@@ -1705,7 +1726,7 @@ ruby_module! {
     def "to_h"(recv, *args, &block) {
         reject_args(args, "to_h", "arguments");
         let items = collect_elements(Src::sending(recv))?;
-        let pairs = to_h_pairs(items.iter().map(|e| (e.raw.as_slice(), &e.packed)), &block)?;
+        let pairs = to_h_pairs(items.iter().map(|e| (e.raw(), &e.packed)), &block)?;
         Ok(RubyValue::Hash(crate::hash_new(pairs)))
     }
     def "reverse_each"(recv, *args, &block) {
