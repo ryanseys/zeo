@@ -81,11 +81,11 @@ pub fn emit_body(cx: &Ctx, body: &[NodeId], wrap_ok: bool) -> TokenStream {
 /// than letting the first grouped statement stamp its own into the frame
 /// underneath. `lexical_frame_label` carries the label down so a block
 /// written here is `block in singleton class`.
-fn emit_singleton_frame(
-    cx: &Ctx,
+fn emit_singleton_frame<'a>(
+    cx: &Ctx<'a>,
     origin: NodeId,
     group: &[NodeId],
-    prev_line: &mut Option<(String, u32)>,
+    prev_line: &mut Option<(&'a str, u32)>,
     is_tail: bool,
     wrap_ok: bool,
 ) -> TokenStream {
@@ -96,7 +96,7 @@ fn emit_singleton_frame(
         Some((f, l)) if *f == file && *l == line => TokenStream::new(),
         _ => quote! { zeo_rt::set_line(#line); },
     };
-    *prev_line = Some((file.to_string(), line));
+    *prev_line = Some((file, line));
     let end_line = crate::codegen::source_end_line(cx.compiler, origin);
     let pooled = crate::codegen::pooled_file(file);
     let mut inner_cx = cx.clone();
@@ -121,10 +121,10 @@ fn emit_singleton_frame(
 
 /// `emit_body`'s statement loop, without the singleton grouping -- so a group
 /// can reuse it without re-detecting itself.
-fn emit_body_plain(
-    cx: &Ctx,
+fn emit_body_plain<'a>(
+    cx: &Ctx<'a>,
     body: &[NodeId],
-    prev_line: &mut Option<(String, u32)>,
+    prev_line: &mut Option<(&'a str, u32)>,
     tail_is_value: bool,
     wrap_ok: bool,
 ) -> TokenStream {
@@ -157,10 +157,10 @@ fn emit_body_plain(
 /// `cov_file_loaded` mark that makes the file reportable iff measurement is
 /// set up when its top level runs (CRuby's own inclusion rule; the entry
 /// file never marks, so it is never reported, also CRuby's rule).
-fn stamp_line(
-    cx: &Ctx,
+fn stamp_line<'a>(
+    cx: &Ctx<'a>,
     stmt: NodeId,
-    prev_line: &mut Option<(String, u32)>,
+    prev_line: &mut Option<(&'a str, u32)>,
     tokens: TokenStream,
     is_tail: bool,
 ) -> TokenStream {
@@ -189,7 +189,7 @@ fn stamp_line(
         crate::codegen::coverage_record_stmt(file, line);
         cov.extend(quote! { zeo_rt::cov_line(#pooled, #line); });
     }
-    *prev_line = Some((file.to_string(), line));
+    *prev_line = Some((file, line));
     if is_tail {
         quote! { { zeo_rt::set_line(#line); #cov #tokens } }
     } else {

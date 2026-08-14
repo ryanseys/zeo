@@ -132,7 +132,7 @@ pub fn collect_escaping_captures(
     for &n in body {
         walk(compiler, n, None, &FSet::default(), &mut raw, self_class);
     }
-    let mut outer_names = Vec::new();
+    let mut outer_names = super::hoisting::Locals::default();
     for &n in body {
         super::hoisting::collect_locals(compiler, n, &mut outer_names);
     }
@@ -147,7 +147,7 @@ pub fn collect_escaping_captures(
     for id in params.default_ids() {
         super::hoisting::collect_locals(compiler, id, &mut outer_names);
     }
-    let mut outer: FSet<String> = outer_names.into_iter().collect();
+    let mut outer: FSet<String> = outer_names.into_set();
     let outer_params = own_param_names(params);
     outer.extend(outer_params.iter().cloned());
     let mut locals: FSet<String> = raw
@@ -338,11 +338,11 @@ pub fn binding_scope_names(
         .into_iter()
         .filter(|n| !crate::hir::is_internal_local(n))
         .collect();
-    let mut assigned = Vec::new();
+    let mut assigned = super::hoisting::Locals::default();
     for &n in body {
         super::hoisting::collect_locals(compiler, n, &mut assigned);
     }
-    for n in assigned {
+    for n in assigned.into_names() {
         if !crate::hir::is_internal_local(&n) && !names.contains(&n) {
             names.push(n);
         }

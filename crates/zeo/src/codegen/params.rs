@@ -60,24 +60,26 @@ pub fn emit_signature_params_free(params: &Params, needs_block: bool) -> TokenSt
     quote! { #(#items),* }
 }
 
-/// Whether rendered Rust mentions `name` as a whole identifier.
+/// Whether a signature declares a rest parameter with a NAME.
 ///
-/// Not `split_whitespace`: `proc_macro2` renders a delimited group with no
-/// space inside it, so `__n.saturating_sub(__min)` yields the word `(__min)`
-/// and a whole-word compare silently misses the reference -- which emitted
-/// `let __extra = __n.saturating_sub(__min);` with no `__min` to read.
-fn mentions_ident(text: &str, name: &str) -> bool {
-    let boundary = |c: Option<char>| !c.is_some_and(|c| c.is_alphanumeric() || c == '_');
-    text.match_indices(name).any(|(i, _)| {
-        boundary(text[..i].chars().next_back()) && boundary(text[i + name.len()..].chars().next())
-    })
+/// The distinction matters wherever `params.rest.iter().flatten()` decides
+/// an emission: an anonymous `*` declares no binding to fill, so the
+/// builders that read `__opt_bound`/`__rest_count` never run for it.
+fn rest_is_named(params: &Params) -> bool {
+    params.rest.as_ref().is_some_and(Option::is_some)
 }
 
 /// `__opt_bound` for a trampoline, emitted only where the argument list it
-/// feeds actually reads it -- a method with no optional and no rest parameter
-/// never does, and there are thousands of those.
-fn opt_bound_let(consumers: &TokenStream, min_lit: usize, nopt: usize) -> TokenStream {
-    if !mentions_ident(&consumers.to_string(), "__opt_bound") {
+/// feeds actually reads it -- a method with no optional and no named rest
+/// parameter never does, and there are thousands of those.
+///
+/// The two readers are `optional_args` (which needs `nopt > 0`) and
+/// `rest_arg` (a named rest); `post_args` indexes from the END and does not.
+/// This used to be answered by rendering the whole argument list to a
+/// `String` and scanning it, at each of the three trampoline emitters --
+/// i.e. once per (class x visible method) over the FLATTENED ancestry.
+fn opt_bound_let(params: &Params, min_lit: usize, nopt: usize) -> TokenStream {
+    if nopt == 0 && !rest_is_named(params) {
         return quote! {};
     }
     quote! { let __opt_bound = (args.len() - #min_lit).min(#nopt); }
@@ -217,7 +219,7 @@ pub fn emit_prologue(cx: &Ctx, params: &Params, body: &[NodeId]) -> TokenStream 
     // timeout gem's captured `message ||= ...`). Ownership is split exactly:
     // this prologue wraps captured-but-never-assigned params, the prelude
     // owns everything assigned.
-    let mut assigned: Vec<String> = Vec::new();
+    let mut assigned = super::hoisting::Locals::default();
     for &n in body {
         super::hoisting::collect_locals(cx.compiler, n, &mut assigned);
     }
@@ -227,7 +229,7 @@ pub fn emit_prologue(cx: &Ctx, params: &Params, body: &[NodeId]) -> TokenStream 
     let wrap_if_captured = |name: &str| -> Option<TokenStream> {
         (cx.captured_locals.contains(name)
             && !destructured.contains(name)
-            && !assigned.iter().any(|a| a == name))
+            && !assigned.contains(name))
         .then(|| {
             let ident = safe_ident(name);
             quote! {
@@ -936,6 +938,68 @@ fn emit_arity_check(params: &Params, callee_frame: &TokenStream) -> TokenStream 
     }
 }
 
+/// The pieces every dynamic trampoline builds IDENTICALLY: the keyword
+/// preamble, the arity check, the forwarded argument list, the `__opt_bound`
+/// binding it may need, and the closure's own block-parameter ident.
+///
+/// The three emitters below produced these thirty lines byte for byte; only
+/// the wrapper around them differs (an `RObj` downcast, a `RubyValue`
+/// receiver, an `RObj` boxed into a `RubyValue`), so that is all each one
+/// still spells out.
+struct TrampolineBody {
+    kw_preamble: Option<TokenStream>,
+    arity_check: TokenStream,
+    opt_bound: TokenStream,
+    call_args: TokenStream,
+    /// `blk` when the callee takes the block, `_blk` when it does not --
+    /// prefixed rather than omitted because the closure's signature is
+    /// fixed, matching every other unused-parameter convention here and
+    /// avoiding a spurious warning in the generated program.
+    blk_ident: proc_macro2::Ident,
+}
+
+fn trampoline_body(
+    method_name: &str,
+    params: &Params,
+    needs_block: bool,
+    callee_frame: &TokenStream,
+) -> TrampolineBody {
+    let (kw_preamble, kw_args) = dynamic_kwargs_binding(method_name, params, callee_frame);
+
+    let nreq = params.required.len();
+    let nopt = params.optional.len();
+    let npost = params.post.len();
+    let min_lit = nreq + npost;
+
+    let required_args = (0..nreq).map(|i| quote! { args[#i].clone() });
+    let optional_args = (0..nopt).map(|i| {
+        let idx = nreq + i;
+        quote! { if #i < __opt_bound { Some(args[#idx].clone()) } else { None } }
+    });
+    // Trailing comma (not leading) -- safe regardless of position, same
+    // reasoning as `emit_call_args`'s `rest_arg`. An ANONYMOUS `*` binds
+    // nothing, so `flatten` skips it and no rest argument is forwarded.
+    let rest_arg = params.rest.iter().flatten().map(|_| {
+        quote! { args[(#nreq + __opt_bound)..(args.len() - #npost)].to_vec(), }
+    });
+    let post_args = (0..npost).map(|i| quote! { args[args.len() - #npost + #i].clone() });
+    let blk_ident = if needs_block {
+        format_ident!("blk")
+    } else {
+        format_ident!("_blk")
+    };
+    // Trailing comma, same reasoning as `rest_arg` -- safe regardless of
+    // position, and here of whether anything precedes it at all.
+    let block_arg = needs_block.then(|| quote! { blk, });
+    TrampolineBody {
+        kw_preamble,
+        arity_check: emit_arity_check(params, callee_frame),
+        call_args: quote! { #(#required_args,)* #(#optional_args,)* #(#rest_arg)* #(#post_args,)* #(#kw_args,)* #block_arg },
+        opt_bound: opt_bound_let(params, min_lit, nopt),
+        blk_ident,
+    }
+}
+
 /// Whether a signature is PLAIN -- required positionals only (a `&block`
 /// param is fine) -- and so compresses to a `zeo_rt::zeo_tramp!` invocation
 /// instead of the long-form closure. The macro's expansion is
@@ -1015,42 +1079,13 @@ pub fn emit_dynamic_trampoline(
             zeo_rt::zeo_tramp!(#head #class_ident, #method_ident, #n, [#(#ix),*] #frame_arg)
         };
     }
-    let (kw_preamble, kw_args) = dynamic_kwargs_binding(method_name, params, callee_frame);
-
-    let nreq = params.required.len();
-    let nopt = params.optional.len();
-    let npost = params.post.len();
-    let min_lit = nreq + npost;
-    let arity_check = emit_arity_check(params, callee_frame);
-
-    let required_args = (0..nreq).map(|i| quote! { args[#i].clone() });
-    let optional_args = (0..nopt).map(|i| {
-        let idx = nreq + i;
-        quote! { if #i < __opt_bound { Some(args[#idx].clone()) } else { None } }
-    });
-    // Trailing comma (not leading) -- safe regardless of position, same
-    // reasoning as `emit_call_args`'s `rest_arg`.
-    let rest_arg = params.rest.iter().flatten().map(|_| {
-        quote! { args[(#nreq + __opt_bound)..(args.len() - #npost)].to_vec(), }
-    });
-    let post_args = (0..npost).map(|i| quote! { args[args.len() - #npost + #i].clone() });
-    // Trailing comma, same reasoning as `rest_arg` -- safe regardless of
-    // position (and here, whether anything precedes it at all). The
-    // closure's own `blk` parameter is prefixed `_` when unused (not just
-    // when `needs_block` is false but ALSO named `_blk` there), matching
-    // every other unused-parameter convention in this codebase and avoiding
-    // a spurious unused-variable warning in the generated program.
-    let blk_ident = if needs_block {
-        format_ident!("blk")
-    } else {
-        format_ident!("_blk")
-    };
-    let block_arg = needs_block.then(|| quote! { blk, });
-    // The argument list is built first so `opt_bound_let` can see whether it
-    // reads `__opt_bound` -- a method with no optional and no rest parameter
-    // never does.
-    let call_args = quote! { #(#required_args,)* #(#optional_args,)* #(#rest_arg)* #(#post_args,)* #(#kw_args,)* #block_arg };
-    let opt_bound = opt_bound_let(&call_args, min_lit, nopt);
+    let TrampolineBody {
+        kw_preamble,
+        arity_check,
+        opt_bound,
+        call_args,
+        blk_ident,
+    } = trampoline_body(method_name, params, needs_block, callee_frame);
 
     quote! {
         |recv: &zeo_rt::RObj, args: &[zeo_rt::RubyValue], #blk_ident: Option<zeo_rt::RubyValue>| -> Result<zeo_rt::RubyValue, zeo_rt::Signal> {
@@ -1116,34 +1151,13 @@ pub fn emit_value_trampoline(
             zeo_rt::zeo_tramp!(#head #fn_path, #n, [#(#ix),*] #frame_arg)
         };
     }
-    let (kw_preamble, kw_args) = dynamic_kwargs_binding(method_name, params, callee_frame);
-
-    let nreq = params.required.len();
-    let nopt = params.optional.len();
-    let npost = params.post.len();
-    let min_lit = nreq + npost;
-    let arity_check = emit_arity_check(params, callee_frame);
-
-    let required_args = (0..nreq).map(|i| quote! { args[#i].clone() });
-    let optional_args = (0..nopt).map(|i| {
-        let idx = nreq + i;
-        quote! { if #i < __opt_bound { Some(args[#idx].clone()) } else { None } }
-    });
-    let rest_arg = params.rest.iter().flatten().map(|_| {
-        quote! { args[(#nreq + __opt_bound)..(args.len() - #npost)].to_vec(), }
-    });
-    let post_args = (0..npost).map(|i| quote! { args[args.len() - #npost + #i].clone() });
-    let blk_ident = if needs_block {
-        format_ident!("blk")
-    } else {
-        format_ident!("_blk")
-    };
-    let block_arg = needs_block.then(|| quote! { blk, });
-    // The argument list is built first so `opt_bound_let` can see whether it
-    // reads `__opt_bound` -- a method with no optional and no rest parameter
-    // never does.
-    let call_args = quote! { #(#required_args,)* #(#optional_args,)* #(#rest_arg)* #(#post_args,)* #(#kw_args,)* #block_arg };
-    let opt_bound = opt_bound_let(&call_args, min_lit, nopt);
+    let TrampolineBody {
+        kw_preamble,
+        arity_check,
+        opt_bound,
+        call_args,
+        blk_ident,
+    } = trampoline_body(method_name, params, needs_block, callee_frame);
     let (recv_ident, recv_arg) = match recv_mode {
         RecvMode::Pass => (format_ident!("recv"), Some(quote! { recv.clone(), })),
         RecvMode::Drop => (format_ident!("_recv"), None),
@@ -1176,34 +1190,13 @@ pub fn emit_exc_trampoline(
     needs_block: bool,
     callee_frame: &TokenStream,
 ) -> TokenStream {
-    let (kw_preamble, kw_args) = dynamic_kwargs_binding(method_name, params, callee_frame);
-
-    let nreq = params.required.len();
-    let nopt = params.optional.len();
-    let npost = params.post.len();
-    let min_lit = nreq + npost;
-    let arity_check = emit_arity_check(params, callee_frame);
-
-    let required_args = (0..nreq).map(|i| quote! { args[#i].clone() });
-    let optional_args = (0..nopt).map(|i| {
-        let idx = nreq + i;
-        quote! { if #i < __opt_bound { Some(args[#idx].clone()) } else { None } }
-    });
-    let rest_arg = params.rest.iter().flatten().map(|_| {
-        quote! { args[(#nreq + __opt_bound)..(args.len() - #npost)].to_vec(), }
-    });
-    let post_args = (0..npost).map(|i| quote! { args[args.len() - #npost + #i].clone() });
-    let blk_ident = if needs_block {
-        format_ident!("blk")
-    } else {
-        format_ident!("_blk")
-    };
-    let block_arg = needs_block.then(|| quote! { blk, });
-    // The argument list is built first so `opt_bound_let` can see whether it
-    // reads `__opt_bound` -- a method with no optional and no rest parameter
-    // never does.
-    let call_args = quote! { #(#required_args,)* #(#optional_args,)* #(#rest_arg)* #(#post_args,)* #(#kw_args,)* #block_arg };
-    let opt_bound = opt_bound_let(&call_args, min_lit, nopt);
+    let TrampolineBody {
+        kw_preamble,
+        arity_check,
+        opt_bound,
+        call_args,
+        blk_ident,
+    } = trampoline_body(method_name, params, needs_block, callee_frame);
 
     quote! {
         |recv: &zeo_rt::RObj, args: &[zeo_rt::RubyValue], #blk_ident: Option<zeo_rt::RubyValue>| -> Result<zeo_rt::RubyValue, zeo_rt::Signal> {
@@ -1641,39 +1634,39 @@ pub fn emit_proc_param_bindings(
     // activemodel's generated Rust, and it multiplies through every shared and
     // module body.
     //
-    // Which are live is decided by looking at the emitted bindings rather than
-    // by re-deriving it from `nopt`/`has_rest`/`npost`: the consumers are
-    // spread over six builders above, and a rule restated here would drift
-    // from them silently -- into a `cannot find value __extra`, or back into
-    // dead code nobody notices. Walked in reverse declaration order so a name
-    // one `let` needs is still seen: `__rest_count` reads `__opt_bound` and
-    // `__extra`, `__extra` reads `__min` and `__n`.
+    // Which are live is a CLOSED FORM of `Params`, and exactly three of the
+    // builders above read any of them:
+    //
+    //   `optional_lets` (nopt > 0)      -- `__opt_bound`
+    //   `rest_let`      (a NAMED rest)  -- `__opt_bound`, `__rest_count`
+    //   `post_lets`     (npost > 0)     -- `__opt_bound`, `__rest_count`
+    //
+    // and the declarations then chain: `__rest_count` reads `__extra` and
+    // `__opt_bound`, `__opt_bound` reads `__extra`, `__extra` reads `__min`
+    // and `__n`. An anonymous `*` is deliberately not a rest here: it
+    // declares no binding, so `rest_let` never runs for it.
+    //
+    // This used to be answered by rendering the whole binding block to a
+    // `String` and scanning it for each of the five names, once per Proc
+    // site. Both directions of a mistake in the rule are LOUD: too narrow is
+    // `cannot find value __extra` in the generated program, too wide is an
+    // unused-variable warning that `compile-bench` counts.
+    let rest_count_live = rest_is_named(params) || npost > 0;
+    let opt_bound_live = nopt > 0 || rest_count_live;
     let arity_math = {
-        let mut used = bindings.to_string();
-        let mut lets: Vec<TokenStream> = Vec::new();
-        for (name, decl) in [
-            (
-                "__rest_count",
-                quote! { let __rest_count = if #has_rest { __extra.saturating_sub(__opt_bound) } else { 0 }; },
-            ),
-            (
-                "__opt_bound",
-                quote! { let __opt_bound = __extra.min(#nopt); },
-            ),
-            (
-                "__extra",
-                quote! { let __extra = __n.saturating_sub(__min); },
-            ),
-            ("__min", quote! { let __min = #nreq + #npost; }),
-            ("__n", quote! { let __n = __positional.len(); }),
-        ] {
-            if mentions_ident(&used, name) {
-                used.push_str(&decl.to_string());
-                lets.push(decl);
+        let n_and_min = opt_bound_live.then(|| {
+            quote! {
+                let __n = __positional.len();
+                let __min = #nreq + #npost;
+                let __extra = __n.saturating_sub(__min);
             }
-        }
-        lets.reverse();
-        quote! { #(#lets)* }
+        });
+        let opt_bound =
+            opt_bound_live.then(|| quote! { let __opt_bound = __extra.min(#nopt); });
+        let rest_count = rest_count_live.then(|| {
+            quote! { let __rest_count = if #has_rest { __extra.saturating_sub(__opt_bound) } else { 0 }; }
+        });
+        quote! { #n_and_min #opt_bound #rest_count }
     };
     quote! {
         #positional_and_kw_source

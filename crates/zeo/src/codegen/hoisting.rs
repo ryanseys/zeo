@@ -149,7 +149,47 @@ pub fn emit_local_write(cx: &Ctx, name: &str, value: TokenStream) -> TokenStream
 /// by `codegen::captures` to compute which names are genuinely shared with
 /// an escaping block (as opposed to owned only by that block -- see the
 /// `Call` arm's docs below).
-pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<String>) {
+/// An ORDERED, deduped local-name accumulator -- [`collect_locals`]' output.
+///
+/// The order is load-bearing (it is the hoisting prelude's declaration
+/// order), so the `Vec` stays; what rides beside it is a set, because the
+/// dedup used to be `Vec::contains` -- a linear scan per assignment over a
+/// list that grows to the scope's local count, run 4+ times per (class x
+/// method) across the FLATTENED ancestry. Callers that then asked "is this
+/// name in there?" per parameter were paying the same scan again, and now
+/// ask the set.
+#[derive(Default)]
+pub(super) struct Locals {
+    seen: FSet<String>,
+    order: Vec<String>,
+}
+
+impl Locals {
+    fn add(&mut self, name: &str) {
+        if !self.seen.contains(name) {
+            self.seen.insert(name.to_string());
+            self.order.push(name.to_string());
+        }
+    }
+
+    pub(super) fn contains(&self, name: &str) -> bool {
+        self.seen.contains(name)
+    }
+
+    pub(super) fn names(&self) -> &[String] {
+        &self.order
+    }
+
+    pub(super) fn into_names(self) -> Vec<String> {
+        self.order
+    }
+
+    pub(super) fn into_set(self) -> FSet<String> {
+        self.seen
+    }
+}
+
+pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Locals) {
     match &compiler.hir[id] {
         // An FFI wrapper body declares no hoistable locals (only param
         // reads).
@@ -163,9 +203,7 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
             method_body: _,
         } => {}
         HirNode::LocalWrite(name, value) => {
-            if !out.contains(name) {
-                out.push(name.clone());
-            }
+            out.add(name);
             collect_locals(compiler, *value, out);
         }
         HirNode::IvarWrite(_, value) | HirNode::ClassVarWrite(_, value) => {
@@ -236,9 +274,7 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
         HirNode::For { target, iterable, body } => {
             target.for_each_node(&mut |n| collect_locals(compiler, n, out));
             target.for_each_local_name(&mut |n| {
-                if !out.contains(&n.to_string()) {
-                    out.push(n.to_string());
-                }
+                out.add(n);
             });
             collect_locals(compiler, *iterable, out);
             for &n in body {
@@ -253,9 +289,7 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
         HirNode::Redo => {}
         HirNode::MultiWrite { targets, value } => {
             targets.for_each_local_name(&mut |n| {
-                if !out.contains(&n.to_string()) {
-                    out.push(n.to_string());
-                }
+                out.add(n);
             });
             targets.for_each_node(&mut |n| collect_locals(compiler, n, out));
             collect_locals(compiler, *value, out);
@@ -418,9 +452,7 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
                 // prelude declares them, same as `MultiWrite`'s targets just
                 // above.
                 arm.pattern.for_each_bound_name(&mut |n| {
-                    if !out.contains(&n.to_string()) {
-                        out.push(n.to_string());
-                    }
+                    out.add(n);
                 });
                 arm.pattern.for_each_node(&mut |n| collect_locals(compiler, n, out));
                 if let Some((g, _)) = arm.guard {
@@ -439,9 +471,7 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
         HirNode::MatchPredicate { subject, pattern } | HirNode::MatchRequired { subject, pattern } => {
             collect_locals(compiler, *subject, out);
             pattern.for_each_bound_name(&mut |n| {
-                if !out.contains(&n.to_string()) {
-                    out.push(n.to_string());
-                }
+                out.add(n);
             });
             pattern.for_each_node(&mut |n| collect_locals(compiler, n, out));
         }
@@ -458,10 +488,9 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
                 // A rescue binding (`=> e`) leaks into the enclosing METHOD
                 // scope exactly like a `case/in` pattern's bound names do --
                 // same treatment as that arm just above.
-                if let Some(name) = &r.binding
-                    && !out.contains(name) {
-                        out.push(name.clone());
-                    }
+                if let Some(name) = &r.binding {
+                    out.add(name);
+                }
                 for &n in &r.body {
                     collect_locals(compiler, n, out);
                 }
@@ -582,10 +611,11 @@ pub fn emit_hoisted_body_after_decls(
 /// excluded because only that prologue can bind them (an optional or keyword
 /// parameter is still an `Option<..>` until it unwraps it).
 fn param_default_locals(cx: &Ctx, default_ids: &[NodeId], param_names: &[String]) -> Vec<String> {
-    let mut names = Vec::new();
+    let mut names = Locals::default();
     for &id in default_ids {
         collect_locals(cx.compiler, id, &mut names);
     }
+    let mut names = names.into_names();
     names.retain(|n| !param_names.iter().any(|p| p == n));
     names
 }
@@ -640,7 +670,7 @@ fn emit_hoisted_decls(
     extra_roots: &[NodeId],
     param_names: &[String],
 ) -> TokenStream {
-    let mut names = Vec::new();
+    let mut names = Locals::default();
     for &n in body {
         collect_locals(cx.compiler, n, &mut names);
     }
@@ -648,7 +678,7 @@ fn emit_hoisted_decls(
         collect_locals(cx.compiler, n, &mut names);
     }
     let predeclared = param_default_locals(cx, extra_roots, param_names);
-    let decls = names.iter().filter_map(|n| {
+    let decls = names.names().iter().filter_map(|n| {
         let ident = safe_ident(n);
         let is_param = param_names.iter().any(|p| p == n);
         if predeclared.contains(n) {

@@ -3306,7 +3306,7 @@ pub(crate) fn emit_class_body_site_lifted(
     // in as its guard. The class body's OWN locals still win: a class body is
     // a fresh Ruby scope, and its names shadow rather than share.
     if !enclosing_captured.is_empty() {
-        let mut own = Vec::new();
+        let mut own = hoisting::Locals::default();
         for &n in stmts {
             hoisting::collect_locals(compiler, n, &mut own);
         }
