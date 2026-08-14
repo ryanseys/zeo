@@ -1469,9 +1469,13 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             // eagerly so an unreached `yield` must not abort the process.
             // Boxed: `yield self` (or any Object-typed value) crosses the
             // Proc boundary as a `RubyValue` slice element.
+            // BORROWED, not cloned: `RProc::call` takes `&self`, and the
+            // block lives in `__blk` for the whole yield. Cloning it cost an
+            // `Arc` refcount pair per yield -- on the hottest path a
+            // generated program has.
             let invoke = quote! {
                 match __blk.as_ref() {
-                    Some(__b) => __b.as_proc_unchecked(),
+                    Some(__b) => __b.as_proc_ref(),
                     None => return Err(zeo_rt::raise_no_block_yield()),
                 }
             };

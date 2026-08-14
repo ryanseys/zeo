@@ -588,6 +588,8 @@ pub(super) fn try_proc_dispatch(
         None => quote! { None },
     };
     Some(
-        quote! { ((#recv_expr).as_proc_unchecked()).call_with_block(&[#(#arg_exprs),*], #block_expr)? },
+        // Borrowed: `call_with_block` takes `&self`, so a `p.call(x)` costs no
+        // `Arc` refcount pair. The receiver temporary outlives the call.
+        quote! { ((#recv_expr).as_proc_ref()).call_with_block(&[#(#arg_exprs),*], #block_expr)? },
     )
 }
