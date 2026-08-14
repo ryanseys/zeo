@@ -21,6 +21,7 @@
 
 use crate::builtins::type_error;
 use crate::{RubyValue, Signal};
+use std::borrow::Cow;
 use std::sync::Arc;
 
 /// The shared body of a `Proc`: `(self, args, call-site block) -> result`.
@@ -594,12 +595,16 @@ pub fn yield_pair(p: &RProc, k: RubyValue, v: RubyValue) -> Result<RubyValue, Si
 /// `codegen::params::emit_proc_param_bindings`. This function is only
 /// reached once that decision says yes, so it just performs the coercion.
 /// A lambda never comes here (strict arity, no auto-splat).
-pub fn block_auto_splat(args: Vec<RubyValue>) -> Result<Vec<RubyValue>, Signal> {
+///
+/// Borrows: the overwhelmingly common answer is "no coercion applies", and
+/// the caller is a block prologue running on every invocation, so the
+/// pass-through case must not allocate.
+pub fn block_auto_splat(args: &[RubyValue]) -> Result<Cow<'_, [RubyValue]>, Signal> {
     if args.len() != 1 {
-        return Ok(args);
+        return Ok(Cow::Borrowed(args));
     }
     match &args[0] {
-        RubyValue::Array(a) => Ok(a.lock().to_vec()),
+        RubyValue::Array(a) => Ok(Cow::Owned(a.lock().to_vec())),
         v => {
             let to_ary = crate::Symbol::intern("to_ary");
             // `rb_check_array_type`: a `to_ary` answering a non-Array is
@@ -608,9 +613,9 @@ pub fn block_auto_splat(args: Vec<RubyValue>) -> Result<Vec<RubyValue>, Signal> 
             if crate::dispatch::responds_to(v.class_id(), to_ary, false)
                 && let RubyValue::Array(a) = crate::dispatch::send_value(v, to_ary, &[], None)?
             {
-                return Ok(a.lock().to_vec());
+                return Ok(Cow::Owned(a.lock().to_vec()));
             }
-            Ok(args)
+            Ok(Cow::Borrowed(args))
         }
     }
 }
@@ -750,8 +755,11 @@ mod tests {
 
     #[test]
     fn auto_splat_spreads_a_lone_array_argument() {
-        let arg = RubyValue::Array(array_new(vec![RubyValue::Int(1), RubyValue::Int(2)]));
-        let out = block_auto_splat(vec![arg]).unwrap();
+        let args = [RubyValue::Array(array_new(vec![
+            RubyValue::Int(1),
+            RubyValue::Int(2),
+        ]))];
+        let out = block_auto_splat(&args).unwrap();
         assert_eq!(out.len(), 2);
         assert_eq!(out[0].to_display_string(), "1");
         assert_eq!(out[1].to_display_string(), "2");
@@ -759,7 +767,8 @@ mod tests {
 
     #[test]
     fn auto_splat_leaves_a_lone_non_array_alone() {
-        let out = block_auto_splat(vec![RubyValue::Int(5)]).unwrap();
+        let args = [RubyValue::Int(5)];
+        let out = block_auto_splat(&args).unwrap();
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].to_display_string(), "5");
     }
@@ -769,20 +778,24 @@ mod tests {
     /// first happens to be an Array.
     #[test]
     fn auto_splat_leaves_multiple_arguments_alone() {
-        let arr = RubyValue::Array(array_new(vec![RubyValue::Int(1)]));
-        let out = block_auto_splat(vec![arr, RubyValue::Int(9)]).unwrap();
+        let args = [
+            RubyValue::Array(array_new(vec![RubyValue::Int(1)])),
+            RubyValue::Int(9),
+        ];
+        let out = block_auto_splat(&args).unwrap();
         assert_eq!(out.len(), 2);
         assert_eq!(out[0].inspect_string(), "[1]");
     }
 
     #[test]
     fn auto_splat_of_no_arguments_is_a_no_op() {
-        assert!(block_auto_splat(Vec::new()).unwrap().is_empty());
+        assert!(block_auto_splat(&[]).unwrap().is_empty());
     }
 
     #[test]
     fn auto_splat_spreads_an_empty_array_to_nothing() {
-        let out = block_auto_splat(vec![RubyValue::Array(array_new(Vec::new()))]).unwrap();
+        let args = [RubyValue::Array(array_new(Vec::new()))];
+        let out = block_auto_splat(&args).unwrap();
         assert!(out.is_empty());
     }
 

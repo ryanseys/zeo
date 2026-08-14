@@ -543,7 +543,7 @@ pub fn emit_multi_write(cx: &Ctx, targets: &MultiTargetGroup, value: NodeId) -> 
         // applies, which is exactly the one-element case here).
         quote! {
             zeo_rt::RubyValue::Array(zeo_rt::array_new(
-                zeo_rt::block_auto_splat(vec![#value_expr])?
+                zeo_rt::block_auto_splat(&[#value_expr])?.into_owned()
             ))
         }
     };
@@ -557,7 +557,7 @@ pub fn emit_multi_write(cx: &Ctx, targets: &MultiTargetGroup, value: NodeId) -> 
 /// `(a, b = arr)` -> `arr` (the array itself, not a fresh destructured copy).
 /// The RHS is evaluated exactly once and is already a `RubyValue` in both
 /// branches -- the `Array` branch calls `as_array_unchecked` on it, the scalar
-/// branch feeds it to `block_auto_splat`, which takes `Vec<RubyValue>`.
+/// branch feeds it to `block_auto_splat`, which takes a `&[RubyValue]`.
 pub fn emit_multi_write_value(cx: &Ctx, targets: &MultiTargetGroup, value: NodeId) -> TokenStream {
     let value_expr = {
         let e = emit_expr(cx, value);
@@ -568,7 +568,7 @@ pub fn emit_multi_write_value(cx: &Ctx, targets: &MultiTargetGroup, value: NodeI
     } else {
         quote! {
             zeo_rt::RubyValue::Array(zeo_rt::array_new(
-                zeo_rt::block_auto_splat(vec![__rhs.clone()])?
+                zeo_rt::block_auto_splat(&[__rhs.clone()])?.into_owned()
             ))
         }
     };

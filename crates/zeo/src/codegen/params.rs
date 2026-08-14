@@ -1410,19 +1410,29 @@ pub fn emit_proc_param_bindings(
     let has_rest = params.rest.is_some();
     let has_keywords = !params.keywords.is_empty() || params.keyword_rest.is_some();
 
+    // `__positional` is a SLICE of the closure's own arguments, not a copy of
+    // them. It used to be `#args_ident.to_vec()`, unconditionally: a heap
+    // allocation plus a clone of every argument on every invocation of every
+    // non-fused block, to serve bindings that only ever `.get(i).cloned()`
+    // out of it. Both shapes below sit entirely inside the borrow, and the
+    // auto-splat -- the one step that can produce different elements -- owns
+    // its result only when a coercion actually applied (`block_auto_splat`
+    // answers a `Cow`). Everything downstream reads through `Deref`, so the
+    // binding builders are untouched by the distinction.
     let positional_and_kw_source = if has_keywords {
         quote! {
-            let (__positional, __kw_source): (Vec<zeo_rt::RubyValue>, Option<zeo_rt::RubyValue>) =
+            let (__positional, __kw_source):
+                (&[zeo_rt::RubyValue], Option<zeo_rt::RubyValue>) =
                 match #args_ident.last() {
                     Some(__v @ zeo_rt::RubyValue::Hash(_)) => {
-                        (#args_ident[..#args_ident.len() - 1].to_vec(), Some(__v.clone()))
+                        (&#args_ident[..#args_ident.len() - 1], Some(__v.clone()))
                     }
-                    _ => (#args_ident.to_vec(), None),
+                    _ => (#args_ident, None),
                 };
         }
     } else {
         quote! {
-            let __positional: Vec<zeo_rt::RubyValue> = #args_ident.to_vec();
+            let __positional: &[zeo_rt::RubyValue] = #args_ident;
         }
     };
     let auto_splat = (!is_lambda && auto_splats(params)).then(|| {
