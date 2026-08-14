@@ -171,6 +171,87 @@ pub(crate) use own_row;
 /// `rb_iter_break()` analogue -- results travel through captured state, never
 /// the break payload). Any other signal (a raise, a `break` from the USER's
 /// block targeting the enclosing call, `Signal::Return`) propagates untouched.
+/// [`for_each`] with the accumulator owned by the DRIVER rather than by the
+/// caller's closure.
+///
+/// `for_each`'s `Send + Sync + 'static` bound exists only for the arm that
+/// wraps the closure in an `RProc` and hands it to a user-defined `each`. The
+/// own-collection arm -- an `Array`, a `Hash`, an already-materialized list,
+/// which is what a receiver almost always is -- calls the closure directly in
+/// a plain loop. But the bound forced every caller to reach its accumulator
+/// through an `Arc<Mutex<_>>` anyway, so that fast arm paid a `parking_lot`
+/// acquire/release pair PER ELEMENT for state only one thread can see (and
+/// `sum_own` paid two, for its take/re-store dance).
+///
+/// Split into `compute` and `absorb` for one reason: the block call must
+/// never happen with the accumulator locked, or a block that re-enters the
+/// same driver deadlocks. `compute` may call the block and holds nothing;
+/// `absorb` holds the accumulator and never calls anything. On the own arm
+/// there is no lock at all, and `&mut acc` cannot alias -- a reentrant call
+/// is a different `fold_each` with an accumulator of its own.
+fn fold_each<A, T>(
+    src: Src<'_>,
+    init: A,
+    compute: impl Fn(&[RubyValue]) -> Result<T, Signal> + Send + Sync + 'static,
+    absorb: impl Fn(&mut A, T) -> Result<(), Signal> + Send + Sync + 'static,
+) -> Result<A, Signal>
+where
+    A: Send + 'static,
+    T: Send + 'static,
+{
+    if src.own.is_some() {
+        let acc = std::cell::RefCell::new(init);
+        for_each_own(src, |yielded| {
+            let t = compute(yielded)?;
+            absorb(&mut acc.borrow_mut(), t)
+        })?;
+        return Ok(acc.into_inner());
+    }
+    let cell = Arc::new(Mutex::new(init));
+    let c2 = cell.clone();
+    for_each(src, move |yielded| {
+        let t = compute(yielded)?;
+        absorb(&mut c2.lock(), t)?;
+        Ok(RubyValue::Nil)
+    })?;
+    Ok(Mutex::into_inner(Arc::into_inner(cell).expect(
+        "the driver is the sole owner once for_each has returned",
+    )))
+}
+
+/// The own-collection half of [`for_each`], with no bound on `f` beyond what
+/// a plain loop needs. Only reachable when `src.own` is set.
+fn for_each_own(
+    src: Src<'_>,
+    mut f: impl FnMut(&[RubyValue]) -> Result<(), Signal>,
+) -> Result<(), Signal> {
+    let own = src
+        .own
+        .expect("for_each_own is only called on an own source");
+    // The lock is never held across the block call, so a block that reads or
+    // writes the receiver cannot deadlock -- `Array#each`'s rule.
+    let mut i = 0usize;
+    loop {
+        let e = match own {
+            Own::Array(a) => match a.lock().get(i) {
+                Some(e) => e.clone(),
+                None => break,
+            },
+            Own::List(v) => match v.get(i) {
+                Some(e) => e.clone(),
+                None => break,
+            },
+        };
+        match f(std::slice::from_ref(&e)) {
+            Ok(()) => {}
+            Err(Signal::Break(_)) => return Ok(()),
+            Err(other) => return Err(other),
+        }
+        i += 1;
+    }
+    Ok(())
+}
+
 fn for_each(
     src: Src<'_>,
     f: impl Fn(&[RubyValue]) -> Result<RubyValue, Signal> + Send + Sync + 'static,
@@ -279,20 +360,25 @@ pub(crate) fn select(
     let method = if keep { "select" } else { "reject" };
     reject_args(args, method, "arguments");
     let blk = block_or_enum!(src.recv, method, args, block);
-    let out: Arc<Mutex<Vec<RubyValue>>> = Arc::new(Mutex::new(Vec::new()));
-    let out2 = out.clone();
     let brk: Arc<Mutex<Option<RubyValue>>> = Arc::new(Mutex::new(None));
     let brk2 = brk.clone();
-    for_each(src, move |yielded| {
-        if yield_block(&blk, yielded, &brk2)?.truthy() == keep {
-            out2.lock().push(pack(yielded));
-        }
-        Ok(RubyValue::Nil)
-    })?;
+    let items = fold_each(
+        src,
+        Vec::new(),
+        move |yielded| {
+            let hit = yield_block(&blk, yielded, &brk2)?.truthy() == keep;
+            Ok(hit.then(|| pack(yielded)))
+        },
+        |out: &mut Vec<RubyValue>, kept| {
+            if let Some(v) = kept {
+                out.push(v);
+            }
+            Ok(())
+        },
+    )?;
     if let Some(v) = user_break(&brk) {
         return Ok(v);
     }
-    let items = std::mem::take(&mut *out.lock());
     Ok(RubyValue::Array(array_new(items)))
 }
 
@@ -831,13 +917,15 @@ fn slice_before_after(
 /// `to_a`/`entries` rows and by the sort/uniq/group rows that need the whole
 /// materialized sequence internally (they can't call the mangled row fn).
 fn collect_to_a(src: Src<'_>) -> Result<RubyValue, Signal> {
-    let out: Arc<Mutex<Vec<RubyValue>>> = Arc::new(Mutex::new(Vec::new()));
-    let out2 = out.clone();
-    for_each(src, move |yielded| {
-        out2.lock().push(pack(yielded));
-        Ok(RubyValue::Nil)
-    })?;
-    let items = std::mem::take(&mut *out.lock());
+    let items = fold_each(
+        src,
+        Vec::new(),
+        |yielded| Ok(pack(yielded)),
+        |out: &mut Vec<RubyValue>, v| {
+            out.push(v);
+            Ok(())
+        },
+    )?;
     Ok(RubyValue::Array(array_new(items)))
 }
 
@@ -941,19 +1029,20 @@ pub(crate) fn map_own(
 ) -> Result<RubyValue, Signal> {
     reject_args(args, "map", "arguments");
     let blk = block_or_enum!(src.recv, "map", args, block);
-    let out: Arc<Mutex<Vec<RubyValue>>> = Arc::new(Mutex::new(Vec::new()));
-    let out2 = out.clone();
     let brk: Arc<Mutex<Option<RubyValue>>> = Arc::new(Mutex::new(None));
     let brk2 = brk.clone();
-    for_each(src, move |yielded| {
-        let v = yield_block(&blk, yielded, &brk2)?;
-        out2.lock().push(v);
-        Ok(RubyValue::Nil)
-    })?;
+    let items = fold_each(
+        src,
+        Vec::new(),
+        move |yielded| yield_block(&blk, yielded, &brk2),
+        |out: &mut Vec<RubyValue>, v| {
+            out.push(v);
+            Ok(())
+        },
+    )?;
     if let Some(v) = user_break(&brk) {
         return Ok(v);
     }
-    let items = std::mem::take(&mut *out.lock());
     Ok(RubyValue::Array(array_new(items)))
 }
 
@@ -962,39 +1051,41 @@ pub(crate) fn count_own(
     args: &[RubyValue],
     block: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    let n = Arc::new(Mutex::new(0i64));
-    let n2 = n.clone();
     let brk: Arc<Mutex<Option<RubyValue>>> = Arc::new(Mutex::new(None));
-    match (args.len(), block) {
-        (0, None) => for_each(src, move |_| {
-            *n2.lock() += 1;
-            Ok(RubyValue::Nil)
-        })?,
+    // One `absorb` for all three arms: they differ only in what DECIDES that
+    // an element counts, which is `compute`'s job.
+    let bump = |n: &mut i64, hit: bool| {
+        if hit {
+            *n += 1;
+        }
+        Ok(())
+    };
+    let n = match (args.len(), block) {
+        (0, None) => fold_each(src, 0i64, |_| Ok(true), bump)?,
         (0, Some(RubyValue::Proc(blk))) => {
             let brk2 = brk.clone();
-            for_each(src, move |yielded| {
-                if yield_block(&blk, yielded, &brk2)?.truthy() {
-                    *n2.lock() += 1;
-                }
-                Ok(RubyValue::Nil)
-            })?
+            fold_each(
+                src,
+                0i64,
+                move |yielded| Ok(yield_block(&blk, yielded, &brk2)?.truthy()),
+                bump,
+            )?
         }
         (1, _) => {
             let item = args[0].clone();
-            for_each(src, move |yielded| {
-                if pack(yielded).rb_eq(&item) {
-                    *n2.lock() += 1;
-                }
-                Ok(RubyValue::Nil)
-            })?
+            fold_each(
+                src,
+                0i64,
+                move |yielded| Ok(pack(yielded).rb_eq(&item)),
+                bump,
+            )?
         }
         _ => panic!("Enumerable#count takes at most one argument"),
-    }
+    };
     if let Some(v) = user_break(&brk) {
         return Ok(v);
     }
-    let result = *n.lock();
-    Ok(RubyValue::Int(result))
+    Ok(RubyValue::Int(n))
 }
 
 pub(crate) fn find_own(
@@ -1038,28 +1129,30 @@ pub(crate) fn sum_own(
         1 => args[0].clone(),
         _ => panic!("Enumerable#sum takes at most one argument"),
     };
-    let acc = Arc::new(Mutex::new(Some(SumAcc::new(init))));
     let blk = match block {
         Some(RubyValue::Proc(p)) => Some(p),
         _ => None,
     };
-    let acc2 = acc.clone();
-    for_each(src, move |yielded| {
-        let mut elem = pack(yielded);
-        if let Some(b) = &blk {
-            elem = b.call(&[elem])?;
-        }
-        let current = acc2.lock().take().expect("accumulator always present");
-        let next = current.add(elem)?;
-        *acc2.lock() = Some(next);
-        Ok(RubyValue::Nil)
-    })?;
-    let result = acc
-        .lock()
-        .take()
-        .expect("accumulator always present")
-        .finish();
-    Ok(result)
+    let acc = fold_each(
+        src,
+        Some(SumAcc::new(init)),
+        move |yielded| {
+            let elem = pack(yielded);
+            match &blk {
+                Some(b) => b.call(&[elem]),
+                None => Ok(elem),
+            }
+        },
+        // `SumAcc::add` consumes `self`, so the value still has to be taken
+        // out and put back -- but that is now a move through a local, where
+        // it used to be TWO lock acquisitions per element.
+        |acc: &mut Option<SumAcc>, elem| {
+            let current = acc.take().expect("accumulator always present");
+            *acc = Some(current.add(elem)?);
+            Ok(())
+        },
+    )?;
+    Ok(acc.expect("accumulator always present").finish())
 }
 
 pub(crate) fn minmax_own(
