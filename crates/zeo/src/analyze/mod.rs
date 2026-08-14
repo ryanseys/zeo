@@ -4177,6 +4177,13 @@ fn walk_class_body(
                 }
                 match resolve_module_target(compiler, &m, &child_cref, box_id) {
                     MixinTarget::Static(target) => {
+                        // A module that installs methods at RUN time has no
+                        // complete table to fold in here -- the send at this
+                        // position takes whatever it holds when it runs.
+                        if module_defines_methods_dynamically(compiler, target) {
+                            defer_runtime_mixin_in_body(compiler, site_idx, stmt);
+                            continue;
+                        }
                         // Same rule as `Include`'s: an `extend_object` override
                         // owns the decision, so the static edit gives way to a
                         // send at this position.
@@ -4934,6 +4941,63 @@ fn defer_runtime_mixin(compiler: &mut Compiler, stmt: NodeId) -> NodeId {
 
 /// [`defer_runtime_mixin`] for a directive inside a `class`/`module` body:
 /// the send runs at the site's own document position.
+/// Whether `module`'s body installs methods at RUN time, so its method set is
+/// not knowable when the mixin is compiled.
+///
+/// A static `include`/`extend` folds the module's methods into the target's
+/// table right here, which is only sound when that table is complete. i18n
+/// writes its delegators as a string eval in a loop:
+///
+///     %w(locale backend default_locale ...).each do |method|
+///       module_eval <<-DELEGATORS
+///         def #{method} ... end
+///         def #{method}= ... end
+///       DELEGATORS
+///     end
+///     ...
+///     extend Base
+///
+/// The literal `def`s in `Base` reached `I18n`; the eight delegator pairs did
+/// not, so `I18n.backend = ...` was a NoMethodError while `I18n.translate`
+/// worked. The mixin becomes a runtime send instead, which installs whatever
+/// the module holds by the time it RUNS -- and also puts the module in the
+/// target's ancestry, where reflection can see it.
+///
+/// Deliberately conservative in the safe direction: a module that merely
+/// MENTIONS one of these names is compiled the slower way, which costs
+/// dispatch speed rather than an answer.
+fn module_defines_methods_dynamically(compiler: &Compiler, module: ClassId) -> bool {
+    fn installs_at_runtime(hir: &crate::hir::Hir, id: NodeId) -> bool {
+        // The EVAL family only. `attr_accessor`, `alias_method` and a
+        // `define_method(:literal)` all expand at COMPILE time, so a module
+        // using them has a complete table and must keep the static edit --
+        // listing them here would push almost every module in the corpus onto
+        // the slow path for nothing.
+        let hit = match &hir[id] {
+            HirNode::Call { name, .. } => matches!(
+                name.as_str(),
+                "module_eval" | "class_eval" | "module_exec" | "class_exec" | "eval"
+            ),
+            _ => false,
+        };
+        if hit {
+            return true;
+        }
+        let mut found = false;
+        hir[id].for_each_child(&mut |c| found = found || installs_at_runtime(hir, c));
+        found
+    }
+    compiler
+        .class_body_sites
+        .iter()
+        .filter(|s| s.class == module)
+        .any(|s| {
+            s.stmts
+                .iter()
+                .any(|&n| installs_at_runtime(&compiler.hir, n))
+        })
+}
+
 fn defer_runtime_mixin_in_body(compiler: &mut Compiler, site_idx: usize, stmt: NodeId) {
     let send = defer_runtime_mixin(compiler, stmt);
     compiler.class_body_sites[site_idx].stmts.push(send);

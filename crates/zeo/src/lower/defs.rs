@@ -1846,6 +1846,32 @@ pub(crate) fn qualified_const_mints_runtime_class(hir: &Hir, name: &str) -> bool
         .any(|&v| value_mints_runtime_class(hir, v))
 }
 
+/// [`const_is_assigned`] for a QUALIFIED path, asked of its leaf.
+///
+/// The twin of [`qualified_const_mints_runtime_class`], and needed for the
+/// same reason: `const_write_values` keys the SCOPE-LESS writes by their leaf,
+/// so `IMPL = Backend` written inside `module Collection` is filed under
+/// `"IMPL"` and the path `Collection::IMPL` never matched it. concurrent-ruby
+/// writes exactly that pair --
+///
+///     MapImplementation = case ... MriMapBackend ... end
+///     class Map < Collection::MapImplementation
+///
+/// -- so `Map` was judged to have a compile-time superclass, went down the
+/// static path, and was DROPPED when nothing there could resolve the name.
+/// `Concurrent::Map` then did not exist and i18n could not build its cache.
+///
+/// Answering true too often costs an optimization, not a result: the runtime
+/// path evaluates the superclass expression and mints the class, which is
+/// always correct. `const_is_class_def` is what keeps a real `class Ns::Base`
+/// on the static path.
+pub(crate) fn qualified_const_is_assigned(hir: &Hir, name: &str) -> bool {
+    let Some(leaf) = name.rsplit("::").next() else {
+        return false;
+    };
+    leaf != name && const_is_assigned(hir, leaf)
+}
+
 /// Whether an already-lowered `class`/`module` DEFINES this name HERE, making
 /// it a compile-time class even if some later statement also assigns the
 /// constant.
@@ -4302,7 +4328,8 @@ pub(crate) fn try_lower_definition(
                 // definition stays on the static path.
                 Ok(n) => {
                     (const_is_assigned(hir, &n)
-                        || crate::lower::defs::qualified_const_mints_runtime_class(hir, &n))
+                        || crate::lower::defs::qualified_const_mints_runtime_class(hir, &n)
+                        || crate::lower::defs::qualified_const_is_assigned(hir, &n))
                         && !const_is_class_def(hir, &n)
                 }
             };
