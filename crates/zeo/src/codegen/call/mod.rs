@@ -978,7 +978,7 @@ fn emit_typed_iter_inline(
 /// forced `Captured` (cell) storage, which -- like an Object-typed
 /// (`Shadowed`, unboxed `Arc<Concrete>`) local or a `for`-var override --
 /// stays on the clone path.
-fn borrowable_operand(cx: &Ctx, id: NodeId) -> Option<proc_macro2::Ident> {
+pub(super) fn borrowable_operand(cx: &Ctx, id: NodeId) -> Option<proc_macro2::Ident> {
     let HirNode::LocalRead(name) = &cx.compiler.hir[id] else {
         return None;
     };
