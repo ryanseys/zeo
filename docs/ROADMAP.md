@@ -516,6 +516,63 @@ diffs beyond the intended shapes.
   are `proc_macro2` token traffic (`Vec<TokenTree>::clone` and
   `validate_ident` are visible line items) and the output writer. That is
   Wave 7b's territory, and it now has a number behind it.
+- **A pending-label register for synthetic C frames** — retired 2026-08-14
+  **by measurement**, before any of it was written. Every builtin dispatch
+  pushes a synthetic frame (`frames::synthetic_c_frame`) and pops it on
+  drop; the idea was to keep the label in a `Cell` on the TLS `Stack` and
+  materialize a real frame only when something looks (a raise, a backtrace,
+  a Ruby call pushing under it). Two measurements, each best-of-5 with the
+  three binaries interleaved inside every round:
+
+  | benchmark | frames fully NEUTERED | the register's ceiling |
+  |---|---|---|
+  | bm_ruby_xor | −9.2% | −1.2% |
+  | bm_template | −7.7% | −0.6% |
+  | bm_matmul | −5.8% | −0.7% |
+  | bm_structaset | −0.2% | −0.0% |
+  | bm_structaref | −0.1% | +0.4% |
+  | **geomean** | **−4.7%** | **−0.4%** |
+
+  The neuter (return `None` from `c_frame_label` and hand back a no-op
+  guard) is the upper bound and it passes the ≥5% gate the design was
+  given. The register does not get to spend it: the second column is a
+  prototype that keeps exactly what the design keeps — one `STACK.with` in
+  the guard's ctor for the dedupe read, one in its drop — and writes no
+  frame at all. It recovers **0.4% of the 4.7%**.
+
+  So the cost is the thread-local ACCESSES, not the frame write or the
+  pointer bump, and the register keeps both accesses by construction. The
+  plan's assumption that it would recover "roughly half" was wrong by an
+  order of magnitude. Anything that moves this number has to remove a TLS
+  round-trip from the builtin dispatch path, not make the frame cheaper.
+- **A 16-byte `RubyValue`** — retired 2026-08-14 **by measurement**. The
+  enum is 24 bytes because `RObj = Arc<dyn RubyObject>` is a fat pointer and
+  `Range` carried a 17-byte payload; Wave 9 fixed the second half, and the
+  first would need a thin `ObjHeader` handle across 424 `RubyValue::Object(`
+  sites, 62 `impl RubyObject`, two class-generating macros, and a custom
+  thin `Weak` (WeakMap/WeakRef/finalizers), with no `ptr::metadata` on
+  stable.
+
+  What that would buy was measured the cheap way round — by making the enum
+  WIDER (`#[repr(align(32))]`, one attribute) and timing the object-graph
+  benchmarks, best-of-5 interleaved:
+
+  | benchmark | cost of +8 bytes |
+  |---|---|
+  | bm_so_lists | +3.0% |
+  | bm_linked_list | +2.6% |
+  | bm_binary_trees | +0.8% |
+  | bm_structaset | +0.3% |
+  | bm_rbtree | −0.7% |
+  | **geomean** | **+1.2%** |
+
+  Eight bytes of width are worth about 1% on exactly the benchmarks the
+  change was aimed at, against a ≥5% gate. The direction is not perfectly
+  symmetric — 24→16 also fits two elements per half cache line where
+  24→32 only pads — but it is the right order of magnitude, and it agrees
+  with what the losing benchmarks already say: they are refcount and
+  allocation bound, not width bound. Revisit only if Arc traffic itself is
+  addressed first.
 - **Mixed Integer↔Float comparison exactness** — a pre-existing divergence:
   `num_cmp`'s Flo lane converts via `as f64`, lossy past 2^53
   (`9007199254740993 == 9007199254740992.0` answers true; CRuby compares
