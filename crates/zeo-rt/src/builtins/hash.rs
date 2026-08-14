@@ -689,10 +689,9 @@ ruby_class! {
         let _iter = crate::collections::hash_iter_guard(rhash);
         let pairs = crate::collections::hash_pairs_snapshot(rhash);
         for (k, v) in pairs {
-            // CRuby yields the pair as ONE array, so `{ |pair| }` and a
-            // forwarded 1-arg callable (`&method(:m)`) get it whole while
-            // `{ |k, v| }` auto-splats it.
-            crate::rproc::yield_tuple(&p, vec![k, v])?;
+            // Two values for a block that can take two, one packed array
+            // otherwise -- `rb_hash_foreach`'s own rule. See `yield_pair`.
+            crate::rproc::yield_pair(&p, k, v)?;
         }
         Ok(recv.clone())
     }

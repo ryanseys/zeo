@@ -1,0 +1,23 @@
+[:one, [:a, 1]]
+[:one, [:b, 2]]
+[:two, :a, 1]
+[:two, :b, 2]
+[:splat, [[:a, 1]]]
+[:splat, [[:b, 2]]]
+[:k_rest, :a, [1]]
+[:k_rest, :b, [2]]
+[:kv_rest, :a, 1, []]
+[:kv_rest, :b, 2, []]
+[:none]
+[:none]
+[:three, :a, 1, nil]
+[:three, :b, 2, nil]
+["a1", "b2"]
+[Array, Array]
+{b: 2}
+2
+[:a, :b]
+[[:a, 1], [:b, 2]]
+[:lambda_err, ArgumentError]
+[:three, :b, 2, nil]
+{a: 1, b: 2}

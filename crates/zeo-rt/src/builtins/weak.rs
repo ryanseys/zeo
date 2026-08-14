@@ -755,7 +755,7 @@ ruby_class! {
 /// LocalJumpError.
 fn yield_pair(blk: &Option<RubyValue>, k: RubyValue, v: RubyValue) -> Result<RubyValue, Signal> {
     match blk {
-        Some(RubyValue::Proc(p)) => crate::rproc::yield_tuple(p, vec![k, v]),
+        Some(RubyValue::Proc(p)) => crate::rproc::yield_pair(p, k, v),
         _ => Err(local_jump_error!("no block given (yield)")),
     }
 }

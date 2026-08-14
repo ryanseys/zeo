@@ -553,6 +553,35 @@ pub fn yield_tuple(p: &RProc, elems: Vec<RubyValue>) -> Result<RubyValue, Signal
     p.call(&[RubyValue::Array(crate::array_new(elems))])
 }
 
+/// Yield a logical PAIR, packing it only when the block cannot take two.
+///
+/// CRuby's `rb_hash_foreach` hands the block two values and packs them only
+/// for a block that takes one. Packing unconditionally cost THREE heap
+/// allocations per pair -- the `Vec`, the `Arc<Freezable<ArrayStore>>` around
+/// it, and the `to_vec` that [`block_auto_splat`] immediately does to take it
+/// apart again -- for the `{ |k, v| }` shape, which is the common one.
+///
+/// The condition is the block's own declared shape, and it reproduces CRuby's
+/// auto-splat rule exactly (each clause verified against ruby 4.0.6):
+///
+/// * a LAMBDA never splats. `{a: 1}.each(&->(k, v) {})` is an `ArgumentError`
+///   in CRuby *because* the lambda receives one argument, so a lambda must
+///   keep getting the packed pair or that error would stop happening.
+/// * `{ |pair| }` (arity 1) and `{ |*a| }` (arity -1) take the pair WHOLE --
+///   the latter sees `[[k, v]]`, not `[k, v]`.
+/// * anything with room for two or more positionals splats: `{ |k, v| }` (2),
+///   `{ |k, *r| }` (-2), `{ |k, v, w| }` (3, binding `w` to nil).
+///
+/// A runtime-internal proc ([`RProc::new`], which the enumerable drivers pass
+/// to a user-defined `each`) has arity -1, so it keeps the packed form and
+/// `enumerable::pack` still sees one argument.
+pub fn yield_pair(p: &RProc, k: RubyValue, v: RubyValue) -> Result<RubyValue, Signal> {
+    if !p.is_lambda() && (p.arity() >= 2 || p.arity() <= -2) {
+        return p.call(&[k, v]);
+    }
+    yield_tuple(p, vec![k, v])
+}
+
 /// A non-lambda block's AUTO-SPLAT (CRuby `setup_parameters_complex`'s
 /// `arg_setup_block` path): a block yielded EXACTLY ONE argument that is an
 /// Array (or `to_ary`-coercible) has that array spread across its
