@@ -97,9 +97,17 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
     let before = changed_goldens(root);
 
     eprintln!("bless: re-recording goldens matching {filter:?} from the ruby oracle");
+    // `-p zeo-tests` is load-bearing for SPEED, not scope: every reader of
+    // `BLESS_VAR` lives in that package. Unscoped, this nextest resolves
+    // features across the whole workspace while the `cargo run` that got us
+    // here resolved them for xtask alone, so the two disagree on
+    // ring/rustls/ureq/xtask and each rebuild invalidates the other's -- ~17s
+    // of recompiling per bless, every time.
     let status = Command::new("cargo")
         .arg("nextest")
         .arg("run")
+        .arg("-p")
+        .arg("zeo-tests")
         .arg("-E")
         .arg(format!("test({filter})"))
         .args(&passthrough)
