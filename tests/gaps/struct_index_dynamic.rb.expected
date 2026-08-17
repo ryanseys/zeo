@@ -1,0 +1,9 @@
+2
+2
+"offset -9 too small for struct(size:2)"
+"offset 9 too large for struct(size:2)"
+1
+1
+2
+"no member 'zz' in struct"
+1

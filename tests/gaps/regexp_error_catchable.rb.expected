@@ -1,0 +1,3 @@
+caught: RegexpError: premature end of char-class: /[invalid/
+after rescue
+true

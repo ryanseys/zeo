@@ -1,0 +1,10 @@
+["ab", "abcd"]
+["llo"]
+ArgumentError
+["ab", "abc"]
+[97, 98, 98]
+"a"
+"A\x00\x00B"
+"\x01\x02\x03"
+[1, 2, 3]
+ArgumentError

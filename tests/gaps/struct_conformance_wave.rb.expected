@@ -1,0 +1,18 @@
+[:a, 1]
+[:b, 2]
+[:c, 3]
+[:a, 1]
+[:b, 2]
+[:c, 3]
+[[:a, 1], [:b, 2], [:c, 3]]
+Enumerator
+[1, 2, nil, nil, nil, nil]
+[1, 2]
+[2]
+[1, 2, nil, nil, nil, nil]
+nil
+"S"
+ArgumentError
+1
+true
+[1, 2, 3]

@@ -16,6 +16,15 @@ names it as a panic, because a bug and a stated limitation want different
 work. A divergence zeo has decided not to reproduce does not
 belong here — it belongs in a passing test that documents it.
 
+The exception is a divergence zeo has decided not to reproduce **yet** because
+matching it would cost more than it is worth. `sort_with_comparator` and
+`narrowed_element_local_pin` are the two today: ruby's `Array#sort` is unstable
+(`ruby_qsort`) and zeo's is stable (Rust's `sort_by`), so equal comparator keys
+come out in a different order. Reproducing ruby's exact permutation means
+porting `ruby_qsort` into a hot runtime path, for behaviour ruby's own docs
+leave unspecified. They stay here, with the reason in their headers, rather
+than becoming a passing test that would pin an order ruby does not promise.
+
 ## The XFAIL contract
 
 Each gap runs through `crates/zeo-tests/tests/gaps.rs` (a `cargo test`/nextest target)

@@ -1,0 +1,12 @@
+ArgumentError
+KeyError
+KeyError
+KeyError
+"12"
+"1"
+ArgumentError
+"ff"
+"5"
+"1-2"
+"key{zz} not found"
+"key<zz> not found"

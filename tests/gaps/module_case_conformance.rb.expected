@@ -1,0 +1,17 @@
+[M]
+[N, M]
+[C, M, Object, Kernel, BasicObject]
+[M]
+true
+true
+true
+true
+true
+false
+true
+true
+true
+"eq"
+"ne"
+"same"
+"other"
