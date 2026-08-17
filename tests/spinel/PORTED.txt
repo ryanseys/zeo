@@ -9,6 +9,14 @@
 
 # --- zeo ports: spinel's compile-time FFI DSL / private C symbols rewritten
 # --- onto the real `ffi` gem and Ruby primitives (see UPSTREAM.md).
+#
+# The four ported at the c55d9bdb sync come first. Three of them currently sit
+# in ../gaps/, which --refresh does not scan -- they are listed anyway, so a
+# promotion back into the corpus cannot silently un-port them.
+ffi_read_write_widths
+ffi_type_list_forms
+socket_constants
+proc_arg_channel_released
 ffi_array_specs_decl
 ffi_binstr_recv
 ffi_binstr_ws_frame
