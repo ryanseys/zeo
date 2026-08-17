@@ -142,7 +142,7 @@ Environment variables:
 | `ZEO_LOG`, `RUST_LOG` | Give a `tracing` `EnvFilter` directive. Example: `ZEO_LOG=zeo::analyze=debug,zeo::lower=trace`. If you set none of these variables, Zeo installs no subscriber and writes no diagnostics. |
 | `ZEO_RUNTIME_PROFILE` | Selects the profile of the linked runtime: `debug` or `release`. The default is `debug` for an immediate run, and `release` for an `-o` or `--compile` artifact. |
 | `ZEO_GVL` | If you set `ZEO_GVL=1`, the threads in that run use CRuby's schedule. This is a FIFO global lock with a 100 ms timer. The default is parallel OS threads. |
-| `ZEO_BLESS` | If you set `ZEO_BLESS=1`, the test suites record their expected output again from real Ruby. Use this only during development. |
+| `ZEO_BLESS_FROM_XTASK` | The test suites record their expected output again from real Ruby instead of comparing it. Only `cargo run -p xtask -- bless <filter>` sets this variable; set it by hand and you write goldens with no filter and no report of what changed. |
 
 ## Ruby features
 
@@ -211,7 +211,7 @@ extensions below — is not in the constant tree at census time, so the census
 does not measure it. The per-extension goldens cover those. Read
 [`docs/METHOD_COVERAGE.md`](docs/METHOD_COVERAGE.md) for how the census works.
 
-- **The conformance suite** in `tests/spinel/` compiles 2,568 programs. It compares stdout and stderr with real Ruby, byte for byte, as
+- **The conformance suite** in `tests/spinel/` compiles 2,924 programs. It compares stdout and stderr with real Ruby, byte for byte, as
   `cargo nextest` cases. `tests/gaps/` holds the programs that do not agree
   yet. Each of these must fail. If one starts to agree with Ruby, the suite
   fails, and that program then moves into the corpus.
@@ -780,14 +780,14 @@ The test suites are in `tests/`. They run as
 `cargo test` or `cargo nextest`, with one case for each `.rb` file.
 
 ```console
-$ cargo nextest run --workspace                   # unit, e2e and all test suites
-$ cargo nextest run -p zeo --test spinel          # the full Ruby corpus
-$ cargo nextest run -p zeo --test examples --test gaps
-$ ZEO_BLESS=1 cargo test -p zeo --test spinel     # record the expected output again
-$ cargo run -p xtask -- bench                     # the performance suite
+$ cargo nextest run --workspace                     # unit, e2e and all test suites
+$ cargo nextest run -p zeo-tests --test spinel      # the full Ruby corpus
+$ cargo nextest run -p zeo-tests --test examples --test gaps
+$ cargo run -p xtask -- bless spinel::              # record the expected output again
+$ cargo run -p xtask -- bench                       # the performance suite
 ```
 
-- **`spinel`** is the conformance corpus, with 2,568 programs.
+- **`spinel`** is the conformance corpus, with 2,924 programs.
   The suite compares each one with real Ruby, byte for byte.
 - **`examples`** holds the programs that Zeo authors wrote, with their correct
   output.
@@ -796,10 +796,11 @@ $ cargo run -p xtask -- bench                     # the performance suite
   starts to agree with Ruby, the suite fails, and `scripts/promote-gap.sh`
   moves the file.
 
-`ZEO_BLESS=1` is the only way to write the expected output. It runs real Ruby
-with `--disable-error_highlight` and `--disable-did_you_mean`, and it records
-the result instead of comparing it. [`CONTRIBUTING.md`](CONTRIBUTING.md) gives
-the full procedure.
+`cargo run -p xtask -- bless <filter>` is the only way to write the expected
+output. It runs real Ruby with `--disable-error_highlight` and
+`--disable-did_you_mean`, records the result instead of comparing it, and
+reports every golden it changed. The filter is required, so a bless is always
+scoped. [`CONTRIBUTING.md`](CONTRIBUTING.md) gives the full procedure.
 
 ## Project layout
 

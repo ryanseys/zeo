@@ -6,7 +6,7 @@
   used in development) and a C compiler.
 - A real Ruby matching the oracle version pinned in `mise.toml`
   (via `mise install`) — only needed when re-blessing golden output from the
-  oracle (`ZEO_BLESS=1`); the committed snapshots cover ordinary runs.
+  oracle (`xtask bless`); the committed snapshots cover ordinary runs.
 
 ## The one rule: oracle-verified, divergence-documented
 
@@ -23,17 +23,22 @@ Zeo's house style is *approximation is fine, silent wrongness is not*:
 ## Workflow
 
 ```console
-$ cargo nextest run --workspace                   # unit + e2e + all golden suites
-$ cargo nextest run -p zeo --test spinel          # the full ruby-oracle corpus
-$ cargo nextest run -p zeo --test examples --test gaps
-$ ZEO_BLESS=1 cargo test -p zeo --test <suite>    # re-record goldens from ruby
-$ cargo run -p xtask -- bench                     # perf vs bench/baseline.tsv
+$ cargo nextest run --workspace                     # unit + e2e + all golden suites
+$ cargo nextest run -p zeo-tests --test spinel      # the full ruby-oracle corpus
+$ cargo nextest run -p zeo-tests --test examples --test gaps
+$ cargo run -p xtask -- bless <filter>              # re-record goldens from ruby
+$ cargo run -p xtask -- bench                       # perf vs bench/baseline.tsv
 ```
 
 - The golden suites live under `tests/` (examples + the spinel corpus + the
   XFAIL gaps tracker) and run as datatest-stable `cargo test`/nextest targets;
   a green `cargo nextest` is the conformance record. A fixed gap fails CI as an
-  XPASS — promote it into `tests/spinel/`.
+  XPASS — promote it with `scripts/promote-gap.sh`, which moves it into
+  `tests/`, the zeo-authored suite. Not `tests/spinel/`, which mirrors the
+  vendored spinel corpus (see `tests/spinel/UPSTREAM.md`).
+- `xtask bless` is the only golden writer: `golden.rs` honours
+  `ZEO_BLESS_FROM_XTASK`, which only `xtask bless` sets, so a bare
+  `ZEO_BLESS=1 cargo test` does nothing.
 - Perf-sensitive changes report their `xtask bench` delta; intentional shifts
   are banked by committing `--update-baseline`'s diff.
 - `cargo clippy --workspace --all-targets` at zero warnings gates CI. Don't

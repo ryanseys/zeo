@@ -90,7 +90,7 @@ jobs:
       - run: cargo test --workspace --doc
         env:
           ZEO_ASSUME_RUNTIME_FRESH: "1"
-      # The tests/ golden suites -- examples, the full ~2368-test spinel corpus,
+      # The tests/ golden suites -- examples, the full ~2900-test spinel corpus,
       # and the gaps XFAIL tracker -- all run under `cargo nextest run --workspace`
       # above (datatest-stable targets tests/{examples,spinel,gaps}.rs) --
       # committed ruby-oracle .expected, no ruby in CI. The `golden` test-group
