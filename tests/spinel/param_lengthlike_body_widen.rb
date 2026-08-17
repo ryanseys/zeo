@@ -15,10 +15,11 @@
 # pins them so a future regression in the broader poly-recv
 # length pathway is caught.
 #
-# nil semantics: spinel returns 0 for nil.length (the result
-# temp's default) while CRuby raises NoMethodError. The
-# silent emit-0 isn't fixed here; the test pins the
-# spinel-specific behavior, not CRuby reference output.
+# nil semantics: nil has no #length, and the poly path used
+# to answer 0 for it (the length helper's answer for anything
+# that is not a collection). It raises NoMethodError now, as
+# CRuby does (#3974), so the nil case is asserted through a
+# rescue.
 #
 # Conservative classifier: only length / size / empty? widen.
 # These don't exist on Integer so widening to poly is sound.
@@ -41,7 +42,11 @@ class Box
 end
 
 b = Box.new
-puts consume_length(b.contents)
+begin
+  puts consume_length(b.contents)
+rescue NoMethodError => e
+  puts e.message
+end
 b.contents = "hello"
 puts consume_length(b.contents)
 b.contents = [1, 2, 3, 4]

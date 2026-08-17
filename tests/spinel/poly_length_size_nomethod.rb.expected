@@ -1,0 +1,10 @@
+"raise: undefined method 'length' for nil"
+3
+2
+1
+"raise: undefined method 'length' for an instance of Integer"
+3
+"raise: undefined method 'size' for nil"
+8
+3
+2

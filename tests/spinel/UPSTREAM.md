@@ -4,10 +4,14 @@
 [spinel](https://github.com/matz/spinel) (MIT License, Copyright (c) 2024-
 Yukihiro Matsumoto), zeo's C-emitting predecessor. Upstream's license text is
 reproduced verbatim beside this file, in [`LICENSE`](LICENSE), as the MIT
-license requires of any redistribution: ~2,300 golden-output
+license requires of any redistribution: ~3,000 golden-output
 programs (`*.rb` + `.rb.expected` stdout snapshots, `.err.expected` /
 `.args` / `.stdin` sidecars, and fixture subdirectories), every snapshot
 oracle-verified against real `ruby`.
+
+Last synced from upstream `master` at **`c55d9bdb`** (2026-08-17). Record the
+sha on every sync: without it, drift is invisible -- the sync that added this
+line found 444 upstream tests missing and 79 vendored bodies stale.
 
 Programs run from the `tests/` working directory, so a handful of sidecar
 `.args` paths and the source paths embedded in backtrace goldens name the
@@ -18,6 +22,26 @@ zeo's scope) are not vendored.
 This copy is zeo's living suite -- it may diverge from spinel's as tests
 are added, ported (e.g. spinel's `ffi_*` intrinsic tests moving to the real
 `ffi` gem API), or re-oracled.
+
+## The divergence that shapes the corpus: frozen string literals
+
+Spinel freezes string literals **by default, with no opt-out** -- a
+`# frozen_string_literal: false` pragma warns and is ignored, and
+`--disable=frozen-string-literal` is rejected (spinel `docs/limitations.md`).
+CRuby 4.0.6 does not: `"abc".frozen?` is `false`.
+
+This is the single biggest structural difference between the two corpora, and
+it is why upstream tests increasingly write `+"str"` where a CRuby-native test
+would write `"str"`. Two consequences:
+
+- Newly imported tests keep whatever the upstream author wrote. `+"str"` is
+  valid CRuby and its ruby-oracled golden is true, so it imports as-is -- but
+  it exercises a fresh unfrozen string rather than CRuby's mutable literal.
+  Do not mistake a `+` for a bug, and do not strip it.
+- A vendored test must NOT be refreshed from upstream just because the body
+  changed. Of the 79 bodies that differed at the `c55d9bdb` sync, 38 differed
+  only by this rewrite; adopting them would have traded mutable-literal
+  coverage for nothing. See `PORTED.txt`.
 
 ## Removed tests
 
@@ -40,6 +64,36 @@ validation. The regex ENGINE semantics it also touched (inline `(?m:)` DOTALL,
 the absence operator `(?~...)`, line anchors) are covered by `Engine::Onig` and
 the `regexp_onig` example/e2e.
 
+Removed at the `c55d9bdb` sync, for the same reason -- spinel-native FFI DSL
+with no `ffi`-gem analog, so a port would assert nothing: `ffi_buffer_bounds_ok`
+(a COMPILE-TIME bounds refusal on `ffi_buffer` accessors; the gem has no
+compile-time buffer declaration), `ffi_const_case_when` (spinel's private
+`ffi_const` value table read against the constant table), and `ffi_source`
+(embeds a C fragment into the generated translation unit).
+
+## Ported tests
+
+A test whose upstream body pins spinel behaviour, but whose SUBJECT has a
+CRuby-valid spelling, is re-authored here rather than removed. `PORTED.txt`
+lists every such stem so `--refresh` never overwrites the port. Ported at the
+`c55d9bdb` sync:
+
+- `ffi_read_write_widths` -- `ffi_buffer` + `ffi_read_u32`/`ffi_write_i16`
+  class macros become `FFI::MemoryPointer#put_*`/`#get_*` at an offset.
+- `ffi_type_list_forms` -- `ffi_func` becomes `attach_function`, which takes
+  the same argument-type array, so the forms under test (a frozen constant,
+  `[:float] * 2`, a literal) carry over unchanged.
+- `socket_constants` -- `Socket::TCP_KEEPIDLE`/`TCP_KEEPINTVL`/`TCP_KEEPCNT`
+  are Linux-only (CRuby on macOS raises `NameError`), so the golden would be
+  machine-specific. Replaced with the portable `TCP_NODELAY`.
+- `proc_arg_channel_released` -- spinel's `GC.stat["bytes"]` becomes
+  `GC.stat[:heap_live_slots]`. CRuby's `GC.stat` is Symbol-keyed and has no
+  "bytes" statistic, so the String subscript is `nil` and the comparison
+  raises `NoMethodError`.
+
+`ruby_engine_name` is vendored UNPORTED: it asserts `RUBY_ENGINE == "spinel"`,
+and the CRuby golden (`"ruby"`, `true`, `false`) is exactly what zeo answers.
+
 ## `analyze_fail/` retired
 
 Both `analyze_fail/` cases (`dynamic_define_method`, `nonliteral_define_method_each`)
@@ -51,13 +105,39 @@ dropped. Compile-rejection coverage lives in the e2e suite
 
 ## How the corpus runs
 
-The corpus is run by `cargo test --test spinel` (datatest-stable; see
-`crates/zeo/tests/spinel.rs` + `tests/support/golden.rs`), one nextest case per
-`.rb`, diffing zeo's stdout+stderr against the committed ruby-oracle
-`.rb.expected`. `ZEO_BLESS=1 cargo test --test spinel` re-records the goldens.
-The old bespoke `xtask conformance run`/scoreboard harness was retired.
+The corpus is run by `cargo nextest run -p zeo-tests --test spinel`
+(datatest-stable; see `crates/zeo-tests/tests/spinel.rs` +
+`crates/zeo-tests/tests/support/golden.rs`), one nextest case per `.rb`,
+diffing zeo's stdout+stderr against the committed ruby-oracle `.rb.expected`.
+`cargo run -p xtask -- bless spinel::` re-records the goldens from ruby -- and
+is the ONLY thing that does: `golden.rs` honours `ZEO_BLESS_FROM_XTASK`, which
+only `xtask bless` sets, so a bare `ZEO_BLESS=1 cargo test` does nothing. The
+old bespoke `xtask conformance run`/scoreboard harness was retired.
 
-New spinel tests are imported by `scripts/import-spinel-corpus.sh
-[SPINEL_TEST_DIR]`, which TRIAGES each against zeo: a test zeo matches `ruby` on
-lands here (a passing corpus case), one it diverges on lands in `../gaps/` (an
-XFAIL gap). It skips tests already vendored and the `REMOVED.txt` list.
+## Syncing from upstream
+
+`scripts/import-spinel-corpus.sh [--refresh] [--no-triage] <SPINEL_TEST_DIR>`
+closes both drift axes, blessing every golden from the ruby 4.0.6 oracle --
+never from spinel's own `.expected`, which is oracled against ruby 3.4 and
+carries spinel's deviations.
+
+- default (**import**): vendors tests not present yet.
+- `--refresh`: re-vendors an already-vendored test whose UPSTREAM BODY has
+  changed. Skips every stem in `PORTED.txt`.
+- Both modes skip `REMOVED.txt`, and both TRIAGE afterwards: a test zeo matches
+  `ruby` on stays here, one it diverges on moves to `../gaps/` as an XFAIL gap.
+- `--no-triage` copies and blesses without running the suite, so a sync that
+  does both modes pays for one corpus run instead of two.
+
+A full sync is:
+
+```sh
+cd ~/dev/spinel && git fetch upstream && git status   # confirm the sha
+cd ~/dev/zeo
+scripts/import-spinel-corpus.sh --no-triage           ~/dev/spinel/test
+scripts/import-spinel-corpus.sh --refresh --no-triage ~/dev/spinel/test
+cargo nextest run -p zeo-tests --test spinel --no-fail-fast
+# every FAIL moves to ../gaps/ with a header naming its cause
+```
+
+Then update the sha at the top of this file.

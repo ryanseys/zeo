@@ -1,0 +1,4 @@
+["TypeError", "ArgumentError"]
+["TypeError", "ArgumentError"]
+["ArgumentError", "RuntimeError"]
+"nil"

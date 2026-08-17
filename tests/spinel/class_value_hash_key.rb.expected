@@ -1,0 +1,9 @@
+1
+{Integer => 2}
+true
+{Integer => [1, 2], String => ["a"]}
+{Integer => 2, String => 1}
+[Integer, String]
+"i"
+"none"
+{Integer => 2, String => 1, Symbol => 1}

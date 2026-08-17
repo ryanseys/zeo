@@ -10,9 +10,10 @@
 # ostruct/ipaddr are unimplemented stdlib: under SPINEL_REQUIRE_GATE the
 # `require` itself is a compile error, so a real program omits it and the .new
 # still raises NameError at the use site. Mutex is core (no require needed).
-# `Pathname` USED to be in that list; ruby 4.0 loads it before the first line,
-# so it constructs here exactly as it does there -- the fixture said `pathname
-# raised` and ruby says `no raise`.
+#
+# Pathname used to stand here too. It is a bundled library now, so naming it
+# without requiring it is a compile error that says which require is missing --
+# a different (and better) answer than this file is about.
 
 class WithMutex
   def initialize
@@ -24,9 +25,9 @@ class WithMutex
   end
 end
 
-class WithPathname
+class WithIPAddr
   def initialize
-    @path = Pathname.new('/tmp')   # unsupported stdlib class -> raises here
+    @addr = IPAddr.new('127.0.0.1')   # unsupported stdlib class -> raises here
     @v = 7
   end
   def v
@@ -58,12 +59,12 @@ end
 
 puts Holder.new.px            #=> 42
 
-# `Pathname` is core, so this one constructs.
+# Constructing the unsupported-stdlib holder raises (loud), not a silent inert 0.
 begin
-  WithPathname.new
+  WithIPAddr.new
   puts "no raise"
 rescue NameError
-  puts "pathname raised"
+  puts "ipaddr raised"
 end
 
 # A direct `.new` on an unsupported stdlib class raises too.

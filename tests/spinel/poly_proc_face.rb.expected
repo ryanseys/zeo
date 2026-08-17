@@ -1,0 +1,14 @@
+true
+1
+[[:req, :x]]
+Proc
+true
+true
+1
+[[:req, :y]]
+false
+1
+true
+1
+[[:req, :w]]
+Proc

@@ -28,7 +28,7 @@ nil
 nil
 hi
 nil
-TypeError: Integer does not have #dig method
+TypeError
 k1
 k2
 99

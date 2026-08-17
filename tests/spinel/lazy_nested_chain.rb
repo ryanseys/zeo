@@ -1,0 +1,5 @@
+p([1, 2].lazy.map { |x| [1, 2].lazy.map { |y| y }.to_a }.to_a)
+p((1..3).lazy.map { |x| (1..x).lazy.map { |y| y * 2 }.to_a }.to_a)
+p((1..3).lazy.map { |x| (1..x).lazy.to_a }.to_a)
+p([1, 2].lazy.map { |x| [3, 4].map { |y| y + x } }.to_a)
+p((1..4).lazy.select { |x| x.even? }.first(2))

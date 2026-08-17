@@ -1,0 +1,8 @@
+"a"
+["a", "b"]
+"z"
+"hello"
+"world"
+"MatchData"
+"hello world"
+"#<MatchData \"hello world\" 1:\"hello\" 2:\"world\">"

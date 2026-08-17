@@ -1,0 +1,6 @@
+block ran
+no block
+render background
+render block
+render foreground
+plain 3

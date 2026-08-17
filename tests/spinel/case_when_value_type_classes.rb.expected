@@ -1,0 +1,15 @@
+:int
+:rat
+:cpx
+:re
+:pr
+:other
+:num
+:num
+:num
+:num
+:other
+[true, false, true, false, true, false, false]
+[false, true, true, false, false, true, false]
+[false, false, false, true, false, false, true]
+[false, false, true, false, false, false, false]

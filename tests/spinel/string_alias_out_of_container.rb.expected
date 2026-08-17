@@ -1,0 +1,9 @@
+[["ABC"], "ABC", true]
+["ABCZ"]
+["qBCZ"]
+["new"]
+[{a: "abcZ"}, true]
+{a: "ABCZ"}
+{1 => "one!"}
+["abc", ["abc"]]
+{k: "v2"}

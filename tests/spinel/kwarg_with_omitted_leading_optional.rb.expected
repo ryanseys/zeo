@@ -1,0 +1,11 @@
+a=nil k=1
+a=9 k=1
+a=nil k=:default
+a=9 k=:default
+a=nil k=1
+a=9 k=1
+a=nil b=nil k=1
+a=7 b=nil k=1
+a=7 b=8 k=1
+a=nil r=5 k=1
+a=4 r=5 k=1

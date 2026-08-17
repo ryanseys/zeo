@@ -1,0 +1,5 @@
+A.f(1, nil)
+B.f(1, nil)
+A.g
+B.g(extra=nil)
+NoMethodError

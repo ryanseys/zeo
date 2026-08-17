@@ -1,0 +1,11 @@
+Method
+:add
+"Calc"
+"Calc"
+[[:req, :n]]
+1
+4
+UnboundMethod
+4
+:add
+5

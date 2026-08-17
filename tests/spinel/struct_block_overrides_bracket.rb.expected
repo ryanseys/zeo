@@ -1,0 +1,13 @@
+1.5
+"hello"
+"/tmp/x"
+1.5
+"hello"
+"custom:a"
+"custom:zzz"
+1
+2
+7
+8
+8
+NameError: no member 'nope' in struct

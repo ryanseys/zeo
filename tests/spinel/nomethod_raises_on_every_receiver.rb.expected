@@ -1,0 +1,8 @@
+[1]
+"undefined method 'nope' for an instance of Symbol"
+:nope
+"undefined method 'nope' for an instance of Plain"
+"undefined method 'nope' for an instance of Array"
+"undefined method 'nope' for an instance of Range"
+"undefined method 'nope' for nil"
+"undefined method 'nope' for an instance of String"

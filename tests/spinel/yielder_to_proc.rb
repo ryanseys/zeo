@@ -1,0 +1,5 @@
+p(Enumerator.new { |y| y.to_proc.call(1) }.to_a)
+p(Enumerator.new { |y| [1, 2, 3].each(&y.to_proc) }.to_a)
+p(Enumerator.new { |y| [1, 2, 3].each(&y) }.to_a)
+p(Enumerator.new { |y| [1, 2, 3].each { |x| y << x } }.to_a)
+p(Enumerator.new { |y| y.yield 5 }.to_a)

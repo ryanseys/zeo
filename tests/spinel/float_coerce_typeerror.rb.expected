@@ -1,0 +1,11 @@
+"nil can't be coerced into Float"
+"String can't be coerced into Float"
+":a can't be coerced into Float"
+"true can't be coerced into Float"
+"Array can't be coerced into Float"
+TypeError
+TypeError
+TypeError
+2.5
+4.0
+"nil can't be coerced into Integer"

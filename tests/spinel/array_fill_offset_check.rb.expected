@@ -1,0 +1,6 @@
+"no implicit conversion of String into Integer"
+[0, 0]
+[1, 0, 0]
+[9, 9, 9]
+[1, 9, 3]
+"no implicit conversion of Symbol into Integer"

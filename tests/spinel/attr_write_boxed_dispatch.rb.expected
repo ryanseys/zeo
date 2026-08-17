@@ -1,0 +1,4 @@
+def writer  x=42
+attr writer x=99
+override    x=42
+raised: NoMethodError

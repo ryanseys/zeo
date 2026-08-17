@@ -1,0 +1,6 @@
+#<MatchData "foo">
+#<MatchData "abcabc" x:"abc">
+nil
+"abc"
+3
+"abcabcabc"

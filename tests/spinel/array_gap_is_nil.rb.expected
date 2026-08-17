@@ -1,0 +1,8 @@
+["x", nil, nil, "y"]
+[1, nil, nil, 5]
+[1.0, nil, 2.0]
+nil
+nil
+nil
+["x", "y"]
+[1, 5]

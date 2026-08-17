@@ -1,0 +1,15 @@
+a = [1, 2, 3, 4, 5]
+p a.values_at(2..)
+p a.values_at(2...)
+p a.values_at(..2)
+p a.values_at(...2)
+p a.values_at(nil..2)
+p a.values_at(1..3)
+p a.values_at(1..9)
+p a.values_at(-2..)
+p a.values_at(7..9)
+p a.values_at(0, 2..3)
+p([1, 2, 3, 4, 5].fill(9, 2..))
+s = ["a", "b", "c"]
+p s.values_at(1..)
+p s.values_at(..1)

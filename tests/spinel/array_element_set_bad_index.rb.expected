@@ -1,0 +1,18 @@
+"no implicit conversion of String into Integer"
+[1, 2]
+"no implicit conversion of Symbol into Integer"
+[1, 2]
+"no implicit conversion from nil to integer"
+[1, 2]
+"no implicit conversion of Array into Integer"
+"no implicit conversion of String into Integer"
+["x"]
+"no implicit conversion of String into Integer"
+[9, 8]
+"no implicit conversion of String into Integer"
+["z"]
+"no implicit conversion of Symbol into Integer"
+["z"]
+"no implicit conversion from nil to integer"
+["z"]
+["z"]

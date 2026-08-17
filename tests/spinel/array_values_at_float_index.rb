@@ -1,0 +1,10 @@
+p([1, 2].values_at(1.5))
+p([1, 2, 3].values_at(0.9))
+p([1, 2, 3].values_at(-1.5))
+p([1, 2, 3].values_at(1.5, 2.5))
+p([1, 2, 3].values_at(0, 1.5))
+b = 1.5
+p([1, 2, 3].values_at(b))
+p([1, 2, 3].values_at(1))
+p(["a", "b", "c"].values_at(2.7))
+p([1.5, 2.5].values_at(1.5))
