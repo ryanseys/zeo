@@ -39,18 +39,21 @@ const RUN_DEADLINE: Duration = Duration::from_secs(60);
 /// The third bound, and the one the other two miss: a child that ALLOCATES
 /// without writing. `(1..).to_a` -- an endless range zeo evaluates eagerly --
 /// prints nothing, so `MAX_CAPTURE` never trips, and it spends the whole
-/// deadline growing the heap. At the golden group's ten-way concurrency that
-/// is ten runaway heaps at once, which is enough to take a machine down before
-/// any of them reaches its deadline.
+/// deadline growing the heap.
 ///
-/// So the child gets an address-space rlimit. It dies on its own allocation
-/// failure in milliseconds instead of surviving to the 60s mark, and the test
-/// reports an ordinary FAILURE like any other divergence. 2 GiB is far above
-/// what a golden program legitimately needs (the largest in the corpus build
-/// arrays in the low tens of MiB) and far below what a runaway wants.
-const MAX_ADDRESS_SPACE: u64 = 2 << 30; // 2 GiB
+/// Measured, on a 16 GiB machine: four such children at `--test-threads 4`
+/// took free memory from 6.9 GiB to 0.06 GiB in five and a half seconds, and
+/// the corpus has six of them. Against that, 741 ordinary golden children peak
+/// at 13 MiB. So the cap can sit far below anything legitimate: 512 MiB is 40x
+/// the observed normal peak and a fraction of what a runaway wants.
+const MAX_CHILD_RSS: u64 = 512 << 20; // 512 MiB
 
-/// Apply [`MAX_ADDRESS_SPACE`] to `cmd`'s child, between fork and exec.
+/// `RLIMIT_AS` is the cheap half of the bound -- the child dies on its own
+/// allocation failure, with no polling. It is NOT the enforcing half: **Darwin
+/// accepts `setrlimit(RLIMIT_AS)` and does not enforce it**, which is how a
+/// child measured 2.29 GiB under a 2 GiB limit. [`child_rss`] and the watchdog
+/// in [`run_bounded`] are what actually hold the line; this stays because it
+/// does work on Linux (CI), where it kills a runaway sooner and cheaper.
 ///
 /// `pre_exec` is unsafe because the closure runs in the forked child, where
 /// only async-signal-safe calls are legal; `setrlimit` is one of them, and the
@@ -61,11 +64,11 @@ fn bound_address_space(cmd: &mut Command) {
     unsafe {
         cmd.pre_exec(|| {
             let lim = libc::rlimit {
-                rlim_cur: MAX_ADDRESS_SPACE,
-                rlim_max: MAX_ADDRESS_SPACE,
+                rlim_cur: MAX_CHILD_RSS,
+                rlim_max: MAX_CHILD_RSS,
             };
-            // A platform that refuses RLIMIT_AS must not fail the spawn: the
-            // deadline and capture bounds still apply.
+            // A platform that ignores or refuses RLIMIT_AS must not fail the
+            // spawn: the watchdog is the one that has to work everywhere.
             libc::setrlimit(libc::RLIMIT_AS, &lim);
             Ok(())
         });
@@ -74,6 +77,30 @@ fn bound_address_space(cmd: &mut Command) {
 
 #[cfg(not(unix))]
 fn bound_address_space(_cmd: &mut Command) {}
+
+/// Resident set size of `pid`, in bytes, or `None` if it can't be read (the
+/// process just exited, or the platform isn't covered -- either way the
+/// watchdog simply doesn't fire and the other two bounds still apply).
+#[cfg(target_os = "macos")]
+fn child_rss(pid: u32) -> Option<u64> {
+    let mut info: libc::proc_taskinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of::<libc::proc_taskinfo>() as libc::c_int;
+    let ptr = std::ptr::addr_of_mut!(info).cast::<libc::c_void>();
+    let n = unsafe { libc::proc_pidinfo(pid as libc::c_int, libc::PROC_PIDTASKINFO, 0, ptr, size) };
+    (n == size).then_some(info.pti_resident_size)
+}
+
+#[cfg(target_os = "linux")]
+fn child_rss(pid: u32) -> Option<u64> {
+    let statm = std::fs::read_to_string(format!("/proc/{pid}/statm")).ok()?;
+    let pages: u64 = statm.split_whitespace().nth(1)?.parse().ok()?;
+    Some(pages * 4096)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn child_rss(_pid: u32) -> Option<u64> {
+    None
+}
 
 /// [`RUN_DEADLINE`], with an env override (`ZEO_GOLDEN_RUN_DEADLINE`, in
 /// seconds) for suites whose cases legitimately run longer -- a vendored
@@ -159,7 +186,9 @@ fn run_bounded(
     });
 
     let started = Instant::now();
+    let pid = child.id();
     let mut limit = None;
+    let mut ticks: u32 = 0;
     loop {
         match child.try_wait() {
             Ok(Some(_)) => break,
@@ -170,12 +199,21 @@ fn run_bounded(
             limit = Some(format!("wrote more than {} MiB", MAX_CAPTURE >> 20));
         } else if started.elapsed() > run_deadline() {
             limit = Some(format!("ran longer than {}s", run_deadline().as_secs()));
+        } else if ticks.is_multiple_of(10) {
+            // Every ~100ms, not every 10ms: reading RSS is a syscall per child
+            // and a runaway needs seconds to matter, not milliseconds.
+            if let Some(rss) = child_rss(pid)
+                && rss > MAX_CHILD_RSS
+            {
+                limit = Some(format!("allocated more than {} MiB", MAX_CHILD_RSS >> 20));
+            }
         }
         if limit.is_some() {
             let _ = child.kill();
             let _ = child.wait();
             break;
         }
+        ticks = ticks.wrapping_add(1);
         std::thread::sleep(Duration::from_millis(10));
     }
 
