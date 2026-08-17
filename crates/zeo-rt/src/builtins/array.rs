@@ -1549,8 +1549,8 @@ ruby_class! {
     def "minmax" arity 0 (recv, *_args, &block) { own_row!(recv, |s| enumerable::minmax_own(s, __args, block)) }
     def "take" arity 1 (recv, *_args, &_block) { own_row!(recv, |s| enumerable::take_drop(s, __args, true)) }
     def "drop" arity 1 (recv, *_args, &_block) { own_row!(recv, |s| enumerable::take_drop(s, __args, false)) }
-    def "take_while" arity 0 (recv, *_args, &block) { own_row!(recv, |s| enumerable::take_drop_while(s, __args, block, true)) }
-    def "drop_while" arity 0 (recv, *_args, &block) { own_row!(recv, |s| enumerable::take_drop_while(s, __args, block, false)) }
+    def "take_while" arity 0 (recv, *_args, &block) { own_row!(recv, |s| enumerable::take_while_own(s, __args, block)) }
+    def "drop_while" arity 0 (recv, *_args, &block) { own_row!(recv, |s| enumerable::drop_while_own(s, __args, block)) }
     def "reverse_each" arity 0 (recv, *_args, &block) { own_row!(recv, |s| enumerable::reverse_each_own(s, __args, block)) }
     def "freeze"(recv) { inherited_row!(kernel, "freeze", recv, __args, None) }
     def "hash"(recv) { inherited_row!(kernel, "hash", recv, __args, None) }

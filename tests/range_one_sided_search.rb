@@ -1,6 +1,7 @@
-# GAP -- imported from the spinel corpus at c55d9bdb.
-# A search over a one-sided Range is evaluated eagerly, so the program
-# never terminates and the harness kills it at the 60s deadline.
+# `find`/`detect`/`take_while` over an endless Range stop at their answer
+# rather than trying to walk the whole range. `find` and `detect` always broke
+# early; `take_while` used to collect the source first, which on `(1..)` never
+# returned.
 #
 p((1..).find { |x001| x001 * x001 > 30 })
 p((1..).detect { |x002| x002 > 3 })

@@ -592,6 +592,13 @@ ruby_class! {
             },
             Some(v) => {
                 let n = crate::builtins::convert::to_index(v)?;
+                // An endless range has no tail to take. This has to be checked
+                // HERE rather than left to the `to_a` below: that goes through
+                // Enumerable, which walks `each` and so never returns, instead
+                // of through Range's own to_a and its endless guard.
+                if end.is_none() {
+                    return Err(crate::range_endpoint_error(false));
+                }
                 // Materialize (Enumerable to_a) and take the tail --
                 // `last(n)` INCLUDES an exclusive end's predecessor set.
                 let _ = (start, exclusive);
@@ -708,6 +715,30 @@ ruby_class! {
                 });
             }
         }
+        // A custom comparator has to walk the whole range to find the smallest,
+        // so an endless one has no answer -- CRuby says so instead of hanging.
+        if block.is_some() && end.is_none() {
+            return Err(range_error!(
+                "cannot get the minimum of endless range with custom comparison method"
+            ));
+        }
+        // `min(n)` with no block is just the first n counting up from `begin`
+        // -- CRuby walks rather than sorting, which is what lets an ENDLESS
+        // range answer. `first(n)` already breaks at n, and inherits the right
+        // errors for free: a Float begin raises "can't iterate from Float", a
+        // descending range answers [], a String range walks by succ.
+        if !args.is_empty() && block.is_none() {
+            // Range's own message for a negative count, not Enumerable's
+            // ("attempt to take negative size") -- delegating below reaches
+            // `Enumerable#first`, which never sees that this began as a Range.
+            if let Some(v) = args.first()
+                && crate::builtins::convert::to_index(v)? < 0
+            {
+                return Err(arg_error!("negative array size (or size too big)"));
+            }
+            return crate::builtins::enumerable::enumerable_send(recv, "first", args, None)
+                .expect("Enumerable implements first");
+        }
         crate::builtins::enumerable::enumerable_send(recv, "min", args, block)
             .expect("Enumerable implements min")
     }
@@ -733,6 +764,36 @@ ruby_class! {
                 return Err(type_error!("cannot exclude non Integer end value"));
             }
             return Ok(e.clone());
+        }
+        // Mirror of `min`'s: a comparator would have to walk down from a
+        // begin this range does not have.
+        if block.is_some() && start.is_none() {
+            return Err(range_error!(
+                "cannot get the maximum of beginless range with custom comparison method"
+            ));
+        }
+        // A BEGINLESS range with an Int end has a maximum, and its n largest
+        // count DOWN from that end with nothing to stop them -- so they are
+        // answered here, arithmetically. Falling through would send `each`,
+        // which raises "can't iterate from NilClass". A Float end has no
+        // decrementable element, so it keeps that fallthrough (CRuby agrees:
+        // `(..5.0).max(2)` is the same TypeError).
+        if start.is_none()
+            && block.is_none()
+            && let Some(RubyValue::Int(e)) = end
+        {
+            let top = if exclusive { e - 1 } else { *e };
+            return match args.first() {
+                None => Ok(RubyValue::Int(top)),
+                Some(v) => {
+                    let n = crate::builtins::convert::to_index(v)?;
+                    if n < 0 {
+                        return Err(arg_error!("negative array size (or size too big)"));
+                    }
+                    let vals = (0..n).map(|i| RubyValue::Int(top - i)).collect();
+                    Ok(RubyValue::Array(crate::array_new(vals)))
+                }
+            };
         }
         crate::builtins::enumerable::enumerable_send(recv, "max", args, block)
             .expect("Enumerable implements max")

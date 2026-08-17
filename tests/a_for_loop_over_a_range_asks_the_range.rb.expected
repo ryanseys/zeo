@@ -1,0 +1,15 @@
+a
+b
+c
+x
+y
+z
+float: can't iterate from Float
+beginless: can't iterate from NilClass
+endless literal ok
+24
+15
+[1, 2, 3]
+[2, 3, 4]
+3..1
+[]

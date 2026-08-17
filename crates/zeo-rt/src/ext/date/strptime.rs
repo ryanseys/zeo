@@ -426,7 +426,7 @@ pub(super) fn civil_from_fragments(
 ) -> Option<(i64, i64, i64)> {
     let get = |key: &str| -> Option<i64> {
         pairs.iter().find_map(|(k, v)| match (k, v) {
-            (RubyValue::Symbol(s), RubyValue::Int(n)) if &*s.name_str() == key => Some(*n),
+            (RubyValue::Symbol(s), RubyValue::Int(n)) if s.name_str() == key => Some(*n),
             _ => None,
         })
     };

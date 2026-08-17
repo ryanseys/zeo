@@ -723,37 +723,74 @@ pub(crate) fn take_drop(src: Src<'_>, args: &[RubyValue], take: bool) -> Result<
     Ok(RubyValue::Array(array_new(items[n..].to_vec())))
 }
 
-pub(crate) fn take_drop_while(
+/// `take_while`: the leading run of elements the block accepts.
+///
+/// Streams, and stops the source at the first falsey result (`rb_iter_break`,
+/// the same shape as [`find_own`]) -- which is what lets it answer over an
+/// ENDLESS source. Collecting first and scanning afterwards, as this used to,
+/// cannot: `(1..).take_while { |x| x < 4 }` never reaches the scan.
+///
+/// The predicate runs through [`yield_block`], not `blk.call`, so a `break`
+/// inside the USER's block is stashed and returned as the whole call's value
+/// instead of being mistaken for the internal stop.
+pub(crate) fn take_while_own(
     src: Src<'_>,
     args: &[RubyValue],
     block: Option<RubyValue>,
-    take: bool,
 ) -> Result<RubyValue, Signal> {
-    reject_args(
-        args,
-        if take { "take_while" } else { "drop_while" },
-        "arguments",
-    );
-    let blk = block_or_enum!(
-        src.recv,
-        if take { "take_while" } else { "drop_while" },
-        args,
-        block
-    );
-    let items = collect_elements(src)?;
-    let mut boundary = items.len();
-    for (i, e) in items.iter().enumerate() {
-        if !blk.call(e.raw())?.truthy() {
-            boundary = i;
-            break;
+    reject_args(args, "take_while", "arguments");
+    let blk = block_or_enum!(src.recv, "take_while", args, block);
+    let out: Arc<Mutex<Vec<RubyValue>>> = Arc::new(Mutex::new(Vec::new()));
+    let out2 = out.clone();
+    let brk: Arc<Mutex<Option<RubyValue>>> = Arc::new(Mutex::new(None));
+    let brk2 = brk.clone();
+    for_each(src, move |yielded| {
+        if !yield_block(&blk, yielded, &brk2)?.truthy() {
+            return Err(Signal::Break(RubyValue::Nil));
         }
+        out2.lock().push(pack(yielded));
+        Ok(RubyValue::Nil)
+    })?;
+    if let Some(v) = user_break(&brk) {
+        return Ok(v);
     }
-    let packed: Vec<RubyValue> = items.into_iter().map(|e| e.packed).collect();
-    Ok(RubyValue::Array(array_new(if take {
-        packed[..boundary].to_vec()
-    } else {
-        packed[boundary..].to_vec()
-    })))
+    let items = std::mem::take(&mut *out.lock());
+    Ok(RubyValue::Array(array_new(items)))
+}
+
+/// `drop_while`: everything AFTER the leading run the block accepts.
+///
+/// Stays eager, and must: the answer is the tail, so there is nothing to
+/// return until the source is exhausted. CRuby's `drop_while` does not
+/// terminate on an infinite source either, so this is parity, not debt.
+/// Once the boundary is found the predicate stops being called -- `keeping`
+/// latches -- matching CRuby, which stops testing after the first falsey.
+pub(crate) fn drop_while_own(
+    src: Src<'_>,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    reject_args(args, "drop_while", "arguments");
+    let blk = block_or_enum!(src.recv, "drop_while", args, block);
+    let out: Arc<Mutex<Vec<RubyValue>>> = Arc::new(Mutex::new(Vec::new()));
+    let out2 = out.clone();
+    let brk: Arc<Mutex<Option<RubyValue>>> = Arc::new(Mutex::new(None));
+    let brk2 = brk.clone();
+    let dropping = Arc::new(Mutex::new(true));
+    let dropping2 = dropping.clone();
+    for_each(src, move |yielded| {
+        if *dropping2.lock() && yield_block(&blk, yielded, &brk2)?.truthy() {
+            return Ok(RubyValue::Nil);
+        }
+        *dropping2.lock() = false;
+        out2.lock().push(pack(yielded));
+        Ok(RubyValue::Nil)
+    })?;
+    if let Some(v) = user_break(&brk) {
+        return Ok(v);
+    }
+    let items = std::mem::take(&mut *out.lock());
+    Ok(RubyValue::Array(array_new(items)))
 }
 
 /// The shared back half of every `to_h` (Enumerable's, `Array`'s and
@@ -1616,12 +1653,43 @@ ruby_module! {
         }
         Ok(RubyValue::Array(array_new(out)))
     }
+    // each_slice / each_cons stream a rolling buffer rather than collecting the
+    // whole source and then calling `.chunks`/`.windows` on it. The blockless
+    // forms were always lazy (`block_or_enum!` returns an Enumerator before any
+    // collect), but that Enumerator re-invokes THIS block form, so
+    // `(1..).each_slice(2).first(2)` used to hang here.
     def "each_slice" arity 1 (recv, *args, &block) {
         let n = slice_size(args, "each_slice")?;
         let blk = block_or_enum!(recv, args, block);
-        let items = collect_packed(Src::sending(recv))?;
-        for chunk in items.chunks(n) {
-            blk.call(&[RubyValue::Array(array_new(chunk.to_vec()))])?;
+        // Kept for the short final slice, after the driver has consumed its clone.
+        let tail_blk = blk.clone();
+        let buf: Arc<Mutex<Vec<RubyValue>>> = Arc::new(Mutex::new(Vec::with_capacity(n)));
+        let buf2 = buf.clone();
+        let brk: Arc<Mutex<Option<RubyValue>>> = Arc::new(Mutex::new(None));
+        let brk2 = brk.clone();
+        for_each(Src::sending(recv), move |yielded| {
+            // Never hold the buffer across the block call: the block may
+            // re-enter this receiver.
+            let full = {
+                let mut b = buf2.lock();
+                b.push(pack(yielded));
+                (b.len() >= n).then(|| std::mem::take(&mut *b))
+            };
+            match full {
+                Some(chunk) => yield_block(&blk, &[RubyValue::Array(array_new(chunk))], &brk2),
+                None => Ok(RubyValue::Nil),
+            }
+        })?;
+        if let Some(v) = user_break(&brk) {
+            return Ok(v);
+        }
+        // A short final slice still yields (CRuby pads nothing and drops nothing).
+        let tail = std::mem::take(&mut *buf.lock());
+        if !tail.is_empty() {
+            match tail_blk.call(&[RubyValue::Array(array_new(tail))]) {
+                Err(Signal::Break(v)) => return Ok(v),
+                other => other?,
+            };
         }
         // The block form answers the receiver (Ruby 3.1+), not nil.
         Ok(recv.clone())
@@ -1629,12 +1697,30 @@ ruby_module! {
     def "each_cons" arity 1 (recv, *args, &block) {
         let n = slice_size(args, "each_cons")?;
         let blk = block_or_enum!(recv, args, block);
-        let items = collect_packed(Src::sending(recv))?;
-        if items.len() >= n {
-            for window in items.windows(n) {
-                blk.call(&[RubyValue::Array(array_new(window.to_vec()))])?;
+        let win: Arc<Mutex<Vec<RubyValue>>> = Arc::new(Mutex::new(Vec::with_capacity(n)));
+        let win2 = win.clone();
+        let brk: Arc<Mutex<Option<RubyValue>>> = Arc::new(Mutex::new(None));
+        let brk2 = brk.clone();
+        for_each(Src::sending(recv), move |yielded| {
+            // A sliding window: keep the last n, emit once it is full. Cloned
+            // out under the lock so the block never sees the live buffer.
+            let full = {
+                let mut w = win2.lock();
+                w.push(pack(yielded));
+                if w.len() > n {
+                    w.remove(0);
+                }
+                (w.len() == n).then(|| w.clone())
+            };
+            match full {
+                Some(window) => yield_block(&blk, &[RubyValue::Array(array_new(window))], &brk2),
+                None => Ok(RubyValue::Nil),
             }
+        })?;
+        if let Some(v) = user_break(&brk) {
+            return Ok(v);
         }
+        // Fewer than n elements in total: nothing is ever yielded.
         // The block form answers the receiver (Ruby 3.1+), not nil.
         Ok(recv.clone())
     }
@@ -1668,31 +1754,55 @@ ruby_module! {
         take_drop(Src::sending(recv), args, false)
     }
     def "take_while" arity 0 (recv, *args, &block) {
-        take_drop_while(Src::sending(recv), args, block, true)
+        take_while_own(Src::sending(recv), args, block)
     }
     def "drop_while" arity 0 (recv, *args, &block) {
-        take_drop_while(Src::sending(recv), args, block, false)
+        drop_while_own(Src::sending(recv), args, block)
     }
     // `find_index(value)` / `find_index { |e| ... }`.
+    //
+    // Streams and stops at the hit, like `find` -- these two answer the same
+    // question and only differ in what they report, so `find` terminating on
+    // an endless source while `find_index` collected it first was a bug, not
+    // a design. The block form routes through `yield_block` so a `break` in
+    // the user's predicate is not read as the internal stop.
     def "find_index"(recv, *args, &block) {
-        let items = collect_elements(Src::sending(recv))?;
-        if let Some(RubyValue::Proc(p)) = &block {
-            for (i, e) in items.iter().enumerate() {
-                if p.call(e.raw())?.truthy() {
-                    return Ok(RubyValue::Int(i as i64));
-                }
-            }
-            return Ok(RubyValue::Nil);
-        }
-        if args.len() != 1 {
+        if block.is_none() && args.len() != 1 {
             panic!("Enumerable#find_index takes a value or a block");
         }
-        for (i, e) in items.iter().enumerate() {
-            if e.packed.rb_eq(&args[0]) {
-                return Ok(RubyValue::Int(i as i64));
+        let needle = args.first().cloned();
+        let blk = match &block {
+            Some(RubyValue::Proc(p)) => Some(p.clone()),
+            _ => None,
+        };
+        let hit: Arc<Mutex<Option<i64>>> = Arc::new(Mutex::new(None));
+        let hit2 = hit.clone();
+        let brk: Arc<Mutex<Option<RubyValue>>> = Arc::new(Mutex::new(None));
+        let brk2 = brk.clone();
+        let idx = Arc::new(Mutex::new(0i64));
+        let idx2 = idx.clone();
+        for_each(Src::sending(recv), move |yielded| {
+            let found = match &blk {
+                Some(p) => yield_block(p, yielded, &brk2)?.truthy(),
+                // The valueless form is rejected above, so `needle` is Some here.
+                None => pack(yielded).rb_eq(needle.as_ref().expect("a value or a block")),
+            };
+            let mut i = idx2.lock();
+            if found {
+                *hit2.lock() = Some(*i);
+                return Err(Signal::Break(RubyValue::Nil));
             }
+            *i += 1;
+            Ok(RubyValue::Nil)
+        })?;
+        if let Some(v) = user_break(&brk) {
+            return Ok(v);
         }
-        Ok(RubyValue::Nil)
+        let found = *hit.lock();
+        Ok(match found {
+            Some(i) => RubyValue::Int(i),
+            None => RubyValue::Nil,
+        })
     }
     def "tally"(recv, *args, &_block) {
         // Optional accumulator hash: counts add onto its existing values and the

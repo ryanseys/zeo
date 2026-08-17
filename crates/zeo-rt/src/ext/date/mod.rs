@@ -331,11 +331,10 @@ ruby_class! {
         let s = &crate::builtins::convert::to_rstr(arg1)?;
         let text = s.lock().to_utf8_lossy().into_owned();
         let fmt = match arg2 {
-            Some(v) => {
-                let f = crate::builtins::convert::to_rstr(v)?;
-                let owned = f.lock().to_utf8_lossy().into_owned();
-                owned
-            }
+            Some(v) => crate::builtins::convert::to_rstr(v)?
+                .lock()
+                .to_utf8_lossy()
+                .into_owned(),
             None => "%F".to_string(),
         };
         Ok(match strptime::date_strptime(&text, &fmt) {
@@ -347,19 +346,17 @@ ruby_class! {
     // `parse`. The default format is `%F`, matching CRuby.
     def self."strptime" cfunc (recv, arg1?, arg2?) {
         let text = match arg1 {
-            Some(v) => {
-                let s = crate::builtins::convert::to_rstr(v)?;
-                let owned = s.lock().to_utf8_lossy().into_owned();
-                owned
-            }
+            Some(v) => crate::builtins::convert::to_rstr(v)?
+                .lock()
+                .to_utf8_lossy()
+                .into_owned(),
             None => "-4712-01-01".to_string(),
         };
         let fmt = match arg2 {
-            Some(v) => {
-                let s = crate::builtins::convert::to_rstr(v)?;
-                let owned = s.lock().to_utf8_lossy().into_owned();
-                owned
-            }
+            Some(v) => crate::builtins::convert::to_rstr(v)?
+                .lock()
+                .to_utf8_lossy()
+                .into_owned(),
             None => "%F".to_string(),
         };
         let (y, m, d) = strptime::date_strptime(&text, &fmt)

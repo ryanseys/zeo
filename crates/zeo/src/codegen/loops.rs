@@ -28,10 +28,33 @@ use quote::quote;
 
 use super::Ctx;
 use super::expr::{emit_expr, infer};
-use crate::hir::{MultiTarget, MultiTargetGroup, NodeId};
+use crate::hir::{HirNode, MultiTarget, MultiTargetGroup, NodeId};
 use crate::types::TyKind;
 use proc_macro2::TokenStream;
 use syn::Lifetime;
+
+/// Whether `for x in <this>` may count with native integers: a range LITERAL
+/// whose begin is provably `Int` and whose end is `Int` or ABSENT (an endless
+/// range still yields Ints -- it just never stops on its own).
+///
+/// Deliberately syntactic: only a literal exposes its endpoints to inference.
+/// A range reaching the loop through a variable answers `false` and takes the
+/// runtime-dispatched arm, which decides the same question from the value.
+/// The two must agree on what "countable" means, because this predicate also
+/// decides whether the loop variable is typed `Int`.
+fn counts_as_ints(cx: &Ctx, iterable: NodeId) -> bool {
+    match cx.compiler.hir[iterable] {
+        HirNode::RangeLit {
+            start: Some(s),
+            end,
+            ..
+        } => {
+            matches!(infer(cx, s), TyKind::Int)
+                && end.is_none_or(|e| matches!(infer(cx, e), TyKind::Int))
+        }
+        _ => false,
+    }
+}
 
 /// A fresh, function-body-unique loop label -- see `Ctx::label_counter`'s
 /// docs for why a shared `Cell` beats threading a counter through every
@@ -182,12 +205,20 @@ pub fn emit_for(cx: &Ctx, target: &MultiTarget, iterable: NodeId, body: &[NodeId
     let outer = fresh_label(cx, "for");
     let redo = fresh_label(cx, "for_body");
     let iterable_ty = infer(cx, iterable);
-    // Only a `Range`'s element type is provably `Int`, and only when `target`
-    // is a single plain local -- an `Array`'s elements aren't tracked
-    // individually, nor is a destructured `for a, b in ...`'s, so those stay
-    // `Poly` (see `analyze::locals`' identical seeding for the same reason).
+    let counted = counts_as_ints(cx, iterable);
+    // A `Range`'s element type is provably `Int` only when its ENDPOINTS are,
+    // and only when `target` is a single plain local -- an `Array`'s elements
+    // aren't tracked individually, nor is a destructured `for a, b in ...`'s,
+    // so those stay `Poly` (see `analyze::locals`' identical seeding for the
+    // same reason).
+    //
+    // `("a".."c")` is a Range too, and yields Strings. Typing its loop
+    // variable `Int` on the strength of the receiver's class alone bound a
+    // String into an Int slot, and the counted lowering below then read its
+    // endpoints with `as_int_unchecked` and PANICKED the program -- on a
+    // perfectly ordinary ruby loop.
     let elem_ty = match (target, iterable_ty) {
-        (MultiTarget::Local(_), TyKind::Range) => TyKind::Int,
+        (MultiTarget::Local(_), TyKind::Range) if counted => TyKind::Int,
         _ => TyKind::Poly,
     };
     let loop_cx = cx.in_loop(redo.clone(), outer.clone());
@@ -241,18 +272,26 @@ pub fn emit_for(cx: &Ctx, target: &MultiTarget, iterable: NodeId, body: &[NodeId
                 }
             }
         },
-        TyKind::Range => quote! {
+        // A statically Int-bounded range literal: count natively, no dispatch.
+        // An ENDLESS one counts too -- it simply has no upper test, so only
+        // `break` ends it, exactly as ruby's does. Reading that absent end as
+        // an Int (`as_int_unchecked` on the `nil`) used to panic before the
+        // first iteration.
+        TyKind::Range if counted => quote! {
             {
                 let __coll = #iter_expr;
                 let __exclusive = __coll.range_exclude_end();
-                let __end = __coll.range_last().as_int_unchecked();
+                let __end_v = __coll.range_last();
+                let __endless = matches!(__end_v, zeo_rt::RubyValue::Nil);
+                let __end = if __endless { 0 } else { __end_v.as_int_unchecked() };
                 let mut __i = __coll.range_first().as_int_unchecked();
                 // Top-of-loop step so `next` advances (see the Array arm).
                 let mut __first = true;
                 #outer: loop {
                     if !__first { __i += 1; }
                     __first = false;
-                    let __in_range = if __exclusive { __i < __end } else { __i <= __end };
+                    let __in_range = __endless
+                        || if __exclusive { __i < __end } else { __i <= __end };
                     if !__in_range { break #outer __coll.clone(); }
                     #bind_range
                     #inner
@@ -334,15 +373,51 @@ pub fn emit_for(cx: &Ctx, target: &MultiTarget, iterable: NodeId, body: &[NodeId
             quote! {
                 {
                     let __coll = #coll;
-                    let __iter = zeo_rt::each_values(&__coll)?;
+                    // A RANGE reaches here whenever it was not statically
+                    // known to be one -- through a Poly local, a method
+                    // return, a rescue-widened variable. Collecting it is
+                    // wrong twice over: an ENDLESS range never finishes, and
+                    // `as_int_unchecked` on the absent end used to panic. So
+                    // the value is asked, and a countable range counts.
+                    //
+                    // Everything else keeps the collect: `for` is `each`, and
+                    // the snapshot is what lets the body keep the labelled
+                    // `break`/`next`/`redo` shape the other arms rely on.
+                    let __is_range = matches!(__coll, zeo_rt::RubyValue::Range(_));
+                    let __begin = if __is_range { __coll.range_first() } else { zeo_rt::RubyValue::Nil };
+                    let __end_v = if __is_range { __coll.range_last() } else { zeo_rt::RubyValue::Nil };
+                    let __endless = __is_range && matches!(__end_v, zeo_rt::RubyValue::Nil);
+                    let __counted = __is_range
+                        && matches!(__begin, zeo_rt::RubyValue::Int(_))
+                        && (__endless || matches!(__end_v, zeo_rt::RubyValue::Int(_)));
+                    let __exclusive = __is_range && __coll.range_exclude_end();
+                    let __end = if __counted && !__endless { __end_v.as_int_unchecked() } else { 0 };
+                    let mut __i = if __counted { __begin.as_int_unchecked() } else { 0 };
+                    // `each_values` raises for a beginless or Float range
+                    // exactly where ruby's `Range#each` does, so this `?` is
+                    // ruby's own TypeError.
+                    let __iter: Vec<zeo_rt::RubyValue> =
+                        if __counted { Vec::new() } else { zeo_rt::each_values(&__coll)? };
                     let mut __idx: usize = 0;
                     // Top-of-loop step so `next` advances (see the Array arm).
                     let mut __first = true;
                     #outer: loop {
-                        if !__first { __idx += 1; }
+                        if !__first {
+                            if __counted { __i += 1; } else { __idx += 1; }
+                        }
                         __first = false;
-                        if __idx >= __iter.len() { break #outer __coll.clone(); }
-                        #bind_array
+                        let __elem = if __counted {
+                            let __in_range = __endless
+                                || if __exclusive { __i < __end } else { __i <= __end };
+                            if !__in_range { break #outer __coll.clone(); }
+                            zeo_rt::RubyValue::Int(__i)
+                        } else {
+                            match __iter.get(__idx) {
+                                Some(__e) => __e.clone(),
+                                None => break #outer __coll.clone(),
+                            }
+                        };
+                        #bind_elem
                         #inner
                     }
                 }
