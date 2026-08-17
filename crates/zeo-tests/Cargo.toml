@@ -17,6 +17,8 @@ publish = false
 [dev-dependencies]
 zeo.workspace = true
 zeo-abi.workspace = true
+# `setrlimit` on the golden child: see MAX_ADDRESS_SPACE in tests/support/golden.rs.
+libc.workspace = true
 miette.workspace = true
 insta.workspace = true
 datatest-stable.workspace = true

@@ -2059,6 +2059,7 @@ version = "0.1.0"
 dependencies = [
  "datatest-stable",
  "insta",
+ "libc",
  "miette",
  "zeo",
  "zeo-abi",

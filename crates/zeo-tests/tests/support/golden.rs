@@ -36,6 +36,45 @@ use std::time::{Duration, Instant};
 const MAX_CAPTURE: usize = 64 << 20; // 64 MiB per stream
 const RUN_DEADLINE: Duration = Duration::from_secs(60);
 
+/// The third bound, and the one the other two miss: a child that ALLOCATES
+/// without writing. `(1..).to_a` -- an endless range zeo evaluates eagerly --
+/// prints nothing, so `MAX_CAPTURE` never trips, and it spends the whole
+/// deadline growing the heap. At the golden group's ten-way concurrency that
+/// is ten runaway heaps at once, which is enough to take a machine down before
+/// any of them reaches its deadline.
+///
+/// So the child gets an address-space rlimit. It dies on its own allocation
+/// failure in milliseconds instead of surviving to the 60s mark, and the test
+/// reports an ordinary FAILURE like any other divergence. 2 GiB is far above
+/// what a golden program legitimately needs (the largest in the corpus build
+/// arrays in the low tens of MiB) and far below what a runaway wants.
+const MAX_ADDRESS_SPACE: u64 = 2 << 30; // 2 GiB
+
+/// Apply [`MAX_ADDRESS_SPACE`] to `cmd`'s child, between fork and exec.
+///
+/// `pre_exec` is unsafe because the closure runs in the forked child, where
+/// only async-signal-safe calls are legal; `setrlimit` is one of them, and the
+/// closure does nothing else.
+#[cfg(unix)]
+fn bound_address_space(cmd: &mut Command) {
+    use std::os::unix::process::CommandExt as _;
+    unsafe {
+        cmd.pre_exec(|| {
+            let lim = libc::rlimit {
+                rlim_cur: MAX_ADDRESS_SPACE,
+                rlim_max: MAX_ADDRESS_SPACE,
+            };
+            // A platform that refuses RLIMIT_AS must not fail the spawn: the
+            // deadline and capture bounds still apply.
+            libc::setrlimit(libc::RLIMIT_AS, &lim);
+            Ok(())
+        });
+    }
+}
+
+#[cfg(not(unix))]
+fn bound_address_space(_cmd: &mut Command) {}
+
 /// [`RUN_DEADLINE`], with an env override (`ZEO_GOLDEN_RUN_DEADLINE`, in
 /// seconds) for suites whose cases legitimately run longer -- a vendored
 /// gem's whole test file is one case in the `gemtests` suite. The deadline
@@ -72,6 +111,7 @@ fn run_bounded(
         Some(_) => cmd.stdin(Stdio::piped()),
         None => cmd.stdin(Stdio::null()),
     };
+    bound_address_space(cmd);
     let mut child = cmd.spawn().map_err(|e| format!("spawn {what}: {e}"))?;
 
     // Set by either reader the moment its stream passes the cap.
