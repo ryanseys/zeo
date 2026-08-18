@@ -3103,6 +3103,23 @@ fn extended_class_method(mid: ClassId, name: Symbol) -> Option<RProc> {
     if let Some(f) = crate::dispatch::value_method(mid, 0, name) {
         return Some(RProc::with_self_and_block(f, RubyValue::Nil, -1, true));
     }
+    // A RUNTIME-defined body (`define_method`, or a method an eval'd `def`
+    // installed) is already value-shaped -- it takes `self` as a plain
+    // `RubyValue`. Preferred over the surrogate below for the same reason the
+    // compiled value bridge is: `self` really is the class, so `self.class`
+    // answers Module and a sibling call resolves through the singleton
+    // ancestry rather than looking for an instance method on the class.
+    if let Some(body) = overlay_value_body(mid, name) {
+        let mid = mid;
+        return Some(RProc::with_self_and_block(
+            move |self_val: &RubyValue, args: &[RubyValue], block| {
+                call_value_body(mid, name, &body, self_val, args, block)
+            },
+            RubyValue::Nil,
+            -1,
+            true,
+        ));
+    }
     // A USER module method is a compiled `&RObj` body: it needs an object
     // receiver. When invoked with a Class `self`, run it against a
     // `ClassSurrogate` -- an `RObj` shell whose ivars ARE the class's own

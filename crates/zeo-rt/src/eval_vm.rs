@@ -521,6 +521,26 @@ mod imp {
             }
             return const_lookup(0, &name);
         }
+        // `K = v` / `Foo::K = v` -- both name their target the same way a
+        // `class`/`module` definition does, so `cpath_target` decides the
+        // owner: the enclosing definee for a bare name, the resolved parent
+        // for a scoped one.
+        if let Some(cw) = node.as_constant_write_node() {
+            let value = eval_node(&cw.value(), env)?;
+            let name = String::from_utf8_lossy(cw.name().as_slice()).into_owned();
+            let owner = match &env.definee {
+                Definee::Class(cid) => cid.0,
+                Definee::Singleton(_) => 0,
+            };
+            crate::constants::const_set(owner, &name, value.clone());
+            return Ok(value);
+        }
+        if let Some(cw) = node.as_constant_path_write_node() {
+            let value = eval_node(&cw.value(), env)?;
+            let (owner, name) = cpath_target(&cw.target().as_node(), env)?;
+            crate::constants::const_set(owner, &name, value.clone());
+            return Ok(value);
+        }
         if let Some(cp) = node.as_constant_path_node() {
             // `Foo::Bar` / `::Foo` -- resolve the parent to a class/module VALUE,
             // then look the name up in its own constant table. A leading `::`
@@ -798,7 +818,7 @@ mod imp {
             Some(r) => Definee::Singleton(eval_node(&r, env)?),
             None => env.definee.clone(),
         };
-        let body = make_eval_method(&env.src, def, env.box_id)?;
+        let body = make_eval_method(&env.src, def, env.box_id, cref_of(&target))?;
         match target {
             Definee::Class(cid) => crate::runtime_define_method(cid, sym, body)?,
             Definee::Singleton(val) => {
@@ -913,14 +933,31 @@ mod imp {
     /// box; on every invocation it re-parses that snippet, binds the call's
     /// args/block to the parameters, and interprets the body -- a `return`
     /// inside folds to the method's value here (the method boundary).
-    fn make_eval_method(src: &Arc<str>, def: &DefNode<'_>, box_id: u32) -> Result<RProc, Signal> {
+    /// The lexical scope an eval-defined method's own constants resolve
+    /// against: the class or module it was DEFINED into. For `def self.m`
+    /// inside `module Made` that is `Made` itself -- the receiver's class is
+    /// `Module`, which knows none of `Made`'s constants.
+    fn cref_of(target: &Definee) -> crate::ClassId {
+        match target {
+            Definee::Class(cid) => *cid,
+            Definee::Singleton(RubyValue::Class(cid)) => *cid,
+            Definee::Singleton(val) => val.class_id(),
+        }
+    }
+
+    fn make_eval_method(
+        src: &Arc<str>,
+        def: &DefNode<'_>,
+        box_id: u32,
+        cref: crate::ClassId,
+    ) -> Result<RProc, Signal> {
         let loc = def.location();
         let snippet: Arc<str> = Arc::from(&src[loc.start_offset()..loc.end_offset()]);
         // Methods behave like lambdas w.r.t. `return` (it exits the method),
         // which we implement directly by catching `Signal::Return` below.
         Ok(RProc::with_self_and_block(
             move |self_val: &RubyValue, args: &[RubyValue], block: Option<RubyValue>| {
-                run_eval_method(&snippet, box_id, self_val, args, block)
+                run_eval_method(&snippet, box_id, self_val, args, block, cref)
             },
             RubyValue::Nil,
             -1,
@@ -936,6 +973,7 @@ mod imp {
         self_val: &RubyValue,
         args: &[RubyValue],
         block: Option<RubyValue>,
+        cref: crate::ClassId,
     ) -> Result<RubyValue, Signal> {
         let result = ruby_prism::parse(snippet.as_bytes());
         if let Some(err) = result.errors().next() {
@@ -965,9 +1003,10 @@ mod imp {
             method_args: Some(args.to_vec()),
             src: Arc::from(snippet),
             // The body's constants resolve against the class the method was
-            // defined into (`class_eval("def m = SOME_CONST")`), which is the
-            // receiver's class at every invocation.
-            cref: Some(self_val.class_id()),
+            // DEFINED into -- captured at the `def`, not re-derived from the
+            // receiver, which is `Module` for a module's own `def self.m` and
+            // the subclass for an inherited one.
+            cref: Some(cref),
             cref_name: None,
             file: Arc::from(EVAL_FILE),
             line: 1,
@@ -1355,9 +1394,17 @@ mod imp {
         let snippet: Arc<str> = Arc::from(&env.src[loc.start_offset()..loc.end_offset()]);
         let self_val = env.self_val.clone();
         let box_id = env.box_id;
+        // A block CLOSES OVER the scope it was written in, and the eval VM's
+        // scope is a real one -- `_erbout = +''; 3.times do |i| _erbout << i
+        // end` is every ERB template with a block tag in it, and reading
+        // `_erbout` as a method call is what a fresh scope made of it. The
+        // child is taken per INVOCATION so a name the enclosing snippet bound
+        // after this block was built is still in it, and so the block's own
+        // params and locals stay block-local, exactly as ruby scopes them.
+        let outer = Arc::clone(&env.scope);
         let proc = RProc::with_self_and_block(
             move |bound_self: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>| {
-                run_eval_block(&snippet, box_id, bound_self, args)
+                run_eval_block(&snippet, box_id, bound_self, args, outer.child())
             },
             self_val,
             -1,
@@ -1391,6 +1438,7 @@ mod imp {
         box_id: u32,
         self_val: &RubyValue,
         args: &[RubyValue],
+        scope: Arc<BindingScope>,
     ) -> Result<RubyValue, Signal> {
         // prism only parses a block in CALL position, so the stored
         // `{...}`/`do...end` text is re-parsed as the block of a synthetic
@@ -1431,7 +1479,7 @@ mod imp {
         };
         let mut env = Env {
             self_val: self_val.clone(),
-            scope: fresh_scope(),
+            scope,
             box_id,
             definee: if crate::runtime_meta::singleton_definee(self_val) {
                 Definee::Singleton(self_val.clone())

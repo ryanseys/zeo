@@ -1,0 +1,10 @@
+:helper
+:helper
+["Wide", "Module", :helper]
+["Wide", :helper]
+7
+[]
+[:defined_m, :evald, :helper, :ivar_write]
+["Wide::Api", true]
+["Klass", "Class", :helper]
+["Object", :helper]
