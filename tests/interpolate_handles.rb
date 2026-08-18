@@ -1,7 +1,3 @@
-# GAP -- imported from the spinel corpus at c55d9bdb.
-# String interpolation of an object with a custom to_s does not use it in
-# every position.
-#
 r, w = IO.pipe
 s = "#{r} #{w}"
 p s.start_with?("#<IO:")

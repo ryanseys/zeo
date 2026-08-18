@@ -422,20 +422,25 @@ impl RubyValue {
                     },
                 }
             }
-            RubyValue::Proc(_) => "#<Proc>".to_string(),
+            // The real renderers, not placeholders: interpolation and `puts`
+            // must agree with `#to_s` (`"#{pr}"` said "#<Proc>" while
+            // `pr.to_s` said "#<Proc:0x...>").
+            RubyValue::Proc(p) => crate::builtins::rproc::proc_inspect(p),
             // `Regexp#to_s` -- real Ruby's `(?opts-negopts:body)` form (NOT
             // the `/pattern/flags` literal form, that's `#inspect`'s job --
             // see `regexp::regexp_to_s`'s docs).
             RubyValue::Regexp(re) => crate::regexp::regexp_to_s(re).display_with(seen)?,
             // `MatchData#to_s` -- the whole matched substring.
             RubyValue::MatchData(m) => crate::regexp::matchdata_to_s(m).display_with(seen)?,
-            // Same placeholder posture as `Object`/`Proc` above.
-            RubyValue::Fiber(_) => "#<Fiber>".to_string(),
+            RubyValue::Fiber(f) => crate::fiber::fiber_inspect(f),
             // `Object#to_s`'s address form -- inspect alone describes the
             // iteration.
             RubyValue::Enumerator(e) => crate::builtins::enumerator::enum_to_s(e),
             RubyValue::Yielder(_) => "#<Enumerator::Yielder>".to_string(),
-            RubyValue::Thread(_) => "#<Thread>".to_string(),
+            RubyValue::Thread(t) => {
+                let status = if crate::thread::thread_alive(t) { "run" } else { "dead" };
+                crate::thread::thread_inspect(t, status)
+            }
             // `Object#to_s`'s address form (CRuby defines no `to_s`/`inspect`
             // on these, so the default applies to both -- inspect_with's
             // catch-all lands here too).

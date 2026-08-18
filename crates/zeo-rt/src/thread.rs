@@ -556,7 +556,13 @@ pub fn thread_status(t: &RThread) -> RubyValue {
     }
     match &*t.state.lock() {
         Some(ThreadState::Running(_)) | None => {
-            RubyValue::Str(crate::string_new("run".to_string()))
+            // A thread parked in `Thread.stop` reports "sleep", not "run" --
+            // CRuby's `THREAD_STOPPED`/`THREAD_STOPPED_FOREVER` both do.
+            let word = match t.stopped.load(Ordering::Relaxed) {
+                true => "sleep",
+                false => "run",
+            };
+            RubyValue::Str(crate::string_new(word.to_string()))
         }
         Some(ThreadState::Done(Ok(_))) => RubyValue::Bool(false),
         Some(ThreadState::Done(Err(_))) => RubyValue::Nil,

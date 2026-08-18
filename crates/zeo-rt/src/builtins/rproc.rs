@@ -250,7 +250,7 @@ ruby_class! {
 /// A proc with no recorded location is CRuby's C-level Proc, which prints
 /// the identity alone. A `Symbol#to_proc` carries its symbol and renders as
 /// `#<Proc:0x...(&:upcase) (lambda)>` -- no space before the `(&:`.
-fn proc_inspect(p: &crate::RProc) -> String {
+pub(crate) fn proc_inspect(p: &crate::RProc) -> String {
     let lambda = if p.is_lambda() { " (lambda)" } else { "" };
     let addr = p.identity();
     if let Some(sym) = p.symbol_origin() {

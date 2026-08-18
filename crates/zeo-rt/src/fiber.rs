@@ -86,6 +86,10 @@ pub struct FiberHandle {
     /// fiber` (oracle-verified) while the original keeps working. Set only
     /// at construction, never cleared.
     uninitialized: bool,
+    /// `"file:line"` of the `Fiber.new` that made this one, which CRuby's
+    /// `#inspect` names (`#<Fiber:0x... f.rb:3 (created)>`). `None` for the
+    /// root fiber and for a `dup`'d husk.
+    origin: Option<String>,
 }
 
 impl FiberHandle {
@@ -141,6 +145,7 @@ fn root_fiber() -> RFiber {
                     entered_by_transfer: AtomicBool::new(false),
                     frozen: AtomicBool::new(false),
                     uninitialized: false,
+                    origin: None,
                 })
             })
             .clone()
@@ -168,6 +173,13 @@ pub fn fiber_is_root(handle: &RFiber) -> bool {
     handle.id == 0
 }
 
+/// Whether `handle`'s body has never begun running.
+fn fiber_unstarted(handle: &RFiber) -> bool {
+    !handle.uninitialized
+        && std::thread::current().id() == handle.owner
+        && FIBERS.with(|f| f.borrow().get(&handle.id).is_some_and(|c| !c.started()))
+}
+
 /// `Fiber#inspect`/`#to_s` -- `#<Fiber:0xADDR (state)>`, where the state is
 /// `created`/`resumed`/`suspended`/`terminated` as in CRuby.
 pub fn fiber_inspect(handle: &RFiber) -> String {
@@ -175,11 +187,19 @@ pub fn fiber_inspect(handle: &RFiber) -> String {
         "terminated"
     } else if fiber_is_current(handle) {
         "resumed"
+    } else if fiber_unstarted(handle) {
+        // Never resumed: CRuby distinguishes this from a fiber suspended at
+        // a `Fiber.yield`, and only the second has anywhere to resume FROM.
+        "created"
     } else {
         "suspended"
     };
+    let origin = handle
+        .origin
+        .as_deref()
+        .map_or_else(String::new, |o| format!(" {o}"));
     format!(
-        "#<Fiber:0x{:016x} ({state})>",
+        "#<Fiber:0x{:016x}{origin} ({state})>",
         Arc::as_ptr(handle) as *const () as usize
     )
 }
@@ -224,6 +244,9 @@ pub fn fiber_new(block: RubyValue) -> RubyValue {
         entered_by_transfer: AtomicBool::new(false),
         frozen: AtomicBool::new(false),
         uninitialized: false,
+        origin: crate::frames::caller_frames(0)
+            .first()
+            .map(|(file, line, _)| format!("{file}:{line}")),
     }))
 }
 
@@ -241,6 +264,7 @@ pub fn dup_uninitialized(src: &FiberHandle) -> RFiber {
         entered_by_transfer: AtomicBool::new(false),
         frozen: AtomicBool::new(false),
         uninitialized: true,
+        origin: src.origin.clone(),
     })
 }
 
