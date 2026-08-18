@@ -2489,6 +2489,13 @@ ruby_class! {
     def "index" cfunc (recv, arg1, arg2?) {
         let husk = crate::regexp::husk_payload(arg1);
         let arg1 = husk.as_ref().unwrap_or(arg1);
+        // A REGEXP search reads characters, so a broken receiver is refused
+        // (`rb_reg_search`); a plain substring search moves by bytes and is
+        // fine on one -- which is why `index` is not in `guard_valid`'s list
+        // wholesale.
+        if matches!(arg1, RubyValue::Regexp(_)) {
+            guard_valid(recv)?;
+        }
         // `index(substr_or_regexp[, start])` -- the optional start is a CHAR
         // offset (from the end when negative) to begin searching at.
         let text = rstr.lock().to_utf8_lossy().into_owned();
@@ -3037,6 +3044,7 @@ ruby_class! {
         let other = husk.as_ref().unwrap_or(other);
         match other {
             RubyValue::Regexp(re) => {
+                guard_valid(recv)?;
                 Ok(crate::regexp_match_index(re, &rstr.lock().to_utf8_lossy()))
             }
             // Only a STRING operand is the TypeError. Ruby's `rb_str_match`
@@ -3082,6 +3090,7 @@ ruby_class! {
         }
     }
     def "match?" cfunc (recv, arg1, arg2?) {
+        guard_valid(recv)?;
         let re = to_regexp(arg1)?;
         let text = rstr.lock().to_utf8_lossy().into_owned();
         Ok(RubyValue::Bool(match match_haystack(&text, arg2)? {

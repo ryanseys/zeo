@@ -374,12 +374,20 @@ fn subject_arg(v: &RubyValue) -> Result<Option<String>, crate::Signal> {
         // conversion but a case CRuby's regexp entry points special-case --
         // `delegate.rb` filters `private_instance_methods` with `/…/ =~ m`.
         RubyValue::Symbol(s) => Ok(Some(s.name())),
-        other => Ok(Some(
-            crate::builtins::convert::to_rstr(other)?
-                .lock()
-                .to_utf8_lossy()
-                .into_owned(),
-        )),
+        other => {
+            let handle = crate::builtins::convert::to_rstr(other)?;
+            let buf = handle.lock();
+            // Matching READS characters, so CRuby refuses a subject whose
+            // bytes are not valid in its own encoding (`rb_enc_check` on the
+            // way in) rather than matching against replacement characters --
+            // which is what `to_utf8_lossy` would silently do here.
+            if !buf.valid_encoding() {
+                let enc = buf.encoding().name();
+                drop(buf);
+                return Err(crate::builtins::arg_error!("invalid byte sequence in {enc}"));
+            }
+            Ok(Some(buf.to_utf8_lossy().into_owned()))
+        }
     }
 }
 

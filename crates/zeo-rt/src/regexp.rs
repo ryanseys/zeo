@@ -811,16 +811,60 @@ fn validate_posix_classes(source: &str) -> Result<(), String> {
 /// shape (`<reason>: /<source>/`) for the common cases; otherwise keep the
 /// engine's text. CRuby names the offending construct and echoes the pattern.
 fn cruby_regex_error(source: &str, raw: &str) -> String {
+    // `(?` alone ends INSIDE a group's opening sequence, which onig names
+    // differently from a group that opened and never closed.
+    let unterminated_group_head = source.ends_with("(?");
     let reason = if raw.contains("unclosed character class") {
-        "unterminated character class"
+        "premature end of char-class"
+    } else if unterminated_group_head {
+        "end pattern in group"
     } else if raw.contains("unclosed group") || raw.contains("unclosed") && raw.contains("(") {
         "end pattern with unmatched parenthesis"
     } else if raw.contains("unopened group") || raw.contains("unmatched") && raw.contains(")") {
         "unmatched close parenthesis"
+    } else if raw.contains("invalid character class range") {
+        "empty range in char class"
+    } else if raw.contains("repetition operator missing expression") {
+        "target of repeat operator is not specified"
+    } else if raw.contains("repetition quantifier expects a valid decimal") {
+        "invalid repeat range"
     } else {
         return raw.to_string();
     };
     format!("{reason}: /{source}/")
+}
+
+/// `/a{2,1}/` -- a repeat range whose upper bound is below its lower. CRuby
+/// refuses it; the `regex` crate accepts it as an empty repetition, so the
+/// check has to happen here. Scans for `{m,n}` outside a character class and
+/// outside an escape, exactly where a quantifier can appear.
+fn validate_repeat_ranges(source: &str) -> Result<(), String> {
+    let bytes = source.as_bytes();
+    let (mut i, mut in_class) = (0usize, false);
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' => i += 1,
+            b'[' if !in_class => in_class = true,
+            b']' if in_class => in_class = false,
+            b'{' if !in_class => {
+                if let Some(end) = source[i..].find('}') {
+                    let body = &source[i + 1..i + end];
+                    if let Some((lo, hi)) = body.split_once(',')
+                        && let (Ok(lo), Ok(hi)) = (lo.trim().parse::<u32>(), hi.trim().parse::<u32>())
+                        && lo > hi
+                    {
+                        return Err(format!(
+                            "upper is smaller than lower in repeat range: /{source}/"
+                        ));
+                    }
+                    i += end;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    Ok(())
 }
 
 /// One non-interpolated regexp LITERAL's compiled form, built on first
@@ -899,6 +943,7 @@ pub fn regexp_new_enc(
     encoding: zeo_abi::RegexpEncoding,
 ) -> Result<RRegexp, String> {
     validate_posix_classes(source)?;
+    validate_repeat_ranges(source)?;
     // A pattern with Ruby-specific semantics goes straight to Oniguruma (the
     // raw source, no escape translation).
     if needs_onig(source) {

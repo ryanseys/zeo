@@ -1,0 +1,19 @@
+["[invalid", "premature end of char-class: /[invalid/"]
+["(a", "end pattern with unmatched parenthesis: /(a/"]
+["a)", "unmatched close parenthesis: /a)/"]
+["a{2,1}", "upper is smaller than lower in repeat range: /a{2,1}/"]
+["[z-a]", "empty range in char class: /[z-a]/"]
+["*a", "target of repeat operator is not specified: /*a/"]
+["(?", "end pattern in group: /(?/"]
+false
+[ArgumentError, "invalid byte sequence in UTF-8"]
+[ArgumentError, "invalid byte sequence in UTF-8"]
+[ArgumentError, "invalid byte sequence in UTF-8"]
+[ArgumentError, "invalid byte sequence in UTF-8"]
+[ArgumentError, "invalid byte sequence in UTF-8"]
+[ArgumentError, "invalid byte sequence in UTF-8"]
+[ArgumentError, "invalid byte sequence in UTF-8"]
+[ArgumentError, "invalid byte sequence in UTF-8"]
+[ArgumentError, "invalid byte sequence in UTF-8"]
+nil
+nil
