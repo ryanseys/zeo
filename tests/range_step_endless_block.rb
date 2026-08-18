@@ -1,7 +1,3 @@
-# GAP -- imported from the spinel corpus at c55d9bdb.
-# Range#step on an endless range with a bad argument raises TypeError where
-# ruby raises ArgumentError.
-#
 r001 = []; (1..).step(3) { |x001| break if x001 > 10; r001 << x001 }; p r001
 a002 = (1..); r002 = []; a002.step(2) { |x002| break if x002 > 5; r002 << x002 }; p r002
 r004 = []; (1..).each { |x004| break if x004 > 5; r004 << x004 }; p r004

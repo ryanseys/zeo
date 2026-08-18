@@ -1,7 +1,3 @@
-# GAP -- imported from the spinel corpus at c55d9bdb.
-# A Range predicate with a typed argument answers false where ruby answers
-# true.
-#
 b = "x"
 p((1..5).cover?(b))
 def g; "x"; end

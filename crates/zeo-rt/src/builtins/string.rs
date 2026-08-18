@@ -44,6 +44,76 @@ pub(crate) fn swapcase_str(s: &str) -> String {
         .collect()
 }
 
+/// `rb_str_upto_each` (string.c) -- the `succ` walk from `beg` to `end` that
+/// BOTH `String#upto` and a String/Symbol `Range`'s `each` are built on. One
+/// copy, because CRuby has one: `range_each` calls this very function, which
+/// is why `("y".."ab").to_a` is empty (`"y" > "a"` by BYTES, length ignored)
+/// while `("9".."11").to_a` walks numerically.
+///
+/// Three branches, in CRuby's order:
+/// - two single ASCII characters increment the CODE POINT;
+/// - two all-digit endpoints walk as INTEGERS, zero-padded to `beg`'s width
+///   (so `"9".upto("11")` is "9","10","11" -- a byte compare would have
+///   stopped before the first step, and `beg`'s width is why it is not "09");
+/// - otherwise a byte-ordered `succ` walk, stopping once a successor grows
+///   longer than `end`.
+pub(crate) fn upto_each(
+    beg: &str,
+    end: &str,
+    exclusive: bool,
+    f: &mut dyn FnMut(&str) -> Result<(), Signal>,
+) -> Result<(), Signal> {
+    let ascii = beg.is_ascii() && end.is_ascii();
+    if ascii && beg.len() == 1 && end.len() == 1 {
+        let (c, e) = (beg.as_bytes()[0], end.as_bytes()[0]);
+        if c > e || (exclusive && c == e) {
+            return Ok(());
+        }
+        let mut c = c;
+        loop {
+            f(std::str::from_utf8(&[c]).unwrap_or(""))?;
+            if !exclusive && c == e {
+                break;
+            }
+            c += 1;
+            if exclusive && c == e {
+                break;
+            }
+        }
+        return Ok(());
+    }
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    if ascii && digits(beg) && digits(end) {
+        if let (Ok(from), Ok(to)) = (beg.parse::<i64>(), end.parse::<i64>()) {
+            let width = beg.len();
+            let mut n = from;
+            while n <= to {
+                if exclusive && n == to {
+                    break;
+                }
+                f(&format!("{n:0width$}"))?;
+                n += 1;
+            }
+        }
+        return Ok(());
+    }
+    if beg > end || (exclusive && beg == end) {
+        return Ok(());
+    }
+    let after_end = succ_str(end);
+    let mut cur = beg.to_string();
+    while cur != after_end {
+        let next = (exclusive || cur != end).then(|| succ_str(&cur));
+        f(&cur)?;
+        let Some(next) = next else { break };
+        cur = next;
+        if (exclusive && cur == end) || cur.len() > end.len() || cur.is_empty() {
+            break;
+        }
+    }
+    Ok(())
+}
+
 /// `String#succ`: increment the rightmost alphanumeric run with carry
 /// (`"az" -> "ba"`, `"zz" -> "aaa"`, `"a9" -> "b0"` -- CRuby's rule); with
 /// no alphanumerics, bump the last char's codepoint.
@@ -2852,40 +2922,10 @@ ruby_class! {
         let exclusive = exclusive.is_some_and(|v| v.truthy());
         let limit = arg_str!(max).lock().to_utf8_lossy().into_owned();
         let p = block_or_enum!(recv, __args, block);
-        let mut cur = rstr.lock().to_utf8_lossy().into_owned();
-        // ALL-DIGIT endpoints walk NUMERICALLY, not by `succ` and a byte
-        // compare: `rb_str_upto_each` takes that branch when both ends are
-        // digits, so `"9".upto("11")` is "9","10","11" where a lexicographic
-        // `"9" > "11"` would have stopped before the first step. Width comes
-        // from the wider endpoint, so `"08".upto("10")` keeps its padding.
-        let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
-        if digits(&cur) && digits(&limit) {
-            let (from, to) = (cur.parse::<i64>(), limit.parse::<i64>());
-            if let (Ok(from), Ok(to)) = (from, to) {
-                let width = cur.len().max(limit.len());
-                let last = if exclusive { to - 1 } else { to };
-                for n in from..=last {
-                    p.call(&[str_value(format!("{n:0width$}"))])?;
-                }
-                return Ok(recv.clone());
-            }
-        }
-        loop {
-            if cur.as_str() > limit.as_str() {
-                break;
-            }
-            if exclusive && cur == limit {
-                break;
-            }
-            p.call(&[str_value(cur.clone())])?;
-            if !exclusive && cur == limit {
-                break;
-            }
-            cur = succ_str(&cur);
-            if cur.len() > limit.len() {
-                break;
-            }
-        }
+        let start = rstr.lock().to_utf8_lossy().into_owned();
+        upto_each(&start, &limit, exclusive, &mut |s| {
+            p.call(&[str_value(s.to_string())]).map(|_| ())
+        })?;
         Ok(recv.clone())
     }
     def "center" cfunc (recv, width, pad_str?) {

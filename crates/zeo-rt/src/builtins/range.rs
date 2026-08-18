@@ -134,7 +134,6 @@ fn range_step(
     recv: &RubyValue,
     meth: &'static str,
     args: &[RubyValue],
-    n: &RubyValue,
     block: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
     use crate::builtins::numeric::{num_cmp, step_walk};
@@ -150,43 +149,210 @@ fn range_step(
             )
         )
     };
-    if !numeric(start) && !numeric(end) {
-        // Any other element type walks by `succ`, and its blockless form is
-        // an ordinary Enumerator rather than a sequence.
-        block_or_enum!(recv, meth, args, block);
-        panic!("Range#step on a non-numeric range isn't supported (zeo limitation)");
-    }
-    // A non-numeric step is not refused until the walk actually needs it:
-    // `(1..5).step("x")` blocklessly answers an ordinary Enumerator, and
-    // only iterating it raises. NOT an implicit-conversion site either --
-    // CRuby raises the numeric-tower coerce shape ("String can't be coerced
-    // into Integer").
-    if !numeric(Some(n)) {
-        block_or_enum!(recv, meth, args, block);
-        return Err(type_error!(
-            "{} can't be coerced into Integer",
-            crate::builtins::coerce_operand_name(n)
-        ));
-    }
-    if matches!(num_cmp(n, &RubyValue::Int(0)), Some(Some(0))) {
+    let succ_walkable = matches!(start, Some(RubyValue::Str(_) | RubyValue::Symbol(_)));
+    // The stride defaults to 1 for anything that can be walked at all; a range
+    // that can be walked only by `succ`-less arithmetic needs one spelled out.
+    // An EXPLICIT `nil` is not the default -- it falls through to the walk and
+    // fails on `begin + nil`, which is where every bad-stride message is born.
+    let n = match args.first() {
+        Some(v) => v.clone(),
+        None => {
+            if numeric(start) || succ_walkable || (start.is_none() && numeric(end)) {
+                RubyValue::Int(1)
+            } else {
+                return Err(arg_error!("step is required for non-numeric ranges"));
+            }
+        }
+    };
+    let n = &n;
+    if numeric(Some(n)) && numeric(start) && matches!(num_cmp(n, &RubyValue::Int(0)), Some(Some(0)))
+    {
         return Err(arg_error!("step can't be 0"));
     }
-    let Some(RubyValue::Proc(p)) = block else {
-        return Ok(crate::builtins::enumerator::arith_seq_of(
-            recv,
-            meth,
-            args,
-            start.cloned().unwrap_or(RubyValue::Nil),
-            end.cloned().unwrap_or(RubyValue::Nil),
-            n.clone(),
-            exclusive,
+    if block.is_none() {
+        // A numeric range with a numeric stride answers an
+        // `ArithmeticSequence`; anything else answers a plain Enumerator, and
+        // a beginless range answers neither (there is nothing to walk from).
+        if numeric(Some(n))
+            && ((numeric(start) && (end.is_none() || numeric(end)))
+                || (start.is_none() && numeric(end)))
+        {
+            return Ok(crate::builtins::enumerator::arith_seq_of(
+                recv,
+                meth,
+                args,
+                start.cloned().unwrap_or(RubyValue::Nil),
+                end.cloned().unwrap_or(RubyValue::Nil),
+                n.clone(),
+                exclusive,
+            ));
+        }
+        if start.is_none() {
+            return Err(arg_error!(
+                "#step for non-numeric beginless ranges is meaningless"
+            ));
+        }
+        return Ok(crate::builtins::enumerator::enumerator_for(
+            recv, meth, args,
         ));
+    }
+    let Some(RubyValue::Proc(p)) = block else {
+        unreachable!("block.is_none() returned above")
     };
-    let nil = RubyValue::Nil;
-    step_walk(start.unwrap_or(&nil), end, n, exclusive, |v| {
-        p.call(std::slice::from_ref(v))?;
-        Ok(())
-    })?;
+    if start.is_none() {
+        return Err(arg_error!(
+            "#step iteration for beginless ranges is meaningless"
+        ));
+    }
+    // Numeric begin AND numeric stride: the one shared arithmetic-sequence
+    // walk in `numeric.rs`, so `.step(n).to_a` can never disagree with the
+    // block form that built it.
+    if numeric(start) && numeric(Some(n)) {
+        step_walk(start.unwrap(), end, n, exclusive, |v| {
+            p.call(std::slice::from_ref(v))?;
+            Ok(())
+        })?;
+        return Ok(recv.clone());
+    }
+    // A String/Symbol range with an Integer stride walks by `succ`, taking
+    // every nth element (`range.c`'s `str_step_i`/`sym_step_i` backward
+    // compatibility path).
+    if succ_walkable
+        && let RubyValue::Int(stride) = n
+        && *stride > 0
+    {
+        return succ_step_walk(recv, *stride, p);
+    }
+    // Everything else is CRuby's generic walk: `v + step` and `<=>`, so a bad
+    // stride raises whatever `begin + step` raises -- which is exactly where
+    // "String can't be coerced into Float" and "no implicit conversion of
+    // Symbol into String" come from.
+    generic_step_walk(recv, start.unwrap(), end, n, exclusive, &p)
+}
+
+/// `Range#max(n)` -- the first `n` of this range's own `reverse_each`
+/// (`range.c` drives it exactly that way). Going through `reverse_each`
+/// rather than a materialize-and-sort is what lets a BEGINLESS range answer:
+/// its `reverse_each` counts down from the end with nothing to stop it, so
+/// the count is the stop.
+fn take_reverse(recv: &RubyValue, n: usize) -> Result<RubyValue, Signal> {
+    let out: Arc<Mutex<Vec<RubyValue>>> = Arc::new(Mutex::new(Vec::new()));
+    let sink = out.clone();
+    let take = RProc::new(move |args: &[RubyValue]| {
+        let mut v = sink.lock();
+        v.push(crate::builtins::enumerable::pack(args));
+        match v.len() >= n {
+            true => Err(Signal::Break(RubyValue::Nil)),
+            false => Ok(RubyValue::Nil),
+        }
+    });
+    if n > 0 {
+        match crate::dispatch::send_value(
+            recv,
+            crate::Symbol::intern("reverse_each"),
+            &[],
+            Some(RubyValue::Proc(take)),
+        ) {
+            Ok(_) | Err(Signal::Break(_)) => {}
+            Err(other) => return Err(other),
+        }
+    }
+    let items = std::mem::take(&mut *out.lock());
+    Ok(RubyValue::Array(crate::array_new(items)))
+}
+
+/// A `succ`-walked range (String, Symbol) stepped by `stride`: this range's
+/// own `each`, with every element but each `stride`th dropped. Driving it
+/// through `each` rather than a private copy of the walk is what keeps
+/// `("a".."e").step(2)` agreeing with `("a".."e").each`, endless String
+/// ranges included.
+fn succ_step_walk(recv: &RubyValue, stride: i64, p: crate::RProc) -> Result<RubyValue, Signal> {
+    use std::sync::atomic::{AtomicI64, Ordering};
+    let seen = std::sync::Arc::new(AtomicI64::new(0));
+    let inner = crate::RProc::new(move |args: &[RubyValue]| {
+        let k = seen.fetch_add(1, Ordering::Relaxed);
+        match k % stride {
+            0 => p.call(args),
+            _ => Ok(RubyValue::Nil),
+        }
+    });
+    // A user `break` evaluates the whole `step` call, so its value replaces
+    // the receiver rather than being swallowed by the inner `each`.
+    match crate::dispatch::send_value(
+        recv,
+        crate::symbol::wk::each(),
+        &[],
+        Some(RubyValue::Proc(inner)),
+    ) {
+        Err(Signal::Break(v)) => Ok(v),
+        Err(other) => Err(other),
+        Ok(_) => Ok(recv.clone()),
+    }
+}
+
+/// `range.c`'s generic `range_step` tail: `v + step` and `<=>`, for every
+/// begin/stride pair the specialized walks above do not cover.
+///
+/// It is also where every bad-stride message is born -- `(1.0..10.0).step("x")`
+/// says "String can't be coerced into Float" because that is what
+/// `1.0 + "x"` says, and `("a".."e").step(:s)` says "no implicit conversion of
+/// Symbol into String" for the same reason.
+fn generic_step_walk(
+    recv: &RubyValue,
+    start: &RubyValue,
+    end: Option<&RubyValue>,
+    n: &RubyValue,
+    exclusive: bool,
+    p: &crate::RProc,
+) -> Result<RubyValue, Signal> {
+    let plus = |v: &RubyValue| -> Result<RubyValue, Signal> {
+        crate::dispatch::send_value(v, crate::Symbol::intern("+"), std::slice::from_ref(n), None)
+    };
+    let mut v = start.clone();
+    let Some(end) = end else {
+        // An endless range yields forever; a `break` is what stops it. The
+        // FIRST addition still runs, so a bad stride raises immediately.
+        loop {
+            p.call(std::slice::from_ref(&v))?;
+            v = plus(&v)?;
+        }
+    };
+    // CRuby compares `begin` against `begin + step` to learn which way the
+    // stride moves, and refuses to iterate at all when that is not the
+    // direction of `begin -> end`.
+    let dir = match start.rb_cmp(end) {
+        Some(0) => {
+            if !exclusive {
+                p.call(std::slice::from_ref(&v))?;
+            }
+            return Ok(recv.clone());
+        }
+        Some(c) => c,
+        None => {
+            return Err(type_error!(
+                "can't iterate from {}",
+                crate::builtins::class_name_of(start)
+            ));
+        }
+    };
+    let stepped = plus(start)?;
+    if start.rb_cmp(&stepped) != Some(dir) {
+        return Ok(recv.clone());
+    }
+    while let Some(c) = v.rb_cmp(end) {
+        if exclusive {
+            if c != dir {
+                break;
+            }
+        } else if c != dir && c != 0 {
+            break;
+        }
+        p.call(std::slice::from_ref(&v))?;
+        if !exclusive && c == 0 {
+            break;
+        }
+        v = plus(&v)?;
+    }
     Ok(recv.clone())
 }
 
@@ -202,28 +368,55 @@ fn range_covers_range(
     other: &RubyValue,
 ) -> bool {
     let (o_start, o_end, o_excl) = range_parts(other);
-    // Begin side: self.begin <= other.begin.
-    match (s_start, o_start) {
-        (Some(ss), Some(os)) => {
-            if !ss.rb_cmp(os).is_some_and(|c| c <= 0) {
-                return false;
-            }
-        }
-        (Some(_), None) => return false,
-        _ => {}
+    // A bound `self` has that `other` lacks is never covered.
+    if s_end.is_some() && o_end.is_none() {
+        return false;
     }
-    // End side: self.end >= other.end, with an EQUAL end covered unless self
-    // excludes it while other includes it.
-    match (s_end, o_end) {
-        (Some(se), Some(oe)) => match se.rb_cmp(oe) {
-            Some(c) if c > 0 => {}
-            Some(0) if !s_excl || o_excl => {}
-            _ => return false,
+    if s_start.is_some() && o_start.is_none() {
+        return false;
+    }
+    // An EMPTY `other` is not covered (`range.c` returns false rather than
+    // treating the empty set as contained).
+    if let (Some(ob), Some(oe)) = (o_start, o_end)
+        && ob
+            .rb_cmp(oe)
+            .is_none_or(|c| c > if o_excl { -1 } else { 0 })
+    {
+        return false;
+    }
+    // Begin side: other's begin must itself be covered.
+    if let Some(ob) = o_start
+        && !crate::value::range_covers(s_start, s_end, s_excl, ob)
+    {
+        return false;
+    }
+    // End side. With matching exclusivity a shared end is covered; where only
+    // SELF excludes, other's end must lie strictly inside. Where only OTHER
+    // excludes and its end sits beyond self's, the real question is whether
+    // other's MAXIMUM is covered -- `(1..5).cover?(1...6)` is true because
+    // `(1...6).max` is 5. A range with no maximum (an exclusive Float end)
+    // raises there, and `range.c` rescues that into false.
+    let Some(se) = s_end else { return true };
+    let cmp_end = match o_end {
+        Some(oe) => match se.rb_cmp(oe) {
+            Some(c) => c,
+            None => return false,
         },
-        (Some(_), None) => return false,
-        _ => {}
+        None => return true,
+    };
+    if s_excl == o_excl {
+        return cmp_end >= 0;
     }
-    true
+    if s_excl {
+        return cmp_end > 0;
+    }
+    if cmp_end >= 0 {
+        return true;
+    }
+    match crate::dispatch::send_value(other, crate::Symbol::intern("max"), &[], None) {
+        Ok(RubyValue::Nil) | Err(_) => false,
+        Ok(m) => se.rb_cmp(&m).is_some_and(|c| c >= 0),
+    }
 }
 
 /// `Range#bsearch` over a FLOAT range. Bisects on the doubles' monotonic
@@ -382,46 +575,27 @@ ruby_class! {
                     i += 1;
                 }
             }
-            // String ranges iterate via `succ` until passing the end
-            // (CRuby's rule, incl. the length guard: `"a".."e"` walks
-            // b/c/d/e; a longer successor stops the walk).
+            // A String range IS `rb_str_upto_each` in CRuby (`range_each`
+            // calls it directly), so both share the one walk -- including its
+            // all-digit and single-character branches, which a length-ordered
+            // loop of its own got wrong in both directions.
             Some(RubyValue::Str(s)) if matches!(end, Some(RubyValue::Str(_))) => {
                 let RubyValue::Str(e) = end.unwrap() else { unreachable!() };
                 let end = e.lock().to_utf8_lossy().into_owned();
-                let mut cur = s.lock().to_utf8_lossy().into_owned();
-                loop {
-                    if cur.len() > end.len() || (cur.len() == end.len() && cur > end) {
-                        break;
-                    }
-                    if exclusive && cur == end {
-                        break;
-                    }
-                    p.call(&[RubyValue::Str(crate::string_new(cur.clone()))])?;
-                    if cur == end {
-                        break;
-                    }
-                    cur = crate::builtins::string::succ_str(&cur);
-                }
+                let beg = s.lock().to_utf8_lossy().into_owned();
+                crate::builtins::string::upto_each(&beg, &end, exclusive, &mut |v| {
+                    p.call(&[RubyValue::Str(crate::string_new(v.to_string()))]).map(|_| ())
+                })?;
             }
-            // Symbol ranges iterate by NAME succession (like String ranges),
-            // yielding Symbols: `(:a..:e)` walks :a,:b,:c,:d,:e.
+            // Symbol ranges iterate by NAME succession (the same walk over
+            // `rb_sym2str`), yielding Symbols: `(:a..:e)` walks :a..:e.
             Some(RubyValue::Symbol(s)) if matches!(end, Some(RubyValue::Symbol(_))) => {
                 let RubyValue::Symbol(e) = end.unwrap() else { unreachable!() };
                 let end = e.name();
-                let mut cur = s.name();
-                loop {
-                    if cur.len() > end.len() || (cur.len() == end.len() && cur > end) {
-                        break;
-                    }
-                    if exclusive && cur == end {
-                        break;
-                    }
-                    p.call(&[RubyValue::Symbol(crate::Symbol::intern(&cur))])?;
-                    if cur == end {
-                        break;
-                    }
-                    cur = crate::builtins::string::succ_str(&cur);
-                }
+                let beg = s.name();
+                crate::builtins::string::upto_each(&beg, &end, exclusive, &mut |v| {
+                    p.call(&[RubyValue::Symbol(crate::Symbol::intern(v))]).map(|_| ())
+                })?;
             }
             // A beginless range, or a non-iterable element type (Float, ...),
             // can't be walked forward -- CRuby names the begin's class:
@@ -594,6 +768,11 @@ ruby_class! {
             },
             Some(v) => {
                 let n = crate::builtins::convert::to_index(v)?;
+                // `last(-1)` is `rb_ary_last`'s own refusal -- shorter than
+                // the one `first`/`min`/`max` raise, and oracle-verified.
+                if n < 0 {
+                    return Err(arg_error!("negative array size"));
+                }
                 // An endless range has no tail to take. This has to be checked
                 // HERE rather than left to the `to_a` below: that goes through
                 // Enumerable, which walks `each` and so never returns, instead
@@ -645,14 +824,17 @@ ruby_class! {
         };
         Ok(RubyValue::Int((last - s + 1).max(0)))
     }
-    // `step(n)` / `% n`: over a NUMERIC range the blockless form answers an
-    // `Enumerator::ArithmeticSequence`. The two names share one body and
-    // differ only in what that sequence prints back.
-    def "step" cfunc (recv, n, &block) {
-        range_step(recv, "step", __args, n, block)
+    // `step(n = 1)` / `% n`: over a NUMERIC range the blockless form answers
+    // an `Enumerator::ArithmeticSequence`. The two names share one body and
+    // differ only in what that sequence prints back. The stride is OPTIONAL
+    // (`(1..3).step.to_a` is `[1, 2, 3]`), which is not the same as passing
+    // `nil` -- that reaches the walk and fails on `begin + nil`.
+    def "step" cfunc (recv, *_args, &block) {
+        range_step(recv, "step", __args, block)
     }
-    def "%" (recv, n, &block) {
-        range_step(recv, "%", __args, n, block)
+    // `%` is the same body, but its stride is REQUIRED (arity 1, not -1).
+    def "%" (recv, _n, &block) {
+        range_step(recv, "%", __args, block)
     }
     def "exclude_end?" (recv) {
         let (_, _, exclusive) = range_parts(recv);
@@ -691,31 +873,28 @@ ruby_class! {
     // Other element types keep iterating through Enumerable, whose behavior is
     // already correct (and whose exclusive-`max` differs by type).
     def "min"(recv, *args, &block) {
-        let (start, end, _) = range_parts(recv);
+        let (start, end, exclusive) = range_parts(recv);
         // A beginless range has no minimum -- CRuby raises rather than iterate
         // (which a bare `enumerable_send` would attempt endlessly). Holds
         // regardless of arg/block (verified against ruby 4.0.6).
         if start.is_none() {
             return Err(range_error!("cannot get the minimum of beginless range"));
         }
+        // `range.c`'s `range_min`: with no block and no count, the minimum IS
+        // the begin -- no walk at all, which is why a monkey-patched
+        // `Range#each` cannot reach it and why an ENDLESS or Float-bounded
+        // range answers. `nil` for an empty range, which an exclusive range
+        // also is when its endpoints are equal.
         if args.is_empty() && block.is_none() {
-            // The minimum of an ascending range with no block is its begin. An
-            // ENDLESS range has one (returned here without iterating, which
-            // would loop forever); a Float-bounded range returns the begin, or
-            // nil for an empty range (begin > end).
-            if let Some(s) = start
-                && end.is_none() {
-                    return Ok(s.clone());
-                }
-            let is_float = matches!(start, Some(RubyValue::Float(_)))
-                || matches!(end, Some(RubyValue::Float(_)));
-            if is_float {
-                return Ok(match (start, end) {
-                    (Some(s), Some(e)) if s.rb_cmp(e).is_some_and(|c| c > 0) => RubyValue::Nil,
-                    (Some(s), _) => s.clone(),
-                    _ => RubyValue::Nil,
-                });
+            let s = start.expect("beginless returned above");
+            let c = match end {
+                Some(e) => s.rb_cmp(e).unwrap_or(-1),
+                None => -1,
+            };
+            if c > 0 || (c == 0 && exclusive) {
+                return Ok(RubyValue::Nil);
             }
+            return Ok(s.clone());
         }
         // A custom comparator has to walk the whole range to find the smallest,
         // so an endless one has no answer -- CRuby says so instead of hanging.
@@ -746,26 +925,59 @@ ruby_class! {
     }
     def "max"(recv, *args, &block) {
         let (start, end, exclusive) = range_parts(recv);
+        // Range's own message for a negative count, as in `min` -- delegating
+        // to `Enumerable#max` reaches "negative size (-1)", which never sees
+        // that this began as a Range.
+        if block.is_none()
+            && let Some(v) = args.first()
+            && crate::builtins::convert::to_index(v)? < 0
+        {
+            return Err(arg_error!("negative array size (or size too big)"));
+        }
         // An endless range has no maximum -- CRuby raises before iterating
         // (which would loop forever). Holds regardless of arg/block (verified
         // against ruby 4.0.6, including a Float begin: `(1.0..).max`).
         if end.is_none() {
             return Err(range_error!("cannot get the maximum of endless range"));
         }
-        let is_float = matches!(start, Some(RubyValue::Float(_)))
-            || matches!(end, Some(RubyValue::Float(_)));
-        if args.is_empty() && block.is_none() && is_float {
-            let Some(e) = end else { return Ok(RubyValue::Nil) };
-            if let Some(s) = start
-                && s.rb_cmp(e).is_some_and(|c| c > 0) {
-                    return Ok(RubyValue::Nil);
-                }
-            // An exclusive float end has no maximum element -- CRuby's exact
-            // TypeError (only an Integer end can be decremented).
-            if exclusive {
-                return Err(type_error!("cannot exclude non Integer end value"));
+        // `range.c`'s `range_max`. `nm` is about the END, not the begin: an
+        // exclusive range with a NUMERIC end takes the closed form (a Float
+        // end has no predecessor, hence the TypeError), while an exclusive
+        // String range has to walk down to it.
+        let numeric_end =
+            end.is_some_and(|e| crate::dispatch::is_a(e.class_id(), zeo_abi::NUMERIC_CLASS));
+        if block.is_none() && !(exclusive && !numeric_end) {
+            let e = end.expect("endless returned above");
+            // `max(n)` is the first n of `reverse_each` -- Range's own, so it
+            // never walks `each` and a beginless range with an Int end can
+            // count down from it.
+            if let Some(v) = args.first() {
+                let n = crate::builtins::convert::to_index(v)?;
+                return take_reverse(recv, n as usize);
             }
-            return Ok(e.clone());
+            let c = match start {
+                Some(s) => s.rb_cmp(e).unwrap_or(-1),
+                None => -1,
+            };
+            if c > 0 {
+                return Ok(RubyValue::Nil);
+            }
+            if !exclusive {
+                return Ok(e.clone());
+            }
+            // Only an Integer end has a predecessor to answer with.
+            let RubyValue::Int(e) = e else {
+                return Err(type_error!("cannot exclude non Integer end value"));
+            };
+            if c == 0 {
+                return Ok(RubyValue::Nil);
+            }
+            if !matches!(start, None | Some(RubyValue::Int(_))) {
+                return Err(type_error!(
+                    "cannot exclude end value with non Integer begin value"
+                ));
+            }
+            return Ok(RubyValue::Int(e - 1));
         }
         // Mirror of `min`'s: a comparator would have to walk down from a
         // begin this range does not have.
@@ -773,29 +985,6 @@ ruby_class! {
             return Err(range_error!(
                 "cannot get the maximum of beginless range with custom comparison method"
             ));
-        }
-        // A BEGINLESS range with an Int end has a maximum, and its n largest
-        // count DOWN from that end with nothing to stop them -- so they are
-        // answered here, arithmetically. Falling through would send `each`,
-        // which raises "can't iterate from NilClass". A Float end has no
-        // decrementable element, so it keeps that fallthrough (CRuby agrees:
-        // `(..5.0).max(2)` is the same TypeError).
-        if start.is_none()
-            && block.is_none()
-            && let Some(RubyValue::Int(e)) = end
-        {
-            let top = if exclusive { e - 1 } else { *e };
-            return match args.first() {
-                None => Ok(RubyValue::Int(top)),
-                Some(v) => {
-                    let n = crate::builtins::convert::to_index(v)?;
-                    if n < 0 {
-                        return Err(arg_error!("negative array size (or size too big)"));
-                    }
-                    let vals = (0..n).map(|i| RubyValue::Int(top - i)).collect();
-                    Ok(RubyValue::Array(crate::array_new(vals)))
-                }
-            };
         }
         crate::builtins::enumerable::enumerable_send(recv, "max", args, block)
             .expect("Enumerable implements max")
@@ -805,7 +994,26 @@ ruby_class! {
     // Each calls the very row it would otherwise have inherited, so `.owner`
     // and `instance_methods(false)` agree and there is still only one body.
     def "=="(recv, _other) { inherited_row!(basic_object, "==", recv, __args, None) }
-    def "eql?"(recv, _other) { inherited_row!(kernel, "eql?", recv, __args, None) }
+    // `eql?` is NOT `==`: `range.c`'s `range_eql` compares the endpoints with
+    // `eql?` too, so `(1..5).eql?(1.0..5.0)` is false where `==` is true.
+    // Both operands must also be the same class.
+    def "eql?"(recv, other) {
+        let RubyValue::Range(o) = other else { return Ok(RubyValue::Bool(false)) };
+        if recv.class_id() != other.class_id() {
+            return Ok(RubyValue::Bool(false));
+        }
+        let (sb, se, sx) = range_parts(recv);
+        let (ob, oe, ox) = o.parts();
+        let eql = |a: Option<&RubyValue>, b: Option<&RubyValue>| -> Result<bool, Signal> {
+            match (a, b) {
+                (None, None) => Ok(true),
+                (Some(a), Some(b)) => Ok(crate::dispatch::send_value(
+                    a, crate::Symbol::intern("eql?"), std::slice::from_ref(b), None)?.truthy()),
+                _ => Ok(false),
+            }
+        };
+        Ok(RubyValue::Bool(sx == ox && eql(sb, ob)? && eql(se, oe)?))
+    }
     // ruby 4 freezes every Range at construction, so both private rows can
     // only ever answer FrozenError for a reachable receiver -- which is the
     // oracle's answer too. (`Range.allocate`'s blank is a by-value zeo
@@ -834,8 +1042,42 @@ ruby_class! {
         }
         own_row!(recv, |s| enumerable::count_own(s, __args, block))
     }
-    def "minmax" arity 0 (recv, *_args, &block) { own_row!(recv, |s| enumerable::minmax_own(s, __args, block)) }
-    def "reverse_each" arity 0 (recv, *_args, &block) { own_row!(recv, |s| enumerable::reverse_each_own(s, __args, block)) }
+    // `range.c`'s `range_minmax`: WITHOUT a block it is the pair `[min, max]`
+    // re-dispatched through this range's own rows, so it inherits every
+    // closed form they have -- a Float range answers its endpoints where the
+    // Enumerable walk raises, and an unbounded one raises instead of hanging.
+    // A block has to compare, so that form still goes to Enumerable.
+    def "minmax" arity 0 (recv, *_args, &block) {
+        if block.is_some() {
+            return own_row!(recv, |s| enumerable::minmax_own(s, __args, block));
+        }
+        let min = crate::dispatch::send_value(recv, crate::Symbol::intern("min"), &[], None)?;
+        let max = crate::dispatch::send_value(recv, crate::Symbol::intern("max"), &[], None)?;
+        Ok(RubyValue::Array(crate::array_new(vec![min, max])))
+    }
+    // `range.c`'s `range_reverse_each`: an ENDLESS range has no last element
+    // to start from, and a beginless one with an Integer end counts down from
+    // it forever (a `break` or a bounded `first` is what stops it). Every
+    // other shape -- a String range, a Float one -- keeps the Enumerable walk,
+    // which materializes and so raises the same errors `each` does.
+    def "reverse_each" arity 0 (recv, *_args, &block) {
+        let (start, end, exclusive) = range_parts(recv);
+        if end.is_none() {
+            return Err(type_error!("can't iterate from NilClass"));
+        }
+        if start.is_none()
+            && let Some(RubyValue::Int(e)) = end
+        {
+            let top = if exclusive { e - 1 } else { *e };
+            let p = block_or_enum!(recv, __args, block);
+            let mut i = top;
+            loop {
+                p.call(&[RubyValue::Int(i)])?;
+                i -= 1;
+            }
+        }
+        own_row!(recv, |s| enumerable::reverse_each_own(s, __args, block))
+    }
     def "to_set" cfunc (recv, *_args, &block) { own_row!(recv, |s| enumerable::to_set_own(s, __args, block)) }
 }
 

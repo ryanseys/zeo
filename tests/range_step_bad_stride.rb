@@ -1,8 +1,3 @@
-# GAP -- imported from the spinel corpus at c55d9bdb.
-# Range#step with a String stride names Integer in the coercion message
-# where ruby names Float, and PANICS the runtime
-# (crates/zeo-rt/src/builtins/range.rs) on a later case.
-#
 r1 = ((1.0..10.0).step("x").to_a rescue $!.message)
 p r1
 r2 = ((1.0..10.0).step(:s).to_a rescue $!.message)

@@ -1,7 +1,3 @@
-# GAP -- imported from the spinel corpus at c55d9bdb.
-# Range#first/#last with a negative count answers [] where ruby raises
-# ArgumentError.
-#
 r001 = ((1..5).first(-1) rescue $!.class); p r001
 r002 = ((1..5).last(-1) rescue $!.class); p r002
 r003 = ((1..5).min(-1) rescue $!.class); p r003

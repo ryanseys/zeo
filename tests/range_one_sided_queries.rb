@@ -1,7 +1,3 @@
-# GAP -- imported from the spinel corpus at c55d9bdb.
-# A one-sided (beginless) Range query raises "can't iterate from NilClass"
-# instead of answering from the bound it has.
-#
 p((..5).max)
 r001 = ((..5).first rescue $!.class); p r001
 r002 = ((1..).last rescue $!.class); p r002
