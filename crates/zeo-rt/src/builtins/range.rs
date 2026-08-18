@@ -836,7 +836,7 @@ ruby_class! {
     }
     def "minmax" arity 0 (recv, *_args, &block) { own_row!(recv, |s| enumerable::minmax_own(s, __args, block)) }
     def "reverse_each" arity 0 (recv, *_args, &block) { own_row!(recv, |s| enumerable::reverse_each_own(s, __args, block)) }
-    def "to_set" cfunc (recv, *_args, &_block) { own_row!(recv, |s| enumerable::to_set_own(s, __args, None)) }
+    def "to_set" cfunc (recv, *_args, &block) { own_row!(recv, |s| enumerable::to_set_own(s, __args, block)) }
 }
 
 /// The one answer both private re-init rows can give: FrozenError with the

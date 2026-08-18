@@ -1342,13 +1342,23 @@ pub(crate) fn reverse_each_own(
 pub(crate) fn to_set_own(
     src: Src<'_>,
     args: &[RubyValue],
-    _block: Option<RubyValue>,
+    block: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
     reject_args(args, "to_set", "arguments");
     let RubyValue::Array(all) = collect_to_a(src)? else {
         unreachable!("to_a always answers an Array")
     };
     let items = all.lock().clone();
+    // A BLOCK transforms each element on the way in (`Set.new(self, &block)`),
+    // so `[3, 4].to_set { |x| x * 2 }` is the set of 6 and 8. It was accepted
+    // and dropped, which put the untransformed elements in the set.
+    let items: Vec<RubyValue> = match &block {
+        Some(RubyValue::Proc(p)) => items
+            .into_iter()
+            .map(|e| p.call(std::slice::from_ref(&e)))
+            .collect::<Result<Vec<_>, Signal>>()?,
+        _ => items.to_vec(),
+    };
     Ok(crate::builtins::set::set_from(items))
 }
 
@@ -2047,8 +2057,8 @@ ruby_module! {
         Ok(crate::builtins::enumerator::chain_of(sources))
     }
     // `to_set` -- a `Set` of the receiver's elements (deduplicated on insert).
-    def "to_set"(recv, *args, &_block) {
-        to_set_own(Src::sending(recv), args, None)
+    def "to_set"(recv, *args, &block) {
+        to_set_own(Src::sending(recv), args, block)
     }
     def "lazy" arity 0 (recv, *_args, &_block) {
         Ok(crate::builtins::lazy::make_lazy(recv))

@@ -20,3 +20,14 @@ module Psych
   class AliasesNotEnabled < BadAlias; end
   class AnchorNotDefined < BadAlias; end
 end
+
+# psych's `core_ext.rb`: every object can dump itself. Ruby spells it as
+# `psych_to_yaml` with `to_yaml` aliased onto it, so a library that wants the
+# unambiguous name can reach past another YAML engine's `to_yaml`.
+class Object
+  def psych_to_yaml(*options)
+    Psych.dump(self, *options)
+  end
+
+  alias to_yaml psych_to_yaml
+end
