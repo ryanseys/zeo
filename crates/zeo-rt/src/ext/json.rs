@@ -60,6 +60,52 @@ fn number_to_ruby(n: &serde_json::Number) -> RubyValue {
 }
 
 /// Whether `symbolize_names: true` was passed as the trailing options Hash.
+/// Reads one boolean option out of the trailing options Hash.
+fn bool_opt(opts: Option<&RubyValue>, name: &str) -> bool {
+    let Some(RubyValue::Hash(h)) = opts else {
+        return false;
+    };
+    let key = RubyValue::Symbol(crate::symbol::Symbol::intern(name));
+    crate::collections::hash_get(h, &key).truthy()
+}
+
+/// The name of the first non-finite Float reachable in `v`, or `None`. JSON has
+/// no spelling for NaN or an infinity, so ruby's generator refuses one unless
+/// `allow_nan:` says otherwise -- and it names the value it refused.
+fn first_nonfinite(v: &RubyValue) -> Option<String> {
+    match v {
+        RubyValue::Float(f) if !f.is_finite() => Some(v.to_display_string()),
+        RubyValue::Array(a) => a.lock().iter().find_map(first_nonfinite),
+        RubyValue::Hash(h) => h
+            .lock()
+            .iter()
+            .find_map(|(_, (k, val))| first_nonfinite(k).or_else(|| first_nonfinite(val))),
+        _ => None,
+    }
+}
+
+/// Freezes a parsed tree in place, for `JSON.parse(text, freeze: true)`:
+/// every String, Array and Hash it built, keys included.
+fn freeze_tree(v: &RubyValue) {
+    match v {
+        RubyValue::Str(s) => s.set_frozen(),
+        RubyValue::Array(a) => {
+            for e in a.lock().iter() {
+                freeze_tree(e);
+            }
+            a.set_frozen();
+        }
+        RubyValue::Hash(h) => {
+            for (_, (k, val)) in h.lock().iter() {
+                freeze_tree(k);
+                freeze_tree(val);
+            }
+            h.set_frozen();
+        }
+        _ => {}
+    }
+}
+
 fn symbolize_opt(opts: Option<&RubyValue>) -> bool {
     let Some(RubyValue::Hash(h)) = opts else {
         return false;
@@ -116,7 +162,29 @@ fn generate_into(v: &RubyValue, indent: Option<usize>, out: &mut String) {
                 generate_into(val, inner, out);
             });
         }
-        // CRuby's default `Object#to_json` is `to_s.to_json` -- a JSON string.
+        // Ruby asks an OBJECT to encode itself (`obj.to_json(state)`), so a
+        // user definition wins; the default `Object#to_json` is `to_s.to_json`,
+        // which yields a JSON string. The answer comes back as JSON TEXT, and
+        // it is re-parsed and re-emitted here rather than spliced raw -- that
+        // is what lets a nested user object pick up the current indentation
+        // under `pretty_generate`.
+        RubyValue::Object(_) => {
+            let encoded =
+                crate::dispatch::send_value(v, crate::symbol::Symbol::intern("to_json"), &[], None);
+            match encoded {
+                Ok(RubyValue::Str(text)) => {
+                    let text = text.lock().to_utf8_lossy().into_owned();
+                    match serde_json::from_str::<serde_json::Value>(&text) {
+                        Ok(parsed) => generate_into(&to_ruby(&parsed, false), indent, out),
+                        // Not valid JSON: the definition is the author's
+                        // problem, so hand it through verbatim.
+                        Err(_) => out.push_str(&text),
+                    }
+                }
+                _ => escape_into(&v.to_display_string(), out),
+            }
+        }
+        // Everything else encodes as its `to_s`, as a JSON string.
         other => escape_into(&other.to_display_string(), out),
     }
 }
@@ -171,10 +239,23 @@ ruby_module! {
         let text = parse_text(arg1)?;
         let value: serde_json::Value = serde_json::from_str(&text)
             .map_err(|e| raise_error("JSON::ParserError", format!("{e}")))?;
-        Ok(to_ruby(&value, symbolize_opt(arg2)))
+        let out = to_ruby(&value, symbolize_opt(arg2));
+        if bool_opt(arg2, "freeze") {
+            freeze_tree(&out);
+        }
+        Ok(out)
     }
-    // `opts` is ignored -- only the compact form is generated.
-    module_function def "generate" | "dump" (_recv, obj, _opts?) {
+    // Only the compact form is generated, so most of `opts` is ignored --
+    // but `allow_nan:` decides whether this raises at all.
+    module_function def "generate" | "dump" (_recv, obj, opts?) {
+        if !bool_opt(opts, "allow_nan")
+            && let Some(bad) = first_nonfinite(obj)
+        {
+            return Err(raise_error(
+                "JSON::GeneratorError",
+                format!("{bad} not allowed in JSON"),
+            ));
+        }
         let mut out = String::new();
         generate_into(obj, None, &mut out);
         Ok(RubyValue::Str(string_new(out)))
