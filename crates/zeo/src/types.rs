@@ -333,6 +333,7 @@ pub fn infer_type_with_locals(
             _ => match infer_type_with_locals(compiler, defining, box_id, locals, *recv) {
                 TyKind::ClassObj(cid)
                     if compiler.has_generated_struct(cid)
+                        && !compiler.class(cid).runtime_conditional
                         && compiler.class_method_in_chain(cid, "new").is_none()
                         && !compiler.may_be_patched_at_runtime("initialize")
                         && !compiler.may_be_patched_at_runtime("new") =>

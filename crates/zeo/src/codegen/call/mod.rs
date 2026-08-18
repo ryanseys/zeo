@@ -1727,10 +1727,14 @@ pub fn emit_call(
                 let ctor = new::emit_new(cx, &cx.compiler.fq_name(defining), args, kwargs, None);
                 // A native-backed class has no struct to `new_handle`
                 // -- `emit_new` already yields a fully-boxed `RubyValue`
-                // built by the runtime. So does the dynamic-dispatch route
-                // `emit_new` takes when a runtime site may have (re)defined
-                // `initialize`/`new` (its own gate, mirrored here).
+                // built by the runtime. So does every dynamic-dispatch route
+                // `emit_new` takes: a runtime site that may have (re)defined
+                // `initialize`/`new`, and a RUNTIME-CONDITIONAL class, whose
+                // `.new` always reads its constant through the concealment
+                // check. `emit_new`'s own gate, mirrored here -- the two must
+                // agree or this boxes a `RubyValue` into an `Arc<Concrete>`.
                 if cx.compiler.is_native_backed(defining)
+                    || cx.compiler.class(defining).runtime_conditional
                     || cx.compiler.may_be_patched_at_runtime("initialize")
                     || cx.compiler.may_be_patched_at_runtime("new")
                 {
