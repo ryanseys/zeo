@@ -340,9 +340,13 @@ ruby_class! {
     // order (the classes filtered out). Kernel and any mixed-in module appear;
     // `Object`/`BasicObject` (classes) do not.
     def "included_modules" (recv) {
-        let mods = crate::dispatch::ancestors_of_value(recv_cid(recv))
+        // The RECEIVER is never one of its own included modules, even though it
+        // heads its own ancestor chain: `Comparable.included_modules` is `[]`,
+        // not `[Comparable]`.
+        let cid = recv_cid(recv);
+        let mods = crate::dispatch::ancestors_of_value(cid)
             .iter()
-            .filter(|&&a| crate::dispatch::class_is_module(a).unwrap_or(false))
+            .filter(|&&a| a != cid && crate::dispatch::class_is_module(a).unwrap_or(false))
             .map(|&a| RubyValue::Class(a))
             .collect();
         Ok(RubyValue::Array(crate::array_new(mods)))
@@ -504,7 +508,18 @@ ruby_class! {
     // from inside `module Foo` misses Foo's own constants. Top-level is where
     // this is written (`Module.constants.include?(:Rails)` guards), and
     // answering Object's set is strictly closer than answering Module's.
-    def self."constants" (_recv, *_args) {
+    def self."constants" (_recv, *args) {
+        // Given ANY argument, `rb_mod_s_constants` stops being the lexical-scope
+        // query and delegates to `Module#constants` on `Module` itself -- which
+        // owns none, so every arity-1 form answers `[]`. `nil` is an ordinary
+        // falsy `inherit`, not a missing argument.
+        if !args.is_empty() {
+            return lookup("constants").expect("Module#constants")(
+                &RubyValue::Class(zeo_abi::MODULE_CLASS),
+                args,
+                None,
+            );
+        }
         let names = crate::constants::const_names_of(0)
             .into_iter()
             .chain(crate::dispatch::nested_class_names(zeo_abi::OBJECT_CLASS));
