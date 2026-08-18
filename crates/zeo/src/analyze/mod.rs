@@ -116,6 +116,7 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
     compiler.assigned_const_names = facts.assigned_consts;
     compiler.runtime_patches = facts.patched_names;
     compiler.runtime_patches_any_name = facts.patches_any_name;
+    compiler.program_freezes = facts.freezes;
     compiler.unique_top_const_inits = facts
         .top_const_inits
         .into_iter()
@@ -306,6 +307,10 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
     // overlay rather than fold against the receiver class's own body. Before
     // `materialize`, which is where the folded tables are built.
     defer_object_extends(compiler);
+
+    // A REOPEN of a frozen class raises and its body never runs, so a method
+    // only that body installs has to be retractable at run time.
+    defer_reopen_only_defs(compiler);
 
     mro::materialize(compiler, &main_statements)?;
 
@@ -3129,6 +3134,8 @@ struct ArenaFacts {
     patched_names: FSet<String>,
     /// [`Compiler::runtime_patches_any_name`].
     patches_any_name: bool,
+    /// [`Compiler::program_freezes`].
+    freezes: bool,
     /// [`Compiler::unique_top_const_inits`]. `None` records a name seen more
     /// than once, which is how uniqueness is decided in a single pass.
     top_const_inits: FMap<String, Option<NodeId>>,
@@ -3154,6 +3161,7 @@ fn collect_arena_facts(hir: &Hir) -> ArenaFacts {
         assigned_consts: consts,
         patched_names: names,
         patches_any_name: any,
+        freezes,
         top_const_inits,
         const_write_sites,
         global_write_sites,
@@ -3211,6 +3219,9 @@ fn collect_arena_facts(hir: &Hir) -> ArenaFacts {
             HirNode::Call { name, args, .. } => {
                 if name == "const_set" {
                     const_set_sites.push(id);
+                }
+                if name == "freeze" {
+                    *freezes = true;
                 }
                 collect_patch_call(hir, name, args, names, any);
             }
@@ -4038,6 +4049,7 @@ fn walk_class_body(
             class: class_id,
             stmts: Vec::new(),
             defs: Vec::new(),
+            installs: Vec::new(),
         });
 
     // Expand any dead-rescue `begin` (a resolved `require` guard) so a fallback
@@ -4108,6 +4120,9 @@ fn walk_class_body(
                     event: crate::compiler::DefEvent::Added,
                     singleton: is_class_method,
                 };
+                compiler.class_body_sites[site_idx]
+                    .installs
+                    .push(def.name.clone());
                 compiler.class_body_sites[site_idx].defs.push(def);
                 register_body_def_method(compiler, class_id, stmt, conditional)?;
             }
@@ -4248,6 +4263,9 @@ fn walk_class_body(
                         event: crate::compiler::DefEvent::Undefined,
                         singleton: false,
                     };
+                    compiler.class_body_sites[site_idx]
+                        .installs
+                        .push(def.name.clone());
                     compiler.class_body_sites[site_idx].defs.push(def);
                 }
                 compiler.classes[class_id.0 as usize]
@@ -4288,6 +4306,9 @@ fn walk_class_body(
                     event: crate::compiler::DefEvent::Added,
                     singleton,
                 };
+                compiler.class_body_sites[site_idx]
+                    .installs
+                    .push(def.name.clone());
                 compiler.class_body_sites[site_idx].defs.push(def);
                 compiler.classes[class_id.0 as usize]
                     .pending_aliases
@@ -4761,6 +4782,41 @@ fn record_imported_methods(
     compiler.classes[class_id.0 as usize]
         .imported_modules
         .extend(resolved);
+}
+
+/// Names that only a class's SECOND-or-later body installs, when the program
+/// freezes anything at all. `Fz.freeze; class Fz; def x; end; end` is a
+/// `FrozenError` in ruby and `x` never exists -- but zeo's compile-time tables
+/// already carry it, so `guard_class_reopen` retires it at run time and the
+/// call sites have to be asking rather than folded.
+///
+/// Gated on [`Compiler::program_freezes`]: without a `freeze` anywhere the
+/// shape is unreachable and no name loses its static dispatch.
+fn defer_reopen_only_defs(compiler: &mut Compiler) {
+    if !compiler.program_freezes {
+        return;
+    }
+    let mut deferred: Vec<(ClassId, String)> = Vec::new();
+    for mine in 0..compiler.class_body_sites.len() {
+        let cid = compiler.class_body_sites[mine].class;
+        let earlier: Vec<usize> = (0..mine)
+            .filter(|&i| compiler.class_body_sites[i].class == cid)
+            .collect();
+        if earlier.is_empty() {
+            continue;
+        }
+        for name in &compiler.class_body_sites[mine].installs {
+            if !earlier
+                .iter()
+                .any(|&i| compiler.class_body_sites[i].installs.contains(name))
+            {
+                deferred.push((cid, name.clone()));
+            }
+        }
+    }
+    for (cid, name) in deferred {
+        compiler.classes[cid.0 as usize].runtime_undefs.insert(name);
+    }
 }
 
 /// The bare constant NAME a node reads, for the leaf-name fallback above.

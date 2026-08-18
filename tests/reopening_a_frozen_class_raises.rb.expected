@@ -1,0 +1,15 @@
+[FrozenError, "can't modify frozen Class: Fz"]
+true
+[:already]
+false
+false
+NoMethodError
+:already
+:a
+:b
+[:a, :b]
+[FrozenError, "can't modify frozen Module: Mz"]
+[:m]
+"Fz"
+"Object"
+"Fz"

@@ -1603,6 +1603,17 @@ impl ClassRegistry {
             |e: &ClassEntry| !e.own_value_names.is_empty() && e.own_value_names.contains(&name);
         if let Some(e) = self.entries.get(&id.0) {
             if let Some(m) = e.methods.get(&name) {
+                // The flattened row may have come from an ANCESTOR that a
+                // runtime `undef_method` has since retired -- `module M; def
+                // doomed; end; end` mixed into a class, then `M.undef_method
+                // :doomed`. Materialization copied the body onto every
+                // includer, so the tombstone sits somewhere this probe never
+                // looks. Only when the overlay is live, and only up to the
+                // position that really defines the name: a nearer own
+                // definition still wins, as it does in ruby.
+                if overlay_live && self.retired_before_owner(id, name) {
+                    return None;
+                }
                 return Some(m);
             }
             if e.undefined_methods.contains(&name) || shadowed(e) {
@@ -1631,6 +1642,21 @@ impl ClassRegistry {
     /// signal `Method#owner` needs: materialization copies an inherited method
     /// onto every descendant's `methods` table, so `lookup` can't tell where it
     /// originated, but `own_methods`/`value_methods` record only local defs.
+    /// Whether an `undef_method` tombstone sits between `id` and the position
+    /// that actually defines `name` -- see the flattened-row check in
+    /// [`Registry::lookup_mro`].
+    fn retired_before_owner(&self, id: ClassId, name: Symbol) -> bool {
+        for &anc in self.ancestors_of(id) {
+            if crate::runtime_meta::overlay_is_undefined(anc, name) {
+                return true;
+            }
+            if self.defines_own(anc, name) {
+                return false;
+            }
+        }
+        false
+    }
+
     fn defines_own(&self, id: ClassId, name: Symbol) -> bool {
         let Some(e) = self.entries.get(&id.0) else {
             return false;
@@ -2546,6 +2572,12 @@ pub fn responds_to(recv_class: ClassId, name: Symbol, include_all: bool) -> bool
                 return false;
             }
             if r.lookup(anc, name).is_some() || r.lookup_value_method(anc, 0, name).is_some() {
+                // ...unless the row was FLATTENED in from an ancestor a runtime
+                // `undef_method` has since retired. Same question `lookup_mro`
+                // asks before trusting its own flattened hit.
+                if overlay_live && r.retired_before_owner(anc, name) {
+                    return false;
+                }
                 // This is the NEAREST ancestor defining `name` (materialization
                 // flattens the resolved method, with its effective visibility,
                 // onto the receiver's own class), so its visibility is
@@ -3838,6 +3870,22 @@ pub fn frozen_class_error(id: ClassId) -> Signal {
     };
     let name = class_name(id).unwrap_or_else(|| format!("#<Class:{}>", id.0));
     frozen_error!("can't modify frozen {kind}: {name}")
+}
+
+/// A REOPEN of a class the program has since frozen -- `Fz.freeze; class Fz;
+/// def x; end; end` is `FrozenError` in ruby, and the body never runs.
+///
+/// zeo's compile-time tables already carry that body's definitions, so the
+/// raise is not enough: `names` -- the ones ONLY this body would have
+/// installed -- are retired first, which is what makes `Fz.instance_methods
+/// (false)` answer `[]` and a call to one raise `NoMethodError`, exactly as
+/// they do when the definition never happened.
+pub fn guard_class_reopen(id: ClassId, names: &[&str]) -> Result<(), Signal> {
+    if !class_frozen(id) {
+        return Ok(());
+    }
+    crate::runtime_meta::retire_names(id, names);
+    Err(frozen_class_error(id))
 }
 
 /// `Foo.freeze`'s storage half -- see `FROZEN_CLASSES`. Repeat calls are

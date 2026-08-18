@@ -3332,6 +3332,7 @@ pub(crate) fn emit_class_body_site_lifted(
     // `inherited` and before the body, which is the order `vm_declare_class`
     // hard-codes (`declare_under` sets the constant, then `rb_class_inherited`,
     // then the body runs).
+    let frozen_guard = emit_frozen_reopen_guard(compiler, site);
     let const_added = emit_declaration_const_added(compiler, site);
     let const_location = emit_declaration_const_location(compiler, site);
     let inherited_hook = emit_inherited_hook(compiler, site);
@@ -3362,7 +3363,7 @@ pub(crate) fn emit_class_body_site_lifted(
         ),
     };
     if stmts.is_empty() {
-        let head = quote! { #reveal #alias_check #const_location #const_added #inherited_hook };
+        let head = quote! { #frozen_guard #reveal #alias_check #const_location #const_added #inherited_hook };
         return match value {
             BodyValue::Discard => (quote! {}, head),
             _ => {
@@ -3477,7 +3478,7 @@ pub(crate) fn emit_class_body_site_lifted(
     // one, where the body's result has to outlive the check.
     let inline_form = match value {
         BodyValue::Discard => {
-            quote! { #reveal #const_location #const_added #inherited_hook { #frame #body }?; #alias_check }
+            quote! { #frozen_guard #reveal #const_location #const_added #inherited_hook { #frame #body }?; #alias_check }
         }
         // `tail_value` overrides the emitted body's own tail when analyze took
         // the last source statement, so what the block evaluates to is the
@@ -3486,7 +3487,7 @@ pub(crate) fn emit_class_body_site_lifted(
             let tail = tail_value(quote! { __body_value });
             quote! {
                 {
-                    #reveal #const_location #const_added #inherited_hook
+                    #frozen_guard #reveal #const_location #const_added #inherited_hook
                     let __body_value = { #frame #body }?;
                     #alias_check
                     #tail
@@ -3531,7 +3532,7 @@ pub(crate) fn emit_class_body_site_lifted(
             #[inline(never)]
             fn #ident() -> Result<zeo_rt::RubyValue, zeo_rt::Signal> { #frame #body }
         },
-        quote! { #reveal #const_location #const_added #inherited_hook #ident()?; #alias_check },
+        quote! { #frozen_guard #reveal #const_location #const_added #inherited_hook #ident()?; #alias_check },
     )
 }
 
@@ -3750,6 +3751,49 @@ fn emit_inherited_hook(compiler: &Compiler, site: &crate::compiler::ClassBodySit
 /// statement inside a `BoxScope` splice, or nested inside another
 /// reachable site's own body. The complement (prelude bootstrap sites,
 /// synthetic `None`-marker registrations) keeps the hoisted splice.
+/// The `FrozenError` a REOPEN of a frozen class raises, plus the names that
+/// reopen alone would have installed -- see `zeo_rt::guard_class_reopen`.
+///
+/// Emitted only for a reopen (a class's SECOND and later bodies): a class
+/// cannot be frozen before its first body runs, since nothing can name it yet.
+/// The names are the ones NO earlier body of the same class defines, so an
+/// override of an already-installed method leaves the original standing.
+fn emit_frozen_reopen_guard(
+    compiler: &Compiler,
+    site: &crate::compiler::ClassBodySite,
+) -> Option<TokenStream> {
+    // A program that never freezes anything cannot reach this shape.
+    if !compiler.program_freezes {
+        return None;
+    }
+    // Registration order IS document order: the analyze walk visits bodies in
+    // the order they run.
+    let mine = compiler
+        .class_body_sites
+        .iter()
+        .position(|s| std::ptr::eq(s, site))?;
+    let earlier: Vec<&crate::compiler::ClassBodySite> = compiler.class_body_sites[..mine]
+        .iter()
+        .filter(|s| s.class == site.class)
+        .collect();
+    if earlier.is_empty() {
+        return None;
+    }
+    let mut names: Vec<&str> = site
+        .installs
+        .iter()
+        .map(String::as_str)
+        .filter(|n| !earlier.iter().any(|s| s.installs.iter().any(|i| i == *n)))
+        .collect();
+    names.sort_unstable();
+    names.dedup();
+    if names.is_empty() {
+        return None;
+    }
+    let id = site.class.0;
+    Some(quote! { zeo_rt::guard_class_reopen(zeo_rt::ClassId(#id), &[#(#names),*])?; })
+}
+
 fn inline_class_markers(
     compiler: &Compiler,
     main_statements: &[crate::hir::NodeId],

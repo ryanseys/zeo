@@ -779,6 +779,13 @@ pub struct Compiler {
     /// safe to fold. Kept apart from the set above because it is the expensive
     /// answer: it de-optimizes every direct call in the program.
     pub runtime_patches_any_name: bool,
+    /// Whether the program calls `freeze` anywhere. A REOPEN of a frozen class
+    /// is a `FrozenError` and its body never runs, so the definitions the
+    /// compile-time tables carry for it have to be retractable -- which costs
+    /// the name its static call sites. A program that never freezes anything
+    /// cannot reach that shape, so it pays neither the check nor the
+    /// de-optimization. See `codegen::emit_frozen_reopen_guard`.
+    pub program_freezes: bool,
     /// `class_in_scope`'s lazily-drained (box, lexical_parent) -> name -> id
     /// index, replacing its linear whole-`classes` scan (the profiled
     /// hot spot at gem scale: every bare-constant classification paid
@@ -976,6 +983,11 @@ pub struct ClassBodySite {
     /// knows whether any hook body will answer, and splices a
     /// [`crate::hir::HirNode::DefHook`] into `stmts` for the ones that will.
     pub defs: Vec<SiteDef>,
+    /// The method names this site's body INSTALLS, kept apart from `defs`
+    /// because `def_hooks` takes that list away once it has decided which
+    /// definitions get a hook report. Read by codegen's frozen-reopen guard,
+    /// which needs to know what a body that never runs would have defined.
+    pub installs: Vec<String>,
 }
 
 /// One consumed definition, and where its report would go.
@@ -1105,6 +1117,7 @@ impl Compiler {
             unit_scopes: FSet::default(),
             positional_redefs: Vec::new(),
             runtime_patches_any_name: false,
+            program_freezes: false,
             class_index: std::cell::RefCell::new(FMap::default()),
             indexed_upto: std::cell::Cell::new(0),
             frozen_crefs: None,

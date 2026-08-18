@@ -108,7 +108,7 @@ pub use dispatch::{
     call_singleton_super_target, check_not_moved_obj, class_is_module, class_name,
     coerce_raise_arg, coerce_raise_arg_with_message, const_miss, construct_by_class_id,
     define_in_default_definee, describe_receiver, downcast_robj, downcast_robj_ref,
-    guard_public_class_method, install_class_registry, instance_variable_get,
+    guard_class_reopen, guard_public_class_method, install_class_registry, instance_variable_get,
     instance_variable_set, instance_variables, is_a, is_a_value, ivar_defined, ivar_frozen_error,
     ivar_get_dyn, ivar_get_dyn_isolated, ivar_name_arg, ivar_set_dyn, ivar_slot_get_dyn,
     ivar_slot_get_dyn_isolated, ivar_slot_set_dyn, main_object, make_name_error,

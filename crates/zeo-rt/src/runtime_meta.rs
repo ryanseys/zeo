@@ -1827,6 +1827,26 @@ pub(crate) fn overlay_class_method_private(id: ClassId, name: Symbol) -> Option<
         .and_then(|e| e.class_methods_vis.get(&name).copied())
 }
 
+/// Retire `names` on `id` without the `undef_method` ceremony -- no
+/// respond-to check, no `method_undefined` hook. Used where a class body that
+/// WOULD have defined them never ran, so the definitions the compile-time
+/// tables already carry have to be taken back. See
+/// [`crate::dispatch::guard_class_reopen`].
+pub(crate) fn retire_names(id: ClassId, names: &[&str]) {
+    let mut w = maps().classes.write().unwrap();
+    let e = w.entry(id.0).or_insert_with(OverlayEntry::delta);
+    for n in names {
+        let sym = Symbol::intern(n);
+        e.undefs.insert(sym);
+        e.methods.remove(&sym);
+        e.class_methods.remove(&sym);
+        e.class_undefs.insert(sym);
+    }
+    drop(w);
+    patch_class(id);
+    mark_live();
+}
+
 /// `private_class_method :x` / `public_class_method :x` at runtime -- see
 /// [`overlay_class_method_private`].
 pub fn runtime_class_method_visibility(

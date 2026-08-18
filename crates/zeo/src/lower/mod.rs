@@ -893,6 +893,17 @@ fn lower_call_node(
                 // Those fall through to the generic runtime
                 // `define_singleton_method` call, which installs a
                 // per-object singleton correctly.
+                //
+                // ...and only when the call sits in a CLASS BODY. An explicit
+                // constant receiver at STATEMENT position
+                // (`Later.define_singleton_method(:mode) { }` after a call to
+                // `Later.mode`) is a runtime event with a document position:
+                // desugaring it to a reopen made last-`def`-wins answer the
+                // new body at BOTH sites, so the method reached back in time.
+                // The runtime row installs into the overlay at the right
+                // moment, and `collect_patch_call` has already de-optimized
+                // the name's call sites.
+                Some(_) if hir.enclosing_class().is_none() => None,
                 Some(r) => constant_path_name(r)
                     .ok()
                     .filter(|n| !const_is_assigned(hir, n))
