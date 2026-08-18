@@ -82,6 +82,30 @@ fn str_val(s: String) -> RubyValue {
     RubyValue::Str(crate::collections::string_new(s))
 }
 
+/// `ENV.select`/`filter`/`reject` -- a HASH of the pairs the block keeps
+/// (`keep == false` inverts it). ENV has no copy of itself to answer with, so
+/// CRuby's rows return a plain Hash too.
+fn env_filter(
+    recv: &RubyValue,
+    block: Option<RubyValue>,
+    keep: bool,
+) -> Result<RubyValue, crate::Signal> {
+    let p = crate::builtins::block_or_enum!(
+        recv,
+        if keep { "select" } else { "reject" },
+        &[],
+        block
+    );
+    let mut out = Vec::new();
+    for (k, v) in pairs() {
+        let (kv, vv) = (str_val(k), str_val(v));
+        if p.call(&[kv.clone(), vv.clone()])?.truthy() == keep {
+            out.push((kv, vv));
+        }
+    }
+    Ok(RubyValue::Hash(crate::collections::hash_new(out)))
+}
+
 /// Every `name => value` pair currently set, sorted by name so `ENV.to_h`/
 /// `ENV.each` have a deterministic order. (Real Ruby's order is the OS's
 /// `environ` order; nothing may depend on it, and sorted is reproducible.)
@@ -227,13 +251,86 @@ ruby_class! {
         Ok(RubyValue::Bool(pairs().is_empty()))
     }
     def "each" | "each_pair"(recv, &block) {
-        let Some(RubyValue::Proc(p)) = block else {
-            return Err(crate::dispatch::raise_no_block_yield());
-        };
+        let p = crate::builtins::block_or_enum!(recv, &[], block);
         for (k, v) in pairs() {
             p.call(&[str_val(k), str_val(v)])?;
         }
         Ok(recv.clone())
+    }
+    def "each_key"(recv, &block) {
+        let p = crate::builtins::block_or_enum!(recv, &[], block);
+        for (k, _) in pairs() {
+            p.call(&[str_val(k)])?;
+        }
+        Ok(recv.clone())
+    }
+    def "each_value"(recv, &block) {
+        let p = crate::builtins::block_or_enum!(recv, &[], block);
+        for (_, v) in pairs() {
+            p.call(&[str_val(v)])?;
+        }
+        Ok(recv.clone())
+    }
+    // The non-destructive filters answer a HASH, not an ENV -- ENV has no
+    // copy. Without these rows a receiverless-looking `ENV.select` reached
+    // the private `Kernel#select` instead (`ENV` is an ordinary object, so
+    // the MRO walk continues into Kernel).
+    def "select" | "filter"(recv, &block) {
+        env_filter(recv, block, true)
+    }
+    def "reject"(recv, &block) {
+        env_filter(recv, block, false)
+    }
+    def "to_a"(_recv) {
+        Ok(RubyValue::Array(crate::collections::array_new(
+            pairs()
+                .into_iter()
+                .map(|(k, v)| RubyValue::Array(crate::collections::array_new(
+                    vec![str_val(k), str_val(v)],
+                )))
+                .collect(),
+        )))
+    }
+    def "invert"(_recv) {
+        Ok(RubyValue::Hash(crate::collections::hash_new(
+            pairs().into_iter().map(|(k, v)| (str_val(v), str_val(k))).collect(),
+        )))
+    }
+    def "rassoc"(_recv, value) {
+        let want = crate::builtins::convert::to_rstr(value)?
+            .lock()
+            .to_utf8_lossy()
+            .into_owned();
+        Ok(match pairs().into_iter().find(|(_, v)| *v == want) {
+            Some((k, v)) => RubyValue::Array(crate::collections::array_new(
+                vec![str_val(k), str_val(v)],
+            )),
+            None => RubyValue::Nil,
+        })
+    }
+    def "has_value?" | "value?"(_recv, value) {
+        let Ok(want) = crate::builtins::convert::to_rstr(value) else {
+            return Ok(RubyValue::Bool(false));
+        };
+        let want = want.lock().to_utf8_lossy().into_owned();
+        Ok(RubyValue::Bool(pairs().iter().any(|(_, v)| *v == want)))
+    }
+    def "except"(_recv, *names) {
+        let drop: Vec<String> = names
+            .iter()
+            .map(|n| Ok(crate::builtins::convert::to_rstr(n)?.lock().to_utf8_lossy().into_owned()))
+            .collect::<Result<_, crate::Signal>>()?;
+        Ok(RubyValue::Hash(crate::collections::hash_new(
+            pairs()
+                .into_iter()
+                .filter(|(k, _)| !drop.contains(k))
+                .map(|(k, v)| (str_val(k), str_val(v)))
+                .collect(),
+        )))
+    }
+    // ENV has no hash table of its own to rebuild; CRuby's row answers nil.
+    def "rehash"(_recv) {
+        Ok(RubyValue::Nil)
     }
     def "clear"(recv) {
         for (k, _) in pairs() {

@@ -5534,6 +5534,17 @@ fn explicit_call_barrier(
             return None;
         }
     }
+    // ENV's rows are SINGLETON methods on one object, and dispatch probes them
+    // by identity because `ENV.class` is `Object` (see `builtins::env`). The
+    // instance walk below reads `Object`'s table, which knows nothing about
+    // them -- so `ENV.select` was refused as the private `Kernel#select` that
+    // ENV's own public row shadows. One pointer compare, on the vet path only.
+    if let RubyValue::Object(o) = recv
+        && crate::builtins::env::is_env_obj(o)
+        && crate::builtins::env::lookup(name.name_str()).is_some()
+    {
+        return None;
+    }
     match instance_method_visibility(recv.class_id(), name)? {
         MethodVisibility::Public => None,
         MethodVisibility::Private => Some(MissingReason::Private),
@@ -5785,12 +5796,19 @@ fn send_in_reason(
     }
     let boxed = RubyValue::Object(recv.clone());
 
-    if is_env {
-        // ENV's read-only Hash/Enumerable surface (`count`, `min`, `value?`,
-        // `each_value`, `grep`, `lazy`, `tally`, ...) is served by dispatching
-        // to a fresh Hash snapshot. Mutators are in `env::lookup` above (they
-        // must write the real environment), so only non-mutating methods reach
-        // here -- a snapshot answers them faithfully without a per-method stub.
+    // ENV's singleton class INCLUDES Enumerable (oracle: its ancestors are
+    // `[#<Class:ENV>, Enumerable, Object, Kernel, BasicObject]`), and a fresh
+    // Hash snapshot answers every one of those rows faithfully without a
+    // per-method stub. Mutators are in `env::lookup` above -- they must write
+    // the real environment.
+    //
+    // Only ENUMERABLE's names, though: a universal like `equal?`/`object_id`
+    // has to resolve on ENV itself, or it compares two different snapshots
+    // and `ENV.equal?(ENV)` answers false.
+    if is_env
+        && crate::builtins::class_table(zeo_abi::ENUMERABLE_CLASS)
+            .is_some_and(|lookup| lookup(name.name_str()).is_some())
+    {
         let snapshot = crate::builtins::env::snapshot();
         return send_value(&snapshot, name, args, block);
     }
