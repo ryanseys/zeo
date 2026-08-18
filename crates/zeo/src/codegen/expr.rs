@@ -2078,6 +2078,27 @@ fn emit_raise_value(cx: &Ctx, node: NodeId, explicit_msg: Option<NodeId>) -> Tok
                 }],
             );
         }
+        // A class with its OWN `self.exception` goes through the runtime
+        // protocol instead: `rb_make_exception` calls `klass.exception(msg)`,
+        // and a class that overrides it expects to build the exception itself.
+        // Constructing with `new` skipped the override entirely.
+        if cx
+            .compiler
+            .class(cid)
+            .class_methods
+            .iter()
+            .any(|e| cx.compiler.scope(e.def).name == "exception")
+        {
+            let id = cid.0;
+            let class_expr = quote! { zeo_rt::RubyValue::Class(zeo_rt::ClassId(#id)) };
+            return match explicit_msg {
+                Some(msg_id) => {
+                    let msg = box_if_object_typed(cx, msg_id, emit_expr(cx, msg_id));
+                    quote! { zeo_rt::coerce_raise_arg_with_message(#class_expr, #msg)? }
+                }
+                None => quote! { zeo_rt::coerce_raise_arg(#class_expr)? },
+            };
+        }
         // `raise SomeError` / `raise SomeError, "msg"` constructs via
         // `SomeError.new(...)`, running any custom `initialize` (defaults and
         // `super` chain included), exactly like CRuby's `exc.exception` path.

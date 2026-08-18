@@ -1218,6 +1218,11 @@ pub(crate) fn parse_integer_strict(text: &str, base: Option<u32>) -> Option<Ruby
         (8, rest.to_string())
     } else if let Some(rest) = lower.strip_prefix("0b") {
         (2, rest.to_string())
+    // `0d` is ruby's EXPLICIT decimal prefix, the fourth of the set. Without
+    // it "0d19" fell through to the leading-zero octal rule and then failed on
+    // the `d`.
+    } else if let Some(rest) = lower.strip_prefix("0d") {
+        (10, rest.to_string())
     } else if lower.len() > 1 && lower.starts_with('0') && base.is_none() {
         (8, lower[1..].to_string())
     } else {

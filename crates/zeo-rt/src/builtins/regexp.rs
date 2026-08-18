@@ -72,7 +72,7 @@ ruby_class! {
     // (none), matching CRuby's historical boolean shorthand.
     // Ruby reaches `Regexp.new` through `Class#new`, but declares `compile` on
     // Regexp itself -- so the marker is per-name, not per-def.
-    def self."new" inherits | "compile" cfunc (_recv, arg1, arg2?, _arg3?) {
+    def self."new" inherits | "compile" cfunc (_recv, arg1, arg2?) {
         // A Regexp source: clone it verbatim (flags and all), ignoring any
         // extra options -- CRuby warns but reuses the original.
         if let Some(re) = crate::regexp::as_regexp(arg1) {
@@ -189,9 +189,17 @@ ruby_class! {
         };
         Ok(RubyValue::Bool(crate::regexp_is_match(re_of(recv), &sub)))
     }
-    def "match" cfunc (recv, arg1, _arg2?) {
+    def "match" cfunc (recv, arg1, _arg2?, &block) {
         let Some(h) = subject_arg(arg1)? else { return Ok(RubyValue::Nil) };
-        Ok(crate::regexp_match(re_of(recv), &h))
+        let m = crate::regexp_match(re_of(recv), &h);
+        // With a block, ruby YIELDS the MatchData on a hit and the call
+        // evaluates to the BLOCK's value; a miss answers nil without running
+        // it. Only the String-receiver form had this arm, so with a Regexp
+        // receiver the block never ran and the MatchData was the value.
+        if let (Some(RubyValue::Proc(p)), false) = (&block, m.is_nil()) {
+            return p.call(std::slice::from_ref(&m));
+        }
+        Ok(m)
     }
     def "=~" (recv, other) {
         let Some(h) = subject_arg(other)? else { return Ok(RubyValue::Nil) };
