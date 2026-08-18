@@ -69,7 +69,19 @@ pub fn eval_string_mode(
 ) -> Result<RubyValue, Signal> {
     #[cfg(feature = "eval-vm")]
     {
-        imp::eval_string(src, self_val, box_id, mode)
+        // The cfunc's own frame, then the snippet's -- see
+        // [`eval_with_binding`]. The label names the entry the source came
+        // through, which is what a backtrace uses to tell three string evals
+        // in one program apart.
+        // The enclosing scope's label, read BEFORE the cfunc frame goes on --
+        // the snippet runs in the caller's name, not the cfunc's.
+        let label = crate::frames::current_frame_label().unwrap_or("<main>");
+        let _c = crate::frames::synthetic_c_frame(match mode {
+            EvalMode::Caller => "Kernel#eval",
+            EvalMode::InstanceEval => "BasicObject#instance_eval",
+            EvalMode::ClassEval => "Module#class_eval",
+        });
+        imp::eval_string(src, self_val, box_id, mode, label)
     }
     #[cfg(not(feature = "eval-vm"))]
     {
@@ -140,6 +152,7 @@ pub fn eval_value_in_scope(
             scope: b.scope.child(),
             file: b.file.clone(),
             line: b.line,
+            label: b.label,
             box_id: b.box_id,
             cref: b.cref,
             frozen: std::sync::atomic::AtomicBool::new(false),
@@ -161,7 +174,7 @@ pub fn eval_value_in_scope(
         RubyValue::Nil => None,
         v => Some(crate::builtins::convert::to_index(v)? as u32),
     };
-    eval_with_binding(&src, b, file, line)
+    eval_with_binding(&src, b, file, line, "Kernel#eval")
 }
 
 /// `Binding#eval` and `Kernel#eval(src, binding, ...)` -- the source runs in
@@ -174,6 +187,7 @@ pub fn eval_with_binding(
     b: &RBinding,
     file: Option<String>,
     line: Option<u32>,
+    caller_label: &'static str,
 ) -> Result<RubyValue, Signal> {
     let code = crate::builtins::convert::to_rstr(src)?
         .lock()
@@ -181,11 +195,15 @@ pub fn eval_with_binding(
         .into_owned();
     #[cfg(feature = "eval-vm")]
     {
+        // The cfunc's own frame -- `Kernel#eval`/`Binding#eval` show between
+        // the caller and the snippet, which is how a backtrace says where an
+        // eval was entered as well as where it raised.
+        let _c = crate::frames::synthetic_c_frame(caller_label);
         imp::eval_in_binding(&code, b, file, line)
     }
     #[cfg(not(feature = "eval-vm"))]
     {
-        let _ = (code, b, file, line);
+        let _ = (code, b, file, line, caller_label);
         Err(not_impl_error!(
             "string eval requires the eval VM (build zeo-rt with --features eval-vm)"
         ))
@@ -260,6 +278,20 @@ mod imp {
         line: u32,
     }
 
+    impl Env {
+        /// The source line a byte offset in `src` sits on. `eval`'s `lineno`
+        /// argument numbers the source's FIRST line, so everything further in
+        /// counts newlines from there.
+        fn line_at(&self, offset: usize) -> u32 {
+            let upto = offset.min(self.src.len());
+            let within = self.src.as_bytes()[..upto]
+                .iter()
+                .filter(|&&b| b == b'\n')
+                .count() as u32;
+            self.line + within
+        }
+    }
+
     /// The environment a fresh (non-`Binding`) eval scope starts from: no
     /// locals, no cref, `(eval)` as its source.
     fn fresh_scope() -> Arc<BindingScope> {
@@ -273,6 +305,7 @@ mod imp {
         self_val: RubyValue,
         box_id: u32,
         mode: EvalMode,
+        label: &'static str,
     ) -> Result<RubyValue, Signal> {
         let result = ruby_prism::parse(src.as_bytes());
         if let Some(err) = result.errors().next() {
@@ -308,6 +341,12 @@ mod imp {
             ),
             _ => (None, None),
         };
+        // Named for where it was evaluated, as CRuby's `(eval at f.rb:14)` is
+        // -- there is no `file` argument on this path.
+        let eval_path = match crate::frames::current_location() {
+            Some((f, l)) => format!("(eval at {f}:{l})"),
+            None => EVAL_FILE.to_string(),
+        };
         let mut env = Env {
             self_val,
             scope: fresh_scope(),
@@ -318,9 +357,15 @@ mod imp {
             src: Arc::from(src),
             cref,
             cref_name,
-            file: Arc::from(EVAL_FILE),
+            file: Arc::from(eval_path.as_str()),
             line: 1,
         };
+        let _frame = crate::frames::FrameGuard::push(
+            crate::frames::intern_path(&eval_path),
+            label,
+            1,
+            0,
+        );
         eval_list(&program.statements().body(), &mut env)
     }
 
@@ -343,6 +388,16 @@ mod imp {
             .node()
             .as_program_node()
             .ok_or_else(|| internal("eval: expected a top-level ProgramNode"))?;
+        // With no `file` argument CRuby names the snippet for where it was
+        // evaluated -- `(eval at f.rb:14)` -- which is what makes two evals in
+        // one program tell their backtraces apart.
+        let eval_path = match &file {
+            Some(f) => f.clone(),
+            None => match crate::frames::current_location() {
+                Some((f, l)) => format!("(eval at {f}:{l})"),
+                None => EVAL_FILE.to_string(),
+            },
+        };
         let mut env = Env {
             self_val: b.self_val.clone(),
             scope: Arc::clone(&b.scope),
@@ -353,9 +408,20 @@ mod imp {
             src: Arc::from(src),
             cref: b.cref,
             cref_name: None,
-            file: Arc::from(file.as_deref().unwrap_or(EVAL_FILE)),
+            file: Arc::from(eval_path.as_str()),
             line: line.unwrap_or(1),
         };
+        // The snippet gets a frame of its OWN, under the captured scope's
+        // label: CRuby runs an eval in the binding's name, so a raise inside
+        // `eval(src, b, "f.rb", 10)` reports `f.rb:10:in '<main>'` however deep
+        // the eval site is. `end_line` 0 -- an eval body fires no entry/exit
+        // trace events.
+        let _frame = crate::frames::FrameGuard::push(
+            crate::frames::intern_path(&eval_path),
+            b.label,
+            env.line,
+            0,
+        );
         eval_list(&program.statements().body(), &mut env)
     }
 
@@ -379,6 +445,11 @@ mod imp {
     fn eval_list(body: &NodeList<'_>, env: &mut Env) -> Result<RubyValue, Signal> {
         let mut last = RubyValue::Nil;
         for node in body.iter() {
+            // The statement's own line, so a raise inside the snippet lands
+            // where it stands rather than on the eval's first line -- counted
+            // from `env.line`, which `eval`'s 4th argument sets. Same
+            // statement granularity a compiled body's `set_line` has.
+            crate::frames::set_line(env.line_at(node.location().start_offset()));
             last = eval_node(&node, env)?;
         }
         Ok(last)
@@ -434,14 +505,9 @@ mod imp {
             return Ok(RubyValue::Str(crate::string_new(env.file.to_string())));
         }
         if node.as_source_line_node().is_some() {
-            // `eval`'s `lineno` argument numbers the source's FIRST line, so a
-            // `__LINE__` further in counts newlines from there.
-            let upto = node.location().start_offset().min(env.src.len());
-            let within = env.src.as_bytes()[..upto]
-                .iter()
-                .filter(|&&b| b == b'\n')
-                .count() as u32;
-            return Ok(RubyValue::Int((env.line + within) as i64));
+            return Ok(RubyValue::Int(
+                env.line_at(node.location().start_offset()) as i64
+            ));
         }
         if let Some(istr) = node.as_interpolated_string_node() {
             return eval_interpolated(&istr.parts(), env);
@@ -818,7 +884,26 @@ mod imp {
             Some(r) => Definee::Singleton(eval_node(&r, env)?),
             None => env.definee.clone(),
         };
-        let body = make_eval_method(&env.src, def, env.box_id, cref_of(&target))?;
+        let owner = cref_of(&target);
+        let label: &'static str = crate::frames::intern_path(&format!(
+            "{}{}{name}",
+            crate::dispatch::class_name(owner).unwrap_or_else(|| "Object".to_string()),
+            match def.receiver() {
+                Some(_) => ".",
+                None => "#",
+            }
+        ));
+        let body = make_eval_method(
+            &env.src,
+            def,
+            env.box_id,
+            owner,
+            EvalFrame {
+                file: crate::frames::intern_path(&env.file),
+                line: env.line_at(def.location().start_offset()),
+                label,
+            },
+        )?;
         match target {
             Definee::Class(cid) => crate::runtime_define_method(cid, sym, body)?,
             Definee::Singleton(val) => {
@@ -945,11 +1030,24 @@ mod imp {
         }
     }
 
+    /// Where an eval-defined method reports itself from -- the snippet's own
+    /// file and the `def`'s own line within it, both fixed at definition time,
+    /// under the label the method was installed as. Without it the body's
+    /// lines stamped the ENCLOSING eval frame, so a raise two lines into a
+    /// method reported the eval's own first line.
+    #[derive(Clone, Copy)]
+    struct EvalFrame {
+        file: &'static str,
+        line: u32,
+        label: &'static str,
+    }
+
     fn make_eval_method(
         src: &Arc<str>,
         def: &DefNode<'_>,
         box_id: u32,
         cref: crate::ClassId,
+        frame: EvalFrame,
     ) -> Result<RProc, Signal> {
         let loc = def.location();
         let snippet: Arc<str> = Arc::from(&src[loc.start_offset()..loc.end_offset()]);
@@ -957,7 +1055,7 @@ mod imp {
         // which we implement directly by catching `Signal::Return` below.
         Ok(RProc::with_self_and_block(
             move |self_val: &RubyValue, args: &[RubyValue], block: Option<RubyValue>| {
-                run_eval_method(&snippet, box_id, self_val, args, block, cref)
+                run_eval_method(&snippet, box_id, self_val, args, block, cref, frame)
             },
             RubyValue::Nil,
             -1,
@@ -974,7 +1072,9 @@ mod imp {
         args: &[RubyValue],
         block: Option<RubyValue>,
         cref: crate::ClassId,
+        frame: EvalFrame,
     ) -> Result<RubyValue, Signal> {
+        let _frame = crate::frames::FrameGuard::push(frame.file, frame.label, frame.line, 0);
         let result = ruby_prism::parse(snippet.as_bytes());
         if let Some(err) = result.errors().next() {
             return Err(crate::dispatch::raise_error(
@@ -1008,8 +1108,11 @@ mod imp {
             // the subclass for an inherited one.
             cref: Some(cref),
             cref_name: None,
-            file: Arc::from(EVAL_FILE),
-            line: 1,
+            // The snippet is the `def`'s own text, sliced out of the enclosing
+            // eval -- so it reports that eval's file, and its lines count from
+            // where the `def` stood in it.
+            file: Arc::from(frame.file),
+            line: frame.line,
         };
         bind_params(&def, args, &env.block.clone(), &mut env)?;
 
@@ -1361,6 +1464,7 @@ mod imp {
                 Arc::clone(&env.scope),
                 env.file.to_string(),
                 env.line,
+                crate::frames::current_frame_label().unwrap_or("<main>"),
                 env.box_id,
                 env.cref,
             ));

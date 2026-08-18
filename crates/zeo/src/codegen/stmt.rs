@@ -164,6 +164,15 @@ fn stamp_line<'a>(
     tokens: TokenStream,
     is_tail: bool,
 ) -> TokenStream {
+    // An AOT-spliced `eval("literal")` carries the SNIPPET's own line numbers,
+    // which mean nothing in the enclosing file -- stamping them wrote line 1
+    // into the caller's frame and never restored it, so a raise inside a
+    // spliced eval reported the top of the file. The splice has no frame of
+    // its own (that is what makes it free), so the honest answer is the eval
+    // call's own line, which is what leaving the stamp off keeps.
+    if cx.in_eval_splice {
+        return tokens;
+    }
     let Some((file, line)) = crate::codegen::source_location(cx.compiler, stmt) else {
         return tokens;
     };

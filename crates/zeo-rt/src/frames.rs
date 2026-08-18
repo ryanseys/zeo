@@ -417,6 +417,37 @@ pub fn current_location() -> Option<(&'static str, u32)> {
     with_frames(|f| f.last().map(|fr| (fr.file, fr.line)))
 }
 
+/// A path a frame can hold, from a String that is not one.
+///
+/// A `Frame` keeps `&'static str` so the push stays two stores, and every
+/// compiled frame's file really is a program constant. Only `eval`'s own
+/// `file` argument is not, and the set of distinct names one program evals
+/// under is small and bounded -- interned rather than leaked per call, so
+/// `eval(src, b, "f.rb", 1)` in a loop costs one allocation, not one a turn.
+#[cfg(feature = "eval-vm")]
+pub fn intern_path(path: &str) -> &'static str {
+    use std::sync::{LazyLock, RwLock};
+    static PATHS: LazyLock<RwLock<std::collections::HashSet<&'static str>>> =
+        LazyLock::new(|| RwLock::new(std::collections::HashSet::new()));
+    if let Some(p) = PATHS.read().unwrap().get(path) {
+        return p;
+    }
+    let mut w = PATHS.write().unwrap();
+    if let Some(p) = w.get(path) {
+        return p;
+    }
+    let leaked: &'static str = Box::leak(path.to_string().into_boxed_str());
+    w.insert(leaked);
+    leaked
+}
+
+/// The innermost frame's LABEL verbatim (`Class#m`, `block in Class#m`,
+/// `<main>`) -- what an `eval` under a Binding captured here reports as its
+/// own frame, since CRuby runs the snippet in the captured scope's name.
+pub fn current_frame_label() -> Option<&'static str> {
+    with_frames(|f| Some(f.last()?.method))
+}
+
 /// `FILE:LINE:in 'METHOD'` -- CRuby's backtrace-entry shape.
 fn format_frame(fr: &Frame) -> String {
     format!("{}:{}:in '{}'", fr.file, fr.line, fr.method)

@@ -270,7 +270,7 @@ ruby_module! {
                             .unwrap_or_else(|| "Object".to_string())
                     ));
                 };
-                crate::eval_vm::eval_with_binding(arg1, b, file, line)
+                crate::eval_vm::eval_with_binding(arg1, b, file, line, "Kernel#eval")
             }
         }
     }

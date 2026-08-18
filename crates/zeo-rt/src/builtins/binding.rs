@@ -129,6 +129,12 @@ pub struct RBinding {
     /// `Binding#source_location` -- where the `binding` call itself sits.
     pub file: String,
     pub line: u32,
+    /// The frame LABEL of the scope this Binding was captured in
+    /// (`Class#m`, `block in Class#m`, `<main>`). An `eval` under the Binding
+    /// runs in the CAPTURED scope's name, not the caller's, so a raise inside
+    /// `eval("...", b, "f.rb", 1)` reports `f.rb:1:in '<main>'` however deep
+    /// the eval site is.
+    pub label: &'static str,
     /// The defining box, for constant/global resolution in `#eval`.
     pub box_id: u32,
     /// The lexical class enclosing the capture -- CRuby's cref, which is what
@@ -166,6 +172,7 @@ impl RubyObject for RBinding {
             }),
             file: self.file.clone(),
             line: self.line,
+            label: self.label,
             box_id: self.box_id,
             cref: self.cref,
             frozen: AtomicBool::new(false),
@@ -198,6 +205,9 @@ pub fn binding_new(
         )),
         file.to_string(),
         line,
+        // Read HERE, inside the scope being captured, so it is that scope's
+        // own label and not the label of wherever the Binding is later used.
+        crate::frames::current_frame_label().unwrap_or("<main>"),
         box_id,
         // `u32::MAX` is codegen's "no enclosing class" marker: `ClassId(0)` is
         // `Object`, a real cref a top-level binding must NOT claim.
@@ -210,6 +220,7 @@ pub(crate) fn binding_value(
     scope: Arc<BindingScope>,
     file: String,
     line: u32,
+    label: &'static str,
     box_id: u32,
     cref: Option<ClassId>,
 ) -> RubyValue {
@@ -218,6 +229,7 @@ pub(crate) fn binding_value(
         scope,
         file,
         line,
+        label,
         box_id,
         cref,
         frozen: AtomicBool::new(false),
@@ -237,6 +249,7 @@ pub(crate) fn rebind(v: &RubyValue) -> RubyValue {
         Arc::clone(&b.scope),
         b.file.clone(),
         b.line,
+        b.label,
         b.box_id,
         b.cref,
     )
@@ -343,7 +356,7 @@ ruby_class! {
             Some(v) => Some(crate::builtins::convert::to_index(v)? as u32),
             None => None,
         };
-        crate::eval_vm::eval_with_binding(arg1, recv_binding(recv), file, line)
+        crate::eval_vm::eval_with_binding(arg1, recv_binding(recv), file, line, "Binding#eval")
     }
     def "inspect" | "to_s"(recv) {
         Ok(RubyValue::Str(crate::string_new(inspect_of(recv))))
