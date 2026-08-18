@@ -533,7 +533,79 @@ fn iso_year(tm: &Tm) -> i64 {
 /// including its `%`, which is what Ruby does rather than raising.
 fn strftime(t: &RTime, fmt: &str) -> String {
     let c = civil(t);
-    let tm = &c.tm;
+    render_strftime(
+        &Broken {
+            tm: c.tm,
+            offset: c.offset,
+            zone: c.zone,
+            is_utc: t.is_utc(),
+            epoch: t.sec(),
+            nsec: t.nsec(),
+            date_mode: false,
+        },
+        fmt,
+    )
+}
+
+/// The broken-down instant [`render_strftime`] reads: everything the directive
+/// table needs and nothing about where it came from. `date` renders its own
+/// reform-aware civil fields through this same oracle-swept engine rather than
+/// carrying a second copy of the directive table.
+pub(crate) struct Broken {
+    tm: Tm,
+    offset: i32,
+    zone: String,
+    is_utc: bool,
+    epoch: i64,
+    nsec: u32,
+    /// `date`'s two extra directives (`%Q`, `%+`), which `Time#strftime`
+    /// leaves verbatim.
+    date_mode: bool,
+}
+
+impl Broken {
+    /// A `date`-side instant: civil fields the caller already resolved against
+    /// the calendar-reform start, plus the offset the date carries.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn from_date(
+        year: i64,
+        mon: i64,
+        mday: i64,
+        hour: i32,
+        min: i32,
+        sec: i32,
+        wday: i32,
+        yday: i32,
+        offset: i32,
+        epoch: i64,
+        nsec: u32,
+    ) -> Broken {
+        Broken {
+            tm: Tm {
+                tm_year: (year - 1900) as i32,
+                tm_mon: (mon - 1) as i32,
+                tm_mday: mday as i32,
+                tm_hour: hour,
+                tm_min: min,
+                tm_sec: sec,
+                tm_wday: wday,
+                tm_yday: yday,
+                tm_isdst: 0,
+            },
+            offset,
+            // `date` renders `%Z` as the COLON offset (`"+09:00"`), where a
+            // Time answers a zone abbreviation -- oracle-verified.
+            zone: offset_str_colon(offset, 1),
+            is_utc: false,
+            epoch,
+            nsec,
+            date_mode: true,
+        }
+    }
+}
+
+pub(crate) fn render_strftime(b: &Broken, fmt: &str) -> String {
+    let tm = &b.tm;
     let mut out = String::new();
     let mut chars = fmt.chars().peekable();
     while let Some(ch) = chars.next() {
@@ -611,7 +683,7 @@ fn strftime(t: &RTime, fmt: &str) -> String {
         // `%N`/`%L`'s fractional seconds to `digits` places: the 9-digit
         // nanosecond string, truncated or right-zero-padded to width.
         let frac = |digits: usize| -> String {
-            let nine = format!("{:09}", t.nsec());
+            let nine = format!("{:09}", b.nsec);
             if digits <= 9 {
                 nine[..digits].to_string()
             } else {
@@ -662,8 +734,8 @@ fn strftime(t: &RTime, fmt: &str) -> String {
             'S' => num(tm.tm_sec as i64, 2),
             'L' => frac(width.unwrap_or(3)),
             'N' => frac(width.unwrap_or(9)),
-            'z' => offset_str_flagged(c.offset, colons, pad, left, t.is_utc(), width),
-            'Z' => c.zone.clone(),
+            'z' => offset_str_flagged(b.offset, colons, pad, left, b.is_utc, width),
+            'Z' => b.zone.clone(),
             'a' => DAY_NAMES[tm.tm_wday as usize][..3].to_string(),
             'A' => DAY_NAMES[tm.tm_wday as usize].to_string(),
             'b' | 'h' => MONTH_NAMES[tm.tm_mon as usize][..3].to_string(),
@@ -681,16 +753,20 @@ fn strftime(t: &RTime, fmt: &str) -> String {
                 1,
             ),
             'w' => num(tm.tm_wday as i64, 1),
-            's' => num(t.sec(), 1),
+            's' => num(b.epoch, 1),
             // The compound directives, in terms of the above.
-            'F' => strftime(t, "%Y-%m-%d"),
-            'T' | 'X' => strftime(t, "%H:%M:%S"),
-            'D' | 'x' => strftime(t, "%m/%d/%y"),
-            'R' => strftime(t, "%H:%M"),
-            'r' => strftime(t, "%I:%M:%S %p"),
-            'c' => strftime(t, "%a %b %e %H:%M:%S %Y"),
+            'F' => render_strftime(b, "%Y-%m-%d"),
+            'T' | 'X' => render_strftime(b, "%H:%M:%S"),
+            'D' | 'x' => render_strftime(b, "%m/%d/%y"),
+            'R' => render_strftime(b, "%H:%M"),
+            'r' => render_strftime(b, "%I:%M:%S %p"),
+            'c' => render_strftime(b, "%a %b %e %H:%M:%S %Y"),
             // The VMS date, strftime.c's own recursive definition.
-            'v' => strftime(t, "%e-%^b-%4Y"),
+            'v' => render_strftime(b, "%e-%^b-%4Y"),
+            // `date`-only: milliseconds since the epoch, and the `%+` date(1)
+            // format. `Time#strftime` has neither and emits them verbatim.
+            'Q' if b.date_mode => num(b.epoch * 1000 + (b.nsec / 1_000_000) as i64, 1),
+            '+' if b.date_mode => render_strftime(b, "%a %b %e %H:%M:%S %Z %Y"),
             'n' => "\n".to_string(),
             't' => "\t".to_string(),
             '%' => "%".to_string(),

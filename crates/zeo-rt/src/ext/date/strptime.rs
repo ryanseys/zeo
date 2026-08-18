@@ -433,23 +433,25 @@ pub(super) fn civil_from_fragments(
     if let Some(secs) = get("seconds") {
         // Epoch day 0 is 1970-01-01, JDN 2440588. `div_euclid` so a negative
         // epoch floors into the previous day rather than toward zero.
-        return Some(super::jdn_to_civil(2_440_588 + secs.div_euclid(86_400)));
+        return Some(super::jd_to_civil_italy(
+            2_440_588 + secs.div_euclid(86_400),
+        ));
     }
     let year = get("year").unwrap_or(this_year);
     if let Some(yday) = get("yday") {
         if !(1..=366).contains(&yday) {
             return None;
         }
-        return Some(super::jdn_to_civil(
-            super::civil_to_jdn(year, 1, 1) + yday - 1,
+        return Some(super::jd_to_civil_italy(
+            super::civil_to_jd_italy(year, 1, 1) + yday - 1,
         ));
     }
     let mon = get("mon").unwrap_or(1);
     let mday = get("mday").unwrap_or(1);
     // Round-tripping through the JDN is the validity check: a day the calendar
     // does not have comes back as a different date.
-    let jdn = super::civil_to_jdn(year, mon, mday);
-    if super::jdn_to_civil(jdn) != (year, mon, mday) {
+    let jdn = super::civil_to_jd_italy(year, mon, mday);
+    if super::jd_to_civil_italy(jdn) != (year, mon, mday) {
         return None;
     }
     Some((year, mon, mday))

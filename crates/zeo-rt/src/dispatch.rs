@@ -3902,6 +3902,31 @@ pub(crate) fn call_user_method(
     if let Some(f) = crate::builtins::class_table(id).and_then(|lookup| lookup(name)) {
         return Some(f(&RubyValue::Object(recv.clone()), args, None));
     }
+    // ...and an ANCESTOR's builtin table, for a builtin SUBCLASS of a builtin
+    // (`DateTime < Date`, whose own table declares only the rows CRuby
+    // publishes on the subclass -- `p dt` reached `Object`'s default repr
+    // because `Date#inspect` sits one class up).
+    //
+    // Bounded at `Object`, which is the whole reason the probe above is
+    // own-class-only: `Kernel`'s `to_s`/`inspect` rows render through
+    // `to_display_string`, so walking into them recurses until the stack dies.
+    // A value-subclass payload is excluded too -- `class Tag < String` renders
+    // through the caller's payload arm, not through `String`'s rows.
+    if recv.builtin_payload().is_none()
+        && let Some(reg) = REGISTRY.get()
+    {
+        for &anc in reg.ancestors_of(id).iter().skip(1) {
+            if anc == zeo_abi::OBJECT_CLASS
+                || anc == zeo_abi::KERNEL_CLASS
+                || anc == zeo_abi::BASIC_OBJECT_CLASS
+            {
+                break;
+            }
+            if let Some(f) = crate::builtins::class_table(anc).and_then(|lookup| lookup(name)) {
+                return Some(f(&RubyValue::Object(recv.clone()), args, None));
+            }
+        }
+    }
     // A COMPILED `Struct`/`Data` inherits its whole protocol from
     // `Struct`/`Data`'s own table, which the walk above cannot see: those rows
     // are value methods, not registry `methods`. `S.new(1) == S.new(1)`

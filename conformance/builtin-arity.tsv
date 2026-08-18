@@ -36,6 +36,8 @@ A	Data	i	i:Data	i:Object	i:JSON::GeneratorMethods	i:Kernel	i:BasicObject
 A	Data	s	s:Data	s:Object	s:BasicObject	i:Class	i:Module	i:Object	i:JSON::GeneratorMethods	i:Kernel	i:BasicObject
 A	Date	i	i:Date	i:Comparable	i:Object	i:JSON::GeneratorMethods	i:Kernel	i:BasicObject
 A	Date	s	s:Date	s:Object	s:BasicObject	i:Class	i:Module	i:Object	i:JSON::GeneratorMethods	i:Kernel	i:BasicObject
+A	DateTime	i	i:DateTime	i:Date	i:Comparable	i:Object	i:JSON::GeneratorMethods	i:Kernel	i:BasicObject
+A	DateTime	s	s:DateTime	s:Date	s:Object	s:BasicObject	i:Class	i:Module	i:Object	i:JSON::GeneratorMethods	i:Kernel	i:BasicObject
 A	Digest	i	i:Digest
 A	Digest	s	s:Digest	i:Module	i:Object	i:JSON::GeneratorMethods	i:Kernel	i:BasicObject
 A	Digest::MD5	i	i:Digest::MD5	i:Digest::Base	i:Digest::Class	i:Digest::Instance	i:Object	i:JSON::GeneratorMethods	i:Kernel	i:BasicObject
@@ -878,6 +880,42 @@ M	Date	s	valid_date?	-1	public	c	rest
 M	Date	s	valid_jd?	-1	public	c	rest
 M	Date	s	valid_ordinal?	-1	public	c	rest
 M	Date	s	xmlschema	-1	public	c	rest
+M	DateTime	i	deconstruct_keys	1	public	c	req
+M	DateTime	i	hour	0	public	c	-
+M	DateTime	i	iso8601	-1	public	c	rest
+M	DateTime	i	jisx0301	-1	public	c	rest
+M	DateTime	i	min	0	public	c	-
+M	DateTime	i	minute	0	public	c	-
+M	DateTime	i	new_offset	-1	public	c	rest
+M	DateTime	i	offset	0	public	c	-
+M	DateTime	i	rfc3339	-1	public	c	rest
+M	DateTime	i	sec	0	public	c	-
+M	DateTime	i	sec_fraction	0	public	c	-
+M	DateTime	i	second	0	public	c	-
+M	DateTime	i	second_fraction	0	public	c	-
+M	DateTime	i	strftime	-1	public	c	rest
+M	DateTime	i	to_date	0	public	c	-
+M	DateTime	i	to_datetime	0	public	c	-
+M	DateTime	i	to_s	0	public	c	-
+M	DateTime	i	to_time	0	public	c	-
+M	DateTime	i	xmlschema	-1	public	c	rest
+M	DateTime	i	zone	0	public	c	-
+M	DateTime	s	_strptime	-1	public	c	rest
+M	DateTime	s	civil	-1	public	c	rest
+M	DateTime	s	commercial	-1	public	c	rest
+M	DateTime	s	httpdate	-1	public	c	rest
+M	DateTime	s	iso8601	-1	public	c	rest
+M	DateTime	s	jd	-1	public	c	rest
+M	DateTime	s	jisx0301	-1	public	c	rest
+M	DateTime	s	new	-1	public	c	rest
+M	DateTime	s	now	-1	public	c	rest
+M	DateTime	s	ordinal	-1	public	c	rest
+M	DateTime	s	parse	-1	public	c	rest
+M	DateTime	s	rfc2822	-1	public	c	rest
+M	DateTime	s	rfc3339	-1	public	c	rest
+M	DateTime	s	rfc822	-1	public	c	rest
+M	DateTime	s	strptime	-1	public	c	rest
+M	DateTime	s	xmlschema	-1	public	c	rest
 M	Delegator	i	!	0	public	ruby	-
 M	Delegator	i	!=	1	public	ruby	req:obj
 M	Delegator	i	==	1	public	ruby	req:obj

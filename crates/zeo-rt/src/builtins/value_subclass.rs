@@ -306,16 +306,14 @@ pub fn call_root_class_method(
 /// to re-tag afterwards. That makes it the OPPOSITE of a payload root, where
 /// the row cannot express the tag and the wrapper has to add it.
 ///
-/// `None` for anything else, including `Date` and `DateTime` themselves: their
-/// own rows are found the ordinary way.
+/// `None` for a root itself: its own rows are found the ordinary way. A
+/// builtin SUBCLASS of one -- `DateTime` -- does reach here, for the class
+/// methods it does not redeclare (`DateTime.today` is `Date`s row, called with
+/// `DateTime` as the receiver so it allocates a `DateTime`).
 pub fn recv_honouring_root(class_id: ClassId) -> Option<ClassId> {
     [zeo_abi::DATE_CLASS, zeo_abi::PROC_CLASS]
         .into_iter()
-        .find(|&root| {
-            class_id != root
-                && class_id != zeo_abi::DATETIME_CLASS
-                && ancestors_of_value(class_id).contains(&root)
-        })
+        .find(|&root| class_id != root && ancestors_of_value(class_id).contains(&root))
 }
 
 /// Register a user subclass of a receiver-honouring root -- today
