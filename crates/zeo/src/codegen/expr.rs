@@ -343,8 +343,14 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
     // concealment table, the same authority every other by-name path consults.
     if let Some(cid) = conditional_class_of_defined_form(cx, id) {
         let cls = cid.0;
+        // ...and a `private_constant` is still nil to `defined?`, whichever
+        // authority answers the existence half. Checked at run time so a later
+        // `public_constant` restores it.
+        let private = defined_form_private_check(cx, id);
         return quote! {
-            if zeo_rt::class_revealed(zeo_rt::ClassId(#cls)) {
+            if #private {
+                zeo_rt::RubyValue::Nil
+            } else if zeo_rt::class_revealed(zeo_rt::ClassId(#cls)) {
                 zeo_rt::RubyValue::Str(zeo_rt::string_new("constant".to_string()))
             } else {
                 zeo_rt::RubyValue::Nil
@@ -2728,6 +2734,30 @@ fn conditional_class_of_defined_form(cx: &Ctx, id: NodeId) -> Option<ClassId> {
         _ => return None,
     };
     cx.compiler.class(cid).runtime_conditional.then_some(cid)
+}
+
+/// Whether the SCOPE OPERATOR in a `defined?` form names a private constant --
+/// a runtime test, so a later `public_constant` restores it. `false` for a bare
+/// reference, which the private rule does not gate.
+fn defined_form_private_check(cx: &Ctx, id: NodeId) -> TokenStream {
+    let (scope, base) = match &cx.compiler.hir[id] {
+        HirNode::QualifiedConstRead(scope, name) => (scope.clone(), name.clone()),
+        HirNode::ClassRef(name) => {
+            let path = crate::constpath::ConstPath::parse(name);
+            match path.scope() {
+                Some(s) => (s.to_string(), path.base().to_string()),
+                None => return quote! { false },
+            }
+        }
+        _ => return quote! { false },
+    };
+    match cx.resolve_class(&scope) {
+        Some(sid) => {
+            let owner = sid.0;
+            quote! { zeo_rt::const_is_private(#owner, #base) }
+        }
+        None => quote! { false },
+    }
 }
 
 pub(super) fn private_const_guard(

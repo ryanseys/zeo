@@ -2943,7 +2943,18 @@ fn splice_into_chain(
         return None;
     }
     let cut = if placement == Placement::Before {
-        at
+        // CRuby's `rb_prepend_module` puts the new module at the FRONT of the
+        // target's origin chain -- ahead of everything ALREADY prepended to
+        // it, not merely ahead of the class itself. `prepend Loud` then
+        // `prepend Also` is `[Also, Loud, Dog]`, so the cut is the first
+        // position `current` shares with the target's existing prepend block.
+        let own = ancestors_of_value(target);
+        let prepended: HashSet<ClassId> =
+            own.iter().copied().take_while(|&a| a != target).collect();
+        current
+            .iter()
+            .position(|a| prepended.contains(a))
+            .unwrap_or(at)
     } else {
         at + 1
     };

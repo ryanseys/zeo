@@ -312,6 +312,10 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
     // only that body installs has to be retractable at run time.
     defer_reopen_only_defs(compiler);
 
+    // A namespace the program ASKS about (`Outer.constants`) must not list a
+    // class whose declaration has not run yet.
+    conceal_observed_namespace_members(compiler);
+
     mro::materialize(compiler, &main_statements)?;
 
     // Which redefinition timelines are observable and must be applied at
@@ -4181,6 +4185,9 @@ fn walk_class_body(
                         // codegen sends `append_features` at this position instead.
                         if compiler.overrides_mixin_primitive(target, "append_features") {
                             defer_mixin_to_runtime(compiler, target);
+                        } else if is_reopen_site(compiler, class_id, site_idx) {
+                            defer_positional_mixin(compiler, site_idx, stmt, target);
+                            continue;
                         } else {
                             compiler.classes[class_id.0 as usize].includes.push(target);
                         }
@@ -4399,6 +4406,9 @@ fn walk_class_body(
                         // codegen sends `prepend_features` at this position instead.
                         if compiler.overrides_mixin_primitive(target, "prepend_features") {
                             defer_mixin_to_runtime(compiler, target);
+                        } else if is_reopen_site(compiler, class_id, site_idx) {
+                            defer_positional_mixin(compiler, site_idx, stmt, target);
+                            continue;
                         } else {
                             compiler.classes[class_id.0 as usize].prepends.push(target);
                         }
@@ -4816,6 +4826,99 @@ fn defer_reopen_only_defs(compiler: &mut Compiler) {
     }
     for (cid, name) in deferred {
         compiler.classes[cid.0 as usize].runtime_undefs.insert(name);
+    }
+}
+
+/// An ancestry edit written in a REOPEN, applied where it stands instead of at
+/// program start: the directive becomes its runtime send spelling (which
+/// splices the overlay chain `ancestors_of_value` prefers) and the module's
+/// method names leave the fold, so a call site asks rather than answering from
+/// a table the edit is not in yet.
+///
+/// Narrower than [`defer_runtime_mixin`], which widens to EVERY name: the
+/// module is resolved here, so only its own names need to leave.
+fn defer_positional_mixin(compiler: &mut Compiler, site_idx: usize, stmt: NodeId, target: ClassId) {
+    defer_mixin_to_runtime(compiler, target);
+    let send = crate::lower::defs::runtime_directive_spelling(&mut compiler.hir, stmt)
+        .expect("a mixin directive is not `refine`")
+        .expect("every mixin directive has a runtime spelling");
+    compiler.class_body_sites[site_idx].stmts.push(send);
+}
+
+/// Whether `site_idx` is a REOPEN of `class_id` -- some earlier site already
+/// ran a body for it, so code could have run in between.
+///
+/// An ancestry edit written in a reopen is a runtime event with a position:
+/// `class Thing; end; p Thing.new.respond_to?(:tag); class Thing; include
+/// Extra; end` must answer `false` first. Recording the edit at compile time
+/// applied it from program start. The `Include`/`Prepend` node stays in the
+/// site's statements either way, so the splice happens where it is written;
+/// what changes is that the compile-time tables no longer carry it.
+fn is_reopen_site(compiler: &Compiler, class_id: ClassId, site_idx: usize) -> bool {
+    compiler.class_body_sites[..site_idx]
+        .iter()
+        .any(|s| s.class == class_id)
+}
+
+/// The verbs that read a namespace's constant LIST, so a class declared later
+/// in the program must not already be in it.
+const CONST_OBSERVERS: &[&str] = &["constants", "const_defined?"];
+
+/// Conceal every class nested DIRECTLY under a namespace the program asks
+/// about, so its constant appears where the declaration stands rather than at
+/// program start. `class Outer::Late; end` written after an
+/// `Outer.constants` had that constant already listed.
+///
+/// Precise on both sides: only a namespace named by a resolvable constant
+/// receiver is observed, and only its DIRECT members are concealed. A
+/// concealed class pays a runtime constant read
+/// (`ClassInfo::runtime_conditional`), which is exactly the price of being
+/// able to say "not yet" -- so the set is kept as small as the question is.
+fn conceal_observed_namespace_members(compiler: &mut Compiler) {
+    let mut observed: Vec<ClassId> = Vec::new();
+    for (_, node) in compiler.hir.iter_with_ids() {
+        let HirNode::Call {
+            receiver: Some(recv),
+            name,
+            ..
+        } = node
+        else {
+            continue;
+        };
+        if !CONST_OBSERVERS.contains(&name.as_str()) {
+            continue;
+        }
+        let recv = *recv;
+        if let Some(cid) = const_node_class(compiler, recv, &[], 0) {
+            observed.push(cid);
+        } else if let Some(leaf) = leaf_const_name(&compiler.hir, recv) {
+            observed.extend(
+                (0..compiler.classes.len() as u32)
+                    .map(ClassId)
+                    .filter(|&c| compiler.class(c).name == leaf),
+            );
+        }
+    }
+    // `Object` is EXCLUDED: it is every top-level class's lexical parent, so
+    // observing it would conceal the whole program -- and concealment costs a
+    // runtime constant read at every reference. `Object.constants` written
+    // before a later top-level `class` therefore still over-reports, a far
+    // narrower divergence than the one it would buy.
+    observed.retain(|&c| c != crate::compiler::OBJECT_CLASS);
+    if observed.is_empty() {
+        return;
+    }
+    for i in 0..compiler.classes.len() {
+        let cid = ClassId(i as u32);
+        let ci = compiler.class(cid);
+        // A BUILTIN's constant is there from program start in ruby too, and a
+        // class already concealed for a guard keeps its own reason.
+        if ci.is_builtin || ci.is_bootstrap || ci.runtime_conditional {
+            continue;
+        }
+        if ci.lexical_parent.is_some_and(|p| observed.contains(&p)) {
+            compiler.classes[i].runtime_conditional = true;
+        }
     }
 }
 
