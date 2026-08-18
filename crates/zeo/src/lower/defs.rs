@@ -4207,6 +4207,31 @@ fn lower_class_body_statement(
     // making the twin exactly as conditional as the def it copies
     // (rspec-support's `RubyFeatures.ripper_supported?` is the corpus case).
     let id = lower_node(result, hir, node)?;
+    // `define_method(:x) { ... }` is a CallNode, so it never reached the `def`
+    // arm above and kept the generic path's `Public` -- but ruby applies the
+    // running default AND `module_function` to it exactly as to a `def`
+    // (oracle-checked on 4.0.6: `private` makes it private, and
+    // `module_function` gives it both a module method and a private instance
+    // copy). It lowers to a `DefMethod` carrying `BLOCK_BODIED_DEF`, which is
+    // what tells it apart from the branch containers handled below.
+    if hir.has_flag(id, crate::hir::NodeFlag::BLOCK_BODIED_DEF)
+        && matches!(
+            &hir[id],
+            crate::hir::HirNode::DefMethod {
+                is_class_method: false,
+                ..
+            }
+        )
+    {
+        if *visibility != Visibility::Public {
+            hir.set_method_visibility(id, *visibility);
+        }
+        if *module_function && promote_to_module_function(hir, id, out) {
+            return Ok(());
+        }
+        out.push(id);
+        return Ok(());
+    }
     if *module_function || *visibility != Visibility::Public {
         apply_body_defaults_in_branches(hir, id, *visibility, *module_function);
     }
