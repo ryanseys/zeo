@@ -27,6 +27,16 @@ github = "ruby/csv"
 tag    = "v3.3.6"
 rev    = "0873ab362d996f12796c3c3e8998b5be657a9b12"
 
+[gems.did_you_mean]
+github = "ruby/did_you_mean"
+tag    = "v2.0.0"
+rev    = "1cce337962d51ee90bb7ff51a51a803fc2384e0e"
+
+[gems.diff-lcs]
+github = "halostatue/diff-lcs"
+tag    = "v1.6.2"
+rev    = "aca4bd72c80231e0646071ad533c65820a4ecc93"
+
 [gems.drb]
 github = "ruby/drb"
 tag    = "v2.2.3"
@@ -106,11 +116,6 @@ rev    = "5229883dca5b451c8bfd322272ccd2ca6d526695"
 github = "ruby/resolv"
 tag    = "v0.7.1"
 rev    = "8fc05c1cb6cd36e4a8d0391aeb8cacdcb2368b4c"
-
-[gems.diff-lcs]
-github = "halostatue/diff-lcs"
-tag    = "v1.6.2"
-rev    = "aca4bd72c80231e0646071ad533c65820a4ecc93"
 
 [gems.rspec]
 github = "rspec/rspec"
