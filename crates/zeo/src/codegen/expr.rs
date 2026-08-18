@@ -1135,8 +1135,14 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             args,
             kwargs,
             block,
-        } => super::call::emit_private_new_error(cx, class_name)
-            .unwrap_or_else(|| super::call::emit_new(cx, class_name, args, kwargs, *block)),
+        } => super::call::emit_private_new_error(cx, class_name).unwrap_or_else(|| {
+            let guard = super::call::runtime_private_new_guard(cx, class_name);
+            let ctor = super::call::emit_new(cx, class_name, args, kwargs, *block);
+            match guard {
+                Some(g) => quote! { { #g #ctor } },
+                None => ctor,
+            }
+        }),
         HirNode::SuperCall {
             args,
             kwargs,

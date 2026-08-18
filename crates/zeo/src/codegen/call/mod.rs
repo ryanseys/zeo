@@ -173,7 +173,9 @@ pub(crate) fn emit_binding_with_self(
 // by sibling `codegen` modules keeps resolving after this file split --
 // each name still lives at its original address as far as any caller
 // outside this module tree is concerned.
-pub use new::{emit_new, emit_new_with_arg_tokens, emit_private_new_error};
+pub use new::{
+    emit_new, emit_new_with_arg_tokens, emit_private_new_error, runtime_private_new_guard,
+};
 pub use procs::emit_lambda_value;
 pub(crate) use procs::emit_proc_or_lambda_value;
 pub use super_calls::emit_super;
@@ -2269,8 +2271,12 @@ pub fn emit_call(
                 && !cx.compiler.class(target).is_builtin
             {
                 let recv_expr = emit_expr(cx, recv_id);
-                let ctor = new::emit_new(cx, &cx.compiler.fq_name(target), args, kwargs, None);
-                return quote! { { let _ = #recv_expr; #ctor } };
+                let fq = cx.compiler.fq_name(target);
+                // Explicit receiver, so a `private_class_method :new` written
+                // at run time refuses this call -- see the guard's docs.
+                let guard = new::runtime_private_new_guard(cx, &fq);
+                let ctor = new::emit_new(cx, &fq, args, kwargs, None);
+                return quote! { { let _ = #recv_expr; #guard #ctor } };
             }
             if cx.compiler.class_method_in_chain(target, name).is_some()
                 && !cx.compiler.may_be_patched_at_runtime(name)

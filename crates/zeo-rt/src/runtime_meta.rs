@@ -108,6 +108,19 @@ struct OverlayEntry {
     /// `super` AT this class's own table rather than past it.
     singleton_prepends: Vec<ClassId>,
     constructor: Option<ConstructorFn>,
+    /// The struct allocator a `Class#dup` copy inherits from its SOURCE. The
+    /// copy's ancestry deliberately omits the source (ruby's `K.dup.ancestors`
+    /// does not list `K`), yet the copied method bodies are the source's
+    /// compiled ones and downcast to the source's struct -- so the allocator
+    /// has to travel with the copy rather than be found by walking.
+    allocator: Option<crate::dispatch::AllocatorFn>,
+    /// Which of `methods` a `Class#dup` copy took from a compiled ANCESTOR
+    /// rather than from the source's own table. They have to sit in `methods`
+    /// (the ancestor's own copy expects the ancestor's struct and would abort
+    /// on this copy's instances) but must stay out of every "own methods"
+    /// answer -- `K.dup.instance_methods(false)` is `K`'s own list, not its
+    /// whole chain's.
+    inherited_names: FSet<Symbol>,
     /// Methods a PREPENDED module supplies, kept apart from `methods` so a
     /// later definition on the target cannot displace them -- ruby puts a
     /// prepended module in its own layer ahead of the class, and `prepend M`
@@ -170,6 +183,8 @@ impl Default for OverlayEntry {
             prepended_class_methods: FMap::default(),
             singleton_prepends: Vec::new(),
             constructor: None,
+            allocator: None,
+            inherited_names: FSet::default(),
             undefs: FSet::default(),
             class_undefs: FSet::default(),
             addr: Box::leak(Box::new(0u8)) as *const u8 as usize,
@@ -3090,7 +3105,9 @@ pub fn overlay_instance_method_names(
         .chain(e.prepended.keys())
         .chain(e.methods_vis.keys())
         .copied()
-        .filter(|n| !e.undefs.contains(n))
+        // A `Class#dup` copy's inherited bodies are dispatch-only -- see
+        // `OverlayEntry::inherited_names`.
+        .filter(|n| !e.undefs.contains(n) && !e.inherited_names.contains(n))
         .collect();
     e.undefs
         .iter()
@@ -3313,6 +3330,162 @@ pub fn runtime_singleton_class(recv: &RubyValue) -> Result<RubyValue, Signal> {
 ///
 /// Only the method table is copied. Constants and class-level ivars stay with
 /// the original, and the copy is anonymous until a constant names it.
+/// `Class#dup` / `Class#clone` -- CRuby's `rb_mod_init_copy` for a CLASS.
+///
+/// The copy is a REAL new class: anonymous (`name` is nil, so naming it does
+/// not rename the source), sharing the source's superclass and mixins, and
+/// carrying its own copies of the source's OWN instance methods, class
+/// methods, constants, class-level ivars and class variables. Nothing is
+/// shared -- writing a constant on the copy leaves the source alone.
+///
+/// `clone` differs from `dup` in exactly one observable way here: it carries
+/// the frozen state over (oracle-verified -- the singleton class, which CRuby
+/// documents as clone-only, is copied by both because a class's singleton
+/// methods ARE its class methods and `rb_mod_init_copy` moves those either way).
+pub fn runtime_class_dup(cid: ClassId, clone: bool) -> Result<RubyValue, Signal> {
+    let id_num = maps().next_id.fetch_add(1, Ordering::Relaxed);
+    let new_id = ClassId(id_num);
+    // The source's chain with the source's own head replaced: same superclass,
+    // same includes and prepends, a new identity at the front.
+    let src_chain = ancestors_of_value(cid);
+    let mut anc = Vec::with_capacity(src_chain.len());
+    anc.push(new_id);
+    anc.extend(src_chain.iter().copied().filter(|&a| a != cid));
+    let leaked: &'static [ClassId] = Box::leak(anc.into_boxed_slice());
+
+    // Own instance methods, per visibility filter, exactly as
+    // `runtime_module_dup` collects a module's.
+    let mut methods = crate::FMap::default();
+    let mut methods_vis = crate::FMap::default();
+    for (filter, vis) in [
+        (
+            crate::dispatch::VisFilter::Public,
+            crate::dispatch::MethodVisibility::Public,
+        ),
+        (
+            crate::dispatch::VisFilter::Protected,
+            crate::dispatch::MethodVisibility::Protected,
+        ),
+        (
+            crate::dispatch::VisFilter::Private,
+            crate::dispatch::MethodVisibility::Private,
+        ),
+    ] {
+        for name in crate::dispatch::instance_method_names(cid, filter, false) {
+            if let Some(m) = module_own_method_impl(cid, name) {
+                methods.insert(name, m);
+                methods_vis.insert(name, vis);
+            }
+        }
+    }
+
+    // A method the source INHERITS from a compiled ancestor has to be copied
+    // too, resolved AT the source: zeo materializes a layout-correct body per
+    // class, so the ancestor's own copy downcasts to the ANCESTOR's struct and
+    // aborts on the copy's instances (which carry the source's). Reflection
+    // must not see these as the copy's own, so they are recorded apart.
+    //
+    // Only compiled ancestors below `Object` need it -- a builtin row and every
+    // Kernel/BasicObject universal take a receiver generically, and the copy's
+    // chain still reaches them.
+    let mut inherited_names = FSet::default();
+    for &anc in ancestors_of_value(cid).iter().skip(1) {
+        if anc == ClassId(0) || crate::dispatch::registry_allocator(anc).is_none() {
+            continue;
+        }
+        for name in
+            crate::dispatch::instance_method_names(anc, crate::dispatch::VisFilter::All, false)
+        {
+            if methods.contains_key(&name) {
+                continue;
+            }
+            if let Some(m) = snapshot_instance_method(cid, name) {
+                methods.insert(name, m);
+                inherited_names.insert(name);
+            }
+        }
+    }
+
+    // Own CLASS methods. `extended_class_method` is the right wrapper: it
+    // hands back an `RProc` whose `self` is the receiving class VALUE, so the
+    // copy's `def self.x` reads the COPY's class-level ivars.
+    let mut class_methods = crate::FMap::default();
+    let mut class_methods_vis = crate::FMap::default();
+    for name in crate::dispatch::class_method_names_in(cid, false) {
+        if let Some(p) = overlay_class_method(cid, name).or_else(|| class_method_as_proc(cid, name))
+        {
+            class_methods.insert(name, p);
+            if crate::dispatch::class_method_is_private(cid, name) {
+                class_methods_vis.insert(name, true);
+            }
+        }
+    }
+
+    // NOT the source's own constructor: it stamps the SOURCE's class id, so
+    // `K.dup.new.class` answered `K` and `K.dup.new.is_a?(K)` was true. The
+    // struct the copied bodies expect travels separately -- see
+    // `OverlayEntry::allocator`.
+    let allocator = crate::dispatch::ancestor_allocator_of(cid);
+    let constructor = Some(match allocator {
+        Some(_) => compiled_subclass_construct,
+        None => minted_constructor(leaked),
+    });
+    {
+        let mut w = maps().classes.write().unwrap();
+        w.insert(
+            id_num,
+            OverlayEntry {
+                ancestors: leaked,
+                methods,
+                methods_vis,
+                class_methods,
+                class_methods_vis,
+                constructor,
+                allocator,
+                inherited_names,
+                ..Default::default()
+            },
+        );
+    }
+    // Constants, class-level ivars and class variables are stored outside the
+    // overlay entry, keyed by class id -- copied by value, so the two classes
+    // diverge from here.
+    for name in crate::constants::const_names_of(cid.0) {
+        if let Some(v) = crate::constants::const_get_own(cid.0, &name) {
+            crate::constants::const_set(id_num, &name, v);
+        }
+    }
+    for name in crate::civars::class_ivar_names(cid.0) {
+        let v = crate::civars::class_ivar_get(cid.0, &name);
+        crate::civars::class_ivar_set(id_num, &name, v)?;
+    }
+    for name in crate::cvars::cvar_names_of(cid.0) {
+        let v = crate::cvars::cvar_get(cid.0, &name);
+        crate::cvars::cvar_set(id_num, &name, v)?;
+    }
+    mark_live();
+    if clone && crate::dispatch::class_frozen(cid) {
+        crate::dispatch::class_set_frozen(new_id);
+    }
+    Ok(RubyValue::Class(new_id))
+}
+
+/// The allocator a `Class#dup` copy recorded for itself -- see
+/// [`OverlayEntry::allocator`].
+pub(crate) fn overlay_allocator(id: ClassId) -> Option<crate::dispatch::AllocatorFn> {
+    if !is_live() {
+        return None;
+    }
+    maps().classes.read().unwrap().get(&id.0)?.allocator
+}
+
+/// One of `cid`'s registered CLASS methods as an `RProc` whose `self` is the
+/// receiving class value -- the shape [`OverlayEntry::class_methods`] holds.
+fn class_method_as_proc(cid: ClassId, name: Symbol) -> Option<RProc> {
+    let f = crate::dispatch::own_class_method_fn(cid, name)?;
+    Some(RProc::with_self_and_block(f, RubyValue::Nil, -1, true))
+}
+
 pub fn runtime_module_dup(mid: ClassId) -> Result<RubyValue, Signal> {
     let id_num = maps().next_id.fetch_add(1, Ordering::Relaxed);
     let new_id = ClassId(id_num);
@@ -3640,6 +3813,32 @@ pub fn overlay_refinements_of(module: ClassId) -> Vec<ClassId> {
 /// its overlay entry (ancestors linearized from the superclass, a generic
 /// name-keyed-object constructor), then run the body block with `self` bound to
 /// the new class so `define_method`/`include`/const-assign inside populate it.
+/// The `ConstructorFn` a class MINTED at run time takes, chosen from its
+/// linearized chain -- shared by `Class.new(Base)` and `Class#dup`, which have
+/// the same problem: instances must carry the RUNTIME id, so the source's own
+/// constructor (which stamps the source's id) is exactly wrong.
+fn minted_constructor(chain: &'static [ClassId]) -> ConstructorFn {
+    if chain
+        .iter()
+        .copied()
+        .any(crate::builtins::value_subclass::is_payload_root)
+    {
+        crate::builtins::value_subclass::value_subclass_construct
+    } else if chain.contains(&zeo_abi::EXCEPTION_CLASS) {
+        crate::builtins::exception::exception_construct
+    } else if chain
+        .iter()
+        .any(|&a| crate::dispatch::registry_allocator(a).is_some())
+    {
+        // `Class.new(CompiledBase)`: instances must be the compiled
+        // ancestor's real struct (stamped with the runtime id) or every
+        // inherited compiled method's downcast aborts.
+        compiled_subclass_construct
+    } else {
+        dyn_object_construct
+    }
+}
+
 pub fn runtime_class_new(
     superclass: Option<RubyValue>,
     body: Option<RProc>,
@@ -3670,25 +3869,7 @@ pub fn runtime_class_new(
     // An EXCEPTION subclass needs the native `RubyException` allocator for the
     // same reason: every `Exception` method it inherits reads that payload, so a
     // name-keyed `DynObject` would satisfy `is_a?` and then fail on `#message`.
-    let constructor = if leaked
-        .iter()
-        .copied()
-        .any(crate::builtins::value_subclass::is_payload_root)
-    {
-        crate::builtins::value_subclass::value_subclass_construct
-    } else if leaked.contains(&zeo_abi::EXCEPTION_CLASS) {
-        crate::builtins::exception::exception_construct
-    } else if leaked
-        .iter()
-        .any(|&a| crate::dispatch::registry_allocator(a).is_some())
-    {
-        // `Class.new(CompiledBase)`: instances must be the compiled
-        // ancestor's real struct (stamped with the runtime id) or every
-        // inherited compiled method's downcast aborts.
-        compiled_subclass_construct
-    } else {
-        dyn_object_construct
-    };
+    let constructor = minted_constructor(leaked);
     {
         let mut w = maps().classes.write().unwrap();
         w.insert(

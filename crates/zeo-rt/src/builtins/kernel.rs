@@ -508,13 +508,15 @@ ruby_module! {
                 c
             }
             // A MODULE gets a real copy -- the whole point of duping one is to
-            // edit it without touching the original (see
-            // `runtime_module_dup`). A CLASS keeps the documented
-            // handle-passthrough: copying one means copying its instances'
-            // layout, which this AOT model has no way to mint.
+            // edit it without touching the original (see `runtime_module_dup`).
             RubyValue::Class(cid) if crate::dispatch::class_is_module(*cid).unwrap_or(false) => {
                 crate::runtime_meta::runtime_module_dup(*cid)?
             }
+            // ...and so does a CLASS: an ANONYMOUS class sharing the source's
+            // superclass and mixins, carrying copies of its own rows,
+            // constants and class-level state. Handing back the same handle
+            // made `K.dup.equal?(K)` true, so naming the copy renamed `K`.
+            RubyValue::Class(cid) => crate::runtime_meta::runtime_class_dup(*cid, false)?,
             _ => recv.dup_value(false)?,
         })
     }
@@ -565,6 +567,14 @@ ruby_module! {
                 // Data copies stay frozen even under `freeze: false` (#2716).
                 crate::builtins::rstruct::refreeze_data_copy(&c);
                 c
+            }
+            // The class/module half, as `dup` above -- `clone` additionally
+            // carries the source's frozen state.
+            RubyValue::Class(cid) if crate::dispatch::class_is_module(*cid).unwrap_or(false) => {
+                crate::runtime_meta::runtime_module_dup(*cid)?
+            }
+            RubyValue::Class(cid) => {
+                crate::runtime_meta::runtime_class_dup(*cid, copy_frozen)?
             }
             _ => recv.dup_value(copy_frozen)?,
         };

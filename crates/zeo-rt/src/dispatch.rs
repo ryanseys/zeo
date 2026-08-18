@@ -2122,6 +2122,16 @@ pub fn responds_to_value(recv: &RubyValue, name: Symbol, include_all: bool) -> b
         // `respond_to?`, the same rule the instance walk below applies.
         return include_all || !class_method_is_private(*cid, name);
     }
+    // `private_class_method :new` marks a name the class does NOT define -- it
+    // inherits `Class#new` -- so `class_receiver_responds` above says no and the
+    // instance walk below would find the public `Class#new` and answer true.
+    // The mark is what ruby reports, whichever table the body lives in.
+    if let RubyValue::Class(cid) = recv
+        && !include_all
+        && class_method_is_private(*cid, name)
+    {
+        return false;
+    }
     // A class-method ALIAS is a name indirection rather than a table row, so
     // ask the whole question again under the source name. Re-entering HERE and
     // not inside `class_receiver_responds` is what makes `alias [] new` answer:
@@ -2887,7 +2897,14 @@ pub fn instance_method_visibility(class: ClassId, name: Symbol) -> Option<Method
             // here read as "not private" and made
             // `C.singleton_class.method_defined?(:private)` true, where CRuby
             // says false because `Module#private` is private.
-            Some(RubyValue::Class(owner)) if class_receiver_responds(owner, name) => {
+            // ...or when a `private_class_method` MARK names it. The mark can
+            // name a method the class only INHERITS (`private_class_method
+            // :new` retires `Class#new` for this one class), which
+            // `class_receiver_responds` alone answers no for.
+            Some(RubyValue::Class(owner))
+                if class_receiver_responds(owner, name)
+                    || crate::runtime_meta::overlay_class_method_private(owner, name).is_some() =>
+            {
                 return Some(match class_method_is_private(owner, name) {
                     true => MethodVisibility::Private,
                     false => MethodVisibility::Public,
@@ -2996,6 +3013,25 @@ pub fn class_method_is_private(class: ClassId, name: Symbol) -> bool {
         }
     }
     false
+}
+
+/// The explicit-receiver visibility guard for a class method a STATIC site
+/// resolved -- `Foo.new` where `private_class_method :new` may arrive at run
+/// time (singleton.rb's `included` hook writes it on its includer). The
+/// compile-time half is `emit_private_new_error`; this is the same refusal for
+/// a mark codegen could not see.
+pub fn guard_public_class_method(cid: ClassId, name: Symbol) -> Result<(), Signal> {
+    if !crate::runtime_meta::is_live() || !class_method_is_private(cid, name) {
+        return Ok(());
+    }
+    Err(raise_error(
+        "NoMethodError",
+        format!(
+            "private method '{}' called for class {}",
+            name.name(),
+            class_name(cid).unwrap_or_else(|| "?".to_string())
+        ),
+    ))
 }
 
 /// The CLASS-method (`def self.x` + builtin class-method) names of `class`,
@@ -3109,9 +3145,29 @@ pub(crate) fn registry_allocator(id: ClassId) -> Option<AllocatorFn> {
 /// ancestor's struct, stamped with the SUBCLASS's id (see `ruby_class!`'s
 /// `__class` field).
 pub(crate) fn ancestor_allocator_of(id: ClassId) -> Option<AllocatorFn> {
-    ancestors_of_value(id)
-        .iter()
-        .find_map(|a| registry_allocator(*a))
+    // A `Class#dup` copy's chain deliberately does NOT contain its source
+    // (`K.dup.ancestors` skips `K`, as ruby's does), so the compiled struct
+    // its copied bodies downcast to is reachable only through the allocator
+    // the copy recorded for itself. See `OverlayEntry::allocator`.
+    crate::runtime_meta::overlay_allocator(id).or_else(|| {
+        ancestors_of_value(id)
+            .iter()
+            .find_map(|a| registry_allocator(*a))
+    })
+}
+
+/// `id`'s OWN registered class-method body (`def self.x`), as the raw fn --
+/// what `Class#dup` copies onto the new class. Deliberately not the flattened
+/// probe: an INHERITED class method belongs to the ancestor, and the copy
+/// keeps the same ancestor.
+pub(crate) fn own_class_method_fn(id: ClassId, name: Symbol) -> Option<ValueMethodFn> {
+    REGISTRY
+        .get()?
+        .entries
+        .get(&id.0)?
+        .class_methods
+        .get(&name)
+        .copied()
 }
 
 /// The registry's dynamic constructor for `id` (`Class#new`'s row) --

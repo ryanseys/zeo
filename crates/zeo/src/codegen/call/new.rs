@@ -30,6 +30,20 @@ pub fn emit_private_new_error(cx: &Ctx, class_name: &str) -> Option<TokenStream>
     })
 }
 
+/// The RUNTIME half of [`emit_private_new_error`]: a `private_class_method
+/// :new` that arrives after compilation (singleton.rb's `included` hook writes
+/// it onto its includer, so no class body carries it) has to be asked about at
+/// the call. Emitted only where a runtime site could mark the name at all, so
+/// an ordinary `Foo.new` is untouched.
+pub fn runtime_private_new_guard(cx: &Ctx, class_name: &str) -> Option<TokenStream> {
+    if !cx.compiler.may_be_patched_at_runtime("new") {
+        return None;
+    }
+    let id = cx.resolve_class(class_name)?.0;
+    let sym = crate::codegen::pooled_sym("new");
+    Some(quote! { zeo_rt::guard_public_class_method(zeo_rt::ClassId(#id), #sym)?; })
+}
+
 pub fn emit_new(
     cx: &Ctx,
     class_name: &str,
