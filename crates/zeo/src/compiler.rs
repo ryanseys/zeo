@@ -98,11 +98,20 @@ pub struct ClassInfo {
     /// Needed to tell a class opened bare (`class Sub` -- often just to hold a
     /// nested class) from one explicitly declared `class Sub < Object`. A
     /// later reopen carrying a superclass may ESTABLISH the parent link in the
-    /// first case, while the second is a genuine conflict. MRI rejects both,
-    /// but this arises in zeo from wholesale-inlined libraries where the
-    /// bare opening and the real declaration are separated -- a deliberate,
-    /// documented divergence (see `reopen_split_superclass_dispatch`).
+    /// first case, while the second is a genuine conflict.
     pub explicit_superclass: bool,
+    /// Whether a real `class Foo` DEFINITION was written with no `< Super` --
+    /// as opposed to the forward SHELL zeo mints for a name a later file
+    /// defines (`resolve_or_create_container`, which no ruby program has an
+    /// equivalent of).
+    ///
+    /// The two look identical afterwards: parent `Object`, no explicit clause.
+    /// Ruby only knows the first, and rejects a reopen that then declares a
+    /// superclass -- `class Sub; end; class Sub < Base; end` is `TypeError:
+    /// superclass mismatch for class Sub`. A shell is not a definition and
+    /// carries no such history, so the reopen that declares its superclass
+    /// establishes it.
+    pub bare_definition: bool,
     /// `prepend`ed modules, in source order (see `analyze::mro`'s
     /// linearization -- expanded in REVERSE source order, so the most
     /// recently prepended module ends up closest).
@@ -1083,6 +1092,7 @@ impl Compiler {
                 own_method_at: FMap::default(),
                 own_class_method_at: FMap::default(),
                 explicit_superclass: false,
+                bare_definition: false,
                 own_class_methods: Vec::new(),
                 class_methods: Vec::new(),
                 method_index: Vec::new(),
@@ -1704,6 +1714,7 @@ impl Compiler {
             own_method_at: FMap::default(),
             own_class_method_at: FMap::default(),
             explicit_superclass: false,
+            bare_definition: false,
             own_class_methods: Vec::new(),
             class_methods: Vec::new(),
             method_index: Vec::new(),

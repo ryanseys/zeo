@@ -1,0 +1,8 @@
+[TypeError, "superclass mismatch for class Bare"]
+"Object"
+[1, 2, 3, "Parent"]
+[TypeError, "superclass mismatch for class Kid"]
+[:m, :n]
+"HI!"
+[TypeError, "superclass mismatch for class String"]
+[TypeError, "Parent is not a module"]

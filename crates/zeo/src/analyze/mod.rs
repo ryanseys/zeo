@@ -3887,21 +3887,23 @@ fn check_reopen_compatibility(
             format!("unknown superclass `{s}` (must be defined earlier in the file)")
         })?;
         if compiler.class(cid).parent != Some(want) {
-            // A class opened BARE first (`class Sub`, often just to
-            // hold a nested class) defaulted its parent to Object
-            // without any `< Super` ever being written. A later reopen
-            // that does declare one ESTABLISHES the link rather than
-            // conflicting with it -- otherwise the parent would be
-            // silently wrong and a subclass override would dispatch
-            // against the wrong chain.
+            // Two shapes reach here with `parent == Object` and no clause
+            // ever written, and ruby tells them apart:
             //
-            // MRI rejects this split too; it arises in zeo from
-            // wholesale-inlined libraries, so accepting it is a
-            // deliberate divergence (see the checked-in expectation
-            // for `reopen_split_superclass_dispatch`). A genuine
-            // conflict -- `class Sub < A` then `class Sub < B` -- still
-            // errors, because `explicit_superclass` is set by then.
-            if compiler.class(cid).explicit_superclass {
+            //   class Sub; end; class Sub < Base    a real bare DEFINITION,
+            //                                       then a conflicting reopen
+            //                                       -- ruby's own TypeError.
+            //   <forward shell>; class Sub < Base   a name a later file
+            //                                       defines, minted early so
+            //                                       an earlier one can name it
+            //                                       -- no ruby equivalent, and
+            //                                       the reopen ESTABLISHES the
+            //                                       link rather than
+            //                                       conflicting with it.
+            //
+            // A genuine `class Sub < A` then `class Sub < B` errors on
+            // `explicit_superclass` before either.
+            if compiler.class(cid).explicit_superclass || compiler.class(cid).bare_definition {
                 return Err(superclass_mismatch(compiler, def_node, name));
             }
             // ... and establishing one that already descends from THIS
@@ -4003,6 +4005,7 @@ fn create_class(
     // can tell a bare opening (parent defaulted to Object) from a real
     // declaration -- see the reopen arm above.
     ci.explicit_superclass = superclass.is_some();
+    ci.bare_definition = superclass.is_none() && !is_module;
     ci.lexical_parent = target.lexical_parent;
     ci.qualified_def = target.qualified_def;
     // The scope this definition is WRITTEN in, which is the naming

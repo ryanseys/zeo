@@ -1,2 +1,0 @@
-gaps/reopen_split_superclass_dispatch.rb:29:in '<module:M>': superclass mismatch for class Sub (TypeError)
-	from gaps/reopen_split_superclass_dispatch.rb:11:in '<main>'

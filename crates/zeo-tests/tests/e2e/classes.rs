@@ -1728,13 +1728,12 @@ fn basic_object_subclass_is_a_blank_slate() {
 }
 
 #[test]
-fn a_bare_opened_class_can_be_reparented_by_a_later_reopen() {
-    // DIVERGENCE, deliberate: MRI rejects this split, but it arises in zeo
-    // from wholesale-inlined libraries where the bare opening (often just to
-    // hold a nested class) and the real declaration are separated. The parent
-    // must come from the reopen that declares it, or a subclass override
-    // would dispatch against the wrong chain. A GENUINE conflict --
-    // `class Sub < A` then `class Sub < B` -- still errors.
+fn a_bare_opened_class_cannot_be_reparented_by_a_later_reopen() {
+    // A bare `class Sub` gives Sub the class Object as its parent, so a later
+    // `class Sub < Base` conflicts with a decision already made -- ruby's own
+    // TypeError, raised where the reopen stands. (zeo's forward SHELLS, minted
+    // for a name a later file defines, carry no such history and ARE
+    // established by the reopen that declares them.)
     let result = run_ruby(
         r#"
         module M
@@ -1747,21 +1746,23 @@ fn a_bare_opened_class_can_be_reparented_by_a_later_reopen() {
               def z; 1; end
             end
           end
-          class Sub < Base
-            def extra; "x"; end
+          begin
+            class Sub < Base
+              def extra; "x"; end
+            end
+          rescue TypeError => e
+            puts e.message
           end
         end
-        class Child < M::Sub
-          def hook; true; end
-        end
-        puts Child.new.run
-        puts M::Sub.new.run
-        puts M::Sub.new.extra
+        puts M::Sub.superclass
         puts M::Sub::Nested.new.z
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(result.stdout, "blocked\nok\nx\n1\n");
+    assert_eq!(
+        result.stdout,
+        "superclass mismatch for class Sub\nObject\n1\n"
+    );
 
     // A genuine conflict is still rejected -- as the `TypeError` ruby raises
     // at the definition, which leaves the first parent standing.
