@@ -342,6 +342,19 @@ pub(crate) fn step_walk(
     mut f: impl FnMut(&RubyValue) -> Result<(), Signal>,
 ) -> Result<(), Signal> {
     need_begin(begin)?;
+    // The limit has to be COMPARABLE with the start, and ruby says so when the
+    // walk RUNS rather than when it is built -- `1.step("z", 1)` answers an
+    // Enumerator, and driving it raises. Without this the walk simply yielded
+    // nothing.
+    if let Some(e) = end
+        && num_cmp(begin, e).is_none()
+    {
+        return Err(arg_error!(
+            "comparison of {} with {} failed",
+            crate::builtins::class_name_of(begin),
+            crate::builtins::class_name_of(e)
+        ));
+    }
     if float_step_lane(begin, end, step) {
         let beg = num_to_f64_unchecked(begin);
         let unit = num_to_f64_unchecked(step);

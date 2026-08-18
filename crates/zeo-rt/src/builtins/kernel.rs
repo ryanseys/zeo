@@ -1562,6 +1562,12 @@ fn parse_complex_string(s: &str) -> Result<(RubyValue, RubyValue), Signal> {
 /// `Kernel#String(arg)` -- `to_s` (the `to_str`-first nuance is invisible
 /// for builtin receivers).
 pub(crate) fn string_impl(args: &[RubyValue]) -> Result<RubyValue, Signal> {
+    // `to_str` FIRST, then `to_s` -- `rb_f_string` tries the strict conversion
+    // and only falls back to the display form, so an object defining `to_str`
+    // is converted by it rather than stringified.
+    if let Some(s) = crate::builtins::convert::check_to_str(&args[0])? {
+        return Ok(s);
+    }
     Ok(RubyValue::Str(crate::string_new(
         args[0].to_display_string(),
     )))
@@ -1574,6 +1580,14 @@ pub(crate) fn string_impl(args: &[RubyValue]) -> Result<RubyValue, Signal> {
 pub(crate) fn array_impl(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     if let Some(a) = crate::builtins::convert::check_to_ary(&args[0])? {
         return Ok(a);
+    }
+    // `to_ary` FIRST, then `to_a` -- `rb_Array` tries both, in that order, so
+    // an object defining only `to_a` still converts.
+    let to_a = crate::Symbol::intern("to_a");
+    if crate::dispatch::responds_to_value(&args[0], to_a, false)
+        && let RubyValue::Array(_) = crate::dispatch::send_value(&args[0], to_a, &[], None)?
+    {
+        return crate::dispatch::send_value(&args[0], to_a, &[], None);
     }
     Ok(match &args[0] {
         RubyValue::Nil => RubyValue::Array(crate::array_new(Vec::new())),
@@ -1600,10 +1614,15 @@ pub(crate) fn hash_impl(args: &[RubyValue]) -> Result<RubyValue, Signal> {
             Ok(RubyValue::Hash(crate::hash_new(Vec::new())))
         }
         RubyValue::Hash(_) => Ok(args[0].clone()),
-        other => Err(type_error!(
-            "can't convert {} into Hash",
-            crate::builtins::convert_name_of(other)
-        )),
+        // `to_hash` converts, as `rb_Hash` does; only a value with none is the
+        // TypeError.
+        other => match crate::builtins::convert::check_to_hash(other)? {
+            Some(h) => Ok(h),
+            None => Err(type_error!(
+                "can't convert {} into Hash",
+                crate::builtins::convert_name_of(other)
+            )),
+        },
     }
 }
 

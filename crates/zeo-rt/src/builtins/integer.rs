@@ -334,6 +334,22 @@ fn int_mask_arg(v: &RubyValue) -> Result<BigInt, Signal> {
     }
 }
 
+/// The limit of an `upto`/`downto` walk has to be COMPARABLE with the
+/// receiver, and ruby says so before yielding anything: `1.upto("a")` is
+/// `comparison of Integer with String failed`, not an empty walk. The check is
+/// deliberately after the blockless-Enumerator return, so it fires when the
+/// walk runs rather than when it is built.
+fn guard_comparable_limit(recv: &RubyValue, limit: &RubyValue) -> Result<(), Signal> {
+    if crate::builtins::numeric::num_cmp(recv, limit).is_some() {
+        return Ok(());
+    }
+    Err(arg_error!(
+        "comparison of {} with {} failed",
+        crate::builtins::class_name_of(recv),
+        crate::builtins::class_name_of(limit)
+    ))
+}
+
 /// `Integer#[]`: extracts bit(s) from `recv`'s two's-complement (infinite for
 /// negatives) representation. Resolves the (shift, width) window from the
 /// single-index / `start, len` / range forms, then answers
@@ -345,9 +361,16 @@ fn int_bit_ref(
     len: Option<&RubyValue>,
 ) -> Result<RubyValue, Signal> {
     use num_traits::One;
+    // Every INDEX goes through the conversion protocol: a non-Integer here is
+    // ruby's `no implicit conversion` TypeError, and a `to_int` duck is
+    // accepted. `to_bigint` panics on anything else, which took the process
+    // down for `5[nil]`.
+    let arg_int = |v: &RubyValue| -> Result<BigInt, Signal> {
+        Ok(to_bigint(&crate::builtins::convert::to_int(v)?))
+    };
     let val = to_bigint(recv);
     let (shift, width): (BigInt, Option<BigInt>) = if let Some(len) = len {
-        (to_bigint(index), Some(to_bigint(len)))
+        (arg_int(index)?, Some(arg_int(len)?))
     } else if let RubyValue::Range(__rg) = index {
         let (begin, end, exclusive) = __rg.parts();
         let Some(b) = begin else {
@@ -355,11 +378,11 @@ fn int_bit_ref(
                 "The beginless range for Integer#[] results in infinity"
             ));
         };
-        let start = to_bigint(b);
+        let start = arg_int(b)?;
         match end {
             None => (start, None),
             Some(e) => {
-                let last = to_bigint(e);
+                let last = arg_int(e)?;
                 let mut w = &last - &start;
                 if !exclusive {
                     w += 1;
@@ -368,7 +391,7 @@ fn int_bit_ref(
             }
         }
     } else {
-        (to_bigint(index), Some(BigInt::one()))
+        (arg_int(index)?, Some(BigInt::one()))
     };
 
     // A NEGATIVE start shifts the other way (`n[-k, len]` == `(n << k)[0, len]`);
@@ -936,6 +959,7 @@ ruby_class! {
     }
     def "upto"(recv, limit, &block) {
         let p = block_or_enum!(recv, __args, block);
+        guard_comparable_limit(recv, limit)?;
         // Fast i64 path; otherwise iterate as BigInt -- the VALUES may exceed
         // i64 even when the SPAN is small (`(2**100).upto(2**100 + 2)`).
         if let (RubyValue::Int(a), RubyValue::Int(b)) = (recv, limit) {
@@ -957,6 +981,7 @@ ruby_class! {
     }
     def "downto"(recv, limit, &block) {
         let p = block_or_enum!(recv, __args, block);
+        guard_comparable_limit(recv, limit)?;
         if let (RubyValue::Int(a), RubyValue::Int(b)) = (recv, limit) {
             let mut i = *a;
             while i >= *b {
