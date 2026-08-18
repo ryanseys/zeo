@@ -18,6 +18,10 @@ use zeo_macros::ruby_module;
 static MEASURE_TOTAL_TIME: AtomicBool = AtomicBool::new(true);
 static AUTO_COMPACT: AtomicBool = AtomicBool::new(false);
 static STRESS: AtomicBool = AtomicBool::new(false);
+/// `GC.disable`/`GC.enable`'s flag. There is no collector for it to gate, but
+/// the flag is observable state that programs read back, so it is tracked --
+/// see the rows for why that is the honest answer rather than a constant.
+static DISABLED: AtomicBool = AtomicBool::new(false);
 /// `GC::Profiler`'s switch. Nothing reads it but `enabled?` -- there is no
 /// tracing collector here to time -- but a program that turns profiling on
 /// and asks must be told what it asked for.
@@ -79,10 +83,17 @@ ruby_module! {
         crate::builtins::weak::run_finalizers_for_dead();
         Ok(RubyValue::Nil)
     }
-    // Real Ruby answers the PREVIOUS enabled state. Always-false is
-    // truthful here: the collector is never enabled, because there isn't one.
-    def self."enable" | "disable"(_recv) {
-        Ok(RubyValue::Bool(false))
+    // Both answer the PREVIOUS disabled state, which is what the restore idiom
+    // reads: `was = GC.disable; ...; GC.enable unless was`. A constant `false`
+    // made the second call of a pair lie, and the idiom leave the GC in the
+    // wrong state. zeo has no collector for the flag to gate -- but the flag
+    // itself is ordinary observable state, so it is tracked truthfully; only
+    // the collection it would gate is missing.
+    def self."disable"(_recv) {
+        Ok(RubyValue::Bool(DISABLED.swap(true, Ordering::Relaxed)))
+    }
+    def self."enable"(_recv) {
+        Ok(RubyValue::Bool(DISABLED.swap(false, Ordering::Relaxed)))
     }
     def self."stress"(_recv) {
         Ok(RubyValue::Bool(STRESS.load(Ordering::Relaxed)))

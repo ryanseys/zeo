@@ -530,7 +530,7 @@ ruby_class! {
     def "polar" (recv) {
         let magnitude =
             crate::dispatch::send_value(recv, crate::Symbol::intern("abs"), &[], None)?;
-        let angle = if matches!(num_cmp(recv, &RubyValue::Int(0)), Some(Some(-1))) {
+        let angle = if points_negative(recv) {
             RubyValue::Float(std::f64::consts::PI)
         } else {
             RubyValue::Int(0)
@@ -545,8 +545,12 @@ ruby_class! {
     }
     def "angle" | "arg" | "phase" (recv) {
         // 0 for non-negative reals, pi for negative (a Float in real Ruby
-        // only for the negative case; 0 stays Integer).
-        Ok(if matches!(num_cmp(recv, &RubyValue::Int(0)), Some(Some(-1))) {
+        // only for the negative case; 0 stays Integer). A NaN is its own
+        // argument, which is CRuby's first test.
+        if matches!(recv, RubyValue::Float(f) if f.is_nan()) {
+            return Ok(recv.clone());
+        }
+        Ok(if points_negative(recv) {
             RubyValue::Float(std::f64::consts::PI)
         } else {
             RubyValue::Int(0)
@@ -933,6 +937,17 @@ fn float_row(recv: &RubyValue, name: &str, args: &[RubyValue]) -> Result<RubyVal
 }
 
 /// `self < 0`, asked through `<=>` so a subclass needs nothing else.
+/// Which half of the plane `recv` points into, for `angle`/`arg`/`phase` and
+/// `polar`. A Float is judged by its SIGN BIT, not by `<=> 0`: `-0.0` compares
+/// equal to zero and yet its argument is pi, which is what CRuby's `float_arg`
+/// answers (it reaches `f_signbit`, not a comparison).
+fn points_negative(recv: &RubyValue) -> bool {
+    match recv {
+        RubyValue::Float(f) => f.is_sign_negative(),
+        other => matches!(num_cmp(other, &RubyValue::Int(0)), Some(Some(-1))),
+    }
+}
+
 fn is_negative(recv: &RubyValue) -> Result<bool, Signal> {
     Ok(matches!(
         send(recv, "<=>", &[RubyValue::Int(0)])?,
