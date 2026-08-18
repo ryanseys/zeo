@@ -2430,6 +2430,7 @@ mod tests {
             captured_locals: std::borrow::Cow::Borrowed(&empty),
             binding_names: None,
             in_eval_splice: false,
+            frameless: false,
             self_ident: quote::format_ident!("__self"),
             in_real_proc: false,
             self_is_dynamic: false,

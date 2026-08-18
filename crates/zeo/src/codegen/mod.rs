@@ -164,6 +164,13 @@ struct Ctx<'a> {
     /// scope's locals and handed it over as a vcall; Ruby resolves it as the
     /// local, which `emit_call` does here against `binding_names`.
     in_eval_splice: bool,
+    /// Whether the body being emitted pushes NO frame of its own -- a
+    /// generated `attr_*` accessor (CRuby compiles those iseq-less, so they
+    /// appear in no backtrace) and an AOT-spliced `eval("literal")`. Both
+    /// would otherwise stamp their own line numbers into the CALLER's frame
+    /// and never restore it, so an unrelated raise later in the caller
+    /// reported the accessor's `attr_reader` line.
+    frameless: bool,
     /// The identifier that stands for `self` in THIS position -- ordinarily
     /// the literal `self`, but rebound to a fresh capture-alias identifier
     /// while emitting an escaping block's own body that captured `self`
@@ -372,6 +379,7 @@ impl<'a> Ctx<'a> {
     fn in_eval_splice(&self) -> Ctx<'a> {
         Ctx {
             in_eval_splice: true,
+            frameless: true,
             ..self.clone()
         }
     }
@@ -2711,6 +2719,7 @@ fn codegen(analyzed: &Analyzed, sink: &mut ItemSink<'_>) -> std::io::Result<()> 
         captured_locals: std::borrow::Cow::Borrowed(&main_captures.locals),
         binding_names: main_binding.clone(),
         in_eval_splice: false,
+        frameless: false,
         self_ident: format_ident!("self"),
         in_real_proc: false,
         self_is_dynamic: false,
@@ -3458,6 +3467,7 @@ pub(crate) fn emit_class_body_site_lifted(
         captured_locals: std::borrow::Cow::Borrowed(&captures.locals),
         binding_names,
         in_eval_splice: false,
+        frameless: false,
         self_ident: format_ident!("self"),
         in_real_proc: false,
         self_is_dynamic: false,
@@ -4035,6 +4045,7 @@ fn emit_class_method_fn(
         captured_locals: std::borrow::Cow::Borrowed(&no_captures.locals),
         binding_names,
         in_eval_splice: false,
+        frameless: false,
         self_ident: if dyn_self {
             format_ident!("__self")
         } else {
@@ -4453,6 +4464,7 @@ fn emit_value_self_method_fn(
         captured_locals: std::borrow::Cow::Borrowed(&method_captures.locals),
         binding_names,
         in_eval_splice: false,
+        frameless: false,
         self_ident: format_ident!("__self"),
         in_real_proc: false,
         // `__self` here is the `RubyValue` receiver parameter, not an
@@ -4533,6 +4545,21 @@ pub(crate) fn emit_instance_method_body(
         &mut method_captures,
         false,
     );
+    // An `attr_*` accessor gets NO frame, because CRuby's does not either:
+    // it compiles them iseq-less, so they appear in no backtrace -- a
+    // `FrozenError` from `attr_writer` reports only the CALLER's line, and
+    // an arity error likewise (oracle-verified both ways against a
+    // hand-written `def x=(v); @x = v; end`, which does get its frame).
+    // A hand-written accessor keeps its frame whenever anything could
+    // observe one: a reader's body cannot raise and calls nothing, so only
+    // `TracePoint` could tell, but a writer's frozen guard raises and its
+    // backtrace must name it.
+    //
+    // Decided BEFORE the body is emitted: a frameless body must not stamp
+    // lines either (see `Ctx::frameless`).
+    let frameless = compiler
+        .accessor_shape(cid, scope)
+        .is_some_and(|a| a.attr_generated || a.kind == crate::compiler::AccessorKind::Reader);
     let method_cx = Ctx {
         compiler,
         box_id: compiler.class(scope.defining_class).box_id,
@@ -4556,6 +4583,7 @@ pub(crate) fn emit_instance_method_body(
         captured_locals: std::borrow::Cow::Borrowed(&method_captures.locals),
         binding_names,
         in_eval_splice: false,
+        frameless,
         self_ident: format_ident!("self"),
         in_real_proc: false,
         self_is_dynamic: false,
@@ -4591,18 +4619,6 @@ pub(crate) fn emit_instance_method_body(
     let needs_return_catch = captures::body_contains_escaping_return(compiler, &scope.body)
         || captures::body_contains_begin(compiler, &scope.body);
     let body = wrap_method_return(needs_return_catch, quote! { #prologue #body });
-    // An `attr_*` accessor gets NO frame, because CRuby's does not either:
-    // it compiles them iseq-less, so they appear in no backtrace -- a
-    // `FrozenError` from `attr_writer` reports only the CALLER's line, and
-    // an arity error likewise (oracle-verified both ways against a
-    // hand-written `def x=(v); @x = v; end`, which does get its frame).
-    // A hand-written accessor keeps its frame whenever anything could
-    // observe one: a reader's body cannot raise and calls nothing, so only
-    // `TracePoint` could tell, but a writer's frozen guard raises and its
-    // backtrace must name it.
-    let frameless = compiler
-        .accessor_shape(cid, scope)
-        .is_some_and(|a| a.attr_generated || a.kind == crate::compiler::AccessorKind::Reader);
     // Dropping `check_ints` with it cannot make a program uninterruptible:
     // an accessor body is a leaf, and every loop and every block already
     // checks on each iteration (`codegen::loops`, `codegen::call::procs`).

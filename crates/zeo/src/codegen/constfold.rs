@@ -290,6 +290,8 @@ mod tests {
                 captured_locals: Cow::Borrowed(&self.empty_captures),
                 binding_names: None,
                 in_eval_splice: false,
+            frameless: false,
+                frameless: false,
                 self_ident: self.self_ident.clone(),
                 in_real_proc: false,
                 self_is_dynamic: false,
