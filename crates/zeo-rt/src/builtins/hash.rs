@@ -498,19 +498,19 @@ ruby_class! {
     // the receiver.
     def "select!" | "filter!" (recv, &block) {
         guard_hash_frozen(recv)?;
-        hash_filter_bang(recv, &[], block, true, true)
+        hash_filter_bang(recv, &[], block, true, true, __RUBY_METHOD)
     }
     def "keep_if" (recv, &block) {
         guard_hash_frozen(recv)?;
-        hash_filter_bang(recv, &[], block, true, false)
+        hash_filter_bang(recv, &[], block, true, false, __RUBY_METHOD)
     }
     def "reject!" (recv, &block) {
         guard_hash_frozen(recv)?;
-        hash_filter_bang(recv, &[], block, false, true)
+        hash_filter_bang(recv, &[], block, false, true, __RUBY_METHOD)
     }
     def "delete_if" (recv, &block) {
         guard_hash_frozen(recv)?;
-        hash_filter_bang(recv, &[], block, false, false)
+        hash_filter_bang(recv, &[], block, false, false, __RUBY_METHOD)
     }
     // `transform_values!` rewrites each value in place through the block,
     // keeping keys and order; answers the receiver.
@@ -761,8 +761,9 @@ fn hash_filter_bang(
     block: Option<RubyValue>,
     keep: bool,
     nil_if_unchanged: bool,
+    method: &'static str,
 ) -> Result<RubyValue, crate::Signal> {
-    let p = block_or_enum!(recv, if keep { "select!" } else { "reject!" }, args, block);
+    let p = block_or_enum!(recv, method, args, block);
     let RubyValue::Hash(h) = recv else {
         unreachable!("Hash table row dispatched on a non-Hash receiver");
     };

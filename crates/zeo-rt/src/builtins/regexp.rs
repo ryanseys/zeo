@@ -384,7 +384,9 @@ fn subject_arg(v: &RubyValue) -> Result<Option<String>, crate::Signal> {
             if !buf.valid_encoding() {
                 let enc = buf.encoding().name();
                 drop(buf);
-                return Err(crate::builtins::arg_error!("invalid byte sequence in {enc}"));
+                return Err(crate::builtins::arg_error!(
+                    "invalid byte sequence in {enc}"
+                ));
             }
             Ok(Some(buf.to_utf8_lossy().into_owned()))
         }

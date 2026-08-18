@@ -1187,7 +1187,7 @@ ruby_class! {
     // In-place filters: self when anything changed, nil otherwise (real
     // Ruby's contract).
     def "select!" | "filter!" (recv, &block) {
-        in_place_filter(recv, "select!", block, true)
+        in_place_filter(recv, __RUBY_METHOD, block, true)
     }
     def "reject!" (recv, &block) {
         in_place_filter(recv, "reject!", block, false)
@@ -1552,10 +1552,10 @@ ruby_class! {
     // inherited, so the two can never drift apart. The parameter lists are
     // the oracle's, which is why some take a splat where the ancestor's
     // signature is narrower.
-    def "map" arity 0 | "collect" arity 0 (recv, *_args, &block) { own_row!(recv, |s| enumerable::map_own(s, __args, block)) }
-    def "select" arity 0 | "filter" arity 0 (recv, *_args, &block) { own_row!(recv, |s| enumerable::select(s, __args, block, true)) }
-    def "reject" arity 0 (recv, *_args, &block) { own_row!(recv, |s| enumerable::select(s, __args, block, false)) }
-    def "find" | "detect" cfunc (recv, *_args, &block) { own_row!(recv, |s| enumerable::find_own(s, __args, block)) }
+    def "map" arity 0 | "collect" arity 0 (recv, *_args, &block) { own_row!(recv, |s| enumerable::map_own(s, __args, block, __RUBY_METHOD)) }
+    def "select" arity 0 | "filter" arity 0 (recv, *_args, &block) { own_row!(recv, |s| enumerable::select(s, __args, block, true, __RUBY_METHOD)) }
+    def "reject" arity 0 (recv, *_args, &block) { own_row!(recv, |s| enumerable::select(s, __args, block, false, __RUBY_METHOD)) }
+    def "find" | "detect" cfunc (recv, *_args, &block) { own_row!(recv, |s| enumerable::find_own(s, __args, block, __RUBY_METHOD)) }
     def "all?" cfunc (recv, *_args, &block) { own_row!(recv, |s| enumerable::any_all(s, __args, block, enumerable::Quantifier::All)) }
     def "any?" cfunc (recv, *_args, &block) { own_row!(recv, |s| enumerable::any_all(s, __args, block, enumerable::Quantifier::Any)) }
     def "none?" cfunc (recv, *_args, &block) { own_row!(recv, |s| enumerable::any_all(s, __args, block, enumerable::Quantifier::None)) }

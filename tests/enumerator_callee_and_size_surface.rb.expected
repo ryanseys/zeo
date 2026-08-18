@@ -1,0 +1,46 @@
+2
+2
+2
+1
+1
+nil
+nil
+9
+3
+nil
+Infinity
+6
+0
+0
+"#<Enumerator: [1, 2]:map>"
+"#<Enumerator: [1, 2]:collect>"
+"#<Enumerator: [1, 2]:select>"
+"#<Enumerator: [1, 2]:filter>"
+"#<Enumerator: [1, 2]:find_all>"
+"#<Enumerator: [1, 2]:reject>"
+"#<Enumerator: [1, 2]:each_entry>"
+"#<Enumerator: {a: 1}:each>"
+"#<Enumerator: {a: 1}:each_pair>"
+"#<Enumerator: {a: 1}:select!>"
+"#<Enumerator: {a: 1}:filter!>"
+"#<Enumerator: {a: 1}:keep_if>"
+"#<Enumerator: {a: 1}:reject!>"
+"#<Enumerator: {a: 1}:delete_if>"
+"#<Enumerator: [1, 2]:map!>"
+"#<Enumerator: [1, 2]:collect!>"
+"#<Enumerator: [1, 2]:select!>"
+"#<Enumerator: [1, 2]:filter!>"
+"#<Enumerator: [1, 2]:keep_if>"
+"#<Enumerator: [1, 2]:flat_map>"
+"#<Enumerator: [1, 2]:collect_concat>"
+"#<Enumerator: [1, 2]:detect>"
+"#<Enumerator: [1, 2]:find>"
+2
+2
+[2, 4]
+[1, 2]
+[2]
+[2]
+{b: 2}
+[2, 3]
+{b: 2}

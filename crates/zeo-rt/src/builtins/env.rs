@@ -90,12 +90,8 @@ fn env_filter(
     block: Option<RubyValue>,
     keep: bool,
 ) -> Result<RubyValue, crate::Signal> {
-    let p = crate::builtins::block_or_enum!(
-        recv,
-        if keep { "select" } else { "reject" },
-        &[],
-        block
-    );
+    let p =
+        crate::builtins::block_or_enum!(recv, if keep { "select" } else { "reject" }, &[], block);
     let mut out = Vec::new();
     for (k, v) in pairs() {
         let (kv, vv) = (str_val(k), str_val(v));

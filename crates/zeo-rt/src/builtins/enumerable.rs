@@ -356,8 +356,8 @@ pub(crate) fn select(
     args: &[RubyValue],
     block: Option<RubyValue>,
     keep: bool,
+    method: &'static str,
 ) -> Result<RubyValue, Signal> {
-    let method = if keep { "select" } else { "reject" };
     reject_args(args, method, "arguments");
     let blk = block_or_enum!(src.recv, method, args, block);
     let brk: Arc<Mutex<Option<RubyValue>>> = Arc::new(Mutex::new(None));
@@ -1095,9 +1095,10 @@ pub(crate) fn map_own(
     src: Src<'_>,
     args: &[RubyValue],
     block: Option<RubyValue>,
+    method: &'static str,
 ) -> Result<RubyValue, Signal> {
-    reject_args(args, "map", "arguments");
-    let blk = block_or_enum!(src.recv, "map", args, block);
+    reject_args(args, method, "arguments");
+    let blk = block_or_enum!(src.recv, method, args, block);
     let brk: Arc<Mutex<Option<RubyValue>>> = Arc::new(Mutex::new(None));
     let brk2 = brk.clone();
     let items = fold_each(
@@ -1161,9 +1162,10 @@ pub(crate) fn find_own(
     src: Src<'_>,
     args: &[RubyValue],
     block: Option<RubyValue>,
+    method: &'static str,
 ) -> Result<RubyValue, Signal> {
     let ifnone = args.first().cloned();
-    let blk = block_or_enum!(src.recv, "find", &[], block);
+    let blk = block_or_enum!(src.recv, method, &[], block);
     let hit: Arc<Mutex<Option<RubyValue>>> = Arc::new(Mutex::new(None));
     let hit2 = hit.clone();
     let brk: Arc<Mutex<Option<RubyValue>>> = Arc::new(Mutex::new(None));
@@ -1368,13 +1370,13 @@ ruby_module! {
     // map/collect: the user block receives the RAW yielded values
     // (`rb_yield_values2`, enum.c:631-633); results collect into an Array.
     def "map" arity 0 | "collect" arity 0 (recv, *args, &block) {
-        map_own(Src::sending(recv), args, block)
+        map_own(Src::sending(recv), args, block, __RUBY_METHOD)
     }
     def "select" arity 0 | "filter" arity 0 | "find_all" arity 0 (recv, *args, &block) {
-        select(Src::sending(recv), args, block, true)
+        select(Src::sending(recv), args, block, true, __RUBY_METHOD)
     }
     def "reject" arity 0 (recv, *args, &block) {
-        select(Src::sending(recv), args, block, false)
+        select(Src::sending(recv), args, block, false, __RUBY_METHOD)
     }
     def "to_a" | "entries"(recv, *args, &_block) {
         reject_args(args, "to_a", "arguments (forwarding them to #each)");
@@ -1420,7 +1422,7 @@ ruby_module! {
     // when NO element matches, and its result becomes the answer; a match --
     // including a `nil` element -- ignores it. With no `ifnone` and no match, nil.
     def "find" | "detect"(recv, *args, &block) {
-        find_own(Src::sending(recv), args, block)
+        find_own(Src::sending(recv), args, block, __RUBY_METHOD)
     }
     // first / first(n): break-on-first(-nth) yield; `first(0)` returns `[]`
     // WITHOUT calling `each` at all (enum.c:3585); `first` on empty -> nil.

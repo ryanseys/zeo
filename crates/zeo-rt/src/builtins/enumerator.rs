@@ -64,6 +64,11 @@ enum EnumSource {
         recv: RubyValue,
         meth: String,
         args: Vec<RubyValue>,
+        /// Whether the METHOD ITSELF built this enumerator (`block_or_enum!`,
+        /// CRuby's `RETURN_SIZED_ENUMERATOR`) rather than an explicit
+        /// `to_enum`/`enum_for`. Only the first supplies a size function, so
+        /// `[1, 2].each.size` is 2 while `[1, 2].to_enum(:each).size` is nil.
+        sized: bool,
     },
     /// `Enumerator::Generator` -- the object `Enumerator.new { |y| ... }`
     /// holds as its source, and which `Enumerator::Generator.new` builds
@@ -227,7 +232,8 @@ static NEXT_ITER_ID: AtomicU64 = AtomicU64::new(1);
 /// (`rb_enumeratorize`): captures the receiver, the method to re-invoke,
 /// and the trailing args -- nothing else.
 pub(crate) fn enumerator_for(recv: &RubyValue, meth: &str, args: &[RubyValue]) -> RubyValue {
-    enumerator_for_with_size(recv, meth, args, None)
+    // The METHOD's own blockless return, so it carries a size function.
+    enumerator_for_sized(recv, meth, args, None, true)
 }
 
 /// `to_enum`/`enum_for` with the optional block that SUPPLIES the size
@@ -241,11 +247,24 @@ pub(crate) fn enumerator_for_with_size(
     args: &[RubyValue],
     size_hint: Option<RubyValue>,
 ) -> RubyValue {
+    enumerator_for_sized(recv, meth, args, size_hint, false)
+}
+
+/// [`enumerator_for_with_size`] plus the `sized` flag -- see
+/// [`EnumSource::Method::sized`].
+pub(crate) fn enumerator_for_sized(
+    recv: &RubyValue,
+    meth: &str,
+    args: &[RubyValue],
+    size_hint: Option<RubyValue>,
+    sized: bool,
+) -> RubyValue {
     RubyValue::Enumerator(Arc::new(EnumeratorData::new(
         EnumSource::Method {
             recv: recv.clone(),
             meth: meth.to_string(),
             args: args.to_vec(),
+            sized,
         },
         size_hint,
     )))
@@ -358,6 +377,7 @@ fn enumerator_over(source: RubyValue, size_hint: Option<RubyValue>) -> RubyValue
             recv: source,
             meth: "each".to_string(),
             args: Vec::new(),
+            sized: true,
         },
         size_hint,
     )))
@@ -438,9 +458,9 @@ fn ended_by_stop_iteration(sig: Signal) -> Result<RubyValue, Signal> {
 /// carries at exhaustion).
 fn internal_each(source: &EnumSource, block: RubyValue) -> Result<RubyValue, Signal> {
     match source {
-        EnumSource::Method { recv, meth, args } => {
-            send_value(recv, Symbol::intern(meth), args, Some(block))
-        }
+        EnumSource::Method {
+            recv, meth, args, ..
+        } => send_value(recv, Symbol::intern(meth), args, Some(block)),
         EnumSource::Generator { block: generator } => {
             let each_block = block.as_proc_unchecked();
             generator.call(&[RubyValue::Yielder(each_block)])
@@ -810,7 +830,9 @@ pub(crate) fn enum_inspect(e: &EnumeratorData) -> String {
             s.push(')');
             s
         }
-        EnumSource::Method { recv, meth, args } => {
+        EnumSource::Method {
+            recv, meth, args, ..
+        } => {
             let mut s = format!("#<Enumerator: {}:{meth}", recv.inspect_string());
             if !args.is_empty() {
                 let last = args.len() - 1;
@@ -883,7 +905,15 @@ fn enum_size(e: &EnumeratorData) -> RubyValue {
         EnumSource::Generator { .. } => RubyValue::Nil,
         // A produced sequence is endless -> Float::INFINITY (CRuby's rule).
         EnumSource::Produce { .. } => RubyValue::Float(f64::INFINITY),
-        EnumSource::Method { recv, meth, args } => match meth.as_str() {
+        EnumSource::Method {
+            recv,
+            meth,
+            args,
+            sized,
+        } => match meth.as_str() {
+            // A `to_enum`/`enum_for` enumerator supplies no size function, so
+            // it has no size at all unless a block was given for one.
+            _ if !*sized => RubyValue::Nil,
             "each" | "each_entry" | "map" | "collect" | "select" | "filter" | "find_all"
             | "reject" | "sort_by" | "min_by" | "max_by" | "group_by" | "partition"
             | "flat_map" | "collect_concat" | "each_with_index" | "each_with_object"
@@ -891,6 +921,19 @@ fn enum_size(e: &EnumeratorData) -> RubyValue {
             | "each_pair" | "each_index" | "map!" | "select!" | "reject!" | "transform_keys"
             | "transform_values" => receiver_size(recv),
             "times" => recv.clone(),
+            // `cycle` repeats the receiver forever, or `n` times: `n * size`,
+            // and 0 for an empty receiver or a non-positive count.
+            "cycle" => {
+                let RubyValue::Int(size) = receiver_size(recv) else {
+                    return RubyValue::Nil;
+                };
+                match args.first() {
+                    None | Some(RubyValue::Nil) if size == 0 => RubyValue::Int(0),
+                    None | Some(RubyValue::Nil) => RubyValue::Float(f64::INFINITY),
+                    Some(RubyValue::Int(n)) => RubyValue::Int((n * size).max(0)),
+                    Some(_) => RubyValue::Nil,
+                }
+            }
             "upto" | "downto" => int_span(recv, args.first(), meth == "upto"),
             "each_slice" | "each_cons" => {
                 let (RubyValue::Int(size), Some(RubyValue::Int(n))) =
@@ -1094,6 +1137,7 @@ ruby_class! {
                     recv,
                     meth,
                     args: captured,
+                    sized,
                 } => {
                     let mut all = captured;
                     all.extend(args.iter().cloned());
@@ -1101,6 +1145,7 @@ ruby_class! {
                         recv,
                         meth,
                         args: all,
+                        sized,
                     }
                 }
                 _ => {

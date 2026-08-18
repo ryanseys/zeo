@@ -885,7 +885,7 @@ mod tests {
         super::seg_matches(pat, name, false)
     }
     fn glob(pattern: &str) -> Vec<String> {
-        super::glob(pattern, false)
+        super::glob(pattern, false, None)
     }
 
     // --- The matcher: pure, no disk --------------------------------------

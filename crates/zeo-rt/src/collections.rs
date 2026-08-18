@@ -623,16 +623,17 @@ fn hash_key_rec(v: &RubyValue, by_identity: bool, seen: &mut Seen) -> HashKey {
             // A SNAPSHOT, as for Hash below: projecting an element can
             // dispatch a user `hash` that reads this very array.
             let items = array_snapshot(a);
-            let parts = items
-                .iter()
-                .map(|e| hash_key_rec(e, false, seen))
-                .collect();
+            let parts = items.iter().map(|e| hash_key_rec(e, false, seen)).collect();
             seen.pop();
             HashKey::Array(parts)
         }
         RubyValue::Range(__rg) => HashKey::Range(
-            __rg.start.as_ref().map(|b| Box::new(hash_key_rec(b, false, seen))),
-            __rg.end.as_ref().map(|b| Box::new(hash_key_rec(b, false, seen))),
+            __rg.start
+                .as_ref()
+                .map(|b| Box::new(hash_key_rec(b, false, seen))),
+            __rg.end
+                .as_ref()
+                .map(|b| Box::new(hash_key_rec(b, false, seen))),
             __rg.exclusive,
         ),
         RubyValue::Hash(h) => {

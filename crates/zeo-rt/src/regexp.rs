@@ -850,7 +850,8 @@ fn validate_repeat_ranges(source: &str) -> Result<(), String> {
                 if let Some(end) = source[i..].find('}') {
                     let body = &source[i + 1..i + end];
                     if let Some((lo, hi)) = body.split_once(',')
-                        && let (Ok(lo), Ok(hi)) = (lo.trim().parse::<u32>(), hi.trim().parse::<u32>())
+                        && let (Ok(lo), Ok(hi)) =
+                            (lo.trim().parse::<u32>(), hi.trim().parse::<u32>())
                         && lo > hi
                     {
                         return Err(format!(

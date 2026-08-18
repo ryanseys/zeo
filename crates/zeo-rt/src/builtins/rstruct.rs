@@ -999,7 +999,10 @@ pub(crate) fn define_value_class(
             return Err(name_error!("identifier {n} needs to be constant"));
         }
         let root_name = class_name(root).unwrap_or_else(|| "Struct".to_string());
-        crate::runtime_meta::name_runtime_class_if_anonymous(class_id, &format!("{root_name}::{n}"));
+        crate::runtime_meta::name_runtime_class_if_anonymous(
+            class_id,
+            &format!("{root_name}::{n}"),
+        );
         crate::constants::const_set(root.0, n, class_val.clone());
     }
     // A class-body block (`Struct.new(:x) do def dist; ...; end end`) runs with

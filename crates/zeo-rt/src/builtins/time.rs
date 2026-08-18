@@ -1195,7 +1195,11 @@ fn parse_offset(s: &str) -> Result<i32, Signal> {
                 Some(t) => t.parse().map_err(|_| bad()),
             }
         };
-        (num(parts.next(), 0)?, num(parts.next(), 0)?, num(parts.next(), 0)?)
+        (
+            num(parts.next(), 0)?,
+            num(parts.next(), 0)?,
+            num(parts.next(), 0)?,
+        )
     } else {
         // The COMPACT form: `+HH`, `+HHMM`, `+HHMMSS` (`Time.new(.., "+0900")`).
         if !rest.bytes().all(|b| b.is_ascii_digit()) || !matches!(rest.len(), 2 | 4 | 6) {

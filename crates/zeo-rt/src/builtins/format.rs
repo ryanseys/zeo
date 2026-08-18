@@ -463,7 +463,6 @@ fn named_get(args: &[RubyValue], name: &str, braces: bool) -> Result<RubyValue, 
     }
 }
 
-
 /// How a template names its arguments. CRuby lets a template use exactly one
 /// of the three (`sprintf.c`'s `CHECK_FOR_WIDTH`/`GETNEXTARG` guards): mixing
 /// them leaves no consistent answer for which argument comes next.
@@ -488,7 +487,6 @@ fn note_style(seen: &mut Option<ArgStyle>, now: ArgStyle) -> Result<(), Signal> 
         }
     }
 }
-
 
 /// The SHORTEST round-trip decimal of `f` as `(digits, exponent)`, where the
 /// value is `0.d1d2... x 10^exponent`. `None` for a value Rust renders in a

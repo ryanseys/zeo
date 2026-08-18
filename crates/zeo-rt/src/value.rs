@@ -438,7 +438,11 @@ impl RubyValue {
             RubyValue::Enumerator(e) => crate::builtins::enumerator::enum_to_s(e),
             RubyValue::Yielder(_) => "#<Enumerator::Yielder>".to_string(),
             RubyValue::Thread(t) => {
-                let status = if crate::thread::thread_alive(t) { "run" } else { "dead" };
+                let status = if crate::thread::thread_alive(t) {
+                    "run"
+                } else {
+                    "dead"
+                };
                 crate::thread::thread_inspect(t, status)
             }
             // `Object#to_s`'s address form (CRuby defines no `to_s`/`inspect`

@@ -133,34 +133,78 @@ fn expand(spec: &ClassSpec) -> TokenStream2 {
             }
             _ => quote! {},
         };
-        let method_name = if mentions(&method.body, "block_or_enum") {
-            let primary = &method.names[0].ruby;
-            quote! { const __RUBY_METHOD: &str = #primary; }
-        } else {
-            quote! {}
-        };
-        fn_items.push(quote! {
-            #( #attrs )*
-            #fn_vis fn #fn_ident(
-                #recv: &crate::RubyValue,
-                __args: &[crate::RubyValue],
-                __block: Option<crate::RubyValue>,
-            ) -> Result<crate::RubyValue, crate::Signal> {
-                #recv_binding
-                #method_name
-                #preamble
-                #body
+        // A def with SEVERAL names whose body builds an Enumerator has to know
+        // which one was called: CRuby's `RETURN_SIZED_ENUMERATOR` captures
+        // `__callee__`, so `[1, 2].collect.inspect` says "collect" and not
+        // "map". One body, one thin wrapper per alias passing its own literal
+        // -- no thread-local, no widened `BuiltinMethodFn`, and nothing on the
+        // hot path. A `bound_name` def keeps the single-fn shape: codegen's
+        // fast paths call it by name.
+        // A body asks for the callee either by building an Enumerator with
+        // `block_or_enum!` or by naming `__RUBY_METHOD` outright (to hand it
+        // to a shared helper).
+        let wants_callee =
+            mentions(&method.body, "block_or_enum") || mentions(&method.body, "__RUBY_METHOD");
+        let per_alias_callee =
+            method.names.len() > 1 && method.bound_name.is_none() && wants_callee;
+        let mut alias_idents: Vec<syn::Ident> = Vec::new();
+        if per_alias_callee {
+            // One fn per alias, each with its OWN `__RUBY_METHOD`. The name
+            // cannot travel as a PARAMETER: `block_or_enum!` is a
+            // `macro_rules!`, whose hygiene keeps its `__RUBY_METHOD` from
+            // binding to a local introduced anywhere else -- only an ITEM
+            // (this `const`) is visible to it.
+            for (n, name) in method.names.iter().enumerate() {
+                let wrapper = quote::format_ident!("{}_as{}", fn_ident, n);
+                let callee = &name.ruby;
+                fn_items.push(quote! {
+                    #( #attrs )*
+                    fn #wrapper(
+                        #recv: &crate::RubyValue,
+                        __args: &[crate::RubyValue],
+                        __block: Option<crate::RubyValue>,
+                    ) -> Result<crate::RubyValue, crate::Signal> {
+                        #recv_binding
+                        const __RUBY_METHOD: &str = #callee;
+                        #preamble
+                        #body
+                    }
+                });
+                alias_idents.push(wrapper);
             }
-        });
+        } else {
+            let method_name = if wants_callee {
+                let primary = &method.names[0].ruby;
+                quote! { const __RUBY_METHOD: &str = #primary; }
+            } else {
+                quote! {}
+            };
+            fn_items.push(quote! {
+                #( #attrs )*
+                #fn_vis fn #fn_ident(
+                    #recv: &crate::RubyValue,
+                    __args: &[crate::RubyValue],
+                    __block: Option<crate::RubyValue>,
+                ) -> Result<crate::RubyValue, crate::Signal> {
+                    #recv_binding
+                    #method_name
+                    #preamble
+                    #body
+                }
+            });
+        }
         // A `module_function` lands in BOTH tables (instance + class); an
         // ordinary method lands in exactly one, chosen by `def` vs `def self.`.
         let derived = method.derived_arity();
         let declared_private = method.visibility == zeo_dsl::Visibility::Private;
         let declared_protected = method.visibility == zeo_dsl::Visibility::Protected;
-        for name in &method.names {
+        for (alias_n, name) in method.names.iter().enumerate() {
             let entry = Entry {
                 ruby: name.ruby.clone(),
-                fn_ident: fn_ident.clone(),
+                fn_ident: alias_idents
+                    .get(alias_n)
+                    .cloned()
+                    .unwrap_or_else(|| fn_ident.clone()),
                 arity: name.arity.unwrap_or(derived),
                 attrs: method.attrs.clone(),
                 is_private: declared_private,
