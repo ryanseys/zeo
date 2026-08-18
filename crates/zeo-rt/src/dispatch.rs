@@ -2528,6 +2528,13 @@ pub fn responds_to(recv_class: ClassId, name: Symbol, include_all: bool) -> bool
     // `Foo.singleton_class.instance_method(:a)` finds `def self.a`.
     if crate::runtime_meta::is_live() {
         match crate::runtime_meta::singleton_owner_value(recv_class) {
+            // A name an `undef` inside `class << self` retired answers
+            // nothing, however live the registry row behind it still is.
+            Some(RubyValue::Class(owner))
+                if crate::runtime_meta::class_method_undefined(owner, name) =>
+            {
+                return false;
+            }
             Some(RubyValue::Class(owner)) => {
                 if class_receiver_responds(owner, name) {
                     return include_all || !class_method_is_private(owner, name);
@@ -2940,6 +2947,12 @@ pub fn instance_method_visibility(class: ClassId, name: Symbol) -> Option<Method
             // name a method the class only INHERITS (`private_class_method
             // :new` retires `Class#new` for this one class), which
             // `class_receiver_responds` alone answers no for.
+            // ...and a RETIRED one answers nothing at all.
+            Some(RubyValue::Class(owner))
+                if crate::runtime_meta::class_method_undefined(owner, name) =>
+            {
+                return None;
+            }
             Some(RubyValue::Class(owner))
                 if class_receiver_responds(owner, name)
                     || crate::runtime_meta::overlay_class_method_private(owner, name).is_some() =>
@@ -3085,6 +3098,16 @@ pub fn guard_public_class_method(cid: ClassId, name: Symbol) -> Result<(), Signa
 pub fn class_method_names_in(class: ClassId, inherit: bool) -> Vec<Symbol> {
     let mut seen = HashSet::new();
     let mut out = Vec::new();
+    // A name an `undef` inside `class << self` retired is claimed before any
+    // table can offer it -- the registry still carries the row it took back.
+    let live = crate::runtime_meta::is_live();
+    if live {
+        for &anc in ancestors_of_value(class) {
+            for name in crate::runtime_meta::overlay_class_undefs(anc) {
+                seen.insert(name);
+            }
+        }
+    }
     // A class minted at runtime keeps its `def self.x`/`define_singleton_method`/
     // `module_function` methods in the overlay, never in the frozen registry.
     if crate::runtime_meta::is_live() {

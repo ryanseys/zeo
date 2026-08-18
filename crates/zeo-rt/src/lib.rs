@@ -136,7 +136,7 @@ pub use lastmatch::{
     last_match, last_match_group, last_match_last_group, last_match_post, last_match_pre,
     set_last_match, svar_scope,
 };
-pub use runtime_meta::register_module_subclass;
+pub use runtime_meta::{register_module_subclass, runtime_undef_class_method_names};
 #[cfg(not(feature = "ext-tracepoint"))]
 #[inline]
 pub fn trace_frame_self(_f: impl FnOnce() -> RubyValue) {}

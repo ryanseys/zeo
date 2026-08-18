@@ -1439,6 +1439,22 @@ pub fn object_method_undefined(recv: &RubyValue, name: Symbol) -> bool {
 /// singleton gem's `undef_method :extend_object`, written inside an `extended`
 /// hook, raised NameError for a method `private_method_defined?` reported on
 /// the very same receiver.
+/// An `undef` written inside a REOPENED `class << self`, applied where it
+/// stands. The compile-time form (`ClassInfo::class_undefined`) applies from
+/// program start, which is wrong the moment a call sits between the two
+/// bodies: `def self.away` ... `p Gone.away` ... `class << self; undef away`.
+///
+/// Goes through the same singleton tombstone the runtime spelling writes, so
+/// dispatch and every ancestor-walking reader agree.
+pub fn runtime_undef_class_method_names(id: ClassId, names: &[&str]) -> Result<(), Signal> {
+    let singleton = singleton_class_id_of(id);
+    let args: Vec<RubyValue> = names
+        .iter()
+        .map(|n| RubyValue::Symbol(Symbol::intern(n)))
+        .collect();
+    runtime_undef_class_method(id, singleton, &args).map(|_| ())
+}
+
 fn runtime_undef_class_method(
     owner: ClassId,
     singleton: ClassId,
@@ -1489,13 +1505,36 @@ fn runtime_undef_class_method(
 /// Whether an `undef` inside `class << self` retired `name` as a CLASS method
 /// of `id` -- the gate every class-method resolution owes
 /// [`OverlayEntry::class_undefs`].
-pub(crate) fn class_method_undefined(id: ClassId, name: Symbol) -> bool {
+/// The class-method names `id`'s own entry retired -- see
+/// [`OverlayEntry::class_undefs`].
+pub(crate) fn overlay_class_undefs(id: ClassId) -> Vec<Symbol> {
     maps()
         .classes
         .read()
         .unwrap()
         .get(&id.0)
-        .is_some_and(|e| e.class_undefs.contains(&name))
+        .map(|e| e.class_undefs.iter().copied().collect())
+        .unwrap_or_default()
+}
+
+pub(crate) fn class_method_undefined(id: ClassId, name: Symbol) -> bool {
+    // Every ancestor, not just `id`: a class method is inherited through the
+    // parallel singleton chain, so `class Multi; class << self; undef x; end;
+    // end` retires it for `Sub < Multi` too. A subclass that DEFINES the name
+    // again ends the walk -- its own `def self.x` sits nearer than the
+    // tombstone, exactly as it would in ruby.
+    let c = maps().classes.read().unwrap();
+    for &anc in crate::dispatch::ancestors_of_value(id) {
+        if c.get(&anc.0)
+            .is_some_and(|e| e.class_undefs.contains(&name))
+        {
+            return true;
+        }
+        if anc != id && crate::dispatch::class_defines_own_class_method(anc, name) {
+            return false;
+        }
+    }
+    false
 }
 
 /// `Module#remove_method` -- drops this class's OWN definition, leaving an

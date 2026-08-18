@@ -4284,9 +4284,19 @@ fn walk_class_body(
             // hook and reopen ordering, and the singleton form has neither.
             HirNode::ClassMethodUndef(names) => {
                 let names = names.clone();
-                compiler.classes[class_id.0 as usize]
-                    .class_undefined
-                    .extend(names);
+                // In a REOPEN the retirement has a position: a call written
+                // between the two bodies still answers. Recording it in
+                // `class_undefined` applies it from program start.
+                if is_reopen_site(compiler, class_id, site_idx) {
+                    for n in &names {
+                        compiler.runtime_patches.insert(n.clone());
+                    }
+                    compiler.class_body_sites[site_idx].stmts.push(stmt);
+                } else {
+                    compiler.classes[class_id.0 as usize]
+                        .class_undefined
+                        .extend(names);
+                }
             }
             // A deferred `alias`/`alias_method` of an INHERITED method --
             // resolved by `mro::resolve_aliases` once ancestors are computed.

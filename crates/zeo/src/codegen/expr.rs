@@ -1842,10 +1842,27 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         HirNode::ClassDef { .. } => {
             crate::codegen::emit_class_def_marker(cx, id, crate::codegen::BodyValue::Keep)
         }
+        // An `undef` in a REOPENED `class << self`: analyze left it in the
+        // site's statements precisely so it applies HERE rather than from
+        // program start.
+        HirNode::ClassMethodUndef(names) => {
+            let cid = cx
+                .defining_class
+                .expect("a class-method undef is written in a class body")
+                .0;
+            let names = names.iter().map(String::as_str);
+            quote! {
+                {
+                    zeo_rt::runtime_undef_class_method_names(
+                        zeo_rt::ClassId(#cid), &[#(#names),*],
+                    )?;
+                    zeo_rt::RubyValue::Nil
+                }
+            }
+        }
         HirNode::Program(_)
         | HirNode::Refine { .. }
         | HirNode::Undef(_)
-        | HirNode::ClassMethodUndef(_)
         | HirNode::AliasMethod { .. }
         | HirNode::MethodVisibility { .. }
         | HirNode::ClassMethodVisibility { .. }
