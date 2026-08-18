@@ -165,7 +165,27 @@ ruby_class! {
                 let a = p.arity();
                 if a < 0 { (-a - 1) as i64 } else { a as i64 }
             }
-            Some(v) => crate::builtins::convert::to_index(v)?,
+            Some(v) => {
+                let n = crate::builtins::convert::to_index(v)?;
+                // Only a LAMBDA is checked, and only against slots it really
+                // has: `proc_curry` rejects an arity outside `min..max`, but a
+                // plain proc is elastic and takes any. A negative `arity` means
+                // a splat, so the maximum is unbounded and only the minimum
+                // (`-arity - 1`) can be violated.
+                if p.is_lambda() {
+                    let a = p.arity();
+                    let (min, max) = match a < 0 {
+                        true => ((-a - 1) as i64, i64::MAX),
+                        false => (a as i64, a as i64),
+                    };
+                    if n < min || n > max {
+                        return Err(arg_error!(
+                            "wrong number of arguments (given {n}, expected {min})"
+                        ));
+                    }
+                }
+                n
+            }
         };
         Ok(curried(p, Vec::new(), n as usize))
     }

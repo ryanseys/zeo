@@ -1061,11 +1061,19 @@ ruby_class! {
 
     // `Enumerator.product(*enums)` -- every combination as an Array, rightmost
     // source varying fastest (#2484). No args yields one empty combination.
-    def self."product"(_recv, *args, &_block) {
-        Ok(RubyValue::Enumerator(Arc::new(EnumeratorData::new(
+    def self."product"(_recv, *args, &block) {
+        let product = RubyValue::Enumerator(Arc::new(EnumeratorData::new(
             EnumSource::Product { sources: args.to_vec() },
             None,
-        ))))
+        )));
+        // With a block, ruby RUNS it over each tuple and answers nil; the
+        // enumerator is only what a blockless call gets. The block used to be
+        // accepted and dropped.
+        let Some(RubyValue::Proc(p)) = block else {
+            return Ok(product);
+        };
+        crate::dispatch::send_value(&product, crate::Symbol::intern("each"), &[], Some(RubyValue::Proc(p)))?;
+        Ok(RubyValue::Nil)
     }
 
     def "each"(recv, *args, &block) {
@@ -1343,6 +1351,12 @@ ruby_class! {
         def "inspect"(recv) { inherited_row!(enumerator, "inspect", recv, __args, None) }
         def "rewind"(recv) { inherited_row!(enumerator, "rewind", recv, __args, None) }
         def "size"(recv) { inherited_row!(enumerator, "size", recv, __args, None) }
+        // `Enumerator::Chain.new(a, b)`. Enumerator's own `self.new` takes a
+        // size and a block, so inheriting it made the two-enumerable form an
+        // arity error -- this class's constructor is its own.
+        def self."new" allocs cfunc (_recv, *args, &_block) {
+            Ok(chain_of(args.to_vec()))
+        }
         // Re-init: the receiver becomes a chain over the given enumerables.
         private def "initialize" cfunc (recv, *args) {
             let e = recv_enum(recv);
@@ -1365,6 +1379,14 @@ ruby_class! {
         def "inspect"(recv) { inherited_row!(enumerator, "inspect", recv, __args, None) }
         def "rewind"(recv) { inherited_row!(enumerator, "rewind", recv, __args, None) }
         def "size"(recv) { inherited_row!(enumerator, "size", recv, __args, None) }
+        // `Enumerator::Product.new(a, b)` -- its own constructor, for the same
+        // reason `Chain` needs one.
+        def self."new" allocs cfunc (_recv, *args, &_block) {
+            Ok(RubyValue::Enumerator(Arc::new(EnumeratorData::new(
+                EnumSource::Product { sources: args.to_vec() },
+                None,
+            ))))
+        }
         // Re-init: the receiver becomes the product of the given axes.
         private def "initialize" cfunc (recv, *args) {
             let e = recv_enum(recv);

@@ -82,10 +82,35 @@ ruby_class! {
     // match), each resolved the same way `[]` does, gathered into an Array.
     def "values_at"(recv, *args, &_block) {
         let md = recv_md(recv);
-        let out = args
-            .iter()
-            .map(|a| crate::regexp::matchdata_get(&md, a))
-            .collect::<Result<Vec<_>, _>>()?;
+        let n = md.groups.len() as i64;
+        let mut out = Vec::with_capacity(args.len());
+        for a in args {
+            // A Range contributes ONE ELEMENT PER INDEX it spans, not a nested
+            // slice -- `rb_get_values_at` walks `beg..beg+len` and fetches each
+            // -- so a range reaching past the last group pads with nil rather
+            // than stopping: `m.values_at(1..9)` is nine elements.
+            if let RubyValue::Range(rg) = a {
+                let (s, e, exclusive) = rg.parts();
+                let beg = match s {
+                    Some(RubyValue::Int(v)) => if *v < 0 { v + n } else { *v },
+                    None => 0,
+                    _ => return Err(type_error!("no implicit conversion into Integer")),
+                };
+                let last = match e {
+                    Some(RubyValue::Int(v)) => {
+                        let v = if *v < 0 { v + n } else { *v };
+                        if exclusive { v - 1 } else { v }
+                    }
+                    None => n - 1,
+                    _ => return Err(type_error!("no implicit conversion into Integer")),
+                };
+                for i in beg..=last {
+                    out.push(crate::regexp::matchdata_group(&md, i));
+                }
+                continue;
+            }
+            out.push(crate::regexp::matchdata_get(&md, a)?);
+        }
         Ok(RubyValue::Array(crate::array_new(out)))
     }
     def "named_captures"(recv, arg?) {
@@ -174,7 +199,16 @@ ruby_class! {
                 } else {
                     let mut out = Vec::new();
                     for k in &keys {
-                        let RubyValue::Symbol(s) = k else { break };
+                        // A non-Symbol key RAISES; it is not a quiet stop.
+                        // `match_deconstruct_keys` checks each key's type
+                        // before looking it up, so `deconstruct_keys(["a"])`
+                        // is a TypeError rather than an empty Hash.
+                        let RubyValue::Symbol(s) = k else {
+                            return Err(type_error!(
+                                "wrong argument type {} (expected Symbol)",
+                                crate::builtins::class_name_of(k)
+                            ));
+                        };
                         match named.iter().find(|(n, _)| *n == s.name()) {
                             Some((_, v)) => out.push((RubyValue::Symbol(*s), v.clone())),
                             None => break,

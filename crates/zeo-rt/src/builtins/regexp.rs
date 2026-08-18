@@ -47,9 +47,14 @@ ruby_class! {
     def self."last_match"(_recv, arg?) {
         match arg {
             None => Ok(crate::lastmatch::last_match()),
-            Some(v) => Ok(crate::lastmatch::last_match_group(
-                crate::builtins::convert::to_index(v)?.max(0) as usize,
-            )),
+            // A Symbol or String selects a NAMED group, not an index:
+            // `rb_reg_s_last_match` forwards anything that is not an Integer
+            // to `match_aref`, so the whole `MatchData#[]` key language works
+            // here. Routing through it is also what keeps the two in step.
+            Some(v) => match crate::lastmatch::last_match() {
+                RubyValue::MatchData(md) => crate::regexp::matchdata_get(&md, v),
+                _ => Ok(RubyValue::Nil),
+            },
         }
     }
 

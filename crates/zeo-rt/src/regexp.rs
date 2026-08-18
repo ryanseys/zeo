@@ -1867,8 +1867,20 @@ pub fn regexp_sub_block(re: &RRegexp, haystack: &str, blk: &RProc) -> Result<Rub
 /// behavior), an out-of-range index (in either direction) is `nil`.
 pub fn matchdata_group(m: &RMatchData, index: i64) -> RubyValue {
     let len = m.groups.len() as i64;
-    let i = if index < 0 { index + len } else { index };
-    if i < 0 || i >= len {
+    let i = if index < 0 {
+        // A negative index counts back through the CAPTURE GROUPS only and can
+        // never land on group 0, the whole match: `rb_reg_nth_match` answers
+        // nil once the wrap reaches `nth <= 0`. So `"hello".match(/(l)(o)/)[-3]`
+        // is nil, not `"lo"`.
+        let wrapped = index + len;
+        if wrapped <= 0 {
+            return RubyValue::Nil;
+        }
+        wrapped
+    } else {
+        index
+    };
+    if i >= len {
         return RubyValue::Nil;
     }
     match m.groups[i as usize] {
@@ -1959,7 +1971,14 @@ pub fn matchdata_named_captures(m: &RMatchData) -> RubyValue {
 }
 
 pub fn matchdata_string(m: &RMatchData) -> RubyValue {
-    crate::builtins::string::str_value_in_enc(m.enc, &m.haystack)
+    let s = crate::builtins::string::str_value_in_enc(m.enc, &m.haystack);
+    // FROZEN: `match_string` hands back `RMATCH(match)->str`, which
+    // `rb_backref_set` froze when the match was recorded, so the haystack
+    // cannot be mutated out from under the offsets the MatchData holds.
+    if let RubyValue::Str(buf) = &s {
+        buf.set_frozen();
+    }
+    s
 }
 
 /// `MatchData#to_s` -- the whole matched substring (distinct from
