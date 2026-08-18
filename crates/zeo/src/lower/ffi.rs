@@ -701,6 +701,117 @@ fn local_array_op<'a>(name: &str, stmt: &Node<'a>) -> Option<LocalArrayOp<'a>> {
     }
 }
 
+/// Receiver-position calls that change the object in place -- the poison
+/// vocabulary both the local and the constant replays read. Any `!` method
+/// counts too; everything else leaves the value alone.
+const IN_PLACE_METHODS: &[&str] = &[
+    "<<",
+    "push",
+    "append",
+    "concat",
+    "replace",
+    "insert",
+    "prepend",
+    "clear",
+    "[]=",
+    "pop",
+    "shift",
+    "unshift",
+    "delete",
+    "delete_at",
+    "delete_if",
+    "keep_if",
+    "fill",
+    "force_encoding",
+];
+
+/// `expr.freeze` -> `expr`. A frozen value is the same value, and a shared
+/// prototype is conventionally written frozen.
+fn unwrap_freeze<'a>(node: &Node<'a>) -> Option<Node<'a>> {
+    let call = node.as_call_node()?;
+    if call.name().as_slice() != b"freeze" || call.arguments().is_some() || call.block().is_some() {
+        return None;
+    }
+    call.receiver()
+}
+
+/// `(expr)` -> `expr`.
+fn unwrap_parens<'a>(node: &Node<'a>) -> Option<Node<'a>> {
+    let body = node.as_parentheses_node()?.body()?;
+    let stmts = body.as_statements_node()?;
+    let mut it = stmts.body().iter();
+    let one = it.next()?;
+    it.next().is_none().then_some(one)
+}
+
+/// The name a plain CONSTANT read spells, or `None` for any other node. Only
+/// the bare form: a `Foo::BAR` names a scope this stage does not resolve.
+fn const_read_name(node: &Node<'_>) -> Option<String> {
+    let read = node.as_constant_read_node()?;
+    Some(String::from_utf8_lossy(read.name().as_slice()).into_owned())
+}
+
+/// The VALUE a class body's `NAME = ...` bound, read at a declaration BEFORE
+/// any later statement could have changed it -- `local_array_elements`'
+/// constant twin, answering the node rather than elements so the caller can
+/// read it with the same rules every other type-list position gets.
+///
+/// A constant is written once by convention, so there is no append idiom to
+/// replay: a second write, or any in-place mutation, poisons the read rather
+/// than answering with a value that may already be stale.
+fn const_value_node<'a>(name: &str, body: &[Node<'a>], before: usize) -> Option<Node<'a>> {
+    let mut found: Option<Node<'a>> = None;
+    for stmt in body {
+        if stmt.location().start_offset() >= before {
+            continue;
+        }
+        if let Some(write) = stmt.as_constant_write_node()
+            && String::from_utf8_lossy(write.name().as_slice()) == name
+        {
+            if found.is_some() {
+                return None;
+            }
+            found = Some(write.value());
+            continue;
+        }
+        if const_mutated(name, stmt) {
+            return None;
+        }
+    }
+    found
+}
+
+/// Whether a statement mutates the constant in place (`TYPES << :int`) --
+/// `local_mutated`'s constant twin, over the same in-place vocabulary.
+fn const_mutated(name: &str, stmt: &Node<'_>) -> bool {
+    struct Search<'n> {
+        name: &'n str,
+        found: bool,
+    }
+    impl<'pr> ruby_prism::Visit<'pr> for Search<'_> {
+        fn visit_call_node(&mut self, node: &ruby_prism::CallNode<'pr>) {
+            if let Some(recv) = node.receiver()
+                && const_read_name(&recv).as_deref() == Some(self.name)
+            {
+                let method = String::from_utf8_lossy(node.name().as_slice()).into_owned();
+                self.found |= method.ends_with('!') || IN_PLACE_METHODS.contains(&method.as_str());
+            }
+            if let Some(recv) = node.receiver() {
+                self.visit(&recv);
+            }
+            if let Some(args) = node.arguments() {
+                self.visit(&args.as_node());
+            }
+            if let Some(block) = node.block() {
+                self.visit(&block);
+            }
+        }
+    }
+    let mut search = Search { name, found: false };
+    ruby_prism::Visit::visit(&mut search, stmt);
+    search.found
+}
+
 /// The name a plain local-variable READ spells, or `None` for any other node.
 fn local_read_name(node: &Node<'_>) -> Option<String> {
     let read = node.as_local_variable_read_node()?;
@@ -714,28 +825,6 @@ fn local_read_name(node: &Node<'_>) -> Option<String> {
 /// the same `str_suffix` in each of them, and every one of those reads is
 /// still the value the assignment gave it.
 fn local_mutated(name: &str, stmt: &Node<'_>) -> bool {
-    /// Receiver-position calls that change the object in place. Any `!`
-    /// method counts too; everything else leaves the value alone.
-    const MUTATORS: &[&str] = &[
-        "<<",
-        "push",
-        "append",
-        "concat",
-        "replace",
-        "insert",
-        "prepend",
-        "clear",
-        "[]=",
-        "pop",
-        "shift",
-        "unshift",
-        "delete",
-        "delete_at",
-        "delete_if",
-        "keep_if",
-        "fill",
-        "force_encoding",
-    ];
     struct Search<'n> {
         name: &'n str,
         found: bool,
@@ -785,7 +874,7 @@ fn local_mutated(name: &str, stmt: &Node<'_>) -> bool {
                 && local_read_name(&recv).as_deref() == Some(self.name)
             {
                 let method = String::from_utf8_lossy(node.name().as_slice()).into_owned();
-                self.found |= method.ends_with('!') || MUTATORS.contains(&method.as_str());
+                self.found |= method.ends_with('!') || IN_PLACE_METHODS.contains(&method.as_str());
             }
             if let Some(recv) = node.receiver() {
                 self.visit(&recv);
@@ -2850,6 +2939,14 @@ fn repeated(list: Vec<crate::hir::FfiType>, n: usize) -> Vec<crate::hir::FfiType
 /// repeat rides back as a COUNT rather than repeated nodes: a prism `Node` is
 /// not `Clone`, and repeating the resolved types is the same answer.
 fn type_list<'a>(node: &Node<'a>, class_body: &[Node<'a>]) -> Option<(Vec<Node<'a>>, usize)> {
+    // `[:float].freeze` -- the spelling a shared prototype gets when it is
+    // written as a constant. The freeze is invisible to a type list, which
+    // only ever reads the elements.
+    // `([:float] * 2).freeze` -- the two wrappers a shared prototype picks up
+    // on its way to a constant, neither of which a type list can see.
+    if let Some(inner) = unwrap_freeze(node).or_else(|| unwrap_parens(node)) {
+        return type_list(&inner, class_body);
+    }
     if let Some(syms) = word_list_to_syms(node) {
         return Some((syms, 1));
     }
@@ -2860,6 +2957,15 @@ fn type_list<'a>(node: &Node<'a>, class_body: &[Node<'a>]) -> Option<(Vec<Node<'
         && let Some(elems) = local_array_elements(&name, class_body, node.location().start_offset())
     {
         return Some((elems, 1));
+    }
+    if let Some(name) = const_read_name(node)
+        && let Some(value) = const_value_node(&name, class_body, node.location().start_offset())
+    {
+        // Read with the SAME rules: `TYPES = ([:float] * 2).freeze` is every
+        // form this function already knows, one indirection away. A constant
+        // bound to itself terminates on the offset test -- the write is never
+        // before its own read.
+        return type_list(&value, class_body);
     }
     // `[...] * n`
     let call = node.as_call_node()?;
