@@ -3224,11 +3224,19 @@ pub fn runtime_singleton_class(recv: &RubyValue) -> Result<RubyValue, Signal> {
     // owner (`singleton_owner`); other heap values (String/Array/...) get a fresh
     // singleton class good for `.class`/`.superclass`/reflection (defining on one
     // isn't supported, matching this runtime's singleton-storage limits).
+    // `nil`/`true`/`false` are the exception CRuby carves out: each is the sole
+    // instance of its class, so its singleton class IS that class, and
+    // `nil.singleton_class.equal?(NilClass)` is true. Only the numeric and
+    // Symbol immediates raise.
+    match recv {
+        RubyValue::Nil => return Ok(RubyValue::Class(zeo_abi::NIL_CLASS)),
+        RubyValue::Bool(true) => return Ok(RubyValue::Class(zeo_abi::TRUE_CLASS)),
+        RubyValue::Bool(false) => return Ok(RubyValue::Class(zeo_abi::FALSE_CLASS)),
+        _ => {}
+    }
     if matches!(
         recv,
-        RubyValue::Nil
-            | RubyValue::Bool(_)
-            | RubyValue::Int(_)
+        RubyValue::Int(_)
             | RubyValue::BigInt(_)
             | RubyValue::Float(_)
             | RubyValue::Rational(_)

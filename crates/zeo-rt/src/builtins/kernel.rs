@@ -280,9 +280,12 @@ ruby_module! {
     // dispatch (a `send :catch`, a `catch` reached through the MRO walk).
     module_function def "catch"(_recv, tag?, &block) {
         // A bare `catch` mints a fresh, unique tag object (passed to the block).
+        // A plain `Object`, as `rb_catch` does -- the block is handed the tag
+        // and `t.class` must answer `Object`. Uniqueness comes from the
+        // allocation, since the tag is matched by identity.
         let tag = tag
             .cloned()
-            .unwrap_or_else(|| RubyValue::Array(crate::array_new(Vec::new())));
+            .unwrap_or_else(|| crate::runtime_meta::blank_instance(zeo_abi::OBJECT_CLASS));
         let blk = block.ok_or_else(|| {
             local_jump_error!("no block given (yield)")
         })?;
@@ -2076,7 +2079,13 @@ pub fn kernel_catch(tag: RubyValue, block: RubyValue) -> Result<RubyValue, Signa
         s.borrow_mut().pop();
     });
     match result {
-        Err(Signal::Throw(t)) if t.tag.rb_eq(&tag) => Ok(t.value),
+        // IDENTITY, not `==`: ruby matches a throw to its catch by object, so
+        // `catch("s") { throw "s" }` does NOT match -- the two literals are
+        // different objects, and the throw escapes as an UncaughtThrowError.
+        // Symbols and Integers still match, being identical by value.
+        Err(Signal::Throw(t)) if crate::builtins::basic_object::value_identity(&t.tag, &tag) => {
+            Ok(t.value)
+        }
         other => other,
     }
 }
@@ -2085,7 +2094,12 @@ pub(crate) fn throw_impl(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     let tag = args[0].clone();
     // Only a tag with a live `catch` frame may unwind; otherwise it is an
     // `UncaughtThrowError` right here, catchable by an ordinary `rescue`.
-    let has_live_catch = CATCH_TAGS.with(|s| s.borrow().iter().any(|t| t.rb_eq(&tag)));
+    // Identity again, for the same reason as `kernel_catch`'s match.
+    let has_live_catch = CATCH_TAGS.with(|s| {
+        s.borrow()
+            .iter()
+            .any(|t| crate::builtins::basic_object::value_identity(t, &tag))
+    });
     if has_live_catch {
         Err(Signal::Throw(Box::new(crate::signal::Thrown {
             tag,
