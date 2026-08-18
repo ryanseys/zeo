@@ -317,24 +317,42 @@ pub(crate) fn build_members(recv: &RubyValue) -> Result<RubyValue, Signal> {
 fn member_index(recv: &RubyValue, key: &RubyValue) -> Result<usize, Signal> {
     let meta = meta_of(recv_class_id(recv)).expect("struct instance has meta");
     let n = meta.members.len();
-    match key {
-        RubyValue::Symbol(s) => meta
-            .index_of(*s)
-            .ok_or_else(|| name_error!("no member '{}' in struct", s.name())),
+    member_index_opt(recv, key)?.ok_or_else(|| match key {
+        RubyValue::Symbol(s) => name_error!("no member '{}' in struct", s.name()),
+        RubyValue::Str(s) => name_error!(
+            "no member '{}' in struct",
+            s.lock().to_utf8_lossy().into_owned()
+        ),
+        // An out-of-range offset names WHICH end it ran off, and reports the
+        // index as WRITTEN -- `s[-9]` on a 2-member struct is "offset -9 too
+        // small", not the -7 the wrap-around produced.
+        other => match crate::builtins::convert::to_index(other) {
+            Ok(i) if i < 0 => index_error!("offset {i} too small for struct(size:{n})"),
+            Ok(i) => index_error!("offset {i} too large for struct(size:{n})"),
+            Err(sig) => sig,
+        },
+    })
+}
+
+/// [`member_index`] without the miss error: `Ok(None)` for a member this struct
+/// does not have or an offset outside it, which is what `dig` answers `nil`
+/// for. A key that is not an index at all still raises -- `s.dig(Object.new)`
+/// is a TypeError in ruby, not a quiet nil.
+fn member_index_opt(recv: &RubyValue, key: &RubyValue) -> Result<Option<usize>, Signal> {
+    let meta = meta_of(recv_class_id(recv)).expect("struct instance has meta");
+    let n = meta.members.len();
+    Ok(match key {
+        RubyValue::Symbol(s) => meta.index_of(*s),
         RubyValue::Str(s) => {
             let name = s.lock().to_utf8_lossy().into_owned();
             meta.index_of(Symbol::intern(&name))
-                .ok_or_else(|| name_error!("no member '{name}' in struct"))
         }
         other => {
             let i = crate::builtins::convert::to_index(other)?;
             let idx = if i < 0 { i + n as i64 } else { i };
-            if idx < 0 || idx as usize >= n {
-                return Err(index_error!("offset {i} too large for struct(size:{n})"));
-            }
-            Ok(idx as usize)
+            (idx >= 0 && (idx as usize) < n).then_some(idx as usize)
         }
-    }
+    })
 }
 
 /// A member value rendered with its own `inspect` (dispatched, so a member that
@@ -391,13 +409,17 @@ pub(crate) fn struct_to_h(recv: &RubyValue, block: Option<RubyValue>) -> Result<
 
 pub(crate) fn build_inspect(recv: &RubyValue) -> Result<RubyValue, Signal> {
     let meta = meta_of(recv_class_id(recv)).expect("struct instance has meta");
-    let slots = slots_of(recv);
-    let mut parts = Vec::with_capacity(meta.members.len());
-    for (m, v) in meta.members.iter().zip(slots.iter()) {
-        let label = crate::builtins::symbol::struct_member_label(&m.name());
-        parts.push(format!("{label}={}", inspect_slot(v)?));
-    }
     let kind = if meta.is_data { "data" } else { "struct" };
+    // The traversal STACK, not a printed-already set: a struct that appears
+    // twice side by side prints twice, and only a genuine cycle is marked --
+    // the same rule `RubyValue::display_with` follows for Array and Hash. It
+    // cannot borrow that one, because a member's `inspect` is DISPATCHED and
+    // starts its own traversal.
+    thread_local! {
+        static INSPECTING: std::cell::RefCell<Vec<usize>> = const {
+            std::cell::RefCell::new(Vec::new())
+        };
+    }
     // An anonymous struct/data shows no name (`#<struct x=1>`); a named one
     // shows it (`#<struct Point x=1>`), matching CRuby. An unnamed runtime
     // class reports a `#<Class:0x..>` placeholder from `class_name` -- treat
@@ -406,6 +428,33 @@ pub(crate) fn build_inspect(recv: &RubyValue) -> Result<RubyValue, Signal> {
         Some(n) if !n.is_empty() && !n.starts_with("#<Class:") => format!(" {n}"),
         _ => String::new(),
     };
+    let ident = crate::value::container_identity(recv);
+    if let Some(id) = ident
+        && INSPECTING.with(|s| s.borrow().contains(&id))
+    {
+        // Ruby names the class and stops: `#<struct S x=#<struct S:...>>`.
+        return Ok(RubyValue::Str(string_new(format!("#<{kind}{named}:...>"))));
+    }
+    if let Some(id) = ident {
+        INSPECTING.with(|s| s.borrow_mut().push(id));
+    }
+    let slots = slots_of(recv);
+    let mut parts = Vec::with_capacity(meta.members.len());
+    let rendered = meta
+        .members
+        .iter()
+        .zip(slots.iter())
+        .try_for_each(|(m, v)| {
+            let label = crate::builtins::symbol::struct_member_label(&m.name());
+            parts.push(format!("{label}={}", inspect_slot(v)?));
+            Ok::<(), Signal>(())
+        });
+    // Popped whether or not a member's `inspect` raised, so a raise does not
+    // leave this struct permanently marked as being inspected.
+    if ident.is_some() {
+        INSPECTING.with(|s| s.borrow_mut().pop());
+    }
+    rendered?;
     // The separator goes BETWEEN the pieces, never ahead of the list: a
     // memberless Data is `#<data Empty>`, not `#<data Empty >`.
     let body = if parts.is_empty() {
@@ -545,9 +594,12 @@ ruby_class! {
     }
     def "dig" cfunc (recv, _key, *_rest, &_block) {
         let args = __args;
-        let value = {
-            let i = member_index(recv, &args[0])?;
-            slot_get(recv, i)
+        // A miss is `nil`, not the `[]` error: ruby's `rb_struct_dig` goes
+        // through `rb_struct_lookup`, so both an unknown member and an
+        // out-of-range offset end the walk quietly.
+        let value = match member_index_opt(recv, &args[0])? {
+            Some(i) => slot_get(recv, i),
+            None => return Ok(RubyValue::Nil),
         };
         if args.len() == 1 || matches!(value, RubyValue::Nil) {
             return Ok(value);
