@@ -445,8 +445,9 @@ fn named_captures_dup_names_backref_plus_and_nonstring_match() {
 #[test]
 fn posix_bracket_validation_and_regexp_error_messages() {
     // An unknown POSIX class name is a RegexpError (invalid POSIX bracket type),
-    // while valid ones compile; an unterminated char class reports CRuby's
-    // message shape, not the engine's raw multiline parse error.
+    // while valid ones compile; an unterminated char class reports onig's own
+    // wording -- "premature end of char-class", not the engine's raw multiline
+    // parse error and not a paraphrase of it.
     let result = run_ruby(
         r##"
         p "Hi 12".scan(/[[:alpha:]]+/)
@@ -460,7 +461,7 @@ fn posix_bracket_validation_and_regexp_error_messages() {
         result.stdout,
         "[\"Hi\"]\n\
          \"invalid POSIX bracket type: /[[:bogus:]]/\"\n\
-         \"unterminated character class: /[invalid/\"\n\
+         \"premature end of char-class: /[invalid/\"\n\
          true\n"
     );
 }

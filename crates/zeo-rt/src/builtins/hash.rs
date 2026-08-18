@@ -228,6 +228,9 @@ ruby_class! {
         Ok(RubyValue::Bool(recv.rb_eq(other)))
     }
     def "fetch" cfunc (recv, arg1, arg2?, &block) {
+        if block.is_some() && arg2.is_some() {
+            crate::builtins::warning::rb_warn("block supersedes default value argument");
+        }
         // One probe, not `has_key?` then `[]` -- see `hash_lookup`.
         if let Some(v) = crate::collections::hash_lookup(rhash, arg1) {
             return Ok(v);

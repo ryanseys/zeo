@@ -176,6 +176,9 @@ ruby_class! {
             && let Some(RubyValue::Array(a)) = size {
                 return Ok(RubyValue::Array(crate::array_new(a.lock().to_vec())));
             }
+        if block.is_some() && fill.is_some() {
+            crate::builtins::warning::rb_warn("block supersedes default value argument");
+        }
         let size = match size {
             None => 0,
             Some(v) => arg_int!(v),
@@ -812,12 +815,20 @@ ruby_class! {
         crate::dispatch::obj_dig(cur, &args[1..])
     }
     def "fetch" cfunc (recv, arg1, arg2?, &block) {
+        if block.is_some() && arg2.is_some() {
+            crate::builtins::warning::rb_warn("block supersedes default value argument");
+        }
         let i = arg_int!(arg1);
         let items = rary.lock().clone();
         let n = items.len() as i64;
         let idx = if i < 0 { i + n } else { i };
         if (0..n).contains(&idx) {
             return Ok(items[idx as usize].clone());
+        }
+        // The BLOCK outranks a positional default -- which is what the warning
+        // above says. It is yielded the ORIGINAL index, not the wrapped one.
+        if let Some(RubyValue::Proc(p)) = &block {
+            return p.call(std::slice::from_ref(arg1));
         }
         if let Some(default) = arg2 {
             return Ok(default.clone());

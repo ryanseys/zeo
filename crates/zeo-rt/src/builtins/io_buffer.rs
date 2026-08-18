@@ -180,6 +180,9 @@ impl RubyObject for RBuffer {
 }
 
 fn buffer_value(st: BufState) -> RubyValue {
+    // CRuby warns from the ALLOCATOR, so every construction spelling reaches
+    // it -- `.new`, `.for`, `.string`, `.map` and a `#slice` alike.
+    crate::builtins::warning::warn_io_buffer_experimental();
     RubyValue::Object(Arc::new(RBuffer {
         state: PlMutex::new(st),
         frozen: AtomicBool::new(false),
@@ -1399,6 +1402,7 @@ fn finish_io(n: isize) -> Result<RubyValue, Signal> {
 }
 
 fn buffer_allocate(_id: ClassId) -> RObj {
+    crate::builtins::warning::warn_io_buffer_experimental();
     Arc::new(RBuffer {
         state: PlMutex::new(null_state()),
         frozen: AtomicBool::new(false),

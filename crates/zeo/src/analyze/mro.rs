@@ -664,6 +664,28 @@ fn materialize_methods(
             }
             materialized.push(entry);
         }
+        // A NATIVE row on this ancestor claims the name too. `Array#none?` and
+        // `Array#size` are Rust builtins with no `Scope`, so `Array`
+        // contributes nothing to `own_methods` for them and the walk used to
+        // fall through to the first ancestor that DOES have a user scope --
+        // handing a `module Enumerable; def none?; end` reopen a name `Array`
+        // owns. Ruby puts `Array` first in the ancestry and its own definition
+        // wins, so the claim is exactly the `seen.insert` an `undef` already
+        // performs.
+        //
+        // AFTER the own-method loop, deliberately: a user REOPEN of the same
+        // builtin (`class Array; def none?; end`) is in that ancestor's
+        // `own_methods` and must outrank the native row it replaces.
+        //
+        // No row is materialized -- the native body is not a `Scope` and the
+        // dynamic walk finds it in `class_table(ancestor)` after the
+        // (now absent) `value_method(ancestor)` probe misses.
+        for name in crate::builtin_surface::surface_for(anc_id)
+            .map(|s| s.instance_methods)
+            .unwrap_or(&[])
+        {
+            seen.insert(compiler.names.intern(name));
+        }
     }
 
     // Ivars are collected from EVERY ancestor's OWN methods -- not just the

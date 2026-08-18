@@ -201,7 +201,16 @@ ruby_class! {
 
     // `File::Stat.new(path)` -- the direct constructor, beside `File.stat`.
     // It FOLLOWS symlinks (`File::Stat.new` is `stat(2)`, not `lstat(2)`).
-    def self."new"(_recv, path) {
+    //
+    // `*args`, not `(path)`: CRuby reaches this through the INHERITED
+    // `Class#new`, whose arity is -1, and the private `File::Stat#initialize`
+    // it forwards to is what carries the arity-1 check. The oracle row is
+    // `Class#new`'s, so a declared 1 here is a mismatch even though the method
+    // really does take exactly one argument.
+    def self."new"(_recv, *_args) {
+        let [path] = __args else {
+            return Err(crate::dispatch::wrong_arity(__args.len(), "1"));
+        };
         stat_from_path(&crate::builtins::file::path_arg(path, "stat")?, true)
     }
     def "size"(recv) {

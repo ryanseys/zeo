@@ -160,15 +160,19 @@ ruby_class! {
         }
     }
     def "fetch" cfunc (_recv, name, default?, &block) {
+        if block.is_some() && default.is_some() {
+            crate::builtins::warning::rb_warn("block supersedes default value argument");
+        }
         let k = key(name)?;
         if let Ok(v) = std::env::var(&k) {
             return Ok(str_val(v));
         }
-        if let Some(d) = default {
-            return Ok(d.clone());
-        }
+        // The BLOCK outranks a positional default, as the warning above says.
         if let Some(RubyValue::Proc(p)) = block {
             return p.call(std::slice::from_ref(name));
+        }
+        if let Some(d) = default {
+            return Ok(d.clone());
         }
         Err(crate::dispatch::raise_error_details(
             "KeyError",

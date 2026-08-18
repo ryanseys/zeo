@@ -1,0 +1,18 @@
+[:blk, 9]
+[:blk, :z]
+"blk ZEO_NO_SUCH_VAR"
+[:blk, :nope]
+[0, 1, 2]
+1
+1
+[:blk, 9]
+[:blk, :z]
+"blk ZEO_NO_SUCH_VAR"
+[:blk, :nope]
+[0, 2, 4]
+:dflt
+:dflt
+"dflt"
+:dflt
+[:fill, :fill]
+:blk

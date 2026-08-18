@@ -85,29 +85,57 @@ fn warn_impl(arg1: &RubyValue, arg2: Option<&RubyValue>) -> Result<RubyValue, Si
     }
 }
 
-/// The `Ractor API is experimental` notice, at the FIRST `Ractor.new` and
-/// never again -- CRuby's own once-per-process `rb_warn` with the caller's
-/// `file:line`, and gated on the same `Warning[:experimental]` flag, so a
-/// program that turns the category off before its first Ractor sees nothing.
-pub(crate) fn warn_ractor_experimental() {
-    static WARNED: AtomicBool = AtomicBool::new(false);
-    if WARNED.swap(true, Ordering::Relaxed) || !EXPERIMENTAL.load(Ordering::Relaxed) {
+/// CRuby's `rb_warn`: the CALLER's `file:line`, the `warning: ` prefix and a
+/// trailing newline. Silent only when `$VERBOSE` is `nil` (`-W0`) -- unlike
+/// `rb_warning`, which additionally needs `$VERBOSE` true.
+///
+/// Through the Ruby-level `$stderr` (CRuby's `rb_warn` writes to `rb_stderr`),
+/// so `$stderr.reopen(IO::NULL)` silences it -- the standard trick for keeping
+/// a nondeterministic `file:line` out of a fixture's stderr. A raising
+/// redirected writer must not turn a warning into an exception, so the write
+/// result is dropped.
+pub(crate) fn rb_warn(msg: &str) {
+    if matches!(crate::globals::global_get(0, "$VERBOSE"), RubyValue::Nil) {
         return;
     }
     let Some((file, line)) = crate::frames::current_location() else {
         return;
     };
-    // Through the Ruby-level `$stderr` (CRuby's `rb_warn` writes to
-    // `rb_stderr`), so `$stderr.reopen(IO::NULL)` silences it -- the
-    // standard trick for keeping the nondeterministic `file:line` out of a
-    // fixture's stderr. A raising redirected writer must not turn a warning
-    // into an exception, so the write result is dropped.
-    let msg = format!(
-        "{file}:{line}: warning: Ractor API is experimental and may change in \
-         future versions of Ruby.\n"
-    );
+    let line = format!("{file}:{line}: warning: {msg}\n");
     let _ =
-        crate::builtins::io::write_bytes(&crate::builtins::io::current_stderr(), msg.as_bytes());
+        crate::builtins::io::write_bytes(&crate::builtins::io::current_stderr(), line.as_bytes());
+}
+
+/// One category-gated notice, at its FIRST reach and never again -- CRuby's
+/// own once-per-process `rb_category_warn` shape. `warned` is the caller's
+/// own cell, so each notice counts separately.
+fn warn_experimental_once(warned: &AtomicBool, msg: &str) {
+    if warned.swap(true, Ordering::Relaxed) || !EXPERIMENTAL.load(Ordering::Relaxed) {
+        return;
+    }
+    rb_warn(msg);
+}
+
+/// The `Ractor API is experimental` notice, at the FIRST `Ractor.new` and
+/// never again. Gated on `Warning[:experimental]`, so a program that turns the
+/// category off before its first Ractor sees nothing.
+pub(crate) fn warn_ractor_experimental() {
+    static WARNED: AtomicBool = AtomicBool::new(false);
+    warn_experimental_once(
+        &WARNED,
+        "Ractor API is experimental and may change in future versions of Ruby.",
+    );
+}
+
+/// The same notice for `IO::Buffer`, which CRuby raises from its ALLOCATOR
+/// (`rb_io_buffer_type_allocate`) -- so every constructor spelling reaches it,
+/// `IO::Buffer.new`, `.for`, `.string` and `.map` alike.
+pub(crate) fn warn_io_buffer_experimental() {
+    static WARNED: AtomicBool = AtomicBool::new(false);
+    warn_experimental_once(
+        &WARNED,
+        "IO::Buffer is experimental and both the Ruby and C interface may change in the future!",
+    );
 }
 
 /// Ruby's PARSE-time warnings, which CRuby prints before the program's first

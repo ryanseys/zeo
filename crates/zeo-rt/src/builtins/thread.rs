@@ -267,6 +267,9 @@ ruby_class! {
     // `Thread#fetch(key, default = nil)` -- the `#[]` read with CRuby's
     // three-way miss: the block, then the default, then a KeyError.
     def "fetch" cfunc (_recv, key, default?, &block) {
+        if block.is_some() && default.is_some() {
+            crate::builtins::warning::rb_warn("block supersedes default value argument");
+        }
         let sym = key_sym(key)?;
         if let Some(v) = thread::thread_local_fetch(t, sym) {
             return Ok(v);

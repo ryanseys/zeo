@@ -5167,6 +5167,18 @@ fn send_value_in_reason(
         let live = crate::runtime_meta::is_live();
         let n = name.name_str();
         for &anc in ancestors_of_value(cid) {
+            // An `undef` at this position TERMINATES the walk, before any
+            // table -- including this ancestor's NATIVE one. A builtin's
+            // `class_table` is a static list, so the compile-time registry
+            // entry and the runtime overlay tombstone are the ONLY records
+            // that a native row was retired. `respond_to?`/`method_defined?`
+            // already read both, so without this the two disagreed: the
+            // predicate said no and the call still answered.
+            if (live && crate::runtime_meta::overlay_is_undefined(anc, name))
+                || REGISTRY.get().is_some_and(|r| r.is_undefined(anc, name))
+            {
+                break;
+            }
             // A runtime `define_method` REPLACES, so within one ancestor the
             // overlay outranks both the reopen and the builtin table -- the
             // placement `send_in_reason` gives an object receiver through
@@ -5860,7 +5872,18 @@ fn send_in_reason(
         Some(None) => {}
         None => {
             let n = name.name_str();
+            let live = crate::runtime_meta::is_live();
             for &anc in ancestors_of_value(id) {
+                // An `undef_method` at this position TERMINATES the walk,
+                // before this ancestor's own NATIVE table -- the tombstone is
+                // the only record that a builtin row was retired, since
+                // `class_table` itself is a static list. See the twin in
+                // `send_value_in_reason`.
+                if (live && crate::runtime_meta::overlay_is_undefined(anc, name))
+                    || REGISTRY.get().is_some_and(|r| r.is_undefined(anc, name))
+                {
+                    break;
+                }
                 if let Some(f) = value_method(anc, box_id, name) {
                     // The same payload bridge the `class_table` arm below
                     // runs: an ext builtin's rows register as VALUE methods
