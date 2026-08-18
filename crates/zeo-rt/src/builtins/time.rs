@@ -232,6 +232,21 @@ fn local_zone(secs: i64) -> (i32, i32, String) {
         return (0, 0, "UTC".to_string());
     };
     let tz = jiff::tz::TimeZone::system();
+    // BEFORE the zone's first transition every zoneinfo file records LMT --
+    // local MEAN time, the town-clock offset to the second (`-07:52:58` for
+    // Los Angeles). CRuby never reports it: `localtime_r` fails that far back
+    // and `find_time_t` falls back to a representative offset, so
+    // `Time.local(0).utc_offset` is -28800 there. Answer the offset the FIRST
+    // real rule established instead, which is what that fallback amounts to.
+    if let Some(first) = tz.following(jiff::Timestamp::MIN).next()
+        && ts < first.timestamp()
+    {
+        return (
+            first.offset().seconds(),
+            i32::from(first.dst().is_dst()),
+            first.abbreviation().to_string(),
+        );
+    }
     let info = tz.to_offset_info(ts);
     let isdst = i32::from(info.dst().is_dst());
     (
@@ -604,6 +619,38 @@ impl Broken {
     }
 }
 
+/// A format whose LAST directive never reached a conversion character
+/// (`"%"`, `"abc%"`, `"%-"`). `Time#strftime` raises on one -- and names the
+/// whole format in the message -- where `Date#strftime` echoes it verbatim,
+/// which is why the check sits beside the Time row rather than in the shared
+/// renderer.
+fn incomplete_directive(fmt: &str) -> bool {
+    let b = fmt.as_bytes();
+    let mut i = 0usize;
+    while i < b.len() {
+        if b[i] != b'%' {
+            i += 1;
+            continue;
+        }
+        i += 1;
+        while i < b.len()
+            && (matches!(b[i], b'-' | b'0' | b'_' | b'^' | b'#' | b':') || b[i].is_ascii_digit())
+        {
+            i += 1;
+        }
+        // `E`/`O` are locale MODIFIERS only when a directive follows; a
+        // trailing `%E` is a complete (unknown) directive ruby echoes.
+        if i + 1 < b.len() && matches!(b[i], b'E' | b'O') {
+            i += 1;
+        }
+        if i >= b.len() {
+            return true;
+        }
+        i += 1;
+    }
+    false
+}
+
 pub(crate) fn render_strftime(b: &Broken, fmt: &str) -> String {
     let tm = &b.tm;
     let mut out = String::new();
@@ -635,6 +682,9 @@ pub(crate) fn render_strftime(b: &Broken, fmt: &str) -> String {
                 '^' => upcase = true,
                 '#' => swapcase = true,
                 ':' => colons += 1,
+                // POSIX's locale modifiers. Ruby accepts and IGNORES them
+                // (it has no locale alternatives), so `%Ey` renders `%y`.
+                'E' | 'O' => {}
                 _ => break,
             }
             raw.push(f);
@@ -1117,26 +1167,47 @@ fn check_offset(off: i64) -> Result<i32, Signal> {
     Ok(off as i32)
 }
 
-/// A `"+HH:MM"` / `"-HH:MM:SS"` / `"UTC"` / `"Z"` offset String, as seconds
-/// east of UTC -- `Time.new`'s 7th argument may be spelled this way.
+/// A `"+HH:MM"` / `"-HH:MM:SS"` / `"+HHMM"` / `"UTC"` / `"Z"` offset String,
+/// as seconds east of UTC -- `Time.new`'s 7th argument may be spelled any of
+/// those ways. `"UTC"`/`"Z"` answer the [`RTime::UTC`] sentinel rather than a
+/// plain zero: they name UTC ITSELF, so `#utc?` is true and `#zone` is "UTC",
+/// where a `"+00:00"` Time is merely at offset zero.
 fn parse_offset(s: &str) -> Result<i32, Signal> {
     let bad = || {
         arg_error!(
             "\"+HH:MM\", \"-HH:MM\", \"UTC\" or \"A\"..\"I\",\"K\"..\"Z\" expected for utc_offset: {s}"
         )
     };
-    if s == "UTC" || s == "Z" {
-        return Ok(0);
+    if s.eq_ignore_ascii_case("utc") || s == "Z" || s == "z" {
+        return Ok(RTime::UTC);
     }
     let sign = match s.as_bytes().first() {
         Some(b'+') => 1,
         Some(b'-') => -1,
         _ => return Err(bad()),
     };
-    let mut parts = s[1..].split(':');
-    let h: i64 = parts.next().ok_or_else(bad)?.parse().map_err(|_| bad())?;
-    let m: i64 = parts.next().unwrap_or("0").parse().map_err(|_| bad())?;
-    let sec: i64 = parts.next().unwrap_or("0").parse().map_err(|_| bad())?;
+    let rest = &s[1..];
+    let (h, m, sec): (i64, i64, i64) = if rest.contains(':') {
+        let mut parts = rest.split(':');
+        let num = |p: Option<&str>, d: i64| -> Result<i64, Signal> {
+            match p {
+                None => Ok(d),
+                Some(t) => t.parse().map_err(|_| bad()),
+            }
+        };
+        (num(parts.next(), 0)?, num(parts.next(), 0)?, num(parts.next(), 0)?)
+    } else {
+        // The COMPACT form: `+HH`, `+HHMM`, `+HHMMSS` (`Time.new(.., "+0900")`).
+        if !rest.bytes().all(|b| b.is_ascii_digit()) || !matches!(rest.len(), 2 | 4 | 6) {
+            return Err(bad());
+        }
+        let at = |i: usize| -> i64 { rest[i..i + 2].parse().unwrap_or(0) };
+        (
+            at(0),
+            if rest.len() >= 4 { at(2) } else { 0 },
+            if rest.len() == 6 { at(4) } else { 0 },
+        )
+    };
     check_offset(sign * (h * 3600 + m * 60 + sec))
 }
 
@@ -1782,6 +1853,11 @@ ruby_class! {
         Ok(RubyValue::Str(crate::collections::string_new(render(recv_time(recv), true))))
     }
     def "strftime" (recv, arg) {
+        let __fmt_check = crate::builtins::convert::to_rstr(arg)?;
+        let __fmt_check = __fmt_check.lock().to_utf8_lossy().into_owned();
+        if incomplete_directive(&__fmt_check) {
+            return Err(crate::builtins::arg_error!("invalid format: {__fmt_check}"));
+        }
         let f = &crate::builtins::convert::to_rstr(arg)?;
         let fmt = f.lock().to_utf8_lossy().into_owned();
         Ok(RubyValue::Str(crate::collections::string_new(strftime(recv_time(recv), &fmt))))

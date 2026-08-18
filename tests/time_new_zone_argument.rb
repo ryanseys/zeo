@@ -1,6 +1,3 @@
-# GAP -- imported from the spinel corpus at c55d9bdb.
-# Time.new with a zone argument raises "utc_offset out of range".
-#
 p Time.new(2020, 1, 1, 0, 0, 0, "UTC").utc?
 p Time.new(2020, 1, 1, 0, 0, 0, "Z").utc?
 p Time.new(2020, 1, 1, 0, 0, 0, "+0900").utc_offset

@@ -1,7 +1,3 @@
-# GAP -- imported from the spinel corpus at c55d9bdb.
-# Time#strftime does not implement the E and O locale modifiers; the
-# directives pass through literally.
-#
 t001 = Time.utc(2024, 2, 29, 5, 7, 9, 123456)
 p t001.strftime("%Ey %EY %Od %Om %OH")
 p t001.strftime("%6L")
