@@ -275,6 +275,63 @@ pub fn fire_exit(fr: &crate::frames::Frame) {
     });
 }
 
+/// CRuby implements TracePoint's whole surface in Ruby -- `trace_point.rb`,
+/// compiled into the VM, each body a `Primitive.` call -- so calling one of
+/// them fires an ordinary `:call`/`:return` pair, at that file's path and its
+/// own `def`/`end` lines. A program tracing `:call` sees them: `tp.disable`
+/// reports one last `:disable` before the trace stops. zeo's rows are native
+/// and would fire nothing, so each injects the pair by hand.
+///
+/// The gate is read at each end INDEPENDENTLY, which is what puts a pair's
+/// two halves where CRuby puts them: the `disable` that ends a trace fires
+/// `:call` and no `:return`, and the `enable` that starts one fires `:return`
+/// and no `:call`. Only the rows ordinary code calls are instrumented -- the event
+/// accessors are legal only inside a handler, where reentrancy suppresses
+/// everything anyway.
+///
+/// Lines are ruby 4.0.6's; re-read them from `trace_point.rb` when the oracle
+/// moves.
+const INTERNAL_PATH: &str = "<internal:trace_point>";
+
+struct InternalFrame {
+    label: &'static str,
+    end_line: u32,
+    slf: RubyValue,
+}
+
+impl InternalFrame {
+    fn enter(label: &'static str, lines: (u32, u32), slf: &RubyValue) -> Self {
+        if tracing() {
+            fire_internal(CALL, label, lines.0, slf);
+        }
+        Self {
+            label,
+            end_line: lines.1,
+            slf: slf.clone(),
+        }
+    }
+}
+
+impl Drop for InternalFrame {
+    fn drop(&mut self) {
+        if tracing() {
+            fire_internal(RETURN, self.label, self.end_line, &self.slf);
+        }
+    }
+}
+
+#[cold]
+fn fire_internal(bit: u8, label: &'static str, lineno: u32, slf: &RubyValue) {
+    dispatch(Snapshot {
+        bit,
+        path: INTERNAL_PATH,
+        lineno,
+        label,
+        raised: None,
+        slf: slf.clone(),
+    });
+}
+
 /// `attach_backtrace`'s hook: `:raise` at the raising frame's current
 /// line, carrying the exception for `#raised_exception`.
 #[cold]
@@ -316,7 +373,11 @@ fn dispatch(mut snap: Snapshot) {
     if tps.is_empty() && legacy.is_none() {
         return;
     }
-    snap.slf = current_self();
+    // An injected `<internal:trace_point>` frame supplies its own receiver
+    // (the tracepoint itself); every other hook leaves it Nil for the notes.
+    if matches!(snap.slf, RubyValue::Nil) {
+        snap.slf = current_self();
+    }
     IN_HANDLER.set(true);
     CURRENT.with(|c| *c.borrow_mut() = Some(snap.clone()));
     let fatal = |exc: RubyValue| -> ! {
@@ -507,11 +568,13 @@ fn new_tp(args: &[RubyValue], block: &Option<RubyValue>) -> Result<RubyValue, Si
 ruby_class! {
     TracePoint = zeo_abi::TRACEPOINT_CLASS < zeo_abi::OBJECT_CLASS;
 
-    def self."new" (_recv, *args, &block) {
+    def self."new" (recv, *args, &block) {
+        let _fr = InternalFrame::enter("TracePoint.new", (96, 99), recv);
         new_tp(args, &block)
     }
     // `trace` is `new` + `enable` in one step.
-    def self."trace" (_recv, *args, &block) {
+    def self."trace" (recv, *args, &block) {
+        let _fr = InternalFrame::enter("TracePoint.trace", (134, 137), recv);
         let tp = new_tp(args, &block)?;
         register(&tp);
         Ok(tp)
@@ -521,6 +584,7 @@ ruby_class! {
     // fresh `enable` is false). The block forms restore that state on the
     // way out -- also past a raise -- and answer the block's value.
     def "enable" cfunc (recv, &block) {
+        let _fr = InternalFrame::enter("TracePoint#enable", (261, 264), recv);
         let prev = tp_of(recv).enabled.load(Ordering::Relaxed);
         match &block {
             Some(RubyValue::Proc(p)) => {
@@ -543,6 +607,7 @@ ruby_class! {
         }
     }
     def "disable" (recv, &block) {
+        let _fr = InternalFrame::enter("TracePoint#disable", (297, 300), recv);
         let prev = tp_of(recv).enabled.load(Ordering::Relaxed);
         match &block {
             Some(RubyValue::Proc(p)) => {
@@ -565,6 +630,7 @@ ruby_class! {
         }
     }
     def "enabled?" (recv) {
+        let _fr = InternalFrame::enter("TracePoint#enabled?", (306, 308), recv);
         Ok(RubyValue::Bool(tp_of(recv).enabled.load(Ordering::Relaxed)))
     }
 
@@ -628,14 +694,16 @@ ruby_class! {
     // `TracePoint.stat` reports per-VM hook counts, keyed by a `RubyVM`
     // object zeo has none of, so there is nothing to key on and nothing to
     // count.
-    def self."stat" (_recv) {
+    def self."stat" (recv) {
+        let _fr = InternalFrame::enter("TracePoint.stat", (119, 121), recv);
         Ok(RubyValue::Hash(crate::collections::hash_new(Vec::new())))
     }
     // `TracePoint.allow_reentry { }` re-arms tracing inside a handler.
     // Outside one CRuby refuses; inside one, zeo's reentrancy suppression
     // stays on (a handler that traced itself would not terminate), so the
     // block simply runs.
-    def self."allow_reentry" (_recv, &block) {
+    def self."allow_reentry" (recv, &block) {
+        let _fr = InternalFrame::enter("TracePoint.allow_reentry", (200, 203), recv);
         let Some(block) = block else {
             return Err(runtime_error!("must be called with a block"));
         };
@@ -648,7 +716,8 @@ ruby_class! {
     // Outside a handler: `#<TracePoint:enabled>`/`#<TracePoint:disabled>`
     // (no address -- CRuby's own shape). Inside one, the current event:
     // `#<TracePoint:call 'volume' f.rb:9>`.
-    def "inspect" | "to_s" (recv) {
+    def "inspect" (recv) {
+        let _fr = InternalFrame::enter("TracePoint#inspect", (106, 108), recv);
         let s = match CURRENT.with(|c| c.borrow().clone()) {
             Some(snap) => match label_parts(snap.label) {
                 Some((_, _, name)) => format!(
