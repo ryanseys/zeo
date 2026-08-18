@@ -100,13 +100,21 @@ pub(super) fn try_const_reflection(
         return None;
     }
     if !is_valid_const_name(&cname) {
+        // Through `make_name_error`, not a bare construction: ruby's
+        // `wrong constant name` carries `#name` and `#receiver` like any other
+        // NameError, and a bare `NameError.new(msg)` leaves both nil. The
+        // runtime row raises the same way for a name this fold cannot see.
         let msg = format!("wrong constant name {cname}");
-        let err = crate::codegen::expr::emit_boxed_new(
-            cx,
-            "NameError",
-            vec![quote! { zeo_rt::RubyValue::Str(zeo_rt::string_new(#msg.to_string())) }],
-        );
-        return Some(quote! { return Err(zeo_rt::Signal::Raise(#err)) });
+        let id = target.0;
+        return Some(quote! {
+            return Err(zeo_rt::Signal::Raise(zeo_rt::stamp_backtrace(
+                zeo_rt::make_name_error(
+                    #msg.to_string(),
+                    #cname,
+                    zeo_rt::RubyValue::Class(zeo_rt::ClassId(#id)),
+                ),
+            )))
+        });
     }
 
     // `const_get`/`const_defined?` reach through to `Object`, unlike the

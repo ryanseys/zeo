@@ -87,6 +87,19 @@ fn const_name_arg(v: &RubyValue) -> Result<String, crate::Signal> {
     }
 }
 
+/// Ruby rejects a name that is not a CONSTANT name (`rb_is_const_id`) before it
+/// ever looks the constant up, and the `NameError` carries the name -- so
+/// `Foo.const_get(:nope)` is `wrong constant name nope` with `#name == :nope`,
+/// not an `uninitialized constant` miss with no name at all.
+fn check_const_name(name: &str, recv: &RubyValue) -> Result<(), crate::Signal> {
+    if name.starts_with(|c: char| c.is_ascii_uppercase()) {
+        return Ok(());
+    }
+    Err(crate::Signal::Raise(crate::dispatch::stamp_backtrace(
+        crate::dispatch::make_name_error(format!("wrong constant name {name}"), name, recv.clone()),
+    )))
+}
+
 /// A class or module that IS `owner`'s constant `name` but was never written
 /// to the constant table: codegen resolves `Zlib::Error` and a bare `Array`
 /// statically, so nothing ever `const_set`s either. The registry files both
@@ -418,6 +431,7 @@ ruby_class! {
                 Search::Own => Search::Own,
                 _ => Search::Scoped,
             };
+            check_const_name(head, recv)?;
             let mut cur = const_lookup(cid, head, head_search)
                 .ok_or_else(|| name_error!("uninitialized constant {head}"))?;
             // A miss past the head dispatches `const_missing` on the scope
@@ -427,6 +441,7 @@ ruby_class! {
                 let RubyValue::Class(scope) = cur else {
                     return Err(type_error!("{} is not a class/module", cur.inspect_string()));
                 };
+                check_const_name(seg, &cur)?;
                 cur = match const_lookup(scope, seg, rest_search) {
                     Some(v) => v,
                     None => crate::dispatch::const_miss(scope, seg)?,
@@ -437,6 +452,7 @@ ruby_class! {
         // A single-segment miss dispatches `const_missing` on the receiver;
         // the default hook raises qualified by it, which is what tells a
         // miss on `Foo.const_get(:X)` apart from one on a bare `X`.
+        check_const_name(&name, recv)?;
         match const_lookup(cid, &name, inherit_search(inherit)) {
             Some(v) => Ok(v),
             None => crate::dispatch::const_miss(cid, &name),
