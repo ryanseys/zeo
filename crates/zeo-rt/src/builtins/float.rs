@@ -96,7 +96,19 @@ ruby_class! {
     }
     // `coerce(other)` promotes both operands to Float (`[Float(other), self]`).
     def "coerce" (recv, arg) {
-        let other = numeric_f64_arg(arg, "can't coerce")?;
+        // A String goes through `Float()`, not the operator coercion: ruby's
+        // `num_coerce` is `[Float(y), Float(x)]`, so `2.5.coerce("3")` is
+        // [3.0, 2.5] and `2.5.coerce("")` is `Float()`'s ArgumentError -- not
+        // the "can't coerce" TypeError an arithmetic operator would give.
+        let other = match arg {
+            RubyValue::Str(_) => {
+                match crate::builtins::kernel::float_impl(std::slice::from_ref(arg))? {
+                    RubyValue::Float(f) => f,
+                    other => crate::builtins::numeric::num_to_f64_unchecked(&other),
+                }
+            }
+            _ => numeric_f64_arg(arg, "can't coerce")?,
+        };
         Ok(RubyValue::Array(crate::array_new(vec![
             RubyValue::Float(other),
             recv.clone(),

@@ -663,6 +663,15 @@ ruby_class! {
                     return num_sub(recv, &bt).ok_or_else(coerce)?;
                 }
                 let (a, b) = (num_to_f64_unchecked(recv), num_to_f64_unchecked(arg));
+                // A zero divisor is ZeroDivisionError on this lane as well:
+                // `flo_remainder` reaches `rb_num_zerodiv` rather than letting
+                // the IEEE division answer NaN.
+                if b == 0.0 {
+                    return Err(crate::dispatch::raise_error(
+                        "ZeroDivisionError",
+                        "divided by 0".to_string(),
+                    ));
+                }
                 Ok(RubyValue::Float(a - b * (a / b).trunc()))
             }
         }
@@ -705,6 +714,15 @@ ruby_class! {
     // `(self / other).floor`, so the subclass's own `/` decides the lane and
     // the quotient's own `floor` decides the rounding.
     def "div" (recv, other) {
+        // The zero check comes FIRST, as `num_div`'s `rb_num_zerodiv` does.
+        // Without it a Float receiver divided to Infinity and then died in
+        // `floor` with FloatDomainError, where ruby says ZeroDivisionError.
+        if crate::dispatch::send_value(other, crate::Symbol::intern("=="), &[RubyValue::Int(0)], None)?.truthy() {
+            return Err(crate::dispatch::raise_error(
+                "ZeroDivisionError",
+                "divided by 0".to_string(),
+            ));
+        }
         let q = send(recv, "/", std::slice::from_ref(other))?;
         send(&q, "floor", &[])
     }

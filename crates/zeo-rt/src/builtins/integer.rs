@@ -315,6 +315,14 @@ pub fn int_pos(a: &RubyValue) -> RubyValue {
 /// width too big"). Left shifts promote through bignum freely.
 /// An Integer mask argument (`allbits?`/`anybits?`/`nobits?`) as a `BigInt`.
 /// A non-Integer argument is CRuby's coercion TypeError.
+/// The `gcd`/`lcm`/`gcdlcm` argument error. Ruby checks these with
+/// `rb_to_int`-shaped strictness and says plainly "not an integer" -- NOT the
+/// numeric tower's "X can't be coerced into Integer", which is what an
+/// arithmetic OPERATOR says about the same argument.
+fn not_an_integer() -> Signal {
+    type_error!("not an integer")
+}
+
 fn int_mask_arg(v: &RubyValue) -> Result<BigInt, Signal> {
     match v {
         RubyValue::Int(_) | RubyValue::BigInt(_) => Ok(to_bigint(v)),
@@ -620,6 +628,17 @@ ruby_class! {
                 RubyValue::Float(to_bigint(recv).to_f64().unwrap_or(f64::NAN)),
             ],
             RubyValue::Int(_) | RubyValue::BigInt(_) => vec![(*arg).clone(), recv.clone()],
+            // A String goes through `Float()` -- `num_coerce` is
+            // `[Float(y), Float(x)]` -- so `42.coerce("3")` is [3.0, 42.0] and
+            // `42.coerce("l")` raises `Float()`'s ArgumentError, not a
+            // "can't coerce" TypeError.
+            RubyValue::Str(_) => {
+                let f = crate::builtins::kernel::float_impl(std::slice::from_ref(arg))?;
+                vec![
+                    f,
+                    RubyValue::Float(to_bigint(recv).to_f64().unwrap_or(f64::NAN)),
+                ]
+            }
             other => {
                 return Err(type_error!("can't coerce {} into Integer", crate::builtins::class_name_of(other)))
             }
@@ -821,7 +840,7 @@ ruby_class! {
             RubyValue::Int(_) | RubyValue::BigInt(_) => {
                 Ok(int_value(to_bigint(recv).gcd(&to_bigint(arg))))
             }
-            other => Err(coerce_error(other, "Integer")),
+            other => Err(not_an_integer()),
         }
     }
     def "lcm" (recv, arg) {
@@ -829,7 +848,7 @@ ruby_class! {
             RubyValue::Int(_) | RubyValue::BigInt(_) => {
                 Ok(int_value(to_bigint(recv).lcm(&to_bigint(arg))))
             }
-            other => Err(coerce_error(other, "Integer")),
+            other => Err(not_an_integer()),
         }
     }
     def "gcdlcm" (recv, arg) {
@@ -841,7 +860,7 @@ ruby_class! {
                     int_value(a.lcm(&b)),
                 ])))
             }
-            other => Err(coerce_error(other, "Integer")),
+            other => Err(not_an_integer()),
         }
     }
     def "bit_length" (recv) {

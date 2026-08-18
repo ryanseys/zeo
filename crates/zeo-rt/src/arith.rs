@@ -70,20 +70,82 @@ pub fn float_pow(a: f64, b: f64) -> f64 {
     a.powf(b)
 }
 
-/// `Float#**` with zeo's negative-base rule: a negative base to a fractional
-/// (non-integer) power has no real result, so it raises Math::DomainError
-/// loudly (CRuby promotes to Complex -- a documented divergence). A
-/// whole-valued exponent (`(-2.0) ** 2.0`) still takes the ordinary power.
-/// Mirrors `float_pow`'s use in `builtins::numeric::num_pow`.
+/// `Float#**`: a negative base to a FRACTIONAL power has no real result, so
+/// ruby leaves the reals and answers a Complex -- `rb_float_pow` ends in
+/// `rb_dbl_complex_new_polar_pi(pow(-dx, dy), dy)`, whose modulus is the
+/// positive base's power and whose argument is `dy * pi`. A whole-valued
+/// exponent (`(-2.0) ** 2.0`) still takes the ordinary real power.
+///
+/// This used to raise `Math::DomainError` instead, which was a divergence
+/// rather than a limit: the Complex tower it needed was already here.
 pub fn float_pow_checked(a: f64, b: f64) -> Result<crate::RubyValue, crate::Signal> {
     if a < 0.0 && b.is_finite() && b.fract() != 0.0 {
-        Err(crate::dispatch::raise_error(
-            "Math::DomainError",
-            "Numerical argument is out of domain".to_string(),
-        ))
-    } else {
-        Ok(crate::RubyValue::Float(a.powf(b)))
+        return dbl_complex_polar_pi((-a).powf(b), b);
     }
+    Ok(crate::RubyValue::Float(a.powf(b)))
+}
+
+/// The half-turn trig `rb_dbl_complex_new_polar_pi` uses, whose argument is
+/// measured in HALF TURNS rather than radians. Darwin's libm has them, which
+/// is exactly the `#ifdef` CRuby takes (complex.c) -- and the reason its
+/// results are clean where `cos(x * PI)` leaves 1e-17 dust.
+#[cfg(target_vendor = "apple")]
+unsafe extern "C" {
+    #[link_name = "__cospi"]
+    fn c_cospi(x: f64) -> f64;
+    #[link_name = "__sinpi"]
+    fn c_sinpi(x: f64) -> f64;
+}
+#[cfg(target_vendor = "apple")]
+fn cospi(x: f64) -> f64 {
+    unsafe { c_cospi(x) }
+}
+#[cfg(target_vendor = "apple")]
+fn sinpi(x: f64) -> f64 {
+    unsafe { c_sinpi(x) }
+}
+#[cfg(not(target_vendor = "apple"))]
+fn cospi(x: f64) -> f64 {
+    (x * std::f64::consts::PI).cos()
+}
+#[cfg(not(target_vendor = "apple"))]
+fn sinpi(x: f64) -> f64 {
+    (x * std::f64::consts::PI).sin()
+}
+
+/// `rb_dbl_complex_new_polar_pi`: a polar constructor whose ANGLE is in half
+/// turns, so the quarter turns land EXACTLY. A half-integer angle is purely
+/// imaginary and an integer angle purely real -- taken as special cases rather
+/// than computed, which is what keeps `(-2.0) ** 0.5` at a clean `0.0` real
+/// part instead of 8.66e-17.
+fn dbl_complex_polar_pi(abs: f64, ang: f64) -> Result<crate::RubyValue, crate::Signal> {
+    let mut abs = abs;
+    let fi = ang.trunc();
+    let fr = ang - fi;
+    // `frac(fi / 2)`: whether the integer half-turn count is odd, which is
+    // what decides the sign.
+    let half = fi / 2.0;
+    let half_fr = half - half.trunc();
+    let pos = fr == 0.5;
+    if pos || fr == -0.5 {
+        if (half_fr != fr) ^ pos {
+            abs = -abs;
+        }
+        return crate::builtins::complex::complex_new(
+            crate::RubyValue::Float(0.0),
+            crate::RubyValue::Float(abs),
+        );
+    }
+    if fr == 0.0 {
+        if half_fr != 0.0 {
+            abs = -abs;
+        }
+        return Ok(crate::RubyValue::Float(abs));
+    }
+    crate::builtins::complex::complex_new(
+        crate::RubyValue::Float(abs * cospi(ang)),
+        crate::RubyValue::Float(abs * sinpi(ang)),
+    )
 }
 #[inline]
 pub fn float_neg(a: f64) -> f64 {
