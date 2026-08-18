@@ -110,6 +110,13 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
         collect_const_aliases(&compiler.hir, &unit.body, &[], 0, &mut scoped_aliases);
     }
     compiler.const_aliases = scoped_aliases;
+    // `ruby2_keywords def m(*a)` -- flag the `def` before anything registers
+    // it, so the Scope carries the mark. Deliberately NOT a lowering rewrite:
+    // the directive is a real `Module#ruby2_keywords` call, and consuming it
+    // changed how the class-body walk saw the statement (delegate.rb's
+    // `method_missing` stopped reaching WeakRef's instances).
+    mark_ruby2_keywords_defs(&mut compiler.hir);
+
     // ONE flat sweep of the node arena serves every whole-arena question --
     // assigned const names, runtime patch verbs, top-level const initializers.
     let facts = collect_arena_facts(&compiler.hir);
@@ -4870,6 +4877,41 @@ fn is_reopen_site(compiler: &Compiler, class_id: ClassId, site_idx: usize) -> bo
         .any(|s| s.class == class_id)
 }
 
+/// Sets [`crate::hir::NodeFlag::RUBY2_KEYWORDS`] on every `def` a
+/// `ruby2_keywords` directive names as its argument.
+///
+/// The CALL stays exactly where it was -- it is an ordinary
+/// `Module#ruby2_keywords` send, and the class-body walk's treatment of the
+/// statement must not change. Only the flag is added, and only the codegen
+/// that decides whether a splat clears a captured keyword mark reads it.
+fn mark_ruby2_keywords_defs(hir: &mut Hir) {
+    let mut defs: Vec<NodeId> = Vec::new();
+    for (_, node) in hir.iter_with_ids() {
+        let HirNode::Call {
+            receiver: None,
+            name,
+            args,
+            ..
+        } = node
+        else {
+            continue;
+        };
+        if name != "ruby2_keywords" {
+            continue;
+        }
+        for a in args {
+            if let ArrayElem::Single(n) = a
+                && matches!(hir[*n], HirNode::DefMethod { .. })
+            {
+                defs.push(*n);
+            }
+        }
+    }
+    for d in defs {
+        hir.set_flag(d, crate::hir::NodeFlag::RUBY2_KEYWORDS);
+    }
+}
+
 /// The verbs that read a namespace's constant LIST, so a class declared later
 /// in the program must not already be in it.
 const CONST_OBSERVERS: &[&str] = &["constants", "const_defined?"];
@@ -5710,6 +5752,13 @@ fn register_method(
         // Set by `register_conditional_defs`, the one caller that registers a
         // `def` whose branch may not run.
         runtime_conditional: false,
+        // `ruby2_keywords def fwd(*a)`: the directive marked the `def` node at
+        // lowering; carry it onto the scope, where codegen reads it.
+        ruby2_keywords: def_node.is_some_and(|n| {
+            compiler
+                .hir
+                .has_flag(n, crate::hir::NodeFlag::RUBY2_KEYWORDS)
+        }),
         accessor,
     }))
 }

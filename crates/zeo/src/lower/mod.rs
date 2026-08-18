@@ -846,6 +846,29 @@ fn lower_call_node(
         }
     }
 
+    // `ruby2_keywords def fwd(*a)` written at the TOP LEVEL, where the
+    // directive is a PRIVATE SINGLETON method of `main` -- an object zeo
+    // dispatches by name, with no such row. The def is answered in the call's
+    // place, carrying the mark `analyze::mark_ruby2_keywords_defs` sets for
+    // every other position (where `Module#ruby2_keywords` is a real row and
+    // the statement must stay put -- consuming it there changed how the
+    // class-body walk saw the body, and delegate.rb's `method_missing` stopped
+    // reaching WeakRef's instances).
+    if name == "ruby2_keywords"
+        && receiver.is_none()
+        && hir.enclosing_class().is_none()
+        && let Some(args) = call.arguments()
+    {
+        let arg_list: Vec<_> = args.arguments().iter().collect();
+        if let [only] = arg_list.as_slice()
+            && only.as_def_node().is_some()
+        {
+            let id = lower_node(result, hir, only)?;
+            hir.set_flag(id, crate::hir::NodeFlag::RUBY2_KEYWORDS);
+            return Ok(id);
+        }
+    }
+
     // `define_singleton_method(:literal) { block }` -- desugars to a
     // `def self.name` on the target class. The target comes from the
     // receiver: none / `self` (inside a class body) means the enclosing

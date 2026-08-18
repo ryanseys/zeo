@@ -567,7 +567,24 @@ pub fn emit_call_args_to(
         && !params.no_keywords
         && !kwargs.is_empty();
     let (kwargs, kw_hash_arg) = if kw_as_positional {
-        (&[][..], Some(super::collections::emit_hash_lit(cx, kwargs)))
+        // MARKED even though it binds positionally here: the callee this site
+        // resolved has no keywords, but it may FORWARD the value on -- a
+        // `ruby2_keywords def fwd(*a) = target(*a)` has to hand `target` the
+        // keywords it was given, and only a marked hash reads as keywords
+        // there. See `RHashData::kw_marked`.
+        let lit = super::collections::emit_hash_lit(cx, kwargs);
+        (
+            &[][..],
+            Some(quote! {
+                {
+                    let __kwp = #lit;
+                    if let zeo_rt::RubyValue::Hash(ref __h) = __kwp {
+                        zeo_rt::hash_mark_kwargs(__h);
+                    }
+                    __kwp
+                }
+            }),
+        )
     } else {
         (kwargs, None)
     };

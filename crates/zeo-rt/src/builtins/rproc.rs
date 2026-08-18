@@ -99,7 +99,27 @@ ruby_class! {
         Ok(crate::builtins::binding::rebind(b))
     }
     // Returns self, and does nothing else -- see `Module#ruby2_keywords`.
+    // `Proc#ruby2_keywords` -- CRuby takes the flag only on a proc that has a
+    // `*rest` and NO post/keyword/keyword-rest parameters, and warns (naming
+    // the reason) otherwise. The receiver is answered either way.
+    //
+    // Setting the flag is a no-op here: zeo's forwarding mark rides on the
+    // trailing hash and a proc has no compiled forwarding site to re-mark, so
+    // only the refusal and its warning are observable. See
+    // `RHashData::kw_marked`.
     def "ruby2_keywords"(recv) {
+        crate::builtins::check_frozen(recv)?;
+        let params = recv_proc(recv).parameters();
+        let takes_flag = params.iter().any(|p| p.kind == "rest")
+            && !params
+                .iter()
+                .any(|p| matches!(p.kind, "key" | "keyreq" | "keyrest"));
+        if !takes_flag {
+            crate::builtins::warning::rb_warn(
+                "Skipping set of ruby2_keywords flag for proc (proc accepts keywords \
+                 or post arguments or proc does not accept argument splat)",
+            );
+        }
         Ok(recv.clone())
     }
     // `source_location` -> `[file, line]` where the block was written, or

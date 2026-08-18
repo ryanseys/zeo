@@ -87,6 +87,12 @@ impl NodeFlag {
     /// The receiver of a call the SOURCE wrote no receiver for -- see
     /// [`Hir::note_implicit_self_receiver`].
     pub const IMPLICIT_SELF_RECEIVER: NodeFlag = NodeFlag(1 << 8);
+    /// A `def` the `ruby2_keywords` directive marked. Its `*rest` keeps the
+    /// KEYWORD mark on a trailing hash it captured, so forwarding it through a
+    /// splat re-promotes it to keywords instead of passing it positionally.
+    /// That is the whole point of the directive: a method written before ruby
+    /// 3 separated them can still forward either kind unchanged.
+    pub const RUBY2_KEYWORDS: NodeFlag = NodeFlag(1 << 9);
 }
 
 /// Index into `Hir::files` -- which source file a `Span` points into.

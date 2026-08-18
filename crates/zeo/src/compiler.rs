@@ -559,6 +559,9 @@ pub struct Scope {
     ///
     /// See `analyze::register_conditional_defs`.
     pub runtime_conditional: bool,
+    /// The `ruby2_keywords` directive marked this `def` -- see
+    /// [`crate::hir::NodeFlag::RUBY2_KEYWORDS`].
+    pub ruby2_keywords: bool,
     /// `Some` when the whole body is one ivar access and nothing else, so
     /// every caller can replace the call with the access -- see
     /// [`AccessorShape`]. Computed from the body's SHAPE, not from having

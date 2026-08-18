@@ -1010,6 +1010,22 @@ pub fn hash_mark_kwargs(h: &RHash) {
     h.lock().kw_marked = true;
 }
 
+/// Clear the keyword mark on the LAST argument, if it is a Hash -- what a
+/// SPLAT does to a trailing hash it expands.
+///
+/// `def forward(*args) = sink(*args)` called as `forward(9, k: 3)` captures the
+/// caller's marked hash into `args`; passing it on through a splat makes it
+/// POSITIONAL again, so `sink` binds it to `*rest` rather than to `k:`. That is
+/// ruby's rule, and the reason `ruby2_keywords` exists to opt out of it.
+///
+/// Safe in place: every marked hash is built fresh by the call site that marked
+/// it, so no other reference can observe the change.
+pub fn unmark_kwargs_tail(args: &mut [RubyValue]) {
+    if let Some(RubyValue::Hash(h)) = args.last() {
+        h.lock().kw_marked = false;
+    }
+}
+
 /// Whether the caller wrote keywords to build `h` (see [`RHashData::kw_marked`]).
 pub fn hash_is_kwargs(h: &RHash) -> bool {
     h.lock().kw_marked

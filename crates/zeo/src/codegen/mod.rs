@@ -336,6 +336,27 @@ impl<'a> Ctx<'a> {
             .unwrap_or(&[])
     }
 
+    /// Whether the method this body belongs to carries the `ruby2_keywords`
+    /// directive -- so a splat forwarding its `*rest` keeps the keyword mark
+    /// on a trailing hash instead of making it positional.
+    ///
+    /// Resolved from the compiler rather than carried on `Ctx`: a body reaches
+    /// codegen through several emitters (inherent method, value-self bridge,
+    /// shared body), and the question is about the SCOPE, which every one of
+    /// them already names.
+    fn enclosing_is_ruby2_keywords(&self) -> bool {
+        let Some(name) = self.current_method.as_deref() else {
+            return false;
+        };
+        let Some(cid) = self.defining_class.or(self.current_class) else {
+            return false;
+        };
+        self.compiler.class(cid).own_methods.iter().any(|&s| {
+            let sc = self.compiler.scope(s);
+            sc.name == name && sc.ruby2_keywords
+        })
+    }
+
     /// A child context for a native loop's own body -- see `loop_labels`'s
     /// docs.
     fn in_loop(&self, redo: Lifetime, outer: Lifetime) -> Ctx<'a> {

@@ -216,6 +216,8 @@ fn emit_kernel_function(
             {
                 let __kw = zeo_rt::hash_new(vec![]);
                 #inserts
+                // Marked: the callee only peels a MARKED trailing hash.
+                zeo_rt::hash_mark_kwargs(&__kw);
                 zeo_rt::RubyValue::Hash(__kw)
             }
         });

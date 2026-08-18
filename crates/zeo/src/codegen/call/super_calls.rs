@@ -607,6 +607,12 @@ fn emit_runtime_super_args(
             pushes.push(quote! {
                 __super_args.extend((#v).as_array_ref().lock().iter().cloned());
             });
+            // A hash the `*rest` captured is POSITIONAL when forwarded, exactly
+            // as at an explicit splat call site. The method's OWN keywords are
+            // pushed as a fresh marked hash below, after this.
+            if !cx.enclosing_is_ruby2_keywords() {
+                pushes.push(quote! { zeo_rt::unmark_kwargs_tail(&mut __super_args); });
+            }
         }
         for name in &current_params.post {
             let v = read(name);
@@ -651,6 +657,9 @@ fn emit_runtime_super_args(
                     // NOTHING -- a trailing empty Hash would bind as a
                     // positional in the parent.
                     if zeo_rt::hash_len(&__kw) > 0 {
+                        // Marked: zsuper forwards these AS KEYWORDS, and the
+                        // callee only peels a marked trailing hash.
+                        zeo_rt::hash_mark_kwargs(&__kw);
                         __super_args.push(zeo_rt::RubyValue::Hash(__kw));
                     }
                 }
@@ -675,6 +684,14 @@ fn emit_runtime_super_args(
                 }
             }
         }
+        // An explicit `super(*rest)`'s splatted trailing hash is POSITIONAL,
+        // exactly as at an ordinary call site -- cleared before the site's own
+        // keywords are pushed below.
+        if !cx.enclosing_is_ruby2_keywords()
+            && args.iter().any(|a| matches!(a, ArrayElem::Splat(_)))
+        {
+            pushes.push(quote! { zeo_rt::unmark_kwargs_tail(&mut __super_args); });
+        }
         if !kwargs.is_empty() {
             let inserts =
                 crate::codegen::collections::emit_kwarg_inserts(cx, kwargs, &quote! { __kw });
@@ -682,6 +699,7 @@ fn emit_runtime_super_args(
                 {
                     let __kw = zeo_rt::hash_new(vec![]);
                     #inserts
+                    zeo_rt::hash_mark_kwargs(&__kw);
                     __super_args.push(zeo_rt::RubyValue::Hash(__kw));
                 }
             });

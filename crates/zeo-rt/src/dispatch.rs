@@ -364,8 +364,13 @@ pub fn bind_dynamic_kwargs<'a>(
     optional: &[&str],
     has_kwrest: bool,
 ) -> Result<BoundKwargs<'a>, Signal> {
+    // Only a MARKED trailing hash is keywords. An unmarked one arrived
+    // positionally -- a plain `f(9, h)`, or a hash a splat expanded, which
+    // ruby makes positional again (see `unmark_kwargs_tail`).
     let (positional, kw_hash) = match args.split_last() {
-        Some((RubyValue::Hash(h), rest)) => (rest, Some(h.clone())),
+        Some((RubyValue::Hash(h), rest)) if crate::collections::hash_is_kwargs(h) => {
+            (rest, Some(h.clone()))
+        }
         _ => (args, None),
     };
     let mut req_values = Vec::with_capacity(required.len());

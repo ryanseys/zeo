@@ -98,6 +98,14 @@ pub(super) fn emit_splat_call(
             quote! { zeo_rt::array_splat_into(&mut __args, &(#e))?; }
         }
     });
+    // A splatted array's trailing hash is POSITIONAL: ruby only re-promotes it
+    // to keywords for a `ruby2_keywords`-marked forwarder. The mark is cleared
+    // BEFORE the real keywords below are pushed, so `f(*a, k: 1)` keeps its own.
+    // ...unless `ruby2_keywords` marked the enclosing method, whose entire
+    // purpose is to forward either kind unchanged.
+    let unmark_splat_tail = (!cx.enclosing_is_ruby2_keywords()
+        && args.iter().any(|a| matches!(a, ArrayElem::Splat(_))))
+    .then(|| quote! { zeo_rt::unmark_kwargs_tail(&mut __args); });
     // Keyword args (literal pairs INTERLEAVED with `**h` double-splats, in
     // source order) merge into ONE trailing Hash (the G2 convention), built
     // by the shared `emit_kwarg_inserts` -- so `f(**a, c: 1, **b)` gets Ruby's
@@ -129,6 +137,7 @@ pub(super) fn emit_splat_call(
     let dispatch = quote! {
         let mut __args: Vec<zeo_rt::RubyValue> = Vec::new();
         #(#arg_pushes)*
+        #unmark_splat_tail
         #kw_push
         #dyn_call
     };
