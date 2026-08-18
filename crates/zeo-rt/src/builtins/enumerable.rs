@@ -1361,9 +1361,7 @@ ruby_module! {
     }
     // `==`-based membership (`rb_equal`, enum.c:2960) with break-on-hit.
     def "include?" arity 1 | "member?" arity 1 (recv, *args, &_block) {
-        if args.len() != 1 {
-            panic!("Enumerable#include? takes exactly one argument");
-        }
+        crate::builtins::check_arity(args.len(), 1, Some(1))?;
         let needle = args[0].clone();
         let found = Arc::new(Mutex::new(false));
         let found2 = found.clone();

@@ -302,7 +302,11 @@ ruby_class! {
     def "length" | "size" (recv) {
         Ok(RubyValue::Int(crate::array_len(rary)))
     }
-    def "include?" | "member?" (recv, arg) {
+    // `member?` is deliberately NOT an alias here: ruby owns `include?` on
+    // Array and `member?` only on Enumerable, so declaring both would put
+    // `member?` in `Array.instance_methods(false)` and report its `.owner` as
+    // Array. It reaches Enumerable's generic row through the ancestry instead.
+    def "include?" (recv, arg) {
         Ok(RubyValue::Bool(crate::array_include(rary, arg)))
     }
     def "empty?" (recv) {
@@ -1379,15 +1383,8 @@ ruby_class! {
             mine.iter().any(|e| theirs.iter().any(|x| e.rb_eq(x))),
         ))
     }
-    // `chain(*others)` -- an `Enumerator::Chain` over self followed by each
-    // argument in turn. The sources are held, not flattened, so each is
-    // iterated with its own `each` when the chain is driven.
-    def "chain"(recv, *args, &_block) {
-        let mut sources = Vec::with_capacity(args.len() + 1);
-        sources.push(recv.clone());
-        sources.extend(args.iter().cloned());
-        Ok(crate::builtins::enumerator::chain_of(sources))
-    }
+    // No `chain` row: ruby owns it on Enumerable alone, and the body here was
+    // byte-identical to Enumerable's, so the ancestry reaches the same code.
     // `compact!` drops nils in place, answering `nil` when there were none
     // (CRuby's destructive-form convention); `rotate!` rotates in place and
     // always answers the receiver.

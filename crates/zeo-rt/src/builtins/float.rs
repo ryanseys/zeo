@@ -49,9 +49,7 @@ ruby_class! {
             _ => unreachable!("Float table row dispatched on a non-Float receiver"),
         }
     }
-    def "+@" (recv) {
-        Ok(recv.clone())
-    }
+    // No `+@` row: ruby owns it on Numeric, whose body is the same `self`.
     def "<=>" (recv, other) {
         Ok(match crate::builtins::numeric::num_cmp(recv, other) {
             Some(Some(c)) => RubyValue::Int(c),
@@ -104,15 +102,9 @@ ruby_class! {
             recv.clone(),
         ])))
     }
-    // `div` -- floored division returning an Integer (`7.0.div(2) == 3`).
-    def "div" (recv, arg) {
-        let d = numeric_f64_arg(arg, "can't coerce")?;
-        float_to_integer((recv_f64(recv) / d).floor())
-    }
-    // `n.i` -- the pure-imaginary Complex `0 + n*i`.
-    def "i" (recv) {
-        crate::builtins::complex::complex_new(RubyValue::Int(0), recv.clone())
-    }
+    // No `div` / `i` rows: ruby owns both on Numeric. `div` there is
+    // `(self / other).floor`, which for a Float receiver runs this class's own
+    // `/` and the quotient's own `floor` -- the same answer this body computed.
     def "to_f" (recv) {
         Ok(recv.clone())
     }

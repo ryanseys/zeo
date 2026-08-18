@@ -550,9 +550,9 @@ ruby_class! {
     def "-@" (recv) {
         Ok(int_neg(recv))
     }
-    def "+@" (recv) {
-        Ok(int_pos(recv))
-    }
+    // No `+@` row: ruby owns it on Numeric, whose body is the same `self`.
+    // The `+n` fast path is unaffected -- codegen emits the free `int_pos`
+    // (`codegen/call/ops.rs`), never this table.
     def "~" (recv) {
         Ok(int_bnot(recv))
     }
@@ -578,18 +578,9 @@ ruby_class! {
         let mask = int_mask_arg(arg)?;
         Ok(RubyValue::Bool((to_bigint(recv) & mask) == BigInt::from(0)))
     }
-    // Every Integer is finite and never infinite (the Float predicates,
-    // answered here so the numeric protocol is uniform).
-    def "finite?" (_recv) {
-        Ok(RubyValue::Bool(true))
-    }
-    def "infinite?" (_recv) {
-        Ok(RubyValue::Nil)
-    }
-    // `n.i` is the pure-imaginary Complex `0 + n*i`.
-    def "i" (recv) {
-        crate::builtins::complex::complex_new(RubyValue::Int(0), recv.clone())
-    }
+    // No `finite?` / `infinite?` / `i` rows: ruby owns all three on Numeric,
+    // and Numeric's bodies already answer true / nil / `Complex(0, self)` --
+    // only `Float` overrides the first two, which it still does.
     // Ceiling division: the smallest integer >= self/other. `-floor(-a / b)`
     // gives the exact result for either sign.
     def "ceildiv" (recv, arg) {
