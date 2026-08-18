@@ -401,9 +401,18 @@ fn render(t: &RTime, with_subsec: bool) -> String {
     } else {
         offset_str(c.offset, with_subsec)
     };
+    // The four-digit pad covers the DIGITS, not the sign: ruby renders year -1
+    // as "-0001", where a plain `{:04}` spends one of the four columns on the
+    // minus and gives "-001".
+    let year = c.tm.tm_year + 1900;
+    let year = if year < 0 {
+        format!("-{:04}", -(year as i64))
+    } else {
+        format!("{year:04}")
+    };
     format!(
-        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}{} {}",
-        c.tm.tm_year + 1900,
+        "{}-{:02}-{:02} {:02}:{:02}:{:02}{} {}",
+        year,
         c.tm.tm_mon + 1,
         c.tm.tm_mday,
         c.tm.tm_hour,
@@ -1095,7 +1104,16 @@ fn round_ndigits(ndigits: Option<&RubyValue>) -> Result<u32, Signal> {
     match ndigits {
         // An explicit nil precision is accepted as absent (oracle-verified).
         None | Some(RubyValue::Nil) => Ok(0),
-        Some(v) => Ok(crate::builtins::convert::to_index(v)?.max(0) as u32),
+        Some(v) => {
+            // A NEGATIVE count is refused, not clamped: there is no such thing
+            // as sub-second precision coarser than a second here, and ruby says
+            // so rather than quietly rounding to whole seconds.
+            let n = crate::builtins::convert::to_index(v)?;
+            if n < 0 {
+                return Err(arg_error!("negative ndigits given"));
+            }
+            Ok(n as u32)
+        }
     }
 }
 

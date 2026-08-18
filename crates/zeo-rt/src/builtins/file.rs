@@ -252,6 +252,49 @@ fn kwarg_str(trailing: Option<&RubyValue>, name: &str) -> Option<String> {
 /// Split `bytes` into records terminated by `sep` (each keeps its terminator,
 /// like `IO#readlines`), stripping the terminator when `chomp`. An empty `sep`
 /// is paragraph mode, which the corpus doesn't use -- treated as "\n\n".
+/// The `sep`/`limit` pair `readlines`/`foreach` take after the path. Ruby tells
+/// them apart BY TYPE, so either may appear alone: a String is the record
+/// separator, an Integer a per-line byte limit. A trailing options Hash (the
+/// `chomp:` keyword) is neither and is skipped here.
+fn sep_and_limit(args: [Option<&RubyValue>; 2]) -> (String, Option<usize>) {
+    let (mut sep, mut limit) = ("\n".to_string(), None);
+    for a in args.into_iter().flatten() {
+        match a {
+            RubyValue::Str(s) => sep = s.lock().to_utf8_lossy().into_owned(),
+            RubyValue::Int(n) if *n > 0 => limit = Some(*n as usize),
+            _ => {}
+        }
+    }
+    (sep, limit)
+}
+
+/// Caps each already-split record at `limit` BYTES, spilling a longer one into
+/// further entries -- ruby's `limit` bounds a line's length rather than the
+/// number of lines.
+fn apply_limit(records: Vec<RubyValue>, limit: Option<usize>) -> Vec<RubyValue> {
+    let Some(limit) = limit else {
+        return records;
+    };
+    let mut out = Vec::with_capacity(records.len());
+    for r in records {
+        let text = r.to_display_string();
+        if text.len() <= limit {
+            out.push(r);
+            continue;
+        }
+        let bytes = text.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            let end = (i + limit).min(bytes.len());
+            out.push(str_val(
+                String::from_utf8_lossy(&bytes[i..end]).into_owned(),
+            ));
+            i = end;
+        }
+    }
+    out
+}
+
 fn split_records(bytes: &[u8], sep: &str, chomp: bool) -> Vec<RubyValue> {
     let sep = if sep.is_empty() { "\n\n" } else { sep };
     let sep = sep.as_bytes();
@@ -806,11 +849,11 @@ ruby_class! {
         // A String positional after the path is the record separator (default
         // "\n"); `chomp: true` (trailing Hash) strips it.
         let chomp = kwarg_truthy(opt.or(sep), "chomp");
-        let sep = match sep {
-            Some(RubyValue::Str(s)) => s.lock().to_utf8_lossy().into_owned(),
-            _ => "\n".to_string(),
-        };
-        Ok(RubyValue::Array(crate::collections::array_new(split_records(&bytes, &sep, chomp))))
+        let (sep, limit) = sep_and_limit([sep, opt]);
+        Ok(RubyValue::Array(crate::collections::array_new(apply_limit(
+            split_records(&bytes, &sep, chomp),
+            limit,
+        ))))
     }
     // `File.foreach(path)` -- yield each line; without a block, an Enumerator.
     // `chomp: true` strips terminators, mirroring `readlines`.
@@ -819,15 +862,12 @@ ruby_class! {
         let p = block_or_enum!(recv, __args, block);
         let bytes = crate::gvl::without_gvl(|| std::fs::read(&path))
             .map_err(|e| raise_errno(&e, "rb_sysopen", &path))?;
-        let text = String::from_utf8_lossy(&bytes).into_owned();
         let chomp = kwarg_truthy(opt.or(sep), "chomp");
-        for line in crate::builtins::string::split_lines(&text) {
-            let line = if chomp {
-                let s = line.to_display_string();
-                str_val(s.trim_end_matches('\n').trim_end_matches('\r').to_string())
-            } else {
-                line
-            };
+        // Through the same (sep, limit) reader `readlines` uses: this used to
+        // split on newlines unconditionally, so an explicit separator was
+        // accepted and ignored.
+        let (sep, limit) = sep_and_limit([sep, opt]);
+        for line in apply_limit(split_records(&bytes, &sep, chomp), limit) {
             p.call(&[line])?;
         }
         Ok(RubyValue::Nil)
@@ -874,9 +914,22 @@ ruby_class! {
         Ok(str_val(path_arg(arg, "path")?))
     }
     // `File.fnmatch(pattern, path [, flags])` / `fnmatch?` -- glob match.
-    def self."fnmatch" | "fnmatch?" cfunc (_recv, arg1, arg2, _arg3?) {
+    def self."fnmatch" | "fnmatch?" cfunc (_recv, arg1, arg2, arg3?) {
         let pat = path_arg(arg1, "fnmatch")?;
         let name = path_arg(arg2, "fnmatch")?;
+        // `FNM_CASEFOLD` (8) folds both sides before matching. The flags were
+        // parsed and dropped, so a case-insensitive match answered false.
+        const FNM_CASEFOLD: i64 = 8;
+        let flags = match arg3 {
+            Some(RubyValue::Int(n)) => *n,
+            _ => 0,
+        };
+        if flags & FNM_CASEFOLD != 0 {
+            return Ok(RubyValue::Bool(fnmatch(
+                &pat.to_lowercase(),
+                &name.to_lowercase(),
+            )));
+        }
         Ok(RubyValue::Bool(fnmatch(&pat, &name)))
     }
     def self."write" cfunc (_recv, arg1, arg2, arg3?) {
