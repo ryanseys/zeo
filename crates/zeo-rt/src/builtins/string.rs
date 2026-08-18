@@ -1996,7 +1996,15 @@ ruby_class! {
         // through the `to_str` probe (CRuby's get_pat_quoted), a
         // non-convertible one raising the expected-Regexp shape.
         let sep_arg = match arg1 {
-            None | Some(RubyValue::Nil) => None,
+            // An absent or nil separator falls back to `$;` (the input field
+            // separator) before awk mode -- ruby's `rb_fs`. Only nil there
+            // means awk, so `$; = ","` makes a bare `split` split on commas.
+            None | Some(RubyValue::Nil) => match crate::globals::global_get(0, "$;") {
+                RubyValue::Nil => None,
+                fs @ RubyValue::Regexp(_) => Some(fs),
+                RubyValue::Str(s) => Some(RubyValue::Str(s)),
+                _ => None,
+            },
             Some(re @ RubyValue::Regexp(_)) => Some(re.clone()),
             Some(other) => match convert::check_to_str(other)? {
                 Some(s) => Some(s),

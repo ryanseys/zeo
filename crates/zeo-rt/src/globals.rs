@@ -322,6 +322,16 @@ pub fn global_assign(box_id: u32, name: &str, value: RubyValue) -> Result<(), cr
     match special_of(&target) {
         None => {
             arm_if_stdio(&target);
+            // `$VERBOSE` keeps only three states: ruby's setter passes `nil`
+            // through and folds everything else to `true`/`false` by
+            // truthiness, so `$VERBOSE = 1` reads back as `true`.
+            let value = match &*target {
+                "$VERBOSE" => match value {
+                    RubyValue::Nil => RubyValue::Nil,
+                    other => RubyValue::Bool(other.truthy()),
+                },
+                _ => value,
+            };
             store(box_id, target, value.clone());
             // AFTER the store: a hook reads the variable it watches.
             fire_tracers(name, &value)
@@ -357,6 +367,9 @@ pub fn global_assign(box_id: u32, name: &str, value: RubyValue) -> Result<(), cr
 /// answers. Called once at bootstrap.
 pub fn seed_default_globals() {
     global_set(0, "$/", RubyValue::Str(crate::string_new("\n".to_string())));
+    // `$VERBOSE` is FALSE by default, not nil: nil is the third state (`-W0`,
+    // "suppress even the ordinary warnings"), and an unset read would answer it.
+    global_set(0, "$VERBOSE", RubyValue::Bool(false));
     let prog = std::env::args().next().unwrap_or_default();
     global_set(0, "$0", RubyValue::Str(crate::string_new(prog)));
     global_alias(0, "$PROGRAM_NAME", "$0");

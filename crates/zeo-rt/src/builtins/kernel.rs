@@ -1855,17 +1855,40 @@ pub fn kernel_pp(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     kernel_p(args)
 }
 
-/// `Kernel#print`: display renderings, no separators, no newline. A String
-/// argument contributes its RAW bytes (see `io::display_bytes`), which is
-/// what keeps `print 0xB4.chr` a single byte on the fd.
+/// The raw bytes of an output-separator global (`$,`, `$\`), or `None` when it
+/// is nil -- which is its default and the overwhelmingly common case, so the
+/// caller adds nothing at all rather than an empty slice.
+fn output_separator(name: &str) -> Option<Vec<u8>> {
+    match crate::globals::global_get(0, name) {
+        RubyValue::Str(s) => Some(s.lock().bytes().to_vec()),
+        _ => None,
+    }
+}
+
+/// `Kernel#print`: display renderings joined by the output field separator
+/// `$,` and closed by the output record separator `$\`, both nil (so both
+/// empty) unless the program sets them. A String argument contributes its RAW
+/// bytes (see `io::display_bytes`), which is what keeps `print 0xB4.chr` a
+/// single byte on the fd.
 pub fn kernel_print(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     let mut buf = Vec::new();
     let mut rendered = Ok(());
-    for a in args {
+    let field_sep = output_separator("$,");
+    for (i, a) in args.iter().enumerate() {
+        if i > 0
+            && let Some(s) = &field_sep
+        {
+            buf.extend_from_slice(s);
+        }
         if let Err(sig) = crate::builtins::io::display_bytes(a, &mut buf) {
             rendered = Err(sig);
             break;
         }
+    }
+    if rendered.is_ok()
+        && let Some(s) = output_separator("$\\")
+    {
+        buf.extend_from_slice(&s);
     }
     // Flush-then-propagate, same as `kernel_puts`.
     crate::builtins::io::write_bytes(&crate::builtins::io::current_stdout(), &buf)?;
