@@ -60,7 +60,7 @@ pub fn is_builtin_feature(feature: &str) -> bool {
     // compile-time frontend (`extend FFI::Library` / `attach_function`, the
     // `lower_class_body` FFI pre-scan) is orthogonal -- it emits `extern "C"` +
     // `#[link]` inline and never needs a constant. See [[ffi-real-gem-api]].
-    // `weakref` (WeakRef), `objspace` (the whole `ObjectSpace` module, both
+    // `objspace` (the whole `ObjectSpace` module, both
     // the always-on half CRuby defines in gc.c and the introspection half it
     // gates behind this require) and `fiber` (Fiber) name always-on builtins
     // here, so those requires are pure no-ops -- their classes resolve
@@ -87,7 +87,6 @@ pub fn is_builtin_feature(feature: &str) -> bool {
             | "io/console"
             | "io/wait"
             | "io/nonblock"
-            | "weakref"
             | "objspace"
             | "fiber"
             | "thread"

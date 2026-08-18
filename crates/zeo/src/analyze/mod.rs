@@ -3795,8 +3795,19 @@ fn check_builtin_superclass_restatement(
                     format!("unknown superclass `{s}` (must be defined earlier in the file)")
                 })?;
                 if compiler.class(cid).parent != Some(want) {
-                    return Err(superclass_mismatch(compiler, def_node, name));
+                    // A NAMESPACE PLACEHOLDER (`WeakRef`) carries no class of
+                    // its own -- the vendored Ruby file is the definition, and
+                    // its `< Delegator` ESTABLISHES the parent the ABI row
+                    // deliberately left at the default. A second, different
+                    // clause is a real mismatch again.
+                    if !zeo_abi::is_namespace_placeholder(cid)
+                        || compiler.class(cid).explicit_superclass
+                    {
+                        return Err(superclass_mismatch(compiler, def_node, name));
+                    }
+                    compiler.classes[cid.0 as usize].parent = Some(want);
                 }
+                compiler.classes[cid.0 as usize].explicit_superclass = true;
             }
         }
     }
@@ -4464,6 +4475,11 @@ fn walk_class_body(
                 if try_prepend_call_edit(compiler, stmt, &child_cref, box_id) {
                     continue;
                 }
+                // `import_methods M` inside a `refine` block. The RUNTIME does
+                // the copying; what the COMPILER needs is the name list, or the
+                // call sites a `using` covers are never nominated and the
+                // imported method is unreachable however well it was copied.
+                record_imported_methods(compiler, class_id, stmt, &child_cref, box_id);
                 if declines_a_singleton_prepend(compiler, stmt, &child_cref, box_id) {
                     // Runs at document position as an ordinary send; the
                     // de-opt makes static call sites see what it writes.
@@ -4709,6 +4725,42 @@ fn defer_object_extends(compiler: &mut Compiler) {
     for m in resolved {
         defer_mixin_to_runtime(compiler, m);
     }
+}
+
+/// Records a `import_methods M, ...` written in a refinement holder's body --
+/// see [`ClassInfo::imported_modules`]. The call still runs (the runtime does
+/// the actual copying); this is only what makes `refinement_defines` answer for
+/// the imported names, which is what nominates a call site.
+fn record_imported_methods(
+    compiler: &mut Compiler,
+    class_id: ClassId,
+    stmt: NodeId,
+    cref: &[ClassId],
+    box_id: u32,
+) {
+    let HirNode::Call {
+        receiver: None,
+        name,
+        args,
+        ..
+    } = &compiler.hir[stmt]
+    else {
+        return;
+    };
+    if name != "import_methods" {
+        return;
+    }
+    let resolved: Vec<ClassId> = args
+        .clone()
+        .iter()
+        .filter_map(|a| match a {
+            crate::hir::ArrayElem::Single(n) => const_node_class(compiler, *n, cref, box_id),
+            crate::hir::ArrayElem::Splat(_) => None,
+        })
+        .collect();
+    compiler.classes[class_id.0 as usize]
+        .imported_modules
+        .extend(resolved);
 }
 
 /// The bare constant NAME a node reads, for the leaf-name fallback above.

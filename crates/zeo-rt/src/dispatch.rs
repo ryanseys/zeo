@@ -1593,11 +1593,19 @@ impl ClassRegistry {
         if tombstoned(id) {
             return None;
         }
+        // A position that has no object-channel row but DOES have a VALUE one
+        // (a builtin REOPEN, and every method of a namespace-slot builtin whose
+        // body is Ruby -- `WeakRef`) ends this walk: answering from further up
+        // would step over the nearer definition. The caller's own per-ancestor
+        // walk probes both channels and resolves it. Gated on the entry having
+        // any value rows at all, which no ordinary user class does.
+        let shadowed =
+            |e: &ClassEntry| !e.own_value_names.is_empty() && e.own_value_names.contains(&name);
         if let Some(e) = self.entries.get(&id.0) {
             if let Some(m) = e.methods.get(&name) {
                 return Some(m);
             }
-            if e.undefined_methods.contains(&name) {
+            if e.undefined_methods.contains(&name) || shadowed(e) {
                 return None;
             }
         }
@@ -1611,7 +1619,7 @@ impl ClassRegistry {
             if let Some(m) = e.methods.get(&name) {
                 return Some(m);
             }
-            if e.undefined_methods.contains(&name) {
+            if e.undefined_methods.contains(&name) || shadowed(e) {
                 return None;
             }
         }
@@ -2184,23 +2192,22 @@ pub fn responds_to_or_missing(
         if let Some(f) = registry().lookup_mro(id, rtm) {
             return Ok(f.call(o, &args, None)?.truthy());
         }
-    } else {
+    } else if let RubyValue::Class(cid) = recv
+        && class_defines_user_hook(*cid, rtm)
+    {
         // A CLASS receiver's hook is a CLASS-level `respond_to_missing?`
         // (`def self.respond_to_missing?`, faker's Base) -- probed through
-        // the same singleton-chain resolution its `method_missing` twin
-        // uses.
-        if let RubyValue::Class(cid) = recv
-            && class_defines_user_hook(*cid, rtm)
-        {
-            return Ok(send_class_walking(*cid, 0, rtm, &args, None)?.truthy());
-        }
-        // A builtin-value receiver's hook can only come from a reopen
-        // (`class Integer; def respond_to_missing?...`) -- the value-method
-        // probe per ancestor.
-        for &anc in ancestors_of_value(id) {
-            if let Some(f) = value_method(anc, 0, rtm) {
-                return Ok(f(recv, &args, None)?.truthy());
-            }
+        // the same singleton-chain resolution its `method_missing` twin uses.
+        return Ok(send_class_walking(*cid, 0, rtm, &args, None)?.truthy());
+    }
+    // The VALUE channel, for both receiver shapes: a builtin REOPEN's hook
+    // (`class Integer; def respond_to_missing?...`), and every method of a
+    // namespace-slot builtin whose body is Ruby -- `WeakRef`, which inherits
+    // `Delegator`'s hook and registers it here rather than on the object
+    // channel `lookup_mro` reads.
+    for &anc in ancestors_of_value(id) {
+        if let Some(f) = value_method(anc, 0, rtm) {
+            return Ok(f(recv, &args, None)?.truthy());
         }
     }
     Ok(false)
@@ -4090,9 +4097,24 @@ pub fn run_initialize(
         f.call(recv, args, block)?;
         return Ok(());
     }
-    if let Some(f) = registry().lookup_mro(class, crate::symbol::wk::initialize()) {
-        f.call(recv, args, block)?;
-        return Ok(());
+    let init = crate::symbol::wk::initialize();
+    // Per ancestor, most-derived first, BOTH channels: the object-channel row
+    // (`lookup`) and the VALUE row a builtin REOPEN registers. `lookup_mro`
+    // reads only the first, so a namespace-slot builtin whose whole body is
+    // Ruby (`WeakRef`, defined in the vendored gem) was walked straight past
+    // into its SUPERCLASS's `initialize`.
+    for &anc in ancestors_of_value(class) {
+        if crate::runtime_meta::is_live() && crate::runtime_meta::overlay_is_undefined(anc, init) {
+            break;
+        }
+        if let Some(f) = registry().lookup(anc, init) {
+            f.call(recv, args, block)?;
+            return Ok(());
+        }
+        if let Some(f) = value_method(anc, 0, init) {
+            f(&RubyValue::Object(recv.clone()), args, block)?;
+            return Ok(());
+        }
     }
     // A RUNTIME class id (`Class.new(StandardError)`) is in no registry entry at
     // all, so the walk above cannot even reach its ancestors. Its chain lives in
@@ -4933,17 +4955,34 @@ pub fn refinement_home(
             false => is_a(cls, target),
             true => matches!(recv, RubyValue::Class(c) if is_a(*c, target)),
         };
-        (applies && value_method(holder, 0, name).is_some()).then_some(holder)
+        (applies && holder_defines(holder, name)).then_some(holder)
     })
 }
 
-fn refinement_for(
+/// Whether refinement holder `holder` supplies `name` -- its compiled rows, or
+/// the ones a runtime `Refinement#import_methods` copied into the overlay.
+fn holder_defines(holder: ClassId, name: Symbol) -> bool {
+    value_method(holder, 0, name).is_some()
+        || (crate::runtime_meta::is_live()
+            && crate::runtime_meta::overlay_value_body(holder, name).is_some())
+}
+
+/// Run refinement holder `holder`'s `name` against `recv`, from whichever of
+/// the two tables carries it.
+fn call_refined(
+    holder: ClassId,
     recv: &RubyValue,
     name: Symbol,
-    candidates: &[(ClassId, ClassId, bool)],
-) -> Option<ValueMethodFn> {
-    let holder = refinement_home(recv, name, candidates)?;
-    value_method(holder, 0, name)
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Option<Result<RubyValue, Signal>> {
+    if let Some(f) = value_method(holder, 0, name) {
+        return Some(f(recv, args, block));
+    }
+    let body = crate::runtime_meta::overlay_value_body(holder, name)?;
+    Some(crate::runtime_meta::call_value_body(
+        holder, name, &body, recv, args, block,
+    ))
 }
 
 /// A call site the active refinements may answer. The refined body wins
@@ -4957,11 +4996,25 @@ pub fn refined_send_in(
     args: &[RubyValue],
     block: Option<RubyValue>,
     candidates: &[(ClassId, ClassId, bool)],
+    explicit: bool,
 ) -> Result<RubyValue, Signal> {
-    match refinement_for(recv, name, candidates) {
-        Some(f) => f(recv, args, block),
-        None => send_value_in(box_id, recv, name, args, block),
+    if let Some(holder) = refinement_home(recv, name, candidates) {
+        // A refined method is an ordinary method for visibility: `private def`
+        // inside a `refine` block (or a private row `import_methods` copied in)
+        // refuses an explicit receiver.
+        if explicit && instance_method_visibility(holder, name) == Some(MethodVisibility::Private) {
+            return Err(raise_method_missing(
+                recv,
+                &name.to_string(),
+                args,
+                MissingReason::Private,
+            ));
+        }
+        if let Some(r) = call_refined(holder, recv, name, args, block.clone()) {
+            return r;
+        }
     }
+    send_value_in(box_id, recv, name, args, block)
 }
 
 /// `recv.send(name, ...)` / `recv.public_send(...)` at a site some `using`
@@ -4976,8 +5029,10 @@ pub fn refined_send_dynamic(
     candidates: &[(ClassId, ClassId, bool)],
     public: bool,
 ) -> Result<RubyValue, Signal> {
-    if let Some(f) = refinement_for(recv, name, candidates) {
-        return f(recv, args, block);
+    if let Some(r) = refinement_home(recv, name, candidates)
+        .and_then(|h| call_refined(h, recv, name, args, block.clone()))
+    {
+        return r;
     }
     if public {
         send_value_public_in(box_id, recv, name, args, block)

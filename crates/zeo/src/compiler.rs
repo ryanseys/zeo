@@ -152,6 +152,12 @@ pub struct ClassInfo {
     /// through dynamic dispatch, where the overlay's tombstone is consulted.
     /// Pay-per-use -- a program with no conditional `undef` is untouched.
     pub runtime_undefs: FSet<String>,
+    /// The modules a `Refinement#import_methods` in this class's body names.
+    /// Only a refinement holder ever has any. The RUNTIME does the copying;
+    /// the compiler needs the names so `refinement_defines` nominates the call
+    /// sites a `using` covers -- an unnominated site never asks the refinement
+    /// at all, however well the copy went.
+    pub imported_modules: Vec<ClassId>,
     /// `(new, old, is_class_method, seq)` aliases whose source method is
     /// INHERITED or lives in another body of this class (not defined earlier
     /// in the SAME body -- that form is cloned at lowering, see
@@ -1045,6 +1051,7 @@ impl Compiler {
                 undefined: FSet::default(),
                 class_undefined: FSet::default(),
                 runtime_undefs: FSet::default(),
+                imported_modules: Vec::new(),
                 pending_aliases: Vec::new(),
                 method_history: Vec::new(),
                 redef_scopes: Vec::new(),
@@ -1465,10 +1472,18 @@ impl Compiler {
     /// the question that decides whether a call site routes through the
     /// refinement at all.
     pub(crate) fn refinement_defines(&self, holder: ClassId, name: &str) -> bool {
-        self.class(holder)
-            .own_methods
-            .iter()
-            .any(|&sid| self.scope(sid).name == name)
+        let defines = |cid: ClassId| {
+            self.class(cid)
+                .own_methods
+                .iter()
+                .any(|&sid| self.scope(sid).name == name)
+        };
+        defines(holder)
+            || self
+                .class(holder)
+                .imported_modules
+                .iter()
+                .any(|&m| defines(m))
     }
 
     /// Precomputes `cref_of`/`fq_name` for every class -- see
@@ -1656,6 +1671,7 @@ impl Compiler {
             undefined: FSet::default(),
             class_undefined: FSet::default(),
             runtime_undefs: FSet::default(),
+            imported_modules: Vec::new(),
             pending_aliases: Vec::new(),
             method_history: Vec::new(),
             redef_scopes: Vec::new(),
@@ -1812,7 +1828,6 @@ impl Compiler {
             // A WeakMap subclass's instances are the native `WeakMap` RObj,
             // and a WeakRef subclass's the native `WeakRef`.
             && !self.is_weakmap_subclass(cid)
-            && !self.is_weakref_subclass(cid)
             // A Date subclass's instances are the native `RDate`.
             && !self.is_date_subclass(cid)
             // A Proc subclass's instances are still `RubyValue::Proc`.
@@ -1955,21 +1970,6 @@ impl Compiler {
             .any(|a| a == zeo_abi::WEAKMAP_CLASS)
     }
 
-    /// Whether `cid` is a user subclass of `WeakRef`.
-    ///
-    /// The WeakMap shape one root over: `weakref_construct` builds
-    /// `WeakRef::new(class, referent)` from the receiver, so the subclass IS
-    /// the native delegator. Its delegation rows are the root's own and reach
-    /// it through the ancestry.
-    pub fn is_weakref_subclass(&self, cid: ClassId) -> bool {
-        let ci = self.class(cid);
-        if ci.is_module || ci.is_builtin || ci.is_bootstrap {
-            return false;
-        }
-        self.superclass_chain(cid)
-            .any(|a| a == zeo_abi::WEAKREF_CLASS)
-    }
-
     /// Whether `cid` is a user `class X < Module` -- a MODULE FACTORY, whose
     /// instances are real runtime module ids tagged as belonging to `X`.
     ///
@@ -2021,7 +2021,6 @@ impl Compiler {
             // free functions exactly as the other two shapes' do.
             || self.is_module_subclass(cid)
             || self.is_weakmap_subclass(cid)
-            || self.is_weakref_subclass(cid)
             || self.is_date_subclass(cid)
             || self.is_proc_subclass(cid)
     }

@@ -3763,9 +3763,19 @@ pub fn refinement_import_methods(
             let Some(body) = snapshot_instance_method(*mid, name) else {
                 continue;
             };
+            // The VALUE-shaped copy as well: a refinement of `String` is
+            // reached with a `RubyValue::Str` receiver, which has no `RObj` for
+            // the `MethodImpl` above to bind against. A compiled user module
+            // emits a value bridge per method, and it takes `self` as a plain
+            // `RubyValue`, so it passes straight through.
+            let value_body = crate::dispatch::value_method(*mid, 0, name)
+                .map(|f| RProc::with_self_and_block(f, RubyValue::Nil, -1, true));
             let mut w = maps().classes.write().unwrap();
             let e = w.entry(hid.0).or_insert_with(OverlayEntry::delta);
             e.methods.insert(name, body);
+            if let Some(vb) = value_body {
+                e.value_bodies.insert(name, vb);
+            }
             e.undefs.remove(&name);
             if private.contains(&name) {
                 e.methods_vis
@@ -4417,7 +4427,7 @@ fn immediate_kind(v: &RubyValue) -> &'static str {
 /// runtime body invents spill into `IvarCell`'s invented storage.
 /// `initialize` resolves through full dispatch, so a runtime-defined body
 /// wins over the inherited compiled one.
-fn compiled_subclass_construct(
+pub(crate) fn compiled_subclass_construct(
     id: ClassId,
     args: &[RubyValue],
     block: Option<RubyValue>,
@@ -4430,7 +4440,7 @@ fn compiled_subclass_construct(
     Ok(RubyValue::Object(handle))
 }
 
-fn dyn_object_construct(
+pub(crate) fn dyn_object_construct(
     id: ClassId,
     args: &[RubyValue],
     block: Option<RubyValue>,

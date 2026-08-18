@@ -1919,21 +1919,6 @@ fn codegen(analyzed: &Analyzed, sink: &mut ItemSink<'_>) -> std::io::Result<()> 
                     vec![#(zeo_rt::ClassId(#ancestor_ids)),*],
                 );
             }
-        } else if compiler.is_weakref_subclass(ClassId(idx as u32)) {
-            // A user `class Ref < WeakRef`: the same shape one root over --
-            // its instances ARE the native delegator, and the delegation rows
-            // reach it through the ancestry.
-            let id = idx as u32;
-            let fq_name = compiler.fq_name(ClassId(id));
-            let ancestor_ids = compiler.class(ClassId(id)).ancestors.iter().map(|a| a.0);
-            quote! {
-                zeo_rt::register_weakref_subclass(
-                    &mut __registry,
-                    zeo_rt::ClassId(#id),
-                    #fq_name,
-                    vec![#(zeo_rt::ClassId(#ancestor_ids)),*],
-                );
-            }
         } else if compiler.is_module_subclass(ClassId(idx as u32)) {
             // A user `class X < Module`: no generated struct -- its instances
             // are real runtime MODULE ids tagged as belonging to X, so
@@ -2597,15 +2582,30 @@ fn codegen(analyzed: &Analyzed, sink: &mut ItemSink<'_>) -> std::io::Result<()> 
         // identical builtin registrations while preserving full reopen parity.
         let is_ext = zeo_abi::is_gated_builtin(ClassId(id));
         let ancestors_default = class.ancestors == zeo_abi::declared_ancestors(ClassId(id));
+        // A reopen that only CHANGED the ancestry patches the entry
+        // `register_builtins` already made, rather than replacing it -- a full
+        // re-register passes `None` for the constructor and would silently
+        // take `.new` away from every class that has one (`WeakRef`, whose
+        // vendored Ruby body declares `< Delegator`, was the case that found
+        // this).
         let register = (!is_overlay && (is_ext || !ancestors_default)).then(|| {
-            quote! {
-                __registry.register(
-                    zeo_rt::ClassId(#id),
-                    #name,
-                    #is_module,
-                    vec![#(zeo_rt::ClassId(#ancestor_ids)),*],
-                    None,
-                );
+            if is_ext {
+                quote! {
+                    __registry.register(
+                        zeo_rt::ClassId(#id),
+                        #name,
+                        #is_module,
+                        vec![#(zeo_rt::ClassId(#ancestor_ids)),*],
+                        None,
+                    );
+                }
+            } else {
+                quote! {
+                    __registry.set_ancestors(
+                        zeo_rt::ClassId(#id),
+                        vec![#(zeo_rt::ClassId(#ancestor_ids)),*],
+                    );
+                }
             }
         });
         // Aliases of builtin methods recorded on a REOPENED builtin (or on

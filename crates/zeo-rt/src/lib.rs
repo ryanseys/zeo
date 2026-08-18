@@ -86,8 +86,8 @@ pub use builtins::value_subclass::{
     register_recv_honouring_subclass, register_value_subclass, value_super,
 };
 pub use builtins::warning::emit_parse_warnings;
+pub use builtins::weak::register_weakmap_subclass;
 pub use builtins::weak::run_finalizers;
-pub use builtins::weak::{register_weakmap_subclass, register_weakref_subclass};
 pub use civars::{CivarSite, class_ivar_get, class_ivar_names, class_ivar_set};
 pub use collections::*;
 pub use constants::{

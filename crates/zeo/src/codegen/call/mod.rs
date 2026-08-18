@@ -1446,6 +1446,9 @@ pub fn emit_call(
                         zeo_rt::refined_send_in(
                             #__bx, &#recv, #name_sym, &[#(#arg_exprs),*], #blk,
                             &[#(#pairs),*],
+                            // Implicit self inside the refine block: a private
+                            // sibling is reachable, as everywhere else.
+                            false,
                         )
                     },
                 );
@@ -2363,6 +2366,7 @@ fn emit_refined_call(
                 &[#(#arg_exprs),*],
                 #blk,
                 &[#(#pairs),*],
+                true,
             )
         },
     ))

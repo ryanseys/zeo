@@ -455,6 +455,22 @@ pub const WEAKMAP_CLASS: ClassId = ClassId(83);
 /// while it lives, raising `WeakRef::RefError` once it's been collected.
 /// CRuby roots it at `Delegator < BasicObject`, which zeo doesn't model;
 /// `Object` is the pragmatic parent.
+/// The builtin slots that are NAMESPACES only -- the class itself is defined in
+/// Ruby (a vendored gem), and the row exists so a nested builtin constant has a
+/// scope and so [`BUILTINS`] stays contiguous. A reopen may therefore DECLARE
+/// the superclass the row leaves open, which is a mismatch for every other
+/// builtin.
+pub const NAMESPACE_PLACEHOLDERS: &[ClassId] = &[WEAKREF_CLASS];
+
+/// Whether `id` is one of [`NAMESPACE_PLACEHOLDERS`].
+pub fn is_namespace_placeholder(id: ClassId) -> bool {
+    NAMESPACE_PLACEHOLDERS.contains(&id)
+}
+
+/// `WeakRef`'s NAMESPACE slot. The class itself is the vendored pure-Ruby
+/// `gems/weakref` -- CRuby's own file, `class WeakRef < Delegator`, standing
+/// on the `ObjectSpace::WeakMap` beside it. The builtin row carries no
+/// methods; it exists so `WeakRef::RefError` has a scope to nest under.
 pub const WEAKREF_CLASS: ClassId = ClassId(84);
 
 /// `Random::Formatter` -- the mixin (CRuby's `random/formatter.rb`) that turns
@@ -860,10 +876,12 @@ pub const NOT_PAYLOAD_ROOTS: &[ClassId] = &[
     DATA_CLASS,
     FFI_STRUCT_CLASS,
     FFI_UNION_CLASS,
+    // A NAMESPACE slot whose class body is Ruby (see `WEAKREF_CLASS`): there is
+    // no native payload to wrap, and its subclasses are ordinary objects.
+    WEAKREF_CLASS,
     // Constructors that already honour the RECEIVER class, so the subclass
     // IS the native type rather than a wrapper around one.
     WEAKMAP_CLASS,
-    WEAKREF_CLASS,
     DATE_CLASS,
     DATETIME_CLASS,
     // The class rides IN the proc, so a subclass instance is still a
@@ -1614,6 +1632,11 @@ pub const BUILTINS: &[BuiltinClass] = &[
         includes: &[],
         feature: None,
     },
+    // A NAMESPACE only: `WeakRef` itself is the vendored pure-Ruby
+    // `gems/weakref` (CRuby's own file, `class WeakRef < Delegator`), which
+    // reopens this row and declares its real superclass. The row exists
+    // because `WeakRef::RefError` nests under it and because `BUILTINS` must
+    // stay contiguous from `ClassId(1)`.
     BuiltinClass {
         id: WEAKREF_CLASS,
         name: "WeakRef",

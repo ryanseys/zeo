@@ -22,7 +22,8 @@ BSD or MIT, compatible with Zeo's MIT OR Apache-2.0).
 
 A Ruby default gem that ships no license file of its own is covered by Ruby's
 own dual license, so those dirs carry Ruby's `COPYING` + `BSDL` pair verbatim
-(`delegate`, `English`, `fiddle`, `forwardable`, `shellwords`, `singleton`;
+(`delegate`, `English`, `fiddle`, `forwardable`, `shellwords`, `singleton`,
+`weakref`;
 `bigdecimal` carries its own upstream `LICENSE` + `BSDL`). `minitest` is MIT
 and reproduces its license in the vendored `README.rdoc`, exactly as upstream
 does. The zeo-authored Ruby halves listed further below carry no separate
@@ -43,6 +44,7 @@ license: they are Zeo's own code, under the repository's MIT OR Apache-2.0.
 | singleton | 0.3.0 | ruby 4.0.5 stdlib |
 | timeout | 0.6.1 | upstream ruby/timeout |
 | tsort | 0.2.0 | ruby 4.0.5 default gem |
+| weakref | 0.1.4 | ruby 4.0.6 stdlib |
 
 `irb/` carries one removal: `lib/irb/ext/tracer.rb` is reduced to a
 comment-only file. It hangs off the `tracer` gem, which ruby 4.0.6 does not
