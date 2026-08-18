@@ -1564,9 +1564,10 @@ fn prelude_attrs() -> TokenStream {
     quote! {
         // Lints that mirror RUBY-source properties, not codegen defects: an
         // unused Ruby assignment (or a hoisted local never read), code after
-        // a `raise`, Kernel#URI's own capitalization. Genuine-defect lints
-        // (unused_must_use and friends) stay live -- the generated program is
-        // expected to build clean.
+        // a `raise`, a loop that only ever leaves through `return` so its
+        // `break`/`next` label goes unmentioned, Kernel#URI's own
+        // capitalization. Genuine-defect lints (unused_must_use and friends)
+        // stay live -- the generated program is expected to build clean.
         #![allow(
             unused_parens,
             unused_braces,
@@ -1574,6 +1575,7 @@ fn prelude_attrs() -> TokenStream {
             unused_variables,
             unreachable_code,
             unused_assignments,
+            unused_labels,
             non_snake_case
         )]
 

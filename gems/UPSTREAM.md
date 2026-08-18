@@ -22,8 +22,8 @@ BSD or MIT, compatible with Zeo's MIT OR Apache-2.0).
 
 A Ruby default gem that ships no license file of its own is covered by Ruby's
 own dual license, so those dirs carry Ruby's `COPYING` + `BSDL` pair verbatim
-(`delegate`, `English`, `fiddle`, `forwardable`, `shellwords`, `singleton`,
-`weakref`;
+(`delegate`, `English`, `fiddle`, `forwardable`, `prime`, `shellwords`,
+`singleton`, `weakref`;
 `bigdecimal` carries its own upstream `LICENSE` + `BSDL`). `minitest` is MIT
 and reproduces its license in the vendored `README.rdoc`, exactly as upstream
 does. The zeo-authored Ruby halves listed further below carry no separate
@@ -39,6 +39,7 @@ license: they are Zeo's own code, under the repository's MIT OR Apache-2.0.
 | ostruct | 0.6.3 | ruby 4.0.5 default gem |
 | pp | 0.6.4 | upstream ruby/pp |
 | prettyprint | 0.2.0 | ruby 4.0.5 default gem |
+| prime | 0.1.4 | ruby 4.0.6 bundled gem |
 | reline | 0.6.3 | ruby 4.0.6 default gem |
 | shellwords | 0.2.2 | ruby 4.0.5 stdlib |
 | singleton | 0.3.0 | ruby 4.0.5 stdlib |
