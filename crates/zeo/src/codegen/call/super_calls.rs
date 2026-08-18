@@ -719,10 +719,11 @@ fn emit_runtime_super_args(
         }
         // No block written: real Ruby forwards the CURRENT method's block
         // (the splice saw `__blk` in scope for free; the runtime dispatch
-        // must pass it explicitly). Inside a real Proc the method's `__blk`
-        // isn't in scope -- `None` keeps that shape compiling, matching the
-        // splice's own reach.
-        (None, None) if !cx.in_real_proc => quote! { __blk.clone() },
+        // must pass it explicitly). Inside a real Proc the closure CLONES the
+        // enclosing method's `__blk` in for exactly this reason -- see
+        // `procs`' `blk_clone`, which a bare `super` turns on the same way a
+        // bare `yield` does. `has_blk_binding` is what says it is there.
+        (None, None) if !cx.in_real_proc || cx.has_blk_binding => quote! { __blk.clone() },
         (None, None) => quote! { None },
     };
     (pushes, block_expr)

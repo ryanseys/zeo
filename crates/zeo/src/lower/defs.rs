@@ -2088,6 +2088,9 @@ pub(crate) fn lower_params(
         })
         .collect::<PResult<Vec<_>>>()?;
 
+    let implicit_rest = params
+        .rest()
+        .is_some_and(|n| n.as_implicit_rest_node().is_some());
     let rest = match params.rest() {
         None if forwarding => Some(Some("__fwd_rest".to_string())),
         None => None,
@@ -2097,6 +2100,9 @@ pub(crate) fn lower_params(
         // `m([1, 2]) { |a, | a }` is `1`, not `[1, 2]` (oracle-verified).
         // That is exactly an anonymous `*`, so it lowers as one and the
         // existing arity/auto-splat rules cover it with no special case.
+        // ...and `implicit_rest` above records that it was a comma, which
+        // keeps it out of the SIGNATURE (`arity`/`#parameters`) and out of a
+        // lambda's strict argument count.
         Some(n) if n.as_implicit_rest_node().is_some() => Some(None),
         Some(n) => {
             let r = n
@@ -2165,6 +2171,7 @@ pub(crate) fn lower_params(
         destructures,
         optional,
         rest,
+        implicit_rest,
         post,
         keywords,
         keyword_rest,

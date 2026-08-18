@@ -230,7 +230,15 @@ fn emit_proc_or_lambda_value_with(
     // bare `super` forwards the caller's block, and `super` there emits
     // CRuby's runtime "super called outside of method" raise) -- there is
     // no `__blk` binding to clone at that level.
-    let blk_clone = (bare_block_use && !method_body && !takes_own_block && cx.has_blk_binding)
+    // A bare `super` in the block forwards the enclosing METHOD's block too,
+    // which is the same capture a bare `yield` needs -- the reference is
+    // synthesized at emit time, so nothing in the block's HIR mentions it.
+    // `Captures::zsuper_forwards` already exists for the parameter half of
+    // exactly this shape.
+    let blk_clone = ((bare_block_use || block_caps.zsuper_forwards)
+        && !method_body
+        && !takes_own_block
+        && cx.has_blk_binding)
         .then(|| quote! { let __blk = __blk.clone(); });
 
     // Whether a METHOD-BODY closure must name its call-site block parameter
@@ -671,7 +679,9 @@ fn emit_lambda_arity_check(
     let nreq = params.required.len();
     let nopt = params.optional.len();
     let npost = params.post.len();
-    let has_rest = params.rest.is_some();
+    // A TRAILING COMMA's rest does not relax a lambda's count: `lambda { |a,| }`
+    // still refuses two arguments. See `Params::implicit_rest`.
+    let has_rest = params.rest.is_some() && !params.implicit_rest;
     let has_keywords = !params.keywords.is_empty() || params.keyword_rest.is_some();
     let min_lit = nreq + npost;
     let min_cond = (min_lit > 0).then(|| quote! { __argc < #min_lit });

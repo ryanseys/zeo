@@ -331,7 +331,20 @@ pub fn emit_prologue(cx: &Ctx, params: &Params, body: &[NodeId]) -> TokenStream 
         pieces.extend(wrap_if_captured(name));
     }
     for ((name, default), ident) in params.optional.iter().zip(&slots.optional) {
-        pieces.push(emit_lazy_default_shadow(cx, ident, *default));
+        // A REPEATED optional (`def f(_ = 1, _ = 2)`) writes the NAME, not the
+        // slot: CRuby compiles a default as an assignment to the local, so the
+        // second `_ = 2` firing overwrites what the first `_` holds. Reads
+        // answer the first slot (`SlotIdents`), so the default branch has to
+        // re-bind it. A captured name lives in a cell by now and is left
+        // alone -- writing through it is a different shape than this shadow.
+        let owner = safe_ident(name);
+        let owner = (owner != *ident && !cx.captured_locals.contains(name)).then_some(owner);
+        pieces.push(emit_lazy_default_shadow(
+            cx,
+            ident,
+            *default,
+            owner.as_ref(),
+        ));
         pieces.extend(wrap_if_captured(name));
     }
     if let (Some(Some(name)), Some(ident)) = (&params.rest, &slots.rest) {
@@ -346,7 +359,7 @@ pub fn emit_prologue(cx: &Ctx, params: &Params, body: &[NodeId]) -> TokenStream 
         match kw {
             KeywordParam::Required(name) => pieces.extend(wrap_if_captured(name)),
             KeywordParam::Optional(name, default) => {
-                pieces.push(emit_lazy_default_shadow(cx, ident, *default));
+                pieces.push(emit_lazy_default_shadow(cx, ident, *default, None));
                 pieces.extend(wrap_if_captured(name));
             }
         }
@@ -376,7 +389,12 @@ pub fn emit_prologue(cx: &Ctx, params: &Params, body: &[NodeId]) -> TokenStream 
     quote! { #(#pieces)* #destructures }
 }
 
-fn emit_lazy_default_shadow(cx: &Ctx, ident: &proc_macro2::Ident, default: NodeId) -> TokenStream {
+fn emit_lazy_default_shadow(
+    cx: &Ctx,
+    ident: &proc_macro2::Ident,
+    default: NodeId,
+    owner: Option<&proc_macro2::Ident>,
+) -> TokenStream {
     let default_expr = {
         let e = emit_expr(cx, default);
         // A default may itself be Object-typed (`def m(o = Widget.new)`).
@@ -386,11 +404,27 @@ fn emit_lazy_default_shadow(cx: &Ctx, ident: &proc_macro2::Ident, default: NodeI
     // (`def m(a = some_call)`) contains a `?`, which must propagate through
     // the ENCLOSING method body, not a helper closure that returns a plain
     // `RubyValue` (a real rustc E0277 found by the conformance corpus).
+    let Some(owner) = owner else {
+        return quote! {
+            #[allow(unused_mut)]
+            let mut #ident: zeo_rt::RubyValue = match #ident {
+                Some(__v) => __v,
+                None => #default_expr,
+            };
+        };
+    };
+    // The duplicate-name form: the default's value lands in BOTH this slot and
+    // the one the name really owns. Shadowed rather than assigned, so the
+    // owning binding does not have to be `mut` -- a required parameter's is a
+    // plain Rust fn parameter.
     quote! {
         #[allow(unused_mut)]
-        let mut #ident: zeo_rt::RubyValue = match #ident {
-            Some(__v) => __v,
-            None => #default_expr,
+        let (mut #ident, #owner): (zeo_rt::RubyValue, zeo_rt::RubyValue) = match #ident {
+            Some(__v) => (__v, #owner),
+            None => {
+                let __d = #default_expr;
+                (__d.clone(), __d)
+            }
         };
     }
 }
@@ -1318,7 +1352,10 @@ pub(super) fn proc_arity(params: &Params, is_lambda: bool) -> i32 {
     let lead = params.required.len() as i32;
     let opt = params.optional.len() as i32;
     let post = params.post.len() as i32;
-    let has_rest = params.rest.is_some();
+    // A TRAILING COMMA's rest is not part of the signature: `proc { |x,| }`
+    // answers 1, and `lambda { |a,| }` answers 1 rather than -2. See
+    // `Params::implicit_rest`.
+    let has_rest = params.rest.is_some() && !params.implicit_rest;
     let has_kw = !params.keywords.is_empty();
     let has_kwrest = params.keyword_rest.is_some();
     let any_required_kw = params
@@ -1362,7 +1399,11 @@ pub(super) fn proc_parameters(params: &Params, _is_lambda: bool) -> Option<Token
     for (o, _) in &params.optional {
         items.push(mk("opt", visible(o)));
     }
-    if let Some(rest) = &params.rest {
+    // A TRAILING COMMA's rest is not in the signature at all -- `proc { |x,| }`
+    // reports just `x`. See `Params::implicit_rest`.
+    if let Some(rest) = &params.rest
+        && !params.implicit_rest
+    {
         // An anonymous `*` (absent, or the parser's `__anon_rest` synthetic)
         // reports the name `:*` (CRuby 4.0).
         items.push(mk("rest", Some(anon_name(rest.as_deref(), "*"))));

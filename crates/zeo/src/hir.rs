@@ -1393,6 +1393,12 @@ pub struct Params {
     /// `None`: no `*` at all. `Some(None)`: an anonymous `*` (collects and
     /// discards the extra positional args). `Some(Some(name))`: `*name`.
     pub rest: Option<Option<String>>,
+    /// The `rest` above came from a TRAILING COMMA (`|a,|`), not from a written
+    /// `*`. It turns on auto-splat and discards what follows the named
+    /// parameters -- but it is not part of the SIGNATURE: `proc { |x,| }.arity`
+    /// is 1, `#parameters` reports only `x`, and `lambda { |a,| }` still
+    /// refuses two arguments.
+    pub implicit_rest: bool,
     /// Required params that appear AFTER a splat (`def f(a, *b, c)` -- `c`
     /// is a `post`; real Ruby allows this, and it's a distinct binding rule
     /// from `required` since its position is anchored from the END of the
