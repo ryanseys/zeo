@@ -479,47 +479,23 @@ pub fn report_uncaught(exc_value: &RubyValue) {
 /// pair as ONE write keeps another thread's report from interleaving into the
 /// middle of it.
 pub(crate) fn report_exception(exc_value: &RubyValue, preamble: Option<&str>) {
-    let msg = crate::dispatch::send(
-        &exc_value.as_object_unchecked(),
-        crate::Symbol::intern("message"),
-        &[],
-        None,
-    )
-    .and_then(|v| v.try_display_string())
-    .unwrap_or_default();
-    let cls = crate::builtins::class_name_of(exc_value);
+    use std::io::IsTerminal;
     let mut out = String::new();
     if let Some(preamble) = preamble {
         out.push_str(preamble);
         out.push('\n');
     }
-    // A MULTI-LINE message keeps the class tag on the first line and lets the
-    // rest run underneath, unindented -- CRuby's `error_pos`/`print_errinfo`
-    // split. `TypeError: X is not a class\n<file>: previous definition ...` is
-    // the shape that shows it, and it is the one a kind collision raises.
-    let (head, tail) = match msg.split_once('\n') {
-        Some((head, tail)) => (head, Some(tail)),
-        None => (msg.as_str(), None),
-    };
-    match backtrace_lines(exc_value) {
-        Some(lines) if !lines.is_empty() => {
-            out.push_str(&format!("{}: {} ({})\n", lines[0], head, cls));
-            if let Some(tail) = tail {
-                out.push_str(tail);
-                out.push('\n');
-            }
-            for l in &lines[1..] {
-                out.push_str(&format!("\tfrom {l}\n"));
-            }
-        }
-        _ => {
-            out.push_str(&format!("{head} ({cls})\n"));
-            if let Some(tail) = tail {
-                out.push_str(tail);
-                out.push('\n');
-            }
-        }
-    }
+    // The same renderer `Exception#full_message` runs -- head line, `from`
+    // trail, then the cause chain. An exception carrying NO backtrace hangs
+    // off nothing here (there is no reporting method to name, and by the time
+    // the top level reports there is no frame left to read a position from).
+    render_exception(
+        exc_value,
+        None,
+        std::io::stderr().is_terminal(),
+        false,
+        &mut out,
+    );
     eprint!("{out}");
 }
 
@@ -1370,19 +1346,122 @@ fn exc_exit_value(
     Ok(exc(recv).detail("exit_value"))
 }
 
-/// `Exception#detailed_message(highlight: false, **opts)` -- `"<message>
-/// (<ClassName>)"`. The optional `error_highlight` gem's source-snippet
-/// augmentation is a separate concern and not reproduced; the keyword options
-/// are accepted and ignored, as the core method does.
+/// CRuby's ANSI decorations (`eval_error.c:81`): bold for the message,
+/// underline for the class name, reset for both.
+const BOLD: &str = "\x1b[1m";
+const UNDERLINE: &str = "\x1b[1;4m";
+const RESET: &str = "\x1b[m";
+
+/// One keyword out of a call's trailing options Hash.
+fn opt_kw(args: &[RubyValue], name: &str) -> Option<RubyValue> {
+    let RubyValue::Hash(h) = args.last()? else {
+        return None;
+    };
+    let key = RubyValue::Symbol(Symbol::intern(name));
+    crate::hash_pairs(h)
+        .into_iter()
+        .find(|(k, _)| k.rb_eq(&key))
+        .map(|(_, v)| v)
+}
+
+/// `highlight:` -- true/false/absent, anything else is CRuby's own refusal.
+/// Absent means "decorate only for a terminal", which the conformance oracle
+/// runs without, so it resolves to false here for the same reason.
+fn highlight_kw(args: &[RubyValue]) -> Result<bool, Signal> {
+    match opt_kw(args, "highlight") {
+        None | Some(RubyValue::Nil) => {
+            use std::io::IsTerminal;
+            Ok(std::io::stderr().is_terminal())
+        }
+        Some(RubyValue::Bool(b)) => Ok(b),
+        Some(other) => Err(arg_error!(
+            "expected true or false as highlight: {}",
+            other.inspect_string()
+        )),
+    }
+}
+
+/// `order:` -- `:top` (the default) puts the failing frame first; `:bottom`
+/// prints CRuby's numbered `Traceback (most recent call last):` block.
+fn reverse_kw(args: &[RubyValue]) -> Result<bool, Signal> {
+    match opt_kw(args, "order") {
+        None | Some(RubyValue::Nil) => Ok(false),
+        Some(RubyValue::Symbol(s)) if s.name() == "top" => Ok(false),
+        Some(RubyValue::Symbol(s)) if s.name() == "bottom" => Ok(true),
+        Some(other) => Err(arg_error!(
+            "expected :top or :bottom as order: {}",
+            other.inspect_string()
+        )),
+    }
+}
+
+/// CRuby's `rb_decorate_message` (`eval_error.c:128`): the `detailed_message`
+/// body, and the head of every rendered report. An EMPTY message prints the
+/// class name alone -- `unhandled exception` for a bare `RuntimeError`, which
+/// is what an argumentless `raise` builds. An ANONYMOUS class (its name spells
+/// `#<Class:...>`) contributes no ` (Class)` tag, and under `highlight:` never
+/// closes the bold it opened -- CRuby's own asymmetry, reproduced. A
+/// multi-line message keeps the tag on its FIRST line and runs the rest
+/// underneath, each line bolded on its own.
+fn decorate_message(class_id: ClassId, msg: &str, highlight: bool) -> String {
+    let (bold, under, reset) = if highlight {
+        (BOLD, UNDERLINE, RESET)
+    } else {
+        ("", "", "")
+    };
+    let name = class_name(class_id).unwrap_or_default();
+    if msg.is_empty() {
+        let bare = if class_id == zeo_abi::RUNTIME_ERROR_CLASS {
+            "unhandled exception"
+        } else {
+            name.as_str()
+        };
+        return format!("{under}{bare}{reset}");
+    }
+    let (head, tail) = match msg.split_once('\n') {
+        Some((head, tail)) => (head, Some(tail)),
+        None => (msg, None),
+    };
+    let mut out = format!("{bold}{head}");
+    if !name.starts_with('#') {
+        out.push_str(&format!(" ({under}{name}{reset}{bold}){reset}"));
+    }
+    if let Some(tail) = tail {
+        out.push('\n');
+        if highlight {
+            let mut first = true;
+            for line in tail.split('\n') {
+                if !first {
+                    out.push('\n');
+                }
+                first = false;
+                if !line.is_empty() {
+                    out.push_str(&format!("{BOLD}{line}{RESET}"));
+                }
+            }
+        } else {
+            out.push_str(tail);
+        }
+    }
+    out
+}
+
+/// `Exception#detailed_message(highlight: nil, **opts)`. The optional
+/// `error_highlight` gem's source-snippet augmentation is a separate concern
+/// and not reproduced; the remaining keyword options are accepted and ignored,
+/// as the core method does.
 fn exc_detailed_message(
     recv: &RObj,
-    _args: &[RubyValue],
+    args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
     let e = exc(recv);
-    let name = class_name(e.class_id).unwrap_or_default();
     let msg = send(recv, Symbol::intern("to_s"), &[], None)?.to_display_string();
-    Ok(RubyValue::Str(string_new(format!("{msg} ({name})"))))
+    Ok(RubyValue::Str(string_new(decorate_message(
+        e.class_id,
+        &msg,
+        highlight_kw(args)?,
+    ))))
 }
 
 /// `SignalException.new(signo)` / `.new(signo, message)` / `.new(name)` --
@@ -1534,31 +1613,148 @@ fn exc_signm(
     send(recv, Symbol::intern("to_s"), &[], None)
 }
 
-/// `def full_message; self.class.name + ": " + message; end`
+/// CRuby's `print_errinfo` (`eval_error.c:86`): the position the report hangs
+/// off, then the decorated message. The position is the exception's innermost
+/// backtrace entry -- or, when it carries none, the CALLER's own source
+/// position under the name of the method doing the reporting (`error_pos`),
+/// which is why `StandardError.new("x").full_message` names `full_message`.
+fn print_errinfo(exc_value: &RubyValue, at: Option<&str>, highlight: bool, out: &mut String) {
+    let RubyValue::Object(o) = exc_value else {
+        return;
+    };
+    // SENT, not computed: `rb_get_detailed_message` dispatches, so a subclass
+    // overriding `detailed_message` changes what every report of it prints --
+    // which is the seam `error_highlight` and `did_you_mean` hang off.
+    let opts = crate::collections::hash_new(vec![(
+        RubyValue::Symbol(Symbol::intern("highlight")),
+        RubyValue::Bool(highlight),
+    )]);
+    crate::collections::hash_mark_kwargs(&opts);
+    let msg = send(
+        o,
+        Symbol::intern("detailed_message"),
+        &[RubyValue::Hash(opts)],
+        None,
+    )
+    .and_then(|v| v.try_display_string())
+    .unwrap_or_default();
+    let lines = backtrace_lines(exc_value).unwrap_or_default();
+    if let Some(pos) = lines.first().map(String::as_str).or(at) {
+        out.push_str(&format!("{pos}: "));
+    }
+    out.push_str(&msg);
+    out.push('\n');
+}
+
+/// CRuby's `print_backtrace` (`eval_error.c:219`): the `from` trail below the
+/// head line, skipping the entry the head already showed. `:bottom` order
+/// walks it outward-in and numbers each line, right-aligned to the widest
+/// index -- the `Traceback (most recent call last):` block.
+fn print_backtrace(exc_value: &RubyValue, reverse: bool, out: &mut String) {
+    let lines = backtrace_lines(exc_value).unwrap_or_default();
+    let len = lines.len();
+    let width = if len <= 1 {
+        0
+    } else {
+        (len - 1).to_string().len()
+    };
+    for i in 1..len {
+        let line = &lines[if reverse { len - i } else { i }];
+        if reverse {
+            out.push_str(&format!("\t{:>width$}: from {line}\n", len - i));
+        } else {
+            out.push_str(&format!("\tfrom {line}\n"));
+        }
+    }
+}
+
+/// CRuby's `show_cause` (`eval_error.c:290`): every exception in the `cause`
+/// chain is rendered after (or, in `:bottom` order, before) the one it caused.
+/// `set_explicit_cause` already refuses a circular chain, so the walk
+/// terminates without a seen-set.
+fn show_cause(exc_value: &RubyValue, at: Option<&str>, highlight: bool, reverse: bool, out: &mut String) {
+    let RubyValue::Object(o) = exc_value else {
+        return;
+    };
+    let Some(e) = downcast_robj::<RubyException>(o) else {
+        return;
+    };
+    let cause = e.cause.lock().clone();
+    if !matches!(cause, RubyValue::Object(_)) {
+        return;
+    }
+    write_exception(&cause, at, highlight, reverse, out);
+}
+
+/// CRuby's `rb_error_write0` (`eval_error.c:323`) -- the one renderer behind
+/// `Exception#full_message` and the uncaught-exception report. `:top` order
+/// reads head, trail, cause; `:bottom` reads them backwards, under a
+/// `Traceback` banner.
+fn render_exception(
+    exc_value: &RubyValue,
+    at: Option<&str>,
+    highlight: bool,
+    reverse: bool,
+    out: &mut String,
+) {
+    if reverse {
+        out.push_str(&if highlight {
+            format!("{BOLD}Traceback{RESET} (most recent call last):\n")
+        } else {
+            "Traceback (most recent call last):\n".to_string()
+        });
+    }
+    write_exception(exc_value, at, highlight, reverse, out);
+}
+
+/// The banner-less body, which is also what each `cause` recurses into -- one
+/// `Traceback` heads the whole report, however long the chain under it is.
+fn write_exception(
+    exc_value: &RubyValue,
+    at: Option<&str>,
+    highlight: bool,
+    reverse: bool,
+    out: &mut String,
+) {
+    if reverse {
+        show_cause(exc_value, at, highlight, reverse, out);
+        print_backtrace(exc_value, true, out);
+        print_errinfo(exc_value, at, highlight, out);
+    } else {
+        print_errinfo(exc_value, at, highlight, out);
+        print_backtrace(exc_value, false, out);
+        show_cause(exc_value, at, highlight, reverse, out);
+    }
+}
+
+/// `Exception#full_message(highlight: nil, order: :top)`.
 fn exc_full_message(
     recv: &RObj,
-    _args: &[RubyValue],
+    args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    let e = exc(recv);
-    let name = class_name(e.class_id).unwrap_or_default();
-    // Dynamic `to_s` (honors a subclass override), matching `#message`/`#inspect`.
-    let msg = send(recv, Symbol::intern("to_s"), &[], None)?.to_display_string();
-    // The uncaught-report shape (`file:line:in 'frame': msg (Class)` +
-    // tab-indented `from` lines, trailing newline) when a backtrace was
-    // stamped -- always the PLAIN rendering (the `highlight:` bold/reverse
-    // escapes aren't modeled; the conformance oracle disables highlighting
-    // too). A backtrace-less exception keeps the bare `Class: msg` form.
-    match e.backtrace.lock().as_ref() {
-        Some(lines) if !lines.is_empty() => {
-            let mut out = format!("{}: {msg} ({name})\n", lines[0]);
-            for l in &lines[1..] {
-                out.push_str(&format!("\tfrom {l}\n"));
-            }
-            Ok(RubyValue::Str(string_new(out)))
-        }
-        _ => Ok(RubyValue::Str(string_new(format!("{name}: {msg}")))),
+    let highlight = highlight_kw(args)?;
+    let reverse = reverse_kw(args)?;
+    let mut out = String::new();
+    render_exception(
+        &RubyValue::Object(recv.clone()),
+        error_pos("full_message").as_deref(),
+        highlight,
+        reverse,
+        &mut out,
+    );
+    Ok(RubyValue::Str(string_new(out)))
+}
+
+/// CRuby's `error_pos_str` (`eval_error.c:39`): `file:line:in 'callee': ` for
+/// the frame the report is being asked from, which is what an exception with
+/// no backtrace of its own hangs off.
+fn error_pos(callee: &str) -> Option<String> {
+    let (file, line) = crate::frames::current_location()?;
+    if line == 0 {
+        return Some(file.to_string());
     }
+    Some(format!("{file}:{line}:in '{callee}'"))
 }
 
 /// The exception `inspect`: empty message -> the class name; a message with a

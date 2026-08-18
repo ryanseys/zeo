@@ -2521,6 +2521,10 @@ pub const INVALID_BYTE_SEQUENCE_ERROR_CLASS: ClassId = exc_id(8);
 
 pub const LOCAL_JUMP_ERROR_CLASS: ClassId = exc_id(20);
 
+/// `RuntimeError` -- the one class whose EMPTY message renders as
+/// `unhandled exception` rather than the class name (`rb_decorate_message`).
+pub const RUNTIME_ERROR_CLASS: ClassId = exc_id(22);
+
 /// `FrozenError` -- exposes `#receiver` (the frozen object).
 pub const FROZEN_ERROR_CLASS: ClassId = exc_id(23);
 
