@@ -422,11 +422,17 @@ ruby_module! {
     module_function def "format" | "sprintf"(_recv, *args, &_block) {
         kernel_format(args)
     }
-    module_function def "Integer" as kernel_integer (_recv, _arg, _base?, **_opts) {
-        integer_impl(__args)
+    // NO `**opts`: the DSL peels any trailing hash before the arity guard, so
+    // `Integer({})` lost its only argument and failed the count. The
+    // `exception:` keyword is taken by `with_exception_kw` instead, which peels
+    // a trailing hash only when it really carries that key -- leaving an
+    // ordinary Hash argument positional, where it belongs.
+    module_function def "Integer" as kernel_integer (_recv, _arg, _base?, _opts?) {
+        with_exception_kw(__args, integer_impl)
     }
-    module_function def "Float" as kernel_float (_recv, _arg, **_opts) {
-        float_impl(__args)
+    // The second slot is the `exception:` hash -- see `Integer`'s note.
+    module_function def "Float" as kernel_float (_recv, _arg, _opts?) {
+        with_exception_kw(__args, float_impl)
     }
     module_function def "String" as kernel_string (_recv, _arg) {
         string_impl(__args)
@@ -437,8 +443,8 @@ ruby_module! {
     module_function def "Hash" as kernel_hash (_recv, _arg) {
         hash_impl(__args)
     }
-    module_function def "Rational" as kernel_rational cfunc (_recv, _numerator, _denominator?) {
-        rational_impl(__args)
+    module_function def "Rational" as kernel_rational cfunc (_recv, _numerator, _denominator?, _opts?) {
+        with_exception_kw(__args, rational_impl)
     }
     // `Kernel#BigDecimal` -- the one BigDecimal constructor (`.new` is long
     // removed). Present whenever the extension is compiled in; like `Time`'s
@@ -452,8 +458,8 @@ ruby_module! {
     module_function def "Pathname"(_recv, arg) {
         crate::builtins::pathname::kernel_pathname(arg)
     }
-    module_function def "Complex" as kernel_complex cfunc (_recv, _real, _imaginary?) {
-        complex_impl(__args)
+    module_function def "Complex" as kernel_complex cfunc (_recv, _real, _imaginary?, _opts?) {
+        with_exception_kw(__args, complex_impl)
     }
     // `Kernel#autoload`/`#autoload?` -- the RECEIVERLESS spellings, which
     // register on `Object` rather than on the caller's class. `Module`'s rows
@@ -1115,6 +1121,42 @@ fn copy_with_hook(original: &RubyValue, copy: RubyValue) -> Result<RubyValue, Si
 /// radix prefixes (`0x`/`0o`/`0b`, or a leading `0` octal when no base is
 /// given); floats/rationals TRUNCATE toward zero; nil and everything else
 /// is a TypeError. Message shapes oracle-verified.
+/// Splits the `exception:` keyword off a Kernel conversion's arguments.
+///
+/// Every one of `Integer`/`Float`/`Rational`/`Complex` takes it, and it is a
+/// KEYWORD -- never one of the value arguments -- so the trailing options Hash
+/// comes off before the positional shape is read at all. Read as a positional
+/// it became a base, a denominator or an imaginary part, which is how
+/// `Integer("abc", exception: false)` used to raise about a Hash.
+fn split_exception_kw(args: &[RubyValue]) -> (&[RubyValue], bool) {
+    let Some(RubyValue::Hash(h)) = args.last() else {
+        return (args, true);
+    };
+    let key = RubyValue::Symbol(crate::Symbol::intern("exception"));
+    if !crate::collections::hash_has_key(h, &key) {
+        return (args, true);
+    }
+    (
+        &args[..args.len() - 1],
+        crate::collections::hash_get(h, &key).truthy(),
+    )
+}
+
+/// Runs a Kernel conversion under its `exception:` keyword: `false` answers
+/// `nil` instead of raising, which is the entire point of the keyword. Only a
+/// RAISE is swallowed -- a `break`/`throw` crossing the conversion still
+/// propagates.
+fn with_exception_kw(
+    args: &[RubyValue],
+    f: impl Fn(&[RubyValue]) -> Result<RubyValue, Signal>,
+) -> Result<RubyValue, Signal> {
+    let (positional, raising) = split_exception_kw(args);
+    match f(positional) {
+        Err(Signal::Raise(_)) if !raising => Ok(RubyValue::Nil),
+        other => other,
+    }
+}
+
 pub(crate) fn integer_impl(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     let base = match args.get(1) {
         None => None,
