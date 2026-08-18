@@ -1,8 +1,3 @@
-# GAP -- imported from the spinel corpus at c55d9bdb.
-# Hash#compare_by_identity / frozen-hash behaviour diverges: a Symbol key
-# reads back as its value.
-#
-# Five surfaces from the conformance wave, each in a different corner.
 
 # Hash#all?/any?/none?/one? with a CLASS pattern is a kind-of test over the
 # [key, value] pairs; comparing the pair to the class value by equality

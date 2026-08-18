@@ -107,6 +107,32 @@ pub fn parse_str_to_r(s: &str) -> (BigInt, BigInt) {
             BigInt::from(1),
         ),
     };
+    // A scientific EXPONENT scales the value exactly: `"1.5e2".to_r` is
+    // `(150/1)`, not `(3/2)` with the tail dropped.
+    let (num, den) = match chars.peek() {
+        Some('e') | Some('E') => {
+            chars.next();
+            let neg_exp = match chars.peek() {
+                Some('-') => {
+                    chars.next();
+                    true
+                }
+                Some('+') => {
+                    chars.next();
+                    false
+                }
+                _ => false,
+            };
+            let digits = take_digits(&mut chars);
+            let exp = digits.parse::<u32>().unwrap_or(0);
+            let scale = BigInt::from(10).pow(exp);
+            match neg_exp {
+                true => (num, den * scale),
+                false => (num * scale, den),
+            }
+        }
+        _ => (num, den),
+    };
     (sign * num, den)
 }
 

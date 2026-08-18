@@ -232,11 +232,13 @@ ruby_class! {
         if let Some(v) = crate::collections::hash_lookup(rhash, arg1) {
             return Ok(v);
         }
-        if let Some(default) = arg2 {
-            return Ok(default.clone());
-        }
+        // The BLOCK wins over a positional default -- which is exactly what
+        // CRuby's "block supersedes default value argument" warning says.
         if let Some(RubyValue::Proc(p)) = &block {
             return p.call(std::slice::from_ref(arg1));
+        }
+        if let Some(default) = arg2 {
+            return Ok(default.clone());
         }
         Err(crate::dispatch::raise_error_details(
             "KeyError",

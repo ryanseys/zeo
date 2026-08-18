@@ -385,6 +385,12 @@ pub type RArray = Arc<Freezable<ArrayStore>>;
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum HashKey {
     Nil,
+    /// A container reached AGAIN while projecting itself -- `h[:me] = h`.
+    /// CRuby's `rb_exec_recursive` substitutes a fixed value at the recurring
+    /// reference rather than descending, which is what makes a self-
+    /// referential container hashable at all; without it the walk recurses
+    /// until the stack dies.
+    Recursive,
     Bool(bool),
     Int(i64),
     /// Bit-pattern equality/hashing, not IEEE `==` -- a `Float::NAN` key
@@ -452,6 +458,7 @@ impl std::hash::Hash for HashKey {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         match self {
             HashKey::Nil => state.write_u8(0),
+            HashKey::Recursive => state.write_u8(17),
             HashKey::Bool(b) => {
                 state.write_u8(1);
                 b.hash(state);
@@ -551,6 +558,11 @@ pub(crate) fn hash_key(v: &RubyValue) -> HashKey {
     hash_key_in(v, false)
 }
 
+/// The container pointers on the current projection path. Empty (and so
+/// allocation-free) for every non-recursive value, which is all of them
+/// outside a deliberately cyclic structure.
+type Seen = Vec<usize>;
+
 /// Projects a value to its `IndexMap` key. `by_identity` (a hash's
 /// `compare_by_identity` flag) makes the heap value-like kinds -- `Str`,
 /// `Array`, `Range`, `BigInt`, `Rational`, `Complex`, and any `Object`
@@ -559,6 +571,10 @@ pub(crate) fn hash_key(v: &RubyValue) -> HashKey {
 /// value in Ruby, so they stay structural; the reference kinds (`Hash`/`Proc`/
 /// `Regexp`/...) already key by identity in the structural path below.
 pub(crate) fn hash_key_in(v: &RubyValue, by_identity: bool) -> HashKey {
+    hash_key_rec(v, by_identity, &mut Seen::new())
+}
+
+fn hash_key_rec(v: &RubyValue, by_identity: bool, seen: &mut Seen) -> HashKey {
     if by_identity {
         let ident = match v {
             RubyValue::Str(s) => Some(Arc::as_ptr(s) as *const () as usize),
@@ -582,7 +598,10 @@ pub(crate) fn hash_key_in(v: &RubyValue, by_identity: bool) -> HashKey {
         // never aliases an Int value, a Rational is always reduced.
         RubyValue::BigInt(b) => HashKey::BigInt(Box::new((**b).clone())),
         RubyValue::Rational(r) => HashKey::Rational(Box::new((r.num.clone(), r.den.clone()))),
-        RubyValue::Complex(c) => HashKey::Complex(Box::new((hash_key(&c.real), hash_key(&c.imag)))),
+        RubyValue::Complex(c) => HashKey::Complex(Box::new((
+            hash_key_rec(&c.real, false, seen),
+            hash_key_rec(&c.imag, false, seen),
+        ))),
         // `-0.0` normalizes to `0.0` before the bits are taken, exactly as
         // `rb_dbl_long_hash` does (`if (d == 0.0) d = 0.0;`). The two compare
         // equal, so they must hash equal and share a Hash slot -- the bit
@@ -595,20 +614,41 @@ pub(crate) fn hash_key_in(v: &RubyValue, by_identity: bool) -> HashKey {
             HashKey::Str(s.bytes().to_vec(), s.hash_key_tag())
         }
         RubyValue::Class(cid) => HashKey::Class(cid.0),
-        RubyValue::Array(a) => HashKey::Array(a.lock().iter().map(hash_key).collect()),
+        RubyValue::Array(a) => {
+            let ptr = Arc::as_ptr(a) as *const () as usize;
+            if seen.contains(&ptr) {
+                return HashKey::Recursive;
+            }
+            seen.push(ptr);
+            // A SNAPSHOT, as for Hash below: projecting an element can
+            // dispatch a user `hash` that reads this very array.
+            let items = array_snapshot(a);
+            let parts = items
+                .iter()
+                .map(|e| hash_key_rec(e, false, seen))
+                .collect();
+            seen.pop();
+            HashKey::Array(parts)
+        }
         RubyValue::Range(__rg) => HashKey::Range(
-            __rg.start.as_ref().map(|b| Box::new(hash_key(b))),
-            __rg.end.as_ref().map(|b| Box::new(hash_key(b))),
+            __rg.start.as_ref().map(|b| Box::new(hash_key_rec(b, false, seen))),
+            __rg.end.as_ref().map(|b| Box::new(hash_key_rec(b, false, seen))),
             __rg.exclusive,
         ),
         RubyValue::Hash(h) => {
+            let ptr = Arc::as_ptr(h) as *const () as usize;
+            if seen.contains(&ptr) {
+                return HashKey::Recursive;
+            }
+            seen.push(ptr);
             // A SNAPSHOT, not the live map: projecting a value can dispatch a
             // user `hash`, which may read the very hash being projected, and
             // the payload lock is not reentrant.
             let mut pairs: Vec<(HashKey, HashKey)> = hash_pairs_snapshot(h)
                 .iter()
-                .map(|(k, v)| (hash_key(k), hash_key(v)))
+                .map(|(k, v)| (hash_key_rec(k, false, seen), hash_key_rec(v, false, seen)))
                 .collect();
+            seen.pop();
             pairs.sort();
             HashKey::Hash(pairs)
         }
@@ -623,14 +663,14 @@ pub(crate) fn hash_key_in(v: &RubyValue, by_identity: bool) -> HashKey {
         // stays the default (real Ruby's own `Object#hash`). A `hash` that
         // raises is a loud panic (no exception channel here).
         RubyValue::Object(o) => match crate::dispatch::call_user_method(o, "hash", &[]) {
-            Some(Ok(v)) => HashKey::Computed(Box::new(hash_key(&v))),
+            Some(Ok(v)) => HashKey::Computed(Box::new(hash_key_rec(&v, false, seen))),
             Some(Err(_)) => panic!(
                 "a user-defined `hash` raised inside a Hash key lookup (zeo limitation: no exception channel here)"
             ),
             // A value-builtin subclass (D3) with no `hash` override keys by its
             // payload -- `Tag.new("k")` is the same Hash key as `"k"`.
             None => match o.builtin_payload() {
-                Some(p) => hash_key_in(&p, by_identity),
+                Some(p) => hash_key_rec(&p, by_identity, seen),
                 None => HashKey::Identity(Arc::as_ptr(o) as *const () as usize),
             },
         },

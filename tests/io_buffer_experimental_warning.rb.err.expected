@@ -1,0 +1,1 @@
+io_buffer_experimental_warning.rb:1: warning: IO::Buffer is experimental and both the Ruby and C interface may change in the future!

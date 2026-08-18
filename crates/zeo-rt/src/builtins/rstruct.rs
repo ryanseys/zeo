@@ -567,12 +567,17 @@ ruby_class! {
         }
         Ok(recv.clone())
     }
+    // ONE argument, the `[name, value]` pair -- not two yielded values. A
+    // two-parameter block destructures it (`rb_struct_each_pair` yields
+    // `rb_assoc_new`), but a one-parameter block sees the pair whole, and a
+    // blockless call enumerates pairs.
     def "each_pair"(recv, &block) {
         let p = block_or_enum!(recv, &[], block);
         let meta = meta_of(recv_class_id(recv)).expect("struct instance has meta");
         let slots = slots_of(recv);
         for (m, v) in meta.members.iter().zip(slots.iter()) {
-            p.call(&[RubyValue::Symbol(*m), v.clone()])?;
+            let pair = RubyValue::Array(crate::array_new(vec![RubyValue::Symbol(*m), v.clone()]));
+            p.call(std::slice::from_ref(&pair))?;
         }
         Ok(recv.clone())
     }
@@ -985,11 +990,18 @@ pub(crate) fn define_value_class(
             keyword_init,
         },
     );
-    if let Some(n) = &name {
-        crate::runtime_meta::name_runtime_class_if_anonymous(class_id, n);
-    }
-
     let class_val = RubyValue::Class(class_id);
+    // `Struct.new("Named", :a)` does not just NAME the class -- it defines
+    // `Struct::Named`, and the class reports that qualified name. CRuby
+    // refuses a name that is not a constant.
+    if let Some(n) = &name {
+        if !n.starts_with(|c: char| c.is_ascii_uppercase()) {
+            return Err(name_error!("identifier {n} needs to be constant"));
+        }
+        let root_name = class_name(root).unwrap_or_else(|| "Struct".to_string());
+        crate::runtime_meta::name_runtime_class_if_anonymous(class_id, &format!("{root_name}::{n}"));
+        crate::constants::const_set(root.0, n, class_val.clone());
+    }
     // A class-body block (`Struct.new(:x) do def dist; ...; end end`) runs with
     // `self` AND the default definee bound to the new class, so its `def`s
     // register on it rather than on the cref the block was written in.

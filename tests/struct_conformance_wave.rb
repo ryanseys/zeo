@@ -1,8 +1,3 @@
-# GAP -- imported from the spinel corpus at c55d9bdb.
-# A Struct enumeration yields the member name alone where ruby yields the
-# [name, value] pair.
-#
-# Five Struct surfaces from the conformance wave.
 S = Struct.new(:a, :b, :c)
 s = S.new(1, 2, 3)
 

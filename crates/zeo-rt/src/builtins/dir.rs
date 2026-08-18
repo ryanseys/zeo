@@ -158,7 +158,15 @@ fn seg_matches(pat: &str, name: &str, dotmatch: bool) -> bool {
 /// Walk `dir` against the remaining glob segments, pushing every match onto
 /// `out`. `prefix` is the path built so far (as the caller wants it echoed
 /// back -- glob answers paths relative to the same root the pattern was).
-fn glob_walk(base: &str, prefix: &str, segs: &[&str], out: &mut Vec<String>, dotmatch: bool) {
+#[allow(clippy::too_many_arguments)]
+fn glob_walk(
+    base: &str,
+    prefix: &str,
+    segs: &[&str],
+    out: &mut Vec<String>,
+    dotmatch: bool,
+    dirs_only: bool,
+) {
     let Some((seg, rest)) = segs.split_first() else {
         return;
     };
@@ -181,10 +189,10 @@ fn glob_walk(base: &str, prefix: &str, segs: &[&str], out: &mut Vec<String>, dot
         if rest.is_empty() {
             // A trailing `**` matches directories themselves.
             if !prefix.is_empty() {
-                out.push(prefix.to_string());
+                out.push(finish(prefix, dirs_only));
             }
         } else {
-            glob_walk(base, prefix, rest, out, dotmatch);
+            glob_walk(base, prefix, rest, out, dotmatch, dirs_only);
         }
         // One or more: descend into every visible subdirectory and retry the
         // whole `**` there.
@@ -202,7 +210,7 @@ fn glob_walk(base: &str, prefix: &str, segs: &[&str], out: &mut Vec<String>, dot
                 } else {
                     format!("{prefix}/{name}")
                 };
-                glob_walk(base, &next, segs, out, dotmatch);
+                glob_walk(base, &next, segs, out, dotmatch, dirs_only);
             }
         }
         return;
@@ -234,29 +242,41 @@ fn glob_walk(base: &str, prefix: &str, segs: &[&str], out: &mut Vec<String>, dot
         } else {
             format!("{prefix}/{name}")
         };
-        if rest.is_empty() {
-            out.push(next);
+        let child = if prefix.is_empty() {
+            format!("{base}/{name}")
         } else {
-            let child = if prefix.is_empty() {
-                format!("{base}/{name}")
-            } else {
-                format!("{base}/{prefix}/{name}")
-            };
-            if std::path::Path::new(&child).is_dir() {
-                glob_walk(base, &next, rest, out, dotmatch);
+            format!("{base}/{prefix}/{name}")
+        };
+        if rest.is_empty() {
+            // A pattern ending in `/` matches DIRECTORIES only, and every
+            // answer keeps that slash (`Dir.glob("**/")` is `["sub/"]`).
+            if !dirs_only || std::path::Path::new(&child).is_dir() {
+                out.push(finish(&next, dirs_only));
             }
+        } else if std::path::Path::new(&child).is_dir() {
+            glob_walk(base, &next, rest, out, dotmatch, dirs_only);
         }
     }
 }
 
-/// One glob pattern -> matching paths, relative to the cwd (or absolute, if
-/// the pattern is). Ruby sorts glob results.
-fn glob(pattern: &str, dotmatch: bool) -> Vec<String> {
+/// A matched path as the glob ANSWERS it -- with the trailing slash a
+/// directory-only pattern asked for.
+fn finish(path: &str, dirs_only: bool) -> String {
+    match dirs_only {
+        true => format!("{path}/"),
+        false => path.to_string(),
+    }
+}
+
+/// One glob pattern -> matching paths, relative to `root` (the `base:` keyword
+/// or the cwd), or absolute if the pattern is. Ruby sorts glob results.
+fn glob(pattern: &str, dotmatch: bool, root: Option<&str>) -> Vec<String> {
     let absolute = pattern.starts_with('/');
+    let dirs_only = pattern.ends_with('/');
     let (base, pat) = if absolute {
         ("", pattern.trim_start_matches('/'))
     } else {
-        (".", pattern)
+        (root.unwrap_or("."), pattern)
     };
     let segs: Vec<&str> = pat.split('/').filter(|s| !s.is_empty()).collect();
     let mut out = Vec::new();
@@ -266,6 +286,7 @@ fn glob(pattern: &str, dotmatch: bool) -> Vec<String> {
         &segs,
         &mut out,
         dotmatch,
+        dirs_only,
     );
     if absolute {
         out = out.into_iter().map(|p| format!("/{p}")).collect();
@@ -429,19 +450,34 @@ fn glob_matches(args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValu
             }
         })
         .any(|f| f & 0x4 != 0);
+    // `base:` roots the search there and answers paths RELATIVE to it.
+    let base_key = RubyValue::Symbol(crate::Symbol::intern("base"));
+    let root = args.iter().find_map(|a| match a {
+        RubyValue::Hash(h) if crate::collections::hash_has_key(h, &base_key) => {
+            match crate::hash_get(h, &base_key) {
+                RubyValue::Nil => None,
+                v => Some(path_arg(&v, "glob")),
+            }
+        }
+        _ => None,
+    });
+    let root = match root {
+        Some(r) => Some(r?),
+        None => None,
+    };
+    let root = root.as_deref();
     let mut all = Vec::new();
     for a in args {
         match a {
             RubyValue::Array(pats) => {
                 for p in pats.lock().iter() {
-                    all.extend(glob(&path_arg(p, "glob")?, dotmatch));
+                    all.extend(glob(&path_arg(p, "glob")?, dotmatch, root));
                 }
             }
             // A trailing options Hash (`base:`) or the Integer FNM flags
             // argument itself is not a pattern.
-            // TODO(plan P-B): honor `base:`.
             RubyValue::Hash(_) | RubyValue::Int(_) => {}
-            v => all.extend(glob(&path_arg(v, "glob")?, dotmatch)),
+            v => all.extend(glob(&path_arg(v, "glob")?, dotmatch, root)),
         }
     }
     all.sort();

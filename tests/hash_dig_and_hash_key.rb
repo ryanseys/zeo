@@ -1,10 +1,3 @@
-# GAP -- imported from the spinel corpus at c55d9bdb.
-# A Hash#dig walk through a self-referential structure recurses without
-# bound and overflows the runtime stack.
-#
-# A dig step that lands on something with no #dig is a TypeError, not a quiet
-# nil: only nil ends the walk. And a Hash hashes by content, so two `==` hashes
-# agree -- it was hashing by pointer, which no two literals share.
 h = { a: 1 }
 r = (h.dig(:a, :b) rescue $!.class); p r
 r = (h.dig(:a, :b) rescue $!.message); p r

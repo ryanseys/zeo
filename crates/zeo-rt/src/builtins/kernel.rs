@@ -503,7 +503,7 @@ ruby_module! {
     def "dup"(recv) {
         Ok(match recv {
             RubyValue::Object(o) => {
-                let c = copy_with_hook(recv, RubyValue::Object(o.dup_object(false)))?;
+                let c = copy_via_hook(recv, RubyValue::Object(o.dup_object(false)), "initialize_dup", None)?;
                 crate::builtins::rstruct::refreeze_data_copy(&c);
                 c
             }
@@ -553,7 +553,12 @@ ruby_module! {
                 // CRuby's order: the copy exists UNFROZEN while the copy
                 // hooks run and the frozen bit lands after -- a hook that
                 // refuses frozen receivers (Data's) sees the pre-freeze copy.
-                let c = copy_with_hook(recv, RubyValue::Object(o.dup_object(false)))?;
+                let c = copy_via_hook(
+                    recv,
+                    RubyValue::Object(o.dup_object(false)),
+                    "initialize_clone",
+                    freeze,
+                )?;
                 if copy_frozen && recv.is_frozen() {
                     let _ = c.freeze_value();
                 }
@@ -653,11 +658,16 @@ ruby_module! {
     private def "initialize_copy"(recv, _orig) {
         Ok(recv.clone())
     }
+    // Both DISPATCH `initialize_copy` rather than calling Kernel's row: a
+    // class that overrides `initialize_copy` must still see it when `dup`
+    // reaches this default through `initialize_dup`'s `super`.
     private def "initialize_dup"(recv, orig) {
-        inherited_row!(kernel, "initialize_copy", recv, std::slice::from_ref(orig), None)
+        crate::dispatch::send_value(
+            recv, crate::Symbol::intern("initialize_copy"), std::slice::from_ref(orig), None)
     }
     private def "initialize_clone" cfunc (recv, orig, *_opts) {
-        inherited_row!(kernel, "initialize_copy", recv, std::slice::from_ref(orig), None)
+        crate::dispatch::send_value(
+            recv, crate::Symbol::intern("initialize_copy"), std::slice::from_ref(orig), None)
     }
     // `Kernel#instance_variables_to_inspect` default: nil, meaning "show
     // every ivar". An override returning an Array turns `#inspect`'s ivar
@@ -1104,14 +1114,31 @@ fn kernel_test(cmd: &RubyValue, path: &RubyValue) -> Result<RubyValue, Signal> {
 /// shallow-copied object, with the original as its argument -- real Ruby's
 /// `clone`/`dup` contract. Object's default hook is a no-op; a user
 /// override (e.g. deep-copying a shared member) runs here.
-fn copy_with_hook(original: &RubyValue, copy: RubyValue) -> Result<RubyValue, Signal> {
-    let hook = Symbol::intern("initialize_copy");
-    // Only dispatch when the object actually defines the (private) hook --
-    // never let a missing one fall through to `method_missing`. In a real
-    // program Object's default no-op makes this always true; a user override
-    // runs here.
+/// `dup`/`clone`'s own hooks. CRuby calls `initialize_dup` from `dup` and
+/// `initialize_clone` from `clone`, and BOTH default to calling
+/// `initialize_copy` -- so a class overriding only `initialize_copy` still
+/// sees it, while one overriding `initialize_dup` sees the more specific hook
+/// too. Calling `initialize_copy` directly skipped the specific pair
+/// entirely.
+///
+/// `freeze` is `clone`'s keyword, forwarded as the trailing options Hash the
+/// hook's `freeze:` parameter binds.
+fn copy_via_hook(
+    original: &RubyValue,
+    copy: RubyValue,
+    hook: &str,
+    freeze: Option<bool>,
+) -> Result<RubyValue, Signal> {
+    let hook = Symbol::intern(hook);
     if crate::dispatch::responds_to(copy.class_id(), hook, true) {
-        crate::dispatch::send_value(&copy, hook, std::slice::from_ref(original), None)?;
+        let mut args = vec![original.clone()];
+        if let Some(f) = freeze {
+            args.push(RubyValue::Hash(crate::collections::hash_new(vec![(
+                RubyValue::Symbol(Symbol::intern("freeze")),
+                RubyValue::Bool(f),
+            )])));
+        }
+        crate::dispatch::send_value(&copy, hook, &args, None)?;
     }
     Ok(copy)
 }
@@ -1489,6 +1516,24 @@ fn convert_error(original: &str) -> Signal {
 fn parse_rational_string(s: &str) -> Result<(num_bigint::BigInt, num_bigint::BigInt), Signal> {
     use num_bigint::BigInt;
     let t = s.trim();
+    // A scientific EXPONENT scales the mantissa exactly -- `Rational("1.5e2")`
+    // is `(150/1)`, not the float 1.5 times 100. Peeled first so the mantissa
+    // reaches the decimal branch below unchanged; a `/` form has no exponent.
+    if !t.contains('/')
+        && let Some(at) = t.rfind(['e', 'E'])
+        && at > 0
+    {
+        let (mantissa, exp) = t.split_at(at);
+        let exp: i32 = exp[1..].parse().map_err(|_| convert_error(s))?;
+        let (mut num, mut den) = parse_rational_string(mantissa)?;
+        let scale = BigInt::from(10).pow(exp.unsigned_abs());
+        if exp >= 0 {
+            num *= scale;
+        } else {
+            den *= scale;
+        }
+        return Ok((num, den));
+    }
     if let Some((n, d)) = t.split_once('/') {
         let num: BigInt = n.trim().parse().map_err(|_| convert_error(s))?;
         let den: BigInt = d.trim().parse().map_err(|_| convert_error(s))?;
@@ -1867,16 +1912,17 @@ pub fn kernel_warn(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     {
         buf.extend_from_slice(format!("{file}:{line}: warning: ").as_bytes());
     }
-    for a in msgs {
-        let start = buf.len();
-        // NO partial flush on a raising `to_s`: CRuby's `warn` renders the
-        // whole message before its one write (unlike `puts`/`print`/`p`),
-        // so nothing reaches stderr -- oracle-verified.
-        crate::builtins::io::display_bytes(a, &mut buf)?;
-        if buf.len() == start || buf.last() != Some(&b'\n') {
-            buf.push(b'\n');
-        }
+    // `rb_warn_m` renders its messages with `rb_io_puts` into a temp string,
+    // so `warn` IS `puts` on stderr: an Array is one line per element
+    // (recursively), an empty Array writes nothing, and a trailing newline is
+    // never doubled. NO partial flush on a raising `to_s` -- CRuby renders
+    // the whole message before its one write (unlike `puts`/`print`/`p`), so
+    // nothing reaches stderr. And with no messages at all there is no write,
+    // where bare `puts` would emit a newline.
+    if msgs.is_empty() {
+        return Ok(RubyValue::Nil);
     }
+    crate::builtins::io::render_puts(msgs, &mut buf)?;
     crate::builtins::io::write_bytes(&crate::builtins::io::current_stderr(), &buf)?;
     Ok(RubyValue::Nil)
 }
