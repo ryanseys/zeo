@@ -3012,6 +3012,18 @@ pub fn class_method_names_in(class: ClassId, inherit: bool) -> Vec<Symbol> {
             out.push(sym);
         }
     }
+    // A MINTED struct/data class answers `members`/`keyword_init?` through
+    // `rstruct::class_lookup`, a table of its own that no ClassId indexes -- so
+    // the loop above cannot see it, and `S.methods` omitted what `S.members`
+    // plainly answers.
+    if crate::builtins::rstruct::is_struct_class(class) {
+        for &n in crate::builtins::rstruct::class_method_names() {
+            let sym = Symbol::intern(n);
+            if seen.insert(sym) {
+                out.push(sym);
+            }
+        }
+    }
     out
 }
 

@@ -515,6 +515,20 @@ impl RubyValue {
         }
         Ok(match self {
             RubyValue::Nil => "nil".to_string(),
+            // A class renders by name -- plus the one suffix ruby's
+            // `Module#inspect` adds where its `to_s` and `name` do not: a
+            // `keyword_init: true` Struct class inspects as
+            // `K(keyword_init: true)`. Without an arm of its own this fell
+            // through to the `to_s` rendering and lost the suffix, so
+            // `K.inspect` and `p K` disagreed.
+            RubyValue::Class(cid) => {
+                let mut n = crate::dispatch::class_name(*cid)
+                    .unwrap_or_else(|| format!("#<Class:{}>", cid.0));
+                if crate::builtins::rstruct::keyword_init_suffix(*cid) {
+                    n.push_str("(keyword_init: true)");
+                }
+                n
+            }
             // The parenthesized inspect forms (`(3/4)` / `(1+2i)`) vs the
             // bare `to_s` ones -- oracle-verified.
             RubyValue::Rational(r) => {

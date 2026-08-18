@@ -204,6 +204,27 @@ pub fn pack(elems: &[RubyValue], template: &str) -> Result<Vec<u8>, Signal> {
                     out.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
                 }
             }
+            // `X` removes bytes already written; `@` pads with NULs (or
+            // truncates) so the next write lands at an absolute offset.
+            'X' => {
+                let n = match d.count {
+                    Count::Star => out.len(),
+                    Count::One => 1,
+                    Count::Fixed(n) => n,
+                };
+                if n > out.len() {
+                    return Err(err("X outside of string".to_string()));
+                }
+                out.truncate(out.len() - n);
+            }
+            '@' => {
+                let n = match d.count {
+                    Count::Star => out.len(),
+                    Count::One => 0,
+                    Count::Fixed(n) => n,
+                };
+                out.resize(n, 0);
+            }
             other => return Err(err(format!("unsupported pack directive: {other}"))),
         }
     }
@@ -426,6 +447,59 @@ pub fn unpack(bytes: &[u8], template: &str) -> Result<Vec<RubyValue>, Signal> {
                     out.push(RubyValue::Int(c as i64));
                 }
                 pos = bytes.len();
+            }
+            // Bit strings: `B` reads each byte MOST-significant bit first,
+            // `b` least-significant first. The count is a number of BITS.
+            'B' | 'b' => {
+                let avail = (bytes.len() - pos) * 8;
+                let take = match d.count {
+                    Count::Star => avail,
+                    Count::One => 1,
+                    Count::Fixed(n) => n.min(avail),
+                };
+                let mut s = String::with_capacity(take);
+                for i in 0..take {
+                    let byte = bytes[pos + i / 8];
+                    let shift = if d.kind == 'B' { 7 - (i % 8) } else { i % 8 };
+                    s.push(if (byte >> shift) & 1 == 1 { '1' } else { '0' });
+                }
+                out.push(RubyValue::Str(crate::string_new(s)));
+                pos += take.div_ceil(8);
+            }
+            // Position moves, which produce no output of their own: `x` skips
+            // forward, `X` backs up, `@` seeks to an absolute offset.
+            'x' => {
+                let n = match d.count {
+                    Count::Star => bytes.len() - pos,
+                    Count::One => 1,
+                    Count::Fixed(n) => n,
+                };
+                if pos + n > bytes.len() {
+                    return Err(err("x outside of string".to_string()));
+                }
+                pos += n;
+            }
+            'X' => {
+                let n = match d.count {
+                    Count::Star => pos,
+                    Count::One => 1,
+                    Count::Fixed(n) => n,
+                };
+                if n > pos {
+                    return Err(err("X outside of string".to_string()));
+                }
+                pos -= n;
+            }
+            '@' => {
+                let n = match d.count {
+                    Count::Star => bytes.len(),
+                    Count::One => 0,
+                    Count::Fixed(n) => n,
+                };
+                if n > bytes.len() {
+                    return Err(err("@ outside of string".to_string()));
+                }
+                pos = n;
             }
             other => return Err(err(format!("unsupported unpack directive: {other}"))),
         }

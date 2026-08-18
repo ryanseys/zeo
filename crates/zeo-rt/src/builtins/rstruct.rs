@@ -1004,6 +1004,22 @@ pub fn class_lookup(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
     }
 }
 
+/// Whether `cid` is a Struct class declared `keyword_init: true`, which is the
+/// one thing its class `inspect` shows and its `to_s`/`name` do not. False for
+/// a plain Struct, for `keyword_init: false`, for a Data, and for any class
+/// that is not a struct at all.
+pub fn keyword_init_suffix(cid: ClassId) -> bool {
+    meta_of(cid).is_some_and(|m| !m.is_data && m.keyword_init == Some(true))
+}
+
+/// The names [`class_lookup`] answers, so a minted struct class REPORTS the
+/// class methods it responds to. `new`/`[]` are left out: those are `Class`'s,
+/// parameterized by the receiver, and ruby does not list them as the struct
+/// class's own either.
+pub fn class_method_names() -> &'static [&'static str] {
+    &["members", "keyword_init?"]
+}
+
 fn class_members(
     recv: &RubyValue,
     _args: &[RubyValue],

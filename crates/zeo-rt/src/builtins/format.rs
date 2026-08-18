@@ -421,15 +421,19 @@ fn named_source(args: &[RubyValue]) -> Option<&crate::RHash> {
     })
 }
 
-fn named_get(args: &[RubyValue], name: &str) -> Result<RubyValue, Signal> {
+/// `braces` picks the bracket the KeyError message uses, which ruby takes
+/// from the FORM that was written: `%{name}` reports `key{name} not found`
+/// and `%<name>s` reports `key<name> not found`.
+fn named_get(args: &[RubyValue], name: &str, braces: bool) -> Result<RubyValue, Signal> {
     let source = named_source(args).ok_or_else(|| arg_error("one hash required".to_string()))?;
     let key = RubyValue::Symbol(crate::Symbol::intern(name));
     if crate::collections::hash_has_key(source, &key) {
         Ok(crate::collections::hash_get(source, &key))
     } else {
+        let (open, close) = if braces { ('{', '}') } else { ('<', '>') };
         Err(crate::dispatch::raise_error(
             "KeyError",
-            format!("key<{name}> not found"),
+            format!("key{open}{name}{close} not found"),
         ))
     }
 }
@@ -497,7 +501,7 @@ pub fn sprintf(template: &str, args: &[RubyValue]) -> Result<String, Signal> {
                     // `%{name}` is a complete directive: the value as-is (`%s`).
                     chars.next();
                     let name = read_until(&mut chars, '}')?;
-                    out.push_str(&named_get(args, &name)?.try_display_string()?);
+                    out.push_str(&named_get(args, &name, true)?.try_display_string()?);
                     continue 'directive;
                 }
                 Some('*') => {
@@ -551,7 +555,7 @@ pub fn sprintf(template: &str, args: &[RubyValue]) -> Result<String, Signal> {
         // Pick the argument: a named reference, an explicit `N$` position, or
         // the next sequential argument.
         let arg = if let Some(name) = &named {
-            named_get(args, name)?
+            named_get(args, name, false)?
         } else if let Some(i) = arg_index {
             args.get(i.wrapping_sub(1))
                 .cloned()

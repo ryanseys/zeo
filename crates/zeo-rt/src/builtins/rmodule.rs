@@ -330,9 +330,21 @@ ruby_class! {
             None => RubyValue::Nil,
         })
     }
-    def "to_s" | "inspect" (recv) {
+    def "to_s" (recv) {
         let cid = recv_cid(recv);
         let n = crate::dispatch::class_name(cid).unwrap_or_else(|| format!("#<Class:{}>", cid.0));
+        Ok(RubyValue::Str(crate::string_new(n)))
+    }
+    // `inspect` is `to_s` PLUS the struct suffix: a `keyword_init: true`
+    // Struct class inspects as `K(keyword_init: true)`, where its `name` and
+    // `to_s` stay the bare `K`. Only an explicit `true` shows -- the tri-state
+    // `nil` (never given) and `false` both print nothing, as in CRuby.
+    def "inspect" (recv) {
+        let cid = recv_cid(recv);
+        let mut n = crate::dispatch::class_name(cid).unwrap_or_else(|| format!("#<Class:{}>", cid.0));
+        if crate::builtins::rstruct::keyword_init_suffix(cid) {
+            n.push_str("(keyword_init: true)");
+        }
         Ok(RubyValue::Str(crate::string_new(n)))
     }
     // The mixin hooks' DEFAULTS. Ruby fires each one on every mixin whether
