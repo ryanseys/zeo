@@ -131,13 +131,18 @@ fn sym_via_name(
 pub(crate) fn symbol_to_proc(name: Symbol) -> RubyValue {
     // CRuby reports `:name.to_proc.arity` as -2 (one required receiver plus
     // optional trailing args), and `:name.to_proc.lambda?` as true.
-    let p: RProc = RProc::with_meta(
-        move |args: &[RubyValue]| {
+    // Built with the BLOCK-aware constructor: a symbol proc forwards whatever
+    // block it was called with, so `:map.to_proc.call([1,2]) { |x| x * 3 }`
+    // runs the block instead of answering an Enumerator. Dropping the block
+    // was invisible until something called the proc with one.
+    let p: RProc = RProc::with_self_and_block(
+        move |_self: &RubyValue, args: &[RubyValue], block: Option<RubyValue>| {
             let Some((recv, rest)) = args.split_first() else {
                 return Err(arg_error!("no receiver given"));
             };
-            crate::dispatch::send_value(recv, name, rest, None)
+            crate::dispatch::send_value(recv, name, rest, block)
         },
+        RubyValue::Nil,
         -2,
         true,
     );

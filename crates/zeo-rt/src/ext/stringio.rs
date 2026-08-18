@@ -183,6 +183,45 @@ fn write_at(state: &mut State, data: &[u8]) {
     state.pos = end;
 }
 
+/// The body of `ungetc`/`ungetbyte`: turn the argument into bytes, step back
+/// over them, and OVERWRITE from there -- ruby replaces rather than restores,
+/// so the pushed-back bytes really appear in the buffer. `byte_form` is
+/// `ungetbyte`'s rule, where an Integer contributes its low byte; `ungetc`
+/// takes an Integer as a CODEPOINT instead.
+fn unget_bytes(
+    recv: &RubyValue,
+    arg: &RubyValue,
+    byte_form: bool,
+) -> Result<RubyValue, crate::Signal> {
+    let mut s = io_of(recv).state.lock();
+    let bytes: Vec<u8> = match arg {
+        RubyValue::Nil => return Ok(RubyValue::Nil),
+        RubyValue::Str(buf) => buf.lock().bytes().to_vec(),
+        RubyValue::Int(n) if byte_form => vec![(*n & 0xFF) as u8],
+        RubyValue::Int(n) => match u32::try_from(*n).ok().and_then(char::from_u32) {
+            Some(c) => c.to_string().into_bytes(),
+            None => return Err(crate::builtins::range_error!("{n} out of char range")),
+        },
+        other => {
+            let str = crate::builtins::convert::to_rstr(other)?;
+            let b = str.lock().bytes().to_vec();
+            b
+        }
+    };
+    if bytes.is_empty() {
+        return Ok(RubyValue::Nil);
+    }
+    let back = bytes.len().min(s.pos);
+    s.pos -= back;
+    let at = s.pos;
+    // Grow first if the write runs past the end, then overwrite in place.
+    if at + bytes.len() > s.bytes.len() {
+        s.bytes.resize(at + bytes.len(), 0);
+    }
+    s.bytes[at..at + bytes.len()].copy_from_slice(&bytes);
+    Ok(RubyValue::Nil)
+}
+
 ruby_class! {
     StringIO = zeo_abi::STRINGIO_CLASS < zeo_abi::OBJECT_CLASS;
     include zeo_abi::ENUMERABLE_CLASS;
@@ -405,6 +444,19 @@ ruby_class! {
         let ch = s.bytes[s.pos..s.pos + len].to_vec();
         s.pos += len;
         Ok(bytes_to_str(&ch, s.enc))
+    }
+    // `ungetc(str_or_int)` / `ungetbyte(str_or_int)` -- push bytes back so the
+    // next read sees them. Ruby does NOT restore what was there: it OVERWRITES
+    // at the new position, so `read(2); getc; ungetc("Z"); read` on "hello"
+    // answers "Zlo". Both answer nil.
+    //
+    // At position 0 the bytes are PREPENDED instead (there is nothing to back
+    // over), which is CRuby's own edge.
+    def "ungetc" (recv, arg) {
+        unget_bytes(recv, arg, false)
+    }
+    def "ungetbyte" (recv, arg) {
+        unget_bytes(recv, arg, true)
     }
     // `getbyte` -- one BYTE as an Integer, `nil` at end. Byte-wise, not
     // character-wise like `getc`: prism's deserializer reads its buffer this

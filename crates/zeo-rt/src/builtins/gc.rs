@@ -155,17 +155,33 @@ ruby_module! {
     def self."measure_total_time="(_recv, on) {
         flag(&MEASURE_TOTAL_TIME, on)
     }
-    def self."latest_gc_info" cfunc (_recv, *_args, &_block) {
-        Ok(hash_of(vec![
-            ("major_by", RubyValue::Nil),
+    // With a Symbol argument ruby answers THAT statistic, not the whole hash;
+    // with a Hash it fills it in. The values are the shape a forced collection
+    // leaves behind, which is what `GC.start` here amounts to.
+    def self."latest_gc_info" cfunc (_recv, *args, &_block) {
+        let info = hash_of(vec![
+            ("major_by", RubyValue::Symbol(crate::Symbol::intern("oldgen"))),
             ("need_major_by", RubyValue::Nil),
-            ("gc_by", RubyValue::Nil),
+            ("gc_by", RubyValue::Symbol(crate::Symbol::intern("method"))),
             ("have_finalizer", RubyValue::Bool(false)),
             ("immediate_sweep", RubyValue::Bool(false)),
             ("state", RubyValue::Symbol(crate::Symbol::intern("none"))),
             ("weak_references_count", RubyValue::Int(0)),
             ("retained_weak_references_count", RubyValue::Int(0)),
-        ]))
+        ]);
+        let RubyValue::Hash(table) = &info else {
+            unreachable!("hash_of builds a Hash")
+        };
+        match args.first() {
+            Some(key @ RubyValue::Symbol(_)) => Ok(crate::collections::hash_get(table, key)),
+            Some(RubyValue::Hash(into)) => {
+                for (_, (k, v)) in table.lock().iter() {
+                    crate::collections::hash_set(into, k.clone(), v.clone());
+                }
+                Ok(RubyValue::Hash(into.clone()))
+            }
+            _ => Ok(info.clone()),
+        }
     }
     def self."latest_compact_info"(_recv) {
         Ok(compact_info())
