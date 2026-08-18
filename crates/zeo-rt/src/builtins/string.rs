@@ -186,7 +186,18 @@ fn expand_charset(set: &str) -> Vec<char> {
     let mut out = Vec::new();
     let mut i = 0;
     while i < chars.len() {
-        if i + 2 < chars.len() && chars[i + 1] == '-' {
+        // A BACKSLASH escapes the next character, so it joins the set as
+        // itself and can never open a range: `"a\\-b"` holds a, - and b, not
+        // the range a..b. `tr_setup_table` reads the same escape, and without
+        // it every escaped set collapsed into a range.
+        if chars[i] == '\\' && i + 1 < chars.len() {
+            out.push(chars[i + 1]);
+            i += 2;
+            continue;
+        }
+        // A range needs an UNESCAPED `-` between two members, and the member
+        // after it must itself not be an escape opener.
+        if i + 2 < chars.len() && chars[i + 1] == '-' && chars[i + 2] != '\\' {
             let (lo, hi) = (chars[i] as u32, chars[i + 2] as u32);
             for c in lo..=hi {
                 if let Some(c) = char::from_u32(c) {
@@ -1867,7 +1878,16 @@ ruby_class! {
             Some(total) if total <= MAX_STRING_SIZE => Ok(RubyValue::Str(
                 crate::collections::string_from_bytes(src.repeat(n as usize), enc),
             )),
-            _ => Err(arg_error!("string size too big")),
+            // The LENGTH MULTIPLICATION overflowed, which is the one case
+            // CRuby also guards -- same wording, `rb_str_times`'s
+            // "argument too big".
+            None => Err(arg_error!("argument too big")),
+            // It fits in a `usize` but not in zeo's cap. CRuby has no guard
+            // here: it reaches the allocator and raises NoMemoryError, a
+            // memory-dependent outcome. zeo raises a deterministic, rescuable
+            // ArgumentError instead, and keeps its OWN wording so the two
+            // cases stay tellable apart -- a documented divergence.
+            Some(_) => Err(arg_error!("string size too big")),
         }
     }
     def "to_s" | "to_str" (recv) {
@@ -2815,6 +2835,23 @@ ruby_class! {
         let limit = arg_str!(max).lock().to_utf8_lossy().into_owned();
         let p = block_or_enum!(recv, __args, block);
         let mut cur = rstr.lock().to_utf8_lossy().into_owned();
+        // ALL-DIGIT endpoints walk NUMERICALLY, not by `succ` and a byte
+        // compare: `rb_str_upto_each` takes that branch when both ends are
+        // digits, so `"9".upto("11")` is "9","10","11" where a lexicographic
+        // `"9" > "11"` would have stopped before the first step. Width comes
+        // from the wider endpoint, so `"08".upto("10")` keeps its padding.
+        let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+        if digits(&cur) && digits(&limit) {
+            let (from, to) = (cur.parse::<i64>(), limit.parse::<i64>());
+            if let (Ok(from), Ok(to)) = (from, to) {
+                let width = cur.len().max(limit.len());
+                let last = if exclusive { to - 1 } else { to };
+                for n in from..=last {
+                    p.call(&[str_value(format!("{n:0width$}"))])?;
+                }
+                return Ok(recv.clone());
+            }
+        }
         loop {
             if cur.as_str() > limit.as_str() {
                 break;
@@ -3472,13 +3509,21 @@ fn sub_gsub(
     // String arms already build in `enc`, and re-encoding those is a no-op.
     let result = match (&pattern_arg, block_proc) {
         (RubyValue::Regexp(re), None) => match &args[1] {
-            // A Hash replacement maps each matched substring to `hash[match]`
-            // (a missing key stringifies to ""), exactly a block that looks the
-            // match up -- so it rides the existing block-substitution path.
+            // A Hash replacement maps each matched substring to `hash[match]`,
+            // exactly a block that looks the match up -- so it rides the
+            // existing block-substitution path. Through `[]`, not a raw table
+            // read: a miss takes the hash's DEFAULT (or its default_proc), and
+            // only a hash with neither yields the empty string.
             RubyValue::Hash(h) => {
-                let table = h.clone();
-                let p =
-                    crate::RProc::new(move |a: &[RubyValue]| Ok(crate::hash_get(&table, &a[0])));
+                let table = RubyValue::Hash(h.clone());
+                let p = crate::RProc::new(move |a: &[RubyValue]| {
+                    crate::dispatch::send_value(
+                        &table,
+                        crate::Symbol::intern("[]"),
+                        std::slice::from_ref(&a[0]),
+                        None,
+                    )
+                });
                 if global {
                     crate::regexp_gsub_block(re, &text, &p)
                 } else {
@@ -3505,10 +3550,18 @@ fn sub_gsub(
             let pattern = pattern.lock().to_utf8_lossy().into_owned();
             // A String pattern matches literally, so its "matched substring" is
             // always the pattern itself. A Hash replacement looks that up (a
-            // missing key stringifies to "") and is inserted literally.
+            // default-aware) and is inserted literally.
             if let RubyValue::Hash(h) = &args[1] {
                 let key = str_value_in(enc, &pattern);
-                let replacement = crate::hash_get(h, &key).to_display_string();
+                // Through `[]`, so a miss takes the hash's DEFAULT rather than
+                // stringifying nil to the empty string.
+                let replacement = crate::dispatch::send_value(
+                    &RubyValue::Hash(h.clone()),
+                    crate::Symbol::intern("[]"),
+                    std::slice::from_ref(&key),
+                    None,
+                )?
+                .to_display_string();
                 return Ok(str_value_in(
                     enc,
                     &if global {
