@@ -302,6 +302,11 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
     // registered, since `include`/`extend`/`prepend`/`< Super` targets must
     // already exist (same "defined earlier in the file" rule `superclass`
     // resolution already enforces). See `mro`'s module docs.
+    // Every `obj.extend(M)` in the program, whose call sites must ask the
+    // overlay rather than fold against the receiver class's own body. Before
+    // `materialize`, which is where the folded tables are built.
+    defer_object_extends(compiler);
+
     mro::materialize(compiler, &main_statements)?;
 
     // Which redefinition timelines are observable and must be applied at
@@ -4624,6 +4629,94 @@ fn defer_runtime_mixin_sends(
                 None => compiler.runtime_patches_any_name = true,
             }
         }
+    }
+}
+
+/// An `obj.extend(M)` with an EXPLICIT receiver -- the object half of the mixin
+/// verbs, which [`defer_runtime_mixin_sends`] does not see because it only
+/// walks class-body statements whose receiver is `self`.
+///
+/// `extend` splices M ahead of the receiver's own class in that ONE object's
+/// lookup, so a call site zeo folded against the class body answers the wrong
+/// body: `o.extend(Deco); o.render(x)` must reach `Deco#render`, not
+/// `Plain#render`. The overlay already holds the copied rows
+/// (`extend_object_default`); what is missing is that the site asks at all.
+///
+/// The cost is exactly proportional to the risk: a name no class in the
+/// program defines is already a dynamic site, so listing it changes nothing.
+///
+/// An argument zeo cannot resolve to one module falls back to every MODULE's
+/// own method names rather than [`Compiler::runtime_patches_any_name`] -- the
+/// union is a superset of anything a real module argument could contribute,
+/// and a module minted at run time (`Module.new { define_method ... }`) is
+/// already covered by the redefinition verbs.
+fn defer_object_extends(compiler: &mut Compiler) {
+    let mut resolved: Vec<ClassId> = Vec::new();
+    let mut widen = false;
+    for (_, node) in compiler.hir.iter_with_ids() {
+        let HirNode::Call {
+            receiver: Some(_),
+            name,
+            args,
+            ..
+        } = node
+        else {
+            continue;
+        };
+        if name != "extend" {
+            continue;
+        }
+        for arg in args {
+            let ArrayElem::Single(n) = arg else {
+                widen = true;
+                continue;
+            };
+            // Resolved against the ROOT cref: this sweep is flat, so a module
+            // named relative to an enclosing body falls to the leaf-name search
+            // below rather than mis-resolving.
+            if let Some(m) = const_node_class(compiler, *n, &[], 0) {
+                resolved.push(m);
+                continue;
+            }
+            match leaf_const_name(&compiler.hir, *n) {
+                Some(leaf) => {
+                    let matches: Vec<ClassId> = compiler
+                        .classes
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, c)| {
+                            c.name == leaf || c.name.rsplit("::").next() == Some(leaf.as_str())
+                        })
+                        .map(|(i, _)| ClassId(i as u32))
+                        .collect();
+                    // A constant naming nothing zeo compiled cannot shadow a
+                    // statically resolved body -- there is no such module.
+                    resolved.extend(matches);
+                }
+                None => widen = true,
+            }
+        }
+    }
+    if widen {
+        resolved.extend(
+            (0..compiler.classes.len())
+                .map(|i| ClassId(i as u32))
+                .filter(|&c| compiler.class(c).is_module),
+        );
+    }
+    resolved.sort_unstable_by_key(|c| c.0);
+    resolved.dedup();
+    for m in resolved {
+        defer_mixin_to_runtime(compiler, m);
+    }
+}
+
+/// The bare constant NAME a node reads, for the leaf-name fallback above.
+fn leaf_const_name(hir: &Hir, node: NodeId) -> Option<String> {
+    match &hir[node] {
+        HirNode::ClassRef(name) => Some(name.trim_start_matches("::").to_string()),
+        HirNode::QualifiedConstRead(_, name) => Some(name.clone()),
+        _ => None,
     }
 }
 
