@@ -2223,7 +2223,25 @@ ruby_class! {
     def "rstrip!"(recv, *args, &block) { str_bang_via(recv, "rstrip", args, block) }
     def "sub!"(recv, *args, &block) { str_bang_via(recv, "sub", args, block) }
     def "gsub!"(recv, *args, &block) { str_bang_via(recv, "gsub", args, block) }
-    def "tr!" arity 2 (recv, *args, &block) { str_bang_via(recv, "tr", args, block) }
+    // Ruby answers self when a character was TRANSLATED, not when the text
+    // CHANGED: `"Hello".tr!("l", "l")` matched two characters and answers
+    // "Hello", where a text comparison sees no difference and says nil. So the
+    // from-set is probed against the receiver BEFORE the rewrite.
+    def "tr!" arity 2 (recv, *args, &block) {
+        let matched = match args.first() {
+            Some(RubyValue::Str(spec)) => {
+                let spec = spec.lock().to_utf8_lossy().into_owned();
+                let (set, negated) = tr_charset(&spec);
+                rstr.lock()
+                    .to_utf8_lossy()
+                    .chars()
+                    .any(|c| set.contains(&c) != negated)
+            }
+            _ => false,
+        };
+        let answered = str_bang_via(recv, "tr", args, block)?;
+        Ok(if matched { recv.clone() } else { answered })
+    }
     def "delete!"(recv, *args, &block) { str_bang_via(recv, "delete", args, block) }
     def "squeeze!"(recv, *args, &block) { str_bang_via(recv, "squeeze", args, block) }
     def "succ!" arity 0 | "next!" arity 0 (recv, *args, &block) { str_bang_via_always(recv, "succ", args, block) }
@@ -3360,8 +3378,38 @@ fn lines_from_args(
         Some(RubyValue::Str(s)) => s.lock().to_utf8_lossy().into_owned(),
         _ => "\n".to_string(),
     };
+    // PARAGRAPH MODE: an empty separator is not "no separator" -- ruby splits
+    // on a blank line, keeping the "\n\n" that ended each paragraph and then
+    // DISCARDING any further consecutive newlines, so "a\n\n\nb" is
+    // ["a\n\n", "b"]. Answering the whole string was the old behaviour.
     if sep.is_empty() {
-        return vec![RubyValue::Str(crate::string_new(text.to_string()))];
+        let bytes = text.as_bytes();
+        let mut out = Vec::new();
+        let (mut start, mut i) = (0usize, 0usize);
+        while i < bytes.len() {
+            if bytes[i] == b'\n' && bytes.get(i + 1) == Some(&b'\n') {
+                let mut end = i + 2;
+                // Every additional newline belongs to the SEPARATOR run and is
+                // dropped, not carried into the next paragraph.
+                while bytes.get(end) == Some(&b'\n') {
+                    end += 1;
+                }
+                let piece = if chomp {
+                    &text[start..i]
+                } else {
+                    &text[start..i + 2]
+                };
+                out.push(RubyValue::Str(crate::string_new(piece.to_string())));
+                start = end;
+                i = end;
+            } else {
+                i += 1;
+            }
+        }
+        if start < text.len() {
+            out.push(RubyValue::Str(crate::string_new(text[start..].to_string())));
+        }
+        return out;
     }
     let mut pieces = Vec::new();
     let mut rest = text;

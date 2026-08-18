@@ -823,15 +823,37 @@ fn bigint_to_f64(v: &num_bigint::BigInt) -> f64 {
 /// The leading civil-field arguments as Integers -- shared by the three
 /// civil constructors, which agree on their first six arguments and differ
 /// only in what a 7th means.
+/// The three-letter English month abbreviations the MONTH slot accepts, from
+/// `month_arg`'s table, matched case-insensitively. Exactly three letters:
+/// "December" is not one of them and falls through to the integer read, which
+/// rejects it -- which is what ruby does too.
+fn month_from_name(s: &str) -> Option<i64> {
+    const NAMES: [&str; 12] = [
+        "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
+    ];
+    if s.len() != 3 {
+        return None;
+    }
+    let lower = s.to_ascii_lowercase();
+    NAMES.iter().position(|n| *n == lower).map(|i| i as i64 + 1)
+}
+
 fn int_parts(args: &[RubyValue], take: usize) -> Result<Vec<i64>, Signal> {
     args.iter()
         .take(take)
-        .map(|a| match a {
+        .enumerate()
+        .map(|(slot, a)| match a {
             RubyValue::Int(i) => Ok(*i),
             // A String component is parsed as a base-10 integer (`Time.utc(
-            // "2020", "3")`), matching CRuby's forced-decimal reading.
+            // "2020", "3")`), matching CRuby's forced-decimal reading -- except
+            // in the MONTH slot, which takes a name first.
             RubyValue::Str(s) => {
                 let t = s.lock().to_utf8_lossy().trim().to_string();
+                if slot == 1
+                    && let Some(m) = month_from_name(&t)
+                {
+                    return Ok(m);
+                }
                 t.parse::<i64>()
                     .map_err(|_| arg_error!("argument out of range: {t:?}"))
             }
