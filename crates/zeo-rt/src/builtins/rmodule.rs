@@ -585,26 +585,28 @@ ruby_class! {
         Ok(RubyValue::Bool(false))
     }
     // Reflection over a CLASS OBJECT's own ivars -- the `@x` a `def self.x`
-    // or a class body writes (see `civars`' docs). Really `Object`'s
+    // or a class body writes (see `civars`' docs). Really `Kernel`'s
     // methods, which a class inherits; they live on the Module table
-    // because that is the one a `RubyValue::Class` receiver reaches.
-    def "instance_variable_get" (recv, arg) {
+    // because that is the one a `RubyValue::Class` receiver reaches -- so
+    // each is marked `inherits` and reflection reports Kernel, which the
+    // ancestry reaches and which declares all four itself.
+    def "instance_variable_get" inherits (recv, arg) {
         let name = ivar_name_arg(arg)?;
         Ok(crate::civars::class_ivar_get(recv_cid(recv).0, &name))
     }
-    def "instance_variable_set" (recv, arg1, arg2) {
+    def "instance_variable_set" inherits (recv, arg1, arg2) {
         let name = ivar_name_arg(arg1)?;
         crate::civars::class_ivar_set(recv_cid(recv).0, &name, (*arg2).clone())?;
         // Answers the VALUE, not the receiver -- oracle-checked.
         Ok((*arg2).clone())
     }
-    def "instance_variable_defined?" (recv, arg) {
+    def "instance_variable_defined?" inherits (recv, arg) {
         let name = ivar_name_arg(arg)?;
         Ok(RubyValue::Bool(
             crate::civars::class_ivar_names(recv_cid(recv).0).contains(&name),
         ))
     }
-    def "instance_variables" (recv) {
+    def "instance_variables" inherits (recv) {
         let names = crate::civars::class_ivar_names(recv_cid(recv).0)
             .into_iter()
             .map(|n| RubyValue::Symbol(crate::Symbol::intern(&format!("@{n}"))))

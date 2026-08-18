@@ -128,6 +128,9 @@ pub struct MethodTable {
     /// `zeo_dsl::MethodDef::allocs`. `false` for every instance table and for
     /// every class-method row that answers the base class.
     pub allocs: fn(&str) -> bool,
+    /// Whether ruby names an ANCESTOR as this row's owner, so reflection must
+    /// look past this class -- see `zeo_dsl::MethodDef::inherits`.
+    pub inherits: fn(&str) -> bool,
 }
 
 /// One builtin class/module's tables, registered by the `ruby_class!`/
@@ -295,6 +298,22 @@ pub(crate) fn builtin_class_method_allocs(id: ClassId, name: &str) -> bool {
     registered_table(id)
         .and_then(|t| t.class.as_ref())
         .is_some_and(|m| (m.allocs)(name))
+}
+
+/// Whether `id`'s row for `name` is one ruby owns further up the ancestry, so
+/// `instance_methods(false)` must skip it and the owner scan must walk past
+/// it. `kind` picks the instance or the class table. See
+/// `zeo_dsl::MethodDef::inherits`.
+pub(crate) fn builtin_row_inherits(id: ClassId, name: &str, class_side: bool) -> bool {
+    registered_table(id)
+        .and_then(|t| {
+            if class_side {
+                t.class.as_ref()
+            } else {
+                t.instance.as_ref()
+            }
+        })
+        .is_some_and(|m| (m.inherits)(name))
 }
 
 /// `class_table`'s reflection companion: the instance-method NAMES a builtin

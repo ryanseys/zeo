@@ -23,7 +23,8 @@ fn thread_error(msg: &str) -> crate::Signal {
 ruby_class! {
     Mutex = zeo_abi::MUTEX_CLASS < zeo_abi::OBJECT_CLASS;
 
-    def self."new" cfunc (_recv) {
+    // `inherits` -- reached through `Class#new` in ruby; see `Hash`'s note.
+    def self."new" cfunc inherits (_recv) {
         Ok(mutex_new())
     }
 

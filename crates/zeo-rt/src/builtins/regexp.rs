@@ -65,7 +65,9 @@ ruby_class! {
     // flags from the second argument -- an Integer bitmask of the three
     // `Regexp::` constants, or `true` (case-insensitive) / `false`/`nil`
     // (none), matching CRuby's historical boolean shorthand.
-    def self."new" | "compile" cfunc (_recv, arg1, arg2?, _arg3?) {
+    // Ruby reaches `Regexp.new` through `Class#new`, but declares `compile` on
+    // Regexp itself -- so the marker is per-name, not per-def.
+    def self."new" inherits | "compile" cfunc (_recv, arg1, arg2?, _arg3?) {
         // A Regexp source: clone it verbatim (flags and all), ignoring any
         // extra options -- CRuby warns but reuses the original.
         if let Some(re) = crate::regexp::as_regexp(arg1) {

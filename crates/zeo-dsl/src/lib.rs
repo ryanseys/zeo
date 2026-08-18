@@ -205,6 +205,27 @@ pub struct MethodDef {
     /// direction: an unmarked new row demotes rather than inventing a
     /// subclass instance.
     pub allocs: bool,
+    /// `inherits`: this row exists so DISPATCH finds it here, but ruby owns
+    /// the method further up the ancestry, so reflection must attribute it
+    /// there.
+    ///
+    /// The inverse of `own_row!`/`inherited_row!`, which exist for the
+    /// opposite case -- ruby owning a method on the SUBCLASS while the body
+    /// lives on an ancestor. Here the body has to live on the subclass (it is
+    /// the only table a receiver of that shape reaches, or the only one that
+    /// can see the payload), while ruby reports an ancestor as the owner:
+    /// `Module#instance_variable_get` is really `Kernel`'s, and `Hash.new` is
+    /// really `Class#new`.
+    ///
+    /// A marked row is skipped by `instance_methods(false)` /
+    /// `singleton_methods(false)` / `private_instance_methods(false)`, and the
+    /// owner scan walks past it to the ancestor that really declares it -- so
+    /// the ancestor MUST have a row of that name, or `.owner` answers nil.
+    ///
+    /// Defaults to false, i.e. "this class owns it". That is the safe
+    /// direction: an unmarked new row claims ownership rather than silently
+    /// disappearing from the class's own surface.
+    pub inherits: bool,
     /// The `{ ... }` body -- real Rust, kept verbatim for the proc-macro.
     pub body: TokenStream,
 }
@@ -280,6 +301,11 @@ impl MethodDef {
 pub struct MethodName {
     pub ruby: String,
     pub arity: Option<i64>,
+    /// Per-NAME [`MethodDef::inherits`], for a def whose `|`-joined names
+    /// differ in ownership: ruby reaches `Regexp.new` through `Class#new` but
+    /// declares `Regexp.compile` on Regexp itself, and both share one body.
+    /// ORed with the def-wide marker, so either spelling works.
+    pub inherits: bool,
 }
 
 /// `alias new = old;` -- a second name for an already-defined method.
@@ -484,7 +510,9 @@ fn parse_def(
         input.parse::<Token![.]>()?;
     }
 
-    // One or more `NAME [arity N]`, separated by `|`, sharing one body.
+    // One or more `NAME [arity N] [inherits]`, separated by `|`, sharing one
+    // body. Both qualifiers are per-NAME because ruby's answers are: two
+    // `|`-joined names can differ in reported arity AND in owner.
     let mut names = Vec::new();
     loop {
         let ruby = parse_method_name(input)?;
@@ -495,7 +523,20 @@ fn parse_def(
         } else {
             None
         };
-        names.push(MethodName { ruby, arity });
+        // A per-NAME `inherits` is recognized only when another `|`-joined
+        // name follows it. A TRAILING one would be indistinguishable from the
+        // def-wide marker parsed below, and silently qualifying just the last
+        // name is exactly the misreading that would cause -- so the trailing
+        // spelling always means "the whole def", which is the common case.
+        let inherits = peek_ident(input, "inherits") && input.peek2(Token![|]);
+        if inherits {
+            input.parse::<Ident>()?;
+        }
+        names.push(MethodName {
+            ruby,
+            arity,
+            inherits,
+        });
         if input.peek(Token![|]) {
             input.parse::<Token![|]>()?;
         } else {
@@ -519,7 +560,9 @@ fn parse_def(
     // `MethodDef::allocs`). Both qualify the def that follows, and either
     // order reads fine, so neither is positional -- writing them the other way
     // round must not become a parse error at the def, far from any explanation.
-    let (mut cfunc, mut allocs) = (false, false);
+    // ...and `inherits`: ruby owns this one further up the ancestry, so
+    // reflection must not report this class (see `MethodDef::inherits`).
+    let (mut cfunc, mut allocs, mut inherits) = (false, false, false);
     loop {
         if !cfunc && peek_ident(input, "cfunc") {
             input.parse::<Ident>()?;
@@ -527,6 +570,9 @@ fn parse_def(
         } else if !allocs && peek_ident(input, "allocs") {
             input.parse::<Ident>()?;
             allocs = true;
+        } else if !inherits && peek_ident(input, "inherits") {
+            input.parse::<Ident>()?;
+            inherits = true;
         } else {
             break;
         }
@@ -556,6 +602,7 @@ fn parse_def(
         block,
         cfunc,
         allocs,
+        inherits,
         body,
     })
 }

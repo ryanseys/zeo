@@ -232,12 +232,17 @@ ruby_class! {
     def "dummy?"(recv) {
         Ok(RubyValue::Bool(recv_encoding(recv).is_dummy()))
     }
-    def "==" | "eql?"(recv, other) {
+    // An Encoding is a singleton in ruby, so `==`/`eql?`/`hash` are just
+    // Kernel's identity ones and ruby declares none of them here. zeo can mint
+    // more than one object for the same encoding, so the rows have to compare
+    // and hash the encoding INDEX -- but they are marked `inherits`, so
+    // `Encoding.instance_methods(false)` and `.owner` still answer Kernel's.
+    def "==" | "eql?" inherits (recv, other) {
         let same = matches!(other, RubyValue::Object(o) if o.class_id() == ENCODING_CLASS)
             && recv_encoding(recv) == recv_encoding(other);
         Ok(RubyValue::Bool(same))
     }
-    def "hash"(recv) {
+    def "hash" inherits (recv) {
         Ok(RubyValue::Int(recv_encoding(recv).0 as i64))
     }
 }

@@ -334,7 +334,8 @@ ruby_class! {
     // (`builtins::rclass`); the row exists for the SUBCLASS path, where
     // `value_subclass::construct_root_payload` builds a payload by calling the
     // root's own `new` out of this table -- chronic's `Span < Range`.
-    def self."new" allocs cfunc (_recv, *args, &_block) {
+    // `inherits` -- reached through `Class#new` in ruby; see `Hash`'s note.
+    def self."new" allocs cfunc inherits (_recv, *args, &_block) {
         crate::builtins::check_arity(args.len(), 2, Some(3))?;
         let excl = args.get(2).is_some_and(|v| v.truthy());
         crate::range_checked(

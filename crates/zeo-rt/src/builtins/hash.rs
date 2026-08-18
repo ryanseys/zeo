@@ -29,7 +29,10 @@ ruby_class! {
     // `Hash.new` / `Hash.new(default)` / `Hash.new { |hash, key| ... }`. The
     // default value and default block are mutually exclusive -- passing both
     // is an ArgumentError, matching CRuby.
-    def self."new" allocs (_recv, arg?, &block) {
+    // `inherits`: ruby reaches `Hash.new` through `Class#new`, so it is not in
+    // `Hash.singleton_methods(false)`. The row has to live here anyway -- it
+    // is what a Hash receiver's allocator is -- so reflection looks past it.
+    def self."new" allocs inherits (_recv, arg?, &block) {
         if let Some(RubyValue::Proc(_)) = &block {
             if !arg.is_none() {
                 return Err(arg_error!("wrong number of arguments (given 1, expected 0)"));

@@ -76,6 +76,9 @@ struct Entry {
     is_private: bool,
     /// See `zeo_dsl::MethodDef::allocs` -- CLASS-method rows only.
     allocs: bool,
+    /// See `zeo_dsl::MethodDef::inherits` -- the row dispatches here, but ruby
+    /// names an ancestor as its owner.
+    inherits: bool,
     /// `protected def` -- reachable only from a receiver the caller is a kind
     /// of. Never set by `module_function`, which splits private/public only.
     is_protected: bool,
@@ -163,6 +166,9 @@ fn expand(spec: &ClassSpec) -> TokenStream2 {
                 is_private: declared_private,
                 is_protected: declared_protected,
                 allocs: method.allocs,
+                // Per-name OR def-wide: `Regexp.new` is Class's while
+                // `Regexp.compile` is Regexp's own, and both share one body.
+                inherits: method.inherits || name.inherits,
             };
             if method.is_module_function {
                 // CRuby's `module_function` splits the visibility: the instance
@@ -201,6 +207,7 @@ fn expand(spec: &ClassSpec) -> TokenStream2 {
                     is_private: t.is_private,
                     is_protected: t.is_protected,
                     allocs: t.allocs,
+                    inherits: t.inherits,
                 };
                 // Mirror the target's bucket.
                 if class.iter().any(|e| e.ruby == alias.old_name) {
@@ -412,6 +419,7 @@ fn gen_method_table(
     let private_fn = format_ident!("{lookup}_is_private");
     let protected_fn = format_ident!("{lookup}_is_protected");
     let allocs_fn = format_ident!("{lookup}_allocs");
+    let inherits_fn = format_ident!("{lookup}_inherits");
 
     let lookup_arms = entries.iter().map(|e| {
         let (ruby, fn_ident, attrs) = (&e.ruby, &e.fn_ident, &e.attrs);
@@ -440,6 +448,12 @@ fn gen_method_table(
     // whole table that marks none, which is nearly all of them -- compiles to
     // `false`: answer the base class. See `zeo_dsl::MethodDef::allocs`.
     let allocs_arms = entries.iter().filter(|e| e.allocs).map(|e| {
+        let (ruby, attrs) = (&e.ruby, &e.attrs);
+        quote! { #( #attrs )* #ruby => true, }
+    });
+    // Same shape, and the same default for the same reason: an unmarked row
+    // claims ownership. See `zeo_dsl::MethodDef::inherits`.
+    let inherits_arms = entries.iter().filter(|e| e.inherits).map(|e| {
         let (ruby, attrs) = (&e.ruby, &e.attrs);
         quote! { #( #attrs )* #ruby => true, }
     });
@@ -483,6 +497,13 @@ fn gen_method_table(
                 _ => false,
             }
         }
+        #[allow(dead_code)]
+        pub(crate) fn #inherits_fn(name: &str) -> bool {
+            match name {
+                #( #inherits_arms )*
+                _ => false,
+            }
+        }
     };
     let table = quote! {
         Some(crate::builtins::MethodTable {
@@ -492,6 +513,7 @@ fn gen_method_table(
             is_private: #private_fn,
             is_protected: #protected_fn,
             allocs: #allocs_fn,
+            inherits: #inherits_fn,
         })
     };
     (items, table)

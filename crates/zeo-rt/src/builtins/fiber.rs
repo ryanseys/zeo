@@ -257,7 +257,8 @@ ruby_class! {
         Ok(RubyValue::Str(crate::string_new(fiber::fiber_inspect(f))))
     }
     // Two Fiber objects are equal iff they are the same fiber (identity).
-    def "==" | "eql?" | "equal?" (_recv, other) {
+    // Ruby owns none of the three on Fiber -- see the same note on `Thread`.
+    def "==" | "eql?" | "equal?" inherits (_recv, other) {
         let same = matches!(other, RubyValue::Fiber(o) if std::sync::Arc::ptr_eq(f, o));
         Ok(RubyValue::Bool(same))
     }

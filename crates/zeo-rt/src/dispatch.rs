@@ -2592,8 +2592,12 @@ fn scan_owner(recv_class: ClassId, skip: usize, name: Symbol) -> Option<ClassId>
                 return Some(anc);
             }
         }
+        // A row marked `inherits` answers the CALL here but names an ancestor
+        // as its owner, so the scan walks past it -- the ancestor that really
+        // declares the method is further along this same chain.
         if let Some(table) = crate::builtins::class_table(anc)
             && table(n).is_some()
+            && !crate::builtins::builtin_row_inherits(anc, n, false)
         {
             return Some(anc);
         }
@@ -2782,6 +2786,13 @@ pub fn instance_method_names(class: ClassId, filter: VisFilter, inherit: bool) -
         // defines the instance copy private, CRuby's rule), so the filter reads
         // it per name rather than assuming public.
         for &n in crate::builtins::class_table_names(anc) {
+            // A row ruby owns further up (`Module#instance_variable_get` is
+            // really Kernel's) sits in this table only so dispatch reaches it.
+            // Skip it for the OWN set; the wide set still gets the name from
+            // the ancestor that really declares it, later in this same chain.
+            if !inherit && crate::builtins::builtin_row_inherits(anc, n, false) {
+                continue;
+            }
             // A builtin private (Kernel's print family, BasicObject's
             // `initialize`) is CLASSIFIED private, not skipped: CRuby keeps it
             // out of `instance_methods` and inside `private_instance_methods`,
@@ -2990,6 +3001,12 @@ pub fn class_method_names_in(class: ClassId, inherit: bool) -> Vec<Symbol> {
         }
     }
     for &n in crate::builtins::class_method_table_names(class) {
+        // `Hash.new` and friends: the row lives on the class so a `Hash(...)`
+        // receiver reaches an allocator, but ruby owns `new` on `Class`, which
+        // the singleton chain reaches anyway. Keep it out of the OWN set.
+        if !inherit && crate::builtins::builtin_row_inherits(class, n, true) {
+            continue;
+        }
         let sym = Symbol::intern(n);
         if seen.insert(sym) {
             out.push(sym);

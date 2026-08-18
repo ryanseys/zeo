@@ -388,7 +388,11 @@ ruby_class! {
     }
 
     // Two Thread objects are equal iff they are the same thread (identity).
-    def "==" | "eql?" | "equal?" (_recv, other) {
+    // Ruby declares none of the three on Thread -- they are Kernel's `==`/
+    // `eql?` and BasicObject's `equal?`, all of which already mean identity.
+    // The rows exist because a `RubyValue::Thread` receiver reaches this
+    // table, so they are marked `inherits` and reflection looks past them.
+    def "==" | "eql?" | "equal?" inherits (_recv, other) {
         let same = matches!(other, RubyValue::Thread(o) if std::sync::Arc::ptr_eq(t, o));
         Ok(RubyValue::Bool(same))
     }
