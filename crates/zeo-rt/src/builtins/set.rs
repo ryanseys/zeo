@@ -95,6 +95,16 @@ fn empty_set() -> RubyValue {
     }))
 }
 
+/// The backing Hash a Set IS -- element => true, in insertion order. CRuby's
+/// Set dumps exactly this as its one `@hash` ivar, so Marshal reads and
+/// writes it rather than inventing a format of its own.
+pub(crate) fn backing_hash(recv: &RubyValue) -> Option<crate::RHash> {
+    match recv {
+        RubyValue::Object(o) => o.as_any().downcast_ref::<RSet>().map(|s| s.hash.clone()),
+        _ => None,
+    }
+}
+
 /// A Set value seeded with `elements` (deduplicated by the insert path).
 pub(crate) fn set_from(elements: impl IntoIterator<Item = RubyValue>) -> RubyValue {
     let s = RSet {
@@ -274,21 +284,14 @@ ruby_class! {
     include zeo_abi::ENUMERABLE_CLASS;
 
     // `Set.new` / `Set.new(enum)` / `Set.new(enum) { |o| transform(o) }`.
+    // Allocate, then DISPATCH `initialize` -- never seed the value here. `Set`
+    // is a core class in ruby 4, so `class Set; def initialize; @a = []; end`
+    // is an ordinary reopen, and building the members inline skipped the
+    // user's override entirely (its `add` then found `@a` nil).
     def self."new" allocs (_recv, arg?, &block) {
         let out = empty_set();
-        if let Some(source) = arg
-            && !source.is_nil() {
-                let s = set_of(&out);
-                for e in arg_elements(source)? {
-                    let e = match &block {
-                        Some(p @ RubyValue::Proc(_)) => {
-                            crate::dispatch::send_value(p, crate::Symbol::intern("call"), &[e], None)?
-                        }
-                        _ => e,
-                    };
-                    s.insert(e);
-                }
-            }
+        let args: Vec<RubyValue> = arg.into_iter().cloned().collect();
+        crate::dispatch::send_value(&out, crate::Symbol::intern("initialize"), &args, block)?;
         Ok(out)
     }
     // `Set[a, b, c]` -- every argument is a member (deduplicated).

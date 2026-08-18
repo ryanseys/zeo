@@ -329,6 +329,20 @@ impl Writer {
             return Ok(());
         }
 
+        // A Set IS its backing Hash, and CRuby dumps exactly that: `o:Set`
+        // with one `@hash` ivar. Native, because `RSet` carries no ivar bag
+        // for the generic object path to find.
+        if let Some(hash) = crate::builtins::set::backing_hash(v) {
+            if self.check_link(ptr_of(v)) {
+                return Ok(());
+            }
+            self.register_link(ptr_of(v));
+            self.out.push(b'o');
+            self.write_symbol(&name);
+            self.write_ivars(&[Iv::Named("@hash".to_string(), RubyValue::Hash(hash))])?;
+            return Ok(());
+        }
+
         if responds_to(cid, Symbol::intern("marshal_dump"), true) {
             if self.check_link(ptr_of(v)) {
                 return Ok(());
@@ -955,6 +969,9 @@ impl Reader<'_> {
         if cls == "Range" {
             return self.read_range(idx);
         }
+        if cls == "Set" {
+            return self.read_set(idx);
+        }
         let cid =
             class_id_by_name(&cls).ok_or_else(|| arg_error!("undefined class/module {cls}"))?;
         let obj = allocate_of(cid).ok_or_else(|| type_error!("allocator undefined for {cls}"))?;
@@ -970,6 +987,28 @@ impl Reader<'_> {
             }
         }
         Ok(obj)
+    }
+
+    /// The `o:Set` body: one `@hash` ivar whose KEYS are the members -- the
+    /// shape CRuby's Set dumps, so a stream crosses between the two.
+    fn read_set(&mut self, idx: usize) -> Result<RubyValue, Signal> {
+        let mut members: Vec<RubyValue> = Vec::new();
+        let count = self.read_long()?;
+        for _ in 0..count {
+            let iname = self.read_symbol_name()?;
+            let value = self.read()?;
+            if iname.trim_start_matches('@') == "hash"
+                && let RubyValue::Hash(h) = value
+            {
+                members = crate::collections::hash_pairs_snapshot(&h)
+                    .into_iter()
+                    .map(|(k, _)| k)
+                    .collect();
+            }
+        }
+        let v = crate::builtins::set::set_from(members);
+        self.objects[idx] = v.clone();
+        Ok(v)
     }
 
     /// The `o:Range` body: three ivars in any order, reassembled into a real
