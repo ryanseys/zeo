@@ -221,6 +221,18 @@ fn lenient_to_i(text: &str, base: u32) -> RubyValue {
         Some(rest) => (true, rest),
         None => (false, t.strip_prefix('+').unwrap_or(t)),
     };
+    // An EXPLICIT base still accepts that base's own literal prefix, which
+    // `rb_cstr_to_inum` skips before reading digits -- `"0x1f".to_i(16)` is 31,
+    // not the 0 a scan that stopped at the `x` produced. Only the matching
+    // prefix is skipped, so `"0x11".to_i(2)` still reads just the leading 0.
+    let t = match base {
+        16 => t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")),
+        2 => t.strip_prefix("0b").or_else(|| t.strip_prefix("0B")),
+        8 => t.strip_prefix("0o").or_else(|| t.strip_prefix("0O")),
+        10 => t.strip_prefix("0d").or_else(|| t.strip_prefix("0D")),
+        _ => None,
+    }
+    .unwrap_or(t);
     let mut digits = String::new();
     let mut prev_underscore = true;
     for c in t.chars() {
@@ -891,6 +903,32 @@ fn str_bang_via(
         // fall back to leaving the receiver untouched.
         _ => Ok(RubyValue::Nil),
     }
+}
+
+/// [`str_bang_via`] for the `!` mutators that answer SELF unconditionally.
+/// The nil-when-unchanged rule is per-method, not universal: CRuby's
+/// `rb_str_reverse_bang` and `rb_str_succ_bang` always return the string, so
+/// `"".reverse!` is `""` and `"a".reverse!` is `"a"` -- both unchanged, and
+/// neither nil.
+fn str_bang_via_always(
+    recv: &RubyValue,
+    base: &str,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, crate::Signal> {
+    // FIRST, and before running `base`: ruby raises on ANY bang method against
+    // a frozen receiver, whether or not it would have changed anything. This is
+    // the guard `str_bang_replace` applies on the other path.
+    guard_str_frozen(recv)?;
+    let produced = crate::dispatch::send_value(recv, crate::Symbol::intern(base), args, block)?;
+    if let RubyValue::Str(s) = produced {
+        let text = s.lock().to_utf8_lossy().into_owned();
+        let RubyValue::Str(dst) = recv else {
+            unreachable!("String table row dispatched on a non-String receiver")
+        };
+        dst.lock().replace_utf8(text);
+    }
+    Ok(recv.clone())
 }
 
 /// `partition`/`rpartition`'s three-part split around a String or Regexp
@@ -2159,7 +2197,7 @@ ruby_class! {
     def "downcase!"(recv, *args, &block) { str_bang_via(recv, "downcase", args, block) }
     def "capitalize!"(recv, *args, &block) { str_bang_via(recv, "capitalize", args, block) }
     def "swapcase!"(recv, *args, &block) { str_bang_via(recv, "swapcase", args, block) }
-    def "reverse!" arity 0 (recv, *args, &block) { str_bang_via(recv, "reverse", args, block) }
+    def "reverse!" arity 0 (recv, *args, &block) { str_bang_via_always(recv, "reverse", args, block) }
     def "strip!"(recv, *args, &block) { str_bang_via(recv, "strip", args, block) }
     def "lstrip!"(recv, *args, &block) { str_bang_via(recv, "lstrip", args, block) }
     def "rstrip!"(recv, *args, &block) { str_bang_via(recv, "rstrip", args, block) }
@@ -2168,7 +2206,7 @@ ruby_class! {
     def "tr!" arity 2 (recv, *args, &block) { str_bang_via(recv, "tr", args, block) }
     def "delete!"(recv, *args, &block) { str_bang_via(recv, "delete", args, block) }
     def "squeeze!"(recv, *args, &block) { str_bang_via(recv, "squeeze", args, block) }
-    def "succ!" arity 0 | "next!" arity 0 (recv, *args, &block) { str_bang_via(recv, "succ", args, block) }
+    def "succ!" arity 0 | "next!" arity 0 (recv, *args, &block) { str_bang_via_always(recv, "succ", args, block) }
     // `sum` -- the CRuby checksum: the sum of the byte values, masked to `bits`
     // (default 16) bits. `chr` is the first character as a one-char String.
     def "sum"(recv, bits?) {
@@ -2696,6 +2734,10 @@ ruby_class! {
             if candidate.parse::<f64>().is_ok()
                 || candidate == "-"
                 || candidate == "+"
+                // A bare leading dot is a legal float in ruby (`".5".to_f` is
+                // 0.5), and the scan has to walk THROUGH the incomplete "."
+                // prefix to reach it -- stopping there answered 0.0.
+                || matches!(candidate, "." | "-." | "+.")
                 || candidate.ends_with(['e', 'E'])
                 || candidate.ends_with("e-")
                 || candidate.ends_with("e+")
@@ -2902,8 +2944,20 @@ ruby_class! {
             RubyValue::Regexp(re) => {
                 Ok(crate::regexp_match_index(re, &rstr.lock().to_utf8_lossy()))
             }
-            other => Err(type_error!("wrong argument type {} (expected Regexp)",
-                    crate::builtins::class_name_of(other))),
+            // Only a STRING operand is the TypeError. Ruby's `rb_str_match`
+            // hands anything else back to the operand's own `=~`, so
+            // `"s" =~ nil` is `nil.=~("s")` -> nil, and `"s" =~ 0` is a
+            // NoMethodError -- `Object#=~` was removed in ruby 3.2, so an
+            // Integer has none.
+            RubyValue::Str(_) => Err(type_error!(
+                "type mismatch: String given"
+            )),
+            other => crate::dispatch::send_value(
+                other,
+                crate::Symbol::intern("=~"),
+                std::slice::from_ref(recv),
+                None,
+            ),
         }
     }
     // Both accept an optional start position (char offset, end-relative when

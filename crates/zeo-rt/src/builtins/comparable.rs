@@ -67,9 +67,15 @@ ruby_module! {
         }
     }
     def "between?" (recv, arg1, arg2) {
+        // SHORT-CIRCUITS, like `cmpint(x, min) >= 0 && cmpint(x, max) <= 0`:
+        // once the receiver is below the lower bound the answer is false, and
+        // the upper bound is never compared -- so `"Hello".between?("l", 0)`
+        // answers false where comparing against `0` would have raised.
         let lo = cmp_or_fail(recv, arg1)?;
-        let hi = cmp_or_fail(recv, arg2)?;
-        Ok(RubyValue::Bool(lo >= 0 && hi <= 0))
+        if lo < 0 {
+            return Ok(RubyValue::Bool(false));
+        }
+        Ok(RubyValue::Bool(cmp_or_fail(recv, arg2)? <= 0))
     }
     // `clamp(lo, hi)` or `clamp(range)`. In the two-argument form a `nil`
     // bound is open on that side (`5.clamp(1, nil)` -> 5), mirroring the

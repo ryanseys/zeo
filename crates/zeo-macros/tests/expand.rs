@@ -33,6 +33,7 @@ pub mod builtins {
         pub is_private: fn(&str) -> bool,
         pub is_protected: fn(&str) -> bool,
         pub allocs: fn(&str) -> bool,
+        pub inherits: fn(&str) -> bool,
     }
 
     pub struct BuiltinClassTable {

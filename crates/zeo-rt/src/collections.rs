@@ -583,7 +583,12 @@ pub(crate) fn hash_key_in(v: &RubyValue, by_identity: bool) -> HashKey {
         RubyValue::BigInt(b) => HashKey::BigInt(Box::new((**b).clone())),
         RubyValue::Rational(r) => HashKey::Rational(Box::new((r.num.clone(), r.den.clone()))),
         RubyValue::Complex(c) => HashKey::Complex(Box::new((hash_key(&c.real), hash_key(&c.imag)))),
-        RubyValue::Float(f) => HashKey::Float(f.to_bits()),
+        // `-0.0` normalizes to `0.0` before the bits are taken, exactly as
+        // `rb_dbl_long_hash` does (`if (d == 0.0) d = 0.0;`). The two compare
+        // equal, so they must hash equal and share a Hash slot -- the bit
+        // patterns do not. NaN still keys by its bits, which is what makes a
+        // NaN key findable at all.
+        RubyValue::Float(f) => HashKey::Float(if *f == 0.0 { 0.0f64 } else { *f }.to_bits()),
         RubyValue::Symbol(s) => HashKey::Symbol(*s),
         RubyValue::Str(s) => {
             let s = s.lock();
@@ -1425,7 +1430,10 @@ pub fn array_include(arr: &RArray, value: &RubyValue) -> bool {
                 None => return false,
             }
         };
-        if e.rb_eq(value) {
+        // IDENTITY first, then `==` -- `rb_equal`'s own order. It is what lets
+        // `[Float::NAN].include?(Float::NAN)` answer true even though NaN is
+        // equal to nothing, itself included.
+        if crate::builtins::basic_object::value_identity(&e, value) || e.rb_eq(value) {
             return true;
         }
         i += 1;

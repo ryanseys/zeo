@@ -133,6 +133,11 @@ ruby_class! {
     def "default_proc" (recv) {
         Ok(rhash.lock().default_proc.clone().unwrap_or(RubyValue::Nil))
     }
+    // Answers what was STORED, not what was passed: `rb_hash_set_default_proc`
+    // returns the converted Proc, so `h.send(:default_proc=, :a)` is a Proc
+    // even though a Symbol went in. (Written as an assignment the value of the
+    // expression is the argument, but that is the parser's rule, not this
+    // method's return.)
     def "default_proc=" (recv, arg) {
         let mut g = rhash.lock();
         match arg {
@@ -159,7 +164,7 @@ ruby_class! {
                 }
             }
         }
-        Ok((*arg).clone())
+        Ok(g.default_proc.clone().unwrap_or(RubyValue::Nil))
     }
     // Switch to identity keying (`equal?`/`object_id` instead of `eql?`/`hash`);
     // re-projects existing entries so keys stay reachable by their own object.

@@ -90,7 +90,12 @@ pub fn arg_encoding(v: &RubyValue) -> Result<EncodingId, Signal> {
             let name = s.lock().to_utf8_lossy().into_owned();
             resolve_name(&name)
         }
-        RubyValue::Symbol(s) => resolve_name(&s.name()),
+        // NO Symbol arm: `rb_to_encoding` takes an Encoding or a String, and
+        // reaches a Symbol only through `rb_check_string_type`, which refuses
+        // it. So `force_encoding(:UTF_8)` and `Encoding.find(:UTF_8)` are both
+        // `no implicit conversion of Symbol into String` -- a TypeError about
+        // the ARGUMENT, not an ArgumentError about the encoding's name
+        // (oracle-checked on 4.0.6; a valid symbol name is refused too).
         other => {
             let name = crate::builtins::convert::to_rstr(other)?
                 .lock()

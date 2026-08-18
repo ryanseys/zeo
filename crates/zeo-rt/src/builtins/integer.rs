@@ -318,7 +318,11 @@ pub fn int_pos(a: &RubyValue) -> RubyValue {
 fn int_mask_arg(v: &RubyValue) -> Result<BigInt, Signal> {
     match v {
         RubyValue::Int(_) | RubyValue::BigInt(_) => Ok(to_bigint(v)),
-        other => Err(coerce_error(other, "Integer")),
+        // The bit predicates take their mask through `rb_to_int`, not the
+        // numeric tower's `coerce` -- so a Float truncates (`42.allbits?(1.5)`
+        // masks with 1) and anything with a `to_int` is accepted, where the
+        // coercion message rejected both.
+        other => Ok(to_bigint(&crate::builtins::convert::to_int(other)?)),
     }
 }
 
