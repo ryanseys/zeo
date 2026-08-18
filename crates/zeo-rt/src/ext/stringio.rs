@@ -202,11 +202,10 @@ fn unget_bytes(
             Some(c) => c.to_string().into_bytes(),
             None => return Err(crate::builtins::range_error!("{n} out of char range")),
         },
-        other => {
-            let str = crate::builtins::convert::to_rstr(other)?;
-            let b = str.lock().bytes().to_vec();
-            b
-        }
+        other => crate::builtins::convert::to_rstr(other)?
+            .lock()
+            .bytes()
+            .to_vec(),
     };
     if bytes.is_empty() {
         return Ok(RubyValue::Nil);
