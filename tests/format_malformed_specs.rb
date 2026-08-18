@@ -1,7 +1,3 @@
-# GAP -- imported from the spinel corpus at c55d9bdb.
-# A malformed format spec is truncated rather than passed through the way
-# ruby renders it.
-#
 p(format("%.*f", -2, 3.14159))
 r001 = (format("%") rescue $!.class); p r001
 r002 = (format("%1$s %s", "a", "b") rescue $!.class); p r002

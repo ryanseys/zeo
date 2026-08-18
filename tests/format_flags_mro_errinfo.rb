@@ -1,8 +1,3 @@
-# GAP -- imported from the spinel corpus at c55d9bdb.
-# A width/precision flag combination drops the fill character, so "0..7"
-# survives where ruby renders "..7".
-#
-# Four surfaces from the conformance wave.
 
 # The non-decimal conversions honour '+' and ' ': C's printf drops both on
 # them, so every signed form was missing its sign

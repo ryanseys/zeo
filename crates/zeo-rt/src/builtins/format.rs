@@ -123,15 +123,23 @@ fn render(spec: &Spec, arg: &RubyValue) -> Result<Rendered, Signal> {
             let f = to_f64_for_format(arg)?;
             let prec = spec.precision.unwrap_or(6);
             Rendered {
-                head: sign_prefix(spec, f.is_sign_negative() && f != 0.0),
-                body: format!("{:.prec$}", f.abs()),
+                // `-0.0` keeps its sign: `format("%.2f", -0.0)` is "-0.00".
+                head: sign_prefix(spec, f.is_sign_negative()),
+                body: fixed_body(f.abs(), prec),
                 ..Default::default()
             }
         }
         'e' | 'E' => {
             let f = to_f64_for_format(arg)?;
             let prec = spec.precision.unwrap_or(6);
-            let body = format!("{:.prec$e}", f.abs());
+            // Rounded on the shortest decimal, as `%f` is.
+            let body = match sci_parts(f, prec) {
+                Some((digits, exp)) => match prec {
+                    0 => format!("{digits}e{exp}"),
+                    _ => format!("{}.{}e{exp}", &digits[..1], &digits[1..]),
+                },
+                None => format!("{:.prec$e}", f.abs()),
+            };
             // Rust: "1.234568e4" -- Ruby wants a signed, 2-digit exponent.
             let (mant, exp) = body.split_once('e').expect("{:e} has an exponent");
             let (exp_sign, exp_digits) = match exp.strip_prefix('-') {
@@ -163,7 +171,13 @@ fn render(spec: &Spec, arg: &RubyValue) -> Result<Rendered, Signal> {
             // base-10 exponent in one step. `expt` is the decimal point's
             // position (value = 0.d1d2... x 10^expt), which is what the
             // BSD switch below is written against.
-            let rounded = format!("{:.*e}", prec.saturating_sub(1), abs);
+            let rounded = match sci_parts(abs, prec.saturating_sub(1)) {
+                Some((digits, exp)) => match prec {
+                    1 => format!("{digits}e{exp}"),
+                    _ => format!("{}.{}e{exp}", &digits[..1], &digits[1..]),
+                },
+                None => format!("{:.*e}", prec.saturating_sub(1), abs),
+            };
             let (mant, exp) = rounded.split_once('e').expect("{:e} has an exponent");
             let expt: i32 = exp.parse::<i32>().expect("{:e}'s exponent is an integer") + 1;
             let body = if expt <= -4 || (expt > prec as i32 && expt > 1) {
@@ -177,7 +191,7 @@ fn render(spec: &Spec, arg: &RubyValue) -> Result<Rendered, Signal> {
                 // Fixed style keeps `prec` significant digits, so the number
                 // of DECIMALS depends on where the point sits.
                 let decimals = (prec as i32 - expt).max(0) as usize;
-                trim_g(&format!("{abs:.decimals$}"), spec.alt)
+                trim_g(&fixed_body(abs, decimals), spec.alt)
             };
             Rendered {
                 head: sign_prefix(spec, f.is_sign_negative()),
@@ -280,7 +294,15 @@ fn render_radix(spec: &Spec, n: num_bigint::BigInt) -> Rendered {
         // (precision 0 renders zero as the empty string).
         let mut body = radix_digits(&n, radix, upper);
         match spec.precision {
-            Some(0) if n.sign() == Sign::NoSign => body.clear(),
+            // Precision 0 renders zero as the empty string -- unless `#` is
+            // asking for octal's leading zero, which IS the whole prefix and
+            // so survives (`%#.0o` of 0 is "0").
+            Some(0) if n.sign() == Sign::NoSign => {
+                body.clear();
+                if spec.alt && radix == 8 {
+                    body.push('0');
+                }
+            }
             Some(p) if body.len() < p => body = "0".repeat(p - body.len()) + &body,
             _ => {}
         }
@@ -327,7 +349,10 @@ fn render_radix(spec: &Spec, n: num_bigint::BigInt) -> Rendered {
         }
     }
     let mut head = String::new();
-    if spec.alt {
+    // Octal's `#` prefix IS a leading zero, and `..` notation already begins
+    // with the sign digit 7 -- CRuby emits no extra "0" there (`%#o` of -1 is
+    // "..7", not "0..7"). The `0x`/`0b` prefixes still apply.
+    if spec.alt && radix != 8 {
         head.push_str(prefix);
     }
     head.push_str("..");
@@ -438,6 +463,165 @@ fn named_get(args: &[RubyValue], name: &str, braces: bool) -> Result<RubyValue, 
     }
 }
 
+
+/// How a template names its arguments. CRuby lets a template use exactly one
+/// of the three (`sprintf.c`'s `CHECK_FOR_WIDTH`/`GETNEXTARG` guards): mixing
+/// them leaves no consistent answer for which argument comes next.
+#[derive(Clone, Copy, PartialEq)]
+enum ArgStyle {
+    Sequential,
+    Numbered,
+    Named,
+}
+
+fn note_style(seen: &mut Option<ArgStyle>, now: ArgStyle) -> Result<(), Signal> {
+    match seen {
+        Some(prev) if *prev != now => Err(arg_error(match (*prev, now) {
+            (ArgStyle::Named, _) | (_, ArgStyle::Named) => {
+                "named<>after<numbered|unnumbered> is not allowed".to_string()
+            }
+            _ => "numbered(1) after unnumbered(2)".to_string(),
+        })),
+        _ => {
+            *seen = Some(now);
+            Ok(())
+        }
+    }
+}
+
+
+/// The SHORTEST round-trip decimal of `f` as `(digits, exponent)`, where the
+/// value is `0.d1d2... x 10^exponent`. `None` for a value Rust renders in a
+/// shape this cannot read (an infinity, a NaN).
+///
+/// The pair is what lets `%e`/`%g` round the same string `%f` does -- see
+/// [`fixed_body`] for why ruby rounds the decimal rather than the bits.
+fn shortest_digits(f: f64) -> Option<(Vec<u8>, i32)> {
+    if !f.is_finite() || f == 0.0 {
+        return None;
+    }
+    let text = format!("{:e}", f.abs());
+    let (mant, exp) = text.split_once('e')?;
+    let exp: i32 = exp.parse().ok()?;
+    let digits: Vec<u8> = mant.bytes().filter(|b| b.is_ascii_digit()).collect();
+    // `{:e}` normalizes to one digit before the point, so the value is
+    // `0.<digits> x 10^(exp + 1)`.
+    Some((digits, exp + 1))
+}
+
+/// `digits` rounded to `sig` significant places, ties to even, with the
+/// exponent adjusted when the carry grows a digit (`999` -> `100`, exponent
+/// +1). `None` when the shortest form already has `sig` digits or fewer, in
+/// which case no rounding happens and the caller keeps the exact expansion.
+fn round_significant(digits: &[u8], exp: i32, sig: usize) -> Option<(String, i32)> {
+    if digits.len() <= sig {
+        return None;
+    }
+    let mut kept: Vec<u8> = digits[..sig].iter().map(|b| b - b'0').collect();
+    let rest = &digits[sig..];
+    let round_up = match rest[0] {
+        d if d > b'5' => true,
+        d if d < b'5' => false,
+        _ if rest[1..].iter().any(|b| *b != b'0') => true,
+        _ => kept.last().is_some_and(|d| d % 2 == 1),
+    };
+    let mut exp = exp;
+    if round_up {
+        let mut i = kept.len();
+        loop {
+            if i == 0 {
+                kept.insert(0, 1);
+                kept.pop();
+                exp += 1;
+                break;
+            }
+            i -= 1;
+            if kept[i] == 9 {
+                kept[i] = 0;
+            } else {
+                kept[i] += 1;
+                break;
+            }
+        }
+    }
+    Some((kept.iter().map(|d| (d + b'0') as char).collect(), exp))
+}
+
+/// `%e`'s mantissa/exponent, rounded ruby's way. `None` falls back to Rust's
+/// exact formatting.
+fn sci_parts(f: f64, prec: usize) -> Option<(String, i32)> {
+    let (digits, exp) = shortest_digits(f)?;
+    let (kept, exp) = round_significant(&digits, exp, prec + 1)?;
+    Some((kept, exp - 1))
+}
+
+/// `%f`'s body -- ruby rounds the SHORTEST round-trip decimal, ties to even,
+/// where C's printf rounds the exact binary double. 2.675 is stored as
+/// 2.67499999999999982, so printf answers "2.67" and ruby answers "2.68";
+/// 2.345 is stored just ABOVE its tie, so printf answers "2.35" and ruby
+/// "2.34". Both fall out of rounding the string "2.675" / "2.345".
+///
+/// Two shapes keep the exact expansion instead:
+/// - a precision at or past the shortest digits, where no rounding happens
+///   and ruby prints the real bits (`%.20f` of 0.1 is 0.10000000000000000555);
+/// - a magnitude below `10^-prec`, where every kept digit is zero and there
+///   is no digit to break the tie on (`%.2f` of 0.005 is "0.01", because the
+///   stored value sits just above 0.005).
+fn fixed_body(f: f64, prec: usize) -> String {
+    let exact = format!("{f:.prec$}");
+    if !f.is_finite() {
+        return exact;
+    }
+    let short = format!("{f}");
+    let Some((int, frac)) = short.split_once('.') else {
+        return exact;
+    };
+    // Rust's `Display` never uses exponent notation for f64, but a value with
+    // no fractional digits to spare needs no rounding either way.
+    if frac.len() <= prec || short.contains('e') {
+        return exact;
+    }
+    if int == "0" && frac.as_bytes()[..prec].iter().all(|b| *b == b'0') {
+        return exact;
+    }
+    let mut digits: Vec<u8> = int
+        .bytes()
+        .chain(frac.bytes().take(prec))
+        .map(|b| b - b'0')
+        .collect();
+    let rest = &frac.as_bytes()[prec..];
+    let round_up = match rest[0] {
+        d if d > b'5' => true,
+        d if d < b'5' => false,
+        // An exact tie (a lone 5) goes to even; anything after it is a
+        // strict excess and rounds up.
+        _ if rest[1..].iter().any(|b| *b != b'0') => true,
+        _ => digits.last().is_some_and(|d| d % 2 == 1),
+    };
+    if round_up {
+        let mut i = digits.len();
+        loop {
+            if i == 0 {
+                digits.insert(0, 1);
+                break;
+            }
+            i -= 1;
+            if digits[i] == 9 {
+                digits[i] = 0;
+            } else {
+                digits[i] += 1;
+                break;
+            }
+        }
+    }
+    let text: String = digits.iter().map(|d| (d + b'0') as char).collect();
+    let point = text.len() - prec;
+    match prec {
+        0 => text,
+        _ => format!("{}.{}", &text[..point], &text[point..]),
+    }
+}
+
 /// Reads a `*` width/precision argument (an Integer) from the sequential
 /// argument stream.
 fn star_int(args: &[RubyValue], next_arg: &mut usize) -> Result<i64, Signal> {
@@ -461,6 +645,11 @@ pub fn sprintf(template: &str, args: &[RubyValue]) -> Result<String, Signal> {
     let mut out = String::new();
     let mut chars = template.chars().peekable();
     let mut next_arg = 0usize;
+    // CRuby refuses a template that mixes the three ways of naming an
+    // argument: sequential (`%s`), numbered (`%1$s`) and named (`%<a>s` /
+    // `%{a}`). Mixing them makes the argument stream ambiguous, so the
+    // FIRST style a template uses is the only one it may use.
+    let mut style: Option<ArgStyle> = None;
     'directive: while let Some(c) = chars.next() {
         if c != '%' {
             out.push(c);
@@ -495,11 +684,13 @@ pub fn sprintf(template: &str, args: &[RubyValue]) -> Result<String, Signal> {
                 }
                 Some('<') => {
                     chars.next();
+                    note_style(&mut style, ArgStyle::Named)?;
                     named = Some(read_until(&mut chars, '>')?);
                 }
                 Some('{') => {
                     // `%{name}` is a complete directive: the value as-is (`%s`).
                     chars.next();
+                    note_style(&mut style, ArgStyle::Named)?;
                     let name = read_until(&mut chars, '}')?;
                     out.push_str(&named_get(args, &name, true)?.try_display_string()?);
                     continue 'directive;
@@ -518,7 +709,12 @@ pub fn sprintf(template: &str, args: &[RubyValue]) -> Result<String, Signal> {
                     chars.next();
                     if chars.peek() == Some(&'*') {
                         chars.next();
-                        spec.precision = Some(star_int(args, &mut next_arg)?.max(0) as usize);
+                        // A NEGATIVE `*` precision is CRuby's "no precision at
+                        // all" (`sprintf.c`: `if (prec < 0) goto no_precision`),
+                        // not a precision of zero -- `%.*f` with -2 renders the
+                        // default six places.
+                        let n = star_int(args, &mut next_arg)?;
+                        spec.precision = (n >= 0).then_some(n as usize);
                     } else {
                         let mut prec = String::new();
                         while chars.peek().is_some_and(|c| c.is_ascii_digit()) {
@@ -534,6 +730,7 @@ pub fn sprintf(template: &str, args: &[RubyValue]) -> Result<String, Signal> {
                     }
                     if chars.peek() == Some(&'$') {
                         chars.next();
+                        note_style(&mut style, ArgStyle::Numbered)?;
                         arg_index = Some(num.parse::<usize>().unwrap_or(0));
                     } else {
                         spec.width = num.parse().ok();
@@ -561,6 +758,7 @@ pub fn sprintf(template: &str, args: &[RubyValue]) -> Result<String, Signal> {
                 .cloned()
                 .ok_or_else(|| arg_error("too few arguments".to_string()))?
         } else {
+            note_style(&mut style, ArgStyle::Sequential)?;
             let a = args
                 .get(next_arg)
                 .cloned()
