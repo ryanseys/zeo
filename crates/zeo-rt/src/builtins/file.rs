@@ -785,6 +785,19 @@ ruby_class! {
         if mode_has_binary(mode) {
             crate::dispatch::send_value(&io, crate::Symbol::intern("binmode"), &[], None)?;
         }
+        // ...and it decides how a read TAGS its bytes, along with any explicit
+        // `encoding:`. Recorded on the handle only when it differs from the
+        // default, so an ordinary text open leaves the slot unset and
+        // `set_encoding_by_bom` can still claim it.
+        let (ext, int) = read_encodings(trailing)?;
+        let binary = mode_has_binary(mode);
+        if binary || ext != crate::encoding::default_external() || int.is_some() {
+            let ext = match binary {
+                true => crate::encoding::ASCII_8BIT,
+                false => ext,
+            };
+            crate::builtins::io::set_handle_encodings(&io, Some(ext), int);
+        }
         let Some(RubyValue::Proc(p)) = block else {
             return Ok(io);
         };

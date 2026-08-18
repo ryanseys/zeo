@@ -2792,7 +2792,14 @@ pub(super) fn emit_const_read(cx: &Ctx, scope: Option<&str>, name: &str) -> Toke
             let (head, leaf) = split_const_path(s);
             let head = head.filter(|h| !h.is_empty());
             let scope_expr = emit_const_read(cx, head, leaf);
-            let qualified = format!("{s}::{name}");
+            // `Object` is never NAMED as the scope: ruby reports
+            // `Object::AlsoMissing` as "uninitialized constant AlsoMissing",
+            // the same as a bare miss, since Object is where a top-level
+            // constant lives anyway.
+            let qualified = match s {
+                "Object" => name.to_string(),
+                _ => format!("{s}::{name}"),
+            };
             return quote! {
                 match #scope_expr {
                     zeo_rt::RubyValue::Class(__cid) => match zeo_rt::const_get_scoped(__cid.0, #name) {
@@ -2828,6 +2835,12 @@ pub(super) fn emit_const_read(cx: &Ctx, scope: Option<&str>, name: &str) -> Toke
     // has `Object` as its defining class, and `Object` is where a bare lookup
     // ENDS rather than a namespace it was qualified by, so it prints bare too.
     let qualified = match (scope, cx.defining_class) {
+        // An EXPLICIT `Object::` scope prints bare for the same reason the
+        // `defining_class == Object` case below does: Object is where a
+        // lookup ENDS, not a namespace the name was qualified by, so ruby
+        // reports `Object::AlsoMissing` as "uninitialized constant
+        // AlsoMissing".
+        (Some("Object"), _) => name.to_string(),
         (Some(s), _) => format!("{s}::{name}"),
         (None, Some(d)) if d != zeo_abi::OBJECT_CLASS => {
             format!("{}::{name}", cx.compiler.fq_name(d))

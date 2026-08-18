@@ -262,6 +262,19 @@ impl RIo {
 /// Zeroes the per-handle state back to `RIo::new`'s defaults after a re-init
 /// swaps the descriptor: lineno, binmode, autoclose, sync, pushed-back bytes,
 /// read-ahead, child pid, encodings, timeout.
+/// Records an opened handle's external/internal encodings, which is what a
+/// read tags its bytes with. Separate from `set_encoding` the ruby method so
+/// `File.open` can set them without going through dispatch.
+pub(crate) fn set_handle_encodings(
+    io: &RubyValue,
+    ext: Option<crate::encoding::EncodingId>,
+    int: Option<crate::encoding::EncodingId>,
+) {
+    if let Some(io) = as_rio(io) {
+        *io.encodings.lock() = (ext, int);
+    }
+}
+
 fn reset_handle_state(io: &RIo) {
     use std::sync::atomic::Ordering;
     io.lineno.store(0, Ordering::Relaxed);
@@ -972,6 +985,13 @@ fn io_read_val(
             i => return Err(arg_error!("negative length {i} given")),
         },
     };
+    // The encoding a WHOLE read tags its bytes with: the handle's external one
+    // when it has been set (`File.open(path, "rb")`, an `encoding:` option, a
+    // BOM), else UTF-8. It used to be UTF-8 unconditionally, so a binary
+    // handle came back mis-tagged.
+    let read_enc = as_rio(recv)
+        .and_then(|io| io.encodings.lock().0)
+        .unwrap_or(crate::encoding::UTF_8);
     with_file(recv, |f, path| {
         // A socket peer that closes with unread data sends RST, so a read can
         // return ECONNRESET AFTER delivering the bytes already buffered; CRuby
@@ -996,10 +1016,7 @@ fn io_read_val(
                 // read through `IO#read` (as opposed to `File.binread`, which
                 // was already byte-faithful) came back corrupted -- see the
                 // same rule on `write_rio` above.
-                Ok(RubyValue::Str(crate::string_from_bytes(
-                    buf,
-                    crate::encoding::UTF_8,
-                )))
+                Ok(RubyValue::Str(crate::string_from_bytes(buf, read_enc)))
             }
             Some(n) => {
                 let mut buf = vec![0u8; n];
@@ -1563,7 +1580,15 @@ ruby_class! {
         let Some(io) = as_rio(recv) else {
             return Ok(RubyValue::Nil);
         };
-        if io.encodings.lock().0.is_some() {
+        // ASCII-8BIT does NOT conflict: `rb_io_set_encoding_by_bom` REQUIRES
+        // binmode, and binmode is exactly what sets the external encoding to
+        // ASCII-8BIT. Only some other explicit encoding is the conflict.
+        if io
+            .encodings
+            .lock()
+            .0
+            .is_some_and(|e| e != crate::encoding::ASCII_8BIT)
+        {
             return Err(arg_error!("encoding is set to UTF-8 already"));
         }
         let Some((id, len)) = read_bom(recv)? else {

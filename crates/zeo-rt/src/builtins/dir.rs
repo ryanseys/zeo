@@ -569,11 +569,11 @@ ruby_class! {
         }
         Ok(RubyValue::Nil)
     }
-    def self."each_child" cfunc (_recv, arg, &block) {
+    // Blockless answers an Enumerator, like every `RETURN_ENUMERATOR` row --
+    // it was raising `no block given (yield)`.
+    def self."each_child" cfunc (recv, arg, &block) {
         let path = path_arg(arg, "each_child")?;
-        let Some(RubyValue::Proc(p)) = block else {
-            return Err(crate::dispatch::raise_no_block_yield());
-        };
+        let p = block_or_enum!(recv, __args, block);
         let mut names = read_names(&path)?;
         names.sort();
         for n in names {
