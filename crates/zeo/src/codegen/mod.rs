@@ -799,6 +799,11 @@ fn push_vm_row(target: u32, box_id: u32, key: &str, tramp: TokenStream) {
     POOLS.with_borrow_mut(|p| p.vm_rows.push(quote! { (#target, #box_id, #key, #tramp) }));
 }
 
+/// One `__VM_FOREIGN` row -- see `PoolBuilder::vm_foreign_rows`.
+fn push_vm_foreign_row(target: u32, key: &str) {
+    POOLS.with_borrow_mut(|p| p.vm_foreign_rows.push(quote! { (#target, #key) }));
+}
+
 /// One `__CM_ROWS` row -- see `PoolBuilder::cm_rows`.
 fn push_cm_row(id: u32, key: &str, tramp: TokenStream) {
     POOLS.with_borrow_mut(|p| p.cm_rows.push(quote! { (#id, #key, #tramp) }));
@@ -1060,6 +1065,12 @@ struct PoolBuilder {
     /// `define_value_rows` call after every `register` -- each row's entry
     /// exists by then, and preserving row order preserves last-wins.
     vm_rows: Vec<TokenStream>,
+    /// The `(class, name)` subset of [`PoolBuilder::vm_rows`] whose OWNER is an
+    /// ancestor rather than the registering class -- a reopened builtin
+    /// registers its whole FLATTENED table, and `super` must not resume into
+    /// one of those. Emitted as `__VM_FOREIGN`. See
+    /// `zeo_rt`'s `ClassEntry::foreign_value_names`.
+    vm_foreign_rows: Vec<TokenStream>,
     /// `define_class_method` rows (`__CM_ROWS`), same shape minus the box.
     cm_rows: Vec<TokenStream>,
     /// One `CallSite` inline cache per dynamic call SITE -- never deduped,
@@ -1799,7 +1810,25 @@ fn codegen(analyzed: &Analyzed, sink: &mut ItemSink<'_>) -> std::io::Result<()> 
     for (idx, class) in compiler.classes.iter().enumerate() {
         // BOOTSTRAP classes are registered by `ClassRegistry::with_core`, not
         // per-program -- skip their whole registration/metadata block here.
+        // The one thing `with_core` cannot know is an ancestry a reachable
+        // `StandardError.prepend(M)` changed, so that much is patched over the
+        // entry it already made. Re-registering instead would reinstall the
+        // native `Exception` method set on top of the program's own deltas.
         if idx == 0 || class.is_builtin || class.is_bootstrap {
+            // Gated on the class having an ancestry EDIT of its own: a
+            // bootstrap class whose computed chain merely differs (an id whose
+            // compile-time `parent` is unset) must keep the chain `with_core`
+            // gave it, not have it truncated.
+            if class.is_bootstrap && !(class.prepends.is_empty() && class.includes.is_empty()) {
+                let id = idx as u32;
+                let ancestor_ids = class.ancestors.iter().map(|a| a.0);
+                registrations.push(quote! {
+                    __registry.set_ancestors(
+                        zeo_rt::ClassId(#id),
+                        vec![#(zeo_rt::ClassId(#ancestor_ids)),*],
+                    );
+                });
+            }
             continue;
         }
         let register = if class.is_module {
@@ -2509,6 +2538,13 @@ fn codegen(analyzed: &Analyzed, sink: &mut ItemSink<'_>) -> std::io::Result<()> 
             // reasoning as `emit_class`'s `dispatch_key`.
             let target = ci.builtin_overlay.map_or(id, |root| root.0);
             push_vm_row(target, ci.box_id, &scope.name, tramp);
+            // A row this class INHERITED or had mixed in -- `String.prepend(
+            // Loud)` materializes `Loud#upcase` onto `String`. Marked so
+            // `super` skips it at the String position instead of finding
+            // `Loud`'s own body again.
+            if entry.defined_class(compiler).0 != target {
+                push_vm_foreign_row(target, &scope.name);
+            }
             // A PRIVATE `def` (every top-level def, and an explicit
             // `private def x`) is recorded so `respond_to?` skips it; a
             // PROTECTED one so the `protected_*` reflection reports it.
@@ -2853,11 +2889,13 @@ fn codegen(analyzed: &Analyzed, sink: &mut ItemSink<'_>) -> std::io::Result<()> 
     let row_calls = POOLS.with_borrow(|p| {
         let vm =
             (!p.vm_rows.is_empty()).then(|| quote! { __registry.define_value_rows(__VM_ROWS); });
+        let vmf = (!p.vm_foreign_rows.is_empty())
+            .then(|| quote! { __registry.mark_foreign_value_rows(__VM_FOREIGN); });
         let cm =
             (!p.cm_rows.is_empty()).then(|| quote! { __registry.define_class_rows(__CM_ROWS); });
         let vis = (!p.vis_rows.is_empty())
             .then(|| quote! { __registry.mark_visibility_rows(__VIS_ROWS); });
-        quote! { #vm #cm #vis }
+        quote! { #vm #vmf #cm #vis }
     });
 
     // Sorted so the generated source is stable across runs (the set is a hash
@@ -3118,6 +3156,12 @@ fn codegen(analyzed: &Analyzed, sink: &mut ItemSink<'_>) -> std::io::Result<()> 
             static __VM_ROWS: &[(u32, u32, &str, zeo_rt::ValueMethodFn)] = &[#(#rows),*];
         }
     });
+    let vm_foreign_rows = (!pools.vm_foreign_rows.is_empty()).then(|| {
+        let rows = &pools.vm_foreign_rows;
+        quote! {
+            static __VM_FOREIGN: &[(u32, &str)] = &[#(#rows),*];
+        }
+    });
     let cm_rows = (!pools.cm_rows.is_empty()).then(|| {
         let rows = &pools.cm_rows;
         quote! {
@@ -3133,7 +3177,7 @@ fn codegen(analyzed: &Analyzed, sink: &mut ItemSink<'_>) -> std::io::Result<()> 
     sink.push(quote! {
         #program #syms #lits #files #strs #(#call_sites)* #(#pps)*
         static __META_ROWS: &[zeo_rt::MetaRow] = &[#(#metas),*];
-        #vm_rows #cm_rows #vis_rows
+        #vm_rows #vm_foreign_rows #cm_rows #vis_rows
     })
 }
 
@@ -4155,12 +4199,38 @@ fn emit_exception_deltas(
     compiler: &Compiler,
     cid: ClassId,
 ) -> Option<(TokenStream, Vec<TokenStream>)> {
+    // The ancestry ABOVE `Object` -- this class's exception chain and whatever
+    // it mixed in, with everything `Object` contributes cut off. A top-level
+    // `include M` puts M in every class's ancestry through `Object`, and those
+    // methods are deliberately nobody's delta (the `is_native_backed` test
+    // below is what used to keep them out; the module arm would let them back
+    // in, and registering one on each of the ~180 exception ids panicked
+    // `define_method` on a class no `register` had reached yet).
+    let above_object = {
+        let anc = &compiler.class(cid).ancestors;
+        let cut = anc
+            .iter()
+            .position(|&a| a == crate::compiler::OBJECT_CLASS)
+            .unwrap_or(anc.len());
+        &anc[..cut]
+    };
     let deltas: Vec<crate::compiler::ScopeId> = compiler
         .class(cid)
         .methods
         .iter()
         .filter(|e| {
-            !e.native_default && compiler.is_native_backed(compiler.scope(e.def).defining_class)
+            let dc = compiler.scope(e.def).defining_class;
+            !e.native_default
+                && (compiler.is_native_backed(dc)
+                    // A MODULE mixed into this class's exception chain --
+                    // `StandardError.prepend(Wrap)`. Nothing else puts the body
+                    // on this id: the builtin-registration loop skips a
+                    // bootstrap class entirely, and a statically resolved site
+                    // reads the materialized table, which the module's own
+                    // bridge (on the MODULE's id) never fills. The entry is
+                    // already the MRO winner, so registering it here is exactly
+                    // the placement ruby gives it.
+                    || (compiler.class(dc).is_module && above_object.contains(&dc)))
         })
         .map(|e| e.def)
         .collect();

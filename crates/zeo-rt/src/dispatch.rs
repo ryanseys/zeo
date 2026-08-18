@@ -783,6 +783,17 @@ struct ClassEntry {
     /// per ancestor of every MRO walk. Maintained solely by
     /// `define_value_method`, the one insertion point.
     own_value_names: FSet<Symbol>,
+    /// The `value_methods` rows this class did NOT define -- a REOPENED
+    /// BUILTIN registers its whole FLATTENED table (`String.prepend(Loud)`
+    /// puts `Loud#upcase` on `String`), and `super` must not find one of
+    /// those at the position it is resuming from or a prepended method's
+    /// `super` finds itself and recurses forever. `own_impls` is the object
+    /// channel's answer to the same question; this is the value channel's.
+    ///
+    /// Only the foreign names are recorded, not the own ones: on a reopened
+    /// builtin the flattened winner is almost always the class's own def, so
+    /// the set is empty for every class that mixes nothing in.
+    foreign_value_names: FSet<Symbol>,
     /// This class's OWN method implementations -- what `super` resolution
     /// walks. `methods` above is the FLATTENED instance-dispatch set (an
     /// entry's winner can be a prepended module's or an ancestor's copy),
@@ -1047,6 +1058,7 @@ impl ClassRegistry {
                 methods: FMap::default(),
                 own_impls: FMap::default(),
                 value_methods: FMap::default(),
+                foreign_value_names: FSet::default(),
                 own_value_names: FSet::default(),
                 private_methods: FSet::default(),
                 protected_methods: FSet::default(),
@@ -1263,6 +1275,17 @@ impl ClassRegistry {
         }
     }
 
+    /// The `__VM_FOREIGN` batch: which of the rows `define_value_rows` just
+    /// installed came from an ancestor rather than this class -- see
+    /// [`ClassEntry::foreign_value_names`].
+    pub fn mark_foreign_value_rows(&mut self, rows: &[(u32, &str)]) {
+        for &(id, name) in rows {
+            if let Some(e) = self.entries.get_mut(&id) {
+                e.foreign_value_names.insert(Symbol::intern(name));
+            }
+        }
+    }
+
     /// [`define_class_method`](Self::define_class_method)'s batch form
     /// (`__CM_ROWS`).
     pub fn define_class_rows(&mut self, rows: &[(u32, &str, ValueMethodFn)]) {
@@ -1390,6 +1413,18 @@ impl ClassRegistry {
         });
         entry.value_methods.insert((box_id, name), f);
         entry.own_value_names.insert(name);
+    }
+
+    /// Replace an ALREADY-REGISTERED class's linearized ancestry -- the
+    /// compile-time answer for a BOOTSTRAP class (the built-in exception tree)
+    /// whose chain a reachable `C.prepend(M)` / `C.include(M)` changed. Those
+    /// classes register once in `with_core`, so codegen has no `register` call
+    /// of its own to carry the new chain, and re-registering would reinstall
+    /// the native method set over the program's own deltas.
+    pub fn set_ancestors(&mut self, id: ClassId, ancestors: Vec<ClassId>) {
+        if let Some(e) = self.entries.get_mut(&id.0) {
+            e.ancestors = ancestors;
+        }
     }
 
     /// Records an `undef name` -- see `ClassEntry::undefined_methods`.
@@ -3247,7 +3282,12 @@ fn probe_generic_row(
     args: &[RubyValue],
     block: Option<RubyValue>,
 ) -> Option<Result<RubyValue, Signal>> {
+    // The FOREIGN rows on `anc` are skipped: a reopened builtin registers its
+    // whole flattened table, so the row sitting at this position can be the
+    // very prepended module the `super` came FROM. See
+    // `ClassEntry::foreign_value_names`.
     let f = value_method(anc, 0, name)
+        .filter(|_| !value_row_is_foreign(anc, name))
         .or_else(|| crate::builtins::class_table(anc).and_then(|t| t(&name.to_string())))?;
     if let RubyValue::Object(o) = recv
         && let Some(root) = o.builtin_root()
@@ -3266,6 +3306,17 @@ fn probe_generic_row(
         )));
     }
     Some(f(recv, args, block))
+}
+
+/// Whether `anc`'s registered value row for `name` was contributed by an
+/// ANCESTOR rather than defined on `anc` -- see
+/// [`ClassEntry::foreign_value_names`].
+fn value_row_is_foreign(anc: ClassId, name: Symbol) -> bool {
+    REGISTRY.get().is_some_and(|r| {
+        r.entries
+            .get(&anc.0)
+            .is_some_and(|e| e.foreign_value_names.contains(&name))
+    })
 }
 
 /// The shared body of [`send_super_from`] and [`send_as_defined_in`]: walk
