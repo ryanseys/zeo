@@ -1,7 +1,3 @@
-# GAP -- imported from the spinel corpus at c55d9bdb.
-# The $~ match globals are not frame-local, so a nested match leaks into
-# the caller's $1.
-#
 def f(s)
   s =~ /(l)/
   $1

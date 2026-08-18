@@ -656,12 +656,43 @@ thread_local! {
     > = std::cell::RefCell::new(FMap::default());
 }
 
+/// Method names that WRITE `$~`. A scope containing one needs an svar scope
+/// even if it never reads an svar, because `$~` is frame-local in ruby: a
+/// method that matches and returns must not leave its match in the caller's
+/// `$1`. (`def g(s); s.scan(/(\d)/); 1; end` is exactly that shape.)
+///
+/// Names only, no receiver: a false positive costs one dead scope push, a
+/// false negative leaks a match upward.
+const SVAR_WRITERS: &[&str] = &[
+    "=~",
+    "match",
+    "match?",
+    "scan",
+    "sub",
+    "sub!",
+    "gsub",
+    "gsub!",
+    "split",
+    "slice",
+    "slice!",
+    "index",
+    "rindex",
+    "partition",
+    "rpartition",
+    "start_with?",
+    "end_with?",
+    "grep",
+    "grep_v",
+    "===",
+];
+
 /// Whether `scope`'s body (nested blocks included -- they share the method's
 /// svar scope) touches the `$~` family: a `LastMatchRef` read, a `$~` write,
-/// or a `Regexp.last_match` call. Decides `scope_frame_guard`'s svar-scope
-/// push; a false positive costs one dead scope push, a false negative would
-/// leak a match to the caller, so the `last_match` check ignores the
-/// receiver.
+/// a `Regexp.last_match` call, or a call that PERFORMS a match and so writes
+/// `$~` even without naming it ([`SVAR_WRITERS`]). Decides
+/// `scope_frame_guard`'s svar-scope push; a false positive costs one dead
+/// scope push, a false negative would leak a match to the caller, so the
+/// `last_match` check ignores the receiver.
 fn scope_mentions_svars(compiler: &Compiler, scope: &crate::compiler::Scope) -> bool {
     fn walk(hir: &crate::hir::Hir, id: crate::hir::NodeId, found: &mut bool) {
         if *found {
@@ -671,6 +702,9 @@ fn scope_mentions_svars(compiler: &Compiler, scope: &crate::compiler::Scope) -> 
             crate::hir::HirNode::LastMatchRef(_) => *found = true,
             crate::hir::HirNode::GlobalWrite(name, _) if name == "$~" => *found = true,
             crate::hir::HirNode::Call { name, .. } if name == "last_match" => *found = true,
+            crate::hir::HirNode::Call { name, .. } if SVAR_WRITERS.contains(&name.as_str()) => {
+                *found = true;
+            }
             _ => hir[id].for_each_child(&mut |c| walk(hir, c, found)),
         }
     }
@@ -2757,6 +2791,19 @@ fn codegen(analyzed: &Analyzed, sink: &mut ItemSink<'_>) -> std::io::Result<()> 
     let ambient_rbconfig = "<zeo-shim>/rbconfig.rb".to_string();
     if !loaded_features.contains(&ambient_rbconfig) {
         loaded_features.push(ambient_rbconfig);
+    }
+    // A feature zeo satisfies with a BUILTIN (`require "set"`, `require
+    // "json"`) splices no file, so nothing above records it -- and CRuby's
+    // `$LOADED_FEATURES` names one entry per loaded feature whatever supplied
+    // it. Listed under the same `<zeo-...>` prefix the rbconfig shim uses, so
+    // a reader can tell a build-machine path from a synthesized one.
+    let mut activated: Vec<&String> = compiler.hir.activated_features.iter().collect();
+    activated.sort();
+    for feature in activated {
+        let entry = format!("<zeo-builtin>/{feature}.rb");
+        if !loaded_features.contains(&entry) {
+            loaded_features.push(entry);
+        }
     }
 
     // The `-I`/`RUBYLIB` roots for the cosmetic `$LOAD_PATH` seeding -- see
