@@ -840,7 +840,7 @@ ruby_class! {
             RubyValue::Int(_) | RubyValue::BigInt(_) => {
                 Ok(int_value(to_bigint(recv).gcd(&to_bigint(arg))))
             }
-            other => Err(not_an_integer()),
+            _other => Err(not_an_integer()),
         }
     }
     def "lcm" (recv, arg) {
@@ -848,7 +848,7 @@ ruby_class! {
             RubyValue::Int(_) | RubyValue::BigInt(_) => {
                 Ok(int_value(to_bigint(recv).lcm(&to_bigint(arg))))
             }
-            other => Err(not_an_integer()),
+            _other => Err(not_an_integer()),
         }
     }
     def "gcdlcm" (recv, arg) {
@@ -860,7 +860,7 @@ ruby_class! {
                     int_value(a.lcm(&b)),
                 ])))
             }
-            other => Err(not_an_integer()),
+            _other => Err(not_an_integer()),
         }
     }
     def "bit_length" (recv) {

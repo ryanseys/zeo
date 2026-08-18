@@ -85,10 +85,10 @@ pub fn float_pow_checked(a: f64, b: f64) -> Result<crate::RubyValue, crate::Sign
     Ok(crate::RubyValue::Float(a.powf(b)))
 }
 
-/// The half-turn trig `rb_dbl_complex_new_polar_pi` uses, whose argument is
-/// measured in HALF TURNS rather than radians. Darwin's libm has them, which
-/// is exactly the `#ifdef` CRuby takes (complex.c) -- and the reason its
-/// results are clean where `cos(x * PI)` leaves 1e-17 dust.
+// The half-turn trig `rb_dbl_complex_new_polar_pi` uses, whose argument is
+// measured in HALF TURNS rather than radians. Darwin's libm has them, which
+// is exactly the `#ifdef` CRuby takes (complex.c) -- and the reason its
+// results are clean where `cos(x * PI)` leaves 1e-17 dust.
 #[cfg(target_vendor = "apple")]
 unsafe extern "C" {
     #[link_name = "__cospi"]
