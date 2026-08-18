@@ -442,8 +442,9 @@ ruby_class! {
     // find-any for a Numeric comparator result (`0` hits, negative searches
     // low, positive high; `nil` on no hit). Binary search on the bounds -- no
     // materialization, so a huge range is fine.
+    // Blockless answers an Enumerator -- see `Array#bsearch`'s note.
     def "bsearch" (recv, &block) {
-        let p = crate::builtins::need_block!(block);
+        let p = block_or_enum!(recv, __args, block);
         let (start, end, exclusive) = range_parts(recv);
         // A float range bisects over the doubles' monotonic integer image
         // (CRuby's approach), so a representable boundary converges exactly.

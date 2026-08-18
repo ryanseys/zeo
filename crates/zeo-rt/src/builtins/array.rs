@@ -307,7 +307,7 @@ ruby_class! {
     // `member?` in `Array.instance_methods(false)` and report its `.owner` as
     // Array. It reaches Enumerable's generic row through the ancestry instead.
     def "include?" (recv, arg) {
-        Ok(RubyValue::Bool(crate::array_include(rary, arg)))
+        Ok(RubyValue::Bool(crate::array_include(rary, arg)?))
     }
     def "empty?" (recv) {
         Ok(RubyValue::Bool(crate::array_len(rary) == 0))
@@ -677,7 +677,13 @@ ruby_class! {
                 Ok(h.lock().remove(idx as usize))
             }
             2 => {
-                let n = arg_int!(args, 1).max(0);
+                // A NEGATIVE length is nil, not an empty slice: `rb_ary_splice`
+                // rejects it before removing anything, so `a.slice!(1, -1)`
+                // answers nil and leaves the array alone.
+                let n = arg_int!(args, 1);
+                if n < 0 {
+                    return Ok(RubyValue::Nil);
+                }
                 let end = ((idx + n) as usize).min(len as usize);
                 let removed: Vec<RubyValue> = h.lock().drain(idx as usize..end).collect();
                 Ok(RubyValue::Array(crate::array_new(removed)))
@@ -742,7 +748,7 @@ ruby_class! {
                     None => return Ok(RubyValue::Nil),
                 }
             };
-            if e.rb_eq(needle) {
+            if crate::builtins::basic_object::rb_equal(&e, needle)? {
                 return Ok(RubyValue::Int(i as i64));
             }
             i += 1;
@@ -843,9 +849,12 @@ ruby_class! {
     def "delete" (recv, arg, &block) {
         let handle = rary;
         check_frozen(handle, recv)?;
-        // Two phases so `rb_eq` (a user `==`) never runs under the lock:
-        // probe per element, then retain by identity of the matched slots.
+        // Two phases so a user `==` never runs under the lock: probe per
+        // element, then retain by identity of the matched slots. The LAST
+        // matched element is kept, because that -- not the argument -- is what
+        // ruby answers: `[Always.new].delete(1)` gives back the `Always`.
         let mut matched = Vec::new();
+        let mut last_match: Option<RubyValue> = None;
         let mut i = 0usize;
         loop {
             let e = {
@@ -855,8 +864,9 @@ ruby_class! {
                     None => break,
                 }
             };
-            if e.rb_eq(arg) {
+            if crate::builtins::basic_object::rb_equal(&e, arg)? {
                 matched.push(i);
+                last_match = Some(e);
             }
             i += 1;
         }
@@ -868,7 +878,7 @@ ruby_class! {
                 idx += 1;
                 !hit
             });
-            return Ok((*arg).clone());
+            return Ok(last_match.unwrap_or_else(|| (*arg).clone()));
         }
         // Not found: a block supplies the answer (yielded the searched value),
         // else nil.
@@ -1356,8 +1366,12 @@ ruby_class! {
     // non-decreasing multisets. Both take a required length and yield tuples
     // (or return an Enumerator without a block).
     def "repeated_permutation"(recv, n, &block) {
-        let n = arg_int!(n);
+        // The Enumerator comes FIRST, exactly as `RETURN_SIZED_ENUMERATOR`
+        // does, so a blockless call DEFERS the argument check to iteration --
+        // `[1].repeated_permutation("l")` answers an Enumerator that prints
+        // the bad argument, and only raises when driven.
         let p = block_or_enum!(recv, __args, block);
+        let n = arg_int!(n);
         let items = rary.lock().clone();
         for tuple in repeated_permutations_of(&items, n) {
             p.call(&[RubyValue::Array(crate::array_new(tuple))])?;
@@ -1471,16 +1485,20 @@ ruby_class! {
     // CRuby also has a find-any mode (the block answering an Integer);
     // that's a documented gap -- a numeric block result raises rather than
     // silently treating it as truthy and answering the wrong element.
+    // Blockless answers an Enumerator, as every `RETURN_ENUMERATOR` row does --
+    // it was raising `no block given (yield)` instead.
     def "bsearch" (recv, &block) {
+        let p = block_or_enum!(recv, __args, block);
         let items = rary.lock().clone();
-        Ok(match bsearch_find(&items, block)? {
+        Ok(match bsearch_find(&items, Some(RubyValue::Proc(p)))? {
             Some(i) => items[i].clone(),
             None => RubyValue::Nil,
         })
     }
     def "bsearch_index" (recv, &block) {
+        let p = block_or_enum!(recv, __args, block);
         let items = rary.lock().clone();
-        Ok(match bsearch_find(&items, block)? {
+        Ok(match bsearch_find(&items, Some(RubyValue::Proc(p)))? {
             Some(i) => RubyValue::Int(i as i64),
             None => RubyValue::Nil,
         })
@@ -2013,6 +2031,18 @@ fn flatten_into(
                     seen.pop();
                 }
             }
+            // Ruby flattens anything that CONVERTS to an Array, not only a
+            // real one: `rb_ary_flatten` probes each element with
+            // `rb_check_array_type`, so an object answering `to_ary` is
+            // descended into. A probe that answers nil (the common case) is
+            // just a non-array element.
+            other if depth != 0 => match crate::builtins::convert::check_to_ary(other)? {
+                Some(RubyValue::Array(inner)) => {
+                    let nested = inner.lock().clone();
+                    out.extend(flatten_into(&nested, depth - 1, seen)?);
+                }
+                _ => out.push(other.clone()),
+            },
             other => out.push(other.clone()),
         }
     }

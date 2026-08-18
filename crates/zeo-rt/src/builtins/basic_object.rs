@@ -158,6 +158,34 @@ pub(crate) fn block_proc(
     }
 }
 
+/// CRuby's `rb_equal` -- the equality a SEARCH uses (`Array#include?`,
+/// `#index`, `#delete`, `Hash#value?`): identity first, then the LEFT operand's
+/// own `==`, DISPATCHED, so a user definition runs and a raise inside it
+/// propagates.
+///
+/// Distinct from [`RubyValue::rb_eq`], which is the structural fallback that a
+/// dispatched `==` itself bottoms out on and which deliberately runs no user
+/// code. Only an `Object` receiver takes the dispatching path: every other
+/// variant's `==` is the structural one, and paying a send per element to
+/// discover that would tax every `include?` over a list of numbers or strings.
+/// (A user reopen of, say, `Integer#==` is therefore still not consulted here
+/// -- a pre-existing boundary, not one this introduces.)
+pub(crate) fn rb_equal(a: &RubyValue, b: &RubyValue) -> Result<bool, crate::Signal> {
+    if value_identity(a, b) {
+        return Ok(true);
+    }
+    if matches!(a, RubyValue::Object(_)) {
+        return Ok(crate::dispatch::send_value(
+            a,
+            crate::Symbol::intern("=="),
+            std::slice::from_ref(b),
+            None,
+        )?
+        .truthy());
+    }
+    Ok(a.rb_eq(b))
+}
+
 /// Reference identity, CRuby's `equal?`: by-value for immediates (real Ruby
 /// too -- `5.equal?(5)` is true, immediates have one identity per value),
 /// allocation identity for everything heap-backed (`"a".equal?("a")` is

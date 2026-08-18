@@ -1418,23 +1418,24 @@ pub fn array_push(arr: &RArray, value: RubyValue) -> RubyValue {
 
 /// `Array#include?` -- `==`-based membership (`RubyValue::rb_eq`), matching
 /// real Ruby's `==` (not `eql?`) rule for `include?`.
-pub fn array_include(arr: &RArray, value: &RubyValue) -> bool {
-    // Per-element lock round-trips: `rb_eq` can re-enter a user `==`, which
-    // must not run under the receiver's (non-reentrant) payload lock.
+pub fn array_include(arr: &RArray, value: &RubyValue) -> Result<bool, crate::Signal> {
+    // Per-element lock round-trips: the comparison can re-enter a user `==`,
+    // which must not run under the receiver's (non-reentrant) payload lock.
     let mut i = 0usize;
     loop {
         let e = {
             let guard = arr.lock();
             match guard.get(i) {
                 Some(e) => e.clone(),
-                None => return false,
+                None => return Ok(false),
             }
         };
-        // IDENTITY first, then `==` -- `rb_equal`'s own order. It is what lets
-        // `[Float::NAN].include?(Float::NAN)` answer true even though NaN is
-        // equal to nothing, itself included.
-        if crate::builtins::basic_object::value_identity(&e, value) || e.rb_eq(value) {
-            return true;
+        // `rb_equal`: identity first (which is what lets
+        // `[Float::NAN].include?(Float::NAN)` answer true, NaN being equal to
+        // nothing including itself), then the ELEMENT's own `==`, dispatched --
+        // so a raising `==` propagates rather than reading as "not found".
+        if crate::builtins::basic_object::rb_equal(&e, value)? {
+            return Ok(true);
         }
         i += 1;
     }

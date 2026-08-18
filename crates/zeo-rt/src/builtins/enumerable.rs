@@ -671,9 +671,13 @@ fn min_max_by(
 }
 
 pub(crate) fn slice_size(args: &[RubyValue], method: &str) -> Result<usize, Signal> {
-    let Some(RubyValue::Int(n)) = args.first() else {
-        panic!("Enumerable#{method} takes one Integer argument");
-    };
+    // Through the conversion protocol, not a panic: a non-Integer here is
+    // ruby's ordinary `no implicit conversion` TypeError, and anything with a
+    // `to_int` is accepted. This used to take the process down.
+    let n = &crate::builtins::convert::to_index(
+        args.first()
+            .ok_or_else(|| crate::builtins::arity_err(0, 1, Some(1)))?,
+    )?;
     if *n < 1 {
         // CRuby names it differently per method: `each_slice` says "invalid
         // slice size", `each_cons` (and the rest) just "invalid size".
@@ -891,7 +895,14 @@ fn chunk_while(
 ) -> Result<RubyValue, Signal> {
     let name = if cut_on { "slice_when" } else { "chunk_while" };
     reject_args(args, name, "arguments");
-    let blk = block_or_enum!(recv, name, args, block);
+    // NOT blockless-returns-Enumerator: both reach `rb_block_proc` before they
+    // build anything, so a missing block is an ArgumentError rather than an
+    // enumerator over a predicate that does not exist.
+    let Some(RubyValue::Proc(blk)) = block else {
+        return Err(crate::builtins::arg_error!(
+            "tried to create Proc object without a block"
+        ));
+    };
     let items = collect_packed(Src::sending(recv))?;
     let mut out: Vec<RubyValue> = Vec::new();
     let mut cur: Vec<RubyValue> = Vec::new();
