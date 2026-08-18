@@ -684,6 +684,7 @@ pub(crate) fn bind_members(
 
     if let Some(h) = kw_hash {
         let mut seen = vec![false; n];
+        let mut unknown: Vec<String> = Vec::new();
         // Pairs snapshot before any slot is written: holding the hash's own
         // lock across a write that could reach back into it is the hazard the
         // rest of this module already avoids the same way.
@@ -697,9 +698,10 @@ pub(crate) fn bind_members(
                     slot_set(recv, i, v.clone());
                     seen[i] = true;
                 }
-                None => {
-                    return Err(arg_error!("unknown keyword: :{}", s.name()));
-                }
+                // Collected, not raised on the spot: ruby reports what is
+                // MISSING before what it did not recognise, so `P.new(y: 1)`
+                // on `Data.define(:x)` is "missing keyword: :x".
+                None => unknown.push(format!(":{}", s.name())),
             }
         }
         // Data requires every member; a plain keyword_init Struct nil-fills.
@@ -718,6 +720,14 @@ pub(crate) fn bind_members(
                 };
                 return Err(arg_error!("missing {word}: {}", missing.join(", ")));
             }
+        }
+        if !unknown.is_empty() {
+            let word = if unknown.len() == 1 {
+                "keyword"
+            } else {
+                "keywords"
+            };
+            return Err(arg_error!("unknown {word}: {}", unknown.join(", ")));
         }
         return Ok(());
     }

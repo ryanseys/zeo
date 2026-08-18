@@ -4184,8 +4184,12 @@ fn lower_class_body_statement(
             out.push(id);
             return Ok(());
         }
-        if *visibility != Visibility::Public {
-            hir.set_method_visibility(id, *visibility);
+        if *visibility != Visibility::Public || auto_private_def(hir, id) {
+            let vis = match auto_private_def(hir, id) {
+                true => Visibility::Private,
+                false => *visibility,
+            };
+            hir.set_method_visibility(id, vis);
         }
         // Under a bare `module_function`, every following `def` becomes a
         // MODULE method AND a PRIVATE instance method (real Ruby keeps both,
@@ -4223,8 +4227,12 @@ fn lower_class_body_statement(
             }
         )
     {
-        if *visibility != Visibility::Public {
-            hir.set_method_visibility(id, *visibility);
+        if *visibility != Visibility::Public || auto_private_def(hir, id) {
+            let vis = match auto_private_def(hir, id) {
+                true => Visibility::Private,
+                false => *visibility,
+            };
+            hir.set_method_visibility(id, vis);
         }
         if *module_function && promote_to_module_function(hir, id, out) {
             return Ok(());
@@ -4237,6 +4245,29 @@ fn lower_class_body_statement(
     }
     out.push(id);
     Ok(())
+}
+
+/// Whether `id` is a `def` ruby makes PRIVATE whatever the running default
+/// says. The object-initialization family and `respond_to_missing?` are hooks
+/// the runtime calls, never a public API, so `rb_scope_visibility_get` forces
+/// their visibility rather than reading it.
+fn auto_private_def(hir: &Hir, id: NodeId) -> bool {
+    let crate::hir::HirNode::DefMethod {
+        name,
+        is_class_method: false,
+        ..
+    } = &hir[id]
+    else {
+        return false;
+    };
+    matches!(
+        name.as_str(),
+        "initialize"
+            | "initialize_copy"
+            | "initialize_clone"
+            | "initialize_dup"
+            | "respond_to_missing?"
+    )
 }
 
 /// Applies the class body's running `visibility` default and `module_function`
