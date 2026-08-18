@@ -237,6 +237,18 @@ pub fn emit_for(cx: &Ctx, target: &MultiTarget, iterable: NodeId, body: &[NodeId
     let bind_array = emit_target_write(cx, target, quote! { __iter[__idx].clone() }, None);
     let bind_elem = emit_target_write(cx, target, quote! { __elem }, None);
     let bind_range = emit_target_write(cx, target, quote! { zeo_rt::RubyValue::Int(__i) }, None);
+    // `for x in obj` is `obj.each { |x| }` -- one parameter, so a multi-value
+    // yield binds its FIRST value; `for k, v in obj` is `{ |k, v| }` and packs.
+    let bind_mode = match target {
+        MultiTarget::Local(_)
+        | MultiTarget::Ivar(_)
+        | MultiTarget::ClassVar(_)
+        | MultiTarget::Global(_)
+        | MultiTarget::Const(_)
+        | MultiTarget::ScopedConst { .. }
+        | MultiTarget::Call { .. } => quote! { zeo_rt::ForBind::First },
+        MultiTarget::Nested(_) => quote! { zeo_rt::ForBind::Packed },
+    };
 
     // `for` evaluates to the collection it iterated (CRuby: `for x in c; end`
     // returns `c`, the same object), unless the body `break`s with a value.
@@ -397,7 +409,7 @@ pub fn emit_for(cx: &Ctx, target: &MultiTarget, iterable: NodeId, body: &[NodeId
                     // exactly where ruby's `Range#each` does, so this `?` is
                     // ruby's own TypeError.
                     let __iter: Vec<zeo_rt::RubyValue> =
-                        if __counted { Vec::new() } else { zeo_rt::each_values(&__coll)? };
+                        if __counted { Vec::new() } else { zeo_rt::each_values(&__coll, #bind_mode)? };
                     let mut __idx: usize = 0;
                     // Top-of-loop step so `next` advances (see the Array arm).
                     let mut __first = true;

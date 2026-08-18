@@ -293,19 +293,33 @@ fn for_each(
     }
 }
 
+/// How a `for` loop's target list takes what `each` yields. Real Ruby's
+/// `for x in obj` compiles to nothing more than `obj.each { |x| ... }`
+/// (`compile_iter`, compile.c:8548), so the two spellings differ exactly as
+/// the two block parameter lists do.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ForBind {
+    /// `for x in obj` -- ONE parameter, so a multi-value yield binds its
+    /// first value and drops the rest. It does NOT pack: `yield 1, 2, 3`
+    /// leaves `x` as `1`, not `[1, 2, 3]`.
+    First,
+    /// `for k, v in obj` -- several, so a multi-value yield packs into the
+    /// Array the destructure then splits (and a single yielded Array is
+    /// auto-splatted, which is what makes `for k, v in hash` work).
+    Packed,
+}
+
 /// Every value `recv`'s `each` yields, in order -- the primitive a `for` loop
-/// over an arbitrary object needs.
-///
-/// Real Ruby's `for x in obj` compiles to nothing more than `obj.each { |x|
-/// ... }` (`compile_iter`, compile.c:8548), so `for` works on ANY receiver
-/// answering `each`, and one that doesn't raises NoMethodError at runtime.
-/// A multi-value yield packs into an Array exactly as a block param would,
-/// which is what lets `for k, v in pairs` destructure.
-pub fn each_values(recv: &RubyValue) -> Result<Vec<RubyValue>, Signal> {
+/// over an arbitrary object needs. `for` works on ANY receiver answering
+/// `each`, and one that doesn't raises NoMethodError at runtime.
+pub fn each_values(recv: &RubyValue, bind: ForBind) -> Result<Vec<RubyValue>, Signal> {
     let out: Arc<Mutex<Vec<RubyValue>>> = Arc::new(Mutex::new(Vec::new()));
     let out2 = out.clone();
     for_each(Src::sending(recv), move |yielded| {
-        out2.lock().push(pack(yielded));
+        out2.lock().push(match bind {
+            ForBind::First => yielded.first().cloned().unwrap_or(RubyValue::Nil),
+            ForBind::Packed => pack(yielded),
+        });
         Ok(RubyValue::Nil)
     })?;
     let items = std::mem::take(&mut *out.lock());

@@ -63,7 +63,7 @@ pub use bootstrap::{install_core_constants, install_data_section, register_built
 pub use builtins::BuiltinMethodFn;
 pub use builtins::binding::{LocalCell, RBinding, binding_new};
 pub use builtins::complex::{RComplex, RComplexData, complex_from_literal, complex_new};
-pub use builtins::enumerable::each_values;
+pub use builtins::enumerable::{ForBind, each_values};
 pub use builtins::enumerator::{EnumeratorData, REnumerator};
 pub use builtins::exception::{
     apply_custom_backtrace, attach_backtrace, backtrace_lines, pattern_fail_case_eq,
