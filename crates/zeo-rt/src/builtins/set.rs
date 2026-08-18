@@ -538,12 +538,19 @@ ruby_class! {
         out.extend(arg_elements(other)?);
         Ok(set_from(out))
     }
+    // ENUMERATES THE OPERAND and consults the receiver, so the result follows
+    // the OPERAND's order: `Set[1, 2] & [2, 1]` is [2, 1]. Ruby's `Set#&`
+    // walks `enum` and keeps what `include?` accepts -- reading it the other
+    // way round kept the receiver's order, and asked a Hash operand for
+    // `include?`, which answers by KEY.
+    //
+    // `#-` is deliberately NOT symmetric: it is `dup.subtract(enum)`, so it
+    // keeps the RECEIVER's order.
     def "&" | "intersection" (recv, other) {
-        let other = set_from(arg_elements(other)?);
-        let keep: Vec<RubyValue> = set_of(recv)
-            .elements()
+        let mine = set_from(set_of(recv).elements());
+        let keep: Vec<RubyValue> = arg_elements(other)?
             .into_iter()
-            .filter(|e| set_of(&other).contains(e))
+            .filter(|e| set_of(&mine).contains(e))
             .collect();
         Ok(set_from(keep))
     }

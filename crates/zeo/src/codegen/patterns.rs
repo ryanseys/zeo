@@ -599,6 +599,18 @@ fn emit_array_binding(
                 )?.as_array_ref().lock().to_vec();
             })
         }
+        // A `MatchData` really does answer `#deconstruct` (its captures), so an
+        // array pattern against one MATCHES -- it is not the "provably never"
+        // case the `_` arm below assumes. Dispatched, like `Poly`'s, because
+        // the row lives in the builtin table rather than a compiled class.
+        TyKind::MatchData => {
+            let dec = super::pooled_sym("deconstruct");
+            Some(quote! {
+                let #arr_ident: Vec<zeo_rt::RubyValue> =
+                    zeo_rt::send_value(&(#scrutinee), #dec, &[], None)?
+                        .as_array_ref().lock().to_vec();
+            })
+        }
         // A Poly scrutinee that isn't a runtime Array dispatches
         // `#deconstruct` (real Ruby's array-pattern protocol) when it responds
         // to it; anything else simply doesn't match (no raise).

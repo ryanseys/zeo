@@ -902,9 +902,12 @@ ruby_class! {
     }
     def "insert" cfunc (recv, _index, *_objects, &_block) {
         let args = __args;
-        let orig = arg_int!(args, 0);
         let handle = rary;
+        // The frozen check comes FIRST, before the index is coerced --
+        // `rb_ary_modify_check` sits at the top of every mutator, so a frozen
+        // receiver is a FrozenError whatever the index turns out to be.
         check_frozen(handle, recv)?;
+        let orig = arg_int!(args, 0);
         let mut guard = handle.lock();
         let n = guard.len() as i64;
         let at = if orig < 0 { orig + n + 1 } else { orig };
