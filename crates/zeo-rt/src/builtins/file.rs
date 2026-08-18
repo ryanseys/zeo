@@ -779,7 +779,14 @@ ruby_class! {
         // Gvl-released: open(2) itself can block (a FIFO with no peer).
         let f = crate::gvl::without_gvl(|| opts.open(&path))
             .map_err(|e| raise_errno(&e, "rb_sysopen", &path))?;
-        let io = crate::builtins::io::file_value(f, Some(path));
+        let io = crate::builtins::io::file_value_mode(
+            f,
+            Some(path),
+            mode.and_then(|m| match m {
+                crate::RubyValue::Str(s) => Some(s.lock().to_utf8_lossy().into_owned()),
+                _ => None,
+            }),
+        );
         // A `b` in the mode string IS binmode, which `#binmode?` reports and
         // `#set_encoding_by_bom` requires.
         if mode_has_binary(mode) {

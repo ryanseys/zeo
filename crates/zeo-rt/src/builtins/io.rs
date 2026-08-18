@@ -104,7 +104,14 @@ pub struct RIo {
     /// when there is no associated file (a pipe, a std stream, or a
     /// `File.new(fd)` given no `path:`) -- distinct from `Some("")`, which
     /// `File.new(fd, path: "")` produces and `#path` must answer as `""`.
-    path: Option<String>,
+    /// Behind a `Mutex` because `#reopen` REPLACES it: the receiver keeps its
+    /// descriptor number and takes on the target file.
+    path: parking_lot::Mutex<Option<String>>,
+    /// The MODE string this handle was opened with, when a caller named one.
+    /// `#reopen(path)` with no mode of its own inherits it, which is CRuby's
+    /// rule (`rb_io_reopen` reuses `fptr->mode`) and the difference between
+    /// `reopen`-ing a write handle and opening the target read-only.
+    open_mode: parking_lot::Mutex<Option<String>>,
     /// `#lineno` -- the count of lines read via `gets`/`readline`/`each_line`,
     /// which CRuby tracks per-IO and lets a program set with `lineno=`.
     lineno: std::sync::atomic::AtomicI64,
@@ -232,11 +239,71 @@ impl RubyObject for RIo {
             IoBackend::Std(s) => *s,
             IoBackend::File(_) | IoBackend::Pipe(_) => StdStream::Stdout,
         };
-        Arc::new(RIo::new(IoBackend::Std(stream), self.path.clone()))
+        Arc::new(RIo::new(IoBackend::Std(stream), self.path.lock().clone()))
     }
 }
 
 impl RIo {
+    /// This handle's live descriptor, or `None` once it is closed. A std
+    /// stream's is its well-known number.
+    fn raw_fd(&self) -> Option<libc::c_int> {
+        use std::os::fd::AsRawFd;
+        match &*self.backend.lock() {
+            IoBackend::File(Some(f)) | IoBackend::Pipe(Some(f)) => Some(f.as_raw_fd()),
+            IoBackend::File(None) | IoBackend::Pipe(None) => None,
+            IoBackend::Std(StdStream::Stdin) => Some(0),
+            IoBackend::Std(StdStream::Stdout) => Some(1),
+            IoBackend::Std(StdStream::Stderr) => Some(2),
+        }
+    }
+
+    /// `rb_io_reopen`'s core: point THIS handle's descriptor at whatever `src`
+    /// refers to, keeping the descriptor NUMBER. That number is the reason
+    /// reopen exists -- `$stderr.reopen(path)` has to redirect fd 2 itself, so
+    /// a child process and every C-level write follow it.
+    ///
+    /// A std stream keeps its `Std` backend (its writes go through fd 1/2,
+    /// which now points elsewhere); a file handle takes a fresh `File` over
+    /// the same number, so it reads and writes the new target.
+    fn dup2_from(&self, src: libc::c_int, path: Option<String>) -> Result<(), Signal> {
+        use std::os::fd::FromRawFd;
+        let Some(dst) = self.raw_fd() else {
+            return Err(crate::dispatch::raise_error(
+                "IOError",
+                "closed stream".to_string(),
+            ));
+        };
+        if src != dst {
+            // SAFETY: both are live descriptors this process owns; `dup2`
+            // closes `dst` first, which is exactly reopen's contract.
+            if unsafe { libc::dup2(src, dst) } < 0 {
+                return Err(crate::builtins::file::raise_errno(
+                    &std::io::Error::last_os_error(),
+                    "reopen",
+                    path.as_deref().unwrap_or(""),
+                ));
+            }
+        }
+        let mut backend = self.backend.lock();
+        if let IoBackend::File(slot) | IoBackend::Pipe(slot) = &mut *backend {
+            // The old `File` owned `dst`, which `dup2` already closed and
+            // reused. Forget it rather than dropping it, or Rust's IO-safety
+            // check aborts on the double close, then re-own the same number.
+            if let Some(old) = slot.take() {
+                std::mem::forget(old);
+            }
+            // SAFETY: `dst` is open and now refers to the target.
+            *slot = Some(unsafe { std::fs::File::from_raw_fd(dst) });
+        }
+        drop(backend);
+        *self.path.lock() = path;
+        self.unget.lock().clear();
+        // Read-ahead from the old descriptor describes a file this IO no
+        // longer refers to.
+        *self.rbuf.lock() = ReadBuf::default();
+        Ok(())
+    }
+
     /// The one place RIo's default per-handle state (unset binmode, autoclose
     /// on, no pushed-back bytes, lineno 0) is established, so every constructor
     /// agrees.
@@ -245,7 +312,8 @@ impl RIo {
         RIo {
             sync: std::sync::atomic::AtomicBool::new(sync),
             backend: parking_lot::Mutex::new(backend),
-            path,
+            path: parking_lot::Mutex::new(path),
+            open_mode: parking_lot::Mutex::new(None),
             lineno: std::sync::atomic::AtomicI64::new(0),
             binmode: std::sync::atomic::AtomicBool::new(false),
             autoclose: std::sync::atomic::AtomicBool::new(true),
@@ -332,6 +400,18 @@ fn std_io(stream: StdStream) -> RubyValue {
 /// Wrap an already-open file as a Ruby `File` value.
 pub(crate) fn file_value(f: std::fs::File, path: Option<String>) -> RubyValue {
     RubyValue::Object(Arc::new(RIo::new(IoBackend::File(Some(f)), path)))
+}
+
+/// [`file_value`] recording the MODE it was opened with, so a later
+/// `#reopen(path)` with no mode of its own inherits it.
+pub(crate) fn file_value_mode(
+    f: std::fs::File,
+    path: Option<String>,
+    mode: Option<String>,
+) -> RubyValue {
+    let io = RIo::new(IoBackend::File(Some(f)), path);
+    *io.open_mode.lock() = mode;
+    RubyValue::Object(Arc::new(io))
 }
 
 /// Wrap one end of an `IO.pipe` (from an owned fd) as a Ruby `IO` value.
@@ -484,7 +564,7 @@ fn write_rio(io: &RIo, bytes: &[u8]) -> Result<(), Signal> {
                 crate::builtins::file::raise_errno(
                     &e,
                     "write",
-                    io.path.as_deref().unwrap_or_default(),
+                    io.path.lock().as_deref().unwrap_or_default(),
                 )
             }),
     })
@@ -681,7 +761,7 @@ pub(crate) fn stream_label(recv: &RubyValue) -> String {
         Some(StdStream::Stdout) => "<STDOUT>".to_string(),
         Some(StdStream::Stderr) => "<STDERR>".to_string(),
         None => as_rio(recv)
-            .and_then(|io| io.path.clone())
+            .and_then(|io| io.path.lock().clone())
             .unwrap_or_default(),
     }
 }
@@ -820,7 +900,7 @@ pub(crate) fn with_file<T>(
     let Some(io) = as_rio(recv) else {
         return Err(io_error!("not a file"));
     };
-    let path = io.path.clone().unwrap_or_default();
+    let path = io.path.lock().clone().unwrap_or_default();
     crate::gvl::without_gvl(|| match &mut *io.backend.lock() {
         IoBackend::File(Some(file)) | IoBackend::Pipe(Some(file)) => {
             // Give back whatever the line readers read ahead, so this closure
@@ -844,7 +924,7 @@ fn with_buffered_file<T>(
     let Some(io) = as_rio(recv) else {
         return Err(io_error!("not a file"));
     };
-    let path = io.path.clone().unwrap_or_default();
+    let path = io.path.lock().clone().unwrap_or_default();
     crate::gvl::without_gvl(|| match &mut *io.backend.lock() {
         IoBackend::File(Some(file)) | IoBackend::Pipe(Some(file)) => f(io, file, &path),
         IoBackend::File(None) | IoBackend::Pipe(None) => Err(io_error!("closed stream")),
@@ -1549,7 +1629,7 @@ ruby_class! {
             _ => unsafe { libc::ioctl(fd, request, 0 as libc::c_int) },
         };
         if rc < 0 {
-            let path = as_rio(recv).and_then(|io| io.path.clone()).unwrap_or_default();
+            let path = as_rio(recv).and_then(|io| io.path.lock().clone()).unwrap_or_default();
             return Err(crate::builtins::file::raise_errno(
                 &std::io::Error::last_os_error(), "ioctl", &path));
         }
@@ -1732,7 +1812,20 @@ ruby_class! {
         io_wait_for(recv, &args[..args.len().min(1)], events)
     }
 
-    def "inspect" | "to_s" (recv, &_blk) {
+    // `IO#to_s` is NOT `#inspect`: CRuby leaves `to_s` as `Object`'s address
+    // form (`#<IO:0x...>`, `#<File:0x...>`) even for `STDIN`, and only
+    // `inspect` describes the stream. Interpolating an IO shows the address.
+    def "to_s" (recv, &_blk) {
+        let class = crate::builtins::class_name_of(recv);
+        let addr = match recv {
+            RubyValue::Object(o) => Arc::as_ptr(o) as *const () as usize,
+            _ => 0,
+        };
+        Ok(RubyValue::Str(crate::collections::string_new(format!(
+            "#<{class}:0x{addr:016x}>"
+        ))))
+    }
+    def "inspect" (recv, &_blk) {
         let name = match stream_of(recv) {
             Some(StdStream::Stdin) => "#<IO:<STDIN>>".to_string(),
             Some(StdStream::Stdout) => "#<IO:<STDOUT>>".to_string(),
@@ -1746,7 +1839,7 @@ ruby_class! {
                         &*io.backend.lock(),
                         IoBackend::File(None) | IoBackend::Pipe(None)
                     );
-                    match (io.path.as_deref(), closed) {
+                    match (io.path.lock().as_deref(), closed) {
                         (Some(p), false) => format!("#<{class}:{p}>"),
                         (Some(p), true) => format!("#<{class}:{p} (closed)>"),
                         (None, false) => format!("#<{class}:fd {}>", raw_fd(recv)?),
@@ -1778,9 +1871,11 @@ ruby_class! {
         let Some(io) = as_rio(recv) else {
             return Err(io_error!("not a file"));
         };
-        // A std stream reports its bracketed name; anything else answers its path,
-        // or nil when it has none (a pipe, or `File.new(fd)` with no `path:`).
-        if let IoBackend::Std(stream) = &*io.backend.lock() {
+        // A std stream reports its bracketed name -- unless a `#reopen` gave
+        // it a real path, which CRuby then answers instead (`$stderr.reopen(
+        // IO::NULL).path` is "/dev/null"). Anything else answers its path, or
+        // nil when it has none (a pipe, or `File.new(fd)` with no `path:`).
+        if let (IoBackend::Std(stream), None) = (&*io.backend.lock(), io.path.lock().as_ref()) {
             let name = match stream {
                 StdStream::Stdin => "<STDIN>",
                 StdStream::Stdout => "<STDOUT>",
@@ -1790,7 +1885,7 @@ ruby_class! {
                 name.to_string(),
             )));
         }
-        Ok(match &io.path {
+        Ok(match &*io.path.lock() {
             Some(p) => RubyValue::Str(crate::collections::string_new(p.clone())),
             None => RubyValue::Nil,
         })
@@ -2496,22 +2591,45 @@ ruby_class! {
         })
     }
 
-    // `#reopen(other_io_or_path[, mode])` -- rebind this IO to another stream.
-    // Reopens the source's path fresh (position 0), which is what a program that
-    // reads after `reopen` observes; answers self.
+    // `#reopen(other_io_or_path[, mode])` -- `rb_io_reopen`: the receiver KEEPS
+    // its descriptor NUMBER and starts referring to the target, which is the
+    // whole point (`$stderr.reopen(path)` redirects fd 2, so a child process
+    // and a C-level write follow it too). So: open the target, `dup2` it onto
+    // the receiver's fd, and drop the temporary.
+    //
+    // Opening the target FIRST is what the mode argument is for -- `"w"`
+    // implies `O_CREAT|O_TRUNC`, so a missing path is created rather than
+    // ENOENT. Answers self.
     def "reopen" cfunc (recv, _target, _mode?, &_blk) {
-        let path = match as_rio(&__args[0]) {
-            Some(other) => other.path.clone().unwrap_or_default(),
-            None => crate::builtins::file::path_arg(&__args[0], "reopen")?,
+        use std::os::fd::AsRawFd;
+        let Some(io) = as_rio(recv) else {
+            return Ok(recv.clone());
         };
-        let f = std::fs::File::open(&path)
-            .map_err(|e| crate::builtins::file::raise_errno(&e, "reopen", &path))?;
-        if let Some(io) = as_rio(recv) {
-            *io.backend.lock() = IoBackend::File(Some(f));
-            io.unget.lock().clear();
-            // A fresh descriptor at position 0 -- read-ahead from the old one
-            // describes a file this IO no longer refers to.
-            *io.rbuf.lock() = ReadBuf::default();
+        // The IO-to-IO form duplicates the OTHER IO's live descriptor; the
+        // path form opens one, honouring the mode.
+        match as_rio(&__args[0]) {
+            Some(other) => {
+                let path = other.path.lock().clone();
+                let fd = other
+                    .raw_fd()
+                    .ok_or_else(|| crate::dispatch::raise_error(
+                        "IOError", "closed stream".to_string()))?;
+                io.dup2_from(fd, path)?;
+            }
+            None => {
+                let path = crate::builtins::file::path_arg(&__args[0], "reopen")?;
+                // With no mode of its own the call INHERITS the receiver's --
+                // `File.open(x, "w").reopen(y)` writes `y`, where a default
+                // of "r" would answer EBADF on the first write.
+                let inherited = io.open_mode.lock().clone().map(|m| {
+                    RubyValue::Str(crate::collections::string_new(m))
+                });
+                let mode = __args.get(1).or(inherited.as_ref());
+                let f = crate::builtins::file::open_options_for(mode, None)?
+                    .open(&path)
+                    .map_err(|e| crate::builtins::file::raise_errno(&e, "reopen", &path))?;
+                io.dup2_from(f.as_raw_fd(), Some(path))?;
+            }
         }
         Ok(recv.clone())
     }

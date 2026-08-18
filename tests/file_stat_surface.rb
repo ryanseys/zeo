@@ -1,6 +1,3 @@
-# GAP -- imported from the spinel corpus at c55d9bdb.
-# File::Stat.new is not defined.
-#
 path = "/tmp/sp_stat_surface_#{Process.pid}"
 File.write(path, "hello")
 st = File.stat(path)

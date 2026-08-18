@@ -199,6 +199,11 @@ ruby_class! {
     Stat = zeo_abi::FILE_STAT_CLASS < zeo_abi::OBJECT_CLASS;
     include zeo_abi::COMPARABLE_CLASS;
 
+    // `File::Stat.new(path)` -- the direct constructor, beside `File.stat`.
+    // It FOLLOWS symlinks (`File::Stat.new` is `stat(2)`, not `lstat(2)`).
+    def self."new"(_recv, path) {
+        stat_from_path(&crate::builtins::file::path_arg(path, "stat")?, true)
+    }
     def "size"(recv) {
         Ok(RubyValue::Int(payload(recv)?.st.st_size))
     }
