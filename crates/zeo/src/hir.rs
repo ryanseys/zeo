@@ -1366,7 +1366,7 @@ impl Hir {
 /// One element of an `ArrayLit` -- a plain value, or a `*expr` splat whose
 /// contents are flattened in at runtime (its length isn't known until then,
 /// so this can't just be another plain element).
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum ArrayElem {
     Single(NodeId),
     Splat(NodeId),
@@ -1394,7 +1394,7 @@ impl ArrayElem {
 /// a default that reads an ivar/local nowhere else referenced (e.g. `def
 /// f(x: @only_here)`) could hit a "no such field" codegen error instead of
 /// working.
-#[derive(Clone, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct Params {
     pub required: Vec<String>,
     /// Parenthesized DESTRUCTURING params (`|a, (b, c), d|`, `|(a, *r)|`,
@@ -1497,7 +1497,7 @@ pub enum Visibility {
     Protected,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum KeywordParam {
     Required(String),
     /// Same lazy-default-evaluation contract as `Params::optional`.
@@ -1584,7 +1584,7 @@ impl Params {
 /// `f(c: 1, **a)` build different hashes -- which is why a call's keywords
 /// can't be split into a separate `pairs` list and `**` slot. One type serves
 /// `Call`, `New`, `HashLit`, and (via a trailing `HashLit`) `Yield`.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum KwArg {
     Pair(NodeId, NodeId),
     DoubleSplat(NodeId),
@@ -1659,7 +1659,7 @@ pub enum LastMatch {
 /// value, a range endpoint, a plain literal/expression matched via `===`)
 /// still lower through the ordinary `NodeId`/`lower_node` path -- only the
 /// PATTERN SHAPE itself is bespoke.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum Pattern {
     /// A bare identifier (`x`, `_`, `_foo`) -- always matches, binding the
     /// scrutinee to this name in the enclosing method scope (exactly like an
@@ -1750,7 +1750,7 @@ pub enum Pattern {
 /// The three shapes a hash pattern's `**` tail can take -- distinct from the
 /// `Option<Option<String>>` shape `Array`/`Find`'s splats use because `**nil`
 /// (explicit "no other keys allowed") has no positional-splat equivalent.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum HashPatternRest {
     /// No `**` at all -- extra keys in the scrutinee are simply ignored
     /// (real Ruby's default hash-pattern leniency).
@@ -1878,7 +1878,7 @@ impl Pattern {
 }
 
 /// One `in PATTERN [if/unless GUARD]` arm of a `case/in`.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct PatternArm {
     pub pattern: Pattern,
     /// `(condition, is_unless)` -- `unless` negates the same way `HirNode::While`'s
@@ -1904,7 +1904,7 @@ pub struct PatternArm {
 /// bespoke attr/index-write codegen of its own. See `parse::lower_multi_target`.
 // `Clone` because `Params` is `Clone` and now carries destructuring groups
 // (`Params::destructures`); the targets themselves are small, owned data.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum MultiTarget {
     Local(String),
     Ivar(String),
@@ -1939,7 +1939,7 @@ pub enum MultiTarget {
 /// None` = no `*` at all; `Some(None)` = an anonymous `*` (discards the
 /// middle slice -- still unsupported, matching the pre-existing plain-local
 /// restriction, a clean lowering error); `Some(Some(target))` = `*target`.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct MultiTargetGroup {
     pub before: Vec<MultiTarget>,
     pub splat: Option<Option<Box<MultiTarget>>>,
@@ -2086,7 +2086,7 @@ impl MultiTargetGroup {
 /// exactly like a `case/in` pattern's bound names do (no new Ruby scope) --
 /// `codegen::hoisting`'s whole-scope local collection needs to see it up
 /// front, same treatment as `Pattern::for_each_bound_name`'s callers.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct RescueClause {
     /// The clause's STATIC exception classes -- plain constant references
     /// (`rescue Foo, Bar => e`), resolved to `ClassId`s and matched with a
@@ -2109,7 +2109,7 @@ pub struct RescueClause {
 /// is supported inside `#{}` (mirrors `ParenthesesNode`'s single-statement
 /// restriction) -- a multi-statement interpolation body is a clean lowering
 /// error, not silently truncated to its last statement.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum StrPart {
     Lit(String),
     /// A literal segment whose bytes are NOT valid UTF-8 -- a `"\xNN"`
@@ -2129,7 +2129,7 @@ pub enum StrPart {
 /// silently accepted as no-ops except a genuinely non-UTF-8-forcing encoding
 /// flag (`e`/`s`), which is a clean lowering rejection (see
 /// `parse/mod.rs`'s recognizer).
-#[derive(Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct RegexpFlags {
     /// `i` -- case-insensitive matching.
     pub ignore_case: bool,
@@ -2338,7 +2338,7 @@ pub enum FfiLib {
 /// declares the `extern "C"` symbol fn-locally (with `#[link(name = ..)]`, so no
 /// build-step change is needed), marshals each argument, calls it, and wraps the
 /// result back into a `RubyValue`.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct FfiCall {
     /// The C symbol to declare and call (the `attach_function` C name, which may
     /// differ from the Ruby method name in the 4-arg rename form).
@@ -2365,7 +2365,7 @@ pub struct FfiCall {
 }
 
 /// A real enum of node kinds; growing it is additive (new variants).
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum HirNode {
     Program(Vec<NodeId>),
     IntegerLit(i64),

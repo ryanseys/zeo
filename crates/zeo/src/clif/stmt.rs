@@ -806,14 +806,14 @@ fn mixin_hook_runs(fx: &Fx, id: NodeId) -> bool {
 /// A short label for the refusal message.
 #[allow(
     clippy::wildcard_enum_match_arm,
-    reason = "structural: a refusal-message label -- every future node kind is correctly 'unsupported' until its lowering lands"
+    reason = "structural: a refusal-message label -- an unnamed kind falls back to its variant name, which is what triage needs"
 )]
-fn statement_kind(node: &HirNode) -> &'static str {
+fn statement_kind(node: &HirNode) -> String {
     match node {
-        HirNode::ClassDef { .. } => "a class definition",
-        HirNode::DefMethod { .. } => "a method definition",
-        HirNode::Begin { .. } => "a begin/rescue/ensure",
-        _ => "an unsupported node kind",
+        HirNode::ClassDef { .. } => "a class definition".to_string(),
+        HirNode::DefMethod { .. } => "a method definition".to_string(),
+        HirNode::Begin { .. } => "a begin/rescue/ensure".to_string(),
+        other => format!("the node kind `{}`", super::expr::variant_name(other)),
     }
 }
 

@@ -758,17 +758,28 @@ fn if_expr(
 /// A short human label for refusal messages.
 #[allow(
     clippy::wildcard_enum_match_arm,
-    reason = "structural: a refusal-message label -- every future node kind is correctly 'unsupported' until its lowering lands"
+    reason = "structural: a refusal-message label -- an unnamed kind falls back to its variant name, which is what triage needs"
 )]
-fn node_kind(node: &HirNode) -> &'static str {
+fn node_kind(node: &HirNode) -> String {
     // One `match` would be 80 arms of labels nothing else needs; the
-    // refusal text only has to orient, not classify.
+    // refusal text only has to orient, not classify -- so a kind without a
+    // hand-written phrase names its HIR VARIANT, which is what a triage
+    // histogram over the corpus reads.
     match node {
-        HirNode::Call { .. } => "a method call",
-        HirNode::If { .. } => "an `if` in value position",
-        HirNode::While { .. } => "a loop in value position",
-        _ => "an unsupported node kind",
+        HirNode::Call { .. } => "a method call".to_string(),
+        HirNode::If { .. } => "an `if` in value position".to_string(),
+        HirNode::While { .. } => "a loop in value position".to_string(),
+        other => format!("the node kind `{}`", variant_name(other)),
     }
+}
+
+/// The bare variant name of a node (`Debug`'s leading identifier).
+pub(crate) fn variant_name(node: &HirNode) -> String {
+    let text = format!("{node:?}");
+    text.split(['(', ' ', '{'])
+        .next()
+        .unwrap_or("Unknown")
+        .to_string()
 }
 
 /// The pure (single non-interpolated UTF-8 part) text of a string literal.
