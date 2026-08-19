@@ -22,7 +22,7 @@ pub mod boxes;
 mod builtins;
 mod catch;
 mod civars;
-mod collections;
+
 mod constants;
 mod cvars;
 mod dispatch;
@@ -48,7 +48,7 @@ mod frames;
 mod globals;
 pub mod gvl;
 mod handling;
-mod ivars;
+
 mod lastmatch;
 mod method_meta;
 mod mt;
@@ -63,7 +63,7 @@ mod symbol;
 mod thread;
 mod tramp;
 mod value;
-mod value_ivars;
+pub(crate) use value::{collections, ivars, value_ivars};
 
 pub use arith::*;
 pub use bootstrap::{install_core_constants, install_data_section, register_builtins};

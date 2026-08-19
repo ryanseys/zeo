@@ -4,6 +4,25 @@
 //! Native-unboxed `i64` is used only for literal `Int` arithmetic in codegen;
 //! everything else is `RubyValue` uniformly.
 
+//!
+//! # The value/ boundary
+//!
+//! * `mod.rs` -- the `RubyValue` tag enum itself: variants, clone/eq/`<=>`
+//!   semantics, class-of, case-equality. The Cranelift ABI work adds
+//!   `#[repr(C, u8)]`, explicit discriminants, and the layout asserts HERE.
+//! * [`collections`] -- the container STORES behind the heap variants
+//!   (`Freezable`, `ArrayStore`, hash storage).
+//! * [`ivars`] -- per-class `IvarCell<N>` slot storage for generated
+//!   object structs.
+//! * [`value_ivars`] -- ivars ON VALUES (side tables for value-subclass
+//!   instances and immediates).
+//!
+//! Everything outside `value/` reaches these through the crate-root
+//! aliases (`crate::collections`, ...), so the grouping changed no paths.
+
+pub(crate) mod collections;
+pub(crate) mod ivars;
+pub(crate) mod value_ivars;
 use crate::builtins::{arg_error, type_error};
 use crate::collections::{RArray, RHash, RStr};
 use crate::dispatch::{
