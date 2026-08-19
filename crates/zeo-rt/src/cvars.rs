@@ -26,7 +26,7 @@ use std::sync::LazyLock;
 
 /// Two-level (owner -> name -> value), so reads probe with their borrowed
 /// `&str` instead of allocating a `(u32, String)` key per access.
-static CVARS: LazyLock<Mutex<crate::ScopedMap<RubyValue>>> =
+static CVARS: LazyLock<Mutex<crate::ClassScopedMap<RubyValue>>> =
     LazyLock::new(|| Mutex::new(FMap::default()));
 
 /// `nil` for a `@@x` never yet written -- matches real Ruby's own behavior

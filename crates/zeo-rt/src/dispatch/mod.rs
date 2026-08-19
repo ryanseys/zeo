@@ -1981,6 +1981,46 @@ pub fn class_set_frozen(id: ClassId) {
 /// The eval VM uses this to resolve a bare class-name constant like
 /// `eval("Integer")` -- codegen resolves those statically and so never
 /// `const_set`s them, leaving the runtime constants table without them.
+/// The compile-time box surrogates, derived ONCE from the installed
+/// registry's name table: `#<Ruby::Box:N>` is the exact name the analyze
+/// pass mints per box. One parse at first ask replaces a `format!` + name
+/// hash (or a name parse-back) at every ask; Track 7's `BoxTable` replaces
+/// this derivation with real registration. Registry-less (unit tests) asks
+/// answer `None` WITHOUT caching, so a later install still populates.
+fn box_surrogates() -> Option<&'static (crate::FMap<u32, u32>, crate::FMap<u32, u32>)> {
+    static MAPS: OnceLock<(crate::FMap<u32, u32>, crate::FMap<u32, u32>)> = OnceLock::new();
+    if let Some(m) = MAPS.get() {
+        return Some(m);
+    }
+    let reg = REGISTRY.get()?;
+    Some(MAPS.get_or_init(|| {
+        let mut by_box = crate::FMap::default();
+        let mut by_class = crate::FMap::default();
+        for (name, id) in &reg.by_name {
+            if let Some(n) = name
+                .strip_prefix("#<Ruby::Box:")
+                .and_then(|r| r.strip_suffix('>'))
+                .and_then(|d| d.parse::<u32>().ok())
+            {
+                by_box.insert(n, *id);
+                by_class.insert(*id, n);
+            }
+        }
+        (by_box, by_class)
+    }))
+}
+
+/// The surrogate class owning box `box_id`'s top-level constants, if one was
+/// compiled in.
+pub(crate) fn box_surrogate_class(box_id: u32) -> Option<ClassId> {
+    box_surrogates()?.0.get(&box_id).map(|&c| ClassId(c))
+}
+
+/// The box a surrogate class belongs to -- [`box_surrogate_class`]'s reverse.
+pub(crate) fn box_of_surrogate_class(cid: ClassId) -> Option<u32> {
+    box_surrogates()?.1.get(&cid.0).copied()
+}
+
 pub fn class_id_by_name(name: &str) -> Option<ClassId> {
     REGISTRY
         .get()

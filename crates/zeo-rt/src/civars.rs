@@ -85,7 +85,7 @@ impl CivarSlot {
 
 /// Two-level (class -> name -> slot). Consulted once per emitted site, then
 /// never again: the site caches the `&'static CivarSlot` it resolved.
-static CIVARS: LazyLock<Mutex<crate::ScopedMap<&'static CivarSlot>>> =
+static CIVARS: LazyLock<Mutex<crate::ClassScopedMap<&'static CivarSlot>>> =
     LazyLock::new(|| Mutex::new(FMap::default()));
 
 fn intern(class_id: u32, name: &str) -> &'static CivarSlot {

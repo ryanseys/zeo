@@ -5,10 +5,16 @@
 /// resistance. Ruby-visible `Object#hash` keeps `DefaultHasher`.
 pub(crate) type FMap<K, V> = std::collections::HashMap<K, V, foldhash::fast::RandomState>;
 pub(crate) type FSet<T> = std::collections::HashSet<T, foldhash::fast::RandomState>;
-/// The two-level `box/class -> name -> value` layout the globals/constants/
-/// cvars/civars families share: `Box<str>` inner keys so every read probes
-/// with its borrowed `&str`.
-pub(crate) type ScopedMap<V> = FMap<u32, FMap<Box<str>, V>>;
+/// A two-level `box -> name -> value` map: the OUTER key is a box id
+/// (`0` = main). `Box<str>` inner keys so every read probes with its
+/// borrowed `&str`. Only the globals family is box-keyed today; Track 7
+/// widens the set.
+pub(crate) type BoxScopedMap<V> = FMap<u32, FMap<Box<str>, V>>;
+/// A two-level `owner class -> name -> value` map: the OUTER key is the
+/// owning `ClassId`'s raw `u32` -- NOT a box id, which the old shared
+/// `ScopedMap` alias let readers confuse. Constants/cvars/civars key this
+/// way and are deliberately box-blind (the documented divergence).
+pub(crate) type ClassScopedMap<V> = FMap<u32, FMap<Box<str>, V>>;
 
 mod arith;
 mod bootstrap;

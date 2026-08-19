@@ -22,7 +22,7 @@ use std::sync::{LazyLock, OnceLock};
 /// every read probe with its borrowed `&str` -- the pre-split
 /// `(u32, String)` key allocated a fresh `String` per read, once per
 /// ancestor on the fallback walk.
-static CONSTANTS: LazyLock<Mutex<crate::ScopedMap<RubyValue>>> =
+static CONSTANTS: LazyLock<Mutex<crate::ClassScopedMap<RubyValue>>> =
     LazyLock::new(|| Mutex::new(FMap::default()));
 
 /// Bumped by every operation that can change what any constant resolves to --
@@ -371,7 +371,7 @@ pub fn const_set(owner_class_id: u32, name: &str, value: RubyValue) {
 /// A REASSIGNMENT overwrites the record, the way CRuby's `setup_const_entry`
 /// does, so the location always names the write that is in force. A `class` or
 /// `module` reopen does not: it creates nothing, so nothing restamps it.
-static LOCATIONS: LazyLock<Mutex<crate::ScopedMap<SourceLine>>> =
+static LOCATIONS: LazyLock<Mutex<crate::ClassScopedMap<SourceLine>>> =
     LazyLock::new(|| Mutex::new(FMap::default()));
 
 /// Where one constant was written: the file, as the program names it, and the
