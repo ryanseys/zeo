@@ -15,6 +15,7 @@
 
 pub(crate) mod class_query;
 pub(crate) mod def_hooks;
+pub(crate) mod fastpath;
 mod locals;
 pub(crate) mod mro;
 pub(crate) mod redefs;

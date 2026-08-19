@@ -31,7 +31,6 @@ use super::expr::{
     box_if_object_typed, emit_expr, emit_symbol_expr, infer, infer_any_class, infer_class,
 };
 use super::ident::safe_ident;
-use crate::compiler::Compiler;
 use crate::compiler::FSet;
 use crate::hir::{ArrayElem, HirNode, KwArg, NodeId, Visibility};
 use crate::types::TyKind;
@@ -180,82 +179,12 @@ pub use procs::emit_lambda_value;
 pub(crate) use procs::emit_proc_or_lambda_value;
 pub use super_calls::emit_super;
 
-/// Whether a call shape is the `.times` fast path (inline splice, no real
-/// `Proc` ever allocated) -- the exact condition `dispatch` already checks
-/// for below, factored out so `codegen::captures`' escaping-block scan can
-/// ask the identical question: any block NOT matching this shape becomes a
-/// real, heap-allocated `Proc` (see that module's docs -- there is no
-/// separate "escape analysis" beyond this one check, since `.times` is the
-/// only inline fast path that exists).
-pub fn is_times_fast_path(
-    compiler: &Compiler,
-    receiver: Option<NodeId>,
-    name: &str,
-    kwargs_empty: bool,
-) -> bool {
-    kwargs_empty
-        && name == "times"
-        && !compiler.times_literal_suppressed
-        && receiver.is_some_and(|r| matches!(compiler.hir[r], HirNode::IntegerLit(_)))
-}
-
-/// `.times`'s sibling: `(1..9).each { }` on a LITERAL range whose bounds are
-/// both Int literals -- the other call shape that fuses to a native counted
-/// loop (no `Proc` allocated). Beginless/endless ranges keep the generic
-/// path (an endless `each` never terminates by counting up).
-pub fn is_range_each_fast_path(
-    compiler: &Compiler,
-    receiver: Option<NodeId>,
-    name: &str,
-    kwargs_empty: bool,
-) -> bool {
-    kwargs_empty
-        && name == "each"
-        && !compiler.range_each_literal_suppressed
-        && receiver.is_some_and(|r| match compiler.hir[r] {
-            HirNode::RangeLit {
-                start: Some(s),
-                end: Some(e),
-                ..
-            } => {
-                matches!(compiler.hir[s], HirNode::IntegerLit(_))
-                    && matches!(compiler.hir[e], HirNode::IntegerLit(_))
-            }
-            _ => false,
-        })
-}
-
-/// Either inline-splice shape -- what the CAPTURE scans ask: a block NOT
-/// matching one of these becomes a real, heap-allocated `Proc`.
-/// Deliberately syntactic-only (typed `inline_iter_sites` nominations are
-/// NOT consulted): a typed site's dynamic-fallback arm still builds a real
-/// proc, so its shared outer locals must keep escaping-style cell captures,
-/// which the inline arm routes through just as correctly.
-pub fn is_inline_block_fast_path(
-    compiler: &Compiler,
-    receiver: Option<NodeId>,
-    name: &str,
-    kwargs_empty: bool,
-) -> bool {
-    is_times_fast_path(compiler, receiver, name, kwargs_empty)
-        || is_range_each_fast_path(compiler, receiver, name, kwargs_empty)
-}
-
-/// The DESCEND decision for the hoisting/exception scans: any spliced block
-/// body -- literal shape or typed-site nomination -- shares the enclosing
-/// Rust scope, so its assigned locals hoist there and its loop jumps compile
-/// against labels in that scope. Wider than `is_inline_block_fast_path`
-/// (see its docs for why the capture scans keep the narrow answer).
-pub fn is_spliced_block_body(
-    compiler: &Compiler,
-    receiver: Option<NodeId>,
-    name: &str,
-    kwargs_empty: bool,
-    block: NodeId,
-) -> bool {
-    is_inline_block_fast_path(compiler, receiver, name, kwargs_empty)
-        || compiler.inline_iter_sites.contains_key(&block)
-}
+// The fusion fast-path predicates live in `analyze::fastpath` (they are pure
+// `Compiler`+HIR questions asked by the capture/hoisting scans too); this
+// re-export keeps every pre-existing `codegen::call::<name>` path resolving.
+pub use crate::analyze::fastpath::{
+    is_inline_block_fast_path, is_range_each_fast_path, is_spliced_block_body, is_times_fast_path,
+};
 
 /// How one spliced iteration binds one of the block's required params: the
 /// param's index, the value expression, and the type inference should
