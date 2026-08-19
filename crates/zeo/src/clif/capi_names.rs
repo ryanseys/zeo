@@ -244,6 +244,11 @@ pub const CAPI: &[CapiSig] = &[
         ret: Some(I32),
     },
     CapiSig {
+        name: "zeo_rt_last_match_ref",
+        params: &[U8, Usize, Ptr],
+        ret: None,
+    },
+    CapiSig {
         name: "zeo_rt_main",
         params: &[I32, Ptr, Ptr, Ptr],
         ret: Some(I32),
@@ -297,6 +302,16 @@ pub const CAPI: &[CapiSig] = &[
         name: "zeo_rt_record_const_location",
         params: &[U32, Ptr, Usize, Ptr, Usize, U32],
         ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_regexp_interp",
+        params: &[Ptr, U8, U8, U8, U8, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
+        name: "zeo_rt_regexp_lit",
+        params: &[U32, Ptr, Usize, U8, U8, U8, U8, Ptr],
+        ret: Some(I32),
     },
     CapiSig {
         name: "zeo_rt_release",

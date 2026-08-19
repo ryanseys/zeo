@@ -223,3 +223,129 @@ pub unsafe extern "C" fn zeo_rt_str_append_value(s: *const RubyValue, v: *const 
         }
     }
 }
+
+/// A NON-INTERPOLATED regexp literal: ONE frozen object per SITE (the
+/// rustc backend's per-site `RegexpSite` static, keyed here by the
+/// emitter-assigned site id). A bad pattern raises `RegexpError` with the
+/// backtrace stamped at the literal -- rustc's `emit_boxed_new` shape
+/// (no cause chaining; that is `raise`'s own semantics).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_regexp_lit(
+    site: u32,
+    ptr: *const u8,
+    len: usize,
+    ignore_case: i8,
+    extended: i8,
+    multiline: i8,
+    enc: u8,
+    out: *mut RubyValue,
+) -> i32 {
+    use std::sync::{Mutex, OnceLock};
+    use zeo_abi::abi::{STATUS_OK, STATUS_SIGNAL};
+    static SITES: OnceLock<Mutex<crate::FMap<u32, crate::regexp::RRegexp>>> = OnceLock::new();
+    let sites = SITES.get_or_init(|| Mutex::new(crate::FMap::default()));
+    if let Some(re) = sites.lock().unwrap().get(&site) {
+        let v = RubyValue::Regexp(re.clone());
+        super::leakcheck::created(&v);
+        unsafe { out.write(v) };
+        return STATUS_OK;
+    }
+    let source = unsafe { super::str_slice(ptr, len) };
+    match crate::regexp::regexp_new_enc(
+        source,
+        ignore_case != 0,
+        extended != 0,
+        multiline != 0,
+        regexp_encoding(enc),
+    ) {
+        Ok(re) => {
+            // Frozen BEFORE publishing, the literal rule.
+            re.set_frozen();
+            sites.lock().unwrap().insert(site, re.clone());
+            let v = RubyValue::Regexp(re);
+            super::leakcheck::created(&v);
+            unsafe { out.write(v) };
+            STATUS_OK
+        }
+        Err(msg) => {
+            crate::signal::set_pending(regexp_error(msg));
+            STATUS_SIGNAL
+        }
+    }
+}
+
+/// An INTERPOLATED regexp literal, built from the pattern string the
+/// emitter assembled (BORROWED). Frozen at birth -- real Ruby since 3.0,
+/// interpolated ones included; `Regexp.new` stays unfrozen by not passing
+/// through here.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_regexp_interp(
+    pat: *const RubyValue,
+    ignore_case: i8,
+    extended: i8,
+    multiline: i8,
+    enc: u8,
+    out: *mut RubyValue,
+) -> i32 {
+    use zeo_abi::abi::{STATUS_OK, STATUS_SIGNAL};
+    let RubyValue::Str(s) = (unsafe { &*pat }) else {
+        panic!("regexp_interp on a non-string pattern")
+    };
+    let source = s.lock().to_utf8_lossy().into_owned();
+    match crate::regexp::regexp_new_enc(
+        &source,
+        ignore_case != 0,
+        extended != 0,
+        multiline != 0,
+        regexp_encoding(enc),
+    ) {
+        Ok(re) => {
+            re.set_frozen();
+            let v = RubyValue::Regexp(re);
+            super::leakcheck::created(&v);
+            unsafe { out.write(v) };
+            STATUS_OK
+        }
+        Err(msg) => {
+            crate::signal::set_pending(regexp_error(msg));
+            STATUS_SIGNAL
+        }
+    }
+}
+
+/// The `RegexpError` raise both wrappers share: construct + stamp the
+/// backtrace at the literal, no cause chaining (rustc's `emit_boxed_new`).
+fn regexp_error(msg: String) -> crate::Signal {
+    let exc = crate::dispatch::construct_exception_value("RegexpError", &msg);
+    crate::builtins::exception::attach_backtrace(&exc);
+    crate::Signal::Raise(exc)
+}
+
+/// The wire byte for [`zeo_abi::RegexpEncoding`].
+fn regexp_encoding(b: u8) -> zeo_abi::RegexpEncoding {
+    match b {
+        0 => zeo_abi::RegexpEncoding::Source,
+        1 => zeo_abi::RegexpEncoding::None,
+        2 => zeo_abi::RegexpEncoding::EucJp,
+        3 => zeo_abi::RegexpEncoding::Windows31j,
+        4 => zeo_abi::RegexpEncoding::Utf8,
+        other => panic!("regexp literal: unknown encoding byte {other}"),
+    }
+}
+
+/// The `$~` family: `kind` selects Data(0) / Group(1, `n`) / Pre(2) /
+/// Post(3) / LastGroup(4) -- each the rustc backend's `last_match*` call.
+/// Infallible; absent state answers nil.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_last_match_ref(kind: u8, n: usize, out: *mut RubyValue) {
+    let v = match kind {
+        0 => crate::lastmatch::last_match(),
+        1 => crate::lastmatch::last_match_group(n),
+        2 => crate::lastmatch::last_match_pre(),
+        3 => crate::lastmatch::last_match_post(),
+        4 => crate::lastmatch::last_match_last_group(),
+        other => panic!("last_match_ref: unknown kind {other}"),
+    };
+    super::leakcheck::created(&v);
+    unsafe { out.write(v) };
+}

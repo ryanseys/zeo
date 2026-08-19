@@ -456,6 +456,9 @@ pub(crate) struct Emitter {
     /// its body already ran in the toplevel prelude).
     pub class_bodies: HashMap<crate::hir::NodeId, ClassBodyCall>,
     fn_index: u32,
+    /// Regexp-literal site ids -- one cached frozen object per site
+    /// (`zeo_rt_regexp_lit`), the rustc per-site `RegexpSite` twin.
+    pub regexp_sites: u32,
     /// When `Some`, every finished function's CLIF renders here (before
     /// machine compilation -- the target-independent IR).
     pub clif_text: Option<String>,
@@ -546,6 +549,7 @@ impl Emitter {
             methods: HashMap::new(),
             class_bodies: HashMap::new(),
             fn_index: 0,
+            regexp_sites: 0,
             clif_text: None,
         })
     }

@@ -44,6 +44,7 @@ zeo_rt_ivar_set_dyn ([Ptr, Ptr, Usize, Ptr]) -> Some(I32)
 zeo_rt_ivar_set_slot ([Ptr, Usize, Ptr]) -> Some(I32)
 zeo_rt_kernel_puts ([Ptr, Usize, Ptr]) -> Some(I32)
 zeo_rt_kw_splat_into ([Ptr, Ptr]) -> Some(I32)
+zeo_rt_last_match_ref ([U8, Usize, Ptr]) -> None
 zeo_rt_main ([I32, Ptr, Ptr, Ptr]) -> Some(I32)
 zeo_rt_main_object ([Ptr]) -> None
 zeo_rt_multi_split ([Ptr, Usize, U8, Usize, Ptr]) -> Some(I32)
@@ -55,6 +56,8 @@ zeo_rt_propagating_enter ([Ptr]) -> Some(U8)
 zeo_rt_propagating_leave ([U8]) -> None
 zeo_rt_range_new ([Ptr, Ptr, U8, Ptr]) -> Some(I32)
 zeo_rt_record_const_location ([U32, Ptr, Usize, Ptr, Usize, U32]) -> None
+zeo_rt_regexp_interp ([Ptr, U8, U8, U8, U8, Ptr]) -> Some(I32)
+zeo_rt_regexp_lit ([U32, Ptr, Usize, U8, U8, U8, U8, Ptr]) -> Some(I32)
 zeo_rt_release ([Ptr]) -> None
 zeo_rt_rescue_matches ([Ptr, Ptr, Usize]) -> Some(U8)
 zeo_rt_retain ([Ptr]) -> None

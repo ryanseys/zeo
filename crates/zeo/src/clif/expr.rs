@@ -300,6 +300,31 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             let name = name.clone();
             super::stmt::ivar_read_op(fx, id, &name)
         }
+        HirNode::LastMatchRef(which) => {
+            use crate::hir::LastMatch;
+            let (kind, n) = match which {
+                LastMatch::Data => (0i64, 0usize),
+                LastMatch::Group(n) => (1, *n),
+                LastMatch::Pre => (2, 0),
+                LastMatch::Post => (3, 0),
+                LastMatch::LastGroup => (4, 0),
+            };
+            let kind_v = fx.b.ins().iconst(types::I8, kind);
+            let n_v = fx.b.ins().iconst(fx.em.ptr, n as i64);
+            let ss = fx.temp_slot();
+            let out = fx.slot_addr(ss, 0);
+            fx.call("zeo_rt_last_match_ref", &[kind_v, n_v, out]);
+            fx.owned_created += 1;
+            Ok(Operand::Slot {
+                ss,
+                owned: true,
+                tag: TagInfo::Unknown,
+            })
+        }
+        HirNode::RegexpLit(parts, flags) => {
+            let (parts, flags) = (parts.clone(), *flags);
+            regexp_lit(fx, &parts, flags)
+        }
         HirNode::Or(a, b) => {
             let (a, b) = (*a, *b);
             short_circuit(fx, a, b, true)
@@ -1240,6 +1265,123 @@ pub(crate) fn rodata_name(
     let ptr = fx.rod(off);
     let len = fx.b.ins().iconst(fx.em.ptr, name.len() as i64);
     (ptr, len)
+}
+
+/// A regexp literal. Static parts (raw-byte segments rendered lossily,
+/// rustc's rule) fold into one source string served by a per-site cache
+/// (`zeo_rt_regexp_lit` -- one frozen object per site); an interpolated
+/// pattern builds a fresh string through the to_s dispatch, then
+/// `zeo_rt_regexp_interp` compiles it, frozen at birth. Both raise
+/// `RegexpError` on a bad pattern.
+fn regexp_lit(
+    fx: &mut Fx,
+    parts: &[crate::hir::StrPart],
+    flags: crate::hir::RegexpFlags,
+) -> Result<Operand, String> {
+    use crate::hir::StrPart;
+    let enc_byte = match flags.encoding {
+        zeo_abi::RegexpEncoding::Source => 0i64,
+        zeo_abi::RegexpEncoding::None => 1,
+        zeo_abi::RegexpEncoding::EucJp => 2,
+        zeo_abi::RegexpEncoding::Windows31j => 3,
+        zeo_abi::RegexpEncoding::Utf8 => 4,
+    };
+    let flag_vals = |fx: &mut Fx| {
+        let ic = fx.b.ins().iconst(types::I8, i64::from(flags.ignore_case));
+        let ext = fx.b.ins().iconst(types::I8, i64::from(flags.extended));
+        let ml = fx.b.ins().iconst(types::I8, i64::from(flags.multiline));
+        let enc = fx.b.ins().iconst(types::I8, enc_byte);
+        (ic, ext, ml, enc)
+    };
+    let is_static = parts
+        .iter()
+        .all(|p| matches!(p, StrPart::Lit(_) | StrPart::Bytes(_)));
+    if is_static {
+        let mut source = String::new();
+        for p in parts {
+            match p {
+                StrPart::Lit(s) => source.push_str(s),
+                StrPart::Bytes(b) => source.push_str(&String::from_utf8_lossy(b)),
+                StrPart::Interp(_) => unreachable!("static parts only"),
+            }
+        }
+        let site = fx.em.regexp_sites;
+        fx.em.regexp_sites += 1;
+        let site_v = fx.b.ins().iconst(types::I32, i64::from(site));
+        let off = fx.em.intern_rodata(source.as_bytes());
+        let ptr = fx.rod(off);
+        let len_v = fx.b.ins().iconst(fx.em.ptr, source.len() as i64);
+        let (ic, ext, ml, enc) = flag_vals(fx);
+        let ss = fx.temp_slot();
+        let out = fx.slot_addr(ss, 0);
+        let status = fx
+            .call(
+                "zeo_rt_regexp_lit",
+                &[site_v, ptr, len_v, ic, ext, ml, enc, out],
+            )
+            .expect("regexp_lit returns a status");
+        fx.fallible(status);
+        fx.owned_created += 1;
+        return Ok(Operand::Slot {
+            ss,
+            owned: true,
+            tag: TagInfo::Known(ValueTag::Regexp as u8),
+        });
+    }
+    // Interpolated: assemble the pattern exactly as string interpolation
+    // does (pooled at creation; an interp piece can raise mid-build).
+    let ss_pat = fx.temp_slot();
+    let pat = fx.slot_addr(ss_pat, 0);
+    let null = fx.b.ins().iconst(fx.em.ptr, 0);
+    let zero = fx.b.ins().iconst(fx.em.ptr, 0);
+    let enc_utf8 = fx.b.ins().iconst(types::I8, ENC_UTF8);
+    fx.call("zeo_rt_str_new", &[null, zero, enc_utf8, pat]);
+    fx.owned_created += 1;
+    ownership::pool_owned(fx, pat, TagInfo::Known(ValueTag::Str as u8));
+    for part in parts {
+        match part {
+            StrPart::Lit(text) => {
+                if text.is_empty() {
+                    continue;
+                }
+                let off = fx.em.intern_rodata(text.as_bytes());
+                let ptr = fx.rod(off);
+                let len_v = fx.b.ins().iconst(fx.em.ptr, text.len() as i64);
+                fx.call("zeo_rt_str_append_lit", &[pat, ptr, len_v]);
+            }
+            StrPart::Bytes(b) => {
+                let text = String::from_utf8_lossy(b).into_owned();
+                let off = fx.em.intern_rodata(text.as_bytes());
+                let ptr = fx.rod(off);
+                let len_v = fx.b.ins().iconst(fx.em.ptr, text.len() as i64);
+                fx.call("zeo_rt_str_append_lit", &[pat, ptr, len_v]);
+            }
+            StrPart::Interp(n) => {
+                let op = lower_expr(fx, *n)?;
+                let p = ownership::borrow_ptr(fx, &op);
+                if op.owned() {
+                    ownership::pool_owned(fx, p, op.tag());
+                }
+                let status = fx
+                    .call("zeo_rt_str_append_value", &[pat, p])
+                    .expect("append_value returns a status");
+                fx.fallible(status);
+            }
+        }
+    }
+    let (ic, ext, ml, enc) = flag_vals(fx);
+    let ss = fx.temp_slot();
+    let out = fx.slot_addr(ss, 0);
+    let status = fx
+        .call("zeo_rt_regexp_interp", &[pat, ic, ext, ml, enc, out])
+        .expect("regexp_interp returns a status");
+    fx.fallible(status);
+    fx.owned_created += 1;
+    Ok(Operand::Slot {
+        ss,
+        owned: true,
+        tag: TagInfo::Known(ValueTag::Regexp as u8),
+    })
 }
 
 /// The class that OWNS `@@name` at this lowering site -- the rustc
