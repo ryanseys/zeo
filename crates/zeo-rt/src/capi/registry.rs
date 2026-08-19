@@ -240,5 +240,7 @@ pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
 /// compiled toplevel passes as the receiver of its direct calls.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zeo_rt_main_object(out: *mut RubyValue) {
-    unsafe { out.write(crate::dispatch::main_object()) };
+    let v = crate::dispatch::main_object();
+    super::leakcheck::created(&v);
+    unsafe { out.write(v) };
 }

@@ -43,6 +43,7 @@ pub unsafe extern "C" fn zeo_rt_signal_take(out: *mut RubyValue) -> u8 {
                 Some(Signal::Redo | Signal::Retry | Signal::Throw(_) | Signal::Terminate)
                 | None => unreachable!("pending slot changed between peek and take"),
             };
+            super::leakcheck::created(&v);
             unsafe { out.write(v) };
         }
         SignalKind::None
@@ -59,7 +60,10 @@ pub unsafe extern "C" fn zeo_rt_signal_take(out: *mut RubyValue) -> u8 {
 /// never re-armed -- `zeo_rt_signal_take` never took it apart.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zeo_rt_signal_set(kind: u8, v: *mut RubyValue) {
-    let payload = || unsafe { std::ptr::read(v) };
+    let payload = || {
+        super::leakcheck::consumed(unsafe { &*v });
+        unsafe { std::ptr::read(v) }
+    };
     let sig = match kind {
         k if k == SignalKind::Break as u8 => Signal::Break(payload()),
         k if k == SignalKind::Next as u8 => Signal::Next(payload()),

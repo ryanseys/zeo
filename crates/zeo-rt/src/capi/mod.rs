@@ -26,6 +26,7 @@
 pub mod dispatch;
 pub mod frames;
 pub mod kernel;
+pub(crate) mod leakcheck;
 pub mod lifecycle;
 pub mod literals;
 pub mod numeric;

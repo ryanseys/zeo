@@ -47,7 +47,9 @@ pub unsafe extern "C" fn zeo_rt_main(
     let result = crate::run_main(move || {
         let mut out = MaybeUninit::<RubyValue>::uninit();
         if unsafe { toplevel(out.as_mut_ptr().cast()) } == STATUS_OK {
-            Ok(unsafe { out.assume_init() })
+            let v = unsafe { out.assume_init() };
+            super::leakcheck::consumed(&v);
+            Ok(v)
         } else {
             Err(crate::signal::take_pending()
                 .expect("the toplevel answered STATUS_SIGNAL with an empty pending slot"))
@@ -55,6 +57,7 @@ pub unsafe extern "C" fn zeo_rt_main(
     });
     let at_exit_status = crate::run_at_exit();
     crate::run_finalizers();
+    super::leakcheck::check_at_exit();
     if let Err(signal) = result {
         match signal {
             // An uncaught SystemExit is not an error; any other uncaught

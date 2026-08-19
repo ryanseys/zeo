@@ -16,7 +16,9 @@ pub unsafe extern "C" fn zeo_rt_object_alloc(cid: u32, out: *mut RubyValue) {
     let id = ClassId(cid);
     let layout = compiled_object::layout_of(id)
         .unwrap_or_else(|| panic!("zeo_rt_object_alloc: no layout registered for class {cid}"));
-    unsafe { out.write(RubyValue::Object(CompiledObject::alloc(id, layout))) };
+    let v = RubyValue::Object(CompiledObject::alloc(id, layout));
+    super::leakcheck::created(&v);
+    unsafe { out.write(v) };
 }
 
 /// `Class#new` for a compiled class: allocate, then run `initialize` (if
@@ -43,6 +45,7 @@ pub unsafe extern "C" fn zeo_rt_class_new_instance(
     let block = if blk.is_null() {
         None
     } else {
+        super::leakcheck::consumed(unsafe { &*blk });
         Some(unsafe { std::ptr::read(blk) })
     };
     let obj = CompiledObject::alloc(id, layout);
@@ -66,6 +69,7 @@ pub unsafe extern "C" fn zeo_rt_ivar_get_slot(
             RubyValue::Nil
         }
     };
+    super::leakcheck::created(&v);
     unsafe { out.write(v) };
 }
 
@@ -79,6 +83,7 @@ pub unsafe extern "C" fn zeo_rt_ivar_set_slot(
     v: *mut RubyValue,
 ) -> i32 {
     let recv = unsafe { &*obj };
+    super::leakcheck::consumed(unsafe { &*v });
     let value = unsafe { std::ptr::read(v) };
     if let Err(sig) = crate::builtins::check_frozen(recv) {
         crate::signal::set_pending(sig);
@@ -117,6 +122,7 @@ pub unsafe extern "C" fn zeo_rt_const_get_at(
     let name = unsafe { super::str_slice(name, name_len) };
     match crate::constants::const_get(owner, name) {
         Some(v) => {
+            super::leakcheck::created(&v);
             unsafe { out.write(v) };
             STATUS_OK
         }

@@ -11,11 +11,9 @@ use crate::{RubyValue, Symbol};
 pub unsafe extern "C" fn zeo_rt_str_lit(ptr: *const u8, len: usize, enc: u8, out: *mut RubyValue) {
     let bytes = unsafe { super::byte_slice(ptr, len) }.to_vec();
     let buf = StrBuf::from_bytes(bytes, EncodingId(enc));
-    unsafe {
-        out.write(RubyValue::Str(crate::value::collections::intern_frozen(
-            buf,
-        )))
-    };
+    let v = RubyValue::Str(crate::value::collections::intern_frozen(buf));
+    super::leakcheck::created(&v);
+    unsafe { out.write(v) };
 }
 
 /// A FRESH, mutable string from literal bytes -- every evaluation of a
@@ -24,11 +22,9 @@ pub unsafe extern "C" fn zeo_rt_str_lit(ptr: *const u8, len: usize, enc: u8, out
 pub unsafe extern "C" fn zeo_rt_str_new(ptr: *const u8, len: usize, enc: u8, out: *mut RubyValue) {
     let bytes = unsafe { super::byte_slice(ptr, len) }.to_vec();
     let buf = StrBuf::from_bytes(bytes, EncodingId(enc));
-    unsafe {
-        out.write(RubyValue::Str(std::sync::Arc::new(
-            crate::collections::Freezable::new(buf),
-        )))
-    };
+    let v = RubyValue::Str(std::sync::Arc::new(crate::collections::Freezable::new(buf)));
+    super::leakcheck::created(&v);
+    unsafe { out.write(v) };
 }
 
 /// Intern a symbol name -- `zeo_unit_init` fills the program's `zeo_syms`
@@ -47,17 +43,18 @@ pub unsafe extern "C" fn zeo_rt_sym_value(id: u32, out: *mut RubyValue) {
 /// A fresh array with room for `cap` elements.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zeo_rt_array_new(cap: usize, out: *mut RubyValue) {
-    unsafe {
-        out.write(RubyValue::Array(crate::value::collections::array_new(
-            Vec::with_capacity(cap),
-        )))
-    };
+    let v = RubyValue::Array(crate::value::collections::array_new(Vec::with_capacity(
+        cap,
+    )));
+    super::leakcheck::created(&v);
+    unsafe { out.write(v) };
 }
 
 /// Push the value moved from `v` -- literal construction's append (the
 /// receiver is the fresh, unfrozen literal, so no frozen check).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zeo_rt_array_push(a: *const RubyValue, v: *mut RubyValue) {
+    super::leakcheck::consumed(unsafe { &*v });
     let value = unsafe { std::ptr::read(v) };
     match unsafe { &*a } {
         RubyValue::Array(arr) => {
@@ -83,17 +80,16 @@ pub unsafe extern "C" fn zeo_rt_array_get(a: *const RubyValue, i: usize, out: *m
         RubyValue::Array(arr) => arr.lock().get(i).cloned().unwrap_or(RubyValue::Nil),
         other => panic!("zeo_rt_array_get on a non-array: {other:?}"),
     };
+    super::leakcheck::created(&v);
     unsafe { out.write(v) };
 }
 
 /// A fresh empty hash.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zeo_rt_hash_new(out: *mut RubyValue) {
-    unsafe {
-        out.write(RubyValue::Hash(crate::value::collections::hash_new(
-            Vec::new(),
-        )))
-    };
+    let v = RubyValue::Hash(crate::value::collections::hash_new(Vec::new()));
+    super::leakcheck::created(&v);
+    unsafe { out.write(v) };
 }
 
 /// Store `k => v` (both moved) -- literal construction's insert.
@@ -103,6 +99,8 @@ pub unsafe extern "C" fn zeo_rt_hash_set(
     k: *mut RubyValue,
     v: *mut RubyValue,
 ) {
+    super::leakcheck::consumed(unsafe { &*k });
+    super::leakcheck::consumed(unsafe { &*v });
     let key = unsafe { std::ptr::read(k) };
     let value = unsafe { std::ptr::read(v) };
     match unsafe { &*h } {
@@ -126,6 +124,7 @@ pub unsafe extern "C" fn zeo_rt_range_new(
         if p.is_null() {
             None
         } else {
+            super::leakcheck::consumed(unsafe { &*p });
             match unsafe { std::ptr::read(p) } {
                 RubyValue::Nil => None,
                 v => Some(v),

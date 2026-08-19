@@ -9,13 +9,18 @@ use zeo_abi::abi::{STATUS_OK, STATUS_SIGNAL};
 /// immediates -- the emitter tests the tag first.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zeo_rt_retain(v: *const RubyValue) {
+    super::leakcheck::check_not_poisoned(v, "zeo_rt_retain");
+    super::leakcheck::created(unsafe { &*v });
     std::mem::forget(unsafe { (*v).clone() });
 }
 
 /// Drop the value at `v` in place; the slot is dead afterward.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zeo_rt_release(v: *mut RubyValue) {
+    super::leakcheck::check_not_poisoned(v, "zeo_rt_release");
+    super::leakcheck::consumed(unsafe { &*v });
     unsafe { std::ptr::drop_in_place(v) };
+    super::leakcheck::poison(v);
 }
 
 /// Move the heap temporary at `v` into the frame-scoped release pool; it
@@ -23,6 +28,8 @@ pub unsafe extern "C" fn zeo_rt_release(v: *mut RubyValue) {
 /// reset). The slot is dead afterward.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zeo_rt_pool_push(v: *mut RubyValue) {
+    super::leakcheck::check_not_poisoned(v, "zeo_rt_pool_push");
+    super::leakcheck::consumed(unsafe { &*v });
     crate::release_pool::push(unsafe { std::ptr::read(v) });
 }
 
@@ -103,5 +110,6 @@ pub unsafe extern "C" fn zeo_rt_bignum_from_decimal(
         Ok(n) => RubyValue::Int(n),
         Err(_) => RubyValue::BigInt(std::sync::Arc::new(digits)),
     };
+    super::leakcheck::created(&v);
     unsafe { out.write(v) };
 }

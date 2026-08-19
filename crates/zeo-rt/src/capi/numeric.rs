@@ -14,7 +14,9 @@ pub unsafe extern "C" fn zeo_rt_int_add_slow(
     b: *const RubyValue,
     out: *mut RubyValue,
 ) {
-    unsafe { out.write(integer::int_add(&*a, &*b)) };
+    let v = unsafe { integer::int_add(&*a, &*b) };
+    super::leakcheck::created(&v);
+    unsafe { out.write(v) };
 }
 
 /// `a - b` past the inline overflow check.
@@ -24,7 +26,9 @@ pub unsafe extern "C" fn zeo_rt_int_sub_slow(
     b: *const RubyValue,
     out: *mut RubyValue,
 ) {
-    unsafe { out.write(integer::int_sub(&*a, &*b)) };
+    let v = unsafe { integer::int_sub(&*a, &*b) };
+    super::leakcheck::created(&v);
+    unsafe { out.write(v) };
 }
 
 /// `a * b` past the inline overflow check.
@@ -34,7 +38,9 @@ pub unsafe extern "C" fn zeo_rt_int_mul_slow(
     b: *const RubyValue,
     out: *mut RubyValue,
 ) {
-    unsafe { out.write(integer::int_mul(&*a, &*b)) };
+    let v = unsafe { integer::int_mul(&*a, &*b) };
+    super::leakcheck::created(&v);
+    unsafe { out.write(v) };
 }
 
 /// Floored `a / b`. The emitter pre-guards the zero divisor (raising
@@ -45,7 +51,9 @@ pub unsafe extern "C" fn zeo_rt_int_div(
     b: *const RubyValue,
     out: *mut RubyValue,
 ) {
-    unsafe { out.write(integer::int_div(&*a, &*b)) };
+    let v = unsafe { integer::int_div(&*a, &*b) };
+    super::leakcheck::created(&v);
+    unsafe { out.write(v) };
 }
 
 /// Floored `a % b`. Same zero-divisor contract as `zeo_rt_int_div`.
@@ -55,7 +63,9 @@ pub unsafe extern "C" fn zeo_rt_int_mod(
     b: *const RubyValue,
     out: *mut RubyValue,
 ) {
-    unsafe { out.write(integer::int_mod(&*a, &*b)) };
+    let v = unsafe { integer::int_mod(&*a, &*b) };
+    super::leakcheck::created(&v);
+    unsafe { out.write(v) };
 }
 
 /// Three-way compare past the inline i64 path: negative/zero/positive.

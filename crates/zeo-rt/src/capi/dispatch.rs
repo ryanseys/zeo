@@ -20,12 +20,17 @@ pub(crate) fn call_value_fn(
     // The callee owns the block from here; `ManuallyDrop` is the move.
     let mut blk = ManuallyDrop::new(block);
     let blk_ptr = match &mut *blk {
-        Some(b) => b as *mut RubyValue,
+        Some(b) => {
+            super::leakcheck::created(b);
+            b as *mut RubyValue
+        }
         None => std::ptr::null_mut(),
     };
     let status = unsafe { f(recv, args.as_ptr(), args.len(), blk_ptr, out.as_mut_ptr()) };
     if status == STATUS_OK {
-        Ok(unsafe { out.assume_init() })
+        let v = unsafe { out.assume_init() };
+        super::leakcheck::consumed(&v);
+        Ok(v)
     } else {
         Err(crate::signal::take_pending()
             .expect("a compiled body answered STATUS_SIGNAL with an empty pending slot"))
@@ -38,6 +43,7 @@ pub(crate) fn call_value_fn(
 pub(crate) fn status_out(r: Result<RubyValue, Signal>, out: *mut RubyValue) -> i32 {
     match r {
         Ok(v) => {
+            super::leakcheck::created(&v);
             unsafe { out.write(v) };
             STATUS_OK
         }
@@ -63,6 +69,7 @@ unsafe fn call_views<'a>(
     let block = if blk.is_null() {
         None
     } else {
+        super::leakcheck::consumed(unsafe { &*blk });
         Some(unsafe { std::ptr::read(blk) })
     };
     (args, block)

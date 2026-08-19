@@ -98,7 +98,10 @@ pub(crate) fn call_block_fn(
     let mut out = std::mem::MaybeUninit::<RubyValue>::uninit();
     let mut blk = std::mem::ManuallyDrop::new(block);
     let blk_ptr = match &mut *blk {
-        Some(b) => b as *mut RubyValue,
+        Some(b) => {
+            super::leakcheck::created(b);
+            b as *mut RubyValue
+        }
         None => std::ptr::null_mut(),
     };
     let status = unsafe {
@@ -112,7 +115,9 @@ pub(crate) fn call_block_fn(
         )
     };
     if status == zeo_abi::abi::STATUS_OK {
-        Ok(unsafe { out.assume_init() })
+        let v = unsafe { out.assume_init() };
+        super::leakcheck::consumed(&v);
+        Ok(v)
     } else {
         Err(crate::signal::take_pending()
             .expect("a compiled block answered STATUS_SIGNAL with an empty pending slot"))
@@ -131,6 +136,7 @@ pub unsafe extern "C" fn zeo_rt_cell_new(init: *mut RubyValue) -> *mut Cell {
     let v = if init.is_null() {
         RubyValue::Nil
     } else {
+        super::leakcheck::consumed(unsafe { &*init });
         unsafe { std::ptr::read(init) }
     };
     Arc::into_raw(Arc::new(parking_lot::Mutex::new(v))).cast_mut()
@@ -152,12 +158,14 @@ pub unsafe extern "C" fn zeo_rt_cell_release(cell: *mut Cell) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zeo_rt_cell_load(cell: *mut Cell, out: *mut RubyValue) {
     let v = unsafe { &*cell }.lock().clone();
+    super::leakcheck::created(&v);
     unsafe { out.write(v) };
 }
 
 /// Store the value moved from `v` into the cell.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zeo_rt_cell_store(cell: *mut Cell, v: *mut RubyValue) {
+    super::leakcheck::consumed(unsafe { &*v });
     let value = unsafe { std::ptr::read(v) };
     let old = std::mem::replace(&mut *unsafe { &*cell }.lock(), value);
     // Dropped OUTSIDE the lock: releasing an object graph can reach other
@@ -205,7 +213,9 @@ pub unsafe extern "C" fn zeo_rt_proc_new(
     if flags & PROC_HOME != 0 {
         proc = proc.with_home();
     }
-    unsafe { out.write(RubyValue::Proc(proc)) };
+    let v = RubyValue::Proc(proc);
+    super::leakcheck::created(&v);
+    unsafe { out.write(v) };
 }
 
 /// `yield`: invoke the call-site block (`blk` is the method's borrowed
@@ -254,6 +264,7 @@ pub unsafe extern "C" fn zeo_rt_proc_call(
     let block = if blk.is_null() {
         None
     } else {
+        super::leakcheck::consumed(unsafe { &*blk });
         Some(unsafe { std::ptr::read(blk) })
     };
     let r = match unsafe { &*p } {
