@@ -445,6 +445,13 @@ pub(crate) fn collect_classes(
             .filter(|_| kind == zeo_abi::abi::CLASS_PLAIN)
         {
             let plain_spine = matches!(a.0, 0 | 24 | 25);
+            // The two ordinary-object builtins from the payload-root
+            // DENYLIST that no other registrar claims (`Numeric`,
+            // `WeakRef`): rustc emits the plain generated struct for a
+            // subclass and inherited behavior comes from the walk probing
+            // their builtin tables at MRO position (`Date::Infinity <
+            // Numeric` is the corpus shape).
+            let plain_builtin = matches!(a, zeo_abi::NUMERIC_CLASS | zeo_abi::WEAKREF_CLASS);
             let user = (a.0 as usize) < compiler.classes.len()
                 && !compiler.classes[a.0 as usize].is_builtin
                 && !compiler.classes[a.0 as usize].is_bootstrap;
@@ -455,7 +462,7 @@ pub(crate) fn collect_classes(
             // slice does not emit yet.
             let builtin_module =
                 (a.0 as usize) < compiler.classes.len() && compiler.classes[a.0 as usize].is_module;
-            if !(plain_spine || user || builtin_module) {
+            if !(plain_spine || plain_builtin || user || builtin_module) {
                 return refuse("a builtin superclass");
             }
         }
