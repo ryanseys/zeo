@@ -248,6 +248,39 @@ impl RProc {
         }))
     }
 
+    /// A proc whose body is a Cranelift-compiled [`crate::capi::BlockFn`]:
+    /// the closure owns the C environment (captured cells, lexical block,
+    /// binding) and bridges every invocation through
+    /// `capi::procs::call_block_fn`. `self` stays a per-call parameter --
+    /// `instance_exec` keeps working -- and the call-site block forwards
+    /// into the body's own `blk` slot; parameter binding (auto-splat
+    /// included) lives INSIDE the compiled body, exactly as it lives inside
+    /// the Rust-emitted closures.
+    pub fn from_c(
+        f: crate::capi::BlockFn,
+        env: crate::capi::procs::ProcEnvOwned,
+        self_val: RubyValue,
+        arity: i32,
+        is_lambda: bool,
+    ) -> RProc {
+        RProc(Arc::new(ProcData {
+            class_id: zeo_abi::PROC_CLASS,
+            f: Arc::new(move |recv, args, block| {
+                crate::capi::procs::call_block_fn(f, &env, recv, args, block)
+            }),
+            self_val,
+            arity,
+            is_lambda,
+            params: std::borrow::Cow::Borrowed(&[]),
+            home: None,
+            binding: None,
+            location: None,
+            origin: None,
+            outer_capture: None,
+            frozen: std::sync::atomic::AtomicBool::new(false),
+        }))
+    }
+
     /// Attach the static `Proc#parameters` metadata codegen computed from the
     /// block/lambda's signature. Called immediately after construction (refcount
     /// 1), so `Arc::get_mut` always succeeds; a no-op on the rare shared handle.

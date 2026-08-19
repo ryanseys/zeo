@@ -26,8 +26,11 @@
 pub mod dispatch;
 pub mod frames;
 pub mod objects;
+pub mod procs;
 pub mod signals;
 pub mod values;
+
+pub use procs::{BlockFn, ProcEnv};
 
 /// A compiled method/trampoline body: the C twin of
 /// [`crate::ValueMethodFn`], and the fn-pointer type dispatch rows and

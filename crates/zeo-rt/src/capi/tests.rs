@@ -1,4 +1,4 @@
-//! Boundary-contract tests for the M0-3 surface: pointers built the way
+//! Boundary-contract tests for the capi surface: pointers built the way
 //! compiled code builds them, asserted against the Rust-side internals.
 
 use super::frames::*;
@@ -388,6 +388,171 @@ fn dup_object_shares_handles_and_dup_starts_unfrozen() {
     drop(copy);
     drop(clone);
     assert_eq!(strong_count(&payload), 2);
+}
+
+// -- M0-6: cells, C-bodied procs, yield --------------------------------------
+
+use super::procs::*;
+
+/// A block body that adds its first argument into its one captured cell
+/// and answers the new total. `break 7` when called with no arguments.
+unsafe extern "C" fn accumulate_body(
+    env: *const ProcEnv,
+    _self: *const RubyValue,
+    argv: *const RubyValue,
+    argc: usize,
+    blk: *mut RubyValue,
+    out: *mut RubyValue,
+) -> i32 {
+    assert!(blk.is_null());
+    let env = unsafe { &*env };
+    assert_eq!(env.n_cells, 1);
+    if argc == 0 {
+        let mut v = MaybeUninit::new(RubyValue::Int(7));
+        unsafe { zeo_rt_signal_set(SignalKind::Break as u8, v.as_mut_ptr()) };
+        return 1;
+    }
+    let cell = unsafe { *env.cells };
+    let mut cur = MaybeUninit::<RubyValue>::uninit();
+    unsafe { zeo_rt_cell_load(cell, cur.as_mut_ptr()) };
+    let RubyValue::Int(base) = (unsafe { cur.assume_init() }) else {
+        panic!()
+    };
+    let RubyValue::Int(arg) = (unsafe { &*argv }) else {
+        panic!()
+    };
+    let mut next = MaybeUninit::new(RubyValue::Int(base + arg));
+    unsafe { zeo_rt_cell_store(cell, next.as_mut_ptr()) };
+    unsafe { out.write(RubyValue::Int(base + arg)) };
+    0
+}
+
+#[test]
+fn cells_roundtrip_and_balance() {
+    let mut init = MaybeUninit::new(a_string("cellv"));
+    let watcher = unsafe { &*init.as_ptr() }.clone();
+    let cell = unsafe { zeo_rt_cell_new(init.as_mut_ptr()) };
+    assert_eq!(strong_count(&watcher), 2, "the cell owns the moved value");
+    unsafe { zeo_rt_cell_retain(cell) };
+    unsafe { zeo_rt_cell_release(cell) };
+    let mut out = MaybeUninit::<RubyValue>::uninit();
+    unsafe { zeo_rt_cell_load(cell, out.as_mut_ptr()) };
+    drop(unsafe { out.assume_init() });
+    let mut replacement = MaybeUninit::new(RubyValue::Int(1));
+    unsafe { zeo_rt_cell_store(cell, replacement.as_mut_ptr()) };
+    assert_eq!(
+        strong_count(&watcher),
+        1,
+        "the store released the old value"
+    );
+    unsafe { zeo_rt_cell_release(cell) };
+}
+
+#[test]
+fn a_c_proc_captures_cells_and_yields() {
+    // The captured local, escaped into a cell as compiled code would do it.
+    let mut init = MaybeUninit::new(RubyValue::Int(100));
+    let cell = unsafe { zeo_rt_cell_new(init.as_mut_ptr()) };
+    let cells = [cell];
+    let recv = RubyValue::Nil;
+    let mut blkv = MaybeUninit::<RubyValue>::uninit();
+    unsafe {
+        zeo_rt_proc_new(
+            accumulate_body,
+            cells.as_ptr(),
+            1,
+            &recv,
+            std::ptr::null(),
+            std::ptr::null(),
+            -1,
+            0,
+            blkv.as_mut_ptr(),
+        )
+    };
+    // The frame's own cell reference can go: the proc holds its own.
+    unsafe { zeo_rt_cell_release(cell) };
+    let blkv = unsafe { blkv.assume_init() };
+    let RubyValue::Proc(p) = &blkv else { panic!() };
+    assert_eq!(p.arity(), -1);
+    assert!(!p.is_lambda());
+
+    // Two yields accumulate through the shared cell.
+    let args = [RubyValue::Int(5)];
+    let mut out = MaybeUninit::<RubyValue>::uninit();
+    assert_eq!(
+        unsafe { zeo_rt_yield(&blkv, args.as_ptr(), 1, out.as_mut_ptr()) },
+        STATUS_OK
+    );
+    assert!(matches!(unsafe { out.assume_init() }, RubyValue::Int(105)));
+    let mut out = MaybeUninit::<RubyValue>::uninit();
+    assert_eq!(
+        unsafe { zeo_rt_yield(&blkv, args.as_ptr(), 1, out.as_mut_ptr()) },
+        STATUS_OK
+    );
+    assert!(matches!(unsafe { out.assume_init() }, RubyValue::Int(110)));
+
+    // A `break` inside the body surfaces as the parked signal.
+    let mut out = MaybeUninit::<RubyValue>::uninit();
+    assert_eq!(
+        unsafe { zeo_rt_yield(&blkv, std::ptr::null(), 0, out.as_mut_ptr()) },
+        1
+    );
+    let mut sig = MaybeUninit::<RubyValue>::uninit();
+    assert_eq!(
+        unsafe { zeo_rt_signal_take(sig.as_mut_ptr()) },
+        SignalKind::Break as u8
+    );
+    assert!(matches!(unsafe { sig.assume_init() }, RubyValue::Int(7)));
+
+    // Proc#call reaches the same body.
+    let mut out = MaybeUninit::<RubyValue>::uninit();
+    assert_eq!(
+        unsafe {
+            zeo_rt_proc_call(
+                &blkv,
+                args.as_ptr(),
+                1,
+                std::ptr::null_mut(),
+                out.as_mut_ptr(),
+            )
+        },
+        STATUS_OK
+    );
+    assert!(matches!(unsafe { out.assume_init() }, RubyValue::Int(115)));
+}
+
+#[test]
+fn yield_without_a_block_signals() {
+    let mut out = MaybeUninit::<RubyValue>::uninit();
+    // Registry-less, the LocalJumpError construction would panic-abort, so
+    // only the null-pointer *shape* is asserted through a real proc: a
+    // non-null block never signals. (The null path is golden-covered.)
+    let mut init = MaybeUninit::new(RubyValue::Int(0));
+    let cell = unsafe { zeo_rt_cell_new(init.as_mut_ptr()) };
+    let cells = [cell];
+    let recv = RubyValue::Nil;
+    let mut blkv = MaybeUninit::<RubyValue>::uninit();
+    unsafe {
+        zeo_rt_proc_new(
+            accumulate_body,
+            cells.as_ptr(),
+            1,
+            &recv,
+            std::ptr::null(),
+            std::ptr::null(),
+            -1,
+            0,
+            blkv.as_mut_ptr(),
+        )
+    };
+    unsafe { zeo_rt_cell_release(cell) };
+    let blkv = unsafe { blkv.assume_init() };
+    let args = [RubyValue::Int(1)];
+    assert_eq!(
+        unsafe { zeo_rt_yield(&blkv, args.as_ptr(), 1, out.as_mut_ptr()) },
+        STATUS_OK
+    );
+    drop(unsafe { out.assume_init() });
 }
 
 // The raise channels (`zeo_rt_raise_error`, `zeo_rt_wrong_arity`) are
