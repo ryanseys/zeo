@@ -4217,6 +4217,13 @@ fn walk_runtime_class(id: ClassId, name: Symbol) -> Option<MethodImpl> {
         if let Some(m) = crate::dispatch::registry_value_method_impl(anc, name) {
             return Some(m);
         }
+        // ...and finally this ancestor's NATIVE table, which is the only place
+        // a builtin's own rows live. Last at each position and never skipped:
+        // leaving it out let a FARTHER ancestor's reopen answer over a nearer
+        // builtin row.
+        if let Some(m) = crate::dispatch::builtin_row_impl(anc, name) {
+            return Some(m);
+        }
     }
     None
 }

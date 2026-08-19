@@ -3849,11 +3849,60 @@ pub(crate) fn registry_own_impl_cloned(id: ClassId, name: Symbol) -> Option<Meth
 /// object's singleton table. `box_id` 0 (the unboxed method set).
 pub(crate) fn registry_value_method_impl(id: ClassId, name: Symbol) -> Option<MethodImpl> {
     let f: ValueMethodFn = REGISTRY.get()?.lookup_value_method(id, 0, name)?;
+    Some(value_fn_impl(f))
+}
+
+/// An ancestor's NATIVE builtin row (`Struct#size`, `Comparable#between?`) as
+/// an object-channel `MethodImpl` -- the last probe at each position of a
+/// runtime class's walk, mirroring the step `send_value_in`'s own walk makes
+/// after the value methods.
+///
+/// Without it a native row was invisible to a class born at runtime, and the
+/// walk carried on to a FARTHER ancestor: `class T < Struct.new(:b)` with a
+/// `module Enumerable; def size` reopen answered `Enumerable#size`, stepping
+/// over `Struct#size` two positions nearer.
+pub(crate) fn builtin_row_impl(id: ClassId, name: Symbol) -> Option<MethodImpl> {
+    // The root `BasicObject#method_missing` is not an answer. It exists so a
+    // USER override's `super` can reach it, and `super` gets there through its
+    // own walk; resolving it HERE means nothing overrode `method_missing`, and
+    // the miss path would then raise through a row that carries its own
+    // generic reason -- losing the VCall/private/protected distinction the
+    // caller was given, and turning `NameError: undefined local variable or
+    // method` back into a plain `NoMethodError`.
+    if id == zeo_abi::BASIC_OBJECT_CLASS && name == crate::symbol::wk::method_missing() {
+        return None;
+    }
+    let f = crate::builtins::class_table(id)?(name.name_str())?;
     Some(MethodImpl::Dynamic(std::sync::Arc::new(
         move |recv: &RObj, args: &[RubyValue], block: Option<RubyValue>| {
+            // The same payload bridge the main walk runs: a value-subclass
+            // instance (`Class.new(Array)`) carries a `RubyValue::Array`
+            // payload, and at its payload root the builtin row runs against
+            // that value -- handing it the boxed object instead panicked the
+            // row's own receiver downcast.
+            if let Some(root) = recv.builtin_root()
+                && crate::builtins::value_subclass::payload_owns(root, id)
+                && let Some(p) = recv.builtin_payload()
+            {
+                let result = f(&p, args, block)?;
+                return Ok(crate::builtins::value_subclass::rewrap_self_return(
+                    result,
+                    &p,
+                    recv,
+                    name.name_str(),
+                ));
+            }
             f(&RubyValue::Object(recv.clone()), args, block)
         },
     )))
+}
+
+fn value_fn_impl(f: ValueMethodFn) -> MethodImpl {
+    MethodImpl::Dynamic(std::sync::Arc::new(
+        move |recv: &RObj, args: &[RubyValue], block: Option<RubyValue>| {
+            f(&RubyValue::Object(recv.clone()), args, block)
+        },
+    ))
 }
 
 /// The registered Ruby-visible (fully-qualified) name of `id` -- `None`
