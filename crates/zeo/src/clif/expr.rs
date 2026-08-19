@@ -33,6 +33,63 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             Ok(Operand::Bool(fx.b.ins().iconst(types::I8, v)))
         }
         HirNode::NilLit => Ok(Operand::Nil),
+        // The bignum / rational / imaginary literals: digits baked into
+        // rodata, assembled by the runtime at the use site (no
+        // compile-time bigint dependency, no string parsing) -- rustc's
+        // shape. `int_from_u32_digits` demotes to `Int` when it fits, so
+        // one Ruby Integer class covers both payloads.
+        HirNode::BigIntegerLit { negative, digits } => {
+            let (negative, digits) = (*negative, digits.clone());
+            let neg = fx.b.ins().iconst(types::I8, i64::from(negative));
+            let (ptr, n) = u32_array(fx, &digits);
+            let ss = fx.temp_slot();
+            let dst = fx.slot_addr(ss, 0);
+            fx.call("zeo_rt_int_digits", &[neg, ptr, n, dst]);
+            fx.owned_created += 1;
+            Ok(Operand::Slot {
+                ss,
+                owned: true,
+                tag: TagInfo::Unknown,
+            })
+        }
+        HirNode::RationalLit {
+            negative,
+            num_digits,
+            den_digits,
+        } => {
+            let (negative, num_digits, den_digits) =
+                (*negative, num_digits.clone(), den_digits.clone());
+            let neg = fx.b.ins().iconst(types::I8, i64::from(negative));
+            let (nptr, nn) = u32_array(fx, &num_digits);
+            let (dptr, dn) = u32_array(fx, &den_digits);
+            let ss = fx.temp_slot();
+            let dst = fx.slot_addr(ss, 0);
+            fx.call("zeo_rt_rational_digits", &[neg, nptr, nn, dptr, dn, dst]);
+            fx.owned_created += 1;
+            Ok(Operand::Slot {
+                ss,
+                owned: true,
+                tag: TagInfo::Known(ValueTag::Rational as u8),
+            })
+        }
+        HirNode::ImaginaryLit(inner) => {
+            let inner = *inner;
+            let op = lower_expr(fx, inner)?;
+            let tag = op.tag();
+            let p = ownership::borrow_ptr(fx, &op);
+            if op.owned() {
+                ownership::pool_owned(fx, p, tag);
+            }
+            let ss = fx.temp_slot();
+            let dst = fx.slot_addr(ss, 0);
+            fx.call("zeo_rt_complex_lit", &[p, dst]);
+            fx.owned_created += 1;
+            Ok(Operand::Slot {
+                ss,
+                owned: true,
+                tag: TagInfo::Known(ValueTag::Complex as u8),
+            })
+        }
         HirNode::StringLit(parts) => {
             let parts = parts.clone();
             // A `# encoding:` magic comment tags EVERY literal in the file
@@ -1061,6 +1118,19 @@ pub(crate) fn variant_name(node: &HirNode) -> String {
         .next()
         .unwrap_or("Unknown")
         .to_string()
+}
+
+/// A baked `u32` array in rodata, 4-aligned (the runtime reads it as
+/// `&[u32]`) -- a numeric literal's digits.
+fn u32_array(
+    fx: &mut Fx,
+    digits: &[u32],
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    let bytes: Vec<u8> = digits.iter().flat_map(|d| d.to_ne_bytes()).collect();
+    let off = fx.em.intern_rodata_aligned(&bytes, 4);
+    let ptr = fx.rod(off);
+    let n = fx.b.ins().iconst(fx.em.ptr, digits.len() as i64);
+    (ptr, n)
 }
 
 /// The `EncodingId` a `# encoding:` magic comment puts on every literal in

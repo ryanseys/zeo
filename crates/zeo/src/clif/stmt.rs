@@ -347,6 +347,9 @@ fn lower_tail_expr(fx: &mut Fx, tail: NodeId) -> Result<super::operand::Operand,
         }
         HirNode::If { .. }
         | HirNode::IntegerLit(..)
+        | HirNode::BigIntegerLit { .. }
+        | HirNode::RationalLit { .. }
+        | HirNode::ImaginaryLit(..)
         | HirNode::FloatLit(..)
         | HirNode::BoolLit(..)
         | HirNode::NilLit
@@ -743,6 +746,9 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
         // and discard the value (it refuses on its own for shapes outside
         // the slice).
         HirNode::IntegerLit(..)
+        | HirNode::BigIntegerLit { .. }
+        | HirNode::RationalLit { .. }
+        | HirNode::ImaginaryLit(..)
         | HirNode::FloatLit(..)
         | HirNode::BoolLit(..)
         | HirNode::NilLit

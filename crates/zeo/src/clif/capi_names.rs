@@ -106,6 +106,11 @@ pub const CAPI: &[CapiSig] = &[
         ret: Some(I32),
     },
     CapiSig {
+        name: "zeo_rt_complex_lit",
+        params: &[Ptr, Ptr],
+        ret: None,
+    },
+    CapiSig {
         name: "zeo_rt_conceal_class",
         params: &[U32],
         ret: None,
@@ -258,6 +263,11 @@ pub const CAPI: &[CapiSig] = &[
     CapiSig {
         name: "zeo_rt_int_add_slow",
         params: &[Ptr, Ptr, Ptr],
+        ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_int_digits",
+        params: &[U8, Ptr, Ptr, Ptr],
         ret: None,
     },
     CapiSig {
@@ -459,6 +469,11 @@ pub const CAPI: &[CapiSig] = &[
         name: "zeo_rt_range_new",
         params: &[Ptr, Ptr, U8, Ptr],
         ret: Some(I32),
+    },
+    CapiSig {
+        name: "zeo_rt_rational_digits",
+        params: &[U8, Ptr, Ptr, Ptr, Ptr, Ptr],
+        ret: None,
     },
     CapiSig {
         name: "zeo_rt_record_const_location",

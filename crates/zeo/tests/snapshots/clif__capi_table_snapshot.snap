@@ -16,6 +16,7 @@ zeo_rt_cell_new ([Ptr]) -> Some(Ptr)
 zeo_rt_cell_release ([Ptr]) -> None
 zeo_rt_cell_store ([Ptr, Ptr]) -> None
 zeo_rt_check_ints ([]) -> Some(I32)
+zeo_rt_complex_lit ([Ptr, Ptr]) -> None
 zeo_rt_conceal_class ([U32]) -> None
 zeo_rt_conditional_class_ref ([U32, Ptr, Usize, U32, Ptr]) -> Some(I32)
 zeo_rt_const_get_at ([U32, Ptr, Usize, Ptr]) -> Some(I32)
@@ -47,6 +48,7 @@ zeo_rt_hash_set ([Ptr, Ptr, Ptr]) -> None
 zeo_rt_home_pop ([]) -> None
 zeo_rt_home_push ([]) -> None
 zeo_rt_int_add_slow ([Ptr, Ptr, Ptr]) -> None
+zeo_rt_int_digits ([U8, Ptr, Ptr, Ptr]) -> None
 zeo_rt_int_mul_slow ([Ptr, Ptr, Ptr]) -> None
 zeo_rt_int_sub_slow ([Ptr, Ptr, Ptr]) -> None
 zeo_rt_ivar_get_dyn ([Ptr, Ptr, Usize, Ptr]) -> Some(I32)
@@ -87,6 +89,7 @@ zeo_rt_propagating_enter ([Ptr]) -> Some(U8)
 zeo_rt_propagating_leave ([U8]) -> None
 zeo_rt_raise_error ([U32, Ptr, Ptr]) -> Some(I32)
 zeo_rt_range_new ([Ptr, Ptr, U8, Ptr]) -> Some(I32)
+zeo_rt_rational_digits ([U8, Ptr, Ptr, Ptr, Ptr, Ptr]) -> None
 zeo_rt_record_const_location ([U32, Ptr, Usize, Ptr, Usize, U32]) -> None
 zeo_rt_regexp_interp ([Ptr, U8, U8, U8, U8, Ptr]) -> Some(I32)
 zeo_rt_regexp_lit ([U32, Ptr, Usize, U8, U8, U8, U8, Ptr]) -> Some(I32)
