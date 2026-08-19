@@ -112,7 +112,7 @@ pub(crate) fn collect_classes(
         if idx == 0 || class.is_builtin || class.is_bootstrap {
             continue;
         }
-        let name = class.name.clone();
+        let name = compiler.fq_name(crate::compiler::ClassId(idx as u32));
         let refuse = |what: &str| {
             Err(format!(
                 "--backend aot is an M0 vertical slice: cannot lower {what} yet (class {name})"

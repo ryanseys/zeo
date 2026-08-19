@@ -604,6 +604,20 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
                 None => Ok(()),
             }
         }
+        // A mixin's ANCESTRY edit happened at compile time (analyze); what
+        // remains where it was written is the module's hook send --
+        // `M.included(C)` and siblings -- which is Module's own no-op
+        // unless the module defines one (rustc's `is_pure_statement` /
+        // `mixin_hook_runs` rule, mirrored).
+        HirNode::Include(_)
+        | HirNode::Extend(_)
+        | HirNode::Prepend(_)
+        | HirNode::ClassMethodPrepend(_) => {
+            if mixin_hook_runs(fx, stmt) {
+                return fx.unsupported(stmt, "a mixin hook (`included`/`extended`/`prepended`)");
+            }
+            Ok(())
+        }
         HirNode::Seq(stmts) => {
             let stmts = stmts.clone();
             lower_stmts(fx, &stmts)
@@ -670,6 +684,33 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
             fx.unsupported(stmt, &what)
         }
     }
+}
+
+/// rustc's `mixin_hook_runs` twin: whether the module defines the
+/// notification hook (or overrides the mix-in primitive, in which case
+/// the node is what performs the mixin at all). rustc's
+/// `cx.defining_class` is Some only while a class body emits; the CLIF
+/// twin of that position is a class-body fn (`self_is_class` with no
+/// method name).
+#[allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "structural: a four-node classifier -- every other node kind is definitionally not a mixin"
+)]
+fn mixin_hook_runs(fx: &Fx, id: NodeId) -> bool {
+    let (module, hook, primitive) = match &fx.an.compiler.hir[id] {
+        HirNode::Include(m) => (m, "included", "append_features"),
+        HirNode::Prepend(m) | HirNode::ClassMethodPrepend(m) => {
+            (m, "prepended", "prepend_features")
+        }
+        HirNode::Extend(m) => (m, "extended", "extend_object"),
+        _ => return false,
+    };
+    let Some(mid) = super::expr::resolve_class_here(fx, module) else {
+        return false;
+    };
+    fx.self_is_class
+        && (fx.an.compiler.class_method_in_chain(mid, hook).is_some()
+            || fx.an.compiler.overrides_mixin_primitive(mid, primitive))
 }
 
 /// A short label for the refusal message.

@@ -765,7 +765,7 @@ fn cref_chain<'a>(fx: &'a Fx) -> &'a [crate::compiler::ClassId] {
 
 /// Resolve a class name against the current cref (rustc's
 /// `Ctx::resolve_class`; box 0 -- box scopes refuse before any lowering).
-fn resolve_class_here(fx: &Fx, name: &str) -> Option<crate::compiler::ClassId> {
+pub(crate) fn resolve_class_here(fx: &Fx, name: &str) -> Option<crate::compiler::ClassId> {
     fx.an.compiler.resolve_class(name, cref_chain(fx), 0)
 }
 

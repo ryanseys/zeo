@@ -189,6 +189,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             ruby2_keywords: def.ruby2_keywords,
             self_is_class: false,
             label_override: None,
+            discard_value: false,
         };
         define_method_body(em, analyzed, &spec)?;
     }
@@ -206,6 +207,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
                 ruby2_keywords: m.ruby2_keywords,
                 self_is_class: false,
                 label_override: None,
+                discard_value: false,
             };
             define_method_body(em, analyzed, &spec)?;
         }
@@ -223,6 +225,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             ruby2_keywords: m.ruby2_keywords,
             self_is_class: true,
             label_override: None,
+            discard_value: false,
         };
         define_method_body(em, analyzed, &spec)?;
     }
@@ -239,6 +242,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             ruby2_keywords: m.ruby2_keywords,
             self_is_class: false,
             label_override: None,
+            discard_value: false,
         };
         define_method_body(em, analyzed, &spec)?;
     }
@@ -258,6 +262,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             ruby2_keywords: false,
             self_is_class: true,
             label_override: Some(cb.label.clone()),
+            discard_value: true,
         };
         define_method_body(em, analyzed, &spec)?;
     }
@@ -926,6 +931,10 @@ pub(crate) struct BodyFnSpec<'a> {
     /// A non-method frame label (`<class:Foo>` for a class body); `None`
     /// derives the ordinary `Owner#name`/`Owner.name` label.
     pub label_override: Option<String>,
+    /// The caller discards `out` (a class-body fn: the marker call pools
+    /// it unread), so the tail runs as a STATEMENT and `out` gets nil --
+    /// statement-only shapes (`include`, a nested `class`) may sit last.
+    pub discard_value: bool,
 }
 
 /// A method's frame facts: `(file, label, line, end_line)` -- shared by
@@ -1258,7 +1267,12 @@ fn define_method_body(
         }
         super::stmt::lower_multi_group(&mut fx, *read, group, ptr)?;
     }
-    super::stmt::lower_value_body_into(&mut fx, def.body, out_ptr)?;
+    if def.discard_value {
+        super::stmt::lower_stmts(&mut fx, def.body)?;
+        super::ownership::write_move_into(&mut fx, &super::operand::Operand::Nil, out_ptr);
+    } else {
+        super::stmt::lower_value_body_into(&mut fx, def.body, out_ptr)?;
+    }
     fx.b.ins().jump(ret_ok, &[]);
 
     let has_frame = file.is_some();

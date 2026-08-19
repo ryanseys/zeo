@@ -17,23 +17,44 @@ pub const SYMS: &str = "zeo_syms";
 /// `.bss` site slots).
 pub const UNIT_INIT: &str = "zeo_unit_init";
 
+/// A fully-qualified owner (`Outer::Inner`) as a symbol fragment.
+fn owner_fragment(owner: &str) -> String {
+    owner.replace("::", "__")
+}
+
 /// The compiled body symbol for `Owner#name`.
 pub fn method_symbol(owner: &str, name: &str) -> String {
-    format!("zeo_m_{owner}_{}", crate::names::ident_fragment(name))
+    format!(
+        "zeo_m_{}_{}",
+        owner_fragment(owner),
+        crate::names::ident_fragment(name)
+    )
 }
 
 /// The `ValueFn` trampoline symbol for `Owner#name` (the dispatch-row twin
 /// of the body above).
 pub fn trampoline_symbol(owner: &str, name: &str) -> String {
-    format!("zeo_t_{owner}_{}", crate::names::ident_fragment(name))
+    format!(
+        "zeo_t_{}_{}",
+        owner_fragment(owner),
+        crate::names::ident_fragment(name)
+    )
 }
 
 /// The compiled body symbol for class method `Owner.name`.
 pub fn class_method_symbol(owner: &str, name: &str) -> String {
-    format!("zeo_cm_{owner}_{}", crate::names::ident_fragment(name))
+    format!(
+        "zeo_cm_{}_{}",
+        owner_fragment(owner),
+        crate::names::ident_fragment(name)
+    )
 }
 
 /// The `ValueFn` trampoline symbol for class method `Owner.name`.
 pub fn class_trampoline_symbol(owner: &str, name: &str) -> String {
-    format!("zeo_ct_{owner}_{}", crate::names::ident_fragment(name))
+    format!(
+        "zeo_ct_{}_{}",
+        owner_fragment(owner),
+        crate::names::ident_fragment(name)
+    )
 }
