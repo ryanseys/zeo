@@ -2,12 +2,32 @@
 //!
 //! CRuby gives every fiber its own `rb_execution_context_t` and switches
 //! `th->ec` on fiber entry/exit (`cont.c`). This runtime keeps the same
-//! ambient state in plain thread-locals -- the `$!`/rescue stack, proc
-//! return-homes, live `catch` tags, and backtrace frames -- so a fiber
-//! switch swaps ALL FOUR as one unit: [`swap`] installs the suspended
-//! context and returns the running one. Sound because a fiber never runs
-//! concurrently with its resumer (both swaps happen on the resumer's own
-//! stack, either side of the switch).
+//! ambient state in plain thread-locals, each owned by its home module with
+//! a `swap_*` fn -- so a fiber switch swaps ALL of them as one unit:
+//! [`swap`] installs the suspended context and returns the running one.
+//! Sound because a fiber never runs concurrently with its resumer (both
+//! swaps happen on the resumer's own stack, either side of the switch).
+//!
+//! # The fiber-scoped TLS inventory
+//!
+//! THE RULE: any thread-local whose value can outlive a call that may reach
+//! `Fiber.yield` belongs in this bundle. `Ec`'s fields are the joined set;
+//! the AUDITED EXEMPTIONS (2026-08-18) are:
+//!
+//! * `dispatch::CURRENT_METHOD` -- the `ZEO_ARITY_DEBUG` attribution
+//!   breadcrumb. Diagnostic-only; a cross-fiber misattribution mislabels a
+//!   debug message, never behavior.
+//! * `value::PENDING_CMP` -- a raising user `<=>` stashed by the infallible
+//!   `rb_cmp` and consumed by its fallible driver in the SAME call, on the
+//!   same stack; no suspension point sits between stash and consume.
+//! * `runtime_meta::SINGLETON_DEFINEE` / `PENDING_DEFS` -- definition-time
+//!   state. A `Fiber.yield` inside a runtime class-definition body would
+//!   leak the definee across fibers; accepted as a known limit beside the
+//!   documented box/definee divergences (nothing exercises it).
+//!
+//! A new thread-local that fails the rule joins `Ec`: add the field, its
+//! `Default` arm, one line in [`swap`], and a `swap_*` fn beside the cell
+//! (5 edit points -- `signal::swap_return_target` is the template).
 //!
 //! Oracle-pinned consequences (ruby 4.0.6): `throw` inside a fiber
 //! cannot see the resumer's `catch` (`UncaughtThrowError` at the throw),
@@ -24,6 +44,10 @@ use crate::RubyValue;
 pub struct Ec {
     handling: Vec<RubyValue>,
     home_stack: Vec<crate::signal::ProcHome>,
+    /// The in-flight `Signal::Return` target (`signal::RETURN_TARGET`):
+    /// per-coroutine by definition -- only one return is in flight per
+    /// coroutine, and it must not retarget another fiber's.
+    return_target: Option<crate::signal::ProcHome>,
     catch_tags: Vec<RubyValue>,
     frames: Vec<crate::frames::Frame>,
     /// The stack-overflow check floor (`stack_guard`) -- each fiber runs on
@@ -44,6 +68,7 @@ impl Default for Ec {
         Ec {
             handling: Vec::new(),
             home_stack: Vec::new(),
+            return_target: None,
             catch_tags: Vec::new(),
             frames: Vec::new(),
             stack_floor: 0,
@@ -62,7 +87,8 @@ pub fn swap(ec: Ec) -> Ec {
     Ec {
         handling: crate::handling::swap_handling(ec.handling),
         home_stack: crate::signal::swap_home_stack(ec.home_stack),
-        catch_tags: crate::builtins::kernel::swap_catch_tags(ec.catch_tags),
+        return_target: crate::signal::swap_return_target(ec.return_target),
+        catch_tags: crate::catch::swap_catch_tags(ec.catch_tags),
         frames: crate::frames::swap_stack(ec.frames),
         stack_floor: crate::stack_guard::set_floor(ec.stack_floor),
         fiber_locals: crate::thread::swap_fiber_locals(ec.fiber_locals),

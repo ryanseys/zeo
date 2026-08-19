@@ -14,6 +14,7 @@ mod arith;
 mod bootstrap;
 pub mod boxes;
 mod builtins;
+mod catch;
 mod civars;
 mod collections;
 mod constants;
@@ -74,10 +75,10 @@ pub use builtins::exception::{
 };
 pub use builtins::format::sprintf;
 pub use builtins::kernel::{
-    kernel_abort, kernel_array, kernel_catch, kernel_complex, kernel_exit, kernel_exit_bang,
-    kernel_float, kernel_format, kernel_hash, kernel_integer, kernel_p, kernel_pp, kernel_print,
-    kernel_printf, kernel_puts, kernel_rand, kernel_rational, kernel_sleep, kernel_srand,
-    kernel_string, kernel_throw, kernel_warn, system_exit_status,
+    kernel_abort, kernel_array, kernel_complex, kernel_exit, kernel_exit_bang, kernel_float,
+    kernel_format, kernel_hash, kernel_integer, kernel_p, kernel_pp, kernel_print, kernel_printf,
+    kernel_puts, kernel_rand, kernel_rational, kernel_sleep, kernel_srand, kernel_string,
+    kernel_throw, kernel_warn, system_exit_status,
 };
 pub use builtins::method::method_capture_inherited;
 pub use builtins::rational::{RRational, RRationalData, rational_from_digits, rational_new};
@@ -88,6 +89,7 @@ pub use builtins::value_subclass::{
 pub use builtins::warning::emit_parse_warnings;
 pub use builtins::weak::register_weakmap_subclass;
 pub use builtins::weak::run_finalizers;
+pub use catch::kernel_catch;
 pub use civars::{CivarSite, class_ivar_get, class_ivar_names, class_ivar_set};
 pub use collections::*;
 pub use constants::{

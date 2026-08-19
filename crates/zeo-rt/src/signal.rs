@@ -182,3 +182,13 @@ pub fn proc_home_alive(home: &ProcHome) -> bool {
 pub fn swap_home_stack(new: Vec<ProcHome>) -> Vec<ProcHome> {
     HOME_STACK.with(|s| s.replace(new))
 }
+
+/// Install `new` as this context's in-flight `Signal::Return` target,
+/// returning the previous one -- the fiber ec-swap's slice of this cell (see
+/// `crate::ec`). Per-coroutine by its own definition ("only one return can
+/// be in flight per coroutine"): a `Fiber.yield` inside an `ensure` running
+/// under a propagating return must not let another fiber's return retarget
+/// this one.
+pub fn swap_return_target(new: Option<ProcHome>) -> Option<ProcHome> {
+    RETURN_TARGET.with(|t| t.replace(new))
+}
