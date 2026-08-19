@@ -2124,6 +2124,11 @@ mod abi_layout {
         // 32 bytes.
         assert_eq!(size_of::<Option<RubyValue>>(), abi::VALUE_SIZE);
         assert_eq!(size_of::<Result<RubyValue, crate::Signal>>(), 32);
+        // `abi::Value` (the opaque slot in the C fn-pointer mirrors) must be
+        // interchangeable with `RubyValue` -- what makes `register_program`'s
+        // fn-pointer transmute sound.
+        assert_eq!(size_of::<abi::Value>(), size_of::<RubyValue>());
+        assert_eq!(align_of::<abi::Value>(), align_of::<RubyValue>());
     }
 
     #[test]

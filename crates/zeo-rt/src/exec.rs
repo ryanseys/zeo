@@ -20,6 +20,25 @@ use crate::{RubyValue, Signal};
 
 static AT_EXIT: parking_lot::Mutex<Vec<RubyValue>> = parking_lot::Mutex::new(Vec::new());
 
+/// The C `argv`, stashed by `zeo_rt_main` before registration runs. Under
+/// an emitted C `main`, `std::env::args()` works on glibc and macOS but is
+/// EMPTY on musl -- so `ARGV`/`$0` seeding reads this first and falls back
+/// to `std::env::args()` for the rustc backend, whose generated `main` never
+/// stashes.
+static CLI_ARGS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+
+pub(crate) fn stash_cli_args(args: Vec<String>) {
+    let _ = CLI_ARGS.set(args);
+}
+
+/// The program's arguments, binary name first.
+pub(crate) fn program_args() -> Vec<String> {
+    match CLI_ARGS.get() {
+        Some(args) => args.clone(),
+        None => std::env::args().collect(),
+    }
+}
+
 pub fn at_exit_register(handler: RubyValue) {
     AT_EXIT.lock().push(handler);
 }

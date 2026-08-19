@@ -459,7 +459,8 @@ pub fn const_location(owner_class_id: u32, name: &str, own_only: bool) -> Option
 /// ordinary runtime `const_get` fallback, so the compiler needs no
 /// special-casing.
 pub fn seed_argv() {
-    let args: Vec<RubyValue> = std::env::args()
+    let args: Vec<RubyValue> = crate::exec::program_args()
+        .into_iter()
         .skip(1)
         .map(|a| RubyValue::Str(crate::collections::string_new(a)))
         .collect();

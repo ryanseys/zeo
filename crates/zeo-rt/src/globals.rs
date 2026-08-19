@@ -370,7 +370,10 @@ pub fn seed_default_globals() {
     // `$VERBOSE` is FALSE by default, not nil: nil is the third state (`-W0`,
     // "suppress even the ordinary warnings"), and an unset read would answer it.
     global_set(0, "$VERBOSE", RubyValue::Bool(false));
-    let prog = std::env::args().next().unwrap_or_default();
+    let prog = crate::exec::program_args()
+        .into_iter()
+        .next()
+        .unwrap_or_default();
     global_set(0, "$0", RubyValue::Str(crate::string_new(prog)));
     global_alias(0, "$PROGRAM_NAME", "$0");
     global_set(0, "$$", RubyValue::Int(i64::from(std::process::id())));

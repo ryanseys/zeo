@@ -26,10 +26,12 @@
 pub mod dispatch;
 pub mod frames;
 pub mod kernel;
+pub mod lifecycle;
 pub mod literals;
 pub mod numeric;
 pub mod objects;
 pub mod procs;
+pub mod registry;
 pub mod signals;
 pub mod values;
 

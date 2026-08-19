@@ -691,3 +691,216 @@ fn integer_slow_paths_promote_and_compare() {
     assert!(matches!(unsafe { out.assume_init() }, RubyValue::Int(1)));
     assert!(unsafe { zeo_rt_int_cmp_slow(&a, &b) } > 0);
 }
+
+// -- M0-7: register_program + zeo_rt_main -----------------------------------
+
+use zeo_abi::abi;
+
+fn abi_str(s: &'static str) -> abi::Str {
+    abi::Str {
+        ptr: s.as_ptr(),
+        len: s.len(),
+    }
+}
+
+fn no_str() -> abi::Str {
+    abi::Str {
+        ptr: std::ptr::null(),
+        len: 0,
+    }
+}
+
+fn empty_desc(toplevel: abi::UnitFn) -> abi::ProgramDesc {
+    abi::ProgramDesc {
+        abi_version: abi::ABI_VERSION,
+        classes: std::ptr::null(),
+        n_classes: 0,
+        obj_rows: std::ptr::null(),
+        n_obj_rows: 0,
+        vm_rows: std::ptr::null(),
+        n_vm_rows: 0,
+        vm_foreign: std::ptr::null(),
+        n_vm_foreign: 0,
+        cm_rows: std::ptr::null(),
+        n_cm_rows: 0,
+        vis_rows: std::ptr::null(),
+        n_vis_rows: 0,
+        meta_rows: std::ptr::null(),
+        n_meta_rows: 0,
+        reg_rows: std::ptr::null(),
+        n_reg_rows: 0,
+        units: std::ptr::null(),
+        n_units: 0,
+        declined: std::ptr::null(),
+        n_declined: 0,
+        coverage: std::ptr::null(),
+        n_cov: 0,
+        loaded_features: std::ptr::null(),
+        n_loaded: 0,
+        load_path: std::ptr::null(),
+        n_load_path: 0,
+        parse_warnings: std::ptr::null(),
+        n_warnings: 0,
+        data_section: no_str(),
+        data_offset: 0,
+        toplevel,
+        unit_init: None,
+        eval_install: None,
+    }
+}
+
+unsafe extern "C" fn nil_toplevel(out: *mut abi::Value) -> i32 {
+    unsafe { out.cast::<RubyValue>().write(RubyValue::Nil) };
+    0
+}
+
+/// The `abi::ValueFn` spelling of a runtime-typed test body -- the same
+/// transmute `register_program` performs in reverse.
+fn as_abi_fn(f: super::ValueFn) -> abi::ValueFn {
+    unsafe { std::mem::transmute::<super::ValueFn, abi::ValueFn>(f) }
+}
+
+unsafe extern "C" fn widget_answer(
+    _recv: *const RubyValue,
+    argv: *const RubyValue,
+    argc: usize,
+    _blk: *mut RubyValue,
+    out: *mut RubyValue,
+) -> i32 {
+    let extra: i64 = (0..argc)
+        .map(|i| match unsafe { &*argv.add(i) } {
+            RubyValue::Int(n) => *n,
+            other => panic!("{other:?}"),
+        })
+        .sum();
+    unsafe { out.write(RubyValue::Int(41 + extra)) };
+    0
+}
+
+#[test]
+fn register_program_registers_a_class_its_rows_and_meta() {
+    const WIDGET: u32 = 60_000;
+    static ANCESTORS: &[u32] = &[WIDGET, 0, 25, 24]; // self, Object, Kernel, BasicObject
+    static IVARS: &[&str] = &["size"];
+    let ivar_strs: Vec<abi::Str> = IVARS.iter().map(|s| abi_str(s)).collect();
+    let classes = [abi::ClassDesc {
+        id: WIDGET,
+        name: abi_str("Widget"),
+        kind: abi::CLASS_PLAIN,
+        ancestors: ANCESTORS.as_ptr(),
+        n_ancestors: ANCESTORS.len(),
+        ivar_names: ivar_strs.as_ptr(),
+        n_ivars: ivar_strs.len(),
+        hidden: 0,
+    }];
+    let obj_rows = [abi::ObjRow {
+        class: WIDGET,
+        name: abi_str("answer"),
+        f: as_abi_fn(widget_answer),
+    }];
+    let meta_rows = [abi::MetaRowC {
+        class: WIDGET,
+        singleton: 0,
+        name: abi_str("answer"),
+        params: std::ptr::null(),
+        n_params: 0,
+        file: abi_str("widget.rb"),
+        line: 3,
+        aliased_from: no_str(),
+    }];
+    let mut desc = empty_desc(nil_toplevel);
+    desc.classes = classes.as_ptr();
+    desc.n_classes = classes.len();
+    desc.obj_rows = obj_rows.as_ptr();
+    desc.n_obj_rows = obj_rows.len();
+    desc.meta_rows = meta_rows.as_ptr();
+    desc.n_meta_rows = meta_rows.len();
+    unsafe { super::registry::register_program(&desc) };
+
+    assert_eq!(
+        crate::dispatch::class_name(zeo_abi::ClassId(WIDGET)).as_deref(),
+        Some("Widget")
+    );
+    // `new` through the shared constructor, then a dynamic send through the
+    // registered ObjRow.
+    let mut obj = MaybeUninit::<RubyValue>::uninit();
+    let status = unsafe {
+        super::objects::zeo_rt_class_new_instance(
+            WIDGET,
+            std::ptr::null(),
+            0,
+            std::ptr::null_mut(),
+            obj.as_mut_ptr(),
+        )
+    };
+    assert_eq!(status, STATUS_OK);
+    let obj = unsafe { obj.assume_init() };
+    let sym = crate::Symbol::intern("answer").to_u32();
+    let arg = RubyValue::Int(1);
+    let mut out = MaybeUninit::<RubyValue>::uninit();
+    let status = unsafe {
+        super::dispatch::zeo_rt_send_value_in(
+            0,
+            &obj,
+            sym,
+            &arg,
+            1,
+            std::ptr::null_mut(),
+            out.as_mut_ptr(),
+        )
+    };
+    assert_eq!(status, STATUS_OK);
+    assert!(matches!(unsafe { out.assume_init() }, RubyValue::Int(42)));
+    // The meta row landed with its source location.
+    let meta = crate::method_meta::lookup(
+        zeo_abi::ClassId(WIDGET),
+        crate::method_meta::MethodKind::Instance,
+        crate::Symbol::intern("answer"),
+    )
+    .expect("the MetaRowC must register");
+    assert_eq!(meta.source(), Some(("widget.rb", 3)));
+}
+
+#[test]
+fn zeo_rt_main_runs_the_toplevel_and_owns_argv() {
+    let desc = empty_desc(nil_toplevel);
+    let prog = c"widget-prog";
+    let arg = c"alpha";
+    let argv = [prog.as_ptr(), arg.as_ptr()];
+    let code = unsafe { super::lifecycle::zeo_rt_main(2, argv.as_ptr(), &desc, std::ptr::null()) };
+    assert_eq!(code, 0);
+    // `$0` and `ARGV` were seeded from the STASHED argv, not env::args.
+    match crate::globals::global_get(0, "$0") {
+        RubyValue::Str(s) => assert_eq!(s.lock().bytes(), b"widget-prog"),
+        other => panic!("$0 should be a Str, got {other:?}"),
+    }
+    match crate::constants::const_get(0, "ARGV") {
+        Some(RubyValue::Array(a)) => {
+            let a = a.lock();
+            assert_eq!(a.len(), 1);
+            match &a[0] {
+                RubyValue::Str(s) => assert_eq!(s.lock().bytes(), b"alpha"),
+                other => panic!("ARGV[0] should be a Str, got {other:?}"),
+            }
+        }
+        other => panic!("ARGV should be an Array, got {other:?}"),
+    }
+}
+
+unsafe extern "C" fn raising_toplevel(out: *mut abi::Value) -> i32 {
+    let _ = out;
+    crate::signal::set_pending(crate::dispatch::raise_error(
+        "RuntimeError",
+        "boom from the toplevel".to_string(),
+    ));
+    1
+}
+
+#[test]
+fn zeo_rt_main_reports_an_uncaught_raise_as_exit_1() {
+    let desc = empty_desc(raising_toplevel);
+    let prog = c"widget-prog";
+    let argv = [prog.as_ptr()];
+    let code = unsafe { super::lifecycle::zeo_rt_main(1, argv.as_ptr(), &desc, std::ptr::null()) };
+    assert_eq!(code, 1);
+}

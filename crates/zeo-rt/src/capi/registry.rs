@@ -1,0 +1,237 @@
+//! `register_program`: walk a [`ProgramDesc`]'s tables in today's generated
+//! `main` order, calling exactly the registrars the rustc backend calls.
+//! Table strings are the program's `.rodata` (the boundary contract), so
+//! they borrow as `&'static str`; the few structures the runtime keeps by
+//! `'static` reference (`ClassLayout`, the meta-row table) are leaked once
+//! here, at registration.
+
+use crate::compiled_object::{self, ClassLayout, CompiledObject};
+use crate::dispatch::ClassRegistry;
+use crate::method_meta::{MetaRow, ParamKind};
+use crate::{RObj, RubyValue, Signal, Symbol};
+use zeo_abi::ClassId;
+use zeo_abi::abi::{self, ProgramDesc};
+
+/// A table view; `len == 0` tolerates a null base (an empty table).
+unsafe fn rows<'a, T>(ptr: *const T, n: usize) -> &'a [T] {
+    if n == 0 {
+        return &[];
+    }
+    unsafe { std::slice::from_raw_parts(ptr, n) }
+}
+
+fn text(s: abi::Str) -> &'static str {
+    unsafe { super::static_str(s.ptr, s.len) }
+}
+
+/// An `abi::ValueFn` as the runtime's own [`super::ValueFn`] -- identical
+/// ABI (the `abi_layout` test asserts `abi::Value` == `RubyValue` in size
+/// and alignment); only the nominal parameter types differ.
+fn value_fn(f: abi::ValueFn) -> super::ValueFn {
+    unsafe { std::mem::transmute::<abi::ValueFn, super::ValueFn>(f) }
+}
+
+/// The shared `AllocatorFn` for every compiled class -- `Class#allocate`'s
+/// storage half, identical to `zeo_rt_object_alloc`'s.
+fn compiled_allocate(id: ClassId) -> RObj {
+    let layout = compiled_object::layout_of(id)
+        .unwrap_or_else(|| panic!("compiled_allocate: no layout registered for class {}", id.0));
+    CompiledObject::alloc(id, layout)
+}
+
+/// The shared `ConstructorFn`: allocate, then `initialize` -- what
+/// `ruby_class!`'s per-class `__construct` does, made generic by the
+/// `LAYOUTS` table.
+fn compiled_construct(
+    id: ClassId,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    let obj = compiled_allocate(id);
+    crate::dispatch::run_initialize(id, &obj, args, block)?;
+    Ok(RubyValue::Object(obj))
+}
+
+fn param_kind(kind: u8) -> ParamKind {
+    match kind {
+        abi::PARAM_REQ => ParamKind::Req,
+        abi::PARAM_OPT => ParamKind::Opt,
+        abi::PARAM_REST => ParamKind::Rest,
+        abi::PARAM_KEYREQ => ParamKind::KeyReq,
+        abi::PARAM_KEY => ParamKind::Key,
+        abi::PARAM_KEYREST => ParamKind::KeyRest,
+        abi::PARAM_BLOCK => ParamKind::Block,
+        k => panic!("register_program: unknown ParamC kind {k}"),
+    }
+}
+
+/// The registration half of the generated `main` sequence, step for step:
+/// classes, method rows, visibility, the registry install, meta rows, core
+/// constants, the loaded-features/load-path seeds, declined features,
+/// coverage, parse warnings, and the `__END__` data section. The pieces no
+/// emitter produces yet (`RegRow`s, feature units, corelib flags, class
+/// kinds beyond plain/module) refuse loudly instead of dropping silently.
+pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
+    assert_eq!(
+        desc.abi_version,
+        abi::ABI_VERSION,
+        "register_program: program ABI version {} != runtime {}",
+        desc.abi_version,
+        abi::ABI_VERSION,
+    );
+    assert!(
+        desc.n_reg_rows == 0,
+        "register_program: RegRow tables are not yet emitted (M1)"
+    );
+    assert!(
+        desc.n_units == 0,
+        "register_program: feature-unit tables are not yet emitted (M1)"
+    );
+
+    let mut registry = ClassRegistry::with_core();
+    for c in unsafe { rows(desc.classes, desc.n_classes) } {
+        let id = ClassId(c.id);
+        let name = text(c.name);
+        let ancestors: Vec<ClassId> = unsafe { rows(c.ancestors, c.n_ancestors) }
+            .iter()
+            .map(|&i| ClassId(i))
+            .collect();
+        match c.kind {
+            abi::CLASS_PLAIN => {
+                registry.register(id, name, false, ancestors, Some(compiled_construct));
+                registry.define_allocator(id, compiled_allocate);
+                let names: &'static [&'static str] = Vec::leak(
+                    unsafe { rows(c.ivar_names, c.n_ivars) }
+                        .iter()
+                        .map(|&s| text(s))
+                        .collect(),
+                );
+                let layout = Box::leak(Box::new(ClassLayout {
+                    names,
+                    hidden: usize::from(c.hidden),
+                }));
+                compiled_object::register_layout(id, layout);
+            }
+            abi::CLASS_MODULE => registry.register(id, name, true, ancestors, None),
+            k => panic!("register_program: class kind {k} ({name}) is not yet emitted (M1)"),
+        }
+    }
+    for r in unsafe { rows(desc.obj_rows, desc.n_obj_rows) } {
+        registry.define_method_c(
+            ClassId(r.class),
+            Symbol::intern(text(r.name)),
+            value_fn(r.f),
+        );
+    }
+    for r in unsafe { rows(desc.vm_rows, desc.n_vm_rows) } {
+        assert!(
+            r.flags == 0,
+            "register_program: VmRow flags ({}) are not yet emitted (G8)",
+            r.flags
+        );
+        registry.define_value_method_c(
+            ClassId(r.class),
+            r.box_id,
+            Symbol::intern(text(r.name)),
+            value_fn(r.f),
+        );
+    }
+    let foreign: Vec<(u32, &str)> = unsafe { rows(desc.vm_foreign, desc.n_vm_foreign) }
+        .iter()
+        .map(|r| (r.class, text(r.name)))
+        .collect();
+    registry.mark_foreign_value_rows(&foreign);
+    for r in unsafe { rows(desc.cm_rows, desc.n_cm_rows) } {
+        registry.define_class_method_c(
+            ClassId(r.class),
+            Symbol::intern(text(r.name)),
+            value_fn(r.f),
+        );
+    }
+    let vis: Vec<(u32, &str, u8)> = unsafe { rows(desc.vis_rows, desc.n_vis_rows) }
+        .iter()
+        .map(|r| (r.class, text(r.name), r.verb))
+        .collect();
+    registry.mark_visibility_rows(&vis);
+    crate::dispatch::install_class_registry(registry);
+
+    let metas: Vec<MetaRow> = unsafe { rows(desc.meta_rows, desc.n_meta_rows) }
+        .iter()
+        .map(|m| {
+            let mut row = if m.singleton != 0 {
+                MetaRow::sing(m.class, text(m.name))
+            } else {
+                MetaRow::inst(m.class, text(m.name))
+            };
+            if m.n_params > 0 {
+                let params: &'static [(ParamKind, Option<&'static str>)] = Vec::leak(
+                    unsafe { rows(m.params, m.n_params) }
+                        .iter()
+                        .map(|p| {
+                            let name = (p.name.len > 0).then(|| text(p.name));
+                            (param_kind(p.kind), name)
+                        })
+                        .collect(),
+                );
+                row = row.params(params);
+            }
+            if m.file.len > 0 {
+                row = row.at(text(m.file), m.line);
+            }
+            if m.aliased_from.len > 0 {
+                row = row.alias(text(m.aliased_from));
+            }
+            row
+        })
+        .collect();
+    if !metas.is_empty() {
+        crate::method_meta::register_meta_rows(Vec::leak(metas));
+    }
+
+    crate::bootstrap::install_core_constants();
+    let loaded: Vec<&str> = unsafe { rows(desc.loaded_features, desc.n_loaded) }
+        .iter()
+        .map(|&s| text(s))
+        .collect();
+    crate::globals::seed_loaded_features(&loaded);
+    if desc.n_load_path > 0 {
+        let paths: Vec<&str> = unsafe { rows(desc.load_path, desc.n_load_path) }
+            .iter()
+            .map(|&s| text(s))
+            .collect();
+        crate::globals::seed_load_path(&paths);
+    }
+    if desc.n_declined > 0 {
+        let declined: Vec<(&'static str, &'static str)> =
+            unsafe { rows(desc.declined, desc.n_declined) }
+                .iter()
+                .map(|r| (text(r.feature), text(r.reason)))
+                .collect();
+        crate::features::install_declined_features(Vec::leak(declined));
+    }
+    if desc.n_cov > 0 {
+        let cov: Vec<(&'static str, u32, &'static [u32], &'static [u32])> =
+            unsafe { rows(desc.coverage, desc.n_cov) }
+                .iter()
+                .map(|c| {
+                    (
+                        text(c.file),
+                        c.total,
+                        unsafe { rows(c.stmt_lines, c.n_stmt) },
+                        unsafe { rows(c.def_lines, c.n_def) },
+                    )
+                })
+                .collect();
+        crate::ext::coverage::coverage_install(Vec::leak(cov));
+    }
+    if desc.n_warnings > 0 {
+        let lines: Vec<&str> = unsafe { rows(desc.parse_warnings, desc.n_warnings) }
+            .iter()
+            .map(|&s| text(s))
+            .collect();
+        crate::emit_parse_warnings(&lines);
+    }
+    if desc.data_section.len > 0 {
+        crate::bootstrap::install_data_section(text(desc.data_section), desc.data_offset);
+    }
+}
