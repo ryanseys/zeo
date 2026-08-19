@@ -74,6 +74,7 @@ pub(crate) struct ModMethodSpec {
     pub hir_params: crate::hir::Params,
     pub has_blk: bool,
     pub ruby2_keywords: bool,
+    pub dyn_ivars: bool,
 }
 
 /// What `collect_classes` hands back: the class table plus its method and
@@ -157,18 +158,35 @@ pub(crate) fn collect_classes(
         // the native default method set and the class's own defs layer
         // over it as deltas (rustc's `register_exception_subclass` arm).
         let cid = ClassId(idx as u32);
-        let exception_backed = compiler.is_exception_backed(cid);
+        let native_backed = compiler.is_native_backed(cid);
+        let immediate = compiler.is_immediate_subclass(cid);
+        // rustc's registrar chain, in its order.
         let kind = if class.is_module {
             zeo_abi::abi::CLASS_MODULE
-        } else if exception_backed {
+        } else if compiler.is_exception_backed(cid) {
             zeo_abi::abi::CLASS_EXCEPTION
+        } else if compiler.is_value_subclass(cid) {
+            zeo_abi::abi::CLASS_VALUE_SUBCLASS
+        } else if compiler.is_date_subclass(cid) || compiler.is_proc_subclass(cid) {
+            zeo_abi::abi::CLASS_RECV_HONOURING
+        } else if compiler.is_weakmap_subclass(cid) {
+            zeo_abi::abi::CLASS_WEAK_MAP
+        } else if compiler.is_module_subclass(cid) {
+            zeo_abi::abi::CLASS_MODULE_SUBCLASS
+        } else if immediate {
+            zeo_abi::abi::CLASS_IMMEDIATE
         } else {
             zeo_abi::abi::CLASS_PLAIN
         };
         // Every ancestor past self must be a user class or the plain
         // Object/Kernel/BasicObject spine -- a builtin superclass outside
         // the shapes above selects a registrar the slice does not emit.
-        for &a in class.ancestors.iter().skip(1).filter(|_| !exception_backed) {
+        for &a in class
+            .ancestors
+            .iter()
+            .skip(1)
+            .filter(|_| kind == zeo_abi::abi::CLASS_PLAIN)
+        {
             let plain_spine = matches!(a.0, 0 | 24 | 25);
             let user = (a.0 as usize) < compiler.classes.len()
                 && !compiler.classes[a.0 as usize].is_builtin
@@ -262,6 +280,7 @@ pub(crate) fn collect_classes(
                     crate::hir::Visibility::Public => {}
                 }
                 module_methods.push(ModMethodSpec {
+                    dyn_ivars: false,
                     owner: ClassId(idx as u32),
                     owner_name: name.clone(),
                     name: mname,
@@ -276,7 +295,14 @@ pub(crate) fn collect_classes(
             }
         }
 
-        for entry in class.methods.iter().filter(|_| !class.is_module) {
+        // An immediate-builtin subclass has NO instances -- rustc emits no
+        // method rows for it (the definition is allowed, `.new` raises).
+        let module_subclass = kind == zeo_abi::abi::CLASS_MODULE_SUBCLASS;
+        for entry in class
+            .methods
+            .iter()
+            .filter(|_| !class.is_module && !immediate)
+        {
             let scope = compiler.scope(entry.def);
             if scope.native_default {
                 continue;
@@ -301,7 +327,7 @@ pub(crate) fn collect_classes(
             // A native-backed instance has NO slots: its accessor runs as
             // an ordinary body (a lone name-keyed ivar read/write), the
             // rustc delta shape.
-            let accessor = match (&scope.accessor, exception_backed) {
+            let accessor = match (&scope.accessor, native_backed) {
                 (Some(_), true) | (None, _) => None,
                 (Some(shape), false) => {
                     let slot = crate::analyze::class_query::slot_of(
@@ -350,8 +376,28 @@ pub(crate) fn collect_classes(
                     verb,
                 });
             }
+            if module_subclass {
+                // A `class X < Module` instance is a `RubyValue::Class`: the
+                // object channel never sees it, so X's defs register as VALUE
+                // rows on X's id (rustc's `define_value_method` arm); ivars
+                // resolve through `ivar_set_dyn`'s Class arm (civars).
+                module_methods.push(ModMethodSpec {
+                    dyn_ivars: true,
+                    owner: ClassId(idx as u32),
+                    owner_name: name.clone(),
+                    name: mname,
+                    body: scope.body.clone(),
+                    node: scope.def_node,
+                    tramp,
+                    body_fn: body_fn.expect("module-subclass accessors run as bodies"),
+                    hir_params: p.clone(),
+                    has_blk,
+                    ruby2_keywords: scope.ruby2_keywords,
+                });
+                continue;
+            }
             methods.push(ObjMethodSpec {
-                dyn_ivars: exception_backed,
+                dyn_ivars: native_backed,
                 owner: ClassId(idx as u32),
                 owner_name: name.clone(),
                 name: mname,
