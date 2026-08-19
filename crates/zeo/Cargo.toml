@@ -32,6 +32,7 @@ cranelift-frontend.workspace = true
 cranelift-module.workspace = true
 cranelift-object.workspace = true
 cranelift-native.workspace = true
+cranelift-jit.workspace = true
 target-lexicon.workspace = true
 ruby-prism.workspace = true
 proc-macro2.workspace = true

@@ -89,6 +89,22 @@ fn capi_surface_is_exported_by_the_archive() {
     }
 }
 
+/// Every symbol the emitter can import resolves through the runtime's
+/// in-process table (`zeo_rt::capi::symbols`) -- what the JIT run path
+/// links against (the `zeo` binary does not export `zeo_rt_*`, so this
+/// table IS the JIT's symbol source; a missing row would fail a user's
+/// program at JIT relocation).
+#[test]
+fn capi_surface_resolves_in_process() {
+    for row in zeo::clif::capi_names::CAPI {
+        assert!(
+            zeo::zeo_rt::capi::symbols::addr(row.name).is_some(),
+            "capi_names row `{}` has no in-process address (add it to zeo-rt capi/symbols.rs)",
+            row.name
+        );
+    }
+}
+
 /// The capi table itself is pinned -- an accidental signature change on
 /// the emitter side shows up as a reviewed snapshot diff.
 #[test]

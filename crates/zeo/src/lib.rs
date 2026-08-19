@@ -236,10 +236,13 @@ pub fn compile_to_object_with(
     })
 }
 
-fn compile_object_on_this_thread(
+/// The shared Cranelift front half: parse, gem reporting, analyze -- what
+/// every clif-backed entry (`aot` object, `jit` run, `--emit-clif`) does
+/// before its own emission. Runs on the caller's (compile) thread.
+fn analyze_on_this_thread(
     source: &str,
     opts: &CompileOptions,
-) -> Result<ObjectOutput, CompileError> {
+) -> Result<analyze::Analyzed, CompileError> {
     memguard::set_phase(memguard::Phase::ParseLower);
     let (hir, root, gem_records) = parse::parse_and_lower_with(
         source,
@@ -260,8 +263,42 @@ fn compile_object_on_this_thread(
     memguard::set_phase(memguard::Phase::Analyze);
     let analyzed = analyze::analyze(hir, root)?;
     memguard::set_phase(memguard::Phase::Codegen);
+    Ok(analyzed)
+}
+
+fn compile_object_on_this_thread(
+    source: &str,
+    opts: &CompileOptions,
+) -> Result<ObjectOutput, CompileError> {
+    let analyzed = analyze_on_this_thread(source, opts)?;
     let object = clif::emit::compile(&analyzed).map_err(CompileError::codegen)?;
     Ok(ObjectOutput { object })
+}
+
+/// The JIT run mode (`--backend jit`): compile in-process and run without
+/// an object file, linker, or on-disk binary. Never returns on success --
+/// the process exits with the program's status.
+pub fn run_jit_with(
+    source: &str,
+    opts: &CompileOptions,
+    program_name: &str,
+    program_args: &[String],
+) -> Result<std::convert::Infallible, CompileError> {
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .name("zeo-compile".into())
+            .stack_size(COMPILE_STACK_SIZE)
+            .spawn_scoped(scope, || {
+                let analyzed = analyze_on_this_thread(source, opts)?;
+                match backend::jit::run(analyzed, program_name, program_args) {
+                    Err(message) => Err(CompileError::codegen(message)),
+                    Ok(never) => match never {},
+                }
+            })
+            .expect("spawning the compiler thread")
+            .join()
+            .unwrap_or_else(|payload| std::panic::resume_unwind(payload))
+    })
 }
 
 /// The per-function CLIF text (`--emit-clif`, the snapshot tests): the
@@ -273,22 +310,7 @@ pub fn compile_to_clif_text(source: &str, opts: &CompileOptions) -> Result<Strin
             .name("zeo-compile".into())
             .stack_size(COMPILE_STACK_SIZE)
             .spawn_scoped(scope, || {
-                memguard::set_phase(memguard::Phase::ParseLower);
-                let (hir, root, gem_records) = parse::parse_and_lower_with(
-                    source,
-                    opts.input_path.as_deref(),
-                    &opts.load_roots,
-                    &opts.package_dirs,
-                    &opts.gem_paths,
-                    opts.lockfile.as_deref(),
-                    opts.root_gem.as_ref(),
-                )?;
-                if opts.gem_warnings {
-                    gem_report::emit_warnings(&gem_records, &opts.nowarn);
-                }
-                memguard::set_phase(memguard::Phase::Analyze);
-                let analyzed = analyze::analyze(hir, root)?;
-                memguard::set_phase(memguard::Phase::Codegen);
+                let analyzed = analyze_on_this_thread(source, opts)?;
                 let (_bytes, text) =
                     clif::emit::compile_with_clif(&analyzed).map_err(CompileError::codegen)?;
                 Ok(text)

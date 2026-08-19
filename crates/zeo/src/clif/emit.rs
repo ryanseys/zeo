@@ -1,6 +1,8 @@
-//! Object emission: ISA/flags, the `ObjectModule`, the capi import cache,
-//! and the per-program orchestration -- prologue/epilogue of the compiled
-//! `<main>`, the emitted C `main`, and the statics (see `statics`).
+//! Code emission: ISA/flags, the module (an object file for AOT,
+//! in-process code memory for JIT -- same lowering either way), the capi
+//! import cache, and the per-program orchestration -- prologue/epilogue of
+//! the compiled `<main>`, the emitted C `main`, and the statics (see
+//! `statics`).
 
 use super::capi_names::{self, CTy};
 use super::ctx::Fx;
@@ -11,9 +13,102 @@ use cranelift_codegen::ir::{
 };
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
-use cranelift_module::{DataId, FuncId, Linkage, Module};
+use cranelift_jit::{JITBuilder, JITModule};
+use cranelift_module::{
+    DataDescription, DataId, FuncId, Linkage, Module, ModuleDeclarations, ModuleReloc, ModuleResult,
+};
 use cranelift_object::{ObjectBuilder, ObjectModule};
 use std::collections::HashMap;
+
+/// The one module the emitter writes into. Both arms take the identical
+/// lowering -- the enum (not two emitters) is what makes "JIT runs the
+/// same code AOT links" a structural fact.
+#[allow(
+    clippy::large_enum_variant,
+    reason = "one ClifModule exists per compile; boxing would buy nothing"
+)]
+pub(crate) enum ClifModule {
+    Object(ObjectModule),
+    Jit(JITModule),
+}
+
+impl ClifModule {
+    fn as_dyn(&self) -> &dyn Module {
+        match self {
+            ClifModule::Object(m) => m,
+            ClifModule::Jit(m) => m,
+        }
+    }
+
+    fn as_dyn_mut(&mut self) -> &mut dyn Module {
+        match self {
+            ClifModule::Object(m) => m,
+            ClifModule::Jit(m) => m,
+        }
+    }
+}
+
+impl Module for ClifModule {
+    fn isa(&self) -> &dyn cranelift_codegen::isa::TargetIsa {
+        self.as_dyn().isa()
+    }
+
+    fn declarations(&self) -> &ModuleDeclarations {
+        self.as_dyn().declarations()
+    }
+
+    fn declare_function(
+        &mut self,
+        name: &str,
+        linkage: Linkage,
+        signature: &ir::Signature,
+    ) -> ModuleResult<FuncId> {
+        self.as_dyn_mut().declare_function(name, linkage, signature)
+    }
+
+    fn declare_anonymous_function(&mut self, signature: &ir::Signature) -> ModuleResult<FuncId> {
+        self.as_dyn_mut().declare_anonymous_function(signature)
+    }
+
+    fn declare_data(
+        &mut self,
+        name: &str,
+        linkage: Linkage,
+        writable: bool,
+        tls: bool,
+    ) -> ModuleResult<DataId> {
+        self.as_dyn_mut().declare_data(name, linkage, writable, tls)
+    }
+
+    fn declare_anonymous_data(&mut self, writable: bool, tls: bool) -> ModuleResult<DataId> {
+        self.as_dyn_mut().declare_anonymous_data(writable, tls)
+    }
+
+    fn define_function_with_control_plane(
+        &mut self,
+        func: FuncId,
+        ctx: &mut cranelift_codegen::Context,
+        ctrl_plane: &mut cranelift_codegen::control::ControlPlane,
+    ) -> ModuleResult<()> {
+        self.as_dyn_mut()
+            .define_function_with_control_plane(func, ctx, ctrl_plane)
+    }
+
+    fn define_function_bytes(
+        &mut self,
+        func_id: FuncId,
+        alignment: u64,
+        bytes: &[u8],
+        relocs: &[ModuleReloc],
+    ) -> ModuleResult<()> {
+        self.as_dyn_mut()
+            .define_function_bytes(func_id, alignment, bytes, relocs)
+    }
+
+    fn define_data(&mut self, data_id: DataId, data: &DataDescription) -> ModuleResult<()> {
+        self.as_dyn_mut().define_data(data_id, data)
+    }
+}
 
 /// Lower `analyzed` to one object file's bytes.
 pub fn compile(analyzed: &Analyzed) -> Result<Vec<u8>, String> {
@@ -29,10 +124,47 @@ fn compile_inner(
     analyzed: &Analyzed,
     collect_clif: bool,
 ) -> Result<(Vec<u8>, Option<String>), String> {
-    let mut em = Emitter::new()?;
+    let mut em = Emitter::new(false)?;
     em.clif_text = collect_clif.then(String::new);
-    let defs = collect_methods(&mut em, analyzed)?;
-    let collected = super::classes::collect_classes(&mut em, analyzed)?;
+    emit_program(&mut em, analyzed)?;
+    let clif = em.clif_text.take();
+    let ClifModule::Object(module) = em.module else {
+        unreachable!("Emitter::new(false) builds an object module")
+    };
+    let product = module.finish();
+    let bytes = product
+        .emit()
+        .map_err(|e| format!("emitting the object file: {e}"))?;
+    Ok((bytes, clif))
+}
+
+/// A JIT-compiled program: finalized in-process code plus the emitted C
+/// `main`'s address. The module OWNS the code memory -- it must outlive
+/// every call into `main`.
+pub struct Jitted {
+    pub module: JITModule,
+    pub main: *const u8,
+}
+
+/// Lower `analyzed` straight into executable memory (`--backend jit`).
+pub fn compile_jit(analyzed: &Analyzed) -> Result<Jitted, String> {
+    let mut em = Emitter::new(true)?;
+    let main = emit_program(&mut em, analyzed)?;
+    let ClifModule::Jit(mut module) = em.module else {
+        unreachable!("Emitter::new(true) builds a JIT module")
+    };
+    module
+        .finalize_definitions()
+        .map_err(|e| format!("finalizing jitted code: {e}"))?;
+    let main = module.get_finalized_function(main);
+    Ok(Jitted { module, main })
+}
+
+/// The whole program into `em`'s module -- every function and data object,
+/// mode-blind. Returns the emitted C `main`.
+fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String> {
+    let defs = collect_methods(em, analyzed)?;
+    let collected = super::classes::collect_classes(em, analyzed)?;
     let (class_specs, obj_methods, class_vis) =
         (collected.classes, collected.methods, collected.vis);
     for def in &defs {
@@ -48,7 +180,7 @@ fn compile_inner(
             node: def.node,
             has_blk: def.has_blk,
         };
-        define_method_body(&mut em, analyzed, &spec)?;
+        define_method_body(em, analyzed, &spec)?;
     }
     for m in &obj_methods {
         if let Some(func) = m.body_fn {
@@ -63,32 +195,32 @@ fn compile_inner(
                 node: m.node,
                 has_blk: m.has_blk,
             };
-            define_method_body(&mut em, analyzed, &spec)?;
+            define_method_body(em, analyzed, &spec)?;
         }
     }
     for def in &defs {
         let decl = &em.methods[&def.name];
         let (tramp, body, arity, has_blk) = (decl.tramp, decl.body, decl.arity, decl.has_blk);
         let idx = em.next_fn_index();
-        super::params::define_trampoline(&mut em, tramp, body, arity, has_blk, idx)?;
+        super::params::define_trampoline(em, tramp, body, arity, has_blk, idx)?;
     }
     for m in &obj_methods {
         let idx = em.next_fn_index();
         match (m.accessor, m.body_fn) {
             (Some((slot, kind)), None) => {
-                super::params::define_accessor(&mut em, m.tramp, slot, kind, idx)?;
+                super::params::define_accessor(em, m.tramp, slot, kind, idx)?;
             }
             (None, Some(body)) => {
-                super::params::define_trampoline(&mut em, m.tramp, body, m.arity, m.has_blk, idx)?;
+                super::params::define_trampoline(em, m.tramp, body, m.arity, m.has_blk, idx)?;
             }
             (Some(_), Some(_)) | (None, None) => {
                 unreachable!("collect_classes declares exactly one of accessor/body")
             }
         }
     }
-    let toplevel = define_toplevel(&mut em, analyzed)?;
-    let unit_init = statics::define_unit_init(&mut em)?;
-    statics::define_syms(&mut em)?;
+    let toplevel = define_toplevel(em, analyzed)?;
+    let unit_init = statics::define_unit_init(em)?;
+    statics::define_syms(em)?;
     let vm_rows: Vec<statics::VmRowSpec> = defs
         .iter()
         .map(|d| statics::VmRowSpec {
@@ -124,7 +256,7 @@ fn compile_inner(
         })
         .collect();
     let desc = statics::define_desc(
-        &mut em,
+        em,
         analyzed,
         toplevel,
         unit_init,
@@ -133,20 +265,15 @@ fn compile_inner(
         &class_specs,
         &obj_rows,
     )?;
-    define_main(&mut em, desc)?;
-    statics::define_rodata(&mut em)?;
-    let clif = em.clif_text.take();
-    let product = em.module.finish();
-    let bytes = product
-        .emit()
-        .map_err(|e| format!("emitting the object file: {e}"))?;
-    Ok((bytes, clif))
+    let main = define_main(em, desc)?;
+    statics::define_rodata(em)?;
+    Ok(main)
 }
 
 /// Program-wide emission state: the module, the rodata blob, the symbol
 /// pool, and the capi import cache.
 pub(crate) struct Emitter {
-    pub module: ObjectModule,
+    pub module: ClifModule,
     pub ptr: ir::Type,
     pub rodata_id: DataId,
     pub syms_id: DataId,
@@ -172,7 +299,10 @@ pub(crate) struct MethodDecl {
 }
 
 impl Emitter {
-    fn new() -> Result<Emitter, String> {
+    /// `jit`: emit into in-process code memory instead of an object file.
+    /// The only lowering-visible difference is `is_pic` (`JITModule`
+    /// requires non-PIC code); everything downstream is mode-blind.
+    fn new(jit: bool) -> Result<Emitter, String> {
         let mut flags = settings::builder();
         let set = |flags: &mut settings::Builder, k: &str, v: &str| {
             flags
@@ -180,7 +310,7 @@ impl Emitter {
                 .map_err(|e| format!("cranelift setting {k}={v}: {e}"))
         };
         set(&mut flags, "opt_level", "speed")?;
-        set(&mut flags, "is_pic", "true")?;
+        set(&mut flags, "is_pic", if jit { "false" } else { "true" })?;
         set(&mut flags, "preserve_frame_pointers", "true")?;
         set(&mut flags, "enable_probestack", "false")?;
         set(&mut flags, "unwind_info", "true")?;
@@ -198,15 +328,29 @@ impl Emitter {
         if isa.triple().endianness() != Ok(target_lexicon::Endianness::Little) {
             return Err("the clif backend only serializes little-endian tables".to_string());
         }
-        let elf = isa.triple().binary_format == target_lexicon::BinaryFormat::Elf;
-        let mut builder =
-            ObjectBuilder::new(isa, "zeo-p0", cranelift_module::default_libcall_names())
-                .map_err(|e| format!("cranelift object builder: {e}"))?;
-        builder.per_function_section(true);
-        // `.eh_frame` is free on ELF; Mach-O emission panics in
-        // cranelift-object 0.134 and is not load-bearing (decision 13).
-        builder.unwind_info(elf);
-        let mut module = ObjectModule::new(builder);
+        let mut module = if jit {
+            // Imports resolve against the runtime linked into THIS process:
+            // the capi table first (`zeo_rt_*` -- not exported, so dlsym
+            // cannot find them), then cranelift's dlsym fallback (libcalls:
+            // memcpy and friends from libc).
+            let mut builder = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
+            builder.symbols(zeo_rt::capi::symbols::NAMES.iter().map(|&name| {
+                let addr = zeo_rt::capi::symbols::addr(name)
+                    .expect("every listed capi symbol has an address");
+                (name, addr)
+            }));
+            ClifModule::Jit(JITModule::new(builder))
+        } else {
+            let elf = isa.triple().binary_format == target_lexicon::BinaryFormat::Elf;
+            let mut builder =
+                ObjectBuilder::new(isa, "zeo-p0", cranelift_module::default_libcall_names())
+                    .map_err(|e| format!("cranelift object builder: {e}"))?;
+            builder.per_function_section(true);
+            // `.eh_frame` is free on ELF; Mach-O emission panics in
+            // cranelift-object 0.134 and is not load-bearing (decision 13).
+            builder.unwind_info(elf);
+            ClifModule::Object(ObjectModule::new(builder))
+        };
         let ptr = module.target_config().pointer_type();
         let rodata_id = module
             .declare_data(names::RODATA, Linkage::Local, false, false)

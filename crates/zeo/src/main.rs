@@ -76,7 +76,7 @@ struct Args {
     /// `--emit-clif[=<path>]`: emit the Cranelift IR instead of building --
     /// to the attached path or stdout when bare. Implies the aot pipeline.
     emit_clif: Option<EmitTarget>,
-    /// `--backend <rustc|aot>`: which code generator builds the program
+    /// `--backend <rustc|aot|jit>`: which code generator builds the program
     /// (`ZEO_BACKEND` is the env spelling; the flag wins). `None` = the
     /// dual-period default, rustc.
     backend: Option<zeo::backend::Backend>,
@@ -169,8 +169,10 @@ options:
   --compile             write the default-named binary instead of running
   --emit-clif[=<path>]  emit the Cranelift IR (the aot backend's own
                         lowering) instead of building; bare prints to stdout
-  --backend <rustc|aot> which code generator builds the program: rustc (the
-                        dual-period default) or the Cranelift AOT backend
+  --backend <rustc|aot|jit>
+                        which code generator builds the program: rustc (the
+                        dual-period default), the Cranelift AOT backend, or
+                        the in-process Cranelift JIT (run mode only)
                         (ZEO_BACKEND is the env spelling; the flag wins)
   -I <dir>              add a `require` search root, like ruby's -I
                         (repeatable; `-I<dir>` and `-I=<dir>` also accepted)
@@ -684,6 +686,23 @@ fn run() -> Result<(), MainError> {
     // The backend decides WHICH compile runs (rust text vs an object file),
     // so it is selected before compiling.
     let backend = zeo::backend::Backend::select(args.backend)?;
+    // The JIT is run-in-place by definition: compile into this process and
+    // exit with the program's status. An artifact request needs a backend
+    // that produces one.
+    if backend == zeo::backend::Backend::Jit {
+        if args.compile || args.output.is_some() {
+            return Err(
+                "--backend jit runs in place and produces no artifact (use --backend aot for -o/--compile)"
+                    .to_string()
+                    .into(),
+            );
+        }
+        let program_name = match &args.source {
+            Source::File(path) => path.display().to_string(),
+            Source::Eval(_) => "-e".to_string(),
+        };
+        match zeo::run_jit_with(&source, &opts, &program_name, &args.program_args)? {}
+    }
     enum Compiled {
         Rustc(zeo::CompileOutput),
         Aot(zeo::ObjectOutput),
@@ -691,6 +710,7 @@ fn run() -> Result<(), MainError> {
     let compiled = match backend {
         zeo::backend::Backend::Rustc => Compiled::Rustc(zeo::compile_to_rust_with(&source, &opts)?),
         zeo::backend::Backend::Aot => Compiled::Aot(zeo::compile_to_object_with(&source, &opts)?),
+        zeo::backend::Backend::Jit => unreachable!("the jit branch above never falls through"),
     };
     zeo::memguard::set_phase(zeo::memguard::Phase::Build);
     let program = match &compiled {

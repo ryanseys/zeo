@@ -34,6 +34,7 @@ pub mod objects;
 pub mod procs;
 pub mod registry;
 pub mod signals;
+pub mod symbols;
 pub mod values;
 
 pub use procs::{BlockFn, ProcEnv};

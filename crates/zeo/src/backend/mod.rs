@@ -36,6 +36,7 @@
 //! in-process test harness share one implementation.
 
 mod cache;
+pub mod jit;
 pub mod link;
 pub mod object;
 
@@ -1214,12 +1215,14 @@ fn runtime_artifact_fingerprint(
 /// `Rustc`: emitted Rust text -> `rustc` -> binary, linking the prebuilt
 /// `zeo-rt` artifact -- the default during the dual period. `Aot`: the
 /// Cranelift path -- HIR -> CLIF -> object file (`clif/`), linked against
-/// `libzeo.a` (`link.rs`). `Jit` (in-process `cranelift-jit`) slots in as a
-/// sibling variant at M0.5.
+/// `libzeo.a` (`link.rs`). `Jit`: the same CLIF finalized into THIS
+/// process's memory and run in place (`jit.rs`) -- run mode only, no
+/// artifact.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Backend {
     Rustc,
     Aot,
+    Jit,
 }
 
 impl Backend {
@@ -1228,7 +1231,10 @@ impl Backend {
         match value {
             "rustc" => Ok(Backend::Rustc),
             "aot" => Ok(Backend::Aot),
-            other => Err(format!("unknown backend `{other}` (expected rustc or aot)")),
+            "jit" => Ok(Backend::Jit),
+            other => Err(format!(
+                "unknown backend `{other}` (expected rustc, aot, or jit)"
+            )),
         }
     }
 
