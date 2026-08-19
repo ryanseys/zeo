@@ -34,6 +34,7 @@ pub(crate) struct ObjMethodSpec {
     pub body_fn: Option<cranelift_module::FuncId>,
     pub hir_params: crate::hir::Params,
     pub has_blk: bool,
+    pub ruby2_keywords: bool,
 }
 
 /// What `collect_classes` hands back: the class table plus its method and
@@ -206,6 +207,7 @@ pub(crate) fn collect_classes(
                 body_fn,
                 hir_params: p.clone(),
                 has_blk,
+                ruby2_keywords: scope.ruby2_keywords,
             });
         }
     }

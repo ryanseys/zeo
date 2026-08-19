@@ -178,6 +178,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             body: &def.body,
             node: def.node,
             has_blk: def.has_blk,
+            ruby2_keywords: def.ruby2_keywords,
         };
         define_method_body(em, analyzed, &spec)?;
     }
@@ -192,6 +193,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
                 body: &m.body,
                 node: m.node,
                 has_blk: m.has_blk,
+                ruby2_keywords: m.ruby2_keywords,
             };
             define_method_body(em, analyzed, &spec)?;
         }
@@ -495,6 +497,7 @@ impl Emitter {
 pub(crate) struct DefSpec {
     pub name: String,
     hir_params: crate::hir::Params,
+    ruby2_keywords: bool,
     body: Vec<crate::hir::NodeId>,
     visibility: crate::hir::Visibility,
     node: Option<crate::hir::NodeId>,
@@ -579,6 +582,7 @@ fn collect_methods(em: &mut Emitter, analyzed: &Analyzed) -> Result<Vec<DefSpec>
         out.push(DefSpec {
             name,
             hir_params: params.clone(),
+            ruby2_keywords: scope.ruby2_keywords,
             body: scope.body.clone(),
             visibility: scope.visibility,
             node: scope.def_node,
@@ -598,6 +602,7 @@ pub(crate) struct BodyFnSpec<'a> {
     pub body: &'a [crate::hir::NodeId],
     pub node: Option<crate::hir::NodeId>,
     pub has_blk: bool,
+    pub ruby2_keywords: bool,
 }
 
 /// A method's frame facts: `(file, label, line, end_line)` -- shared by
@@ -825,6 +830,7 @@ fn define_method_body(
     fx.method_class = Some(def.owner);
     fx.frame_label = label.clone();
     fx.blk_ptr = blk_ptr;
+    fx.ruby2_keywords = def.ruby2_keywords;
     let ret_ok = fx.b.create_block();
     fx.ret = Some((out_ptr, ret_ok));
 

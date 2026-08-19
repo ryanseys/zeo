@@ -95,6 +95,9 @@ pub(crate) struct Fx<'e, 'f> {
     /// site must be matched by exactly one consumption site.
     pub owned_created: usize,
     pub owned_consumed: usize,
+    /// The enclosing `def` carries the `ruby2_keywords` directive: a splat
+    /// forwarding its `*rest` keeps the keyword mark on a trailing hash.
+    pub ruby2_keywords: bool,
 }
 
 impl<'e, 'f> Fx<'e, 'f> {
@@ -131,6 +134,7 @@ impl<'e, 'f> Fx<'e, 'f> {
             shadowed: std::collections::HashSet::new(),
             owned_created: 0,
             owned_consumed: 0,
+            ruby2_keywords: false,
         }
     }
 

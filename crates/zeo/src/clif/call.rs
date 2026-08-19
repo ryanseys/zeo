@@ -255,7 +255,9 @@ pub(crate) fn splat_send(
     };
     let sym = fx.sym_id(name);
     let zero_box = fx.b.ins().iconst(types::I32, 0);
-    let unmark = fx.b.ins().iconst(types::I8, 1);
+    // `ruby2_keywords`' whole purpose: a marked forwarder's splat keeps a
+    // trailing hash's keyword mark.
+    let unmark = fx.b.ins().iconst(types::I8, i64::from(!fx.ruby2_keywords));
     let null = fx.b.ins().iconst(fx.em.ptr, 0);
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
