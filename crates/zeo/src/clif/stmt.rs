@@ -40,6 +40,30 @@ pub(crate) fn lower_value_body_into(
     Ok(())
 }
 
+/// `@name = value`: the runtime slot write (frozen check inside); the
+/// value MOVES in.
+fn lower_ivar_write(fx: &mut Fx, site: NodeId, name: &str, value: NodeId) -> Result<(), String> {
+    let slot = ivar_slot_of(fx, site, name)?;
+    let op = lower_expr(fx, value)?;
+    let ptr = ownership::move_ptr(fx, &op);
+    let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
+    let slot_v = fx.b.ins().iconst(fx.em.ptr, slot as i64);
+    let status = fx
+        .call("zeo_rt_ivar_set_slot", &[self_ptr, slot_v, ptr])
+        .expect("ivar_set_slot returns a status");
+    fx.fallible(status);
+    Ok(())
+}
+
+fn ivar_slot_of(fx: &Fx, site: NodeId, name: &str) -> Result<usize, String> {
+    let Some(class) = fx.method_class else {
+        return fx.unsupported(site, "an ivar outside a compiled method");
+    };
+    crate::analyze::class_query::slot_of(&fx.an.compiler, class, name)
+        .ok_or(())
+        .or_else(|()| fx.unsupported(site, "a dynamic (slotless) ivar"))
+}
+
 /// A tail position accepts a few statement-shaped nodes whose value Ruby
 /// defines: an assignment answers the assigned value, a loop answers nil.
 #[allow(
@@ -57,6 +81,22 @@ fn lower_tail_expr(fx: &mut Fx, tail: NodeId) -> Result<super::operand::Operand,
             Ok(Operand::Ptr {
                 addr,
                 owned: false,
+                tag: TagInfo::Unknown,
+            })
+        }
+        HirNode::IvarWrite(name, value) => {
+            let (name, value) = (name.clone(), *value);
+            let slot = ivar_slot_of(fx, tail, &name)?;
+            lower_ivar_write(fx, tail, &name, value)?;
+            let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
+            let ss = fx.temp_slot();
+            let out = fx.slot_addr(ss, 0);
+            let slot_v = fx.b.ins().iconst(fx.em.ptr, slot as i64);
+            fx.call("zeo_rt_ivar_get_slot", &[self_ptr, slot_v, out]);
+            fx.owned_created += 1;
+            Ok(Operand::Slot {
+                ss,
+                owned: true,
                 tag: TagInfo::Unknown,
             })
         }
@@ -101,6 +141,12 @@ fn lower_tail_expr(fx: &mut Fx, tail: NodeId) -> Result<super::operand::Operand,
         | HirNode::NilLit
         | HirNode::StringLit(..)
         | HirNode::LocalRead(..)
+        | HirNode::IvarRead(..)
+        | HirNode::Or(..)
+        | HirNode::And(..)
+        | HirNode::ClassRef(..)
+        | HirNode::New { .. }
+        | HirNode::SelfRef
         | HirNode::Call { .. } => lower_expr(fx, tail),
         other => {
             let what = format!("this tail expression ({})", statement_kind(other));
@@ -223,6 +269,28 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
             fx.continue_unreachable();
             Ok(())
         }
+        HirNode::IvarWrite(name, value) => {
+            let (name, value) = (name.clone(), *value);
+            lower_ivar_write(fx, stmt, &name, value)
+        }
+        HirNode::Return(value) => {
+            let value = *value;
+            let Some((out, ret_ok)) = fx.ret else {
+                return fx.unsupported(stmt, "a top-level `return`");
+            };
+            match value {
+                Some(v) => {
+                    let op = lower_expr(fx, v)?;
+                    ownership::write_move_into(fx, &op, out);
+                }
+                None => {
+                    ownership::write_move_into(fx, &super::operand::Operand::Nil, out);
+                }
+            }
+            fx.b.ins().jump(ret_ok, &[]);
+            fx.continue_unreachable();
+            Ok(())
+        }
         HirNode::Seq(stmts) => {
             let stmts = stmts.clone();
             lower_stmts(fx, &stmts)
@@ -252,6 +320,12 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
         | HirNode::NilLit
         | HirNode::StringLit(..)
         | HirNode::LocalRead(..)
+        | HirNode::IvarRead(..)
+        | HirNode::Or(..)
+        | HirNode::And(..)
+        | HirNode::ClassRef(..)
+        | HirNode::New { .. }
+        | HirNode::SelfRef
         | HirNode::Call { .. } => {
             let op = lower_expr(fx, stmt)?;
             ownership::discard(fx, op);

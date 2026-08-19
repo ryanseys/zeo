@@ -39,6 +39,11 @@ pub const CAPI: &[CapiSig] = &[
         ret: Some(I32),
     },
     CapiSig {
+        name: "zeo_rt_const_get_at",
+        params: &[U32, Ptr, Usize, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
         name: "zeo_rt_frame_pop",
         params: &[],
         ret: None,
@@ -47,6 +52,11 @@ pub const CAPI: &[CapiSig] = &[
         name: "zeo_rt_frame_push",
         params: &[Ptr, Usize, Ptr, Usize, U32, U32],
         ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_frozen_check",
+        params: &[Ptr],
+        ret: Some(I32),
     },
     CapiSig {
         name: "zeo_rt_int_add_slow",
@@ -62,6 +72,16 @@ pub const CAPI: &[CapiSig] = &[
         name: "zeo_rt_int_sub_slow",
         params: &[Ptr, Ptr, Ptr],
         ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_ivar_get_slot",
+        params: &[Ptr, Usize, Ptr],
+        ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_ivar_set_slot",
+        params: &[Ptr, Usize, Ptr],
+        ret: Some(I32),
     },
     CapiSig {
         name: "zeo_rt_kernel_puts",

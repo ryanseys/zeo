@@ -153,7 +153,7 @@ pub(crate) fn pool_owned(fx: &mut Fx, addr: ir::Value, tag: TagInfo) {
 }
 
 /// Retain the value at `addr` iff its runtime tag is a heap tag.
-fn retain_if_heap(fx: &mut Fx, addr: ir::Value) {
+pub(crate) fn retain_if_heap(fx: &mut Fx, addr: ir::Value) {
     let fl = MemFlagsData::trusted();
     let t = fx.b.ins().load(types::I8, fl, addr, 0);
     let is_heap = fx.b.ins().icmp_imm_u(
@@ -168,6 +168,34 @@ fn retain_if_heap(fx: &mut Fx, addr: ir::Value) {
     fx.call("zeo_rt_retain", &[addr]);
     fx.b.ins().jump(cont, &[]);
     fx.b.switch_to_block(cont);
+}
+
+/// `op` as a pointer whose pointee the callee will MOVE from
+/// (`ivar_set_slot`'s convention). An owned operand hands over its own
+/// storage; a borrowed one is copied to a temp and retained (moving from
+/// the original would kill the local it borrows); unboxed values
+/// materialize plainly.
+pub(crate) fn move_ptr(fx: &mut Fx, op: &Operand) -> ir::Value {
+    match op {
+        Operand::Slot { owned: true, .. } | Operand::Ptr { owned: true, .. } => {
+            fx.owned_consumed += 1;
+            addr_of(fx, op)
+        }
+        Operand::Slot { owned: false, .. } | Operand::Ptr { owned: false, .. } => {
+            let ss = fx.temp_slot();
+            let dst = fx.slot_addr(ss, 0);
+            store_bits(fx, op, dst);
+            match op.tag().heap() {
+                Some(true) => {
+                    fx.call("zeo_rt_retain", &[dst]);
+                }
+                Some(false) => {}
+                None => retain_if_heap(fx, dst),
+            }
+            dst
+        }
+        Operand::Nil | Operand::Int(_) | Operand::Float(_) | Operand::Bool(_) => borrow_ptr(fx, op),
+    }
 }
 
 /// Evaluate-and-ignore: an owned result is pooled (heap) or simply

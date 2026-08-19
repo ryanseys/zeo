@@ -9,7 +9,7 @@ use cranelift_codegen::ir::{self, InstBuilder, MemFlagsData, UserFuncName};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module};
 use std::collections::HashMap;
-use zeo_abi::abi::{self, ProgramDesc, Str, VisRow, VmRow};
+use zeo_abi::abi::{self, ClassDesc, ObjRow, ProgramDesc, Str, VisRow, VmRow};
 
 /// The program's symbol table: names in first-intern order; `zeo_unit_init`
 /// interns each at startup into the `zeo_syms` `.bss` array, and emitted
@@ -177,6 +177,189 @@ fn define_vm_rows(em: &mut Emitter, rows: &[VmRowSpec]) -> Result<Option<DataId>
     Ok(Some(id))
 }
 
+/// One `ObjRow` (an object-channel method on a compiled class).
+pub(crate) struct ObjRowSpec {
+    pub class: u32,
+    pub name: String,
+    pub f: FuncId,
+}
+
+/// The `zeo_obj_rows` table (same shape as `zeo_vm_rows`, minus box/flags).
+fn define_obj_rows(em: &mut Emitter, rows: &[ObjRowSpec]) -> Result<Option<DataId>, String> {
+    if rows.is_empty() {
+        return Ok(None);
+    }
+    let size = std::mem::size_of::<ObjRow>();
+    let id = em
+        .module
+        .declare_data("zeo_obj_rows", Linkage::Local, false, false)
+        .map_err(|e| format!("declaring zeo_obj_rows: {e}"))?;
+    let interned: Vec<u32> = rows
+        .iter()
+        .map(|r| em.intern_rodata(r.name.as_bytes()))
+        .collect();
+    let mut data = DataDescription::new();
+    let mut bytes = vec![0u8; size * rows.len()];
+    for (i, row) in rows.iter().enumerate() {
+        let base = i * size;
+        bytes[base + std::mem::offset_of!(ObjRow, class)
+            ..base + std::mem::offset_of!(ObjRow, class) + 4]
+            .copy_from_slice(&row.class.to_le_bytes());
+        let at = base + std::mem::offset_of!(ObjRow, name) + std::mem::offset_of!(Str, len);
+        bytes[at..at + 8].copy_from_slice(&(row.name.len() as u64).to_le_bytes());
+    }
+    data.define(bytes.into_boxed_slice());
+    data.set_align(8);
+    let rodata_gv = em.module.declare_data_in_data(em.rodata_id, &mut data);
+    for (i, row) in rows.iter().enumerate() {
+        let base = i * size;
+        let name_at =
+            (base + std::mem::offset_of!(ObjRow, name) + std::mem::offset_of!(Str, ptr)) as u32;
+        data.write_data_addr(name_at, rodata_gv, i64::from(interned[i]));
+        let f_ref = em.module.declare_func_in_data(row.f, &mut data);
+        data.write_function_addr((base + std::mem::offset_of!(ObjRow, f)) as u32, f_ref);
+    }
+    em.module
+        .define_data(id, &data)
+        .map_err(|e| format!("defining zeo_obj_rows: {e}"))?;
+    Ok(Some(id))
+}
+
+/// The `zeo_classes` table plus its two auxiliary arrays: the linearized
+/// ancestor ids and the ivar-name `Str` entries every `ClassDesc` points
+/// into.
+fn define_classes(
+    em: &mut Emitter,
+    classes: &[super::classes::ClassSpec],
+) -> Result<Option<DataId>, String> {
+    if classes.is_empty() {
+        return Ok(None);
+    }
+    // Ancestor ids, one shared u32 array.
+    let anc_id = em
+        .module
+        .declare_data("zeo_class_ancestors", Linkage::Local, false, false)
+        .map_err(|e| format!("declaring zeo_class_ancestors: {e}"))?;
+    let mut anc_bytes = Vec::new();
+    let mut anc_offsets = Vec::with_capacity(classes.len());
+    for c in classes {
+        anc_offsets.push(anc_bytes.len());
+        for a in &c.ancestors {
+            anc_bytes.extend_from_slice(&a.to_le_bytes());
+        }
+    }
+    let mut anc = DataDescription::new();
+    anc.define(anc_bytes.into_boxed_slice());
+    anc.set_align(4);
+    em.module
+        .define_data(anc_id, &anc)
+        .map_err(|e| format!("defining zeo_class_ancestors: {e}"))?;
+
+    // Ivar names, one shared Str array.
+    let str_size = std::mem::size_of::<Str>();
+    let n_ivars: usize = classes.iter().map(|c| c.ivars.len()).sum();
+    let ivars_id = (n_ivars > 0)
+        .then(|| {
+            em.module
+                .declare_data("zeo_class_ivars", Linkage::Local, false, false)
+                .map_err(|e| format!("declaring zeo_class_ivars: {e}"))
+        })
+        .transpose()?;
+    let mut ivar_offsets = Vec::with_capacity(classes.len());
+    if let Some(ivars_id) = ivars_id {
+        let mut entries: Vec<(u32, usize)> = Vec::with_capacity(n_ivars);
+        for c in classes {
+            ivar_offsets.push(entries.len() * str_size);
+            for iv in &c.ivars {
+                entries.push((em.intern_rodata(iv.as_bytes()), iv.len()));
+            }
+        }
+        let mut data = DataDescription::new();
+        let mut bytes = vec![0u8; str_size * entries.len()];
+        for (i, &(_, len)) in entries.iter().enumerate() {
+            let at = i * str_size + std::mem::offset_of!(Str, len);
+            bytes[at..at + 8].copy_from_slice(&(len as u64).to_le_bytes());
+        }
+        data.define(bytes.into_boxed_slice());
+        data.set_align(8);
+        let rodata_gv = em.module.declare_data_in_data(em.rodata_id, &mut data);
+        for (i, &(off, _)) in entries.iter().enumerate() {
+            let at = (i * str_size + std::mem::offset_of!(Str, ptr)) as u32;
+            data.write_data_addr(at, rodata_gv, i64::from(off));
+        }
+        em.module
+            .define_data(ivars_id, &data)
+            .map_err(|e| format!("defining zeo_class_ivars: {e}"))?;
+    } else {
+        ivar_offsets.resize(classes.len(), 0);
+    }
+
+    let size = std::mem::size_of::<ClassDesc>();
+    let id = em
+        .module
+        .declare_data("zeo_classes", Linkage::Local, false, false)
+        .map_err(|e| format!("declaring zeo_classes: {e}"))?;
+    let name_offs: Vec<u32> = classes
+        .iter()
+        .map(|c| em.intern_rodata(c.name.as_bytes()))
+        .collect();
+    let mut data = DataDescription::new();
+    let mut bytes = vec![0u8; size * classes.len()];
+    let put_u64 = |bytes: &mut [u8], at: usize, v: u64| {
+        bytes[at..at + 8].copy_from_slice(&v.to_le_bytes());
+    };
+    for (i, c) in classes.iter().enumerate() {
+        let base = i * size;
+        bytes[base + std::mem::offset_of!(ClassDesc, id)
+            ..base + std::mem::offset_of!(ClassDesc, id) + 4]
+            .copy_from_slice(&c.id.to_le_bytes());
+        bytes[base + std::mem::offset_of!(ClassDesc, kind)] = abi::CLASS_PLAIN;
+        let at = base + std::mem::offset_of!(ClassDesc, name) + std::mem::offset_of!(Str, len);
+        bytes[at..at + 8].copy_from_slice(&(c.name.len() as u64).to_le_bytes());
+        put_u64(
+            &mut bytes,
+            base + std::mem::offset_of!(ClassDesc, n_ancestors),
+            c.ancestors.len() as u64,
+        );
+        put_u64(
+            &mut bytes,
+            base + std::mem::offset_of!(ClassDesc, n_ivars),
+            c.ivars.len() as u64,
+        );
+        bytes[base + std::mem::offset_of!(ClassDesc, hidden)
+            ..base + std::mem::offset_of!(ClassDesc, hidden) + 2]
+            .copy_from_slice(&c.hidden.to_le_bytes());
+    }
+    data.define(bytes.into_boxed_slice());
+    data.set_align(8);
+    let rodata_gv = em.module.declare_data_in_data(em.rodata_id, &mut data);
+    let anc_gv = em.module.declare_data_in_data(anc_id, &mut data);
+    let ivars_gv = ivars_id.map(|iv| em.module.declare_data_in_data(iv, &mut data));
+    for (i, c) in classes.iter().enumerate() {
+        let base = i * size;
+        let name_at =
+            (base + std::mem::offset_of!(ClassDesc, name) + std::mem::offset_of!(Str, ptr)) as u32;
+        data.write_data_addr(name_at, rodata_gv, i64::from(name_offs[i]));
+        data.write_data_addr(
+            (base + std::mem::offset_of!(ClassDesc, ancestors)) as u32,
+            anc_gv,
+            anc_offsets[i] as i64,
+        );
+        if !c.ivars.is_empty() {
+            let gv = ivars_gv.expect("ivar table exists when any class has ivars");
+            data.write_data_addr(
+                (base + std::mem::offset_of!(ClassDesc, ivar_names)) as u32,
+                gv,
+                ivar_offsets[i] as i64,
+            );
+        }
+    }
+    em.module
+        .define_data(id, &data)
+        .map_err(|e| format!("defining zeo_classes: {e}"))?;
+    Ok(Some(id))
+}
+
 /// The `zeo_vis_rows` table.
 fn define_vis_rows(em: &mut Emitter, rows: &[VisRowSpec]) -> Result<Option<DataId>, String> {
     if rows.is_empty() {
@@ -219,6 +402,10 @@ fn define_vis_rows(em: &mut Emitter, rows: &[VisRowSpec]) -> Result<Option<DataI
 
 /// `zeo_program_desc` + the `Str` tables: the loaded-features seed (the
 /// same list the rustc backend emits) and the parse warnings.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the desc is the one table of tables; every parameter is one of its sections"
+)]
 pub(crate) fn define_desc(
     em: &mut Emitter,
     analyzed: &Analyzed,
@@ -226,9 +413,13 @@ pub(crate) fn define_desc(
     unit_init: Option<FuncId>,
     vm_rows: &[VmRowSpec],
     vis_rows: &[VisRowSpec],
+    classes: &[super::classes::ClassSpec],
+    obj_rows: &[ObjRowSpec],
 ) -> Result<DataId, String> {
     let vm_table = define_vm_rows(em, vm_rows)?;
     let vis_table = define_vis_rows(em, vis_rows)?;
+    let class_table = define_classes(em, classes)?;
+    let obj_table = define_obj_rows(em, obj_rows)?;
     let hir = &analyzed.compiler.hir;
     let mut loaded: Vec<String> = hir
         .loaded_files
@@ -307,6 +498,16 @@ pub(crate) fn define_desc(
         std::mem::offset_of!(ProgramDesc, n_vis_rows),
         vis_rows.len() as u64,
     );
+    put_u64(
+        &mut buf,
+        std::mem::offset_of!(ProgramDesc, n_classes),
+        classes.len() as u64,
+    );
+    put_u64(
+        &mut buf,
+        std::mem::offset_of!(ProgramDesc, n_obj_rows),
+        obj_rows.len() as u64,
+    );
     desc.define(buf.into_boxed_slice());
     desc.set_align(8);
     let tables_gv = em.module.declare_data_in_data(tables_id, &mut desc);
@@ -331,6 +532,14 @@ pub(crate) fn define_desc(
     if let Some(vis) = vis_table {
         let gv = em.module.declare_data_in_data(vis, &mut desc);
         desc.write_data_addr(std::mem::offset_of!(ProgramDesc, vis_rows) as u32, gv, 0);
+    }
+    if let Some(ct) = class_table {
+        let gv = em.module.declare_data_in_data(ct, &mut desc);
+        desc.write_data_addr(std::mem::offset_of!(ProgramDesc, classes) as u32, gv, 0);
+    }
+    if let Some(ot) = obj_table {
+        let gv = em.module.declare_data_in_data(ot, &mut desc);
+        desc.write_data_addr(std::mem::offset_of!(ProgramDesc, obj_rows) as u32, gv, 0);
     }
     let toplevel_ref = em.module.declare_func_in_data(toplevel, &mut desc);
     desc.write_function_addr(

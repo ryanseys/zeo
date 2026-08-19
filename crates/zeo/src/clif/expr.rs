@@ -92,7 +92,38 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
         }
         HirNode::ClassRef(name) => {
             let name = name.clone();
-            class_value(fx, id, &name)
+            const_read(fx, id, &name)
+        }
+        HirNode::SelfRef => {
+            let addr = fx.self_ptr.expect("self_ptr is set in the prologue");
+            Ok(Operand::Ptr {
+                addr,
+                owned: false,
+                tag: TagInfo::Unknown,
+            })
+        }
+        HirNode::IvarRead(name) => {
+            let name = name.clone();
+            let slot = ivar_slot(fx, id, &name)?;
+            let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
+            let ss = fx.temp_slot();
+            let out = fx.slot_addr(ss, 0);
+            let slot_v = fx.b.ins().iconst(fx.em.ptr, slot as i64);
+            fx.call("zeo_rt_ivar_get_slot", &[self_ptr, slot_v, out]);
+            fx.owned_created += 1;
+            Ok(Operand::Slot {
+                ss,
+                owned: true,
+                tag: TagInfo::Unknown,
+            })
+        }
+        HirNode::Or(a, b) => {
+            let (a, b) = (*a, *b);
+            short_circuit(fx, a, b, true)
+        }
+        HirNode::And(a, b) => {
+            let (a, b) = (*a, *b);
+            short_circuit(fx, a, b, false)
         }
         HirNode::New {
             class_name,
@@ -159,11 +190,11 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                     Some(decl) if decl.arity == args.len() => {
                         super::call::direct_call(fx, id, &name, &args)
                     }
-                    Some(_) => fx.unsupported(id, "a compiled call with the wrong arity"),
-                    None => {
-                        let what = format!("a receiverless call to `{name}`");
-                        fx.unsupported(id, &what)
-                    }
+                    // Unknown names and arity mismatches go through the
+                    // implicit-self dynamic send (the runtime raises the
+                    // NoMethodError/ArgumentError, exactly where rustc's
+                    // fallback does).
+                    Some(_) | None => super::call::implicit_send(fx, id, &name, &args),
                 },
             }
         }
@@ -230,6 +261,88 @@ pub(crate) fn pure_literal(parts: &[StrPart]) -> Option<String> {
         [StrPart::Lit(s)] => Some(s.clone()),
         [StrPart::Bytes(_) | StrPart::Interp(_)] | [_, _, ..] => None,
     }
+}
+
+/// A constant read: a statically-resolved class becomes a Class immediate;
+/// anything else (a value constant like `ARGV`) reads through the uncached
+/// runtime lookup, `NameError` on miss.
+fn const_read(fx: &mut Fx, id: NodeId, name: &str) -> Result<Operand, String> {
+    if fx.an.compiler.resolve_class(name, &[], 0).is_some() {
+        return class_value(fx, id, name);
+    }
+    let off = fx.em.intern_rodata(name.as_bytes());
+    let ptr = fx.rod(off);
+    let len_v = fx.b.ins().iconst(fx.em.ptr, name.len() as i64);
+    let owner = fx.b.ins().iconst(types::I32, 0);
+    let ss = fx.temp_slot();
+    let out = fx.slot_addr(ss, 0);
+    let status = fx
+        .call("zeo_rt_const_get_at", &[owner, ptr, len_v, out])
+        .expect("const_get_at returns a status");
+    fx.fallible(status);
+    fx.owned_created += 1;
+    Ok(Operand::Slot {
+        ss,
+        owned: true,
+        tag: TagInfo::Unknown,
+    })
+}
+
+/// The compile-time ivar slot for `@name` in the enclosing method's class.
+fn ivar_slot(fx: &Fx, id: NodeId, name: &str) -> Result<usize, String> {
+    let Some(class) = fx.method_class else {
+        return fx.unsupported(id, "an ivar outside a compiled method");
+    };
+    crate::analyze::class_query::slot_of(&fx.an.compiler, class, name)
+        .ok_or(())
+        .or_else(|()| fx.unsupported(id, "a dynamic (slotless) ivar"))
+}
+
+/// `a || b` / `a && b`: keep `a` when its truthiness matches
+/// `keep_truthy`, else evaluate and keep `b` -- the OPERAND is the value,
+/// Ruby's rule.
+fn short_circuit(fx: &mut Fx, a: NodeId, b: NodeId, keep_truthy: bool) -> Result<Operand, String> {
+    let a_op = lower_expr(fx, a)?;
+    let ptr = ownership::borrow_ptr(fx, &a_op);
+    let a_tag = a_op.tag();
+    if a_op.owned() {
+        ownership::pool_owned(fx, ptr, a_tag);
+    }
+    let borrowed = Operand::Ptr {
+        addr: ptr,
+        owned: false,
+        tag: a_tag,
+    };
+    let t = ownership::truthy(fx, borrowed);
+    let ss = fx.temp_slot();
+    let dst = fx.slot_addr(ss, 0);
+    let keep_a = fx.b.create_block();
+    let eval_b = fx.b.create_block();
+    let join = fx.b.create_block();
+    if keep_truthy {
+        fx.b.ins().brif(t, keep_a, &[], eval_b, &[]);
+    } else {
+        fx.b.ins().brif(t, eval_b, &[], keep_a, &[]);
+    }
+    fx.b.switch_to_block(keep_a);
+    let a_again = Operand::Ptr {
+        addr: ptr,
+        owned: false,
+        tag: a_tag,
+    };
+    ownership::write_move_into(fx, &a_again, dst);
+    fx.b.ins().jump(join, &[]);
+    fx.b.switch_to_block(eval_b);
+    let b_op = lower_expr(fx, b)?;
+    ownership::write_move_into(fx, &b_op, dst);
+    fx.b.ins().jump(join, &[]);
+    fx.b.switch_to_block(join);
+    fx.owned_created += 1;
+    Ok(Operand::Slot {
+        ss,
+        owned: true,
+        tag: TagInfo::Unknown,
+    })
 }
 
 /// A statically-resolved class/module reference as a Class value (an

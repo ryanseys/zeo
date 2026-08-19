@@ -103,3 +103,29 @@ pub unsafe extern "C" fn zeo_rt_frozen_check(v: *const RubyValue) -> i32 {
         }
     }
 }
+
+/// An uncached constant read on `owner` (0 = `Object`, the toplevel).
+/// Miss = CRuby's `NameError: uninitialized constant <name>` (the
+/// `ConstSite` caching layer is a later milestone).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_const_get_at(
+    owner: u32,
+    name: *const u8,
+    name_len: usize,
+    out: *mut RubyValue,
+) -> i32 {
+    let name = unsafe { super::str_slice(name, name_len) };
+    match crate::constants::const_get(owner, name) {
+        Some(v) => {
+            unsafe { out.write(v) };
+            STATUS_OK
+        }
+        None => {
+            crate::signal::set_pending(crate::dispatch::raise_error(
+                "NameError",
+                format!("uninitialized constant {name}"),
+            ));
+            STATUS_SIGNAL
+        }
+    }
+}

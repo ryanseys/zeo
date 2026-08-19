@@ -42,6 +42,12 @@ pub(crate) struct Fx<'e, 'f> {
     /// The current `self` as a borrowed pointer: the method's first
     /// parameter, or the toplevel's pooled `main_object` copy.
     pub self_ptr: Option<ir::Value>,
+    /// The enclosing class when lowering a method body -- what ivar slot
+    /// resolution keys on.
+    pub method_class: Option<zeo_abi::ClassId>,
+    /// A method body's `(out, ret_ok)`: `return` writes the value and
+    /// jumps; `None` at the toplevel.
+    pub ret: Option<(ir::Value, ir::Block)>,
     /// The ownership ledger `verify` checks: every owned-value emission
     /// site must be matched by exactly one consumption site.
     pub owned_created: usize,
@@ -71,6 +77,8 @@ impl<'e, 'f> Fx<'e, 'f> {
             loops: Vec::new(),
             prev_line: None,
             self_ptr: None,
+            method_class: None,
+            ret: None,
             owned_created: 0,
             owned_consumed: 0,
         }

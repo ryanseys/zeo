@@ -62,6 +62,72 @@ pub(crate) fn direct_call(
     })
 }
 
+/// A receiverless dynamic send on the current `self` -- the implicit-call
+/// mode (no visibility barrier: private methods answer).
+pub(crate) fn implicit_send(
+    fx: &mut Fx,
+    site: NodeId,
+    name: &str,
+    args: &[ArrayElem],
+) -> Result<Operand, String> {
+    let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
+    let argv_ptr = build_argv(fx, site, args)?;
+    let sym = fx.sym_id(name);
+    let zero_box = fx.b.ins().iconst(types::I32, 0);
+    let argc_v = fx.b.ins().iconst(fx.em.ptr, args.len() as i64);
+    let null = fx.b.ins().iconst(fx.em.ptr, 0);
+    let ss = fx.temp_slot();
+    let out = fx.slot_addr(ss, 0);
+    let status = fx
+        .call(
+            "zeo_rt_send_value_in",
+            &[zero_box, self_ptr, sym, argv_ptr, argc_v, null, out],
+        )
+        .expect("send returns a status");
+    fx.fallible(status);
+    fx.owned_created += 1;
+    Ok(Operand::Slot {
+        ss,
+        owned: true,
+        tag: TagInfo::Unknown,
+    })
+}
+
+/// A contiguous argv array of borrowed copies (owned temps hand their
+/// value to the pool first). Null when empty.
+fn build_argv(
+    fx: &mut Fx,
+    site: NodeId,
+    args: &[ArrayElem],
+) -> Result<cranelift_codegen::ir::Value, String> {
+    let argc = args.len();
+    let argv = (argc > 0).then(|| {
+        fx.b.create_sized_stack_slot(StackSlotData::new(
+            StackSlotKind::ExplicitSlot,
+            argc as u32 * VALUE_SIZE,
+            3,
+        ))
+    });
+    for (i, arg) in args.iter().enumerate() {
+        let ArrayElem::Single(id) = arg else {
+            return fx.unsupported(site, "a splat argument");
+        };
+        let op = lower_expr(fx, *id)?;
+        if op.owned() {
+            let tag = op.tag();
+            let addr = ownership::addr_of(fx, &op);
+            ownership::pool_owned(fx, addr, tag);
+        }
+        let argv = argv.expect("argc > 0 here");
+        let dst = fx.slot_addr(argv, (i as u32 * VALUE_SIZE) as i32);
+        ownership::write_borrow(fx, &op, dst);
+    }
+    Ok(match argv {
+        Some(ss) => fx.slot_addr(ss, 0),
+        None => fx.b.ins().iconst(fx.em.ptr, 0),
+    })
+}
+
 /// An explicit-receiver dynamic send through the uncached entry (the
 /// visibility barrier's `caller` is `Object` -- the only lexical class the
 /// slice compiles).
@@ -89,36 +155,10 @@ pub(crate) fn dynamic_send_value(
     if recv_op.owned() {
         ownership::pool_owned(fx, recv_ptr, recv_op.tag());
     }
-    // A CONTIGUOUS argv array (the borrowed-copy shape `lower_puts` uses).
-    let argc = args.len();
-    let argv = (argc > 0).then(|| {
-        fx.b.create_sized_stack_slot(StackSlotData::new(
-            StackSlotKind::ExplicitSlot,
-            argc as u32 * VALUE_SIZE,
-            3,
-        ))
-    });
-    for (i, arg) in args.iter().enumerate() {
-        let ArrayElem::Single(id) = arg else {
-            return fx.unsupported(site, "a splat argument");
-        };
-        let op = lower_expr(fx, *id)?;
-        if op.owned() {
-            let tag = op.tag();
-            let addr = ownership::addr_of(fx, &op);
-            ownership::pool_owned(fx, addr, tag);
-        }
-        let argv = argv.expect("argc > 0 here");
-        let dst = fx.slot_addr(argv, (i as u32 * VALUE_SIZE) as i32);
-        ownership::write_borrow(fx, &op, dst);
-    }
-    let argv_ptr = match argv {
-        Some(ss) => fx.slot_addr(ss, 0),
-        None => fx.b.ins().iconst(fx.em.ptr, 0),
-    };
+    let argv_ptr = build_argv(fx, site, args)?;
     let sym = fx.sym_id(name);
     let zero_box = fx.b.ins().iconst(types::I32, 0);
-    let argc_v = fx.b.ins().iconst(fx.em.ptr, argc as i64);
+    let argc_v = fx.b.ins().iconst(fx.em.ptr, args.len() as i64);
     let null = fx.b.ins().iconst(fx.em.ptr, 0);
     let caller = fx.b.ins().iconst(types::I32, 0); // Object
     let ss = fx.temp_slot();

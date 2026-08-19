@@ -19,14 +19,55 @@ use std::collections::HashMap;
 pub fn compile(analyzed: &Analyzed) -> Result<Vec<u8>, String> {
     let mut em = Emitter::new()?;
     let defs = collect_methods(&mut em, analyzed)?;
+    let collected = super::classes::collect_classes(&mut em, analyzed)?;
+    let (class_specs, obj_methods, class_vis) =
+        (collected.classes, collected.methods, collected.vis);
     for def in &defs {
-        define_method_body(&mut em, analyzed, def)?;
+        let func = em.methods[&def.name].body;
+        let spec = BodyFnSpec {
+            func,
+            owner: zeo_abi::ClassId(0),
+            owner_name: "Object",
+            name: &def.name,
+            params: &def.params,
+            body: &def.body,
+            node: def.node,
+        };
+        define_method_body(&mut em, analyzed, &spec)?;
+    }
+    for m in &obj_methods {
+        if let Some(func) = m.body_fn {
+            let spec = BodyFnSpec {
+                func,
+                owner: m.owner,
+                owner_name: &m.owner_name,
+                name: &m.name,
+                params: &m.params,
+                body: &m.body,
+                node: m.node,
+            };
+            define_method_body(&mut em, analyzed, &spec)?;
+        }
     }
     for def in &defs {
         let decl = &em.methods[&def.name];
         let (tramp, body, arity) = (decl.tramp, decl.body, decl.arity);
         let idx = em.next_fn_index();
         super::params::define_trampoline(&mut em, tramp, body, arity, idx)?;
+    }
+    for m in &obj_methods {
+        let idx = em.next_fn_index();
+        match (m.accessor, m.body_fn) {
+            (Some((slot, kind)), None) => {
+                super::params::define_accessor(&mut em, m.tramp, slot, kind, idx)?;
+            }
+            (None, Some(body)) => {
+                super::params::define_trampoline(&mut em, m.tramp, body, m.arity, idx)?;
+            }
+            (Some(_), Some(_)) | (None, None) => {
+                unreachable!("collect_classes declares exactly one of accessor/body")
+            }
+        }
     }
     let toplevel = define_toplevel(&mut em, analyzed)?;
     let unit_init = statics::define_unit_init(&mut em)?;
@@ -55,7 +96,26 @@ pub fn compile(analyzed: &Analyzed) -> Result<Vec<u8>, String> {
             })
         })
         .collect();
-    let desc = statics::define_desc(&mut em, analyzed, toplevel, unit_init, &vm_rows, &vis_rows)?;
+    let mut vis_rows = vis_rows;
+    vis_rows.extend(class_vis);
+    let obj_rows: Vec<statics::ObjRowSpec> = obj_methods
+        .iter()
+        .map(|m| statics::ObjRowSpec {
+            class: m.owner.0,
+            name: m.name.clone(),
+            f: m.tramp,
+        })
+        .collect();
+    let desc = statics::define_desc(
+        &mut em,
+        analyzed,
+        toplevel,
+        unit_init,
+        &vm_rows,
+        &vis_rows,
+        &class_specs,
+        &obj_rows,
+    )?;
     define_main(&mut em, desc)?;
     statics::define_rodata(&mut em)?;
     let product = em.module.finish();
@@ -307,13 +367,29 @@ fn collect_methods(em: &mut Emitter, analyzed: &Analyzed) -> Result<Vec<DefSpec>
     Ok(out)
 }
 
+/// What `define_method_body` compiles: any owner's ordinary method.
+pub(crate) struct BodyFnSpec<'a> {
+    pub func: FuncId,
+    pub owner: zeo_abi::ClassId,
+    pub owner_name: &'a str,
+    pub name: &'a str,
+    pub params: &'a [String],
+    pub body: &'a [crate::hir::NodeId],
+    pub node: Option<crate::hir::NodeId>,
+}
+
 /// One compiled method body: `(self, p1..pn, out) -> i32`. Params are
 /// copied into owned slots (the M0 rule -- borrow-through is a perf-pass
-/// lever); the tail value moves into `out`.
-fn define_method_body(em: &mut Emitter, analyzed: &Analyzed, def: &DefSpec) -> Result<(), String> {
+/// lever); the tail value moves into `out`; `return` jumps to the shared
+/// ok-exit.
+fn define_method_body(
+    em: &mut Emitter,
+    analyzed: &Analyzed,
+    def: &BodyFnSpec<'_>,
+) -> Result<(), String> {
     let sig = super::params::body_sig(em, def.params.len());
     let idx = em.next_fn_index();
-    let label = format!("Object#{}", def.name);
+    let label = format!("{}#{}", def.owner_name, def.name);
     let (line, end_line) = match def.node {
         Some(node) => (
             crate::codegen::source_location(&analyzed.compiler, node).map_or(0, |(_, l)| l),
@@ -342,6 +418,9 @@ fn define_method_body(em: &mut Emitter, analyzed: &Analyzed, def: &DefSpec) -> R
     let self_ptr = entry_params[0];
     let out_ptr = *entry_params.last().expect("out is the last param");
     fx.self_ptr = Some(self_ptr);
+    fx.method_class = Some(def.owner);
+    let ret_ok = fx.b.create_block();
+    fx.ret = Some((out_ptr, ret_ok));
 
     // Recursion guard BEFORE the frame exists: a failure returns without
     // pops (mirrors the rustc prologue's `stack_check()?` position).
@@ -374,7 +453,7 @@ fn define_method_body(em: &mut Emitter, analyzed: &Analyzed, def: &DefSpec) -> R
     }
     // The body's other locals, nil-initialized.
     let mut locals = crate::analyze::local_storage::Locals::default();
-    for &stmt in &def.body {
+    for &stmt in def.body {
         crate::analyze::local_storage::collect_locals(&analyzed.compiler, stmt, &mut locals);
     }
     for name in locals.names().to_vec() {
@@ -413,7 +492,8 @@ fn define_method_body(em: &mut Emitter, analyzed: &Analyzed, def: &DefSpec) -> R
         .expect("check_ints returns a status");
     fx.fallible(status);
 
-    super::stmt::lower_value_body_into(&mut fx, &def.body, out_ptr)?;
+    super::stmt::lower_value_body_into(&mut fx, def.body, out_ptr)?;
+    fx.b.ins().jump(ret_ok, &[]);
 
     let has_frame = file.is_some();
     let epilogue = |fx: &mut Fx, status: i64| {
@@ -428,6 +508,7 @@ fn define_method_body(em: &mut Emitter, analyzed: &Analyzed, def: &DefSpec) -> R
         let code = fx.b.ins().iconst(types::I32, status);
         fx.b.ins().return_(&[code]);
     };
+    fx.b.switch_to_block(ret_ok);
     epilogue(&mut fx, 0);
     let land = fx.land;
     fx.b.switch_to_block(land);
@@ -440,9 +521,8 @@ fn define_method_body(em: &mut Emitter, analyzed: &Analyzed, def: &DefSpec) -> R
 
     let mut ctx = em.module.make_context();
     ctx.func = func;
-    let body_id = em.methods[&def.name].body;
     em.module
-        .define_function(body_id, &mut ctx)
+        .define_function(def.func, &mut ctx)
         .map_err(|e| format!("compiling {label}: {e}"))?;
     Ok(())
 }
@@ -538,9 +618,11 @@ fn define_toplevel(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, Stri
         .iter()
         .copied()
         .filter(|&s| {
+            // Defs and (statement-free, collect_classes-verified) class
+            // definitions registered through the tables run nothing here.
             !matches!(
                 analyzed.compiler.hir[s],
-                crate::hir::HirNode::DefMethod { .. }
+                crate::hir::HirNode::DefMethod { .. } | crate::hir::HirNode::ClassDef { .. }
             )
         })
         .collect();
