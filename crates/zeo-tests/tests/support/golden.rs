@@ -389,6 +389,61 @@ fn profile() -> zeo::backend::Profile {
     zeo::backend::Profile::from_env_or(zeo::backend::Profile::Debug)
 }
 
+/// `ZEO_GOLDEN_BACKEND`: which backend runs the goldens. Unset or `rustc`
+/// = today's in-process compile + `build_binary` path. `jit`/`aot` = the
+/// Cranelift legs: spawn the built `zeo` CLI, one child per golden (the
+/// isolation the plan requires). The default flips with the M1 backend
+/// flip, not before -- until CLIF parity, the ratchet legs run on demand.
+fn golden_backend() -> Option<String> {
+    std::env::var("ZEO_GOLDEN_BACKEND")
+        .ok()
+        .filter(|v| !v.is_empty() && v != "rustc")
+}
+
+/// The built `zeo` CLI beside this test binary's profile dir.
+fn zeo_cli() -> Result<PathBuf, String> {
+    let mut p = std::env::current_exe().map_err(|e| format!("test binary path: {e}"))?;
+    p.pop(); // deps/<test-bin> -> deps
+    p.pop(); // deps -> target/<profile>
+    p.push("zeo");
+    if p.is_file() {
+        Ok(p)
+    } else {
+        Err(format!(
+            "ZEO_GOLDEN_BACKEND needs the zeo CLI at {} (run `cargo build -p zeo` first)",
+            p.display()
+        ))
+    }
+}
+
+/// The Cranelift legs' runner. Rejection must stay distinguishable from a
+/// program that built and then failed at run time (the `CompileFail`
+/// contract), and a spawned CLI folds both into "nonzero exit" -- so the
+/// program is object-compiled IN PROCESS first (the identical lowering the
+/// JIT finalizes; decision-free duplication, correctness over speed on a
+/// leg that runs on demand), and only a program that compiles is spawned.
+fn run_via_cli(
+    backend: &str,
+    rb: &Path,
+    source: &str,
+    opts: &zeo::CompileOptions,
+    args: &[String],
+    stdin: Option<&[u8]>,
+    run_cwd: &Path,
+) -> Result<(Vec<u8>, Vec<u8>), String> {
+    zeo::compile_to_object_with(source, opts).map_err(String::from)?;
+    let mut cmd = Command::new(zeo_cli()?);
+    cmd.arg("--backend").arg(backend);
+    for root in &opts.load_roots {
+        cmd.arg("-I").arg(root);
+    }
+    for dir in &opts.package_dirs {
+        cmd.arg("--gems").arg(dir);
+    }
+    cmd.arg(rb).args(args).current_dir(run_cwd);
+    run_bounded(&mut cmd, stdin, "zeo CLI (ZEO_GOLDEN_BACKEND)")
+}
+
 /// Compile `source` with zeo and run the produced binary in `run_cwd` with
 /// `args`/`stdin`. `Ok((stdout, stderr))` when it produced a runnable binary;
 /// `Err(reason)` when zeo rejected the program or the link failed (which a
@@ -407,6 +462,9 @@ fn compile_and_run(
         load_roots: env.load_roots.clone(),
         ..Default::default()
     };
+    if let Some(backend) = golden_backend() {
+        return run_via_cli(&backend, rb, source, &opts, args, stdin, run_cwd);
+    }
     let compiled = zeo::compile_to_rust_with(source, &opts).map_err(String::from)?;
     let bin = std::env::temp_dir().join(format!(
         "zeo-golden-{}-{:?}",
