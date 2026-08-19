@@ -9,6 +9,7 @@ pub mod capi_names;
 pub(crate) mod ctx;
 pub mod emit;
 pub(crate) mod expr;
+pub(crate) mod iter;
 pub mod names;
 pub(crate) mod operand;
 pub(crate) mod ownership;

@@ -11,11 +11,14 @@ use std::collections::HashMap;
 
 pub(crate) const VALUE_SIZE: u32 = zeo_abi::abi::VALUE_SIZE as u32;
 
-/// An enclosing native loop's jump targets.
+/// An enclosing native loop's jump targets. `result` is the loop's value
+/// slot when the loop sits in value position: `break v` moves `v` there
+/// (the normal exit writes the loop's own default first).
 pub(crate) struct LoopCtl {
     pub exit: ir::Block,
     pub latch: ir::Block,
     pub body: ir::Block,
+    pub result: Option<ir::Value>,
 }
 
 pub(crate) struct Fx<'e, 'f> {

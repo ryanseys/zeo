@@ -74,6 +74,63 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             let (cond, then_body, else_body) = (*cond, then_body.clone(), else_body.clone());
             if_expr(fx, cond, &then_body, &else_body)
         }
+        // Assignment in EXPRESSION position (`f(x = 1)`, the desugared
+        // `[]=` value hand-back): run the statement, answer the local.
+        HirNode::LocalWrite(name, _) => {
+            let name = name.clone();
+            super::stmt::lower_stmt(fx, id)?;
+            let &ss = fx
+                .locals
+                .get(&name)
+                .unwrap_or_else(|| panic!("local `{name}` must be hoisted"));
+            let addr = fx.slot_addr(ss, 0);
+            Ok(Operand::Ptr {
+                addr,
+                owned: false,
+                tag: TagInfo::Unknown,
+            })
+        }
+        HirNode::ClassRef(name) => {
+            let name = name.clone();
+            class_value(fx, id, &name)
+        }
+        HirNode::New {
+            class_name,
+            args,
+            kwargs,
+            block: None,
+        } if kwargs.is_empty() => {
+            let (class_name, args) = (class_name.clone(), args.clone());
+            let recv = class_value(fx, id, &class_name)?;
+            let elems: Vec<ArrayElem> = args.iter().map(|&a| ArrayElem::Single(a)).collect();
+            super::call::dynamic_send_value(fx, id, recv, "new", &elems)
+        }
+        HirNode::Call {
+            receiver,
+            name,
+            args,
+            kwargs,
+            block: Some(blk),
+            block_arg: None,
+            safe: false,
+        } if args.is_empty() => {
+            let (receiver, name, kwargs_empty, blk) =
+                (*receiver, name.clone(), kwargs.is_empty(), *blk);
+            match super::iter::counted_of(fx, receiver, &name, kwargs_empty) {
+                Some(counted) => {
+                    let ss = fx.temp_slot();
+                    let dst = fx.slot_addr(ss, 0);
+                    super::iter::lower_counted(fx, id, &counted, blk, Some(dst))?;
+                    fx.owned_created += 1;
+                    Ok(Operand::Slot {
+                        ss,
+                        owned: true,
+                        tag: TagInfo::Unknown,
+                    })
+                }
+                None => fx.unsupported(id, "a block argument"),
+            }
+        }
         HirNode::Call {
             receiver,
             name,
@@ -173,6 +230,33 @@ pub(crate) fn pure_literal(parts: &[StrPart]) -> Option<String> {
         [StrPart::Lit(s)] => Some(s.clone()),
         [StrPart::Bytes(_) | StrPart::Interp(_)] | [_, _, ..] => None,
     }
+}
+
+/// A statically-resolved class/module reference as a Class value (an
+/// immediate: tag + u32 id).
+fn class_value(fx: &mut Fx, id: NodeId, name: &str) -> Result<Operand, String> {
+    let Some(cid) = fx.an.compiler.resolve_class(name, &[], 0) else {
+        let what = format!("the unresolved constant `{name}`");
+        return fx.unsupported(id, &what);
+    };
+    let ss = fx.temp_slot();
+    let dst = fx.slot_addr(ss, 0);
+    let fl = MemFlagsData::trusted();
+    let z = fx.b.ins().iconst(types::I64, 0);
+    for off in [0, 8, 16] {
+        fx.b.ins().store(fl, z, dst, off);
+    }
+    let tag =
+        fx.b.ins()
+            .iconst(types::I8, i64::from(ValueTag::Class as u8));
+    fx.b.ins().store(fl, tag, dst, 0);
+    let cid_v = fx.b.ins().iconst(types::I32, i64::from(cid.0));
+    fx.b.ins().store(fl, cid_v, dst, PAYLOAD_OFFSET as i32);
+    Ok(Operand::Slot {
+        ss,
+        owned: false,
+        tag: TagInfo::Known(ValueTag::Class as u8),
+    })
 }
 
 /// The operator set the slice lowers inline.

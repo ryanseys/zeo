@@ -73,6 +73,18 @@ pub(crate) fn dynamic_send(
     args: &[ArrayElem],
 ) -> Result<Operand, String> {
     let recv_op = lower_expr(fx, recv)?;
+    dynamic_send_value(fx, site, recv_op, name, args)
+}
+
+/// `dynamic_send` on an already-lowered receiver (the `New` lowering hands
+/// a Class value here).
+pub(crate) fn dynamic_send_value(
+    fx: &mut Fx,
+    site: NodeId,
+    recv_op: Operand,
+    name: &str,
+    args: &[ArrayElem],
+) -> Result<Operand, String> {
     let recv_ptr = ownership::borrow_ptr(fx, &recv_op);
     if recv_op.owned() {
         ownership::pool_owned(fx, recv_ptr, recv_op.tag());

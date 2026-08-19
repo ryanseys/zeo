@@ -60,9 +60,34 @@ fn lower_tail_expr(fx: &mut Fx, tail: NodeId) -> Result<super::operand::Operand,
                 tag: TagInfo::Unknown,
             })
         }
-        HirNode::While { .. } | HirNode::Loop { .. } => {
-            lower_stmt(fx, tail)?;
-            Ok(Operand::Nil)
+        HirNode::While {
+            cond,
+            body,
+            negate,
+            post,
+        } => {
+            let (cond, body, negate, post) = (*cond, body.clone(), *negate, *post);
+            let ss = fx.temp_slot();
+            let dst = fx.slot_addr(ss, 0);
+            lower_loop(fx, Some((cond, negate)), &body, post, Some(dst))?;
+            fx.owned_created += 1;
+            Ok(Operand::Slot {
+                ss,
+                owned: true,
+                tag: TagInfo::Unknown,
+            })
+        }
+        HirNode::Loop { body } => {
+            let body = body.clone();
+            let ss = fx.temp_slot();
+            let dst = fx.slot_addr(ss, 0);
+            lower_loop(fx, None, &body, false, Some(dst))?;
+            fx.owned_created += 1;
+            Ok(Operand::Slot {
+                ss,
+                owned: true,
+                tag: TagInfo::Unknown,
+            })
         }
         HirNode::Break(..) | HirNode::Next(..) | HirNode::Redo => {
             // The jump leaves this block unreachable; the nil is never read.
@@ -88,7 +113,7 @@ fn lower_tail_expr(fx: &mut Fx, tail: NodeId) -> Result<super::operand::Operand,
     clippy::wildcard_enum_match_arm,
     reason = "structural: the refusal arm IS the default -- an unlisted node kind must refuse loudly, which is exactly what a new HirNode should do here until its lowering lands"
 )]
-fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
+pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
     stamp_line(fx, stmt);
     match &fx.an.compiler.hir[stmt] {
         HirNode::LocalWrite(name, value) => {
@@ -143,22 +168,34 @@ fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
             post,
         } => {
             let (cond, body, negate, post) = (*cond, body.clone(), *negate, *post);
-            lower_loop(fx, Some((cond, negate)), &body, post)
+            lower_loop(fx, Some((cond, negate)), &body, post, None)
         }
         HirNode::Loop { body } => {
             let body = body.clone();
-            lower_loop(fx, None, &body, false)
+            lower_loop(fx, None, &body, false, None)
         }
         HirNode::Break(value) => {
             let value = *value;
-            if let Some(v) = value {
-                let op = lower_expr(fx, v)?;
-                ownership::discard(fx, op);
-            }
-            let Some(ctl) = fx.loops.last() else {
+            if fx.loops.is_empty() {
                 return fx.unsupported(stmt, "`break` outside a loop");
-            };
-            let exit = ctl.exit;
+            }
+            let result = fx.loops.last().expect("checked above").result;
+            match (value, result) {
+                // `break v` in a value-position loop: v IS the loop's value.
+                (Some(v), Some(dst)) => {
+                    let op = lower_expr(fx, v)?;
+                    ownership::write_move_into(fx, &op, dst);
+                }
+                (Some(v), None) => {
+                    let op = lower_expr(fx, v)?;
+                    ownership::discard(fx, op);
+                }
+                (None, Some(dst)) => {
+                    ownership::write_move_into(fx, &super::operand::Operand::Nil, dst);
+                }
+                (None, None) => {}
+            }
+            let exit = fx.loops.last().expect("checked above").exit;
             fx.b.ins().jump(exit, &[]);
             fx.continue_unreachable();
             Ok(())
@@ -189,6 +226,22 @@ fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
         HirNode::Seq(stmts) => {
             let stmts = stmts.clone();
             lower_stmts(fx, &stmts)
+        }
+        HirNode::Call {
+            receiver,
+            name,
+            args,
+            kwargs,
+            block: Some(blk),
+            block_arg: None,
+            safe: false,
+        } if args.is_empty() => {
+            let (receiver, name, kwargs_empty, blk) =
+                (*receiver, name.clone(), kwargs.is_empty(), *blk);
+            match super::iter::counted_of(fx, receiver, &name, kwargs_empty) {
+                Some(counted) => super::iter::lower_counted(fx, stmt, &counted, blk, None),
+                None => fx.unsupported(stmt, "a block argument"),
+            }
         }
         // Anything else in statement position: try the expression lowering
         // and discard the value (it refuses on its own for shapes outside
@@ -274,6 +327,7 @@ fn lower_loop(
     cond: Option<(NodeId, bool)>,
     body: &[NodeId],
     post: bool,
+    result: Option<cranelift_codegen::ir::Value>,
 ) -> Result<(), String> {
     let mark = fx
         .call("zeo_rt_pool_mark", &[])
@@ -281,6 +335,7 @@ fn lower_loop(
     let head = fx.b.create_block();
     let body_blk = fx.b.create_block();
     let latch = fx.b.create_block();
+    let exit_normal = fx.b.create_block();
     let exit = fx.b.create_block();
     let first = if post { body_blk } else { head };
     fx.b.ins().jump(first, &[]);
@@ -296,7 +351,7 @@ fn lower_loop(
                     fx.b.ins()
                         .icmp_imm_u(cranelift_codegen::ir::condcodes::IntCC::Equal, t, 0);
             }
-            fx.b.ins().brif(t, body_blk, &[], exit, &[]);
+            fx.b.ins().brif(t, body_blk, &[], exit_normal, &[]);
         }
         None => {
             fx.b.ins().jump(body_blk, &[]);
@@ -312,6 +367,7 @@ fn lower_loop(
         exit,
         latch,
         body: body_blk,
+        result,
     });
     lower_stmts(fx, body)?;
     fx.loops.pop();
@@ -320,6 +376,14 @@ fn lower_loop(
     fx.b.switch_to_block(latch);
     fx.call("zeo_rt_pool_reset", &[mark]);
     fx.b.ins().jump(head, &[]);
+
+    // Ran-to-completion (condition went false): a loop's own value is nil;
+    // `break v` bypasses this write.
+    fx.b.switch_to_block(exit_normal);
+    if let Some(dst) = result {
+        ownership::write_move_into(fx, &super::operand::Operand::Nil, dst);
+    }
+    fx.b.ins().jump(exit, &[]);
 
     fx.b.switch_to_block(exit);
     fx.call("zeo_rt_pool_reset", &[mark]);
