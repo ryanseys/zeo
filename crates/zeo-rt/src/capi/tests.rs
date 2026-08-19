@@ -587,3 +587,107 @@ fn synthetic_c_frames_dedupe_and_pop_what_they_pushed() {
         zeo_rt_frame_pop();
     }
 }
+
+// -- M0-7 (b): literals and numeric slow paths -------------------------------
+
+use super::literals::*;
+use super::numeric::*;
+
+#[test]
+fn string_literals_intern_frozen_and_str_new_allocates_fresh() {
+    let utf8 = crate::encoding::UTF_8.0;
+    let mut a = MaybeUninit::<RubyValue>::uninit();
+    let mut b = MaybeUninit::<RubyValue>::uninit();
+    unsafe {
+        zeo_rt_str_lit(c"lit".as_ptr().cast(), 3, utf8, a.as_mut_ptr());
+        zeo_rt_str_lit(c"lit".as_ptr().cast(), 3, utf8, b.as_mut_ptr());
+    }
+    let (a, b) = unsafe { (a.assume_init(), b.assume_init()) };
+    let (RubyValue::Str(x), RubyValue::Str(y)) = (&a, &b) else {
+        panic!()
+    };
+    assert!(Arc::ptr_eq(x, y), "one frozen object per content");
+    let mut c = MaybeUninit::<RubyValue>::uninit();
+    let mut d = MaybeUninit::<RubyValue>::uninit();
+    unsafe {
+        zeo_rt_str_new(c"lit".as_ptr().cast(), 3, utf8, c.as_mut_ptr());
+        zeo_rt_str_new(c"lit".as_ptr().cast(), 3, utf8, d.as_mut_ptr());
+    }
+    let (c, d) = unsafe { (c.assume_init(), d.assume_init()) };
+    let (RubyValue::Str(x), RubyValue::Str(y)) = (&c, &d) else {
+        panic!()
+    };
+    assert!(!Arc::ptr_eq(x, y), "each evaluation allocates");
+}
+
+#[test]
+fn symbols_array_hash_range_construct() {
+    let id = unsafe { zeo_rt_sym_intern(c"capi_sym".as_ptr().cast(), 8) };
+    let mut s = MaybeUninit::<RubyValue>::uninit();
+    unsafe { zeo_rt_sym_value(id, s.as_mut_ptr()) };
+    assert!(
+        matches!(unsafe { s.assume_init() }, RubyValue::Symbol(sym) if sym.name_str() == "capi_sym")
+    );
+
+    let mut a = MaybeUninit::<RubyValue>::uninit();
+    unsafe { zeo_rt_array_new(2, a.as_mut_ptr()) };
+    let a = unsafe { a.assume_init() };
+    let mut v = MaybeUninit::new(RubyValue::Int(1));
+    unsafe { zeo_rt_array_push(&a, v.as_mut_ptr()) };
+    let mut v = MaybeUninit::new(RubyValue::Int(2));
+    unsafe { zeo_rt_array_push(&a, v.as_mut_ptr()) };
+    assert_eq!(unsafe { zeo_rt_array_len(&a) }, 2);
+    let mut e = MaybeUninit::<RubyValue>::uninit();
+    unsafe { zeo_rt_array_get(&a, 1, e.as_mut_ptr()) };
+    assert!(matches!(unsafe { e.assume_init() }, RubyValue::Int(2)));
+    let mut e = MaybeUninit::<RubyValue>::uninit();
+    unsafe { zeo_rt_array_get(&a, 9, e.as_mut_ptr()) };
+    assert!(matches!(unsafe { e.assume_init() }, RubyValue::Nil));
+
+    let mut h = MaybeUninit::<RubyValue>::uninit();
+    unsafe { zeo_rt_hash_new(h.as_mut_ptr()) };
+    let h = unsafe { h.assume_init() };
+    let mut k = MaybeUninit::new(RubyValue::Int(1));
+    let mut val = MaybeUninit::new(RubyValue::Int(10));
+    unsafe { zeo_rt_hash_set(&h, k.as_mut_ptr(), val.as_mut_ptr()) };
+    let RubyValue::Hash(hd) = &h else { panic!() };
+    assert_eq!(hd.lock().len(), 1);
+
+    let mut lo = MaybeUninit::new(RubyValue::Int(1));
+    let mut hi = MaybeUninit::new(RubyValue::Int(5));
+    let mut r = MaybeUninit::<RubyValue>::uninit();
+    assert_eq!(
+        unsafe { zeo_rt_range_new(lo.as_mut_ptr(), hi.as_mut_ptr(), 0, r.as_mut_ptr()) },
+        STATUS_OK
+    );
+    assert!(matches!(unsafe { r.assume_init() }, RubyValue::Range(_)));
+}
+
+#[test]
+fn integer_slow_paths_promote_and_compare() {
+    let a = RubyValue::Int(i64::MAX);
+    let b = RubyValue::Int(1);
+    let mut out = MaybeUninit::<RubyValue>::uninit();
+    unsafe { zeo_rt_int_add_slow(&a, &b, out.as_mut_ptr()) };
+    let sum = unsafe { out.assume_init() };
+    assert!(matches!(&sum, RubyValue::BigInt(v) if v.to_string() == "9223372036854775808"));
+    let mut out = MaybeUninit::<RubyValue>::uninit();
+    unsafe { zeo_rt_int_sub_slow(&sum, &b, out.as_mut_ptr()) };
+    assert!(
+        matches!(unsafe { out.assume_init() }, RubyValue::Int(i64::MAX)),
+        "the slow path normalizes back to Int"
+    );
+    let mut out = MaybeUninit::<RubyValue>::uninit();
+    unsafe { zeo_rt_int_mul_slow(&RubyValue::Int(6), &RubyValue::Int(7), out.as_mut_ptr()) };
+    assert!(matches!(unsafe { out.assume_init() }, RubyValue::Int(42)));
+    let mut out = MaybeUninit::<RubyValue>::uninit();
+    unsafe { zeo_rt_int_div(&RubyValue::Int(-7), &RubyValue::Int(2), out.as_mut_ptr()) };
+    assert!(
+        matches!(unsafe { out.assume_init() }, RubyValue::Int(-4)),
+        "floored division"
+    );
+    let mut out = MaybeUninit::<RubyValue>::uninit();
+    unsafe { zeo_rt_int_mod(&RubyValue::Int(-7), &RubyValue::Int(2), out.as_mut_ptr()) };
+    assert!(matches!(unsafe { out.assume_init() }, RubyValue::Int(1)));
+    assert!(unsafe { zeo_rt_int_cmp_slow(&a, &b) } > 0);
+}

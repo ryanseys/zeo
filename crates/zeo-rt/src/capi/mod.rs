@@ -25,6 +25,9 @@
 
 pub mod dispatch;
 pub mod frames;
+pub mod kernel;
+pub mod literals;
+pub mod numeric;
 pub mod objects;
 pub mod procs;
 pub mod signals;
