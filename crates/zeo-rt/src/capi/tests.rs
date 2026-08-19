@@ -791,6 +791,8 @@ fn register_program_registers_a_class_its_rows_and_meta() {
         n_ancestors: ANCESTORS.len(),
         ivar_names: ivar_strs.as_ptr(),
         n_ivars: ivar_strs.len(),
+        members: std::ptr::null(),
+        n_members: 0,
         hidden: 0,
     }];
     let obj_rows = [abi::ObjRow {

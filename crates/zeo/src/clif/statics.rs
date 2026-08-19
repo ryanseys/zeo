@@ -640,6 +640,44 @@ fn define_classes(
         ivar_offsets.resize(classes.len(), 0);
     }
 
+    // A compiled Struct/Data's member names, one shared Str array.
+    let n_members: usize = classes.iter().map(|c| c.members.len()).sum();
+    let members_id = (n_members > 0)
+        .then(|| {
+            em.module
+                .declare_data("zeo_class_members", Linkage::Local, false, false)
+                .map_err(|e| format!("declaring zeo_class_members: {e}"))
+        })
+        .transpose()?;
+    let mut member_offsets = Vec::with_capacity(classes.len());
+    if let Some(members_id) = members_id {
+        let mut entries: Vec<(u32, usize)> = Vec::with_capacity(n_members);
+        for c in classes {
+            member_offsets.push(entries.len() * str_size);
+            for m in &c.members {
+                entries.push((em.intern_rodata(m.as_bytes()), m.len()));
+            }
+        }
+        let mut data = DataDescription::new();
+        let mut bytes = vec![0u8; str_size * entries.len()];
+        for (i, &(_, len)) in entries.iter().enumerate() {
+            let at = i * str_size + std::mem::offset_of!(Str, len);
+            bytes[at..at + 8].copy_from_slice(&(len as u64).to_le_bytes());
+        }
+        data.define(bytes.into_boxed_slice());
+        data.set_align(8);
+        let rodata_gv = em.module.declare_data_in_data(em.rodata_id, &mut data);
+        for (i, &(off, _)) in entries.iter().enumerate() {
+            let at = (i * str_size + std::mem::offset_of!(Str, ptr)) as u32;
+            data.write_data_addr(at, rodata_gv, i64::from(off));
+        }
+        em.module
+            .define_data(members_id, &data)
+            .map_err(|e| format!("defining zeo_class_members: {e}"))?;
+    } else {
+        member_offsets.resize(classes.len(), 0);
+    }
+
     let size = std::mem::size_of::<ClassDesc>();
     let id = em
         .module
@@ -672,6 +710,11 @@ fn define_classes(
             base + std::mem::offset_of!(ClassDesc, n_ivars),
             c.ivars.len() as u64,
         );
+        put_u64(
+            &mut bytes,
+            base + std::mem::offset_of!(ClassDesc, n_members),
+            c.members.len() as u64,
+        );
         bytes[base + std::mem::offset_of!(ClassDesc, hidden)
             ..base + std::mem::offset_of!(ClassDesc, hidden) + 2]
             .copy_from_slice(&c.hidden.to_le_bytes());
@@ -681,6 +724,7 @@ fn define_classes(
     let rodata_gv = em.module.declare_data_in_data(em.rodata_id, &mut data);
     let anc_gv = em.module.declare_data_in_data(anc_id, &mut data);
     let ivars_gv = ivars_id.map(|iv| em.module.declare_data_in_data(iv, &mut data));
+    let members_gv = members_id.map(|m| em.module.declare_data_in_data(m, &mut data));
     for (i, c) in classes.iter().enumerate() {
         let base = i * size;
         let name_at =
@@ -697,6 +741,14 @@ fn define_classes(
                 (base + std::mem::offset_of!(ClassDesc, ivar_names)) as u32,
                 gv,
                 ivar_offsets[i] as i64,
+            );
+        }
+        if !c.members.is_empty() {
+            let gv = members_gv.expect("member table exists when any class has members");
+            data.write_data_addr(
+                (base + std::mem::offset_of!(ClassDesc, members)) as u32,
+                gv,
+                member_offsets[i] as i64,
             );
         }
     }

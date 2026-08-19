@@ -400,7 +400,10 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 ownership::discard(fx, init);
                 return Ok(borrowed());
             }
-            let recv = class_value(fx, id, &class_name)?;
+            // A statically-known class is a Class immediate; a constant
+            // holding a RUNTIME class (`Struct.new`/`Data.define`) is read
+            // at the call, exactly the rustc `__rtclass` shape.
+            let recv = const_read(fx, id, &class_name)?;
             let elems: Vec<ArrayElem> = args.iter().map(|&a| ArrayElem::Single(a)).collect();
             match (block, kwargs.is_empty()) {
                 // `Foo.new(x) { .. }`: the literal block forwards to
@@ -1043,16 +1046,6 @@ fn short_circuit(fx: &mut Fx, a: NodeId, b: NodeId, keep_truthy: bool) -> Result
         owned: true,
         tag: TagInfo::Unknown,
     })
-}
-
-/// A statically-resolved class/module reference as a Class value (an
-/// immediate: tag + u32 id).
-fn class_value(fx: &mut Fx, id: NodeId, name: &str) -> Result<Operand, String> {
-    let Some(cid) = resolve_class_here(fx, name) else {
-        let what = format!("the unresolved constant `{name}`");
-        return fx.unsupported(id, &what);
-    };
-    class_value_of(fx, id, name, cid)
 }
 
 /// The Class-immediate materialization for an already-resolved id.

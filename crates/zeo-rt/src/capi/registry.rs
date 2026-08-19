@@ -88,6 +88,17 @@ pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
     for c in unsafe { rows(desc.classes, desc.n_classes) } {
         let id = ClassId(c.id);
         let name = text(c.name);
+        // A compiled `Struct`/`Data`: its member list, so `Struct`'s one
+        // shared protocol (`to_a`/`[]`/`==`/`each`/`dig`/`inspect`/Marshal)
+        // finds it by MRO and reaches the members by index, exactly as it
+        // does for a runtime-minted one.
+        if c.n_members > 0 {
+            let members: Vec<&str> = unsafe { rows(c.members, c.n_members) }
+                .iter()
+                .map(|&m| text(m))
+                .collect();
+            crate::register_compiled_struct(id, &members, false, None);
+        }
         let ancestors: Vec<ClassId> = unsafe { rows(c.ancestors, c.n_ancestors) }
             .iter()
             .map(|&i| ClassId(i))

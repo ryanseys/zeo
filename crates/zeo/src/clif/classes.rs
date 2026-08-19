@@ -18,6 +18,9 @@ pub(crate) struct ClassSpec {
     pub ancestors: Vec<u32>,
     pub ivars: Vec<String>,
     pub hidden: u16,
+    /// A compiled `Struct`/`Data`'s member names, in declaration order
+    /// (`register_compiled_struct`); empty for every other class.
+    pub members: Vec<String>,
     /// `module M` -- registered `CLASS_MODULE` (no allocator, no layout);
     /// its methods ride the VALUE channel instead of the object channel.
     /// A `zeo_abi::abi::CLASS_*` registrar selector.
@@ -484,7 +487,18 @@ pub(crate) fn collect_classes(
             // subclass and inherited behavior comes from the walk probing
             // their builtin tables at MRO position (`Date::Infinity <
             // Numeric` is the corpus shape).
-            let plain_builtin = matches!(a, zeo_abi::NUMERIC_CLASS | zeo_abi::WEAKREF_CLASS);
+            // `Struct`/`Data` are on the payload-root denylist for the same
+            // reason: their subclasses are ORDINARY ivar objects whose
+            // members are hidden ivars, so the plain registrar serves them
+            // and `register_compiled_struct` (below) hands `Struct`'s one
+            // shared protocol the member list.
+            let plain_builtin = matches!(
+                a,
+                zeo_abi::NUMERIC_CLASS
+                    | zeo_abi::WEAKREF_CLASS
+                    | zeo_abi::STRUCT_CLASS
+                    | zeo_abi::DATA_CLASS
+            );
             let user = (a.0 as usize) < compiler.classes.len()
                 && !compiler.classes[a.0 as usize].is_builtin
                 && !compiler.classes[a.0 as usize].is_bootstrap;
@@ -506,6 +520,7 @@ pub(crate) fn collect_classes(
             ancestors: class.ancestors.iter().map(|c| c.0).collect(),
             ivars: class.ivars.clone(),
             hidden: u16::try_from(class.hidden_ivars.len()).expect("hidden ivars fit u16"),
+            members: class.hidden_ivars.clone(),
             kind,
         });
         // What this class's own body wrote -- `instance_methods(false)` /

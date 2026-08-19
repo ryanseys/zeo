@@ -173,6 +173,12 @@ pub struct ClassDesc {
     pub n_ancestors: usize,
     pub ivar_names: *const Str,
     pub n_ivars: usize,
+    /// A compiled `Struct`/`Data`'s MEMBER names, in declaration order --
+    /// what `register_compiled_struct` hands `Struct`'s one shared
+    /// protocol so `to_a`/`[]`/`==`/`each`/`dig`/`inspect`/Marshal reach
+    /// the members by index. Empty for every other class.
+    pub members: *const Str,
+    pub n_members: usize,
     pub hidden: u16,
 }
 
