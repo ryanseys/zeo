@@ -1993,16 +1993,6 @@ fn lexically_normalize(path: &Path) -> PathBuf {
     out
 }
 
-/// Discovers packages under each dir, in dir order: every subdirectory
-/// containing a `.gemspec` is a gem (subdirectories without
-/// one are silently ignored -- not gems). Within one dir, discovery is
-/// name-sorted (deterministic); across dirs, the FIRST occurrence of a
-/// package NAME wins entirely (a project-local package shadows a
-/// same-named compiler-bundled one -- the "one version per name, nearest
-/// wins" rule, the same shape as Bundler's lockfile picking exactly one
-/// version). A missing/unreadable packages dir contributes nothing (the
-/// CLI passes default candidate locations that often don't exist).
-
 /// The feature a `require`/`require_relative` names, or `None` if the argument
 /// is not one constant string. Lowers the argument and reads its folded
 /// literal, exactly as `lower_require_statement` and `lower_call_general` do,
@@ -2427,9 +2417,6 @@ impl<'pr> ruby_prism::Visit<'pr> for RequireCollector<'pr> {
         }
     }
 }
-
-/// Whether one `when` condition matches the baked subject: a string literal
-/// by equality, a `|`-literal regexp by substring. Anything else is `None`.
 
 /// Collects every receiver-less `autoload` call in a statement tree,
 /// descending through the STRUCTURAL containers stdlib nests them in --

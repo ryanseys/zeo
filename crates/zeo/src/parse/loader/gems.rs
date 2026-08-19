@@ -73,6 +73,15 @@ pub(super) fn lockfile_precedence(
         .collect()
 }
 
+/// Discovers packages under each dir, in dir order: every subdirectory
+/// containing a `.gemspec` is a gem (subdirectories without
+/// one are silently ignored -- not gems). Within one dir, discovery is
+/// name-sorted (deterministic); across dirs, the FIRST occurrence of a
+/// package NAME wins entirely (a project-local package shadows a
+/// same-named compiler-bundled one -- the "one version per name, nearest
+/// wins" rule, the same shape as Bundler's lockfile picking exactly one
+/// version). A missing/unreadable packages dir contributes nothing (the
+/// CLI passes default candidate locations that often don't exist).
 pub(super) fn discover_packages(
     package_dirs: &[PathBuf],
     bundled_dir: Option<&Path>,

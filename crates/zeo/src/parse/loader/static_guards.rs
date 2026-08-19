@@ -93,6 +93,8 @@ fn literal_alt_match(subject: &str, pattern: &ruby_prism::Node<'_>) -> Option<bo
     Some(alts.iter().any(|a| subject.contains(a)))
 }
 
+/// Whether one `when` condition matches the baked subject: a string literal
+/// by equality, a `|`-literal regexp by substring. Anything else is `None`.
 pub(super) fn literal_when_match(subject: &str, cond: &ruby_prism::Node<'_>) -> Option<bool> {
     if let Some(s) = cond.as_string_node() {
         return Some(s.unescaped() == subject.as_bytes());
