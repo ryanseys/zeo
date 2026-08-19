@@ -989,13 +989,35 @@ const NOFRAME: &[&str] = &[
     "module_exec",
 ];
 
+/// Rows CRuby answers with a SPECIALIZED VM instruction rather than a call:
+/// `opt_ltlt` and `opt_aset` push no control frame, so a raise from inside one
+/// names only the caller (`"x".freeze << "y"` reports `<main>`, where a
+/// hand-written `def <<` would report itself).
+///
+/// Keyed by (class, name), because the specialization is per receiver type and
+/// the general fallback DOES frame: `opt_ltlt` covers String and Array and
+/// nothing else, so `IO#<<` reports `IO#write` / `IO#<<` and must not be
+/// silenced by a name-only rule. Only the rows whose fast path can RAISE are
+/// listed -- the frozen checks and nothing else; an `opt_aref` or an `opt_eq`
+/// has no way to reach a backtrace.
+const SPECIALIZED: &[(ClassId, &str)] = &[
+    (zeo_abi::STRING_CLASS, "<<"),
+    (zeo_abi::ARRAY_CLASS, "<<"),
+    (zeo_abi::ARRAY_CLASS, "[]="),
+    (zeo_abi::HASH_CLASS, "[]="),
+];
+
 /// The interned backtrace label for a builtin row -- `'Owner#name'` for an
-/// instance row, `'Owner.name'` for a class row -- or `None` for [`NOFRAME`].
+/// instance row, `'Owner.name'` for a class row -- or `None` for [`NOFRAME`]
+/// and [`SPECIALIZED`].
 /// One leak per distinct row, cached, so the cold MRO-walk paths can ask on
 /// every call; the flat maps precompute it into [`FlatHit`] instead.
 fn c_frame_label(owner: ClassId, name: Symbol, sep: char) -> Option<&'static str> {
     let n = name.name_str();
     if NOFRAME.contains(&n) {
+        return None;
+    }
+    if sep == '#' && SPECIALIZED.contains(&(owner, n)) {
         return None;
     }
     type LabelKey = (u32, Symbol, bool);

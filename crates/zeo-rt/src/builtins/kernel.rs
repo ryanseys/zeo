@@ -428,22 +428,28 @@ ruby_module! {
     // a trailing hash only when it really carries that key -- leaving an
     // ordinary Hash argument positional, where it belongs.
     module_function def "Integer" as kernel_integer (_recv, _arg, _base?, _opts?) {
+        let _frame = conversion_frame("Kernel#Integer");
         with_exception_kw(__args, integer_impl)
     }
     // The second slot is the `exception:` hash -- see `Integer`'s note.
     module_function def "Float" as kernel_float (_recv, _arg, _opts?) {
+        let _frame = conversion_frame("Kernel#Float");
         with_exception_kw(__args, float_impl)
     }
     module_function def "String" as kernel_string (_recv, _arg) {
+        let _frame = conversion_frame("Kernel#String");
         string_impl(__args)
     }
     module_function def "Array" as kernel_array (_recv, _arg) {
+        let _frame = conversion_frame("Kernel#Array");
         array_impl(__args)
     }
     module_function def "Hash" as kernel_hash (_recv, _arg) {
+        let _frame = conversion_frame("Kernel#Hash");
         hash_impl(__args)
     }
     module_function def "Rational" as kernel_rational cfunc (_recv, _numerator, _denominator?, _opts?) {
+        let _frame = conversion_frame("Kernel#Rational");
         with_exception_kw(__args, rational_impl)
     }
     // `Kernel#BigDecimal` -- the one BigDecimal constructor (`.new` is long
@@ -459,6 +465,7 @@ ruby_module! {
         crate::builtins::pathname::kernel_pathname(arg)
     }
     module_function def "Complex" as kernel_complex cfunc (_recv, _real, _imaginary?, _opts?) {
+        let _frame = conversion_frame("Kernel#Complex");
         with_exception_kw(__args, complex_impl)
     }
     // `Kernel#autoload`/`#autoload?` -- the RECEIVERLESS spellings, which
@@ -1183,6 +1190,19 @@ fn split_exception_kw(args: &[RubyValue]) -> (&[RubyValue], bool) {
 /// `nil` instead of raising, which is the entire point of the keyword. Only a
 /// RAISE is swallowed -- a `break`/`throw` crossing the conversion still
 /// propagates.
+/// `Kernel#Integer` and its family are ordinary cfuncs in CRuby, which push a
+/// control frame -- so a raise from inside one names it
+/// (`f.rb:2:in 'Kernel#Integer'`) where a specialized instruction like
+/// `opt_ltlt` names only the caller.
+///
+/// Pushed HERE and not at the dispatch boundary because codegen's fast path
+/// calls this very function directly and never reaches that boundary
+/// (`codegen::call::kernel`'s `row_fn`). `synthetic_c_frame`'s exact-repeat
+/// dedupe keeps the DISPATCH route to one frame, not two.
+fn conversion_frame(label: &'static str) -> crate::frames::CFrameGuard {
+    crate::frames::synthetic_c_frame(label)
+}
+
 fn with_exception_kw(
     args: &[RubyValue],
     f: impl Fn(&[RubyValue]) -> Result<RubyValue, Signal>,
