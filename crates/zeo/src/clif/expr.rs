@@ -717,6 +717,31 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 tag: TagInfo::Unknown,
             })
         }
+        // `@name = v` in VALUE position answers the value ASSIGNED, not a
+        // read-back: rustc binds the rhs once (`let __v = ..`) and hands
+        // the write a clone. The park-then-write shape is the cvar/const
+        // twin -- the write's frozen check can raise, so an owned rhs is
+        // pooled first and the store takes a moved COPY.
+        HirNode::IvarWrite(name, value) => {
+            let (name, value) = (name.clone(), *value);
+            let op = lower_expr(fx, value)?;
+            let tag = op.tag();
+            let ptr = ownership::borrow_ptr(fx, &op);
+            if op.owned() {
+                ownership::pool_owned(fx, ptr, tag);
+            }
+            let borrowed = Operand::Ptr {
+                addr: ptr,
+                owned: false,
+                tag,
+            };
+            super::stmt::ivar_write_op(fx, id, &name, borrowed)?;
+            Ok(Operand::Ptr {
+                addr: ptr,
+                owned: false,
+                tag,
+            })
+        }
         HirNode::ClassVarWrite(name, value) => {
             let (name, value) = (name.clone(), *value);
             let owner = cvar_owner(fx, &name);

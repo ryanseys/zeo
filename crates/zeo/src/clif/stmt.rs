@@ -275,13 +275,6 @@ fn lower_tail_expr(fx: &mut Fx, tail: NodeId) -> Result<super::operand::Operand,
             lower_stmt(fx, tail)?;
             Ok(ownership::read_local(fx, &name).expect("just assigned"))
         }
-        HirNode::IvarWrite(name, value) => {
-            let (name, value) = (name.clone(), *value);
-            lower_ivar_write(fx, tail, &name, value)?;
-            // The assignment's value: read back (both forms store exactly
-            // what was assigned; ivars have no hooks).
-            ivar_read_op(fx, tail, &name)
-        }
         HirNode::While {
             cond,
             body,
@@ -359,6 +352,7 @@ fn lower_tail_expr(fx: &mut Fx, tail: NodeId) -> Result<super::operand::Operand,
         | HirNode::StringLit(..)
         | HirNode::LocalRead(..)
         | HirNode::IvarRead(..)
+        | HirNode::IvarWrite(..)
         | HirNode::Or(..)
         | HirNode::And(..)
         | HirNode::ClassRef(..)
