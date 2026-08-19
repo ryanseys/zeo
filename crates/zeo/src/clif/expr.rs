@@ -443,6 +443,237 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 super::call::kw_send(fx, id, recv, &name, &args, &kwargs)
             }
         }
+        HirNode::RangeLit {
+            start,
+            end,
+            exclusive,
+        } => {
+            let (start, end, exclusive) = (*start, *end, *exclusive);
+            // Endpoints are evaluated in order, parked BORROWED (owned
+            // temps pooled -- the second endpoint's evaluation can raise),
+            // then handed to `range_new` as MOVED copies (`move_ptr`
+            // retains a borrowed source; nothing fallible runs between the
+            // copies and the call). A nil endpoint folds into the absent
+            // one inside the runtime (`nil..5` IS `..5`), and the
+            // construction runs CRuby's `begin <=> end` comparability
+            // check, so the call is fallible.
+            let park = |fx: &mut Fx, n: Option<NodeId>| -> Result<Option<Operand>, String> {
+                let Some(n) = n else { return Ok(None) };
+                let op = lower_expr(fx, n)?;
+                let tag = op.tag();
+                let ptr = ownership::borrow_ptr(fx, &op);
+                if op.owned() {
+                    ownership::pool_owned(fx, ptr, tag);
+                }
+                Ok(Some(Operand::Ptr {
+                    addr: ptr,
+                    owned: false,
+                    tag,
+                }))
+            };
+            let s_op = park(fx, start)?;
+            let e_op = park(fx, end)?;
+            let null = fx.b.ins().iconst(fx.em.ptr, 0);
+            let s_ptr = match &s_op {
+                Some(op) => ownership::move_ptr(fx, op),
+                None => null,
+            };
+            let e_ptr = match &e_op {
+                Some(op) => ownership::move_ptr(fx, op),
+                None => null,
+            };
+            let excl = fx.b.ins().iconst(types::I8, i64::from(exclusive));
+            let ss = fx.temp_slot();
+            let out = fx.slot_addr(ss, 0);
+            let status = fx
+                .call("zeo_rt_range_new", &[s_ptr, e_ptr, excl, out])
+                .expect("range_new returns a status");
+            fx.fallible(status);
+            fx.owned_created += 1;
+            Ok(Operand::Slot {
+                ss,
+                owned: true,
+                tag: TagInfo::Known(ValueTag::Range as u8),
+            })
+        }
+        // `$!` -- the exception being handled (the bare-`raise` slot), nil
+        // outside any rescue. NOT the `$foo` table.
+        HirNode::GlobalRead(name) if name == "$!" => {
+            let ss = fx.temp_slot();
+            let out = fx.slot_addr(ss, 0);
+            fx.call("zeo_rt_gvar_err_info", &[out]);
+            fx.owned_created += 1;
+            Ok(Operand::Slot {
+                ss,
+                owned: true,
+                tag: TagInfo::Unknown,
+            })
+        }
+        // `$?` -- the last child's wait status slot, nil until a child ran.
+        HirNode::GlobalRead(name) if name == "$?" => {
+            let ss = fx.temp_slot();
+            let out = fx.slot_addr(ss, 0);
+            fx.call("zeo_rt_gvar_child_status", &[out]);
+            fx.owned_created += 1;
+            Ok(Operand::Slot {
+                ss,
+                owned: true,
+                tag: TagInfo::Unknown,
+            })
+        }
+        HirNode::GlobalRead(name) => {
+            let name = name.clone();
+            let (nptr, nlen) = rodata_name(fx, &name);
+            // Globals are per-box tables; everything the CLIF backend
+            // compiles today is the main program (box scopes refuse).
+            let bx = fx.b.ins().iconst(types::I32, 0);
+            let ss = fx.temp_slot();
+            let out = fx.slot_addr(ss, 0);
+            fx.call("zeo_rt_gvar_get", &[bx, nptr, nlen, out]);
+            fx.owned_created += 1;
+            Ok(Operand::Slot {
+                ss,
+                owned: true,
+                tag: TagInfo::Unknown,
+            })
+        }
+        // Assignment answers the assigned value (the table takes a clone,
+        // so the operand keeps its own ownership). Fallible: read-only
+        // globals (`$0 = 1` is fine, `$FILENAME = ..` is not) raise.
+        HirNode::GlobalWrite(name, value) => {
+            let (name, value) = (name.clone(), *value);
+            let op = lower_expr(fx, value)?;
+            let tag = op.tag();
+            let ptr = ownership::borrow_ptr(fx, &op);
+            if op.owned() {
+                ownership::pool_owned(fx, ptr, tag);
+            }
+            let (nptr, nlen) = rodata_name(fx, &name);
+            let bx = fx.b.ins().iconst(types::I32, 0);
+            let status = fx
+                .call("zeo_rt_gvar_assign", &[bx, nptr, nlen, ptr])
+                .expect("gvar_assign returns a status");
+            fx.fallible(status);
+            Ok(Operand::Ptr {
+                addr: ptr,
+                owned: false,
+                tag,
+            })
+        }
+        HirNode::ClassVarRead(name) => {
+            let name = name.clone();
+            let owner = cvar_owner(fx, &name);
+            let owner_v = fx.b.ins().iconst(types::I32, i64::from(owner));
+            let (nptr, nlen) = rodata_name(fx, &name);
+            let ss = fx.temp_slot();
+            let out = fx.slot_addr(ss, 0);
+            // The `@@x ||= v` read half tolerates an unassigned cvar (nil);
+            // every other read is ruby's NameError.
+            if fx
+                .an
+                .compiler
+                .hir
+                .has_flag(id, crate::hir::NodeFlag::LENIENT_CVAR_READ)
+            {
+                fx.call("zeo_rt_cvar_get", &[owner_v, nptr, nlen, out]);
+            } else {
+                let status = fx
+                    .call("zeo_rt_cvar_get_checked", &[owner_v, nptr, nlen, out])
+                    .expect("cvar_get_checked returns a status");
+                fx.fallible(status);
+            }
+            fx.owned_created += 1;
+            Ok(Operand::Slot {
+                ss,
+                owned: true,
+                tag: TagInfo::Unknown,
+            })
+        }
+        HirNode::ClassVarWrite(name, value) => {
+            let (name, value) = (name.clone(), *value);
+            let owner = cvar_owner(fx, &name);
+            let op = lower_expr(fx, value)?;
+            let tag = op.tag();
+            let ptr = ownership::borrow_ptr(fx, &op);
+            if op.owned() {
+                ownership::pool_owned(fx, ptr, tag);
+            }
+            let owner_v = fx.b.ins().iconst(types::I32, i64::from(owner));
+            let (nptr, nlen) = rodata_name(fx, &name);
+            let status = fx
+                .call("zeo_rt_cvar_set", &[owner_v, nptr, nlen, ptr])
+                .expect("cvar_set returns a status");
+            fx.fallible(status);
+            Ok(Operand::Ptr {
+                addr: ptr,
+                owned: false,
+                tag,
+            })
+        }
+        HirNode::ConstWrite { scope, name, value } => {
+            let (scope, name, value) = (scope.clone(), name.clone(), *value);
+            // An explicit `Scope::NAME = ..` whose scope isn't a registered
+            // class takes rustc's runtime-scope path -- not lowered yet.
+            let owner_class = match scope.as_deref() {
+                Some(s) => match fx.an.compiler.resolve_class(s, &[], 0) {
+                    Some(cid) => cid,
+                    None => {
+                        return fx.unsupported(id, "a constant write on a runtime scope");
+                    }
+                },
+                None => crate::compiler::OBJECT_CLASS,
+            };
+            let owner = fx
+                .an
+                .compiler
+                .class(owner_class)
+                .const_owners
+                .get(&name)
+                .copied()
+                .unwrap_or(owner_class)
+                .0;
+            // A `const_added` hook would have to fire after the write
+            // (rustc's `emit_const_added`) -- refuse until that lands.
+            if fx.an.compiler.global_def_hooks.contains("const_added")
+                || fx
+                    .an
+                    .compiler
+                    .class_method_in_chain(zeo_abi::ClassId(owner), "const_added")
+                    .is_some()
+            {
+                return fx.unsupported(id, "a constant write observed by `const_added`");
+            }
+            let Some((file, line)) = crate::codegen::source_location(&fx.an.compiler, id) else {
+                return fx.unsupported(id, "a span-less constant write");
+            };
+            let op = lower_expr(fx, value)?;
+            let tag = op.tag();
+            let ptr = ownership::borrow_ptr(fx, &op);
+            if op.owned() {
+                ownership::pool_owned(fx, ptr, tag);
+            }
+            let owner_v = fx.b.ins().iconst(types::I32, i64::from(owner));
+            let (nptr, nlen) = rodata_name(fx, &name);
+            let (fptr, flen) = rodata_name(fx, file);
+            let line_v = fx.b.ins().iconst(types::I32, i64::from(line));
+            fx.call(
+                "zeo_rt_const_set_at",
+                &[owner_v, nptr, nlen, ptr, fptr, flen, line_v],
+            );
+            Ok(Operand::Ptr {
+                addr: ptr,
+                owned: false,
+                tag,
+            })
+        }
+        HirNode::CaseWhen {
+            subject,
+            arms,
+            else_body,
+        } => {
+            let (subject, arms, else_body) = (*subject, arms.clone(), else_body.clone());
+            case_when(fx, id, subject, &arms, &else_body)
+        }
         other => {
             let what = format!("this expression ({})", node_kind(other));
             fx.unsupported(id, &what)
@@ -887,4 +1118,137 @@ fn boxed_binop(
 /// Hand an owned operand's value to the pool, keeping `addr` borrowable.
 fn pool_operand(fx: &mut Fx, op: &Operand, addr: cranelift_codegen::ir::Value) {
     ownership::pool_owned(fx, addr, op.tag());
+}
+
+/// `name`'s bytes interned in `.rodata`, as a `(ptr, len)` argument pair.
+fn rodata_name(
+    fx: &mut Fx,
+    name: &str,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    let off = fx.em.intern_rodata(name.as_bytes());
+    let ptr = fx.rod(off);
+    let len = fx.b.ins().iconst(fx.em.ptr, name.len() as i64);
+    (ptr, len)
+}
+
+/// The class that OWNS `@@name` at this lowering site -- the rustc
+/// emitter's `cvar_owner_id` rule: the lexically enclosing class (`Object`
+/// at the toplevel), looked through a `class << self` surrogate, then
+/// resolved through the analyzer's `cvar_owners` claim map (a subclass
+/// writing a parent-declared cvar stores on the parent).
+fn cvar_owner(fx: &Fx, name: &str) -> u32 {
+    let defining = fx.method_class.unwrap_or(crate::compiler::OBJECT_CLASS);
+    let defining = if fx.an.compiler.is_singleton_surrogate(defining) {
+        fx.an
+            .compiler
+            .class(defining)
+            .lexical_parent
+            .unwrap_or(defining)
+    } else {
+        defining
+    };
+    fx.an
+        .compiler
+        .class(defining)
+        .cvar_owners
+        .get(name)
+        .copied()
+        .unwrap_or(defining)
+        .0
+}
+
+/// `case`/`when` in VALUE position: the subject is evaluated once and
+/// parked borrowed; each `when` value tests through the runtime's `===`
+/// dispatch (`case_eq`; a splatted list through `case_eq_any`, which
+/// short-circuits exactly as the listed form's `||` chain does); the first
+/// hit's body moves its value into the one result slot; no hit runs the
+/// else body (an absent one answers nil). Subjectless `case` tests each
+/// value's truthiness, ruby's if-chain sugar.
+fn case_when(
+    fx: &mut Fx,
+    id: NodeId,
+    subject: Option<NodeId>,
+    arms: &[(Vec<ArrayElem>, Vec<NodeId>)],
+    else_body: &[NodeId],
+) -> Result<Operand, String> {
+    let subj = match subject {
+        Some(n) => {
+            let op = lower_expr(fx, n)?;
+            let tag = op.tag();
+            let ptr = ownership::borrow_ptr(fx, &op);
+            if op.owned() {
+                ownership::pool_owned(fx, ptr, tag);
+            }
+            Some(ptr)
+        }
+        None => None,
+    };
+    let ss = fx.temp_slot();
+    let dst = fx.slot_addr(ss, 0);
+    // The `===` hit flag's scratch byte (a whole value slot; only byte 0
+    // is used).
+    let hit_ss = fx.temp_slot();
+    let hit_ptr = fx.slot_addr(hit_ss, 0);
+    let join = fx.b.create_block();
+    for (values, body) in arms {
+        let body_block = fx.b.create_block();
+        for elem in values {
+            let hit = match (elem, subj) {
+                (ArrayElem::Single(v), Some(s)) => {
+                    let op = lower_expr(fx, *v)?;
+                    let tag = op.tag();
+                    let p = ownership::borrow_ptr(fx, &op);
+                    if op.owned() {
+                        ownership::pool_owned(fx, p, tag);
+                    }
+                    let status = fx
+                        .call("zeo_rt_case_eq", &[p, s, hit_ptr])
+                        .expect("case_eq returns a status");
+                    fx.fallible(status);
+                    fx.b.ins()
+                        .load(types::I8, MemFlagsData::trusted(), hit_ptr, 0)
+                }
+                (ArrayElem::Splat(v), Some(s)) => {
+                    let op = lower_expr(fx, *v)?;
+                    let tag = op.tag();
+                    let p = ownership::borrow_ptr(fx, &op);
+                    if op.owned() {
+                        ownership::pool_owned(fx, p, tag);
+                    }
+                    let status = fx
+                        .call("zeo_rt_case_eq_any", &[p, s, hit_ptr])
+                        .expect("case_eq_any returns a status");
+                    fx.fallible(status);
+                    fx.b.ins()
+                        .load(types::I8, MemFlagsData::trusted(), hit_ptr, 0)
+                }
+                (ArrayElem::Single(v), None) => {
+                    let op = lower_expr(fx, *v)?;
+                    ownership::truthy(fx, op)
+                }
+                (ArrayElem::Splat(_), None) => {
+                    return fx.unsupported(id, "a subjectless `when *splat`");
+                }
+            };
+            let cont = fx.b.create_block();
+            fx.b.ins().brif(hit, body_block, &[], cont, &[]);
+            fx.b.switch_to_block(cont);
+        }
+        // The fall-through block (no value hit) is where the NEXT arm's
+        // tests continue; remember it, fill this arm's body, come back.
+        let fall = fx.b.current_block().expect("a block is under construction");
+        fx.b.switch_to_block(body_block);
+        super::stmt::lower_value_body_into(fx, body, dst)?;
+        fx.b.ins().jump(join, &[]);
+        fx.b.switch_to_block(fall);
+    }
+    super::stmt::lower_value_body_into(fx, else_body, dst)?;
+    fx.b.ins().jump(join, &[]);
+    fx.b.switch_to_block(join);
+    fx.owned_created += 1;
+    Ok(Operand::Slot {
+        ss,
+        owned: true,
+        tag: TagInfo::Unknown,
+    })
 }

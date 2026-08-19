@@ -135,3 +135,123 @@ pub unsafe extern "C" fn zeo_rt_const_get_at(
         }
     }
 }
+
+/// A global variable read (`$foo`) from box `box_id`'s table. Never-assigned
+/// = nil (Ruby's rule), so this is infallible. The `$!`/`$?` specials read
+/// dedicated runtime slots and have their own entries below.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_gvar_get(
+    box_id: u32,
+    name: *const u8,
+    name_len: usize,
+    out: *mut RubyValue,
+) {
+    let name = unsafe { super::str_slice(name, name_len) };
+    let v = crate::globals::global_get(box_id, name);
+    super::leakcheck::created(&v);
+    unsafe { out.write(v) };
+}
+
+/// A global variable assignment. `v` is BORROWED (cloned into the table),
+/// so the emitter's temporary keeps its own ownership. Fallible: read-only
+/// globals and alias hooks raise.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_gvar_assign(
+    box_id: u32,
+    name: *const u8,
+    name_len: usize,
+    v: *const RubyValue,
+) -> i32 {
+    let name = unsafe { super::str_slice(name, name_len) };
+    match crate::globals::global_assign(box_id, name, unsafe { &*v }.clone()) {
+        Ok(()) => STATUS_OK,
+        Err(sig) => {
+            crate::signal::set_pending(sig);
+            STATUS_SIGNAL
+        }
+    }
+}
+
+/// `$!` -- the exception currently being handled (the same slot a bare
+/// `raise` re-raises), nil outside any rescue. NOT the `$foo` table.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_gvar_err_info(out: *mut RubyValue) {
+    let v = crate::current_exception().unwrap_or(RubyValue::Nil);
+    super::leakcheck::created(&v);
+    unsafe { out.write(v) };
+}
+
+/// `$?` -- the last child's wait status (set by `system`/backticks), nil
+/// until the first child runs. NOT the `$foo` table.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_gvar_child_status(out: *mut RubyValue) {
+    let v = crate::last_child_status();
+    super::leakcheck::created(&v);
+    unsafe { out.write(v) };
+}
+
+/// A class variable read whose never-assigned answer is nil -- the
+/// `@@x ||= v` read half. Every other read is the checked twin below.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_cvar_get(
+    owner: u32,
+    name: *const u8,
+    name_len: usize,
+    out: *mut RubyValue,
+) {
+    let name = unsafe { super::str_slice(name, name_len) };
+    let v = crate::cvars::cvar_get(owner, name);
+    super::leakcheck::created(&v);
+    unsafe { out.write(v) };
+}
+
+/// A class variable read: unassigned raises CRuby's NameError.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_cvar_get_checked(
+    owner: u32,
+    name: *const u8,
+    name_len: usize,
+    out: *mut RubyValue,
+) -> i32 {
+    let name = unsafe { super::str_slice(name, name_len) };
+    super::dispatch::status_out(crate::cvars::cvar_get_checked(owner, name), out)
+}
+
+/// A class variable write. `v` is BORROWED (cloned into the table).
+/// Fallible: writing over a parent's cvar from a child raises.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_cvar_set(
+    owner: u32,
+    name: *const u8,
+    name_len: usize,
+    v: *const RubyValue,
+) -> i32 {
+    let name = unsafe { super::str_slice(name, name_len) };
+    match crate::cvars::cvar_set(owner, name, unsafe { &*v }.clone()) {
+        Ok(()) => STATUS_OK,
+        Err(sig) => {
+            crate::signal::set_pending(sig);
+            STATUS_SIGNAL
+        }
+    }
+}
+
+/// A constant assignment with its source location (what
+/// `Module#const_source_location` reads back; a re-assignment warns and
+/// restamps, exactly [`crate::constants::const_set_at`]'s contract).
+/// `v` is BORROWED (cloned into the table); `file` must point at `.rodata`
+/// (the `'static` the location table keeps).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_const_set_at(
+    owner: u32,
+    name: *const u8,
+    name_len: usize,
+    v: *const RubyValue,
+    file: *const u8,
+    file_len: usize,
+    line: u32,
+) {
+    let name = unsafe { super::str_slice(name, name_len) };
+    let file = unsafe { super::static_str(file, file_len) };
+    crate::constants::const_set_at(owner, name, unsafe { &*v }.clone(), file, line);
+}

@@ -407,3 +407,44 @@ pub unsafe extern "C" fn zeo_rt_callsite_init(slot: *mut crate::dispatch::CallSi
 pub unsafe extern "C" fn zeo_rt_classmethod_site_init(slot: *mut crate::dispatch::ClassMethodSite) {
     unsafe { slot.write(crate::dispatch::ClassMethodSite::new()) };
 }
+
+/// `case`/`when`: does `pattern === subject`? Dispatches the candidate's
+/// own `===` (a user class overriding it is the whole point of `case`).
+/// `*hit` gets 0/1 on success; a raising `===` propagates.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_case_eq(
+    pattern: *const RubyValue,
+    subject: *const RubyValue,
+    hit: *mut i8,
+) -> i32 {
+    match crate::value::case_eq(unsafe { &*pattern }, unsafe { &*subject }) {
+        Ok(b) => {
+            unsafe { hit.write(i8::from(b)) };
+            STATUS_OK
+        }
+        Err(sig) => {
+            crate::signal::set_pending(sig);
+            STATUS_SIGNAL
+        }
+    }
+}
+
+/// `when *candidates`: the splat form -- `===` over every element of the
+/// (to_a-coerced) candidate list, short-circuiting on the first hit.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_case_eq_any(
+    candidates: *const RubyValue,
+    subject: *const RubyValue,
+    hit: *mut i8,
+) -> i32 {
+    match crate::value::case_eq_any(unsafe { &*candidates }, unsafe { &*subject }) {
+        Ok(b) => {
+            unsafe { hit.write(i8::from(b)) };
+            STATUS_OK
+        }
+        Err(sig) => {
+            crate::signal::set_pending(sig);
+            STATUS_SIGNAL
+        }
+    }
+}

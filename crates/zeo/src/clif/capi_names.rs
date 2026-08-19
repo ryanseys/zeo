@@ -64,6 +64,16 @@ pub const CAPI: &[CapiSig] = &[
         ret: Some(I32),
     },
     CapiSig {
+        name: "zeo_rt_case_eq",
+        params: &[Ptr, Ptr, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
+        name: "zeo_rt_case_eq_any",
+        params: &[Ptr, Ptr, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
         name: "zeo_rt_cell_load",
         params: &[Ptr, Ptr],
         ret: None,
@@ -94,6 +104,26 @@ pub const CAPI: &[CapiSig] = &[
         ret: Some(I32),
     },
     CapiSig {
+        name: "zeo_rt_const_set_at",
+        params: &[U32, Ptr, Usize, Ptr, Ptr, Usize, U32],
+        ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_cvar_get",
+        params: &[U32, Ptr, Usize, Ptr],
+        ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_cvar_get_checked",
+        params: &[U32, Ptr, Usize, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
+        name: "zeo_rt_cvar_set",
+        params: &[U32, Ptr, Usize, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
         name: "zeo_rt_frame_pop",
         params: &[],
         ret: None,
@@ -107,6 +137,26 @@ pub const CAPI: &[CapiSig] = &[
         name: "zeo_rt_frozen_check",
         params: &[Ptr],
         ret: Some(I32),
+    },
+    CapiSig {
+        name: "zeo_rt_gvar_assign",
+        params: &[U32, Ptr, Usize, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
+        name: "zeo_rt_gvar_child_status",
+        params: &[Ptr],
+        ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_gvar_err_info",
+        params: &[Ptr],
+        ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_gvar_get",
+        params: &[U32, Ptr, Usize, Ptr],
+        ret: None,
     },
     CapiSig {
         name: "zeo_rt_handling_pop",
@@ -217,6 +267,11 @@ pub const CAPI: &[CapiSig] = &[
         name: "zeo_rt_propagating_leave",
         params: &[U8],
         ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_range_new",
+        params: &[Ptr, Ptr, U8, Ptr],
+        ret: Some(I32),
     },
     CapiSig {
         name: "zeo_rt_release",

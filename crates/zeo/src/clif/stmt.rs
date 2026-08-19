@@ -303,6 +303,13 @@ fn lower_tail_expr(fx: &mut Fx, tail: NodeId) -> Result<super::operand::Operand,
         | HirNode::HashLit(..)
         | HirNode::SymbolLit(..)
         | HirNode::Seq(..)
+        | HirNode::CaseWhen { .. }
+        | HirNode::RangeLit { .. }
+        | HirNode::GlobalRead(..)
+        | HirNode::GlobalWrite(..)
+        | HirNode::ClassVarRead(..)
+        | HirNode::ClassVarWrite(..)
+        | HirNode::ConstWrite { .. }
         | HirNode::Call { .. } => lower_expr(fx, tail),
         other => {
             let what = format!("this tail expression ({})", statement_kind(other));
@@ -630,6 +637,13 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
         | HirNode::SelfRef
         | HirNode::Yield(..)
         | HirNode::BlockGiven
+        | HirNode::CaseWhen { .. }
+        | HirNode::RangeLit { .. }
+        | HirNode::GlobalRead(..)
+        | HirNode::GlobalWrite(..)
+        | HirNode::ClassVarRead(..)
+        | HirNode::ClassVarWrite(..)
+        | HirNode::ConstWrite { .. }
         | HirNode::Call { .. } => {
             let op = lower_expr(fx, stmt)?;
             ownership::discard(fx, op);

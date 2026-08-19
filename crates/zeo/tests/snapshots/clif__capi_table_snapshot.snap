@@ -8,15 +8,25 @@ zeo_rt_array_push_splat ([Ptr, Ptr]) -> Some(I32)
 zeo_rt_bind_block_params ([Ptr, U8, Ptr, Usize, Ptr, Ptr]) -> Some(I32)
 zeo_rt_bind_params ([Ptr, Ptr, Usize, Ptr, Ptr]) -> Some(I32)
 zeo_rt_block_arg_to_proc ([Ptr, Ptr]) -> Some(I32)
+zeo_rt_case_eq ([Ptr, Ptr, Ptr]) -> Some(I32)
+zeo_rt_case_eq_any ([Ptr, Ptr, Ptr]) -> Some(I32)
 zeo_rt_cell_load ([Ptr, Ptr]) -> None
 zeo_rt_cell_new ([Ptr]) -> Some(Ptr)
 zeo_rt_cell_release ([Ptr]) -> None
 zeo_rt_cell_store ([Ptr, Ptr]) -> None
 zeo_rt_check_ints ([]) -> Some(I32)
 zeo_rt_const_get_at ([U32, Ptr, Usize, Ptr]) -> Some(I32)
+zeo_rt_const_set_at ([U32, Ptr, Usize, Ptr, Ptr, Usize, U32]) -> None
+zeo_rt_cvar_get ([U32, Ptr, Usize, Ptr]) -> None
+zeo_rt_cvar_get_checked ([U32, Ptr, Usize, Ptr]) -> Some(I32)
+zeo_rt_cvar_set ([U32, Ptr, Usize, Ptr]) -> Some(I32)
 zeo_rt_frame_pop ([]) -> None
 zeo_rt_frame_push ([Ptr, Usize, Ptr, Usize, U32, U32]) -> None
 zeo_rt_frozen_check ([Ptr]) -> Some(I32)
+zeo_rt_gvar_assign ([U32, Ptr, Usize, Ptr]) -> Some(I32)
+zeo_rt_gvar_child_status ([Ptr]) -> None
+zeo_rt_gvar_err_info ([Ptr]) -> None
+zeo_rt_gvar_get ([U32, Ptr, Usize, Ptr]) -> None
 zeo_rt_handling_pop ([]) -> None
 zeo_rt_handling_push ([Ptr]) -> None
 zeo_rt_hash_new ([Ptr]) -> None
@@ -39,6 +49,7 @@ zeo_rt_pool_reset ([Usize]) -> None
 zeo_rt_proc_new ([Ptr, Ptr, Usize, Ptr, Ptr, Ptr, I32, U32, Ptr]) -> None
 zeo_rt_propagating_enter ([Ptr]) -> Some(U8)
 zeo_rt_propagating_leave ([U8]) -> None
+zeo_rt_range_new ([Ptr, Ptr, U8, Ptr]) -> Some(I32)
 zeo_rt_release ([Ptr]) -> None
 zeo_rt_rescue_matches ([Ptr, Ptr, Usize]) -> Some(U8)
 zeo_rt_retain ([Ptr]) -> None
