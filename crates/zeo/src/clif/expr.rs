@@ -1094,6 +1094,35 @@ fn class_value_of(
     _name: &str,
     cid: crate::compiler::ClassId,
 ) -> Result<Operand, String> {
+    // Registered but not PROMISED: whether a runtime-conditional class's
+    // constant exists is settled by the guarded body having run, so the
+    // reference asks -- `NameError` until `reveal_class` fires there.
+    if fx.an.compiler.class(cid).runtime_conditional {
+        let fq = fx.an.compiler.fq_name(cid);
+        let owner = fx
+            .an
+            .compiler
+            .class(cid)
+            .lexical_parent
+            .unwrap_or(crate::compiler::OBJECT_CLASS);
+        let ss = fx.temp_slot();
+        let dst = fx.slot_addr(ss, 0);
+        let cid_v = fx.b.ins().iconst(types::I32, i64::from(cid.0));
+        let (nptr, nlen) = rodata_name(fx, &fq);
+        let owner_v = fx.b.ins().iconst(types::I32, i64::from(owner.0));
+        let st = fx
+            .call(
+                "zeo_rt_conditional_class_ref",
+                &[cid_v, nptr, nlen, owner_v, dst],
+            )
+            .expect("conditional_class_ref returns a status");
+        fx.fallible(st);
+        return Ok(Operand::Slot {
+            ss,
+            owned: false,
+            tag: TagInfo::Known(ValueTag::Class as u8),
+        });
+    }
     let ss = fx.temp_slot();
     let dst = fx.slot_addr(ss, 0);
     let fl = MemFlagsData::trusted();
@@ -1829,6 +1858,35 @@ fn lower_defined(fx: &mut Fx, site: NodeId, inner: NodeId) -> Result<Operand, St
             .call("zeo_rt_defined_cvar", &[ov, nptr, nlen])
             .expect("defined_cvar answers");
         return Ok(defined_cond(fx, hit, "class variable"));
+    }
+    // A bare constant naming a RUNTIME-CONDITIONAL class: registered but
+    // not PROMISED, so whether it exists is settled by the guarded body
+    // having run. Foldable in neither direction -- probe its owner.
+    if let HirNode::ClassRef(name) = &fx.an.compiler.hir[inner] {
+        let name = name.clone();
+        let env = crate::analyze::constfold::ConstEnv {
+            compiler: &fx.an.compiler,
+            defining_class: fx.defining_class.or(fx.method_class),
+            box_id: 0,
+        };
+        if crate::analyze::constfold::const_form_resolves(&env, inner).is_none()
+            && let Some(cid) = resolve_class_here(fx, &name)
+            && fx.an.compiler.class(cid).runtime_conditional
+        {
+            let owner = fx
+                .an
+                .compiler
+                .class(cid)
+                .lexical_parent
+                .unwrap_or(crate::compiler::OBJECT_CLASS);
+            let leaf = fx.an.compiler.leaf_name(cid).to_string();
+            let sid = fx.b.ins().iconst(types::I32, i64::from(owner.0));
+            let (nptr, nlen) = rodata_name(fx, &leaf);
+            let hit = fx
+                .call("zeo_rt_defined_const_in", &[sid, nptr, nlen])
+                .expect("defined_const_in answers");
+            return Ok(defined_cond(fx, hit, "constant"));
+        }
     }
     // The static classification tail -- rustc's, in its order.
     let classification: Option<&str> = match &fx.an.compiler.hir[inner] {

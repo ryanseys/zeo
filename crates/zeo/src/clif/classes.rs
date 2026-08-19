@@ -121,6 +121,9 @@ pub(crate) struct CollectedClasses {
     pub extends: Vec<(u32, Vec<u32>)>,
     /// `(class, name)` -- `undef` marks (`mark_undefined`).
     pub undef_rows: Vec<(u32, String)>,
+    /// Runtime-conditional class ids, concealed until their guarded body
+    /// reveals them.
+    pub conceal: Vec<u32>,
     /// `(class, new, old, is_class_side)` -- builtin-source alias rows
     /// (`register_alias` / `register_class_alias` name indirections).
     pub alias_rows: Vec<(u32, String, String, bool)>,
@@ -153,6 +156,7 @@ pub(crate) fn collect_classes(
     let mut extends: Vec<(u32, Vec<u32>)> = Vec::new();
     let mut sst: Vec<(u32, u32, String, cranelift_module::FuncId)> = Vec::new();
     let mut alias_rows: Vec<(u32, String, String, bool)> = Vec::new();
+    let mut conceal: Vec<u32> = Vec::new();
     // Builtin-source alias rows, every class including the toplevel (rustc's
     // `alias_registration_rows`; the boxed-overlay target case is refused
     // with its class). A require-gated builtin whose feature never fired
@@ -265,8 +269,11 @@ pub(crate) fn collect_classes(
                 // marked FOREIGN so `super` skips this position.
                 foreign.push((idx as u32, mname.clone()));
             }
+            // A conditional `def` emits a RUNTIME install at its document
+            // position instead (analyze left it in the body's statements),
+            // so it contributes no static row here.
             if scope.runtime_conditional {
-                return refuse_m("a conditionally-defined method");
+                continue;
             }
 
             let p = &scope.params;
@@ -347,7 +354,7 @@ pub(crate) fn collect_classes(
                 ))
             };
             if scope.runtime_conditional {
-                return refuse_m("a conditionally-defined class method");
+                continue;
             }
 
             let p = &scope.params;
@@ -415,8 +422,11 @@ pub(crate) fn collect_classes(
         if class.box_id != 0 {
             return refuse("a boxed class");
         }
+        // A runtime-CONDITIONAL class registers its shape (the static MRO
+        // needs one) but starts CONCEALED: the constant does not exist
+        // until the guarded body runs and reveals it.
         if class.runtime_conditional {
-            return refuse("a conditionally-defined class");
+            conceal.push(idx as u32);
         }
         // `include` works through the two mechanisms below (materialized
         // copies on the includer + value rows on the module + the module in
@@ -524,9 +534,13 @@ pub(crate) fn collect_classes(
         // `Method#owner` truth, exactly the rustc `mark_own_rows` list
         // (plus re-scoped `zsuper` entries, refused above with the
         // visibility overrides they ride in on).
+        // A conditional `def` is left out: `instance_methods(false)` must
+        // report what the class HAS, and whether it has this one is settled
+        // at run time by the row its install writes.
         let mut own: Vec<&String> = class
             .own_methods
             .iter()
+            .filter(|&&sid| !compiler.scope(sid).runtime_conditional)
             .map(|&sid| &compiler.scope(sid).name)
             .collect();
         own.sort();
@@ -548,7 +562,7 @@ pub(crate) fn collect_classes(
                     ))
                 };
                 if scope.runtime_conditional {
-                    return refuse_m("a conditionally-defined method");
+                    continue;
                 }
 
                 let p = &scope.params;
@@ -622,8 +636,11 @@ pub(crate) fn collect_classes(
                     "the CLIF backend cannot lower {what} yet ({name}#{mname})"
                 ))
             };
+            // A conditional `def` emits a RUNTIME install at its document
+            // position instead (analyze left it in the body's statements),
+            // so it contributes no static row here.
             if scope.runtime_conditional {
-                return refuse_m("a conditionally-defined method");
+                continue;
             }
 
             let p = &scope.params;
@@ -744,7 +761,7 @@ pub(crate) fn collect_classes(
                     ))
                 };
                 if scope.runtime_conditional {
-                    return refuse_m("a conditionally-defined method");
+                    continue;
                 }
 
                 let p = &scope.params;
@@ -826,7 +843,7 @@ pub(crate) fn collect_classes(
                 ))
             };
             if scope.runtime_conditional {
-                return refuse_m("a conditionally-defined class method");
+                continue;
             }
 
             let p = &scope.params;
@@ -903,7 +920,7 @@ pub(crate) fn collect_classes(
                 ))
             };
             if scope.runtime_conditional {
-                return refuse_m("a conditionally-defined class method");
+                continue;
             }
 
             let p = &scope.params;
@@ -1002,5 +1019,6 @@ pub(crate) fn collect_classes(
         sst,
         alias_rows,
         undef_rows,
+        conceal,
     })
 }

@@ -101,6 +101,16 @@ pub const CAPI: &[CapiSig] = &[
         ret: Some(I32),
     },
     CapiSig {
+        name: "zeo_rt_conceal_class",
+        params: &[U32],
+        ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_conditional_class_ref",
+        params: &[U32, Ptr, Usize, U32, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
         name: "zeo_rt_const_get_at",
         params: &[U32, Ptr, Usize, Ptr],
         ret: Some(I32),
@@ -474,6 +484,11 @@ pub const CAPI: &[CapiSig] = &[
         name: "zeo_rt_return_targets_here",
         params: &[],
         ret: Some(U8),
+    },
+    CapiSig {
+        name: "zeo_rt_reveal_class",
+        params: &[U32],
+        ret: None,
     },
     CapiSig {
         name: "zeo_rt_runtime_set_visibility",

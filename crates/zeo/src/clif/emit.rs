@@ -179,6 +179,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
         sst,
         alias_rows,
         undef_rows,
+        conceal,
     ) = (
         collected.classes,
         collected.methods,
@@ -192,6 +193,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
         collected.sst,
         collected.alias_rows,
         collected.undef_rows,
+        collected.conceal,
     );
     for def in &defs {
         let func = em.methods[&def.name].body;
@@ -489,6 +491,15 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
                 ids: vec![*module],
             }),
     );
+    // Runtime-conditional classes start concealed.
+    reg_rows.extend(conceal.iter().map(|class| statics::RegRowSpec {
+        kind: zeo_abi::abi::REG_CONCEAL_CLASS,
+        class: *class,
+        a: String::new(),
+        b: String::new(),
+        f: None,
+        ids: vec![],
+    }));
     // `undef` marks.
     reg_rows.extend(undef_rows.iter().map(|(class, name)| statics::RegRowSpec {
         kind: zeo_abi::abi::REG_MARK_UNDEFINED,
@@ -844,6 +855,9 @@ pub(crate) struct ClassBodyCall {
     pub func: Option<FuncId>,
     /// `(owner, leaf, file, line)` -- recorded only by the DECLARING site.
     pub const_loc: Option<(u32, String, String, u32)>,
+    /// Whether this site must REVEAL its runtime-conditional class: the
+    /// guarded definition just ran, so the constant exists from here on.
+    pub reveal: bool,
     /// The FROZEN-REOPEN guard's name list: the methods THIS site would
     /// install that no earlier site for the same class already did. Empty
     /// when the program freezes nothing, when this is the class's first
@@ -1031,6 +1045,7 @@ fn collect_class_bodies(
             class: site.class.0,
             func,
             const_loc,
+            reveal: ci.runtime_conditional,
             freeze_guard,
         };
         let is_inline = site.def_node.is_some_and(|n| inline.contains(&n));

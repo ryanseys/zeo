@@ -372,6 +372,11 @@ pub const REG_CLASS_ALIAS: u8 = 7;
 /// from this position down, shadowing any inherited row.
 pub const REG_MARK_UNDEFINED: u8 = 8;
 
+/// `RegRow.kind`: `class` is runtime-CONDITIONAL -- its shape registers so
+/// the static MRO has one, but the constant stays concealed until the
+/// guarded body reveals it.
+pub const REG_CONCEAL_CLASS: u8 = 9;
+
 /// A lazily-run feature unit -- the `install_feature_units` twin.
 #[repr(C)]
 pub struct UnitRow {

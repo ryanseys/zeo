@@ -978,6 +978,13 @@ pub(crate) fn emit_class_body_call(
             .expect("guard_class_reopen returns a status");
         fx.fallible(st);
     }
+    // A runtime-conditional class's guarded definition just RAN: the
+    // constant exists from here on, before any declaration bookkeeping and
+    // at EVERY site (whichever branch runs must reveal).
+    if call.reveal {
+        let cid = fx.b.ins().iconst(types::I32, i64::from(call.class));
+        fx.call("zeo_rt_reveal_class", &[cid]);
+    }
     if let Some((owner, name, file, line)) = &call.const_loc {
         let owner_v = fx.b.ins().iconst(types::I32, i64::from(*owner));
         let (nptr, nlen) = name_pair(fx, name);

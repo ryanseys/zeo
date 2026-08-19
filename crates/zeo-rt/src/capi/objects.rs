@@ -471,3 +471,36 @@ pub unsafe extern "C" fn zeo_rt_guard_class_reopen(
         }
     }
 }
+
+/// A runtime-conditional class starts CONCEALED: its shape is registered
+/// (the static MRO needs one) but nothing may treat the constant as
+/// existing until its guarded body runs.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_conceal_class(cid: u32) {
+    crate::constants::conceal_class(cid);
+}
+
+/// The guarded definition just RAN: the constant exists from here on.
+/// Idempotent -- a reopened conditional class reveals at every site.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_reveal_class(cid: u32) {
+    crate::constants::reveal_class(cid);
+}
+
+/// A reference to a runtime-CONDITIONAL class: `NameError` while the
+/// guarded body has not run (`uninitialized constant Foo`), the Class
+/// value once it has.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_conditional_class_ref(
+    cid: u32,
+    fq: *const u8,
+    fq_len: usize,
+    owner: u32,
+    out: *mut RubyValue,
+) -> i32 {
+    let name = unsafe { super::str_slice(fq, fq_len) };
+    status_out(
+        crate::constants::conditional_class_ref(ClassId(cid), name, ClassId(owner)),
+        out,
+    )
+}
