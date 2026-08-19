@@ -2,6 +2,11 @@
 //! Struct/module classes, and the lowering of `Class.new`-minted classes,
 //! reopens, and their bodies.
 
+#![warn(
+    clippy::wildcard_enum_match_arm,
+    reason = "swept: this module's matches are exhaustive. Re-enabled because a\n    parent module's file-level allow is INHERITED by its submodules"
+)]
+
 use super::*;
 
 /// Whether the program ASSIGNS this constant a value anywhere already lowered
@@ -757,6 +762,12 @@ fn lower_runtime_class_body(
 /// body-defined constant read from inside a `def` is refused there rather than
 /// resolved against the wrong scope -- the body position still works, since
 /// `self` is the class being built.
+#[allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "structural: literal-shape probes -- only a `DynConstWrite` on `self` defines, \
+              only `ClassRef`/`New` read a bare name, and every other node passes \
+              through the rewrite unchanged"
+)]
 fn rescope_body_constants(
     hir: &mut Hir,
     cref: Option<&str>,
@@ -888,6 +899,12 @@ fn rescope_body_constants(
 /// NoMethodError only if actually executed) -- acceptable for a runtime class
 /// on an otherwise-unreachable path, and never worse than the previous hard
 /// compile error.
+#[allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "structural: the wildcard bucket is `Rewrite::Keep` -- the statement runs as \
+              written in the body lambda, the fully general path; every listed arm \
+              is an opt-in re-spelling of a definition-time directive"
+)]
 pub(super) fn transform_runtime_class_body(
     hir: &mut Hir,
     body: Vec<NodeId>,
@@ -1027,6 +1044,11 @@ pub(super) fn transform_runtime_class_body(
 /// ruby_parser closes with `if ENV["RP_LINENO_DEBUG"] then class RubyLexer;
 /// alias old_lineno= lineno=; ...` -- a debug hook whose guard is a real
 /// runtime question.
+#[allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "structural: only an `if` nests further directives; every other statement \
+              passes through unchanged"
+)]
 pub(crate) fn transform_conditional_class_body(hir: &mut Hir, body: &[NodeId]) -> Vec<NodeId> {
     let mut out = Vec::with_capacity(body.len());
     for &id in body {
@@ -1073,6 +1095,12 @@ pub(crate) fn transform_conditional_class_body(hir: &mut Hir, body: &[NodeId]) -
 /// them, and both drifted from [`HirNode::is_class_body_directive`]: three gems
 /// (danger, gitlab-labkit, activeadmin_settings_cached) reached codegen through
 /// a directive neither had a row for.
+#[allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "structural: only the listed directive kinds have a runtime self-send \
+              re-spelling (`Refine` is the explicit refusal); anything else answers \
+              `None` (not a directive) by definition"
+)]
 pub(crate) fn runtime_directive_spelling(hir: &mut Hir, id: NodeId) -> PResult<Option<NodeId>> {
     /// Classified without holding the `&hir[id]` borrow across the node-building
     /// mutations below (each rewrite pushes fresh nodes).
