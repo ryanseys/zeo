@@ -967,6 +967,17 @@ pub(crate) fn emit_class_body_call(
 ) -> Result<(), String> {
     use cranelift_codegen::ir::{InstBuilder, MemFlagsData, types};
     use cranelift_module::Module;
+    // The frozen-reopen guard runs FIRST: a frozen class raises before the
+    // body's declaration bookkeeping, let alone its statements.
+    if !call.freeze_guard.is_empty() {
+        let names: Vec<&str> = call.freeze_guard.iter().map(String::as_str).collect();
+        let (ptr, n) = super::statics::str_array(fx, &names);
+        let cid = fx.b.ins().iconst(types::I32, i64::from(call.class));
+        let st = fx
+            .call("zeo_rt_guard_class_reopen", &[cid, ptr, n])
+            .expect("guard_class_reopen returns a status");
+        fx.fallible(st);
+    }
     if let Some((owner, name, file, line)) = &call.const_loc {
         let owner_v = fx.b.ins().iconst(types::I32, i64::from(*owner));
         let (nptr, nlen) = name_pair(fx, name);

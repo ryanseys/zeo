@@ -443,3 +443,31 @@ pub unsafe extern "C" fn zeo_rt_runtime_set_visibility(cid: u32, name: u32, verb
         }
     }
 }
+
+/// The FROZEN-REOPEN guard: a class body that would install a name the
+/// class does not already carry raises `FrozenError` when the class was
+/// frozen, and retires the names it could not install. `names` is a
+/// `.rodata` Str array, in the emitter's sorted order.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_guard_class_reopen(
+    cid: u32,
+    names: *const zeo_abi::abi::Str,
+    n: usize,
+) -> i32 {
+    let rows = if n == 0 {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(names, n) }
+    };
+    let names: Vec<&str> = rows
+        .iter()
+        .map(|s| unsafe { super::str_slice(s.ptr, s.len) })
+        .collect();
+    match crate::dispatch::guard_class_reopen(ClassId(cid), &names) {
+        Ok(()) => STATUS_OK,
+        Err(sig) => {
+            crate::signal::set_pending(sig);
+            STATUS_SIGNAL
+        }
+    }
+}

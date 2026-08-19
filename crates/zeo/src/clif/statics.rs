@@ -1005,3 +1005,32 @@ pub(crate) fn define_rodata(em: &mut Emitter) -> Result<(), String> {
         .define_data(em.rodata_id, &data)
         .map_err(|e| format!("defining {}: {e}", names::RODATA))
 }
+
+/// A `Str` array built on the STACK from `.rodata` bytes, as
+/// `(ptr, count)` -- what a runtime call taking a name list reads. Used
+/// where the list is per-SITE rather than per-program (the frozen-reopen
+/// guard), so a static table would cost a relocation per site for nothing.
+pub(crate) fn str_array(
+    fx: &mut super::ctx::Fx,
+    names: &[&str],
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    use cranelift_codegen::ir::{InstBuilder, MemFlagsData, StackSlotData, StackSlotKind};
+    let str_size = std::mem::size_of::<Str>();
+    let ss = fx.b.create_sized_stack_slot(StackSlotData::new(
+        StackSlotKind::ExplicitSlot,
+        (names.len() * str_size) as u32,
+        3,
+    ));
+    let fl = MemFlagsData::trusted();
+    for (i, name) in names.iter().enumerate() {
+        let (ptr, len) = super::expr::rodata_name(fx, name);
+        let base = (i * str_size) as i32;
+        let at = fx.slot_addr(ss, base + std::mem::offset_of!(Str, ptr) as i32);
+        fx.b.ins().store(fl, ptr, at, 0);
+        let at = fx.slot_addr(ss, base + std::mem::offset_of!(Str, len) as i32);
+        fx.b.ins().store(fl, len, at, 0);
+    }
+    let base = fx.slot_addr(ss, 0);
+    let n = fx.b.ins().iconst(fx.em.ptr, names.len() as i64);
+    (base, n)
+}

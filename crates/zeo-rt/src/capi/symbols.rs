@@ -68,6 +68,7 @@ capi_symbols!(
     frames::zeo_rt_frame_pop,
     frames::zeo_rt_frame_push,
     objects::zeo_rt_frozen_check,
+    objects::zeo_rt_guard_class_reopen,
     objects::zeo_rt_gvar_assign,
     objects::zeo_rt_gvar_child_status,
     objects::zeo_rt_gvar_err_info,

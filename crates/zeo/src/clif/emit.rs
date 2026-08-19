@@ -844,6 +844,11 @@ pub(crate) struct ClassBodyCall {
     pub func: Option<FuncId>,
     /// `(owner, leaf, file, line)` -- recorded only by the DECLARING site.
     pub const_loc: Option<(u32, String, String, u32)>,
+    /// The FROZEN-REOPEN guard's name list: the methods THIS site would
+    /// install that no earlier site for the same class already did. Empty
+    /// when the program freezes nothing, when this is the class's first
+    /// site, or when the site installs nothing new.
+    pub freeze_guard: Vec<String>,
 }
 
 /// One compiled class body (a separate Ruby scope, lifted to its own
@@ -970,9 +975,32 @@ fn collect_class_bodies(
         {
             return refuse("a class declaration observed by `inherited`");
         }
-        if compiler.program_freezes && !declares && !site.installs.is_empty() {
-            return refuse("a reopen under `freeze` (the frozen-reopen guard)");
-        }
+        // The frozen-reopen guard: a REOPEN under a program that freezes
+        // classes raises `FrozenError` for the names it would newly
+        // install. Registration order IS document order, so "earlier" is
+        // simply the sites for this class before this one (rustc's
+        // `emit_frozen_reopen_guard`).
+        let freeze_guard = if compiler.program_freezes {
+            let earlier: Vec<&crate::compiler::ClassBodySite> = compiler.class_body_sites[..i]
+                .iter()
+                .filter(|s| s.class == site.class)
+                .collect();
+            if earlier.is_empty() {
+                Vec::new()
+            } else {
+                let mut names: Vec<String> = site
+                    .installs
+                    .iter()
+                    .filter(|n| !earlier.iter().any(|s| s.installs.contains(n)))
+                    .cloned()
+                    .collect();
+                names.sort_unstable();
+                names.dedup();
+                names
+            }
+        } else {
+            Vec::new()
+        };
         let const_loc = (declares)
             .then(|| {
                 site.def_node
@@ -1003,6 +1031,7 @@ fn collect_class_bodies(
             class: site.class.0,
             func,
             const_loc,
+            freeze_guard,
         };
         let is_inline = site.def_node.is_some_and(|n| inline.contains(&n));
         if is_inline && let Some(marker) = site.def_node {
