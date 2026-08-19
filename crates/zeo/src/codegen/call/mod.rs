@@ -4132,6 +4132,10 @@ fn dispatch(
         // resolving the same class to the same method on every call. Per-site
         // inline cache; see `zeo_rt::CallSite`.
         let caller = visibility::caller_class(cx, recv_id, bypass_visibility);
+        // Every send below borrows the receiver, and a receiver can DIVERGE --
+        // see `expr::typed_receiver`, which gives the jump somewhere to coerce
+        // into so `&(...)` is not `&!`.
+        let recv_expr = &super::expr::typed_receiver(recv_expr.clone());
         // A statically-known CLASS receiver -- `Math.sin(x)`, `Time.now`.
         // `send_value_cached` rules these out before it reads its cache (a
         // class value's methods resolve through an arm of their own), so this

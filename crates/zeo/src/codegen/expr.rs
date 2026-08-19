@@ -2321,6 +2321,20 @@ pub(super) fn raise_in_expr_position(err: TokenStream, ok_ty: TokenStream) -> To
 /// real type error, not just redundant, which is why this can't be a blind
 /// "wrap everything" step; it's keyed on the type, which this codebase's
 /// own invariant makes an exact proxy for "needs boxing".
+/// A RECEIVER expression, given a type.
+///
+/// A receiver can DIVERGE: `raise("x").foo`, or a `const_get` whose literal
+/// name folds to a compile-time `NameError`. Those emit a bare `return
+/// Err(..)`, whose type is `!` -- which coerces to anything except behind a
+/// reference, and a receiver is emitted as `&(expr)`. `&!` is not
+/// `&RubyValue`, so rustc rejected the whole program over an expression that
+/// never runs. A `let` with an explicit type is a coercion site, which gives
+/// the jump somewhere to coerce INTO; the binding costs nothing after
+/// optimization and rides only the dynamic path.
+pub(super) fn typed_receiver(value: TokenStream) -> TokenStream {
+    quote! { { let __recv: zeo_rt::RubyValue = #value; __recv } }
+}
+
 pub(super) fn box_if_object_typed(cx: &Ctx, id: NodeId, value: TokenStream) -> TokenStream {
     match infer(cx, id) {
         TyKind::Object(cid) => {
