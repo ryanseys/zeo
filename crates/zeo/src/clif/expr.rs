@@ -352,15 +352,63 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             class_name,
             args,
             kwargs,
-            block: None,
+            block,
         } => {
-            let (class_name, args, kwargs) = (class_name.clone(), args.clone(), kwargs.clone());
+            let (class_name, args, kwargs, block) =
+                (class_name.clone(), args.clone(), kwargs.clone(), *block);
+            // `Object.new`: a bare sentinel instance of the runtime root --
+            // no registered constructor exists (Object's container holds
+            // top-level defs as free functions), so the rustc backend folds
+            // it to a fresh `Object` and so does this. A user-defined
+            // `initialize` (top-level `def initialize`, or a `class Object`
+            // reopen) still runs, through its VALUE-channel row.
+            if let Some(cid) = resolve_class_here(fx, &class_name)
+                && cid == crate::compiler::OBJECT_CLASS
+                && block.is_none()
+            {
+                let ss = fx.temp_slot();
+                let dst = fx.slot_addr(ss, 0);
+                fx.call("zeo_rt_object_new_sentinel", &[dst]);
+                fx.owned_created += 1;
+                let recv = Operand::Slot {
+                    ss,
+                    owned: true,
+                    tag: TagInfo::Known(zeo_abi::abi::ValueTag::Object as u8),
+                };
+                if fx.an.compiler.method_in_chain(cid, "initialize").is_none() {
+                    if !args.is_empty() || !kwargs.is_empty() {
+                        return fx.unsupported(id, "`Object.new` with arguments");
+                    }
+                    return Ok(recv);
+                }
+                // The sentinel is the RECEIVER of its own `initialize`; the
+                // call's value is discarded and the object handed back.
+                let elems: Vec<ArrayElem> = args.iter().map(|&a| ArrayElem::Single(a)).collect();
+                let p = ownership::borrow_ptr(fx, &recv);
+                ownership::pool_owned(fx, p, recv.tag());
+                let tag = recv.tag();
+                let borrowed = || Operand::Ptr {
+                    addr: p,
+                    owned: false,
+                    tag,
+                };
+                let init = if kwargs.is_empty() {
+                    super::call::dynamic_send_value(fx, id, borrowed(), "initialize", &elems)?
+                } else {
+                    super::call::kw_send(fx, id, Some(borrowed()), "initialize", &elems, &kwargs)?
+                };
+                ownership::discard(fx, init);
+                return Ok(borrowed());
+            }
             let recv = class_value(fx, id, &class_name)?;
             let elems: Vec<ArrayElem> = args.iter().map(|&a| ArrayElem::Single(a)).collect();
-            if kwargs.is_empty() {
-                super::call::dynamic_send_value(fx, id, recv, "new", &elems)
-            } else {
-                super::call::kw_send(fx, id, Some(recv), "new", &elems, &kwargs)
+            match (block, kwargs.is_empty()) {
+                // `Foo.new(x) { .. }`: the literal block forwards to
+                // `initialize`, so `yield`/`block_given?` inside it see it.
+                (Some(blk), true) => super::blocks::block_send_op(fx, id, recv, "new", &elems, blk),
+                (Some(_), false) => fx.unsupported(id, "`new` with both keywords and a block"),
+                (None, true) => super::call::dynamic_send_value(fx, id, recv, "new", &elems),
+                (None, false) => super::call::kw_send(fx, id, Some(recv), "new", &elems, &kwargs),
             }
         }
         HirNode::Call {

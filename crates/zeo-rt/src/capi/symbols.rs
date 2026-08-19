@@ -98,6 +98,7 @@ capi_symbols!(
     registry::zeo_rt_main_object,
     literals::zeo_rt_multi_split,
     objects::zeo_rt_object_alloc,
+    objects::zeo_rt_object_new_sentinel,
     values::zeo_rt_pool_mark,
     values::zeo_rt_pool_push,
     values::zeo_rt_pool_reset,

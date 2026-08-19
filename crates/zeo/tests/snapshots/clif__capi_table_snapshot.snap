@@ -54,6 +54,7 @@ zeo_rt_last_match_ref ([U8, Usize, Ptr]) -> None
 zeo_rt_main ([I32, Ptr, Ptr, Ptr]) -> Some(I32)
 zeo_rt_main_object ([Ptr]) -> None
 zeo_rt_multi_split ([Ptr, Usize, U8, Usize, Ptr]) -> Some(I32)
+zeo_rt_object_new_sentinel ([Ptr]) -> None
 zeo_rt_pool_mark ([]) -> Some(Usize)
 zeo_rt_pool_push ([Ptr]) -> None
 zeo_rt_pool_reset ([Usize]) -> None

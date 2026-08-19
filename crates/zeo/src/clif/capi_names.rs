@@ -296,6 +296,11 @@ pub const CAPI: &[CapiSig] = &[
         ret: Some(I32),
     },
     CapiSig {
+        name: "zeo_rt_object_new_sentinel",
+        params: &[Ptr],
+        ret: None,
+    },
+    CapiSig {
         name: "zeo_rt_pool_mark",
         params: &[],
         ret: Some(Usize),

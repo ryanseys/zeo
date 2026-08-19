@@ -21,6 +21,18 @@ pub unsafe extern "C" fn zeo_rt_object_alloc(cid: u32, out: *mut RubyValue) {
     unsafe { out.write(v) };
 }
 
+/// `Object.new` -- a bare sentinel instance of the runtime root, whose
+/// container holds no ivar layout at all (top-level `def`s are free
+/// functions). Each call mints a fresh `Arc`, so identity is distinct --
+/// the sentinel idiom's whole point. The rustc twin is the inline
+/// `RubyValue::Object(Arc::new(Object::default()))` in `codegen::call::new`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_object_new_sentinel(out: *mut RubyValue) {
+    let v = RubyValue::Object(std::sync::Arc::new(crate::Object::default()));
+    super::leakcheck::created(&v);
+    unsafe { out.write(v) };
+}
+
 /// `Class#new` for a compiled class: allocate, then run `initialize` (if
 /// any ancestor defines one; with none, arguments are rejected as CRuby's
 /// zero-arity `Object#initialize` would).

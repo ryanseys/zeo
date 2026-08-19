@@ -583,6 +583,24 @@ fn define_block_fn(
 /// A dynamic send carrying a literal block: build the proc, pass it moved,
 /// and catch a Break -- the Break value IS the send's value (rustc's
 /// `catch_break`).
+/// [`block_send`] with the receiver ALREADY lowered -- what a `Foo.new
+/// { .. }` needs, whose receiver is a Class immediate rather than a HIR
+/// node.
+pub(crate) fn block_send_op(
+    fx: &mut Fx,
+    site: NodeId,
+    recv: Operand,
+    name: &str,
+    args: &[ArrayElem],
+    block: NodeId,
+) -> Result<Operand, String> {
+    let (proc_ss, _names) = build_proc(fx, site, block)?;
+    let blk_ptr = fx.slot_addr(proc_ss, 0);
+    // The callee consumes the moved-in proc, error path included.
+    fx.owned_consumed += 1;
+    send_with_block_ptr_ops(fx, site, Some(recv), name, args, blk_ptr)
+}
+
 pub(crate) fn block_send(
     fx: &mut Fx,
     site: NodeId,
@@ -656,7 +674,7 @@ fn send_with_block_ptr(
     send_with_block_ptr_ops(fx, site, recv, name, args, blk_ptr)
 }
 
-fn send_with_block_ptr_ops(
+pub(crate) fn send_with_block_ptr_ops(
     fx: &mut Fx,
     site: NodeId,
     recv: Option<Operand>,

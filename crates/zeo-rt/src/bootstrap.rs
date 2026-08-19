@@ -7,11 +7,11 @@
 //! (`install_core_constants`). The alternative was ~540 identical `register(...)`
 //! calls plus eight `seed_*` calls emitted into every program.
 
-use zeo_abi::{BUILTINS, OBJECT_CLASS, declared_ancestors};
+use zeo_abi::{BUILTINS, ClassId, OBJECT_CLASS, declared_ancestors};
 
-use crate::RubyValue;
 use crate::builtins::exception::register_exceptions;
-use crate::dispatch::ClassRegistry;
+use crate::dispatch::{ClassRegistry, ConstructorFn};
+use crate::{RubyValue, Signal, Symbol};
 
 /// Install the always-on built-in classes/modules (`Integer`, `Array`,
 /// `Kernel`, ... and `Object`) into `registry` with their DECLARED ancestors --
@@ -28,9 +28,30 @@ pub fn register_builtins(registry: &mut ClassRegistry) {
         .filter(|b| b.feature.is_none())
         .map(|b| (b.id, b.name, b.is_module));
     for (id, name, is_module) in object.chain(always_on) {
-        registry.register(id, name, is_module, declared_ancestors(id), None);
+        let ctor = (id == OBJECT_CLASS).then_some(object_construct as ConstructorFn);
+        registry.register(id, name, is_module, declared_ancestors(id), ctor);
     }
     undefine_builtin_methods(registry);
+}
+
+/// `Object.new` -- the bare sentinel instance of the runtime root. Both
+/// backends FOLD a literal `Object.new` (no ivar layout exists to allocate
+/// from: `Object`'s container holds top-level defs as free functions), but
+/// a class reached only at run time (`k = Object; k.new`) dispatches here.
+/// A user-defined `initialize` runs through the ordinary send.
+fn object_construct(
+    _id: ClassId,
+    args: &[RubyValue],
+    blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    let obj = RubyValue::Object(std::sync::Arc::new(crate::Object::default()));
+    if crate::dispatch::responds_to_value(&obj, Symbol::intern("initialize"), true) {
+        crate::dispatch::send_value(&obj, Symbol::intern("initialize"), args, blk)?;
+    } else if !args.is_empty() {
+        // CRuby's zero-arity `Object#initialize` rejects them.
+        return Err(crate::dispatch::wrong_arity(args.len(), "0"));
+    }
+    Ok(obj)
 }
 
 /// The built-in `undef`s: a name an ancestor defines that the class REFUSES,
