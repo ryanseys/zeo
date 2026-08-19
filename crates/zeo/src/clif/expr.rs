@@ -70,6 +70,25 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             let (cond, then_body, else_body) = (*cond, then_body.clone(), else_body.clone());
             if_expr(fx, cond, &then_body, &else_body)
         }
+        // A diverging expression in value position (`a = (raise "x")`):
+        // the signal leaves the block unreachable; the nil is never read.
+        HirNode::Break(..) | HirNode::Next(..) | HirNode::Redo | HirNode::Raise(..) => {
+            super::stmt::lower_stmt(fx, id)?;
+            Ok(Operand::Nil)
+        }
+        // A parenthesized sequence in VALUE position (`(a; b)`, a default
+        // expression with side effects): statements, then the last as the
+        // value.
+        HirNode::Seq(stmts) => {
+            let stmts = stmts.clone();
+            match stmts.split_last() {
+                Some((last, init)) => {
+                    super::stmt::lower_stmts(fx, init)?;
+                    lower_expr(fx, *last)
+                }
+                None => Ok(Operand::Nil),
+            }
+        }
         // Assignment in EXPRESSION position (`f(x = 1)`, the desugared
         // `[]=` value hand-back): run the statement, answer the local.
         HirNode::LocalWrite(name, _) => {
@@ -210,6 +229,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             // direct; everything else is a block-passing dynamic send.
             if receiver.is_none()
                 && let Some(decl) = fx.em.methods.get(&name)
+                && decl.plain
                 && decl.arity == args.len()
             {
                 return super::call::direct_call(fx, id, &name, &args, Some(blk));
@@ -241,7 +261,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 }
                 Some(recv) => super::call::dynamic_send(fx, id, recv, &name, &args),
                 None => match fx.em.methods.get(&name) {
-                    Some(decl) if decl.arity == args.len() => {
+                    Some(decl) if decl.plain && decl.arity == args.len() => {
                         super::call::direct_call(fx, id, &name, &args, None)
                     }
                     // Unknown names and arity mismatches go through the

@@ -178,6 +178,153 @@ fn define_vm_rows(em: &mut Emitter, rows: &[VmRowSpec]) -> Result<Option<DataId>
     Ok(Some(id))
 }
 
+/// A method's `.rodata` `ParamDescC` (+ its keyword rows): what the bound
+/// trampoline hands `zeo_rt_bind_params`. Anonymous data objects; every
+/// string lives in the rodata blob.
+pub(crate) fn define_param_desc(
+    em: &mut Emitter,
+    spec: &super::params::TrampSpec<'_>,
+) -> Result<DataId, String> {
+    use zeo_abi::abi::{KwParamC, PARAM_STAR_ANON, PARAM_STAR_NAMED, PARAM_STAR_NONE, ParamDescC};
+    let p = spec.params;
+    let put_u32 = |bytes: &mut [u8], at: usize, v: u32| {
+        bytes[at..at + 4].copy_from_slice(&v.to_le_bytes());
+    };
+    let put_usize = |bytes: &mut [u8], at: usize, v: usize| {
+        bytes[at..at + 8].copy_from_slice(&(v as u64).to_le_bytes());
+    };
+    let str_len_at = |bytes: &mut [u8], field: usize, s: &str| {
+        let at = field + std::mem::offset_of!(Str, len);
+        bytes[at..at + 8].copy_from_slice(&(s.len() as u64).to_le_bytes());
+    };
+
+    let kws_id = if p.keywords.is_empty() {
+        None
+    } else {
+        let size = std::mem::size_of::<KwParamC>();
+        let mut bytes = vec![0u8; size * p.keywords.len()];
+        let mut offs = Vec::with_capacity(p.keywords.len());
+        for (i, kw) in p.keywords.iter().enumerate() {
+            let base = i * size;
+            let (name, required) = match kw {
+                crate::hir::KeywordParam::Required(n) => (n, 1u8),
+                crate::hir::KeywordParam::Optional(n, _) => (n, 0u8),
+            };
+            offs.push(em.intern_rodata(name.as_bytes()));
+            str_len_at(
+                &mut bytes,
+                base + std::mem::offset_of!(KwParamC, name),
+                name,
+            );
+            bytes[base + std::mem::offset_of!(KwParamC, required)] = required;
+        }
+        let mut data = DataDescription::new();
+        data.define(bytes.into_boxed_slice());
+        data.set_align(8);
+        let rodata_gv = em.module.declare_data_in_data(em.rodata_id, &mut data);
+        for (i, off) in offs.iter().enumerate() {
+            let at = (i * size
+                + std::mem::offset_of!(KwParamC, name)
+                + std::mem::offset_of!(Str, ptr)) as u32;
+            data.write_data_addr(at, rodata_gv, i64::from(*off));
+        }
+        let id = em
+            .module
+            .declare_anonymous_data(false, false)
+            .map_err(|e| format!("declaring a kw table: {e}"))?;
+        em.module
+            .define_data(id, &data)
+            .map_err(|e| format!("defining a kw table: {e}"))?;
+        Some(id)
+    };
+
+    let star = |r: &Option<Option<String>>| match r {
+        None => PARAM_STAR_NONE,
+        Some(None) => PARAM_STAR_ANON,
+        Some(Some(_)) => PARAM_STAR_NAMED,
+    };
+    let file = spec.file.unwrap_or("");
+    let mut bytes = vec![0u8; std::mem::size_of::<ParamDescC>()];
+    put_u32(
+        &mut bytes,
+        std::mem::offset_of!(ParamDescC, nreq),
+        p.required.len() as u32,
+    );
+    put_u32(
+        &mut bytes,
+        std::mem::offset_of!(ParamDescC, nopt),
+        p.optional.len() as u32,
+    );
+    put_u32(
+        &mut bytes,
+        std::mem::offset_of!(ParamDescC, npost),
+        p.post.len() as u32,
+    );
+    bytes[std::mem::offset_of!(ParamDescC, rest)] = star(&p.rest);
+    bytes[std::mem::offset_of!(ParamDescC, kwrest)] = star(&p.keyword_rest);
+    bytes[std::mem::offset_of!(ParamDescC, no_keywords)] = u8::from(p.no_keywords);
+    put_usize(
+        &mut bytes,
+        std::mem::offset_of!(ParamDescC, n_kws),
+        p.keywords.len(),
+    );
+    str_len_at(
+        &mut bytes,
+        std::mem::offset_of!(ParamDescC, name),
+        spec.name,
+    );
+    str_len_at(&mut bytes, std::mem::offset_of!(ParamDescC, file), file);
+    str_len_at(
+        &mut bytes,
+        std::mem::offset_of!(ParamDescC, label),
+        spec.label,
+    );
+    put_u32(
+        &mut bytes,
+        std::mem::offset_of!(ParamDescC, line),
+        spec.line,
+    );
+    put_u32(
+        &mut bytes,
+        std::mem::offset_of!(ParamDescC, end_line),
+        spec.end_line,
+    );
+
+    let name_off = em.intern_rodata(spec.name.as_bytes());
+    let file_off = em.intern_rodata(file.as_bytes());
+    let label_off = em.intern_rodata(spec.label.as_bytes());
+    let mut data = DataDescription::new();
+    data.define(bytes.into_boxed_slice());
+    data.set_align(8);
+    let rodata_gv = em.module.declare_data_in_data(em.rodata_id, &mut data);
+    let str_ptr = |data: &mut DataDescription, field: usize, off: u32| {
+        data.write_data_addr(
+            (field + std::mem::offset_of!(Str, ptr)) as u32,
+            rodata_gv,
+            i64::from(off),
+        );
+    };
+    str_ptr(&mut data, std::mem::offset_of!(ParamDescC, name), name_off);
+    str_ptr(&mut data, std::mem::offset_of!(ParamDescC, file), file_off);
+    str_ptr(
+        &mut data,
+        std::mem::offset_of!(ParamDescC, label),
+        label_off,
+    );
+    if let Some(kid) = kws_id {
+        let gv = em.module.declare_data_in_data(kid, &mut data);
+        data.write_data_addr(std::mem::offset_of!(ParamDescC, kws) as u32, gv, 0);
+    }
+    let id = em
+        .module
+        .declare_anonymous_data(false, false)
+        .map_err(|e| format!("declaring a ParamDesc: {e}"))?;
+    em.module
+        .define_data(id, &data)
+        .map_err(|e| format!("defining a ParamDesc: {e}"))?;
+    Ok(id)
+}
+
 /// One `ObjRow` (an object-channel method on a compiled class).
 pub(crate) struct ObjRowSpec {
     pub class: u32,

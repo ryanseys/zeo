@@ -174,7 +174,6 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             owner: zeo_abi::ClassId(0),
             owner_name: "Object",
             name: &def.name,
-            params: &def.params,
             hir_params: &def.hir_params,
             body: &def.body,
             node: def.node,
@@ -189,7 +188,6 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
                 owner: m.owner,
                 owner_name: &m.owner_name,
                 name: &m.name,
-                params: &m.params,
                 hir_params: &m.hir_params,
                 body: &m.body,
                 node: m.node,
@@ -200,9 +198,21 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
     }
     for def in &defs {
         let decl = &em.methods[&def.name];
-        let (tramp, body, arity, has_blk) = (decl.tramp, decl.body, decl.arity, decl.has_blk);
+        let (tramp, body, has_blk) = (decl.tramp, decl.body, decl.has_blk);
         let idx = em.next_fn_index();
-        super::params::define_trampoline(em, tramp, body, arity, has_blk, idx)?;
+        let (file, label, line, end_line) = method_frame(analyzed, "Object", &def.name, def.node);
+        let spec = super::params::TrampSpec {
+            tramp,
+            body,
+            params: &def.hir_params,
+            has_blk,
+            name: &def.name,
+            file: file.as_deref(),
+            label: &label,
+            line,
+            end_line,
+        };
+        super::params::define_trampoline(em, &spec, idx)?;
     }
     for m in &obj_methods {
         let idx = em.next_fn_index();
@@ -211,7 +221,20 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
                 super::params::define_accessor(em, m.tramp, slot, kind, idx)?;
             }
             (None, Some(body)) => {
-                super::params::define_trampoline(em, m.tramp, body, m.arity, m.has_blk, idx)?;
+                let (file, label, line, end_line) =
+                    method_frame(analyzed, &m.owner_name, &m.name, m.node);
+                let spec = super::params::TrampSpec {
+                    tramp: m.tramp,
+                    body,
+                    params: &m.hir_params,
+                    has_blk: m.has_blk,
+                    name: &m.name,
+                    file: file.as_deref(),
+                    label: &label,
+                    line,
+                    end_line,
+                };
+                super::params::define_trampoline(em, &spec, idx)?;
             }
             (Some(_), Some(_)) | (None, None) => {
                 unreachable!("collect_classes declares exactly one of accessor/body")
@@ -294,7 +317,12 @@ pub(crate) struct Emitter {
 pub(crate) struct MethodDecl {
     pub body: FuncId,
     pub tramp: FuncId,
+    /// Required-positional count (the direct-call gate compares it).
     pub arity: usize,
+    /// Required positionals only -- a count-matched call site may go
+    /// direct; any richer shape routes through the dynamic send and the
+    /// bound trampoline.
+    pub plain: bool,
     pub has_blk: bool,
 }
 
@@ -466,7 +494,6 @@ impl Emitter {
 /// analyze hoists method scopes out of `main_statements`).
 pub(crate) struct DefSpec {
     pub name: String,
-    params: Vec<String>,
     hir_params: crate::hir::Params,
     body: Vec<crate::hir::NodeId>,
     visibility: crate::hir::Visibility,
@@ -474,9 +501,22 @@ pub(crate) struct DefSpec {
     has_blk: bool,
 }
 
-/// Collect and DECLARE every top-level `def` the slice can compile
-/// (required positional params only; unconditional; no aliases or
-/// accessors). Prelude-native rows are the runtime's own, never emitted.
+/// The M1-1 parameter eligibility shared by top-level and class methods:
+/// the full positional/keyword surface binds; destructures and the
+/// block-only trailing-comma rest are still refusals.
+pub(crate) fn check_params(p: &crate::hir::Params) -> Result<(), &'static str> {
+    if !p.destructures.is_empty() {
+        return Err("a destructuring parameter");
+    }
+    if p.implicit_rest {
+        return Err("an implicit-rest parameter");
+    }
+    Ok(())
+}
+
+/// Collect and DECLARE every top-level `def` the backend can compile
+/// (unconditional; no aliases or accessors). Prelude-native rows are the
+/// runtime's own, never emitted.
 fn collect_methods(em: &mut Emitter, analyzed: &Analyzed) -> Result<Vec<DefSpec>, String> {
     let compiler = &analyzed.compiler;
     let mut out = Vec::new();
@@ -506,22 +546,12 @@ fn collect_methods(em: &mut Emitter, analyzed: &Analyzed) -> Result<Vec<DefSpec>
             return refuse("an attr_* accessor");
         }
         let params = &scope.params;
-        if !(params.destructures.is_empty()
-            && params.optional.is_empty()
-            && params.rest.is_none()
-            && !params.implicit_rest
-            && params.post.is_empty()
-            && params.keywords.is_empty()
-            && params.keyword_rest.is_none()
-            && params.block.is_none()
-            && params.block_locals.is_empty()
-            && params.implicit_block_locals.is_empty())
-        {
-            return refuse("a def with non-required parameters");
+        if let Err(what) = check_params(params) {
+            return refuse(what);
         }
-        let arity = params.required.len();
+        let layout = super::params::layout_of(params)?;
         let has_blk = scope.needs_block_param();
-        let body_sig = super::params::body_sig(em, arity, has_blk);
+        let body_sig = super::params::body_sig(em, layout.n_slots, has_blk);
         let body_id = em
             .module
             .declare_function(
@@ -544,13 +574,13 @@ fn collect_methods(em: &mut Emitter, analyzed: &Analyzed) -> Result<Vec<DefSpec>
             MethodDecl {
                 body: body_id,
                 tramp: tramp_id,
-                arity,
+                arity: params.required.len(),
+                plain: layout.plain,
                 has_blk,
             },
         );
         out.push(DefSpec {
             name,
-            params: params.required.clone(),
             hir_params: params.clone(),
             body: scope.body.clone(),
             visibility: scope.visibility,
@@ -567,11 +597,198 @@ pub(crate) struct BodyFnSpec<'a> {
     pub owner: zeo_abi::ClassId,
     pub owner_name: &'a str,
     pub name: &'a str,
-    pub params: &'a [String],
     pub hir_params: &'a crate::hir::Params,
     pub body: &'a [crate::hir::NodeId],
     pub node: Option<crate::hir::NodeId>,
     pub has_blk: bool,
+}
+
+/// A method's frame facts: `(file, label, line, end_line)` -- shared by
+/// the body prologue and the trampoline's `ParamDescC`.
+fn method_frame(
+    analyzed: &Analyzed,
+    owner_name: &str,
+    name: &str,
+    node: Option<crate::hir::NodeId>,
+) -> (Option<String>, String, u32, u32) {
+    let label = format!("{owner_name}#{name}");
+    let (line, end_line) = match node {
+        Some(node) => (
+            crate::codegen::source_location(&analyzed.compiler, node).map_or(0, |(_, l)| l),
+            crate::codegen::source_end_line(&analyzed.compiler, node),
+        ),
+        None => (0, 0),
+    };
+    let file = analyzed.compiler.hir.files.first().map(|f| f.name.clone());
+    (file, label, line, end_line)
+}
+
+/// An optional parameter whose binding waits for the frame: `ptr` null =
+/// run the default; else copy the given value. A `duplicate` slot (a
+/// repeated `_` name) has no storage of its own -- its default still runs
+/// for side effects and WRITES the owning local (CRuby compiles a default
+/// as an assignment to the local), but a given value is ignored.
+struct DeferredOpt {
+    name: String,
+    default: crate::hir::NodeId,
+    ptr: ir::Value,
+    duplicate: bool,
+}
+
+/// Phase A of param binding (pre-frame, no user code): always-present
+/// slots copy into their storage (cells when captured), optionals get
+/// nil storage and a [`DeferredOpt`], `&b` binds from the block channel.
+/// Only the FIRST slot of a repeated `_` name owns the readable local.
+fn bind_param_slots(
+    fx: &mut Fx,
+    p: &crate::hir::Params,
+    entry: &[ir::Value],
+    blk_ptr: Option<ir::Value>,
+    captured: &crate::compiler::FSet<String>,
+) -> Vec<DeferredOpt> {
+    let mut bound: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut deferred = Vec::new();
+    let mut s = 0usize;
+    let always =
+        |fx: &mut Fx, bound: &mut std::collections::HashSet<String>, name: &str, slot: usize| {
+            let ptr = entry[1 + slot];
+            if !bound.insert(name.to_string()) {
+                return; // a later duplicate slot binds nothing
+            }
+            let src = super::operand::Operand::Ptr {
+                addr: ptr,
+                owned: false,
+                tag: super::operand::TagInfo::Unknown,
+            };
+            if captured.contains(name) {
+                let seed = fx.temp_slot();
+                let seed_addr = fx.slot_addr(seed, 0);
+                super::ownership::write_move_into(fx, &src, seed_addr);
+                init_cell_local(fx, name.to_string(), Some(seed_addr));
+            } else {
+                let ss = fx.new_value_slot();
+                let dst = fx.slot_addr(ss, 0);
+                super::ownership::write_move_into(fx, &src, dst);
+                fx.locals
+                    .insert(name.to_string(), super::ctx::Local::Slot(ss));
+            }
+        };
+    let defer = |fx: &mut Fx,
+                 bound: &mut std::collections::HashSet<String>,
+                 deferred: &mut Vec<DeferredOpt>,
+                 name: &str,
+                 default: crate::hir::NodeId,
+                 slot: usize| {
+        let duplicate = !bound.insert(name.to_string());
+        if !duplicate {
+            if captured.contains(name) {
+                init_cell_local(fx, name.to_string(), None);
+            } else {
+                let ss = fx.new_value_slot();
+                fx.locals
+                    .insert(name.to_string(), super::ctx::Local::Slot(ss));
+            }
+        }
+        deferred.push(DeferredOpt {
+            name: name.to_string(),
+            default,
+            ptr: entry[1 + slot],
+            duplicate,
+        });
+    };
+
+    for name in &p.required {
+        always(fx, &mut bound, name, s);
+        s += 1;
+    }
+    for (name, default) in &p.optional {
+        defer(fx, &mut bound, &mut deferred, name, *default, s);
+        s += 1;
+    }
+    // An anonymous `*` has no slot.
+    if let Some(Some(name)) = &p.rest {
+        always(fx, &mut bound, name, s);
+        s += 1;
+    }
+    for name in &p.post {
+        always(fx, &mut bound, name, s);
+        s += 1;
+    }
+    for kw in &p.keywords {
+        match kw {
+            crate::hir::KeywordParam::Required(name) => always(fx, &mut bound, name, s),
+            crate::hir::KeywordParam::Optional(name, default) => {
+                defer(fx, &mut bound, &mut deferred, name, *default, s);
+            }
+        }
+        s += 1;
+    }
+    // An anonymous `**` has no slot.
+    if let Some(Some(name)) = &p.keyword_rest {
+        always(fx, &mut bound, name, s);
+        s += 1;
+    }
+    let _ = s;
+    // `&b`: nil when called blockless (real Ruby), else another reference
+    // to the moved-in block (the body's own is still released at exit).
+    if let (Some(Some(name)), Some(blk)) = (&p.block, blk_ptr)
+        && bound.insert(name.to_string())
+    {
+        if captured.contains(name) {
+            init_cell_local(fx, name.to_string(), None);
+        } else {
+            let ss = fx.new_value_slot();
+            fx.locals
+                .insert(name.to_string(), super::ctx::Local::Slot(ss));
+        }
+        let got =
+            fx.b.ins()
+                .icmp_imm_u(cranelift_codegen::ir::condcodes::IntCC::NotEqual, blk, 0);
+        let yes = fx.b.create_block();
+        let join = fx.b.create_block();
+        fx.b.ins().brif(got, yes, &[], join, &[]);
+        fx.b.switch_to_block(yes);
+        let src = super::operand::Operand::Ptr {
+            addr: blk,
+            owned: false,
+            tag: super::operand::TagInfo::Unknown,
+        };
+        super::ownership::write_local(fx, name, &src);
+        fx.b.ins().jump(join, &[]);
+        fx.b.switch_to_block(join);
+    }
+    deferred
+}
+
+/// Phase B (the frame exists): each deferred optional either copies its
+/// given value or evaluates its default -- user code, in declared order,
+/// so a later default reads every earlier binding.
+fn bind_deferred(fx: &mut Fx, deferred: &[DeferredOpt]) -> Result<(), String> {
+    for d in deferred {
+        let given = fx.b.create_block();
+        let absent = fx.b.create_block();
+        let join = fx.b.create_block();
+        let nonnull =
+            fx.b.ins()
+                .icmp_imm_u(cranelift_codegen::ir::condcodes::IntCC::NotEqual, d.ptr, 0);
+        fx.b.ins().brif(nonnull, given, &[], absent, &[]);
+        fx.b.switch_to_block(given);
+        if !d.duplicate {
+            let src = super::operand::Operand::Ptr {
+                addr: d.ptr,
+                owned: false,
+                tag: super::operand::TagInfo::Unknown,
+            };
+            super::ownership::write_local(fx, &d.name, &src);
+        }
+        fx.b.ins().jump(join, &[]);
+        fx.b.switch_to_block(absent);
+        let op = super::expr::lower_expr(fx, d.default)?;
+        super::ownership::write_local(fx, &d.name, &op);
+        fx.b.ins().jump(join, &[]);
+        fx.b.switch_to_block(join);
+    }
+    Ok(())
 }
 
 /// One compiled method body: `(self, p1..pn, out) -> i32`. Params are
@@ -583,17 +800,10 @@ fn define_method_body(
     analyzed: &Analyzed,
     def: &BodyFnSpec<'_>,
 ) -> Result<(), String> {
-    let sig = super::params::body_sig(em, def.params.len(), def.has_blk);
+    let layout = super::params::layout_of(def.hir_params)?;
+    let sig = super::params::body_sig(em, layout.n_slots, def.has_blk);
     let idx = em.next_fn_index();
-    let label = format!("{}#{}", def.owner_name, def.name);
-    let (line, end_line) = match def.node {
-        Some(node) => (
-            crate::codegen::source_location(&analyzed.compiler, node).map_or(0, |(_, l)| l),
-            crate::codegen::source_end_line(&analyzed.compiler, node),
-        ),
-        None => (0, 0),
-    };
-    let file = analyzed.compiler.hir.files.first().map(|f| f.name.clone());
+    let (file, label, line, end_line) = method_frame(analyzed, def.owner_name, def.name, def.node);
 
     let mut func = ir::Function::with_name_signature(UserFuncName::user(0, idx), sig);
     let cfg = em.module.target_config();
@@ -642,30 +852,18 @@ fn define_method_body(
         crate::analyze::class_query::SelfClass::new(Some(def.owner), None),
     )
     .locals;
-    // Params: owned copies in slots (retained when heap); a captured param
-    // escapes straight into its cell.
-    for (i, name) in def.params.iter().enumerate() {
-        let src = super::operand::Operand::Ptr {
-            addr: entry_params[i + 1],
-            owned: false,
-            tag: super::operand::TagInfo::Unknown,
-        };
-        if captured.contains(name) {
-            let seed = fx.temp_slot();
-            let seed_addr = fx.slot_addr(seed, 0);
-            super::ownership::write_move_into(&mut fx, &src, seed_addr);
-            init_cell_local(&mut fx, name.clone(), Some(seed_addr));
-        } else {
-            let ss = fx.new_value_slot();
-            let dst = fx.slot_addr(ss, 0);
-            super::ownership::write_move_into(&mut fx, &src, dst);
-            fx.locals.insert(name.clone(), super::ctx::Local::Slot(ss));
-        }
-    }
-    // The body's other locals, nil-initialized (cells when captured).
+    // Always-present params bind now (no user code); optionals get their
+    // storage and defer to after the frame exists (a default is user code
+    // that can raise, and CRuby attributes it to the method).
+    let deferred = bind_param_slots(&mut fx, def.hir_params, &entry_params, blk_ptr, &captured);
+    // The body's other locals, nil-initialized (cells when captured) --
+    // including what the DEFAULT expressions themselves assign.
     let mut locals = crate::analyze::local_storage::Locals::default();
     for &stmt in def.body {
         crate::analyze::local_storage::collect_locals(&analyzed.compiler, stmt, &mut locals);
+    }
+    for id in def.hir_params.default_ids() {
+        crate::analyze::local_storage::collect_locals(&analyzed.compiler, id, &mut locals);
     }
     for name in locals.names().to_vec() {
         if fx.locals.contains_key(&name) {
@@ -698,6 +896,7 @@ fn define_method_body(
         .expect("check_ints returns a status");
     fx.fallible(status);
 
+    bind_deferred(&mut fx, &deferred)?;
     super::stmt::lower_value_body_into(&mut fx, def.body, out_ptr)?;
     fx.b.ins().jump(ret_ok, &[]);
 

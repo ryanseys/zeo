@@ -34,6 +34,11 @@ use CTy::{I32, Ptr, U8, U32, Usize};
 /// internal compiler error, never a user-visible path.
 pub const CAPI: &[CapiSig] = &[
     CapiSig {
+        name: "zeo_rt_bind_params",
+        params: &[Ptr, Ptr, Usize, Ptr, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
         name: "zeo_rt_cell_load",
         params: &[Ptr, Ptr],
         ret: None,

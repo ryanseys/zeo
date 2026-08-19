@@ -25,10 +25,8 @@ pub(crate) struct ObjMethodSpec {
     pub owner: ClassId,
     pub owner_name: String,
     pub name: String,
-    pub arity: usize,
     pub body: Vec<crate::hir::NodeId>,
     pub node: Option<crate::hir::NodeId>,
-    pub params: Vec<String>,
     pub tramp: cranelift_module::FuncId,
     /// `Some` = an `attr_*` accessor (no body fn at all -- the trampoline
     /// IS the method); `None` = an ordinary body + trampoline pair.
@@ -144,19 +142,10 @@ pub(crate) fn collect_classes(
                 return refuse_m("an alias");
             }
             let p = &scope.params;
-            if !(p.destructures.is_empty()
-                && p.optional.is_empty()
-                && p.rest.is_none()
-                && !p.implicit_rest
-                && p.post.is_empty()
-                && p.keywords.is_empty()
-                && p.keyword_rest.is_none()
-                && p.block.is_none()
-                && p.block_locals.is_empty()
-                && p.implicit_block_locals.is_empty())
-            {
-                return refuse_m("a def with non-required parameters");
+            if let Err(what) = super::emit::check_params(p) {
+                return refuse_m(what);
             }
+            let layout = super::params::layout_of(p)?;
             let accessor = match &scope.accessor {
                 Some(shape) => {
                     let slot = crate::analyze::class_query::slot_of(
@@ -171,7 +160,6 @@ pub(crate) fn collect_classes(
                 }
                 None => None,
             };
-            let arity = p.required.len();
             let has_blk = scope.needs_block_param();
             let tramp = em
                 .module
@@ -182,7 +170,7 @@ pub(crate) fn collect_classes(
                 )
                 .map_err(|e| format!("declaring {name}#{mname}: {e}"))?;
             let body_fn = if accessor.is_none() {
-                let sig = params::body_sig(em, arity, has_blk);
+                let sig = params::body_sig(em, layout.n_slots, has_blk);
                 Some(
                     em.module
                         .declare_function(
@@ -211,10 +199,8 @@ pub(crate) fn collect_classes(
                 owner: ClassId(idx as u32),
                 owner_name: name.clone(),
                 name: mname,
-                arity,
                 body: scope.body.clone(),
                 node: scope.def_node,
-                params: p.required.clone(),
                 tramp,
                 accessor,
                 body_fn,

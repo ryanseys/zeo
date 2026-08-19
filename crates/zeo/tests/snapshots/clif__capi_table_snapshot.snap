@@ -2,6 +2,7 @@
 source: crates/zeo/tests/clif.rs
 expression: rendered
 ---
+zeo_rt_bind_params ([Ptr, Ptr, Usize, Ptr, Ptr]) -> Some(I32)
 zeo_rt_cell_load ([Ptr, Ptr]) -> None
 zeo_rt_cell_new ([Ptr]) -> Some(Ptr)
 zeo_rt_cell_release ([Ptr]) -> None
