@@ -1,0 +1,174 @@
+//! The Proc -> Dynamic bridge and runtime method frames -- what a `super`
+//! in a runtime-defined method resolves against.
+
+use super::*;
+
+/// Wrap a compiled block as an instance method: the method's receiver becomes
+/// the block's `self` (`instance_exec`-style rebinding, which `RProc` supports
+/// by taking self as a parameter), and the block the METHOD is called with is
+/// forwarded into the body, so `yield`/`&blk` inside a `define_method` body
+/// see the method's caller's block -- CRuby's `invoke_bmethod` specval, not
+/// the closure env (see `ProcData::f`).
+///
+/// `defining` is the class this method is installed on and `name` its name; the
+/// wrapper pushes them as the current method frame for the duration of the call
+/// so a `super` in the body (which has no compile-time defining class -- the
+/// class was minted at runtime) can resume the receiver's MRO walk after
+/// `defining`. See [`send_super_dynamic`].
+pub fn dynamic_from_proc(defining: ClassId, name: Symbol, body: RProc) -> MethodImpl {
+    MethodImpl::Dynamic(Arc::new(move |recv: &RObj, args: &[RubyValue], block| {
+        let self_val = RubyValue::Object(recv.clone());
+        push_method_frame(defining, name);
+        // Control flow here is `Result<_, Signal>`, never an unwinding panic, so
+        // this pop runs on every exit (value OR signal) without a guard type.
+        let out = body.call_with_self_and_block(&self_val, args, block);
+        pop_method_frame();
+        out
+    }))
+}
+
+// ---------------------------------------------------------------------------
+// Runtime method frames -- what a `super` in a runtime-defined method resolves
+// against
+// ---------------------------------------------------------------------------
+
+thread_local! {
+    /// The stack of runtime-defined methods currently executing on this thread,
+    /// each `(defining class, method name)`. `dynamic_from_proc`'s wrapper
+    /// pushes on entry and pops on exit, so the top frame is always the
+    /// innermost runtime method -- exactly what a bare `super` there needs.
+    static METHOD_FRAMES: RefCell<Vec<(ClassId, Symbol)>> = const { RefCell::new(Vec::new()) };
+
+    /// The stack of runtime class BODIES currently executing -- a
+    /// `Class.new`/`Module.new` block or a `class_eval`. Carries the running
+    /// default visibility and `module_function` mode a bare directive sets,
+    /// as CRuby's cref does, and dies with the body like a cref too.
+    static BODY_FRAMES: RefCell<Vec<BodyFrame>> = const { RefCell::new(Vec::new()) };
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct BodyFrame {
+    pub(super) class: ClassId,
+    pub(super) vis: crate::dispatch::MethodVisibility,
+    pub(super) module_function: bool,
+}
+
+/// Runs `f` with a fresh body frame for `id`, so bare directives inside it
+/// have somewhere to record themselves.
+pub(crate) fn with_body_frame<T>(
+    id: ClassId,
+    f: impl FnOnce() -> Result<T, Signal>,
+) -> Result<T, Signal> {
+    BODY_FRAMES.with(|s| {
+        s.borrow_mut().push(BodyFrame {
+            class: id,
+            vis: crate::dispatch::MethodVisibility::Public,
+            module_function: false,
+        })
+    });
+    // A class body's definee is the class, even inside an enclosing
+    // `instance_eval` -- so suspend those frames for this body.
+    let outer = SINGLETON_DEFINEE.with(|s| std::mem::take(&mut *s.borrow_mut()));
+    let out = f();
+    SINGLETON_DEFINEE.with(|s| *s.borrow_mut() = outer);
+    BODY_FRAMES.with(|s| {
+        s.borrow_mut().pop();
+    });
+    out
+}
+
+// The receivers of the `instance_eval`/`instance_exec` frames open on this
+// thread. Inside one, a `def` whose self IS that receiver installs on the
+// singleton class -- Ruby's rule, and what `SingleForwardable` relies on.
+// The receiver is recorded rather than a bare depth so that a `def` reached
+// through some OTHER object's method, from inside the block, still follows
+// the ordinary rule.
+std::thread_local!(static SINGLETON_DEFINEE: std::cell::RefCell<Vec<RubyValue>> =
+    const { std::cell::RefCell::new(Vec::new()) });
+
+/// Run `f` with `recv`'s singleton class as the default definee --
+/// `instance_eval`/`instance_exec`'s rule.
+pub(crate) fn with_singleton_definee<T>(
+    recv: &RubyValue,
+    f: impl FnOnce() -> Result<T, Signal>,
+) -> Result<T, Signal> {
+    SINGLETON_DEFINEE.with(|s| s.borrow_mut().push(recv.clone()));
+    let out = f();
+    SINGLETON_DEFINEE.with(|s| {
+        s.borrow_mut().pop();
+    });
+    out
+}
+
+/// The class an enclosing `class_eval`/`class_exec`/`Class.new`/`Module.new`
+/// block made the default definee -- [`singleton_definee`]'s module twin, and
+/// what makes a `def` in such a block land on the new class rather than on
+/// the cref where the block was written.
+///
+/// `slf` has to still BE that class: a `def` reached through some other
+/// object's method, from inside the block, follows the ordinary rule.
+pub(crate) fn module_definee(slf: &RubyValue) -> Option<ClassId> {
+    let RubyValue::Class(cid) = slf else {
+        return None;
+    };
+    BODY_FRAMES.with(|s| s.borrow().last().map(|f| f.class).filter(|c| c == cid))
+}
+
+/// Whether a `def` running with `recv` as its self installs on the singleton
+/// class -- true exactly inside an `instance_eval`/`instance_exec` of `recv`.
+pub(crate) fn singleton_definee(recv: &RubyValue) -> bool {
+    SINGLETON_DEFINEE.with(|s| {
+        s.borrow().last().is_some_and(|open| match (open, recv) {
+            (RubyValue::Class(a), RubyValue::Class(b)) => a == b,
+            _ => crate::builtins::basic_object::value_identity(open, recv),
+        })
+    })
+}
+
+pub(super) fn current_frame_for(id: ClassId) -> Option<BodyFrame> {
+    BODY_FRAMES.with(|s| s.borrow().iter().rev().find(|f| f.class == id).copied())
+}
+
+pub(super) fn update_frame_for(id: ClassId, f: impl FnOnce(&mut BodyFrame)) {
+    BODY_FRAMES.with(|s| {
+        if let Some(frame) = s.borrow_mut().iter_mut().rev().find(|fr| fr.class == id) {
+            f(frame);
+        }
+    });
+}
+
+/// A sentinel "defining class" for a per-object singleton method: it is never a
+/// real class id (`u32::MAX` is above every runtime id), so `send_super_from`'s
+/// ancestor lookup misses it and resumes from the TOP of the receiver's own
+/// ancestry -- which is exactly where a singleton method's `super` belongs (the
+/// conceptual singleton class sits ahead of the object's real class).
+pub(super) const SINGLETON_DEFINING: ClassId = ClassId(u32::MAX);
+
+pub(super) fn push_method_frame(defining: ClassId, name: Symbol) {
+    METHOD_FRAMES.with(|f| f.borrow_mut().push((defining, name)));
+}
+
+pub(super) fn pop_method_frame() {
+    METHOD_FRAMES.with(|f| {
+        f.borrow_mut().pop();
+    });
+}
+
+/// `super` from inside a RUNTIME-defined method (a `def` in a `Class.new` /
+/// `Struct.new` / `Data.define` body, or a `define_method`) whose defining class
+/// is not known at compile time. Reads this thread's current method frame --
+/// pushed by [`dynamic_from_proc`] on entry -- and resumes the receiver's MRO
+/// walk after that class, exactly like the compile-time `send_super_from`.
+/// Raises `RuntimeError` when there is no active runtime frame (a `super`
+/// written outside any method), matching CRuby's runtime error rather than a
+/// compile-time rejection.
+pub fn send_super_dynamic(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    match METHOD_FRAMES.with(|f| f.borrow().last().copied()) {
+        Some((defining, name)) => send_super_from(recv, defining, name, args, block),
+        None => Err(runtime_error!("super called outside of method")),
+    }
+}
