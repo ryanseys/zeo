@@ -1206,3 +1206,97 @@ fn runtime_artifact_fingerprint(
         .unwrap_or(0);
     Ok(format!("zeo-rt:{}:{mtime};", meta.len()))
 }
+
+/// Which code-generation backend turns a compiled program into machine code.
+///
+/// `Rustc` is the only implementation today: emitted Rust text -> `rustc` ->
+/// binary, linking the prebuilt `zeo-rt` artifact. The Cranelift backends
+/// (`Aot`: object files + linker; `Jit`: in-process `cranelift-jit`) slot in
+/// as sibling variants here -- `run_program`/`build_artifact` below are the
+/// two mode entries every backend implements.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Backend {
+    Rustc,
+}
+
+impl Backend {
+    /// The backend this invocation uses. Always `Rustc` until `--backend`/
+    /// `ZEO_BACKEND` exist; this is their single future read point.
+    pub fn select() -> Backend {
+        Backend::Rustc
+    }
+}
+
+/// Run mode (`zeo file.rb`, `zeo -e`): produce a throwaway program for
+/// `compiled`, run it with `program_args`, and exit this process with the
+/// program's status. Never returns on success.
+///
+/// Rustc: compile to a temp binary and exec it. Run-once, so it DEFAULTS to
+/// the fast-to-build `Debug` runtime (`ZEO_RUNTIME_PROFILE` overrides) and
+/// DYNAMIC linkage -- the binary exists for milliseconds and runs only from
+/// this machine's build tree, and static linkage made every `zeo file.rb`
+/// pay a full runtime link just to print and exit.
+pub fn run_program(
+    backend: Backend,
+    compiled: &crate::CompileOutput,
+    program_args: &[String],
+) -> Result<std::convert::Infallible, String> {
+    match backend {
+        Backend::Rustc => {
+            let runtime = Runtime::for_prism(compiled.needs_prism_runtime);
+            let linkage = Linkage::Dynamic;
+            let profile = Profile::from_env_or(Profile::Debug);
+            ensure_runtime_built(profile, runtime, linkage)?;
+            let bin = std::env::temp_dir().join(format!("zeo-e-{}", std::process::id()));
+            // An unchanged program is served from the content-keyed binary
+            // cache; a changed one is a full rustc run. The path-keyed
+            // incremental state that used to sit between those two was
+            // retired -- it was the cache's only shared mutable state, and
+            // it broke concurrent builds (see `build_binary`).
+            build_binary(
+                &compiled.rust_source,
+                &bin,
+                profile,
+                runtime,
+                linkage,
+                GenOpt::Optimized,
+            )?;
+            let status = std::process::Command::new(&bin)
+                .args(program_args)
+                .status()
+                .map_err(|e| format!("running compiled program: {e}"))?;
+            let _ = std::fs::remove_file(&bin);
+            std::process::exit(status.code().unwrap_or(1));
+        }
+    }
+}
+
+/// Artifact mode (`zeo file.rb -o app`, `--compile`): produce the SHIPPED
+/// binary at `output` for `compiled`.
+///
+/// Rustc: SELF-CONTAINED (static runtime -- an artifact must never depend on
+/// a dylib in a build tree), DEFAULTED to the release-profiled runtime
+/// (optimized + stripped); `ZEO_RUNTIME_PROFILE` overrides (e.g. to
+/// symbolicate a runtime panic).
+pub fn build_artifact(
+    backend: Backend,
+    compiled: &crate::CompileOutput,
+    output: &Path,
+) -> Result<(), String> {
+    match backend {
+        Backend::Rustc => {
+            let runtime = Runtime::for_prism(compiled.needs_prism_runtime);
+            let linkage = Linkage::Static;
+            let profile = Profile::from_env_or(Profile::Release);
+            ensure_runtime_built(profile, runtime, linkage)?;
+            build_binary(
+                &compiled.rust_source,
+                output,
+                profile,
+                runtime,
+                linkage,
+                GenOpt::Optimized,
+            )
+        }
+    }
+}

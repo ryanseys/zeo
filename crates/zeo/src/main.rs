@@ -656,50 +656,16 @@ fn run() -> Result<(), MainError> {
 
     let compiled = zeo::compile_to_rust_with(&source, &opts)?;
 
-    use zeo::backend::{GenOpt, Linkage, Profile, Runtime, build_binary, ensure_runtime_built};
     zeo::memguard::set_phase(zeo::memguard::Phase::Build);
+    let backend = zeo::backend::Backend::select();
 
-    // Which runtime variant this program's binary links: the lean, parser-free
-    // default, or the prism-linked `eval-vm` one iff the program reaches prism
-    // at runtime. The single mapping point for both build paths below.
-    let runtime = Runtime::for_prism(compiled.needs_prism_runtime);
-
-    // The default mode -- a bare file or `-e`, no artifact asked for:
-    // compile to a throwaway binary, run it, and exit with ITS status
-    // (stdout/stderr stream straight through), like ruby. Run-once, so it
-    // DEFAULTS to the fast-to-build `Debug` runtime; a harness that compiles
-    // thousands of programs can flip this to `Release` via
-    // `ZEO_RUNTIME_PROFILE` for a ~12x faster per-program link. With `-o` or
-    // `--compile`, produce an artifact like the mode below instead.
-    //
-    // DYNAMIC linkage, unlike the artifact mode below: the binary exists for
-    // milliseconds, runs only from this machine's build tree (whose dylib the
-    // baked rpath resolves), and static linkage made every `zeo file.rb` pay
-    // a ~290ms link of the full runtime just to print and exit.
+    // The default mode -- a bare file or `-e`, no artifact asked for: build a
+    // throwaway program, run it, and exit with ITS status (stdout/stderr
+    // stream straight through), like ruby. With `-o` or `--compile`, produce
+    // an artifact instead. The mode bodies live in `backend` (they are what
+    // varies per backend); this is just the mode decision.
     if !args.compile && args.output.is_none() {
-        let linkage = Linkage::Dynamic;
-        let profile = Profile::from_env_or(Profile::Debug);
-        ensure_runtime_built(profile, runtime, linkage)?;
-        let bin = std::env::temp_dir().join(format!("zeo-e-{}", std::process::id()));
-        // An unchanged program is served from the content-keyed binary cache;
-        // a changed one is a full rustc run. The path-keyed incremental state
-        // that used to sit between those two was retired -- it was the cache's
-        // only shared mutable state, and it broke concurrent builds (see
-        // `backend::build_binary`).
-        build_binary(
-            &compiled.rust_source,
-            &bin,
-            profile,
-            runtime,
-            linkage,
-            GenOpt::Optimized,
-        )?;
-        let status = std::process::Command::new(&bin)
-            .args(&args.program_args)
-            .status()
-            .map_err(|e| format!("running compiled program: {e}"))?;
-        let _ = std::fs::remove_file(&bin);
-        std::process::exit(status.code().unwrap_or(1));
+        match zeo::backend::run_program(backend, &compiled, &args.program_args)? {}
     }
 
     let output = args.output.unwrap_or_else(|| {
@@ -710,23 +676,7 @@ fn run() -> Result<(), MainError> {
         p.set_extension("");
         p
     });
-    // `zeo foo.rb -o app` produces a SHIPPED binary: SELF-CONTAINED (static
-    // runtime -- an artifact must never depend on a dylib in a build tree)
-    // and DEFAULTED to the release-profiled runtime (optimized + stripped) so
-    // it is small and fast, rather than embedding the unoptimized debug
-    // runtime. One-time release runtime build on first use. Overridable to
-    // `debug` via `ZEO_RUNTIME_PROFILE` (e.g. to symbolicate a runtime panic).
-    let linkage = Linkage::Static;
-    let profile = Profile::from_env_or(Profile::Release);
-    ensure_runtime_built(profile, runtime, linkage)?;
-    Ok(build_binary(
-        &compiled.rust_source,
-        &output,
-        profile,
-        runtime,
-        linkage,
-        GenOpt::Optimized,
-    )?)
+    Ok(zeo::backend::build_artifact(backend, &compiled, &output)?)
 }
 
 /// Install a `tracing` subscriber (stderr) for the compiler pipeline: `ZEO_LOG`
