@@ -452,9 +452,6 @@ pub(crate) fn lower_super(
     block: Option<NodeId>,
     block_arg: Option<NodeId>,
 ) -> Result<Operand, String> {
-    if fx.block_next.is_some() {
-        return fx.unsupported(site, "a `super` inside a block");
-    }
     let (Some(def_class), Some(mname), Some(owner)) =
         (fx.defining_class, fx.method_name.clone(), fx.method_class)
     else {

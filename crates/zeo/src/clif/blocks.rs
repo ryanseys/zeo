@@ -57,10 +57,21 @@ fn captured_names(
         body,
         class_query::SelfClass::new(fx.method_class, None),
     );
+    // A BARE `super` inside the block forwards the ENCLOSING method's
+    // parameters by name, and those reads exist only in the emitted
+    // forwarding list -- there is no HIR node to walk, which is what
+    // `zsuper_forwards` records. The enclosing scope already promoted them
+    // to cells for exactly this (`collect_escaping_captures`).
+    let zsuper_params = caps
+        .zsuper_forwards
+        .then_some(fx.method_params.as_ref())
+        .flatten()
+        .map(captures::own_param_names)
+        .unwrap_or_default();
     let mut names: Vec<String> = caps
         .locals
-        .iter()
-        .filter(|n| fx.locals.contains_key(*n))
+        .union(&zsuper_params)
+        .filter(|n| fx.locals.contains_key(n.as_str()))
         .cloned()
         .collect();
     names.sort();
@@ -245,6 +256,16 @@ fn define_block_fn(
     let em = &mut *fx.em;
     let an = fx.an;
     let method_class = fx.method_class;
+    // A `super` written inside a block targets the ENCLOSING method (ruby:
+    // blocks have no `super` of their own), so the block fn carries that
+    // method's identity -- its defining class, name and parameter list.
+    let enclosing = (
+        fx.defining_class,
+        fx.method_name.clone(),
+        fx.method_params.clone(),
+        fx.self_is_class,
+        fx.ruby2_keywords,
+    );
 
     let desc_id = super::statics::define_param_desc(
         em,
@@ -292,6 +313,13 @@ fn define_block_fn(
     let (env, self_p, argv, argc, blk, out) = (ep[0], ep[1], ep[2], ep[3], ep[4], ep[5]);
     bfx.self_ptr = Some(self_p);
     bfx.method_class = method_class;
+    (
+        bfx.defining_class,
+        bfx.method_name,
+        bfx.method_params,
+        bfx.self_is_class,
+        bfx.ruby2_keywords,
+    ) = enclosing;
     bfx.frame_label = label.clone();
     // Bare `yield`/`block_given?` targets the env's lexical block (the
     // enclosing method's) -- unless this closure declares its own `&b`,
