@@ -301,6 +301,101 @@ pub const CAPI: &[CapiSig] = &[
         ret: None,
     },
     CapiSig {
+        name: "zeo_rt_pat_array_get",
+        params: &[Ptr, Usize, Ptr],
+        ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_pat_array_len",
+        params: &[Ptr],
+        ret: Some(Usize),
+    },
+    CapiSig {
+        name: "zeo_rt_pat_array_slice",
+        params: &[Ptr, Usize, Usize, Ptr],
+        ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_pat_deconstruct",
+        params: &[Ptr, Ptr, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
+        name: "zeo_rt_pat_deconstruct_keys",
+        params: &[Ptr, Ptr, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
+        name: "zeo_rt_pat_fail_case_eq",
+        params: &[Ptr, Ptr],
+        ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_pat_fail_find",
+        params: &[Ptr],
+        ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_pat_fail_guard",
+        params: &[],
+        ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_pat_fail_length",
+        params: &[Ptr, Usize, U8],
+        ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_pat_fail_not_empty",
+        params: &[Ptr, U8],
+        ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_pat_hash_except",
+        params: &[Ptr, Ptr, Usize, Ptr],
+        ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_pat_hash_get",
+        params: &[Ptr, U32, Ptr],
+        ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_pat_hash_has_key",
+        params: &[Ptr, U32],
+        ret: Some(U8),
+    },
+    CapiSig {
+        name: "zeo_rt_pat_hash_len",
+        params: &[Ptr],
+        ret: Some(Usize),
+    },
+    CapiSig {
+        name: "zeo_rt_pat_is_a",
+        params: &[Ptr, U32],
+        ret: Some(U8),
+    },
+    CapiSig {
+        name: "zeo_rt_pat_key_miss_clear",
+        params: &[],
+        ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_pat_key_miss_record",
+        params: &[U32, Ptr],
+        ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_pat_match_error",
+        params: &[Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
+        name: "zeo_rt_pat_match_error_bare",
+        params: &[Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
         name: "zeo_rt_pool_mark",
         params: &[],
         ret: Some(Usize),

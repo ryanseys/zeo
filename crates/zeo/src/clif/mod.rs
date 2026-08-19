@@ -22,6 +22,7 @@ pub mod names;
 pub(crate) mod operand;
 pub(crate) mod ownership;
 pub(crate) mod params;
+pub(crate) mod patterns;
 pub(crate) mod statics;
 pub(crate) mod stmt;
 pub(crate) mod verify;

@@ -763,6 +763,30 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             let (subject, arms, else_body) = (*subject, arms.clone(), else_body.clone());
             case_when(fx, id, subject, &arms, &else_body)
         }
+        HirNode::CaseIn {
+            subject,
+            arms,
+            else_body,
+        } => {
+            let (subject, arms, else_body) = (*subject, arms.clone(), else_body.clone());
+            let ss = fx.temp_slot();
+            let dst = fx.slot_addr(ss, 0);
+            super::patterns::lower_case_in(fx, id, subject, &arms, &else_body, dst)?;
+            fx.owned_created += 1;
+            Ok(Operand::Slot {
+                ss,
+                owned: true,
+                tag: TagInfo::Unknown,
+            })
+        }
+        HirNode::MatchPredicate { subject, pattern } => {
+            let (subject, pattern) = (*subject, pattern.clone());
+            super::patterns::lower_match_predicate(fx, id, subject, &pattern)
+        }
+        HirNode::MatchRequired { subject, pattern } => {
+            let (subject, pattern) = (*subject, pattern.clone());
+            super::patterns::lower_match_required(fx, id, subject, &pattern)
+        }
         other => {
             let what = format!("this expression ({})", node_kind(other));
             fx.unsupported(id, &what)
@@ -857,7 +881,7 @@ pub(crate) fn resolve_class_here(fx: &Fx, name: &str) -> Option<crate::compiler:
     fx.an.compiler.resolve_class(name, cref_chain(fx), 0)
 }
 
-fn const_read(fx: &mut Fx, id: NodeId, name: &str) -> Result<Operand, String> {
+pub(crate) fn const_read(fx: &mut Fx, id: NodeId, name: &str) -> Result<Operand, String> {
     if let Some(cid) = resolve_class_here(fx, name) {
         return class_value_of(fx, id, name, cid);
     }
@@ -1807,6 +1831,9 @@ fn lower_defined(fx: &mut Fx, site: NodeId, inner: NodeId) -> Result<Operand, St
         | HirNode::Defined(_)
         | HirNode::If { .. }
         | HirNode::CaseWhen { .. }
+        | HirNode::CaseIn { .. }
+        | HirNode::MatchPredicate { .. }
+        | HirNode::MatchRequired { .. }
         | HirNode::Begin { .. }
         | HirNode::Seq(_)
         | HirNode::While { .. }

@@ -55,6 +55,25 @@ zeo_rt_main ([I32, Ptr, Ptr, Ptr]) -> Some(I32)
 zeo_rt_main_object ([Ptr]) -> None
 zeo_rt_multi_split ([Ptr, Usize, U8, Usize, Ptr]) -> Some(I32)
 zeo_rt_object_new_sentinel ([Ptr]) -> None
+zeo_rt_pat_array_get ([Ptr, Usize, Ptr]) -> None
+zeo_rt_pat_array_len ([Ptr]) -> Some(Usize)
+zeo_rt_pat_array_slice ([Ptr, Usize, Usize, Ptr]) -> None
+zeo_rt_pat_deconstruct ([Ptr, Ptr, Ptr]) -> Some(I32)
+zeo_rt_pat_deconstruct_keys ([Ptr, Ptr, Ptr]) -> Some(I32)
+zeo_rt_pat_fail_case_eq ([Ptr, Ptr]) -> None
+zeo_rt_pat_fail_find ([Ptr]) -> None
+zeo_rt_pat_fail_guard ([]) -> None
+zeo_rt_pat_fail_length ([Ptr, Usize, U8]) -> None
+zeo_rt_pat_fail_not_empty ([Ptr, U8]) -> None
+zeo_rt_pat_hash_except ([Ptr, Ptr, Usize, Ptr]) -> None
+zeo_rt_pat_hash_get ([Ptr, U32, Ptr]) -> None
+zeo_rt_pat_hash_has_key ([Ptr, U32]) -> Some(U8)
+zeo_rt_pat_hash_len ([Ptr]) -> Some(Usize)
+zeo_rt_pat_is_a ([Ptr, U32]) -> Some(U8)
+zeo_rt_pat_key_miss_clear ([]) -> None
+zeo_rt_pat_key_miss_record ([U32, Ptr]) -> None
+zeo_rt_pat_match_error ([Ptr]) -> Some(I32)
+zeo_rt_pat_match_error_bare ([Ptr]) -> Some(I32)
 zeo_rt_pool_mark ([]) -> Some(Usize)
 zeo_rt_pool_push ([Ptr]) -> None
 zeo_rt_pool_reset ([Usize]) -> None

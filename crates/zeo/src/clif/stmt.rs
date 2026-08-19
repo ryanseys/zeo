@@ -376,6 +376,9 @@ fn lower_tail_expr(fx: &mut Fx, tail: NodeId) -> Result<super::operand::Operand,
         | HirNode::SymbolLit(..)
         | HirNode::Seq(..)
         | HirNode::CaseWhen { .. }
+        | HirNode::CaseIn { .. }
+        | HirNode::MatchPredicate { .. }
+        | HirNode::MatchRequired { .. }
         | HirNode::RangeLit { .. }
         | HirNode::GlobalRead(..)
         | HirNode::GlobalWrite(..)
@@ -753,6 +756,9 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
         | HirNode::Yield(..)
         | HirNode::BlockGiven
         | HirNode::CaseWhen { .. }
+        | HirNode::CaseIn { .. }
+        | HirNode::MatchPredicate { .. }
+        | HirNode::MatchRequired { .. }
         | HirNode::RangeLit { .. }
         | HirNode::GlobalRead(..)
         | HirNode::GlobalWrite(..)

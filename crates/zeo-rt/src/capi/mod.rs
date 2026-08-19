@@ -32,6 +32,7 @@ pub mod lifecycle;
 pub mod literals;
 pub mod numeric;
 pub mod objects;
+pub mod patterns;
 pub mod procs;
 pub mod registry;
 pub mod signals;

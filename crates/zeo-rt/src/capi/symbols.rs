@@ -7,8 +7,8 @@
 //! user's program.
 
 use super::{
-    bind, dispatch, frames, kernel, lifecycle, literals, numeric, objects, procs, registry,
-    signals, values,
+    bind, dispatch, frames, kernel, lifecycle, literals, numeric, objects, patterns, procs,
+    registry, signals, values,
 };
 
 macro_rules! capi_symbols {
@@ -99,6 +99,25 @@ capi_symbols!(
     literals::zeo_rt_multi_split,
     objects::zeo_rt_object_alloc,
     objects::zeo_rt_object_new_sentinel,
+    patterns::zeo_rt_pat_array_get,
+    patterns::zeo_rt_pat_array_len,
+    patterns::zeo_rt_pat_array_slice,
+    patterns::zeo_rt_pat_deconstruct,
+    patterns::zeo_rt_pat_deconstruct_keys,
+    patterns::zeo_rt_pat_fail_case_eq,
+    patterns::zeo_rt_pat_fail_find,
+    patterns::zeo_rt_pat_fail_guard,
+    patterns::zeo_rt_pat_fail_length,
+    patterns::zeo_rt_pat_fail_not_empty,
+    patterns::zeo_rt_pat_hash_except,
+    patterns::zeo_rt_pat_hash_get,
+    patterns::zeo_rt_pat_hash_has_key,
+    patterns::zeo_rt_pat_hash_len,
+    patterns::zeo_rt_pat_is_a,
+    patterns::zeo_rt_pat_key_miss_clear,
+    patterns::zeo_rt_pat_key_miss_record,
+    patterns::zeo_rt_pat_match_error,
+    patterns::zeo_rt_pat_match_error_bare,
     values::zeo_rt_pool_mark,
     values::zeo_rt_pool_push,
     values::zeo_rt_pool_reset,
