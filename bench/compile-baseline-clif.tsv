@@ -1,0 +1,25 @@
+# M0-17 (2026-08-19, aarch64-apple-darwin, release zeo + release libzeo.a).
+# A SEPARATE file, not a column in compile-baseline.tsv: the xtask
+# compile-bench parser owns that file's shape until its zeo-dev port (L1);
+# this merges into the backend column then. Times are wall ms (compile =
+# whole `zeo -o` invocation; run = whole program run). Only the M0 slice
+# compiles under CLIF -- the 10-set's other members refuse loudly and are
+# listed below the table.
+name	compile_aot_ms	compile_rustc_ms	bin_aot_bytes	bin_rustc_bytes	run_aot_ms	run_rustc_ms	run_ratio
+hello	214	497	17173176	13993360	6	7	0.86
+bm_fib	108	361	17174104	14026880	625	279	2.24
+bm_loops_times	112	404	17174096	14026848	2522	479	5.27
+bm_nested_loop	112	399	17173856	14009952	273	163	1.68
+bm_binary_trees	127	534	17192208	14110256	1933	562	3.44
+# bm_binary_trees run at depth 14.
+# Refused (M0 slice boundary, loud): bm_template (interp strings),
+# bm_json_parse, bm_micro_lisp, core_classes (expressions outside the
+# slice), uri_parse_and_build (modules), optparse_subset (non-required
+# params), gem_rubygems, gem_bundler (everything above).
+# Known run-time levers, all rustc-parity mechanisms (not speculative):
+# TyKind unboxed locals (deferred at M0-10), CallSite inline caches
+# (sends are UNCACHED send_value_in), typed collection fast paths
+# ([]/[]=/% dynamic today; bm_loops_times = 32M such sends),
+# borrow-through params, release elision. hello size +23% over rustc:
+# every no_mangle zeo_rt_* export is linker-retained under -dead_strip;
+# an -exported_symbols_list is the lever (M0.5/M3).
