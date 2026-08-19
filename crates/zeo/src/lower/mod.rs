@@ -7,11 +7,6 @@
 //! else is a clean `Err` (mirroring zeo's `unsupported(c, id, "...")`
 //! convention), not a panic.
 
-#![allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "not yet swept for wildcard arms -- see the lint's note in lib.rs"
-)]
-
 mod assign;
 mod calls;
 pub mod consts;
