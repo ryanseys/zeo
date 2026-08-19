@@ -18,6 +18,8 @@ pub enum CTy {
     U32,
     /// `u8` (encoding ids, flag bytes) -- unsigned-extended per the C ABI.
     U8,
+    /// `i8` (boolean answers) -- sign-extended per the C ABI.
+    I8,
 }
 
 /// One imported runtime function: its exact exported name and C shape.
@@ -27,7 +29,7 @@ pub struct CapiSig {
     pub ret: Option<CTy>,
 }
 
-use CTy::{I32, Ptr, U8, U32, Usize};
+use CTy::{I8, I32, Ptr, U8, U32, Usize};
 
 /// Every runtime symbol the emitter can import, alphabetical by name.
 /// Grows with the lowerings; `sig` panics on a name not listed -- an
@@ -114,6 +116,11 @@ pub const CAPI: &[CapiSig] = &[
         ret: Some(I32),
     },
     CapiSig {
+        name: "zeo_rt_const_private",
+        params: &[U32, Ptr, Usize],
+        ret: Some(I8),
+    },
+    CapiSig {
         name: "zeo_rt_const_set_at",
         params: &[U32, Ptr, Usize, Ptr, Ptr, Usize, U32],
         ret: None,
@@ -132,6 +139,31 @@ pub const CAPI: &[CapiSig] = &[
         name: "zeo_rt_cvar_set",
         params: &[U32, Ptr, Usize, Ptr],
         ret: Some(I32),
+    },
+    CapiSig {
+        name: "zeo_rt_defined_const_in",
+        params: &[U32, Ptr, Usize],
+        ret: Some(I8),
+    },
+    CapiSig {
+        name: "zeo_rt_defined_cvar",
+        params: &[U32, Ptr, Usize],
+        ret: Some(I8),
+    },
+    CapiSig {
+        name: "zeo_rt_defined_gvar",
+        params: &[U32, Ptr, Usize],
+        ret: Some(I8),
+    },
+    CapiSig {
+        name: "zeo_rt_defined_ivar",
+        params: &[Ptr, Ptr, Usize, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
+        name: "zeo_rt_defined_method",
+        params: &[Ptr, U32, U8, Ptr],
+        ret: None,
     },
     CapiSig {
         name: "zeo_rt_frame_pop",
@@ -422,6 +454,11 @@ pub const CAPI: &[CapiSig] = &[
         name: "zeo_rt_str_new",
         params: &[Ptr, Usize, U8, Ptr],
         ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_super_defined",
+        params: &[Ptr, U32, U32],
+        ret: Some(I8),
     },
     CapiSig {
         name: "zeo_rt_sym_intern",

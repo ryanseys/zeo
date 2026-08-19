@@ -18,10 +18,16 @@ zeo_rt_check_ints ([]) -> Some(I32)
 zeo_rt_const_get_at ([U32, Ptr, Usize, Ptr]) -> Some(I32)
 zeo_rt_const_get_cref ([Ptr, Usize, Ptr, Usize, Ptr, Usize, Ptr]) -> Some(I32)
 zeo_rt_const_get_scoped ([U32, Ptr, Usize, Ptr, Usize, Ptr]) -> Some(I32)
+zeo_rt_const_private ([U32, Ptr, Usize]) -> Some(I8)
 zeo_rt_const_set_at ([U32, Ptr, Usize, Ptr, Ptr, Usize, U32]) -> None
 zeo_rt_cvar_get ([U32, Ptr, Usize, Ptr]) -> None
 zeo_rt_cvar_get_checked ([U32, Ptr, Usize, Ptr]) -> Some(I32)
 zeo_rt_cvar_set ([U32, Ptr, Usize, Ptr]) -> Some(I32)
+zeo_rt_defined_const_in ([U32, Ptr, Usize]) -> Some(I8)
+zeo_rt_defined_cvar ([U32, Ptr, Usize]) -> Some(I8)
+zeo_rt_defined_gvar ([U32, Ptr, Usize]) -> Some(I8)
+zeo_rt_defined_ivar ([Ptr, Ptr, Usize, Ptr]) -> Some(I32)
+zeo_rt_defined_method ([Ptr, U32, U8, Ptr]) -> None
 zeo_rt_frame_pop ([]) -> None
 zeo_rt_frame_push ([Ptr, Usize, Ptr, Usize, U32, U32]) -> None
 zeo_rt_frozen_check ([Ptr]) -> Some(I32)
@@ -80,6 +86,7 @@ zeo_rt_stack_check ([]) -> Some(I32)
 zeo_rt_str_append_lit ([Ptr, Ptr, Usize]) -> None
 zeo_rt_str_append_value ([Ptr, Ptr]) -> Some(I32)
 zeo_rt_str_new ([Ptr, Usize, U8, Ptr]) -> None
+zeo_rt_super_defined ([Ptr, U32, U32]) -> Some(I8)
 zeo_rt_sym_intern ([Ptr, Usize]) -> Some(U32)
 zeo_rt_sym_value ([U32, Ptr]) -> None
 zeo_rt_truthy ([Ptr]) -> Some(U8)

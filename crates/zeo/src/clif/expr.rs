@@ -300,6 +300,10 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             let name = name.clone();
             super::stmt::ivar_read_op(fx, id, &name)
         }
+        HirNode::Defined(v) => {
+            let v = *v;
+            lower_defined(fx, id, v)
+        }
         HirNode::LastMatchRef(which) => {
             use crate::hir::LastMatch;
             let (kind, n) = match which {
@@ -1393,6 +1397,361 @@ fn regexp_lit(
         owned: true,
         tag: TagInfo::Known(ValueTag::Regexp as u8),
     })
+}
+
+/// `defined?(s)` -- a FRESH string answer (rustc's `string_new`) or nil.
+fn defined_str(fx: &mut Fx, dst: cranelift_codegen::ir::Value, s: &str) {
+    let off = fx.em.intern_rodata(s.as_bytes());
+    let ptr = fx.rod(off);
+    let len_v = fx.b.ins().iconst(fx.em.ptr, s.len() as i64);
+    let enc = fx.b.ins().iconst(types::I8, ENC_UTF8);
+    fx.call("zeo_rt_str_new", &[ptr, len_v, enc, dst]);
+}
+
+/// `defined?`'s runtime-conditional answer: `s` when `hit` (an i8) is
+/// non-zero, else nil, in one owned temp.
+fn defined_cond(fx: &mut Fx, hit: cranelift_codegen::ir::Value, s: &str) -> Operand {
+    let ss = fx.temp_slot();
+    let dst = fx.slot_addr(ss, 0);
+    let yes = fx.b.create_block();
+    let no = fx.b.create_block();
+    let merge = fx.b.create_block();
+    fx.b.ins().brif(hit, yes, &[], no, &[]);
+    fx.b.switch_to_block(yes);
+    defined_str(fx, dst, s);
+    fx.b.ins().jump(merge, &[]);
+    fx.b.switch_to_block(no);
+    ownership::write_move_into(fx, &Operand::Nil, dst);
+    fx.b.ins().jump(merge, &[]);
+    fx.b.switch_to_block(merge);
+    fx.owned_created += 1;
+    Operand::Slot {
+        ss,
+        owned: true,
+        tag: TagInfo::Unknown,
+    }
+}
+
+/// The static half of `defined_cond`.
+fn defined_static(fx: &mut Fx, s: Option<&str>) -> Operand {
+    match s {
+        None => Operand::Nil,
+        Some(s) => {
+            let ss = fx.temp_slot();
+            let dst = fx.slot_addr(ss, 0);
+            defined_str(fx, dst, s);
+            fx.owned_created += 1;
+            Operand::Slot {
+                ss,
+                owned: true,
+                tag: TagInfo::Known(ValueTag::Str as u8),
+            }
+        }
+    }
+}
+
+/// `is_predefined_global`'s list, verbatim from the rustc emitter.
+fn is_predefined_global(name: &str) -> bool {
+    matches!(
+        name,
+        "$!" | "$@"
+            | "$;"
+            | "$,"
+            | "$/"
+            | "$\\"
+            | "$."
+            | "$<"
+            | "$>"
+            | "$_"
+            | "$0"
+            | "$*"
+            | "$:"
+            | "$\""
+            | "$$"
+            | "$?"
+            | "$DEBUG"
+            | "$VERBOSE"
+            | "$FILENAME"
+            | "$PROGRAM_NAME"
+            | "$stdin"
+            | "$stdout"
+            | "$stderr"
+            | "$LOAD_PATH"
+            | "$LOADED_FEATURES"
+    )
+}
+
+/// `defined?(expr)` -- rustc's `emit_defined`, branch for branch. The
+/// runtime-probing forms call one capi each; everything else classifies
+/// statically. The collection-literal recursion and dynamic-scope const
+/// forms still refuse.
+#[allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "structural: the static-classification tail mirrors rustc's exhaustive match; an unlisted node kind refuses loudly below rather than misclassifying"
+)]
+fn lower_defined(fx: &mut Fx, site: NodeId, inner: NodeId) -> Result<Operand, String> {
+    use crate::hir::LastMatch;
+    // `defined?(yield)`: runtime -- the block channel is or isn't there.
+    if matches!(&fx.an.compiler.hir[inner], HirNode::Yield(_)) {
+        return Ok(match fx.blk_ptr {
+            None => Operand::Nil,
+            Some(blk) => {
+                let hit = fx.b.ins().icmp_imm_u(
+                    cranelift_codegen::ir::condcodes::IntCC::NotEqual,
+                    blk,
+                    0,
+                );
+                defined_cond(fx, hit, "yield")
+            }
+        });
+    }
+    // `defined?(super)`: probe the same walk `super` runs.
+    if matches!(&fx.an.compiler.hir[inner], HirNode::SuperCall { .. })
+        && !fx.self_is_class
+        && let (Some(dc), Some(m)) = (fx.defining_class, fx.method_name.clone())
+    {
+        let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
+        let dc_v = fx.b.ins().iconst(types::I32, i64::from(dc.0));
+        let sym = fx.sym_id(&m);
+        let hit = fx
+            .call("zeo_rt_super_defined", &[self_ptr, dc_v, sym])
+            .expect("super_defined answers");
+        return Ok(defined_cond(fx, hit, "super"));
+    }
+    // `defined?(a_call)`: evaluate the receiver (its raise SWALLOWED to
+    // nil -- CRuby's catch entry over the whole expression) and probe it.
+    if let HirNode::Call { receiver, name, .. } = &fx.an.compiler.hir[inner] {
+        let (receiver, name) = (*receiver, name.clone());
+        let ss = fx.temp_slot();
+        let dst = fx.slot_addr(ss, 0);
+        let hit_ss = fx.temp_slot();
+        let hit_ptr = fx.slot_addr(hit_ss, 0);
+        let sym = fx.sym_id(&name);
+        let merge = fx.b.create_block();
+        let check = fx.b.create_block();
+        match receiver {
+            None => {
+                let self_ptr = super::stmt::dyn_ivar_recv(fx);
+                let one = fx.b.ins().iconst(types::I8, 1);
+                fx.call("zeo_rt_defined_method", &[self_ptr, sym, one, hit_ptr]);
+                fx.b.ins().jump(check, &[]);
+            }
+            Some(rid) => {
+                let swallow = fx.b.create_block();
+                let saved = fx.land;
+                fx.land = swallow;
+                let op = lower_expr(fx, rid)?;
+                fx.land = saved;
+                let p = ownership::borrow_ptr(fx, &op);
+                if op.owned() {
+                    ownership::pool_owned(fx, p, op.tag());
+                }
+                let zero = fx.b.ins().iconst(types::I8, 0);
+                fx.call("zeo_rt_defined_method", &[p, sym, zero, hit_ptr]);
+                fx.b.ins().jump(check, &[]);
+                // The swallow landing: drop the pending signal (rustc's
+                // `unwrap_or(Nil)` drops the Err) and answer nil.
+                fx.b.switch_to_block(swallow);
+                let sig_ss = fx.temp_slot();
+                let sig_dst = fx.slot_addr(sig_ss, 0);
+                ownership::write_move_into(fx, &Operand::Nil, sig_dst);
+                fx.call("zeo_rt_signal_take", &[sig_dst]);
+                fx.owned_created += 1;
+                ownership::pool_owned(fx, sig_dst, TagInfo::Unknown);
+                ownership::write_move_into(fx, &Operand::Nil, dst);
+                fx.b.ins().jump(merge, &[]);
+            }
+        }
+        fx.b.switch_to_block(check);
+        let fl = cranelift_codegen::ir::MemFlagsData::trusted();
+        let hit = fx.b.ins().load(types::I8, fl, hit_ptr, 0);
+        let yes = fx.b.create_block();
+        let no = fx.b.create_block();
+        fx.b.ins().brif(hit, yes, &[], no, &[]);
+        fx.b.switch_to_block(yes);
+        defined_str(fx, dst, "method");
+        fx.b.ins().jump(merge, &[]);
+        fx.b.switch_to_block(no);
+        ownership::write_move_into(fx, &Operand::Nil, dst);
+        fx.b.ins().jump(merge, &[]);
+        fx.b.switch_to_block(merge);
+        fx.owned_created += 1;
+        return Ok(Operand::Slot {
+            ss,
+            owned: true,
+            tag: TagInfo::Unknown,
+        });
+    }
+    // `defined?(Scope::NAME)` with a compile-time scope but non-static
+    // membership: privacy then membership, both runtime probes.
+    if let HirNode::QualifiedConstRead(scope, name) = &fx.an.compiler.hir[inner] {
+        let (scope, name) = (scope.clone(), name.clone());
+        let env = crate::analyze::constfold::ConstEnv {
+            compiler: &fx.an.compiler,
+            defining_class: fx.defining_class.or(fx.method_class),
+            box_id: 0,
+        };
+        if crate::analyze::constfold::const_form_resolves(&env, inner) != Some(true) {
+            let Some(scope_id) = resolve_class_here(fx, &scope) else {
+                return fx.unsupported(site, "a `defined?` of an unresolvable scope");
+            };
+            let sid = fx.b.ins().iconst(types::I32, i64::from(scope_id.0));
+            let (nptr, nlen) = rodata_name(fx, &name);
+            let private = fx
+                .call("zeo_rt_const_private", &[sid, nptr, nlen])
+                .expect("const_private answers");
+            let hidden = fx.b.create_block();
+            let probe = fx.b.create_block();
+            let merge = fx.b.create_block();
+            let ss = fx.temp_slot();
+            let dst = fx.slot_addr(ss, 0);
+            fx.b.ins().brif(private, hidden, &[], probe, &[]);
+            fx.b.switch_to_block(hidden);
+            ownership::write_move_into(fx, &Operand::Nil, dst);
+            fx.b.ins().jump(merge, &[]);
+            fx.b.switch_to_block(probe);
+            let sid2 = fx.b.ins().iconst(types::I32, i64::from(scope_id.0));
+            let (nptr2, nlen2) = rodata_name(fx, &name);
+            let hit = fx
+                .call("zeo_rt_defined_const_in", &[sid2, nptr2, nlen2])
+                .expect("defined_const_in answers");
+            let yes = fx.b.create_block();
+            let no = fx.b.create_block();
+            fx.b.ins().brif(hit, yes, &[], no, &[]);
+            fx.b.switch_to_block(yes);
+            defined_str(fx, dst, "constant");
+            fx.b.ins().jump(merge, &[]);
+            fx.b.switch_to_block(no);
+            ownership::write_move_into(fx, &Operand::Nil, dst);
+            fx.b.ins().jump(merge, &[]);
+            fx.b.switch_to_block(merge);
+            fx.owned_created += 1;
+            return Ok(Operand::Slot {
+                ss,
+                owned: true,
+                tag: TagInfo::Unknown,
+            });
+        }
+        return Ok(defined_static(fx, Some("constant")));
+    }
+    if matches!(&fx.an.compiler.hir[inner], HirNode::DynConstRead { .. }) {
+        return fx.unsupported(site, "a `defined?` of a runtime-scoped constant");
+    }
+    if let HirNode::GlobalRead(name) = &fx.an.compiler.hir[inner] {
+        let name = name.clone();
+        if is_predefined_global(&name) {
+            return Ok(defined_static(fx, Some("global-variable")));
+        }
+        let bx = fx.b.ins().iconst(types::I32, 0);
+        let (nptr, nlen) = rodata_name(fx, &name);
+        let hit = fx
+            .call("zeo_rt_defined_gvar", &[bx, nptr, nlen])
+            .expect("defined_gvar answers");
+        return Ok(defined_cond(fx, hit, "global-variable"));
+    }
+    if let HirNode::LastMatchRef(which) = &fx.an.compiler.hir[inner] {
+        let which = *which;
+        if matches!(which, LastMatch::Data) {
+            return Ok(defined_static(fx, Some("global-variable")));
+        }
+        let (kind, n) = match which {
+            LastMatch::Data => unreachable!("returned above"),
+            LastMatch::Group(n) => (1i64, n),
+            LastMatch::Pre => (2, 0),
+            LastMatch::Post => (3, 0),
+            LastMatch::LastGroup => (4, 0),
+        };
+        let kind_v = fx.b.ins().iconst(types::I8, kind);
+        let n_v = fx.b.ins().iconst(fx.em.ptr, n as i64);
+        let mss = fx.temp_slot();
+        let mout = fx.slot_addr(mss, 0);
+        fx.call("zeo_rt_last_match_ref", &[kind_v, n_v, mout]);
+        fx.owned_created += 1;
+        ownership::pool_owned(fx, mout, TagInfo::Unknown);
+        let fl = cranelift_codegen::ir::MemFlagsData::trusted();
+        let tag = fx.b.ins().load(types::I8, fl, mout, 0);
+        return Ok(defined_cond(fx, tag, "global-variable"));
+    }
+    if matches!(
+        &fx.an.compiler.hir[inner],
+        HirNode::ArrayLit(_) | HirNode::HashLit(_)
+    ) {
+        return fx.unsupported(site, "a `defined?` over a collection literal");
+    }
+    if let HirNode::IvarRead(name) = &fx.an.compiler.hir[inner] {
+        let name = name.clone();
+        let self_ptr = super::stmt::dyn_ivar_recv(fx);
+        let (nptr, nlen) = rodata_name(fx, &name);
+        let hit_ss = fx.temp_slot();
+        let hit_ptr = fx.slot_addr(hit_ss, 0);
+        let status = fx
+            .call("zeo_rt_defined_ivar", &[self_ptr, nptr, nlen, hit_ptr])
+            .expect("defined_ivar returns a status");
+        fx.fallible(status);
+        let fl = cranelift_codegen::ir::MemFlagsData::trusted();
+        let hit = fx.b.ins().load(types::I8, fl, hit_ptr, 0);
+        return Ok(defined_cond(fx, hit, "instance-variable"));
+    }
+    if let HirNode::ClassVarRead(name) = &fx.an.compiler.hir[inner] {
+        let name = name.clone();
+        let owner = cvar_owner(fx, &name);
+        let ov = fx.b.ins().iconst(types::I32, i64::from(owner));
+        let (nptr, nlen) = rodata_name(fx, &name);
+        let hit = fx
+            .call("zeo_rt_defined_cvar", &[ov, nptr, nlen])
+            .expect("defined_cvar answers");
+        return Ok(defined_cond(fx, hit, "class variable"));
+    }
+    // The static classification tail -- rustc's, in its order.
+    let classification: Option<&str> = match &fx.an.compiler.hir[inner] {
+        HirNode::LocalRead(name) => fx.locals.contains_key(name).then_some("local-variable"),
+        HirNode::ClassRef(_) => {
+            let env = crate::analyze::constfold::ConstEnv {
+                compiler: &fx.an.compiler,
+                defining_class: fx.defining_class.or(fx.method_class),
+                box_id: 0,
+            };
+            match crate::analyze::constfold::const_form_resolves(&env, inner) {
+                Some(true) => Some("constant"),
+                _ => None,
+            }
+        }
+        HirNode::SelfRef => Some("self"),
+        HirNode::New { .. }
+        | HirNode::SuperCall { .. }
+        | HirNode::BlockGiven
+        | HirNode::Raise(..) => Some("method"),
+        HirNode::NilLit => Some("nil"),
+        HirNode::BoolLit(true) => Some("true"),
+        HirNode::BoolLit(false) => Some("false"),
+        HirNode::IntegerLit(_)
+        | HirNode::FloatLit(_)
+        | HirNode::SymbolLit(_)
+        | HirNode::StringLit(_)
+        | HirNode::RegexpLit(..)
+        | HirNode::RangeLit { .. }
+        | HirNode::And(..)
+        | HirNode::Or(..)
+        | HirNode::Defined(_)
+        | HirNode::If { .. }
+        | HirNode::CaseWhen { .. }
+        | HirNode::Begin { .. }
+        | HirNode::Seq(_)
+        | HirNode::While { .. }
+        | HirNode::Loop { .. }
+        | HirNode::Lambda { .. } => Some("expression"),
+        HirNode::LocalWrite(..)
+        | HirNode::IvarWrite(..)
+        | HirNode::ClassVarWrite(..)
+        | HirNode::GlobalWrite(..)
+        | HirNode::ConstWrite { .. }
+        | HirNode::MultiWrite { .. } => Some("assignment"),
+        HirNode::Break(_) | HirNode::Next(_) | HirNode::Redo | HirNode::Return(_) => None,
+        _ => {
+            return fx.unsupported(site, "this `defined?` form");
+        }
+    };
+    Ok(defined_static(fx, classification))
 }
 
 /// The class that OWNS `@@name` at this lowering site -- the rustc

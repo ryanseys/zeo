@@ -502,3 +502,88 @@ pub unsafe extern "C" fn zeo_rt_value_super_args(
     };
     status_out(r, out)
 }
+
+/// `defined?(recv.m)` / `defined?(m)`: does the receiver answer `m`
+/// (respond_to_missing? consulted; its raise SWALLOWED -- rustc's
+/// `unwrap_or(false)`)? Infallible by design.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_defined_method(
+    recv: *const RubyValue,
+    sym: u32,
+    include_all: u8,
+    hit: *mut i8,
+) {
+    let ok = crate::dispatch::responds_to_or_missing(
+        unsafe { &*recv },
+        Symbol::from_u32(sym),
+        include_all != 0,
+    )
+    .unwrap_or(false);
+    unsafe { hit.write(i8::from(ok)) };
+}
+
+/// `defined?(super)`: a target exists past `defining_class` on the
+/// receiver's chain.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_super_defined(
+    recv: *const RubyValue,
+    defining_class: u32,
+    sym: u32,
+) -> i8 {
+    i8::from(crate::dispatch::super_defined(
+        unsafe { &*recv },
+        zeo_abi::ClassId(defining_class),
+        Symbol::from_u32(sym),
+    ))
+}
+
+/// `defined?(@iv)`: set on self RIGHT NOW -- behind CRuby's Ractor guard
+/// (which can raise, hence the status).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_defined_ivar(
+    recv: *const RubyValue,
+    name: *const u8,
+    len: usize,
+    hit: *mut i8,
+) -> i32 {
+    use zeo_abi::abi::{STATUS_OK, STATUS_SIGNAL};
+    let recv = unsafe { &*recv };
+    if let Err(sig) = crate::ractor::ivar_isolation_check(recv) {
+        crate::signal::set_pending(sig);
+        return STATUS_SIGNAL;
+    }
+    let name = unsafe { super::str_slice(name, len) };
+    unsafe { hit.write(i8::from(crate::dispatch::ivar_defined(recv, name))) };
+    STATUS_OK
+}
+
+/// `defined?(@@x)` / `defined?($g)` / `defined?(Scope::N)` /
+/// `const_is_private` -- the four infallible table probes, one entry each.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_defined_cvar(owner: u32, name: *const u8, len: usize) -> i8 {
+    i8::from(crate::cvars::cvar_defined(owner, unsafe {
+        super::str_slice(name, len)
+    }))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_defined_gvar(box_id: u32, name: *const u8, len: usize) -> i8 {
+    i8::from(crate::globals::global_defined(box_id, unsafe {
+        super::str_slice(name, len)
+    }))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_defined_const_in(scope: u32, name: *const u8, len: usize) -> i8 {
+    i8::from(crate::builtins::rmodule::const_defined_in(
+        zeo_abi::ClassId(scope),
+        unsafe { super::str_slice(name, len) },
+    ))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_const_private(scope: u32, name: *const u8, len: usize) -> i8 {
+    i8::from(crate::constants::const_is_private(scope, unsafe {
+        super::str_slice(name, len)
+    }))
+}

@@ -616,7 +616,7 @@ impl Emitter {
         match t {
             CTy::Ptr | CTy::Usize => self.ptr,
             CTy::I32 | CTy::U32 => types::I32,
-            CTy::U8 => types::I8,
+            CTy::U8 | CTy::I8 => types::I8,
         }
     }
 
@@ -625,6 +625,7 @@ impl Emitter {
             // A sub-32-bit C ARGUMENT is the caller's to zero-extend (the
             // Apple arm64 rule; a no-op elsewhere).
             CTy::U8 => AbiParam::new(types::I8).uext(),
+            CTy::I8 => AbiParam::new(types::I8).sext(),
             CTy::Ptr | CTy::Usize | CTy::I32 | CTy::U32 => AbiParam::new(self.ctype(t)),
         }
     }

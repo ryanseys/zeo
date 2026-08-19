@@ -40,6 +40,20 @@ pub(crate) fn lower_value_body_into(
     Ok(())
 }
 
+/// The receiver for a NAME-KEYED ivar access: `self`, or the `main`
+/// object at the toplevel (rustc's `ivar_get_dyn(&main_object(), ..)`).
+pub(crate) fn dyn_ivar_recv(fx: &mut Fx) -> cranelift_codegen::ir::Value {
+    if fx.method_class.is_some() {
+        return fx.self_ptr.expect("self_ptr is set in the prologue");
+    }
+    let ss = fx.temp_slot();
+    let ptr = fx.slot_addr(ss, 0);
+    fx.call("zeo_rt_main_object", &[ptr]);
+    fx.owned_created += 1;
+    ownership::pool_owned(fx, ptr, super::operand::TagInfo::Unknown);
+    ptr
+}
+
 /// `@name` read into a fresh owned temp -- slot-indexed for a compiled
 /// class; NAME-KEYED (fallible: the Ractor guard) for a native-backed one,
 /// the rustc `ivar_get_dyn_isolated` shape.
@@ -49,16 +63,29 @@ pub(crate) fn ivar_read_op(
     name: &str,
 ) -> Result<super::operand::Operand, String> {
     use super::operand::{Operand, TagInfo};
+    if fx.dyn_ivars || fx.method_class.is_none() {
+        if fx.self_is_class {
+            return fx.unsupported(site, "a class-level ivar");
+        }
+        let recv = dyn_ivar_recv(fx);
+        let ss = fx.temp_slot();
+        let out = fx.slot_addr(ss, 0);
+        let (nptr, nlen) = super::expr::rodata_name(fx, name);
+        let status = fx
+            .call("zeo_rt_ivar_get_dyn", &[recv, nptr, nlen, out])
+            .expect("ivar_get_dyn returns a status");
+        fx.fallible(status);
+        fx.owned_created += 1;
+        return Ok(super::operand::Operand::Slot {
+            ss,
+            owned: true,
+            tag: super::operand::TagInfo::Unknown,
+        });
+    }
     let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
-    if fx.dyn_ivars {
-        let (nptr, nlen) = super::expr::rodata_name(fx, name);
-        let status = fx
-            .call("zeo_rt_ivar_get_dyn", &[self_ptr, nptr, nlen, out])
-            .expect("ivar_get_dyn returns a status");
-        fx.fallible(status);
-    } else {
+    {
         let slot = ivar_slot_of(fx, site, name)?;
         let slot_v = fx.b.ins().iconst(fx.em.ptr, slot as i64);
         fx.call("zeo_rt_ivar_get_slot", &[self_ptr, slot_v, out]);
@@ -80,8 +107,11 @@ pub(crate) fn ivar_write_op(
     name: &str,
     op: super::operand::Operand,
 ) -> Result<(), String> {
-    let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
-    if fx.dyn_ivars {
+    if fx.dyn_ivars || fx.method_class.is_none() {
+        if fx.self_is_class {
+            return fx.unsupported(site, "a class-level ivar");
+        }
+        let recv = dyn_ivar_recv(fx);
         let tag = op.tag();
         let ptr = ownership::borrow_ptr(fx, &op);
         if op.owned() {
@@ -89,10 +119,13 @@ pub(crate) fn ivar_write_op(
         }
         let (nptr, nlen) = super::expr::rodata_name(fx, name);
         let status = fx
-            .call("zeo_rt_ivar_set_dyn", &[self_ptr, nptr, nlen, ptr])
+            .call("zeo_rt_ivar_set_dyn", &[recv, nptr, nlen, ptr])
             .expect("ivar_set_dyn returns a status");
         fx.fallible(status);
-    } else {
+        return Ok(());
+    }
+    let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
+    {
         let slot = ivar_slot_of(fx, site, name)?;
         let ptr = ownership::move_ptr(fx, &op);
         let slot_v = fx.b.ins().iconst(fx.em.ptr, slot as i64);
@@ -353,6 +386,7 @@ fn lower_tail_expr(fx: &mut Fx, tail: NodeId) -> Result<super::operand::Operand,
         | HirNode::RegexpLit(..)
         | HirNode::LastMatchRef(..)
         | HirNode::SuperCall { .. }
+        | HirNode::Defined(..)
         | HirNode::Call { .. } => lower_expr(fx, tail),
         other => {
             let what = format!("this tail expression ({})", statement_kind(other));
@@ -716,6 +750,7 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
         | HirNode::RegexpLit(..)
         | HirNode::LastMatchRef(..)
         | HirNode::SuperCall { .. }
+        | HirNode::Defined(..)
         | HirNode::Call { .. } => {
             let op = lower_expr(fx, stmt)?;
             ownership::discard(fx, op);
