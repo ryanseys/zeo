@@ -18,6 +18,9 @@ pub(crate) struct ClassSpec {
     pub ancestors: Vec<u32>,
     pub ivars: Vec<String>,
     pub hidden: u16,
+    /// `module M` -- registered `CLASS_MODULE` (no allocator, no layout);
+    /// its methods ride the VALUE channel instead of the object channel.
+    pub is_module: bool,
 }
 
 /// One object-channel method to compile for a user class.
@@ -55,15 +58,39 @@ pub(crate) struct CmMethodSpec {
     pub ruby2_keywords: bool,
 }
 
+/// One module method: body + `ValueFn` trampoline, registered as a
+/// `VmRow` on the module's id. The body's `self` is whatever receiver
+/// dispatch hands over (a value pointer, as every body here takes).
+pub(crate) struct ModMethodSpec {
+    pub owner: ClassId,
+    pub owner_name: String,
+    pub name: String,
+    pub body: Vec<crate::hir::NodeId>,
+    pub node: Option<crate::hir::NodeId>,
+    pub tramp: cranelift_module::FuncId,
+    pub body_fn: cranelift_module::FuncId,
+    pub hir_params: crate::hir::Params,
+    pub has_blk: bool,
+    pub ruby2_keywords: bool,
+}
+
 /// What `collect_classes` hands back: the class table plus its method and
 /// visibility rows.
 pub(crate) struct CollectedClasses {
     pub classes: Vec<ClassSpec>,
     pub methods: Vec<ObjMethodSpec>,
+    /// A module's OWN methods as VALUE-channel rows on the module id --
+    /// rustc's `__um_` bridges. An includer dispatches through its own
+    /// materialized object-channel copies first; these rows are what a
+    /// dynamic receiver (and the ancestor walk) finds.
+    pub module_methods: Vec<ModMethodSpec>,
     pub class_methods: Vec<CmMethodSpec>,
     /// `(class, name)` pairs a `def self.x` WROTE on the class itself --
     /// reflection's `Method#owner` truth (`mark_own_class_method_rows`).
     pub own_cm: Vec<(u32, String)>,
+    /// The instance-method twin: names each class's own body wrote
+    /// (`mark_own_rows` -- `instance_methods(false)`/`Method#owner`).
+    pub own_rows: Vec<(u32, String)>,
     pub vis: Vec<statics::VisRowSpec>,
 }
 
@@ -76,8 +103,10 @@ pub(crate) fn collect_classes(
     let compiler = &analyzed.compiler;
     let mut classes = Vec::new();
     let mut methods = Vec::new();
+    let mut module_methods = Vec::new();
     let mut class_methods = Vec::new();
     let mut own_cm = Vec::new();
+    let mut own_rows = Vec::new();
     let mut vis = Vec::new();
     for (idx, class) in compiler.classes.iter().enumerate() {
         if idx == 0 || class.is_builtin || class.is_bootstrap {
@@ -89,9 +118,6 @@ pub(crate) fn collect_classes(
                 "--backend aot is an M0 vertical slice: cannot lower {what} yet (class {name})"
             ))
         };
-        if class.is_module {
-            return refuse("a module");
-        }
         if class.box_id != 0 {
             return refuse("a boxed class");
         }
@@ -101,8 +127,10 @@ pub(crate) fn collect_classes(
         if !class.class_body_stmts.is_empty() {
             return refuse("a class body with runtime statements");
         }
+        // `include` works through the two mechanisms below (materialized
+        // copies on the includer + value rows on the module + the module in
+        // `ancestors`); the rest of the mixin surface still refuses.
         if !(class.prepends.is_empty()
-            && class.includes.is_empty()
             && class.extends.is_empty()
             && class.class_method_prepends.is_empty()
             && class.imported_modules.is_empty())
@@ -144,9 +172,92 @@ pub(crate) fn collect_classes(
             ancestors: class.ancestors.iter().map(|c| c.0).collect(),
             ivars: class.ivars.clone(),
             hidden: u16::try_from(class.hidden_ivars.len()).expect("hidden ivars fit u16"),
+            is_module: class.is_module,
         });
+        // What this class's own body wrote -- `instance_methods(false)` /
+        // `Method#owner` truth, exactly the rustc `mark_own_rows` list
+        // (plus re-scoped `zsuper` entries, refused above with the
+        // visibility overrides they ride in on).
+        let mut own: Vec<&String> = class
+            .own_methods
+            .iter()
+            .map(|&sid| &compiler.scope(sid).name)
+            .collect();
+        own.sort();
+        for n in own {
+            own_rows.push((idx as u32, n.clone()));
+        }
 
-        for entry in &class.methods {
+        if class.is_module {
+            // A module's own methods ride the VALUE channel on its own id.
+            for &sid in &class.own_methods {
+                let scope = compiler.scope(sid);
+                if scope.native_default {
+                    continue;
+                }
+                let mname = scope.name.clone();
+                let refuse_m = |what: &str| {
+                    Err(format!(
+                        "--backend aot is an M0 vertical slice: cannot lower {what} yet ({name}#{mname})"
+                    ))
+                };
+                if scope.runtime_conditional {
+                    return refuse_m("a conditionally-defined method");
+                }
+                if scope.alias_of.is_some() {
+                    return refuse_m("an alias");
+                }
+                if scope.accessor.is_some() {
+                    return refuse_m("a module accessor");
+                }
+                let p = &scope.params;
+                if let Err(what) = super::emit::check_params(p) {
+                    return refuse_m(what);
+                }
+                let layout = super::params::layout_of(p)?;
+                let has_blk = scope.needs_block_param();
+                let tramp = em
+                    .module
+                    .declare_function(
+                        &names::trampoline_symbol(&name, &mname),
+                        Linkage::Local,
+                        &params::value_fn_sig(em),
+                    )
+                    .map_err(|e| format!("declaring {name}#{mname}: {e}"))?;
+                let sig = params::body_sig(em, layout.n_slots, has_blk);
+                let body_fn = em
+                    .module
+                    .declare_function(&names::method_symbol(&name, &mname), Linkage::Local, &sig)
+                    .map_err(|e| format!("declaring {name}#{mname}: {e}"))?;
+                match scope.visibility {
+                    crate::hir::Visibility::Private => vis.push(statics::VisRowSpec {
+                        class: idx as u32,
+                        name: mname.clone(),
+                        verb: 0,
+                    }),
+                    crate::hir::Visibility::Protected => vis.push(statics::VisRowSpec {
+                        class: idx as u32,
+                        name: mname.clone(),
+                        verb: 1,
+                    }),
+                    crate::hir::Visibility::Public => {}
+                }
+                module_methods.push(ModMethodSpec {
+                    owner: ClassId(idx as u32),
+                    owner_name: name.clone(),
+                    name: mname,
+                    body: scope.body.clone(),
+                    node: scope.def_node,
+                    tramp,
+                    body_fn,
+                    hir_params: p.clone(),
+                    has_blk,
+                    ruby2_keywords: scope.ruby2_keywords,
+                });
+            }
+        }
+
+        for entry in class.methods.iter().filter(|_| !class.is_module) {
             let scope = compiler.scope(entry.def);
             if scope.native_default {
                 continue;
@@ -307,8 +418,10 @@ pub(crate) fn collect_classes(
     Ok(CollectedClasses {
         classes,
         methods,
+        module_methods,
         class_methods,
         own_cm,
+        own_rows,
         vis,
     })
 }

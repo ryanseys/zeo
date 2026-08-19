@@ -557,7 +557,11 @@ fn define_classes(
         bytes[base + std::mem::offset_of!(ClassDesc, id)
             ..base + std::mem::offset_of!(ClassDesc, id) + 4]
             .copy_from_slice(&c.id.to_le_bytes());
-        bytes[base + std::mem::offset_of!(ClassDesc, kind)] = abi::CLASS_PLAIN;
+        bytes[base + std::mem::offset_of!(ClassDesc, kind)] = if c.is_module {
+            abi::CLASS_MODULE
+        } else {
+            abi::CLASS_PLAIN
+        };
         let at = base + std::mem::offset_of!(ClassDesc, name) + std::mem::offset_of!(Str, len);
         bytes[at..at + 8].copy_from_slice(&(c.name.len() as u64).to_le_bytes());
         put_u64(

@@ -313,6 +313,8 @@ pub struct MetaRowC {
 /// - [`REG_MARK_OWN_CLASS_METHOD_ROWS`]: `a` = the method name a
 ///   `def self.x` WROTE on `class` (reflection's `Method#owner` truth,
 ///   as opposed to the materialized copies descendants dispatch through).
+/// - [`REG_MARK_OWN_ROWS`]: the instance-method twin -- `a` = a name
+///   `class`'s own body wrote.
 #[repr(C)]
 pub struct RegRow {
     pub kind: u8,
@@ -327,6 +329,11 @@ pub struct RegRow {
 
 /// `RegRow.kind`: mark `a` as a class-method name `class` itself wrote.
 pub const REG_MARK_OWN_CLASS_METHOD_ROWS: u8 = 1;
+
+/// `RegRow.kind`: mark `a` as an instance-method name `class` itself
+/// wrote (vs a copy materialization gave it) -- `instance_methods(false)`
+/// and `Method#owner` truth.
+pub const REG_MARK_OWN_ROWS: u8 = 2;
 
 /// A lazily-run feature unit -- the `install_feature_units` twin.
 #[repr(C)]

@@ -165,11 +165,13 @@ pub fn compile_jit(analyzed: &Analyzed) -> Result<Jitted, String> {
 fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String> {
     let defs = collect_methods(em, analyzed)?;
     let collected = super::classes::collect_classes(em, analyzed)?;
-    let (class_specs, obj_methods, cm_methods, own_cm, class_vis) = (
+    let (class_specs, obj_methods, mod_methods, cm_methods, own_cm, own_rows, class_vis) = (
         collected.classes,
         collected.methods,
+        collected.module_methods,
         collected.class_methods,
         collected.own_cm,
+        collected.own_rows,
         collected.vis,
     );
     for def in &defs {
@@ -220,6 +222,21 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
         };
         define_method_body(em, analyzed, &spec)?;
     }
+    for m in &mod_methods {
+        let spec = BodyFnSpec {
+            func: m.body_fn,
+            owner: m.owner,
+            owner_name: &m.owner_name,
+            name: &m.name,
+            hir_params: &m.hir_params,
+            body: &m.body,
+            node: m.node,
+            has_blk: m.has_blk,
+            ruby2_keywords: m.ruby2_keywords,
+            self_is_class: false,
+        };
+        define_method_body(em, analyzed, &spec)?;
+    }
     for def in &defs {
         let decl = &em.methods[&def.name];
         let (tramp, body, has_blk) = (decl.tramp, decl.body, decl.has_blk);
@@ -266,6 +283,23 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             }
         }
     }
+    for m in &mod_methods {
+        let idx = em.next_fn_index();
+        let (file, label, line, end_line) =
+            method_frame(analyzed, &m.owner_name, &m.name, m.node, false);
+        let spec = super::params::TrampSpec {
+            tramp: m.tramp,
+            body: m.body_fn,
+            params: &m.hir_params,
+            has_blk: m.has_blk,
+            name: &m.name,
+            file: file.as_deref(),
+            label: &label,
+            line,
+            end_line,
+        };
+        super::params::define_trampoline(em, &spec, idx)?;
+    }
     for m in &cm_methods {
         let idx = em.next_fn_index();
         let (file, label, line, end_line) =
@@ -286,7 +320,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
     let toplevel = define_toplevel(em, analyzed)?;
     let unit_init = statics::define_unit_init(em)?;
     statics::define_syms(em)?;
-    let vm_rows: Vec<statics::VmRowSpec> = defs
+    let mut vm_rows: Vec<statics::VmRowSpec> = defs
         .iter()
         .map(|d| statics::VmRowSpec {
             class: 0,
@@ -295,6 +329,12 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             f: em.methods[&d.name].tramp,
         })
         .collect();
+    vm_rows.extend(mod_methods.iter().map(|m| statics::VmRowSpec {
+        class: m.owner.0,
+        box_id: 0,
+        name: m.name.clone(),
+        f: m.tramp,
+    }));
     let vis_rows: Vec<statics::VisRowSpec> = defs
         .iter()
         .filter_map(|d| {
@@ -328,14 +368,19 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             f: m.tramp,
         })
         .collect();
-    let reg_rows: Vec<statics::RegRowSpec> = own_cm
+    let mut reg_rows: Vec<statics::RegRowSpec> = own_rows
         .iter()
         .map(|(class, name)| statics::RegRowSpec {
-            kind: zeo_abi::abi::REG_MARK_OWN_CLASS_METHOD_ROWS,
+            kind: zeo_abi::abi::REG_MARK_OWN_ROWS,
             class: *class,
             a: name.clone(),
         })
         .collect();
+    reg_rows.extend(own_cm.iter().map(|(class, name)| statics::RegRowSpec {
+        kind: zeo_abi::abi::REG_MARK_OWN_CLASS_METHOD_ROWS,
+        class: *class,
+        a: name.clone(),
+    }));
     let desc = statics::define_desc(
         em,
         analyzed,

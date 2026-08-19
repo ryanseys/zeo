@@ -149,6 +149,9 @@ pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
             abi::REG_MARK_OWN_CLASS_METHOD_ROWS => {
                 registry.mark_own_class_method_rows(ClassId(r.class), &[text(r.a)]);
             }
+            abi::REG_MARK_OWN_ROWS => {
+                registry.mark_own_rows(ClassId(r.class), &[text(r.a)]);
+            }
             k => panic!("register_program: unknown RegRow kind {k}"),
         }
     }
