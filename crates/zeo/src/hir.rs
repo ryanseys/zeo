@@ -11,11 +11,6 @@
 //! a compact interned id. Interning them is a possible later optimization,
 //! not a blocker.
 
-#![allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "not yet swept for wildcard arms -- see the lint's note in lib.rs"
-)]
-
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct NodeId(u32);
 
@@ -1197,6 +1192,11 @@ impl Hir {
     /// Whether the program names a `RubyVM` surface whose body parses at
     /// runtime (`AbstractSyntaxTree.parse`, `InstructionSequence.compile`) --
     /// those link the prism runtime exactly like a dynamic `eval` does.
+    #[allow(
+        clippy::wildcard_enum_match_arm,
+        reason = "structural: a whole-arena scan for constant reads naming `RubyVM`; \
+                  every node kind that cannot carry that name is a non-match by definition"
+    )]
     fn mentions_rubyvm_parser(&self) -> bool {
         self.nodes.iter().any(|node| match node {
             HirNode::ClassRef(n) => n == "RubyVM",
@@ -1223,6 +1223,11 @@ impl Hir {
     /// static analysis can see -- raises the runtime's own
     /// `NotImplementedError` naming `--features eval-vm`, never silent
     /// wrong output.
+    #[allow(
+        clippy::wildcard_enum_match_arm,
+        reason = "structural: a whole-arena scan for eval-shaped CALLS (literal `eval` is \
+                  already spliced as `HirNode::Eval`); only a `Call` can be one"
+    )]
     pub fn uses_runtime_eval(&self) -> bool {
         self.nodes.iter().any(|node| match node {
             HirNode::Call { name, args, .. } => match name.as_str() {
@@ -1261,6 +1266,11 @@ impl Hir {
     /// just keeps today's accessors), and the honest miss -- reaching
     /// `TracePoint` through a computed name -- costs a `:call` event on
     /// one-line accessors, not wrong output.
+    #[allow(
+        clippy::wildcard_enum_match_arm,
+        reason = "structural: a whole-arena scan for the node kinds that can name \
+                  `TracePoint`/`set_trace_func`; anything else is a non-match by definition"
+    )]
     pub fn uses_call_tracing(&self) -> bool {
         self.nodes.iter().any(|node| match node {
             // `TracePoint.new` lowers to `New`, not a `Call` on a `ClassRef` --
@@ -1289,6 +1299,11 @@ impl Hir {
     /// scan like [`uses_call_tracing`], and over-approximation is the safe
     /// direction (a program that merely mentions the constant just carries
     /// the cheap guards).
+    #[allow(
+        clippy::wildcard_enum_match_arm,
+        reason = "structural: a whole-arena scan for the node kinds that can name \
+                  `Ractor`; anything else is a non-match by definition"
+    )]
     pub fn uses_ractor(&self) -> bool {
         self.nodes.iter().any(|node| match node {
             HirNode::New { class_name: n, .. }
@@ -1301,6 +1316,11 @@ impl Hir {
 
     /// The literal method name a `send`-family call names, if it is a symbol
     /// or string literal -- `None` for a computed one.
+    #[allow(
+        clippy::wildcard_enum_match_arm,
+        reason = "structural: only a symbol or one-part string literal IS a literal \
+                  method name; every other node is the computed case, `None` by definition"
+    )]
     pub fn sent_name(&self, first_arg: NodeId) -> Option<&str> {
         match &self[first_arg] {
             HirNode::SymbolLit(n) => Some(n),
@@ -1318,6 +1338,11 @@ impl Hir {
     /// never reflects on a Proc that way pays nothing (see
     /// `codegen::captures::binding_scope_names`). Memoized: every method
     /// scope asks, and the answer is a whole-program property.
+    #[allow(
+        clippy::wildcard_enum_match_arm,
+        reason = "structural: a whole-arena scan for `binding`-shaped CALLS; only a \
+                  `Call` can be one"
+    )]
     pub fn uses_proc_binding(&self) -> bool {
         *self.proc_binding.get_or_init(|| {
             self.nodes.iter().any(|node| match node {
@@ -1931,7 +1956,12 @@ impl MultiTargetGroup {
         let mut visit = |t: &MultiTarget| match t {
             MultiTarget::Local(n) => out.push(n.clone()),
             MultiTarget::Nested(g) => g.collect_local_names(out),
-            _ => {}
+            MultiTarget::Ivar(_)
+            | MultiTarget::ClassVar(_)
+            | MultiTarget::Global(_)
+            | MultiTarget::Const(_)
+            | MultiTarget::ScopedConst { .. }
+            | MultiTarget::Call { .. } => {}
         };
         self.before.iter().for_each(&mut visit);
         if let Some(Some(t)) = &self.splat {
@@ -1983,7 +2013,13 @@ impl MultiTarget {
     pub fn for_each_target(&self, visit: &mut impl FnMut(&MultiTarget)) {
         match self {
             MultiTarget::Nested(group) => group.for_each_target(visit),
-            leaf => visit(leaf),
+            leaf @ (MultiTarget::Local(_)
+            | MultiTarget::Ivar(_)
+            | MultiTarget::ClassVar(_)
+            | MultiTarget::Global(_)
+            | MultiTarget::Const(_)
+            | MultiTarget::ScopedConst { .. }
+            | MultiTarget::Call { .. }) => visit(leaf),
         }
     }
 
