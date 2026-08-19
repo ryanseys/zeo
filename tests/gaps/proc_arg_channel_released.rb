@@ -1,17 +1,29 @@
 # GAP -- imported from the spinel corpus at c55d9bdb.
-# GC.stat exposes only :count and answers nil for every other statistic, so
-# :heap_live_slots is nil and the comparison raises NoMethodError. Ported
-# from spinel's GC.stat["bytes"]; see tests/spinel/UPSTREAM.md.
 #
-# The boxed-argument and result channels a proc call publishes through are GC
-# roots, and nothing cleared them: the last call's arguments and result stayed
-# reachable for the rest of the program, so a dropped structure was re-marked
-# at every collection. The callee reads them out and drops the references.
+# What this file was FILED for is fixed: the boxed-argument and result
+# channels a proc call publishes through were GC roots nothing cleared, so the
+# last call's arguments and result stayed reachable for the rest of the
+# program. The callee reads them out and drops the references, and an
+# `ObjectSpace.define_finalizer` on the argument now fires after the call --
+# checked directly, which is the only way to see it without a slot count.
+#
+# What is left is `GC.stat[:heap_live_slots]`, which is nil: zeo is
+# `Arc`-refcounted with no collector, and `GC` answers nil for every statistic
+# this heap has no truthful value for rather than inventing one (see
+# `builtins/gc.rs`'s module docs and docs/COMPATIBILITY.md). Reporting a live
+# count truthfully means an increment on every heap allocation and a decrement
+# in every payload's `Drop` -- a real cost on exactly the path zeo already
+# loses to CRuby on, for a statistic almost nothing reads.
+#
+# It cannot be rewritten around either: any direct liveness test diverges
+# between a refcounting and a tracing heap in the other direction. zeo's
+# finalizer fires promptly where CRuby's has not run yet, so the honest
+# version of this test would fail on ruby.
 #
 # Spinel's version read `GC.stat["bytes"]`. CRuby's GC.stat is keyed by SYMBOL
 # and has no "bytes" statistic, so a String subscript there is nil and the
-# comparison raises NoMethodError. The portable spelling of the same property
-# -- a dropped structure stops being live -- is the live-slot count.
+# comparison raises NoMethodError there too. The portable spelling of the same
+# property -- a dropped structure stops being live -- is the live-slot count.
 def build(len)
   n = len.to_i
   a = []

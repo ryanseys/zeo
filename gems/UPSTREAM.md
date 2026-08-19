@@ -31,6 +31,7 @@ license: they are Zeo's own code, under the repository's MIT OR Apache-2.0.
 
 | gem | version | source |
 |---|---|---|
+| date | 3.5.1 | ruby 4.0.6 bundled gem |
 | delegate | 0.6.1 | ruby 4.0.5 stdlib |
 | english (`English`) | 0.8.1 | ruby 4.0.5 stdlib |
 | forwardable | 1.4.0 | ruby 4.0.5 stdlib |
@@ -66,6 +67,13 @@ bigdecimal 4.1.2 gem (the version bundled with ruby 4.0.5) -- in 4.x that
 IS most of the gem (`power`, `sqrt`, `BigMath`, `to_d`) -- with one marked
 deviation, tagged `zeo:` in-file: the JRuby loader branch is reduced to
 `require "bigdecimal.so"`.
+
+`date/lib/date.rb` is the upstream Ruby half verbatim, with two zeo-marked
+changes: it opens with `require "date.so"` rather than `require 'date_core'`
+(the same loader idiom `strscan` uses to reach its native half), `VERSION` is
+dropped because zeo's native half already declares it, and `Date::Error` is
+ADDED -- CRuby defines it in C, and a feature-gated native class cannot
+register a constructible exception here.
 
 `fiddle/` follows the same vendored pattern: `closure.rb`, `function.rb`
 and `version.rb` are verbatim from the ruby 4.0.5 fiddle-1.1.8 gem, and

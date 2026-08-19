@@ -508,8 +508,14 @@ fn civil_checked(y: i64, m: i64, d: i64, sg: f64) -> Result<i64, Signal> {
 /// has no feature-gated exception class yet, so this raises the parent with
 /// CRuby's message; a `rescue ArgumentError` (and `rescue => e`) catches it
 /// identically, only `rescue Date::Error` does not exist.
+/// `Date::Error`, an `ArgumentError` subclass every invalid-date raise uses.
+/// Raised BY NAME: a feature-gated native class cannot register a
+/// constructible exception here, so the Ruby half (`gems/date/lib/date.rb`)
+/// defines it as an ordinary user class -- the same split `StringScanner::Error`
+/// takes. Before `require "date"` runs there is no such class and nothing that
+/// could reach this function either.
 fn date_error(msg: &str) -> Signal {
-    arg_error!("{msg}")
+    crate::dispatch::raise_error("Date::Error", msg.to_string())
 }
 
 /// The current UTC calendar day, as a JDN (a documented divergence from CRuby's
