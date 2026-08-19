@@ -136,3 +136,59 @@ pub unsafe extern "C" fn zeo_rt_range_new(
         out,
     )
 }
+
+/// A multiple assignment's split: destructure `value` against a
+/// `before/splat/after` target shape into `out`'s
+/// `n_before + has_splat + n_after` slots (each OWNED; the splat slot, when
+/// present, gets a fresh Array). `value` coerces exactly as the rustc
+/// emission does -- an Array destructures directly, anything else goes
+/// through the `to_ary` rule ([`crate::block_auto_splat`], which can
+/// raise). Slots are nil-filled BEFORE the coercion, so an error path
+/// releases safely.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_multi_split(
+    value: *const RubyValue,
+    n_before: usize,
+    has_splat: u8,
+    n_after: usize,
+    out: *mut RubyValue,
+) -> i32 {
+    use zeo_abi::abi::{STATUS_OK, STATUS_SIGNAL};
+    let has_splat = has_splat != 0;
+    let n_out = n_before + usize::from(has_splat) + n_after;
+    for i in 0..n_out {
+        unsafe { out.add(i).write(RubyValue::Nil) };
+    }
+    let v = unsafe { &*value };
+    let elems: Vec<RubyValue> = match v {
+        RubyValue::Array(a) => a.lock().iter().cloned().collect(),
+        other => match crate::block_auto_splat(std::slice::from_ref(other)) {
+            Ok(cow) => cow.into_owned(),
+            Err(sig) => {
+                crate::signal::set_pending(sig);
+                return STATUS_SIGNAL;
+            }
+        },
+    };
+    let (before, splat, after) =
+        crate::value::collections::multi_assign(&elems, n_before, has_splat, n_after);
+    let mut s = 0usize;
+    let mut put = |v: RubyValue| {
+        super::leakcheck::created(&v);
+        unsafe { out.add(s).write(v) };
+        s += 1;
+    };
+    for v in before {
+        put(v);
+    }
+    if has_splat {
+        put(RubyValue::Array(crate::value::collections::array_new(
+            splat,
+        )));
+    }
+    for v in after {
+        put(v);
+    }
+    debug_assert_eq!(s, n_out);
+    STATUS_OK
+}

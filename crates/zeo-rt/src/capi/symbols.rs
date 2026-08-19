@@ -73,6 +73,7 @@ capi_symbols!(
     dispatch::zeo_rt_kw_splat_into,
     lifecycle::zeo_rt_main,
     registry::zeo_rt_main_object,
+    literals::zeo_rt_multi_split,
     objects::zeo_rt_object_alloc,
     values::zeo_rt_pool_mark,
     values::zeo_rt_pool_push,

@@ -164,6 +164,11 @@ pub const CAPI: &[CapiSig] = &[
         ret: None,
     },
     CapiSig {
+        name: "zeo_rt_multi_split",
+        params: &[Ptr, Usize, U8, Usize, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
         name: "zeo_rt_pool_mark",
         params: &[],
         ret: Some(Usize),

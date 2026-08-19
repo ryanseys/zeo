@@ -505,9 +505,6 @@ pub(crate) struct DefSpec {
 /// the full positional/keyword surface binds; destructures and the
 /// block-only trailing-comma rest are still refusals.
 pub(crate) fn check_params(p: &crate::hir::Params) -> Result<(), &'static str> {
-    if !p.destructures.is_empty() {
-        return Err("a destructuring parameter");
-    }
     if p.implicit_rest {
         return Err("an implicit-rest parameter");
     }
@@ -865,7 +862,11 @@ fn define_method_body(
     for id in def.hir_params.default_ids() {
         crate::analyze::local_storage::collect_locals(&analyzed.compiler, id, &mut locals);
     }
-    for name in locals.names().to_vec() {
+    let mut hoisted_names = locals.names().to_vec();
+    for (_, group) in &def.hir_params.destructures {
+        group.collect_local_names(&mut hoisted_names);
+    }
+    for name in hoisted_names {
         if fx.locals.contains_key(&name) {
             continue;
         }
@@ -897,6 +898,17 @@ fn define_method_body(
     fx.fallible(status);
 
     bind_deferred(&mut fx, &deferred)?;
+    // Parenthesized destructuring params replay as the multi-assignments
+    // they are, after every slot is bound and before the body runs.
+    for (read, group) in &def.hir_params.destructures {
+        let op = super::expr::lower_expr(&mut fx, *read)?;
+        let tag = op.tag();
+        let ptr = super::ownership::borrow_ptr(&mut fx, &op);
+        if op.owned() {
+            super::ownership::pool_owned(&mut fx, ptr, tag);
+        }
+        super::stmt::lower_multi_group(&mut fx, *read, group, ptr)?;
+    }
     super::stmt::lower_value_body_into(&mut fx, def.body, out_ptr)?;
     fx.b.ins().jump(ret_ok, &[]);
 

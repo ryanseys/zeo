@@ -55,6 +55,125 @@ fn lower_ivar_write(fx: &mut Fx, site: NodeId, name: &str, value: NodeId) -> Res
     Ok(())
 }
 
+/// A multiple assignment (`a, b = ...`, `a, *r, c = arr`, nested
+/// groups): the runtime splits the (to_ary-coerced) value against the
+/// before/splat/after shape into owned slots; each target consumes its
+/// slot. `value_ptr` is a BORROW of the right-hand side.
+pub(crate) fn lower_multi_group(
+    fx: &mut Fx,
+    site: NodeId,
+    group: &crate::hir::MultiTargetGroup,
+    value_ptr: cranelift_codegen::ir::Value,
+) -> Result<(), String> {
+    let n_before = group.before.len();
+    let n_after = group.after.len();
+    let has_splat = group.splat.is_some();
+    let n_out = n_before + usize::from(has_splat) + n_after;
+    let slots =
+        fx.b.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(
+            cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
+            (n_out.max(1) as u32) * super::ctx::VALUE_SIZE,
+            3,
+        ));
+    let slots_ptr = fx.slot_addr(slots, 0);
+    let nb = fx.b.ins().iconst(fx.em.ptr, n_before as i64);
+    let hs = fx.b.ins().iconst(types::I8, i64::from(has_splat));
+    let na = fx.b.ins().iconst(fx.em.ptr, n_after as i64);
+    let status = fx
+        .call("zeo_rt_multi_split", &[value_ptr, nb, hs, na, slots_ptr])
+        .expect("multi_split returns a status");
+    fx.fallible(status);
+    fx.owned_created += n_out;
+    let mut s = 0usize;
+    let addr_of_slot = |fx: &mut Fx, s: usize| fx.slot_addr(slots, (s as u32 * 24) as i32);
+    for t in &group.before {
+        let addr = addr_of_slot(fx, s);
+        write_multi_target(fx, site, t, addr)?;
+        s += 1;
+    }
+    match &group.splat {
+        Some(Some(t)) => {
+            let addr = addr_of_slot(fx, s);
+            write_multi_target(fx, site, t, addr)?;
+            s += 1;
+        }
+        Some(None) => {
+            // An anonymous `*` collects and discards.
+            let addr = addr_of_slot(fx, s);
+            fx.call("zeo_rt_release", &[addr]);
+            fx.owned_consumed += 1;
+            s += 1;
+        }
+        None => {}
+    }
+    for t in &group.after {
+        let addr = addr_of_slot(fx, s);
+        write_multi_target(fx, site, t, addr)?;
+        s += 1;
+    }
+    debug_assert_eq!(s, n_out);
+    Ok(())
+}
+
+/// One multi-assignment target's write; `addr` holds the OWNED slot value
+/// the target consumes.
+fn write_multi_target(
+    fx: &mut Fx,
+    site: NodeId,
+    target: &crate::hir::MultiTarget,
+    addr: cranelift_codegen::ir::Value,
+) -> Result<(), String> {
+    use crate::hir::MultiTarget;
+    let op = super::operand::Operand::Ptr {
+        addr,
+        owned: true,
+        tag: super::operand::TagInfo::Unknown,
+    };
+    match target {
+        MultiTarget::Local(name) => {
+            ownership::write_local(fx, name, &op);
+            Ok(())
+        }
+        MultiTarget::Ivar(name) => {
+            let slot = ivar_slot_of(fx, site, name)?;
+            let ptr = ownership::move_ptr(fx, &op);
+            let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
+            let slot_v = fx.b.ins().iconst(fx.em.ptr, slot as i64);
+            let status = fx
+                .call("zeo_rt_ivar_set_slot", &[self_ptr, slot_v, ptr])
+                .expect("ivar_set_slot returns a status");
+            fx.fallible(status);
+            Ok(())
+        }
+        MultiTarget::Call {
+            write_call,
+            tmp_name,
+        } => {
+            // Bind the write's synthetic hidden local, then run the write
+            // call itself through the ordinary expression path.
+            ownership::write_local(fx, tmp_name, &op);
+            let r = lower_expr(fx, *write_call)?;
+            ownership::discard(fx, r);
+            Ok(())
+        }
+        MultiTarget::Nested(group) => {
+            // The nested group destructures the slot's value (borrowing it
+            // for the split), then the slot itself is done.
+            let group = group.clone();
+            lower_multi_group(fx, site, &group, addr)?;
+            fx.call("zeo_rt_release", &[addr]);
+            fx.owned_consumed += 1;
+            Ok(())
+        }
+        MultiTarget::ClassVar(_)
+        | MultiTarget::Global(_)
+        | MultiTarget::Const(_)
+        | MultiTarget::ScopedConst { .. } => {
+            fx.unsupported(site, "a cvar/global/constant multi-assignment target")
+        }
+    }
+}
+
 fn ivar_slot_of(fx: &Fx, site: NodeId, name: &str) -> Result<usize, String> {
     let Some(class) = fx.method_class else {
         return fx.unsupported(site, "an ivar outside a compiled method");
@@ -174,6 +293,11 @@ fn lower_tail_expr(fx: &mut Fx, tail: NodeId) -> Result<super::operand::Operand,
         | HirNode::SelfRef
         | HirNode::Yield(..)
         | HirNode::BlockGiven
+        | HirNode::MultiWrite { .. }
+        | HirNode::ArrayLit(..)
+        | HirNode::HashLit(..)
+        | HirNode::SymbolLit(..)
+        | HirNode::Seq(..)
         | HirNode::Call { .. } => lower_expr(fx, tail),
         other => {
             let what = format!("this tail expression ({})", statement_kind(other));
@@ -195,6 +319,15 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
             let op = lower_expr(fx, value)?;
             ownership::write_local(fx, &name, &op);
             Ok(())
+        }
+        HirNode::MultiWrite { targets, value } => {
+            let (targets, value) = (targets.clone(), *value);
+            let op = lower_expr(fx, value)?;
+            let ptr = ownership::borrow_ptr(fx, &op);
+            if op.owned() {
+                ownership::pool_owned(fx, ptr, op.tag());
+            }
+            lower_multi_group(fx, stmt, &targets, ptr)
         }
         HirNode::Call {
             receiver: None,

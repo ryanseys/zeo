@@ -89,6 +89,23 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 None => Ok(Operand::Nil),
             }
         }
+        // A multiple assignment in VALUE position yields the RAW right-hand
+        // side (CRuby: `(a, b = arr)` is `arr` itself, not a fresh copy).
+        HirNode::MultiWrite { targets, value } => {
+            let (targets, value) = (targets.clone(), *value);
+            let op = lower_expr(fx, value)?;
+            let tag = op.tag();
+            let ptr = ownership::borrow_ptr(fx, &op);
+            if op.owned() {
+                ownership::pool_owned(fx, ptr, tag);
+            }
+            super::stmt::lower_multi_group(fx, id, &targets, ptr)?;
+            Ok(Operand::Ptr {
+                addr: ptr,
+                owned: false,
+                tag,
+            })
+        }
         // Assignment in EXPRESSION position (`f(x = 1)`, the desugared
         // `[]=` value hand-back): run the statement, answer the local.
         HirNode::LocalWrite(name, _) => {
