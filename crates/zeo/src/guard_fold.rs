@@ -32,7 +32,7 @@
 
 #![allow(
     clippy::wildcard_enum_match_arm,
-    reason = "not yet swept for wildcard arms -- see the lint's note in lib.rs"
+    reason = "structural, module-wide: this whole module is the build-time guard FOLD. \n    Every match is an opt-in claim about one literal shape, and every wildcard \n    either answers in the documented three-valued contract's safe direction \n    (`None` = undecidable, keep the guard; `false` = make no claim) or delegates \n    deeper into the fold chain, which ends the same way -- sound by definition \n    for any node kind not listed, including future variants. Nothing in this \n    module emits or transforms; a missed shape only costs a fold"
 )]
 
 use crate::compiler::{ClassId, Compiler, ScopeId};
