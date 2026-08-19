@@ -480,6 +480,27 @@ pub unsafe extern "C" fn zeo_rt_send_super_from_args(
     status_out(r, out)
 }
 
+/// `super` from a RUNTIME-installed method body, whose defining class is
+/// minted at run time: the runtime reads it (and the method name) off the
+/// method-frame stack pushed when the body was entered. Same argument
+/// convention as [`zeo_rt_send_super_from_args`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_send_super_dynamic_args(
+    recv: *const RubyValue,
+    args: *const RubyValue,
+    unmark: u8,
+    kw: *const RubyValue,
+    blk: *mut RubyValue,
+    out: *mut RubyValue,
+) -> i32 {
+    let r = unsafe {
+        with_array_args(args, unmark, kw, blk, |full, block| {
+            crate::runtime_meta::send_super_dynamic(&*recv, full, block)
+        })
+    };
+    status_out(r, out)
+}
+
 /// A CLASS-method `super` whose target the compile-time singleton-chain
 /// walk could not name: the runtime resumes the receiver class's
 /// singleton chain after `defining_class`. Same argument convention as

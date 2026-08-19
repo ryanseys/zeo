@@ -81,6 +81,15 @@ pub(crate) struct Fx<'e, 'f> {
     /// The enclosing method's parameter list -- what a bare `super`
     /// forwards by name.
     pub method_params: Option<crate::hir::Params>,
+    /// This body is a RUNTIME-installed method (a `def`/`define_method`
+    /// the analyzer could not register), so its defining class is minted
+    /// at run time and a `super` reads it off the method-frame stack --
+    /// rustc's `runtime_super_params` (`Some` = this flag).
+    pub runtime_super: bool,
+    /// ...and it came from a literal `define_method`, where ruby refuses
+    /// a BARE `super` at dispatch: a block-shaped body has no parameter
+    /// list to forward from, so ruby raises rather than guessing.
+    pub define_method_body: bool,
     /// A method body's `(out, ret_ok)`: `return` writes the value and
     /// jumps; `None` at the toplevel.
     pub ret: Option<(ir::Value, ir::Block)>,
@@ -149,6 +158,8 @@ impl<'e, 'f> Fx<'e, 'f> {
             defining_class: None,
             method_name: None,
             method_params: None,
+            runtime_super: false,
+            define_method_body: false,
             ret: None,
             retries: Vec::new(),
             ensure_depth: 0,

@@ -145,6 +145,7 @@ capi_symbols!(
     objects::zeo_rt_runtime_set_visibility,
     dispatch::zeo_rt_send_class_cached,
     dispatch::zeo_rt_send_super_class_from_args,
+    dispatch::zeo_rt_send_super_dynamic_args,
     dispatch::zeo_rt_send_super_from_args,
     dispatch::zeo_rt_send_value_args_in,
     dispatch::zeo_rt_send_value_cached,

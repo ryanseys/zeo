@@ -1,6 +1,5 @@
 ---
 source: crates/zeo/tests/clif.rs
-assertion_line: 30
 expression: "clif_of(\"total = 0\\nq = Array.new(3, 2)\\nq.each { |x| total = total + x }\\nputs total\\n\",)"
 ---
 ;; block in <main>
@@ -197,16 +196,34 @@ block16:
 block9:
     v83 = stack_addr.i64 ss1
     call fn5(v83)
+    v84 = iconst.i64 0
+    v85 = icmp.i64 ne v4, v84  ; v84 = 0
+    brif v85, block20, block21
+
+block20:
+    call fn5(v4)
+    jump block21
+
+block21:
     call fn11()
-    v84 = iconst.i32 0
-    return v84  ; v84 = 0
+    v86 = iconst.i32 0
+    return v86  ; v86 = 0
 
 block1:
-    v85 = stack_addr.i64 ss1
-    call fn5(v85)
+    v87 = stack_addr.i64 ss1
+    call fn5(v87)
+    v88 = iconst.i64 0
+    v89 = icmp.i64 ne v4, v88  ; v88 = 0
+    brif v89, block22, block23
+
+block22:
+    call fn5(v4)
+    jump block23
+
+block23:
     call fn11()
-    v86 = iconst.i32 1
-    return v86  ; v86 = 1
+    v90 = iconst.i32 1
+    return v90  ; v90 = 1
 }
 
 ;; zeo_toplevel

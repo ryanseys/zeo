@@ -245,7 +245,14 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 // body (its bare `yield` reaches the installed method's
                 // call-site block).
                 let label = format!("block in {}", fx.frame_label);
-                let ss = super::blocks::build_method_body(fx, id, &params, &body, &label)?;
+                let ss = super::blocks::build_method_body(
+                    fx,
+                    id,
+                    &params,
+                    &body,
+                    &label,
+                    super::blocks::MethodBody::DefineMethod,
+                )?;
                 return Ok(Operand::Slot {
                     ss,
                     owned: true,
@@ -2245,11 +2252,6 @@ fn runtime_def(
     is_def: bool,
 ) -> Result<Operand, String> {
     use cranelift_codegen::ir::types;
-    if crate::analyze::scan_contains_super_body(&fx.an.compiler.hir, body) {
-        // `super` in a runtime-installed body resolves through the runtime
-        // method-frame stack, not a compile-time ancestor splice.
-        return fx.unsupported(id, "`super` inside a runtime-installed method body");
-    }
     // A `def`'s frame is labeled after the METHOD it creates; a
     // `define_method` body is genuinely the block ruby labels it as.
     let label = if is_def {
@@ -2262,7 +2264,12 @@ fn runtime_def(
     } else {
         format!("block in {}", fx.frame_label)
     };
-    let proc_ss = super::blocks::build_method_body(fx, id, params, body, &label)?;
+    let kind = if is_def {
+        super::blocks::MethodBody::Def
+    } else {
+        super::blocks::MethodBody::DefineMethod
+    };
+    let proc_ss = super::blocks::build_method_body(fx, id, params, body, &label, kind)?;
     let proc_addr = fx.slot_addr(proc_ss, 0);
     let sym = fx.sym_id(name);
     let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");

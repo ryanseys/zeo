@@ -452,15 +452,28 @@ pub(crate) fn lower_super(
     block: Option<NodeId>,
     block_arg: Option<NodeId>,
 ) -> Result<Operand, String> {
-    let (Some(def_class), Some(mname), Some(owner)) =
-        (fx.defining_class, fx.method_name.clone(), fx.method_class)
-    else {
+    // A BARE `super` from a `define_method` body is an error in ruby: a
+    // zsuper forwards the CURRENT values of the method's parameters, and a
+    // block-shaped body has no parameter list to forward from, so ruby
+    // refuses rather than guessing. Raised at DISPATCH time (the method may
+    // never be called), like rustc's.
+    if zsuper && fx.define_method_body {
+        let msg = "implicit argument passing of super from method defined by \
+                   define_method() is not supported. Specify all arguments explicitly.";
+        let cid = fx.b.ins().iconst(
+            cranelift_codegen::ir::types::I32,
+            i64::from(zeo_abi::RUNTIME_ERROR_CLASS.0),
+        );
+        let (mptr, mlen) = super::expr::rodata_name(fx, msg);
+        let status = fx
+            .call("zeo_rt_raise_error", &[cid, mptr, mlen])
+            .expect("raise_error returns a status");
+        fx.fallible(status);
+        return Ok(Operand::Nil);
+    }
+    let Some(params) = fx.method_params.clone() else {
         return fx.unsupported(site, "a `super` outside a compiled method");
     };
-    let params = fx
-        .method_params
-        .clone()
-        .expect("method bodies stash their params");
 
     // The argument Array (rustc's `__super_args` Vec) + kw hash + unmark.
     let (args_ptr, kw_ptr, unmark) = if zsuper {
@@ -599,6 +612,37 @@ pub(crate) fn lower_super(
             }
             None => fx.b.ins().iconst(fx.em.ptr, 0),
         },
+    };
+
+    // A RUNTIME-installed body's defining class is minted at run time, so
+    // the walk resumes from the (class, name) pair the method-frame stack
+    // recorded when the body was entered -- rustc's `send_super_dynamic`.
+    if fx.runtime_super {
+        let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
+        let ss = fx.temp_slot();
+        let out = fx.slot_addr(ss, 0);
+        let unmark_v =
+            fx.b.ins()
+                .iconst(cranelift_codegen::ir::types::I8, i64::from(unmark));
+        let status = fx
+            .call(
+                "zeo_rt_send_super_dynamic_args",
+                &[self_ptr, args_ptr, unmark_v, kw_ptr, blk_ptr, out],
+            )
+            .expect("send_super_dynamic_args returns a status");
+        fx.fallible(status);
+        fx.owned_created += 1;
+        return Ok(Operand::Slot {
+            ss,
+            owned: true,
+            tag: TagInfo::Unknown,
+        });
+    }
+
+    let (Some(def_class), Some(mname), Some(owner)) =
+        (fx.defining_class, fx.method_name.clone(), fx.method_class)
+    else {
+        return fx.unsupported(site, "a `super` outside a compiled method");
     };
 
     // A CLASS-method `super` resolves against the SINGLETON-class chain,

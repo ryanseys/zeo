@@ -451,6 +451,11 @@ pub const CAPI: &[CapiSig] = &[
         ret: None,
     },
     CapiSig {
+        name: "zeo_rt_raise_error",
+        params: &[U32, Ptr, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
         name: "zeo_rt_range_new",
         params: &[Ptr, Ptr, U8, Ptr],
         ret: Some(I32),
@@ -503,6 +508,11 @@ pub const CAPI: &[CapiSig] = &[
     CapiSig {
         name: "zeo_rt_send_super_class_from_args",
         params: &[U32, U32, U32, Ptr, U8, Ptr, Ptr, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
+        name: "zeo_rt_send_super_dynamic_args",
+        params: &[Ptr, Ptr, U8, Ptr, Ptr, Ptr],
         ret: Some(I32),
     },
     CapiSig {

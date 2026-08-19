@@ -126,9 +126,19 @@ pub(crate) fn build_method_body(
     params: &crate::hir::Params,
     body: &[NodeId],
     label: &str,
+    kind: MethodBody,
 ) -> Result<ir::StackSlot, String> {
-    let (ss, _) = build_closure_with(fx, site, params, body, true, true, Some(label))?;
+    let (ss, _) = build_closure_with(fx, site, params, body, true, Some(kind), Some(label))?;
     Ok(ss)
+}
+
+/// Which runtime-install form a method-body closure came from. A real
+/// `def` forwards its own parameters for a bare `super`; a literal
+/// `define_method` has no parameter list to forward, and ruby refuses.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MethodBody {
+    Def,
+    DefineMethod,
 }
 
 fn build_closure(
@@ -138,7 +148,7 @@ fn build_closure(
     body: &[NodeId],
     is_lambda: bool,
 ) -> Result<(ir::StackSlot, Vec<String>), String> {
-    build_closure_with(fx, site, params, body, is_lambda, false, None)
+    build_closure_with(fx, site, params, body, is_lambda, None, None)
 }
 
 fn build_closure_with(
@@ -147,7 +157,7 @@ fn build_closure_with(
     params: &crate::hir::Params,
     body: &[NodeId],
     is_lambda: bool,
-    method_body: bool,
+    method_body: Option<MethodBody>,
     label_override: Option<&str>,
 ) -> Result<(ir::StackSlot, Vec<String>), String> {
     let names = captured_names(fx, site, params, body)?;
@@ -157,7 +167,7 @@ fn build_closure_with(
     // declares its own `&b`, which owns the channel.
     let bare_block_use = crate::analyze::scan_bare_block_use_body(&fx.an.compiler.hir, body)
         && params.block.is_none()
-        && !method_body;
+        && method_body.is_none();
     let lexical_blk = if bare_block_use { fx.blk_ptr } else { None };
     // A body that can raise `Signal::Return` at its own level captures its
     // home (dead home -> LocalJumpError, the runtime's resolution). A
@@ -233,7 +243,7 @@ fn define_block_fn(
     body: &[NodeId],
     captured: &[String],
     is_lambda: bool,
-    method_body: bool,
+    method_body: Option<MethodBody>,
     label_override: Option<&str>,
 ) -> Result<cranelift_module::FuncId, String> {
     let params = params.clone();
@@ -313,13 +323,25 @@ fn define_block_fn(
     let (env, self_p, argv, argc, blk, out) = (ep[0], ep[1], ep[2], ep[3], ep[4], ep[5]);
     bfx.self_ptr = Some(self_p);
     bfx.method_class = method_class;
-    (
-        bfx.defining_class,
-        bfx.method_name,
-        bfx.method_params,
-        bfx.self_is_class,
-        bfx.ruby2_keywords,
-    ) = enclosing;
+    match method_body {
+        // A RUNTIME-installed method is a scope of its own: its defining
+        // class is minted at run time, so a `super` inside it reads the
+        // frame stack, and a BARE one forwards ITS OWN parameters.
+        Some(kind) => {
+            bfx.method_params = Some(params.clone());
+            bfx.runtime_super = true;
+            bfx.define_method_body = kind == MethodBody::DefineMethod;
+        }
+        None => {
+            (
+                bfx.defining_class,
+                bfx.method_name,
+                bfx.method_params,
+                bfx.self_is_class,
+                bfx.ruby2_keywords,
+            ) = enclosing;
+        }
+    }
     bfx.frame_label = label.clone();
     // Bare `yield`/`block_given?` targets the env's lexical block (the
     // enclosing method's) -- unless this closure declares its own `&b`,
@@ -327,7 +349,7 @@ fn define_block_fn(
     // A method body's bare `yield` reaches the block the INSTALLED method
     // is called with -- this fn's own `blk` -- so it binds even without a
     // declared `&b`.
-    bfx.blk_ptr = (params.block.is_some() || method_body).then_some(blk);
+    bfx.blk_ptr = (params.block.is_some() || method_body.is_some()).then_some(blk);
 
     // Env cells -> unowned cell locals.
     let fl = MemFlagsData::trusted();
@@ -335,7 +357,7 @@ fn define_block_fn(
     let ptr_ty = bfx.em.ptr;
     let cells_base = bfx.b.ins().load(ptr_ty, fl, env, cells_off);
     if params.block.is_none()
-        && !method_body
+        && method_body.is_none()
         && crate::analyze::scan_bare_block_use_body(&an.compiler.hir, &body)
     {
         let lex_off = std::mem::offset_of!(zeo_rt::capi::ProcEnv, lexical_blk) as i32;
@@ -612,6 +634,18 @@ fn define_block_fn(
                 }
             }
         }
+        // The call-site block was MOVED in (`call_block_fn` hands over its
+        // reference), so this fn owns it -- exactly as a compiled method
+        // body owns the blk its trampoline passes. `&b` took its own
+        // retained copy; this releases ours. A null channel is skipped.
+        let got = bfx.b.ins().icmp_imm_u(IntCC::NotEqual, blk, 0);
+        let rel = bfx.b.create_block();
+        let cont = bfx.b.create_block();
+        bfx.b.ins().brif(got, rel, &[], cont, &[]);
+        bfx.b.switch_to_block(rel);
+        bfx.call("zeo_rt_release", &[blk]);
+        bfx.b.ins().jump(cont, &[]);
+        bfx.b.switch_to_block(cont);
         if has_frame {
             bfx.call("zeo_rt_frame_pop", &[]);
         }
