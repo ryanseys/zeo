@@ -48,7 +48,6 @@ use crate::value::RubyValue;
 use crate::{RProc, Symbol};
 use parking_lot::Mutex;
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread::ThreadId;
@@ -216,12 +215,31 @@ impl EnumeratorData {
     }
 }
 
-/// Deliberately the same instantiation as `fiber.rs`'s `FiberCoro` (see
-/// the module docs for why the matching TypeIds are a feature).
-type EnumCoro = crate::coroutine::Coroutine<Vec<RubyValue>, RubyValue, Result<RubyValue, Signal>>;
+/// Genuinely the same instantiation as `fiber.rs`'s `FiberCoro` -- the
+/// matching TypeIds are what let a user `Fiber.yield` inside an iterated
+/// block suspend this fiber directly (the coroutine shim's invariant-3
+/// check compares `(Input, Yield)` pairs; the earlier `Vec<RubyValue>`
+/// input CLAIMED this and didn't have it), and what lets
+/// `fiber::terminate_coro` dispose of either kind.
+type EnumCoro = crate::fiber::FiberCoro;
 
 thread_local! {
-    static ENUM_FIBERS: RefCell<HashMap<u64, EnumCoro>> = RefCell::new(HashMap::new());
+    static ENUM_FIBERS: RefCell<crate::fiber::CoroTable> =
+        RefCell::new(crate::fiber::CoroTable::new());
+}
+
+/// The Terminate-protocol drain for this thread's Enumerator iteration
+/// fibers -- `fiber::terminate_thread_fibers`' sibling, called from the
+/// same thread tails.
+pub fn terminate_thread_enum_fibers() {
+    let drained: Vec<EnumCoro> = ENUM_FIBERS.with(|f| {
+        let mut t = f.borrow_mut();
+        let keys: Vec<u64> = t.keys().copied().collect();
+        keys.iter().filter_map(|k| t.remove(k)).collect()
+    });
+    for coro in drained {
+        crate::fiber::terminate_coro(coro);
+    }
 }
 
 /// Process-wide so ids stay unambiguous even if handles travel between
@@ -579,18 +597,28 @@ fn ensure_fiber(e: &REnumerator) -> u64 {
     }
     let id = NEXT_ITER_ID.fetch_add(1, Ordering::Relaxed);
     let source = e.source();
-    let coro: EnumCoro = crate::coroutine::new_fiber(move |_: Vec<RubyValue>| {
+    let coro: EnumCoro = crate::coroutine::new_fiber(move |first: crate::fiber::FiberInput| {
         // See `fiber_new`: the coroutine stack needs its own overflow floor.
         crate::stack_guard::set_floor(crate::stack_guard::fiber_floor_here());
+        // Torn down before the iteration ever ran: nothing to unwind. Any
+        // other first input carries no information here (the fed value only
+        // matters at a suspended `y.yield`).
+        if matches!(first, crate::fiber::FiberInput::Terminate) {
+            return Err(Signal::Terminate);
+        }
         let shuttle: RProc = RProc::new(|raw: &[RubyValue]| {
             // `y.yield` suspends, then returns the value `#feed` injected on the
             // resume (empty resume -> nil), so `got = y.yield(x)` sees it.
-            let fed = crate::coroutine::yield_current::<Vec<RubyValue>, RubyValue>(
+            let fed = match crate::coroutine::yield_current::<crate::fiber::FiberInput, RubyValue>(
                 RubyValue::Array(array_new(raw.to_vec())),
-            );
-            Ok(fed
-                .and_then(|v| v.into_iter().next())
-                .unwrap_or(RubyValue::Nil))
+            ) {
+                None => Vec::new(),
+                Some(crate::fiber::FiberInput::Resume(vals))
+                | Some(crate::fiber::FiberInput::Transfer(vals)) => vals,
+                Some(crate::fiber::FiberInput::Raise(exc)) => return Err(Signal::Raise(exc)),
+                Some(crate::fiber::FiberInput::Terminate) => return Err(Signal::Terminate),
+            };
+            Ok(fed.into_iter().next().unwrap_or(RubyValue::Nil))
         });
         internal_each(&source, RubyValue::Proc(shuttle))
     });
@@ -639,7 +667,7 @@ fn get_next_values(e: &REnumerator) -> Result<Vec<RubyValue>, Signal> {
     // the shuttle returns it from the paused `y.yield`. Cleared once consumed.
     let feed_in: Vec<RubyValue> = e.state.lock().feed.take().into_iter().collect();
     let caller_ec = crate::ec::swap(std::mem::take(&mut e.state.lock().saved_ec));
-    let outcome = crate::coroutine::resume(&mut coro, feed_in);
+    let outcome = crate::coroutine::resume(&mut coro, crate::fiber::FiberInput::Resume(feed_in));
     e.state.lock().saved_ec = crate::ec::swap(caller_ec);
     match outcome {
         // The shuttle's arity-preserving Array payload -- the normal case.
@@ -707,17 +735,30 @@ fn ary2sv(mut vals: Vec<RubyValue>) -> RubyValue {
 /// result) -- the re-init rows discard the position exactly as a fresh
 /// enumerator would start.
 fn clear_iteration(e: &EnumeratorData) {
-    let mut st = e.state.lock();
-    if let Some(id) = st.fiber.take()
-        && st.owner == Some(std::thread::current().id())
-    {
-        ENUM_FIBERS.with(|f| f.borrow_mut().remove(&id));
+    // The coroutine is taken out UNDER the lock but disposed of outside it:
+    // the Terminate resume drops arbitrary values, and a drop that reaches
+    // back into this enumerator must not deadlock on `state`.
+    let coro = {
+        let mut st = e.state.lock();
+        let taken = match st.fiber.take() {
+            Some(id) if st.owner == Some(std::thread::current().id()) => {
+                ENUM_FIBERS.with(|f| f.borrow_mut().remove(&id))
+            }
+            _ => None,
+        };
+        st.owner = None;
+        st.lookahead = None;
+        st.feed = None;
+        st.done = None;
+        st.saved_ec = crate::ec::Ec::default();
+        taken
+    };
+    if let Some(coro) = coro {
+        // A suspended iteration being discarded mid-program (a re-init row)
+        // releases its live values through the Terminate protocol, never a
+        // stack unwind.
+        crate::fiber::terminate_coro(coro);
     }
-    st.owner = None;
-    st.lookahead = None;
-    st.feed = None;
-    st.done = None;
-    st.saved_ec = crate::ec::Ec::default();
 }
 
 /// The FrozenError every re-init row raises on a frozen receiver.

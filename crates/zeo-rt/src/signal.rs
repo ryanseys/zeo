@@ -51,6 +51,16 @@ pub enum Signal {
     /// 5.15 ns): that boxed `Signal` as a WHOLE, putting an allocation on
     /// `Break`/`Next`/`Return`, which are ordinary block control flow.
     Throw(Box<Thrown>),
+    /// Fiber/enumerator TEARDOWN: a suspended coroutine being disposed of is
+    /// resumed one last time with this in flight, so its live locals and
+    /// temporaries release through ordinary `Result` propagation -- never
+    /// native stack unwinding (which Cranelift-compiled frames cannot
+    /// support on Mach-O). Rescue clauses never match it and `ensure`
+    /// bodies are SKIPPED for it (today's force-unwind runs no Ruby
+    /// `ensure` either -- the documented "no ensure on never-finished
+    /// fibers" rule); every landing propagates it until the coroutine entry
+    /// finishes on `Err(Signal::Terminate)`.
+    Terminate,
 }
 
 /// [`Signal::Throw`]'s payload. A named struct rather than a tuple because
@@ -181,6 +191,46 @@ pub fn proc_home_alive(home: &ProcHome) -> bool {
 /// -- the fiber ec-swap's slice of this cell (see `crate::ec`).
 pub fn swap_home_stack(new: Vec<ProcHome>) -> Vec<ProcHome> {
     HOME_STACK.with(|s| s.replace(new))
+}
+
+// The pending-signal slot of the C-ABI status protocol: a compiled function
+// that returns `STATUS_SIGNAL` has parked its `Signal` here for the caller
+// to read back (`zeo_rt_signal_take`/`_kind`, arriving with `capi/`). One
+// slot per coroutine -- exactly one signal is in flight at a time, the same
+// invariant `RETURN_TARGET` rests on -- and fiber-swapped through `Ec` so a
+// fiber switch never observes another fiber's signal.
+std::thread_local!(static PENDING: RefCell<Option<Signal>> = const { RefCell::new(None) });
+
+/// Park `sig` as the pending signal. Debug-asserts the slot is empty: a
+/// second set before a take means a landing forgot to consume or forward.
+#[expect(
+    dead_code,
+    reason = "consumed by the capi/ status-protocol wrappers (M0-3)"
+)]
+pub fn set_pending(sig: Signal) {
+    PENDING.with(|p| {
+        let mut p = p.borrow_mut();
+        debug_assert!(
+            p.is_none(),
+            "pending-signal slot set while already occupied"
+        );
+        *p = Some(sig);
+    });
+}
+
+/// Take the pending signal, emptying the slot.
+#[expect(
+    dead_code,
+    reason = "consumed by the capi/ status-protocol wrappers (M0-3)"
+)]
+pub fn take_pending() -> Option<Signal> {
+    PENDING.with(|p| p.borrow_mut().take())
+}
+
+/// Install `new` as this context's pending signal, returning the previous
+/// one -- the fiber ec-swap's slice of this cell (see `crate::ec`).
+pub fn swap_pending(new: Option<Signal>) -> Option<Signal> {
+    PENDING.with(|p| p.replace(new))
 }
 
 /// Install `new` as this context's in-flight `Signal::Return` target,

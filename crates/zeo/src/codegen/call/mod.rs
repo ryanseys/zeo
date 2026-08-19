@@ -2012,6 +2012,8 @@ pub fn emit_call(
                         // `Fiber#raise` injected an exception at this yield.
                         zeo_rt::FiberYield::Raise(__e) => return Err(zeo_rt::Signal::Raise(__e)),
                         zeo_rt::FiberYield::Root => return Err(zeo_rt::Signal::Raise(#root_error)),
+                        // Teardown: propagate; every landing forwards it.
+                        zeo_rt::FiberYield::Terminate => return Err(zeo_rt::Signal::Terminate),
                     }
                 };
             }

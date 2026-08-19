@@ -69,7 +69,15 @@ where
             crate::gvl::mark_sole_thread();
             let _ctx = crate::gvl::install_ctx();
             let _held = crate::gvl::process_gvl().hold();
-            body()
+            let result = body();
+            // Tear down this thread's suspended fibers HERE, while every
+            // thread-local is alive -- the Terminate protocol, not a stack
+            // unwind (see `fiber::terminate_thread_fibers`). `at_exit` runs
+            // later on the REAL main thread, where a cross-thread resume of
+            // these fibers was already a FiberError.
+            crate::fiber::terminate_thread_fibers();
+            crate::builtins::enumerator::terminate_thread_enum_fibers();
+            result
         })
         .expect("spawn the ruby main thread");
     let joined = main.join();

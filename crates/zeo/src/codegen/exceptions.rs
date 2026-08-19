@@ -159,8 +159,11 @@ pub fn emit_begin(
     // `zeo_rt::PropagatingGuard` for why it is a guard and not a push/pop pair.
     let ensure_tokens = ensure_body.as_ref().map(|stmts| {
         let e = super::stmt::emit_body(cx, stmts, false);
+        // `Signal::Terminate` (fiber/enumerator teardown) SKIPS the user
+        // ensure body: the old force-unwind ran no Ruby `ensure` either, and
+        // the whole point of the teardown signal is that only releases run.
         quote! {
-            {
+            if !matches!(__final, Err(zeo_rt::Signal::Terminate)) {
                 let __handling = zeo_rt::PropagatingGuard::enter(&__final);
                 { #e };
             }

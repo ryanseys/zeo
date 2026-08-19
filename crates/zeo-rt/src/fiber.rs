@@ -32,13 +32,18 @@
 //! and to the block's own params (bound leniently from the first `resume`'s
 //! args by the ordinary Proc binding machinery).
 //!
-//! A fiber never resumed to completion is force-unwound when its thread's
-//! table drops (corosensei's `Drop`) -- deterministic cleanup, no
-//! GC-finalizer dependence (the leak JRuby's thread-backed fibers were
-//! notorious for). Only Rust destructors run during that unwind; compiled
-//! Ruby control flow (including `ensure`) is `Result`-based, so no Ruby
-//! code executes -- matching this runtime's general "no ensure on
-//! never-finished fibers" simplification.
+//! A fiber never resumed to completion is torn down with the TERMINATE
+//! protocol at its thread's tail ([`terminate_thread_fibers`], called from
+//! `exec::run_main` and `Thread.new` bodies): the suspended coroutine is
+//! resumed one last time with [`FiberInput::Terminate`], so its live values
+//! release through ordinary `Result` propagation -- never a native stack
+//! unwind, which Cranelift-compiled frames cannot support. `ensure` bodies
+//! are skipped and rescue never matches (see [`Signal::Terminate`]), so no
+//! Ruby code observably executes -- the same "no ensure on never-finished
+//! fibers" behaviour the old corosensei force-unwind had. Deterministic
+//! cleanup, no GC-finalizer dependence (the leak JRuby's thread-backed
+//! fibers were notorious for). The TLS destructor itself only ever
+//! `force_reset`s (see [`CoroTable`]).
 
 use crate::coroutine::{Coroutine, CoroutineResult};
 use crate::{RubyValue, Signal, Symbol};
@@ -115,12 +120,112 @@ pub enum FiberInput {
     /// `#transfer(*args)` handed the fiber control -- same payload shape as
     /// `Resume`, but the entry marks the fiber transfer-entered.
     Transfer(Vec<RubyValue>),
+    /// Teardown: the fiber is being disposed of. The suspended point wakes
+    /// as `Err(Signal::Terminate)` and the body unwinds through ordinary
+    /// `Result` propagation -- releases run, `ensure` bodies are skipped,
+    /// rescue never matches (see [`Signal::Terminate`]). Delivered only by
+    /// [`terminate_coro`].
+    Terminate,
 }
 
-type FiberCoro = Coroutine<FiberInput, RubyValue, Result<RubyValue, Signal>>;
+/// The one coroutine shape every Ruby-level fiber uses -- `Fiber` proper and
+/// `Enumerator`'s internal iteration fiber alike, so `Fiber.yield` inside an
+/// iterated block suspends either kind, and [`terminate_coro`] disposes of
+/// either kind.
+pub(crate) type FiberCoro = Coroutine<FiberInput, RubyValue, Result<RubyValue, Signal>>;
+
+/// A coroutine table whose DROP never unwinds a suspended stack: any
+/// coroutine still here when the thread's TLS dies is `force_reset` (marked
+/// complete, stack contents leaked). The real teardown -- resuming with
+/// [`FiberInput::Terminate`] so live values release -- runs earlier, at the
+/// thread tails ([`terminate_thread_fibers`]), where every other
+/// thread-local the unwinding code touches is still alive; TLS destruction
+/// order is unspecified, so the destructor itself must not run compiled
+/// code. (corosensei's own drop would force-UNWIND the stack instead --
+/// native unwinding Cranelift-compiled frames cannot support.)
+pub(crate) struct CoroTable(HashMap<u64, FiberCoro>);
+
+impl CoroTable {
+    pub(crate) fn new() -> CoroTable {
+        CoroTable(HashMap::new())
+    }
+}
+
+impl std::ops::Deref for CoroTable {
+    type Target = HashMap<u64, FiberCoro>;
+    fn deref(&self) -> &HashMap<u64, FiberCoro> {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for CoroTable {
+    fn deref_mut(&mut self) -> &mut HashMap<u64, FiberCoro> {
+        &mut self.0
+    }
+}
+
+impl Drop for CoroTable {
+    fn drop(&mut self) {
+        for (_, mut coro) in self.0.drain() {
+            if !coro.done() {
+                // SAFETY: leaks the suspended stack's contents instead of
+                // dropping them -- the documented last resort for a
+                // never-drained thread (a panicking body, a unit test); no
+                // code runs, so no dead-TLS access.
+                unsafe { coro.force_reset() };
+            }
+        }
+    }
+}
+
+/// Dispose of one coroutine: if it ever started and is not finished, resume
+/// it with [`FiberInput::Terminate`] (under a scratch execution context, so
+/// its landing pops cannot touch the disposer's own stacks) until it
+/// completes -- bounded, because a fiber that yields AGAIN during teardown
+/// is a bug -- then `force_reset` whatever remains. An unstarted coroutine
+/// has nothing live on its stack and is reset directly.
+pub(crate) fn terminate_coro(mut coro: FiberCoro) {
+    if coro.done() {
+        return;
+    }
+    if coro.started() {
+        let scratch = crate::ec::swap(crate::ec::Ec::default());
+        let mut finished = false;
+        for _ in 0..8 {
+            if let crate::coroutine::CoroutineResult::Return(_) =
+                crate::coroutine::resume(&mut coro, FiberInput::Terminate)
+            {
+                finished = true;
+                break;
+            }
+        }
+        let _ = crate::ec::swap(scratch);
+        if finished {
+            return;
+        }
+        debug_assert!(false, "a fiber yielded through 8 Terminate resumes");
+    }
+    // SAFETY: unstarted (empty stack), or the debug-asserted bug case where
+    // leaking beats unwinding.
+    unsafe { coro.force_reset() };
+}
+
+/// The Terminate-protocol drain for this thread's `Fiber` table -- called at
+/// the thread tails (`exec::run_main`'s ruby-main closure, `Thread.new`
+/// bodies) while every thread-local is still alive.
+pub fn terminate_thread_fibers() {
+    let drained: Vec<FiberCoro> = FIBERS.with(|f| {
+        let mut t = f.borrow_mut();
+        let keys: Vec<u64> = t.keys().copied().collect();
+        keys.iter().filter_map(|k| t.remove(k)).collect()
+    });
+    for coro in drained {
+        terminate_coro(coro);
+    }
+}
 
 thread_local! {
-    static FIBERS: RefCell<HashMap<u64, FiberCoro>> = RefCell::new(HashMap::new());
+    static FIBERS: RefCell<CoroTable> = RefCell::new(CoroTable::new());
     /// The stack of fibers currently executing on this thread (innermost
     /// last) -- backs `Fiber.current`. Empty means the root fiber is running.
     static CURRENT_FIBER: RefCell<Vec<RFiber>> = const { RefCell::new(Vec::new()) };
@@ -230,6 +335,8 @@ pub fn fiber_new(block: RubyValue) -> RubyValue {
         match first {
             FiberInput::Resume(args) | FiberInput::Transfer(args) => body.call(&args),
             FiberInput::Raise(exc) => Err(Signal::Raise(exc)),
+            // Torn down before ever running: nothing to unwind.
+            FiberInput::Terminate => Err(Signal::Terminate),
         }
     });
     FIBERS.with(|f| f.borrow_mut().insert(id, coro));
@@ -324,6 +431,7 @@ pub fn fiber_transfer(handle: &RFiber, args: Vec<RubyValue>) -> FiberResume {
                 FiberResume::Value(pack_values(vals))
             }
             Some(FiberInput::Raise(exc)) => FiberResume::RubyError(Signal::Raise(exc)),
+            Some(FiberInput::Terminate) => FiberResume::RubyError(Signal::Terminate),
         };
     }
     if handle.finished.load(Ordering::Relaxed) {
@@ -406,6 +514,9 @@ pub enum FiberYield {
     Raise(RubyValue),
     /// No fiber is running -- the "can't yield from root fiber" `FiberError`.
     Root,
+    /// The fiber is being disposed of: the call site must propagate
+    /// `Err(Signal::Terminate)` (see [`Signal::Terminate`]).
+    Terminate,
 }
 
 /// `Fiber.yield(*args)` -- packs `args` per the CRuby convention (module
@@ -424,6 +535,7 @@ pub fn fiber_yield(args: Vec<RubyValue>) -> FiberYield {
             FiberYield::Value(pack_values(vals))
         }
         Some(FiberInput::Raise(exc)) => FiberYield::Raise(exc),
+        Some(FiberInput::Terminate) => FiberYield::Terminate,
     }
 }
 
@@ -493,9 +605,12 @@ pub fn fiber_kill(handle: &RFiber) -> RubyValue {
         let _ = fiber_drive(handle, FiberInput::Raise(kill_exception()));
     }
     handle.finished.store(true, Ordering::Relaxed);
-    FIBERS.with(|f| {
-        f.borrow_mut().remove(&handle.id);
-    });
+    // A fiber that RESCUED the kill exception and suspended again is still
+    // live in the table -- dispose of it through the Terminate protocol,
+    // never a stack unwind.
+    if let Some(coro) = FIBERS.with(|f| f.borrow_mut().remove(&handle.id)) {
+        terminate_coro(coro);
+    }
     RubyValue::Nil
 }
 

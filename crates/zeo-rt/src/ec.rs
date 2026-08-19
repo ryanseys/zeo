@@ -48,6 +48,11 @@ pub struct Ec {
     /// per-coroutine by definition -- only one return is in flight per
     /// coroutine, and it must not retarget another fiber's.
     return_target: Option<crate::signal::ProcHome>,
+    /// The C-ABI status protocol's pending signal (`signal::PENDING`):
+    /// per-coroutine for the same reason as `return_target` -- one signal
+    /// in flight per coroutine, and a fiber switch must not let another
+    /// fiber observe or consume it.
+    pending: Option<crate::Signal>,
     catch_tags: Vec<RubyValue>,
     frames: Vec<crate::frames::Frame>,
     /// The stack-overflow check floor (`stack_guard`) -- each fiber runs on
@@ -69,6 +74,7 @@ impl Default for Ec {
             handling: Vec::new(),
             home_stack: Vec::new(),
             return_target: None,
+            pending: None,
             catch_tags: Vec::new(),
             frames: Vec::new(),
             stack_floor: 0,
@@ -88,6 +94,7 @@ pub fn swap(ec: Ec) -> Ec {
         handling: crate::handling::swap_handling(ec.handling),
         home_stack: crate::signal::swap_home_stack(ec.home_stack),
         return_target: crate::signal::swap_return_target(ec.return_target),
+        pending: crate::signal::swap_pending(ec.pending),
         catch_tags: crate::catch::swap_catch_tags(ec.catch_tags),
         frames: crate::frames::swap_stack(ec.frames),
         stack_floor: crate::stack_guard::set_floor(ec.stack_floor),

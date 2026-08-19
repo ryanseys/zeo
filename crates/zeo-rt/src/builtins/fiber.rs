@@ -148,6 +148,7 @@ ruby_class! {
                 "FiberError",
                 "attempt to yield on a not resumed fiber".to_string(),
             )),
+            crate::fiber::FiberYield::Terminate => Err(Signal::Terminate),
         }
     }
     // The scheduler quartet. There is no fiber scheduler here, so every query

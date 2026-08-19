@@ -310,6 +310,10 @@ pub fn thread_new(block: RubyValue, args: Vec<RubyValue>) -> RubyValue {
         // The frame stack needs no management here: this closure runs on
         // a brand-new OS thread whose `frames` TLS starts empty.
         let result = body.call(&args);
+        // Suspended fibers this thread created are torn down here, while
+        // its thread-locals are alive (see `fiber::terminate_thread_fibers`).
+        crate::fiber::terminate_thread_fibers();
+        crate::builtins::enumerator::terminate_thread_enum_fibers();
         // A killed thread dies silently with a nil value, whatever exception
         // unwound it (its `ensure` blocks already ran during that unwind).
         if for_thread.was_killed.load(Ordering::Relaxed) {
