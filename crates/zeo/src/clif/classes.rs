@@ -104,6 +104,10 @@ pub(crate) struct CollectedClasses {
     /// (`mark_own_rows` -- `instance_methods(false)`/`Method#owner`).
     pub own_rows: Vec<(u32, String)>,
     pub vis: Vec<statics::VisRowSpec>,
+    /// `(class, name)` value rows a builtin reopen INHERITED (a module
+    /// method materialized onto the builtin) -- marked foreign so a
+    /// `super` walk skips them at that position (`mark_foreign_value_rows`).
+    pub foreign: Vec<(u32, String)>,
 }
 
 /// Collect + declare every user class and its methods; refusals are loud
@@ -118,8 +122,252 @@ pub(crate) fn collect_classes(
     let mut module_methods = Vec::new();
     let mut class_methods = Vec::new();
     let mut own_cm = Vec::new();
+    let mut foreign = Vec::new();
     let mut own_rows = Vec::new();
     let mut vis = Vec::new();
+    // REOPENED builtins first (rustc's builtin-registration loop): a
+    // non-bootstrap builtin's user methods ride the VALUE channel on the
+    // builtin's own id (they dispatch FIRST, before the native table); a
+    // BOOTSTRAP (exception) reopen's ride the OBJECT channel as deltas
+    // over the native set `with_core` installed. Bodies take a
+    // `RubyValue` self, so ivars are name-keyed (`dyn_ivars`).
+    for (idx, class) in compiler.classes.iter().enumerate() {
+        if idx == 0 || !(class.is_builtin || class.is_bootstrap) {
+            continue;
+        }
+        // The entries this id will actually carry. A BOOTSTRAP (exception)
+        // reopen keeps only its DELTAS -- a body defined on a native-backed
+        // class, or on a module mixed in ABOVE Object (rustc's
+        // `emit_exception_deltas` filter); a top-level `include M` reaches
+        // every exception through Object and is deliberately nobody's
+        // delta. Guards below fire only when something will emit.
+        let deltas: Vec<&crate::compiler::MethodEntry> = class
+            .methods
+            .iter()
+            .filter(|e| {
+                let scope = compiler.scope(e.def);
+                if scope.native_default {
+                    return false;
+                }
+                if !class.is_bootstrap {
+                    return true;
+                }
+                let dc = e.defined_class(compiler);
+                let above_object = {
+                    let anc = &class.ancestors;
+                    let cut = anc
+                        .iter()
+                        .position(|&a| a == crate::compiler::OBJECT_CLASS)
+                        .unwrap_or(anc.len());
+                    &anc[..cut]
+                };
+                compiler.is_native_backed(dc)
+                    || (compiler.class(dc).is_module && above_object.contains(&dc))
+            })
+            .collect();
+        let cms: Vec<&crate::compiler::MethodEntry> = class
+            .class_methods
+            .iter()
+            .filter(|e| !compiler.scope(e.def).native_default)
+            .collect();
+        if deltas.is_empty() && cms.is_empty() {
+            continue;
+        }
+        let name = compiler.fq_name(crate::compiler::ClassId(idx as u32));
+        let refuse = |what: &str| {
+            Err(format!(
+                "--backend aot is an M0 vertical slice: cannot lower {what} yet (class {name})"
+            ))
+        };
+        // A require-gated builtin whose feature never fired: no code can
+        // resolve its constant, so its rows would be dead weight -- rustc
+        // skips it entirely (the register-only-enabled-features rule).
+        if !compiler.feature_active(crate::compiler::ClassId(idx as u32)) {
+            continue;
+        }
+        if class.builtin_overlay.is_some() || class.box_id != 0 {
+            return refuse("a boxed builtin overlay");
+        }
+        // A builtin carries its natural includes (String includes
+        // Comparable); only a reopen that CHANGED the ancestry -- an
+        // ancestors list differing from the declared default -- selects
+        // the set_ancestors patch the slice does not emit.
+        if class.ancestors != zeo_abi::declared_ancestors(crate::compiler::ClassId(idx as u32)) {
+            return refuse("an ancestry-changing builtin reopen");
+        }
+        if !(class.pending_aliases.is_empty()
+            && class.builtin_aliases.is_empty()
+            && class.class_aliases.is_empty()
+            && class.undefined.is_empty()
+            && class.class_undefined.is_empty()
+            && class.runtime_undefs.is_empty()
+            && class.pending_module_functions.is_empty()
+            && class.visibility_overrides.is_empty()
+            && class.class_visibility_overrides.is_empty()
+            && class.singleton_super_targets.is_empty())
+        {
+            return refuse("this class-surface shape on a builtin reopen");
+        }
+        // No `mark_own_rows` here: a VALUE row self-records ownership at
+        // insert (`own_value_names`), and a bootstrap delta's object-channel
+        // row follows rustc, which marks nothing for reopens either.
+        for entry in deltas {
+            let scope = compiler.scope(entry.def);
+            let mname = compiler.names.str(entry.name).to_string();
+            let refuse_m = |what: &str| {
+                Err(format!(
+                    "--backend aot is an M0 vertical slice: cannot lower {what} yet ({name}#{mname})"
+                ))
+            };
+            let dc = entry.defined_class(compiler);
+            if !class.is_bootstrap && dc.0 != idx as u32 {
+                // A module method materialized onto this builtin: the row
+                // registers here (compiled in this class's context) and is
+                // marked FOREIGN so `super` skips this position.
+                foreign.push((idx as u32, mname.clone()));
+            }
+            if scope.runtime_conditional {
+                return refuse_m("a conditionally-defined method");
+            }
+            if scope.alias_of.is_some() {
+                return refuse_m("an alias");
+            }
+            let p = &scope.params;
+            if let Err(what) = super::emit::check_params(p) {
+                return refuse_m(what);
+            }
+            let layout = super::params::layout_of(p)?;
+            let has_blk = scope.needs_block_param();
+            let tramp = em
+                .module
+                .declare_function(
+                    &names::trampoline_symbol(&name, &mname),
+                    Linkage::Local,
+                    &params::value_fn_sig(em),
+                )
+                .map_err(|e| format!("declaring {name}#{mname}: {e}"))?;
+            let sig = params::body_sig(em, layout.n_slots, has_blk);
+            let body_fn = em
+                .module
+                .declare_function(&names::method_symbol(&name, &mname), Linkage::Local, &sig)
+                .map_err(|e| format!("declaring {name}#{mname}: {e}"))?;
+            match scope.visibility {
+                crate::hir::Visibility::Private => vis.push(statics::VisRowSpec {
+                    class: idx as u32,
+                    name: mname.clone(),
+                    verb: 0,
+                }),
+                crate::hir::Visibility::Protected => vis.push(statics::VisRowSpec {
+                    class: idx as u32,
+                    name: mname.clone(),
+                    verb: 1,
+                }),
+                crate::hir::Visibility::Public => {}
+            }
+            if class.is_bootstrap {
+                // An exception reopen: an OBJECT-channel delta.
+                methods.push(ObjMethodSpec {
+                    is_own: class.own_methods.contains(&entry.def),
+                    dyn_ivars: true,
+                    defining_class: scope.defining_class,
+                    owner: ClassId(idx as u32),
+                    owner_name: name.clone(),
+                    name: mname,
+                    body: scope.body.clone(),
+                    node: scope.def_node,
+                    tramp,
+                    accessor: None,
+                    body_fn: Some(body_fn),
+                    hir_params: p.clone(),
+                    has_blk,
+                    ruby2_keywords: scope.ruby2_keywords,
+                });
+            } else {
+                // A value-channel row on the builtin's own id.
+                module_methods.push(ModMethodSpec {
+                    dyn_ivars: true,
+                    defining_class: scope.defining_class,
+                    owner: ClassId(idx as u32),
+                    owner_name: name.clone(),
+                    name: mname,
+                    body: scope.body.clone(),
+                    node: scope.def_node,
+                    tramp,
+                    body_fn,
+                    hir_params: p.clone(),
+                    has_blk,
+                    ruby2_keywords: scope.ruby2_keywords,
+                });
+            }
+        }
+        for entry in cms {
+            let scope = compiler.scope(entry.def);
+            let mname = compiler.names.str(entry.name).to_string();
+            let refuse_m = |what: &str| {
+                Err(format!(
+                    "--backend aot is an M0 vertical slice: cannot lower {what} yet ({name}.{mname})"
+                ))
+            };
+            if scope.runtime_conditional {
+                return refuse_m("a conditionally-defined class method");
+            }
+            if scope.alias_of.is_some() {
+                return refuse_m("a class-method alias");
+            }
+            if scope.accessor.is_some() {
+                return refuse_m("a singleton accessor");
+            }
+            let p = &scope.params;
+            if let Err(what) = super::emit::check_params(p) {
+                return refuse_m(what);
+            }
+            let layout = super::params::layout_of(p)?;
+            let has_blk = scope.needs_block_param();
+            let tramp = em
+                .module
+                .declare_function(
+                    &names::class_trampoline_symbol(&name, &mname),
+                    Linkage::Local,
+                    &params::value_fn_sig(em),
+                )
+                .map_err(|e| format!("declaring {name}.{mname}: {e}"))?;
+            let sig = params::body_sig(em, layout.n_slots, has_blk);
+            let body_fn = em
+                .module
+                .declare_function(
+                    &names::class_method_symbol(&name, &mname),
+                    Linkage::Local,
+                    &sig,
+                )
+                .map_err(|e| format!("declaring {name}.{mname}: {e}"))?;
+            if entry.visibility == crate::hir::Visibility::Private {
+                vis.push(statics::VisRowSpec {
+                    class: idx as u32,
+                    name: mname.clone(),
+                    verb: 3,
+                });
+            }
+            class_methods.push(CmMethodSpec {
+                owner: ClassId(idx as u32),
+                owner_name: name.clone(),
+                name: mname,
+                body: scope.body.clone(),
+                node: scope.def_node,
+                tramp,
+                body_fn,
+                hir_params: p.clone(),
+                has_blk,
+                ruby2_keywords: scope.ruby2_keywords,
+            });
+        }
+        for &sid in &class.own_class_methods {
+            if compiler.scope(sid).native_default {
+                continue;
+            }
+            own_cm.push((idx as u32, compiler.scope(sid).name.clone()));
+        }
+    }
+
     for (idx, class) in compiler.classes.iter().enumerate() {
         if idx == 0 || class.is_builtin || class.is_bootstrap {
             continue;
@@ -503,6 +751,7 @@ pub(crate) fn collect_classes(
         module_methods,
         class_methods,
         own_cm,
+        foreign,
         own_rows,
         vis,
     })

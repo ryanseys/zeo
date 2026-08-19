@@ -9,7 +9,9 @@ use cranelift_codegen::ir::{self, InstBuilder, MemFlagsData, UserFuncName};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module};
 use std::collections::HashMap;
-use zeo_abi::abi::{self, ClassDesc, CmRow, ObjRow, ProgramDesc, RegRow, Str, VisRow, VmRow};
+use zeo_abi::abi::{
+    self, ClassDesc, CmRow, ForeignRow, ObjRow, ProgramDesc, RegRow, Str, VisRow, VmRow,
+};
 
 /// The program's symbol table: names in first-intern order; `zeo_unit_init`
 /// interns each at startup into the `zeo_syms` `.bss` array, and emitted
@@ -352,6 +354,46 @@ pub(crate) struct ObjRowSpec {
     pub f: FuncId,
 }
 
+/// The `zeo_vm_foreign` table: rows a builtin reopen INHERITED, marked
+/// so a `super` walk skips them at that position.
+fn define_foreign_rows(em: &mut Emitter, rows: &[(u32, String)]) -> Result<Option<DataId>, String> {
+    if rows.is_empty() {
+        return Ok(None);
+    }
+    let size = std::mem::size_of::<ForeignRow>();
+    let id = em
+        .module
+        .declare_data("zeo_vm_foreign", Linkage::Local, false, false)
+        .map_err(|e| format!("declaring zeo_vm_foreign: {e}"))?;
+    let interned: Vec<u32> = rows
+        .iter()
+        .map(|(_, name)| em.intern_rodata(name.as_bytes()))
+        .collect();
+    let mut data = DataDescription::new();
+    let mut bytes = vec![0u8; size * rows.len()];
+    for (i, (class, name)) in rows.iter().enumerate() {
+        let base = i * size;
+        bytes[base + std::mem::offset_of!(ForeignRow, class)
+            ..base + std::mem::offset_of!(ForeignRow, class) + 4]
+            .copy_from_slice(&class.to_le_bytes());
+        let at = base + std::mem::offset_of!(ForeignRow, name) + std::mem::offset_of!(Str, len);
+        bytes[at..at + 8].copy_from_slice(&(name.len() as u64).to_le_bytes());
+    }
+    data.define(bytes.into_boxed_slice());
+    data.set_align(8);
+    let rodata_gv = em.module.declare_data_in_data(em.rodata_id, &mut data);
+    for (i, &off) in interned.iter().enumerate() {
+        let base = i * size;
+        let at =
+            (base + std::mem::offset_of!(ForeignRow, name) + std::mem::offset_of!(Str, ptr)) as u32;
+        data.write_data_addr(at, rodata_gv, i64::from(off));
+    }
+    em.module
+        .define_data(id, &data)
+        .map_err(|e| format!("defining zeo_vm_foreign: {e}"))?;
+    Ok(Some(id))
+}
+
 /// The `zeo_obj_rows` table (same shape as `zeo_vm_rows`, minus box/flags).
 fn define_obj_rows(em: &mut Emitter, rows: &[ObjRowSpec]) -> Result<Option<DataId>, String> {
     if rows.is_empty() {
@@ -669,6 +711,7 @@ pub(crate) fn define_desc(
     obj_rows: &[ObjRowSpec],
     cm_rows: &[CmRowSpec],
     reg_rows: &[RegRowSpec],
+    foreign_rows: &[(u32, String)],
 ) -> Result<DataId, String> {
     let vm_table = define_vm_rows(em, vm_rows)?;
     let vis_table = define_vis_rows(em, vis_rows)?;
@@ -676,6 +719,7 @@ pub(crate) fn define_desc(
     let obj_table = define_obj_rows(em, obj_rows)?;
     let cm_table = define_cm_rows(em, cm_rows)?;
     let reg_table = define_reg_rows(em, reg_rows)?;
+    let foreign_table = define_foreign_rows(em, foreign_rows)?;
     let hir = &analyzed.compiler.hir;
     let mut loaded: Vec<String> = hir
         .loaded_files
@@ -751,6 +795,11 @@ pub(crate) fn define_desc(
     );
     put_u64(
         &mut buf,
+        std::mem::offset_of!(ProgramDesc, n_vm_foreign),
+        foreign_rows.len() as u64,
+    );
+    put_u64(
+        &mut buf,
         std::mem::offset_of!(ProgramDesc, n_vis_rows),
         vis_rows.len() as u64,
     );
@@ -794,6 +843,10 @@ pub(crate) fn define_desc(
     if let Some(vm) = vm_table {
         let gv = em.module.declare_data_in_data(vm, &mut desc);
         desc.write_data_addr(std::mem::offset_of!(ProgramDesc, vm_rows) as u32, gv, 0);
+    }
+    if let Some(f) = foreign_table {
+        let gv = em.module.declare_data_in_data(f, &mut desc);
+        desc.write_data_addr(std::mem::offset_of!(ProgramDesc, vm_foreign) as u32, gv, 0);
     }
     if let Some(vis) = vis_table {
         let gv = em.module.declare_data_in_data(vis, &mut desc);

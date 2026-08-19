@@ -166,7 +166,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
     let defs = collect_methods(em, analyzed)?;
     let collected = super::classes::collect_classes(em, analyzed)?;
     let class_bodies = collect_class_bodies(em, analyzed)?;
-    let (class_specs, obj_methods, mod_methods, cm_methods, own_cm, own_rows, class_vis) = (
+    let (class_specs, obj_methods, mod_methods, cm_methods, own_cm, own_rows, class_vis, foreign) = (
         collected.classes,
         collected.methods,
         collected.module_methods,
@@ -174,6 +174,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
         collected.own_cm,
         collected.own_rows,
         collected.vis,
+        collected.foreign,
     );
     for def in &defs {
         let func = em.methods[&def.name].body;
@@ -453,6 +454,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
         &obj_rows,
         &cm_rows,
         &reg_rows,
+        &foreign,
     )?;
     let main = define_main(em, desc)?;
     statics::define_rodata(em)?;
@@ -860,11 +862,16 @@ fn collect_class_bodies(
                 "--backend aot is an M0 vertical slice: cannot lower {what} yet (class {name})"
             ))
         };
-        if ci.is_builtin || ci.is_bootstrap || site.class.0 == 0 {
-            if site.stmts.is_empty() {
-                continue;
-            }
-            return refuse("a builtin reopen body");
+        // A BUILTIN reopen's body runs like any other -- but the class was
+        // never DECLARED by it (the constant pre-exists), so nothing below
+        // that hangs off "declares" (const-location record, const_added /
+        // inherited announcements) applies.
+        let builtin = ci.is_builtin || ci.is_bootstrap || site.class.0 == 0;
+        if builtin && site.stmts.is_empty() {
+            continue;
+        }
+        if builtin && !compiler.feature_active(site.class) {
+            return refuse("a require-gated builtin reopen body");
         }
         if site.def_node.is_none() {
             if site.stmts.is_empty() {
@@ -872,11 +879,12 @@ fn collect_class_bodies(
             }
             return refuse("a synthetic class body");
         }
-        let declares = compiler
-            .class_body_sites
-            .iter()
-            .find(|s| s.class == site.class)
-            .is_some_and(|s| std::ptr::eq(s, site));
+        let declares = !builtin
+            && compiler
+                .class_body_sites
+                .iter()
+                .find(|s| s.class == site.class)
+                .is_some_and(|s| std::ptr::eq(s, site));
         // `class Foo; end` DEFINES a constant, so ruby announces it; a
         // hook observing that announcement is not emitted yet.
         let decl_owner = ci.lexical_parent.unwrap_or(crate::compiler::OBJECT_CLASS);
