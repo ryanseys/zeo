@@ -1,6 +1,11 @@
 //! Method registration: own-method rows, conditional defs, accessor
 //! shapes, module/mixin targets, superclass + const-alias resolution.
 
+#![warn(
+    clippy::wildcard_enum_match_arm,
+    reason = "swept: this module's matches are exhaustive. Re-enabled because a\n    parent module's file-level allow is INHERITED by its submodules"
+)]
+
 use super::*;
 
 /// The next [`crate::compiler::SiteDef::seq`]. The walk visits bodies in the
@@ -318,6 +323,11 @@ fn defer_runtime_mixin(compiler: &mut Compiler, stmt: NodeId) -> NodeId {
 /// Deliberately conservative in the safe direction: a module that merely
 /// MENTIONS one of these names is compiled the slower way, which costs
 /// dispatch speed rather than an answer.
+#[allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "structural: a scan for eval-family CALLS; only a `Call` can be one, and the \
+              conservative miss direction is the documented slower-but-correct path"
+)]
 pub(super) fn module_defines_methods_dynamically(compiler: &Compiler, module: ClassId) -> bool {
     fn installs_at_runtime(hir: &crate::hir::Hir, id: NodeId) -> bool {
         // The EVAL family only. `attr_accessor`, `alias_method` and a
@@ -437,6 +447,11 @@ fn is_const_path_alias(compiler: &Compiler, name: &str, cref: &[ClassId], box_id
 /// is anything but a constant path answers `None`: `M = Module.new` mints a
 /// module at run time, which no static MRO can reach, and that stays the loud
 /// error `resolve_module_target` documents.
+#[allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "structural: only the two constant-read node kinds spell an alias target; any \
+              other written value means `None` (not an alias) by definition"
+)]
 fn resolve_const_alias(
     compiler: &mut Compiler,
     name: &str,
@@ -512,6 +527,11 @@ fn lexical_const_alias<'a>(
 /// it. The three arms below are the ones that change WHERE a write lands --
 /// a `class`/`module` deepens the scope path, a box restarts it -- and every
 /// other node descends into its children.
+#[allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "structural: only const writes bind alias names and only the listed scope kinds \
+              bound the walk; everything else descends generically"
+)]
 pub(super) fn collect_const_aliases(
     hir: &Hir,
     stmts: &[NodeId],
@@ -773,6 +793,11 @@ pub(super) fn register_method(
 /// any second statement all disqualify. An accessor's whole value is that the
 /// call has NOTHING else in it, so a near-miss is worth nothing and only
 /// widens what the devirtualized paths must reproduce.
+#[allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "structural: only a lone ivar read/write body IS accessor-shaped; every other \
+              body shape means `None` (keep the real method) by definition"
+)]
 fn accessor_shape(
     hir: &Hir,
     def_node: Option<NodeId>,

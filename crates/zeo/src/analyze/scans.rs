@@ -1,6 +1,11 @@
 //! Whole-arena scans and collectors: `ArenaFacts` (the one-sweep answers),
 //! the shared body/statement scan helpers, and the ivar collector.
 
+#![warn(
+    clippy::wildcard_enum_match_arm,
+    reason = "swept: this module's matches are exhaustive. Re-enabled because a\n    parent module's file-level allow is INHERITED by its submodules"
+)]
+
 use super::*;
 
 /// What [`collect_arena_facts`] answers in its one sweep. A struct rather than
@@ -35,6 +40,11 @@ pub(super) struct ArenaFacts {
 /// const names because over-collection is the safe direction (see the
 /// field's docs), for patches because the answer is "could this name change
 /// under us?".
+#[allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "structural: a whole-arena facts sweep -- each arm records one literal shape; \
+              a node kind recording no fact contributes nothing by definition"
+)]
 pub(super) fn collect_arena_facts(hir: &Hir) -> ArenaFacts {
     let mut facts = ArenaFacts::default();
     let ArenaFacts {
@@ -119,6 +129,11 @@ pub(super) fn collect_arena_facts(hir: &Hir) -> ArenaFacts {
 /// exactly the boundary that makes a write "top-level". First write wins, so a
 /// later reassignment does not change which class a reopen attaches to -- the
 /// arena scan this replaces had the same first-match-wins behaviour.
+#[allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "structural: only a bare `NAME = v` binds a top-level alias and only `ClassDef` \
+              bounds the scope; everything else descends generically"
+)]
 pub(super) fn collect_top_level_const_aliases(
     hir: &Hir,
     stmts: &[NodeId],
@@ -266,6 +281,11 @@ pub(super) fn collect_shell_kinds(
 /// forward-referenced (a `class` inside `begin/rescue` or a block was
 /// "unknown superclass" to every earlier file). Hence the generic
 /// `for_each_child` default rather than an allowlist of container nodes.
+#[allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "structural: only the definition/scope node kinds matter to shell collection; \
+              everything else descends generically via `for_each_child`"
+)]
 fn collect_shell_kinds_node(
     hir: &Hir,
     id: NodeId,
@@ -426,6 +446,12 @@ fn collect_ivar_target(target: &crate::hir::MultiTarget, out: &mut Vec<String>) 
     }
 }
 
+#[allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "structural: only ivar reads/writes and the multi-write targets carry ivar \
+              names, and only FFI/class/def bodies bound the scope; everything else \
+              descends generically"
+)]
 pub(crate) fn collect_ivars(hir: &Hir, id: NodeId, out: &mut Vec<String>) {
     let mut record = |name: &str| {
         if !out.iter().any(|n| n == name) {

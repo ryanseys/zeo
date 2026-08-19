@@ -1,6 +1,11 @@
 //! Class registration and the class-body walk: shells, reopens,
 //! definition targets, compatibility checks, and the mixin deferrals.
 
+#![warn(
+    clippy::wildcard_enum_match_arm,
+    reason = "swept: this module's matches are exhaustive. Re-enabled because a\n    parent module's file-level allow is INHERITED by its submodules"
+)]
+
 use super::*;
 
 /// Resolve a compact-path CONTAINER (`Gem::Security` in `Gem::Security::Policy`)
@@ -639,6 +644,11 @@ fn walk_class_body(
     // runtime self-sends this body serves. Only inside them: a directive written
     // straight in the class body is registered at compile time, and rewriting it
     // here would throw that away.
+    #[allow(
+        clippy::wildcard_enum_match_arm,
+        reason = "structural: only an undecidable `if` holds directives with no \
+                  expression form; every other statement passes through unchanged"
+    )]
     let body: Vec<NodeId> = body
         .iter()
         .map(|&stmt| match &compiler.hir[stmt] {
@@ -1077,7 +1087,69 @@ fn walk_class_body(
             // code that runs ONCE at class-definition time with `self` = the
             // class object. Collected here (flat list AND this site's own
             // record) and executed at the site's document position.
-            _ => {
+            HirNode::Program(_)
+            | HirNode::IntegerLit(_)
+            | HirNode::BigIntegerLit { .. }
+            | HirNode::RationalLit { .. }
+            | HirNode::ImaginaryLit(_)
+            | HirNode::FloatLit(_)
+            | HirNode::SymbolLit(_)
+            | HirNode::NilLit
+            | HirNode::BoolLit(_)
+            | HirNode::And(..)
+            | HirNode::Or(..)
+            | HirNode::Defined(_)
+            | HirNode::If { .. }
+            | HirNode::CaseWhen { .. }
+            | HirNode::ArrayLit(_)
+            | HirNode::HashLit(_)
+            | HirNode::RangeLit { .. }
+            | HirNode::StringLit(_)
+            | HirNode::RegexpLit(..)
+            | HirNode::LocalRead(_)
+            | HirNode::LocalWrite(..)
+            | HirNode::IvarRead(_)
+            | HirNode::ClassVarRead(_)
+            | HirNode::ClassRef(_)
+            | HirNode::Call { .. }
+            | HirNode::New { .. }
+            | HirNode::SuperCall { .. }
+            | HirNode::Block { .. }
+            | HirNode::Lambda { .. }
+            | HirNode::DefHook { .. }
+            | HirNode::MethodRedefine { .. }
+            | HirNode::While { .. }
+            | HirNode::Loop { .. }
+            | HirNode::For { .. }
+            | HirNode::Break(_)
+            | HirNode::Next(_)
+            | HirNode::Redo
+            | HirNode::MultiWrite { .. }
+            | HirNode::Eval(_)
+            | HirNode::Ffi(_)
+            | HirNode::BoxScope { .. }
+            | HirNode::BoxHandle(_)
+            | HirNode::Return(_)
+            | HirNode::Yield(_)
+            | HirNode::BlockGiven
+            | HirNode::SelfRef
+            | HirNode::Raise(..)
+            | HirNode::CaseIn { .. }
+            | HirNode::MatchPredicate { .. }
+            | HirNode::MatchRequired { .. }
+            | HirNode::Begin { .. }
+            | HirNode::Retry
+            | HirNode::GlobalRead(_)
+            | HirNode::GlobalWrite(..)
+            | HirNode::QualifiedConstRead(..)
+            | HirNode::ConstReadOrNil(..)
+            | HirNode::DynConstRead { .. }
+            | HirNode::DynConstWrite { .. }
+            | HirNode::PreExec(_)
+            | HirNode::AliasGlobal(..)
+            | HirNode::LastMatchRef(_)
+            | HirNode::Seq(_)
+            | HirNode::FlipFlop { .. } => {
                 // A reachable `C.prepend(M)` / `C.singleton_class.prepend(M)` in
                 // a class body (e.g. connection_pool's
                 // `Process.singleton_class.prepend(ForkTracker)`) is a static
@@ -1539,6 +1611,11 @@ pub(super) fn conceal_observed_namespace_members(compiler: &mut Compiler) {
 }
 
 /// The bare constant NAME a node reads, for the leaf-name fallback above.
+#[allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "structural: only the two constant-read node kinds carry a bare name; \
+              every other node is not a constant read by definition"
+)]
 fn leaf_const_name(hir: &Hir, node: NodeId) -> Option<String> {
     match &hir[node] {
         HirNode::ClassRef(name) => Some(name.trim_start_matches("::").to_string()),
