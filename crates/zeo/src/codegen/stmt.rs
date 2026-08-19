@@ -259,7 +259,7 @@ fn emit_if_statement(
     then_body: &[NodeId],
     else_body: &[NodeId],
 ) -> TokenStream {
-    match super::constfold::static_cond(cx, cond) {
+    match super::constfold::static_cond(&cx.const_env(), cond) {
         Some(true) => return emit_body_discard(cx, then_body),
         Some(false) => return emit_body_discard(cx, else_body),
         None => {}

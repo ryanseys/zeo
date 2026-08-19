@@ -119,7 +119,7 @@ pub(super) fn try_const_reflection(
 
     // `const_get`/`const_defined?` reach through to `Object`, unlike the
     // scope operator -- `K.const_get(:Errno)` answers where `K::Errno` raises.
-    let as_class = class_const_in(cx, target, &cname, ObjectReach::Included);
+    let as_class = class_const_in(&cx.const_env(), target, &cname, ObjectReach::Included);
     // A runtime-conditional class is the runtime row's to answer: this fold
     // would bake an existence the concealment table decides.
     if as_class.is_some_and(|c| cx.compiler.class(c).runtime_conditional) {
@@ -137,7 +137,7 @@ pub(super) fn try_const_reflection(
             && cx.compiler.class(target).const_owners.contains_key(&cname);
         let defined = as_class.is_some()
             || seeded
-            || value_const_defined_in(cx, target, &cname, ObjectReach::Included);
+            || value_const_defined_in(&cx.const_env(), target, &cname, ObjectReach::Included);
         // Only a PROVEN yes folds. A no here means "no class body writes this
         // name", which is not the same as "no such constant": a top-level
         // assignment is no class body's statement, and a `const_set` can add one

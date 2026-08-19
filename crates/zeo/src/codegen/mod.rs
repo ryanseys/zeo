@@ -23,7 +23,7 @@ mod call;
 pub(crate) use crate::analyze::captures;
 pub(crate) use crate::analyze::class_query;
 mod collections;
-mod constfold;
+pub(crate) use crate::analyze::constfold;
 mod exceptions;
 mod expr;
 mod hoisting;
@@ -341,6 +341,16 @@ impl<'a> Ctx<'a> {
         self.defining_class
             .map(|c| self.compiler.cref_of_ref(c))
             .unwrap_or(&[])
+    }
+
+    /// The backend-neutral projection of this context that
+    /// `analyze::constfold`'s resolvability/truthiness questions need.
+    fn const_env(&self) -> constfold::ConstEnv<'a> {
+        constfold::ConstEnv {
+            compiler: self.compiler,
+            defining_class: self.defining_class,
+            box_id: self.box_id,
+        }
     }
 
     /// Whether the method this body belongs to carries the `ruby2_keywords`

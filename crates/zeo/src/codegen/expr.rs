@@ -364,7 +364,7 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
     // answer has to change over the program's life. The scope is still
     // resolved at compile time; only the membership test is deferred.
     if let HirNode::QualifiedConstRead(scope, name) = &cx.compiler.hir[id]
-        && super::constfold::const_form_resolves(cx, id) != Some(true)
+        && super::constfold::const_form_resolves(&cx.const_env(), id) != Some(true)
         && let Some(scope_id) = cx.resolve_class(scope)
     {
         let scope_id = scope_id.0;
@@ -506,7 +506,7 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         // provably resolves at compile time; an unresolvable `Scope::NAME`/
         // bare-`NAME` answers `nil` (CRuby's `defined?` on a missing constant).
         HirNode::ClassRef(_) | HirNode::QualifiedConstRead(..) => {
-            match super::constfold::const_form_resolves(cx, id) {
+            match super::constfold::const_form_resolves(&cx.const_env(), id) {
                 Some(true) => Some("constant"),
                 _ => None,
             }
@@ -628,7 +628,7 @@ fn emit_if(cx: &Ctx, cond: NodeId, then_body: &[NodeId], else_body: &[NodeId]) -
     // valid Rust in an expression slot once braced -- an `if` expression can sit
     // in a value position (`x = if COND ...`), and a multi-statement branch
     // would otherwise splice bare statements where an expression is expected.
-    match super::constfold::static_cond(cx, cond) {
+    match super::constfold::static_cond(&cx.const_env(), cond) {
         Some(true) => {
             let body = super::stmt::emit_body_boxed(cx, then_body);
             return quote! { { #body } };

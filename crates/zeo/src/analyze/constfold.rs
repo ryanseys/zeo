@@ -19,16 +19,42 @@
     reason = "not yet swept for wildcard arms -- see the lint's note in lib.rs"
 )]
 
-use super::Ctx;
-use crate::compiler::{ClassId, OBJECT_CLASS};
+use crate::compiler::{ClassId, Compiler, OBJECT_CLASS};
 use crate::hir::{HirNode, NodeId};
+
+/// The lexical environment a constant-resolution question needs -- the
+/// backend-neutral projection of an emitter context: which compiler, which
+/// defining class (for the cref chain), which box. Everything here is
+/// derivable at analyze time; `codegen::Ctx::const_env` builds one.
+#[derive(Clone, Copy)]
+pub(crate) struct ConstEnv<'a> {
+    pub(crate) compiler: &'a Compiler,
+    pub(crate) defining_class: Option<ClassId>,
+    pub(crate) box_id: u32,
+}
+
+impl<'a> ConstEnv<'a> {
+    /// The lexical scope chain enclosing the current code, outermost first --
+    /// `Compiler::cref_of`'s rule (see `codegen::Ctx::cref_chain`, whose twin
+    /// this is). Empty at the top level.
+    pub(crate) fn cref_chain(&self) -> &'a [ClassId] {
+        self.defining_class
+            .map(|c| self.compiler.cref_of_ref(c))
+            .unwrap_or(&[])
+    }
+
+    fn resolve_class(&self, name: &str) -> Option<ClassId> {
+        self.compiler
+            .resolve_class(name, self.cref_chain(), self.box_id)
+    }
+}
 
 /// Whether a search may answer with a constant `Object` itself owns -- ruby's
 /// `exclude` flag (`variable.c`'s `rb_const_search`). `Object` is an ancestor
 /// of every class, so a search that reads its table from a `Foo` receiver makes
 /// every top-level constant answer as `Foo`'s own.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum ObjectReach {
+pub(crate) enum ObjectReach {
     /// `const_get`/`const_defined?`, and a bare name (whose lookup ENDS at the
     /// top level).
     Included,
@@ -41,19 +67,19 @@ pub(super) enum ObjectReach {
 /// The class/module `target::cname` names, if any -- a nested definition in
 /// `target`'s own namespace, or, where the search reaches `Object`, a top-level
 /// class, which lives there and so is visible from every receiver.
-pub(super) fn class_const_in(
-    cx: &Ctx,
+pub(crate) fn class_const_in(
+    env: &ConstEnv,
     target: ClassId,
     cname: &str,
     reach: ObjectReach,
 ) -> Option<ClassId> {
-    if let Some(c) = cx.resolve_class(&format!("{}::{cname}", cx.compiler.fq_name(target))) {
+    if let Some(c) = env.resolve_class(&format!("{}::{cname}", env.compiler.fq_name(target))) {
         return Some(c);
     }
     if reach == ObjectReach::Excluded && target != OBJECT_CLASS {
         return None;
     }
-    cx.compiler.resolve_class(cname, &[], cx.box_id)
+    env.compiler.resolve_class(cname, &[], env.box_id)
 }
 
 /// Whether a VALUE constant named `cname` is defined on `target` or any
@@ -61,13 +87,13 @@ pub(super) fn class_const_in(
 /// `resolve_consts` populates. `reach` decides whether `Object`'s own
 /// constants count, which is what tells `Foo::BAR` apart from
 /// `Foo.const_get(:BAR)`.
-pub(super) fn value_const_defined_in(
-    cx: &Ctx,
+pub(crate) fn value_const_defined_in(
+    env: &ConstEnv,
     target: ClassId,
     cname: &str,
     reach: ObjectReach,
 ) -> bool {
-    let mut chain = cx.compiler.class(target).ancestors.clone();
+    let mut chain = env.compiler.class(target).ancestors.clone();
     if reach == ObjectReach::Excluded && target != OBJECT_CLASS {
         chain.retain(|&anc| anc != OBJECT_CLASS);
     } else if !chain.contains(&OBJECT_CLASS) {
@@ -80,7 +106,7 @@ pub(super) fn value_const_defined_in(
     // until its own `const_set` runs).
     chain
         .iter()
-        .any(|&anc| crate::analyze::mro::directly_defines_const(cx.compiler, anc, cname))
+        .any(|&anc| crate::analyze::mro::directly_defines_const(env.compiler, anc, cname))
 }
 
 /// Whether a constant-reference HIR node (the operand of a `defined?`) provably
@@ -93,8 +119,8 @@ pub(super) fn value_const_defined_in(
 /// guard away would run the very branch it protects. A BARE name stays
 /// decidable, because that is the version/feature-gate idiom (`defined?(Ractor)`)
 /// whose whole value is dropping unreachable code at compile time.
-pub(super) fn const_form_resolves(cx: &Ctx, id: NodeId) -> Option<bool> {
-    match &cx.compiler.hir[id] {
+pub(crate) fn const_form_resolves(env: &ConstEnv, id: NodeId) -> Option<bool> {
+    match &env.compiler.hir[id] {
         // A bare name is a class OR a value constant. Only the first was
         // consulted, so `ASSIGNED = 7; defined?(ASSIGNED)` answered nil where
         // ruby answers "constant" -- `resolve_class` has nothing to say about a
@@ -105,8 +131,8 @@ pub(super) fn const_form_resolves(cx: &Ctx, id: NodeId) -> Option<bool> {
             // scope, so the private-constant rule applies to it too.
             let path = crate::constpath::ConstPath::parse(name);
             if let Some(scope) = path.scope()
-                && let Some(sid) = cx.resolve_class(scope)
-                && cx
+                && let Some(sid) = env.resolve_class(scope)
+                && env
                     .compiler
                     .class(sid)
                     .private_constants
@@ -114,16 +140,16 @@ pub(super) fn const_form_resolves(cx: &Ctx, id: NodeId) -> Option<bool> {
             {
                 return Some(false);
             }
-            let mut scopes = cx.cref_chain().to_vec();
+            let mut scopes = env.cref_chain().to_vec();
             scopes.push(OBJECT_CLASS);
-            if defined_only_later(cx, id, &scopes, name) {
+            if defined_only_later(env, id, &scopes, name) {
                 return Some(false);
             }
-            if let Some(cid) = cx.resolve_class(name) {
+            if let Some(cid) = env.resolve_class(name) {
                 // Registered but not PROMISED -- whether a runtime-conditional
                 // class's constant exists is a runtime fact, foldable in
                 // neither direction.
-                if cx.compiler.class(cid).runtime_conditional {
+                if env.compiler.class(cid).runtime_conditional {
                     return None;
                 }
                 return Some(true);
@@ -132,7 +158,7 @@ pub(super) fn const_form_resolves(cx: &Ctx, id: NodeId) -> Option<bool> {
             // `__END__`, but nothing in the program body assigns it -- it is
             // installed at startup (`zeo_rt::install_data_section`), so the
             // body scan below cannot see it.
-            if name == "DATA" && cx.compiler.hir.data_section.is_some() {
+            if name == "DATA" && env.compiler.hir.data_section.is_some() {
                 return Some(true);
             }
             // `RUBY_ENGINE`, `ENV`, `STDOUT` -- installed on `Object` at
@@ -146,34 +172,34 @@ pub(super) fn const_form_resolves(cx: &Ctx, id: NodeId) -> Option<bool> {
                 scopes
                     .iter()
                     .rev()
-                    .any(|&s| value_const_defined_in(cx, s, name, ObjectReach::Included)),
+                    .any(|&s| value_const_defined_in(env, s, name, ObjectReach::Included)),
             )
         }
         HirNode::QualifiedConstRead(scope, name) => {
-            let Some(scope_id) = cx.resolve_class(scope) else {
+            let Some(scope_id) = env.resolve_class(scope) else {
                 return Some(false);
             };
             // A runtime-conditional SCOPE makes the whole path a runtime
             // question.
-            if cx.compiler.class(scope_id).runtime_conditional {
+            if env.compiler.class(scope_id).runtime_conditional {
                 return None;
             }
             // `defined?(M::S)` is nil for a private constant -- the same
             // rejection of the scope operator the read itself gets.
-            if cx.compiler.class(scope_id).private_constants.contains(name) {
+            if env.compiler.class(scope_id).private_constants.contains(name) {
                 return Some(false);
             }
-            if defined_only_later(cx, id, &[scope_id], name) {
+            if defined_only_later(env, id, &[scope_id], name) {
                 return Some(false);
             }
             // The scope OPERATOR, so a top-level constant does not answer:
             // `defined?(K::TOP)` is nil even where `TOP` is set.
-            let nested = class_const_in(cx, scope_id, name, ObjectReach::Excluded);
-            if nested.is_some_and(|c| cx.compiler.class(c).runtime_conditional) {
+            let nested = class_const_in(env, scope_id, name, ObjectReach::Excluded);
+            if nested.is_some_and(|c| env.compiler.class(c).runtime_conditional) {
                 return None;
             }
             let known = nested.is_some()
-                || value_const_defined_in(cx, scope_id, name, ObjectReach::Excluded);
+                || value_const_defined_in(env, scope_id, name, ObjectReach::Excluded);
             known.then_some(true)
         }
         _ => None,
@@ -190,10 +216,10 @@ pub(super) fn const_form_resolves(cx: &Ctx, id: NodeId) -> Option<bool> {
 /// a reference with no position (it sits in a `def` body, which runs at call
 /// time, or in a block), or a name with no positioned definition at all, keeps
 /// whatever whole-program answer the caller already had.
-fn defined_only_later(cx: &Ctx, at: NodeId, scopes: &[ClassId], name: &str) -> bool {
+fn defined_only_later(env: &ConstEnv, at: NodeId, scopes: &[ClassId], name: &str) -> bool {
     let mut later = false;
     for &s in scopes {
-        match cx.compiler.const_defined_before(s, name, at) {
+        match env.compiler.const_defined_before(s, name, at) {
             Some(true) => return false,
             Some(false) => later = true,
             None => {}
@@ -215,20 +241,20 @@ fn defined_only_later(cx: &Ctx, at: NodeId, scopes: &[ClassId], name: &str) -> b
 /// (the `&&` value identity CRuby would compute is irrelevant here). The left
 /// operand of a folded `&&` is always a pure `defined?` guard, so dropping the
 /// unreached right operand never elides a side effect.
-pub(super) fn static_cond(cx: &Ctx, id: NodeId) -> Option<bool> {
+pub(crate) fn static_cond(env: &ConstEnv, id: NodeId) -> Option<bool> {
     // A build-time target-constant guard -- a version gate (`Gem.rubygems_version
     // < Gem::Version.new("3.5.22")`, `RUBY_VERSION < "3.0"`) or a feature probe
     // (`unless VALIDATES_FOR_RESOLUTION`) -- folds against zeo's fixed version /
     // method tables. Resolved in the emit site's lexical cref -- see
     // `crate::guard_fold`.
-    if let Some(b) = crate::guard_fold::static_cond(cx.compiler, cx.cref_chain(), cx.box_id, id) {
+    if let Some(b) = crate::guard_fold::static_cond(env.compiler, env.cref_chain(), env.box_id, id) {
         return Some(b);
     }
-    match &cx.compiler.hir[id] {
-        HirNode::Defined(inner) => const_form_resolves(cx, *inner),
-        HirNode::And(l, r) => match static_cond(cx, *l) {
+    match &env.compiler.hir[id] {
+        HirNode::Defined(inner) => const_form_resolves(env, *inner),
+        HirNode::And(l, r) => match static_cond(env, *l) {
             Some(false) => Some(false),
-            Some(true) => static_cond(cx, *r),
+            Some(true) => static_cond(env, *r),
             None => None,
         },
         _ => None,
@@ -240,31 +266,18 @@ mod tests {
     use super::*;
     use crate::analyze::{Analyzed, analyze};
     use crate::compiler::Compiler;
-    use crate::compiler::{FMap, FSet};
-    use proc_macro2::Ident;
-    use quote::format_ident;
-    use std::borrow::Cow;
-    use std::cell::Cell;
 
-    /// A compiled-to-`Analyzed` program that can hand out a root-scope [`Ctx`]
-    /// borrowing its owned state, for exercising the fold helpers against the
-    /// same class/constant registry real codegen sees.
+    /// A compiled-to-`Analyzed` program that can hand out a root-scope
+    /// [`ConstEnv`] borrowing its owned state, for exercising the fold
+    /// helpers against the same class/constant registry real codegen sees.
     struct Fixture {
         analyzed: Analyzed,
-        labels: Cell<u32>,
-        empty_captures: FSet<String>,
-        empty_locals: FMap<String, crate::types::TyKind>,
-        self_ident: Ident,
     }
 
     fn fixture(source: &str) -> Fixture {
         let (hir, root) = crate::parse::parse_and_lower(source).expect("parse");
         Fixture {
             analyzed: analyze(hir, root).expect("analyze"),
-            labels: Cell::new(0),
-            empty_captures: FSet::default(),
-            empty_locals: FMap::default(),
-            self_ident: format_ident!("self"),
         }
     }
 
@@ -273,35 +286,11 @@ mod tests {
             &self.analyzed.compiler
         }
 
-        fn ctx(&self) -> Ctx<'_> {
-            Ctx {
+        fn env(&self) -> ConstEnv<'_> {
+            ConstEnv {
                 compiler: &self.analyzed.compiler,
-                box_id: 0,
-                current_class: None,
                 defining_class: None,
-                class_self: None,
-                current_method: None,
-                current_method_origin: None,
-                local_types: Cow::Borrowed(&self.empty_locals),
-                label_counter: &self.labels,
-                loop_labels: None,
-                next_yields_value: false,
-                for_var_override: None,
-                captured_locals: Cow::Borrowed(&self.empty_captures),
-                binding_names: None,
-                in_eval_splice: false,
-                frameless: false,
-                self_ident: self.self_ident.clone(),
-                in_real_proc: false,
-                self_is_dynamic: false,
-                self_slots: false,
-                shared_body: false,
-                trace: None,
-                runtime_super_params: None,
-                defined_by_define_method: false,
-                lexical_frame_label: None,
-                block_depth: 0,
-                has_blk_binding: false,
+                box_id: 0,
             }
         }
 
@@ -320,31 +309,31 @@ mod tests {
     #[test]
     fn a_defined_guard_over_a_missing_constant_is_statically_false() {
         let fx = fixture("if defined?(NoSuchConst)\n  1\nend\n");
-        assert_eq!(static_cond(&fx.ctx(), fx.first_if_cond()), Some(false));
+        assert_eq!(static_cond(&fx.env(), fx.first_if_cond()), Some(false));
     }
 
     #[test]
     fn a_defined_guard_over_a_live_class_is_statically_true() {
         let fx = fixture("if defined?(String)\n  1\nend\n");
-        assert_eq!(static_cond(&fx.ctx(), fx.first_if_cond()), Some(true));
+        assert_eq!(static_cond(&fx.env(), fx.first_if_cond()), Some(true));
     }
 
     #[test]
     fn a_defined_and_short_circuits_on_the_missing_left() {
         let fx = fixture("if defined?(Nope) && Nope.on?\n  1\nend\n");
-        assert_eq!(static_cond(&fx.ctx(), fx.first_if_cond()), Some(false));
+        assert_eq!(static_cond(&fx.env(), fx.first_if_cond()), Some(false));
     }
 
     #[test]
     fn a_missing_qualified_scope_is_statically_false() {
         let fx = fixture("if defined?(MissingRoot::Sub::Thing)\n  1\nend\n");
-        assert_eq!(static_cond(&fx.ctx(), fx.first_if_cond()), Some(false));
+        assert_eq!(static_cond(&fx.env(), fx.first_if_cond()), Some(false));
     }
 
     #[test]
     fn a_non_defined_condition_does_not_fold() {
         let fx = fixture("x = 1\nif x\n  1\nend\n");
-        assert_eq!(static_cond(&fx.ctx(), fx.first_if_cond()), None);
+        assert_eq!(static_cond(&fx.env(), fx.first_if_cond()), None);
     }
 
     /// A build-time question a gem gave a NAME is still a build-time question.
@@ -364,7 +353,7 @@ mod tests {
         ] {
             let fx = fixture(&format!("{module}if E.rbx?\n  1\nend\n"));
             assert_eq!(
-                static_cond(&fx.ctx(), fx.first_if_cond()),
+                static_cond(&fx.env(), fx.first_if_cond()),
                 Some(false),
                 "{module}"
             );
@@ -392,7 +381,7 @@ mod tests {
             ),
         ] {
             let fx = fixture(&format!("{module}if {guard}\n  1\nend\n"));
-            assert_eq!(static_cond(&fx.ctx(), fx.first_if_cond()), None, "{module}");
+            assert_eq!(static_cond(&fx.env(), fx.first_if_cond()), None, "{module}");
         }
     }
 }
