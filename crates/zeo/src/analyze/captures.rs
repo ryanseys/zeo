@@ -15,7 +15,7 @@
     reason = "swept: this module's HIR walks are exhaustive. Re-enabled because a\n    parent module's file-level allow is INHERITED by its submodules"
 )]
 
-use super::call::is_inline_block_fast_path;
+use super::fastpath::is_inline_block_fast_path;
 use crate::compiler::Compiler;
 use crate::compiler::{FMap, FSet};
 use crate::hir::{ArrayElem, HirNode, NodeId, Params, ScopeKind};
@@ -85,7 +85,7 @@ pub struct Captures {
 /// rather than captured ones --
 /// silently making `def m((a, b)); -> { a += 1 }; end` read a nil `a` inside
 /// the block. One enumeration, one place to update.
-pub(super) fn own_param_names(params: &Params) -> FSet<String> {
+pub(crate) fn own_param_names(params: &Params) -> FSet<String> {
     params.bound_names().into_iter().collect()
 }
 
@@ -132,9 +132,9 @@ pub fn collect_escaping_captures(
     for &n in body {
         walk(compiler, n, None, &FSet::default(), &mut raw, self_class);
     }
-    let mut outer_names = super::hoisting::Locals::default();
+    let mut outer_names = super::local_storage::Locals::default();
     for &n in body {
-        super::hoisting::collect_locals(compiler, n, &mut outer_names);
+        super::local_storage::collect_locals(compiler, n, &mut outer_names);
     }
     // A parameter DEFAULT can assign a local, and ruby scopes it to the whole
     // method: `def fetch(name, default = (no_default = true))` -- memoizable's
@@ -145,7 +145,7 @@ pub fn collect_escaping_captures(
     // `hoisting::emit_hoisted_body_with_roots` already walks these for the same
     // reason.
     for id in params.default_ids() {
-        super::hoisting::collect_locals(compiler, id, &mut outer_names);
+        super::local_storage::collect_locals(compiler, id, &mut outer_names);
     }
     let mut outer: FSet<String> = outer_names.into_set();
     let outer_params = own_param_names(params);
@@ -293,7 +293,7 @@ fn scope_calls_binding(compiler: &Compiler, id: NodeId) -> bool {
 /// `Kernel#eval`, which CRuby runs in the caller's frame exactly as the direct
 /// one. `public_send` is excluded because `Kernel#eval` is private, so CRuby
 /// raises `NoMethodError` there rather than evaluating anything.
-pub(super) fn is_sent_eval(compiler: &Compiler, name: &str, args: &[NodeId]) -> bool {
+pub(crate) fn is_sent_eval(compiler: &Compiler, name: &str, args: &[NodeId]) -> bool {
     matches!(name, "send" | "__send__")
         && (2..=5).contains(&args.len())
         && compiler.hir.sent_name(args[0]) == Some("eval")
@@ -338,9 +338,9 @@ pub fn binding_scope_names(
         .into_iter()
         .filter(|n| !crate::hir::is_internal_local(n))
         .collect();
-    let mut assigned = super::hoisting::Locals::default();
+    let mut assigned = super::local_storage::Locals::default();
     for &n in body {
-        super::hoisting::collect_locals(compiler, n, &mut assigned);
+        super::local_storage::collect_locals(compiler, n, &mut assigned);
     }
     for n in assigned.into_names() {
         if !crate::hir::is_internal_local(&n) && !names.contains(&n) {

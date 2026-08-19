@@ -20,7 +20,7 @@
 )]
 
 mod call;
-mod captures;
+pub(crate) use crate::analyze::captures;
 pub(crate) use crate::analyze::class_query;
 mod collections;
 mod constfold;

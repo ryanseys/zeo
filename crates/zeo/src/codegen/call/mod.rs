@@ -183,7 +183,7 @@ pub use super_calls::emit_super;
 // `Compiler`+HIR questions asked by the capture/hoisting scans too); this
 // re-export keeps every pre-existing `codegen::call::<name>` path resolving.
 pub use crate::analyze::fastpath::{
-    is_inline_block_fast_path, is_range_each_fast_path, is_spliced_block_body, is_times_fast_path,
+    is_range_each_fast_path, is_spliced_block_body, is_times_fast_path,
 };
 
 /// How one spliced iteration binds one of the block's required params: the
