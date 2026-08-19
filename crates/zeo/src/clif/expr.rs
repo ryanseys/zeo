@@ -466,6 +466,70 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 }
             }
         }
+        // `recv&.m(args) { blk }`: the receiver is evaluated ONCE and a nil
+        // one answers nil without evaluating the arguments or building the
+        // block -- oracle-verified (`nil&.push(*a, f())` never calls `f`),
+        // which is why the whole argument build sits in the call branch.
+        HirNode::Call {
+            receiver: Some(recv),
+            name,
+            args,
+            kwargs,
+            block,
+            block_arg,
+            safe: true,
+        } => {
+            let (recv, name, args, kwargs, block, block_arg) = (
+                *recv,
+                name.clone(),
+                args.clone(),
+                kwargs.clone(),
+                *block,
+                *block_arg,
+            );
+            let op = lower_expr(fx, recv)?;
+            let tag = op.tag();
+            let ptr = ownership::borrow_ptr(fx, &op);
+            if op.owned() {
+                ownership::pool_owned(fx, ptr, tag);
+            }
+            let ss = fx.temp_slot();
+            let dst = fx.slot_addr(ss, 0);
+            let b_nil = fx.b.create_block();
+            let b_call = fx.b.create_block();
+            let join = fx.b.create_block();
+            let tv = fx.b.ins().load(types::I8, MemFlagsData::trusted(), ptr, 0);
+            let is_nil = fx.b.ins().icmp_imm_u(IntCC::Equal, tv, 0);
+            fx.b.ins().brif(is_nil, b_nil, &[], b_call, &[]);
+            fx.b.switch_to_block(b_nil);
+            ownership::write_move_into(fx, &Operand::Nil, dst);
+            fx.b.ins().jump(join, &[]);
+            fx.b.switch_to_block(b_call);
+            let recv_op = Operand::Ptr {
+                addr: ptr,
+                owned: false,
+                tag,
+            };
+            let blk = block_channel(fx, id, block, block_arg)?;
+            let res = if args.iter().any(|a| matches!(a, ArrayElem::Splat(_))) {
+                super::call::splat_send(fx, id, Some(recv_op), &name, &args, &kwargs, blk)?
+            } else if !kwargs.is_empty() {
+                super::call::kw_send(fx, id, Some(recv_op), &name, &args, &kwargs, blk)?
+            } else if let Some(bp) = blk {
+                super::blocks::send_with_block_ptr_ops(fx, id, Some(recv_op), &name, &args, bp)?
+            } else {
+                super::call::dynamic_send_value(fx, id, recv_op, &name, &args)?
+            };
+            ownership::write_move_into(fx, &res, dst);
+            fx.b.ins().jump(join, &[]);
+            fx.b.switch_to_block(join);
+            fx.owned_created += 1;
+            Ok(Operand::Slot {
+                ss,
+                owned: true,
+                tag: TagInfo::Unknown,
+            })
+        }
         HirNode::Call {
             receiver,
             name,
