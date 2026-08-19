@@ -647,11 +647,46 @@ pub(crate) fn block_send_op(
     args: &[ArrayElem],
     block: NodeId,
 ) -> Result<Operand, String> {
+    let blk_ptr = literal_block_ptr(fx, site, block)?;
+    send_with_block_ptr_ops(fx, site, Some(recv), name, args, blk_ptr)
+}
+
+/// The block channel a literal `{ .. }`/`do .. end` opens: the proc is
+/// built here and MOVED to the callee, error path included.
+pub(crate) fn literal_block_ptr(
+    fx: &mut Fx,
+    site: NodeId,
+    block: NodeId,
+) -> Result<ir::Value, String> {
     let (proc_ss, _names) = build_proc(fx, site, block)?;
     let blk_ptr = fx.slot_addr(proc_ss, 0);
-    // The callee consumes the moved-in proc, error path included.
     fx.owned_consumed += 1;
-    send_with_block_ptr_ops(fx, site, Some(recv), name, args, blk_ptr)
+    Ok(blk_ptr)
+}
+
+/// The block channel a `&expr` argument opens: `nil` is "no block" (a
+/// null blk), anything else converts through `to_proc` and moves to the
+/// callee.
+pub(crate) fn block_arg_ptr(fx: &mut Fx, block_arg: NodeId) -> Result<ir::Value, String> {
+    let op = super::expr::lower_expr(fx, block_arg)?;
+    let vp = ownership::borrow_ptr(fx, &op);
+    if op.owned() {
+        ownership::pool_owned(fx, vp, op.tag());
+    }
+    let conv_ss = fx.temp_slot();
+    let conv = fx.slot_addr(conv_ss, 0);
+    let status = fx
+        .call("zeo_rt_block_arg_to_proc", &[vp, conv])
+        .expect("block_arg_to_proc returns a status");
+    fx.fallible(status);
+    let fl = MemFlagsData::trusted();
+    let tag = fx.b.ins().load(types::I8, fl, conv, 0);
+    let is_nil = fx.b.ins().icmp_imm_u(IntCC::Equal, tag, 0);
+    let null = fx.b.ins().iconst(fx.em.ptr, 0);
+    let blk_ptr = fx.b.ins().select(is_nil, null, conv);
+    fx.owned_created += 1;
+    fx.owned_consumed += 1; // moved to the callee, or an immediate nil
+    Ok(blk_ptr)
 }
 
 pub(crate) fn block_send(
@@ -662,10 +697,7 @@ pub(crate) fn block_send(
     args: &[ArrayElem],
     block: NodeId,
 ) -> Result<Operand, String> {
-    let (proc_ss, _names) = build_proc(fx, site, block)?;
-    let blk_ptr = fx.slot_addr(proc_ss, 0);
-    // The callee consumes the moved-in proc, error path included.
-    fx.owned_consumed += 1;
+    let blk_ptr = literal_block_ptr(fx, site, block)?;
     send_with_block_ptr(fx, site, recv, name, args, blk_ptr)
 }
 
@@ -689,25 +721,7 @@ pub(crate) fn block_arg_send(
         }
         None => None,
     };
-    let op = super::expr::lower_expr(fx, block_arg)?;
-    let vp = ownership::borrow_ptr(fx, &op);
-    if op.owned() {
-        ownership::pool_owned(fx, vp, op.tag());
-    }
-    let conv_ss = fx.temp_slot();
-    let conv = fx.slot_addr(conv_ss, 0);
-    let status = fx
-        .call("zeo_rt_block_arg_to_proc", &[vp, conv])
-        .expect("block_arg_to_proc returns a status");
-    fx.fallible(status);
-    // Nil = "no block" (a null blk); a Proc moves to the callee.
-    let fl = MemFlagsData::trusted();
-    let tag = fx.b.ins().load(types::I8, fl, conv, 0);
-    let is_nil = fx.b.ins().icmp_imm_u(IntCC::Equal, tag, 0);
-    let null = fx.b.ins().iconst(fx.em.ptr, 0);
-    let blk_ptr = fx.b.ins().select(is_nil, null, conv);
-    fx.owned_created += 1;
-    fx.owned_consumed += 1; // moved to the callee, or an immediate nil
+    let blk_ptr = block_arg_ptr(fx, block_arg)?;
     send_with_block_ptr_ops(fx, site, recv, name, args, blk_ptr)
 }
 
@@ -767,8 +781,20 @@ pub(crate) fn send_with_block_ptr_ops(
         )
         .expect("send returns a status")
     };
-    // catch_break: a Break's value is the send's value; everything else
-    // propagates.
+    catch_break(fx, status, out);
+    fx.owned_created += 1;
+    Ok(Operand::Slot {
+        ss,
+        owned: true,
+        tag: TagInfo::Unknown,
+    })
+}
+
+/// The block-passing send's landing: a `Break` signal's value IS the
+/// send's value (ruby's `break` out of a block), everything else
+/// propagates. Every send that opened a block channel needs it -- the
+/// plain shape, and the keyword and splat entries alike.
+pub(crate) fn catch_break(fx: &mut Fx, status: ir::Value, out: ir::Value) {
     let ok = fx.b.create_block();
     let signalled = fx.b.create_block();
     fx.b.ins().brif(status, signalled, &[], ok, &[]);
@@ -783,10 +809,4 @@ pub(crate) fn send_with_block_ptr_ops(
     fx.call("zeo_rt_signal_take", &[out]);
     fx.b.ins().jump(ok, &[]);
     fx.b.switch_to_block(ok);
-    fx.owned_created += 1;
-    Ok(Operand::Slot {
-        ss,
-        owned: true,
-        tag: TagInfo::Unknown,
-    })
 }

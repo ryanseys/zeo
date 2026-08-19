@@ -434,7 +434,15 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 let init = if kwargs.is_empty() {
                     super::call::dynamic_send_value(fx, id, borrowed(), "initialize", &elems)?
                 } else {
-                    super::call::kw_send(fx, id, Some(borrowed()), "initialize", &elems, &kwargs)?
+                    super::call::kw_send(
+                        fx,
+                        id,
+                        Some(borrowed()),
+                        "initialize",
+                        &elems,
+                        &kwargs,
+                        None,
+                    )?
                 };
                 ownership::discard(fx, init);
                 return Ok(borrowed());
@@ -448,9 +456,14 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 // `Foo.new(x) { .. }`: the literal block forwards to
                 // `initialize`, so `yield`/`block_given?` inside it see it.
                 (Some(blk), true) => super::blocks::block_send_op(fx, id, recv, "new", &elems, blk),
-                (Some(_), false) => fx.unsupported(id, "`new` with both keywords and a block"),
+                (Some(blk), false) => {
+                    let bp = super::blocks::literal_block_ptr(fx, id, blk)?;
+                    super::call::kw_send(fx, id, Some(recv), "new", &elems, &kwargs, Some(bp))
+                }
                 (None, true) => super::call::dynamic_send_value(fx, id, recv, "new", &elems),
-                (None, false) => super::call::kw_send(fx, id, Some(recv), "new", &elems, &kwargs),
+                (None, false) => {
+                    super::call::kw_send(fx, id, Some(recv), "new", &elems, &kwargs, None)
+                }
             }
         }
         HirNode::Call {
@@ -486,6 +499,16 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             {
                 return super::call::direct_call(fx, id, &name, &args, Some(blk));
             }
+            // A splatted argument list builds its Array in the runtime, so
+            // it takes the args entry with the block on the same channel.
+            if args.iter().any(|a| matches!(a, ArrayElem::Splat(_))) {
+                let recv = match receiver {
+                    Some(r) => Some(lower_expr(fx, r)?),
+                    None => None,
+                };
+                let bp = super::blocks::literal_block_ptr(fx, id, blk)?;
+                return super::call::splat_send(fx, id, recv, &name, &args, &[], Some(bp));
+            }
             super::blocks::block_send(fx, id, receiver, &name, &args, blk)
         }
         HirNode::Call {
@@ -503,7 +526,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                     Some(r) => Some(lower_expr(fx, r)?),
                     None => None,
                 };
-                return super::call::splat_send(fx, id, recv, &name, &args, &[]);
+                return super::call::splat_send(fx, id, recv, &name, &args, &[], None);
             }
             match receiver {
                 Some(recv) if BinOp::of(&name).is_some() && args.len() == 1 => {
@@ -548,27 +571,36 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             let (receiver, name, args, ba) = (*receiver, name.clone(), args.clone(), *ba);
             super::blocks::block_arg_send(fx, id, receiver, &name, &args, ba)
         }
-        // Call-site keywords (no block channel yet): the kw send entries
-        // append the marked hash per the trailing-kwargs convention.
+        // Call-site keywords: the kw/splat send entries append the marked
+        // hash per the trailing-kwargs convention. A block rides the same
+        // channel it does on a keyword-free call -- the receiver still
+        // evaluates first, then the arguments, then the block.
         HirNode::Call {
             receiver,
             name,
             args,
             kwargs,
-            block: None,
-            block_arg: None,
+            block,
+            block_arg,
             safe: false,
         } => {
-            let (receiver, name, args, kwargs) =
-                (*receiver, name.clone(), args.clone(), kwargs.clone());
+            let (receiver, name, args, kwargs, block, block_arg) = (
+                *receiver,
+                name.clone(),
+                args.clone(),
+                kwargs.clone(),
+                *block,
+                *block_arg,
+            );
             let recv = match receiver {
                 Some(r) => Some(lower_expr(fx, r)?),
                 None => None,
             };
+            let blk = block_channel(fx, id, block, block_arg)?;
             if args.iter().any(|a| matches!(a, ArrayElem::Splat(_))) {
-                super::call::splat_send(fx, id, recv, &name, &args, &kwargs)
+                super::call::splat_send(fx, id, recv, &name, &args, &kwargs, blk)
             } else {
-                super::call::kw_send(fx, id, recv, &name, &args, &kwargs)
+                super::call::kw_send(fx, id, recv, &name, &args, &kwargs, blk)
             }
         }
         HirNode::RangeLit {
@@ -892,6 +924,23 @@ fn if_expr(
         owned: true,
         tag: TagInfo::Unknown,
     })
+}
+
+/// The block channel a call opens, if any: a literal block builds its
+/// proc, a `&expr` argument converts through `to_proc` (nil = no block).
+/// Ruby's grammar admits only one of the two.
+fn block_channel(
+    fx: &mut Fx,
+    id: NodeId,
+    block: Option<NodeId>,
+    block_arg: Option<NodeId>,
+) -> Result<Option<cranelift_codegen::ir::Value>, String> {
+    match (block, block_arg) {
+        (None, None) => Ok(None),
+        (Some(blk), None) => Ok(Some(super::blocks::literal_block_ptr(fx, id, blk)?)),
+        (None, Some(ba)) => Ok(Some(super::blocks::block_arg_ptr(fx, ba)?)),
+        (Some(_), Some(_)) => fx.unsupported(id, "a literal block beside a `&` block argument"),
+    }
 }
 
 /// A short human label for refusal messages.

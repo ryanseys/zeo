@@ -235,6 +235,7 @@ pub(crate) fn splat_send(
     name: &str,
     args: &[ArrayElem],
     kwargs: &[crate::hir::KwArg],
+    blk: Option<cranelift_codegen::ir::Value>,
 ) -> Result<Operand, String> {
     let _ = site;
     let recv_ptr = match &recv {
@@ -258,7 +259,7 @@ pub(crate) fn splat_send(
     // `ruby2_keywords`' whole purpose: a marked forwarder's splat keeps a
     // trailing hash's keyword mark.
     let unmark = fx.b.ins().iconst(types::I8, i64::from(!fx.ruby2_keywords));
-    let null = fx.b.ins().iconst(fx.em.ptr, 0);
+    let blk_ptr = blk.unwrap_or_else(|| fx.b.ins().iconst(fx.em.ptr, 0));
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
     let status = match recv {
@@ -267,17 +268,23 @@ pub(crate) fn splat_send(
             fx.call(
                 "zeo_rt_send_value_explicit_args_in",
                 &[
-                    zero_box, recv_ptr, sym, args_ptr, unmark, kw_ptr, null, caller, out,
+                    zero_box, recv_ptr, sym, args_ptr, unmark, kw_ptr, blk_ptr, caller, out,
                 ],
             )
         }
         None => fx.call(
             "zeo_rt_send_value_args_in",
-            &[zero_box, recv_ptr, sym, args_ptr, unmark, kw_ptr, null, out],
+            &[
+                zero_box, recv_ptr, sym, args_ptr, unmark, kw_ptr, blk_ptr, out,
+            ],
         ),
     }
     .expect("splat sends return a status");
-    fx.fallible(status);
+    if blk.is_some() {
+        super::blocks::catch_break(fx, status, out);
+    } else {
+        fx.fallible(status);
+    }
     fx.owned_created += 1;
     Ok(Operand::Slot {
         ss,
@@ -297,6 +304,7 @@ pub(crate) fn kw_send(
     name: &str,
     args: &[ArrayElem],
     kwargs: &[crate::hir::KwArg],
+    blk: Option<cranelift_codegen::ir::Value>,
 ) -> Result<Operand, String> {
     let recv_ptr = match &recv {
         Some(op) => {
@@ -313,7 +321,7 @@ pub(crate) fn kw_send(
     let sym = fx.sym_id(name);
     let zero_box = fx.b.ins().iconst(types::I32, 0);
     let argc_v = fx.b.ins().iconst(fx.em.ptr, args.len() as i64);
-    let null = fx.b.ins().iconst(fx.em.ptr, 0);
+    let blk_ptr = blk.unwrap_or_else(|| fx.b.ins().iconst(fx.em.ptr, 0));
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
     let status = match recv {
@@ -322,17 +330,23 @@ pub(crate) fn kw_send(
             fx.call(
                 "zeo_rt_send_value_explicit_kw_in",
                 &[
-                    zero_box, recv_ptr, sym, argv_ptr, argc_v, kw_ptr, null, caller, out,
+                    zero_box, recv_ptr, sym, argv_ptr, argc_v, kw_ptr, blk_ptr, caller, out,
                 ],
             )
         }
         None => fx.call(
             "zeo_rt_send_value_kw_in",
-            &[zero_box, recv_ptr, sym, argv_ptr, argc_v, kw_ptr, null, out],
+            &[
+                zero_box, recv_ptr, sym, argv_ptr, argc_v, kw_ptr, blk_ptr, out,
+            ],
         ),
     }
     .expect("kw sends return a status");
-    fx.fallible(status);
+    if blk.is_some() {
+        super::blocks::catch_break(fx, status, out);
+    } else {
+        fx.fallible(status);
+    }
     fx.owned_created += 1;
     Ok(Operand::Slot {
         ss,
