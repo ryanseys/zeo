@@ -6,11 +6,6 @@
 //! class) is what drives the static-vs-dynamic dispatch decision in
 //! `codegen`, even though the *value* itself stays boxed either way.
 
-#![allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "not yet swept for wildcard arms -- see the lint's note in lib.rs"
-)]
-
 use crate::compiler::FMap;
 use crate::compiler::{ClassId, Compiler};
 use crate::hir::{HirNode, NodeId};
@@ -96,6 +91,11 @@ fn no_locals() -> FMap<String, TyKind> {
 /// "long"; end` makes the old `length -> Int` narrowing unsound (the
 /// override's result is whatever it returns, so the call types `Poly`).
 /// Free for un-reopened builtins: their materialized method table is empty.
+#[allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "structural: only the immediate builtin-receiver types have a reopen table \
+              to consult; every other type answers false (no override) by definition"
+)]
 pub(crate) fn builtin_override(
     compiler: &Compiler,
     recv_ty: TyKind,
@@ -166,6 +166,12 @@ pub fn infer_type(compiler: &Compiler, id: NodeId) -> TyKind {
 /// `analyze::locals::infer_locals`), what's its static type? This is what
 /// lets `x + y` resolve to native `Int` arithmetic when `x`/`y` are locals
 /// previously assigned an `Int`-typed value, not just literal-on-literal.
+#[allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "structural: pure type NARROWING -- every arm is an opt-in static claim, \
+              and the wildcard's `Poly` (no claim, dynamic dispatch) is sound for any \
+              node or receiver type not narrowed, including future variants"
+)]
 pub fn infer_type_with_locals(
     compiler: &Compiler,
     defining: Option<crate::compiler::ClassId>,
