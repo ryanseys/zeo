@@ -186,7 +186,12 @@ pub(crate) fn const_form_resolves(env: &ConstEnv, id: NodeId) -> Option<bool> {
             }
             // `defined?(M::S)` is nil for a private constant -- the same
             // rejection of the scope operator the read itself gets.
-            if env.compiler.class(scope_id).private_constants.contains(name) {
+            if env
+                .compiler
+                .class(scope_id)
+                .private_constants
+                .contains(name)
+            {
                 return Some(false);
             }
             if defined_only_later(env, id, &[scope_id], name) {
@@ -247,7 +252,8 @@ pub(crate) fn static_cond(env: &ConstEnv, id: NodeId) -> Option<bool> {
     // (`unless VALIDATES_FOR_RESOLUTION`) -- folds against zeo's fixed version /
     // method tables. Resolved in the emit site's lexical cref -- see
     // `crate::guard_fold`.
-    if let Some(b) = crate::guard_fold::static_cond(env.compiler, env.cref_chain(), env.box_id, id) {
+    if let Some(b) = crate::guard_fold::static_cond(env.compiler, env.cref_chain(), env.box_id, id)
+    {
         return Some(b);
     }
     match &env.compiler.hir[id] {

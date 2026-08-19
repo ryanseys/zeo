@@ -54,6 +54,7 @@ pub mod rename;
 
 pub use parse::gem_compat::{GemCompatEntry, GemCompatOutcome, gem_compat, gem_compat_installed};
 mod guard_fold;
+pub(crate) mod names;
 pub mod parse;
 pub mod types;
 
