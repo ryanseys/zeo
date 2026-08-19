@@ -128,17 +128,12 @@ pub(crate) fn lower_begin(
         fx.call("zeo_rt_handling_push", &[exc]);
         fx.handling_depth += 1;
         if let Some(binding) = &clause.binding {
-            let &ss = fx
-                .locals
-                .get(binding)
-                .unwrap_or_else(|| panic!("rescue binding `{binding}` must be hoisted"));
-            let dst = fx.slot_addr(ss, 0);
             let borrowed = Operand::Ptr {
                 addr: exc,
                 owned: false,
                 tag: TagInfo::Unknown,
             };
-            ownership::write_assign(fx, &borrowed, dst);
+            ownership::write_local(fx, binding, &borrowed);
         }
         let clause_land = fx.b.create_block();
         let saved_land = fx.land;

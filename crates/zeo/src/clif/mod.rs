@@ -4,6 +4,7 @@
 //! `puts` statements) end to end, refusing everything else loudly -- the
 //! full statement/expression lowering lands as `ctx`/`stmt`/`expr` modules.
 
+pub(crate) mod blocks;
 pub(crate) mod call;
 pub mod capi_names;
 pub(crate) mod classes;

@@ -4,12 +4,23 @@
 
 use super::emit::Emitter;
 use crate::analyze::Analyzed;
-use cranelift_codegen::ir::{self, InstBuilder, StackSlotData, StackSlotKind, types};
+use cranelift_codegen::ir::{self, InstBuilder, MemFlagsData, StackSlotData, StackSlotKind, types};
 use cranelift_frontend::FunctionBuilder;
 use cranelift_module::Module;
 use std::collections::HashMap;
 
 pub(crate) const VALUE_SIZE: u32 = zeo_abi::abi::VALUE_SIZE as u32;
+
+/// One Ruby local's storage in the enclosing function.
+#[derive(Clone, Copy)]
+pub(crate) enum Local {
+    /// An owned 24-byte value slot.
+    Slot(ir::StackSlot),
+    /// A captured local: the 8-byte slot holds the `*mut Cell` pointer.
+    /// `owned` = this function created the cell (releases it at exit);
+    /// a block body's env cells belong to the proc.
+    Cell { ss: ir::StackSlot, owned: bool },
+}
 
 /// An enclosing native loop's jump targets. `result` is the loop's value
 /// slot when the loop sits in value position: `break v` moves `v` there
@@ -38,8 +49,8 @@ pub(crate) struct Fx<'e, 'f> {
     pub rodata_base: ir::Value,
     /// The `zeo_syms` base address, likewise.
     pub syms_base: ir::Value,
-    /// Ruby local -> its owned 24-byte slot (hoisted, nil-initialized).
-    pub locals: HashMap<String, ir::StackSlot>,
+    /// Ruby local -> its storage (hoisted; captured names live in cells).
+    pub locals: HashMap<String, Local>,
     frefs: HashMap<&'static str, ir::FuncRef>,
     temp_free: Vec<ir::StackSlot>,
     temp_taken: Vec<ir::StackSlot>,
@@ -65,6 +76,19 @@ pub(crate) struct Fx<'e, 'f> {
     /// How many `$!` (`handling_push`) entries the current lexical point
     /// sits under -- a direct jump pops down to its target's depth.
     pub handling_depth: usize,
+    /// The enclosing frame's label ("<main>", "Object#fib") -- what a
+    /// block's own frame derives its "block in ..." label from.
+    pub frame_label: String,
+    /// The method's borrowed block parameter (null = no block passed);
+    /// `None` when the scope has no block slot at all (yield then passes
+    /// null and raises the LocalJumpError).
+    pub blk_ptr: Option<ir::Value>,
+    /// Inside an escaping block body: where `next v` moves its value and
+    /// jumps (the block's ok-exit).
+    pub block_next: Option<(ir::Value, ir::Block)>,
+    /// Names currently aliased to a fused-block shadow slot -- an escaping
+    /// block may not capture one (the shadow dies with the loop).
+    pub shadowed: std::collections::HashSet<String>,
     /// The ownership ledger `verify` checks: every owned-value emission
     /// site must be matched by exactly one consumption site.
     pub owned_created: usize,
@@ -99,6 +123,10 @@ impl<'e, 'f> Fx<'e, 'f> {
             retries: Vec::new(),
             ensure_depth: 0,
             handling_depth: 0,
+            frame_label: String::new(),
+            blk_ptr: None,
+            block_next: None,
+            shadowed: std::collections::HashSet::new(),
             owned_created: 0,
             owned_consumed: 0,
         }
@@ -194,6 +222,28 @@ impl<'e, 'f> Fx<'e, 'f> {
     /// The source location of `node`, for refusal messages and line stamps.
     pub fn location(&self, node: crate::hir::NodeId) -> Option<(&str, u32)> {
         crate::codegen::source_location(&self.an.compiler, node)
+    }
+
+    /// A fresh nil-initialized value slot.
+    pub fn new_value_slot(&mut self) -> ir::StackSlot {
+        let ss = self.b.create_sized_stack_slot(StackSlotData::new(
+            StackSlotKind::ExplicitSlot,
+            VALUE_SIZE,
+            3,
+        ));
+        let dst = self.slot_addr(ss, 0);
+        let z = self.b.ins().iconst(types::I64, 0);
+        for off in [0, 8, 16] {
+            self.b.ins().store(MemFlagsData::trusted(), z, dst, off);
+        }
+        ss
+    }
+
+    /// The `*mut Cell` a captured local's pointer slot holds.
+    pub fn cell_ptr(&mut self, ss: ir::StackSlot) -> ir::Value {
+        let addr = self.slot_addr(ss, 0);
+        let ptr = self.em.ptr;
+        self.b.ins().load(ptr, MemFlagsData::trusted(), addr, 0)
     }
 
     /// Emit the `handling_pop`s a direct jump owes before leaving for a

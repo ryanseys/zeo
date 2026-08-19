@@ -5,7 +5,7 @@
 //! and friends) need the dynamic-fallback arm's real `Proc`, so they ride
 //! in with the blocks milestone (M0-14).
 
-use super::ctx::{Fx, LoopCtl, VALUE_SIZE};
+use super::ctx::{Fx, LoopCtl};
 use super::ownership;
 use crate::hir::{HirNode, NodeId};
 use cranelift_codegen::ir::condcodes::IntCC;
@@ -79,19 +79,11 @@ pub(crate) fn lower_counted(
     // synthetic key so the epilogue/landing releases it, and the visible
     // name maps to it only for the loop's extent.
     let shadow = param.as_ref().map(|name| {
-        let ss = fx.b.create_sized_stack_slot(StackSlotData::new(
-            StackSlotKind::ExplicitSlot,
-            VALUE_SIZE,
-            3,
-        ));
-        let dst = fx.slot_addr(ss, 0);
-        let z = fx.b.ins().iconst(types::I64, 0);
-        for off in [0, 8, 16] {
-            fx.b.ins().store(MemFlagsData::trusted(), z, dst, off);
-        }
+        let ss = fx.new_value_slot();
         let key = format!("{name}#blk{}", fx.locals.len());
-        fx.locals.insert(key, ss);
-        let old = fx.locals.insert(name.clone(), ss);
+        fx.locals.insert(key, super::ctx::Local::Slot(ss));
+        let old = fx.locals.insert(name.clone(), super::ctx::Local::Slot(ss));
+        fx.shadowed.insert(name.clone());
         (name.clone(), ss, old)
     });
 
@@ -164,6 +156,7 @@ pub(crate) fn lower_counted(
     fx.call("zeo_rt_pool_reset", &[mark]);
     // Lexical shadowing ends with the loop.
     if let Some((name, _, old)) = shadow {
+        fx.shadowed.remove(&name);
         match old {
             Some(prev) => {
                 fx.locals.insert(name, prev);

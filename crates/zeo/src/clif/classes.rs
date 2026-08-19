@@ -34,6 +34,8 @@ pub(crate) struct ObjMethodSpec {
     /// IS the method); `None` = an ordinary body + trampoline pair.
     pub accessor: Option<(usize, AccessorKind)>,
     pub body_fn: Option<cranelift_module::FuncId>,
+    pub hir_params: crate::hir::Params,
+    pub has_blk: bool,
 }
 
 /// What `collect_classes` hands back: the class table plus its method and
@@ -170,6 +172,7 @@ pub(crate) fn collect_classes(
                 None => None,
             };
             let arity = p.required.len();
+            let has_blk = scope.needs_block_param();
             let tramp = em
                 .module
                 .declare_function(
@@ -179,7 +182,7 @@ pub(crate) fn collect_classes(
                 )
                 .map_err(|e| format!("declaring {name}#{mname}: {e}"))?;
             let body_fn = if accessor.is_none() {
-                let sig = params::body_sig(em, arity);
+                let sig = params::body_sig(em, arity, has_blk);
                 Some(
                     em.module
                         .declare_function(
@@ -215,6 +218,8 @@ pub(crate) fn collect_classes(
                 tramp,
                 accessor,
                 body_fn,
+                hir_params: p.clone(),
+                has_blk,
             });
         }
     }

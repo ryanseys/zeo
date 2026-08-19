@@ -3,7 +3,7 @@
 //! `<main>`, the emitted C `main`, and the statics (see `statics`).
 
 use super::capi_names::{self, CTy};
-use super::ctx::{Fx, VALUE_SIZE};
+use super::ctx::Fx;
 use super::{names, statics, stmt, verify};
 use crate::analyze::Analyzed;
 use cranelift_codegen::ir::{
@@ -30,8 +30,10 @@ pub fn compile(analyzed: &Analyzed) -> Result<Vec<u8>, String> {
             owner_name: "Object",
             name: &def.name,
             params: &def.params,
+            hir_params: &def.hir_params,
             body: &def.body,
             node: def.node,
+            has_blk: def.has_blk,
         };
         define_method_body(&mut em, analyzed, &spec)?;
     }
@@ -43,17 +45,19 @@ pub fn compile(analyzed: &Analyzed) -> Result<Vec<u8>, String> {
                 owner_name: &m.owner_name,
                 name: &m.name,
                 params: &m.params,
+                hir_params: &m.hir_params,
                 body: &m.body,
                 node: m.node,
+                has_blk: m.has_blk,
             };
             define_method_body(&mut em, analyzed, &spec)?;
         }
     }
     for def in &defs {
         let decl = &em.methods[&def.name];
-        let (tramp, body, arity) = (decl.tramp, decl.body, decl.arity);
+        let (tramp, body, arity, has_blk) = (decl.tramp, decl.body, decl.arity, decl.has_blk);
         let idx = em.next_fn_index();
-        super::params::define_trampoline(&mut em, tramp, body, arity, idx)?;
+        super::params::define_trampoline(&mut em, tramp, body, arity, has_blk, idx)?;
     }
     for m in &obj_methods {
         let idx = em.next_fn_index();
@@ -62,7 +66,7 @@ pub fn compile(analyzed: &Analyzed) -> Result<Vec<u8>, String> {
                 super::params::define_accessor(&mut em, m.tramp, slot, kind, idx)?;
             }
             (None, Some(body)) => {
-                super::params::define_trampoline(&mut em, m.tramp, body, m.arity, idx)?;
+                super::params::define_trampoline(&mut em, m.tramp, body, m.arity, m.has_blk, idx)?;
             }
             (Some(_), Some(_)) | (None, None) => {
                 unreachable!("collect_classes declares exactly one of accessor/body")
@@ -146,6 +150,7 @@ pub(crate) struct MethodDecl {
     pub body: FuncId,
     pub tramp: FuncId,
     pub arity: usize,
+    pub has_blk: bool,
 }
 
 impl Emitter {
@@ -290,9 +295,11 @@ impl Emitter {
 pub(crate) struct DefSpec {
     pub name: String,
     params: Vec<String>,
+    hir_params: crate::hir::Params,
     body: Vec<crate::hir::NodeId>,
     visibility: crate::hir::Visibility,
     node: Option<crate::hir::NodeId>,
+    has_blk: bool,
 }
 
 /// Collect and DECLARE every top-level `def` the slice can compile
@@ -341,7 +348,8 @@ fn collect_methods(em: &mut Emitter, analyzed: &Analyzed) -> Result<Vec<DefSpec>
             return refuse("a def with non-required parameters");
         }
         let arity = params.required.len();
-        let body_sig = super::params::body_sig(em, arity);
+        let has_blk = scope.needs_block_param();
+        let body_sig = super::params::body_sig(em, arity, has_blk);
         let body_id = em
             .module
             .declare_function(
@@ -365,14 +373,17 @@ fn collect_methods(em: &mut Emitter, analyzed: &Analyzed) -> Result<Vec<DefSpec>
                 body: body_id,
                 tramp: tramp_id,
                 arity,
+                has_blk,
             },
         );
         out.push(DefSpec {
             name,
             params: params.required.clone(),
+            hir_params: params.clone(),
             body: scope.body.clone(),
             visibility: scope.visibility,
             node: scope.def_node,
+            has_blk,
         });
     }
     Ok(out)
@@ -385,8 +396,10 @@ pub(crate) struct BodyFnSpec<'a> {
     pub owner_name: &'a str,
     pub name: &'a str,
     pub params: &'a [String],
+    pub hir_params: &'a crate::hir::Params,
     pub body: &'a [crate::hir::NodeId],
     pub node: Option<crate::hir::NodeId>,
+    pub has_blk: bool,
 }
 
 /// One compiled method body: `(self, p1..pn, out) -> i32`. Params are
@@ -398,7 +411,7 @@ fn define_method_body(
     analyzed: &Analyzed,
     def: &BodyFnSpec<'_>,
 ) -> Result<(), String> {
-    let sig = super::params::body_sig(em, def.params.len());
+    let sig = super::params::body_sig(em, def.params.len(), def.has_blk);
     let idx = em.next_fn_index();
     let label = format!("{}#{}", def.owner_name, def.name);
     let (line, end_line) = match def.node {
@@ -428,8 +441,11 @@ fn define_method_body(
     let entry_params: Vec<ir::Value> = fx.b.block_params(entry).to_vec();
     let self_ptr = entry_params[0];
     let out_ptr = *entry_params.last().expect("out is the last param");
+    let blk_ptr = def.has_blk.then(|| entry_params[entry_params.len() - 2]);
     fx.self_ptr = Some(self_ptr);
     fx.method_class = Some(def.owner);
+    fx.frame_label = label.clone();
+    fx.blk_ptr = blk_ptr;
     let ret_ok = fx.b.create_block();
     fx.ret = Some((out_ptr, ret_ok));
 
@@ -446,23 +462,35 @@ fn define_method_body(
     fx.b.ins().return_(&[one]);
     fx.b.switch_to_block(cont);
 
-    // Params: owned copies in slots (retained when heap).
+    // What escaping blocks capture becomes a cell instead of a slot.
+    let captured = crate::analyze::captures::collect_escaping_captures(
+        &analyzed.compiler,
+        def.body,
+        def.hir_params,
+        crate::analyze::class_query::SelfClass::new(Some(def.owner), None),
+    )
+    .locals;
+    // Params: owned copies in slots (retained when heap); a captured param
+    // escapes straight into its cell.
     for (i, name) in def.params.iter().enumerate() {
-        let ss = fx.b.create_sized_stack_slot(StackSlotData::new(
-            StackSlotKind::ExplicitSlot,
-            VALUE_SIZE,
-            3,
-        ));
-        let dst = fx.slot_addr(ss, 0);
         let src = super::operand::Operand::Ptr {
             addr: entry_params[i + 1],
             owned: false,
             tag: super::operand::TagInfo::Unknown,
         };
-        super::ownership::write_move_into(&mut fx, &src, dst);
-        fx.locals.insert(name.clone(), ss);
+        if captured.contains(name) {
+            let seed = fx.temp_slot();
+            let seed_addr = fx.slot_addr(seed, 0);
+            super::ownership::write_move_into(&mut fx, &src, seed_addr);
+            init_cell_local(&mut fx, name.clone(), Some(seed_addr));
+        } else {
+            let ss = fx.new_value_slot();
+            let dst = fx.slot_addr(ss, 0);
+            super::ownership::write_move_into(&mut fx, &src, dst);
+            fx.locals.insert(name.clone(), super::ctx::Local::Slot(ss));
+        }
     }
-    // The body's other locals, nil-initialized.
+    // The body's other locals, nil-initialized (cells when captured).
     let mut locals = crate::analyze::local_storage::Locals::default();
     for &stmt in def.body {
         crate::analyze::local_storage::collect_locals(&analyzed.compiler, stmt, &mut locals);
@@ -471,17 +499,12 @@ fn define_method_body(
         if fx.locals.contains_key(&name) {
             continue;
         }
-        let ss = fx.b.create_sized_stack_slot(StackSlotData::new(
-            StackSlotKind::ExplicitSlot,
-            VALUE_SIZE,
-            3,
-        ));
-        let dst = fx.slot_addr(ss, 0);
-        let z = fx.b.ins().iconst(types::I64, 0);
-        for off in [0, 8, 16] {
-            fx.b.ins().store(MemFlagsData::trusted(), z, dst, off);
+        if captured.contains(&name) {
+            init_cell_local(&mut fx, name, None);
+        } else {
+            let ss = fx.new_value_slot();
+            fx.locals.insert(name, super::ctx::Local::Slot(ss));
         }
-        fx.locals.insert(name, ss);
     }
 
     if let Some(file) = &file {
@@ -508,10 +531,20 @@ fn define_method_body(
 
     let has_frame = file.is_some();
     let epilogue = |fx: &mut Fx, status: i64| {
-        let local_slots: Vec<_> = fx.locals.values().copied().collect();
-        for ss in local_slots {
-            let addr = fx.slot_addr(ss, 0);
-            fx.call("zeo_rt_release", &[addr]);
+        release_locals(fx);
+        if let Some(blk) = blk_ptr {
+            // The body owns the moved-in block; a null slot releases as a
+            // no-op inside the runtime? No -- guard it.
+            let got =
+                fx.b.ins()
+                    .icmp_imm_u(cranelift_codegen::ir::condcodes::IntCC::NotEqual, blk, 0);
+            let rel = fx.b.create_block();
+            let cont = fx.b.create_block();
+            fx.b.ins().brif(got, rel, &[], cont, &[]);
+            fx.b.switch_to_block(rel);
+            fx.call("zeo_rt_release", &[blk]);
+            fx.b.ins().jump(cont, &[]);
+            fx.b.switch_to_block(cont);
         }
         if has_frame {
             fx.call("zeo_rt_frame_pop", &[]);
@@ -576,19 +609,23 @@ fn define_toplevel(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, Stri
         fx.b.block_params(entry)[0]
     };
 
-    // Hoisted locals: one owned 24-byte slot each, zeroed (Nil).
+    fx.frame_label = "<main>".to_string();
+    // Hoisted locals: an owned slot each, or a cell when an escaping block
+    // captures the name.
+    let captured = crate::analyze::captures::collect_escaping_captures(
+        &analyzed.compiler,
+        &analyzed.main_statements,
+        &crate::hir::Params::default(),
+        crate::analyze::class_query::SelfClass::new(None, None),
+    )
+    .locals;
     for name in locals.names().to_vec() {
-        let ss = fx.b.create_sized_stack_slot(StackSlotData::new(
-            StackSlotKind::ExplicitSlot,
-            VALUE_SIZE,
-            3,
-        ));
-        let dst = fx.slot_addr(ss, 0);
-        let z = fx.b.ins().iconst(types::I64, 0);
-        for off in [0, 8, 16] {
-            fx.b.ins().store(MemFlagsData::trusted(), z, dst, off);
+        if captured.contains(&name) {
+            init_cell_local(&mut fx, name, None);
+        } else {
+            let ss = fx.new_value_slot();
+            fx.locals.insert(name, super::ctx::Local::Slot(ss));
         }
-        fx.locals.insert(name, ss);
     }
 
     if let Some(file) = &frame {
@@ -642,11 +679,7 @@ fn define_toplevel(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, Stri
     // Normal exit: release the locals, pop the frame (drains the pool),
     // hand back Nil.
     let epilogue = |fx: &mut Fx, status: i64| {
-        let local_slots: Vec<_> = fx.locals.values().copied().collect();
-        for ss in local_slots {
-            let addr = fx.slot_addr(ss, 0);
-            fx.call("zeo_rt_release", &[addr]);
-        }
+        release_locals(fx);
         if frame.is_some() {
             fx.call("zeo_rt_frame_pop", &[]);
         }
@@ -713,4 +746,41 @@ fn define_main(em: &mut Emitter, desc: DataId) -> Result<FuncId, String> {
         .define_function(func_id, &mut ctx)
         .map_err(|e| format!("compiling main: {e}"))?;
     Ok(func_id)
+}
+
+/// A fresh CAPTURED local: an owned cell (seeded from `seed`'s moved
+/// value, nil when `None`) whose pointer lives in an 8-byte slot.
+fn init_cell_local(fx: &mut Fx, name: String, seed: Option<ir::Value>) {
+    let init = match seed {
+        Some(p) => p,
+        None => fx.b.ins().iconst(fx.em.ptr, 0),
+    };
+    let cellp = fx
+        .call("zeo_rt_cell_new", &[init])
+        .expect("cell_new returns the cell");
+    let ss =
+        fx.b.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
+    let dst = fx.slot_addr(ss, 0);
+    fx.b.ins().store(MemFlagsData::trusted(), cellp, dst, 0);
+    fx.locals
+        .insert(name, super::ctx::Local::Cell { ss, owned: true });
+}
+
+/// Release every local: slots drop their value, owned cells drop their
+/// reference (the proc's copies keep the cell alive).
+fn release_locals(fx: &mut Fx) {
+    let locals: Vec<super::ctx::Local> = fx.locals.values().copied().collect();
+    for l in locals {
+        match l {
+            super::ctx::Local::Slot(ss) => {
+                let addr = fx.slot_addr(ss, 0);
+                fx.call("zeo_rt_release", &[addr]);
+            }
+            super::ctx::Local::Cell { ss, owned: true } => {
+                let ptr = fx.cell_ptr(ss);
+                fx.call("zeo_rt_cell_release", &[ptr]);
+            }
+            super::ctx::Local::Cell { owned: false, .. } => {}
+        }
+    }
 }

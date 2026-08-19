@@ -22,10 +22,13 @@ pub(crate) fn value_fn_sig(em: &Emitter) -> ir::Signature {
     sig
 }
 
-/// The direct-body C signature: `(self, p1..pn, out) -> i32`.
-pub(crate) fn body_sig(em: &Emitter, arity: usize) -> ir::Signature {
+/// The direct-body C signature: `(self, p1..pn, [blk,] out) -> i32`. The
+/// blk slot exists only when the scope uses a block (`yield`/
+/// `block_given?`); it is MOVED in (null = none) and the body releases it.
+pub(crate) fn body_sig(em: &Emitter, arity: usize, has_blk: bool) -> ir::Signature {
     let mut sig = em.module.make_signature();
-    for _ in 0..(arity + 2) {
+    let n = arity + 2 + usize::from(has_blk);
+    for _ in 0..n {
         sig.params.push(AbiParam::new(em.ptr));
     }
     sig.returns.push(AbiParam::new(types::I32));
@@ -38,6 +41,7 @@ pub(crate) fn define_trampoline(
     tramp: FuncId,
     body: FuncId,
     arity: usize,
+    has_blk: bool,
     fn_index: u32,
 ) -> Result<(), String> {
     let sig = value_fn_sig(em);
@@ -60,15 +64,20 @@ pub(crate) fn define_trampoline(
     let blk = b.block_params(entry)[3];
     let out = b.block_params(entry)[4];
 
-    // The block was MOVED in; a method that declares none consumes it by
-    // releasing (Ruby: an unused block is simply ignored).
-    let has_blk = b.ins().icmp_imm_u(IntCC::NotEqual, blk, 0);
-    let do_release = b.create_block();
+    // The block was MOVED in. A body with a blk slot receives it whole;
+    // one without consumes it by releasing (Ruby: an unused block is
+    // simply ignored).
     let arity_check = b.create_block();
-    b.ins().brif(has_blk, do_release, &[], arity_check, &[]);
-    b.switch_to_block(do_release);
-    b.ins().call(release, &[blk]);
-    b.ins().jump(arity_check, &[]);
+    if has_blk {
+        b.ins().jump(arity_check, &[]);
+    } else {
+        let got_blk = b.ins().icmp_imm_u(IntCC::NotEqual, blk, 0);
+        let do_release = b.create_block();
+        b.ins().brif(got_blk, do_release, &[], arity_check, &[]);
+        b.switch_to_block(do_release);
+        b.ins().call(release, &[blk]);
+        b.ins().jump(arity_check, &[]);
+    }
 
     b.switch_to_block(arity_check);
     let ok = b.create_block();
@@ -83,7 +92,7 @@ pub(crate) fn define_trampoline(
     b.ins().return_(&[status]);
 
     b.switch_to_block(ok);
-    let mut args = Vec::with_capacity(arity + 2);
+    let mut args = Vec::with_capacity(arity + 3);
     args.push(recv);
     for i in 0..arity {
         let p = if i == 0 {
@@ -93,6 +102,9 @@ pub(crate) fn define_trampoline(
                 .iadd_imm_u(argv, i64::from(i as u32 * super::ctx::VALUE_SIZE))
         };
         args.push(p);
+    }
+    if has_blk {
+        args.push(blk);
     }
     args.push(out);
     let call = b.ins().call(body_ref, &args);

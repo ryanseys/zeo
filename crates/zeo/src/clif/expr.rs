@@ -53,18 +53,14 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             })
         }
         HirNode::LocalRead(name) => {
-            let Some(&ss) = fx.locals.get(name) else {
+            let name = name.clone();
+            match ownership::read_local(fx, &name) {
+                Some(op) => Ok(op),
                 // A read before any write is nil in Ruby only via `defined?`
                 // shapes the slice does not lower; a plain read of an
                 // unhoisted name cannot reach here.
-                return fx.unsupported(id, "a read of an unknown local");
-            };
-            let addr = fx.slot_addr(ss, 0);
-            Ok(Operand::Ptr {
-                addr,
-                owned: false,
-                tag: TagInfo::Unknown,
-            })
+                None => fx.unsupported(id, "a read of an unknown local"),
+            }
         }
         HirNode::If {
             cond,
@@ -79,16 +75,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
         HirNode::LocalWrite(name, _) => {
             let name = name.clone();
             super::stmt::lower_stmt(fx, id)?;
-            let &ss = fx
-                .locals
-                .get(&name)
-                .unwrap_or_else(|| panic!("local `{name}` must be hoisted"));
-            let addr = fx.slot_addr(ss, 0);
-            Ok(Operand::Ptr {
-                addr,
-                owned: false,
-                tag: TagInfo::Unknown,
-            })
+            Ok(ownership::read_local(fx, &name).expect("just assigned"))
         }
         HirNode::ClassRef(name) => {
             let name = name.clone();
@@ -124,6 +111,36 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 tag: TagInfo::Unknown,
             })
         }
+        HirNode::Yield(args) => {
+            let args = args.clone();
+            let argv_ptr = super::call::build_argv(fx, id, &args)?;
+            let blk = match fx.blk_ptr {
+                Some(b) => b,
+                None => fx.b.ins().iconst(fx.em.ptr, 0),
+            };
+            let argc_v = fx.b.ins().iconst(fx.em.ptr, args.len() as i64);
+            let ss = fx.temp_slot();
+            let out = fx.slot_addr(ss, 0);
+            let status = fx
+                .call("zeo_rt_yield", &[blk, argv_ptr, argc_v, out])
+                .expect("yield returns a status");
+            fx.fallible(status);
+            fx.owned_created += 1;
+            Ok(Operand::Slot {
+                ss,
+                owned: true,
+                tag: TagInfo::Unknown,
+            })
+        }
+        HirNode::BlockGiven => match fx.blk_ptr {
+            Some(b) => {
+                let given =
+                    fx.b.ins()
+                        .icmp_imm_u(cranelift_codegen::ir::condcodes::IntCC::NotEqual, b, 0);
+                Ok(Operand::Bool(given))
+            }
+            None => Ok(Operand::Bool(fx.b.ins().iconst(types::I8, 0))),
+        },
         HirNode::SelfRef => {
             let addr = fx.self_ptr.expect("self_ptr is set in the prologue");
             Ok(Operand::Ptr {
@@ -174,23 +191,30 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             block: Some(blk),
             block_arg: None,
             safe: false,
-        } if args.is_empty() => {
-            let (receiver, name, kwargs_empty, blk) =
-                (*receiver, name.clone(), kwargs.is_empty(), *blk);
-            match super::iter::counted_of(fx, receiver, &name, kwargs_empty) {
-                Some(counted) => {
-                    let ss = fx.temp_slot();
-                    let dst = fx.slot_addr(ss, 0);
-                    super::iter::lower_counted(fx, id, &counted, blk, Some(dst))?;
-                    fx.owned_created += 1;
-                    Ok(Operand::Slot {
-                        ss,
-                        owned: true,
-                        tag: TagInfo::Unknown,
-                    })
-                }
-                None => fx.unsupported(id, "a block argument"),
+        } if kwargs.is_empty() => {
+            let (receiver, name, args, blk) = (*receiver, name.clone(), args.clone(), *blk);
+            if args.is_empty()
+                && let Some(counted) = super::iter::counted_of(fx, receiver, &name, true)
+            {
+                let ss = fx.temp_slot();
+                let dst = fx.slot_addr(ss, 0);
+                super::iter::lower_counted(fx, id, &counted, blk, Some(dst))?;
+                fx.owned_created += 1;
+                return Ok(Operand::Slot {
+                    ss,
+                    owned: true,
+                    tag: TagInfo::Unknown,
+                });
             }
+            // A receiverless block call naming a compiled method goes
+            // direct; everything else is a block-passing dynamic send.
+            if receiver.is_none()
+                && let Some(decl) = fx.em.methods.get(&name)
+                && decl.arity == args.len()
+            {
+                return super::call::direct_call(fx, id, &name, &args, Some(blk));
+            }
+            super::blocks::block_send(fx, id, receiver, &name, &args, blk)
         }
         HirNode::Call {
             receiver,
@@ -218,7 +242,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 Some(recv) => super::call::dynamic_send(fx, id, recv, &name, &args),
                 None => match fx.em.methods.get(&name) {
                     Some(decl) if decl.arity == args.len() => {
-                        super::call::direct_call(fx, id, &name, &args)
+                        super::call::direct_call(fx, id, &name, &args, None)
                     }
                     // Unknown names and arity mismatches go through the
                     // implicit-self dynamic send (the runtime raises the

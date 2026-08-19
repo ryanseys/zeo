@@ -34,6 +34,26 @@ use CTy::{I32, Ptr, U8, U32, Usize};
 /// internal compiler error, never a user-visible path.
 pub const CAPI: &[CapiSig] = &[
     CapiSig {
+        name: "zeo_rt_cell_load",
+        params: &[Ptr, Ptr],
+        ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_cell_new",
+        params: &[Ptr],
+        ret: Some(Ptr),
+    },
+    CapiSig {
+        name: "zeo_rt_cell_release",
+        params: &[Ptr],
+        ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_cell_store",
+        params: &[Ptr, Ptr],
+        ret: None,
+    },
+    CapiSig {
         name: "zeo_rt_check_ints",
         params: &[],
         ret: Some(I32),
@@ -121,6 +141,11 @@ pub const CAPI: &[CapiSig] = &[
     CapiSig {
         name: "zeo_rt_pool_reset",
         params: &[Usize],
+        ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_proc_new",
+        params: &[Ptr, Ptr, Usize, Ptr, Ptr, Ptr, I32, U32, Ptr],
         ret: None,
     },
     CapiSig {
@@ -216,6 +241,11 @@ pub const CAPI: &[CapiSig] = &[
     CapiSig {
         name: "zeo_rt_wrong_arity",
         params: &[Usize, Usize, Usize],
+        ret: Some(I32),
+    },
+    CapiSig {
+        name: "zeo_rt_yield",
+        params: &[Ptr, Ptr, Usize, Ptr],
         ret: Some(I32),
     },
 ];

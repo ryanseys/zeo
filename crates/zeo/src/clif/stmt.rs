@@ -76,13 +76,7 @@ fn lower_tail_expr(fx: &mut Fx, tail: NodeId) -> Result<super::operand::Operand,
         HirNode::LocalWrite(name, _) => {
             let name = name.clone();
             lower_stmt(fx, tail)?;
-            let &ss = fx.locals.get(&name).expect("just assigned");
-            let addr = fx.slot_addr(ss, 0);
-            Ok(Operand::Ptr {
-                addr,
-                owned: false,
-                tag: TagInfo::Unknown,
-            })
+            Ok(ownership::read_local(fx, &name).expect("just assigned"))
         }
         HirNode::IvarWrite(name, value) => {
             let (name, value) = (name.clone(), *value);
@@ -178,6 +172,8 @@ fn lower_tail_expr(fx: &mut Fx, tail: NodeId) -> Result<super::operand::Operand,
         | HirNode::ClassRef(..)
         | HirNode::New { .. }
         | HirNode::SelfRef
+        | HirNode::Yield(..)
+        | HirNode::BlockGiven
         | HirNode::Call { .. } => lower_expr(fx, tail),
         other => {
             let what = format!("this tail expression ({})", statement_kind(other));
@@ -197,12 +193,7 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
             let name = name.clone();
             let value = *value;
             let op = lower_expr(fx, value)?;
-            let &ss = fx
-                .locals
-                .get(&name)
-                .unwrap_or_else(|| panic!("local `{name}` must be hoisted"));
-            let dst = fx.slot_addr(ss, 0);
-            ownership::write_assign(fx, &op, dst);
+            ownership::write_local(fx, &name, &op);
             Ok(())
         }
         HirNode::Call {
@@ -254,6 +245,24 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
         HirNode::Break(value) => {
             let value = *value;
             if fx.loops.is_empty() {
+                // In an escaping block, `break` arms the Break signal the
+                // send-site's catch_break receives.
+                if fx.block_next.is_some() {
+                    let op = match value {
+                        Some(v) => lower_expr(fx, v)?,
+                        None => super::operand::Operand::Nil,
+                    };
+                    let ptr = ownership::move_ptr(fx, &op);
+                    let kind =
+                        fx.b.ins()
+                            .iconst(types::I8, i64::from(zeo_abi::abi::SignalKind::Break as u8));
+                    fx.pop_handling_to(0);
+                    fx.call("zeo_rt_signal_set", &[kind, ptr]);
+                    let land = fx.land;
+                    fx.b.ins().jump(land, &[]);
+                    fx.continue_unreachable();
+                    return Ok(());
+                }
                 return fx.unsupported(stmt, "`break` outside a loop");
             }
             let result = fx.loops.last().expect("checked above").result;
@@ -284,6 +293,24 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
         }
         HirNode::Next(value) => {
             let value = *value;
+            if fx.loops.is_empty()
+                && let Some((out, ret_ok)) = fx.block_next
+            {
+                // In an escaping block, `next v` IS the block's return.
+                match value {
+                    Some(v) => {
+                        let op = lower_expr(fx, v)?;
+                        ownership::write_move_into(fx, &op, out);
+                    }
+                    None => {
+                        ownership::write_move_into(fx, &super::operand::Operand::Nil, out);
+                    }
+                }
+                fx.pop_handling_to(0);
+                fx.b.ins().jump(ret_ok, &[]);
+                fx.continue_unreachable();
+                return Ok(());
+            }
             if let Some(v) = value {
                 let op = lower_expr(fx, v)?;
                 ownership::discard(fx, op);
@@ -396,13 +423,23 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
             block: Some(blk),
             block_arg: None,
             safe: false,
-        } if args.is_empty() => {
-            let (receiver, name, kwargs_empty, blk) =
-                (*receiver, name.clone(), kwargs.is_empty(), *blk);
-            match super::iter::counted_of(fx, receiver, &name, kwargs_empty) {
-                Some(counted) => super::iter::lower_counted(fx, stmt, &counted, blk, None),
-                None => fx.unsupported(stmt, "a block argument"),
+        } if kwargs.is_empty() => {
+            let (receiver, name, args, blk) = (*receiver, name.clone(), args.clone(), *blk);
+            if args.is_empty()
+                && let Some(counted) = super::iter::counted_of(fx, receiver, &name, true)
+            {
+                return super::iter::lower_counted(fx, stmt, &counted, blk, None);
             }
+            let op = if receiver.is_none()
+                && let Some(decl) = fx.em.methods.get(&name)
+                && decl.arity == args.len()
+            {
+                super::call::direct_call(fx, stmt, &name, &args, Some(blk))?
+            } else {
+                super::blocks::block_send(fx, stmt, receiver, &name, &args, blk)?
+            };
+            ownership::discard(fx, op);
+            Ok(())
         }
         // Anything else in statement position: try the expression lowering
         // and discard the value (it refuses on its own for shapes outside
@@ -419,6 +456,8 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
         | HirNode::ClassRef(..)
         | HirNode::New { .. }
         | HirNode::SelfRef
+        | HirNode::Yield(..)
+        | HirNode::BlockGiven
         | HirNode::Call { .. } => {
             let op = lower_expr(fx, stmt)?;
             ownership::discard(fx, op);

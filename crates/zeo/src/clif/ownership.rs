@@ -3,7 +3,7 @@
 //! move or retain, and the `verify` ledger counts every owned emission
 //! site against its one consumption site.
 
-use super::ctx::Fx;
+use super::ctx::{Fx, Local};
 use super::operand::{Operand, TagInfo};
 use cranelift_codegen::ir::{self, InstBuilder, MemFlagsData, types};
 use zeo_abi::abi::{FIRST_HEAP_TAG, PAYLOAD_OFFSET, ValueTag};
@@ -195,6 +195,54 @@ pub(crate) fn move_ptr(fx: &mut Fx, op: &Operand) -> ir::Value {
             dst
         }
         Operand::Nil | Operand::Int(_) | Operand::Float(_) | Operand::Bool(_) => borrow_ptr(fx, op),
+    }
+}
+
+/// Read local `name`: a slot local is a borrow of its storage; a cell
+/// local loads a fresh owned clone.
+pub(crate) fn read_local(fx: &mut Fx, name: &str) -> Option<Operand> {
+    let l = *fx.locals.get(name)?;
+    Some(match l {
+        Local::Slot(ss) => {
+            let addr = fx.slot_addr(ss, 0);
+            Operand::Ptr {
+                addr,
+                owned: false,
+                tag: TagInfo::Unknown,
+            }
+        }
+        Local::Cell { ss, .. } => {
+            let ptr = fx.cell_ptr(ss);
+            let t = fx.temp_slot();
+            let out = fx.slot_addr(t, 0);
+            fx.call("zeo_rt_cell_load", &[ptr, out]);
+            fx.owned_created += 1;
+            Operand::Slot {
+                ss: t,
+                owned: true,
+                tag: TagInfo::Unknown,
+            }
+        }
+    })
+}
+
+/// Assign local `name` = `op` (release-old/move-in for slots; a cell
+/// stores the moved value under its lock).
+pub(crate) fn write_local(fx: &mut Fx, name: &str, op: &Operand) {
+    let l = *fx
+        .locals
+        .get(name)
+        .unwrap_or_else(|| panic!("local `{name}` must be hoisted"));
+    match l {
+        Local::Slot(ss) => {
+            let dst = fx.slot_addr(ss, 0);
+            write_assign(fx, op, dst);
+        }
+        Local::Cell { ss, .. } => {
+            let ptr = fx.cell_ptr(ss);
+            let mp = move_ptr(fx, op);
+            fx.call("zeo_rt_cell_store", &[ptr, mp]);
+        }
     }
 }
 

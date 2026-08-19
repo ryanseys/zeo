@@ -40,16 +40,34 @@ pub(crate) fn direct_call(
     site: NodeId,
     name: &str,
     args: &[ArrayElem],
+    block: Option<NodeId>,
 ) -> Result<Operand, String> {
+    let decl_has_blk = fx.em.methods[name].has_blk;
+    // A literal block on a method that never uses one is never invoked --
+    // nothing to build (Ruby's own rule).
+    let blk_ptr = match (block, decl_has_blk) {
+        (Some(blk_node), true) => {
+            let (proc_ss, _) = super::blocks::build_proc(fx, site, blk_node)?;
+            // The callee consumes the moved-in proc.
+            fx.owned_consumed += 1;
+            Some(fx.slot_addr(proc_ss, 0))
+        }
+        (Some(_), false) => None,
+        (None, true) => Some(fx.b.ins().iconst(fx.em.ptr, 0)),
+        (None, false) => None,
+    };
     let ptrs = arg_ptrs(fx, site, args)?;
     let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
     let func_id = fx.em.methods[name].body;
     let fref = fx.em.module.declare_func_in_func(func_id, fx.b.func);
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
-    let mut call_args = Vec::with_capacity(ptrs.len() + 2);
+    let mut call_args = Vec::with_capacity(ptrs.len() + 3);
     call_args.push(self_ptr);
     call_args.extend(ptrs);
+    if let Some(b) = blk_ptr {
+        call_args.push(b);
+    }
     call_args.push(out);
     let inst = fx.b.ins().call(fref, &call_args);
     let status = fx.b.func.dfg.inst_results(inst)[0];
@@ -95,7 +113,7 @@ pub(crate) fn implicit_send(
 
 /// A contiguous argv array of borrowed copies (owned temps hand their
 /// value to the pool first). Null when empty.
-fn build_argv(
+pub(crate) fn build_argv(
     fx: &mut Fx,
     site: NodeId,
     args: &[ArrayElem],
