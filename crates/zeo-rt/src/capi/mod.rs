@@ -23,6 +23,7 @@
     reason = "one boundary contract for the whole surface, documented on the module -- per-function repetition of the same pointer terms would drown the real signatures"
 )]
 
+pub mod bind;
 pub mod dispatch;
 pub mod frames;
 pub mod kernel;

@@ -243,6 +243,49 @@ pub struct ParamC {
     pub name: Str,
 }
 
+/// `ParamDescC.rest`/`.kwrest` kinds: no `*` at all, an anonymous `*`
+/// (collects and DISCARDS -- no signature slot), or `*name` (one slot
+/// holding the runtime-built Array/Hash).
+pub const PARAM_STAR_NONE: u8 = 0;
+pub const PARAM_STAR_ANON: u8 = 1;
+pub const PARAM_STAR_NAMED: u8 = 2;
+
+/// One keyword parameter of a [`ParamDescC`], in DECLARED order (required
+/// and optional interleave exactly as written -- the slot order).
+#[repr(C)]
+pub struct KwParamC {
+    pub name: Str,
+    /// 1 = required (`k:`); 0 = optional (`k: default` -- the default runs
+    /// in the body when the slot is absent).
+    pub required: u8,
+}
+
+/// A compiled method's parameter shape: what `zeo_rt_bind_params` routes a
+/// dynamic call's argv into (the trampoline path). Signature slots, in
+/// order: required, optional, rest (when NAMED), post, keywords (declared
+/// order), kwrest (when NAMED) -- the same order the direct entry's
+/// parameters take. `name` feeds the binder's error text; `file`/`label`/
+/// `line`/`end_line` are the CALLEE frame its raises run under (CRuby
+/// attributes argument errors to the def line). All `Str`s are `.rodata`.
+#[repr(C)]
+pub struct ParamDescC {
+    pub nreq: u32,
+    pub nopt: u32,
+    pub npost: u32,
+    pub rest: u8,
+    pub kwrest: u8,
+    /// `**nil` -- refuses keywords BEFORE the arity check.
+    pub no_keywords: u8,
+    pub _pad: u8,
+    pub kws: *const KwParamC,
+    pub n_kws: usize,
+    pub name: Str,
+    pub file: Str,
+    pub label: Str,
+    pub line: u32,
+    pub end_line: u32,
+}
+
 /// One method's reflection facts -- the `MetaRow` twin. `file.len == 0` =
 /// no source location; `aliased_from.len == 0` = not an alias.
 #[repr(C)]

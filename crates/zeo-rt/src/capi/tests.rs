@@ -904,3 +904,229 @@ fn zeo_rt_main_reports_an_uncaught_raise_as_exit_1() {
     let code = unsafe { super::lifecycle::zeo_rt_main(1, argv.as_ptr(), &desc, std::ptr::null()) };
     assert_eq!(code, 1);
 }
+
+// -- M1-1: zeo_rt_bind_params ------------------------------------------------
+
+fn bind_desc(nreq: u32, nopt: u32, npost: u32, rest: u8, kwrest: u8) -> abi::ParamDescC {
+    abi::ParamDescC {
+        nreq,
+        nopt,
+        npost,
+        rest,
+        kwrest,
+        no_keywords: 0,
+        _pad: 0,
+        kws: std::ptr::null(),
+        n_kws: 0,
+        name: abi_str("m"),
+        file: abi_str("t.rb"),
+        label: abi_str("Object#m"),
+        line: 1,
+        end_line: 2,
+    }
+}
+
+/// Run the binder over `args`; hand back (status, slots, present).
+fn bind(desc: &abi::ParamDescC, args: &[RubyValue]) -> (i32, Vec<RubyValue>, u64) {
+    let n_slots = desc.nreq as usize
+        + desc.nopt as usize
+        + usize::from(desc.rest == abi::PARAM_STAR_NAMED)
+        + desc.npost as usize
+        + desc.n_kws
+        + usize::from(desc.kwrest == abi::PARAM_STAR_NAMED);
+    let mut slots: Vec<RubyValue> = Vec::with_capacity(n_slots.max(1));
+    let mut present: u64 = 0;
+    let status = unsafe {
+        slots.set_len(0);
+        let s = super::bind::zeo_rt_bind_params(
+            desc,
+            if args.is_empty() {
+                std::ptr::null()
+            } else {
+                args.as_ptr()
+            },
+            args.len(),
+            slots.as_mut_ptr(),
+            &mut present,
+        );
+        slots.set_len(n_slots);
+        s
+    };
+    (status, slots, present)
+}
+
+fn kw_marked_hash(pairs: &[(&str, i64)]) -> RubyValue {
+    let pairs: Vec<(RubyValue, RubyValue)> = pairs
+        .iter()
+        .map(|(k, v)| {
+            (
+                RubyValue::Symbol(crate::Symbol::intern(k)),
+                RubyValue::Int(*v),
+            )
+        })
+        .collect();
+    let h = crate::value::collections::hash_new(pairs);
+    crate::value::collections::hash_mark_kwargs(&h);
+    RubyValue::Hash(h)
+}
+
+#[test]
+fn bind_routes_required_optional_rest_and_post() {
+    let desc = bind_desc(1, 1, 1, abi::PARAM_STAR_NAMED, abi::PARAM_STAR_NONE);
+    // def m(a, b = ?, *r, c) called with (1, 2, 3, 4, 5)
+    let args: Vec<RubyValue> = (1..=5).map(RubyValue::Int).collect();
+    let (status, slots, present) = bind(&desc, &args);
+    assert_eq!(status, abi::STATUS_OK);
+    assert_eq!(present, 0b1111);
+    assert!(matches!(slots[0], RubyValue::Int(1)));
+    assert!(matches!(slots[1], RubyValue::Int(2)));
+    let RubyValue::Array(r) = &slots[2] else {
+        panic!("rest slot must be an Array, got {:?}", slots[2])
+    };
+    assert_eq!(r.lock().len(), 2);
+    assert!(matches!(slots[3], RubyValue::Int(5)));
+}
+
+#[test]
+fn bind_leaves_an_absent_optional_nil_and_unpresent() {
+    let desc = bind_desc(1, 2, 0, abi::PARAM_STAR_NONE, abi::PARAM_STAR_NONE);
+    let args = vec![RubyValue::Int(7), RubyValue::Int(8)];
+    let (status, slots, present) = bind(&desc, &args);
+    assert_eq!(status, abi::STATUS_OK);
+    assert_eq!(present, 0b011);
+    assert!(matches!(slots[1], RubyValue::Int(8)));
+    assert!(matches!(slots[2], RubyValue::Nil));
+}
+
+#[test]
+fn bind_wrong_arity_raises_under_the_callee_frame() {
+    boot_registry();
+    let desc = bind_desc(2, 1, 0, abi::PARAM_STAR_NONE, abi::PARAM_STAR_NONE);
+    let (status, slots, present) = bind(&desc, &[RubyValue::Int(1)]);
+    assert_eq!(status, abi::STATUS_SIGNAL);
+    assert_eq!(present, 0);
+    assert!(slots.iter().all(|v| matches!(v, RubyValue::Nil)));
+    let Some(Signal::Raise(exc)) = crate::signal::take_pending() else {
+        panic!("wrong arity must park a Raise")
+    };
+    let msg = exc_message(&exc);
+    assert!(
+        msg.contains("wrong number of arguments (given 1, expected 2..3)"),
+        "{msg}"
+    );
+}
+
+#[test]
+fn bind_declared_keywords_peel_the_marked_hash() {
+    boot_registry();
+    let kws = [
+        abi::KwParamC {
+            name: abi_str("a"),
+            required: 1,
+        },
+        abi::KwParamC {
+            name: abi_str("b"),
+            required: 0,
+        },
+    ];
+    let mut desc = bind_desc(1, 0, 0, abi::PARAM_STAR_NONE, abi::PARAM_STAR_NONE);
+    desc.kws = kws.as_ptr();
+    desc.n_kws = kws.len();
+    let args = vec![RubyValue::Int(9), kw_marked_hash(&[("a", 1)])];
+    let (status, slots, present) = bind(&desc, &args);
+    assert_eq!(status, abi::STATUS_OK);
+    assert_eq!(present, 0b011);
+    assert!(matches!(slots[0], RubyValue::Int(9)));
+    assert!(matches!(slots[1], RubyValue::Int(1)));
+    assert!(matches!(slots[2], RubyValue::Nil)); // b absent -> default runs in the body
+
+    // Unknown keyword refuses.
+    let args = vec![RubyValue::Int(9), kw_marked_hash(&[("a", 1), ("zz", 2)])];
+    let (status, ..) = bind(&desc, &args);
+    assert_eq!(status, abi::STATUS_SIGNAL);
+    let Some(Signal::Raise(exc)) = crate::signal::take_pending() else {
+        panic!("unknown keyword must park a Raise")
+    };
+    assert!(exc_message(&exc).contains("unknown keyword: :zz"));
+}
+
+#[test]
+fn bind_kwrest_collects_the_leftovers() {
+    let kws = [abi::KwParamC {
+        name: abi_str("a"),
+        required: 1,
+    }];
+    let mut desc = bind_desc(0, 0, 0, abi::PARAM_STAR_NONE, abi::PARAM_STAR_NAMED);
+    desc.kws = kws.as_ptr();
+    desc.n_kws = kws.len();
+    let args = vec![kw_marked_hash(&[("a", 1), ("x", 2), ("y", 3)])];
+    let (status, slots, present) = bind(&desc, &args);
+    assert_eq!(status, abi::STATUS_OK);
+    assert_eq!(present, 0b11);
+    assert!(matches!(slots[0], RubyValue::Int(1)));
+    let RubyValue::Hash(h) = &slots[1] else {
+        panic!("kwrest slot must be a Hash")
+    };
+    assert_eq!(h.lock().len(), 2);
+}
+
+#[test]
+fn bind_keywordless_callee_keeps_the_marked_hash_positional() {
+    // The options-hash idiom: def m(opts = {}) ; m(a: 1).
+    let desc = bind_desc(0, 1, 0, abi::PARAM_STAR_NONE, abi::PARAM_STAR_NONE);
+    let args = vec![kw_marked_hash(&[("a", 1)])];
+    let (status, slots, present) = bind(&desc, &args);
+    assert_eq!(status, abi::STATUS_OK);
+    assert_eq!(present, 0b1);
+    assert!(matches!(slots[0], RubyValue::Hash(_)));
+}
+
+#[test]
+fn bind_no_keywords_refuses_a_marked_hash_before_arity() {
+    boot_registry();
+    let mut desc = bind_desc(0, 0, 0, abi::PARAM_STAR_NONE, abi::PARAM_STAR_NONE);
+    desc.no_keywords = 1;
+    // Wrong count AND keywords: the keywords report first (CRuby order).
+    let args = vec![
+        RubyValue::Int(1),
+        RubyValue::Int(2),
+        kw_marked_hash(&[("b", 4)]),
+    ];
+    let (status, ..) = bind(&desc, &args);
+    assert_eq!(status, abi::STATUS_SIGNAL);
+    let Some(Signal::Raise(exc)) = crate::signal::take_pending() else {
+        panic!("**nil must park a Raise")
+    };
+    assert!(exc_message(&exc).contains("no keywords accepted"));
+}
+
+#[test]
+fn bind_anonymous_rest_discards_without_a_slot() {
+    let desc = bind_desc(1, 0, 0, abi::PARAM_STAR_ANON, abi::PARAM_STAR_NONE);
+    let args: Vec<RubyValue> = (1..=4).map(RubyValue::Int).collect();
+    let (status, slots, present) = bind(&desc, &args);
+    assert_eq!(status, abi::STATUS_OK);
+    assert_eq!(present, 0b1);
+    assert_eq!(slots.len(), 1);
+    assert!(matches!(slots[0], RubyValue::Int(1)));
+}
+
+/// The raised exception's `message`, through ordinary dispatch.
+fn exc_message(exc: &RubyValue) -> String {
+    let msg = crate::dispatch::send_value(exc, crate::Symbol::intern("message"), &[], None)
+        .expect("Exception#message answers");
+    match msg {
+        RubyValue::Str(s) => String::from_utf8_lossy(s.lock().bytes()).into_owned(),
+        other => panic!("message should be a Str, got {other:?}"),
+    }
+}
+
+/// The exception paths need the class registry; boot it once, tolerating a
+/// prior boot in the same process.
+fn boot_registry() {
+    static BOOT: std::sync::Once = std::sync::Once::new();
+    BOOT.call_once(|| {
+        let desc = empty_desc(nil_toplevel);
+        unsafe { super::registry::register_program(&desc) };
+    });
+}
