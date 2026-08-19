@@ -218,6 +218,29 @@ pub unsafe extern "C" fn zeo_rt_proc_new(
     unsafe { out.write(v) };
 }
 
+/// `&expr` at a call site: Ruby's `rb_block_arg_to_proc` -- a Proc passes
+/// through, a Symbol becomes its proc, nil means "no block", anything
+/// else duck-types through `to_proc` (`TypeError` otherwise). `out` gets
+/// the Proc, or Nil for "no block".
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_block_arg_to_proc(v: *const RubyValue, out: *mut RubyValue) -> i32 {
+    match crate::rproc::block_arg_to_proc(unsafe { &*v }.clone()) {
+        Ok(Some(p)) => {
+            super::leakcheck::created(&p);
+            unsafe { out.write(p) };
+            zeo_abi::abi::STATUS_OK
+        }
+        Ok(None) => {
+            unsafe { out.write(RubyValue::Nil) };
+            zeo_abi::abi::STATUS_OK
+        }
+        Err(sig) => {
+            crate::signal::set_pending(sig);
+            zeo_abi::abi::STATUS_SIGNAL
+        }
+    }
+}
+
 /// `yield`: invoke the call-site block (`blk` is the method's borrowed
 /// block slot; null raises the no-block `LocalJumpError`).
 #[unsafe(no_mangle)]

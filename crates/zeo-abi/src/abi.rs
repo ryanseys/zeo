@@ -276,7 +276,10 @@ pub struct ParamDescC {
     pub kwrest: u8,
     /// `**nil` -- refuses keywords BEFORE the arity check.
     pub no_keywords: u8,
-    pub _pad: u8,
+    /// The rest came from a TRAILING COMMA (`|a,|`): lenient binding like
+    /// an anonymous `*`, but a lambda's arity stays strict and
+    /// `Proc#arity` ignores it (block shapes only; methods refuse it).
+    pub implicit_rest: u8,
     pub kws: *const KwParamC,
     pub n_kws: usize,
     pub name: Str,

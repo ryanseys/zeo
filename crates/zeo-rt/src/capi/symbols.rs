@@ -37,6 +37,7 @@ capi_symbols!(
     values::zeo_rt_bignum_from_decimal,
     bind::zeo_rt_bind_block_params,
     bind::zeo_rt_bind_params,
+    procs::zeo_rt_block_arg_to_proc,
     dispatch::zeo_rt_callsite_init,
     procs::zeo_rt_cell_load,
     procs::zeo_rt_cell_new,

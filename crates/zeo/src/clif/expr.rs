@@ -155,6 +155,22 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 tag: TagInfo::Known(ValueTag::Hash as u8),
             })
         }
+        HirNode::Lambda {
+            params,
+            body,
+            method_body,
+        } => {
+            if *method_body {
+                return fx.unsupported(id, "a runtime-installed method body");
+            }
+            let (params, body) = (params.as_ref().clone(), body.clone());
+            let (ss, _) = super::blocks::build_lambda(fx, id, &params, &body)?;
+            Ok(Operand::Slot {
+                ss,
+                owned: true,
+                tag: TagInfo::Known(ValueTag::Proc as u8),
+            })
+        }
         HirNode::ClassRef(name) => {
             let name = name.clone();
             const_read(fx, id, &name)
@@ -341,6 +357,19 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                     Some(_) | None => super::call::implicit_send(fx, id, &name, &args),
                 },
             }
+        }
+        // A `&expr` block argument (no literal block, no keywords).
+        HirNode::Call {
+            receiver,
+            name,
+            args,
+            kwargs,
+            block: None,
+            block_arg: Some(ba),
+            safe: false,
+        } if kwargs.is_empty() => {
+            let (receiver, name, args, ba) = (*receiver, name.clone(), args.clone(), *ba);
+            super::blocks::block_arg_send(fx, id, receiver, &name, &args, ba)
         }
         // Call-site keywords (no block channel yet): the kw send entries
         // append the marked hash per the trailing-kwargs convention.

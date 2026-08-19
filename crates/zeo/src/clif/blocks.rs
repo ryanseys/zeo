@@ -17,12 +17,15 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_module::Module;
 use zeo_abi::abi::SignalKind;
 
-/// The names an escaping block at `block` captures from the enclosing
-/// scope, in deterministic order.
-fn captured_names(fx: &Fx, block: NodeId) -> Result<Vec<String>, String> {
-    let HirNode::Block { params, body } = &fx.an.compiler.hir[block] else {
-        return fx.unsupported(block, "a non-literal block");
-    };
+/// The names an escaping closure with `params`/`body` captures from the
+/// enclosing scope, in deterministic order.
+fn captured_names(
+    fx: &Fx,
+    site: NodeId,
+    params: &crate::hir::Params,
+    body: &[NodeId],
+) -> Result<Vec<String>, String> {
+    let block = site;
     let caps = captures::block_captures(
         &fx.an.compiler,
         params,
@@ -57,14 +60,35 @@ pub(crate) fn build_proc(
     site: NodeId,
     block: NodeId,
 ) -> Result<(ir::StackSlot, Vec<String>), String> {
-    let names = captured_names(fx, block)?;
-    let arity = {
-        let HirNode::Block { params, .. } = &fx.an.compiler.hir[block] else {
-            unreachable!("checked in captured_names");
-        };
-        super::params::proc_arity(params, false)
+    let HirNode::Block { params, body } = &fx.an.compiler.hir[block] else {
+        return fx.unsupported(block, "a non-literal block");
     };
-    let f_id = define_block_fn(fx, site, block, &names)?;
+    let (params, body) = (params.as_ref().clone(), body.clone());
+    build_closure(fx, site, &params, &body, false)
+}
+
+/// A lambda literal (`->() {}` and friends): the same closure machinery
+/// with lambda semantics -- strict arity, no auto-splat, `return`/`break`
+/// fold at the lambda's own boundary.
+pub(crate) fn build_lambda(
+    fx: &mut Fx,
+    site: NodeId,
+    params: &crate::hir::Params,
+    body: &[NodeId],
+) -> Result<(ir::StackSlot, Vec<String>), String> {
+    build_closure(fx, site, params, body, true)
+}
+
+fn build_closure(
+    fx: &mut Fx,
+    site: NodeId,
+    params: &crate::hir::Params,
+    body: &[NodeId],
+    is_lambda: bool,
+) -> Result<(ir::StackSlot, Vec<String>), String> {
+    let names = captured_names(fx, site, params, body)?;
+    let arity = super::params::proc_arity(params, is_lambda);
+    let f_id = define_block_fn(fx, site, params, body, &names, is_lambda)?;
     let f_ref = fx.em.module.declare_func_in_func(f_id, fx.b.func);
     let ptr_ty = fx.em.ptr;
     let f_addr = fx.b.ins().func_addr(ptr_ty, f_ref);
@@ -93,7 +117,9 @@ pub(crate) fn build_proc(
     let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
     let null = fx.b.ins().iconst(ptr_ty, 0);
     let arity_v = fx.b.ins().iconst(types::I32, i64::from(arity));
-    let flags = fx.b.ins().iconst(types::I32, 0);
+    let flags =
+        fx.b.ins()
+            .iconst(types::I32, i64::from(u32::from(is_lambda))); // PROC_LAMBDA
     let proc_ss = fx.temp_slot();
     let proc_addr = fx.slot_addr(proc_ss, 0);
     fx.call(
@@ -114,16 +140,15 @@ pub(crate) fn build_proc(
 fn define_block_fn(
     fx: &mut Fx,
     site: NodeId,
-    block: NodeId,
+    params: &crate::hir::Params,
+    body: &[NodeId],
     captured: &[String],
+    is_lambda: bool,
 ) -> Result<cranelift_module::FuncId, String> {
-    let HirNode::Block { params, body } = &fx.an.compiler.hir[block] else {
-        unreachable!("checked in captured_names");
-    };
-    let params = params.as_ref().clone();
-    let body = body.clone();
+    let params = params.clone();
+    let body = body.to_vec();
     let layout = super::params::layout_of(&params)?;
-    let auto_splat = super::params::auto_splats(&params);
+    let auto_splat = !is_lambda && super::params::auto_splats(&params);
     let label = format!("block in {}", fx.frame_label);
     let (line, file) = {
         let loc = fx.location(site);
@@ -294,7 +319,9 @@ fn define_block_fn(
     let present_ptr = bfx.slot_addr(present_ss, 0);
     let desc_gv = bfx.em.module.declare_data_in_func(desc_id, bfx.b.func);
     let desc_ptr = bfx.b.ins().symbol_value(ptr_ty, desc_gv);
-    let flags_v = bfx.b.ins().iconst(types::I8, i64::from(auto_splat));
+    // BLOCK_BIND_AUTO_SPLAT = 1, BLOCK_BIND_LAMBDA = 2 (the runtime's bits).
+    let bind_flags = u8::from(auto_splat) | (u8::from(is_lambda) << 1);
+    let flags_v = bfx.b.ins().iconst(types::I8, i64::from(bind_flags));
     let status = bfx
         .call(
             "zeo_rt_bind_block_params",
@@ -435,6 +462,11 @@ fn define_block_fn(
 
     let ret_ok = bfx.b.create_block();
     bfx.block_next = Some((out, ret_ok));
+    if is_lambda {
+        // `return` inside a lambda terminates the LAMBDA call (a closure
+        // boundary, like a method).
+        bfx.ret = Some((out, ret_ok));
+    }
     super::stmt::lower_value_body_into(&mut bfx, &body, out)?;
     bfx.b.ins().jump(ret_ok, &[]);
 
@@ -464,7 +496,31 @@ fn define_block_fn(
     epilogue(&mut bfx, 0);
     let land = bfx.land;
     bfx.b.switch_to_block(land);
-    epilogue(&mut bfx, 1);
+    if is_lambda {
+        // A lambda folds a propagating `Return`/`Break` (a nested block's)
+        // into its own normal return -- the value lands in `out` and the
+        // ok-epilogue runs.
+        let kind = bfx.call("zeo_rt_signal_kind", &[]).expect("kind answers");
+        let is_ret =
+            bfx.b
+                .ins()
+                .icmp_imm_u(IntCC::Equal, kind, i64::from(SignalKind::Return as u8));
+        let is_brk = bfx
+            .b
+            .ins()
+            .icmp_imm_u(IntCC::Equal, kind, i64::from(SignalKind::Break as u8));
+        let folds = bfx.b.ins().bor(is_ret, is_brk);
+        let fold = bfx.b.create_block();
+        let normal = bfx.b.create_block();
+        bfx.b.ins().brif(folds, fold, &[], normal, &[]);
+        bfx.b.switch_to_block(fold);
+        bfx.call("zeo_rt_signal_take", &[out]);
+        bfx.b.ins().jump(ret_ok, &[]);
+        bfx.b.switch_to_block(normal);
+        epilogue(&mut bfx, 1);
+    } else {
+        epilogue(&mut bfx, 1);
+    }
 
     super::verify::check(&bfx, &label);
     let Fx { mut b, .. } = bfx;
@@ -491,9 +547,80 @@ pub(crate) fn block_send(
     block: NodeId,
 ) -> Result<Operand, String> {
     let (proc_ss, _names) = build_proc(fx, site, block)?;
-    let recv_ptr = match recv {
+    let blk_ptr = fx.slot_addr(proc_ss, 0);
+    // The callee consumes the moved-in proc, error path included.
+    fx.owned_consumed += 1;
+    send_with_block_ptr(fx, site, recv, name, args, blk_ptr)
+}
+
+/// A call site's `&expr` block argument: convert (Proc through, Symbol to
+/// proc, nil to "no block", `to_proc` duck-typing), then the same
+/// block-passing send. The converted value moves to the callee when it is
+/// a Proc; a nil conversion is an immediate and needs nothing.
+pub(crate) fn block_arg_send(
+    fx: &mut Fx,
+    site: NodeId,
+    recv: Option<NodeId>,
+    name: &str,
+    args: &[ArrayElem],
+    block_arg: NodeId,
+) -> Result<Operand, String> {
+    // The receiver evaluates FIRST (ruby's order), then the block arg.
+    let recv = match recv {
         Some(r) => {
-            let recv_op = super::expr::lower_expr(fx, r)?;
+            let op = super::expr::lower_expr(fx, r)?;
+            Some(op)
+        }
+        None => None,
+    };
+    let op = super::expr::lower_expr(fx, block_arg)?;
+    let vp = ownership::borrow_ptr(fx, &op);
+    if op.owned() {
+        ownership::pool_owned(fx, vp, op.tag());
+    }
+    let conv_ss = fx.temp_slot();
+    let conv = fx.slot_addr(conv_ss, 0);
+    let status = fx
+        .call("zeo_rt_block_arg_to_proc", &[vp, conv])
+        .expect("block_arg_to_proc returns a status");
+    fx.fallible(status);
+    // Nil = "no block" (a null blk); a Proc moves to the callee.
+    let fl = MemFlagsData::trusted();
+    let tag = fx.b.ins().load(types::I8, fl, conv, 0);
+    let is_nil = fx.b.ins().icmp_imm_u(IntCC::Equal, tag, 0);
+    let null = fx.b.ins().iconst(fx.em.ptr, 0);
+    let blk_ptr = fx.b.ins().select(is_nil, null, conv);
+    fx.owned_created += 1;
+    fx.owned_consumed += 1; // moved to the callee, or an immediate nil
+    send_with_block_ptr_ops(fx, site, recv, name, args, blk_ptr)
+}
+
+/// [`block_send`]'s tail with the receiver already lowered.
+fn send_with_block_ptr(
+    fx: &mut Fx,
+    site: NodeId,
+    recv: Option<NodeId>,
+    name: &str,
+    args: &[ArrayElem],
+    blk_ptr: ir::Value,
+) -> Result<Operand, String> {
+    let recv = match recv {
+        Some(r) => Some(super::expr::lower_expr(fx, r)?),
+        None => None,
+    };
+    send_with_block_ptr_ops(fx, site, recv, name, args, blk_ptr)
+}
+
+fn send_with_block_ptr_ops(
+    fx: &mut Fx,
+    site: NodeId,
+    recv: Option<Operand>,
+    name: &str,
+    args: &[ArrayElem],
+    blk_ptr: ir::Value,
+) -> Result<Operand, String> {
+    let recv_ptr = match recv {
+        Some(recv_op) => {
             let p = ownership::borrow_ptr(fx, &recv_op);
             if recv_op.owned() {
                 ownership::pool_owned(fx, p, recv_op.tag());
@@ -506,9 +633,6 @@ pub(crate) fn block_send(
     let sym = fx.sym_id(name);
     let zero_box = fx.b.ins().iconst(types::I32, 0);
     let argc_v = fx.b.ins().iconst(fx.em.ptr, args.len() as i64);
-    let blk_ptr = fx.slot_addr(proc_ss, 0);
-    // The callee consumes the moved-in proc, error path included.
-    fx.owned_consumed += 1;
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
     let status = if recv_ptr.1 {

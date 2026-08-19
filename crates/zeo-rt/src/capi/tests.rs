@@ -915,7 +915,7 @@ fn bind_desc(nreq: u32, nopt: u32, npost: u32, rest: u8, kwrest: u8) -> abi::Par
         rest,
         kwrest,
         no_keywords: 0,
-        _pad: 0,
+        implicit_rest: 0,
         kws: std::ptr::null(),
         n_kws: 0,
         name: abi_str("m"),

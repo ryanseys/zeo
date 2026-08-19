@@ -263,6 +263,7 @@ pub(crate) fn define_param_desc(
     bytes[std::mem::offset_of!(ParamDescC, rest)] = star(&p.rest);
     bytes[std::mem::offset_of!(ParamDescC, kwrest)] = star(&p.keyword_rest);
     bytes[std::mem::offset_of!(ParamDescC, no_keywords)] = u8::from(p.no_keywords);
+    bytes[std::mem::offset_of!(ParamDescC, implicit_rest)] = u8::from(p.implicit_rest);
     put_usize(
         &mut bytes,
         std::mem::offset_of!(ParamDescC, n_kws),

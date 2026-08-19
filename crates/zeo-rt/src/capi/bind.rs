@@ -215,6 +215,10 @@ impl Filler {
 
 /// Block-binding flags for [`zeo_rt_bind_block_params`].
 pub const BLOCK_BIND_AUTO_SPLAT: u8 = 1;
+/// Lambda mode: STRICT arity (raised before binding, with the trailing
+/// kwargs Hash discounted exactly as the rustc emission does) and no
+/// auto-splat (the emitter never sets both bits).
+pub const BLOCK_BIND_LAMBDA: u8 = 2;
 
 /// The BLOCK twin of [`zeo_rt_bind_params`]: same `ParamDescC`, same slot
 /// layout, ruby's block rules instead of a method call's -- LENIENT
@@ -275,6 +279,27 @@ unsafe fn bind_block(
         .map(|k| unsafe { super::str_slice(k.name.ptr, k.name.len) })
         .collect();
     let has_keywords = !kws.is_empty() || desc.kwrest != PARAM_STAR_NONE;
+
+    // A lambda checks arity STRICTLY, before anything binds -- the exact
+    // rustc emission: a trailing Hash is discounted only when keywords are
+    // declared, a trailing comma's rest does not relax the count, and the
+    // message reports the minimum.
+    if flags & BLOCK_BIND_LAMBDA != 0 {
+        let (nreq, nopt, npost) = (desc.nreq as usize, desc.nopt as usize, desc.npost as usize);
+        let has_rest = desc.rest != PARAM_STAR_NONE && desc.implicit_rest == 0;
+        let argc = if has_keywords && matches!(args.last(), Some(RubyValue::Hash(_))) {
+            args.len() - 1
+        } else {
+            args.len()
+        };
+        let min = nreq + npost;
+        if argc < min || (!has_rest && argc > nreq + nopt + npost) {
+            return Err(crate::dispatch::raise_error(
+                "ArgumentError",
+                format!("wrong number of arguments (given {argc}, expected {min})"),
+            ));
+        }
+    }
 
     // The keyword source splits off BEFORE auto-splat (CRuby's order: a
     // block `|a, b, **k|` yielded one `[1, {x: 9}]` binds `b = {x: 9}`).

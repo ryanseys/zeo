@@ -294,6 +294,7 @@ fn lower_tail_expr(fx: &mut Fx, tail: NodeId) -> Result<super::operand::Operand,
         | HirNode::Yield(..)
         | HirNode::BlockGiven
         | HirNode::MultiWrite { .. }
+        | HirNode::Lambda { .. }
         | HirNode::ArrayLit(..)
         | HirNode::HashLit(..)
         | HirNode::SymbolLit(..)
