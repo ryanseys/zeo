@@ -158,7 +158,14 @@ pub(crate) fn collect_classes(
             let user = (a.0 as usize) < compiler.classes.len()
                 && !compiler.classes[a.0 as usize].is_builtin
                 && !compiler.classes[a.0 as usize].is_bootstrap;
-            if !(plain_spine || user) {
+            // A builtin MODULE in the chain (`include Comparable`) is fine:
+            // registration carries the id and the dispatch walk probes the
+            // module's builtin table at its MRO position, exactly as it does
+            // for Kernel. Only a builtin SUPERCLASS selects a registrar the
+            // slice does not emit yet.
+            let builtin_module =
+                (a.0 as usize) < compiler.classes.len() && compiler.classes[a.0 as usize].is_module;
+            if !(plain_spine || user || builtin_module) {
                 return refuse("a builtin superclass");
             }
         }
