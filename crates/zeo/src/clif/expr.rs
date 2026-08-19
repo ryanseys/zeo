@@ -96,6 +96,39 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             super::stmt::lower_stmt(fx, id)?;
             Ok(ownership::read_local(fx, &name).expect("just assigned"))
         }
+        HirNode::SymbolLit(name) => {
+            let name = name.clone();
+            let sym = fx.sym_id(&name);
+            let ss = fx.temp_slot();
+            let out = fx.slot_addr(ss, 0);
+            fx.call("zeo_rt_sym_value", &[sym, out]);
+            fx.owned_created += 1;
+            Ok(Operand::Slot {
+                ss,
+                owned: true,
+                tag: TagInfo::Known(ValueTag::Symbol as u8),
+            })
+        }
+        HirNode::HashLit(pairs) => {
+            // A KWARGS_HASH-flagged literal is a folded keyword set (a
+            // `yield`'s kwargs), whose empty-drop/mark semantics the yield
+            // lowering does not carry yet.
+            if fx
+                .an
+                .compiler
+                .hir
+                .has_flag(id, crate::hir::NodeFlag::KWARGS_HASH)
+            {
+                return fx.unsupported(id, "keyword arguments to `yield`");
+            }
+            let pairs = pairs.clone();
+            let addr = super::call::build_hash(fx, &pairs)?;
+            Ok(Operand::Ptr {
+                addr,
+                owned: false,
+                tag: TagInfo::Known(ValueTag::Hash as u8),
+            })
+        }
         HirNode::ClassRef(name) => {
             let name = name.clone();
             const_read(fx, id, &name)
@@ -196,11 +229,15 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             args,
             kwargs,
             block: None,
-        } if kwargs.is_empty() => {
-            let (class_name, args) = (class_name.clone(), args.clone());
+        } => {
+            let (class_name, args, kwargs) = (class_name.clone(), args.clone(), kwargs.clone());
             let recv = class_value(fx, id, &class_name)?;
             let elems: Vec<ArrayElem> = args.iter().map(|&a| ArrayElem::Single(a)).collect();
-            super::call::dynamic_send_value(fx, id, recv, "new", &elems)
+            if kwargs.is_empty() {
+                super::call::dynamic_send_value(fx, id, recv, "new", &elems)
+            } else {
+                super::call::kw_send(fx, id, Some(recv), "new", &elems, &kwargs)
+            }
         }
         HirNode::Call {
             receiver,
@@ -271,6 +308,25 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                     Some(_) | None => super::call::implicit_send(fx, id, &name, &args),
                 },
             }
+        }
+        // Call-site keywords (no block channel yet): the kw send entries
+        // append the marked hash per the trailing-kwargs convention.
+        HirNode::Call {
+            receiver,
+            name,
+            args,
+            kwargs,
+            block: None,
+            block_arg: None,
+            safe: false,
+        } => {
+            let (receiver, name, args, kwargs) =
+                (*receiver, name.clone(), args.clone(), kwargs.clone());
+            let recv = match receiver {
+                Some(r) => Some(lower_expr(fx, r)?),
+                None => None,
+            };
+            super::call::kw_send(fx, id, recv, &name, &args, &kwargs)
         }
         other => {
             let what = format!("this expression ({})", node_kind(other));

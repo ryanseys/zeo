@@ -94,6 +94,16 @@ pub const CAPI: &[CapiSig] = &[
         ret: None,
     },
     CapiSig {
+        name: "zeo_rt_hash_new",
+        params: &[Ptr],
+        ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_hash_set",
+        params: &[Ptr, Ptr, Ptr],
+        ret: None,
+    },
+    CapiSig {
         name: "zeo_rt_int_add_slow",
         params: &[Ptr, Ptr, Ptr],
         ret: None,
@@ -121,6 +131,11 @@ pub const CAPI: &[CapiSig] = &[
     CapiSig {
         name: "zeo_rt_kernel_puts",
         params: &[Ptr, Usize, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
+        name: "zeo_rt_kw_splat_into",
+        params: &[Ptr, Ptr],
         ret: Some(I32),
     },
     CapiSig {
@@ -184,8 +199,18 @@ pub const CAPI: &[CapiSig] = &[
         ret: Some(I32),
     },
     CapiSig {
+        name: "zeo_rt_send_value_explicit_kw_in",
+        params: &[U32, Ptr, U32, Ptr, Usize, Ptr, Ptr, U32, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
         name: "zeo_rt_send_value_in",
         params: &[U32, Ptr, U32, Ptr, Usize, Ptr, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
+        name: "zeo_rt_send_value_kw_in",
+        params: &[U32, Ptr, U32, Ptr, Usize, Ptr, Ptr, Ptr],
         ret: Some(I32),
     },
     CapiSig {
@@ -237,6 +262,11 @@ pub const CAPI: &[CapiSig] = &[
         name: "zeo_rt_sym_intern",
         params: &[Ptr, Usize],
         ret: Some(U32),
+    },
+    CapiSig {
+        name: "zeo_rt_sym_value",
+        params: &[U32, Ptr],
+        ret: None,
     },
     CapiSig {
         name: "zeo_rt_truthy",

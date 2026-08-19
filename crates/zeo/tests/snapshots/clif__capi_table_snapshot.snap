@@ -14,12 +14,15 @@ zeo_rt_frame_push ([Ptr, Usize, Ptr, Usize, U32, U32]) -> None
 zeo_rt_frozen_check ([Ptr]) -> Some(I32)
 zeo_rt_handling_pop ([]) -> None
 zeo_rt_handling_push ([Ptr]) -> None
+zeo_rt_hash_new ([Ptr]) -> None
+zeo_rt_hash_set ([Ptr, Ptr, Ptr]) -> None
 zeo_rt_int_add_slow ([Ptr, Ptr, Ptr]) -> None
 zeo_rt_int_mul_slow ([Ptr, Ptr, Ptr]) -> None
 zeo_rt_int_sub_slow ([Ptr, Ptr, Ptr]) -> None
 zeo_rt_ivar_get_slot ([Ptr, Usize, Ptr]) -> None
 zeo_rt_ivar_set_slot ([Ptr, Usize, Ptr]) -> Some(I32)
 zeo_rt_kernel_puts ([Ptr, Usize, Ptr]) -> Some(I32)
+zeo_rt_kw_splat_into ([Ptr, Ptr]) -> Some(I32)
 zeo_rt_main ([I32, Ptr, Ptr, Ptr]) -> Some(I32)
 zeo_rt_main_object ([Ptr]) -> None
 zeo_rt_pool_mark ([]) -> Some(Usize)
@@ -32,7 +35,9 @@ zeo_rt_release ([Ptr]) -> None
 zeo_rt_rescue_matches ([Ptr, Ptr, Usize]) -> Some(U8)
 zeo_rt_retain ([Ptr]) -> None
 zeo_rt_send_value_explicit_in ([U32, Ptr, U32, Ptr, Usize, Ptr, U32, Ptr]) -> Some(I32)
+zeo_rt_send_value_explicit_kw_in ([U32, Ptr, U32, Ptr, Usize, Ptr, Ptr, U32, Ptr]) -> Some(I32)
 zeo_rt_send_value_in ([U32, Ptr, U32, Ptr, Usize, Ptr, Ptr]) -> Some(I32)
+zeo_rt_send_value_kw_in ([U32, Ptr, U32, Ptr, Usize, Ptr, Ptr, Ptr]) -> Some(I32)
 zeo_rt_set_line ([U32]) -> None
 zeo_rt_signal_drop ([Ptr]) -> None
 zeo_rt_signal_kind ([]) -> Some(U8)
@@ -43,6 +48,7 @@ zeo_rt_signal_take ([Ptr]) -> Some(U8)
 zeo_rt_stack_check ([]) -> Some(I32)
 zeo_rt_str_new ([Ptr, Usize, U8, Ptr]) -> None
 zeo_rt_sym_intern ([Ptr, Usize]) -> Some(U32)
+zeo_rt_sym_value ([U32, Ptr]) -> None
 zeo_rt_truthy ([Ptr]) -> Some(U8)
 zeo_rt_wrong_arity ([Usize, Usize, Usize]) -> Some(I32)
 zeo_rt_yield ([Ptr, Ptr, Usize, Ptr]) -> Some(I32)

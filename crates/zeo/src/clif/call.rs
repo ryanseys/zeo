@@ -146,6 +146,102 @@ pub(crate) fn build_argv(
     })
 }
 
+/// A Hash from `KwArg` rows (a hash literal, or a call site's keyword
+/// set), evaluated in written order -- key then value per pair, `**`
+/// splats merged in place, later keys overwrite. The hash is pooled AT
+/// CREATION (a `**` coercion can raise mid-build, and the error edge must
+/// not strand an unpooled value), so the returned address is a BORROW --
+/// alive until frame pop -- and later pairs mutate through the shared
+/// handle.
+pub(crate) fn build_hash(
+    fx: &mut Fx,
+    pairs: &[crate::hir::KwArg],
+) -> Result<cranelift_codegen::ir::Value, String> {
+    let ss = fx.temp_slot();
+    let out = fx.slot_addr(ss, 0);
+    fx.call("zeo_rt_hash_new", &[out]);
+    fx.owned_created += 1;
+    ownership::pool_owned(fx, out, TagInfo::Known(zeo_abi::abi::ValueTag::Hash as u8));
+    for kw in pairs {
+        match kw {
+            crate::hir::KwArg::Pair(k, v) => {
+                let kop = lower_expr(fx, *k)?;
+                let kptr = ownership::move_ptr(fx, &kop);
+                let vop = lower_expr(fx, *v)?;
+                let vptr = ownership::move_ptr(fx, &vop);
+                fx.call("zeo_rt_hash_set", &[out, kptr, vptr]);
+            }
+            crate::hir::KwArg::DoubleSplat(e) => {
+                let op = lower_expr(fx, *e)?;
+                let p = ownership::borrow_ptr(fx, &op);
+                if op.owned() {
+                    ownership::pool_owned(fx, p, op.tag());
+                }
+                let status = fx
+                    .call("zeo_rt_kw_splat_into", &[out, p])
+                    .expect("kw_splat_into returns a status");
+                fx.fallible(status);
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// A dynamic send WITH call-site keywords: positionals into argv, the
+/// keyword Hash built here, the runtime's kw entry does the append-if-
+/// non-empty. `recv` `None` = the implicit-self mode (private methods
+/// answer); `Some` = the explicit entry behind the visibility barrier.
+pub(crate) fn kw_send(
+    fx: &mut Fx,
+    site: NodeId,
+    recv: Option<Operand>,
+    name: &str,
+    args: &[ArrayElem],
+    kwargs: &[crate::hir::KwArg],
+) -> Result<Operand, String> {
+    let recv_ptr = match &recv {
+        Some(op) => {
+            let p = ownership::borrow_ptr(fx, op);
+            if op.owned() {
+                ownership::pool_owned(fx, p, op.tag());
+            }
+            p
+        }
+        None => fx.self_ptr.expect("self_ptr is set in the prologue"),
+    };
+    let argv_ptr = build_argv(fx, site, args)?;
+    let kw_ptr = build_hash(fx, kwargs)?;
+    let sym = fx.sym_id(name);
+    let zero_box = fx.b.ins().iconst(types::I32, 0);
+    let argc_v = fx.b.ins().iconst(fx.em.ptr, args.len() as i64);
+    let null = fx.b.ins().iconst(fx.em.ptr, 0);
+    let ss = fx.temp_slot();
+    let out = fx.slot_addr(ss, 0);
+    let status = match recv {
+        Some(_) => {
+            let caller = fx.b.ins().iconst(types::I32, 0); // Object
+            fx.call(
+                "zeo_rt_send_value_explicit_kw_in",
+                &[
+                    zero_box, recv_ptr, sym, argv_ptr, argc_v, kw_ptr, null, caller, out,
+                ],
+            )
+        }
+        None => fx.call(
+            "zeo_rt_send_value_kw_in",
+            &[zero_box, recv_ptr, sym, argv_ptr, argc_v, kw_ptr, null, out],
+        ),
+    }
+    .expect("kw sends return a status");
+    fx.fallible(status);
+    fx.owned_created += 1;
+    Ok(Operand::Slot {
+        ss,
+        owned: true,
+        tag: TagInfo::Unknown,
+    })
+}
+
 /// An explicit-receiver dynamic send through the uncached entry (the
 /// visibility barrier's `caller` is `Object` -- the only lexical class the
 /// slice compiles).

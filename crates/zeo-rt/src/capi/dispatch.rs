@@ -154,6 +154,104 @@ pub unsafe extern "C" fn zeo_rt_send_value_explicit_in(
     )
 }
 
+/// The keyword-send twins' shared tail: `kw` is the call site's freshly
+/// built keyword Hash (BORROWED). A non-empty set is marked and appended
+/// as the trailing argument (the trailing-kwargs-hash convention the
+/// binder peels); a runtime-EMPTY set is dropped -- `f(**{})` passes no
+/// keywords, so it must not raise on a `**nil` callee.
+unsafe fn with_kw_args<R>(
+    argv: *const RubyValue,
+    argc: usize,
+    kw: *const RubyValue,
+    blk: *mut RubyValue,
+    send: impl FnOnce(&[RubyValue], Option<RubyValue>) -> R,
+) -> R {
+    let (args, block) = unsafe { call_views(argv, argc, blk) };
+    let kw = unsafe { &*kw };
+    let RubyValue::Hash(h) = kw else {
+        panic!("a kw send's keyword argument must be a Hash, got {kw:?}")
+    };
+    if h.lock().is_empty() {
+        return send(args, block);
+    }
+    crate::value::collections::hash_mark_kwargs(h);
+    let mut full = Vec::with_capacity(argc + 1);
+    full.extend_from_slice(args);
+    full.push(kw.clone());
+    send(&full, block)
+}
+
+/// [`zeo_rt_send_value_in`] with call-site keywords.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_send_value_kw_in(
+    box_id: u32,
+    recv: *const RubyValue,
+    sym: u32,
+    argv: *const RubyValue,
+    argc: usize,
+    kw: *const RubyValue,
+    blk: *mut RubyValue,
+    out: *mut RubyValue,
+) -> i32 {
+    let r = unsafe {
+        with_kw_args(argv, argc, kw, blk, |args, block| {
+            crate::dispatch::send_value_in(box_id, &*recv, Symbol::from_u32(sym), args, block)
+        })
+    };
+    status_out(r, out)
+}
+
+/// [`zeo_rt_send_value_explicit_in`] with call-site keywords.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_send_value_explicit_kw_in(
+    box_id: u32,
+    recv: *const RubyValue,
+    sym: u32,
+    argv: *const RubyValue,
+    argc: usize,
+    kw: *const RubyValue,
+    blk: *mut RubyValue,
+    caller: u32,
+    out: *mut RubyValue,
+) -> i32 {
+    let r = unsafe {
+        with_kw_args(argv, argc, kw, blk, |args, block| {
+            crate::dispatch::send_value_explicit_in(
+                box_id,
+                &*recv,
+                Symbol::from_u32(sym),
+                args,
+                block,
+                caller,
+            )
+        })
+    };
+    status_out(r, out)
+}
+
+/// `**expr` at a call site: coerce `src` to a Hash (Ruby's `to_hash`
+/// protocol; `TypeError` otherwise) and merge its pairs into the keyword
+/// hash being built at `dst` -- later keys overwrite, Ruby's merge order.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_kw_splat_into(dst: *const RubyValue, src: *const RubyValue) -> i32 {
+    let RubyValue::Hash(d) = (unsafe { &*dst }) else {
+        panic!("kw_splat_into's destination must be the kw Hash")
+    };
+    match crate::rproc::to_hash_coerce(unsafe { &*src }) {
+        Ok(h) => {
+            let pairs: Vec<(RubyValue, RubyValue)> = h.lock().values().cloned().collect();
+            for (k, v) in pairs {
+                crate::value::collections::hash_set(d, k, v);
+            }
+            STATUS_OK
+        }
+        Err(sig) => {
+            crate::signal::set_pending(sig);
+            STATUS_SIGNAL
+        }
+    }
+}
+
 /// [`crate::dispatch::send_class_cached`] -- the class-method-receiver
 /// cached send (`Math.sqrt`, `File.read`).
 #[unsafe(no_mangle)]
