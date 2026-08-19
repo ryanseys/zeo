@@ -964,12 +964,6 @@ impl ClassRegistry {
     }
 }
 
-/// Every registered class that has `id` in its ancestry, `id` itself excluded
-/// -- the descendants a change to `id` can be seen through. One scan of the
-/// registry, called only from `runtime_meta::patch_class` on a real runtime
-/// definition, never from a loop.
-///
-
 /// The class registry is installed exactly once, from generated `main()`,
 /// before any `Thread`/`Ractor` spawns anything -- a `OnceLock`
 /// (not a `thread_local!`, unlike before the Send+Sync migration) gives

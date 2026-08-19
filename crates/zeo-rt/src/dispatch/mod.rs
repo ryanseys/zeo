@@ -834,6 +834,11 @@ fn with_c_frame<R>(label: Option<&'static str>, f: impl FnOnce() -> R) -> R {
     }
 }
 
+/// Every registered class that has `id` in its ancestry, `id` itself excluded
+/// -- the descendants a change to `id` can be seen through. One scan of the
+/// registry, called only from `runtime_meta::patch_class` on a real runtime
+/// definition, never from a loop.
+///
 /// Reads the FROZEN ancestry deliberately: a class whose chain was spliced at
 /// runtime is covered by `GATE_ANCESTRY_MUTATED` instead, which is a stronger
 /// statement than anything this could enumerate.
@@ -1981,14 +1986,18 @@ pub fn class_set_frozen(id: ClassId) {
 /// The eval VM uses this to resolve a bare class-name constant like
 /// `eval("Integer")` -- codegen resolves those statically and so never
 /// `const_set`s them, leaving the runtime constants table without them.
+/// The bidirectional `box_id <-> surrogate ClassId` pair: forward map first,
+/// reverse second.
+type SurrogateMaps = (crate::FMap<u32, u32>, crate::FMap<u32, u32>);
+
 /// The compile-time box surrogates, derived ONCE from the installed
 /// registry's name table: `#<Ruby::Box:N>` is the exact name the analyze
 /// pass mints per box. One parse at first ask replaces a `format!` + name
 /// hash (or a name parse-back) at every ask; Track 7's `BoxTable` replaces
 /// this derivation with real registration. Registry-less (unit tests) asks
 /// answer `None` WITHOUT caching, so a later install still populates.
-fn box_surrogates() -> Option<&'static (crate::FMap<u32, u32>, crate::FMap<u32, u32>)> {
-    static MAPS: OnceLock<(crate::FMap<u32, u32>, crate::FMap<u32, u32>)> = OnceLock::new();
+fn box_surrogates() -> Option<&'static SurrogateMaps> {
+    static MAPS: OnceLock<SurrogateMaps> = OnceLock::new();
     if let Some(m) = MAPS.get() {
         return Some(m);
     }
