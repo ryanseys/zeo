@@ -187,6 +187,103 @@ pub(crate) fn build_hash(
     Ok(out)
 }
 
+/// An Array from `ArrayElem` rows (an array literal, or a splat-bearing
+/// call site's arguments): singles pushed, splats expanded through the
+/// runtime's `to_a` coercion (which can raise). Pooled at creation, same
+/// reasoning as `build_hash` -- the returned address is a borrow.
+pub(crate) fn build_array(
+    fx: &mut Fx,
+    args: &[ArrayElem],
+) -> Result<cranelift_codegen::ir::Value, String> {
+    let ss = fx.temp_slot();
+    let out = fx.slot_addr(ss, 0);
+    let cap = fx.b.ins().iconst(fx.em.ptr, args.len() as i64);
+    fx.call("zeo_rt_array_new", &[cap, out]);
+    fx.owned_created += 1;
+    ownership::pool_owned(fx, out, TagInfo::Known(zeo_abi::abi::ValueTag::Array as u8));
+    for arg in args {
+        match arg {
+            ArrayElem::Single(id) => {
+                let op = lower_expr(fx, *id)?;
+                let p = ownership::move_ptr(fx, &op);
+                fx.call("zeo_rt_array_push", &[out, p]);
+            }
+            ArrayElem::Splat(id) => {
+                let op = lower_expr(fx, *id)?;
+                let p = ownership::borrow_ptr(fx, &op);
+                if op.owned() {
+                    ownership::pool_owned(fx, p, op.tag());
+                }
+                let status = fx
+                    .call("zeo_rt_array_push_splat", &[out, p])
+                    .expect("push_splat returns a status");
+                fx.fallible(status);
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// A splat-bearing dynamic send: args built as a runtime Array, keywords
+/// (when present) as the kw Hash; the runtime entry unmarks the splat
+/// tail (a splat-expanded hash is positional again -- `ruby2_keywords`
+/// will pass 0 here when it lands) and appends the keywords.
+pub(crate) fn splat_send(
+    fx: &mut Fx,
+    site: NodeId,
+    recv: Option<Operand>,
+    name: &str,
+    args: &[ArrayElem],
+    kwargs: &[crate::hir::KwArg],
+) -> Result<Operand, String> {
+    let _ = site;
+    let recv_ptr = match &recv {
+        Some(op) => {
+            let p = ownership::borrow_ptr(fx, op);
+            if op.owned() {
+                ownership::pool_owned(fx, p, op.tag());
+            }
+            p
+        }
+        None => fx.self_ptr.expect("self_ptr is set in the prologue"),
+    };
+    let args_ptr = build_array(fx, args)?;
+    let kw_ptr = if kwargs.is_empty() {
+        fx.b.ins().iconst(fx.em.ptr, 0)
+    } else {
+        build_hash(fx, kwargs)?
+    };
+    let sym = fx.sym_id(name);
+    let zero_box = fx.b.ins().iconst(types::I32, 0);
+    let unmark = fx.b.ins().iconst(types::I8, 1);
+    let null = fx.b.ins().iconst(fx.em.ptr, 0);
+    let ss = fx.temp_slot();
+    let out = fx.slot_addr(ss, 0);
+    let status = match recv {
+        Some(_) => {
+            let caller = fx.b.ins().iconst(types::I32, 0); // Object
+            fx.call(
+                "zeo_rt_send_value_explicit_args_in",
+                &[
+                    zero_box, recv_ptr, sym, args_ptr, unmark, kw_ptr, null, caller, out,
+                ],
+            )
+        }
+        None => fx.call(
+            "zeo_rt_send_value_args_in",
+            &[zero_box, recv_ptr, sym, args_ptr, unmark, kw_ptr, null, out],
+        ),
+    }
+    .expect("splat sends return a status");
+    fx.fallible(status);
+    fx.owned_created += 1;
+    Ok(Operand::Slot {
+        ss,
+        owned: true,
+        tag: TagInfo::Unknown,
+    })
+}
+
 /// A dynamic send WITH call-site keywords: positionals into argv, the
 /// keyword Hash built here, the runtime's kw entry does the append-if-
 /// non-empty. `recv` `None` = the implicit-self mode (private methods

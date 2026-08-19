@@ -109,6 +109,15 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 tag: TagInfo::Known(ValueTag::Symbol as u8),
             })
         }
+        HirNode::ArrayLit(elems) => {
+            let elems = elems.clone();
+            let addr = super::call::build_array(fx, &elems)?;
+            Ok(Operand::Ptr {
+                addr,
+                owned: false,
+                tag: TagInfo::Known(ValueTag::Array as u8),
+            })
+        }
         HirNode::HashLit(pairs) => {
             // A KWARGS_HASH-flagged literal is a folded keyword set (a
             // `yield`'s kwargs), whose empty-drop/mark semantics the yield
@@ -283,6 +292,13 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             safe: false,
         } if kwargs.is_empty() => {
             let (receiver, name, args) = (*receiver, name.clone(), args.clone());
+            if args.iter().any(|a| matches!(a, ArrayElem::Splat(_))) {
+                let recv = match receiver {
+                    Some(r) => Some(lower_expr(fx, r)?),
+                    None => None,
+                };
+                return super::call::splat_send(fx, id, recv, &name, &args, &[]);
+            }
             match receiver {
                 Some(recv) if BinOp::of(&name).is_some() && args.len() == 1 => {
                     let [ArrayElem::Single(arg)] = args.as_slice() else {
@@ -326,7 +342,11 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 Some(r) => Some(lower_expr(fx, r)?),
                 None => None,
             };
-            super::call::kw_send(fx, id, recv, &name, &args, &kwargs)
+            if args.iter().any(|a| matches!(a, ArrayElem::Splat(_))) {
+                super::call::splat_send(fx, id, recv, &name, &args, &kwargs)
+            } else {
+                super::call::kw_send(fx, id, recv, &name, &args, &kwargs)
+            }
         }
         other => {
             let what = format!("this expression ({})", node_kind(other));

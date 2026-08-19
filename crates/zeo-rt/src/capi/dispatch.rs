@@ -229,6 +229,120 @@ pub unsafe extern "C" fn zeo_rt_send_value_explicit_kw_in(
     status_out(r, out)
 }
 
+/// The splat-call entries' shared tail: `args` is a runtime-built Array
+/// (the call site pushed singles and splat-expanded elements). `unmark`
+/// clears a kw mark off the trailing element first -- a splat-expanded
+/// hash is POSITIONAL again (ruby's rule; `ruby2_keywords` is the opt-out
+/// and passes 0). `kw` (null = none) then appends per the kw convention.
+unsafe fn with_array_args<R>(
+    args: *const RubyValue,
+    unmark: u8,
+    kw: *const RubyValue,
+    blk: *mut RubyValue,
+    send: impl FnOnce(&[RubyValue], Option<RubyValue>) -> R,
+) -> R {
+    let RubyValue::Array(a) = (unsafe { &*args }) else {
+        panic!("a splat send's args must be an Array")
+    };
+    let mut full: Vec<RubyValue> = a.lock().iter().cloned().collect();
+    if unmark != 0 {
+        crate::value::collections::unmark_kwargs_tail(&mut full);
+    }
+    if !kw.is_null() {
+        let kw = unsafe { &*kw };
+        let RubyValue::Hash(h) = kw else {
+            panic!("a kw send's keyword argument must be a Hash, got {kw:?}")
+        };
+        if !h.lock().is_empty() {
+            crate::value::collections::hash_mark_kwargs(h);
+            full.push(kw.clone());
+        }
+    }
+    let block = if blk.is_null() {
+        None
+    } else {
+        super::leakcheck::consumed(unsafe { &*blk });
+        Some(unsafe { std::ptr::read(blk) })
+    };
+    send(&full, block)
+}
+
+/// [`zeo_rt_send_value_in`] with a runtime-built argument Array (a call
+/// site with a `*` splat).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_send_value_args_in(
+    box_id: u32,
+    recv: *const RubyValue,
+    sym: u32,
+    args: *const RubyValue,
+    unmark: u8,
+    kw: *const RubyValue,
+    blk: *mut RubyValue,
+    out: *mut RubyValue,
+) -> i32 {
+    let r = unsafe {
+        with_array_args(args, unmark, kw, blk, |full, block| {
+            crate::dispatch::send_value_in(box_id, &*recv, Symbol::from_u32(sym), full, block)
+        })
+    };
+    status_out(r, out)
+}
+
+/// [`zeo_rt_send_value_explicit_in`] with a runtime-built argument Array.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_send_value_explicit_args_in(
+    box_id: u32,
+    recv: *const RubyValue,
+    sym: u32,
+    args: *const RubyValue,
+    unmark: u8,
+    kw: *const RubyValue,
+    blk: *mut RubyValue,
+    caller: u32,
+    out: *mut RubyValue,
+) -> i32 {
+    let r = unsafe {
+        with_array_args(args, unmark, kw, blk, |full, block| {
+            crate::dispatch::send_value_explicit_in(
+                box_id,
+                &*recv,
+                Symbol::from_u32(sym),
+                full,
+                block,
+                caller,
+            )
+        })
+    };
+    status_out(r, out)
+}
+
+/// `*expr` at a call site: splat-expand `src` into the args Array being
+/// built at `dst` (Ruby's `to_a` coercion; nil contributes nothing;
+/// non-convertible wraps as one element -- `array_splat_into`'s rules).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_array_push_splat(
+    dst: *const RubyValue,
+    src: *const RubyValue,
+) -> i32 {
+    let RubyValue::Array(a) = (unsafe { &*dst }) else {
+        panic!("array_push_splat's destination must be the args Array")
+    };
+    let mut extra = Vec::new();
+    match crate::value::collections::array_splat_into(&mut extra, unsafe { &*src }) {
+        Ok(()) => {
+            let mut al = a.lock();
+            for v in extra {
+                al.push(v);
+            }
+            STATUS_OK
+        }
+        Err(sig) => {
+            crate::signal::set_pending(sig);
+            STATUS_SIGNAL
+        }
+    }
+}
+
 /// `**expr` at a call site: coerce `src` to a Hash (Ruby's `to_hash`
 /// protocol; `TypeError` otherwise) and merge its pairs into the keyword
 /// hash being built at `dst` -- later keys overwrite, Ruby's merge order.

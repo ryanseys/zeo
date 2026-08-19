@@ -34,6 +34,21 @@ use CTy::{I32, Ptr, U8, U32, Usize};
 /// internal compiler error, never a user-visible path.
 pub const CAPI: &[CapiSig] = &[
     CapiSig {
+        name: "zeo_rt_array_new",
+        params: &[Usize, Ptr],
+        ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_array_push",
+        params: &[Ptr, Ptr],
+        ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_array_push_splat",
+        params: &[Ptr, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
         name: "zeo_rt_bind_params",
         params: &[Ptr, Ptr, Usize, Ptr, Ptr],
         ret: Some(I32),
@@ -192,6 +207,16 @@ pub const CAPI: &[CapiSig] = &[
         name: "zeo_rt_retain",
         params: &[Ptr],
         ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_send_value_args_in",
+        params: &[U32, Ptr, U32, Ptr, U8, Ptr, Ptr, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
+        name: "zeo_rt_send_value_explicit_args_in",
+        params: &[U32, Ptr, U32, Ptr, U8, Ptr, Ptr, U32, Ptr],
+        ret: Some(I32),
     },
     CapiSig {
         name: "zeo_rt_send_value_explicit_in",
