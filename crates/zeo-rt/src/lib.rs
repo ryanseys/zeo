@@ -20,6 +20,7 @@ mod arith;
 mod bootstrap;
 pub mod boxes;
 mod builtins;
+pub mod capi;
 mod catch;
 mod civars;
 
@@ -55,6 +56,7 @@ mod mt;
 pub mod pools;
 mod ractor;
 mod regexp;
+mod release_pool;
 mod rproc;
 mod runtime_meta;
 mod signal;

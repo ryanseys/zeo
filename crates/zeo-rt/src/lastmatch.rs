@@ -50,6 +50,18 @@ pub fn svar_scope() -> SvarScope {
     SvarScope(())
 }
 
+/// [`svar_scope`] without the guard -- the capi push/pop twins, since
+/// Cranelift-compiled code has no Rust drops and brackets the scope
+/// explicitly.
+pub(crate) fn svar_scope_push_raw() {
+    std::mem::forget(svar_scope());
+}
+
+/// The explicit pop matching [`svar_scope_push_raw`].
+pub(crate) fn svar_scope_pop_raw() {
+    drop(SvarScope(()));
+}
+
 /// The fiber-switch handoff ([`crate::ec::swap`]): install a suspended
 /// context's base+scopes, returning the running one's.
 pub fn swap_svars(

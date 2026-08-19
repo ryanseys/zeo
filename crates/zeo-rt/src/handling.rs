@@ -94,6 +94,25 @@ impl Drop for PropagatingGuard {
     }
 }
 
+/// [`PropagatingGuard::enter`] without the guard, for the capi `ensure`
+/// bracket (Cranelift-compiled code has no Rust drops): pushes `$!` when
+/// the propagating signal is a raise, answering whether it pushed -- pass
+/// that back to [`propagating_leave_raw`].
+pub(crate) fn propagating_enter_raw(sig: &crate::Signal) -> bool {
+    let crate::Signal::Raise(exc) = sig else {
+        return false;
+    };
+    push_handling(exc.clone());
+    true
+}
+
+/// The explicit pop matching [`propagating_enter_raw`].
+pub(crate) fn propagating_leave_raw(pushed: bool) {
+    if pushed {
+        pop_handling();
+    }
+}
+
 /// Installs `new` as this execution context's handling stack and returns
 /// the previous one -- `fiber::fiber_resume`'s entry/exit swap (see module
 /// docs). Not a general-purpose API: only the fiber boundary may call it,

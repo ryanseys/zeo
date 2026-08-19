@@ -1,0 +1,252 @@
+//! Boundary-contract tests for the M0-3 surface: pointers built the way
+//! compiled code builds them, asserted against the Rust-side internals.
+
+use super::frames::*;
+use super::signals::*;
+use super::values::*;
+use crate::{RubyValue, Signal};
+use std::mem::MaybeUninit;
+use std::sync::Arc;
+use zeo_abi::abi::{STATUS_OK, SignalKind};
+
+fn a_string(text: &str) -> RubyValue {
+    RubyValue::Str(crate::value::collections::string_new(text.to_string()))
+}
+
+fn strong_count(v: &RubyValue) -> usize {
+    match v {
+        RubyValue::Str(arc) => Arc::strong_count(arc),
+        other => panic!("test helper wants a Str, got {other:?}"),
+    }
+}
+
+#[test]
+fn retain_and_release_balance_the_refcount() {
+    let v = a_string("capi");
+    assert_eq!(strong_count(&v), 1);
+    unsafe { zeo_rt_retain(&v) };
+    assert_eq!(strong_count(&v), 2);
+    // Release the reference the retain minted exactly as compiled code
+    // would: a bit-copy of the slot IS that reference.
+    let mut slot = MaybeUninit::new(unsafe { std::ptr::read(&v) });
+    unsafe { zeo_rt_release(slot.as_mut_ptr()) };
+    assert_eq!(strong_count(&v), 1);
+}
+
+#[test]
+fn the_pool_drains_at_frame_pop() {
+    let v = a_string("pooled");
+    unsafe {
+        zeo_rt_frame_push(
+            c"t.rb".as_ptr().cast(),
+            4,
+            c"Object#m".as_ptr().cast(),
+            8,
+            1,
+            2,
+        );
+    }
+    let mut temp = MaybeUninit::new(v.clone());
+    assert_eq!(strong_count(&v), 2);
+    unsafe { zeo_rt_pool_push(temp.as_mut_ptr()) };
+    assert_eq!(strong_count(&v), 2, "pool_push moves, it does not clone");
+    unsafe { zeo_rt_frame_pop() };
+    assert_eq!(strong_count(&v), 1, "frame_pop released the pooled temp");
+}
+
+#[test]
+fn pool_mark_and_reset_bracket_a_loop_iteration() {
+    let v = a_string("latch");
+    let mark = unsafe { zeo_rt_pool_mark() };
+    for _ in 0..3 {
+        let mut temp = MaybeUninit::new(v.clone());
+        unsafe { zeo_rt_pool_push(temp.as_mut_ptr()) };
+    }
+    assert_eq!(strong_count(&v), 4);
+    unsafe { zeo_rt_pool_reset(mark) };
+    assert_eq!(strong_count(&v), 1);
+}
+
+#[test]
+fn frame_push_shows_in_the_backtrace_and_pops_clean() {
+    let depth_before = crate::frames::capture_backtrace().len();
+    unsafe {
+        zeo_rt_frame_push(
+            c"cap.rb".as_ptr().cast(),
+            6,
+            c"Object#capi".as_ptr().cast(),
+            11,
+            7,
+            9,
+        );
+        zeo_rt_set_line(8);
+    }
+    let bt = crate::frames::capture_backtrace();
+    assert_eq!(
+        bt.first().map(String::as_str),
+        Some("cap.rb:8:in 'Object#capi'")
+    );
+    unsafe { zeo_rt_frame_pop() };
+    assert_eq!(crate::frames::capture_backtrace().len(), depth_before);
+}
+
+#[test]
+fn payload_signals_roundtrip_through_set_kind_take() {
+    let mut v = MaybeUninit::new(RubyValue::Int(42));
+    unsafe { zeo_rt_signal_set(SignalKind::Break as u8, v.as_mut_ptr()) };
+    assert_eq!(unsafe { zeo_rt_signal_kind() }, SignalKind::Break as u8);
+    let mut out = MaybeUninit::<RubyValue>::uninit();
+    assert_eq!(
+        unsafe { zeo_rt_signal_take(out.as_mut_ptr()) },
+        SignalKind::Break as u8
+    );
+    assert!(matches!(unsafe { out.assume_init() }, RubyValue::Int(42)));
+    assert_eq!(unsafe { zeo_rt_signal_kind() }, SignalKind::None as u8);
+}
+
+#[test]
+fn no_payload_signals_stay_parked_across_take() {
+    unsafe { zeo_rt_signal_set(SignalKind::Retry as u8, std::ptr::null_mut()) };
+    let mut out = MaybeUninit::<RubyValue>::uninit();
+    assert_eq!(
+        unsafe { zeo_rt_signal_take(out.as_mut_ptr()) },
+        SignalKind::Retry as u8
+    );
+    assert_eq!(
+        unsafe { zeo_rt_signal_kind() },
+        SignalKind::Retry as u8,
+        "take leaves a payload-less signal parked"
+    );
+    assert!(matches!(crate::signal::take_pending(), Some(Signal::Retry)));
+}
+
+#[test]
+fn the_ensure_bracket_saves_and_restores_a_raise() {
+    crate::signal::set_pending(Signal::Raise(a_string("boom")));
+    let saved = unsafe { zeo_rt_signal_save() };
+    assert_eq!(unsafe { zeo_rt_signal_kind() }, SignalKind::None as u8);
+    let pushed = unsafe { zeo_rt_propagating_enter(saved) };
+    assert_eq!(pushed, 1);
+    assert!(
+        crate::handling::current_exception().is_some(),
+        "$! holds the propagating raise while the ensure body runs"
+    );
+    unsafe { zeo_rt_propagating_leave(pushed) };
+    assert!(crate::handling::current_exception().is_none());
+    unsafe { zeo_rt_signal_restore(saved) };
+    assert_eq!(unsafe { zeo_rt_signal_kind() }, SignalKind::Raise as u8);
+    let mut out = MaybeUninit::<RubyValue>::uninit();
+    unsafe { zeo_rt_signal_take(out.as_mut_ptr()) };
+    drop(unsafe { out.assume_init() });
+}
+
+#[test]
+fn a_throw_survives_the_ensure_bracket_whole() {
+    crate::signal::set_pending(Signal::Throw(Box::new(crate::signal::Thrown {
+        tag: RubyValue::Int(1),
+        value: RubyValue::Int(2),
+    })));
+    let saved = unsafe { zeo_rt_signal_save() };
+    assert_eq!(unsafe { zeo_rt_propagating_enter(saved) }, 0);
+    unsafe { zeo_rt_propagating_leave(0) };
+    unsafe { zeo_rt_signal_restore(saved) };
+    let mut out = MaybeUninit::<RubyValue>::uninit();
+    assert_eq!(
+        unsafe { zeo_rt_signal_take(out.as_mut_ptr()) },
+        SignalKind::Throw as u8
+    );
+    assert!(matches!(
+        crate::signal::take_pending(),
+        Some(Signal::Throw(_))
+    ));
+}
+
+#[test]
+fn rescue_matches_walks_the_builtin_ancestry() {
+    let exc = RubyValue::Int(3);
+    let classes = [zeo_abi::INTEGER_CLASS.0, zeo_abi::STRING_CLASS.0];
+    assert_eq!(
+        unsafe { zeo_rt_rescue_matches(&exc, classes.as_ptr(), 2) },
+        1
+    );
+    let miss = [zeo_abi::STRING_CLASS.0];
+    assert_eq!(unsafe { zeo_rt_rescue_matches(&exc, miss.as_ptr(), 1) }, 0);
+}
+
+#[test]
+fn value_predicates_answer_inline_questions() {
+    let s = a_string("x");
+    unsafe {
+        assert_eq!(zeo_rt_truthy(&RubyValue::Nil), 0);
+        assert_eq!(zeo_rt_truthy(&RubyValue::Bool(false)), 0);
+        assert_eq!(zeo_rt_truthy(&s), 1);
+        assert_eq!(
+            zeo_rt_class_of(&RubyValue::Int(1)),
+            zeo_abi::INTEGER_CLASS.0
+        );
+        assert_eq!(zeo_rt_is_a(&s, zeo_abi::STRING_CLASS.0), 1);
+        assert_eq!(zeo_rt_is_a(&s, zeo_abi::INTEGER_CLASS.0), 0);
+    }
+    let mut eq = 0i8;
+    assert_eq!(
+        unsafe { zeo_rt_eq(&RubyValue::Int(4), &RubyValue::Int(4), &mut eq) },
+        STATUS_OK
+    );
+    assert_eq!(eq, 1);
+}
+
+#[test]
+fn bignum_from_decimal_normalizes_small_and_keeps_big() {
+    let mut out = MaybeUninit::<RubyValue>::uninit();
+    unsafe {
+        zeo_rt_bignum_from_decimal(c"9223372036854775807".as_ptr().cast(), 19, out.as_mut_ptr())
+    };
+    assert!(matches!(
+        unsafe { out.assume_init() },
+        RubyValue::Int(i64::MAX)
+    ));
+    let big = "9223372036854775808";
+    let mut out = MaybeUninit::<RubyValue>::uninit();
+    unsafe { zeo_rt_bignum_from_decimal(big.as_ptr(), big.len(), out.as_mut_ptr()) };
+    let v = unsafe { out.assume_init() };
+    assert!(matches!(&v, RubyValue::BigInt(b) if b.to_string() == big));
+}
+
+#[test]
+fn stack_check_and_check_ints_answer_ok_on_a_quiet_thread() {
+    assert_eq!(unsafe { zeo_rt_stack_check() }, STATUS_OK);
+    assert_eq!(unsafe { zeo_rt_check_ints() }, STATUS_OK);
+}
+
+// The raise channels (`zeo_rt_raise_error`, `zeo_rt_wrong_arity`) are
+// untestable registry-less: the documented loud panic cannot unwind out of
+// an `extern "C"` fn (it aborts, per decision 13's boundary posture). They
+// are exercised end to end by the M0 slice goldens.
+
+#[test]
+fn svar_scope_brackets_push_and_pop() {
+    unsafe { zeo_rt_svar_scope_push() };
+    unsafe { zeo_rt_svar_scope_pop() };
+}
+
+#[test]
+fn synthetic_c_frames_dedupe_and_pop_what_they_pushed() {
+    unsafe {
+        zeo_rt_frame_push(
+            c"s.rb".as_ptr().cast(),
+            4,
+            c"Object#n".as_ptr().cast(),
+            8,
+            1,
+            2,
+        );
+        let label = c"Array#sum";
+        let first = zeo_rt_synthetic_c_frame_push(label.as_ptr().cast(), 9);
+        assert_eq!(first, 1);
+        let repeat = zeo_rt_synthetic_c_frame_push(label.as_ptr().cast(), 9);
+        assert_eq!(repeat, 0, "an exact repeat is deduped");
+        zeo_rt_synthetic_c_frame_pop(repeat);
+        zeo_rt_synthetic_c_frame_pop(first);
+        zeo_rt_frame_pop();
+    }
+}

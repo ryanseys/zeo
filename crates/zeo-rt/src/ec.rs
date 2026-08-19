@@ -54,6 +54,10 @@ pub struct Ec {
     /// fiber observe or consume it.
     pending: Option<crate::Signal>,
     catch_tags: Vec<RubyValue>,
+    /// The frame-scoped release pool (`release_pool`): compiled-code heap
+    /// temporaries drain with their own coroutine's frames, so the pool and
+    /// its per-frame watermarks swap as one slice.
+    pool: crate::release_pool::PoolState,
     frames: Vec<crate::frames::Frame>,
     /// The stack-overflow check floor (`stack_guard`) -- each fiber runs on
     /// its own coroutine stack with its own floor. `0` (a fresh context) =
@@ -76,6 +80,7 @@ impl Default for Ec {
             return_target: None,
             pending: None,
             catch_tags: Vec::new(),
+            pool: crate::release_pool::PoolState::default(),
             frames: Vec::new(),
             stack_floor: 0,
             fiber_locals: Some(std::sync::Arc::default()),
@@ -96,6 +101,7 @@ pub fn swap(ec: Ec) -> Ec {
         return_target: crate::signal::swap_return_target(ec.return_target),
         pending: crate::signal::swap_pending(ec.pending),
         catch_tags: crate::catch::swap_catch_tags(ec.catch_tags),
+        pool: crate::release_pool::swap_pool(ec.pool),
         frames: crate::frames::swap_stack(ec.frames),
         stack_floor: crate::stack_guard::set_floor(ec.stack_floor),
         fiber_locals: crate::thread::swap_fiber_locals(ec.fiber_locals),

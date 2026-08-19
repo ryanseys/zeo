@@ -203,10 +203,6 @@ std::thread_local!(static PENDING: RefCell<Option<Signal>> = const { RefCell::ne
 
 /// Park `sig` as the pending signal. Debug-asserts the slot is empty: a
 /// second set before a take means a landing forgot to consume or forward.
-#[expect(
-    dead_code,
-    reason = "consumed by the capi/ status-protocol wrappers (M0-3)"
-)]
 pub fn set_pending(sig: Signal) {
     PENDING.with(|p| {
         let mut p = p.borrow_mut();
@@ -219,12 +215,14 @@ pub fn set_pending(sig: Signal) {
 }
 
 /// Take the pending signal, emptying the slot.
-#[expect(
-    dead_code,
-    reason = "consumed by the capi/ status-protocol wrappers (M0-3)"
-)]
 pub fn take_pending() -> Option<Signal> {
     PENDING.with(|p| p.borrow_mut().take())
+}
+
+/// Read the pending signal without consuming it -- `zeo_rt_signal_kind`'s
+/// peek, and `zeo_rt_signal_take`'s payload/no-payload split.
+pub(crate) fn with_pending<R>(f: impl FnOnce(&Option<Signal>) -> R) -> R {
+    PENDING.with(|p| f(&p.borrow()))
 }
 
 /// Install `new` as this context's pending signal, returning the previous

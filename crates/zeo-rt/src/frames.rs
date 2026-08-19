@@ -357,6 +357,33 @@ impl Drop for CFrameGuard {
     }
 }
 
+/// [`FrameGuard::push`] without the guard -- the capi push/pop twins call
+/// these so Cranelift-compiled code (which has no Rust drops) brackets a
+/// frame explicitly while the traced-pop logic stays in one place.
+pub(crate) fn frame_push_raw(file: &'static str, method: &'static str, line: u32, end_line: u32) {
+    std::mem::forget(FrameGuard::push(file, method, line, end_line));
+}
+
+/// The explicit pop matching [`frame_push_raw`].
+pub(crate) fn frame_pop_raw() {
+    drop(FrameGuard(()));
+}
+
+/// [`synthetic_c_frame`] without the guard: answers whether a frame was
+/// actually pushed (a deduped call pushes nothing) -- pass it back to
+/// [`synthetic_c_frame_pop_raw`].
+pub(crate) fn synthetic_c_frame_push_raw(method: &'static str) -> bool {
+    let guard = synthetic_c_frame(method);
+    let pushed = guard.0;
+    std::mem::forget(guard);
+    pushed
+}
+
+/// The explicit pop matching [`synthetic_c_frame_push_raw`].
+pub(crate) fn synthetic_c_frame_pop_raw(pushed: bool) {
+    drop(CFrameGuard(pushed));
+}
+
 /// Stamp the innermost frame's current line -- emitted before a statement
 /// whose source line differs from the previous statement's.
 #[inline]
