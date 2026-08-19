@@ -267,8 +267,14 @@ pub(super) fn module_extendable_method_names(mid: ClassId) -> Vec<Symbol> {
 pub(super) fn extended_value_method(mid: ClassId, name: Symbol) -> Option<RProc> {
     let f = crate::builtins::class_table(mid)
         .and_then(|t| t(&name.name()))
+        .map(crate::dispatch::ValueImpl::Rust)
         .or_else(|| crate::dispatch::value_method(mid, 0, name))?;
-    Some(RProc::with_self_and_block(f, RubyValue::Nil, -1, true))
+    Some(RProc::with_self_and_block(
+        f.into_fn(),
+        RubyValue::Nil,
+        -1,
+        true,
+    ))
 }
 
 /// One `extend`ed module method, wrapped as a class method (a value-receiver
@@ -289,7 +295,12 @@ pub(super) fn extended_class_method(mid: ClassId, name: Symbol) -> Option<RProc>
     // for an instance method `new` and find none) and what routes `@x` to the
     // class's own store. Preferred over the `&RObj` body below.
     if let Some(f) = crate::dispatch::value_method(mid, 0, name) {
-        return Some(RProc::with_self_and_block(f, RubyValue::Nil, -1, true));
+        return Some(RProc::with_self_and_block(
+            f.into_fn(),
+            RubyValue::Nil,
+            -1,
+            true,
+        ));
     }
     // A RUNTIME-defined body (`define_method`, or a method an eval'd `def`
     // installed) is already value-shaped -- it takes `self` as a plain
@@ -757,7 +768,12 @@ pub(crate) fn overlay_allocator(id: ClassId) -> Option<crate::dispatch::Allocato
 /// receiving class value -- the shape [`OverlayEntry::class_methods`] holds.
 fn class_method_as_proc(cid: ClassId, name: Symbol) -> Option<RProc> {
     let f = crate::dispatch::own_class_method_fn(cid, name)?;
-    Some(RProc::with_self_and_block(f, RubyValue::Nil, -1, true))
+    Some(RProc::with_self_and_block(
+        f.into_fn(),
+        RubyValue::Nil,
+        -1,
+        true,
+    ))
 }
 
 pub fn runtime_module_dup(mid: ClassId) -> Result<RubyValue, Signal> {
@@ -1043,7 +1059,7 @@ pub fn refinement_import_methods(
             // emits a value bridge per method, and it takes `self` as a plain
             // `RubyValue`, so it passes straight through.
             let value_body = crate::dispatch::value_method(*mid, 0, name)
-                .map(|f| RProc::with_self_and_block(f, RubyValue::Nil, -1, true));
+                .map(|f| RProc::with_self_and_block(f.into_fn(), RubyValue::Nil, -1, true));
             let mut w = maps().classes.write().unwrap();
             let e = w.entry(hid.0).or_insert_with(OverlayEntry::delta);
             e.methods.insert(name, body);

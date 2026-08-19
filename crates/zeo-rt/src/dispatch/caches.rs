@@ -11,10 +11,13 @@ use super::*;
 enum Cached {
     /// A generated object -- resolved through the registry's own method table.
     Obj(MethodFn),
+    /// A Cranelift-compiled object method (`MethodImpl::CValue`) -- the
+    /// receiver is already the `&RubyValue` the C body borrows.
+    CObj(crate::capi::ValueFn),
     /// A builtin value (`Int`, `Str`, `Array`, ...) -- resolved through the
     /// flattened one-probe walk, with the row's synthetic-frame label so a
     /// cached hit shows the same backtrace as the uncached resolution.
-    Value(ValueMethodFn, Option<&'static str>),
+    Value(ValueImpl, Option<&'static str>),
 }
 
 /// One dynamic call site's monomorphic inline cache.
@@ -114,7 +117,12 @@ pub fn send_value_cached(
                 note_dispatch_gated(gates, name);
                 return match (target, recv) {
                     (Cached::Obj(f), RubyValue::Object(o)) => f(o, args, block),
-                    (Cached::Value(f, label), _) => with_c_frame(*label, || f(recv, args, block)),
+                    (Cached::CObj(f), RubyValue::Object(_)) => {
+                        crate::capi::dispatch::call_value_fn(*f, recv, args, block)
+                    }
+                    (Cached::Value(f, label), _) => {
+                        with_c_frame(*label, || f.call(recv, args, block))
+                    }
                     // A class id cannot be both shapes, so this is unreachable
                     // in practice; falling through is still the right answer.
                     _ => send_value_in(box_id, recv, name, args, block),
@@ -131,12 +139,20 @@ pub fn send_value_cached(
             }
             match recv {
                 RubyValue::Object(o) if id != zeo_abi::OBJECT_CLASS => {
-                    if let Some(MethodImpl::Static(f)) =
-                        REGISTRY.get().and_then(|r| r.lookup_mro(id, name))
-                    {
-                        note_dispatch_gated(gates, name);
-                        let _ = site.hit.set((id.0, Cached::Obj(*f)));
-                        return f(o, args, block);
+                    match REGISTRY.get().and_then(|r| r.lookup_mro(id, name)) {
+                        Some(MethodImpl::Static(f)) => {
+                            note_dispatch_gated(gates, name);
+                            let _ = site.hit.set((id.0, Cached::Obj(*f)));
+                            return f(o, args, block);
+                        }
+                        // A CValue hit that only fell through would make
+                        // every compiled-object call uncached.
+                        Some(MethodImpl::CValue(f)) => {
+                            note_dispatch_gated(gates, name);
+                            let _ = site.hit.set((id.0, Cached::CObj(*f)));
+                            return crate::capi::dispatch::call_value_fn(*f, recv, args, block);
+                        }
+                        Some(MethodImpl::Dynamic(_)) | None => {}
                     }
                 }
                 RubyValue::Object(_) => {}
@@ -145,7 +161,7 @@ pub fn send_value_cached(
                     {
                         note_dispatch_gated(gates, name);
                         let _ = site.hit.set((id.0, Cached::Value(hit.f, hit.frame_label)));
-                        return with_c_frame(hit.frame_label, || (hit.f)(recv, args, block));
+                        return with_c_frame(hit.frame_label, || hit.f.call(recv, args, block));
                     }
                 }
             }
@@ -173,7 +189,7 @@ pub fn send_value_cached(
 /// varies per call -- misses instead of skipping a visibility question that
 /// was answered for somebody else.
 pub struct ClassMethodSite {
-    hit: std::sync::OnceLock<(u32, ValueMethodFn, Option<&'static str>)>,
+    hit: std::sync::OnceLock<(u32, ValueImpl, Option<&'static str>)>,
 }
 
 impl Default for ClassMethodSite {
@@ -219,7 +235,7 @@ pub fn send_class_cached(
         if let Some((cached_caller, f, label)) = site.hit.get() {
             if *cached_caller == caller_class {
                 note_dispatch_gated(gates, name);
-                return with_c_frame(*label, || f(recv, args, block));
+                return with_c_frame(*label, || f.call(recv, args, block));
             }
         } else {
             // Vetted BEFORE it fills, exactly as `send_value_cached` does, so
@@ -233,7 +249,7 @@ pub fn send_class_cached(
             {
                 note_dispatch_gated(gates, name);
                 let _ = site.hit.set((caller_class, f, label));
-                return with_c_frame(label, || f(recv, args, block));
+                return with_c_frame(label, || f.call(recv, args, block));
             }
         }
     }
@@ -423,7 +439,12 @@ pub fn send_value_dyn_cached(
                 note_dispatch_gated(gates, name);
                 return match (target, recv) {
                     (Cached::Obj(f), RubyValue::Object(o)) => f(o, args, block),
-                    (Cached::Value(f, label), _) => with_c_frame(*label, || f(recv, args, block)),
+                    (Cached::CObj(f), RubyValue::Object(_)) => {
+                        crate::capi::dispatch::call_value_fn(*f, recv, args, block)
+                    }
+                    (Cached::Value(f, label), _) => {
+                        with_c_frame(*label, || f.call(recv, args, block))
+                    }
                     _ => send_value_in(box_id, recv, name, args, block),
                 };
             }
@@ -438,12 +459,18 @@ pub fn send_value_dyn_cached(
             }
             match recv {
                 RubyValue::Object(o) if id != zeo_abi::OBJECT_CLASS => {
-                    if let Some(MethodImpl::Static(f)) =
-                        REGISTRY.get().and_then(|r| r.lookup_mro(id, name))
-                    {
-                        note_dispatch_gated(gates, name);
-                        let _ = site.hit.set((id.0, vet, Cached::Obj(*f)));
-                        return f(o, args, block);
+                    match REGISTRY.get().and_then(|r| r.lookup_mro(id, name)) {
+                        Some(MethodImpl::Static(f)) => {
+                            note_dispatch_gated(gates, name);
+                            let _ = site.hit.set((id.0, vet, Cached::Obj(*f)));
+                            return f(o, args, block);
+                        }
+                        Some(MethodImpl::CValue(f)) => {
+                            note_dispatch_gated(gates, name);
+                            let _ = site.hit.set((id.0, vet, Cached::CObj(*f)));
+                            return crate::capi::dispatch::call_value_fn(*f, recv, args, block);
+                        }
+                        Some(MethodImpl::Dynamic(_)) | None => {}
                     }
                 }
                 RubyValue::Object(_) => {}
@@ -454,7 +481,7 @@ pub fn send_value_dyn_cached(
                         let _ = site
                             .hit
                             .set((id.0, vet, Cached::Value(hit.f, hit.frame_label)));
-                        return with_c_frame(hit.frame_label, || (hit.f)(recv, args, block));
+                        return with_c_frame(hit.frame_label, || hit.f.call(recv, args, block));
                     }
                 }
             }

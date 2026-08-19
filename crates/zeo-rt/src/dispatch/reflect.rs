@@ -139,7 +139,7 @@ pub fn responds_to_or_missing(
     // channel `lookup_mro` reads.
     for &anc in ancestors_of_value(id) {
         if let Some(f) = value_method(anc, 0, rtm) {
-            return Ok(f(recv, &args, None)?.truthy());
+            return Ok(f.call(recv, &args, None)?.truthy());
         }
     }
     Ok(false)
@@ -264,13 +264,11 @@ pub fn class_method_extend_source(cid: ClassId, name: Symbol) -> Option<ClassId>
 /// compiled `&RObj` body has no object to bind a Class receiver to, and the
 /// module's own `extend`-time wrapper (`runtime_meta::extended_class_method`)
 /// is the path that serves those.
-pub(super) fn extended_class_method_fn(
-    cid: ClassId,
-    name: Symbol,
-) -> Option<(ValueMethodFn, ClassId)> {
+pub(super) fn extended_class_method_fn(cid: ClassId, name: Symbol) -> Option<(ValueImpl, ClassId)> {
     let owner = class_method_extend_source(cid, name)?;
     let f = crate::builtins::class_table(owner)
         .and_then(|t| t(name.name_str()))
+        .map(ValueImpl::Rust)
         .or_else(|| value_method(owner, 0, name))?;
     Some((f, owner))
 }
@@ -289,13 +287,17 @@ fn extended_class_method_owner(cid: ClassId, name: Symbol) -> Option<ClassId> {
 /// ancestor defines it -- the `class_methods` table, which is a different one
 /// from `value_method`'s. Used to COPY a class method (a runtime `alias` inside
 /// `class << self`); dispatch itself walks the chain inline.
-pub(crate) fn class_method_fn(cid: ClassId, name: Symbol) -> Option<ValueMethodFn> {
+pub(crate) fn class_method_fn(cid: ClassId, name: Symbol) -> Option<ValueImpl> {
     let owner = class_method_owner(cid, name)?;
     registry()
         .entries
         .get(&owner.0)
         .and_then(|e| e.class_methods.get(&name).copied())
-        .or_else(|| crate::builtins::class_method_table(owner).and_then(|l| l(name.name_str())))
+        .or_else(|| {
+            crate::builtins::class_method_table(owner)
+                .and_then(|l| l(name.name_str()))
+                .map(ValueImpl::Rust)
+        })
 }
 
 /// [`class_method_owner`]'s `#super_method` companion: the next definer

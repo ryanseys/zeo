@@ -218,6 +218,83 @@ fn stack_check_and_check_ints_answer_ok_on_a_quiet_thread() {
     assert_eq!(unsafe { zeo_rt_check_ints() }, STATUS_OK);
 }
 
+// -- M0-4: the Rust->C dispatch bridge --------------------------------------
+
+unsafe extern "C" fn double_plus_args(
+    recv: *const RubyValue,
+    argv: *const RubyValue,
+    argc: usize,
+    blk: *mut RubyValue,
+    out: *mut RubyValue,
+) -> i32 {
+    assert!(blk.is_null(), "this test body takes no block");
+    let n = match unsafe { &*recv } {
+        RubyValue::Int(n) => *n,
+        other => panic!("test body wants an Int receiver, got {other:?}"),
+    };
+    let extra: i64 = (0..argc)
+        .map(|i| match unsafe { &*argv.add(i) } {
+            RubyValue::Int(n) => *n,
+            other => panic!("{other:?}"),
+        })
+        .sum();
+    unsafe { out.write(RubyValue::Int(n * 2 + extra)) };
+    0
+}
+
+unsafe extern "C" fn always_signals(
+    _recv: *const RubyValue,
+    _argv: *const RubyValue,
+    _argc: usize,
+    _blk: *mut RubyValue,
+    _out: *mut RubyValue,
+) -> i32 {
+    crate::signal::set_pending(Signal::Return(RubyValue::Int(7)));
+    1
+}
+
+unsafe extern "C" fn consumes_its_block(
+    _recv: *const RubyValue,
+    _argv: *const RubyValue,
+    _argc: usize,
+    blk: *mut RubyValue,
+    out: *mut RubyValue,
+) -> i32 {
+    assert!(!blk.is_null());
+    // The block arrives by MOVE: the callee owns and releases it.
+    drop(unsafe { std::ptr::read(blk) });
+    unsafe { out.write(RubyValue::Nil) };
+    0
+}
+
+#[test]
+fn a_c_value_impl_calls_through_the_bridge() {
+    let f = crate::dispatch::ValueImpl::C(double_plus_args);
+    let recv = RubyValue::Int(20);
+    let args = [RubyValue::Int(1), RubyValue::Int(2)];
+    assert!(matches!(f.call(&recv, &args, None), Ok(RubyValue::Int(43))));
+}
+
+#[test]
+fn a_signalling_c_body_becomes_an_err() {
+    let f = crate::dispatch::ValueImpl::C(always_signals);
+    match f.call(&RubyValue::Nil, &[], None) {
+        Err(Signal::Return(RubyValue::Int(7))) => {}
+        other => panic!("expected the parked Return, got {other:?}"),
+    }
+    assert_eq!(unsafe { zeo_rt_signal_kind() }, SignalKind::None as u8);
+}
+
+#[test]
+fn the_block_moves_into_the_c_callee() {
+    let block = a_string("blk");
+    let watcher = block.clone();
+    assert_eq!(strong_count(&watcher), 2);
+    let f = crate::dispatch::ValueImpl::C(consumes_its_block);
+    f.call(&RubyValue::Nil, &[], Some(block)).unwrap();
+    assert_eq!(strong_count(&watcher), 1, "the callee released the block");
+}
+
 // The raise channels (`zeo_rt_raise_error`, `zeo_rt_wrong_arity`) are
 // untestable registry-less: the documented loud panic cannot unwind out of
 // an `extern "C"` fn (it aborts, per decision 13's boundary posture). They

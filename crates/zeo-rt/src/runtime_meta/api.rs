@@ -632,7 +632,7 @@ pub fn runtime_alias_method(id: ClassId, new: Symbol, old: Symbol) -> Result<Rub
         let source = existing
             .or_else(|| {
                 crate::dispatch::class_method_fn(owner, old)
-                    .map(|f| RProc::with_self_and_block(f, RubyValue::Nil, -1, true))
+                    .map(|f| RProc::with_self_and_block(f.into_fn(), RubyValue::Nil, -1, true))
             })
             .or_else(|| extended_class_method(owner, old));
         let Some(source) = source else {

@@ -57,7 +57,7 @@ pub(super) struct ClassEntry {
     /// the same id in every box -- so, unlike CRuby, they are not isolated
     /// per box. Per-box state on distinct USER classes (their own `ClassId`
     /// per box) and per-box instance-method monkeypatches both work.
-    pub(super) value_methods: FMap<(u32, Symbol), ValueMethodFn>,
+    pub(super) value_methods: FMap<(u32, Symbol), ValueImpl>,
     /// Just the NAMES in `value_methods`, box dimension collapsed.
     /// `defines_own` and `own_method_visibility` ask "does this class
     /// reopen this name at all", which the keyed map can only answer by
@@ -150,7 +150,7 @@ pub(super) struct ClassEntry {
     /// here is always this exact class's own entry. That is also what keeps
     /// class-level `@x` storage correct through this path -- each copy
     /// carries its own class id (see `civars`' docs).
-    pub(super) class_methods: FMap<Symbol, ValueMethodFn>,
+    pub(super) class_methods: FMap<Symbol, ValueImpl>,
     /// [`ClassEntry::aliases`]'s singleton-side twin: `new -> old` name
     /// indirections for an alias written inside `class << self` whose source is
     /// a builtin class method rather than a user `def self.x`.
@@ -173,7 +173,7 @@ pub(super) struct ClassEntry {
     /// the module's generic bridge, so a sibling-extend chain (`extend A`
     /// then `extend B`, each `super`ing to the next) resolves every hop
     /// with the RECEIVER's context.
-    pub(super) singleton_super_targets: FMap<(u32, Symbol), ValueMethodFn>,
+    pub(super) singleton_super_targets: FMap<(u32, Symbol), ValueImpl>,
     /// The names DEFINED DIRECTLY on this class (not materialized from an
     /// ancestor) -- what `instance_methods(false)` needs, since `methods`
     /// above holds the flattened, fully-materialized set (dispatch's own
@@ -206,7 +206,7 @@ pub(super) struct ClassEntry {
     /// probed ahead of it when live. The label rides along for BUILTIN rows
     /// (`'File.read'` -- see [`FlatHit::frame_label`]); user `def self.x`
     /// rows push their own compiled frames and carry `None`.
-    pub(super) flat_class: OnceLock<crate::FMap<Symbol, (ValueMethodFn, Option<&'static str>)>>,
+    pub(super) flat_class: OnceLock<crate::FMap<Symbol, (ValueImpl, Option<&'static str>)>>,
 }
 
 /// One flattened dispatch answer: the function, which ancestor supplied it,
@@ -215,7 +215,7 @@ pub(super) struct ClassEntry {
 /// against the boxed receiver, mirroring the walk).
 #[derive(Clone, Copy)]
 pub(super) struct FlatHit {
-    pub(super) f: ValueMethodFn,
+    pub(super) f: ValueImpl,
     pub(super) owner: ClassId,
     pub(super) builtin: bool,
     /// The `'Owner#name'` backtrace frame this row shows while it runs --
@@ -324,7 +324,7 @@ impl ClassRegistry {
                         }
                         if let Some(f) = lookup(n) {
                             map.entry(sym).or_insert(FlatHit {
-                                f,
+                                f: ValueImpl::Rust(f),
                                 owner: anc,
                                 builtin: true,
                                 frame_label: c_frame_label(anc, sym, '#'),
@@ -345,7 +345,7 @@ impl ClassRegistry {
         &self,
         id: ClassId,
         name: Symbol,
-    ) -> Option<(ValueMethodFn, Option<&'static str>)> {
+    ) -> Option<(ValueImpl, Option<&'static str>)> {
         let entry = self.entries.get(&id.0)?;
         let map = entry.flat_class.get_or_init(|| {
             let mut map = crate::FMap::default();
@@ -356,7 +356,8 @@ impl ClassRegistry {
                 for &n in crate::builtins::class_method_table_names(id) {
                     if let Some(f) = lookup(n) {
                         let sym = Symbol::intern(n);
-                        map.entry(sym).or_insert((f, c_frame_label(id, sym, '.')));
+                        map.entry(sym)
+                            .or_insert((ValueImpl::Rust(f), c_frame_label(id, sym, '.')));
                     }
                 }
             }
@@ -622,7 +623,29 @@ impl ClassRegistry {
                 name.name()
             )
         });
-        entry.value_methods.insert((box_id, name), f);
+        entry
+            .value_methods
+            .insert((box_id, name), ValueImpl::Rust(f));
+        entry.own_value_names.insert(name);
+    }
+
+    /// [`define_value_method`](Self::define_value_method)'s C twin: a
+    /// Cranelift-compiled reopen/top-level row (`VmRow`).
+    pub fn define_value_method_c(
+        &mut self,
+        id: ClassId,
+        box_id: u32,
+        name: Symbol,
+        f: crate::capi::ValueFn,
+    ) {
+        let entry = self.entries.get_mut(&id.0).unwrap_or_else(|| {
+            panic!(
+                "class {} must be registered before defining `{}` on it",
+                id.0,
+                name.name()
+            )
+        });
+        entry.value_methods.insert((box_id, name), ValueImpl::C(f));
         entry.own_value_names.insert(name);
     }
 
@@ -695,7 +718,17 @@ impl ClassRegistry {
             .get_mut(&id.0)
             .expect("class must be registered before defining class methods on it")
             .class_methods
-            .insert(name, f);
+            .insert(name, ValueImpl::Rust(f));
+    }
+
+    /// [`define_class_method`](Self::define_class_method)'s C twin: a
+    /// Cranelift-compiled `def self.x` row (`CmRow`).
+    pub fn define_class_method_c(&mut self, id: ClassId, name: Symbol, f: crate::capi::ValueFn) {
+        self.entries
+            .get_mut(&id.0)
+            .expect("class must be registered before defining class methods on it")
+            .class_methods
+            .insert(name, ValueImpl::C(f));
     }
 
     /// Registers one `extend`ed-module method copy as a singleton-chain
@@ -712,7 +745,7 @@ impl ClassRegistry {
             .get_mut(&id.0)
             .expect("class must be registered before defining class methods on it")
             .singleton_super_targets
-            .insert((module.0, name), f);
+            .insert((module.0, name), ValueImpl::Rust(f));
     }
 
     /// The runtime-mutable path `define_method`/`define_singleton_method`
@@ -725,6 +758,17 @@ impl ClassRegistry {
             .expect("class must be registered before defining methods on it")
             .methods
             .insert(name, MethodImpl::from_fn(f));
+    }
+
+    /// [`define_method`](Self::define_method)'s C twin: a Cranelift-compiled
+    /// object-channel row (`ObjRow` -- the CLIF `ruby_class! dispatch{}`
+    /// equivalent), registered as [`MethodImpl::CValue`].
+    pub fn define_method_c(&mut self, id: ClassId, name: Symbol, f: crate::capi::ValueFn) {
+        self.entries
+            .get_mut(&id.0)
+            .expect("class must be registered before defining methods on it")
+            .methods
+            .insert(name, MethodImpl::CValue(f));
     }
 
     /// `define_method` that ALSO records the row as this class's own
@@ -949,7 +993,7 @@ impl ClassRegistry {
         id: ClassId,
         box_id: u32,
         name: Symbol,
-    ) -> Option<ValueMethodFn> {
+    ) -> Option<ValueImpl> {
         let entry = self.entries.get(&id.0)?;
         if box_id != 0
             && let Some(f) = entry.value_methods.get(&(box_id, name))

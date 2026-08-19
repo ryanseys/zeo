@@ -681,6 +681,13 @@ pub enum MethodImpl {
     // BEFORE dispatching, so a runtime method that itself defines another
     // method can't deadlock.
     Dynamic(DynMethodFn),
+    /// A Cranelift-compiled body registered on the object channel (an
+    /// `ObjRow` -- the CLIF twin of `ruby_class!`'s `dispatch{}` rows).
+    /// Called with a borrowed `RubyValue::Object` VIEW of the receiver:
+    /// `ManuallyDrop` over a `ptr::read` copy, so no Arc bump on the hot
+    /// path -- sound because the view lives only for the call and the
+    /// callee only borrows its receiver.
+    CValue(crate::capi::ValueFn),
 }
 
 impl MethodImpl {
@@ -694,6 +701,11 @@ impl MethodImpl {
         match self {
             MethodImpl::Static(f) => f(recv, args, block),
             MethodImpl::Dynamic(f) => f(recv, args, block),
+            MethodImpl::CValue(f) => {
+                let view =
+                    std::mem::ManuallyDrop::new(RubyValue::Object(unsafe { std::ptr::read(recv) }));
+                crate::capi::dispatch::call_value_fn(*f, &view, args, block)
+            }
         }
     }
 
@@ -736,6 +748,45 @@ pub type AllocatorFn = fn(ClassId) -> RObj;
 /// this same table.
 pub type ValueMethodFn =
     fn(&RubyValue, &[RubyValue], Option<RubyValue>) -> Result<RubyValue, Signal>;
+
+/// One value-channel implementation: the [`ValueMethodFn`] shape every
+/// Rust row registers as, or a Cranelift-compiled C body. What the
+/// registry's value tables, `FlatHit`, and the inline caches store --
+/// `Copy` (two words) so caches keep holding it by value; `call` adds one
+/// predictable branch over the direct call it replaces. The
+/// generated-code-facing `define_*` signatures keep taking bare
+/// `ValueMethodFn` (their row-table types are baked into emitted programs)
+/// and wrap into `Rust` at the insertion point; C rows arrive through the
+/// `_c` twins.
+#[derive(Clone, Copy)]
+pub enum ValueImpl {
+    Rust(ValueMethodFn),
+    C(crate::capi::ValueFn),
+}
+
+impl ValueImpl {
+    #[inline(always)]
+    pub fn call(
+        &self,
+        recv: &RubyValue,
+        args: &[RubyValue],
+        block: Option<RubyValue>,
+    ) -> Result<RubyValue, Signal> {
+        match self {
+            ValueImpl::Rust(f) => f(recv, args, block),
+            ValueImpl::C(f) => crate::capi::dispatch::call_value_fn(*f, recv, args, block),
+        }
+    }
+
+    /// The closure shape `RProc::with_self_and_block` and friends take --
+    /// for the wrap sites where a bare `ValueMethodFn` used to pass as an
+    /// `impl Fn` directly.
+    pub(crate) fn into_fn(
+        self,
+    ) -> impl Fn(&RubyValue, &[RubyValue], Option<RubyValue>) -> Result<RubyValue, Signal> {
+        move |recv, args, block| self.call(recv, args, block)
+    }
+}
 
 /// Builtin rows that push NO synthetic frame: rows whose CRuby counterpart is
 /// frameless in a backtrace (`send`, `raise`), and rows whose implementation
@@ -1233,11 +1284,11 @@ pub(crate) fn ancestor_allocator_of(id: ClassId) -> Option<AllocatorFn> {
     })
 }
 
-/// `id`'s OWN registered class-method body (`def self.x`), as the raw fn --
-/// what `Class#dup` copies onto the new class. Deliberately not the flattened
-/// probe: an INHERITED class method belongs to the ancestor, and the copy
-/// keeps the same ancestor.
-pub(crate) fn own_class_method_fn(id: ClassId, name: Symbol) -> Option<ValueMethodFn> {
+/// `id`'s OWN registered class-method body (`def self.x`), as the raw
+/// implementation -- what `Class#dup` copies onto the new class.
+/// Deliberately not the flattened probe: an INHERITED class method belongs
+/// to the ancestor, and the copy keeps the same ancestor.
+pub(crate) fn own_class_method_fn(id: ClassId, name: Symbol) -> Option<ValueImpl> {
     REGISTRY
         .get()?
         .entries
@@ -1421,13 +1472,17 @@ fn probe_generic_row(
     // `ClassEntry::foreign_value_names`.
     let f = value_method(anc, 0, name)
         .filter(|_| !value_row_is_foreign(anc, name))
-        .or_else(|| crate::builtins::class_table(anc).and_then(|t| t(&name.to_string())))?;
+        .or_else(|| {
+            crate::builtins::class_table(anc)
+                .and_then(|t| t(&name.to_string()))
+                .map(ValueImpl::Rust)
+        })?;
     if let RubyValue::Object(o) = recv
         && let Some(root) = o.builtin_root()
         && crate::builtins::value_subclass::payload_owns(root, anc)
         && let Some(p) = o.builtin_payload()
     {
-        let result = match f(&p, args, block) {
+        let result = match f.call(&p, args, block) {
             Ok(r) => r,
             Err(e) => return Some(Err(e)),
         };
@@ -1438,7 +1493,7 @@ fn probe_generic_row(
             name.name_str(),
         )));
     }
-    Some(f(recv, args, block))
+    Some(f.call(recv, args, block))
 }
 
 /// Whether `anc`'s registered value row for `name` was contributed by an
@@ -1620,7 +1675,7 @@ fn send_class_walking_inner(
             .get(&anc.0)
             .and_then(|e| e.class_methods.get(&name).copied())
         {
-            return f(&recv, args, block);
+            return f.call(&recv, args, block);
         }
         if let Some(f) =
             crate::builtins::class_method_table(anc).and_then(|lookup| lookup(&method_name))
@@ -1667,10 +1722,10 @@ pub fn call_singleton_super_target(
             .get(&recv_class.0)
             .and_then(|e| e.singleton_super_targets.get(&(target.0, name)).copied())
         {
-            return f(&recv, args, block);
+            return f.call(&recv, args, block);
         }
         if let Some(f) = value_method(target, 0, name) {
-            return f(&recv, args, block);
+            return f.call(&recv, args, block);
         }
     } else {
         if crate::runtime_meta::is_live()
@@ -1683,7 +1738,7 @@ pub fn call_singleton_super_target(
             .get(&target.0)
             .and_then(|e| e.class_methods.get(&name).copied())
         {
-            return f(&recv, args, block);
+            return f.call(&recv, args, block);
         }
         if let Some(f) = crate::builtins::class_method_table(target).and_then(|t| t(&method_name)) {
             return f(&recv, args, block);
@@ -1799,7 +1854,7 @@ pub fn reflect_dispatch_in(
 /// `class_id()`; see `ValueMethodFn`'s docs for why no ancestor walk is
 /// needed. Used by `send_value`'s override-first stage and by
 /// `display_with`/`inspect_with`'s `to_s`/`inspect` probes in `value.rs`.
-pub(crate) fn value_method(id: ClassId, box_id: u32, name: Symbol) -> Option<ValueMethodFn> {
+pub(crate) fn value_method(id: ClassId, box_id: u32, name: Symbol) -> Option<ValueImpl> {
     REGISTRY.get()?.lookup_value_method(id, box_id, name)
 }
 
@@ -1836,7 +1891,7 @@ pub(crate) fn registry_own_impl_cloned(id: ClassId, name: Symbol) -> Option<Meth
 /// as), wrapped as a `MethodImpl` so `Object#extend` can copy it into an
 /// object's singleton table. `box_id` 0 (the unboxed method set).
 pub(crate) fn registry_value_method_impl(id: ClassId, name: Symbol) -> Option<MethodImpl> {
-    let f: ValueMethodFn = REGISTRY.get()?.lookup_value_method(id, 0, name)?;
+    let f = REGISTRY.get()?.lookup_value_method(id, 0, name)?;
     Some(value_fn_impl(f))
 }
 
@@ -1885,10 +1940,10 @@ pub(crate) fn builtin_row_impl(id: ClassId, name: Symbol) -> Option<MethodImpl> 
     )))
 }
 
-fn value_fn_impl(f: ValueMethodFn) -> MethodImpl {
+fn value_fn_impl(f: ValueImpl) -> MethodImpl {
     MethodImpl::Dynamic(std::sync::Arc::new(
         move |recv: &RObj, args: &[RubyValue], block: Option<RubyValue>| {
-            f(&RubyValue::Object(recv.clone()), args, block)
+            f.call(&RubyValue::Object(recv.clone()), args, block)
         },
     ))
 }
@@ -2291,7 +2346,7 @@ pub fn run_initialize(
             return Ok(());
         }
         if let Some(f) = value_method(anc, 0, init) {
-            f(&RubyValue::Object(recv.clone()), args, block)?;
+            f.call(&RubyValue::Object(recv.clone()), args, block)?;
             return Ok(());
         }
     }
@@ -2716,7 +2771,7 @@ fn call_refined(
     block: Option<RubyValue>,
 ) -> Option<Result<RubyValue, Signal>> {
     if let Some(f) = value_method(holder, 0, name) {
-        return Some(f(recv, args, block));
+        return Some(f.call(recv, args, block));
     }
     let body = crate::runtime_meta::overlay_value_body(holder, name)?;
     Some(crate::runtime_meta::call_value_body(
@@ -2896,14 +2951,16 @@ fn send_value_in_reason(
         // Class/Module). A class with NO registry entry (a never-required
         // feature-gated ext) still gets the direct builtin probe below.
         if let Some((f, label)) = REGISTRY.get().and_then(|r| r.flat_class_hit(*cid, name)) {
-            return with_c_frame(label, || f(recv, args, block));
+            return with_c_frame(label, || f.call(recv, args, block));
         }
         // A module the class EXTENDED, whose row is its own INSTANCE method:
         // CRuby seats the module in the singleton ancestry, just past the
         // class's own rows, and the row takes a `&RubyValue` receiver -- so
         // the class value passes straight through as `self`.
         if let Some((f, owner)) = extended_class_method_fn(*cid, name) {
-            return with_c_frame(c_frame_label(owner, name, '#'), || f(recv, args, block));
+            return with_c_frame(c_frame_label(owner, name, '#'), || {
+                f.call(recv, args, block)
+            });
         }
         // A MINTED struct/data class's OWN singleton methods (`Point.members`,
         // `Point[1, 2]`, and `Point.new` itself). CRuby defines these directly
@@ -2973,10 +3030,10 @@ fn send_value_in_reason(
                 }
             });
             if let Some((anc, f)) = flattened {
-                return with_c_frame(c_frame_label(anc, name, '.'), || f(recv, args, block));
+                return with_c_frame(c_frame_label(anc, name, '.'), || f.call(recv, args, block));
             }
             if let Some(f) = class_method_fn(*cid, name) {
-                return with_c_frame(c_frame_label(*cid, name, '.'), || f(recv, args, block));
+                return with_c_frame(c_frame_label(*cid, name, '.'), || f.call(recv, args, block));
             }
         }
         if let Some(lookup) = crate::builtins::class_method_table(*cid)
@@ -3045,14 +3102,14 @@ fn send_value_in_reason(
     if box_id == 0 && !crate::runtime_meta::is_live() {
         if let Some(hit) = REGISTRY.get().and_then(|r| r.flat_value_hit(cid, name)) {
             if let Some(hit) = hit {
-                return with_c_frame(hit.frame_label, || (hit.f)(recv, args, block));
+                return with_c_frame(hit.frame_label, || hit.f.call(recv, args, block));
             }
             // A genuine flat miss: fall through to the alias tail below.
         } else {
             let n = name.name_str();
             for &anc in ancestors_of_value(cid) {
                 if let Some(f) = value_method(anc, box_id, name) {
-                    return f(recv, args, block);
+                    return f.call(recv, args, block);
                 }
                 if let Some(table) = crate::builtins::class_table(anc)
                     && let Some(f) = table(n)
@@ -3089,7 +3146,7 @@ fn send_value_in_reason(
                 return crate::runtime_meta::call_value_body(anc, name, &p, recv, args, block);
             }
             if let Some(f) = value_method(anc, box_id, name) {
-                return f(recv, args, block);
+                return f.call(recv, args, block);
             }
             if let Some(table) = crate::builtins::class_table(anc)
                 && let Some(f) = table(n)
@@ -3301,7 +3358,7 @@ fn send_in_reason(
                     .is_some_and(|r| crate::builtins::value_subclass::payload_owns(r, hit.owner))
                 && let Some(ref p) = payload
             {
-                let result = with_c_frame(hit.frame_label, || (hit.f)(p, args, block))?;
+                let result = with_c_frame(hit.frame_label, || hit.f.call(p, args, block))?;
                 return Ok(crate::builtins::value_subclass::rewrap_self_return(
                     result,
                     p,
@@ -3309,7 +3366,7 @@ fn send_in_reason(
                     name.name_str(),
                 ));
             }
-            return with_c_frame(hit.frame_label, || (hit.f)(&boxed, args, block));
+            return with_c_frame(hit.frame_label, || hit.f.call(&boxed, args, block));
         }
         // A genuine flat miss: straight to the alias tail below.
         Some(None) => {}
@@ -3337,12 +3394,12 @@ fn send_in_reason(
                         .is_some_and(|r| crate::builtins::value_subclass::payload_owns(r, anc))
                         && let Some(ref p) = payload
                     {
-                        let result = f(p, args, block)?;
+                        let result = f.call(p, args, block)?;
                         return Ok(crate::builtins::value_subclass::rewrap_self_return(
                             result, p, recv, n,
                         ));
                     }
-                    return f(&boxed, args, block);
+                    return f.call(&boxed, args, block);
                 }
                 // `include Math` reaches its module functions here as an
                 // ordinary `class_table` hit on Math's registered instance

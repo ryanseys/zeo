@@ -343,7 +343,7 @@ impl RubyValue {
             && let Some(f) =
                 crate::dispatch::value_method(self.class_id(), 0, crate::symbol::wk::to_s())
         {
-            return match f(self, &[], None)? {
+            return match f.call(self, &[], None)? {
                 RubyValue::Str(s) => Ok(s.lock().to_utf8_lossy().into_owned()),
                 other => other.display_with(seen),
             };
@@ -543,7 +543,7 @@ impl RubyValue {
             && let Some(f) =
                 crate::dispatch::value_method(self.class_id(), 0, crate::symbol::wk::inspect())
         {
-            return match f(self, &[], None)? {
+            return match f.call(self, &[], None)? {
                 RubyValue::Str(s) => Ok(s.lock().to_utf8_lossy().into_owned()),
                 other => other.display_with(seen),
             };

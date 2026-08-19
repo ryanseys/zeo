@@ -23,9 +23,27 @@
     reason = "one boundary contract for the whole surface, documented on the module -- per-function repetition of the same pointer terms would drown the real signatures"
 )]
 
+pub mod dispatch;
 pub mod frames;
 pub mod signals;
 pub mod values;
+
+/// A compiled method/trampoline body: the C twin of
+/// [`crate::ValueMethodFn`], and the fn-pointer type dispatch rows and
+/// inline caches store for Cranelift-emitted code ([`crate::ValueImpl`]'s
+/// `C` arm). `recv`/`argv` are borrowed; `blk` is MOVED in (null = no
+/// block; the callee consumes it); `out` receives the value on
+/// `STATUS_OK`, and `STATUS_SIGNAL` parks the `Signal` in the pending
+/// slot. `zeo-abi` mirrors this shape for the emitter once `ProgramDesc`
+/// lands (M0-7); the two agree by the `abi_layout` assertions, not by
+/// nominal identity.
+pub type ValueFn = unsafe extern "C" fn(
+    recv: *const crate::RubyValue,
+    argv: *const crate::RubyValue,
+    argc: usize,
+    blk: *mut crate::RubyValue,
+    out: *mut crate::RubyValue,
+) -> i32;
 
 /// A borrowed byte slice from a `(ptr, len)` pair. `len == 0` tolerates a
 /// null `ptr` (an empty `Str` in a row table).

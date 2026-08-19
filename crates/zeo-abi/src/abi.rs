@@ -87,10 +87,12 @@ pub enum SignalKind {
 /// `size_of` of the runtime's `.bss` inline-cache site structs -- what the
 /// emitter sizes each opaque site slot to (initialised by `zeo_unit_init`,
 /// never assumed zero-valid). All align 8. Asserted by `zeo-rt`'s
-/// `abi_layout` test.
-pub const CALLSITE_SIZE: usize = 48;
-pub const DYNCALLER_SITE_SIZE: usize = 48;
-pub const CLASSMETHOD_SITE_SIZE: usize = 40;
+/// `abi_layout` test. The three method-cache sites grew 8 bytes when their
+/// cached entry widened from a bare `ValueMethodFn` to `ValueImpl` (the
+/// Rust-or-C two-word implementation, M0-4).
+pub const CALLSITE_SIZE: usize = 56;
+pub const DYNCALLER_SITE_SIZE: usize = 56;
+pub const CLASSMETHOD_SITE_SIZE: usize = 48;
 pub const CONST_SITE_SIZE: usize = 40;
 pub const CIVAR_SITE_SIZE: usize = 40;
 pub const REGEXP_SITE_SIZE: usize = 16;
