@@ -16,3 +16,14 @@ pub const SYMS: &str = "zeo_syms";
 /// Startup initialization: interns the symbol table (and, later, the
 /// `.bss` site slots).
 pub const UNIT_INIT: &str = "zeo_unit_init";
+
+/// The compiled body symbol for `Owner#name`.
+pub fn method_symbol(owner: &str, name: &str) -> String {
+    format!("zeo_m_{owner}_{}", crate::names::ident_fragment(name))
+}
+
+/// The `ValueFn` trampoline symbol for `Owner#name` (the dispatch-row twin
+/// of the body above).
+pub fn trampoline_symbol(owner: &str, name: &str) -> String {
+    format!("zeo_t_{owner}_{}", crate::names::ident_fragment(name))
+}

@@ -10,10 +10,78 @@ use cranelift_codegen::ir::{InstBuilder, StackSlotData, StackSlotKind, types};
 
 pub(crate) fn lower_stmts(fx: &mut Fx, stmts: &[NodeId]) -> Result<(), String> {
     for &stmt in stmts {
+        let mark = fx.stmt_mark();
         lower_stmt(fx, stmt)?;
-        fx.end_stmt();
+        fx.end_stmt(mark);
     }
     Ok(())
+}
+
+/// A body in VALUE position (a method body, an `if`-expression arm): the
+/// leading statements run as statements, the tail's value MOVES into the
+/// caller's `dst` slot. An empty body is nil.
+pub(crate) fn lower_value_body_into(
+    fx: &mut Fx,
+    stmts: &[NodeId],
+    dst: cranelift_codegen::ir::Value,
+) -> Result<(), String> {
+    let Some((&tail, init)) = stmts.split_last() else {
+        ownership::write_move_into(fx, &super::operand::Operand::Nil, dst);
+        return Ok(());
+    };
+    for &stmt in init {
+        let mark = fx.stmt_mark();
+        lower_stmt(fx, stmt)?;
+        fx.end_stmt(mark);
+    }
+    stamp_line(fx, tail);
+    let op = lower_tail_expr(fx, tail)?;
+    ownership::write_move_into(fx, &op, dst);
+    Ok(())
+}
+
+/// A tail position accepts a few statement-shaped nodes whose value Ruby
+/// defines: an assignment answers the assigned value, a loop answers nil.
+#[allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "structural: the refusal arm IS the default -- an unlisted node kind must refuse loudly, which is exactly what a new HirNode should do here until its lowering lands"
+)]
+fn lower_tail_expr(fx: &mut Fx, tail: NodeId) -> Result<super::operand::Operand, String> {
+    use super::operand::{Operand, TagInfo};
+    match &fx.an.compiler.hir[tail] {
+        HirNode::LocalWrite(name, _) => {
+            let name = name.clone();
+            lower_stmt(fx, tail)?;
+            let &ss = fx.locals.get(&name).expect("just assigned");
+            let addr = fx.slot_addr(ss, 0);
+            Ok(Operand::Ptr {
+                addr,
+                owned: false,
+                tag: TagInfo::Unknown,
+            })
+        }
+        HirNode::While { .. } | HirNode::Loop { .. } => {
+            lower_stmt(fx, tail)?;
+            Ok(Operand::Nil)
+        }
+        HirNode::Break(..) | HirNode::Next(..) | HirNode::Redo => {
+            // The jump leaves this block unreachable; the nil is never read.
+            lower_stmt(fx, tail)?;
+            Ok(Operand::Nil)
+        }
+        HirNode::If { .. }
+        | HirNode::IntegerLit(..)
+        | HirNode::FloatLit(..)
+        | HirNode::BoolLit(..)
+        | HirNode::NilLit
+        | HirNode::StringLit(..)
+        | HirNode::LocalRead(..)
+        | HirNode::Call { .. } => lower_expr(fx, tail),
+        other => {
+            let what = format!("this tail expression ({})", statement_kind(other));
+            fx.unsupported(tail, &what)
+        }
+    }
 }
 
 #[allow(

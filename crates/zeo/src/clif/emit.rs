@@ -18,10 +18,44 @@ use std::collections::HashMap;
 /// Lower `analyzed` to one object file's bytes.
 pub fn compile(analyzed: &Analyzed) -> Result<Vec<u8>, String> {
     let mut em = Emitter::new()?;
+    let defs = collect_methods(&mut em, analyzed)?;
+    for def in &defs {
+        define_method_body(&mut em, analyzed, def)?;
+    }
+    for def in &defs {
+        let decl = &em.methods[&def.name];
+        let (tramp, body, arity) = (decl.tramp, decl.body, decl.arity);
+        let idx = em.next_fn_index();
+        super::params::define_trampoline(&mut em, tramp, body, arity, idx)?;
+    }
     let toplevel = define_toplevel(&mut em, analyzed)?;
     let unit_init = statics::define_unit_init(&mut em)?;
     statics::define_syms(&mut em)?;
-    let desc = statics::define_desc(&mut em, analyzed, toplevel, unit_init)?;
+    let vm_rows: Vec<statics::VmRowSpec> = defs
+        .iter()
+        .map(|d| statics::VmRowSpec {
+            class: 0,
+            box_id: 0,
+            name: d.name.clone(),
+            f: em.methods[&d.name].tramp,
+        })
+        .collect();
+    let vis_rows: Vec<statics::VisRowSpec> = defs
+        .iter()
+        .filter_map(|d| {
+            let verb = match d.visibility {
+                crate::hir::Visibility::Private => 0,
+                crate::hir::Visibility::Protected => 1,
+                crate::hir::Visibility::Public => return None,
+            };
+            Some(statics::VisRowSpec {
+                class: 0,
+                name: d.name.clone(),
+                verb,
+            })
+        })
+        .collect();
+    let desc = statics::define_desc(&mut em, analyzed, toplevel, unit_init, &vm_rows, &vis_rows)?;
     define_main(&mut em, desc)?;
     statics::define_rodata(&mut em)?;
     let product = em.module.finish();
@@ -41,6 +75,17 @@ pub(crate) struct Emitter {
     rodata: Vec<u8>,
     rodata_offsets: HashMap<Vec<u8>, u32>,
     imports: HashMap<&'static str, FuncId>,
+    /// Compiled methods by Ruby name -- what a receiverless call resolves
+    /// against for the direct path.
+    pub methods: HashMap<String, MethodDecl>,
+    fn_index: u32,
+}
+
+/// One compiled method's declaration facts.
+pub(crate) struct MethodDecl {
+    pub body: FuncId,
+    pub tramp: FuncId,
+    pub arity: usize,
 }
 
 impl Emitter {
@@ -95,6 +140,8 @@ impl Emitter {
             rodata: Vec::new(),
             rodata_offsets: HashMap::new(),
             imports: HashMap::new(),
+            methods: HashMap::new(),
+            fn_index: 0,
         })
     }
 
@@ -138,6 +185,12 @@ impl Emitter {
         }
     }
 
+    /// A fresh `UserFuncName` index (cosmetic; must be unique per module).
+    pub(crate) fn next_fn_index(&mut self) -> u32 {
+        self.fn_index += 1;
+        self.fn_index
+    }
+
     /// The import `FuncId` for capi symbol `name` (declared once).
     pub(crate) fn import(&mut self, name: &'static str) -> FuncId {
         if let Some(&id) = self.imports.get(name) {
@@ -159,6 +212,239 @@ impl Emitter {
         self.imports.insert(name, id);
         id
     }
+}
+
+/// One eligible top-level `def`'s facts (from `Compiler.classes[0]` --
+/// analyze hoists method scopes out of `main_statements`).
+pub(crate) struct DefSpec {
+    pub name: String,
+    params: Vec<String>,
+    body: Vec<crate::hir::NodeId>,
+    visibility: crate::hir::Visibility,
+    node: Option<crate::hir::NodeId>,
+}
+
+/// Collect and DECLARE every top-level `def` the slice can compile
+/// (required positional params only; unconditional; no aliases or
+/// accessors). Prelude-native rows are the runtime's own, never emitted.
+fn collect_methods(em: &mut Emitter, analyzed: &Analyzed) -> Result<Vec<DefSpec>, String> {
+    let compiler = &analyzed.compiler;
+    let mut out = Vec::new();
+    for entry in &compiler.classes[0].methods {
+        let scope = compiler.scope(entry.def);
+        if scope.native_default {
+            continue;
+        }
+        let name = compiler.names.str(entry.name).to_string();
+        let at = scope
+            .def_node
+            .and_then(|n| crate::codegen::source_location(compiler, n))
+            .map(|(f, l)| format!(" ({f}:{l})"))
+            .unwrap_or_default();
+        let refuse = |what: &str| {
+            Err(format!(
+                "--backend aot is an M0 vertical slice: cannot lower {what} yet{at}"
+            ))
+        };
+        if scope.runtime_conditional {
+            return refuse("a conditionally-defined method");
+        }
+        if scope.alias_of.is_some() {
+            return refuse("an alias");
+        }
+        if scope.accessor.is_some() {
+            return refuse("an attr_* accessor");
+        }
+        let params = &scope.params;
+        if !(params.destructures.is_empty()
+            && params.optional.is_empty()
+            && params.rest.is_none()
+            && !params.implicit_rest
+            && params.post.is_empty()
+            && params.keywords.is_empty()
+            && params.keyword_rest.is_none()
+            && params.block.is_none()
+            && params.block_locals.is_empty()
+            && params.implicit_block_locals.is_empty())
+        {
+            return refuse("a def with non-required parameters");
+        }
+        let arity = params.required.len();
+        let body_sig = super::params::body_sig(em, arity);
+        let body_id = em
+            .module
+            .declare_function(
+                &names::method_symbol("Object", &name),
+                Linkage::Local,
+                &body_sig,
+            )
+            .map_err(|e| format!("declaring {name}: {e}"))?;
+        let tramp_sig = super::params::value_fn_sig(em);
+        let tramp_id = em
+            .module
+            .declare_function(
+                &names::trampoline_symbol("Object", &name),
+                Linkage::Local,
+                &tramp_sig,
+            )
+            .map_err(|e| format!("declaring {name}'s trampoline: {e}"))?;
+        em.methods.insert(
+            name.clone(),
+            MethodDecl {
+                body: body_id,
+                tramp: tramp_id,
+                arity,
+            },
+        );
+        out.push(DefSpec {
+            name,
+            params: params.required.clone(),
+            body: scope.body.clone(),
+            visibility: scope.visibility,
+            node: scope.def_node,
+        });
+    }
+    Ok(out)
+}
+
+/// One compiled method body: `(self, p1..pn, out) -> i32`. Params are
+/// copied into owned slots (the M0 rule -- borrow-through is a perf-pass
+/// lever); the tail value moves into `out`.
+fn define_method_body(em: &mut Emitter, analyzed: &Analyzed, def: &DefSpec) -> Result<(), String> {
+    let sig = super::params::body_sig(em, def.params.len());
+    let idx = em.next_fn_index();
+    let label = format!("Object#{}", def.name);
+    let (line, end_line) = match def.node {
+        Some(node) => (
+            crate::codegen::source_location(&analyzed.compiler, node).map_or(0, |(_, l)| l),
+            crate::codegen::source_end_line(&analyzed.compiler, node),
+        ),
+        None => (0, 0),
+    };
+    let file = analyzed.compiler.hir.files.first().map(|f| f.name.clone());
+
+    let mut func = ir::Function::with_name_signature(UserFuncName::user(0, idx), sig);
+    let cfg = em.module.target_config();
+    let mut fbc = FunctionBuilderContext::new();
+    let b = FunctionBuilder::new(&mut func, &mut fbc);
+    let mut fx = Fx::new(em, analyzed, b, |em, b| {
+        let entry = b.create_block();
+        b.append_block_params_for_function_params(entry);
+        b.switch_to_block(entry);
+        let rodata_gv = em.module.declare_data_in_func(em.rodata_id, b.func);
+        let syms_gv = em.module.declare_data_in_func(em.syms_id, b.func);
+        let rodata = b.ins().symbol_value(em.ptr, rodata_gv);
+        let syms = b.ins().symbol_value(em.ptr, syms_gv);
+        (rodata, syms)
+    });
+    let entry = fx.b.current_block().expect("entry is current");
+    let entry_params: Vec<ir::Value> = fx.b.block_params(entry).to_vec();
+    let self_ptr = entry_params[0];
+    let out_ptr = *entry_params.last().expect("out is the last param");
+    fx.self_ptr = Some(self_ptr);
+
+    // Recursion guard BEFORE the frame exists: a failure returns without
+    // pops (mirrors the rustc prologue's `stack_check()?` position).
+    let status = fx
+        .call("zeo_rt_stack_check", &[])
+        .expect("stack_check returns a status");
+    let early = fx.b.create_block();
+    let cont = fx.b.create_block();
+    fx.b.ins().brif(status, early, &[], cont, &[]);
+    fx.b.switch_to_block(early);
+    let one = fx.b.ins().iconst(types::I32, 1);
+    fx.b.ins().return_(&[one]);
+    fx.b.switch_to_block(cont);
+
+    // Params: owned copies in slots (retained when heap).
+    for (i, name) in def.params.iter().enumerate() {
+        let ss = fx.b.create_sized_stack_slot(StackSlotData::new(
+            StackSlotKind::ExplicitSlot,
+            VALUE_SIZE,
+            3,
+        ));
+        let dst = fx.slot_addr(ss, 0);
+        let src = super::operand::Operand::Ptr {
+            addr: entry_params[i + 1],
+            owned: false,
+            tag: super::operand::TagInfo::Unknown,
+        };
+        super::ownership::write_move_into(&mut fx, &src, dst);
+        fx.locals.insert(name.clone(), ss);
+    }
+    // The body's other locals, nil-initialized.
+    let mut locals = crate::analyze::local_storage::Locals::default();
+    for &stmt in &def.body {
+        crate::analyze::local_storage::collect_locals(&analyzed.compiler, stmt, &mut locals);
+    }
+    for name in locals.names().to_vec() {
+        if fx.locals.contains_key(&name) {
+            continue;
+        }
+        let ss = fx.b.create_sized_stack_slot(StackSlotData::new(
+            StackSlotKind::ExplicitSlot,
+            VALUE_SIZE,
+            3,
+        ));
+        let dst = fx.slot_addr(ss, 0);
+        let z = fx.b.ins().iconst(types::I64, 0);
+        for off in [0, 8, 16] {
+            fx.b.ins().store(MemFlagsData::trusted(), z, dst, off);
+        }
+        fx.locals.insert(name, ss);
+    }
+
+    if let Some(file) = &file {
+        let off = fx.em.intern_rodata(file.as_bytes());
+        let label_off = fx.em.intern_rodata(label.as_bytes());
+        let file_ptr = fx.rod(off);
+        let file_len = fx.b.ins().iconst(fx.em.ptr, file.len() as i64);
+        let label_ptr = fx.rod(label_off);
+        let label_len = fx.b.ins().iconst(fx.em.ptr, label.len() as i64);
+        let line_v = fx.b.ins().iconst(types::I32, i64::from(line));
+        let end_v = fx.b.ins().iconst(types::I32, i64::from(end_line));
+        fx.call(
+            "zeo_rt_frame_push",
+            &[file_ptr, file_len, label_ptr, label_len, line_v, end_v],
+        );
+    }
+    let status = fx
+        .call("zeo_rt_check_ints", &[])
+        .expect("check_ints returns a status");
+    fx.fallible(status);
+
+    super::stmt::lower_value_body_into(&mut fx, &def.body, out_ptr)?;
+
+    let has_frame = file.is_some();
+    let epilogue = |fx: &mut Fx, status: i64| {
+        let local_slots: Vec<_> = fx.locals.values().copied().collect();
+        for ss in local_slots {
+            let addr = fx.slot_addr(ss, 0);
+            fx.call("zeo_rt_release", &[addr]);
+        }
+        if has_frame {
+            fx.call("zeo_rt_frame_pop", &[]);
+        }
+        let code = fx.b.ins().iconst(types::I32, status);
+        fx.b.ins().return_(&[code]);
+    };
+    epilogue(&mut fx, 0);
+    let land = fx.land;
+    fx.b.switch_to_block(land);
+    epilogue(&mut fx, 1);
+
+    verify::check(&fx, &label);
+    let Fx { mut b, .. } = fx;
+    b.seal_all_blocks();
+    b.finalize(cfg);
+
+    let mut ctx = em.module.make_context();
+    ctx.func = func;
+    let body_id = em.methods[&def.name].body;
+    em.module
+        .define_function(body_id, &mut ctx)
+        .map_err(|e| format!("compiling {label}: {e}"))?;
+    Ok(())
 }
 
 /// The compiled `<main>` body, `UnitFn`-shaped: hoisted nil-initialized
@@ -232,7 +518,33 @@ fn define_toplevel(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, Stri
         .expect("check_ints returns a status");
     fx.fallible(status);
 
-    stmt::lower_stmts(&mut fx, &analyzed.main_statements)?;
+    // The toplevel's `self`: one pooled `main` handle, borrowed by every
+    // receiverless direct call.
+    let self_ss = fx.temp_slot();
+    let self_addr = fx.slot_addr(self_ss, 0);
+    fx.call("zeo_rt_main_object", &[self_addr]);
+    fx.owned_created += 1;
+    super::ownership::pool_owned(
+        &mut fx,
+        self_addr,
+        super::operand::TagInfo::Known(zeo_abi::abi::ValueTag::Object as u8),
+    );
+    fx.self_ptr = Some(self_addr);
+
+    // Defs registered through the row tables run nothing in statement
+    // position (the rustc backend's shape: registration precedes the body).
+    let runnable: Vec<crate::hir::NodeId> = analyzed
+        .main_statements
+        .iter()
+        .copied()
+        .filter(|&s| {
+            !matches!(
+                analyzed.compiler.hir[s],
+                crate::hir::HirNode::DefMethod { .. }
+            )
+        })
+        .collect();
+    stmt::lower_stmts(&mut fx, &runnable)?;
 
     // Normal exit: release the locals, pop the frame (drains the pool),
     // hand back Nil.

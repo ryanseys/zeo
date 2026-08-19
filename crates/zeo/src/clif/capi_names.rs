@@ -74,6 +74,11 @@ pub const CAPI: &[CapiSig] = &[
         ret: Some(I32),
     },
     CapiSig {
+        name: "zeo_rt_main_object",
+        params: &[Ptr],
+        ret: None,
+    },
+    CapiSig {
         name: "zeo_rt_pool_mark",
         params: &[],
         ret: Some(Usize),
@@ -99,6 +104,11 @@ pub const CAPI: &[CapiSig] = &[
         ret: None,
     },
     CapiSig {
+        name: "zeo_rt_send_value_explicit_in",
+        params: &[U32, Ptr, U32, Ptr, Usize, Ptr, U32, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
         name: "zeo_rt_send_value_in",
         params: &[U32, Ptr, U32, Ptr, Usize, Ptr, Ptr],
         ret: Some(I32),
@@ -107,6 +117,11 @@ pub const CAPI: &[CapiSig] = &[
         name: "zeo_rt_set_line",
         params: &[U32],
         ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_stack_check",
+        params: &[],
+        ret: Some(I32),
     },
     CapiSig {
         name: "zeo_rt_str_new",
@@ -122,6 +137,11 @@ pub const CAPI: &[CapiSig] = &[
         name: "zeo_rt_truthy",
         params: &[Ptr],
         ret: Some(U8),
+    },
+    CapiSig {
+        name: "zeo_rt_wrong_arity",
+        params: &[Usize, Usize, Usize],
+        ret: Some(I32),
     },
 ];
 

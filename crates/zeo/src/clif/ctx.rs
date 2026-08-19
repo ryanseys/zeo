@@ -36,6 +36,9 @@ pub(crate) struct Fx<'e, 'f> {
     temp_taken: Vec<ir::StackSlot>,
     pub loops: Vec<LoopCtl>,
     pub prev_line: Option<u32>,
+    /// The current `self` as a borrowed pointer: the method's first
+    /// parameter, or the toplevel's pooled `main_object` copy.
+    pub self_ptr: Option<ir::Value>,
     /// The ownership ledger `verify` checks: every owned-value emission
     /// site must be matched by exactly one consumption site.
     pub owned_created: usize,
@@ -64,6 +67,7 @@ impl<'e, 'f> Fx<'e, 'f> {
             temp_taken: Vec::new(),
             loops: Vec::new(),
             prev_line: None,
+            self_ptr: None,
             owned_created: 0,
             owned_consumed: 0,
         }
@@ -121,10 +125,18 @@ impl<'e, 'f> Fx<'e, 'f> {
         ss
     }
 
-    /// Statement boundary: every temp taken during the statement is dead
-    /// (its value moved, pooled, or immediate), so the slots recycle.
-    pub fn end_stmt(&mut self) {
-        self.temp_free.append(&mut self.temp_taken);
+    /// A statement's temp watermark -- pair with [`Fx::end_stmt`].
+    pub fn stmt_mark(&self) -> usize {
+        self.temp_taken.len()
+    }
+
+    /// Statement boundary: every temp taken SINCE `mark` is dead (its
+    /// value moved, pooled, or immediate), so those slots recycle. Scoped
+    /// by the watermark because statements nest (an `if` arm's statements
+    /// finish while the enclosing expression's temps are still borrowed).
+    pub fn end_stmt(&mut self, mark: usize) {
+        let tail = self.temp_taken.split_off(mark);
+        self.temp_free.extend(tail);
     }
 
     pub fn slot_addr(&mut self, ss: ir::StackSlot, offset: i32) -> ir::Value {

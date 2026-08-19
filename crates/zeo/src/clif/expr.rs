@@ -66,31 +66,88 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 tag: TagInfo::Unknown,
             })
         }
+        HirNode::If {
+            cond,
+            then_body,
+            else_body,
+        } => {
+            let (cond, then_body, else_body) = (*cond, then_body.clone(), else_body.clone());
+            if_expr(fx, cond, &then_body, &else_body)
+        }
         HirNode::Call {
-            receiver: Some(recv),
+            receiver,
             name,
             args,
             kwargs,
             block: None,
             block_arg: None,
             safe: false,
-        } if BinOp::of(name).is_some() && kwargs.is_empty() && args.len() == 1 => {
-            let [ArrayElem::Single(arg)] = args.as_slice() else {
-                return fx.unsupported(id, "a splat operand");
-            };
-            binop(
-                fx,
-                BinOp::of(name).expect("guarded above"),
-                name,
-                *recv,
-                *arg,
-            )
+        } if kwargs.is_empty() => {
+            let (receiver, name, args) = (*receiver, name.clone(), args.clone());
+            match receiver {
+                Some(recv) if BinOp::of(&name).is_some() && args.len() == 1 => {
+                    let [ArrayElem::Single(arg)] = args.as_slice() else {
+                        return fx.unsupported(id, "a splat operand");
+                    };
+                    binop(
+                        fx,
+                        BinOp::of(&name).expect("guarded above"),
+                        &name,
+                        recv,
+                        *arg,
+                    )
+                }
+                Some(recv) => super::call::dynamic_send(fx, id, recv, &name, &args),
+                None => match fx.em.methods.get(&name) {
+                    Some(decl) if decl.arity == args.len() => {
+                        super::call::direct_call(fx, id, &name, &args)
+                    }
+                    Some(_) => fx.unsupported(id, "a compiled call with the wrong arity"),
+                    None => {
+                        let what = format!("a receiverless call to `{name}`");
+                        fx.unsupported(id, &what)
+                    }
+                },
+            }
         }
         other => {
             let what = format!("this expression ({})", node_kind(other));
             fx.unsupported(id, &what)
         }
     }
+}
+
+/// `if` in VALUE position: both arms move their value into one result
+/// slot.
+fn if_expr(
+    fx: &mut Fx,
+    cond: NodeId,
+    then_body: &[NodeId],
+    else_body: &[NodeId],
+) -> Result<Operand, String> {
+    let c = lower_expr(fx, cond)?;
+    let t = ownership::truthy(fx, c);
+    let ss = fx.temp_slot();
+    // The result address is computed BEFORE the branch, so it dominates
+    // both arms.
+    let dst = fx.slot_addr(ss, 0);
+    let b_then = fx.b.create_block();
+    let b_else = fx.b.create_block();
+    let join = fx.b.create_block();
+    fx.b.ins().brif(t, b_then, &[], b_else, &[]);
+    fx.b.switch_to_block(b_then);
+    super::stmt::lower_value_body_into(fx, then_body, dst)?;
+    fx.b.ins().jump(join, &[]);
+    fx.b.switch_to_block(b_else);
+    super::stmt::lower_value_body_into(fx, else_body, dst)?;
+    fx.b.ins().jump(join, &[]);
+    fx.b.switch_to_block(join);
+    fx.owned_created += 1;
+    Ok(Operand::Slot {
+        ss,
+        owned: true,
+        tag: TagInfo::Unknown,
+    })
 }
 
 /// A short human label for refusal messages.

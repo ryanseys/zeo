@@ -90,6 +90,16 @@ pub(crate) fn write_borrow(fx: &mut Fx, op: &Operand, dst: ir::Value) {
 /// new value MOVES in (a borrowed source is retained first -- before the
 /// release, so `x = x` never touches a dead value).
 pub(crate) fn write_assign(fx: &mut Fx, op: &Operand, dst: ir::Value) {
+    take_into(fx, op, dst, true);
+}
+
+/// Move `op` into FRESH storage at `dst` (no old value to release) -- an
+/// `out` slot, an if-expression's result, a param copy.
+pub(crate) fn write_move_into(fx: &mut Fx, op: &Operand, dst: ir::Value) {
+    take_into(fx, op, dst, false);
+}
+
+fn take_into(fx: &mut Fx, op: &Operand, dst: ir::Value, release_dst: bool) {
     if let Operand::Slot { owned: false, .. } | Operand::Ptr { owned: false, .. } = op {
         match op.tag().heap() {
             Some(true) => {
@@ -106,7 +116,9 @@ pub(crate) fn write_assign(fx: &mut Fx, op: &Operand, dst: ir::Value) {
     if op.owned() {
         fx.owned_consumed += 1;
     }
-    fx.call("zeo_rt_release", &[dst]);
+    if release_dst {
+        fx.call("zeo_rt_release", &[dst]);
+    }
     store_bits(fx, op, dst);
 }
 

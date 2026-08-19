@@ -235,3 +235,10 @@ pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
         crate::bootstrap::install_data_section(text(desc.data_section), desc.data_offset);
     }
 }
+
+/// The top-level `self`: a fresh handle to the `main` object -- what a
+/// compiled toplevel passes as the receiver of its direct calls.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_main_object(out: *mut RubyValue) {
+    unsafe { out.write(crate::dispatch::main_object()) };
+}
