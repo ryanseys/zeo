@@ -579,7 +579,7 @@ mod tests {
                 .iter()
                 .map(|p| match p {
                     StrPart::Lit(s) => s.as_str(),
-                    _ => "",
+                    StrPart::Bytes(_) | StrPart::Interp(_) => "",
                 })
                 .collect();
             return format!("{class}: {text}");

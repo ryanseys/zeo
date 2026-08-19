@@ -23,7 +23,9 @@
 //     answer for every future variant is unambiguously "no", and listing 78
 //     `=> None` arms would bury the two that matter;
 //   - a module not yet swept, which carries a file-level allow naming this
-//     comment. Those are the burn-down list -- grep for the lint name.
+//     comment. As of the 2026-08-18 sweep only `codegen/` (deleted at the
+//     Cranelift M3 milestone -- sweeping dying code is waste) still carries
+//     one; everything permanent is exhaustive or reasoned.
 //
 // A walk that asks "may I descend through this?" should use
 // `HirNode::scope_kind` rather than either, which is exhaustive in one place.
