@@ -17,7 +17,20 @@ use std::collections::HashMap;
 
 /// Lower `analyzed` to one object file's bytes.
 pub fn compile(analyzed: &Analyzed) -> Result<Vec<u8>, String> {
+    compile_inner(analyzed, false).map(|(bytes, _)| bytes)
+}
+
+/// `compile` plus the per-function CLIF text (`--emit-clif`, snapshots).
+pub fn compile_with_clif(analyzed: &Analyzed) -> Result<(Vec<u8>, String), String> {
+    compile_inner(analyzed, true).map(|(bytes, text)| (bytes, text.expect("collected")))
+}
+
+fn compile_inner(
+    analyzed: &Analyzed,
+    collect_clif: bool,
+) -> Result<(Vec<u8>, Option<String>), String> {
     let mut em = Emitter::new()?;
+    em.clif_text = collect_clif.then(String::new);
     let defs = collect_methods(&mut em, analyzed)?;
     let collected = super::classes::collect_classes(&mut em, analyzed)?;
     let (class_specs, obj_methods, class_vis) =
@@ -122,10 +135,12 @@ pub fn compile(analyzed: &Analyzed) -> Result<Vec<u8>, String> {
     )?;
     define_main(&mut em, desc)?;
     statics::define_rodata(&mut em)?;
+    let clif = em.clif_text.take();
     let product = em.module.finish();
-    product
+    let bytes = product
         .emit()
-        .map_err(|e| format!("emitting the object file: {e}"))
+        .map_err(|e| format!("emitting the object file: {e}"))?;
+    Ok((bytes, clif))
 }
 
 /// Program-wide emission state: the module, the rodata blob, the symbol
@@ -143,6 +158,9 @@ pub(crate) struct Emitter {
     /// against for the direct path.
     pub methods: HashMap<String, MethodDecl>,
     fn_index: u32,
+    /// When `Some`, every finished function's CLIF renders here (before
+    /// machine compilation -- the target-independent IR).
+    pub clif_text: Option<String>,
 }
 
 /// One compiled method's declaration facts.
@@ -207,6 +225,7 @@ impl Emitter {
             imports: HashMap::new(),
             methods: HashMap::new(),
             fn_index: 0,
+            clif_text: None,
         })
     }
 
@@ -258,6 +277,15 @@ impl Emitter {
             // Apple arm64 rule; a no-op elsewhere).
             CTy::U8 => AbiParam::new(types::I8).uext(),
             CTy::Ptr | CTy::Usize | CTy::I32 | CTy::U32 => AbiParam::new(self.ctype(t)),
+        }
+    }
+
+    /// Record `func`'s CLIF when `--emit-clif` asked for it, under its
+    /// exported symbol name.
+    pub(crate) fn record_clif(&mut self, name: &str, func: &ir::Function) {
+        if let Some(text) = &mut self.clif_text {
+            use std::fmt::Write as _;
+            let _ = writeln!(text, ";; {name}\n{}", func.display());
         }
     }
 
@@ -563,6 +591,7 @@ fn define_method_body(
     b.seal_all_blocks();
     b.finalize(cfg);
 
+    em.record_clif(&label, &func);
     let mut ctx = em.module.make_context();
     ctx.func = func;
     em.module
@@ -700,6 +729,7 @@ fn define_toplevel(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, Stri
     b.seal_all_blocks();
     b.finalize(cfg);
 
+    em.record_clif(names::TOPLEVEL, &func);
     let mut ctx = em.module.make_context();
     ctx.func = func;
     em.module
@@ -740,6 +770,7 @@ fn define_main(em: &mut Emitter, desc: DataId) -> Result<FuncId, String> {
     b.seal_all_blocks();
     b.finalize(cfg);
 
+    em.record_clif("main", &func);
     let mut ctx = em.module.make_context();
     ctx.func = func;
     em.module

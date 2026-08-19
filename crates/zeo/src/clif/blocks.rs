@@ -302,6 +302,7 @@ fn define_block_fn(
     let Fx { mut b, .. } = bfx;
     b.seal_all_blocks();
     b.finalize(cfg);
+    em.record_clif(&label, &func);
     let mut ctx = em.module.make_context();
     ctx.func = func;
     em.module

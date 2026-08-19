@@ -73,6 +73,9 @@ struct Args {
     /// positionals and everything after `--`, exactly ruby's
     /// `[--] [args...]` shape.
     program_args: Vec<String>,
+    /// `--emit-clif[=<path>]`: emit the Cranelift IR instead of building --
+    /// to the attached path or stdout when bare. Implies the aot pipeline.
+    emit_clif: Option<EmitTarget>,
     /// `--backend <rustc|aot>`: which code generator builds the program
     /// (`ZEO_BACKEND` is the env spelling; the flag wins). `None` = the
     /// dual-period default, rustc.
@@ -164,6 +167,8 @@ modes:
 options:
   -o <output>           where to write the compiled binary
   --compile             write the default-named binary instead of running
+  --emit-clif[=<path>]  emit the Cranelift IR (the aot backend's own
+                        lowering) instead of building; bare prints to stdout
   --backend <rustc|aot> which code generator builds the program: rustc (the
                         dual-period default) or the Cranelift AOT backend
                         (ZEO_BACKEND is the env spelling; the flag wins)
@@ -234,6 +239,7 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
     let mut output = None;
     let mut pretty = false;
     let mut emit_rust: Option<EmitTarget> = None;
+    let mut emit_clif: Option<EmitTarget> = None;
     let mut load_roots = Vec::new();
     let mut package_dirs = Vec::new();
     let mut root_gem: Option<String> = None;
@@ -329,6 +335,13 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
                 // be ambiguous with the input file. Bare means stdout.
                 "emit-rust" => {
                     emit_rust = Some(match inline {
+                        Some(path) => EmitTarget::File(PathBuf::from(path)),
+                        None => EmitTarget::Stdout,
+                    });
+                }
+                // Attached path only, like --emit-rust.
+                "emit-clif" => {
+                    emit_clif = Some(match inline {
                         Some(path) => EmitTarget::File(PathBuf::from(path)),
                         None => EmitTarget::Stdout,
                     });
@@ -479,6 +492,7 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
         gem_paths,
         lockfile: gemfile.map(derive_lockfile),
         program_args,
+        emit_clif,
         backend,
     })))
 }
@@ -656,6 +670,15 @@ fn run() -> Result<(), MainError> {
             return Ok(());
         }
         None => {}
+    }
+    if let Some(target) = &args.emit_clif {
+        let text = zeo::compile_to_clif_text(&source, &opts)?;
+        match target {
+            EmitTarget::Stdout => print!("{text}"),
+            EmitTarget::File(path) => std::fs::write(path, &text)
+                .map_err(|e| format!("writing {}: {e}", path.display()))?,
+        }
+        return Ok(());
     }
 
     // The backend decides WHICH compile runs (rust text vs an object file),

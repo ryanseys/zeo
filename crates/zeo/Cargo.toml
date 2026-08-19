@@ -61,6 +61,10 @@ tar.workspace = true
 flate2.workspace = true
 serde_json.workspace = true
 
+[dev-dependencies]
+# CLIF snapshot pinning (`tests/clif.rs`).
+insta.workspace = true
+
 [build-dependencies]
 # The build.rs projects the compiler's `CLASS_SURFACE` by re-parsing the
 # runtime's ruby_class!/ruby_module! headers with the SAME grammar the macro

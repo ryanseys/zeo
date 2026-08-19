@@ -102,6 +102,7 @@ pub(crate) fn define_unit_init(em: &mut Emitter) -> Result<Option<FuncId>, Strin
     b.seal_all_blocks();
     b.finalize(cfg);
 
+    em.record_clif(names::UNIT_INIT, &func);
     let mut ctx = em.module.make_context();
     ctx.func = func;
     em.module

@@ -113,6 +113,7 @@ pub(crate) fn define_trampoline(
 
     b.seal_all_blocks();
     b.finalize(cfg);
+    em.record_clif("trampoline", &func);
     let mut ctx = em.module.make_context();
     ctx.func = func;
     em.module
@@ -228,6 +229,7 @@ pub(crate) fn define_accessor(
 
     b.seal_all_blocks();
     b.finalize(cfg);
+    em.record_clif("trampoline", &func);
     let mut ctx = em.module.make_context();
     ctx.func = func;
     em.module

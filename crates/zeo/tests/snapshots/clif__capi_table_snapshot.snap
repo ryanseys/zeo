@@ -1,0 +1,47 @@
+---
+source: crates/zeo/tests/clif.rs
+expression: rendered
+---
+zeo_rt_cell_load ([Ptr, Ptr]) -> None
+zeo_rt_cell_new ([Ptr]) -> Some(Ptr)
+zeo_rt_cell_release ([Ptr]) -> None
+zeo_rt_cell_store ([Ptr, Ptr]) -> None
+zeo_rt_check_ints ([]) -> Some(I32)
+zeo_rt_const_get_at ([U32, Ptr, Usize, Ptr]) -> Some(I32)
+zeo_rt_frame_pop ([]) -> None
+zeo_rt_frame_push ([Ptr, Usize, Ptr, Usize, U32, U32]) -> None
+zeo_rt_frozen_check ([Ptr]) -> Some(I32)
+zeo_rt_handling_pop ([]) -> None
+zeo_rt_handling_push ([Ptr]) -> None
+zeo_rt_int_add_slow ([Ptr, Ptr, Ptr]) -> None
+zeo_rt_int_mul_slow ([Ptr, Ptr, Ptr]) -> None
+zeo_rt_int_sub_slow ([Ptr, Ptr, Ptr]) -> None
+zeo_rt_ivar_get_slot ([Ptr, Usize, Ptr]) -> None
+zeo_rt_ivar_set_slot ([Ptr, Usize, Ptr]) -> Some(I32)
+zeo_rt_kernel_puts ([Ptr, Usize, Ptr]) -> Some(I32)
+zeo_rt_main ([I32, Ptr, Ptr, Ptr]) -> Some(I32)
+zeo_rt_main_object ([Ptr]) -> None
+zeo_rt_pool_mark ([]) -> Some(Usize)
+zeo_rt_pool_push ([Ptr]) -> None
+zeo_rt_pool_reset ([Usize]) -> None
+zeo_rt_proc_new ([Ptr, Ptr, Usize, Ptr, Ptr, Ptr, I32, U32, Ptr]) -> None
+zeo_rt_propagating_enter ([Ptr]) -> Some(U8)
+zeo_rt_propagating_leave ([U8]) -> None
+zeo_rt_release ([Ptr]) -> None
+zeo_rt_rescue_matches ([Ptr, Ptr, Usize]) -> Some(U8)
+zeo_rt_retain ([Ptr]) -> None
+zeo_rt_send_value_explicit_in ([U32, Ptr, U32, Ptr, Usize, Ptr, U32, Ptr]) -> Some(I32)
+zeo_rt_send_value_in ([U32, Ptr, U32, Ptr, Usize, Ptr, Ptr]) -> Some(I32)
+zeo_rt_set_line ([U32]) -> None
+zeo_rt_signal_drop ([Ptr]) -> None
+zeo_rt_signal_kind ([]) -> Some(U8)
+zeo_rt_signal_restore ([Ptr]) -> None
+zeo_rt_signal_save ([]) -> Some(Ptr)
+zeo_rt_signal_set ([U8, Ptr]) -> None
+zeo_rt_signal_take ([Ptr]) -> Some(U8)
+zeo_rt_stack_check ([]) -> Some(I32)
+zeo_rt_str_new ([Ptr, Usize, U8, Ptr]) -> None
+zeo_rt_sym_intern ([Ptr, Usize]) -> Some(U32)
+zeo_rt_truthy ([Ptr]) -> Some(U8)
+zeo_rt_wrong_arity ([Usize, Usize, Usize]) -> Some(I32)
+zeo_rt_yield ([Ptr, Ptr, Usize, Ptr]) -> Some(I32)

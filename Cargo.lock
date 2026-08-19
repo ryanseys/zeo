@@ -2257,6 +2257,7 @@ dependencies = [
  "cranelift-object",
  "flate2",
  "foldhash 0.1.5",
+ "insta",
  "libc",
  "miette",
  "mimalloc",

@@ -50,7 +50,9 @@ pub(crate) struct Fx<'e, 'f> {
     /// The `zeo_syms` base address, likewise.
     pub syms_base: ir::Value,
     /// Ruby local -> its storage (hoisted; captured names live in cells).
-    pub locals: HashMap<String, Local>,
+    /// Ordered: epilogues and capture walks iterate it, and emission must
+    /// be a pure function of the source.
+    pub locals: std::collections::BTreeMap<String, Local>,
     frefs: HashMap<&'static str, ir::FuncRef>,
     temp_free: Vec<ir::StackSlot>,
     temp_taken: Vec<ir::StackSlot>,
@@ -111,7 +113,7 @@ impl<'e, 'f> Fx<'e, 'f> {
             land,
             rodata_base,
             syms_base,
-            locals: HashMap::new(),
+            locals: std::collections::BTreeMap::new(),
             frefs: HashMap::new(),
             temp_free: Vec::new(),
             temp_taken: Vec::new(),

@@ -1,0 +1,104 @@
+//! The Cranelift backend's M0-16 gates: CLIF snapshots for a small
+//! corpus, the capi-surface presence check against `libzeo.a`, and the
+//! deterministic-output golden.
+
+use std::path::PathBuf;
+
+fn clif_of(source: &str) -> String {
+    let text = zeo::compile_to_clif_text(source, &zeo::CompileOptions::default())
+        .expect("the slice program must lower");
+    // The default calling convention names the host (`apple_aarch64`,
+    // `system_v`); normalize so the snapshots hold on every platform.
+    text.replace("apple_aarch64", "ccall")
+        .replace("system_v", "ccall")
+}
+
+#[test]
+fn clif_snapshot_hello() {
+    insta::assert_snapshot!(clif_of("puts \"Hello, world!\"\n"));
+}
+
+#[test]
+fn clif_snapshot_fib() {
+    insta::assert_snapshot!(clif_of(
+        "def fib(n)\n  if n < 2\n    n\n  else\n    fib(n - 1) + fib(n - 2)\n  end\nend\nputs fib(10)\n",
+    ));
+}
+
+#[test]
+fn clif_snapshot_block_send() {
+    insta::assert_snapshot!(clif_of(
+        "total = 0\nq = Array.new(3, 2)\nq.each { |x| total = total + x }\nputs total\n",
+    ));
+}
+
+/// Two compiles of one program are byte-identical -- object emission is a
+/// pure function of the CLIF.
+#[test]
+fn object_output_is_deterministic() {
+    let src = "def add(a, b)\n  a + b\nend\nputs add(2, 3)\n";
+    let a = zeo::compile_to_object_with(src, &zeo::CompileOptions::default())
+        .expect("compiles")
+        .object;
+    let b = zeo::compile_to_object_with(src, &zeo::CompileOptions::default())
+        .expect("compiles")
+        .object;
+    assert_eq!(a, b, "two compiles must produce identical object bytes");
+}
+
+/// Every symbol the emitter can import (`clif::capi_names::CAPI`) is a
+/// defined `T` symbol in the runtime archive the link consumes.
+#[test]
+fn capi_surface_is_exported_by_the_archive() {
+    let mut dir = std::env::current_exe().expect("test binary path");
+    // target/<profile>/deps/<bin> -> target/<profile>
+    dir.pop();
+    dir.pop();
+    let archive: PathBuf = dir.join("libzeo.a");
+    assert!(
+        archive.is_file(),
+        "libzeo.a must sit beside the test profile dir: {}",
+        archive.display()
+    );
+    let out = std::process::Command::new("nm")
+        .arg(&archive)
+        .output()
+        .expect("nm must run");
+    // macOS nm exits nonzero for archive members it cannot fully parse
+    // (bitcode attribute drift, symbol-less members); the symbol listing
+    // on stdout is still complete for the runtime's own objects, which is
+    // all this asserts over.
+    let nm = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !nm.is_empty(),
+        "nm produced no listing for {}",
+        archive.display()
+    );
+    let defined: std::collections::HashSet<&str> = nm
+        .lines()
+        .filter(|l| l.contains(" T "))
+        .filter_map(|l| l.rsplit(' ').next())
+        .map(|s| s.strip_prefix('_').unwrap_or(s))
+        .collect();
+    for row in zeo::clif::capi_names::CAPI {
+        assert!(
+            defined.contains(row.name),
+            "capi_names row `{}` is not a defined symbol in libzeo.a",
+            row.name
+        );
+    }
+}
+
+/// The capi table itself is pinned -- an accidental signature change on
+/// the emitter side shows up as a reviewed snapshot diff.
+#[test]
+fn capi_table_snapshot() {
+    let mut rendered = String::new();
+    for row in zeo::clif::capi_names::CAPI {
+        rendered.push_str(&format!(
+            "{} ({:?}) -> {:?}\n",
+            row.name, row.params, row.ret
+        ));
+    }
+    insta::assert_snapshot!(rendered);
+}
