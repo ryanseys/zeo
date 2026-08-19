@@ -225,6 +225,111 @@ impl Trace {
 
 /// The `IvarCell` slot index of `@name` on `class`: declared ivars first,
 /// then hidden ivars (Struct/Data members) after them.
+/// The ancestor whose SINGLETON-chain slot holds `defining_class`: the class
+/// itself when a `def self.x` defines the method, or the class that `extend`s
+/// (or singleton-prepends) it when a module does. `None` when the receiver's
+/// ancestry holds no such slot.
+///
+/// This is what a runtime class-method `super` must resume from. The chain
+/// puts an extended module directly after the class extending it (see
+/// [`extended_singleton_super`]), so resuming after that class is exactly
+/// right: the class's own `def self.x` sits BEFORE the module and is
+/// correctly skipped.
+pub(crate) fn singleton_chain_host(
+    compiler: &Compiler,
+    receiver_class: ClassId,
+    defining_class: Option<ClassId>,
+) -> Option<ClassId> {
+    let defining_class = defining_class?;
+    compiler
+        .class(receiver_class)
+        .ancestors
+        .iter()
+        .enumerate()
+        .find(|&(i, &anc)| {
+            let info = compiler.class(anc);
+            if i > 0 && info.is_module {
+                return false;
+            }
+            anc == defining_class
+                || info.extends.contains(&defining_class)
+                || info.class_method_prepends.contains(&defining_class)
+        })
+        .map(|(_, &anc)| anc)
+}
+
+/// `super` resolution for a method that reached the receiver as a CLASS
+/// method via `extend M`: walks the receiver's SINGLETON-class chain as the
+/// compiler knows it -- for each non-module ancestor (`include`d modules
+/// never join a singleton chain), the ancestor's own `def self.x` pool and
+/// then its `extend`ed modules' instance-method pools, most recently
+/// extended first. Returns the first `mname` definition STRICTLY AFTER
+/// `defining_class`'s own entry in that chain, `None` when the walk runs
+/// dry (the caller then defers to the runtime walk, which owns builtin
+/// defaults and runtime-defined methods).
+pub(crate) fn extended_singleton_super(
+    compiler: &Compiler,
+    receiver_class: ClassId,
+    defining_class: ClassId,
+    mname: &str,
+) -> Option<(ClassId, crate::compiler::ScopeId, bool)> {
+    // `(class, instance_pool)`: a chain entry resolves `mname` against its
+    // instance methods (an extended module) or its `def self.x` pool (a
+    // class standing in for its own metaclass).
+    let mut chain: Vec<(ClassId, bool)> = Vec::new();
+    for (i, &anc) in compiler.class(receiver_class).ancestors.iter().enumerate() {
+        let info = compiler.class(anc);
+        // The receiver itself heads the chain even when it IS a module
+        // (`module Target; extend Props; end`); mixed-in modules deeper in
+        // the MRO contribute nothing to the singleton chain.
+        if i > 0 && info.is_module {
+            continue;
+        }
+        // Singleton-PREPENDED modules sit BEFORE this ancestor's own class
+        // methods (they override `def self.x`, `super` reaching the original),
+        // most recently prepended first -- the class-method mirror of `prepend`
+        // on the instance chain.
+        for &m in info.class_method_prepends.iter().rev() {
+            chain.push((m, true));
+        }
+        chain.push((anc, false));
+        for &m in info.extends.iter().rev() {
+            chain.push((m, true));
+        }
+    }
+    // The defining entry: the extended MODULE (`super` written in it,
+    // instance pool) or the CLASS itself (`def self.x`'s own slot) --
+    // module and class ids never collide, so the id alone identifies it.
+    let dpos = chain.iter().position(|&(c, _)| c == defining_class)?;
+    chain[dpos + 1..].iter().find_map(|&(anc, instance_pool)| {
+        let info = compiler.class(anc);
+        let pool = if instance_pool {
+            &info.own_methods
+        } else {
+            &info.own_class_methods
+        };
+        pool.iter()
+            .find(|&&s| compiler.scope(s).name == mname)
+            .map(|&sid| {
+                // A class's OWN `def self.x` that a singleton PREPEND shadows is
+                // no longer in the live class-methods row (the prepend won), so
+                // `super` must reach it through the super-TARGET table -- the
+                // `module_instance` side of `call_singleton_super_target`, which
+                // `mro::materialize_class_methods` populated with the shadowed
+                // own copy. Report it there instead of the (occupied) class row.
+                let shadowed_by_prepend = !instance_pool
+                    && info.class_method_prepends.iter().any(|&pm| {
+                        compiler
+                            .class(pm)
+                            .own_methods
+                            .iter()
+                            .any(|&s| compiler.scope(s).name == mname)
+                    });
+                (anc, sid, instance_pool || shadowed_by_prepend)
+            })
+    })
+}
+
 pub(crate) fn slot_of(compiler: &Compiler, class: ClassId, name: &str) -> Option<usize> {
     let info = compiler.class(class);
     info.ivars.iter().position(|iv| iv == name).or_else(|| {

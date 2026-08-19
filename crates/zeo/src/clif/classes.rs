@@ -66,6 +66,10 @@ pub(crate) struct CmMethodSpec {
     /// copy): compiled and registered under `(module, name)`, but no
     /// `CmRow` on the class-method channel.
     pub cm_row: bool,
+    /// The class the `def` was WRITTEN in -- the class itself for a
+    /// `def self.x`, the MODULE for an `extend`ed copy. A class-method
+    /// `super` resumes the singleton chain after it.
+    pub defining_class: ClassId,
     pub owner: ClassId,
     pub owner_name: String,
     pub name: String,
@@ -389,6 +393,7 @@ pub(crate) fn collect_classes(
             }
             class_methods.push(CmMethodSpec {
                 cm_row: true,
+                defining_class: scope.defining_class,
                 owner: ClassId(idx as u32),
                 owner_name: name.clone(),
                 name: mname,
@@ -881,6 +886,7 @@ pub(crate) fn collect_classes(
             cm_def_tramps.push((entry.def, tramp));
             class_methods.push(CmMethodSpec {
                 cm_row: true,
+                defining_class: scope.defining_class,
                 owner: ClassId(idx as u32),
                 owner_name: name.clone(),
                 name: mname,
@@ -949,6 +955,7 @@ pub(crate) fn collect_classes(
             sst.push((idx as u32, m.0, mname.clone(), tramp));
             class_methods.push(CmMethodSpec {
                 cm_row: false,
+                defining_class: scope.defining_class,
                 owner: ClassId(idx as u32),
                 owner_name: name.clone(),
                 name: mname,

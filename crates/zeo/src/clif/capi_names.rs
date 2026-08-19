@@ -66,6 +66,11 @@ pub const CAPI: &[CapiSig] = &[
         ret: Some(I32),
     },
     CapiSig {
+        name: "zeo_rt_call_singleton_super_target_args",
+        params: &[U32, U8, U32, U32, Ptr, U8, Ptr, Ptr, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
         name: "zeo_rt_case_eq",
         params: &[Ptr, Ptr, Ptr],
         ret: Some(I32),
@@ -493,6 +498,11 @@ pub const CAPI: &[CapiSig] = &[
     CapiSig {
         name: "zeo_rt_runtime_set_visibility",
         params: &[U32, U32, U8],
+        ret: Some(I32),
+    },
+    CapiSig {
+        name: "zeo_rt_send_super_class_from_args",
+        params: &[U32, U32, U32, Ptr, U8, Ptr, Ptr, Ptr],
         ret: Some(I32),
     },
     CapiSig {

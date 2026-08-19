@@ -455,9 +455,6 @@ pub(crate) fn lower_super(
     if fx.block_next.is_some() {
         return fx.unsupported(site, "a `super` inside a block");
     }
-    if fx.self_is_class {
-        return fx.unsupported(site, "a class-method `super`");
-    }
     let (Some(def_class), Some(mname), Some(owner)) =
         (fx.defining_class, fx.method_name.clone(), fx.method_class)
     else {
@@ -606,6 +603,67 @@ pub(crate) fn lower_super(
             None => fx.b.ins().iconst(fx.em.ptr, 0),
         },
     };
+
+    // A CLASS-method `super` resolves against the SINGLETON-class chain,
+    // which this compiler reconstructs exactly for compile-time extends
+    // (sibling-extend order is compile-time knowledge the runtime registry
+    // does not record). A resolved target dispatches its registered row
+    // directly; a miss -- a builtin default, or a runtime-defined method --
+    // defers to the runtime walk, resumed from the ancestor whose singleton
+    // slot HOLDS the defining class (an extended module is not itself in
+    // the ancestry, and naming it restarts the walk at the top).
+    if fx.self_is_class {
+        let compiler = &fx.an.compiler;
+        let target = crate::analyze::class_query::extended_singleton_super(
+            compiler, owner, def_class, &mname,
+        );
+        let resume =
+            crate::analyze::class_query::singleton_chain_host(compiler, owner, Some(def_class))
+                .unwrap_or(def_class);
+        let sym = fx.sym_id(&mname);
+        let recv_v =
+            fx.b.ins()
+                .iconst(cranelift_codegen::ir::types::I32, i64::from(owner.0));
+        let ss = fx.temp_slot();
+        let out = fx.slot_addr(ss, 0);
+        let unmark_v =
+            fx.b.ins()
+                .iconst(cranelift_codegen::ir::types::I8, i64::from(unmark));
+        let status = match target {
+            Some((t, _sid, module_instance)) => {
+                let t_v =
+                    fx.b.ins()
+                        .iconst(cranelift_codegen::ir::types::I32, i64::from(t.0));
+                let mi =
+                    fx.b.ins()
+                        .iconst(cranelift_codegen::ir::types::I8, i64::from(module_instance));
+                fx.call(
+                    "zeo_rt_call_singleton_super_target_args",
+                    &[
+                        t_v, mi, recv_v, sym, args_ptr, unmark_v, kw_ptr, blk_ptr, out,
+                    ],
+                )
+                .expect("call_singleton_super_target_args returns a status")
+            }
+            None => {
+                let def_v =
+                    fx.b.ins()
+                        .iconst(cranelift_codegen::ir::types::I32, i64::from(resume.0));
+                fx.call(
+                    "zeo_rt_send_super_class_from_args",
+                    &[recv_v, def_v, sym, args_ptr, unmark_v, kw_ptr, blk_ptr, out],
+                )
+                .expect("send_super_class_from_args returns a status")
+            }
+        };
+        fx.fallible(status);
+        fx.owned_created += 1;
+        return Ok(Operand::Slot {
+            ss,
+            owned: true,
+            tag: TagInfo::Unknown,
+        });
+    }
 
     // Channel: a value-builtin subclass whose walk above `def_class` finds
     // no user definition targets the native root (rustc's `value_channel`

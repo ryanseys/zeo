@@ -480,6 +480,67 @@ pub unsafe extern "C" fn zeo_rt_send_super_from_args(
     status_out(r, out)
 }
 
+/// A CLASS-method `super` whose target the compile-time singleton-chain
+/// walk could not name: the runtime resumes the receiver class's
+/// singleton chain after `defining_class`. Same argument convention as
+/// [`zeo_rt_send_super_from_args`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_send_super_class_from_args(
+    recv_class: u32,
+    defining_class: u32,
+    sym: u32,
+    args: *const RubyValue,
+    unmark: u8,
+    kw: *const RubyValue,
+    blk: *mut RubyValue,
+    out: *mut RubyValue,
+) -> i32 {
+    let r = unsafe {
+        with_array_args(args, unmark, kw, blk, |full, block| {
+            crate::dispatch::send_super_class_from(
+                zeo_abi::ClassId(recv_class),
+                zeo_abi::ClassId(defining_class),
+                Symbol::from_u32(sym),
+                full,
+                block,
+            )
+        })
+    };
+    status_out(r, out)
+}
+
+/// A CLASS-method `super` the emitter DID resolve against the singleton
+/// chain (sibling-extend order is compile-time knowledge the runtime
+/// registry does not record): dispatch the named row directly --
+/// `module_instance` picks the extended module's instance-method bridge
+/// over a `def self.x` row.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_call_singleton_super_target_args(
+    target: u32,
+    module_instance: u8,
+    recv_class: u32,
+    sym: u32,
+    args: *const RubyValue,
+    unmark: u8,
+    kw: *const RubyValue,
+    blk: *mut RubyValue,
+    out: *mut RubyValue,
+) -> i32 {
+    let r = unsafe {
+        with_array_args(args, unmark, kw, blk, |full, block| {
+            crate::dispatch::call_singleton_super_target(
+                zeo_abi::ClassId(target),
+                module_instance != 0,
+                zeo_abi::ClassId(recv_class),
+                Symbol::from_u32(sym),
+                full,
+                block,
+            )
+        })
+    };
+    status_out(r, out)
+}
+
 /// `super` from a value-builtin subclass into the inherited builtin
 /// (`value_super`: `initialize` re-seats the payload, anything else runs
 /// the root builtin against it). Same argument convention as above.

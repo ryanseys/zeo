@@ -194,7 +194,12 @@ pub fn emit_super(
     // through to the runtime walk below. Instance methods keep the plain
     // MRO walk over own pools.
     let found = if in_class_method {
-        extended_singleton_super(cx, receiver_class, defining_class, mname)
+        crate::analyze::class_query::extended_singleton_super(
+            cx.compiler,
+            receiver_class,
+            defining_class,
+            mname,
+        )
     } else {
         pos.and_then(|pos| {
             ancestors[pos + 1..].iter().find_map(|&anc| {
@@ -311,117 +316,6 @@ pub fn emit_super(
     )
 }
 
-/// The ancestor whose SINGLETON-chain slot holds `defining_class`: the class
-/// itself when a `def self.x` defines the method, or the class that `extend`s
-/// (or singleton-prepends) it when a module does. `None` when the receiver's
-/// ancestry holds no such slot.
-///
-/// This is what a runtime class-method `super` must resume from. The chain
-/// puts an extended module directly after the class extending it (see
-/// [`extended_singleton_super`]), so resuming after that class is exactly
-/// right: the class's own `def self.x` sits BEFORE the module and is
-/// correctly skipped.
-fn singleton_chain_host(
-    cx: &Ctx,
-    receiver_class: crate::compiler::ClassId,
-    defining_class: Option<crate::compiler::ClassId>,
-) -> Option<crate::compiler::ClassId> {
-    let defining_class = defining_class?;
-    cx.compiler
-        .class(receiver_class)
-        .ancestors
-        .iter()
-        .enumerate()
-        .find(|&(i, &anc)| {
-            let info = cx.compiler.class(anc);
-            if i > 0 && info.is_module {
-                return false;
-            }
-            anc == defining_class
-                || info.extends.contains(&defining_class)
-                || info.class_method_prepends.contains(&defining_class)
-        })
-        .map(|(_, &anc)| anc)
-}
-
-/// `super` resolution for a method that reached the receiver as a CLASS
-/// method via `extend M`: walks the receiver's SINGLETON-class chain as the
-/// compiler knows it -- for each non-module ancestor (`include`d modules
-/// never join a singleton chain), the ancestor's own `def self.x` pool and
-/// then its `extend`ed modules' instance-method pools, most recently
-/// extended first. Returns the first `mname` definition STRICTLY AFTER
-/// `defining_class`'s own entry in that chain, `None` when the walk runs
-/// dry (the caller then defers to the runtime walk, which owns builtin
-/// defaults and runtime-defined methods).
-fn extended_singleton_super(
-    cx: &Ctx,
-    receiver_class: crate::compiler::ClassId,
-    defining_class: crate::compiler::ClassId,
-    mname: &str,
-) -> Option<(crate::compiler::ClassId, crate::compiler::ScopeId, bool)> {
-    // `(class, instance_pool)`: a chain entry resolves `mname` against its
-    // instance methods (an extended module) or its `def self.x` pool (a
-    // class standing in for its own metaclass).
-    let mut chain: Vec<(crate::compiler::ClassId, bool)> = Vec::new();
-    for (i, &anc) in cx
-        .compiler
-        .class(receiver_class)
-        .ancestors
-        .iter()
-        .enumerate()
-    {
-        let info = cx.compiler.class(anc);
-        // The receiver itself heads the chain even when it IS a module
-        // (`module Target; extend Props; end`); mixed-in modules deeper in
-        // the MRO contribute nothing to the singleton chain.
-        if i > 0 && info.is_module {
-            continue;
-        }
-        // Singleton-PREPENDED modules sit BEFORE this ancestor's own class
-        // methods (they override `def self.x`, `super` reaching the original),
-        // most recently prepended first -- the class-method mirror of `prepend`
-        // on the instance chain.
-        for &m in info.class_method_prepends.iter().rev() {
-            chain.push((m, true));
-        }
-        chain.push((anc, false));
-        for &m in info.extends.iter().rev() {
-            chain.push((m, true));
-        }
-    }
-    // The defining entry: the extended MODULE (`super` written in it,
-    // instance pool) or the CLASS itself (`def self.x`'s own slot) --
-    // module and class ids never collide, so the id alone identifies it.
-    let dpos = chain.iter().position(|&(c, _)| c == defining_class)?;
-    chain[dpos + 1..].iter().find_map(|&(anc, instance_pool)| {
-        let info = cx.compiler.class(anc);
-        let pool = if instance_pool {
-            &info.own_methods
-        } else {
-            &info.own_class_methods
-        };
-        pool.iter()
-            .find(|&&s| cx.compiler.scope(s).name == mname)
-            .map(|&sid| {
-                // A class's OWN `def self.x` that a singleton PREPEND shadows is
-                // no longer in the live class-methods row (the prepend won), so
-                // `super` must reach it through the super-TARGET table -- the
-                // `module_instance` side of `call_singleton_super_target`, which
-                // `mro::materialize_class_methods` populated with the shadowed
-                // own copy. Report it there instead of the (occupied) class row.
-                let shadowed_by_prepend = !instance_pool
-                    && info.class_method_prepends.iter().any(|&pm| {
-                        cx.compiler
-                            .class(pm)
-                            .own_methods
-                            .iter()
-                            .any(|&s| cx.compiler.scope(s).name == mname)
-                    });
-                (anc, sid, instance_pool || shadowed_by_prepend)
-            })
-    })
-}
-
 /// `super` dispatched through `zeo_rt::send_super_from` rather than spliced,
 /// resuming the receiver's REAL ancestor walk after `defining_class`.
 ///
@@ -466,8 +360,12 @@ fn emit_runtime_super(
         // answered `D#name`'s `super` with Base's copy of `D#name`, one
         // level down, forever. Name the ancestor whose singleton-chain slot
         // holds the module instead, which IS in the ancestry.
-        let def_id =
-            singleton_chain_host(cx, recv_class, cx.defining_class).map_or(def_id, |host| host.0);
+        let def_id = crate::analyze::class_query::singleton_chain_host(
+            cx.compiler,
+            recv_class,
+            cx.defining_class,
+        )
+        .map_or(def_id, |host| host.0);
         return quote! {
             {
                 let mut __super_args: Vec<zeo_rt::RubyValue> = Vec::new();

@@ -251,7 +251,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             label_override: None,
             discard_value: false,
             dyn_ivars: false,
-            defining_class: None,
+            defining_class: Some(m.defining_class),
         };
         define_method_body(em, analyzed, &spec)?;
     }
