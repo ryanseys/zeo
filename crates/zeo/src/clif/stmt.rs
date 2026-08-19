@@ -687,6 +687,14 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
         // builtin row's source is validated at this body's END
         // (`validate_class_aliases`) -- the statement itself runs nothing.
         HirNode::AliasMethod { .. } => Ok(()),
+        // Visibility retags, `undef`, and `module_function` are pure
+        // REGISTRATION too: analyze stamped the tables (vis rows, undefined
+        // marks, module-function copies) and the statements run nothing.
+        HirNode::MethodVisibility { .. }
+        | HirNode::ClassMethodVisibility { .. }
+        | HirNode::Undef(..)
+        | HirNode::ClassMethodUndef(..)
+        | HirNode::ModuleFunction(..) => Ok(()),
         HirNode::Include(_)
         | HirNode::Extend(_)
         | HirNode::Prepend(_)

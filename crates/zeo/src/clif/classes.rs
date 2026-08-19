@@ -116,6 +116,8 @@ pub(crate) struct CollectedClasses {
     /// `(class, module ids)` -- `register_extends` rows: the modules on
     /// each class's SINGLETON chain (`extend M`, `extend self`).
     pub extends: Vec<(u32, Vec<u32>)>,
+    /// `(class, name)` -- `undef` marks (`mark_undefined`).
+    pub undef_rows: Vec<(u32, String)>,
     /// `(class, new, old, is_class_side)` -- builtin-source alias rows
     /// (`register_alias` / `register_class_alias` name indirections).
     pub alias_rows: Vec<(u32, String, String, bool)>,
@@ -168,6 +170,7 @@ pub(crate) fn collect_classes(
             alias_rows.push((idx as u32, new.clone(), old.clone(), true));
         }
     }
+
     // REOPENED builtins first (rustc's builtin-registration loop): a
     // non-bootstrap builtin's user methods ride the VALUE channel on the
     // builtin's own id (they dispatch FIRST, before the native table); a
@@ -238,15 +241,8 @@ pub(crate) fn collect_classes(
         if class.ancestors != zeo_abi::declared_ancestors(crate::compiler::ClassId(idx as u32)) {
             return refuse("an ancestry-changing builtin reopen");
         }
-        if !(class.undefined.is_empty()
-            && class.class_undefined.is_empty()
-            && class.runtime_undefs.is_empty()
-            && class.pending_module_functions.is_empty()
-            && class.visibility_overrides.is_empty()
-            && class.class_visibility_overrides.is_empty()
-            && class.singleton_super_targets.is_empty())
-        {
-            return refuse("this class-surface shape on a builtin reopen");
+        if !class.singleton_super_targets.is_empty() {
+            return refuse("a singleton super target on a builtin reopen");
         }
         // No `mark_own_rows` here: a VALUE row self-records ownership at
         // insert (`own_value_names`), and a bootstrap delta's object-channel
@@ -428,18 +424,11 @@ pub(crate) fn collect_classes(
         if !(class.class_method_prepends.is_empty() && class.imported_modules.is_empty()) {
             return refuse("a mixin");
         }
-        // `pending_aliases` is DRAINED by `mro::resolve_aliases`; the
-        // resolved forms are copy scopes in the method tables and the
-        // `builtin_aliases`/`class_aliases` rows collected below.
-        if !(class.undefined.is_empty()
-            && class.class_undefined.is_empty()
-            && class.runtime_undefs.is_empty()
-            && class.pending_module_functions.is_empty()
-            && class.visibility_overrides.is_empty()
-            && class.class_visibility_overrides.is_empty())
-        {
-            return refuse("this class-surface shape");
-        }
+        // The rest of the class surface needs no refusal: `pending_aliases`,
+        // `pending_module_functions` and `class_undefined` are DRAINED or
+        // applied by analyze, `runtime_undefs` is compile-side fold
+        // suppression, and `undefined`/visibility overrides emit as rows in
+        // the uniform pass below.
         if class.feature_gate.is_some() {
             return refuse("a feature-gated class");
         }
@@ -952,6 +941,47 @@ pub(crate) fn collect_classes(
             own_cm.push((idx as u32, compiler.scope(sid).name.clone()));
         }
     }
+    // Visibility overrides (`private :m` retagging an inherited method) and
+    // `undef` marks, every class including the toplevel. Vis rows apply in
+    // order, and this pass runs after every per-method stamp above, so the
+    // override wins -- rustc's append-after-the-loop rule.
+    let mut undef_rows: Vec<(u32, String)> = Vec::new();
+    for (idx, class) in compiler.classes.iter().enumerate() {
+        if (class.is_builtin || class.is_bootstrap)
+            && !compiler.feature_active(crate::compiler::ClassId(idx as u32))
+        {
+            continue;
+        }
+        for (mname, v) in &class.visibility_overrides {
+            let verb = match v {
+                crate::hir::Visibility::Private => 0,
+                crate::hir::Visibility::Protected => 1,
+                crate::hir::Visibility::Public => 2,
+            };
+            vis.push(statics::VisRowSpec {
+                class: idx as u32,
+                name: mname.clone(),
+                verb,
+            });
+        }
+        for (mname, v) in &class.class_visibility_overrides {
+            let verb = if *v == crate::hir::Visibility::Private {
+                3
+            } else {
+                4
+            };
+            vis.push(statics::VisRowSpec {
+                class: idx as u32,
+                name: mname.clone(),
+                verb,
+            });
+        }
+        let mut undefined: Vec<&String> = class.undefined.iter().collect();
+        undefined.sort();
+        for n in undefined {
+            undef_rows.push((idx as u32, n.clone()));
+        }
+    }
     Ok(CollectedClasses {
         classes,
         methods,
@@ -964,5 +994,6 @@ pub(crate) fn collect_classes(
         extends,
         sst,
         alias_rows,
+        undef_rows,
     })
 }

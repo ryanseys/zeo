@@ -178,6 +178,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
         extends,
         sst,
         alias_rows,
+        undef_rows,
     ) = (
         collected.classes,
         collected.methods,
@@ -190,6 +191,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
         collected.extends,
         collected.sst,
         collected.alias_rows,
+        collected.undef_rows,
     );
     for def in &defs {
         let func = em.methods[&def.name].body;
@@ -487,6 +489,15 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
                 ids: vec![*module],
             }),
     );
+    // `undef` marks.
+    reg_rows.extend(undef_rows.iter().map(|(class, name)| statics::RegRowSpec {
+        kind: zeo_abi::abi::REG_MARK_UNDEFINED,
+        class: *class,
+        a: name.clone(),
+        b: String::new(),
+        f: None,
+        ids: vec![],
+    }));
     // Builtin-source alias name-indirection rows.
     reg_rows.extend(
         alias_rows

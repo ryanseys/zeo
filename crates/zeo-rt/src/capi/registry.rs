@@ -174,6 +174,9 @@ pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
                 Symbol::intern(text(r.a)),
                 value_fn(r.f.expect("a super-target row carries its fn")),
             ),
+            abi::REG_MARK_UNDEFINED => {
+                registry.mark_undefined(ClassId(r.class), Symbol::intern(text(r.a)));
+            }
             abi::REG_ALIAS => {
                 registry.register_alias(ClassId(r.class), text(r.a), text(r.b));
             }

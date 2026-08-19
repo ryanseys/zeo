@@ -362,6 +362,10 @@ pub const REG_ALIAS: u8 = 6;
 /// the row lands in the table a class-OBJECT receiver consults.
 pub const REG_CLASS_ALIAS: u8 = 7;
 
+/// `RegRow.kind`: `undef`'s mark -- `a` on `class` answers "not defined"
+/// from this position down, shadowing any inherited row.
+pub const REG_MARK_UNDEFINED: u8 = 8;
+
 /// A lazily-run feature unit -- the `install_feature_units` twin.
 #[repr(C)]
 pub struct UnitRow {
