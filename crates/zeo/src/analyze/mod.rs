@@ -13,6 +13,7 @@
     reason = "not yet swept for wildcard arms -- see the lint's note in lib.rs"
 )]
 
+pub(crate) mod class_query;
 pub(crate) mod def_hooks;
 mod locals;
 pub(crate) mod mro;

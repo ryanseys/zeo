@@ -28,8 +28,8 @@ use crate::compiler::{ClassId, Compiler, OBJECT_CLASS};
 /// name, a method name, the definition's own class. Those parts are constant
 /// across a sharing group; the class is the variable.
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub(super) enum ClassQuery {
-    /// Which slot of the receiver's `IvarCell` holds `@name` (`expr::slot_of`).
+pub(crate) enum ClassQuery {
+    /// Which slot of the receiver's `IvarCell` holds `@name` ([`slot_of`]).
     /// The emitted code carries the INDEX, so two classes that place the name
     /// differently -- or one that never declares it -- must not share.
     IvarSlot(String),
@@ -73,7 +73,7 @@ pub(super) enum ClassQuery {
 
 /// What a [`ClassQuery`] answered.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(super) enum Answer {
+pub(crate) enum Answer {
     Slot(Option<u32>),
     Yes(bool),
 }
@@ -81,14 +81,14 @@ pub(super) enum Answer {
 impl Answer {
     /// The `bool` a yes/no query answered. Panics on a mismatched pairing,
     /// which would be a bug in this file rather than in a compiled program.
-    pub(super) fn yes(self) -> bool {
+    pub(crate) fn yes(self) -> bool {
         match self {
             Answer::Yes(b) => b,
             other => unreachable!("a yes/no query answered {other:?}"),
         }
     }
 
-    pub(super) fn slot(self) -> Option<usize> {
+    pub(crate) fn slot(self) -> Option<usize> {
         match self {
             Answer::Slot(s) => s.map(|s| s as usize),
             other => unreachable!("an ivar-slot query answered {other:?}"),
@@ -100,10 +100,10 @@ impl ClassQuery {
     /// THE evaluator. Both halves of the mechanism call it -- `Ctx::ask` while
     /// emitting, and [`Trace::agrees_for`] while replaying -- which is what
     /// makes a recorded answer a test another class can be held to.
-    pub(super) fn answer(&self, compiler: &Compiler, cid: ClassId) -> Answer {
+    pub(crate) fn answer(&self, compiler: &Compiler, cid: ClassId) -> Answer {
         match self {
             ClassQuery::IvarSlot(name) => {
-                Answer::Slot(super::expr::slot_of(compiler, cid, name).map(|slot| slot as u32))
+                Answer::Slot(slot_of(compiler, cid, name).map(|slot| slot as u32))
             }
             ClassQuery::InChain(name) => Answer::Yes(compiler.method_in_chain(cid, name).is_some()),
             ClassQuery::ShadowsKernel(name) => {
@@ -158,13 +158,13 @@ fn takes_value_super(
 /// emitted closure. Carrying the class and the trace as one value is what stops
 /// a caller from passing the first and forgetting the second.
 #[derive(Clone, Copy, Default)]
-pub(super) struct SelfClass<'a> {
-    pub(super) cid: Option<ClassId>,
+pub(crate) struct SelfClass<'a> {
+    pub(crate) cid: Option<ClassId>,
     trace: Option<&'a std::cell::RefCell<Trace>>,
 }
 
 impl<'a> SelfClass<'a> {
-    pub(super) fn new(
+    pub(crate) fn new(
         cid: Option<ClassId>,
         trace: Option<&'a std::cell::RefCell<Trace>>,
     ) -> SelfClass<'a> {
@@ -173,7 +173,7 @@ impl<'a> SelfClass<'a> {
 
     /// [`super::Ctx::ask`] for code that has no `Ctx`. `None` when there is no
     /// receiver class, which is also when nothing can vary with one.
-    pub(super) fn ask(&self, compiler: &Compiler, query: ClassQuery) -> Option<Answer> {
+    pub(crate) fn ask(&self, compiler: &Compiler, query: ClassQuery) -> Option<Answer> {
         let cid = self.cid?;
         let answer = query.answer(compiler, cid);
         if let Some(trace) = self.trace {
@@ -188,10 +188,10 @@ impl<'a> SelfClass<'a> {
 /// Order is not load-bearing -- replay checks every pair -- but keeping it lets
 /// a divergence report name the first question that parted.
 #[derive(Default, Clone)]
-pub(super) struct Trace(Vec<(ClassQuery, Answer)>);
+pub(crate) struct Trace(Vec<(ClassQuery, Answer)>);
 
 impl Trace {
-    pub(super) fn record(&mut self, query: ClassQuery, answer: Answer) {
+    pub(crate) fn record(&mut self, query: ClassQuery, answer: Answer) {
         // A body asks the same question repeatedly (one ivar read per mention).
         // Deduping keeps replay proportional to the DISTINCT class-dependence
         // of the body rather than to its length.
@@ -202,12 +202,12 @@ impl Trace {
 
     /// Whether `cid` answers every recorded question the same way -- i.e.
     /// whether the emission this trace came from is valid for `cid` too.
-    pub(super) fn agrees_for(&self, compiler: &Compiler, cid: ClassId) -> bool {
+    pub(crate) fn agrees_for(&self, compiler: &Compiler, cid: ClassId) -> bool {
         self.0.iter().all(|(q, a)| q.answer(compiler, cid) == *a)
     }
 
     /// The first question `cid` answers differently, for diagnostics.
-    pub(super) fn first_disagreement(
+    pub(crate) fn first_disagreement(
         &self,
         compiler: &Compiler,
         cid: ClassId,
@@ -218,7 +218,19 @@ impl Trace {
         })
     }
 
-    pub(super) fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.0.len()
     }
+}
+
+/// The `IvarCell` slot index of `@name` on `class`: declared ivars first,
+/// then hidden ivars (Struct/Data members) after them.
+pub(crate) fn slot_of(compiler: &Compiler, class: ClassId, name: &str) -> Option<usize> {
+    let info = compiler.class(class);
+    info.ivars.iter().position(|iv| iv == name).or_else(|| {
+        info.hidden_ivars
+            .iter()
+            .position(|iv| iv == name)
+            .map(|i| info.ivars.len() + i)
+    })
 }

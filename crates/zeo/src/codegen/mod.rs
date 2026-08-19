@@ -21,7 +21,7 @@
 
 mod call;
 mod captures;
-mod class_query;
+pub(crate) use crate::analyze::class_query;
 mod collections;
 mod constfold;
 mod exceptions;
@@ -4769,7 +4769,7 @@ fn emit_class(compiler: &Compiler, shared: &share::SharedBodies, cid: ClassId) -
         let frame = cached_frame_guard(compiler, entry.def, false);
         let tramp = match compiler.accessor_shape(cid, scope) {
             Some(shape) => {
-                let slot = expr::slot_of(compiler, cid, &shape.ivar)
+                let slot = class_query::slot_of(compiler, cid, &shape.ivar)
                     .expect("`accessor_shape` only matches a declared slot");
                 params::emit_accessor_trampoline(&name_ident, shape, slot, &frame)
             }
