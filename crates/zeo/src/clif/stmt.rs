@@ -462,7 +462,18 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
         }
         HirNode::Redo => {
             let Some(ctl) = fx.loops.last() else {
-                return fx.unsupported(stmt, "`redo` outside a loop");
+                // `redo` in a block re-runs the block from its binding head
+                // (the bindings re-run too -- they sit inside the loop).
+                let Some(head) = fx.block_redo else {
+                    return fx.unsupported(stmt, "`redo` outside a loop");
+                };
+                if fx.ensure_depth != 0 {
+                    return fx.unsupported(stmt, "a `redo` across an `ensure` boundary");
+                }
+                fx.pop_handling_to(0);
+                fx.b.ins().jump(head, &[]);
+                fx.continue_unreachable();
+                return Ok(());
             };
             if ctl.depth != fx.ensure_depth {
                 return fx.unsupported(stmt, "a `redo` across an `ensure` boundary");

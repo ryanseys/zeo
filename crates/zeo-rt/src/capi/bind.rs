@@ -212,3 +212,174 @@ impl Filler {
         self.s += 1;
     }
 }
+
+/// Block-binding flags for [`zeo_rt_bind_block_params`].
+pub const BLOCK_BIND_AUTO_SPLAT: u8 = 1;
+
+/// The BLOCK twin of [`zeo_rt_bind_params`]: same `ParamDescC`, same slot
+/// layout, ruby's block rules instead of a method call's -- LENIENT
+/// positionals (missing bind nil, extra drop, no arity error), the
+/// keyword source is ANY trailing Hash when the block declares keywords
+/// (Ruby 3 has no implicit conversion the other way), auto-splat when the
+/// emitter's static decision says so (`flags`), post params fill
+/// left-to-right from what remains (never wrapping back), a missing
+/// REQUIRED keyword still raises, and an optional keyword's presence is
+/// approximated as "its value is non-nil" (the documented imprecision the
+/// rustc emission shares). The caller's frame is already pushed -- errors
+/// here need no frame handling of their own.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_bind_block_params(
+    desc: *const ParamDescC,
+    flags: u8,
+    argv: *const RubyValue,
+    argc: usize,
+    slots: *mut RubyValue,
+    present: *mut u64,
+) -> i32 {
+    let desc = unsafe { &*desc };
+    let n_slots = slot_count(desc);
+    for i in 0..n_slots {
+        unsafe { slots.add(i).write(RubyValue::Nil) };
+    }
+    unsafe { present.write(0) };
+    let args: &[RubyValue] = if argc == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(argv, argc) }
+    };
+    match unsafe { bind_block(desc, flags, n_slots, args, slots, present) } {
+        Ok(()) => STATUS_OK,
+        Err(sig) => {
+            crate::signal::set_pending(sig);
+            STATUS_SIGNAL
+        }
+    }
+}
+
+unsafe fn bind_block(
+    desc: &ParamDescC,
+    flags: u8,
+    n_slots: usize,
+    args: &[RubyValue],
+    slots: *mut RubyValue,
+    present: *mut u64,
+) -> Result<(), Signal> {
+    use crate::value::collections::{array_new, hash_get, hash_has_key, hash_new};
+    let kws: &[KwParamC] = if desc.n_kws == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(desc.kws, desc.n_kws) }
+    };
+    let kw_names: Vec<&str> = kws
+        .iter()
+        .map(|k| unsafe { super::str_slice(k.name.ptr, k.name.len) })
+        .collect();
+    let has_keywords = !kws.is_empty() || desc.kwrest != PARAM_STAR_NONE;
+
+    // The keyword source splits off BEFORE auto-splat (CRuby's order: a
+    // block `|a, b, **k|` yielded one `[1, {x: 9}]` binds `b = {x: 9}`).
+    let (positional, kw_source): (&[RubyValue], Option<crate::RHash>) = if has_keywords {
+        match args.split_last() {
+            Some((RubyValue::Hash(h), rest)) => (rest, Some(h.clone())),
+            _ => (args, None),
+        }
+    } else {
+        (args, None)
+    };
+    let positional: std::borrow::Cow<'_, [RubyValue]> = if flags & BLOCK_BIND_AUTO_SPLAT != 0 {
+        crate::block_auto_splat(positional)?
+    } else {
+        std::borrow::Cow::Borrowed(positional)
+    };
+
+    let (nreq, nopt, npost) = (desc.nreq as usize, desc.nopt as usize, desc.npost as usize);
+    let n = positional.len();
+    let min = nreq + npost;
+    let extra = n.saturating_sub(min);
+    let opt_bound = extra.min(nopt);
+    let rest_count = if desc.rest != PARAM_STAR_NONE {
+        extra.saturating_sub(opt_bound)
+    } else {
+        0
+    };
+
+    let mut f = Filler {
+        s: 0,
+        n_slots,
+        slots,
+        present,
+    };
+    let get = |i: usize| positional.get(i).cloned().unwrap_or(RubyValue::Nil);
+    for i in 0..nreq {
+        f.fill(get(i));
+    }
+    for i in 0..nopt {
+        if i < opt_bound {
+            f.fill(get(nreq + i));
+        } else {
+            f.skip(); // absent: the default runs in the body
+        }
+    }
+    match desc.rest {
+        PARAM_STAR_NAMED => {
+            let elems: Vec<RubyValue> = (nreq + opt_bound..nreq + opt_bound + rest_count)
+                .filter_map(|i| positional.get(i).cloned())
+                .collect();
+            f.fill(RubyValue::Array(array_new(elems)));
+        }
+        PARAM_STAR_ANON | PARAM_STAR_NONE => {}
+        other => unreachable!("ParamDescC.rest kind {other}"),
+    }
+    // Posts fill left-to-right from what's left, nil-padding the tail --
+    // never anchored to the end (`|a, *b, c, d|` on [1, 2] is c=2, d=nil).
+    for i in 0..npost {
+        f.fill(get(nreq + opt_bound + rest_count + i));
+    }
+    for (kw, name) in kws.iter().zip(&kw_names) {
+        let key = RubyValue::Symbol(crate::Symbol::intern(name));
+        if kw.required != 0 {
+            match &kw_source {
+                Some(h) if hash_has_key(h, &key) => f.fill(hash_get(h, &key)),
+                _ => {
+                    return Err(crate::dispatch::raise_error(
+                        "ArgumentError",
+                        format!("missing keyword: :{name}"),
+                    ));
+                }
+            }
+        } else {
+            match &kw_source {
+                Some(h) => {
+                    let v = hash_get(h, &key);
+                    if v.is_nil() {
+                        f.skip(); // the default runs in the body
+                    } else {
+                        f.fill(v);
+                    }
+                }
+                None => f.skip(),
+            }
+        }
+    }
+    match desc.kwrest {
+        PARAM_STAR_NAMED => {
+            let pairs: Vec<(RubyValue, RubyValue)> = match &kw_source {
+                Some(h) => h
+                    .lock()
+                    .values()
+                    .filter(|(k, _)| match k {
+                        RubyValue::Symbol(s) => !kw_names.contains(&s.name_str()),
+                        _ => true,
+                    })
+                    .cloned()
+                    .collect(),
+                None => Vec::new(),
+            };
+            f.fill(RubyValue::Hash(hash_new(pairs)));
+        }
+        PARAM_STAR_ANON | PARAM_STAR_NONE => {}
+        other => unreachable!("ParamDescC.kwrest kind {other}"),
+    }
+    debug_assert_eq!(f.s, n_slots, "block slot routing must cover the layout");
+    Ok(())
+}

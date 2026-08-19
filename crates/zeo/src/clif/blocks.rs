@@ -62,7 +62,7 @@ pub(crate) fn build_proc(
         let HirNode::Block { params, .. } = &fx.an.compiler.hir[block] else {
             unreachable!("checked in captured_names");
         };
-        params.required.len()
+        super::params::proc_arity(params, false)
     };
     let f_id = define_block_fn(fx, site, block, &names)?;
     let f_ref = fx.em.module.declare_func_in_func(f_id, fx.b.func);
@@ -92,7 +92,7 @@ pub(crate) fn build_proc(
     let n_cells = fx.b.ins().iconst(ptr_ty, names.len() as i64);
     let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
     let null = fx.b.ins().iconst(ptr_ty, 0);
-    let arity_v = fx.b.ins().iconst(types::I32, arity as i64);
+    let arity_v = fx.b.ins().iconst(types::I32, i64::from(arity));
     let flags = fx.b.ins().iconst(types::I32, 0);
     let proc_ss = fx.temp_slot();
     let proc_addr = fx.slot_addr(proc_ss, 0);
@@ -108,8 +108,9 @@ pub(crate) fn build_proc(
 }
 
 /// The block body as a `BlockFn`: env cells become (unowned) cell locals,
-/// params bind nil-filled/extra-dropped, `next` is the ok-exit, `break`
-/// arms the Break signal.
+/// params bind through `zeo_rt_bind_block_params` (ruby's lenient block
+/// rules, full shape), `next` is the ok-exit, `break` arms the Break
+/// signal, `redo` re-enters at the binding head.
 fn define_block_fn(
     fx: &mut Fx,
     site: NodeId,
@@ -119,22 +120,10 @@ fn define_block_fn(
     let HirNode::Block { params, body } = &fx.an.compiler.hir[block] else {
         unreachable!("checked in captured_names");
     };
-    if !(params.destructures.is_empty()
-        && params.optional.is_empty()
-        && params.rest.is_none()
-        && !params.implicit_rest
-        && params.post.is_empty()
-        && params.keywords.is_empty()
-        && params.keyword_rest.is_none()
-        && params.block.is_none()
-        && params.block_locals.is_empty()
-        && params.implicit_block_locals.is_empty()
-        && params.required.len() <= 1)
-    {
-        return fx.unsupported(site, "this block's parameter shape");
-    }
-    let block_params = params.required.clone();
+    let params = params.as_ref().clone();
     let body = body.clone();
+    let layout = super::params::layout_of(&params)?;
+    let auto_splat = super::params::auto_splats(&params);
     let label = format!("block in {}", fx.frame_label);
     let (line, file) = {
         let loc = fx.location(site);
@@ -148,6 +137,18 @@ fn define_block_fn(
     let em = &mut *fx.em;
     let an = fx.an;
     let method_class = fx.method_class;
+
+    let desc_id = super::statics::define_param_desc(
+        em,
+        &super::params::ParamDescSpec {
+            params: &params,
+            name: "block",
+            file: file.as_deref(),
+            label: &label,
+            line,
+            end_line: line,
+        },
+    )?;
 
     let mut sig = em.module.make_signature();
     for _ in 0..6 {
@@ -180,7 +181,7 @@ fn define_block_fn(
     });
     let entry = bfx.b.current_block().expect("entry is current");
     let ep: Vec<ir::Value> = bfx.b.block_params(entry).to_vec();
-    let (env, self_p, argv, argc, _blk, out) = (ep[0], ep[1], ep[2], ep[3], ep[4], ep[5]);
+    let (env, self_p, argv, argc, blk, out) = (ep[0], ep[1], ep[2], ep[3], ep[4], ep[5]);
     bfx.self_ptr = Some(self_p);
     bfx.method_class = method_class;
     bfx.frame_label = label.clone();
@@ -201,50 +202,49 @@ fn define_block_fn(
             .insert(name.clone(), Local::Cell { ss, owned: false });
     }
 
-    // Params: nil-fill the missing, drop the extra (non-lambda binding).
-    for (i, name) in block_params.iter().enumerate() {
-        let ss = bfx.new_value_slot();
-        let have = bfx
-            .b
-            .ins()
-            .icmp_imm_u(IntCC::UnsignedGreaterThan, argc, i as i64);
-        let bind = bfx.b.create_block();
-        let cont = bfx.b.create_block();
-        bfx.b.ins().brif(have, bind, &[], cont, &[]);
-        bfx.b.switch_to_block(bind);
-        let src = if i == 0 {
-            argv
-        } else {
-            bfx.b.ins().iadd_imm_u(argv, (i as u32 * VALUE_SIZE) as i64)
-        };
-        let op = Operand::Ptr {
-            addr: src,
-            owned: false,
-            tag: TagInfo::Unknown,
-        };
-        let dst = bfx.slot_addr(ss, 0);
-        ownership::write_assign(&mut bfx, &op, dst);
-        bfx.b.ins().jump(cont, &[]);
-        bfx.b.switch_to_block(cont);
-        if !captured.contains(name) {
-            bfx.locals.insert(name.clone(), Local::Slot(ss));
-        } else {
-            // A captured own-param would need a cell binding per call;
-            // outside the slice.
-            return bfx.unsupported(site, "a block parameter captured by a nested block");
+    // Storage for every name the block binds -- params (all kinds, `&b`
+    // and destructured names included), body locals, block-locals -- as
+    // owned cells when a NESTED block captures them, plain slots
+    // otherwise. Created once, before the redo loop.
+    let body_captured = captures::collect_escaping_captures(
+        &an.compiler,
+        &body,
+        &params,
+        class_query::SelfClass::new(method_class, None),
+    )
+    .locals;
+    let mut names: Vec<String> = params.bound_names();
+    {
+        let mut locals = crate::analyze::local_storage::Locals::default();
+        for &stmt in &body {
+            crate::analyze::local_storage::collect_locals(&an.compiler, stmt, &mut locals);
         }
+        for id in params.default_ids() {
+            crate::analyze::local_storage::collect_locals(&an.compiler, id, &mut locals);
+        }
+        names.extend(locals.names().iter().cloned());
     }
-    // Other block-body locals.
-    let mut locals = crate::analyze::local_storage::Locals::default();
-    for &stmt in &body {
-        crate::analyze::local_storage::collect_locals(&an.compiler, stmt, &mut locals);
-    }
-    for name in locals.names().to_vec() {
+    for name in names {
         if bfx.locals.contains_key(&name) {
             continue;
         }
-        let ss = bfx.new_value_slot();
-        bfx.locals.insert(name, Local::Slot(ss));
+        if body_captured.contains(&name) {
+            let null = bfx.b.ins().iconst(ptr_ty, 0);
+            let cellp = bfx
+                .call("zeo_rt_cell_new", &[null])
+                .expect("cell_new returns the cell");
+            let ss = bfx.b.create_sized_stack_slot(StackSlotData::new(
+                StackSlotKind::ExplicitSlot,
+                8,
+                3,
+            ));
+            let dst = bfx.slot_addr(ss, 0);
+            bfx.b.ins().store(fl, cellp, dst, 0);
+            bfx.locals.insert(name, Local::Cell { ss, owned: true });
+        } else {
+            let ss = bfx.new_value_slot();
+            bfx.locals.insert(name, Local::Slot(ss));
+        }
     }
 
     if let Some(file) = &file {
@@ -264,6 +264,174 @@ fn define_block_fn(
         .call("zeo_rt_check_ints", &[])
         .expect("check_ints returns a status");
     bfx.fallible(status);
+
+    // The binding head: `redo` re-enters here (the bindings re-run,
+    // ruby's rule -- rustc's 'redo loop starts at the same point).
+    let redo_head = bfx.b.create_block();
+    bfx.b.ins().jump(redo_head, &[]);
+    bfx.b.switch_to_block(redo_head);
+    bfx.block_redo = Some(redo_head);
+
+    // Bind through the runtime (the full block rules); slot values are
+    // POOLED (a default can raise mid-sequence -- the pool keeps the
+    // error edge clean; under `redo` the pool grows per iteration until
+    // frame pop, an accepted rarity).
+    let n_slots = layout.n_slots;
+    let slots_ss = (n_slots > 0).then(|| {
+        bfx.b.create_sized_stack_slot(StackSlotData::new(
+            StackSlotKind::ExplicitSlot,
+            n_slots as u32 * VALUE_SIZE,
+            3,
+        ))
+    });
+    let present_ss =
+        bfx.b
+            .create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
+    let slots_ptr = match slots_ss {
+        Some(ss) => bfx.slot_addr(ss, 0),
+        None => bfx.b.ins().iconst(ptr_ty, 0),
+    };
+    let present_ptr = bfx.slot_addr(present_ss, 0);
+    let desc_gv = bfx.em.module.declare_data_in_func(desc_id, bfx.b.func);
+    let desc_ptr = bfx.b.ins().symbol_value(ptr_ty, desc_gv);
+    let flags_v = bfx.b.ins().iconst(types::I8, i64::from(auto_splat));
+    let status = bfx
+        .call(
+            "zeo_rt_bind_block_params",
+            &[desc_ptr, flags_v, argv, argc, slots_ptr, present_ptr],
+        )
+        .expect("bind_block_params returns a status");
+    bfx.fallible(status);
+    for s in 0..n_slots {
+        let ss = slots_ss.expect("n_slots > 0 when slots exist");
+        let addr = bfx.slot_addr(ss, s as i32 * 24);
+        bfx.owned_created += 1;
+        ownership::pool_owned(&mut bfx, addr, TagInfo::Unknown);
+    }
+    let present = (n_slots > 0).then(|| bfx.b.ins().load(types::I64, fl, present_ptr, 0));
+
+    // Copy the bound slots into their locals, in declared order; absent
+    // optionals run their defaults (user code, frame already up).
+    {
+        let mut bound: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut s = 0usize;
+        let slot_addr =
+            |bfx: &mut Fx, s: usize| bfx.slot_addr(slots_ss.expect("slots exist"), s as i32 * 24);
+        let always =
+            |bfx: &mut Fx, bound: &mut std::collections::HashSet<String>, name: &str, s: usize| {
+                if !bound.insert(name.to_string()) {
+                    return;
+                }
+                let addr = slot_addr(bfx, s);
+                let op = Operand::Ptr {
+                    addr,
+                    owned: false,
+                    tag: TagInfo::Unknown,
+                };
+                ownership::write_local(bfx, name, &op);
+            };
+        let optional = |bfx: &mut Fx,
+                        bound: &mut std::collections::HashSet<String>,
+                        name: &str,
+                        default: NodeId,
+                        s: usize|
+         -> Result<(), String> {
+            let duplicate = !bound.insert(name.to_string());
+            let p = present.expect("optionals imply slots");
+            let bit = bfx.b.ins().band_imm_u(p, (1u64 << s) as i64);
+            let got = bfx.b.ins().icmp_imm_u(IntCC::NotEqual, bit, 0);
+            let given = bfx.b.create_block();
+            let absent = bfx.b.create_block();
+            let join = bfx.b.create_block();
+            bfx.b.ins().brif(got, given, &[], absent, &[]);
+            bfx.b.switch_to_block(given);
+            if !duplicate {
+                let addr = slot_addr(bfx, s);
+                let op = Operand::Ptr {
+                    addr,
+                    owned: false,
+                    tag: TagInfo::Unknown,
+                };
+                ownership::write_local(bfx, name, &op);
+            }
+            bfx.b.ins().jump(join, &[]);
+            bfx.b.switch_to_block(absent);
+            let op = super::expr::lower_expr(bfx, default)?;
+            ownership::write_local(bfx, name, &op);
+            bfx.b.ins().jump(join, &[]);
+            bfx.b.switch_to_block(join);
+            Ok(())
+        };
+        for name in &params.required {
+            always(&mut bfx, &mut bound, name, s);
+            s += 1;
+        }
+        for (name, default) in &params.optional {
+            optional(&mut bfx, &mut bound, name, *default, s)?;
+            s += 1;
+        }
+        if let Some(Some(name)) = &params.rest {
+            always(&mut bfx, &mut bound, name, s);
+            s += 1;
+        } else if matches!(params.rest, Some(None)) {
+            // anonymous `*`: no slot
+        }
+        for name in &params.post {
+            always(&mut bfx, &mut bound, name, s);
+            s += 1;
+        }
+        for kw in &params.keywords {
+            match kw {
+                crate::hir::KeywordParam::Required(name) => always(&mut bfx, &mut bound, name, s),
+                crate::hir::KeywordParam::Optional(name, default) => {
+                    optional(&mut bfx, &mut bound, name, *default, s)?;
+                }
+            }
+            s += 1;
+        }
+        if let Some(Some(name)) = &params.keyword_rest {
+            always(&mut bfx, &mut bound, name, s);
+            s += 1;
+        }
+        debug_assert_eq!(s, n_slots);
+    }
+    // Destructured params replay as multi-assignments.
+    for (read, group) in &params.destructures {
+        let op = super::expr::lower_expr(&mut bfx, *read)?;
+        let tag = op.tag();
+        let ptr = ownership::borrow_ptr(&mut bfx, &op);
+        if op.owned() {
+            ownership::pool_owned(&mut bfx, ptr, tag);
+        }
+        super::stmt::lower_multi_group(&mut bfx, *read, group, ptr)?;
+    }
+    // Block-locals (and implicit ones): fresh nil EVERY invocation --
+    // and every `redo` iteration (they sit inside the loop).
+    for name in params
+        .block_locals
+        .iter()
+        .chain(&params.implicit_block_locals)
+    {
+        ownership::write_local(&mut bfx, name, &Operand::Nil);
+    }
+    // `&b`: nil when the block was called blockless, else the call-site
+    // block.
+    if let Some(Some(bname)) = &params.block {
+        ownership::write_local(&mut bfx, bname, &Operand::Nil);
+        let got = bfx.b.ins().icmp_imm_u(IntCC::NotEqual, blk, 0);
+        let yes = bfx.b.create_block();
+        let join = bfx.b.create_block();
+        bfx.b.ins().brif(got, yes, &[], join, &[]);
+        bfx.b.switch_to_block(yes);
+        let op = Operand::Ptr {
+            addr: blk,
+            owned: false,
+            tag: TagInfo::Unknown,
+        };
+        ownership::write_local(&mut bfx, bname, &op);
+        bfx.b.ins().jump(join, &[]);
+        bfx.b.switch_to_block(join);
+    }
 
     let ret_ok = bfx.b.create_block();
     bfx.block_next = Some((out, ret_ok));

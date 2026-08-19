@@ -98,6 +98,9 @@ pub(crate) struct Fx<'e, 'f> {
     /// The enclosing `def` carries the `ruby2_keywords` directive: a splat
     /// forwarding its `*rest` keeps the keyword mark on a trailing hash.
     pub ruby2_keywords: bool,
+    /// Inside a block fn: the binding head `redo` jumps to (re-running the
+    /// param bindings, ruby's rule) -- set once the bindings exist.
+    pub block_redo: Option<ir::Block>,
 }
 
 impl<'e, 'f> Fx<'e, 'f> {
@@ -135,6 +138,7 @@ impl<'e, 'f> Fx<'e, 'f> {
             owned_created: 0,
             owned_consumed: 0,
             ruby2_keywords: false,
+            block_redo: None,
         }
     }
 

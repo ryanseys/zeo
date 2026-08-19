@@ -35,6 +35,7 @@ capi_symbols!(
     dispatch::zeo_rt_array_push_splat,
     lifecycle::zeo_rt_at_exit_register,
     values::zeo_rt_bignum_from_decimal,
+    bind::zeo_rt_bind_block_params,
     bind::zeo_rt_bind_params,
     dispatch::zeo_rt_callsite_init,
     procs::zeo_rt_cell_load,

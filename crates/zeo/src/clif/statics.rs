@@ -183,7 +183,7 @@ fn define_vm_rows(em: &mut Emitter, rows: &[VmRowSpec]) -> Result<Option<DataId>
 /// string lives in the rodata blob.
 pub(crate) fn define_param_desc(
     em: &mut Emitter,
-    spec: &super::params::TrampSpec<'_>,
+    spec: &super::params::ParamDescSpec<'_>,
 ) -> Result<DataId, String> {
     use zeo_abi::abi::{KwParamC, PARAM_STAR_ANON, PARAM_STAR_NAMED, PARAM_STAR_NONE, ParamDescC};
     let p = spec.params;

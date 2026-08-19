@@ -70,6 +70,52 @@ pub(crate) fn layout_of(p: &Params) -> Result<Layout, String> {
     })
 }
 
+/// What a `.rodata` `ParamDescC` serialization needs (`statics::
+/// define_param_desc`): the shape, the name for binder error text, and
+/// the callee frame binder raises run under.
+pub(crate) struct ParamDescSpec<'a> {
+    pub params: &'a Params,
+    pub name: &'a str,
+    pub file: Option<&'a str>,
+    pub label: &'a str,
+    pub line: u32,
+    pub end_line: u32,
+}
+
+/// The rustc emitter's static auto-splat decision, verbatim: a single
+/// ambiguous leading param never auto-splats; anything with real
+/// positional structure does (non-lambda blocks only).
+pub(crate) fn auto_splats(params: &Params) -> bool {
+    let lead = params.required.len();
+    let opt = params.optional.len();
+    let post = params.post.len();
+    let ambiguous_param0 = lead == 1 && opt == 0 && post == 0 && params.rest.is_none();
+    !ambiguous_param0 && (lead + post > 0 || opt > 1)
+}
+
+/// `Proc#arity`'s value for a block/lambda of this shape (the rustc
+/// emitter's rule, verbatim; a trailing comma's rest is not signature).
+pub(crate) fn proc_arity(params: &Params, is_lambda: bool) -> i32 {
+    let lead = params.required.len() as i32;
+    let opt = params.optional.len() as i32;
+    let post = params.post.len() as i32;
+    let has_rest = params.rest.is_some() && !params.implicit_rest;
+    let has_kw = !params.keywords.is_empty();
+    let has_kwrest = params.keyword_rest.is_some();
+    let any_required_kw = params
+        .keywords
+        .iter()
+        .any(|k| matches!(k, KeywordParam::Required(_)));
+    let min = lead + post + i32::from(any_required_kw);
+    let max = (!has_rest).then(|| lead + opt + post + i32::from(has_kw || has_kwrest));
+    let positive = match max {
+        Some(max) if is_lambda => min == max,
+        Some(_) => true,
+        None => false,
+    };
+    if positive { min } else { -min - 1 }
+}
+
 /// Everything a trampoline definition needs beyond its `FuncId`s.
 pub(crate) struct TrampSpec<'a> {
     pub tramp: FuncId,
@@ -141,7 +187,17 @@ fn define_bound_trampoline(
     layout: &Layout,
     fn_index: u32,
 ) -> Result<(), String> {
-    let desc_id = super::statics::define_param_desc(em, spec)?;
+    let desc_id = super::statics::define_param_desc(
+        em,
+        &ParamDescSpec {
+            params: spec.params,
+            name: spec.name,
+            file: spec.file,
+            label: spec.label,
+            line: spec.line,
+            end_line: spec.end_line,
+        },
+    )?;
     let sig = value_fn_sig(em);
     let mut func = ir::Function::with_name_signature(UserFuncName::user(1, fn_index), sig);
     let body_ref = em.module.declare_func_in_func(spec.body, &mut func);
