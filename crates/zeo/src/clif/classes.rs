@@ -46,6 +46,11 @@ pub(crate) struct ObjMethodSpec {
     /// This entry is the class's OWN write (not a materialized ancestor
     /// copy): its trampoline doubles as the own-`super`-target row.
     pub is_own: bool,
+    /// An own method SHADOWED by a `prepend` winner: its body compiles and
+    /// its `REG_SUPER_TARGET_VALUE` row registers, but no `ObjRow` -- the
+    /// object channel carries the module's materialized copy (rustc's
+    /// `__own_` bridge shape).
+    pub super_target_only: bool,
 }
 
 /// One class method (`def self.x`) to compile -- a `CmRow` on the
@@ -54,6 +59,10 @@ pub(crate) struct ObjMethodSpec {
 /// is an optimization for self-free bodies, not a semantic difference), so
 /// a subclass inheriting the method runs under its own `self`.
 pub(crate) struct CmMethodSpec {
+    /// `false` = a singleton-super-target-only body (a shadowed `extend`
+    /// copy): compiled and registered under `(module, name)`, but no
+    /// `CmRow` on the class-method channel.
+    pub cm_row: bool,
     pub owner: ClassId,
     pub owner_name: String,
     pub name: String,
@@ -104,6 +113,14 @@ pub(crate) struct CollectedClasses {
     /// (`mark_own_rows` -- `instance_methods(false)`/`Method#owner`).
     pub own_rows: Vec<(u32, String)>,
     pub vis: Vec<statics::VisRowSpec>,
+    /// `(class, module ids)` -- `register_extends` rows: the modules on
+    /// each class's SINGLETON chain (`extend M`, `extend self`).
+    pub extends: Vec<(u32, Vec<u32>)>,
+    /// `(class, module, name, trampoline)` -- singleton-chain super
+    /// targets: every `extend`ed method copy (winner AND shadowed) plus
+    /// inherited class methods a subclass's own `def self.x` shadowed
+    /// (`define_singleton_super_target`).
+    pub sst: Vec<(u32, u32, String, cranelift_module::FuncId)>,
     /// `(class, name)` value rows a builtin reopen INHERITED (a module
     /// method materialized onto the builtin) -- marked foreign so a
     /// `super` walk skips them at that position (`mark_foreign_value_rows`).
@@ -125,6 +142,8 @@ pub(crate) fn collect_classes(
     let mut foreign = Vec::new();
     let mut own_rows = Vec::new();
     let mut vis = Vec::new();
+    let mut extends: Vec<(u32, Vec<u32>)> = Vec::new();
+    let mut sst: Vec<(u32, u32, String, cranelift_module::FuncId)> = Vec::new();
     // REOPENED builtins first (rustc's builtin-registration loop): a
     // non-bootstrap builtin's user methods ride the VALUE channel on the
     // builtin's own id (they dispatch FIRST, before the native table); a
@@ -176,7 +195,7 @@ pub(crate) fn collect_classes(
         let name = compiler.fq_name(crate::compiler::ClassId(idx as u32));
         let refuse = |what: &str| {
             Err(format!(
-                "--backend aot is an M0 vertical slice: cannot lower {what} yet (class {name})"
+                "the CLIF backend cannot lower {what} yet (class {name})"
             ))
         };
         // A require-gated builtin whose feature never fired: no code can
@@ -216,7 +235,7 @@ pub(crate) fn collect_classes(
             let mname = compiler.names.str(entry.name).to_string();
             let refuse_m = |what: &str| {
                 Err(format!(
-                    "--backend aot is an M0 vertical slice: cannot lower {what} yet ({name}#{mname})"
+                    "the CLIF backend cannot lower {what} yet ({name}#{mname})"
                 ))
             };
             let dc = entry.defined_class(compiler);
@@ -268,6 +287,7 @@ pub(crate) fn collect_classes(
                 // An exception reopen: an OBJECT-channel delta.
                 methods.push(ObjMethodSpec {
                     is_own: class.own_methods.contains(&entry.def),
+                    super_target_only: false,
                     dyn_ivars: true,
                     defining_class: scope.defining_class,
                     owner: ClassId(idx as u32),
@@ -305,7 +325,7 @@ pub(crate) fn collect_classes(
             let mname = compiler.names.str(entry.name).to_string();
             let refuse_m = |what: &str| {
                 Err(format!(
-                    "--backend aot is an M0 vertical slice: cannot lower {what} yet ({name}.{mname})"
+                    "the CLIF backend cannot lower {what} yet ({name}.{mname})"
                 ))
             };
             if scope.runtime_conditional {
@@ -348,6 +368,7 @@ pub(crate) fn collect_classes(
                 });
             }
             class_methods.push(CmMethodSpec {
+                cm_row: true,
                 owner: ClassId(idx as u32),
                 owner_name: name.clone(),
                 name: mname,
@@ -375,7 +396,7 @@ pub(crate) fn collect_classes(
         let name = compiler.fq_name(crate::compiler::ClassId(idx as u32));
         let refuse = |what: &str| {
             Err(format!(
-                "--backend aot is an M0 vertical slice: cannot lower {what} yet (class {name})"
+                "the CLIF backend cannot lower {what} yet (class {name})"
             ))
         };
         if class.box_id != 0 {
@@ -387,11 +408,7 @@ pub(crate) fn collect_classes(
         // `include` works through the two mechanisms below (materialized
         // copies on the includer + value rows on the module + the module in
         // `ancestors`); the rest of the mixin surface still refuses.
-        if !(class.prepends.is_empty()
-            && class.extends.is_empty()
-            && class.class_method_prepends.is_empty()
-            && class.imported_modules.is_empty())
-        {
+        if !(class.class_method_prepends.is_empty() && class.imported_modules.is_empty()) {
             return refuse("a mixin");
         }
         if !(class.pending_aliases.is_empty()
@@ -402,8 +419,7 @@ pub(crate) fn collect_classes(
             && class.runtime_undefs.is_empty()
             && class.pending_module_functions.is_empty()
             && class.visibility_overrides.is_empty()
-            && class.class_visibility_overrides.is_empty()
-            && class.singleton_super_targets.is_empty())
+            && class.class_visibility_overrides.is_empty())
         {
             return refuse("this class-surface shape");
         }
@@ -435,6 +451,17 @@ pub(crate) fn collect_classes(
         } else {
             zeo_abi::abi::CLASS_PLAIN
         };
+        // Prepend winners flow through the MATERIALIZED `methods` table
+        // (analyze picked them; `ancestors` already orders the module
+        // before the class); the shadowed own defs register below as
+        // super-target-only rows. Native-backed shapes would need rustc's
+        // `promote_own_impl` twin instead -- not built yet.
+        if !class.prepends.is_empty() && kind != zeo_abi::abi::CLASS_PLAIN {
+            return refuse("a prepend on a native-backed class");
+        }
+        if !class.extends.is_empty() {
+            extends.push((idx as u32, class.extends.iter().map(|m| m.0).collect()));
+        }
         // Every ancestor past self must be a user class or the plain
         // Object/Kernel/BasicObject spine -- a builtin superclass outside
         // the shapes above selects a registrar the slice does not emit.
@@ -499,7 +526,7 @@ pub(crate) fn collect_classes(
                 let mname = scope.name.clone();
                 let refuse_m = |what: &str| {
                     Err(format!(
-                        "--backend aot is an M0 vertical slice: cannot lower {what} yet ({name}#{mname})"
+                        "the CLIF backend cannot lower {what} yet ({name}#{mname})"
                     ))
                 };
                 if scope.runtime_conditional {
@@ -575,7 +602,7 @@ pub(crate) fn collect_classes(
             let mname = compiler.names.str(entry.name).to_string();
             let refuse_m = |what: &str| {
                 Err(format!(
-                    "--backend aot is an M0 vertical slice: cannot lower {what} yet ({name}#{mname})"
+                    "the CLIF backend cannot lower {what} yet ({name}#{mname})"
                 ))
             };
             if scope.runtime_conditional {
@@ -664,6 +691,7 @@ pub(crate) fn collect_classes(
             }
             methods.push(ObjMethodSpec {
                 is_own: class.own_methods.contains(&entry.def),
+                super_target_only: false,
                 dyn_ivars: native_backed,
                 defining_class: scope.defining_class,
                 owner: ClassId(idx as u32),
@@ -679,10 +707,100 @@ pub(crate) fn collect_classes(
                 ruby2_keywords: scope.ruby2_keywords,
             });
         }
+        // An own method a `prepend` SHADOWED never won its name in the
+        // materialized table -- its body still compiles, reachable ONLY
+        // through the module copy's `super` (rustc's `__own_` bridge +
+        // `define_super_target_value`).
+        if !class.prepends.is_empty() && !class.is_module && !immediate {
+            let winners: std::collections::HashSet<crate::compiler::ScopeId> =
+                class.methods.iter().map(|e| e.def).collect();
+            for &sid in &class.own_methods {
+                if winners.contains(&sid) {
+                    continue;
+                }
+                let scope = compiler.scope(sid);
+                if scope.native_default {
+                    continue;
+                }
+                let mname = scope.name.clone();
+                let refuse_m = |what: &str| {
+                    Err(format!(
+                        "the CLIF backend cannot lower {what} yet ({name}#{mname})"
+                    ))
+                };
+                if scope.runtime_conditional {
+                    return refuse_m("a conditionally-defined method");
+                }
+                if scope.alias_of.is_some() {
+                    return refuse_m("an alias");
+                }
+                let p = &scope.params;
+                if let Err(what) = super::emit::check_params(p) {
+                    return refuse_m(what);
+                }
+                let layout = super::params::layout_of(p)?;
+                let accessor = match &scope.accessor {
+                    None => None,
+                    Some(shape) => {
+                        let slot = crate::analyze::class_query::slot_of(
+                            compiler,
+                            ClassId(idx as u32),
+                            &shape.ivar,
+                        )
+                        .ok_or_else(|| {
+                            format!("accessor ivar @{} has no slot on {name}", shape.ivar)
+                        })?;
+                        Some((slot, shape.kind))
+                    }
+                };
+                let has_blk = scope.needs_block_param();
+                let tramp = em
+                    .module
+                    .declare_function(
+                        &names::trampoline_symbol(&name, &format!("__own_{mname}")),
+                        Linkage::Local,
+                        &params::value_fn_sig(em),
+                    )
+                    .map_err(|e| format!("declaring {name}#{mname}: {e}"))?;
+                let body_fn = if accessor.is_none() {
+                    let sig = params::body_sig(em, layout.n_slots, has_blk);
+                    Some(
+                        em.module
+                            .declare_function(
+                                &names::method_symbol(&name, &format!("__own_{mname}")),
+                                Linkage::Local,
+                                &sig,
+                            )
+                            .map_err(|e| format!("declaring {name}#{mname}: {e}"))?,
+                    )
+                } else {
+                    None
+                };
+                methods.push(ObjMethodSpec {
+                    is_own: true,
+                    super_target_only: true,
+                    dyn_ivars: false,
+                    defining_class: scope.defining_class,
+                    owner: ClassId(idx as u32),
+                    owner_name: name.clone(),
+                    name: mname,
+                    body: scope.body.clone(),
+                    node: scope.def_node,
+                    tramp,
+                    accessor,
+                    body_fn,
+                    hir_params: p.clone(),
+                    has_blk,
+                    ruby2_keywords: scope.ruby2_keywords,
+                });
+            }
+        }
         // Class methods (`def self.x`): every entry registers on the
         // CLASS-METHOD channel (a `CmRow`), so both a literal `Foo.run`
         // and a variable-held class dispatch through it. With mixins
         // refused above, `class_methods` is the class's own writes.
+        let mut cm_def_tramps: Vec<(crate::compiler::ScopeId, cranelift_module::FuncId)> =
+            Vec::new();
         for entry in &class.class_methods {
             let scope = compiler.scope(entry.def);
             if scope.native_default {
@@ -691,7 +809,7 @@ pub(crate) fn collect_classes(
             let mname = compiler.names.str(entry.name).to_string();
             let refuse_m = |what: &str| {
                 Err(format!(
-                    "--backend aot is an M0 vertical slice: cannot lower {what} yet ({name}.{mname})"
+                    "the CLIF backend cannot lower {what} yet ({name}.{mname})"
                 ))
             };
             if scope.runtime_conditional {
@@ -735,7 +853,82 @@ pub(crate) fn collect_classes(
                     verb: 3,
                 });
             }
+            cm_def_tramps.push((entry.def, tramp));
             class_methods.push(CmMethodSpec {
+                cm_row: true,
+                owner: ClassId(idx as u32),
+                owner_name: name.clone(),
+                name: mname,
+                body: scope.body.clone(),
+                node: scope.def_node,
+                tramp,
+                body_fn,
+                hir_params: p.clone(),
+                has_blk,
+                ruby2_keywords: scope.ruby2_keywords,
+            });
+        }
+        // Singleton-chain super targets (rustc's `__sst_` containers +
+        // winner reuse): every `(module, def)` pair in
+        // `singleton_super_targets`, deduped. A pair whose def IS a
+        // materialized winner reuses that `CmRow` trampoline (every CLIF
+        // class-method body is receiver-generic); a shadowed copy gets its
+        // own body under a per-(class,module) symbol.
+        let mut sst_seen: Vec<(ClassId, crate::compiler::ScopeId)> = Vec::new();
+        for &(m, sid) in &class.singleton_super_targets {
+            if sst_seen.contains(&(m, sid)) {
+                continue;
+            }
+            sst_seen.push((m, sid));
+            let scope = compiler.scope(sid);
+            if scope.native_default {
+                continue;
+            }
+            let mname = scope.name.clone();
+            if let Some(&(_, tramp)) = cm_def_tramps.iter().find(|(d, _)| *d == sid) {
+                sst.push((idx as u32, m.0, mname, tramp));
+                continue;
+            }
+            let refuse_m = |what: &str| {
+                Err(format!(
+                    "the CLIF backend cannot lower {what} yet ({name}.{mname})"
+                ))
+            };
+            if scope.runtime_conditional {
+                return refuse_m("a conditionally-defined class method");
+            }
+            if scope.alias_of.is_some() {
+                return refuse_m("a class-method alias");
+            }
+            if scope.accessor.is_some() {
+                return refuse_m("a singleton accessor");
+            }
+            let p = &scope.params;
+            if let Err(what) = super::emit::check_params(p) {
+                return refuse_m(what);
+            }
+            let layout = super::params::layout_of(p)?;
+            let has_blk = scope.needs_block_param();
+            let tramp = em
+                .module
+                .declare_function(
+                    &names::class_trampoline_symbol(&name, &format!("__sst_{}_{mname}", m.0)),
+                    Linkage::Local,
+                    &params::value_fn_sig(em),
+                )
+                .map_err(|e| format!("declaring {name}.{mname}: {e}"))?;
+            let sig = params::body_sig(em, layout.n_slots, has_blk);
+            let body_fn = em
+                .module
+                .declare_function(
+                    &names::class_method_symbol(&name, &format!("__sst_{}_{mname}", m.0)),
+                    Linkage::Local,
+                    &sig,
+                )
+                .map_err(|e| format!("declaring {name}.{mname}: {e}"))?;
+            sst.push((idx as u32, m.0, mname.clone(), tramp));
+            class_methods.push(CmMethodSpec {
+                cm_row: false,
                 owner: ClassId(idx as u32),
                 owner_name: name.clone(),
                 name: mname,
@@ -761,5 +954,7 @@ pub(crate) fn collect_classes(
         foreign,
         own_rows,
         vis,
+        extends,
+        sst,
     })
 }

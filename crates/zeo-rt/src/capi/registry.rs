@@ -174,6 +174,26 @@ pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
                 Symbol::intern(text(r.a)),
                 value_fn(r.f.expect("a super-target row carries its fn")),
             ),
+            abi::REG_SINGLETON_SUPER_TARGET => {
+                let module = unsafe { *r.ids };
+                registry.define_singleton_super_target_c(
+                    ClassId(r.class),
+                    ClassId(module),
+                    Symbol::intern(text(r.a)),
+                    value_fn(r.f.expect("a singleton-super-target row carries its fn")),
+                );
+            }
+            abi::REG_EXTENDS => {
+                let mods = if r.n_ids == 0 {
+                    Vec::new()
+                } else {
+                    unsafe { std::slice::from_raw_parts(r.ids, r.n_ids) }
+                        .iter()
+                        .map(|&i| ClassId(i))
+                        .collect()
+                };
+                registry.register_extends(ClassId(r.class), mods);
+            }
             abi::REG_MARK_OWN_ROWS => {
                 registry.mark_own_rows(ClassId(r.class), &[text(r.a)]);
             }

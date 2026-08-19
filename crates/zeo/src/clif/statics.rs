@@ -345,6 +345,8 @@ pub(crate) struct RegRowSpec {
     pub a: String,
     /// A super-target row's trampoline; None for the mark kinds.
     pub f: Option<FuncId>,
+    /// `REG_EXTENDS`' module ids; empty for every other kind.
+    pub ids: Vec<u32>,
 }
 
 /// One `ObjRow` (an object-channel method on a compiled class).
@@ -488,6 +490,31 @@ fn define_reg_rows(em: &mut Emitter, rows: &[RegRowSpec]) -> Result<Option<DataI
         .iter()
         .map(|r| em.intern_rodata(r.a.as_bytes()))
         .collect();
+    // One shared u32 array holds every row's `ids` run (`REG_EXTENDS`'
+    // module lists); each row points into it at its offset.
+    let mut ids_bytes: Vec<u8> = Vec::new();
+    let mut ids_offsets: Vec<usize> = Vec::with_capacity(rows.len());
+    for row in rows {
+        ids_offsets.push(ids_bytes.len());
+        for id in &row.ids {
+            ids_bytes.extend_from_slice(&id.to_le_bytes());
+        }
+    }
+    let ids_id = if ids_bytes.is_empty() {
+        None
+    } else {
+        let id = em
+            .module
+            .declare_data("zeo_reg_row_ids", Linkage::Local, false, false)
+            .map_err(|e| format!("declaring zeo_reg_row_ids: {e}"))?;
+        let mut d = DataDescription::new();
+        d.define(ids_bytes.into_boxed_slice());
+        d.set_align(4);
+        em.module
+            .define_data(id, &d)
+            .map_err(|e| format!("defining zeo_reg_row_ids: {e}"))?;
+        Some(id)
+    };
     let mut data = DataDescription::new();
     let mut bytes = vec![0u8; size * rows.len()];
     for (i, row) in rows.iter().enumerate() {
@@ -498,9 +525,21 @@ fn define_reg_rows(em: &mut Emitter, rows: &[RegRowSpec]) -> Result<Option<DataI
             .copy_from_slice(&row.class.to_le_bytes());
         let at = base + std::mem::offset_of!(RegRow, a) + std::mem::offset_of!(Str, len);
         bytes[at..at + 8].copy_from_slice(&(row.a.len() as u64).to_le_bytes());
+        let n_at = base + std::mem::offset_of!(RegRow, n_ids);
+        bytes[n_at..n_at + 8].copy_from_slice(&(row.ids.len() as u64).to_le_bytes());
     }
     data.define(bytes.into_boxed_slice());
     data.set_align(8);
+    if let Some(ids_id) = ids_id {
+        let ids_gv = em.module.declare_data_in_data(ids_id, &mut data);
+        for (i, row) in rows.iter().enumerate() {
+            if row.ids.is_empty() {
+                continue;
+            }
+            let at = (i * size + std::mem::offset_of!(RegRow, ids)) as u32;
+            data.write_data_addr(at, ids_gv, ids_offsets[i] as i64);
+        }
+    }
     let rodata_gv = em.module.declare_data_in_data(em.rodata_id, &mut data);
     for (i, &off) in interned.iter().enumerate() {
         let base = i * size;

@@ -1069,6 +1069,19 @@ impl BinOp {
 /// the result is a fresh owned slot.
 fn binop(fx: &mut Fx, op: BinOp, name: &str, recv: NodeId, arg: NodeId) -> Result<Operand, String> {
     let a = lower_expr(fx, recv)?;
+    // Park an owned lhs BEFORE the rhs lowers: the rhs may raise, and the
+    // raise landing never sees an operand that is owned but unpooled.
+    let a = if a.owned() {
+        let pa = ownership::borrow_ptr(fx, &a);
+        pool_operand(fx, &a, pa);
+        Operand::Ptr {
+            addr: pa,
+            owned: false,
+            tag: a.tag(),
+        }
+    } else {
+        a
+    };
     let b_op = lower_expr(fx, arg)?;
     // Unboxed-both fast case: no memory, no tag tests. Everything else
     // takes the general boxed shape.

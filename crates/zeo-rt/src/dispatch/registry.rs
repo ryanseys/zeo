@@ -748,6 +748,22 @@ impl ClassRegistry {
             .insert((module.0, name), ValueImpl::Rust(f));
     }
 
+    /// [`define_singleton_super_target`](Self::define_singleton_super_target)'s
+    /// C twin: a Cranelift-compiled trampoline as the `(module, name)` copy.
+    pub fn define_singleton_super_target_c(
+        &mut self,
+        id: ClassId,
+        module: ClassId,
+        name: Symbol,
+        f: crate::capi::ValueFn,
+    ) {
+        self.entries
+            .get_mut(&id.0)
+            .expect("class must be registered before defining class methods on it")
+            .singleton_super_targets
+            .insert((module.0, name), ValueImpl::C(f));
+    }
+
     /// The runtime-mutable path `define_method`/`define_singleton_method`
     /// actually go through: a real `HashMap` insert, no compile-time
     /// literal-name restriction (contrast zeo's `walk_scope`, which can

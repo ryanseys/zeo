@@ -293,8 +293,6 @@ impl<'e, 'f> Fx<'e, 'f> {
             .location(node)
             .map(|(f, l)| format!(" ({f}:{l})"))
             .unwrap_or_default();
-        Err(format!(
-            "--backend aot is an M0 vertical slice: cannot lower {what} yet{at}"
-        ))
+        Err(format!("the CLIF backend cannot lower {what} yet{at}"))
     }
 }

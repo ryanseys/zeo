@@ -166,7 +166,18 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
     let defs = collect_methods(em, analyzed)?;
     let collected = super::classes::collect_classes(em, analyzed)?;
     let class_bodies = collect_class_bodies(em, analyzed)?;
-    let (class_specs, obj_methods, mod_methods, cm_methods, own_cm, own_rows, class_vis, foreign) = (
+    let (
+        class_specs,
+        obj_methods,
+        mod_methods,
+        cm_methods,
+        own_cm,
+        own_rows,
+        class_vis,
+        foreign,
+        extends,
+        sst,
+    ) = (
         collected.classes,
         collected.methods,
         collected.module_methods,
@@ -175,6 +186,8 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
         collected.own_rows,
         collected.vis,
         collected.foreign,
+        collected.extends,
+        collected.sst,
     );
     for def in &defs {
         let func = em.methods[&def.name].body;
@@ -399,6 +412,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
     vis_rows.extend(class_vis);
     let obj_rows: Vec<statics::ObjRowSpec> = obj_methods
         .iter()
+        .filter(|m| !m.super_target_only)
         .map(|m| statics::ObjRowSpec {
             class: m.owner.0,
             name: m.name.clone(),
@@ -407,6 +421,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
         .collect();
     let cm_rows: Vec<statics::CmRowSpec> = cm_methods
         .iter()
+        .filter(|m| m.cm_row)
         .map(|m| statics::CmRowSpec {
             class: m.owner.0,
             name: m.name.clone(),
@@ -420,6 +435,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             class: *class,
             a: name.clone(),
             f: None,
+            ids: vec![],
         })
         .collect();
     reg_rows.extend(own_cm.iter().map(|(class, name)| statics::RegRowSpec {
@@ -427,6 +443,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
         class: *class,
         a: name.clone(),
         f: None,
+        ids: vec![],
     }));
     // Own-`super`-target rows: every OWN instance method's trampoline is
     // already receiver-generic, so it doubles as the class's per-position
@@ -441,6 +458,26 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
                 class: m.owner.0,
                 a: m.name.clone(),
                 f: Some(m.tramp),
+                ids: vec![],
+            }),
+    );
+    // `extend M` rows: the modules on each class's singleton chain.
+    reg_rows.extend(extends.iter().map(|(class, mods)| statics::RegRowSpec {
+        kind: zeo_abi::abi::REG_EXTENDS,
+        class: *class,
+        a: String::new(),
+        f: None,
+        ids: mods.clone(),
+    }));
+    // Singleton-chain super-target rows, keyed `(class, module, name)`.
+    reg_rows.extend(
+        sst.iter()
+            .map(|(class, module, name, tramp)| statics::RegRowSpec {
+                kind: zeo_abi::abi::REG_SINGLETON_SUPER_TARGET,
+                class: *class,
+                a: name.clone(),
+                f: Some(*tramp),
+                ids: vec![*module],
             }),
     );
     let desc = statics::define_desc(
@@ -707,11 +744,7 @@ fn collect_methods(em: &mut Emitter, analyzed: &Analyzed) -> Result<Vec<DefSpec>
             .and_then(|n| crate::codegen::source_location(compiler, n))
             .map(|(f, l)| format!(" ({f}:{l})"))
             .unwrap_or_default();
-        let refuse = |what: &str| {
-            Err(format!(
-                "--backend aot is an M0 vertical slice: cannot lower {what} yet{at}"
-            ))
-        };
+        let refuse = |what: &str| Err(format!("the CLIF backend cannot lower {what} yet{at}"));
         if scope.runtime_conditional {
             return refuse("a conditionally-defined method");
         }
@@ -860,7 +893,7 @@ fn collect_class_bodies(
         let name = compiler.fq_name(site.class);
         let refuse = |what: &str| {
             Err(format!(
-                "--backend aot is an M0 vertical slice: cannot lower {what} yet (class {name})"
+                "the CLIF backend cannot lower {what} yet (class {name})"
             ))
         };
         // A BUILTIN reopen's body runs like any other -- but the class was

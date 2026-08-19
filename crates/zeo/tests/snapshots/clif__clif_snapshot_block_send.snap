@@ -1,5 +1,6 @@
 ---
 source: crates/zeo/tests/clif.rs
+assertion_line: 30
 expression: "clif_of(\"total = 0\\nq = Array.new(3, 2)\\nq.each { |x| total = total + x }\\nputs total\\n\",)"
 ---
 ;; block in <main>
@@ -109,21 +110,21 @@ block8:
     v39 = load.i64 notrap aligned v38
     v40 = stack_addr.i64 ss4
     call fn7(v39, v40)
-    v41 = stack_addr.i64 ss1
-    v42 = stack_addr.i64 ss4
-    v43 = load.i8 notrap aligned v42
-    v44 = iconst.i8 16
-    v45 = icmp uge v43, v44  ; v44 = 16
-    brif v45, block10, block11
+    v41 = stack_addr.i64 ss4
+    v42 = load.i8 notrap aligned v41
+    v43 = iconst.i8 16
+    v44 = icmp uge v42, v43  ; v43 = 16
+    brif v44, block10, block11
 
 block10:
-    call fn3(v42)
+    call fn3(v41)
     jump block11
 
 block11:
+    v45 = stack_addr.i64 ss1
     v46 = stack_addr.i64 ss5
-    v47 = load.i8 notrap aligned v42
-    v48 = load.i8 notrap aligned v41
+    v47 = load.i8 notrap aligned v41
+    v48 = load.i8 notrap aligned v45
     v49 = iconst.i8 2
     v50 = icmp eq v47, v49  ; v49 = 2
     v51 = iconst.i8 2
@@ -132,8 +133,8 @@ block11:
     brif v53, block12, block13
 
 block12:
-    v54 = load.i64 notrap aligned v42+8
-    v55 = load.i64 notrap aligned v41+8
+    v54 = load.i64 notrap aligned v41+8
+    v55 = load.i64 notrap aligned v45+8
     v56, v57 = sadd_overflow v54, v55
     brif v57, block17, block18
 
@@ -144,7 +145,7 @@ block18:
     jump block16
 
 block17:
-    call fn8(v42, v41, v46)
+    call fn8(v41, v45, v46)
     jump block16
 
 block13:
@@ -156,8 +157,8 @@ block13:
     brif v63, block14, block15
 
 block14:
-    v64 = load.f64 notrap aligned v42+8
-    v65 = load.f64 notrap aligned v41+8
+    v64 = load.f64 notrap aligned v41+8
+    v65 = load.f64 notrap aligned v45+8
     v66 = fadd v64, v65
     v67 = iconst.i8 3
     store notrap aligned v67, v46  ; v67 = 3
@@ -169,7 +170,7 @@ block15:
     v69 = iconst.i32 0
     v70 = iconst.i64 1
     v71 = iconst.i64 0
-    v72 = call fn9(v69, v42, v68, v41, v70, v71, v46)  ; v69 = 0, v70 = 1, v71 = 0
+    v72 = call fn9(v69, v41, v68, v45, v70, v71, v46)  ; v69 = 0, v70 = 1, v71 = 0
     brif v72, block1, block19
 
 block19:

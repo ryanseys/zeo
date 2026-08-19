@@ -341,6 +341,17 @@ pub const REG_MARK_OWN_ROWS: u8 = 2;
 /// receiver-generic `ValueFn`s, so the ordinary trampoline serves.
 pub const REG_SUPER_TARGET_VALUE: u8 = 3;
 
+/// `RegRow.kind`: `class` extends the modules in `ids` (`class C; extend M`
+/// or `module M; extend self`) -- they join C's SINGLETON chain, which the
+/// linearized `ancestors` deliberately excludes, so class-method dispatch,
+/// `C.is_a?(M)` and `C.singleton_class.ancestors` walk them separately.
+pub const REG_EXTENDS: u8 = 4;
+
+/// `RegRow.kind`: one `extend`ed-module method copy (winner or shadowed) as
+/// a SINGLETON-chain super target on `class`, keyed `(ids[0] = module, a)` --
+/// what `call_singleton_super_target` consults. `f` carries the trampoline.
+pub const REG_SINGLETON_SUPER_TARGET: u8 = 5;
+
 /// A lazily-run feature unit -- the `install_feature_units` twin.
 #[repr(C)]
 pub struct UnitRow {
