@@ -321,6 +321,17 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 tag: TagInfo::Unknown,
             })
         }
+        HirNode::SuperCall {
+            args,
+            kwargs,
+            zsuper,
+            block,
+            block_arg,
+        } => {
+            let (args, kwargs, zsuper, block, block_arg) =
+                (args.clone(), kwargs.clone(), *zsuper, *block, *block_arg);
+            super::call::lower_super(fx, id, &args, &kwargs, zsuper, block, block_arg)
+        }
         HirNode::RegexpLit(parts, flags) => {
             let (parts, flags) = (parts.clone(), *flags);
             regexp_lit(fx, &parts, flags)

@@ -169,6 +169,11 @@ pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
             abi::REG_MARK_OWN_CLASS_METHOD_ROWS => {
                 registry.mark_own_class_method_rows(ClassId(r.class), &[text(r.a)]);
             }
+            abi::REG_SUPER_TARGET_VALUE => registry.define_super_target_value_c(
+                ClassId(r.class),
+                Symbol::intern(text(r.a)),
+                value_fn(r.f.expect("a super-target row carries its fn")),
+            ),
             abi::REG_MARK_OWN_ROWS => {
                 registry.mark_own_rows(ClassId(r.class), &[text(r.a)]);
             }

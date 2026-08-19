@@ -62,6 +62,7 @@ zeo_rt_release ([Ptr]) -> None
 zeo_rt_rescue_matches ([Ptr, Ptr, Usize]) -> Some(U8)
 zeo_rt_retain ([Ptr]) -> None
 zeo_rt_return_targets_here ([]) -> Some(U8)
+zeo_rt_send_super_from_args ([Ptr, U32, U32, Ptr, U8, Ptr, Ptr, Ptr]) -> Some(I32)
 zeo_rt_send_value_args_in ([U32, Ptr, U32, Ptr, U8, Ptr, Ptr, Ptr]) -> Some(I32)
 zeo_rt_send_value_explicit_args_in ([U32, Ptr, U32, Ptr, U8, Ptr, Ptr, U32, Ptr]) -> Some(I32)
 zeo_rt_send_value_explicit_in ([U32, Ptr, U32, Ptr, Usize, Ptr, U32, Ptr]) -> Some(I32)
@@ -82,5 +83,6 @@ zeo_rt_str_new ([Ptr, Usize, U8, Ptr]) -> None
 zeo_rt_sym_intern ([Ptr, Usize]) -> Some(U32)
 zeo_rt_sym_value ([U32, Ptr]) -> None
 zeo_rt_truthy ([Ptr]) -> Some(U8)
+zeo_rt_value_super_args ([Ptr, Ptr, Usize, Ptr, U8, Ptr, Ptr, Ptr]) -> Some(I32)
 zeo_rt_wrong_arity ([Usize, Usize, Usize]) -> Some(I32)
 zeo_rt_yield ([Ptr, Ptr, Usize, Ptr]) -> Some(I32)

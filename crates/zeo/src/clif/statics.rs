@@ -341,6 +341,8 @@ pub(crate) struct RegRowSpec {
     pub kind: u8,
     pub class: u32,
     pub a: String,
+    /// A super-target row's trampoline; None for the mark kinds.
+    pub f: Option<FuncId>,
 }
 
 /// One `ObjRow` (an object-channel method on a compiled class).
@@ -462,6 +464,12 @@ fn define_reg_rows(em: &mut Emitter, rows: &[RegRowSpec]) -> Result<Option<DataI
         let base = i * size;
         let a_at = (base + std::mem::offset_of!(RegRow, a) + std::mem::offset_of!(Str, ptr)) as u32;
         data.write_data_addr(a_at, rodata_gv, i64::from(off));
+    }
+    for (i, row) in rows.iter().enumerate() {
+        let Some(f) = row.f else { continue };
+        let f_ref = em.module.declare_func_in_data(f, &mut data);
+        let base = i * size;
+        data.write_function_addr((base + std::mem::offset_of!(RegRow, f)) as u32, f_ref);
     }
     em.module
         .define_data(id, &data)

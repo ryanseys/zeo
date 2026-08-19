@@ -771,6 +771,22 @@ impl ClassRegistry {
             .insert(name, MethodImpl::CValue(f));
     }
 
+    /// [`define_super_target_value`](Self::define_super_target_value)'s C
+    /// twin: a CLIF trampoline is already receiver-generic, so it serves
+    /// as the own-`super`-target row directly.
+    pub fn define_super_target_value_c(
+        &mut self,
+        id: ClassId,
+        name: Symbol,
+        f: crate::capi::ValueFn,
+    ) {
+        self.entries
+            .get_mut(&id.0)
+            .expect("class must be registered before defining methods on it")
+            .own_impls
+            .insert(name, MethodImpl::CValue(f));
+    }
+
     /// `define_method` that ALSO records the row as this class's own
     /// `super` target -- the native exception method sets use this (every
     /// exception id carries the natives, so a `super` walk finds them at

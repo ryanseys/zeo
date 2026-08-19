@@ -335,6 +335,12 @@ pub const REG_MARK_OWN_CLASS_METHOD_ROWS: u8 = 1;
 /// and `Method#owner` truth.
 pub const REG_MARK_OWN_ROWS: u8 = 2;
 
+/// `RegRow.kind`: register `f` as `class`'s OWN `super`-target row for
+/// method `a` -- the per-position contribution `send_super_from`'s MRO
+/// walk (and `Method#super_method`) consults. CLIF trampolines are
+/// receiver-generic `ValueFn`s, so the ordinary trampoline serves.
+pub const REG_SUPER_TARGET_VALUE: u8 = 3;
+
 /// A lazily-run feature unit -- the `install_feature_units` twin.
 #[repr(C)]
 pub struct UnitRow {

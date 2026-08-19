@@ -334,6 +334,11 @@ pub const CAPI: &[CapiSig] = &[
         ret: Some(U8),
     },
     CapiSig {
+        name: "zeo_rt_send_super_from_args",
+        params: &[Ptr, U32, U32, Ptr, U8, Ptr, Ptr, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
         name: "zeo_rt_send_value_args_in",
         params: &[U32, Ptr, U32, Ptr, U8, Ptr, Ptr, Ptr],
         ret: Some(I32),
@@ -432,6 +437,11 @@ pub const CAPI: &[CapiSig] = &[
         name: "zeo_rt_truthy",
         params: &[Ptr],
         ret: Some(U8),
+    },
+    CapiSig {
+        name: "zeo_rt_value_super_args",
+        params: &[Ptr, Ptr, Usize, Ptr, U8, Ptr, Ptr, Ptr],
+        ret: Some(I32),
     },
     CapiSig {
         name: "zeo_rt_wrong_arity",

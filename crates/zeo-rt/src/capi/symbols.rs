@@ -111,6 +111,7 @@ capi_symbols!(
     values::zeo_rt_retain,
     signals::zeo_rt_return_targets_here,
     dispatch::zeo_rt_send_class_cached,
+    dispatch::zeo_rt_send_super_from_args,
     dispatch::zeo_rt_send_value_args_in,
     dispatch::zeo_rt_send_value_cached,
     dispatch::zeo_rt_send_value_explicit_args_in,
@@ -141,6 +142,7 @@ capi_symbols!(
     frames::zeo_rt_trace_frame_self,
     values::zeo_rt_truthy,
     lifecycle::zeo_rt_validate_class_aliases,
+    dispatch::zeo_rt_value_super_args,
     signals::zeo_rt_wrong_arity,
     procs::zeo_rt_yield,
 );

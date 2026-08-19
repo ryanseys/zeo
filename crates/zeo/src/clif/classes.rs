@@ -40,6 +40,12 @@ pub(crate) struct ObjMethodSpec {
     pub has_blk: bool,
     pub ruby2_keywords: bool,
     pub dyn_ivars: bool,
+    /// The class the `def` was WRITTEN in (a module method keeps the
+    /// module) -- where its `super` resumes.
+    pub defining_class: ClassId,
+    /// This entry is the class's OWN write (not a materialized ancestor
+    /// copy): its trampoline doubles as the own-`super`-target row.
+    pub is_own: bool,
 }
 
 /// One class method (`def self.x`) to compile -- a `CmRow` on the
@@ -75,6 +81,9 @@ pub(crate) struct ModMethodSpec {
     pub has_blk: bool,
     pub ruby2_keywords: bool,
     pub dyn_ivars: bool,
+    /// The class the `def` was WRITTEN in (a module method keeps the
+    /// module) -- where its `super` resumes.
+    pub defining_class: ClassId,
 }
 
 /// What `collect_classes` hands back: the class table plus its method and
@@ -281,6 +290,7 @@ pub(crate) fn collect_classes(
                 }
                 module_methods.push(ModMethodSpec {
                     dyn_ivars: false,
+                    defining_class: scope.defining_class,
                     owner: ClassId(idx as u32),
                     owner_name: name.clone(),
                     name: mname,
@@ -383,6 +393,7 @@ pub(crate) fn collect_classes(
                 // resolve through `ivar_set_dyn`'s Class arm (civars).
                 module_methods.push(ModMethodSpec {
                     dyn_ivars: true,
+                    defining_class: scope.defining_class,
                     owner: ClassId(idx as u32),
                     owner_name: name.clone(),
                     name: mname,
@@ -397,7 +408,9 @@ pub(crate) fn collect_classes(
                 continue;
             }
             methods.push(ObjMethodSpec {
+                is_own: class.own_methods.contains(&entry.def),
                 dyn_ivars: native_backed,
+                defining_class: scope.defining_class,
                 owner: ClassId(idx as u32),
                 owner_name: name.clone(),
                 name: mname,

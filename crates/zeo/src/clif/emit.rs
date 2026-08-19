@@ -191,6 +191,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             label_override: None,
             discard_value: false,
             dyn_ivars: false,
+            defining_class: Some(zeo_abi::ClassId(0)),
         };
         define_method_body(em, analyzed, &spec)?;
     }
@@ -210,6 +211,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
                 label_override: None,
                 discard_value: false,
                 dyn_ivars: m.dyn_ivars,
+                defining_class: Some(m.defining_class),
             };
             define_method_body(em, analyzed, &spec)?;
         }
@@ -229,6 +231,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             label_override: None,
             discard_value: false,
             dyn_ivars: false,
+            defining_class: None,
         };
         define_method_body(em, analyzed, &spec)?;
     }
@@ -247,6 +250,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             label_override: None,
             discard_value: false,
             dyn_ivars: m.dyn_ivars,
+            defining_class: Some(m.defining_class),
         };
         define_method_body(em, analyzed, &spec)?;
     }
@@ -268,6 +272,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             label_override: Some(cb.label.clone()),
             discard_value: true,
             dyn_ivars: false,
+            defining_class: None,
         };
         define_method_body(em, analyzed, &spec)?;
     }
@@ -413,13 +418,30 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             kind: zeo_abi::abi::REG_MARK_OWN_ROWS,
             class: *class,
             a: name.clone(),
+            f: None,
         })
         .collect();
     reg_rows.extend(own_cm.iter().map(|(class, name)| statics::RegRowSpec {
         kind: zeo_abi::abi::REG_MARK_OWN_CLASS_METHOD_ROWS,
         class: *class,
         a: name.clone(),
+        f: None,
     }));
+    // Own-`super`-target rows: every OWN instance method's trampoline is
+    // already receiver-generic, so it doubles as the class's per-position
+    // contribution to a `super` walk (rustc emits dedicated dynamic-self
+    // bridges for the same rows; here the trampoline IS one).
+    reg_rows.extend(
+        obj_methods
+            .iter()
+            .filter(|m| m.is_own)
+            .map(|m| statics::RegRowSpec {
+                kind: zeo_abi::abi::REG_SUPER_TARGET_VALUE,
+                class: m.owner.0,
+                a: m.name.clone(),
+                f: Some(m.tramp),
+            }),
+    );
     let desc = statics::define_desc(
         em,
         analyzed,
@@ -947,6 +969,9 @@ pub(crate) struct BodyFnSpec<'a> {
     /// Ivars in this body are NAME-KEYED at runtime (a native-backed
     /// owner has no compiled slot layout).
     pub dyn_ivars: bool,
+    /// The class the `def` was WRITTEN in (rustc's `cx.defining_class`;
+    /// a module method keeps the module) -- None where `super` refuses.
+    pub defining_class: Option<zeo_abi::ClassId>,
 }
 
 /// A method's frame facts: `(file, label, line, end_line)` -- shared by
@@ -1182,6 +1207,9 @@ fn define_method_body(
     let blk_ptr = def.has_blk.then(|| entry_params[entry_params.len() - 2]);
     fx.self_ptr = Some(self_ptr);
     fx.method_class = Some(def.owner);
+    fx.defining_class = def.defining_class;
+    fx.method_name = (!def.name.is_empty()).then(|| def.name.to_string());
+    fx.method_params = Some(def.hir_params.clone());
     fx.self_is_class = def.self_is_class;
     fx.dyn_ivars = def.dyn_ivars;
     fx.frame_label = label.clone();

@@ -390,3 +390,232 @@ pub(crate) fn dynamic_send_value(
         tag: TagInfo::Unknown,
     })
 }
+
+/// `super` -- rustc's `emit_super`, the instance-method channels only
+/// (class-method/singleton-chain `super` and `super` inside a block still
+/// refuse). One runtime mechanism: `send_super_from`'s per-position MRO
+/// walk resumes AFTER the class the `def` was WRITTEN in
+/// (`fx.defining_class` -- a module method's copy keeps the module, which
+/// sits in the receiver's ancestry); a value-builtin subclass whose walk
+/// finds no user definition above bridges into the native root instead
+/// (`value_super`). Bare `super` forwards the current method's own params
+/// by NAME (splat rest, keywords as one marked hash -- the G2
+/// convention); the current block forwards unless the site writes one.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn lower_super(
+    fx: &mut Fx,
+    site: NodeId,
+    args: &[ArrayElem],
+    kwargs: &[crate::hir::KwArg],
+    zsuper: bool,
+    block: Option<NodeId>,
+    block_arg: Option<NodeId>,
+) -> Result<Operand, String> {
+    if fx.block_next.is_some() {
+        return fx.unsupported(site, "a `super` inside a block");
+    }
+    if fx.self_is_class {
+        return fx.unsupported(site, "a class-method `super`");
+    }
+    let (Some(def_class), Some(mname), Some(owner)) =
+        (fx.defining_class, fx.method_name.clone(), fx.method_class)
+    else {
+        return fx.unsupported(site, "a `super` outside a compiled method");
+    };
+    let params = fx
+        .method_params
+        .clone()
+        .expect("method bodies stash their params");
+
+    // The argument Array (rustc's `__super_args` Vec) + kw hash + unmark.
+    let (args_ptr, kw_ptr, unmark) = if zsuper {
+        let ss = fx.temp_slot();
+        let out = fx.slot_addr(ss, 0);
+        let cap = fx.b.ins().iconst(
+            fx.em.ptr,
+            (params.required.len() + params.optional.len() + params.post.len()) as i64,
+        );
+        fx.call("zeo_rt_array_new", &[cap, out]);
+        fx.owned_created += 1;
+        ownership::pool_owned(fx, out, TagInfo::Known(zeo_abi::abi::ValueTag::Array as u8));
+        let push_named = |fx: &mut Fx, name: &str| {
+            let op = ownership::read_local(fx, name).expect("a param is always bound");
+            let p = ownership::move_ptr(fx, &op);
+            fx.call("zeo_rt_array_push", &[out, p]);
+        };
+        for name in &params.required {
+            push_named(fx, name);
+        }
+        for (name, _) in &params.optional {
+            push_named(fx, name);
+        }
+        if let Some(Some(rest)) = &params.rest {
+            let op = ownership::read_local(fx, rest).expect("a param is always bound");
+            let p = ownership::borrow_ptr(fx, &op);
+            if op.owned() {
+                ownership::pool_owned(fx, p, op.tag());
+            }
+            let status = fx
+                .call("zeo_rt_array_push_splat", &[out, p])
+                .expect("push_splat returns a status");
+            fx.fallible(status);
+        }
+        for name in &params.post {
+            push_named(fx, name);
+        }
+        let has_kw = !params.keywords.is_empty() || matches!(params.keyword_rest, Some(Some(_)));
+        let kw_ptr = if has_kw {
+            let kss = fx.temp_slot();
+            let kw = fx.slot_addr(kss, 0);
+            fx.call("zeo_rt_hash_new", &[kw]);
+            fx.owned_created += 1;
+            ownership::pool_owned(fx, kw, TagInfo::Known(zeo_abi::abi::ValueTag::Hash as u8));
+            for k in &params.keywords {
+                let key = match k {
+                    crate::hir::KeywordParam::Required(n)
+                    | crate::hir::KeywordParam::Optional(n, _) => n.clone(),
+                };
+                let sym = fx.sym_id(&key);
+                let sss = fx.temp_slot();
+                let sptr = fx.slot_addr(sss, 0);
+                fx.call("zeo_rt_sym_value", &[sym, sptr]);
+                fx.owned_created += 1;
+                fx.owned_consumed += 1; // hash_set moves the key temp
+                let vop = ownership::read_local(fx, &key).expect("a param is always bound");
+                let vp = ownership::move_ptr(fx, &vop);
+                fx.call("zeo_rt_hash_set", &[kw, sptr, vp]);
+            }
+            if let Some(Some(krest)) = &params.keyword_rest {
+                let op = ownership::read_local(fx, krest).expect("a param is always bound");
+                let p = ownership::borrow_ptr(fx, &op);
+                if op.owned() {
+                    ownership::pool_owned(fx, p, op.tag());
+                }
+                let status = fx
+                    .call("zeo_rt_kw_splat_into", &[kw, p])
+                    .expect("kw_splat_into returns a status");
+                fx.fallible(status);
+            }
+            kw
+        } else {
+            fx.b.ins().iconst(fx.em.ptr, 0)
+        };
+        let unmark = matches!(params.rest, Some(Some(_))) && !fx.ruby2_keywords;
+        (out, kw_ptr, unmark)
+    } else {
+        let args_ptr = build_array(fx, args)?;
+        let kw_ptr = if kwargs.is_empty() {
+            fx.b.ins().iconst(fx.em.ptr, 0)
+        } else {
+            build_hash(fx, kwargs)?
+        };
+        let unmark = args.iter().any(|a| matches!(a, ArrayElem::Splat(_))) && !fx.ruby2_keywords;
+        (args_ptr, kw_ptr, unmark)
+    };
+
+    // The block: a literal proc moves in; `&expr` coerces; neither written
+    // = forward the CURRENT method's block (a RETAINED extra reference --
+    // the callee consumes one, the epilogue still releases ours).
+    let blk_ptr = match (block, block_arg) {
+        (Some(b), _) => {
+            let (proc_ss, _names) = super::blocks::build_proc(fx, site, b)?;
+            fx.owned_consumed += 1;
+            fx.slot_addr(proc_ss, 0)
+        }
+        (None, Some(e)) => {
+            let op = lower_expr(fx, e)?;
+            let vp = ownership::borrow_ptr(fx, &op);
+            if op.owned() {
+                ownership::pool_owned(fx, vp, op.tag());
+            }
+            let conv_ss = fx.temp_slot();
+            let conv = fx.slot_addr(conv_ss, 0);
+            let status = fx
+                .call("zeo_rt_block_arg_to_proc", &[vp, conv])
+                .expect("block_arg_to_proc returns a status");
+            fx.fallible(status);
+            let fl = cranelift_codegen::ir::MemFlagsData::trusted();
+            let tag =
+                fx.b.ins()
+                    .load(cranelift_codegen::ir::types::I8, fl, conv, 0);
+            let is_nil =
+                fx.b.ins()
+                    .icmp_imm_u(cranelift_codegen::ir::condcodes::IntCC::Equal, tag, 0);
+            let null = fx.b.ins().iconst(fx.em.ptr, 0);
+            fx.owned_created += 1;
+            fx.owned_consumed += 1;
+            fx.b.ins().select(is_nil, null, conv)
+        }
+        (None, None) => match fx.blk_ptr {
+            Some(blk) => {
+                let got = fx.b.ins().icmp_imm_u(
+                    cranelift_codegen::ir::condcodes::IntCC::NotEqual,
+                    blk,
+                    0,
+                );
+                let do_retain = fx.b.create_block();
+                let cont = fx.b.create_block();
+                fx.b.ins().brif(got, do_retain, &[], cont, &[]);
+                fx.b.switch_to_block(do_retain);
+                fx.call("zeo_rt_retain", &[blk]);
+                fx.b.ins().jump(cont, &[]);
+                fx.b.switch_to_block(cont);
+                blk
+            }
+            None => fx.b.ins().iconst(fx.em.ptr, 0),
+        },
+    };
+
+    // Channel: a value-builtin subclass whose walk above `def_class` finds
+    // no user definition targets the native root (rustc's `value_channel`
+    // predicate, verbatim); everything else is the per-position MRO walk.
+    let compiler = &fx.an.compiler;
+    let ancestors = &compiler.class(owner).ancestors;
+    let pos = ancestors.iter().position(|&a| a == def_class);
+    let found = pos.is_some_and(|pos| {
+        ancestors[pos + 1..].iter().any(|&anc| {
+            compiler
+                .class(anc)
+                .own_methods
+                .iter()
+                .any(|&s| compiler.scope(s).name == mname)
+        })
+    });
+    let value_channel = !found && pos.is_some() && compiler.is_value_subclass(owner);
+
+    let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
+    let ss = fx.temp_slot();
+    let out = fx.slot_addr(ss, 0);
+    let unmark_v =
+        fx.b.ins()
+            .iconst(cranelift_codegen::ir::types::I8, i64::from(unmark));
+    let status = if value_channel {
+        let (nptr, nlen) = super::expr::rodata_name(fx, &mname);
+        fx.call(
+            "zeo_rt_value_super_args",
+            &[
+                self_ptr, nptr, nlen, args_ptr, unmark_v, kw_ptr, blk_ptr, out,
+            ],
+        )
+        .expect("value_super_args returns a status")
+    } else {
+        let def_v =
+            fx.b.ins()
+                .iconst(cranelift_codegen::ir::types::I32, i64::from(def_class.0));
+        let sym = fx.sym_id(&mname);
+        fx.call(
+            "zeo_rt_send_super_from_args",
+            &[
+                self_ptr, def_v, sym, args_ptr, unmark_v, kw_ptr, blk_ptr, out,
+            ],
+        )
+        .expect("send_super_from_args returns a status")
+    };
+    fx.fallible(status);
+    fx.owned_created += 1;
+    Ok(Operand::Slot {
+        ss,
+        owned: true,
+        tag: TagInfo::Unknown,
+    })
+}

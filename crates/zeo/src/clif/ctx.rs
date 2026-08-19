@@ -71,6 +71,16 @@ pub(crate) struct Fx<'e, 'f> {
     /// This body's owner is NATIVE-BACKED (an exception subclass): ivars
     /// are name-keyed at runtime, not compiled slots.
     pub dyn_ivars: bool,
+    /// The class this body's `def` was WRITTEN in (rustc's
+    /// `cx.defining_class`) -- where a `super` walk resumes from. A module
+    /// method's materialized copy keeps the MODULE here while
+    /// `method_class` names the includer.
+    pub defining_class: Option<zeo_abi::ClassId>,
+    /// The enclosing method's name -- what a `super` re-sends.
+    pub method_name: Option<String>,
+    /// The enclosing method's parameter list -- what a bare `super`
+    /// forwards by name.
+    pub method_params: Option<crate::hir::Params>,
     /// A method body's `(out, ret_ok)`: `return` writes the value and
     /// jumps; `None` at the toplevel.
     pub ret: Option<(ir::Value, ir::Block)>,
@@ -136,6 +146,9 @@ impl<'e, 'f> Fx<'e, 'f> {
             method_class: None,
             self_is_class: false,
             dyn_ivars: false,
+            defining_class: None,
+            method_name: None,
+            method_params: None,
             ret: None,
             retries: Vec::new(),
             ensure_depth: 0,

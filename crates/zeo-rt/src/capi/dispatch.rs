@@ -448,3 +448,57 @@ pub unsafe extern "C" fn zeo_rt_case_eq_any(
         }
     }
 }
+
+/// An instance-method `super`: resume the MRO walk after `defining_class`
+/// in the receiver's live ancestry (`send_super_from`). Args ride the
+/// splat-call Array convention ([`with_array_args`]): `unmark` clears a
+/// splat-expanded trailing hash's kw mark (rustc passes it only when a
+/// splat/`*rest` actually forwarded), `kw` appends marked-if-non-empty,
+/// `blk` moves.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_send_super_from_args(
+    recv: *const RubyValue,
+    defining_class: u32,
+    sym: u32,
+    args: *const RubyValue,
+    unmark: u8,
+    kw: *const RubyValue,
+    blk: *mut RubyValue,
+    out: *mut RubyValue,
+) -> i32 {
+    let r = unsafe {
+        with_array_args(args, unmark, kw, blk, |full, block| {
+            crate::dispatch::send_super_from(
+                &*recv,
+                zeo_abi::ClassId(defining_class),
+                Symbol::from_u32(sym),
+                full,
+                block,
+            )
+        })
+    };
+    status_out(r, out)
+}
+
+/// `super` from a value-builtin subclass into the inherited builtin
+/// (`value_super`: `initialize` re-seats the payload, anything else runs
+/// the root builtin against it). Same argument convention as above.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_value_super_args(
+    recv: *const RubyValue,
+    name: *const u8,
+    len: usize,
+    args: *const RubyValue,
+    unmark: u8,
+    kw: *const RubyValue,
+    blk: *mut RubyValue,
+    out: *mut RubyValue,
+) -> i32 {
+    let mname = unsafe { super::str_slice(name, len) };
+    let r = unsafe {
+        with_array_args(args, unmark, kw, blk, |full, block| {
+            crate::value_super(&*recv, mname, full, block)
+        })
+    };
+    status_out(r, out)
+}
