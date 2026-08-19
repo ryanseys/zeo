@@ -11,3 +11,8 @@ pub const PROGRAM_DESC: &str = "zeo_program_desc";
 pub const RODATA: &str = "zeo_rodata";
 /// The `Str` (ptr, len) tables -- `loaded_features`, `parse_warnings`.
 pub const STR_TABLES: &str = "zeo_str_tables";
+/// The interned-symbol id array (`.bss`), filled by `zeo_unit_init`.
+pub const SYMS: &str = "zeo_syms";
+/// Startup initialization: interns the symbol table (and, later, the
+/// `.bss` site slots).
+pub const UNIT_INIT: &str = "zeo_unit_init";

@@ -5,5 +5,12 @@
 //! full statement/expression lowering lands as `ctx`/`stmt`/`expr` modules.
 
 pub mod capi_names;
+pub(crate) mod ctx;
 pub mod emit;
+pub(crate) mod expr;
 pub mod names;
+pub(crate) mod operand;
+pub(crate) mod ownership;
+pub(crate) mod statics;
+pub(crate) mod stmt;
+pub(crate) mod verify;
