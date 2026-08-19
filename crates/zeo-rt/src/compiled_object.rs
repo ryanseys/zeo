@@ -53,6 +53,21 @@ pub fn layout_of(id: ClassId) -> Option<&'static ClassLayout> {
     LAYOUTS.read().unwrap().as_ref()?.get(&id.0).copied()
 }
 
+/// The layout an instance of `id` is ALLOCATED with: its own, or -- for a
+/// class minted at run time (`Class.new(Compiled)`) -- the nearest
+/// compiled ancestor's. That is the rustc twin: a runtime subclass
+/// inherits its parent's `__allocate`, which builds the PARENT's struct
+/// and stamps the subclass's id.
+pub fn alloc_layout_of(id: ClassId) -> Option<&'static ClassLayout> {
+    if let Some(l) = layout_of(id) {
+        return Some(l);
+    }
+    crate::dispatch::ancestors_of_value(id)
+        .iter()
+        .copied()
+        .find_map(layout_of)
+}
+
 /// A compiled class's instance. The class word is atomic for the same
 /// reason `ruby_class!` structs carry one: a `Ractor` move retags the husk
 /// in place.

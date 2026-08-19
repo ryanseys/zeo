@@ -34,7 +34,7 @@ fn value_fn(f: abi::ValueFn) -> super::ValueFn {
 /// The shared `AllocatorFn` for every compiled class -- `Class#allocate`'s
 /// storage half, identical to `zeo_rt_object_alloc`'s.
 fn compiled_allocate(id: ClassId) -> RObj {
-    let layout = compiled_object::layout_of(id)
+    let layout = compiled_object::alloc_layout_of(id)
         .unwrap_or_else(|| panic!("compiled_allocate: no layout registered for class {}", id.0));
     CompiledObject::alloc(id, layout)
 }

@@ -14,7 +14,7 @@ use zeo_abi::abi::{STATUS_OK, STATUS_SIGNAL};
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zeo_rt_object_alloc(cid: u32, out: *mut RubyValue) {
     let id = ClassId(cid);
-    let layout = compiled_object::layout_of(id)
+    let layout = compiled_object::alloc_layout_of(id)
         .unwrap_or_else(|| panic!("zeo_rt_object_alloc: no layout registered for class {cid}"));
     let v = RubyValue::Object(CompiledObject::alloc(id, layout));
     super::leakcheck::created(&v);
