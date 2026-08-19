@@ -98,6 +98,7 @@ capi_symbols!(
     signals::zeo_rt_propagating_leave,
     signals::zeo_rt_raise_error,
     literals::zeo_rt_range_new,
+    objects::zeo_rt_record_const_location,
     values::zeo_rt_release,
     signals::zeo_rt_report_uncaught,
     signals::zeo_rt_rescue_matches,

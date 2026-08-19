@@ -52,6 +52,7 @@ zeo_rt_proc_new ([Ptr, Ptr, Usize, Ptr, Ptr, Ptr, I32, U32, Ptr]) -> None
 zeo_rt_propagating_enter ([Ptr]) -> Some(U8)
 zeo_rt_propagating_leave ([U8]) -> None
 zeo_rt_range_new ([Ptr, Ptr, U8, Ptr]) -> Some(I32)
+zeo_rt_record_const_location ([U32, Ptr, Usize, Ptr, Usize, U32]) -> None
 zeo_rt_release ([Ptr]) -> None
 zeo_rt_rescue_matches ([Ptr, Ptr, Usize]) -> Some(U8)
 zeo_rt_retain ([Ptr]) -> None

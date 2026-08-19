@@ -284,6 +284,11 @@ pub const CAPI: &[CapiSig] = &[
         ret: Some(I32),
     },
     CapiSig {
+        name: "zeo_rt_record_const_location",
+        params: &[U32, Ptr, Usize, Ptr, Usize, U32],
+        ret: None,
+    },
+    CapiSig {
         name: "zeo_rt_release",
         params: &[Ptr],
         ret: None,

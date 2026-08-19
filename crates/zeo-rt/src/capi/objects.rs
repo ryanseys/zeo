@@ -321,3 +321,22 @@ pub unsafe extern "C" fn zeo_rt_const_get_scoped(
         }
     }
 }
+
+/// Where a `class`/`module` DECLARATION bound its name -- the
+/// `Module#const_source_location` record for constants that live outside
+/// the value table (the class registry holds them). Recorded when the
+/// declaring site runs, CRuby's timing; a reopen creates nothing and
+/// records nothing. `file` must point at `.rodata`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_record_const_location(
+    owner: u32,
+    name: *const u8,
+    name_len: usize,
+    file: *const u8,
+    file_len: usize,
+    line: u32,
+) {
+    let name = unsafe { super::str_slice(name, name_len) };
+    let file = unsafe { super::static_str(file, file_len) };
+    crate::constants::record_const_location(owner, name, file, line);
+}

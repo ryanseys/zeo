@@ -124,9 +124,6 @@ pub(crate) fn collect_classes(
         if class.runtime_conditional {
             return refuse("a conditionally-defined class");
         }
-        if !class.class_body_stmts.is_empty() {
-            return refuse("a class body with runtime statements");
-        }
         // `include` works through the two mechanisms below (materialized
         // copies on the includer + value rows on the module + the module in
         // `ancestors`); the rest of the mixin surface still refuses.

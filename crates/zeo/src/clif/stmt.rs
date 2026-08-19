@@ -594,6 +594,16 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
             fx.continue_unreachable();
             Ok(())
         }
+        HirNode::ClassDef { .. } => {
+            // Registration happened at startup; the marker runs the body
+            // site (statements + the declaration's const-location record).
+            // A miss is a hoisted or statement-free site: nothing to run.
+            let call = fx.em.class_bodies.get(&stmt).cloned();
+            match call {
+                Some(call) => emit_class_body_call(fx, &call),
+                None => Ok(()),
+            }
+        }
         HirNode::Seq(stmts) => {
             let stmts = stmts.clone();
             lower_stmts(fx, &stmts)
@@ -802,4 +812,69 @@ fn stamp_line(fx: &mut Fx, stmt: NodeId) {
     fx.prev_line = Some(line);
     let v = fx.b.ins().iconst(types::I32, i64::from(line));
     fx.call("zeo_rt_set_line", &[v]);
+}
+
+/// One class-body site's marker-time emission: record the declaration's
+/// `const_source_location`, then call the compiled body with the class as
+/// `self` (its value -- ruby's class-body tail -- is discarded here; a
+/// `class` expression in value position still refuses).
+pub(crate) fn emit_class_body_call(
+    fx: &mut Fx,
+    call: &super::emit::ClassBodyCall,
+) -> Result<(), String> {
+    use cranelift_codegen::ir::{InstBuilder, MemFlagsData, types};
+    use cranelift_module::Module;
+    if let Some((owner, name, file, line)) = &call.const_loc {
+        let owner_v = fx.b.ins().iconst(types::I32, i64::from(*owner));
+        let (nptr, nlen) = name_pair(fx, name);
+        let (fptr, flen) = name_pair(fx, file);
+        let line_v = fx.b.ins().iconst(types::I32, i64::from(*line));
+        fx.call(
+            "zeo_rt_record_const_location",
+            &[owner_v, nptr, nlen, fptr, flen, line_v],
+        );
+    }
+    let Some(func) = call.func else {
+        return Ok(());
+    };
+    // `self` = the class, materialized as a Class immediate.
+    let self_ss = fx.temp_slot();
+    let self_addr = fx.slot_addr(self_ss, 0);
+    let fl = MemFlagsData::trusted();
+    let z = fx.b.ins().iconst(types::I64, 0);
+    for off in [0, 8, 16] {
+        fx.b.ins().store(fl, z, self_addr, off);
+    }
+    let tag =
+        fx.b.ins()
+            .iconst(types::I8, i64::from(zeo_abi::abi::ValueTag::Class as u8));
+    fx.b.ins().store(fl, tag, self_addr, 0);
+    let cid = fx.b.ins().iconst(types::I32, i64::from(call.class));
+    fx.b.ins()
+        .store(fl, cid, self_addr, zeo_abi::abi::PAYLOAD_OFFSET as i32);
+    let out_ss = fx.temp_slot();
+    let out = fx.slot_addr(out_ss, 0);
+    let fref = fx.em.module.declare_func_in_func(func, fx.b.func);
+    let inst = fx.b.ins().call(fref, &[self_addr, out]);
+    let status = fx.b.func.dfg.inst_results(inst)[0];
+    fx.fallible(status);
+    fx.owned_created += 1;
+    ownership::discard(
+        fx,
+        super::operand::Operand::Slot {
+            ss: out_ss,
+            owned: true,
+            tag: super::operand::TagInfo::Unknown,
+        },
+    );
+    Ok(())
+}
+
+/// A `&str`'s `.rodata` `(ptr, len)` pair.
+fn name_pair(fx: &mut Fx, s: &str) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    use cranelift_codegen::ir::InstBuilder;
+    let off = fx.em.intern_rodata(s.as_bytes());
+    let ptr = fx.rod(off);
+    let len = fx.b.ins().iconst(fx.em.ptr, s.len() as i64);
+    (ptr, len)
 }

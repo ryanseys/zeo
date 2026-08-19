@@ -165,6 +165,7 @@ pub fn compile_jit(analyzed: &Analyzed) -> Result<Jitted, String> {
 fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String> {
     let defs = collect_methods(em, analyzed)?;
     let collected = super::classes::collect_classes(em, analyzed)?;
+    let class_bodies = collect_class_bodies(em, analyzed)?;
     let (class_specs, obj_methods, mod_methods, cm_methods, own_cm, own_rows, class_vis) = (
         collected.classes,
         collected.methods,
@@ -187,6 +188,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             has_blk: def.has_blk,
             ruby2_keywords: def.ruby2_keywords,
             self_is_class: false,
+            label_override: None,
         };
         define_method_body(em, analyzed, &spec)?;
     }
@@ -203,6 +205,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
                 has_blk: m.has_blk,
                 ruby2_keywords: m.ruby2_keywords,
                 self_is_class: false,
+                label_override: None,
             };
             define_method_body(em, analyzed, &spec)?;
         }
@@ -219,6 +222,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             has_blk: m.has_blk,
             ruby2_keywords: m.ruby2_keywords,
             self_is_class: true,
+            label_override: None,
         };
         define_method_body(em, analyzed, &spec)?;
     }
@@ -234,6 +238,26 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             has_blk: m.has_blk,
             ruby2_keywords: m.ruby2_keywords,
             self_is_class: false,
+            label_override: None,
+        };
+        define_method_body(em, analyzed, &spec)?;
+    }
+    let empty_params = crate::hir::Params::default();
+    for cb in &class_bodies {
+        let Some(func) = cb.call.func else { continue };
+        let owner_name = analyzed.compiler.fq_name(cb.class);
+        let spec = BodyFnSpec {
+            func,
+            owner: cb.class,
+            owner_name: &owner_name,
+            name: "",
+            hir_params: &empty_params,
+            body: &cb.stmts,
+            node: cb.node,
+            has_blk: false,
+            ruby2_keywords: false,
+            self_is_class: true,
+            label_override: Some(cb.label.clone()),
         };
         define_method_body(em, analyzed, &spec)?;
     }
@@ -317,7 +341,12 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
         };
         super::params::define_trampoline(em, &spec, idx)?;
     }
-    let toplevel = define_toplevel(em, analyzed)?;
+    let hoisted: Vec<ClassBodyCall> = class_bodies
+        .iter()
+        .filter(|cb| !cb.inline)
+        .map(|cb| cb.call.clone())
+        .collect();
+    let toplevel = define_toplevel(em, analyzed, &hoisted)?;
     let unit_init = statics::define_unit_init(em)?;
     statics::define_syms(em)?;
     let mut vm_rows: Vec<statics::VmRowSpec> = defs
@@ -412,6 +441,10 @@ pub(crate) struct Emitter {
     /// Compiled methods by Ruby name -- what a receiverless call resolves
     /// against for the direct path.
     pub methods: HashMap<String, MethodDecl>,
+    /// Class-body sites by their INLINE `ClassDef` marker: what a marker
+    /// in statement position emits (a hoisted site's marker is absent --
+    /// its body already ran in the toplevel prelude).
+    pub class_bodies: HashMap<crate::hir::NodeId, ClassBodyCall>,
     fn_index: u32,
     /// When `Some`, every finished function's CLIF renders here (before
     /// machine compilation -- the target-independent IR).
@@ -501,6 +534,7 @@ impl Emitter {
             rodata_offsets: HashMap::new(),
             imports: HashMap::new(),
             methods: HashMap::new(),
+            class_bodies: HashMap::new(),
             fn_index: 0,
             clif_text: None,
         })
@@ -696,6 +730,186 @@ fn collect_methods(em: &mut Emitter, analyzed: &Analyzed) -> Result<Vec<DefSpec>
 }
 
 /// What `define_method_body` compiles: any owner's ordinary method.
+/// What runs at one class-body site: the declaration's
+/// `const_source_location` record, then the compiled body (absent when
+/// analyze consumed every statement -- the `class C; def a; end; end`
+/// shape).
+#[derive(Clone)]
+pub(crate) struct ClassBodyCall {
+    pub class: u32,
+    pub func: Option<FuncId>,
+    /// `(owner, leaf, file, line)` -- recorded only by the DECLARING site.
+    pub const_loc: Option<(u32, String, String, u32)>,
+}
+
+/// One compiled class body (a separate Ruby scope, lifted to its own
+/// function exactly as the rustc backend lifts it).
+pub(crate) struct ClassBodySpec {
+    pub call: ClassBodyCall,
+    pub class: zeo_abi::ClassId,
+    pub label: String,
+    pub stmts: Vec<crate::hir::NodeId>,
+    pub node: Option<crate::hir::NodeId>,
+    /// Marker reachable INLINE from the statement stream: the body runs at
+    /// its marker. Hoisted otherwise (a `class` inside a `def`): the body
+    /// runs once in the toplevel prelude, the rustc backend's rule.
+    pub inline: bool,
+}
+
+/// The markers whose class bodies run AT their document position -- the
+/// rustc backend's `inline_class_markers` walk: statement containers
+/// descend, a `def`'s body waits to be called (so its markers hoist),
+/// except a block-bodied `define_method` def, whose body is a block.
+fn inline_markers(
+    compiler: &crate::compiler::Compiler,
+    main_statements: &[crate::hir::NodeId],
+) -> std::collections::HashSet<crate::hir::NodeId> {
+    use crate::hir::HirNode;
+    let site_stmts: HashMap<crate::hir::NodeId, &[crate::hir::NodeId]> = compiler
+        .class_body_sites
+        .iter()
+        .filter_map(|s| s.def_node.map(|n| (n, s.stmts.as_slice())))
+        .collect();
+    let mut seen = std::collections::HashSet::new();
+    let mut work: Vec<crate::hir::NodeId> = main_statements.to_vec();
+    for &def in compiler.hir.block_bodied_defs() {
+        if let HirNode::DefMethod { body, .. } = &compiler.hir[def] {
+            work.extend(body.iter().copied());
+        }
+    }
+    #[allow(
+        clippy::wildcard_enum_match_arm,
+        reason = "structural: every other node is a plain statement container -- the walk descends via for_each_child, the same bucket the rustc twin uses"
+    )]
+    while let Some(n) = work.pop() {
+        match &compiler.hir[n] {
+            HirNode::ClassDef { .. } => {
+                if seen.insert(n)
+                    && let Some(stmts) = site_stmts.get(&n)
+                {
+                    work.extend(stmts.iter().copied());
+                }
+            }
+            HirNode::BoxScope { body, .. } => work.extend(body.iter().copied()),
+            HirNode::DefMethod { body, .. }
+                if compiler
+                    .hir
+                    .has_flag(n, crate::hir::NodeFlag::BLOCK_BODIED_DEF) =>
+            {
+                work.extend(body.iter().copied());
+            }
+            HirNode::DefMethod { .. } => {}
+            other => other.for_each_child(&mut |c| work.push(c)),
+        }
+    }
+    seen
+}
+
+/// Collect + declare every class-body site; refusals are loud. Mirrors
+/// `emit_class_body_site_lifted`'s head registrations: the shapes whose
+/// registrations the slice cannot emit yet (const_added/inherited hooks,
+/// the frozen-reopen guard) refuse rather than drop.
+fn collect_class_bodies(
+    em: &mut Emitter,
+    analyzed: &Analyzed,
+) -> Result<Vec<ClassBodySpec>, String> {
+    let compiler = &analyzed.compiler;
+    let inline = inline_markers(compiler, &analyzed.main_statements);
+    let mut specs = Vec::new();
+    for (i, site) in compiler.class_body_sites.iter().enumerate() {
+        let ci = compiler.class(site.class);
+        let name = compiler.fq_name(site.class);
+        let refuse = |what: &str| {
+            Err(format!(
+                "--backend aot is an M0 vertical slice: cannot lower {what} yet (class {name})"
+            ))
+        };
+        if ci.is_builtin || ci.is_bootstrap || site.class.0 == 0 {
+            if site.stmts.is_empty() {
+                continue;
+            }
+            return refuse("a builtin reopen body");
+        }
+        if site.def_node.is_none() {
+            if site.stmts.is_empty() {
+                continue;
+            }
+            return refuse("a synthetic class body");
+        }
+        let declares = compiler
+            .class_body_sites
+            .iter()
+            .find(|s| s.class == site.class)
+            .is_some_and(|s| std::ptr::eq(s, site));
+        // `class Foo; end` DEFINES a constant, so ruby announces it; a
+        // hook observing that announcement is not emitted yet.
+        let decl_owner = ci.lexical_parent.unwrap_or(crate::compiler::OBJECT_CLASS);
+        if declares
+            && (compiler.global_def_hooks.contains("const_added")
+                || compiler
+                    .class_method_in_chain(decl_owner, "const_added")
+                    .is_some())
+        {
+            return refuse("a class declaration observed by `const_added`");
+        }
+        if declares
+            && let Some(parent) = ci.parent
+            && compiler
+                .class_method_in_chain(parent, "inherited")
+                .is_some()
+        {
+            return refuse("a class declaration observed by `inherited`");
+        }
+        if compiler.program_freezes && !declares && !site.installs.is_empty() {
+            return refuse("a reopen under `freeze` (the frozen-reopen guard)");
+        }
+        let const_loc = (declares)
+            .then(|| {
+                site.def_node
+                    .and_then(|n| crate::codegen::source_location(compiler, n))
+                    .map(|(file, line)| {
+                        (
+                            decl_owner.0,
+                            compiler.leaf_name(site.class).to_string(),
+                            file.to_string(),
+                            line,
+                        )
+                    })
+            })
+            .flatten();
+        let func = if site.stmts.is_empty() {
+            None
+        } else {
+            let sig = super::params::body_sig(em, 0, false);
+            Some(
+                em.module
+                    .declare_function(&format!("zeo_cb_{i}"), Linkage::Local, &sig)
+                    .map_err(|e| format!("declaring the {name} class body: {e}"))?,
+            )
+        };
+        let kind = if ci.is_module { "module" } else { "class" };
+        let label = format!("<{kind}:{}>", compiler.leaf_name(site.class));
+        let call = ClassBodyCall {
+            class: site.class.0,
+            func,
+            const_loc,
+        };
+        let is_inline = site.def_node.is_some_and(|n| inline.contains(&n));
+        if is_inline && let Some(marker) = site.def_node {
+            em.class_bodies.insert(marker, call.clone());
+        }
+        specs.push(ClassBodySpec {
+            call,
+            class: site.class,
+            label,
+            stmts: site.stmts.clone(),
+            node: site.def_node,
+            inline: is_inline,
+        });
+    }
+    Ok(specs)
+}
+
 pub(crate) struct BodyFnSpec<'a> {
     pub func: FuncId,
     pub owner: zeo_abi::ClassId,
@@ -709,6 +923,9 @@ pub(crate) struct BodyFnSpec<'a> {
     /// A class-method body: `self` is the Class value (frame label
     /// `Owner.name`, ivars are civars).
     pub self_is_class: bool,
+    /// A non-method frame label (`<class:Foo>` for a class body); `None`
+    /// derives the ordinary `Owner#name`/`Owner.name` label.
+    pub label_override: Option<String>,
 }
 
 /// A method's frame facts: `(file, label, line, end_line)` -- shared by
@@ -921,6 +1138,7 @@ fn define_method_body(
         def.node,
         def.self_is_class,
     );
+    let label = def.label_override.clone().unwrap_or(label);
 
     let mut func = ir::Function::with_name_signature(UserFuncName::user(0, idx), sig);
     let cfg = em.module.target_config();
@@ -1118,7 +1336,11 @@ fn define_method_body(
 /// locals, the frame push, `check_ints`, the statements, then `Nil` out --
 /// with the ONE landing block releasing the locals and popping the frame
 /// (which drains the release pool) on the signal path.
-fn define_toplevel(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String> {
+fn define_toplevel(
+    em: &mut Emitter,
+    analyzed: &Analyzed,
+    hoisted: &[ClassBodyCall],
+) -> Result<FuncId, String> {
     let mut sig = em.module.make_signature();
     sig.params.push(AbiParam::new(em.ptr));
     sig.returns.push(AbiParam::new(types::I32));
@@ -1202,18 +1424,23 @@ fn define_toplevel(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, Stri
     );
     fx.self_ptr = Some(self_addr);
 
+    // Class bodies whose markers sit inside `def`s run ONCE here, before
+    // the main body, in document order -- the rustc backend hoists them
+    // the same way (`inline_class_markers`'s complement).
+    for call in hoisted {
+        stmt::emit_class_body_call(&mut fx, call)?;
+    }
     // Defs registered through the row tables run nothing in statement
-    // position (the rustc backend's shape: registration precedes the body).
+    // position (the rustc backend's shape: registration precedes the
+    // body); a ClassDef marker now runs its body site inline.
     let runnable: Vec<crate::hir::NodeId> = analyzed
         .main_statements
         .iter()
         .copied()
         .filter(|&s| {
-            // Defs and (statement-free, collect_classes-verified) class
-            // definitions registered through the tables run nothing here.
             !matches!(
                 analyzed.compiler.hir[s],
-                crate::hir::HirNode::DefMethod { .. } | crate::hir::HirNode::ClassDef { .. }
+                crate::hir::HirNode::DefMethod { .. }
             )
         })
         .collect();
