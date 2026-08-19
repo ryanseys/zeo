@@ -180,6 +180,29 @@ pub(crate) fn registered_table(id: ClassId) -> Option<&'static BuiltinClassTable
     BY_ID.get(id.0 as usize).copied().flatten()
 }
 
+/// Which side of a builtin's tables a question addresses.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Side {
+    Instance,
+    Class,
+}
+
+/// THE registered-table projection: the one place a `(class, side)` becomes a
+/// method-table view. Every routing question below reads through this, so a
+/// runtime row store consulted in policy order (Track 2's corelib rows before
+/// the Rust rows) slots in here without touching a single reader. The
+/// hand-rolled ext residuals (date, psych's `YAML` alias, `FileTest`) stay in
+/// their per-question arms below -- they are asymmetric (FileTest declares
+/// class arity/names but no class lookup) and disappear as the ext migration
+/// finishes.
+pub(crate) fn side_of(id: ClassId, side: Side) -> Option<&'static MethodTable> {
+    let t = registered_table(id)?;
+    match side {
+        Side::Instance => t.instance.as_ref(),
+        Side::Class => t.class.as_ref(),
+    }
+}
+
 /// The static ClassId -> method-table map. A plain match (rustc compiles it
 /// to a jump table); `None` for user classes and for builtins with no table
 /// yet. `Enumerable`/`Comparable` are ordinary rows here too -- the MRO
@@ -187,9 +210,9 @@ pub(crate) fn registered_table(id: ClassId) -> Option<&'static BuiltinClassTable
 /// that `include`s them, exactly like every other builtin module.
 pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMethodFn>> {
     // A macro-registered class is fully described by its own table and has no
-    // match arm below, so consult the registry first.
-    if let Some(t) = registered_table(id) {
-        return t.instance.as_ref().map(|m| m.lookup);
+    // match arm below, so consult the projection first.
+    if let Some(m) = side_of(id, Side::Instance) {
+        return Some(m.lookup);
     }
     Some(match id {
         #[cfg(feature = "ext-date")]
@@ -203,8 +226,8 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
 /// `Method#arity` consults this for a builtin-receiver method object, walking
 /// the receiver's ancestry so an inherited builtin resolves against its owner.
 pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> {
-    if let Some(t) = registered_table(id) {
-        return t.instance.as_ref().map(|m| m.arity);
+    if let Some(m) = side_of(id, Side::Instance) {
+        return Some(m.arity);
     }
     Some(match id {
         #[cfg(feature = "ext-date")]
@@ -229,8 +252,8 @@ pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> 
 /// instance -- rows generally ignore it (`Time.now` needs no receiver), but
 /// it keeps the `BuiltinMethodFn` ABI uniform with `class_table`'s.
 pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMethodFn>> {
-    if let Some(t) = registered_table(id) {
-        return t.class.as_ref().map(|m| m.lookup);
+    if let Some(m) = side_of(id, Side::Class) {
+        return Some(m.lookup);
     }
     Some(match id {
         // In-tree `ext/` extensions, each behind its `ext-<name>` cargo feature.
@@ -246,8 +269,8 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
 /// `class_method_table`'s arity twin -- what `Foo.method(:bar).arity` reads
 /// for a builtin class method, the singleton mirror of [`class_arity_table`].
 pub(crate) fn class_method_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> {
-    if let Some(t) = registered_table(id) {
-        return t.class.as_ref().map(|m| m.arity);
+    if let Some(m) = side_of(id, Side::Class) {
+        return Some(m.arity);
     }
     // Only the hand-written tables that declare arities appear here; the rest
     // of `class_method_table`'s arms are hand-rolled `lookup_class` fns with
@@ -267,27 +290,21 @@ pub(crate) fn class_method_arity_table(id: ClassId) -> Option<fn(&str) -> Option
 /// private, so `Math.instance_methods(false)` is empty while
 /// `Math.private_instance_methods(false)` lists 28.
 pub(crate) fn class_method_is_private(id: ClassId, name: &str) -> bool {
-    registered_table(id)
-        .and_then(|t| t.instance.as_ref())
-        .is_some_and(|m| (m.is_private)(name))
+    side_of(id, Side::Instance).is_some_and(|m| (m.is_private)(name))
 }
 
 /// Whether the builtin instance method `name` on `id` is CRuby-PROTECTED --
 /// `Pathname#path` is the whole population, made protected so `#to_s` is the
 /// way to spell a path out loud.
 pub(crate) fn class_method_is_protected(id: ClassId, name: &str) -> bool {
-    registered_table(id)
-        .and_then(|t| t.instance.as_ref())
-        .is_some_and(|m| (m.is_protected)(name))
+    side_of(id, Side::Instance).is_some_and(|m| (m.is_protected)(name))
 }
 
 /// The same question for a builtin CLASS-method row (`private def self."x"`)
 /// -- prism's `serialize_parse` and friends, the backend seam the gem's own
 /// Ruby calls with implicit self and nothing outside should see.
 pub(crate) fn builtin_class_method_is_private(id: ClassId, name: &str) -> bool {
-    registered_table(id)
-        .and_then(|t| t.class.as_ref())
-        .is_some_and(|m| (m.is_private)(name))
+    side_of(id, Side::Class).is_some_and(|m| (m.is_private)(name))
 }
 
 /// Whether a builtin CLASS-method row allocates through the RECEIVER class --
@@ -295,9 +312,7 @@ pub(crate) fn builtin_class_method_is_private(id: ClassId, name: &str) -> bool {
 /// `zeo_dsl::MethodDef::allocs`; the row itself carries the answer, as the
 /// equivalent C function does in CRuby.
 pub(crate) fn builtin_class_method_allocs(id: ClassId, name: &str) -> bool {
-    registered_table(id)
-        .and_then(|t| t.class.as_ref())
-        .is_some_and(|m| (m.allocs)(name))
+    side_of(id, Side::Class).is_some_and(|m| (m.allocs)(name))
 }
 
 /// Whether `id`'s row for `name` is one ruby owns further up the ancestry, so
@@ -305,23 +320,22 @@ pub(crate) fn builtin_class_method_allocs(id: ClassId, name: &str) -> bool {
 /// it. `kind` picks the instance or the class table. See
 /// `zeo_dsl::MethodDef::inherits`.
 pub(crate) fn builtin_row_inherits(id: ClassId, name: &str, class_side: bool) -> bool {
-    registered_table(id)
-        .and_then(|t| {
-            if class_side {
-                t.class.as_ref()
-            } else {
-                t.instance.as_ref()
-            }
-        })
-        .is_some_and(|m| (m.inherits)(name))
+    let side = if class_side {
+        Side::Class
+    } else {
+        Side::Instance
+    };
+    side_of(id, side).is_some_and(|m| (m.inherits)(name))
 }
 
 /// `class_table`'s reflection companion: the instance-method NAMES a builtin
 /// class exposes (for `instance_methods`/`methods`). Mirrors `class_table`'s
 /// arms exactly -- each `<mod>::lookup` has a paste-generated `<mod>::lookup_names`.
 pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
-    if let Some(t) = registered_table(id) {
-        return t.instance.as_ref().map(|m| (m.names)()).unwrap_or(&[]);
+    if registered_table(id).is_some() {
+        return side_of(id, Side::Instance)
+            .map(|m| (m.names)())
+            .unwrap_or(&[]);
     }
     match id {
         #[cfg(feature = "ext-date")]
@@ -333,8 +347,8 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
 /// `class_method_table`'s reflection companion: the CLASS-method NAMES a
 /// builtin exposes (for `SomeClass.singleton_methods` / `.methods`).
 pub(crate) fn class_method_table_names(id: ClassId) -> &'static [&'static str] {
-    if let Some(t) = registered_table(id) {
-        return t.class.as_ref().map(|m| (m.names)()).unwrap_or(&[]);
+    if registered_table(id).is_some() {
+        return side_of(id, Side::Class).map(|m| (m.names)()).unwrap_or(&[]);
     }
     match id {
         zeo_abi::FILE_TEST_MODULE => file::lookup_class_names(),
