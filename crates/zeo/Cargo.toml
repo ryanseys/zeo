@@ -25,6 +25,14 @@ zeo-abi.workspace = true
 # link. `eval-vm` on because the shipped runtime is the single
 # always-eval-capable variant (the Lean/Eval split dies at M0.5).
 zeo-rt = { workspace = true, features = ["eval-vm"] }
+# The Cranelift backend: HIR -> CLIF -> object files (see `clif/`), linked
+# against `libzeo.a` by `backend/link.rs`.
+cranelift-codegen.workspace = true
+cranelift-frontend.workspace = true
+cranelift-module.workspace = true
+cranelift-object.workspace = true
+cranelift-native.workspace = true
+target-lexicon.workspace = true
 ruby-prism.workspace = true
 proc-macro2.workspace = true
 unicode-ident.workspace = true

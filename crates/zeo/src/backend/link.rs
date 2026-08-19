@@ -2,17 +2,23 @@
 //! archive lives and which native system libraries a program link must
 //! name. The driver itself (object emission + the `cc` invocation) lands
 //! with the `--backend aot` path; the pieces here have their contract
-//! pinned now -- the archive location by `runtime_archive`'s staleness
+//! pinned now -- the archive location by `runtime_archive`'s presence
 //! rule, the library lists by the `natlibs_table_matches_rustc` diff test.
 
 use std::path::PathBuf;
 
 /// `libzeo.a` beside the running `zeo` binary -- the staticlib half of
 /// this crate's own build (see `[lib] crate-type` in Cargo.toml), which an
-/// installed payload places beside the executable too. Missing or older
-/// than the binary means the developer's tree is half-built: the fix is
-/// `cargo build`, never shelling cargo from here (the same purity rule
-/// `build_binary` keeps).
+/// installed payload places beside the executable too. Missing means the
+/// tree is half-built: the fix is `cargo build`, never shelling cargo from
+/// here (the same purity rule `build_binary` keeps).
+///
+/// No mtime staleness check: the archive and the binary come out of ONE
+/// cargo build with the archive written first, so "archive older than the
+/// binary" is true of every fresh build -- and a bin-only rebuild leaves an
+/// older archive that is still correct (the lib didn't change). Cargo's own
+/// dependency tracking is the freshness guarantee in the dev tree; the
+/// installed payload gets a content fingerprint at G12.
 pub fn runtime_archive() -> Result<PathBuf, String> {
     let exe = std::env::current_exe()
         .map_err(|e| format!("cannot locate the running zeo binary: {e}"))?;
@@ -20,20 +26,10 @@ pub fn runtime_archive() -> Result<PathBuf, String> {
         .parent()
         .ok_or_else(|| "the zeo binary has no parent directory".to_string())?;
     let archive = dir.join("libzeo.a");
-    let meta = std::fs::metadata(&archive).map_err(|_| {
-        format!(
+    if !archive.is_file() {
+        return Err(format!(
             "runtime archive missing: {} (rerun `cargo build` -- \
              `libzeo.a` is built beside the `zeo` binary)",
-            archive.display()
-        )
-    })?;
-    let exe_meta =
-        std::fs::metadata(&exe).map_err(|e| format!("cannot stat the running zeo binary: {e}"))?;
-    if let (Ok(archive_time), Ok(exe_time)) = (meta.modified(), exe_meta.modified())
-        && archive_time < exe_time
-    {
-        return Err(format!(
-            "runtime archive is older than the zeo binary: {} (rerun `cargo build`)",
             archive.display()
         ));
     }
@@ -72,23 +68,79 @@ pub fn natlibs_for(triple: &str) -> Result<&'static [&'static str], String> {
     }
 }
 
+/// The host's target triple, for the natlibs table and the link shape.
+pub(crate) fn host_triple() -> &'static str {
+    if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        "aarch64-apple-darwin"
+    } else if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
+        "x86_64-apple-darwin"
+    } else if cfg!(all(
+        target_os = "linux",
+        target_arch = "aarch64",
+        target_env = "gnu"
+    )) {
+        "aarch64-unknown-linux-gnu"
+    } else if cfg!(all(
+        target_os = "linux",
+        target_arch = "x86_64",
+        target_env = "gnu"
+    )) {
+        "x86_64-unknown-linux-gnu"
+    } else if cfg!(all(
+        target_os = "linux",
+        target_arch = "aarch64",
+        target_env = "musl"
+    )) {
+        "aarch64-unknown-linux-musl"
+    } else if cfg!(all(
+        target_os = "linux",
+        target_arch = "x86_64",
+        target_env = "musl"
+    )) {
+        "x86_64-unknown-linux-musl"
+    } else {
+        panic!("no host-triple mapping for this platform")
+    }
+}
+
+/// Link one emitted object against `libzeo.a` into `output`, through the
+/// system `cc` (the same external-tool requirement rustc's link step has).
+/// Whole-archive because linkme `BUILTIN_TABLES` elements live in
+/// otherwise-unreferenced members; dead-strip/gc-sections then drops
+/// everything unreferenced (the compiler half of an eval-free program
+/// included).
+pub fn link_binary(object: &std::path::Path, output: &std::path::Path) -> Result<(), String> {
+    let archive = runtime_archive()?;
+    let natlibs = natlibs_for(host_triple())?;
+    let mut cmd = std::process::Command::new("cc");
+    cmd.arg("-o").arg(output).arg(object);
+    if cfg!(target_os = "macos") {
+        cmd.arg(format!("-Wl,-force_load,{}", archive.display()));
+        cmd.args(natlibs);
+        cmd.arg("-Wl,-dead_strip");
+    } else {
+        cmd.arg("-Wl,--whole-archive");
+        cmd.arg(&archive);
+        cmd.arg("-Wl,--no-whole-archive");
+        cmd.args(natlibs);
+        cmd.arg("-Wl,--gc-sections");
+    }
+    let out = cmd
+        .output()
+        .map_err(|e| format!("running cc to link {}: {e}", output.display()))?;
+    if !out.status.success() {
+        return Err(format!(
+            "linking {} failed:\n{}",
+            output.display(),
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn host_triple() -> &'static str {
-        if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
-            "aarch64-apple-darwin"
-        } else if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
-            "x86_64-apple-darwin"
-        } else if cfg!(all(target_os = "linux", target_env = "gnu")) {
-            "x86_64-unknown-linux-gnu"
-        } else if cfg!(all(target_os = "linux", target_env = "musl")) {
-            "x86_64-unknown-linux-musl"
-        } else {
-            panic!("no host-triple mapping for this platform")
-        }
-    }
 
     #[test]
     fn every_supported_triple_has_a_table() {

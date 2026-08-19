@@ -31,6 +31,18 @@ zeo-rt = { path = "crates/zeo-rt", version = "=0.1.0" }
 zeo-dsl = { path = "crates/zeo-dsl", version = "=0.1.0" }
 zeo-macros = { path = "crates/zeo-macros", version = "=0.1.0" }
 
+# The Cranelift backend (plan decision 1): zeo lowers HIR to CLIF itself and
+# emits object files -- no rustc/LLVM in the compile path. Pinned to the
+# wasmtime 47 release line; the quarterly bump is deliberate, never floating.
+# `x86 + arm64` covers every dist triple; `host-arch` keeps a from-source
+# build working anywhere Cranelift does.
+cranelift-codegen = { version = "=0.134.3", features = ["x86", "arm64"] }
+cranelift-frontend = "=0.134.3"
+cranelift-module = "=0.134.3"
+cranelift-object = "=0.134.3"
+cranelift-native = "=0.134.3"
+target-lexicon = "0.13"
+
 # The parser: prism, CRuby's own default parser since 3.4.
 ruby-prism = "1.9.0"
 

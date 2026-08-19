@@ -37,6 +37,7 @@
 
 mod cache;
 pub mod link;
+pub mod object;
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -1210,22 +1211,45 @@ fn runtime_artifact_fingerprint(
 
 /// Which code-generation backend turns a compiled program into machine code.
 ///
-/// `Rustc` is the only implementation today: emitted Rust text -> `rustc` ->
-/// binary, linking the prebuilt `zeo-rt` artifact. The Cranelift backends
-/// (`Aot`: object files + linker; `Jit`: in-process `cranelift-jit`) slot in
-/// as sibling variants here -- `run_program`/`build_artifact` below are the
-/// two mode entries every backend implements.
+/// `Rustc`: emitted Rust text -> `rustc` -> binary, linking the prebuilt
+/// `zeo-rt` artifact -- the default during the dual period. `Aot`: the
+/// Cranelift path -- HIR -> CLIF -> object file (`clif/`), linked against
+/// `libzeo.a` (`link.rs`). `Jit` (in-process `cranelift-jit`) slots in as a
+/// sibling variant at M0.5.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Backend {
     Rustc,
+    Aot,
 }
 
 impl Backend {
-    /// The backend this invocation uses. Always `Rustc` until `--backend`/
-    /// `ZEO_BACKEND` exist; this is their single future read point.
-    pub fn select() -> Backend {
-        Backend::Rustc
+    /// A `--backend`/`ZEO_BACKEND` value.
+    pub fn parse(value: &str) -> Result<Backend, String> {
+        match value {
+            "rustc" => Ok(Backend::Rustc),
+            "aot" => Ok(Backend::Aot),
+            other => Err(format!("unknown backend `{other}` (expected rustc or aot)")),
+        }
     }
+
+    /// The backend this invocation uses: the CLI flag, else `ZEO_BACKEND`,
+    /// else the dual-period default (`Rustc`).
+    pub fn select(cli: Option<Backend>) -> Result<Backend, String> {
+        if let Some(backend) = cli {
+            return Ok(backend);
+        }
+        match std::env::var("ZEO_BACKEND") {
+            Ok(value) if !value.is_empty() => Backend::parse(&value),
+            Ok(_) | Err(_) => Ok(Backend::Rustc),
+        }
+    }
+}
+
+/// A compiled program in whichever form its backend produced -- the input
+/// the two mode entries below dispatch on.
+pub enum CompiledProgram<'a> {
+    Rustc(&'a crate::CompileOutput),
+    Aot(&'a crate::ObjectOutput),
 }
 
 /// Run mode (`zeo file.rb`, `zeo -e`): produce a throwaway program for
@@ -1238,12 +1262,11 @@ impl Backend {
 /// this machine's build tree, and static linkage made every `zeo file.rb`
 /// pay a full runtime link just to print and exit.
 pub fn run_program(
-    backend: Backend,
-    compiled: &crate::CompileOutput,
+    compiled: &CompiledProgram<'_>,
     program_args: &[String],
 ) -> Result<std::convert::Infallible, String> {
-    match backend {
-        Backend::Rustc => {
+    match compiled {
+        CompiledProgram::Rustc(compiled) => {
             let runtime = Runtime::for_prism(compiled.needs_prism_runtime);
             let linkage = Linkage::Dynamic;
             let profile = Profile::from_env_or(Profile::Debug);
@@ -1269,6 +1292,18 @@ pub fn run_program(
             let _ = std::fs::remove_file(&bin);
             std::process::exit(status.code().unwrap_or(1));
         }
+        // Aot run mode links a throwaway binary and runs it -- the
+        // in-process JIT replaces this at M0.5.
+        CompiledProgram::Aot(compiled) => {
+            let bin = std::env::temp_dir().join(format!("zeo-e-{}", std::process::id()));
+            object::object_to_binary(&compiled.object, &bin)?;
+            let status = std::process::Command::new(&bin)
+                .args(program_args)
+                .status()
+                .map_err(|e| format!("running compiled program: {e}"))?;
+            let _ = std::fs::remove_file(&bin);
+            std::process::exit(status.code().unwrap_or(1));
+        }
     }
 }
 
@@ -1279,13 +1314,9 @@ pub fn run_program(
 /// a dylib in a build tree), DEFAULTED to the release-profiled runtime
 /// (optimized + stripped); `ZEO_RUNTIME_PROFILE` overrides (e.g. to
 /// symbolicate a runtime panic).
-pub fn build_artifact(
-    backend: Backend,
-    compiled: &crate::CompileOutput,
-    output: &Path,
-) -> Result<(), String> {
-    match backend {
-        Backend::Rustc => {
+pub fn build_artifact(compiled: &CompiledProgram<'_>, output: &Path) -> Result<(), String> {
+    match compiled {
+        CompiledProgram::Rustc(compiled) => {
             let runtime = Runtime::for_prism(compiled.needs_prism_runtime);
             let linkage = Linkage::Static;
             let profile = Profile::from_env_or(Profile::Release);
@@ -1299,5 +1330,6 @@ pub fn build_artifact(
                 GenOpt::Optimized,
             )
         }
+        CompiledProgram::Aot(compiled) => object::object_to_binary(&compiled.object, output),
     }
 }

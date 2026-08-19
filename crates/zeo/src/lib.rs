@@ -49,6 +49,7 @@ pub mod analyze;
 pub mod analyze_error;
 pub mod backend;
 pub mod builtin_surface;
+pub mod clif;
 pub mod codegen;
 pub mod compiler;
 pub(crate) mod debug_flags;
@@ -210,6 +211,57 @@ pub fn compile_to_file(
         lines: stats.lines,
         needs_prism_runtime,
     })
+}
+
+/// A Cranelift-compiled program: one object file's bytes, ready for
+/// `backend::link` (the `--backend aot` pipeline).
+pub struct ObjectOutput {
+    pub object: Vec<u8>,
+}
+
+/// The Cranelift pipeline: the same front end as `compile_to_rust_with`,
+/// then `clif::emit` instead of the Rust emitter.
+pub fn compile_to_object_with(
+    source: &str,
+    opts: &CompileOptions,
+) -> Result<ObjectOutput, CompileError> {
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .name("zeo-compile".into())
+            .stack_size(COMPILE_STACK_SIZE)
+            .spawn_scoped(scope, || compile_object_on_this_thread(source, opts))
+            .expect("spawning the compiler thread")
+            .join()
+            .unwrap_or_else(|payload| std::panic::resume_unwind(payload))
+    })
+}
+
+fn compile_object_on_this_thread(
+    source: &str,
+    opts: &CompileOptions,
+) -> Result<ObjectOutput, CompileError> {
+    memguard::set_phase(memguard::Phase::ParseLower);
+    let (hir, root, gem_records) = parse::parse_and_lower_with(
+        source,
+        opts.input_path.as_deref(),
+        &opts.load_roots,
+        &opts.package_dirs,
+        &opts.gem_paths,
+        opts.lockfile.as_deref(),
+        opts.root_gem.as_ref(),
+    )?;
+    if opts.gem_warnings {
+        gem_report::emit_warnings(&gem_records, &opts.nowarn);
+    }
+    if let Some(path) = &opts.gem_report {
+        gem_report::write_report(&gem_records, path)
+            .map_err(|message| CompileError::Report { message })?;
+    }
+    memguard::set_phase(memguard::Phase::Analyze);
+    let analyzed = analyze::analyze(hir, root)?;
+    memguard::set_phase(memguard::Phase::Codegen);
+    let object = clif::emit::compile(&analyzed).map_err(CompileError::codegen)?;
+    Ok(ObjectOutput { object })
 }
 
 /// What `compile_to_file` wrote.

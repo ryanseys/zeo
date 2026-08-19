@@ -73,6 +73,10 @@ struct Args {
     /// positionals and everything after `--`, exactly ruby's
     /// `[--] [args...]` shape.
     program_args: Vec<String>,
+    /// `--backend <rustc|aot>`: which code generator builds the program
+    /// (`ZEO_BACKEND` is the env spelling; the flag wins). `None` = the
+    /// dual-period default, rustc.
+    backend: Option<zeo::backend::Backend>,
 }
 
 /// Where `--emit-rust` sends the generated Rust. The path is ATTACHED-only
@@ -160,6 +164,9 @@ modes:
 options:
   -o <output>           where to write the compiled binary
   --compile             write the default-named binary instead of running
+  --backend <rustc|aot> which code generator builds the program: rustc (the
+                        dual-period default) or the Cranelift AOT backend
+                        (ZEO_BACKEND is the env spelling; the flag wins)
   -I <dir>              add a `require` search root, like ruby's -I
                         (repeatable; `-I<dir>` and `-I=<dir>` also accepted)
   --gems <dir>          add a directory of vendored gems: every subdirectory
@@ -235,6 +242,7 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
     let mut gem_paths: Vec<PathBuf> = Vec::new();
     let mut gemfile: Option<PathBuf> = None;
     let mut compile = false;
+    let mut backend: Option<zeo::backend::Backend> = None;
     let mut program_args: Vec<String> = Vec::new();
 
     // RUBYOPT first, so the command line wins wherever both touch the same
@@ -302,6 +310,7 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
                 "help" => return Ok(Parsed::Help),
                 "version" => return Ok(Parsed::Version),
                 "compile" => compile = true,
+                "backend" => backend = Some(zeo::backend::Backend::parse(&value("--backend")?)?),
                 "gems" => package_dirs.push(PathBuf::from(value("--gems")?)),
                 "root-gem" => root_gem = Some(value("--root-gem")?),
                 "gem-path" => gem_paths.push(PathBuf::from(value("--gem-path")?)),
@@ -470,6 +479,7 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
         gem_paths,
         lockfile: gemfile.map(derive_lockfile),
         program_args,
+        backend,
     })))
 }
 
@@ -648,10 +658,22 @@ fn run() -> Result<(), MainError> {
         None => {}
     }
 
-    let compiled = zeo::compile_to_rust_with(&source, &opts)?;
-
+    // The backend decides WHICH compile runs (rust text vs an object file),
+    // so it is selected before compiling.
+    let backend = zeo::backend::Backend::select(args.backend)?;
+    enum Compiled {
+        Rustc(zeo::CompileOutput),
+        Aot(zeo::ObjectOutput),
+    }
+    let compiled = match backend {
+        zeo::backend::Backend::Rustc => Compiled::Rustc(zeo::compile_to_rust_with(&source, &opts)?),
+        zeo::backend::Backend::Aot => Compiled::Aot(zeo::compile_to_object_with(&source, &opts)?),
+    };
     zeo::memguard::set_phase(zeo::memguard::Phase::Build);
-    let backend = zeo::backend::Backend::select();
+    let program = match &compiled {
+        Compiled::Rustc(c) => zeo::backend::CompiledProgram::Rustc(c),
+        Compiled::Aot(o) => zeo::backend::CompiledProgram::Aot(o),
+    };
 
     // The default mode -- a bare file or `-e`, no artifact asked for: build a
     // throwaway program, run it, and exit with ITS status (stdout/stderr
@@ -659,7 +681,7 @@ fn run() -> Result<(), MainError> {
     // an artifact instead. The mode bodies live in `backend` (they are what
     // varies per backend); this is just the mode decision.
     if !args.compile && args.output.is_none() {
-        match zeo::backend::run_program(backend, &compiled, &args.program_args)? {}
+        match zeo::backend::run_program(&program, &args.program_args)? {}
     }
 
     let output = args.output.unwrap_or_else(|| {
@@ -670,7 +692,7 @@ fn run() -> Result<(), MainError> {
         p.set_extension("");
         p
     });
-    Ok(zeo::backend::build_artifact(backend, &compiled, &output)?)
+    Ok(zeo::backend::build_artifact(&program, &output)?)
 }
 
 /// Install a `tracing` subscriber (stderr) for the compiler pipeline: `ZEO_LOG`
