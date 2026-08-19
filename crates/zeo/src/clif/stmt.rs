@@ -313,6 +313,7 @@ fn lower_tail_expr(fx: &mut Fx, tail: NodeId) -> Result<super::operand::Operand,
         | HirNode::ClassVarRead(..)
         | HirNode::ClassVarWrite(..)
         | HirNode::ConstWrite { .. }
+        | HirNode::QualifiedConstRead(..)
         | HirNode::Call { .. } => lower_expr(fx, tail),
         other => {
             let what = format!("this tail expression ({})", statement_kind(other));
@@ -648,6 +649,7 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
         | HirNode::ClassVarRead(..)
         | HirNode::ClassVarWrite(..)
         | HirNode::ConstWrite { .. }
+        | HirNode::QualifiedConstRead(..)
         | HirNode::Call { .. } => {
             let op = lower_expr(fx, stmt)?;
             ownership::discard(fx, op);

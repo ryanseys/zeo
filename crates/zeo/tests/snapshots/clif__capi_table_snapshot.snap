@@ -16,6 +16,8 @@ zeo_rt_cell_release ([Ptr]) -> None
 zeo_rt_cell_store ([Ptr, Ptr]) -> None
 zeo_rt_check_ints ([]) -> Some(I32)
 zeo_rt_const_get_at ([U32, Ptr, Usize, Ptr]) -> Some(I32)
+zeo_rt_const_get_cref ([Ptr, Usize, Ptr, Usize, Ptr, Usize, Ptr]) -> Some(I32)
+zeo_rt_const_get_scoped ([U32, Ptr, Usize, Ptr, Usize, Ptr]) -> Some(I32)
 zeo_rt_const_set_at ([U32, Ptr, Usize, Ptr, Ptr, Usize, U32]) -> None
 zeo_rt_cvar_get ([U32, Ptr, Usize, Ptr]) -> None
 zeo_rt_cvar_get_checked ([U32, Ptr, Usize, Ptr]) -> Some(I32)

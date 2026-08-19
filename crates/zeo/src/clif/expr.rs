@@ -224,6 +224,10 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             let name = name.clone();
             const_read(fx, id, &name)
         }
+        HirNode::QualifiedConstRead(scope, name) => {
+            let (scope, name) = (scope.clone(), name.clone());
+            scoped_const_read(fx, id, &scope, &name)
+        }
         HirNode::Begin {
             body,
             rescues,
@@ -620,13 +624,16 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             // An explicit `Scope::NAME = ..` whose scope isn't a registered
             // class takes rustc's runtime-scope path -- not lowered yet.
             let owner_class = match scope.as_deref() {
-                Some(s) => match fx.an.compiler.resolve_class(s, &[], 0) {
+                Some(s) => match resolve_class_here(fx, s) {
                     Some(cid) => cid,
                     None => {
                         return fx.unsupported(id, "a constant write on a runtime scope");
                     }
                 },
-                None => crate::compiler::OBJECT_CLASS,
+                // A bare `NAME =` is owned by the lexically enclosing
+                // class/module (the emitting context); `Object` at the top
+                // level -- rustc's `const_owner_id_opt` fallback.
+                None => fx.method_class.unwrap_or(crate::compiler::OBJECT_CLASS),
             };
             let owner = fx
                 .an
@@ -747,19 +754,129 @@ pub(crate) fn pure_literal(parts: &[StrPart]) -> Option<String> {
 /// A constant read: a statically-resolved class becomes a Class immediate;
 /// anything else (a value constant like `ARGV`) reads through the uncached
 /// runtime lookup, `NameError` on miss.
+/// The lexical cref chain enclosing the current body, outermost first --
+/// `Compiler::cref_of`'s frozen answer for the emitting class; empty at
+/// the top level (rustc's `Ctx::cref_chain`).
+fn cref_chain<'a>(fx: &'a Fx) -> &'a [crate::compiler::ClassId] {
+    fx.method_class
+        .map(|c| fx.an.compiler.cref_of_ref(c))
+        .unwrap_or(&[])
+}
+
+/// Resolve a class name against the current cref (rustc's
+/// `Ctx::resolve_class`; box 0 -- box scopes refuse before any lowering).
+fn resolve_class_here(fx: &Fx, name: &str) -> Option<crate::compiler::ClassId> {
+    fx.an.compiler.resolve_class(name, cref_chain(fx), 0)
+}
+
 fn const_read(fx: &mut Fx, id: NodeId, name: &str) -> Result<Operand, String> {
-    if fx.an.compiler.resolve_class(name, &[], 0).is_some() {
-        return class_value(fx, id, name);
+    if let Some(cid) = resolve_class_here(fx, name) {
+        return class_value_of(fx, id, name, cid);
     }
-    let off = fx.em.intern_rodata(name.as_bytes());
-    let ptr = fx.rod(off);
-    let len_v = fx.b.ins().iconst(fx.em.ptr, name.len() as i64);
-    let owner = fx.b.ins().iconst(types::I32, 0);
+    // The rustc `emit_const_read` bare-name shape: owner from the
+    // compile-time claim map, then every enclosing cref scope, then the
+    // top -- one runtime walk through `const_get_cref`, whose miss raises
+    // the NameError with the cref-qualified message.
+    let compiler = &fx.an.compiler;
+    let defining = fx.method_class.unwrap_or(crate::compiler::OBJECT_CLASS);
+    let top = crate::compiler::OBJECT_CLASS;
+    let owner = compiler
+        .class(defining)
+        .const_owners
+        .get(name)
+        .copied()
+        .unwrap_or(defining);
+    if compiler
+        .class_method_in_chain(owner, "const_missing")
+        .is_some()
+    {
+        return fx.unsupported(id, "a constant read with a `const_missing` hook");
+    }
+    let mut chain: Vec<u32> = vec![owner.0];
+    let mut at = compiler.class(owner).cref_parent;
+    while let Some(cid) = at {
+        if cid != owner && cid != top {
+            chain.push(cid.0);
+        }
+        at = compiler.class(cid).cref_parent;
+    }
+    if owner != top {
+        chain.push(top.0);
+    }
+    let qualified = if defining == crate::compiler::OBJECT_CLASS {
+        name.to_string()
+    } else {
+        format!("{}::{name}", compiler.fq_name(defining))
+    };
+    let bytes: Vec<u8> = chain.iter().flat_map(|c| c.to_le_bytes()).collect();
+    let ids_off = fx.em.intern_rodata_aligned(&bytes, 4);
+    let ids_ptr = fx.rod(ids_off);
+    let n_ids = fx.b.ins().iconst(fx.em.ptr, chain.len() as i64);
+    let (nptr, nlen) = rodata_name(fx, name);
+    let (qptr, qlen) = rodata_name(fx, &qualified);
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
     let status = fx
-        .call("zeo_rt_const_get_at", &[owner, ptr, len_v, out])
-        .expect("const_get_at returns a status");
+        .call(
+            "zeo_rt_const_get_cref",
+            &[ids_ptr, n_ids, nptr, nlen, qptr, qlen, out],
+        )
+        .expect("const_get_cref returns a status");
+    fx.fallible(status);
+    fx.owned_created += 1;
+    Ok(Operand::Slot {
+        ss,
+        owned: true,
+        tag: TagInfo::Unknown,
+    })
+}
+
+/// An explicit `Scope::NAME` read whose scope resolves at compile time:
+/// the scope operator's own search on the scope class, ruby's
+/// as-written miss message (`Object::` prints bare -- it is where a
+/// lookup ENDS, not a qualifier).
+fn scoped_const_read(fx: &mut Fx, id: NodeId, scope: &str, name: &str) -> Result<Operand, String> {
+    // `Scope::NAME` naming a nested class/module is a Class immediate.
+    let path = format!("{scope}::{name}");
+    if let Some(cid) = resolve_class_here(fx, &path) {
+        return class_value_of(fx, id, &path, cid);
+    }
+    // A top-level anchor `::Name` lowers with scope "Object", where the
+    // name may be an ordinary top-level class.
+    if scope == "Object"
+        && let Some(cid) = fx.an.compiler.resolve_class(name, &[], 0)
+    {
+        return class_value_of(fx, id, name, cid);
+    }
+    let Some(scope_cid) = resolve_class_here(fx, scope) else {
+        return fx.unsupported(id, "a constant read on a runtime scope");
+    };
+    let compiler = &fx.an.compiler;
+    if compiler.class(scope_cid).private_constants.contains(name) {
+        return fx.unsupported(id, "a private-constant reference");
+    }
+    if compiler
+        .class_method_in_chain(scope_cid, "const_missing")
+        .is_some()
+    {
+        return fx.unsupported(id, "a constant read with a `const_missing` hook");
+    }
+    let qualified = if scope == "Object" {
+        name.to_string()
+    } else {
+        format!("{scope}::{name}")
+    };
+    let owner_v = fx.b.ins().iconst(types::I32, i64::from(scope_cid.0));
+    let (nptr, nlen) = rodata_name(fx, name);
+    let (qptr, qlen) = rodata_name(fx, &qualified);
+    let ss = fx.temp_slot();
+    let out = fx.slot_addr(ss, 0);
+    let status = fx
+        .call(
+            "zeo_rt_const_get_scoped",
+            &[owner_v, nptr, nlen, qptr, qlen, out],
+        )
+        .expect("const_get_scoped returns a status");
     fx.fallible(status);
     fx.owned_created += 1;
     Ok(Operand::Slot {
@@ -834,10 +951,20 @@ fn short_circuit(fx: &mut Fx, a: NodeId, b: NodeId, keep_truthy: bool) -> Result
 /// A statically-resolved class/module reference as a Class value (an
 /// immediate: tag + u32 id).
 fn class_value(fx: &mut Fx, id: NodeId, name: &str) -> Result<Operand, String> {
-    let Some(cid) = fx.an.compiler.resolve_class(name, &[], 0) else {
+    let Some(cid) = resolve_class_here(fx, name) else {
         let what = format!("the unresolved constant `{name}`");
         return fx.unsupported(id, &what);
     };
+    class_value_of(fx, id, name, cid)
+}
+
+/// The Class-immediate materialization for an already-resolved id.
+fn class_value_of(
+    fx: &mut Fx,
+    _id: NodeId,
+    _name: &str,
+    cid: crate::compiler::ClassId,
+) -> Result<Operand, String> {
     let ss = fx.temp_slot();
     let dst = fx.slot_addr(ss, 0);
     let fl = MemFlagsData::trusted();

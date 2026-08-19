@@ -51,6 +51,8 @@ capi_symbols!(
     values::zeo_rt_class_of,
     dispatch::zeo_rt_classmethod_site_init,
     objects::zeo_rt_const_get_at,
+    objects::zeo_rt_const_get_cref,
+    objects::zeo_rt_const_get_scoped,
     objects::zeo_rt_const_set_at,
     objects::zeo_rt_cvar_get,
     objects::zeo_rt_cvar_get_checked,

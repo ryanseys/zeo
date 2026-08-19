@@ -255,3 +255,69 @@ pub unsafe extern "C" fn zeo_rt_const_set_at(
     let file = unsafe { super::static_str(file, file_len) };
     crate::constants::const_set_at(owner, name, unsafe { &*v }.clone(), file, line);
 }
+
+/// A BARE constant read resolved through its compile-time cref chain:
+/// `ids` = the owner first, then each enclosing cref scope, then the top
+/// (the emitter's `emit_const_read` order); each entry searches its own
+/// ancestry (`const_get`). Miss = the `const_miss_signal` NameError whose
+/// message carries the pre-qualified name (`Store::Cart::DEFAULT` for a
+/// nested miss, bare at the top level).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_const_get_cref(
+    ids: *const u32,
+    n_ids: usize,
+    name: *const u8,
+    name_len: usize,
+    qualified: *const u8,
+    qualified_len: usize,
+    out: *mut RubyValue,
+) -> i32 {
+    let name = unsafe { super::str_slice(name, name_len) };
+    let ids = unsafe { std::slice::from_raw_parts(ids, n_ids) };
+    for &id in ids {
+        if let Some(v) = crate::constants::const_get(id, name) {
+            super::leakcheck::created(&v);
+            unsafe { out.write(v) };
+            return STATUS_OK;
+        }
+    }
+    let qualified = unsafe { super::str_slice(qualified, qualified_len) };
+    crate::signal::set_pending(crate::builtins::rmodule::const_miss_signal(
+        ClassId(ids[0]),
+        name,
+        &format!("uninitialized constant {qualified}"),
+    ));
+    STATUS_SIGNAL
+}
+
+/// An explicit `Scope::NAME` read: the scope operator's own search
+/// (`const_get_scoped` -- excludes `Object`'s constants for a non-root
+/// scope, ruby's `exclude` flag). Miss = the same NameError shape, with
+/// the path as written.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_const_get_scoped(
+    owner: u32,
+    name: *const u8,
+    name_len: usize,
+    qualified: *const u8,
+    qualified_len: usize,
+    out: *mut RubyValue,
+) -> i32 {
+    let name = unsafe { super::str_slice(name, name_len) };
+    match crate::constants::const_get_scoped(owner, name) {
+        Some(v) => {
+            super::leakcheck::created(&v);
+            unsafe { out.write(v) };
+            STATUS_OK
+        }
+        None => {
+            let qualified = unsafe { super::str_slice(qualified, qualified_len) };
+            crate::signal::set_pending(crate::builtins::rmodule::const_miss_signal(
+                ClassId(owner),
+                name,
+                &format!("uninitialized constant {qualified}"),
+            ));
+            STATUS_SIGNAL
+        }
+    }
+}
