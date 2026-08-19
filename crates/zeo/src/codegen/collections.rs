@@ -214,13 +214,7 @@ pub fn emit_flip_flop(
 /// nodes (the exception prelude, `eval` bodies -- no file) fall back to the
 /// program-wide flag.
 pub fn literal_file_frozen(cx: &Ctx, id: NodeId) -> bool {
-    cx.compiler
-        .hir
-        .span(id)
-        .and_then(|s| (s.file.0 != u32::MAX).then_some(s.file))
-        .and_then(|f| cx.compiler.hir.files.get(f.0 as usize))
-        .map(|sf| sf.frozen_string_literal)
-        .unwrap_or(cx.compiler.hir.frozen_string_literal)
+    cx.compiler.hir.literal_frozen_at(id)
 }
 
 /// A (possibly-interpolated) string literal -- a single `Lit` part (the

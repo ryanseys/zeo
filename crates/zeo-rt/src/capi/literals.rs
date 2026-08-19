@@ -203,6 +203,18 @@ pub unsafe extern "C" fn zeo_rt_str_append_lit(s: *const RubyValue, ptr: *const 
     rs.lock().push_str(text);
 }
 
+/// Append a RAW-BYTE literal segment (a `\xNN` escape): the bytes go in
+/// untouched, so an invalid sequence stays invalid exactly as CRuby's
+/// does.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_str_append_bytes(s: *const RubyValue, ptr: *const u8, len: usize) {
+    let RubyValue::Str(rs) = (unsafe { &*s }) else {
+        panic!("str_append_bytes on a non-string")
+    };
+    let bytes = unsafe { super::byte_slice(ptr, len) };
+    rs.lock().push_bytes(bytes);
+}
+
 /// Append an interpolated value: `try_display_string` dispatches a
 /// user-defined `to_s`, whose raise propagates (catchable at the
 /// interpolation site, CRuby's rule).

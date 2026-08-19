@@ -163,6 +163,7 @@ capi_symbols!(
     signals::zeo_rt_signal_take,
     frames::zeo_rt_stack_check,
     frames::zeo_rt_stamp_backtrace,
+    literals::zeo_rt_str_append_bytes,
     literals::zeo_rt_str_append_lit,
     literals::zeo_rt_str_append_value,
     literals::zeo_rt_str_lit,

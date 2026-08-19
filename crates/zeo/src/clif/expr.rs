@@ -34,15 +34,33 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
         }
         HirNode::NilLit => Ok(Operand::Nil),
         HirNode::StringLit(parts) => {
-            if let Some(text) = pure_literal(parts) {
+            let parts = parts.clone();
+            // A `# encoding:` magic comment tags EVERY literal in the file
+            // with that encoding, byte-built -- and, as rustc's does, skips
+            // the frozen pool. Otherwise a raw-byte segment forces the byte
+            // builder at the SOURCE encoding (an invalid `\xNN` literal
+            // stays UTF-8-and-invalid, matching CRuby), and a purely-UTF-8
+            // literal takes the readable path.
+            let script_enc = script_encoding_id(fx);
+            let enc_id = script_enc.unwrap_or(ENC_UTF8);
+            let bytes_built =
+                script_enc.is_some() || parts.iter().any(|p| matches!(p, StrPart::Bytes(_)));
+            if !bytes_built && let Some(text) = pure_literal(&parts) {
                 let off = fx.em.intern_rodata(text.as_bytes());
-                let len = text.len();
                 let ss = fx.temp_slot();
                 let dst = fx.slot_addr(ss, 0);
                 let ptr = fx.rod(off);
-                let len_v = fx.b.ins().iconst(fx.em.ptr, len as i64);
+                let len_v = fx.b.ins().iconst(fx.em.ptr, text.len() as i64);
                 let enc = fx.b.ins().iconst(types::I8, ENC_UTF8);
-                fx.call("zeo_rt_str_new", &[ptr, len_v, enc, dst]);
+                // `# frozen_string_literal: true`: a non-interpolated
+                // literal IS its interned frozen twin (equal literals share
+                // one object, and mutation raises).
+                let entry = if fx.an.compiler.hir.literal_frozen_at(id) {
+                    "zeo_rt_str_lit"
+                } else {
+                    "zeo_rt_str_new"
+                };
+                fx.call(entry, &[ptr, len_v, enc, dst]);
                 fx.owned_created += 1;
                 return Ok(Operand::Slot {
                     ss,
@@ -50,19 +68,15 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                     tag: TagInfo::Known(ValueTag::Str as u8),
                 });
             }
-            if parts.iter().any(|p| matches!(p, StrPart::Bytes(_))) {
-                return fx.unsupported(id, "a non-UTF-8 string literal");
-            }
-            // Interpolation: a fresh mutable string, literal pieces
-            // appended raw, interpolated values through the runtime's
-            // to_s dispatch (whose raise propagates). Pooled at creation
-            // -- an interp piece can raise mid-build.
-            let parts = parts.clone();
+            // The builder: a fresh mutable string, literal pieces appended
+            // raw, interpolated values through the runtime's to_s dispatch
+            // (whose raise propagates). Pooled at creation -- a piece can
+            // raise mid-build.
             let ss = fx.temp_slot();
             let dst = fx.slot_addr(ss, 0);
             let null = fx.b.ins().iconst(fx.em.ptr, 0);
             let zero = fx.b.ins().iconst(fx.em.ptr, 0);
-            let enc = fx.b.ins().iconst(types::I8, ENC_UTF8);
+            let enc = fx.b.ins().iconst(types::I8, enc_id);
             fx.call("zeo_rt_str_new", &[null, zero, enc, dst]);
             fx.owned_created += 1;
             ownership::pool_owned(fx, dst, TagInfo::Known(ValueTag::Str as u8));
@@ -77,6 +91,15 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                         let len_v = fx.b.ins().iconst(fx.em.ptr, text.len() as i64);
                         fx.call("zeo_rt_str_append_lit", &[dst, ptr, len_v]);
                     }
+                    StrPart::Bytes(raw) => {
+                        if raw.is_empty() {
+                            continue;
+                        }
+                        let off = fx.em.intern_rodata(raw);
+                        let ptr = fx.rod(off);
+                        let len_v = fx.b.ins().iconst(fx.em.ptr, raw.len() as i64);
+                        fx.call("zeo_rt_str_append_bytes", &[dst, ptr, len_v]);
+                    }
                     StrPart::Interp(n) => {
                         let op = lower_expr(fx, *n)?;
                         let p = ownership::borrow_ptr(fx, &op);
@@ -88,7 +111,6 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                             .expect("append_value returns a status");
                         fx.fallible(status);
                     }
-                    StrPart::Bytes(_) => unreachable!("byte segments refused above"),
                 }
             }
             Ok(Operand::Ptr {
@@ -1039,6 +1061,20 @@ pub(crate) fn variant_name(node: &HirNode) -> String {
         .next()
         .unwrap_or("Unknown")
         .to_string()
+}
+
+/// The `EncodingId` a `# encoding:` magic comment puts on every literal in
+/// the program, if one is set. Lowering already normalized the comment to
+/// one of the four names zeo supports (UTF-8 is `None` -- the default).
+fn script_encoding_id(fx: &Fx) -> Option<i64> {
+    let name = fx.an.compiler.hir.script_encoding.as_deref()?;
+    let id = match name {
+        "US_ASCII" => zeo_rt::encoding::US_ASCII,
+        "ASCII_8BIT" => zeo_rt::encoding::ASCII_8BIT,
+        "ISO_8859_1" => zeo_rt::encoding::ISO_8859_1,
+        other => unreachable!("lower::literals normalizes the magic comment; got `{other}`"),
+    };
+    Some(i64::from(id.0))
 }
 
 /// The pure (single non-interpolated UTF-8 part) text of a string literal.

@@ -113,8 +113,10 @@ zeo_rt_signal_save ([]) -> Some(Ptr)
 zeo_rt_signal_set ([U8, Ptr]) -> None
 zeo_rt_signal_take ([Ptr]) -> Some(U8)
 zeo_rt_stack_check ([]) -> Some(I32)
+zeo_rt_str_append_bytes ([Ptr, Ptr, Ptr]) -> None
 zeo_rt_str_append_lit ([Ptr, Ptr, Usize]) -> None
 zeo_rt_str_append_value ([Ptr, Ptr]) -> Some(I32)
+zeo_rt_str_lit ([Ptr, Ptr, U8, Ptr]) -> None
 zeo_rt_str_new ([Ptr, Usize, U8, Ptr]) -> None
 zeo_rt_super_defined ([Ptr, U32, U32]) -> Some(I8)
 zeo_rt_sym_intern ([Ptr, Usize]) -> Some(U32)

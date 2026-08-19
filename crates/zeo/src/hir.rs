@@ -1026,6 +1026,16 @@ impl Hir {
         (0..self.nodes.len() as u32).map(NodeId)
     }
 
+    /// Whether the string literal at `id` is FROZEN: the magic comment is
+    /// per FILE (a required file's setting is its own), falling back to the
+    /// main file's for a synthetic node.
+    pub fn literal_frozen_at(&self, id: NodeId) -> bool {
+        self.span(id)
+            .and_then(|s| (s.file.0 != u32::MAX).then_some(s.file))
+            .and_then(|f| self.files.get(f.0 as usize))
+            .map_or(self.frozen_string_literal, |sf| sf.frozen_string_literal)
+    }
+
     /// The provenance of `id` -- `None` for a synthetic node (see `Span`).
     pub fn span(&self, id: NodeId) -> Option<Span> {
         self.spans[id.0 as usize].known()
