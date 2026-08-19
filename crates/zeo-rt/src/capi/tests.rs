@@ -295,6 +295,101 @@ fn the_block_moves_into_the_c_callee() {
     assert_eq!(strong_count(&watcher), 1, "the callee released the block");
 }
 
+// -- M0-5: CompiledObject, LAYOUTS, and slot ivars ---------------------------
+
+use super::objects::*;
+
+/// One registered layout for these tests: two named ivars + one hidden
+/// member slot, on a class id far outside the builtin range.
+fn test_layout_class() -> u32 {
+    static LAYOUT: crate::compiled_object::ClassLayout = crate::compiled_object::ClassLayout {
+        names: &["a", "b"],
+        hidden: 1,
+    };
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    const CID: u32 = 900_001;
+    ONCE.call_once(|| {
+        crate::compiled_object::register_layout(zeo_abi::ClassId(CID), &LAYOUT);
+    });
+    CID
+}
+
+#[test]
+fn a_compiled_object_allocates_and_slots_roundtrip() {
+    let cid = test_layout_class();
+    let mut obj = MaybeUninit::<RubyValue>::uninit();
+    unsafe { zeo_rt_object_alloc(cid, obj.as_mut_ptr()) };
+    let obj = unsafe { obj.assume_init() };
+    assert_eq!(unsafe { zeo_rt_class_of(&obj) }, cid);
+
+    // Unassigned slot reads nil; a write lands and reads back.
+    let mut out = MaybeUninit::<RubyValue>::uninit();
+    unsafe { zeo_rt_ivar_get_slot(&obj, 0, out.as_mut_ptr()) };
+    assert!(matches!(unsafe { out.assume_init() }, RubyValue::Nil));
+    let mut v = MaybeUninit::new(RubyValue::Int(5));
+    assert_eq!(
+        unsafe { zeo_rt_ivar_set_slot(&obj, 1, v.as_mut_ptr()) },
+        STATUS_OK
+    );
+    let mut out = MaybeUninit::<RubyValue>::uninit();
+    unsafe { zeo_rt_ivar_get_slot(&obj, 1, out.as_mut_ptr()) };
+    assert!(matches!(unsafe { out.assume_init() }, RubyValue::Int(5)));
+
+    // Reflection reports first-assignment order and skips the hidden slot.
+    let RubyValue::Object(o) = &obj else { panic!() };
+    let mut h = MaybeUninit::new(RubyValue::Int(9));
+    assert_eq!(
+        unsafe { zeo_rt_ivar_set_slot(&obj, 2, h.as_mut_ptr()) },
+        STATUS_OK
+    );
+    assert_eq!(
+        o.ivar_pairs()
+            .into_iter()
+            .map(|(n, _)| n)
+            .collect::<Vec<_>>(),
+        vec!["@b".to_string()],
+        "members are not instance variables"
+    );
+    assert!(matches!(o.hidden_ivar_get(0), Some(RubyValue::Int(9))));
+}
+
+#[test]
+fn frozen_state_flows_through_the_object() {
+    // The REFUSAL side (a frozen write raising FrozenError) constructs an
+    // exception, which the registry-less unit environment cannot -- the
+    // M0 slice goldens cover it. Here: the flag itself and the clean check.
+    let cid = test_layout_class();
+    let mut obj = MaybeUninit::<RubyValue>::uninit();
+    unsafe { zeo_rt_object_alloc(cid, obj.as_mut_ptr()) };
+    let obj = unsafe { obj.assume_init() };
+    assert_eq!(unsafe { zeo_rt_frozen_check(&obj) }, STATUS_OK);
+    let RubyValue::Object(o) = &obj else { panic!() };
+    assert!(!o.is_frozen());
+    o.set_frozen();
+    assert!(o.is_frozen());
+}
+
+#[test]
+fn dup_object_shares_handles_and_dup_starts_unfrozen() {
+    let cid = test_layout_class();
+    let mut obj = MaybeUninit::<RubyValue>::uninit();
+    unsafe { zeo_rt_object_alloc(cid, obj.as_mut_ptr()) };
+    let obj = unsafe { obj.assume_init() };
+    let payload = a_string("shared");
+    let mut v = MaybeUninit::new(payload.clone());
+    unsafe { zeo_rt_ivar_set_slot(&obj, 0, v.as_mut_ptr()) };
+    let RubyValue::Object(o) = &obj else { panic!() };
+    o.set_frozen();
+    let copy = o.dup_object(false);
+    assert!(!copy.is_frozen());
+    assert_eq!(strong_count(&payload), 3, "shallow: the handle is shared");
+    let clone = o.dup_object(true);
+    assert!(clone.is_frozen());
+    drop(copy);
+    drop(clone);
+    assert_eq!(strong_count(&payload), 2);
+}
+
 // The raise channels (`zeo_rt_raise_error`, `zeo_rt_wrong_arity`) are
 // untestable registry-less: the documented loud panic cannot unwind out of
 // an `extern "C"` fn (it aborts, per decision 13's boundary posture). They

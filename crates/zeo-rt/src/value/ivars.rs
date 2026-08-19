@@ -48,6 +48,14 @@ use parking_lot::Mutex;
 /// `0` means "never assigned"; every real stamp is 1-based.
 type Seq = u8;
 
+/// The value-slot storage a cell is generic over: the const-size inline
+/// arrays `ruby_class!` structs embed ([`IvarCell`]), or the boxed slices
+/// the size-erased [`IvarSlots`] holds for `CompiledObject` (whose slot
+/// count is only known at `register_program` time). One bound name so the
+/// impl blocks below stay readable.
+pub trait Store<T>: AsRef<[T]> + AsMut<[T]> {}
+impl<T, A: AsRef<[T]> + AsMut<[T]>> Store<T> for A {}
+
 /// An ivar the class body never declared, assigned by `instance_variable_set`
 /// or by a method a runtime path added. Carries its own stamp so it interleaves
 /// with the declared slots in assignment order.
@@ -57,11 +65,11 @@ struct Invented {
     seq: Seq,
 }
 
-struct Inner<const N: usize> {
+struct Inner<V, Q> {
     /// `Nil` until assigned -- so a read needs no branch. `seq` is what says
     /// whether the `Nil` is real.
-    vals: [RubyValue; N],
-    seq: [Seq; N],
+    vals: V,
+    seq: Q,
     next_seq: Seq,
     /// `None` for the overwhelmingly common object that invents nothing. A
     /// `Vec` rather than a map: invented ivars are few, a linear scan over a
@@ -75,7 +83,7 @@ struct Inner<const N: usize> {
     invented: Option<Box<Vec<Invented>>>,
 }
 
-impl<const N: usize> Inner<N> {
+impl<V: Store<RubyValue>, Q: Store<Seq>> Inner<V, Q> {
     /// The next stamp, renumbering everything live if the counter is about to
     /// wrap. Renumbering preserves relative order, so what callers observe
     /// never changes -- an object would need 255 assignments to DISTINCT ivars
@@ -93,13 +101,19 @@ impl<const N: usize> Inner<N> {
     #[cold]
     #[inline(never)]
     fn compact(&mut self) {
-        let mut live: Vec<Seq> = self.seq.iter().copied().filter(|s| *s != 0).collect();
+        let mut live: Vec<Seq> = self
+            .seq
+            .as_ref()
+            .iter()
+            .copied()
+            .filter(|s| *s != 0)
+            .collect();
         if let Some(inv) = &self.invented {
             live.extend(inv.iter().map(|i| i.seq));
         }
         live.sort_unstable();
         let rank = |s: Seq| (live.partition_point(|l| *l < s) as Seq) + 1;
-        for s in self.seq.iter_mut().filter(|s| **s != 0) {
+        for s in self.seq.as_mut().iter_mut().filter(|s| **s != 0) {
             *s = rank(*s);
         }
         if let Some(inv) = &mut self.invented {
@@ -115,8 +129,8 @@ impl<const N: usize> Inner<N> {
     }
 }
 
-pub struct IvarCell<const N: usize> {
-    inner: Mutex<Inner<N>>,
+pub struct IvarCellCore<V: Store<RubyValue>, Q: Store<Seq>> {
+    inner: Mutex<Inner<V, Q>>,
     /// The thread currently inside an accessor, or `0`. Only a diagnostic: it
     /// converts the hang a re-entrant access would otherwise cause into a
     /// panic that names the slot. Debug builds only, which is where it earns
@@ -125,10 +139,21 @@ pub struct IvarCell<const N: usize> {
     holder: std::sync::atomic::AtomicU64,
     /// The one thread that has taken the lock-free path on this cell, or `0`.
     /// A diagnostic for the sole-thread invariant -- see
-    /// [`IvarCell::note_fast_thread`]. Debug builds only.
+    /// [`IvarCellCore::note_fast_thread`]. Debug builds only.
     #[cfg(debug_assertions)]
     fast_owner: std::sync::atomic::AtomicU64,
 }
+
+/// The compiled-class cell `ruby_class!` structs embed -- the name and
+/// shape generated programs spell (`zeo_rt::IvarCell<3>`), now an alias
+/// over the storage-generic core.
+pub type IvarCell<const N: usize> = IvarCellCore<[RubyValue; N], [Seq; N]>;
+
+/// The size-erased twin: the same cell over boxed slices, for
+/// `CompiledObject`, whose slot count only exists at `register_program`
+/// time. Same lock, same sole-thread fast path, same stamps -- one
+/// implementation, two storage shapes.
+pub type IvarSlots = IvarCellCore<Box<[RubyValue]>, Box<[Seq]>>;
 
 impl<const N: usize> Default for IvarCell<N> {
     fn default() -> Self {
@@ -136,31 +161,31 @@ impl<const N: usize> Default for IvarCell<N> {
     }
 }
 
-/// Pairs the real guard with clearing [`IvarCell::holder`] on the way out, so
-/// an unwinding accessor cannot leave a stale owner behind.
+/// Pairs the real guard with clearing [`IvarCellCore::holder`] on the way
+/// out, so an unwinding accessor cannot leave a stale owner behind.
 #[cfg(debug_assertions)]
-struct Held<'a, const N: usize> {
-    cell: &'a IvarCell<N>,
-    guard: parking_lot::MutexGuard<'a, Inner<N>>,
+struct Held<'a, V: Store<RubyValue>, Q: Store<Seq>> {
+    cell: &'a IvarCellCore<V, Q>,
+    guard: parking_lot::MutexGuard<'a, Inner<V, Q>>,
 }
 
 #[cfg(debug_assertions)]
-impl<const N: usize> std::ops::Deref for Held<'_, N> {
-    type Target = Inner<N>;
-    fn deref(&self) -> &Inner<N> {
+impl<V: Store<RubyValue>, Q: Store<Seq>> std::ops::Deref for Held<'_, V, Q> {
+    type Target = Inner<V, Q>;
+    fn deref(&self) -> &Inner<V, Q> {
         &self.guard
     }
 }
 
 #[cfg(debug_assertions)]
-impl<const N: usize> std::ops::DerefMut for Held<'_, N> {
-    fn deref_mut(&mut self) -> &mut Inner<N> {
+impl<V: Store<RubyValue>, Q: Store<Seq>> std::ops::DerefMut for Held<'_, V, Q> {
+    fn deref_mut(&mut self) -> &mut Inner<V, Q> {
         &mut self.guard
     }
 }
 
 #[cfg(debug_assertions)]
-impl<const N: usize> Drop for Held<'_, N> {
+impl<V: Store<RubyValue>, Q: Store<Seq>> Drop for Held<'_, V, Q> {
     fn drop(&mut self) {
         self.cell
             .holder
@@ -184,24 +209,24 @@ impl<const N: usize> Drop for Held<'_, N> {
 ///
 /// An object holding no other object -- the overwhelmingly common one -- pays a
 /// scan of its slots and nothing else.
-impl<const N: usize> Drop for IvarCell<N> {
+impl<V: Store<RubyValue>, Q: Store<Seq>> Drop for IvarCellCore<V, Q> {
     #[inline]
     fn drop(&mut self) {
         let inner = self.inner.get_mut();
-        if inner.invented.is_none() && !inner.vals.iter().any(|v| v.links_to_object()) {
+        if inner.invented.is_none() && !inner.vals.as_ref().iter().any(|v| v.links_to_object()) {
             return;
         }
         self.release_chain();
     }
 }
 
-impl<const N: usize> IvarCell<N> {
+impl<V: Store<RubyValue>, Q: Store<Seq>> IvarCellCore<V, Q> {
     #[cold]
     #[inline(never)]
     fn release_chain(&mut self) {
         let inner = self.inner.get_mut();
         let mut work: Vec<RubyValue> = Vec::new();
-        for v in inner.vals.iter_mut() {
+        for v in inner.vals.as_mut().iter_mut() {
             if v.links_to_object() {
                 work.push(std::mem::replace(v, RubyValue::Nil));
             }
@@ -221,12 +246,14 @@ impl<const N: usize> IvarCell<N> {
         }
     }
 
+    /// Wrap freshly-built storage (every slot `Nil`, every stamp 0) -- the
+    /// shared tail of the two aliases' constructors.
     #[inline]
-    pub fn new() -> Self {
+    fn from_storage(vals: V, seq: Q) -> Self {
         Self {
             inner: Mutex::new(Inner {
-                vals: std::array::from_fn(|_| RubyValue::Nil),
-                seq: [0; N],
+                vals,
+                seq,
                 next_seq: 1,
                 invented: None,
             }),
@@ -238,7 +265,7 @@ impl<const N: usize> IvarCell<N> {
     }
 
     #[cfg(debug_assertions)]
-    fn held(&self) -> Held<'_, N> {
+    fn held(&self) -> Held<'_, V, Q> {
         use std::sync::atomic::Ordering;
         // `ThreadId` has no stable numeric form, so this hashes it. A
         // collision would only ever cost a false panic in a debug build, and
@@ -264,7 +291,7 @@ impl<const N: usize> IvarCell<N> {
 
     #[cfg(not(debug_assertions))]
     #[inline(always)]
-    fn held(&self) -> parking_lot::MutexGuard<'_, Inner<N>> {
+    fn held(&self) -> parking_lot::MutexGuard<'_, Inner<V, Q>> {
         self.inner.lock()
     }
 
@@ -307,7 +334,7 @@ impl<const N: usize> IvarCell<N> {
     /// [`crate::RubyObject::take_linked_ivars`]' storage half.
     pub fn take_linked(&self, out: &mut Vec<RubyValue>) {
         let mut inner = self.held();
-        for v in inner.vals.iter_mut() {
+        for v in inner.vals.as_mut().iter_mut() {
             if v.links_to_object() {
                 out.push(std::mem::replace(v, RubyValue::Nil));
             }
@@ -324,9 +351,9 @@ impl<const N: usize> IvarCell<N> {
             // SAFETY: see the module docs. No other thread can reach this cell
             // while `sole_thread` holds, and this borrow ends before the clone
             // returns -- nothing here calls Ruby, so nothing can re-enter.
-            return unsafe { (*self.inner.data_ptr()).vals[index].clone() };
+            return unsafe { (*self.inner.data_ptr()).vals.as_ref()[index].clone() };
         }
-        self.held().vals[index].clone()
+        self.held().vals.as_ref()[index].clone()
     }
 
     #[inline(always)]
@@ -337,48 +364,39 @@ impl<const N: usize> IvarCell<N> {
             // guard -- releasing an object graph reaches other cells, never
             // this one, which the caller is holding a reference to.
             let inner = unsafe { &mut *self.inner.data_ptr() };
-            if inner.seq[index] == 0 {
-                inner.seq[index] = inner.stamp();
+            if inner.seq.as_ref()[index] == 0 {
+                let s = inner.stamp();
+                inner.seq.as_mut()[index] = s;
             }
-            inner.vals[index] = value;
+            inner.vals.as_mut()[index] = value;
             return;
         }
         let mut inner = self.held();
-        if inner.seq[index] == 0 {
-            inner.seq[index] = inner.stamp();
+        if inner.seq.as_ref()[index] == 0 {
+            let s = inner.stamp();
+            inner.seq.as_mut()[index] = s;
         }
-        inner.vals[index] = value;
-    }
-
-    /// The first assignment to every slot at once, as `initialize` makes it:
-    /// one lock instead of one per ivar, and no per-slot "has this been
-    /// assigned yet" branch, because a fresh object's answer is always no.
-    #[inline]
-    pub fn init(&self, values: [RubyValue; N]) {
-        let mut inner = self.held();
-        inner.vals = values;
-        inner.seq = std::array::from_fn(|i| i as Seq + 1);
-        inner.next_seq = N as Seq + 1;
+        inner.vals.as_mut()[index] = value;
     }
 
     #[inline(always)]
     pub fn defined(&self, index: usize) -> bool {
         if self.unlocked() {
             // SAFETY: as in `get`.
-            return unsafe { (*self.inner.data_ptr()).seq[index] != 0 };
+            return unsafe { (*self.inner.data_ptr()).seq.as_ref()[index] != 0 };
         }
-        self.held().seq[index] != 0
+        self.held().seq.as_ref()[index] != 0
     }
 
     /// `remove_instance_variable`: empties the slot and answers the old value,
     /// or `None` for a slot never assigned (the caller raises `NameError`).
     pub fn take(&self, index: usize) -> Option<RubyValue> {
         let mut inner = self.held();
-        if inner.seq[index] == 0 {
+        if inner.seq.as_ref()[index] == 0 {
             return None;
         }
-        inner.seq[index] = 0;
-        let old = std::mem::replace(&mut inner.vals[index], RubyValue::Nil);
+        inner.seq.as_mut()[index] = 0;
+        let old = std::mem::replace(&mut inner.vals.as_mut()[index], RubyValue::Nil);
         drop(inner);
         Some(old)
     }
@@ -445,8 +463,14 @@ impl<const N: usize> IvarCell<N> {
         let mut out: Vec<(Seq, String, RubyValue)> = names
             .iter()
             .enumerate()
-            .filter(|(i, _)| inner.seq[*i] != 0)
-            .map(|(i, n)| (inner.seq[i], format!("@{n}"), inner.vals[i].clone()))
+            .filter(|(i, _)| inner.seq.as_ref()[*i] != 0)
+            .map(|(i, n)| {
+                (
+                    inner.seq.as_ref()[i],
+                    format!("@{n}"),
+                    inner.vals.as_ref()[i].clone(),
+                )
+            })
             .collect();
         if let Some(inv) = &inner.invented {
             out.extend(
@@ -468,8 +492,8 @@ impl<const N: usize> IvarCell<N> {
     pub fn values(&self, declared: usize) -> Vec<RubyValue> {
         let inner = self.held();
         let mut out: Vec<(Seq, RubyValue)> = (0..declared)
-            .filter(|i| inner.seq[*i] != 0)
-            .map(|i| (inner.seq[i], inner.vals[i].clone()))
+            .filter(|i| inner.seq.as_ref()[*i] != 0)
+            .map(|i| (inner.seq.as_ref()[i], inner.vals.as_ref()[i].clone()))
             .collect();
         if let Some(inv) = &inner.invented {
             out.extend(inv.iter().map(|i| (i.seq, i.value.clone())));
@@ -479,13 +503,16 @@ impl<const N: usize> IvarCell<N> {
         out.into_iter().map(|(_, v)| v).collect()
     }
 
-    /// `dup`/`clone`'s shallow copy: every value cloned as a HANDLE, so nested
-    /// objects stay shared, and the assignment order carried over with them.
-    pub fn duplicate(&self) -> Self {
+    /// `dup`/`clone`'s shallow-copy core: every value cloned as a HANDLE, so
+    /// nested objects stay shared, and the assignment order carried over with
+    /// them. `make` rebuilds the two storages from the guarded views (the one
+    /// step the storage shape owns -- see the two `duplicate`s below).
+    fn duplicate_with(&self, make: impl FnOnce(&[RubyValue], &[Seq]) -> (V, Q)) -> Self {
         let inner = self.held();
+        let (vals, seq) = make(inner.vals.as_ref(), inner.seq.as_ref());
         let copy = Inner {
-            vals: std::array::from_fn(|i| inner.vals[i].clone()),
-            seq: inner.seq,
+            vals,
+            seq,
             next_seq: inner.next_seq,
             invented: inner.invented.as_ref().map(|inv| {
                 Box::new(
@@ -500,13 +527,63 @@ impl<const N: usize> IvarCell<N> {
             }),
         };
         drop(inner);
+        Self::from_storage_inner(copy)
+    }
+
+    #[inline]
+    fn from_storage_inner(inner: Inner<V, Q>) -> Self {
         Self {
-            inner: Mutex::new(copy),
+            inner: Mutex::new(inner),
             #[cfg(debug_assertions)]
             holder: std::sync::atomic::AtomicU64::new(0),
             #[cfg(debug_assertions)]
             fast_owner: std::sync::atomic::AtomicU64::new(0),
         }
+    }
+}
+
+impl<const N: usize> IvarCell<N> {
+    #[inline]
+    pub fn new() -> Self {
+        Self::from_storage(std::array::from_fn(|_| RubyValue::Nil), [0; N])
+    }
+
+    /// The first assignment to every slot at once, as `initialize` makes it:
+    /// one lock instead of one per ivar, and no per-slot "has this been
+    /// assigned yet" branch, because a fresh object's answer is always no.
+    #[inline]
+    pub fn init(&self, values: [RubyValue; N]) {
+        let mut inner = self.held();
+        inner.vals = values;
+        inner.seq = std::array::from_fn(|i| i as Seq + 1);
+        inner.next_seq = N as Seq + 1;
+    }
+
+    /// `dup`/`clone`'s shallow copy -- see [`IvarCellCore::duplicate_with`].
+    pub fn duplicate(&self) -> Self {
+        self.duplicate_with(|vals, seq| {
+            (
+                std::array::from_fn(|i| vals[i].clone()),
+                std::array::from_fn(|i| seq[i]),
+            )
+        })
+    }
+}
+
+impl IvarSlots {
+    /// A fresh size-erased cell with `n` slots, every one `Nil`/unassigned
+    /// -- `CompiledObject`'s allocator, `n` from the class's `LAYOUTS` row.
+    #[inline]
+    pub fn with_len(n: usize) -> Self {
+        Self::from_storage(
+            std::iter::repeat_with(|| RubyValue::Nil).take(n).collect(),
+            vec![0; n].into_boxed_slice(),
+        )
+    }
+
+    /// `dup`/`clone`'s shallow copy -- see [`IvarCellCore::duplicate_with`].
+    pub fn duplicate(&self) -> Self {
+        self.duplicate_with(|vals, seq| (vals.to_vec().into_boxed_slice(), seq.into()))
     }
 }
 

@@ -25,6 +25,7 @@
 
 pub mod dispatch;
 pub mod frames;
+pub mod objects;
 pub mod signals;
 pub mod values;
 

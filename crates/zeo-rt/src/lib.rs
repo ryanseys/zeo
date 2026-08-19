@@ -23,6 +23,7 @@ mod builtins;
 pub mod capi;
 mod catch;
 mod civars;
+pub mod compiled_object;
 
 mod constants;
 mod cvars;
