@@ -37,11 +37,18 @@ use crate::regexp::{RMatchData, RRegexp};
 use crate::thread::{RMutex, RQueue, RThread};
 use crate::{RObj, RProc, Symbol};
 
+// `repr(C, u8)` = tag byte + payload union: size 24, align 8, every payload
+// at offset 8, `Option`/`Result` niches preserved -- asserted by the
+// `abi_layout` test below. Discriminants are `zeo_abi::abi::ValueTag`'s
+// numbers: immediates (no `Arc` payload -- a plain 24-byte copy) below
+// `FIRST_HEAP_TAG` (16), heap variants from 16, source order within each
+// band.
 #[derive(Clone)]
+#[repr(C, u8)]
 pub enum RubyValue {
-    Nil,
-    Bool(bool),
-    Int(i64),
+    Nil = 0,
+    Bool(bool) = 1,
+    Int(i64) = 2,
     /// An `Integer` beyond `i64` (the full-bignum decision).
     /// INVARIANT: never holds an i64-range value -- every construction
     /// funnels through `builtins::integer::int_value`, which demotes to
@@ -49,53 +56,53 @@ pub enum RubyValue {
     /// canonical (a `BigInt(5)` can never exist alongside `Int(5)`).
     /// `class_id()` is `INTEGER_CLASS` -- one Ruby class, two payloads.
     /// Always-frozen immediate tier, like `Int`.
-    BigInt(std::sync::Arc<num_bigint::BigInt>),
-    Float(f64),
+    BigInt(std::sync::Arc<num_bigint::BigInt>) = 16,
+    Float(f64) = 3,
     /// A `Rational` -- always reduced, `den > 0`, bignum
     /// components; see `builtins::rational`. Always-frozen immediate tier.
-    Rational(crate::builtins::rational::RRational),
+    Rational(crate::builtins::rational::RRational) = 17,
     /// A `Complex` -- two components that keep their own
     /// numeric class (Integer|Float|Rational); see `builtins::complex`.
     /// Always-frozen immediate tier.
-    Complex(crate::builtins::complex::RComplex),
-    Symbol(Symbol),
-    Str(RStr),
-    Array(RArray),
-    Hash(RHash),
+    Complex(crate::builtins::complex::RComplex) = 18,
+    Symbol(Symbol) = 4,
+    Str(RStr) = 19,
+    Array(RArray) = 20,
+    Hash(RHash) = 21,
     /// `a..b` / `a...b` -- see `builtins::range::RangeData`.
-    Range(crate::builtins::range::RRange),
-    Object(RObj),
+    Range(crate::builtins::range::RRange) = 22,
+    Object(RObj) = 23,
     /// A real, escaping block/`Proc` -- see `rproc`'s module docs.
-    Proc(RProc),
+    Proc(RProc) = 24,
     /// A real, `regex`-crate-backed `Regexp` -- see
     /// `regexp`'s module docs.
-    Regexp(RRegexp),
+    Regexp(RRegexp) = 25,
     /// A successful `Regexp#match`/`String#match` result.
-    MatchData(RMatchData),
+    MatchData(RMatchData) = 26,
     /// A `Fiber` -- the Send+Sync HANDLE only; the actual
     /// coroutine is thread-pinned in `fiber::FIBERS` (see that module's
     /// docs for why it can't live here).
-    Fiber(RFiber),
+    Fiber(RFiber) = 27,
     /// An `Enumerator` -- captures `(receiver, method, args)`
     /// or an `Enumerator.new` generator block; external iteration state is
     /// a thread-pinned fiber, same split as `Fiber` (see
     /// `builtins::enumerator`'s module docs).
-    Enumerator(crate::builtins::enumerator::REnumerator),
+    Enumerator(crate::builtins::enumerator::REnumerator) = 28,
     /// An `Enumerator::Yielder` -- the `y` in
     /// `Enumerator.new { |y| y << 1 }`, wrapping the each-block currently
     /// being driven (`y << v` / `y.yield v` forward to it).
-    Yielder(RProc),
+    Yielder(RProc) = 29,
     /// A `Thread` -- a real OS thread, truly parallel by default; see
     /// `thread`'s module docs.
-    Thread(RThread),
+    Thread(RThread) = 30,
     /// A Ruby `Mutex` -- non-reentrant, per-execution-context
     /// owned, like CRuby's.
-    Mutex(RMutex),
+    Mutex(RMutex) = 31,
     /// A `Queue` -- blocking pop, closable.
-    Queue(RQueue),
+    Queue(RQueue) = 32,
     /// A `Ractor` -- a real OS thread with a frozen-or-copy
     /// message boundary; see `ractor`'s module docs.
-    Ractor(RRactor),
+    Ractor(RRactor) = 33,
     /// A first-class class/module VALUE -- `x = Widget`,
     /// `w.class`, a rescue binding's `.class`, classes stored in
     /// collections. `Copy` payload, always frozen (like the immediates);
@@ -105,7 +112,7 @@ pub enum RubyValue {
     /// `Class.new`, in the `runtime_meta` overlay (an id at/above
     /// `zeo_abi::RUNTIME_CLASS_ID_BASE`), which those same accessors
     /// consult. A runtime class's instances are `runtime_meta::DynObject`s.
-    Class(ClassId),
+    Class(ClassId) = 5,
 }
 
 // Hand-written rather than `#[derive(Debug)]`: `Object`'s payload is
@@ -2082,5 +2089,112 @@ mod tests {
             panic!("expected two mutexes")
         };
         assert!(!std::sync::Arc::ptr_eq(a, b), "fresh mutex, not an alias");
+    }
+}
+
+/// The `zeo_abi::abi` layout contract, asserted against the real types --
+/// the Cranelift backend reads/writes values through these numbers, so a
+/// drift here is generated code corrupting memory.
+#[cfg(test)]
+mod abi_layout {
+    use super::*;
+    use crate::{array_new, hash_new, string_new};
+    use std::mem::{align_of, size_of};
+    use zeo_abi::abi::{self, ValueTag};
+
+    fn tag(v: &RubyValue) -> u8 {
+        unsafe { *(v as *const RubyValue as *const u8).add(abi::TAG_OFFSET) }
+    }
+
+    fn payload<T: Copy>(v: &RubyValue) -> T {
+        unsafe {
+            (v as *const RubyValue as *const u8)
+                .add(abi::PAYLOAD_OFFSET)
+                .cast::<T>()
+                .read()
+        }
+    }
+
+    #[test]
+    fn value_size_and_align() {
+        assert_eq!(size_of::<RubyValue>(), abi::VALUE_SIZE);
+        assert_eq!(align_of::<RubyValue>(), abi::VALUE_ALIGN);
+        // The niches `repr(C, u8)` must not cost: `Option<RubyValue>` stays
+        // one value wide, and the `Result` every body returns today stays
+        // 32 bytes.
+        assert_eq!(size_of::<Option<RubyValue>>(), abi::VALUE_SIZE);
+        assert_eq!(size_of::<Result<RubyValue, crate::Signal>>(), 32);
+    }
+
+    #[test]
+    fn immediate_tags_and_payload_offsets() {
+        // The six inline-known payloads: tag byte at 0, payload at 8.
+        assert_eq!(tag(&RubyValue::Nil), ValueTag::Nil as u8);
+        let b = RubyValue::Bool(true);
+        assert_eq!(tag(&b), ValueTag::Bool as u8);
+        assert_eq!(payload::<u8>(&b), 1);
+        let i = RubyValue::Int(0x1122_3344_5566_7788);
+        assert_eq!(tag(&i), ValueTag::Int as u8);
+        assert_eq!(payload::<i64>(&i), 0x1122_3344_5566_7788);
+        let f = RubyValue::Float(1.5);
+        assert_eq!(tag(&f), ValueTag::Float as u8);
+        assert_eq!(payload::<f64>(&f), 1.5);
+        let sym = Symbol::intern("abi_layout_probe");
+        let s = RubyValue::Symbol(sym);
+        assert_eq!(tag(&s), ValueTag::Symbol as u8);
+        assert_eq!(payload::<u32>(&s), sym.to_u32());
+        let c = RubyValue::Class(ClassId(7));
+        assert_eq!(tag(&c), ValueTag::Class as u8);
+        assert_eq!(payload::<u32>(&c), 7);
+        // All six sit in the memcpy band.
+        for v in [&RubyValue::Nil, &b, &i, &f, &s, &c] {
+            assert!(tag(v) < abi::FIRST_HEAP_TAG);
+        }
+    }
+
+    #[test]
+    fn heap_tags() {
+        // Representative heap variants (the rest are pinned by their
+        // explicit source discriminants, which mirror `ValueTag` verbatim;
+        // Fiber/Thread/Ractor values need live runtime machinery a unit
+        // test shouldn't spin up).
+        let cases = [
+            (
+                RubyValue::BigInt(std::sync::Arc::new(num_bigint::BigInt::from(1) << 80)),
+                ValueTag::BigInt,
+            ),
+            (RubyValue::Str(string_new("x".to_string())), ValueTag::Str),
+            (RubyValue::Array(array_new(vec![])), ValueTag::Array),
+            (RubyValue::Hash(hash_new(vec![])), ValueTag::Hash),
+        ];
+        for (v, want) in &cases {
+            assert_eq!(tag(v), *want as u8);
+            assert!(tag(v) >= abi::FIRST_HEAP_TAG);
+        }
+    }
+
+    #[test]
+    fn site_struct_sizes() {
+        assert_eq!(size_of::<crate::CallSite>(), abi::CALLSITE_SIZE);
+        assert_eq!(size_of::<crate::DynCallerSite>(), abi::DYNCALLER_SITE_SIZE);
+        assert_eq!(
+            size_of::<crate::ClassMethodSite>(),
+            abi::CLASSMETHOD_SITE_SIZE
+        );
+        assert_eq!(size_of::<crate::ConstSite>(), abi::CONST_SITE_SIZE);
+        assert_eq!(size_of::<crate::CivarSite>(), abi::CIVAR_SITE_SIZE);
+        assert_eq!(size_of::<crate::RegexpSite>(), abi::REGEXP_SITE_SIZE);
+        assert_eq!(size_of::<crate::ffi::FfiSymSite>(), abi::FFISYM_SITE_SIZE);
+        for a in [
+            align_of::<crate::CallSite>(),
+            align_of::<crate::DynCallerSite>(),
+            align_of::<crate::ClassMethodSite>(),
+            align_of::<crate::ConstSite>(),
+            align_of::<crate::CivarSite>(),
+            align_of::<crate::RegexpSite>(),
+            align_of::<crate::ffi::FfiSymSite>(),
+        ] {
+            assert_eq!(a, abi::SITE_ALIGN);
+        }
     }
 }

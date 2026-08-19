@@ -18,6 +18,7 @@
 //! Zero dependencies, on purpose: keeping the runtime's heavy deps out of
 //! every compiler build -- a dependency-free leaf has no such cost.
 
+pub mod abi;
 mod errno;
 pub mod ffi;
 
