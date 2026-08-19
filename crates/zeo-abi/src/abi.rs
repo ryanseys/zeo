@@ -305,9 +305,14 @@ pub struct MetaRowC {
 
 /// One registrar call today's generated `main` makes that is not a method
 /// row (includes/extends, aliases, undefs, super-target bridges, boot
-/// redefs, singleton surrogates, ...). The `kind` numbering lands with the
-/// emitter arms that produce each row (M1); until then `register_program`
-/// refuses any row loudly.
+/// redefs, singleton surrogates, ...). Each `kind` number lands with the
+/// emitter arm that produces it; `register_program` refuses an unknown
+/// kind loudly.
+///
+/// Kinds so far:
+/// - [`REG_MARK_OWN_CLASS_METHOD_ROWS`]: `a` = the method name a
+///   `def self.x` WROTE on `class` (reflection's `Method#owner` truth,
+///   as opposed to the materialized copies descendants dispatch through).
 #[repr(C)]
 pub struct RegRow {
     pub kind: u8,
@@ -319,6 +324,9 @@ pub struct RegRow {
     pub n_ids: usize,
     pub flag: u8,
 }
+
+/// `RegRow.kind`: mark `a` as a class-method name `class` itself wrote.
+pub const REG_MARK_OWN_CLASS_METHOD_ROWS: u8 = 1;
 
 /// A lazily-run feature unit -- the `install_feature_units` twin.
 #[repr(C)]

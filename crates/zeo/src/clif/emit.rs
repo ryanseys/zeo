@@ -165,8 +165,13 @@ pub fn compile_jit(analyzed: &Analyzed) -> Result<Jitted, String> {
 fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String> {
     let defs = collect_methods(em, analyzed)?;
     let collected = super::classes::collect_classes(em, analyzed)?;
-    let (class_specs, obj_methods, class_vis) =
-        (collected.classes, collected.methods, collected.vis);
+    let (class_specs, obj_methods, cm_methods, own_cm, class_vis) = (
+        collected.classes,
+        collected.methods,
+        collected.class_methods,
+        collected.own_cm,
+        collected.vis,
+    );
     for def in &defs {
         let func = em.methods[&def.name].body;
         let spec = BodyFnSpec {
@@ -179,6 +184,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             node: def.node,
             has_blk: def.has_blk,
             ruby2_keywords: def.ruby2_keywords,
+            self_is_class: false,
         };
         define_method_body(em, analyzed, &spec)?;
     }
@@ -194,15 +200,32 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
                 node: m.node,
                 has_blk: m.has_blk,
                 ruby2_keywords: m.ruby2_keywords,
+                self_is_class: false,
             };
             define_method_body(em, analyzed, &spec)?;
         }
+    }
+    for m in &cm_methods {
+        let spec = BodyFnSpec {
+            func: m.body_fn,
+            owner: m.owner,
+            owner_name: &m.owner_name,
+            name: &m.name,
+            hir_params: &m.hir_params,
+            body: &m.body,
+            node: m.node,
+            has_blk: m.has_blk,
+            ruby2_keywords: m.ruby2_keywords,
+            self_is_class: true,
+        };
+        define_method_body(em, analyzed, &spec)?;
     }
     for def in &defs {
         let decl = &em.methods[&def.name];
         let (tramp, body, has_blk) = (decl.tramp, decl.body, decl.has_blk);
         let idx = em.next_fn_index();
-        let (file, label, line, end_line) = method_frame(analyzed, "Object", &def.name, def.node);
+        let (file, label, line, end_line) =
+            method_frame(analyzed, "Object", &def.name, def.node, false);
         let spec = super::params::TrampSpec {
             tramp,
             body,
@@ -224,7 +247,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             }
             (None, Some(body)) => {
                 let (file, label, line, end_line) =
-                    method_frame(analyzed, &m.owner_name, &m.name, m.node);
+                    method_frame(analyzed, &m.owner_name, &m.name, m.node, false);
                 let spec = super::params::TrampSpec {
                     tramp: m.tramp,
                     body,
@@ -242,6 +265,23 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
                 unreachable!("collect_classes declares exactly one of accessor/body")
             }
         }
+    }
+    for m in &cm_methods {
+        let idx = em.next_fn_index();
+        let (file, label, line, end_line) =
+            method_frame(analyzed, &m.owner_name, &m.name, m.node, true);
+        let spec = super::params::TrampSpec {
+            tramp: m.tramp,
+            body: m.body_fn,
+            params: &m.hir_params,
+            has_blk: m.has_blk,
+            name: &m.name,
+            file: file.as_deref(),
+            label: &label,
+            line,
+            end_line,
+        };
+        super::params::define_trampoline(em, &spec, idx)?;
     }
     let toplevel = define_toplevel(em, analyzed)?;
     let unit_init = statics::define_unit_init(em)?;
@@ -280,6 +320,22 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             f: m.tramp,
         })
         .collect();
+    let cm_rows: Vec<statics::CmRowSpec> = cm_methods
+        .iter()
+        .map(|m| statics::CmRowSpec {
+            class: m.owner.0,
+            name: m.name.clone(),
+            f: m.tramp,
+        })
+        .collect();
+    let reg_rows: Vec<statics::RegRowSpec> = own_cm
+        .iter()
+        .map(|(class, name)| statics::RegRowSpec {
+            kind: zeo_abi::abi::REG_MARK_OWN_CLASS_METHOD_ROWS,
+            class: *class,
+            a: name.clone(),
+        })
+        .collect();
     let desc = statics::define_desc(
         em,
         analyzed,
@@ -289,6 +345,8 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
         &vis_rows,
         &class_specs,
         &obj_rows,
+        &cm_rows,
+        &reg_rows,
     )?;
     let main = define_main(em, desc)?;
     statics::define_rodata(em)?;
@@ -603,17 +661,23 @@ pub(crate) struct BodyFnSpec<'a> {
     pub node: Option<crate::hir::NodeId>,
     pub has_blk: bool,
     pub ruby2_keywords: bool,
+    /// A class-method body: `self` is the Class value (frame label
+    /// `Owner.name`, ivars are civars).
+    pub self_is_class: bool,
 }
 
 /// A method's frame facts: `(file, label, line, end_line)` -- shared by
-/// the body prologue and the trampoline's `ParamDescC`.
+/// the body prologue and the trampoline's `ParamDescC`. `class_method`
+/// picks ruby's `.` label separator over `#`.
 fn method_frame(
     analyzed: &Analyzed,
     owner_name: &str,
     name: &str,
     node: Option<crate::hir::NodeId>,
+    class_method: bool,
 ) -> (Option<String>, String, u32, u32) {
-    let label = format!("{owner_name}#{name}");
+    let sep = if class_method { "." } else { "#" };
+    let label = format!("{owner_name}{sep}{name}");
     let (line, end_line) = match node {
         Some(node) => (
             crate::codegen::source_location(&analyzed.compiler, node).map_or(0, |(_, l)| l),
@@ -805,7 +869,13 @@ fn define_method_body(
     let layout = super::params::layout_of(def.hir_params)?;
     let sig = super::params::body_sig(em, layout.n_slots, def.has_blk);
     let idx = em.next_fn_index();
-    let (file, label, line, end_line) = method_frame(analyzed, def.owner_name, def.name, def.node);
+    let (file, label, line, end_line) = method_frame(
+        analyzed,
+        def.owner_name,
+        def.name,
+        def.node,
+        def.self_is_class,
+    );
 
     let mut func = ir::Function::with_name_signature(UserFuncName::user(0, idx), sig);
     let cfg = em.module.target_config();
@@ -828,6 +898,7 @@ fn define_method_body(
     let blk_ptr = def.has_blk.then(|| entry_params[entry_params.len() - 2]);
     fx.self_ptr = Some(self_ptr);
     fx.method_class = Some(def.owner);
+    fx.self_is_class = def.self_is_class;
     fx.frame_label = label.clone();
     fx.blk_ptr = blk_ptr;
     fx.ruby2_keywords = def.ruby2_keywords;

@@ -9,7 +9,7 @@ use cranelift_codegen::ir::{self, InstBuilder, MemFlagsData, UserFuncName};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module};
 use std::collections::HashMap;
-use zeo_abi::abi::{self, ClassDesc, ObjRow, ProgramDesc, Str, VisRow, VmRow};
+use zeo_abi::abi::{self, ClassDesc, CmRow, ObjRow, ProgramDesc, RegRow, Str, VisRow, VmRow};
 
 /// The program's symbol table: names in first-intern order; `zeo_unit_init`
 /// interns each at startup into the `zeo_syms` `.bss` array, and emitted
@@ -326,6 +326,23 @@ pub(crate) fn define_param_desc(
     Ok(id)
 }
 
+/// One class-method dispatch row (`CmRow`): `def self.x`'s trampoline on
+/// the class-method channel.
+pub(crate) struct CmRowSpec {
+    pub class: u32,
+    pub name: String,
+    pub f: FuncId,
+}
+
+/// One `RegRow` -- the non-method registrar calls, in program order. The
+/// only kind so far marks a class's OWN class-method names; `a` carries
+/// the name, every other field is zero.
+pub(crate) struct RegRowSpec {
+    pub kind: u8,
+    pub class: u32,
+    pub a: String,
+}
+
 /// One `ObjRow` (an object-channel method on a compiled class).
 pub(crate) struct ObjRowSpec {
     pub class: u32,
@@ -371,6 +388,84 @@ fn define_obj_rows(em: &mut Emitter, rows: &[ObjRowSpec]) -> Result<Option<DataI
     em.module
         .define_data(id, &data)
         .map_err(|e| format!("defining zeo_obj_rows: {e}"))?;
+    Ok(Some(id))
+}
+
+fn define_cm_rows(em: &mut Emitter, rows: &[CmRowSpec]) -> Result<Option<DataId>, String> {
+    if rows.is_empty() {
+        return Ok(None);
+    }
+    let size = std::mem::size_of::<CmRow>();
+    let id = em
+        .module
+        .declare_data("zeo_cm_rows", Linkage::Local, false, false)
+        .map_err(|e| format!("declaring zeo_cm_rows: {e}"))?;
+    let interned: Vec<u32> = rows
+        .iter()
+        .map(|r| em.intern_rodata(r.name.as_bytes()))
+        .collect();
+    let mut data = DataDescription::new();
+    let mut bytes = vec![0u8; size * rows.len()];
+    for (i, row) in rows.iter().enumerate() {
+        let base = i * size;
+        bytes[base + std::mem::offset_of!(CmRow, class)
+            ..base + std::mem::offset_of!(CmRow, class) + 4]
+            .copy_from_slice(&row.class.to_le_bytes());
+        let at = base + std::mem::offset_of!(CmRow, name) + std::mem::offset_of!(Str, len);
+        bytes[at..at + 8].copy_from_slice(&(row.name.len() as u64).to_le_bytes());
+    }
+    data.define(bytes.into_boxed_slice());
+    data.set_align(8);
+    let rodata_gv = em.module.declare_data_in_data(em.rodata_id, &mut data);
+    for (i, row) in rows.iter().enumerate() {
+        let base = i * size;
+        let name_at =
+            (base + std::mem::offset_of!(CmRow, name) + std::mem::offset_of!(Str, ptr)) as u32;
+        data.write_data_addr(name_at, rodata_gv, i64::from(interned[i]));
+        let f_ref = em.module.declare_func_in_data(row.f, &mut data);
+        data.write_function_addr((base + std::mem::offset_of!(CmRow, f)) as u32, f_ref);
+    }
+    em.module
+        .define_data(id, &data)
+        .map_err(|e| format!("defining zeo_cm_rows: {e}"))?;
+    Ok(Some(id))
+}
+
+fn define_reg_rows(em: &mut Emitter, rows: &[RegRowSpec]) -> Result<Option<DataId>, String> {
+    if rows.is_empty() {
+        return Ok(None);
+    }
+    let size = std::mem::size_of::<RegRow>();
+    let id = em
+        .module
+        .declare_data("zeo_reg_rows", Linkage::Local, false, false)
+        .map_err(|e| format!("declaring zeo_reg_rows: {e}"))?;
+    let interned: Vec<u32> = rows
+        .iter()
+        .map(|r| em.intern_rodata(r.a.as_bytes()))
+        .collect();
+    let mut data = DataDescription::new();
+    let mut bytes = vec![0u8; size * rows.len()];
+    for (i, row) in rows.iter().enumerate() {
+        let base = i * size;
+        bytes[base + std::mem::offset_of!(RegRow, kind)] = row.kind;
+        bytes[base + std::mem::offset_of!(RegRow, class)
+            ..base + std::mem::offset_of!(RegRow, class) + 4]
+            .copy_from_slice(&row.class.to_le_bytes());
+        let at = base + std::mem::offset_of!(RegRow, a) + std::mem::offset_of!(Str, len);
+        bytes[at..at + 8].copy_from_slice(&(row.a.len() as u64).to_le_bytes());
+    }
+    data.define(bytes.into_boxed_slice());
+    data.set_align(8);
+    let rodata_gv = em.module.declare_data_in_data(em.rodata_id, &mut data);
+    for (i, &off) in interned.iter().enumerate() {
+        let base = i * size;
+        let a_at = (base + std::mem::offset_of!(RegRow, a) + std::mem::offset_of!(Str, ptr)) as u32;
+        data.write_data_addr(a_at, rodata_gv, i64::from(off));
+    }
+    em.module
+        .define_data(id, &data)
+        .map_err(|e| format!("defining zeo_reg_rows: {e}"))?;
     Ok(Some(id))
 }
 
@@ -564,11 +659,15 @@ pub(crate) fn define_desc(
     vis_rows: &[VisRowSpec],
     classes: &[super::classes::ClassSpec],
     obj_rows: &[ObjRowSpec],
+    cm_rows: &[CmRowSpec],
+    reg_rows: &[RegRowSpec],
 ) -> Result<DataId, String> {
     let vm_table = define_vm_rows(em, vm_rows)?;
     let vis_table = define_vis_rows(em, vis_rows)?;
     let class_table = define_classes(em, classes)?;
     let obj_table = define_obj_rows(em, obj_rows)?;
+    let cm_table = define_cm_rows(em, cm_rows)?;
+    let reg_table = define_reg_rows(em, reg_rows)?;
     let hir = &analyzed.compiler.hir;
     let mut loaded: Vec<String> = hir
         .loaded_files
@@ -657,6 +756,16 @@ pub(crate) fn define_desc(
         std::mem::offset_of!(ProgramDesc, n_obj_rows),
         obj_rows.len() as u64,
     );
+    put_u64(
+        &mut buf,
+        std::mem::offset_of!(ProgramDesc, n_cm_rows),
+        cm_rows.len() as u64,
+    );
+    put_u64(
+        &mut buf,
+        std::mem::offset_of!(ProgramDesc, n_reg_rows),
+        reg_rows.len() as u64,
+    );
     desc.define(buf.into_boxed_slice());
     desc.set_align(8);
     let tables_gv = em.module.declare_data_in_data(tables_id, &mut desc);
@@ -689,6 +798,14 @@ pub(crate) fn define_desc(
     if let Some(ot) = obj_table {
         let gv = em.module.declare_data_in_data(ot, &mut desc);
         desc.write_data_addr(std::mem::offset_of!(ProgramDesc, obj_rows) as u32, gv, 0);
+    }
+    if let Some(ct) = cm_table {
+        let gv = em.module.declare_data_in_data(ct, &mut desc);
+        desc.write_data_addr(std::mem::offset_of!(ProgramDesc, cm_rows) as u32, gv, 0);
+    }
+    if let Some(rt) = reg_table {
+        let gv = em.module.declare_data_in_data(rt, &mut desc);
+        desc.write_data_addr(std::mem::offset_of!(ProgramDesc, reg_rows) as u32, gv, 0);
     }
     let toplevel_ref = em.module.declare_func_in_data(toplevel, &mut desc);
     desc.write_function_addr(

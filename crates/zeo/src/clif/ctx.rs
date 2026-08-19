@@ -64,6 +64,10 @@ pub(crate) struct Fx<'e, 'f> {
     /// The enclosing class when lowering a method body -- what ivar slot
     /// resolution keys on.
     pub method_class: Option<zeo_abi::ClassId>,
+    /// Lowering a CLASS-method body: `self` is the Class value, so `@x`
+    /// is the class object's own ivar (a civar site, not lowered yet) and
+    /// an implicit send resolves through the singleton chain.
+    pub self_is_class: bool,
     /// A method body's `(out, ret_ok)`: `return` writes the value and
     /// jumps; `None` at the toplevel.
     pub ret: Option<(ir::Value, ir::Block)>,
@@ -127,6 +131,7 @@ impl<'e, 'f> Fx<'e, 'f> {
             prev_line: None,
             self_ptr: None,
             method_class: None,
+            self_is_class: false,
             ret: None,
             retries: Vec::new(),
             ensure_depth: 0,

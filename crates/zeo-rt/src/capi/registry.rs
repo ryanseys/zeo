@@ -80,10 +80,6 @@ pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
         abi::ABI_VERSION,
     );
     assert!(
-        desc.n_reg_rows == 0,
-        "register_program: RegRow tables are not yet emitted (M1)"
-    );
-    assert!(
         desc.n_units == 0,
         "register_program: feature-unit tables are not yet emitted (M1)"
     );
@@ -147,6 +143,14 @@ pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
             Symbol::intern(text(r.name)),
             value_fn(r.f),
         );
+    }
+    for r in unsafe { rows(desc.reg_rows, desc.n_reg_rows) } {
+        match r.kind {
+            abi::REG_MARK_OWN_CLASS_METHOD_ROWS => {
+                registry.mark_own_class_method_rows(ClassId(r.class), &[text(r.a)]);
+            }
+            k => panic!("register_program: unknown RegRow kind {k}"),
+        }
     }
     let vis: Vec<(u32, &str, u8)> = unsafe { rows(desc.vis_rows, desc.n_vis_rows) }
         .iter()

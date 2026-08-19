@@ -359,6 +359,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 && let Some(decl) = fx.em.methods.get(&name)
                 && decl.plain
                 && decl.arity == args.len()
+                && !method_class_shadows(fx, &name)
             {
                 return super::call::direct_call(fx, id, &name, &args, Some(blk));
             }
@@ -396,7 +397,11 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 }
                 Some(recv) => super::call::dynamic_send(fx, id, recv, &name, &args),
                 None => match fx.em.methods.get(&name) {
-                    Some(decl) if decl.plain && decl.arity == args.len() => {
+                    Some(decl)
+                        if decl.plain
+                            && decl.arity == args.len()
+                            && !method_class_shadows(fx, &name) =>
+                    {
                         super::call::direct_call(fx, id, &name, &args, None)
                     }
                     // Unknown names and arity mismatches go through the
@@ -766,6 +771,11 @@ fn const_read(fx: &mut Fx, id: NodeId, name: &str) -> Result<Operand, String> {
 
 /// The compile-time ivar slot for `@name` in the enclosing method's class.
 fn ivar_slot(fx: &Fx, id: NodeId, name: &str) -> Result<usize, String> {
+    if fx.self_is_class {
+        // `@x` in a class-method body is the CLASS object's own ivar (a
+        // civar site), not an instance slot.
+        return fx.unsupported(id, "a class-level ivar");
+    }
     let Some(class) = fx.method_class else {
         return fx.unsupported(id, "an ivar outside a compiled method");
     };
@@ -1251,4 +1261,22 @@ fn case_when(
         owned: true,
         tag: TagInfo::Unknown,
     })
+}
+
+/// Whether an implicit send of `name` from the current body resolves to a
+/// method of the ENCLOSING class before reaching the toplevel `Object`
+/// def the direct-call table holds -- ruby's MRO puts the receiver's own
+/// chain first, so a shadowed name must go through the dynamic send.
+pub(crate) fn method_class_shadows(fx: &Fx, name: &str) -> bool {
+    let Some(cid) = fx.method_class else {
+        return false;
+    };
+    if cid.0 == 0 {
+        return false;
+    }
+    if fx.self_is_class {
+        fx.an.compiler.lookup_class_method(cid, name).is_some()
+    } else {
+        fx.an.compiler.lookup_method(cid, name).is_some()
+    }
 }

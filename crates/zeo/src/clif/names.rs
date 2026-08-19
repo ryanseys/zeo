@@ -27,3 +27,13 @@ pub fn method_symbol(owner: &str, name: &str) -> String {
 pub fn trampoline_symbol(owner: &str, name: &str) -> String {
     format!("zeo_t_{owner}_{}", crate::names::ident_fragment(name))
 }
+
+/// The compiled body symbol for class method `Owner.name`.
+pub fn class_method_symbol(owner: &str, name: &str) -> String {
+    format!("zeo_cm_{owner}_{}", crate::names::ident_fragment(name))
+}
+
+/// The `ValueFn` trampoline symbol for class method `Owner.name`.
+pub fn class_trampoline_symbol(owner: &str, name: &str) -> String {
+    format!("zeo_ct_{owner}_{}", crate::names::ident_fragment(name))
+}

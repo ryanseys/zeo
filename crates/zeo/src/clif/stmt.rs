@@ -175,6 +175,9 @@ fn write_multi_target(
 }
 
 fn ivar_slot_of(fx: &Fx, site: NodeId, name: &str) -> Result<usize, String> {
+    if fx.self_is_class {
+        return fx.unsupported(site, "a class-level ivar");
+    }
     let Some(class) = fx.method_class else {
         return fx.unsupported(site, "an ivar outside a compiled method");
     };
@@ -612,6 +615,7 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
             let op = if receiver.is_none()
                 && let Some(decl) = fx.em.methods.get(&name)
                 && decl.arity == args.len()
+                && !super::expr::method_class_shadows(fx, &name)
             {
                 super::call::direct_call(fx, stmt, &name, &args, Some(blk))?
             } else {

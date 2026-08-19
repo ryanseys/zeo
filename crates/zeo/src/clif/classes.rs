@@ -37,11 +37,33 @@ pub(crate) struct ObjMethodSpec {
     pub ruby2_keywords: bool,
 }
 
+/// One class method (`def self.x`) to compile -- a `CmRow` on the
+/// class-method channel. The body ALWAYS receives the runtime receiver as
+/// `self` (rustc's `__dynself` twin behavior; its receiverless `Drop` mode
+/// is an optimization for self-free bodies, not a semantic difference), so
+/// a subclass inheriting the method runs under its own `self`.
+pub(crate) struct CmMethodSpec {
+    pub owner: ClassId,
+    pub owner_name: String,
+    pub name: String,
+    pub body: Vec<crate::hir::NodeId>,
+    pub node: Option<crate::hir::NodeId>,
+    pub tramp: cranelift_module::FuncId,
+    pub body_fn: cranelift_module::FuncId,
+    pub hir_params: crate::hir::Params,
+    pub has_blk: bool,
+    pub ruby2_keywords: bool,
+}
+
 /// What `collect_classes` hands back: the class table plus its method and
 /// visibility rows.
 pub(crate) struct CollectedClasses {
     pub classes: Vec<ClassSpec>,
     pub methods: Vec<ObjMethodSpec>,
+    pub class_methods: Vec<CmMethodSpec>,
+    /// `(class, name)` pairs a `def self.x` WROTE on the class itself --
+    /// reflection's `Method#owner` truth (`mark_own_class_method_rows`).
+    pub own_cm: Vec<(u32, String)>,
     pub vis: Vec<statics::VisRowSpec>,
 }
 
@@ -54,6 +76,8 @@ pub(crate) fn collect_classes(
     let compiler = &analyzed.compiler;
     let mut classes = Vec::new();
     let mut methods = Vec::new();
+    let mut class_methods = Vec::new();
+    let mut own_cm = Vec::new();
     let mut vis = Vec::new();
     for (idx, class) in compiler.classes.iter().enumerate() {
         if idx == 0 || class.is_builtin || class.is_bootstrap {
@@ -84,9 +108,6 @@ pub(crate) fn collect_classes(
             && class.imported_modules.is_empty())
         {
             return refuse("a mixin");
-        }
-        if !class.class_methods.is_empty() || !class.own_class_methods.is_empty() {
-            return refuse("a class method");
         }
         if !(class.pending_aliases.is_empty()
             && class.builtin_aliases.is_empty()
@@ -210,10 +231,84 @@ pub(crate) fn collect_classes(
                 ruby2_keywords: scope.ruby2_keywords,
             });
         }
+        // Class methods (`def self.x`): every entry registers on the
+        // CLASS-METHOD channel (a `CmRow`), so both a literal `Foo.run`
+        // and a variable-held class dispatch through it. With mixins
+        // refused above, `class_methods` is the class's own writes.
+        for entry in &class.class_methods {
+            let scope = compiler.scope(entry.def);
+            if scope.native_default {
+                continue;
+            }
+            let mname = compiler.names.str(entry.name).to_string();
+            let refuse_m = |what: &str| {
+                Err(format!(
+                    "--backend aot is an M0 vertical slice: cannot lower {what} yet ({name}.{mname})"
+                ))
+            };
+            if scope.runtime_conditional {
+                return refuse_m("a conditionally-defined class method");
+            }
+            if scope.alias_of.is_some() {
+                return refuse_m("a class-method alias");
+            }
+            if scope.accessor.is_some() {
+                return refuse_m("a singleton accessor");
+            }
+            let p = &scope.params;
+            if let Err(what) = super::emit::check_params(p) {
+                return refuse_m(what);
+            }
+            let layout = super::params::layout_of(p)?;
+            let has_blk = scope.needs_block_param();
+            let tramp = em
+                .module
+                .declare_function(
+                    &names::class_trampoline_symbol(&name, &mname),
+                    Linkage::Local,
+                    &params::value_fn_sig(em),
+                )
+                .map_err(|e| format!("declaring {name}.{mname}: {e}"))?;
+            let sig = params::body_sig(em, layout.n_slots, has_blk);
+            let body_fn = em
+                .module
+                .declare_function(
+                    &names::class_method_symbol(&name, &mname),
+                    Linkage::Local,
+                    &sig,
+                )
+                .map_err(|e| format!("declaring {name}.{mname}: {e}"))?;
+            // Only Private gets a row (verb 3) -- exactly the rustc
+            // `emit_class_method_visibility_rows` rule.
+            if entry.visibility == crate::hir::Visibility::Private {
+                vis.push(statics::VisRowSpec {
+                    class: idx as u32,
+                    name: mname.clone(),
+                    verb: 3,
+                });
+            }
+            class_methods.push(CmMethodSpec {
+                owner: ClassId(idx as u32),
+                owner_name: name.clone(),
+                name: mname,
+                body: scope.body.clone(),
+                node: scope.def_node,
+                tramp,
+                body_fn,
+                hir_params: p.clone(),
+                has_blk,
+                ruby2_keywords: scope.ruby2_keywords,
+            });
+        }
+        for &sid in &class.own_class_methods {
+            own_cm.push((idx as u32, compiler.scope(sid).name.clone()));
+        }
     }
     Ok(CollectedClasses {
         classes,
         methods,
+        class_methods,
+        own_cm,
         vis,
     })
 }
