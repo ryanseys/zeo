@@ -17,6 +17,31 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_module::Module;
 use zeo_abi::abi::SignalKind;
 
+/// Whether `body` can raise a `Signal::Return` at its own level --
+/// nested blocks/lambdas recurse, `def`/`class` bodies stop (the rustc
+/// emitter's rule, verbatim).
+#[allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "structural: a probe -- every other node kind simply recurses through for_each_child, which is the correct default for any future variant"
+)]
+fn body_contains_return(hir: &crate::hir::Hir, body: &[NodeId]) -> bool {
+    fn scan(hir: &crate::hir::Hir, id: NodeId) -> bool {
+        match &hir[id] {
+            HirNode::Return(_) => return true,
+            HirNode::DefMethod { .. } | HirNode::ClassDef { .. } => return false,
+            _ => {}
+        }
+        let mut found = false;
+        hir[id].for_each_child(&mut |n| {
+            if !found {
+                found = scan(hir, n);
+            }
+        });
+        found
+    }
+    body.iter().any(|&n| scan(hir, n))
+}
+
 /// The names an escaping closure with `params`/`body` captures from the
 /// enclosing scope, in deterministic order.
 fn captured_names(
@@ -88,6 +113,16 @@ fn build_closure(
 ) -> Result<(ir::StackSlot, Vec<String>), String> {
     let names = captured_names(fx, site, params, body)?;
     let arity = super::params::proc_arity(params, is_lambda);
+    // Bare `yield`/`block_given?` in the body targets the LEXICALLY
+    // enclosing method's block, cloned into the env -- unless the closure
+    // declares its own `&b`, which owns the channel.
+    let bare_block_use = crate::analyze::scan_bare_block_use_body(&fx.an.compiler.hir, body)
+        && params.block.is_none();
+    let lexical_blk = if bare_block_use { fx.blk_ptr } else { None };
+    // A body that can raise `Signal::Return` at its own level captures its
+    // home (dead home -> LocalJumpError, the runtime's resolution). A
+    // lambda folds its own returns and needs none.
+    let wants_home = !is_lambda && body_contains_return(&fx.an.compiler.hir, body);
     let f_id = define_block_fn(fx, site, params, body, &names, is_lambda)?;
     let f_ref = fx.em.module.declare_func_in_func(f_id, fx.b.func);
     let ptr_ty = fx.em.ptr;
@@ -116,16 +151,17 @@ fn build_closure(
     let n_cells = fx.b.ins().iconst(ptr_ty, names.len() as i64);
     let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
     let null = fx.b.ins().iconst(ptr_ty, 0);
+    let lex_blk = lexical_blk.unwrap_or(null);
     let arity_v = fx.b.ins().iconst(types::I32, i64::from(arity));
-    let flags =
-        fx.b.ins()
-            .iconst(types::I32, i64::from(u32::from(is_lambda))); // PROC_LAMBDA
+    // PROC_LAMBDA = 1, PROC_HOME = 2 (the runtime's bits).
+    let flag_bits = u32::from(is_lambda) | (u32::from(wants_home) << 1);
+    let flags = fx.b.ins().iconst(types::I32, i64::from(flag_bits));
     let proc_ss = fx.temp_slot();
     let proc_addr = fx.slot_addr(proc_ss, 0);
     fx.call(
         "zeo_rt_proc_new",
         &[
-            f_addr, cells_ptr, n_cells, self_ptr, null, null, arity_v, flags, proc_addr,
+            f_addr, cells_ptr, n_cells, self_ptr, lex_blk, null, arity_v, flags, proc_addr,
         ],
     );
     // The proc is owned until a send/call consumes it (moved-in blk).
@@ -210,12 +246,21 @@ fn define_block_fn(
     bfx.self_ptr = Some(self_p);
     bfx.method_class = method_class;
     bfx.frame_label = label.clone();
+    // Bare `yield`/`block_given?` targets the env's lexical block (the
+    // enclosing method's) -- unless this closure declares its own `&b`,
+    // which owns the channel and takes the CALL-SITE block.
+    bfx.blk_ptr = params.block.is_some().then_some(blk);
 
     // Env cells -> unowned cell locals.
     let fl = MemFlagsData::trusted();
     let cells_off = std::mem::offset_of!(zeo_rt::capi::ProcEnv, cells) as i32;
     let ptr_ty = bfx.em.ptr;
     let cells_base = bfx.b.ins().load(ptr_ty, fl, env, cells_off);
+    if params.block.is_none() && crate::analyze::scan_bare_block_use_body(&an.compiler.hir, &body) {
+        let lex_off = std::mem::offset_of!(zeo_rt::capi::ProcEnv, lexical_blk) as i32;
+        let lex = bfx.b.ins().load(ptr_ty, fl, env, lex_off);
+        bfx.blk_ptr = Some(lex);
+    }
     for (i, name) in captured.iter().enumerate() {
         let cellp = bfx.b.ins().load(ptr_ty, fl, cells_base, (i * 8) as i32);
         let ss =

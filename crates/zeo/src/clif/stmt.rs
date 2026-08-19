@@ -242,7 +242,11 @@ fn lower_tail_expr(fx: &mut Fx, tail: NodeId) -> Result<super::operand::Operand,
                 tag: TagInfo::Unknown,
             })
         }
-        HirNode::Break(..) | HirNode::Next(..) | HirNode::Redo | HirNode::Raise(..) => {
+        HirNode::Break(..)
+        | HirNode::Next(..)
+        | HirNode::Redo
+        | HirNode::Raise(..)
+        | HirNode::Return(..) => {
             // The jump/signal leaves this block unreachable; the nil is
             // never read.
             lower_stmt(fx, tail)?;
@@ -492,6 +496,29 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
         HirNode::Return(value) => {
             let value = *value;
             let Some((out, ret_ok)) = fx.ret else {
+                // In an escaping block, `return` arms the Return signal;
+                // the runtime resolves it against the proc's captured home
+                // (dead home -> LocalJumpError) and the defining method's
+                // boundary folds a targeted one.
+                if fx.block_next.is_some() {
+                    if fx.ensure_depth != 0 {
+                        return fx.unsupported(stmt, "a `return` across an `ensure` boundary");
+                    }
+                    let op = match value {
+                        Some(v) => lower_expr(fx, v)?,
+                        None => super::operand::Operand::Nil,
+                    };
+                    let ptr = ownership::move_ptr(fx, &op);
+                    let kind =
+                        fx.b.ins()
+                            .iconst(types::I8, i64::from(zeo_abi::abi::SignalKind::Return as u8));
+                    fx.pop_handling_to(0);
+                    fx.call("zeo_rt_signal_set", &[kind, ptr]);
+                    let land = fx.land;
+                    fx.b.ins().jump(land, &[]);
+                    fx.continue_unreachable();
+                    return Ok(());
+                }
                 return fx.unsupported(stmt, "a top-level `return`");
             };
             if fx.ensure_depth != 0 {

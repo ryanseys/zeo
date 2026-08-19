@@ -72,7 +72,11 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
         }
         // A diverging expression in value position (`a = (raise "x")`):
         // the signal leaves the block unreachable; the nil is never read.
-        HirNode::Break(..) | HirNode::Next(..) | HirNode::Redo | HirNode::Raise(..) => {
+        HirNode::Break(..)
+        | HirNode::Next(..)
+        | HirNode::Redo
+        | HirNode::Raise(..)
+        | HirNode::Return(..) => {
             super::stmt::lower_stmt(fx, id)?;
             Ok(Operand::Nil)
         }

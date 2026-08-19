@@ -833,6 +833,12 @@ fn define_method_body(
     fx.ruby2_keywords = def.ruby2_keywords;
     let ret_ok = fx.b.create_block();
     fx.ret = Some((out_ptr, ret_ok));
+    // The non-local-return home: pushed when a Proc built in this body (or
+    // one running under a begin) can aim a `Signal::Return` here -- the
+    // same predicate as the rustc wrapper's needs_return_catch.
+    let needs_return_catch =
+        crate::analyze::captures::body_contains_escaping_return(&analyzed.compiler, def.body)
+            || crate::analyze::captures::body_contains_begin(&analyzed.compiler, def.body);
 
     // Recursion guard BEFORE the frame exists: a failure returns without
     // pops (mirrors the rustc prologue's `stack_check()?` position).
@@ -846,6 +852,9 @@ fn define_method_body(
     let one = fx.b.ins().iconst(types::I32, 1);
     fx.b.ins().return_(&[one]);
     fx.b.switch_to_block(cont);
+    if needs_return_catch {
+        fx.call("zeo_rt_home_push", &[]);
+    }
 
     // What escaping blocks capture becomes a cell instead of a slot.
     let captured = crate::analyze::captures::collect_escaping_captures(
@@ -938,6 +947,9 @@ fn define_method_body(
         if has_frame {
             fx.call("zeo_rt_frame_pop", &[]);
         }
+        if needs_return_catch {
+            fx.call("zeo_rt_home_pop", &[]);
+        }
         let code = fx.b.ins().iconst(types::I32, status);
         fx.b.ins().return_(&[code]);
     };
@@ -945,7 +957,32 @@ fn define_method_body(
     epilogue(&mut fx, 0);
     let land = fx.land;
     fx.b.switch_to_block(land);
-    epilogue(&mut fx, 1);
+    if needs_return_catch {
+        // A `Signal::Return` aimed at THIS activation (asked before the
+        // home pops) folds into the method's own value.
+        let kind = fx.call("zeo_rt_signal_kind", &[]).expect("kind answers");
+        let is_ret = fx.b.ins().icmp_imm_u(
+            cranelift_codegen::ir::condcodes::IntCC::Equal,
+            kind,
+            i64::from(zeo_abi::abi::SignalKind::Return as u8),
+        );
+        let ask = fx.b.create_block();
+        let normal = fx.b.create_block();
+        fx.b.ins().brif(is_ret, ask, &[], normal, &[]);
+        fx.b.switch_to_block(ask);
+        let mine = fx
+            .call("zeo_rt_return_targets_here", &[])
+            .expect("targets answers");
+        let fold = fx.b.create_block();
+        fx.b.ins().brif(mine, fold, &[], normal, &[]);
+        fx.b.switch_to_block(fold);
+        fx.call("zeo_rt_signal_take", &[out_ptr]);
+        fx.b.ins().jump(ret_ok, &[]);
+        fx.b.switch_to_block(normal);
+        epilogue(&mut fx, 1);
+    } else {
+        epilogue(&mut fx, 1);
+    }
 
     verify::check(&fx, &label);
     let Fx { mut b, .. } = fx;

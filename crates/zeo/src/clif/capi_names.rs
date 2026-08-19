@@ -129,6 +129,16 @@ pub const CAPI: &[CapiSig] = &[
         ret: None,
     },
     CapiSig {
+        name: "zeo_rt_home_pop",
+        params: &[],
+        ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_home_push",
+        params: &[],
+        ret: None,
+    },
+    CapiSig {
         name: "zeo_rt_int_add_slow",
         params: &[Ptr, Ptr, Ptr],
         ret: None,
@@ -222,6 +232,11 @@ pub const CAPI: &[CapiSig] = &[
         name: "zeo_rt_retain",
         params: &[Ptr],
         ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_return_targets_here",
+        params: &[],
+        ret: Some(U8),
     },
     CapiSig {
         name: "zeo_rt_send_value_args_in",

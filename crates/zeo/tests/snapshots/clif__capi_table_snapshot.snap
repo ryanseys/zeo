@@ -21,6 +21,8 @@ zeo_rt_handling_pop ([]) -> None
 zeo_rt_handling_push ([Ptr]) -> None
 zeo_rt_hash_new ([Ptr]) -> None
 zeo_rt_hash_set ([Ptr, Ptr, Ptr]) -> None
+zeo_rt_home_pop ([]) -> None
+zeo_rt_home_push ([]) -> None
 zeo_rt_int_add_slow ([Ptr, Ptr, Ptr]) -> None
 zeo_rt_int_mul_slow ([Ptr, Ptr, Ptr]) -> None
 zeo_rt_int_sub_slow ([Ptr, Ptr, Ptr]) -> None
@@ -40,6 +42,7 @@ zeo_rt_propagating_leave ([U8]) -> None
 zeo_rt_release ([Ptr]) -> None
 zeo_rt_rescue_matches ([Ptr, Ptr, Usize]) -> Some(U8)
 zeo_rt_retain ([Ptr]) -> None
+zeo_rt_return_targets_here ([]) -> Some(U8)
 zeo_rt_send_value_args_in ([U32, Ptr, U32, Ptr, U8, Ptr, Ptr, Ptr]) -> Some(I32)
 zeo_rt_send_value_explicit_args_in ([U32, Ptr, U32, Ptr, U8, Ptr, Ptr, U32, Ptr]) -> Some(I32)
 zeo_rt_send_value_explicit_in ([U32, Ptr, U32, Ptr, Usize, Ptr, U32, Ptr]) -> Some(I32)
