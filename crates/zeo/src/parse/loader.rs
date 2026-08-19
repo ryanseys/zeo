@@ -41,11 +41,6 @@
 //! time; `load`'s `wrap` parameter, native features, and `~`/`./`-prefixed
 //! `require` are clean rejections.
 
-#![allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "not yet swept for wildcard arms -- see the lint's note in lib.rs"
-)]
-
 use crate::hir::{Hir, HirNode, LoadedFile, NodeId};
 use crate::lower::context::{BindingsFrame, SourceFileFrame, current_box_binding};
 use crate::lower::features::{canonical_ext_feature, is_builtin_feature};
@@ -1987,7 +1982,10 @@ fn lexically_normalize(path: &Path) -> PathBuf {
             {
                 out.pop();
             }
-            other => out.push(other),
+            other @ (Component::Prefix(_)
+            | Component::RootDir
+            | Component::ParentDir
+            | Component::Normal(_)) => out.push(other),
         }
     }
     out
@@ -2148,6 +2146,13 @@ fn mark_ffi_bodies(hir: &mut Hir, body: &ruby_prism::NodeList<'_>, cref: &mut Ve
     }
 }
 
+#[allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "structural: a scan for `raise LoadError`-shaped code. `mentions` probes \
+              for the literal exception names; `walk` descends generically (only def/ \
+              lambda bodies defer execution, only `Raise` raises), and over-approximation \
+              is the safe direction -- it only keeps a rescue's fallback path emitted"
+)]
 fn spliced_may_raise_load_error(hir: &Hir, stmts: &[crate::hir::NodeId]) -> bool {
     use crate::hir::HirNode;
     fn mentions(hir: &Hir, id: crate::hir::NodeId) -> bool {
