@@ -350,9 +350,6 @@ pub(crate) fn collect_classes(
                 return refuse_m("a conditionally-defined class method");
             }
 
-            if scope.accessor.is_some() {
-                return refuse_m("a singleton accessor");
-            }
             let p = &scope.params;
             if let Err(what) = super::emit::check_params(p) {
                 return refuse_m(what);
@@ -554,9 +551,6 @@ pub(crate) fn collect_classes(
                     return refuse_m("a conditionally-defined method");
                 }
 
-                if scope.accessor.is_some() {
-                    return refuse_m("a module accessor");
-                }
                 let p = &scope.params;
                 if let Err(what) = super::emit::check_params(p) {
                     return refuse_m(what);
@@ -590,7 +584,11 @@ pub(crate) fn collect_classes(
                     crate::hir::Visibility::Public => {}
                 }
                 module_methods.push(ModMethodSpec {
-                    dyn_ivars: false,
+                    // A module's VALUE-channel row takes whatever receiver
+                    // dispatch hands over, so its ivars are name-keyed (the
+                    // includer's materialized object-channel copy keeps the
+                    // slot-indexed fast path).
+                    dyn_ivars: true,
                     defining_class: scope.defining_class,
                     owner: ClassId(idx as u32),
                     owner_name: name.clone(),
@@ -831,9 +829,6 @@ pub(crate) fn collect_classes(
                 return refuse_m("a conditionally-defined class method");
             }
 
-            if scope.accessor.is_some() {
-                return refuse_m("a singleton accessor");
-            }
             let p = &scope.params;
             if let Err(what) = super::emit::check_params(p) {
                 return refuse_m(what);
@@ -911,9 +906,6 @@ pub(crate) fn collect_classes(
                 return refuse_m("a conditionally-defined class method");
             }
 
-            if scope.accessor.is_some() {
-                return refuse_m("a singleton accessor");
-            }
             let p = &scope.params;
             if let Err(what) = super::emit::check_params(p) {
                 return refuse_m(what);

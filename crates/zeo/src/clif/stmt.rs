@@ -63,10 +63,10 @@ pub(crate) fn ivar_read_op(
     name: &str,
 ) -> Result<super::operand::Operand, String> {
     use super::operand::{Operand, TagInfo};
-    if fx.dyn_ivars || fx.method_class.is_none() {
-        if fx.self_is_class {
-            return fx.unsupported(site, "a class-level ivar");
-        }
+    if fx.dyn_ivars || fx.self_is_class || fx.method_class.is_none() {
+        // A `self_is_class` body's `@x` is a CLASS-level ivar; the runtime's
+        // name-keyed path routes a `RubyValue::Class` receiver to `civars`,
+        // so the same call serves both.
         let recv = dyn_ivar_recv(fx);
         let ss = fx.temp_slot();
         let out = fx.slot_addr(ss, 0);
@@ -107,10 +107,7 @@ pub(crate) fn ivar_write_op(
     name: &str,
     op: super::operand::Operand,
 ) -> Result<(), String> {
-    if fx.dyn_ivars || fx.method_class.is_none() {
-        if fx.self_is_class {
-            return fx.unsupported(site, "a class-level ivar");
-        }
+    if fx.dyn_ivars || fx.self_is_class || fx.method_class.is_none() {
         let recv = dyn_ivar_recv(fx);
         let tag = op.tag();
         let ptr = ownership::borrow_ptr(fx, &op);
@@ -253,9 +250,6 @@ fn write_multi_target(
 }
 
 fn ivar_slot_of(fx: &Fx, site: NodeId, name: &str) -> Result<usize, String> {
-    if fx.self_is_class {
-        return fx.unsupported(site, "a class-level ivar");
-    }
     let Some(class) = fx.method_class else {
         return fx.unsupported(site, "an ivar outside a compiled method");
     };
