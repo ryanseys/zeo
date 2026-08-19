@@ -177,6 +177,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
         foreign,
         extends,
         sst,
+        alias_rows,
     ) = (
         collected.classes,
         collected.methods,
@@ -188,6 +189,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
         collected.foreign,
         collected.extends,
         collected.sst,
+        collected.alias_rows,
     );
     for def in &defs {
         let func = em.methods[&def.name].body;
@@ -434,6 +436,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             kind: zeo_abi::abi::REG_MARK_OWN_ROWS,
             class: *class,
             a: name.clone(),
+            b: String::new(),
             f: None,
             ids: vec![],
         })
@@ -442,6 +445,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
         kind: zeo_abi::abi::REG_MARK_OWN_CLASS_METHOD_ROWS,
         class: *class,
         a: name.clone(),
+        b: String::new(),
         f: None,
         ids: vec![],
     }));
@@ -457,6 +461,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
                 kind: zeo_abi::abi::REG_SUPER_TARGET_VALUE,
                 class: m.owner.0,
                 a: m.name.clone(),
+                b: String::new(),
                 f: Some(m.tramp),
                 ids: vec![],
             }),
@@ -466,6 +471,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
         kind: zeo_abi::abi::REG_EXTENDS,
         class: *class,
         a: String::new(),
+        b: String::new(),
         f: None,
         ids: mods.clone(),
     }));
@@ -476,8 +482,26 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
                 kind: zeo_abi::abi::REG_SINGLETON_SUPER_TARGET,
                 class: *class,
                 a: name.clone(),
+                b: String::new(),
                 f: Some(*tramp),
                 ids: vec![*module],
+            }),
+    );
+    // Builtin-source alias name-indirection rows.
+    reg_rows.extend(
+        alias_rows
+            .iter()
+            .map(|(class, new, old, is_class)| statics::RegRowSpec {
+                kind: if *is_class {
+                    zeo_abi::abi::REG_CLASS_ALIAS
+                } else {
+                    zeo_abi::abi::REG_ALIAS
+                },
+                class: *class,
+                a: new.clone(),
+                b: old.clone(),
+                f: None,
+                ids: vec![],
             }),
     );
     let desc = statics::define_desc(
@@ -747,9 +771,6 @@ fn collect_methods(em: &mut Emitter, analyzed: &Analyzed) -> Result<Vec<DefSpec>
         let refuse = |what: &str| Err(format!("the CLIF backend cannot lower {what} yet{at}"));
         if scope.runtime_conditional {
             return refuse("a conditionally-defined method");
-        }
-        if scope.alias_of.is_some() {
-            return refuse("an alias");
         }
         if scope.accessor.is_some() {
             return refuse("an attr_* accessor");
@@ -1521,6 +1542,31 @@ fn define_toplevel(
     );
     fx.self_ptr = Some(self_addr);
 
+    // Alias-carrying classes with no body of their own validate here
+    // (`NameError` for a source resolving nowhere); a class WITH a body
+    // site validates at its body's end instead -- rustc's split.
+    let unbodied: Vec<u32> = analyzed
+        .compiler
+        .classes
+        .iter()
+        .enumerate()
+        .filter(|(i, c)| {
+            !c.builtin_aliases.is_empty()
+                && !analyzed
+                    .compiler
+                    .class_body_sites
+                    .iter()
+                    .any(|site| site.class.0 as usize == *i)
+        })
+        .map(|(i, _)| i as u32)
+        .collect();
+    for id in unbodied {
+        let cid = fx.b.ins().iconst(types::I32, i64::from(id));
+        let st = fx
+            .call("zeo_rt_validate_class_aliases", &[cid])
+            .expect("validate_class_aliases returns a status");
+        fx.fallible(st);
+    }
     // Class bodies whose markers sit inside `def`s run ONCE here, before
     // the main body, in document order -- the rustc backend hoists them
     // the same way (`inline_class_markers`'s complement).

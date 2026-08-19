@@ -116,6 +116,9 @@ pub(crate) struct CollectedClasses {
     /// `(class, module ids)` -- `register_extends` rows: the modules on
     /// each class's SINGLETON chain (`extend M`, `extend self`).
     pub extends: Vec<(u32, Vec<u32>)>,
+    /// `(class, new, old, is_class_side)` -- builtin-source alias rows
+    /// (`register_alias` / `register_class_alias` name indirections).
+    pub alias_rows: Vec<(u32, String, String, bool)>,
     /// `(class, module, name, trampoline)` -- singleton-chain super
     /// targets: every `extend`ed method copy (winner AND shadowed) plus
     /// inherited class methods a subclass's own `def self.x` shadowed
@@ -144,6 +147,27 @@ pub(crate) fn collect_classes(
     let mut vis = Vec::new();
     let mut extends: Vec<(u32, Vec<u32>)> = Vec::new();
     let mut sst: Vec<(u32, u32, String, cranelift_module::FuncId)> = Vec::new();
+    let mut alias_rows: Vec<(u32, String, String, bool)> = Vec::new();
+    // Builtin-source alias rows, every class including the toplevel (rustc's
+    // `alias_registration_rows`; the boxed-overlay target case is refused
+    // with its class). A require-gated builtin whose feature never fired
+    // registers nothing, aliases included.
+    for (idx, class) in compiler.classes.iter().enumerate() {
+        if class.builtin_aliases.is_empty() && class.class_aliases.is_empty() {
+            continue;
+        }
+        if (class.is_builtin || class.is_bootstrap)
+            && !compiler.feature_active(crate::compiler::ClassId(idx as u32))
+        {
+            continue;
+        }
+        for (new, old) in &class.builtin_aliases {
+            alias_rows.push((idx as u32, new.clone(), old.clone(), false));
+        }
+        for (new, old) in &class.class_aliases {
+            alias_rows.push((idx as u32, new.clone(), old.clone(), true));
+        }
+    }
     // REOPENED builtins first (rustc's builtin-registration loop): a
     // non-bootstrap builtin's user methods ride the VALUE channel on the
     // builtin's own id (they dispatch FIRST, before the native table); a
@@ -214,10 +238,7 @@ pub(crate) fn collect_classes(
         if class.ancestors != zeo_abi::declared_ancestors(crate::compiler::ClassId(idx as u32)) {
             return refuse("an ancestry-changing builtin reopen");
         }
-        if !(class.pending_aliases.is_empty()
-            && class.builtin_aliases.is_empty()
-            && class.class_aliases.is_empty()
-            && class.undefined.is_empty()
+        if !(class.undefined.is_empty()
             && class.class_undefined.is_empty()
             && class.runtime_undefs.is_empty()
             && class.pending_module_functions.is_empty()
@@ -248,9 +269,7 @@ pub(crate) fn collect_classes(
             if scope.runtime_conditional {
                 return refuse_m("a conditionally-defined method");
             }
-            if scope.alias_of.is_some() {
-                return refuse_m("an alias");
-            }
+
             let p = &scope.params;
             if let Err(what) = super::emit::check_params(p) {
                 return refuse_m(what);
@@ -331,9 +350,7 @@ pub(crate) fn collect_classes(
             if scope.runtime_conditional {
                 return refuse_m("a conditionally-defined class method");
             }
-            if scope.alias_of.is_some() {
-                return refuse_m("a class-method alias");
-            }
+
             if scope.accessor.is_some() {
                 return refuse_m("a singleton accessor");
             }
@@ -411,10 +428,10 @@ pub(crate) fn collect_classes(
         if !(class.class_method_prepends.is_empty() && class.imported_modules.is_empty()) {
             return refuse("a mixin");
         }
-        if !(class.pending_aliases.is_empty()
-            && class.builtin_aliases.is_empty()
-            && class.class_aliases.is_empty()
-            && class.undefined.is_empty()
+        // `pending_aliases` is DRAINED by `mro::resolve_aliases`; the
+        // resolved forms are copy scopes in the method tables and the
+        // `builtin_aliases`/`class_aliases` rows collected below.
+        if !(class.undefined.is_empty()
             && class.class_undefined.is_empty()
             && class.runtime_undefs.is_empty()
             && class.pending_module_functions.is_empty()
@@ -532,9 +549,7 @@ pub(crate) fn collect_classes(
                 if scope.runtime_conditional {
                     return refuse_m("a conditionally-defined method");
                 }
-                if scope.alias_of.is_some() {
-                    return refuse_m("an alias");
-                }
+
                 if scope.accessor.is_some() {
                     return refuse_m("a module accessor");
                 }
@@ -608,9 +623,7 @@ pub(crate) fn collect_classes(
             if scope.runtime_conditional {
                 return refuse_m("a conditionally-defined method");
             }
-            if scope.alias_of.is_some() {
-                return refuse_m("an alias");
-            }
+
             let p = &scope.params;
             if let Err(what) = super::emit::check_params(p) {
                 return refuse_m(what);
@@ -731,9 +744,7 @@ pub(crate) fn collect_classes(
                 if scope.runtime_conditional {
                     return refuse_m("a conditionally-defined method");
                 }
-                if scope.alias_of.is_some() {
-                    return refuse_m("an alias");
-                }
+
                 let p = &scope.params;
                 if let Err(what) = super::emit::check_params(p) {
                     return refuse_m(what);
@@ -815,9 +826,7 @@ pub(crate) fn collect_classes(
             if scope.runtime_conditional {
                 return refuse_m("a conditionally-defined class method");
             }
-            if scope.alias_of.is_some() {
-                return refuse_m("a class-method alias");
-            }
+
             if scope.accessor.is_some() {
                 return refuse_m("a singleton accessor");
             }
@@ -897,9 +906,7 @@ pub(crate) fn collect_classes(
             if scope.runtime_conditional {
                 return refuse_m("a conditionally-defined class method");
             }
-            if scope.alias_of.is_some() {
-                return refuse_m("a class-method alias");
-            }
+
             if scope.accessor.is_some() {
                 return refuse_m("a singleton accessor");
             }
@@ -956,5 +963,6 @@ pub(crate) fn collect_classes(
         vis,
         extends,
         sst,
+        alias_rows,
     })
 }

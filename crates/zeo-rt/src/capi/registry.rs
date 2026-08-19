@@ -174,6 +174,12 @@ pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
                 Symbol::intern(text(r.a)),
                 value_fn(r.f.expect("a super-target row carries its fn")),
             ),
+            abi::REG_ALIAS => {
+                registry.register_alias(ClassId(r.class), text(r.a), text(r.b));
+            }
+            abi::REG_CLASS_ALIAS => {
+                registry.register_class_alias(ClassId(r.class), text(r.a), text(r.b));
+            }
             abi::REG_SINGLETON_SUPER_TARGET => {
                 let module = unsafe { *r.ids };
                 registry.define_singleton_super_target_c(

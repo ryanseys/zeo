@@ -343,6 +343,8 @@ pub(crate) struct RegRowSpec {
     pub kind: u8,
     pub class: u32,
     pub a: String,
+    /// The alias kinds' OLD name; empty for every other kind.
+    pub b: String,
     /// A super-target row's trampoline; None for the mark kinds.
     pub f: Option<FuncId>,
     /// `REG_EXTENDS`' module ids; empty for every other kind.
@@ -490,6 +492,10 @@ fn define_reg_rows(em: &mut Emitter, rows: &[RegRowSpec]) -> Result<Option<DataI
         .iter()
         .map(|r| em.intern_rodata(r.a.as_bytes()))
         .collect();
+    let interned_b: Vec<u32> = rows
+        .iter()
+        .map(|r| em.intern_rodata(r.b.as_bytes()))
+        .collect();
     // One shared u32 array holds every row's `ids` run (`REG_EXTENDS`'
     // module lists); each row points into it at its offset.
     let mut ids_bytes: Vec<u8> = Vec::new();
@@ -525,6 +531,8 @@ fn define_reg_rows(em: &mut Emitter, rows: &[RegRowSpec]) -> Result<Option<DataI
             .copy_from_slice(&row.class.to_le_bytes());
         let at = base + std::mem::offset_of!(RegRow, a) + std::mem::offset_of!(Str, len);
         bytes[at..at + 8].copy_from_slice(&(row.a.len() as u64).to_le_bytes());
+        let bt = base + std::mem::offset_of!(RegRow, b) + std::mem::offset_of!(Str, len);
+        bytes[bt..bt + 8].copy_from_slice(&(row.b.len() as u64).to_le_bytes());
         let n_at = base + std::mem::offset_of!(RegRow, n_ids);
         bytes[n_at..n_at + 8].copy_from_slice(&(row.ids.len() as u64).to_le_bytes());
     }
@@ -545,6 +553,11 @@ fn define_reg_rows(em: &mut Emitter, rows: &[RegRowSpec]) -> Result<Option<DataI
         let base = i * size;
         let a_at = (base + std::mem::offset_of!(RegRow, a) + std::mem::offset_of!(Str, ptr)) as u32;
         data.write_data_addr(a_at, rodata_gv, i64::from(off));
+    }
+    for (i, &off) in interned_b.iter().enumerate() {
+        let base = i * size;
+        let b_at = (base + std::mem::offset_of!(RegRow, b) + std::mem::offset_of!(Str, ptr)) as u32;
+        data.write_data_addr(b_at, rodata_gv, i64::from(off));
     }
     for (i, row) in rows.iter().enumerate() {
         let Some(f) = row.f else { continue };

@@ -682,6 +682,11 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
         // `M.included(C)` and siblings -- which is Module's own no-op
         // unless the module defines one (rustc's `is_pure_statement` /
         // `mixin_hook_runs` rule, mirrored).
+        // `alias new old` is pure REGISTRATION: analyze resolved it into a
+        // copy scope (user source) or an alias row (builtin source), and a
+        // builtin row's source is validated at this body's END
+        // (`validate_class_aliases`) -- the statement itself runs nothing.
+        HirNode::AliasMethod { .. } => Ok(()),
         HirNode::Include(_)
         | HirNode::Extend(_)
         | HirNode::Prepend(_)
@@ -952,7 +957,24 @@ pub(crate) fn emit_class_body_call(
             &[owner_v, nptr, nlen, fptr, flen, line_v],
         );
     }
+    // `alias`'s builtin source validates as this body finishes -- CRuby's
+    // timing, run at the CALL site so an alias-only (empty-statement) body
+    // still checks (rustc emits the check even for an otherwise empty
+    // body).
+    let validate = |fx: &mut Fx| {
+        let has = !fx.an.compiler.classes[call.class as usize]
+            .builtin_aliases
+            .is_empty();
+        if has {
+            let cid = fx.b.ins().iconst(types::I32, i64::from(call.class));
+            let st = fx
+                .call("zeo_rt_validate_class_aliases", &[cid])
+                .expect("validate_class_aliases returns a status");
+            fx.fallible(st);
+        }
+    };
     let Some(func) = call.func else {
+        validate(fx);
         return Ok(());
     };
     // `self` = the class, materialized as a Class immediate.
@@ -976,6 +998,7 @@ pub(crate) fn emit_class_body_call(
     let inst = fx.b.ins().call(fref, &[self_addr, out]);
     let status = fx.b.func.dfg.inst_results(inst)[0];
     fx.fallible(status);
+    validate(fx);
     fx.owned_created += 1;
     ownership::discard(
         fx,

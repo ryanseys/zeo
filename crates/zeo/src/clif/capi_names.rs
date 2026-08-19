@@ -481,6 +481,11 @@ pub const CAPI: &[CapiSig] = &[
         ret: Some(I32),
     },
     CapiSig {
+        name: "zeo_rt_validate_class_aliases",
+        params: &[U32],
+        ret: Some(I32),
+    },
+    CapiSig {
         name: "zeo_rt_wrong_arity",
         params: &[Usize, Usize, Usize],
         ret: Some(I32),

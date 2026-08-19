@@ -352,6 +352,16 @@ pub const REG_EXTENDS: u8 = 4;
 /// what `call_singleton_super_target` consults. `f` carries the trampoline.
 pub const REG_SINGLETON_SUPER_TARGET: u8 = 5;
 
+/// `RegRow.kind`: a NAME-indirection alias whose source is a builtin
+/// method (`a` = new name, `b` = old/terminal name) -- the send miss paths
+/// rewrite through it; `validate_class_aliases` raises `NameError` for a
+/// source that resolves nowhere, at the class body's run.
+pub const REG_ALIAS: u8 = 6;
+
+/// [`REG_ALIAS`]'s singleton-side twin (`class << self; alias [] new`):
+/// the row lands in the table a class-OBJECT receiver consults.
+pub const REG_CLASS_ALIAS: u8 = 7;
+
 /// A lazily-run feature unit -- the `install_feature_units` twin.
 #[repr(C)]
 pub struct UnitRow {
