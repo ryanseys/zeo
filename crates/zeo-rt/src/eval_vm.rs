@@ -360,12 +360,8 @@ mod imp {
             file: Arc::from(eval_path.as_str()),
             line: 1,
         };
-        let _frame = crate::frames::FrameGuard::push(
-            crate::frames::intern_path(&eval_path),
-            label,
-            1,
-            0,
-        );
+        let _frame =
+            crate::frames::FrameGuard::push(crate::frames::intern_path(&eval_path), label, 1, 0);
         eval_list(&program.statements().body(), &mut env)
     }
 
@@ -1760,7 +1756,8 @@ mod imp {
         // `dispatch::send` requires). Arithmetic and real method calls are
         // covered end-to-end by the `--features eval-vm` e2e suite.
         fn eval(src: &str) -> RubyValue {
-            super::eval_string(src, RubyValue::Nil, 0, super::EvalMode::Caller).expect("eval ok")
+            super::eval_string(src, RubyValue::Nil, 0, super::EvalMode::Caller, "<main>")
+                .expect("eval ok")
         }
 
         #[test]
@@ -1831,6 +1828,7 @@ mod imp {
                 RubyValue::Nil,
                 0,
                 super::EvalMode::Caller,
+                "<main>",
             )
             .expect("eval ok");
             assert!(matches!(v, RubyValue::Int(0)));
@@ -1868,7 +1866,7 @@ mod imp {
         #[test]
         #[should_panic(expected = "SyntaxError")]
         fn parse_error_is_a_syntax_error() {
-            let _ = super::eval_string("def", RubyValue::Nil, 0, super::EvalMode::Caller);
+            let _ = super::eval_string("def", RubyValue::Nil, 0, super::EvalMode::Caller, "<main>");
         }
     }
 }

@@ -6073,13 +6073,18 @@ mod tests {
         assert_eq!(ci.own_class_methods.len(), 1);
     }
 
+    /// A REOPEN's `include` applies where it stands, so it lowers to the
+    /// runtime send rather than joining `ClassInfo::includes` -- a call written
+    /// between the two bodies must not already see the second module. Only the
+    /// FIRST body's mixin is a compile-time ancestry edit.
     #[test]
-    fn reopening_appends_includes() {
+    fn a_reopens_include_does_not_join_the_static_ancestry() {
         let a = analyze_src(
             "module M1\nend\nmodule M2\nend\nclass Foo\n  include M1\nend\nclass Foo\n  include M2\nend\n",
         );
         let ci = a.compiler.class(class_named(&a, "Foo"));
-        assert_eq!(ci.includes.len(), 2);
+        assert_eq!(ci.includes.len(), 1);
+        assert_eq!(ci.includes[0], class_named(&a, "M1"));
     }
 
     /// The reopen guards, each mirroring CRuby's own TypeError

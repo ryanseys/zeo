@@ -694,24 +694,20 @@ mod tests {
             .lookup)(name)
         .unwrap()
     }
-    fn cmethod(name: &str) -> crate::builtins::BuiltinMethodFn {
-        (crate::builtins::registered_table(zeo_abi::SET_CLASS)
-            .unwrap()
-            .class
-            .as_ref()
-            .unwrap()
-            .lookup)(name)
-        .unwrap()
-    }
 
     fn ints(xs: &[i64]) -> RubyValue {
         set_from(xs.iter().map(|&i| RubyValue::Int(i)))
     }
 
+    /// `Set.new`'s own row SENDS `initialize` (so a subclass override runs),
+    /// which needs a class registry no `--lib` unit test installs. The row
+    /// under test is `initialize`; calling it directly is the same code path
+    /// with the dispatch hop removed.
     #[test]
     fn new_deduplicates_and_preserves_insertion_order() {
-        let s = cmethod("new")(
-            &RubyValue::Nil,
+        let s = empty_set();
+        imethod("initialize")(
+            &s,
             &[RubyValue::Array(crate::array_new(
                 [3, 1, 3, 2, 1].iter().map(|&i| RubyValue::Int(i)).collect(),
             ))],

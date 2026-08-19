@@ -1672,7 +1672,13 @@ fn print_backtrace(exc_value: &RubyValue, reverse: bool, out: &mut String) {
 /// chain is rendered after (or, in `:bottom` order, before) the one it caused.
 /// `set_explicit_cause` already refuses a circular chain, so the walk
 /// terminates without a seen-set.
-fn show_cause(exc_value: &RubyValue, at: Option<&str>, highlight: bool, reverse: bool, out: &mut String) {
+fn show_cause(
+    exc_value: &RubyValue,
+    at: Option<&str>,
+    highlight: bool,
+    reverse: bool,
+    out: &mut String,
+) {
     let RubyValue::Object(o) = exc_value else {
         return;
     };

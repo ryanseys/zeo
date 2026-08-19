@@ -3110,7 +3110,6 @@ fn extended_class_method(mid: ClassId, name: Symbol) -> Option<RProc> {
     // answers Module and a sibling call resolves through the singleton
     // ancestry rather than looking for an instance method on the class.
     if let Some(body) = overlay_value_body(mid, name) {
-        let mid = mid;
         return Some(RProc::with_self_and_block(
             move |self_val: &RubyValue, args: &[RubyValue], block| {
                 call_value_body(mid, name, &body, self_val, args, block)
