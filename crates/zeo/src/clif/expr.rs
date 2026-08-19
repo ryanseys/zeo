@@ -298,18 +298,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
         }
         HirNode::IvarRead(name) => {
             let name = name.clone();
-            let slot = ivar_slot(fx, id, &name)?;
-            let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
-            let ss = fx.temp_slot();
-            let out = fx.slot_addr(ss, 0);
-            let slot_v = fx.b.ins().iconst(fx.em.ptr, slot as i64);
-            fx.call("zeo_rt_ivar_get_slot", &[self_ptr, slot_v, out]);
-            fx.owned_created += 1;
-            Ok(Operand::Slot {
-                ss,
-                owned: true,
-                tag: TagInfo::Unknown,
-            })
+            super::stmt::ivar_read_op(fx, id, &name)
         }
         HirNode::Or(a, b) => {
             let (a, b) = (*a, *b);
@@ -886,21 +875,6 @@ fn scoped_const_read(fx: &mut Fx, id: NodeId, scope: &str, name: &str) -> Result
     })
 }
 
-/// The compile-time ivar slot for `@name` in the enclosing method's class.
-fn ivar_slot(fx: &Fx, id: NodeId, name: &str) -> Result<usize, String> {
-    if fx.self_is_class {
-        // `@x` in a class-method body is the CLASS object's own ivar (a
-        // civar site), not an instance slot.
-        return fx.unsupported(id, "a class-level ivar");
-    }
-    let Some(class) = fx.method_class else {
-        return fx.unsupported(id, "an ivar outside a compiled method");
-    };
-    crate::analyze::class_query::slot_of(&fx.an.compiler, class, name)
-        .ok_or(())
-        .or_else(|()| fx.unsupported(id, "a dynamic (slotless) ivar"))
-}
-
 /// `a || b` / `a && b`: keep `a` when its truthiness matches
 /// `keep_truthy`, else evaluate and keep `b` -- the OPERAND is the value,
 /// Ruby's rule.
@@ -1258,7 +1232,7 @@ fn pool_operand(fx: &mut Fx, op: &Operand, addr: cranelift_codegen::ir::Value) {
 }
 
 /// `name`'s bytes interned in `.rodata`, as a `(ptr, len)` argument pair.
-fn rodata_name(
+pub(crate) fn rodata_name(
     fx: &mut Fx,
     name: &str,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {

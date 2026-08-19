@@ -20,7 +20,8 @@ pub(crate) struct ClassSpec {
     pub hidden: u16,
     /// `module M` -- registered `CLASS_MODULE` (no allocator, no layout);
     /// its methods ride the VALUE channel instead of the object channel.
-    pub is_module: bool,
+    /// A `zeo_abi::abi::CLASS_*` registrar selector.
+    pub kind: u8,
 }
 
 /// One object-channel method to compile for a user class.
@@ -38,6 +39,7 @@ pub(crate) struct ObjMethodSpec {
     pub hir_params: crate::hir::Params,
     pub has_blk: bool,
     pub ruby2_keywords: bool,
+    pub dyn_ivars: bool,
 }
 
 /// One class method (`def self.x`) to compile -- a `CmRow` on the
@@ -150,10 +152,23 @@ pub(crate) fn collect_classes(
         if class.feature_gate.is_some() {
             return refuse("a feature-gated class");
         }
+        // The registrar this class needs. An exception subclass's chain
+        // holds builtin superclasses BY DESIGN -- the registrar installs
+        // the native default method set and the class's own defs layer
+        // over it as deltas (rustc's `register_exception_subclass` arm).
+        let cid = ClassId(idx as u32);
+        let exception_backed = compiler.is_exception_backed(cid);
+        let kind = if class.is_module {
+            zeo_abi::abi::CLASS_MODULE
+        } else if exception_backed {
+            zeo_abi::abi::CLASS_EXCEPTION
+        } else {
+            zeo_abi::abi::CLASS_PLAIN
+        };
         // Every ancestor past self must be a user class or the plain
-        // Object/Kernel/BasicObject spine -- an exception/value/module
-        // superclass selects a registrar the slice does not emit.
-        for &a in class.ancestors.iter().skip(1) {
+        // Object/Kernel/BasicObject spine -- a builtin superclass outside
+        // the shapes above selects a registrar the slice does not emit.
+        for &a in class.ancestors.iter().skip(1).filter(|_| !exception_backed) {
             let plain_spine = matches!(a.0, 0 | 24 | 25);
             let user = (a.0 as usize) < compiler.classes.len()
                 && !compiler.classes[a.0 as usize].is_builtin
@@ -176,7 +191,7 @@ pub(crate) fn collect_classes(
             ancestors: class.ancestors.iter().map(|c| c.0).collect(),
             ivars: class.ivars.clone(),
             hidden: u16::try_from(class.hidden_ivars.len()).expect("hidden ivars fit u16"),
-            is_module: class.is_module,
+            kind,
         });
         // What this class's own body wrote -- `instance_methods(false)` /
         // `Method#owner` truth, exactly the rustc `mark_own_rows` list
@@ -283,8 +298,12 @@ pub(crate) fn collect_classes(
                 return refuse_m(what);
             }
             let layout = super::params::layout_of(p)?;
-            let accessor = match &scope.accessor {
-                Some(shape) => {
+            // A native-backed instance has NO slots: its accessor runs as
+            // an ordinary body (a lone name-keyed ivar read/write), the
+            // rustc delta shape.
+            let accessor = match (&scope.accessor, exception_backed) {
+                (Some(_), true) | (None, _) => None,
+                (Some(shape), false) => {
                     let slot = crate::analyze::class_query::slot_of(
                         compiler,
                         ClassId(idx as u32),
@@ -295,7 +314,6 @@ pub(crate) fn collect_classes(
                     })?;
                     Some((slot, shape.kind))
                 }
-                None => None,
             };
             let has_blk = scope.needs_block_param();
             let tramp = em
@@ -333,6 +351,7 @@ pub(crate) fn collect_classes(
                 });
             }
             methods.push(ObjMethodSpec {
+                dyn_ivars: exception_backed,
                 owner: ClassId(idx as u32),
                 owner_name: name.clone(),
                 name: mname,

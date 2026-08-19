@@ -109,7 +109,27 @@ pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
                 compiled_object::register_layout(id, layout);
             }
             abi::CLASS_MODULE => registry.register(id, name, true, ancestors, None),
-            k => panic!("register_program: class kind {k} ({name}) is not yet emitted (M1)"),
+            // The native-backed shapes: instances are the runtime's own
+            // types, methods arrive as deltas over the installed defaults.
+            abi::CLASS_EXCEPTION => {
+                crate::register_exception_subclass(&mut registry, id, name, ancestors)
+            }
+            abi::CLASS_VALUE_SUBCLASS => {
+                crate::register_value_subclass(&mut registry, id, name, ancestors)
+            }
+            abi::CLASS_RECV_HONOURING => {
+                crate::register_recv_honouring_subclass(&mut registry, id, name, ancestors)
+            }
+            abi::CLASS_MODULE_SUBCLASS => {
+                crate::register_module_subclass(&mut registry, id, name, ancestors)
+            }
+            abi::CLASS_WEAK_MAP => {
+                crate::register_weakmap_subclass(&mut registry, id, name, ancestors)
+            }
+            // An instance-less builtin's subclass: name + ancestors only, no
+            // constructor -- `.new` resolves dynamically to the raise.
+            abi::CLASS_IMMEDIATE => registry.register(id, name, false, ancestors, None),
+            k => panic!("register_program: unknown class kind {k} ({name})"),
         }
     }
     for r in unsafe { rows(desc.obj_rows, desc.n_obj_rows) } {

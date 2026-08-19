@@ -214,9 +214,19 @@ pub const CAPI: &[CapiSig] = &[
         ret: None,
     },
     CapiSig {
+        name: "zeo_rt_ivar_get_dyn",
+        params: &[Ptr, Ptr, Usize, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
         name: "zeo_rt_ivar_get_slot",
         params: &[Ptr, Usize, Ptr],
         ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_ivar_set_dyn",
+        params: &[Ptr, Ptr, Usize, Ptr],
+        ret: Some(I32),
     },
     CapiSig {
         name: "zeo_rt_ivar_set_slot",

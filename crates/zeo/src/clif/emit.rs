@@ -190,6 +190,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             self_is_class: false,
             label_override: None,
             discard_value: false,
+            dyn_ivars: false,
         };
         define_method_body(em, analyzed, &spec)?;
     }
@@ -208,6 +209,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
                 self_is_class: false,
                 label_override: None,
                 discard_value: false,
+                dyn_ivars: m.dyn_ivars,
             };
             define_method_body(em, analyzed, &spec)?;
         }
@@ -226,6 +228,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             self_is_class: true,
             label_override: None,
             discard_value: false,
+            dyn_ivars: false,
         };
         define_method_body(em, analyzed, &spec)?;
     }
@@ -243,6 +246,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             self_is_class: false,
             label_override: None,
             discard_value: false,
+            dyn_ivars: false,
         };
         define_method_body(em, analyzed, &spec)?;
     }
@@ -263,6 +267,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             self_is_class: true,
             label_override: Some(cb.label.clone()),
             discard_value: true,
+            dyn_ivars: false,
         };
         define_method_body(em, analyzed, &spec)?;
     }
@@ -935,6 +940,9 @@ pub(crate) struct BodyFnSpec<'a> {
     /// it unread), so the tail runs as a STATEMENT and `out` gets nil --
     /// statement-only shapes (`include`, a nested `class`) may sit last.
     pub discard_value: bool,
+    /// Ivars in this body are NAME-KEYED at runtime (a native-backed
+    /// owner has no compiled slot layout).
+    pub dyn_ivars: bool,
 }
 
 /// A method's frame facts: `(file, label, line, end_line)` -- shared by
@@ -1171,6 +1179,7 @@ fn define_method_body(
     fx.self_ptr = Some(self_ptr);
     fx.method_class = Some(def.owner);
     fx.self_is_class = def.self_is_class;
+    fx.dyn_ivars = def.dyn_ivars;
     fx.frame_label = label.clone();
     fx.blk_ptr = blk_ptr;
     fx.ruby2_keywords = def.ruby2_keywords;

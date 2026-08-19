@@ -40,19 +40,74 @@ pub(crate) fn lower_value_body_into(
     Ok(())
 }
 
-/// `@name = value`: the runtime slot write (frozen check inside); the
-/// value MOVES in.
-fn lower_ivar_write(fx: &mut Fx, site: NodeId, name: &str, value: NodeId) -> Result<(), String> {
-    let slot = ivar_slot_of(fx, site, name)?;
-    let op = lower_expr(fx, value)?;
-    let ptr = ownership::move_ptr(fx, &op);
+/// `@name` read into a fresh owned temp -- slot-indexed for a compiled
+/// class; NAME-KEYED (fallible: the Ractor guard) for a native-backed one,
+/// the rustc `ivar_get_dyn_isolated` shape.
+pub(crate) fn ivar_read_op(
+    fx: &mut Fx,
+    site: NodeId,
+    name: &str,
+) -> Result<super::operand::Operand, String> {
+    use super::operand::{Operand, TagInfo};
     let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
-    let slot_v = fx.b.ins().iconst(fx.em.ptr, slot as i64);
-    let status = fx
-        .call("zeo_rt_ivar_set_slot", &[self_ptr, slot_v, ptr])
-        .expect("ivar_set_slot returns a status");
-    fx.fallible(status);
+    let ss = fx.temp_slot();
+    let out = fx.slot_addr(ss, 0);
+    if fx.dyn_ivars {
+        let (nptr, nlen) = super::expr::rodata_name(fx, name);
+        let status = fx
+            .call("zeo_rt_ivar_get_dyn", &[self_ptr, nptr, nlen, out])
+            .expect("ivar_get_dyn returns a status");
+        fx.fallible(status);
+    } else {
+        let slot = ivar_slot_of(fx, site, name)?;
+        let slot_v = fx.b.ins().iconst(fx.em.ptr, slot as i64);
+        fx.call("zeo_rt_ivar_get_slot", &[self_ptr, slot_v, out]);
+    }
+    fx.owned_created += 1;
+    Ok(Operand::Slot {
+        ss,
+        owned: true,
+        tag: TagInfo::Unknown,
+    })
+}
+
+/// `@name = <op>`: the slot write MOVES the value in; the name-keyed
+/// write BORROWS it (the runtime clones), so an owned operand parks in
+/// the pool first -- the write's frozen check can raise.
+pub(crate) fn ivar_write_op(
+    fx: &mut Fx,
+    site: NodeId,
+    name: &str,
+    op: super::operand::Operand,
+) -> Result<(), String> {
+    let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
+    if fx.dyn_ivars {
+        let tag = op.tag();
+        let ptr = ownership::borrow_ptr(fx, &op);
+        if op.owned() {
+            ownership::pool_owned(fx, ptr, tag);
+        }
+        let (nptr, nlen) = super::expr::rodata_name(fx, name);
+        let status = fx
+            .call("zeo_rt_ivar_set_dyn", &[self_ptr, nptr, nlen, ptr])
+            .expect("ivar_set_dyn returns a status");
+        fx.fallible(status);
+    } else {
+        let slot = ivar_slot_of(fx, site, name)?;
+        let ptr = ownership::move_ptr(fx, &op);
+        let slot_v = fx.b.ins().iconst(fx.em.ptr, slot as i64);
+        let status = fx
+            .call("zeo_rt_ivar_set_slot", &[self_ptr, slot_v, ptr])
+            .expect("ivar_set_slot returns a status");
+        fx.fallible(status);
+    }
     Ok(())
+}
+
+/// `@name = value`: evaluate then write (see [`ivar_write_op`]).
+fn lower_ivar_write(fx: &mut Fx, site: NodeId, name: &str, value: NodeId) -> Result<(), String> {
+    let op = lower_expr(fx, value)?;
+    ivar_write_op(fx, site, name, op)
 }
 
 /// A multiple assignment (`a, b = ...`, `a, *r, c = arr`, nested
@@ -134,17 +189,7 @@ fn write_multi_target(
             ownership::write_local(fx, name, &op);
             Ok(())
         }
-        MultiTarget::Ivar(name) => {
-            let slot = ivar_slot_of(fx, site, name)?;
-            let ptr = ownership::move_ptr(fx, &op);
-            let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
-            let slot_v = fx.b.ins().iconst(fx.em.ptr, slot as i64);
-            let status = fx
-                .call("zeo_rt_ivar_set_slot", &[self_ptr, slot_v, ptr])
-                .expect("ivar_set_slot returns a status");
-            fx.fallible(status);
-            Ok(())
-        }
+        MultiTarget::Ivar(name) => ivar_write_op(fx, site, name, op),
         MultiTarget::Call {
             write_call,
             tmp_name,
@@ -202,19 +247,10 @@ fn lower_tail_expr(fx: &mut Fx, tail: NodeId) -> Result<super::operand::Operand,
         }
         HirNode::IvarWrite(name, value) => {
             let (name, value) = (name.clone(), *value);
-            let slot = ivar_slot_of(fx, tail, &name)?;
             lower_ivar_write(fx, tail, &name, value)?;
-            let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
-            let ss = fx.temp_slot();
-            let out = fx.slot_addr(ss, 0);
-            let slot_v = fx.b.ins().iconst(fx.em.ptr, slot as i64);
-            fx.call("zeo_rt_ivar_get_slot", &[self_ptr, slot_v, out]);
-            fx.owned_created += 1;
-            Ok(Operand::Slot {
-                ss,
-                owned: true,
-                tag: TagInfo::Unknown,
-            })
+            // The assignment's value: read back (both forms store exactly
+            // what was assigned; ivars have no hooks).
+            ivar_read_op(fx, tail, &name)
         }
         HirNode::While {
             cond,

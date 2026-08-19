@@ -340,3 +340,42 @@ pub unsafe extern "C" fn zeo_rt_record_const_location(
     let file = unsafe { super::static_str(file, file_len) };
     crate::constants::record_const_location(owner, name, file, line);
 }
+
+/// Read `@name` from a NATIVE-BACKED self (an exception/value-subclass
+/// instance): name-keyed, behind CRuby's Ractor guard -- the rustc
+/// backend's `ivar_get_dyn_isolated`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_ivar_get_dyn(
+    recv: *const RubyValue,
+    name: *const u8,
+    len: usize,
+    out: *mut RubyValue,
+) -> i32 {
+    let name = unsafe { super::str_slice(name, len) };
+    status_out(
+        crate::dispatch::ivar_get_dyn_isolated(unsafe { &*recv }, name),
+        out,
+    )
+}
+
+/// Write `@name` on a native-backed self; `v` is BORROWED (cloned in).
+/// The frozen check lives inside, exactly the rustc `ivar_set_dyn` path;
+/// the echoed value is dropped here (the emitter reads the ivar back when
+/// the assignment's value is consumed).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_ivar_set_dyn(
+    recv: *const RubyValue,
+    name: *const u8,
+    len: usize,
+    v: *const RubyValue,
+) -> i32 {
+    use zeo_abi::abi::{STATUS_OK, STATUS_SIGNAL};
+    let name = unsafe { super::str_slice(name, len) };
+    match crate::dispatch::ivar_set_dyn(unsafe { &*recv }, name, unsafe { &*v }.clone()) {
+        Ok(_echo) => STATUS_OK,
+        Err(sig) => {
+            crate::signal::set_pending(sig);
+            STATUS_SIGNAL
+        }
+    }
+}

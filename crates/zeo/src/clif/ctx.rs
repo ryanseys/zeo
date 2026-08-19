@@ -68,6 +68,9 @@ pub(crate) struct Fx<'e, 'f> {
     /// is the class object's own ivar (a civar site, not lowered yet) and
     /// an implicit send resolves through the singleton chain.
     pub self_is_class: bool,
+    /// This body's owner is NATIVE-BACKED (an exception subclass): ivars
+    /// are name-keyed at runtime, not compiled slots.
+    pub dyn_ivars: bool,
     /// A method body's `(out, ret_ok)`: `return` writes the value and
     /// jumps; `None` at the toplevel.
     pub ret: Option<(ir::Value, ir::Block)>,
@@ -132,6 +135,7 @@ impl<'e, 'f> Fx<'e, 'f> {
             self_ptr: None,
             method_class: None,
             self_is_class: false,
+            dyn_ivars: false,
             ret: None,
             retries: Vec::new(),
             ensure_depth: 0,
