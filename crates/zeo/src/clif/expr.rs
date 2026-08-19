@@ -34,21 +34,66 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
         }
         HirNode::NilLit => Ok(Operand::Nil),
         HirNode::StringLit(parts) => {
-            let Some(text) = pure_literal(parts) else {
-                return fx.unsupported(id, "an interpolated or non-UTF-8 string literal");
-            };
-            let off = fx.em.intern_rodata(text.as_bytes());
-            let len = text.len();
+            if let Some(text) = pure_literal(parts) {
+                let off = fx.em.intern_rodata(text.as_bytes());
+                let len = text.len();
+                let ss = fx.temp_slot();
+                let dst = fx.slot_addr(ss, 0);
+                let ptr = fx.rod(off);
+                let len_v = fx.b.ins().iconst(fx.em.ptr, len as i64);
+                let enc = fx.b.ins().iconst(types::I8, ENC_UTF8);
+                fx.call("zeo_rt_str_new", &[ptr, len_v, enc, dst]);
+                fx.owned_created += 1;
+                return Ok(Operand::Slot {
+                    ss,
+                    owned: true,
+                    tag: TagInfo::Known(ValueTag::Str as u8),
+                });
+            }
+            if parts.iter().any(|p| matches!(p, StrPart::Bytes(_))) {
+                return fx.unsupported(id, "a non-UTF-8 string literal");
+            }
+            // Interpolation: a fresh mutable string, literal pieces
+            // appended raw, interpolated values through the runtime's
+            // to_s dispatch (whose raise propagates). Pooled at creation
+            // -- an interp piece can raise mid-build.
+            let parts = parts.clone();
             let ss = fx.temp_slot();
             let dst = fx.slot_addr(ss, 0);
-            let ptr = fx.rod(off);
-            let len_v = fx.b.ins().iconst(fx.em.ptr, len as i64);
+            let null = fx.b.ins().iconst(fx.em.ptr, 0);
+            let zero = fx.b.ins().iconst(fx.em.ptr, 0);
             let enc = fx.b.ins().iconst(types::I8, ENC_UTF8);
-            fx.call("zeo_rt_str_new", &[ptr, len_v, enc, dst]);
+            fx.call("zeo_rt_str_new", &[null, zero, enc, dst]);
             fx.owned_created += 1;
-            Ok(Operand::Slot {
-                ss,
-                owned: true,
+            ownership::pool_owned(fx, dst, TagInfo::Known(ValueTag::Str as u8));
+            for part in &parts {
+                match part {
+                    StrPart::Lit(text) => {
+                        if text.is_empty() {
+                            continue;
+                        }
+                        let off = fx.em.intern_rodata(text.as_bytes());
+                        let ptr = fx.rod(off);
+                        let len_v = fx.b.ins().iconst(fx.em.ptr, text.len() as i64);
+                        fx.call("zeo_rt_str_append_lit", &[dst, ptr, len_v]);
+                    }
+                    StrPart::Interp(n) => {
+                        let op = lower_expr(fx, *n)?;
+                        let p = ownership::borrow_ptr(fx, &op);
+                        if op.owned() {
+                            ownership::pool_owned(fx, p, op.tag());
+                        }
+                        let status = fx
+                            .call("zeo_rt_str_append_value", &[dst, p])
+                            .expect("append_value returns a status");
+                        fx.fallible(status);
+                    }
+                    StrPart::Bytes(_) => unreachable!("byte segments refused above"),
+                }
+            }
+            Ok(Operand::Ptr {
+                addr: dst,
+                owned: false,
                 tag: TagInfo::Known(ValueTag::Str as u8),
             })
         }

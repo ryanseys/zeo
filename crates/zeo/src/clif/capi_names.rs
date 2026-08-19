@@ -309,6 +309,16 @@ pub const CAPI: &[CapiSig] = &[
         ret: Some(I32),
     },
     CapiSig {
+        name: "zeo_rt_str_append_lit",
+        params: &[Ptr, Ptr, Usize],
+        ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_str_append_value",
+        params: &[Ptr, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
         name: "zeo_rt_str_new",
         params: &[Ptr, Usize, U8, Ptr],
         ret: None,

@@ -192,3 +192,34 @@ pub unsafe extern "C" fn zeo_rt_multi_split(
     debug_assert_eq!(s, n_out);
     STATUS_OK
 }
+
+/// Append literal UTF-8 bytes to the (mutable) string being interpolated.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_str_append_lit(s: *const RubyValue, ptr: *const u8, len: usize) {
+    let RubyValue::Str(rs) = (unsafe { &*s }) else {
+        panic!("str_append_lit on a non-string")
+    };
+    let text = unsafe { super::str_slice(ptr, len) };
+    rs.lock().push_str(text);
+}
+
+/// Append an interpolated value: `try_display_string` dispatches a
+/// user-defined `to_s`, whose raise propagates (catchable at the
+/// interpolation site, CRuby's rule).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_str_append_value(s: *const RubyValue, v: *const RubyValue) -> i32 {
+    use zeo_abi::abi::{STATUS_OK, STATUS_SIGNAL};
+    let RubyValue::Str(rs) = (unsafe { &*s }) else {
+        panic!("str_append_value on a non-string")
+    };
+    match unsafe { &*v }.try_display_string() {
+        Ok(text) => {
+            rs.lock().push_str(&text);
+            STATUS_OK
+        }
+        Err(sig) => {
+            crate::signal::set_pending(sig);
+            STATUS_SIGNAL
+        }
+    }
+}
