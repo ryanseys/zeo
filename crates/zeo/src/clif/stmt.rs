@@ -307,6 +307,7 @@ fn lower_tail_expr(fx: &mut Fx, tail: NodeId) -> Result<super::operand::Operand,
         HirNode::Break(..)
         | HirNode::Next(..)
         | HirNode::Redo
+        | HirNode::Retry
         | HirNode::Raise(..)
         | HirNode::Return(..) => {
             // The jump/signal leaves this block unreachable; the nil is
@@ -755,6 +756,10 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
         | HirNode::SelfRef
         | HirNode::Yield(..)
         | HirNode::BlockGiven
+        | HirNode::SymbolLit(..)
+        | HirNode::ArrayLit(..)
+        | HirNode::HashLit(..)
+        | HirNode::Lambda { .. }
         | HirNode::CaseWhen { .. }
         | HirNode::CaseIn { .. }
         | HirNode::MatchPredicate { .. }
