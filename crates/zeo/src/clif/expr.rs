@@ -94,6 +94,36 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             let name = name.clone();
             const_read(fx, id, &name)
         }
+        HirNode::Begin {
+            body,
+            rescues,
+            else_body,
+            ensure_body,
+        } => {
+            let (body, rescues, else_body, ensure_body) = (
+                body.clone(),
+                rescues.clone(),
+                else_body.clone(),
+                ensure_body.clone(),
+            );
+            let ss = fx.temp_slot();
+            let dst = fx.slot_addr(ss, 0);
+            super::control::lower_begin(
+                fx,
+                id,
+                &body,
+                &rescues,
+                else_body.as_deref(),
+                ensure_body.as_deref(),
+                Some(dst),
+            )?;
+            fx.owned_created += 1;
+            Ok(Operand::Slot {
+                ss,
+                owned: true,
+                tag: TagInfo::Unknown,
+            })
+        }
         HirNode::SelfRef => {
             let addr = fx.self_ptr.expect("self_ptr is set in the prologue");
             Ok(Operand::Ptr {

@@ -132,6 +132,8 @@ pub(crate) fn lower_counted(
         latch,
         body: body_blk,
         result,
+        depth: fx.ensure_depth,
+        handling: fx.handling_depth,
     });
     super::stmt::lower_stmts(fx, &body)?;
     fx.loops.pop();

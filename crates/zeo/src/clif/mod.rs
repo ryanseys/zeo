@@ -7,6 +7,7 @@
 pub(crate) mod call;
 pub mod capi_names;
 pub(crate) mod classes;
+pub(crate) mod control;
 pub(crate) mod ctx;
 pub mod emit;
 pub(crate) mod expr;

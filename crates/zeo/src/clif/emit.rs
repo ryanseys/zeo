@@ -216,6 +216,17 @@ impl Emitter {
         off
     }
 
+    /// Like `intern_rodata`, but the offset is `align`-aligned (id arrays
+    /// the runtime reads as `&[u32]`). Not deduplicated -- alignment is
+    /// part of the identity and these tables are tiny.
+    pub(crate) fn intern_rodata_aligned(&mut self, bytes: &[u8], align: usize) -> u32 {
+        let pad = (align - (self.rodata.len() % align)) % align;
+        self.rodata.extend(std::iter::repeat_n(0u8, pad));
+        let off = u32::try_from(self.rodata.len()).expect("rodata under 4GB");
+        self.rodata.extend_from_slice(bytes);
+        off
+    }
+
     pub(crate) fn take_rodata(&mut self) -> Vec<u8> {
         std::mem::take(&mut self.rodata)
     }

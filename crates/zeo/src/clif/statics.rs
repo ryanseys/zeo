@@ -569,7 +569,7 @@ pub(crate) fn define_rodata(em: &mut Emitter) -> Result<(), String> {
     } else {
         bytes.into_boxed_slice()
     });
-    data.set_align(1);
+    data.set_align(8);
     em.module
         .define_data(em.rodata_id, &data)
         .map_err(|e| format!("defining {}: {e}", names::RODATA))

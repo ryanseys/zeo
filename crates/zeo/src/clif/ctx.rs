@@ -19,6 +19,12 @@ pub(crate) struct LoopCtl {
     pub latch: ir::Block,
     pub body: ir::Block,
     pub result: Option<ir::Value>,
+    /// The `ensure_depth` at loop entry: a `break`/`next`/`redo` may only
+    /// jump when no `ensure` boundary sits between it and the loop.
+    pub depth: usize,
+    /// The `handling_depth` at loop entry: a jump out emits the
+    /// difference in `handling_pop`s first (`$!` stays balanced).
+    pub handling: usize,
 }
 
 pub(crate) struct Fx<'e, 'f> {
@@ -48,6 +54,17 @@ pub(crate) struct Fx<'e, 'f> {
     /// A method body's `(out, ret_ok)`: `return` writes the value and
     /// jumps; `None` at the toplevel.
     pub ret: Option<(ir::Value, ir::Block)>,
+    /// `retry` targets (a rescue clause's begin head), with their ensure
+    /// and handling depths.
+    pub retries: Vec<(ir::Block, usize, usize)>,
+    /// How many `ensure` bodies enclose the current lowering point -- a
+    /// DIRECT jump (`break`/`next`/`redo`/`return`/`retry`) may not cross
+    /// one (it would skip the ensure); such jumps refuse until the
+    /// jump-through-ensure machinery lands.
+    pub ensure_depth: usize,
+    /// How many `$!` (`handling_push`) entries the current lexical point
+    /// sits under -- a direct jump pops down to its target's depth.
+    pub handling_depth: usize,
     /// The ownership ledger `verify` checks: every owned-value emission
     /// site must be matched by exactly one consumption site.
     pub owned_created: usize,
@@ -79,6 +96,9 @@ impl<'e, 'f> Fx<'e, 'f> {
             self_ptr: None,
             method_class: None,
             ret: None,
+            retries: Vec::new(),
+            ensure_depth: 0,
+            handling_depth: 0,
             owned_created: 0,
             owned_consumed: 0,
         }
@@ -174,6 +194,15 @@ impl<'e, 'f> Fx<'e, 'f> {
     /// The source location of `node`, for refusal messages and line stamps.
     pub fn location(&self, node: crate::hir::NodeId) -> Option<(&str, u32)> {
         crate::codegen::source_location(&self.an.compiler, node)
+    }
+
+    /// Emit the `handling_pop`s a direct jump owes before leaving for a
+    /// point at `target` handling depth (the lexical counter is untouched
+    /// -- pops are per-path).
+    pub fn pop_handling_to(&mut self, target: usize) {
+        for _ in target..self.handling_depth {
+            self.call("zeo_rt_handling_pop", &[]);
+        }
     }
 
     /// A loud "the M0 slice cannot lower this" error, with the location.

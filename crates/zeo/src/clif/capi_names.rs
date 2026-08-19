@@ -59,6 +59,16 @@ pub const CAPI: &[CapiSig] = &[
         ret: Some(I32),
     },
     CapiSig {
+        name: "zeo_rt_handling_pop",
+        params: &[],
+        ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_handling_push",
+        params: &[Ptr],
+        ret: None,
+    },
+    CapiSig {
         name: "zeo_rt_int_add_slow",
         params: &[Ptr, Ptr, Ptr],
         ret: None,
@@ -114,9 +124,24 @@ pub const CAPI: &[CapiSig] = &[
         ret: None,
     },
     CapiSig {
+        name: "zeo_rt_propagating_enter",
+        params: &[Ptr],
+        ret: Some(U8),
+    },
+    CapiSig {
+        name: "zeo_rt_propagating_leave",
+        params: &[U8],
+        ret: None,
+    },
+    CapiSig {
         name: "zeo_rt_release",
         params: &[Ptr],
         ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_rescue_matches",
+        params: &[Ptr, Ptr, Usize],
+        ret: Some(U8),
     },
     CapiSig {
         name: "zeo_rt_retain",
@@ -137,6 +162,36 @@ pub const CAPI: &[CapiSig] = &[
         name: "zeo_rt_set_line",
         params: &[U32],
         ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_signal_drop",
+        params: &[Ptr],
+        ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_signal_kind",
+        params: &[],
+        ret: Some(U8),
+    },
+    CapiSig {
+        name: "zeo_rt_signal_restore",
+        params: &[Ptr],
+        ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_signal_save",
+        params: &[],
+        ret: Some(Ptr),
+    },
+    CapiSig {
+        name: "zeo_rt_signal_set",
+        params: &[U8, Ptr],
+        ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_signal_take",
+        params: &[Ptr],
+        ret: Some(U8),
     },
     CapiSig {
         name: "zeo_rt_stack_check",

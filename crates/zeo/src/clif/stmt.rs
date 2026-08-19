@@ -129,10 +129,41 @@ fn lower_tail_expr(fx: &mut Fx, tail: NodeId) -> Result<super::operand::Operand,
                 tag: TagInfo::Unknown,
             })
         }
-        HirNode::Break(..) | HirNode::Next(..) | HirNode::Redo => {
-            // The jump leaves this block unreachable; the nil is never read.
+        HirNode::Break(..) | HirNode::Next(..) | HirNode::Redo | HirNode::Raise(..) => {
+            // The jump/signal leaves this block unreachable; the nil is
+            // never read.
             lower_stmt(fx, tail)?;
             Ok(Operand::Nil)
+        }
+        HirNode::Begin {
+            body,
+            rescues,
+            else_body,
+            ensure_body,
+        } => {
+            let (body, rescues, else_body, ensure_body) = (
+                body.clone(),
+                rescues.clone(),
+                else_body.clone(),
+                ensure_body.clone(),
+            );
+            let ss = fx.temp_slot();
+            let dst = fx.slot_addr(ss, 0);
+            super::control::lower_begin(
+                fx,
+                tail,
+                &body,
+                &rescues,
+                else_body.as_deref(),
+                ensure_body.as_deref(),
+                Some(dst),
+            )?;
+            fx.owned_created += 1;
+            Ok(Operand::Slot {
+                ss,
+                owned: true,
+                tag: TagInfo::Unknown,
+            })
         }
         HirNode::If { .. }
         | HirNode::IntegerLit(..)
@@ -241,7 +272,12 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
                 }
                 (None, None) => {}
             }
-            let exit = fx.loops.last().expect("checked above").exit;
+            let ctl = fx.loops.last().expect("checked above");
+            if ctl.depth != fx.ensure_depth {
+                return fx.unsupported(stmt, "a `break` across an `ensure` boundary");
+            }
+            let (exit, handling) = (ctl.exit, ctl.handling);
+            fx.pop_handling_to(handling);
             fx.b.ins().jump(exit, &[]);
             fx.continue_unreachable();
             Ok(())
@@ -255,7 +291,11 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
             let Some(ctl) = fx.loops.last() else {
                 return fx.unsupported(stmt, "`next` outside a loop");
             };
-            let latch = ctl.latch;
+            if ctl.depth != fx.ensure_depth {
+                return fx.unsupported(stmt, "a `next` across an `ensure` boundary");
+            }
+            let (latch, handling) = (ctl.latch, ctl.handling);
+            fx.pop_handling_to(handling);
             fx.b.ins().jump(latch, &[]);
             fx.continue_unreachable();
             Ok(())
@@ -264,7 +304,11 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
             let Some(ctl) = fx.loops.last() else {
                 return fx.unsupported(stmt, "`redo` outside a loop");
             };
-            let body = ctl.body;
+            if ctl.depth != fx.ensure_depth {
+                return fx.unsupported(stmt, "a `redo` across an `ensure` boundary");
+            }
+            let (body, handling) = (ctl.body, ctl.handling);
+            fx.pop_handling_to(handling);
             fx.b.ins().jump(body, &[]);
             fx.continue_unreachable();
             Ok(())
@@ -278,6 +322,10 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
             let Some((out, ret_ok)) = fx.ret else {
                 return fx.unsupported(stmt, "a top-level `return`");
             };
+            if fx.ensure_depth != 0 {
+                return fx.unsupported(stmt, "a `return` across an `ensure` boundary");
+            }
+            fx.pop_handling_to(0);
             match value {
                 Some(v) => {
                     let op = lower_expr(fx, v)?;
@@ -288,6 +336,51 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
                 }
             }
             fx.b.ins().jump(ret_ok, &[]);
+            fx.continue_unreachable();
+            Ok(())
+        }
+        HirNode::Begin {
+            body,
+            rescues,
+            else_body,
+            ensure_body,
+        } => {
+            let (body, rescues, else_body, ensure_body) = (
+                body.clone(),
+                rescues.clone(),
+                else_body.clone(),
+                ensure_body.clone(),
+            );
+            super::control::lower_begin(
+                fx,
+                stmt,
+                &body,
+                &rescues,
+                else_body.as_deref(),
+                ensure_body.as_deref(),
+                None,
+            )
+        }
+        HirNode::Raise(args, cause) => {
+            if let crate::hir::RaiseCause::Explicit(_) = cause {
+                return fx.unsupported(stmt, "a `raise` with an explicit cause:");
+            }
+            let elems: Vec<ArrayElem> = args.iter().map(|&a| ArrayElem::Single(a)).collect();
+            // `raise` IS `Kernel#raise` -- the builtin row constructs,
+            // stamps, and signals; the Ok arm is unreachable.
+            let op = super::call::implicit_send(fx, stmt, "raise", &elems)?;
+            ownership::discard(fx, op);
+            Ok(())
+        }
+        HirNode::Retry => {
+            let Some(&(target, depth, handling)) = fx.retries.last() else {
+                return fx.unsupported(stmt, "`retry` outside a rescue clause");
+            };
+            if depth != fx.ensure_depth {
+                return fx.unsupported(stmt, "a `retry` across an `ensure` boundary");
+            }
+            fx.pop_handling_to(handling);
+            fx.b.ins().jump(target, &[]);
             fx.continue_unreachable();
             Ok(())
         }
@@ -442,6 +535,8 @@ fn lower_loop(
         latch,
         body: body_blk,
         result,
+        depth: fx.ensure_depth,
+        handling: fx.handling_depth,
     });
     lower_stmts(fx, body)?;
     fx.loops.pop();
