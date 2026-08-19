@@ -4,9 +4,9 @@
 //! receiver/index binding for `obj.attr op= rhs`/`arr[i] op= rhs`, and the
 //! generalized multi-assignment target shape. Split out of `parse/mod.rs`.
 
-#![allow(
+#![warn(
     clippy::wildcard_enum_match_arm,
-    reason = "not yet swept for wildcard arms -- see the lint's note in lib.rs"
+    reason = "swept: this module's matches are exhaustive. Re-enabled because a\n    parent module's file-level allow is INHERITED by its submodules"
 )]
 
 use super::consts::constant_path_name;
@@ -164,7 +164,7 @@ pub(crate) fn lower_or_write(hir: &mut Hir, target: Storage, rhs: NodeId) -> Nod
             hir.set_flag(read, crate::hir::NodeFlag::LENIENT_CVAR_READ);
             read
         }
-        _ => target.read(hir),
+        Storage::Local(_) | Storage::Ivar(_) | Storage::Global(_) => target.read(hir),
     };
     let write = target.write(hir, rhs);
     hir.push(HirNode::Or(read, write))

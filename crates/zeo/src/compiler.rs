@@ -5,11 +5,6 @@
 //! into `zeo_rt::ClassId` by codegen, but the two types are otherwise
 //! unrelated -- `zeo` never links against `zeo-rt` at all.
 
-#![allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "not yet swept for wildcard arms -- see the lint's note in lib.rs"
-)]
-
 use crate::hir::{Hir, NodeId, Params, Visibility};
 use crate::types::TyKind;
 
@@ -1525,6 +1520,12 @@ impl Compiler {
             .collect();
         self.frozen_crefs = Some(crefs);
         self.frozen_fq_names = Some(names);
+        #[allow(
+            clippy::wildcard_enum_match_arm,
+            reason = "structural: only a bare `NAME = ...` is a DIRECT const definition \
+                      in a class body; class/module definitions resolve through the \
+                      class tables, not this list (see `directly_defines_const`)"
+        )]
         let defs = self
             .classes
             .iter()
