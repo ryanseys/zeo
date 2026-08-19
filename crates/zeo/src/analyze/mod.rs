@@ -8,11 +8,6 @@
 //! walks the whole program and mutates a `Compiler`) is exactly what a real
 //! fixpoint would wrap in `for iter in 0..128 { ... }` later.
 
-#![allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "not yet swept for wildcard arms -- see the lint's note in lib.rs"
-)]
-
 pub(crate) mod captures;
 pub(crate) mod class_query;
 mod classes;

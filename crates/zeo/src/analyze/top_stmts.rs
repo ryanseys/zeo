@@ -2,6 +2,11 @@
 //! and the statically-decidable guard/splice machinery around it (dead
 //! rescues, decidable ifs, conditional reopens, guarded top defs).
 
+#![warn(
+    clippy::wildcard_enum_match_arm,
+    reason = "swept: this module's matches are exhaustive. Re-enabled because a\n    parent module's file-level allow is INHERITED by its submodules"
+)]
+
 use super::*;
 
 /// One top-level statement of the program walk: intercepts the
@@ -833,7 +838,77 @@ fn for_each_nested_stmt(
         }
         HirNode::ClassDef { .. } | HirNode::DefMethod { .. } => return,
         HirNode::Lambda { body, .. } => body.iter().map(|&s| (s, reach.through_block())).collect(),
-        other => {
+        other @ (HirNode::Program(_)
+        | HirNode::IntegerLit(_)
+        | HirNode::BigIntegerLit { .. }
+        | HirNode::RationalLit { .. }
+        | HirNode::ImaginaryLit(_)
+        | HirNode::FloatLit(_)
+        | HirNode::SymbolLit(_)
+        | HirNode::NilLit
+        | HirNode::BoolLit(_)
+        | HirNode::And(..)
+        | HirNode::Or(..)
+        | HirNode::Defined(_)
+        | HirNode::ArrayLit(_)
+        | HirNode::HashLit(_)
+        | HirNode::RangeLit { .. }
+        | HirNode::StringLit(_)
+        | HirNode::RegexpLit(..)
+        | HirNode::LocalRead(_)
+        | HirNode::LocalWrite(..)
+        | HirNode::IvarRead(_)
+        | HirNode::IvarWrite(..)
+        | HirNode::ClassVarRead(_)
+        | HirNode::ClassVarWrite(..)
+        | HirNode::ClassRef(_)
+        | HirNode::Call { .. }
+        | HirNode::New { .. }
+        | HirNode::SuperCall { .. }
+        | HirNode::Include(_)
+        | HirNode::Extend(_)
+        | HirNode::Prepend(_)
+        | HirNode::ClassMethodPrepend(_)
+        | HirNode::DefHook { .. }
+        | HirNode::MethodRedefine { .. }
+        | HirNode::Refine { .. }
+        | HirNode::Using(_)
+        | HirNode::Break(_)
+        | HirNode::Next(_)
+        | HirNode::Redo
+        | HirNode::MultiWrite { .. }
+        | HirNode::Eval(_)
+        | HirNode::Ffi(_)
+        | HirNode::BoxScope { .. }
+        | HirNode::BoxHandle(_)
+        | HirNode::Return(_)
+        | HirNode::Yield(_)
+        | HirNode::BlockGiven
+        | HirNode::SelfRef
+        | HirNode::Raise(..)
+        | HirNode::CaseIn { .. }
+        | HirNode::MatchPredicate { .. }
+        | HirNode::MatchRequired { .. }
+        | HirNode::Retry
+        | HirNode::GlobalRead(_)
+        | HirNode::GlobalWrite(..)
+        | HirNode::QualifiedConstRead(..)
+        | HirNode::ConstReadOrNil(..)
+        | HirNode::ConstWrite { .. }
+        | HirNode::DynConstRead { .. }
+        | HirNode::DynConstWrite { .. }
+        | HirNode::PreExec(_)
+        | HirNode::AliasGlobal(..)
+        | HirNode::Undef(_)
+        | HirNode::ClassMethodUndef(_)
+        | HirNode::AliasMethod { .. }
+        | HirNode::MethodVisibility { .. }
+        | HirNode::ClassMethodVisibility { .. }
+        | HirNode::ModuleFunction(_)
+        | HirNode::ConstantVisibility { .. }
+        | HirNode::LastMatchRef(_)
+        | HirNode::Seq(_)
+        | HirNode::FlipFlop { .. }) => {
             let mut children = Vec::new();
             other.for_each_child(&mut |c| children.push((c, reach)));
             children
@@ -919,6 +994,11 @@ pub(super) fn splice_dead_rescues(compiler: &Compiler, stmts: &[NodeId]) -> Vec<
 /// an ordinary runtime call. Returns `true` when it recorded the edit, so the
 /// caller drops the call from the emitted stream (`prepend` returns its
 /// receiver, virtually never used at these statement-position load-time sites).
+#[allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "structural: a probe for the literal `C.prepend(M)` call shapes; any other \
+              expression is not a static ancestry edit by definition"
+)]
 pub(super) fn try_prepend_call_edit(
     compiler: &mut Compiler,
     stmt: NodeId,
@@ -1035,6 +1115,11 @@ pub(super) fn try_prepend_call_edit(
 /// what CRuby does. Those pass through as the ordinary send they are -- the
 /// `SomeRailsClass.singleton_class.prepend(TheirPatch)` shape behind most of
 /// the rails-plugin band, activerecord-jdbc-adapter and friends.
+#[allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "structural: conservative in the safe direction -- any receiver shape not \
+              provably resolvable keeps declining"
+)]
 pub(super) fn declines_a_singleton_prepend(
     compiler: &Compiler,
     stmt: NodeId,
@@ -1109,6 +1194,11 @@ pub(super) fn defer_singleton_prepend(
     }
 }
 
+#[allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "structural: only the constant-read node kinds name a class statically; any \
+              other node answers `None` by definition"
+)]
 pub(super) fn const_node_class(
     compiler: &Compiler,
     node: NodeId,
@@ -1207,6 +1297,11 @@ fn body_cannot_raise(compiler: &Compiler, body: &[NodeId]) -> bool {
 /// `codegen::expr::emit_expr` has no expression form for, minus
 /// `DefMethod` (which has a runtime `define_method` emission and so
 /// survives inside an ordinary undecided `if` unchanged).
+#[allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "structural: only definitions and the `if`s nesting them count; any other \
+              statement holds no top-level def at statement position by definition"
+)]
 fn branch_has_top_defs(compiler: &Compiler, body: &[NodeId]) -> bool {
     body.iter().any(|&s| {
         let node = &compiler.hir[s];
@@ -1275,6 +1370,11 @@ fn branch_has_top_defs(compiler: &Compiler, body: &[NodeId]) -> bool {
 /// one-statement case; activesupport's `unless methods_are_duplicable`, which
 /// reopens `Method` and `UnboundMethod` together behind a `begin/rescue` probe
 /// no compile-time analysis can settle, is why the run is not capped at one.
+#[allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "structural: conservative -- any statement shape not in the known reopen \
+              vocabulary answers `None`, keeping the whole guard as runtime code"
+)]
 fn try_conditional_reopen(
     compiler: &mut Compiler,
     cond: NodeId,
@@ -1395,6 +1495,11 @@ fn try_conditional_reopen(
 /// `Ok(true)` means the caller keeps the whole `if` as ordinary runtime
 /// code; a branch holding any OTHER definition shape (a top-level mixin)
 /// answers `Ok(false)` and keeps the compile-time error.
+#[allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "structural: conservative in both closures -- an unrecognized statement either \
+              disqualifies the guard or keeps generic conditional registration"
+)]
 fn register_guarded_top_defs(compiler: &mut Compiler, stmt: NodeId) -> Result<bool, String> {
     fn qualifies(compiler: &Compiler, body: &[NodeId]) -> bool {
         body.iter().all(|&s| match &compiler.hir[s] {
@@ -1572,6 +1677,11 @@ fn peel_one_sided_guards(
 /// debugging why `static_top_cond` couldn't decide a guard (turn it on with
 /// `ZEO_LOG=zeo::analyze=debug`); names the idiom (e.g. `defined?(Foo::BAR)`,
 /// `RUBY_VERSION.<cmp>`, `local(x)`) so a new require-graph blocker is legible.
+#[allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "structural: a debug-only label for tracing output; unlisted shapes read \
+              `other`, which is the label's meaning"
+)]
 fn cond_kind(compiler: &Compiler, id: NodeId) -> String {
     match &compiler.hir[id] {
         HirNode::Defined(inner) => match &compiler.hir[*inner] {
@@ -1651,6 +1761,11 @@ fn static_const_defined(
 
 /// [`static_const_defined`] once the receiver has resolved -- shared with the
 /// `Object.constants.include?(:Name)` spelling of the same question.
+#[allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "structural: only a literal symbol/one-part string is a compile-time constant \
+              name; anything else answers `None` (not foldable) by definition"
+)]
 fn static_const_defined_in(
     compiler: &Compiler,
     target: ClassId,
@@ -1863,6 +1978,11 @@ fn global_assigned_outside(compiler: &Compiler, guarded: &[NodeId], name: &str) 
 /// one of them: the caller already asked `directly_defines_const`, and a body
 /// the walk has not reached yet has not run -- the same moment rule the class
 /// arm applies.
+#[allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "structural: a whole-arena scan for `const_set`/const-write shapes; unknown \
+              shapes answer in the conservative direction, never \"not target\""
+)]
 fn const_written_into(
     compiler: &Compiler,
     guarded: &[NodeId],
@@ -1960,6 +2080,11 @@ fn class_shaped_anywhere(compiler: &Compiler, box_id: u32, name: &str) -> bool {
     compiler.class_shaped_anywhere(box_id, name)
 }
 
+#[allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "structural: a guard FOLD -- every arm is an opt-in claim and the wildcard's \
+              `None` (undecidable, emit the guard) is sound for anything unlisted"
+)]
 fn static_top_cond(
     compiler: &Compiler,
     id: NodeId,
@@ -2187,6 +2312,11 @@ fn not_the_entry_file(compiler: &Compiler, file: NodeId, prog: NodeId) -> Option
 /// `if 1.class.name == "Integer"`, which picks between an `Integer` and a
 /// `Fixnum` reopening and so must be decided for either branch to register. A
 /// literal's class is fixed at compile time, and so is its name.
+#[allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "structural: only the literal kinds have a statically-known class; anything \
+              else answers `None` (undecidable) by definition"
+)]
 fn literal_class_name_is(compiler: &Compiler, call: NodeId, expected: NodeId) -> Option<bool> {
     let HirNode::StringLit(parts) = &compiler.hir[expected] else {
         return None;
@@ -2550,6 +2680,11 @@ pub(super) fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(),
 /// this end filters the WRITES, which the `scope` field cannot do -- `scope` is
 /// `None` for `NAME = ...` at any depth, recording only the explicit
 /// `Foo::NAME = ...` prefix.
+#[allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "structural: only the constant-read/`.class` shapes name an alias target; \
+              anything else answers `None` by definition"
+)]
 pub(super) fn const_alias_target(compiler: &Compiler, leaf: &str, box_id: u32) -> Option<ClassId> {
     let value = *compiler.top_level_const_aliases.get(leaf)?;
     match &compiler.hir[value] {
@@ -2569,6 +2704,11 @@ pub(super) fn const_alias_target(compiler: &Compiler, leaf: &str, box_id: u32) -
 }
 
 /// The builtin `ClassId` of a literal value (`1.class` -> Integer, etc.).
+#[allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "structural: only literal nodes have a builtin class id; anything else \
+              answers `None` by definition"
+)]
 fn literal_class_id(node: &HirNode) -> Option<ClassId> {
     Some(match node {
         HirNode::IntegerLit(_) | HirNode::BigIntegerLit { .. } => zeo_abi::INTEGER_CLASS,
