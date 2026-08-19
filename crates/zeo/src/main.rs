@@ -7,12 +7,6 @@ use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-/// The compiler is allocation-heavy (arena nodes, interner strings, token
-/// streams); mimalloc measurably beats system malloc on that shape. On the
-/// BINARY only -- the library stays allocator-neutral for its embedders.
-#[global_allocator]
-static GLOBAL_ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
-
 /// What `run` can fail with: a compile error renders as a miette diagnostic
 /// (annotated source excerpt, auto-degrading for pipes/NO_COLOR); everything
 /// else (argument parsing, IO, the `cargo`/`rustc` build step) keeps the

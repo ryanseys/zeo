@@ -19,6 +19,12 @@ include = ["/src", "/build.rs", "/README.md", "/gems.pregen.tar.gz"]
 
 [dependencies]
 zeo-abi.workspace = true
+# The runtime, linked INTO the compiler (plan decision 9, reversed
+# 2026-08-18): the `zeo` binary hosts the Cranelift JIT run path, and the
+# staticlib output below is `libzeo.a` -- the one archive AOT programs
+# link. `eval-vm` on because the shipped runtime is the single
+# always-eval-capable variant (the Lean/Eval split dies at M0.5).
+zeo-rt = { workspace = true, features = ["eval-vm"] }
 ruby-prism.workspace = true
 proc-macro2.workspace = true
 unicode-ident.workspace = true
@@ -34,10 +40,11 @@ libc.workspace = true
 # Fast non-DoS-resistant hashing for compiler-internal name sets (same
 # policy zeo-rt already uses for its internal maps).
 foldhash.workspace = true
-# The CLI binary's global allocator: the front end is allocation-heavy
-# (arena nodes, interner strings, token streams), and mimalloc reliably
-# beats system malloc on that shape. Declared in main.rs, so the LIBRARY
-# imposes nothing on its embedders (the test harnesses).
+# The global allocator: the front end is allocation-heavy (arena nodes,
+# interner strings, token streams), and mimalloc reliably beats system
+# malloc on that shape. Declared in lib.rs -- `libzeo.a` must carry the
+# ONE allocator every AOT program runs on, so the library owns it and the
+# binary and the test harnesses inherit it.
 mimalloc.workspace = true
 # The registry install tier (`cargo install zeo`): tar+flate2 unpack the
 # embedded gems archive; serde_json reads cargo's --message-format=json
@@ -58,6 +65,11 @@ proc-macro2.workspace = true
 [lib]
 name = "zeo"
 path = "src/lib.rs"
+# One rustc invocation, two outputs: the rlib the `zeo` binary (and the
+# test harnesses) link, and `libzeo.a` -- runtime + compiler + deps + std
+# + the allocator -- which `zeo -o` links into AOT programs (the compiler
+# half dead-strips out of eval-free binaries). See `backend/link.rs`.
+crate-type = ["rlib", "staticlib"]
 
 [[bin]]
 name = "zeo"

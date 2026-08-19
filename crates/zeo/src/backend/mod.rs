@@ -36,6 +36,7 @@
 //! in-process test harness share one implementation.
 
 mod cache;
+pub mod link;
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;

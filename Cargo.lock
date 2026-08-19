@@ -1990,6 +1990,7 @@ dependencies = [
  "unicode-ident",
  "zeo-abi",
  "zeo-dsl",
+ "zeo-rt",
 ]
 
 [[package]]

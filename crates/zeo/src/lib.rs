@@ -30,6 +30,21 @@
 // A walk that asks "may I descend through this?" should use
 // `HirNode::scope_kind` rather than either, which is exhaustive in one place.
 
+/// The runtime, re-exported whole: the re-export is what forces `zeo-rt`
+/// (its `zeo_rt_*` C surface and linkme tables included) into every output
+/// of this lib -- the `zeo` binary AND the `libzeo.a` staticlib AOT
+/// programs link. The eval hook (`zeo_rt::eval::EvalCompiler`, G6) installs
+/// through this path too.
+pub use zeo_rt;
+
+/// The one allocator per process image (plan decision 9): `libzeo.a` is the
+/// only Rust staticlib an AOT program ever links, so the allocator it runs
+/// on is declared HERE -- the `zeo` binary and the test harnesses inherit
+/// it. The front end is allocation-heavy (arena nodes, interner strings,
+/// token streams), and mimalloc reliably beats system malloc on that shape.
+#[global_allocator]
+static GLOBAL_ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 pub mod analyze;
 pub mod analyze_error;
 pub mod backend;
