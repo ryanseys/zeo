@@ -267,6 +267,9 @@ fn ivar_slot_of(fx: &Fx, site: NodeId, name: &str) -> Result<usize, String> {
 fn lower_tail_expr(fx: &mut Fx, tail: NodeId) -> Result<super::operand::Operand, String> {
     use super::operand::{Operand, TagInfo};
     match &fx.an.compiler.hir[tail] {
+        // A `def` answers its method-name Symbol; the install itself is the
+        // ordinary expression lowering.
+        HirNode::DefMethod { .. } => super::expr::lower_expr(fx, tail),
         HirNode::LocalWrite(name, _) => {
             let name = name.clone();
             lower_stmt(fx, tail)?;
@@ -684,6 +687,15 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
         // builtin row's source is validated at this body's END
         // (`validate_class_aliases`) -- the statement itself runs nothing.
         HirNode::AliasMethod { .. } => Ok(()),
+        // A `def` reached HERE is one analyze did not register statically
+        // (written inside a method body or a block): a RUNTIME install,
+        // whose Symbol value the statement position drops. The toplevel
+        // and class-body positions filter their defs out before lowering.
+        HirNode::DefMethod { .. } => {
+            let op = super::expr::lower_expr(fx, stmt)?;
+            ownership::discard(fx, op);
+            Ok(())
+        }
         // Visibility retags, `undef`, and `module_function` are pure
         // REGISTRATION too: analyze stamped the tables (vis rows, undefined
         // marks, module-function copies) and the statements run nothing.

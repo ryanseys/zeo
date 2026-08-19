@@ -104,6 +104,22 @@ pub(crate) fn build_lambda(
     build_closure(fx, site, params, body, true)
 }
 
+/// A METHOD-BODY lambda: the proc a runtime `def`/`define_method` installs.
+/// Same closure machinery, one semantic difference -- a bare `yield` /
+/// `block_given?` in the body reaches the block the INSTALLED METHOD is
+/// called with (this fn's own `blk` parameter), never the lexically
+/// enclosing method's, so no lexical block rides in the env.
+pub(crate) fn build_method_body(
+    fx: &mut Fx,
+    site: NodeId,
+    params: &crate::hir::Params,
+    body: &[NodeId],
+    label: &str,
+) -> Result<ir::StackSlot, String> {
+    let (ss, _) = build_closure_with(fx, site, params, body, true, true, Some(label))?;
+    Ok(ss)
+}
+
 fn build_closure(
     fx: &mut Fx,
     site: NodeId,
@@ -111,19 +127,41 @@ fn build_closure(
     body: &[NodeId],
     is_lambda: bool,
 ) -> Result<(ir::StackSlot, Vec<String>), String> {
+    build_closure_with(fx, site, params, body, is_lambda, false, None)
+}
+
+fn build_closure_with(
+    fx: &mut Fx,
+    site: NodeId,
+    params: &crate::hir::Params,
+    body: &[NodeId],
+    is_lambda: bool,
+    method_body: bool,
+    label_override: Option<&str>,
+) -> Result<(ir::StackSlot, Vec<String>), String> {
     let names = captured_names(fx, site, params, body)?;
     let arity = super::params::proc_arity(params, is_lambda);
     // Bare `yield`/`block_given?` in the body targets the LEXICALLY
     // enclosing method's block, cloned into the env -- unless the closure
     // declares its own `&b`, which owns the channel.
     let bare_block_use = crate::analyze::scan_bare_block_use_body(&fx.an.compiler.hir, body)
-        && params.block.is_none();
+        && params.block.is_none()
+        && !method_body;
     let lexical_blk = if bare_block_use { fx.blk_ptr } else { None };
     // A body that can raise `Signal::Return` at its own level captures its
     // home (dead home -> LocalJumpError, the runtime's resolution). A
     // lambda folds its own returns and needs none.
     let wants_home = !is_lambda && body_contains_return(&fx.an.compiler.hir, body);
-    let f_id = define_block_fn(fx, site, params, body, &names, is_lambda)?;
+    let f_id = define_block_fn(
+        fx,
+        site,
+        params,
+        body,
+        &names,
+        is_lambda,
+        method_body,
+        label_override,
+    )?;
     let f_ref = fx.em.module.declare_func_in_func(f_id, fx.b.func);
     let ptr_ty = fx.em.ptr;
     let f_addr = fx.b.ins().func_addr(ptr_ty, f_ref);
@@ -173,6 +211,10 @@ fn build_closure(
 /// params bind through `zeo_rt_bind_block_params` (ruby's lenient block
 /// rules, full shape), `next` is the ok-exit, `break` arms the Break
 /// signal, `redo` re-enters at the binding head.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one closure-emission entry: the block's own shape, its capture list, and the two method-body distinctions each say something different"
+)]
 fn define_block_fn(
     fx: &mut Fx,
     site: NodeId,
@@ -180,12 +222,17 @@ fn define_block_fn(
     body: &[NodeId],
     captured: &[String],
     is_lambda: bool,
+    method_body: bool,
+    label_override: Option<&str>,
 ) -> Result<cranelift_module::FuncId, String> {
     let params = params.clone();
     let body = body.to_vec();
     let layout = super::params::layout_of(&params)?;
     let auto_splat = !is_lambda && super::params::auto_splats(&params);
-    let label = format!("block in {}", fx.frame_label);
+    // A runtime-installed method is labeled after the METHOD it creates,
+    // not after where the `def` was written.
+    let label =
+        label_override.map_or_else(|| format!("block in {}", fx.frame_label), str::to_string);
     let (line, file) = {
         let loc = fx.location(site);
         (
@@ -249,14 +296,20 @@ fn define_block_fn(
     // Bare `yield`/`block_given?` targets the env's lexical block (the
     // enclosing method's) -- unless this closure declares its own `&b`,
     // which owns the channel and takes the CALL-SITE block.
-    bfx.blk_ptr = params.block.is_some().then_some(blk);
+    // A method body's bare `yield` reaches the block the INSTALLED method
+    // is called with -- this fn's own `blk` -- so it binds even without a
+    // declared `&b`.
+    bfx.blk_ptr = (params.block.is_some() || method_body).then_some(blk);
 
     // Env cells -> unowned cell locals.
     let fl = MemFlagsData::trusted();
     let cells_off = std::mem::offset_of!(zeo_rt::capi::ProcEnv, cells) as i32;
     let ptr_ty = bfx.em.ptr;
     let cells_base = bfx.b.ins().load(ptr_ty, fl, env, cells_off);
-    if params.block.is_none() && crate::analyze::scan_bare_block_use_body(&an.compiler.hir, &body) {
+    if params.block.is_none()
+        && !method_body
+        && crate::analyze::scan_bare_block_use_body(&an.compiler.hir, &body)
+    {
         let lex_off = std::mem::offset_of!(zeo_rt::capi::ProcEnv, lexical_blk) as i32;
         let lex = bfx.b.ins().load(ptr_ty, fl, env, lex_off);
         bfx.blk_ptr = Some(lex);

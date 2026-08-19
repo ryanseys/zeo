@@ -391,3 +391,55 @@ pub unsafe extern "C" fn zeo_rt_ivar_set_dyn(
         }
     }
 }
+
+/// A runtime `def` in expression position: install `name` on the DEFAULT
+/// DEFINEE -- the cref's, unless an `*_eval`/`Class.new` on the stack
+/// replaced it, which only the runtime can say, so both candidates go.
+/// `private` marks the top-level rule (a bare top-level `def` is a private
+/// instance method of `Object`). The value is the method-name Symbol.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_define_in_default_definee(
+    cref: *const RubyValue,
+    slf: *const RubyValue,
+    name: u32,
+    body: *mut RubyValue,
+    private: u8,
+    out: *mut RubyValue,
+) -> i32 {
+    // The proc is MOVED in (the caller hands over its reference).
+    let body = unsafe { body.read() };
+    super::leakcheck::consumed(&body);
+    super::dispatch::status_out(
+        crate::dispatch::define_in_default_definee(
+            unsafe { &*cref },
+            unsafe { &*slf },
+            crate::Symbol::from_u32(name),
+            body,
+            private != 0,
+        ),
+        out,
+    )
+}
+
+/// The visibility a runtime-installed `def` carries from its class body's
+/// running default (`private`/`protected` mode). Verb 0 = private, 1 =
+/// protected.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_runtime_set_visibility(cid: u32, name: u32, verb: u8) -> i32 {
+    let vis = if verb == 0 {
+        crate::dispatch::MethodVisibility::Private
+    } else {
+        crate::dispatch::MethodVisibility::Protected
+    };
+    match crate::runtime_meta::runtime_set_visibility(
+        ClassId(cid),
+        &[RubyValue::Symbol(crate::Symbol::from_u32(name))],
+        vis,
+    ) {
+        Ok(_) => zeo_abi::abi::STATUS_OK,
+        Err(sig) => {
+            crate::signal::set_pending(sig);
+            zeo_abi::abi::STATUS_SIGNAL
+        }
+    }
+}

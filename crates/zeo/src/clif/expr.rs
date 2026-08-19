@@ -204,15 +204,54 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 tag: TagInfo::Known(ValueTag::Hash as u8),
             })
         }
+        // A `def` in EXPRESSION position is a RUNTIME method install: its
+        // body becomes a method-body proc and the install answers the
+        // method-name Symbol (rustc's `emit_expr` DefMethod arm).
+        HirNode::DefMethod {
+            name,
+            params,
+            body,
+            is_class_method,
+            visibility,
+            is_def,
+        } => {
+            let (name, params, body, is_class_method, visibility, is_def) = (
+                name.clone(),
+                params.as_ref().clone(),
+                body.clone(),
+                *is_class_method,
+                *visibility,
+                *is_def,
+            );
+            runtime_def(
+                fx,
+                id,
+                &name,
+                &params,
+                &body,
+                is_class_method,
+                visibility,
+                is_def,
+            )
+        }
         HirNode::Lambda {
             params,
             body,
             method_body,
         } => {
-            if *method_body {
-                return fx.unsupported(id, "a runtime-installed method body");
+            let (params, body, method_body) = (params.as_ref().clone(), body.clone(), *method_body);
+            if method_body {
+                // `define_method(:m) { .. }`'s body proc, built as a method
+                // body (its bare `yield` reaches the installed method's
+                // call-site block).
+                let label = format!("block in {}", fx.frame_label);
+                let ss = super::blocks::build_method_body(fx, id, &params, &body, &label)?;
+                return Ok(Operand::Slot {
+                    ss,
+                    owned: true,
+                    tag: TagInfo::Known(ValueTag::Proc as u8),
+                });
             }
-            let (params, body) = (params.as_ref().clone(), body.clone());
             let (ss, _) = super::blocks::build_lambda(fx, id, &params, &body)?;
             Ok(Operand::Slot {
                 ss,
@@ -1984,4 +2023,146 @@ pub(crate) fn method_class_shadows(fx: &Fx, name: &str) -> bool {
     } else {
         fx.an.compiler.lookup_method(cid, name).is_some()
     }
+}
+
+/// A `def` in EXPRESSION position -- a RUNTIME method install whose value
+/// is the method-name Symbol.
+///
+/// Three shapes, exactly the rustc emitter's split: `def self.x` is always
+/// `define_singleton_method` on `self`; a real `def` installs on the
+/// DEFAULT DEFINEE (the cref's, unless an `*_eval`/`Class.new` on the
+/// stack replaced it -- only the runtime can say, so both candidates go);
+/// a literal `define_method(:m){}` is an ordinary `Module#define_method`
+/// send, which raises `NoMethodError` when `self` is no Module.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the DefMethod node's own fields, each deciding a different part of the install"
+)]
+fn runtime_def(
+    fx: &mut Fx,
+    id: NodeId,
+    name: &str,
+    params: &crate::hir::Params,
+    body: &[NodeId],
+    is_class_method: bool,
+    visibility: crate::hir::Visibility,
+    is_def: bool,
+) -> Result<Operand, String> {
+    use cranelift_codegen::ir::types;
+    if crate::analyze::scan_contains_super_body(&fx.an.compiler.hir, body) {
+        // `super` in a runtime-installed body resolves through the runtime
+        // method-frame stack, not a compile-time ancestor splice.
+        return fx.unsupported(id, "`super` inside a runtime-installed method body");
+    }
+    // A `def`'s frame is labeled after the METHOD it creates; a
+    // `define_method` body is genuinely the block ruby labels it as.
+    let label = if is_def {
+        match fx.method_class {
+            Some(c) if c != crate::compiler::OBJECT_CLASS => {
+                format!("{}#{name}", fx.an.compiler.fq_name(c))
+            }
+            _ => format!("Object#{name}"),
+        }
+    } else {
+        format!("block in {}", fx.frame_label)
+    };
+    let proc_ss = super::blocks::build_method_body(fx, id, params, body, &label)?;
+    let proc_addr = fx.slot_addr(proc_ss, 0);
+    let sym = fx.sym_id(name);
+    let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
+
+    if is_class_method || !is_def {
+        // Both are ordinary sends to `self`; the proc MOVES into the args.
+        let verb = if is_class_method {
+            "define_singleton_method"
+        } else {
+            "define_method"
+        };
+        let argv =
+            fx.b.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(
+                cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
+                2 * zeo_abi::abi::VALUE_SIZE as u32,
+                3,
+            ));
+        let a0 = fx.slot_addr(argv, 0);
+        fx.call("zeo_rt_sym_value", &[sym, a0]);
+        let a1 = fx.slot_addr(argv, zeo_abi::abi::VALUE_SIZE as i32);
+        let moved = Operand::Slot {
+            ss: proc_ss,
+            owned: true,
+            tag: TagInfo::Known(ValueTag::Proc as u8),
+        };
+        // The move retires the proc slot; the argv slot becomes the owner,
+        // and since the send only BORROWS its arguments the frame pool is
+        // what releases it (a raw argv slot has no other releaser).
+        ownership::write_move_into(fx, &moved, a1);
+        fx.owned_created += 1;
+        ownership::pool_owned(fx, a1, TagInfo::Known(ValueTag::Proc as u8));
+        let recv = Operand::Ptr {
+            addr: self_ptr,
+            owned: false,
+            tag: TagInfo::Unknown,
+        };
+        return super::call::dynamic_send_ptr(fx, recv, verb, a0, 2);
+    }
+
+    // The cref's definee -- where the `def` was WRITTEN, a compile-time
+    // fact; the runtime compares it with the live self to see whether an
+    // `*_eval` replaced the definee.
+    let cref_cid = fx
+        .defining_class
+        .or(fx.method_class)
+        .unwrap_or(crate::compiler::OBJECT_CLASS);
+    let cref_ss = fx.temp_slot();
+    let cref = fx.slot_addr(cref_ss, 0);
+    {
+        use cranelift_codegen::ir::{InstBuilder, MemFlagsData};
+        let fl = MemFlagsData::trusted();
+        let z = fx.b.ins().iconst(types::I64, 0);
+        for off in [0, 8, 16] {
+            fx.b.ins().store(fl, z, cref, off);
+        }
+        let tag =
+            fx.b.ins()
+                .iconst(types::I8, i64::from(ValueTag::Class as u8));
+        fx.b.ins().store(fl, tag, cref, 0);
+        let cid = fx.b.ins().iconst(types::I32, i64::from(cref_cid.0));
+        fx.b.ins()
+            .store(fl, cid, cref, zeo_abi::abi::PAYLOAD_OFFSET as i32);
+    }
+    // Written at the TOP LEVEL a `def` is a PRIVATE instance method of
+    // Object, exactly as a bare top-level `def` is.
+    let top_level = fx.method_class.is_none();
+    let private = fx.b.ins().iconst(types::I8, i64::from(u8::from(top_level)));
+    let out_ss = fx.temp_slot();
+    let out = fx.slot_addr(out_ss, 0);
+    let status = fx
+        .call(
+            "zeo_rt_define_in_default_definee",
+            &[cref, self_ptr, sym, proc_addr, private, out],
+        )
+        .expect("define_in_default_definee returns a status");
+    // The proc's reference moved into the runtime.
+    fx.owned_consumed += 1;
+    fx.fallible(status);
+    // A class body's running visibility default rides along: the dynamic
+    // walk reads the overlay row this wrote AHEAD of any static mark.
+    if visibility != crate::hir::Visibility::Public && fx.method_class.is_some() {
+        use cranelift_codegen::ir::InstBuilder;
+        let cid = fx.b.ins().iconst(types::I32, i64::from(cref_cid.0));
+        let verb = fx.b.ins().iconst(
+            types::I8,
+            i64::from(u8::from(visibility == crate::hir::Visibility::Protected)),
+        );
+        let st = fx
+            .call("zeo_rt_runtime_set_visibility", &[cid, sym, verb])
+            .expect("runtime_set_visibility returns a status");
+        fx.fallible(st);
+    }
+    fx.owned_created += 1;
+    Ok(Operand::Slot {
+        ss: out_ss,
+        owned: true,
+        tag: TagInfo::Known(ValueTag::Symbol as u8),
+    })
 }

@@ -369,9 +369,36 @@ pub(crate) fn dynamic_send_value(
         ownership::pool_owned(fx, recv_ptr, recv_op.tag());
     }
     let argv_ptr = build_argv(fx, site, args)?;
+    dynamic_send_argv(fx, recv_ptr, name, argv_ptr, args.len())
+}
+
+/// [`dynamic_send_value`] over an ALREADY-BUILT argv -- what a runtime
+/// `def` install needs, whose two arguments are a Symbol and a proc the
+/// caller moved into place.
+pub(crate) fn dynamic_send_ptr(
+    fx: &mut Fx,
+    recv_op: Operand,
+    name: &str,
+    argv_ptr: cranelift_codegen::ir::Value,
+    argc: usize,
+) -> Result<Operand, String> {
+    let recv_ptr = ownership::borrow_ptr(fx, &recv_op);
+    if recv_op.owned() {
+        ownership::pool_owned(fx, recv_ptr, recv_op.tag());
+    }
+    dynamic_send_argv(fx, recv_ptr, name, argv_ptr, argc)
+}
+
+fn dynamic_send_argv(
+    fx: &mut Fx,
+    recv_ptr: cranelift_codegen::ir::Value,
+    name: &str,
+    argv_ptr: cranelift_codegen::ir::Value,
+    argc: usize,
+) -> Result<Operand, String> {
     let sym = fx.sym_id(name);
     let zero_box = fx.b.ins().iconst(types::I32, 0);
-    let argc_v = fx.b.ins().iconst(fx.em.ptr, args.len() as i64);
+    let argc_v = fx.b.ins().iconst(fx.em.ptr, argc as i64);
     let null = fx.b.ins().iconst(fx.em.ptr, 0);
     let caller = fx.b.ins().iconst(types::I32, 0); // Object
     let ss = fx.temp_slot();
