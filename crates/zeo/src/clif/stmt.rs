@@ -159,17 +159,12 @@ pub(crate) fn lower_value_body_into(
 /// The receiver for a NAME-KEYED ivar access: `self`, or the `main`
 /// object at the toplevel (rustc's `ivar_get_dyn(&main_object(), ..)`).
 pub(crate) fn dyn_ivar_recv(fx: &mut Fx) -> cranelift_codegen::ir::Value {
-    // A RUNTIME-installed method body has no compile-time class, but its
-    // `self` IS the receiver -- `main` is only the TOPLEVEL scope's self.
-    if fx.method_class.is_some() || fx.runtime_method_body {
-        return fx.self_ptr.expect("self_ptr is set in the prologue");
-    }
-    let ss = fx.temp_slot();
-    let ptr = fx.slot_addr(ss, 0);
-    fx.call("zeo_rt_main_object", &[ptr]);
-    fx.owned_created += 1;
-    ownership::pool_owned(fx, ptr, super::operand::TagInfo::Unknown);
-    ptr
+    // Every scope's prologue seats its own `self`: `main` for the toplevel,
+    // the receiver for a runtime-installed body, the class for a class
+    // body, and the block fn's `self_` parameter for a block -- which is
+    // what `instance_exec` REBINDS, so a re-homed block's `@x = 1` must
+    // read it rather than assume the enclosing scope's.
+    fx.self_ptr.expect("self_ptr is set in the prologue")
 }
 
 /// `@name` read into a fresh owned temp -- slot-indexed for a compiled
