@@ -482,6 +482,51 @@ fn define_cm_rows(em: &mut Emitter, rows: &[CmRowSpec]) -> Result<Option<DataId>
     Ok(Some(id))
 }
 
+/// The `UnitRow` table: one row per SPELLING a `require` can use for a
+/// compiled-in load-path file (the load-path-relative feature name and the
+/// absolute path), both pointing at the same unit function.
+fn define_unit_rows(em: &mut Emitter, rows: &[(String, FuncId)]) -> Result<Option<DataId>, String> {
+    if rows.is_empty() {
+        return Ok(None);
+    }
+    let size = std::mem::size_of::<zeo_abi::abi::UnitRow>();
+    let id = em
+        .module
+        .declare_data("zeo_unit_rows", Linkage::Local, false, false)
+        .map_err(|e| format!("declaring zeo_unit_rows: {e}"))?;
+    let interned: Vec<u32> = rows
+        .iter()
+        .map(|(name, _)| em.intern_rodata(name.as_bytes()))
+        .collect();
+    let mut data = DataDescription::new();
+    let mut bytes = vec![0u8; size * rows.len()];
+    for (i, (name, _)) in rows.iter().enumerate() {
+        let at = i * size
+            + std::mem::offset_of!(zeo_abi::abi::UnitRow, feature)
+            + std::mem::offset_of!(Str, len);
+        bytes[at..at + 8].copy_from_slice(&(name.len() as u64).to_le_bytes());
+    }
+    data.define(bytes.into_boxed_slice());
+    data.set_align(8);
+    let rodata_gv = em.module.declare_data_in_data(em.rodata_id, &mut data);
+    for (i, (_, f)) in rows.iter().enumerate() {
+        let base = i * size;
+        let name_at = (base
+            + std::mem::offset_of!(zeo_abi::abi::UnitRow, feature)
+            + std::mem::offset_of!(Str, ptr)) as u32;
+        data.write_data_addr(name_at, rodata_gv, i64::from(interned[i]));
+        let f_ref = em.module.declare_func_in_data(*f, &mut data);
+        data.write_function_addr(
+            (base + std::mem::offset_of!(zeo_abi::abi::UnitRow, f)) as u32,
+            f_ref,
+        );
+    }
+    em.module
+        .define_data(id, &data)
+        .map_err(|e| format!("defining zeo_unit_rows: {e}"))?;
+    Ok(Some(id))
+}
+
 fn define_reg_rows(em: &mut Emitter, rows: &[RegRowSpec]) -> Result<Option<DataId>, String> {
     if rows.is_empty() {
         return Ok(None);
@@ -966,6 +1011,7 @@ pub(crate) fn define_desc(
     reg_rows: &[RegRowSpec],
     foreign_rows: &[(u32, String)],
     meta_rows: &[MetaRowSpec],
+    unit_rows: &[(String, FuncId)],
 ) -> Result<DataId, String> {
     let vm_table = define_vm_rows(em, vm_rows)?;
     let vis_table = define_vis_rows(em, vis_rows)?;
@@ -975,6 +1021,7 @@ pub(crate) fn define_desc(
     let reg_table = define_reg_rows(em, reg_rows)?;
     let foreign_table = define_foreign_rows(em, foreign_rows)?;
     let meta_table = define_meta_rows(em, meta_rows)?;
+    let unit_table = define_unit_rows(em, unit_rows)?;
     let hir = &analyzed.compiler.hir;
     let mut loaded: Vec<String> = hir
         .loaded_files
@@ -1083,6 +1130,11 @@ pub(crate) fn define_desc(
         std::mem::offset_of!(ProgramDesc, n_meta_rows),
         meta_rows.len() as u64,
     );
+    put_u64(
+        &mut buf,
+        std::mem::offset_of!(ProgramDesc, n_units),
+        unit_rows.len() as u64,
+    );
     desc.define(buf.into_boxed_slice());
     desc.set_align(8);
     let tables_gv = em.module.declare_data_in_data(tables_id, &mut desc);
@@ -1131,6 +1183,10 @@ pub(crate) fn define_desc(
     if let Some(rt) = reg_table {
         let gv = em.module.declare_data_in_data(rt, &mut desc);
         desc.write_data_addr(std::mem::offset_of!(ProgramDesc, reg_rows) as u32, gv, 0);
+    }
+    if let Some(ut) = unit_table {
+        let gv = em.module.declare_data_in_data(ut, &mut desc);
+        desc.write_data_addr(std::mem::offset_of!(ProgramDesc, units) as u32, gv, 0);
     }
     let toplevel_ref = em.module.declare_func_in_data(toplevel, &mut desc);
     desc.write_function_addr(

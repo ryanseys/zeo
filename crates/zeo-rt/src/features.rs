@@ -28,7 +28,43 @@ use std::collections::{HashMap, HashSet};
 /// A compiled unit: one file's top-level statements.
 pub type UnitFn = fn() -> Result<RubyValue, Signal>;
 
-static UNITS: std::sync::OnceLock<HashMap<&'static str, UnitFn>> = std::sync::OnceLock::new();
+/// The same unit through the C ABI: a compiled unit function from a
+/// Cranelift-emitted program (`zeo_abi::abi::UnitFn`).
+pub type CUnitFn = unsafe extern "C" fn(out: *mut RubyValue) -> i32;
+
+/// Which emitter produced a unit. The two backends hand the runtime the
+/// same thing in the two shapes their calling conventions allow.
+#[derive(Clone, Copy)]
+pub enum UnitImpl {
+    Rust(UnitFn),
+    C(CUnitFn),
+}
+
+impl UnitImpl {
+    /// The identity a load cycle is detected by -- the function itself.
+    fn identity(self) -> usize {
+        match self {
+            UnitImpl::Rust(f) => f as usize,
+            UnitImpl::C(f) => f as usize,
+        }
+    }
+
+    fn call(self) -> Result<RubyValue, Signal> {
+        match self {
+            UnitImpl::Rust(f) => f(),
+            UnitImpl::C(f) => {
+                let mut out = std::mem::MaybeUninit::<RubyValue>::uninit();
+                match unsafe { f(out.as_mut_ptr()) } {
+                    0 => Ok(unsafe { out.assume_init() }),
+                    _ => Err(crate::signal::take_pending()
+                        .expect("a status of 1 leaves a pending signal")),
+                }
+            }
+        }
+    }
+}
+
+static UNITS: std::sync::OnceLock<HashMap<&'static str, UnitImpl>> = std::sync::OnceLock::new();
 
 #[derive(Default)]
 struct LoadState {
@@ -56,7 +92,20 @@ fn state() -> &'static parking_lot::Mutex<LoadState> {
 /// Installs the program's units. Emitted once, at startup, before `main`'s
 /// first statement -- a require in the very first line must already see them.
 pub fn install_feature_units(rows: &'static [(&'static str, UnitFn)]) {
-    let _ = UNITS.set(rows.iter().copied().collect());
+    let _ = UNITS.set(
+        rows.iter()
+            .map(|&(name, f)| (name, UnitImpl::Rust(f)))
+            .collect(),
+    );
+}
+
+/// [`install_feature_units`] for a Cranelift-emitted program.
+pub fn install_feature_units_c(rows: &'static [(&'static str, CUnitFn)]) {
+    let _ = UNITS.set(
+        rows.iter()
+            .map(|&(name, f)| (name, UnitImpl::C(f)))
+            .collect(),
+    );
 }
 
 /// The key a feature string resolves under: the `.rb` suffix is optional in
@@ -73,7 +122,7 @@ fn key(feature: &str) -> &str {
 pub fn load_feature(feature: &str) -> Option<Result<bool, Signal>> {
     let name = key(feature);
     let unit = *UNITS.get()?.get(name)?;
-    let identity = unit as usize;
+    let identity = unit.identity();
     {
         let mut st = state().lock();
         if st.loaded.contains(&identity) || !st.loading.insert(identity) {
@@ -81,7 +130,7 @@ pub fn load_feature(feature: &str) -> Option<Result<bool, Signal>> {
         }
         st.depth += 1;
     }
-    let result = unit();
+    let result = unit.call();
     let outermost;
     let outcome = {
         let mut st = state().lock();

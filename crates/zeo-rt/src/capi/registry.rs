@@ -68,9 +68,7 @@ fn param_kind(kind: u8) -> ParamKind {
 /// The registration half of the generated `main` sequence, step for step:
 /// classes, method rows, visibility, the registry install, meta rows, core
 /// constants, the loaded-features/load-path seeds, declined features,
-/// coverage, parse warnings, and the `__END__` data section. The pieces no
-/// emitter produces yet (`RegRow`s, feature units, corelib flags, class
-/// kinds beyond plain/module) refuse loudly instead of dropping silently.
+/// coverage, parse warnings, and the `__END__` data section.
 pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
     assert_eq!(
         desc.abi_version,
@@ -79,11 +77,6 @@ pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
         desc.abi_version,
         abi::ABI_VERSION,
     );
-    assert!(
-        desc.n_units == 0,
-        "register_program: feature-unit tables are not yet emitted (M1)"
-    );
-
     let mut registry = ClassRegistry::with_core();
     for c in unsafe { rows(desc.classes, desc.n_classes) } {
         let id = ClassId(c.id);
@@ -306,6 +299,18 @@ pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
             .map(|&s| text(s))
             .collect();
         crate::globals::seed_load_path(&paths);
+    }
+    if desc.n_units > 0 {
+        let units: Vec<(&'static str, crate::features::CUnitFn)> =
+            unsafe { rows(desc.units, desc.n_units) }
+                .iter()
+                .map(|r| {
+                    (text(r.feature), unsafe {
+                        std::mem::transmute::<abi::UnitFn, crate::features::CUnitFn>(r.f)
+                    })
+                })
+                .collect();
+        crate::features::install_feature_units_c(Vec::leak(units));
     }
     if desc.n_declined > 0 {
         let declined: Vec<(&'static str, &'static str)> =

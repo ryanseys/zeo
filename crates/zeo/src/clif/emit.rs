@@ -443,7 +443,29 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
         .filter(|cb| !cb.inline)
         .map(|cb| cb.call.clone())
         .collect();
-    let toplevel = define_toplevel(em, analyzed, &hoisted)?;
+    let toplevel = define_toplevel(
+        em,
+        analyzed,
+        &TopScope::Main { hoisted: &hoisted },
+        &analyzed.main_statements,
+    )?;
+    // One fn per compiled-in load-path file, registered under BOTH spellings
+    // a program can build: the load-path-relative feature name and the
+    // absolute path `File.expand_path("x", __dir__)` produces.
+    let mut unit_rows: Vec<(String, FuncId)> = Vec::new();
+    for (i, (feature, absolute, stmts)) in analyzed.feature_units.iter().enumerate() {
+        let f = define_toplevel(
+            em,
+            analyzed,
+            &TopScope::Unit {
+                index: i,
+                file: format!("{absolute}.rb"),
+            },
+            stmts,
+        )?;
+        unit_rows.push((feature.clone(), f));
+        unit_rows.push((absolute.clone(), f));
+    }
     let unit_init = statics::define_unit_init(em)?;
     statics::define_syms(em)?;
     let mut vm_rows: Vec<statics::VmRowSpec> = defs
@@ -727,6 +749,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
         &reg_rows,
         &foreign,
         &meta_rows,
+        &unit_rows,
     )?;
     let main = define_main(em, desc)?;
     statics::define_rodata(em)?;
@@ -1982,26 +2005,49 @@ fn define_method_body(
 /// locals, the frame push, `check_ints`, the statements, then `Nil` out --
 /// with the ONE landing block releasing the locals and popping the frame
 /// (which drains the release pool) on the signal path.
+/// Which top-level scope a body fn is: the program's `<main>`, or one
+/// compiled-in load-path file the runtime runs when a `require` names it.
+/// A unit IS a top-level scope -- its own file-isolated locals, its own
+/// frame -- but none of main's once-per-program installs are its.
+enum TopScope<'a> {
+    Main { hoisted: &'a [ClassBodyCall] },
+    Unit { index: usize, file: String },
+}
+
 fn define_toplevel(
     em: &mut Emitter,
     analyzed: &Analyzed,
-    hoisted: &[ClassBodyCall],
+    scope: &TopScope<'_>,
+    stmts: &[crate::hir::NodeId],
 ) -> Result<FuncId, String> {
     let mut sig = em.module.make_signature();
     sig.params.push(AbiParam::new(em.ptr));
     sig.returns.push(AbiParam::new(types::I32));
+    let (sym, label, frame, idx) = match scope {
+        TopScope::Main { .. } => (
+            names::TOPLEVEL.to_string(),
+            "<main>".to_string(),
+            analyzed.compiler.hir.files.first().map(|f| f.name.clone()),
+            0,
+        ),
+        TopScope::Unit { index, file } => (
+            format!("zeo_unit_{index}"),
+            "<top (required)>".to_string(),
+            Some(file.clone()),
+            em.next_fn_index(),
+        ),
+    };
     let func_id = em
         .module
-        .declare_function(names::TOPLEVEL, Linkage::Local, &sig)
-        .map_err(|e| format!("declaring {}: {e}", names::TOPLEVEL))?;
+        .declare_function(&sym, Linkage::Local, &sig)
+        .map_err(|e| format!("declaring {sym}: {e}"))?;
 
-    let frame = analyzed.compiler.hir.files.first().map(|f| f.name.clone());
     let mut locals = crate::analyze::local_storage::Locals::default();
-    for &stmt in &analyzed.main_statements {
+    for &stmt in stmts {
         crate::analyze::local_storage::collect_locals(&analyzed.compiler, stmt, &mut locals);
     }
 
-    let mut func = ir::Function::with_name_signature(UserFuncName::user(0, 0), sig);
+    let mut func = ir::Function::with_name_signature(UserFuncName::user(0, idx), sig);
     let cfg = em.module.target_config();
     let mut fbc = FunctionBuilderContext::new();
     let b = FunctionBuilder::new(&mut func, &mut fbc);
@@ -2020,13 +2066,13 @@ fn define_toplevel(
         fx.b.block_params(entry)[0]
     };
 
-    fx.frame_label = "<main>".to_string();
+    fx.frame_label = label.clone();
     // Hoisted locals: an owned slot each, or a cell when an escaping block
     // captures the name.
     let empty_params = crate::hir::Params::default();
     let mut caps = crate::analyze::captures::collect_escaping_captures(
         &analyzed.compiler,
-        &analyzed.main_statements,
+        stmts,
         &empty_params,
         crate::analyze::class_query::SelfClass::new(None, None),
     );
@@ -2034,15 +2080,20 @@ fn define_toplevel(
     // can read it -- anywhere, including inside a required gem's method
     // (erb's `new_toplevel`) -- deoptimizes the top level to cells exactly as
     // a literal `binding` call there would.
-    let wants_toplevel_binding = analyzed
-        .compiler
-        .hir
-        .nodes()
-        .iter()
-        .any(|n| matches!(n, crate::hir::HirNode::ClassRef(c) if c == "TOPLEVEL_BINDING"));
+    // A UNIT never carries it: `TOPLEVEL_BINDING` names MAIN's frame, so a
+    // program that reads it deoptimizes main, not every file it requires. A
+    // unit that calls `binding` itself still deoptimizes -- the call is in
+    // its own statements.
+    let wants_toplevel_binding = matches!(scope, TopScope::Main { .. })
+        && analyzed
+            .compiler
+            .hir
+            .nodes()
+            .iter()
+            .any(|n| matches!(n, crate::hir::HirNode::ClassRef(c) if c == "TOPLEVEL_BINDING"));
     fx.binding_names = crate::analyze::captures::binding_scope_names(
         &analyzed.compiler,
-        &analyzed.main_statements,
+        stmts,
         &empty_params,
         &mut caps,
         wants_toplevel_binding,
@@ -2059,11 +2110,11 @@ fn define_toplevel(
 
     if let Some(file) = &frame {
         let off = fx.em.intern_rodata(file.as_bytes());
-        let main_off = fx.em.intern_rodata(b"<main>");
+        let main_off = fx.em.intern_rodata(label.as_bytes());
         let file_ptr = fx.rod(off);
         let file_len = fx.b.ins().iconst(fx.em.ptr, file.len() as i64);
         let label_ptr = fx.rod(main_off);
-        let label_len = fx.b.ins().iconst(fx.em.ptr, "<main>".len() as i64);
+        let label_len = fx.b.ins().iconst(fx.em.ptr, label.len() as i64);
         let zero = fx.b.ins().iconst(types::I32, 0);
         fx.call(
             "zeo_rt_frame_push",
@@ -2088,59 +2139,13 @@ fn define_toplevel(
     );
     fx.self_ptr = Some(self_addr);
 
-    // Alias-carrying classes with no body of their own validate here
-    // (`NameError` for a source resolving nowhere); a class WITH a body
-    // site validates at its body's end instead -- rustc's split.
-    let unbodied: Vec<u32> = analyzed
-        .compiler
-        .classes
-        .iter()
-        .enumerate()
-        .filter(|(i, c)| {
-            !c.builtin_aliases.is_empty()
-                && !analyzed
-                    .compiler
-                    .class_body_sites
-                    .iter()
-                    .any(|site| site.class.0 as usize == *i)
-        })
-        .map(|(i, _)| i as u32)
-        .collect();
-    for id in unbodied {
-        let cid = fx.b.ins().iconst(types::I32, i64::from(id));
-        let st = fx
-            .call("zeo_rt_validate_class_aliases", &[cid])
-            .expect("validate_class_aliases returns a status");
-        fx.fallible(st);
-    }
-    // `TOPLEVEL_BINDING`, installed UNCONDITIONALLY so `Object.constants`
-    // lists it (the census asks). A program that never names it gets the
-    // cheap degraded form -- self = `main`, no locals -- because
-    // `binding_names` stayed `None`; naming it anywhere upgrades both.
-    {
-        let op = super::expr::binding_value_at(&mut fx, "<main>", 0);
-        let vp = super::ownership::borrow_ptr(&mut fx, &op);
-        super::ownership::pool_owned(&mut fx, vp, op.tag());
-        let (nptr, nlen) = super::expr::rodata_name(&mut fx, "TOPLEVEL_BINDING");
-        let (fptr, flen) = super::expr::rodata_name(&mut fx, "<main>");
-        let owner = fx.b.ins().iconst(types::I32, 0);
-        let line = fx.b.ins().iconst(types::I32, 0);
-        fx.call(
-            "zeo_rt_const_set_at",
-            &[owner, nptr, nlen, vp, fptr, flen, line],
-        );
-    }
-    // Class bodies whose markers sit inside `def`s run ONCE here, before
-    // the main body, in document order -- the rustc backend hoists them
-    // the same way (`inline_class_markers`'s complement).
-    for call in hoisted {
-        stmt::emit_class_body_call(&mut fx, call)?;
+    if let TopScope::Main { hoisted } = scope {
+        main_installs(&mut fx, analyzed, hoisted)?;
     }
     // Defs registered through the row tables run nothing in statement
     // position (the rustc backend's shape: registration precedes the
     // body); a ClassDef marker now runs its body site inline.
-    let runnable: Vec<crate::hir::NodeId> = analyzed
-        .main_statements
+    let runnable: Vec<crate::hir::NodeId> = stmts
         .iter()
         .copied()
         .filter(|&s| {
@@ -2171,18 +2176,77 @@ fn define_toplevel(
     fx.b.switch_to_block(land);
     epilogue(&mut fx, 1);
 
-    verify::check(&fx, names::TOPLEVEL);
+    verify::check(&fx, &sym);
     let Fx { mut b, .. } = fx;
     b.seal_all_blocks();
     b.finalize(cfg);
 
-    em.record_clif(names::TOPLEVEL, &func);
+    em.record_clif(&sym, &func);
     let mut ctx = em.module.make_context();
     ctx.func = func;
     em.module
         .define_function(func_id, &mut ctx)
-        .map_err(|e| format!("compiling {}: {e}", names::TOPLEVEL))?;
+        .map_err(|e| format!("compiling {sym}: {e}"))?;
     Ok(func_id)
+}
+
+/// The installs that belong to the PROGRAM, not to a top-level scope:
+/// alias validation for body-less classes, `TOPLEVEL_BINDING`, and the class
+/// bodies whose markers sit inside `def`s. A required file runs none of them.
+fn main_installs(
+    fx: &mut Fx,
+    analyzed: &Analyzed,
+    hoisted: &[ClassBodyCall],
+) -> Result<(), String> {
+    // Alias-carrying classes with no body of their own validate here
+    // (`NameError` for a source resolving nowhere); a class WITH a body
+    // site validates at its body's end instead -- rustc's split.
+    let unbodied: Vec<u32> = analyzed
+        .compiler
+        .classes
+        .iter()
+        .enumerate()
+        .filter(|(i, c)| {
+            !c.builtin_aliases.is_empty()
+                && !analyzed
+                    .compiler
+                    .class_body_sites
+                    .iter()
+                    .any(|site| site.class.0 as usize == *i)
+        })
+        .map(|(i, _)| i as u32)
+        .collect();
+    for id in unbodied {
+        let cid = fx.b.ins().iconst(types::I32, i64::from(id));
+        let st = fx
+            .call("zeo_rt_validate_class_aliases", &[cid])
+            .expect("validate_class_aliases returns a status");
+        fx.fallible(st);
+    }
+    // `TOPLEVEL_BINDING`, installed UNCONDITIONALLY so `Object.constants`
+    // lists it (the census asks). A program that never names it gets the
+    // cheap degraded form -- self = `main`, no locals -- because
+    // `binding_names` stayed `None`; naming it anywhere upgrades both.
+    {
+        let op = super::expr::binding_value_at(fx, "<main>", 0);
+        let vp = super::ownership::borrow_ptr(fx, &op);
+        super::ownership::pool_owned(fx, vp, op.tag());
+        let (nptr, nlen) = super::expr::rodata_name(fx, "TOPLEVEL_BINDING");
+        let (fptr, flen) = super::expr::rodata_name(fx, "<main>");
+        let owner = fx.b.ins().iconst(types::I32, 0);
+        let line = fx.b.ins().iconst(types::I32, 0);
+        fx.call(
+            "zeo_rt_const_set_at",
+            &[owner, nptr, nlen, vp, fptr, flen, line],
+        );
+    }
+    // Class bodies whose markers sit inside `def`s run ONCE here, before
+    // the main body, in document order -- the rustc backend hoists them
+    // the same way (`inline_class_markers`'s complement).
+    for call in hoisted {
+        stmt::emit_class_body_call(fx, call)?;
+    }
+    Ok(())
 }
 
 /// The exported C `main(argc, argv)`: tail-calls `zeo_rt_main` with the
