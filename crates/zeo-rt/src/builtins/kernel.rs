@@ -307,20 +307,24 @@ ruby_module! {
     // operand's own `exception` method constructs the value (running a user
     // subclass's `initialize`), a String implies `RuntimeError`, an
     // exception OBJECT with no message raises as-is, anything else is
-    // `TypeError: exception class/object expected`. A third argument (a
-    // custom backtrace) is accepted and DROPPED -- there is no backtrace
-    // representation yet (same divergence as every raise); an explicit
-    // `cause:` doesn't reach this row (kwargs ride as a trailing Hash that
-    // 2-arg shapes would misread; the automatic `$!` chaining below is
-    // what dynamic callers get).
+    // `TypeError: exception class/object expected`. A third argument is a
+    // CUSTOM backtrace and replaces the stamped one; an explicit `cause:`
+    // doesn't reach this row (kwargs ride as a trailing Hash that 2-arg
+    // shapes would misread; the automatic `$!` chaining below is what
+    // dynamic callers get).
     module_function def "raise" | "fail"(_recv, exception?, message?, backtrace?) {
-        let args: Vec<RubyValue> = [exception, message, backtrace]
+        let args: Vec<RubyValue> = [exception, message]
             .iter()
             .take_while(|p| p.is_some())
             .filter_map(|p| p.cloned())
             .collect();
         let exc = build_raise_exception(&args)?;
-        Err(Signal::Raise(crate::dispatch::raise_with_cause(exc)))
+        let exc = crate::dispatch::raise_with_cause(exc);
+        // After the stamp, so the custom lines WIN over the real stack.
+        if let Some(bt) = backtrace {
+            crate::builtins::exception::apply_custom_backtrace(&exc, bt)?;
+        }
+        Err(Signal::Raise(exc))
     }
     module_function def "sleep" as kernel_sleep (_recv, _seconds?) {
         sleep_impl(__args)

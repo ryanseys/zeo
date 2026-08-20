@@ -288,7 +288,13 @@ ruby_class! {
         let i = arg_int!(index);
         match crate::array_set(rary, i, second.clone()) {
             Some(v) => Ok(v),
-            None => Err(index_error!("index {i} too small for array; minimum: -{}", crate::array_len(rary))),
+            // `minimum:` is the NUMBER `-len`, so an empty array reads
+            // `minimum: 0` -- not a literal minus in front of the length,
+            // which spelled it `-0` (CRuby's `rb_ary_store`).
+            None => Err(index_error!(
+                "index {i} too small for array; minimum: {}",
+                -(crate::array_len(rary) as i64)
+            )),
         }
     }
     def "<<" arity 1 | "push" | "append"(recv, *args, &_block) {
@@ -2082,8 +2088,9 @@ fn array_splice(
     let start = if start < 0 { start + n } else { start };
     if start < 0 {
         return Err(index_error!(
-            "index {} too small for array; minimum: -{n}",
-            start - n
+            "index {} too small for array; minimum: {}",
+            start - n,
+            -n
         ));
     }
     let start = start as usize;
