@@ -2,11 +2,25 @@
 
 ## Setup
 
-- Rust ≥ 1.88 (`rust-version` in `Cargo.toml`; `mise.toml` pins the toolchain
+- Rust ≥ 1.94 (`rust-version` in `Cargo.toml`; `mise.toml` pins the toolchain
   used in development) and a C compiler.
 - A real Ruby matching the oracle version pinned in `mise.toml`
   (via `mise install`) — only needed when re-blessing golden output from the
   oracle (`xtask bless`); the committed snapshots cover ordinary runs.
+
+```console
+$ cargo build --workspace     # do this first, and after every compiler edit
+```
+
+**`cargo build` first, always.** It produces two things the test suites need
+and cannot build for themselves: the `zeo` binary the golden harness spawns,
+and `libzeo.a`, the runtime archive every compiled program links against.
+Nothing gives a test target a cargo dependency edge to a *binary* target, so a
+stale `zeo` would otherwise run yesterday's compiler over today's goldens and
+report green. The harness stats the compiler's sources against the binary and
+refuses instead — if a whole suite fails with *"the zeo CLI … is older than
+…"*, that is this, and `cargo build` is the fix. (`cargo nextest run
+--workspace` rebuilds it for you; `cargo nextest run -p zeo-tests` does not.)
 
 ## The one rule: oracle-verified, divergence-documented
 
@@ -26,9 +40,15 @@ Zeo's house style is *approximation is fine, silent wrongness is not*:
 $ cargo nextest run --workspace                     # unit + e2e + all golden suites
 $ cargo nextest run -p zeo-tests --test spinel      # the full ruby-oracle corpus
 $ cargo nextest run -p zeo-tests --test examples --test gaps
+$ cargo nextest run -p zeo-tests -P full            # + the whole-gem cases
 $ cargo run -p xtask -- bless <filter>              # re-record goldens from ruby
 $ cargo run -p xtask -- bench                       # perf vs bench/baseline.tsv
 ```
+
+The default profile is the dev loop. `-P full` adds the cases that compile a
+whole gem's require graph (`gemtests`, `every_bundled_gem_compiles`,
+`rspec_end_to_end`, `prism_surface`); they belong to a phase gate, not to
+every run.
 
 - The golden suites live under `tests/` (examples + the spinel corpus + the
   XFAIL gaps tracker) and run as datatest-stable `cargo test`/nextest targets;
@@ -46,6 +66,43 @@ $ cargo run -p xtask -- bench                       # perf vs bench/baseline.tsv
 - The tree is rustfmt-clean, but CI does **not** gate it. `cargo fmt` is safe
   to run and should be a no-op; keep your change to it small, and don't
   reformat code you didn't touch.
+
+## The two backends
+
+Zeo lowers Ruby to Cranelift IR and emits machine code itself. That is the
+compiler; `crates/zeo/src/clif/` is where it lives.
+
+| Spelling | Backend | What it does |
+|---|---|---|
+| `zeo file.rb`, `zeo -e` | **jit** (default) | finalizes the CLIF into this process and runs it in place |
+| `zeo file.rb -o app` | **aot** (default) | writes an object file and links it against `libzeo.a` |
+| `zeo --backend rustc file.rb` | **rustc** | the frozen differential oracle |
+
+There is a second, older backend: `crates/zeo/src/codegen/` emits Rust source
+text and hands it to `rustc`. It was the only backend until Cranelift reached
+parity, and it is **frozen** — bug fixes only, and only when Cranelift and it
+disagree about something CRuby settles. It exists so a suspect Cranelift
+result can be diffed against a backend that was correct before it, and it is
+deleted once parity is proved (M3). Don't add features to it; don't let its
+existence talk you into writing anything twice.
+
+It is dev-tree only and slow on purpose: nothing caches a built program any
+more, so `--backend rustc hello.rb` pays a real `rustc` (~13 s). That is the
+right cost for what it is actually used for — rerunning **one** golden that
+diverged.
+
+The golden suites take the same three legs:
+
+```console
+$ cargo nextest run -p zeo-tests --test examples                      # jit
+$ ZEO_GOLDEN_BACKEND=aot   cargo nextest run -p zeo-tests --test examples
+$ ZEO_GOLDEN_BACKEND=rustc cargo nextest run -p zeo-tests --test examples
+```
+
+`crates/zeo/tests/clif.rs` holds insta snapshots of the emitted CLIF. They
+record emitter *shape*, which no golden can see, so **run `cargo nextest run
+-p zeo` after any `clif/` change**. insta stops at the first failing snapshot,
+so "1 failed" does not mean "1 stale" — fix and re-run until it is quiet.
 
 ## Code conventions
 

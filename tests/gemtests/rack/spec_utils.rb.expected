@@ -1,0 +1,14 @@
+Run options: --seed 42
+
+# Running:
+
+..............................................................E.
+
+Finished in 0.00s
+
+  1) Error:
+Rack::Utils::cookies#test_0004_raises an error if the cookie key is invalid:
+TypeError: class or module required for rescue clause. Got [ArgumentError, /invalid cookie key/]
+    test/spec_utils.rb:660:in 'block (2 levels) in <top (required)>'
+
+64 runs, 301 assertions, 0 failures, 1 errors, 0 skips
