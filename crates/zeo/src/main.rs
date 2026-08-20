@@ -2,7 +2,6 @@
 //! library's `compile_to_rust`/`backend::build_binary` -- see `lib.rs` for the
 //! actual parse -> analyze -> codegen -> build pipeline.
 
-use std::collections::HashSet;
 use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -51,8 +50,6 @@ struct Args {
     root_gem: Option<String>,
     /// `--report[=<path>]`: the `zeo-gems.json` disclosure record, opt-in.
     report: Report,
-    /// Warning categories suppressed via `-W0`/`-W:no-<category>`.
-    nowarn: HashSet<String>,
     /// The external gem store dirs (`--gem-path`/`GEM_PATH`) and the lockfile
     /// derived from `--bundle-gemfile`/`BUNDLE_GEMFILE`. Either both are
     /// populated or neither -- `parse_args_from` enforces the pairing.
@@ -190,9 +187,9 @@ options:
                         needs a store via --gem-path
   --report[=<path>]     write the `zeo-gems.json` disclosure record
                         (default path: next to the output artifact)
-  -W0                   suppress all zeo warnings
-  -W:no-<category>      suppress one warning category; `-W:<category>`
-                        re-enables it. Categories: zeo-builtin-substitute
+  -w, -W[0-2]           accepted, ruby's shapes; zeo warns from neither
+  -W:[no-]<category>    accepted for ruby's categories (deprecated,
+                        experimental, performance, strict_unused_block)
   --emit-rust[=<path>]  write the generated Rust to <path> -- or stdout when
                         no path is attached -- and exit (no build). The file
                         form is unformatted and streamed, so nothing holds
@@ -246,7 +243,6 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
     let mut package_dirs = Vec::new();
     let mut root_gem: Option<String> = None;
     let mut report = Report::Off;
-    let mut nowarn = HashSet::new();
     let mut gem_paths: Vec<PathBuf> = Vec::new();
     let mut gemfile: Option<PathBuf> = None;
     let mut compile = false;
@@ -270,7 +266,7 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
             {
                 rubyopt_roots.push(PathBuf::from(dir));
             } else if tok == "-w" || tok.starts_with("-W") {
-                warn_flag(tok, &mut nowarn)?;
+                warn_flag(tok)?;
             } else {
                 return Err(format!("illegal switch in RUBYOPT: {tok}"));
             }
@@ -389,7 +385,7 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
                     {
                         load_roots.push(PathBuf::from(dir));
                     } else if arg == "-w" || arg.starts_with("-W") {
-                        warn_flag(&arg, &mut nowarn)?;
+                        warn_flag(&arg)?;
                     } else {
                         return Err(format!(
                             "invalid option: {arg} (-h will show valid options)"
@@ -489,7 +485,6 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
         package_dirs,
         root_gem,
         report,
-        nowarn,
         store_from_flags: gem_paths_from_flag || gemfile_from_flag,
         gem_paths,
         lockfile: gemfile.map(derive_lockfile),
@@ -499,32 +494,28 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
     })))
 }
 
-/// The `-w`/`-W` family, ruby's shapes: levels are accepted (`-W0` silences
-/// everything; the rest are the default, already-on behavior), and
-/// `-W:[no-]<category>` toggles one category, validated so a typo is an error
-/// rather than a silently ignored suppression.
-fn warn_flag(arg: &str, nowarn: &mut HashSet<String>) -> Result<(), String> {
+/// Every `-W:[no-]<category>` ruby 4.0.6 accepts. zeo emits none of these
+/// categories, so toggling one is a no-op -- but an unknown name is still
+/// reported, exactly as ruby reports it, so a typo is not silently ignored.
+const WARNING_CATEGORIES: &[&str] = &[
+    "deprecated",
+    "experimental",
+    "performance",
+    "strict_unused_block",
+];
+
+/// The `-w`/`-W` family, ruby's shapes. Every form is accepted and none
+/// changes what zeo prints: the compiler's own diagnostics are errors, and
+/// the warning categories above belong to a runtime zeo does not warn from.
+/// An unknown category warns and continues, as ruby's own driver does.
+fn warn_flag(arg: &str) -> Result<(), String> {
     match arg {
-        "-w" | "-W" | "-W1" | "-W2" => Ok(()),
-        "-W0" => {
-            for category in zeo::gem_report::WARNING_CATEGORIES {
-                nowarn.insert((*category).to_string());
-            }
-            Ok(())
-        }
+        "-w" | "-W" | "-W0" | "-W1" | "-W2" => Ok(()),
         _ => match arg.strip_prefix("-W:") {
             Some(category) => {
-                let (suppress, name) = match category.strip_prefix("no-") {
-                    Some(name) => (true, name),
-                    None => (false, category),
-                };
-                if !zeo::gem_report::WARNING_CATEGORIES.contains(&name) {
-                    return Err(format!("unknown warning category: `{name}'"));
-                }
-                if suppress {
-                    nowarn.insert(name.to_string());
-                } else {
-                    nowarn.remove(name);
+                let name = category.strip_prefix("no-").unwrap_or(category);
+                if !WARNING_CATEGORIES.contains(&name) {
+                    eprintln!("zeo: warning: unknown warning category: '{name}'");
                 }
                 Ok(())
             }
@@ -640,13 +631,7 @@ fn run() -> Result<(), MainError> {
         input_path: input_path.clone(),
         load_roots: args.load_roots.clone(),
         package_dirs,
-        // Warnings are the disclosure mechanism, so they are ALWAYS on at the
-        // CLI -- independent of the opt-in report file. `-W0` (or a
-        // `-W:no-<category>`) is the off switch. The library default stays
-        // silent for in-process harness callers.
-        gem_warnings: true,
         gem_report,
-        nowarn: args.nowarn.clone(),
         gem_paths: args.gem_paths.clone(),
         lockfile: args.lockfile.clone(),
         root_gem: args.root_gem.clone().map(zeo::Gem::named),
@@ -847,21 +832,28 @@ mod tests {
     }
 
     #[test]
-    fn warning_categories_toggle_and_validate() {
-        let a = ok(&["-W:no-zeo-builtin-substitute", "t.rb"]);
-        assert!(a.nowarn.contains("zeo-builtin-substitute"));
-        // The positive form re-enables -- last one wins.
-        let a = ok(&[
-            "-W:no-zeo-builtin-substitute",
-            "-W:zeo-builtin-substitute",
-            "t.rb",
-        ]);
-        assert!(a.nowarn.is_empty());
-        let a = ok(&["-W0", "t.rb"]);
-        assert!(a.nowarn.contains("zeo-builtin-substitute"));
-        // Levels and -w are accepted no-ops.
-        assert!(ok(&["-w", "-W", "-W1", "-W2", "t.rb"]).nowarn.is_empty());
-        assert!(err(&["-W:no-typo", "t.rb"]).contains("unknown warning category"));
+    fn warning_flags_are_accepted_no_ops() {
+        // Every ruby shape parses and leaves the compile unchanged.
+        for arg in [
+            "-w",
+            "-W",
+            "-W0",
+            "-W1",
+            "-W2",
+            "-W:deprecated",
+            "-W:no-experimental",
+            "-W:no-performance",
+            "-W:no-strict_unused_block",
+            // An unknown category warns on stderr, as ruby's driver does,
+            // and still runs.
+            "-W:no-typo",
+        ] {
+            let a = ok(&[arg, "t.rb"]);
+            assert!(
+                matches!(a.source, Source::File(ref p) if p == &PathBuf::from("t.rb")),
+                "{arg}"
+            );
+        }
         assert!(err(&["-W3", "t.rb"]).contains("invalid option"));
     }
 
@@ -986,12 +978,10 @@ mod tests {
             rubylib: Some("x:y".into()),
             ..Env::default()
         };
-        let a = match parse_env(&["-Ib", "-W:zeo-builtin-substitute", "t.rb"], &env).unwrap() {
+        let a = match parse_env(&["-Ib", "-W:deprecated", "t.rb"], &env).unwrap() {
             Parsed::Run(a) => *a,
             _ => panic!(),
         };
-        // CLI -W re-enables what RUBYOPT's -W0 suppressed.
-        assert!(a.nowarn.is_empty());
         // Roots: CLI -I, then RUBYOPT -I, then RUBYLIB -- ruby's order.
         assert_eq!(
             a.load_roots,

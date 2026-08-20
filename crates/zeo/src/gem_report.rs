@@ -5,16 +5,15 @@
 //! Why this exists (the GraalVM lesson): a substitution is silent by nature --
 //! zeo's `json` behaves *almost* like the gem until an edge case where it
 //! doesn't, and a user debugging that has no breadcrumb unless the swap was
-//! recorded up front. So the CLI warns on every substitution by DEFAULT
-//! (`-W:no-<category>`/`-W0` is the off switch), and `--report` additionally
-//! writes this record next to the artifact.
+//! recorded up front. `--report` writes this record next to the artifact.
+//! It is the ONLY disclosure channel: a compiler diagnostic on every run is
+//! noise on the program's own stderr, which nothing else in ruby produces.
 //!
 //! The record is populated by `parse::loader` as each require resolves and
-//! rides on `Hir::gem_records`; `lib::compile_to_rust_with` writes the JSON and
-//! emits the warnings once lowering is done.
+//! rides on `Hir::gem_records`; `lib::compile_to_rust_with` writes the JSON
+//! once lowering is done.
 
 use std::collections::BTreeMap;
-use std::collections::HashSet;
 use std::path::Path;
 
 /// One required library and how it was satisfied. Deduped by `name` at record
@@ -43,14 +42,6 @@ pub enum SatisfiedBy {
     /// zeo has no ext for, or a library only a method body required.
     Excluded { kind: String, reason: String },
 }
-
-/// The mnemonic slug the substitution warning carries, and the category
-/// `-W:no-zeo-builtin-substitute` suppresses.
-pub const SUBSTITUTE_SLUG: &str = "zeo-builtin-substitute";
-
-/// Every warning category `-W:<category>`/`-W:no-<category>` accepts -- the
-/// validation list, so a typo is an error rather than a silent no-op.
-pub const WARNING_CATEGORIES: &[&str] = &[SUBSTITUTE_SLUG];
 
 /// `Excluded::kind` for a library only a method body required. zeo does not
 /// load it, so the record is the only breadcrumb before the runtime
@@ -143,34 +134,6 @@ fn entry_body(r: &GemRecord) -> String {
         fields.push(format!("\"note\": {}", json_str(note)));
     }
     fields.join(", ")
-}
-
-/// Emit the once-per-library substitution warning to stderr, unless the
-/// category is suppressed. Separate dial from the report file: a caller can
-/// want the warnings without the file, or the file without the noise.
-pub fn emit_warnings(records: &[GemRecord], nowarn: &HashSet<String>) {
-    if nowarn.contains(SUBSTITUTE_SLUG) {
-        return;
-    }
-    let mut seen = HashSet::new();
-    for r in records {
-        if let SatisfiedBy::Excluded { kind, reason } = &r.by {
-            if kind == DEFERRED_KIND && seen.insert(r.name.as_str()) {
-                eprintln!(
-                    "zeo: warning: '{}' is not compiled in ({reason}) [{SUBSTITUTE_SLUG}]",
-                    r.name
-                );
-            }
-        } else if let Some(note) = substitution_note(&r.name)
-            && seen.insert(r.name.as_str())
-        {
-            eprintln!(
-                "zeo: warning: '{}' is satisfied by zeo's built-in implementation \
-                     ({note}) [{SUBSTITUTE_SLUG}]",
-                r.name
-            );
-        }
-    }
 }
 
 /// A JSON string literal: quote, and escape the characters JSON requires.

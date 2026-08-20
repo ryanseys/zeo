@@ -115,8 +115,8 @@ Zeo names the replacement for each removed old spelling.
 | `--gem-path <dir>` | Adds an installed RubyGems store (`gem env gemdir`). You can give this option more than one time; without it, Zeo reads `GEM_PATH`. A store is only used together with a Gemfile from `--bundle-gemfile` or `BUNDLE_GEMFILE`. |
 | `--bundle-gemfile <path>` | Gives the Gemfile. Zeo reads its lockfile — `Gemfile` → `Gemfile.lock`, `gems.rb` → `gems.locked` — and that lockfile selects the versions in the store. A `<path>` that already ends in `.lock` is read directly. Without this option, Zeo reads `BUNDLE_GEMFILE`. |
 | `--report[=<path>]` | Writes the `zeo-gems.json` record. Without a path, the record goes next to the output artifact. The record is off by default. |
-| `-W0` | Stops all Zeo warnings. |
-| `-W:no-<category>` | Stops one category of disclosure warning; `-W:<category>` starts it again. The one category today is `zeo-builtin-substitute`. An unknown category is an error. `-w`, `-W`, `-W1` and `-W2` are accepted and change nothing: the warnings are on by default. |
+| `-w`, `-W`, `-W0`, `-W1`, `-W2` | Accepted, in Ruby's shapes. They change nothing: Zeo prints no warnings of its own. |
+| `-W:[no-]<category>` | Accepted for Ruby's own categories — `deprecated`, `experimental`, `performance`, `strict_unused_block`. Zeo warns from none of them, so the option changes nothing. An unknown category prints Ruby's own notice. |
 | `--emit-rust[=<path>]` | Writes the generated Rust source to `<path>`, or to stdout without a path, then stops. Does not build. The path form streams and holds no copy of the program in memory. |
 | `--pretty` | With `--emit-rust`: formats the Rust source for a person to read. This costs a re-parse and a second copy of the program. |
 | `-v`, `--version` | Prints the version, then stops. |

@@ -138,9 +138,10 @@ replaces.
 
 Zeo provides its own implementation under a name a gem or C extension also
 uses. The surface is close, but the backing differs — so an edge case can
-diverge, and `zeo-gems.json` marks these `diverges: true`. A compile warns
-once per such library (category `zeo-builtin-substitute`; silence with
-`-W:no-zeo-builtin-substitute`, or `-W0` for all warnings).
+diverge, and `zeo-gems.json` marks these `diverges: true`. Ask for that
+record with `--report`: it is the disclosure channel. A compile prints
+nothing, because a diagnostic on every run is noise on the program's own
+stderr that Ruby never produces.
 
 | `require` | Zeo provides | why it diverges |
 |---|---|---|
@@ -1004,6 +1005,6 @@ object per library the program required (`--report=<path>` picks the path):
 }
 ```
 
-The record is opt-in; the **warnings** are the always-on half — a substitution
-is silent by nature, so every compile warns once per substituted library
-unless `-W0`/`-W:no-zeo-builtin-substitute` turns that off.
+The record is the disclosure channel, and it is opt-in: pass `--report`.
+Zeo prints no warning of its own for a substitution — a line on the
+program's stderr for every run is noise Ruby never produces.

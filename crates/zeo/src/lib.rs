@@ -96,14 +96,6 @@ pub struct CompileOptions {
     /// file -- is the DEFAULT, for the library API and the CLI alike (the
     /// CLI's `--report` opts in with a path next to the output artifact).
     pub gem_report: Option<std::path::PathBuf>,
-    /// Emit the once-per-library substitution warnings to stderr. Off by
-    /// default (keeps the harness path silent); the CLI always turns it on,
-    /// with `-W0`/`-W:no-<category>` as the off switch.
-    pub gem_warnings: bool,
-    /// Warning categories suppressed (the CLI's `-W:no-<category>`) -- a dial
-    /// independent of `gem_report`, so a caller can silence the noise but
-    /// keep the file.
-    pub nowarn: std::collections::HashSet<String>,
     /// Installed RubyGems store directories (`gem env gemdir`) to resolve
     /// locked gems against, probed in order (first hit per gem wins). The CLI
     /// fills this from `--gem-path` or `GEM_PATH` -- but only alongside a
@@ -253,9 +245,6 @@ fn analyze_on_this_thread(
         opts.lockfile.as_deref(),
         opts.root_gem.as_ref(),
     )?;
-    if opts.gem_warnings {
-        gem_report::emit_warnings(&gem_records, &opts.nowarn);
-    }
     if let Some(path) = &opts.gem_report {
         gem_report::write_report(&gem_records, path)
             .map_err(|message| CompileError::Report { message })?;
@@ -398,9 +387,6 @@ fn compile_on_this_thread(
     // The disclosure record is fully known once lowering resolved
     // every require. Write it (and warn) BEFORE analyze/codegen, so the ledger
     // lands even if a later stage fails.
-    if opts.gem_warnings {
-        gem_report::emit_warnings(&gem_records, &opts.nowarn);
-    }
     if let Some(path) = &opts.gem_report {
         gem_report::write_report(&gem_records, path)
             .map_err(|message| CompileError::Report { message })?;

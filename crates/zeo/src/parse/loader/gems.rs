@@ -120,9 +120,9 @@ pub(super) fn discover_packages(
             // -- and, once that file's computed `require RUBY_VERSION... +
             // "/ffi_c"` demanded the gem's whole load path as units, dragged
             // in `ffi/struct_layout.rb`'s `class Enum < Field` and failed the
-            // compile outright. The `zeo-builtin-substitute` warning has
-            // always CLAIMED zeo's implementation is the one in use; this is
-            // what makes the claim true.
+            // compile outright. The `zeo-gems.json` record has always
+            // CLAIMED zeo's implementation is the one in use; this is what
+            // makes the claim true.
             if provenance == GemProvenance::Bundled
                 && crate::gem_report::substitution_note(&pkg.name).is_some()
                 && let Some(slot) = packages.iter_mut().find(|g| g.name == pkg.name)
