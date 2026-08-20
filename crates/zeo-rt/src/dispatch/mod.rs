@@ -1546,6 +1546,11 @@ fn send_walking(
         if crate::runtime_meta::is_live() && crate::runtime_meta::overlay_is_undefined(anc, name) {
             break;
         }
+        // A `remove_method` here empties only THIS position: `super` carries
+        // on to the ancestor that still defines the name.
+        if crate::runtime_meta::is_live() && crate::runtime_meta::overlay_is_removed(anc, name) {
+            continue;
+        }
         if let Some(obj) = &obj {
             if crate::runtime_meta::is_live()
                 && let Some(m) = crate::runtime_meta::overlay_own_method(anc, name)
@@ -2347,6 +2352,9 @@ pub fn run_initialize(
         if crate::runtime_meta::is_live() && crate::runtime_meta::overlay_is_undefined(anc, init) {
             break;
         }
+        if crate::runtime_meta::is_live() && crate::runtime_meta::overlay_is_removed(anc, init) {
+            continue;
+        }
         if let Some(f) = registry().lookup(anc, init) {
             f.call(recv, args, block)?;
             return Ok(());
@@ -2980,7 +2988,15 @@ fn send_value_in_reason(
         // singleton method is strictly closer than one inherited from
         // Class/Module). A class with NO registry entry (a never-required
         // feature-gated ext) still gets the direct builtin probe below.
-        if let Some((f, label)) = REGISTRY.get().and_then(|r| r.flat_class_hit(*cid, name)) {
+        // ...unless `remove_method` in `class << self` took the row back.
+        // This probe is FLAT, so the receiver's row is still sitting in it;
+        // skipping the position is what lets an ancestor's `def self.x`
+        // answer, which is the whole difference from an `undef`.
+        let class_removed_here = crate::runtime_meta::is_live()
+            && crate::runtime_meta::overlay_class_removed(*cid, name);
+        if !class_removed_here
+            && let Some((f, label)) = REGISTRY.get().and_then(|r| r.flat_class_hit(*cid, name))
+        {
             return with_c_frame(label, || f.call(recv, args, block));
         }
         // A module the class EXTENDED, whose row is its own INSTANCE method:
@@ -3179,6 +3195,11 @@ fn send_value_in_reason(
                 || REGISTRY.get().is_some_and(|r| r.is_undefined(anc, name))
             {
                 break;
+            }
+            // `remove_method` empties the position rather than ending the
+            // walk -- an ancestor's definition is meant to answer now.
+            if live && crate::runtime_meta::overlay_is_removed(anc, name) {
+                continue;
             }
             // A runtime `define_method` REPLACES, so within one ancestor the
             // overlay outranks both the reopen and the builtin table -- the
@@ -3429,6 +3450,9 @@ fn send_in_reason(
                     || REGISTRY.get().is_some_and(|r| r.is_undefined(anc, name))
                 {
                     break;
+                }
+                if live && crate::runtime_meta::overlay_is_removed(anc, name) {
+                    continue;
                 }
                 if let Some(f) = value_method(anc, box_id, name) {
                     // The same payload bridge the `class_table` arm below

@@ -151,6 +151,20 @@ struct OverlayEntry {
     /// left `Sub.x` answering as if nothing had happened -- nothing on the
     /// class-method path ever looks at a singleton id.
     class_undefs: FSet<Symbol>,
+    /// Names `remove_method` retired, and the reason it is not `undefs`:
+    /// `undef` TERMINATES the MRO walk, `remove` only empties THIS class's own
+    /// tables and lets the walk carry on. `class C < P; def m; end; end` then
+    /// `C.remove_method(:m)` leaves `C.new.m` answering `P#m`, where an
+    /// `undef` would raise.
+    ///
+    /// An entry rather than a deletion because a class's own definition can
+    /// live in two layers -- the overlay and the COMPILED registry row -- and
+    /// deleting the overlay one merely uncovered the compiled one underneath.
+    /// Every write that defines the name again clears it.
+    removed: FSet<Symbol>,
+    /// [`OverlayEntry::removed`]'s class-method twin, keyed on the OWNER for
+    /// the same reason [`OverlayEntry::class_undefs`] is.
+    class_removed: FSet<Symbol>,
     /// The address the anonymous `#<Class:0x...>` rendering reports -- a real
     /// leaked allocation, so it is unique, stable, and 16 hex digits wide like
     /// every other object's. Not `ancestors.as_ptr()`: `include`/`prepend`
@@ -197,6 +211,8 @@ impl Default for OverlayEntry {
             allocator: None,
             inherited_names: FSet::default(),
             undefs: FSet::default(),
+            removed: FSet::default(),
+            class_removed: FSet::default(),
             class_undefs: FSet::default(),
             addr: Box::leak(Box::new(0u8)) as *const u8 as usize,
             uninitialized: false,

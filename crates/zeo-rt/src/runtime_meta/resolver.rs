@@ -54,6 +54,11 @@ pub(super) fn walk_runtime_class(id: ClassId, name: Symbol) -> Option<MethodImpl
             if entry.is_some_and(|e| e.undefs.contains(&name)) {
                 return None;
             }
+            // A `remove_method` empties this position without ending the
+            // walk -- the ancestor that still defines the name answers.
+            if entry.is_some_and(|e| e.removed.contains(&name)) {
+                continue;
+            }
             if let Some(m) = entry.and_then(|e| {
                 e.prepended
                     .get(&name)
@@ -279,6 +284,27 @@ pub fn overlay_is_undefined(id: ClassId, name: Symbol) -> bool {
         .unwrap()
         .get(&id.0)
         .is_some_and(|e| e.undefs.contains(&name))
+}
+
+/// Whether class `id`'s OWN entry had `name` REMOVED -- the walk skips this
+/// ancestor's tables and keeps going, where [`overlay_is_undefined`] stops it.
+pub fn overlay_is_removed(id: ClassId, name: Symbol) -> bool {
+    maps()
+        .classes
+        .read()
+        .unwrap()
+        .get(&id.0)
+        .is_some_and(|e| e.removed.contains(&name))
+}
+
+/// [`overlay_is_removed`]'s class-method twin.
+pub fn overlay_class_removed(id: ClassId, name: Symbol) -> bool {
+    maps()
+        .classes
+        .read()
+        .unwrap()
+        .get(&id.0)
+        .is_some_and(|e| e.class_removed.contains(&name))
 }
 
 /// Reverse of [`overlay_class_name`]: the runtime class id whose Ruby-visible

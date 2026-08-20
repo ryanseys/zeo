@@ -46,6 +46,7 @@ pub fn runtime_define_method(id: ClassId, name: Symbol, body: RProc) -> Result<R
         e.methods.insert(name, m);
         e.value_bodies.insert(name, body);
         e.undefs.remove(&name);
+        e.removed.remove(&name);
         // `initialize` and its copy/clone/dup family are private wherever
         // they are defined -- CRuby stamps them so in `rb_method_entry_make`
         // regardless of the visibility cursor.
@@ -160,6 +161,7 @@ fn replace_method_impl(id: ClassId, name: Symbol, imp: crate::dispatch::MethodIm
         let e = w.entry(id.0).or_insert_with(OverlayEntry::delta);
         e.methods.insert(name, imp);
         e.undefs.remove(&name);
+        e.removed.remove(&name);
     }
     patch_class(id);
     mark_live();
@@ -305,6 +307,7 @@ fn install_attr(id: ClassId, name: Symbol, m: MethodImpl) {
     e.methods.insert(name, m);
     e.methods_vis.remove(&name);
     e.undefs.remove(&name);
+    e.removed.remove(&name);
 }
 
 /// `Module#undef_method` -- CRuby's `rb_undef`. The name must currently
@@ -582,27 +585,53 @@ pub(crate) fn class_method_undefined(id: ClassId, name: Symbol) -> bool {
 }
 
 /// `Module#remove_method` -- drops this class's OWN definition, leaving an
-/// inherited one reachable. Unlike `undef_method` it plants no tombstone.
+/// inherited one reachable. Unlike `undef_method` it plants no terminator:
+/// the walk skips this class's tables for the name and carries on.
+///
+/// It has to plant SOMETHING, though, and that is [`OverlayEntry::removed`].
+/// A class's own definition can live in two layers -- the runtime overlay and
+/// the COMPILED registry row -- so deleting the overlay entry alone merely
+/// uncovered the compiled row underneath, and `remove_method` looked like it
+/// had done nothing.
 pub fn runtime_remove_method(id: ClassId, args: &[RubyValue]) -> Result<RubyValue, Signal> {
     if crate::dispatch::class_frozen(id) {
         return Err(crate::dispatch::frozen_class_error(id));
     }
+    // A SINGLETON class's instance methods are its owner's CLASS methods, so
+    // the removal belongs in the owner's class-method space -- the same two
+    // redirects `runtime_undef_method` makes, for the same reason.
+    if let Some(owner) = singleton_class_owner(id) {
+        return runtime_remove_class_method(owner, id, args);
+    }
+    let value_owner = maps().singleton_owner.read().unwrap().get(&id.0).cloned();
+    if let Some(owner) = value_owner
+        && !matches!(owner, RubyValue::Class(_))
+    {
+        return runtime_remove_singleton_method(&owner, id, args);
+    }
     let mut removed_names = Vec::with_capacity(args.len());
     for arg in args {
         let name = coerce_method_name(Some(arg))?;
-        let removed = maps()
+        let in_overlay = maps()
             .classes
-            .write()
+            .read()
             .unwrap()
-            .get_mut(&id.0)
-            .and_then(|e| e.methods.remove(&name))
-            .is_some();
-        if !removed {
+            .get(&id.0)
+            .is_some_and(|e| e.methods.contains_key(&name));
+        if !in_overlay && !crate::dispatch::class_defines_own_instance_method(id, name) {
             return Err(name_error!(
                 "method '{}' not defined in {}",
                 name.name(),
                 crate::dispatch::class_name(id).unwrap_or_else(|| "?".to_string())
             ));
+        }
+        {
+            let mut w = maps().classes.write().unwrap();
+            let e = w.entry(id.0).or_insert_with(OverlayEntry::delta);
+            e.methods.remove(&name);
+            e.value_bodies.remove(&name);
+            e.methods_vis.remove(&name);
+            e.removed.insert(name);
         }
         removed_names.push(name);
     }
@@ -612,6 +641,91 @@ pub fn runtime_remove_method(id: ClassId, args: &[RubyValue]) -> Result<RubyValu
         fire_def_hook(DefTarget::Class(id), DefEvent::Removed, name)?;
     }
     Ok(RubyValue::Class(id))
+}
+
+/// [`runtime_remove_method`] reached through a class's SINGLETON class, where
+/// the names are `owner`'s class methods -- `runtime_undef_class_method`'s
+/// twin, minus the tombstones that stop the walk.
+fn runtime_remove_class_method(
+    owner: ClassId,
+    singleton: ClassId,
+    args: &[RubyValue],
+) -> Result<RubyValue, Signal> {
+    let mut removed_names = Vec::with_capacity(args.len());
+    for arg in args {
+        let name = coerce_method_name(Some(arg))?;
+        let in_overlay = overlay_class_method(owner, name).is_some();
+        if !in_overlay && !crate::dispatch::class_defines_own_class_method(owner, name) {
+            return Err(name_error!(
+                "method '{}' not defined in {}",
+                name.name(),
+                crate::dispatch::class_name(singleton).unwrap_or_else(|| "?".to_string())
+            ));
+        }
+        {
+            let mut w = maps().classes.write().unwrap();
+            let e = w.entry(owner.0).or_insert_with(OverlayEntry::delta);
+            e.class_methods.remove(&name);
+            e.extended_class_methods.remove(&name);
+            e.class_methods_vis.remove(&name);
+            e.class_removed.insert(name);
+            // And on the SINGLETON's own id, which is what every
+            // ancestor-walking READER consults -- so `instance_methods(false)`
+            // and `method_defined?` agree with dispatch instead of finding the
+            // row again behind it.
+            let sg = w.entry(singleton.0).or_insert_with(OverlayEntry::delta);
+            sg.methods.remove(&name);
+            sg.value_bodies.remove(&name);
+            sg.removed.insert(name);
+        }
+        removed_names.push(name);
+    }
+    patch_class(owner);
+    patch_class(singleton);
+    mark_live();
+    for name in removed_names {
+        fire_def_hook(DefTarget::Class(owner), DefEvent::Removed, name)?;
+    }
+    Ok(RubyValue::Class(owner))
+}
+
+/// [`runtime_remove_method`] for ONE OBJECT, reached through that object's
+/// singleton class. Its methods live identity-keyed with no compiled layer
+/// under them, so this is a plain deletion -- the object's CLASS answers
+/// afterwards, which is exactly what `remove_method` means.
+fn runtime_remove_singleton_method(
+    owner: &RubyValue,
+    singleton: ClassId,
+    args: &[RubyValue],
+) -> Result<RubyValue, Signal> {
+    let Some(key) = pin_identity(owner) else {
+        return Err(type_error!("can't define singleton"));
+    };
+    let mut removed_names = Vec::with_capacity(args.len());
+    for arg in args {
+        let name = coerce_method_name(Some(arg))?;
+        let gone = {
+            let mut w = maps().singletons.write().unwrap();
+            w.get_mut(&key).is_some_and(|t| t.remove(&name).is_some())
+        } | {
+            let mut w = maps().value_singletons.write().unwrap();
+            w.get_mut(&key).is_some_and(|t| t.remove(&name).is_some())
+        };
+        if !gone {
+            return Err(name_error!(
+                "method '{}' not defined in {}",
+                name.name(),
+                crate::dispatch::class_name(singleton).unwrap_or_else(|| "?".to_string())
+            ));
+        }
+        clear_extended_name(key, name);
+        removed_names.push(name);
+    }
+    mark_singletons();
+    for name in removed_names {
+        fire_def_hook(DefTarget::Singleton(owner), DefEvent::Removed, name)?;
+    }
+    Ok(RubyValue::Class(singleton))
 }
 
 /// `Module#alias_method(new, old)` reached AT RUNTIME (computed names --
@@ -1158,6 +1272,8 @@ pub fn runtime_define_method_from_method(
         let mut w = maps().classes.write().unwrap();
         let e = w.entry(id.0).or_insert_with(OverlayEntry::delta);
         e.methods.insert(name, m);
+        e.undefs.remove(&name);
+        e.removed.remove(&name);
         if let Some(vb) = value_body {
             e.value_bodies.insert(name, vb);
         }

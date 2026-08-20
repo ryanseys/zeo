@@ -225,6 +225,14 @@ pub(super) fn class_receiver_responds(cid: ClassId, name: Symbol) -> bool {
         && crate::builtins::rstruct::class_lookup(n).is_some()
 }
 
+/// Whether `cid` DEFINES instance method `name` itself, as opposed to
+/// inheriting it or receiving a materialized copy from a module it included.
+/// `remove_method` asks this: CRuby removes only a class's own definition and
+/// raises `NameError` for anything else.
+pub fn class_defines_own_instance_method(cid: ClassId, name: Symbol) -> bool {
+    registry().defines_own(cid, name)
+}
+
 /// Whether `cid` has an OWN class method `name` -- a `def self.x` materialized
 /// into the registry, or a runtime singleton def -- as opposed to one merely
 /// inherited from `Class`/`Module`. `extend` consults this so a receiver's own
@@ -334,6 +342,14 @@ fn scan_class_method_owner(cid: ClassId, skip: usize, name: Symbol) -> Option<(C
         .skip(skip)
         .copied()
         .find_map(|anc| {
+            // `remove_method` in `class << self` empties THIS position without
+            // ending the walk -- an ancestor's `def self.x` is meant to answer
+            // now, which is what separates it from the `undef` above.
+            if crate::runtime_meta::is_live()
+                && crate::runtime_meta::overlay_class_removed(anc, name)
+            {
+                return None;
+            }
             // A RUNTIME `extend` copies the module's rows into the overlay, so
             // the overlay hit alone cannot tell the two apart -- the set the
             // copies were recorded in can.
@@ -480,6 +496,11 @@ pub fn responds_to(recv_class: ClassId, name: Symbol, include_all: bool) -> bool
             if crate::runtime_meta::overlay_is_undefined(anc, name) {
                 return false;
             }
+            // Removed here, so this position answers nothing -- but an
+            // ancestor still may, which is what separates it from an undef.
+            if crate::runtime_meta::overlay_is_removed(anc, name) {
+                continue;
+            }
             if let Some(v) = crate::runtime_meta::overlay_method_visibility(anc, name) {
                 return include_all || v == MethodVisibility::Public;
             }
@@ -583,6 +604,9 @@ fn scan_owner(recv_class: ClassId, skip: usize, name: Symbol) -> Option<ClassId>
         if overlay_live {
             if crate::runtime_meta::overlay_is_undefined(anc, name) {
                 return None;
+            }
+            if crate::runtime_meta::overlay_is_removed(anc, name) {
+                continue;
             }
             if crate::runtime_meta::overlay_has_instance_method(anc, name) {
                 return Some(anc);
@@ -903,6 +927,9 @@ pub fn instance_method_visibility(class: ClassId, name: Symbol) -> Option<Method
         if crate::runtime_meta::is_live() {
             if crate::runtime_meta::overlay_is_undefined(*anc, name) {
                 return None;
+            }
+            if crate::runtime_meta::overlay_is_removed(*anc, name) {
+                continue;
             }
             if let Some(vis) = crate::runtime_meta::overlay_method_visibility(*anc, name) {
                 return Some(vis);

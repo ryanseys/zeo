@@ -1086,6 +1086,7 @@ pub fn refinement_import_methods(
                 e.value_bodies.insert(name, vb);
             }
             e.undefs.remove(&name);
+            e.removed.remove(&name);
             if private.contains(&name) {
                 e.methods_vis
                     .insert(name, crate::dispatch::MethodVisibility::Private);

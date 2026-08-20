@@ -877,6 +877,13 @@ impl ClassRegistry {
         let overlay_live = crate::runtime_meta::is_live();
         let tombstoned =
             |cid: ClassId| overlay_live && crate::runtime_meta::overlay_is_undefined(cid, name);
+        // `remove_method`'s tombstone SKIPS a position instead of ending the
+        // walk. It has to be consulted here too, because this table is
+        // FLATTENED: a class that removed its own definition still carries the
+        // inherited copy materialization put in its row, and answering from it
+        // would undo the removal.
+        let removed =
+            |cid: ClassId| overlay_live && crate::runtime_meta::overlay_is_removed(cid, name);
         if tombstoned(id) {
             return None;
         }
@@ -888,7 +895,7 @@ impl ClassRegistry {
         // any value rows at all, which no ordinary user class does.
         let shadowed =
             |e: &ClassEntry| !e.own_value_names.is_empty() && e.own_value_names.contains(&name);
-        if let Some(e) = self.entries.get(&id.0) {
+        if let Some(e) = self.entries.get(&id.0).filter(|_| !removed(id)) {
             if let Some(m) = e.methods.get(&name) {
                 // The flattened row may have come from an ANCESTOR that a
                 // runtime `undef_method` has since retired -- `module M; def
@@ -910,6 +917,9 @@ impl ClassRegistry {
         for &anc in self.ancestors_of(id).iter().skip(1) {
             if tombstoned(anc) {
                 return None;
+            }
+            if removed(anc) {
+                continue;
             }
             let Some(e) = self.entries.get(&anc.0) else {
                 continue;
@@ -937,6 +947,11 @@ impl ClassRegistry {
             if crate::runtime_meta::overlay_is_undefined(anc, name) {
                 return true;
             }
+            // A REMOVED name means this ancestor defines nothing here any
+            // more, so the search for the owner carries past it.
+            if crate::runtime_meta::overlay_is_removed(anc, name) {
+                continue;
+            }
             if self.defines_own(anc, name) {
                 return false;
             }
@@ -944,7 +959,7 @@ impl ClassRegistry {
         false
     }
 
-    pub(super) fn defines_own(&self, id: ClassId, name: Symbol) -> bool {
+    pub(crate) fn defines_own(&self, id: ClassId, name: Symbol) -> bool {
         let Some(e) = self.entries.get(&id.0) else {
             return false;
         };
