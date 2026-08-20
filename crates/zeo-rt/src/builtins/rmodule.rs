@@ -92,12 +92,37 @@ fn const_name_arg(v: &RubyValue) -> Result<String, crate::Signal> {
 /// `Foo.const_get(:nope)` is `wrong constant name nope` with `#name == :nope`,
 /// not an `uninitialized constant` miss with no name at all.
 fn check_const_name(name: &str, recv: &RubyValue) -> Result<(), crate::Signal> {
-    if name.starts_with(|c: char| c.is_ascii_uppercase()) {
+    if is_const_path(name) {
         return Ok(());
     }
     Err(crate::Signal::Raise(crate::dispatch::stamp_backtrace(
         crate::dispatch::make_name_error(format!("wrong constant name {name}"), name, recv.clone()),
     )))
+}
+
+/// `rb_is_const_id` over a whole path: every `::`-separated segment starts
+/// with an uppercase ASCII letter and carries nothing but identifier
+/// characters after it. The first letter alone is not the test -- `Bad.Name`
+/// passes that and is still a `wrong constant name`, which is what a
+/// `const_get` fed an arbitrary string has to say.
+fn is_const_path(name: &str) -> bool {
+    let mut segments = name.split("::").peekable();
+    // A leading `::` is ruby's top-level spelling, not an empty segment.
+    if name.starts_with("::") {
+        segments.next();
+    }
+    let mut any = false;
+    for seg in segments {
+        any = true;
+        let mut chars = seg.chars();
+        if !chars.next().is_some_and(|c| c.is_ascii_uppercase()) {
+            return false;
+        }
+        if !chars.all(|c| c.is_alphanumeric() || c == '_') {
+            return false;
+        }
+    }
+    any
 }
 
 /// A class or module that IS `owner`'s constant `name` but was never written
@@ -472,6 +497,7 @@ ruby_class! {
     }
     def "const_defined?" cfunc (recv, name, inherit?) {
         let name = const_name_arg(name)?;
+        check_const_name(&name, recv)?;
         let cid = recv_cid(recv);
         // A pending autoload counts: ruby announces the constant when the
         // autoload is DECLARED, long before the feature loads (and whether or
@@ -1130,7 +1156,7 @@ ruby_class! {
     // constant defined in C, and so it is here for the ones the runtime seeds.
     def "const_source_location" cfunc (recv, name, inherit?) {
         let name = const_name_arg(name)?;
-        if !name.starts_with(|c: char| c.is_ascii_uppercase()) {
+        if !is_const_path(&name) {
             return Err(name_error!("wrong constant name {name}"));
         }
         let cid = recv_cid(recv);

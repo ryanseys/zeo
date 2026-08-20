@@ -392,6 +392,12 @@ pub unsafe extern "C" fn zeo_rt_kw_splat_into(dst: *const RubyValue, src: *const
     let RubyValue::Hash(d) = (unsafe { &*dst }) else {
         panic!("kw_splat_into's destination must be the kw Hash")
     };
+    // `**nil` is ruby's "pass no keywords" spelling -- a no-op, never a
+    // conversion. Only the literal `nil` qualifies; anything else that is
+    // not a Hash still has to answer `to_hash` or raise.
+    if matches!(unsafe { &*src }, RubyValue::Nil) {
+        return STATUS_OK;
+    }
     match crate::rproc::to_hash_coerce(unsafe { &*src }) {
         Ok(h) => {
             let pairs: Vec<(RubyValue, RubyValue)> = h.lock().values().cloned().collect();
