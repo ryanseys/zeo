@@ -116,6 +116,10 @@ pub(crate) struct Fx<'e, 'f> {
     /// enclosing scope's locals could only arrive as a vcall; ruby reads
     /// it as the local (`Ctx::in_eval_splice`).
     pub in_eval_splice: bool,
+    /// The `Ruby::Box` this code runs in (`0` = main). Every dynamic send,
+    /// global and constant owner is keyed by it, which is the AOT
+    /// translation of CRuby's loading-box context (`Ctx::box_id`).
+    pub box_id: u32,
     /// The name this body was DEFINED under when an alias reaches it by
     /// another: what `__method__` answers where `__callee__` answers
     /// [`Fx::method_name`].
@@ -206,6 +210,7 @@ impl<'e, 'f> Fx<'e, 'f> {
             define_method_body: false,
             self_is_dynamic: false,
             in_eval_splice: false,
+            box_id: 0,
             method_origin: None,
             ret: None,
             retries: Vec::new(),
@@ -288,6 +293,13 @@ impl<'e, 'f> Fx<'e, 'f> {
     pub fn end_stmt(&mut self, mark: usize) {
         let tail = self.temp_taken.split_off(mark);
         self.temp_free.extend(tail);
+    }
+
+    /// This scope's box as the `u32` every runtime entry takes.
+    pub fn box_v(&mut self) -> ir::Value {
+        use cranelift_codegen::ir::InstBuilder;
+        let b = self.box_id;
+        self.b.ins().iconst(ir::types::I32, i64::from(b))
     }
 
     pub fn slot_addr(&mut self, ss: ir::StackSlot, offset: i32) -> ir::Value {

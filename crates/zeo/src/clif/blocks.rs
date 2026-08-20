@@ -1110,7 +1110,7 @@ pub(crate) fn send_with_block_ptr_ops(
     }
     let argv_ptr = super::call::build_argv(fx, site, args)?;
     let sym = fx.sym_id(name);
-    let zero_box = fx.b.ins().iconst(types::I32, 0);
+    let zero_box = fx.box_v();
     let argc_v = fx.b.ins().iconst(fx.em.ptr, args.len() as i64);
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);

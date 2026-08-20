@@ -132,7 +132,7 @@ fn lower(
     };
     let (ids_ptr, n_ids) = candidate_table(fx, cands);
     let sym = fx.sym_id(name);
-    let zero_box = fx.b.ins().iconst(types::I32, 0);
+    let zero_box = fx.box_v();
     let argc = fx.b.ins().iconst(fx.em.ptr, args.len() as i64);
     let blk_ptr = blk.unwrap_or_else(|| fx.b.ins().iconst(fx.em.ptr, 0));
     let explicit_v = fx.b.ins().iconst(types::I8, i64::from(u8::from(explicit)));
@@ -229,7 +229,7 @@ fn lower_reflect(
         None => None,
     };
     let (ids_ptr, n_ids) = candidate_table(fx, active);
-    let zero_box = fx.b.ins().iconst(types::I32, 0);
+    let zero_box = fx.box_v();
     let entry_v = fx.b.ins().iconst(types::I8, i64::from(entry));
     let argc = fx.b.ins().iconst(fx.em.ptr, args.len() as i64);
     let blk_ptr = blk.unwrap_or_else(|| fx.b.ins().iconst(fx.em.ptr, 0));

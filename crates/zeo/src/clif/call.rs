@@ -118,7 +118,7 @@ pub(crate) fn implicit_send(
             return Ok(op);
         }
         let sym = fx.sym_id(name);
-        let zero_box = fx.b.ins().iconst(types::I32, 0);
+        let zero_box = fx.box_v();
         let ss = fx.temp_slot();
         let out = fx.slot_addr(ss, 0);
         let status = fx
@@ -137,7 +137,7 @@ pub(crate) fn implicit_send(
     }
     let argv_ptr = build_argv(fx, site, args)?;
     let sym = fx.sym_id(name);
-    let zero_box = fx.b.ins().iconst(types::I32, 0);
+    let zero_box = fx.box_v();
     let argc_v = fx.b.ins().iconst(fx.em.ptr, args.len() as i64);
     let null = fx.b.ins().iconst(fx.em.ptr, 0);
     let ss = fx.temp_slot();
@@ -331,7 +331,7 @@ pub(crate) fn splat_send(
         build_hash(fx, kwargs)?
     };
     let sym = fx.sym_id(name);
-    let zero_box = fx.b.ins().iconst(types::I32, 0);
+    let zero_box = fx.box_v();
     // `ruby2_keywords`' whole purpose: a marked forwarder's splat keeps a
     // trailing hash's keyword mark.
     let unmark = fx.b.ins().iconst(types::I8, i64::from(!fx.ruby2_keywords));
@@ -396,7 +396,7 @@ pub(crate) fn kw_send(
     let argv_ptr = build_argv(fx, site, args)?;
     let kw_ptr = build_hash(fx, kwargs)?;
     let sym = fx.sym_id(name);
-    let zero_box = fx.b.ins().iconst(types::I32, 0);
+    let zero_box = fx.box_v();
     let argc_v = fx.b.ins().iconst(fx.em.ptr, args.len() as i64);
     let blk_ptr = blk.unwrap_or_else(|| fx.b.ins().iconst(fx.em.ptr, 0));
     let ss = fx.temp_slot();
@@ -523,7 +523,7 @@ fn dynamic_send_argv(
     bypass: bool,
 ) -> Result<Operand, String> {
     let sym = fx.sym_id(name);
-    let zero_box = fx.b.ins().iconst(types::I32, 0);
+    let zero_box = fx.box_v();
     let argc_v = fx.b.ins().iconst(fx.em.ptr, argc as i64);
     let null = fx.b.ins().iconst(fx.em.ptr, 0);
     let caller = caller_class(fx, bypass);

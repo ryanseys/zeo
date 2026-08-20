@@ -58,3 +58,13 @@ pub fn class_trampoline_symbol(owner: &str, name: &str) -> String {
         crate::names::ident_fragment(name)
     )
 }
+
+/// The owner spelling a SYMBOL uses: a per-box class shares its ruby name
+/// with the main-box one, so the box rides in the symbol while the frame
+/// label keeps the ruby name.
+pub fn boxed_owner(name: &str, box_id: u32) -> String {
+    match box_id {
+        0 => name.to_string(),
+        b => format!("b{b}_{name}"),
+    }
+}

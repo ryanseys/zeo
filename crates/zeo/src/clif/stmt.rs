@@ -382,7 +382,7 @@ fn write_multi_target(
             Ok(())
         }
         MultiTarget::Global(name) => {
-            let bx = fx.b.ins().iconst(types::I32, 0);
+            let bx = fx.box_v();
             let (nptr, nlen) = name_pair(fx, name);
             let status = fx
                 .call("zeo_rt_gvar_assign", &[bx, nptr, nlen, addr])
@@ -561,6 +561,8 @@ fn lower_tail_expr(fx: &mut Fx, tail: NodeId) -> Result<super::operand::Operand,
         | HirNode::RegexpLit(..)
         | HirNode::Ffi(..)
         | HirNode::Eval(..)
+        | HirNode::BoxScope { .. }
+        | HirNode::BoxHandle(_)
         | HirNode::LastMatchRef(..)
         | HirNode::SuperCall { .. }
         | HirNode::Defined(..)
@@ -1043,7 +1045,7 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
             }
             let ss = fx.temp_slot();
             let out = fx.slot_addr(ss, 0);
-            let zero_box = fx.b.ins().iconst(types::I32, 0);
+            let zero_box = fx.box_v();
             let argc = fx.b.ins().iconst(fx.em.ptr, 1);
             let null = fx.b.ins().iconst(fx.em.ptr, 0);
             let status = fx
@@ -1151,6 +1153,8 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
         | HirNode::RegexpLit(..)
         | HirNode::Ffi(..)
         | HirNode::Eval(..)
+        | HirNode::BoxScope { .. }
+        | HirNode::BoxHandle(_)
         | HirNode::LastMatchRef(..)
         | HirNode::SuperCall { .. }
         | HirNode::Defined(..)
@@ -1234,7 +1238,7 @@ fn mixin_hook_send(fx: &mut Fx, module: &str, hook: &str) -> Result<(), String> 
     let sym = fx.sym_id(hook);
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
-    let zero_box = fx.b.ins().iconst(types::I32, 0);
+    let zero_box = fx.box_v();
     let argc = fx.b.ins().iconst(fx.em.ptr, 1);
     let null = fx.b.ins().iconst(fx.em.ptr, 0);
     let status = fx
@@ -1736,7 +1740,7 @@ fn class_body_site_run(
         let sym = fx.sym_id("inherited");
         let ss = fx.temp_slot();
         let out = fx.slot_addr(ss, 0);
-        let zero_box = fx.b.ins().iconst(types::I32, 0);
+        let zero_box = fx.box_v();
         let argc = fx.b.ins().iconst(fx.em.ptr, 1);
         let null = fx.b.ins().iconst(fx.em.ptr, 0);
         let status = fx

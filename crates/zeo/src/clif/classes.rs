@@ -122,6 +122,11 @@ pub(crate) struct RedefSpec {
 /// dispatch hands over (a value pointer, as every body here takes).
 pub(crate) struct ModMethodSpec {
     pub owner: ClassId,
+    /// The `Ruby::Box` this row belongs to. A per-box OVERLAY of a builtin
+    /// (`box.eval("class String; def shout; end; end")`) registers on the
+    /// ROOT builtin's entry keyed by its box, so only code running in that
+    /// box reaches it.
+    pub box_id: u32,
     pub owner_name: String,
     pub name: String,
     pub body: Vec<crate::hir::NodeId>,
@@ -330,6 +335,10 @@ pub(crate) fn collect_classes(
             continue;
         }
         let name = compiler.fq_name(crate::compiler::ClassId(idx as u32));
+        // A per-BOX class shares its ruby name with the main-box one, so
+        // the symbols it declares carry the box; the frame label keeps the
+        // ruby name (rustc's `class_ident` draws the same line).
+        let sym = super::names::boxed_owner(&name, class.box_id);
         let refuse = |what: &str| {
             Err(format!(
                 "the CLIF backend cannot lower {what} yet (class {name})"
@@ -350,9 +359,6 @@ pub(crate) fn collect_classes(
         let target = class
             .builtin_overlay
             .map_or(crate::compiler::ClassId(idx as u32), |root| root);
-        if class.box_id != 0 {
-            return refuse("a boxed builtin overlay");
-        }
         if !class.singleton_super_targets.is_empty() {
             return refuse("a singleton super target on a builtin reopen");
         }
@@ -390,7 +396,7 @@ pub(crate) fn collect_classes(
             let tramp = em
                 .module
                 .declare_function(
-                    &names::trampoline_symbol(&name, &mname),
+                    &names::trampoline_symbol(&sym, &mname),
                     Linkage::Local,
                     &params::value_fn_sig(em),
                 )
@@ -398,7 +404,7 @@ pub(crate) fn collect_classes(
             let sig = params::body_sig(em, layout.n_slots, has_blk);
             let body_fn = em
                 .module
-                .declare_function(&names::method_symbol(&name, &mname), Linkage::Local, &sig)
+                .declare_function(&names::method_symbol(&sym, &mname), Linkage::Local, &sig)
                 .map_err(|e| format!("declaring {name}#{mname}: {e}"))?;
             match scope.visibility {
                 crate::hir::Visibility::Private => vis.push(statics::VisRowSpec {
@@ -438,6 +444,7 @@ pub(crate) fn collect_classes(
                 // A value-channel row on the builtin's own id.
                 module_methods.push(ModMethodSpec {
                     dyn_ivars: true,
+                    box_id: class.box_id,
                     alias_of: scope.alias_of.clone(),
                     defining_class: scope.defining_class,
                     lexical_home: scope.lexical_home,
@@ -475,7 +482,7 @@ pub(crate) fn collect_classes(
             let tramp = em
                 .module
                 .declare_function(
-                    &names::class_trampoline_symbol(&name, &mname),
+                    &names::class_trampoline_symbol(&sym, &mname),
                     Linkage::Local,
                     &params::value_fn_sig(em),
                 )
@@ -484,7 +491,7 @@ pub(crate) fn collect_classes(
             let body_fn = em
                 .module
                 .declare_function(
-                    &names::class_method_symbol(&name, &mname),
+                    &names::class_method_symbol(&sym, &mname),
                     Linkage::Local,
                     &sig,
                 )
@@ -538,14 +545,16 @@ pub(crate) fn collect_classes(
             continue;
         }
         let name = compiler.fq_name(crate::compiler::ClassId(idx as u32));
+        // A per-BOX class shares its ruby name with the main-box one, so
+        // the symbols it declares carry the box; the frame label keeps the
+        // ruby name (rustc's `class_ident` draws the same line).
+        let sym = super::names::boxed_owner(&name, class.box_id);
         let refuse = |what: &str| {
             Err(format!(
                 "the CLIF backend cannot lower {what} yet (class {name})"
             ))
         };
-        if class.box_id != 0 {
-            return refuse("a boxed class");
-        }
+
         // A runtime-CONDITIONAL class registers its shape (the static MRO
         // needs one) but starts CONCEALED: the constant does not exist
         // until the guarded body runs and reveals it.
@@ -738,7 +747,7 @@ pub(crate) fn collect_classes(
                 let tramp = em
                     .module
                     .declare_function(
-                        &names::trampoline_symbol(&name, &mname),
+                        &names::trampoline_symbol(&sym, &mname),
                         Linkage::Local,
                         &params::value_fn_sig(em),
                     )
@@ -746,7 +755,7 @@ pub(crate) fn collect_classes(
                 let sig = params::body_sig(em, layout.n_slots, has_blk);
                 let body_fn = em
                     .module
-                    .declare_function(&names::method_symbol(&name, &mname), Linkage::Local, &sig)
+                    .declare_function(&names::method_symbol(&sym, &mname), Linkage::Local, &sig)
                     .map_err(|e| format!("declaring {name}#{mname}: {e}"))?;
                 match scope.visibility {
                     crate::hir::Visibility::Private => vis.push(statics::VisRowSpec {
@@ -762,6 +771,7 @@ pub(crate) fn collect_classes(
                     crate::hir::Visibility::Public => {}
                 }
                 module_methods.push(ModMethodSpec {
+                    box_id: class.box_id,
                     // A module's VALUE-channel row takes whatever receiver
                     // dispatch hands over, so its ivars are name-keyed (the
                     // includer's materialized object-channel copy keeps the
@@ -838,7 +848,7 @@ pub(crate) fn collect_classes(
             let tramp = em
                 .module
                 .declare_function(
-                    &names::trampoline_symbol(&name, &mname),
+                    &names::trampoline_symbol(&sym, &mname),
                     Linkage::Local,
                     &params::value_fn_sig(em),
                 )
@@ -847,11 +857,7 @@ pub(crate) fn collect_classes(
                 let sig = params::body_sig(em, layout.n_slots, has_blk);
                 Some(
                     em.module
-                        .declare_function(
-                            &names::method_symbol(&name, &mname),
-                            Linkage::Local,
-                            &sig,
-                        )
+                        .declare_function(&names::method_symbol(&sym, &mname), Linkage::Local, &sig)
                         .map_err(|e| format!("declaring {name}#{mname}: {e}"))?,
                 )
             } else {
@@ -876,6 +882,7 @@ pub(crate) fn collect_classes(
                 // resolve through `ivar_set_dyn`'s Class arm (civars).
                 module_methods.push(ModMethodSpec {
                     dyn_ivars: true,
+                    box_id: class.box_id,
                     alias_of: scope.alias_of.clone(),
                     defining_class: scope.defining_class,
                     lexical_home: scope.lexical_home,
@@ -960,7 +967,7 @@ pub(crate) fn collect_classes(
                 let tramp = em
                     .module
                     .declare_function(
-                        &names::trampoline_symbol(&name, &format!("__own_{mname}")),
+                        &names::trampoline_symbol(&sym, &format!("__own_{mname}")),
                         Linkage::Local,
                         &params::value_fn_sig(em),
                     )
@@ -970,7 +977,7 @@ pub(crate) fn collect_classes(
                     Some(
                         em.module
                             .declare_function(
-                                &names::method_symbol(&name, &format!("__own_{mname}")),
+                                &names::method_symbol(&sym, &format!("__own_{mname}")),
                                 Linkage::Local,
                                 &sig,
                             )
@@ -1030,7 +1037,7 @@ pub(crate) fn collect_classes(
             let tramp = em
                 .module
                 .declare_function(
-                    &names::class_trampoline_symbol(&name, &mname),
+                    &names::class_trampoline_symbol(&sym, &mname),
                     Linkage::Local,
                     &params::value_fn_sig(em),
                 )
@@ -1039,7 +1046,7 @@ pub(crate) fn collect_classes(
             let body_fn = em
                 .module
                 .declare_function(
-                    &names::class_method_symbol(&name, &mname),
+                    &names::class_method_symbol(&sym, &mname),
                     Linkage::Local,
                     &sig,
                 )
@@ -1097,7 +1104,7 @@ pub(crate) fn collect_classes(
             let tramp = em
                 .module
                 .declare_function(
-                    &names::trampoline_symbol(&name, &suffix),
+                    &names::trampoline_symbol(&sym, &suffix),
                     Linkage::Local,
                     &params::value_fn_sig(em),
                 )
@@ -1105,7 +1112,7 @@ pub(crate) fn collect_classes(
             let body_fn = em
                 .module
                 .declare_function(
-                    &names::method_symbol(&name, &suffix),
+                    &names::method_symbol(&sym, &suffix),
                     Linkage::Local,
                     &params::body_sig(em, layout.n_slots, has_blk),
                 )
@@ -1163,7 +1170,7 @@ pub(crate) fn collect_classes(
             let tramp = em
                 .module
                 .declare_function(
-                    &names::class_trampoline_symbol(&name, &format!("__sst_{}_{mname}", m.0)),
+                    &names::class_trampoline_symbol(&sym, &format!("__sst_{}_{mname}", m.0)),
                     Linkage::Local,
                     &params::value_fn_sig(em),
                 )
@@ -1172,7 +1179,7 @@ pub(crate) fn collect_classes(
             let body_fn = em
                 .module
                 .declare_function(
-                    &names::class_method_symbol(&name, &format!("__sst_{}_{mname}", m.0)),
+                    &names::class_method_symbol(&sym, &format!("__sst_{}_{mname}", m.0)),
                     Linkage::Local,
                     &sig,
                 )

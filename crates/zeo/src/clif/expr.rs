@@ -424,7 +424,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
         // write through either name is visible through both. Answers nil.
         HirNode::AliasGlobal(new_name, old_name) => {
             let (new_name, old_name) = (new_name.clone(), old_name.clone());
-            let bx = fx.b.ins().iconst(types::I32, 0);
+            let bx = fx.box_v();
             let (nptr, nlen) = rodata_name(fx, &new_name);
             let (optr, olen) = rodata_name(fx, &old_name);
             fx.call("zeo_rt_gvar_alias", &[bx, nptr, nlen, optr, olen]);
@@ -725,6 +725,33 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 tag: TagInfo::Unknown,
             })
         }
+        // A box-scoped splice (`box.eval("..")`, a `box.require`d file's
+        // statements, `box::X`): it emits exactly like an eval splice --
+        // the statements run here, the last one is the value -- with the
+        // box overridden for the body, which is the AOT translation of
+        // CRuby's loading-box context.
+        HirNode::BoxScope { box_id, body } => {
+            let (box_id, body) = (*box_id, body.clone());
+            let ss = fx.temp_slot();
+            let dst = fx.slot_addr(ss, 0);
+            let was = std::mem::replace(&mut fx.box_id, box_id);
+            let r = super::stmt::lower_value_body_into(fx, &body, dst);
+            fx.box_id = was;
+            r?;
+            fx.owned_created += 1;
+            Ok(Operand::Slot {
+                ss,
+                owned: true,
+                tag: TagInfo::Unknown,
+            })
+        }
+        // The handle VALUE `box = Ruby::Box.new` binds: a Class of the
+        // box's top-level surrogate, so `p box` prints its registered
+        // `#<Ruby::Box:N>` name and handle equality works.
+        HirNode::BoxHandle(box_id) => match fx.an.compiler.box_surrogate(*box_id) {
+            Some(cid) => Ok(class_immediate(fx, cid)),
+            None => fx.unsupported(id, "a box with no surrogate"),
+        },
         HirNode::Ffi(call) => {
             let call = call.clone();
             super::ffi::lower_ffi_call(fx, id, &call)
@@ -1238,7 +1265,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             let (nptr, nlen) = rodata_name(fx, &name);
             // Globals are per-box tables; everything the CLIF backend
             // compiles today is the main program (box scopes refuse).
-            let bx = fx.b.ins().iconst(types::I32, 0);
+            let bx = fx.box_v();
             let ss = fx.temp_slot();
             let out = fx.slot_addr(ss, 0);
             fx.call("zeo_rt_gvar_get", &[bx, nptr, nlen, out]);
@@ -1261,7 +1288,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 ownership::pool_owned(fx, ptr, tag);
             }
             let (nptr, nlen) = rodata_name(fx, &name);
-            let bx = fx.b.ins().iconst(types::I32, 0);
+            let bx = fx.box_v();
             let status = fx
                 .call("zeo_rt_gvar_assign", &[bx, nptr, nlen, ptr])
                 .expect("gvar_assign returns a status");
@@ -1571,10 +1598,12 @@ pub(crate) fn lexical_class(fx: &Fx) -> Option<crate::compiler::ClassId> {
     fx.lexical_home.or(fx.method_class)
 }
 
-/// Resolve a class name against the current cref (rustc's
-/// `Ctx::resolve_class`; box 0 -- box scopes refuse before any lowering).
+/// Resolve a class name against the current cref and BOX (rustc's
+/// `Ctx::resolve_class`).
 pub(crate) fn resolve_class_here(fx: &Fx, name: &str) -> Option<crate::compiler::ClassId> {
-    fx.an.compiler.resolve_class(name, cref_chain(fx), 0)
+    fx.an
+        .compiler
+        .resolve_class(name, cref_chain(fx), fx.box_id)
 }
 
 /// `K.method(:name)` captured BEFORE every own `def self.name` in the
@@ -2874,7 +2903,7 @@ fn defined_rest(fx: &mut Fx, site: NodeId, inner: NodeId) -> Result<Operand, Str
         if is_predefined_global(&name) {
             return Ok(defined_static(fx, Some("global-variable")));
         }
-        let bx = fx.b.ins().iconst(types::I32, 0);
+        let bx = fx.box_v();
         let (nptr, nlen) = rodata_name(fx, &name);
         let hit = fx
             .call("zeo_rt_defined_gvar", &[bx, nptr, nlen])
@@ -3078,7 +3107,7 @@ pub(crate) fn const_added_announce(fx: &mut Fx, owner: u32, name: &str) -> Resul
     let sym = fx.sym_id("const_added");
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
-    let zero_box = fx.b.ins().iconst(types::I32, 0);
+    let zero_box = fx.box_v();
     let argc = fx.b.ins().iconst(fx.em.ptr, 1);
     let null = fx.b.ins().iconst(fx.em.ptr, 0);
     let status = fx

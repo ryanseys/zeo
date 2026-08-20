@@ -486,7 +486,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
         .collect();
     vm_rows.extend(mod_methods.iter().map(|m| statics::VmRowSpec {
         class: m.owner.0,
-        box_id: 0,
+        box_id: m.box_id,
         name: m.name.clone(),
         f: m.tramp,
     }));
