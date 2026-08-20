@@ -467,51 +467,7 @@ fn lower_tail_expr(fx: &mut Fx, tail: NodeId) -> Result<super::operand::Operand,
             lower_stmt(fx, tail)?;
             Ok(ownership::read_local(fx, &name).expect("just assigned"))
         }
-        HirNode::While {
-            cond,
-            body,
-            negate,
-            post,
-        } => {
-            let (cond, body, negate, post) = (*cond, body.clone(), *negate, *post);
-            let ss = fx.temp_slot();
-            let dst = fx.slot_addr(ss, 0);
-            lower_loop(fx, Some((cond, negate)), &body, post, Some(dst))?;
-            fx.owned_created += 1;
-            Ok(Operand::Slot {
-                ss,
-                owned: true,
-                tag: TagInfo::Unknown,
-            })
-        }
-        HirNode::For {
-            target,
-            iterable,
-            body,
-        } => {
-            let (target, iterable, body) = (target.clone(), *iterable, body.clone());
-            let ss = fx.temp_slot();
-            let dst = fx.slot_addr(ss, 0);
-            lower_for(fx, tail, &target, iterable, &body, Some(dst))?;
-            fx.owned_created += 1;
-            Ok(Operand::Slot {
-                ss,
-                owned: true,
-                tag: TagInfo::Unknown,
-            })
-        }
-        HirNode::Loop { body } => {
-            let body = body.clone();
-            let ss = fx.temp_slot();
-            let dst = fx.slot_addr(ss, 0);
-            lower_loop(fx, None, &body, false, Some(dst))?;
-            fx.owned_created += 1;
-            Ok(Operand::Slot {
-                ss,
-                owned: true,
-                tag: TagInfo::Unknown,
-            })
-        }
+        HirNode::While { .. } | HirNode::For { .. } | HirNode::Loop { .. } => loop_value(fx, tail),
         HirNode::Break(..)
         | HirNode::Next(..)
         | HirNode::Redo
@@ -1354,18 +1310,6 @@ fn lower_loop(
 /// re-reads its length every step), an Int-bounded Range counts, and
 /// everything else walks what `each` yielded. The loop's own value is the
 /// collection; a `break v` supplies its own.
-/// [`lower_for`] in value position.
-pub(crate) fn lower_for_value(
-    fx: &mut Fx,
-    site: NodeId,
-    target: &crate::hir::MultiTarget,
-    iterable: NodeId,
-    body: &[NodeId],
-    dst: cranelift_codegen::ir::Value,
-) -> Result<(), String> {
-    lower_for(fx, site, target, iterable, body, Some(dst))
-}
-
 fn lower_for(
     fx: &mut Fx,
     site: NodeId,
@@ -1489,6 +1433,50 @@ fn signal_jump(
     fx.b.ins().jump(land, &[]);
     fx.continue_unreachable();
     Ok(())
+}
+
+/// A `while`/`until`/`loop`/`for` in VALUE position: its own value is nil
+/// (the collection, for `for`), and a `break v` supplies its own.
+#[allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "structural: every caller has already matched one of the three loop kinds; the bucket is a loud refusal, not a decision"
+)]
+pub(crate) fn loop_value(fx: &mut Fx, node: NodeId) -> Result<super::operand::Operand, String> {
+    let ss = fx.temp_slot();
+    let dst = fx.slot_addr(ss, 0);
+    match &fx.an.compiler.hir[node] {
+        HirNode::While {
+            cond,
+            body,
+            negate,
+            post,
+        } => {
+            let (cond, body, negate, post) = (*cond, body.clone(), *negate, *post);
+            lower_loop(fx, Some((cond, negate)), &body, post, Some(dst))?;
+        }
+        HirNode::Loop { body } => {
+            let body = body.clone();
+            lower_loop(fx, None, &body, false, Some(dst))?;
+        }
+        HirNode::For {
+            target,
+            iterable,
+            body,
+        } => {
+            let (target, iterable, body) = (target.clone(), *iterable, body.clone());
+            lower_for(fx, node, &target, iterable, &body, Some(dst))?;
+        }
+        other => {
+            let what = format!("the node kind `{}`", super::expr::variant_name(other));
+            return fx.unsupported(node, &what);
+        }
+    }
+    fx.owned_created += 1;
+    Ok(super::operand::Operand::Slot {
+        ss,
+        owned: true,
+        tag: super::operand::TagInfo::Unknown,
+    })
 }
 
 /// Mirror the rustc backend's `stamp_line`: a `set_line` only when the

@@ -186,6 +186,11 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 None => fx.unsupported(id, "a read of an unknown local"),
             }
         }
+        // A loop in VALUE position: its own value is nil (`for` answers the
+        // collection it walked), and a `break v` supplies its own.
+        HirNode::While { .. } | HirNode::Loop { .. } | HirNode::For { .. } => {
+            super::stmt::loop_value(fx, id)
+        }
         HirNode::If {
             cond,
             then_body,
@@ -392,24 +397,6 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             let (optr, olen) = rodata_name(fx, &old_name);
             fx.call("zeo_rt_gvar_alias", &[bx, nptr, nlen, optr, olen]);
             Ok(Operand::Nil)
-        }
-        // `for` in VALUE position: the loop answers the collection it
-        // walked (a `break v` supplies its own).
-        HirNode::For {
-            target,
-            iterable,
-            body,
-        } => {
-            let (target, iterable, body) = (target.clone(), *iterable, body.clone());
-            let ss = fx.temp_slot();
-            let dst = fx.slot_addr(ss, 0);
-            super::stmt::lower_for_value(fx, id, &target, iterable, &body, dst)?;
-            fx.owned_created += 1;
-            Ok(Operand::Slot {
-                ss,
-                owned: true,
-                tag: TagInfo::Unknown,
-            })
         }
         // A `class`/`module` written where a value is READ -- `x = class C;
         // 7; end`, or a `class << self` body ending a method. Ruby's value
