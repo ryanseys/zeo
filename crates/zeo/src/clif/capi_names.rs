@@ -551,6 +551,11 @@ pub const CAPI: &[CapiSig] = &[
         ret: Some(U8),
     },
     CapiSig {
+        name: "zeo_rt_rescue_matches_any",
+        params: &[Ptr, Ptr, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
         name: "zeo_rt_retain",
         params: &[Ptr],
         ret: None,

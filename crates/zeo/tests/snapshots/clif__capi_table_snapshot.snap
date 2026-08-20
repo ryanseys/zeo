@@ -105,6 +105,7 @@ zeo_rt_regexp_interp ([Ptr, U8, U8, U8, U8, Ptr]) -> Some(I32)
 zeo_rt_regexp_lit ([U32, Ptr, Usize, U8, U8, U8, U8, Ptr]) -> Some(I32)
 zeo_rt_release ([Ptr]) -> None
 zeo_rt_rescue_matches ([Ptr, Ptr, Usize]) -> Some(U8)
+zeo_rt_rescue_matches_any ([Ptr, Ptr, Ptr]) -> Some(I32)
 zeo_rt_retain ([Ptr]) -> None
 zeo_rt_return_targets_here ([]) -> Some(U8)
 zeo_rt_reveal_class ([U32]) -> None

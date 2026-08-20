@@ -1421,6 +1421,18 @@ pub(crate) fn const_read(fx: &mut Fx, id: NodeId, name: &str) -> Result<Operand,
     })
 }
 
+/// A constant read by PATH: `Foo::Bar` splits and takes the scoped read,
+/// a bare name the cref walk. What a rescue clause's unresolved class
+/// name needs -- ruby evaluates a clause's class expression only while
+/// MATCHING, so a name that resolves to nothing here may still hold one
+/// then (`ALIAS = Base`, `Foo = Class.new`).
+pub(crate) fn const_path_read(fx: &mut Fx, id: NodeId, path: &str) -> Result<Operand, String> {
+    match crate::codegen::split_const_path(path) {
+        (Some(scope), leaf) if !scope.is_empty() => scoped_const_read(fx, id, scope, leaf),
+        (_, leaf) => const_read(fx, id, leaf),
+    }
+}
+
 /// An explicit `Scope::NAME` read whose scope resolves at compile time:
 /// the scope operator's own search on the scope class, ruby's
 /// as-written miss message (`Object::` prints bare -- it is where a

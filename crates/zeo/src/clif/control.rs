@@ -25,31 +25,41 @@ pub(crate) fn lower_begin(
     ensure_body: Option<&[NodeId]>,
     result: Option<ir::Value>,
 ) -> Result<(), String> {
-    // Resolve every clause's classes up front (compile-time ids).
-    let mut clause_ids: Vec<Vec<u32>> = Vec::with_capacity(rescues.len());
+    // Resolve every clause's matchers up front: the ids a baked ancestry
+    // test settles, and the ones only the run time can (see [`Matcher`]).
+    let mut clause_ids: Vec<(Vec<u32>, Vec<Matcher>)> = Vec::with_capacity(rescues.len());
     for clause in rescues {
-        if !clause.splats.is_empty() {
-            return fx.unsupported(site, "a splatted rescue list");
-        }
-        let ids = if clause.classes.is_empty() {
+        // A bare `rescue` (no listed classes AND no splats) matches
+        // StandardError; a `rescue *errs` with no static classes does NOT
+        // get that default -- only the splat list matters.
+        if clause.classes.is_empty() && clause.splats.is_empty() {
             let std_err = fx
                 .an
                 .compiler
                 .resolve_class("StandardError", &[], 0)
                 .expect("StandardError is always registered");
-            vec![std_err.0]
-        } else {
-            let mut ids = Vec::with_capacity(clause.classes.len());
-            for name in &clause.classes {
-                let Some(cid) = fx.an.compiler.resolve_class(name, &[], 0) else {
-                    let what = format!("the unresolved rescue class `{name}`");
-                    return fx.unsupported(site, &what);
-                };
-                ids.push(cid.0);
+            clause_ids.push((vec![std_err.0], Vec::new()));
+            continue;
+        }
+        let mut ids = Vec::with_capacity(clause.classes.len());
+        let mut dynamic = Vec::new();
+        for name in &clause.classes {
+            match fx.an.compiler.resolve_class(name, &[], 0) {
+                // `rescue` matches via `===`, and the baked ancestry test
+                // IS `Module#===` -- so it stands only while nothing can
+                // override the matcher's own `===`.
+                Some(cid)
+                    if fx.an.compiler.class_method_in_chain(cid, "===").is_none()
+                        && !fx.an.compiler.may_be_patched_at_runtime("===") =>
+                {
+                    ids.push(cid.0);
+                }
+                Some(cid) => dynamic.push(Matcher::Class(cid.0)),
+                None => dynamic.push(Matcher::Const(name.clone())),
             }
-            ids
-        };
-        clause_ids.push(ids);
+        }
+        dynamic.extend(clause.splats.iter().map(|&n| Matcher::Splat(n)));
+        clause_ids.push((ids, dynamic));
     }
 
     let outer_land = fx.land;
@@ -109,14 +119,8 @@ pub(crate) fn lower_begin(
     ownership::pool_owned(fx, exc, TagInfo::Unknown);
 
     let no_match = fx.b.create_block();
-    for (clause, ids) in rescues.iter().zip(&clause_ids) {
-        let id_bytes: Vec<u8> = ids.iter().flat_map(|i| i.to_le_bytes()).collect();
-        let off = fx.em.intern_rodata_aligned(&id_bytes, 4);
-        let ids_ptr = fx.rod(off);
-        let n = fx.b.ins().iconst(fx.em.ptr, ids.len() as i64);
-        let m = fx
-            .call("zeo_rt_rescue_matches", &[exc, ids_ptr, n])
-            .expect("rescue_matches answers");
+    for (clause, matchers) in rescues.iter().zip(&clause_ids.clone()) {
+        let m = clause_match(fx, site, exc, &matchers.0, &matchers.1)?;
         let clause_blk = fx.b.create_block();
         let next = fx.b.create_block();
         fx.b.ins().brif(m, clause_blk, &[], next, &[]);
@@ -209,7 +213,84 @@ pub(crate) fn lower_begin(
     Ok(())
 }
 
-/// A begin section: statements, with the tail as a value when `result`
+/// One rescue matcher only the RUN TIME can settle. Ruby evaluates a
+/// clause's class expression while MATCHING, not while compiling, so each
+/// of these asks then -- and its own error (an undefined constant, a
+/// non-Module element) propagates from there, exactly as ruby's does.
+#[derive(Clone)]
+enum Matcher {
+    /// A resolved class whose `===` may be overridden: keep the identity
+    /// static, re-ask through the runtime so the override is honoured.
+    Class(u32),
+    /// A name that resolves to no class HERE but may hold one then
+    /// (`ALIAS = Base`, `Foo = Class.new`).
+    Const(String),
+    /// `rescue *errs` -- an Array of classes, or a single one.
+    Splat(NodeId),
+}
+
+/// One clause's `||`-joined match: the baked ancestry test over the static
+/// ids first (a single call), then each runtime matcher, short-circuiting.
+fn clause_match(
+    fx: &mut Fx,
+    site: NodeId,
+    exc: ir::Value,
+    ids: &[u32],
+    dynamic: &[Matcher],
+) -> Result<ir::Value, String> {
+    let ss = fx.temp_slot();
+    let out = fx.slot_addr(ss, 0);
+    let fl = ir::MemFlagsData::trusted();
+    let hit = fx.b.create_block();
+    let join = fx.b.create_block();
+    let zero = fx.b.ins().iconst(types::I8, 0);
+    fx.b.ins().store(fl, zero, out, 0);
+    if !ids.is_empty() {
+        let id_bytes: Vec<u8> = ids.iter().flat_map(|i| i.to_le_bytes()).collect();
+        let off = fx.em.intern_rodata_aligned(&id_bytes, 4);
+        let ids_ptr = fx.rod(off);
+        let n = fx.b.ins().iconst(fx.em.ptr, ids.len() as i64);
+        let m = fx
+            .call("zeo_rt_rescue_matches", &[exc, ids_ptr, n])
+            .expect("rescue_matches answers");
+        let next = fx.b.create_block();
+        fx.b.ins().brif(m, hit, &[], next, &[]);
+        fx.b.switch_to_block(next);
+    }
+    for matcher in dynamic {
+        let val = match matcher {
+            Matcher::Class(cid) => super::expr::class_immediate(fx, crate::compiler::ClassId(*cid)),
+            Matcher::Const(name) => {
+                let name = name.clone();
+                super::expr::const_path_read(fx, site, &name)?
+            }
+            Matcher::Splat(node) => super::expr::lower_expr(fx, *node)?,
+        };
+        let ptr = ownership::borrow_ptr(fx, &val);
+        if val.owned() {
+            ownership::pool_owned(fx, ptr, val.tag());
+        }
+        let m_ss = fx.temp_slot();
+        let m_ptr = fx.slot_addr(m_ss, 0);
+        let status = fx
+            .call("zeo_rt_rescue_matches_any", &[exc, ptr, m_ptr])
+            .expect("rescue_matches_any returns a status");
+        fx.fallible(status);
+        let m = fx.b.ins().load(types::I8, fl, m_ptr, 0);
+        let next = fx.b.create_block();
+        fx.b.ins().brif(m, hit, &[], next, &[]);
+        fx.b.switch_to_block(next);
+    }
+    fx.b.ins().jump(join, &[]);
+    fx.b.switch_to_block(hit);
+    let one = fx.b.ins().iconst(types::I8, 1);
+    fx.b.ins().store(fl, one, out, 0);
+    fx.b.ins().jump(join, &[]);
+    fx.b.switch_to_block(join);
+    Ok(fx.b.ins().load(types::I8, fl, out, 0))
+}
+
+/// A begin section: statements, with the tail as a value when `result`/// A begin section: statements, with the tail as a value when `result`
 /// asks for one.
 fn lower_section(fx: &mut Fx, stmts: &[NodeId], result: Option<ir::Value>) -> Result<(), String> {
     match result {
