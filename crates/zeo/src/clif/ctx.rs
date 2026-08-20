@@ -101,6 +101,12 @@ pub(crate) struct Fx<'e, 'f> {
     /// a BARE `super` at dispatch: a block-shaped body has no parameter
     /// list to forward from, so ruby raises rather than guessing.
     pub define_method_body: bool,
+    /// This scope's `self` is only known at run time -- a runtime-installed
+    /// method body, or a block `instance_eval`/`instance_exec` re-homes. The
+    /// class a `protected` check compares against is then whatever `self`
+    /// turns out to be, not the lexically enclosing class (rustc's
+    /// `Ctx::self_is_dynamic`).
+    pub self_is_dynamic: bool,
     /// A method body's `(out, ret_ok)`: `return` writes the value and
     /// jumps; `None` at the toplevel.
     pub ret: Option<(ir::Value, ir::Block)>,
@@ -184,6 +190,7 @@ impl<'e, 'f> Fx<'e, 'f> {
             method_params: None,
             runtime_method_body: false,
             define_method_body: false,
+            self_is_dynamic: false,
             ret: None,
             retries: Vec::new(),
             ensure_depth: 0,

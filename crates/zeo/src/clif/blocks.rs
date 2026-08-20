@@ -126,6 +126,13 @@ pub(crate) fn build_proc(
         return fx.unsupported(block, "a non-literal block");
     };
     let (params, body) = (params.as_ref().clone(), body.clone());
+    // `instance_eval`/`instance_exec` rebinds this block's `self` at run
+    // time, so nothing lexical can name its class.
+    let rehomed = fx
+        .an
+        .compiler
+        .hir
+        .has_flag(block, crate::hir::NodeFlag::REHOMED_BLOCK);
     // A computed-name `define_method` block IS a method body at run time:
     // `super` inside it reads the frame stack and a bare one raises ruby's
     // define_method refusal -- the two markers the literal `DefMethod` form
@@ -144,9 +151,19 @@ pub(crate) fn build_proc(
             false,
             Some(MethodBody::DefineMethod),
             FrameName::Block,
+            rehomed,
         );
     }
-    build_closure(fx, site, &params, &body, false)
+    build_closure_with(
+        fx,
+        site,
+        &params,
+        &body,
+        false,
+        None,
+        FrameName::Block,
+        rehomed,
+    )
 }
 
 /// A lambda literal (`->() {}` and friends): the same closure machinery
@@ -174,7 +191,7 @@ pub(crate) fn build_method_body(
     frame: FrameName,
     kind: MethodBody,
 ) -> Result<ir::StackSlot, String> {
-    let (ss, _) = build_closure_with(fx, site, params, body, true, Some(kind), frame)?;
+    let (ss, _) = build_closure_with(fx, site, params, body, true, Some(kind), frame, false)?;
     Ok(ss)
 }
 
@@ -212,7 +229,16 @@ fn build_closure(
     body: &[NodeId],
     is_lambda: bool,
 ) -> Result<(ir::StackSlot, Vec<String>), String> {
-    build_closure_with(fx, site, params, body, is_lambda, None, FrameName::Block)
+    build_closure_with(
+        fx,
+        site,
+        params,
+        body,
+        is_lambda,
+        None,
+        FrameName::Block,
+        false,
+    )
 }
 
 fn build_closure_with(
@@ -223,6 +249,7 @@ fn build_closure_with(
     is_lambda: bool,
     method_body: Option<MethodBody>,
     frame: FrameName,
+    rehomed: bool,
 ) -> Result<(ir::StackSlot, Vec<String>), String> {
     let names = captured_names(fx, site, params, body)?;
     let arity = super::params::proc_arity(params, is_lambda);
@@ -246,6 +273,7 @@ fn build_closure_with(
         is_lambda,
         method_body,
         frame,
+        rehomed,
     )?;
     let f_ref = fx.em.module.declare_func_in_func(f_id, fx.b.func);
     let ptr_ty = fx.em.ptr;
@@ -397,6 +425,7 @@ fn define_block_fn(
     is_lambda: bool,
     method_body: Option<MethodBody>,
     frame: FrameName,
+    rehomed: bool,
 ) -> Result<cranelift_module::FuncId, String> {
     let params = params.clone();
     let body = body.to_vec();
@@ -425,6 +454,7 @@ fn define_block_fn(
     let em = &mut *fx.em;
     let an = fx.an;
     let method_class = fx.method_class;
+    let self_is_dynamic = fx.self_is_dynamic;
     // A `super` written inside a block targets the ENCLOSING method (ruby:
     // blocks have no `super` of their own), so the block fn carries that
     // method's identity -- its defining class, name and parameter list.
@@ -490,6 +520,7 @@ fn define_block_fn(
             bfx.method_params = Some(params.clone());
             bfx.runtime_method_body = true;
             bfx.define_method_body = kind == MethodBody::DefineMethod;
+            bfx.self_is_dynamic = true;
         }
         None => {
             (
@@ -503,6 +534,10 @@ fn define_block_fn(
     }
     bfx.frame_label = base;
     bfx.block_depth = depth;
+    // A re-homed block (`recv.instance_eval { }`) runs under a `self` only
+    // the run time knows, and so does every block written inside one.
+    bfx.self_is_dynamic =
+        bfx.self_is_dynamic || rehomed || (method_body.is_none() && self_is_dynamic);
     // Bare `yield`/`block_given?` targets the env's lexical block (the
     // enclosing method's) -- unless this closure declares its own `&b`,
     // which owns the channel and takes the CALL-SITE block.

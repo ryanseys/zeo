@@ -116,6 +116,11 @@ pub const CAPI: &[CapiSig] = &[
         ret: Some(I32),
     },
     CapiSig {
+        name: "zeo_rt_class_of",
+        params: &[Ptr],
+        ret: Some(U32),
+    },
+    CapiSig {
         name: "zeo_rt_complex_lit",
         params: &[Ptr, Ptr],
         ret: None,

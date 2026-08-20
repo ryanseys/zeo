@@ -429,10 +429,21 @@ pub(crate) fn kw_send(
 /// RECEIVERLESS, so the surrogate must be the receiver AND the barrier must
 /// stay down.
 pub(crate) fn caller_class(fx: &mut Fx, bypass: bool) -> cranelift_codegen::ir::Value {
-    let cid = match bypass {
-        true => i64::from(u32::MAX),
-        false => fx.method_class.map_or(0, |c| i64::from(c.0)),
-    };
+    if bypass {
+        return fx.b.ins().iconst(types::I32, i64::from(u32::MAX));
+    }
+    // A scope whose `self` only the run time knows (a `Class.new` body's
+    // method, an `instance_eval` block) has no lexical class to compare a
+    // `protected` target against -- the enclosing one is `Object`, which is
+    // no kind of the class the body will belong to, and the call was
+    // refused. Ask `self` instead, per call (rustc's `Caller::Runtime`).
+    if fx.self_is_dynamic {
+        let slf = fx.self_ptr.expect("self_ptr is set in the prologue");
+        return fx
+            .call("zeo_rt_class_of", &[slf])
+            .expect("class_of answers a class id");
+    }
+    let cid = fx.method_class.map_or(0, |c| i64::from(c.0));
     fx.b.ins().iconst(types::I32, cid)
 }
 
