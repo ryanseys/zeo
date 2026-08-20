@@ -72,6 +72,8 @@ capi_symbols!(
     dispatch::zeo_rt_defined_ivar,
     dispatch::zeo_rt_defined_method,
     values::zeo_rt_eq,
+    kernel::zeo_rt_flip_flop_on,
+    kernel::zeo_rt_flip_flop_set,
     forloop::zeo_rt_for_begin,
     forloop::zeo_rt_for_end,
     forloop::zeo_rt_for_next,

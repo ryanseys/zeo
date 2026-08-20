@@ -186,6 +186,20 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 None => fx.unsupported(id, "a read of an unknown local"),
             }
         }
+        // `a..b` used as a CONDITION -- a latch, not a Range. It answers
+        // true from the evaluation whose left operand is truthy through the
+        // one whose right operand is; two dots retest the right operand in
+        // the very evaluation that turned the latch on, three dots wait for
+        // the next.
+        HirNode::FlipFlop {
+            state,
+            left,
+            right,
+            exclusive,
+        } => {
+            let (state, left, right, exclusive) = (*state, *left, *right, *exclusive);
+            flip_flop(fx, state, left, right, exclusive)
+        }
         // A loop in VALUE position: its own value is nil (`for` answers the
         // collection it walked), and a `break v` supplies its own.
         HirNode::While { .. } | HirNode::Loop { .. } | HirNode::For { .. } => {
@@ -1603,6 +1617,82 @@ fn runtime_scope_const_read(
         ss,
         owned: true,
         tag: TagInfo::Unknown,
+    })
+}
+
+/// A `true`/`false` immediate into `dst`.
+fn write_bool(fx: &mut Fx, dst: cranelift_codegen::ir::Value, v: bool) {
+    let b = fx.b.ins().iconst(types::I8, i64::from(v));
+    ownership::write_move_into(fx, &Operand::Bool(b), dst);
+}
+
+/// One flip-flop evaluation: the latch decides, and either operand may
+/// raise, so both are ordinary lowered expressions guarded by the latch's
+/// own branches (rustc's `emit_flip_flop`, branch for branch).
+fn flip_flop(
+    fx: &mut Fx,
+    state: u32,
+    left: NodeId,
+    right: NodeId,
+    exclusive: bool,
+) -> Result<Operand, String> {
+    let ss = fx.temp_slot();
+    let dst = fx.slot_addr(ss, 0);
+    let on_blk = fx.b.create_block();
+    let test_left = fx.b.create_block();
+    let turned_on = fx.b.create_block();
+    let off_blk = fx.b.create_block();
+    let join = fx.b.create_block();
+    let state_v = fx.b.ins().iconst(types::I32, i64::from(state));
+    let on = fx
+        .call("zeo_rt_flip_flop_on", &[state_v])
+        .expect("flip_flop_on answers");
+    fx.b.ins().brif(on, on_blk, &[], test_left, &[]);
+
+    // Already on: the right operand decides whether this is the last true.
+    let turn_off = |fx: &mut Fx| -> Result<(), String> {
+        let op = lower_expr(fx, right)?;
+        let t = ownership::truthy(fx, op);
+        let clear = fx.b.create_block();
+        let done = fx.b.create_block();
+        fx.b.ins().brif(t, clear, &[], done, &[]);
+        fx.b.switch_to_block(clear);
+        let state_v = fx.b.ins().iconst(types::I32, i64::from(state));
+        let zero = fx.b.ins().iconst(types::I8, 0);
+        fx.call("zeo_rt_flip_flop_set", &[state_v, zero]);
+        fx.b.ins().jump(done, &[]);
+        fx.b.switch_to_block(done);
+        Ok(())
+    };
+    fx.b.switch_to_block(on_blk);
+    turn_off(fx)?;
+    write_bool(fx, dst, true);
+    fx.b.ins().jump(join, &[]);
+
+    fx.b.switch_to_block(test_left);
+    let op = lower_expr(fx, left)?;
+    let t = ownership::truthy(fx, op);
+    fx.b.ins().brif(t, turned_on, &[], off_blk, &[]);
+
+    fx.b.switch_to_block(turned_on);
+    let state_v = fx.b.ins().iconst(types::I32, i64::from(state));
+    let one = fx.b.ins().iconst(types::I8, 1);
+    fx.call("zeo_rt_flip_flop_set", &[state_v, one]);
+    if !exclusive {
+        turn_off(fx)?;
+    }
+    write_bool(fx, dst, true);
+    fx.b.ins().jump(join, &[]);
+
+    fx.b.switch_to_block(off_blk);
+    write_bool(fx, dst, false);
+    fx.b.ins().jump(join, &[]);
+
+    fx.b.switch_to_block(join);
+    Ok(Operand::Ptr {
+        addr: dst,
+        owned: false,
+        tag: TagInfo::Known(ValueTag::Bool as u8),
     })
 }
 

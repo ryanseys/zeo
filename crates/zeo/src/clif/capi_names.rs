@@ -206,6 +206,16 @@ pub const CAPI: &[CapiSig] = &[
         ret: None,
     },
     CapiSig {
+        name: "zeo_rt_flip_flop_on",
+        params: &[U32],
+        ret: Some(U8),
+    },
+    CapiSig {
+        name: "zeo_rt_flip_flop_set",
+        params: &[U32, U8],
+        ret: None,
+    },
+    CapiSig {
         name: "zeo_rt_for_begin",
         params: &[Ptr, U8, Ptr],
         ret: Some(I32),
