@@ -456,7 +456,9 @@ pub(crate) fn dynamic_send(
     args: &[ArrayElem],
 ) -> Result<Operand, String> {
     let bypass = super::expr::bypasses_visibility(fx, Some(recv));
+    let later = super::expr::later_nodes(args, &[], None);
     let recv_op = lower_expr(fx, recv)?;
+    let recv_op = super::expr::park_reassignable(fx, Some(recv), recv_op, &later);
     dynamic_send_value(fx, site, recv_op, name, args, bypass)
 }
 

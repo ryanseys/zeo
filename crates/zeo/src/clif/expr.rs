@@ -972,8 +972,12 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 return Ok(op);
             }
             if args.iter().any(|a| matches!(a, ArrayElem::Splat(_))) {
+                let later = later_nodes(&args, &[], None);
                 let recv = match receiver {
-                    Some(r) => Some(lower_expr(fx, r)?),
+                    Some(r) => {
+                        let op = lower_expr(fx, r)?;
+                        Some(park_reassignable(fx, Some(r), op, &later))
+                    }
                     None => None,
                 };
                 let bypass = bypasses_visibility(fx, receiver);
@@ -1062,8 +1066,12 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             {
                 return Ok(op);
             }
+            let later = later_nodes(&args, &kwargs, block_arg);
             let recv = match receiver {
-                Some(r) => Some(lower_expr(fx, r)?),
+                Some(r) => {
+                    let op = lower_expr(fx, r)?;
+                    Some(park_reassignable(fx, Some(r), op, &later))
+                }
                 None => None,
             };
             let blk = block_channel(fx, id, block, block_arg)?;
@@ -2124,7 +2132,7 @@ fn binop(fx: &mut Fx, op: BinOp, name: &str, recv: NodeId, arg: NodeId) -> Resul
             tag: a.tag(),
         }
     } else {
-        a
+        park_reassignable(fx, Some(recv), a, &[arg])
     };
     let b_op = lower_expr(fx, arg)?;
     // Unboxed-both fast case: no memory, no tag tests. Everything else
@@ -3125,6 +3133,61 @@ fn case_when(
 /// answering `None` changes nothing but the entry -- and the implicit entry is
 /// the one ruby means: private has been reachable through a literal `self`
 /// receiver since 2.7.
+/// A plain hoisted local reads as a BORROW of its slot, and a reassignment
+/// overwrites that slot in place -- so `a << (a = [9]; 2)` would push onto
+/// the array the argument just bound, and release the one the receiver
+/// named. Copy the value out (retained, pooled) when anything still to be
+/// evaluated can write that name; a call whose arguments assign nothing
+/// keeps the borrow.
+pub(crate) fn park_reassignable(
+    fx: &mut Fx,
+    recv: Option<NodeId>,
+    op: Operand,
+    later: &[NodeId],
+) -> Operand {
+    let Some(r) = recv else { return op };
+    let HirNode::LocalRead(name) = &fx.an.compiler.hir[r] else {
+        return op;
+    };
+    let name = name.clone();
+    if !matches!(fx.locals.get(&name), Some(super::ctx::Local::Slot(_))) {
+        return op;
+    }
+    if !later
+        .iter()
+        .any(|&n| crate::analyze::class_query::assigns_local(&fx.an.compiler, n, &name))
+    {
+        return op;
+    }
+    let tag = op.tag();
+    let addr = ownership::move_ptr(fx, &op);
+    fx.owned_created += 1;
+    ownership::pool_owned(fx, addr, tag);
+    Operand::Ptr {
+        addr,
+        owned: false,
+        tag,
+    }
+}
+
+/// The node ids a call still has to evaluate after its receiver: every
+/// argument, every keyword value, and a `&expr` block argument.
+pub(crate) fn later_nodes(
+    args: &[crate::hir::ArrayElem],
+    kwargs: &[crate::hir::KwArg],
+    block_arg: Option<NodeId>,
+) -> Vec<NodeId> {
+    let mut out: Vec<NodeId> = args
+        .iter()
+        .map(|a| match a {
+            crate::hir::ArrayElem::Single(n) | crate::hir::ArrayElem::Splat(n) => *n,
+        })
+        .collect();
+    out.extend(kwargs.iter().flat_map(crate::hir::KwArg::node_ids));
+    out.extend(block_arg);
+    out
+}
+
 fn self_receiver(fx: &Fx, recv: Option<NodeId>) -> Option<NodeId> {
     let r = recv?;
     match matches!(fx.an.compiler.hir[r], HirNode::SelfRef) {

@@ -10,39 +10,10 @@ use quote::{format_ident, quote};
 
 use crate::codegen::Ctx;
 use crate::codegen::expr::{box_if_object_typed, emit_expr, infer};
-use crate::hir::{HirNode, NodeId};
+use crate::hir::NodeId;
 use crate::types::TyKind;
 use proc_macro2::TokenStream;
 
-/// Whether evaluating `id`'s subtree can ASSIGN the local `name`.
-///
-/// A borrowed receiver stays borrowed across the argument evaluation, and
-/// `a << (a = [9]; 2)` is perfectly good Ruby -- so an argument that writes
-/// the receiver's own local has to take the cloning path or the generated
-/// program fails to compile (E0506, `cannot assign to a because it is
-/// borrowed`). A write from inside a nested BLOCK is not a case this has to
-/// find: a closure that could reassign the local would have forced `Captured`
-/// (cell) storage, which `borrowable_operand` already declines.
-fn assigns_local(cx: &Ctx, id: NodeId, name: &str) -> bool {
-    let node = &cx.compiler.hir[id];
-    let own = match node {
-        HirNode::LocalWrite(n, _) => n == name,
-        HirNode::MultiWrite { targets, .. } => {
-            let mut names = Vec::new();
-            targets.collect_local_names(&mut names);
-            names.iter().any(|n| n == name)
-        }
-        _ => false,
-    };
-    if own {
-        return true;
-    }
-    let mut found = false;
-    node.for_each_child(&mut |child| {
-        found = found || assigns_local(cx, child, name);
-    });
-    found
-}
 /// `Array`/`Hash`/`Str`/`Range`'s built-in method fast path (see
 /// `zeo_rt::collections`'s module docs for the original deliberate
 /// scope-cut this grew from). `a[i]`/`a[i] = v` are ordinary `CallNode`s
@@ -70,9 +41,9 @@ pub(super) fn try_collection_dispatch(
     let borrowed;
     let recv_expr = match super::borrowable_operand(cx, recv_id) {
         Some(ident)
-            if !args
-                .iter()
-                .any(|&a| assigns_local(cx, a, &ident.to_string())) =>
+            if !args.iter().any(|&a| {
+                crate::analyze::class_query::assigns_local(cx.compiler, a, &ident.to_string())
+            }) =>
         {
             borrowed = quote! { &#ident };
             &borrowed

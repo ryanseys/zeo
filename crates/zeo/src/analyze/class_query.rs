@@ -378,3 +378,33 @@ pub(crate) fn class_method_defined_only_later(
     }
     any
 }
+
+/// Whether evaluating `id`'s subtree can ASSIGN the local `name`.
+///
+/// A borrowed receiver stays borrowed across the argument evaluation, and
+/// `a << (a = [9]; 2)` is perfectly good Ruby -- the push lands on the
+/// array the receiver named BEFORE the argument ran. A write from inside a
+/// nested BLOCK is not a case this has to find: a closure that could
+/// reassign the local would have forced cell storage, which no backend
+/// borrows through.
+pub(crate) fn assigns_local(compiler: &Compiler, id: crate::hir::NodeId, name: &str) -> bool {
+    use crate::hir::HirNode;
+    let node = &compiler.hir[id];
+    let own = match node {
+        HirNode::LocalWrite(n, _) => n == name,
+        HirNode::MultiWrite { targets, .. } => {
+            let mut names = Vec::new();
+            targets.collect_local_names(&mut names);
+            names.iter().any(|n| n == name)
+        }
+        _ => false,
+    };
+    if own {
+        return true;
+    }
+    let mut found = false;
+    node.for_each_child(&mut |child| {
+        found = found || assigns_local(compiler, child, name);
+    });
+    found
+}
