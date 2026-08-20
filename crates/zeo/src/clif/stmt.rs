@@ -1107,6 +1107,13 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
             }
             let op = if receiver.is_none()
                 && let Some(decl) = fx.em.methods.get(&name)
+                // `plain` as well as the count: a richer signature binds
+                // through the trampoline, and its body takes one slot per
+                // PARAMETER, not per argument. Without this the statement
+                // arm built a call the direct entry could not accept
+                // (minitest's `describe(desc, additional_desc = nil, &blk)`
+                // written as a statement).
+                && decl.plain
                 && decl.arity == args.len()
                 && !args.iter().any(|a| matches!(a, ArrayElem::Splat(_)))
                 && !super::expr::method_class_shadows(fx, &name)
