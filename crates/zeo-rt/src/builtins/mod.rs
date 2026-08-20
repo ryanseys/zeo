@@ -164,20 +164,55 @@ pub static BUILTIN_TABLES: [BuiltinClassTable] = [..];
 /// the ABI already indexes `BUILTINS` by `id.0 - 1` on the same grounds. This
 /// is asked per ANCESTOR by `instance_method_visibility`, `responds_to` and
 /// `scan_owner`, so the hash was paid once per step of every MRO walk.
+///
+/// "Dense small integers" is true of every table key but one:
+/// `ENV_SINGLETON_CLASS` is `u32::MAX`, a reserved key rather than a class
+/// (see its doc in zeo-abi). Sizing the array by the largest key therefore
+/// asked for `u32::MAX + 1` slots -- **32 GiB** -- on the first routing
+/// question of every program. macOS hid it completely: `vec![None; n]` of a
+/// nullable reference allocates ZEROED, so the pages were never touched and
+/// the reservation cost nothing real. Linux refuses the allocation outright
+/// under a memory cap and the process aborts, which is how it surfaced.
+///
+/// So the array covers the dense range only, and the sparse keys -- one
+/// today -- ride in a list scanned linearly. The scan is off the hot path by
+/// construction: a real class id never reaches it.
 pub(crate) fn registered_table(id: ClassId) -> Option<&'static BuiltinClassTable> {
-    static BY_ID: LazyLock<Vec<Option<&'static BuiltinClassTable>>> = LazyLock::new(|| {
+    /// Keys at or above this are reserved markers, not class ids. The
+    /// runtime block itself starts here, and no `ruby_class!` table is
+    /// keyed inside it.
+    const DENSE_LIMIT: u32 = zeo_abi::RUNTIME_CLASS_ID_BASE;
+
+    struct Map {
+        dense: Vec<Option<&'static BuiltinClassTable>>,
+        sparse: Vec<(u32, &'static BuiltinClassTable)>,
+    }
+    static BY_ID: LazyLock<Map> = LazyLock::new(|| {
         let len = BUILTIN_TABLES
             .iter()
-            .map(|t| t.id.0 as usize)
+            .map(|t| t.id.0)
+            .filter(|id| *id < DENSE_LIMIT)
             .max()
-            .map_or(0, |m| m + 1);
-        let mut v = vec![None; len];
+            .map_or(0, |m| m as usize + 1);
+        let mut dense = vec![None; len];
+        let mut sparse = Vec::new();
         for t in BUILTIN_TABLES {
-            v[t.id.0 as usize] = Some(t);
+            if t.id.0 < DENSE_LIMIT {
+                dense[t.id.0 as usize] = Some(t);
+            } else {
+                sparse.push((t.id.0, t));
+            }
         }
-        v
+        Map { dense, sparse }
     });
-    BY_ID.get(id.0 as usize).copied().flatten()
+    if id.0 < DENSE_LIMIT {
+        return BY_ID.dense.get(id.0 as usize).copied().flatten();
+    }
+    BY_ID
+        .sparse
+        .iter()
+        .find(|(key, _)| *key == id.0)
+        .map(|(_, t)| *t)
 }
 
 /// Which side of a builtin's tables a question addresses.
