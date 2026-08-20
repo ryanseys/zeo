@@ -675,6 +675,22 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 (args.clone(), kwargs.clone(), *zsuper, *block, *block_arg);
             super::call::lower_super(fx, id, &args, &kwargs, zsuper, block, block_arg)
         }
+        // The four `__zeo_ffi_*` markers a deferred `ffi_lib`/`enum`
+        // desugars to (see `lower::ffi`): they run where they stand, in
+        // class-body order.
+        HirNode::Call {
+            receiver: None,
+            name,
+            args,
+            ..
+        } if super::ffi::is_marker(name) => {
+            let (name, args) = (name.clone(), args.clone());
+            super::ffi::marker_call(fx, id, &name, &args)
+        }
+        HirNode::Ffi(call) => {
+            let call = call.clone();
+            super::ffi::lower_ffi_call(fx, id, &call)
+        }
         HirNode::RegexpLit(parts, flags) => {
             let (parts, flags) = (parts.clone(), *flags);
             regexp_lit(fx, &parts, flags)

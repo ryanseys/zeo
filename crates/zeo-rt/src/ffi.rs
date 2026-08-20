@@ -687,6 +687,125 @@ impl FfiSymSite {
     }
 }
 
+/// Every symbol a Cranelift-emitted call site has already resolved, keyed
+/// by the emitter-assigned site id. The rustc backend gets a `.bss`
+/// [`FfiSymSite`] per site; CLIF sites carry an id and share this table,
+/// the same shape `zeo_rt_regexp_lit` uses for its per-site literals. Like
+/// `FfiSymSite`, only SUCCESS is cached -- a failed resolution re-raises on
+/// every call.
+#[cfg(feature = "ext-ffi")]
+static SITE_ADDRS: std::sync::OnceLock<std::sync::RwLock<std::collections::HashMap<u32, usize>>> =
+    std::sync::OnceLock::new();
+
+#[cfg(feature = "ext-ffi")]
+fn site_addrs() -> &'static std::sync::RwLock<std::collections::HashMap<u32, usize>> {
+    SITE_ADDRS.get_or_init(Default::default)
+}
+
+#[cfg(feature = "ext-ffi")]
+fn cached_site(site: u32) -> Option<*const c_void> {
+    site_addrs()
+        .read()
+        .expect("no poisoned site readers")
+        .get(&site)
+        .map(|a| *a as *const c_void)
+}
+
+#[cfg(feature = "ext-ffi")]
+fn cache_site(site: u32, addr: *const c_void) {
+    site_addrs()
+        .write()
+        .expect("no poisoned site writers")
+        .insert(site, addr as usize);
+}
+
+#[cfg(feature = "ext-ffi")]
+fn dlsym_in(handle: *mut c_void, sym: &str) -> Result<*const c_void, Signal> {
+    let cname = std::ffi::CString::new(sym)
+        .map_err(|_| arg_error!("FFI symbol name contains a null byte"))?;
+    Ok(unsafe { libc::dlsym(handle, cname.as_ptr()) })
+}
+
+/// Resolve one Cranelift call site's C symbol. `mode` is
+/// `zeo_abi::abi::FFI_SYM_*`: the named libraries, the process image, or
+/// the libraries with the process image as a fallback -- which is what a
+/// build-time `#[link(name = ..)]` amounted to, since the linked library's
+/// symbols are simply present in the running program.
+#[cfg(feature = "ext-ffi")]
+pub fn site_symbol(
+    site: u32,
+    candidates: &[&str],
+    sym: &str,
+    mode: u8,
+) -> Result<*const c_void, Signal> {
+    if let Some(a) = cached_site(site) {
+        return Ok(a);
+    }
+    let mut lib_error = None;
+    if mode != zeo_abi::abi::FFI_SYM_PROCESS {
+        match dlopen_first(candidates) {
+            Ok(handle) => {
+                let addr = dlsym_in(handle, sym)?;
+                if !addr.is_null() {
+                    cache_site(site, addr);
+                    return Ok(addr);
+                }
+            }
+            Err(e) => lib_error = Some(e),
+        }
+    }
+    if mode != zeo_abi::abi::FFI_SYM_LIB {
+        let addr = dlsym_in(libc::RTLD_DEFAULT, sym)?;
+        if !addr.is_null() {
+            cache_site(site, addr);
+            return Ok(addr);
+        }
+    }
+    if let Some(e) = lib_error {
+        return Err(e);
+    }
+    Err(crate::raise_error(
+        "FFI::NotFoundError",
+        if candidates.is_empty() {
+            format!("Function '{sym}' not found in [current process]")
+        } else {
+            format!("Function '{sym}' not found in [{}]", candidates.join(", "))
+        },
+    ))
+}
+
+/// [`site_symbol`] for a DEFERRED library slot -- the handles
+/// [`ffi_lib_store`] opened when the class body ran, searched in
+/// declaration order.
+#[cfg(feature = "ext-ffi")]
+pub fn site_symbol_slot(site: u32, slot: usize, sym: &str) -> Result<*const c_void, Signal> {
+    if let Some(a) = cached_site(site) {
+        return Ok(a);
+    }
+    let handles = lib_slots()
+        .read()
+        .expect("no poisoned slot writers")
+        .get(&slot)
+        .cloned()
+        .ok_or_else(|| {
+            crate::raise_error(
+                "LoadError",
+                format!("`ffi_lib` did not run before `{sym}` was called"),
+            )
+        })?;
+    for handle in handles {
+        let addr = dlsym_in(handle as *mut c_void, sym)?;
+        if !addr.is_null() {
+            cache_site(site, addr);
+            return Ok(addr);
+        }
+    }
+    Err(crate::raise_error(
+        "FFI::NotFoundError",
+        format!("Function '{sym}' not found"),
+    ))
+}
+
 #[cfg(feature = "ext-ffi")]
 impl Default for FfiSymSite {
     fn default() -> FfiSymSite {

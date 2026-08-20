@@ -51,6 +51,50 @@ impl CScalar {
         self.size()
     }
 
+    /// The variant as ONE BYTE, for a `.rodata` call descriptor the
+    /// Cranelift backend bakes and the runtime reads back
+    /// (`zeo_abi::abi::FfiTypeC`). Spelled out rather than left to a
+    /// `repr` so a reordering of the enum cannot silently retype a call.
+    pub const fn code(self) -> u8 {
+        match self {
+            CScalar::Void => 0,
+            CScalar::I8 => 1,
+            CScalar::I16 => 2,
+            CScalar::I32 => 3,
+            CScalar::I64 => 4,
+            CScalar::U8 => 5,
+            CScalar::U16 => 6,
+            CScalar::U32 => 7,
+            CScalar::U64 => 8,
+            CScalar::F32 => 9,
+            CScalar::F64 => 10,
+            CScalar::Bool => 11,
+            CScalar::Str => 12,
+            CScalar::Pointer => 13,
+        }
+    }
+
+    /// The inverse of [`CScalar::code`].
+    pub const fn from_code(code: u8) -> Option<CScalar> {
+        Some(match code {
+            0 => CScalar::Void,
+            1 => CScalar::I8,
+            2 => CScalar::I16,
+            3 => CScalar::I32,
+            4 => CScalar::I64,
+            5 => CScalar::U8,
+            6 => CScalar::U16,
+            7 => CScalar::U32,
+            8 => CScalar::U64,
+            9 => CScalar::F32,
+            10 => CScalar::F64,
+            11 => CScalar::Bool,
+            12 => CScalar::Str,
+            13 => CScalar::Pointer,
+            _ => return None,
+        })
+    }
+
     /// The variant's own name (`"I32"`), which is also the runtime `FfiKind`
     /// variant name codegen spells in generated code.
     pub const fn name(self) -> &'static str {

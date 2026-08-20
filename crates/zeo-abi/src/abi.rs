@@ -495,3 +495,76 @@ pub struct ProgramDesc {
     /// `zeo_eval_install` when the program can eval (G6); else `None`.
     pub eval_install: Option<unsafe extern "C" fn()>,
 }
+
+// ---------------------------------------------------------------------------
+// FFI call descriptors
+//
+// An `attach_function` wrapper body is one C call whose whole shape --
+// argument types, return type, `blocking:`, `:varargs` -- is compile-time
+// knowledge. The Cranelift backend bakes it into `.rodata` as the tree
+// below and hands the runtime ONE pointer, so the emitted code lowers only
+// the argument EXPRESSIONS: an argument list half-built when a coercion
+// raises can then strand nothing.
+// ---------------------------------------------------------------------------
+
+/// [`FfiTypeC::tag`]: an ordinary C scalar, named by `scalar`.
+pub const FFI_TY_SCALAR: u8 = 0;
+/// A named `enum`: `members` maps Symbol to `int` in both directions.
+pub const FFI_TY_ENUM: u8 = 1;
+/// An `enum` whose members only the running program knows -- `slot` names
+/// the runtime store the class body filled.
+pub const FFI_TY_ENUM_SLOT: u8 = 2;
+/// A `callback`: `sub` holds the C argument types, `scalar` the C return.
+pub const FFI_TY_CALLBACK: u8 = 3;
+/// A struct passed or returned BY VALUE: `sub` holds the field types in
+/// declaration order (inline arrays already expanded) and `size` the byte
+/// width.
+pub const FFI_TY_STRUCT: u8 = 4;
+/// `:strptr` -- a `char *` return read back as `[String, Pointer]`.
+pub const FFI_TY_STRPTR: u8 = 5;
+
+/// One `enum` member, in declaration order.
+#[repr(C)]
+pub struct FfiEnumMemberC {
+    pub name: Str,
+    pub value: i64,
+}
+
+/// One C type in a call descriptor. Which fields carry meaning is decided
+/// by `tag`; the rest are zero.
+#[repr(C)]
+pub struct FfiTypeC {
+    pub tag: u8,
+    /// The `CScalar` code (`zeo_abi::ffi::CScalar::code`) -- the type
+    /// itself for [`FFI_TY_SCALAR`], the RETURN type for a callback.
+    pub scalar: u8,
+    pub slot: usize,
+    pub members: *const FfiEnumMemberC,
+    pub n_members: usize,
+    pub sub: *const FfiTypeC,
+    pub n_sub: usize,
+    pub size: usize,
+}
+
+/// One `attach_function` call site's whole C signature.
+#[repr(C)]
+pub struct FfiCallC {
+    pub args: *const FfiTypeC,
+    pub n_args: usize,
+    pub ret: FfiTypeC,
+    /// `blocking: true` -- run the call with the GVL released.
+    pub blocking: u8,
+    /// `:varargs` -- the LAST value in `argv` is the wrapper's `*rest`, a
+    /// flat Array of alternating `(type Symbol, value)` pairs.
+    pub variadic: u8,
+}
+
+/// [`FfiSymMode`] as a byte: resolve the symbol in the named libraries only.
+pub const FFI_SYM_LIB: u8 = 0;
+/// Resolve in the named libraries, falling back to the process image -- the
+/// tier a build-time `#[link(name = ..)]` served for the rustc backend,
+/// where the library is linked into the program and its symbols are simply
+/// present.
+pub const FFI_SYM_LIB_OR_PROCESS: u8 = 1;
+/// Resolve in the process image only (no `ffi_lib`, or `FFI::CURRENT_PROCESS`).
+pub const FFI_SYM_PROCESS: u8 = 2;

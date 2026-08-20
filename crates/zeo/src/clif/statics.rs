@@ -1313,3 +1313,188 @@ pub(crate) fn str_array(
     let n = fx.b.ins().iconst(fx.em.ptr, names.len() as i64);
     (base, n)
 }
+
+// ---------------------------------------------------------------------------
+// FFI call descriptors
+// ---------------------------------------------------------------------------
+
+/// A pointer field inside a descriptor still to be filled in: where it
+/// sits, and what it points at.
+enum FfiReloc {
+    /// A `.rodata` byte offset (a `Str`'s `ptr`).
+    Rodata(usize, u32),
+    /// Another anonymous data object (a member table, a sub-type array).
+    Data(usize, DataId),
+}
+
+impl FfiReloc {
+    fn shift(self, by: usize) -> FfiReloc {
+        match self {
+            FfiReloc::Rodata(at, off) => FfiReloc::Rodata(at + by, off),
+            FfiReloc::Data(at, id) => FfiReloc::Data(at + by, id),
+        }
+    }
+}
+
+/// Apply a descriptor's pointer fields to a `DataDescription` already
+/// holding its bytes.
+fn write_ffi_relocs(em: &mut Emitter, data: &mut DataDescription, relocs: Vec<FfiReloc>) {
+    if relocs.is_empty() {
+        return;
+    }
+    let rodata_gv = em.module.declare_data_in_data(em.rodata_id, data);
+    for r in relocs {
+        match r {
+            FfiReloc::Rodata(at, off) => {
+                data.write_data_addr(at as u32, rodata_gv, i64::from(off));
+            }
+            FfiReloc::Data(at, id) => {
+                let gv = em.module.declare_data_in_data(id, data);
+                data.write_data_addr(at as u32, gv, 0);
+            }
+        }
+    }
+}
+
+fn define_ffi_data(
+    em: &mut Emitter,
+    what: &str,
+    bytes: Vec<u8>,
+    relocs: Vec<FfiReloc>,
+) -> Result<DataId, String> {
+    let mut data = DataDescription::new();
+    data.define(bytes.into_boxed_slice());
+    data.set_align(8);
+    write_ffi_relocs(em, &mut data, relocs);
+    let id = em
+        .module
+        .declare_anonymous_data(false, false)
+        .map_err(|e| format!("declaring {what}: {e}"))?;
+    em.module
+        .define_data(id, &data)
+        .map_err(|e| format!("defining {what}: {e}"))?;
+    Ok(id)
+}
+
+/// One `FfiTypeC`'s bytes plus the pointer fields still to fill in.
+fn ffi_type_bytes(
+    em: &mut Emitter,
+    ty: &super::ffi::TySpec,
+) -> Result<(Vec<u8>, Vec<FfiReloc>), String> {
+    use super::ffi::TySpec;
+    use zeo_abi::abi::{
+        FFI_TY_CALLBACK, FFI_TY_ENUM, FFI_TY_ENUM_SLOT, FFI_TY_SCALAR, FFI_TY_STRPTR,
+        FFI_TY_STRUCT, FfiEnumMemberC, FfiTypeC,
+    };
+    let mut bytes = vec![0u8; std::mem::size_of::<FfiTypeC>()];
+    let mut relocs = Vec::new();
+    let put_usize = |bytes: &mut [u8], at: usize, v: usize| {
+        bytes[at..at + 8].copy_from_slice(&(v as u64).to_le_bytes());
+    };
+    let (tag, scalar) = match ty {
+        TySpec::Scalar(s) => (FFI_TY_SCALAR, s.code()),
+        TySpec::Enum(_) => (FFI_TY_ENUM, zeo_abi::ffi::CScalar::I32.code()),
+        TySpec::EnumSlot(_) => (FFI_TY_ENUM_SLOT, zeo_abi::ffi::CScalar::I32.code()),
+        TySpec::Callback(_, ret) => (FFI_TY_CALLBACK, ret.code()),
+        TySpec::Struct(..) => (FFI_TY_STRUCT, 0),
+        TySpec::StrPtr => (FFI_TY_STRPTR, zeo_abi::ffi::CScalar::Pointer.code()),
+    };
+    bytes[std::mem::offset_of!(FfiTypeC, tag)] = tag;
+    bytes[std::mem::offset_of!(FfiTypeC, scalar)] = scalar;
+    match ty {
+        TySpec::Enum(members) => {
+            let size = std::mem::size_of::<FfiEnumMemberC>();
+            let mut mbytes = vec![0u8; size * members.len()];
+            let mut mrelocs = Vec::new();
+            for (i, (name, value)) in members.iter().enumerate() {
+                let base = i * size;
+                let name_at = base + std::mem::offset_of!(FfiEnumMemberC, name);
+                let off = em.intern_rodata(name.as_bytes());
+                mrelocs.push(FfiReloc::Rodata(
+                    name_at + std::mem::offset_of!(Str, ptr),
+                    off,
+                ));
+                put_usize(
+                    &mut mbytes,
+                    name_at + std::mem::offset_of!(Str, len),
+                    name.len(),
+                );
+                mbytes[base + std::mem::offset_of!(FfiEnumMemberC, value)
+                    ..base + std::mem::offset_of!(FfiEnumMemberC, value) + 8]
+                    .copy_from_slice(&value.to_le_bytes());
+            }
+            let id = define_ffi_data(em, "an FFI enum member table", mbytes, mrelocs)?;
+            relocs.push(FfiReloc::Data(std::mem::offset_of!(FfiTypeC, members), id));
+            put_usize(
+                &mut bytes,
+                std::mem::offset_of!(FfiTypeC, n_members),
+                members.len(),
+            );
+        }
+        TySpec::EnumSlot(slot) => {
+            put_usize(&mut bytes, std::mem::offset_of!(FfiTypeC, slot), *slot);
+        }
+        TySpec::Callback(args, _) => {
+            let subs: Vec<TySpec> = args.iter().map(|s| TySpec::Scalar(*s)).collect();
+            if let Some(id) = ffi_type_array(em, &subs)? {
+                relocs.push(FfiReloc::Data(std::mem::offset_of!(FfiTypeC, sub), id));
+            }
+            put_usize(
+                &mut bytes,
+                std::mem::offset_of!(FfiTypeC, n_sub),
+                args.len(),
+            );
+        }
+        TySpec::Struct(fields, size) => {
+            if let Some(id) = ffi_type_array(em, fields)? {
+                relocs.push(FfiReloc::Data(std::mem::offset_of!(FfiTypeC, sub), id));
+            }
+            put_usize(
+                &mut bytes,
+                std::mem::offset_of!(FfiTypeC, n_sub),
+                fields.len(),
+            );
+            put_usize(&mut bytes, std::mem::offset_of!(FfiTypeC, size), *size);
+        }
+        TySpec::Scalar(_) | TySpec::StrPtr => {}
+    }
+    Ok((bytes, relocs))
+}
+
+/// An array of `FfiTypeC` as one anonymous data object; `None` when empty.
+fn ffi_type_array(em: &mut Emitter, tys: &[super::ffi::TySpec]) -> Result<Option<DataId>, String> {
+    if tys.is_empty() {
+        return Ok(None);
+    }
+    let size = std::mem::size_of::<zeo_abi::abi::FfiTypeC>();
+    let mut bytes = Vec::with_capacity(size * tys.len());
+    let mut relocs = Vec::new();
+    for (i, ty) in tys.iter().enumerate() {
+        let (b, r) = ffi_type_bytes(em, ty)?;
+        bytes.extend_from_slice(&b);
+        relocs.extend(r.into_iter().map(|x| x.shift(i * size)));
+    }
+    define_ffi_data(em, "an FFI type table", bytes, relocs).map(Some)
+}
+
+/// One `attach_function` call site's `FfiCallC`.
+pub(crate) fn define_ffi_call(
+    em: &mut Emitter,
+    spec: &super::ffi::CallSpec,
+) -> Result<DataId, String> {
+    use zeo_abi::abi::FfiCallC;
+    let args_id = ffi_type_array(em, &spec.args)?;
+    let (ret_bytes, ret_relocs) = ffi_type_bytes(em, &spec.ret)?;
+    let mut bytes = vec![0u8; std::mem::size_of::<FfiCallC>()];
+    let ret_at = std::mem::offset_of!(FfiCallC, ret);
+    bytes[ret_at..ret_at + ret_bytes.len()].copy_from_slice(&ret_bytes);
+    bytes[std::mem::offset_of!(FfiCallC, n_args)..std::mem::offset_of!(FfiCallC, n_args) + 8]
+        .copy_from_slice(&(spec.args.len() as u64).to_le_bytes());
+    bytes[std::mem::offset_of!(FfiCallC, blocking)] = u8::from(spec.blocking);
+    bytes[std::mem::offset_of!(FfiCallC, variadic)] = u8::from(spec.variadic);
+    let mut relocs: Vec<FfiReloc> = ret_relocs.into_iter().map(|r| r.shift(ret_at)).collect();
+    if let Some(id) = args_id {
+        relocs.push(FfiReloc::Data(std::mem::offset_of!(FfiCallC, args), id));
+    }
+    define_ffi_data(em, "an FFI call descriptor", bytes, relocs)
+}

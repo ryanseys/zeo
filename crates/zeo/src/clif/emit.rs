@@ -827,6 +827,9 @@ pub(crate) struct Emitter {
     /// Regexp-literal site ids -- one cached frozen object per site
     /// (`zeo_rt_regexp_lit`), the rustc per-site `RegexpSite` twin.
     pub regexp_sites: u32,
+    /// `attach_function` call-site ids -- one resolved C symbol address
+    /// per site in the runtime, the rustc per-site `FfiSymSite` twin.
+    pub ffi_sites: u32,
     /// When `Some`, every finished function's CLIF renders here (before
     /// machine compilation -- the target-independent IR).
     pub clif_text: Option<String>,
@@ -919,6 +922,7 @@ impl Emitter {
             redef_tramps: HashMap::new(),
             fn_index: 0,
             regexp_sites: 0,
+            ffi_sites: 0,
             clif_text: None,
         })
     }
@@ -1614,14 +1618,21 @@ fn method_frame(
 ) -> (Option<String>, String, u32, u32) {
     let sep = if class_method { "." } else { "#" };
     let label = format!("{owner_name}{sep}{name}");
+    let here = node.and_then(|n| crate::codegen::source_location(&analyzed.compiler, n));
     let (line, end_line) = match node {
         Some(node) => (
-            crate::codegen::source_location(&analyzed.compiler, node).map_or(0, |(_, l)| l),
+            here.map_or(0, |(_, l)| l),
             crate::codegen::source_end_line(&analyzed.compiler, node),
         ),
         None => (0, 0),
     };
-    let file = analyzed.compiler.hir.files.first().map(|f| f.name.clone());
+    // The body's OWN file, not the program's first: a `require_relative`
+    // in a required file resolves against the frame's directory, so a
+    // spliced body that named the requiring file would look one directory
+    // up.
+    let file = here
+        .map(|(f, _)| f.to_string())
+        .or_else(|| analyzed.compiler.hir.files.first().map(|f| f.name.clone()));
     (file, label, line, end_line)
 }
 

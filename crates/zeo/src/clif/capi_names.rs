@@ -216,6 +216,36 @@ pub const CAPI: &[CapiSig] = &[
         ret: None,
     },
     CapiSig {
+        name: "zeo_rt_ffi_enum_field",
+        params: &[Usize, U8, Ptr, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
+        name: "zeo_rt_ffi_enum_store",
+        params: &[Usize, Ptr, Usize, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
+        name: "zeo_rt_ffi_invoke",
+        params: &[Ptr, Usize, Ptr, Usize, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
+        name: "zeo_rt_ffi_lib_store",
+        params: &[Usize, Ptr, Ptr, Usize, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
+        name: "zeo_rt_ffi_sym",
+        params: &[U32, Ptr, Usize, Ptr, Usize, U8, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
+        name: "zeo_rt_ffi_sym_slot",
+        params: &[U32, Usize, Ptr, Usize, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
         name: "zeo_rt_flip_flop_on",
         params: &[U32],
         ret: Some(U8),

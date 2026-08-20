@@ -7,7 +7,7 @@
 //! user's program.
 
 use super::{
-    bind, dispatch, forloop, frames, kernel, lifecycle, literals, numeric, objects, patterns,
+    bind, dispatch, ffi, forloop, frames, kernel, lifecycle, literals, numeric, objects, patterns,
     procs, registry, signals, values,
 };
 
@@ -73,6 +73,12 @@ capi_symbols!(
     dispatch::zeo_rt_defined_ivar,
     dispatch::zeo_rt_defined_method,
     values::zeo_rt_eq,
+    ffi::zeo_rt_ffi_enum_field,
+    ffi::zeo_rt_ffi_enum_store,
+    ffi::zeo_rt_ffi_invoke,
+    ffi::zeo_rt_ffi_lib_store,
+    ffi::zeo_rt_ffi_sym,
+    ffi::zeo_rt_ffi_sym_slot,
     kernel::zeo_rt_flip_flop_on,
     kernel::zeo_rt_flip_flop_set,
     forloop::zeo_rt_for_begin,
