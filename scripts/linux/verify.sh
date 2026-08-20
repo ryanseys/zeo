@@ -12,6 +12,11 @@
 #   scripts/linux/verify.sh cross     # x86_64 compile check
 #   scripts/linux/verify.sh shell     # an interactive prompt in the image
 #   scripts/linux/verify.sh all       # build jit aot units natlibs valgrind
+#   scripts/linux/verify.sh -E '<expr>'   # one nextest filter, for triage
+#
+# Every stage tees its output to `logs/<stage>.log` beside this script.
+# The container runs `--rm`, so its `podman logs` die with it -- a run whose
+# output only existed there could not be read back at all.
 #
 # Every stage needs `build` to have run first (nothing rebuilds the `zeo`
 # BINARY for a test target). The target volume persists between runs, so a
@@ -19,9 +24,17 @@
 set -euo pipefail
 
 IMAGE=${ZEO_LINUX_IMAGE:-zeo-linux}
+# The VM's own width. The e2e tier LINKS a whole binary per test, so this
+# run is bound by `cc` far more than by the compiler -- threads are the
+# lever that matters, and the ceiling is the podman machine's cpu count
+# (`podman machine set --cpus N`, which needs the machine stopped).
+THREADS=${ZEO_LINUX_THREADS:-8}
+MEMORY=${ZEO_LINUX_MEMORY:-10g}
 VOLUME=${ZEO_LINUX_VOLUME:-zeo-linux-target}
 ENGINE=${ZEO_CONTAINER_ENGINE:-podman}
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+
+LOGS="$REPO/scripts/linux/logs"
 
 run() {
   # --platform: see the Dockerfile header. --memory: the golden harness's
@@ -32,20 +45,23 @@ run() {
   # non-tty caller (CI, an agent), where podman refuses the flag.
   local tty=(); [ -t 0 ] && [ -t 1 ] && tty=(-it)
   "$ENGINE" run --rm "${tty[@]}" --platform linux/arm64 \
-    --memory 6g \
-    -v "$REPO":/src:ro -v "$VOLUME":/target \
-    -w /src "$IMAGE" bash -c "$1"
+    --memory "$MEMORY" \
+    -v "$REPO":/src:ro -v "$VOLUME":/target -v "$LOGS":/logs \
+    -w /src "$IMAGE" bash -c "$1" 2>&1 | tee "$LOGS/$STAGE.log"
+  return "${PIPESTATUS[0]}"
 }
 
 stage() {
-  echo "=== linux: $1"
+  STAGE=$(printf '%s' "$1" | tr -cs 'A-Za-z0-9_.-' '_')
+  mkdir -p "$LOGS"
+  echo "=== linux: $1  (log: scripts/linux/logs/$STAGE.log)"
   case "$1" in
     build)   run 'cargo build --workspace' ;;
     # No env var = the default (jit) leg, four threads: the goldens spawn a
     # child zeo each and the watchdog caps them at 512 MiB.
-    jit)     run 'cargo nextest run -p zeo-tests --test-threads 4 --no-fail-fast' ;;
-    aot)     run 'ZEO_GOLDEN_BACKEND=aot cargo nextest run -p zeo-tests --test-threads 4 --no-fail-fast --test examples --test spinel --test gaps' ;;
-    units)   run 'cargo nextest run -p zeo -p zeo-rt --test-threads 4' ;;
+    jit)     run "cargo nextest run -p zeo-tests --test-threads $THREADS --no-fail-fast" ;;
+    aot)     run "ZEO_GOLDEN_BACKEND=aot cargo nextest run -p zeo-tests --test-threads $THREADS --no-fail-fast --test examples --test spinel --test gaps" ;;
+    units)   run "cargo nextest run -p zeo -p zeo-rt --test-threads $THREADS" ;;
     # The one test that asks rustc for the live answer instead of trusting
     # the table; ignored by default because it compiles the lib in a probe
     # target dir. This is the platform whose table was never confirmed.
@@ -62,10 +78,19 @@ stage() {
       AR_x86_64_unknown_linux_gnu=x86_64-linux-gnu-ar \
       cargo check --workspace --target x86_64-unknown-linux-gnu' ;;
     shell)   run 'exec bash' ;;
+    # Triage: one nextest filter expression against the default profile.
+    # `verify.sh -E 'test(foo)'` after a red run, instead of the hour the
+    # whole corpus costs.
+    -E)      run "cargo nextest run -p zeo-tests --test-threads $THREADS --no-fail-fast -E '$FILTER'" ;;
     *)       echo "unknown stage: $1" >&2; exit 2 ;;
   esac
 }
 
+if [ "${1:-}" = -E ]; then
+  FILTER=${2:?"-E needs a nextest filter expression"}
+  stage -E
+  exit
+fi
 if [ $# -eq 0 ] || [ "$1" = all ]; then
   set -- build jit aot units natlibs valgrind
 fi

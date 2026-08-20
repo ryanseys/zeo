@@ -90,15 +90,16 @@ fn linkme_bytes(binary: &Path) -> u64 {
     total
 }
 
-/// How many symbols in `binary` name `needle` (lowercased match).
-fn symbols_naming(binary: &Path, needle: &str) -> usize {
+/// The symbols in `binary` that name `needle` (lowercased match).
+fn symbols_naming(binary: &Path, needle: &str) -> Vec<String> {
     let bytes = read(binary);
     let file = object::File::parse(&*bytes)
         .unwrap_or_else(|e| panic!("parsing {}: {e}", binary.display()));
     file.symbols()
         .filter_map(|s| s.name().ok())
         .filter(|n| n.to_ascii_lowercase().contains(needle))
-        .count()
+        .map(str::to_string)
+        .collect()
 }
 
 /// The whole-archive half: a linked program's `BUILTIN_TABLES` is the same
@@ -126,7 +127,7 @@ fn a_linked_program_keeps_every_builtin_table() {
 /// would pass while proving nothing.
 #[test]
 fn an_eval_free_program_dead_strips_the_compiler() {
-    let compiler = symbols_naming(&zeo_cli(), "cranelift");
+    let compiler = symbols_naming(&zeo_cli(), "cranelift").len();
     assert!(
         compiler > 100,
         "the zeo binary names cranelift only {compiler} times -- this test \
@@ -136,10 +137,13 @@ fn an_eval_free_program_dead_strips_the_compiler() {
     let bin = link_program("puts :ok\n");
     let program = symbols_naming(&bin, "cranelift");
     let _ = std::fs::remove_file(&bin);
-    assert_eq!(
-        program, 0,
-        "an eval-free program carries {program} cranelift symbols -- the \
-         compiler is no longer dead-stripped out of libzeo.a (see \
-         -dead_strip/--gc-sections in backend/link.rs)"
+    let sample: Vec<&str> = program.iter().take(10).map(String::as_str).collect();
+    assert!(
+        program.is_empty(),
+        "an eval-free program carries {} cranelift symbols (of the zeo \
+         binary's {compiler}) -- the compiler is no longer dead-stripped out \
+         of libzeo.a (see -dead_strip/--gc-sections in backend/link.rs). \
+         First few: {sample:#?}",
+        program.len()
     );
 }

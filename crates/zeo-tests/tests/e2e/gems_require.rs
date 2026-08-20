@@ -1301,10 +1301,32 @@ fn rbconfig_shim_is_built_in() {
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(
-        result.stdout,
-        "4.0.0\ndarwin25\n\"\"\narm64-darwin25\nconstant\n"
+    let lines: Vec<&str> = result.stdout.lines().collect();
+    assert_eq!(lines.len(), 5, "stdout: {:?}", result.stdout);
+    assert_eq!(lines[0], "4.0.0");
+    assert_eq!(lines[2], "\"\"", "no EXEEXT on a unix host");
+    assert_eq!(lines[4], "constant");
+
+    // `host_os`/`arch` are the BUILD host's, so pinning them pinned this
+    // test to one machine: it read `darwin25`/`arm64-darwin25`, which is
+    // wrong on Linux and goes stale on the next macOS release. What the
+    // shim actually owes is that the two agree -- `arch` is
+    // `<cpu>-<host_os>` -- and that they name the platform this test is
+    // running on.
+    let (host_os, arch) = (lines[1], lines[3]);
+    let family = if cfg!(target_os = "macos") {
+        "darwin"
+    } else {
+        "linux"
+    };
+    assert!(
+        host_os.starts_with(family),
+        "host_os {host_os:?} does not name this platform"
     );
+    let cpu = arch
+        .strip_suffix(&format!("-{host_os}"))
+        .unwrap_or_else(|| panic!("arch {arch:?} must end with -{host_os}"));
+    assert!(!cpu.is_empty(), "arch {arch:?} names no cpu");
 }
 
 // A `require` need not be a top-level statement. Loading the file still runs
