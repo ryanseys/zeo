@@ -46,7 +46,6 @@ pub(crate) fn lower_counted(
         && params.keyword_rest.is_none()
         && params.block.is_none()
         && params.block_locals.is_empty()
-        && params.implicit_block_locals.is_empty()
         && params.required.len() <= 1)
     {
         return fx.unsupported(site, "this block's parameter shape");
@@ -55,6 +54,11 @@ pub(crate) fn lower_counted(
         return fx.unsupported(site, "a fused range-each in value position");
     }
     let param = params.required.first().cloned();
+    // A name first-assigned INSIDE the block is fresh on every invocation
+    // in ruby. This splice shares the enclosing scope, where the name was
+    // hoisted once, so each iteration resets it -- a conditional first
+    // assignment (`x = v if cond`) must not carry into the next.
+    let implicit_locals = params.implicit_block_locals.clone();
     let body = body.clone();
 
     let (start, end, end_cc) = match *counted {
@@ -118,6 +122,13 @@ pub(crate) fn lower_counted(
         let c = fx.b.ins().load(types::I64, fl, counter_addr, 0);
         let dst = fx.slot_addr(*ss, 0);
         ownership::write_assign(fx, &super::operand::Operand::Int(c), dst);
+    }
+    for name in &implicit_locals {
+        // A name a NESTED escaping block captured lives in a cell, whose
+        // freshness is that machinery's job, not a scalar reset.
+        if matches!(fx.locals.get(name), Some(super::ctx::Local::Slot(_))) {
+            ownership::write_local(fx, name, &super::operand::Operand::Nil);
+        }
     }
     fx.loops.push(LoopCtl {
         exit,
