@@ -499,7 +499,12 @@ pub(crate) fn collect_classes(
             class_methods.push(CmMethodSpec {
                 cm_row: true,
                 alias_of: scope.alias_of.clone(),
-                defining_class: scope.defining_class,
+                // A `def` written in a `class << self` body was written in
+                // the SINGLETON, so that is its cref -- which is where a
+                // `def` nested inside it installs, and what its bare
+                // constants and `Module.nesting` resolve through (rustc's
+                // `lexical` binding for a class-method body).
+                defining_class: scope.lexical_home.unwrap_or(scope.defining_class),
                 lexical_home: scope.lexical_home,
                 owner: target,
                 owner_name: name.clone(),
@@ -1052,7 +1057,12 @@ pub(crate) fn collect_classes(
             class_methods.push(CmMethodSpec {
                 cm_row: true,
                 alias_of: scope.alias_of.clone(),
-                defining_class: scope.defining_class,
+                // A `def` written in a `class << self` body was written in
+                // the SINGLETON, so that is its cref -- which is where a
+                // `def` nested inside it installs, and what its bare
+                // constants and `Module.nesting` resolve through (rustc's
+                // `lexical` binding for a class-method body).
+                defining_class: scope.lexical_home.unwrap_or(scope.defining_class),
                 lexical_home: scope.lexical_home,
                 owner: ClassId(idx as u32),
                 owner_name: name.clone(),
