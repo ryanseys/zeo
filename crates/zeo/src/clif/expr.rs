@@ -551,11 +551,37 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
         }
         HirNode::Yield(args) => {
             let args = args.clone();
+            // A trailing hash the yield spelled as KEYWORDS (`yield(v, **h)`)
+            // is dropped when `h` turns out empty, so its length is as much
+            // a runtime question as a splat's.
+            let kw_tail = args.last().and_then(|a| match a {
+                ArrayElem::Single(n)
+                    if fx
+                        .an
+                        .compiler
+                        .hir
+                        .has_flag(*n, crate::hir::NodeFlag::KWARGS_HASH) =>
+                {
+                    Some(*n)
+                }
+                ArrayElem::Single(_) | ArrayElem::Splat(_) => None,
+            });
             // `yield(*a)`: the length is a runtime question, so the list is
             // built as an Array and the block binds from its contents
             // (rustc's `__args` vector twin).
-            if args.iter().any(|a| matches!(a, ArrayElem::Splat(_))) {
-                let arr = super::call::build_array(fx, &args)?;
+            if kw_tail.is_some() || args.iter().any(|a| matches!(a, ArrayElem::Splat(_))) {
+                let fixed = &args[..args.len() - usize::from(kw_tail.is_some())];
+                let arr = super::call::build_array(fx, fixed)?;
+                let kw = match kw_tail {
+                    Some(n) => {
+                        let HirNode::HashLit(pairs) = &fx.an.compiler.hir[n] else {
+                            unreachable!("a KWARGS_HASH node is always a HashLit")
+                        };
+                        let pairs = pairs.clone();
+                        super::call::build_hash(fx, &pairs)?
+                    }
+                    None => fx.b.ins().iconst(fx.em.ptr, 0),
+                };
                 let blk = match fx.blk_ptr {
                     Some(b) => b,
                     None => fx.b.ins().iconst(fx.em.ptr, 0),
@@ -563,7 +589,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 let ss = fx.temp_slot();
                 let out = fx.slot_addr(ss, 0);
                 let status = fx
-                    .call("zeo_rt_yield_args", &[blk, arr, out])
+                    .call("zeo_rt_yield_args", &[blk, arr, kw, out])
                     .expect("yield_args returns a status");
                 fx.fallible(status);
                 fx.owned_created += 1;

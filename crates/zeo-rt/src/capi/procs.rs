@@ -269,13 +269,15 @@ pub unsafe extern "C" fn zeo_rt_yield(
     status_out(r, out)
 }
 
-/// `yield(*a)`: the argument list is only known at run time, so the
-/// caller hands the Array it built and the block binds from its contents
-/// through its ordinary parameter machinery.
+/// `yield(*a)` / `yield(v, **h)`: the argument list is only known at run
+/// time, so the caller hands the Array it built (plus the keyword Hash, or
+/// null) and the block binds from its contents through its ordinary
+/// parameter machinery.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zeo_rt_yield_args(
     blk: *const RubyValue,
     args: *const RubyValue,
+    kw: *const RubyValue,
     out: *mut RubyValue,
 ) -> i32 {
     if blk.is_null() {
@@ -285,7 +287,15 @@ pub unsafe extern "C" fn zeo_rt_yield_args(
     let RubyValue::Array(a) = (unsafe { &*args }) else {
         panic!("a splatted yield's args must be an Array")
     };
-    let full: Vec<RubyValue> = a.lock().iter().cloned().collect();
+    let mut full: Vec<RubyValue> = a.lock().iter().cloned().collect();
+    // A `**h` the yield spelled as KEYWORDS contributes nothing when it is
+    // empty at run time: the block sees one fewer argument, not a `{}`.
+    if !kw.is_null() {
+        let h = unsafe { &*kw };
+        if crate::value::collections::hash_len(&h.as_hash_unchecked()) != 0 {
+            full.push(h.clone());
+        }
+    }
     let r = match unsafe { &*blk } {
         RubyValue::Proc(p) => p.call(&full),
         other => Err(crate::builtins::type_error!(
