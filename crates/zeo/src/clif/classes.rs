@@ -40,6 +40,9 @@ pub(crate) struct ObjMethodSpec {
     pub accessor: Option<(usize, AccessorKind)>,
     pub body_fn: Option<cranelift_module::FuncId>,
     pub hir_params: crate::hir::Params,
+    /// The name this method was ALIASED from -- reflection's
+    /// `Method#original_name`; `None` for an ordinary `def`.
+    pub alias_of: Option<String>,
     pub has_blk: bool,
     pub ruby2_keywords: bool,
     pub dyn_ivars: bool,
@@ -78,6 +81,9 @@ pub(crate) struct CmMethodSpec {
     pub tramp: cranelift_module::FuncId,
     pub body_fn: cranelift_module::FuncId,
     pub hir_params: crate::hir::Params,
+    /// The name this method was ALIASED from -- reflection's
+    /// `Method#original_name`; `None` for an ordinary `def`.
+    pub alias_of: Option<String>,
     pub has_blk: bool,
     pub ruby2_keywords: bool,
 }
@@ -113,6 +119,9 @@ pub(crate) struct ModMethodSpec {
     pub tramp: cranelift_module::FuncId,
     pub body_fn: cranelift_module::FuncId,
     pub hir_params: crate::hir::Params,
+    /// The name this method was ALIASED from -- reflection's
+    /// `Method#original_name`; `None` for an ordinary `def`.
+    pub alias_of: Option<String>,
     pub has_blk: bool,
     pub ruby2_keywords: bool,
     pub dyn_ivars: bool,
@@ -379,6 +388,7 @@ pub(crate) fn collect_classes(
                     is_own: class.own_methods.contains(&entry.def),
                     super_target_only: false,
                     dyn_ivars: true,
+                    alias_of: scope.alias_of.clone(),
                     defining_class: scope.defining_class,
                     owner: ClassId(idx as u32),
                     owner_name: name.clone(),
@@ -396,6 +406,7 @@ pub(crate) fn collect_classes(
                 // A value-channel row on the builtin's own id.
                 module_methods.push(ModMethodSpec {
                     dyn_ivars: true,
+                    alias_of: scope.alias_of.clone(),
                     defining_class: scope.defining_class,
                     owner: ClassId(idx as u32),
                     owner_name: name.clone(),
@@ -454,6 +465,7 @@ pub(crate) fn collect_classes(
             }
             class_methods.push(CmMethodSpec {
                 cm_row: true,
+                alias_of: scope.alias_of.clone(),
                 defining_class: scope.defining_class,
                 owner: ClassId(idx as u32),
                 owner_name: name.clone(),
@@ -687,6 +699,7 @@ pub(crate) fn collect_classes(
                     // includer's materialized object-channel copy keeps the
                     // slot-indexed fast path).
                     dyn_ivars: true,
+                    alias_of: scope.alias_of.clone(),
                     defining_class: scope.defining_class,
                     owner: ClassId(idx as u32),
                     owner_name: name.clone(),
@@ -791,6 +804,7 @@ pub(crate) fn collect_classes(
                 // resolve through `ivar_set_dyn`'s Class arm (civars).
                 module_methods.push(ModMethodSpec {
                     dyn_ivars: true,
+                    alias_of: scope.alias_of.clone(),
                     defining_class: scope.defining_class,
                     owner: ClassId(idx as u32),
                     owner_name: name.clone(),
@@ -809,6 +823,7 @@ pub(crate) fn collect_classes(
                 is_own: class.own_methods.contains(&entry.def),
                 super_target_only: false,
                 dyn_ivars: native_backed,
+                alias_of: scope.alias_of.clone(),
                 defining_class: scope.defining_class,
                 owner: ClassId(idx as u32),
                 owner_name: name.clone(),
@@ -894,6 +909,7 @@ pub(crate) fn collect_classes(
                     is_own: true,
                     super_target_only: true,
                     dyn_ivars: false,
+                    alias_of: scope.alias_of.clone(),
                     defining_class: scope.defining_class,
                     owner: ClassId(idx as u32),
                     owner_name: name.clone(),
@@ -965,6 +981,7 @@ pub(crate) fn collect_classes(
             cm_def_tramps.push((entry.def, tramp));
             class_methods.push(CmMethodSpec {
                 cm_row: true,
+                alias_of: scope.alias_of.clone(),
                 defining_class: scope.defining_class,
                 owner: ClassId(idx as u32),
                 owner_name: name.clone(),
@@ -1082,6 +1099,7 @@ pub(crate) fn collect_classes(
             sst.push((idx as u32, m.0, mname.clone(), tramp));
             class_methods.push(CmMethodSpec {
                 cm_row: false,
+                alias_of: scope.alias_of.clone(),
                 defining_class: scope.defining_class,
                 owner: ClassId(idx as u32),
                 owner_name: name.clone(),

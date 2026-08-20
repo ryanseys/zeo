@@ -658,6 +658,53 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
                 flag: 0,
             }),
     );
+    // Reflection rows: one per emitted method scope, in the order the
+    // tables above register them.
+    let mut meta_rows: Vec<statics::MetaRowSpec> = Vec::new();
+    for d in &defs {
+        meta_rows.push(meta_row(
+            analyzed,
+            0,
+            false,
+            &d.name,
+            &d.hir_params,
+            d.node,
+            d.alias_of.as_deref(),
+        ));
+    }
+    for m in &obj_methods {
+        meta_rows.push(meta_row(
+            analyzed,
+            m.owner.0,
+            false,
+            &m.name,
+            &m.hir_params,
+            m.node,
+            m.alias_of.as_deref(),
+        ));
+    }
+    for m in &mod_methods {
+        meta_rows.push(meta_row(
+            analyzed,
+            m.owner.0,
+            false,
+            &m.name,
+            &m.hir_params,
+            m.node,
+            m.alias_of.as_deref(),
+        ));
+    }
+    for m in cm_methods.iter().filter(|m| m.cm_row) {
+        meta_rows.push(meta_row(
+            analyzed,
+            m.owner.0,
+            true,
+            &m.name,
+            &m.hir_params,
+            m.node,
+            m.alias_of.as_deref(),
+        ));
+    }
     let desc = statics::define_desc(
         em,
         analyzed,
@@ -670,6 +717,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
         &cm_rows,
         &reg_rows,
         &foreign,
+        &meta_rows,
     )?;
     let main = define_main(em, desc)?;
     statics::define_rodata(em)?;
@@ -897,6 +945,7 @@ pub(crate) struct DefSpec {
     visibility: crate::hir::Visibility,
     node: Option<crate::hir::NodeId>,
     has_blk: bool,
+    alias_of: Option<String>,
 }
 
 /// The M1-1 parameter eligibility shared by top-level and class methods:
@@ -972,9 +1021,86 @@ fn collect_methods(em: &mut Emitter, analyzed: &Analyzed) -> Result<Vec<DefSpec>
             visibility: scope.visibility,
             node: scope.def_node,
             has_blk,
+            alias_of: scope.alias_of.clone(),
         });
     }
     Ok(out)
+}
+
+/// One method scope's reflection row: what ruby can ask back about a `def`
+/// that its function pointer cannot answer -- the signature
+/// (`#arity`/`#parameters`), the `def` keyword's own line
+/// (`#source_location`, and `#inspect`'s tail), and the name an alias
+/// copied from.
+fn meta_row(
+    analyzed: &Analyzed,
+    class: u32,
+    singleton: bool,
+    name: &str,
+    params: &crate::hir::Params,
+    node: Option<crate::hir::NodeId>,
+    alias_of: Option<&str>,
+) -> statics::MetaRowSpec {
+    let (file, line) = node
+        .and_then(|n| crate::codegen::source_location(&analyzed.compiler, n))
+        .map_or((String::new(), 0), |(f, l)| (f.to_string(), l));
+    statics::MetaRowSpec {
+        class,
+        singleton,
+        name: name.to_string(),
+        params: param_entries(params),
+        file,
+        line,
+        aliased_from: alias_of.unwrap_or_default().to_string(),
+    }
+}
+
+/// A method's parameters as ruby reports them (`Method#parameters`): the
+/// declared order, with an anonymous rest/keyrest/block named for its own
+/// sigil -- ruby prints `def m(*)` as `[:rest, :*]`, and a `__`-prefixed
+/// name IS anonymous (the internal one lowering gave a bare sigil).
+fn param_entries(params: &crate::hir::Params) -> Vec<(u8, String)> {
+    use crate::hir::KeywordParam;
+    use zeo_abi::abi;
+    fn named(kind: u8, name: &str) -> (u8, String) {
+        if name.starts_with("__") {
+            (kind, String::new())
+        } else {
+            (kind, name.to_string())
+        }
+    }
+    fn sigil(kind: u8, name: &Option<String>, s: &str) -> (u8, String) {
+        match name {
+            Some(n) if !n.starts_with("__") => (kind, n.clone()),
+            _ => (kind, s.to_string()),
+        }
+    }
+    let mut out = Vec::new();
+    for r in &params.required {
+        out.push(named(abi::PARAM_REQ, r));
+    }
+    for (o, _) in &params.optional {
+        out.push(named(abi::PARAM_OPT, o));
+    }
+    if let Some(rest) = &params.rest {
+        out.push(sigil(abi::PARAM_REST, rest, "*"));
+    }
+    for p in &params.post {
+        out.push(named(abi::PARAM_REQ, p));
+    }
+    for kw in &params.keywords {
+        match kw {
+            KeywordParam::Required(n) => out.push(named(abi::PARAM_KEYREQ, n)),
+            KeywordParam::Optional(n, _) => out.push(named(abi::PARAM_KEY, n)),
+        }
+    }
+    if let Some(kwrest) = &params.keyword_rest {
+        out.push(sigil(abi::PARAM_KEYREST, kwrest, "**"));
+    }
+    if let Some(block) = &params.block {
+        out.push(sigil(abi::PARAM_BLOCK, block, "&"));
+    }
+    out
 }
 
 /// What `define_method_body` compiles: any owner's ordinary method.

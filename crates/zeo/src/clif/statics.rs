@@ -10,7 +10,8 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module};
 use std::collections::HashMap;
 use zeo_abi::abi::{
-    self, ClassDesc, CmRow, ForeignRow, ObjRow, ProgramDesc, RegRow, Str, VisRow, VmRow,
+    self, ClassDesc, CmRow, ForeignRow, MetaRowC, ObjRow, ParamC, ProgramDesc, RegRow, Str, VisRow,
+    VmRow,
 };
 
 /// The program's symbol table: names in first-intern order; `zeo_unit_init`
@@ -761,6 +762,151 @@ fn define_classes(
     Ok(Some(id))
 }
 
+/// One method's reflection row: the signature, the `def` keyword's own
+/// line, and the name an alias came from -- everything `#arity`,
+/// `#parameters`, `#source_location` and `#inspect` read back.
+pub(crate) struct MetaRowSpec {
+    pub class: u32,
+    pub singleton: bool,
+    pub name: String,
+    /// `(kind, name)` in ruby's own report order; an empty name is a bare
+    /// `*` a C function would report.
+    pub params: Vec<(u8, String)>,
+    /// The `def`'s file and line; empty file = no source location.
+    pub file: String,
+    pub line: u32,
+    /// The original name when this row is an alias; empty otherwise.
+    pub aliased_from: String,
+}
+
+/// The `zeo_meta_rows` table + its one shared parameter array.
+fn define_meta_rows(em: &mut Emitter, rows: &[MetaRowSpec]) -> Result<Option<DataId>, String> {
+    if rows.is_empty() {
+        return Ok(None);
+    }
+    let size = std::mem::size_of::<MetaRowC>();
+    let psize = std::mem::size_of::<ParamC>();
+    let id = em
+        .module
+        .declare_data("zeo_meta_rows", Linkage::Local, false, false)
+        .map_err(|e| format!("declaring zeo_meta_rows: {e}"))?;
+    let names: Vec<u32> = rows
+        .iter()
+        .map(|r| em.intern_rodata(r.name.as_bytes()))
+        .collect();
+    let files: Vec<u32> = rows
+        .iter()
+        .map(|r| em.intern_rodata(r.file.as_bytes()))
+        .collect();
+    let aliases: Vec<u32> = rows
+        .iter()
+        .map(|r| em.intern_rodata(r.aliased_from.as_bytes()))
+        .collect();
+    // One shared array holds every row's parameter run; each row points
+    // into it at its own offset.
+    let mut param_names: Vec<Vec<u32>> = Vec::with_capacity(rows.len());
+    let mut param_offsets: Vec<usize> = Vec::with_capacity(rows.len());
+    let mut n_params = 0usize;
+    for r in rows {
+        param_offsets.push(n_params * psize);
+        n_params += r.params.len();
+        param_names.push(
+            r.params
+                .iter()
+                .map(|(_, n)| em.intern_rodata(n.as_bytes()))
+                .collect(),
+        );
+    }
+    let params_id = if n_params == 0 {
+        None
+    } else {
+        let pid = em
+            .module
+            .declare_data("zeo_meta_params", Linkage::Local, false, false)
+            .map_err(|e| format!("declaring zeo_meta_params: {e}"))?;
+        let mut pd = DataDescription::new();
+        let mut pbytes = vec![0u8; psize * n_params];
+        let mut i = 0usize;
+        for r in rows {
+            for (kind, name) in &r.params {
+                let base = i * psize;
+                pbytes[base + std::mem::offset_of!(ParamC, kind)] = *kind;
+                let at = base + std::mem::offset_of!(ParamC, name) + std::mem::offset_of!(Str, len);
+                pbytes[at..at + 8].copy_from_slice(&(name.len() as u64).to_le_bytes());
+                i += 1;
+            }
+        }
+        pd.define(pbytes.into_boxed_slice());
+        pd.set_align(8);
+        let rod = em.module.declare_data_in_data(em.rodata_id, &mut pd);
+        let mut i = 0usize;
+        for offs in &param_names {
+            for &off in offs {
+                let at = (i * psize
+                    + std::mem::offset_of!(ParamC, name)
+                    + std::mem::offset_of!(Str, ptr)) as u32;
+                pd.write_data_addr(at, rod, i64::from(off));
+                i += 1;
+            }
+        }
+        em.module
+            .define_data(pid, &pd)
+            .map_err(|e| format!("defining zeo_meta_params: {e}"))?;
+        Some(pid)
+    };
+    let mut data = DataDescription::new();
+    let mut bytes = vec![0u8; size * rows.len()];
+    for (i, r) in rows.iter().enumerate() {
+        let base = i * size;
+        let at = base + std::mem::offset_of!(MetaRowC, class);
+        bytes[at..at + 4].copy_from_slice(&r.class.to_le_bytes());
+        bytes[base + std::mem::offset_of!(MetaRowC, singleton)] = u8::from(r.singleton);
+        let at = base + std::mem::offset_of!(MetaRowC, line);
+        bytes[at..at + 4].copy_from_slice(&r.line.to_le_bytes());
+        for (field, len) in [
+            (std::mem::offset_of!(MetaRowC, name), r.name.len()),
+            (std::mem::offset_of!(MetaRowC, file), r.file.len()),
+            (
+                std::mem::offset_of!(MetaRowC, aliased_from),
+                r.aliased_from.len(),
+            ),
+        ] {
+            let at = base + field + std::mem::offset_of!(Str, len);
+            bytes[at..at + 8].copy_from_slice(&(len as u64).to_le_bytes());
+        }
+        let n_at = base + std::mem::offset_of!(MetaRowC, n_params);
+        bytes[n_at..n_at + 8].copy_from_slice(&(r.params.len() as u64).to_le_bytes());
+    }
+    data.define(bytes.into_boxed_slice());
+    data.set_align(8);
+    if let Some(pid) = params_id {
+        let pgv = em.module.declare_data_in_data(pid, &mut data);
+        for (i, r) in rows.iter().enumerate() {
+            if r.params.is_empty() {
+                continue;
+            }
+            let at = (i * size + std::mem::offset_of!(MetaRowC, params)) as u32;
+            data.write_data_addr(at, pgv, param_offsets[i] as i64);
+        }
+    }
+    let rod = em.module.declare_data_in_data(em.rodata_id, &mut data);
+    for i in 0..rows.len() {
+        let base = i * size;
+        for (field, off) in [
+            (std::mem::offset_of!(MetaRowC, name), names[i]),
+            (std::mem::offset_of!(MetaRowC, file), files[i]),
+            (std::mem::offset_of!(MetaRowC, aliased_from), aliases[i]),
+        ] {
+            let at = (base + field + std::mem::offset_of!(Str, ptr)) as u32;
+            data.write_data_addr(at, rod, i64::from(off));
+        }
+    }
+    em.module
+        .define_data(id, &data)
+        .map_err(|e| format!("defining zeo_meta_rows: {e}"))?;
+    Ok(Some(id))
+}
+
 /// The `zeo_vis_rows` table.
 fn define_vis_rows(em: &mut Emitter, rows: &[VisRowSpec]) -> Result<Option<DataId>, String> {
     if rows.is_empty() {
@@ -819,6 +965,7 @@ pub(crate) fn define_desc(
     cm_rows: &[CmRowSpec],
     reg_rows: &[RegRowSpec],
     foreign_rows: &[(u32, String)],
+    meta_rows: &[MetaRowSpec],
 ) -> Result<DataId, String> {
     let vm_table = define_vm_rows(em, vm_rows)?;
     let vis_table = define_vis_rows(em, vis_rows)?;
@@ -827,6 +974,7 @@ pub(crate) fn define_desc(
     let cm_table = define_cm_rows(em, cm_rows)?;
     let reg_table = define_reg_rows(em, reg_rows)?;
     let foreign_table = define_foreign_rows(em, foreign_rows)?;
+    let meta_table = define_meta_rows(em, meta_rows)?;
     let hir = &analyzed.compiler.hir;
     let mut loaded: Vec<String> = hir
         .loaded_files
@@ -930,6 +1078,11 @@ pub(crate) fn define_desc(
         std::mem::offset_of!(ProgramDesc, n_reg_rows),
         reg_rows.len() as u64,
     );
+    put_u64(
+        &mut buf,
+        std::mem::offset_of!(ProgramDesc, n_meta_rows),
+        meta_rows.len() as u64,
+    );
     desc.define(buf.into_boxed_slice());
     desc.set_align(8);
     let tables_gv = em.module.declare_data_in_data(tables_id, &mut desc);
@@ -970,6 +1123,10 @@ pub(crate) fn define_desc(
     if let Some(ct) = cm_table {
         let gv = em.module.declare_data_in_data(ct, &mut desc);
         desc.write_data_addr(std::mem::offset_of!(ProgramDesc, cm_rows) as u32, gv, 0);
+    }
+    if let Some(mt) = meta_table {
+        let gv = em.module.declare_data_in_data(mt, &mut desc);
+        desc.write_data_addr(std::mem::offset_of!(ProgramDesc, meta_rows) as u32, gv, 0);
     }
     if let Some(rt) = reg_table {
         let gv = em.module.declare_data_in_data(rt, &mut desc);
