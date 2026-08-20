@@ -1114,22 +1114,37 @@ pub(crate) fn send_with_block_ptr_ops(
     let argc_v = fx.b.ins().iconst(fx.em.ptr, args.len() as i64);
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
-    let status = if recv_ptr.1 {
-        let caller = super::call::caller_class(fx, bypass);
-        fx.call(
-            "zeo_rt_send_value_explicit_in",
-            &[
-                zero_box, recv_ptr.0, sym, argv_ptr, argc_v, blk_ptr, caller, out,
-            ],
-        )
-        .expect("send returns a status")
+    // Same caching rule as a blockless send (see `call::static_caller`):
+    // the site's caller class is a per-site constant, so a body whose
+    // `self` only the run time knows keeps the uncached entry. An implicit
+    // receiver caches under FCALL.
+    let explicit = recv_ptr.1;
+    let cacheable = if explicit {
+        super::call::static_caller(fx, bypass)
     } else {
-        fx.call(
-            "zeo_rt_send_value_in",
-            &[zero_box, recv_ptr.0, sym, argv_ptr, argc_v, blk_ptr, out],
-        )
-        .expect("send returns a status")
+        Some(super::call::FCALL)
     };
+    let status = match cacheable {
+        Some(caller) => {
+            let cache = fx.callsite_ptr(caller);
+            fx.call(
+                "zeo_rt_send_value_cached",
+                &[
+                    cache, zero_box, recv_ptr.0, sym, argv_ptr, argc_v, blk_ptr, out,
+                ],
+            )
+        }
+        None => {
+            let caller = super::call::caller_class(fx, bypass);
+            fx.call(
+                "zeo_rt_send_value_explicit_in",
+                &[
+                    zero_box, recv_ptr.0, sym, argv_ptr, argc_v, blk_ptr, caller, out,
+                ],
+            )
+        }
+    }
+    .expect("send returns a status");
     catch_break(fx, status, out);
     fx.owned_created += 1;
     Ok(Operand::Slot {
