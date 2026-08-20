@@ -1588,6 +1588,11 @@ fn class_body_site(
         let cid = fx.b.ins().iconst(types::I32, i64::from(call.class));
         fx.call("zeo_rt_reveal_class", &[cid]);
     }
+    // The constant is set, so ruby announces it -- before `inherited` and
+    // before the body, the order `vm_declare_class` hard-codes.
+    if let Some((owner, name)) = &call.const_added {
+        super::expr::const_added_announce(fx, *owner, name)?;
+    }
     if let Some((owner, name, file, line)) = &call.const_loc {
         let owner_v = fx.b.ins().iconst(types::I32, i64::from(*owner));
         let (nptr, nlen) = name_pair(fx, name);

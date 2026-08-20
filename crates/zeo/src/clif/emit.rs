@@ -1010,6 +1010,9 @@ pub(crate) struct ClassBodyCall {
     pub func: Option<FuncId>,
     /// `(owner, leaf, file, line)` -- recorded only by the DECLARING site.
     pub const_loc: Option<(u32, String, String, u32)>,
+    /// `(owner, leaf)` -- the `const_added` this declaration announces, from
+    /// the DECLARING site only. `None` for a reopen, which creates nothing.
+    pub const_added: Option<(u32, String)>,
     /// The superclass to announce this declaration to (`Super.inherited(C)`)
     /// -- `None` unless this site DECLARES the class and the superclass
     /// chain answers `inherited` by then.
@@ -1135,14 +1138,16 @@ fn collect_class_bodies(
         // `class Foo; end` DEFINES a constant, so ruby announces it; a
         // hook observing that announcement is not emitted yet.
         let decl_owner = ci.lexical_parent.unwrap_or(crate::compiler::OBJECT_CLASS);
-        if declares
+        // `class Foo; end` DEFINES a constant, so ruby announces it on the
+        // lexically enclosing module -- only from the site that CREATES it.
+        let const_added = (declares
             && (compiler.global_def_hooks.contains("const_added")
                 || compiler
                     .class_method_in_chain(decl_owner, "const_added")
-                    .is_some())
-        {
-            return refuse("a class declaration observed by `const_added`");
-        }
+                    .is_some_and(|(_, hook)| {
+                        crate::codegen::hook_installed_before(compiler, hook, site.def_node)
+                    })))
+        .then(|| (decl_owner.0, compiler.leaf_name(site.class).to_string()));
         // `Super.inherited(C)` fires when the class is CREATED, so only its
         // FIRST site announces; a reopen creates nothing. A hook written
         // BELOW this declaration is not installed yet and stays silent.
@@ -1220,6 +1225,7 @@ fn collect_class_bodies(
             class: site.class.0,
             func,
             const_loc,
+            const_added,
             inherited,
             reveal: ci.runtime_conditional,
             freeze_guard,

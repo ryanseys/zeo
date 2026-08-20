@@ -1189,17 +1189,6 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 .copied()
                 .unwrap_or(owner_class)
                 .0;
-            // A `const_added` hook would have to fire after the write
-            // (rustc's `emit_const_added`) -- refuse until that lands.
-            if fx.an.compiler.global_def_hooks.contains("const_added")
-                || fx
-                    .an
-                    .compiler
-                    .class_method_in_chain(zeo_abi::ClassId(owner), "const_added")
-                    .is_some()
-            {
-                return fx.unsupported(id, "a constant write observed by `const_added`");
-            }
             let Some((file, line)) = crate::codegen::source_location(&fx.an.compiler, id) else {
                 return fx.unsupported(id, "a span-less constant write");
             };
@@ -1217,6 +1206,10 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 "zeo_rt_const_set_at",
                 &[owner_v, nptr, nlen, ptr, fptr, flen, line_v],
             );
+            // Ruby announces the constant AFTER the write, so the hook body
+            // can already read it -- and on every assignment, re-assignment
+            // included.
+            const_added_send(fx, owner, &name, Some(id))?;
             Ok(Operand::Ptr {
                 addr: ptr,
                 owned: false,
@@ -2632,6 +2625,67 @@ fn defined_rest(fx: &mut Fx, site: NodeId, inner: NodeId) -> Result<Operand, Str
 /// at the toplevel), looked through a `class << self` surrogate, then
 /// resolved through the analyzer's `cvar_owners` claim map (a subclass
 /// writing a parent-declared cvar stores on the parent).
+/// `owner.const_added(:name)` -- ruby announces a constant the moment it
+/// becomes readable. Emits nothing unless the owner's chain answers the
+/// hook by this point in the file (`Module`'s own default is a no-op), so
+/// a program without one is unchanged.
+pub(crate) fn const_added_send(
+    fx: &mut Fx,
+    owner: u32,
+    name: &str,
+    at: Option<NodeId>,
+) -> Result<(), String> {
+    // A `class Module; def const_added` reopen answers for every module,
+    // and no per-class scan can see it -- `Compiler::global_def_hooks`.
+    if !fx.an.compiler.global_def_hooks.contains("const_added") {
+        let Some((_, hook)) = fx
+            .an
+            .compiler
+            .class_method_in_chain(zeo_abi::ClassId(owner), "const_added")
+        else {
+            return Ok(());
+        };
+        if !crate::codegen::hook_installed_before(&fx.an.compiler, hook, at) {
+            return Ok(());
+        }
+    }
+    const_added_announce(fx, owner, name)
+}
+
+/// [`const_added_send`] with the hook check already made by the caller.
+pub(crate) fn const_added_announce(fx: &mut Fx, owner: u32, name: &str) -> Result<(), String> {
+    let recv = class_immediate(fx, crate::compiler::ClassId(owner));
+    let recv_ptr = ownership::borrow_ptr(fx, &recv);
+    let arg = symbol_value(fx, name)?;
+    let argv = ownership::borrow_ptr(fx, &arg);
+    if arg.owned() {
+        ownership::pool_owned(fx, argv, arg.tag());
+    }
+    let sym = fx.sym_id("const_added");
+    let ss = fx.temp_slot();
+    let out = fx.slot_addr(ss, 0);
+    let zero_box = fx.b.ins().iconst(types::I32, 0);
+    let argc = fx.b.ins().iconst(fx.em.ptr, 1);
+    let null = fx.b.ins().iconst(fx.em.ptr, 0);
+    let status = fx
+        .call(
+            "zeo_rt_send_value_in",
+            &[zero_box, recv_ptr, sym, argv, argc, null, out],
+        )
+        .expect("send returns a status");
+    fx.fallible(status);
+    fx.owned_created += 1;
+    ownership::discard(
+        fx,
+        Operand::Slot {
+            ss,
+            owned: true,
+            tag: TagInfo::Unknown,
+        },
+    );
+    Ok(())
+}
+
 pub(crate) fn cvar_owner(fx: &Fx, name: &str) -> u32 {
     // Where the code was WRITTEN, never the receiver that reaches it: a
     // class method inherited by a subclass still reads its own class's
