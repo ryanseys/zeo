@@ -314,9 +314,6 @@ pub fn thread_new(block: RubyValue, args: Vec<RubyValue>) -> RubyValue {
         crate::ractor::install_current_ractor(parent_ractor);
         CURRENT.with(|c| *c.lock() = Some(for_thread.clone()));
         for_thread.native_id.store(native_id(), Ordering::Relaxed);
-        // The creator is waiting on this; a dropped receiver (the creator
-        // gave up) is not an error.
-        let _ = started_tx.send(());
         // The frame stack needs no management here: this closure runs on
         // a brand-new OS thread whose `frames` TLS starts empty.
         let result = body.call(&args);
@@ -344,7 +341,19 @@ pub fn thread_new(block: RubyValue, args: Vec<RubyValue>) -> RubyValue {
         .stack_size(8 * 1024 * 1024)
         .spawn(move || {
             let _ctx = crate::gvl::install_ctx();
-            let _held = crate::gvl::process_gvl().hold();
+            // Under an ARMED Gvl the creator is still holding it here, so
+            // the latch has to be released BEFORE the wait for it -- and
+            // it need not be later, because a real Gvl makes `Thread.pass`
+            // the handoff CRuby's is. In the parallel mode `hold` is free,
+            // so the latch waits for the body to be genuinely runnable.
+            let gvl = crate::gvl::process_gvl();
+            if gvl.is_armed() {
+                let _ = started_tx.send(());
+                let _held = gvl.hold();
+                return run();
+            }
+            let _held = gvl.hold();
+            let _ = started_tx.send(());
             run()
         })
         .expect("spawning a Ruby Thread's OS thread");
