@@ -1593,9 +1593,14 @@ fn cref_chain<'a>(fx: &'a Fx) -> &'a [crate::compiler::ClassId] {
 
 /// The class a LEXICAL question resolves against: the singleton surrogate
 /// when the body was written in a constant-bearing `class << self`, else the
-/// owner. `Scope::lexical_home`'s rule, and rustc's `lexical` binding.
+/// class the body was WRITTEN in. `Scope::lexical_home`'s rule over rustc's
+/// `cref_chain`, which reads `defining_class`.
+///
+/// The owner is the last resort, not the first: a method materialized onto
+/// a subclass or an includer keeps the cref it was written in, so `rescue
+/// Boom` inside `M::Base#go` still names `M::Boom` when `Sub` runs it.
 pub(crate) fn lexical_class(fx: &Fx) -> Option<crate::compiler::ClassId> {
-    fx.lexical_home.or(fx.method_class)
+    fx.lexical_home.or(fx.defining_class).or(fx.method_class)
 }
 
 /// Resolve a class name against the current cref and BOX (rustc's
