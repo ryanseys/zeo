@@ -268,14 +268,21 @@ pub unsafe extern "C" fn zeo_rt_const_set_at(
     crate::constants::const_set_at(owner, name, unsafe { &*v }.clone(), file, line);
 }
 
+/// `zeo_rt_const_get_cref`'s `flags`: the owner's chain defines a user
+/// `const_missing`, so a miss DISPATCHES it.
+pub const CONST_CREF_HOOK: u8 = 1;
+/// `zeo_rt_const_get_cref`'s `flags`: the read runs inside a BOX, so the
+/// tail past the box's surrogate reaches the MASTER constants.
+pub const CONST_CREF_MASTER: u8 = 2;
+
 /// A BARE constant read resolved through its compile-time cref chain:
 /// `ids` = the owner first, then each enclosing cref scope, then the top
 /// (the emitter's `emit_const_read` order); each entry searches its own
 /// ancestry (`const_get`). Miss = the `const_miss_signal` NameError whose
 /// message carries the pre-qualified name (`Store::Cart::DEFAULT` for a
-/// nested miss, bare at the top level), or -- when `hook` is set because
-/// the owner's chain defines one -- the `const_missing` dispatch whose
-/// answer this read then takes.
+/// nested miss, bare at the top level), or -- when [`CONST_CREF_HOOK`] is
+/// set because the owner's chain defines one -- the `const_missing`
+/// dispatch whose answer this read then takes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zeo_rt_const_get_cref(
     ids: *const u32,
@@ -284,7 +291,7 @@ pub unsafe extern "C" fn zeo_rt_const_get_cref(
     name_len: usize,
     qualified: *const u8,
     qualified_len: usize,
-    hook: u8,
+    flags: u8,
     out: *mut RubyValue,
 ) -> i32 {
     let name = unsafe { super::str_slice(name, name_len) };
@@ -296,7 +303,19 @@ pub unsafe extern "C" fn zeo_rt_const_get_cref(
             return STATUS_OK;
         }
     }
-    if hook != 0 {
+    // Inside a BOX the chain ends at the box's own surrogate, and the tail
+    // past it reaches only the MASTER constants -- the ones installed
+    // before the main program ran. Falling through to `Object` would hand
+    // the box main's own top-level constants, which a box (a copy of
+    // master) never sees.
+    if flags & CONST_CREF_MASTER != 0
+        && let Some(v) = crate::constants::const_get_master(name)
+    {
+        super::leakcheck::created(&v);
+        unsafe { out.write(v) };
+        return STATUS_OK;
+    }
+    if flags & CONST_CREF_HOOK != 0 {
         return status_out(crate::dispatch::const_miss(ClassId(ids[0]), name), out);
     }
     let qualified = unsafe { super::str_slice(qualified, qualified_len) };

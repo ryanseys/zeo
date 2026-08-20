@@ -1391,9 +1391,9 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                     None => return runtime_scope_const_write(fx, id, s, &name, value),
                 },
                 // A bare `NAME =` is owned by the lexically enclosing
-                // class/module (the emitting context); `Object` at the top
-                // level -- rustc's `const_owner_id_opt` fallback.
-                None => fx.method_class.unwrap_or(crate::compiler::OBJECT_CLASS),
+                // class/module (the emitting context); the box's top level
+                // otherwise -- rustc's `const_owner_id_opt` fallback.
+                None => fx.method_class.unwrap_or_else(|| box_top(fx)),
             };
             let owner = fx
                 .an
@@ -1591,6 +1591,20 @@ fn cref_chain<'a>(fx: &'a Fx) -> &'a [crate::compiler::ClassId] {
         .unwrap_or(&[])
 }
 
+/// The class a cref-less constant belongs to: `Object`, or -- inside a BOX
+/// -- the box's own SURROGATE. A box is a copy of MASTER, so its top-level
+/// constants must not land in (or be read from) main's `Object` table;
+/// rustc's `box_top_owner` draws the same line.
+pub(crate) fn box_top(fx: &Fx) -> crate::compiler::ClassId {
+    if fx.box_id == 0 {
+        return crate::compiler::OBJECT_CLASS;
+    }
+    fx.an
+        .compiler
+        .box_surrogate(fx.box_id)
+        .expect("analyze registers a surrogate for every allocated box")
+}
+
 /// The class a LEXICAL question resolves against: the singleton surrogate
 /// when the body was written in a constant-bearing `class << self`, else the
 /// class the body was WRITTEN in. `Scope::lexical_home`'s rule over rustc's
@@ -1704,13 +1718,17 @@ pub(crate) fn const_read(fx: &mut Fx, id: NodeId, name: &str) -> Result<Operand,
     // compile-time claim map, then every enclosing cref scope, then the
     // top -- one runtime walk through `const_get_cref`, whose miss raises
     // the NameError with the cref-qualified message.
-    let compiler = &fx.an.compiler;
+    // Inside a BOX the top level is the box's own SURROGATE -- both where
+    // a cref-less read starts and where the chain ends. The tail past it
+    // reaches the MASTER constants and stops (the flag below), never
+    // main's own top-level table.
+    let top = box_top(fx);
     let defining = if top_level {
-        crate::compiler::OBJECT_CLASS
+        top
     } else {
-        lexical_class(fx).unwrap_or(crate::compiler::OBJECT_CLASS)
+        lexical_class(fx).unwrap_or(top)
     };
-    let top = crate::compiler::OBJECT_CLASS;
+    let compiler = &fx.an.compiler;
     let owner = compiler
         .class(defining)
         .const_owners
@@ -1735,7 +1753,7 @@ pub(crate) fn const_read(fx: &mut Fx, id: NodeId, name: &str) -> Result<Operand,
     if owner != top {
         chain.push(top.0);
     }
-    let qualified = if defining == crate::compiler::OBJECT_CLASS {
+    let qualified = if defining == top {
         name.to_string()
     } else {
         format!("{}::{name}", compiler.fq_name(defining))
@@ -1746,7 +1764,8 @@ pub(crate) fn const_read(fx: &mut Fx, id: NodeId, name: &str) -> Result<Operand,
     let n_ids = fx.b.ins().iconst(fx.em.ptr, chain.len() as i64);
     let (nptr, nlen) = rodata_name(fx, name);
     let (qptr, qlen) = rodata_name(fx, &qualified);
-    let hook_v = fx.b.ins().iconst(types::I8, i64::from(hook));
+    let flags = u8::from(hook) | if fx.box_id == 0 { 0 } else { 2 };
+    let hook_v = fx.b.ins().iconst(types::I8, i64::from(flags));
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
     let status = fx
@@ -3407,7 +3426,11 @@ pub(crate) fn binding_value_with_self(
     let cells_ptr = super::statics::cell_array(fx, &shared);
     let (fptr, flen) = rodata_name(fx, file);
     let line_v = fx.b.ins().iconst(types::I32, i64::from(line));
-    let box_v = fx.b.ins().iconst(types::I32, 0);
+    // The binding carries THIS scope's box: a `box.eval(source)` with a
+    // non-literal source lowers to a receiverless `eval` inside a
+    // `BoxScope`, and the box is what makes its globals and constants the
+    // BOX's rather than main's.
+    let box_v = fx.box_v();
     // `u32::MAX`, not 0: `ClassId(0)` is `Object`, a cref a top-level
     // binding must not claim. A CLASS BODY has no `defining_class` -- there
     // is no `def` around it -- but its own cref is its class, which is what
