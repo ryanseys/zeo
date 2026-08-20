@@ -164,6 +164,13 @@ pub(crate) struct Fx<'e, 'f> {
     pub shadowed: std::collections::HashSet<String>,
     /// The ownership ledger `verify` checks: every owned-value emission
     /// site must be matched by exactly one consumption site.
+    /// Drain the frame's release pool at every STATEMENT boundary, not
+    /// only at frame pop. Set for the long-lived frames -- the top level
+    /// and a required unit -- where a temporary otherwise lives for the
+    /// whole program: CRuby's temporaries die with their statement, and a
+    /// program that watches for collection (`ObjectSpace::WeakMap`, a
+    /// finalizer) can SEE the difference.
+    pub drain_temps: bool,
     pub owned_created: usize,
     pub owned_consumed: usize,
     /// The enclosing `def` carries the `ruby2_keywords` directive: a splat
@@ -222,6 +229,7 @@ impl<'e, 'f> Fx<'e, 'f> {
             blk_ptr: None,
             block_next: None,
             shadowed: std::collections::HashSet::new(),
+            drain_temps: false,
             owned_created: 0,
             owned_consumed: 0,
             ruby2_keywords: false,

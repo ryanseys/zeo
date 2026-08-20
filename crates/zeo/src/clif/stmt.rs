@@ -28,7 +28,14 @@ pub(crate) fn lower_stmts(fx: &mut Fx, stmts: &[NodeId]) -> Result<(), String> {
             continue;
         }
         let mark = fx.stmt_mark();
+        let pool = fx.drain_temps.then(|| {
+            fx.call("zeo_rt_pool_mark", &[])
+                .expect("pool_mark returns the watermark")
+        });
         lower_stmt(fx, stmts[i])?;
+        if let Some(pool) = pool {
+            fx.call("zeo_rt_pool_reset", &[pool]);
+        }
         fx.end_stmt(mark);
         i += 1;
     }
@@ -417,7 +424,7 @@ fn const_multi_write(
             Some(cid) => cid,
             None => return fx.unsupported(site, "a constant multi-assignment on a runtime scope"),
         },
-        None => fx.method_class.unwrap_or(crate::compiler::OBJECT_CLASS),
+        None => fx.method_class.unwrap_or_else(|| super::expr::box_top(fx)),
     };
     let owner = fx
         .an
