@@ -1,0 +1,17 @@
+[:a, :b, :bd, :lam, :lam_local, :mb, :names, :outer_only, :pr, :seen, :shadowed]
+1
+99
+"99two"
+main
+true
+false
+[:x, :y, :z]
+14
+[:a, :b, :bd, :inner, :item, :lam, :lam_local, :mb, :names, :outer_only, :pr, :seen, :shadowed]
+:from_block
+[:a, :b, :bd, :i, :lam, :lam_local, :mb, :names, :outer_only, :pr, :seen, :shadowed, :x, :y]
+[:hidden]
+:in_make
+:in_make
+true
+2

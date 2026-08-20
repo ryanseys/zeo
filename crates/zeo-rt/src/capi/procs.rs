@@ -207,7 +207,8 @@ pub unsafe extern "C" fn zeo_rt_proc_new(
             Some(unsafe { (*p).clone() })
         }
     };
-    let env = ProcEnvOwned::new(owned, opt(lexical_blk), opt(binding));
+    let defining_scope = opt(binding);
+    let env = ProcEnvOwned::new(owned, opt(lexical_blk), defining_scope.clone());
     let mut proc = RProc::from_c(
         f,
         env,
@@ -215,6 +216,12 @@ pub unsafe extern "C" fn zeo_rt_proc_new(
         arity,
         flags & PROC_LAMBDA != 0,
     );
+    // Two different readers of the same value: the ENV copy serves a
+    // `binding`/bare `yield` written inside the body, this one serves
+    // `Proc#binding` asked from outside.
+    if let Some(scope) = defining_scope {
+        proc = proc.with_binding(scope);
+    }
     if flags & PROC_HOME != 0 {
         proc = proc.with_home();
     }
@@ -369,4 +376,47 @@ fn proc_param_kind(kind: u8) -> &'static str {
         abi::PARAM_BLOCK => "block",
         _ => "req",
     }
+}
+
+/// `Kernel#binding` -- the caller's own frame, captured. The names and their
+/// cells come from the emitter (only a CELL local can be in one, which is
+/// why a `binding` in a scope promotes its locals), the `file`/`line` are
+/// the call's, and `cref` is `u32::MAX` where a top-level binding must not
+/// claim `Object`.
+///
+/// The name pointers are `.rodata`, so the `'static` the binding stores is
+/// real.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_binding_new(
+    self_: *const RubyValue,
+    names: *const zeo_abi::abi::Str,
+    cells: *const *mut Cell,
+    n: usize,
+    file: *const u8,
+    file_len: usize,
+    line: u32,
+    box_id: u32,
+    cref: u32,
+    out: *mut RubyValue,
+) {
+    let locals: Vec<(&'static str, LocalCell)> = (0..n)
+        .map(|i| {
+            let name = unsafe { &*names.add(i) };
+            let raw = unsafe { *cells.add(i) }.cast_const();
+            unsafe { Arc::increment_strong_count(raw) };
+            (unsafe { super::static_str(name.ptr, name.len) }, unsafe {
+                Arc::from_raw(raw)
+            })
+        })
+        .collect();
+    let v = crate::builtins::binding::binding_new(
+        unsafe { (*self_).clone() },
+        locals,
+        unsafe { super::static_str(file, file_len) },
+        line,
+        box_id,
+        cref,
+    );
+    super::leakcheck::created(&v);
+    unsafe { out.write(v) };
 }

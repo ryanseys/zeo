@@ -66,6 +66,11 @@ pub const CAPI: &[CapiSig] = &[
         ret: Some(I32),
     },
     CapiSig {
+        name: "zeo_rt_binding_new",
+        params: &[Ptr, Ptr, Ptr, Usize, Ptr, Usize, U32, U32, U32, Ptr],
+        ret: None,
+    },
+    CapiSig {
         name: "zeo_rt_block_arg_to_proc",
         params: &[Ptr, Ptr],
         ret: Some(I32),

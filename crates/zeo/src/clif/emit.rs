@@ -1798,14 +1798,24 @@ fn define_method_body(
         fx.call("zeo_rt_home_push", &[]);
     }
 
-    // What escaping blocks capture becomes a cell instead of a slot.
-    let captured = crate::analyze::captures::collect_escaping_captures(
+    // What escaping blocks capture becomes a cell instead of a slot -- and
+    // so does every local a `binding` taken here would report, because a
+    // cell is the only storage a binding can share. `binding_scope_names`
+    // adds them to the set and hands back the list the binding reports.
+    let mut caps = crate::analyze::captures::collect_escaping_captures(
         &analyzed.compiler,
         def.body,
         def.hir_params,
         crate::analyze::class_query::SelfClass::new(Some(def.owner), None),
-    )
-    .locals;
+    );
+    fx.binding_names = crate::analyze::captures::binding_scope_names(
+        &analyzed.compiler,
+        def.body,
+        def.hir_params,
+        &mut caps,
+        false,
+    );
+    let captured = caps.locals;
     // Always-present params bind now (no user code); optionals get their
     // storage and defer to after the frame exists (a default is user code
     // that can raise, and CRuby attributes it to the method).
@@ -1990,13 +2000,21 @@ fn define_toplevel(
     fx.frame_label = "<main>".to_string();
     // Hoisted locals: an owned slot each, or a cell when an escaping block
     // captures the name.
-    let captured = crate::analyze::captures::collect_escaping_captures(
+    let empty_params = crate::hir::Params::default();
+    let mut caps = crate::analyze::captures::collect_escaping_captures(
         &analyzed.compiler,
         &analyzed.main_statements,
-        &crate::hir::Params::default(),
+        &empty_params,
         crate::analyze::class_query::SelfClass::new(None, None),
-    )
-    .locals;
+    );
+    fx.binding_names = crate::analyze::captures::binding_scope_names(
+        &analyzed.compiler,
+        &analyzed.main_statements,
+        &empty_params,
+        &mut caps,
+        false,
+    );
+    let captured = caps.locals;
     for name in locals.names().to_vec() {
         if captured.contains(&name) {
             init_cell_local(&mut fx, name, None);

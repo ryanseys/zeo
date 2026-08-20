@@ -53,6 +53,11 @@ pub(crate) struct Fx<'e, 'f> {
     /// Ordered: epilogues and capture walks iterate it, and emission must
     /// be a pure function of the source.
     pub locals: std::collections::BTreeMap<String, Local>,
+    /// The names a `binding` taken in THIS scope reports, when the scope
+    /// takes one (`analyze::captures::binding_scope_names`). Its presence is
+    /// what promoted those locals to cells, which is the only storage a
+    /// binding can share. `None` in a scope that never mentions `binding`.
+    pub binding_names: Option<std::rc::Rc<Vec<String>>>,
     frefs: HashMap<&'static str, ir::FuncRef>,
     temp_free: Vec<ir::StackSlot>,
     temp_taken: Vec<ir::StackSlot>,
@@ -169,6 +174,7 @@ impl<'e, 'f> Fx<'e, 'f> {
             dyn_ivars: false,
             defining_class: None,
             lexical_home: None,
+            binding_names: None,
             method_name: None,
             method_params: None,
             runtime_method_body: false,

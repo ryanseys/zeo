@@ -1170,6 +1170,30 @@ pub(crate) fn define_rodata(em: &mut Emitter) -> Result<(), String> {
 /// `(ptr, count)` -- what a runtime call taking a name list reads. Used
 /// where the list is per-SITE rather than per-program (the frozen-reopen
 /// guard), so a static table would cost a relocation per site for nothing.
+/// A stack array of the `*mut Cell` each named local holds -- the shape
+/// `zeo_rt_binding_new` reads. Every name must be a `Local::Cell`; the
+/// caller filters.
+pub(crate) fn cell_array(fx: &mut super::ctx::Fx, names: &[&str]) -> cranelift_codegen::ir::Value {
+    use cranelift_codegen::ir::{InstBuilder, MemFlagsData, StackSlotData, StackSlotKind, types};
+    let ss = fx.b.create_sized_stack_slot(StackSlotData::new(
+        StackSlotKind::ExplicitSlot,
+        (names.len().max(1) * 8) as u32,
+        3,
+    ));
+    let fl = MemFlagsData::trusted();
+    for (i, name) in names.iter().enumerate() {
+        let Some(super::ctx::Local::Cell { ss: cell_ss, .. }) = fx.locals.get(*name).copied()
+        else {
+            unreachable!("cell_array is given only cell locals");
+        };
+        let at = fx.slot_addr(cell_ss, 0);
+        let p = fx.b.ins().load(types::I64, fl, at, 0);
+        let dst = fx.slot_addr(ss, (i * 8) as i32);
+        fx.b.ins().store(fl, p, dst, 0);
+    }
+    fx.slot_addr(ss, 0)
+}
+
 pub(crate) fn str_array(
     fx: &mut super::ctx::Fx,
     names: &[&str],

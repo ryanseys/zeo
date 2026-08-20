@@ -42,6 +42,14 @@ fn body_contains_return(hir: &crate::hir::Hir, body: &[NodeId]) -> bool {
     body.iter().any(|&n| scan(hir, n))
 }
 
+/// Whether `body` takes a `binding` of its own -- the question
+/// `captures::binding_scope_names` answers, asked here without keeping its
+/// result (the block's own context recomputes it).
+fn body_takes_a_binding(fx: &Fx, params: &crate::hir::Params, body: &[NodeId]) -> bool {
+    let mut probe = captures::Captures::default();
+    captures::binding_scope_names(&fx.an.compiler, body, params, &mut probe, false).is_some()
+}
+
 /// The names an escaping closure with `params`/`body` captures from the
 /// enclosing scope, in deterministic order.
 fn captured_names(
@@ -68,12 +76,30 @@ fn captured_names(
         .flatten()
         .map(captures::own_param_names)
         .unwrap_or_default();
+    // A `binding` taken INSIDE the block reports the enclosing scope's
+    // locals too, and CLIF lifts a block to its own function -- so a name
+    // the binding names has to be captured even where nothing else in the
+    // body reads it. The rustc backend needs no equivalent: its block is a
+    // Rust closure written inside the enclosing function, where every outer
+    // cell is already in scope by name.
+    let binding_reach: std::collections::BTreeSet<String> =
+        match body_takes_a_binding(fx, params, body) {
+            true => fx
+                .binding_names
+                .iter()
+                .flat_map(|names| names.iter())
+                .cloned()
+                .collect(),
+            false => std::collections::BTreeSet::default(),
+        };
     let mut names: Vec<String> = caps
         .locals
         .union(&zsuper_params)
+        .chain(binding_reach.iter())
         .filter(|n| fx.locals.contains_key(n.as_str()))
         .cloned()
         .collect();
+    names.dedup();
     names.sort();
     for n in &names {
         if fx.shadowed.contains(n) {
@@ -253,13 +279,39 @@ fn build_closure_with(
     let file_ptr = fx.rod(foff);
     let file_len = fx.b.ins().iconst(ptr_ty, file.len() as i64);
     let line_v = fx.b.ins().iconst(types::I32, i64::from(line));
+    // `Proc#binding` -- the scope the proc was BUILT in, captured here
+    // because the block's own locals do not exist until it runs. Only a
+    // program that can ask pays: `uses_proc_binding` is what promoted this
+    // scope's locals to cells, so without it there is nothing to capture and
+    // `#binding` is left to raise CRuby's C-level-Proc `ArgumentError`.
+    let binding_ptr = match fx.an.compiler.hir.uses_proc_binding() && fx.binding_names.is_some() {
+        true => {
+            let op = super::expr::binding_value(fx, site)?.expect("binding_names is Some");
+            let p = ownership::borrow_ptr(fx, &op);
+            ownership::pool_owned(fx, p, op.tag());
+            p
+        }
+        false => null,
+    };
     let proc_ss = fx.temp_slot();
     let proc_addr = fx.slot_addr(proc_ss, 0);
     fx.call(
         "zeo_rt_proc_new",
         &[
-            f_addr, cells_ptr, n_cells, self_ptr, lex_blk, null, arity_v, flags, params_ptr,
-            n_params, file_ptr, file_len, line_v, proc_addr,
+            f_addr,
+            cells_ptr,
+            n_cells,
+            self_ptr,
+            lex_blk,
+            binding_ptr,
+            arity_v,
+            flags,
+            params_ptr,
+            n_params,
+            file_ptr,
+            file_len,
+            line_v,
+            proc_addr,
         ],
     );
     // The proc is owned until a send/call consumes it (moved-in blk).
@@ -441,13 +493,30 @@ fn define_block_fn(
     // and destructured names included), body locals, block-locals -- as
     // owned cells when a NESTED block captures them, plain slots
     // otherwise. Created once, before the redo loop.
-    let body_captured = captures::collect_escaping_captures(
+    // ...and as cells for every name a `binding` taken in the block would
+    // report, which is the only storage a binding can share.
+    let mut body_caps = captures::collect_escaping_captures(
         &an.compiler,
         &body,
         &params,
         class_query::SelfClass::new(method_class, None),
-    )
-    .locals;
+    );
+    // What a `binding` in this body sees: the block's OWN names first, then
+    // the enclosing scope's -- CRuby's innermost-scope-first
+    // `local_variables` order.
+    bfx.binding_names =
+        captures::binding_scope_names(&an.compiler, &body, &params, &mut body_caps, false).map(
+            |own| {
+                let mut names = (*own).clone();
+                for n in fx.binding_names.iter().flat_map(|outer| outer.iter()) {
+                    if !names.contains(n) {
+                        names.push(n.clone());
+                    }
+                }
+                std::rc::Rc::new(names)
+            },
+        );
+    let body_captured = body_caps.locals;
     let mut names: Vec<String> = params.bound_names();
     {
         let mut locals = crate::analyze::local_storage::Locals::default();

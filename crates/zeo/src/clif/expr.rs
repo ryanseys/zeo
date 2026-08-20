@@ -947,6 +947,13 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             if let Some(op) = module_nesting(fx, receiver, &name, &args)? {
                 return Ok(op);
             }
+            if receiver.is_none()
+                && name == "binding"
+                && args.is_empty()
+                && let Some(op) = binding_value(fx, id)?
+            {
+                return Ok(op);
+            }
             if args.iter().any(|a| matches!(a, ArrayElem::Splat(_))) {
                 let recv = match receiver {
                     Some(r) => Some(lower_expr(fx, r)?),
@@ -3028,6 +3035,56 @@ pub(crate) fn method_class_shadows(fx: &Fx, name: &str) -> bool {
     } else {
         fx.an.compiler.lookup_method(cid, name).is_some()
     }
+}
+
+/// `Kernel#binding` -- this frame, captured. A builtin row cannot answer it:
+/// it would have to see its CALLER's locals. The emitter can, so it builds
+/// the value here, from the names `binding_scope_names` promoted to cells
+/// (rustc's `emit_binding_value`).
+///
+/// `None` when the scope reports no names -- a `binding` reached through a
+/// runtime-computed send, say -- and the ordinary dynamic send raises the
+/// runtime's own refusal.
+pub(crate) fn binding_value(fx: &mut Fx, site: NodeId) -> Result<Option<Operand>, String> {
+    let Some(names) = fx.binding_names.clone() else {
+        return Ok(None);
+    };
+    // Only a CELL local can be shared with a binding; a name the scope
+    // reports but keeps in a slot cannot be reached from one.
+    let shared: Vec<&str> = names
+        .iter()
+        .filter(|n| matches!(fx.locals.get(*n), Some(super::ctx::Local::Cell { .. })))
+        .map(String::as_str)
+        .collect();
+    let (names_ptr, n) = super::statics::str_array(fx, &shared);
+    let cells_ptr = super::statics::cell_array(fx, &shared);
+    let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
+    let (file, line) = fx
+        .location(site)
+        .map_or((String::new(), 0), |(f, l)| (f.to_string(), l));
+    let (fptr, flen) = rodata_name(fx, &file);
+    let line_v = fx.b.ins().iconst(types::I32, i64::from(line));
+    let box_v = fx.b.ins().iconst(types::I32, 0);
+    // `u32::MAX`, not 0: `ClassId(0)` is `Object`, a cref a top-level
+    // binding must not claim.
+    let cref = fx.b.ins().iconst(
+        types::I32,
+        i64::from(fx.defining_class.map_or(u32::MAX, |c| c.0)),
+    );
+    let ss = fx.temp_slot();
+    let out = fx.slot_addr(ss, 0);
+    fx.call(
+        "zeo_rt_binding_new",
+        &[
+            self_ptr, names_ptr, cells_ptr, n, fptr, flen, line_v, box_v, cref, out,
+        ],
+    );
+    fx.owned_created += 1;
+    Ok(Some(Operand::Slot {
+        ss,
+        owned: true,
+        tag: TagInfo::Unknown,
+    }))
 }
 
 /// `Module.nesting` -- the lexical class/module chain at THIS call site,
