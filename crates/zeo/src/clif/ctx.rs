@@ -107,6 +107,11 @@ pub(crate) struct Fx<'e, 'f> {
     /// turns out to be, not the lexically enclosing class (rustc's
     /// `Ctx::self_is_dynamic`).
     pub self_is_dynamic: bool,
+    /// Lowering the statements of an AOT-spliced `eval("literal")`. prism
+    /// parsed the snippet on its own, so a bare name that IS one of the
+    /// enclosing scope's locals could only arrive as a vcall; ruby reads
+    /// it as the local (`Ctx::in_eval_splice`).
+    pub in_eval_splice: bool,
     /// The name this body was DEFINED under when an alias reaches it by
     /// another: what `__method__` answers where `__callee__` answers
     /// [`Fx::method_name`].
@@ -195,6 +200,7 @@ impl<'e, 'f> Fx<'e, 'f> {
             runtime_method_body: false,
             define_method_body: false,
             self_is_dynamic: false,
+            in_eval_splice: false,
             method_origin: None,
             ret: None,
             retries: Vec::new(),

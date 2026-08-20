@@ -216,6 +216,11 @@ pub const CAPI: &[CapiSig] = &[
         ret: None,
     },
     CapiSig {
+        name: "zeo_rt_eval_value_in_scope",
+        params: &[Ptr, Ptr, Ptr, Ptr, Ptr, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
         name: "zeo_rt_ffi_enum_field",
         params: &[Usize, U8, Ptr, Ptr],
         ret: Some(I32),

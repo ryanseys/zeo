@@ -701,6 +701,25 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             let (name, args) = (name.clone(), args.clone());
             super::ffi::marker_call(fx, id, &name, &args)
         }
+        // An AOT-spliced `eval("literal")`: the snippet's statements run
+        // right here, in the enclosing scope, and its last one is the
+        // value. What the splice changes is one lookup rule -- see
+        // `Fx::in_eval_splice`.
+        HirNode::Eval(body) => {
+            let body = body.clone();
+            let ss = fx.temp_slot();
+            let dst = fx.slot_addr(ss, 0);
+            let was = std::mem::replace(&mut fx.in_eval_splice, true);
+            let r = super::stmt::lower_value_body_into(fx, &body, dst);
+            fx.in_eval_splice = was;
+            r?;
+            fx.owned_created += 1;
+            Ok(Operand::Slot {
+                ss,
+                owned: true,
+                tag: TagInfo::Unknown,
+            })
+        }
         HirNode::Ffi(call) => {
             let call = call.clone();
             super::ffi::lower_ffi_call(fx, id, &call)
@@ -999,6 +1018,9 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 && args.is_empty()
                 && let Some(op) = binding_value(fx, id)?
             {
+                return Ok(op);
+            }
+            if let Some(op) = runtime_eval(fx, id, receiver, &name, &args)? {
                 return Ok(op);
             }
             if args.iter().any(|a| matches!(a, ArrayElem::Splat(_))) {
@@ -3338,6 +3360,19 @@ pub(crate) fn binding_value(fx: &mut Fx, site: NodeId) -> Result<Option<Operand>
 /// A scope that reports no names yields the DEGRADED form (self, no locals),
 /// which is what a program that never asks for one gets.
 pub(crate) fn binding_value_at(fx: &mut Fx, file: &str, line: u32) -> Operand {
+    let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
+    binding_value_with_self(fx, self_ptr, file, line)
+}
+
+/// [`binding_value_at`] with `self` supplied rather than taken from the
+/// context -- `obj.send(:eval, src)`, where CRuby reads the LOCALS from
+/// the caller's frame but binds `self` to the receiver.
+pub(crate) fn binding_value_with_self(
+    fx: &mut Fx,
+    self_ptr: cranelift_codegen::ir::Value,
+    file: &str,
+    line: u32,
+) -> Operand {
     let names = fx.binding_names.clone();
     // Only a CELL local can be shared with a binding; a name the scope
     // reports but keeps in a slot cannot be reached from one.
@@ -3349,16 +3384,19 @@ pub(crate) fn binding_value_at(fx: &mut Fx, file: &str, line: u32) -> Operand {
         .collect();
     let (names_ptr, n) = super::statics::str_array(fx, &shared);
     let cells_ptr = super::statics::cell_array(fx, &shared);
-    let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
     let (fptr, flen) = rodata_name(fx, file);
     let line_v = fx.b.ins().iconst(types::I32, i64::from(line));
     let box_v = fx.b.ins().iconst(types::I32, 0);
     // `u32::MAX`, not 0: `ClassId(0)` is `Object`, a cref a top-level
-    // binding must not claim.
-    let cref = fx.b.ins().iconst(
-        types::I32,
-        i64::from(fx.defining_class.map_or(u32::MAX, |c| c.0)),
-    );
+    // binding must not claim. A CLASS BODY has no `defining_class` -- there
+    // is no `def` around it -- but its own cref is its class, which is what
+    // a constant read through the binding resolves against.
+    let owner = fx
+        .defining_class
+        .or_else(|| fx.self_is_class.then_some(fx.method_class).flatten());
+    let cref =
+        fx.b.ins()
+            .iconst(types::I32, i64::from(owner.map_or(u32::MAX, |c| c.0)));
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
     fx.call(
@@ -3660,4 +3698,97 @@ pub(crate) fn site_decided_call(fx: &Fx, id: NodeId) -> bool {
             };
             resolve_class_here(fx, target) == Some(zeo_abi::RACTOR_CLASS)
         })
+}
+
+/// A RUNTIME `eval` -- the source is not a literal, so it goes to the eval
+/// VM carrying THIS scope. CRuby evaluates a bare `eval` (or one given a
+/// `nil` binding) in the caller's own frame, so the site materializes a
+/// Binding of itself and hands it over; an explicit binding argument wins.
+/// `send(:eval, ..)` is the reflective spelling of the same private
+/// `Kernel#eval`, which reads its LOCALS from the caller's frame either
+/// way and takes `self` from the receiver.
+///
+/// The string-LITERAL form never reaches here: it lowered to
+/// `HirNode::Eval`, an inline splice, at lower time.
+fn runtime_eval(
+    fx: &mut Fx,
+    id: NodeId,
+    receiver: Option<NodeId>,
+    name: &str,
+    args: &[crate::hir::ArrayElem],
+) -> Result<Option<Operand>, String> {
+    let ids: Option<Vec<NodeId>> = args
+        .iter()
+        .map(|a| match a {
+            crate::hir::ArrayElem::Single(n) => Some(*n),
+            crate::hir::ArrayElem::Splat(_) => None,
+        })
+        .collect();
+    let Some(ids) = ids else {
+        return Ok(None);
+    };
+    let sent = crate::analyze::captures::is_sent_eval(&fx.an.compiler, name, &ids);
+    let bare = receiver.is_none() && name == "eval" && (1..=4).contains(&ids.len());
+    if !(bare || sent) {
+        return Ok(None);
+    }
+    // A class that defines its OWN `eval` shadows `Kernel#eval` for a
+    // receiverless call in its instance methods -- ruby's ordinary method
+    // resolution, so resolve the sibling instead of the VM.
+    if bare
+        && let Some(owner) = fx.method_class
+        && fx.an.compiler.method_in_chain(owner, "eval").is_some()
+    {
+        return Ok(None);
+    }
+    // The Binding of THIS scope. Without cell storage there is nothing to
+    // share, so the eval could not read a caller local anyway; the scope
+    // that can reach one was deoptimized by `binding_scope_names`.
+    let self_op = match receiver {
+        Some(r) => Some(lower_expr(fx, r)?),
+        None => None,
+    };
+    let scope = match self_op {
+        Some(op) => {
+            let p = ownership::borrow_ptr(fx, &op);
+            if op.owned() {
+                ownership::pool_owned(fx, p, op.tag());
+            }
+            binding_value_with_self(fx, p, "(eval)", 0)
+        }
+        None => {
+            let _ = id;
+            binding_value_at(fx, "(eval)", 0)
+        }
+    };
+    let scope_ptr = ownership::borrow_ptr(fx, &scope);
+    ownership::pool_owned(fx, scope_ptr, scope.tag());
+    let rest = &ids[usize::from(sent)..];
+    let mut ptrs = Vec::with_capacity(4);
+    for &a in rest.iter().take(4) {
+        let op = lower_expr(fx, a)?;
+        let p = ownership::borrow_ptr(fx, &op);
+        if op.owned() {
+            ownership::pool_owned(fx, p, op.tag());
+        }
+        ptrs.push(p);
+    }
+    while ptrs.len() < 4 {
+        ptrs.push(fx.b.ins().iconst(fx.em.ptr, 0));
+    }
+    let ss = fx.temp_slot();
+    let out = fx.slot_addr(ss, 0);
+    let status = fx
+        .call(
+            "zeo_rt_eval_value_in_scope",
+            &[ptrs[0], scope_ptr, ptrs[1], ptrs[2], ptrs[3], out],
+        )
+        .expect("eval_value_in_scope returns a status");
+    fx.fallible(status);
+    fx.owned_created += 1;
+    Ok(Some(Operand::Slot {
+        ss,
+        owned: true,
+        tag: TagInfo::Unknown,
+    }))
 }

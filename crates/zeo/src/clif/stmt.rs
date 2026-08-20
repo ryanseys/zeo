@@ -560,6 +560,7 @@ fn lower_tail_expr(fx: &mut Fx, tail: NodeId) -> Result<super::operand::Operand,
         | HirNode::AliasGlobal(..)
         | HirNode::RegexpLit(..)
         | HirNode::Ffi(..)
+        | HirNode::Eval(..)
         | HirNode::LastMatchRef(..)
         | HirNode::SuperCall { .. }
         | HirNode::Defined(..)
@@ -1149,6 +1150,7 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
         | HirNode::AliasGlobal(..)
         | HirNode::RegexpLit(..)
         | HirNode::Ffi(..)
+        | HirNode::Eval(..)
         | HirNode::LastMatchRef(..)
         | HirNode::SuperCall { .. }
         | HirNode::Defined(..)
