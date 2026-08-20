@@ -455,6 +455,15 @@ fn define_block_fn(
     let an = fx.an;
     let method_class = fx.method_class;
     let self_is_dynamic = fx.self_is_dynamic;
+    // `ruby2_keywords def fwd(*a)` whose `def` installs at RUN time (a class
+    // body consumes the directive's argument, so the def never registers
+    // statically): the mark rides on the `def` node itself, and without it
+    // the forwarding splat cleared the keyword mark it exists to keep.
+    let marked_forwarder = fx
+        .an
+        .compiler
+        .hir
+        .has_flag(site, crate::hir::NodeFlag::RUBY2_KEYWORDS);
     // A NATIVE-BACKED owner has no compiled slot layout, so its ivars are
     // name-keyed -- and a block written in one of its methods reads the same
     // storage (`@items` inside `synchronize { }` answered nil).
@@ -526,6 +535,7 @@ fn define_block_fn(
             bfx.runtime_method_body = true;
             bfx.define_method_body = kind == MethodBody::DefineMethod;
             bfx.self_is_dynamic = true;
+            bfx.ruby2_keywords = marked_forwarder;
         }
         None => {
             (
