@@ -281,7 +281,11 @@ pub(crate) fn collect_classes(
     // over the native set `with_core` installed. Bodies take a
     // `RubyValue` self, so ivars are name-keyed (`dyn_ivars`).
     for (idx, class) in compiler.classes.iter().enumerate() {
-        if idx == 0 || !(class.is_builtin || class.is_bootstrap) {
+        // `Object` joins for its CLASS methods only: `class Object; def
+        // self.method_added; end` is an ordinary class-method row, while its
+        // instance methods are the top-level `def`s `collect_methods`
+        // already emitted.
+        if !(class.is_builtin || class.is_bootstrap || idx == 0) {
             continue;
         }
         // The entries this id will actually carry. A BOOTSTRAP (exception)
@@ -294,6 +298,9 @@ pub(crate) fn collect_classes(
             .methods
             .iter()
             .filter(|e| {
+                if idx == 0 {
+                    return false;
+                }
                 let scope = compiler.scope(e.def);
                 if scope.native_default {
                     return false;
@@ -334,7 +341,16 @@ pub(crate) fn collect_classes(
         if !compiler.feature_active(crate::compiler::ClassId(idx as u32)) {
             continue;
         }
-        if class.builtin_overlay.is_some() || class.box_id != 0 {
+        // A per-box OVERLAY never registers an entry of its own -- instances
+        // keep the ROOT builtin's identity -- but its rows still register,
+        // on the root's entry keyed by the box. A core constant ALIAS
+        // (`Errno::EWOULDBLOCK` IS `Errno::EAGAIN`) is the same shape with
+        // no box: its rows are the root's, which is what makes rescuing by
+        // either name catch the other.
+        let target = class
+            .builtin_overlay
+            .map_or(crate::compiler::ClassId(idx as u32), |root| root);
+        if class.box_id != 0 {
             return refuse("a boxed builtin overlay");
         }
         if !class.singleton_super_targets.is_empty() {
@@ -352,11 +368,11 @@ pub(crate) fn collect_classes(
                 ))
             };
             let dc = entry.defined_class(compiler);
-            if !class.is_bootstrap && dc.0 != idx as u32 {
+            if !class.is_bootstrap && dc != target {
                 // A module method materialized onto this builtin: the row
                 // registers here (compiled in this class's context) and is
                 // marked FOREIGN so `super` skips this position.
-                foreign.push((idx as u32, mname.clone()));
+                foreign.push((target.0, mname.clone()));
             }
             // A conditional `def` emits a RUNTIME install at its document
             // position instead (analyze left it in the body's statements),
@@ -386,12 +402,12 @@ pub(crate) fn collect_classes(
                 .map_err(|e| format!("declaring {name}#{mname}: {e}"))?;
             match scope.visibility {
                 crate::hir::Visibility::Private => vis.push(statics::VisRowSpec {
-                    class: idx as u32,
+                    class: target.0,
                     name: mname.clone(),
                     verb: 0,
                 }),
                 crate::hir::Visibility::Protected => vis.push(statics::VisRowSpec {
-                    class: idx as u32,
+                    class: target.0,
                     name: mname.clone(),
                     verb: 1,
                 }),
@@ -406,7 +422,7 @@ pub(crate) fn collect_classes(
                     alias_of: scope.alias_of.clone(),
                     defining_class: scope.defining_class,
                     lexical_home: scope.lexical_home,
-                    owner: ClassId(idx as u32),
+                    owner: target,
                     owner_name: name.clone(),
                     name: mname,
                     body: scope.body.clone(),
@@ -425,7 +441,7 @@ pub(crate) fn collect_classes(
                     alias_of: scope.alias_of.clone(),
                     defining_class: scope.defining_class,
                     lexical_home: scope.lexical_home,
-                    owner: ClassId(idx as u32),
+                    owner: target,
                     owner_name: name.clone(),
                     name: mname,
                     body: scope.body.clone(),
@@ -475,7 +491,7 @@ pub(crate) fn collect_classes(
                 .map_err(|e| format!("declaring {name}.{mname}: {e}"))?;
             if entry.visibility == crate::hir::Visibility::Private {
                 vis.push(statics::VisRowSpec {
-                    class: idx as u32,
+                    class: target.0,
                     name: mname.clone(),
                     verb: 3,
                 });
@@ -485,7 +501,7 @@ pub(crate) fn collect_classes(
                 alias_of: scope.alias_of.clone(),
                 defining_class: scope.defining_class,
                 lexical_home: scope.lexical_home,
-                owner: ClassId(idx as u32),
+                owner: target,
                 owner_name: name.clone(),
                 name: mname,
                 body: scope.body.clone(),
@@ -501,7 +517,7 @@ pub(crate) fn collect_classes(
             if compiler.scope(sid).native_default {
                 continue;
             }
-            own_cm.push((idx as u32, compiler.scope(sid).name.clone()));
+            own_cm.push((target.0, compiler.scope(sid).name.clone()));
         }
     }
 
