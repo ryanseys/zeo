@@ -89,10 +89,8 @@ pub fn run_ruby_packages(
     roots: &[&str],
     package_dirs: &[&str],
 ) -> RunResult {
-    let (dir, source, opts) = write_project(files, entry, roots, package_dirs);
-    let result = compile_link_run(&source, &opts, &[], &[]);
-    let _ = std::fs::remove_dir_all(&dir);
-    result
+    let (_dir, source, opts) = write_project(files, entry, roots, package_dirs);
+    compile_link_run(&source, &opts, &[], &[])
 }
 
 /// The compile-only half of `run_ruby_project`, exposed separately so
@@ -119,12 +117,9 @@ pub fn compile_packages(
     let (dir, entry_source, opts) = write_project(files, entry, roots, package_dirs);
     match zeo::compile_to_rust_with(&entry_source, &opts) {
         Ok(rust) => Ok((rust, dir)),
-        Err(e) => {
-            let _ = std::fs::remove_dir_all(&dir);
-            // The message alone -- negative-path tests assert on the same
-            // text the pre-typed-error harness always saw.
-            Err(String::from(e))
-        }
+        // The message alone -- negative-path tests assert on the same text
+        // the pre-typed-error harness always saw.
+        Err(e) => Err(String::from(e)),
     }
 }
 
@@ -133,10 +128,13 @@ pub fn compile_packages(
 ///
 /// The directory is named from the project's own CONTENT, not the pid:
 /// `__FILE__`/`__dir__` bake this absolute path into the program, so a
-/// pid-named directory changed every run. A content hash also makes the
-/// directory self-consistent -- the same hash always means the same files,
-/// so there is nothing stale to clear and no `remove_dir_all` racing a
-/// concurrent run of an identical project.
+/// pid-named directory changed every run.
+///
+/// It is never REMOVED, for the same reason. The hash makes the directory
+/// self-consistent -- the same hash always means the same files -- so there
+/// is nothing stale to clear, while a cleanup would race any concurrent
+/// test whose project has identical content and is compiling from it right
+/// now. The tree lives in the system temp directory and costs kilobytes.
 fn write_project(
     files: &[(&str, &str)],
     entry: &str,
