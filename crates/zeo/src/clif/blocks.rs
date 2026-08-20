@@ -126,6 +126,26 @@ pub(crate) fn build_proc(
         return fx.unsupported(block, "a non-literal block");
     };
     let (params, body) = (params.as_ref().clone(), body.clone());
+    // A computed-name `define_method` block IS a method body at run time:
+    // `super` inside it reads the frame stack and a bare one raises ruby's
+    // define_method refusal -- the two markers the literal `DefMethod` form
+    // carries (rustc's `DYNAMIC_DEFINE_METHOD_BLOCK` arm).
+    if fx
+        .an
+        .compiler
+        .hir
+        .has_flag(block, crate::hir::NodeFlag::DYNAMIC_DEFINE_METHOD_BLOCK)
+    {
+        return build_closure_with(
+            fx,
+            site,
+            &params,
+            &body,
+            false,
+            Some(MethodBody::DefineMethod),
+            FrameName::Block,
+        );
+    }
     build_closure(fx, site, &params, &body, false)
 }
 

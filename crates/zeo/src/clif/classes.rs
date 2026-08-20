@@ -590,11 +590,21 @@ pub(crate) fn collect_classes(
         };
         // Prepend winners flow through the MATERIALIZED `methods` table
         // (analyze picked them; `ancestors` already orders the module
-        // before the class); the shadowed own defs register below as
-        // super-target-only rows. Native-backed shapes would need rustc's
-        // `promote_own_impl` twin instead -- not built yet.
+        // before the class), so a prepend that shadows NOTHING needs no
+        // emission of its own whatever the registrar. Only a SHADOWED own
+        // def does, and on a native-backed class its body cannot register
+        // as an object-channel bridge -- that shape wants rustc's
+        // `promote_own_impl` twin, not built yet.
         if !class.prepends.is_empty() && kind != zeo_abi::abi::CLASS_PLAIN {
-            return refuse("a prepend on a native-backed class");
+            let winners: std::collections::HashSet<crate::compiler::ScopeId> =
+                class.methods.iter().map(|e| e.def).collect();
+            let shadows_own = class.own_methods.iter().any(|sid| {
+                let scope = compiler.scope(*sid);
+                !winners.contains(sid) && !scope.native_default && !scope.runtime_conditional
+            });
+            if shadows_own {
+                return refuse("a prepend that shadows an own def on a native-backed class");
+            }
         }
         if !class.extends.is_empty() {
             extends.push((idx as u32, class.extends.iter().map(|m| m.0).collect()));
