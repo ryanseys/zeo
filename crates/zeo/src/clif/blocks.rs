@@ -772,7 +772,7 @@ pub(crate) fn block_send_op(
     block: NodeId,
 ) -> Result<Operand, String> {
     let blk_ptr = literal_block_ptr(fx, site, block)?;
-    send_with_block_ptr_ops(fx, site, Some(recv), name, args, blk_ptr)
+    send_with_block_ptr_ops(fx, site, Some(recv), name, args, blk_ptr, false)
 }
 
 /// The block channel a literal `{ .. }`/`do .. end` opens: the proc is
@@ -838,15 +838,13 @@ pub(crate) fn block_arg_send(
     block_arg: NodeId,
 ) -> Result<Operand, String> {
     // The receiver evaluates FIRST (ruby's order), then the block arg.
-    let recv = match recv {
-        Some(r) => {
-            let op = super::expr::lower_expr(fx, r)?;
-            Some(op)
-        }
+    let bypass = super::expr::bypasses_visibility(fx, recv);
+    let recv_op = match recv {
+        Some(r) => Some(super::expr::lower_expr(fx, r)?),
         None => None,
     };
     let blk_ptr = block_arg_ptr(fx, block_arg)?;
-    send_with_block_ptr_ops(fx, site, recv, name, args, blk_ptr)
+    send_with_block_ptr_ops(fx, site, recv_op, name, args, blk_ptr, bypass)
 }
 
 /// [`block_send`]'s tail with the receiver already lowered.
@@ -858,11 +856,12 @@ fn send_with_block_ptr(
     args: &[ArrayElem],
     blk_ptr: ir::Value,
 ) -> Result<Operand, String> {
-    let recv = match recv {
+    let bypass = super::expr::bypasses_visibility(fx, recv);
+    let recv_op = match recv {
         Some(r) => Some(super::expr::lower_expr(fx, r)?),
         None => None,
     };
-    send_with_block_ptr_ops(fx, site, recv, name, args, blk_ptr)
+    send_with_block_ptr_ops(fx, site, recv_op, name, args, blk_ptr, bypass)
 }
 
 pub(crate) fn send_with_block_ptr_ops(
@@ -872,6 +871,7 @@ pub(crate) fn send_with_block_ptr_ops(
     name: &str,
     args: &[ArrayElem],
     blk_ptr: ir::Value,
+    bypass: bool,
 ) -> Result<Operand, String> {
     let recv_ptr = match recv {
         Some(recv_op) => {
@@ -891,7 +891,15 @@ pub(crate) fn send_with_block_ptr_ops(
             owned: false,
             tag: TagInfo::Unknown,
         });
-        return super::call::splat_send(fx, site, recv, name, args, &[], Some(blk_ptr));
+        return super::call::splat_send(
+            fx,
+            site,
+            super::call::Recv::maybe(recv, bypass),
+            name,
+            args,
+            &[],
+            Some(blk_ptr),
+        );
     }
     let argv_ptr = super::call::build_argv(fx, site, args)?;
     let sym = fx.sym_id(name);
@@ -900,7 +908,7 @@ pub(crate) fn send_with_block_ptr_ops(
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
     let status = if recv_ptr.1 {
-        let caller = super::call::caller_class(fx);
+        let caller = super::call::caller_class(fx, bypass);
         fx.call(
             "zeo_rt_send_value_explicit_in",
             &[

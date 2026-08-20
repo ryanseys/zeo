@@ -224,6 +224,35 @@ pub(crate) fn build_array(
     Ok(out)
 }
 
+/// The receiver half of a dynamic send: what to dispatch against, and
+/// whether ruby's visibility barrier applies to the site at all.
+pub(crate) struct Recv {
+    /// The evaluated receiver, or `None` for the current `self` -- which is
+    /// the implicit entry, the one a receiverless call takes.
+    pub op: Option<Operand>,
+    /// Ruby's `VM_CALL_FCALL`: run no check. True for the
+    /// `self.singleton_class` a `class << self` body's statement is rebound
+    /// onto, whose ruby form is RECEIVERLESS -- the surrogate must be the
+    /// receiver AND the barrier must stay down. A receiver the SOURCE wrote
+    /// is never marked, so `Foo.singleton_class.some_private` still raises.
+    pub bypass: bool,
+}
+
+impl Recv {
+    /// An evaluated receiver behind the barrier.
+    pub(crate) fn at(op: Operand) -> Recv {
+        Recv {
+            op: Some(op),
+            bypass: false,
+        }
+    }
+
+    /// An evaluated receiver, or `self`, with the site's own barrier verdict.
+    pub(crate) fn maybe(op: Option<Operand>, bypass: bool) -> Recv {
+        Recv { op, bypass }
+    }
+}
+
 /// A splat-bearing dynamic send: args built as a runtime Array, keywords
 /// (when present) as the kw Hash; the runtime entry unmarks the splat
 /// tail (a splat-expanded hash is positional again -- `ruby2_keywords`
@@ -231,14 +260,15 @@ pub(crate) fn build_array(
 pub(crate) fn splat_send(
     fx: &mut Fx,
     site: NodeId,
-    recv: Option<Operand>,
+    recv: Recv,
     name: &str,
     args: &[ArrayElem],
     kwargs: &[crate::hir::KwArg],
     blk: Option<cranelift_codegen::ir::Value>,
 ) -> Result<Operand, String> {
     let _ = site;
-    let recv_ptr = match &recv {
+    let bypass = recv.bypass;
+    let recv_ptr = match &recv.op {
         Some(op) => {
             let p = ownership::borrow_ptr(fx, op);
             if op.owned() {
@@ -262,9 +292,9 @@ pub(crate) fn splat_send(
     let blk_ptr = blk.unwrap_or_else(|| fx.b.ins().iconst(fx.em.ptr, 0));
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
-    let status = match recv {
+    let status = match recv.op {
         Some(_) => {
-            let caller = caller_class(fx);
+            let caller = caller_class(fx, bypass);
             fx.call(
                 "zeo_rt_send_value_explicit_args_in",
                 &[
@@ -300,13 +330,14 @@ pub(crate) fn splat_send(
 pub(crate) fn kw_send(
     fx: &mut Fx,
     site: NodeId,
-    recv: Option<Operand>,
+    recv: Recv,
     name: &str,
     args: &[ArrayElem],
     kwargs: &[crate::hir::KwArg],
     blk: Option<cranelift_codegen::ir::Value>,
 ) -> Result<Operand, String> {
-    let recv_ptr = match &recv {
+    let bypass = recv.bypass;
+    let recv_ptr = match &recv.op {
         Some(op) => {
             let p = ownership::borrow_ptr(fx, op);
             if op.owned() {
@@ -324,9 +355,9 @@ pub(crate) fn kw_send(
     let blk_ptr = blk.unwrap_or_else(|| fx.b.ins().iconst(fx.em.ptr, 0));
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
-    let status = match recv {
+    let status = match recv.op {
         Some(_) => {
-            let caller = caller_class(fx);
+            let caller = caller_class(fx, bypass);
             fx.call(
                 "zeo_rt_send_value_explicit_kw_in",
                 &[
@@ -362,10 +393,17 @@ pub(crate) fn kw_send(
 /// `Object` is what the check compares against there -- the same rule
 /// `codegen::call::visibility::caller_class` spells for the rustc backend.
 ///
-/// A site whose receiver runs NO check never reaches here: it takes the
-/// implicit entry instead (see `expr::dispatch_receiver`).
-pub(crate) fn caller_class(fx: &mut Fx) -> cranelift_codegen::ir::Value {
-    let cid = fx.method_class.map_or(0, |c| i64::from(c.0));
+/// `bypass` is ruby's `VM_CALL_FCALL`: the site runs no check at all. A
+/// literal `self` receiver never reaches here (it takes the implicit entry --
+/// see `expr::self_receiver`), but the `self.singleton_class` a `class <<
+/// self` body's statement is rebound onto does: its ruby form is
+/// RECEIVERLESS, so the surrogate must be the receiver AND the barrier must
+/// stay down.
+pub(crate) fn caller_class(fx: &mut Fx, bypass: bool) -> cranelift_codegen::ir::Value {
+    let cid = match bypass {
+        true => i64::from(u32::MAX),
+        false => fx.method_class.map_or(0, |c| i64::from(c.0)),
+    };
     fx.b.ins().iconst(types::I32, cid)
 }
 
@@ -377,8 +415,9 @@ pub(crate) fn dynamic_send(
     name: &str,
     args: &[ArrayElem],
 ) -> Result<Operand, String> {
+    let bypass = super::expr::bypasses_visibility(fx, Some(recv));
     let recv_op = lower_expr(fx, recv)?;
-    dynamic_send_value(fx, site, recv_op, name, args)
+    dynamic_send_value(fx, site, recv_op, name, args, bypass)
 }
 
 /// `dynamic_send` on an already-lowered receiver (the `New` lowering hands
@@ -389,13 +428,14 @@ pub(crate) fn dynamic_send_value(
     recv_op: Operand,
     name: &str,
     args: &[ArrayElem],
+    bypass: bool,
 ) -> Result<Operand, String> {
     let recv_ptr = ownership::borrow_ptr(fx, &recv_op);
     if recv_op.owned() {
         ownership::pool_owned(fx, recv_ptr, recv_op.tag());
     }
     let argv_ptr = build_argv(fx, site, args)?;
-    dynamic_send_argv(fx, recv_ptr, name, argv_ptr, args.len())
+    dynamic_send_argv(fx, recv_ptr, name, argv_ptr, args.len(), bypass)
 }
 
 /// [`dynamic_send_value`] over an ALREADY-BUILT argv -- what a runtime
@@ -412,7 +452,7 @@ pub(crate) fn dynamic_send_ptr(
     if recv_op.owned() {
         ownership::pool_owned(fx, recv_ptr, recv_op.tag());
     }
-    dynamic_send_argv(fx, recv_ptr, name, argv_ptr, argc)
+    dynamic_send_argv(fx, recv_ptr, name, argv_ptr, argc, false)
 }
 
 fn dynamic_send_argv(
@@ -421,12 +461,13 @@ fn dynamic_send_argv(
     name: &str,
     argv_ptr: cranelift_codegen::ir::Value,
     argc: usize,
+    bypass: bool,
 ) -> Result<Operand, String> {
     let sym = fx.sym_id(name);
     let zero_box = fx.b.ins().iconst(types::I32, 0);
     let argc_v = fx.b.ins().iconst(fx.em.ptr, argc as i64);
     let null = fx.b.ins().iconst(fx.em.ptr, 0);
-    let caller = caller_class(fx);
+    let caller = caller_class(fx, bypass);
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
     let status = fx

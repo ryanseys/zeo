@@ -733,12 +733,19 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                     tag,
                 };
                 let init = if kwargs.is_empty() {
-                    super::call::dynamic_send_value(fx, id, borrowed(), "initialize", &elems)?
+                    super::call::dynamic_send_value(
+                        fx,
+                        id,
+                        borrowed(),
+                        "initialize",
+                        &elems,
+                        false,
+                    )?
                 } else {
                     super::call::kw_send(
                         fx,
                         id,
-                        Some(borrowed()),
+                        super::call::Recv::at(borrowed()),
                         "initialize",
                         &elems,
                         &kwargs,
@@ -759,12 +766,26 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 (Some(blk), true) => super::blocks::block_send_op(fx, id, recv, "new", &elems, blk),
                 (Some(blk), false) => {
                     let bp = super::blocks::literal_block_ptr(fx, id, blk)?;
-                    super::call::kw_send(fx, id, Some(recv), "new", &elems, &kwargs, Some(bp))
+                    super::call::kw_send(
+                        fx,
+                        id,
+                        super::call::Recv::at(recv),
+                        "new",
+                        &elems,
+                        &kwargs,
+                        Some(bp),
+                    )
                 }
-                (None, true) => super::call::dynamic_send_value(fx, id, recv, "new", &elems),
-                (None, false) => {
-                    super::call::kw_send(fx, id, Some(recv), "new", &elems, &kwargs, None)
-                }
+                (None, true) => super::call::dynamic_send_value(fx, id, recv, "new", &elems, false),
+                (None, false) => super::call::kw_send(
+                    fx,
+                    id,
+                    super::call::Recv::at(recv),
+                    "new",
+                    &elems,
+                    &kwargs,
+                    None,
+                ),
             }
         }
         // `recv&.m(args) { blk }`: the receiver is evaluated ONCE and a nil
@@ -814,16 +835,32 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             let blk = block_channel(fx, id, block, block_arg)?;
             // `self&.x` reaches a private `x` exactly as `self.x` does: the
             // safe part is the nil test, and it changes no visibility rule.
-            let barrier = dispatch_receiver(fx, Some(recv)).is_some();
-            let through = barrier.then_some(recv_op);
+            let through = self_receiver(fx, Some(recv)).map(|_| recv_op);
+            let bypass = bypasses_visibility(fx, Some(recv));
             let res = if args.iter().any(|a| matches!(a, ArrayElem::Splat(_))) {
-                super::call::splat_send(fx, id, through, &name, &args, &kwargs, blk)?
+                super::call::splat_send(
+                    fx,
+                    id,
+                    super::call::Recv::maybe(through, bypass),
+                    &name,
+                    &args,
+                    &kwargs,
+                    blk,
+                )?
             } else if !kwargs.is_empty() {
-                super::call::kw_send(fx, id, through, &name, &args, &kwargs, blk)?
+                super::call::kw_send(
+                    fx,
+                    id,
+                    super::call::Recv::maybe(through, bypass),
+                    &name,
+                    &args,
+                    &kwargs,
+                    blk,
+                )?
             } else if let Some(bp) = blk {
-                super::blocks::send_with_block_ptr_ops(fx, id, through, &name, &args, bp)?
+                super::blocks::send_with_block_ptr_ops(fx, id, through, &name, &args, bp, bypass)?
             } else if let Some(op) = through {
-                super::call::dynamic_send_value(fx, id, op, &name, &args)?
+                super::call::dynamic_send_value(fx, id, op, &name, &args, bypass)?
             } else {
                 super::call::implicit_send(fx, id, &name, &args)?
             };
@@ -847,7 +884,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             safe: false,
         } if kwargs.is_empty() => {
             let (receiver, name, args, blk) = (
-                dispatch_receiver(fx, *receiver),
+                self_receiver(fx, *receiver),
                 name.clone(),
                 args.clone(),
                 *blk,
@@ -884,7 +921,16 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                     None => None,
                 };
                 let bp = super::blocks::literal_block_ptr(fx, id, blk)?;
-                return super::call::splat_send(fx, id, recv, &name, &args, &[], Some(bp));
+                let bypass = bypasses_visibility(fx, receiver);
+                return super::call::splat_send(
+                    fx,
+                    id,
+                    super::call::Recv::maybe(recv, bypass),
+                    &name,
+                    &args,
+                    &[],
+                    Some(bp),
+                );
             }
             super::blocks::block_send(fx, id, receiver, &name, &args, blk)
         }
@@ -897,14 +943,22 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             block_arg: None,
             safe: false,
         } if kwargs.is_empty() => {
-            let (receiver, name, args) =
-                (dispatch_receiver(fx, *receiver), name.clone(), args.clone());
+            let (receiver, name, args) = (self_receiver(fx, *receiver), name.clone(), args.clone());
             if args.iter().any(|a| matches!(a, ArrayElem::Splat(_))) {
                 let recv = match receiver {
                     Some(r) => Some(lower_expr(fx, r)?),
                     None => None,
                 };
-                return super::call::splat_send(fx, id, recv, &name, &args, &[], None);
+                let bypass = bypasses_visibility(fx, receiver);
+                return super::call::splat_send(
+                    fx,
+                    id,
+                    super::call::Recv::maybe(recv, bypass),
+                    &name,
+                    &args,
+                    &[],
+                    None,
+                );
             }
             match receiver {
                 Some(recv) if BinOp::of(&name).is_some() && args.len() == 1 => {
@@ -948,7 +1002,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             safe: false,
         } if kwargs.is_empty() => {
             let (receiver, name, args, ba) = (
-                dispatch_receiver(fx, *receiver),
+                self_receiver(fx, *receiver),
                 name.clone(),
                 args.clone(),
                 *ba,
@@ -969,7 +1023,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             safe: false,
         } => {
             let (receiver, name, args, kwargs, block, block_arg) = (
-                dispatch_receiver(fx, *receiver),
+                self_receiver(fx, *receiver),
                 name.clone(),
                 args.clone(),
                 kwargs.clone(),
@@ -981,10 +1035,27 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 None => None,
             };
             let blk = block_channel(fx, id, block, block_arg)?;
+            let bypass = bypasses_visibility(fx, receiver);
             if args.iter().any(|a| matches!(a, ArrayElem::Splat(_))) {
-                super::call::splat_send(fx, id, recv, &name, &args, &kwargs, blk)
+                super::call::splat_send(
+                    fx,
+                    id,
+                    super::call::Recv::maybe(recv, bypass),
+                    &name,
+                    &args,
+                    &kwargs,
+                    blk,
+                )
             } else {
-                super::call::kw_send(fx, id, recv, &name, &args, &kwargs, blk)
+                super::call::kw_send(
+                    fx,
+                    id,
+                    super::call::Recv::maybe(recv, bypass),
+                    &name,
+                    &args,
+                    &kwargs,
+                    blk,
+                )
             }
         }
         HirNode::RangeLit {
@@ -2908,23 +2979,31 @@ fn case_when(
 /// method of the ENCLOSING class before reaching the toplevel `Object`
 /// def the direct-call table holds -- ruby's MRO puts the receiver's own
 /// chain first, so a shadowed name must go through the dynamic send.
-/// The receiver a send should DISPATCH against, or `None` when ruby runs no
-/// visibility check for it and the implicit-self entry is the right one.
+/// The receiver a send should DISPATCH against, or `None` when it IS the
+/// current `self` and the implicit entry is the right one.
 ///
-/// Two receivers qualify, and they are the two `codegen::call::visibility::
-/// runs_no_check` names: a literal `self` -- private has been reachable
-/// through one since ruby 2.7 -- and a receiver zeo SYNTHESIZED for a call
-/// written with no receiver at all, which is what a `class << self` body's
-/// `private :x` arrives as. Both denote the object `self_ptr` already holds,
-/// so answering `None` changes only which entry the call takes: the one
-/// without the barrier.
-fn dispatch_receiver(fx: &Fx, recv: Option<NodeId>) -> Option<NodeId> {
+/// Only a literal `self` qualifies. `self_ptr` already holds that object, so
+/// answering `None` changes nothing but the entry -- and the implicit entry is
+/// the one ruby means: private has been reachable through a literal `self`
+/// receiver since 2.7.
+fn self_receiver(fx: &Fx, recv: Option<NodeId>) -> Option<NodeId> {
     let r = recv?;
-    let hir = &fx.an.compiler.hir;
-    match matches!(hir[r], HirNode::SelfRef) || hir.is_implicit_self_receiver(r) {
+    match matches!(fx.an.compiler.hir[r], HirNode::SelfRef) {
         true => None,
         false => Some(r),
     }
+}
+
+/// Whether the site runs NO visibility check -- ruby's `VM_CALL_FCALL`.
+///
+/// True for the receiver zeo SYNTHESIZES for a call ruby writes with none:
+/// the `self.singleton_class` a `class << self` body's statement is rebound
+/// onto. That receiver must still be EVALUATED -- the surrogate is where
+/// those methods live -- so it cannot take the `self_receiver` route above;
+/// only its barrier comes down. A receiver the SOURCE wrote is never marked,
+/// so a hand-written `Foo.singleton_class.some_private_method` still raises.
+pub(crate) fn bypasses_visibility(fx: &Fx, recv: Option<NodeId>) -> bool {
+    recv.is_some_and(|r| fx.an.compiler.hir.is_implicit_self_receiver(r))
 }
 
 pub(crate) fn method_class_shadows(fx: &Fx, name: &str) -> bool {
