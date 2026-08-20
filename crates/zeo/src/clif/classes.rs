@@ -636,6 +636,8 @@ pub(crate) fn collect_classes(
                     | zeo_abi::WEAKREF_CLASS
                     | zeo_abi::STRUCT_CLASS
                     | zeo_abi::DATA_CLASS
+                    | zeo_abi::FFI_STRUCT_CLASS
+                    | zeo_abi::FFI_UNION_CLASS
             );
             let user = (a.0 as usize) < compiler.classes.len()
                 && !compiler.classes[a.0 as usize].is_builtin
