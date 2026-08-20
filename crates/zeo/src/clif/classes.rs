@@ -339,11 +339,6 @@ pub(crate) fn collect_classes(
         // the symbols it declares carry the box; the frame label keeps the
         // ruby name (rustc's `class_ident` draws the same line).
         let sym = super::names::boxed_owner(&name, class.box_id);
-        let refuse = |what: &str| {
-            Err(format!(
-                "the CLIF backend cannot lower {what} yet (class {name})"
-            ))
-        };
         // A require-gated builtin whose feature never fired: no code can
         // resolve its constant, so its rows would be dead weight -- rustc
         // skips it entirely (the register-only-enabled-features rule).
@@ -359,9 +354,6 @@ pub(crate) fn collect_classes(
         let target = class
             .builtin_overlay
             .map_or(crate::compiler::ClassId(idx as u32), |root| root);
-        if !class.singleton_super_targets.is_empty() {
-            return refuse("a singleton super target on a builtin reopen");
-        }
         // No `mark_own_rows` here: a VALUE row self-records ownership at
         // insert (`own_value_names`), and a bootstrap delta's object-channel
         // row follows rustc, which marks nothing for reopens either.
@@ -461,6 +453,8 @@ pub(crate) fn collect_classes(
                 });
             }
         }
+        let mut cm_def_tramps: Vec<(crate::compiler::ScopeId, cranelift_module::FuncId)> =
+            Vec::new();
         for entry in cms {
             let scope = compiler.scope(entry.def);
             let mname = compiler.names.str(entry.name).to_string();
@@ -524,7 +518,19 @@ pub(crate) fn collect_classes(
                 has_blk,
                 ruby2_keywords: scope.ruby2_keywords,
             });
+            cm_def_tramps.push((entry.def, tramp));
         }
+        emit_singleton_super_targets(
+            compiler,
+            em,
+            class,
+            target,
+            &name,
+            &sym,
+            &cm_def_tramps,
+            &mut sst,
+            &mut class_methods,
+        )?;
         for &sid in &class.own_class_methods {
             if compiler.scope(sid).native_default {
                 continue;
@@ -1131,77 +1137,17 @@ pub(crate) fn collect_classes(
                 ruby2_keywords: scope.ruby2_keywords,
             });
         }
-        // Singleton-chain super targets (rustc's `__sst_` containers +
-        // winner reuse): every `(module, def)` pair in
-        // `singleton_super_targets`, deduped. A pair whose def IS a
-        // materialized winner reuses that `CmRow` trampoline (every CLIF
-        // class-method body is receiver-generic); a shadowed copy gets its
-        // own body under a per-(class,module) symbol.
-        let mut sst_seen: Vec<(ClassId, crate::compiler::ScopeId)> = Vec::new();
-        for &(m, sid) in &class.singleton_super_targets {
-            if sst_seen.contains(&(m, sid)) {
-                continue;
-            }
-            sst_seen.push((m, sid));
-            let scope = compiler.scope(sid);
-            if scope.native_default {
-                continue;
-            }
-            let mname = scope.name.clone();
-            if let Some(&(_, tramp)) = cm_def_tramps.iter().find(|(d, _)| *d == sid) {
-                sst.push((idx as u32, m.0, mname, tramp));
-                continue;
-            }
-            let refuse_m = |what: &str| {
-                Err(format!(
-                    "the CLIF backend cannot lower {what} yet ({name}.{mname})"
-                ))
-            };
-            if scope.runtime_conditional {
-                continue;
-            }
-
-            let p = &scope.params;
-            if let Err(what) = super::emit::check_params(p) {
-                return refuse_m(what);
-            }
-            let layout = super::params::layout_of(p)?;
-            let has_blk = scope.needs_block_param();
-            let tramp = em
-                .module
-                .declare_function(
-                    &names::class_trampoline_symbol(&sym, &format!("__sst_{}_{mname}", m.0)),
-                    Linkage::Local,
-                    &params::value_fn_sig(em),
-                )
-                .map_err(|e| format!("declaring {name}.{mname}: {e}"))?;
-            let sig = params::body_sig(em, layout.n_slots, has_blk);
-            let body_fn = em
-                .module
-                .declare_function(
-                    &names::class_method_symbol(&sym, &format!("__sst_{}_{mname}", m.0)),
-                    Linkage::Local,
-                    &sig,
-                )
-                .map_err(|e| format!("declaring {name}.{mname}: {e}"))?;
-            sst.push((idx as u32, m.0, mname.clone(), tramp));
-            class_methods.push(CmMethodSpec {
-                cm_row: false,
-                alias_of: scope.alias_of.clone(),
-                defining_class: scope.defining_class,
-                lexical_home: scope.lexical_home,
-                owner: ClassId(idx as u32),
-                owner_name: name.clone(),
-                name: mname,
-                body: scope.body.clone(),
-                node: scope.def_node,
-                tramp,
-                body_fn,
-                hir_params: p.clone(),
-                has_blk,
-                ruby2_keywords: scope.ruby2_keywords,
-            });
-        }
+        emit_singleton_super_targets(
+            compiler,
+            em,
+            class,
+            ClassId(idx as u32),
+            &name,
+            &sym,
+            &cm_def_tramps,
+            &mut sst,
+            &mut class_methods,
+        )?;
         for &sid in &class.own_class_methods {
             own_cm.push((idx as u32, compiler.scope(sid).name.clone()));
         }
@@ -1273,4 +1219,93 @@ pub(crate) fn collect_classes(
         set_ancestors,
         register_builtin,
     })
+}
+
+/// A class's singleton-chain super targets (rustc's `__sst_` containers +
+/// winner reuse): every `(module, def)` pair in `singleton_super_targets`,
+/// deduped. A pair whose def IS a materialized winner reuses that `CmRow`
+/// trampoline (every CLIF class-method body is receiver-generic); a
+/// shadowed copy gets its own body under a per-(class,module) symbol.
+///
+/// Shared by the plain-class loop and the builtin-reopen loop: a REOPENED
+/// builtin extended with a module needs exactly the same rows, and
+/// `minitest` reopens `Warning` that way.
+#[allow(clippy::too_many_arguments)]
+fn emit_singleton_super_targets(
+    compiler: &crate::compiler::Compiler,
+    em: &mut Emitter,
+    class: &crate::compiler::ClassInfo,
+    owner: ClassId,
+    name: &str,
+    sym: &str,
+    cm_def_tramps: &[(crate::compiler::ScopeId, cranelift_module::FuncId)],
+    sst: &mut Vec<(u32, u32, String, cranelift_module::FuncId)>,
+    class_methods: &mut Vec<CmMethodSpec>,
+) -> Result<(), String> {
+    let mut sst_seen: Vec<(ClassId, crate::compiler::ScopeId)> = Vec::new();
+    for &(m, sid) in &class.singleton_super_targets {
+        if sst_seen.contains(&(m, sid)) {
+            continue;
+        }
+        sst_seen.push((m, sid));
+        let scope = compiler.scope(sid);
+        if scope.native_default {
+            continue;
+        }
+        let mname = scope.name.clone();
+        if let Some(&(_, tramp)) = cm_def_tramps.iter().find(|(d, _)| *d == sid) {
+            sst.push((owner.0, m.0, mname, tramp));
+            continue;
+        }
+        let refuse_m = |what: &str| {
+            Err(format!(
+                "the CLIF backend cannot lower {what} yet ({name}.{mname})"
+            ))
+        };
+        if scope.runtime_conditional {
+            continue;
+        }
+
+        let p = &scope.params;
+        if let Err(what) = super::emit::check_params(p) {
+            return refuse_m(what);
+        }
+        let layout = super::params::layout_of(p)?;
+        let has_blk = scope.needs_block_param();
+        let tramp = em
+            .module
+            .declare_function(
+                &names::class_trampoline_symbol(sym, &format!("__sst_{}_{mname}", m.0)),
+                Linkage::Local,
+                &params::value_fn_sig(em),
+            )
+            .map_err(|e| format!("declaring {name}.{mname}: {e}"))?;
+        let sig = params::body_sig(em, layout.n_slots, has_blk);
+        let body_fn = em
+            .module
+            .declare_function(
+                &names::class_method_symbol(sym, &format!("__sst_{}_{mname}", m.0)),
+                Linkage::Local,
+                &sig,
+            )
+            .map_err(|e| format!("declaring {name}.{mname}: {e}"))?;
+        sst.push((owner.0, m.0, mname.clone(), tramp));
+        class_methods.push(CmMethodSpec {
+            cm_row: false,
+            alias_of: scope.alias_of.clone(),
+            defining_class: scope.defining_class,
+            lexical_home: scope.lexical_home,
+            owner,
+            owner_name: name.to_string(),
+            name: mname,
+            body: scope.body.clone(),
+            node: scope.def_node,
+            tramp,
+            body_fn,
+            hir_params: p.clone(),
+            has_blk,
+            ruby2_keywords: scope.ruby2_keywords,
+        });
+    }
+    Ok(())
 }
