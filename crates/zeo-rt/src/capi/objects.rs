@@ -523,26 +523,6 @@ pub unsafe extern "C" fn zeo_rt_const_get_on_value(
     }
 }
 
-/// The bare `uninitialized constant X` NameError an unresolvable scope
-/// owes -- `Nope::X = v` raises on the SCOPE before the value is ever
-/// evaluated (CRuby's order), so the emitter lowers the raise alone.
-/// `leaf` is the path's last segment, which is what `NameError#name`
-/// reports.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn zeo_rt_raise_uninitialized_constant(
-    message: *const u8,
-    message_len: usize,
-    leaf: *const u8,
-    leaf_len: usize,
-) -> i32 {
-    let message = unsafe { super::str_slice(message, message_len) }.to_string();
-    let leaf = unsafe { super::str_slice(leaf, leaf_len) };
-    crate::signal::set_pending(Signal::Raise(crate::dispatch::stamp_backtrace(
-        crate::dispatch::make_name_error(message, leaf, RubyValue::Nil),
-    )));
-    STATUS_SIGNAL
-}
-
 /// Where a `class`/`module` DECLARATION bound its name -- the
 /// `Module#const_source_location` record for constants that live outside
 /// the value table (the class registry holds them). Recorded when the

@@ -159,7 +159,6 @@ capi_symbols!(
     concurrency::zeo_rt_ractor_new,
     signals::zeo_rt_raise_error,
     objects::zeo_rt_raise_private_constant,
-    objects::zeo_rt_raise_uninitialized_constant,
     signals::zeo_rt_raise_with_explicit_cause,
     literals::zeo_rt_range_new,
     numeric::zeo_rt_rational_digits,
