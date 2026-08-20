@@ -713,6 +713,9 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
                 }
                 return fx.unsupported(stmt, "`break` outside a loop");
             }
+            if fx.loops.last().expect("checked above").depth != fx.ensure_depth {
+                return signal_jump(fx, value, zeo_abi::abi::SignalKind::Break);
+            }
             let result = fx.loops.last().expect("checked above").result;
             match (value, result) {
                 // `break v` in a value-position loop: v IS the loop's value.
@@ -730,9 +733,6 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
                 (None, None) => {}
             }
             let ctl = fx.loops.last().expect("checked above");
-            if ctl.depth != fx.ensure_depth {
-                return fx.unsupported(stmt, "a `break` across an `ensure` boundary");
-            }
             let (exit, handling) = (ctl.exit, ctl.handling);
             fx.pop_handling_to(handling);
             fx.b.ins().jump(exit, &[]);
@@ -759,16 +759,17 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
                 fx.continue_unreachable();
                 return Ok(());
             }
-            if let Some(v) = value {
-                let op = lower_expr(fx, v)?;
-                ownership::discard(fx, op);
-            }
             let Some(ctl) = fx.loops.last() else {
                 return fx.unsupported(stmt, "`next` outside a loop");
             };
             if ctl.depth != fx.ensure_depth {
-                return fx.unsupported(stmt, "a `next` across an `ensure` boundary");
+                return signal_jump(fx, value, zeo_abi::abi::SignalKind::Next);
             }
+            if let Some(v) = value {
+                let op = lower_expr(fx, v)?;
+                ownership::discard(fx, op);
+            }
+            let ctl = fx.loops.last().expect("checked above");
             let (latch, handling) = (ctl.latch, ctl.handling);
             fx.pop_handling_to(handling);
             fx.b.ins().jump(latch, &[]);
@@ -791,8 +792,9 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
                 return Ok(());
             };
             if ctl.depth != fx.ensure_depth {
-                return fx.unsupported(stmt, "a `redo` across an `ensure` boundary");
+                return signal_jump(fx, None, zeo_abi::abi::SignalKind::Redo);
             }
+            let ctl = fx.loops.last().expect("checked above");
             let (body, handling) = (ctl.body, ctl.handling);
             fx.pop_handling_to(handling);
             fx.b.ins().jump(body, &[]);
@@ -827,19 +829,30 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
                 }
                 return fx.unsupported(stmt, "a top-level `return`");
             };
+            // The returned expression runs BEFORE `$!` unwinds -- inside a
+            // rescue clause `return $!.message` reads the rescued one.
+            let op = match value {
+                Some(v) => lower_expr(fx, v)?,
+                None => super::operand::Operand::Nil,
+            };
             if fx.ensure_depth != 0 {
-                return fx.unsupported(stmt, "a `return` across an `ensure` boundary");
+                // An `ensure` sits between here and the method's exit, so
+                // the return travels as a signal: the bracket saves and
+                // restores it around the ensure body, and this method's own
+                // boundary folds it (an unmarked `Return` belongs to the
+                // nearest catcher). The landing chain pops `$!` on the way.
+                let ptr = ownership::move_ptr(fx, &op);
+                let kind =
+                    fx.b.ins()
+                        .iconst(types::I8, i64::from(zeo_abi::abi::SignalKind::Return as u8));
+                fx.call("zeo_rt_signal_set", &[kind, ptr]);
+                let land = fx.land;
+                fx.b.ins().jump(land, &[]);
+                fx.continue_unreachable();
+                return Ok(());
             }
             fx.pop_handling_to(0);
-            match value {
-                Some(v) => {
-                    let op = lower_expr(fx, v)?;
-                    ownership::write_move_into(fx, &op, out);
-                }
-                None => {
-                    ownership::write_move_into(fx, &super::operand::Operand::Nil, out);
-                }
-            }
+            ownership::write_move_into(fx, &op, out);
             fx.b.ins().jump(ret_ok, &[]);
             fx.continue_unreachable();
             Ok(())
@@ -1444,6 +1457,34 @@ fn lower_for(
     fx.b.switch_to_block(exit);
     fx.call("zeo_rt_for_end", &[state]);
     fx.call("zeo_rt_pool_reset", &[mark]);
+    Ok(())
+}
+
+/// A loop-targeted `break`/`next`/`redo` with an `ensure` between it and
+/// its loop. Ruby runs that ensure first, so the jump travels as a signal
+/// down the landing chain and the ensure-carrying `begin` settles it back
+/// onto the loop's own targets ([`super::control::lower_begin`]). `$!` is
+/// left to that chain, which pops exactly what it pushed.
+fn signal_jump(
+    fx: &mut Fx,
+    value: Option<NodeId>,
+    kind: zeo_abi::abi::SignalKind,
+) -> Result<(), String> {
+    let ptr = match value {
+        Some(v) => {
+            let op = lower_expr(fx, v)?;
+            ownership::move_ptr(fx, &op)
+        }
+        // `Redo` carries nothing; the other two answer nil without one.
+        None if matches!(kind, zeo_abi::abi::SignalKind::Redo) => fx.b.ins().iconst(fx.em.ptr, 0),
+        None => ownership::move_ptr(fx, &super::operand::Operand::Nil),
+    };
+    let k = fx.b.ins().iconst(types::I8, i64::from(kind as u8));
+    fx.call("zeo_rt_signal_set", &[k, ptr]);
+    fx.ensure_jumps += 1;
+    let land = fx.land;
+    fx.b.ins().jump(land, &[]);
+    fx.continue_unreachable();
     Ok(())
 }
 

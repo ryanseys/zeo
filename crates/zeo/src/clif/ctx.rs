@@ -98,9 +98,15 @@ pub(crate) struct Fx<'e, 'f> {
     pub retries: Vec<(ir::Block, usize, usize)>,
     /// How many `ensure` bodies enclose the current lowering point -- a
     /// DIRECT jump (`break`/`next`/`redo`/`return`/`retry`) may not cross
-    /// one (it would skip the ensure); such jumps refuse until the
-    /// jump-through-ensure machinery lands.
+    /// one (it would skip the ensure), so it travels as a signal instead
+    /// and the ensure-carrying `begin` settles it back onto its target.
     pub ensure_depth: usize,
+    /// How many loop-targeted jumps have taken that signal route so far.
+    /// A `begin` compares the count across its own lowering: a difference
+    /// means one of its jumps needs its settle, and NO difference means
+    /// nothing inside it can arm a `Break`/`Next`/`Redo`, so it must not
+    /// claim one that merely passes through.
+    pub ensure_jumps: usize,
     /// How many `$!` (`handling_push`) entries the current lexical point
     /// sits under -- a direct jump pops down to its target's depth.
     pub handling_depth: usize,
@@ -163,6 +169,7 @@ impl<'e, 'f> Fx<'e, 'f> {
             ret: None,
             retries: Vec::new(),
             ensure_depth: 0,
+            ensure_jumps: 0,
             handling_depth: 0,
             frame_label: String::new(),
             blk_ptr: None,

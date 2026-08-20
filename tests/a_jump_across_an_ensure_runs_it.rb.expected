@@ -1,0 +1,77 @@
+b0
+e0
+b1
+e1
+e2
+---
+n1
+ne1
+ne2
+n3
+ne3
+n4
+ne4
+---
+ke0
+k0
+ke0
+k1
+ke1
+---
+me1
+m2
+me2
+m3
+me3
+---
+n1
+n2
+done
+===
+f1
+fe1
+fe2
+fe3
+---
+t0
+te0
+te1
+t2
+te2
+---
+a1
+ae1
+a2
+ae2
+ae3
+---
+u1
+ui1
+uo1
+ui2
+uo2
+u3
+ui3
+uo3
+---
+w1
+wi1
+wo1
+wi2
+wo2
+done
+===
+ensure a
+1
+ensure b
+"r:boom"
+seen 10
+ensure c 10
+ensure c 20
+20
+inner d
+outer d
+5
+2
+ensure f
+:after

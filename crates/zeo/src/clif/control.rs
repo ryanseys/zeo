@@ -3,8 +3,8 @@
 //! taken, pooled, and matched against the clause chain (`$!` bracketed per
 //! clause); everything else propagates outward. An `ensure` body runs
 //! inline on the normal path and under the signal-save bracket on the
-//! landing path. Direct jumps across an `ensure` boundary refuse loudly
-//! (the jump-through-ensure machinery is a later slice).
+//! landing path. A jump across an `ensure` boundary travels as a signal
+//! and this construct settles it back onto its target once the ensure ran.
 
 use super::ctx::Fx;
 use super::operand::{Operand, TagInfo};
@@ -76,8 +76,28 @@ pub(crate) fn lower_begin(
     fx.b.ins().jump(begin_head, &[]);
     fx.b.switch_to_block(begin_head);
 
-    // The body (and `else`) lower against the begin's landing; direct
-    // jumps out of an ensure-carrying begin refuse via the depth stamp.
+    // The loop a jump out of this begin would have gone to directly. Only
+    // one at the SAME ensure depth is ours: a farther one has another
+    // ensure in between, and that begin settles it.
+    let loop_target = if ensure_body.is_some() {
+        fx.loops
+            .last()
+            .filter(|ctl| ctl.depth == fx.ensure_depth)
+            .map(|ctl| Settle {
+                exit: ctl.exit,
+                latch: ctl.latch,
+                body: ctl.body,
+                result: ctl.result,
+                handling: ctl.handling,
+            })
+    } else {
+        None
+    };
+    let jumps_before = fx.ensure_jumps;
+
+    // The body (and `else`) lower against the begin's landing; a direct
+    // jump out of an ensure-carrying begin becomes a signal (the depth
+    // stamp) so the bracket below runs before it reaches its target.
     fx.land = begin_land;
     if ensure_body.is_some() {
         fx.ensure_depth += 1;
@@ -86,9 +106,6 @@ pub(crate) fn lower_begin(
     lower_section(fx, body, body_result)?;
     if let Some(else_body) = else_body {
         lower_section(fx, else_body, result)?;
-    }
-    if ensure_body.is_some() {
-        fx.ensure_depth -= 1;
     }
     fx.land = outer_land;
     match ensure_normal {
@@ -101,8 +118,11 @@ pub(crate) fn lower_begin(
     }
 
     // The begin landing: a Raise is taken and matched; everything else
-    // propagates (through the ensure bracket when one exists).
+    // propagates (through the ensure bracket when one exists). The whole
+    // landing region -- matchers and clause bodies alike -- still sits
+    // inside the ensure's reach, so it lands on the bracket, not outside.
     fx.b.switch_to_block(begin_land);
+    fx.land = propagate;
     let kind = fx.call("zeo_rt_signal_kind", &[]).expect("kind answers");
     let is_raise =
         fx.b.ins()
@@ -174,10 +194,18 @@ pub(crate) fn lower_begin(
     fx.call("zeo_rt_signal_set", &[raise_kind, exc]);
     fx.b.ins().jump(propagate, &[]);
 
+    // Past the landing region: the ensure bracket itself is outside the
+    // begin's own reach again.
+    fx.land = outer_land;
+    if ensure_body.is_some() {
+        fx.ensure_depth -= 1;
+    }
+
     // The ensure bracket, both flavors.
     if let Some(ensure_stmts) = ensure_body {
         // Normal path: the ensure body runs inline (its own signals go to
-        // the OUTER landing).
+        // the OUTER landing, and its own jumps go straight to their target
+        // -- nothing is left to run).
         let en = ensure_normal.expect("created with ensure_body");
         fx.b.switch_to_block(en);
         lower_section(fx, ensure_stmts, None)?;
@@ -199,18 +227,102 @@ pub(crate) fn lower_begin(
         lower_section(fx, ensure_stmts, None)?;
         fx.ensure_depth -= 1;
         fx.land = saved_land;
+        // Only now is it known whether a jump inside this begin (its body,
+        // a clause, or the ensure itself) armed a signal for the enclosing
+        // loop. Without one, nothing here may claim a passing signal.
+        let settle = (fx.ensure_jumps > jumps_before)
+            .then_some(loop_target)
+            .flatten()
+            .map(|t| (fx.b.create_block(), t));
+        let after = settle.map_or(outer_land, |(blk, _)| blk);
         fx.call("zeo_rt_propagating_leave", &[pushed]);
         fx.call("zeo_rt_signal_restore", &[saved]);
-        fx.b.ins().jump(outer_land, &[]);
+        fx.b.ins().jump(after, &[]);
 
         fx.b.switch_to_block(efail);
         fx.call("zeo_rt_propagating_leave", &[pushed]);
         fx.call("zeo_rt_signal_drop", &[saved]);
-        fx.b.ins().jump(outer_land, &[]);
+        fx.b.ins().jump(after, &[]);
+
+        if let Some((settle_blk, target)) = settle {
+            lower_settle(fx, settle_blk, outer_land, target);
+        }
     }
 
     fx.b.switch_to_block(done);
     Ok(())
+}
+
+/// The enclosing native loop a jump out of an ensure-carrying `begin` was
+/// aiming at: its own `break`/`next`/`redo` targets, value slot, and `$!`
+/// depth, read off the [`super::ctx::LoopCtl`] the jump could not reach.
+#[derive(Clone, Copy)]
+struct Settle {
+    exit: ir::Block,
+    latch: ir::Block,
+    body: ir::Block,
+    result: Option<ir::Value>,
+    handling: usize,
+}
+
+/// Turn the signal an ensure-crossing jump armed back into the jump it
+/// was: the ensure has run, so `Break` supplies the loop's value and
+/// leaves, `Next` discards its own and reaches the latch, and `Redo`
+/// re-enters the body. Anything else is a real unwind and passes through.
+fn lower_settle(fx: &mut Fx, settle: ir::Block, outer_land: ir::Block, target: Settle) {
+    fx.b.switch_to_block(settle);
+    let kind = fx.call("zeo_rt_signal_kind", &[]).expect("kind answers");
+    let arm = |fx: &mut Fx, k: SignalKind| {
+        let taken = fx.b.create_block();
+        let rest = fx.b.create_block();
+        let is =
+            fx.b.ins()
+                .icmp_imm_u(IntCC::Equal, kind, i64::from(k as u8));
+        fx.b.ins().brif(is, taken, &[], rest, &[]);
+        fx.b.switch_to_block(rest);
+        taken
+    };
+    let b_break = arm(fx, SignalKind::Break);
+    let b_next = arm(fx, SignalKind::Next);
+    let b_redo = arm(fx, SignalKind::Redo);
+    fx.b.ins().jump(outer_land, &[]);
+
+    // `break v`: v IS the loop's value in value position.
+    fx.b.switch_to_block(b_break);
+    let value = take_signal_value(fx);
+    match target.result {
+        Some(dst) => ownership::write_move_into(fx, &value, dst),
+        None => ownership::discard(fx, value),
+    }
+    fx.pop_handling_to(target.handling);
+    fx.b.ins().jump(target.exit, &[]);
+
+    // `next v`: a native loop has nowhere to send the value.
+    fx.b.switch_to_block(b_next);
+    let value = take_signal_value(fx);
+    ownership::discard(fx, value);
+    fx.pop_handling_to(target.handling);
+    fx.b.ins().jump(target.latch, &[]);
+
+    // `redo` carries nothing, so clearing the slot is a save-and-drop.
+    fx.b.switch_to_block(b_redo);
+    let saved = fx.call("zeo_rt_signal_save", &[]).expect("saved handle");
+    fx.call("zeo_rt_signal_drop", &[saved]);
+    fx.pop_handling_to(target.handling);
+    fx.b.ins().jump(target.body, &[]);
+}
+
+/// Move the pending signal's payload into a fresh temp, owned.
+fn take_signal_value(fx: &mut Fx) -> Operand {
+    let ss = fx.temp_slot();
+    let addr = fx.slot_addr(ss, 0);
+    fx.call("zeo_rt_signal_take", &[addr]);
+    fx.owned_created += 1;
+    Operand::Ptr {
+        addr,
+        owned: true,
+        tag: TagInfo::Unknown,
+    }
 }
 
 /// One rescue matcher only the RUN TIME can settle. Ruby evaluates a
