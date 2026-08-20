@@ -662,21 +662,32 @@ pub(crate) fn collect_classes(
             kind,
         });
         // What this class's own body wrote -- `instance_methods(false)` /
-        // `Method#owner` truth, exactly the rustc `mark_own_rows` list
-        // (plus re-scoped `zsuper` entries, refused above with the
-        // visibility overrides they ride in on).
+        // `Method#owner` truth, exactly the rustc `mark_own_rows` list.
         // A conditional `def` is left out: `instance_methods(false)` must
         // report what the class HAS, and whether it has this one is settled
         // at run time by the row its install writes.
-        let mut own: Vec<&String> = class
+        //
+        // A method this class only RE-SCOPED (`private :inherited_method`)
+        // is its own too: ruby plants a real entry for it (CRuby's
+        // `VM_METHOD_TYPE_ZSUPER`), which is what makes the name answer
+        // `private_instance_methods(false)` and `instance_method(:x).owner`
+        // here while still running the ancestor's body.
+        let mut own: Vec<String> = class
             .own_methods
             .iter()
             .filter(|&&sid| !compiler.scope(sid).runtime_conditional)
-            .map(|&sid| &compiler.scope(sid).name)
+            .map(|&sid| compiler.scope(sid).name.clone())
+            .chain(
+                compiler
+                    .methods_of(ClassId(idx as u32))
+                    .iter()
+                    .filter(|e| e.zsuper)
+                    .map(|e| compiler.names.str(e.name).to_string()),
+            )
             .collect();
         own.sort();
         for n in own {
-            own_rows.push((idx as u32, n.clone()));
+            own_rows.push((idx as u32, n));
         }
 
         if class.is_module {

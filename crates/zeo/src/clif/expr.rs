@@ -946,6 +946,20 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             if let Some(op) = module_nesting(fx, receiver, &name, &args)? {
                 return Ok(op);
             }
+            // `__method__`/`__callee__` under an ALIAS: `__method__` is the
+            // name the body was DEFINED under, `__callee__` the name it was
+            // reached through, and the runtime row -- which reads the frame
+            // -- can only ever see the latter. Folded only where the
+            // emitter knows the enclosing method; everywhere else (a
+            // top-level scope, a body installed at run time) the row's
+            // frame read is the better answer and this falls through.
+            if receiver.is_none()
+                && args.is_empty()
+                && name == "__method__"
+                && let Some(origin) = fx.method_origin.clone()
+            {
+                return symbol_value(fx, &origin);
+            }
             if let Some(op) = method_capture_intrinsic(fx, receiver, &name, &args, &[], None, None)?
             {
                 return Ok(op);

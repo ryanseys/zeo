@@ -231,6 +231,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             defining_class: Some(zeo_abi::ClassId(0)),
             // A top-level `def` is never inside a `class << self`.
             lexical_home: None,
+            origin_name: def.alias_of.as_deref(),
         };
         define_method_body(em, analyzed, &spec)?;
     }
@@ -252,6 +253,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
                 dyn_ivars: m.dyn_ivars,
                 defining_class: Some(m.defining_class),
                 lexical_home: m.lexical_home,
+                origin_name: m.alias_of.as_deref(),
             };
             define_method_body(em, analyzed, &spec)?;
         }
@@ -273,6 +275,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             dyn_ivars: false,
             defining_class: Some(m.defining_class),
             lexical_home: m.lexical_home,
+            origin_name: m.alias_of.as_deref(),
         };
         define_method_body(em, analyzed, &spec)?;
     }
@@ -293,6 +296,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             dyn_ivars: false,
             defining_class: Some(m.owner),
             lexical_home: None,
+            origin_name: None,
         };
         define_method_body(em, analyzed, &spec)?;
     }
@@ -313,6 +317,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             dyn_ivars: m.dyn_ivars,
             defining_class: Some(m.defining_class),
             lexical_home: m.lexical_home,
+            origin_name: m.alias_of.as_deref(),
         };
         define_method_body(em, analyzed, &spec)?;
     }
@@ -338,6 +343,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             // A class body's OWN cref is its class; the surrogate case is
             // carried by the `def`s inside it, not by the body fn.
             lexical_home: None,
+            origin_name: None,
         };
         define_method_body(em, analyzed, &spec)?;
     }
@@ -724,6 +730,31 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             m.node,
             m.alias_of.as_deref(),
         ));
+    }
+    // A re-scoped inherited method reflects on THIS class: after `private
+    // :x`, ruby answers the subclass for `instance_method(:x).owner` while
+    // still running the ancestor's body (rustc's `zsuper` meta pass).
+    for (idx, class) in analyzed.compiler.classes.iter().enumerate() {
+        if idx == 0 || class.is_builtin || class.is_bootstrap {
+            continue;
+        }
+        for e in analyzed
+            .compiler
+            .methods_of(crate::compiler::ClassId(idx as u32))
+            .iter()
+            .filter(|e| e.zsuper)
+        {
+            let scope = analyzed.compiler.scope(e.def);
+            meta_rows.push(meta_row(
+                analyzed,
+                idx as u32,
+                false,
+                &scope.name,
+                &scope.params,
+                scope.def_node,
+                scope.alias_of.as_deref(),
+            ));
+        }
     }
     for m in cm_methods.iter().filter(|m| m.cm_row) {
         meta_rows.push(meta_row(
@@ -1535,6 +1566,10 @@ pub(crate) struct BodyFnSpec<'a> {
     /// `Module.nesting` -- while the owner keeps dispatch and ivars. See
     /// `Scope::lexical_home`.
     pub lexical_home: Option<zeo_abi::ClassId>,
+    /// The name this body was DEFINED under, when an alias reaches it by
+    /// another one: `__method__` answers this, `__callee__` the name the
+    /// entry carries. `None` when the two are the same.
+    pub origin_name: Option<&'a str>,
 }
 
 /// A method's frame facts: `(file, label, line, end_line)` -- shared by
@@ -1805,6 +1840,7 @@ fn define_method_body(
     fx.lexical_home = def.lexical_home;
     fx.define_method_body = define_method_body;
     fx.method_name = (!def.name.is_empty()).then(|| def.name.to_string());
+    fx.method_origin = def.origin_name.map(str::to_string);
     fx.method_params = Some(def.hir_params.clone());
     fx.self_is_class = def.self_is_class;
     fx.dyn_ivars = def.dyn_ivars;

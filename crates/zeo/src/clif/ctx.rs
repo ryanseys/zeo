@@ -107,6 +107,10 @@ pub(crate) struct Fx<'e, 'f> {
     /// turns out to be, not the lexically enclosing class (rustc's
     /// `Ctx::self_is_dynamic`).
     pub self_is_dynamic: bool,
+    /// The name this body was DEFINED under when an alias reaches it by
+    /// another: what `__method__` answers where `__callee__` answers
+    /// [`Fx::method_name`].
+    pub method_origin: Option<String>,
     /// A method body's `(out, ret_ok)`: `return` writes the value and
     /// jumps; `None` at the toplevel.
     pub ret: Option<(ir::Value, ir::Block)>,
@@ -191,6 +195,7 @@ impl<'e, 'f> Fx<'e, 'f> {
             runtime_method_body: false,
             define_method_body: false,
             self_is_dynamic: false,
+            method_origin: None,
             ret: None,
             retries: Vec::new(),
             ensure_depth: 0,
