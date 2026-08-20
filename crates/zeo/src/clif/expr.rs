@@ -971,7 +971,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 );
             }
             match receiver {
-                Some(recv) if BinOp::of(&name).is_some() && args.len() == 1 => {
+                Some(recv) if operator_fast_path(fx, &name) && args.len() == 1 => {
                     let [ArrayElem::Single(arg)] = args.as_slice() else {
                         return fx.unsupported(id, "a splat operand");
                     };
@@ -2014,6 +2014,21 @@ fn binop(fx: &mut Fx, op: BinOp, name: &str, recv: NodeId, arg: NodeId) -> Resul
         return Ok(int_int(fx, op, *av, *bv));
     }
     boxed_binop(fx, op, name, a, b_op)
+}
+
+/// Whether `name`'s operator fast path may be taken. A user reopen that
+/// redefines the operator on `Integer`'s or `Float`'s fast-path MRO has to
+/// be honored at EVERY call site, so the whole fast path stands down and the
+/// ordinary dynamic send finds the reopened row -- `analyze` recorded both
+/// lanes for exactly this, and the rustc backend consults the same sets.
+///
+/// Both lanes gate the one decision because the boxed shape tests both tags:
+/// a `Float#==` reopen leaves the Int arm sound, but the site cannot know
+/// which arm it will take.
+fn operator_fast_path(fx: &Fx, name: &str) -> bool {
+    BinOp::of(name).is_some()
+        && !fx.an.compiler.redefined_int_ops.contains(name)
+        && !fx.an.compiler.redefined_float_ops.contains(name)
 }
 
 /// Both operands statically Int: pure SSA.
