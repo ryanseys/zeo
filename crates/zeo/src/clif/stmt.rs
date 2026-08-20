@@ -460,10 +460,6 @@ fn ivar_slot_of(fx: &Fx, name: &str) -> Option<usize> {
 
 /// A tail position accepts a few statement-shaped nodes whose value Ruby
 /// defines: an assignment answers the assigned value, a loop answers nil.
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "structural: the refusal arm IS the default -- an unlisted node kind must refuse loudly, which is exactly what a new HirNode should do here until its lowering lands"
-)]
 fn lower_tail_expr(fx: &mut Fx, tail: NodeId) -> Result<super::operand::Operand, String> {
     use super::operand::{Operand, TagInfo};
     match &fx.an.compiler.hir[tail] {
@@ -573,10 +569,6 @@ fn lower_tail_expr(fx: &mut Fx, tail: NodeId) -> Result<super::operand::Operand,
     }
 }
 
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "structural: the refusal arm IS the default -- an unlisted node kind must refuse loudly, which is exactly what a new HirNode should do here until its lowering lands"
-)]
 pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
     stamp_line(fx, stmt);
     match &fx.an.compiler.hir[stmt] {
@@ -1158,10 +1150,6 @@ fn sym_id_array(
 /// singleton form fires the same hooks with the SINGLETON class as their
 /// argument, which zeo has no compile-time class for; analyze rejects a
 /// module that defines either, so it is named only to stay true.
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "structural: a four-node classifier -- every other node kind is definitionally not a mixin"
-)]
 fn mixin_parts(node: &HirNode) -> Option<(&String, &'static str, &'static str)> {
     match node {
         HirNode::Include(m) => Some((m, "included", "append_features")),
@@ -1223,10 +1211,6 @@ fn mixin_hook_send(fx: &mut Fx, module: &str, hook: &str) -> Result<(), String> 
 }
 
 /// A short label for the refusal message.
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "structural: a refusal-message label -- an unnamed kind falls back to its variant name, which is what triage needs"
-)]
 fn statement_kind(node: &HirNode) -> String {
     match node {
         HirNode::ClassDef { .. } => "a class definition".to_string(),
@@ -1483,10 +1467,6 @@ fn signal_jump(
 
 /// A `while`/`until`/`loop`/`for` in VALUE position: its own value is nil
 /// (the collection, for `for`), and a `break v` supplies its own.
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "structural: every caller has already matched one of the three loop kinds; the bucket is a loud refusal, not a decision"
-)]
 pub(crate) fn loop_value(fx: &mut Fx, node: NodeId) -> Result<super::operand::Operand, String> {
     let ss = fx.temp_slot();
     let dst = fx.slot_addr(ss, 0);

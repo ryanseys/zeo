@@ -1,11 +1,6 @@
 //! Load-time static guards for definition lowering: the platform/engine
 //! conditions a def-site `if` can decide at compile time.
 
-#![warn(
-    clippy::wildcard_enum_match_arm,
-    reason = "swept: this module's matches are exhaustive. Re-enabled because a\n    parent module's file-level allow is INHERITED by its submodules"
-)]
-
 use super::*;
 
 /// A class/module-body `if`/`unless` guard zeo can decide at COMPILE time --
@@ -279,11 +274,6 @@ fn guard_pattern(node: &Node<'_>) -> Option<crate::guard_fold::LiteralPattern> {
 /// runtime-provided constant, and `RUBY_VERSION <cmp> "x"` (String#<=>
 /// lexicographic, matching how Ruby compares these version strings). `None` when
 /// the guard depends on runtime state -- the caller then keeps the runtime `if`.
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "structural: a guard FOLD -- each arm is an opt-in claim; anything unlisted \
-              answers `None` and the caller keeps the runtime `if`"
-)]
 pub(super) fn eval_static_class_self_guard(hir: &Hir, cond: NodeId) -> Option<bool> {
     match &hir[cond] {
         HirNode::BoolLit(b) => Some(*b),

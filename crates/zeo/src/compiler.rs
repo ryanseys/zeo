@@ -1520,12 +1520,6 @@ impl Compiler {
             .collect();
         self.frozen_crefs = Some(crefs);
         self.frozen_fq_names = Some(names);
-        #[allow(
-            clippy::wildcard_enum_match_arm,
-            reason = "structural: only a bare `NAME = ...` is a DIRECT const definition \
-                      in a class body; class/module definitions resolve through the \
-                      class tables, not this list (see `directly_defines_const`)"
-        )]
         let defs = self
             .classes
             .iter()

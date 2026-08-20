@@ -10,11 +10,6 @@
 //! (`Arc<parking_lot::Mutex<RubyValue>>`) storage class instead of a plain hoisted `let
 //! mut`?
 
-#![warn(
-    clippy::wildcard_enum_match_arm,
-    reason = "swept: this module's HIR walks are exhaustive. Re-enabled because a\n    parent module's file-level allow is INHERITED by its submodules"
-)]
-
 use super::fastpath::is_inline_block_fast_path;
 use crate::compiler::Compiler;
 use crate::compiler::{FMap, FSet};
@@ -247,10 +242,6 @@ pub fn block_captures(
 /// Descends through blocks and lambdas (a `binding` taken inside one still
 /// exposes the enclosing scope's locals) but stops at a `def`/`class` body,
 /// which is a scope of its own.
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "structural: `binding`/`eval` is a call, so no other node kind can be one.\n    The scope stops are decided by `scope_kind` at the top of the function"
-)]
 fn scope_calls_binding(compiler: &Compiler, id: NodeId) -> bool {
     match compiler.hir[id].scope_kind() {
         // A `def`/`class` body is a scope of its own.
@@ -420,23 +411,12 @@ fn node_contains_escaping_return(compiler: &Compiler, id: NodeId, in_escaping: b
     // shares this scope, so its `return` is literal and only counts if the
     // walk was already inside an escaping one. `new` and `super` have no
     // inline form, so their blocks always escape.
-    #[allow(
-        clippy::wildcard_enum_match_arm,
-        reason = "structural: these three are the only node kinds carrying a literal \
-                  block, so no other variant has one to treat specially"
-    )]
     let block = match node {
         HirNode::Call { block, .. }
         | HirNode::New { block, .. }
         | HirNode::SuperCall { block, .. } => *block,
         _ => None,
     };
-    #[allow(
-        clippy::wildcard_enum_match_arm,
-        reason = "structural: only a call has an inline fast path. Reached solely when \
-                  `block` above is `Some`, so the default answers for `new`/`super`, \
-                  whose blocks always escape"
-    )]
     let in_block = match node {
         HirNode::Call {
             receiver,

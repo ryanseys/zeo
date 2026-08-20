@@ -14,11 +14,6 @@
 //! Loops will reuse the same join, treating "loop body ran zero
 //! times" as one more branch to agree with.
 
-#![warn(
-    clippy::wildcard_enum_match_arm,
-    reason = "swept: this module's HIR walks are exhaustive. Re-enabled because a\n    parent module's file-level allow is INHERITED by its submodules"
-)]
-
 use crate::compiler::{ClassId, Compiler};
 use crate::compiler::{FMap, FSet};
 use crate::hir::{ArrayElem, HirNode, NodeId};
@@ -53,10 +48,6 @@ pub fn infer_locals(
 /// declared once at the top of the scope and therefore always in scope. The
 /// cost is dynamic dispatch on reads, the same trade `Params::bound_names`
 /// takes for a rebound parameter.
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "structural: only a top-level `x = <expr>` binds a name HERE. Every other\n    statement kind contributes exactly what `assigned_in` finds under it"
-)]
 fn widen_nested_writes(compiler: &Compiler, body: &[NodeId], locals: &mut FMap<String, TyKind>) {
     let mut nested = FSet::default();
     for &stmt in body {

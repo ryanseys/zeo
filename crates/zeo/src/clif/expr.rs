@@ -14,10 +14,6 @@ use zeo_abi::abi::{PAYLOAD_OFFSET, ValueTag};
 /// `EncodingId(1)` = UTF-8, every plain source literal's encoding.
 const ENC_UTF8: i64 = 1;
 
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "structural: the refusal arm IS the default -- an unlisted node kind must refuse loudly, which is exactly what a new HirNode should do here until its lowering lands"
-)]
 pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
     match &fx.an.compiler.hir[id] {
         HirNode::IntegerLit(v) => {
@@ -1404,10 +1400,6 @@ fn block_channel(
 }
 
 /// A short human label for refusal messages.
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "structural: a refusal-message label -- an unnamed kind falls back to its variant name, which is what triage needs"
-)]
 fn node_kind(node: &HirNode) -> String {
     // One `match` would be 80 arms of labels nothing else needs; the
     // refusal text only has to orient, not classify -- so a kind without a
@@ -2437,10 +2429,6 @@ fn is_predefined_global(name: &str) -> bool {
 /// runtime-probing forms call one capi each; everything else classifies
 /// statically. The collection-literal recursion and dynamic-scope const
 /// forms still refuse.
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "structural: the static-classification tail mirrors rustc's exhaustive match; an unlisted node kind refuses loudly below rather than misclassifying"
-)]
 fn lower_defined(fx: &mut Fx, site: NodeId, inner: NodeId) -> Result<Operand, String> {
     // `defined?(yield)`: runtime -- the block channel is or isn't there.
     if matches!(&fx.an.compiler.hir[inner], HirNode::Yield(_)) {
@@ -2661,10 +2649,6 @@ fn defined_const_under_runtime_scope(
 
 /// The rest of [`lower_defined`]'s classification chain, split off only so
 /// that neither half runs to a thousand lines.
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "structural: the static-classification tail mirrors rustc's exhaustive match; an unlisted node kind refuses loudly below rather than misclassifying"
-)]
 fn defined_rest(fx: &mut Fx, site: NodeId, inner: NodeId) -> Result<Operand, String> {
     use crate::hir::LastMatch;
     if let HirNode::GlobalRead(name) = &fx.an.compiler.hir[inner] {

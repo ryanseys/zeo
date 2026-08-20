@@ -4,11 +4,6 @@
 //! the SAME predicate, so it lives here, backend-neutrally, rather than in
 //! any one consumer.
 
-#![warn(
-    clippy::wildcard_enum_match_arm,
-    reason = "swept: this module's matches are exhaustive. Re-enabled because a\n    parent module's file-level allow is INHERITED by its submodules"
-)]
-
 use crate::compiler::Compiler;
 use crate::hir::{HirNode, NodeId};
 
@@ -35,11 +30,6 @@ pub fn is_times_fast_path(
 /// both Int literals -- the other call shape that fuses to a native counted
 /// loop (no `Proc` allocated). Beginless/endless ranges keep the generic
 /// path (an endless `each` never terminates by counting up).
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "structural: only a literal range with two literal Int bounds fuses; every \
-              other receiver shape keeps the generic dispatch path by definition"
-)]
 pub fn is_range_each_fast_path(
     compiler: &Compiler,
     receiver: Option<NodeId>,

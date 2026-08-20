@@ -2,11 +2,6 @@
 //! the enclosing class (the mentions_self rule), singleton item mapping,
 //! and the self-site rewrites.
 
-#![warn(
-    clippy::wildcard_enum_match_arm,
-    reason = "swept: this module's matches are exhaustive. Re-enabled because a\n    parent module's file-level allow is INHERITED by its submodules"
-)]
-
 use super::*;
 
 /// `class << obj; def a; ...; end; ...; end` on a NON-`self` receiver:
@@ -39,12 +34,6 @@ pub(crate) fn desugar_singleton_class_defs(
 /// guarding definitions keeps its runtime `if` with each branch mapped the same
 /// way. Recursive so a nested `if RUBY_VERSION < "3.2"; module PathAttr; end`
 /// (tempfile) composes.
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "structural: the wildcard bucket IS the fully general path -- the statement \
-              runs as the body of `singleton_class.class_eval`, ruby's own mechanism; \
-              every listed arm is an opt-in compile-time lowering of a specific shape"
-)]
 fn desugar_singleton_items(
     result: &ruby_prism::ParseResult,
     hir: &mut Hir,
@@ -421,11 +410,6 @@ fn desugar_singleton_items(
 /// shape: `connection` is the module's business, and the assignment itself is
 /// self-free. A block that is NOT a method body does capture the enclosing
 /// `self`, and is still walked.
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "structural: a scan for `self` mentions with the two scope stops; everything \
-              else descends generically via `for_each_child`"
-)]
 fn mentions_self(hir: &Hir, id: NodeId) -> bool {
     let mut stack = vec![id];
     while let Some(n) = stack.pop() {
@@ -447,11 +431,6 @@ fn mentions_self(hir: &Hir, id: NodeId) -> bool {
 /// evaluated, which for a call nested inside a block zeo cannot do.
 ///
 /// Stops where `mentions_self` stops, and for the same reason.
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "structural: a scan for receiverless calls with the two scope stops; \
-              everything else descends generically"
-)]
 fn has_implicit_self_send(hir: &Hir, id: NodeId) -> bool {
     let mut stack = vec![id];
     while let Some(n) = stack.pop() {
@@ -495,11 +474,6 @@ fn retarget_self_to_singleton(hir: &mut Hir, id: NodeId) {
 /// Every `self` under `id` that is EVALUATED here -- the sites
 /// [`retarget_self_to_singleton`] and its `class << obj` counterpart rewrite.
 /// Stops at a definition boundary for the reason `mentions_self` does.
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "structural: a scan collecting `self` sites with the two scope stops; \
-              everything else descends generically"
-)]
 fn evaluated_self_sites(hir: &Hir, id: NodeId) -> Vec<NodeId> {
     let mut stack = vec![id];
     let mut sites = Vec::new();
@@ -535,11 +509,6 @@ fn singleton_class_of(recv: NodeId) -> HirNode {
 
 /// The names of an all-literal-symbol argument list (`:a, :b`), or `None` when
 /// any argument is computed -- a directive zeo can only serve at run time.
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "structural: only a literal symbol is a compile-time name; anything else \
-              means `None` (serve the directive at run time) by definition"
-)]
 fn literal_symbol_args(hir: &Hir, args: &[ArrayElem]) -> Option<Vec<String>> {
     if args.is_empty() {
         return None;
@@ -577,12 +546,6 @@ fn own_singleton_class(hir: &mut Hir) -> NodeId {
     recv
 }
 
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "structural: same contract as `desugar_singleton_items` -- the wildcard \
-              buckets are the general retarget/runtime paths, guarded by the \
-              implicit-self-send probe; listed arms are opt-in static lowerings"
-)]
 pub(super) fn map_class_self_items(
     hir: &mut Hir,
     ids: &[NodeId],
@@ -941,11 +904,6 @@ pub(super) fn map_class_self_items(
 /// Marks every `DefMethod` in a constant-bearing `class << self` body
 /// (recursing into kept conditional branches) -- see
 /// `NodeFlag::SINGLETON_BODY_DEF`.
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "structural: statement-position defs sit directly or under the `if`s the \
-              guard desugar produces; anything else holds none to tag"
-)]
 pub(super) fn tag_singleton_body_defs(hir: &mut Hir, ids: &[NodeId]) {
     for &id in ids {
         match &hir[id] {

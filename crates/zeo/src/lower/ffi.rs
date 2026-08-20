@@ -4,11 +4,6 @@
 //! accessor-method synthesis, and the C type-name mapping shared by both.
 //! Split out of `parse/mod.rs`.
 
-#![warn(
-    clippy::wildcard_enum_match_arm,
-    reason = "swept: this module's matches are exhaustive. Re-enabled because a\n    parent module's file-level allow is INHERITED by its submodules"
-)]
-
 use super::PResult;
 use super::literals::assemble_i64;
 use crate::hir::{Hir, HirNode, NodeId, Params, Visibility};
@@ -1408,12 +1403,6 @@ fn enum_int_literal(node: &Node<'_>, hir: &Hir, body_so_far: &[NodeId]) -> Optio
 /// it to, if it named one. See [`as_ffi_layout`].
 pub(crate) type FfiField = (String, crate::hir::FfiType, Option<usize>);
 
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "structural: literal-shape recognition of the gem's documented `layout` \
-              spellings; an unrecognized shape is a loud rejection or a pointer \
-              degradation, never a silently mis-shaped field"
-)]
 pub(crate) fn as_ffi_layout<'a>(
     node: &Node<'a>,
     aliases: &crate::compiler::FMap<String, crate::hir::FfiType>,
@@ -1549,11 +1538,6 @@ fn hash_pairs<'a>(node: &Node<'a>) -> Option<Vec<(Node<'a>, Node<'a>)>> {
 /// assigned an integer -- sys-filesystem's `UUID_NODE_LEN = 6` two lines above
 /// its `layout(...)` is the shape, and C bindings spell array widths that way
 /// far more often than not.
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "structural: same contract as `as_ffi_layout` -- unlisted element shapes \
-              reject loudly or degrade to pointer per the gem's own rule"
-)]
 fn layout_array_type(
     node: &Node<'_>,
     aliases: &crate::compiler::FMap<String, crate::hir::FfiType>,
@@ -1620,11 +1604,6 @@ fn layout_array_type(
 /// already lowered for it. Scoped to the body on purpose: a layout's array
 /// width is written beside the layout, and reaching further would mean deciding
 /// a name against a scope chain that is still being built.
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "structural: only a `ConstWrite` of an integer literal answers; anything else \
-              means `None` (not a compile-time width) by definition"
-)]
 fn body_const_int(hir: &Hir, body_so_far: &[NodeId], node: &Node<'_>) -> Option<i64> {
     let wanted = const_leaf_name(node)?;
     let own = body_so_far.iter().rev().find_map(|&id| match &hir[id] {
@@ -1654,11 +1633,6 @@ fn const_leaf_name(node: &Node<'_>) -> Option<String> {
 /// vocabulary this way). The symbol's NAME comes back for the ordinary
 /// keyword resolution; `body_const_int`'s sibling, with the same
 /// enclosing-body fallback.
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "structural: only a `ConstWrite` of a symbol literal answers; anything else \
-              means `None` by definition"
-)]
 fn body_const_type_symbol(hir: &Hir, body_so_far: &[NodeId], node: &Node<'_>) -> Option<String> {
     let wanted = const_leaf_name(node)?;
     let own = body_so_far.iter().rev().find_map(|&id| match &hir[id] {
@@ -1674,11 +1648,6 @@ fn body_const_type_symbol(hir: &Hir, body_so_far: &[NodeId], node: &Node<'_>) ->
 /// The `FFI::MemoryPointer` accessor pair and C layout `(size, align)` for a
 /// struct field type. Structs hold scalar/pointer fields; a `:string`/`:bool`/
 /// nested-struct field is a clean, greppable rejection (follow-on).
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "structural: the unlisted field types return a loud `isn't supported yet` \
-              error -- the compile contract's FAIL direction, never a wrong accessor"
-)]
 fn ffi_field_accessor(ty: &crate::hir::FfiType) -> PResult<(String, String, usize, usize)> {
     use crate::hir::FfiType::*;
     // An inline array occupies `count` elements IN PLACE, and aligns to one
@@ -1757,11 +1726,6 @@ fn ffi_field_accessor(ty: &crate::hir::FfiType) -> PResult<(String, String, usiz
 /// Divergence recorded once, here: a `:long` field answers
 /// `Type::Builtin::INT64` rather than `LONG`, because both fold to one width
 /// before a layout is recorded and the spelling is gone by now.
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "structural: unlisted types either have a scalar descriptor or fail loudly; \
-              the inner probes answer `None` for non-scalars by definition"
-)]
 fn ffi_field_descriptor(name: &str, ty: &crate::hir::FfiType, off: usize) -> PResult<String> {
     use crate::hir::FfiType::*;
     let (size, align) = {
@@ -1833,11 +1797,6 @@ fn ffi_field_descriptor(name: &str, ty: &crate::hir::FfiType, off: usize) -> PRe
     ))
 }
 
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "structural: the scalar tail spells every remaining c_scalar type; aggregate \
-              arms returned above, and `:strptr` is the explicit rejection"
-)]
 fn ruby_ffi_type_src(ty: &crate::hir::FfiType) -> PResult<String> {
     use crate::hir::FfiType::*;
     Ok(match ty {
@@ -2008,11 +1967,6 @@ pub(crate) fn ffi_struct_layout(
     })
 }
 
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "structural: literal-shape probes over the walked layout; unlisted shapes \
-              reject loudly (named-class requirement) or take the general path"
-)]
 pub(crate) fn synthesize_ffi_struct(
     layout: &crate::hir::FfiStructLayout,
     with_inline_array_classes: bool,
@@ -2494,12 +2448,6 @@ fn strip_lib_name(raw: &str) -> String {
 /// `attach_function :abs, [:int], :int` (plain) or `attach_function :my_len,
 /// :strlen, [:string], :ulong` (the 4-arg rename form) -> a synthesized class
 /// method whose body is a `HirNode::Ffi` over the C symbol.
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "structural: `StructRef` degrades to pointer per the gem's own rule and \
-              everything else passes through; by-value struct returns without a \
-              named class are the explicit loud rejection"
-)]
 fn lower_attach_function(
     result: &ParseResult,
     hir: &mut Hir,

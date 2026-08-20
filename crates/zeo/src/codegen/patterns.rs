@@ -16,11 +16,6 @@
 //! precisely as long as real Ruby's does (the rest of the enclosing method
 //! scope), no new storage class needed.
 
-#![allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "not yet swept for wildcard arms -- see the lint's note in lib.rs"
-)]
-
 use quote::{format_ident, quote};
 
 use super::Ctx;

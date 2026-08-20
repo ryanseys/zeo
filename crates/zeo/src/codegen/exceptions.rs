@@ -55,11 +55,6 @@
 //! labels are established inside the very same closure, so a jump targeting
 //! IT works via ordinary literal jumps, no signal involved at all).
 
-#![allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "not yet swept for wildcard arms -- see the lint's note in lib.rs"
-)]
-
 use quote::quote;
 
 use super::Ctx;

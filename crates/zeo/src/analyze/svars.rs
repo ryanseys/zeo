@@ -54,11 +54,6 @@ pub(crate) fn body_mentions_svars(compiler: &Compiler, body: &[NodeId]) -> bool 
     found
 }
 
-#[expect(
-    clippy::wildcard_enum_match_arm,
-    reason = "structural: a probe -- every other node kind contributes nothing of \
-              its own and is answered by its children"
-)]
 fn walk(hir: &Hir, id: NodeId, found: &mut bool) {
     if *found {
         return;

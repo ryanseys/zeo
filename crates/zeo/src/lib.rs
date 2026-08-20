@@ -12,23 +12,13 @@
 //! final `cargo build` of the *generated* program (and running the
 //! resulting binary), since that's a genuinely separate compilation unit.
 
-#![warn(clippy::wildcard_enum_match_arm)]
-// A `_` arm on an enum silently absorbs new variants. Exhaustiveness checking
-// is what makes adding an `HirNode` safe: the compiler names every walk that
-// must decide about it, instead of one of them quietly defaulting. Three
-// `fix(analyze)` commits were each one missed node kind.
-//
-// Two deliberate exceptions, both marked with an `#[allow]` carrying a reason:
-//   - a STRUCTURAL shape test ("is this node a symbol literal?"), where the
-//     answer for every future variant is unambiguously "no", and listing 78
-//     `=> None` arms would bury the two that matter;
-//   - a module not yet swept, which carries a file-level allow naming this
-//     comment. As of the 2026-08-18 sweep only `codegen/` (deleted at the
-//     Cranelift M3 milestone -- sweeping dying code is waste) still carries
-//     one; everything permanent is exhaustive or reasoned.
-//
-// A walk that asks "may I descend through this?" should use
-// `HirNode::scope_kind` rather than either, which is exhaustive in one place.
+// `clippy::wildcard_enum_match_arm` is OFF (user-directed 2026-08-20): the
+// lint fired on far more probes and folds -- where every unlisted variant is
+// answered by its children or by one honest default -- than on walks that
+// genuinely had to decide, so the 106 `allow`s it collected were noise around
+// the handful of real cases. A walk that must name every variant still spells
+// them out; one that asks "may I descend through this?" uses
+// `HirNode::scope_kind`, which is exhaustive in one place.
 
 /// The runtime, re-exported whole: the re-export is what forces `zeo-rt`
 /// (its `zeo_rt_*` C surface and linkme tables included) into every output

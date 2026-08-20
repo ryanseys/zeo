@@ -16,11 +16,6 @@
 //! generated Rust text ends up with one copy per class, exactly the same
 //! trade a generic Rust function already makes via monomorphization.
 
-#![warn(
-    clippy::wildcard_enum_match_arm,
-    reason = "swept: this module's matches are exhaustive. Re-enabled because a\n    parent module's file-level allow is INHERITED by its submodules"
-)]
-
 use crate::analyze_error::AnalyzeError;
 use crate::compiler::{ClassId, Compiler, MethodEntry, NameId, OBJECT_CLASS, ScopeId};
 use crate::compiler::{FMap, FSet};
@@ -1103,11 +1098,6 @@ fn owner_of(compiler: &mut Compiler, class_id: ClassId, name: &str) -> ClassId {
 /// same rule a class body's own list follows: `NAME = 1 if cond` stays
 /// unclaimed rather than naming an owner it may never get. `class_body_stmts`
 /// is analysis-only (execution is per-site), so this adds no second run.
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "structural: only a bare top-level `NAME = v` claims an owner and only a \
-              box scope changes it; statement-level only, so nothing else descends"
-)]
 fn record_top_level_consts(compiler: &mut Compiler, main_statements: &[NodeId]) {
     let mut claims: Vec<(ClassId, NodeId)> = Vec::new();
     let mut frames: Vec<(ClassId, Vec<NodeId>)> = vec![(OBJECT_CLASS, main_statements.to_vec())];
@@ -1168,12 +1158,6 @@ fn index_stmts(
     }
 }
 
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "structural: only const/class definitions mark a definition point and only \
-              a box scope changes the owner; everything else is a statement container \
-              whose children run right here, descended generically"
-)]
 fn index_node(
     compiler: &mut Compiler,
     owner: ClassId,
@@ -1350,11 +1334,6 @@ impl NameList {
 /// always counts (an explicit `Foo::NAME` write needs no ownership
 /// DISCOVERY, its target is already named); `ClassVarRead`/`ClassVarWrite`
 /// always count.
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "structural: only the listed node kinds carry const/cvar names to own; \
-              everything else descends generically via `for_each_child`"
-)]
 fn collect_ownership_names(
     compiler: &Compiler,
     id: crate::hir::NodeId,

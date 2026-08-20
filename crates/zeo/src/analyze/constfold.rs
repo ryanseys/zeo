@@ -14,11 +14,6 @@
 //!   body may be MRI-only/uncompilable code (`if defined?(RubyVM::YJIT);
 //!   RubyVM::YJIT.enable; end`) that must never reach Rust emission.
 
-#![warn(
-    clippy::wildcard_enum_match_arm,
-    reason = "swept: this module's matches are exhaustive. Re-enabled because a\n    parent module's file-level allow is INHERITED by its submodules"
-)]
-
 use crate::compiler::{ClassId, Compiler, OBJECT_CLASS};
 use crate::hir::{HirNode, NodeId};
 
@@ -119,12 +114,6 @@ pub(crate) fn value_const_defined_in(
 /// guard away would run the very branch it protects. A BARE name stays
 /// decidable, because that is the version/feature-gate idiom (`defined?(Ractor)`)
 /// whose whole value is dropping unreachable code at compile time.
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "structural: only the constant-reference node kinds are constant forms; for \
-              every other node `defined?` makes no compile-time claim (the caller asks \
-              at runtime), so the conservative `None` is correct by definition"
-)]
 pub(crate) fn const_form_resolves(env: &ConstEnv, id: NodeId) -> Option<bool> {
     match &env.compiler.hir[id] {
         // A bare name is a class OR a value constant. Only the first was
@@ -252,11 +241,6 @@ fn defined_only_later(env: &ConstEnv, at: NodeId, scopes: &[ClassId], name: &str
 /// (the `&&` value identity CRuby would compute is irrelevant here). The left
 /// operand of a folded `&&` is always a pure `defined?` guard, so dropping the
 /// unreached right operand never elides a side effect.
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "structural: only `defined?` guards and their `&&` chains fold; any other \
-              condition emits normally, so the conservative `None` never elides a branch"
-)]
 pub(crate) fn static_cond(env: &ConstEnv, id: NodeId) -> Option<bool> {
     // A build-time target-constant guard -- a version gate (`Gem.rubygems_version
     // < Gem::Version.new("3.5.22")`, `RUBY_VERSION < "3.0"`) or a feature probe

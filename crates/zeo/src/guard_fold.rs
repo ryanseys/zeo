@@ -30,11 +30,6 @@
 //! guard site (empty at the top level) so a bare `Specification`/const resolves
 //! in its enclosing namespace, exactly as it would at that source position.
 
-#![allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "structural, module-wide: this whole module is the build-time guard FOLD. \n    Every match is an opt-in claim about one literal shape, and every wildcard \n    either answers in the documented three-valued contract's safe direction \n    (`None` = undecidable, keep the guard; `false` = make no claim) or delegates \n    deeper into the fold chain, which ends the same way -- sound by definition \n    for any node kind not listed, including future variants. Nothing in this \n    module emits or transforms; a missed shape only costs a fold"
-)]
-
 use crate::compiler::{ClassId, Compiler, ScopeId};
 use crate::hir::{ArrayElem, HirNode, NodeId, Params, StrPart, Visibility};
 use std::cmp::Ordering;

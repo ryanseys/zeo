@@ -4,11 +4,6 @@
 //! receiver/index binding for `obj.attr op= rhs`/`arr[i] op= rhs`, and the
 //! generalized multi-assignment target shape. Split out of `parse/mod.rs`.
 
-#![warn(
-    clippy::wildcard_enum_match_arm,
-    reason = "swept: this module's matches are exhaustive. Re-enabled because a\n    parent module's file-level allow is INHERITED by its submodules"
-)]
-
 use super::consts::constant_path_name;
 use super::{PResult, cvar_read, cvar_write, lower_node};
 use crate::hir::{ArrayElem, Hir, HirNode, LastMatch, NodeId};

@@ -43,11 +43,6 @@
 //! restarts those counters, so two spliced files' `__recv0`s would
 //! otherwise collide in the merged scope.
 
-#![warn(
-    clippy::wildcard_enum_match_arm,
-    reason = "swept: this module's HIR walks are exhaustive. Re-enabled because a\n    parent module's file-level allow is INHERITED by its submodules"
-)]
-
 use crate::hir::{
     ArrayElem, HashPatternRest, Hir, HirNode, MultiTarget, MultiTargetGroup, NodeId, Params,
     Pattern,

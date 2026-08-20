@@ -5,11 +5,6 @@
 //! the static and runtime class-lowering paths. Split out of
 //! `parse/mod.rs`.
 
-#![warn(
-    clippy::wildcard_enum_match_arm,
-    reason = "swept: this module's matches are exhaustive. Re-enabled because a\n    parent module's file-level allow is INHERITED by its submodules"
-)]
-
 use super::assign::lower_multi_target_group;
 use super::consts::constant_path_name;
 use super::control::static_bool;
@@ -1799,12 +1794,6 @@ fn auto_private_def(hir: &Hir, id: NodeId) -> bool {
 /// mode to every instance `def` in `id`'s `if`/`case` branches, recursively --
 /// see the call site above for why. Statements other than branch containers
 /// and defs pass through untouched.
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "structural: a pass-through rewrite -- only defs take the pending visibility \
-              default and only `if`/`case` branches nest them (the shapes the guard \
-              desugars produce); every other statement passes through unchanged"
-)]
 fn apply_body_defaults_in_branches(
     hir: &mut Hir,
     id: NodeId,

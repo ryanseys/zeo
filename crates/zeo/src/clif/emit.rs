@@ -1210,10 +1210,6 @@ fn inline_markers(
             work.extend(body.iter().copied());
         }
     }
-    #[allow(
-        clippy::wildcard_enum_match_arm,
-        reason = "structural: every other node is a plain statement container -- the walk descends via for_each_child, the same bucket the rustc twin uses"
-    )]
     while let Some(n) = work.pop() {
         match &compiler.hir[n] {
             HirNode::ClassDef { .. } => {
@@ -1427,10 +1423,6 @@ fn split_guard(
 
 /// [`BodyTail`] for one site: what the body's LAST SOURCE statement is
 /// worth (rustc's `consumed_tail_value` plus its value/statement split).
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "structural: three classifiers over HirNode -- the listed kinds are the ones with no value of their own, and every other kind is an ordinary expression the tail lowering computes (refusing loudly where it cannot)"
-)]
 fn body_tail(
     compiler: &crate::compiler::Compiler,
     site: &crate::compiler::ClassBodySite,

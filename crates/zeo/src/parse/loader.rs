@@ -2146,13 +2146,6 @@ fn mark_ffi_bodies(hir: &mut Hir, body: &ruby_prism::NodeList<'_>, cref: &mut Ve
     }
 }
 
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "structural: a scan for `raise LoadError`-shaped code. `mentions` probes \
-              for the literal exception names; `walk` descends generically (only def/ \
-              lambda bodies defer execution, only `Raise` raises), and over-approximation \
-              is the safe direction -- it only keeps a rescue's fallback path emitted"
-)]
 fn spliced_may_raise_load_error(hir: &Hir, stmts: &[crate::hir::NodeId]) -> bool {
     use crate::hir::HirNode;
     fn mentions(hir: &Hir, id: crate::hir::NodeId) -> bool {

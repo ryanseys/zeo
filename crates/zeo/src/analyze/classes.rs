@@ -1,11 +1,6 @@
 //! Class registration and the class-body walk: shells, reopens,
 //! definition targets, compatibility checks, and the mixin deferrals.
 
-#![warn(
-    clippy::wildcard_enum_match_arm,
-    reason = "swept: this module's matches are exhaustive. Re-enabled because a\n    parent module's file-level allow is INHERITED by its submodules"
-)]
-
 use super::*;
 
 /// Resolve a compact-path CONTAINER (`Gem::Security` in `Gem::Security::Policy`)
@@ -644,11 +639,6 @@ fn walk_class_body(
     // runtime self-sends this body serves. Only inside them: a directive written
     // straight in the class body is registered at compile time, and rewriting it
     // here would throw that away.
-    #[allow(
-        clippy::wildcard_enum_match_arm,
-        reason = "structural: only an undecidable `if` holds directives with no \
-                  expression form; every other statement passes through unchanged"
-    )]
     let body: Vec<NodeId> = body
         .iter()
         .map(|&stmt| match &compiler.hir[stmt] {
@@ -1611,11 +1601,6 @@ pub(super) fn conceal_observed_namespace_members(compiler: &mut Compiler) {
 }
 
 /// The bare constant NAME a node reads, for the leaf-name fallback above.
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "structural: only the two constant-read node kinds carry a bare name; \
-              every other node is not a constant read by definition"
-)]
 fn leaf_const_name(hir: &Hir, node: NodeId) -> Option<String> {
     match &hir[node] {
         HirNode::ClassRef(name) => Some(name.trim_start_matches("::").to_string()),

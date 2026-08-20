@@ -20,10 +20,6 @@ use zeo_abi::abi::SignalKind;
 /// Whether `body` can raise a `Signal::Return` at its own level --
 /// nested blocks/lambdas recurse, `def`/`class` bodies stop (the rustc
 /// emitter's rule, verbatim).
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "structural: a probe -- every other node kind simply recurses through for_each_child, which is the correct default for any future variant"
-)]
 fn body_contains_return(hir: &crate::hir::Hir, body: &[NodeId]) -> bool {
     fn scan(hir: &crate::hir::Hir, id: NodeId) -> bool {
         match &hir[id] {

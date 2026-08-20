@@ -4,11 +4,6 @@
 //! (`ClassName.foo(...)`), and their shared helpers
 //! (`literal_name_arg`/`is_valid_const_name`/`any_builtin_overrides`).
 
-#![allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "not yet swept for wildcard arms -- see the lint's note in lib.rs"
-)]
-
 use quote::quote;
 
 use crate::codegen::Ctx;
