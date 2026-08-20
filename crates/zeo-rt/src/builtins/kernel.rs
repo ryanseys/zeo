@@ -108,11 +108,16 @@ ruby_module! {
     // while `__send__` still works there. They share BasicObject's one
     // implementation, as `rb_f_send` does in CRuby.
     //
-    // `public_send`'s visibility gate lives in `dispatch::send_value_public_in`
-    // and is applied by codegen at the call site, so this row is the
-    // visibility-blind path both names funnel through once that check passes.
-    def "send" | "public_send"(recv, *args, &block) {
+    // `send` is deliberately visibility-blind. `public_send` is not: its gate
+    // is `dispatch::send_value_public_in`. The rustc backend folds that gate
+    // into the call site and so reaches this row only where it did not fold;
+    // the CLIF backend has no such fold and reaches it always -- so the rule
+    // lives HERE, where both find it.
+    def "send"(recv, *args, &block) {
         crate::builtins::basic_object::dynamic_send(recv, args, block)
+    }
+    def "public_send"(recv, *args, &block) {
+        crate::builtins::basic_object::public_dynamic_send(recv, args, block)
     }
 
     // The print family as REAL Kernel methods (Path 2): `obj.send(:puts,

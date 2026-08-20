@@ -258,6 +258,35 @@ pub(crate) fn dynamic_send(
     crate::dispatch::send_value(recv, sym, rest, block)
 }
 
+/// [`dynamic_send`] behind `public_send`'s barrier: ruby resolves the target
+/// and then refuses a non-public one with a rescuable `NoMethodError`, with
+/// none of the self-receiver/protected-relatedness relaxations an ordinary
+/// explicit-receiver call gets.
+///
+/// The rustc backend folds this gate into the CALL SITE, so it reaches this
+/// row only on paths that never folded; the CLIF backend has no such fold
+/// and reaches it always. Keeping the rule here means both answer the same.
+pub(crate) fn public_dynamic_send(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    let Some((name_arg, rest)) = args.split_first() else {
+        return Err(arg_error!("no method name given"));
+    };
+    let sym = match name_arg {
+        RubyValue::Symbol(s) => *s,
+        RubyValue::Str(s) => Symbol::intern(&s.lock().to_utf8_lossy()),
+        other => {
+            return Err(type_error!(
+                "{} is not a symbol nor a string",
+                other.inspect_string()
+            ));
+        }
+    };
+    crate::dispatch::send_value_public_in(0, recv, sym, rest, block)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,0 +1,12 @@
+:pub
+:shh
+:shh
+[NoMethodError, "private method 'secret' called for an instance of Acct"]
+[NoMethodError, "protected method 'guarded' called for an instance of Acct"]
+[NoMethodError, "private method 'secret' called for an instance of Acct"]
+:shh
+[NoMethodError, "private method 'secret' called for an instance of Acct"]
+[NoMethodError, "protected method 'guarded' called for an instance of Acct"]
+:pub
+:pub
+[ArgumentError, "no method name given"]
