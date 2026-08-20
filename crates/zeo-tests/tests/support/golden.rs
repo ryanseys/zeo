@@ -390,15 +390,19 @@ fn profile() -> zeo::backend::Profile {
 }
 
 /// `ZEO_GOLDEN_BACKEND`: which backend runs the goldens. Unset or `jit` =
-/// the default -- spawn the built `zeo` CLI, one child per golden (the
-/// isolation the plan requires); `aot` is the same leg through a linked
-/// binary. `rustc` selects the frozen differential oracle: the in-process
-/// compile + `build_binary` path, which stays reachable until M3.
-fn golden_backend() -> Option<String> {
+/// the default; `aot` is the same leg through a linked binary; `rustc` is
+/// the frozen differential oracle, kept selectable until M3.
+///
+/// All three spawn the built `zeo` CLI, one child per golden. The oracle
+/// used to run in-process instead, through `build_binary` and the
+/// content-keyed bin cache; that machinery is gone, so the oracle now pays
+/// a full rustc compile per golden. Deliberate: a whole-corpus oracle sweep
+/// is no longer part of any gate, and the way the oracle actually earns its
+/// keep -- rerunning ONE diverging golden -- costs one rustc invocation.
+fn golden_backend() -> String {
     match std::env::var("ZEO_GOLDEN_BACKEND") {
-        Ok(v) if v == "rustc" => None,
-        Ok(v) if !v.is_empty() => Some(v),
-        _ => Some("jit".to_string()),
+        Ok(v) if !v.is_empty() => v,
+        _ => "jit".to_string(),
     }
 }
 
@@ -478,7 +482,16 @@ fn run_via_cli(
     stdin: Option<&[u8]>,
     run_cwd: &Path,
 ) -> Result<(Vec<u8>, Vec<u8>), String> {
-    zeo::compile_to_object_with(source, opts).map_err(String::from)?;
+    // Probe the front end IN PROCESS first, so a program zeo REJECTS stays
+    // distinguishable from one that compiled and then failed at run time --
+    // the CompileFail contract the goldens are written against. The probe
+    // has to go through the backend under test: a refusal is a property of
+    // the emitter, and reporting the other one's verdict would be a lie.
+    match backend {
+        "rustc" => zeo::compile_to_rust_with(source, opts).map(|_| ()),
+        _ => zeo::compile_to_object_with(source, opts).map(|_| ()),
+    }
+    .map_err(String::from)?;
     let mut cmd = Command::new(zeo_cli()?);
     cmd.arg("--backend").arg(backend);
     for root in &opts.load_roots {
@@ -516,37 +529,7 @@ fn compile_and_run(
         load_roots: env.load_roots.clone(),
         ..Default::default()
     };
-    if let Some(backend) = golden_backend() {
-        return run_via_cli(&backend, rb, source, &opts, args, stdin, run_cwd);
-    }
-    let compiled = zeo::compile_to_rust_with(source, &opts).map_err(String::from)?;
-    let bin = std::env::temp_dir().join(format!(
-        "zeo-golden-{}-{:?}",
-        std::process::id(),
-        std::thread::current().id()
-    ));
-    let runtime = zeo::backend::Runtime::for_prism(compiled.needs_prism_runtime);
-    // Golden binaries are throwaway: link the runtime DYNAMICALLY (shared dylib,
-    // to keep the bin-cache small. See `run_ruby_packages`.
-    let linkage = zeo::backend::Linkage::Dynamic;
-    zeo::backend::ensure_runtime_built(profile(), runtime, linkage)?;
-    // Unoptimized: a golden test only diffs OUTPUT, its hot paths live in the
-    // release runtime dylib, and `-O2` over a gem-scale generated main costs
-    // rustc tens of minutes on a cold cache.
-    zeo::backend::build_binary(
-        &compiled.rust_source,
-        &bin,
-        profile(),
-        runtime,
-        linkage,
-        zeo::backend::GenOpt::Unoptimized,
-    )?;
-
-    let mut cmd = Command::new(&bin);
-    cmd.args(args).current_dir(run_cwd);
-    let out = run_bounded(&mut cmd, stdin, "compiled binary");
-    let _ = std::fs::remove_file(&bin);
-    out
+    run_via_cli(&golden_backend(), rb, source, &opts, args, stdin, run_cwd)
 }
 
 // ---- ruby oracle (bless) ----

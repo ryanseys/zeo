@@ -62,35 +62,15 @@ fn the_lockfile_selects_the_version_when_the_store_holds_several() {
         lockfile: Some(store.join("Gemfile.lock")),
         ..Default::default()
     };
-    let compiled = zeo::compile_to_rust_with("require \"purelib\"\nputs Purelib::VERSION\n", &opts)
-        .expect("the locked purelib resolves");
-
-    let bin = std::env::temp_dir().join(format!(
-        "zeo-lockver-{}-{:?}",
-        std::process::id(),
-        std::thread::current().id()
-    ));
-    let runtime = zeo::backend::Runtime::for_prism(compiled.needs_prism_runtime);
-    let linkage = zeo::backend::Linkage::Dynamic;
-    zeo::backend::ensure_runtime_built(crate::support::harness_profile(), runtime, linkage)
-        .expect("building zeo-rt");
-    zeo::backend::build_binary(
-        &compiled.rust_source,
-        &bin,
-        crate::support::harness_profile(),
-        runtime,
-        linkage,
-        zeo::backend::GenOpt::Unoptimized,
-    )
-    .expect("linking the store program");
-    let out = std::process::Command::new(&bin)
-        .output()
-        .expect("running it");
-    let _ = std::fs::remove_file(&bin);
+    let out = crate::support::compile_link_run(
+        "require \"purelib\"\nputs Purelib::VERSION\n",
+        &opts,
+        &[],
+        &[],
+    );
 
     assert_eq!(
-        String::from_utf8_lossy(&out.stdout),
-        "1.0.0\n",
+        out.stdout, "1.0.0\n",
         "the store also holds purelib 2.0.0; the lockfile pins 1.0.0"
     );
 }

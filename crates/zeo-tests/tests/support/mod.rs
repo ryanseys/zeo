@@ -17,24 +17,10 @@ pub struct RunResult {
     pub status: std::process::ExitStatus,
 }
 
-/// The runtime profile the rustc-backed corners of the harness still link
-/// generated programs against (`e2e/ffi.rs`'s lockfile test).
-///
-/// `-O0`: these tests assert what a program prints, and optimizing a
-/// throwaway binary only spends rustc time. It also keeps the runtime
-/// symbolicated, which is what you want chasing a panic.
-/// `ZEO_RUNTIME_PROFILE=release` forces the optimized build back. Reading the
-/// env from many `#[test]` threads is safe: the data race `from_env_or` warns
-/// about is `set_var` vs `var_os`, and this only ever reads.
-#[allow(dead_code)] // only `e2e/ffi.rs`'s rustc-backed test still needs it
-pub fn harness_profile() -> zeo::backend::Profile {
-    zeo::backend::Profile::from_env_or(zeo::backend::Profile::Debug)
-}
-
 /// Compile `source` with `opts` through the default backend, link the
 /// object into a throwaway binary, run it with `env`/`args`, and hand back
 /// what it printed. The one place the e2e tier builds a program.
-fn compile_link_run(
+pub fn compile_link_run(
     source: &str,
     opts: &zeo::CompileOptions,
     env: &[(&str, &str)],
