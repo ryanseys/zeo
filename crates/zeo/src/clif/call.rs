@@ -142,10 +142,14 @@ pub(crate) fn implicit_send(
     let null = fx.b.ins().iconst(fx.em.ptr, 0);
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
+    // An implicit receiver asks no visibility question, so the site is
+    // vetted against FCALL -- `send_value_cached` with that caller is
+    // `send_value_in` with a monomorphic cache in front.
+    let cache = fx.callsite_ptr(FCALL);
     let status = fx
         .call(
-            "zeo_rt_send_value_in",
-            &[zero_box, self_ptr, sym, argv_ptr, argc_v, null, out],
+            "zeo_rt_send_value_cached",
+            &[cache, zero_box, self_ptr, sym, argv_ptr, argc_v, null, out],
         )
         .expect("send returns a status");
     fx.fallible(status);
@@ -445,6 +449,22 @@ pub(crate) fn kw_send(
 /// self` body's statement is rebound onto does: its ruby form is
 /// RECEIVERLESS, so the surrogate must be the receiver AND the barrier must
 /// stay down.
+/// Ruby's `VM_CALL_FCALL`: the caller class that means "run no visibility
+/// check". The runtime spells it the same way (`dispatch::caches::FCALL`).
+pub(crate) const FCALL: u32 = u32::MAX;
+
+/// The caller class as a COMPILE-TIME constant, or `None` when only the
+/// run time can answer -- which is the whole gate on caching a site.
+pub(crate) fn static_caller(fx: &Fx, bypass: bool) -> Option<u32> {
+    if bypass {
+        return Some(FCALL);
+    }
+    if fx.self_is_dynamic {
+        return None;
+    }
+    Some(fx.method_class.map_or(0, |c| c.0))
+}
+
 pub(crate) fn caller_class(fx: &mut Fx, bypass: bool) -> cranelift_codegen::ir::Value {
     if bypass {
         return fx.b.ins().iconst(types::I32, i64::from(u32::MAX));
@@ -526,15 +546,29 @@ fn dynamic_send_argv(
     let zero_box = fx.box_v();
     let argc_v = fx.b.ins().iconst(fx.em.ptr, argc as i64);
     let null = fx.b.ins().iconst(fx.em.ptr, 0);
-    let caller = caller_class(fx, bypass);
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
-    let status = fx
-        .call(
-            "zeo_rt_send_value_explicit_in",
-            &[zero_box, recv_ptr, sym, argv_ptr, argc_v, null, caller, out],
-        )
-        .expect("send returns a status");
+    // A site's caller class is a per-site CONSTANT the cache is vetted
+    // against once, so only a statically known caller can cache. A body
+    // whose `self` only the run time knows asks `self` per call
+    // (`Caller::Runtime`) and keeps the uncached entry.
+    let status = match static_caller(fx, bypass) {
+        Some(caller) => {
+            let cache = fx.callsite_ptr(caller);
+            fx.call(
+                "zeo_rt_send_value_cached",
+                &[cache, zero_box, recv_ptr, sym, argv_ptr, argc_v, null, out],
+            )
+        }
+        None => {
+            let caller = caller_class(fx, bypass);
+            fx.call(
+                "zeo_rt_send_value_explicit_in",
+                &[zero_box, recv_ptr, sym, argv_ptr, argc_v, null, caller, out],
+            )
+        }
+    }
+    .expect("send returns a status");
     fx.fallible(status);
     fx.owned_created += 1;
     Ok(Operand::Slot {

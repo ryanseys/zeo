@@ -276,6 +276,31 @@ impl<'e, 'f> Fx<'e, 'f> {
         )
     }
 
+    /// A fresh inline-cache slot in `zeo_callsites`, vetted against
+    /// `caller` (`u32::MAX` = FCALL, no visibility question), as a pointer.
+    ///
+    /// One slot per SITE, never shared: the cache is monomorphic, so two
+    /// sites sharing one would thrash each other. The base is
+    /// re-materialised per site rather than hoisted to the entry block --
+    /// it is an `adrp`/`add` pair the same shape rustc's `&__CS_n[i]`
+    /// compiles to, and hoisting it would need the value to dominate every
+    /// block that sends.
+    pub fn callsite_ptr(&mut self, caller: u32) -> ir::Value {
+        let idx = self.em.callsites.len();
+        self.em.callsites.push(caller);
+        let gv = self
+            .em
+            .module
+            .declare_data_in_func(self.em.callsites_id, self.b.func);
+        let base = self.b.ins().symbol_value(self.em.ptr, gv);
+        let off = (idx * zeo_abi::abi::CALLSITE_SIZE) as i64;
+        if off == 0 {
+            base
+        } else {
+            self.b.ins().iadd_imm_u(base, off)
+        }
+    }
+
     /// A 24-byte temp slot, recycled at statement boundaries.
     pub fn temp_slot(&mut self) -> ir::StackSlot {
         let ss = self.temp_free.pop().unwrap_or_else(|| {

@@ -81,6 +81,11 @@ pub const CAPI: &[CapiSig] = &[
         ret: Some(I32),
     },
     CapiSig {
+        name: "zeo_rt_callsite_init",
+        params: &[Ptr, U32],
+        ret: None,
+    },
+    CapiSig {
         name: "zeo_rt_case_eq",
         params: &[Ptr, Ptr, Ptr],
         ret: Some(I32),
@@ -730,6 +735,11 @@ pub const CAPI: &[CapiSig] = &[
     CapiSig {
         name: "zeo_rt_send_value_args_in",
         params: &[U32, Ptr, U32, Ptr, U8, Ptr, Ptr, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
+        name: "zeo_rt_send_value_cached",
+        params: &[Ptr, U32, Ptr, U32, Ptr, Usize, Ptr, Ptr],
         ret: Some(I32),
     },
     CapiSig {

@@ -56,10 +56,25 @@ pub(crate) fn define_syms(em: &mut Emitter) -> Result<(), String> {
         .map_err(|e| format!("defining {}: {e}", names::SYMS))
 }
 
-/// `zeo_unit_init`: intern every symbol name into `zeo_syms`. `None` when
-/// the program interned nothing.
+/// Define the `zeo_callsites` array: one zeroed `CallSite` per emitted
+/// inline cache. Zero bytes are NOT a valid slot (the runtime's `OnceLock`
+/// is not zero-initialisable), so nothing may read one before
+/// `zeo_unit_init` has written it -- which is why init runs before the
+/// first statement rather than lazily per site.
+pub(crate) fn define_callsites(em: &mut Emitter) -> Result<(), String> {
+    let mut data = DataDescription::new();
+    data.define_zeroinit(em.callsites.len().max(1) * abi::CALLSITE_SIZE);
+    data.set_align(8);
+    em.module
+        .define_data(em.callsites_id, &data)
+        .map_err(|e| format!("defining {}: {e}", names::CALLSITES))
+}
+
+/// `zeo_unit_init`: intern every symbol name into `zeo_syms`, then hand
+/// every `zeo_callsites` slot its caller class. `None` when the program
+/// has neither.
 pub(crate) fn define_unit_init(em: &mut Emitter) -> Result<Option<FuncId>, String> {
-    if em.syms.is_empty() {
+    if em.syms.is_empty() && em.callsites.is_empty() {
         return Ok(None);
     }
     let sig = em.module.make_signature();
@@ -78,10 +93,15 @@ pub(crate) fn define_unit_init(em: &mut Emitter) -> Result<Option<FuncId>, Strin
             .collect()
     };
 
+    let f_site_init = em.import("zeo_rt_callsite_init");
+    let callers: Vec<u32> = em.callsites.clone();
+
     let mut func = ir::Function::with_name_signature(UserFuncName::user(0, 2), sig);
     let intern = em.module.declare_func_in_func(f_intern, &mut func);
+    let site_init = em.module.declare_func_in_func(f_site_init, &mut func);
     let rodata_gv = em.module.declare_data_in_func(em.rodata_id, &mut func);
     let syms_gv = em.module.declare_data_in_func(em.syms_id, &mut func);
+    let sites_gv = em.module.declare_data_in_func(em.callsites_id, &mut func);
     let cfg = em.module.target_config();
     let mut fbc = FunctionBuilderContext::new();
     let mut b = FunctionBuilder::new(&mut func, &mut fbc);
@@ -100,6 +120,19 @@ pub(crate) fn define_unit_init(em: &mut Emitter) -> Result<Option<FuncId>, Strin
         let call = b.ins().call(intern, &[ptr, len_v]);
         let id = b.func.dfg.inst_results(call)[0];
         b.ins().store(fl, id, syms, (i * 4) as i32);
+    }
+    if !callers.is_empty() {
+        let sites = b.ins().symbol_value(em.ptr, sites_gv);
+        for (i, caller) in callers.into_iter().enumerate() {
+            let off = (i * abi::CALLSITE_SIZE) as i64;
+            let slot = if off == 0 {
+                sites
+            } else {
+                b.ins().iadd_imm_u(sites, off)
+            };
+            let caller_v = b.ins().iconst(ir::types::I32, i64::from(caller));
+            b.ins().call(site_init, &[slot, caller_v]);
+        }
     }
     b.ins().return_(&[]);
     b.seal_all_blocks();

@@ -489,6 +489,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
     }
     let unit_init = statics::define_unit_init(em)?;
     statics::define_syms(em)?;
+    statics::define_callsites(em)?;
     let mut vm_rows: Vec<statics::VmRowSpec> = defs
         .iter()
         .map(|d| statics::VmRowSpec {
@@ -842,6 +843,11 @@ pub(crate) struct Emitter {
     pub ptr: ir::Type,
     pub rodata_id: DataId,
     pub syms_id: DataId,
+    pub callsites_id: DataId,
+    /// One entry per emitted inline-cache slot: the caller class the site
+    /// is vetted against (`u32::MAX` = ruby's FCALL, no visibility
+    /// question). The index IS the slot index.
+    pub callsites: Vec<u32>,
     pub syms: statics::SymPool,
     rodata: Vec<u8>,
     rodata_offsets: HashMap<Vec<u8>, u32>,
@@ -947,11 +953,16 @@ impl Emitter {
         let syms_id = module
             .declare_data(names::SYMS, Linkage::Local, true, false)
             .map_err(|e| format!("declaring {}: {e}", names::SYMS))?;
+        let callsites_id = module
+            .declare_data(names::CALLSITES, Linkage::Local, true, false)
+            .map_err(|e| format!("declaring {}: {e}", names::CALLSITES))?;
         Ok(Emitter {
             module,
             ptr,
             rodata_id,
             syms_id,
+            callsites_id,
+            callsites: Vec::new(),
             syms: statics::SymPool::default(),
             rodata: Vec::new(),
             rodata_offsets: HashMap::new(),

@@ -90,6 +90,14 @@ pub fn send_value_cached(
     args: &[RubyValue],
     block: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
+    // A cache HIT calls the target without ever reaching
+    // `send_value_in_reason`, which is where the dynamic entry's stack
+    // check lives -- so the check has to happen here too, or a recursion
+    // whose only carrier is a cached send runs the NATIVE stack out and
+    // aborts the process instead of raising a rescuable SystemStackError.
+    // One TLS read and a compare, beside an atomic load this path already
+    // pays.
+    crate::stack_guard::stack_check()?;
     // ONE gate-byte load serves both questions this path asks -- the same
     // single atomic load `is_live()` always cost. The moved branch is
     // never taken until a `move: true` send poisons something; from then on
@@ -224,6 +232,9 @@ pub fn send_class_cached(
     block: Option<RubyValue>,
     caller_class: u32,
 ) -> Result<RubyValue, Signal> {
+    // A hit skips the dynamic entry, and with it the stack check -- see
+    // `send_value_cached`.
+    crate::stack_guard::stack_check()?;
     let gates = crate::runtime_meta::gates();
     // One gate-byte load, same as `send_value_cached`: nothing caches while
     // anything is defined at runtime, and a poisoned (moved) program takes

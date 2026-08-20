@@ -13,6 +13,13 @@ pub const RODATA: &str = "zeo_rodata";
 pub const STR_TABLES: &str = "zeo_str_tables";
 /// The interned-symbol id array (`.bss`), filled by `zeo_unit_init`.
 pub const SYMS: &str = "zeo_syms";
+
+/// The `.bss` array of monomorphic inline caches -- one `CallSite` slot per
+/// dynamic send the emitter could key by a COMPILE-TIME caller class.
+/// `zeo_unit_init` initialises each with its caller (the runtime's
+/// `OnceLock` is not valid zero bytes, so the slots cannot be left as they
+/// come out of `.bss`).
+pub const CALLSITES: &str = "zeo_callsites";
 /// Startup initialization: interns the symbol table (and, later, the
 /// `.bss` site slots).
 pub const UNIT_INIT: &str = "zeo_unit_init";
