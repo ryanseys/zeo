@@ -7,6 +7,7 @@ use super::expr::lower_expr;
 use super::ownership;
 use crate::hir::{ArrayElem, HirNode, NodeId};
 use cranelift_codegen::ir::{InstBuilder, StackSlotData, StackSlotKind, types};
+use cranelift_module::Module;
 
 pub(crate) fn lower_stmts(fx: &mut Fx, stmts: &[NodeId]) -> Result<(), String> {
     for &stmt in stmts {
@@ -739,6 +740,19 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
         // walk consumed. An FCALL, not a visibility-checked call: ruby
         // reaches its hooks that way, so a `private def self.method_added`
         // still runs.
+        // A redefinition applied at its document position: the install
+        // replaces the overlay body, and the definition's own
+        // `method_added` report is a separate `DefHook` right after it.
+        HirNode::MethodRedefine { class, name, scope } => {
+            let (class, name, scope) = (*class, name.clone(), *scope);
+            let tramp = fx.em.redef_tramps[&(class, scope)];
+            let f_ref = fx.em.module.declare_func_in_func(tramp, fx.b.func);
+            let f_addr = fx.b.ins().func_addr(fx.em.ptr, f_ref);
+            let cid = fx.b.ins().iconst(types::I32, i64::from(class));
+            let (nptr, nlen) = super::expr::rodata_name(fx, &name);
+            fx.call("zeo_rt_runtime_replace_method", &[cid, nptr, nlen, f_addr]);
+            Ok(())
+        }
         HirNode::DefHook {
             class,
             hook,

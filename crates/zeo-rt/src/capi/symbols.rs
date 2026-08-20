@@ -150,6 +150,7 @@ capi_symbols!(
     values::zeo_rt_retain,
     signals::zeo_rt_return_targets_here,
     objects::zeo_rt_reveal_class,
+    objects::zeo_rt_runtime_replace_method,
     objects::zeo_rt_runtime_set_visibility,
     objects::zeo_rt_scope_const_defined,
     objects::zeo_rt_scope_const_get,

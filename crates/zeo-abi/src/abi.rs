@@ -397,6 +397,13 @@ pub const REG_REGISTER_BUILTIN: u8 = 11;
 /// `singleton_class.prepend`ed module in its `ancestors`).
 pub const REG_SINGLETON_SURROGATE: u8 = 12;
 
+/// The BOOT install of the first body of a method with an observable
+/// redefinition timeline: `class` = the owner, `a` = the method name, `f`
+/// = that body's trampoline. It runs before the first statement, so the
+/// window before each reopen's positional re-install dispatches the way
+/// ruby's install-where-it-stands does.
+pub const REG_BOOT_REDEF: u8 = 13;
+
 /// A lazily-run feature unit -- the `install_feature_units` twin.
 #[repr(C)]
 pub struct UnitRow {

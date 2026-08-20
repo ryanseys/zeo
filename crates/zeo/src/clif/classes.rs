@@ -82,6 +82,25 @@ pub(crate) struct CmMethodSpec {
     pub ruby2_keywords: bool,
 }
 
+/// One SUPERSEDED (or re-installed) body of a method with an observable
+/// redefinition timeline. Compiled as a receiver-generic value-channel
+/// body -- an overlay entry propagates down the ancestry, so a subclass
+/// instance may arrive -- and installed by `runtime_replace_method` at
+/// the definition's document position.
+pub(crate) struct RedefSpec {
+    pub owner: ClassId,
+    pub owner_name: String,
+    pub scope: crate::compiler::ScopeId,
+    pub name: String,
+    pub body: Vec<crate::hir::NodeId>,
+    pub node: Option<crate::hir::NodeId>,
+    pub tramp: cranelift_module::FuncId,
+    pub body_fn: cranelift_module::FuncId,
+    pub hir_params: crate::hir::Params,
+    pub has_blk: bool,
+    pub ruby2_keywords: bool,
+}
+
 /// One module method: body + `ValueFn` trampoline, registered as a
 /// `VmRow` on the module's id. The body's `self` is whatever receiver
 /// dispatch hands over (a value pointer, as every body here takes).
@@ -131,6 +150,10 @@ pub(crate) struct CollectedClasses {
     /// `(surrogate, owner)` for every compile-registered singleton-class
     /// surrogate -- what seeds the runtime's `singleton_class` mint.
     pub singleton_surrogates: Vec<(u32, u32)>,
+    /// Every body of a redefined method, superseded ones included.
+    pub redefs: Vec<RedefSpec>,
+    /// `(class, name, scope)` -- the FIRST body, installed at boot.
+    pub boot_redefs: Vec<(u32, String, crate::compiler::ScopeId)>,
     /// `(class, ancestor ids)` -- a builtin reopen that CHANGED the
     /// ancestry patches the entry `register_builtins` already made.
     pub set_ancestors: Vec<(u32, Vec<u32>)>,
@@ -171,6 +194,7 @@ pub(crate) fn collect_classes(
     let mut alias_rows: Vec<(u32, String, String, bool)> = Vec::new();
     let mut conceal: Vec<u32> = Vec::new();
     let mut singleton_surrogates: Vec<(u32, u32)> = Vec::new();
+    let mut redefs: Vec<RedefSpec> = Vec::new();
     let mut set_ancestors: Vec<(u32, Vec<u32>)> = Vec::new();
     let mut register_builtin: Vec<(u32, String, bool, Vec<u32>)> = Vec::new();
     // Builtin-source alias rows, every class including the toplevel (rustc's
@@ -945,6 +969,54 @@ pub(crate) fn collect_classes(
                 ruby2_keywords: scope.ruby2_keywords,
             });
         }
+        // Every body of a method with an observable redefinition timeline
+        // (rustc's `__redef_<id>` containers): the superseded ones AND the
+        // final one, each installed at its own document position.
+        for &sid in &class.redef_scopes {
+            let scope = compiler.scope(sid);
+            let mname = scope.name.clone();
+            let refuse_r = |what: &str| {
+                Err(format!(
+                    "the CLIF backend cannot lower {what} yet ({name}#{mname})"
+                ))
+            };
+            let p = &scope.params;
+            if let Err(what) = super::emit::check_params(p) {
+                return refuse_r(what);
+            }
+            let layout = super::params::layout_of(p)?;
+            let has_blk = scope.needs_block_param();
+            let suffix = format!("__redef_{}_{mname}", sid.0);
+            let tramp = em
+                .module
+                .declare_function(
+                    &names::trampoline_symbol(&name, &suffix),
+                    Linkage::Local,
+                    &params::value_fn_sig(em),
+                )
+                .map_err(|e| format!("declaring {name}#{mname}: {e}"))?;
+            let body_fn = em
+                .module
+                .declare_function(
+                    &names::method_symbol(&name, &suffix),
+                    Linkage::Local,
+                    &params::body_sig(em, layout.n_slots, has_blk),
+                )
+                .map_err(|e| format!("declaring {name}#{mname}: {e}"))?;
+            redefs.push(RedefSpec {
+                owner: ClassId(idx as u32),
+                owner_name: name.clone(),
+                scope: sid,
+                name: mname,
+                body: scope.body.clone(),
+                node: scope.def_node,
+                tramp,
+                body_fn,
+                hir_params: p.clone(),
+                has_blk,
+                ruby2_keywords: scope.ruby2_keywords,
+            });
+        }
         // Singleton-chain super targets (rustc's `__sst_` containers +
         // winner reuse): every `(module, def)` pair in
         // `singleton_super_targets`, deduped. A pair whose def IS a
@@ -1059,6 +1131,11 @@ pub(crate) fn collect_classes(
             undef_rows.push((idx as u32, n.clone()));
         }
     }
+    let boot_redefs: Vec<(u32, String, crate::compiler::ScopeId)> = compiler
+        .positional_redefs
+        .iter()
+        .map(|(cid, name, sid)| (cid.0, name.clone(), *sid))
+        .collect();
     Ok(CollectedClasses {
         classes,
         methods,
@@ -1074,6 +1151,8 @@ pub(crate) fn collect_classes(
         undef_rows,
         conceal,
         singleton_surrogates,
+        redefs,
+        boot_redefs,
         set_ancestors,
         register_builtin,
     })

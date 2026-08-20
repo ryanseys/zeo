@@ -181,6 +181,8 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
         undef_rows,
         conceal,
         singleton_surrogates,
+        redefs,
+        boot_redefs,
         set_ancestors,
         register_builtin,
     ) = (
@@ -198,9 +200,16 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
         collected.undef_rows,
         collected.conceal,
         collected.singleton_surrogates,
+        collected.redefs,
+        collected.boot_redefs,
         collected.set_ancestors,
         collected.register_builtin,
     );
+    // Populated BEFORE any body is defined: a class body's
+    // `MethodRedefine` statement reads it while its own fn is built.
+    for m in &redefs {
+        em.redef_tramps.insert((m.owner.0, m.scope.0), m.tramp);
+    }
     for def in &defs {
         let func = em.methods[&def.name].body;
         let spec = BodyFnSpec {
@@ -258,6 +267,25 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             discard_value: false,
             dyn_ivars: false,
             defining_class: Some(m.defining_class),
+        };
+        define_method_body(em, analyzed, &spec)?;
+    }
+    for m in &redefs {
+        let spec = BodyFnSpec {
+            func: m.body_fn,
+            owner: m.owner,
+            owner_name: &m.owner_name,
+            name: &m.name,
+            hir_params: &m.hir_params,
+            body: &m.body,
+            node: m.node,
+            has_blk: m.has_blk,
+            ruby2_keywords: m.ruby2_keywords,
+            self_is_class: false,
+            label_override: None,
+            discard_value: false,
+            dyn_ivars: false,
+            defining_class: Some(m.owner),
         };
         define_method_body(em, analyzed, &spec)?;
     }
@@ -347,6 +375,23 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
                 unreachable!("collect_classes declares exactly one of accessor/body")
             }
         }
+    }
+    for m in &redefs {
+        let idx = em.next_fn_index();
+        let (file, label, line, end_line) =
+            method_frame(analyzed, &m.owner_name, &m.name, m.node, false);
+        let spec = super::params::TrampSpec {
+            tramp: m.tramp,
+            body: m.body_fn,
+            params: &m.hir_params,
+            has_blk: m.has_blk,
+            name: &m.name,
+            file: file.as_deref(),
+            label: &label,
+            line,
+            end_line,
+        };
+        super::params::define_trampoline(em, &spec, idx)?;
     }
     for m in &mod_methods {
         let idx = em.next_fn_index();
@@ -540,6 +585,21 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
         ids: vec![],
         flag: 0,
     }));
+    // The FIRST body of every observable redefinition timeline installs
+    // before the first statement runs.
+    reg_rows.extend(
+        boot_redefs
+            .iter()
+            .map(|(class, name, sid)| statics::RegRowSpec {
+                kind: zeo_abi::abi::REG_BOOT_REDEF,
+                class: *class,
+                a: name.clone(),
+                b: String::new(),
+                f: Some(em.redef_tramps[&(*class, sid.0)]),
+                ids: vec![],
+                flag: 0,
+            }),
+    );
     // Singleton-class surrogates seed the runtime mint.
     reg_rows.extend(
         singleton_surrogates
@@ -618,6 +678,9 @@ pub(crate) struct Emitter {
     /// in statement position emits (a hoisted site's marker is absent --
     /// its body already ran in the toplevel prelude).
     pub class_bodies: HashMap<crate::hir::NodeId, ClassBodyCall>,
+    /// `(class, scope)` -> the trampoline that installs that body, for the
+    /// boot install and each positional `MethodRedefine`.
+    pub redef_tramps: HashMap<(u32, u32), FuncId>,
     fn_index: u32,
     /// Regexp-literal site ids -- one cached frozen object per site
     /// (`zeo_rt_regexp_lit`), the rustc per-site `RegexpSite` twin.
@@ -711,6 +774,7 @@ impl Emitter {
             imports: HashMap::new(),
             methods: HashMap::new(),
             class_bodies: HashMap::new(),
+            redef_tramps: HashMap::new(),
             fn_index: 0,
             regexp_sites: 0,
             clif_text: None,

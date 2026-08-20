@@ -342,6 +342,21 @@ pub unsafe extern "C" fn zeo_rt_const_get_scoped(
     }
 }
 
+/// A method REDEFINITION applied at its document position: `f` becomes
+/// the class's current body of `name` in the overlay, so code running
+/// between two same-name `def`s dispatches to the earlier one (ruby's
+/// install-where-it-stands, which zeo's static tables flatten away).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_runtime_replace_method(
+    class: u32,
+    name: *const u8,
+    name_len: usize,
+    f: super::ValueFn,
+) {
+    let name = unsafe { super::str_slice(name, name_len) };
+    crate::runtime_meta::runtime_replace_method_c(ClassId(class), Symbol::intern(name), f);
+}
+
 /// `Foo::NAME`'s lenient half (`||=`'s read, `defined?`'s probe): an
 /// absent constant -- or a scope class the compiler never registered --
 /// is `nil`, never a raise.

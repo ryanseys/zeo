@@ -207,6 +207,11 @@ pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
             abi::REG_CONCEAL_CLASS => crate::constants::conceal_class(r.class),
             // Both handled in the pre-pass above.
             abi::REG_REGISTER_BUILTIN | abi::REG_SET_ANCESTORS => {}
+            abi::REG_BOOT_REDEF => crate::runtime_meta::runtime_replace_method_c(
+                ClassId(r.class),
+                Symbol::intern(text(r.a)),
+                value_fn(r.f.expect("a boot-redef row carries its fn")),
+            ),
             abi::REG_SINGLETON_SURROGATE => {
                 let owner = unsafe { *r.ids };
                 crate::runtime_meta::register_singleton_surrogate(ClassId(owner), ClassId(r.class));

@@ -145,11 +145,20 @@ pub fn register_singleton_surrogate(owner: ClassId, surrogate: ClassId) {
 /// No hook fires here. The spliced `DefHook` at the same position is the
 /// report, exactly as for a statically-registered `def`.
 pub fn runtime_replace_method(id: ClassId, name: Symbol, f: crate::dispatch::MethodFn) {
+    replace_method_impl(id, name, crate::dispatch::MethodImpl::Static(f));
+}
+
+/// [`runtime_replace_method`]'s Cranelift twin: the body is a compiled
+/// `ValueFn`, so the overlay entry is a `CValue`.
+pub fn runtime_replace_method_c(id: ClassId, name: Symbol, f: crate::capi::ValueFn) {
+    replace_method_impl(id, name, crate::dispatch::MethodImpl::CValue(f));
+}
+
+fn replace_method_impl(id: ClassId, name: Symbol, imp: crate::dispatch::MethodImpl) {
     {
         let mut w = maps().classes.write().unwrap();
         let e = w.entry(id.0).or_insert_with(OverlayEntry::delta);
-        e.methods
-            .insert(name, crate::dispatch::MethodImpl::Static(f));
+        e.methods.insert(name, imp);
         e.undefs.remove(&name);
     }
     patch_class(id);
