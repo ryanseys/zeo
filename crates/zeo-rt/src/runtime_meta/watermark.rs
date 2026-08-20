@@ -742,6 +742,15 @@ pub fn runtime_class_dup(cid: ClassId, clone: bool) -> Result<RubyValue, Signal>
             },
         );
     }
+    // A CLIF program's instances share one concrete type whose per-class
+    // shape is a `LAYOUTS` row keyed by class id, and the copy's chain does
+    // not contain its source -- so the row has to be copied across with the
+    // allocator, or the copy's `new` finds nothing to allocate. (The rustc
+    // backend needs no equivalent: its allocator IS the source's per-class
+    // `__allocate`, which knows the struct.)
+    if let Some(layout) = crate::compiled_object::alloc_layout_of(cid) {
+        crate::compiled_object::register_layout(new_id, layout);
+    }
     // Constants, class-level ivars and class variables are stored outside the
     // overlay entry, keyed by class id -- copied by value, so the two classes
     // diverge from here.

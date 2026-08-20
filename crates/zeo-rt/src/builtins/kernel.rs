@@ -2392,7 +2392,14 @@ pub(crate) fn build_raise_exception(args: &[RubyValue]) -> Result<RubyValue, Sig
                 RubyValue::Str(_) if rest.is_empty() => {
                     crate::dispatch::coerce_raise_arg(first.clone())
                 }
-                _ => Err(type_error!("exception class/object expected")),
+                // Anything else goes through CRuby's `rb_make_exception`
+                // protocol: an object whose class answers `#exception` may
+                // be raised, and only what that refuses is the TypeError.
+                // Refusing here outright made `raise WithHook.new, "hi"`
+                // a TypeError where the emitter's own folded site ran the
+                // hook.
+                _ if msg.is_empty() => crate::dispatch::coerce_raise_arg(first.clone()),
+                _ => crate::dispatch::coerce_raise_arg_with_message(first.clone(), msg[0].clone()),
             }
         }
     }
