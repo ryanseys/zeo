@@ -487,7 +487,14 @@ fn run_via_cli(
     for dir in &opts.package_dirs {
         cmd.arg("--gems").arg(dir);
     }
-    cmd.arg(rb).args(args).current_dir(run_cwd);
+    // `--` first: a golden's own args are the PROGRAM's (`--seed 42` for a
+    // minitest driver), and without the separator the CLI reads them as its
+    // own options.
+    cmd.arg(rb);
+    if !args.is_empty() {
+        cmd.arg("--").args(args);
+    }
+    cmd.current_dir(run_cwd);
     run_bounded(&mut cmd, stdin, "zeo CLI (ZEO_GOLDEN_BACKEND)")
 }
 
