@@ -2633,7 +2633,14 @@ fn defined_rest(fx: &mut Fx, site: NodeId, inner: NodeId) -> Result<Operand, Str
 /// resolved through the analyzer's `cvar_owners` claim map (a subclass
 /// writing a parent-declared cvar stores on the parent).
 pub(crate) fn cvar_owner(fx: &Fx, name: &str) -> u32 {
-    let defining = fx.method_class.unwrap_or(crate::compiler::OBJECT_CLASS);
+    // Where the code was WRITTEN, never the receiver that reaches it: a
+    // class method inherited by a subclass still reads its own class's
+    // storage (`Sub.note` writes `Base`'s `@@subs`), so a materialized
+    // copy's `defining_class` -- not `method_class` -- is the question.
+    let defining = fx
+        .defining_class
+        .or(fx.method_class)
+        .unwrap_or(crate::compiler::OBJECT_CLASS);
     let defining = if fx.an.compiler.is_singleton_surrogate(defining) {
         fx.an
             .compiler
