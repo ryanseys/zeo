@@ -2007,12 +2007,22 @@ fn define_toplevel(
         &empty_params,
         crate::analyze::class_query::SelfClass::new(None, None),
     );
+    // `TOPLEVEL_BINDING` IS the top-level frame's binding, so a program that
+    // can read it -- anywhere, including inside a required gem's method
+    // (erb's `new_toplevel`) -- deoptimizes the top level to cells exactly as
+    // a literal `binding` call there would.
+    let wants_toplevel_binding = analyzed
+        .compiler
+        .hir
+        .nodes()
+        .iter()
+        .any(|n| matches!(n, crate::hir::HirNode::ClassRef(c) if c == "TOPLEVEL_BINDING"));
     fx.binding_names = crate::analyze::captures::binding_scope_names(
         &analyzed.compiler,
         &analyzed.main_statements,
         &empty_params,
         &mut caps,
-        false,
+        wants_toplevel_binding,
     );
     let captured = caps.locals;
     for name in locals.names().to_vec() {
@@ -2079,6 +2089,23 @@ fn define_toplevel(
             .call("zeo_rt_validate_class_aliases", &[cid])
             .expect("validate_class_aliases returns a status");
         fx.fallible(st);
+    }
+    // `TOPLEVEL_BINDING`, installed UNCONDITIONALLY so `Object.constants`
+    // lists it (the census asks). A program that never names it gets the
+    // cheap degraded form -- self = `main`, no locals -- because
+    // `binding_names` stayed `None`; naming it anywhere upgrades both.
+    {
+        let op = super::expr::binding_value_at(&mut fx, "<main>", 0);
+        let vp = super::ownership::borrow_ptr(&mut fx, &op);
+        super::ownership::pool_owned(&mut fx, vp, op.tag());
+        let (nptr, nlen) = super::expr::rodata_name(&mut fx, "TOPLEVEL_BINDING");
+        let (fptr, flen) = super::expr::rodata_name(&mut fx, "<main>");
+        let owner = fx.b.ins().iconst(types::I32, 0);
+        let line = fx.b.ins().iconst(types::I32, 0);
+        fx.call(
+            "zeo_rt_const_set_at",
+            &[owner, nptr, nlen, vp, fptr, flen, line],
+        );
     }
     // Class bodies whose markers sit inside `def`s run ONCE here, before
     // the main body, in document order -- the rustc backend hoists them

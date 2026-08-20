@@ -3046,23 +3046,33 @@ pub(crate) fn method_class_shadows(fx: &Fx, name: &str) -> bool {
 /// runtime-computed send, say -- and the ordinary dynamic send raises the
 /// runtime's own refusal.
 pub(crate) fn binding_value(fx: &mut Fx, site: NodeId) -> Result<Option<Operand>, String> {
-    let Some(names) = fx.binding_names.clone() else {
+    if fx.binding_names.is_none() {
         return Ok(None);
-    };
+    }
+    let (file, line) = fx
+        .location(site)
+        .map_or((String::new(), 0), |(f, l)| (f.to_string(), l));
+    Ok(Some(binding_value_at(fx, &file, line)))
+}
+
+/// [`binding_value`] with the location supplied rather than read from a site
+/// -- `TOPLEVEL_BINDING`, whose location CRuby reports as `["<main>", 0]`.
+/// A scope that reports no names yields the DEGRADED form (self, no locals),
+/// which is what a program that never asks for one gets.
+pub(crate) fn binding_value_at(fx: &mut Fx, file: &str, line: u32) -> Operand {
+    let names = fx.binding_names.clone();
     // Only a CELL local can be shared with a binding; a name the scope
     // reports but keeps in a slot cannot be reached from one.
     let shared: Vec<&str> = names
         .iter()
+        .flat_map(|n| n.iter())
         .filter(|n| matches!(fx.locals.get(*n), Some(super::ctx::Local::Cell { .. })))
         .map(String::as_str)
         .collect();
     let (names_ptr, n) = super::statics::str_array(fx, &shared);
     let cells_ptr = super::statics::cell_array(fx, &shared);
     let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
-    let (file, line) = fx
-        .location(site)
-        .map_or((String::new(), 0), |(f, l)| (f.to_string(), l));
-    let (fptr, flen) = rodata_name(fx, &file);
+    let (fptr, flen) = rodata_name(fx, file);
     let line_v = fx.b.ins().iconst(types::I32, i64::from(line));
     let box_v = fx.b.ins().iconst(types::I32, 0);
     // `u32::MAX`, not 0: `ClassId(0)` is `Object`, a cref a top-level
@@ -3080,11 +3090,11 @@ pub(crate) fn binding_value(fx: &mut Fx, site: NodeId) -> Result<Option<Operand>
         ],
     );
     fx.owned_created += 1;
-    Ok(Some(Operand::Slot {
+    Operand::Slot {
         ss,
         owned: true,
         tag: TagInfo::Unknown,
-    }))
+    }
 }
 
 /// `Module.nesting` -- the lexical class/module chain at THIS call site,
