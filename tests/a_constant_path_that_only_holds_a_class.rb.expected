@@ -1,0 +1,11 @@
+M::Base
+"base: x"
+M::Base
+"base: y"
+true
+[1, 2]
+[:a, :b]
+:hi
+:hi
+[M::Base, "base: boom"]
+"uninitialized constant M::Nope"

@@ -1487,6 +1487,15 @@ pub(crate) fn const_read(fx: &mut Fx, id: NodeId, name: &str) -> Result<Operand,
     if let Some(cid) = resolve_class_here(fx, name) {
         return class_value_of(fx, id, name, cid);
     }
+    // A PATH whose leaf is not a class -- `M::ALIAS` where the constant only
+    // HOLDS one -- is the scope operator's question, not the bare-name cref
+    // walk's: asking the walk for the whole string looks up a constant
+    // literally called "M::ALIAS" and misses.
+    if let Some((scope, leaf)) = name.rsplit_once("::")
+        && !scope.is_empty()
+    {
+        return scoped_const_read(fx, id, scope, leaf);
+    }
     // The rustc `emit_const_read` bare-name shape: owner from the
     // compile-time claim map, then every enclosing cref scope, then the
     // top -- one runtime walk through `const_get_cref`, whose miss raises
