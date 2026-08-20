@@ -43,7 +43,9 @@ pub(crate) fn lower_value_body_into(
 /// The receiver for a NAME-KEYED ivar access: `self`, or the `main`
 /// object at the toplevel (rustc's `ivar_get_dyn(&main_object(), ..)`).
 pub(crate) fn dyn_ivar_recv(fx: &mut Fx) -> cranelift_codegen::ir::Value {
-    if fx.method_class.is_some() {
+    // A RUNTIME-installed method body has no compile-time class, but its
+    // `self` IS the receiver -- `main` is only the TOPLEVEL scope's self.
+    if fx.method_class.is_some() || fx.runtime_method_body {
         return fx.self_ptr.expect("self_ptr is set in the prologue");
     }
     let ss = fx.temp_slot();
@@ -57,36 +59,21 @@ pub(crate) fn dyn_ivar_recv(fx: &mut Fx) -> cranelift_codegen::ir::Value {
 /// `@name` read into a fresh owned temp -- slot-indexed for a compiled
 /// class; NAME-KEYED (fallible: the Ractor guard) for a native-backed one,
 /// the rustc `ivar_get_dyn_isolated` shape.
-pub(crate) fn ivar_read_op(
-    fx: &mut Fx,
-    site: NodeId,
-    name: &str,
-) -> Result<super::operand::Operand, String> {
+pub(crate) fn ivar_read_op(fx: &mut Fx, name: &str) -> Result<super::operand::Operand, String> {
     use super::operand::{Operand, TagInfo};
     if fx.dyn_ivars || fx.self_is_class || fx.method_class.is_none() {
         // A `self_is_class` body's `@x` is a CLASS-level ivar; the runtime's
         // name-keyed path routes a `RubyValue::Class` receiver to `civars`,
         // so the same call serves both.
-        let recv = dyn_ivar_recv(fx);
-        let ss = fx.temp_slot();
-        let out = fx.slot_addr(ss, 0);
-        let (nptr, nlen) = super::expr::rodata_name(fx, name);
-        let status = fx
-            .call("zeo_rt_ivar_get_dyn", &[recv, nptr, nlen, out])
-            .expect("ivar_get_dyn returns a status");
-        fx.fallible(status);
-        fx.owned_created += 1;
-        return Ok(super::operand::Operand::Slot {
-            ss,
-            owned: true,
-            tag: super::operand::TagInfo::Unknown,
-        });
+        return name_keyed_ivar_read(fx, name);
     }
+    let Some(slot) = ivar_slot_of(fx, name) else {
+        return name_keyed_ivar_read(fx, name);
+    };
     let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
     {
-        let slot = ivar_slot_of(fx, site, name)?;
         let slot_v = fx.b.ins().iconst(fx.em.ptr, slot as i64);
         fx.call("zeo_rt_ivar_get_slot", &[self_ptr, slot_v, out]);
     }
@@ -98,16 +85,35 @@ pub(crate) fn ivar_read_op(
     })
 }
 
+/// `@name` through the runtime's NAME-keyed path: a native-backed or
+/// class receiver, and any ivar the compiled layout has no slot for.
+fn name_keyed_ivar_read(fx: &mut Fx, name: &str) -> Result<super::operand::Operand, String> {
+    let recv = dyn_ivar_recv(fx);
+    let ss = fx.temp_slot();
+    let out = fx.slot_addr(ss, 0);
+    let (nptr, nlen) = super::expr::rodata_name(fx, name);
+    let status = fx
+        .call("zeo_rt_ivar_get_dyn", &[recv, nptr, nlen, out])
+        .expect("ivar_get_dyn returns a status");
+    fx.fallible(status);
+    fx.owned_created += 1;
+    Ok(super::operand::Operand::Slot {
+        ss,
+        owned: true,
+        tag: super::operand::TagInfo::Unknown,
+    })
+}
+
 /// `@name = <op>`: the slot write MOVES the value in; the name-keyed
 /// write BORROWS it (the runtime clones), so an owned operand parks in
 /// the pool first -- the write's frozen check can raise.
 pub(crate) fn ivar_write_op(
     fx: &mut Fx,
-    site: NodeId,
     name: &str,
     op: super::operand::Operand,
 ) -> Result<(), String> {
-    if fx.dyn_ivars || fx.self_is_class || fx.method_class.is_none() {
+    let slot = ivar_slot_of(fx, name);
+    if slot.is_none() || fx.dyn_ivars || fx.self_is_class || fx.method_class.is_none() {
         let recv = dyn_ivar_recv(fx);
         let tag = op.tag();
         let ptr = ownership::borrow_ptr(fx, &op);
@@ -123,7 +129,7 @@ pub(crate) fn ivar_write_op(
     }
     let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
     {
-        let slot = ivar_slot_of(fx, site, name)?;
+        let slot = slot.expect("the slotless case took the name-keyed path");
         let ptr = ownership::move_ptr(fx, &op);
         let slot_v = fx.b.ins().iconst(fx.em.ptr, slot as i64);
         let status = fx
@@ -135,9 +141,9 @@ pub(crate) fn ivar_write_op(
 }
 
 /// `@name = value`: evaluate then write (see [`ivar_write_op`]).
-fn lower_ivar_write(fx: &mut Fx, site: NodeId, name: &str, value: NodeId) -> Result<(), String> {
+fn lower_ivar_write(fx: &mut Fx, name: &str, value: NodeId) -> Result<(), String> {
     let op = lower_expr(fx, value)?;
-    ivar_write_op(fx, site, name, op)
+    ivar_write_op(fx, name, op)
 }
 
 /// A multiple assignment (`a, b = ...`, `a, *r, c = arr`, nested
@@ -219,7 +225,7 @@ fn write_multi_target(
             ownership::write_local(fx, name, &op);
             Ok(())
         }
-        MultiTarget::Ivar(name) => ivar_write_op(fx, site, name, op),
+        MultiTarget::Ivar(name) => ivar_write_op(fx, name, op),
         MultiTarget::Call {
             write_call,
             tmp_name,
@@ -249,13 +255,14 @@ fn write_multi_target(
     }
 }
 
-fn ivar_slot_of(fx: &Fx, site: NodeId, name: &str) -> Result<usize, String> {
-    let Some(class) = fx.method_class else {
-        return fx.unsupported(site, "an ivar outside a compiled method");
-    };
+/// The compiled slot `@name` occupies on this body's class, or `None` for
+/// an ivar the class's list does not carry -- one a body only ever reads,
+/// or one written on a receiver of another class. rustc keeps those in the
+/// same object's name-keyed overflow (`set_named`/`get_named`); the CLIF
+/// twin is the name-keyed capi, which reaches the identical storage.
+fn ivar_slot_of(fx: &Fx, name: &str) -> Option<usize> {
+    let class = fx.method_class?;
     crate::analyze::class_query::slot_of(&fx.an.compiler, class, name)
-        .ok_or(())
-        .or_else(|()| fx.unsupported(site, "a dynamic (slotless) ivar"))
 }
 
 /// A tail position accepts a few statement-shaped nodes whose value Ruby
@@ -573,7 +580,7 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
         }
         HirNode::IvarWrite(name, value) => {
             let (name, value) = (name.clone(), *value);
-            lower_ivar_write(fx, stmt, &name, value)
+            lower_ivar_write(fx, &name, value)
         }
         HirNode::Return(value) => {
             let value = *value;

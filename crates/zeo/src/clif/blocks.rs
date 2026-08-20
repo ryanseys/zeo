@@ -329,7 +329,7 @@ fn define_block_fn(
         // frame stack, and a BARE one forwards ITS OWN parameters.
         Some(kind) => {
             bfx.method_params = Some(params.clone());
-            bfx.runtime_super = true;
+            bfx.runtime_method_body = true;
             bfx.define_method_body = kind == MethodBody::DefineMethod;
         }
         None => {

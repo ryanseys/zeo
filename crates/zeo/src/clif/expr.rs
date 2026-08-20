@@ -423,7 +423,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
         }
         HirNode::IvarRead(name) => {
             let name = name.clone();
-            super::stmt::ivar_read_op(fx, id, &name)
+            super::stmt::ivar_read_op(fx, &name)
         }
         HirNode::Defined(v) => {
             let v = *v;
@@ -917,7 +917,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 owned: false,
                 tag,
             };
-            super::stmt::ivar_write_op(fx, id, &name, borrowed)?;
+            super::stmt::ivar_write_op(fx, &name, borrowed)?;
             Ok(Operand::Ptr {
                 addr: ptr,
                 owned: false,

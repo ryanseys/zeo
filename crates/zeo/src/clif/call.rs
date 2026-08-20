@@ -617,7 +617,7 @@ pub(crate) fn lower_super(
     // A RUNTIME-installed body's defining class is minted at run time, so
     // the walk resumes from the (class, name) pair the method-frame stack
     // recorded when the body was entered -- rustc's `send_super_dynamic`.
-    if fx.runtime_super {
+    if fx.runtime_method_body {
         let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
         let ss = fx.temp_slot();
         let out = fx.slot_addr(ss, 0);
