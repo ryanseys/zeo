@@ -180,6 +180,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
         alias_rows,
         undef_rows,
         conceal,
+        singleton_surrogates,
         set_ancestors,
         register_builtin,
     ) = (
@@ -196,6 +197,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
         collected.alias_rows,
         collected.undef_rows,
         collected.conceal,
+        collected.singleton_surrogates,
         collected.set_ancestors,
         collected.register_builtin,
     );
@@ -538,6 +540,20 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
         ids: vec![],
         flag: 0,
     }));
+    // Singleton-class surrogates seed the runtime mint.
+    reg_rows.extend(
+        singleton_surrogates
+            .iter()
+            .map(|(surrogate, owner)| statics::RegRowSpec {
+                kind: zeo_abi::abi::REG_SINGLETON_SURROGATE,
+                class: *surrogate,
+                a: String::new(),
+                b: String::new(),
+                f: None,
+                ids: vec![*owner],
+                flag: 0,
+            }),
+    );
     // `undef` marks.
     reg_rows.extend(undef_rows.iter().map(|(class, name)| statics::RegRowSpec {
         kind: zeo_abi::abi::REG_MARK_UNDEFINED,

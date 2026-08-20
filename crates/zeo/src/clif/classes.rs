@@ -128,6 +128,9 @@ pub(crate) struct CollectedClasses {
     /// Runtime-conditional class ids, concealed until their guarded body
     /// reveals them.
     pub conceal: Vec<u32>,
+    /// `(surrogate, owner)` for every compile-registered singleton-class
+    /// surrogate -- what seeds the runtime's `singleton_class` mint.
+    pub singleton_surrogates: Vec<(u32, u32)>,
     /// `(class, ancestor ids)` -- a builtin reopen that CHANGED the
     /// ancestry patches the entry `register_builtins` already made.
     pub set_ancestors: Vec<(u32, Vec<u32>)>,
@@ -167,6 +170,7 @@ pub(crate) fn collect_classes(
     let mut sst: Vec<(u32, u32, String, cranelift_module::FuncId)> = Vec::new();
     let mut alias_rows: Vec<(u32, String, String, bool)> = Vec::new();
     let mut conceal: Vec<u32> = Vec::new();
+    let mut singleton_surrogates: Vec<(u32, u32)> = Vec::new();
     let mut set_ancestors: Vec<(u32, Vec<u32>)> = Vec::new();
     let mut register_builtin: Vec<(u32, String, bool, Vec<u32>)> = Vec::new();
     // Builtin-source alias rows, every class including the toplevel (rustc's
@@ -463,11 +467,23 @@ pub(crate) fn collect_classes(
         if class.runtime_conditional {
             conceal.push(idx as u32);
         }
+        // A `class << self` body is homed on a surrogate module; seeding
+        // the runtime mint is what makes `Owner.singleton_class` answer it
+        // (rustc's `register_singleton_surrogate` block).
+        if compiler.is_singleton_surrogate(crate::compiler::ClassId(idx as u32))
+            && let Some(owner) = class.lexical_parent
+        {
+            singleton_surrogates.push((idx as u32, owner.0));
+        }
         // `include` works through the two mechanisms below (materialized
         // copies on the includer + value rows on the module + the module in
-        // `ancestors`); the rest of the mixin surface still refuses.
-        if !(class.class_method_prepends.is_empty() && class.imported_modules.is_empty()) {
-            return refuse("a mixin");
+        // `ancestors`), and `singleton_class.prepend` through the same
+        // materialization the instance side uses -- analyze has already put
+        // the winners in `class_methods` and every position's copy in
+        // `singleton_super_targets`. A refinement's `import_methods` is the
+        // one mixin form still refused.
+        if !class.imported_modules.is_empty() {
+            return refuse("a refinement's `import_methods`");
         }
         // The rest of the class surface needs no refusal: `pending_aliases`,
         // `pending_module_functions` and `class_undefined` are DRAINED or
@@ -1057,6 +1073,7 @@ pub(crate) fn collect_classes(
         alias_rows,
         undef_rows,
         conceal,
+        singleton_surrogates,
         set_ancestors,
         register_builtin,
     })

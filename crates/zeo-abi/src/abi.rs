@@ -390,6 +390,13 @@ pub const REG_SET_ANCESTORS: u8 = 10;
 /// `__registry.register(.., None)` does.
 pub const REG_REGISTER_BUILTIN: u8 = 11;
 
+/// A compile-registered SINGLETON-class surrogate -- the module a
+/// constant-bearing or mixin-bearing `class << self` body is homed on.
+/// `class` = the surrogate, `ids[0]` = its owner; seeding the runtime mint
+/// is what makes `Owner.singleton_class` answer it (and so what puts a
+/// `singleton_class.prepend`ed module in its `ancestors`).
+pub const REG_SINGLETON_SURROGATE: u8 = 12;
+
 /// A lazily-run feature unit -- the `install_feature_units` twin.
 #[repr(C)]
 pub struct UnitRow {
