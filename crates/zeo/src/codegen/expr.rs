@@ -2723,7 +2723,7 @@ fn qualified_const_class(cx: &Ctx, scope: &str, name: &str) -> Option<ClassId> {
 
 /// Split a written constant PATH into the `(scope, leaf)` pair
 /// [`emit_const_read`] takes: `"M::ALIAS"` -> `(Some("M"), "ALIAS")`.
-pub(super) fn split_const_path(path: &str) -> (Option<&str>, &str) {
+pub(crate) fn split_const_path(path: &str) -> (Option<&str>, &str) {
     match path.rsplit_once("::") {
         Some((scope, leaf)) => (Some(scope), leaf),
         None => (None, path),

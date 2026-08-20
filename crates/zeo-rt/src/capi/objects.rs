@@ -342,6 +342,70 @@ pub unsafe extern "C" fn zeo_rt_const_get_scoped(
     }
 }
 
+/// `Scope::NAME` where the SCOPE is only a runtime constant (a
+/// `Struct.new` result, a class built under a computed superclass): the
+/// caller read the scope path and hands the value here, and the leaf is
+/// looked up with the scope operator's own search. A non-module scope is
+/// ruby's TypeError; a missing leaf the NameError naming the scope class
+/// as its receiver (rustc's runtime-scope arm, verbatim).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_const_get_on_value(
+    scope: *const RubyValue,
+    name: *const u8,
+    name_len: usize,
+    qualified: *const u8,
+    qualified_len: usize,
+    out: *mut RubyValue,
+) -> i32 {
+    let name = unsafe { super::str_slice(name, name_len) };
+    let scope = unsafe { &*scope };
+    let RubyValue::Class(cid) = scope else {
+        crate::signal::set_pending(crate::dispatch::raise_error(
+            "TypeError",
+            format!("{} is not a class/module", scope.inspect_string()),
+        ));
+        return STATUS_SIGNAL;
+    };
+    match crate::constants::const_get_scoped(cid.0, name) {
+        Some(v) => {
+            super::leakcheck::created(&v);
+            unsafe { out.write(v) };
+            STATUS_OK
+        }
+        None => {
+            let qualified = unsafe { super::str_slice(qualified, qualified_len) };
+            crate::signal::set_pending(Signal::Raise(crate::dispatch::stamp_backtrace(
+                crate::dispatch::make_name_error(
+                    format!("uninitialized constant {qualified}"),
+                    name,
+                    RubyValue::Class(*cid),
+                ),
+            )));
+            STATUS_SIGNAL
+        }
+    }
+}
+
+/// The bare `uninitialized constant X` NameError an unresolvable scope
+/// owes -- `Nope::X = v` raises on the SCOPE before the value is ever
+/// evaluated (CRuby's order), so the emitter lowers the raise alone.
+/// `leaf` is the path's last segment, which is what `NameError#name`
+/// reports.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_raise_uninitialized_constant(
+    message: *const u8,
+    message_len: usize,
+    leaf: *const u8,
+    leaf_len: usize,
+) -> i32 {
+    let message = unsafe { super::str_slice(message, message_len) }.to_string();
+    let leaf = unsafe { super::str_slice(leaf, leaf_len) };
+    crate::signal::set_pending(Signal::Raise(crate::dispatch::stamp_backtrace(
+        crate::dispatch::make_name_error(message, leaf, RubyValue::Nil),
+    )));
+    STATUS_SIGNAL
+}
+
 /// Where a `class`/`module` DECLARATION bound its name -- the
 /// `Module#const_source_location` record for constants that live outside
 /// the value table (the class registry holds them). Recorded when the

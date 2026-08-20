@@ -952,9 +952,12 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             let owner_class = match scope.as_deref() {
                 Some(s) => match resolve_class_here(fx, s) {
                     Some(cid) => cid,
-                    None => {
-                        return fx.unsupported(id, "a constant write on a runtime scope");
-                    }
+                    // An unresolvable scope is a `NameError` on the SCOPE,
+                    // raised BEFORE the value runs (`Nope::X = (puts 1; 5)`
+                    // prints nothing -- oracle-verified), so the write
+                    // lowers as the raise alone. Deferred to run time so a
+                    // dead or guarded branch still compiles.
+                    None => return raise_uninitialized_constant(fx, s),
                 },
                 // A bare `NAME =` is owned by the lexically enclosing
                 // class/module (the emitting context); `Object` at the top
@@ -1256,7 +1259,7 @@ fn scoped_const_read(fx: &mut Fx, id: NodeId, scope: &str, name: &str) -> Result
         return class_value_of(fx, id, name, cid);
     }
     let Some(scope_cid) = resolve_class_here(fx, scope) else {
-        return fx.unsupported(id, "a constant read on a runtime scope");
+        return runtime_scope_const_read(fx, id, scope, name);
     };
     let compiler = &fx.an.compiler;
     if compiler.class(scope_cid).private_constants.contains(name) {
@@ -1282,6 +1285,77 @@ fn scoped_const_read(fx: &mut Fx, id: NodeId, scope: &str, name: &str) -> Result
             &[owner_v, nptr, nlen, qptr, qlen, hook_v, out],
         )
         .expect("const_get_scoped returns a status");
+    fx.fallible(status);
+    fx.owned_created += 1;
+    Ok(Operand::Slot {
+        ss,
+        owned: true,
+        tag: TagInfo::Unknown,
+    })
+}
+
+/// The bare `uninitialized constant <path>` NameError, in whatever
+/// position the caller sits: the raise diverges, so the operand it hands
+/// back is the unreachable nil every diverging arm answers.
+fn raise_uninitialized_constant(fx: &mut Fx, path: &str) -> Result<Operand, String> {
+    let message = format!("uninitialized constant {path}");
+    let leaf = crate::constpath::ConstPath::parse(path).base().to_string();
+    let (mptr, mlen) = rodata_name(fx, &message);
+    let (lptr, llen) = rodata_name(fx, &leaf);
+    let status = fx
+        .call(
+            "zeo_rt_raise_uninitialized_constant",
+            &[mptr, mlen, lptr, llen],
+        )
+        .expect("raise_uninitialized_constant returns a status");
+    fx.fallible(status);
+    Ok(Operand::Nil)
+}
+
+/// A scope that is no compile-time class may still be a RUNTIME constant
+/// holding one (`Line = Struct.new(..)`, a class under a computed
+/// superclass), so the path resolves at run time: read the scope by its
+/// own rules -- recursively, so `K::C::P` reports a missing HEAD exactly
+/// as a bare miss does -- then the leaf on the class it names (rustc's
+/// `emit_const_read` runtime-scope arm).
+fn runtime_scope_const_read(
+    fx: &mut Fx,
+    id: NodeId,
+    scope: &str,
+    name: &str,
+) -> Result<Operand, String> {
+    // A TOP-ANCHORED scope (`::Tilt::Template`) splits with an empty head;
+    // that is the anchor, not a namespace to look `Tilt` up in.
+    let (head, leaf) = crate::codegen::split_const_path(scope);
+    let leaf = leaf.to_string();
+    let scope_op = match head.filter(|h| !h.is_empty()) {
+        Some(h) => {
+            let h = h.to_string();
+            scoped_const_read(fx, id, &h, &leaf)?
+        }
+        None => const_read(fx, id, &leaf)?,
+    };
+    // `Object` is never NAMED as the scope: ruby reports `Object::X` as a
+    // bare miss, since a top-level constant lives on Object anyway.
+    let qualified = if scope == "Object" {
+        name.to_string()
+    } else {
+        format!("{scope}::{name}")
+    };
+    let sptr = ownership::borrow_ptr(fx, &scope_op);
+    if scope_op.owned() {
+        ownership::pool_owned(fx, sptr, scope_op.tag());
+    }
+    let (nptr, nlen) = rodata_name(fx, name);
+    let (qptr, qlen) = rodata_name(fx, &qualified);
+    let ss = fx.temp_slot();
+    let out = fx.slot_addr(ss, 0);
+    let status = fx
+        .call(
+            "zeo_rt_const_get_on_value",
+            &[sptr, nptr, nlen, qptr, qlen, out],
+        )
+        .expect("const_get_on_value returns a status");
     fx.fallible(status);
     fx.owned_created += 1;
     Ok(Operand::Slot {

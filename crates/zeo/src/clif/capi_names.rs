@@ -131,6 +131,11 @@ pub const CAPI: &[CapiSig] = &[
         ret: Some(I32),
     },
     CapiSig {
+        name: "zeo_rt_const_get_on_value",
+        params: &[Ptr, Ptr, Usize, Ptr, Usize, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
         name: "zeo_rt_const_get_scoped",
         params: &[U32, Ptr, Usize, Ptr, Usize, U8, Ptr],
         ret: Some(I32),
@@ -473,6 +478,11 @@ pub const CAPI: &[CapiSig] = &[
     CapiSig {
         name: "zeo_rt_raise_error",
         params: &[U32, Ptr, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
+        name: "zeo_rt_raise_uninitialized_constant",
+        params: &[Ptr, Usize, Ptr, Usize],
         ret: Some(I32),
     },
     CapiSig {
