@@ -1111,7 +1111,6 @@ pub(super) fn emit_block_option(
 // (receiver/name/positional args/kwargs/literal block/forwarded block/safe-
 // nav), not incidental duplication a struct would meaningfully collapse --
 // bundling them would just move the same count behind one more layer.
-#[allow(clippy::too_many_arguments)]
 #[allow(
     clippy::too_many_arguments,
     reason = "one parameter per syntactic part of a Ruby call site"

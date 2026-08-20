@@ -117,7 +117,9 @@ zeo_rt_retain ([Ptr]) -> None
 zeo_rt_return_targets_here ([]) -> Some(U8)
 zeo_rt_reveal_class ([U32]) -> None
 zeo_rt_runtime_replace_method ([U32, Ptr, Usize, Ptr]) -> None
+zeo_rt_runtime_class_method_visibility ([U32, U32, U8]) -> Some(I32)
 zeo_rt_runtime_set_visibility ([U32, U32, U8]) -> Some(I32)
+zeo_rt_runtime_undef_class_method ([U32, U32]) -> Some(I32)
 zeo_rt_scope_const_defined ([Ptr, Ptr, Usize]) -> Some(I8)
 zeo_rt_scope_const_get ([Ptr, Ptr, Usize, Ptr]) -> Some(I32)
 zeo_rt_scope_const_get_or_nil ([Ptr, Ptr, Usize, Ptr]) -> Some(I32)

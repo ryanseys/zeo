@@ -927,14 +927,42 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
             ownership::discard(fx, op);
             Ok(())
         }
-        // Visibility retags, `undef`, and `module_function` are pure
-        // REGISTRATION too: analyze stamped the tables (vis rows, undefined
-        // marks, module-function copies) and the statements run nothing.
-        HirNode::MethodVisibility { .. }
-        | HirNode::ClassMethodVisibility { .. }
-        | HirNode::Undef(..)
-        | HirNode::ClassMethodUndef(..)
-        | HirNode::ModuleFunction(..) => Ok(()),
+        // Visibility is POSITIONAL: a reopen's re-mark of a name the class
+        // already owns, and a unit body's re-mark, are the ones analyze
+        // leaves in the site's statements rather than folding into the
+        // start-of-program override rows -- so they apply HERE.
+        HirNode::MethodVisibility { name, visibility } => {
+            let (name, visibility) = (name.clone(), *visibility);
+            let verb = match visibility {
+                crate::hir::Visibility::Private => 0,
+                crate::hir::Visibility::Protected => 1,
+                crate::hir::Visibility::Public => 2,
+            };
+            apply_visibility(fx, stmt, "zeo_rt_runtime_set_visibility", &name, Some(verb))
+        }
+        HirNode::ClassMethodVisibility { name, visibility } => {
+            let (name, visibility) = (name.clone(), *visibility);
+            let private = u8::from(visibility == crate::hir::Visibility::Private);
+            apply_visibility(
+                fx,
+                stmt,
+                "zeo_rt_runtime_class_method_visibility",
+                &name,
+                Some(private),
+            )
+        }
+        // An `undef` in a REOPENED `class << self`: a call written between
+        // the two bodies still answers, so the retirement has a position.
+        HirNode::ClassMethodUndef(names) => {
+            for name in names.clone() {
+                apply_visibility(fx, stmt, "zeo_rt_runtime_undef_class_method", &name, None)?;
+            }
+            Ok(())
+        }
+        // `undef` and `module_function` stay pure REGISTRATION: analyze
+        // stamped the tables (undefined marks, module-function copies) and
+        // the statements run nothing.
+        HirNode::Undef(..) | HirNode::ModuleFunction(..) => Ok(()),
         HirNode::Include(_)
         | HirNode::Extend(_)
         | HirNode::Prepend(_)
@@ -1747,4 +1775,33 @@ fn name_pair(fx: &mut Fx, s: &str) -> (cranelift_codegen::ir::Value, cranelift_c
     let ptr = fx.rod(off);
     let len = fx.b.ins().iconst(fx.em.ptr, s.len() as i64);
     (ptr, len)
+}
+
+/// One positional definition-surface retag: the enclosing class body's own
+/// class, the name as a Symbol, and the entry's verb byte when it takes one.
+fn apply_visibility(
+    fx: &mut Fx,
+    stmt: NodeId,
+    entry: &'static str,
+    name: &str,
+    verb: Option<u8>,
+) -> Result<(), String> {
+    use cranelift_codegen::ir::InstBuilder;
+    let Some(cid) = fx.defining_class.or(fx.method_class) else {
+        return fx.unsupported(stmt, "a visibility retag outside a class body");
+    };
+    let cid_v =
+        fx.b.ins()
+            .iconst(cranelift_codegen::ir::types::I32, i64::from(cid.0));
+    let sym = fx.sym_id(name);
+    let mut args = vec![cid_v, sym];
+    if let Some(v) = verb {
+        args.push(
+            fx.b.ins()
+                .iconst(cranelift_codegen::ir::types::I8, i64::from(v)),
+        );
+    }
+    let status = fx.call(entry, &args).expect("the entry returns a status");
+    fx.fallible(status);
+    Ok(())
 }

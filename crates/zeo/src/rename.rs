@@ -243,6 +243,20 @@ impl Walker {
                 method_body: _,
             } => {
                 let suspended = self.suspend_params(params);
+                // The IMPLICIT block-locals are the one own-name list
+                // `bound_names` does not carry, so they are not suspended --
+                // and observation 2 says renaming a block-own name is
+                // harmless as long as it happens at EVERY site. This list is
+                // a site: it names what the prelude resets to nil per
+                // invocation, and a stale spelling there names a local no
+                // scope hoisted.
+                if !self.collecting {
+                    for n in &mut params.implicit_block_locals {
+                        if self.names.contains(n.as_str()) {
+                            *n = format!("{}{}", self.prefix, n);
+                        }
+                    }
+                }
                 for d in params.default_ids() {
                     self.visit(hir, d);
                 }

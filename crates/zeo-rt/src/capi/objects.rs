@@ -631,14 +631,15 @@ pub unsafe extern "C" fn zeo_rt_define_in_default_definee(
 }
 
 /// The visibility a runtime-installed `def` carries from its class body's
-/// running default (`private`/`protected` mode). Verb 0 = private, 1 =
-/// protected.
+/// running default (`private`/`protected` mode), and the one a REOPEN's
+/// `private :m` applies at its document position. Verb 0 = private, 1 =
+/// protected, 2 = public.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zeo_rt_runtime_set_visibility(cid: u32, name: u32, verb: u8) -> i32 {
-    let vis = if verb == 0 {
-        crate::dispatch::MethodVisibility::Private
-    } else {
-        crate::dispatch::MethodVisibility::Protected
+    let vis = match verb {
+        0 => crate::dispatch::MethodVisibility::Private,
+        1 => crate::dispatch::MethodVisibility::Protected,
+        _ => crate::dispatch::MethodVisibility::Public,
     };
     match crate::runtime_meta::runtime_set_visibility(
         ClassId(cid),
@@ -677,6 +678,43 @@ pub unsafe extern "C" fn zeo_rt_guard_class_reopen(
         Err(sig) => {
             crate::signal::set_pending(sig);
             STATUS_SIGNAL
+        }
+    }
+}
+
+/// A reopen's `private_class_method :m` / `public_class_method :m`, applied
+/// at its document position (analyze leaves those in the site's statements
+/// precisely so they do).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_runtime_class_method_visibility(
+    cid: u32,
+    name: u32,
+    private: u8,
+) -> i32 {
+    match crate::runtime_meta::runtime_class_method_visibility(
+        ClassId(cid),
+        &[RubyValue::Symbol(crate::Symbol::from_u32(name))],
+        private != 0,
+    ) {
+        Ok(()) => zeo_abi::abi::STATUS_OK,
+        Err(sig) => {
+            crate::signal::set_pending(sig);
+            zeo_abi::abi::STATUS_SIGNAL
+        }
+    }
+}
+
+/// An `undef` in a REOPENED `class << self`, applied where it stands.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_runtime_undef_class_method(cid: u32, name: u32) -> i32 {
+    match crate::runtime_meta::runtime_undef_class_method_names(
+        ClassId(cid),
+        &[crate::Symbol::from_u32(name).name().as_str()],
+    ) {
+        Ok(()) => zeo_abi::abi::STATUS_OK,
+        Err(sig) => {
+            crate::signal::set_pending(sig);
+            zeo_abi::abi::STATUS_SIGNAL
         }
     }
 }

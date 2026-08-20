@@ -1218,7 +1218,7 @@ pub(crate) struct ClassBodySpec {
 /// except a block-bodied `define_method` def, whose body is a block.
 fn inline_markers(
     compiler: &crate::compiler::Compiler,
-    main_statements: &[crate::hir::NodeId],
+    top_statements: &[&[crate::hir::NodeId]],
 ) -> std::collections::HashSet<crate::hir::NodeId> {
     use crate::hir::HirNode;
     let site_stmts: HashMap<crate::hir::NodeId, &[crate::hir::NodeId]> = compiler
@@ -1227,7 +1227,7 @@ fn inline_markers(
         .filter_map(|s| s.def_node.map(|n| (n, s.stmts.as_slice())))
         .collect();
     let mut seen = std::collections::HashSet::new();
-    let mut work: Vec<crate::hir::NodeId> = main_statements.to_vec();
+    let mut work: Vec<crate::hir::NodeId> = top_statements.concat();
     for &def in compiler.hir.block_bodied_defs() {
         if let HirNode::DefMethod { body, .. } = &compiler.hir[def] {
             work.extend(body.iter().copied());
@@ -1266,7 +1266,13 @@ fn collect_class_bodies(
     analyzed: &Analyzed,
 ) -> Result<Vec<ClassBodySpec>, String> {
     let compiler = &analyzed.compiler;
-    let inline = inline_markers(compiler, &analyzed.main_statements);
+    // Every TOP-LEVEL statement stream: main's, and each compiled-in
+    // feature unit's. A unit's `class` marker runs where it stands IN THE
+    // UNIT -- hoisting it into main's prelude would run a never-loaded
+    // unit's body at program start.
+    let mut tops: Vec<&[crate::hir::NodeId]> = vec![&analyzed.main_statements];
+    tops.extend(analyzed.feature_units.iter().map(|(_, _, s)| s.as_slice()));
+    let inline = inline_markers(compiler, &tops);
     let mut specs = Vec::new();
     for (i, site) in compiler.class_body_sites.iter().enumerate() {
         let ci = compiler.class(site.class);
