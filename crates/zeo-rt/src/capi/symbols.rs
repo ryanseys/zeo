@@ -114,6 +114,7 @@ capi_symbols!(
     literals::zeo_rt_last_match_ref,
     lifecycle::zeo_rt_main,
     registry::zeo_rt_main_object,
+    dispatch::zeo_rt_method_capture_inherited,
     literals::zeo_rt_multi_split,
     objects::zeo_rt_object_alloc,
     objects::zeo_rt_object_new_sentinel,

@@ -71,6 +71,7 @@ zeo_rt_kw_splat_into ([Ptr, Ptr]) -> Some(I32)
 zeo_rt_last_match_ref ([U8, Usize, Ptr]) -> None
 zeo_rt_main ([I32, Ptr, Ptr, Ptr]) -> Some(I32)
 zeo_rt_main_object ([Ptr]) -> None
+zeo_rt_method_capture_inherited ([Ptr, Ptr, Ptr]) -> Some(I32)
 zeo_rt_multi_split ([Ptr, Usize, U8, Usize, Ptr]) -> Some(I32)
 zeo_rt_object_new_sentinel ([Ptr]) -> None
 zeo_rt_pat_array_get ([Ptr, Usize, Ptr]) -> None

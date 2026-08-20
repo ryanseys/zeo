@@ -326,16 +326,20 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
         } => {
             let (params, body, method_body) = (params.as_ref().clone(), body.clone(), *method_body);
             if method_body {
-                // `define_method(:m) { .. }`'s body proc, built as a method
-                // body (its bare `yield` reaches the installed method's
-                // call-site block).
+                // The two lowering sites that build one are the `def obj.m`
+                // and `class << obj` desugars, so this IS a real `def`'s
+                // body: its bare `yield` reaches the installed method's
+                // call-site block, and a bare `super` forwards the
+                // parameter list a `def` actually wrote (rustc marks
+                // `runtime_super_params` here and leaves
+                // `defined_by_define_method` alone).
                 let ss = super::blocks::build_method_body(
                     fx,
                     id,
                     &params,
                     &body,
                     super::blocks::FrameName::Block,
-                    super::blocks::MethodBody::DefineMethod,
+                    super::blocks::MethodBody::Def,
                 )?;
                 return Ok(Operand::Slot {
                     ss,
@@ -942,6 +946,10 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             if let Some(op) = module_nesting(fx, receiver, &name, &args)? {
                 return Ok(op);
             }
+            if let Some(op) = method_capture_intrinsic(fx, receiver, &name, &args, &[], None, None)?
+            {
+                return Ok(op);
+            }
             if receiver.is_none()
                 && name == "binding"
                 && args.is_empty()
@@ -1035,6 +1043,11 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 *block,
                 *block_arg,
             );
+            if let Some(op) =
+                method_capture_intrinsic(fx, receiver, &name, &args, &kwargs, block, block_arg)?
+            {
+                return Ok(op);
+            }
             let recv = match receiver {
                 Some(r) => Some(lower_expr(fx, r)?),
                 None => None,
@@ -1481,6 +1494,76 @@ pub(crate) fn lexical_class(fx: &Fx) -> Option<crate::compiler::ClassId> {
 /// `Ctx::resolve_class`; box 0 -- box scopes refuse before any lowering).
 pub(crate) fn resolve_class_here(fx: &Fx, name: &str) -> Option<crate::compiler::ClassId> {
     fx.an.compiler.resolve_class(name, cref_chain(fx), 0)
+}
+
+/// `K.method(:name)` captured BEFORE every own `def self.name` in the
+/// document: CRuby resolves at capture time, so the Method binds the
+/// INHERITED entry and a by-name capture would recurse forever through
+/// the later override (rspec-support's `NEW_MUTEX_METHOD =
+/// Mutex.method(:new)` / `def self.new = NEW_MUTEX_METHOD.call` pair).
+#[allow(clippy::too_many_arguments)]
+fn method_capture_intrinsic(
+    fx: &mut Fx,
+    receiver: Option<NodeId>,
+    name: &str,
+    args: &[crate::hir::ArrayElem],
+    kwargs: &[crate::hir::KwArg],
+    block: Option<NodeId>,
+    block_arg: Option<NodeId>,
+) -> Result<Option<Operand>, String> {
+    if name != "method"
+        || args.len() != 1
+        || !kwargs.is_empty()
+        || block.is_some()
+        || block_arg.is_some()
+    {
+        return Ok(None);
+    }
+    let (Some(recv_id), crate::hir::ArrayElem::Single(sym_id)) = (receiver, &args[0]) else {
+        return Ok(None);
+    };
+    let HirNode::ClassRef(path) = &fx.an.compiler.hir[recv_id] else {
+        return Ok(None);
+    };
+    let path = path.clone();
+    let sym_id = *sym_id;
+    let HirNode::SymbolLit(sym) = &fx.an.compiler.hir[sym_id] else {
+        return Ok(None);
+    };
+    let sym = sym.clone();
+    let Some(target) = resolve_class_here(fx, &path) else {
+        return Ok(None);
+    };
+    if !crate::analyze::class_query::class_method_defined_only_later(
+        &fx.an.compiler,
+        target,
+        &sym,
+        recv_id,
+    ) {
+        return Ok(None);
+    }
+    let recv_op = lower_expr(fx, recv_id)?;
+    let recv_ptr = super::ownership::borrow_ptr(fx, &recv_op);
+    if recv_op.owned() {
+        super::ownership::pool_owned(fx, recv_ptr, recv_op.tag());
+    }
+    let sym_op = lower_expr(fx, sym_id)?;
+    let sym_ptr = super::ownership::borrow_ptr(fx, &sym_op);
+    if sym_op.owned() {
+        super::ownership::pool_owned(fx, sym_ptr, sym_op.tag());
+    }
+    let ss = fx.temp_slot();
+    let out = fx.slot_addr(ss, 0);
+    let status = fx
+        .call("zeo_rt_method_capture_inherited", &[recv_ptr, sym_ptr, out])
+        .expect("method_capture_inherited returns a status");
+    fx.fallible(status);
+    fx.owned_created += 1;
+    Ok(Some(Operand::Slot {
+        ss,
+        owned: true,
+        tag: TagInfo::Unknown,
+    }))
 }
 
 pub(crate) fn const_read(fx: &mut Fx, id: NodeId, name: &str) -> Result<Operand, String> {

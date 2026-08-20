@@ -476,6 +476,31 @@ pub unsafe extern "C" fn zeo_rt_case_eq(
     }
 }
 
+/// `K.method(:name)` captured BEFORE every own `def self.name` in the
+/// document: CRuby resolves at capture time, so the Method binds the
+/// INHERITED entry. The COMPILER proves the position and emits this
+/// instead of the by-name capture, which would find the later override
+/// and recurse forever.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_method_capture_inherited(
+    recv: *const RubyValue,
+    name_arg: *const RubyValue,
+    out: *mut RubyValue,
+) -> i32 {
+    match crate::builtins::method::method_capture_inherited(unsafe { &*recv }, unsafe {
+        &*name_arg
+    }) {
+        Ok(v) => {
+            unsafe { out.write(v) };
+            STATUS_OK
+        }
+        Err(sig) => {
+            crate::signal::set_pending(sig);
+            STATUS_SIGNAL
+        }
+    }
+}
+
 /// `when *candidates`: the splat form -- `===` over every element of the
 /// (to_a-coerced) candidate list, short-circuiting on the first hit.
 #[unsafe(no_mangle)]

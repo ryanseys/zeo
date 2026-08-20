@@ -339,3 +339,42 @@ pub(crate) fn slot_of(compiler: &Compiler, class: ClassId, name: &str) -> Option
             .map(|i| info.ivars.len() + i)
     })
 }
+
+/// `K.method(:name)` where every own `def self.name` sits LATER in the
+/// document than the capture at `at`. CRuby resolves at capture time, so
+/// the Method binds the INHERITED entry -- a by-name capture would find
+/// the later override and, for rspec-support's `NEW_MUTEX_METHOD =
+/// Mutex.method(:new)` / `def self.new = NEW_MUTEX_METHOD.call` pair,
+/// recurse forever.
+///
+/// SPANS, not `doc_order`: a plain `def` is registration rather than an
+/// executable site statement, so the position index never records it --
+/// but source offsets order a SAME-FILE body just as well, and the
+/// capture-before-own-def shape is a same-file one (a cross-file reopen
+/// stays on the normal capture).
+pub(crate) fn class_method_defined_only_later(
+    compiler: &Compiler,
+    target: ClassId,
+    sym: &str,
+    at: crate::hir::NodeId,
+) -> bool {
+    let Some(at) = compiler.hir.span(at) else {
+        return false;
+    };
+    let mut any = false;
+    for (n, is_cm, _seq, sid) in &compiler.class(target).method_history {
+        if *is_cm && n == sym {
+            let Some(def_node) = compiler.scope(*sid).def_node else {
+                return false;
+            };
+            let Some(def) = compiler.hir.span(def_node) else {
+                return false;
+            };
+            if def.file != at.file || def.start < at.start {
+                return false;
+            }
+            any = true;
+        }
+    }
+    any
+}
