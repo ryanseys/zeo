@@ -540,7 +540,18 @@ fn socket_const_value(name: &str) -> i64 {
         "IP_MULTICAST_IF" => libc::IP_MULTICAST_IF,
         "IPV6_MULTICAST_IF" => libc::IPV6_MULTICAST_IF,
         "IPV6_MULTICAST_LOOP" => libc::IPV6_MULTICAST_LOOP,
+        // RFC 3493 renamed IPV6_ADD_MEMBERSHIP/IPV6_DROP_MEMBERSHIP to
+        // IPV6_JOIN_GROUP/IPV6_LEAVE_GROUP. glibc keeps the old names as the
+        // definitions and the new ones as `#define` aliases of them -- same
+        // numbers, but only the old spelling reaches Rust, since libc binds
+        // constants, not preprocessor aliases.
+        #[cfg(target_os = "linux")]
+        "IPV6_JOIN_GROUP" => libc::IPV6_ADD_MEMBERSHIP,
+        #[cfg(target_os = "linux")]
+        "IPV6_LEAVE_GROUP" => libc::IPV6_DROP_MEMBERSHIP,
+        #[cfg(not(target_os = "linux"))]
         "IPV6_JOIN_GROUP" => libc::IPV6_JOIN_GROUP,
+        #[cfg(not(target_os = "linux"))]
         "IPV6_LEAVE_GROUP" => libc::IPV6_LEAVE_GROUP,
         "MSG_DONTWAIT" => libc::MSG_DONTWAIT,
         "MSG_TRUNC" => libc::MSG_TRUNC,
