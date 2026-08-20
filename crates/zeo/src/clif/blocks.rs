@@ -821,6 +821,16 @@ pub(crate) fn send_with_block_ptr_ops(
         }
         None => (fx.self_ptr.expect("self_ptr is set in the prologue"), false),
     };
+    // A splatted list builds its Array in the runtime, so it takes the
+    // args entry with the block on the same channel.
+    if args.iter().any(|a| matches!(a, ArrayElem::Splat(_))) {
+        let recv = recv_ptr.1.then_some(Operand::Ptr {
+            addr: recv_ptr.0,
+            owned: false,
+            tag: TagInfo::Unknown,
+        });
+        return super::call::splat_send(fx, site, recv, name, args, &[], Some(blk_ptr));
+    }
     let argv_ptr = super::call::build_argv(fx, site, args)?;
     let sym = fx.sym_id(name);
     let zero_box = fx.b.ins().iconst(types::I32, 0);

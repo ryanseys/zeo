@@ -715,6 +715,11 @@ pub const CAPI: &[CapiSig] = &[
         params: &[Ptr, Ptr, Usize, Ptr],
         ret: Some(I32),
     },
+    CapiSig {
+        name: "zeo_rt_yield_args",
+        params: &[Ptr, Ptr, Ptr],
+        ret: Some(I32),
+    },
 ];
 
 /// The signature row for `name`.

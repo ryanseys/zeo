@@ -194,6 +194,7 @@ capi_symbols!(
     dispatch::zeo_rt_value_super_args,
     signals::zeo_rt_wrong_arity,
     procs::zeo_rt_yield,
+    procs::zeo_rt_yield_args,
 );
 
 #[cfg(test)]

@@ -434,7 +434,10 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
             block: None,
             block_arg: None,
             safe: false,
-        } if name == "puts" && kwargs.is_empty() => {
+        } if name == "puts"
+            && kwargs.is_empty()
+            && !args.iter().any(|a| matches!(a, ArrayElem::Splat(_))) =>
+        {
             let args = args.clone();
             lower_puts(fx, stmt, &args)
         }
@@ -818,6 +821,7 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
             let op = if receiver.is_none()
                 && let Some(decl) = fx.em.methods.get(&name)
                 && decl.arity == args.len()
+                && !args.iter().any(|a| matches!(a, ArrayElem::Splat(_)))
                 && !super::expr::method_class_shadows(fx, &name)
             {
                 super::call::direct_call(fx, stmt, &name, &args, Some(blk))?

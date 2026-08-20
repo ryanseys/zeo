@@ -481,6 +481,28 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
         }
         HirNode::Yield(args) => {
             let args = args.clone();
+            // `yield(*a)`: the length is a runtime question, so the list is
+            // built as an Array and the block binds from its contents
+            // (rustc's `__args` vector twin).
+            if args.iter().any(|a| matches!(a, ArrayElem::Splat(_))) {
+                let arr = super::call::build_array(fx, &args)?;
+                let blk = match fx.blk_ptr {
+                    Some(b) => b,
+                    None => fx.b.ins().iconst(fx.em.ptr, 0),
+                };
+                let ss = fx.temp_slot();
+                let out = fx.slot_addr(ss, 0);
+                let status = fx
+                    .call("zeo_rt_yield_args", &[blk, arr, out])
+                    .expect("yield_args returns a status");
+                fx.fallible(status);
+                fx.owned_created += 1;
+                return Ok(Operand::Slot {
+                    ss,
+                    owned: true,
+                    tag: TagInfo::Unknown,
+                });
+            }
             let argv_ptr = super::call::build_argv(fx, id, &args)?;
             let blk = match fx.blk_ptr {
                 Some(b) => b,
@@ -741,6 +763,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 && let Some(decl) = fx.em.methods.get(&name)
                 && decl.plain
                 && decl.arity == args.len()
+                && !args.iter().any(|a| matches!(a, ArrayElem::Splat(_)))
                 && !method_class_shadows(fx, &name)
             {
                 return super::call::direct_call(fx, id, &name, &args, Some(blk));
@@ -792,6 +815,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                     Some(decl)
                         if decl.plain
                             && decl.arity == args.len()
+                            && !args.iter().any(|a| matches!(a, ArrayElem::Splat(_)))
                             && !method_class_shadows(fx, &name) =>
                     {
                         super::call::direct_call(fx, id, &name, &args, None)

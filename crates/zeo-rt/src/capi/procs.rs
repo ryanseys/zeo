@@ -269,6 +269,33 @@ pub unsafe extern "C" fn zeo_rt_yield(
     status_out(r, out)
 }
 
+/// `yield(*a)`: the argument list is only known at run time, so the
+/// caller hands the Array it built and the block binds from its contents
+/// through its ordinary parameter machinery.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_yield_args(
+    blk: *const RubyValue,
+    args: *const RubyValue,
+    out: *mut RubyValue,
+) -> i32 {
+    if blk.is_null() {
+        crate::signal::set_pending(crate::dispatch::raise_no_block_yield());
+        return zeo_abi::abi::STATUS_SIGNAL;
+    }
+    let RubyValue::Array(a) = (unsafe { &*args }) else {
+        panic!("a splatted yield's args must be an Array")
+    };
+    let full: Vec<RubyValue> = a.lock().iter().cloned().collect();
+    let r = match unsafe { &*blk } {
+        RubyValue::Proc(p) => p.call(&full),
+        other => Err(crate::builtins::type_error!(
+            "wrong block value (given {})",
+            other.inspect_string()
+        )),
+    };
+    status_out(r, out)
+}
+
 /// `Proc#call` -- the proc's own lexical self, with an optional call-site
 /// block forwarded to its `&param` (moved in; null = none).
 #[unsafe(no_mangle)]
