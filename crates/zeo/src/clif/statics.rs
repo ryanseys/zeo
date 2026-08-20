@@ -1033,6 +1033,18 @@ pub(crate) fn define_desc(
     if !loaded.contains(&ambient_rbconfig) {
         loaded.push(ambient_rbconfig);
     }
+    // A feature zeo satisfies with a BUILTIN (`require "set"`, `require
+    // "json"`) splices no file, so nothing above records it -- and CRuby's
+    // `$LOADED_FEATURES` names one entry per loaded feature whatever
+    // supplied it (rustc's `<zeo-builtin>` listing).
+    let mut activated: Vec<&String> = hir.activated_features.iter().collect();
+    activated.sort();
+    for feature in activated {
+        let entry = format!("<zeo-builtin>/{feature}.rb");
+        if !loaded.contains(&entry) {
+            loaded.push(entry);
+        }
+    }
     let warnings: Vec<String> = hir.warnings.iter().map(ToString::to_string).collect();
 
     // One Str-array object: loaded features first, then warnings.
@@ -1135,8 +1147,35 @@ pub(crate) fn define_desc(
         std::mem::offset_of!(ProgramDesc, n_units),
         unit_rows.len() as u64,
     );
+    // `DATA` -- only a script with an `__END__` carries the path, so every
+    // other program neither holds it nor opens anything at startup.
+    let data_section = hir
+        .data_section
+        .as_ref()
+        .map(|d| (em.intern_rodata(d.path.as_bytes()), d.path.len(), d.offset));
+    if let Some((_, len, offset)) = data_section {
+        put_u64(
+            &mut buf,
+            std::mem::offset_of!(ProgramDesc, data_section) + std::mem::offset_of!(Str, len),
+            len as u64,
+        );
+        put_u64(
+            &mut buf,
+            std::mem::offset_of!(ProgramDesc, data_offset),
+            offset,
+        );
+    }
     desc.define(buf.into_boxed_slice());
     desc.set_align(8);
+    if let Some((off, _, _)) = data_section {
+        let rodata_gv = em.module.declare_data_in_data(em.rodata_id, &mut desc);
+        desc.write_data_addr(
+            (std::mem::offset_of!(ProgramDesc, data_section) + std::mem::offset_of!(Str, ptr))
+                as u32,
+            rodata_gv,
+            i64::from(off),
+        );
+    }
     let tables_gv = em.module.declare_data_in_data(tables_id, &mut desc);
     if !loaded.is_empty() {
         desc.write_data_addr(

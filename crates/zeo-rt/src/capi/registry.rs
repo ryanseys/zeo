@@ -200,6 +200,9 @@ pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
             abi::REG_CONCEAL_CLASS => crate::constants::conceal_class(r.class),
             // Both handled in the pre-pass above.
             abi::REG_REGISTER_BUILTIN | abi::REG_SET_ANCESTORS => {}
+            abi::REG_MARK_GLOBAL_DEF_HOOK => {
+                crate::runtime_meta::mark_global_def_hook(text(r.a));
+            }
             abi::REG_CONST_PRIVATE => {
                 crate::constants::const_set_private(r.class, &[text(r.a)], true);
             }

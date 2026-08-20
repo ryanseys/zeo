@@ -639,6 +639,21 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
                 flag: 0,
             }),
     );
+    // A definition hook written on `Module`/`Class`/`BasicObject` itself
+    // answers for every class, and no per-class owner scan can see one.
+    {
+        let mut names: Vec<&String> = analyzed.compiler.global_def_hooks.iter().collect();
+        names.sort();
+        reg_rows.extend(names.into_iter().map(|n| statics::RegRowSpec {
+            kind: zeo_abi::abi::REG_MARK_GLOBAL_DEF_HOOK,
+            class: 0,
+            a: n.clone(),
+            b: String::new(),
+            f: None,
+            ids: vec![],
+            flag: 0,
+        }));
+    }
     // `private_constant` marks.
     reg_rows.extend(
         private_consts

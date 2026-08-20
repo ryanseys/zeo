@@ -82,8 +82,20 @@ pub fn resolve(
     }
     let future = future_names(&taken);
 
+    // A PRELUDE definition (`BUILTIN_EXCEPTIONS_RB`) is ruby's own,
+    // installed before the program's first statement runs, so no hook the
+    // program writes can have been there to see it. Without this, a
+    // `class Module; def method_added(n); end; end` announced
+    // `Exception#initialize` and its siblings ahead of everything the user
+    // wrote.
+    let prelude: std::collections::HashSet<NodeId> = compiler
+        .scopes
+        .iter()
+        .filter(|s| s.native_default)
+        .filter_map(|s| s.def_node)
+        .collect();
     for (class, defs, target) in taken {
-        let sends = surviving(compiler, class, &defs, &global, &future);
+        let sends = surviving(compiler, class, &defs, &global, &future, &prelude);
         if sends.is_empty() {
             continue;
         }
@@ -186,8 +198,10 @@ fn surviving(
     defs: &[SiteDef],
     global: &[&'static str],
     future: &Future,
+    prelude: &std::collections::HashSet<NodeId>,
 ) -> Vec<Send> {
     defs.iter()
+        .filter(|d| !prelude.contains(&d.node))
         .filter_map(|d| {
             let hook = d.event.hook(d.singleton);
             fires(compiler, class, d, hook, global).then(|| Send {

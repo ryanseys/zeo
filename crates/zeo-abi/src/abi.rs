@@ -410,6 +410,13 @@ pub const REG_BOOT_REDEF: u8 = 13;
 /// `defined?` read it too.
 pub const REG_CONST_PRIVATE: u8 = 14;
 
+/// A definition hook written on `Module`/`Class`/`BasicObject` ITSELF, which
+/// answers for every class in the program: `a` = the hook name. No per-class
+/// owner scan can see one -- the reopen registers an ordinary instance
+/// method whose owner is the very class the no-op default lives on -- so the
+/// compiler records it by name and the runtime consults the list.
+pub const REG_MARK_GLOBAL_DEF_HOOK: u8 = 15;
+
 /// The byte size of the emitter's opaque `for`-loop state slot -- one
 /// stack slot per loop, filled by `zeo_rt_for_begin` and released by
 /// `zeo_rt_for_end`. The runtime asserts its own struct fits.
