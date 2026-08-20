@@ -1239,14 +1239,22 @@ impl Backend {
     }
 
     /// The backend this invocation uses: the CLI flag, else `ZEO_BACKEND`,
-    /// else the dual-period default (`Rustc`).
-    pub fn select(cli: Option<Backend>) -> Result<Backend, String> {
+    /// else the default for the MODE. Cranelift is the default backend, and
+    /// the two Cranelift modes are not interchangeable: the JIT runs a
+    /// program in place, and only the AOT backend produces the artifact
+    /// `-o`/`--compile` asks for. `--backend rustc` stays selectable as the
+    /// differential oracle until M3.
+    pub fn select(cli: Option<Backend>, wants_artifact: bool) -> Result<Backend, String> {
         if let Some(backend) = cli {
             return Ok(backend);
         }
         match std::env::var("ZEO_BACKEND") {
             Ok(value) if !value.is_empty() => Backend::parse(&value),
-            Ok(_) | Err(_) => Ok(Backend::Rustc),
+            Ok(_) | Err(_) => Ok(if wants_artifact {
+                Backend::Aot
+            } else {
+                Backend::Jit
+            }),
         }
     }
 }

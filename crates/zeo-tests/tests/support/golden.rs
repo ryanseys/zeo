@@ -389,31 +389,78 @@ fn profile() -> zeo::backend::Profile {
     zeo::backend::Profile::from_env_or(zeo::backend::Profile::Debug)
 }
 
-/// `ZEO_GOLDEN_BACKEND`: which backend runs the goldens. Unset or `rustc`
-/// = today's in-process compile + `build_binary` path. `jit`/`aot` = the
-/// Cranelift legs: spawn the built `zeo` CLI, one child per golden (the
-/// isolation the plan requires). The default flips with the M1 backend
-/// flip, not before -- until CLIF parity, the ratchet legs run on demand.
+/// `ZEO_GOLDEN_BACKEND`: which backend runs the goldens. Unset or `jit` =
+/// the default -- spawn the built `zeo` CLI, one child per golden (the
+/// isolation the plan requires); `aot` is the same leg through a linked
+/// binary. `rustc` selects the frozen differential oracle: the in-process
+/// compile + `build_binary` path, which stays reachable until M3.
 fn golden_backend() -> Option<String> {
-    std::env::var("ZEO_GOLDEN_BACKEND")
-        .ok()
-        .filter(|v| !v.is_empty() && v != "rustc")
+    match std::env::var("ZEO_GOLDEN_BACKEND") {
+        Ok(v) if v == "rustc" => None,
+        Ok(v) if !v.is_empty() => Some(v),
+        _ => Some("jit".to_string()),
+    }
 }
 
 /// The built `zeo` CLI beside this test binary's profile dir.
+///
+/// Checked against the compiler's own sources, because nothing rebuilds it
+/// for us: a test target has no cargo dependency edge to a BINARY target,
+/// so a stale `zeo` would run yesterday's compiler over today's goldens and
+/// report green. Stat-only, and it never shells cargo -- it says what to run.
 fn zeo_cli() -> Result<PathBuf, String> {
     let mut p = std::env::current_exe().map_err(|e| format!("test binary path: {e}"))?;
     p.pop(); // deps/<test-bin> -> deps
     p.pop(); // deps -> target/<profile>
     p.push("zeo");
-    if p.is_file() {
-        Ok(p)
-    } else {
-        Err(format!(
-            "ZEO_GOLDEN_BACKEND needs the zeo CLI at {} (run `cargo build -p zeo` first)",
+    if !p.is_file() {
+        return Err(format!(
+            "the golden harness needs the zeo CLI at {} (run `cargo build -p zeo` first)",
             p.display()
-        ))
+        ));
     }
+    if let Some(source) = newer_compiler_source(&p) {
+        return Err(format!(
+            "the zeo CLI at {} is older than {} (run `cargo build -p zeo` first)",
+            p.display(),
+            source.display()
+        ));
+    }
+    Ok(p)
+}
+
+/// The compiler crates whose sources build the `zeo` binary and `libzeo.a`.
+const COMPILER_CRATES: &[&str] = &["zeo", "zeo-rt", "zeo-abi", "zeo-macros", "zeo-dsl"];
+
+/// A compiler source newer than `binary`, if there is one. Walks exactly the
+/// inputs cargo would rebuild for -- the crates' `src`/`build.rs`/manifest
+/// plus the workspace manifest and lockfile -- and never the test corpus,
+/// which is not an input to the compiler.
+fn newer_compiler_source(binary: &Path) -> Option<PathBuf> {
+    let mtime = |p: &Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+    let built = mtime(binary)?;
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent()?.parent()?;
+    let mut roots: Vec<PathBuf> = vec![root.join("Cargo.toml"), root.join("Cargo.lock")];
+    for name in COMPILER_CRATES {
+        let dir = root.join("crates").join(name);
+        roots.push(dir.join("src"));
+        roots.push(dir.join("build.rs"));
+        roots.push(dir.join("Cargo.toml"));
+    }
+    let mut stack = roots;
+    while let Some(path) = stack.pop() {
+        let Ok(meta) = std::fs::metadata(&path) else {
+            continue;
+        };
+        if meta.is_dir() {
+            if let Ok(entries) = std::fs::read_dir(&path) {
+                stack.extend(entries.flatten().map(|e| e.path()));
+            }
+        } else if meta.modified().is_ok_and(|m| m > built) {
+            return Some(path);
+        }
+    }
+    None
 }
 
 /// The Cranelift legs' runner. Rejection must stay distinguishable from a

@@ -116,7 +116,14 @@ fn a_warm_rerun_serves_the_binary_from_the_cache() {
     let dir = scratch("warm-rerun");
     let rb = write(&dir, "t.rb", "puts :ok\n");
 
-    let out = zeo().arg(&rb).output().expect("spawn zeo");
+    // The binary cache belongs to the rustc backend, which the default no
+    // longer selects; it stays reachable as the differential oracle until
+    // M3, and this test goes with it.
+    let out = zeo()
+        .args(["--backend", "rustc"])
+        .arg(&rb)
+        .output()
+        .expect("spawn zeo");
     assert_eq!(
         stdout_of(&out),
         "ok\n",
@@ -127,6 +134,7 @@ fn a_warm_rerun_serves_the_binary_from_the_cache() {
     // The rerun of an unchanged program must skip rustc entirely -- the
     // timings line names the cache instead of a rustc wall time.
     let out = zeo()
+        .args(["--backend", "rustc"])
         .arg(&rb)
         .env("ZEO_TIMINGS", "1")
         .output()

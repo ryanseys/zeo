@@ -167,9 +167,10 @@ options:
   --emit-clif[=<path>]  emit the Cranelift IR (the aot backend's own
                         lowering) instead of building; bare prints to stdout
   --backend <rustc|aot|jit>
-                        which code generator builds the program: rustc (the
-                        dual-period default), the Cranelift AOT backend, or
-                        the in-process Cranelift JIT (run mode only)
+                        which code generator builds the program: the
+                        in-process Cranelift JIT (the default in run mode),
+                        the Cranelift AOT backend (the default with -o), or
+                        rustc (the differential oracle, kept until M3)
                         (ZEO_BACKEND is the env spelling; the flag wins)
   -I <dir>              add a `require` search root, like ruby's -I
                         (repeatable; `-I<dir>` and `-I=<dir>` also accepted)
@@ -670,12 +671,13 @@ fn run() -> Result<(), MainError> {
 
     // The backend decides WHICH compile runs (rust text vs an object file),
     // so it is selected before compiling.
-    let backend = zeo::backend::Backend::select(args.backend)?;
+    let wants_artifact = args.compile || args.output.is_some();
+    let backend = zeo::backend::Backend::select(args.backend, wants_artifact)?;
     // The JIT is run-in-place by definition: compile into this process and
     // exit with the program's status. An artifact request needs a backend
     // that produces one.
     if backend == zeo::backend::Backend::Jit {
-        if args.compile || args.output.is_some() {
+        if wants_artifact {
             return Err(
                 "--backend jit runs in place and produces no artifact (use --backend aot for -o/--compile)"
                     .to_string()
