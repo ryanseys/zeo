@@ -12,6 +12,7 @@ pub(crate) mod captures;
 pub(crate) mod class_query;
 mod classes;
 pub(crate) mod constfold;
+pub(crate) mod coverage;
 pub(crate) mod def_hooks;
 pub(crate) mod fastpath;
 pub(crate) mod local_storage;

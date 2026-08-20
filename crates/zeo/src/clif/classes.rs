@@ -796,7 +796,10 @@ pub(crate) fn collect_classes(
             // A native-backed instance has NO slots: its accessor runs as
             // an ordinary body (a lone name-keyed ivar read/write), the
             // rustc delta shape.
-            let accessor = match (&scope.accessor, native_backed) {
+            let accessor = match (
+                compiler.accessor_shape(ClassId(idx as u32), scope),
+                native_backed,
+            ) {
                 (Some(_), true) | (None, _) => None,
                 (Some(shape), false) => {
                     let slot = crate::analyze::class_query::slot_of(
@@ -918,7 +921,7 @@ pub(crate) fn collect_classes(
                     return refuse_m(what);
                 }
                 let layout = super::params::layout_of(p)?;
-                let accessor = match &scope.accessor {
+                let accessor = match compiler.accessor_shape(ClassId(idx as u32), scope) {
                     None => None,
                     Some(shape) => {
                         let slot = crate::analyze::class_query::slot_of(

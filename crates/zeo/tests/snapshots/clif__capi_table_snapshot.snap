@@ -29,6 +29,8 @@ zeo_rt_const_get_or_nil ([U32, Ptr, Usize, Ptr]) -> None
 zeo_rt_const_get_scoped ([U32, Ptr, Usize, Ptr, Usize, U8, Ptr]) -> Some(I32)
 zeo_rt_const_private ([U32, Ptr, Usize]) -> Some(I8)
 zeo_rt_const_set_at ([U32, Ptr, Usize, Ptr, Ptr, Usize, U32]) -> None
+zeo_rt_cov_file_loaded ([Ptr, Usize]) -> None
+zeo_rt_cov_line ([Ptr, Usize, U32]) -> None
 zeo_rt_cvar_get ([U32, Ptr, Usize, Ptr]) -> None
 zeo_rt_cvar_get_checked ([U32, Ptr, Usize, Ptr]) -> Some(I32)
 zeo_rt_cvar_set ([U32, Ptr, Usize, Ptr]) -> Some(I32)

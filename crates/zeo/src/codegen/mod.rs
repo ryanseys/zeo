@@ -1249,57 +1249,13 @@ pub(crate) fn coverage_record_stmt(file: &str, line: u32) {
     });
 }
 
-/// `def` lines per file: definitions the emitted statement stream never
-/// stamps -- top-level and class-body `def`s are intercepted at analyze
-/// (`process_top_stmt` / `register_body_def_method`) and compiled statically,
-/// so no runtime statement passes their line. CRuby reports a definition
-/// line's execution count, which for these is exactly once, when the file
-/// loads -- `Coverage.result` adds the static 1 for a covered file.
-fn coverage_def_lines(
-    compiler: &Compiler,
-) -> std::collections::BTreeMap<String, std::collections::BTreeSet<u32>> {
-    fn walk(
-        compiler: &Compiler,
-        body: &[crate::hir::NodeId],
-        out: &mut std::collections::BTreeMap<String, std::collections::BTreeSet<u32>>,
-    ) {
-        for &s in body {
-            match &compiler.hir[s] {
-                crate::hir::HirNode::DefMethod { .. } => {
-                    if let Some((file, line)) = source_location(compiler, s) {
-                        out.entry(file.to_string()).or_default().insert(line);
-                    }
-                }
-                crate::hir::HirNode::ClassDef { body, .. } => {
-                    let body = body.clone();
-                    walk(compiler, &body, out);
-                }
-                _ => {}
-            }
-        }
-    }
-    let mut out = std::collections::BTreeMap::new();
-    let programs: Vec<Vec<crate::hir::NodeId>> = compiler
-        .hir
-        .iter()
-        .filter_map(|n| match n {
-            crate::hir::HirNode::Program(stmts) => Some(stmts.clone()),
-            _ => None,
-        })
-        .collect();
-    for stmts in &programs {
-        walk(compiler, stmts, &mut out);
-    }
-    out
-}
-
 /// The `zeo_rt::coverage_install` call for a coverage-activated program:
 /// one row per source file -- its total line count (the result array's
 /// length), the statement lines collected during emission, and the `def`
 /// lines from the HIR walk. `None` when coverage wasn't activated.
 fn coverage_install_tokens(compiler: &Compiler) -> Option<TokenStream> {
     let collect = COVERAGE.with_borrow_mut(|c| c.take())?;
-    let defs = coverage_def_lines(compiler);
+    let defs = crate::analyze::coverage::def_lines(compiler);
     let mut seen = FSet::default();
     let rows: Vec<TokenStream> = compiler
         .hir
@@ -1644,13 +1600,7 @@ fn codegen(analyzed: &Analyzed, sink: &mut ItemSink<'_>) -> std::io::Result<()> 
 
     // Line coverage collects only for a program that required `coverage` --
     // see the `COVERAGE` thread-local's docs.
-    COVERAGE.set(
-        compiler
-            .hir
-            .activated_features
-            .contains("coverage")
-            .then(CovCollect::default),
-    );
+    COVERAGE.set(crate::analyze::coverage::active(compiler).then(CovCollect::default));
 
     // `Object` (index 0, built into `zeo-rt`), every MODULE, and every
     // reserved BUILT-IN placeholder (`Integer`/`Array`/etc. -- see

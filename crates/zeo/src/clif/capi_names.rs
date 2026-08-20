@@ -171,6 +171,16 @@ pub const CAPI: &[CapiSig] = &[
         ret: None,
     },
     CapiSig {
+        name: "zeo_rt_cov_file_loaded",
+        params: &[Ptr, Usize],
+        ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_cov_line",
+        params: &[Ptr, Usize, U32],
+        ret: None,
+    },
+    CapiSig {
         name: "zeo_rt_cvar_get",
         params: &[U32, Ptr, Usize, Ptr],
         ret: None,

@@ -63,6 +63,10 @@ pub(crate) struct Fx<'e, 'f> {
     temp_taken: Vec<ir::StackSlot>,
     pub loops: Vec<LoopCtl>,
     pub prev_line: Option<u32>,
+    /// The stamped statement's FILE, tracked beside `prev_line` for line
+    /// coverage: a statement that begins a spliced file is what marks the
+    /// file covered.
+    pub prev_file: Option<String>,
     /// The current `self` as a borrowed pointer: the method's first
     /// parameter, or the toplevel's pooled `main_object` copy.
     pub self_ptr: Option<ir::Value>,
@@ -188,6 +192,7 @@ impl<'e, 'f> Fx<'e, 'f> {
             temp_taken: Vec::new(),
             loops: Vec::new(),
             prev_line: None,
+            prev_file: None,
             self_ptr: None,
             method_class: None,
             self_is_class: false,

@@ -1022,6 +1022,7 @@ pub(crate) fn define_desc(
     let foreign_table = define_foreign_rows(em, foreign_rows)?;
     let meta_table = define_meta_rows(em, meta_rows)?;
     let unit_table = define_unit_rows(em, unit_rows)?;
+    let (cov_table, n_cov) = define_cov_rows(em, analyzed)?;
     let hir = &analyzed.compiler.hir;
     let mut loaded: Vec<String> = hir
         .loaded_files
@@ -1147,6 +1148,7 @@ pub(crate) fn define_desc(
         std::mem::offset_of!(ProgramDesc, n_units),
         unit_rows.len() as u64,
     );
+    put_u64(&mut buf, std::mem::offset_of!(ProgramDesc, n_cov), n_cov);
     // `DATA` -- only a script with an `__END__` carries the path, so every
     // other program neither holds it nor opens anything at startup.
     let data_section = hir
@@ -1190,6 +1192,10 @@ pub(crate) fn define_desc(
             tables_gv,
             (loaded.len() * str_size) as i64,
         );
+    }
+    if let Some(cov) = cov_table {
+        let gv = em.module.declare_data_in_data(cov, &mut desc);
+        desc.write_data_addr(std::mem::offset_of!(ProgramDesc, coverage) as u32, gv, 0);
     }
     if let Some(vm) = vm_table {
         let gv = em.module.declare_data_in_data(vm, &mut desc);
@@ -1497,4 +1503,96 @@ pub(crate) fn define_ffi_call(
         relocs.push(FfiReloc::Data(std::mem::offset_of!(FfiCallC, args), id));
     }
     define_ffi_data(em, "an FFI call descriptor", bytes, relocs)
+}
+
+/// The line-coverage table: one row per source file that has any coverable
+/// line -- its total line count (the result array's length), the statement
+/// lines stamped during emission, and the `def` lines no statement stream
+/// ever passes. Empty (and so absent) in a program that never activated
+/// coverage.
+fn define_cov_rows(em: &mut Emitter, analyzed: &Analyzed) -> Result<(Option<DataId>, u64), String> {
+    use zeo_abi::abi::CovFile;
+    if !em.cov_active {
+        return Ok((None, 0));
+    }
+    let defs = crate::analyze::coverage::def_lines(&analyzed.compiler);
+    let stmts = std::mem::take(&mut em.cov_lines);
+    let mut seen = crate::compiler::FSet::default();
+    let files: Vec<(String, u32, Vec<u32>, Vec<u32>)> = analyzed
+        .compiler
+        .hir
+        .files
+        .iter()
+        .filter(|f| seen.insert(f.name.clone()))
+        .filter_map(|f| {
+            let stmt: Vec<u32> = stmts.get(&f.name).into_iter().flatten().copied().collect();
+            let def: Vec<u32> = defs.get(&f.name).into_iter().flatten().copied().collect();
+            if stmt.is_empty() && def.is_empty() {
+                return None;
+            }
+            let total = u32::try_from(f.source.lines().count()).unwrap_or(u32::MAX);
+            Some((f.name.clone(), total, stmt, def))
+        })
+        .collect();
+    if files.is_empty() {
+        return Ok((None, 0));
+    }
+    let size = std::mem::size_of::<CovFile>();
+    let mut bytes = vec![0u8; size * files.len()];
+    let mut relocs: Vec<FfiReloc> = Vec::new();
+    let mut line_ids: Vec<(usize, DataId)> = Vec::new();
+    for (i, (name, total, stmt, def)) in files.iter().enumerate() {
+        let base = i * size;
+        let name_at = base + std::mem::offset_of!(CovFile, file);
+        let off = em.intern_rodata(name.as_bytes());
+        relocs.push(FfiReloc::Rodata(
+            name_at + std::mem::offset_of!(Str, ptr),
+            off,
+        ));
+        bytes[name_at + std::mem::offset_of!(Str, len)
+            ..name_at + std::mem::offset_of!(Str, len) + 8]
+            .copy_from_slice(&(name.len() as u64).to_le_bytes());
+        let at = base + std::mem::offset_of!(CovFile, total);
+        bytes[at..at + 4].copy_from_slice(&total.to_le_bytes());
+        for (lines, ptr_field, n_field) in [
+            (
+                stmt,
+                std::mem::offset_of!(CovFile, stmt_lines),
+                std::mem::offset_of!(CovFile, n_stmt),
+            ),
+            (
+                def,
+                std::mem::offset_of!(CovFile, def_lines),
+                std::mem::offset_of!(CovFile, n_def),
+            ),
+        ] {
+            let at = base + n_field;
+            bytes[at..at + 8].copy_from_slice(&(lines.len() as u64).to_le_bytes());
+            if lines.is_empty() {
+                continue;
+            }
+            let mut lb = Vec::with_capacity(lines.len() * 4);
+            for l in lines {
+                lb.extend_from_slice(&l.to_le_bytes());
+            }
+            let id = define_ffi_data(em, "a coverage line list", lb, Vec::new())?;
+            line_ids.push((base + ptr_field, id));
+        }
+    }
+    let mut data = DataDescription::new();
+    data.define(bytes.into_boxed_slice());
+    data.set_align(8);
+    write_ffi_relocs(em, &mut data, relocs);
+    for (at, id) in line_ids {
+        let gv = em.module.declare_data_in_data(id, &mut data);
+        data.write_data_addr(at as u32, gv, 0);
+    }
+    let id = em
+        .module
+        .declare_anonymous_data(false, false)
+        .map_err(|e| format!("declaring the coverage table: {e}"))?;
+    em.module
+        .define_data(id, &data)
+        .map_err(|e| format!("defining the coverage table: {e}"))?;
+    Ok((Some(id), files.len() as u64))
 }

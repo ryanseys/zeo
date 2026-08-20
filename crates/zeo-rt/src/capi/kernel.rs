@@ -82,3 +82,17 @@ pub unsafe extern "C" fn zeo_rt_eval_value_in_scope(
         out,
     )
 }
+
+/// One statement hit -- emitted beside every `set_line` stamp of a
+/// coverage-activated program, and nothing at all in one without.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_cov_line(file: *const u8, len: usize, line: u32) {
+    crate::ext::coverage::cov_line(unsafe { super::static_str(file, len) }, line);
+}
+
+/// A spliced file's top level is beginning: the file is reported iff
+/// measurement is set up at this moment.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_cov_file_loaded(file: *const u8, len: usize) {
+    crate::ext::coverage::cov_file_loaded(unsafe { super::static_str(file, len) });
+}

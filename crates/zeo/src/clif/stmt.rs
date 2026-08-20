@@ -1554,15 +1554,35 @@ pub(crate) fn loop_value(fx: &mut Fx, node: NodeId) -> Result<super::operand::Op
 /// Mirror the rustc backend's `stamp_line`: a `set_line` only when the
 /// statement's line differs from the previous stamp.
 fn stamp_line(fx: &mut Fx, stmt: NodeId) {
-    let Some((_, line)) = fx.location(stmt) else {
+    let Some((file, line)) = fx.location(stmt) else {
         return;
     };
-    if fx.prev_line == Some(line) {
+    let file = file.to_string();
+    if fx.prev_line == Some(line) && fx.prev_file.as_deref() == Some(file.as_str()) {
         return;
     }
+    let entering_spliced_file = fx.prev_file.as_deref().is_some_and(|f| f != file)
+        && fx
+            .an
+            .compiler
+            .hir
+            .files
+            .first()
+            .is_none_or(|f0| f0.name != file);
     fx.prev_line = Some(line);
+    fx.prev_file = Some(file.clone());
     let v = fx.b.ins().iconst(types::I32, i64::from(line));
     fx.call("zeo_rt_set_line", &[v]);
+    // Line coverage's one hit per stamped statement -- a program without
+    // the `require` emits nothing here at all.
+    if fx.em.cov_active {
+        let (fptr, flen) = super::expr::rodata_name(fx, &file);
+        if entering_spliced_file {
+            fx.call("zeo_rt_cov_file_loaded", &[fptr, flen]);
+        }
+        fx.call("zeo_rt_cov_line", &[fptr, flen, v]);
+        fx.em.cov_lines.entry(file).or_default().insert(line);
+    }
 }
 
 /// One class-body site's marker-time emission: record the declaration's

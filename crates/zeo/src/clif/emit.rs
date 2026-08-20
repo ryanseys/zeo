@@ -163,6 +163,7 @@ pub fn compile_jit(analyzed: &Analyzed) -> Result<Jitted, String> {
 /// The whole program into `em`'s module -- every function and data object,
 /// mode-blind. Returns the emitted C `main`.
 fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String> {
+    em.cov_active = crate::analyze::coverage::active(&analyzed.compiler);
     let defs = collect_methods(em, analyzed)?;
     let collected = super::classes::collect_classes(em, analyzed)?;
     let class_bodies = collect_class_bodies(em, analyzed)?;
@@ -848,6 +849,12 @@ pub(crate) struct Emitter {
     /// `attach_function` call-site ids -- one resolved C symbol address
     /// per site in the runtime, the rustc per-site `FfiSymSite` twin.
     pub ffi_sites: u32,
+    /// Line coverage: whether the program activated it, and the statement
+    /// lines stamped so far (the `def` lines it never stamps come from
+    /// `analyze::coverage::def_lines`). Empty in a program without the
+    /// `require` -- the instrumentation is absent, not gated.
+    pub cov_active: bool,
+    pub cov_lines: std::collections::BTreeMap<String, std::collections::BTreeSet<u32>>,
     /// When `Some`, every finished function's CLIF renders here (before
     /// machine compilation -- the target-independent IR).
     pub clif_text: Option<String>,
@@ -941,6 +948,8 @@ impl Emitter {
             fn_index: 0,
             regexp_sites: 0,
             ffi_sites: 0,
+            cov_active: false,
+            cov_lines: std::collections::BTreeMap::new(),
             clif_text: None,
         })
     }

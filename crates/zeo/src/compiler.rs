@@ -1787,7 +1787,12 @@ impl Compiler {
         scope: &'s Scope,
     ) -> Option<&'s AccessorShape> {
         scope.accessor.as_ref().filter(|a| {
-            (a.attr_generated || !self.traces_calls())
+            // A HAND-written accessor keeps its body wherever instrumentation
+            // can observe the call: a TracePoint hook needs the frame, and
+            // line coverage needs the body's own line stamped. A GENERATED
+            // one stays iseq-less either way, exactly as CRuby compiles it.
+            (a.attr_generated
+                || !(self.traces_calls() || crate::analyze::coverage::active(self)))
                 && !scope.needs_block_param()
                 // A `Struct` MEMBER devirtualizes exactly like an ivar: it is a
                 // real slot, just one `instance_variables` does not report.
