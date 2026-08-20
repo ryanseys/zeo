@@ -505,8 +505,8 @@ pub(super) fn try_regexp_dispatch(
                         return Some(quote! {
                             {
                                 let __recv = (#recv_expr).as_str_unchecked();
-                                let __hs = { let __g = __recv.lock(); __g.to_utf8_lossy().into_owned() };
-                                zeo_rt::regexp_scan_block(&(#re_expr).as_regexp_unchecked(), &__hs, (#blk_expr).as_proc_ref())?;
+                                let (__hs, __enc) = { let __g = __recv.lock(); (__g.to_utf8_lossy().into_owned(), __g.encoding()) };
+                                zeo_rt::regexp_scan_block(&(#re_expr).as_regexp_unchecked(), &__hs, __enc, (#blk_expr).as_proc_ref())?;
                                 zeo_rt::RubyValue::Str(__recv)
                             }
                         });

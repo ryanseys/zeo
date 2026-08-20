@@ -476,7 +476,7 @@ fn str_value_in(enc: crate::encoding::EncodingId, text: &str) -> RubyValue {
 /// Snapshots each Array before mapping rather than holding its guard across
 /// the recursion -- the value is freshly built and cannot be self-referential
 /// today, and this keeps that from being load-bearing.
-fn reencode_strs(v: &RubyValue, enc: crate::encoding::EncodingId) -> RubyValue {
+pub(crate) fn reencode_strs(v: &RubyValue, enc: crate::encoding::EncodingId) -> RubyValue {
     if enc == crate::encoding::UTF_8 {
         return v.clone();
     }
@@ -3144,8 +3144,15 @@ ruby_class! {
         // receiver's encoding; the engine works in decoded UTF-8.
         let matches: Vec<RubyValue> =
             matches.iter().map(|m| reencode_strs(m, enc)).collect();
-        match &block {
-            Some(RubyValue::Proc(p)) => {
+        match (&block, arg) {
+            // `$~` tracks the CURRENT match inside the block, as it does in
+            // `sub`/`gsub`'s block form -- so the block form re-walks the
+            // haystack rather than yielding the collected array.
+            (Some(RubyValue::Proc(p)), RubyValue::Regexp(re)) => {
+                crate::regexp::regexp_scan_block(re, &text, enc, p)?;
+                Ok(recv.clone())
+            }
+            (Some(RubyValue::Proc(p)), _) => {
                 for m in matches {
                     p.call(&[m])?;
                 }

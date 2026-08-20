@@ -1881,6 +1881,12 @@ fn define_method_body(
             &[file_ptr, file_len, label_ptr, label_len, line_v, end_v],
         );
     }
+    // `$~` is frame-local: a scope that can touch the family gets its own
+    // svar scope, so a match it performs never reaches the caller's `$1`.
+    let needs_svar = crate::analyze::svars::body_mentions_svars(&analyzed.compiler, def.body);
+    if needs_svar {
+        fx.call("zeo_rt_svar_scope_push", &[]);
+    }
     let status = fx
         .call("zeo_rt_check_ints", &[])
         .expect("check_ints returns a status");
@@ -1925,6 +1931,9 @@ fn define_method_body(
         }
         if has_frame {
             fx.call("zeo_rt_frame_pop", &[]);
+        }
+        if needs_svar {
+            fx.call("zeo_rt_svar_scope_pop", &[]);
         }
         if needs_return_catch {
             fx.call("zeo_rt_home_pop", &[]);

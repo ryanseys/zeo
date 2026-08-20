@@ -1656,7 +1656,12 @@ pub fn regexp_scan(re: &RRegexp, haystack: &str) -> RubyValue {
 /// groups, exactly like the array `scan` returns) and answers nothing here;
 /// the caller returns the receiver (CRuby's `str_scan`). A user `break` in the
 /// block propagates untouched.
-pub fn regexp_scan_block(re: &RRegexp, haystack: &str, blk: &RProc) -> Result<(), Signal> {
+pub fn regexp_scan_block(
+    re: &RRegexp,
+    haystack: &str,
+    enc: crate::encoding::EncodingId,
+    blk: &RProc,
+) -> Result<(), Signal> {
     let has_groups = re.engine.captures_len() > 1;
     for caps in re.engine.captures_all(haystack) {
         let yielded = if has_groups {
@@ -1681,7 +1686,7 @@ pub fn regexp_scan_block(re: &RRegexp, haystack: &str, blk: &RProc) -> Result<()
             &caps,
             crate::encoding::UTF_8,
         )));
-        blk.call(&[yielded])?;
+        blk.call(&[crate::builtins::string::reencode_strs(&yielded, enc)])?;
     }
     Ok(())
 }

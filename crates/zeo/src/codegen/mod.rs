@@ -669,7 +669,8 @@ pub(crate) fn scope_frame_guard(
     // own frame-local `$~` slot, CRuby's special-variable rule: a callee's
     // match is invisible to the caller. Blocks share their method's (no
     // guard of their own -- see `lastmatch`'s module docs).
-    let svar = scope_mentions_svars(compiler, scope).then(|| quote! { , zeo_rt::svar_scope() });
+    let svar = crate::analyze::svars::body_mentions_svars(compiler, &scope.body)
+        .then(|| quote! { , zeo_rt::svar_scope() });
     // The stack probe rides the prologue, INSIDE the guard's initializer so
     // this stays one statement (`zeo_tramp!` splices it as `$frame:stmt`):
     // every compiled method checks its depth against the execution context's
@@ -708,68 +709,6 @@ thread_local! {
     static FRAME_GUARDS: std::cell::RefCell<
         FMap<(crate::compiler::ScopeId, bool), TokenStream>,
     > = std::cell::RefCell::new(FMap::default());
-}
-
-/// Method names that WRITE `$~`. A scope containing one needs an svar scope
-/// even if it never reads an svar, because `$~` is frame-local in ruby: a
-/// method that matches and returns must not leave its match in the caller's
-/// `$1`. (`def g(s); s.scan(/(\d)/); 1; end` is exactly that shape.)
-///
-/// Names only, no receiver: a false positive costs one dead scope push, a
-/// false negative leaks a match upward.
-const SVAR_WRITERS: &[&str] = &[
-    "=~",
-    "match",
-    "match?",
-    "scan",
-    "sub",
-    "sub!",
-    "gsub",
-    "gsub!",
-    "split",
-    "slice",
-    "slice!",
-    "index",
-    "rindex",
-    "partition",
-    "rpartition",
-    "start_with?",
-    "end_with?",
-    "grep",
-    "grep_v",
-    "===",
-];
-
-/// Whether `scope`'s body (nested blocks included -- they share the method's
-/// svar scope) touches the `$~` family: a `LastMatchRef` read, a `$~` write,
-/// a `Regexp.last_match` call, or a call that PERFORMS a match and so writes
-/// `$~` even without naming it ([`SVAR_WRITERS`]). Decides
-/// `scope_frame_guard`'s svar-scope push; a false positive costs one dead
-/// scope push, a false negative would leak a match to the caller, so the
-/// `last_match` check ignores the receiver.
-fn scope_mentions_svars(compiler: &Compiler, scope: &crate::compiler::Scope) -> bool {
-    fn walk(hir: &crate::hir::Hir, id: crate::hir::NodeId, found: &mut bool) {
-        if *found {
-            return;
-        }
-        match &hir[id] {
-            crate::hir::HirNode::LastMatchRef(_) => *found = true,
-            crate::hir::HirNode::GlobalWrite(name, _) if name == "$~" => *found = true,
-            crate::hir::HirNode::Call { name, .. } if name == "last_match" => *found = true,
-            crate::hir::HirNode::Call { name, .. } if SVAR_WRITERS.contains(&name.as_str()) => {
-                *found = true;
-            }
-            _ => hir[id].for_each_child(&mut |c| walk(hir, c, found)),
-        }
-    }
-    let mut found = false;
-    for &n in &scope.body {
-        walk(&compiler.hir, n, &mut found);
-        if found {
-            break;
-        }
-    }
-    found
 }
 
 /// The frame label of the scope ENCLOSING the current emission position --
@@ -3521,13 +3460,21 @@ pub(crate) fn emit_class_body_site_lifted(
         .def_node
         .and_then(|n| source_location(compiler, n))
         .or_else(|| stmts.iter().find_map(|&n| source_location(compiler, n)));
+    // A class body is a frame of its own, so `$~` is frame-local in it too:
+    // a match performed while the body runs must not reach the enclosing
+    // scope's `$1` (`scope_frame_guard`'s rule, asked of a body).
+    let svar = crate::analyze::svars::body_mentions_svars(compiler, stmts);
     let frame = match loc {
         Some((file, line)) => {
             let label = body_frame_label(compiler, cid);
             // The body's `end` line, `TracePoint`'s `:end` lineno.
             let end_line = site.def_node.map_or(0, |n| source_end_line(compiler, n));
             let file = pooled_file(file);
-            quote! { let __frame = zeo_rt::FrameGuard::push(#file, #label, #line, #end_line); }
+            let push = quote! { zeo_rt::FrameGuard::push(#file, #label, #line, #end_line) };
+            match svar {
+                true => quote! { let __frame = (#push, zeo_rt::svar_scope()); },
+                false => quote! { let __frame = #push; },
+            }
         }
         None => quote! {},
     };

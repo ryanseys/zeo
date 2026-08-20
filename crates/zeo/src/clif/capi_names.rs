@@ -753,6 +753,16 @@ pub const CAPI: &[CapiSig] = &[
         ret: Some(I8),
     },
     CapiSig {
+        name: "zeo_rt_svar_scope_pop",
+        params: &[],
+        ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_svar_scope_push",
+        params: &[],
+        ret: None,
+    },
+    CapiSig {
         name: "zeo_rt_sym_intern",
         params: &[Ptr, Usize],
         ret: Some(U32),
