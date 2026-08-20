@@ -156,6 +156,81 @@ pub(crate) fn body_sig(em: &Emitter, arity: usize, has_blk: bool) -> ir::Signatu
     sig
 }
 
+/// The callee frame a trampoline's own raises run under. A trampoline
+/// raises BEFORE the body pushes anything -- a wrong-arity call, a frozen
+/// receiver on an accessor -- and CRuby attributes both to the callee, so
+/// the frame is pushed around the raise (rustc's `zeo_tramp!` puts its
+/// `$frame` guard in the raising scope for exactly this).
+struct CalleeFrame {
+    push: ir::FuncRef,
+    pop: ir::FuncRef,
+    rodata: cranelift_codegen::ir::GlobalValue,
+    file: (u32, usize),
+    label: (u32, usize),
+    line: u32,
+    end_line: u32,
+    ptr: types::Type,
+}
+
+impl CalleeFrame {
+    fn declare(
+        em: &mut Emitter,
+        func: &mut ir::Function,
+        file: Option<&str>,
+        label: &str,
+        line: u32,
+        end_line: u32,
+    ) -> Self {
+        let file = file.unwrap_or("");
+        let file = (em.intern_rodata(file.as_bytes()), file.len());
+        let label = (em.intern_rodata(label.as_bytes()), label.len());
+        let push_id = em.import("zeo_rt_frame_push");
+        let push = em.module.declare_func_in_func(push_id, func);
+        let pop_id = em.import("zeo_rt_frame_pop");
+        let pop = em.module.declare_func_in_func(pop_id, func);
+        let rodata = em.module.declare_data_in_func(em.rodata_id, func);
+        CalleeFrame {
+            push,
+            pop,
+            rodata,
+            file,
+            label,
+            line,
+            end_line,
+            ptr: em.ptr,
+        }
+    }
+
+    /// Push, run `raise`, pop, and answer the status it returned.
+    fn around(
+        &self,
+        b: &mut FunctionBuilder,
+        raise: impl FnOnce(&mut FunctionBuilder) -> ir::Value,
+    ) -> ir::Value {
+        let base = b.ins().symbol_value(self.ptr, self.rodata);
+        let at = |b: &mut FunctionBuilder, off: u32| {
+            if off == 0 {
+                base
+            } else {
+                b.ins().iadd_imm_u(base, i64::from(off))
+            }
+        };
+        let file_ptr = at(b, self.file.0);
+        let file_n = b.ins().iconst(self.ptr, self.file.1 as i64);
+        let label_ptr = at(b, self.label.0);
+        let label_n = b.ins().iconst(self.ptr, self.label.1 as i64);
+        let line = b.ins().iconst(types::I32, i64::from(self.line));
+        let end = b.ins().iconst(types::I32, i64::from(self.end_line));
+        b.ins().call(
+            self.push,
+            &[file_ptr, file_n, label_ptr, label_n, line, end],
+        );
+        let status = raise(b);
+        b.ins().call(self.pop, &[]);
+        status
+    }
+}
+
 /// Define a method's trampoline: the lean shape for a plain signature,
 /// the `bind_params` shape for everything else.
 pub(crate) fn define_trampoline(
@@ -165,14 +240,7 @@ pub(crate) fn define_trampoline(
 ) -> Result<(), String> {
     let layout = layout_of(spec.params)?;
     if layout.plain {
-        define_plain_trampoline(
-            em,
-            spec.tramp,
-            spec.body,
-            spec.params.required.len(),
-            spec.has_blk,
-            fn_index,
-        )
+        define_plain_trampoline(em, spec, spec.params.required.len(), fn_index)
     } else {
         define_bound_trampoline(em, spec, &layout, fn_index)
     }
@@ -312,12 +380,11 @@ fn define_bound_trampoline(
 /// The lean trampoline for a required-params-only method.
 fn define_plain_trampoline(
     em: &mut Emitter,
-    tramp: FuncId,
-    body: FuncId,
+    spec: &TrampSpec<'_>,
     arity: usize,
-    has_blk: bool,
     fn_index: u32,
 ) -> Result<(), String> {
+    let (tramp, body, has_blk) = (spec.tramp, spec.body, spec.has_blk);
     let sig = value_fn_sig(em);
     let mut func = ir::Function::with_name_signature(UserFuncName::user(1, fn_index), sig);
     let body_ref = em.module.declare_func_in_func(body, &mut func);
@@ -325,6 +392,14 @@ fn define_plain_trampoline(
     let release = em.module.declare_func_in_func(release_id, &mut func);
     let wrong_id = em.import("zeo_rt_wrong_arity");
     let wrong = em.module.declare_func_in_func(wrong_id, &mut func);
+    let frame = CalleeFrame::declare(
+        em,
+        &mut func,
+        spec.file,
+        spec.label,
+        spec.line,
+        spec.end_line,
+    );
 
     let cfg = em.module.target_config();
     let mut fbc = FunctionBuilderContext::new();
@@ -360,9 +435,12 @@ fn define_plain_trampoline(
     b.ins().brif(right, ok, &[], bad, &[]);
 
     b.switch_to_block(bad);
-    let n = b.ins().iconst(em.ptr, arity as i64);
-    let call = b.ins().call(wrong, &[argc, n, n]);
-    let status = b.func.dfg.inst_results(call)[0];
+    let ptr = em.ptr;
+    let status = frame.around(&mut b, |b| {
+        let n = b.ins().iconst(ptr, arity as i64);
+        let call = b.ins().call(wrong, &[argc, n, n]);
+        b.func.dfg.inst_results(call)[0]
+    });
     b.ins().return_(&[status]);
 
     b.switch_to_block(ok);
@@ -397,15 +475,23 @@ fn define_plain_trampoline(
 
 /// An `attr_reader`/`attr_writer` trampoline -- the slot access IS the
 /// method (no body fn; the rustc backend's `zeo_tramp!(rd/wr)` heads).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn define_accessor(
     em: &mut Emitter,
     tramp: FuncId,
     slot: usize,
     kind: crate::compiler::AccessorKind,
     fn_index: u32,
+    frame: Option<(Option<&str>, &str, u32, u32)>,
 ) -> Result<(), String> {
     let sig = value_fn_sig(em);
     let mut func = ir::Function::with_name_signature(UserFuncName::user(1, fn_index), sig);
+    // An `attr_*`-GENERATED accessor is iseq-less in CRuby: it appears in
+    // no backtrace, and TracePoint sees no `:call` for it. Only a body
+    // folded from a real `def` carries a frame here.
+    let frame = frame.map(|(file, label, line, end_line)| {
+        CalleeFrame::declare(em, &mut func, file, label, line, end_line)
+    });
     let release_id = em.import("zeo_rt_release");
     let release = em.module.declare_func_in_func(release_id, &mut func);
     let wrong_id = em.import("zeo_rt_wrong_arity");
@@ -455,9 +541,16 @@ pub(crate) fn define_accessor(
     let right = b.ins().icmp_imm_u(IntCC::Equal, argc, want);
     b.ins().brif(right, ok, &[], bad, &[]);
     b.switch_to_block(bad);
-    let n = b.ins().iconst(em.ptr, want);
-    let call = b.ins().call(wrong, &[argc, n, n]);
-    let status = b.func.dfg.inst_results(call)[0];
+    let ptr = em.ptr;
+    let raise_arity = |b: &mut FunctionBuilder| {
+        let n = b.ins().iconst(ptr, want);
+        let call = b.ins().call(wrong, &[argc, n, n]);
+        b.func.dfg.inst_results(call)[0]
+    };
+    let status = match &frame {
+        Some(frame) => frame.around(&mut b, raise_arity),
+        None => raise_arity(&mut b),
+    };
     b.ins().return_(&[status]);
 
     b.switch_to_block(ok);
@@ -475,8 +568,14 @@ pub(crate) fn define_accessor(
             let frozen = frozen.expect("writer imports frozen_check");
             let set = set.expect("writer imports ivar_set_slot");
             let retain = retain.expect("writer imports retain");
-            let call = b.ins().call(frozen, &[recv]);
-            let status = b.func.dfg.inst_results(call)[0];
+            let check_frozen = |b: &mut FunctionBuilder| {
+                let call = b.ins().call(frozen, &[recv]);
+                b.func.dfg.inst_results(call)[0]
+            };
+            let status = match &frame {
+                Some(frame) => frame.around(&mut b, check_frozen),
+                None => check_frozen(&mut b),
+            };
             let go = b.create_block();
             let sig_out = b.create_block();
             b.ins().brif(status, sig_out, &[], go, &[]);

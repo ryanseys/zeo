@@ -584,7 +584,7 @@ pub(crate) fn lower_super(
         return Ok(Operand::Nil);
     }
     let Some(params) = fx.method_params.clone() else {
-        return fx.unsupported(site, "a `super` outside a compiled method");
+        return super_outside_a_method(fx);
     };
 
     // The argument Array (rustc's `__super_args` Vec) + kw hash + unmark.
@@ -754,7 +754,7 @@ pub(crate) fn lower_super(
     let (Some(def_class), Some(mname), Some(owner)) =
         (fx.defining_class, fx.method_name.clone(), fx.method_class)
     else {
-        return fx.unsupported(site, "a `super` outside a compiled method");
+        return super_outside_a_method(fx);
     };
 
     // A CLASS-method `super` resolves against the SINGLETON-class chain,
@@ -870,4 +870,21 @@ pub(crate) fn lower_super(
         owned: true,
         tag: TagInfo::Unknown,
     })
+}
+
+/// `super` with no enclosing method at all -- top level, a top-level block,
+/// a class body. Real Ruby raises at RUNTIME and the raise is rescuable
+/// (`vm_insnhelper.c`), so emit it instead of refusing to compile; rustc's
+/// `super_calls` arm does the same, message verbatim.
+fn super_outside_a_method(fx: &mut Fx) -> Result<Operand, String> {
+    let cid = fx.b.ins().iconst(
+        cranelift_codegen::ir::types::I32,
+        i64::from(zeo_abi::NO_METHOD_ERROR_CLASS.0),
+    );
+    let (mptr, mlen) = super::expr::rodata_name(fx, "super called outside of method");
+    let status = fx
+        .call("zeo_rt_raise_error", &[cid, mptr, mlen])
+        .expect("raise_error returns a status");
+    fx.fallible(status);
+    Ok(Operand::Nil)
 }

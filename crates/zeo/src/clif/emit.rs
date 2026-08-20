@@ -233,6 +233,8 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             // A top-level `def` is never inside a `class << self`.
             lexical_home: None,
             origin_name: def.alias_of.as_deref(),
+            // A top-level `def` belongs to main.
+            box_id: 0,
         };
         define_method_body(em, analyzed, &spec)?;
     }
@@ -255,6 +257,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
                 defining_class: Some(m.defining_class),
                 lexical_home: m.lexical_home,
                 origin_name: m.alias_of.as_deref(),
+                box_id: analyzed.compiler.class(m.owner).box_id,
             };
             define_method_body(em, analyzed, &spec)?;
         }
@@ -277,6 +280,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             defining_class: Some(m.defining_class),
             lexical_home: m.lexical_home,
             origin_name: m.alias_of.as_deref(),
+            box_id: analyzed.compiler.class(m.owner).box_id,
         };
         define_method_body(em, analyzed, &spec)?;
     }
@@ -298,6 +302,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             defining_class: Some(m.owner),
             lexical_home: None,
             origin_name: None,
+            box_id: analyzed.compiler.class(m.owner).box_id,
         };
         define_method_body(em, analyzed, &spec)?;
     }
@@ -319,6 +324,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             defining_class: Some(m.defining_class),
             lexical_home: m.lexical_home,
             origin_name: m.alias_of.as_deref(),
+            box_id: analyzed.compiler.class(m.owner).box_id,
         };
         define_method_body(em, analyzed, &spec)?;
     }
@@ -345,6 +351,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             // carried by the `def`s inside it, not by the body fn.
             lexical_home: None,
             origin_name: None,
+            box_id: analyzed.compiler.class(cb.class).box_id,
         };
         define_method_body(em, analyzed, &spec)?;
     }
@@ -370,8 +377,15 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
     for m in &obj_methods {
         let idx = em.next_fn_index();
         match (m.accessor, m.body_fn) {
-            (Some((slot, kind)), None) => {
-                super::params::define_accessor(em, m.tramp, slot, kind, idx)?;
+            (Some((slot, kind, attr_generated)), None) => {
+                // A hand-written accessor body folded to a slot trampoline
+                // keeps its frame; an `attr_*`-generated one has none.
+                let framed = (!attr_generated)
+                    .then(|| method_frame(analyzed, &m.owner_name, &m.name, m.node, false));
+                let frame = framed
+                    .as_ref()
+                    .map(|(file, label, line, end)| (file.as_deref(), label.as_str(), *line, *end));
+                super::params::define_accessor(em, m.tramp, slot, kind, idx, frame)?;
             }
             (None, Some(body)) => {
                 let (file, label, line, end_line) =
@@ -1616,6 +1630,11 @@ pub(crate) struct BodyFnSpec<'a> {
     /// another one: `__method__` answers this, `__callee__` the name the
     /// entry carries. `None` when the two are the same.
     pub origin_name: Option<&'a str>,
+    /// The `Ruby::Box` this body was compiled in. Every dynamic send,
+    /// global and constant owner inside it is keyed by the box, which is
+    /// what makes a box's `String#blank?` reachable from the box's own
+    /// code and from nowhere else.
+    pub box_id: u32,
 }
 
 /// A method's frame facts: `(file, label, line, end_line)` -- shared by
@@ -1843,9 +1862,18 @@ fn define_method_body(
     let layout = super::params::layout_of(def.hir_params)?;
     let sig = super::params::body_sig(em, layout.n_slots, def.has_blk);
     let idx = em.next_fn_index();
+    // A module method materialized onto an includer keeps the MODULE in
+    // its frame label: CRuby names the DEFINING class (`M#mixed`, never
+    // `Bar#mixed`), which is what rustc reads off `scope.defining_class`.
+    let label_owner = match def.defining_class {
+        Some(dc) if dc != def.owner && analyzed.compiler.class(dc).is_module => {
+            analyzed.compiler.fq_name(dc)
+        }
+        _ => def.owner_name.to_string(),
+    };
     let (file, label, line, end_line) = method_frame(
         analyzed,
-        def.owner_name,
+        &label_owner,
         def.name,
         def.node,
         def.self_is_class,
@@ -1889,6 +1917,7 @@ fn define_method_body(
     let blk_ptr = def.has_blk.then(|| entry_params[entry_params.len() - 2]);
     fx.self_ptr = Some(self_ptr);
     fx.method_class = Some(def.owner);
+    fx.box_id = def.box_id;
     fx.defining_class = def.defining_class;
     fx.lexical_home = def.lexical_home;
     fx.define_method_body = define_method_body;
@@ -2250,7 +2279,11 @@ fn define_toplevel(
             )
         })
         .collect();
+    // The top level's frame lives for the whole program, so its temps
+    // die at their own statement instead.
+    fx.drain_temps = true;
     stmt::lower_stmts(&mut fx, &runnable)?;
+    fx.drain_temps = false;
 
     // Normal exit: release the locals, pop the frame (drains the pool),
     // hand back Nil.

@@ -35,9 +35,12 @@ pub(crate) struct ObjMethodSpec {
     pub body: Vec<crate::hir::NodeId>,
     pub node: Option<crate::hir::NodeId>,
     pub tramp: cranelift_module::FuncId,
-    /// `Some` = an `attr_*` accessor (no body fn at all -- the trampoline
-    /// IS the method); `None` = an ordinary body + trampoline pair.
-    pub accessor: Option<(usize, AccessorKind)>,
+    /// `Some` = an accessor devirtualized to a slot trampoline (no body fn
+    /// at all -- the trampoline IS the method); `None` = an ordinary body +
+    /// trampoline pair. The flag is `attr_generated`: a GENERATED accessor
+    /// is iseq-less in CRuby, so it carries no frame, while one folded from
+    /// a hand-written `def` still does.
+    pub accessor: Option<(usize, AccessorKind, bool)>,
     pub body_fn: Option<cranelift_module::FuncId>,
     pub hir_params: crate::hir::Params,
     /// The name this method was ALIASED from -- reflection's
@@ -847,7 +850,7 @@ pub(crate) fn collect_classes(
                     .ok_or_else(|| {
                         format!("accessor ivar @{} has no slot on {name}", shape.ivar)
                     })?;
-                    Some((slot, shape.kind))
+                    Some((slot, shape.kind, shape.attr_generated))
                 }
             };
             let has_blk = scope.needs_block_param();
@@ -966,7 +969,7 @@ pub(crate) fn collect_classes(
                         .ok_or_else(|| {
                             format!("accessor ivar @{} has no slot on {name}", shape.ivar)
                         })?;
-                        Some((slot, shape.kind))
+                        Some((slot, shape.kind, shape.attr_generated))
                     }
                 };
                 let has_blk = scope.needs_block_param();
