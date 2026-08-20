@@ -619,7 +619,9 @@ ruby_class! {
 
     // `pread(len, offset)` -- read WITHOUT moving the position, which is the
     // whole point of the name.
-    def "pread" (recv, len, offset) {
+    // `cfunc`: CRuby declares this `argc = -1`, so it reports arity -1 even
+    // though it accepts 2..3.
+    def "pread" cfunc (recv, len, offset, buffer?) {
         check_readable(recv)?;
         let len = crate::builtins::convert::to_index(len)?.max(0) as usize;
         let off = crate::builtins::convert::to_index(offset)?.max(0) as usize;
@@ -630,7 +632,19 @@ ruby_class! {
             return Err(crate::builtins::eof_error!("end of file reached"));
         }
         let end = (off + len).min(s.bytes.len());
-        Ok(bytes_to_str(&s.bytes[off..end], s.enc))
+        let (bytes, enc) = (s.bytes[off..end].to_vec(), s.enc);
+        drop(s);
+        // A buffer argument RECEIVES the bytes and is what comes back, the
+        // same contract `readpartial` keeps.
+        match buffer {
+            None | Some(RubyValue::Nil) => Ok(bytes_to_str(&bytes, enc)),
+            Some(v) => {
+                crate::builtins::convert::to_rstr(v)?
+                    .lock()
+                    .replace_bytes(bytes, enc);
+                Ok((*v).clone())
+            }
+        }
     }
 
     // `string = str` / `reopen(str)` -- replace the buffer and rewind. CRuby

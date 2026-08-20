@@ -1137,15 +1137,55 @@ pub fn runtime_define_method_from_method(
                 crate::dispatch::class_name(owner).unwrap_or_default()
             )
         })?;
+    // The VALUE-shaped copy as well, resolved in the same order `m` was. An
+    // `RObj`-shaped `MethodImpl` has nothing to bind a Class or a builtin
+    // receiver to, so without this the installed method is reachable only
+    // from an ordinary OBJECT -- and both ways a module exposes itself
+    // (`extend self`, `module_function`) call it with the MODULE as the
+    // receiver.
+    let value_body = crate::dispatch::value_method(id, 0, src_name)
+        .or_else(|| crate::dispatch::value_method(owner, 0, src_name))
+        .map(|f| RProc::with_self_and_block(f.into_fn(), RubyValue::Nil, -1, true));
+    // A live `module_function` cursor governs this form exactly as it governs
+    // a `def` or a `define_method` block: the instance copy turns PRIVATE and
+    // a public module method appears beside it. rack's `Rack::Utils` opens
+    // with a bare `module_function` and later installs `escape_html` from
+    // `ERB::Escape.instance_method(:html_escape)`, so without this
+    // `Rack::Utils.escape_html` was a NoMethodError while the instance copy
+    // stayed wrongly public.
+    let module_function = current_frame_for(id).is_some_and(|f| f.module_function);
     {
         let mut w = maps().classes.write().unwrap();
         let e = w.entry(id.0).or_insert_with(OverlayEntry::delta);
         e.methods.insert(name, m);
-        e.methods_vis.remove(&name);
+        if let Some(vb) = value_body {
+            e.value_bodies.insert(name, vb);
+        }
+        if module_function {
+            e.methods_vis
+                .insert(name, crate::dispatch::MethodVisibility::Private);
+        } else {
+            e.methods_vis.remove(&name);
+        }
+    }
+    // Built with the overlay lock DROPPED: `extended_class_method` reads it.
+    if module_function && let Some(wrapper) = extended_class_method(id, name) {
+        let mut w = maps().classes.write().unwrap();
+        let e = w.entry(id.0).or_insert_with(OverlayEntry::delta);
+        e.class_methods.insert(name, wrapper);
+        e.extended_class_methods.remove(&name);
     }
     patch_class(id);
     mark_live();
     fire_def_hook(DefTarget::Class(id), DefEvent::Added, name)?;
+    // ruby reports BOTH halves: the instance copy, then the module copy.
+    if module_function {
+        fire_def_hook(
+            DefTarget::Singleton(&RubyValue::Class(id)),
+            DefEvent::Added,
+            name,
+        )?;
+    }
     Ok(RubyValue::Symbol(name))
 }
 
