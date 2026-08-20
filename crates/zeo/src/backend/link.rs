@@ -26,14 +26,25 @@ pub fn runtime_archive() -> Result<PathBuf, String> {
         .parent()
         .ok_or_else(|| "the zeo binary has no parent directory".to_string())?;
     let archive = dir.join("libzeo.a");
-    if !archive.is_file() {
-        return Err(format!(
-            "runtime archive missing: {} (rerun `cargo build` -- \
-             `libzeo.a` is built beside the `zeo` binary)",
-            archive.display()
-        ));
+    if archive.is_file() {
+        return Ok(archive);
     }
-    Ok(archive)
+    // A cargo TEST binary lives one level deeper, in `<profile>/deps/`,
+    // while the archive stays in `<profile>/` -- the e2e harness links from
+    // there.
+    if dir.file_name().is_some_and(|n| n == "deps")
+        && let Some(up) = dir.parent()
+    {
+        let archive = up.join("libzeo.a");
+        if archive.is_file() {
+            return Ok(archive);
+        }
+    }
+    Err(format!(
+        "runtime archive missing: {} (rerun `cargo build` -- \
+         `libzeo.a` is built beside the `zeo` binary)",
+        archive.display()
+    ))
 }
 
 /// What `rustc --print=native-static-libs` reports for the `zeo` staticlib

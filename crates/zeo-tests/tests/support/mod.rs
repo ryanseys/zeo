@@ -1,11 +1,15 @@
-//! In-process test harness: compiles Ruby source via `zeo::compile_to_rust`
-//! directly (no subprocess spawn for the compiler itself), then shells out
-//! only for the unavoidable parts -- `cargo build`-ing the generated program
-//! and running the resulting binary -- capturing stdout/stderr/exit status
-//! separately so tests can assert on each independently. This is the new
-//! default tier for zeo test coverage, replacing most `.expected`-file
-//! testing going forward; `examples/*.rb` + `.expected` (driven by `xtask`)
-//! remains as a smaller "real CLI + real `ruby`-oracle" smoke suite.
+//! In-process test harness: compiles Ruby source through the DEFAULT
+//! backend (Cranelift, to an object file) directly -- no subprocess spawn
+//! for the compiler itself -- links a throwaway binary and runs it,
+//! capturing stdout/stderr/exit status separately so tests can assert on
+//! each independently. This is the default tier for zeo test coverage;
+//! `tests/*.rb` + `.expected` remains as the "real CLI + real `ruby`-oracle"
+//! golden suite.
+//!
+//! The compile-only negative-path checks scattered through `e2e/` still ask
+//! `compile_to_rust*`: they assert front-end and loader POLICY (a `require`
+//! that must not resolve, a form that must be rejected), which both backends
+//! share, and the rustc emitter stays reachable until M3.
 
 pub struct RunResult {
     pub stdout: String,
@@ -13,16 +17,52 @@ pub struct RunResult {
     pub status: std::process::ExitStatus,
 }
 
-/// The runtime profile the e2e harness links generated programs against.
+/// The runtime profile the rustc-backed corners of the harness still link
+/// generated programs against (`e2e/ffi.rs`'s lockfile test).
 ///
-/// `-O0`, matching the golden harness: these tests assert what a program
-/// prints, and optimizing a throwaway binary only spends rustc time. It also
-/// keeps the runtime symbolicated, which is what you want chasing a panic.
+/// `-O0`: these tests assert what a program prints, and optimizing a
+/// throwaway binary only spends rustc time. It also keeps the runtime
+/// symbolicated, which is what you want chasing a panic.
 /// `ZEO_RUNTIME_PROFILE=release` forces the optimized build back. Reading the
 /// env from many `#[test]` threads is safe: the data race `from_env_or` warns
 /// about is `set_var` vs `var_os`, and this only ever reads.
+#[allow(dead_code)] // only `e2e/ffi.rs`'s rustc-backed test still needs it
 pub fn harness_profile() -> zeo::backend::Profile {
     zeo::backend::Profile::from_env_or(zeo::backend::Profile::Debug)
+}
+
+/// Compile `source` with `opts` through the default backend, link the
+/// object into a throwaway binary, run it with `env`/`args`, and hand back
+/// what it printed. The one place the e2e tier builds a program.
+fn compile_link_run(
+    source: &str,
+    opts: &zeo::CompileOptions,
+    env: &[(&str, &str)],
+    args: &[&str],
+) -> RunResult {
+    let compiled = zeo::compile_to_object_with(source, opts)
+        .unwrap_or_else(|e| panic!("compile_to_object_with failed: {e}"));
+    let bin = std::env::temp_dir().join(format!(
+        "zeo-test-bin-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    zeo::backend::build_artifact(&zeo::backend::CompiledProgram::Aot(&compiled), &bin)
+        .unwrap_or_else(|e| panic!("linking the test binary failed: {e}"));
+    let mut cmd = std::process::Command::new(&bin);
+    cmd.args(args);
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    let out = cmd
+        .output()
+        .unwrap_or_else(|e| panic!("running compiled binary: {e}"));
+    let _ = std::fs::remove_file(&bin);
+    RunResult {
+        stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+        status: out.status,
+    }
 }
 
 pub fn run_ruby(source: &str) -> RunResult {
@@ -49,45 +89,10 @@ pub fn run_ruby_packages(
     roots: &[&str],
     package_dirs: &[&str],
 ) -> RunResult {
-    let result = compile_packages(files, entry, roots, package_dirs);
-    let (compiled, dir) = match result {
-        Ok(v) => v,
-        Err(e) => panic!("compile_to_rust_with failed: {e}"),
-    };
-    let rust_source = &compiled.rust_source;
-
-    let bin = std::env::temp_dir().join(format!(
-        "zeo-test-bin-{}-{:?}",
-        std::process::id(),
-        std::thread::current().id()
-    ));
-    let runtime = zeo::backend::Runtime::for_prism(compiled.needs_prism_runtime);
-    // Throwaway test binaries link the runtime DYNAMICALLY, against one shared
-    // dylib, so the bin-cache stays small. The dylib always
-    // sits in `target/`, where these binaries are run from.
-    let linkage = zeo::backend::Linkage::Dynamic;
-    zeo::backend::ensure_runtime_built(harness_profile(), runtime, linkage)
-        .expect("building zeo-rt for the e2e harness");
-    zeo::backend::build_binary(
-        rust_source,
-        &bin,
-        harness_profile(),
-        runtime,
-        linkage,
-        zeo::backend::GenOpt::Unoptimized,
-    )
-    .unwrap_or_else(|e| panic!("build_binary failed: {e}\n--- generated Rust ---\n{rust_source}"));
-    let out = std::process::Command::new(&bin)
-        .output()
-        .unwrap_or_else(|e| panic!("running compiled binary: {e}"));
-    let _ = std::fs::remove_file(&bin);
+    let (dir, source, opts) = write_project(files, entry, roots, package_dirs);
+    let result = compile_link_run(&source, &opts, &[], &[]);
     let _ = std::fs::remove_dir_all(&dir);
-
-    RunResult {
-        stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
-        status: out.status,
-    }
+    result
 }
 
 /// The compile-only half of `run_ruby_project`, exposed separately so
@@ -111,16 +116,33 @@ pub fn compile_packages(
     roots: &[&str],
     package_dirs: &[&str],
 ) -> Result<(zeo::CompileOutput, std::path::PathBuf), String> {
-    // Named from the project's own CONTENT, not the pid: `__FILE__`/`__dir__`
-    // bake this absolute path into the generated Rust as a string literal, and
-    // `build_binary`'s cache is keyed on that source -- so a pid-named
-    // directory changed the source every run and guaranteed a cache MISS,
-    // making a path-observing test the slowest in the suite by an order of
-    // magnitude while every other test hit the cache.
-    //
-    // A content hash also makes the directory self-consistent: the same hash
-    // always means the same files, so there is nothing stale to clear and no
-    // `remove_dir_all` racing a concurrent run of an identical project.
+    let (dir, entry_source, opts) = write_project(files, entry, roots, package_dirs);
+    match zeo::compile_to_rust_with(&entry_source, &opts) {
+        Ok(rust) => Ok((rust, dir)),
+        Err(e) => {
+            let _ = std::fs::remove_dir_all(&dir);
+            // The message alone -- negative-path tests assert on the same
+            // text the pre-typed-error harness always saw.
+            Err(String::from(e))
+        }
+    }
+}
+
+/// Write `files` into a per-project temp directory and build the compile
+/// options that name `entry`. Returns `(dir, entry source, opts)`.
+///
+/// The directory is named from the project's own CONTENT, not the pid:
+/// `__FILE__`/`__dir__` bake this absolute path into the program, so a
+/// pid-named directory changed every run. A content hash also makes the
+/// directory self-consistent -- the same hash always means the same files,
+/// so there is nothing stale to clear and no `remove_dir_all` racing a
+/// concurrent run of an identical project.
+fn write_project(
+    files: &[(&str, &str)],
+    entry: &str,
+    roots: &[&str],
+    package_dirs: &[&str],
+) -> (std::path::PathBuf, String, zeo::CompileOptions) {
     let mut hasher = std::hash::DefaultHasher::new();
     for (rel, source) in files {
         std::hash::Hash::hash(&(rel, source), &mut hasher);
@@ -148,15 +170,7 @@ pub fn compile_packages(
         // happen and must not litter the tree or dirty asserted stderr.
         ..Default::default()
     };
-    match zeo::compile_to_rust_with(&entry_source, &opts) {
-        Ok(rust) => Ok((rust, dir)),
-        Err(e) => {
-            let _ = std::fs::remove_dir_all(&dir);
-            // The message alone -- negative-path tests assert on the same
-            // text the pre-typed-error harness always saw.
-            Err(String::from(e))
-        }
-    }
+    (dir, entry_source, opts)
 }
 
 /// `run_ruby` plus environment variables and argv for the COMPILED BINARY's
@@ -165,48 +179,5 @@ pub fn compile_packages(
 /// well-behaved program).
 #[allow(dead_code)] // each test binary compiles its own copy of this module
 pub fn run_ruby_configured(source: &str, env: &[(&str, &str)], args: &[&str]) -> RunResult {
-    // `compile_to_rust_with` (not the flag-less `compile_to_rust`) so the eval
-    // VM detection rides along -- a program that reaches runtime `eval` must
-    // link the `Eval` runtime variant, or its eval would hit the lean stub.
-    let compiled = zeo::compile_to_rust_with(source, &Default::default())
-        .unwrap_or_else(|e| panic!("compile_to_rust_with failed: {e}"));
-    let rust_source = &compiled.rust_source;
-
-    let bin = std::env::temp_dir().join(format!(
-        "zeo-test-bin-{}-{:?}",
-        std::process::id(),
-        std::thread::current().id()
-    ));
-    let runtime = zeo::backend::Runtime::for_prism(compiled.needs_prism_runtime);
-    // Throwaway test binaries link the runtime DYNAMICALLY, against one shared
-    // dylib, so the bin-cache stays small. The dylib always
-    // sits in `target/`, where these binaries are run from.
-    let linkage = zeo::backend::Linkage::Dynamic;
-    zeo::backend::ensure_runtime_built(harness_profile(), runtime, linkage)
-        .expect("building zeo-rt for the e2e harness");
-    zeo::backend::build_binary(
-        rust_source,
-        &bin,
-        harness_profile(),
-        runtime,
-        linkage,
-        zeo::backend::GenOpt::Unoptimized,
-    )
-    .unwrap_or_else(|e| panic!("build_binary failed: {e}\n--- generated Rust ---\n{rust_source}"));
-
-    let mut cmd = std::process::Command::new(&bin);
-    cmd.args(args);
-    for (k, v) in env {
-        cmd.env(k, v);
-    }
-    let out = cmd
-        .output()
-        .unwrap_or_else(|e| panic!("running compiled binary: {e}"));
-    let _ = std::fs::remove_file(&bin);
-
-    RunResult {
-        stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
-        status: out.status,
-    }
+    compile_link_run(source, &Default::default(), env, args)
 }
