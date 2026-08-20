@@ -81,6 +81,8 @@ zeo_rt_pat_key_miss_clear ([]) -> None
 zeo_rt_pat_key_miss_record ([U32, Ptr]) -> None
 zeo_rt_pat_match_error ([Ptr]) -> Some(I32)
 zeo_rt_pat_match_error_bare ([Ptr]) -> Some(I32)
+zeo_rt_pending_defs_begin ([U32, Ptr, Ptr]) -> None
+zeo_rt_pending_defs_end ([]) -> None
 zeo_rt_pool_mark ([]) -> Some(Usize)
 zeo_rt_pool_push ([Ptr]) -> None
 zeo_rt_pool_reset ([Usize]) -> None

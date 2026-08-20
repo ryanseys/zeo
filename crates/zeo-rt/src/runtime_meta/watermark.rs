@@ -41,17 +41,27 @@ static PENDING_DEPTH: AtomicUsize = AtomicUsize::new(0);
 /// Runs `f` -- a definition hook's send -- with `names` marked as not yet
 /// defined on `class`.
 pub fn with_pending_defs<R>(class: ClassId, names: &[Symbol], f: impl FnOnce() -> R) -> R {
+    pending_defs_begin(class, names);
+    let out = f();
+    pending_defs_end();
+    out
+}
+
+/// [`with_pending_defs`]' two halves, for a caller that cannot pass a
+/// closure across the C boundary. They must pair exactly.
+pub fn pending_defs_begin(class: ClassId, names: &[Symbol]) {
     PENDING_DEPTH.fetch_add(1, Ordering::AcqRel);
     GATES.fetch_or(GATE_PENDING, Ordering::Release);
     PENDING_DEFS.with(|p| p.borrow_mut().push((class, names.to_vec())));
-    let out = f();
+}
+
+pub fn pending_defs_end() {
     PENDING_DEFS.with(|p| {
         p.borrow_mut().pop();
     });
     if PENDING_DEPTH.fetch_sub(1, Ordering::AcqRel) == 1 {
         GATES.fetch_and(!GATE_PENDING, Ordering::Release);
     }
-    out
 }
 
 /// Whether a definition hook is running with a non-empty pending set -- the

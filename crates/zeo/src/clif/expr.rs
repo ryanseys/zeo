@@ -1374,6 +1374,12 @@ fn class_value_of(
             tag: TagInfo::Known(ValueTag::Class as u8),
         });
     }
+    Ok(class_immediate(fx, cid))
+}
+
+/// A `RubyValue::Class(cid)` written into a fresh temp slot -- an
+/// immediate, so unowned (no retain, nothing to release).
+pub(crate) fn class_immediate(fx: &mut Fx, cid: crate::compiler::ClassId) -> Operand {
     let ss = fx.temp_slot();
     let dst = fx.slot_addr(ss, 0);
     let fl = MemFlagsData::trusted();
@@ -1387,11 +1393,11 @@ fn class_value_of(
     fx.b.ins().store(fl, tag, dst, 0);
     let cid_v = fx.b.ins().iconst(types::I32, i64::from(cid.0));
     fx.b.ins().store(fl, cid_v, dst, PAYLOAD_OFFSET as i32);
-    Ok(Operand::Slot {
+    Operand::Slot {
         ss,
         owned: false,
         tag: TagInfo::Known(ValueTag::Class as u8),
-    })
+    }
 }
 
 /// The operator set the slice lowers inline.

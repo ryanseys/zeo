@@ -685,8 +685,7 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
         // A mixin's ANCESTRY edit happened at compile time (analyze); what
         // remains where it was written is the module's hook send --
         // `M.included(C)` and siblings -- which is Module's own no-op
-        // unless the module defines one (rustc's `is_pure_statement` /
-        // `mixin_hook_runs` rule, mirrored).
+        // unless the module defines one.
         // `alias new old` is pure REGISTRATION: analyze resolved it into a
         // copy scope (user source) or an alias row (builtin source), and a
         // builtin row's source is validated at this body's END
@@ -713,9 +712,85 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
         | HirNode::Extend(_)
         | HirNode::Prepend(_)
         | HirNode::ClassMethodPrepend(_) => {
-            if mixin_hook_runs(fx, stmt) {
-                return fx.unsupported(stmt, "a mixin hook (`included`/`extended`/`prepended`)");
+            let Some((module, hook, primitive)) = mixin_parts(&fx.an.compiler.hir[stmt]) else {
+                unreachable!("guarded by the four mixin arms")
+            };
+            let (module, hook, primitive) = (module.clone(), hook, primitive);
+            // The PRIMITIVE first when the module overrides it -- it is what
+            // performs the mixin, and analyze suppressed the static edit on
+            // the strength of it. The notification follows either way,
+            // exactly as ruby fires `included` even when an override skipped
+            // the splice.
+            let overrides = super::expr::resolve_class_here(fx, &module)
+                .is_some_and(|mid| fx.an.compiler.overrides_mixin_primitive(mid, primitive));
+            if overrides {
+                mixin_hook_send(fx, &module, primitive)?;
             }
+            mixin_hook_send(fx, &module, hook)
+        }
+        // A definition report -- `Klass.method_added(:name)` and its five
+        // siblings -- spliced back in at the position of a `def` the analyze
+        // walk consumed. An FCALL, not a visibility-checked call: ruby
+        // reaches its hooks that way, so a `private def self.method_added`
+        // still runs.
+        HirNode::DefHook {
+            class,
+            hook,
+            name,
+            pending,
+        } => {
+            let (class, hook, name, pending) =
+                (*class, hook.clone(), name.clone(), pending.clone());
+            let recv = super::expr::class_immediate(fx, crate::compiler::ClassId(class));
+            let recv_ptr = ownership::borrow_ptr(fx, &recv);
+            let arg_ss = fx.temp_slot();
+            let argv = fx.slot_addr(arg_ss, 0);
+            let arg_sym = fx.sym_id(&name);
+            fx.call("zeo_rt_sym_value", &[arg_sym, argv]);
+            let sym = fx.sym_id(&hook);
+            // The half-built view the hook body must see: the names still in
+            // the FUTURE here are marked pending for as long as the send is
+            // on the stack. Omitted when nothing is left, so the last
+            // definition in a class pays nothing.
+            if !pending.is_empty() {
+                let (ptr, n) = sym_id_array(fx, &pending);
+                let cid_v = fx.b.ins().iconst(types::I32, i64::from(class));
+                fx.call("zeo_rt_pending_defs_begin", &[cid_v, ptr, n]);
+            }
+            let ss = fx.temp_slot();
+            let out = fx.slot_addr(ss, 0);
+            let zero_box = fx.b.ins().iconst(types::I32, 0);
+            let argc = fx.b.ins().iconst(fx.em.ptr, 1);
+            let null = fx.b.ins().iconst(fx.em.ptr, 0);
+            let status = fx
+                .call(
+                    "zeo_rt_send_value_in",
+                    &[zero_box, recv_ptr, sym, argv, argc, null, out],
+                )
+                .expect("send returns a status");
+            if pending.is_empty() {
+                fx.fallible(status);
+            } else {
+                // The pop must run on the RAISE path too: pair it before the
+                // landing jump.
+                let ok = fx.b.create_block();
+                let bad = fx.b.create_block();
+                fx.b.ins().brif(status, bad, &[], ok, &[]);
+                fx.b.switch_to_block(bad);
+                fx.call("zeo_rt_pending_defs_end", &[]);
+                fx.b.ins().jump(fx.land, &[]);
+                fx.b.switch_to_block(ok);
+                fx.call("zeo_rt_pending_defs_end", &[]);
+            }
+            fx.owned_created += 1;
+            ownership::discard(
+                fx,
+                super::operand::Operand::Slot {
+                    ss,
+                    owned: true,
+                    tag: super::operand::TagInfo::Unknown,
+                },
+            );
             Ok(())
         }
         HirNode::Seq(stmts) => {
@@ -800,31 +875,98 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
     }
 }
 
-/// rustc's `mixin_hook_runs` twin: whether the module defines the
-/// notification hook (or overrides the mix-in primitive, in which case
-/// the node is what performs the mixin at all). rustc's
-/// `cx.defining_class` is Some only while a class body emits; the CLIF
-/// twin of that position is a class-body fn (`self_is_class` with no
-/// method name).
+/// A stack array of runtime symbol ids -- the ids come from `zeo_syms`,
+/// which `zeo_unit_init` fills, so they are loads rather than constants
+/// and the array cannot live in rodata.
+fn sym_id_array(
+    fx: &mut Fx,
+    names: &[String],
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    let ss =
+        fx.b.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(
+            cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
+            (names.len() * 4) as u32,
+            2,
+        ));
+    let fl = cranelift_codegen::ir::MemFlagsData::trusted();
+    for (i, name) in names.iter().enumerate() {
+        let id = fx.sym_id(name);
+        let at = fx.slot_addr(ss, (i * 4) as i32);
+        fx.b.ins().store(fl, id, at, 0);
+    }
+    let base = fx.slot_addr(ss, 0);
+    let n = fx.b.ins().iconst(fx.em.ptr, names.len() as i64);
+    (base, n)
+}
+
+/// `(module name, notification hook, mix-in primitive)` for the four mixin
+/// nodes -- `include` is `append_features` then `included`, and its
+/// siblings follow the same shape (`eval.c`'s `rb_mod_include`). The
+/// singleton form fires the same hooks with the SINGLETON class as their
+/// argument, which zeo has no compile-time class for; analyze rejects a
+/// module that defines either, so it is named only to stay true.
 #[allow(
     clippy::wildcard_enum_match_arm,
     reason = "structural: a four-node classifier -- every other node kind is definitionally not a mixin"
 )]
-fn mixin_hook_runs(fx: &Fx, id: NodeId) -> bool {
-    let (module, hook, primitive) = match &fx.an.compiler.hir[id] {
-        HirNode::Include(m) => (m, "included", "append_features"),
+fn mixin_parts(node: &HirNode) -> Option<(&String, &'static str, &'static str)> {
+    match node {
+        HirNode::Include(m) => Some((m, "included", "append_features")),
         HirNode::Prepend(m) | HirNode::ClassMethodPrepend(m) => {
-            (m, "prepended", "prepend_features")
+            Some((m, "prepended", "prepend_features"))
         }
-        HirNode::Extend(m) => (m, "extended", "extend_object"),
-        _ => return false,
+        HirNode::Extend(m) => Some((m, "extended", "extend_object")),
+        _ => None,
+    }
+}
+
+/// `M.hook(Target)` -- the send a mixin leaves behind where it was
+/// written, its ancestry edit having happened at compile time. Nothing is
+/// emitted when nobody defines the hook (Module's own default is a no-op);
+/// a PRIMITIVE reaches here only when the module overrides it, and it is
+/// what performs the mixin at all.
+fn mixin_hook_send(fx: &mut Fx, module: &str, hook: &str) -> Result<(), String> {
+    let (Some(mid), true) = (
+        super::expr::resolve_class_here(fx, module),
+        fx.self_is_class,
+    ) else {
+        return Ok(());
     };
-    let Some(mid) = super::expr::resolve_class_here(fx, module) else {
-        return false;
+    let Some(target) = fx.method_class else {
+        return Ok(());
     };
-    fx.self_is_class
-        && (fx.an.compiler.class_method_in_chain(mid, hook).is_some()
-            || fx.an.compiler.overrides_mixin_primitive(mid, primitive))
+    if fx.an.compiler.class_method_in_chain(mid, hook).is_none()
+        && !fx.an.compiler.overrides_mixin_primitive(mid, hook)
+    {
+        return Ok(());
+    }
+    let recv = super::expr::class_immediate(fx, mid);
+    let recv_ptr = ownership::borrow_ptr(fx, &recv);
+    let arg = super::expr::class_immediate(fx, target);
+    let argv = ownership::borrow_ptr(fx, &arg);
+    let sym = fx.sym_id(hook);
+    let ss = fx.temp_slot();
+    let out = fx.slot_addr(ss, 0);
+    let zero_box = fx.b.ins().iconst(types::I32, 0);
+    let argc = fx.b.ins().iconst(fx.em.ptr, 1);
+    let null = fx.b.ins().iconst(fx.em.ptr, 0);
+    let status = fx
+        .call(
+            "zeo_rt_send_value_in",
+            &[zero_box, recv_ptr, sym, argv, argc, null, out],
+        )
+        .expect("send returns a status");
+    fx.fallible(status);
+    fx.owned_created += 1;
+    ownership::discard(
+        fx,
+        super::operand::Operand::Slot {
+            ss,
+            owned: true,
+            tag: super::operand::TagInfo::Unknown,
+        },
+    );
+    Ok(())
 }
 
 /// A short label for the refusal message.

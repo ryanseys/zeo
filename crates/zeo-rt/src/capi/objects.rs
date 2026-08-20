@@ -3,7 +3,7 @@
 
 use super::dispatch::status_out;
 use crate::compiled_object::{self, CompiledObject};
-use crate::{RubyValue, Signal};
+use crate::{RubyValue, Signal, Symbol};
 use zeo_abi::ClassId;
 use zeo_abi::abi::{STATUS_OK, STATUS_SIGNAL};
 
@@ -503,4 +503,24 @@ pub unsafe extern "C" fn zeo_rt_conditional_class_ref(
         crate::constants::conditional_class_ref(ClassId(cid), name, ClassId(owner)),
         out,
     )
+}
+
+/// [`crate::runtime_meta::with_pending_defs`]' two halves: the definition
+/// hook's send runs with `names` marked as not yet defined on `class`, so
+/// the hook body sees the half-built class ruby shows it. The emitter
+/// pairs them around the send (and its raise path).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_pending_defs_begin(class: u32, syms: *const u32, n: usize) {
+    let ids = if n == 0 {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(syms, n) }
+    };
+    let names: Vec<Symbol> = ids.iter().map(|&s| Symbol::from_u32(s)).collect();
+    crate::runtime_meta::pending_defs_begin(ClassId(class), &names);
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_pending_defs_end() {
+    crate::runtime_meta::pending_defs_end();
 }

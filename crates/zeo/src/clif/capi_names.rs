@@ -431,6 +431,16 @@ pub const CAPI: &[CapiSig] = &[
         ret: Some(I32),
     },
     CapiSig {
+        name: "zeo_rt_pending_defs_begin",
+        params: &[U32, Ptr, Ptr],
+        ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_pending_defs_end",
+        params: &[],
+        ret: None,
+    },
+    CapiSig {
         name: "zeo_rt_pool_mark",
         params: &[],
         ret: Some(Usize),

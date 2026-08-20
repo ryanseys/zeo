@@ -125,6 +125,8 @@ capi_symbols!(
     patterns::zeo_rt_pat_key_miss_record,
     patterns::zeo_rt_pat_match_error,
     patterns::zeo_rt_pat_match_error_bare,
+    objects::zeo_rt_pending_defs_begin,
+    objects::zeo_rt_pending_defs_end,
     values::zeo_rt_pool_mark,
     values::zeo_rt_pool_push,
     values::zeo_rt_pool_reset,
