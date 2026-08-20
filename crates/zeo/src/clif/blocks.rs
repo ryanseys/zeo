@@ -241,6 +241,10 @@ fn build_closure(
     )
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one closure-emission entry: the block's own shape plus the three facts only its writing site knows -- which method-body form it is, what frame ruby names it after, and whether an `*_eval` re-homes its self"
+)]
 fn build_closure_with(
     fx: &mut Fx,
     site: NodeId,

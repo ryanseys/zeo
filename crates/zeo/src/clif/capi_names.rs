@@ -613,14 +613,14 @@ pub const CAPI: &[CapiSig] = &[
         ret: None,
     },
     CapiSig {
-        name: "zeo_rt_runtime_replace_method",
-        params: &[U32, Ptr, Usize, Ptr],
-        ret: None,
-    },
-    CapiSig {
         name: "zeo_rt_runtime_class_method_visibility",
         params: &[U32, U32, U8],
         ret: Some(I32),
+    },
+    CapiSig {
+        name: "zeo_rt_runtime_replace_method",
+        params: &[U32, Ptr, Usize, Ptr],
+        ret: None,
     },
     CapiSig {
         name: "zeo_rt_runtime_set_visibility",
@@ -798,13 +798,13 @@ pub const CAPI: &[CapiSig] = &[
         ret: Some(U8),
     },
     CapiSig {
-        name: "zeo_rt_value_super_args",
-        params: &[Ptr, Ptr, Usize, Ptr, U8, Ptr, Ptr, Ptr],
+        name: "zeo_rt_validate_class_aliases",
+        params: &[U32],
         ret: Some(I32),
     },
     CapiSig {
-        name: "zeo_rt_validate_class_aliases",
-        params: &[U32],
+        name: "zeo_rt_value_super_args",
+        params: &[Ptr, Ptr, Usize, Ptr, U8, Ptr, Ptr, Ptr],
         ret: Some(I32),
     },
     CapiSig {
