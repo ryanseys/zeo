@@ -15,8 +15,9 @@
 //!   9.8 GB and panicked a 16 GB machine's kernel, so how much the compiler
 //!   HOLDS is a first-class number here, not a footnote to how long it takes.
 //!   `0` for a compile that finished inside the poller's first interval.
-//! - `rustc_ms` / `bin_bytes` -- one `zeo -o` build under `ZEO_CACHE=bypass`
-//!   (release runtime, static linkage: the shipped configuration)
+//! - `rustc_ms` / `bin_bytes` -- one `zeo -o` build against the release
+//!   runtime. Nothing caches a built binary, so every run measures the real
+//!   cost.
 //! - `warnings` -- rustc warnings emitted while compiling the generated
 //!   program (the generated-code cleanliness gauge; target is 0)
 //!
@@ -237,8 +238,9 @@ fn run_one(zeo_bin: &Path, name: &str, rb: &Path, runs: usize) -> Result<Row, St
     }
     let _ = std::fs::remove_file(&emitted);
 
-    // Build: one `-o` under cache bypass; `zeo-timings:` lines carry the
-    // build-path source bytes, the rustc wall time, and the binary size.
+    // Build: one `-o`; `zeo-timings:` lines carry the build-path source
+    // bytes, the rustc wall time, and the binary size. Nothing caches a
+    // built binary any more, so every run measures the real cost.
     let bin_path = std::env::temp_dir().join(format!("zeo-compile-bench-{name}"));
     let out = Command::new(zeo_bin)
         .arg(rb)
@@ -246,7 +248,6 @@ fn run_one(zeo_bin: &Path, name: &str, rb: &Path, runs: usize) -> Result<Row, St
         .arg(&bin_path)
         .arg("-W0")
         .env("ZEO_TIMINGS", "1")
-        .env("ZEO_CACHE", "bypass")
         .output()
         .map_err(|e| format!("invoking zeo -o: {e}"))?;
     let stderr = String::from_utf8_lossy(&out.stderr);

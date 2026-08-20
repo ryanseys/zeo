@@ -16,9 +16,7 @@ fn zeo() -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_zeo"));
     // Ambient ruby config must not leak into the parse (RUBYOPT would be
     // consulted; a user's RUBYLIB would widen the load path).
-    cmd.env_remove("RUBYOPT")
-        .env_remove("RUBYLIB")
-        .env_remove("ZEO_CACHE");
+    cmd.env_remove("RUBYOPT").env_remove("RUBYLIB");
     cmd
 }
 
@@ -111,14 +109,19 @@ fn compile_writes_the_default_binary_and_runs_nothing() {
     assert_eq!(stdout_of(&ran), "ran\n");
 }
 
+/// The frozen rustc emitter is still reachable, which is the whole reason
+/// it is kept: a suspect Cranelift result gets diffed against the backend
+/// that was correct before it.
+///
+/// One invocation, and it is not cheap -- the content-keyed binary cache
+/// that used to make a warm rerun free is gone, so this pays a real `rustc`
+/// over the generated program. That is the deal `--backend rustc` now
+/// offers, and asserting it here keeps the deal honest.
 #[test]
-fn a_warm_rerun_serves_the_binary_from_the_cache() {
-    let dir = scratch("warm-rerun");
+fn the_rustc_oracle_still_compiles_and_runs_a_program() {
+    let dir = scratch("rustc-oracle");
     let rb = write(&dir, "t.rb", "puts :ok\n");
 
-    // The binary cache belongs to the rustc backend, which the default no
-    // longer selects; it stays reachable as the differential oracle until
-    // M3, and this test goes with it.
     let out = zeo()
         .args(["--backend", "rustc"])
         .arg(&rb)
@@ -130,18 +133,6 @@ fn a_warm_rerun_serves_the_binary_from_the_cache() {
         "stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-
-    // The rerun of an unchanged program must skip rustc entirely -- the
-    // timings line names the cache instead of a rustc wall time.
-    let out = zeo()
-        .args(["--backend", "rustc"])
-        .arg(&rb)
-        .env("ZEO_TIMINGS", "1")
-        .output()
-        .expect("spawn zeo");
-    assert_eq!(stdout_of(&out), "ok\n");
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("rustc=cached"), "stderr: {stderr}");
 }
 
 #[test]

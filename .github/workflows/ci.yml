@@ -74,29 +74,39 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest
-      # The workspace unit + e2e tests. Prebuild every (runtime, linkage)
-      # zeo-rt combination the suites link -- including the DYNAMIC dylibs the
-      # golden harness uses -- through the same backend::build_runtime path
-      # the harnesses call, so no test process pays a lazy cargo build behind
-      # the runtime flock. With the artifacts known-fresh,
-      # ZEO_ASSUME_RUNTIME_FRESH skips the per-test-process stat walk and
-      # cache-sweep trigger.
-      - run: cargo run -p xtask -- prebuild-runtimes
-      # --no-fail-fast so one failure doesn't hide the rest of the report.
+      # `zeo` is a BINARY target, and nothing gives a test target a cargo
+      # dependency edge to one -- so the suites would happily run yesterday's
+      # compiler. Build the workspace first: that produces both the `zeo` the
+      # golden harness spawns and the `libzeo.a` every AOT link needs.
+      - run: cargo build --workspace
+
+      # The default leg: Cranelift through the in-process JIT, one `zeo` child
+      # per golden. --no-fail-fast so one failure doesn't hide the rest of the
+      # report.
       - run: cargo nextest run --workspace --no-fail-fast
+
+      # The AOT leg -- the same CLIF through an object file and a real link,
+      # which is what SHIPS and therefore what the retire gate measures. Scoped
+      # to the golden corpora: it links a binary per case, so running the whole
+      # workspace through it again would cost far more than it proves.
+      - run: cargo nextest run -p zeo-tests --test examples --test spinel --test gaps --no-fail-fast
         env:
-          ZEO_ASSUME_RUNTIME_FRESH: "1"
+          ZEO_GOLDEN_BACKEND: aot
+
       # nextest doesn't run doctests; keep them covered.
       - run: cargo test --workspace --doc
-        env:
-          ZEO_ASSUME_RUNTIME_FRESH: "1"
+
       # The tests/ golden suites -- examples, the full ~2900-test spinel corpus,
       # and the gaps XFAIL tracker -- all run under `cargo nextest run --workspace`
       # above (datatest-stable targets tests/{examples,spinel,gaps}.rs) --
       # committed ruby-oracle .expected, no ruby in CI. The `golden` test-group
-      # (.config/nextest.toml) caps their concurrency so a cold zeo-bin-cache
-      # doesn't overload rustc. A fixed gap fails CI as an XPASS (promote it).
-
+      # (.config/nextest.toml) caps their concurrency. A fixed gap fails CI as
+      # an XPASS (promote it).
+      #
+      # NOT run here: the `-P full` profile's whole-gem cases (gemtests,
+      # every_bundled_gem_compiles, rspec_end_to_end, prism_surface). They
+      # compile entire require graphs and belong to the phase gate, not to
+      # every push.
   msrv:
     name: MSRV check
     runs-on: ubuntu-latest

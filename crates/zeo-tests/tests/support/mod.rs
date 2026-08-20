@@ -9,7 +9,8 @@
 //! The compile-only negative-path checks scattered through `e2e/` still ask
 //! `compile_to_rust*`: they assert front-end and loader POLICY (a `require`
 //! that must not resolve, a form that must be rejected), which both backends
-//! share, and the rustc emitter stays reachable until M3.
+//! share, and the rustc emitter stays reachable until M3. Nothing here
+//! BUILDS through rustc any more.
 
 pub struct RunResult {
     pub stdout: String,

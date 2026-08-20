@@ -217,9 +217,12 @@ environment:
                         Gemfile is also known (an ambient store alone never
                         changes a compile)
   BUNDLE_GEMFILE        the Gemfile for --bundle-gemfile
-  ZEO_RUNTIME_PROFILE   `debug` or `release` -- override the runtime profile
-                        (default: debug for immediate runs, release for
-                        -o/--compile artifacts)
+  ZEO_BACKEND           `jit`, `aot` or `rustc` -- override the default
+                        backend (jit for immediate runs, aot for -o/--compile;
+                        rustc is the frozen differential oracle, dev tree only)
+  ZEO_RUNTIME_PROFILE   `debug` or `release` -- which zeo-rt build --backend
+                        rustc links against (default: debug for immediate
+                        runs, release for -o/--compile artifacts)
   ZEO_LOG / RUST_LOG    a `tracing` EnvFilter directive for the compiler's
                         internal logs, e.g. `zeo=debug` or
                         `zeo::analyze=debug,zeo::lower=trace`

@@ -1,6 +1,5 @@
-//! Where zeo finds its payload -- the bundled `gems/` and the runtime
-//! workspace `ensure_runtime_built` compiles -- and where it writes build
-//! artifacts.
+//! Where zeo finds its payload -- the bundled `gems/` and the runtime it
+//! links programs against -- and where it writes build artifacts.
 //!
 //! Two homes exist today:
 //!

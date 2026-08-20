@@ -43,7 +43,6 @@ mod gem_probe;
 mod gemtests;
 mod jobs;
 mod method_census;
-mod prebuild;
 mod stage_publish;
 mod stdlib_status;
 mod sweep;
@@ -70,7 +69,6 @@ fn main() -> ExitCode {
         Some("bench") => bench::main(&root, &args),
         Some("bless") => bless::main(&root, &args),
         Some("compile-bench") => compile_bench::main(&root, &args),
-        Some("prebuild-runtimes") => prebuild::main(&root, &args),
         Some("stdlib-status") => stdlib_status::main(&root, &args),
         Some("gem-compat") => gem_compat::main(&root, &args),
         Some("gem-probe") => gem_probe::main(&root, &args),
@@ -84,7 +82,7 @@ fn main() -> ExitCode {
         _ => {
             eprintln!(
                 "usage: cargo run -p xtask -- \
-                 <bench|bless|compile-bench|prebuild-runtimes|stdlib-status|gem-compat|gem|\
+                 <bench|bless|compile-bench|stdlib-status|gem-compat|gem|\
                  gem-probe|gemtests|arity-oracle|method-census|stage-publish|dist|sweep>"
             );
             ExitCode::FAILURE
