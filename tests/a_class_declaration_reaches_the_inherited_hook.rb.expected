@@ -1,0 +1,4 @@
+inherited A
+inherited B
+late hook BeforeHook
+["A", "B"]

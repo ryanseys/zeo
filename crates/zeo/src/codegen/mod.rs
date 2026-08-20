@@ -3707,7 +3707,7 @@ fn emit_declaration_const_location(
 /// `require` puts another file's statements in the middle of this one, so raw
 /// offsets do not order across files -- as is anything span-less. All of those
 /// keep firing.
-fn hook_installed_before(
+pub(crate) fn hook_installed_before(
     compiler: &Compiler,
     hook: crate::compiler::ScopeId,
     at: Option<crate::hir::NodeId>,

@@ -1598,6 +1598,36 @@ fn class_body_site(
             &[owner_v, nptr, nlen, fptr, flen, line_v],
         );
     }
+    // ...then `Super.inherited(C)`, the order `vm_declare_class` hard-codes
+    // (the constant is set, the hook fires, then the body runs).
+    if let Some(parent) = call.inherited {
+        let recv = super::expr::class_immediate(fx, crate::compiler::ClassId(parent));
+        let recv_ptr = ownership::borrow_ptr(fx, &recv);
+        let arg = super::expr::class_immediate(fx, crate::compiler::ClassId(call.class));
+        let argv = ownership::borrow_ptr(fx, &arg);
+        let sym = fx.sym_id("inherited");
+        let ss = fx.temp_slot();
+        let out = fx.slot_addr(ss, 0);
+        let zero_box = fx.b.ins().iconst(types::I32, 0);
+        let argc = fx.b.ins().iconst(fx.em.ptr, 1);
+        let null = fx.b.ins().iconst(fx.em.ptr, 0);
+        let status = fx
+            .call(
+                "zeo_rt_send_value_in",
+                &[zero_box, recv_ptr, sym, argv, argc, null, out],
+            )
+            .expect("send returns a status");
+        fx.fallible(status);
+        fx.owned_created += 1;
+        ownership::discard(
+            fx,
+            super::operand::Operand::Slot {
+                ss,
+                owned: true,
+                tag: super::operand::TagInfo::Unknown,
+            },
+        );
+    }
     // `alias`'s builtin source validates as this body finishes -- CRuby's
     // timing, run at the CALL site so an alias-only (empty-statement) body
     // still checks (rustc emits the check even for an otherwise empty

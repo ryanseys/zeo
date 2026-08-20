@@ -1010,6 +1010,10 @@ pub(crate) struct ClassBodyCall {
     pub func: Option<FuncId>,
     /// `(owner, leaf, file, line)` -- recorded only by the DECLARING site.
     pub const_loc: Option<(u32, String, String, u32)>,
+    /// The superclass to announce this declaration to (`Super.inherited(C)`)
+    /// -- `None` unless this site DECLARES the class and the superclass
+    /// chain answers `inherited` by then.
+    pub inherited: Option<u32>,
     /// Whether this site must REVEAL its runtime-conditional class: the
     /// guarded definition just ran, so the constant exists from here on.
     pub reveal: bool,
@@ -1139,14 +1143,20 @@ fn collect_class_bodies(
         {
             return refuse("a class declaration observed by `const_added`");
         }
-        if declares
-            && let Some(parent) = ci.parent
-            && compiler
-                .class_method_in_chain(parent, "inherited")
-                .is_some()
-        {
-            return refuse("a class declaration observed by `inherited`");
-        }
+        // `Super.inherited(C)` fires when the class is CREATED, so only its
+        // FIRST site announces; a reopen creates nothing. A hook written
+        // BELOW this declaration is not installed yet and stays silent.
+        let inherited = declares
+            .then_some(ci.parent)
+            .flatten()
+            .filter(|&parent| {
+                compiler
+                    .class_method_in_chain(parent, "inherited")
+                    .is_some_and(|(_, hook)| {
+                        crate::codegen::hook_installed_before(compiler, hook, site.def_node)
+                    })
+            })
+            .map(|parent| parent.0);
         // The frozen-reopen guard: a REOPEN under a program that freezes
         // classes raises `FrozenError` for the names it would newly
         // install. Registration order IS document order, so "earlier" is
@@ -1210,6 +1220,7 @@ fn collect_class_bodies(
             class: site.class.0,
             func,
             const_loc,
+            inherited,
             reveal: ci.runtime_conditional,
             freeze_guard,
             tail,
