@@ -28,6 +28,7 @@ macro_rules! capi_symbols {
 }
 
 capi_symbols!(
+    dispatch::zeo_rt_alias_in_default_definee,
     literals::zeo_rt_array_get,
     literals::zeo_rt_array_len,
     literals::zeo_rt_array_new,

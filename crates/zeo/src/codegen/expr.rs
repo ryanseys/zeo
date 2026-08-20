@@ -1887,7 +1887,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
 
 /// The Ruby spelling of a definition-level node, for the rejection above and
 /// for the one `codegen::consumed_tail_value` raises over the same nodes.
-pub(super) fn definition_kind(node: &HirNode) -> &'static str {
+pub(crate) fn definition_kind(node: &HirNode) -> &'static str {
     match node {
         HirNode::Program(_) => "a program body",
         HirNode::ClassDef {

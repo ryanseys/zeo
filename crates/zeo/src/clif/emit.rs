@@ -324,7 +324,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             ruby2_keywords: false,
             self_is_class: true,
             label_override: Some(cb.label.clone()),
-            discard_value: true,
+            discard_value: cb.call.tail != BodyTail::Own,
             dyn_ivars: false,
             defining_class: None,
         };
@@ -969,6 +969,25 @@ fn collect_methods(em: &mut Emitter, analyzed: &Analyzed) -> Result<Vec<DefSpec>
 /// `const_source_location` record, then the compiled body (absent when
 /// analyze consumed every statement -- the `class C; def a; end; end`
 /// shape).
+/// What a `class`/`module` marker EVALUATES to. A `class` is an
+/// expression in Ruby (`x = class C; 7; end` binds 7), and almost every
+/// site runs for effect -- so the body fn keeps its tail only where the
+/// tail is a value at all.
+#[derive(Clone, PartialEq)]
+pub(crate) enum BodyTail {
+    /// The body fn computes it: its last statement IS an expression.
+    Own,
+    /// Analyze CONSUMED the body's last source statement, so the emitted
+    /// statements no longer end where ruby's value comes from -- a `def`
+    /// answers its name, `private_constant` the module it hid it on.
+    Sym(String),
+    OwnClass,
+    /// A definition-level construct with no value zeo can name: nil in
+    /// tail position (where nothing necessarily reads it), a refusal in
+    /// expression position.
+    Unknown(&'static str),
+}
+
 #[derive(Clone)]
 pub(crate) struct ClassBodyCall {
     pub class: u32,
@@ -983,6 +1002,9 @@ pub(crate) struct ClassBodyCall {
     /// when the program freezes nothing, when this is the class's first
     /// site, or when the site installs nothing new.
     pub freeze_guard: Vec<String>,
+    /// The site's Ruby value -- read only by a marker in value or tail
+    /// position; a statement marker discards it.
+    pub tail: BodyTail,
 }
 
 /// One compiled class body (a separate Ruby scope, lifted to its own
@@ -1149,6 +1171,7 @@ fn collect_class_bodies(
                     })
             })
             .flatten();
+        let tail = body_tail(compiler, site);
         let func = if site.stmts.is_empty() {
             None
         } else {
@@ -1159,14 +1182,21 @@ fn collect_class_bodies(
                     .map_err(|e| format!("declaring the {name} class body: {e}"))?,
             )
         };
-        let kind = if ci.is_module { "module" } else { "class" };
-        let label = format!("<{kind}:{}>", compiler.leaf_name(site.class));
+        // A `class << self` body is homed on a surrogate whose reserved
+        // name is unwritable; ruby SPELLS its frame label instead.
+        let label = if compiler.is_singleton_surrogate(site.class) {
+            "singleton class".to_string()
+        } else {
+            let kind = if ci.is_module { "module" } else { "class" };
+            format!("<{kind}:{}>", compiler.leaf_name(site.class))
+        };
         let call = ClassBodyCall {
             class: site.class.0,
             func,
             const_loc,
             reveal: ci.runtime_conditional,
             freeze_guard,
+            tail,
         };
         let is_inline = site.def_node.is_some_and(|n| inline.contains(&n));
         if is_inline && let Some(marker) = site.def_node {
@@ -1182,6 +1212,63 @@ fn collect_class_bodies(
         });
     }
     Ok(specs)
+}
+
+/// [`BodyTail`] for one site: what the body's LAST SOURCE statement is
+/// worth (rustc's `consumed_tail_value` plus its value/statement split).
+#[allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "structural: three classifiers over HirNode -- the listed kinds are the ones with no value of their own, and every other kind is an ordinary expression the tail lowering computes (refusing loudly where it cannot)"
+)]
+fn body_tail(
+    compiler: &crate::compiler::Compiler,
+    site: &crate::compiler::ClassBodySite,
+) -> BodyTail {
+    use crate::hir::HirNode;
+    let last = site
+        .def_node
+        .and_then(|n| match &compiler.hir[n] {
+            HirNode::ClassDef { body, .. } => body.last().copied(),
+            _ => None,
+        })
+        .or_else(|| site.stmts.last().copied());
+    let Some(last) = last else {
+        return BodyTail::Own;
+    };
+    // Not the emitted tail: analyze consumed the source's last statement.
+    if site.stmts.last() != Some(&last) {
+        return match &compiler.hir[last] {
+            HirNode::DefMethod { name, .. } => BodyTail::Sym(name.clone()),
+            // `private_constant :Hidden` answers the module it hid the
+            // constant on, which is the body's own class.
+            HirNode::ConstantVisibility { .. } => BodyTail::OwnClass,
+            node => BodyTail::Unknown(crate::codegen::definition_kind(node)),
+        };
+    }
+    // A definition-level construct that survived into the statement list
+    // runs for effect; everything else is an ordinary expression the tail
+    // lowering computes (and refuses loudly where it cannot).
+    match &compiler.hir[last] {
+        HirNode::Program(_)
+        | HirNode::Refine { .. }
+        | HirNode::Using(_)
+        | HirNode::Undef(_)
+        | HirNode::ClassMethodUndef(_)
+        | HirNode::AliasMethod { .. }
+        | HirNode::MethodVisibility { .. }
+        | HirNode::ClassMethodVisibility { .. }
+        | HirNode::ConstantVisibility { .. }
+        | HirNode::ModuleFunction(_)
+        | HirNode::MethodRedefine { .. }
+        | HirNode::DefHook { .. }
+        | HirNode::Include(_)
+        | HirNode::Extend(_)
+        | HirNode::Prepend(_)
+        | HirNode::ClassMethodPrepend(_) => {
+            BodyTail::Unknown(crate::codegen::definition_kind(&compiler.hir[last]))
+        }
+        _ => BodyTail::Own,
+    }
 }
 
 pub(crate) struct BodyFnSpec<'a> {

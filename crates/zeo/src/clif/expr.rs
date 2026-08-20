@@ -243,16 +243,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
         }
         HirNode::SymbolLit(name) => {
             let name = name.clone();
-            let sym = fx.sym_id(&name);
-            let ss = fx.temp_slot();
-            let out = fx.slot_addr(ss, 0);
-            fx.call("zeo_rt_sym_value", &[sym, out]);
-            fx.owned_created += 1;
-            Ok(Operand::Slot {
-                ss,
-                owned: true,
-                tag: TagInfo::Known(ValueTag::Symbol as u8),
-            })
+            symbol_value(fx, &name)
         }
         HirNode::ArrayLit(elems) => {
             let elems = elems.clone();
@@ -345,6 +336,57 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 tag: TagInfo::Known(ValueTag::Proc as u8),
             })
         }
+        // The `alias new old` KEYWORD (lowering's marker call): it installs
+        // on the frame's DEFAULT DEFINEE, which is the cref's class unless
+        // an `*_eval`/`instance_exec` re-homed the block -- so the runtime
+        // decides, from the same two candidates rustc hands it.
+        HirNode::Call {
+            receiver: None,
+            name,
+            args,
+            ..
+        } if name == "__zeo_alias_keyword" && args.len() == 2 => {
+            let [ArrayElem::Single(new_id), ArrayElem::Single(old_id)] = args.as_slice() else {
+                return fx.unsupported(id, "a splatted `alias`");
+            };
+            let (new_id, old_id) = (*new_id, *old_id);
+            let cref =
+                class_immediate(fx, fx.method_class.unwrap_or(crate::compiler::OBJECT_CLASS));
+            let cref_ptr = ownership::borrow_ptr(fx, &cref);
+            if cref.owned() {
+                ownership::pool_owned(fx, cref_ptr, cref.tag());
+            }
+            let self_ptr = super::stmt::dyn_ivar_recv(fx);
+            let new_op = lower_expr(fx, new_id)?;
+            let new_ptr = ownership::borrow_ptr(fx, &new_op);
+            if new_op.owned() {
+                ownership::pool_owned(fx, new_ptr, new_op.tag());
+            }
+            let old_op = lower_expr(fx, old_id)?;
+            let old_ptr = ownership::borrow_ptr(fx, &old_op);
+            if old_op.owned() {
+                ownership::pool_owned(fx, old_ptr, old_op.tag());
+            }
+            let ss = fx.temp_slot();
+            let out = fx.slot_addr(ss, 0);
+            let status = fx
+                .call(
+                    "zeo_rt_alias_in_default_definee",
+                    &[cref_ptr, self_ptr, new_ptr, old_ptr, out],
+                )
+                .expect("alias_in_default_definee returns a status");
+            fx.fallible(status);
+            fx.owned_created += 1;
+            Ok(Operand::Slot {
+                ss,
+                owned: true,
+                tag: TagInfo::Unknown,
+            })
+        }
+        // A `class`/`module` written where a value is READ -- `x = class C;
+        // 7; end`, or a `class << self` body ending a method. Ruby's value
+        // is the body's last statement, which the site computes.
+        HirNode::ClassDef { .. } => super::stmt::class_body_value(fx, id, true),
         HirNode::ClassRef(name) => {
             let name = name.clone();
             const_read(fx, id, &name)
@@ -1573,6 +1615,20 @@ fn class_value_of(
 
 /// A `RubyValue::Class(cid)` written into a fresh temp slot -- an
 /// immediate, so unowned (no retain, nothing to release).
+/// A Symbol value for `name`, interned by `zeo_unit_init`.
+pub(crate) fn symbol_value(fx: &mut Fx, name: &str) -> Result<Operand, String> {
+    let sym = fx.sym_id(name);
+    let ss = fx.temp_slot();
+    let out = fx.slot_addr(ss, 0);
+    fx.call("zeo_rt_sym_value", &[sym, out]);
+    fx.owned_created += 1;
+    Ok(Operand::Slot {
+        ss,
+        owned: true,
+        tag: TagInfo::Known(ValueTag::Symbol as u8),
+    })
+}
+
 pub(crate) fn class_immediate(fx: &mut Fx, cid: crate::compiler::ClassId) -> Operand {
     let ss = fx.temp_slot();
     let dst = fx.slot_addr(ss, 0);

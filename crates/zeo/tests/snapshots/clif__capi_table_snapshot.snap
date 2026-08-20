@@ -2,6 +2,7 @@
 source: crates/zeo/tests/clif.rs
 expression: rendered
 ---
+zeo_rt_alias_in_default_definee ([Ptr, Ptr, Ptr, Ptr, Ptr]) -> Some(I32)
 zeo_rt_array_new ([Usize, Ptr]) -> None
 zeo_rt_array_push ([Ptr, Ptr]) -> None
 zeo_rt_array_push_splat ([Ptr, Ptr]) -> Some(I32)

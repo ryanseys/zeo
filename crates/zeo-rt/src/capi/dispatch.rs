@@ -102,6 +102,29 @@ pub unsafe extern "C" fn zeo_rt_send_value_cached(
     )
 }
 
+/// The `alias new old` KEYWORD: it installs on the frame's DEFAULT
+/// DEFINEE (a `*_eval`/`instance_exec` may have re-homed the block), not
+/// on `self` -- `Module#alias_method` is the call form that dispatches to
+/// its receiver.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_alias_in_default_definee(
+    cref: *const RubyValue,
+    slf: *const RubyValue,
+    new: *const RubyValue,
+    old: *const RubyValue,
+    out: *mut RubyValue,
+) -> i32 {
+    status_out(
+        crate::dispatch::alias_in_default_definee(
+            unsafe { &*cref },
+            unsafe { &*slf },
+            unsafe { &*new }.clone(),
+            unsafe { &*old }.clone(),
+        ),
+        out,
+    )
+}
+
 /// The uncached dynamic send (implicit receiver -- no visibility barrier).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zeo_rt_send_value_in(

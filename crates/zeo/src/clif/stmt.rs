@@ -10,11 +10,112 @@ use cranelift_codegen::ir::{InstBuilder, StackSlotData, StackSlotKind, types};
 use cranelift_module::Module;
 
 pub(crate) fn lower_stmts(fx: &mut Fx, stmts: &[NodeId]) -> Result<(), String> {
-    for &stmt in stmts {
+    let mut i = 0;
+    while i < stmts.len() {
+        // A `class << self` body's statements are SPLICED into the
+        // enclosing class body, tagged with the marker they came from
+        // (`Hir::singleton_frame_stmts`). Each contiguous run gets its own
+        // `singleton class` backtrace frame, rustc's `emit_singleton_frame`.
+        if let Some(&origin) = fx.an.compiler.hir.singleton_frame_stmts.get(&stmts[i]) {
+            let mut j = i + 1;
+            while j < stmts.len()
+                && fx.an.compiler.hir.singleton_frame_stmts.get(&stmts[j]) == Some(&origin)
+            {
+                j += 1;
+            }
+            singleton_frame(fx, origin, &stmts[i..j], None)?;
+            i = j;
+            continue;
+        }
+        let mark = fx.stmt_mark();
+        lower_stmt(fx, stmts[i])?;
+        fx.end_stmt(mark);
+        i += 1;
+    }
+    Ok(())
+}
+
+/// One `class << self` group inside its own frame. Two positions have to
+/// be right: the frame itself is labelled `singleton class` and tracks the
+/// group's own lines, and the ENCLOSING frame is left reading the `class
+/// << self` KEYWORD's line -- so the head stamps that line BEFORE the
+/// push rather than letting the first grouped statement stamp it
+/// underneath. `frame_label` carries down so a block written here is
+/// `block in singleton class`.
+fn singleton_frame(
+    fx: &mut Fx,
+    origin: NodeId,
+    group: &[NodeId],
+    dst: Option<cranelift_codegen::ir::Value>,
+) -> Result<(), String> {
+    let Some((file, line)) = fx.location(origin) else {
+        return lower_group(fx, group, dst);
+    };
+    let (file, line) = (file.to_string(), line);
+    stamp_line(fx, origin);
+    let end_line = crate::codegen::source_end_line(&fx.an.compiler, origin);
+    let label = "singleton class";
+    let foff = fx.em.intern_rodata(file.as_bytes());
+    let loff = fx.em.intern_rodata(label.as_bytes());
+    let fptr = fx.rod(foff);
+    let flen = fx.b.ins().iconst(fx.em.ptr, file.len() as i64);
+    let lptr = fx.rod(loff);
+    let llen = fx.b.ins().iconst(fx.em.ptr, label.len() as i64);
+    let line_v = fx.b.ins().iconst(types::I32, i64::from(line));
+    let end_v = fx.b.ins().iconst(types::I32, i64::from(end_line));
+    fx.call(
+        "zeo_rt_frame_push",
+        &[fptr, flen, lptr, llen, line_v, end_v],
+    );
+    // The error path pops this frame before the enclosing landing runs.
+    let outer_land = fx.land;
+    let pop_land = fx.b.create_block();
+    fx.land = pop_land;
+    let saved_label = std::mem::replace(&mut fx.frame_label, label.to_string());
+    let saved_line = fx.prev_line.take();
+    let r = lower_group(fx, group, dst);
+    fx.frame_label = saved_label;
+    fx.land = outer_land;
+    fx.prev_line = saved_line;
+    r?;
+    fx.call("zeo_rt_frame_pop", &[]);
+    let after = fx.b.create_block();
+    fx.b.ins().jump(after, &[]);
+    fx.b.switch_to_block(pop_land);
+    fx.call("zeo_rt_frame_pop", &[]);
+    fx.b.ins().jump(outer_land, &[]);
+    fx.b.switch_to_block(after);
+    Ok(())
+}
+
+/// [`lower_stmts`]' loop without the singleton grouping -- so a group can
+/// reuse it without re-detecting itself. With a `dst` the group's last
+/// statement is its VALUE.
+fn lower_group(
+    fx: &mut Fx,
+    stmts: &[NodeId],
+    dst: Option<cranelift_codegen::ir::Value>,
+) -> Result<(), String> {
+    let Some(dst) = dst else {
+        for &stmt in stmts {
+            let mark = fx.stmt_mark();
+            lower_stmt(fx, stmt)?;
+            fx.end_stmt(mark);
+        }
+        return Ok(());
+    };
+    let Some((&tail, init)) = stmts.split_last() else {
+        ownership::write_move_into(fx, &super::operand::Operand::Nil, dst);
+        return Ok(());
+    };
+    for &stmt in init {
         let mark = fx.stmt_mark();
         lower_stmt(fx, stmt)?;
         fx.end_stmt(mark);
     }
+    stamp_line(fx, tail);
+    let op = lower_tail_expr(fx, tail)?;
+    ownership::write_move_into(fx, &op, dst);
     Ok(())
 }
 
@@ -30,11 +131,25 @@ pub(crate) fn lower_value_body_into(
         ownership::write_move_into(fx, &super::operand::Operand::Nil, dst);
         return Ok(());
     };
-    for &stmt in init {
-        let mark = fx.stmt_mark();
-        lower_stmt(fx, stmt)?;
-        fx.end_stmt(mark);
+    // A tail inside a `class << self` group supplies the body's value, so
+    // its frame block is an expression rather than a statement.
+    if let Some(&origin) = fx.an.compiler.hir.singleton_frame_stmts.get(&tail) {
+        let mut start = stmts.len() - 1;
+        while start > 0
+            && fx
+                .an
+                .compiler
+                .hir
+                .singleton_frame_stmts
+                .get(&stmts[start - 1])
+                == Some(&origin)
+        {
+            start -= 1;
+        }
+        lower_stmts(fx, &stmts[..start])?;
+        return singleton_frame(fx, origin, &stmts[start..], Some(dst));
     }
+    lower_stmts(fx, init)?;
     stamp_line(fx, tail);
     let op = lower_tail_expr(fx, tail)?;
     ownership::write_move_into(fx, &op, dst);
@@ -397,6 +512,10 @@ fn lower_tail_expr(fx: &mut Fx, tail: NodeId) -> Result<super::operand::Operand,
         | HirNode::SuperCall { .. }
         | HirNode::Defined(..)
         | HirNode::Call { .. } => lower_expr(fx, tail),
+        // A `class`/`module` in TAIL position: the site runs and answers
+        // its body's last value; a body ending in a definition-level
+        // construct answers nil, since nothing necessarily reads it.
+        HirNode::ClassDef { .. } => class_body_value(fx, tail, false),
         other => {
             let what = format!("this tail expression ({})", statement_kind(other));
             fx.unsupported(tail, &what)
@@ -1139,10 +1258,65 @@ fn stamp_line(fx: &mut Fx, stmt: NodeId) {
 /// `const_source_location`, then call the compiled body with the class as
 /// `self` (its value -- ruby's class-body tail -- is discarded here; a
 /// `class` expression in value position still refuses).
+/// A class-body marker in STATEMENT position: run the site, drop its
+/// value.
 pub(crate) fn emit_class_body_call(
     fx: &mut Fx,
     call: &super::emit::ClassBodyCall,
 ) -> Result<(), String> {
+    let op = class_body_site(fx, call)?;
+    ownership::discard(fx, op);
+    Ok(())
+}
+
+/// The site's Ruby VALUE -- what a `class`/`module` written where a value
+/// is read evaluates to. `expression` distinguishes the two positions: a
+/// tail whose value zeo cannot name is nil (nothing necessarily reads
+/// it), an expression's is a refusal.
+pub(crate) fn class_body_value(
+    fx: &mut Fx,
+    site: NodeId,
+    expression: bool,
+) -> Result<super::operand::Operand, String> {
+    use super::emit::BodyTail;
+    let Some(call) = fx.em.class_bodies.get(&site).cloned() else {
+        // A hoisted or statement-free site: its body already ran (or has
+        // nothing to run), and ruby's value is the body's own tail.
+        return Ok(super::operand::Operand::Nil);
+    };
+    let op = class_body_site(fx, &call)?;
+    match &call.tail {
+        BodyTail::Own => Ok(op),
+        BodyTail::Sym(name) => {
+            ownership::discard(fx, op);
+            let name = name.clone();
+            super::expr::symbol_value(fx, &name)
+        }
+        BodyTail::OwnClass => {
+            ownership::discard(fx, op);
+            Ok(super::expr::class_immediate(
+                fx,
+                crate::compiler::ClassId(call.class),
+            ))
+        }
+        BodyTail::Unknown(kind) if expression => {
+            let kind = *kind;
+            fx.unsupported(
+                site,
+                &format!("a class body read for its VALUE ending in {kind}"),
+            )
+        }
+        BodyTail::Unknown(_) => {
+            ownership::discard(fx, op);
+            Ok(super::operand::Operand::Nil)
+        }
+    }
+}
+
+fn class_body_site(
+    fx: &mut Fx,
+    call: &super::emit::ClassBodyCall,
+) -> Result<super::operand::Operand, String> {
     use cranelift_codegen::ir::{InstBuilder, MemFlagsData, types};
     use cranelift_module::Module;
     // The frozen-reopen guard runs FIRST: a frozen class raises before the
@@ -1191,7 +1365,7 @@ pub(crate) fn emit_class_body_call(
     };
     let Some(func) = call.func else {
         validate(fx);
-        return Ok(());
+        return Ok(super::operand::Operand::Nil);
     };
     // `self` = the class, materialized as a Class immediate.
     let self_ss = fx.temp_slot();
@@ -1216,15 +1390,11 @@ pub(crate) fn emit_class_body_call(
     fx.fallible(status);
     validate(fx);
     fx.owned_created += 1;
-    ownership::discard(
-        fx,
-        super::operand::Operand::Slot {
-            ss: out_ss,
-            owned: true,
-            tag: super::operand::TagInfo::Unknown,
-        },
-    );
-    Ok(())
+    Ok(super::operand::Operand::Slot {
+        ss: out_ss,
+        owned: true,
+        tag: super::operand::TagInfo::Unknown,
+    })
 }
 
 /// A `&str`'s `.rodata` `(ptr, len)` pair.

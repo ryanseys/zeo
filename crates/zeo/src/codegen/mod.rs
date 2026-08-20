@@ -26,7 +26,7 @@ mod collections;
 pub(crate) use crate::analyze::constfold;
 mod exceptions;
 mod expr;
-pub(crate) use expr::split_const_path;
+pub(crate) use expr::{definition_kind, split_const_path};
 mod hoisting;
 mod ident;
 mod loops;
