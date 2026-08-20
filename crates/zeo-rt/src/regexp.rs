@@ -1866,7 +1866,22 @@ pub fn regexp_sub(re: &RRegexp, haystack: &str, replacement: &str) -> Result<Rub
 /// is converted with `to_s`) and spliced in place of the match. Propagates
 /// whatever `Signal` the block itself raises (`break`/`return`/an uncaught
 /// `raise`) via `?`, same as any other real-`Proc` invocation.
-pub fn regexp_gsub_block(re: &RRegexp, haystack: &str, blk: &RProc) -> Result<RubyValue, Signal> {
+///
+/// `enc` is the RECEIVER's encoding, and the matched substring is rebuilt in
+/// it before the block sees it -- the engine works on decoded UTF-8, so
+/// without this a byte the receiver holds raw (`0xE3` in a BINARY string)
+/// reaches the block as the two-byte UTF-8 spelling of U+00E3. That is the
+/// same rule `regexp_scan_block` keeps, and it is load-bearing for the
+/// HASH-replacement form, whose table is keyed by single raw bytes: a miss
+/// there substitutes the empty string, so every non-ASCII byte silently
+/// VANISHED (`URI.encode_www_form_component` dropped every multibyte
+/// character and every Latin-1 byte).
+pub fn regexp_gsub_block(
+    re: &RRegexp,
+    haystack: &str,
+    enc: crate::encoding::EncodingId,
+    blk: &RProc,
+) -> Result<RubyValue, Signal> {
     let mut out = String::new();
     let mut last_end = 0usize;
     for caps in re.engine.captures_all(haystack) {
@@ -1881,7 +1896,7 @@ pub fn regexp_gsub_block(re: &RRegexp, haystack: &str, blk: &RProc) -> Result<Ru
             crate::encoding::UTF_8,
         )));
         let matched = RubyValue::Str(string_new(haystack[m_start..m_end].to_string()));
-        let replaced = blk.call(&[matched])?;
+        let replaced = blk.call(&[crate::builtins::string::reencode_strs(&matched, enc)])?;
         out.push_str(&replaced.to_display_string());
         last_end = m_end;
     }
@@ -1891,7 +1906,12 @@ pub fn regexp_gsub_block(re: &RRegexp, haystack: &str, blk: &RProc) -> Result<Ru
 
 /// `String#sub(regexp) { |whole_match| ... }` -- see `regexp_gsub_block`'s
 /// docs; only the first match is replaced.
-pub fn regexp_sub_block(re: &RRegexp, haystack: &str, blk: &RProc) -> Result<RubyValue, Signal> {
+pub fn regexp_sub_block(
+    re: &RRegexp,
+    haystack: &str,
+    enc: crate::encoding::EncodingId,
+    blk: &RProc,
+) -> Result<RubyValue, Signal> {
     match re.engine.captures_first(haystack) {
         Some(caps) => {
             let (m_start, m_end) = caps.get(0).expect("group 0 is always the whole match");
@@ -1902,7 +1922,7 @@ pub fn regexp_sub_block(re: &RRegexp, haystack: &str, blk: &RProc) -> Result<Rub
                 crate::encoding::UTF_8,
             )));
             let matched = RubyValue::Str(string_new(haystack[m_start..m_end].to_string()));
-            let replaced = blk.call(&[matched])?;
+            let replaced = blk.call(&[crate::builtins::string::reencode_strs(&matched, enc)])?;
             let mut out = String::new();
             out.push_str(&haystack[..m_start]);
             out.push_str(&replaced.to_display_string());

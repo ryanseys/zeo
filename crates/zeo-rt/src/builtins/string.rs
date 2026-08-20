@@ -3629,9 +3629,9 @@ fn sub_gsub(
                     )
                 });
                 if global {
-                    crate::regexp_gsub_block(re, &text, &p)
+                    crate::regexp_gsub_block(re, &text, enc, &p)
                 } else {
-                    crate::regexp_sub_block(re, &text, &p)
+                    crate::regexp_sub_block(re, &text, enc, &p)
                 }
             }
             other => {
@@ -3645,9 +3645,9 @@ fn sub_gsub(
         },
         (RubyValue::Regexp(re), Some(p)) => {
             if global {
-                crate::regexp_gsub_block(re, &text, &p)
+                crate::regexp_gsub_block(re, &text, enc, &p)
             } else {
-                crate::regexp_sub_block(re, &text, &p)
+                crate::regexp_sub_block(re, &text, enc, &p)
             }
         }
         (RubyValue::Str(pattern), None) => {

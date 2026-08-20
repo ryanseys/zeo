@@ -445,6 +445,17 @@ pub(super) fn try_regexp_dispatch(
                 let __h = __h.lock();
                 let __h = __h.to_utf8_lossy();
             };
+            // The block forms of `sub`/`gsub` additionally need the
+            // RECEIVER's encoding: the engine works on decoded UTF-8, so the
+            // matched substring has to be rebuilt in it before the block sees
+            // it (see `regexp_gsub_block`). Its own guard, so the other arms
+            // do not bind a name they never read.
+            let haystack_enc_guard = quote! {
+                let __h = (#recv_expr).as_str_unchecked();
+                let __h = __h.lock();
+                let __henc = __h.encoding();
+                let __h = __h.to_utf8_lossy();
+            };
             match (name, args.len()) {
                 ("=~", 1) => {
                     return Some(quote! {
@@ -509,16 +520,16 @@ pub(super) fn try_regexp_dispatch(
                     let block_id = block?;
                     let blk_expr = super::procs::emit_proc_value(cx, block_id);
                     return Some(quote! {
-                        { #haystack_guard
-                          zeo_rt::regexp_sub_block(&(#re_expr).as_regexp_unchecked(), &__h, (#blk_expr).as_proc_ref())? }
+                        { #haystack_enc_guard
+                          zeo_rt::regexp_sub_block(&(#re_expr).as_regexp_unchecked(), &__h, __henc, (#blk_expr).as_proc_ref())? }
                     });
                 }
                 ("gsub", 1) => {
                     let block_id = block?;
                     let blk_expr = super::procs::emit_proc_value(cx, block_id);
                     return Some(quote! {
-                        { #haystack_guard
-                          zeo_rt::regexp_gsub_block(&(#re_expr).as_regexp_unchecked(), &__h, (#blk_expr).as_proc_ref())? }
+                        { #haystack_enc_guard
+                          zeo_rt::regexp_gsub_block(&(#re_expr).as_regexp_unchecked(), &__h, __henc, (#blk_expr).as_proc_ref())? }
                     });
                 }
                 _ => {}
