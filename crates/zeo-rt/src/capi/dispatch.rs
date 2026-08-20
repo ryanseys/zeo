@@ -3,7 +3,7 @@
 //! row runs through.
 
 use super::ValueFn;
-use crate::{RubyValue, Signal, Symbol};
+use crate::{ClassId, RubyValue, Signal, Symbol};
 use std::mem::{ManuallyDrop, MaybeUninit};
 use zeo_abi::abi::{STATUS_OK, STATUS_SIGNAL};
 
@@ -740,4 +740,91 @@ pub unsafe extern "C" fn zeo_rt_const_private(scope: u32, name: *const u8, len: 
     i8::from(crate::constants::const_is_private(scope, unsafe {
         super::str_slice(name, len)
     }))
+}
+
+/// The `(target, holder, singleton)` candidates a refined call site bakes,
+/// as a flat `u32` triple array in `.rodata`.
+unsafe fn refine_candidates(ids: *const u32, n: usize) -> Vec<(ClassId, ClassId, bool)> {
+    if n == 0 {
+        return Vec::new();
+    }
+    unsafe { std::slice::from_raw_parts(ids, n * 3) }
+        .chunks_exact(3)
+        .map(|c| (ClassId(c[0]), ClassId(c[1]), c[2] != 0))
+        .collect()
+}
+
+/// A call at a site some `using` covers, on a name one of the covering
+/// refinements defines. Whether the refinement APPLIES depends on the
+/// receiver's runtime class, so the whole call goes through one entry that
+/// tries the refined bodies and then falls back to an ordinary send --
+/// exactly what the rustc backend's `refined_send_in` does.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_refined_send_in(
+    box_id: u32,
+    recv: *const RubyValue,
+    sym: u32,
+    argv: *const RubyValue,
+    argc: usize,
+    kw: *const RubyValue,
+    blk: *mut RubyValue,
+    ids: *const u32,
+    n_ids: usize,
+    explicit: u8,
+    out: *mut RubyValue,
+) -> i32 {
+    let cands = unsafe { refine_candidates(ids, n_ids) };
+    let call = |args: &[RubyValue], block: Option<RubyValue>| {
+        crate::dispatch::refined_send_in(
+            box_id,
+            unsafe { &*recv },
+            Symbol::from_u32(sym),
+            args,
+            block,
+            &cands,
+            explicit != 0,
+        )
+    };
+    let r = unsafe {
+        if kw.is_null() {
+            let (args, block) = call_views(argv, argc, blk);
+            call(args, block)
+        } else {
+            with_kw_args(argv, argc, kw, blk, call)
+        }
+    };
+    status_out(r, out)
+}
+
+/// `send`/`public_send`/`respond_to?`/`method` at a site some `using`
+/// covers. Two questions are open and neither is decidable at compile
+/// time: which of the entries the receiver's chain actually resolves to
+/// (any class may define its own), and whether a refinement answers the
+/// name it was handed. `entry` is the written one, as
+/// `zeo_abi::abi::REFLECT_*`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_reflect_dispatch_in(
+    box_id: u32,
+    recv: *const RubyValue,
+    entry: u8,
+    argv: *const RubyValue,
+    argc: usize,
+    blk: *mut RubyValue,
+    ids: *const u32,
+    n_ids: usize,
+    out: *mut RubyValue,
+) -> i32 {
+    use crate::dispatch::Reflect;
+    let entry = match entry {
+        zeo_abi::abi::REFLECT_SEND => Reflect::Send,
+        zeo_abi::abi::REFLECT_PUBLIC_SEND => Reflect::PublicSend,
+        zeo_abi::abi::REFLECT_RESPOND_TO => Reflect::RespondTo,
+        zeo_abi::abi::REFLECT_METHOD => Reflect::Method,
+        other => panic!("reflect_dispatch_in: unknown entry {other}"),
+    };
+    let cands = unsafe { refine_candidates(ids, n_ids) };
+    let (args, block) = unsafe { call_views(argv, argc, blk) };
+    let r =
+        crate::dispatch::reflect_dispatch_in(box_id, unsafe { &*recv }, entry, args, block, &cands);
+    status_out(r, out)
 }

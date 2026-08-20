@@ -159,6 +159,8 @@ capi_symbols!(
     literals::zeo_rt_range_new,
     numeric::zeo_rt_rational_digits,
     objects::zeo_rt_record_const_location,
+    dispatch::zeo_rt_refined_send_in,
+    dispatch::zeo_rt_reflect_dispatch_in,
     literals::zeo_rt_regexp_interp,
     literals::zeo_rt_regexp_lit,
     values::zeo_rt_release,

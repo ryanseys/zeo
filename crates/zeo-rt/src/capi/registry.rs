@@ -200,6 +200,11 @@ pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
             abi::REG_CONCEAL_CLASS => crate::constants::conceal_class(r.class),
             // Both handled in the pre-pass above.
             abi::REG_REGISTER_BUILTIN | abi::REG_SET_ANCESTORS => {}
+            abi::REG_MARK_REFINEMENT => {
+                let module = unsafe { *r.ids };
+                let target = unsafe { *r.ids.add(1) };
+                registry.mark_refinement(ClassId(r.class), ClassId(module), ClassId(target));
+            }
             abi::REG_MARK_GLOBAL_DEF_HOOK => {
                 crate::runtime_meta::mark_global_def_hook(text(r.a));
             }

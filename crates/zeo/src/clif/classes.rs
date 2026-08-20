@@ -550,11 +550,10 @@ pub(crate) fn collect_classes(
         // `ancestors`), and `singleton_class.prepend` through the same
         // materialization the instance side uses -- analyze has already put
         // the winners in `class_methods` and every position's copy in
-        // `singleton_super_targets`. A refinement's `import_methods` is the
-        // one mixin form still refused.
-        if !class.imported_modules.is_empty() {
-            return refuse("a refinement's `import_methods`");
-        }
+        // `singleton_super_targets`. A refinement's `import_methods` needs
+        // nothing here either: the RUNTIME copies the rows when the holder
+        // body's call runs, and `imported_modules` exists only so a refined
+        // call site is nominated for a name the import brought in.
         // The rest of the class surface needs no refusal: `pending_aliases`,
         // `pending_module_functions` and `class_undefined` are DRAINED or
         // applied by analyze, `runtime_undefs` is compile-side fold

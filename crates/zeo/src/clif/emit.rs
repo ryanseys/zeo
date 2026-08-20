@@ -668,6 +668,24 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
                 flag: 0,
             }),
     );
+    // A `refine` holder is a module in every respect but one: its own
+    // `.class` is `Refinement`, which is what a refined `Method#owner`
+    // reports -- and the mark is what makes the runtime's refined lookup
+    // find the holder's rows at all.
+    for (idx, _) in analyzed.compiler.classes.iter().enumerate() {
+        let holder = crate::compiler::ClassId(idx as u32);
+        if let Some((module, target)) = analyzed.compiler.refinement_of(holder) {
+            reg_rows.push(statics::RegRowSpec {
+                kind: zeo_abi::abi::REG_MARK_REFINEMENT,
+                class: holder.0,
+                a: String::new(),
+                b: String::new(),
+                f: None,
+                ids: vec![module.0, target.0],
+                flag: 0,
+            });
+        }
+    }
     // Singleton-class surrogates seed the runtime mint.
     reg_rows.extend(
         singleton_surrogates

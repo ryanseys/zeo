@@ -417,6 +417,23 @@ pub const REG_CONST_PRIVATE: u8 = 14;
 /// compiler records it by name and the runtime consults the list.
 pub const REG_MARK_GLOBAL_DEF_HOOK: u8 = 15;
 
+/// `zeo_rt_reflect_dispatch_in`'s `entry`: the reflection method as
+/// WRITTEN at the site -- which is both what the MRO is asked about and
+/// what an ordinary call dispatches when the answer is "shadowed".
+pub const REFLECT_SEND: u8 = 0;
+/// See [`REFLECT_SEND`].
+pub const REFLECT_PUBLIC_SEND: u8 = 1;
+/// See [`REFLECT_SEND`].
+pub const REFLECT_RESPOND_TO: u8 = 2;
+/// See [`REFLECT_SEND`].
+pub const REFLECT_METHOD: u8 = 3;
+
+/// A `refine` HOLDER class: `class` = the holder, `ids[0]` = the refining
+/// module, `ids[1]` = the refined target. The holder is a module in every
+/// respect but one -- its own `.class` is `Refinement`, which is what a
+/// refined `Method#owner` reports.
+pub const REG_MARK_REFINEMENT: u8 = 16;
+
 /// The byte size of the emitter's opaque `for`-loop state slot -- one
 /// stack slot per loop, filled by `zeo_rt_for_begin` and released by
 /// `zeo_rt_for_end`. The runtime asserts its own struct fits.

@@ -15,6 +15,13 @@ use zeo_abi::abi::{PAYLOAD_OFFSET, ValueTag};
 const ENC_UTF8: i64 = 1;
 
 pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
+    // A refined name at a site some `using` covers, ahead of every fold and
+    // fast path below -- a refinement may well override one of them
+    // (`String#size` is both a refinable name and an inlined length read),
+    // and the fold would devirtualize straight past the runtime match.
+    if let Some(op) = super::refine::refined_call(fx, id)? {
+        return Ok(op);
+    }
     match &fx.an.compiler.hir[id] {
         HirNode::IntegerLit(v) => {
             let v = *v;

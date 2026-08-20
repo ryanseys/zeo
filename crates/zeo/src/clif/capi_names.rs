@@ -603,6 +603,16 @@ pub const CAPI: &[CapiSig] = &[
         ret: None,
     },
     CapiSig {
+        name: "zeo_rt_refined_send_in",
+        params: &[U32, Ptr, U32, Ptr, Usize, Ptr, Ptr, Ptr, Usize, U8, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
+        name: "zeo_rt_reflect_dispatch_in",
+        params: &[U32, Ptr, U8, Ptr, Usize, Ptr, Ptr, Usize, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
         name: "zeo_rt_regexp_interp",
         params: &[Ptr, U8, U8, U8, U8, Ptr],
         ret: Some(I32),
