@@ -173,6 +173,27 @@ pub fn is_payload_root(id: ClassId) -> bool {
 ///
 /// A no-op for the roots whose superclass is already `Object` (every one but
 /// `File`).
+/// The rows a payload root's table only RE-EXPORTS from `Kernel`
+/// (`inherited_row!(kernel, ..)`) and that read the receiver's own
+/// identity rather than its contents: CRuby's `rb_obj_dup`/`rb_obj_clone`
+/// allocate through `rb_obj_class(obj)`, and `freeze` marks the object
+/// itself. Handing those the PAYLOAD copies or freezes the wrapped value
+/// instead -- `S.new("x").dup.class` answered `String`, and
+/// `s.freeze.frozen?` answered false.
+/// answers the Kernel row itself, to run against the WRAPPER -- which is
+/// what the re-export means and what the payload root's own row cannot do
+/// (its receiver downcast rejects a boxed subclass).
+pub fn wrapper_row(name: Symbol) -> Option<crate::builtins::BuiltinMethodFn> {
+    use crate::symbol::wk;
+    let re_exported = name == wk::rt_dup()
+        || name == wk::rt_clone()
+        || name == wk::rt_freeze()
+        || name == wk::rt_initialize_copy();
+    re_exported
+        .then(|| crate::builtins::kernel::lookup(name.name_str()))
+        .flatten()
+}
+
 pub fn payload_owns(root: ClassId, anc: ClassId) -> bool {
     if root == anc {
         return true;

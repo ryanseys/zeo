@@ -1482,6 +1482,9 @@ fn probe_generic_row(
         && crate::builtins::value_subclass::payload_owns(root, anc)
         && let Some(p) = o.builtin_payload()
     {
+        if let Some(k) = crate::builtins::value_subclass::wrapper_row(name) {
+            return Some(k(recv, args, block));
+        }
         let result = match f.call(&p, args, block) {
             Ok(r) => r,
             Err(e) => return Some(Err(e)),
@@ -1927,6 +1930,9 @@ pub(crate) fn builtin_row_impl(id: ClassId, name: Symbol) -> Option<MethodImpl> 
                 && crate::builtins::value_subclass::payload_owns(root, id)
                 && let Some(p) = recv.builtin_payload()
             {
+                if let Some(k) = crate::builtins::value_subclass::wrapper_row(name) {
+                    return k(&RubyValue::Object(recv.clone()), args, block);
+                }
                 let result = f(&p, args, block)?;
                 return Ok(crate::builtins::value_subclass::rewrap_self_return(
                     result,
@@ -3371,6 +3377,9 @@ fn send_in_reason(
                     .is_some_and(|r| crate::builtins::value_subclass::payload_owns(r, hit.owner))
                 && let Some(ref p) = payload
             {
+                if let Some(k) = crate::builtins::value_subclass::wrapper_row(name) {
+                    return k(&RubyValue::Object(recv.clone()), args, block);
+                }
                 let result = with_c_frame(hit.frame_label, || hit.f.call(p, args, block))?;
                 return Ok(crate::builtins::value_subclass::rewrap_self_return(
                     result,
@@ -3407,6 +3416,9 @@ fn send_in_reason(
                         .is_some_and(|r| crate::builtins::value_subclass::payload_owns(r, anc))
                         && let Some(ref p) = payload
                     {
+                        if let Some(k) = crate::builtins::value_subclass::wrapper_row(name) {
+                            return k(&boxed, args, block);
+                        }
                         let result = f.call(p, args, block)?;
                         return Ok(crate::builtins::value_subclass::rewrap_self_return(
                             result, p, recv, n,
@@ -3428,6 +3440,9 @@ fn send_in_reason(
                         .is_some_and(|r| crate::builtins::value_subclass::payload_owns(r, anc))
                         && let Some(ref p) = payload
                     {
+                        if let Some(k) = crate::builtins::value_subclass::wrapper_row(name) {
+                            return k(&boxed, args, block);
+                        }
                         let result = with_c_frame(label, || f(p, args, block))?;
                         return Ok(crate::builtins::value_subclass::rewrap_self_return(
                             result, p, recv, n,

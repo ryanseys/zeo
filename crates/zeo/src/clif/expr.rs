@@ -1579,12 +1579,22 @@ pub(crate) fn const_read(fx: &mut Fx, id: NodeId, name: &str) -> Result<Operand,
     {
         return scoped_const_read(fx, id, scope, leaf);
     }
+    // `::X` names the TOP LEVEL explicitly: no cref is consulted, and
+    // ruby's message does not echo the `::` (`uninitialized constant
+    // Nope`). Only the single-segment form reaches here -- a longer path
+    // already split above, and its scope re-asks this walk.
+    let top_level = name.starts_with("::");
+    let name = name.strip_prefix("::").unwrap_or(name);
     // The rustc `emit_const_read` bare-name shape: owner from the
     // compile-time claim map, then every enclosing cref scope, then the
     // top -- one runtime walk through `const_get_cref`, whose miss raises
     // the NameError with the cref-qualified message.
     let compiler = &fx.an.compiler;
-    let defining = lexical_class(fx).unwrap_or(crate::compiler::OBJECT_CLASS);
+    let defining = if top_level {
+        crate::compiler::OBJECT_CLASS
+    } else {
+        lexical_class(fx).unwrap_or(crate::compiler::OBJECT_CLASS)
+    };
     let top = crate::compiler::OBJECT_CLASS;
     let owner = compiler
         .class(defining)
@@ -1741,7 +1751,9 @@ fn scoped_const_read(fx: &mut Fx, id: NodeId, scope: &str, name: &str) -> Result
 /// position the caller sits: the raise diverges, so the operand it hands
 /// back is the unreachable nil every diverging arm answers.
 fn raise_uninitialized_constant(fx: &mut Fx, path: &str) -> Result<Operand, String> {
-    let message = format!("uninitialized constant {path}");
+    // A top-level path spells its root with `::`, and ruby's message does
+    // not echo it: `::Nope` reports `uninitialized constant Nope`.
+    let message = format!("uninitialized constant {}", path.trim_start_matches("::"));
     let leaf = crate::constpath::ConstPath::parse(path).base().to_string();
     let (mptr, mlen) = rodata_name(fx, &message);
     let (lptr, llen) = rodata_name(fx, &leaf);
