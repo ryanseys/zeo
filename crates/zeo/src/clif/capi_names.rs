@@ -507,7 +507,9 @@ pub const CAPI: &[CapiSig] = &[
     },
     CapiSig {
         name: "zeo_rt_proc_new",
-        params: &[Ptr, Ptr, Usize, Ptr, Ptr, Ptr, I32, U32, Ptr],
+        params: &[
+            Ptr, Ptr, Usize, Ptr, Ptr, Ptr, I32, U32, Ptr, Usize, Ptr, Usize, U32, Ptr,
+        ],
         ret: None,
     },
     CapiSig {

@@ -1048,7 +1048,7 @@ fn meta_row(
         class,
         singleton,
         name: name.to_string(),
-        params: param_entries(params),
+        params: param_entries(params, false),
         file,
         line,
         aliased_from: alias_of.unwrap_or_default().to_string(),
@@ -1059,7 +1059,7 @@ fn meta_row(
 /// declared order, with an anonymous rest/keyrest/block named for its own
 /// sigil -- ruby prints `def m(*)` as `[:rest, :*]`, and a `__`-prefixed
 /// name IS anonymous (the internal one lowering gave a bare sigil).
-fn param_entries(params: &crate::hir::Params) -> Vec<(u8, String)> {
+pub(crate) fn param_entries(params: &crate::hir::Params, block: bool) -> Vec<(u8, String)> {
     use crate::hir::KeywordParam;
     use zeo_abi::abi;
     fn named(kind: u8, name: &str) -> (u8, String) {
@@ -1082,7 +1082,11 @@ fn param_entries(params: &crate::hir::Params) -> Vec<(u8, String)> {
     for (o, _) in &params.optional {
         out.push(named(abi::PARAM_OPT, o));
     }
-    if let Some(rest) = &params.rest {
+    // A TRAILING COMMA's rest is not in a block's signature at all --
+    // `proc { |x,| }` reports just `x`.
+    if let Some(rest) = &params.rest
+        && !(block && params.implicit_rest)
+    {
         out.push(sigil(abi::PARAM_REST, rest, "*"));
     }
     for p in &params.post {

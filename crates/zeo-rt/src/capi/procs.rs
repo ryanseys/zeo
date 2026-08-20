@@ -186,6 +186,11 @@ pub unsafe extern "C" fn zeo_rt_proc_new(
     binding: *const RubyValue,
     arity: i32,
     flags: u32,
+    params: *const zeo_abi::abi::ParamC,
+    n_params: usize,
+    file: *const u8,
+    file_len: usize,
+    line: u32,
     out: *mut RubyValue,
 ) {
     let owned: Box<[LocalCell]> = (0..n_cells)
@@ -212,6 +217,21 @@ pub unsafe extern "C" fn zeo_rt_proc_new(
     );
     if flags & PROC_HOME != 0 {
         proc = proc.with_home();
+    }
+    if n_params > 0 {
+        let rows = unsafe { std::slice::from_raw_parts(params, n_params) };
+        proc = proc.with_params_owned(
+            rows.iter()
+                .map(|p| crate::ProcParamMeta {
+                    kind: proc_param_kind(p.kind),
+                    name: (p.name.len > 0)
+                        .then(|| unsafe { super::str_slice(p.name.ptr, p.name.len) }),
+                })
+                .collect(),
+        );
+    }
+    if file_len > 0 {
+        proc = proc.with_location(unsafe { super::str_slice(file, file_len) }, line);
     }
     let v = RubyValue::Proc(proc);
     super::leakcheck::created(&v);
@@ -335,4 +355,18 @@ pub unsafe extern "C" fn zeo_rt_proc_call(
         )),
     };
     status_out(r, out)
+}
+
+/// A [`zeo_abi::abi::ParamC`] kind as `Proc#parameters` spells it.
+fn proc_param_kind(kind: u8) -> &'static str {
+    use zeo_abi::abi;
+    match kind {
+        abi::PARAM_OPT => "opt",
+        abi::PARAM_REST => "rest",
+        abi::PARAM_KEYREQ => "keyreq",
+        abi::PARAM_KEY => "key",
+        abi::PARAM_KEYREST => "keyrest",
+        abi::PARAM_BLOCK => "block",
+        _ => "req",
+    }
 }

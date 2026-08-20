@@ -300,6 +300,16 @@ impl RProc {
         self
     }
 
+    /// [`RProc::with_params_static`] for a caller that BUILT the list --
+    /// the C ABI hands one over per construction rather than pointing at a
+    /// per-signature static (the names themselves are still `.rodata`).
+    pub fn with_params_owned(mut self, params: Vec<ProcParamMeta>) -> RProc {
+        if let Some(data) = Arc::get_mut(&mut self.0) {
+            data.params = std::borrow::Cow::Owned(params);
+        }
+        self
+    }
+
     /// The `Proc#parameters` metadata (empty for a runtime-internal proc).
     pub fn parameters(&self) -> &[ProcParamMeta] {
         self.0.params.as_ref()

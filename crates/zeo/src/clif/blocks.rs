@@ -215,17 +215,79 @@ fn build_closure_with(
     // PROC_LAMBDA = 1, PROC_HOME = 2 (the runtime's bits).
     let flag_bits = u32::from(is_lambda) | (u32::from(wants_home) << 1);
     let flags = fx.b.ins().iconst(types::I32, i64::from(flag_bits));
+    // `Proc#parameters` and `#source_location` (the middle of `#inspect`):
+    // the shape is compile-time knowledge, handed over per construction as
+    // a stack-built row array whose names point into `.rodata`.
+    let entries = super::emit::param_entries(params, true);
+    let params_slot = (!entries.is_empty()).then(|| {
+        fx.b.create_sized_stack_slot(StackSlotData::new(
+            StackSlotKind::ExplicitSlot,
+            entries.len() as u32 * param_c_size(),
+            3,
+        ))
+    });
+    for (i, (kind, name)) in entries.iter().enumerate() {
+        let base = i as i32 * param_c_size() as i32;
+        let ss = params_slot.expect("entries non-empty");
+        let fl = MemFlagsData::trusted();
+        let k = fx.b.ins().iconst(types::I8, i64::from(*kind));
+        let at = fx.slot_addr(ss, base + kind_off());
+        fx.b.ins().store(fl, k, at, 0);
+        let off = fx.em.intern_rodata(name.as_bytes());
+        let p = fx.rod(off);
+        let at = fx.slot_addr(ss, base + name_ptr_off());
+        fx.b.ins().store(fl, p, at, 0);
+        let n = fx.b.ins().iconst(ptr_ty, name.len() as i64);
+        let at = fx.slot_addr(ss, base + name_len_off());
+        fx.b.ins().store(fl, n, at, 0);
+    }
+    let params_ptr = match params_slot {
+        Some(ss) => fx.slot_addr(ss, 0),
+        None => fx.b.ins().iconst(ptr_ty, 0),
+    };
+    let n_params = fx.b.ins().iconst(ptr_ty, entries.len() as i64);
+    let (file, line) = fx
+        .location(site)
+        .map_or((String::new(), 0), |(f, l)| (f.to_string(), l));
+    let foff = fx.em.intern_rodata(file.as_bytes());
+    let file_ptr = fx.rod(foff);
+    let file_len = fx.b.ins().iconst(ptr_ty, file.len() as i64);
+    let line_v = fx.b.ins().iconst(types::I32, i64::from(line));
     let proc_ss = fx.temp_slot();
     let proc_addr = fx.slot_addr(proc_ss, 0);
     fx.call(
         "zeo_rt_proc_new",
         &[
-            f_addr, cells_ptr, n_cells, self_ptr, lex_blk, null, arity_v, flags, proc_addr,
+            f_addr, cells_ptr, n_cells, self_ptr, lex_blk, null, arity_v, flags, params_ptr,
+            n_params, file_ptr, file_len, line_v, proc_addr,
         ],
     );
     // The proc is owned until a send/call consumes it (moved-in blk).
     fx.owned_created += 1;
     Ok((proc_ss, names))
+}
+
+/// `ParamC`'s size and field offsets -- the stack rows a proc's parameter
+/// list is built into must match what the runtime reads back.
+fn param_c_size() -> u32 {
+    u32::try_from(std::mem::size_of::<zeo_abi::abi::ParamC>()).expect("ParamC fits a u32")
+}
+fn kind_off() -> i32 {
+    i32::try_from(std::mem::offset_of!(zeo_abi::abi::ParamC, kind)).expect("offset fits")
+}
+fn name_ptr_off() -> i32 {
+    i32::try_from(
+        std::mem::offset_of!(zeo_abi::abi::ParamC, name)
+            + std::mem::offset_of!(zeo_abi::abi::Str, ptr),
+    )
+    .expect("offset fits")
+}
+fn name_len_off() -> i32 {
+    i32::try_from(
+        std::mem::offset_of!(zeo_abi::abi::ParamC, name)
+            + std::mem::offset_of!(zeo_abi::abi::Str, len),
+    )
+    .expect("offset fits")
 }
 
 /// The block body as a `BlockFn`: env cells become (unowned) cell locals,
