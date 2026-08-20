@@ -122,17 +122,30 @@ pub(crate) fn build_proc(
     site: NodeId,
     block: NodeId,
 ) -> Result<(ir::StackSlot, Vec<String>), String> {
+    build_proc_rehomed(fx, site, block, false)
+}
+
+/// [`build_proc`] where the CALL SITE is what rebinds the block's `self`:
+/// `Ractor.new`'s isolated Proc runs with the ractor itself as receiver,
+/// which no flag on the block node records.
+pub(crate) fn build_proc_rehomed(
+    fx: &mut Fx,
+    site: NodeId,
+    block: NodeId,
+    site_rehomes: bool,
+) -> Result<(ir::StackSlot, Vec<String>), String> {
     let HirNode::Block { params, body } = &fx.an.compiler.hir[block] else {
         return fx.unsupported(block, "a non-literal block");
     };
     let (params, body) = (params.as_ref().clone(), body.clone());
     // `instance_eval`/`instance_exec` rebinds this block's `self` at run
     // time, so nothing lexical can name its class.
-    let rehomed = fx
-        .an
-        .compiler
-        .hir
-        .has_flag(block, crate::hir::NodeFlag::REHOMED_BLOCK);
+    let rehomed = site_rehomes
+        || fx
+            .an
+            .compiler
+            .hir
+            .has_flag(block, crate::hir::NodeFlag::REHOMED_BLOCK);
     // A computed-name `define_method` block IS a method body at run time:
     // `super` inside it reads the frame stack and a bare one raises ruby's
     // define_method refusal -- the two markers the literal `DefMethod` form
@@ -363,6 +376,18 @@ fn build_closure_with(
         }
         false => null,
     };
+    // `Ractor.new(&this_proc)` refuses exactly when CRuby's Proc-isolation
+    // check does, and that verdict has to ride ON THE VALUE: a dynamic
+    // proc's creation site and its `Ractor.new` site only meet at run time.
+    // Outer = a shared cell from the enclosing scope, or a name this body
+    // reads but never binds (an enclosing param/block-local); ruby reports
+    // the alphabetically first. Self/ivar access is deliberately NOT
+    // recorded -- ruby isolates such a proc fine, and its ivar reads fail
+    // later, inside the ractor.
+    let outer = outer_capture(fx, params, body);
+    let ooff = fx.em.intern_rodata(outer.as_bytes());
+    let outer_ptr = fx.rod(ooff);
+    let outer_len = fx.b.ins().iconst(ptr_ty, outer.len() as i64);
     let proc_ss = fx.temp_slot();
     let proc_addr = fx.slot_addr(proc_ss, 0);
     fx.call(
@@ -381,6 +406,8 @@ fn build_closure_with(
             file_ptr,
             file_len,
             line_v,
+            outer_ptr,
+            outer_len,
             proc_addr,
         ],
     );
@@ -951,7 +978,18 @@ pub(crate) fn literal_block_ptr(
     site: NodeId,
     block: NodeId,
 ) -> Result<ir::Value, String> {
-    let (proc_ss, _names) = build_proc(fx, site, block)?;
+    literal_block_ptr_rehomed(fx, site, block, false)
+}
+
+/// [`literal_block_ptr`] for a site that rebinds the block's `self` --
+/// see [`build_proc_rehomed`].
+pub(crate) fn literal_block_ptr_rehomed(
+    fx: &mut Fx,
+    site: NodeId,
+    block: NodeId,
+    site_rehomes: bool,
+) -> Result<ir::Value, String> {
+    let (proc_ss, _names) = build_proc_rehomed(fx, site, block, site_rehomes)?;
     let blk_ptr = fx.slot_addr(proc_ss, 0);
     fx.owned_consumed += 1;
     Ok(blk_ptr)
@@ -1120,4 +1158,25 @@ pub(crate) fn catch_break(fx: &mut Fx, status: ir::Value, out: ir::Value) {
     fx.call("zeo_rt_signal_take", &[out]);
     fx.b.ins().jump(ok, &[]);
     fx.b.switch_to_block(ok);
+}
+
+/// The name a `Ractor.new` isolation check reports for this block, or the
+/// empty string when it isolates cleanly. See the call site's note.
+fn outer_capture(fx: &Fx, params: &crate::hir::Params, body: &[NodeId]) -> String {
+    let caps = captures::block_captures(
+        &fx.an.compiler,
+        params,
+        body,
+        class_query::SelfClass::new(fx.method_class, None),
+    );
+    let mut names: Vec<&String> = caps
+        .locals
+        .iter()
+        .filter(|n| {
+            matches!(fx.locals.get(n.as_str()), Some(Local::Cell { .. }))
+                || !caps.assigned.contains(n.as_str())
+        })
+        .collect();
+    names.sort();
+    names.first().map_or_else(String::new, |n| (*n).clone())
 }

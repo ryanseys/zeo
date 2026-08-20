@@ -191,6 +191,8 @@ pub unsafe extern "C" fn zeo_rt_proc_new(
     file: *const u8,
     file_len: usize,
     line: u32,
+    outer: *const u8,
+    outer_len: usize,
     out: *mut RubyValue,
 ) {
     let owned: Box<[LocalCell]> = (0..n_cells)
@@ -239,6 +241,11 @@ pub unsafe extern "C" fn zeo_rt_proc_new(
     }
     if file_len > 0 {
         proc = proc.with_location(unsafe { super::str_slice(file, file_len) }, line);
+    }
+    // The Ractor-isolation verdict rides ON THE VALUE: a dynamic proc's
+    // creation site and its `Ractor.new` site only meet at run time.
+    if outer_len > 0 {
+        proc = proc.with_outer_capture(unsafe { super::static_str(outer, outer_len) });
     }
     let v = RubyValue::Proc(proc);
     super::leakcheck::created(&v);

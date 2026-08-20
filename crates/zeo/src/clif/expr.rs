@@ -15,6 +15,13 @@ use zeo_abi::abi::{PAYLOAD_OFFSET, ValueTag};
 const ENC_UTF8: i64 = 1;
 
 pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
+    // `Ractor.new(*args, name: ...) { }` -- the one concurrency constructor
+    // with no usable runtime row: the block must be built as an isolated
+    // Proc where the compiler can see the capture set, so the site is
+    // recognized here rather than dispatched.
+    if let Some(op) = ractor_new(fx, id)? {
+        return Ok(op);
+    }
     // A refined name at a site some `using` covers, ahead of every fold and
     // fast path below -- a refinement may well override one of them
     // (`String#size` is both a refinable name and an inlined length read),
@@ -3539,4 +3546,118 @@ fn runtime_def(
         owned: true,
         tag: TagInfo::Known(ValueTag::Symbol as u8),
     })
+}
+
+/// `Ractor.new(*args, name: ...) { |*p| }` / `Ractor.new(&proc)`. The
+/// block is an ordinary escaping Proc carrying its own isolation verdict
+/// (`RProc::with_outer_capture`), which `zeo_rt_ractor_new` reads and
+/// refuses on at exactly the moment CRuby's own Proc-isolation check does.
+fn ractor_new(fx: &mut Fx, id: NodeId) -> Result<Option<Operand>, String> {
+    let HirNode::Call {
+        receiver: Some(recv),
+        name,
+        args,
+        kwargs,
+        block,
+        block_arg,
+        safe: false,
+    } = &fx.an.compiler.hir[id]
+    else {
+        return Ok(None);
+    };
+    if name != "new" {
+        return Ok(None);
+    }
+    let target = match &fx.an.compiler.hir[*recv] {
+        HirNode::ClassRef(n) => n.as_str(),
+        HirNode::QualifiedConstRead(scope, n) if scope == "Object" => n.as_str(),
+        _ => return Ok(None),
+    };
+    if resolve_class_here(fx, target) != Some(zeo_abi::RACTOR_CLASS) {
+        return Ok(None);
+    }
+    let (args, kwargs, block, block_arg) = (args.clone(), kwargs.clone(), *block, *block_arg);
+    let mut name_node = None;
+    for kw in &kwargs {
+        match kw {
+            crate::hir::KwArg::Pair(k, v) if matches!(&fx.an.compiler.hir[*k], HirNode::SymbolLit(s) if s == "name") =>
+            {
+                name_node = Some(*v);
+            }
+            _ => {
+                return fx
+                    .unsupported(id, "a `Ractor.new` keyword other than `name:`")
+                    .map(Some);
+            }
+        }
+    }
+    let argv = super::call::build_argv(fx, id, &args)?;
+    let name_ptr = match name_node {
+        Some(v) => {
+            let op = lower_expr(fx, v)?;
+            let p = ownership::borrow_ptr(fx, &op);
+            if op.owned() {
+                ownership::pool_owned(fx, p, op.tag());
+            }
+            p
+        }
+        None => fx.b.ins().iconst(fx.em.ptr, 0),
+    };
+    let blk = match (block, block_arg) {
+        (Some(b), _) => super::blocks::literal_block_ptr_rehomed(fx, id, b, true)?,
+        (None, Some(ba)) => super::blocks::block_arg_ptr(fx, ba)?,
+        (None, None) => fx.b.ins().iconst(fx.em.ptr, 0),
+    };
+    // The literal block's own site, for `#inspect`'s `#<Ractor:#2 file:4>`
+    // slot. A dynamic proc passes nothing: `ractor_new` reads the current
+    // frame, which IS the `Ractor.new` call site -- CRuby's slot for that
+    // shape.
+    let (file, line) = match block.and_then(|b| fx.location(b)) {
+        Some((f, l)) => (format!("{f}:{l}"), 1),
+        None => (String::new(), 0),
+    };
+    let off = fx.em.intern_rodata(file.as_bytes());
+    let loc_ptr = fx.rod(off);
+    let loc_len =
+        fx.b.ins()
+            .iconst(fx.em.ptr, if line == 0 { 0 } else { file.len() as i64 });
+    let argc = fx.b.ins().iconst(fx.em.ptr, args.len() as i64);
+    let ss = fx.temp_slot();
+    let out = fx.slot_addr(ss, 0);
+    let status = fx
+        .call(
+            "zeo_rt_ractor_new",
+            &[blk, argv, argc, name_ptr, loc_ptr, loc_len, out],
+        )
+        .expect("ractor_new returns a status");
+    fx.fallible(status);
+    fx.owned_created += 1;
+    Ok(Some(Operand::Slot {
+        ss,
+        owned: true,
+        tag: TagInfo::Unknown,
+    }))
+}
+
+/// Whether `id` is a call whose lowering is decided by the SITE rather
+/// than by dispatch -- a refinement-covered call, or `Ractor.new`. Both
+/// are recognized at the head of [`lower_expr`]; a statement-position call
+/// carrying a literal block does not route through it, so `lower_stmt`
+/// asks this first.
+pub(crate) fn site_decided_call(fx: &Fx, id: NodeId) -> bool {
+    let HirNode::Call { receiver, name, .. } = &fx.an.compiler.hir[id] else {
+        return false;
+    };
+    if !fx.an.compiler.refinements_active_at(id).is_empty() {
+        return true;
+    }
+    name == "new"
+        && receiver.is_some_and(|r| {
+            let target = match &fx.an.compiler.hir[r] {
+                HirNode::ClassRef(n) => n.as_str(),
+                HirNode::QualifiedConstRead(scope, n) if scope == "Object" => n.as_str(),
+                _ => return false,
+            };
+            resolve_class_here(fx, target) == Some(zeo_abi::RACTOR_CLASS)
+        })
 }

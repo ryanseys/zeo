@@ -172,10 +172,15 @@ pub(crate) fn dyn_ivar_recv(fx: &mut Fx) -> cranelift_codegen::ir::Value {
 /// the rustc `ivar_get_dyn_isolated` shape.
 pub(crate) fn ivar_read_op(fx: &mut Fx, name: &str) -> Result<super::operand::Operand, String> {
     use super::operand::{Operand, TagInfo};
-    if fx.dyn_ivars || fx.self_is_class || fx.method_class.is_none() {
+    if fx.dyn_ivars || fx.self_is_dynamic || fx.self_is_class || fx.method_class.is_none() {
         // A `self_is_class` body's `@x` is a CLASS-level ivar; the runtime's
         // name-keyed path routes a `RubyValue::Class` receiver to `civars`,
         // so the same call serves both.
+        //
+        // A DYNAMIC self has no statically-known layout to take a slot
+        // from at all: an `*_eval` or a `Ractor.new` block rebinds the
+        // receiver, and the name-keyed entry carries CRuby's Ractor guard
+        // with it (rustc asks `self_is_dynamic` first for the same reason).
         return name_keyed_ivar_read(fx, name);
     }
     let Some(slot) = ivar_slot_of(fx, name) else {
@@ -224,7 +229,12 @@ pub(crate) fn ivar_write_op(
     op: super::operand::Operand,
 ) -> Result<(), String> {
     let slot = ivar_slot_of(fx, name);
-    if slot.is_none() || fx.dyn_ivars || fx.self_is_class || fx.method_class.is_none() {
+    if slot.is_none()
+        || fx.dyn_ivars
+        || fx.self_is_dynamic
+        || fx.self_is_class
+        || fx.method_class.is_none()
+    {
         let recv = dyn_ivar_recv(fx);
         let tag = op.tag();
         let ptr = ownership::borrow_ptr(fx, &op);
@@ -567,6 +577,15 @@ fn lower_tail_expr(fx: &mut Fx, tail: NodeId) -> Result<super::operand::Operand,
 
 pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
     stamp_line(fx, stmt);
+    // A call the SITE decides (a refinement-covered name, `Ractor.new`)
+    // lowers as an expression whose value is discarded: the arms below
+    // include shapes -- a literal block, an inline iterator -- that would
+    // otherwise take a dispatch path the site is entitled to override.
+    if super::expr::site_decided_call(fx, stmt) {
+        let op = lower_expr(fx, stmt)?;
+        ownership::discard(fx, op);
+        return Ok(());
+    }
     match &fx.an.compiler.hir[stmt] {
         HirNode::LocalWrite(name, value) => {
             let name = name.clone();

@@ -553,7 +553,7 @@ pub const CAPI: &[CapiSig] = &[
     CapiSig {
         name: "zeo_rt_proc_new",
         params: &[
-            Ptr, Ptr, Usize, Ptr, Ptr, Ptr, I32, U32, Ptr, Usize, Ptr, Usize, U32, Ptr,
+            Ptr, Ptr, Usize, Ptr, Ptr, Ptr, I32, U32, Ptr, Usize, Ptr, Usize, U32, Ptr, Usize, Ptr,
         ],
         ret: None,
     },
@@ -566,6 +566,11 @@ pub const CAPI: &[CapiSig] = &[
         name: "zeo_rt_propagating_leave",
         params: &[U8],
         ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_ractor_new",
+        params: &[Ptr, Ptr, Usize, Ptr, Ptr, Usize, Ptr],
+        ret: Some(I32),
     },
     CapiSig {
         name: "zeo_rt_raise_error",

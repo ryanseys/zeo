@@ -7,8 +7,8 @@
 //! user's program.
 
 use super::{
-    bind, dispatch, ffi, forloop, frames, kernel, lifecycle, literals, numeric, objects, patterns,
-    procs, registry, signals, values,
+    bind, concurrency, dispatch, ffi, forloop, frames, kernel, lifecycle, literals, numeric,
+    objects, patterns, procs, registry, signals, values,
 };
 
 macro_rules! capi_symbols {
@@ -152,6 +152,7 @@ capi_symbols!(
     procs::zeo_rt_proc_new,
     signals::zeo_rt_propagating_enter,
     signals::zeo_rt_propagating_leave,
+    concurrency::zeo_rt_ractor_new,
     signals::zeo_rt_raise_error,
     objects::zeo_rt_raise_private_constant,
     objects::zeo_rt_raise_uninitialized_constant,

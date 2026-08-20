@@ -471,6 +471,8 @@ fn a_c_proc_captures_cells_and_yields() {
             std::ptr::null(),
             0,
             0,
+            std::ptr::null(),
+            0,
             blkv.as_mut_ptr(),
         )
     };
@@ -551,6 +553,8 @@ fn yield_without_a_block_signals() {
             0,
             std::ptr::null(),
             0,
+            0,
+            std::ptr::null(),
             0,
             blkv.as_mut_ptr(),
         )
