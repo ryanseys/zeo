@@ -377,6 +377,12 @@ pub const REG_MARK_UNDEFINED: u8 = 8;
 /// guarded body reveals it.
 pub const REG_CONCEAL_CLASS: u8 = 9;
 
+/// A builtin reopen that CHANGED the class's ancestry (`class Array;
+/// include M; end`): `ids` = the full ancestor chain, patched over the
+/// entry `register_builtins` already made rather than replacing it (a
+/// re-register would carry no constructor).
+pub const REG_SET_ANCESTORS: u8 = 10;
+
 /// A lazily-run feature unit -- the `install_feature_units` twin.
 #[repr(C)]
 pub struct UnitRow {

@@ -186,6 +186,10 @@ pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
                 value_fn(r.f.expect("a super-target row carries its fn")),
             ),
             abi::REG_CONCEAL_CLASS => crate::constants::conceal_class(r.class),
+            abi::REG_SET_ANCESTORS => {
+                let ids = unsafe { rows(r.ids, r.n_ids) };
+                registry.set_ancestors(ClassId(r.class), ids.iter().map(|&i| ClassId(i)).collect());
+            }
             abi::REG_MARK_UNDEFINED => {
                 registry.mark_undefined(ClassId(r.class), Symbol::intern(text(r.a)));
             }

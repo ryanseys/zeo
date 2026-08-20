@@ -180,6 +180,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
         alias_rows,
         undef_rows,
         conceal,
+        set_ancestors,
     ) = (
         collected.classes,
         collected.methods,
@@ -194,6 +195,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
         collected.alias_rows,
         collected.undef_rows,
         collected.conceal,
+        collected.set_ancestors,
     );
     for def in &defs {
         let func = em.methods[&def.name].body;
@@ -489,6 +491,19 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
                 b: String::new(),
                 f: Some(*tramp),
                 ids: vec![*module],
+            }),
+    );
+    // A builtin reopen that changed the ancestry patches the chain.
+    reg_rows.extend(
+        set_ancestors
+            .iter()
+            .map(|(class, ancestors)| statics::RegRowSpec {
+                kind: zeo_abi::abi::REG_SET_ANCESTORS,
+                class: *class,
+                a: String::new(),
+                b: String::new(),
+                f: None,
+                ids: ancestors.clone(),
             }),
     );
     // Runtime-conditional classes start concealed.
