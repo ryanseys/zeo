@@ -181,6 +181,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
         undef_rows,
         conceal,
         set_ancestors,
+        register_builtin,
     ) = (
         collected.classes,
         collected.methods,
@@ -196,6 +197,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
         collected.undef_rows,
         collected.conceal,
         collected.set_ancestors,
+        collected.register_builtin,
     );
     for def in &defs {
         let func = em.methods[&def.name].body;
@@ -445,6 +447,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             b: String::new(),
             f: None,
             ids: vec![],
+            flag: 0,
         })
         .collect();
     reg_rows.extend(own_cm.iter().map(|(class, name)| statics::RegRowSpec {
@@ -454,6 +457,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
         b: String::new(),
         f: None,
         ids: vec![],
+        flag: 0,
     }));
     // Own-`super`-target rows: every OWN instance method's trampoline is
     // already receiver-generic, so it doubles as the class's per-position
@@ -470,6 +474,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
                 b: String::new(),
                 f: Some(m.tramp),
                 ids: vec![],
+                flag: 0,
             }),
     );
     // `extend M` rows: the modules on each class's singleton chain.
@@ -480,6 +485,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
         b: String::new(),
         f: None,
         ids: mods.clone(),
+        flag: 0,
     }));
     // Singleton-chain super-target rows, keyed `(class, module, name)`.
     reg_rows.extend(
@@ -491,6 +497,21 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
                 b: String::new(),
                 f: Some(*tramp),
                 ids: vec![*module],
+                flag: 0,
+            }),
+    );
+    // Require-gated builtins register per program.
+    reg_rows.extend(
+        register_builtin
+            .iter()
+            .map(|(class, name, is_module, ancestors)| statics::RegRowSpec {
+                kind: zeo_abi::abi::REG_REGISTER_BUILTIN,
+                class: *class,
+                a: name.clone(),
+                b: String::new(),
+                f: None,
+                ids: ancestors.clone(),
+                flag: u8::from(*is_module),
             }),
     );
     // A builtin reopen that changed the ancestry patches the chain.
@@ -504,6 +525,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
                 b: String::new(),
                 f: None,
                 ids: ancestors.clone(),
+                flag: 0,
             }),
     );
     // Runtime-conditional classes start concealed.
@@ -514,6 +536,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
         b: String::new(),
         f: None,
         ids: vec![],
+        flag: 0,
     }));
     // `undef` marks.
     reg_rows.extend(undef_rows.iter().map(|(class, name)| statics::RegRowSpec {
@@ -523,6 +546,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
         b: String::new(),
         f: None,
         ids: vec![],
+        flag: 0,
     }));
     // Builtin-source alias name-indirection rows.
     reg_rows.extend(
@@ -539,6 +563,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
                 b: old.clone(),
                 f: None,
                 ids: vec![],
+                flag: 0,
             }),
     );
     let desc = statics::define_desc(

@@ -383,6 +383,13 @@ pub const REG_CONCEAL_CLASS: u8 = 9;
 /// re-register would carry no constructor).
 pub const REG_SET_ANCESTORS: u8 = 10;
 
+/// A require-GATED builtin (an extension class) registers per program --
+/// `register_builtins` covers only the always-on ones. `a` = the
+/// fully-qualified display name, `flag` = is-a-module, `ids` = the
+/// ancestor chain; the entry carries no constructor, exactly as rustc's
+/// `__registry.register(.., None)` does.
+pub const REG_REGISTER_BUILTIN: u8 = 11;
+
 /// A lazily-run feature unit -- the `install_feature_units` twin.
 #[repr(C)]
 pub struct UnitRow {

@@ -131,6 +131,9 @@ pub(crate) struct CollectedClasses {
     /// `(class, ancestor ids)` -- a builtin reopen that CHANGED the
     /// ancestry patches the entry `register_builtins` already made.
     pub set_ancestors: Vec<(u32, Vec<u32>)>,
+    /// `(class, fq name, is_module, ancestor ids)` -- a require-gated
+    /// builtin, which `register_builtins` does not cover.
+    pub register_builtin: Vec<(u32, String, bool, Vec<u32>)>,
     /// `(class, new, old, is_class_side)` -- builtin-source alias rows
     /// (`register_alias` / `register_class_alias` name indirections).
     pub alias_rows: Vec<(u32, String, String, bool)>,
@@ -165,6 +168,7 @@ pub(crate) fn collect_classes(
     let mut alias_rows: Vec<(u32, String, String, bool)> = Vec::new();
     let mut conceal: Vec<u32> = Vec::new();
     let mut set_ancestors: Vec<(u32, Vec<u32>)> = Vec::new();
+    let mut register_builtin: Vec<(u32, String, bool, Vec<u32>)> = Vec::new();
     // Builtin-source alias rows, every class including the toplevel (rustc's
     // `alias_registration_rows`; the boxed-overlay target case is refused
     // with its class). A require-gated builtin whose feature never fired
@@ -186,6 +190,35 @@ pub(crate) fn collect_classes(
         }
     }
 
+    // Builtin registry patches, rustc's two emission points:
+    //
+    // - a BOOTSTRAP (exception) class whose own mixin changed its chain
+    //   patches it; one whose computed chain merely differs keeps what
+    //   `with_core` gave it;
+    // - an always-on builtin with its DEFAULT ancestors is registered once
+    //   by `register_builtins`, so nothing is emitted for it, while a
+    //   require-GATED extension registers per program and a reopen that
+    //   CHANGED the ancestry PATCHES the existing entry -- a full
+    //   re-register carries no constructor and would take `.new` away.
+    for (idx, class) in compiler.classes.iter().enumerate() {
+        let cid = crate::compiler::ClassId(idx as u32);
+        let chain = || class.ancestors.iter().map(|a| a.0).collect::<Vec<u32>>();
+        if class.is_bootstrap && !(class.prepends.is_empty() && class.includes.is_empty()) {
+            set_ancestors.push((idx as u32, chain()));
+        }
+        if !((class.is_builtin || idx == 0) && compiler.feature_active(cid))
+            || class.builtin_overlay.is_some()
+            || class.box_id != 0
+        {
+            continue;
+        }
+        if zeo_abi::is_gated_builtin(cid) {
+            register_builtin.push((idx as u32, compiler.fq_name(cid), class.is_module, chain()));
+        } else if class.ancestors != zeo_abi::declared_ancestors(cid) {
+            set_ancestors.push((idx as u32, chain()));
+        }
+    }
+
     // REOPENED builtins first (rustc's builtin-registration loop): a
     // non-bootstrap builtin's user methods ride the VALUE channel on the
     // builtin's own id (they dispatch FIRST, before the native table); a
@@ -195,30 +228,6 @@ pub(crate) fn collect_classes(
     for (idx, class) in compiler.classes.iter().enumerate() {
         if idx == 0 || !(class.is_builtin || class.is_bootstrap) {
             continue;
-        }
-        let cid = crate::compiler::ClassId(idx as u32);
-        // A reopen that CHANGED the ancestry (`class Array; include M; end`)
-        // patches the entry `register_builtins` already made, rather than
-        // replacing it -- a full re-register would pass no constructor and
-        // silently take `.new` away. Emitted whether or not the reopen also
-        // defines methods, and BEFORE the delta guards below, which skip a
-        // reopen that defines none. A BOOTSTRAP class only patches when it
-        // has a mixin of its own: one whose computed chain merely differs
-        // must keep the chain `with_core` gave it.
-        if compiler.feature_active(cid)
-            && class.builtin_overlay.is_none()
-            && class.box_id == 0
-            && class.ancestors != zeo_abi::declared_ancestors(cid)
-            && (!class.is_bootstrap || !(class.prepends.is_empty() && class.includes.is_empty()))
-        {
-            if zeo_abi::is_gated_builtin(cid) {
-                return Err(format!(
-                    "the CLIF backend cannot lower an ancestry-changing reopen of a \
-                     require-gated builtin yet (class {})",
-                    compiler.fq_name(cid)
-                ));
-            }
-            set_ancestors.push((idx as u32, class.ancestors.iter().map(|a| a.0).collect()));
         }
         // The entries this id will actually carry. A BOOTSTRAP (exception)
         // reopen keeps only its DELTAS -- a body defined on a native-backed
@@ -1049,5 +1058,6 @@ pub(crate) fn collect_classes(
         undef_rows,
         conceal,
         set_ancestors,
+        register_builtin,
     })
 }

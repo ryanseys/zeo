@@ -143,6 +143,25 @@ pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
             k => panic!("register_program: unknown class kind {k} ({name})"),
         }
     }
+    // The two REGISTRY-SHAPE rows run BEFORE any method row, exactly where
+    // rustc's `main` puts its builtin registrations: a row cannot be defined
+    // on a class the registry has not seen, and a chain patch must be in
+    // place before anything walks it.
+    for r in unsafe { rows(desc.reg_rows, desc.n_reg_rows) } {
+        let ids = || {
+            unsafe { rows(r.ids, r.n_ids) }
+                .iter()
+                .map(|&i| ClassId(i))
+                .collect::<Vec<_>>()
+        };
+        match r.kind {
+            abi::REG_REGISTER_BUILTIN => {
+                registry.register(ClassId(r.class), text(r.a), r.flag != 0, ids(), None);
+            }
+            abi::REG_SET_ANCESTORS => registry.set_ancestors(ClassId(r.class), ids()),
+            _ => {}
+        }
+    }
     for r in unsafe { rows(desc.obj_rows, desc.n_obj_rows) } {
         registry.define_method_c(
             ClassId(r.class),
@@ -186,10 +205,8 @@ pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
                 value_fn(r.f.expect("a super-target row carries its fn")),
             ),
             abi::REG_CONCEAL_CLASS => crate::constants::conceal_class(r.class),
-            abi::REG_SET_ANCESTORS => {
-                let ids = unsafe { rows(r.ids, r.n_ids) };
-                registry.set_ancestors(ClassId(r.class), ids.iter().map(|&i| ClassId(i)).collect());
-            }
+            // Both handled in the pre-pass above.
+            abi::REG_REGISTER_BUILTIN | abi::REG_SET_ANCESTORS => {}
             abi::REG_MARK_UNDEFINED => {
                 registry.mark_undefined(ClassId(r.class), Symbol::intern(text(r.a)));
             }

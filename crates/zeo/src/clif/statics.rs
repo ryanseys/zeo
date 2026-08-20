@@ -349,6 +349,8 @@ pub(crate) struct RegRowSpec {
     pub f: Option<FuncId>,
     /// `REG_EXTENDS`' module ids; empty for every other kind.
     pub ids: Vec<u32>,
+    /// `REG_REGISTER_BUILTIN`'s is-a-module bit; 0 for every other kind.
+    pub flag: u8,
 }
 
 /// One `ObjRow` (an object-channel method on a compiled class).
@@ -526,6 +528,7 @@ fn define_reg_rows(em: &mut Emitter, rows: &[RegRowSpec]) -> Result<Option<DataI
     for (i, row) in rows.iter().enumerate() {
         let base = i * size;
         bytes[base + std::mem::offset_of!(RegRow, kind)] = row.kind;
+        bytes[base + std::mem::offset_of!(RegRow, flag)] = row.flag;
         bytes[base + std::mem::offset_of!(RegRow, class)
             ..base + std::mem::offset_of!(RegRow, class) + 4]
             .copy_from_slice(&row.class.to_le_bytes());
