@@ -507,6 +507,13 @@ pub(crate) fn collect_classes(
 
     for (idx, class) in compiler.classes.iter().enumerate() {
         if idx == 0 || class.is_builtin || class.is_bootstrap {
+            // A builtin needs no registrar of its own, but its singleton
+            // chain still does: `CGI` EXTENDS the module it includes
+            // (`zeo_abi::BUILTIN_EXTENDS`), and without the row
+            // `CGI.escapeHTML` reaches no body at all.
+            if !class.extends.is_empty() {
+                extends.push((idx as u32, class.extends.iter().map(|m| m.0).collect()));
+            }
             continue;
         }
         let name = compiler.fq_name(crate::compiler::ClassId(idx as u32));
