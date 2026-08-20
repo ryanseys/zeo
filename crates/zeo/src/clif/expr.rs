@@ -2512,6 +2512,49 @@ fn defined_cond(fx: &mut Fx, hit: cranelift_codegen::ir::Value, s: &str) -> Oper
     }
 }
 
+/// `"expression"` when every one of `nodes` is itself defined, else nil --
+/// what a collection literal answers, CRuby recursing into its elements.
+/// Each element's own `defined?` is lowered and the answers are ANDed; an
+/// empty literal is defined outright.
+fn defined_all_or_nil(fx: &mut Fx, site: NodeId, nodes: &[NodeId]) -> Result<Operand, String> {
+    let ss = fx.temp_slot();
+    let dst = fx.slot_addr(ss, 0);
+    let yes = fx.b.create_block();
+    let no = fx.b.create_block();
+    let merge = fx.b.create_block();
+    for &n in nodes {
+        let op = lower_defined(fx, site, n)?;
+        let p = ownership::borrow_ptr(fx, &op);
+        if op.owned() {
+            ownership::pool_owned(fx, p, op.tag());
+        }
+        let fl = cranelift_codegen::ir::MemFlagsData::trusted();
+        let tag = fx.b.ins().load(types::I8, fl, p, 0);
+        let defined = fx.b.ins().icmp_imm_u(
+            cranelift_codegen::ir::condcodes::IntCC::NotEqual,
+            tag,
+            i64::from(ValueTag::Nil as u8),
+        );
+        let next = fx.b.create_block();
+        fx.b.ins().brif(defined, next, &[], no, &[]);
+        fx.b.switch_to_block(next);
+    }
+    fx.b.ins().jump(yes, &[]);
+    fx.b.switch_to_block(yes);
+    defined_str(fx, dst, "expression");
+    fx.b.ins().jump(merge, &[]);
+    fx.b.switch_to_block(no);
+    ownership::write_move_into(fx, &Operand::Nil, dst);
+    fx.b.ins().jump(merge, &[]);
+    fx.b.switch_to_block(merge);
+    fx.owned_created += 1;
+    Ok(Operand::Slot {
+        ss,
+        owned: true,
+        tag: TagInfo::Unknown,
+    })
+}
+
 /// The static half of `defined_cond`.
 fn defined_static(fx: &mut Fx, s: Option<&str>) -> Operand {
     match s {
@@ -2822,11 +2865,27 @@ fn defined_rest(fx: &mut Fx, site: NodeId, inner: NodeId) -> Result<Operand, Str
         let tag = fx.b.ins().load(types::I8, fl, mout, 0);
         return Ok(defined_cond(fx, tag, "global-variable"));
     }
-    if matches!(
-        &fx.an.compiler.hir[inner],
-        HirNode::ArrayLit(_) | HirNode::HashLit(_)
-    ) {
-        return fx.unsupported(site, "a `defined?` over a collection literal");
+    // An array/hash literal answers "expression" only if EVERY element is
+    // itself defined -- CRuby recurses (`defined?([Missing, Array])` is nil,
+    // `defined?([1, Array])` is "expression"). An empty literal is defined.
+    if let HirNode::ArrayLit(elems) = &fx.an.compiler.hir[inner] {
+        let nodes: Vec<NodeId> = elems
+            .iter()
+            .map(|e| match e {
+                crate::hir::ArrayElem::Single(n) | crate::hir::ArrayElem::Splat(n) => *n,
+            })
+            .collect();
+        return defined_all_or_nil(fx, site, &nodes);
+    }
+    if let HirNode::HashLit(entries) = &fx.an.compiler.hir[inner] {
+        let mut nodes = Vec::new();
+        for e in entries {
+            match e {
+                crate::hir::KwArg::Pair(k, v) => nodes.extend([*k, *v]),
+                crate::hir::KwArg::DoubleSplat(n) => nodes.push(*n),
+            }
+        }
+        return defined_all_or_nil(fx, site, &nodes);
     }
     if let HirNode::IvarRead(name) = &fx.an.compiler.hir[inner] {
         let name = name.clone();

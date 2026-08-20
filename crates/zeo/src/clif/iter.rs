@@ -49,9 +49,6 @@ pub(crate) fn lower_counted(
     {
         return fx.unsupported(site, "this block's parameter shape");
     }
-    if matches!(counted, Counted::Range { .. }) && result.is_some() {
-        return fx.unsupported(site, "a fused range-each in value position");
-    }
     let param = params.required.first().cloned();
     // A name first-assigned INSIDE the block is fresh on every invocation
     // in ruby. This splice shares the enclosing scope, where the name was
@@ -193,15 +190,44 @@ pub(crate) fn lower_counted(
 
     fx.b.switch_to_block(exit_normal);
     if let Some(dst) = result {
-        // Only `times` reaches here in value position: its value is the
-        // receiver.
-        let Counted::Times { n } = *counted else {
-            unreachable!("range-each in value position refused above");
-        };
-        let n_v = fx.b.ins().iconst(types::I64, n);
-        let tag = fx.b.ins().iconst(types::I8, i64::from(ValueTag::Int as u8));
-        fx.b.ins().store(fl, tag, dst, 0);
-        fx.b.ins().store(fl, n_v, dst, PAYLOAD_OFFSET as i32);
+        // The loop's value is its RECEIVER: the count for `times`, the range
+        // itself for a range-`each`. The range is rebuilt here from the same
+        // literal endpoints the bounds came from -- the receiver was a
+        // literal, which is what made the fusion legal in the first place.
+        match *counted {
+            Counted::Times { n } => {
+                let n_v = fx.b.ins().iconst(types::I64, n);
+                let tag = fx.b.ins().iconst(types::I8, i64::from(ValueTag::Int as u8));
+                fx.b.ins().store(fl, tag, dst, 0);
+                fx.b.ins().store(fl, n_v, dst, PAYLOAD_OFFSET as i32);
+            }
+            Counted::Range {
+                start,
+                end,
+                exclusive,
+            } => {
+                let int_slot = |fx: &mut Fx, v: i64| {
+                    let ss = fx.b.create_sized_stack_slot(StackSlotData::new(
+                        StackSlotKind::ExplicitSlot,
+                        zeo_abi::abi::VALUE_SIZE as u32,
+                        3,
+                    ));
+                    let addr = fx.slot_addr(ss, 0);
+                    let tag = fx.b.ins().iconst(types::I8, i64::from(ValueTag::Int as u8));
+                    let n = fx.b.ins().iconst(types::I64, v);
+                    fx.b.ins().store(fl, tag, addr, 0);
+                    fx.b.ins().store(fl, n, addr, PAYLOAD_OFFSET as i32);
+                    addr
+                };
+                let a = int_slot(fx, start);
+                let b = int_slot(fx, end);
+                let excl = fx.b.ins().iconst(types::I8, i64::from(exclusive));
+                let status = fx
+                    .call("zeo_rt_range_new", &[a, b, excl, dst])
+                    .expect("range_new returns a status");
+                fx.fallible(status);
+            }
+        }
     }
     fx.b.ins().jump(exit, &[]);
 

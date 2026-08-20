@@ -71,7 +71,15 @@ pub(crate) fn direct_call(
     call_args.push(out);
     let inst = fx.b.ins().call(fref, &call_args);
     let status = fx.b.func.dfg.inst_results(inst)[0];
-    fx.fallible(status);
+    // A `break` inside the literal block ENDS THIS CALL with its value
+    // (CRuby's TAG_BREAK), however deep the `yield` that reached it sits --
+    // the same landing every dynamic block-passing send opens. Without it
+    // the signal ran past the top level.
+    if blk_ptr.is_some() && block.is_some() {
+        super::blocks::catch_break(fx, status, out);
+    } else {
+        fx.fallible(status);
+    }
     fx.owned_created += 1;
     Ok(Operand::Slot {
         ss,
