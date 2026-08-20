@@ -1,0 +1,12 @@
+false
+:steady
+false
+:steady
+true
+true
+true
+false
+[:steady?, :windows?]
+Platform
+false
+true

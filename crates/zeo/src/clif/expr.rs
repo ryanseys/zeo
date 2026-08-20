@@ -812,14 +812,20 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 tag,
             };
             let blk = block_channel(fx, id, block, block_arg)?;
+            // `self&.x` reaches a private `x` exactly as `self.x` does: the
+            // safe part is the nil test, and it changes no visibility rule.
+            let barrier = dispatch_receiver(fx, Some(recv)).is_some();
+            let through = barrier.then_some(recv_op);
             let res = if args.iter().any(|a| matches!(a, ArrayElem::Splat(_))) {
-                super::call::splat_send(fx, id, Some(recv_op), &name, &args, &kwargs, blk)?
+                super::call::splat_send(fx, id, through, &name, &args, &kwargs, blk)?
             } else if !kwargs.is_empty() {
-                super::call::kw_send(fx, id, Some(recv_op), &name, &args, &kwargs, blk)?
+                super::call::kw_send(fx, id, through, &name, &args, &kwargs, blk)?
             } else if let Some(bp) = blk {
-                super::blocks::send_with_block_ptr_ops(fx, id, Some(recv_op), &name, &args, bp)?
+                super::blocks::send_with_block_ptr_ops(fx, id, through, &name, &args, bp)?
+            } else if let Some(op) = through {
+                super::call::dynamic_send_value(fx, id, op, &name, &args)?
             } else {
-                super::call::dynamic_send_value(fx, id, recv_op, &name, &args)?
+                super::call::implicit_send(fx, id, &name, &args)?
             };
             ownership::write_move_into(fx, &res, dst);
             fx.b.ins().jump(join, &[]);
@@ -840,7 +846,12 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             block_arg: None,
             safe: false,
         } if kwargs.is_empty() => {
-            let (receiver, name, args, blk) = (*receiver, name.clone(), args.clone(), *blk);
+            let (receiver, name, args, blk) = (
+                dispatch_receiver(fx, *receiver),
+                name.clone(),
+                args.clone(),
+                *blk,
+            );
             if args.is_empty()
                 && let Some(counted) = super::iter::counted_of(fx, receiver, &name, true)
             {
@@ -886,7 +897,8 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             block_arg: None,
             safe: false,
         } if kwargs.is_empty() => {
-            let (receiver, name, args) = (*receiver, name.clone(), args.clone());
+            let (receiver, name, args) =
+                (dispatch_receiver(fx, *receiver), name.clone(), args.clone());
             if args.iter().any(|a| matches!(a, ArrayElem::Splat(_))) {
                 let recv = match receiver {
                     Some(r) => Some(lower_expr(fx, r)?),
@@ -935,7 +947,12 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             block_arg: Some(ba),
             safe: false,
         } if kwargs.is_empty() => {
-            let (receiver, name, args, ba) = (*receiver, name.clone(), args.clone(), *ba);
+            let (receiver, name, args, ba) = (
+                dispatch_receiver(fx, *receiver),
+                name.clone(),
+                args.clone(),
+                *ba,
+            );
             super::blocks::block_arg_send(fx, id, receiver, &name, &args, ba)
         }
         // Call-site keywords: the kw/splat send entries append the marked
@@ -952,7 +969,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             safe: false,
         } => {
             let (receiver, name, args, kwargs, block, block_arg) = (
-                *receiver,
+                dispatch_receiver(fx, *receiver),
                 name.clone(),
                 args.clone(),
                 kwargs.clone(),
@@ -2891,6 +2908,25 @@ fn case_when(
 /// method of the ENCLOSING class before reaching the toplevel `Object`
 /// def the direct-call table holds -- ruby's MRO puts the receiver's own
 /// chain first, so a shadowed name must go through the dynamic send.
+/// The receiver a send should DISPATCH against, or `None` when ruby runs no
+/// visibility check for it and the implicit-self entry is the right one.
+///
+/// Two receivers qualify, and they are the two `codegen::call::visibility::
+/// runs_no_check` names: a literal `self` -- private has been reachable
+/// through one since ruby 2.7 -- and a receiver zeo SYNTHESIZED for a call
+/// written with no receiver at all, which is what a `class << self` body's
+/// `private :x` arrives as. Both denote the object `self_ptr` already holds,
+/// so answering `None` changes only which entry the call takes: the one
+/// without the barrier.
+fn dispatch_receiver(fx: &Fx, recv: Option<NodeId>) -> Option<NodeId> {
+    let r = recv?;
+    let hir = &fx.an.compiler.hir;
+    match matches!(hir[r], HirNode::SelfRef) || hir.is_implicit_self_receiver(r) {
+        true => None,
+        false => Some(r),
+    }
+}
+
 pub(crate) fn method_class_shadows(fx: &Fx, name: &str) -> bool {
     let Some(cid) = fx.method_class else {
         return false;

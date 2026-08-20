@@ -212,8 +212,13 @@ pub(super) fn class_receiver_responds(cid: ClassId, name: Symbol) -> bool {
         return true;
     }
     // A module the class EXTENDED answers too -- the same edge dispatch runs
-    // the call through.
-    if extended_class_method_fn(cid, name).is_some() {
+    // the call through, and the same two probes in the same order, so the
+    // predicate cannot say no to a name the call would answer.
+    if let Some(owner) = class_method_extend_source(cid, name)
+        && ((crate::runtime_meta::is_live()
+            && crate::runtime_meta::overlay_value_body(owner, name).is_some())
+            || extended_class_method_body(owner, name).is_some())
+    {
         return true;
     }
     crate::builtins::rstruct::is_struct_class(cid)
@@ -259,18 +264,18 @@ pub fn class_method_extend_source(cid: ClassId, name: Symbol) -> Option<ClassId>
     }
 }
 
-/// The row a module the class `extend`ed supplies for class method `name`,
-/// with the module that owns it. Only a value-receiver row qualifies: a
-/// compiled `&RObj` body has no object to bind a Class receiver to, and the
-/// module's own `extend`-time wrapper (`runtime_meta::extended_class_method`)
-/// is the path that serves those.
-pub(super) fn extended_class_method_fn(cid: ClassId, name: Symbol) -> Option<(ValueImpl, ClassId)> {
-    let owner = class_method_extend_source(cid, name)?;
-    let f = crate::builtins::class_table(owner)
+/// The row `owner` -- a module some class `extend`ed -- supplies for `name`.
+/// Only a value-receiver row qualifies: a compiled `&RObj` body has no object
+/// to bind a Class receiver to, and the module's own `extend`-time wrapper
+/// (`runtime_meta::extended_class_method`) is the path that serves those.
+///
+/// The owner is resolved by the caller ([`class_method_extend_source`]) so
+/// that one scan can serve both this and the overlay probe beside it.
+pub(super) fn extended_class_method_body(owner: ClassId, name: Symbol) -> Option<ValueImpl> {
+    crate::builtins::class_table(owner)
         .and_then(|t| t(name.name_str()))
         .map(ValueImpl::Rust)
-        .or_else(|| value_method(owner, 0, name))?;
-    Some((f, owner))
+        .or_else(|| value_method(owner, 0, name))
 }
 
 /// The module a class `extend`ed that supplies instance method `name`, with

@@ -264,7 +264,7 @@ pub(crate) fn splat_send(
     let out = fx.slot_addr(ss, 0);
     let status = match recv {
         Some(_) => {
-            let caller = fx.b.ins().iconst(types::I32, 0); // Object
+            let caller = caller_class(fx);
             fx.call(
                 "zeo_rt_send_value_explicit_args_in",
                 &[
@@ -326,7 +326,7 @@ pub(crate) fn kw_send(
     let out = fx.slot_addr(ss, 0);
     let status = match recv {
         Some(_) => {
-            let caller = fx.b.ins().iconst(types::I32, 0); // Object
+            let caller = caller_class(fx);
             fx.call(
                 "zeo_rt_send_value_explicit_kw_in",
                 &[
@@ -355,9 +355,21 @@ pub(crate) fn kw_send(
     })
 }
 
-/// An explicit-receiver dynamic send through the uncached entry (the
-/// visibility barrier's `caller` is `Object` -- the only lexical class the
-/// slice compiles).
+/// The class a visibility barrier compares against. Ruby's `protected` asks
+/// whether the CALLING method's own class is ancestor-related to the target's
+/// owner, so an explicit-receiver site has to name itself; `private` ignores
+/// it. Outside any class body `self` is `main`, an ordinary `Object`, and
+/// `Object` is what the check compares against there -- the same rule
+/// `codegen::call::visibility::caller_class` spells for the rustc backend.
+///
+/// A site whose receiver runs NO check never reaches here: it takes the
+/// implicit entry instead (see `expr::dispatch_receiver`).
+pub(crate) fn caller_class(fx: &mut Fx) -> cranelift_codegen::ir::Value {
+    let cid = fx.method_class.map_or(0, |c| i64::from(c.0));
+    fx.b.ins().iconst(types::I32, cid)
+}
+
+/// An explicit-receiver dynamic send through the uncached entry.
 pub(crate) fn dynamic_send(
     fx: &mut Fx,
     site: NodeId,
@@ -414,7 +426,7 @@ fn dynamic_send_argv(
     let zero_box = fx.b.ins().iconst(types::I32, 0);
     let argc_v = fx.b.ins().iconst(fx.em.ptr, argc as i64);
     let null = fx.b.ins().iconst(fx.em.ptr, 0);
-    let caller = fx.b.ins().iconst(types::I32, 0); // Object
+    let caller = caller_class(fx);
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
     let status = fx

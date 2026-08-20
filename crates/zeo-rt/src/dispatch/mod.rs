@@ -2957,10 +2957,23 @@ fn send_value_in_reason(
         // CRuby seats the module in the singleton ancestry, just past the
         // class's own rows, and the row takes a `&RubyValue` receiver -- so
         // the class value passes straight through as `self`.
-        if let Some((f, owner)) = extended_class_method_fn(*cid, name) {
-            return with_c_frame(c_frame_label(owner, name, '#'), || {
-                f.call(recv, args, block)
-            });
+        if let Some(owner) = class_method_extend_source(*cid, name) {
+            // A body the module installed at RUN TIME -- a `def` inside a
+            // `case` whose branch only the run time picks -- lives in the
+            // overlay and in no registered row, so the row probe below finds
+            // the OWNER and then no body at all. Probed first because the
+            // overlay REPLACES within one owner, the rule the ancestor walk
+            // further down already applies per ancestor.
+            if crate::runtime_meta::is_live()
+                && let Some(p) = crate::runtime_meta::overlay_value_body(owner, name)
+            {
+                return crate::runtime_meta::call_value_body(owner, name, &p, recv, args, block);
+            }
+            if let Some(f) = extended_class_method_body(owner, name) {
+                return with_c_frame(c_frame_label(owner, name, '#'), || {
+                    f.call(recv, args, block)
+                });
+            }
         }
         // A MINTED struct/data class's OWN singleton methods (`Point.members`,
         // `Point[1, 2]`, and `Point.new` itself). CRuby defines these directly

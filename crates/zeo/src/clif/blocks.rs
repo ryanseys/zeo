@@ -900,7 +900,7 @@ pub(crate) fn send_with_block_ptr_ops(
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
     let status = if recv_ptr.1 {
-        let caller = fx.b.ins().iconst(types::I32, 0);
+        let caller = super::call::caller_class(fx);
         fx.call(
             "zeo_rt_send_value_explicit_in",
             &[
