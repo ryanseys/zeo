@@ -648,6 +648,26 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
         HirNode::Break(value) => {
             let value = *value;
             if fx.loops.is_empty() {
+                // A `break` at the top of a `define_method` body RETURNS
+                // from the method: the block became the method, so there is
+                // no yielding call left to break out of, and CRuby's rule
+                // for a block-turned-method is the lambda one.
+                if fx.define_method_body
+                    && let Some((out, ret_ok)) = fx.ret.or(fx.block_next)
+                {
+                    if fx.ensure_depth != 0 {
+                        return signal_jump(fx, value, zeo_abi::abi::SignalKind::Next);
+                    }
+                    let op = match value {
+                        Some(v) => lower_expr(fx, v)?,
+                        None => super::operand::Operand::Nil,
+                    };
+                    ownership::write_move_into(fx, &op, out);
+                    fx.pop_handling_to(0);
+                    fx.b.ins().jump(ret_ok, &[]);
+                    fx.continue_unreachable();
+                    return Ok(());
+                }
                 // In an escaping block, `break` arms the Break signal the
                 // send-site's catch_break receives.
                 if fx.block_next.is_some() {
@@ -771,22 +791,24 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
                 // the runtime resolves it against the proc's captured home
                 // (dead home -> LocalJumpError) and the defining method's
                 // boundary folds a targeted one.
-                if fx.block_next.is_some() {
-                    let op = match value {
-                        Some(v) => lower_expr(fx, v)?,
-                        None => super::operand::Operand::Nil,
-                    };
-                    let ptr = ownership::move_ptr(fx, &op);
-                    let kind =
-                        fx.b.ins()
-                            .iconst(types::I8, i64::from(zeo_abi::abi::SignalKind::Return as u8));
-                    fx.call("zeo_rt_signal_set", &[kind, ptr]);
-                    let land = fx.land;
-                    fx.b.ins().jump(land, &[]);
-                    fx.continue_unreachable();
-                    return Ok(());
-                }
-                return fx.unsupported(stmt, "a top-level `return`");
+                // ...and at the TOP LEVEL, where a `return` ends the program
+                // silently and successfully: the same signal, settled by
+                // `zeo_rt_main` rather than by any method boundary. (Ruby
+                // rejects a `return` in a class body at parse time, so this
+                // is the only other body without one.)
+                let op = match value {
+                    Some(v) => lower_expr(fx, v)?,
+                    None => super::operand::Operand::Nil,
+                };
+                let ptr = ownership::move_ptr(fx, &op);
+                let kind =
+                    fx.b.ins()
+                        .iconst(types::I8, i64::from(zeo_abi::abi::SignalKind::Return as u8));
+                fx.call("zeo_rt_signal_set", &[kind, ptr]);
+                let land = fx.land;
+                fx.b.ins().jump(land, &[]);
+                fx.continue_unreachable();
+                return Ok(());
             };
             // The returned expression runs BEFORE `$!` unwinds -- inside a
             // rescue clause `return $!.message` reads the rescued one.

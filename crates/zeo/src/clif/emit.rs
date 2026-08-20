@@ -1566,6 +1566,14 @@ fn define_method_body(
     fx.self_ptr = Some(self_ptr);
     fx.method_class = Some(def.owner);
     fx.defining_class = def.defining_class;
+    // A body that came from a literal `define_method(:name) { .. }` rather
+    // than a `def`: a BARE `super` is an error in it, and a `break` returns.
+    fx.define_method_body = def.node.is_some_and(|n| {
+        matches!(
+            &analyzed.compiler.hir[n],
+            crate::hir::HirNode::DefMethod { is_def: false, .. }
+        )
+    });
     fx.method_name = (!def.name.is_empty()).then(|| def.name.to_string());
     fx.method_params = Some(def.hir_params.clone());
     fx.self_is_class = def.self_is_class;
