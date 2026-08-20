@@ -76,20 +76,8 @@ pub(crate) fn lower_begin(
     fx.b.ins().jump(begin_head, &[]);
     fx.b.switch_to_block(begin_head);
 
-    // The loop a jump out of this begin would have gone to directly. Only
-    // one at the SAME ensure depth is ours: a farther one has another
-    // ensure in between, and that begin settles it.
-    let loop_target = if ensure_body.is_some() {
-        fx.loops
-            .last()
-            .filter(|ctl| ctl.depth == fx.ensure_depth)
-            .map(|ctl| Settle {
-                exit: ctl.exit,
-                latch: ctl.latch,
-                body: ctl.body,
-                result: ctl.result,
-                handling: ctl.handling,
-            })
+    let settle_target = if ensure_body.is_some() {
+        settle_target(fx)
     } else {
         None
     };
@@ -229,9 +217,9 @@ pub(crate) fn lower_begin(
         fx.land = saved_land;
         // Only now is it known whether a jump inside this begin (its body,
         // a clause, or the ensure itself) armed a signal for the enclosing
-        // loop. Without one, nothing here may claim a passing signal.
+        // target. Without one, nothing here may claim a passing signal.
         let settle = (fx.ensure_jumps > jumps_before)
-            .then_some(loop_target)
+            .then_some(settle_target)
             .flatten()
             .map(|t| (fx.b.create_block(), t));
         let after = settle.map_or(outer_land, |(blk, _)| blk);
@@ -253,22 +241,50 @@ pub(crate) fn lower_begin(
     Ok(())
 }
 
-/// The enclosing native loop a jump out of an ensure-carrying `begin` was
-/// aiming at: its own `break`/`next`/`redo` targets, value slot, and `$!`
-/// depth, read off the [`super::ctx::LoopCtl`] the jump could not reach.
+/// Where each jump that crossed an `ensure` lands once it has run -- the
+/// targets the jump itself could not reach, read off the enclosing
+/// [`super::ctx::LoopCtl`] or, inside an escaping block, off the block's
+/// own boundary.
 #[derive(Clone, Copy)]
 struct Settle {
-    exit: ir::Block,
-    latch: ir::Block,
-    body: ir::Block,
-    result: Option<ir::Value>,
+    /// `break`'s target and the slot its value fills. `None` = it keeps
+    /// travelling: an escaping block's `break` belongs to the call site's
+    /// `catch_break`, not to anything lexically here.
+    brk: Option<(ir::Block, Option<ir::Value>)>,
+    /// `next`'s target and the slot its value fills (a native loop has
+    /// nowhere to send one; a block's `next` IS its return value).
+    nxt: (ir::Block, Option<ir::Value>),
+    /// Where `redo` re-enters.
+    rdo: Option<ir::Block>,
+    /// The `$!` depth of that target -- the settle pops down to it.
     handling: usize,
 }
 
+/// The target an ensure-crossing jump inside the begin about to be lowered
+/// was aiming at. A native loop only counts at the SAME ensure depth: a
+/// farther one has another ensure in between, and THAT begin settles it.
+/// With no loop in reach, an escaping block's own boundary is the target.
+fn settle_target(fx: &Fx) -> Option<Settle> {
+    if let Some(ctl) = fx.loops.last() {
+        return (ctl.depth == fx.ensure_depth).then_some(Settle {
+            brk: Some((ctl.exit, ctl.result)),
+            nxt: (ctl.latch, None),
+            rdo: Some(ctl.body),
+            handling: ctl.handling,
+        });
+    }
+    let (out, ret_ok) = fx.block_next?;
+    (fx.ensure_depth == 0).then_some(Settle {
+        brk: None,
+        nxt: (ret_ok, Some(out)),
+        rdo: fx.block_redo,
+        handling: 0,
+    })
+}
+
 /// Turn the signal an ensure-crossing jump armed back into the jump it
-/// was: the ensure has run, so `Break` supplies the loop's value and
-/// leaves, `Next` discards its own and reaches the latch, and `Redo`
-/// re-enters the body. Anything else is a real unwind and passes through.
+/// was, now that the ensure has run. Anything the target does not claim is
+/// a real unwind and passes through.
 fn lower_settle(fx: &mut Fx, settle: ir::Block, outer_land: ir::Block, target: Settle) {
     fx.b.switch_to_block(settle);
     let kind = fx.call("zeo_rt_signal_kind", &[]).expect("kind answers");
@@ -282,34 +298,30 @@ fn lower_settle(fx: &mut Fx, settle: ir::Block, outer_land: ir::Block, target: S
         fx.b.switch_to_block(rest);
         taken
     };
-    let b_break = arm(fx, SignalKind::Break);
-    let b_next = arm(fx, SignalKind::Next);
-    let b_redo = arm(fx, SignalKind::Redo);
+    let b_break = target.brk.map(|t| (arm(fx, SignalKind::Break), t));
+    let b_next = (arm(fx, SignalKind::Next), target.nxt);
+    let b_redo = target.rdo.map(|t| (arm(fx, SignalKind::Redo), t));
     fx.b.ins().jump(outer_land, &[]);
 
-    // `break v`: v IS the loop's value in value position.
-    fx.b.switch_to_block(b_break);
-    let value = take_signal_value(fx);
-    match target.result {
-        Some(dst) => ownership::write_move_into(fx, &value, dst),
-        None => ownership::discard(fx, value),
+    for (blk, (dest, dst)) in [b_break, Some(b_next)].into_iter().flatten() {
+        fx.b.switch_to_block(blk);
+        let value = take_signal_value(fx);
+        match dst {
+            Some(dst) => ownership::write_move_into(fx, &value, dst),
+            None => ownership::discard(fx, value),
+        }
+        fx.pop_handling_to(target.handling);
+        fx.b.ins().jump(dest, &[]);
     }
-    fx.pop_handling_to(target.handling);
-    fx.b.ins().jump(target.exit, &[]);
-
-    // `next v`: a native loop has nowhere to send the value.
-    fx.b.switch_to_block(b_next);
-    let value = take_signal_value(fx);
-    ownership::discard(fx, value);
-    fx.pop_handling_to(target.handling);
-    fx.b.ins().jump(target.latch, &[]);
 
     // `redo` carries nothing, so clearing the slot is a save-and-drop.
-    fx.b.switch_to_block(b_redo);
-    let saved = fx.call("zeo_rt_signal_save", &[]).expect("saved handle");
-    fx.call("zeo_rt_signal_drop", &[saved]);
-    fx.pop_handling_to(target.handling);
-    fx.b.ins().jump(target.body, &[]);
+    if let Some((blk, dest)) = b_redo {
+        fx.b.switch_to_block(blk);
+        let saved = fx.call("zeo_rt_signal_save", &[]).expect("saved handle");
+        fx.call("zeo_rt_signal_drop", &[saved]);
+        fx.pop_handling_to(target.handling);
+        fx.b.ins().jump(dest, &[]);
+    }
 }
 
 /// Move the pending signal's payload into a fresh temp, owned.

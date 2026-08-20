@@ -744,6 +744,9 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
             if fx.loops.is_empty()
                 && let Some((out, ret_ok)) = fx.block_next
             {
+                if fx.ensure_depth != 0 {
+                    return signal_jump(fx, value, zeo_abi::abi::SignalKind::Next);
+                }
                 // In an escaping block, `next v` IS the block's return.
                 match value {
                     Some(v) => {
@@ -784,7 +787,7 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
                     return fx.unsupported(stmt, "`redo` outside a loop");
                 };
                 if fx.ensure_depth != 0 {
-                    return fx.unsupported(stmt, "a `redo` across an `ensure` boundary");
+                    return signal_jump(fx, None, zeo_abi::abi::SignalKind::Redo);
                 }
                 fx.pop_handling_to(0);
                 fx.b.ins().jump(head, &[]);
