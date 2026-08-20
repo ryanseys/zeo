@@ -36,6 +36,7 @@ mod gems_require;
 mod gems_vendored;
 mod io_files;
 mod language_core;
+mod linkage;
 mod marshal;
 mod metaprog;
 mod methods;

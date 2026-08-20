@@ -60,6 +60,11 @@ insta = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+# Object-file/executable reader. The link-ledger tests read a LINKED
+# program's sections and symbols to assert what the link step kept (the
+# linkme `BUILTIN_TABLES` elements) and what it dropped (the compiler).
+object = "0.39"
+
 # Data-driven tests: one `cargo test`/nextest case per golden `.rb` file
 # (conformance corpus, examples, gaps). By nextest-rs, same ecosystem as the
 # `cargo nextest` we already run.
