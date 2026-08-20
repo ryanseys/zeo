@@ -1363,14 +1363,7 @@ fn collect_class_bodies(
                     .map_err(|e| format!("declaring the {name} class body: {e}"))?,
             )
         };
-        // A `class << self` body is homed on a surrogate whose reserved
-        // name is unwritable; ruby SPELLS its frame label instead.
-        let label = if compiler.is_singleton_surrogate(site.class) {
-            "singleton class".to_string()
-        } else {
-            let kind = if ci.is_module { "module" } else { "class" };
-            format!("<{kind}:{}>", compiler.leaf_name(site.class))
-        };
+        let label = body_frame_label(compiler, site.class);
         let call = ClassBodyCall {
             class: site.class.0,
             func,
@@ -1526,6 +1519,21 @@ pub(crate) struct BodyFnSpec<'a> {
 /// A method's frame facts: `(file, label, line, end_line)` -- shared by
 /// the body prologue and the trampoline's `ParamDescC`. `class_method`
 /// picks ruby's `.` label separator over `#`.
+/// CRuby's backtrace label for a class or module BODY frame -- `<class:Foo>`,
+/// `<module:M>`, and `singleton class` for a `class << self` body, whose
+/// surrogate carries a reserved name ruby cannot spell and must never show.
+fn body_frame_label(compiler: &crate::compiler::Compiler, cid: crate::compiler::ClassId) -> String {
+    if compiler.is_singleton_surrogate(cid) {
+        return "singleton class".to_string();
+    }
+    let kind = if compiler.class(cid).is_module {
+        "module"
+    } else {
+        "class"
+    };
+    format!("<{kind}:{}>", compiler.leaf_name(cid))
+}
+
 fn method_frame(
     analyzed: &Analyzed,
     owner_name: &str,
@@ -1733,7 +1741,23 @@ fn define_method_body(
         def.node,
         def.self_is_class,
     );
-    let label = def.label_override.clone().unwrap_or(label);
+    // A body that came from a literal `define_method(:name) { .. }` rather
+    // than a `def`: a BARE `super` is an error in it, a `break` returns, and
+    // ruby labels its frame as the BLOCK it is (`block in <class:Named>`),
+    // never after the method it installs.
+    let define_method_body = def.node.is_some_and(|n| {
+        matches!(
+            &analyzed.compiler.hir[n],
+            crate::hir::HirNode::DefMethod { is_def: false, .. }
+        )
+    });
+    let base = define_method_body
+        .then(|| body_frame_label(&analyzed.compiler, def.defining_class.unwrap_or(def.owner)));
+    let label = match (def.label_override.clone(), &base) {
+        (Some(l), _) => l,
+        (None, Some(base)) => format!("block in {base}"),
+        (None, None) => label,
+    };
 
     let mut func = ir::Function::with_name_signature(UserFuncName::user(0, idx), sig);
     let cfg = em.module.target_config();
@@ -1758,19 +1782,17 @@ fn define_method_body(
     fx.method_class = Some(def.owner);
     fx.defining_class = def.defining_class;
     fx.lexical_home = def.lexical_home;
-    // A body that came from a literal `define_method(:name) { .. }` rather
-    // than a `def`: a BARE `super` is an error in it, and a `break` returns.
-    fx.define_method_body = def.node.is_some_and(|n| {
-        matches!(
-            &analyzed.compiler.hir[n],
-            crate::hir::HirNode::DefMethod { is_def: false, .. }
-        )
-    });
+    fx.define_method_body = define_method_body;
     fx.method_name = (!def.name.is_empty()).then(|| def.name.to_string());
     fx.method_params = Some(def.hir_params.clone());
     fx.self_is_class = def.self_is_class;
     fx.dyn_ivars = def.dyn_ivars;
-    fx.frame_label = label.clone();
+    // A block written inside this body counts from the scope ruby names:
+    // the class body a `define_method` sits in, one level up.
+    (fx.frame_label, fx.block_depth) = match base {
+        Some(base) => (base, 1),
+        None => (label.clone(), 0),
+    };
     fx.blk_ptr = blk_ptr;
     fx.ruby2_keywords = def.ruby2_keywords;
     let ret_ok = fx.b.create_block();

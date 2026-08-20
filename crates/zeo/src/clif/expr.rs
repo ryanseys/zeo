@@ -333,13 +333,12 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 // `define_method(:m) { .. }`'s body proc, built as a method
                 // body (its bare `yield` reaches the installed method's
                 // call-site block).
-                let label = format!("block in {}", fx.frame_label);
                 let ss = super::blocks::build_method_body(
                     fx,
                     id,
                     &params,
                     &body,
-                    &label,
+                    super::blocks::FrameName::Block,
                     super::blocks::MethodBody::DefineMethod,
                 )?;
                 return Ok(Operand::Slot {
@@ -3174,22 +3173,22 @@ fn runtime_def(
     use cranelift_codegen::ir::types;
     // A `def`'s frame is labeled after the METHOD it creates; a
     // `define_method` body is genuinely the block ruby labels it as.
-    let label = if is_def {
-        match fx.method_class {
+    let frame = if is_def {
+        super::blocks::FrameName::Method(match fx.method_class {
             Some(c) if c != crate::compiler::OBJECT_CLASS => {
                 format!("{}#{name}", fx.an.compiler.fq_name(c))
             }
             _ => format!("Object#{name}"),
-        }
+        })
     } else {
-        format!("block in {}", fx.frame_label)
+        super::blocks::FrameName::Block
     };
     let kind = if is_def {
         super::blocks::MethodBody::Def
     } else {
         super::blocks::MethodBody::DefineMethod
     };
-    let proc_ss = super::blocks::build_method_body(fx, id, params, body, &label, kind)?;
+    let proc_ss = super::blocks::build_method_body(fx, id, params, body, frame, kind)?;
     let proc_addr = fx.slot_addr(proc_ss, 0);
     let sym = fx.sym_id(name);
     let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");

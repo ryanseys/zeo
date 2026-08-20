@@ -302,6 +302,20 @@ fn scope_is_define_method(compiler: &Compiler, scope: &crate::compiler::Scope) -
     )
 }
 
+/// The frame a static `define_method(:name) { .. }` body reports, and the
+/// depth blocks inside it count from: the body IS the block ruby names after
+/// the class body it sits in, so a block written in it is the SECOND level.
+fn define_method_scope_frame(
+    compiler: &Compiler,
+    scope: &crate::compiler::Scope,
+) -> (Option<String>, u32) {
+    if scope_is_define_method(compiler, scope) {
+        (Some(body_frame_label(compiler, scope.defining_class)), 1)
+    } else {
+        (None, 0)
+    }
+}
+
 fn binding_scope_local_types<'a>(
     binding_names: Option<&std::rc::Rc<Vec<String>>>,
     captured: &FSet<String>,
@@ -4025,6 +4039,7 @@ fn emit_class_method_fn(
     // through the surrogate (whose lexical parent is the class itself, so
     // everything else in the chain is unchanged). See `Scope::lexical_home`.
     let lexical = scope.lexical_home.unwrap_or(scope.defining_class);
+    let dm_frame = define_method_scope_frame(compiler, scope);
     let cx = Ctx {
         compiler,
         box_id: compiler.class(lexical).box_id,
@@ -4043,7 +4058,7 @@ fn emit_class_method_fn(
         current_method: Some(scope.name.clone()),
         current_method_origin: scope.alias_of.clone(),
         defined_by_define_method: scope_is_define_method(compiler, scope),
-        lexical_frame_label: None,
+        lexical_frame_label: dm_frame.0.clone(),
         local_types: binding_scope_local_types(
             binding_names.as_ref(),
             &no_captures.locals,
@@ -4068,7 +4083,7 @@ fn emit_class_method_fn(
         shared_body: false,
         trace: None,
         runtime_super_params: None,
-        block_depth: 0,
+        block_depth: dm_frame.1,
         has_blk_binding: needs_block,
     };
     let prologue = params::emit_prologue(&cx, &scope.params, &scope.body);
@@ -4450,6 +4465,7 @@ fn emit_value_self_method_fn(
         &mut method_captures,
         false,
     );
+    let dm_frame = define_method_scope_frame(compiler, scope);
     let cx = Ctx {
         compiler,
         box_id: compiler.class(scope.defining_class).box_id,
@@ -4462,7 +4478,7 @@ fn emit_value_self_method_fn(
         current_method: Some(scope.name.clone()),
         current_method_origin: scope.alias_of.clone(),
         defined_by_define_method: scope_is_define_method(compiler, scope),
-        lexical_frame_label: None,
+        lexical_frame_label: dm_frame.0.clone(),
         local_types: binding_scope_local_types(
             binding_names.as_ref(),
             &method_captures.locals,
@@ -4488,7 +4504,7 @@ fn emit_value_self_method_fn(
         shared_body: shared,
         trace,
         runtime_super_params: None,
-        block_depth: 0,
+        block_depth: dm_frame.1,
         has_blk_binding: needs_block,
     };
     let prologue = params::emit_prologue(&cx, &scope.params, &scope.body);
@@ -4571,6 +4587,7 @@ pub(crate) fn emit_instance_method_body(
     let frameless = compiler
         .accessor_shape(cid, scope)
         .is_some_and(|a| a.attr_generated || a.kind == crate::compiler::AccessorKind::Reader);
+    let dm_frame = define_method_scope_frame(compiler, scope);
     let method_cx = Ctx {
         compiler,
         box_id: compiler.class(scope.defining_class).box_id,
@@ -4581,7 +4598,7 @@ pub(crate) fn emit_instance_method_body(
         current_method: Some(scope.name.clone()),
         current_method_origin: scope.alias_of.clone(),
         defined_by_define_method: scope_is_define_method(compiler, scope),
-        lexical_frame_label: None,
+        lexical_frame_label: dm_frame.0.clone(),
         local_types: binding_scope_local_types(
             binding_names.as_ref(),
             &method_captures.locals,
@@ -4602,7 +4619,7 @@ pub(crate) fn emit_instance_method_body(
         shared_body: false,
         trace: None,
         runtime_super_params: None,
-        block_depth: 0,
+        block_depth: dm_frame.1,
         has_blk_binding: needs_block,
     };
     let prologue = params::emit_prologue(&method_cx, &scope.params, &scope.body);

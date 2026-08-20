@@ -151,11 +151,29 @@ pub(crate) fn build_method_body(
     site: NodeId,
     params: &crate::hir::Params,
     body: &[NodeId],
-    label: &str,
+    frame: FrameName,
     kind: MethodBody,
 ) -> Result<ir::StackSlot, String> {
-    let (ss, _) = build_closure_with(fx, site, params, body, true, Some(kind), Some(label))?;
+    let (ss, _) = build_closure_with(fx, site, params, body, true, Some(kind), frame)?;
     Ok(ss)
+}
+
+/// What a closure's backtrace frame is called. Ruby names a block after the
+/// scope it was WRITTEN in and counts the nesting -- `block in Foo#m`,
+/// `block (2 levels) in Foo#m` -- while a real `def` creates an ordinary
+/// method however it is installed, so the method IS the frame and blocks
+/// inside its body count from zero again.
+pub(crate) enum FrameName {
+    Block,
+    Method(String),
+}
+
+/// Ruby's spelling for a block nested `depth` levels under `base`.
+fn block_label(base: &str, depth: usize) -> String {
+    match depth {
+        0 | 1 => format!("block in {base}"),
+        n => format!("block ({n} levels) in {base}"),
+    }
 }
 
 /// Which runtime-install form a method-body closure came from. A real
@@ -174,7 +192,7 @@ fn build_closure(
     body: &[NodeId],
     is_lambda: bool,
 ) -> Result<(ir::StackSlot, Vec<String>), String> {
-    build_closure_with(fx, site, params, body, is_lambda, None, None)
+    build_closure_with(fx, site, params, body, is_lambda, None, FrameName::Block)
 }
 
 fn build_closure_with(
@@ -184,7 +202,7 @@ fn build_closure_with(
     body: &[NodeId],
     is_lambda: bool,
     method_body: Option<MethodBody>,
-    label_override: Option<&str>,
+    frame: FrameName,
 ) -> Result<(ir::StackSlot, Vec<String>), String> {
     let names = captured_names(fx, site, params, body)?;
     let arity = super::params::proc_arity(params, is_lambda);
@@ -207,7 +225,7 @@ fn build_closure_with(
         &names,
         is_lambda,
         method_body,
-        label_override,
+        frame,
     )?;
     let f_ref = fx.em.module.declare_func_in_func(f_id, fx.b.func);
     let ptr_ty = fx.em.ptr;
@@ -358,16 +376,23 @@ fn define_block_fn(
     captured: &[String],
     is_lambda: bool,
     method_body: Option<MethodBody>,
-    label_override: Option<&str>,
+    frame: FrameName,
 ) -> Result<cranelift_module::FuncId, String> {
     let params = params.clone();
     let body = body.to_vec();
     let layout = super::params::layout_of(&params)?;
     let auto_splat = !is_lambda && super::params::auto_splats(&params);
-    // A runtime-installed method is labeled after the METHOD it creates,
-    // not after where the `def` was written.
-    let label =
-        label_override.map_or_else(|| format!("block in {}", fx.frame_label), str::to_string);
+    let (label, base, depth) = match frame {
+        FrameName::Method(name) => (name.clone(), name, 0),
+        FrameName::Block => {
+            let depth = fx.block_depth + 1;
+            (
+                block_label(&fx.frame_label, depth),
+                fx.frame_label.clone(),
+                depth,
+            )
+        }
+    };
     let (line, file) = {
         let loc = fx.location(site);
         (
@@ -456,7 +481,8 @@ fn define_block_fn(
             ) = enclosing;
         }
     }
-    bfx.frame_label = label.clone();
+    bfx.frame_label = base;
+    bfx.block_depth = depth;
     // Bare `yield`/`block_given?` targets the env's lexical block (the
     // enclosing method's) -- unless this closure declares its own `&b`,
     // which owns the channel and takes the CALL-SITE block.

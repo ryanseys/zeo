@@ -122,8 +122,13 @@ pub(crate) struct Fx<'e, 'f> {
     /// sits under -- a direct jump pops down to its target's depth.
     pub handling_depth: usize,
     /// The enclosing frame's label ("<main>", "Object#fib") -- what a
-    /// block's own frame derives its "block in ..." label from.
+    /// block's own frame derives its "block in ..." label from. A block
+    /// keeps the label of the scope it was WRITTEN in, never its own.
     pub frame_label: String,
+    /// How many blocks deep this scope sits under `frame_label` -- ruby
+    /// counts the nesting (`block (2 levels) in ...`), and a real `def`
+    /// restarts the count.
+    pub block_depth: usize,
     /// The method's borrowed block parameter (null = no block passed);
     /// `None` when the scope has no block slot at all (yield then passes
     /// null and raises the LocalJumpError).
@@ -185,6 +190,7 @@ impl<'e, 'f> Fx<'e, 'f> {
             ensure_jumps: 0,
             handling_depth: 0,
             frame_label: String::new(),
+            block_depth: 0,
             blk_ptr: None,
             block_next: None,
             shadowed: std::collections::HashSet::new(),
