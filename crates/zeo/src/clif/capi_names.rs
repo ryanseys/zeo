@@ -526,6 +526,11 @@ pub const CAPI: &[CapiSig] = &[
         ret: Some(I32),
     },
     CapiSig {
+        name: "zeo_rt_raise_with_explicit_cause",
+        params: &[Ptr, Usize, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
         name: "zeo_rt_range_new",
         params: &[Ptr, Ptr, U8, Ptr],
         ret: Some(I32),

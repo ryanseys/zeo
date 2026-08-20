@@ -205,6 +205,40 @@ pub unsafe extern "C" fn zeo_rt_svar_scope_pop() {
     crate::lastmatch::svar_scope_pop_raw();
 }
 
+/// `raise ..., cause: c` -- the cause is EXPLICIT, so the automatic `$!`
+/// chaining is skipped. The exception is built exactly as `Kernel#raise`
+/// builds it, the cause is set (its own TypeError and circularity checks
+/// raise from here), the backtrace is stamped, and the `Signal::Raise` is
+/// parked. Always answers `STATUS_SIGNAL`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_raise_with_explicit_cause(
+    argv: *const RubyValue,
+    argc: usize,
+    cause: *const RubyValue,
+) -> i32 {
+    let args = if argc == 0 {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(argv, argc) }
+    };
+    let exc = match crate::builtins::kernel::build_raise_exception(args) {
+        Ok(e) => e,
+        Err(sig) => {
+            set_pending(sig);
+            return STATUS_SIGNAL;
+        }
+    };
+    if let Err(sig) =
+        crate::builtins::exception::set_explicit_cause(&exc, unsafe { &*cause }.clone())
+    {
+        set_pending(sig);
+        return STATUS_SIGNAL;
+    }
+    crate::builtins::exception::attach_backtrace(&exc);
+    set_pending(Signal::Raise(exc));
+    STATUS_SIGNAL
+}
+
 /// THE runtime raise channel: raise class `cid` with `msg` -- builds the
 /// exception (cause + backtrace attached), parks the `Signal::Raise`,
 /// answers `STATUS_SIGNAL` so the caller's `brif` lands directly.

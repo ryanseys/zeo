@@ -100,6 +100,7 @@ zeo_rt_propagating_leave ([U8]) -> None
 zeo_rt_raise_error ([U32, Ptr, Ptr]) -> Some(I32)
 zeo_rt_raise_private_constant ([U32, Ptr, Usize, Ptr, Usize]) -> Some(I32)
 zeo_rt_raise_uninitialized_constant ([Ptr, Usize, Ptr, Usize]) -> Some(I32)
+zeo_rt_raise_with_explicit_cause ([Ptr, Usize, Ptr]) -> Some(I32)
 zeo_rt_range_new ([Ptr, Ptr, U8, Ptr]) -> Some(I32)
 zeo_rt_rational_digits ([U8, Ptr, Ptr, Ptr, Ptr, Ptr]) -> None
 zeo_rt_record_const_location ([U32, Ptr, Usize, Ptr, Usize, U32]) -> None

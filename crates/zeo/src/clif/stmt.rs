@@ -839,8 +839,24 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
             )
         }
         HirNode::Raise(args, cause) => {
-            if let crate::hir::RaiseCause::Explicit(_) = cause {
-                return fx.unsupported(stmt, "a `raise` with an explicit cause:");
+            // `raise ..., cause: c`: the cause is explicit, so the automatic
+            // `$!` chaining the row does is skipped and the runtime builds,
+            // causes and stamps the exception in one entry.
+            if let crate::hir::RaiseCause::Explicit(node) = cause {
+                let (args, node) = (args.clone(), *node);
+                let elems: Vec<ArrayElem> = args.iter().map(|&a| ArrayElem::Single(a)).collect();
+                let argv = super::call::build_argv(fx, stmt, &elems)?;
+                let cause_op = super::expr::lower_expr(fx, node)?;
+                let cause_ptr = ownership::borrow_ptr(fx, &cause_op);
+                if cause_op.owned() {
+                    ownership::pool_owned(fx, cause_ptr, cause_op.tag());
+                }
+                let argc = fx.b.ins().iconst(fx.em.ptr, args.len() as i64);
+                let status = fx
+                    .call("zeo_rt_raise_with_explicit_cause", &[argv, argc, cause_ptr])
+                    .expect("raise_with_explicit_cause returns a status");
+                fx.fallible(status);
+                return Ok(());
             }
             let elems: Vec<ArrayElem> = args.iter().map(|&a| ArrayElem::Single(a)).collect();
             // `raise` IS `Kernel#raise` -- the builtin row constructs,
