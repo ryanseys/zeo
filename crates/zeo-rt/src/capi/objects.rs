@@ -613,18 +613,27 @@ pub unsafe extern "C" fn zeo_rt_define_in_default_definee(
     name: u32,
     body: *mut RubyValue,
     private: u8,
+    body_vis: u8,
     out: *mut RubyValue,
 ) -> i32 {
     // The proc is MOVED in (the caller hands over its reference).
     let body = unsafe { body.read() };
     super::leakcheck::consumed(&body);
+    // `body_vis`: 0 = none, 1 = private, 2 = protected -- the enclosing
+    // body's running default, applied to whatever definee the runtime picks.
+    let body_vis = match body_vis {
+        1 => Some(crate::dispatch::MethodVisibility::Private),
+        2 => Some(crate::dispatch::MethodVisibility::Protected),
+        _ => None,
+    };
     super::dispatch::status_out(
-        crate::dispatch::define_in_default_definee(
+        crate::dispatch::define_in_default_definee_vis(
             unsafe { &*cref },
             unsafe { &*slf },
             crate::Symbol::from_u32(name),
             body,
             private != 0,
+            body_vis,
         ),
         out,
     )

@@ -187,7 +187,7 @@ pub const CAPI: &[CapiSig] = &[
     },
     CapiSig {
         name: "zeo_rt_define_in_default_definee",
-        params: &[Ptr, Ptr, U32, Ptr, U8, Ptr],
+        params: &[Ptr, Ptr, U32, Ptr, U8, U8, Ptr],
         ret: Some(I32),
     },
     CapiSig {

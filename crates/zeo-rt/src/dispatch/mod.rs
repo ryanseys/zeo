@@ -2493,6 +2493,22 @@ pub fn define_in_default_definee(
     body: RubyValue,
     private: bool,
 ) -> Result<RubyValue, Signal> {
+    define_in_default_definee_vis(cref, slf, name, body, private, None)
+}
+
+/// [`define_in_default_definee`] carrying the enclosing body's RUNNING
+/// visibility default, applied to whatever definee is resolved. The rustc
+/// emitter stamps that mark itself, at sites where the definee is a
+/// compile-time fact; the CLIF emitter hands it here, because a `def` in a
+/// `Class.new` body installs on a class only the run time can name.
+pub fn define_in_default_definee_vis(
+    cref: &RubyValue,
+    slf: &RubyValue,
+    name: Symbol,
+    body: RubyValue,
+    private: bool,
+    body_vis: Option<MethodVisibility>,
+) -> Result<RubyValue, Signal> {
     // `(definee, installer, the cref's own -- the only one the caller's
     // top-level verdict is about)`.
     let (definee, installer, from_cref) = if crate::runtime_meta::singleton_definee(slf) {
@@ -2523,6 +2539,14 @@ pub fn define_in_default_definee(
             &[RubyValue::Symbol(name)],
             MethodVisibility::Private,
         )?;
+    }
+    // The enclosing body's RUNNING visibility default (`private` with no
+    // arguments, and ruby's automatic `private` for `initialize`) applies to
+    // whatever definee was resolved above -- retagging the CREF instead
+    // raised `undefined method 'initialize' for module 'M'` for a `def` in a
+    // `Class.new` body, where the definee is the new class.
+    if let (Some(vis), RubyValue::Class(id)) = (body_vis, &definee) {
+        crate::runtime_meta::runtime_set_visibility(*id, &[RubyValue::Symbol(name)], vis)?;
     }
     Ok(out)
 }

@@ -3431,31 +3431,26 @@ fn runtime_def(
     // Object, exactly as a bare top-level `def` is.
     let top_level = fx.method_class.is_none();
     let private = fx.b.ins().iconst(types::I8, i64::from(u8::from(top_level)));
+    // The class body's RUNNING visibility default rides along, applied by the
+    // runtime to the definee it resolves -- which is not always the cref (a
+    // `def` in a `Class.new` body installs on the new class).
+    let body_vis = match visibility {
+        crate::hir::Visibility::Private if fx.method_class.is_some() => 1,
+        crate::hir::Visibility::Protected if fx.method_class.is_some() => 2,
+        _ => 0,
+    };
+    let body_vis = fx.b.ins().iconst(types::I8, i64::from(body_vis));
     let out_ss = fx.temp_slot();
     let out = fx.slot_addr(out_ss, 0);
     let status = fx
         .call(
             "zeo_rt_define_in_default_definee",
-            &[cref, self_ptr, sym, proc_addr, private, out],
+            &[cref, self_ptr, sym, proc_addr, private, body_vis, out],
         )
         .expect("define_in_default_definee returns a status");
     // The proc's reference moved into the runtime.
     fx.owned_consumed += 1;
     fx.fallible(status);
-    // A class body's running visibility default rides along: the dynamic
-    // walk reads the overlay row this wrote AHEAD of any static mark.
-    if visibility != crate::hir::Visibility::Public && fx.method_class.is_some() {
-        use cranelift_codegen::ir::InstBuilder;
-        let cid = fx.b.ins().iconst(types::I32, i64::from(cref_cid.0));
-        let verb = fx.b.ins().iconst(
-            types::I8,
-            i64::from(u8::from(visibility == crate::hir::Visibility::Protected)),
-        );
-        let st = fx
-            .call("zeo_rt_runtime_set_visibility", &[cid, sym, verb])
-            .expect("runtime_set_visibility returns a status");
-        fx.fallible(st);
-    }
     fx.owned_created += 1;
     Ok(Operand::Slot {
         ss: out_ss,
