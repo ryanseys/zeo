@@ -149,6 +149,24 @@ pub unsafe extern "C" fn zeo_rt_send_value_in(
     )
 }
 
+/// A VCALL -- a bare identifier ruby could have read as a local
+/// (`foo`, never `foo()` or `self.foo`). Same lookup as
+/// [`zeo_rt_send_value_in`]; only the MISS differs, and it is the whole
+/// point: ruby says "undefined local variable or method" and raises
+/// NameError, not NoMethodError.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_send_value_vcall_in(
+    box_id: u32,
+    recv: *const RubyValue,
+    sym: u32,
+    out: *mut RubyValue,
+) -> i32 {
+    status_out(
+        crate::dispatch::send_value_vcall_in(box_id, unsafe { &*recv }, Symbol::from_u32(sym)),
+        out,
+    )
+}
+
 /// The uncached dynamic send behind the explicit-receiver visibility
 /// barrier (`caller` = the call site's enclosing class; `FCALL` asks no
 /// question).

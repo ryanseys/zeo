@@ -89,6 +89,35 @@ pub(crate) fn implicit_send(
     args: &[ArrayElem],
 ) -> Result<Operand, String> {
     let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
+    // A VCALL -- a bare identifier ruby could have read as a local. The
+    // lookup is the same; the MISS is not. Ruby says "undefined local
+    // variable or method" and raises NameError, because from the source it
+    // cannot tell which the writer meant.
+    if args.is_empty()
+        && fx
+            .an
+            .compiler
+            .hir
+            .has_flag(site, crate::hir::NodeFlag::VCALL)
+    {
+        let sym = fx.sym_id(name);
+        let zero_box = fx.b.ins().iconst(types::I32, 0);
+        let ss = fx.temp_slot();
+        let out = fx.slot_addr(ss, 0);
+        let status = fx
+            .call(
+                "zeo_rt_send_value_vcall_in",
+                &[zero_box, self_ptr, sym, out],
+            )
+            .expect("send returns a status");
+        fx.fallible(status);
+        fx.owned_created += 1;
+        return Ok(Operand::Slot {
+            ss,
+            owned: true,
+            tag: TagInfo::Unknown,
+        });
+    }
     let argv_ptr = build_argv(fx, site, args)?;
     let sym = fx.sym_id(name);
     let zero_box = fx.b.ins().iconst(types::I32, 0);

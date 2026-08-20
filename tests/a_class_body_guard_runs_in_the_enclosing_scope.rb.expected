@@ -1,0 +1,10 @@
+"string probed"
+"symbol probed"
+"integer probed"
+nil
+nil
+guard raised
+["in 'Object#boom'", "in '<main>'"]
+"array probed"
+"outer"
+"hash probed"

@@ -177,6 +177,7 @@ capi_symbols!(
     dispatch::zeo_rt_send_value_explicit_kw_in,
     dispatch::zeo_rt_send_value_in,
     dispatch::zeo_rt_send_value_kw_in,
+    dispatch::zeo_rt_send_value_vcall_in,
     frames::zeo_rt_set_line,
     signals::zeo_rt_signal_drop,
     signals::zeo_rt_signal_kind,

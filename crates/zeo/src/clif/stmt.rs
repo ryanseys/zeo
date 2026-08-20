@@ -1598,7 +1598,50 @@ pub(crate) fn class_body_value(
     }
 }
 
+/// One class-body site, under its trailing `if`/`unless` when it has one.
+///
+/// The condition is lowered HERE, in the enclosing scope, because that is
+/// where ruby runs it and where the locals it reads live -- `class Set ...
+/// end if set_pp` in pp.rb reads a top-level local. Everything the site does
+/// rides inside the branch: a class whose guard failed was never declared,
+/// so it announces nothing and reveals nothing, and the site's value is nil.
 fn class_body_site(
+    fx: &mut Fx,
+    call: &super::emit::ClassBodyCall,
+) -> Result<super::operand::Operand, String> {
+    use cranelift_codegen::ir::InstBuilder;
+    let Some((cond, run_when)) = call.guard else {
+        return class_body_site_run(fx, call);
+    };
+    let c = super::expr::lower_expr(fx, cond)?;
+    let truthy = ownership::truthy(fx, c);
+    let ss = fx.temp_slot();
+    let dst = fx.slot_addr(ss, 0);
+    let b_run = fx.b.create_block();
+    let b_skip = fx.b.create_block();
+    let join = fx.b.create_block();
+    let (t, f) = match run_when {
+        true => (b_run, b_skip),
+        false => (b_skip, b_run),
+    };
+    fx.b.ins().brif(truthy, t, &[], f, &[]);
+    fx.b.switch_to_block(b_run);
+    let op = class_body_site_run(fx, call)?;
+    ownership::write_move_into(fx, &op, dst);
+    fx.b.ins().jump(join, &[]);
+    fx.b.switch_to_block(b_skip);
+    ownership::write_move_into(fx, &super::operand::Operand::Nil, dst);
+    fx.b.ins().jump(join, &[]);
+    fx.b.switch_to_block(join);
+    fx.owned_created += 1;
+    Ok(super::operand::Operand::Slot {
+        ss,
+        owned: true,
+        tag: super::operand::TagInfo::Unknown,
+    })
+}
+
+fn class_body_site_run(
     fx: &mut Fx,
     call: &super::emit::ClassBodyCall,
 ) -> Result<super::operand::Operand, String> {

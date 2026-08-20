@@ -673,6 +673,11 @@ pub const CAPI: &[CapiSig] = &[
         ret: Some(I32),
     },
     CapiSig {
+        name: "zeo_rt_send_value_vcall_in",
+        params: &[U32, Ptr, U32, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
         name: "zeo_rt_set_line",
         params: &[U32],
         ret: None,

@@ -1164,6 +1164,15 @@ pub(crate) struct ClassBodyCall {
     /// The site's Ruby value -- read only by a marker in value or tail
     /// position; a statement marker discards it.
     pub tail: BodyTail,
+    /// A trailing `if`/`unless` on the `class` keyword (`class Set ... end if
+    /// set_pp`). Ruby evaluates it in the ENCLOSING scope -- the oracle's
+    /// backtrace for a raise inside one says `<main>`, not `<class:Set>` --
+    /// so it stays OUT of the lifted body and runs at the marker, where the
+    /// enclosing locals it reads are in scope. `(cond, run_when)`: `unless`
+    /// puts the body in the else branch and runs when the condition is
+    /// FALSE. Everything the site registers rides inside the branch too: a
+    /// class whose guard failed was never defined.
+    pub guard: Option<(crate::hir::NodeId, bool)>,
 }
 
 /// One compiled class body (a separate Ruby scope, lifted to its own
@@ -1339,7 +1348,12 @@ fn collect_class_bodies(
             })
             .flatten();
         let tail = body_tail(compiler, site);
-        let func = if site.stmts.is_empty() {
+        // A trailing `if`/`unless` on the `class` keyword arrives as the
+        // body's ONE statement, wrapping everything. It belongs to the
+        // ENCLOSING scope, so split it back out: the lifted body gets the
+        // taken branch, the marker gets the condition.
+        let (guard, body_stmts) = split_guard(compiler, &site.stmts);
+        let func = if body_stmts.is_empty() {
             None
         } else {
             let sig = super::params::body_sig(em, 0, false);
@@ -1366,6 +1380,7 @@ fn collect_class_bodies(
             reveal: ci.runtime_conditional,
             freeze_guard,
             tail,
+            guard,
         };
         let is_inline = site.def_node.is_some_and(|n| inline.contains(&n));
         if is_inline && let Some(marker) = site.def_node {
@@ -1375,12 +1390,46 @@ fn collect_class_bodies(
             call,
             class: site.class,
             label,
-            stmts: site.stmts.clone(),
+            stmts: body_stmts,
             node: site.def_node,
             inline: is_inline,
         });
     }
     Ok(specs)
+}
+
+/// A class body whose ONE statement is an `If` is a `class ... end if cond`
+/// (or `unless`): analyze wraps the whole body in the guard, because the
+/// rustc backend splices the body inline where the condition's locals are in
+/// scope. CLIF lifts the body to its own function, so the condition has to
+/// come back out -- which is also where ruby runs it (the oracle's backtrace
+/// for a raise in one reads `<main>`, never `<class:X>`).
+///
+/// One branch of such an `If` is always empty: `if` fills the then branch,
+/// `unless` the else. Anything else is an ordinary `if` the body wrote, and
+/// stays in the body.
+fn split_guard(
+    compiler: &crate::compiler::Compiler,
+    stmts: &[crate::hir::NodeId],
+) -> (Option<(crate::hir::NodeId, bool)>, Vec<crate::hir::NodeId>) {
+    let keep = || (None, stmts.to_vec());
+    let [only] = stmts else { return keep() };
+    let crate::hir::HirNode::If {
+        cond,
+        then_body,
+        else_body,
+    } = &compiler.hir[*only]
+    else {
+        return keep();
+    };
+    match (then_body.is_empty(), else_body.is_empty()) {
+        (false, true) => (Some((*cond, true)), then_body.clone()),
+        (true, false) => (Some((*cond, false)), else_body.clone()),
+        // Both empty: nothing to run either way, but the condition still
+        // has to be evaluated. Both full: an ordinary `if` written as the
+        // body's only statement, which the body lowers itself.
+        (true, true) | (false, false) => keep(),
+    }
 }
 
 /// [`BodyTail`] for one site: what the body's LAST SOURCE statement is
