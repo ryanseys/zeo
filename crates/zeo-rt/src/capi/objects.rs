@@ -342,6 +342,90 @@ pub unsafe extern "C" fn zeo_rt_const_get_scoped(
     }
 }
 
+/// `Foo::NAME`'s lenient half (`||=`'s read, `defined?`'s probe): an
+/// absent constant -- or a scope class the compiler never registered --
+/// is `nil`, never a raise.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_const_get_or_nil(
+    owner: u32,
+    name: *const u8,
+    name_len: usize,
+    out: *mut RubyValue,
+) {
+    let name = unsafe { super::str_slice(name, name_len) };
+    let v = crate::constants::const_get(owner, name).unwrap_or(RubyValue::Nil);
+    super::leakcheck::created(&v);
+    unsafe { out.write(v) };
+}
+
+/// `obj::NAME` -- the scope operator on a VALUE, so the whole search runs
+/// here: the scoped search (not `const_get`'s, which reaches through
+/// `Object` and past a `private_constant`), the privacy gate, and the
+/// `const_missing` dispatch on a miss.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_scope_const_get(
+    scope: *const RubyValue,
+    name: *const u8,
+    name_len: usize,
+    out: *mut RubyValue,
+) -> i32 {
+    let name = unsafe { super::str_slice(name, name_len) };
+    status_out(
+        crate::builtins::rmodule::scope_const_get(unsafe { &*scope }, name),
+        out,
+    )
+}
+
+/// The lenient half of `obj::NAME ||= v`: nil where the strict read would
+/// raise `NameError`. A non-module scope is still a `TypeError` -- the
+/// leniency is about the NAME, not the receiver.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_scope_const_get_or_nil(
+    scope: *const RubyValue,
+    name: *const u8,
+    name_len: usize,
+    out: *mut RubyValue,
+) -> i32 {
+    let name = unsafe { super::str_slice(name, name_len) };
+    status_out(
+        crate::builtins::rmodule::scope_const_get_or_nil(unsafe { &*scope }, name),
+        out,
+    )
+}
+
+/// `defined?(obj::NAME)`'s membership test -- a scope that is not a module
+/// answers false rather than raising.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_scope_const_defined(
+    scope: *const RubyValue,
+    name: *const u8,
+    name_len: usize,
+) -> u8 {
+    let name = unsafe { super::str_slice(name, name_len) };
+    u8::from(crate::builtins::rmodule::scope_const_defined(
+        unsafe { &*scope },
+        name,
+    ))
+}
+
+/// `obj::NAME = value` -- writes the scope's OWN table (assignment never
+/// walks an ancestry), records the writing line, fires `const_added`, and
+/// answers the value.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_scope_const_set(
+    scope: *const RubyValue,
+    name: *const u8,
+    name_len: usize,
+    v: *const RubyValue,
+    out: *mut RubyValue,
+) -> i32 {
+    let name = unsafe { super::str_slice(name, name_len) };
+    status_out(
+        crate::builtins::rmodule::scope_const_set(unsafe { &*scope }, name, unsafe { &*v }.clone()),
+        out,
+    )
+}
+
 /// `Scope::NAME` where the SCOPE is only a runtime constant (a
 /// `Struct.new` result, a class built under a computed superclass): the
 /// caller read the scope path and hands the value here, and the leaf is

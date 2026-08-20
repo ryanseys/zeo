@@ -353,6 +353,102 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             let (scope, name) = (scope.clone(), name.clone());
             scoped_const_read(fx, id, &scope, &name)
         }
+        // `X ||= v`'s read half: an absent constant -- or a scope the
+        // compiler never registered -- is nil, so the write half can
+        // define it (rustc's `const_owner_id_opt` miss arm).
+        HirNode::ConstReadOrNil(scope, name) => {
+            let (scope, name) = (scope.clone(), name.clone());
+            let owner_class = match scope.as_deref() {
+                Some(s) => match resolve_class_here(fx, s) {
+                    Some(cid) => cid,
+                    None => return Ok(Operand::Nil),
+                },
+                None => fx.method_class.unwrap_or(crate::compiler::OBJECT_CLASS),
+            };
+            let owner = fx
+                .an
+                .compiler
+                .class(owner_class)
+                .const_owners
+                .get(&name)
+                .copied()
+                .unwrap_or(owner_class)
+                .0;
+            let owner_v = fx.b.ins().iconst(types::I32, i64::from(owner));
+            let (nptr, nlen) = rodata_name(fx, &name);
+            let ss = fx.temp_slot();
+            let out = fx.slot_addr(ss, 0);
+            fx.call("zeo_rt_const_get_or_nil", &[owner_v, nptr, nlen, out]);
+            fx.owned_created += 1;
+            Ok(Operand::Slot {
+                ss,
+                owned: true,
+                tag: TagInfo::Unknown,
+            })
+        }
+        // `expr::NAME` / `expr::NAME = v`: the scope is a VALUE, so the
+        // whole search happens at run time -- the scope operator's own,
+        // which rejects a non-module scope with ruby's TypeError.
+        HirNode::DynConstRead {
+            scope,
+            name,
+            lenient,
+        } => {
+            let (scope, name, lenient) = (*scope, name.clone(), *lenient);
+            let op = lower_expr(fx, scope)?;
+            let ptr = ownership::borrow_ptr(fx, &op);
+            if op.owned() {
+                ownership::pool_owned(fx, ptr, op.tag());
+            }
+            let (nptr, nlen) = rodata_name(fx, &name);
+            let ss = fx.temp_slot();
+            let out = fx.slot_addr(ss, 0);
+            let entry = if lenient {
+                "zeo_rt_scope_const_get_or_nil"
+            } else {
+                "zeo_rt_scope_const_get"
+            };
+            let status = fx
+                .call(entry, &[ptr, nptr, nlen, out])
+                .expect("scope_const_get returns a status");
+            fx.fallible(status);
+            fx.owned_created += 1;
+            Ok(Operand::Slot {
+                ss,
+                owned: true,
+                tag: TagInfo::Unknown,
+            })
+        }
+        HirNode::DynConstWrite { scope, name, value } => {
+            let (scope, name, value) = (*scope, name.clone(), *value);
+            // Ruby evaluates the scope FIRST and the value second, and
+            // demands a module of the scope only once both are in hand
+            // (`1::X = (puts 2; 3)` prints before it raises) -- unlike the
+            // static form, which raises on an unresolvable scope untouched.
+            let sop = lower_expr(fx, scope)?;
+            let sptr = ownership::borrow_ptr(fx, &sop);
+            if sop.owned() {
+                ownership::pool_owned(fx, sptr, sop.tag());
+            }
+            let vop = lower_expr(fx, value)?;
+            let vptr = ownership::borrow_ptr(fx, &vop);
+            if vop.owned() {
+                ownership::pool_owned(fx, vptr, vop.tag());
+            }
+            let (nptr, nlen) = rodata_name(fx, &name);
+            let ss = fx.temp_slot();
+            let out = fx.slot_addr(ss, 0);
+            let status = fx
+                .call("zeo_rt_scope_const_set", &[sptr, nptr, nlen, vptr, out])
+                .expect("scope_const_set returns a status");
+            fx.fallible(status);
+            fx.owned_created += 1;
+            Ok(Operand::Slot {
+                ss,
+                owned: true,
+                tag: TagInfo::Unknown,
+            })
+        }
         HirNode::Begin {
             body,
             rescues,
@@ -2122,8 +2218,55 @@ fn lower_defined(fx: &mut Fx, site: NodeId, inner: NodeId) -> Result<Operand, St
         }
         return Ok(defined_static(fx, Some("constant")));
     }
-    if matches!(&fx.an.compiler.hir[inner], HirNode::DynConstRead { .. }) {
-        return fx.unsupported(site, "a `defined?` of a runtime-scoped constant");
+    // `defined?(obj::NAME)`: only the run time can answer. `"constant"`
+    // when the scope operator finds the name, nil otherwise -- including
+    // when the scope is not a module at all, and including a raise from
+    // the scope expression itself (CRuby's catch entry over the whole
+    // form swallows it).
+    if let HirNode::DynConstRead { scope, name, .. } = &fx.an.compiler.hir[inner] {
+        let (scope, name) = (*scope, name.clone());
+        let ss = fx.temp_slot();
+        let dst = fx.slot_addr(ss, 0);
+        let swallow = fx.b.create_block();
+        let merge = fx.b.create_block();
+        let saved = fx.land;
+        fx.land = swallow;
+        let op = lower_expr(fx, scope)?;
+        fx.land = saved;
+        let p = ownership::borrow_ptr(fx, &op);
+        if op.owned() {
+            ownership::pool_owned(fx, p, op.tag());
+        }
+        let (nptr, nlen) = rodata_name(fx, &name);
+        let hit = fx
+            .call("zeo_rt_scope_const_defined", &[p, nptr, nlen])
+            .expect("scope_const_defined answers");
+        let yes = fx.b.create_block();
+        let no = fx.b.create_block();
+        fx.b.ins().brif(hit, yes, &[], no, &[]);
+        fx.b.switch_to_block(yes);
+        defined_str(fx, dst, "constant");
+        fx.b.ins().jump(merge, &[]);
+        fx.b.switch_to_block(no);
+        ownership::write_move_into(fx, &Operand::Nil, dst);
+        fx.b.ins().jump(merge, &[]);
+        // The swallow landing: drop the pending signal and answer nil.
+        fx.b.switch_to_block(swallow);
+        let sig_ss = fx.temp_slot();
+        let sig_dst = fx.slot_addr(sig_ss, 0);
+        ownership::write_move_into(fx, &Operand::Nil, sig_dst);
+        fx.call("zeo_rt_signal_take", &[sig_dst]);
+        fx.owned_created += 1;
+        ownership::pool_owned(fx, sig_dst, TagInfo::Unknown);
+        ownership::write_move_into(fx, &Operand::Nil, dst);
+        fx.b.ins().jump(merge, &[]);
+        fx.b.switch_to_block(merge);
+        fx.owned_created += 1;
+        return Ok(Operand::Slot {
+            ss,
+            owned: true,
+            tag: TagInfo::Unknown,
+        });
     }
     if let HirNode::GlobalRead(name) = &fx.an.compiler.hir[inner] {
         let name = name.clone();

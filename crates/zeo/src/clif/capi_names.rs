@@ -136,6 +136,11 @@ pub const CAPI: &[CapiSig] = &[
         ret: Some(I32),
     },
     CapiSig {
+        name: "zeo_rt_const_get_or_nil",
+        params: &[U32, Ptr, Usize, Ptr],
+        ret: None,
+    },
+    CapiSig {
         name: "zeo_rt_const_get_scoped",
         params: &[U32, Ptr, Usize, Ptr, Usize, U8, Ptr],
         ret: Some(I32),
@@ -538,6 +543,26 @@ pub const CAPI: &[CapiSig] = &[
     CapiSig {
         name: "zeo_rt_runtime_set_visibility",
         params: &[U32, U32, U8],
+        ret: Some(I32),
+    },
+    CapiSig {
+        name: "zeo_rt_scope_const_defined",
+        params: &[Ptr, Ptr, Usize],
+        ret: Some(I8),
+    },
+    CapiSig {
+        name: "zeo_rt_scope_const_get",
+        params: &[Ptr, Ptr, Usize, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
+        name: "zeo_rt_scope_const_get_or_nil",
+        params: &[Ptr, Ptr, Usize, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
+        name: "zeo_rt_scope_const_set",
+        params: &[Ptr, Ptr, Usize, Ptr, Ptr],
         ret: Some(I32),
     },
     CapiSig {

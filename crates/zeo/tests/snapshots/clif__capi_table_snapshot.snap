@@ -22,6 +22,7 @@ zeo_rt_conditional_class_ref ([U32, Ptr, Usize, U32, Ptr]) -> Some(I32)
 zeo_rt_const_get_at ([U32, Ptr, Usize, Ptr]) -> Some(I32)
 zeo_rt_const_get_cref ([Ptr, Usize, Ptr, Usize, Ptr, Usize, U8, Ptr]) -> Some(I32)
 zeo_rt_const_get_on_value ([Ptr, Ptr, Usize, Ptr, Usize, Ptr]) -> Some(I32)
+zeo_rt_const_get_or_nil ([U32, Ptr, Usize, Ptr]) -> None
 zeo_rt_const_get_scoped ([U32, Ptr, Usize, Ptr, Usize, U8, Ptr]) -> Some(I32)
 zeo_rt_const_private ([U32, Ptr, Usize]) -> Some(I8)
 zeo_rt_const_set_at ([U32, Ptr, Usize, Ptr, Ptr, Usize, U32]) -> None
@@ -103,6 +104,10 @@ zeo_rt_retain ([Ptr]) -> None
 zeo_rt_return_targets_here ([]) -> Some(U8)
 zeo_rt_reveal_class ([U32]) -> None
 zeo_rt_runtime_set_visibility ([U32, U32, U8]) -> Some(I32)
+zeo_rt_scope_const_defined ([Ptr, Ptr, Usize]) -> Some(I8)
+zeo_rt_scope_const_get ([Ptr, Ptr, Usize, Ptr]) -> Some(I32)
+zeo_rt_scope_const_get_or_nil ([Ptr, Ptr, Usize, Ptr]) -> Some(I32)
+zeo_rt_scope_const_set ([Ptr, Ptr, Usize, Ptr, Ptr]) -> Some(I32)
 zeo_rt_send_super_class_from_args ([U32, U32, U32, Ptr, U8, Ptr, Ptr, Ptr]) -> Some(I32)
 zeo_rt_send_super_dynamic_args ([Ptr, Ptr, U8, Ptr, Ptr, Ptr]) -> Some(I32)
 zeo_rt_send_super_from_args ([Ptr, U32, U32, Ptr, U8, Ptr, Ptr, Ptr]) -> Some(I32)

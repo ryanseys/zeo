@@ -388,6 +388,9 @@ fn lower_tail_expr(fx: &mut Fx, tail: NodeId) -> Result<super::operand::Operand,
         | HirNode::ClassVarWrite(..)
         | HirNode::ConstWrite { .. }
         | HirNode::QualifiedConstRead(..)
+        | HirNode::ConstReadOrNil(..)
+        | HirNode::DynConstRead { .. }
+        | HirNode::DynConstWrite { .. }
         | HirNode::RegexpLit(..)
         | HirNode::LastMatchRef(..)
         | HirNode::SuperCall { .. }
@@ -859,6 +862,9 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
         | HirNode::ClassVarWrite(..)
         | HirNode::ConstWrite { .. }
         | HirNode::QualifiedConstRead(..)
+        | HirNode::ConstReadOrNil(..)
+        | HirNode::DynConstRead { .. }
+        | HirNode::DynConstWrite { .. }
         | HirNode::RegexpLit(..)
         | HirNode::LastMatchRef(..)
         | HirNode::SuperCall { .. }
