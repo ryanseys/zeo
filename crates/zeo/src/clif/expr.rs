@@ -2253,7 +2253,6 @@ fn is_predefined_global(name: &str) -> bool {
     reason = "structural: the static-classification tail mirrors rustc's exhaustive match; an unlisted node kind refuses loudly below rather than misclassifying"
 )]
 fn lower_defined(fx: &mut Fx, site: NodeId, inner: NodeId) -> Result<Operand, String> {
-    use crate::hir::LastMatch;
     // `defined?(yield)`: runtime -- the block channel is or isn't there.
     if matches!(&fx.an.compiler.hir[inner], HirNode::Yield(_)) {
         return Ok(match fx.blk_ptr {
@@ -2356,7 +2355,12 @@ fn lower_defined(fx: &mut Fx, site: NodeId, inner: NodeId) -> Result<Operand, St
         };
         if crate::analyze::constfold::const_form_resolves(&env, inner) != Some(true) {
             let Some(scope_id) = resolve_class_here(fx, &scope) else {
-                return fx.unsupported(site, "a `defined?` of an unresolvable scope");
+                // A scope only the run time can name (`Scoped = Module.new`)
+                // -- or one nothing ever defines, where reading it raises
+                // and the swallow answers nil, as ruby's does.
+                return defined_const_under_runtime_scope(fx, &name, |fx| {
+                    const_path_read(fx, inner, &scope)
+                });
             };
             let sid = fx.b.ins().iconst(types::I32, i64::from(scope_id.0));
             let (nptr, nlen) = rodata_name(fx, &name);
@@ -2404,19 +2408,36 @@ fn lower_defined(fx: &mut Fx, site: NodeId, inner: NodeId) -> Result<Operand, St
     // form swallows it).
     if let HirNode::DynConstRead { scope, name, .. } = &fx.an.compiler.hir[inner] {
         let (scope, name) = (*scope, name.clone());
+        return defined_const_under_runtime_scope(fx, &name, |fx| lower_expr(fx, scope));
+    }
+    defined_rest(fx, site, inner)
+}
+
+/// `defined?` of a constant under a scope only the run time settles
+/// (`obj::NAME`, or `Scope::NAME` whose scope this compile cannot name).
+/// The scope is evaluated under a SWALLOW landing -- CRuby's catch entry
+/// over the whole form eats a raise from it -- and then the scope
+/// operator's own search answers `"constant"` or nil, nil too when the
+/// scope turns out to be no module at all.
+fn defined_const_under_runtime_scope(
+    fx: &mut Fx,
+    name: &str,
+    scope: impl FnOnce(&mut Fx) -> Result<Operand, String>,
+) -> Result<Operand, String> {
+    {
         let ss = fx.temp_slot();
         let dst = fx.slot_addr(ss, 0);
         let swallow = fx.b.create_block();
         let merge = fx.b.create_block();
         let saved = fx.land;
         fx.land = swallow;
-        let op = lower_expr(fx, scope)?;
+        let op = scope(fx)?;
         fx.land = saved;
         let p = ownership::borrow_ptr(fx, &op);
         if op.owned() {
             ownership::pool_owned(fx, p, op.tag());
         }
-        let (nptr, nlen) = rodata_name(fx, &name);
+        let (nptr, nlen) = rodata_name(fx, name);
         let hit = fx
             .call("zeo_rt_scope_const_defined", &[p, nptr, nlen])
             .expect("scope_const_defined answers");
@@ -2441,12 +2462,22 @@ fn lower_defined(fx: &mut Fx, site: NodeId, inner: NodeId) -> Result<Operand, St
         fx.b.ins().jump(merge, &[]);
         fx.b.switch_to_block(merge);
         fx.owned_created += 1;
-        return Ok(Operand::Slot {
+        Ok(Operand::Slot {
             ss,
             owned: true,
             tag: TagInfo::Unknown,
-        });
+        })
     }
+}
+
+/// The rest of [`lower_defined`]'s classification chain, split off only so
+/// that neither half runs to a thousand lines.
+#[allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "structural: the static-classification tail mirrors rustc's exhaustive match; an unlisted node kind refuses loudly below rather than misclassifying"
+)]
+fn defined_rest(fx: &mut Fx, site: NodeId, inner: NodeId) -> Result<Operand, String> {
+    use crate::hir::LastMatch;
     if let HirNode::GlobalRead(name) = &fx.an.compiler.hir[inner] {
         let name = name.clone();
         if is_predefined_global(&name) {
