@@ -35,7 +35,15 @@ struct State {
     /// carry (a compressed stream, an image, a socket capture).
     enc: crate::encoding::EncodingId,
     pos: usize,
-    closed: bool,
+    /// The line counter `gets`/`readline`/`each_line` advance and `lineno=`
+    /// sets. It is bookkeeping, not a position: CRuby never derives one from
+    /// the other, so seeking does not touch it.
+    lineno: i64,
+    /// CRuby closes the two directions independently (`close_read` /
+    /// `close_write`), and `closed?` is true only when BOTH are. `close`
+    /// shuts both.
+    closed_read: bool,
+    closed_write: bool,
 }
 
 pub struct RStringIO {
@@ -50,7 +58,9 @@ impl RStringIO {
                 bytes,
                 enc,
                 pos: 0,
-                closed: false,
+                lineno: 0,
+                closed_read: false,
+                closed_write: false,
             }),
             frozen: AtomicBool::new(false),
         }
@@ -174,6 +184,49 @@ fn partial_read(
 }
 
 /// Overwrite-from-`pos` write, extending the buffer as a file would.
+/// The two direction guards. CRuby closes reading and writing separately and
+/// refuses the matching half afterwards, with these exact messages -- rack's
+/// Lint and every `IO`-shaped wrapper rely on the refusal, not on a silent
+/// empty answer.
+///
+/// Only the I/O surface is guarded. `string`, `pos` and `size` keep answering
+/// on a fully closed StringIO, because they read the OBJECT, not the stream.
+fn check_readable(recv: &RubyValue) -> Result<(), crate::Signal> {
+    if io_of(recv).state.lock().closed_read {
+        return Err(crate::builtins::io_error!("not opened for reading"));
+    }
+    Ok(())
+}
+
+fn check_writable(recv: &RubyValue) -> Result<(), crate::Signal> {
+    if io_of(recv).state.lock().closed_write {
+        return Err(crate::builtins::io_error!("not opened for writing"));
+    }
+    Ok(())
+}
+
+/// Replace the buffer with `arg`'s bytes and start over: position 0, line 0,
+/// and the argument's own encoding, because a StringIO remembers what its
+/// bytes mean. Shared by `string=` and `reopen`, which differ only in what
+/// they answer.
+fn set_buffer(recv: &RubyValue, arg: &RubyValue) {
+    let (bytes, enc) = match arg {
+        RubyValue::Str(sp) => {
+            let g = sp.lock();
+            (g.bytes().to_vec(), g.encoding())
+        }
+        other => (
+            other.to_display_string().into_bytes(),
+            crate::encoding::UTF_8,
+        ),
+    };
+    let mut s = io_of(recv).state.lock();
+    s.bytes = bytes;
+    s.enc = enc;
+    s.pos = 0;
+    s.lineno = 0;
+}
+
 fn write_at(state: &mut State, data: &[u8]) {
     let end = state.pos + data.len();
     if state.bytes.len() < end {
@@ -245,6 +298,7 @@ ruby_class! {
         Ok(RubyValue::Nil)
     }
     def "read" (recv, arg?) {
+        check_readable(recv)?;
         let mut s = io_of(recv).state.lock();
         match arg {
             None | Some(RubyValue::Nil) => {
@@ -276,13 +330,16 @@ ruby_class! {
     // `net/protocol` reaches `read_nonblock` through `Net::BufferedIO`, which
     // is how net/http and net/smtp read from any IO.
     def "readpartial" | "sysread" cfunc (recv, maxlen, buffer?, &_blk) {
+        check_readable(recv)?;
         partial_read(recv, maxlen, buffer, true)
     }
     def "read_nonblock" cfunc (recv, maxlen, buffer?, **opts, &_blk) {
+        check_readable(recv)?;
         let raises = crate::builtins::io::nonblock_raises(opts);
         partial_read(recv, maxlen, buffer, raises)
     }
     def "write" (recv, *args, &_block) {
+        check_writable(recv)?;
         let mut written = 0usize;
         let mut s = io_of(recv).state.lock();
         for a in args {
@@ -293,11 +350,13 @@ ruby_class! {
         Ok(RubyValue::Int(written as i64))
     }
     def "<<" (recv, other) {
+        check_writable(recv)?;
         let mut s = io_of(recv).state.lock();
         write_at(&mut s, &arg_bytes(other));
         Ok(recv.clone())
     }
     def "print" (recv, *args, &_block) {
+        check_writable(recv)?;
         let mut s = io_of(recv).state.lock();
         for a in args {
             write_at(&mut s, &arg_bytes(a));
@@ -305,6 +364,7 @@ ruby_class! {
         Ok(RubyValue::Nil)
     }
     def "puts" (recv, *args, &_block) {
+        check_writable(recv)?;
         let mut s = io_of(recv).state.lock();
         if args.is_empty() {
             write_at(&mut s, b"\n");
@@ -319,6 +379,7 @@ ruby_class! {
     // not drift. The bytes are sliced here rather than reused from IO because a
     // StringIO remembers its buffer's encoding.
     def "gets" as gets (recv, _sep?, _limit?, **_opts, &_blk) {
+        check_readable(recv)?;
         let opts = crate::builtins::io::line_opts(__args);
         let mut s = io_of(recv).state.lock();
         if s.pos >= s.bytes.len() {
@@ -338,6 +399,9 @@ ruby_class! {
         }
         let mut line = s.bytes[s.pos..end].to_vec();
         s.pos = end;
+        // Every line HANDED BACK advances the counter `lineno` reports --
+        // including the ones `each_line`/`readlines` take through here.
+        s.lineno += 1;
         crate::builtins::io::chomp_line(&mut line, &opts);
         Ok(bytes_to_str(&line, s.enc))
     }
@@ -360,6 +424,7 @@ ruby_class! {
     }
     // `each_char` -- yield each character; blockless, an Enumerator.
     def "each_char" (recv, &block) {
+        check_readable(recv)?;
         let p = crate::builtins::block_or_enum!(recv, __args, block);
         loop {
             let ch = {
@@ -380,11 +445,13 @@ ruby_class! {
     // PRIVATE `Kernel#printf`, so an explicit receiver is refused -- which is
     // exactly what a StringIO is for.
     def "printf" cfunc (recv, fmt, *args, &_blk) {
+        check_writable(recv)?;
         let s = crate::builtins::format::sprintf(&fmt.try_display_string()?, args)?;
         write_at(&mut io_of(recv).state.lock(), s.as_bytes());
         Ok(RubyValue::Nil)
     }
     def "eof?" | "eof" (recv) {
+        check_readable(recv)?;
         let s = io_of(recv).state.lock();
         Ok(RubyValue::Bool(s.pos >= s.bytes.len()))
     }
@@ -404,11 +471,205 @@ ruby_class! {
         Ok(RubyValue::Int(io_of(recv).state.lock().bytes.len() as i64))
     }
     def "close" (recv) {
-        io_of(recv).state.lock().closed = true;
+        let mut s = io_of(recv).state.lock();
+        s.closed_read = true;
+        s.closed_write = true;
         Ok(RubyValue::Nil)
     }
     def "closed?" (recv) {
-        Ok(RubyValue::Bool(io_of(recv).state.lock().closed))
+        let s = io_of(recv).state.lock();
+        Ok(RubyValue::Bool(s.closed_read && s.closed_write))
+    }
+    def "close_read" (recv) {
+        io_of(recv).state.lock().closed_read = true;
+        Ok(RubyValue::Nil)
+    }
+    def "close_write" (recv) {
+        io_of(recv).state.lock().closed_write = true;
+        Ok(RubyValue::Nil)
+    }
+    def "closed_read?" (recv) {
+        Ok(RubyValue::Bool(io_of(recv).state.lock().closed_read))
+    }
+    def "closed_write?" (recv) {
+        Ok(RubyValue::Bool(io_of(recv).state.lock().closed_write))
+    }
+
+    // The stream methods a StringIO answers WITHOUT a stream behind it.
+    // CRuby defines every one of these so a StringIO is drop-in wherever an
+    // IO is expected -- rack's Lint refuses an error stream that does not
+    // answer `#flush`, and a buffer that cannot say `false` to `tty?` is not
+    // a stand-in for anything. The answers are CRuby's own, not plausible
+    // ones: `flush`/`binmode` hand back the receiver, `fsync` is 0 (the
+    // syscall's success value), `fileno`/`pid` are nil (there is no
+    // descriptor and no child), and `sync` is TRUE -- an in-memory buffer is
+    // always already flushed.
+    def "flush" (recv) {
+        Ok(recv.clone())
+    }
+    def "binmode" (recv) {
+        Ok(recv.clone())
+    }
+    def "fsync" (_recv) {
+        Ok(RubyValue::Int(0))
+    }
+    def "fileno" (_recv) {
+        Ok(RubyValue::Nil)
+    }
+    def "pid" (_recv) {
+        Ok(RubyValue::Nil)
+    }
+    def "isatty" | "tty?" (_recv) {
+        Ok(RubyValue::Bool(false))
+    }
+    def "sync" (_recv) {
+        Ok(RubyValue::Bool(true))
+    }
+    // Accepted and ignored -- there is no buffer to stop buffering. CRuby
+    // answers the ARGUMENT, as every `foo=` does.
+    def "sync=" (_recv, arg) {
+        Ok((*arg).clone())
+    }
+    // CRuby raises here rather than pretending: `fcntl` is a descriptor
+    // operation and a StringIO has no descriptor. The message is the
+    // machine-level one it uses.
+    def "fcntl" cfunc (_recv, *_args) {
+        Err(crate::builtins::not_impl_error!(
+            "fcntl() function is unimplemented on this machine"
+        ))
+    }
+
+    // The line counter. It is bookkeeping the reader advances, never derived
+    // from the position -- `seek`/`rewind` leave it alone, which is why it
+    // has to be stored rather than computed.
+    def "lineno" (recv) {
+        Ok(RubyValue::Int(io_of(recv).state.lock().lineno))
+    }
+    def "lineno=" (recv, arg) {
+        let n = crate::builtins::convert::to_index(arg)?;
+        io_of(recv).state.lock().lineno = n;
+        Ok((*arg).clone())
+    }
+
+    // `each_byte` / `each_codepoint` -- the two walks `each_char` did not
+    // cover. Blockless, each is an Enumerator, like every `each_*`.
+    def "each_byte" (recv, &block) {
+        check_readable(recv)?;
+        let p = crate::builtins::block_or_enum!(recv, __args, block);
+        loop {
+            let b = {
+                let mut s = io_of(recv).state.lock();
+                if s.pos >= s.bytes.len() {
+                    break;
+                }
+                let b = s.bytes[s.pos];
+                s.pos += 1;
+                b
+            };
+            p.call(&[RubyValue::Int(i64::from(b))])?;
+        }
+        Ok(recv.clone())
+    }
+    def "each_codepoint" (recv, &block) {
+        check_readable(recv)?;
+        let p = crate::builtins::block_or_enum!(recv, __args, block);
+        loop {
+            let cp = {
+                let mut s = io_of(recv).state.lock();
+                if s.pos >= s.bytes.len() {
+                    break;
+                }
+                let len = char_len(s.enc, s.bytes[s.pos]).min(s.bytes.len() - s.pos);
+                let chunk = &s.bytes[s.pos..s.pos + len];
+                // Undecodable bytes answer their own value, which is what
+                // CRuby does for a single-byte encoding and the honest answer
+                // for a broken sequence.
+                let cp = std::str::from_utf8(chunk)
+                    .ok()
+                    .and_then(|t| t.chars().next())
+                    .map_or(i64::from(chunk[0]), |c| i64::from(c as u32));
+                s.pos += len;
+                cp
+            };
+            p.call(&[RubyValue::Int(cp)])?;
+        }
+        Ok(recv.clone())
+    }
+
+    // `putc(obj)` -- write ONE character: an Integer's low byte, or a
+    // String's first character. It answers its argument, not the count.
+    def "putc" (recv, arg) {
+        check_writable(recv)?;
+        let byte = match arg {
+            RubyValue::Str(_) => {
+                // An empty String writes NOTHING and still answers itself --
+                // CRuby's own answer, not an error.
+                let b = arg_bytes(arg);
+                if b.is_empty() {
+                    return Ok((*arg).clone());
+                }
+                let len = { let s = io_of(recv).state.lock(); char_len(s.enc, b[0]).min(b.len()) };
+                b[..len].to_vec()
+            }
+            other => vec![(crate::builtins::convert::to_index(other)? & 0xff) as u8],
+        };
+        write_at(&mut io_of(recv).state.lock(), &byte);
+        Ok((*arg).clone())
+    }
+
+    // `pread(len, offset)` -- read WITHOUT moving the position, which is the
+    // whole point of the name.
+    def "pread" (recv, len, offset) {
+        check_readable(recv)?;
+        let len = crate::builtins::convert::to_index(len)?.max(0) as usize;
+        let off = crate::builtins::convert::to_index(offset)?.max(0) as usize;
+        let s = io_of(recv).state.lock();
+        // A zero-length read never reaches for a byte, so it answers "" even
+        // at the very end; any other read starting AT or past the end is EOF.
+        if len > 0 && off >= s.bytes.len() {
+            return Err(crate::builtins::eof_error!("end of file reached"));
+        }
+        let end = (off + len).min(s.bytes.len());
+        Ok(bytes_to_str(&s.bytes[off..end], s.enc))
+    }
+
+    // `string = str` / `reopen(str)` -- replace the buffer and rewind. CRuby
+    // answers the new string from the assignment and the receiver from
+    // `reopen`, which is the only difference between them here.
+    def "string=" (recv, arg) {
+        set_buffer(recv, arg);
+        Ok((*arg).clone())
+    }
+    def "reopen" cfunc (recv, arg?, *_rest) {
+        if let Some(arg) = arg {
+            set_buffer(recv, arg);
+        }
+        Ok(recv.clone())
+    }
+
+    // `set_encoding(enc)` retags the buffer WITHOUT converting the bytes --
+    // it declares what they already mean. It answers the receiver.
+    def "set_encoding" cfunc (recv, enc, *_rest) {
+        io_of(recv).state.lock().enc = crate::builtins::encoding::arg_encoding(enc)?;
+        Ok(recv.clone())
+    }
+    // A leading byte-order mark NAMES the encoding; CRuby consumes it, retags
+    // the buffer, and answers the Encoding. No mark means no answer (nil) and
+    // nothing consumed.
+    def "set_encoding_by_bom" (recv) {
+        let mut s = io_of(recv).state.lock();
+        let (id, len) = match s.bytes.as_slice() {
+            [0xEF, 0xBB, 0xBF, ..] => (crate::encoding::UTF_8, 3usize),
+            [0xFF, 0xFE, 0x00, 0x00, ..] => (crate::encoding::UTF_32LE, 4),
+            [0x00, 0x00, 0xFE, 0xFF, ..] => (crate::encoding::UTF_32BE, 4),
+            [0xFF, 0xFE, ..] => (crate::encoding::UTF_16LE, 2),
+            [0xFE, 0xFF, ..] => (crate::encoding::UTF_16BE, 2),
+            _ => return Ok(RubyValue::Nil),
+        };
+        s.enc = id;
+        s.pos = len;
+        drop(s);
+        Ok(crate::builtins::encoding::encoding_value(id))
     }
 
     // `seek(offset, whence = SEEK_SET)` -- reposition; whence 0/1/2 =
@@ -435,6 +696,7 @@ ruby_class! {
     }
     // `getc` -- one character (the next whole UTF-8 char), or nil at EOF.
     def "getc" (recv) {
+        check_readable(recv)?;
         let mut s = io_of(recv).state.lock();
         if s.pos >= s.bytes.len() {
             return Ok(RubyValue::Nil);
@@ -452,15 +714,18 @@ ruby_class! {
     // At position 0 the bytes are PREPENDED instead (there is nothing to back
     // over), which is CRuby's own edge.
     def "ungetc" (recv, arg) {
+        check_readable(recv)?;
         unget_bytes(recv, arg, false)
     }
     def "ungetbyte" (recv, arg) {
+        check_readable(recv)?;
         unget_bytes(recv, arg, true)
     }
     // `getbyte` -- one BYTE as an Integer, `nil` at end. Byte-wise, not
     // character-wise like `getc`: prism's deserializer reads its buffer this
     // way, and a multi-byte encoding must not make it skip.
     def "getbyte" (recv) {
+        check_readable(recv)?;
         let mut s = io_of(recv).state.lock();
         if s.pos >= s.bytes.len() {
             return Ok(RubyValue::Nil);
@@ -472,6 +737,7 @@ ruby_class! {
     // `readbyte` -- `getbyte`, but raising `EOFError` at end rather than
     // answering nil (the same pairing `getc`/`readchar` have).
     def "readbyte" (recv) {
+        check_readable(recv)?;
         let mut s = io_of(recv).state.lock();
         if s.pos >= s.bytes.len() {
             return Err(eof_error!("end of file reached"));
@@ -501,6 +767,7 @@ ruby_class! {
     // `truncate(len)` -- resize the buffer, zero-padding when it grows.
     // Returns 0 (CRuby's IO#truncate result).
     def "truncate" (recv, arg) {
+        check_writable(recv)?;
         let len = &crate::builtins::convert::to_index(arg)?;
         if *len < 0 {
             return Err(raise_error("Errno::EINVAL", "Invalid argument".to_string()));
