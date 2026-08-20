@@ -181,6 +181,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
         undef_rows,
         conceal,
         singleton_surrogates,
+        private_consts,
         redefs,
         boot_redefs,
         set_ancestors,
@@ -200,6 +201,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
         collected.undef_rows,
         collected.conceal,
         collected.singleton_surrogates,
+        collected.private_consts,
         collected.redefs,
         collected.boot_redefs,
         collected.set_ancestors,
@@ -596,6 +598,20 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
                 a: name.clone(),
                 b: String::new(),
                 f: Some(em.redef_tramps[&(*class, sid.0)]),
+                ids: vec![],
+                flag: 0,
+            }),
+    );
+    // `private_constant` marks.
+    reg_rows.extend(
+        private_consts
+            .iter()
+            .map(|(class, name)| statics::RegRowSpec {
+                kind: zeo_abi::abi::REG_CONST_PRIVATE,
+                class: *class,
+                a: name.clone(),
+                b: String::new(),
+                f: None,
                 ids: vec![],
                 flag: 0,
             }),

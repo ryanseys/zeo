@@ -150,6 +150,8 @@ pub(crate) struct CollectedClasses {
     /// `(surrogate, owner)` for every compile-registered singleton-class
     /// surrogate -- what seeds the runtime's `singleton_class` mint.
     pub singleton_surrogates: Vec<(u32, u32)>,
+    /// `(class, name)` -- `private_constant` marks.
+    pub private_consts: Vec<(u32, String)>,
     /// Every body of a redefined method, superseded ones included.
     pub redefs: Vec<RedefSpec>,
     /// `(class, name, scope)` -- the FIRST body, installed at boot.
@@ -194,6 +196,7 @@ pub(crate) fn collect_classes(
     let mut alias_rows: Vec<(u32, String, String, bool)> = Vec::new();
     let mut conceal: Vec<u32> = Vec::new();
     let mut singleton_surrogates: Vec<(u32, u32)> = Vec::new();
+    let mut private_consts: Vec<(u32, String)> = Vec::new();
     let mut redefs: Vec<RedefSpec> = Vec::new();
     let mut set_ancestors: Vec<(u32, Vec<u32>)> = Vec::new();
     let mut register_builtin: Vec<(u32, String, bool, Vec<u32>)> = Vec::new();
@@ -491,6 +494,12 @@ pub(crate) fn collect_classes(
         if class.runtime_conditional {
             conceal.push(idx as u32);
         }
+        private_consts.extend(
+            class
+                .private_constants
+                .iter()
+                .map(|n| (idx as u32, n.clone())),
+        );
         // A `class << self` body is homed on a surrogate module; seeding
         // the runtime mint is what makes `Owner.singleton_class` answer it
         // (rustc's `register_singleton_surrogate` block).
@@ -1151,6 +1160,7 @@ pub(crate) fn collect_classes(
         undef_rows,
         conceal,
         singleton_surrogates,
+        private_consts,
         redefs,
         boot_redefs,
         set_ancestors,

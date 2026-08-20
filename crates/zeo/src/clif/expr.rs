@@ -383,6 +383,16 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 tag: TagInfo::Unknown,
             })
         }
+        // `alias $new $old` -- a bidirectional alias of the STORAGE, so a
+        // write through either name is visible through both. Answers nil.
+        HirNode::AliasGlobal(new_name, old_name) => {
+            let (new_name, old_name) = (new_name.clone(), old_name.clone());
+            let bx = fx.b.ins().iconst(types::I32, 0);
+            let (nptr, nlen) = rodata_name(fx, &new_name);
+            let (optr, olen) = rodata_name(fx, &old_name);
+            fx.call("zeo_rt_gvar_alias", &[bx, nptr, nlen, optr, olen]);
+            Ok(Operand::Nil)
+        }
         // `for` in VALUE position: the loop answers the collection it
         // walked (a `break v` supplies its own).
         HirNode::For {
@@ -1454,9 +1464,42 @@ fn scoped_const_read(fx: &mut Fx, id: NodeId, scope: &str, name: &str) -> Result
         return runtime_scope_const_read(fx, id, scope, name);
     };
     let compiler = &fx.an.compiler;
-    if compiler.class(scope_cid).private_constants.contains(name) {
-        return fx.unsupported(id, "a private-constant reference");
+    // A `private_constant` is a runtime FLAG, not a compile-time fact: a
+    // later `M.public_constant :S` restores the name. So the guard is
+    // emitted where the compiler saw the directive, and asks.
+    // The flag lives on the constant's OWNER, which the claim map may
+    // redirect to (rustc's `const_owner_id_opt`).
+    let owner_cid = compiler
+        .class(scope_cid)
+        .const_owners
+        .get(name)
+        .copied()
+        .unwrap_or(scope_cid);
+    if compiler.class(owner_cid).private_constants.contains(name) {
+        let path = format!("{}::{name}", compiler.fq_name(owner_cid));
+        let owner_v = fx.b.ins().iconst(types::I32, i64::from(owner_cid.0));
+        let (nptr, nlen) = rodata_name(fx, name);
+        let private = fx
+            .call("zeo_rt_const_private", &[owner_v, nptr, nlen])
+            .expect("const_private answers");
+        let hidden = fx.b.create_block();
+        let go = fx.b.create_block();
+        fx.b.ins().brif(private, hidden, &[], go, &[]);
+        fx.b.switch_to_block(hidden);
+        let owner_v = fx.b.ins().iconst(types::I32, i64::from(owner_cid.0));
+        let (nptr, nlen) = rodata_name(fx, name);
+        let (pptr, plen) = rodata_name(fx, &path);
+        let st = fx
+            .call(
+                "zeo_rt_raise_private_constant",
+                &[owner_v, nptr, nlen, pptr, plen],
+            )
+            .expect("raise_private_constant returns a status");
+        fx.fallible(st);
+        fx.b.ins().jump(go, &[]);
+        fx.b.switch_to_block(go);
     }
+    let compiler = &fx.an.compiler;
     let hook = compiler
         .class_method_in_chain(scope_cid, "const_missing")
         .is_some();
@@ -2532,7 +2575,7 @@ fn lower_defined(fx: &mut Fx, site: NodeId, inner: NodeId) -> Result<Operand, St
 /// at the toplevel), looked through a `class << self` surrogate, then
 /// resolved through the analyzer's `cvar_owners` claim map (a subclass
 /// writing a parent-declared cvar stores on the parent).
-fn cvar_owner(fx: &Fx, name: &str) -> u32 {
+pub(crate) fn cvar_owner(fx: &Fx, name: &str) -> u32 {
     let defining = fx.method_class.unwrap_or(crate::compiler::OBJECT_CLASS);
     let defining = if fx.an.compiler.is_singleton_surrogate(defining) {
         fx.an

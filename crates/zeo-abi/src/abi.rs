@@ -404,6 +404,12 @@ pub const REG_SINGLETON_SURROGATE: u8 = 12;
 /// ruby's install-where-it-stands does.
 pub const REG_BOOT_REDEF: u8 = 13;
 
+/// One `private_constant` name: `class` = the owner, `a` = the name. The
+/// reference guard asks the runtime flag at the site (a later
+/// `public_constant` restores the name), and `Module#constants` and
+/// `defined?` read it too.
+pub const REG_CONST_PRIVATE: u8 = 14;
+
 /// The byte size of the emitter's opaque `for`-loop state slot -- one
 /// stack slot per loop, filled by `zeo_rt_for_begin` and released by
 /// `zeo_rt_for_end`. The runtime asserts its own struct fits.

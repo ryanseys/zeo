@@ -246,6 +246,11 @@ pub const CAPI: &[CapiSig] = &[
         ret: Some(I32),
     },
     CapiSig {
+        name: "zeo_rt_gvar_alias",
+        params: &[U32, Ptr, Usize, Ptr, Usize],
+        ret: None,
+    },
+    CapiSig {
         name: "zeo_rt_gvar_assign",
         params: &[U32, Ptr, Usize, Ptr],
         ret: Some(I32),
@@ -508,6 +513,11 @@ pub const CAPI: &[CapiSig] = &[
     CapiSig {
         name: "zeo_rt_raise_error",
         params: &[U32, Ptr, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
+        name: "zeo_rt_raise_private_constant",
+        params: &[U32, Ptr, Usize, Ptr, Usize],
         ret: Some(I32),
     },
     CapiSig {

@@ -342,6 +342,44 @@ pub unsafe extern "C" fn zeo_rt_const_get_scoped(
     }
 }
 
+/// `alias $new $old` -- a real, bidirectional alias of the STORAGE, so
+/// writing either name is visible through both.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_gvar_alias(
+    box_id: u32,
+    new: *const u8,
+    new_len: usize,
+    old: *const u8,
+    old_len: usize,
+) {
+    let new = unsafe { super::str_slice(new, new_len) };
+    let old = unsafe { super::str_slice(old, old_len) };
+    crate::globals::global_alias(box_id, new, old);
+}
+
+/// The `private constant X::Y referenced` NameError. A GUARD rather than a
+/// compile-time refusal, because a later `X.public_constant :Y` restores
+/// the name and only the runtime flag knows.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_raise_private_constant(
+    owner: u32,
+    name: *const u8,
+    name_len: usize,
+    path: *const u8,
+    path_len: usize,
+) -> i32 {
+    let name = unsafe { super::str_slice(name, name_len) };
+    let path = unsafe { super::str_slice(path, path_len) };
+    crate::signal::set_pending(Signal::Raise(crate::dispatch::stamp_backtrace(
+        crate::dispatch::make_name_error(
+            format!("private constant {path} referenced"),
+            name,
+            RubyValue::Class(ClassId(owner)),
+        ),
+    )));
+    STATUS_SIGNAL
+}
+
 /// A method REDEFINITION applied at its document position: `f` becomes
 /// the class's current body of `name` in the overlay, so code running
 /// between two same-name `def`s dispatches to the earlier one (ruby's

@@ -362,13 +362,82 @@ fn write_multi_target(
             fx.owned_consumed += 1;
             Ok(())
         }
-        MultiTarget::ClassVar(_)
-        | MultiTarget::Global(_)
-        | MultiTarget::Const(_)
-        | MultiTarget::ScopedConst { .. } => {
-            fx.unsupported(site, "a cvar/global/constant multi-assignment target")
+        // The storage forms: each routes through the same write the
+        // single-assignment arm uses, with the slot's value as the rhs.
+        MultiTarget::ClassVar(name) => {
+            let owner = super::expr::cvar_owner(fx, name);
+            let owner_v = fx.b.ins().iconst(types::I32, i64::from(owner));
+            let (nptr, nlen) = name_pair(fx, name);
+            let status = fx
+                .call("zeo_rt_cvar_set", &[owner_v, nptr, nlen, addr])
+                .expect("cvar_set returns a status");
+            fx.fallible(status);
+            fx.call("zeo_rt_release", &[addr]);
+            fx.owned_consumed += 1;
+            Ok(())
+        }
+        MultiTarget::Global(name) => {
+            let bx = fx.b.ins().iconst(types::I32, 0);
+            let (nptr, nlen) = name_pair(fx, name);
+            let status = fx
+                .call("zeo_rt_gvar_assign", &[bx, nptr, nlen, addr])
+                .expect("gvar_assign returns a status");
+            fx.fallible(status);
+            fx.call("zeo_rt_release", &[addr]);
+            fx.owned_consumed += 1;
+            Ok(())
+        }
+        MultiTarget::Const(name) => {
+            let name = name.clone();
+            const_multi_write(fx, site, None, &name, addr)
+        }
+        MultiTarget::ScopedConst { scope, name } => {
+            let (scope, name) = (scope.clone(), name.clone());
+            const_multi_write(fx, site, Some(&scope), &name, addr)
         }
     }
+}
+
+/// A constant multi-assignment target's write -- `const_set_at` with the
+/// declaring site's location, exactly as the single-assignment arm does.
+fn const_multi_write(
+    fx: &mut Fx,
+    site: NodeId,
+    scope: Option<&str>,
+    name: &str,
+    addr: cranelift_codegen::ir::Value,
+) -> Result<(), String> {
+    let owner_class = match scope {
+        Some(s) => match super::expr::resolve_class_here(fx, s) {
+            Some(cid) => cid,
+            None => return fx.unsupported(site, "a constant multi-assignment on a runtime scope"),
+        },
+        None => fx.method_class.unwrap_or(crate::compiler::OBJECT_CLASS),
+    };
+    let owner = fx
+        .an
+        .compiler
+        .class(owner_class)
+        .const_owners
+        .get(name)
+        .copied()
+        .unwrap_or(owner_class)
+        .0;
+    let Some((file, line)) = crate::codegen::source_location(&fx.an.compiler, site) else {
+        return fx.unsupported(site, "a span-less constant multi-assignment");
+    };
+    let (file, line) = (file.to_string(), line);
+    let owner_v = fx.b.ins().iconst(types::I32, i64::from(owner));
+    let (nptr, nlen) = name_pair(fx, name);
+    let (fptr, flen) = name_pair(fx, &file);
+    let line_v = fx.b.ins().iconst(types::I32, i64::from(line));
+    fx.call(
+        "zeo_rt_const_set_at",
+        &[owner_v, nptr, nlen, addr, fptr, flen, line_v],
+    );
+    fx.call("zeo_rt_release", &[addr]);
+    fx.owned_consumed += 1;
+    Ok(())
 }
 
 /// The compiled slot `@name` occupies on this body's class, or `None` for
@@ -523,6 +592,7 @@ fn lower_tail_expr(fx: &mut Fx, tail: NodeId) -> Result<super::operand::Operand,
         | HirNode::ConstReadOrNil(..)
         | HirNode::DynConstRead { .. }
         | HirNode::DynConstWrite { .. }
+        | HirNode::AliasGlobal(..)
         | HirNode::RegexpLit(..)
         | HirNode::LastMatchRef(..)
         | HirNode::SuperCall { .. }
@@ -1026,6 +1096,7 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
         | HirNode::ConstReadOrNil(..)
         | HirNode::DynConstRead { .. }
         | HirNode::DynConstWrite { .. }
+        | HirNode::AliasGlobal(..)
         | HirNode::RegexpLit(..)
         | HirNode::LastMatchRef(..)
         | HirNode::SuperCall { .. }
