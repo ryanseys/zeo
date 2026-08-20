@@ -415,6 +415,22 @@ fn lower_tail_expr(fx: &mut Fx, tail: NodeId) -> Result<super::operand::Operand,
                 tag: TagInfo::Unknown,
             })
         }
+        HirNode::For {
+            target,
+            iterable,
+            body,
+        } => {
+            let (target, iterable, body) = (target.clone(), *iterable, body.clone());
+            let ss = fx.temp_slot();
+            let dst = fx.slot_addr(ss, 0);
+            lower_for(fx, tail, &target, iterable, &body, Some(dst))?;
+            fx.owned_created += 1;
+            Ok(Operand::Slot {
+                ss,
+                owned: true,
+                tag: TagInfo::Unknown,
+            })
+        }
         HirNode::Loop { body } => {
             let body = body.clone();
             let ss = fx.temp_slot();
@@ -594,6 +610,14 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
         HirNode::Loop { body } => {
             let body = body.clone();
             lower_loop(fx, None, &body, false, None)
+        }
+        HirNode::For {
+            target,
+            iterable,
+            body,
+        } => {
+            let (target, iterable, body) = (target.clone(), *iterable, body.clone());
+            lower_for(fx, stmt, &target, iterable, &body, None)
         }
         HirNode::Break(value) => {
             let value = *value;
@@ -1236,6 +1260,121 @@ fn lower_loop(
     fx.b.ins().jump(exit, &[]);
 
     fx.b.switch_to_block(exit);
+    fx.call("zeo_rt_pool_reset", &[mark]);
+    Ok(())
+}
+
+/// `for target in iterable` -- ruby performs NO type dispatch here (it
+/// compiles to `iterable.each { |target| .. }`), so the runtime driver
+/// decides per receiver: a live Array indexes the receiver itself (CRuby
+/// re-reads its length every step), an Int-bounded Range counts, and
+/// everything else walks what `each` yielded. The loop's own value is the
+/// collection; a `break v` supplies its own.
+/// [`lower_for`] in value position.
+pub(crate) fn lower_for_value(
+    fx: &mut Fx,
+    site: NodeId,
+    target: &crate::hir::MultiTarget,
+    iterable: NodeId,
+    body: &[NodeId],
+    dst: cranelift_codegen::ir::Value,
+) -> Result<(), String> {
+    lower_for(fx, site, target, iterable, body, Some(dst))
+}
+
+fn lower_for(
+    fx: &mut Fx,
+    site: NodeId,
+    target: &crate::hir::MultiTarget,
+    iterable: NodeId,
+    body: &[NodeId],
+    result: Option<cranelift_codegen::ir::Value>,
+) -> Result<(), String> {
+    use crate::hir::MultiTarget;
+    let coll = lower_expr(fx, iterable)?;
+    let coll_ptr = ownership::borrow_ptr(fx, &coll);
+    if coll.owned() {
+        ownership::pool_owned(fx, coll_ptr, coll.tag());
+    }
+    // `for x in obj` is one parameter, so a multi-value yield binds its
+    // FIRST value; `for k, v in obj` packs.
+    let packed = u8::from(matches!(target, MultiTarget::Nested(_)));
+    let state_ss = fx.b.create_sized_stack_slot(StackSlotData::new(
+        StackSlotKind::ExplicitSlot,
+        u32::try_from(zeo_abi::abi::FOR_STATE_SIZE).expect("the state slot fits a u32"),
+        3,
+    ));
+    let state = fx.slot_addr(state_ss, 0);
+    let packed_v = fx.b.ins().iconst(types::I8, i64::from(packed));
+    let status = fx
+        .call("zeo_rt_for_begin", &[coll_ptr, packed_v, state])
+        .expect("for_begin returns a status");
+    fx.fallible(status);
+
+    let mark = fx
+        .call("zeo_rt_pool_mark", &[])
+        .expect("pool_mark returns the watermark");
+    let head = fx.b.create_block();
+    let body_blk = fx.b.create_block();
+    let latch = fx.b.create_block();
+    let exit_normal = fx.b.create_block();
+    let exit = fx.b.create_block();
+    // The error path releases the state before the enclosing landing runs.
+    let outer_land = fx.land;
+    let end_land = fx.b.create_block();
+    fx.b.ins().jump(head, &[]);
+
+    fx.b.switch_to_block(head);
+    let elem_ss = fx.temp_slot();
+    let elem = fx.slot_addr(elem_ss, 0);
+    let more_ss = fx.temp_slot();
+    let more_ptr = fx.slot_addr(more_ss, 0);
+    fx.call("zeo_rt_for_next", &[state, elem, more_ptr]);
+    let fl = cranelift_codegen::ir::MemFlagsData::trusted();
+    let more = fx.b.ins().load(types::I8, fl, more_ptr, 0);
+    fx.b.ins().brif(more, body_blk, &[], exit_normal, &[]);
+
+    fx.b.switch_to_block(body_blk);
+    fx.owned_created += 1;
+    write_multi_target(fx, site, target, elem)?;
+    let status = fx
+        .call("zeo_rt_check_ints", &[])
+        .expect("check_ints status");
+    fx.land = end_land;
+    fx.fallible(status);
+    fx.loops.push(LoopCtl {
+        exit,
+        latch,
+        body: body_blk,
+        result,
+        depth: fx.ensure_depth,
+        handling: fx.handling_depth,
+    });
+    let r = lower_stmts(fx, body);
+    fx.loops.pop();
+    fx.land = outer_land;
+    r?;
+    fx.b.ins().jump(latch, &[]);
+
+    fx.b.switch_to_block(latch);
+    fx.call("zeo_rt_pool_reset", &[mark]);
+    fx.b.ins().jump(head, &[]);
+
+    // Ran to completion: the loop answers the collection it walked.
+    fx.b.switch_to_block(exit_normal);
+    if let Some(dst) = result {
+        fx.call("zeo_rt_for_result", &[state, dst]);
+        fx.owned_created += 1;
+        fx.owned_consumed += 1;
+    }
+    fx.b.ins().jump(exit, &[]);
+
+    fx.b.switch_to_block(end_land);
+    fx.call("zeo_rt_for_end", &[state]);
+    fx.b.ins().jump(outer_land, &[]);
+
+    fx.b.switch_to_block(exit);
+    fx.call("zeo_rt_for_end", &[state]);
     fx.call("zeo_rt_pool_reset", &[mark]);
     Ok(())
 }

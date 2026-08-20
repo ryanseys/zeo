@@ -404,6 +404,11 @@ pub const REG_SINGLETON_SURROGATE: u8 = 12;
 /// ruby's install-where-it-stands does.
 pub const REG_BOOT_REDEF: u8 = 13;
 
+/// The byte size of the emitter's opaque `for`-loop state slot -- one
+/// stack slot per loop, filled by `zeo_rt_for_begin` and released by
+/// `zeo_rt_for_end`. The runtime asserts its own struct fits.
+pub const FOR_STATE_SIZE: usize = 96;
+
 /// A lazily-run feature unit -- the `install_feature_units` twin.
 #[repr(C)]
 pub struct UnitRow {

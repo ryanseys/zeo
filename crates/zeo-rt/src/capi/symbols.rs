@@ -7,8 +7,8 @@
 //! user's program.
 
 use super::{
-    bind, dispatch, frames, kernel, lifecycle, literals, numeric, objects, patterns, procs,
-    registry, signals, values,
+    bind, dispatch, forloop, frames, kernel, lifecycle, literals, numeric, objects, patterns,
+    procs, registry, signals, values,
 };
 
 macro_rules! capi_symbols {
@@ -72,6 +72,10 @@ capi_symbols!(
     dispatch::zeo_rt_defined_ivar,
     dispatch::zeo_rt_defined_method,
     values::zeo_rt_eq,
+    forloop::zeo_rt_for_begin,
+    forloop::zeo_rt_for_end,
+    forloop::zeo_rt_for_next,
+    forloop::zeo_rt_for_result,
     frames::zeo_rt_frame_pop,
     frames::zeo_rt_frame_push,
     objects::zeo_rt_frozen_check,

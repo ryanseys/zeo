@@ -25,6 +25,7 @@
 
 pub mod bind;
 pub mod dispatch;
+pub mod forloop;
 pub mod frames;
 pub mod kernel;
 pub(crate) mod leakcheck;
