@@ -447,6 +447,14 @@ fn const_multi_write(
 /// twin is the name-keyed capi, which reaches the identical storage.
 fn ivar_slot_of(fx: &Fx, name: &str) -> Option<usize> {
     let class = fx.method_class?;
+    // Only a COMPILED class carries a slot layout at run time. The
+    // toplevel's own methods land on Object, whose instance is the runtime
+    // `main` object -- analyze still lists the toplevel's ivars there, and
+    // indexing them would read a layout no receiver has.
+    let info = fx.an.compiler.class(class);
+    if class == crate::compiler::OBJECT_CLASS || info.is_builtin || info.is_bootstrap {
+        return None;
+    }
     crate::analyze::class_query::slot_of(&fx.an.compiler, class, name)
 }
 

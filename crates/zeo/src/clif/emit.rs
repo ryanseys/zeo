@@ -930,9 +930,6 @@ fn collect_methods(em: &mut Emitter, analyzed: &Analyzed) -> Result<Vec<DefSpec>
         if scope.runtime_conditional {
             return refuse("a conditionally-defined method");
         }
-        if scope.accessor.is_some() {
-            return refuse("an attr_* accessor");
-        }
         let params = &scope.params;
         if let Err(what) = check_params(params) {
             return refuse(what);
