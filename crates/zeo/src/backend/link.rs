@@ -132,10 +132,25 @@ pub fn link_binary(object: &std::path::Path, output: &std::path::Path) -> Result
         return Err(format!(
             "linking {} failed:\n{}",
             output.display(),
-            String::from_utf8_lossy(&out.stderr)
+            link_diagnostics(&String::from_utf8_lossy(&out.stderr))
         ));
     }
     Ok(())
+}
+
+/// A failed link's stderr, without the linker's warnings. A macOS link of
+/// `libzeo.a` emits one `built for newer 'macOS' version` line per vendored
+/// C object plus a duplicate-`-lSystem` line -- fifty lines of noise that
+/// push the error itself out of any bounded report.
+fn link_diagnostics(stderr: &str) -> String {
+    let kept: Vec<&str> = stderr
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("ld: warning:"))
+        .collect();
+    if kept.iter().all(|l| l.trim().is_empty()) {
+        return stderr.to_string();
+    }
+    kept.join("\n")
 }
 
 #[cfg(test)]
