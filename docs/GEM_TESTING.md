@@ -205,6 +205,16 @@ exists, and the gem's own code may not have been compiled at all — Zeo can
 decline a unit and defer it to a runtime `LoadError`, which only the `run`
 stage sees. `build` and `run` are opt-in (`--build`, `--run`).
 
+**Which backend the number measures.** The probe drives `--emit-rust`, so
+`codegen ok` is a claim about the **frozen rustc emitter**, not about the
+Cranelift backend that every default run uses since the M1 flip. The four
+rungs before it are backend-independent (they are the front end, which both
+backends share), so a `parse`/`lower`/`analyze` row means the same thing
+either way — only the last rung is emitter-specific. The golden corpora are
+what measure Cranelift, and they are at 100 %. Re-pointing the probe at the
+default backend would re-run 195,778 rows and is a decision of its own, not
+a docs fix.
+
 This was two files, split on whether the outcome was `ok`. They carried the
 same columns and one parser served both, so the split was a filter frozen into
 the filesystem — and it made `stage` read as a claim, because a reader in a

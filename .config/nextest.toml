@@ -1,19 +1,30 @@
-# Every suite here compiles its `.rb` with zeo and invokes `rustc` on a cache
-# miss. Running them at full thread count launches that many concurrent rustc
-# processes, and the memory pressure sporadically fails a build.
+# Every suite here compiles its `.rb` files and runs the result. Since the
+# M1 flip that means CRANELIFT -- in-process for a JIT golden, plus one `cc`
+# link for an AOT or e2e case. No `rustc` runs in a default nextest run at
+# all any more; `--backend rustc` is a dev-tree oracle a golden reaches only
+# under `ZEO_GOLDEN_BACKEND=rustc`.
 #
-# ONE group across all of them, not one per suite: the bound that matters is
-# how many rustc are alive at once in the whole run, and two groups of eight
-# is sixteen. `e2e` is the largest suite by test count and was outside any
-# group until this -- it ran at full width, each test able to launch a rustc.
+# What the group still bounds is therefore MEMORY, not toolchain processes:
+# each golden spawns a child `zeo` that holds a compile arena, and the
+# harness caps a child at 512 MiB of RSS (`run_bounded` in
+# tests/support/golden.rs) because an allocating-but-silent child once ate
+# 6.9 GB in 5.5 s. ONE group across all the suites, not one per suite: the
+# bound that matters is how many children are alive in the whole run, and
+# two groups of eight is sixteen.
+#
+# The width below was chosen when a test could launch a rustc, and has NOT
+# been re-measured against the Cranelift path -- it is a ceiling nobody has
+# shown is the right one. Re-measuring belongs to the perf pass, not to a
+# correctness run. In practice the gate is run at `--test-threads 4` on a
+# 16 GB machine, which sits under it anyway.
 [test-groups]
 golden = { max-threads = 10 }
 
 # The default run is the DEV loop and stays fast: everything that compiles a
-# whole gem's require graph (minutes of rustc per case) is opted out here and
-# runs only under `-P full` -- `cargo nextest run -p zeo-tests -P full` is the
-# full gate's spelling. The gem probe owns broad whole-gem compile coverage;
-# these four are the survivors with assertions the probe can't make.
+# whole gem's require graph is opted out here and runs only under `-P full`
+# -- `cargo nextest run -p zeo-tests -P full` is the full gate's spelling.
+# The gem probe owns broad whole-gem compile coverage; these four are the
+# survivors with assertions the probe can't make.
 [profile.default]
 default-filter = "not (binary(gemtests) | test(every_bundled_gem_compiles) | test(rspec_end_to_end) | test(prism_surface))"
 
@@ -21,11 +32,12 @@ default-filter = "not (binary(gemtests) | test(every_bundled_gem_compiles) | tes
 [profile.full]
 default-filter = "all()"
 
-# Goldens that splice a whole require graph into one program take minutes in
-# rustc alone. Slow is not stuck, so they get their own deadline instead of
-# raising the backstop for every other golden. (The per-gem programs that
-# used to live in `tests/gems/` are gone -- whole-gem coverage is the gem
-# probe's job, and each of those cases cost minutes of every suite run.)
+# Goldens that splice a whole require graph into one program are minutes of
+# work whichever backend compiles them. Slow is not stuck, so they get their
+# own deadline instead of raising the backstop for every other golden. (The
+# per-gem programs that used to live in `tests/gems/` are gone -- whole-gem
+# coverage is the gem probe's job, and each of those cases cost minutes of
+# every suite run.)
 #
 # nextest resolves each setting from the first matching override, so these must
 # precede the blanket one below.
@@ -42,8 +54,9 @@ test-group = "golden"
 slow-timeout = { period = "360s", terminate-after = 2 }
 
 # The rspec end-to-end golden splices the entire rspec stack (core,
-# expectations, mocks, support, diff-lcs) into one program -- a cold compile
-# runs minutes, like a gemtests case. Warm reruns hit the test bin-cache.
+# expectations, mocks, support, diff-lcs) into one program -- minutes, like a
+# gemtests case, and nothing caches it: the test bin-cache was deleted with
+# the rest of the rustc build machinery, so every run is a cold compile.
 # No binary() anchor: it was born in gaps and lives in examples now, and an
 # anchored pattern goes silently stale on promotion.
 [[profile.default.overrides]]
@@ -51,24 +64,26 @@ filter = "test(rspec_end_to_end)"
 test-group = "golden"
 slow-timeout = { period = "360s", terminate-after = 2 }
 
-# Backstop under the harness's own per-child cap (`run_bounded` in
-# tests/support/golden.rs), so a hung case can never wedge the whole run.
+# Backstop under the harness's own per-child cap, so a hung case can never
+# wedge the whole run.
 [[profile.default.overrides]]
 filter = "binary(spinel) | binary(examples) | binary(gaps)"
 test-group = "golden"
 slow-timeout = { period = "60s", terminate-after = 3 }
 
-# The CLI suite spawns the real `zeo` binary, which compiles with rustc on a
-# cache miss like every golden -- same group, same reasoning. No terminate:
-# its minitest case legitimately compiles a whole require graph.
+# The CLI suite spawns the real `zeo` binary, which compiles the same way
+# every golden does -- same group, same reasoning. No terminate: its
+# minitest case legitimately compiles a whole require graph, and one case
+# deliberately runs the rustc oracle.
 [[profile.default.overrides]]
 filter = "binary(cli)"
 test-group = "golden"
 
-# `e2e` joins the group but keeps the default deadline. Its cases build whole
-# programs and some legitimately run past the goldens' 60s, so bounding its
-# CONCURRENCY is the fix here; borrowing their timeout as well would convert
-# machine pressure into spurious failures.
+# `e2e` joins the group but keeps the default deadline. Its cases compile AND
+# LINK whole programs -- the one tier that shells `cc` per test -- and some
+# legitimately run past the goldens' 60s, so bounding its CONCURRENCY is the
+# fix here; borrowing their timeout as well would convert machine pressure
+# into spurious failures.
 [[profile.default.overrides]]
 filter = "binary(e2e)"
 test-group = "golden"
