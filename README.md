@@ -74,6 +74,11 @@ $ zeo hello.rb --compile          # writes ./hello
 $ zeo -e 'puts "hello, world"'
 $ zeo -e 'puts :ok' -o my_bin
 
+# A literal `eval` is parsed and spliced at COMPILE time -- it costs nothing
+# at run time and still sees the surrounding scope.
+$ zeo -e "puts eval('1 + 1 + (\"hello\" * 8).length')"
+42
+
 # A test file, like `ruby -Itest test/foo_test.rb`.
 $ zeo -Itest test/foo_test.rb
 
