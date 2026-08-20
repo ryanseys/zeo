@@ -127,12 +127,12 @@ pub const CAPI: &[CapiSig] = &[
     },
     CapiSig {
         name: "zeo_rt_const_get_cref",
-        params: &[Ptr, Usize, Ptr, Usize, Ptr, Usize, Ptr],
+        params: &[Ptr, Usize, Ptr, Usize, Ptr, Usize, U8, Ptr],
         ret: Some(I32),
     },
     CapiSig {
         name: "zeo_rt_const_get_scoped",
-        params: &[U32, Ptr, Usize, Ptr, Usize, Ptr],
+        params: &[U32, Ptr, Usize, Ptr, Usize, U8, Ptr],
         ret: Some(I32),
     },
     CapiSig {

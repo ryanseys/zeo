@@ -1191,12 +1191,13 @@ pub(crate) fn const_read(fx: &mut Fx, id: NodeId, name: &str) -> Result<Operand,
         .get(name)
         .copied()
         .unwrap_or(defining);
-    if compiler
+    // A miss on an owner whose chain defines a USER `const_missing`
+    // dispatches the hook instead of the baked raise (CRuby's protocol,
+    // rustc's `miss` arm); the runtime does it so the walk and the hook
+    // stay one call.
+    let hook = compiler
         .class_method_in_chain(owner, "const_missing")
-        .is_some()
-    {
-        return fx.unsupported(id, "a constant read with a `const_missing` hook");
-    }
+        .is_some();
     let mut chain: Vec<u32> = vec![owner.0];
     let mut at = compiler.class(owner).cref_parent;
     while let Some(cid) = at {
@@ -1219,12 +1220,13 @@ pub(crate) fn const_read(fx: &mut Fx, id: NodeId, name: &str) -> Result<Operand,
     let n_ids = fx.b.ins().iconst(fx.em.ptr, chain.len() as i64);
     let (nptr, nlen) = rodata_name(fx, name);
     let (qptr, qlen) = rodata_name(fx, &qualified);
+    let hook_v = fx.b.ins().iconst(types::I8, i64::from(hook));
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
     let status = fx
         .call(
             "zeo_rt_const_get_cref",
-            &[ids_ptr, n_ids, nptr, nlen, qptr, qlen, out],
+            &[ids_ptr, n_ids, nptr, nlen, qptr, qlen, hook_v, out],
         )
         .expect("const_get_cref returns a status");
     fx.fallible(status);
@@ -1260,12 +1262,9 @@ fn scoped_const_read(fx: &mut Fx, id: NodeId, scope: &str, name: &str) -> Result
     if compiler.class(scope_cid).private_constants.contains(name) {
         return fx.unsupported(id, "a private-constant reference");
     }
-    if compiler
+    let hook = compiler
         .class_method_in_chain(scope_cid, "const_missing")
-        .is_some()
-    {
-        return fx.unsupported(id, "a constant read with a `const_missing` hook");
-    }
+        .is_some();
     let qualified = if scope == "Object" {
         name.to_string()
     } else {
@@ -1274,12 +1273,13 @@ fn scoped_const_read(fx: &mut Fx, id: NodeId, scope: &str, name: &str) -> Result
     let owner_v = fx.b.ins().iconst(types::I32, i64::from(scope_cid.0));
     let (nptr, nlen) = rodata_name(fx, name);
     let (qptr, qlen) = rodata_name(fx, &qualified);
+    let hook_v = fx.b.ins().iconst(types::I8, i64::from(hook));
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
     let status = fx
         .call(
             "zeo_rt_const_get_scoped",
-            &[owner_v, nptr, nlen, qptr, qlen, out],
+            &[owner_v, nptr, nlen, qptr, qlen, hook_v, out],
         )
         .expect("const_get_scoped returns a status");
     fx.fallible(status);

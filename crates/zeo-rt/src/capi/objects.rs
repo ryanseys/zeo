@@ -273,7 +273,9 @@ pub unsafe extern "C" fn zeo_rt_const_set_at(
 /// (the emitter's `emit_const_read` order); each entry searches its own
 /// ancestry (`const_get`). Miss = the `const_miss_signal` NameError whose
 /// message carries the pre-qualified name (`Store::Cart::DEFAULT` for a
-/// nested miss, bare at the top level).
+/// nested miss, bare at the top level), or -- when `hook` is set because
+/// the owner's chain defines one -- the `const_missing` dispatch whose
+/// answer this read then takes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zeo_rt_const_get_cref(
     ids: *const u32,
@@ -282,6 +284,7 @@ pub unsafe extern "C" fn zeo_rt_const_get_cref(
     name_len: usize,
     qualified: *const u8,
     qualified_len: usize,
+    hook: u8,
     out: *mut RubyValue,
 ) -> i32 {
     let name = unsafe { super::str_slice(name, name_len) };
@@ -292,6 +295,9 @@ pub unsafe extern "C" fn zeo_rt_const_get_cref(
             unsafe { out.write(v) };
             return STATUS_OK;
         }
+    }
+    if hook != 0 {
+        return status_out(crate::dispatch::const_miss(ClassId(ids[0]), name), out);
     }
     let qualified = unsafe { super::str_slice(qualified, qualified_len) };
     crate::signal::set_pending(crate::builtins::rmodule::const_miss_signal(
@@ -313,6 +319,7 @@ pub unsafe extern "C" fn zeo_rt_const_get_scoped(
     name_len: usize,
     qualified: *const u8,
     qualified_len: usize,
+    hook: u8,
     out: *mut RubyValue,
 ) -> i32 {
     let name = unsafe { super::str_slice(name, name_len) };
@@ -322,6 +329,7 @@ pub unsafe extern "C" fn zeo_rt_const_get_scoped(
             unsafe { out.write(v) };
             STATUS_OK
         }
+        None if hook != 0 => status_out(crate::dispatch::const_miss(ClassId(owner), name), out),
         None => {
             let qualified = unsafe { super::str_slice(qualified, qualified_len) };
             crate::signal::set_pending(crate::builtins::rmodule::const_miss_signal(
