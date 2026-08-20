@@ -372,14 +372,20 @@ fn gen_preamble(method: &zeo_dsl::MethodDef) -> TokenStream2 {
     let max = method.rest.is_none().then_some(method.params.len());
 
     // `**kwrest` peels the trailing options Hash off before anything is
-    // counted, so `[1].pack()` reports `given 0`, not `given 1`.
+    // counted, so `[1].pack()` reports `given 0`, not `given 1` -- but ONLY
+    // when the mandatory positionals are already covered without it. That is
+    // CRuby's own condition for `rb_scan_args`' `:` (`n_mand < argc`), and
+    // without it a Hash passed as a real ARGUMENT vanishes:
+    // `Ractor.make_shareable(a_hash)` reported `given 0, expected 1`.
     let (slice, kw_binding) = match &method.kwrest {
         Some(name) => (
             quote! { __pos },
             quote! {
                 let (#name, __pos): (Option<&crate::RubyValue>, &[crate::RubyValue]) =
                     match __args.last() {
-                        Some(h @ crate::RubyValue::Hash(_)) => (Some(h), &__args[..__args.len() - 1]),
+                        Some(h @ crate::RubyValue::Hash(_)) if __args.len() > #min => {
+                            (Some(h), &__args[..__args.len() - 1])
+                        }
                         _ => (None, __args),
                     };
             },
