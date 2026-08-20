@@ -335,7 +335,21 @@ fn emit_iter_splice(
     // invocation semantics is the whole point of the declaration. A
     // block-local a nested escaping block captures is cell-wrapped for
     // the same reason as the param above.
-    let block_locals = params.block_locals.iter().map(|name| {
+    // An IMPLICIT block-local (a name first assigned in the body) that a
+    // nested escaping block captures needs the same fresh cell per iteration:
+    // the enclosing scope hoisted ONE cell for it, so without this every
+    // closure the loop builds shares the last iteration's value.
+    let fresh_cells: Vec<&String> = params
+        .block_locals
+        .iter()
+        .chain(
+            params
+                .implicit_block_locals
+                .iter()
+                .filter(|name| nested_captured.contains(*name)),
+        )
+        .collect();
+    let block_locals = fresh_cells.into_iter().map(|name| {
         let ident = safe_ident(name);
         if nested_captured.contains(name) {
             quote! {

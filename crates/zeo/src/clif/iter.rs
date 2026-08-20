@@ -45,7 +45,6 @@ pub(crate) fn lower_counted(
         && params.keywords.is_empty()
         && params.keyword_rest.is_none()
         && params.block.is_none()
-        && params.block_locals.is_empty()
         && params.required.len() <= 1)
     {
         return fx.unsupported(site, "this block's parameter shape");
@@ -59,6 +58,29 @@ pub(crate) fn lower_counted(
     // hoisted once, so each iteration resets it -- a conditional first
     // assignment (`x = v if cond`) must not carry into the next.
     let implicit_locals = params.implicit_block_locals.clone();
+    // `|i; n|`: names the block DECLARES as its own. They shadow any
+    // enclosing local of the same name and rebind fresh per iteration,
+    // exactly like the implicit ones.
+    let block_locals = params.block_locals.clone();
+    // What an ESCAPING closure inside the body captures. The splice has no
+    // frame of its own, so those names cannot live in a plain slot: ruby
+    // binds a block parameter per invocation, and two closures built in two
+    // iterations must not share one storage. They get a cell each iteration
+    // instead -- rustc's "cell-wrapped fresh" splice.
+    let escaping = crate::analyze::captures::collect_escaping_captures(
+        &fx.an.compiler,
+        body,
+        params,
+        crate::analyze::class_query::SelfClass::new(fx.method_class, None),
+    )
+    .locals;
+    let per_iteration_cells: Vec<String> = param
+        .iter()
+        .chain(implicit_locals.iter())
+        .chain(block_locals.iter())
+        .filter(|n| escaping.contains(*n))
+        .cloned()
+        .collect();
     let body = body.clone();
 
     let (start, end, end_cc) = match *counted {
@@ -79,17 +101,34 @@ pub(crate) fn lower_counted(
     };
 
     // The block parameter SHADOWS any enclosing local of the same name
-    // (rustc splices a fresh `let`); the shadow slot registers under a
-    // synthetic key so the epilogue/landing releases it, and the visible
-    // name maps to it only for the loop's extent.
-    let shadow = param.as_ref().map(|name| {
-        let ss = fx.new_value_slot();
-        let key = format!("{name}#blk{}", fx.locals.len());
-        fx.locals.insert(key, super::ctx::Local::Slot(ss));
-        let old = fx.locals.insert(name.clone(), super::ctx::Local::Slot(ss));
-        fx.shadowed.insert(name.clone());
-        (name.clone(), ss, old)
-    });
+    // (rustc splices a fresh `let`); the shadow registers under a synthetic
+    // key so the epilogue/landing releases it, and the visible name maps to
+    // it only for the loop's extent. A name a closure escapes with is a cell
+    // (replaced per iteration below); everything else is a plain slot, which
+    // an escaping block may not capture.
+    let mut restore: Vec<(String, Option<super::ctx::Local>)> = Vec::new();
+    let bind_shadow =
+        |fx: &mut Fx, restore: &mut Vec<(String, Option<super::ctx::Local>)>, name: &str| {
+            let local = match per_iteration_cells.iter().any(|n| n == name) {
+                true => new_cell_local(fx),
+                false => super::ctx::Local::Slot(fx.new_value_slot()),
+            };
+            let key = format!("{name}#blk{}", fx.locals.len());
+            fx.locals.insert(key, local);
+            let old = fx.locals.insert(name.to_string(), local);
+            if matches!(local, super::ctx::Local::Slot(_)) {
+                fx.shadowed.insert(name.to_string());
+            }
+            restore.push((name.to_string(), old));
+        };
+    if let Some(name) = param.clone() {
+        bind_shadow(fx, &mut restore, &name);
+    }
+    for name in implicit_locals.iter().chain(block_locals.iter()) {
+        if per_iteration_cells.iter().any(|n| n == name) || block_locals.contains(name) {
+            bind_shadow(fx, &mut restore, name);
+        }
+    }
 
     let counter =
         fx.b.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
@@ -118,14 +157,17 @@ pub(crate) fn lower_counted(
         .call("zeo_rt_check_ints", &[])
         .expect("check_ints returns a status");
     fx.fallible(status);
-    if let Some((_, ss, _)) = &shadow {
-        let c = fx.b.ins().load(types::I64, fl, counter_addr, 0);
-        let dst = fx.slot_addr(*ss, 0);
-        ownership::write_assign(fx, &super::operand::Operand::Int(c), dst);
+    // Each iteration binds fresh storage for every escaping name, so a
+    // closure built last time keeps the value it captured.
+    for name in &per_iteration_cells {
+        replace_cell(fx, name);
     }
-    for name in &implicit_locals {
-        // A name a NESTED escaping block captured lives in a cell, whose
-        // freshness is that machinery's job, not a scalar reset.
+    if let Some(name) = &param {
+        let c = fx.b.ins().load(types::I64, fl, counter_addr, 0);
+        ownership::write_local(fx, name, &super::operand::Operand::Int(c));
+    }
+    for name in implicit_locals.iter().chain(block_locals.iter()) {
+        // A cell was just replaced; a plain slot resets to nil.
         if matches!(fx.locals.get(name), Some(super::ctx::Local::Slot(_))) {
             ownership::write_local(fx, name, &super::operand::Operand::Nil);
         }
@@ -166,7 +208,7 @@ pub(crate) fn lower_counted(
     fx.b.switch_to_block(exit);
     fx.call("zeo_rt_pool_reset", &[mark]);
     // Lexical shadowing ends with the loop.
-    if let Some((name, _, old)) = shadow {
+    for (name, old) in restore {
         fx.shadowed.remove(&name);
         match old {
             Some(prev) => {
@@ -216,4 +258,34 @@ pub(crate) fn counted_of(
         });
     }
     None
+}
+
+/// A fresh owned cell in a slot of its own, ready to hold one binding.
+fn new_cell_local(fx: &mut Fx) -> super::ctx::Local {
+    let null = fx.b.ins().iconst(fx.em.ptr, 0);
+    let cellp = fx
+        .call("zeo_rt_cell_new", &[null])
+        .expect("cell_new returns the cell");
+    let ss =
+        fx.b.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
+    let dst = fx.slot_addr(ss, 0);
+    fx.b.ins().store(MemFlagsData::trusted(), cellp, dst, 0);
+    super::ctx::Local::Cell { ss, owned: true }
+}
+
+/// Point `name`'s cell slot at a NEW cell and drop this scope's reference to
+/// the old one -- a closure that captured it holds its own. The slot always
+/// holds a live cell, so the epilogue's release needs no guard.
+fn replace_cell(fx: &mut Fx, name: &str) {
+    let Some(super::ctx::Local::Cell { ss, .. }) = fx.locals.get(name).copied() else {
+        unreachable!("an escaping name was bound as a cell");
+    };
+    let old = fx.cell_ptr(ss);
+    let null = fx.b.ins().iconst(fx.em.ptr, 0);
+    let fresh = fx
+        .call("zeo_rt_cell_new", &[null])
+        .expect("cell_new returns the cell");
+    let dst = fx.slot_addr(ss, 0);
+    fx.b.ins().store(MemFlagsData::trusted(), fresh, dst, 0);
+    fx.call("zeo_rt_cell_release", &[old]);
 }

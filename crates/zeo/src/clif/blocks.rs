@@ -95,8 +95,8 @@ fn captured_names(
         .filter(|n| fx.locals.contains_key(n.as_str()))
         .cloned()
         .collect();
-    names.dedup();
     names.sort();
+    names.dedup();
     for n in &names {
         if fx.shadowed.contains(n) {
             return fx.unsupported(
@@ -104,10 +104,14 @@ fn captured_names(
                 "a block capturing a fused-loop parameter (the shadow dies with the loop)",
             );
         }
-        if !matches!(fx.locals.get(n), Some(Local::Cell { .. })) {
-            panic!("ICE: captured local `{n}` was hoisted as a plain slot");
-        }
     }
+    // The enclosing scope decides what is SHARED, and it decided textually:
+    // ruby makes a name first assigned inside a block block-local unless the
+    // outer scope assigned it EARLIER in the source, so `b = proc { x = 1 };
+    // x = 5` gives the block an `x` of its own. This walk only sees which
+    // names the body mentions; a name the enclosing scope hoisted as a plain
+    // slot is one it found unshared, and the block declares its own.
+    names.retain(|n| matches!(fx.locals.get(n), Some(Local::Cell { .. })));
     Ok(names)
 }
 
