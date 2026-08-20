@@ -108,6 +108,7 @@ zeo_rt_pending_defs_end ([]) -> None
 zeo_rt_pool_mark ([]) -> Some(Usize)
 zeo_rt_pool_push ([Ptr]) -> None
 zeo_rt_pool_reset ([Usize]) -> None
+zeo_rt_proc_call_or_send ([Ptr, U32, Ptr, Usize, Ptr, U32, Ptr]) -> Some(I32)
 zeo_rt_proc_new ([Ptr, Ptr, Usize, Ptr, Ptr, Ptr, I32, U32, Ptr, Usize, Ptr, Usize, U32, Ptr, Usize, Ptr]) -> None
 zeo_rt_propagating_enter ([Ptr]) -> Some(U8)
 zeo_rt_propagating_leave ([U8]) -> None

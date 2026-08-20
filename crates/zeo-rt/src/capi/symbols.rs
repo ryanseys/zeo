@@ -152,6 +152,7 @@ capi_symbols!(
     values::zeo_rt_pool_push,
     values::zeo_rt_pool_reset,
     procs::zeo_rt_proc_call,
+    procs::zeo_rt_proc_call_or_send,
     procs::zeo_rt_proc_new,
     signals::zeo_rt_propagating_enter,
     signals::zeo_rt_propagating_leave,

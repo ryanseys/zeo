@@ -427,3 +427,51 @@ pub unsafe extern "C" fn zeo_rt_binding_new(
     super::leakcheck::created(&v);
     unsafe { out.write(v) };
 }
+
+/// `blk.call(..)` where `blk` is the scope's own `&block` parameter -- a
+/// value that is a Proc or nil, and nothing else.
+///
+/// A Proc reaches [`crate::RProc::call`] DIRECTLY rather than Proc's
+/// dispatch row, which is what keeps a `break` inside an iterator's block
+/// a `Signal::Break` for the iterator to catch instead of the
+/// `LocalJumpError` a proc-closure's break raises (`Enumerable#first`
+/// driving a user `each` that forwards its block). It is the same fold the
+/// rustc backend applies wherever it can type the receiver as a Proc.
+///
+/// Anything else -- `nil` when no block was given -- takes the ordinary
+/// explicit send, so the miss is ruby's own `NoMethodError`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_proc_call_or_send(
+    recv: *const RubyValue,
+    sym: u32,
+    argv: *const RubyValue,
+    argc: usize,
+    blk: *mut RubyValue,
+    caller: u32,
+    out: *mut RubyValue,
+) -> i32 {
+    let args = if argc == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(argv, argc) }
+    };
+    let block = if blk.is_null() {
+        None
+    } else {
+        super::leakcheck::consumed(unsafe { &*blk });
+        Some(unsafe { std::ptr::read(blk) })
+    };
+    let recv = unsafe { &*recv };
+    let r = match recv {
+        RubyValue::Proc(p) => p.call_with_block(args, block),
+        other => crate::dispatch::send_value_explicit_in(
+            0,
+            other,
+            crate::Symbol::from_u32(sym),
+            args,
+            block,
+            caller,
+        ),
+    };
+    status_out(r, out)
+}

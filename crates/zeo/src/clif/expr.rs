@@ -15,6 +15,11 @@ use zeo_abi::abi::{PAYLOAD_OFFSET, ValueTag};
 const ENC_UTF8: i64 = 1;
 
 pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
+    // `blk.call(..)` on the scope's own `&block` parameter -- see
+    // `block_param_call`.
+    if let Some(op) = block_param_call(fx, id)? {
+        return Ok(op);
+    }
     // `Ractor.new(*args, name: ...) { }` -- the one concurrency constructor
     // with no usable runtime row: the block must be built as an isolated
     // Proc where the compiler can see the capture set, so the site is
@@ -3784,6 +3789,76 @@ fn runtime_eval(
             &[ptrs[0], scope_ptr, ptrs[1], ptrs[2], ptrs[3], out],
         )
         .expect("eval_value_in_scope returns a status");
+    fx.fallible(status);
+    fx.owned_created += 1;
+    Ok(Some(Operand::Slot {
+        ss,
+        owned: true,
+        tag: TagInfo::Unknown,
+    }))
+}
+
+/// `blk.call(a, b)` where `blk` is the scope's own `&block` parameter --
+/// a value that is a Proc or nil, and nothing else. A Proc reaches
+/// `RProc::call` DIRECTLY rather than Proc's dispatch row, which is what
+/// keeps a `break` inside an iterator's block a `Signal::Break` for the
+/// iterator to catch instead of the `LocalJumpError` a proc-closure's
+/// break raises. `Enumerable#first` driving a user `each` that forwards
+/// its block is the corpus shape; the rustc backend gets the same fold
+/// wherever it can type a receiver as a Proc.
+fn block_param_call(fx: &mut Fx, id: NodeId) -> Result<Option<Operand>, String> {
+    let HirNode::Call {
+        receiver: Some(recv),
+        name,
+        args,
+        kwargs,
+        block,
+        block_arg,
+        safe: false,
+    } = &fx.an.compiler.hir[id]
+    else {
+        return Ok(None);
+    };
+    if !matches!(name.as_str(), "call" | "()" | "[]" | "yield" | "===")
+        || !kwargs.is_empty()
+        || block.is_some()
+        || block_arg.is_some()
+        || args.iter().any(|a| matches!(a, ArrayElem::Splat(_)))
+    {
+        return Ok(None);
+    }
+    let HirNode::LocalRead(local) = &fx.an.compiler.hir[*recv] else {
+        return Ok(None);
+    };
+    // An ANONYMOUS `&` declares no name, so no `LocalRead` can name it.
+    if fx
+        .method_params
+        .as_ref()
+        .and_then(|p| p.block.as_ref())
+        .and_then(Option::as_ref)
+        != Some(local)
+    {
+        return Ok(None);
+    }
+    let (name, args, recv) = (name.clone(), args.clone(), *recv);
+    let op = lower_expr(fx, recv)?;
+    let recv_ptr = ownership::borrow_ptr(fx, &op);
+    if op.owned() {
+        ownership::pool_owned(fx, recv_ptr, op.tag());
+    }
+    let argv = super::call::build_argv(fx, id, &args)?;
+    let sym = fx.sym_id(&name);
+    let argc = fx.b.ins().iconst(fx.em.ptr, args.len() as i64);
+    let null = fx.b.ins().iconst(fx.em.ptr, 0);
+    let caller = super::call::caller_class(fx, false);
+    let ss = fx.temp_slot();
+    let out = fx.slot_addr(ss, 0);
+    let status = fx
+        .call(
+            "zeo_rt_proc_call_or_send",
+            &[recv_ptr, sym, argv, argc, null, caller, out],
+        )
+        .expect("proc_call_or_send returns a status");
     fx.fallible(status);
     fx.owned_created += 1;
     Ok(Some(Operand::Slot {

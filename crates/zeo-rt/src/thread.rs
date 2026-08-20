@@ -301,12 +301,22 @@ pub fn thread_new(block: RubyValue, args: Vec<RubyValue>) -> RubyValue {
     // threads-within-a-ractor model), so `Ractor.current` and the port
     // creator guards keep answering inside the child.
     let parent_ractor = crate::ractor::current_ractor();
+    // CRuby's `Thread.new` returns with the thread already RUNNING (the
+    // creator waits for the new thread to start), which is what makes
+    // `Thread.new { .. }; Thread.pass` a reliable handoff rather than a
+    // race. Without the latch a `#kill` posted right after the spawn was
+    // delivered at the body's first `check_ints`, before its first
+    // statement -- and the `ensure` the golden asserts never ran.
+    let (started_tx, started_rx) = std::sync::mpsc::sync_channel::<()>(1);
     let run = move || {
         // Record identity so `Thread.current` inside the body finds THIS
         // thread rather than falling through to main.
         crate::ractor::install_current_ractor(parent_ractor);
         CURRENT.with(|c| *c.lock() = Some(for_thread.clone()));
         for_thread.native_id.store(native_id(), Ordering::Relaxed);
+        // The creator is waiting on this; a dropped receiver (the creator
+        // gave up) is not an error.
+        let _ = started_tx.send(());
         // The frame stack needs no management here: this closure runs on
         // a brand-new OS thread whose `frames` TLS starts empty.
         let result = body.call(&args);
@@ -339,6 +349,7 @@ pub fn thread_new(block: RubyValue, args: Vec<RubyValue>) -> RubyValue {
         })
         .expect("spawning a Ruby Thread's OS thread");
     *data.state.lock() = Some(ThreadState::Running(handle));
+    let _ = started_rx.recv();
     RubyValue::Thread(data)
 }
 
