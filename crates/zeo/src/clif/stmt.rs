@@ -703,7 +703,8 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
                     let kind =
                         fx.b.ins()
                             .iconst(types::I8, i64::from(zeo_abi::abi::SignalKind::Break as u8));
-                    fx.pop_handling_to(0);
+                    // The landing chain pops what it pushed -- popping `$!`
+                    // here as well would drop an ENCLOSING clause's entry.
                     fx.call("zeo_rt_signal_set", &[kind, ptr]);
                     let land = fx.land;
                     fx.b.ins().jump(land, &[]);
@@ -810,9 +811,6 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
                 // (dead home -> LocalJumpError) and the defining method's
                 // boundary folds a targeted one.
                 if fx.block_next.is_some() {
-                    if fx.ensure_depth != 0 {
-                        return fx.unsupported(stmt, "a `return` across an `ensure` boundary");
-                    }
                     let op = match value {
                         Some(v) => lower_expr(fx, v)?,
                         None => super::operand::Operand::Nil,
@@ -821,7 +819,6 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
                     let kind =
                         fx.b.ins()
                             .iconst(types::I8, i64::from(zeo_abi::abi::SignalKind::Return as u8));
-                    fx.pop_handling_to(0);
                     fx.call("zeo_rt_signal_set", &[kind, ptr]);
                     let land = fx.land;
                     fx.b.ins().jump(land, &[]);
