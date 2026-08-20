@@ -49,6 +49,11 @@ pub(crate) struct ObjMethodSpec {
     /// The class the `def` was WRITTEN in (a module method keeps the
     /// module) -- where its `super` resumes.
     pub defining_class: ClassId,
+    /// The singleton-class SURROGATE the `def` was lexically written in (a
+    /// constant-bearing `class << self` body). Lexical questions -- bare
+    /// constants, `Module.nesting` -- resolve through it. See
+    /// `Scope::lexical_home`.
+    pub lexical_home: Option<ClassId>,
     /// This entry is the class's OWN write (not a materialized ancestor
     /// copy): its trampoline doubles as the own-`super`-target row.
     pub is_own: bool,
@@ -73,6 +78,11 @@ pub(crate) struct CmMethodSpec {
     /// `def self.x`, the MODULE for an `extend`ed copy. A class-method
     /// `super` resumes the singleton chain after it.
     pub defining_class: ClassId,
+    /// The singleton-class SURROGATE the `def` was lexically written in (a
+    /// constant-bearing `class << self` body). Lexical questions -- bare
+    /// constants, `Module.nesting` -- resolve through it. See
+    /// `Scope::lexical_home`.
+    pub lexical_home: Option<ClassId>,
     pub owner: ClassId,
     pub owner_name: String,
     pub name: String,
@@ -128,6 +138,11 @@ pub(crate) struct ModMethodSpec {
     /// The class the `def` was WRITTEN in (a module method keeps the
     /// module) -- where its `super` resumes.
     pub defining_class: ClassId,
+    /// The singleton-class SURROGATE the `def` was lexically written in (a
+    /// constant-bearing `class << self` body). Lexical questions -- bare
+    /// constants, `Module.nesting` -- resolve through it. See
+    /// `Scope::lexical_home`.
+    pub lexical_home: Option<ClassId>,
 }
 
 /// What `collect_classes` hands back: the class table plus its method and
@@ -390,6 +405,7 @@ pub(crate) fn collect_classes(
                     dyn_ivars: true,
                     alias_of: scope.alias_of.clone(),
                     defining_class: scope.defining_class,
+                    lexical_home: scope.lexical_home,
                     owner: ClassId(idx as u32),
                     owner_name: name.clone(),
                     name: mname,
@@ -408,6 +424,7 @@ pub(crate) fn collect_classes(
                     dyn_ivars: true,
                     alias_of: scope.alias_of.clone(),
                     defining_class: scope.defining_class,
+                    lexical_home: scope.lexical_home,
                     owner: ClassId(idx as u32),
                     owner_name: name.clone(),
                     name: mname,
@@ -467,6 +484,7 @@ pub(crate) fn collect_classes(
                 cm_row: true,
                 alias_of: scope.alias_of.clone(),
                 defining_class: scope.defining_class,
+                lexical_home: scope.lexical_home,
                 owner: ClassId(idx as u32),
                 owner_name: name.clone(),
                 name: mname,
@@ -701,6 +719,7 @@ pub(crate) fn collect_classes(
                     dyn_ivars: true,
                     alias_of: scope.alias_of.clone(),
                     defining_class: scope.defining_class,
+                    lexical_home: scope.lexical_home,
                     owner: ClassId(idx as u32),
                     owner_name: name.clone(),
                     name: mname,
@@ -806,6 +825,7 @@ pub(crate) fn collect_classes(
                     dyn_ivars: true,
                     alias_of: scope.alias_of.clone(),
                     defining_class: scope.defining_class,
+                    lexical_home: scope.lexical_home,
                     owner: ClassId(idx as u32),
                     owner_name: name.clone(),
                     name: mname,
@@ -825,6 +845,7 @@ pub(crate) fn collect_classes(
                 dyn_ivars: native_backed,
                 alias_of: scope.alias_of.clone(),
                 defining_class: scope.defining_class,
+                lexical_home: scope.lexical_home,
                 owner: ClassId(idx as u32),
                 owner_name: name.clone(),
                 name: mname,
@@ -911,6 +932,7 @@ pub(crate) fn collect_classes(
                     dyn_ivars: false,
                     alias_of: scope.alias_of.clone(),
                     defining_class: scope.defining_class,
+                    lexical_home: scope.lexical_home,
                     owner: ClassId(idx as u32),
                     owner_name: name.clone(),
                     name: mname,
@@ -983,6 +1005,7 @@ pub(crate) fn collect_classes(
                 cm_row: true,
                 alias_of: scope.alias_of.clone(),
                 defining_class: scope.defining_class,
+                lexical_home: scope.lexical_home,
                 owner: ClassId(idx as u32),
                 owner_name: name.clone(),
                 name: mname,
@@ -1101,6 +1124,7 @@ pub(crate) fn collect_classes(
                 cm_row: false,
                 alias_of: scope.alias_of.clone(),
                 defining_class: scope.defining_class,
+                lexical_home: scope.lexical_home,
                 owner: ClassId(idx as u32),
                 owner_name: name.clone(),
                 name: mname,

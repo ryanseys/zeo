@@ -76,6 +76,12 @@ pub(crate) struct Fx<'e, 'f> {
     /// method's materialized copy keeps the MODULE here while
     /// `method_class` names the includer.
     pub defining_class: Option<zeo_abi::ClassId>,
+    /// The singleton-class SURROGATE this body was lexically written in (a
+    /// `def` in a constant-bearing `class << self` body). Bare constants and
+    /// `Module.nesting` resolve through it; dispatch, ivars and `super` keep
+    /// using the owner. `None` for every other body. See
+    /// `Scope::lexical_home`.
+    pub lexical_home: Option<zeo_abi::ClassId>,
     /// The enclosing method's name -- what a `super` re-sends.
     pub method_name: Option<String>,
     /// The enclosing method's parameter list -- what a bare `super`
@@ -162,6 +168,7 @@ impl<'e, 'f> Fx<'e, 'f> {
             self_is_class: false,
             dyn_ivars: false,
             defining_class: None,
+            lexical_home: None,
             method_name: None,
             method_params: None,
             runtime_method_body: false,

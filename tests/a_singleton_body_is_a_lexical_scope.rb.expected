@@ -1,0 +1,10 @@
+[:singleton_const, :module_const, :from_singleton]
+["#<Class:Outer>", "Outer"]
+:name_error
+[:inner, :b_const, :a_const]
+["#<Class:A::B>", "A::B", "A"]
+[]
+["Plain"]
+["Plain"]
+:singleton_const
+[false, true]

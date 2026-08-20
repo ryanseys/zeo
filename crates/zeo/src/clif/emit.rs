@@ -229,6 +229,8 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             discard_value: false,
             dyn_ivars: false,
             defining_class: Some(zeo_abi::ClassId(0)),
+            // A top-level `def` is never inside a `class << self`.
+            lexical_home: None,
         };
         define_method_body(em, analyzed, &spec)?;
     }
@@ -249,6 +251,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
                 discard_value: false,
                 dyn_ivars: m.dyn_ivars,
                 defining_class: Some(m.defining_class),
+                lexical_home: m.lexical_home,
             };
             define_method_body(em, analyzed, &spec)?;
         }
@@ -269,6 +272,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             discard_value: false,
             dyn_ivars: false,
             defining_class: Some(m.defining_class),
+            lexical_home: m.lexical_home,
         };
         define_method_body(em, analyzed, &spec)?;
     }
@@ -288,6 +292,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             discard_value: false,
             dyn_ivars: false,
             defining_class: Some(m.owner),
+            lexical_home: None,
         };
         define_method_body(em, analyzed, &spec)?;
     }
@@ -307,6 +312,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             discard_value: false,
             dyn_ivars: m.dyn_ivars,
             defining_class: Some(m.defining_class),
+            lexical_home: m.lexical_home,
         };
         define_method_body(em, analyzed, &spec)?;
     }
@@ -329,6 +335,9 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             discard_value: cb.call.tail != BodyTail::Own,
             dyn_ivars: false,
             defining_class: None,
+            // A class body's OWN cref is its class; the surrogate case is
+            // carried by the `def`s inside it, not by the body fn.
+            lexical_home: None,
         };
         define_method_body(em, analyzed, &spec)?;
     }
@@ -1457,6 +1466,12 @@ pub(crate) struct BodyFnSpec<'a> {
     /// The class the `def` was WRITTEN in (rustc's `cx.defining_class`;
     /// a module method keeps the module) -- None where `super` refuses.
     pub defining_class: Option<zeo_abi::ClassId>,
+    /// The singleton-class SURROGATE this body was lexically written in,
+    /// when the `def` sat in a constant-bearing `class << self` body.
+    /// Everything LEXICAL resolves through it -- bare constants,
+    /// `Module.nesting` -- while the owner keeps dispatch and ivars. See
+    /// `Scope::lexical_home`.
+    pub lexical_home: Option<zeo_abi::ClassId>,
 }
 
 /// A method's frame facts: `(file, label, line, end_line)` -- shared by
@@ -1693,6 +1708,7 @@ fn define_method_body(
     fx.self_ptr = Some(self_ptr);
     fx.method_class = Some(def.owner);
     fx.defining_class = def.defining_class;
+    fx.lexical_home = def.lexical_home;
     // A body that came from a literal `define_method(:name) { .. }` rather
     // than a `def`: a BARE `super` is an error in it, and a `break` returns.
     fx.define_method_body = def.node.is_some_and(|n| {

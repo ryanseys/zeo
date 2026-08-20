@@ -944,6 +944,9 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             safe: false,
         } if kwargs.is_empty() => {
             let (receiver, name, args) = (self_receiver(fx, *receiver), name.clone(), args.clone());
+            if let Some(op) = module_nesting(fx, receiver, &name, &args)? {
+                return Ok(op);
+            }
             if args.iter().any(|a| matches!(a, ArrayElem::Splat(_))) {
                 let recv = match receiver {
                     Some(r) => Some(lower_expr(fx, r)?),
@@ -1464,9 +1467,16 @@ pub(crate) fn pure_literal(parts: &[StrPart]) -> Option<String> {
 /// `Compiler::cref_of`'s frozen answer for the emitting class; empty at
 /// the top level (rustc's `Ctx::cref_chain`).
 fn cref_chain<'a>(fx: &'a Fx) -> &'a [crate::compiler::ClassId] {
-    fx.method_class
+    lexical_class(fx)
         .map(|c| fx.an.compiler.cref_of_ref(c))
         .unwrap_or(&[])
+}
+
+/// The class a LEXICAL question resolves against: the singleton surrogate
+/// when the body was written in a constant-bearing `class << self`, else the
+/// owner. `Scope::lexical_home`'s rule, and rustc's `lexical` binding.
+pub(crate) fn lexical_class(fx: &Fx) -> Option<crate::compiler::ClassId> {
+    fx.lexical_home.or(fx.method_class)
 }
 
 /// Resolve a class name against the current cref (rustc's
@@ -1484,7 +1494,7 @@ pub(crate) fn const_read(fx: &mut Fx, id: NodeId, name: &str) -> Result<Operand,
     // top -- one runtime walk through `const_get_cref`, whose miss raises
     // the NameError with the cref-qualified message.
     let compiler = &fx.an.compiler;
-    let defining = fx.method_class.unwrap_or(crate::compiler::OBJECT_CLASS);
+    let defining = lexical_class(fx).unwrap_or(crate::compiler::OBJECT_CLASS);
     let top = crate::compiler::OBJECT_CLASS;
     let owner = compiler
         .class(defining)
@@ -2975,10 +2985,6 @@ fn case_when(
     })
 }
 
-/// Whether an implicit send of `name` from the current body resolves to a
-/// method of the ENCLOSING class before reaching the toplevel `Object`
-/// def the direct-call table holds -- ruby's MRO puts the receiver's own
-/// chain first, so a shadowed name must go through the dynamic send.
 /// The receiver a send should DISPATCH against, or `None` when it IS the
 /// current `self` and the implicit entry is the right one.
 ///
@@ -3006,6 +3012,10 @@ pub(crate) fn bypasses_visibility(fx: &Fx, recv: Option<NodeId>) -> bool {
     recv.is_some_and(|r| fx.an.compiler.hir.is_implicit_self_receiver(r))
 }
 
+/// Whether an implicit send of `name` from the current body resolves to a
+/// method of the ENCLOSING class before reaching the toplevel `Object`
+/// def the direct-call table holds -- ruby's MRO puts the receiver's own
+/// chain first, so a shadowed name must go through the dynamic send.
 pub(crate) fn method_class_shadows(fx: &Fx, name: &str) -> bool {
     let Some(cid) = fx.method_class else {
         return false;
@@ -3018,6 +3028,42 @@ pub(crate) fn method_class_shadows(fx: &Fx, name: &str) -> bool {
     } else {
         fx.an.compiler.lookup_method(cid, name).is_some()
     }
+}
+
+/// `Module.nesting` -- the lexical class/module chain at THIS call site,
+/// innermost first. It is compile-time knowledge and nothing else: a builtin
+/// row runs with no view of its caller's lexical scope, so folding here is
+/// the only way to answer anything but `[]` (rustc folds it the same way).
+/// `cref_chain` is outermost-first.
+fn module_nesting(
+    fx: &mut Fx,
+    receiver: Option<NodeId>,
+    name: &str,
+    args: &[ArrayElem],
+) -> Result<Option<Operand>, String> {
+    if name != "nesting" || !args.is_empty() {
+        return Ok(None);
+    }
+    let Some(r) = receiver else { return Ok(None) };
+    if !matches!(&fx.an.compiler.hir[r], HirNode::ClassRef(n) if n == "Module") {
+        return Ok(None);
+    }
+    let chain: Vec<crate::compiler::ClassId> = cref_chain(fx).iter().rev().copied().collect();
+    let ss = fx.temp_slot();
+    let out = fx.slot_addr(ss, 0);
+    let cap = fx.b.ins().iconst(fx.em.ptr, chain.len() as i64);
+    fx.call("zeo_rt_array_new", &[cap, out]);
+    fx.owned_created += 1;
+    for cid in chain {
+        let op = class_immediate(fx, cid);
+        let p = ownership::move_ptr(fx, &op);
+        fx.call("zeo_rt_array_push", &[out, p]);
+    }
+    Ok(Some(Operand::Slot {
+        ss,
+        owned: true,
+        tag: TagInfo::Known(zeo_abi::abi::ValueTag::Array as u8),
+    }))
 }
 
 /// A `def` in EXPRESSION position -- a RUNTIME method install whose value
