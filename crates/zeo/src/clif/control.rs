@@ -204,6 +204,23 @@ pub(crate) fn lower_begin(
         // lands in `efail`: leave the bracket, DROP the saved signal
         // (CRuby: the newer signal wins), propagate its own.
         fx.b.switch_to_block(propagate);
+        // `Signal::Terminate` (fiber/enumerator teardown) SKIPS the user
+        // ensure body: the old force-unwind ran no ruby `ensure` either, and
+        // the whole point of the teardown signal is that only releases run.
+        {
+            use cranelift_codegen::ir::condcodes::IntCC;
+            let kind = fx
+                .call("zeo_rt_signal_kind", &[])
+                .expect("signal_kind answers");
+            let is_terminate = fx.b.ins().icmp_imm_u(
+                IntCC::Equal,
+                kind,
+                zeo_abi::abi::SignalKind::Terminate as i64,
+            );
+            let run = fx.b.create_block();
+            fx.b.ins().brif(is_terminate, outer_land, &[], run, &[]);
+            fx.b.switch_to_block(run);
+        }
         let saved = fx.call("zeo_rt_signal_save", &[]).expect("saved handle");
         let pushed = fx
             .call("zeo_rt_propagating_enter", &[saved])

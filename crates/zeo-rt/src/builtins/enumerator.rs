@@ -1291,12 +1291,18 @@ ruby_class! {
         let e = recv_enum(recv);
         let mut st = e.state.lock();
         if let Some(id) = st.fiber.take() {
-            // The dropped coroutine force-unwinds (Rust destructors only
-            // -- fiber.rs's module docs). A fiber pinned to ANOTHER
-            // thread can't be removed from here; it unwinds when that
+            // Disposed through the Terminate protocol, never by DROPPING the
+            // coroutine: corosensei's drop force-UNWINDS the suspended stack,
+            // and a compiled frame cannot support native unwinding (the abort
+            // reads "failed to initiate panic"). A fiber pinned to ANOTHER
+            // thread can't be removed from here; it is disposed when that
             // thread's table drops (documented leak-until-thread-exit).
-            if st.owner == Some(std::thread::current().id()) {
-                ENUM_FIBERS.with(|f| f.borrow_mut().remove(&id));
+            if st.owner == Some(std::thread::current().id())
+                && let Some(coro) = ENUM_FIBERS.with(|f| f.borrow_mut().remove(&id))
+            {
+                drop(st);
+                crate::fiber::terminate_coro(coro);
+                st = e.state.lock();
             }
         }
         st.owner = None;

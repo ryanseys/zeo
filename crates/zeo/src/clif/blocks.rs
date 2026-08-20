@@ -455,6 +455,10 @@ fn define_block_fn(
     let an = fx.an;
     let method_class = fx.method_class;
     let self_is_dynamic = fx.self_is_dynamic;
+    // A NATIVE-BACKED owner has no compiled slot layout, so its ivars are
+    // name-keyed -- and a block written in one of its methods reads the same
+    // storage (`@items` inside `synchronize { }` answered nil).
+    let dyn_ivars = fx.dyn_ivars;
     // A `super` written inside a block targets the ENCLOSING method (ruby:
     // blocks have no `super` of their own), so the block fn carries that
     // method's identity -- its defining class, name and parameter list.
@@ -512,6 +516,7 @@ fn define_block_fn(
     let (env, self_p, argv, argc, blk, out) = (ep[0], ep[1], ep[2], ep[3], ep[4], ep[5]);
     bfx.self_ptr = Some(self_p);
     bfx.method_class = method_class;
+    bfx.dyn_ivars = dyn_ivars;
     match method_body {
         // A RUNTIME-installed method is a scope of its own: its defining
         // class is minted at run time, so a `super` inside it reads the
