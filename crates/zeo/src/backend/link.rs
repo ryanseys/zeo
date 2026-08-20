@@ -52,9 +52,24 @@ pub fn runtime_archive() -> Result<PathBuf, String> {
 /// AFTER the archive. Checked against the live answer by the ignored diff
 /// test below (a CI leg: it compiles the lib in its own target dir).
 const NATLIBS_MACOS: &[&str] = &["-liconv", "-lSystem", "-lc", "-lm"];
-/// The glibc set rustc documents for static linking; confirmed per-host by
-/// the same diff test when it runs on Linux (the podman loop / CI).
+/// What rustc reports on glibc, VERBATIM -- captured live by the diff test
+/// below on 2026-08-20, replacing a list seeded from documentation that had
+/// never been checked on the platform it describes.
+///
+/// The head of it is not std's: `-lcrypt` and the first `-lutil` come from
+/// zeo-rt's own `#[link(name = ..)]` attributes (`String#crypt`, `PTY`),
+/// which rustc honours for its own link and reports here, but which nothing
+/// tells a hand-written table about -- so the AOT link on Linux failed with
+/// `undefined reference to 'crypt'` while every macOS run stayed green
+/// (libSystem carries both). `-lutil` appearing twice is rustc's own output
+/// and is kept: the assert is equality with what rustc says, and a
+/// de-duplicated list would fail it while changing nothing about the link.
+///
+/// **Adding a `#[link(name = ..)]` anywhere in zeo-rt means adding it here.**
+/// The diff test is what catches a miss, and it only runs on Linux.
 const NATLIBS_LINUX_GNU: &[&str] = &[
+    "-lcrypt",
+    "-lutil",
     "-lgcc_s",
     "-lutil",
     "-lrt",
@@ -183,6 +198,18 @@ mod tests {
         natlibs_for("wasm32-unknown-unknown").unwrap_err();
     }
 
+    /// Where the probe build writes. Beside the ambient target dir when
+    /// there is one, because the Linux leg mounts the repo READ-ONLY --
+    /// `<workspace>/target` is not writable there, and the probe must not
+    /// share the ambient dir either (it would churn the real build's
+    /// fingerprints).
+    fn natlibs_probe_dir(workspace: &std::path::Path) -> PathBuf {
+        match std::env::var_os("CARGO_TARGET_DIR") {
+            Some(dir) => PathBuf::from(dir).join("natlibs-probe"),
+            None => workspace.join("target/natlibs-probe"),
+        }
+    }
+
     /// The CI diff leg: asks rustc for the live answer and compares it to
     /// the table for this host. Compiles the `zeo` lib in its own target
     /// dir so the main tree's fingerprints stay put -- expensive on a cold
@@ -202,7 +229,7 @@ mod tests {
                 "--print=native-static-libs",
             ])
             .current_dir(workspace)
-            .env("CARGO_TARGET_DIR", workspace.join("target/natlibs-probe"))
+            .env("CARGO_TARGET_DIR", natlibs_probe_dir(workspace))
             .output()
             .expect("cargo rustc must run");
         let stderr = String::from_utf8_lossy(&out.stderr);
