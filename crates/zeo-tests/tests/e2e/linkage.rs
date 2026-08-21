@@ -19,7 +19,7 @@
 
 use std::path::{Path, PathBuf};
 
-use object::{Object, ObjectSection, ObjectSymbol};
+use object::{Object, ObjectSection};
 
 /// Compile and link `source` into a throwaway binary, run it once to prove
 /// it is a working program (an assert on a binary that cannot run proves
@@ -90,16 +90,27 @@ fn linkme_bytes(binary: &Path) -> u64 {
     total
 }
 
-/// The symbols in `binary` that name `needle` (lowercased match).
-fn symbols_naming(binary: &Path, needle: &str) -> Vec<String> {
+/// Total size of `binary`'s executable sections -- the quantity the
+/// compiler's presence or absence moves.
+///
+/// Symbol names cannot answer this: the link discards the local symbol
+/// table (`-x`), so a compiler that survived would be nameless but
+/// present. Bytes of code are what is actually there.
+fn text_bytes(binary: &Path) -> u64 {
     let bytes = read(binary);
     let file = object::File::parse(&*bytes)
         .unwrap_or_else(|e| panic!("parsing {}: {e}", binary.display()));
-    file.symbols()
-        .filter_map(|s| s.name().ok())
-        .filter(|n| n.to_ascii_lowercase().contains(needle))
-        .map(str::to_string)
-        .collect()
+    let total: u64 = file
+        .sections()
+        .filter(|s| s.kind() == object::SectionKind::Text)
+        .map(|s| s.size())
+        .sum();
+    assert!(
+        total > 0,
+        "{} carries no text section at all",
+        binary.display()
+    );
+    total
 }
 
 /// The whole-archive half: a linked program's `BUILTIN_TABLES` is the same
@@ -119,31 +130,30 @@ fn a_linked_program_keeps_every_builtin_table() {
 }
 
 /// The dead-strip half: a program that cannot `eval` does not carry the
-/// compiler. Cranelift is the compiler's bulkiest half and nothing in the
-/// runtime references it, so its symbols are the marker.
+/// compiler. `libzeo.a` holds compiler and runtime alike (one staticlib,
+/// plan decision 9) and `-force_load`/`--whole-archive` pulls in every
+/// member, so `-dead_strip`/`--gc-sections` is the only thing standing
+/// between an eval-free program and a copy of Cranelift.
 ///
-/// The `zeo` binary is checked in the same test, because the assert is
-/// otherwise vacuous: a stripped binary has no symbols of any kind and
-/// would pass while proving nothing.
+/// Measured against the `zeo` binary, which links the same archive and
+/// DOES reference the compiler. Today a linked program's text is about
+/// half of it; drop the flag and it is 1.2x of it, because the program
+/// then carries every member the archive has. Anything in between fails
+/// loudly rather than passing on a coincidence.
 #[test]
 fn an_eval_free_program_dead_strips_the_compiler() {
-    let compiler = symbols_naming(&zeo_cli(), "cranelift").len();
-    assert!(
-        compiler > 100,
-        "the zeo binary names cranelift only {compiler} times -- this test \
-         cannot tell dead-stripping from a stripped symbol table"
-    );
-
+    let compiler = text_bytes(&zeo_cli());
     let bin = link_program("puts :ok\n");
-    let program = symbols_naming(&bin, "cranelift");
+    let program = text_bytes(&bin);
     let _ = std::fs::remove_file(&bin);
-    let sample: Vec<&str> = program.iter().take(10).map(String::as_str).collect();
+
+    let ratio = program as f64 / compiler as f64;
     assert!(
-        program.is_empty(),
-        "an eval-free program carries {} cranelift symbols (of the zeo \
-         binary's {compiler}) -- the compiler is no longer dead-stripped out \
-         of libzeo.a (see -dead_strip/--gc-sections in backend/link.rs). \
-         First few: {sample:#?}",
-        program.len()
+        ratio < 0.75,
+        "an eval-free program's text is {program} bytes, {ratio:.2}x the zeo \
+         binary's {compiler} -- it is carrying the compiler half of \
+         libzeo.a. The link no longer dead-strips (see \
+         -dead_strip/--gc-sections in backend/link.rs); measured, losing \
+         that flag takes this ratio from 0.52 to 1.21."
     );
 }

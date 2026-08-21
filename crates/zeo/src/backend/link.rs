@@ -135,6 +135,12 @@ pub(crate) fn host_triple() -> &'static str {
 /// otherwise-unreferenced members; dead-strip/gc-sections then drops
 /// everything unreferenced (the compiler half of an eval-free program
 /// included).
+///
+/// `-x` discards the local symbol table. Nothing reads it: a Ruby
+/// backtrace is built from zeo's own frame stack, and the JIT resolves
+/// the runtime through an in-process pointer table rather than by name.
+/// It is what the rustc path got from `-C strip=symbols`, and without it
+/// an eval-free `hello` carries 2 MB of Rust symbol names.
 pub fn link_binary(object: &std::path::Path, output: &std::path::Path) -> Result<(), String> {
     let archive = runtime_archive()?;
     let natlibs = natlibs_for(host_triple())?;
@@ -144,12 +150,14 @@ pub fn link_binary(object: &std::path::Path, output: &std::path::Path) -> Result
         cmd.arg(format!("-Wl,-force_load,{}", archive.display()));
         cmd.args(natlibs);
         cmd.arg("-Wl,-dead_strip");
+        cmd.arg("-Wl,-x");
     } else {
         cmd.arg("-Wl,--whole-archive");
         cmd.arg(&archive);
         cmd.arg("-Wl,--no-whole-archive");
         cmd.args(natlibs);
         cmd.arg("-Wl,--gc-sections");
+        cmd.arg("-Wl,-x");
     }
     let out = cmd
         .output()
