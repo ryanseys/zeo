@@ -93,6 +93,16 @@ jobs:
         env:
           ZEO_GOLDEN_BACKEND: aot
 
+      # The native-library table an AOT link names after the archive is
+      # HAND-WRITTEN (backend/link.rs), and nothing tells it about a
+      # `#[link(name = ..)]` added anywhere in zeo-rt. This test asks rustc
+      # for the live answer and diffs it. Linux only: it is where the table
+      # was wrong (`-lcrypt` missing, so every AOT link there failed while
+      # macOS stayed green -- libSystem carries crypt and util). Ignored by
+      # default because it compiles the lib in a probe target dir.
+      - run: cargo test -p zeo --lib -- --ignored natlibs_table_matches_rustc --nocapture
+        if: runner.os == 'Linux'
+
       # nextest doesn't run doctests; keep them covered.
       - run: cargo test --workspace --doc
 
