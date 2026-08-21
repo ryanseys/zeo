@@ -1763,53 +1763,71 @@ fn lower_class_body_statement(
     if *module_function || *visibility != Visibility::Public {
         apply_body_defaults_in_branches(hir, id, *visibility, *module_function);
     }
-    out.push(id);
-    // A `define_method(:name, <a callable>)` under a bare `module_function`
-    // installs at RUN time, and the mode cursor is resolved HERE, at compile
-    // time, so it cannot reach the installed method the way it reaches a
-    // `def`. What Ruby produces for that statement -- a private instance
-    // copy plus a module method -- is exactly what the runtime's own
-    // `Module#module_function(:name)` produces, so emitting that promotion
-    // right after the call is what carries the mode across the boundary.
-    //
-    // Only the shapes that REACH here need it: `define_method(:name) { }`
-    // desugared into a `DefMethod` further up and returned before this.
-    if *module_function && let Some(name) = runtime_defined_method_name(node) {
-        let sym = hir.push(HirNode::SymbolLit(name));
-        out.push(hir.push(HirNode::Call {
-            receiver: None,
-            name: "module_function".to_string(),
-            args: vec![crate::hir::ArrayElem::Single(sym)],
-            kwargs: Vec::new(),
-            block: None,
-            block_arg: None,
-            safe: false,
-        }));
-    }
+    push_body_statement(hir, id, *module_function, out);
     Ok(())
 }
 
-/// The literal name a `define_method` statement installs at RUN time, for
-/// the `module_function` promotion above.
+/// Push one class-body statement, and behind it the promotion a run-time
+/// `define_method` needs to obey a bare `module_function`.
 ///
-/// Deliberately blind to what follows the name -- a `Method`, a lambda, a
-/// `&proc`, or a block that closes over an enclosing local all land here,
-/// and every one of them is a run-time install. The compile-time shapes
-/// never reach this call.
-fn runtime_defined_method_name(node: &Node<'_>) -> Option<String> {
-    let call = node.as_call_node()?;
-    if call.receiver().is_some() {
+/// The mode makes every definition after it a module method AND a private
+/// instance copy. Zeo resolves that cursor at compile time, which reaches a
+/// `def` and reaches `define_method(:name) { }` (it desugars to one) -- but
+/// `define_method(:name, <a callable>)` installs at RUN time, where a
+/// compile-time cursor cannot follow it. What Ruby produces for that
+/// statement is exactly what the runtime's own `Module#module_function(:name)`
+/// produces, so emitting that call right behind it carries the mode across
+/// the boundary.
+fn push_body_statement(hir: &mut Hir, id: NodeId, module_function: bool, out: &mut Vec<NodeId>) {
+    out.push(id);
+    if !module_function {
+        return;
+    }
+    let Some(name) = runtime_define_method_name(hir, id) else {
+        return;
+    };
+    if let Some(span) = hir.span(id) {
+        hir.push_span(span);
+    }
+    let sym = hir.push(HirNode::SymbolLit(name));
+    out.push(hir.push(HirNode::Call {
+        receiver: None,
+        name: "module_function".to_string(),
+        args: vec![crate::hir::ArrayElem::Single(sym)],
+        kwargs: Vec::new(),
+        block: None,
+        block_arg: None,
+        safe: false,
+    }));
+    if hir.span(id).is_some() {
+        hir.pop_span();
+    }
+}
+
+/// The literal name a `define_method` STATEMENT installs at run time.
+///
+/// Deliberately blind to what follows the name -- a `Method`, an
+/// `UnboundMethod`, a lambda, an `&proc`, or a block that closes over an
+/// enclosing local all reach here, and every one of them is a run-time
+/// install. The compile-time shapes are `DefMethod` nodes by now and never
+/// match.
+fn runtime_define_method_name(hir: &Hir, id: NodeId) -> Option<String> {
+    let HirNode::Call {
+        receiver: None,
+        name,
+        args,
+        ..
+    } = &hir[id]
+    else {
+        return None;
+    };
+    if name != "define_method" {
         return None;
     }
-    if call.name().as_slice() != b"define_method" {
+    let crate::hir::ArrayElem::Single(first) = *args.first()? else {
         return None;
-    }
-    let first = call.arguments()?.arguments().iter().next()?;
-    if let Some(sym) = first.as_symbol_node() {
-        return Some(String::from_utf8_lossy(sym.unescaped()).into_owned());
-    }
-    let s = first.as_string_node()?;
-    Some(String::from_utf8_lossy(s.unescaped()).into_owned())
+    };
+    hir.sent_name(first).map(str::to_string)
 }
 
 /// Whether `id` is a `def` ruby makes PRIVATE whatever the running default
@@ -1864,7 +1882,11 @@ fn apply_body_defaults_in_branches(
                     apply_body_defaults_in_branches(hir, sid, visibility, module_function);
                     out.push(sid);
                 }
-                _ => out.push(sid),
+                // A run-time `define_method` inside a branch needs the same
+                // promotion the body's own statements get -- rack writes
+                // `define_method(:escape_html, ERB::Escape.instance_method(..))`
+                // under an `if defined?(ERB::Escape)`.
+                _ => push_body_statement(hir, sid, module_function, &mut out),
             }
         }
         *stmts = out;

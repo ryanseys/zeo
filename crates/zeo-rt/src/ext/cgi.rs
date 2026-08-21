@@ -8,7 +8,7 @@
 //! `escapeHTML`/`unescapeHTML` map `& < > " '`. The unreserved set kept by the
 //! URL escapers is alphanumerics plus `_.-~`.
 
-use crate::{RubyValue, string_new};
+use crate::RubyValue;
 use zeo_macros::{ruby_class, ruby_module};
 
 fn in_bytes(v: &RubyValue) -> Vec<u8> {
@@ -18,8 +18,29 @@ fn in_bytes(v: &RubyValue) -> Vec<u8> {
     }
 }
 
-fn out(text: String) -> RubyValue {
-    RubyValue::Str(string_new(text))
+/// The encoding an argument carries -- UTF-8 for anything that had to be
+/// stringified to get here.
+fn enc_of(v: &RubyValue) -> crate::encoding::EncodingId {
+    match v {
+        RubyValue::Str(s) => s.lock().encoding(),
+        _ => crate::encoding::UTF_8,
+    }
+}
+
+/// One row's answer, in the ARGUMENT's encoding.
+///
+/// Every escape here is a byte transformation -- it rewrites ASCII
+/// punctuation and passes everything else through -- so CRuby hands back a
+/// string in the encoding it was given, invalid bytes and all:
+/// `CGI.escapeHTML("\xC0<")` on a binary string is `"\xC0&lt;"`, still
+/// binary. Decoding first is what turned that into `"À&lt;"` in UTF-8, and
+/// what turned a UTF-8 snowman into three Latin-1 characters: `b as char`
+/// reads a BYTE as a codepoint, and `String` then re-encodes it.
+fn out_like(arg: &RubyValue, bytes: Vec<u8>) -> RubyValue {
+    RubyValue::Str(crate::string_wrap(crate::StrBuf::from_bytes(
+        bytes,
+        enc_of(arg),
+    )))
 }
 
 fn is_unreserved(b: u8) -> bool {
@@ -76,41 +97,53 @@ fn percent_decode(bytes: &[u8], plus_space: bool) -> Vec<u8> {
     out
 }
 
-fn html_escape(bytes: &[u8]) -> String {
-    let mut s = String::with_capacity(bytes.len());
+fn html_escape(bytes: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(bytes.len());
     for &b in bytes {
         match b {
-            b'&' => s.push_str("&amp;"),
-            b'<' => s.push_str("&lt;"),
-            b'>' => s.push_str("&gt;"),
-            b'"' => s.push_str("&quot;"),
-            b'\'' => s.push_str("&#39;"),
-            b => s.push(b as char),
+            b'&' => out.extend_from_slice(b"&amp;"),
+            b'<' => out.extend_from_slice(b"&lt;"),
+            b'>' => out.extend_from_slice(b"&gt;"),
+            b'"' => out.extend_from_slice(b"&quot;"),
+            b'\'' => out.extend_from_slice(b"&#39;"),
+            b => out.push(b),
         }
     }
-    s
+    out
 }
 
-fn html_unescape(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(amp) = rest.find('&') {
-        out.push_str(&rest[..amp]);
-        rest = &rest[amp..];
-        let Some(semi) = rest.find(';') else {
-            out.push('&');
-            rest = &rest[1..];
+/// `unescapeHTML`, in bytes and in `enc`.
+///
+/// A NAMED entity is ASCII and always decodes. A NUMERIC one decodes only
+/// when `enc` can represent the codepoint, and is left standing when it
+/// cannot -- oracle-verified, and CRuby's own rule: `&#9731;` is a snowman
+/// in a UTF-8 string, stays `&#9731;` in a binary one (no byte can hold
+/// it) and stays in Latin-1 too, while `&#233;` in Latin-1 decodes to the
+/// single byte `\xE9`.
+fn html_unescape(bytes: &[u8], enc: crate::encoding::EncodingId) -> Vec<u8> {
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'&' {
+            out.push(bytes[i]);
+            i += 1;
+            continue;
+        }
+        let Some(rel) = bytes[i..].iter().position(|&b| b == b';') else {
+            out.push(b'&');
+            i += 1;
             continue;
         };
-        let entity = &rest[1..semi];
+        let entity = &bytes[i + 1..i + rel];
         let decoded = match entity {
-            "amp" => Some('&'),
-            "lt" => Some('<'),
-            "gt" => Some('>'),
-            "quot" => Some('"'),
-            "apos" | "#39" => Some('\''),
-            _ => entity
-                .strip_prefix('#')
+            b"amp" => Some('&'),
+            b"lt" => Some('<'),
+            b"gt" => Some('>'),
+            b"quot" => Some('"'),
+            b"apos" | b"#39" => Some('\''),
+            _ => std::str::from_utf8(entity)
+                .ok()
+                .and_then(|e| e.strip_prefix('#'))
                 .and_then(|num| {
                     num.strip_prefix(['x', 'X'])
                         .and_then(|h| u32::from_str_radix(h, 16).ok())
@@ -118,18 +151,17 @@ fn html_unescape(text: &str) -> String {
                 })
                 .and_then(char::from_u32),
         };
-        match decoded {
-            Some(c) => {
-                out.push(c);
-                rest = &rest[semi + 1..];
+        match decoded.and_then(|c| crate::encoding::encode_scalar(enc, c)) {
+            Some(b) => {
+                out.extend_from_slice(&b);
+                i += rel + 1;
             }
             None => {
-                out.push('&');
-                rest = &rest[1..];
+                out.push(b'&');
+                i += 1;
             }
         }
     }
-    out.push_str(rest);
     out
 }
 
@@ -160,26 +192,28 @@ fn element_names(args: &[RubyValue]) -> Vec<String> {
 /// `<`/`>` before escaping, `&lt;`/`&gt;` after it. CRuby writes this as a
 /// regexp (`/<\/?(?:A|B)(?!\w)(?:.|\n)*?>/i`); the name run is read to its end
 /// here, which is that `(?!\w)` -- `<ABBR>` is not `<A>`.
-fn element_spans(text: &str, names: &[String], open: &str, close: &str) -> Vec<(usize, usize)> {
+fn element_spans(text: &[u8], names: &[String], open: &[u8], close: &[u8]) -> Vec<(usize, usize)> {
+    let find = |hay: &[u8], needle: &[u8]| {
+        hay.windows(needle.len().max(1))
+            .position(|w| w == needle)
+    };
     let mut spans = Vec::new();
     let mut i = 0;
-    while let Some(rel) = text[i..].find(open) {
+    while let Some(rel) = find(&text[i..], open) {
         let start = i + rel;
         let mut j = start + open.len();
-        if text[j..].starts_with('/') {
+        if text.get(j) == Some(&b'/') {
             j += 1;
         }
         let name_start = j;
-        while j < text.len() && {
-            let b = text.as_bytes()[j];
-            b.is_ascii_alphanumeric() || b == b'_'
-        } {
+        while j < text.len() && (text[j].is_ascii_alphanumeric() || text[j] == b'_') {
             j += 1;
         }
         let name = &text[name_start..j];
         if !name.is_empty()
+            && let Ok(name) = std::str::from_utf8(name)
             && names.iter().any(|n| n.eq_ignore_ascii_case(name))
-            && let Some(rel2) = text[j..].find(close)
+            && let Some(rel2) = find(&text[j..], close)
         {
             let end = j + rel2 + close.len();
             spans.push((start, end));
@@ -192,30 +226,38 @@ fn element_spans(text: &str, names: &[String], open: &str, close: &str) -> Vec<(
 }
 
 /// Rewrite each span through `f` and leave everything between them alone.
-fn rewrite_spans(text: &str, spans: &[(usize, usize)], f: impl Fn(&str) -> String) -> String {
-    let mut s = String::with_capacity(text.len());
+fn rewrite_spans(
+    text: &[u8],
+    spans: &[(usize, usize)],
+    f: impl Fn(&[u8]) -> Vec<u8>,
+) -> Vec<u8> {
+    let mut out = Vec::with_capacity(text.len());
     let mut at = 0;
     for &(start, end) in spans {
-        s.push_str(&text[at..start]);
-        s.push_str(&f(&text[start..end]));
+        out.extend_from_slice(&text[at..start]);
+        out.extend_from_slice(&f(&text[start..end]));
         at = end;
     }
-    s.push_str(&text[at..]);
-    s
+    out.extend_from_slice(&text[at..]);
+    out
 }
 
 fn escape_element(args: &[RubyValue]) -> RubyValue {
-    let text = as_text(&args[0]);
+    let text = in_bytes(&args[0]);
     let names = element_names(&args[1..]);
-    let spans = element_spans(&text, &names, "<", ">");
-    out(rewrite_spans(&text, &spans, |m| html_escape(m.as_bytes())))
+    let spans = element_spans(&text, &names, b"<", b">");
+    out_like(&args[0], rewrite_spans(&text, &spans, |m| html_escape(m)))
 }
 
 fn unescape_element(args: &[RubyValue]) -> RubyValue {
-    let text = as_text(&args[0]);
+    let text = in_bytes(&args[0]);
     let names = element_names(&args[1..]);
-    let spans = element_spans(&text, &names, "&lt;", "&gt;");
-    out(rewrite_spans(&text, &spans, html_unescape))
+    let enc = enc_of(&args[0]);
+    let spans = element_spans(&text, &names, b"&lt;", b"&gt;");
+    out_like(
+        &args[0],
+        rewrite_spans(&text, &spans, |m| html_unescape(m, enc)),
+    )
 }
 
 /// `CGI::EscapeExt` -- the module CRuby's `cgi/escape` PREPENDS to
@@ -232,22 +274,22 @@ mod escape_ext {
 
         // Arities match ruby 4.0.6.
         def "escape" (_recv, arg) {
-            Ok(out(percent_encode(&in_bytes(arg), true)))
+            Ok(out_like(arg, percent_encode(&in_bytes(arg), true).into_bytes()))
         }
         def "unescape" cfunc (_recv, string, _encoding?) {
-            Ok(out(String::from_utf8_lossy(&percent_decode(&in_bytes(string), true)).into_owned()))
+            Ok(out_like(string, percent_decode(&in_bytes(string), true)))
         }
         def "escapeURIComponent" | "escape_uri_component" (_recv, arg) {
-            Ok(out(percent_encode(&in_bytes(arg), false)))
+            Ok(out_like(arg, percent_encode(&in_bytes(arg), false).into_bytes()))
         }
         def "unescapeURIComponent" arity -1 | "unescape_uri_component" arity -1 (_recv, arg1, _arg2?) {
-            Ok(out(String::from_utf8_lossy(&percent_decode(&in_bytes(arg1), false)).into_owned()))
+            Ok(out_like(arg1, percent_decode(&in_bytes(arg1), false)))
         }
         def "escapeHTML" | "escape_html" | "h" (_recv, arg) {
-            Ok(out(html_escape(&in_bytes(arg))))
+            Ok(out_like(arg, html_escape(&in_bytes(arg))))
         }
         def "unescapeHTML" | "unescape_html" (_recv, arg) {
-            Ok(out(html_unescape(&as_text(arg))))
+            Ok(out_like(arg, html_unescape(&in_bytes(arg), enc_of(arg))))
         }
     }
 }
@@ -262,22 +304,22 @@ mod escape {
         Escape = zeo_abi::CGI_ESCAPE_MODULE;
 
         def "escape" (_recv, arg) {
-            Ok(out(percent_encode(&in_bytes(arg), true)))
+            Ok(out_like(arg, percent_encode(&in_bytes(arg), true).into_bytes()))
         }
         def "unescape" cfunc (_recv, string, _encoding?) {
-            Ok(out(String::from_utf8_lossy(&percent_decode(&in_bytes(string), true)).into_owned()))
+            Ok(out_like(string, percent_decode(&in_bytes(string), true)))
         }
         def "escapeURIComponent" | "escape_uri_component" (_recv, arg) {
-            Ok(out(percent_encode(&in_bytes(arg), false)))
+            Ok(out_like(arg, percent_encode(&in_bytes(arg), false).into_bytes()))
         }
         def "unescapeURIComponent" arity -1 | "unescape_uri_component" arity -1 (_recv, arg1, _arg2?) {
-            Ok(out(String::from_utf8_lossy(&percent_decode(&in_bytes(arg1), false)).into_owned()))
+            Ok(out_like(arg1, percent_decode(&in_bytes(arg1), false)))
         }
         def "escapeHTML" (_recv, arg) {
-            Ok(out(html_escape(&in_bytes(arg))))
+            Ok(out_like(arg, html_escape(&in_bytes(arg))))
         }
         def "unescapeHTML" (_recv, arg) {
-            Ok(out(html_unescape(&as_text(arg))))
+            Ok(out_like(arg, html_unescape(&in_bytes(arg), enc_of(arg))))
         }
         // `escapeElement(string, *elements)` escapes the TAGS of the named
         // elements and nothing else -- not the text between them, and not a
@@ -306,7 +348,11 @@ mod tests {
     use super::*;
 
     fn s(text: &str) -> RubyValue {
-        RubyValue::Str(string_new(text.to_string()))
+        RubyValue::Str(crate::string_new(text.to_string()))
+    }
+    /// A byte answer as text, for an assertion written in ASCII.
+    fn b(bytes: Vec<u8>) -> String {
+        String::from_utf8(bytes).expect("the fixtures are ASCII")
     }
     fn t(v: RubyValue) -> String {
         match v {
@@ -330,9 +376,22 @@ mod tests {
 
     #[test]
     fn html_escapes_match_ruby() {
-        assert_eq!(html_escape(b"<a>&\"'"), "&lt;a&gt;&amp;&quot;&#39;");
-        assert_eq!(html_unescape("&lt;a&gt;&amp;&quot;&#39;"), "<a>&\"'");
-        assert_eq!(html_unescape("&#x41;&#66;"), "AB");
+        let utf8 = crate::encoding::UTF_8;
+        assert_eq!(b(html_escape(b"<a>&\"'")), "&lt;a&gt;&amp;&quot;&#39;");
+        assert_eq!(
+            b(html_unescape(b"&lt;a&gt;&amp;&quot;&#39;", utf8)),
+            "<a>&\"'"
+        );
+        assert_eq!(b(html_unescape(b"&#x41;&#66;", utf8)), "AB");
+        // A byte no encoding decodes passes through untouched, and the
+        // numeric entity for a character the encoding cannot hold is left
+        // standing -- CRuby's rule, and what a lossy decode destroyed.
+        assert_eq!(html_escape(b"\xC0<"), b"\xC0&lt;".to_vec());
+        assert_eq!(
+            html_unescape(b"&#9731;", crate::encoding::ASCII_8BIT),
+            b"&#9731;".to_vec()
+        );
+        assert_eq!(html_unescape(b"&#9731;", utf8), "\u{2603}".as_bytes().to_vec());
     }
 
     #[test]

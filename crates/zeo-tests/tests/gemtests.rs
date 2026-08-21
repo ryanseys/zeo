@@ -35,10 +35,17 @@ fn gemtest(rb: &Path) -> datatest_stable::Result<()> {
     }
     // A whole test file is one case; its compile splices the gem's full
     // require graph and the run executes every test in it. 60s is the
-    // ordinary goldens' bound, not this suite's.
-    // SAFETY: nextest runs each test in its own process, and this is set
-    // before the first `run_deadline()` read.
-    unsafe { std::env::set_var("ZEO_GOLDEN_RUN_DEADLINE", "300") };
+    // ordinary goldens' bound, not this suite's -- and neither is the
+    // 512 MiB one, which was measured against a golden that prints a few
+    // lines (`MAX_CHILD_RSS`). Every case in THIS suite is a whole-gem
+    // compile by definition, so the raise is unconditional here where
+    // `examples.rs` needs a by-name list for its two.
+    // SAFETY: nextest runs each test in its own process, and both are set
+    // before the first `run_deadline()`/`max_child_rss()` read.
+    unsafe {
+        std::env::set_var("ZEO_GOLDEN_RUN_DEADLINE", "300");
+        std::env::set_var("ZEO_GOLDEN_MAX_RSS", "4096");
+    }
     let env = golden::SuiteEnv {
         package_dirs: vec![vendor.clone()],
         load_roots: vec![gem_root.join("test")],

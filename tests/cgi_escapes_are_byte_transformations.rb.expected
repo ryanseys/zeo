@@ -1,0 +1,18 @@
+escapeHTML(UTF-8) -> "☃" UTF-8
+escapeHTML(ASCII-8BIT) -> "\xC0&lt;" ASCII-8BIT
+escapeHTML(ISO-8859-1) -> "caf\xE9" ISO-8859-1
+escape(UTF-8) -> "%E2%98%83" UTF-8
+escape(ASCII-8BIT) -> "%C0%3C" ASCII-8BIT
+escapeURIComponent(UTF-8) -> "%E2%98%83" UTF-8
+unescape -> "\xC0<" UTF-8
+unescapeHTML(utf8, &lt;&amp;) -> "<&" UTF-8
+unescapeHTML(utf8, &#9731;) -> "☃" UTF-8
+unescapeHTML(utf8, &#233;) -> "é" UTF-8
+unescapeHTML(binary, &lt;&amp;) -> "<&" ASCII-8BIT
+unescapeHTML(binary, &#9731;) -> "&#9731;" ASCII-8BIT
+unescapeHTML(binary, &#233;) -> "&#233;" ASCII-8BIT
+unescapeHTML(latin1, &lt;&amp;) -> "<&" ISO-8859-1
+unescapeHTML(latin1, &#9731;) -> "&#9731;" ISO-8859-1
+unescapeHTML(latin1, &#233;) -> "\xE9" ISO-8859-1
+escapeElement -> "&lt;A HREF=&#39;x&#39;&gt;t&lt;/A&gt;\xC0" ASCII-8BIT
+"<A>t</A>\xC0"

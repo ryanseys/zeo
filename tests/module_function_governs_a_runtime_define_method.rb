@@ -22,9 +22,17 @@ module U
   define_method(:unbound, Src.instance_method(:html_escape))
   define_method(:lambda_arg, ->(s) { "lam(#{s})" })
   define_method("string_name", ->(s) { "str(#{s})" })
+
+  # rack's own shape: the definition sits in a BRANCH of the module body,
+  # so the mode has to reach it there too.
+  if defined?(Src) && Src.instance_method(:html_escape)
+    define_method(:in_a_branch, Src.instance_method(:html_escape))
+  else
+    def in_a_branch(s) = "fallback(#{s})"
+  end
 end
 
-%i[plain blk unbound lambda_arg string_name].each do |m|
+%i[plain blk unbound lambda_arg string_name in_a_branch].each do |m|
   puts U.public_send(m, "x")
 end
 
