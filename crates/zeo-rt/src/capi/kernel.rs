@@ -77,6 +77,28 @@ pub unsafe extern "C" fn zeo_rt_eval_value_in_scope(
     )
 }
 
+/// `eval(*args)` -- the splat-bearing spelling of the site above. `args`
+/// is the Array the site built; the arity check happens inside.
+///
+/// # Safety
+/// `args` is a live Array value and `scope` a live Binding value.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_eval_value_in_scope_argv(
+    args: *const RubyValue,
+    scope: *const RubyValue,
+    out: *mut RubyValue,
+) -> i32 {
+    let scope = match unsafe { scope.as_ref() } {
+        Some(v) => v.clone(),
+        None => RubyValue::Nil,
+    };
+    let list: Vec<RubyValue> = match unsafe { args.as_ref() } {
+        Some(RubyValue::Array(a)) => a.lock().iter().cloned().collect(),
+        _ => Vec::new(),
+    };
+    status_out(crate::eval::eval_value_in_scope_argv(&list, scope), out)
+}
+
 /// One statement hit -- emitted beside every `set_line` stamp of a
 /// coverage-activated program, and nothing at all in one without.
 #[unsafe(no_mangle)]

@@ -127,13 +127,21 @@ pub(crate) fn const_form_resolves(env: &ConstEnv, id: NodeId) -> Option<bool> {
             let path = crate::constpath::ConstPath::parse(name);
             if let Some(scope) = path.scope()
                 && let Some(sid) = env.resolve_class(scope)
-                && env
+            {
+                if env
                     .compiler
                     .class(sid)
                     .private_constants
                     .contains(path.base())
-            {
-                return Some(false);
+                {
+                    return Some(false);
+                }
+                // Privacy the compiler cannot see is a runtime fact, and
+                // `defined?` of a private constant is nil -- so the fold
+                // stands down and the probe asks.
+                if env.compiler.hir.constant_privacy_is_runtime() {
+                    return None;
+                }
             }
             let mut scopes = env.cref_chain().to_vec();
             scopes.push(OBJECT_CLASS);
@@ -188,6 +196,10 @@ pub(crate) fn const_form_resolves(env: &ConstEnv, id: NodeId) -> Option<bool> {
                 .contains(name)
             {
                 return Some(false);
+            }
+            // Privacy the compiler cannot see is a runtime fact.
+            if env.compiler.hir.constant_privacy_is_runtime() {
+                return None;
             }
             if defined_only_later(env, id, &[scope_id], name) {
                 return Some(false);

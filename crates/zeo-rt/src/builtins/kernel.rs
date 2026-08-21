@@ -266,7 +266,14 @@ ruby_module! {
             _ => None,
         };
         match arg2 {
-            None | Some(RubyValue::Nil) => crate::eval_value((*arg1).clone(), recv.clone(), 0),
+            None | Some(RubyValue::Nil) => crate::eval::eval_value_located(
+                (*arg1).clone(),
+                recv.clone(),
+                0,
+                crate::eval::EvalMode::Caller,
+                file.as_deref(),
+                line,
+            ),
             Some(b) => {
                 let Some(b) = crate::builtins::binding::as_binding(b) else {
                     return Err(type_error!(

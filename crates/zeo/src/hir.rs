@@ -1304,6 +1304,24 @@ impl Hir {
         })
     }
 
+    /// Whether a constant's PRIVACY can change while the program runs.
+    ///
+    /// `private_constant`/`public_constant` in a class body are compile-time
+    /// facts analyze folds into `ClassInfo::private_constants`; a `Module`
+    /// reached through a dynamic send, or a snippet a run-time `eval`
+    /// compiles, sets the same flag with nothing static to see. A program
+    /// where either is possible asks the run time at every explicit-scope
+    /// read instead of folding one -- which is why the predicate is a whole
+    /// property rather than a per-site one: the directive and the read are
+    /// in different scopes by construction.
+    pub fn constant_privacy_is_runtime(&self) -> bool {
+        self.uses_runtime_eval()
+            || self.nodes.iter().any(|node| {
+                matches!(node, HirNode::Call { name, .. }
+                    if name == "private_constant" || name == "public_constant")
+            })
+    }
+
     /// Whether the program can observe a `:call`/`:return` event -- it names
     /// `TracePoint` or calls `set_trace_func` anywhere.
     ///

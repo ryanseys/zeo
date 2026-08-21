@@ -2015,7 +2015,11 @@ fn emit_private_constant_guard(fx: &mut Fx, scope_cid: crate::compiler::ClassId,
         .get(name)
         .copied()
         .unwrap_or(scope_cid);
-    if !compiler.class(owner_cid).private_constants.contains(name) {
+    // The compiler saw the directive, or nothing static can see it and the
+    // run time is the only place the answer lives.
+    if !compiler.class(owner_cid).private_constants.contains(name)
+        && !compiler.hir.constant_privacy_is_runtime()
+    {
         return;
     }
     let path = format!("{}::{name}", compiler.fq_name(owner_cid));
@@ -4209,12 +4213,14 @@ fn runtime_eval(
             crate::hir::ArrayElem::Splat(_) => None,
         })
         .collect();
-    let Some(ids) = ids else {
-        return Ok(None);
-    };
-    let sent = crate::analyze::captures::is_sent_eval(&fx.an.compiler, name, &ids);
+    // A splat means the argument LIST is a run-time value: the same site,
+    // with the arity check moved into the runtime entry. Only the bare
+    // spelling takes it -- `send(*args)` does not say it is an eval at all.
+    let splatted = ids.is_none() && receiver.is_none() && name == "eval";
+    let ids = ids.unwrap_or_default();
+    let sent = !splatted && crate::analyze::captures::is_sent_eval(&fx.an.compiler, name, &ids);
     let bare = receiver.is_none() && name == "eval" && (1..=4).contains(&ids.len());
-    if !(bare || sent) {
+    if !(bare || sent || splatted) {
         return Ok(None);
     }
     // A class that defines its OWN `eval` shadows `Kernel#eval` for a
@@ -4248,6 +4254,21 @@ fn runtime_eval(
     };
     let scope_ptr = ownership::borrow_ptr(fx, &scope);
     ownership::pool_owned(fx, scope_ptr, scope.tag());
+    if splatted {
+        let args_ptr = super::call::build_array(fx, args)?;
+        let ss = fx.temp_slot();
+        let out = fx.slot_addr(ss, 0);
+        let status = fx
+            .call("zeo_rt_eval_value_in_scope_argv", &[args_ptr, scope_ptr, out])
+            .expect("eval_value_in_scope_argv returns a status");
+        fx.fallible(status);
+        fx.owned_created += 1;
+        return Ok(Some(Operand::Slot {
+            ss,
+            owned: true,
+            tag: TagInfo::Unknown,
+        }));
+    }
     let rest = &ids[usize::from(sent)..];
     let mut ptrs = Vec::with_capacity(4);
     for &a in rest.iter().take(4) {

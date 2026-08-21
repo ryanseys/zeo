@@ -345,15 +345,29 @@ pub fn eval_string_mode(
     box_id: u32,
     mode: EvalMode,
 ) -> Result<RubyValue, Signal> {
+    eval_string_located(src, self_val, box_id, mode, None, None)
+}
+
+/// [`eval_string_mode`] with `eval`'s own filename/lineno arguments --
+/// what `__FILE__`/`__LINE__` and every backtrace row inside the snippet
+/// report. Absent, they are `("(eval at f.rb:14)", 1)`.
+pub fn eval_string_located(
+    src: &str,
+    self_val: RubyValue,
+    box_id: u32,
+    mode: EvalMode,
+    file: Option<&str>,
+    line: Option<u32>,
+) -> Result<RubyValue, Signal> {
     // The enclosing scope's label, read BEFORE the cfunc frame goes on --
     // the snippet runs in the caller's name, not the cfunc's.
     let label = crate::frames::current_frame_label().unwrap_or("<main>");
     let _c = crate::frames::synthetic_c_frame(entry_label(mode));
-    let path = eval_path(None);
+    let path = eval_path(file);
     let req = EvalRequest {
         src,
         file: &path,
-        line: 1,
+        line: line.unwrap_or(1),
         self_val,
         box_id,
         mode,
@@ -381,16 +395,43 @@ pub fn eval_value_mode(
     box_id: u32,
     mode: EvalMode,
 ) -> Result<RubyValue, Signal> {
+    eval_value_located(src, self_val, box_id, mode, None, None)
+}
+
+/// [`eval_value_mode`] carrying `eval`'s filename/lineno arguments.
+pub fn eval_value_located(
+    src: RubyValue,
+    self_val: RubyValue,
+    box_id: u32,
+    mode: EvalMode,
+    file: Option<&str>,
+    line: Option<u32>,
+) -> Result<RubyValue, Signal> {
     let code = crate::builtins::convert::to_rstr(&src)?
         .lock()
         .to_utf8_lossy()
         .into_owned();
-    eval_string_mode(&code, self_val, box_id, mode)
+    eval_string_located(&code, self_val, box_id, mode, file, line)
 }
 
 /// [`eval_value_mode`] in the default `Kernel#eval` mode.
 pub fn eval_value(src: RubyValue, self_val: RubyValue, box_id: u32) -> Result<RubyValue, Signal> {
     eval_value_mode(src, self_val, box_id, EvalMode::Caller)
+}
+
+/// The compiled `eval(*args)` site: a splat means the argument list is a
+/// run-time value, so the arity `Kernel#eval` declares is checked here
+/// rather than by the shape of the call. Everything else is
+/// [`eval_value_in_scope`], including the caller's own frame as `scope`.
+pub fn eval_value_in_scope_argv(
+    args: &[RubyValue],
+    scope: RubyValue,
+) -> Result<RubyValue, Signal> {
+    if args.is_empty() || args.len() > 4 {
+        return Err(crate::dispatch::wrong_arity(args.len(), "1..4"));
+    }
+    let at = |i: usize| args.get(i).cloned().unwrap_or(RubyValue::Nil);
+    eval_value_in_scope(at(0), scope, at(1), at(2), at(3))
 }
 
 /// The compiled receiver-less `eval(src[, binding[, file[, line]]])` site.
