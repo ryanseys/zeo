@@ -28,7 +28,20 @@ use crate::value::RubyValue;
 use num_bigint::{BigInt, Sign};
 use std::collections::HashMap;
 use std::sync::Arc;
+
 use zeo_macros::ruby_module;
+
+/// The blank instance a loaded object is filled into -- CRuby's `rb_obj_alloc`,
+/// which asks the class's own allocator and never dispatches `allocate` (a user
+/// override of that method is not part of the Marshal protocol).
+///
+/// `dispatch::allocate_of` alone is not that answer: it is documented to say
+/// `None` for a BUILTIN, whose blank instance lives with `Class#allocate`. A
+/// plain `Object` carrying ivars is exactly that case, so dumping one and
+/// loading it back raised `allocator undefined for Object`.
+fn marshal_allocate(cid: crate::ClassId) -> Option<RubyValue> {
+    crate::builtins::rclass::builtin_allocate(cid).or_else(|| allocate_of(cid))
+}
 
 const MAJOR: u8 = 4;
 const MINOR: u8 = 8;
@@ -906,8 +919,8 @@ impl Reader<'_> {
             _ => {
                 let cid = class_id_by_name(&cls)
                     .ok_or_else(|| arg_error!("undefined class/module {cls}"))?;
-                let obj =
-                    allocate_of(cid).ok_or_else(|| type_error!("allocator undefined for {cls}"))?;
+                let obj = marshal_allocate(cid)
+                    .ok_or_else(|| type_error!("allocator undefined for {cls}"))?;
                 self.objects[idx] = obj.clone();
                 let inner = self.read()?;
                 send_value(&obj, Symbol::intern("marshal_load"), &[inner], None)?;
@@ -974,7 +987,8 @@ impl Reader<'_> {
         }
         let cid =
             class_id_by_name(&cls).ok_or_else(|| arg_error!("undefined class/module {cls}"))?;
-        let obj = allocate_of(cid).ok_or_else(|| type_error!("allocator undefined for {cls}"))?;
+        let obj =
+            marshal_allocate(cid).ok_or_else(|| type_error!("allocator undefined for {cls}"))?;
         self.objects[idx] = obj.clone();
         let count = self.read_long()?;
         if let RubyValue::Object(o) = &obj {

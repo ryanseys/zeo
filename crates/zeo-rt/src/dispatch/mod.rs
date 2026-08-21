@@ -227,7 +227,11 @@ pub type RObj = Arc<dyn RubyObject>;
 /// name at runtime, so a map is the honest representation.
 #[derive(Default)]
 pub struct Object {
-    ivars: parking_lot::Mutex<std::collections::HashMap<String, RubyValue>>,
+    /// Insertion-ordered: ruby reports instance variables in
+    /// FIRST-ASSIGNMENT order, and that order is a property of the object
+    /// rather than of its class. Every `Object.new` is one of these (the
+    /// emitter folds it to `zeo_rt_object_new_sentinel`), not just `main`.
+    ivars: parking_lot::Mutex<indexmap::IndexMap<String, RubyValue>>,
     /// `Object.new.freeze` sets this; `main` never does. A generic Object had
     /// no frozen slot at all before, so `freeze`/`frozen?`/`clone(freeze:)`
     /// silently no-op'd (issue_3033).
@@ -297,9 +301,7 @@ impl RubyObject for Object {
     fn ivar_pairs(&self) -> Vec<(String, RubyValue)> {
         // The root object's keys are stored WITHOUT the `@` (see
         // `ivar_get_named`); paired in a single lock so name/value order can't
-        // diverge. Insertion order isn't preserved (a plain `HashMap`) -- a
-        // minor divergence limited to the name-keyed main object, which is
-        // rarely inspected with ivars.
+        // diverge.
         self.ivars
             .lock()
             .iter()
@@ -334,8 +336,10 @@ impl RubyObject for Object {
     }
     fn ivar_remove_named(&self, name: &str) -> Option<RubyValue> {
         // Name-keyed: a missing key is genuinely absent, so `None` cleanly
-        // signals CRuby's `NameError` case.
-        self.ivars.lock().remove(name)
+        // signals CRuby's `NameError` case. `shift_remove`, not `remove`: the
+        // latter swaps the last entry into the hole and would reorder the
+        // survivors.
+        self.ivars.lock().shift_remove(name)
     }
     fn dup_object(&self, copy_frozen: bool) -> RObj {
         Arc::new(Object {

@@ -19,7 +19,7 @@ use zeo_macros::ruby_class;
 /// `Object`/`BasicObject` land here rather than on a registered allocator
 /// because their instances have no payload to allocate -- CRuby's is a blank
 /// object, and so is this.
-fn builtin_allocate(cid: crate::ClassId) -> Option<RubyValue> {
+pub(crate) fn builtin_allocate(cid: crate::ClassId) -> Option<RubyValue> {
     match cid {
         zeo_abi::STRING_CLASS => Some(RubyValue::Str(crate::string_new(String::new()))),
         zeo_abi::ARRAY_CLASS => Some(RubyValue::Array(crate::array_new(Vec::new()))),
