@@ -10,6 +10,7 @@ mod gem_store;
 mod gemspec;
 mod loader;
 mod lockfile;
+pub(crate) mod syntax_report;
 
 pub use loader::read_source;
 

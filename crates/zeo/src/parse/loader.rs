@@ -384,17 +384,22 @@ pub(super) fn lower_main_file(
         loader.packages.insert(0, subject);
     }
     let result = ruby_prism::parse(source.as_bytes());
-    if let Some(err) = result.errors().next() {
-        return Err(LowerError::syntax(format!(
-            "parse error: {}",
-            err.message()
-        )));
-    }
     // What `__FILE__` and every span report. A source with no path on
     // disk can still have a NAME -- a run-time `eval`'s is
     // `(eval at f.rb:14)`, which is what its backtrace rows must say.
     let named = file_name.or(input_path);
     let main_name = named.map_or_else(|| "-e".to_string(), |p| p.display().to_string());
+    if let Some(err) = result.errors().next() {
+        return Err(LowerError::syntax_reported(
+            format!("parse error: {}", err.message()),
+            crate::parse::syntax_report::report(
+                source,
+                &result,
+                &main_name,
+                line_offset as i32 + 1,
+            ),
+        ));
+    }
     collect_parse_warnings(hir, &result, &main_name, source);
     hir.data_section = input_path.and_then(|p| data_section(&result, p));
     let program = result

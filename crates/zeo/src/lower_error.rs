@@ -42,6 +42,10 @@ pub struct LowerError {
     /// Where in the source the rejected construct sits -- see the module
     /// docs for when this is `None`.
     pub span: Option<Span>,
+    /// The text a `SyntaxError` raised for this source carries: prism's own
+    /// multi-line report (`parse::syntax_report`), which is what CRuby puts
+    /// in the exception. `message` stays the one-line form the CLI renders.
+    pub report: Option<String>,
 }
 
 impl LowerError {
@@ -50,6 +54,16 @@ impl LowerError {
             kind: LowerErrorKind::Syntax,
             message: msg.into(),
             span: None,
+            report: None,
+        }
+    }
+
+    /// A parse failure that also carries the rich report -- what a run-time
+    /// `eval` of this source raises.
+    pub fn syntax_reported(msg: impl Into<String>, report: Option<String>) -> LowerError {
+        LowerError {
+            report,
+            ..LowerError::syntax(msg)
         }
     }
 
@@ -58,6 +72,7 @@ impl LowerError {
             kind: LowerErrorKind::Unsupported,
             message: msg.into(),
             span: None,
+            report: None,
         }
     }
 

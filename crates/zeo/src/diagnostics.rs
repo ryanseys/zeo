@@ -39,6 +39,8 @@ pub struct LowerDiagnostic {
     src: Option<Box<NamedSource<String>>>,
     /// `(byte offset, length)` into `src`.
     span: Option<(usize, usize)>,
+    /// prism's own multi-line report -- see `LowerError::report`.
+    report: Option<String>,
 }
 
 impl LowerDiagnostic {
@@ -46,7 +48,13 @@ impl LowerDiagnostic {
     /// diagnostic's own -- it names the PASS for a reader of the CLI --
     /// while ruby's `SyntaxError` carries prism's message alone.
     fn syntax_message(&self) -> Option<&str> {
-        let msg = (self.kind == LowerErrorKind::Syntax).then_some(self.message.as_str())?;
+        if self.kind != LowerErrorKind::Syntax {
+            return None;
+        }
+        if let Some(report) = &self.report {
+            return Some(report.as_str());
+        }
+        let msg = self.message.as_str();
         Some(msg.strip_prefix("parse error: ").unwrap_or(msg))
     }
 
@@ -67,6 +75,7 @@ impl LowerDiagnostic {
         LowerDiagnostic {
             kind: err.kind,
             message: err.message,
+            report: err.report,
             src,
             span,
         }
