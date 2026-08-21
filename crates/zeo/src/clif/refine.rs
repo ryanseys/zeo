@@ -81,13 +81,6 @@ pub(crate) fn refined_call(fx: &mut Fx, site: NodeId) -> Result<Option<Operand>,
     if cands.is_empty() && slots.is_empty() {
         return Ok(None);
     }
-    // The refined entry takes one flat argument list, so a splat -- whose
-    // element count only the run time knows -- has no place to go yet.
-    if args.iter().any(|a| matches!(a, ArrayElem::Splat(_)))
-        || kwargs.iter().any(|k| matches!(k, KwArg::DoubleSplat(_)))
-    {
-        return fx.unsupported(site, "a splat at a refined call").map(Some);
-    }
     let set = if slots.is_empty() {
         Cands::Static(&cands)
     } else {
@@ -162,7 +155,15 @@ fn lower(
     block_arg: Option<NodeId>,
     cands: Cands<'_>,
 ) -> Result<Operand, String> {
-    let argv = super::call::build_argv(fx, site, args)?;
+    // A splat's element count is a run-time number, so those arguments go
+    // over as an Array and the runtime flattens them. Everything else stays
+    // on the flat argv, which needs no allocation.
+    let splatted = args.iter().any(|a| matches!(a, ArrayElem::Splat(_)));
+    let argv = if splatted {
+        super::call::build_array(fx, args)?
+    } else {
+        super::call::build_argv(fx, site, args)?
+    };
     let kw = if kwargs.is_empty() {
         fx.b.ins().iconst(fx.em.ptr, 0)
     } else {
@@ -179,19 +180,30 @@ fn lower(
     let (ids_ptr, n_ids) = cands.table(fx);
     let sym = fx.sym_id(name);
     let zero_box = fx.box_v();
-    let argc = fx.b.ins().iconst(fx.em.ptr, args.len() as i64);
     let blk_ptr = blk.unwrap_or_else(|| fx.b.ins().iconst(fx.em.ptr, 0));
     let explicit_v = fx.b.ins().iconst(types::I8, i64::from(u8::from(explicit)));
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
-    let status = fx
-        .call(
+    let status = if splatted {
+        // `ruby2_keywords`: a marked forwarder's splat keeps a trailing
+        // hash's keyword mark, as on every other args-Array send.
+        let unmark = fx.b.ins().iconst(types::I8, i64::from(!fx.ruby2_keywords));
+        fx.call(
+            cands.args_entry(),
+            &[
+                zero_box, recv_ptr, sym, argv, unmark, kw, blk_ptr, ids_ptr, n_ids, explicit_v, out,
+            ],
+        )
+    } else {
+        let argc = fx.b.ins().iconst(fx.em.ptr, args.len() as i64);
+        fx.call(
             cands.entry(),
             &[
                 zero_box, recv_ptr, sym, argv, argc, kw, blk_ptr, ids_ptr, n_ids, explicit_v, out,
             ],
         )
-        .expect("refined_send_in returns a status");
+    }
+    .expect("a refined send returns a status");
     if blk.is_some() {
         super::blocks::catch_break(fx, status, out);
     } else {
@@ -219,6 +231,14 @@ impl Cands<'_> {
         match self {
             Cands::Static(_) => "zeo_rt_refined_send_in",
             Cands::Slots(_) => "zeo_rt_eval_refined_send",
+        }
+    }
+
+    /// [`Cands::entry`] for a call whose arguments are a runtime-built Array.
+    fn args_entry(self) -> &'static str {
+        match self {
+            Cands::Static(_) => "zeo_rt_refined_send_args_in",
+            Cands::Slots(_) => "zeo_rt_eval_refined_send_args",
         }
     }
 

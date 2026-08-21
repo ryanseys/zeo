@@ -275,7 +275,7 @@ pub unsafe extern "C" fn zeo_rt_send_value_explicit_kw_in(
 /// clears a kw mark off the trailing element first -- a splat-expanded
 /// hash is POSITIONAL again (ruby's rule; `ruby2_keywords` is the opt-out
 /// and passes 0). `kw` (null = none) then appends per the kw convention.
-unsafe fn with_array_args<R>(
+pub(super) unsafe fn with_array_args<R>(
     args: *const RubyValue,
     unmark: u8,
     kw: *const RubyValue,
@@ -804,6 +804,42 @@ pub unsafe extern "C" fn zeo_rt_refined_send_in(
         } else {
             with_kw_args(argv, argc, kw, blk, call)
         }
+    };
+    status_out(r, out)
+}
+
+/// [`zeo_rt_refined_send_in`] with a runtime-built argument Array.
+///
+/// A splat's element count is only known at run time, so the site builds an
+/// Array and hands it over whole. `unmark` is `ruby2_keywords`' opt-out, as
+/// on every other args-Array entry.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_refined_send_args_in(
+    box_id: u32,
+    recv: *const RubyValue,
+    sym: u32,
+    args: *const RubyValue,
+    unmark: u8,
+    kw: *const RubyValue,
+    blk: *mut RubyValue,
+    ids: *const u32,
+    n_ids: usize,
+    explicit: u8,
+    out: *mut RubyValue,
+) -> i32 {
+    let cands = unsafe { refine_candidates(ids, n_ids) };
+    let r = unsafe {
+        with_array_args(args, unmark, kw, blk, |full, block| {
+            crate::dispatch::refined_send_in(
+                box_id,
+                &*recv,
+                Symbol::from_u32(sym),
+                full,
+                block,
+                &cands,
+                explicit != 0,
+            )
+        })
     };
     status_out(r, out)
 }

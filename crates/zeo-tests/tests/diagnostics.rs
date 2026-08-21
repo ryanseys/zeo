@@ -38,19 +38,16 @@ fn a_parse_failure_renders_without_an_excerpt() {
 /// XFAIL gap.
 ///
 /// **This test is about the REPORT, not the construct.** The probe has moved
-/// twice as refusals closed: `Foo&.bar` (refused only by the retired rustc
-/// emitter), then a refined call through `&.` (fixed 2026-08-21). Re-point it
-/// at another live refusal rather than deleting the test.
+/// three times as refusals closed: `Foo&.bar` (refused only by the retired
+/// rustc emitter), a refined call through `&.`, then a splat at a refined
+/// call. Re-point it at another live refusal rather than deleting the test.
 #[test]
 fn an_unsupported_construct_is_an_error_not_a_panic() {
     // Through EMISSION, not just the front end: `fx.unsupported` is the
     // emitter's own refusal channel, and `--emit-clif` is the cheapest way
     // to reach it (no object file, no linker).
-    let err = zeo::compile_to_clif_text(
-        "module R\n  refine Array do\n    def pick(*ns) = ns\n  end\nend\nusing R\nidx = [0]\np [1].pick(*idx)\n",
-        &Default::default(),
-    )
-    .expect_err("a splat at a refined call is rejected");
+    let err = zeo::compile_to_clif_text("3.times { |a, b| p [a, b] }\n", &Default::default())
+        .expect_err("a fused loop with a multi-parameter block is rejected");
     insta::assert_snapshot!(render(err));
 }
 

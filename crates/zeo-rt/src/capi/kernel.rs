@@ -294,6 +294,46 @@ pub unsafe extern "C" fn zeo_rt_eval_refined_send(
     )
 }
 
+/// [`zeo_rt_eval_refined_send`] with a runtime-built argument Array.
+///
+/// The snippet twin of `zeo_rt_refined_send_args_in`: a splat's element count
+/// is a run-time number, so the site hands over an Array.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_eval_refined_send_args(
+    box_id: u32,
+    recv: *const RubyValue,
+    sym: u32,
+    args: *const RubyValue,
+    unmark: u8,
+    kw: *const RubyValue,
+    blk: *mut RubyValue,
+    slots: *const u32,
+    n_slots: usize,
+    explicit: u8,
+    out: *mut RubyValue,
+) -> i32 {
+    let slots = if n_slots == 0 {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(slots, n_slots) }
+    };
+    let cands = crate::eval::using_candidates(slots);
+    let r = unsafe {
+        super::dispatch::with_array_args(args, unmark, kw, blk, |full, block| {
+            crate::dispatch::refined_send_in(
+                box_id,
+                &*recv,
+                crate::Symbol::from_u32(sym),
+                full,
+                block,
+                &cands,
+                explicit != 0,
+            )
+        })
+    };
+    status_out(r, out)
+}
+
 /// One statement hit -- emitted beside every `set_line` stamp of a
 /// coverage-activated program, and nothing at all in one without.
 #[unsafe(no_mangle)]

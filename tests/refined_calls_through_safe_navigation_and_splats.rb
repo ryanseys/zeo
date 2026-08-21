@@ -39,3 +39,19 @@ recv = ->(v) { calls += 1; v }
 p recv.call(nil)&.shout
 p recv.call("ok")&.shout
 p calls
+
+# A splat and a double-splat at a refined call: the element count is a
+# run-time number, so the arguments travel as an Array.
+module R3
+  refine Hash do
+    def merged(**kw) = merge(kw)
+    def pick(*ns, **kw) = [ns, kw]
+  end
+end
+using R3
+h = { a: 1 }
+extra = { b: 2 }
+p h.merged(**extra)
+p h.pick(*[1, 2], **extra)
+p h.merged(c: 3)
+p h&.pick(*[0])
