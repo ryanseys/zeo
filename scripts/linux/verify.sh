@@ -38,15 +38,26 @@ LOGS="$REPO/scripts/linux/logs"
 
 run() {
   # --platform: see the Dockerfile header. --memory: the golden harness's
-  # own RSS watchdog assumes room to work; 6 GiB matches what the macOS
-  # side has spare. Repo read-only -- a test that writes into the source
-  # tree is a bug, and this is where it gets caught.
+  # own RSS watchdog assumes room to work.
+  #
+  # The repo mounts READ-WRITE, and that is deliberate rather than lazy: a
+  # golden runs with its cwd set to `tests/`, and a dozen of them create a
+  # temp file there on purpose (`File.write("test_size_temp.bin", ..)`) --
+  # the oracle did exactly that when the `.expected` was blessed. A
+  # read-only mount turns every one of those into `Errno::EROFS`, which
+  # reads as a zeo bug and is not one.
+  #
+  # --pids-limit: podman defaults to 2048, and the thread goldens spawn
+  # enough OS threads at eight-way parallelism to hit it -- `pthread_create`
+  # then fails EAGAIN and the runtime panics mid-test. Another failure that
+  # is the harness, not the program.
   # -it only when there IS a terminal: the same script runs from a
   # non-tty caller (CI, an agent), where podman refuses the flag.
   local tty=(); [ -t 0 ] && [ -t 1 ] && tty=(-it)
   "$ENGINE" run --rm "${tty[@]}" --platform linux/arm64 \
     --memory "$MEMORY" \
-    -v "$REPO":/src:ro -v "$VOLUME":/target -v "$LOGS":/logs \
+    --pids-limit 16384 \
+    -v "$REPO":/src -v "$VOLUME":/target -v "$LOGS":/logs \
     -w /src "$IMAGE" bash -c "$1" 2>&1 | tee "$LOGS/$STAGE.log"
   return "${PIPESTATUS[0]}"
 }

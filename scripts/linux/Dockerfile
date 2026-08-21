@@ -37,7 +37,7 @@ RUN apt-get update -qq \
 # from source costs more than everything else in this image.
 RUN curl -LsSf https://get.nexte.st/latest/linux-arm | tar zxf - -C /usr/local/bin
 
-# The repo mounts read-only; everything written goes to CARGO_TARGET_DIR
+# Writes go to CARGO_TARGET_DIR
 # (a named volume, so rebuilds stay incremental) or /tmp.
 ENV CARGO_TARGET_DIR=/target
 WORKDIR /src

@@ -48,12 +48,28 @@ const RUN_DEADLINE: Duration = Duration::from_secs(60);
 /// the observed normal peak and a fraction of what a runaway wants.
 const MAX_CHILD_RSS: u64 = 512 << 20; // 512 MiB
 
+/// The address-space ceiling, which is a DIFFERENT quantity from the RSS cap
+/// above and must not borrow its number.
+///
+/// `MAX_CHILD_RSS` was used here directly, and on macOS that was harmless
+/// because **Darwin accepts `setrlimit(RLIMIT_AS)` and does not enforce it**
+/// (a child measured 2.29 GiB under a 2 GiB limit). Linux enforces it, and a
+/// perfectly ordinary zeo program RESERVES far more than 512 MiB of address
+/// space without touching it: a 64 MiB `ruby-main` stack, 8 MiB per Ruby
+/// thread, and mimalloc's arenas. Every thread golden died on Linux with
+/// `pthread_create` -> EAGAIN and a runtime panic, which reads as a
+/// concurrency bug and is a harness one.
+///
+/// 4 GiB is the ceiling instead: comfortably above anything legitimate, and
+/// still under what a runaway wants -- the measured one took free memory from
+/// 6.9 GiB to 0.06 GiB in five and a half seconds.
+const MAX_CHILD_ADDRESS_SPACE: u64 = 4 << 30; // 4 GiB
+
 /// `RLIMIT_AS` is the cheap half of the bound -- the child dies on its own
-/// allocation failure, with no polling. It is NOT the enforcing half: **Darwin
-/// accepts `setrlimit(RLIMIT_AS)` and does not enforce it**, which is how a
-/// child measured 2.29 GiB under a 2 GiB limit. [`child_rss`] and the watchdog
-/// in [`run_bounded`] are what actually hold the line; this stays because it
-/// does work on Linux (CI), where it kills a runaway sooner and cheaper.
+/// allocation failure, with no polling. It is NOT the enforcing half (see
+/// above): [`child_rss`] and the watchdog in [`run_bounded`] hold the line.
+/// This stays because it does work on Linux, where it kills a runaway sooner
+/// and cheaper.
 ///
 /// `pre_exec` is unsafe because the closure runs in the forked child, where
 /// only async-signal-safe calls are legal; `setrlimit` is one of them, and the
@@ -64,8 +80,8 @@ fn bound_address_space(cmd: &mut Command) {
     unsafe {
         cmd.pre_exec(|| {
             let lim = libc::rlimit {
-                rlim_cur: MAX_CHILD_RSS,
-                rlim_max: MAX_CHILD_RSS,
+                rlim_cur: MAX_CHILD_ADDRESS_SPACE,
+                rlim_max: MAX_CHILD_ADDRESS_SPACE,
             };
             // A platform that ignores or refuses RLIMIT_AS must not fail the
             // spawn: the watchdog is the one that has to work everywhere.

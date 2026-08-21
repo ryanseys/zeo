@@ -1,0 +1,13 @@
+The `.expected` was blessed against macOS ruby, and the last line's value
+is a libm result: `(-8.0) ** (1.0/3)` is a complex power, so the answer
+comes from the platform's `pow`/`exp`/`log`.
+
+macOS prints  (1.0+1.7320508075688772i)
+Linux prints  (1.0000000000000002+1.7320508075688772i)
+
+Confirmed by running CRuby itself on Linux (aarch64-linux-gnu): it prints
+the second, which is exactly what zeo prints there. So Linux CRuby
+diverges from the committed macOS-oracle expectation in the same way and
+by the same one ULP that zeo does -- there is nothing here for zeo to fix,
+and pinning the macOS value on both platforms would only make the suite
+lie on one of them.
