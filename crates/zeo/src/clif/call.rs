@@ -290,6 +290,41 @@ pub(crate) fn build_argv(
     })
 }
 
+/// `Foo.new(a, b)` on a plain compiled class: allocate and run
+/// `initialize`, with no dispatch for `new` at all. The gate lives at the
+/// call site (see `HirNode::New`); the runtime entry is the same one
+/// `Class#new` reaches after the walk, so `initialize` resolution --
+/// including an overlay row and an inherited one -- is unchanged.
+pub(crate) fn construct_compiled(
+    fx: &mut Fx,
+    site: NodeId,
+    cid: crate::compiler::ClassId,
+    args: &[ArrayElem],
+    blk: Option<cranelift_codegen::ir::Value>,
+) -> Result<Operand, String> {
+    let argv_ptr = build_argv(fx, site, args)?;
+    super::stmt::stamp_call_line(fx, site);
+    let cid_v = fx.b.ins().iconst(types::I32, i64::from(cid.0));
+    let argc_v = fx.b.ins().iconst(fx.em.ptr, args.len() as i64);
+    // `literal_block_ptr` already books the move to the callee.
+    let blk_ptr = blk.unwrap_or_else(|| fx.b.ins().iconst(fx.em.ptr, 0));
+    let ss = fx.temp_slot();
+    let out = fx.slot_addr(ss, 0);
+    let status = fx
+        .call(
+            "zeo_rt_class_new_instance",
+            &[cid_v, argv_ptr, argc_v, blk_ptr, out],
+        )
+        .expect("class_new_instance returns a status");
+    fx.fallible(status);
+    fx.owned_created += 1;
+    Ok(Operand::Slot {
+        ss,
+        owned: true,
+        tag: TagInfo::Known(zeo_abi::abi::ValueTag::Object as u8),
+    })
+}
+
 /// A Hash from `KwArg` rows (a hash literal, or a call site's keyword
 /// set), evaluated in written order -- key then value per pair, `**`
 /// splats merged in place, later keys overwrite. The hash is pooled AT

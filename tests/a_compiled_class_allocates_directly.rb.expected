@@ -1,0 +1,10 @@
+A(5,[],)
+A(1,[2, 3],)
+A(5,[],42)
+A(9,[],)
+Priv
+private method 'new' called for class Priv
+"own new [1]"
+NoInit
+wrong number of arguments (given 1, expected 0)
+boom @ a_compiled_class_allocates_directly.rb:35:in 'Raiser#initialize'

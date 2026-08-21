@@ -835,6 +835,38 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 ownership::discard(fx, init);
                 return Ok(borrowed());
             }
+            // A plain compiled class allocates DIRECTLY: `Foo.new` walked
+            // the singleton chain looking for a `new` that is served by the
+            // constructor rather than a class-method row, so the site's
+            // cache could only ever remember the miss. The gate is the
+            // rustc emitter's `statically_constructed`, term for term --
+            // a generated-struct class (which is what `CompiledObject`'s
+            // layout table holds), not runtime-conditional, with neither
+            // `initialize` nor `new` patchable at run time, and no own
+            // `new` on the singleton chain to override the constructor.
+            // A `private_class_method :new` keeps the dynamic route, which
+            // is what raises its NoMethodError, and so does a keyword
+            // construction: the runtime's `new` entry takes the keyword
+            // Hash on its own channel and marks it there, which this
+            // positional-only entry has nowhere to put.
+            if kwargs.is_empty()
+                && let Some(cid) = resolve_class_here(fx, &class_name).filter(|&cid| {
+                    let c = &fx.an.compiler;
+                    c.has_generated_struct(cid)
+                        && !c.class(cid).runtime_conditional
+                        && !c.may_be_patched_at_runtime("initialize")
+                        && !c.may_be_patched_at_runtime("new")
+                        && c.class_method_in_chain(cid, "new").is_none()
+                        && !c.class_method_is_private(cid, "new")
+                })
+            {
+                let elems: Vec<ArrayElem> = args.iter().map(|&a| ArrayElem::Single(a)).collect();
+                let blk_ptr = match block {
+                    Some(b) => Some(super::blocks::literal_block_ptr(fx, id, b)?),
+                    None => None,
+                };
+                return super::call::construct_compiled(fx, id, cid, &elems, blk_ptr);
+            }
             // A statically-known class is a Class immediate; a constant
             // holding a RUNTIME class (`Struct.new`/`Data.define`) is read
             // at the call, exactly the rustc `__rtclass` shape.

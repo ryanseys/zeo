@@ -19,6 +19,7 @@ zeo_rt_cell_new ([Ptr]) -> Some(Ptr)
 zeo_rt_cell_release ([Ptr]) -> None
 zeo_rt_cell_store ([Ptr, Ptr]) -> None
 zeo_rt_check_ints ([]) -> Some(I32)
+zeo_rt_class_new_instance ([U32, Ptr, Usize, Ptr, Ptr]) -> Some(I32)
 zeo_rt_class_of ([Ptr]) -> Some(U32)
 zeo_rt_classmethod_site_init ([Ptr]) -> None
 zeo_rt_complex_lit ([Ptr, Ptr]) -> None
