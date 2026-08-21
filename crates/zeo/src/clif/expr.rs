@@ -213,6 +213,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             exclusive,
         } => {
             let (state, left, right, exclusive) = (*state, *left, *right, *exclusive);
+            let state = state + fx.flip_flop_base;
             flip_flop(fx, state, left, right, exclusive)
         }
         // A loop in VALUE position: its own value is nil (`for` answers the

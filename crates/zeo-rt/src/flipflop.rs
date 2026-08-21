@@ -17,6 +17,21 @@ thread_local! {
     static LATCHES: RefCell<Vec<bool>> = const { RefCell::new(Vec::new()) };
 }
 
+/// Where a run-time `eval`'s ids begin. A program's are dense from zero and
+/// minted by ONE compile; a snippet is compiled by a fresh compiler that
+/// starts counting at zero again, so the two spaces would otherwise share
+/// latches. No program has a million flip-flop sites, and the latch vector
+/// is sparse (it grows to the highest id ever used, one byte each).
+const EVAL_BASE: u32 = 1 << 20;
+
+static NEXT_EVAL_ID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(EVAL_BASE);
+
+/// Reserve `n` consecutive latch ids for one compiled `eval` snippet and
+/// answer the first. Called once per snippet, at compile time.
+pub fn reserve(n: u32) -> u32 {
+    NEXT_EVAL_ID.fetch_add(n, std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Whether the flip-flop numbered `id` is currently on.
 pub fn flip_flop_on(id: u32) -> bool {
     LATCHES.with(|l| l.borrow().get(id as usize).copied().unwrap_or(false))

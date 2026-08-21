@@ -185,6 +185,10 @@ fn build(req: &EvalRequest<'_>, scope_names: &[String]) -> Result<Compiled, Refu
         label: req.label,
         cref,
         mode: mode_byte(req.mode),
+        flip_flop_base: match analyzed.compiler.hir.flip_flops {
+            0 => 0,
+            n => zeo_rt::eval::reserve_flip_flops(n),
+        },
     };
     let program = crate::clif::eval::compile(&analyzed, &spec)?;
     if let Some(init) = program.unit_init {
@@ -251,10 +255,8 @@ fn scope_refusals(analyzed: &crate::analyze::Analyzed) -> Result<(), String> {
             | HirNode::Refine { .. }
             | HirNode::Using { .. } => Some("a definition-level statement"),
             // Compile-time-only surfaces.
-            HirNode::Eval(..) | HirNode::Ffi(..) => Some("a nested compiler surface"),
+            HirNode::Ffi(..) => Some("a nested compiler surface"),
             HirNode::BoxScope { .. } | HirNode::BoxHandle(..) => Some("a `Ruby::Box`"),
-            HirNode::PreExec(..) => Some("a `BEGIN` block"),
-            HirNode::FlipFlop { .. } => Some("a flip-flop"),
             _ => None,
         };
     }

@@ -575,8 +575,12 @@ fn define_block_fn(
     // (`class_eval("def m = HOST_C")` reads the CLASS's constant), a `def`
     // it contains installs the way the eval's own would, and a bare name
     // that is one of the caller's locals is still that local.
-    let (eval_cref, eval_mode, in_eval_splice) =
-        (fx.eval_cref.clone(), fx.eval_mode, fx.in_eval_splice);
+    let (eval_cref, eval_mode, in_eval_splice, flip_flop_base) = (
+        fx.eval_cref.clone(),
+        fx.eval_mode,
+        fx.in_eval_splice,
+        fx.flip_flop_base,
+    );
     // A `super` written inside a block targets the ENCLOSING method (ruby:
     // blocks have no `super` of their own), so the block fn carries that
     // method's identity -- its defining class, name and parameter list.
@@ -657,6 +661,7 @@ fn define_block_fn(
         }
     }
     bfx.eval_cref = eval_cref;
+    bfx.flip_flop_base = flip_flop_base;
     bfx.eval_mode = eval_mode;
     bfx.in_eval_splice = in_eval_splice;
     bfx.frame_label = base;

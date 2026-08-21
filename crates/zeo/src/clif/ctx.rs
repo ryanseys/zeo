@@ -141,6 +141,9 @@ pub(crate) struct Fx<'e, 'f> {
     /// the RUN TIME says, because one snippet may be evaluated against any
     /// number of receivers.
     pub eval_mode: Option<u8>,
+    /// What every flip-flop id in this function is offset by -- zero in a
+    /// program, a reserved base in an `eval` snippet (see `EvalSpec`).
+    pub flip_flop_base: u32,
     /// The `Ruby::Box` this code runs in (`0` = main). Every dynamic send,
     /// global and constant owner is keyed by it, which is the AOT
     /// translation of CRuby's loading-box context (`Ctx::box_id`).
@@ -243,6 +246,7 @@ impl<'e, 'f> Fx<'e, 'f> {
             self_is_dynamic: false,
             in_eval_splice: false,
             eval_cref: None,
+            flip_flop_base: 0,
             eval_mode: None,
             box_id: 0,
             method_origin: None,

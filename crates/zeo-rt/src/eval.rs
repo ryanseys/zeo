@@ -80,6 +80,14 @@ pub fn cref_of(req: &EvalRequest<'_>) -> (Vec<zeo_abi::ClassId>, Option<String>)
     }
 }
 
+/// Reserve `n` flip-flop latch ids for one compiled snippet -- see
+/// `flipflop::reserve`. A snippet is compiled by a fresh compiler whose
+/// ids start at zero, which are the running program's own.
+#[must_use]
+pub fn reserve_flip_flops(n: u32) -> u32 {
+    crate::flipflop::reserve(n)
+}
+
 /// The `SyntaxError` a snippet that does not parse raises. Both
 /// evaluators must build it here, or the same unparsable source raises a
 /// different exception depending on which one ran it.
