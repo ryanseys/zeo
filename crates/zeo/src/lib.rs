@@ -97,6 +97,10 @@ pub struct CompileOptions {
     /// for exactly that reason). `None` -- and no `input_path` -- is ruby's
     /// `"-e"`.
     pub file_name: Option<std::path::PathBuf>,
+    /// What the source's FIRST line is numbered. Zero for a file on disk;
+    /// a run-time `eval` given a `line` argument numbers from it, and
+    /// every span, backtrace row and `__LINE__` follows.
+    pub line_offset: u32,
     /// Ordered `-I` search roots for plain `require "feature"`.
     pub load_roots: Vec<std::path::PathBuf>,
     /// Ordered directories of vendored gems (each subdirectory with a
@@ -261,6 +265,7 @@ fn analyze_on_this_thread(
         source,
         opts.input_path.as_deref(),
         opts.file_name.as_deref(),
+        opts.line_offset,
         &opts.load_roots,
         &opts.package_dirs,
         &opts.gem_paths,
@@ -299,6 +304,7 @@ pub fn analyze_snippet(
         source,
         opts.input_path.as_deref(),
         opts.file_name.as_deref(),
+        opts.line_offset,
         &opts.load_roots,
         &opts.package_dirs,
         &opts.gem_paths,
@@ -423,6 +429,7 @@ fn compile_on_this_thread(
         source,
         opts.input_path.as_deref(),
         opts.file_name.as_deref(),
+        opts.line_offset,
         &opts.load_roots,
         &opts.package_dirs,
         &opts.gem_paths,

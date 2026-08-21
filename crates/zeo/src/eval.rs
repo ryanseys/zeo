@@ -105,18 +105,12 @@ fn build(req: &EvalRequest<'_>, scope_names: &[String]) -> Result<Compiled, Stri
     {
         return Err("the caller's cref is a run-time class".to_string());
     }
-    // CRuby offsets a snippet's own line numbers by the `line` argument,
-    // which reaches `__LINE__`, every backtrace row and every
-    // `source_location` -- the front end has no such offset, so a snippet
-    // that carries one still belongs to the interpreter.
-    if req.line != 1 {
-        return Err("the eval names a starting line".to_string());
-    }
     // `__FILE__` and every frame the snippet raises from name the file the
-    // CALLER gave (`(eval at f.rb:14)` when it gave none), so the snippet
-    // is lowered under that name rather than the program's.
+    // CALLER gave (`(eval at f.rb:14)` when it gave none) and count from
+    // the line it gave, so the snippet is lowered under both.
     let opts = crate::CompileOptions {
         file_name: Some(std::path::PathBuf::from(req.file)),
+        line_offset: req.line.saturating_sub(1),
         ..crate::CompileOptions::default()
     };
     let analyzed = crate::analyze_snippet(req.src, &opts).map_err(|e| e.to_string())?;

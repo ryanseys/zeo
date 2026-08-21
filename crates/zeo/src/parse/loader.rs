@@ -265,6 +265,7 @@ pub(super) fn lower_main_file(
     source: &str,
     input_path: Option<&Path>,
     file_name: Option<&Path>,
+    line_offset: u32,
     load_roots: &[PathBuf],
     package_dirs: &[PathBuf],
     gem_paths: &[PathBuf],
@@ -402,10 +403,10 @@ pub(super) fn lower_main_file(
         .ok_or("expected a top-level ProgramNode")?;
     // The main file is `__FILE__`'s answer for its own statements -- held
     // for exactly this lowering, and restored by the guard's Drop.
-    let _file = SourceFileFrame::push(named);
+    let _file = SourceFileFrame::push(named, line_offset);
     // Span provenance: the main file's name AS GIVEN (matching `__FILE__`),
     // `"-e"` for a pathless source string.
-    let main_file = hir.add_file(main_name, source);
+    let main_file = hir.add_file_at(main_name, source, line_offset);
     if input_path.is_some() {
         hir.main_file = Some(main_file);
     }
@@ -1733,7 +1734,7 @@ impl Loader {
         // A required file's `__FILE__` is ITSELF, not whoever required it.
         // Popped by the guard's Drop, so the parent's own statements after
         // the splice see their own path again.
-        let _file = SourceFileFrame::push(Some(canonical));
+        let _file = SourceFileFrame::push(Some(canonical), 0);
         let file_id = hir.add_file(
             canonical.display().to_string(),
             std::sync::Arc::clone(&source),

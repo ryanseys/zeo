@@ -344,10 +344,11 @@ pub fn encoding_const_name(name: &str) -> PResult<Option<&'static str>> {
 /// path; it runs once per occurrence, at compile time).
 pub(crate) fn line_of(result: &ParseResult, offset: usize) -> i64 {
     let src = result.source();
-    1 + src[..offset.min(src.len())]
+    let counted = 1 + src[..offset.min(src.len())]
         .iter()
         .filter(|&&b| b == b'\n')
-        .count() as i64
+        .count() as i64;
+    counted + i64::from(super::context::current_line_offset())
 }
 
 /// A literal string segment's bytes as a `StrPart`: readable UTF-8 text when

@@ -31,7 +31,11 @@ thread_local! {
     /// rather than the main program: every file's statements end up in one
     /// merged `Program`, so by codegen time there is nothing left to tell
     /// them apart.
-    static SOURCE_FILE: RefCell<Vec<PathBuf>> = const { RefCell::new(Vec::new()) };
+    /// Each entry is the file's path and the line its FIRST line is
+    /// numbered (0 for a file that starts at 1). Only a run-time `eval`
+    /// snippet carries an offset -- CRuby numbers one from the `line`
+    /// argument, and `__LINE__` has to answer that.
+    static SOURCE_FILE: RefCell<Vec<(PathBuf, u32)>> = const { RefCell::new(Vec::new()) };
 }
 
 /// The box bound to local `name` in the file currently being lowered, if
@@ -44,16 +48,22 @@ pub fn current_box_binding(name: &str) -> Option<u32> {
 /// string with no path at all (`compile_to_rust`'s bare form, and the
 /// exception prelude), where real Ruby's own answer would be `"-e"`.
 pub fn current_source_file() -> Option<PathBuf> {
-    SOURCE_FILE.with(|f| f.borrow().last().cloned())
+    SOURCE_FILE.with(|f| f.borrow().last().map(|(p, _)| p.clone()))
+}
+
+/// What to add to a line counted from the current file's own start --
+/// see [`SOURCE_FILE`].
+pub fn current_line_offset() -> u32 {
+    SOURCE_FILE.with(|f| f.borrow().last().map_or(0, |(_, o)| *o))
 }
 
 /// Pushes the file being lowered; pops on drop (including the error path).
 /// Same RAII shape as `BindingsFrame`.
 pub struct SourceFileFrame;
 impl SourceFileFrame {
-    pub fn push(path: Option<&Path>) -> Option<SourceFileFrame> {
+    pub fn push(path: Option<&Path>, line_offset: u32) -> Option<SourceFileFrame> {
         let path = path?;
-        SOURCE_FILE.with(|f| f.borrow_mut().push(path.to_path_buf()));
+        SOURCE_FILE.with(|f| f.borrow_mut().push((path.to_path_buf(), line_offset)));
         Some(SourceFileFrame)
     }
 }

@@ -147,7 +147,7 @@ end
 /// last-pushed node.
 pub fn parse_and_lower(source: &str) -> Result<(Hir, NodeId), CompileError> {
     let (hir, root, _gem_records) =
-        parse_and_lower_with(source, None, None, &[], &[], &[], None, None)?;
+        parse_and_lower_with(source, None, None, 0, &[], &[], &[], None, None)?;
     Ok((hir, root))
 }
 
@@ -221,6 +221,7 @@ pub fn parse_and_lower_with(
     source: &str,
     input_path: Option<&std::path::Path>,
     file_name: Option<&std::path::Path>,
+    line_offset: u32,
     load_roots: &[std::path::PathBuf],
     package_dirs: &[std::path::PathBuf],
     gem_paths: &[std::path::PathBuf],
@@ -266,6 +267,7 @@ pub fn parse_and_lower_with(
         source,
         input_path,
         file_name,
+        line_offset,
         load_roots,
         package_dirs,
         gem_paths,

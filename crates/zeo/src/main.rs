@@ -646,6 +646,7 @@ fn run() -> Result<(), MainError> {
     let opts = zeo::CompileOptions {
         input_path: input_path.clone(),
         file_name: None,
+        line_offset: 0,
         load_roots: args.load_roots.clone(),
         package_dirs,
         gem_report,

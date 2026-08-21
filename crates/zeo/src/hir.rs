@@ -152,6 +152,11 @@ pub struct SourceFile {
     /// re-counting newlines from byte 0, which made per-statement line
     /// stamping quadratic in file size at gem scale.
     line_starts: Vec<u32>,
+    /// What to add to a line counted from this file's own start. Zero for
+    /// every file on disk; a run-time `eval` snippet numbers its first
+    /// line from the `line` argument CRuby gives it, and every span,
+    /// frame and `__LINE__` in it must agree.
+    line_offset: u32,
 }
 
 impl SourceFile {
@@ -160,7 +165,7 @@ impl SourceFile {
     /// scan produced (a start `s = i + 1` satisfies `s <= byte` iff the
     /// newline at `i` sits strictly before `byte`).
     pub fn line_at(&self, byte: u32) -> u32 {
-        self.line_starts.partition_point(|&s| s <= byte) as u32
+        self.line_offset + self.line_starts.partition_point(|&s| s <= byte) as u32
     }
 }
 
@@ -1087,6 +1092,17 @@ impl Hir {
         name: impl Into<String>,
         source: impl Into<std::sync::Arc<str>>,
     ) -> FileId {
+        self.add_file_at(name, source, 0)
+    }
+
+    /// [`add_file`](Self::add_file) for a file whose first line is not 1 --
+    /// see [`SourceFile::line_offset`].
+    pub fn add_file_at(
+        &mut self,
+        name: impl Into<String>,
+        source: impl Into<std::sync::Arc<str>>,
+        line_offset: u32,
+    ) -> FileId {
         let source = source.into();
         let frozen_string_literal = magic_frozen_string_literal(&source);
         let mut line_starts = vec![0u32];
@@ -1100,6 +1116,7 @@ impl Hir {
             source,
             frozen_string_literal,
             line_starts,
+            line_offset,
         });
         FileId((self.files.len() - 1) as u32)
     }
