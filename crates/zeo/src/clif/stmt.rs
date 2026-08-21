@@ -1585,6 +1585,15 @@ fn stamp_line(fx: &mut Fx, stmt: NodeId) {
         return;
     };
     let file = file.to_string();
+    // The DWARF row is stamped BEFORE the dedup: `set_srcloc` emits no
+    // code, and skipping it whenever the previous statement shared a line
+    // would leave whole blocks attributed to whatever the last STAMPED
+    // statement was -- the dedup exists to save a runtime CALL, which is
+    // a different question.
+    if let Some(debug) = fx.em.debug.as_mut() {
+        let loc = debug.srcloc(&file, line);
+        fx.b.set_srcloc(loc);
+    }
     if fx.prev_line == Some(line) && fx.prev_file.as_deref() == Some(file.as_str()) {
         return;
     }

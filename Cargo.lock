@@ -2338,10 +2338,12 @@ dependencies = [
  "cranelift-object",
  "flate2",
  "foldhash 0.1.5",
+ "gimli 0.33.0",
  "insta",
  "libc",
  "miette",
  "mimalloc",
+ "object 0.39.1",
  "prettyplease",
  "proc-macro2",
  "quote",
@@ -2425,6 +2427,7 @@ name = "zeo-tests"
 version = "0.1.0"
 dependencies = [
  "datatest-stable",
+ "gimli 0.33.0",
  "insta",
  "libc",
  "miette",

@@ -523,7 +523,7 @@ fn run_via_cli(
     // the emitter, and reporting the other one's verdict would be a lie.
     match backend {
         "rustc" => zeo::compile_to_rust_with(source, opts).map(|_| ()),
-        _ => zeo::compile_to_object_with(source, opts).map(|_| ()),
+        _ => zeo::compile_to_object_with(source, opts, false).map(|_| ()),
     }
     .map_err(String::from)?;
     let mut cmd = Command::new(zeo_cli()?);

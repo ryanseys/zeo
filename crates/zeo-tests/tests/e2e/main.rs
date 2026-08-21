@@ -26,6 +26,7 @@ mod codegen;
 mod collections;
 mod concurrency;
 mod control_flow;
+mod debuginfo;
 mod enumerable;
 mod etc;
 mod exceptions;

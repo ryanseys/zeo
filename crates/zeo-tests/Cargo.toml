@@ -28,6 +28,7 @@ zeo-dsl = { workspace = true, features = ["spans"] }
 # The link-ledger tests (e2e/linkage.rs) read a linked program's sections
 # and symbols; nothing else in the suite parses a binary.
 object.workspace = true
+gimli.workspace = true
 
 # Golden-file suites: one nextest case per `.rb`, comparing zeo's output to the
 # committed ruby-oracle `.expected` (see tests/support/golden.rs). `harness =

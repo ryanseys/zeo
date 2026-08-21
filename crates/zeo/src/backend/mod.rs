@@ -349,7 +349,7 @@ pub fn run_program(
         // in-process JIT replaces this at M0.5.
         CompiledProgram::Aot(compiled) => {
             let bin = std::env::temp_dir().join(format!("zeo-e-{}", std::process::id()));
-            object::object_to_binary(&compiled.object, &bin)?;
+            object::object_to_binary(&compiled.object, compiled.debuginfo, &bin)?;
             let status = std::process::Command::new(&bin)
                 .args(program_args)
                 .status()
@@ -374,6 +374,8 @@ pub fn build_artifact(compiled: &CompiledProgram<'_>, output: &Path) -> Result<(
             Profile::from_env_or(Profile::Release),
             GenOpt::Optimized,
         ),
-        CompiledProgram::Aot(compiled) => object::object_to_binary(&compiled.object, output),
+        CompiledProgram::Aot(compiled) => {
+            object::object_to_binary(&compiled.object, compiled.debuginfo, output)
+        }
     }
 }

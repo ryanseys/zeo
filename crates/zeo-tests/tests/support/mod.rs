@@ -27,7 +27,7 @@ pub fn compile_link_run(
     env: &[(&str, &str)],
     args: &[&str],
 ) -> RunResult {
-    let compiled = zeo::compile_to_object_with(source, opts)
+    let compiled = zeo::compile_to_object_with(source, opts, false)
         .unwrap_or_else(|e| panic!("compile_to_object_with failed: {e}"));
     let bin = std::env::temp_dir().join(format!(
         "zeo-test-bin-{}-{:?}",

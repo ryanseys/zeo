@@ -199,6 +199,11 @@ pub fn compile_to_file(
 /// `backend::link` (the `--backend aot` pipeline).
 pub struct ObjectOutput {
     pub object: Vec<u8>,
+    /// Whether the object carries DWARF. The LINK reads it: debug info in
+    /// a Mach-O program lives in the object file the binary points back
+    /// at, so a `-g` link keeps that object and keeps the symbol table
+    /// that names it.
+    pub debuginfo: bool,
 }
 
 /// The Cranelift pipeline: the same front end as `compile_to_rust_with`,
@@ -206,12 +211,15 @@ pub struct ObjectOutput {
 pub fn compile_to_object_with(
     source: &str,
     opts: &CompileOptions,
+    debuginfo: bool,
 ) -> Result<ObjectOutput, CompileError> {
     std::thread::scope(|scope| {
         std::thread::Builder::new()
             .name("zeo-compile".into())
             .stack_size(COMPILE_STACK_SIZE)
-            .spawn_scoped(scope, || compile_object_on_this_thread(source, opts))
+            .spawn_scoped(scope, || {
+                compile_object_on_this_thread(source, opts, debuginfo)
+            })
             .expect("spawning the compiler thread")
             .join()
             .unwrap_or_else(|payload| std::panic::resume_unwind(payload))
@@ -248,10 +256,11 @@ fn analyze_on_this_thread(
 fn compile_object_on_this_thread(
     source: &str,
     opts: &CompileOptions,
+    debuginfo: bool,
 ) -> Result<ObjectOutput, CompileError> {
     let analyzed = analyze_on_this_thread(source, opts)?;
-    let object = clif::emit::compile(&analyzed).map_err(CompileError::codegen)?;
-    Ok(ObjectOutput { object })
+    let object = clif::emit::compile(&analyzed, debuginfo).map_err(CompileError::codegen)?;
+    Ok(ObjectOutput { object, debuginfo })
 }
 
 /// The JIT run mode (`--backend jit`): compile in-process and run without

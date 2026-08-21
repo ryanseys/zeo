@@ -15,6 +15,7 @@ pub mod capi_names;
 pub(crate) mod classes;
 pub(crate) mod control;
 pub(crate) mod ctx;
+pub(crate) mod debuginfo;
 pub mod emit;
 pub(crate) mod expr;
 pub(crate) mod ffi;

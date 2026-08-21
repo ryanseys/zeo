@@ -26,7 +26,7 @@ use object::{Object, ObjectSection};
 /// nothing), and hand back the path. The caller removes it.
 fn link_program(source: &str) -> PathBuf {
     let opts = zeo::CompileOptions::default();
-    let compiled = zeo::compile_to_object_with(source, &opts)
+    let compiled = zeo::compile_to_object_with(source, &opts, false)
         .unwrap_or_else(|e| panic!("compile_to_object_with failed: {e}"));
     let bin = std::env::temp_dir().join(format!(
         "zeo-linkage-{}-{:?}",

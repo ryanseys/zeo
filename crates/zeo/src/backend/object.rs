@@ -6,11 +6,28 @@ use std::path::Path;
 /// Write `object` to a scratch `.o` beside the output, link it against
 /// `libzeo.a`, and clean up. The scratch name carries the pid so parallel
 /// `zeo` processes never collide.
-pub fn object_to_binary(object: &[u8], output: &Path) -> Result<(), String> {
-    let obj_path = std::env::temp_dir().join(format!("zeo-p0-{}.o", std::process::id()));
+///
+/// `debuginfo` moves the object and keeps it. Mach-O does not put DWARF
+/// in the binary at all: the linker records a DEBUG MAP naming the object
+/// file it came from, and lldb (or `dsymutil`) reads the DWARF back out
+/// of that file at the recorded path. A scratch `.o` in the temp dir,
+/// deleted a moment later, is a path to nothing.
+pub fn object_to_binary(object: &[u8], debuginfo: bool, output: &Path) -> Result<(), String> {
+    let obj_path = if debuginfo {
+        let mut p = output.to_path_buf();
+        let name = p
+            .file_name()
+            .map_or_else(|| "a.out".to_string(), |n| n.to_string_lossy().into_owned());
+        p.set_file_name(format!("{name}.o"));
+        p
+    } else {
+        std::env::temp_dir().join(format!("zeo-p0-{}.o", std::process::id()))
+    };
     std::fs::write(&obj_path, object)
         .map_err(|e| format!("writing {}: {e}", obj_path.display()))?;
-    let linked = super::link::link_binary(&obj_path, output);
-    let _ = std::fs::remove_file(&obj_path);
+    let linked = super::link::link_binary(&obj_path, output, debuginfo);
+    if !debuginfo {
+        let _ = std::fs::remove_file(&obj_path);
+    }
     linked
 }

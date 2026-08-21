@@ -77,6 +77,10 @@ struct Args {
     /// (`ZEO_BACKEND` is the env spelling; the flag wins). `None` = the
     /// dual-period default, rustc.
     backend: Option<zeo::backend::Backend>,
+    /// `-g`: put DWARF line tables in the emitted object, so a native
+    /// debugger or profiler renders a compiled frame as `file.rb:line`.
+    /// `ZEO_DEBUGINFO=1` is the env spelling.
+    debuginfo: bool,
 }
 
 /// Where `--emit-rust` sends the generated Rust. The path is ATTACHED-only
@@ -172,6 +176,9 @@ options:
                         the Cranelift AOT backend (the default with -o), or
                         rustc (the differential oracle, kept until M3)
                         (ZEO_BACKEND is the env spelling; the flag wins)
+  -g                    put DWARF line tables in the compiled program, so
+                        lldb, perf and Instruments name a Ruby frame by its
+                        file and line (ZEO_DEBUGINFO=1 is the env spelling)
   -I <dir>              add a `require` search root, like ruby's -I
                         (repeatable; `-I<dir>` and `-I=<dir>` also accepted)
   --gems <dir>          add a directory of vendored gems: every subdirectory
@@ -243,6 +250,9 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
     let mut pretty = false;
     let mut emit_rust: Option<EmitTarget> = None;
     let mut emit_clif: Option<EmitTarget> = None;
+    // The env spelling is read once here so the flag and the variable can
+    // never disagree downstream.
+    let mut debuginfo = std::env::var_os("ZEO_DEBUGINFO").is_some_and(|v| v != "0");
     let mut load_roots = Vec::new();
     let mut package_dirs = Vec::new();
     let mut root_gem: Option<String> = None;
@@ -376,6 +386,7 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
                 "-I" => {
                     load_roots.push(PathBuf::from(iter.next().ok_or("-I requires a directory")?));
                 }
+                "-g" => debuginfo = true,
                 "-h" => return Ok(Parsed::Help),
                 "-v" => return Ok(Parsed::Version),
                 _ => {
@@ -494,6 +505,7 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
         lockfile: gemfile.map(derive_lockfile),
         program_args,
         emit_clif,
+        debuginfo,
         backend,
     })))
 }
@@ -680,6 +692,16 @@ fn run() -> Result<(), MainError> {
     // exit with the program's status. An artifact request needs a backend
     // that produces one.
     if backend == zeo::backend::Backend::Jit {
+        // Silently honouring nothing is the one answer that would be
+        // wrong: DWARF describes an artifact, and the in-process JIT
+        // leaves none behind.
+        if args.debuginfo {
+            return Err(
+                "-g describes a compiled artifact and the in-process JIT produces none (use -o/--compile)"
+                    .to_string()
+                    .into(),
+            );
+        }
         if wants_artifact {
             return Err(
                 "--backend jit runs in place and produces no artifact (use --backend aot for -o/--compile)"
@@ -699,7 +721,9 @@ fn run() -> Result<(), MainError> {
     }
     let compiled = match backend {
         zeo::backend::Backend::Rustc => Compiled::Rustc(zeo::compile_to_rust_with(&source, &opts)?),
-        zeo::backend::Backend::Aot => Compiled::Aot(zeo::compile_to_object_with(&source, &opts)?),
+        zeo::backend::Backend::Aot => {
+            Compiled::Aot(zeo::compile_to_object_with(&source, &opts, args.debuginfo)?)
+        }
         zeo::backend::Backend::Jit => unreachable!("the jit branch above never falls through"),
     };
     zeo::memguard::set_phase(zeo::memguard::Phase::Build);

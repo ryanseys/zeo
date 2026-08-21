@@ -123,6 +123,29 @@ The system libraries each target needs are a table in `link.rs`, diffed
 against `rustc --print=native-static-libs` by an `#[ignore]`d test that
 the Linux leg runs.
 
+## Debug info
+
+`zeo -g file.rb -o prog` (or `ZEO_DEBUGINFO=1`) puts DWARF line tables in
+the emitted object, built from the same statement boundaries
+`zeo_rt_set_line` marks — so what a debugger says and what `caller` says
+cannot drift apart. Zeo's own backtraces never read it; this is for
+`lldb`, `perf` and Instruments.
+
+The addresses in it are relocations against the section that defines each
+function, never numbers: the linker decides where a function lands, and a
+debug reference against a local function SYMBOL is a shape `dsymutil`
+does not recognise — it applies no relocation, says nothing about it, and
+every row silently keeps the raw offset it was written with.
+
+Platforms differ in where the DWARF ends up, so `-g` changes the link:
+
+- **ELF** links the debug sections straight into the binary.
+- **Mach-O** does not. The linker leaves a debug MAP behind — local stab
+  entries naming the object file each function came from — so a `-g`
+  build keeps `<output>.o` beside the binary and drops the `-Wl,-x` that
+  would strip the map. Run `dsymutil <output>` to fold the DWARF into a
+  `.dSYM`; lldb and Instruments read it from there.
+
 ## Debugging a miscompile
 
 | Tool | Shows |
@@ -146,8 +169,9 @@ stale snapshot — so three of them can sit stale behind one report.
   version is a perf lever, not a correctness item.
 - FFI sends every call through the runtime's libffi tier. A direct
   `call_indirect` on a declared C signature is the lever.
-- No DWARF yet, so a profiler shows compiled Ruby frames without
-  `file.rb:line`. Frame pointers are on, so the stacks themselves walk.
+- The line table is the only DWARF emitted. A debugger names a compiled
+  frame and its `file.rb:line`, but has nothing to say about a local
+  variable — zeo's values are 24-byte slots with no described type.
 - macOS gets no unwind tables (cranelift-object cannot emit Mach-O ones).
   Nothing depends on unwinding: a panic prints and ends the process, and
   fiber teardown is a `Terminate` signal, not a native unwind.

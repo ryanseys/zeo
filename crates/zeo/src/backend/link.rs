@@ -141,7 +141,15 @@ pub(crate) fn host_triple() -> &'static str {
 /// the runtime through an in-process pointer table rather than by name.
 /// It is what the rustc path got from `-C strip=symbols`, and without it
 /// an eval-free `hello` carries 2 MB of Rust symbol names.
-pub fn link_binary(object: &std::path::Path, output: &std::path::Path) -> Result<(), String> {
+///
+/// `debuginfo` is exactly when those symbols ARE read: the Mach-O debug
+/// map is a set of local stab entries naming `object`, so `-x` would
+/// throw away the only pointer to the DWARF.
+pub fn link_binary(
+    object: &std::path::Path,
+    output: &std::path::Path,
+    debuginfo: bool,
+) -> Result<(), String> {
     let archive = runtime_archive()?;
     let natlibs = natlibs_for(host_triple())?;
     let mut cmd = std::process::Command::new("cc");
@@ -150,14 +158,18 @@ pub fn link_binary(object: &std::path::Path, output: &std::path::Path) -> Result
         cmd.arg(format!("-Wl,-force_load,{}", archive.display()));
         cmd.args(natlibs);
         cmd.arg("-Wl,-dead_strip");
-        cmd.arg("-Wl,-x");
+        if !debuginfo {
+            cmd.arg("-Wl,-x");
+        }
     } else {
         cmd.arg("-Wl,--whole-archive");
         cmd.arg(&archive);
         cmd.arg("-Wl,--no-whole-archive");
         cmd.args(natlibs);
         cmd.arg("-Wl,--gc-sections");
-        cmd.arg("-Wl,-x");
+        if !debuginfo {
+            cmd.arg("-Wl,-x");
+        }
     }
     let out = cmd
         .output()

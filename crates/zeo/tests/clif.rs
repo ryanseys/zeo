@@ -37,10 +37,10 @@ fn clif_snapshot_block_send() {
 #[test]
 fn object_output_is_deterministic() {
     let src = "def add(a, b)\n  a + b\nend\nputs add(2, 3)\n";
-    let a = zeo::compile_to_object_with(src, &zeo::CompileOptions::default())
+    let a = zeo::compile_to_object_with(src, &zeo::CompileOptions::default(), false)
         .expect("compiles")
         .object;
-    let b = zeo::compile_to_object_with(src, &zeo::CompileOptions::default())
+    let b = zeo::compile_to_object_with(src, &zeo::CompileOptions::default(), false)
         .expect("compiles")
         .object;
     assert_eq!(a, b, "two compiles must produce identical object bytes");

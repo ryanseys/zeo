@@ -110,28 +110,35 @@ impl Module for ClifModule {
     }
 }
 
-/// Lower `analyzed` to one object file's bytes.
-pub fn compile(analyzed: &Analyzed) -> Result<Vec<u8>, String> {
-    compile_inner(analyzed, false).map(|(bytes, _)| bytes)
+/// Lower `analyzed` to one object file's bytes. `debuginfo` adds DWARF
+/// line tables (`-g`); see `clif::debuginfo`.
+pub fn compile(analyzed: &Analyzed, debuginfo: bool) -> Result<Vec<u8>, String> {
+    compile_inner(analyzed, false, debuginfo).map(|(bytes, _)| bytes)
 }
 
 /// `compile` plus the per-function CLIF text (`--emit-clif`, snapshots).
 pub fn compile_with_clif(analyzed: &Analyzed) -> Result<(Vec<u8>, String), String> {
-    compile_inner(analyzed, true).map(|(bytes, text)| (bytes, text.expect("collected")))
+    compile_inner(analyzed, true, false).map(|(bytes, text)| (bytes, text.expect("collected")))
 }
 
 fn compile_inner(
     analyzed: &Analyzed,
     collect_clif: bool,
+    debuginfo: bool,
 ) -> Result<(Vec<u8>, Option<String>), String> {
     let mut em = Emitter::new(false)?;
     em.clif_text = collect_clif.then(String::new);
+    em.debug = debuginfo.then(super::debuginfo::DebugInfo::default);
     emit_program(&mut em, analyzed)?;
     let clif = em.clif_text.take();
+    let debug = em.debug.take();
     let ClifModule::Object(module) = em.module else {
         unreachable!("Emitter::new(false) builds an object module")
     };
-    let product = module.finish();
+    let mut product = module.finish();
+    if let Some(debug) = &debug {
+        debug.emit(&mut product)?;
+    }
     let bytes = product
         .emit()
         .map_err(|e| format!("emitting the object file: {e}"))?;
@@ -883,6 +890,9 @@ pub(crate) struct Emitter {
     /// When `Some`, every finished function's CLIF renders here (before
     /// machine compilation -- the target-independent IR).
     pub clif_text: Option<String>,
+    /// When `Some`, statements stamp a `SourceLoc` and the object carries
+    /// DWARF built from them (`-g`).
+    pub debug: Option<super::debuginfo::DebugInfo>,
 }
 
 /// One compiled method's declaration facts.
@@ -986,6 +996,7 @@ impl Emitter {
             cov_active: false,
             cov_lines: std::collections::BTreeMap::new(),
             clif_text: None,
+            debug: None,
         })
     }
 
@@ -1048,6 +1059,22 @@ impl Emitter {
         if let Some(text) = &mut self.clif_text {
             use std::fmt::Write as _;
             let _ = writeln!(text, ";; {name}\n{}", func.display());
+        }
+    }
+
+    /// Take one just-compiled function's line rows, the `record_clif`
+    /// twin for DWARF. Must run while the context still holds the
+    /// `CompiledCode` -- i.e. right after `define_function`.
+    pub(crate) fn record_debug(
+        &mut self,
+        name: &str,
+        func: FuncId,
+        ctx: &cranelift_codegen::Context,
+    ) {
+        if let Some(debug) = &mut self.debug
+            && let Some(code) = ctx.compiled_code()
+        {
+            debug.record(func, name, code);
         }
     }
 
@@ -2144,6 +2171,7 @@ fn define_method_body(
     em.module
         .define_function(def.func, &mut ctx)
         .map_err(|e| format!("compiling {label}: {e}"))?;
+    em.record_debug(&label, def.func, &ctx);
     Ok(())
 }
 
@@ -2337,6 +2365,7 @@ fn define_toplevel(
     em.module
         .define_function(func_id, &mut ctx)
         .map_err(|e| format!("compiling {sym}: {e}"))?;
+    em.record_debug(&sym, func_id, &ctx);
     Ok(func_id)
 }
 
@@ -2437,6 +2466,7 @@ fn define_main(em: &mut Emitter, desc: DataId) -> Result<FuncId, String> {
     em.module
         .define_function(func_id, &mut ctx)
         .map_err(|e| format!("compiling main: {e}"))?;
+    em.record_debug("main", func_id, &ctx);
     Ok(func_id)
 }
 
