@@ -1115,17 +1115,27 @@ pub(super) fn try_prepend_call_edit(
         }
         (target, on_singleton, modules)
     };
+    // The INSTANCE side runs as the ordinary send it is, so the ancestry
+    // changes where the call is WRITTEN -- a compile-time edit applied the
+    // prepend from the program's first line, and `K.ancestors` read above
+    // the call already showed it. What the edit bought was reach: a
+    // statically dispatched `K#m` never consults the runtime tables the
+    // send writes, so the prepend would override nothing. That is exactly
+    // what `defer_mixin_to_runtime` pays for, and the singleton side has
+    // paid it since `defer_singleton_prepend`.
+    if !on_singleton {
+        for &m in &modules {
+            super::classes::defer_mixin_to_runtime(compiler, m);
+        }
+        return false;
+    }
     // Registered in REVERSE argument order so `mro`'s uniform
     // "later-registered-is-closer" flatten yields source order in the ancestry
     // (`prepend A, B` -> [A, B, self]) -- the same rule the class-body multi-arg
     // lowering follows (see `lower/defs.rs`).
     for m in modules.into_iter().rev() {
         let ci = &mut compiler.classes[target.0 as usize];
-        if on_singleton {
-            ci.class_method_prepends.push(m);
-        } else {
-            ci.prepends.push(m);
-        }
+        ci.class_method_prepends.push(m);
     }
     true
 }

@@ -1766,16 +1766,22 @@ fn mix_in(
     if crate::dispatch::class_frozen(*cid) {
         return Err(crate::dispatch::frozen_class_error(*cid));
     }
-    // `prepend A, B` puts B closest to self and `include A, B` puts B closest
-    // too, so both walk the arguments in the order that lands them there.
-    let ordered: Vec<&RubyValue> = match placement {
-        Placement::After => modules.iter().rev().collect(),
-        Placement::Before => modules.iter().collect(),
-    };
+    // ONE multi-argument call keeps its arguments in source order --
+    // `include A, B` is `[self, A, B]` and `prepend A, B` is `[A, B, self]`
+    // -- while separate calls put the LATEST closest to self. Each splice
+    // lands its module closest to self, so both walk the arguments in
+    // reverse to leave the first one outermost.
+    let ordered: Vec<&RubyValue> = modules.iter().rev().collect();
     let (primitive, hook) = match placement {
         Placement::Before => ("prepend_features", "prepended"),
         Placement::After => ("append_features", "included"),
     };
+    // BEFORE the loop: each splice reads the chain the previous one wrote,
+    // and an overlay chain is only consulted once the overlay is live. A
+    // multi-argument call spliced every module against the FROZEN chain
+    // otherwise, so the last write won and the rest vanished.
+    mark_ancestry_mutated();
+    mark_live();
     for module_val in ordered {
         let RubyValue::Class(mid) = module_val else {
             return Err(type_error!(
