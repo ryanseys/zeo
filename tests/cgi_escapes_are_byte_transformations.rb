@@ -44,10 +44,9 @@ puts "unescape -> #{r.inspect} #{r.encoding}"
 end
 
 # The element forms escape only the tags they were asked about, and leave
-# the bytes around them alone. (`unescapeElement` is deliberately not
-# round-tripped here: zeo's span rule differs from CRuby's for a tag whose
-# ATTRIBUTES carry entities, which is a separate, pre-existing divergence
-# and has nothing to do with encodings.)
+# the bytes around them alone. The span rule itself -- where one tag ends --
+# is `tests/cgi_element_escapes_span_one_tag.rb`; what this file asks of the
+# family is that it stay a BYTE transformation.
 doc = "<A HREF='x'>t</A>\xC0".dup.force_encoding("BINARY")
 r = CGI.escapeElement(doc, "A")
 puts "escapeElement -> #{r.inspect} #{r.encoding}"

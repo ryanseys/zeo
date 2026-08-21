@@ -723,11 +723,19 @@ fn singleton_super_chain(recv: &RubyValue) -> Vec<ClassId> {
 /// reflection question.
 pub fn singleton_prepend_owner(cid: ClassId, name: Symbol) -> Option<ClassId> {
     let defines = |m: ClassId| crate::dispatch::method_owner(m, name).is_some();
-    if let Some(m) = resolver::singleton_prepends_of(cid).into_iter().find(|&m| defines(m)) {
+    if let Some(m) = resolver::singleton_prepends_of(cid)
+        .into_iter()
+        .find(|&m| defines(m))
+    {
         return Some(m);
     }
     let key = singleton_class_key(&RubyValue::Class(cid))?;
-    let sid = maps().singleton_classes.read().unwrap().get(&key).copied()?;
+    let sid = maps()
+        .singleton_classes
+        .read()
+        .unwrap()
+        .get(&key)
+        .copied()?;
     crate::dispatch::ancestors_of_value(sid)
         .iter()
         .take_while(|&&a| a != sid)

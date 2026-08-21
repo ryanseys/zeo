@@ -187,14 +187,43 @@ fn element_names(args: &[RubyValue]) -> Vec<String> {
     names
 }
 
-/// The byte ranges of the `<tag ...>` / `</tag>` spans naming one of `names`,
-/// where `open`/`close` are the delimiters as they appear in this text --
-/// `<`/`>` before escaping, `&lt;`/`&gt;` after it. CRuby writes this as a
-/// regexp (`/<\/?(?:A|B)(?!\w)(?:.|\n)*?>/i`); the name run is read to its end
-/// here, which is that `(?!\w)` -- `<ABBR>` is not `<A>`.
-fn element_spans(text: &[u8], names: &[String], open: &[u8], close: &[u8]) -> Vec<(usize, usize)> {
-    let find =
-        |hay: &[u8], needle: &[u8]| hay.windows(needle.len().max(1)).position(|w| w == needle);
+/// Which alphabet an element span is read in: the tag as written, or the
+/// tag as `escapeHTML` left it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TagText {
+    Plain,
+    Escaped,
+}
+
+/// The byte ranges of the `<tag ...>` / `</tag>` spans naming one of `names`.
+///
+/// CRuby writes each as a regexp, and the two differ only in the ALPHABET
+/// (`cgi/escape.rb`, ruby 4.0.6):
+///
+/// ```text
+///   escapeElement    /<\/?(?:A|B)\b[^<>]*+>?/im
+///   unescapeElement  /&lt;\/?(?:A|B)\b(?>[^&]+|&(?![gl]t;)\w+;)*(?:&gt;)?/im
+/// ```
+///
+/// Both read the tag name, then run to the next DELIMITER -- an open or a
+/// close -- and take the close only when that is what stopped them. Two
+/// consequences the older "find the next close" reading got wrong: an
+/// UNTERMINATED tag still matches (`&lt;A` unescapes), and a tag whose
+/// attributes carry an escaped delimiter ends AT it, so
+/// `&lt;A HREF=&quot;a&lt;b&quot;&gt;` unescapes only as far as the `a`.
+///
+/// The escaped form also stops at any `&` that does not begin a `&word;`
+/// entity, which is why a NUMERIC reference ends a span: `&#62;` has no
+/// `\w` after the `&`.
+///
+/// The name run is read to its end, which is the regexp's `\b` -- `<ABBR>`
+/// is not `<A>`.
+fn element_spans(text: &[u8], names: &[String], mode: TagText) -> Vec<(usize, usize)> {
+    let (open, close): (&[u8], &[u8]) = match mode {
+        TagText::Plain => (b"<", b">"),
+        TagText::Escaped => (b"&lt;", b"&gt;"),
+    };
+    let find = |hay: &[u8], needle: &[u8]| hay.windows(needle.len()).position(|w| w == needle);
     let mut spans = Vec::new();
     let mut i = 0;
     while let Some(rel) = find(&text[i..], open) {
@@ -211,9 +240,12 @@ fn element_spans(text: &[u8], names: &[String], open: &[u8], close: &[u8]) -> Ve
         if !name.is_empty()
             && let Ok(name) = std::str::from_utf8(name)
             && names.iter().any(|n| n.eq_ignore_ascii_case(name))
-            && let Some(rel2) = find(&text[j..], close)
         {
-            let end = j + rel2 + close.len();
+            let body_end = tag_body_end(text, j, mode);
+            let end = match text[body_end..].starts_with(close) {
+                true => body_end + close.len(),
+                false => body_end,
+            };
             spans.push((start, end));
             i = end;
             continue;
@@ -221,6 +253,47 @@ fn element_spans(text: &[u8], names: &[String], open: &[u8], close: &[u8]) -> Ve
         i = start + open.len();
     }
     spans
+}
+
+/// Where a tag's attribute run ends: at the next delimiter, and for escaped
+/// text at any `&` that does not begin a `&word;` entity other than `&lt;`
+/// or `&gt;`. See [`element_spans`] for the two regexps this is.
+fn tag_body_end(text: &[u8], from: usize, mode: TagText) -> usize {
+    let mut k = from;
+    match mode {
+        TagText::Plain => {
+            while k < text.len() && text[k] != b'<' && text[k] != b'>' {
+                k += 1;
+            }
+            k
+        }
+        TagText::Escaped => loop {
+            while k < text.len() && text[k] != b'&' {
+                k += 1;
+            }
+            match entity_run(&text[k..]) {
+                Some(n) => k += n,
+                None => return k,
+            }
+        },
+    }
+}
+
+/// The length of a `&word;` entity at the head of `text`, or `None` when
+/// there is none or it is the `&lt;`/`&gt;` a tag span ends at. The regexp
+/// is `&(?![gl]t;)\w+;`, so a numeric reference never qualifies.
+fn entity_run(text: &[u8]) -> Option<usize> {
+    if text.first() != Some(&b'&') || text.starts_with(b"&lt;") || text.starts_with(b"&gt;") {
+        return None;
+    }
+    let mut k = 1;
+    while k < text.len() && (text[k].is_ascii_alphanumeric() || text[k] == b'_') {
+        k += 1;
+    }
+    match k > 1 && text.get(k) == Some(&b';') {
+        true => Some(k + 1),
+        false => None,
+    }
 }
 
 /// Rewrite each span through `f` and leave everything between them alone.
@@ -239,7 +312,7 @@ fn rewrite_spans(text: &[u8], spans: &[(usize, usize)], f: impl Fn(&[u8]) -> Vec
 fn escape_element(args: &[RubyValue]) -> RubyValue {
     let text = in_bytes(&args[0]);
     let names = element_names(&args[1..]);
-    let spans = element_spans(&text, &names, b"<", b">");
+    let spans = element_spans(&text, &names, TagText::Plain);
     out_like(&args[0], rewrite_spans(&text, &spans, |m| html_escape(m)))
 }
 
@@ -247,7 +320,7 @@ fn unescape_element(args: &[RubyValue]) -> RubyValue {
     let text = in_bytes(&args[0]);
     let names = element_names(&args[1..]);
     let enc = enc_of(&args[0]);
-    let spans = element_spans(&text, &names, b"&lt;", b"&gt;");
+    let spans = element_spans(&text, &names, TagText::Escaped);
     out_like(
         &args[0],
         rewrite_spans(&text, &spans, |m| html_unescape(m, enc)),
