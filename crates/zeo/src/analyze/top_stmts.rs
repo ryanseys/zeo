@@ -48,6 +48,22 @@ fn process_top_stmt_inner(
     main_statements: &mut Vec<NodeId>,
     pre_exec: &mut Vec<NodeId>,
 ) -> Result<(), AnalyzeError> {
+    // An `eval` snippet REGISTERS NOTHING (plan G6): the program whose
+    // class table these rows would join is already running, so a `def`
+    // here has to install at its own document position through the
+    // runtime -- which is exactly what the emitter does for a `def`
+    // analyze could not register. The prelude still registers: it is the
+    // bootstrap set every compile starts from, snippet or not.
+    if compiler.hir.mode == crate::CompileMode::Eval
+        && !bootstrap
+        && matches!(
+            compiler.hir[stmt],
+            HirNode::DefMethod { .. } | HirNode::ClassDef { .. }
+        )
+    {
+        main_statements.push(stmt);
+        return Ok(());
+    }
     // A `BEGIN { ... }` body's statements ARE top-level statements -- ruby
     // hoists them to run before the main program, in the same scope and the
     // same cref. They take the same walk, into the hoisted list instead of the

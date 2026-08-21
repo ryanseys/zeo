@@ -453,6 +453,13 @@ pub struct Hir {
     /// visible inside every `Ruby::Box` (see `Compiler::resolve_class`'s
     /// bootstrap fallback).
     pub builtin_exceptions_len: usize,
+
+    /// What this compile is FOR (plan G6's `CompileMode`). Every static
+    /// decision the emitter makes belongs to a whole PROGRAM, which owns
+    /// the class table it registers into; a snippet compiled for a
+    /// run-time `eval` arrives after that program is already running, so
+    /// its own `def`s and `class`es install through the runtime instead.
+    pub mode: crate::CompileMode,
     /// How many `Ruby::Box`es the loader allocated -- box ids
     /// run 1..=boxes (0 is the root program). `analyze` creates one
     /// top-level surrogate `ClassInfo` per id.

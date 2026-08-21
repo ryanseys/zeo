@@ -67,6 +67,22 @@ pub(crate) mod names;
 pub mod parse;
 pub mod types;
 
+/// What a compile is FOR.
+///
+/// `Program` is the ordinary whole-program compile: it owns a class
+/// table, so a top-level `def` or `class` REGISTERS and is emitted as a
+/// row the runtime installs at boot. `Eval` is one snippet handed to a
+/// program that is already running (`crate::eval`), where the same `def`
+/// has to install through the runtime at its document position -- which
+/// is what the emitter already does for a `def` written somewhere analyze
+/// could not register.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum CompileMode {
+    #[default]
+    Program,
+    Eval,
+}
+
 /// The compile-time file context `require` resolution needs --
 /// see `parse::parse_and_lower_with`. `Default` (no path, no roots) keeps
 /// `compile_to_rust`'s pathless behavior: `require_relative` then fails with
@@ -279,7 +295,18 @@ pub fn analyze_snippet(
     source: &str,
     opts: &CompileOptions,
 ) -> Result<analyze::Analyzed, CompileError> {
-    analyze_on_this_thread(source, opts)
+    let (mut hir, root, _records) = parse::parse_and_lower_with(
+        source,
+        opts.input_path.as_deref(),
+        opts.file_name.as_deref(),
+        &opts.load_roots,
+        &opts.package_dirs,
+        &opts.gem_paths,
+        opts.lockfile.as_deref(),
+        opts.root_gem.as_ref(),
+    )?;
+    hir.mode = CompileMode::Eval;
+    analyze::analyze(hir, root)
 }
 
 /// The JIT run mode (`--backend jit`): compile in-process and run without

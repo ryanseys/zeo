@@ -162,26 +162,17 @@ fn build(req: &EvalRequest<'_>, scope_names: &[String]) -> Result<Compiled, Stri
 /// compile makes. Each is a widening this compiler owes (G6-1/G6-2).
 fn refusals(analyzed: &crate::analyze::Analyzed) -> Result<(), String> {
     let compiler = &analyzed.compiler;
-    // A top-level `def`/`class` is HOISTED out of the statements into the
-    // class table, so the walk below never sees it -- and this compile
-    // emits no registration tables at all, which is what made an eval'd
-    // `def` vanish instead of installing. Both belong on the runtime's
-    // overlay (G6-1's own next step).
-    if compiler.classes[0]
-        .methods
-        .iter()
-        .any(|e| !compiler.scope(e.def).native_default)
-    {
-        return Err("the source has a `def`".to_string());
-    }
-    if compiler
-        .classes
-        .iter()
-        .enumerate()
-        .any(|(i, c)| i != 0 && !c.is_builtin && !c.is_bootstrap)
-    {
-        return Err("the source has a `class`/`module`".to_string());
-    }
+    // `CompileMode::Eval` registers nothing, so nothing can be hoisted
+    // past the walk below -- but a compile that DID register would emit
+    // rows this snippet has no tables for, and the method would simply
+    // vanish. Cheap to assert, and the assertion is the contract.
+    debug_assert!(
+        compiler.classes[0]
+            .methods
+            .iter()
+            .all(|e| compiler.scope(e.def).native_default),
+        "an eval snippet registered a method"
+    );
     let hir = &compiler.hir;
     let mut refused = None;
     let mut stack: Vec<crate::hir::NodeId> = analyzed.main_statements.clone();
@@ -191,10 +182,10 @@ fn refusals(analyzed: &crate::analyze::Analyzed) -> Result<(), String> {
         }
         hir[id].for_each_child(&mut |c| stack.push(c));
         refused = match &hir[id] {
-            // Registration: analyze put these in a class table nothing
-            // registers, so the method would simply vanish. They belong on
-            // the runtime's overlay instead.
-            HirNode::DefMethod { .. } => Some("a `def`"),
+            // Registration: `CompileMode::Eval` leaves these unregistered,
+            // and only a `def` has a run-time install path already (the
+            // emitter's own arm for a `def` written where analyze could
+            // not register one). The rest still belong to the interpreter.
             HirNode::ClassDef { .. } => Some("a `class`/`module`"),
             HirNode::MethodRedefine { .. } => Some("a redefinition"),
             HirNode::AliasMethod { .. } => Some("an `alias`"),

@@ -6,24 +6,33 @@
 //! burn-down discipline: the interpreter is the differential oracle for
 //! every shape until nothing falls back to it (G6-4).
 
-use crate::support::{RunResult, run_ruby, run_ruby_configured};
+use crate::support::{RunResult, run_ruby_configured};
 
 /// The program under both evaluators. A compiled program installs the
 /// compiler through `ProgramDesc.eval_install`, so the switch is all that
 /// differs between the two runs.
 fn both(source: &str) -> (RunResult, RunResult) {
-    let vm = run_ruby(source);
-    let compiled = run_ruby_configured(source, &[("ZEO_EVAL", "compiler")], &[]);
-    (vm, compiled)
+    (interpreted(source), compiled(source))
+}
+
+/// Each leg names its evaluator explicitly: only `compiler` selects the
+/// compiler, so anything else pins the interpreter whatever `ZEO_EVAL`
+/// the test run itself was started with.
+fn interpreted(source: &str) -> RunResult {
+    run_ruby_configured(source, &[("ZEO_EVAL", "interpreter")], &[])
+}
+
+fn compiled(source: &str) -> RunResult {
+    run_ruby_configured(source, &[("ZEO_EVAL", "compiler")], &[])
 }
 
 fn agree(source: &str, expected: &str) {
-    let (vm, compiled) = both(source);
+    let (vm, run) = both(source);
     assert_eq!(vm.stdout, expected, "the interpreter diverges from CRuby");
     assert_eq!(
-        compiled.stdout, expected,
+        run.stdout, expected,
         "the compiler diverges from CRuby (stderr: {})",
-        compiled.stderr
+        run.stderr
     );
 }
 
@@ -76,14 +85,10 @@ fn a_rescue_clause_binds_inside_the_source() {
         rescued = "begin; Integer('x'); rescue ArgumentError => e; e.class; end"
         p eval(rescued)
         "#;
-    let compiled = run_ruby_configured(source, &[("ZEO_EVAL", "compiler")], &[]);
-    assert_eq!(
-        compiled.stdout, "ArgumentError\n",
-        "stderr: {}",
-        compiled.stderr
-    );
+    let run = compiled(source);
+    assert_eq!(run.stdout, "ArgumentError\n", "stderr: {}", run.stderr);
     assert!(
-        run_ruby(source).stderr.contains("NotImplementedError"),
+        interpreted(source).stderr.contains("NotImplementedError"),
         "the eval VM was expected to decline this shape"
     );
 }
@@ -117,16 +122,49 @@ fn file_and_line_report_the_eval_site() {
 }
 
 #[test]
-fn a_shape_the_compiler_declines_still_runs() {
-    // A `def` in the source installs on the runtime's overlay, which this
-    // compiler does not emit yet -- the interpreter answers it, and the
-    // program cannot tell.
-    agree(
-        r#"
+fn a_def_installs_at_its_document_position() {
+    // `CompileMode::Eval` registers nothing, so the `def` reaches the
+    // emitter's run-time install arm -- and installs PRIVATE on Object,
+    // which is what a top-level `def` is. The interpreter gets the
+    // visibility wrong here (it answers `false`), so this is the second
+    // shape the compiled path fixes rather than keeps.
+    let source = r#"
         src = "def evaled; 41 + 1; end; evaled"
         p eval(src)
         p evaled
+        p self.class.private_instance_methods(false).include?(:evaled)
+        "#;
+    let run = compiled(source);
+    assert_eq!(run.stdout, "42\n42\ntrue\n", "stderr: {}", run.stderr);
+}
+
+#[test]
+fn an_evaled_def_binds_the_whole_parameter_surface() {
+    let source = r#"
+        src = "def with_args(a, b = 2, *r, k: 3, &blk); [a, b, r, k, blk&.call]; end"
+        eval(src)
+        p with_args(1)
+        p with_args(1, 5, 6, 7, k: 9) { :blk }
+        "#;
+    let run = compiled(source);
+    assert_eq!(
+        run.stdout, "[1, 2, [], 3, nil]\n[1, 5, [6, 7], 9, :blk]\n",
+        "stderr: {}",
+        run.stderr
+    );
+}
+
+#[test]
+fn a_shape_the_compiler_declines_still_runs() {
+    // A `class` in the source mints a run-time class, which this compiler
+    // does not lower yet -- the interpreter answers it, and the program
+    // cannot tell which one ran.
+    agree(
+        r#"
+        src = "class Minted; def hi; :hi; end; end; Minted.new.hi"
+        p eval(src)
+        p Minted.name
         "#,
-        "42\n42\n",
+        ":hi\n\"Minted\"\n",
     );
 }
