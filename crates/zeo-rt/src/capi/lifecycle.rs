@@ -19,6 +19,19 @@ pub unsafe extern "C" fn zeo_rt_main(
     prog: *const ProgramDesc,
     corelib: *const c_void,
 ) -> i32 {
+    let status = unsafe { main_inner(argc, argv, prog, corelib) };
+    // This RETURNS to the emitted C `main`, which is past everything that
+    // would otherwise write the buffer out (see `exec::flush_stdio`).
+    crate::exec::flush_stdio();
+    status
+}
+
+unsafe fn main_inner(
+    argc: i32,
+    argv: *const *const c_char,
+    prog: *const ProgramDesc,
+    corelib: *const c_void,
+) -> i32 {
     assert!(
         corelib.is_null(),
         "zeo_rt_main: corelib registration is not yet emitted (G8)"

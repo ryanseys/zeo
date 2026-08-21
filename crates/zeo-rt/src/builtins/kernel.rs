@@ -2279,7 +2279,12 @@ pub fn kernel_exit_bang(args: &[RubyValue]) -> ! {
         Some(RubyValue::Int(n)) => *n as i32,
         Some(_) => 1,
     };
-    std::process::exit(code)
+    // CRuby's `exit!` is `_exit(2)`: it runs no `at_exit` handler and
+    // DISCARDS whatever stdio still holds (`print "x"; exit!` writes
+    // nothing, where `exit` writes the `x`). `std::process::exit` runs
+    // Rust's own cleanup, which flushes -- so the buffer has to be
+    // stepped around, not asked politely.
+    unsafe { libc::_exit(code) }
 }
 
 /// The exit status carried by `exc` when it IS a `SystemExit`, else `None` --

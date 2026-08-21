@@ -39,6 +39,20 @@ pub(crate) fn program_args() -> Vec<String> {
     }
 }
 
+/// Flush the standard streams on the way out of the process.
+///
+/// Rust flushes its own `stdout` from `lang_start`, which an emitted C
+/// `main` never enters -- so an AOT program that RETURNS its status (the
+/// ordinary end, and the `SystemExit` end) left the buffer unwritten.
+/// Output ending in a newline survived regardless, because stdout is
+/// line-buffered; only a program printing raw bytes lost its tail, which
+/// is why every newline-terminated golden passed over it.
+pub fn flush_stdio() {
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
+    let _ = std::io::stderr().flush();
+}
+
 pub fn at_exit_register(handler: RubyValue) {
     AT_EXIT.lock().push(handler);
 }
