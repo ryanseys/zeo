@@ -1,0 +1,13 @@
+["#<Class:Bare>", "#<Class:Object>", "#<Class:BasicObject>", "Class", "Module", "Object", "Kernel", "BasicObject"]
+"Inc"
+true
+["#<Class:Inc>", "SA", "#<Class:Object>", "#<Class:BasicObject>", "Class", "Module", "Object", "Kernel", "BasicObject"]
+[:s]
+"SA(Pre)"
+true
+["SA", "#<Class:Pre>", "#<Class:Object>", "#<Class:BasicObject>", "Class", "Module", "Object", "Kernel", "BasicObject"]
+"SB(Both)"
+["SB", "#<Class:Both>", "SA", "#<Class:Object>", "#<Class:BasicObject>", "Class", "Module", "Object", "Kernel", "BasicObject"]
+["SB", "#<Class:Called>", "SA", "#<Class:Object>", "#<Class:BasicObject>", "Class", "Module", "Object", "Kernel", "BasicObject"]
+"Inc"
+["#<Class:Child>", "#<Class:Inc>", "SA", "#<Class:Object>", "#<Class:BasicObject>", "Class", "Module", "Object", "Kernel", "BasicObject"]

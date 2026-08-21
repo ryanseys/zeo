@@ -560,9 +560,15 @@ pub fn runtime_singleton_class(recv: &RubyValue) -> Result<RubyValue, Signal> {
     let cache_key = singleton_class_key(recv);
     let real = recv.class_id();
     let owner = recv.clone();
-    if let Some(k) = cache_key
-        && let Some(&sid) = maps().singleton_classes.read().unwrap().get(&k)
-    {
+    // The guard is dropped before the rebase below: an `if let` chain holds
+    // its temporaries for the whole body, and the rebase walks the metaclass
+    // chain, which mints -- and minting takes this same lock for writing.
+    let cached = cache_key.and_then(|k| maps().singleton_classes.read().unwrap().get(&k).copied());
+    if let Some(sid) = cached {
+        // A COMPILED surrogate carries the compiler's Object-rooted ancestry,
+        // not ruby's metaclass chain. This is the first ask, so it is where
+        // the rebase belongs -- a minted singleton pays the same gate below.
+        super::rebase_compiled_surrogate(sid, recv);
         return Ok(RubyValue::Class(sid));
     }
     let id_num = maps().next_id.fetch_add(1, Ordering::Relaxed);

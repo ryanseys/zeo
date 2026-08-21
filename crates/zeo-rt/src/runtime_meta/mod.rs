@@ -699,7 +699,9 @@ fn singleton_super_chain(recv: &RubyValue) -> Vec<ClassId> {
     {
         let mut parent = superclass_of(*cid);
         while let Some(p) = parent {
-            push(singleton_class_id_of(p), &mut chain);
+            for id in singleton_layer(p) {
+                push(id, &mut chain);
+            }
             parent = superclass_of(p);
         }
     }
@@ -709,6 +711,40 @@ fn singleton_super_chain(recv: &RubyValue) -> Vec<ClassId> {
     chain
 }
 
+/// What ruby files AT one class's singleton: the modules prepended into it,
+/// the singleton class itself, then the modules extended onto the class. What
+/// sits ABOVE the layer -- the parent's own layer, then `Class`'s ancestry --
+/// is [`singleton_super_chain`]'s job.
+///
+/// A subclass's chain carries its parent's whole layer, not just the parent's
+/// singleton class: `class Child < Inc` where `Inc` mixes a module into its
+/// singleton lists that module between `#<Class:Inc>` and `#<Class:Object>`.
+///
+/// The prepends come from two places because a singleton prepend does: a
+/// run-time one lands in the overlay, and a compiled one lives in the
+/// singleton class's own registered chain, ahead of the singleton itself.
+fn singleton_layer(cid: ClassId) -> Vec<ClassId> {
+    let sid = singleton_class_id_of(cid);
+    let mut layer: Vec<ClassId> = resolver::singleton_prepends_of(cid);
+    for &a in crate::dispatch::ancestors_of_value(sid) {
+        if a == sid {
+            break;
+        }
+        if !layer.contains(&a) {
+            layer.push(a);
+        }
+    }
+    layer.push(sid);
+    for m in extended_modules(&RubyValue::Class(cid)).into_iter().rev() {
+        for &a in crate::dispatch::ancestors_of_value(m) {
+            if !layer.contains(&a) {
+                layer.push(a);
+            }
+        }
+    }
+    layer
+}
+
 /// `cid`'s singleton class, minting it if this is the first ask. Holds NO
 /// lock, so the recursion up the superclass chain cannot deadlock.
 fn singleton_class_id_of(cid: ClassId) -> ClassId {
@@ -716,6 +752,52 @@ fn singleton_class_id_of(cid: ClassId) -> ClassId {
         Ok(RubyValue::Class(sid)) => sid,
         _ => unreachable!("a Class always has a singleton class"),
     }
+}
+
+/// Rebase a COMPILED singleton surrogate onto ruby's parallel metaclass
+/// chain, the first time a program asks for the singleton class.
+///
+/// A `class << self` body that carries a mixin makes the compiler register a
+/// surrogate class with an ancestry of its own, and
+/// `analyze::mro::compute_ancestors` roots every class at `Object`. So the
+/// surrogate arrives as `[prepends.., surrogate, includes.., Object, Kernel,
+/// BasicObject]` where ruby continues through `#<Class:Object>`,
+/// `#<Class:BasicObject>`, `Class` and `Module` first. Everything from the
+/// first `Object` on is that ordinary tail, and [`singleton_super_chain`]
+/// builds the real one.
+///
+/// The chain it builds also carries the owner's `extend`s, which is how an
+/// `include` written inside `class << self` reaches the ancestry at all: it
+/// lowers to `extend`, ruby's own meaning for it.
+///
+/// A MINTED singleton already has the right chain and an overlay entry, so
+/// the entry's absence is what tells the two apart -- and it also makes this
+/// idempotent, since the rebase writes one.
+fn rebase_compiled_surrogate(sid: ClassId, recv: &RubyValue) {
+    if maps().classes.read().unwrap().contains_key(&sid.0) {
+        return;
+    }
+    let mut anc: Vec<ClassId> = crate::dispatch::ancestors_of_value(sid)
+        .iter()
+        .copied()
+        .take_while(|&a| a != zeo_abi::OBJECT_CLASS)
+        .collect();
+    if !anc.contains(&sid) {
+        anc.push(sid);
+    }
+    anc.extend(singleton_super_chain(recv));
+    let mut seen = crate::FSet::default();
+    anc.retain(|&a| seen.insert(a));
+    let name = crate::dispatch::class_name(sid);
+    maps().classes.write().unwrap().insert(
+        sid.0,
+        OverlayEntry {
+            name: RwLock::new(name),
+            ancestors: Box::leak(anc.into_boxed_slice()),
+            ..Default::default()
+        },
+    );
+    mark_live();
 }
 
 /// Rebuild an ALREADY-MINTED singleton class's ancestry after an `extend`.
