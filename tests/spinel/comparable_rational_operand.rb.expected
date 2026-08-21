@@ -1,0 +1,9 @@
+true
+false
+-1
+true
+true
+[300, 100]
+ArgumentError
+true
+1

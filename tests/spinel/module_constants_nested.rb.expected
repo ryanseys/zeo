@@ -1,0 +1,8 @@
+[:Border, :Frame, :HEIGHT, :WIDTH]
+"|x|"
+2
+[:A, :B]
+[:X, :Y]
+[]
+[:Deep, :INNER]
+[:DEEPER]

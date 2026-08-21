@@ -1,0 +1,13 @@
+["upcase", NoMethodError, "undefined method 'upcase' for an instance of Bare"]
+["strip", NoMethodError, "undefined method 'strip' for an instance of Bare"]
+["reverse", NoMethodError, "undefined method 'reverse' for an instance of Bare"]
+["chars", NoMethodError, "undefined method 'chars' for an instance of Bare"]
+["to_str upcase", NoMethodError, "undefined method 'upcase' for an instance of WithToStr"]
+"AB C"
+"AB C"
+["A", "b", " ", "c"]
+:AB
+["sym strip", NoMethodError, "undefined method 'strip' for an instance of Symbol"]
+["int upcase", NoMethodError, "undefined method 'upcase' for an instance of Integer"]
+["nil strip", NoMethodError, "undefined method 'strip' for nil"]
+"MINE"

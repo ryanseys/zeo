@@ -1,0 +1,5 @@
+[]
+[:zero, nil, :two]
+[nil, "one", nil, "three"]
+[1, 2]
+3

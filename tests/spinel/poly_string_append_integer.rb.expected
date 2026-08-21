@@ -1,0 +1,13 @@
+RangeError
+{k: "abcZ"}
+RangeError
+"abcB"
+"abcBあ"
+RangeError
+{k: "abcBあ"}
+RangeError
+"q!"
+["q!"]
+["xy"]
+"aB"
+RangeError

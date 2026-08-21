@@ -1,0 +1,20 @@
+TypeError: nil can't be coerced into Integer
+TypeError: true can't be coerced into Integer
+TypeError: false can't be coerced into Integer
+TypeError: String can't be coerced into Integer
+TypeError: Array can't be coerced into Integer
+TypeError: :s can't be coerced into Integer
+TypeError: Hash can't be coerced into Integer
+TypeError: nil can't be coerced into Float
+TypeError: true can't be coerced into Float
+TypeError: :s can't be coerced into Float
+TypeError: no implicit conversion of nil into String
+TypeError: no implicit conversion of true into String
+TypeError: no implicit conversion of Symbol into String
+TypeError: no implicit conversion of Integer into String
+TypeError: no implicit conversion of Array into String
+TypeError: no implicit conversion of nil into Array
+TypeError: no implicit conversion of true into Array
+TypeError: no implicit conversion of Symbol into Array
+TypeError: no implicit conversion of String into Array
+nil can't be coerced into Integer

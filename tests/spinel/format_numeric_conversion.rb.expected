@@ -1,0 +1,42 @@
+%d nil => TypeError: can't convert nil into Integer
+%f nil => TypeError: can't convert nil into Float
+%x nil => TypeError: can't convert nil into Integer
+""
+%d true => TypeError: can't convert true into Integer
+%f true => TypeError: can't convert true into Float
+%x true => TypeError: can't convert true into Integer
+"true"
+%d false => TypeError: can't convert false into Integer
+%f false => TypeError: can't convert false into Float
+%x false => TypeError: can't convert false into Integer
+"false"
+%d :s => TypeError: can't convert Symbol into Integer
+%f :s => TypeError: can't convert Symbol into Float
+%x :s => TypeError: can't convert Symbol into Integer
+"s"
+%d [1] => TypeError: can't convert Array into Integer
+%f [1] => TypeError: can't convert Array into Float
+%x [1] => TypeError: can't convert Array into Integer
+"[1]"
+%d {a: 1} => TypeError: can't convert Hash into Integer
+%f {a: 1} => TypeError: can't convert Hash into Float
+%x {a: 1} => TypeError: can't convert Hash into Integer
+"{a: 1}"
+"1180591620717411303424"
+"400000000000000000"
+"200000000000000000000000"
+"10000000000000000000000000000000000000000000000000000000000000000000000"
+"-1180591620717411303424"
+"1180591620717411303424.000000"
+"+1180591620717411303424"
+"0x400000000000000000"
+"        1180591620717411303424|"
+"1180591620717411303424        |"
+"7.000000"
+"7.000000e+00"
+"5"
+"2"
+"7"
+"02.50"
+"ff"
+"a-1"

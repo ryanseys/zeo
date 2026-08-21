@@ -1,0 +1,20 @@
+R str
+A str
+true
+R str
+A str
+2
+R arr
+A arr
+true
+R arr
+A arr
+1
+R hash
+A hash
+true
+R obj
+A obj
+1
+31
+["12", "34"]

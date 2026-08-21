@@ -1,0 +1,10 @@
+{o: "a", b: 1, st: :open}
+S(keyword_init: true)
+1
+{o: "a", b: 1, st: :open}
+{o: "a", b: 2, st: :open}
+{o: "a", b: 2, st: :open}
+{o: "a", b: 2, st: :open}
+{o: "a", b: 9, st: :open}
+2
+3

@@ -1,0 +1,17 @@
+["x*z"]
+["x*z"]
+["x*z"]
+["zzz"]
+["abcZ"]
+{k: "abcZ"}
+["abcZ"]
+["zzz"]
+["abc"]
+["abc", "def"]
+1
+3
+nil
+nil
+[:a, 1]
+1
+1

@@ -1,0 +1,8 @@
+swallowed: ArgumentError: inner boom
+caught: RuntimeError: outer boom
+ensured
+caught: TypeError: typed boom
+inner: inner boom
+middle: middle boom
+caught: outermost boom
+caught: replacement

@@ -1,0 +1,8 @@
+20
+20
+[TypeError, "no implicit conversion of Inert into Integer"]
+[NoMethodError, "undefined method 'to_i' for an instance of Inert"]
+42
+"obj=Inert"
+Inert
+Inert

@@ -1,0 +1,17 @@
+"a*c"
+{a: "a*c"}
+"a*c"
+nil
+{a: "abc"}
+"a*c"
+"A*C"
+nil
+"a*c"
+"c*a"
+{a: "c*a"}
+"a*c"
+["a*c"]
+"a*c"
+nil
+"pad"
+nil
