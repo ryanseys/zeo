@@ -11,7 +11,8 @@
 //! interpreter as the differential oracle for every one. The interpreter
 //! is retired when nothing falls back (plan G6-4).
 
-use crate::builtins::binding::RBinding;
+pub use crate::builtins::binding::RBinding;
+pub use crate::eval_vm::EvalMode;
 use crate::{RubyValue, Signal};
 use std::sync::OnceLock;
 
@@ -37,6 +38,46 @@ pub struct EvalRequest<'a> {
     /// frame), its `self` is the receiver, and its cref is what a constant
     /// resolves against.
     pub binding: Option<&'a RBinding>,
+}
+
+/// The C signature a compiled snippet's entry function has: the status
+/// protocol every compiled function speaks, over the caller's cell array
+/// (one `*mut Cell` per local the snippet binds, in the order the compiler
+/// asked for) and a BORROWED `self`.
+pub type EvalFn = unsafe extern "C" fn(
+    cells: *const *mut crate::capi::procs::Cell,
+    self_val: *const RubyValue,
+    out: *mut RubyValue,
+) -> i32;
+
+/// Run one compiled snippet under `req`'s own frame -- the same file,
+/// label and line the interpreter pushes, so a backtrace cannot tell the
+/// two evaluators apart.
+///
+/// # Safety
+/// `f` must be a live entry compiled for exactly `req` and `cells` (same
+/// source, same cell order); its module must outlive the call.
+pub unsafe fn call(
+    req: &EvalRequest<'_>,
+    f: EvalFn,
+    cells: &[*mut crate::capi::procs::Cell],
+) -> Result<RubyValue, Signal> {
+    let _frame = crate::frames::FrameGuard::push(
+        crate::frames::intern_path(req.file),
+        req.label,
+        req.line,
+        0,
+    );
+    let mut out = std::mem::MaybeUninit::<RubyValue>::uninit();
+    let status = unsafe { f(cells.as_ptr(), &req.self_val, out.as_mut_ptr()) };
+    if status == zeo_abi::abi::STATUS_OK {
+        let v = unsafe { out.assume_init() };
+        crate::capi::leakcheck::consumed(&v);
+        Ok(v)
+    } else {
+        Err(crate::signal::take_pending()
+            .expect("a compiled eval answered STATUS_SIGNAL with an empty pending slot"))
+    }
 }
 
 /// An evaluator the `zeo` library installs. `None` from [`EvalCompiler::

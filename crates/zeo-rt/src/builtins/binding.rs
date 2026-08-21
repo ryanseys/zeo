@@ -87,6 +87,22 @@ impl BindingScope {
             .insert(0, (name.to_string(), Arc::new(Mutex::new(value))));
     }
 
+    /// The cell `name` names, CREATING it (nil) on this Binding's own layer
+    /// when the captured frame has none -- what a compiled `eval` binds its
+    /// locals to. Ruby declares an eval's locals when it parses the snippet,
+    /// so a name the source only writes under an `if` still exists; the
+    /// interpreter's [`set`] adds the same cell at its first write.
+    pub(crate) fn cell_or_add(&self, name: &str) -> LocalCell {
+        if let Some(c) = self.cell(name) {
+            return c;
+        }
+        let cell: LocalCell = Arc::new(Mutex::new(RubyValue::Nil));
+        self.added
+            .lock()
+            .insert(0, (name.to_string(), Arc::clone(&cell)));
+        cell
+    }
+
     /// Every name in scope, `local_variables` order: this Binding's own
     /// additions newest-first, then the frame's own declaration order.
     fn names(&self) -> Vec<String> {
@@ -253,6 +269,23 @@ pub(crate) fn rebind(v: &RubyValue) -> RubyValue {
         b.box_id,
         b.cref,
     )
+}
+
+impl RBinding {
+    /// Every local this Binding sees, `local_variables` order -- what a
+    /// compiled `eval` under it must bind before it runs (`zeo::eval`).
+    pub fn local_names(&self) -> Vec<String> {
+        self.scope.names()
+    }
+
+    /// The cell `name` names, created on this Binding when it has none,
+    /// as ONE more owner of it. A compiled `eval` entry loads one per
+    /// local, so a write through it reaches the compiled frame the Binding
+    /// captured; the caller hands the reference back with
+    /// `zeo_rt_cell_release`.
+    pub fn local_cell_ptr(&self, name: &str) -> *mut crate::capi::procs::Cell {
+        Arc::into_raw(self.scope.cell_or_add(name)).cast_mut()
+    }
 }
 
 pub(crate) fn as_binding(v: &RubyValue) -> Option<&RBinding> {

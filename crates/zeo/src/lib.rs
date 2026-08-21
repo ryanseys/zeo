@@ -44,6 +44,7 @@ pub mod codegen;
 pub mod compiler;
 pub(crate) mod debug_flags;
 pub mod diagnostics;
+pub mod eval;
 pub mod gem_report;
 pub mod home;
 pub mod memguard;
@@ -74,6 +75,12 @@ pub mod types;
 pub struct CompileOptions {
     /// The main file's own path -- the base for its `require_relative`s.
     pub input_path: Option<std::path::PathBuf>,
+    /// The name `__FILE__` and every span report, for a source with no path
+    /// on disk: a run-time `eval` is named `(eval at f.rb:14)` and has no
+    /// directory of its own (CRuby's `require_relative` in an eval raises
+    /// for exactly that reason). `None` -- and no `input_path` -- is ruby's
+    /// `"-e"`.
+    pub file_name: Option<std::path::PathBuf>,
     /// Ordered `-I` search roots for plain `require "feature"`.
     pub load_roots: Vec<std::path::PathBuf>,
     /// Ordered directories of vendored gems (each subdirectory with a
@@ -237,6 +244,7 @@ fn analyze_on_this_thread(
     let (hir, root, gem_records) = parse::parse_and_lower_with(
         source,
         opts.input_path.as_deref(),
+        opts.file_name.as_deref(),
         &opts.load_roots,
         &opts.package_dirs,
         &opts.gem_paths,
@@ -261,6 +269,17 @@ fn compile_object_on_this_thread(
     let analyzed = analyze_on_this_thread(source, opts)?;
     let object = clif::emit::compile(&analyzed, debuginfo).map_err(CompileError::codegen)?;
     Ok(ObjectOutput { object, debuginfo })
+}
+
+/// The front end alone, on the CALLER's thread: one snippet in, its
+/// analysis out. What a run-time `eval` compiles (see `crate::eval`) --
+/// no loader roots, no gem report, and no compile thread, because a
+/// snippet arrives on a Ruby thread that already has a stack.
+pub fn analyze_snippet(
+    source: &str,
+    opts: &CompileOptions,
+) -> Result<analyze::Analyzed, CompileError> {
+    analyze_on_this_thread(source, opts)
 }
 
 /// The JIT run mode (`--backend jit`): compile in-process and run without
@@ -376,6 +395,7 @@ fn compile_on_this_thread(
     let (hir, root, gem_records) = parse::parse_and_lower_with(
         source,
         opts.input_path.as_deref(),
+        opts.file_name.as_deref(),
         &opts.load_roots,
         &opts.package_dirs,
         &opts.gem_paths,

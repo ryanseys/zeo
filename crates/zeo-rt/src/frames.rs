@@ -451,7 +451,6 @@ pub fn current_location() -> Option<(&'static str, u32)> {
 /// `file` argument is not, and the set of distinct names one program evals
 /// under is small and bounded -- interned rather than leaked per call, so
 /// `eval(src, b, "f.rb", 1)` in a loop costs one allocation, not one a turn.
-#[cfg(feature = "eval-vm")]
 pub fn intern_path(path: &str) -> &'static str {
     use std::sync::{LazyLock, RwLock};
     static PATHS: LazyLock<RwLock<std::collections::HashSet<&'static str>>> =

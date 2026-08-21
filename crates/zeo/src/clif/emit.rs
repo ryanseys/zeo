@@ -824,11 +824,17 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             m.alias_of.as_deref(),
         ));
     }
+    // The JIT never needs the reference: the `zeo` process it runs in
+    // installed the compiler itself. A LINKED program names the installer
+    // so the linker keeps the compiler for it -- and only for it.
+    let eval_install =
+        matches!(em.module, ClifModule::Object(_)) && analyzed.compiler.hir.uses_runtime_eval();
     let desc = statics::define_desc(
         em,
         analyzed,
         toplevel,
         unit_init,
+        eval_install,
         &vm_rows,
         &vis_rows,
         &class_specs,
@@ -915,7 +921,7 @@ impl Emitter {
     /// `jit`: emit into in-process code memory instead of an object file.
     /// The only lowering-visible difference is `is_pic` (`JITModule`
     /// requires non-PIC code); everything downstream is mode-blind.
-    fn new(jit: bool) -> Result<Emitter, String> {
+    pub(crate) fn new(jit: bool) -> Result<Emitter, String> {
         let mut flags = settings::builder();
         let set = |flags: &mut settings::Builder, k: &str, v: &str| {
             flags
@@ -2480,7 +2486,7 @@ fn define_main(em: &mut Emitter, desc: DataId) -> Result<FuncId, String> {
 
 /// A fresh CAPTURED local: an owned cell (seeded from `seed`'s moved
 /// value, nil when `None`) whose pointer lives in an 8-byte slot.
-fn init_cell_local(fx: &mut Fx, name: String, seed: Option<ir::Value>) {
+pub(crate) fn init_cell_local(fx: &mut Fx, name: String, seed: Option<ir::Value>) {
     let init = match seed {
         Some(p) => p,
         None => fx.b.ins().iconst(fx.em.ptr, 0),
@@ -2498,7 +2504,7 @@ fn init_cell_local(fx: &mut Fx, name: String, seed: Option<ir::Value>) {
 
 /// Release every local: slots drop their value, owned cells drop their
 /// reference (the proc's copies keep the cell alive).
-fn release_locals(fx: &mut Fx) {
+pub(crate) fn release_locals(fx: &mut Fx) {
     let locals: Vec<super::ctx::Local> = fx.locals.values().copied().collect();
     for l in locals {
         match l {

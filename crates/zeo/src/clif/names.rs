@@ -31,6 +31,10 @@ pub const CM_SITES: &str = "zeo_cm_sites";
 /// `.bss` site slots).
 pub const UNIT_INIT: &str = "zeo_unit_init";
 
+/// The `zeo` library's own installer for the run-time `eval` compiler,
+/// named by `ProgramDesc.eval_install` in a program that can eval.
+pub const EVAL_INSTALL: &str = "zeo_eval_install";
+
 /// A fully-qualified owner (`Outer::Inner`) as a symbol fragment.
 fn owner_fragment(owner: &str) -> String {
     owner.replace("::", "__")

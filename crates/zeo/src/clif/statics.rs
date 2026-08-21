@@ -1063,6 +1063,7 @@ pub(crate) fn define_desc(
     analyzed: &Analyzed,
     toplevel: FuncId,
     unit_init: Option<FuncId>,
+    eval_install: bool,
     vm_rows: &[VmRowSpec],
     vis_rows: &[VisRowSpec],
     classes: &[super::classes::ClassSpec],
@@ -1303,6 +1304,22 @@ pub(crate) fn define_desc(
         desc.write_function_addr(
             std::mem::offset_of!(ProgramDesc, unit_init) as u32,
             init_ref,
+        );
+    }
+    // The compiler installs itself as the runtime's evaluator -- named
+    // ONLY by a program that can `eval`, which is what lets `-dead_strip`
+    // drop the whole compiler from every program that cannot (plan
+    // decision 17).
+    if eval_install {
+        let sig = em.module.make_signature();
+        let f = em
+            .module
+            .declare_function(names::EVAL_INSTALL, Linkage::Import, &sig)
+            .map_err(|e| format!("declaring {}: {e}", names::EVAL_INSTALL))?;
+        let f_ref = em.module.declare_func_in_data(f, &mut desc);
+        desc.write_function_addr(
+            std::mem::offset_of!(ProgramDesc, eval_install) as u32,
+            f_ref,
         );
     }
     em.module

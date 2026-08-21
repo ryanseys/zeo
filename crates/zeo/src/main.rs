@@ -645,6 +645,7 @@ fn run() -> Result<(), MainError> {
     };
     let opts = zeo::CompileOptions {
         input_path: input_path.clone(),
+        file_name: None,
         load_roots: args.load_roots.clone(),
         package_dirs,
         gem_report,
@@ -786,6 +787,9 @@ fn main() -> ExitCode {
             Box::new(miette::MietteHandlerOpts::new().wrap_lines(false).build())
         }));
     }
+    // The compiler IS the runtime's evaluator, for whatever shapes it
+    // accepts (`ZEO_EVAL=compiler` selects it; plan G6).
+    zeo::eval::install();
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(MainError::Plain(e)) => {

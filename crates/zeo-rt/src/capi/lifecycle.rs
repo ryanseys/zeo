@@ -51,10 +51,11 @@ unsafe fn main_inner(
     if let Some(init) = desc.unit_init {
         unsafe { init() };
     }
-    assert!(
-        desc.eval_install.is_none(),
-        "zeo_rt_main: eval_install is not yet emitted (G6)"
-    );
+    // A program that can `eval` names the compiler's installer, and only
+    // such a program links the compiler at all -- see `ProgramDesc`.
+    if let Some(install) = desc.eval_install {
+        unsafe { install() };
+    }
 
     let toplevel = desc.toplevel;
     let result = crate::run_main(move || {

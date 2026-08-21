@@ -264,6 +264,7 @@ pub(super) fn lower_main_file(
     hir: &mut Hir,
     source: &str,
     input_path: Option<&Path>,
+    file_name: Option<&Path>,
     load_roots: &[PathBuf],
     package_dirs: &[PathBuf],
     gem_paths: &[PathBuf],
@@ -388,7 +389,11 @@ pub(super) fn lower_main_file(
             err.message()
         )));
     }
-    let main_name = input_path.map_or_else(|| "-e".to_string(), |p| p.display().to_string());
+    // What `__FILE__` and every span report. A source with no path on
+    // disk can still have a NAME -- a run-time `eval`'s is
+    // `(eval at f.rb:14)`, which is what its backtrace rows must say.
+    let named = file_name.or(input_path);
+    let main_name = named.map_or_else(|| "-e".to_string(), |p| p.display().to_string());
     collect_parse_warnings(hir, &result, &main_name, source);
     hir.data_section = input_path.and_then(|p| data_section(&result, p));
     let program = result
@@ -397,7 +402,7 @@ pub(super) fn lower_main_file(
         .ok_or("expected a top-level ProgramNode")?;
     // The main file is `__FILE__`'s answer for its own statements -- held
     // for exactly this lowering, and restored by the guard's Drop.
-    let _file = SourceFileFrame::push(input_path);
+    let _file = SourceFileFrame::push(named);
     // Span provenance: the main file's name AS GIVEN (matching `__FILE__`),
     // `"-e"` for a pathless source string.
     let main_file = hir.add_file(main_name, source);

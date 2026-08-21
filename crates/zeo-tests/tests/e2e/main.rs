@@ -29,6 +29,7 @@ mod control_flow;
 mod debuginfo;
 mod enumerable;
 mod etc;
+mod eval;
 mod exceptions;
 mod ffi;
 mod gc_weak;

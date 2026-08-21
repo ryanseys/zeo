@@ -52,6 +52,22 @@ pub enum EvalMode {
     InstanceEval,
 }
 
+/// The file name a snippet reports, which is CRuby's `(eval at f.rb:14)`
+/// unless the caller named one: two evals in one program tell their
+/// backtraces apart by where they were EVALUATED. Shared by the
+/// interpreter and by the `EvalRequest` handed to a compiler, so the two
+/// evaluators cannot name the same snippet differently.
+#[cfg(feature = "eval-vm")]
+fn eval_path(file: Option<&str>) -> String {
+    match file {
+        Some(f) => f.to_string(),
+        None => match crate::frames::current_location() {
+            Some((f, l)) => format!("(eval at {f}:{l})"),
+            None => imp::EVAL_FILE.to_string(),
+        },
+    }
+}
+
 /// Evaluate `src` as a standalone chunk of Ruby with `self` bound to
 /// `self_val`, resolving constants/globals against `box_id`. A parse failure
 /// becomes a catchable `SyntaxError`; the value of the last statement is
@@ -83,9 +99,10 @@ pub fn eval_string_mode(
         };
         let _c = crate::frames::synthetic_c_frame(entry);
         if let Some(c) = crate::eval::selected() {
+            let path = eval_path(None);
             let req = crate::eval::EvalRequest {
                 src,
-                file: "(eval)",
+                file: &path,
                 line: 1,
                 self_val: self_val.clone(),
                 box_id,
@@ -216,10 +233,14 @@ pub fn eval_with_binding(
         // eval was entered as well as where it raised.
         let _c = crate::frames::synthetic_c_frame(caller_label);
         if let Some(c) = crate::eval::selected() {
+            let path = eval_path(file.as_deref());
             let req = crate::eval::EvalRequest {
                 src: &code,
-                file: file.as_deref().unwrap_or(&b.file),
-                line: line.unwrap_or(b.line),
+                // The snippet's own first line, which is 1 unless the
+                // caller named one -- NOT the Binding's capture line, which
+                // is where `binding` was written.
+                file: &path,
+                line: line.unwrap_or(1),
                 self_val: b.self_val.clone(),
                 box_id: b.box_id,
                 mode: EvalMode::Caller,
@@ -329,7 +350,7 @@ mod imp {
         Arc::new(BindingScope::new(Vec::new()))
     }
 
-    const EVAL_FILE: &str = "(eval)";
+    pub(super) const EVAL_FILE: &str = "(eval)";
 
     pub(super) fn eval_string(
         src: &str,
@@ -374,10 +395,7 @@ mod imp {
         };
         // Named for where it was evaluated, as CRuby's `(eval at f.rb:14)` is
         // -- there is no `file` argument on this path.
-        let eval_path = match crate::frames::current_location() {
-            Some((f, l)) => format!("(eval at {f}:{l})"),
-            None => EVAL_FILE.to_string(),
-        };
+        let eval_path = super::eval_path(None);
         let mut env = Env {
             self_val,
             scope: fresh_scope(),
@@ -418,13 +436,7 @@ mod imp {
         // With no `file` argument CRuby names the snippet for where it was
         // evaluated -- `(eval at f.rb:14)` -- which is what makes two evals in
         // one program tell their backtraces apart.
-        let eval_path = match &file {
-            Some(f) => f.clone(),
-            None => match crate::frames::current_location() {
-                Some((f, l)) => format!("(eval at {f}:{l})"),
-                None => EVAL_FILE.to_string(),
-            },
-        };
+        let eval_path = super::eval_path(file.as_deref());
         let mut env = Env {
             self_val: b.self_val.clone(),
             scope: Arc::clone(&b.scope),
