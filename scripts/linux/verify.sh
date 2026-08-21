@@ -21,6 +21,11 @@
 # Every stage needs `build` to have run first (nothing rebuilds the `zeo`
 # BINARY for a test target). The target volume persists between runs, so a
 # second `build` is incremental.
+#
+# The container runs as ROOT, and one golden can tell: `process_identity_rows`
+# expects `Errno::EPERM` from `Sys.setuid("root")` and its siblings, which
+# succeed here. CI and any developer machine run unprivileged, so the
+# expectation is right and this leg is the odd one out -- do not bless it away.
 set -euo pipefail
 
 IMAGE=${ZEO_LINUX_IMAGE:-zeo-linux}
@@ -51,6 +56,7 @@ run() {
   # enough OS threads at eight-way parallelism to hit it -- `pthread_create`
   # then fails EAGAIN and the runtime panics mid-test. Another failure that
   # is the harness, not the program.
+  #
   # -it only when there IS a terminal: the same script runs from a
   # non-tty caller (CI, an agent), where podman refuses the flag.
   local tty=(); [ -t 0 ] && [ -t 1 ] && tty=(-it)
