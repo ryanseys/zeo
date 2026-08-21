@@ -2518,10 +2518,21 @@ pub fn eval_define(
     name: Symbol,
     body: RubyValue,
 ) -> Result<RubyValue, Signal> {
-    let (definee, installer) = match (mode, slf) {
-        (2, _) => (slf.clone(), "define_singleton_method"),
-        (_, RubyValue::Class(_)) => (slf.clone(), "define_method"),
-        _ => (RubyValue::Class(slf.class_id()), "define_method"),
+    // The RUN TIME decides first, and it has to: the `def` may be sitting
+    // in a proc the eval only BUILT, which something else then runs under
+    // an `instance_eval`/`class_eval` of its own (forwardable's
+    // `_delegator_method` is exactly that shape). Only when nothing has
+    // opened a definee does the eval's own mode answer.
+    let (definee, installer) = if crate::runtime_meta::singleton_definee(slf) {
+        (slf.clone(), "define_singleton_method")
+    } else if let Some(cid) = crate::runtime_meta::module_definee(slf) {
+        (RubyValue::Class(cid), "define_method")
+    } else {
+        match (mode, slf) {
+            (2, _) => (slf.clone(), "define_singleton_method"),
+            (_, RubyValue::Class(_)) => (slf.clone(), "define_method"),
+            _ => (RubyValue::Class(slf.class_id()), "define_method"),
+        }
     };
     let out = send_value(
         &definee,
