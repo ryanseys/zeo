@@ -2004,7 +2004,8 @@ fn define_method_body(
     // same predicate as the rustc wrapper's needs_return_catch.
     let needs_return_catch =
         crate::analyze::captures::body_contains_escaping_return(&analyzed.compiler, def.body)
-            || crate::analyze::captures::body_contains_begin(&analyzed.compiler, def.body);
+            || crate::analyze::captures::body_contains_begin(&analyzed.compiler, def.body)
+            || crate::analyze::captures::body_contains_runtime_eval(&analyzed.compiler, def.body);
 
     // Recursion guard BEFORE the frame exists: a failure returns without
     // pops (mirrors the rustc prologue's `stack_check()?` position).

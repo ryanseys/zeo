@@ -282,13 +282,12 @@ fn home_refusals(analyzed: &crate::analyze::Analyzed) -> Result<(), String> {
         }
         hir[id].for_each_child(&mut |c| stack.push(c));
         refused = match &hir[id] {
-            // `super` resumes from the class the body was written in;
-            // `yield`/`return` belong to the method the eval sits inside,
-            // whose block channel and return target the snippet's own
-            // frame does not carry.
-            HirNode::SuperCall { .. } => Some("a top-level `super`"),
-            HirNode::Yield { .. } | HirNode::BlockGiven => Some("a top-level `yield`"),
-            HirNode::Return(..) => Some("a top-level `return`"),
+            // A `yield` is the one shape here with no answer at all: it
+            // needs the enclosing method's block channel, which nothing
+            // hands a snippet. (prism refuses to parse a bare `yield` on
+            // its own, so this arm is reached only where zeo's front end
+            // lowers one some other way.)
+            HirNode::Yield { .. } => Some("a top-level `yield`"),
             _ => None,
         };
     }

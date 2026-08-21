@@ -134,6 +134,11 @@ fn define_entry(
     fx.in_eval_splice = true;
     fx.eval_cref = spec.cref.clone();
     fx.eval_mode = Some(spec.mode);
+    // A snippet has no defining class of its own, so a `super` written in
+    // one resumes from the (class, name) pair the method-frame stack
+    // recorded -- the same question a run-time-installed body asks, and
+    // the same answer.
+    fx.runtime_method_body = true;
 
     // The caller's cells first: unowned (the caller holds the reference
     // and drops it when the call returns).

@@ -3995,7 +3995,8 @@ fn emit_class_method_fn(
     // needs the SAME per-method `Signal::Return` catch an ordinary instance
     // method gets when it contains either.
     let needs_return_catch = captures::body_contains_begin(compiler, &scope.body)
-        || captures::body_contains_escaping_return(compiler, &scope.body);
+        || captures::body_contains_escaping_return(compiler, &scope.body)
+        || captures::body_contains_runtime_eval(compiler, &scope.body);
     let body_tokens = wrap_method_return(needs_return_catch, body);
     let frame = scope_frame_guard(compiler, scope, true);
     // A class method's traced `self` is the class object itself -- the OWNER,
@@ -4409,7 +4410,8 @@ fn emit_value_self_method_fn(
     // Same needs-a-`Signal::Return`-catch rule as `emit_class`'s methods --
     // see the long comment there.
     let needs_return_catch = captures::body_contains_escaping_return(compiler, &scope.body)
-        || captures::body_contains_begin(compiler, &scope.body);
+        || captures::body_contains_begin(compiler, &scope.body)
+        || captures::body_contains_runtime_eval(compiler, &scope.body);
     let body_tokens = wrap_method_return(needs_return_catch, quote! { #prologue #body });
     let frame = scope_frame_guard(compiler, scope, false);
     let self_note = compiler
@@ -4536,7 +4538,8 @@ pub(crate) fn emit_instance_method_body(
     // needs this (it introduces its own closure boundary a literal
     // `return` can't cross either).
     let needs_return_catch = captures::body_contains_escaping_return(compiler, &scope.body)
-        || captures::body_contains_begin(compiler, &scope.body);
+        || captures::body_contains_begin(compiler, &scope.body)
+        || captures::body_contains_runtime_eval(compiler, &scope.body);
     let body = wrap_method_return(needs_return_catch, quote! { #prologue #body });
     // Dropping `check_ints` with it cannot make a program uninterruptible:
     // an accessor body is a leaf, and every loop and every block already

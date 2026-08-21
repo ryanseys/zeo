@@ -440,6 +440,51 @@ fn node_contains_escaping_return(compiler: &Compiler, id: NodeId, in_escaping: b
     found
 }
 
+/// Whether `body` can reach a RUN-TIME `eval` -- a snippet whose `return`
+/// belongs to THIS method, exactly as ruby's does.
+///
+/// A snippet's `return` arms an unmarked `Signal::Return`, which belongs to
+/// the nearest catcher; without this the enclosing method pushes no home,
+/// the signal walks out past it and the program ends silently. The rule
+/// mirrors [`crate::hir::Hir::uses_runtime_eval`] -- a LITERAL
+/// `eval("...")` is already spliced into this scope's own statements, so a
+/// surviving `Call` named `eval` is the dynamic form.
+///
+/// Over-approximation is safe (one `home_push`/`home_pop` pair per call);
+/// the walk stops where a `return` would be caught before reaching here --
+/// a nested `def`, a lambda, an FFI wrapper.
+pub fn body_contains_runtime_eval(compiler: &Compiler, body: &[NodeId]) -> bool {
+    body.iter()
+        .any(|&n| node_contains_runtime_eval(compiler, n))
+}
+
+fn node_contains_runtime_eval(compiler: &Compiler, id: NodeId) -> bool {
+    let node = &compiler.hir[id];
+    if let HirNode::Call { name, args, .. } = node {
+        let dynamic = match name.as_str() {
+            "eval" => true,
+            "instance_eval" | "class_eval" | "module_eval" => !args.is_empty(),
+            "send" | "__send__" | "public_send" => args
+                .first()
+                .and_then(|a| compiler.hir.sent_name(a.node_id()))
+                .is_some_and(|n| {
+                    matches!(n, "eval" | "instance_eval" | "class_eval" | "module_eval")
+                }),
+            _ => false,
+        };
+        if dynamic {
+            return true;
+        }
+    }
+    match node.scope_kind() {
+        ScopeKind::Ffi | ScopeKind::Lambda | ScopeKind::Definition => return false,
+        ScopeKind::Block | ScopeKind::None => {}
+    }
+    let mut found = false;
+    node.for_each_child(&mut |c| found = found || node_contains_runtime_eval(compiler, c));
+    found
+}
+
 /// Whether `body` lexically contains a `begin`/`rescue`/`else`/`ensure`
 /// construct ANYWHERE (including inside a `.times` inline block, which
 /// shares this same Rust function scope, and inside a real escaping block --

@@ -2486,6 +2486,10 @@ pub const STOP_ITERATION_CLASS: ClassId = exc_id(15);
 /// over an exception's hidden detail slots. Keep the offset in sync with its row.
 pub const KEY_ERROR_CLASS: ClassId = exc_id(14);
 
+/// `NotImplementedError` -- named because the emitter raises it where zeo
+/// declines a shape ruby answers, rather than answering it wrongly.
+pub const NOT_IMPLEMENTED_ERROR_CLASS: ClassId = exc_id(2);
+
 /// `NameError` -- exposes `#name`/`#receiver` and a name-aware `initialize`.
 pub const NAME_ERROR_CLASS: ClassId = exc_id(16);
 

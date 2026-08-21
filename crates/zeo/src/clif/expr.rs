@@ -656,6 +656,13 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                         .icmp_imm_u(cranelift_codegen::ir::condcodes::IntCC::NotEqual, b, 0);
                 Ok(Operand::Bool(given))
             }
+            // A snippet carries no block channel and the ENCLOSING method's
+            // is not a snippet's to read, so `false` would be a silent
+            // wrong answer: the receiverless send reaches `Kernel`'s own
+            // row, which says exactly that.
+            None if fx.eval_mode.is_some() => {
+                super::call::implicit_send(fx, id, "block_given?", &[])
+            }
             None => Ok(Operand::Bool(fx.b.ins().iconst(types::I8, 0))),
         },
         HirNode::SelfRef => {

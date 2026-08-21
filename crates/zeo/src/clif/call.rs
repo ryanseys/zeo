@@ -791,8 +791,29 @@ pub(crate) fn lower_super(
         fx.fallible(status);
         return Ok(Operand::Nil);
     }
-    let Some(params) = fx.method_params.clone() else {
-        return super_outside_a_method(fx);
+    // A snippet has no method of its own, and yet the eval may sit inside
+    // one -- the walk below resumes from the (class, name) pair the
+    // method-frame stack recorded, which is exactly what a `super` written
+    // in an eval must do. A BARE `super` still cannot: it forwards the
+    // enclosing method's own arguments, and no channel hands a snippet
+    // those, so it says so rather than forwarding an empty list.
+    let params = match fx.method_params.clone() {
+        Some(p) => p,
+        None if fx.eval_mode.is_some() && !zsuper => crate::hir::Params::default(),
+        None if fx.eval_mode.is_some() => {
+            let msg = "a bare `super` inside an `eval` forwards the enclosing method's arguments, which zeo does not hand a snippet";
+            let cid = fx.b.ins().iconst(
+                cranelift_codegen::ir::types::I32,
+                i64::from(zeo_abi::NOT_IMPLEMENTED_ERROR_CLASS.0),
+            );
+            let (mptr, mlen) = super::expr::rodata_name(fx, msg);
+            let status = fx
+                .call("zeo_rt_raise_error", &[cid, mptr, mlen])
+                .expect("raise_error returns a status");
+            fx.fallible(status);
+            return Ok(Operand::Nil);
+        }
+        None => return super_outside_a_method(fx),
     };
 
     // The argument Array (rustc's `__super_args` Vec) + kw hash + unmark.
