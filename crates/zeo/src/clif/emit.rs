@@ -905,6 +905,9 @@ pub(crate) struct MethodDecl {
     /// direct; any richer shape routes through the dynamic send and the
     /// bound trampoline.
     pub plain: bool,
+    /// Callee keyword names in slot order when EVERY keyword is required
+    /// and nothing else complicates the signature -- see `Layout`.
+    pub kw_direct: Option<Vec<String>>,
     pub has_blk: bool,
 }
 
@@ -1182,6 +1185,7 @@ fn collect_methods(em: &mut Emitter, analyzed: &Analyzed) -> Result<Vec<DefSpec>
                 tramp: tramp_id,
                 arity: params.required.len(),
                 plain: layout.plain,
+                kw_direct: layout.kw_direct.clone(),
                 has_blk,
             },
         );

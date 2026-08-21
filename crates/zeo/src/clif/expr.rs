@@ -1150,6 +1150,31 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             {
                 return Ok(op);
             }
+            // A receiverless keyword call naming a compiled method whose
+            // keywords are ALL required, covered exactly by literal keys,
+            // fills the slots itself: no Hash, no dynamic send, no binder.
+            // The rustc backend has routed this shape statically all
+            // along; CLIF sent every keyword call the long way round.
+            if receiver.is_none()
+                && block_arg.is_none()
+                && !args.iter().any(|a| matches!(a, ArrayElem::Splat(_)))
+                && !method_class_shadows(fx, &name)
+                && fx
+                    .em
+                    .methods
+                    .get(&name)
+                    .is_some_and(|d| d.arity == args.len())
+                && let Some(order) = super::call::kw_direct_order(fx, &name, &kwargs)
+            {
+                return super::call::direct_call_kw(
+                    fx,
+                    id,
+                    &name,
+                    &args,
+                    Some((&kwargs, &order)),
+                    block,
+                );
+            }
             let later = later_nodes(&args, &kwargs, block_arg);
             let recv = match receiver {
                 Some(r) => {

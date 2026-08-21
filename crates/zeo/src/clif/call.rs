@@ -33,13 +33,84 @@ fn arg_ptrs(
     Ok(ptrs)
 }
 
-/// A direct call to compiled method `name`: `(self, p1..pn, out)` through
-/// the status protocol. `self_ptr` is the caller's own borrowed self.
+/// The call site's keyword keys as literal names, in written order.
+/// `None` when a key is not a literal symbol or a `**` splat is present --
+/// which is exactly when the pairing cannot be decided here.
+pub(crate) fn literal_kw_names(fx: &Fx, kwargs: &[crate::hir::KwArg]) -> Option<Vec<String>> {
+    let mut names = Vec::with_capacity(kwargs.len());
+    for kw in kwargs {
+        let crate::hir::KwArg::Pair(k, _) = kw else {
+            return None;
+        };
+        match &fx.an.compiler.hir[*k] {
+            crate::hir::HirNode::SymbolLit(n) => names.push(n.clone()),
+            _ => return None,
+        }
+    }
+    Some(names)
+}
+
+/// Callee slot order -> the index of the site row that fills it, when the
+/// site's keys cover the callee's required keywords EXACTLY. Anything
+/// else -- a missing key, a spare one, the same key twice -- is an
+/// `ArgumentError` (or a last-one-wins overwrite) that the binder owns, so
+/// it keeps the dynamic route and its error text cannot drift.
+///
+/// Callee names are distinct (ruby forbids a repeated parameter name) and
+/// the lengths match, so an injective map is a bijective one: every site
+/// row is used exactly once.
+pub(crate) fn kw_slot_order(decl: &[String], site: &[String]) -> Option<Vec<usize>> {
+    if decl.len() != site.len() {
+        return None;
+    }
+    let mut order = Vec::with_capacity(decl.len());
+    for want in decl {
+        let mut found = None;
+        for (i, got) in site.iter().enumerate() {
+            if got == want {
+                if found.is_some() {
+                    return None;
+                }
+                found = Some(i);
+            }
+        }
+        order.push(found?);
+    }
+    Some(order)
+}
+
+/// Can this site fill `name`'s keyword slots itself? Answers the slot
+/// order when it can.
+pub(crate) fn kw_direct_order(
+    fx: &Fx,
+    name: &str,
+    kwargs: &[crate::hir::KwArg],
+) -> Option<Vec<usize>> {
+    let decl = fx.em.methods.get(name)?;
+    let want = decl.kw_direct.as_ref()?;
+    kw_slot_order(want, &literal_kw_names(fx, kwargs)?)
+}
+
+/// A direct call to compiled method `name`: `(self, p1..pn, k1..km, out)`
+/// through the status protocol. `self_ptr` is the caller's own borrowed
+/// self. `kw` is `(the site's rows, slot order)` when the site fills the
+/// callee's keyword slots itself -- see [`kw_direct_order`].
 pub(crate) fn direct_call(
     fx: &mut Fx,
     site: NodeId,
     name: &str,
     args: &[ArrayElem],
+    block: Option<NodeId>,
+) -> Result<Operand, String> {
+    direct_call_kw(fx, site, name, args, None, block)
+}
+
+pub(crate) fn direct_call_kw(
+    fx: &mut Fx,
+    site: NodeId,
+    name: &str,
+    args: &[ArrayElem],
+    kw: Option<(&[crate::hir::KwArg], &[usize])>,
     block: Option<NodeId>,
 ) -> Result<Operand, String> {
     let decl_has_blk = fx.em.methods[name].has_blk;
@@ -57,15 +128,37 @@ pub(crate) fn direct_call(
         (None, false) => None,
     };
     let ptrs = arg_ptrs(fx, site, args)?;
+    // Keyword VALUES evaluate in written order (they are ordinary
+    // argument expressions), and land in the callee's DECLARED order --
+    // so they are lowered first and permuted after.
+    let kw_ptrs = match kw {
+        None => Vec::new(),
+        Some((rows, order)) => {
+            let mut written = Vec::with_capacity(rows.len());
+            for row in rows {
+                let crate::hir::KwArg::Pair(_, v) = row else {
+                    unreachable!("kw_direct_order rejects a ** splat");
+                };
+                let op = lower_expr(fx, *v)?;
+                let p = ownership::borrow_ptr(fx, &op);
+                if op.owned() {
+                    ownership::pool_owned(fx, p, op.tag());
+                }
+                written.push(p);
+            }
+            order.iter().map(|&i| written[i]).collect()
+        }
+    };
     super::stmt::stamp_call_line(fx, site);
     let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
     let func_id = fx.em.methods[name].body;
     let fref = fx.em.module.declare_func_in_func(func_id, fx.b.func);
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
-    let mut call_args = Vec::with_capacity(ptrs.len() + 3);
+    let mut call_args = Vec::with_capacity(ptrs.len() + kw_ptrs.len() + 3);
     call_args.push(self_ptr);
     call_args.extend(ptrs);
+    call_args.extend(kw_ptrs);
     if let Some(b) = blk_ptr {
         call_args.push(b);
     }

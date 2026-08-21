@@ -28,6 +28,13 @@ pub(crate) struct Layout {
     /// Required positionals only (and no `**nil`): the lean trampoline
     /// suffices and a count-matched call site may go direct.
     pub plain: bool,
+    /// Required positionals plus REQUIRED keywords and nothing else, as
+    /// the keyword names in declared (= slot) order. A call site whose
+    /// keys are literal and cover this set exactly can fill the slots
+    /// itself and go direct -- no Hash, no dynamic send, no binder. Any
+    /// other keyword shape (an optional keyword, a `**rest`, `**nil`)
+    /// keeps the binder, whose job is deciding what is absent.
+    pub kw_direct: Option<Vec<String>>,
 }
 
 pub(crate) fn layout_of(p: &Params) -> Result<Layout, String> {
@@ -57,16 +64,30 @@ pub(crate) fn layout_of(p: &Params) -> Result<Layout, String> {
         }
         s += 1;
     }
-    let plain = p.optional.is_empty()
+    let positional_only = p.optional.is_empty()
         && p.rest.is_none()
         && p.post.is_empty()
-        && p.keywords.is_empty()
         && p.keyword_rest.is_none()
         && !p.no_keywords;
+    let plain = positional_only && p.keywords.is_empty();
+    let all_required = p
+        .keywords
+        .iter()
+        .all(|k| matches!(k, KeywordParam::Required(_)));
+    let kw_direct = (positional_only && !p.keywords.is_empty() && all_required).then(|| {
+        p.keywords
+            .iter()
+            .map(|k| match k {
+                KeywordParam::Required(n) => n.clone(),
+                KeywordParam::Optional(n, _) => n.clone(),
+            })
+            .collect()
+    });
     Ok(Layout {
         n_slots,
         optional_mask: mask,
         plain,
+        kw_direct,
     })
 }
 
