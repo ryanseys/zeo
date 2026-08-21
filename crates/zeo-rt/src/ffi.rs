@@ -905,6 +905,15 @@ fn dlopen_first(candidates: &[&str]) -> Result<*mut c_void, Signal> {
     let mut errors = Vec::new();
     for cand in candidates {
         let mut names = vec![(*cand).to_string()];
+        // `FFI::LibraryPath.wrap` answers `Platform::LIBC` for the bare
+        // name `c` rather than a file called `libc`, and on glibc that
+        // constant is the SONAME: `libc.so` there is a linker SCRIPT and
+        // `c.so` is nothing at all, so neither mangled spelling below
+        // opens anything. macOS never noticed -- `libc.dylib` is a real
+        // library.
+        if cfg!(all(target_os = "linux", target_env = "gnu")) && *cand == "c" {
+            names.push("libc.so.6".to_string());
+        }
         // A bare name (no path, no extension) gets the mangled spellings.
         if !cand.contains('/') && !cand.contains('.') {
             names.push(format!("lib{cand}.{DYLIB_EXT}"));
