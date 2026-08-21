@@ -283,6 +283,7 @@ pub fn parse_and_lower_with(
         input_path,
         file_name,
         line_offset,
+        mode,
         load_roots,
         package_dirs,
         gem_paths,

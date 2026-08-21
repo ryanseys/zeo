@@ -70,6 +70,10 @@ pub struct Ec {
     /// The `$~` svar bundle (`lastmatch`): base slot + scope stack.
     svar_base: Option<crate::regexp::RMatchData>,
     svar_scopes: Vec<Option<crate::regexp::RMatchData>>,
+    /// The block channel and `super` target a snippet's `yield`/`super`
+    /// read (`eval::EvalHome`): published per compiled scope, so it swaps
+    /// with the frames it brackets.
+    eval_homes: Vec<crate::eval::EvalHome>,
 }
 
 impl Default for Ec {
@@ -86,6 +90,7 @@ impl Default for Ec {
             fiber_locals: Some(std::sync::Arc::default()),
             svar_base: None,
             svar_scopes: Vec::new(),
+            eval_homes: Vec::new(),
         }
     }
 }
@@ -107,5 +112,6 @@ pub fn swap(ec: Ec) -> Ec {
         fiber_locals: crate::thread::swap_fiber_locals(ec.fiber_locals),
         svar_base,
         svar_scopes,
+        eval_homes: crate::eval::swap_eval_homes(ec.eval_homes),
     }
 }

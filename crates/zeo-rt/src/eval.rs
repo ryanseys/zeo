@@ -80,6 +80,105 @@ pub fn cref_of(req: &EvalRequest<'_>) -> (Vec<zeo_abi::ClassId>, Option<String>)
     }
 }
 
+/// The block channel and `super` target a snippet reaches through.
+///
+/// `yield`, `block_given?` and a bare `super` written at a snippet's own
+/// level belong to the method the `eval` was called from -- CRuby reads
+/// them off the caller's control frame, which zeo has no equivalent of.
+/// So a compiled scope that LEXICALLY contains a run-time `eval`
+/// publishes its own home for the length of the call, and the snippet
+/// reads the top of the stack. A block publishes the home it inherited
+/// (`ProcEnv::lexical_blk`), which is what keeps an `eval` written inside
+/// one aimed at the enclosing method rather than at whatever Ruby method
+/// happens to be driving the block.
+pub struct EvalHome {
+    block: Option<RubyValue>,
+    /// The enclosing method's own arguments and `super` target. `None` for
+    /// a block's home -- a block carries neither, and a snippet that needs
+    /// one says so rather than forwarding nothing.
+    zsuper: Option<(Vec<RubyValue>, zeo_abi::ClassId, crate::Symbol)>,
+}
+
+thread_local! {
+    static EVAL_HOMES: std::cell::RefCell<Vec<EvalHome>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// See [`crate::ec`] -- the stack is per-fiber, like every other
+/// frame-shaped piece of ambient state.
+pub(crate) fn swap_eval_homes(next: Vec<EvalHome>) -> Vec<EvalHome> {
+    EVAL_HOMES.with(|h| std::mem::replace(&mut *h.borrow_mut(), next))
+}
+
+/// Publish this scope's block channel (and, for a method, what a bare
+/// `super` written in a snippet would forward) for the length of the call.
+pub fn home_push(
+    block: Option<RubyValue>,
+    zsuper: Option<(Vec<RubyValue>, zeo_abi::ClassId, crate::Symbol)>,
+) {
+    EVAL_HOMES.with(|h| h.borrow_mut().push(EvalHome { block, zsuper }));
+}
+
+pub fn home_pop() {
+    EVAL_HOMES.with(|h| {
+        h.borrow_mut().pop();
+    });
+}
+
+/// The block a snippet's `yield`/`block_given?` means, or `None` where no
+/// enclosing scope has one.
+#[must_use]
+pub fn home_block() -> Option<RubyValue> {
+    EVAL_HOMES.with(|h| h.borrow().last().and_then(|e| e.block.clone()))
+}
+
+/// Whether any enclosing scope published a home at all. `false` means the
+/// `eval` was called from a scope that can never have a block -- the top
+/// level, or a class body -- which is what makes a `yield` written in the
+/// snippet CRuby's compile-time `Invalid yield` rather than a run-time
+/// `LocalJumpError`.
+#[must_use]
+pub fn has_home() -> bool {
+    EVAL_HOMES.with(|h| !h.borrow().is_empty())
+}
+
+/// `yield` written at a snippet's own level.
+pub fn home_yield(args: &[RubyValue]) -> Result<RubyValue, Signal> {
+    match home_block() {
+        Some(RubyValue::Proc(p)) => p.call(args),
+        _ => Err(crate::builtins::local_jump_error!("no block given (yield)")),
+    }
+}
+
+/// `defined?(super)` written at a snippet's own level: the same walk,
+/// without running it. Nil where no enclosing method published a target,
+/// which is what CRuby answers for an `eval` at the top level.
+#[must_use]
+pub fn home_super_defined(recv: &RubyValue) -> bool {
+    EVAL_HOMES
+        .with(|h| h.borrow().last().and_then(|e| e.zsuper.clone()))
+        .is_some_and(|(_, defining, name)| crate::dispatch::super_defined(recv, defining, name))
+}
+
+/// A bare `super` written at a snippet's own level: the enclosing
+/// method's own arguments, resumed after the class that defined it.
+pub fn home_super(recv: &RubyValue) -> Result<RubyValue, Signal> {
+    let home = EVAL_HOMES.with(|h| {
+        h.borrow()
+            .last()
+            .and_then(|e| e.zsuper.clone().map(|z| (z, e.block.clone())))
+    });
+    match home {
+        Some(((args, defining, name), block)) => {
+            crate::dispatch::send_super_from(recv, defining, name, &args, block)
+        }
+        None => Err(crate::builtins::not_impl_error!(
+            "a bare `super` inside an `eval` forwards the enclosing method's arguments, which \
+             zeo hands a snippet only where the `eval` is written in the method itself"
+        )),
+    }
+}
+
 /// Reserve `n` flip-flop latch ids for one compiled snippet -- see
 /// `flipflop::reserve`. A snippet is compiled by a fresh compiler whose
 /// ids start at zero, which are the running program's own.
@@ -94,6 +193,18 @@ pub fn reserve_flip_flops(n: u32) -> u32 {
 #[must_use]
 pub fn syntax_error(message: String) -> Signal {
     crate::dispatch::raise_error("SyntaxError", message)
+}
+
+/// A `SyntaxError` CRuby raises while COMPILING the snippet rather than
+/// while parsing it (`Invalid yield`): its backtrace is the eval's own
+/// location alone, because no frame of the snippet ever ran.
+#[must_use]
+pub fn syntax_error_at(message: String, row: String) -> Signal {
+    let signal = crate::dispatch::raise_error("SyntaxError", message);
+    if let Signal::Raise(exc) = &signal {
+        crate::builtins::exception::set_backtrace_lines(exc, vec![row]);
+    }
+    signal
 }
 
 /// A shape zeo declines to compile. Raised rather than answered
@@ -423,10 +534,7 @@ pub fn eval_value(src: RubyValue, self_val: RubyValue, box_id: u32) -> Result<Ru
 /// run-time value, so the arity `Kernel#eval` declares is checked here
 /// rather than by the shape of the call. Everything else is
 /// [`eval_value_in_scope`], including the caller's own frame as `scope`.
-pub fn eval_value_in_scope_argv(
-    args: &[RubyValue],
-    scope: RubyValue,
-) -> Result<RubyValue, Signal> {
+pub fn eval_value_in_scope_argv(args: &[RubyValue], scope: RubyValue) -> Result<RubyValue, Signal> {
     if args.is_empty() || args.len() > 4 {
         return Err(crate::dispatch::wrong_arity(args.len(), "1..4"));
     }

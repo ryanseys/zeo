@@ -266,6 +266,7 @@ pub(super) fn lower_main_file(
     input_path: Option<&Path>,
     file_name: Option<&Path>,
     line_offset: u32,
+    mode: crate::CompileMode,
     load_roots: &[PathBuf],
     package_dirs: &[PathBuf],
     gem_paths: &[PathBuf],
@@ -389,7 +390,13 @@ pub(super) fn lower_main_file(
     // `(eval at f.rb:14)`, which is what its backtrace rows must say.
     let named = file_name.or(input_path);
     let main_name = named.map_or_else(|| "-e".to_string(), |p| p.display().to_string());
-    if let Some(err) = result.errors().next() {
+    // A snippet is parsed in a method's context, so `yield` is valid there
+    // -- CRuby says so by handing prism a scope, and prism's own check is
+    // the one thing that changes (the node is built either way). Every
+    // other jump keyword stays refused: CRuby refuses those in an `eval`
+    // too.
+    let ignore = |m: &str| mode.is_eval() && m == "Invalid yield";
+    if let Some(err) = result.errors().find(|e| !ignore(e.message())) {
         return Err(LowerError::syntax_reported(
             format!("parse error: {}", err.message()),
             crate::parse::syntax_report::report(
@@ -397,6 +404,7 @@ pub(super) fn lower_main_file(
                 &result,
                 &main_name,
                 line_offset as i32 + 1,
+                &ignore,
             ),
         ));
     }

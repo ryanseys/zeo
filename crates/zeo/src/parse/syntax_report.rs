@@ -223,15 +223,17 @@ fn rich_report(
 ///
 /// `start_line` is the line the source's FIRST line reports -- `eval`'s
 /// fourth argument, so a snippet's rows carry the caller's numbering.
+/// `skip` drops the diagnostics the caller's parse context makes legal.
 pub(crate) fn report(
     source: &str,
     result: &ParseResult<'_>,
     file: &str,
     start_line: i32,
+    skip: &dyn Fn(&str) -> bool,
 ) -> Option<String> {
     let offsets = line_offsets(source);
     let mut errors: Vec<Rich> = Vec::new();
-    for (idx, d) in result.errors().enumerate() {
+    for (idx, d) in result.errors().filter(|e| !skip(e.message())).enumerate() {
         let loc = d.location();
         let (line, column_start) = line_column(&offsets, loc.start_offset(), start_line);
         let (end_line, end_column) = line_column(&offsets, loc.end_offset(), start_line);

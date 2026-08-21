@@ -253,6 +253,11 @@ pub const CAPI: &[CapiSig] = &[
         ret: None,
     },
     CapiSig {
+        name: "zeo_rt_eval_block_given",
+        params: &[],
+        ret: Some(I8),
+    },
+    CapiSig {
         name: "zeo_rt_eval_class_body",
         params: &[Ptr, Ptr, Ptr, Ptr, Ptr, U32, Ptr, Ptr, U32, Ptr, Ptr, Ptr],
         ret: Some(I32),
@@ -273,6 +278,31 @@ pub const CAPI: &[CapiSig] = &[
         ret: Some(I32),
     },
     CapiSig {
+        name: "zeo_rt_eval_home_block",
+        params: &[Ptr],
+        ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_eval_home_pop",
+        params: &[],
+        ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_eval_home_push",
+        params: &[Ptr, Ptr, U8, Ptr, U32, U32],
+        ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_eval_super",
+        params: &[Ptr, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
+        name: "zeo_rt_eval_super_defined",
+        params: &[Ptr],
+        ret: Some(I8),
+    },
+    CapiSig {
         name: "zeo_rt_eval_value_in_scope",
         params: &[Ptr, Ptr, Ptr, Ptr, Ptr, Ptr],
         ret: Some(I32),
@@ -280,6 +310,11 @@ pub const CAPI: &[CapiSig] = &[
     CapiSig {
         name: "zeo_rt_eval_value_in_scope_argv",
         params: &[Ptr, Ptr, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
+        name: "zeo_rt_eval_yield",
+        params: &[Ptr, Usize, Ptr],
         ret: Some(I32),
     },
     CapiSig {

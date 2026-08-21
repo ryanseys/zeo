@@ -701,6 +701,13 @@ pub(super) fn register_method(
             uses_bare_block = true;
         }
     }
+    // A run-time `eval` written here may itself say `yield` or
+    // `block_given?`, and CRuby answers both from the CALLER's frame --
+    // so the method keeps its block channel and publishes it for the
+    // length of the call (`zeo_rt::eval::EvalHome`).
+    if !uses_bare_block && crate::analyze::captures::body_contains_runtime_eval(compiler, &body) {
+        uses_bare_block = true;
+    }
     // A same-body `alias` clones its source's `DefMethod`; the clone is what
     // carries the birth name, and materializing this method onto a descendant
     // reuses the same node, so the alias stays an alias all the way down.

@@ -344,7 +344,17 @@ fn build_closure_with(
     let bare_block_use = crate::analyze::scan_bare_block_use_body(&fx.an.compiler.hir, body)
         && params.block.is_none()
         && method_body.is_none();
-    let lexical_blk = if bare_block_use { fx.blk_ptr } else { None };
+    // A body that can reach a run-time `eval` needs the channel too: the
+    // snippet's `yield`/`block_given?` mean the enclosing METHOD's block,
+    // which the block re-publishes so an intervening Ruby method that can
+    // eval cannot shadow it (`zeo_rt::eval::EvalHome`).
+    let publishes_eval_home =
+        crate::analyze::captures::body_contains_runtime_eval(&fx.an.compiler, body);
+    let lexical_blk = if bare_block_use || publishes_eval_home {
+        fx.blk_ptr
+    } else {
+        None
+    };
     // A body that can raise `Signal::Return` at its own level captures its
     // home (dead home -> LocalJumpError, the runtime's resolution). A
     // lambda folds its own returns and needs none.
@@ -683,9 +693,13 @@ fn define_block_fn(
     let cells_off = std::mem::offset_of!(zeo_rt::capi::ProcEnv, cells) as i32;
     let ptr_ty = bfx.em.ptr;
     let cells_base = bfx.b.ins().load(ptr_ty, fl, env, cells_off);
+    // A body that can reach a run-time `eval` inherits the channel for the
+    // same reason a bare `yield` does -- and so that a block nested inside
+    // it inherits one too.
     if params.block.is_none()
         && method_body.is_none()
-        && crate::analyze::scan_bare_block_use_body(&an.compiler.hir, &body)
+        && (crate::analyze::scan_bare_block_use_body(&an.compiler.hir, &body)
+            || crate::analyze::captures::body_contains_runtime_eval(&an.compiler, &body))
     {
         let lex_off = std::mem::offset_of!(zeo_rt::capi::ProcEnv, lexical_blk) as i32;
         let lex = bfx.b.ins().load(ptr_ty, fl, env, lex_off);
@@ -781,6 +795,29 @@ fn define_block_fn(
         .call("zeo_rt_check_ints", &[])
         .expect("check_ints returns a status");
     bfx.fallible(status);
+    // What a run-time `eval` written in this body reads for `yield` and
+    // `block_given?`: a `def` body installed at run time owns its own
+    // channel; every other block means the enclosing method's, which the
+    // env carries. No `super` target rides along -- a block has no
+    // parameter list to forward.
+    let publishes_eval_home =
+        crate::analyze::captures::body_contains_runtime_eval(&an.compiler, &body);
+    if publishes_eval_home {
+        let home_blk = match (method_body.is_some(), bfx.blk_ptr) {
+            (true, Some(b)) => b,
+            _ => {
+                let lex_off = std::mem::offset_of!(zeo_rt::capi::ProcEnv, lexical_blk) as i32;
+                bfx.b.ins().load(ptr_ty, fl, env, lex_off)
+            }
+        };
+        let null = bfx.b.ins().iconst(ptr_ty, 0);
+        let zero8 = bfx.b.ins().iconst(types::I8, 0);
+        let zero32 = bfx.b.ins().iconst(types::I32, 0);
+        bfx.call(
+            "zeo_rt_eval_home_push",
+            &[home_blk, null, zero8, null, zero32, zero32],
+        );
+    }
 
     // The binding head: `redo` re-enters here (the bindings re-run,
     // ruby's rule -- rustc's 'redo loop starts at the same point).
@@ -999,6 +1036,9 @@ fn define_block_fn(
         bfx.b.switch_to_block(cont);
         if has_frame {
             bfx.call("zeo_rt_frame_pop", &[]);
+        }
+        if publishes_eval_home {
+            bfx.call("zeo_rt_eval_home_pop", &[]);
         }
         let code = bfx.b.ins().iconst(types::I32, status);
         bfx.b.ins().return_(&[code]);

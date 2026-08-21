@@ -45,6 +45,7 @@ impl EvalCompiler for Jit {
             // Source prism refuses is the PROGRAM's error, not a compiler
             // limit: `eval("1 +")` raises a catchable `SyntaxError`.
             Err(Refusal::Syntax(msg)) => Err(zeo_rt::eval::syntax_error(msg)),
+            Err(Refusal::SyntaxAt(msg, row)) => Err(zeo_rt::eval::syntax_error_at(msg, row)),
             // A shape zeo declines. It raises rather than answering
             // approximately -- CRuby-identical or nothing, which is the
             // same contract a program's compile has.
@@ -57,6 +58,10 @@ impl EvalCompiler for Jit {
 enum Refusal {
     /// The source does not parse -- the snippet's own `SyntaxError`.
     Syntax(String),
+    /// The source parses but does not COMPILE where it was called from
+    /// (`Invalid yield`): a `SyntaxError` whose backtrace is the eval's
+    /// own location, because no frame of the snippet ever ran.
+    SyntaxAt(String, String),
     /// A shape zeo declines: a `NotImplementedError` naming it.
     NotCompiled(String),
 }
@@ -77,7 +82,7 @@ struct Compiled {
 /// Keyed by everything the lowering depends on. The cell list is part of
 /// it because the entry loads its locals BY INDEX: the same source under a
 /// Binding with different names is a different function.
-type Key = (String, u32, Vec<String>, u8, Vec<u32>);
+type Key = (String, u32, Vec<String>, u8, Vec<u32>, bool);
 
 static CACHE: Mutex<Option<HashMap<Key, &'static Compiled>>> = Mutex::new(None);
 
@@ -92,6 +97,11 @@ fn compiled_for(req: &EvalRequest<'_>) -> Result<&'static Compiled, Refusal> {
         scope_names.clone(),
         mode_byte(req.mode),
         zeo_rt::eval::cref_of(req).0.iter().map(|c| c.0).collect(),
+        // Whether a `yield` written here is legal at all -- a compile-time
+        // question in CRuby, and a property of the CALLER, so the same
+        // source compiled from a method and from the top level are two
+        // different compiles.
+        zeo_rt::eval::has_home(),
     );
     if let Some(&c) = CACHE
         .lock()
@@ -156,6 +166,9 @@ fn build(req: &EvalRequest<'_>, scope_names: &[String]) -> Result<Compiled, Refu
             None => Refusal::NotCompiled(e.to_string()),
         })?;
     refusals(&analyzed)?;
+    if !zeo_rt::eval::has_home() {
+        invalid_yield(&analyzed)?;
+    }
 
     // The snippet's own locals join the caller's: under a Binding every
     // one of them is a cell, so a name the source introduces lands in the
@@ -202,8 +215,34 @@ fn build(req: &EvalRequest<'_>, scope_names: &[String]) -> Result<Compiled, Refu
 /// snippet, because their lowering reads a decision only a whole-program
 /// compile makes. Each is a widening this compiler owes (G6-1/G6-2).
 fn refusals(analyzed: &crate::analyze::Analyzed) -> Result<(), String> {
-    scope_refusals(analyzed)?;
-    home_refusals(analyzed)
+    scope_refusals(analyzed)
+}
+
+/// A `yield` at the snippet's own level, where the `eval` was called from
+/// a scope that can never have a block: CRuby compiles the snippet before
+/// it runs a statement of it and refuses with `Invalid yield`, which is a
+/// catchable `SyntaxError` naming the yield's own place. The walk stops at
+/// a `def` -- one written in the snippet has a block channel of its own.
+fn invalid_yield(analyzed: &crate::analyze::Analyzed) -> Result<(), Refusal> {
+    let hir = &analyzed.compiler.hir;
+    let mut stack: Vec<crate::hir::NodeId> = analyzed.main_statements.clone();
+    while let Some(id) = stack.pop() {
+        // `defined?(yield)` asks a question rather than yielding, and
+        // CRuby answers it with nil rather than refusing the compile.
+        if matches!(hir[id], HirNode::DefMethod { .. } | HirNode::Defined(_)) {
+            continue;
+        }
+        hir[id].for_each_child(&mut |c| stack.push(c));
+        if matches!(hir[id], HirNode::Yield(_)) {
+            let (file, line) =
+                crate::codegen::source_location(&analyzed.compiler, id).unwrap_or(("(eval)", 1));
+            return Err(Refusal::SyntaxAt(
+                format!("{file}:{line}: Invalid yield"),
+                file.to_string(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// The shapes that are wrong ANYWHERE in a snippet, `def` bodies
@@ -261,37 +300,6 @@ fn scope_refusals(analyzed: &crate::analyze::Analyzed) -> Result<(), String> {
             // whole-program compile consumes.
             HirNode::Ffi(..) => Some("an `FFI::Library` declaration"),
             HirNode::BoxScope { .. } | HirNode::BoxHandle(..) => Some("a `Ruby::Box`"),
-            _ => None,
-        };
-    }
-    match refused {
-        Some(what) => Err(format!("the source has {what}")),
-        None => Ok(()),
-    }
-}
-
-/// The shapes that need a HOME -- the enclosing method's identity, block
-/// channel or return target. A snippet's own level has none; a `def`
-/// written inside it does, so this walk stops at one.
-fn home_refusals(analyzed: &crate::analyze::Analyzed) -> Result<(), String> {
-    let hir = &analyzed.compiler.hir;
-    let mut refused = None;
-    let mut stack: Vec<crate::hir::NodeId> = analyzed.main_statements.clone();
-    while let Some(id) = stack.pop() {
-        if refused.is_some() {
-            break;
-        }
-        if matches!(hir[id], HirNode::DefMethod { .. }) {
-            continue;
-        }
-        hir[id].for_each_child(&mut |c| stack.push(c));
-        refused = match &hir[id] {
-            // A `yield` is the one shape here with no answer at all: it
-            // needs the enclosing method's block channel, which nothing
-            // hands a snippet. (prism refuses to parse a bare `yield` on
-            // its own, so this arm is reached only where zeo's front end
-            // lowers one some other way.)
-            HirNode::Yield { .. } => Some("a top-level `yield`"),
             _ => None,
         };
     }

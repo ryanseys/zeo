@@ -752,6 +752,101 @@ fn dynamic_send_argv(
     })
 }
 
+/// What a BARE `super` forwards: the enclosing method's parameters read by
+/// NAME at the moment it runs -- rest splatted in place, keywords gathered
+/// into one hash, and `unmark` saying whether a splatted tail keeps its
+/// keyword mark (the `ruby2_keywords` opt-out). Answers
+/// `(args Array, kw Hash or null, unmark)`.
+///
+/// Shared with the eval home (`emit::method_body`): a snippet's own bare
+/// `super` forwards the same list, published when the enclosing method
+/// starts because the snippet has no parameter list of its own.
+pub(crate) fn build_zsuper_args(
+    fx: &mut Fx,
+    params: &crate::hir::Params,
+) -> Result<
+    (
+        cranelift_codegen::ir::Value,
+        cranelift_codegen::ir::Value,
+        bool,
+    ),
+    String,
+> {
+    let ss = fx.temp_slot();
+    let out = fx.slot_addr(ss, 0);
+    let cap = fx.b.ins().iconst(
+        fx.em.ptr,
+        (params.required.len() + params.optional.len() + params.post.len()) as i64,
+    );
+    fx.call("zeo_rt_array_new", &[cap, out]);
+    fx.owned_created += 1;
+    ownership::pool_owned(fx, out, TagInfo::Known(zeo_abi::abi::ValueTag::Array as u8));
+    let push_named = |fx: &mut Fx, name: &str| {
+        let op = ownership::read_local(fx, name).expect("a param is always bound");
+        let p = ownership::move_ptr(fx, &op);
+        fx.call("zeo_rt_array_push", &[out, p]);
+    };
+    for name in &params.required {
+        push_named(fx, name);
+    }
+    for (name, _) in &params.optional {
+        push_named(fx, name);
+    }
+    if let Some(Some(rest)) = &params.rest {
+        let op = ownership::read_local(fx, rest).expect("a param is always bound");
+        let p = ownership::borrow_ptr(fx, &op);
+        if op.owned() {
+            ownership::pool_owned(fx, p, op.tag());
+        }
+        let status = fx
+            .call("zeo_rt_array_push_splat", &[out, p])
+            .expect("push_splat returns a status");
+        fx.fallible(status);
+    }
+    for name in &params.post {
+        push_named(fx, name);
+    }
+    let has_kw = !params.keywords.is_empty() || matches!(params.keyword_rest, Some(Some(_)));
+    let kw_ptr = if has_kw {
+        let kss = fx.temp_slot();
+        let kw = fx.slot_addr(kss, 0);
+        fx.call("zeo_rt_hash_new", &[kw]);
+        fx.owned_created += 1;
+        ownership::pool_owned(fx, kw, TagInfo::Known(zeo_abi::abi::ValueTag::Hash as u8));
+        for k in &params.keywords {
+            let key = match k {
+                crate::hir::KeywordParam::Required(n)
+                | crate::hir::KeywordParam::Optional(n, _) => n.clone(),
+            };
+            let sym = fx.sym_id(&key);
+            let sss = fx.temp_slot();
+            let sptr = fx.slot_addr(sss, 0);
+            fx.call("zeo_rt_sym_value", &[sym, sptr]);
+            fx.owned_created += 1;
+            fx.owned_consumed += 1; // hash_set moves the key temp
+            let vop = ownership::read_local(fx, &key).expect("a param is always bound");
+            let vp = ownership::move_ptr(fx, &vop);
+            fx.call("zeo_rt_hash_set", &[kw, sptr, vp]);
+        }
+        if let Some(Some(krest)) = &params.keyword_rest {
+            let op = ownership::read_local(fx, krest).expect("a param is always bound");
+            let p = ownership::borrow_ptr(fx, &op);
+            if op.owned() {
+                ownership::pool_owned(fx, p, op.tag());
+            }
+            let status = fx
+                .call("zeo_rt_kw_splat_into", &[kw, p])
+                .expect("kw_splat_into returns a status");
+            fx.fallible(status);
+        }
+        kw
+    } else {
+        fx.b.ins().iconst(fx.em.ptr, 0)
+    };
+    let unmark = matches!(params.rest, Some(Some(_))) && !fx.ruby2_keywords;
+    Ok((out, kw_ptr, unmark))
+}
+
 /// `super` -- rustc's `emit_super`, the instance-method channels only
 /// (class-method/singleton-chain `super` and `super` inside a block still
 /// refuse). One runtime mechanism: `send_super_from`'s per-position MRO
@@ -800,97 +895,29 @@ pub(crate) fn lower_super(
     let params = match fx.method_params.clone() {
         Some(p) => p,
         None if fx.eval_mode.is_some() && !zsuper => crate::hir::Params::default(),
+        // A BARE `super` forwards the enclosing METHOD's arguments, which
+        // that method published for the length of the eval.
         None if fx.eval_mode.is_some() => {
-            let msg = "a bare `super` inside an `eval` forwards the enclosing method's arguments, which zeo does not hand a snippet";
-            let cid = fx.b.ins().iconst(
-                cranelift_codegen::ir::types::I32,
-                i64::from(zeo_abi::NOT_IMPLEMENTED_ERROR_CLASS.0),
-            );
-            let (mptr, mlen) = super::expr::rodata_name(fx, msg);
+            let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
+            let ss = fx.temp_slot();
+            let out = fx.slot_addr(ss, 0);
             let status = fx
-                .call("zeo_rt_raise_error", &[cid, mptr, mlen])
-                .expect("raise_error returns a status");
+                .call("zeo_rt_eval_super", &[self_ptr, out])
+                .expect("eval_super returns a status");
             fx.fallible(status);
-            return Ok(Operand::Nil);
+            fx.owned_created += 1;
+            return Ok(Operand::Slot {
+                ss,
+                owned: true,
+                tag: TagInfo::Unknown,
+            });
         }
         None => return super_outside_a_method(fx),
     };
 
     // The argument Array (rustc's `__super_args` Vec) + kw hash + unmark.
     let (args_ptr, kw_ptr, unmark) = if zsuper {
-        let ss = fx.temp_slot();
-        let out = fx.slot_addr(ss, 0);
-        let cap = fx.b.ins().iconst(
-            fx.em.ptr,
-            (params.required.len() + params.optional.len() + params.post.len()) as i64,
-        );
-        fx.call("zeo_rt_array_new", &[cap, out]);
-        fx.owned_created += 1;
-        ownership::pool_owned(fx, out, TagInfo::Known(zeo_abi::abi::ValueTag::Array as u8));
-        let push_named = |fx: &mut Fx, name: &str| {
-            let op = ownership::read_local(fx, name).expect("a param is always bound");
-            let p = ownership::move_ptr(fx, &op);
-            fx.call("zeo_rt_array_push", &[out, p]);
-        };
-        for name in &params.required {
-            push_named(fx, name);
-        }
-        for (name, _) in &params.optional {
-            push_named(fx, name);
-        }
-        if let Some(Some(rest)) = &params.rest {
-            let op = ownership::read_local(fx, rest).expect("a param is always bound");
-            let p = ownership::borrow_ptr(fx, &op);
-            if op.owned() {
-                ownership::pool_owned(fx, p, op.tag());
-            }
-            let status = fx
-                .call("zeo_rt_array_push_splat", &[out, p])
-                .expect("push_splat returns a status");
-            fx.fallible(status);
-        }
-        for name in &params.post {
-            push_named(fx, name);
-        }
-        let has_kw = !params.keywords.is_empty() || matches!(params.keyword_rest, Some(Some(_)));
-        let kw_ptr = if has_kw {
-            let kss = fx.temp_slot();
-            let kw = fx.slot_addr(kss, 0);
-            fx.call("zeo_rt_hash_new", &[kw]);
-            fx.owned_created += 1;
-            ownership::pool_owned(fx, kw, TagInfo::Known(zeo_abi::abi::ValueTag::Hash as u8));
-            for k in &params.keywords {
-                let key = match k {
-                    crate::hir::KeywordParam::Required(n)
-                    | crate::hir::KeywordParam::Optional(n, _) => n.clone(),
-                };
-                let sym = fx.sym_id(&key);
-                let sss = fx.temp_slot();
-                let sptr = fx.slot_addr(sss, 0);
-                fx.call("zeo_rt_sym_value", &[sym, sptr]);
-                fx.owned_created += 1;
-                fx.owned_consumed += 1; // hash_set moves the key temp
-                let vop = ownership::read_local(fx, &key).expect("a param is always bound");
-                let vp = ownership::move_ptr(fx, &vop);
-                fx.call("zeo_rt_hash_set", &[kw, sptr, vp]);
-            }
-            if let Some(Some(krest)) = &params.keyword_rest {
-                let op = ownership::read_local(fx, krest).expect("a param is always bound");
-                let p = ownership::borrow_ptr(fx, &op);
-                if op.owned() {
-                    ownership::pool_owned(fx, p, op.tag());
-                }
-                let status = fx
-                    .call("zeo_rt_kw_splat_into", &[kw, p])
-                    .expect("kw_splat_into returns a status");
-                fx.fallible(status);
-            }
-            kw
-        } else {
-            fx.b.ins().iconst(fx.em.ptr, 0)
-        };
-        let unmark = matches!(params.rest, Some(Some(_))) && !fx.ruby2_keywords;
-        (out, kw_ptr, unmark)
+        build_zsuper_args(fx, &params)?
     } else {
         let args_ptr = build_array(fx, args)?;
         let kw_ptr = if kwargs.is_empty() {

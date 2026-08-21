@@ -1,0 +1,20 @@
+21
+false
+true
+"ie 7"
+"ce 7"
+"b 7"
+"outer got 7"
+[[107]]
+[1, 20, [], 90]
+[1, 2, [3], 4]
+"super"
+nil
+nil
+nil
+"yield"
+LocalJumpError: no block given (yield)
+SyntaxError: (eval at a_snippet_reaches_its_callers_block.rb:74):1: Invalid yield
+["(eval at a_snippet_reaches_its_callers_block.rb:74)"]
+class body: (eval at a_snippet_reaches_its_callers_block.rb:81):1: Invalid yield
+nil

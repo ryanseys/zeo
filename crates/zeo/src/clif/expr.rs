@@ -617,6 +617,17 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 };
                 let blk = match fx.blk_ptr {
                     Some(b) => b,
+                    None if fx.eval_mode.is_some() => {
+                        // The enclosing method's channel, published for the
+                        // snippet -- materialized as a value the shared
+                        // entry can take.
+                        let bss = fx.temp_slot();
+                        let bp = fx.slot_addr(bss, 0);
+                        fx.call("zeo_rt_eval_home_block", &[bp]);
+                        fx.owned_created += 1;
+                        ownership::pool_owned(fx, bp, TagInfo::Unknown);
+                        bp
+                    }
                     None => fx.b.ins().iconst(fx.em.ptr, 0),
                 };
                 let ss = fx.temp_slot();
@@ -640,9 +651,15 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             let argc_v = fx.b.ins().iconst(fx.em.ptr, args.len() as i64);
             let ss = fx.temp_slot();
             let out = fx.slot_addr(ss, 0);
-            let status = fx
-                .call("zeo_rt_yield", &[blk, argv_ptr, argc_v, out])
-                .expect("yield returns a status");
+            // A snippet's OWN level has no block channel; the block it
+            // means is the enclosing method's, which that method published.
+            let status = if fx.blk_ptr.is_none() && fx.eval_mode.is_some() {
+                fx.call("zeo_rt_eval_yield", &[argv_ptr, argc_v, out])
+                    .expect("eval_yield returns a status")
+            } else {
+                fx.call("zeo_rt_yield", &[blk, argv_ptr, argc_v, out])
+                    .expect("yield returns a status")
+            };
             fx.fallible(status);
             fx.owned_created += 1;
             Ok(Operand::Slot {
@@ -658,12 +675,13 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                         .icmp_imm_u(cranelift_codegen::ir::condcodes::IntCC::NotEqual, b, 0);
                 Ok(Operand::Bool(given))
             }
-            // A snippet carries no block channel and the ENCLOSING method's
-            // is not a snippet's to read, so `false` would be a silent
-            // wrong answer: the receiverless send reaches `Kernel`'s own
-            // row, which says exactly that.
+            // A snippet carries no block channel of its own; the one it
+            // means is the enclosing method's, published for the call.
             None if fx.eval_mode.is_some() => {
-                super::call::implicit_send(fx, id, "block_given?", &[])
+                let given = fx
+                    .call("zeo_rt_eval_block_given", &[])
+                    .expect("eval_block_given answers");
+                Ok(Operand::Bool(given))
             }
             None => Ok(Operand::Bool(fx.b.ins().iconst(types::I8, 0))),
         },
@@ -3077,6 +3095,14 @@ fn is_predefined_global(name: &str) -> bool {
 fn lower_defined(fx: &mut Fx, site: NodeId, inner: NodeId) -> Result<Operand, String> {
     // `defined?(yield)`: runtime -- the block channel is or isn't there.
     if matches!(&fx.an.compiler.hir[inner], HirNode::Yield(_)) {
+        // A snippet's own level has no channel; the one it means is the
+        // enclosing method's, published for the call.
+        if fx.blk_ptr.is_none() && fx.eval_mode.is_some() {
+            let hit = fx
+                .call("zeo_rt_eval_block_given", &[])
+                .expect("eval_block_given answers");
+            return Ok(defined_cond(fx, hit, "yield"));
+        }
         return Ok(match fx.blk_ptr {
             None => Operand::Nil,
             Some(blk) => {
@@ -3100,6 +3126,15 @@ fn lower_defined(fx: &mut Fx, site: NodeId, inner: NodeId) -> Result<Operand, St
         let hit = fx
             .call("zeo_rt_super_defined", &[self_ptr, dc_v, sym])
             .expect("super_defined answers");
+        return Ok(defined_cond(fx, hit, "super"));
+    }
+    // The same probe at a SNIPPET's own level, where the target is the
+    // enclosing method's rather than this scope's.
+    if matches!(&fx.an.compiler.hir[inner], HirNode::SuperCall { .. }) && fx.eval_mode.is_some() {
+        let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
+        let hit = fx
+            .call("zeo_rt_eval_super_defined", &[self_ptr])
+            .expect("eval_super_defined answers");
         return Ok(defined_cond(fx, hit, "super"));
     }
     // Inside a RUN-TIME eval a bare name that IS one of the caller's
@@ -4259,7 +4294,10 @@ fn runtime_eval(
         let ss = fx.temp_slot();
         let out = fx.slot_addr(ss, 0);
         let status = fx
-            .call("zeo_rt_eval_value_in_scope_argv", &[args_ptr, scope_ptr, out])
+            .call(
+                "zeo_rt_eval_value_in_scope_argv",
+                &[args_ptr, scope_ptr, out],
+            )
             .expect("eval_value_in_scope_argv returns a status");
         fx.fallible(status);
         fx.owned_created += 1;

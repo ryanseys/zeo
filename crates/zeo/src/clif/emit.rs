@@ -2107,6 +2107,37 @@ fn define_method_body(
         }
         super::stmt::lower_multi_group(&mut fx, *read, group, ptr)?;
     }
+    // A scope that lexically contains a run-time `eval` publishes what a
+    // snippet's `yield`, `block_given?` and bare `super` mean: CRuby reads
+    // those off the caller's control frame, and zeo has no equivalent, so
+    // the home rides on its own stack for the length of the call. A
+    // `define_method` body publishes no `super` target -- a bare `super`
+    // is an error in one, and the snippet must say so rather than forward
+    // the block's parameters.
+    // A CLASS BODY publishes nothing: it can never have a block, and CRuby
+    // refuses a `yield` written in an `eval` called from one outright
+    // (`Invalid yield`) rather than raising `LocalJumpError`. An empty
+    // name is what a class-body spec carries.
+    let publishes_eval_home = !def.name.is_empty()
+        && crate::analyze::captures::body_contains_runtime_eval(&analyzed.compiler, def.body);
+    if publishes_eval_home {
+        let params = def.hir_params.clone();
+        let (args, kw, unmark) = if define_method_body {
+            let null = fx.b.ins().iconst(fx.em.ptr, 0);
+            (null, null, false)
+        } else {
+            super::call::build_zsuper_args(&mut fx, &params)?
+        };
+        let unmark_v = fx.b.ins().iconst(types::I8, i64::from(unmark));
+        let blk = match blk_ptr {
+            Some(b) => b,
+            None => fx.b.ins().iconst(fx.em.ptr, 0),
+        };
+        let defining = def.defining_class.unwrap_or(def.owner);
+        let dc = fx.b.ins().iconst(types::I32, i64::from(defining.0));
+        let sym = fx.sym_id(def.name);
+        fx.call("zeo_rt_eval_home_push", &[blk, args, unmark_v, kw, dc, sym]);
+    }
     if def.discard_value {
         super::stmt::lower_stmts(&mut fx, def.body)?;
         super::ownership::write_move_into(&mut fx, &super::operand::Operand::Nil, out_ptr);
@@ -2140,6 +2171,9 @@ fn define_method_body(
         }
         if needs_return_catch {
             fx.call("zeo_rt_home_pop", &[]);
+        }
+        if publishes_eval_home {
+            fx.call("zeo_rt_eval_home_pop", &[]);
         }
         let code = fx.b.ins().iconst(types::I32, status);
         fx.b.ins().return_(&[code]);
