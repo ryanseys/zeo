@@ -916,7 +916,6 @@ impl HirNode {
             | HirNode::Next(..)
             | HirNode::Redo
             | HirNode::MultiWrite { .. }
-            | HirNode::Eval(..)
             | HirNode::BoxScope { .. }
             | HirNode::BoxHandle(..)
             | HirNode::Return(..)
@@ -1269,11 +1268,14 @@ impl Hir {
     /// Whether this program can reach a RUN-TIME `eval`.
     ///
     /// Only `Kernel#eval` and string-form `instance_eval` funnel into
-    /// `zeo_rt::eval_value`/`eval_string`. A literal `eval("...")` does not
-    /// count: lowering already spliced it into the arena as `HirNode::Eval`,
-    /// so any surviving `Call` named `eval` is the dynamic form. Block-form
-    /// `instance_eval { ... }` runs a real block and carries it in `block`,
-    /// so a POSITIONAL argument marks the string form.
+    /// `zeo_rt::eval_value`/`eval_string`. EVERY `eval` is a run-time one:
+    /// the compile-time splice a literal source once took was retired
+    /// once a snippet compiled for real, because the splice reported the
+    /// ENCLOSING file for `__FILE__` and every backtrace row, ignored a
+    /// magic comment written in the string, and shared the caller's
+    /// storage where CRuby shares a Binding. Block-form `instance_eval
+    /// { ... }` runs a real block and carries it in `block`, so a
+    /// POSITIONAL argument marks the string form.
     ///
     /// This scans the whole arena rather than traversing from the roots, so
     /// it also catches eval sites inside spliced files and method bodies.
@@ -2869,17 +2871,6 @@ pub enum HirNode {
         targets: MultiTargetGroup,
         value: NodeId,
     },
-    /// `eval("literal ruby source")` -- ONLY the compile-time-constant-string
-    /// form (see `parse/mod.rs`'s eval-call-shape recognizer). `body`'s
-    /// source was parsed and lowered into THIS SAME arena at lowering time --
-    /// by the time `analyze`/`codegen` ever see this node, it's ordinary
-    /// already-spliced Hir, indistinguishable from code written inline at the
-    /// eval call site (so local/ivar scoping "just works" -- see the
-    /// recognizer's docs). Runtime (non-literal) eval, `instance_eval`/
-    /// `class_eval` with dynamic content, and `binding` are NOT implemented --
-    /// see docs/EVAL.md for the future embedded-interpreter design those
-    /// would need.
-    Eval(Vec<NodeId>),
     /// The body of a synthesized `attach_function` wrapper: marshal args,
     /// call the C symbol, wrap the result. See `FfiCall`.
     Ffi(Box<FfiCall>),
@@ -3334,7 +3325,6 @@ impl HirNode {
             | HirNode::Next(_)
             | HirNode::Redo
             | HirNode::MultiWrite { .. }
-            | HirNode::Eval(_)
             | HirNode::Ffi(_)
             | HirNode::BoxScope { .. }
             | HirNode::BoxHandle(_)
@@ -3411,7 +3401,6 @@ impl HirNode {
         }
         match self {
             HirNode::Program(body)
-            | HirNode::Eval(body)
             | HirNode::PreExec(body)
             | HirNode::Seq(body)
             | HirNode::Loop { body }

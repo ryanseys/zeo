@@ -202,11 +202,12 @@ pub(crate) fn implicit_send(
             .hir
             .has_flag(site, crate::hir::NodeFlag::VCALL)
     {
-        // Inside an eval splice the name may be the enclosing scope's own
-        // local, whose storage the hoisting prelude already created.
-        // Restricted to the splice: outside one, a name prism called a
-        // vcall genuinely is not a local -- it would have parsed as a read.
-        if fx.in_eval_splice
+        // In a SNIPPET the name may be one of the caller's own locals:
+        // prism parsed the snippet alone, so a name it holds could only
+        // arrive as a vcall. Restricted to a snippet: elsewhere a name
+        // prism called a vcall genuinely is not a local -- it would have
+        // parsed as a read.
+        if fx.eval_mode.is_some()
             && let Some(op) = ownership::read_local(fx, name)
         {
             return Ok(op);

@@ -1115,7 +1115,6 @@ fn walk_class_body(
             | HirNode::Next(_)
             | HirNode::Redo
             | HirNode::MultiWrite { .. }
-            | HirNode::Eval(_)
             | HirNode::Ffi(_)
             | HirNode::BoxScope { .. }
             | HirNode::BoxHandle(_)

@@ -527,9 +527,7 @@ fn node_contains_bubbling_loop_jump(compiler: &Compiler, id: NodeId) -> bool {
             StrPart::Interp(n) => node_contains_bubbling_loop_jump(compiler, *n),
             StrPart::Lit(_) | StrPart::Bytes(_) => false,
         }),
-        HirNode::Eval(body) | HirNode::BoxScope { body, .. } => {
-            body_contains_bubbling_loop_jump(compiler, body)
-        }
+        HirNode::BoxScope { body, .. } => body_contains_bubbling_loop_jump(compiler, body),
         HirNode::MatchPredicate { subject, .. } | HirNode::MatchRequired { subject, .. } => {
             node_contains_bubbling_loop_jump(compiler, *subject)
         }

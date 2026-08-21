@@ -179,7 +179,6 @@ fn track_node(
         | HirNode::Return(_)
         | HirNode::PreExec(_)
         | HirNode::Seq(_)
-        | HirNode::Eval(_)
         | HirNode::Yield(_)
         | HirNode::Raise(..) => {
             compiler.hir[id].for_each_child(&mut |n| {

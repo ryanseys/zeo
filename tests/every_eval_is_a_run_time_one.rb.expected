@@ -1,0 +1,10 @@
+"(eval at F:15)"
+1
+(eval at F:21):1:in 'Object#raiser'
+F:21:in 'Kernel#eval'
+true
+false
+begin ran
+after
+42
+43

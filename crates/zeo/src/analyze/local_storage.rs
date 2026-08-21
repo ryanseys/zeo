@@ -293,7 +293,7 @@ pub(crate) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Locals) 
                 }
             }
         }
-        HirNode::Eval(body) | HirNode::BoxScope { box_id: _, body } => {
+        HirNode::BoxScope { box_id: _, body } => {
             for &n in body {
                 collect_locals(compiler, n, out);
             }

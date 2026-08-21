@@ -230,16 +230,18 @@ fn needs_prism_runtime_selects_the_runtime_variant() {
 
     // No eval anywhere -> lean.
     assert!(!needs("puts 1"));
-    // An ACCEPTED literal eval is spliced inline (`HirNode::Eval`) -> lean.
-    assert!(!needs(r#"puts eval("1 + 2")"#));
+    // EVERY eval is a run-time one: the compile-time splice a literal
+    // source once took was retired, because it reported the enclosing file
+    // for `__FILE__` and every backtrace row and ignored a magic comment
+    // written in the string.
+    assert!(needs(r#"puts eval("1 + 2")"#));
     // A block-form `instance_eval` runs a real block, never the VM -> lean.
     assert!(!needs("o = Object.new\no.instance_eval { 1 + 2 }\n"));
 
     // A dynamic (non-literal) eval reaches the runtime VM -> needs it.
     assert!(needs("s = \"1 + 2\"\neval(s)\n"));
-    // A literal eval defining a top-level class used to fall through to the
-    // VM; the registration walk descends the splice now, so it stays lean.
-    assert!(!needs(r#"eval("class Foo; end")"#));
+    // ... a literal one defining a class included.
+    assert!(needs(r#"eval("class Foo; end")"#));
     // A string-form `instance_eval` reaches the VM -> needs it.
     assert!(needs("o = Object.new\no.instance_eval(\"@x = 1\")\n"));
     // A string-form `class_eval`/`module_eval` reaches it the same way -- the

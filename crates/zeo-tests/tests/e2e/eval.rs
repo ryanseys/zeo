@@ -312,16 +312,23 @@ fn a_class_name_already_taken_is_a_type_error() {
 fn a_shape_zeo_declines_raises_and_names_itself() {
     // There is no second evaluator to hand a declined shape to, and
     // answering one approximately would break the compile contract. It
-    // raises, and the message says which shape it was.
+    // raises, and the message says which shape it was. An `FFI::Struct`
+    // subclass is the shape here: its `layout` is replayed from the gem's
+    // own source, so the body text a snippet's class body needs is not in
+    // the snippet at all (`tests/gaps/an_ffi_declaration_inside_an_eval.rb`).
     agree(
         r#"
-        src = "module Ref; refine String do; def z; 1; end; end; end"
+        require "ffi"
+        src = "class EvalStruct < FFI::Struct; layout :a, :int; end"
         begin
           eval(src)
         rescue NotImplementedError => e
           puts e.message
         end
         "#,
-        "zeo cannot compile this `eval`: the source has a `refine`\n",
+        concat!(
+            "zeo cannot compile this `eval`: a `class` inside an `eval` whose body analyze ",
+            "rewrote (an `FFI::Struct` layout is the one shape that does)\n"
+        ),
     );
 }

@@ -1263,28 +1263,6 @@ pub fn emit_call(
         return emit_eval_in_scope(cx, scope, &args[1..]);
     }
 
-    // A bare name inside an AOT-spliced `eval("literal")` that IS one of the
-    // enclosing scope's locals. prism parsed the snippet on its own, so it
-    // could only hand the name over as a vcall; Ruby resolves it as the local,
-    // whose declaration the hoisting prelude has already emitted. Restricted
-    // to the splice: outside one, a name prism called a vcall genuinely isn't
-    // a local, because it would have parsed as a read if it were.
-    if cx.in_eval_splice
-        && is_vcall
-        && receiver.is_none()
-        && args.is_empty()
-        && kwargs.is_empty()
-        && block.is_none()
-        && block_arg.is_none()
-        && cx
-            .binding_names
-            .iter()
-            .flat_map(|names| names.iter())
-            .any(|n| n == name)
-    {
-        return super::hoisting::emit_local_read(cx, name);
-    }
-
     // `binding.local_variable_get(:name)` -- with a literal symbol naming an
     // in-scope local, this is the one Binding operation with a fully STATIC
     // answer (the value of that local), so it lowers to a direct read,

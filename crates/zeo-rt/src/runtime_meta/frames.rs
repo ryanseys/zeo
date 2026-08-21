@@ -169,6 +169,12 @@ pub fn send_super_dynamic(
 ) -> Result<RubyValue, Signal> {
     match METHOD_FRAMES.with(|f| f.borrow().last().copied()) {
         Some((defining, name)) => send_super_from(recv, defining, name, args, block),
-        None => Err(runtime_error!("super called outside of method")),
+        // A snippet's own level has no method of its own, and yet the
+        // `eval` may sit inside one -- whose target it published for the
+        // call (`zeo_rt::eval::EvalHome`).
+        None => match crate::eval::home_super_target() {
+            Some((defining, name)) => send_super_from(recv, defining, name, args, block),
+            None => Err(runtime_error!("super called outside of method")),
+        },
     }
 }

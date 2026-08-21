@@ -519,7 +519,6 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         HirNode::New { .. }
         | HirNode::SuperCall { .. }
         | HirNode::Ffi(_)
-        | HirNode::Eval(_)
         // A box-scoped splice classifies like the eval it rode in on; a
         // handle literal is an ordinary expression value.
         | HirNode::BoxScope { .. }
@@ -1412,17 +1411,12 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             let b = super::stmt::emit_body_boxed(&narrowed, body);
             quote! { { #b } }
         }
-        HirNode::Eval(body) => {
-            let b = super::stmt::emit_body(&cx.in_eval_splice(), body, false);
-            quote! { { #b } }
-        }
         // A synthesized `attach_function` wrapper body: declare the C
         // symbol `extern "C"` (fn-locally, `#[link]`ed), marshal each argument,
         // call it, wrap the result. See `emit_ffi_call`.
         HirNode::Ffi(call) => emit_ffi_call(cx, call),
-        // The `Eval` emit shape with the box switched: the body
-        // resolves classes/constants/globals against `box_id` -- the AOT
-        // loading-box context.
+        // The body resolves classes/constants/globals against `box_id` --
+        // the AOT loading-box context.
         HirNode::BoxScope { box_id, body } => {
             let box_cx = cx.in_box(*box_id);
             let b = super::stmt::emit_body(&box_cx, body, false);

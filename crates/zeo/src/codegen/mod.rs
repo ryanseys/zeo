@@ -154,12 +154,6 @@ struct Ctx<'a> {
     /// stay an unboxed `Arc<Concrete>`). See
     /// `codegen::captures::binding_scope_names`.
     binding_names: Option<std::rc::Rc<Vec<String>>>,
-    /// Whether the code being emitted came from an AOT-spliced
-    /// `eval("literal")` (`HirNode::Eval`). That snippet was parsed on its
-    /// OWN, so prism could not know a bare name is one of the enclosing
-    /// scope's locals and handed it over as a vcall; Ruby resolves it as the
-    /// local, which `emit_call` does here against `binding_names`.
-    in_eval_splice: bool,
     /// Whether the body being emitted pushes NO frame of its own -- a
     /// generated `attr_*` accessor (CRuby compiles those iseq-less, so they
     /// appear in no backtrace) and an AOT-spliced `eval("literal")`. Both
@@ -395,14 +389,6 @@ impl<'a> Ctx<'a> {
     }
 
     /// A child context for an AOT-spliced `eval("literal")` body -- see
-    /// `in_eval_splice`'s docs.
-    fn in_eval_splice(&self) -> Ctx<'a> {
-        Ctx {
-            in_eval_splice: true,
-            frameless: true,
-            ..self.clone()
-        }
-    }
 
     /// A child context for a `BoxScope` body: everything inside
     /// resolves classes/constants/globals against the box -- the AOT
@@ -2626,7 +2612,6 @@ fn codegen(analyzed: &Analyzed, sink: &mut ItemSink<'_>) -> std::io::Result<()> 
         for_var_override: None,
         captured_locals: std::borrow::Cow::Borrowed(&main_captures.locals),
         binding_names: main_binding.clone(),
-        in_eval_splice: false,
         frameless: false,
         self_ident: format_ident!("self"),
         in_real_proc: false,
@@ -3374,7 +3359,6 @@ pub(crate) fn emit_class_body_site_lifted(
         for_var_override: None,
         captured_locals: std::borrow::Cow::Borrowed(&captures.locals),
         binding_names,
-        in_eval_splice: false,
         frameless: false,
         self_ident: format_ident!("self"),
         in_real_proc: false,
@@ -3961,7 +3945,6 @@ fn emit_class_method_fn(
         for_var_override: None,
         captured_locals: std::borrow::Cow::Borrowed(&no_captures.locals),
         binding_names,
-        in_eval_splice: false,
         frameless: false,
         self_ident: if dyn_self {
             format_ident!("__self")
@@ -4382,7 +4365,6 @@ fn emit_value_self_method_fn(
         for_var_override: None,
         captured_locals: std::borrow::Cow::Borrowed(&method_captures.locals),
         binding_names,
-        in_eval_splice: false,
         frameless: false,
         self_ident: format_ident!("__self"),
         in_real_proc: false,
@@ -4503,7 +4485,6 @@ pub(crate) fn emit_instance_method_body(
         for_var_override: None,
         captured_locals: std::borrow::Cow::Borrowed(&method_captures.locals),
         binding_names,
-        in_eval_splice: false,
         frameless,
         self_ident: format_ident!("self"),
         in_real_proc: false,

@@ -492,6 +492,14 @@ pub(super) fn lower_main_file(
 /// scan, deliberately over-approximate: a comment mention costs only the
 /// shim's inclusion), or runtime `eval` exists and could reach it.
 fn wants_ambient_rbconfig(hir: &Hir) -> bool {
+    // Never for a SNIPPET: the running program already loaded whatever it
+    // loads, and a snippet resolves every constant at run time. Splicing
+    // the shim into one also RECURSES -- the shim's own module body runs
+    // as one more snippet, whose source names `RbConfig` and would splice
+    // it again.
+    if hir.mode.is_eval() {
+        return false;
+    }
     hir.uses_runtime_eval()
         || hir
             .files

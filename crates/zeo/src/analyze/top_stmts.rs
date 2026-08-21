@@ -917,7 +917,6 @@ fn for_each_nested_stmt(
         | HirNode::Next(_)
         | HirNode::Redo
         | HirNode::MultiWrite { .. }
-        | HirNode::Eval(_)
         | HirNode::Ffi(_)
         | HirNode::BoxScope { .. }
         | HirNode::BoxHandle(_)

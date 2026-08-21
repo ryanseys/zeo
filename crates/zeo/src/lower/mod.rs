@@ -29,7 +29,7 @@ use ruby_prism::{CallNode, Node, ParseResult};
 use calls::{lower_block, lower_block_like_params, lower_call_args};
 use consts::{box_rooted_path, constant_path_name};
 use defs::{const_is_assigned, lower_params};
-use eval_splice::{lower_box_eval, reject_top_level_defs, single_literal_string_arg};
+use eval_splice::{lower_box_eval, single_literal_string_arg};
 pub use literals::encoding_const_name;
 use literals::line_of;
 
@@ -1501,45 +1501,6 @@ fn lower_call_node(
                     }
                     _ => {}
                 }
-            }
-        }
-    }
-
-    if name == "eval" && receiver.is_none() {
-        // A single string-LITERAL argument keeps the zero-cost AOT path:
-        // the source is parsed and INLINED at compile time (`HirNode::Eval`),
-        // needs no runtime parser, and still sees the surrounding scope's
-        // locals -- prism parses the snippet on its own, so a bare name
-        // arrives as a vcall, and `codegen::call` resolves it back against
-        // the scope (`Ctx::in_eval_splice`). Every other shape -- a
-        // non-literal source expression, or the `binding`/`filename`/
-        // `lineno` argument forms -- falls through to the ordinary
-        // implicit-self `Call` lowering below, which routes `Kernel#eval`
-        // into the runtime `eval` entry (which compiles the snippet, so
-        // raises NotImplementedError at the call), carrying a `Binding` of
-        // the calling scope so that path sees the caller's locals too.
-        let arg_list: Vec<_> = call
-            .arguments()
-            .map(|a| a.arguments().iter().collect())
-            .unwrap_or_default();
-        if arg_list.len() == 1
-            && let Some(s) = arg_list[0].as_string_node()
-        {
-            let src = String::from_utf8_lossy(s.unescaped()).into_owned();
-            // Try the zero-cost AOT inline path. If the literal source
-            // doesn't parse, or defines something the inline path can't
-            // express -- a top-level `def`, or a `class`/`module` written
-            // inside a METHOD body, where the registration walk never
-            // reaches the splice -- DON'T fail the compile: fall through to
-            // the runtime `eval` entry so the program still builds and the
-            // error/behaviour surfaces at runtime, catchably, exactly as
-            // CRuby's `eval` does.
-            if let Ok(body) = parse_and_lower_into(hir, &src)
-                && reject_top_level_defs(hir, &body).is_ok()
-                && !(hir.is_in_def_body() && eval_splice::defines_a_class(hir, &body))
-                && !eval_splice::splice_changes_meaning(hir, &body)
-            {
-                return Ok(hir.push(HirNode::Eval(body)));
             }
         }
     }

@@ -302,10 +302,6 @@ pub(crate) fn is_sent_eval(compiler: &Compiler, name: &str, args: &[NodeId]) -> 
 /// door in: the top-level frame has to be materialized when anything anywhere
 /// can READ that constant, with no `binding` call in sight.
 ///
-/// An AOT-spliced `eval("literal")` (`HirNode::Eval`) gets the NAME LIST
-/// without the promotion: `codegen::call` reads it to resolve a bare name in
-/// the snippet back to the scope's local (see `Ctx::in_eval_splice`), and
-/// nothing there needs a cell.
 pub fn binding_scope_names(
     compiler: &Compiler,
     body: &[NodeId],
@@ -313,10 +309,10 @@ pub fn binding_scope_names(
     captures: &mut Captures,
     force: bool,
 ) -> Option<std::rc::Rc<Vec<String>>> {
-    let promote = force || body.iter().any(|&n| scope_calls_binding(compiler, n));
-    if !promote && !body.iter().any(|&n| scope_splices_eval(compiler, n)) {
+    if !(force || body.iter().any(|&n| scope_calls_binding(compiler, n))) {
         return None;
     }
+    let promote = true;
     // A parenthesized destructuring param's internal slot (`__destr_<i>`) is
     // zeo's own bookkeeping, not a Ruby local: CRuby's `local_variables`
     // reports only the names the destructure BINDS, which `bound_names`
@@ -342,28 +338,6 @@ pub fn binding_scope_names(
         captures.locals.extend(names.iter().cloned());
     }
     Some(std::rc::Rc::new(names))
-}
-
-/// Whether this scope contains an AOT-spliced `eval("literal")` -- the shape
-/// that needs the name list but no cell promotion. Same walk boundary as
-/// [`scope_calls_binding`].
-fn scope_splices_eval(compiler: &Compiler, id: NodeId) -> bool {
-    let node = &compiler.hir[id];
-    if matches!(node, HirNode::Eval(_)) {
-        return true;
-    }
-    match node.scope_kind() {
-        // A `def`/`class` body is a scope of its own.
-        ScopeKind::Definition => return false,
-        ScopeKind::Ffi | ScopeKind::Lambda | ScopeKind::Block | ScopeKind::None => {}
-    }
-    let mut found = false;
-    compiler.hir[id].for_each_child(&mut |n| {
-        if !found {
-            found = scope_splices_eval(compiler, n);
-        }
-    });
-    found
 }
 
 /// Whether `body` (a WHOLE method's own body) contains a `return` that is
@@ -808,7 +782,6 @@ fn walk(
         | HirNode::Return(_)
         | HirNode::PreExec(_)
         | HirNode::Seq(_)
-        | HirNode::Eval(_)
         | HirNode::BoxScope { .. }
         | HirNode::Yield(_)
         | HirNode::Raise(..)

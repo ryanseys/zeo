@@ -745,30 +745,10 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             let (name, args) = (name.clone(), args.clone());
             super::ffi::marker_call(fx, id, &name, &args)
         }
-        // An AOT-spliced `eval("literal")`: the snippet's statements run
-        // right here, in the enclosing scope, and its last one is the
-        // value. What the splice changes is one lookup rule -- see
-        // `Fx::in_eval_splice`.
-        HirNode::Eval(body) => {
-            let body = body.clone();
-            let ss = fx.temp_slot();
-            let dst = fx.slot_addr(ss, 0);
-            let was = std::mem::replace(&mut fx.in_eval_splice, true);
-            let r = super::stmt::lower_value_body_into(fx, &body, dst);
-            fx.in_eval_splice = was;
-            r?;
-            fx.owned_created += 1;
-            Ok(Operand::Slot {
-                ss,
-                owned: true,
-                tag: TagInfo::Unknown,
-            })
-        }
         // A box-scoped splice (`box.eval("..")`, a `box.require`d file's
-        // statements, `box::X`): it emits exactly like an eval splice --
-        // the statements run here, the last one is the value -- with the
-        // box overridden for the body, which is the AOT translation of
-        // CRuby's loading-box context.
+        // statements, `box::X`): the statements run here, the last one is
+        // the value, with the box overridden for the body -- the AOT
+        // translation of CRuby's loading-box context.
         HirNode::BoxScope { box_id, body } => {
             let (box_id, body) = (*box_id, body.clone());
             let ss = fx.temp_slot();

@@ -133,10 +133,6 @@ fn define_entry(
     fx.dyn_ivars = true;
     fx.box_id = spec.box_id;
     fx.frame_label = spec.label.to_string();
-    // prism parsed the snippet on its own, so a name that IS one of the
-    // caller's locals could only arrive as a vcall -- ruby reads it as the
-    // local, and the cells below are its storage.
-    fx.in_eval_splice = true;
     fx.eval_cref = spec.cref.clone();
     fx.eval_mode = Some(spec.mode);
     // A snippet has no defining class of its own, so a `super` written in
@@ -146,6 +142,11 @@ fn define_entry(
     fx.runtime_method_body = true;
     fx.flip_flop_base = spec.flip_flop_base;
     fx.using_base = spec.using_base;
+    // A `binding` written in the snippet reports the same names its own
+    // entry took cells for -- the caller's, plus whatever the source
+    // introduces. Without this the call reached `Kernel#binding`'s row,
+    // which refuses (a method row cannot see its caller's scope).
+    fx.binding_names = Some(std::rc::Rc::new(spec.cells.to_vec()));
 
     // The caller's cells first: unowned (the caller holds the reference
     // and drops it when the call returns).

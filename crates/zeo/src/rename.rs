@@ -187,7 +187,6 @@ impl Walker {
             // walk REWRITES names, and a new `HirNode` carrying one must fail
             // to compile here rather than silently inherit plain descent.
             HirNode::Program(_)
-            | HirNode::Eval(_)
             | HirNode::PreExec(_)
             | HirNode::Seq(_)
             | HirNode::BoxScope { .. }

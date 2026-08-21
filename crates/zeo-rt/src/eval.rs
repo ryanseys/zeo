@@ -150,6 +150,17 @@ pub fn home_yield(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     }
 }
 
+/// The `(defining class, name)` a `super` written at a snippet's own
+/// level resumes from -- the enclosing method's, published for the call.
+#[must_use]
+pub fn home_super_target() -> Option<(zeo_abi::ClassId, crate::Symbol)> {
+    EVAL_HOMES.with(|h| {
+        h.borrow()
+            .last()
+            .and_then(|e| e.zsuper.as_ref().map(|(_, c, n)| (*c, *n)))
+    })
+}
+
 /// `defined?(super)` written at a snippet's own level: the same walk,
 /// without running it. Nil where no enclosing method published a target,
 /// which is what CRuby answers for an `eval` at the top level.
