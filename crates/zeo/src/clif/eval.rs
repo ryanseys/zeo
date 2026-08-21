@@ -167,7 +167,7 @@ fn define_entry(
         &analyzed.compiler,
         stmts,
         &empty_params,
-        crate::analyze::class_query::SelfClass::new(None, None),
+        None,
     );
     let captured = caps.locals;
     let mut locals = crate::analyze::local_storage::Locals::default();

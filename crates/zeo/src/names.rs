@@ -1,60 +1,13 @@
-//! The backend-neutral name-mangling core: how a Ruby name (method/class/
-//! local/ivar) becomes a valid target-language identifier FRAGMENT. The
-//! Rust-specific half (keyword escaping, `r#` raw idents, `proc_macro2::Ident`
-//! construction) stays in `codegen::ident`; a CLIF symbol namer composes the
-//! same fragments.
+//! The name-mangling core: how a Ruby name (method/class/local/ivar) becomes
+//! a valid identifier FRAGMENT. `clif::names` composes these fragments into
+//! the symbols an object file carries.
 
-/// A Ruby method name that's a bare operator symbol (`def +`/`def <=>`/
-/// `a + b`/`a <=> b` are the exact same method name either way -- operators
-/// are ordinary `Call`s) -- none of
-/// these are valid Rust identifier TEXT at all (`+`, `<=>`, `[]`, ...), so
-/// unlike `escape_special_suffix`'s plain-name-plus-suffix rewriting, this
-/// is a fixed, exhaustive lookup table, not a general escaping rule.
-/// Without it, a user class defining `def +(other)`/`def <=>(other)`
-/// panics at codegen time with a raw `proc_macro2` "not a valid Ident"
-/// error. Both the `impl` block's method
-/// definition (`codegen::mod::emit_class`) and a call site's general
-/// (non-fast-path) dispatch (`codegen::call::dispatch`) route every method
-/// name through this SAME table, so fixing it once makes both sides
-/// agree automatically.
-pub(crate) const OPERATOR_METHOD_NAMES: &[(&str, &str)] = &[
-    ("+", "op_add"),
-    ("-", "op_sub"),
-    ("*", "op_mul"),
-    ("/", "op_div"),
-    ("%", "op_mod"),
-    ("**", "op_pow"),
-    ("==", "op_eq"),
-    ("!=", "op_neq"),
-    ("<", "op_lt"),
-    (">", "op_gt"),
-    ("<=", "op_le"),
-    (">=", "op_ge"),
-    ("<=>", "op_cmp"),
-    ("&", "op_band"),
-    ("|", "op_bor"),
-    ("^", "op_bxor"),
-    ("<<", "op_shl"),
-    (">>", "op_shr"),
-    ("[]", "op_index"),
-    ("[]=", "op_index_set"),
-    ("-@", "op_neg"),
-    ("+@", "op_pos"),
-    ("~", "op_bnot"),
-    ("!", "op_not"),
-    ("=~", "op_match"),
-    ("!~", "op_not_match"),
-    ("===", "op_case_eq"),
-];
-
-/// A spelling of `name` that Rust accepts as an identifier, or `None` when it
+/// A spelling of `name` an identifier grammar accepts, or `None` when it
 /// already is one.
 ///
-/// Ruby's identifier rule is far wider than Rust's: every byte above ASCII
-/// counts, so `@height´` is a legal ivar (fastimage ships one), as is any
-/// Latin-1 punctuation in a method name. Rust wants XID characters, and
-/// `Ident::new` PANICS on anything else -- which reached the user as an
-/// internal-error backtrace instead of a diagnostic.
+/// Ruby's identifier rule is far wider: every byte above ASCII counts, so
+/// `@height´` is a legal ivar (fastimage ships one), as is any Latin-1
+/// punctuation in a method name.
 ///
 /// Each rejected character becomes its `_uXXXX_` code point, so a name stays
 /// recognizable and two names cannot collide: the encoding is reversible.
@@ -114,37 +67,4 @@ pub(crate) fn ident_fragment(name: &str) -> String {
         Some(safe) => safe,
         None => name.to_string(),
     }
-}
-
-/// `foo?` -> `foo_p`, `foo!` -> `foo_bang`, `foo=` -> `foo_set` -- but NOT
-/// operator method names that happen to end the same way (`==`, `!=`, `<=`,
-/// `>=`, `[]=`), which are fixed multi-char symbol sequences with no
-/// identifier-like base, not a plain name plus a suffix -- those are handled
-/// by [`OPERATOR_METHOD_NAMES`], checked before this function is ever
-/// called.
-///
-/// A marker is a RESERVED ending, so a plain Ruby name that already ends in
-/// one gets a trailing `_`: `remote=` and `remote_set` are two different
-/// methods, and rubygems' `Gem::Resolver::InstallerSet` defines both (a
-/// "duplicate definitions with name `remote_set`" on the generated program --
-/// a miscompile of legal input, exactly like `class_method_ident`'s). Since a
-/// marker never ends in `_`, the escaped form can't collide back.
-pub(crate) fn escape_special_suffix(name: &str) -> Option<String> {
-    const MARKERS: [(&str, &str); 3] = [("?", "_p"), ("!", "_bang"), ("=", "_set")];
-    fn is_ident_like(base: &str) -> bool {
-        let mut chars = base.chars();
-        matches!(chars.next(), Some(c) if c.is_alphabetic() || c == '_')
-            && chars.all(|c| c.is_alphanumeric() || c == '_')
-    }
-    for (suffix, marker) in MARKERS {
-        if let Some(base) = name.strip_suffix(suffix)
-            && is_ident_like(base)
-        {
-            return Some(format!("{base}{marker}"));
-        }
-    }
-    if is_ident_like(name) && MARKERS.iter().any(|(_, m)| name.ends_with(m)) {
-        return Some(format!("{name}_"));
-    }
-    None
 }

@@ -32,14 +32,6 @@ struct Args {
     /// program string (`ruby -e`'s shape). Exactly one is required.
     source: Source,
     output: Option<PathBuf>,
-    /// `--emit-rust[=<path>]`: emit the generated Rust instead of building --
-    /// to the attached path (streamed; nothing holds the program as text) or
-    /// to stdout when bare.
-    emit_rust: Option<EmitTarget>,
-    /// `--pretty`: render `--emit-rust`'s output through prettyplease for a
-    /// person to read (costs a `syn` re-parse and a second whole-program
-    /// copy, so it is opt-in).
-    pretty: bool,
     /// `-I` roots, then RUBYOPT's `-I` roots, then RUBYLIB -- ruby's order.
     load_roots: Vec<PathBuf>,
     /// `--gems <dir>`: vendored-gem directories (repeatable).
@@ -83,9 +75,9 @@ struct Args {
     debuginfo: bool,
 }
 
-/// Where `--emit-rust` sends the generated Rust. The path is ATTACHED-only
-/// (`--emit-rust=out.rs`) -- a spaced value would be ambiguous with the input
-/// file, the same reason `--report` is attached-only.
+/// Where `--emit-clif` sends the emitted IR. The path is ATTACHED-only
+/// (`--emit-clif=out.clif`) -- a spaced value would be ambiguous with the
+/// input file, the same reason `--report` is attached-only.
 enum EmitTarget {
     Stdout,
     File(PathBuf),
@@ -170,11 +162,9 @@ options:
   --compile             write the default-named binary instead of running
   --emit-clif[=<path>]  emit the Cranelift IR (the aot backend's own
                         lowering) instead of building; bare prints to stdout
-  --backend <rustc|aot|jit>
-                        which code generator builds the program: the
-                        in-process Cranelift JIT (the default in run mode),
-                        the Cranelift AOT backend (the default with -o), or
-                        rustc (the differential oracle, kept until M3)
+  --backend <aot|jit>   which mode the Cranelift backend runs in: the
+                        in-process JIT (the default in run mode) or the AOT
+                        object-file path (the default with -o)
                         (ZEO_BACKEND is the env spelling; the flag wins)
   -g                    put DWARF line tables in the compiled program, so
                         lldb, perf and Instruments name a Ruby frame by its
@@ -198,14 +188,6 @@ options:
   -w, -W[0-2]           accepted, ruby's shapes; zeo warns from neither
   -W:[no-]<category>    accepted for ruby's categories (deprecated,
                         experimental, performance, strict_unused_block)
-  --emit-rust[=<path>]  write the generated Rust to <path> -- or stdout when
-                        no path is attached -- and exit (no build). The file
-                        form is unformatted and streamed, so nothing holds
-                        the program as text -- what a sweep or a build
-                        harness wants
-  --pretty              with --emit-rust: format the Rust for a person to
-                        read, which costs a `syn` re-parse and a second copy
-                        of the whole program
   -v, --version         print the version and exit
   -h, --help            show this message
 
@@ -224,12 +206,8 @@ environment:
                         Gemfile is also known (an ambient store alone never
                         changes a compile)
   BUNDLE_GEMFILE        the Gemfile for --bundle-gemfile
-  ZEO_BACKEND           `jit`, `aot` or `rustc` -- override the default
-                        backend (jit for immediate runs, aot for -o/--compile;
-                        rustc is the frozen differential oracle, dev tree only)
-  ZEO_RUNTIME_PROFILE   `debug` or `release` -- which zeo-rt build --backend
-                        rustc links against (default: debug for immediate
-                        runs, release for -o/--compile artifacts)
+  ZEO_BACKEND           `jit` or `aot` -- override the default backend (jit
+                        for immediate runs, aot for -o/--compile)
   ZEO_LOG / RUST_LOG    a `tracing` EnvFilter directive for the compiler's
                         internal logs, e.g. `zeo=debug` or
                         `zeo::analyze=debug,zeo::lower=trace`
@@ -247,8 +225,6 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
     let mut input = None;
     let mut eval: Option<String> = None;
     let mut output = None;
-    let mut pretty = false;
-    let mut emit_rust: Option<EmitTarget> = None;
     let mut emit_clif: Option<EmitTarget> = None;
     // The env spelling is read once here so the flag and the variable can
     // never disagree downstream.
@@ -345,20 +321,12 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
                 }
                 // Attached path only, like --report -- a spaced value would
                 // be ambiguous with the input file. Bare means stdout.
-                "emit-rust" => {
-                    emit_rust = Some(match inline {
-                        Some(path) => EmitTarget::File(PathBuf::from(path)),
-                        None => EmitTarget::Stdout,
-                    });
-                }
-                // Attached path only, like --emit-rust.
                 "emit-clif" => {
                     emit_clif = Some(match inline {
                         Some(path) => EmitTarget::File(PathBuf::from(path)),
                         None => EmitTarget::Stdout,
                     });
                 }
-                "pretty" => pretty = true,
                 _ => {
                     return Err(format!(
                         "invalid option: {arg} (-h will show valid options)"
@@ -431,13 +399,9 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
     if compile && matches!(source, Source::Eval(_)) {
         return Err("--compile with -e has no input filename to name the binary; use -o".into());
     }
-    // `--pretty` shapes --emit-rust's output and nothing else.
-    if pretty && emit_rust.is_none() {
-        return Err("--pretty only shapes --emit-rust output; add --emit-rust[=<path>]".into());
-    }
     // Trailing args are ARGV, which only an immediately-run program has.
-    // (`--emit-rust` inspects instead of running, so it has none.)
-    let runs_now = output.is_none() && !compile && emit_rust.is_none();
+    // (`--emit-clif` inspects instead of running, so it has none.)
+    let runs_now = output.is_none() && !compile && emit_clif.is_none();
     if !program_args.is_empty() && !runs_now {
         return Err(format!("unexpected argument `{}`", program_args[0]));
     }
@@ -487,8 +451,6 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
         source,
         output,
         compile,
-        pretty,
-        emit_rust,
         load_roots: {
             let mut roots = load_roots;
             roots.extend(rubyopt_roots);
@@ -654,29 +616,7 @@ fn run() -> Result<(), MainError> {
         gem_paths: args.gem_paths.clone(),
         lockfile: args.lockfile.clone(),
         root_gem: args.root_gem.clone().map(zeo::Gem::named),
-        pretty: args.pretty,
     };
-    // Ahead of the ordinary compile because the file form is a DIFFERENT one:
-    // nothing holds the program as text, so there is no `CompileOutput` to
-    // branch on afterwards. `--pretty` and stdout necessarily collect (syn
-    // has to parse the program as a unit; stdout is a human/pipe consumer),
-    // so those pay for the copy they use.
-    match &args.emit_rust {
-        Some(EmitTarget::File(path)) if !args.pretty => {
-            zeo::compile_to_file(&source, &opts, path)?;
-            return Ok(());
-        }
-        Some(target) => {
-            let compiled = zeo::compile_to_rust_with(&source, &opts)?;
-            match target {
-                EmitTarget::Stdout => println!("{}", compiled.rust_source),
-                EmitTarget::File(path) => std::fs::write(path, &compiled.rust_source)
-                    .map_err(|e| format!("writing {}: {e}", path.display()))?,
-            }
-            return Ok(());
-        }
-        None => {}
-    }
     if let Some(target) = &args.emit_clif {
         let text = zeo::compile_to_clif_text(&source, &opts)?;
         match target {
@@ -687,8 +627,8 @@ fn run() -> Result<(), MainError> {
         return Ok(());
     }
 
-    // The backend decides WHICH compile runs (rust text vs an object file),
-    // so it is selected before compiling.
+    // The backend decides whether this compile runs in place or produces an
+    // object file, so it is selected before compiling.
     let wants_artifact = args.compile || args.output.is_some();
     let backend = zeo::backend::Backend::select(args.backend, wants_artifact)?;
     // The JIT is run-in-place by definition: compile into this process and
@@ -718,28 +658,18 @@ fn run() -> Result<(), MainError> {
         };
         match zeo::run_jit_with(&source, &opts, &program_name, &args.program_args)? {}
     }
-    enum Compiled {
-        Rustc(zeo::CompileOutput),
-        Aot(zeo::ObjectOutput),
-    }
     let compiled = match backend {
-        zeo::backend::Backend::Rustc => Compiled::Rustc(zeo::compile_to_rust_with(&source, &opts)?),
-        zeo::backend::Backend::Aot => {
-            Compiled::Aot(zeo::compile_to_object_with(&source, &opts, args.debuginfo)?)
-        }
+        zeo::backend::Backend::Aot => zeo::compile_to_object_with(&source, &opts, args.debuginfo)?,
         zeo::backend::Backend::Jit => unreachable!("the jit branch above never falls through"),
     };
     zeo::memguard::set_phase(zeo::memguard::Phase::Build);
-    let program = match &compiled {
-        Compiled::Rustc(c) => zeo::backend::CompiledProgram::Rustc(c),
-        Compiled::Aot(o) => zeo::backend::CompiledProgram::Aot(o),
-    };
+    let program = zeo::backend::CompiledProgram::Aot(&compiled);
 
     // The default mode -- a bare file or `-e`, no artifact asked for: build a
     // throwaway program, run it, and exit with ITS status (stdout/stderr
     // stream straight through), like ruby. With `-o` or `--compile`, produce
-    // an artifact instead. The mode bodies live in `backend` (they are what
-    // varies per backend); this is just the mode decision.
+    // an artifact instead. The mode bodies live in `backend`; this is just the
+    // mode decision.
     if !args.compile && args.output.is_none() {
         match zeo::backend::run_program(&program, &args.program_args)? {}
     }
@@ -857,7 +787,7 @@ mod tests {
         // An artifact or inspect mode runs nothing, so there is no ARGV.
         assert!(err(&["t.rb", "--compile", "alpha"]).contains("unexpected argument `alpha`"));
         assert!(err(&["-o", "app", "t.rb", "alpha"]).contains("unexpected argument `alpha`"));
-        assert!(err(&["--emit-rust", "t.rb", "alpha"]).contains("unexpected argument `alpha`"));
+        assert!(err(&["--emit-clif", "t.rb", "alpha"]).contains("unexpected argument `alpha`"));
     }
 
     #[test]
@@ -1042,19 +972,18 @@ mod tests {
     }
 
     #[test]
-    fn emit_rust_takes_an_attached_path_or_stdout() {
+    fn emit_clif_takes_an_attached_path_or_stdout() {
         assert!(matches!(
-            ok(&["--emit-rust", "t.rb"]).emit_rust,
+            ok(&["--emit-clif", "t.rb"]).emit_clif,
             Some(EmitTarget::Stdout)
         ));
-        match ok(&["--emit-rust=out.rs", "t.rb"]).emit_rust {
-            Some(EmitTarget::File(p)) => assert_eq!(p, PathBuf::from("out.rs")),
+        match ok(&["--emit-clif=out.clif", "t.rb"]).emit_clif {
+            Some(EmitTarget::File(p)) => assert_eq!(p, PathBuf::from("out.clif")),
             other => panic!("expected a file target, got {:?}", other.is_some()),
         }
-        // --pretty modifies --emit-rust and is rejected alone.
-        assert!(ok(&["--emit-rust", "--pretty", "t.rb"]).pretty);
-        assert!(err(&["--pretty", "t.rb"]).contains("--emit-rust"));
-        // The old inspect spellings are gone.
+        // The retired Rust emitter's flags are gone, and say so.
+        assert!(err(&["--emit-rust", "t.rb"]).contains("invalid option"));
+        assert!(err(&["--pretty", "t.rb"]).contains("invalid option"));
         assert!(err(&["--dump=rust", "t.rb"]).contains("invalid option"));
     }
 }

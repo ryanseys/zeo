@@ -2026,7 +2026,7 @@ fn define_method_body(
         &analyzed.compiler,
         def.body,
         def.hir_params,
-        crate::analyze::class_query::SelfClass::new(Some(def.owner), None),
+        Some(def.owner),
     );
     fx.binding_names = crate::analyze::captures::binding_scope_names(
         &analyzed.compiler,
@@ -2292,7 +2292,7 @@ fn define_toplevel(
         &analyzed.compiler,
         stmts,
         &empty_params,
-        crate::analyze::class_query::SelfClass::new(None, None),
+        None,
     );
     // `TOPLEVEL_BINDING` IS the top-level frame's binding, so a program that
     // can read it -- anywhere, including inside a required gem's method

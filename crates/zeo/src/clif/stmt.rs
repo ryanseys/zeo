@@ -688,6 +688,14 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
             else_body,
         } => {
             let (cond, then_body, else_body) = (*cond, then_body.clone(), else_body.clone());
+            // A build-time guard (`if defined?(Gone)`, a version gate) decides
+            // WHICH BRANCH IS EMITTED, so the other one is never lowered. That
+            // matters beyond code size: the unreached branch is written for a
+            // ruby zeo is not, and may name constructs this emitter would
+            // refuse.
+            if let Some(taken) = static_cond(fx, cond) {
+                return lower_stmts(fx, if taken { &then_body } else { &else_body });
+            }
             let c = lower_expr(fx, cond)?;
             let t = ownership::truthy(fx, c);
             let b_then = fx.b.create_block();
@@ -2363,4 +2371,15 @@ fn apply_visibility(
     let status = fx.call(entry, &args).expect("the entry returns a status");
     fx.fallible(status);
     Ok(())
+}
+
+/// The compile-time verdict on an `if` condition, or `None` when it has to be
+/// asked at run time. See `analyze::constfold::static_cond`.
+pub(crate) fn static_cond(fx: &Fx<'_, '_>, cond: crate::hir::NodeId) -> Option<bool> {
+    let env = crate::analyze::constfold::ConstEnv {
+        compiler: &fx.an.compiler,
+        defining_class: fx.defining_class.or(fx.method_class),
+        box_id: fx.box_id,
+    };
+    crate::analyze::constfold::static_cond(&env, cond)
 }

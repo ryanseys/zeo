@@ -109,32 +109,6 @@ fn compile_writes_the_default_binary_and_runs_nothing() {
     assert_eq!(stdout_of(&ran), "ran\n");
 }
 
-/// The frozen rustc emitter is still reachable, which is the whole reason
-/// it is kept: a suspect Cranelift result gets diffed against the backend
-/// that was correct before it.
-///
-/// One invocation, and it is not cheap -- the content-keyed binary cache
-/// that used to make a warm rerun free is gone, so this pays a real `rustc`
-/// over the generated program. That is the deal `--backend rustc` now
-/// offers, and asserting it here keeps the deal honest.
-#[test]
-fn the_rustc_oracle_still_compiles_and_runs_a_program() {
-    let dir = scratch("rustc-oracle");
-    let rb = write(&dir, "t.rb", "puts :ok\n");
-
-    let out = zeo()
-        .args(["--backend", "rustc"])
-        .arg(&rb)
-        .output()
-        .expect("spawn zeo");
-    assert_eq!(
-        stdout_of(&out),
-        "ok\n",
-        "stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
 #[test]
 fn a_failing_minitest_run_exits_nonzero() {
     // THE promise of run-by-default: `zeo test.rb` reports test failure

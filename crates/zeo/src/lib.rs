@@ -40,7 +40,6 @@ pub mod analyze_error;
 pub mod backend;
 pub mod builtin_surface;
 pub mod clif;
-pub mod codegen;
 pub mod compiler;
 pub(crate) mod debug_flags;
 pub mod diagnostics;
@@ -143,12 +142,6 @@ pub struct CompileOptions {
     /// probe passes its subject here so a squatted feature resolves to the
     /// gem actually under test.
     pub root_gem: Option<Gem>,
-    /// Render the generated Rust through prettyplease (the `--dump=rust`
-    /// human view).
-    /// Off by default: the build path feeds rustc, which is insensitive to
-    /// formatting, and the re-parse + pretty-print pair dominated emission
-    /// at gem scale.
-    pub pretty: bool,
 }
 
 /// A gem named by the caller -- the public identity type `CompileOptions`
@@ -173,69 +166,6 @@ impl Gem {
     }
 }
 
-/// A compiled program: the generated Rust source, ready for
-/// `backend::build_binary`.
-#[derive(Debug)]
-pub struct CompileOutput {
-    pub rust_source: String,
-    /// Whether this program needs prism at RUNTIME -- a runtime eval site,
-    /// or `require "prism"` (see `Hir::needs_prism_runtime`). One shipped
-    /// runtime carries it either way now; what the flag still decides is
-    /// whether the program's `ProgramDesc` names `zeo_eval_install`, which
-    /// is what keeps the compiler out of every binary that cannot eval.
-    pub needs_prism_runtime: bool,
-}
-
-/// The full parse -> analyze -> codegen pipeline: Ruby source in, formatted
-/// Rust source text out. Both `main.rs` (the CLI) and the test harness call
-/// this directly.
-pub fn compile_to_rust(source: &str) -> Result<String, String> {
-    compile_to_rust_with(source, &CompileOptions::default())
-        .map(|out| out.rust_source)
-        .map_err(String::from)
-}
-
-/// `compile_to_rust` plus the require-resolution context. The typed error
-/// carries the failing stage and (for lowering rejections) the source span --
-/// see `diagnostics`; `String` consumers convert via `From`/`Display`.
-pub fn compile_to_rust_with(
-    source: &str,
-    opts: &CompileOptions,
-) -> Result<CompileOutput, CompileError> {
-    let (produced, needs_prism_runtime) = compile_with_emit(source, opts, Emit::Memory)?;
-    let Produced::Memory(rust_source) = produced else {
-        unreachable!("Emit::Memory produces Produced::Memory")
-    };
-    Ok(CompileOutput {
-        rust_source,
-        needs_prism_runtime,
-    })
-}
-
-/// `compile_to_rust_with`, streamed straight to `path` instead of returned.
-///
-/// For a caller that wants the Rust as a FILE -- the CLI's `--emit-rust`, and
-/// every sweep behind it. Nothing holds the program as text, so the peak drops
-/// by one whole copy of the output; at gem scale that copy is the difference
-/// between a compile that fits and one that does not. Always the compact
-/// renderer: `--dump=rust`'s `syn` round-trip and prettyplease exist to make
-/// output a PERSON reads, and add two more whole-program copies to do it.
-pub fn compile_to_file(
-    source: &str,
-    opts: &CompileOptions,
-    path: &std::path::Path,
-) -> Result<EmitOutput, CompileError> {
-    let (produced, needs_prism_runtime) = compile_with_emit(source, opts, Emit::File(path))?;
-    let Produced::File(stats) = produced else {
-        unreachable!("Emit::File produces Produced::File")
-    };
-    Ok(EmitOutput {
-        bytes: stats.bytes,
-        lines: stats.lines,
-        needs_prism_runtime,
-    })
-}
-
 /// A Cranelift-compiled program: one object file's bytes, ready for
 /// `backend::link` (the `--backend aot` pipeline).
 pub struct ObjectOutput {
@@ -247,8 +177,7 @@ pub struct ObjectOutput {
     pub debuginfo: bool,
 }
 
-/// The Cranelift pipeline: the same front end as `compile_to_rust_with`,
-/// then `clif::emit` instead of the Rust emitter.
+/// The Cranelift pipeline: front end, then `clif::emit`.
 pub fn compile_to_object_with(
     source: &str,
     opts: &CompileOptions,
@@ -478,152 +407,15 @@ pub fn compile_to_clif_text(source: &str, opts: &CompileOptions) -> Result<Strin
     })
 }
 
-/// What `compile_to_file` wrote.
-#[derive(Debug)]
-pub struct EmitOutput {
-    pub bytes: u64,
-    pub lines: u64,
-    /// As [`CompileOutput::needs_prism_runtime`].
-    pub needs_prism_runtime: bool,
-}
-
-fn compile_with_emit(
-    source: &str,
-    opts: &CompileOptions,
-    emit: Emit<'_>,
-) -> Result<(Produced, bool), CompileError> {
-    std::thread::scope(|scope| {
-        std::thread::Builder::new()
-            .name("zeo-compile".into())
-            .stack_size(COMPILE_STACK_SIZE)
-            .spawn_scoped(scope, || compile_on_this_thread(source, opts, emit))
-            .expect("spawning the compiler thread")
-            .join()
-            .unwrap_or_else(|payload| std::panic::resume_unwind(payload))
-    })
-}
-
 /// Stack depth scales with source nesting depth, and `resolv` alone exceeds the
 /// ~2 MiB a spawned thread gets by default -- the CLI survived only because a
 /// main thread gets 8 MiB. Compiling on an explicitly-sized thread makes that
 /// headroom the compiler's property rather than the caller's.
 const COMPILE_STACK_SIZE: usize = 64 * 1024 * 1024;
 
-/// Whether `ZEO_TIMINGS` is set: the phase-timing report emitted by
-/// `compile_on_this_thread`, `codegen_to_string`, and `backend::build_binary`
-/// as machine-parseable `zeo-timings:` stderr lines (consumed by
+/// Whether `ZEO_TIMINGS` is set: the phase-timing report `FrontEnd::report`
+/// writes as machine-parseable `zeo-timings:` stderr lines (consumed by
 /// `xtask compile-bench`).
 pub fn timings_enabled() -> bool {
     std::env::var_os("ZEO_TIMINGS").is_some()
-}
-
-/// Where a compile's generated Rust goes.
-///
-/// The distinction is the whole point of `compile_to_file`: a program held as
-/// a `String` is a second whole-program copy in memory beside the tokens it
-/// was rendered from, and at gem scale that copy is hundreds of megabytes.
-/// A caller that only wants the FILE never has to pay for it.
-#[derive(Clone, Copy)]
-enum Emit<'a> {
-    Memory,
-    File(&'a std::path::Path),
-}
-
-/// What a compile produced, matching the `Emit` it was given.
-enum Produced {
-    Memory(String),
-    File(codegen::EmitStats),
-}
-
-fn compile_on_this_thread(
-    source: &str,
-    opts: &CompileOptions,
-    emit: Emit<'_>,
-) -> Result<(Produced, bool), CompileError> {
-    let t_start = std::time::Instant::now();
-    memguard::set_phase(memguard::Phase::ParseLower);
-    let (hir, root, gem_records) = parse::parse_and_lower_with(
-        source,
-        opts.input_path.as_deref(),
-        opts.file_name.as_deref(),
-        opts.line_offset,
-        opts.mode,
-        &opts.load_roots,
-        &opts.package_dirs,
-        &opts.gem_paths,
-        opts.lockfile.as_deref(),
-        opts.root_gem.as_ref(),
-    )?;
-    let t_parse_lower = t_start.elapsed();
-    // The disclosure record is fully known once lowering resolved
-    // every require. Write it (and warn) BEFORE analyze/codegen, so the ledger
-    // lands even if a later stage fails.
-    if let Some(path) = &opts.gem_report {
-        gem_report::write_report(&gem_records, path)
-            .map_err(|message| CompileError::Report { message })?;
-    }
-    // Computed from the arena BEFORE `analyze` consumes it: a whole-program
-    // fact (does any eval site survive lowering?), so it belongs here rather
-    // than downstream where the arena is already owned by `Analyzed`.
-    let needs_prism_runtime = hir.needs_prism_runtime();
-    // Reported with the timings because the arena is a first-class term in the
-    // compiler's peak: one `HirNode` is as wide as the largest variant, so the
-    // count times that width is a floor on what the front end holds.
-    let (node_count, node_bytes) = (
-        hir.all_nodes().len(),
-        std::mem::size_of_val(hir.all_nodes()),
-    );
-    let t_analyze_start = std::time::Instant::now();
-    memguard::set_phase(memguard::Phase::Analyze);
-    let analyzed = analyze::analyze(hir, root)?;
-    let t_analyze = t_analyze_start.elapsed();
-    let t_codegen_start = std::time::Instant::now();
-    memguard::set_phase(memguard::Phase::Codegen);
-    let produced = match emit {
-        Emit::Memory if opts.pretty => {
-            Produced::Memory(codegen::codegen_to_string_pretty(&analyzed)?)
-        }
-        Emit::Memory => Produced::Memory(codegen::codegen_to_string(&analyzed)?),
-        Emit::File(path) => {
-            let file = std::fs::File::create(path)
-                .map_err(|e| CompileError::codegen(format!("creating {}: {e}", path.display())))?;
-            // Buffered: the writer is handed one token at a time, and an
-            // unbuffered `File` would make each of those a syscall.
-            let mut out = std::io::BufWriter::with_capacity(256 * 1024, file);
-            match codegen::codegen_to_writer(&analyzed, &mut out) {
-                Ok(stats) => Produced::File(stats),
-                Err(e) => {
-                    // Emission STREAMS, so a construct codegen refuses is only
-                    // reported once a partial program is already on disk. Half
-                    // a program still parses as a whole one, and whatever ran
-                    // next would blame rustc for a file zeo knew was wrong.
-                    drop(out);
-                    let _ = std::fs::remove_file(path);
-                    return Err(e);
-                }
-            }
-        }
-    };
-    if timings_enabled() {
-        let bytes = match &produced {
-            Produced::Memory(s) => s.len() as u64,
-            Produced::File(stats) => stats.bytes,
-        };
-        eprintln!(
-            "zeo-timings: parse_lower={}ms analyze={}ms codegen={}ms total={}ms bytes={bytes} lines={} nodes={node_count} node_bytes={} peak_rss={}",
-            t_parse_lower.as_millis(),
-            t_analyze.as_millis(),
-            t_codegen_start.elapsed().as_millis(),
-            t_start.elapsed().as_millis(),
-            match &produced {
-                Produced::Memory(_) => 0,
-                Produced::File(stats) => stats.lines,
-            },
-            // `0` for a compile that finished inside the poller's first
-            // interval -- absent, not zero. `compile-bench` reads it as such.
-            node_bytes,
-            memguard::peak_bytes().unwrap_or(0),
-        );
-    }
-    Ok((produced, needs_prism_runtime))
 }

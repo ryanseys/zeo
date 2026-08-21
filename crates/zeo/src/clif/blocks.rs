@@ -7,7 +7,7 @@
 use super::ctx::{Fx, Local, VALUE_SIZE};
 use super::operand::{Operand, TagInfo};
 use super::ownership;
-use crate::analyze::{captures, class_query};
+use crate::analyze::captures;
 use crate::hir::{ArrayElem, HirNode, NodeId};
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::{
@@ -55,12 +55,7 @@ fn captured_names(
     body: &[NodeId],
 ) -> Result<Vec<String>, String> {
     let block = site;
-    let caps = captures::block_captures(
-        &fx.an.compiler,
-        params,
-        body,
-        class_query::SelfClass::new(fx.method_class, None),
-    );
+    let caps = captures::block_captures(&fx.an.compiler, params, body, fx.method_class);
     // A BARE `super` inside the block forwards the ENCLOSING method's
     // parameters by name, and those reads exist only in the emitted
     // forwarding list -- there is no HIR node to walk, which is what
@@ -729,12 +724,8 @@ fn define_block_fn(
     // otherwise. Created once, before the redo loop.
     // ...and as cells for every name a `binding` taken in the block would
     // report, which is the only storage a binding can share.
-    let mut body_caps = captures::collect_escaping_captures(
-        &an.compiler,
-        &body,
-        &params,
-        class_query::SelfClass::new(method_class, None),
-    );
+    let mut body_caps =
+        captures::collect_escaping_captures(&an.compiler, &body, &params, method_class);
     // What a `binding` in this body sees: the block's OWN names first, then
     // the enclosing scope's -- CRuby's innermost-scope-first
     // `local_variables` order.
@@ -1318,12 +1309,7 @@ pub(crate) fn catch_break(fx: &mut Fx, status: ir::Value, out: ir::Value) {
 /// The name a `Ractor.new` isolation check reports for this block, or the
 /// empty string when it isolates cleanly. See the call site's note.
 fn outer_capture(fx: &Fx, params: &crate::hir::Params, body: &[NodeId]) -> String {
-    let caps = captures::block_captures(
-        &fx.an.compiler,
-        params,
-        body,
-        class_query::SelfClass::new(fx.method_class, None),
-    );
+    let caps = captures::block_captures(&fx.an.compiler, params, body, fx.method_class);
     let mut names: Vec<&String> = caps
         .locals
         .iter()

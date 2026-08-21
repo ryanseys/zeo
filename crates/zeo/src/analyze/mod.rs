@@ -28,7 +28,6 @@ pub(crate) use scans::*;
 use top_stmts::*;
 pub(crate) mod mro;
 pub(crate) mod redefs;
-pub(crate) mod share;
 
 use crate::analyze_error::AnalyzeError;
 use crate::compiler::{AccessorKind, AccessorShape, ClassId, Compiler, OBJECT_CLASS, Scope};

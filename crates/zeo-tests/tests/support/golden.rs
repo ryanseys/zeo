@@ -414,25 +414,9 @@ fn sidecars(rb: &Path) -> std::io::Result<Sidecars> {
 
 // ---- compile + run via the zeo library (same path as e2e `run_ruby`) ----
 
-/// `-O0`. A golden asserts what a program PRINTS, never how fast it runs, and
-/// `-C opt-level=2` is pure cost here -- ruinous once a vendored-gem golden
-/// splices a whole require graph into one crate (`gems/net_http.rb` generates
-/// 45MB of Rust, which rustc will not optimize inside ten minutes).
-/// `ZEO_RUNTIME_PROFILE=release` forces the optimized build back.
-fn profile() -> zeo::backend::Profile {
-    zeo::backend::Profile::from_env_or(zeo::backend::Profile::Debug)
-}
-
-/// `ZEO_GOLDEN_BACKEND`: which backend runs the goldens. Unset or `jit` =
-/// the default; `aot` is the same leg through a linked binary; `rustc` is
-/// the frozen differential oracle, kept selectable until M3.
-///
-/// All three spawn the built `zeo` CLI, one child per golden. The oracle
-/// used to run in-process instead, through `build_binary` and the
-/// content-keyed bin cache; that machinery is gone, so the oracle now pays
-/// a full rustc compile per golden. Deliberate: a whole-corpus oracle sweep
-/// is no longer part of any gate, and the way the oracle actually earns its
-/// keep -- rerunning ONE diverging golden -- costs one rustc invocation.
+/// `ZEO_GOLDEN_BACKEND`: which mode runs the goldens. Unset or `jit` = the
+/// in-process default; `aot` is the same leg through a linked binary. Both
+/// spawn the built `zeo` CLI, one child per golden.
 fn golden_backend() -> String {
     match std::env::var("ZEO_GOLDEN_BACKEND") {
         Ok(v) if !v.is_empty() => v,
@@ -516,16 +500,13 @@ fn run_via_cli(
     stdin: Option<&[u8]>,
     run_cwd: &Path,
 ) -> Result<(Vec<u8>, Vec<u8>), String> {
-    // Probe the front end IN PROCESS first, so a program zeo REJECTS stays
+    // Probe the emitter IN PROCESS first, so a program zeo REJECTS stays
     // distinguishable from one that compiled and then failed at run time --
-    // the CompileFail contract the goldens are written against. The probe
-    // has to go through the backend under test: a refusal is a property of
-    // the emitter, and reporting the other one's verdict would be a lie.
-    match backend {
-        "rustc" => zeo::compile_to_rust_with(source, opts).map(|_| ()),
-        _ => zeo::compile_to_object_with(source, opts, false).map(|_| ()),
-    }
-    .map_err(String::from)?;
+    // the CompileFail contract the goldens are written against. A refusal is
+    // a property of the emitter, so this has to go through it.
+    zeo::compile_to_object_with(source, opts, false)
+        .map(|_| ())
+        .map_err(String::from)?;
     let mut cmd = Command::new(zeo_cli()?);
     cmd.arg("--backend").arg(backend);
     for root in &opts.load_roots {
@@ -701,11 +682,9 @@ pub fn run_golden_env(
 
     if mode == Mode::CompileFail {
         // "Rejected" means zeo can't produce a RUNNABLE binary -- a clean
-        // analyze/codegen error OR generated Rust that rustc refuses (the old
-        // CLI-based harness treated a nonzero `zeo <src> -o bin` exit, from
-        // either stage, as the rejection). `compile_and_run` returns `Err`
-        // exactly when compile or link fails (a program that builds and then
-        // crashes at runtime returns `Ok`, so it does NOT count as rejected).
+        // front-end, emitter or link failure. `compile_and_run` returns `Err`
+        // exactly then (a program that builds and then crashes at runtime
+        // returns `Ok`, so it does NOT count as rejected).
         return match compile_and_run(rb, &source, &sc.args, sc.stdin.as_deref(), run_cwd, env) {
             Err(_) => Ok(()),
             Ok(_) => Err(format!(

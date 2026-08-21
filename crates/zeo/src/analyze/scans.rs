@@ -393,14 +393,6 @@ pub(crate) fn scan_bare_block_use_body(hir: &Hir, body: &[NodeId]) -> bool {
     scan_stmts(hir, body, &wants_enclosing_block)
 }
 
-/// Whether a method body (or anything nested under it -- blocks and lambdas
-/// included, since a `super` written inside one still targets the ENCLOSING
-/// method) contains a `super` call. Consumed by codegen's super-reachability
-/// analysis (which method NAMES need dynamic-self `super`-target bridges).
-pub(crate) fn scan_contains_super(hir: &Hir, id: NodeId) -> bool {
-    scan_body(hir, id, &|n| matches!(n, HirNode::SuperCall { .. }))
-}
-
 pub(crate) fn scan_contains_super_body(hir: &Hir, body: &[NodeId]) -> bool {
     scan_stmts(hir, body, &|n| matches!(n, HirNode::SuperCall { .. }))
 }

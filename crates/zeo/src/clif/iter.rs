@@ -92,7 +92,7 @@ pub(crate) fn lower_counted(
         &fx.an.compiler,
         body,
         params,
-        crate::analyze::class_query::SelfClass::new(fx.method_class, None),
+        fx.method_class,
     )
     .locals;
     let per_iteration_cells: Vec<String> = param

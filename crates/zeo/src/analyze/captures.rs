@@ -121,7 +121,7 @@ pub fn collect_escaping_captures(
     compiler: &Compiler,
     body: &[NodeId],
     params: &Params,
-    self_class: super::class_query::SelfClass<'_>,
+    self_class: Option<crate::compiler::ClassId>,
 ) -> Captures {
     let mut raw = Captures::default();
     for &n in body {
@@ -211,7 +211,7 @@ pub fn block_captures(
     compiler: &Compiler,
     params: &Params,
     body: &[NodeId],
-    self_class: super::class_query::SelfClass<'_>,
+    self_class: Option<crate::compiler::ClassId>,
 ) -> Captures {
     let mut caps = Captures::default();
     let own = own_param_names(params);
@@ -550,15 +550,10 @@ fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
 /// inherits Kernel through it, so a hit there proves nothing.
 fn self_class_overrides(
     compiler: &crate::compiler::Compiler,
-    self_class: super::class_query::SelfClass<'_>,
+    self_class: Option<crate::compiler::ClassId>,
     name: &str,
 ) -> bool {
-    self_class
-        .ask(
-            compiler,
-            super::class_query::ClassQuery::ShadowsKernel(name.to_string()),
-        )
-        .is_some_and(|a| a.yes())
+    super::class_query::shadows_kernel(compiler, self_class, name)
 }
 
 /// A block or lambda written INSIDE an escaping block makes that block's
@@ -697,7 +692,7 @@ fn walk(
     escaping_at: Option<(crate::hir::FileId, u32, bool)>,
     param_exclusions: &FSet<String>,
     caps: &mut Captures,
-    self_class: super::class_query::SelfClass<'_>,
+    self_class: Option<crate::compiler::ClassId>,
 ) {
     match &compiler.hir[id] {
         // An FFI wrapper body has no escaping block, so nothing of the
@@ -1172,7 +1167,7 @@ fn walk_multi_target(
     outer_at: Option<(crate::hir::FileId, u32)>,
     param_exclusions: &FSet<String>,
     caps: &mut Captures,
-    self_class: super::class_query::SelfClass<'_>,
+    self_class: Option<crate::compiler::ClassId>,
 ) {
     use crate::hir::MultiTarget;
     match target {
@@ -1243,7 +1238,7 @@ fn walk_multi_target_group(
     outer_at: Option<(crate::hir::FileId, u32)>,
     param_exclusions: &FSet<String>,
     caps: &mut Captures,
-    self_class: super::class_query::SelfClass<'_>,
+    self_class: Option<crate::compiler::ClassId>,
 ) {
     for t in group.before.iter().chain(&group.after) {
         walk_multi_target(

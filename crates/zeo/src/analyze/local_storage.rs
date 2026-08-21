@@ -38,10 +38,6 @@ impl Locals {
         }
     }
 
-    pub(crate) fn contains(&self, name: &str) -> bool {
-        self.seen.contains(name)
-    }
-
     pub(crate) fn names(&self) -> &[String] {
         &self.order
     }

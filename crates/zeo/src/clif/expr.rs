@@ -227,6 +227,19 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             else_body,
         } => {
             let (cond, then_body, else_body) = (*cond, then_body.clone(), else_body.clone());
+            // As the statement arm: a decided guard emits one branch only.
+            if let Some(taken) = super::stmt::static_cond(fx, cond) {
+                let taken = if taken { &then_body } else { &else_body };
+                let ss = fx.temp_slot();
+                let dst = fx.slot_addr(ss, 0);
+                super::stmt::lower_value_body_into(fx, taken, dst)?;
+                fx.owned_created += 1;
+                return Ok(Operand::Slot {
+                    ss,
+                    owned: true,
+                    tag: TagInfo::Unknown,
+                });
+            }
             if_expr(fx, cond, &then_body, &else_body)
         }
         // A diverging expression in value position (`a = (raise "x")`):

@@ -36,11 +36,11 @@ cranelift-native.workspace = true
 cranelift-jit.workspace = true
 target-lexicon.workspace = true
 ruby-prism.workspace = true
-proc-macro2.workspace = true
+# Unicode XID tables: a Ruby name is far wider than any target identifier
+# (`@height´` is a legal ivar), so `names::transliterate` needs the real
+# classification to build a symbol fragment.
 unicode-ident.workspace = true
-quote.workspace = true
 syn.workspace = true
-prettyplease.workspace = true
 miette.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
