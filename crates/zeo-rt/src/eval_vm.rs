@@ -109,6 +109,7 @@ pub fn eval_string_mode(
                 mode,
                 label,
                 binding: None,
+                cref_chain: &[],
             };
             if let Some(answer) = c.eval(&req) {
                 return answer;
@@ -246,6 +247,7 @@ pub fn eval_with_binding(
                 mode: EvalMode::Caller,
                 label: b.label,
                 binding: Some(b),
+                cref_chain: &[],
             };
             if let Some(answer) = c.eval(&req) {
                 return answer;

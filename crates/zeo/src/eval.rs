@@ -82,7 +82,7 @@ struct Compiled {
 /// Keyed by everything the lowering depends on. The cell list is part of
 /// it because the entry loads its locals BY INDEX: the same source under a
 /// Binding with different names is a different function.
-type Key = (String, u32, Vec<String>, u8, u32);
+type Key = (String, u32, Vec<String>, u8, Vec<u32>);
 
 static CACHE: Mutex<Option<HashMap<Key, &'static Compiled>>> = Mutex::new(None);
 
@@ -96,7 +96,7 @@ fn compiled_for(req: &EvalRequest<'_>) -> Result<&'static Compiled, Refusal> {
         req.box_id,
         scope_names.clone(),
         mode_byte(req.mode),
-        zeo_rt::eval::cref_of(req).0.map_or(u32::MAX, |c| c.0),
+        zeo_rt::eval::cref_of(req).0.iter().map(|c| c.0).collect(),
     );
     if let Some(&c) = CACHE
         .lock()
@@ -129,15 +129,20 @@ fn build(req: &EvalRequest<'_>, scope_names: &[String]) -> Result<Compiled, Refu
     // compiler below has no entry for it, and every static fold stands
     // down for that reason (`Fx::eval_cref`). `Object` needs none of it --
     // its table IS the top level, which a snippet already searches.
-    let cref = match zeo_rt::eval::cref_of(req) {
-        (Some(cid), _) if cid == zeo_abi::OBJECT_CLASS => None,
-        (Some(cid), Some(name)) => Some(std::rc::Rc::new((Some(cid.0), name))),
-        (Some(_), None) => return Err("the cref is a class with no name".to_string().into()),
-        // No cref, but a NAME: `instance_eval` on a class resolves in its
+    let (chain, name) = zeo_rt::eval::cref_of(req);
+    // `Object`'s table IS the top level, which every search ends at anyway.
+    let chain: Vec<u32> = chain
+        .iter()
+        .map(|c| c.0)
+        .filter(|&c| c != zeo_abi::OBJECT_CLASS.0)
+        .collect();
+    let cref = match (chain.is_empty(), name) {
+        (true, None) => None,
+        // No chain, but a NAME: `instance_eval` on a class resolves in its
         // SINGLETON, which owns no constants -- the miss is the answer,
         // and CRuby spells the miss `#<Class:X>::NAME`.
-        (None, Some(name)) => Some(std::rc::Rc::new((None, name))),
-        (None, None) => None,
+        (_, Some(name)) => Some(std::rc::Rc::new(crate::clif::ctx::EvalCref { chain, name })),
+        (false, None) => return Err("the cref is a class with no name".to_string().into()),
     };
     // `__FILE__` and every frame the snippet raises from name the file the
     // CALLER gave (`(eval at f.rb:14)` when it gave none) and count from
@@ -240,7 +245,6 @@ fn scope_refusals(analyzed: &crate::analyze::Analyzed) -> Result<(), String> {
             // and only a `def` has a run-time install path already (the
             // emitter's own arm for a `def` written where analyze could
             // not register one). The rest still belong to the interpreter.
-            HirNode::ClassDef { .. } => Some("a `class`/`module`"),
             HirNode::MethodRedefine { .. } => Some("a redefinition"),
             HirNode::ClassMethodPrepend { .. }
             | HirNode::DefHook { .. }

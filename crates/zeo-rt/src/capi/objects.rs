@@ -668,6 +668,68 @@ pub unsafe extern "C" fn zeo_rt_eval_define(
     )
 }
 
+/// Open a `class`/`module` written inside a run-time `eval`: the constant
+/// if it already names one, a freshly minted and bound class otherwise.
+/// `superclass` is null for a bare `class Foo`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_eval_class_open(
+    owner: *const RubyValue,
+    name: *const u8,
+    name_len: usize,
+    superclass: *const RubyValue,
+    is_module: u8,
+    out: *mut RubyValue,
+) -> i32 {
+    let name = unsafe { super::str_slice(name, name_len) };
+    let superclass = (!superclass.is_null()).then(|| unsafe { &*superclass });
+    super::dispatch::status_out(
+        crate::eval::class_open(unsafe { &*owner }, name, superclass, is_module != 0),
+        out,
+    )
+}
+
+/// Run a `class`/`module` BODY written inside a run-time `eval` -- one more
+/// `class_eval`, which is what a class body IS (see `eval::class_body`).
+#[unsafe(no_mangle)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one class body's own shape: the class, its source, where it was written, and the cref it inherits"
+)]
+pub unsafe extern "C" fn zeo_rt_eval_class_body(
+    class_val: *const RubyValue,
+    src: *const u8,
+    src_len: usize,
+    file: *const u8,
+    file_len: usize,
+    line: u32,
+    label: *const u8,
+    label_len: usize,
+    box_id: u32,
+    outer_cref: *const zeo_abi::ClassId,
+    n_outer: usize,
+    out: *mut RubyValue,
+) -> i32 {
+    let src = unsafe { super::str_slice(src, src_len) };
+    let file = unsafe { super::str_slice(file, file_len) };
+    let label = unsafe { super::str_slice(label, label_len) };
+    let outer = match n_outer {
+        0 => &[][..],
+        n => unsafe { std::slice::from_raw_parts(outer_cref, n) },
+    };
+    super::dispatch::status_out(
+        crate::eval::class_body(
+            unsafe { &*class_val },
+            src,
+            file,
+            line,
+            label,
+            box_id,
+            outer,
+        ),
+        out,
+    )
+}
+
 /// The class a definition-level statement written inside a run-time `eval`
 /// names -- `alias`, `undef`, `private`, `module_function`,
 /// `private_constant`. Same rule as [`zeo_rt_eval_define`]'s definee, with

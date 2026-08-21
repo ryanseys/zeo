@@ -577,6 +577,7 @@ fn lower_tail_expr(fx: &mut Fx, tail: NodeId) -> Result<super::operand::Operand,
         // A `class`/`module` in TAIL position: the site runs and answers
         // its body's last value; a body ending in a definition-level
         // construct answers nil, since nothing necessarily reads it.
+        HirNode::ClassDef { .. } if fx.eval_mode.is_some() => eval_class_def(fx, tail),
         HirNode::ClassDef { .. } => class_body_value(fx, tail, false),
         // A snippet's definition-level statements run and answer what ruby
         // answers: the KEYWORD forms (`alias`, `undef`, `private_constant`)
@@ -965,6 +966,11 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
             fx.pop_handling_to(handling);
             fx.b.ins().jump(target, &[]);
             fx.continue_unreachable();
+            Ok(())
+        }
+        HirNode::ClassDef { .. } if fx.eval_mode.is_some() => {
+            let op = eval_class_def(fx, stmt)?;
+            ownership::discard(fx, op);
             Ok(())
         }
         HirNode::ClassDef { .. } => {
@@ -1385,6 +1391,153 @@ fn eval_mixin_send_value(
         ownership::pool_owned(fx, argv, tag);
     }
     super::call::implicit_send_ptr(fx, verb, argv, 1)
+}
+
+/// `class Foo < Bar ... end` / `module M ... end` written inside a run-time
+/// `eval`.
+///
+/// The HEADER runs here: the owner is the snippet's own cref (or the scope
+/// `A::B` names), the superclass is an ordinary constant read in THIS
+/// scope, and the runtime reuses or mints the class.
+///
+/// The BODY runs as one more `class_eval` of its own source text. That is
+/// not a shortcut -- a class body in CRuby is a separate iseq with its own
+/// cref and its own locals, sharing nothing with the scope around it, and
+/// this compiler's `class_eval` path already answers every question such a
+/// body raises: where a `def` lands, what a bare constant resolves
+/// against, which class owns `@@x`. Lowering the body HERE would need all
+/// of that a second time, against a class id no compile can know.
+pub(crate) fn eval_class_def(fx: &mut Fx, stmt: NodeId) -> Result<super::operand::Operand, String> {
+    use super::operand::{Operand, TagInfo};
+    let HirNode::ClassDef {
+        name,
+        superclass,
+        body,
+        is_module,
+    } = &fx.an.compiler.hir[stmt]
+    else {
+        unreachable!("guarded by the ClassDef arm")
+    };
+    let (name, superclass, body, is_module) =
+        (name.clone(), superclass.clone(), body.clone(), *is_module);
+    if name == crate::compiler::SINGLETON_SURROGATE {
+        return fx.unsupported(stmt, "a `class << self` inside an `eval`");
+    }
+    let (scope, leaf) = crate::codegen::split_const_path(&name);
+
+    // The owner of the bare name: the scope when one is written, else the
+    // snippet's own cref -- and the top level when it has none.
+    let owner = match scope.filter(|s| !s.is_empty()) {
+        Some(s) => super::expr::const_path_read(fx, stmt, s)?,
+        None => {
+            let cid = fx
+                .eval_cref
+                .as_ref()
+                .and_then(|c| c.chain.first().copied())
+                .map_or(crate::compiler::OBJECT_CLASS, crate::compiler::ClassId);
+            super::expr::class_immediate(fx, cid)
+        }
+    };
+    let owner_ptr = ownership::borrow_ptr(fx, &owner);
+    if owner.owned() {
+        ownership::pool_owned(fx, owner_ptr, owner.tag());
+    }
+    let super_ptr = match &superclass {
+        Some(sup) => {
+            let op = super::expr::const_path_read(fx, stmt, sup)?;
+            let p = ownership::borrow_ptr(fx, &op);
+            if op.owned() {
+                ownership::pool_owned(fx, p, op.tag());
+            }
+            p
+        }
+        None => fx.b.ins().iconst(fx.em.ptr, 0),
+    };
+    let (nptr, nlen) = super::expr::rodata_name(fx, leaf);
+    let is_module_v = fx.b.ins().iconst(types::I8, i64::from(u8::from(is_module)));
+    let class_ss = fx.temp_slot();
+    let class_ptr = fx.slot_addr(class_ss, 0);
+    let status = fx
+        .call(
+            "zeo_rt_eval_class_open",
+            &[owner_ptr, nptr, nlen, super_ptr, is_module_v, class_ptr],
+        )
+        .expect("eval_class_open returns a status");
+    fx.fallible(status);
+    fx.owned_created += 1;
+    ownership::pool_owned(
+        fx,
+        class_ptr,
+        TagInfo::Known(zeo_abi::abi::ValueTag::Class as u8),
+    );
+
+    let (src, file, line) = eval_body_source(fx, stmt, &body)?;
+    let (sptr, slen) = super::expr::rodata_name(fx, &src);
+    let (fptr, flen) = super::expr::rodata_name(fx, &file);
+    let kind = if is_module { "module" } else { "class" };
+    let (lptr, llen) = super::expr::rodata_name(fx, &format!("<{kind}:{leaf}>"));
+    let line_v = fx.b.ins().iconst(types::I32, i64::from(line));
+    let bx = fx.box_v();
+    // The chain THIS scope searches, which the body prepends its own class
+    // to: `class Inside` written in `Wrap.class_eval` still sees
+    // `Wrap::IN_WRAP`.
+    let outer: Vec<u32> = fx
+        .eval_cref
+        .as_ref()
+        .map(|c| c.chain.clone())
+        .unwrap_or_default();
+    let bytes: Vec<u8> = outer.iter().flat_map(|c| c.to_le_bytes()).collect();
+    let outer_off = fx.em.intern_rodata_aligned(&bytes, 4);
+    let outer_ptr = fx.rod(outer_off);
+    let n_outer = fx.b.ins().iconst(fx.em.ptr, outer.len() as i64);
+    let out_ss = fx.temp_slot();
+    let out = fx.slot_addr(out_ss, 0);
+    let status = fx
+        .call(
+            "zeo_rt_eval_class_body",
+            &[
+                class_ptr, sptr, slen, fptr, flen, line_v, lptr, llen, bx, outer_ptr, n_outer, out,
+            ],
+        )
+        .expect("eval_class_body returns a status");
+    fx.fallible(status);
+    fx.owned_created += 1;
+    Ok(Operand::Slot {
+        ss: out_ss,
+        owned: true,
+        tag: TagInfo::Unknown,
+    })
+}
+
+/// The SOURCE TEXT of a body written inside a snippet, sliced from the
+/// statements' own spans -- plus the file and first line they report, so a
+/// backtrace row raised inside it names the same place the snippet does.
+fn eval_body_source(
+    fx: &Fx,
+    stmt: NodeId,
+    body: &[NodeId],
+) -> Result<(String, String, u32), String> {
+    let hir = &fx.an.compiler.hir;
+    let Some((file, line)) = crate::codegen::source_location(&fx.an.compiler, stmt) else {
+        return Err("a span-less `class` inside an `eval`".to_string());
+    };
+    let (file, mut line) = (file.to_string(), line);
+    let (Some(first), Some(last)) = (body.first(), body.last()) else {
+        return Ok((String::new(), file, line));
+    };
+    let (Some(a), Some(b)) = (hir.span(*first), hir.span(*last)) else {
+        return Err("a span-less statement in a `class` inside an `eval`".to_string());
+    };
+    let src = hir
+        .files
+        .get(a.file.0 as usize)
+        .ok_or_else(|| "a `class` body from an unknown file".to_string())?;
+    let (start, end) = (a.start as usize, (b.end as usize).min(src.source.len()));
+    if start > end {
+        return Err("a `class` body whose statements run backwards".to_string());
+    }
+    line = src.line_at(a.start);
+    Ok((src.source[start..end].to_string(), file, line))
 }
 
 /// The class a definition-level statement written in a snippet names --

@@ -38,6 +38,23 @@ pub(crate) struct LoopCtl {
     pub handling: usize,
 }
 
+/// The lexical class chain a snippet's bare constant searches -- CRuby's
+/// cref list, innermost first, with the top level left off (every search
+/// ends there anyway).
+///
+/// The fresh compiler a snippet is lowered by has no entry for any of these
+/// classes: they were minted while the program ran. Class ids are the one
+/// thing both sides always agreed on, so the ids travel as immediates and
+/// every static fold stands down beside them.
+pub(crate) struct EvalCref {
+    /// The chain, innermost first. EMPTY for an `instance_eval` on a class:
+    /// its cref is the singleton, which owns no constants at all -- the
+    /// miss IS the answer, and `name` is what CRuby qualifies it with.
+    pub chain: Vec<u32>,
+    /// How a `NameError` raised in this scope spells the miss.
+    pub name: String,
+}
+
 pub(crate) struct Fx<'e, 'f> {
     pub em: &'e mut Emitter,
     pub an: &'e Analyzed,
@@ -116,12 +133,9 @@ pub(crate) struct Fx<'e, 'f> {
     /// enclosing scope's locals could only arrive as a vcall; ruby reads
     /// it as the local (`Ctx::in_eval_splice`).
     pub in_eval_splice: bool,
-    /// Lowering a run-time `eval` snippet whose constants resolve against a
-    /// class only the RUN TIME knows (`zeo::eval`): its id and its name.
-    /// The fresh compiler a snippet is lowered by has no entry for it --
-    /// class ids are the one thing both sides always agreed on, so the id
-    /// travels as an immediate and every static fold stands down.
-    pub eval_cref: Option<std::rc::Rc<(Option<u32>, String)>>,
+    /// Lowering a run-time `eval` snippet whose constants resolve against
+    /// classes only the RUN TIME knows (`zeo::eval`) -- see [`EvalCref`].
+    pub eval_cref: Option<std::rc::Rc<EvalCref>>,
     /// Lowering a run-time `eval` snippet: which surface invoked it
     /// (`eval_vm::EvalMode` as a byte). A `def` inside one installs where
     /// the RUN TIME says, because one snippet may be evaluated against any

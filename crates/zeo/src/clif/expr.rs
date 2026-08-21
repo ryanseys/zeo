@@ -433,6 +433,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
         // A `class`/`module` written where a value is READ -- `x = class C;
         // 7; end`, or a `class << self` body ending a method. Ruby's value
         // is the body's last statement, which the site computes.
+        HirNode::ClassDef { .. } if fx.eval_mode.is_some() => super::stmt::eval_class_def(fx, id),
         HirNode::ClassDef { .. } => super::stmt::class_body_value(fx, id, true),
         HirNode::ClassRef(name) => {
             let name = name.clone();
@@ -453,7 +454,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             let eval_owner = fx
                 .eval_cref
                 .as_ref()
-                .and_then(|c| c.0)
+                .and_then(|c| c.chain.first().copied())
                 .filter(|_| scope.is_none());
             let owner_class = match scope.as_deref() {
                 Some(s) => match resolve_class_here(fx, s) {
@@ -1473,7 +1474,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             let eval_owner = fx
                 .eval_cref
                 .as_ref()
-                .and_then(|c| c.0)
+                .and_then(|c| c.chain.first().copied())
                 .filter(|_| scope.is_none());
             // An explicit `Scope::NAME = ..` whose scope isn't a registered
             // class takes rustc's runtime-scope path -- not lowered yet.
@@ -1909,11 +1910,13 @@ pub(crate) fn const_read(fx: &mut Fx, id: NodeId, name: &str) -> Result<Operand,
     // top. There is no claim map to consult and no lexical parent to walk
     // -- CRuby's string `*_eval` has one cref and no nesting either.
     if let Some(cref) = fx.eval_cref.clone() {
-        let chain = match cref.0 {
-            Some(cid) if cid != top.0 => vec![cid, top.0],
-            _ => vec![top.0],
-        };
-        let qualified = format!("{}::{name}", cref.1);
+        // The snippet's own lexical chain, then the top -- a `class` body
+        // opened inside a snippet prepends its class to the chain it
+        // inherited, so a constant of an ENCLOSING `class_eval` is still
+        // in reach.
+        let mut chain: Vec<u32> = cref.chain.iter().copied().filter(|&c| c != top.0).collect();
+        chain.push(top.0);
+        let qualified = format!("{}::{name}", cref.name);
         return const_cref_call(fx, &chain, name, &qualified, false);
     }
     let owner = compiler
@@ -3553,7 +3556,7 @@ pub(crate) fn cvar_owner(fx: &Fx, name: &str) -> u32 {
     // A snippet's cvar belongs to its cref, which is a RUN-TIME class the
     // fresh compiler has no entry for: no owner walk to do, and the
     // runtime's own `cvar_get`/`set` climb the live ancestry from there.
-    if let Some(cid) = fx.eval_cref.as_ref().and_then(|c| c.0) {
+    if let Some(cid) = fx.eval_cref.as_ref().and_then(|c| c.chain.first().copied()) {
         return cid;
     }
     // Where the code was WRITTEN, never the receiver that reaches it: a

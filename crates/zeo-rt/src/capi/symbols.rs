@@ -75,6 +75,8 @@ capi_symbols!(
     dispatch::zeo_rt_defined_ivar,
     dispatch::zeo_rt_defined_method,
     values::zeo_rt_eq,
+    objects::zeo_rt_eval_class_body,
+    objects::zeo_rt_eval_class_open,
     objects::zeo_rt_eval_define,
     objects::zeo_rt_eval_definee,
     kernel::zeo_rt_eval_value_in_scope,

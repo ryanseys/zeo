@@ -253,6 +253,16 @@ pub const CAPI: &[CapiSig] = &[
         ret: None,
     },
     CapiSig {
+        name: "zeo_rt_eval_class_body",
+        params: &[Ptr, Ptr, Ptr, Ptr, Ptr, U32, Ptr, Ptr, U32, Ptr, Ptr, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
+        name: "zeo_rt_eval_class_open",
+        params: &[Ptr, Ptr, Ptr, Ptr, U8, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
         name: "zeo_rt_eval_define",
         params: &[U8, Ptr, U32, Ptr, U8, Ptr],
         ret: Some(I32),

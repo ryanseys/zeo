@@ -45,6 +45,8 @@ zeo_rt_defined_cvar ([U32, Ptr, Usize]) -> Some(I8)
 zeo_rt_defined_gvar ([U32, Ptr, Usize]) -> Some(I8)
 zeo_rt_defined_ivar ([Ptr, Ptr, Usize, Ptr]) -> Some(I32)
 zeo_rt_defined_method ([Ptr, U32, U8, Ptr]) -> None
+zeo_rt_eval_class_body ([Ptr, Ptr, Ptr, Ptr, Ptr, U32, Ptr, Ptr, U32, Ptr, Ptr, Ptr]) -> Some(I32)
+zeo_rt_eval_class_open ([Ptr, Ptr, Ptr, Ptr, U8, Ptr]) -> Some(I32)
 zeo_rt_eval_define ([U8, Ptr, U32, Ptr, U8, Ptr]) -> Some(I32)
 zeo_rt_eval_definee ([U8, Ptr, Ptr]) -> Some(I32)
 zeo_rt_eval_value_in_scope ([Ptr, Ptr, Ptr, Ptr, Ptr, Ptr]) -> Some(I32)
