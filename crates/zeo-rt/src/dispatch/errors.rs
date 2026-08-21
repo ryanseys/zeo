@@ -196,16 +196,43 @@ pub fn describe_receiver(recv: &RubyValue) -> String {
             format!("{kind} {}", named(*cid))
         }
         // The top-level `self` is rendered literally as `main`
-        // (`error.c:2678`), not as `#<Object:0x...>`.
+        // (`error.c:2678`), not as `#<Object:0x...>` -- and it stays
+        // `main` even once it HAS a singleton class, which the oracle
+        // confirms, so this test comes first.
         RubyValue::Object(o) => match main_object() {
             RubyValue::Object(m) if Arc::ptr_eq(&m, o) => "main".to_string(),
+            _ if crate::runtime_meta::has_singleton_class(recv) => {
+                address_form(recv, &named(o.class_id()))
+            }
             _ => format!("an instance of {}", named(o.class_id())),
         },
         // Every remaining variant maps to a builtin ClassId via the ABI table.
-        _ => format!(
-            "an instance of {}",
-            zeo_abi::builtin_name(recv.class_id()).unwrap_or("Object")
-        ),
+        _ => {
+            let name = zeo_abi::builtin_name(recv.class_id()).unwrap_or("Object");
+            if crate::runtime_meta::has_singleton_class(recv) {
+                address_form(recv, name)
+            } else {
+                format!("an instance of {name}")
+            }
+        }
+    }
+}
+
+/// `rb_any_to_s`: `#<Class:0xADDR>`, the shape CRuby names a receiver
+/// with a singleton class by.
+///
+/// It is the DEFAULT rendering even when the class defines its own
+/// `to_s` or `inspect` -- oracle-verified, a `K` with both still reports
+/// `#<K:0x...>`, and an Array with a singleton reports `#<Array:0x...>`
+/// rather than its elements. That keeps the promise the doc above makes:
+/// building this message runs no user code.
+fn address_form(recv: &RubyValue, class_name: &str) -> String {
+    match crate::runtime_meta::value_identity(recv) {
+        Some(addr) => format!("#<{class_name}:0x{addr:016x}>"),
+        // Nothing without an identity can carry a singleton class, so
+        // this is unreachable in practice; naming the class alone beats
+        // raising while building an error message.
+        None => format!("an instance of {class_name}"),
     }
 }
 

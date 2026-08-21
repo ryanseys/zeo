@@ -212,6 +212,49 @@ pub fn per_object_method_home(recv: &RubyValue, name: Symbol) -> Option<ClassId>
     }
 }
 
+/// Whether a singleton class EXISTS for `recv` -- CRuby's
+/// `RCLASS_SINGLETON_P(CLASS_OF(obj))`, which is what decides how a
+/// `NoMethodError` names its receiver (`#<K:0xADDR>` instead of `an
+/// instance of K`).
+///
+/// Materializing one is the trigger, not having methods in it:
+/// oracle-verified, a bare `obj.singleton_class` flips it, removing the
+/// last `def obj.m` does NOT flip it back, and `freeze` never flips it.
+/// So the question is asked of every place one can be materialized -- a
+/// minted class, an own per-object def, a per-object `extend` -- rather
+/// than of the method tables alone.
+///
+/// `nil`/`true`/`false` answer their own class from `singleton_class`,
+/// so they have none of their own; they render bare anyway.
+pub fn has_singleton_class(recv: &RubyValue) -> bool {
+    if matches!(recv, RubyValue::Nil | RubyValue::Bool(_)) {
+        return false;
+    }
+    if super::singleton_class_key(recv)
+        .is_some_and(|k| maps().singleton_classes.read().unwrap().contains_key(&k))
+    {
+        return true;
+    }
+    let Some(key) = value_identity(recv) else {
+        return false;
+    };
+    let own =
+        |t: &FMap<usize, FMap<Symbol, MethodImpl>>| t.get(&key).is_some_and(|t| !t.is_empty());
+    own(&maps().singletons.read().unwrap())
+        || maps()
+            .value_singletons
+            .read()
+            .unwrap()
+            .get(&key)
+            .is_some_and(|t| !t.is_empty())
+        || maps()
+            .extended
+            .read()
+            .unwrap()
+            .get(&key)
+            .is_some_and(|l| !l.is_empty())
+}
+
 /// Whether `recv` (an object) has a per-object singleton method `name` --
 /// `respond_to?`'s identity-keyed probe, since the class-id walk can't see a
 /// singleton installed on one specific object.
