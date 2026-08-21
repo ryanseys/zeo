@@ -52,13 +52,18 @@ fn process_top_stmt_inner(
     // class table these rows would join is already running, so a `def`
     // here has to install at its own document position through the
     // runtime -- which is exactly what the emitter does for a `def`
-    // analyze could not register. The prelude still registers: it is the
-    // bootstrap set every compile starts from, snippet or not.
+    // analyze could not register, and a mixin is the ordinary send ruby
+    // writes. The prelude still registers: it is the bootstrap set every
+    // compile starts from, snippet or not.
     if compiler.hir.mode == crate::CompileMode::Eval
         && !bootstrap
         && matches!(
             compiler.hir[stmt],
-            HirNode::DefMethod { .. } | HirNode::ClassDef { .. }
+            HirNode::DefMethod { .. }
+                | HirNode::ClassDef { .. }
+                | HirNode::Include(_)
+                | HirNode::Extend(_)
+                | HirNode::Prepend(_)
         )
     {
         main_statements.push(stmt);

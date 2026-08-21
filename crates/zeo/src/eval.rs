@@ -222,10 +222,7 @@ fn scope_refusals(analyzed: &crate::analyze::Analyzed, no_cref: bool) -> Result<
             | HirNode::ClassMethodVisibility { .. }
             | HirNode::ModuleFunction { .. }
             | HirNode::ConstantVisibility { .. } => Some("a visibility statement"),
-            HirNode::Include { .. }
-            | HirNode::Extend { .. }
-            | HirNode::Prepend { .. }
-            | HirNode::ClassMethodPrepend { .. }
+            HirNode::ClassMethodPrepend { .. }
             | HirNode::DefHook { .. }
             | HirNode::Refine { .. }
             | HirNode::Using { .. } => Some("a definition-level statement"),

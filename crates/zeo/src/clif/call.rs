@@ -230,9 +230,22 @@ pub(crate) fn implicit_send(
         });
     }
     let argv_ptr = build_argv(fx, site, args)?;
+    implicit_send_ptr(fx, name, argv_ptr, args.len())
+}
+
+/// [`implicit_send`] with the arguments already in a contiguous slot
+/// array -- what a site that has no HIR argument nodes to lower needs
+/// (an `eval`'s `include M`, whose module the marker holds by NAME).
+pub(crate) fn implicit_send_ptr(
+    fx: &mut Fx,
+    name: &str,
+    argv_ptr: cranelift_codegen::ir::Value,
+    argc: usize,
+) -> Result<Operand, String> {
+    let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
     let sym = fx.sym_id(name);
     let zero_box = fx.box_v();
-    let argc_v = fx.b.ins().iconst(fx.em.ptr, args.len() as i64);
+    let argc_v = fx.b.ins().iconst(fx.em.ptr, argc as i64);
     let null = fx.b.ins().iconst(fx.em.ptr, 0);
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);

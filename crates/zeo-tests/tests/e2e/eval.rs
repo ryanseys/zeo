@@ -289,6 +289,33 @@ fn a_class_variable_and_a_constant_belong_to_the_cref() {
 }
 
 #[test]
+fn a_mixin_in_the_source_is_the_send_ruby_writes() {
+    // A whole-program compile records `include M` as a compile-time
+    // ancestry EDIT and emits no statement for it. A snippet has no class
+    // table to edit into, so analyze must leave the marker alone and the
+    // emitter sends it -- receiverless, because ruby's top-level `include`
+    // is a private method on `main`.
+    agree(
+        r#"
+        module Greeter
+          def hello = "hello from #{self.class}"
+          def self.included(base) = puts("included into #{base}")
+        end
+        class Plain; end
+        src = "include Greeter"
+        Plain.class_eval(src)
+        p Plain.new.hello
+        p Plain.ancestors.include?(Greeter)
+        obj = Object.new
+        ext = "extend Greeter"
+        obj.instance_eval(ext)
+        p obj.hello
+        "#,
+        "included into Plain\n\"hello from Plain\"\ntrue\n\"hello from Object\"\n",
+    );
+}
+
+#[test]
 fn a_shape_the_compiler_declines_still_runs() {
     // A `class` in the source mints a run-time class, which this compiler
     // does not lower yet -- the interpreter answers it, and the program

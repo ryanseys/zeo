@@ -1005,6 +1005,15 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
                 unreachable!("guarded by the four mixin arms")
             };
             let (module, hook, primitive) = (module.clone(), hook, primitive);
+            // In an eval snippet NOTHING edited an ancestry at compile
+            // time -- there is no class table to edit into -- so the mixin
+            // is the ordinary send ruby writes: a receiverless call on
+            // whatever `self` turns out to be (`main` at a snippet's own
+            // level, the receiver under a `class_eval`). The hooks fire
+            // from the runtime's own implementation of it.
+            if fx.eval_mode.is_some() {
+                return eval_mixin_send(fx, stmt, &module, mixin_verb(&fx.an.compiler.hir[stmt]));
+            }
             // The PRIMITIVE first when the module overrides it -- it is what
             // performs the mixin, and analyze suppressed the static edit on
             // the strength of it. The notification follows either way,
@@ -1250,6 +1259,32 @@ fn mixin_parts(node: &HirNode) -> Option<(&String, &'static str, &'static str)> 
 /// emitted when nobody defines the hook (Module's own default is a no-op);
 /// a PRIMITIVE reaches here only when the module overrides it, and it is
 /// what performs the mixin at all.
+/// The verb a mixin marker spells, for the run-time send an eval needs.
+fn mixin_verb(node: &HirNode) -> &'static str {
+    match node {
+        HirNode::Include(_) => "include",
+        HirNode::Prepend(_) | HirNode::ClassMethodPrepend(_) => "prepend",
+        HirNode::Extend(_) => "extend",
+        other => unreachable!("guarded by the four mixin arms; got {other:?}"),
+    }
+}
+
+/// `include M` inside an `eval`: the receiverless send, with the module
+/// read as an ordinary constant. Receiverless because ruby's own
+/// `Module#include` is public but `main.include` is not -- the same
+/// FCALL barrier a bare `include` at the top level passes.
+fn eval_mixin_send(fx: &mut Fx, site: NodeId, module: &str, verb: &str) -> Result<(), String> {
+    let arg = super::expr::const_read(fx, site, module)?;
+    let tag = arg.tag();
+    let argv = ownership::borrow_ptr(fx, &arg);
+    if arg.owned() {
+        ownership::pool_owned(fx, argv, tag);
+    }
+    let op = super::call::implicit_send_ptr(fx, verb, argv, 1)?;
+    ownership::discard(fx, op);
+    Ok(())
+}
+
 fn mixin_hook_send(fx: &mut Fx, module: &str, hook: &str) -> Result<(), String> {
     let (Some(mid), true) = (
         super::expr::resolve_class_here(fx, module),
