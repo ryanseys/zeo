@@ -922,6 +922,10 @@ impl Emitter {
                 .set(k, v)
                 .map_err(|e| format!("cranelift setting {k}={v}: {e}"))
         };
+        // `speed_and_size` was measured and is a NULL RESULT on both axes:
+        // fib/gcbench/nested_loop/loops_times all within noise, and hello
+        // 15,303,448 against 15,303,464 bytes -- an emitted program's size
+        // is `libzeo.a`, not its own code.
         set(&mut flags, "opt_level", "speed")?;
         set(&mut flags, "is_pic", if jit { "false" } else { "true" })?;
         set(&mut flags, "preserve_frame_pointers", "true")?;
