@@ -1936,7 +1936,12 @@ pub(crate) fn const_read(fx: &mut Fx, id: NodeId, name: &str) -> Result<Operand,
         let mut chain: Vec<u32> = cref.chain.iter().copied().filter(|&c| c != top.0).collect();
         chain.push(top.0);
         let qualified = format!("{}::{name}", cref.name);
-        return const_cref_call(fx, &chain, name, &qualified, false);
+        // Whether the cref's chain defines `const_missing` is a RUN-TIME
+        // question in a snippet -- the class is one the running program
+        // registered and this compiler has no entry for -- so the miss
+        // always goes through the dispatch, whose default row raises the
+        // same NameError the baked one would.
+        return const_cref_call(fx, &chain, name, &qualified, true);
     }
     let owner = compiler
         .class(defining)
@@ -2087,9 +2092,12 @@ fn scoped_const_read(fx: &mut Fx, id: NodeId, scope: &str, name: &str) -> Result
         return runtime_scope_const_read(fx, id, scope, name);
     };
     let compiler = &fx.an.compiler;
-    let hook = compiler
-        .class_method_in_chain(scope_cid, "const_missing")
-        .is_some();
+    // In a snippet the scope's class methods are the running program's,
+    // which this compiler cannot see -- so the run time decides.
+    let hook = fx.eval_mode.is_some()
+        || compiler
+            .class_method_in_chain(scope_cid, "const_missing")
+            .is_some();
     let qualified = if scope == "Object" {
         name.to_string()
     } else {

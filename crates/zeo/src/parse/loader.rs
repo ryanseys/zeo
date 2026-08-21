@@ -838,7 +838,13 @@ impl Loader {
             // records the file-local binding, AND binds the local to the
             // handle VALUE (the box's top-level surrogate as a Class), so
             // `p box` works.
+            // ... but not in a SNIPPET: a compile-time box is one the
+            // PROGRAM's own file declares, and a snippet minting one would
+            // hand back a handle to a box nothing else can reach. Left as
+            // an ordinary call, it answers what a run-time `Ruby::Box.new`
+            // answers anywhere else in zeo.
             if let Some(lw) = n.as_local_variable_write_node()
+                && !hir.mode.is_eval()
                 && crate::lower::eval_splice::is_ruby_box_new(&lw.value())
             {
                 let lname = String::from_utf8_lossy(lw.name().as_slice()).into_owned();

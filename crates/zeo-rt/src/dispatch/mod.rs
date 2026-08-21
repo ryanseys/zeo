@@ -1251,6 +1251,18 @@ pub(crate) fn allocate_instance_of(id: ClassId) -> Option<RObj> {
 /// answers; Module's default row raises the same qualified NameError the
 /// miss would have. CRuby's exact protocol, which nothing in this runtime
 /// called before: the hook had a definition but no caller.
+/// Whether `cid`'s chain defines a `const_missing` of its OWN -- anything
+/// but `Module`'s default row, which only raises. A miss dispatches the
+/// hook where one exists and takes the caller's pre-qualified NameError
+/// where none does, because the default row rebuilds the message from the
+/// receiver and a cref-qualified miss (`#<Class:Host>::X`) is not a
+/// receiver's to name.
+#[must_use]
+pub fn user_const_missing(cid: ClassId) -> bool {
+    class_method_owner(cid, Symbol::intern("const_missing"))
+        .is_some_and(|owner| owner != zeo_abi::MODULE_CLASS)
+}
+
 pub fn const_miss(cid: ClassId, name: &str) -> Result<RubyValue, Signal> {
     send_value(
         &RubyValue::Class(cid),

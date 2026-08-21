@@ -315,7 +315,7 @@ pub unsafe extern "C" fn zeo_rt_const_get_cref(
         unsafe { out.write(v) };
         return STATUS_OK;
     }
-    if flags & CONST_CREF_HOOK != 0 {
+    if flags & CONST_CREF_HOOK != 0 && crate::dispatch::user_const_missing(ClassId(ids[0])) {
         return status_out(crate::dispatch::const_miss(ClassId(ids[0]), name), out);
     }
     let qualified = unsafe { super::str_slice(qualified, qualified_len) };
@@ -527,6 +527,14 @@ pub unsafe extern "C" fn zeo_rt_const_get_on_value(
             super::leakcheck::created(&v);
             unsafe { out.write(v) };
             STATUS_OK
+        }
+        // CRuby dispatches `const_missing` on the scope for every miss --
+        // the default row raises exactly the NameError the baked one did,
+        // and a user hook answers where ruby's answers. `qualified` stays
+        // in the signature: it is what the row's own message rebuilds.
+        None if crate::dispatch::user_const_missing(*cid) => {
+            let _ = (qualified, qualified_len);
+            status_out(crate::dispatch::const_miss(*cid, name), out)
         }
         None => {
             let qualified = unsafe { super::str_slice(qualified, qualified_len) };

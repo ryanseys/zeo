@@ -440,6 +440,29 @@ module FFI
     def typedef(*) end
 
     def ffi_convention(*) end
+
+    # The two directives the compiler MUST have consumed. Reaching either
+    # at run time means it did not see the declaration at all -- a snippet
+    # a run-time `eval` compiled, or a computed send -- and zeo has no
+    # run-time attach path to fall back on, so it says so rather than
+    # answering `NoMethodError` as though the name were misspelled.
+    def ffi_lib(*)
+      raise NotImplementedError,
+            "zeo resolves an `FFI::Library` declaration at compile time, so `ffi_lib` cannot be " \
+            "reached at run time (an `eval`'d declaration, or a computed send)"
+    end
+
+    def attach_function(*)
+      raise NotImplementedError,
+            "zeo resolves an `FFI::Library` declaration at compile time, so `attach_function` " \
+            "cannot be reached at run time (an `eval`'d declaration, or a computed send)"
+    end
+
+    def attach_variable(*)
+      raise NotImplementedError,
+            "zeo resolves an `FFI::Library` declaration at compile time, so `attach_variable` " \
+            "cannot be reached at run time (an `eval`'d declaration, or a computed send)"
+    end
   end
 
   # The custom-parameter-type protocol. zeo's marshaling converts through

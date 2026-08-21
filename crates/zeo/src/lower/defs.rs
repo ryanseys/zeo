@@ -653,9 +653,14 @@ pub(crate) fn lower_class_body(
             }
         }
     }
-    let is_ffi = stmts.iter().any(is_extend_ffi_library)
-        || ffi_path.as_deref().is_some_and(|p| hir.is_ffi_library(p))
-        || stmts.iter().any(|s| ffi_extender_pairs(hir, s).is_some());
+    // A SNIPPET declares no FFI library: the directives are compile-time
+    // ones the whole-program walk consumes, and a snippet has no such
+    // walk. Left as ordinary calls, they reach `FFI::Library`'s own rows,
+    // which say so loudly instead of silently attaching nothing.
+    let is_ffi = !hir.mode.is_eval()
+        && (stmts.iter().any(is_extend_ffi_library)
+            || ffi_path.as_deref().is_some_and(|p| hir.is_ffi_library(p))
+            || stmts.iter().any(|s| ffi_extender_pairs(hir, s).is_some()));
     if is_ffi && let Some(p) = &ffi_path {
         hir.mark_ffi_library(p);
     }

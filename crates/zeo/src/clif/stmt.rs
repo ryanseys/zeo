@@ -1562,6 +1562,23 @@ fn eval_body_source(
     let (Some(a), Some(b)) = (hir.span(*first), hir.span(*last)) else {
         return Err("a span-less statement in a `class` inside an `eval`".to_string());
     };
+    // The body's TEXT is what runs (a class body inside a snippet is one
+    // more `class_eval` of its own source), so a statement analyze
+    // synthesized -- whose span points into some other file entirely --
+    // would slice nonsense out of the snippet and hand it to prism. An
+    // `FFI::Struct` subclass is the one shape that does: its `layout` is
+    // replayed from the gem's own source.
+    let own = hir
+        .span(stmt)
+        .and_then(|s| s.known())
+        .ok_or_else(|| "a span-less `class` inside an `eval`".to_string())?;
+    if a.file != own.file || a.start < own.start || b.end > own.end {
+        return Err(
+            "a `class` inside an `eval` whose body analyze rewrote (an `FFI::Struct` layout is \
+             the one shape that does)"
+                .to_string(),
+        );
+    }
     let src = hir
         .files
         .get(a.file.0 as usize)

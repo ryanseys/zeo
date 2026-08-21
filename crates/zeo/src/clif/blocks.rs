@@ -350,10 +350,22 @@ fn build_closure_with(
     // eval cannot shadow it (`zeo_rt::eval::EvalHome`).
     let publishes_eval_home =
         crate::analyze::captures::body_contains_runtime_eval(&fx.an.compiler, body);
-    let lexical_blk = if bare_block_use || publishes_eval_home {
-        fx.blk_ptr
-    } else {
-        None
+    let wants_lexical_blk = bare_block_use || publishes_eval_home;
+    let lexical_blk = match (wants_lexical_blk, fx.blk_ptr, fx.eval_mode) {
+        (false, _, _) => None,
+        (true, Some(b), _) => Some(b),
+        // A snippet's own level has no channel: the block a `yield`
+        // written in one of its blocks means is the enclosing METHOD's,
+        // published for the call (`zeo_rt::eval::EvalHome`).
+        (true, None, Some(_)) => {
+            let ss = fx.temp_slot();
+            let p = fx.slot_addr(ss, 0);
+            fx.call("zeo_rt_eval_home_block", &[p]);
+            fx.owned_created += 1;
+            ownership::pool_owned(fx, p, TagInfo::Unknown);
+            Some(p)
+        }
+        (true, None, None) => None,
     };
     // A body that can raise `Signal::Return` at its own level captures its
     // home (dead home -> LocalJumpError, the runtime's resolution). A
