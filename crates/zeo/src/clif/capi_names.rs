@@ -43,6 +43,16 @@ pub const CAPI: &[CapiSig] = &[
         ret: Some(I32),
     },
     CapiSig {
+        name: "zeo_rt_array_get",
+        params: &[Ptr, Usize, Ptr],
+        ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_array_len",
+        params: &[Ptr],
+        ret: Some(Usize),
+    },
+    CapiSig {
         name: "zeo_rt_array_new",
         params: &[Usize, Ptr],
         ret: None,
@@ -441,6 +451,11 @@ pub const CAPI: &[CapiSig] = &[
         name: "zeo_rt_int_sub_slow",
         params: &[Ptr, Ptr, Ptr],
         ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_iter_inline_ok_for",
+        params: &[U32, U32],
+        ret: Some(I8),
     },
     CapiSig {
         name: "zeo_rt_ivar_get_dyn",

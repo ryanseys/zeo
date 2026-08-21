@@ -357,6 +357,18 @@ pub unsafe extern "C" fn zeo_rt_send_value_explicit_args_in(
     status_out(r, out)
 }
 
+/// May a fused iteration splice stand in for `recv_class`'s own iterator
+/// method? False once anything has redefined it (or opened an overlay the
+/// splice cannot see), which is what makes the fast arm's guard a runtime
+/// question rather than a compile-time one.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_iter_inline_ok_for(box_id: u32, recv_class: u32) -> i8 {
+    i8::from(crate::runtime_meta::iter_inline_ok_for(
+        box_id,
+        ClassId(recv_class),
+    ))
+}
+
 /// `*expr` at a call site: splat-expand `src` into the args Array being
 /// built at `dst` (Ruby's `to_a` coercion; nil contributes nothing;
 /// non-convertible wraps as one element -- `array_splat_into`'s rules).

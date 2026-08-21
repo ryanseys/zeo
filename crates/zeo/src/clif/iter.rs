@@ -1,9 +1,20 @@
-//! Iterator fusion: the LITERAL `n.times { |i| }` and `(a..b).each { |i| }`
-//! shapes (`analyze::fastpath`'s predicates -- a literal receiver cannot be
+//! Iterator fusion. Two shapes, and the difference between them is
+//! whether the fast arm needs a guard at all.
+//!
+//! The LITERAL `n.times { |i| }` and `(a..b).each { |i| }` shapes take
+//! `analyze::fastpath`'s predicates: a literal receiver cannot be
 //! redefined at run time, so no gate and no dynamic fallback, exactly the
-//! rustc emitter's rule). The typed `InlineIterKind` fusions (`ArrayEach`
-//! and friends) need the dynamic-fallback arm's real `Proc`, so they ride
-//! in with the blocks milestone (M0-14).
+//! rustc emitter's rule.
+//!
+//! `arr.each { |e| }` on a statically-`Array` local is the guarded shape:
+//! the receiver's class is a compile-time BELIEF, and `Array#each` can be
+//! redefined, so the site tests the tag AND asks
+//! `zeo_rt_iter_inline_ok_for` before it may splice -- with a real `Proc`
+//! and an ordinary block send on the other arm. The body is lowered twice
+//! for that reason (spliced inline, and again as the proc's own
+//! function), which is what the rustc emitter's `match recv { Array(a) if
+//! .. => 'iter: loop {..}, other => catch_break(send_value_in(..)) }`
+//! also does.
 
 use super::ctx::{Fx, LoopCtl};
 use super::ownership;
@@ -23,6 +34,11 @@ pub(crate) enum Counted {
         end: i64,
         exclusive: bool,
     },
+    /// `arr.each { |e| }` on a statically-`Array` receiver. The bound is
+    /// re-read from the array EVERY iteration, because CRuby's `each`
+    /// does: a body that pushes to the array it is walking keeps walking.
+    /// `recv` is a borrowed pointer to the receiver value.
+    ArrayEach { recv: ir::Value },
 }
 
 /// Lower one fused counted loop. `result` = the loop's value slot when in
@@ -80,6 +96,8 @@ pub(crate) fn lower_counted(
         .collect();
     let body = body.clone();
 
+    // `(start, end, end_cc)` for the counted shapes; `ArrayEach` re-reads
+    // its bound per iteration instead and is tested at the head below.
     let (start, end, end_cc) = match *counted {
         Counted::Times { n } => (0, n, IntCC::SignedGreaterThanOrEqual),
         Counted::Range {
@@ -95,6 +113,7 @@ pub(crate) fn lower_counted(
                 IntCC::SignedGreaterThan
             },
         ),
+        Counted::ArrayEach { .. } => (0, 0, IntCC::SignedGreaterThanOrEqual),
     };
 
     // The block parameter SHADOWS any enclosing local of the same name
@@ -146,7 +165,15 @@ pub(crate) fn lower_counted(
 
     fx.b.switch_to_block(head);
     let c = fx.b.ins().load(types::I64, fl, counter_addr, 0);
-    let done = fx.b.ins().icmp_imm_s(end_cc, c, end);
+    let done = match *counted {
+        Counted::ArrayEach { recv } => {
+            let len = fx
+                .call("zeo_rt_array_len", &[recv])
+                .expect("array_len answers the length");
+            fx.b.ins().icmp(IntCC::SignedGreaterThanOrEqual, c, len)
+        }
+        _ => fx.b.ins().icmp_imm_s(end_cc, c, end),
+    };
     fx.b.ins().brif(done, exit_normal, &[], body_blk, &[]);
 
     fx.b.switch_to_block(body_blk);
@@ -161,7 +188,24 @@ pub(crate) fn lower_counted(
     }
     if let Some(name) = &param {
         let c = fx.b.ins().load(types::I64, fl, counter_addr, 0);
-        ownership::write_local(fx, name, &super::operand::Operand::Int(c));
+        match *counted {
+            Counted::ArrayEach { recv } => {
+                let ss = fx.temp_slot();
+                let dst = fx.slot_addr(ss, 0);
+                fx.call("zeo_rt_array_get", &[recv, c, dst]);
+                fx.owned_created += 1;
+                let elem = super::operand::Operand::Slot {
+                    ss,
+                    owned: true,
+                    tag: super::operand::TagInfo::Unknown,
+                };
+                ownership::write_local(fx, name, &elem);
+            }
+            _ => ownership::write_local(fx, name, &super::operand::Operand::Int(c)),
+        }
+    } else if let Counted::ArrayEach { .. } = *counted {
+        // A parameterless block still consumes each element -- nothing to
+        // fetch, the counter alone drives the walk.
     }
     for name in implicit_locals.iter().chain(block_locals.iter()) {
         // A cell was just replaced; a plain slot resets to nil.
@@ -191,10 +235,22 @@ pub(crate) fn lower_counted(
     fx.b.switch_to_block(exit_normal);
     if let Some(dst) = result {
         // The loop's value is its RECEIVER: the count for `times`, the range
-        // itself for a range-`each`. The range is rebuilt here from the same
-        // literal endpoints the bounds came from -- the receiver was a
-        // literal, which is what made the fusion legal in the first place.
+        // itself for a range-`each`, the array itself for an array-`each`.
+        // The range is rebuilt here from the same literal endpoints the
+        // bounds came from -- the receiver was a literal, which is what
+        // made the fusion legal in the first place.
         match *counted {
+            Counted::ArrayEach { recv } => {
+                let src = super::operand::Operand::Ptr {
+                    addr: recv,
+                    owned: false,
+                    tag: super::operand::TagInfo::Known(ValueTag::Array as u8),
+                };
+                // A borrowed source is RETAINED into `dst`, which the
+                // ledger counts as this site creating an owned value.
+                ownership::write_move_into(fx, &src, dst);
+                fx.owned_created += 1;
+            }
             Counted::Times { n } => {
                 let n_v = fx.b.ins().iconst(types::I64, n);
                 let tag = fx.b.ins().iconst(types::I8, i64::from(ValueTag::Int as u8));
@@ -314,4 +370,96 @@ fn replace_cell(fx: &mut Fx, name: &str) {
     let dst = fx.slot_addr(ss, 0);
     fx.b.ins().store(MemFlagsData::trusted(), fresh, dst, 0);
     fx.call("zeo_rt_cell_release", &[old]);
+}
+
+/// `arr.each { |e| .. }` on a statically-`Array` receiver: the fused walk
+/// under a guard that PROVES the belief, with an ordinary block send on
+/// the other arm.
+///
+/// Two questions, both asked at run time and both able to say no. The tag
+/// test answers "is this really an Array" -- a static `TyKind::Array` is
+/// what analyze believes, not what the value is. `iter_inline_ok_for`
+/// answers "may a splice stand in for `Array#each`" -- a reopen, a
+/// per-object singleton, or a box makes real dispatch the only correct
+/// answer, and the fallback arm is what keeps the site working then.
+///
+/// `want_result` is false in statement position, where `each`'s value (the
+/// receiver) is discarded -- which spares the arm a retain and a release
+/// per call, and that is most of them.
+pub(crate) fn lower_array_each(
+    fx: &mut Fx,
+    site: NodeId,
+    recv_id: NodeId,
+    block: NodeId,
+    want_result: bool,
+) -> Result<Option<super::operand::Operand>, String> {
+    use super::operand::{Operand, TagInfo};
+    // The receiver is evaluated ONCE and both arms borrow it.
+    let op = super::expr::lower_expr(fx, recv_id)?;
+    let recv = ownership::borrow_ptr(fx, &op);
+    if op.owned() {
+        ownership::pool_owned(fx, recv, op.tag());
+    }
+    let result = want_result.then(|| {
+        let ss = fx.temp_slot();
+        (ss, fx.slot_addr(ss, 0))
+    });
+
+    let gate = fx.b.create_block();
+    let fast = fx.b.create_block();
+    let slow = fx.b.create_block();
+    let join = fx.b.create_block();
+
+    let fl = MemFlagsData::trusted();
+    let tag = fx.b.ins().load(types::I8, fl, recv, 0);
+    let is_array =
+        fx.b.ins()
+            .icmp_imm_u(IntCC::Equal, tag, i64::from(ValueTag::Array as u8));
+    fx.b.ins().brif(is_array, gate, &[], slow, &[]);
+
+    fx.b.switch_to_block(gate);
+    let box_v = fx.box_v();
+    let array_cid =
+        fx.b.ins()
+            .iconst(types::I32, i64::from(crate::compiler::ARRAY_CLASS.0));
+    let ok = fx
+        .call("zeo_rt_iter_inline_ok_for", &[box_v, array_cid])
+        .expect("iter_inline_ok_for answers a flag");
+    fx.b.ins().brif(ok, fast, &[], slow, &[]);
+
+    fx.b.switch_to_block(fast);
+    lower_counted(
+        fx,
+        site,
+        &Counted::ArrayEach { recv },
+        block,
+        result.map(|(_, dst)| dst),
+    )?;
+    fx.b.ins().jump(join, &[]);
+
+    fx.b.switch_to_block(slow);
+    let borrowed = Operand::Ptr {
+        addr: recv,
+        owned: false,
+        tag: TagInfo::Unknown,
+    };
+    let r = super::blocks::block_send_op(fx, site, borrowed, "each", &[], block)?;
+    match result {
+        Some((_, dst)) => {
+            let owned = r.owned();
+            ownership::write_move_into(fx, &r, dst);
+            if !owned {
+                fx.owned_created += 1;
+            }
+        }
+        None => ownership::discard(fx, r),
+    }
+    fx.b.ins().jump(join, &[]);
+
+    fx.b.switch_to_block(join);
+    Ok(result.map(|(ss, _)| Operand::Slot {
+        ss,
+        owned: true,
+        tag: TagInfo::Unknown,
+    }))
 }

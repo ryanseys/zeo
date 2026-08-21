@@ -184,11 +184,11 @@ bm_send_bmethod	1786715621	0.088
 bm_send_bmethod	1786715956	0.089
 bm_send_bmethod	1787288219	0.261
 bm_send_bmethod	1787289792	0.288
-bm_send_cfunc_block	1786699208	0.425
-bm_send_cfunc_block	1786715623	0.415
-bm_send_cfunc_block	1786715959	0.414
 bm_send_cfunc_block	1787288228	2.996
 bm_send_cfunc_block	1787289802	2.997
+bm_send_cfunc_block	1787290536	2.964
+bm_send_cfunc_block	1787290674	1.218
+bm_send_cfunc_block	1787290729	0.613
 bm_send_rubyfunc_block	1786699209	0.279
 bm_send_rubyfunc_block	1786715627	0.279
 bm_send_rubyfunc_block	1786715964	0.278

@@ -1109,6 +1109,17 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
             safe: false,
         } if kwargs.is_empty() => {
             let (receiver, name, args, blk) = (*receiver, name.clone(), args.clone(), *blk);
+            // A typed-receiver `arr.each` fuses here too -- and this is
+            // where most of them are written, since `each`'s value is
+            // rarely wanted.
+            if args.is_empty()
+                && let Some(r) = receiver
+                && fx.an.compiler.inline_iter_sites.get(&blk)
+                    == Some(&crate::compiler::InlineIterKind::ArrayEach)
+            {
+                super::iter::lower_array_each(fx, stmt, r, blk, false)?;
+                return Ok(());
+            }
             if args.is_empty()
                 && let Some(counted) = super::iter::counted_of(fx, receiver, &name, true)
             {

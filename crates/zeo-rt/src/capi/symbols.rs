@@ -34,6 +34,7 @@ capi_symbols!(
     literals::zeo_rt_array_new,
     literals::zeo_rt_array_push,
     dispatch::zeo_rt_array_push_splat,
+    dispatch::zeo_rt_iter_inline_ok_for,
     lifecycle::zeo_rt_at_exit_register,
     values::zeo_rt_bignum_from_decimal,
     bind::zeo_rt_bind_block_params,

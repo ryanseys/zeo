@@ -1001,6 +1001,18 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 args.clone(),
                 *blk,
             );
+            // A typed-receiver `arr.each` (`Compiler::inline_iter_sites`):
+            // fused under a runtime guard, with the ordinary block send on
+            // the other arm. The literal shapes below never nominate --
+            // their receivers are not locals -- so the order is free.
+            if args.is_empty()
+                && let Some(r) = receiver
+                && fx.an.compiler.inline_iter_sites.get(&blk)
+                    == Some(&crate::compiler::InlineIterKind::ArrayEach)
+            {
+                return Ok(super::iter::lower_array_each(fx, id, r, blk, true)?
+                    .expect("a wanted result is always built"));
+            }
             if args.is_empty()
                 && let Some(counted) = super::iter::counted_of(fx, receiver, &name, true)
             {
