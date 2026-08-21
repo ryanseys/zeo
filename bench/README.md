@@ -59,25 +59,52 @@ rather than once at the end, so an interrupted run keeps what it finished;
 
 ## Results
 
-Measured 2026-08-14 on one Apple-silicon laptop, `--runs 5 --ruby`, so Zeo and
-CRuby 4.0.6 are timed in the **same run** under the same conditions. Read them
-as a shape, not a portable claim. Best-of-3 and best-of-5 agree on every figure
-below.
+Measured 2026-08-21 on one Apple-silicon laptop, `--ruby`, so Zeo and CRuby
+4.0.6 are timed in the **same run** under the same conditions. Read them as a
+shape, not a portable claim.
 
 **Two aggregates, because one would mislead:**
 
 | | geomean |
 |---|---|
-| all 58 benchmarks | **1.71× faster than CRuby** |
-| the 36 where CRuby takes ≥ 0.10 s | **1.20× faster** |
+| all 58 benchmarks | **1.17× faster than CRuby** |
+| the 37 where CRuby takes ≥ 0.10 s | **0.71× — slower** |
 
-The gap between those two numbers is process startup. 14 benchmarks finish in
-under 50 ms of CRuby time, where Zeo's native binary starts instantly and the
+The gap between those two numbers is process startup. 21 benchmarks finish in
+under 100 ms of CRuby time, where Zeo's native binary starts instantly and the
 interpreter pays ~30 ms of boot — that is a real advantage of shipping a
 binary, but it is not a claim about generated code. The second row is the one
 that describes generated code.
 
-Split by outcome: **42 of 58 faster, 16 slower.**
+Split by outcome: **25 of 58 faster, 33 slower**; on the compute-bound 37,
+**8 faster, 29 slower**.
+
+> **These numbers replaced a much better-looking set on 2026-08-21, and the
+> reason is worth stating.** Until then the figures here were the **Rust-
+> emitting backend's** (1.71× / 1.20×, 42 of 58) — the backend that was
+> retired that day. The Cranelift backend that ships now is **+53% geomean
+> against that baseline**: it has had two optimization waves and has not had
+> the rest. The per-benchmark analysis in the sections below still describes
+> the retired backend's profile and is kept only until it is re-measured.
+
+The current spread, compute-bound only:
+
+| winners | | losers | |
+|---|---|---|---|
+| `range_each` | 3.27× | `rbtree` | 0.25× |
+| `so_mandelbrot` | 2.18× | `send_rubyfunc_block` | 0.31× |
+| `nested_loop` | 1.35× | `life` | 0.35× |
+| `partial_sums` | 1.33× | `getivar_module` | 0.35× |
+| `matmul` | 1.27× | `linked_list` | 0.38× |
+| `attr_accessor` | 1.27× | `splay` | 0.39× |
+| `send_cfunc_block` | 1.24× | `inline` | 0.41× |
+| `nqueens` | 1.04× | `so_lists` | 0.46× |
+
+Every loser is a named, unbuilt lever: the typed `InlineIterKind` splices
+(`so_lists`, `rbtree`, `splay`, `life`), a `CivarSite` the emitter never emits
+(`getivar_module`), a direct compiled-to-compiled call for a statically-known
+receiver class (`send_rubyfunc_block`), and the per-call runtime block
+(`tak`, `tarai`).
 
 ### The 16 that lose, in two groups
 

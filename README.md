@@ -245,15 +245,28 @@ A compiled program starts in **under a millisecond**; CRuby needs roughly 30 ms
 before the first line runs. `bench/` holds 58 programs, each with its correct
 output, and `cargo xtask bench` verifies the output before it times anything.
 
-Measured against CRuby 4.0.6 with the **rustc backend** (2026-07-31): **1.78×**
-faster over all 58, **1.23×** over the 36 compute-bound ones. Zeo wins 47 and
-loses 11; the losses are reference-counting and allocation bound.
+Measured 2026-08-21, Zeo and CRuby 4.0.6 timed in the same run:
 
-The Cranelift backend is correctness-complete but has **not** had its
-performance pass yet — that is a scheduled milestone, not a finished one. Treat
-the numbers above as the shape of the target, and read
-[`bench/README.md`](bench/README.md) for the method and
-[`docs/ROADMAP.md`](docs/ROADMAP.md) for the remaining levers.
+| | geomean |
+|---|---|
+| all 58 benchmarks | **1.17× faster than CRuby** |
+| the 37 where CRuby takes ≥ 0.10 s | **0.71× — slower** |
+
+Read the second row. The first is inflated by process startup: 21 of the 58
+finish inside CRuby's ~30 ms of boot, where a native binary starts instantly.
+That is a real advantage of shipping a binary and it is not a claim about
+generated code.
+
+**The Cranelift backend is correctness-complete and has not finished its
+performance pass.** On compute-bound work it is behind CRuby, and behind the
+Rust-emitting backend it replaced. It wins big where the emitter has a fused
+loop or an inline cache (`range_each` 3.27×, `so_mandelbrot` 2.18×,
+`attr_accessor` 1.27×) and loses where it does not (`rbtree` 0.25×,
+`send_rubyfunc_block` 0.31×, `life` 0.35×, `getivar_module` 0.35×). Those
+losses are a ranked list of unbuilt levers, not a mystery: typed iterator
+splices, a class-level ivar site, a direct call for a statically-known
+receiver class. [`bench/README.md`](bench/README.md) has the method,
+[`docs/ROADMAP.md`](docs/ROADMAP.md) the levers.
 
 ---
 
@@ -419,8 +432,9 @@ Zeo is experimental. The known limits, all of them deliberate and recorded:
   time, or a run-time `box.require`, raises `NotImplementedError`.
 - **Four extensions are partial** — `coverage`, `nkf`, `openssl`, `TracePoint`.
   See [`docs/EXTENSIONS.md`](docs/EXTENSIONS.md).
-- **The Cranelift backend has not had its performance pass.** Correctness is
-  complete; code quality is the next milestone.
+- **The Cranelift backend has not finished its performance pass.** Correctness
+  is complete; code quality is not. On compute-bound work it currently runs at
+  **0.71× of CRuby** — see [Performance](#performance).
 
 [`docs/ROADMAP.md`](docs/ROADMAP.md) tracks the rest.
 
