@@ -473,11 +473,17 @@ fn define_block_fn(
             )
         }
     };
+    // The block's OWN file, not the program's first. A block compiled out
+    // of a spliced `require` that named the requiring file is not just
+    // cosmetic: a library filters its own frames out of a backtrace by
+    // PATH (minitest's is `%r{lib/minitest}`), so a frame wearing the test
+    // file's name survives the filter and shows up in the report.
     let (line, file) = {
         let loc = fx.location(site);
         (
             loc.map_or(0, |(_, l)| l),
-            fx.an.compiler.hir.files.first().map(|f| f.name.clone()),
+            loc.map(|(f, _)| f.to_string())
+                .or_else(|| fx.an.compiler.hir.files.first().map(|f| f.name.clone())),
         )
     };
 
