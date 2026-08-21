@@ -1,0 +1,24 @@
+nil
+nil
+nil
+nil
+#<Enumerator: 5:then>
+Enumerator
+[5]
+5
+1
+[5]
+#<Enumerator: nil:then>
+[nil]
+:sym
+[1.5]
+[1..3]
+[{a: 1}]
+[[1, 2]]
+["s"]
+3
+[[2, "x"]]
+1
+[[7, 0]]
+[4]
+OK

@@ -1,0 +1,24 @@
+nil => TypeError: can't convert nil into Float
+1.5 nil => TypeError: can't convert nil into Float
+true => TypeError: can't convert true into Float
+1.5 true => TypeError: can't convert true into Float
+false => TypeError: can't convert false into Float
+1.5 false => TypeError: can't convert false into Float
+"x" => ArgumentError: invalid value for Float(): "x"
+1.5 "x" => ArgumentError: invalid value for Float(): "x"
+[1] => TypeError: can't convert Array into Float
+1.5 [1] => TypeError: can't convert Array into Float
+{a: 1} => TypeError: can't convert Hash into Float
+1.5 {a: 1} => TypeError: can't convert Hash into Float
+:s => TypeError: can't convert Symbol into Float
+1.5 :s => TypeError: can't convert Symbol into Float
+ArgumentError: invalid value for Float(): "x"
+TypeError: can't convert Array into Float
+TypeError: can't convert nil into Float
+TypeError: can't convert nil into Float
+[2.5, 5.0]
+[2, 5]
+[2.5, 5.0]
+[1180591620717411303424, 5]
+[3.0, 1.5]
+[2, 5]

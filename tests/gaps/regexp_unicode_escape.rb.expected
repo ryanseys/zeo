@@ -1,0 +1,20 @@
+true
+false
+true
+true
+true
+"abb"
+"aaa"
+true
+true
+true
+true
+"a-b"
+\u: RegexpError
+\u6: RegexpError
+\u{}: RegexpError
+\u{ }: RegexpError
+\u{d800}: RegexpError
+\u{110000}: RegexpError
+\u{0000061}: RegexpError
+\u{61,62}: RegexpError

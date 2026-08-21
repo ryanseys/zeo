@@ -1,0 +1,38 @@
+[true, false, false, true, true, false, false, true]
+[true, false, false, true, true, true, false, false]
+[true, true, false, true, true, true, false]
+[true, true, true, false, false, false, true, false, true]
+[true, true, false, false, true, true, true, false]
+[true, false, false, true, true, false]
+[true, false, true, true, true, false, true, false, true, true]
+[true, true, false, true, false, true, true, true]
+[true, true, false, false, true]
+[true, true, false, true, false, false, false, true]
+[true, false, false, true, true, false, false, false]
+[true, false, false, true, false, true]
+[true, true, false, true]
+[true, true, false, false, false, false, false, false, false]
+[false, true, true, false, false]
+[true, true, false, true, true, false, true, false, false, true]
+[true, false, true, false]
+[true, true, true, true, false, true, true, false]
+[false, true]
+[false, true, true, false, false, false, true]
+[false, true, true, false, true, false]
+[false, false, false, true, true]
+:self
+:same_message
+:same_members
+:same_instant
+:same_match
+:not_a_fiber
+false
+true
+[nil, true]
+false
+receiver
+false
+receiver
+false
+receiver
+true

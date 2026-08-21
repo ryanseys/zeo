@@ -1,0 +1,13 @@
+#<struct >
+#<data >
+#<struct >
+[]
+0
+#<struct a=nil>
+#<struct a=1>
+1
+nil
+#<struct a=1, b=nil>
+[1, 2]
+#<struct S9>
+#<struct S8 a=nil>

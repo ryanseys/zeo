@@ -1,0 +1,48 @@
+[TypeError, "no implicit conversion from nil to integer"]
+[TypeError, "no implicit conversion from nil to integer"]
+[TypeError, "no implicit conversion from nil to integer"]
+[TypeError, "no implicit conversion from nil to integer"]
+[TypeError, "no implicit conversion from nil to integer"]
+[TypeError, "no implicit conversion from nil to integer"]
+[TypeError, "no implicit conversion from nil to integer"]
+[TypeError, "no implicit conversion from nil to integer"]
+[TypeError, "no implicit conversion from nil to integer"]
+[TypeError, "no implicit conversion from nil to integer"]
+[TypeError, "no implicit conversion from nil to integer"]
+[TypeError, "no implicit conversion of false into Integer"]
+[TypeError, "no implicit conversion of nil into Integer"]
+[TypeError, "no implicit conversion of nil into Integer"]
+[TypeError, "no implicit conversion of nil into Integer"]
+[TypeError, "no implicit conversion of nil into String"]
+[TypeError, "no implicit conversion of true into String"]
+[TypeError, "no implicit conversion of nil into String"]
+[TypeError, "no implicit conversion of nil into String"]
+[TypeError, "no implicit conversion of Integer into String"]
+[TypeError, "no implicit conversion of nil into String"]
+[TypeError, "wrong argument type nil (expected Regexp)"]
+[TypeError, "wrong argument type nil (expected Regexp)"]
+[TypeError, "wrong argument type nil (expected Regexp)"]
+[TypeError, "wrong argument type false (expected Regexp)"]
+[TypeError, "wrong argument type true (expected Regexp)"]
+[TypeError, "no implicit conversion of nil into Array"]
+[TypeError, "no implicit conversion of nil into Array"]
+[TypeError, "no implicit conversion from nil to integer"]
+[TypeError, "no implicit conversion of false into Integer"]
+[TypeError, "no implicit conversion of nil into String"]
+[TypeError, "no implicit conversion of nil into String"]
+[TypeError, "no implicit conversion of nil into String"]
+[TypeError, "no implicit conversion of nil into Integer"]
+["a", "b"]
+"ab\n"
+[1, 2]
+[0, 0]
+nil
+nil
+nil
+true
+["a", "1"]
+nil
+[1, 9, 9]
+[NoMethodError, "undefined method '=~' for true"]
+"hello"
+"ConvE"
