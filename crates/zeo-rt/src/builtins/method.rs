@@ -129,7 +129,9 @@ impl RMethod {
         }
         match self.kind {
             MethodKind::Instance => crate::dispatch::method_owner(self.home, self.name),
-            MethodKind::Singleton => crate::dispatch::class_method_owner(self.home, self.name),
+            MethodKind::Singleton => {
+                crate::dispatch::class_method_owner_reported(self.home, self.name)
+            }
         }
     }
 }

@@ -1363,7 +1363,41 @@ pub fn construct_by_class_id(
 /// `defining_class` on `recv`'s chain -- the same resolution
 /// [`send_super_from`] walks, answered as a boolean instead of a call.
 pub fn super_defined(recv: &RubyValue, defining_class: ClassId, name: Symbol) -> bool {
+    // A CLASS receiver's `super` walks the CLASS-method chain -- the same
+    // split [`send_super_from`] makes one function below, and for the same
+    // reason: the object channel asks `Class`'s own instance ancestry, which
+    // holds no `def self.x` and so answers no every time.
+    if let RubyValue::Class(cid) = recv {
+        return super_class_defined(*cid, defining_class, name);
+    }
     method_owner_after(recv.class_id(), defining_class, name).is_some()
+}
+
+/// [`super_defined`]'s class-method half: the question
+/// [`send_super_class_from`] answers by calling, asked without calling. The
+/// three cases are that function's, in its order -- `defining_class` on the
+/// chain, `defining_class` prepended into some ancestor's singleton, and
+/// neither.
+fn super_class_defined(recv_class: ClassId, defining_class: ClassId, name: Symbol) -> bool {
+    let owner_from =
+        |skip: usize| crate::dispatch::reflect::scan_class_method_owner(recv_class, skip, name);
+    let ancestors = ancestors_of_value(recv_class);
+    if let Some(pos) = ancestors.iter().position(|&a| a == defining_class) {
+        return owner_from(pos + 1).is_some();
+    }
+    if let Some(pos) = ancestors
+        .iter()
+        .position(|&a| crate::runtime_meta::has_singleton_prepend(a, defining_class))
+    {
+        return crate::runtime_meta::singleton_prepend_super_below(
+            ancestors[pos],
+            defining_class,
+            name,
+        )
+        .is_some()
+            || owner_from(pos).is_some();
+    }
+    owner_from(1).is_some()
 }
 
 /// The `super` dispatch for an exception-backed receiver.

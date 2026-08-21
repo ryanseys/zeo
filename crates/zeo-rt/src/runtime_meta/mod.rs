@@ -711,6 +711,30 @@ fn singleton_super_chain(recv: &RubyValue) -> Vec<ClassId> {
     chain
 }
 
+/// The module prepended into `cid`'s singleton class that supplies class
+/// method `name`, latest prepend first -- what `Method#owner` reports where
+/// zeo's flattened rows name the host class.
+///
+/// A singleton prepend arrives two ways and both are read here: a run-time
+/// `K.singleton_class.prepend(M)` records the module in the overlay, and a
+/// compiled `class << self; prepend M; end` seats it ahead of the surrogate
+/// in the surrogate's own chain. The surrogate is read WITHOUT minting -- it
+/// was registered at boot, and minting here would arm the overlay gate for a
+/// reflection question.
+pub fn singleton_prepend_owner(cid: ClassId, name: Symbol) -> Option<ClassId> {
+    let defines = |m: ClassId| crate::dispatch::method_owner(m, name).is_some();
+    if let Some(m) = resolver::singleton_prepends_of(cid).into_iter().find(|&m| defines(m)) {
+        return Some(m);
+    }
+    let key = singleton_class_key(&RubyValue::Class(cid))?;
+    let sid = maps().singleton_classes.read().unwrap().get(&key).copied()?;
+    crate::dispatch::ancestors_of_value(sid)
+        .iter()
+        .take_while(|&&a| a != sid)
+        .copied()
+        .find(|&m| defines(m))
+}
+
 /// What ruby files AT one class's singleton: the modules prepended into it,
 /// the singleton class itself, then the modules extended onto the class. What
 /// sits ABOVE the layer -- the parent's own layer, then `Class`'s ancestry --

@@ -44,7 +44,9 @@ impl RUnboundMethod {
         }
         match self.kind {
             MethodKind::Instance => crate::dispatch::method_owner(self.home, self.name),
-            MethodKind::Singleton => crate::dispatch::class_method_owner(self.home, self.name),
+            MethodKind::Singleton => {
+                crate::dispatch::class_method_owner_reported(self.home, self.name)
+            }
         }
     }
 }
@@ -118,8 +120,12 @@ pub(crate) fn owner_value(
 ) -> Result<RubyValue, crate::Signal> {
     match kind {
         MethodKind::Instance => Ok(RubyValue::Class(owner)),
+        // A module reached through the singleton chain -- `extend`ed onto the
+        // class, or prepended into its singleton -- is named BARE. Only a
+        // real `def self.x` is reported as owned by a singleton class.
         MethodKind::Singleton
-            if crate::dispatch::class_method_extend_source(home, name) == Some(owner) =>
+            if crate::dispatch::class_method_extend_source(home, name) == Some(owner)
+                || crate::runtime_meta::singleton_prepend_owner(home, name) == Some(owner) =>
         {
             Ok(RubyValue::Class(owner))
         }

@@ -3122,13 +3122,40 @@ fn lower_defined(fx: &mut Fx, site: NodeId, inner: NodeId) -> Result<Operand, St
             }
         });
     }
-    // `defined?(super)`: probe the same walk `super` runs.
+    // `defined?(super)`: probe the same walk `super` runs. A CLASS-method
+    // body asks the same two questions `lower_super` asks, in the same
+    // order, or the two disagree: a statically resolved singleton target is
+    // a yes outright, and only a miss reaches the run-time walk -- resumed
+    // from the ancestor that HOLDS the defining class, since an extended
+    // module is not itself in the ancestry. A class BODY has no method name,
+    // so it still falls through to the static tail.
     if matches!(&fx.an.compiler.hir[inner], HirNode::SuperCall { .. })
-        && !fx.self_is_class
         && let (Some(dc), Some(m)) = (fx.defining_class, fx.method_name.clone())
     {
+        let mut target = dc;
+        if fx.self_is_class {
+            let Some(owner) = fx.method_class else {
+                return Ok(Operand::Nil);
+            };
+            let compiler = &fx.an.compiler;
+            if crate::analyze::class_query::extended_singleton_super(compiler, owner, dc, &m)
+                .is_some()
+            {
+                let ss = fx.temp_slot();
+                let dst = fx.slot_addr(ss, 0);
+                defined_str(fx, dst, "super");
+                fx.owned_created += 1;
+                return Ok(Operand::Slot {
+                    ss,
+                    owned: true,
+                    tag: TagInfo::Unknown,
+                });
+            }
+            target = crate::analyze::class_query::singleton_chain_host(compiler, owner, Some(dc))
+                .unwrap_or(dc);
+        }
         let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
-        let dc_v = fx.b.ins().iconst(types::I32, i64::from(dc.0));
+        let dc_v = fx.b.ins().iconst(types::I32, i64::from(target.0));
         let sym = fx.sym_id(&m);
         let hit = fx
             .call("zeo_rt_super_defined", &[self_ptr, dc_v, sym])

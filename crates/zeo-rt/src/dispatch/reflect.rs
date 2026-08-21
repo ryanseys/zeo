@@ -257,6 +257,22 @@ pub fn class_method_owner(cid: ClassId, name: Symbol) -> Option<ClassId> {
     scan_class_method_owner(cid, 0, name).map(|(owner, _)| owner)
 }
 
+/// [`class_method_owner`]'s REPORTING twin -- what `Method#owner` answers.
+///
+/// A module PREPENDED into a singleton class wins the lookup, and ruby names
+/// it as the owner. zeo flattens a singleton prepend into the host's own
+/// class-method rows (the module's body becomes the winner, the host's own
+/// `def self.x` becomes its super target), so the scan below correctly finds
+/// the HOST and reflection must name the module instead.
+///
+/// Only reflection takes this route. `class_method_owner` stays the
+/// dispatch answer, because `class_method_fn` reads the owner's own row
+/// table -- and the flattened winner lives on the host, not on the module.
+pub fn class_method_owner_reported(cid: ClassId, name: Symbol) -> Option<ClassId> {
+    let owner = class_method_owner(cid, name)?;
+    Some(crate::runtime_meta::singleton_prepend_owner(owner, name).unwrap_or(owner))
+}
+
 /// The module an `extend` supplies class method `name` from, or `None` when a
 /// `def self.<name>` up the chain gets there first.
 ///
@@ -329,7 +345,11 @@ pub fn class_method_owner_after(cid: ClassId, after: ClassId, name: Symbol) -> O
 /// Each ancestor is asked for its OWN class methods first and for the modules
 /// it `extend`ed second, which is the order CRuby's singleton ancestry seats
 /// them in: `#<Class:K>`, then K's extends, then `#<Class:Object>`.
-fn scan_class_method_owner(cid: ClassId, skip: usize, name: Symbol) -> Option<(ClassId, bool)> {
+pub(crate) fn scan_class_method_owner(
+    cid: ClassId,
+    skip: usize,
+    name: Symbol,
+) -> Option<(ClassId, bool)> {
     let n = name.name_str();
     // An `undef` written inside `class << self` retires the name here and for
     // every subclass, so the walk must stop rather than reach an ancestor's
