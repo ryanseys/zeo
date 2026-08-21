@@ -76,11 +76,27 @@ pub fn eval_string_mode(
         // The enclosing scope's label, read BEFORE the cfunc frame goes on --
         // the snippet runs in the caller's name, not the cfunc's.
         let label = crate::frames::current_frame_label().unwrap_or("<main>");
-        let _c = crate::frames::synthetic_c_frame(match mode {
+        let entry = match mode {
             EvalMode::Caller => "Kernel#eval",
             EvalMode::InstanceEval => "BasicObject#instance_eval",
             EvalMode::ClassEval => "Module#class_eval",
-        });
+        };
+        let _c = crate::frames::synthetic_c_frame(entry);
+        if let Some(c) = crate::eval::selected() {
+            let req = crate::eval::EvalRequest {
+                src,
+                file: "(eval)",
+                line: 1,
+                self_val: self_val.clone(),
+                box_id,
+                mode,
+                label,
+                binding: None,
+            };
+            if let Some(answer) = c.eval(&req) {
+                return answer;
+            }
+        }
         imp::eval_string(src, self_val, box_id, mode, label)
     }
     #[cfg(not(feature = "eval-vm"))]
@@ -199,6 +215,21 @@ pub fn eval_with_binding(
         // the caller and the snippet, which is how a backtrace says where an
         // eval was entered as well as where it raised.
         let _c = crate::frames::synthetic_c_frame(caller_label);
+        if let Some(c) = crate::eval::selected() {
+            let req = crate::eval::EvalRequest {
+                src: &code,
+                file: file.as_deref().unwrap_or(&b.file),
+                line: line.unwrap_or(b.line),
+                self_val: b.self_val.clone(),
+                box_id: b.box_id,
+                mode: EvalMode::Caller,
+                label: b.label,
+                binding: Some(b),
+            };
+            if let Some(answer) = c.eval(&req) {
+                return answer;
+            }
+        }
         imp::eval_in_binding(&code, b, file, line)
     }
     #[cfg(not(feature = "eval-vm"))]
