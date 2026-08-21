@@ -1578,6 +1578,28 @@ pub(crate) fn loop_value(fx: &mut Fx, node: NodeId) -> Result<super::operand::Op
     })
 }
 
+/// Stamp the frame's line for a CALL whose method NAME sits on a later
+/// line than the expression it belongs to (`recv\n  .m`, `end.m(..)`).
+///
+/// Emitted after the receiver and the arguments, because those belong to
+/// their own lines: a raise inside one must still report where it was
+/// written, which is what ruby does.
+///
+/// The line only, never a coverage hit. Ruby counts a multi-line call's
+/// FIRST line in `Coverage` while reporting the name's line in a
+/// backtrace, so the two answers cannot come from one stamp.
+pub(crate) fn stamp_call_line(fx: &mut Fx, site: NodeId) {
+    let Some(line) = fx.an.compiler.hir.call_line(site) else {
+        return;
+    };
+    if fx.prev_line == Some(line) {
+        return;
+    }
+    fx.prev_line = Some(line);
+    let v = fx.b.ins().iconst(types::I32, i64::from(line));
+    fx.call("zeo_rt_set_line", &[v]);
+}
+
 /// Mirror the rustc backend's `stamp_line`: a `set_line` only when the
 /// statement's line differs from the previous stamp.
 fn stamp_line(fx: &mut Fx, stmt: NodeId) {

@@ -310,6 +310,13 @@ pub struct Hir {
     /// entry: the exception prelude, `eval` bodies) makes every span
     /// `SYNTH`.
     pub lowering_file: Option<FileId>,
+    /// A call whose METHOD NAME sits on a later line than the expression
+    /// it belongs to (`recv\n  .m`, `end.m(..)`), by the name's byte
+    /// offset. Ruby's backtrace reports the call at the NAME's line while
+    /// coverage still counts the statement's first line -- oracle-verified,
+    /// the two are different questions -- so this cannot be folded into the
+    /// node's span, which answers the second.
+    call_message: crate::compiler::FMap<NodeId, u32>,
     /// Provenance of every `require`/`require_relative`/`load` SPLICE
     /// INSTANCE grafted into this arena, in splice order --
     /// the main file itself is NOT recorded (matching CRuby, where the main
@@ -1039,6 +1046,21 @@ impl Hir {
     /// The provenance of `id` -- `None` for a synthetic node (see `Span`).
     pub fn span(&self, id: NodeId) -> Option<Span> {
         self.spans[id.0 as usize].known()
+    }
+
+    /// Record a call whose method name is on a later line than the
+    /// expression's first (see [`Hir::call_message`]).
+    pub(crate) fn set_call_message(&mut self, id: NodeId, offset: u32) {
+        self.call_message.insert(id, offset);
+    }
+
+    /// The LINE a call's method name sits on, when that is not the line
+    /// its expression starts on. `None` for every ordinary call, which is
+    /// what keeps this to one entry per `recv\n  .m` in the program.
+    pub fn call_line(&self, id: NodeId) -> Option<u32> {
+        let offset = *self.call_message.get(&id)?;
+        let file = self.files.get(self.span(id)?.file.0 as usize)?;
+        Some(file.line_at(offset))
     }
 
     /// Records that the file currently lowering computes a `require`/`autoload`

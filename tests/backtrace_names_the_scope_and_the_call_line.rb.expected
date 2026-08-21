@@ -1,0 +1,26 @@
+blocks at a required file's top level:
+  lib/backtrace_scopes.rb:6:in 'block (2 levels) in <top (required)>'
+  lib/backtrace_scopes.rb:5:in 'Array#each'
+  lib/backtrace_scopes.rb:5:in 'block in <top (required)>'
+  backtrace_names_the_scope_and_the_call_line.rb:23:in 'block in <main>'
+  backtrace_names_the_scope_and_the_call_line.rb:17:in 'Object#show'
+  backtrace_names_the_scope_and_the_call_line.rb:23:in '<main>'
+a method in a required file:
+  lib/backtrace_scopes.rb:11:in 'Object#a_method_here'
+  backtrace_names_the_scope_and_the_call_line.rb:24:in 'block in <main>'
+  backtrace_names_the_scope_and_the_call_line.rb:17:in 'Object#show'
+  backtrace_names_the_scope_and_the_call_line.rb:24:in '<main>'
+a chained call:
+  lib/backtrace_scopes.rb:15:in 'Chained.boom'
+  backtrace_names_the_scope_and_the_call_line.rb:28:in 'block in <main>'
+  backtrace_names_the_scope_and_the_call_line.rb:17:in 'Object#show'
+  backtrace_names_the_scope_and_the_call_line.rb:26:in '<main>'
+a call on a block's value:
+  backtrace_names_the_scope_and_the_call_line.rb:34:in 'block in <main>'
+  backtrace_names_the_scope_and_the_call_line.rb:17:in 'Object#show'
+  backtrace_names_the_scope_and_the_call_line.rb:31:in '<main>'
+a raise in the receiver of a chained call:
+  backtrace_names_the_scope_and_the_call_line.rb:39:in 'Object#raises_while_evaluating'
+  backtrace_names_the_scope_and_the_call_line.rb:41:in 'block in <main>'
+  backtrace_names_the_scope_and_the_call_line.rb:17:in 'Object#show'
+  backtrace_names_the_scope_and_the_call_line.rb:40:in '<main>'

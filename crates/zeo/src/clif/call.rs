@@ -57,6 +57,7 @@ pub(crate) fn direct_call(
         (None, false) => None,
     };
     let ptrs = arg_ptrs(fx, site, args)?;
+    super::stmt::stamp_call_line(fx, site);
     let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
     let func_id = fx.em.methods[name].body;
     let fref = fx.em.module.declare_func_in_func(func_id, fx.b.func);
@@ -515,6 +516,7 @@ pub(crate) fn dynamic_send_value(
         ownership::pool_owned(fx, recv_ptr, recv_op.tag());
     }
     let argv_ptr = build_argv(fx, site, args)?;
+    super::stmt::stamp_call_line(fx, site);
     dynamic_send_argv(fx, recv_ptr, recv_class, name, argv_ptr, args.len(), bypass)
 }
 

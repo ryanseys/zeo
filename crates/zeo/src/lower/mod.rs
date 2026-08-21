@@ -224,7 +224,36 @@ pub fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResu
     hir.push_span(span);
     let out = lower_node_inner(result, hir, node);
     hir.pop_span();
+    if let Ok(id) = out {
+        record_call_line(hir, id, node);
+    }
     out.map_err(|e| e.with_span_if_missing(span))
+}
+
+/// Note a call whose method NAME is on a later line than the expression it
+/// belongs to -- `recv\n  .m`, or rack's `lambda do .. end.must_raise(..)`.
+///
+/// Ruby reports such a call at the name's line, which is not where the
+/// expression starts and not what coverage counts: for
+/// `[1].map do |i|\n i\n end.boom`, the backtrace says the `end.boom`
+/// line and `Coverage` counts the `[1].map` one. Both oracle-verified, so
+/// the two answers are kept apart -- the span stays the whole expression's
+/// and this records the other.
+fn record_call_line(hir: &mut Hir, id: NodeId, node: &Node<'_>) {
+    let Some(call) = node.as_call_node() else {
+        return;
+    };
+    let Some(msg) = call.message_loc() else { return };
+    let (Some(file), Some(span)) = (hir.lowering_file, hir.span(id)) else {
+        return;
+    };
+    let Some(src) = hir.files.get(file.0 as usize) else {
+        return;
+    };
+    let at = msg.start_offset() as u32;
+    if src.line_at(at) > src.line_at(span.start) {
+        hir.set_call_message(id, at);
+    }
 }
 
 /// Whether `recv` is the constant naming the `class`/`module` body being

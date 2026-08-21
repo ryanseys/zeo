@@ -219,6 +219,22 @@ pub(crate) enum FrameName {
 }
 
 /// Ruby's spelling for a block nested `depth` levels under `base`.
+/// The scope name a block's frame hangs off.
+///
+/// Ruby names the scope the block was WRITTEN in, and a `require` zeo
+/// splices into its requiring file still has a scope of its own there:
+/// a required file's top level is `<top (required)>`, never the
+/// requiring file's `<main>`. Only that one substitution is needed --
+/// a block inside a method or a class body already inherits that scope's
+/// own label, in the required file as anywhere else.
+fn block_base(fx: &Fx, file: Option<&str>) -> String {
+    let main = fx.an.compiler.hir.files.first().map(|f| f.name.as_str());
+    if fx.frame_label == "<main>" && file.is_some() && file != main {
+        return "<top (required)>".to_string();
+    }
+    fx.frame_label.clone()
+}
+
 fn block_label(base: &str, depth: usize) -> String {
     match depth {
         0 | 1 => format!("block in {base}"),
@@ -462,17 +478,6 @@ fn define_block_fn(
     let body = body.to_vec();
     let layout = super::params::layout_of(&params)?;
     let auto_splat = !is_lambda && super::params::auto_splats(&params);
-    let (label, base, depth) = match frame {
-        FrameName::Method(name) => (name.clone(), name, 0),
-        FrameName::Block => {
-            let depth = fx.block_depth + 1;
-            (
-                block_label(&fx.frame_label, depth),
-                fx.frame_label.clone(),
-                depth,
-            )
-        }
-    };
     // The block's OWN file, not the program's first. A block compiled out
     // of a spliced `require` that named the requiring file is not just
     // cosmetic: a library filters its own frames out of a backtrace by
@@ -485,6 +490,14 @@ fn define_block_fn(
             loc.map(|(f, _)| f.to_string())
                 .or_else(|| fx.an.compiler.hir.files.first().map(|f| f.name.clone())),
         )
+    };
+    let (label, base, depth) = match frame {
+        FrameName::Method(name) => (name.clone(), name, 0),
+        FrameName::Block => {
+            let depth = fx.block_depth + 1;
+            let base = block_base(fx, file.as_deref());
+            (block_label(&base, depth), base, depth)
+        }
     };
 
     // A fresh function; the enclosing Fx lends its Emitter.
