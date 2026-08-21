@@ -1,0 +1,10 @@
+GC.stat[:count]	true
+GC.stat[:total_allocated_objects]	true
+GC.stat[:heap_live_slots]	true
+ObjectSpace.count_objects	true
+ObjectSpace.each_object	true
+ObjectSpace.memsize_of	true
+ObjectSpace.memsize_of_all	true
+ObjectSpace._id2ref	true
+ObjectSpace.dump	true
+ObjectSpace.trace_object_allocations_start	true

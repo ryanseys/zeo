@@ -2,12 +2,24 @@
 # derived from its arity -- `[[:req]]` where ruby says `[[:req, :path]]`.
 # zeo reports a parameter NAME on no builtin row at all.
 #
-# MEASURED against the 4,464 rows of conformance/builtin-arity.tsv (whose 8th
-# column already carries ruby's own descriptors): 265 rows diverge. 100 of
-# them differ only in the names; the other 165 differ in KIND, and 76 of those
-# want a KEYWORD parameter, which the DSL cannot spell at all. The dense
-# clusters are ObjectSpace (50), Pathname (50), IO (40), Ractor (17),
-# RubyVM::YJIT (16), Kernel (15) and Monitor (14).
+# RE-MEASURED 2026-08-21, live against the oracle rather than against the
+# arity TSV -- whose 8th column carries ruby's KINDS, not its names, which is
+# what made the earlier count wrong. Diffing `#parameters` over every class
+# reachable from `Object` (5,444 ruby rows, 2,367 of them shared with zeo):
+# **138 rows diverge**, clustered as
+#
+#   Pathname 44 · Ractor 16 · GC 8 · Array 7 · Thread::SizedQueue 6 ·
+#   Random::Formatter 5 · RubyVM::YJIT 5 · Kernel 5 ·
+#   RubyVM::AbstractSyntaxTree 4 · Process::Tms 4 · ObjectSpace 4 ·
+#   Exception 4 · TracePoint 3 · Thread::Queue 3 · IO 3 · Dir 3 ·
+#   then a tail of one- and two-row classes.
+#
+# The earlier reading (265 rows; ObjectSpace 50, IO 40, RubyVM::YJIT 16) was
+# counting differently and is superseded. It matters because it was the basis
+# for scoping: G8's corelib closes Pathname (44) and Kernel (5) by
+# construction, so ~89 rows are NOT reachable that way -- GC, Array, the
+# queue family, Random::Formatter, Process::Tms, Exception, TracePoint, Dir --
+# and those are the ones worth hand-annotating.
 #
 # TWO SHAPES OF FIX, and the choice is the work:
 #

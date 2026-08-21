@@ -21,15 +21,19 @@
 # `raise` (the `raise` call itself). No per-frame offset, no wider `Frame`, no
 # side table -- which is what the earlier design sketch assumed was needed.
 #
-# THE BLOCKER IS THE ID, not the rule. `node_id` is a `uint32_t` on prism's
+# WHERE THE ID COMES FROM. `node_id` is a `uint32_t` on prism's
 # own `pm_node_t` (ast.h:1074), assigned at ALLOCATION during the parse -- so
 # it is neither pre- nor post-order over the finished tree (a StatementsNode
 # is allocated before the call it holds), and cannot be recomputed by walking.
 # Three ways to reach it, none free:
 #
-#   * the `ruby-prism` safe bindings expose no accessor and keep the raw
-#     `*mut pm_call_node_t` private, so reading the field means walking with
-#     `ruby-prism-sys` and its per-kind child switch;
+#   * the `ruby-prism` safe bindings expose no accessor -- but the field IS
+#     reachable, corrected 2026-08-21: `pointer` is private on each node
+#     STRUCT (`CallNode`), and `Node` is an ENUM whose variant fields are
+#     public wherever the enum is, so `Node::CallNode { pointer, .. }`
+#     destructures and `(*pointer.cast::<pm_node_t>()).node_id` reads it
+#     (`ruby-prism-sys` 1.9.0, `ast.h:1074`). One arm for the call case,
+#     ~170 for a general helper. So the id is NOT the blocker;
 #   * zeo's own `RubyVM::AbstractSyntaxTree` numbering is a DIFFERENT scheme
 #     (its translator maps prism onto CRuby's NODE_* set and answers 3 where
 #     prism answers 4), so it cannot serve;
@@ -41,6 +45,20 @@
 #
 # The third is the shape to take, once there is somewhere to put the callee
 # that reflection does not see.
+#
+# WHAT ACTUALLY BLOCKS THIS, measured 2026-08-21: the CALLEE, not the id. A
+# `Location` does not carry one, and the rule needs it -- location i's node
+# is the call named by location i-1's method, and when i-1 is a BLOCK frame
+# the node is the `yield` that ran it rather than a call at all.
+# `exc_backtrace_locations` builds the whole list at once and so CAN thread
+# the callee through, but `caller_locations` and the `Thread`/`Fiber`
+# builders each need their own answer, and location 0's comes from the
+# exception (`NameError#name` for a missing method). That is the project.
+#
+# A safety valve belongs with it: when the callee cannot be determined,
+# raise `ArgumentError`. `ErrorHighlight.spot` already rescues that into "no
+# spot", so a shape the rule misses degrades to a plain message instead of
+# breaking every `detailed_message`.
 begin
   nil.nope
 rescue NoMethodError => e

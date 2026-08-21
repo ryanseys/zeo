@@ -25,10 +25,24 @@
 #                               where CRuby's `true` reports a real state
 #                               change. Listed so a caller that branches on it
 #                               is not surprised.
-#   AST node_id                 FIXABLE, unlike the rest. The ids are
-#                               zeo-numbered because prism's parse-internal
-#                               ids are not exposed through its Rust bindings;
-#                               if they ever are, this row can match.
+#   AST node_id                 FIXABLE, unlike the rest -- but NOT for the
+#                               reason recorded here until 2026-08-21, which
+#                               was wrong twice over. (1) prism's ids ARE
+#                               reachable: the safe crate keeps `pointer`
+#                               private on each node STRUCT, but `Node` is an
+#                               enum and a variant's fields are public, so
+#                               `Node::CallNode { pointer, .. }` reads
+#                               `pm_node_t.node_id`. (2) reaching them would
+#                               not help anyway: CRuby's AST ids are a THIRD
+#                               numbering, neither prism's nor zeo's
+#                               (`nil.nope` is prism id 3 for the call and
+#                               CRuby AST id 1). Matching this row means
+#                               reproducing CRuby's own allocation order,
+#                               which is the same work as completing the
+#                               translator -- see
+#                               `the_ast_translator_answers_unknown_for_some_shapes.rb`.
+#                               prism's real ids are wanted elsewhere, by
+#                               `ast_node_id_for_backtrace_location.rb`.
 $stderr.reopen(IO::NULL)
 
 iseq = RubyVM::InstructionSequence.compile("40 + 2")

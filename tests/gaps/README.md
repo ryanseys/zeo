@@ -13,17 +13,53 @@ A gap may be a program that makes the compiler **panic**. The harness contains
 a panic and counts it as a divergence, so an internal error can be recorded
 here rather than taking the test binary down with it. A `Mode::Pass` failure
 names it as a panic, because a bug and a stated limitation want different
-work. A divergence zeo has decided not to reproduce does not
-belong here — it belongs in a passing test that documents it.
+work.
 
-The exception is a divergence zeo has decided not to reproduce **yet** because
-matching it would cost more than it is worth. `sort_with_comparator` and
-`narrowed_element_local_pin` are the two today: ruby's `Array#sort` is unstable
-(`ruby_qsort`) and zeo's is stable (Rust's `sort_by`), so equal comparator keys
-come out in a different order. Reproducing ruby's exact permutation means
-porting `ruby_qsort` into a hot runtime path, for behaviour ruby's own docs
-leave unspecified. They stay here, with the reason in their headers, rather
-than becoming a passing test that would pin an order ruby does not promise.
+A divergence zeo has decided not to reproduce **and has matched deliberately
+differently** belongs in a passing test that documents the choice. One it has
+decided not to reproduce **because matching would cost more than the
+divergence does** stays here, with the reason in its header, rather than
+becoming a passing test that would pin behaviour ruby does not promise.
+
+## Three kinds of file live here
+
+Read a gap's header for which one it is; the difference decides whether it is
+work or a decision.
+
+**A bug or an unbuilt mechanism.** The default, and most of the directory:
+run-time boxes (`a_box_*`, `a_class_written_in_a_box_escapes_it`,
+`a_top_level_def_in_a_box_escapes_it`), the cycle collector and heap
+enumeration (`a_reference_cycle_is_never_reclaimed`,
+`there_is_no_heap_enumeration`), the MRO occurrence change
+(`a_module_both_prepended_and_included`), reflection surfaces
+(`builtin_method_parameter_names`, `a_require_gated_builtin_row_is_always_present`,
+`a_struct_backed_builtin_class_is_not_a_struct`,
+`the_ast_translator_answers_unknown_for_some_shapes`), and the two prism-id
+files. Each names its mechanism and, where one exists, the phase that owns it.
+
+**A DECISION, kept here rather than in a passing test.** Reproducing these
+would make zeo's own behaviour worse or cost more than the divergence does:
+`sort_with_comparator` and `narrowed_element_local_pin` (ruby's `Array#sort` is
+unstable — `ruby_qsort` — and zeo's is stable, so equal comparator keys come
+out in a different order; matching means porting `ruby_qsort` into a hot path
+for behaviour ruby's docs leave unspecified), `ractor_move_traversal_accidents`
+and `ractor_move_io_and_range` (CRuby guts objects as it walks, so a REFUSED
+move has already destroyed the source; zeo validates the whole graph first),
+`a_proc_isolation_message_lists_every_outer_variable` (the variable list's
+order), `kernel_scope_intrinsics_dynamic_send` (a method row cannot see its
+caller's block, and widening `Frame` to carry one costs every call), and
+`a_later_def_on_a_builtin_reaches_back` (a builtin's first definition is a
+native row with no `Scope` to order against — revisit if the corelib gives
+builtins real scopes).
+
+**A PERMANENT absence.** `rubyvm_iseq_serialization`'s `to_a`/`to_binary`/
+`disasm` rows: zeo compiles ahead of time and has no bytecode, so a faithful
+answer would mean emitting YARV it never runs. The file reads its rows apart,
+because one of them (`InstructionSequence.of`) is quietly WRONG rather than
+loudly absent.
+
+A file may carry more than one kind — `rubyvm_iseq_serialization` and
+`error_highlight_library` both do — which is why the headers read row by row.
 
 ## The XFAIL contract
 
