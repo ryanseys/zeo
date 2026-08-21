@@ -1582,7 +1582,7 @@ ruby_class! {
     Time = zeo_abi::TIME_CLASS < zeo_abi::OBJECT_CLASS;
     include zeo_abi::COMPARABLE_CLASS;
 
-    def self."now" as time_now cfunc allocs (_recv) {
+    def self."now" params "in: nil" as time_now cfunc allocs (_recv) {
         let d = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("system clock before the Unix epoch");
@@ -1599,7 +1599,7 @@ ruby_class! {
     // answers a TypeError about the Hash. The `in:` keyword is peeled here
     // instead, and only when the hash really carries that key -- an ordinary
     // Hash argument stays positional.
-    def self."at" allocs (_recv, _time, _subsec?, _unit?, _opts?) {
+    def self."at" params "time, subsec = nil, unit = nil, in: nil" allocs (_recv, _time, _subsec?, _unit?, _opts?) {
         use num_bigint::BigInt;
         // The `in:` keyword is peeled from the END of the argument list, and
         // ONLY when the trailing hash really carries that key. The DSL's

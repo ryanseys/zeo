@@ -31,7 +31,7 @@ ruby_class! {
         Ok(RubyValue::Float(0.0))
     }
     // `nil` converts to the zero of each numeric tower.
-    def "to_r" arity 0 | "rationalize" (_recv, _arg?) {
+    def "to_r" arity 0 | "rationalize" params "eps = nil" (_recv, _arg?) {
         crate::builtins::rational::rational_new(0.into(), 1.into())
     }
     def "to_c" (_recv) {

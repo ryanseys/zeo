@@ -645,16 +645,16 @@ ruby_module! {
         def "cstime"(recv) {
             Ok(recv_tms(recv).get(3))
         }
-        def "utime="(recv, v) {
+        def "utime=" params "_"(recv, v) {
             tms_set(recv, 0, v)
         }
-        def "stime="(recv, v) {
+        def "stime=" params "_"(recv, v) {
             tms_set(recv, 1, v)
         }
-        def "cutime="(recv, v) {
+        def "cutime=" params "_"(recv, v) {
             tms_set(recv, 2, v)
         }
-        def "cstime="(recv, v) {
+        def "cstime=" params "_"(recv, v) {
             tms_set(recv, 3, v)
         }
         def "to_a" | "values"(recv) {

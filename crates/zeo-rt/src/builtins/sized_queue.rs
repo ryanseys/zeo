@@ -50,12 +50,12 @@ ruby_class! {
     // ---- rows ruby OWNS on this class while the body lives on an ancestor.
     // Each calls the very row it would otherwise have inherited, so `.owner`
     // and `instance_methods(false)` agree and there is still only one body.
-    def "<<"(recv, _item, *_rest) { inherited_row!(queue, "<<", recv, __args, None) }
-    def "push"(recv, _item, *_rest) { inherited_row!(queue, "push", recv, __args, None) }
-    def "enq"(recv, _item, *_rest) { inherited_row!(queue, "enq", recv, __args, None) }
-    def "pop" cfunc (recv, *_args) { inherited_row!(queue, "pop", recv, __args, None) }
-    def "deq" cfunc (recv, *_args) { inherited_row!(queue, "deq", recv, __args, None) }
-    def "shift" cfunc (recv, *_args) { inherited_row!(queue, "shift", recv, __args, None) }
+    def "<<" params "object, non_block = nil, timeout: nil"(recv, _item, *_rest) { inherited_row!(queue, "<<", recv, __args, None) }
+    def "push" params "object, non_block = nil, timeout: nil"(recv, _item, *_rest) { inherited_row!(queue, "push", recv, __args, None) }
+    def "enq" params "object, non_block = nil, timeout: nil"(recv, _item, *_rest) { inherited_row!(queue, "enq", recv, __args, None) }
+    def "pop" params "non_block = nil, timeout: nil" cfunc (recv, *_args) { inherited_row!(queue, "pop", recv, __args, None) }
+    def "deq" params "non_block = nil, timeout: nil" cfunc (recv, *_args) { inherited_row!(queue, "deq", recv, __args, None) }
+    def "shift" params "non_block = nil, timeout: nil" cfunc (recv, *_args) { inherited_row!(queue, "shift", recv, __args, None) }
     def "close"(recv) { inherited_row!(queue, "close", recv, __args, None) }
 }
 

@@ -185,7 +185,7 @@ ruby_module! {
     }
     // `garbage_collect` is `GC.start` by another name -- a no-op sweep (plus
     // the finalizer/weakmap sweep once those land).
-    module_function def "garbage_collect"(_recv, *_args, &_block) {
+    module_function def "garbage_collect" params "full_mark: true, immediate_mark: true, immediate_sweep: true"(_recv, *_args, &_block) {
         Ok(RubyValue::Nil)
     }
     // An empty per-class census: no fabricated counts, matching `GC.stat`'s

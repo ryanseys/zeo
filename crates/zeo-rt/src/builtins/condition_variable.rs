@@ -91,7 +91,7 @@ ruby_class! {
 
     // `wait(mutex, timeout=nil)` -- release `mutex`, park until signaled or
     // `timeout` seconds elapse, re-acquire `mutex`, return self.
-    def "wait"(recv, arg1, arg2?) {
+    def "wait" params "mutex, timeout = nil"(recv, arg1, arg2?) {
         let RubyValue::Mutex(rm) = arg1 else {
             return Err(type_error!("no implicit conversion into Mutex"));
         };

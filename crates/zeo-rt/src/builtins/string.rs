@@ -1741,14 +1741,14 @@ ruby_class! {
     // `unpack`/`unpack1`: deserialize the bytes per a template (see
     // `builtins::pack`). `unpack` answers the whole Array; `unpack1` the
     // first element (nil when empty).
-    def "unpack"(recv, fmt, **opts) {
+    def "unpack" params "fmt, offset: nil"(recv, fmt, **opts) {
         let template = unpack_template(fmt)?;
         let bytes = rstr.lock().bytes().to_vec();
         let start = kw_unpack_offset(opts, bytes.len())?;
         let vals = crate::builtins::pack::unpack(&bytes[start..], &template)?;
         Ok(RubyValue::Array(crate::array_new(vals)))
     }
-    def "unpack1"(recv, fmt, **opts) {
+    def "unpack1" params "fmt, offset: nil"(recv, fmt, **opts) {
         let template = unpack_template(fmt)?;
         let bytes = rstr.lock().bytes().to_vec();
         let start = kw_unpack_offset(opts, bytes.len())?;

@@ -568,12 +568,12 @@ fn new_tp(args: &[RubyValue], block: &Option<RubyValue>) -> Result<RubyValue, Si
 ruby_class! {
     TracePoint = zeo_abi::TRACEPOINT_CLASS < zeo_abi::OBJECT_CLASS;
 
-    def self."new" (recv, *args, &block) {
+    def self."new" params "*events" (recv, *args, &block) {
         let _fr = InternalFrame::enter("TracePoint.new", (96, 99), recv);
         new_tp(args, &block)
     }
     // `trace` is `new` + `enable` in one step.
-    def self."trace" (recv, *args, &block) {
+    def self."trace" params "*events" (recv, *args, &block) {
         let _fr = InternalFrame::enter("TracePoint.trace", (134, 137), recv);
         let tp = new_tp(args, &block)?;
         register(&tp);
@@ -583,7 +583,7 @@ ruby_class! {
     // `enable`/`disable` answer the PREVIOUS state (oracle-verified: a
     // fresh `enable` is false). The block forms restore that state on the
     // way out -- also past a raise -- and answer the block's value.
-    def "enable" cfunc (recv, &block) {
+    def "enable" params "target: nil, target_line: nil, target_thread: nil" cfunc (recv, &block) {
         let _fr = InternalFrame::enter("TracePoint#enable", (261, 264), recv);
         let prev = tp_of(recv).enabled.load(Ordering::Relaxed);
         match &block {

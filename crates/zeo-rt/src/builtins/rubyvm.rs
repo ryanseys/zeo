@@ -142,10 +142,10 @@ mod yjit {
         def self."enabled?" | "stats_enabled?" | "log_enabled?" | "trace_exit_locations_enabled?" (_recv) {
             Ok(RubyValue::Bool(false))
         }
-        def self."enable"(_recv, **_opts) {
+        def self."enable" params "stats: nil, log: nil, mem_size: nil, call_threshold: nil"(_recv, **_opts) {
             Ok(RubyValue::Bool(false))
         }
-        def self."runtime_stats"(_recv, *_args) {
+        def self."runtime_stats" params "key = nil"(_recv, *_args) {
             Ok(RubyValue::Nil)
         }
         def self."stats_string"(_recv) {
@@ -154,18 +154,18 @@ mod yjit {
         def self."exit_locations" | "log" (_recv) {
             Ok(RubyValue::Nil)
         }
-        def self."dump_exit_locations"(_recv, _path) {
+        def self."dump_exit_locations" params "filename"(_recv, _path) {
             Err(crate::builtins::arg_error!(
                 "--yjit-trace-exits must be enabled to use dump_exit_locations."
             ))
         }
-        def self."insns_compiled"(_recv, _iseq) {
+        def self."insns_compiled" params "iseq"(_recv, _iseq) {
             Ok(RubyValue::Nil)
         }
         def self."code_gc" | "reset_stats!" | "simulate_oom!" (_recv) {
             Ok(RubyValue::Nil)
         }
-        def self."disasm"(_recv, _what) {
+        def self."disasm" params "iseq"(_recv, _what) {
             Ok(RubyValue::Nil)
         }
     }

@@ -201,23 +201,23 @@ ruby_module! {
         send_value(recv, Symbol::intern("bytes"), std::slice::from_ref(arg), None)
     }
     // `random_bytes(n = 16)` -- n raw bytes (ASCII-8BIT).
-    def "random_bytes"(recv, n?) {
+    def "random_bytes" params "n = nil"(recv, n?) {
         let bytes = entropy(recv, count(n, 16)?)?;
         Ok(RubyValue::Str(crate::string_from_bytes(bytes, ASCII_8BIT)))
     }
     // `hex(n = 16)` -- 2n lowercase hex chars.
-    def "hex"(recv, n?) {
+    def "hex" params "n = nil"(recv, n?) {
         let bytes = entropy(recv, count(n, 16)?)?;
         Ok(RubyValue::Str(string_new(hex_encode(&bytes))))
     }
     // `base64(n = 16)` -- RFC 4648 base64, padded.
-    def "base64"(recv, n?) {
+    def "base64" params "n = nil"(recv, n?) {
         let bytes = entropy(recv, count(n, 16)?)?;
         Ok(RubyValue::Str(string_new(base64_encode(&bytes, STD, true))))
     }
     // `urlsafe_base64(n = 16, padding = false)` -- URL/filename-safe alphabet;
     // padding stripped unless the second argument is truthy.
-    def "urlsafe_base64"(recv, n?, padding?) {
+    def "urlsafe_base64" params "n = nil, padding = nil"(recv, n?, padding?) {
         let bytes = entropy(recv, count(n, 16)?)?;
         let padding = matches!(padding, Some(v) if v.truthy());
         Ok(RubyValue::Str(string_new(base64_encode(&bytes, URL, padding))))
@@ -252,7 +252,7 @@ ruby_module! {
         }
     }
     // `alphanumeric(n = 16, chars: [A-Za-z0-9])`.
-    def "alphanumeric"(recv, n?, **opts) {
+    def "alphanumeric" params "n = nil, chars: nil"(recv, n?, **opts) {
         let chars = chars_kwarg(opts);
         let n = count(n, 16)?;
         choose(recv, &chars, n)

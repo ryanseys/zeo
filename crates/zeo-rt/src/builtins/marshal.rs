@@ -70,7 +70,7 @@ ruby_module! {
 
     // `Marshal.load(str)` -> the deserialized object.
     // `Marshal.restore` is CRuby's own alias of `.load`.
-    def self."load" | "restore" (_recv, arg1, _arg2?) {
+    def self."load" params "source, proc = nil, freeze: nil" | "restore" params "source, proc = nil, freeze: nil" (_recv, arg1, _arg2?) {
         let RubyValue::Str(s) = arg1 else {
             return Err(type_error!("instance of IO needed"));
         };

@@ -1,39 +1,44 @@
-# `Method#parameters` on a BUILTIN row answers the anonymous descriptor
-# derived from its arity -- `[[:req]]` where ruby says `[[:req, :path]]`.
-# zeo reports a parameter NAME on no builtin row at all.
+# `Method#parameters` on a BUILTIN row answers the anonymous descriptor derived
+# from its arity -- `[[:req]]` where ruby says `[[:req, :path]]`.
 #
-# RE-MEASURED 2026-08-21, live against the oracle rather than against the
-# arity TSV -- whose 8th column carries ruby's KINDS, not its names, which is
-# what made the earlier count wrong. Diffing `#parameters` over every class
-# reachable from `Object` (5,444 ruby rows, 2,367 of them shared with zeo):
-# **138 rows diverge**, clustered as
+# LARGELY CLOSED 2026-08-21. The mechanism landed and 96 of the 142 diverging
+# rows went with it; what is left is 46, and it is left DELIBERATELY.
 #
-#   Pathname 44 · Ractor 16 · GC 8 · Array 7 · Thread::SizedQueue 6 ·
-#   Random::Formatter 5 · RubyVM::YJIT 5 · Kernel 5 ·
-#   RubyVM::AbstractSyntaxTree 4 · Process::Tms 4 · ObjectSpace 4 ·
-#   Exception 4 · TracePoint 3 · Thread::Queue 3 · IO 3 · Dir 3 ·
-#   then a tail of one- and two-row classes.
+# What the mechanism is: the DSL spells a row's signature per NAME
+# (`params "fmt, buffer: nil"`), in ruby's own `def` spelling, and the ARITY
+# falls out of it (`zeo_dsl::signature_arity`) -- so the two answers cannot
+# disagree for a row that carries one, and an `arity N` override becomes
+# unnecessary wherever a spelling is written. The proc-macro bakes the
+# descriptor into a fourth generated lookup beside `lookup_arity`, reached
+# through a `params` field on `MethodTable`. A row that spells nothing keeps
+# the arity-derived descriptor, so annotating is additive.
 #
-# The earlier reading (265 rows; ObjectSpace 50, IO 40, RubyVM::YJIT 16) was
-# counting differently and is superseded. It matters because it was the basis
-# for scoping: G8's corelib closes Pathname (44) and Kernel (5) by
-# construction, so ~89 rows are NOT reachable that way -- GC, Array, the
-# queue family, Random::Formatter, Process::Tms, Exception, TracePoint, Dir --
-# and those are the ones worth hand-annotating.
+# It also gave the DSL a KEYWORD spelling, which it had none of. That is not an
+# oversight being corrected: a native body receives a keyword inside the
+# options Hash it already takes as one positional slot, so what the body
+# RECEIVES and what ruby REPORTS are genuinely different lists. `params` is
+# metadata, not a binding, which is why it can spell one at all.
 #
-# TWO SHAPES OF FIX, and the choice is the work:
+# THE 46 THAT REMAIN are Pathname (41) and Kernel (5), and they are exactly the
+# clusters G8's corelib closes BY CONSTRUCTION -- `pathname_builtin.rb` and
+# `kernel.rb` are vendored from CRuby with their real signatures in them.
+# Hand-annotating them now would write the same 46 answers twice and leave two
+# sources to drift. The scoping decision (2026-08-21, user-directed) was "only
+# the clusters corelib won't reach", and this is the other side of it.
 #
-#   the DSL grows parameter metadata -- names, and a keyword spelling it has
-#   no syntax for. One source of truth, so `arity` and `parameters` agree by
-#   construction, and the arity ratchet already gates half of it. ~265 row
-#   edits behind a real macro feature.
+# Two things the pass fixed that were not on the list, both found by measuring
+# rather than by reading the ledger:
 #
-#   or a table generated from the TSV, checked in beside
-#   `class_surface.pregen.rs`. Mechanical, but it puts ~2,300 rows of ruby's
-#   answers into every binary -- roughly 150KB for a reflection surface almost
-#   nothing reads -- and leaves two sources of truth to drift.
+#   Every hand-registered `Exception` row reached no arity table, so zeo's two
+#   catch-alls for an unknown row disagreed with each other -- `-1` through
+#   `#arity` and `[]` through `#parameters`. 34 arity divergences came from
+#   that one cause, and the whole-surface arity diff is now ZERO. The kinds
+#   ride in `BY_OWNER` beside the ownership marks so the two cannot drift.
 #
-# Neither is a fix to squeeze in beside another one; recorded here with the
-# numbers so the next pass can pick without re-measuring.
+#   The walk that finds a spelled signature has to STOP at the ancestor that
+#   owns the row. Continuing (a `?` inside `find_map` does) answered
+#   `Enumerable#to_set`'s spelling for `Range#to_set`, which ruby declares
+#   separately.
+#
+# The line below is Kernel's, so this file stays a gap until G8.
 p method(:require).parameters
-p String.instance_method(:sub).parameters

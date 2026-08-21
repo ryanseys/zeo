@@ -633,7 +633,7 @@ ruby_class! {
     // only `Float` overrides the first two, which it still does.
     // Ceiling division: the smallest integer >= self/other. `-floor(-a / b)`
     // gives the exact result for either sign.
-    def "ceildiv" (recv, arg) {
+    def "ceildiv" params "other" (recv, arg) {
         // `ceildiv(other)` == `-((-self).div(other))`; a Float/Rational divisor
         // rides the floored-division tower, still answering an Integer.
         if matches!(arg, RubyValue::Float(_) | RubyValue::Rational(_)) {

@@ -2073,7 +2073,7 @@ ruby_module! {
         Ok(crate::builtins::enumerator::chain_of(sources))
     }
     // `to_set` -- a `Set` of the receiver's elements (deduplicated on insert).
-    def "to_set"(recv, *args, &block) {
+    def "to_set" params "*args, &block"(recv, *args, &block) {
         to_set_own(Src::sending(recv), args, block)
     }
     def "lazy" arity 0 (recv, *_args, &_block) {

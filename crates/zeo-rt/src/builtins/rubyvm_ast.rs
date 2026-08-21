@@ -153,7 +153,7 @@ mod ast {
     ruby_module! {
         AbstractSyntaxTree = zeo_abi::RUBYVM_AST_MODULE;
 
-        def self."parse"(_recv, source, **opts) {
+        def self."parse" params "string, keep_script_lines: nil, error_tolerant: nil, keep_tokens: nil"(_recv, source, **opts) {
             let src = match source {
                 RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
                 other => {
@@ -165,7 +165,7 @@ mod ast {
             };
             parse_to_node(&src, opts)
         }
-        def self."parse_file"(_recv, path, **opts) {
+        def self."parse_file" params "pathname, keep_script_lines: nil, error_tolerant: nil, keep_tokens: nil"(_recv, path, **opts) {
             let path = match path {
                 RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
                 other => other.to_display_string(),
@@ -177,13 +177,13 @@ mod ast {
         // Compiled code has no retained AST -- byte-for-byte what ruby 4.0.6
         // itself answers (prism is its default compiler): a raise for Ruby-level
         // callables, `nil` for a C-defined method.
-        def self."of"(_recv, what, **_opts) {
+        def self."of" params "body, keep_script_lines: nil, error_tolerant: nil, keep_tokens: nil"(_recv, what, **_opts) {
             match what {
                 RubyValue::Proc(_) => Err(raise_error("RuntimeError", PRISM_ERROR.to_string())),
                 _ => Ok(RubyValue::Nil),
             }
         }
-        def self."node_id_for_backtrace_location"(_recv, _loc) {
+        def self."node_id_for_backtrace_location" params "backtrace_location"(_recv, _loc) {
             Err(raise_error("RuntimeError", PRISM_ERROR.to_string()))
         }
     }

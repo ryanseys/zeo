@@ -1924,7 +1924,7 @@ ruby_class! {
     }
 
     // `readline` -- `gets`, but raises `EOFError` instead of answering nil.
-    def "readline" cfunc (recv, _sep?, _limit?, **_opts, &_blk) {
+    def "readline" params "sep = nil, limit = nil, chomp: nil" cfunc (recv, _sep?, _limit?, **_opts, &_blk) {
         let args = __args;
         match gets_value(recv, args)? {
             RubyValue::Nil => Err(eof_error!("end of file reached")),
@@ -2078,7 +2078,7 @@ ruby_class! {
     // never waits. The descriptor is marked `O_NONBLOCK` first and LEFT that way,
     // as CRuby leaves it; every blocking row here already parks in `poll(2)` on
     // `EAGAIN`, so an ordinary `#gets` on the same handle still blocks.
-    def "read_nonblock" (recv, maxlen, buffer?, **opts, &_blk) {
+    def "read_nonblock" params "len, buf = nil, exception: nil" (recv, maxlen, buffer?, **opts, &_blk) {
         let raises = nonblock_raises(opts);
         let max = convert::to_index(maxlen)?.max(0) as usize;
         let outbuf = match buffer {
@@ -2135,7 +2135,7 @@ ruby_class! {
     // `write_nonblock(string, exception: true)` -- one `write(2)` that never
     // waits, answering the count it managed. A partial write is the caller's to
     // resume, which is the whole point of the method.
-    def "write_nonblock" (recv, buffer, **opts, &_blk) {
+    def "write_nonblock" params "buf, exception: nil" (recv, buffer, **opts, &_blk) {
         let raises = nonblock_raises(opts);
         let bytes = convert::to_rstr(buffer)?.lock().bytes().to_vec();
         set_fd_nonblock(raw_fd(recv)?, true)?;

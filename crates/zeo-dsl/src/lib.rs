@@ -325,9 +325,15 @@ impl SigKind {
     }
 }
 
-/// One entry of a `params "..."` spelling. `name` is `None` for an anonymous
-/// slot (`*`, `**`, `&`), which is what a native row reports when it has a
-/// forwarding slot with no name of its own.
+/// One entry of a `params "..."` spelling.
+///
+/// A bare `*`/`**`/`&` is named for its own SIGIL, not left nameless: that is
+/// what ruby reports for an anonymous forwarding slot
+/// (`Ractor#send.parameters` is `[[:rest, :*], [:keyrest, :**], [:block, :&]]`).
+/// A genuinely nameless slot needs no spelling at all -- it is what the
+/// arity-derived anonymous descriptor already produces -- so `name` is never
+/// `None` here today, and stays an Option only because the descriptor it
+/// becomes has one.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct SigParam {
     pub kind: SigKind,
@@ -395,28 +401,58 @@ pub fn parse_signature(spec: &str) -> Result<Vec<SigParam>, String> {
         if p.is_empty() {
             return Err(format!("empty parameter in params \"{spec}\""));
         }
-        let named = |rest: &str| -> Option<String> {
+        // A bare sigil keeps the sigil as its name -- ruby's own answer.
+        let named = |rest: &str, sigil: &str| -> Option<String> {
             let r = rest.trim();
-            (!r.is_empty()).then(|| r.to_string())
+            Some(if r.is_empty() {
+                sigil.to_string()
+            } else {
+                r.to_string()
+            })
         };
         let entry = if let Some(rest) = p.strip_prefix("**") {
-            SigParam { kind: SigKind::KeyRest, name: named(rest) }
+            SigParam {
+                kind: SigKind::KeyRest,
+                name: named(rest, "**"),
+            }
         } else if let Some(rest) = p.strip_prefix('*') {
-            SigParam { kind: SigKind::Rest, name: named(rest) }
+            SigParam {
+                kind: SigKind::Rest,
+                name: named(rest, "*"),
+            }
         } else if let Some(rest) = p.strip_prefix('&') {
-            SigParam { kind: SigKind::Block, name: named(rest) }
+            SigParam {
+                kind: SigKind::Block,
+                name: named(rest, "&"),
+            }
         } else if let Some((head, tail)) = split_keyword(p) {
             // `name:` is required, `name: default` is optional -- ruby's own
             // rule, and the only thing the default text is read for.
-            let kind = if tail.trim().is_empty() { SigKind::KeyReq } else { SigKind::Key };
-            SigParam { kind, name: Some(head.to_string()) }
+            let kind = if tail.trim().is_empty() {
+                SigKind::KeyReq
+            } else {
+                SigKind::Key
+            };
+            SigParam {
+                kind,
+                name: Some(head.to_string()),
+            }
         } else if let Some((head, _)) = p.split_once('=') {
-            SigParam { kind: SigKind::Opt, name: named(head) }
+            SigParam {
+                kind: SigKind::Opt,
+                name: Some(head.trim().to_string()),
+            }
         } else {
-            SigParam { kind: SigKind::Req, name: Some(p.to_string()) }
+            SigParam {
+                kind: SigKind::Req,
+                name: Some(p.to_string()),
+            }
         };
-        if entry.name.as_deref().is_some_and(|n| !is_param_name(n)) {
-            return Err(format!("'{p}' is not a parameter spelling (in params \"{spec}\")"));
+        let sigil = matches!(entry.name.as_deref(), Some("*" | "**" | "&"));
+        if !sigil && entry.name.as_deref().is_some_and(|n| !is_param_name(n)) {
+            return Err(format!(
+                "'{p}' is not a parameter spelling (in params \"{spec}\")"
+            ));
         }
         out.push(entry);
     }
@@ -1072,6 +1108,95 @@ mod tests {
         // A nested `module` has no superclass.
         assert!(matches!(spec.nested[1].kind, ClassKind::Module));
         assert_eq!(spec.nested[1].name.to_string(), "Sub");
+    }
+
+    /// Every shape a `params "..."` spelling has to carry, checked against the
+    /// oracle's own answer for a row that has it.
+    #[test]
+    fn a_signature_spelling_is_rubys_own_parameters_answer() {
+        let k = |s: &str| {
+            parse_signature(s)
+                .unwrap()
+                .into_iter()
+                .map(|p| (p.kind, p.name))
+                .collect::<Vec<_>>()
+        };
+        let n = |s: &str| Some(s.to_string());
+        // `Array#pack` -> [[:req, :fmt], [:key, :buffer]]
+        assert_eq!(
+            k("fmt, buffer: nil"),
+            vec![(SigKind::Req, n("fmt")), (SigKind::Key, n("buffer"))]
+        );
+        // `GC.start` -> three optional keywords, no positional.
+        assert_eq!(
+            k("full_mark: true, immediate_mark: true, immediate_sweep: true"),
+            vec![
+                (SigKind::Key, n("full_mark")),
+                (SigKind::Key, n("immediate_mark")),
+                (SigKind::Key, n("immediate_sweep")),
+            ]
+        );
+        // A required keyword is the one with NO default.
+        assert_eq!(k("into:"), vec![(SigKind::KeyReq, n("into"))]);
+        // The anonymous forwarding trio is named for its own sigil, which is
+        // what `Ractor#send` reports.
+        assert_eq!(
+            k("*, **, &"),
+            vec![
+                (SigKind::Rest, n("*")),
+                (SigKind::KeyRest, n("**")),
+                (SigKind::Block, n("&")),
+            ]
+        );
+        assert_eq!(
+            k("*args, **opts, &blk"),
+            vec![
+                (SigKind::Rest, n("args")),
+                (SigKind::KeyRest, n("opts")),
+                (SigKind::Block, n("blk")),
+            ]
+        );
+        // `Dir.glob`: an optional positional whose default carries a `::`, and
+        // one carrying a top-level comma inside brackets -- neither may split
+        // the list or read as a keyword.
+        assert_eq!(
+            k("pattern, _flags = 0, base: nil"),
+            vec![
+                (SigKind::Req, n("pattern")),
+                (SigKind::Opt, n("_flags")),
+                (SigKind::Key, n("base")),
+            ]
+        );
+        assert_eq!(
+            k("enc = Encoding::UTF_8, seed = [1, 2]"),
+            vec![(SigKind::Opt, n("enc")), (SigKind::Opt, n("seed"))]
+        );
+        // A parameter genuinely named `_` (`Process::Tms#stime=`).
+        assert_eq!(k("_"), vec![(SigKind::Req, n("_"))]);
+    }
+
+    /// The arity a spelling implies is the one CRuby derives from the same
+    /// signature -- which is why a row that spells its parameters needs no
+    /// `arity N` override.
+    #[test]
+    fn arity_falls_out_of_the_signature() {
+        let a = |s: &str| signature_arity(&parse_signature(s).unwrap());
+        assert_eq!(a(""), 0);
+        assert_eq!(a("a, b"), 2);
+        assert_eq!(a("a, b = nil"), -2);
+        assert_eq!(a("*args"), -1);
+        // `GC.start`: optional keywords alone make it variadic.
+        assert_eq!(a("full_mark: true"), -1);
+        // A REQUIRED keyword adds one mandatory slot and keeps it fixed.
+        assert_eq!(a("a, b:"), 2);
+        // A block never counts.
+        assert_eq!(a("a, &blk"), 1);
+    }
+
+    #[test]
+    fn a_signature_that_is_not_a_signature_is_an_error() {
+        assert!(parse_signature("a b").is_err());
+        assert!(parse_signature("a,,b").is_err());
     }
 
     #[test]

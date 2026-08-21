@@ -321,7 +321,7 @@ ruby_class! {
     def "empty?" (recv) {
         Ok(RubyValue::Bool(crate::array_len(rary) == 0))
     }
-    def "first"(recv, *args, &_block) {
+    def "first" params "n = nil"(recv, *args, &_block) {
         // `first(n)` is Enumerable's n-form (next ancestor in the chain
         // implements it) -- only the 0-arg head accessor lives here. A negative
         // count is caught here so it carries Array's own message ("negative
@@ -341,7 +341,7 @@ ruby_class! {
     // `last`/`last(n)` mirror `pop`'s dual return: bare answers ONE element
     // (nil when empty), `last(n)` an ARRAY of up to the last n, in original
     // order (`n` past the length takes what's there; `n == 0` is `[]`).
-    def "last"(recv, n?) {
+    def "last" params "n = nil"(recv, n?) {
         let items = rary.lock();
         let Some(n) = count_arg(n)? else {
             return Ok(items.last().cloned().unwrap_or(RubyValue::Nil));
@@ -846,7 +846,7 @@ ruby_class! {
     }
     // `fetch_values(*indices)` -- each index fetched strictly (an out-of-range
     // index raises IndexError, or is passed to the block if one is given).
-    def "fetch_values"(recv, *args, &block) {
+    def "fetch_values" params "*indexes, &block"(recv, *args, &block) {
         let items = rary.lock().clone();
         let n = items.len() as i64;
         let mut out = Vec::with_capacity(args.len());
@@ -1230,7 +1230,7 @@ ruby_class! {
     // Shares Kernel#rand's generator, which `srand` reseeds.
     // A `random:` keyword supplies the RNG (a Random-like object responding to
     // `rand`); without it the shared PRNG is used.
-    def "sample"(recv, n?, **opts) {
+    def "sample" params "n = nil, random: nil"(recv, n?, **opts) {
         let random = take_random_kwarg(opts);
         let items = rary.lock().clone();
         let len = items.len();
@@ -1284,7 +1284,7 @@ ruby_class! {
         }
         Ok(RubyValue::Array(crate::array_new(out)))
     }
-    def "shuffle"(recv, **opts) {
+    def "shuffle" params "random: nil"(recv, **opts) {
         let random = take_random_kwarg(opts);
         let mut items = rary.lock().to_vec();
         // Fisher-Yates, top down, exactly as ruby walks it.
@@ -1296,7 +1296,7 @@ ruby_class! {
     }
     // `pack`: serialize the elements per a template into a byte string (see
     // `builtins::pack`). ASCII-8BIT unless the template is all `U` (UTF-8).
-    def "pack" arity -2(recv, arg) {
+    def "pack" arity -2 params "fmt, buffer: nil"(recv, arg) {
         let t = crate::builtins::arg_str!(arg);
         let template = t.lock().to_utf8_lossy().into_owned();
         let elems = rary.lock().clone();
@@ -1461,7 +1461,7 @@ ruby_class! {
     }
     // In-place Fisher-Yates shuffle (mirrors `shuffle` but writes back and
     // answers the receiver).
-    def "shuffle!"(recv, **opts) {
+    def "shuffle!" params "random: nil"(recv, **opts) {
         let random = take_random_kwarg(opts);
         let handle = rary;
         check_frozen(handle, recv)?;

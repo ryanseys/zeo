@@ -388,7 +388,12 @@ pub(crate) fn builtin_arity(class: ClassId, kind: MethodKind, name: Symbol) -> O
 fn builtin_params(class: ClassId, kind: MethodKind, name: Symbol) -> Option<Descriptor> {
     let n = name.name();
     let n = n.as_str();
-    crate::dispatch::ancestors_of_value(class).iter().find_map(|&anc| {
+    // An explicit loop, NOT `find_map`: a closure returning `None` makes
+    // `find_map` keep walking, which is exactly the wrong move once the owner
+    // is found. `Enumerable#to_set` spells its signature and `Range#to_set`
+    // does not, so continuing past Range answered Enumerable's spelling for
+    // ruby's own separate row.
+    for &anc in crate::dispatch::ancestors_of_value(class).iter() {
         let (arity, params) = match kind {
             MethodKind::Instance => (
                 crate::builtins::class_arity_table(anc),
@@ -399,14 +404,18 @@ fn builtin_params(class: ClassId, kind: MethodKind, name: Symbol) -> Option<Desc
                 crate::builtins::class_method_params_table(anc),
             ),
         };
-        arity?(n)?;
-        let rows = params?(n)?;
-        Some(
+        let Some(arity) = arity else { continue };
+        if arity(n).is_none() {
+            continue;
+        }
+        // This ancestor owns the row. Its answer is the answer, spelled or not.
+        return params?(n).map(|rows| {
             rows.iter()
                 .map(|(k, name)| (*k, name.map(str::to_string)))
-                .collect(),
-        )
-    })
+                .collect()
+        });
+    }
+    None
 }
 
 /// CRuby's signed arity for one descriptor. Required positionals (a post arg is
@@ -440,22 +449,15 @@ pub(crate) fn arity_of(d: &[(ParamKind, Option<String>)]) -> i64 {
 /// so its shape is synthesized from its declared arity the way CRuby reports a
 /// C function: `n >= 0` mandatory anonymous slots, or `-n-1` of them followed
 /// by a rest.
-///
-/// TOTAL, and that is the fix to a divergence: a row nothing knows about is
-/// reported at arity `-1`, and `-1` IS `[[:rest]]`. Answering `None` here left
-/// the two callers spelling their own empty-Array fallback, so the same unknown
-/// row said `-1` through `#arity` and `[]` through `#parameters` -- two
-/// catch-alls that contradicted each other. `Exception#exception` was one.
 pub fn parameters(
     recv: Option<&RubyValue>,
     class: ClassId,
     kind: MethodKind,
     name: Symbol,
-) -> RubyValue {
+) -> Option<RubyValue> {
     let d = descriptor_of(recv, class, kind, name)
         .or_else(|| builtin_params(class, kind, name))
-        .or_else(|| builtin_arity(class, kind, name).map(anonymous_descriptor))
-        .unwrap_or_else(|| anonymous_descriptor(-1));
+        .or_else(|| builtin_arity(class, kind, name).map(anonymous_descriptor))?;
     let pairs = d
         .into_iter()
         .map(|(kind, pname)| {
@@ -466,7 +468,7 @@ pub fn parameters(
             RubyValue::Array(crate::array_new(entry))
         })
         .collect();
-    RubyValue::Array(crate::array_new(pairs))
+    Some(RubyValue::Array(crate::array_new(pairs)))
 }
 
 /// `Method#source_location` / `UnboundMethod#source_location`: the

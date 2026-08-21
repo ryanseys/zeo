@@ -502,7 +502,7 @@ ruby_class! {
     // `Dir.open` takes `(name, encoding: nil, &block)` and so reports -2;
     // `Dir.new` is a C function that discarded its signature and reports -1.
     // Same handle either way, so they share `open_handle`.
-    def self."open" as open_handle (_recv, arg1, _arg2?, &block) {
+    def self."open" params "name, encoding: nil, &block" as open_handle (_recv, arg1, _arg2?, &block) {
         let path = path_arg(arg1, "open")?;
         let dir = open_dir(&path)?;
         let Some(RubyValue::Proc(p)) = block else {
@@ -702,12 +702,12 @@ ruby_class! {
     // missing convenience. It arrives with the stdlib work, as Ruby's own.
     // `Dir.glob(pat)` / `Dir[pat]` -- the block form yields each match and
     // answers nil; otherwise an Array. Multiple patterns union.
-    def self."glob" (_recv, _pattern, _flags?, **_opts, &block) {
+    def self."glob" params "pattern, _flags = nil, flags: nil, base: nil, sort: nil" (_recv, _pattern, _flags?, **_opts, &block) {
         glob_matches(__args, block)
     }
     // `Dir[]` is the same matcher with a looser signature -- any number of
     // patterns, and none at all answers `[]` where `glob` would raise.
-    def self."[]" (_recv, *args, &block) {
+    def self."[]" params "*args, base: nil, sort: nil" (_recv, *args, &block) {
         glob_matches(args, block)
     }
 

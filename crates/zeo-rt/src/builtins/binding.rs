@@ -358,7 +358,7 @@ ruby_class! {
     }
     // `Binding#irb` opens an IRB session on this scope. zeo ships no irb, and
     // a `require` for it is the LoadError a caller can rescue.
-    def "irb" cfunc (_recv, *_args, &_block) {
+    def "irb" params "*, **, &" cfunc (_recv, *_args, &_block) {
         Err(crate::dispatch::raise_error(
             "LoadError",
             "cannot load such file -- irb".to_string(),

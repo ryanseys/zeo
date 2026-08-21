@@ -1366,7 +1366,7 @@ zeo_macros::ruby_class! {
 
     // Every LITERAL `Ractor.new { ... }` compiles through codegen's
     // intrinsic; only a computed/dynamic send lands here.
-    def self."new" cfunc (_recv, *_args, &_block) {
+    def self."new" params "*args, name: nil, &block" cfunc (_recv, *_args, &_block) {
         Err(crate::builtins::not_impl_error!(
             "dynamic Ractor.new isn't supported (zeo compiles literal Ractor.new blocks)"
         ))
@@ -1383,25 +1383,25 @@ zeo_macros::ruby_class! {
     def self."count"(_recv) {
         Ok(RubyValue::Int(ractor_count()))
     }
-    def self."select" cfunc (_recv, *ports) {
+    def self."select" params "*ports" cfunc (_recv, *ports) {
         ractor_select(ports)
     }
     def self."receive" | "recv" (_recv) {
         ractor_receive()
     }
-    def self."[]"(_recv, sym) {
+    def self."[]" params "sym"(_recv, sym) {
         let r = current_ractor();
         let key = local_key(sym)?;
         Ok(r.locals.lock().get(&key).cloned().unwrap_or(RubyValue::Nil))
     }
-    def self."[]="(_recv, sym, val) {
+    def self."[]=" params "sym, val"(_recv, sym, val) {
         let r = current_ractor();
         r.locals.lock().insert(local_key(sym)?, val.clone());
         Ok(val.clone())
     }
     // Double-checked under `store_lock`: the block runs at most once per
     // key across the ractor's threads.
-    def self."store_if_absent"(_recv, sym, &block) {
+    def self."store_if_absent" params "sym"(_recv, sym, &block) {
         let r = current_ractor();
         let key = local_key(sym)?;
         if let Some(v) = r.locals.lock().get(&key) {
@@ -1421,25 +1421,25 @@ zeo_macros::ruby_class! {
     // `copy:` is accepted and ignored: zeo deep-freezes in place, which is what
     // `copy: false` asks for, and the copying form would need a deep clone the
     // runtime does not have yet.
-    def self."make_shareable"(_recv, obj, **_opts) {
+    def self."make_shareable" params "obj, copy: nil"(_recv, obj, **_opts) {
         make_shareable_value(obj)
     }
-    def self."shareable?"(_recv, obj) {
+    def self."shareable?" params "obj"(_recv, obj) {
         Ok(RubyValue::Bool(shareable(obj)))
     }
-    def self."shareable_proc" cfunc (_recv, **opts, &block) {
+    def self."shareable_proc" params "self: nil" cfunc (_recv, **opts, &block) {
         shareable_callable(opts, block, false)
     }
-    def self."shareable_lambda" cfunc (_recv, **opts, &block) {
+    def self."shareable_lambda" params "self: nil" cfunc (_recv, **opts, &block) {
         shareable_callable(opts, block, true)
     }
     // ruby 4.0's `Ractor._require(feature)` -- the require that runs on the
     // main ractor in CRuby; here it shares `Kernel#require`'s dynamic body.
-    def self."_require"(_recv, feature) {
+    def self."_require" params "feature"(_recv, feature) {
         crate::builtins::kernel::dynamic_require(feature)
     }
 
-    def "send" | "<<" cfunc (recv, *args) {
+    def "send" params "*, **, &" | "<<" params "*, **, &" cfunc (recv, *args) {
         let (payload, move_it) = send_payload(args)?;
         ractor_send_mode(&recv.as_ractor_unchecked(), payload, move_it)?;
         Ok(recv.clone())
@@ -1457,7 +1457,7 @@ zeo_macros::ruby_class! {
     def "value"(recv) {
         ractor_value(&recv.as_ractor_unchecked())
     }
-    def "monitor"(recv, port) {
+    def "monitor" params "port"(recv, port) {
         let Some(p) = as_port(port) else {
             // CRuby 4.0.6 SEGFAULTS here ([BUG] in <internal:ractor>); a
             // TypeError is this runtime's strictly-better answer.
@@ -1468,7 +1468,7 @@ zeo_macros::ruby_class! {
         };
         Ok(RubyValue::Bool(ractor_monitor(&recv.as_ractor_unchecked(), &p)))
     }
-    def "unmonitor"(recv, port) {
+    def "unmonitor" params "port"(recv, port) {
         if let Some(p) = as_port(port) {
             ractor_unmonitor(&recv.as_ractor_unchecked(), &p);
         }
@@ -1489,7 +1489,7 @@ zeo_macros::ruby_class! {
     def "inspect" | "to_s" (recv) {
         Ok(RubyValue::Str(crate::string_new(ractor_inspect(&recv.as_ractor_unchecked()))))
     }
-    def "[]"(recv, sym) {
+    def "[]" params "sym"(recv, sym) {
         let r = recv.as_ractor_unchecked();
         if !Arc::ptr_eq(&r, &current_ractor()) {
             return Err(crate::builtins::runtime_error!(
@@ -1499,7 +1499,7 @@ zeo_macros::ruby_class! {
         let key = local_key(sym)?;
         Ok(r.locals.lock().get(&key).cloned().unwrap_or(RubyValue::Nil))
     }
-    def "[]="(recv, sym, val) {
+    def "[]=" params "sym, val"(recv, sym, val) {
         let r = recv.as_ractor_unchecked();
         if !Arc::ptr_eq(&r, &current_ractor()) {
             return Err(crate::builtins::runtime_error!(
@@ -1517,7 +1517,7 @@ zeo_macros::ruby_class! {
         def "receive"(recv) {
             port_receive(&recv_port(recv))
         }
-        def "send" | "<<" (recv, obj, **opts) {
+        def "send" params "obj, move: nil" | "<<" params "obj, move: nil" (recv, obj, **opts) {
             let move_it = matches!(opts, Some(RubyValue::Hash(h)) if move_requested(h));
             port_send_in(&recv_port(recv), obj, move_it)?;
             Ok(recv.clone())

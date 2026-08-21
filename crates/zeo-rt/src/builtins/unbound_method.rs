@@ -211,7 +211,8 @@ ruby_class! {
     }
     def "parameters"(recv) {
         let um = recv_unbound(recv);
-        Ok(crate::method_meta::parameters(None, um.home, um.kind, um.name))
+        Ok(crate::method_meta::parameters(None, um.home, um.kind, um.name)
+            .unwrap_or_else(|| RubyValue::Array(crate::array_new(vec![]))))
     }
     def "bind"(recv, arg) {
         bind_target(recv_unbound(recv), arg)

@@ -34,7 +34,9 @@ ruby_class! {
     }
     // `pop`/`shift`/`deq` -- block (yielding) while empty and open; a closed
     // empty queue pops `nil`.
-    def "pop" | "shift" | "deq" cfunc (recv) {
+    def "pop" params "non_block = nil, timeout: nil"
+        | "shift" params "non_block = nil, timeout: nil"
+        | "deq" params "non_block = nil, timeout: nil" cfunc (recv) {
         queue_pop(&recv.as_queue_unchecked())
     }
     def "close"(recv) {

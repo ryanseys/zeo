@@ -79,7 +79,7 @@ ruby_module! {
     }
     // `GC#garbage_collect` -- the instance twin of `GC.start`, which a class
     // gets by `include GC`. Public, as CRuby lists it.
-    def "garbage_collect" (_recv, *_args, &_block) {
+    def "garbage_collect" params "full_mark: nil, immediate_mark: nil, immediate_sweep: nil" (_recv, *_args, &_block) {
         COUNT.fetch_add(1, Ordering::Relaxed);
         crate::builtins::weak::run_finalizers_for_dead();
         Ok(RubyValue::Nil)
@@ -99,7 +99,7 @@ ruby_module! {
     def self."stress"(_recv) {
         Ok(RubyValue::Bool(STRESS.load(Ordering::Relaxed)))
     }
-    def self."stress="(_recv, on) {
+    def self."stress=" params "flag"(_recv, on) {
         flag(&STRESS, on)
     }
     // The number of collections RUN: every explicit `GC.start`/
@@ -111,7 +111,7 @@ ruby_module! {
     // `stat()` -> the whole hash, `stat(:key)` -> one value (nil for a key
     // this heap has no truthful number for), `stat(hash)` -> fills and
     // answers the hash. Only `:count` carries a real value.
-    def self."stat"(_recv, *_args, &_block) {
+    def self."stat" params "hash_or_key = nil"(_recv, *_args, &_block) {
         let count = RubyValue::Int(COUNT.load(Ordering::Relaxed) as i64);
         match _args.first() {
             Some(RubyValue::Symbol(s)) => Ok(if s.name() == "count" {
@@ -132,12 +132,12 @@ ruby_module! {
     }
     // One size-pooled heap per slot size is an MRI structure; there are no
     // heaps here to describe, whether asked for all of them or for one.
-    def self."stat_heap" cfunc (_recv, *_args, &_block) {
+    def self."stat_heap" params "heap_name = nil, hash_or_key = nil" cfunc (_recv, *_args, &_block) {
         Ok(empty_hash())
     }
     // `GC.config` reports the collector's own settings. zeo's answer names the
     // implementation truthfully rather than echoing MRI's `"default"`.
-    def self."config" cfunc (_recv, *_args, &_block) {
+    def self."config" params "hash = nil" cfunc (_recv, *_args, &_block) {
         Ok(hash_of(vec![(
             "implementation",
             RubyValue::Str(crate::string_new("refcount".to_string())),
@@ -153,13 +153,13 @@ ruby_module! {
     def self."measure_total_time"(_recv) {
         Ok(RubyValue::Bool(MEASURE_TOTAL_TIME.load(Ordering::Relaxed)))
     }
-    def self."measure_total_time="(_recv, on) {
+    def self."measure_total_time=" params "flag"(_recv, on) {
         flag(&MEASURE_TOTAL_TIME, on)
     }
     // With a Symbol argument ruby answers THAT statistic, not the whole hash;
     // with a Hash it fills it in. The values are the shape a forced collection
     // leaves behind, which is what `GC.start` here amounts to.
-    def self."latest_gc_info" cfunc (_recv, *args, &_block) {
+    def self."latest_gc_info" params "hash_or_key = nil" cfunc (_recv, *args, &_block) {
         let info = hash_of(vec![
             ("major_by", RubyValue::Symbol(crate::Symbol::intern("oldgen"))),
             ("need_major_by", RubyValue::Nil),

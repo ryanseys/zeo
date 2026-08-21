@@ -1,0 +1,20 @@
+[[:req, :fmt], [:key, :buffer]]
+[[:opt, :n]]
+[[:opt, :n], [:key, :random]]
+[[:req, :fmt], [:key, :offset]]
+[[:req, :len], [:opt, :buf], [:key, :exception]]
+[[:req, :pattern], [:opt, :_flags], [:key, :flags], [:key, :base], [:key, :sort]]
+[[:req, :source], [:opt, :proc], [:key, :freeze]]
+[[:req, :time], [:opt, :subsec], [:opt, :unit], [:key, :in]]
+[[:key, :target], [:key, :target_line], [:key, :target_thread]]
+[[:key, :full_mark], [:key, :immediate_mark], [:key, :immediate_sweep]]
+-1
+[]
+0
+[[:rest, :*], [:keyrest, :**], [:block, :&]]
+[[:req]]
+1
+[[:rest]]
+[]
+0
+0
