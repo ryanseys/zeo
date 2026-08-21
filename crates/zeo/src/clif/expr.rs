@@ -1121,6 +1121,9 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                     )
                 }
                 Some(recv) => super::call::dynamic_send(fx, id, recv, &name, &args),
+                None if let Some(folded) = inline_accessor(fx, &name, &args, &[], None, None) => {
+                    folded
+                }
                 None => match fx.em.methods.get(&name) {
                     Some(decl)
                         if decl.plain
@@ -1676,6 +1679,72 @@ pub(crate) fn lexical_class(fx: &Fx) -> Option<crate::compiler::ClassId> {
 
 /// Resolve a class name against the current cref and BOX (rustc's
 /// `Ctx::resolve_class`).
+/// A receiverless (or literal-`self`) call naming an accessor of THIS
+/// body's own class, replaced by the ivar access itself: no dispatch, no
+/// trampoline, no frame. The rustc emitter's `emit_inline_accessor` at a
+/// Path-1 site, with `self` as the statically-typed receiver.
+///
+/// `Compiler::accessor_shape` carries the gate that matters -- a
+/// HAND-written accessor keeps its body wherever instrumentation can
+/// observe the call (TracePoint, line coverage), while an `attr_*`
+/// GENERATED one is iseq-less either way, exactly as CRuby compiles it --
+/// and `ivar_read_op`/`ivar_write_op` carry the rest: a dynamic or class
+/// `self`, a native-backed owner, and a name the layout has no slot for
+/// all take the name-keyed path on their own.
+///
+/// Runtime redefinition is no more a hazard here than at any Path-1 site:
+/// zeo binds these statically in both backends, and a later
+/// `define_method` does not displace them (`tests/gaps/
+/// issue_runtime_redefine_accessor.rb`). This preserves that; it does not
+/// widen it.
+fn inline_accessor(
+    fx: &mut Fx,
+    name: &str,
+    args: &[ArrayElem],
+    kwargs: &[crate::hir::KwArg],
+    block: Option<crate::hir::NodeId>,
+    block_arg: Option<crate::hir::NodeId>,
+) -> Option<Result<Operand, String>> {
+    use crate::compiler::AccessorKind;
+    if !kwargs.is_empty() || block.is_some() || block_arg.is_some() {
+        return None;
+    }
+    if fx.self_is_dynamic || fx.self_is_class || fx.dyn_ivars {
+        return None;
+    }
+    let cid = fx.method_class?;
+    let (_owner, scope_id) = fx.an.compiler.method_in_chain(cid, name)?;
+    let scope = fx.an.compiler.scope(scope_id);
+    let shape = fx.an.compiler.accessor_shape(cid, scope)?;
+    let ivar = shape.ivar.clone();
+    match (shape.kind, args) {
+        (AccessorKind::Reader, []) => Some(super::stmt::ivar_read_op(fx, &ivar)),
+        (AccessorKind::Writer, [ArrayElem::Single(arg)]) => {
+            let arg = *arg;
+            Some((|| {
+                let op = lower_expr(fx, arg)?;
+                // `obj.x = v` answers `v`, so the write takes a copy and
+                // the value is handed back.
+                let p = ownership::borrow_ptr(fx, &op);
+                let tag = op.tag();
+                if op.owned() {
+                    ownership::pool_owned(fx, p, tag);
+                }
+                let borrowed = || Operand::Ptr {
+                    addr: p,
+                    owned: false,
+                    tag,
+                };
+                super::stmt::ivar_write_op(fx, &ivar, borrowed())?;
+                Ok(borrowed())
+            })())
+        }
+        // An argument count the accessor does not take must still raise
+        // `ArgumentError`, which is the trampoline's job.
+        _ => None,
+    }
+}
+
 pub(crate) fn resolve_class_here(fx: &Fx, name: &str) -> Option<crate::compiler::ClassId> {
     fx.an
         .compiler
