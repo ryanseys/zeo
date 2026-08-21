@@ -193,10 +193,8 @@ fn element_names(args: &[RubyValue]) -> Vec<String> {
 /// regexp (`/<\/?(?:A|B)(?!\w)(?:.|\n)*?>/i`); the name run is read to its end
 /// here, which is that `(?!\w)` -- `<ABBR>` is not `<A>`.
 fn element_spans(text: &[u8], names: &[String], open: &[u8], close: &[u8]) -> Vec<(usize, usize)> {
-    let find = |hay: &[u8], needle: &[u8]| {
-        hay.windows(needle.len().max(1))
-            .position(|w| w == needle)
-    };
+    let find =
+        |hay: &[u8], needle: &[u8]| hay.windows(needle.len().max(1)).position(|w| w == needle);
     let mut spans = Vec::new();
     let mut i = 0;
     while let Some(rel) = find(&text[i..], open) {
@@ -226,11 +224,7 @@ fn element_spans(text: &[u8], names: &[String], open: &[u8], close: &[u8]) -> Ve
 }
 
 /// Rewrite each span through `f` and leave everything between them alone.
-fn rewrite_spans(
-    text: &[u8],
-    spans: &[(usize, usize)],
-    f: impl Fn(&[u8]) -> Vec<u8>,
-) -> Vec<u8> {
+fn rewrite_spans(text: &[u8], spans: &[(usize, usize)], f: impl Fn(&[u8]) -> Vec<u8>) -> Vec<u8> {
     let mut out = Vec::with_capacity(text.len());
     let mut at = 0;
     for &(start, end) in spans {
@@ -391,7 +385,10 @@ mod tests {
             html_unescape(b"&#9731;", crate::encoding::ASCII_8BIT),
             b"&#9731;".to_vec()
         );
-        assert_eq!(html_unescape(b"&#9731;", utf8), "\u{2603}".as_bytes().to_vec());
+        assert_eq!(
+            html_unescape(b"&#9731;", utf8),
+            "\u{2603}".as_bytes().to_vec()
+        );
     }
 
     #[test]
