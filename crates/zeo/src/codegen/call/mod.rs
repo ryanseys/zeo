@@ -57,7 +57,7 @@ fn inline_block_binding_names(
     Some(std::rc::Rc::new(names))
 }
 
-/// The eval VM call every `Kernel#eval` site funnels through, given the
+/// The runtime `eval` call every `Kernel#eval` site funnels through, given the
 /// already-emitted Binding of the calling scope and the call's
 /// `(src[, binding[, file[, line]]])` arguments. The absent trailing ones are
 /// `nil`, which is what tells the runtime to use `scope`.
@@ -1352,7 +1352,7 @@ pub fn emit_call(
             }
         }
         // Receiver-less `eval(src[, binding[, file[, line]]])`: route straight
-        // to the runtime eval VM, carrying THIS scope -- CRuby evaluates a bare
+        // to the runtime `eval` entry, carrying THIS scope -- CRuby evaluates a bare
         // `eval` (or one given a `nil` binding) in the caller's own frame, so
         // the call site materializes a Binding of itself and hands it over,
         // which is what lets the source read and write the caller's locals. An

@@ -793,7 +793,7 @@ impl ValueImpl {
 /// reads the CALLER's frames and would see its own synthetic one instead
 /// (`caller`, `binding`, `__method__`, `warn`'s uplevel). The eval family
 /// stays frameless too: its frames carry `(eval)` locations built inside
-/// `eval_vm`, not a dispatch-boundary label.
+/// the eval entries, not a dispatch-boundary label.
 const NOFRAME: &[&str] = &[
     // `Proc#call`/`Method#call` are frameless in CRuby backtraces -- the
     // callee's own frame sits directly on the caller's.
@@ -1368,7 +1368,7 @@ pub fn super_defined(recv: &RubyValue, defining_class: ClassId, name: Symbol) ->
 /// the registry, where every exception id carries the native `exc_*` fns,
 /// runs the true behaviour instead.
 ///
-/// This is also the shape the eval VM needs for `super`, so it lands here
+/// This is also the shape a run-time `eval` needs for `super`, so it lands here
 /// rather than in codegen.
 pub fn send_super_from(
     recv: &RubyValue,
@@ -2049,7 +2049,7 @@ pub fn class_set_frozen(id: ClassId) {
 
 /// Reverse of `class_name`: the id a fully-qualified class/module NAME is
 /// registered under (`"Integer"`, `"Math"`, a user `"Widget"`), or `None`.
-/// The eval VM uses this to resolve a bare class-name constant like
+/// A run-time `eval` uses this to resolve a bare class-name constant like
 /// `eval("Integer")` -- codegen resolves those statically and so never
 /// `const_set`s them, leaving the runtime constants table without them.
 /// The bidirectional `box_id <-> surrogate ClassId` pair: forward map first,
@@ -2510,7 +2510,7 @@ pub fn define_in_default_definee(
 /// compile-time fact; the CLIF emitter hands it here, because a `def` in a
 /// `Class.new` body installs on a class only the run time can name.
 /// Install an eval'd `def` -- see `capi::objects::zeo_rt_eval_define`.
-/// `mode` is `eval_vm::EvalMode` as a byte (0 Caller, 1 ClassEval,
+/// `mode` is `eval::EvalMode` as a byte (0 Caller, 1 ClassEval,
 /// 2 InstanceEval).
 pub fn eval_define(
     mode: u8,
@@ -3638,7 +3638,7 @@ mod tests {
     use super::*;
 
     /// Both `MethodImpl` arms invoke through `call` with the same ABI -- the
-    /// widening the eval VM depends on, verified without any registry.
+    /// widening a run-time `eval` depends on, verified without any registry.
     #[test]
     fn method_impl_static_and_dynamic_dispatch_through_call() {
         let recv: RObj = Arc::new(Object::default());

@@ -31,12 +31,9 @@ mod dispatch;
 mod ec;
 mod enc;
 pub mod encoding;
-// Runtime string `eval`. Always compiled -- the module's public
-// `eval_string` is the stub-or-real entry, gating only its prism-backed
-// interpreter internals behind the `eval-vm` feature.
+// Runtime string `eval`, and the seam the compiler is installed through.
 mod coroutine;
 pub mod eval;
-mod eval_vm;
 mod exec;
 mod ext;
 pub mod features;
@@ -134,7 +131,7 @@ pub use dispatch::{
     validate_aliases, validate_class_aliases, value_class, wrong_arity,
 };
 pub use encoding::{EncodingId, StrBuf};
-pub use eval_vm::{eval_string, eval_value, eval_value_in_scope};
+pub use eval::{eval_string, eval_value, eval_value_in_scope};
 pub use exec::{at_exit_register, run_at_exit, run_main};
 /// The compiled-prologue `TracePoint#self` note (`ext::tracepoint`) -- boxes
 /// the receiver only while a trace hook is armed; free (and a no-op) in

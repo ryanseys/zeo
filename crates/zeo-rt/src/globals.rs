@@ -284,7 +284,7 @@ pub fn global_get(box_id: u32, name: &str) -> RubyValue {
 }
 
 /// The plain store, for the runtime's own seeding (`$0`, `$/`, ...) and the
-/// eval VM's assignments, which never target a [`Special`] at a read-only
+/// eval's assignments, which never target a [`Special`] at a read-only
 /// spelling. Ruby-level assignment goes through [`global_assign`].
 pub fn global_set(box_id: u32, name: &str, value: RubyValue) {
     let target = resolve(box_id, name);

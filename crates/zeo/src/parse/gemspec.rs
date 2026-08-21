@@ -10,7 +10,7 @@
 //! Measured against the 271 gemspecs installed on the development machine:
 //! zero lines fall outside `{comment, blank, Gem::Specification.new do |s|,
 //! end, s.<attr> = <expr>, s.add_*_dependency(...)}`, and all 741 dependency
-//! lines match one exact form. So a static parse is safe, and no eval VM is
+//! lines match one exact form. So a static parse is safe, and no evaluator is
 //! needed. `every_installed_gemspec_parses` below re-checks that claim against
 //! the real store on every test run rather than trusting this comment.
 //!

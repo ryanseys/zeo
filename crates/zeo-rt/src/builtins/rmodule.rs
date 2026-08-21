@@ -912,17 +912,17 @@ ruby_class! {
     // self path (self is a Class). `module_eval` is an alias.
     def "class_eval" | "module_eval" (recv, *args, &block) {
         if let Some(arg) = args.first() {
-            // The string form, through the eval VM with `self` rebound to the
+            // The string form, compiled with `self` rebound to the
             // class -- the same routing `instance_eval` already uses, and the
             // compiler ALREADY links the eval runtime for it
             // (`Hir::uses_runtime_eval`). Ignoring `args` here meant a string
             // form fell through to the block path and reported the misleading
             // "tried to create Proc object without a block".
-            return crate::eval_vm::eval_value_mode(
+            return crate::eval::eval_value_mode(
                 arg.clone(),
                 recv.clone(),
                 0,
-                crate::eval_vm::EvalMode::ClassEval,
+                crate::eval::EvalMode::ClassEval,
             );
         }
         let blk = crate::builtins::basic_object::block_proc(block, "class_eval")?;

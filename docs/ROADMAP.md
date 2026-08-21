@@ -135,13 +135,13 @@ all designed in the pass-4 plan:
   must stay bit-identical (add no atomic loads).
 - **Per-box load bookkeeping.** Stamp `LoadedFile.box_id` at splice time,
   seed `$LOADED_FEATURES` per box, key `feature_already_loaded` by box.
-- **Runtime `box.require`/`load`** through the eval VM, searching the box's
+- **Runtime `box.require`/`load`** through the run-time compiler, searching the box's
   own `$LOAD_PATH`; `wrap:` refused loudly. Today both raise
   `NotImplementedError` naming the compile-time model.
 - **`Box.current` as a value.** Today it answers `nil` (the disabled-mode
   answer). The design: a codegen intrinsic answering the enclosing
   `Ctx.box_id` — Zeo's baked box id IS CRuby's "code runs in its defining
-  file's box" rule — with the eval VM answering via `Env.box_id`.
+  file's box" rule — with the snippet's own compile carrying the box id.
 
 ### RubyVM::AbstractSyntaxTree — widen the mapped tier
 

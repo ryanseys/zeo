@@ -205,9 +205,9 @@ cannot disagree.
 - **Reflection** — `Method#parameters`/`#arity`/`#source_location`,
   `TracePoint`, line coverage, `ObjectSpace`, `RubyVM::AbstractSyntaxTree` and
   `RubyVM::InstructionSequence`, `Ruby::Box`.
-- **`eval`** — a literal `eval("…")` is parsed and spliced at compile time. A
-  dynamic `eval` runs on the interpreter in
-  [`docs/EVAL_VM.md`](docs/EVAL_VM.md), which is linked only into programs that
+- **`eval`** — a literal `eval("…")` is parsed and spliced at compile time; a
+  dynamic one is COMPILED at run time by the same compiler
+  ([`docs/EVAL.md`](docs/EVAL.md)), which is linked only into programs that
   can reach it.
 
 For what does not match yet, read
@@ -400,7 +400,7 @@ anywhere; `ZEO_HOME` overrides the search. Building a binary needs a linker
 
 ```
 crates/      the seven workspace crates (above)
-docs/        COMPATIBILITY, EXTENSIONS, EVAL_VM, GEM_TESTING, METHOD_COVERAGE, ROADMAP
+docs/        COMPATIBILITY, EXTENSIONS, EVAL, GEM_TESTING, METHOD_COVERAGE, ROADMAP
 tests/       example goldens, the spinel corpus, the gaps tracker, gemtests drivers
 gems/        65 bundled gems (gems.toml pins the git-tracked ones)
 bench/       58 benchmark programs; read bench/README.md

@@ -4,7 +4,7 @@
 //! splice AOT, and each box's top-level constants live on a surrogate class
 //! (`#<Ruby::Box:N>` -- see `crate::boxes`). The rows here carry the dynamic
 //! surface: the disabled-mode refusals with CRuby's messages, and `eval` on a
-//! box value routed through the eval VM with the box's OWN top-level owner
+//! box value routed through the runtime `eval` entry with the box's OWN top-level owner
 //! (so a dynamic `box.eval("X = 1")` lands in the box, not on `Object`).
 //!
 //! `Ruby` itself is the identity namespace: the `RUBY_*` constants under

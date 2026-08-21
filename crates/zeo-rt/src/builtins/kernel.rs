@@ -245,8 +245,8 @@ ruby_module! {
         let body = crate::runtime_meta::coerce_method_body(body, &block)?;
         crate::runtime_define_singleton_method(recv, name, body)
     }
-    // `eval(str)` -- runtime string eval through the eval VM
-    // (feature-gated: a build without `eval-vm` answers NotImplementedError).
+    // `eval(str)` -- runtime string eval, which zeo COMPILES (a binary
+    // linked without the compiler answers NotImplementedError).
     // `self` is the CALLER's own, since this universal Kernel row is reached
     // through the receiver's MRO walk -- so `eval("@x")` at the top level reads
     // the main object's ivar, and the same call inside a method reads that
@@ -275,7 +275,7 @@ ruby_module! {
                             .unwrap_or_else(|| "Object".to_string())
                     ));
                 };
-                crate::eval_vm::eval_with_binding(arg1, b, file, line, "Kernel#eval")
+                crate::eval::eval_with_binding(arg1, b, file, line, "Kernel#eval")
             }
         }
     }

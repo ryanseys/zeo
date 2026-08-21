@@ -81,13 +81,9 @@ pub(crate) mod json;
 pub(crate) mod monitor;
 #[cfg(feature = "ext-nkf")]
 pub(crate) mod nkf;
-#[cfg(feature = "ext-tracepoint")]
-pub(crate) mod tracepoint;
-// Both features: the module calls the prism C library, which only the
-// `eval-vm` variant links. See `ext-prism` in Cargo.toml.
 #[cfg(feature = "ext-openssl")]
 pub(crate) mod openssl;
-#[cfg(all(feature = "ext-prism", feature = "eval-vm"))]
+#[cfg(feature = "ext-prism")]
 pub(crate) mod prism;
 #[cfg(feature = "ext-psych")]
 pub(crate) mod psych;
@@ -103,5 +99,7 @@ pub(crate) mod stringio;
 pub(crate) mod strscan;
 #[cfg(feature = "ext-syslog")]
 pub(crate) mod syslog;
+#[cfg(feature = "ext-tracepoint")]
+pub(crate) mod tracepoint;
 #[cfg(feature = "ext-zlib")]
 pub(crate) mod zlib;

@@ -102,15 +102,15 @@ ruby_class! {
     def "instance_eval" (recv, *args, &block) {
         if let Some(arg) = args.first() {
             // The string form (`obj.instance_eval("...")`) runs the source
-            // through the eval VM with `self` rebound to the
+            // compiled with `self` rebound to the
             // receiver, so `@ivar`/implicit-self calls resolve against `obj`.
             // A non-String argument keeps Ruby's own TypeError (handled by
             // `eval_value`'s coercion).
-            return crate::eval_vm::eval_value_mode(
+            return crate::eval::eval_value_mode(
                 arg.clone(),
                 recv.clone(),
                 0,
-                crate::eval_vm::EvalMode::InstanceEval,
+                crate::eval::EvalMode::InstanceEval,
             );
         }
         let blk = block_proc(block, "instance_eval")?;

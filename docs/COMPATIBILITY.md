@@ -121,7 +121,7 @@ replaces.
 - **`RubyVM::InstructionSequence` refuses serialization.** `#to_a`,
   `#to_binary` and the disassembly family raise `NotImplementedError` naming
   the reason: Zeo compiles ahead of time and has no YARV bytecode.
-  `compile`/`#eval` are real (a prism parse check, then the eval VM).
+  `compile`/`#eval` are real (a prism parse check, then a compile).
   `InstructionSequence.of` answers `nil` for every method — the same answer
   CRuby gives for a C-defined method, and what irb's source finder expects.
 - **`RubyVM::YJIT.enable` answers `false`.** There is no JIT to switch on.
@@ -503,7 +503,7 @@ left-most-label wildcards), independent of the connection's verify mode.
 `#source_location`, `#local_variables`, `#local_variable_get`/`_set`/
 `_defined?`, `#eval`, `#dup`/`#clone` and `TOPLEVEL_BINDING` all behave as
 CRuby's, sharing the compiled frame's own slots so writes flow both ways
-(`docs/EVAL_VM.md` explains how codegen gives just those frames cell
+(`docs/EVAL.md` explains how codegen gives just those frames cell
 storage). The bounds:
 
 - **A Binding taken inside an INLINE-SPLICED iterator block** (`n.times { |i|
@@ -519,7 +519,7 @@ storage). The bounds:
   ordinary block parameters, so a Binding carries no separate implicit set.
   That is CRuby's answer for every binding taken outside such a block.
 - **A `send` whose method name is COMPUTED** (`m = :eval; send(m, src)`) is
-  invisible to static analysis: that binary may not link the eval VM at all,
+  invisible to static analysis: that binary may carry no compiler at all,
   and the eval gets no scope. A LITERAL `send(:eval, src)` /
   `obj.send(:eval, src)` is fully supported — same locals, same `self` rule as
   CRuby's. `public_send(:eval, …)` is `NoMethodError` in CRuby because
@@ -535,7 +535,7 @@ shared by reference), never the block's own locals. A proc with no Ruby scope
 behind it — `Symbol#to_proc` and the other runtime-internal ones — raises
 CRuby's `ArgumentError: Can't create Binding from C level Proc`, and so does any
 proc in a program the compiler never saw ask for a `Proc#binding` (the capture
-is pay-per-use; see `docs/EVAL_VM.md`).
+is pay-per-use; see `docs/EVAL.md`).
 
 ### Pattern matching
 

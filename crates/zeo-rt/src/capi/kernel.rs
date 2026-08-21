@@ -72,13 +72,7 @@ pub unsafe extern "C" fn zeo_rt_eval_value_in_scope(
         None => RubyValue::Nil,
     };
     status_out(
-        crate::eval_vm::eval_value_in_scope(
-            arg(src),
-            arg(scope),
-            arg(binding),
-            arg(file),
-            arg(line),
-        ),
+        crate::eval::eval_value_in_scope(arg(src), arg(scope), arg(binding), arg(file), arg(line)),
         out,
     )
 }

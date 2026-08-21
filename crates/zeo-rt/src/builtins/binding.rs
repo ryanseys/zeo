@@ -389,7 +389,7 @@ ruby_class! {
             Some(v) => Some(crate::builtins::convert::to_index(v)? as u32),
             None => None,
         };
-        crate::eval_vm::eval_with_binding(arg1, recv_binding(recv), file, line, "Binding#eval")
+        crate::eval::eval_with_binding(arg1, recv_binding(recv), file, line, "Binding#eval")
     }
     def "inspect" | "to_s"(recv) {
         Ok(RubyValue::Str(crate::string_new(inspect_of(recv))))

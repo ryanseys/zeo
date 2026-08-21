@@ -2393,7 +2393,7 @@ pub(super) fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(),
         None,
         Conditional::No,
     )?;
-    // `SyntaxError < ScriptError` -- the eval VM's parse-failure
+    // `SyntaxError < ScriptError` -- the eval's parse-failure
     // class. Pinned here (not in `BUILTIN_EXCEPTIONS_RB`) so it takes the id
     // immediately after `Math::DomainError`, leaving every other exception id
     // fixed; `zeo-abi::EXCEPTION_CLASSES` reserves the matching id.

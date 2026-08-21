@@ -41,7 +41,7 @@ pub struct EvalSpec<'a> {
     /// The classes the source resolves constants against, when they are
     /// ones only the run time knows -- see `clif::ctx::EvalCref`.
     pub cref: Option<std::rc::Rc<super::ctx::EvalCref>>,
-    /// Which surface invoked the eval (`eval_vm::EvalMode` as a byte).
+    /// Which surface invoked the eval (`zeo_rt::eval::EvalMode` as a byte).
     pub mode: u8,
     /// The first flip-flop latch id reserved for this snippet. A snippet is
     /// compiled by a FRESH compiler whose ids start at zero, which are the

@@ -17,7 +17,7 @@ pub(crate) mod control;
 pub(crate) mod ctx;
 pub(crate) mod debuginfo;
 pub mod emit;
-pub mod eval;
+pub(crate) mod eval;
 pub(crate) mod expr;
 pub(crate) mod ffi;
 pub(crate) mod iter;

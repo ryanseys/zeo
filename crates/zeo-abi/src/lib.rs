@@ -525,7 +525,7 @@ pub const RACTOR_MOVED_OBJECT_CLASS: ClassId = ClassId(163);
 pub const IO_BUFFER_CLASS: ClassId = ClassId(164);
 
 /// `RubyVM` -- CRuby's VM introspection namespace, emulated over zeo's own
-/// counters and (behind `eval-vm`) the prism parser.
+/// counters and the prism parser.
 pub const RUBYVM_CLASS: ClassId = ClassId(165);
 /// `RubyVM::AbstractSyntaxTree` -- parse.y-taxonomy AST over prism.
 pub const RUBYVM_AST_MODULE: ClassId = ClassId(166);
@@ -2793,7 +2793,7 @@ const CORE_EXCEPTIONS: [ExceptionClass; 57] = [
         superclass: Some(exc_id(4)),
         is_module: false,
     },
-    // `SyntaxError < ScriptError` -- raised by the runtime eval VM
+    // `SyntaxError < ScriptError` -- raised by a run-time `eval`
     // when a dynamically-eval'd string fails to parse. Appended AFTER
     // `Math::DomainError` so every pre-existing exception id stays put; like
     // `Math::DomainError` it is registered in the compiler's exception-tail pin

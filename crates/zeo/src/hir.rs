@@ -1242,7 +1242,7 @@ impl Hir {
     /// from.
     ///
     /// Two things reach prism, and they are separate questions. The runtime
-    /// eval VM is one ([`Hir::uses_runtime_eval`]). The other is `require
+    /// eval is one ([`Hir::uses_runtime_eval`]). The other is `require
     /// "prism"`, whose `ext-prism` module calls the same C library's
     /// serialize entry points: the lean variant does not link it, so such a
     /// program would otherwise fail at LINK time, where no message can
@@ -1266,7 +1266,7 @@ impl Hir {
         })
     }
 
-    /// Whether this program can reach the RUNTIME eval VM.
+    /// Whether this program can reach a RUN-TIME `eval`.
     ///
     /// Only `Kernel#eval` and string-form `instance_eval` funnel into
     /// `zeo_rt::eval_value`/`eval_string`. A literal `eval("...")` does not
@@ -1277,17 +1277,17 @@ impl Hir {
     ///
     /// This scans the whole arena rather than traversing from the roots, so
     /// it also catches eval sites inside spliced files and method bodies.
-    /// Over-approximation is safe: a false positive only links the larger
-    /// runtime. A miss -- `send(name, src)` with a computed name, which no
-    /// static analysis can see -- raises the runtime's own
-    /// `NotImplementedError` naming `--features eval-vm`, never silent
-    /// wrong output.
+    /// Over-approximation is safe: a false positive only links the compiler
+    /// into a binary that never calls it. A miss -- `send(name, src)` with
+    /// a computed name, which no static analysis can see -- raises the
+    /// runtime's own `NotImplementedError` saying the program carries no
+    /// compiler, never silent wrong output.
     pub fn uses_runtime_eval(&self) -> bool {
         self.nodes.iter().any(|node| match node {
             HirNode::Call { name, args, .. } => match name.as_str() {
                 // Any `eval`, receiver or not: `Binding#eval` runs its source
-                // through the same VM, and a Binding is an ordinary value a
-                // call site can hold in anything.
+                // through the same entry, and a Binding is an ordinary value
+                // a call site can hold in anything.
                 "eval" => true,
                 "instance_eval" | "class_eval" | "module_eval" => !args.is_empty(),
                 // A reflective `send(:eval, src)` is an eval site too, and a
@@ -2859,7 +2859,7 @@ pub enum HirNode {
     /// eval call site (so local/ivar scoping "just works" -- see the
     /// recognizer's docs). Runtime (non-literal) eval, `instance_eval`/
     /// `class_eval` with dynamic content, and `binding` are NOT implemented --
-    /// see docs/EVAL_VM.md for the future embedded-interpreter design those
+    /// see docs/EVAL.md for the future embedded-interpreter design those
     /// would need.
     Eval(Vec<NodeId>),
     /// The body of a synthesized `attach_function` wrapper: marshal args,

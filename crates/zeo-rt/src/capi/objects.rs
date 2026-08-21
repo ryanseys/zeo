@@ -639,7 +639,7 @@ pub unsafe extern "C" fn zeo_rt_define_in_default_definee(
 }
 
 /// A `def` written inside a run-time `eval`, installed where CRuby installs
-/// it -- the `mode` byte is `eval_vm::EvalMode`, and the rule is the
+/// it -- the `mode` byte is `eval::EvalMode`, and the rule is the
 /// interpreter's own `initial_definee`: `instance_eval` installs on the
 /// receiver's SINGLETON, `class_eval` on the receiver (a Class), and a
 /// plain `Kernel#eval` on the receiver's class -- privately when that

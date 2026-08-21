@@ -137,7 +137,7 @@ pub(crate) struct Fx<'e, 'f> {
     /// classes only the RUN TIME knows (`zeo::eval`) -- see [`EvalCref`].
     pub eval_cref: Option<std::rc::Rc<EvalCref>>,
     /// Lowering a run-time `eval` snippet: which surface invoked it
-    /// (`eval_vm::EvalMode` as a byte). A `def` inside one installs where
+    /// (`zeo_rt::eval::EvalMode` as a byte). A `def` inside one installs where
     /// the RUN TIME says, because one snippet may be evaluated against any
     /// number of receivers.
     pub eval_mode: Option<u8>,

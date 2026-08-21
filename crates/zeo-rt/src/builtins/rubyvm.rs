@@ -7,7 +7,7 @@
 //! analog (shapes). `YJIT` is present and permanently disabled -- zeo is an
 //! AOT compiler, so `enable` truthfully answers false (CRuby answers true;
 //! the one documented divergence in this family). `InstructionSequence`
-//! really compiles (a prism parse check) and really evaluates (the eval VM);
+//! really compiles (a prism parse check) and really evaluates;
 //! the YARV serialization surface (`to_a`/`to_binary`/`disasm`) refuses with
 //! `NotImplementedError` naming the AOT reality -- there is no bytecode.
 //!
@@ -232,18 +232,10 @@ fn recv_iseq(recv: &RubyValue) -> Arc<RIseq> {
 
 /// The parse gate every compile row runs: a SyntaxError now, not at eval.
 fn parse_check(src: &str) -> Result<(), Signal> {
-    #[cfg(feature = "eval-vm")]
-    {
-        let result = ruby_prism::parse(src.as_bytes());
-        if let Some(err) = result.errors().next() {
-            return Err(raise_error("SyntaxError", err.message().to_string()));
-        }
-        Ok(())
-    }
-    #[cfg(not(feature = "eval-vm"))]
-    {
-        let _ = src;
-        Ok(())
+    let result = ruby_prism::parse(src.as_bytes());
+    match result.errors().next() {
+        Some(err) => Err(raise_error("SyntaxError", err.message().to_string())),
+        None => Ok(()),
     }
 }
 

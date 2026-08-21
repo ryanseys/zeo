@@ -179,10 +179,10 @@ impl Gem {
 pub struct CompileOutput {
     pub rust_source: String,
     /// Whether this program needs prism at RUNTIME -- a runtime eval site,
-    /// or `require "prism"` (see `Hir::needs_prism_runtime`). Selects which
-    /// `backend::Runtime` variant the binary links: `true` -> the
-    /// prism-linked `eval-vm` runtime, `false` -> the lean, parser-free
-    /// default. The build step maps it via `backend::Runtime::for_prism`.
+    /// or `require "prism"` (see `Hir::needs_prism_runtime`). One shipped
+    /// runtime carries it either way now; what the flag still decides is
+    /// whether the program's `ProgramDesc` names `zeo_eval_install`, which
+    /// is what keeps the compiler out of every binary that cannot eval.
     pub needs_prism_runtime: bool,
 }
 

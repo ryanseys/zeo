@@ -207,7 +207,7 @@ fn eval_shares_the_enclosing_local_scope() {
 #[test]
 fn eval_of_a_non_literal_argument_runs_in_the_vm() {
     // A non-literal source is not rejected at compile time; it runs
-    // through the eval VM. (`y` is interpolated INTO the source string, not
+    // through the runtime `eval`. (`y` is interpolated INTO the source string, not
     // referenced inside the eval.)
     let result = run_ruby("y = 40\nputs eval(\"#{y} + 2\")\n");
     assert!(result.status.success(), "stderr: {}", result.stderr);
@@ -371,10 +371,10 @@ fn universal_reflection_and_to_set() {
 }
 
 // ---------------------------------------------------------------------------
-// Runtime string `eval` / `instance_eval` (the eval VM).
+// Runtime string `eval` / `instance_eval`, which zeo compiles.
 //
 // Every source below is held in a VARIABLE (or built with `.dup`/`+`), so it is
-// NOT a string literal and therefore runs through the runtime eval VM (a
+// NOT a string literal and therefore runs through the runtime `eval` (a
 // tree-walking interpreter over prism), not the compile-time inline path a
 // string literal takes. That is the surface these tests are here to cover.
 // ---------------------------------------------------------------------------
@@ -682,10 +682,10 @@ fn respond_to_missing_and_method_missing_protocol() {
 /// (installing on the right definee), optional+rest+keyword params, `return`
 /// and `yield` in an eval-defined method, and blocks + auto-splat passed to
 /// calls inside eval. Each source is non-literal (held in a variable / built
-/// with a heredoc) so it runs through the runtime eval VM, not the inline
+/// with a heredoc) so it runs through the runtime `eval`, not the inline
 /// splice. Output oracle-verified verbatim.
 #[test]
-fn eval_vm_defines_methods_and_runs_blocks() {
+fn a_runtime_eval_defines_methods_and_runs_blocks() {
     let result = run_ruby(
         r#"
         code = <<~RUBY
@@ -727,9 +727,9 @@ fn eval_vm_defines_methods_and_runs_blocks() {
 /// `class`/`module` bodies inside eval: a fresh class with initialize+ivars,
 /// a subclass whose method calls `super`, a module function, reopening a
 /// compiled class, and the class expression's value. Non-literal source ->
-/// the runtime eval VM. Oracle-verified verbatim.
+/// the runtime `eval` entry. Oracle-verified verbatim.
 #[test]
-fn eval_vm_defines_classes_and_modules() {
+fn a_runtime_eval_defines_classes_and_modules() {
     let result = run_ruby(
         r#"
         code = <<~RUBY

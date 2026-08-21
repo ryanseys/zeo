@@ -1359,7 +1359,7 @@ fn lower_call_node(
     // UNCONDITIONALLY: those two have a genuine second runtime path for
     // their non-desugared shape (an ordinary implicit-self `Call`), but
     // `eval` doesn't -- this path has no runtime parser/interpreter (see
-    // docs/EVAL_VM.md), so letting a non-literal `eval(...)` fall through
+    // docs/EVAL.md), so letting a non-literal `eval(...)` fall through
     // as a plain `Call` would compile cleanly and only fail at RUNTIME
     // with a confusing `NoMethodError`, strictly worse than a clear
     // compile-time rejection.
@@ -1515,7 +1515,7 @@ fn lower_call_node(
         // non-literal source expression, or the `binding`/`filename`/
         // `lineno` argument forms -- falls through to the ordinary
         // implicit-self `Call` lowering below, which routes `Kernel#eval`
-        // into the runtime eval VM (feature-gated, so a build without it
+        // into the runtime `eval` entry (which compiles the snippet, so
         // raises NotImplementedError at the call), carrying a `Binding` of
         // the calling scope so that path sees the caller's locals too.
         let arg_list: Vec<_> = call
@@ -1531,7 +1531,7 @@ fn lower_call_node(
             // express -- a top-level `def`, or a `class`/`module` written
             // inside a METHOD body, where the registration walk never
             // reaches the splice -- DON'T fail the compile: fall through to
-            // the runtime eval VM so the program still builds and the
+            // the runtime `eval` entry so the program still builds and the
             // error/behaviour surfaces at runtime, catchably, exactly as
             // CRuby's `eval` does.
             if let Ok(body) = parse_and_lower_into(hir, &src)

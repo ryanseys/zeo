@@ -39,20 +39,16 @@ pub unsafe extern "C" fn zeo_eval_install() {
 struct Jit;
 
 impl EvalCompiler for Jit {
-    fn eval(&self, req: &EvalRequest<'_>) -> Option<Result<RubyValue, Signal>> {
+    fn eval(&self, req: &EvalRequest<'_>) -> Result<RubyValue, Signal> {
         match compiled_for(req) {
-            Ok(c) => Some(run(req, c)),
+            Ok(c) => run(req, c),
             // Source prism refuses is the PROGRAM's error, not a compiler
-            // limit: `eval("1 +")` raises a catchable `SyntaxError` in
-            // ruby, and handing it to a second evaluator would only make
-            // that one raise it instead.
-            Err(Refusal::Syntax(msg)) => Some(Err(zeo_rt::eval::syntax_error(msg))),
-            Err(Refusal::NotCompiled(why)) => {
-                if std::env::var_os("ZEO_EVAL_DEBUG").is_some() {
-                    eprintln!("zeo: eval falls back to the interpreter: {why}");
-                }
-                None
-            }
+            // limit: `eval("1 +")` raises a catchable `SyntaxError`.
+            Err(Refusal::Syntax(msg)) => Err(zeo_rt::eval::syntax_error(msg)),
+            // A shape zeo declines. It raises rather than answering
+            // approximately -- CRuby-identical or nothing, which is the
+            // same contract a program's compile has.
+            Err(Refusal::NotCompiled(why)) => Err(zeo_rt::eval::not_compiled(why)),
         }
     }
 }
@@ -61,8 +57,7 @@ impl EvalCompiler for Jit {
 enum Refusal {
     /// The source does not parse -- the snippet's own `SyntaxError`.
     Syntax(String),
-    /// A shape this compiler does not lower correctly yet, so the
-    /// interpreter answers it (G6-1).
+    /// A shape zeo declines: a `NotImplementedError` naming it.
     NotCompiled(String),
 }
 
@@ -249,13 +244,22 @@ fn scope_refusals(analyzed: &crate::analyze::Analyzed) -> Result<(), String> {
             // and only a `def` has a run-time install path already (the
             // emitter's own arm for a `def` written where analyze could
             // not register one). The rest still belong to the interpreter.
-            HirNode::MethodRedefine { .. } => Some("a redefinition"),
-            HirNode::ClassMethodPrepend { .. }
-            | HirNode::DefHook { .. }
-            | HirNode::Refine { .. }
-            | HirNode::Using { .. } => Some("a definition-level statement"),
+            // Analyze registers nothing in a snippet, so neither of these
+            // can be synthesized here -- they are refused because a
+            // silently wrong answer is the alternative, not because the
+            // shape is expected.
+            HirNode::MethodRedefine { .. } => Some("a redefinition analyze resolved"),
+            HirNode::DefHook { .. } => Some("a definition hook analyze spliced"),
+            HirNode::ClassMethodPrepend { .. } => Some("a singleton `prepend`"),
+            // Refinements are a COMPILE-TIME decision: a covered call site
+            // gives up its static dispatch, and a snippet's sites were
+            // decided before the `refine` ran.
+            HirNode::Refine { .. } => Some("a `refine`"),
+            HirNode::Using { .. } => Some("a `using`"),
             // Compile-time-only surfaces.
-            HirNode::Ffi(..) => Some("a nested compiler surface"),
+            // The FFI surface is assembled by analyze from markers a
+            // whole-program compile consumes.
+            HirNode::Ffi(..) => Some("an `FFI::Library` declaration"),
             HirNode::BoxScope { .. } | HirNode::BoxHandle(..) => Some("a `Ruby::Box`"),
             _ => None,
         };

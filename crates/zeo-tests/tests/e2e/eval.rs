@@ -1,38 +1,22 @@
-//! A run-time `eval` through the REAL compiler (`ZEO_EVAL=compiler`,
-//! plan G6) against the same program through the interpreter.
+//! A run-time `eval`, which zeo COMPILES (plan G6).
 //!
-//! Both must answer what CRuby answers, so each case carries the oracle's
-//! own output and both evaluators are held to it. That is the whole
-//! burn-down discipline: the interpreter is the differential oracle for
-//! every shape until nothing falls back to it (G6-4).
+//! Every case carries CRuby's own output. A prism-walking interpreter
+//! answered these until 2026-08-21, as the differential oracle each
+//! widening of the compiled path was measured against; the cases it never
+//! covered say so where they are.
 
-use crate::support::{RunResult, run_ruby_configured};
+use crate::support::{RunResult, run_ruby};
 
-/// The program under both evaluators. A compiled program installs the
-/// compiler through `ProgramDesc.eval_install`, so the switch is all that
-/// differs between the two runs.
-fn both(source: &str) -> (RunResult, RunResult) {
-    (interpreted(source), compiled(source))
-}
-
-/// Each leg names its evaluator explicitly: only `compiler` selects the
-/// compiler, so anything else pins the interpreter whatever `ZEO_EVAL`
-/// the test run itself was started with.
-fn interpreted(source: &str) -> RunResult {
-    run_ruby_configured(source, &[("ZEO_EVAL", "interpreter")], &[])
-}
-
-fn compiled(source: &str) -> RunResult {
-    run_ruby_configured(source, &[("ZEO_EVAL", "compiler")], &[])
+fn run(source: &str) -> RunResult {
+    run_ruby(source)
 }
 
 fn agree(source: &str, expected: &str) {
-    let (vm, run) = both(source);
-    assert_eq!(vm.stdout, expected, "the interpreter diverges from CRuby");
+    let out = run(source);
     assert_eq!(
-        run.stdout, expected,
+        out.stdout, expected,
         "the compiler diverges from CRuby (stderr: {})",
-        run.stderr
+        out.stderr
     );
 }
 
@@ -77,20 +61,14 @@ fn a_block_runs_inside_the_source() {
 #[test]
 fn a_rescue_clause_binds_inside_the_source() {
     // The compiler answers CRuby here where the INTERPRETER cannot: a
-    // `rescue => e` inside an eval is one of the nodes the eval VM never
-    // covered, and it raises `NotImplementedError`. The compiled path
-    // lowers it like any other body, so this is a shape the burn-down
-    // gains rather than merely keeps.
+    // A `rescue => e` inside an eval is one of the nodes the retired
+    // interpreter never covered. The compiled path lowers it like any
+    // other body.
     let source = r#"
         rescued = "begin; Integer('x'); rescue ArgumentError => e; e.class; end"
         p eval(rescued)
         "#;
-    let run = compiled(source);
-    assert_eq!(run.stdout, "ArgumentError\n", "stderr: {}", run.stderr);
-    assert!(
-        interpreted(source).stderr.contains("NotImplementedError"),
-        "the eval VM was expected to decline this shape"
-    );
+    agree(source, "ArgumentError\n");
 }
 
 #[test]
@@ -125,17 +103,15 @@ fn file_and_line_report_the_eval_site() {
 fn a_def_installs_at_its_document_position() {
     // `CompileMode::Eval` registers nothing, so the `def` reaches the
     // emitter's run-time install arm -- and installs PRIVATE on Object,
-    // which is what a top-level `def` is. The interpreter gets the
-    // visibility wrong here (it answers `false`), so this is the second
-    // shape the compiled path fixes rather than keeps.
+    // which is what a top-level `def` is. The retired interpreter got the
+    // visibility wrong here (it answered `false`).
     let source = r#"
         src = "def evaled; 41 + 1; end; evaled"
         p eval(src)
         p evaled
         p self.class.private_instance_methods(false).include?(:evaled)
         "#;
-    let run = compiled(source);
-    assert_eq!(run.stdout, "42\n42\ntrue\n", "stderr: {}", run.stderr);
+    agree(source, "42\n42\ntrue\n");
 }
 
 #[test]
@@ -146,12 +122,7 @@ fn an_evaled_def_binds_the_whole_parameter_surface() {
         p with_args(1)
         p with_args(1, 5, 6, 7, k: 9) { :blk }
         "#;
-    let run = compiled(source);
-    assert_eq!(
-        run.stdout, "[1, 2, [], 3, nil]\n[1, 5, [6, 7], 9, :blk]\n",
-        "stderr: {}",
-        run.stderr
-    );
+    agree(source, "[1, 2, [], 3, nil]\n[1, 5, [6, 7], 9, :blk]\n");
 }
 
 #[test]
@@ -198,21 +169,15 @@ fn a_block_in_the_source_writes_the_callers_local() {
     // it could not see the caller's declaration. The name the eval's own
     // scope holds came from the Binding, so the caller assigned it first
     // and ruby shares it -- both the capture and the per-invocation nil
-    // fill have to agree about that. A third shape the eval VM never
-    // covered (a block with a parameter inside an eval), so the compiler
-    // is held to CRuby alone.
+    // fill have to agree about that -- a shape the retired interpreter
+    // never covered (a block with a parameter inside an eval).
     let source = r#"
         total = 5
         src = "[1,2].each { |x| total += x }; total"
         p eval(src)
         p total
         "#;
-    let run = compiled(source);
-    assert_eq!(run.stdout, "8\n8\n", "stderr: {}", run.stderr);
-    assert!(
-        interpreted(source).stderr.contains("NotImplementedError"),
-        "the eval VM was expected to decline this shape"
-    );
+    agree(source, "8\n8\n");
 }
 
 #[test]
@@ -244,7 +209,8 @@ fn a_def_in_the_source_has_a_home_of_its_own() {
 fn defined_calls_a_callers_local_a_local() {
     // prism could only call it a vcall (it parsed the snippet alone), so
     // `defined?` reported an undefined method for a name the caller
-    // holds. The eval VM answers `nil` here; CRuby and the compiler agree
+    // holds. The retired interpreter answered `nil` here; CRuby and the
+    // compiler agree
     // on "local-variable".
     let source = r#"
         loc = 5
@@ -253,13 +219,7 @@ fn defined_calls_a_callers_local_a_local() {
         p eval(here)
         p eval(gone)
         "#;
-    let run = compiled(source);
-    assert_eq!(
-        run.stdout, "\"local-variable\"\nnil\n",
-        "stderr: {}",
-        run.stderr
-    );
-    assert_eq!(interpreted(source).stdout, "nil\nnil\n");
+    agree(source, "\"local-variable\"\nnil\n");
 }
 
 #[test]
@@ -284,8 +244,7 @@ fn a_class_variable_and_a_constant_belong_to_the_cref() {
         p Counter::GRAND
         p Object.const_defined?(:GRAND)
         "#;
-    let run = compiled(source);
-    assert_eq!(run.stdout, "11\n11\n22\nfalse\n", "stderr: {}", run.stderr);
+    agree(source, "11\n11\n22\nfalse\n");
 }
 
 #[test]
@@ -316,10 +275,10 @@ fn a_mixin_in_the_source_is_the_send_ruby_writes() {
 }
 
 #[test]
-fn a_shape_the_compiler_declines_still_runs() {
-    // A `class` in the source mints a run-time class, which this compiler
-    // does not lower yet -- the interpreter answers it, and the program
-    // cannot tell which one ran.
+fn a_class_in_the_source_mints_and_runs() {
+    // The header mints the class through the runtime; the BODY runs as one
+    // more `class_eval` of its own source, which is what a class body IS
+    // -- a scope of its own, with its own cref.
     agree(
         r#"
         src = "class Minted; def hi; :hi; end; end; Minted.new.hi"
@@ -327,5 +286,42 @@ fn a_shape_the_compiler_declines_still_runs() {
         p Minted.name
         "#,
         ":hi\n\"Minted\"\n",
+    );
+}
+
+#[test]
+fn a_class_name_already_taken_is_a_type_error() {
+    // Ruby raises before anything is minted. (It also warns
+    // `previous definition of TOP was here`, which zeo does not track --
+    // hence the stdout-only check rather than a golden.)
+    agree(
+        r#"
+        TOP = 1
+        src = "class TOP; end"
+        begin
+          eval(src)
+        rescue TypeError => e
+          puts e.message
+        end
+        "#,
+        "TOP is not a class\n",
+    );
+}
+
+#[test]
+fn a_shape_zeo_declines_raises_and_names_itself() {
+    // There is no second evaluator to hand a declined shape to, and
+    // answering one approximately would break the compile contract. It
+    // raises, and the message says which shape it was.
+    agree(
+        r#"
+        src = "module Ref; refine String do; def z; 1; end; end; end"
+        begin
+          eval(src)
+        rescue NotImplementedError => e
+          puts e.message
+        end
+        "#,
+        "zeo cannot compile this `eval`: the source has a `refine`\n",
     );
 }

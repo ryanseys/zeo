@@ -19,7 +19,7 @@ use ruby_prism::{CallNode, Node, ParseResult};
 /// Every other source shape -- a non-literal expression, or a computed
 /// string -- lowers to a receiver-less `eval` [`HirNode::Call`] wrapped in
 /// the same `BoxScope`. Codegen threads the enclosing `box_id` into that
-/// call so it evaluates through the runtime eval VM in the box's dimension,
+/// call so it evaluates through the runtime `eval` entry in the box's dimension,
 /// mirroring how receiver-less `Kernel#eval` already falls through to the VM
 /// for a non-literal source. `class`/`def` in a dynamic body are handled by
 /// the VM at runtime, so `allow_defs` gates only the literal path.
@@ -57,7 +57,7 @@ pub fn lower_box_eval(
         }
         return Ok(hir.push(HirNode::BoxScope { box_id, body }));
     }
-    // Non-literal source: evaluate through the runtime eval VM in the box's
+    // Non-literal source: evaluate through the runtime `eval` entry in the box's
     // dimension. A receiver-less `eval` Call inside the `BoxScope` picks up
     // `box_id` from codegen's box context (see `codegen::call`'s eval
     // special-case); `self` is the ambient main object, consistent with the
@@ -184,7 +184,7 @@ pub(crate) fn reject_top_level_defs(hir: &Hir, body: &[NodeId]) -> PResult<()> {
 /// as "a position the analyze walk doesn't register". A `Ruby::Box#eval`
 /// splices into a `BoxScope`, which the walk also descends, so only the
 /// plain-`eval` inline path asks this -- and its answer sends the snippet to
-/// the runtime eval VM.
+/// the runtime `eval` entry.
 pub(crate) fn defines_a_class(hir: &Hir, body: &[NodeId]) -> bool {
     body.iter()
         .any(|&id| matches!(hir[id], HirNode::ClassDef { .. }))

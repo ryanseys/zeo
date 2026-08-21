@@ -1,18 +1,19 @@
-//! The seam between a run-time `eval` and whatever evaluates it.
+//! Runtime string `eval`, and the seam it reaches the compiler through.
 //!
-//! Two things can: the prism-walking interpreter in [`crate::eval_vm`],
-//! and the REAL compiler, which the `zeo` library installs here through
-//! [`install`] (it cannot be a plain dependency -- the runtime must not
-//! depend on the compiler, so the compiler reaches down instead).
+//! A snippet is COMPILED, by the same front end and the same Cranelift
+//! emitter a whole program is (plan G6). The compiler cannot be a plain
+//! dependency -- the runtime must not depend on it -- so the runtime
+//! declares the seam here and the `zeo` library reaches down and fills it
+//! through [`install`]. An AOT program carries the installer only when it
+//! can eval at all, which is what lets the linker drop the compiler from
+//! every program that cannot.
 //!
-//! Both exist during the burn-down. `ZEO_EVAL=compiler` routes what the
-//! installed compiler accepts through it and lets the rest fall back to
-//! the interpreter, so the slice can widen one shape at a time with the
-//! interpreter as the differential oracle for every one. The interpreter
-//! is retired when nothing falls back (plan G6-4).
+//! There is no second implementation of Ruby behind this any more. A
+//! prism-walking interpreter answered here until 2026-08-21, as the
+//! differential oracle each widening of the compiled path was measured
+//! against; what it declined, it declined LOUDLY, and so does this.
 
 pub use crate::builtins::binding::RBinding;
-pub use crate::eval_vm::EvalMode;
 use crate::{RubyValue, Signal};
 use std::sync::OnceLock;
 
@@ -29,7 +30,7 @@ pub struct EvalRequest<'a> {
     pub self_val: RubyValue,
     /// Defining box for constant and global resolution.
     pub box_id: u32,
-    pub mode: crate::eval_vm::EvalMode,
+    pub mode: EvalMode,
     /// The enclosing scope's frame label -- the snippet runs in the
     /// caller's name, not the entry cfunc's.
     pub label: &'static str,
@@ -48,15 +49,14 @@ pub struct EvalRequest<'a> {
     pub cref_chain: &'a [zeo_abi::ClassId],
 }
 
-/// The class a snippet resolves its constants against, and the name a
-/// NameError qualifies with -- CRuby's rule, and the interpreter's own
-/// (`eval_vm::imp::eval_string`'s `(cref, cref_name)` pair and
-/// `RBinding::cref`): a Binding names its capture's lexical class;
-/// otherwise only the two `*_eval` string forms on a CLASS have one, and
-/// `instance_eval`'s is the singleton, which owns no constants at all --
-/// so the miss IS the answer, in the `#<Class:X>` spelling.
+/// The classes a snippet resolves its constants against, and the name a
+/// NameError qualifies with -- CRuby's rule: a Binding names its
+/// capture's lexical class; otherwise only the two `*_eval` string forms
+/// on a CLASS have one, and `instance_eval`'s is the singleton, which owns
+/// no constants at all -- so the miss IS the answer, in the `#<Class:X>`
+/// spelling. A `class` body opened inside a snippet prepends its own.
 ///
-/// Both evaluators must read this from ONE place, or the same snippet
+/// The compiler and the runtime must read this from ONE place, or a
 /// resolves `K` differently depending on which one ran it.
 pub fn cref_of(req: &EvalRequest<'_>) -> (Vec<zeo_abi::ClassId>, Option<String>) {
     if let Some(&head) = req.cref_chain.first() {
@@ -94,6 +94,17 @@ pub fn reserve_flip_flops(n: u32) -> u32 {
 #[must_use]
 pub fn syntax_error(message: String) -> Signal {
     crate::dispatch::raise_error("SyntaxError", message)
+}
+
+/// A shape zeo declines to compile. Raised rather than answered
+/// approximately: the compile contract is CRuby-identical or nothing, and
+/// a snippet's compile is no different from a program's.
+#[must_use]
+pub fn not_compiled(what: String) -> Signal {
+    crate::dispatch::raise_error(
+        "NotImplementedError",
+        format!("zeo cannot compile this `eval`: {what}"),
+    )
 }
 
 /// The C signature a compiled snippet's entry function has: the status
@@ -230,36 +241,30 @@ pub fn class_body(
     if src.is_empty() {
         return Ok(RubyValue::Nil);
     }
-    if let Some(c) = selected() {
-        let RubyValue::Class(cid) = class_val else {
-            unreachable!("the header answered a Class")
-        };
-        let mut chain = Vec::with_capacity(outer_cref.len() + 1);
-        chain.push(*cid);
-        chain.extend_from_slice(outer_cref);
-        let req = EvalRequest {
-            src,
-            file,
-            line,
-            self_val: class_val.clone(),
-            box_id,
-            mode: EvalMode::ClassEval,
-            label,
-            binding: None,
-            cref_chain: &chain,
-        };
-        if let Some(answer) = c.eval(&req) {
-            return answer;
-        }
-    }
-    crate::eval_vm::eval_string_mode(src, class_val.clone(), box_id, EvalMode::ClassEval)
+    let RubyValue::Class(cid) = class_val else {
+        unreachable!("the header answered a Class")
+    };
+    let mut chain = Vec::with_capacity(outer_cref.len() + 1);
+    chain.push(*cid);
+    chain.extend_from_slice(outer_cref);
+    let req = EvalRequest {
+        src,
+        file,
+        line,
+        self_val: class_val.clone(),
+        box_id,
+        mode: EvalMode::ClassEval,
+        label,
+        binding: None,
+        cref_chain: &chain,
+    };
+    compiler()?.eval(&req)
 }
 
-/// An evaluator the `zeo` library installs. `None` from [`EvalCompiler::
-/// eval`] means "this shape is not compiled yet" -- the caller falls back
-/// to the interpreter, which is what keeps the burn-down incremental.
+/// The evaluator the `zeo` library installs. A shape it declines raises --
+/// there is nothing else to hand the snippet to.
 pub trait EvalCompiler: Send + Sync {
-    fn eval(&self, req: &EvalRequest<'_>) -> Option<Result<RubyValue, Signal>>;
+    fn eval(&self, req: &EvalRequest<'_>) -> Result<RubyValue, Signal>;
 }
 
 static COMPILER: OnceLock<&'static dyn EvalCompiler> = OnceLock::new();
@@ -272,12 +277,209 @@ pub fn install(compiler: &'static dyn EvalCompiler) {
     let _ = COMPILER.set(compiler);
 }
 
-/// The installed compiler, when one is installed AND selected. Reading the
-/// switch here rather than at the call sites keeps "which evaluator" one
-/// question with one answer.
-pub(crate) fn selected() -> Option<&'static dyn EvalCompiler> {
-    if !matches!(std::env::var("ZEO_EVAL").as_deref(), Ok("compiler")) {
-        return None;
+/// The installed compiler. Absent means this binary was linked without one
+/// -- which is only reachable when the compiler's own
+/// `Hir::uses_runtime_eval` missed the site, since every program that can
+/// eval carries the installer.
+fn compiler() -> Result<&'static dyn EvalCompiler, Signal> {
+    COMPILER.get().copied().ok_or_else(|| {
+        crate::builtins::not_impl_error!(
+            "this program was compiled without the eval compiler, so it cannot evaluate a string \
+             at run time (zeo links it only into a program it can see reach `eval`)"
+        )
+    })
+}
+
+// ---------------------------------------------------------------------------
+// The runtime's `eval` entries -- what every dispatch site funnels through
+// ---------------------------------------------------------------------------
+
+/// Which surface invoked the eval -- it decides where a `def` inside the
+/// source installs (the "default definee", CRuby's `cref`):
+/// - `Caller` (`Kernel#eval`): an instance method on `self`'s class (a plain
+///   top-level eval's `self` is the main object, so `def` lands on `Object`).
+/// - `ClassEval` (`Module#class_eval`): an instance method on `self` (a Class).
+/// - `InstanceEval` (`BasicObject#instance_eval`): a singleton method on
+///   `self` (a class method when `self` is itself a Class).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum EvalMode {
+    Caller,
+    ClassEval,
+    InstanceEval,
+}
+
+/// The file name a snippet reports, which is CRuby's `(eval at f.rb:14)`
+/// unless the caller named one: two evals in one program tell their
+/// backtraces apart by where they were EVALUATED.
+fn eval_path(file: Option<&str>) -> String {
+    match file {
+        Some(f) => f.to_string(),
+        None => match crate::frames::current_location() {
+            Some((f, l)) => format!("(eval at {f}:{l})"),
+            None => EVAL_FILE.to_string(),
+        },
     }
-    COMPILER.get().copied()
+}
+
+/// What a snippet with no caller location at all reports.
+pub(crate) const EVAL_FILE: &str = "(eval)";
+
+/// The cfunc frame that shows between the caller and the snippet -- how a
+/// backtrace says where an eval was ENTERED as well as where it raised.
+fn entry_label(mode: EvalMode) -> &'static str {
+    match mode {
+        EvalMode::Caller => "Kernel#eval",
+        EvalMode::InstanceEval => "BasicObject#instance_eval",
+        EvalMode::ClassEval => "Module#class_eval",
+    }
+}
+
+/// Evaluate `src` as a standalone chunk of Ruby with `self` bound to
+/// `self_val`, resolving constants/globals against `box_id`. A parse failure
+/// becomes a catchable `SyntaxError`; the value of the last statement is
+/// returned (`nil` for an empty program). `mode` decides where a `def`
+/// inside the source installs -- see [`EvalMode`].
+pub fn eval_string_mode(
+    src: &str,
+    self_val: RubyValue,
+    box_id: u32,
+    mode: EvalMode,
+) -> Result<RubyValue, Signal> {
+    // The enclosing scope's label, read BEFORE the cfunc frame goes on --
+    // the snippet runs in the caller's name, not the cfunc's.
+    let label = crate::frames::current_frame_label().unwrap_or("<main>");
+    let _c = crate::frames::synthetic_c_frame(entry_label(mode));
+    let path = eval_path(None);
+    let req = EvalRequest {
+        src,
+        file: &path,
+        line: 1,
+        self_val,
+        box_id,
+        mode,
+        label,
+        binding: None,
+        cref_chain: &[],
+    };
+    compiler()?.eval(&req)
+}
+
+/// [`eval_string_mode`] in the default `Kernel#eval` mode -- the entry the
+/// literal-splice fallback uses.
+pub fn eval_string(src: &str, self_val: RubyValue, box_id: u32) -> Result<RubyValue, Signal> {
+    eval_string_mode(src, self_val, box_id, EvalMode::Caller)
+}
+
+/// The dynamic-`eval` entry every dispatch site funnels through: coerce the
+/// source argument to a String (Ruby raises `TypeError` for anything else,
+/// even a Symbol) and evaluate it with `self` bound to `self_val`. Keeping the
+/// coercion here means every caller -- `Kernel#eval`, `instance_eval`,
+/// `class_eval` -- shares one definition of "what counts as evalable source".
+pub fn eval_value_mode(
+    src: RubyValue,
+    self_val: RubyValue,
+    box_id: u32,
+    mode: EvalMode,
+) -> Result<RubyValue, Signal> {
+    let code = crate::builtins::convert::to_rstr(&src)?
+        .lock()
+        .to_utf8_lossy()
+        .into_owned();
+    eval_string_mode(&code, self_val, box_id, mode)
+}
+
+/// [`eval_value_mode`] in the default `Kernel#eval` mode.
+pub fn eval_value(src: RubyValue, self_val: RubyValue, box_id: u32) -> Result<RubyValue, Signal> {
+    eval_value_mode(src, self_val, box_id, EvalMode::Caller)
+}
+
+/// The compiled receiver-less `eval(src[, binding[, file[, line]]])` site.
+/// CRuby runs a bare `eval` -- and one given a `nil` binding -- in the
+/// CALLER's own frame, so the emitter hands that frame over as `scope`,
+/// materialized right at the call site; that is what lets the source read
+/// and write the caller's locals. An explicit non-nil binding wins over it,
+/// and must be a `Binding`.
+pub fn eval_value_in_scope(
+    src: RubyValue,
+    scope: RubyValue,
+    binding: RubyValue,
+    file: RubyValue,
+    line: RubyValue,
+) -> Result<RubyValue, Signal> {
+    let chosen = if binding.is_nil() { &scope } else { &binding };
+    let Some(b) = crate::builtins::binding::as_binding(chosen) else {
+        return Err(crate::builtins::type_error!(
+            "wrong argument type {} (expected binding)",
+            crate::dispatch::class_name(binding.class_id()).unwrap_or_else(|| "Object".to_string())
+        ));
+    };
+    // Without an explicit binding the source runs in a CHILD of the caller's
+    // frame: it reads and writes the caller's locals, but a name it introduces
+    // is its own and dies with the call. `Binding#eval` keeps them, because
+    // there the Binding IS the scope.
+    let implicit;
+    let b = if binding.is_nil() {
+        implicit = RBinding {
+            self_val: b.self_val.clone(),
+            scope: b.scope.child(),
+            file: b.file.clone(),
+            line: b.line,
+            label: b.label,
+            box_id: b.box_id,
+            cref: b.cref,
+            frozen: std::sync::atomic::AtomicBool::new(false),
+        };
+        &implicit
+    } else {
+        b
+    };
+    let file = match &file {
+        RubyValue::Nil => None,
+        v => Some(
+            crate::builtins::convert::to_rstr(v)?
+                .lock()
+                .to_utf8_lossy()
+                .into_owned(),
+        ),
+    };
+    let line = match &line {
+        RubyValue::Nil => None,
+        v => Some(crate::builtins::convert::to_index(v)? as u32),
+    };
+    eval_with_binding(&src, b, file, line, "Kernel#eval")
+}
+
+/// `Binding#eval` and `Kernel#eval(src, binding, ...)` -- the source runs in
+/// the captured scope: `b`'s locals ARE the eval's locals (shared cells, so a
+/// write reaches the compiled frame), `b`'s `self` is the receiver, and `b`'s
+/// cref is what a constant resolves against. `file`/`line` override what
+/// `__FILE__`/`__LINE__` report, as CRuby's own 3rd/4th `eval` arguments do.
+pub fn eval_with_binding(
+    src: &RubyValue,
+    b: &RBinding,
+    file: Option<String>,
+    line: Option<u32>,
+    caller_label: &'static str,
+) -> Result<RubyValue, Signal> {
+    let code = crate::builtins::convert::to_rstr(src)?
+        .lock()
+        .to_utf8_lossy()
+        .into_owned();
+    let _c = crate::frames::synthetic_c_frame(caller_label);
+    let path = eval_path(file.as_deref());
+    let req = EvalRequest {
+        src: &code,
+        file: &path,
+        // The snippet's own first line, which is 1 unless the caller named
+        // one -- NOT the Binding's capture line, which is where `binding`
+        // was written.
+        line: line.unwrap_or(1),
+        self_val: b.self_val.clone(),
+        box_id: b.box_id,
+        mode: EvalMode::Caller,
+        label: b.label,
+        binding: Some(b),
+        cref_chain: &[],
+    };
+    compiler()?.eval(&req)
 }

@@ -11,55 +11,72 @@ are the same moment for a literal, and no runtime parser is ever needed.
 A **dynamic** `eval` — a runtime-computed string (interpolated, read from a
 variable, built from I/O) — is a different problem for a whole-program AOT
 compiler: the source being "compiled" isn't known until the program is already
-running. Zeo handles it with a runtime tree-walking interpreter, the **eval
-VM**, linked into the generated binary behind the `eval-vm` cargo feature.
+running. Zeo answers it the only way that keeps one implementation of Ruby in
+the tree: it **compiles the snippet**, with the same front end, the same
+`analyze`, and the same Cranelift emitter a whole program goes through.
 
-## The eval VM (`crates/zeo-rt/src/eval_vm.rs`)
+## One snippet, one compile (`crates/zeo/src/eval.rs`, `clif/eval.rs`)
 
-The eval VM walks `ruby-prism`'s own `Node` tree directly, not the compiler's
-HIR. HIR bakes in decisions the AOT compiler resolves statically — `New` needs a
-statically-known class, `ClassRef` has no first-class runtime `Class` value,
-`super` lowers to inlining the parent body, class-var owners are pre-resolved in
-`analyze` — so an interpreter over HIR would have to *undo* all of that. Prism's
-`Node` tree, by contrast, is Ruby's surface semantics, and every construct maps
-onto a primitive the runtime already exposes: `dispatch::send_value` for method
-calls, `const_get`/`global_get`/`ivar_*`/`cvar_*` for state, the `runtime_meta`
-overlay for a runtime `def`/`class`.
+The runtime must never depend on the compiler, so `zeo_rt::eval` declares the
+seam — `EvalRequest`, `EvalCompiler`, `install` — and the `zeo` library reaches
+down and fills it. A program emits a `ProgramDesc` full of tables the runtime
+registers at boot; a snippet emits **one function** and the statics it reads:
+an entry `(cells, self, out) -> i32`, the status protocol every compiled
+function speaks. One `JITModule` per snippet, kept for the process's life
+(CRuby keeps an eval's iseq too), cached by source, box, scope names, mode and
+cref.
 
-So the VM is a purely additive module against the *live* runtime, not a second
-compiler. Eval'd code and AOT-compiled code share one value representation
-(`RubyValue`), one control-flow signal type (`Signal`), and one class/method
-registry — and call into each other freely: compiled code invoking `eval`,
-eval'd code calling a compiled method via `send`, and an eval-defined method
-being called back from compiled code.
+Everything a program's emitter decides statically, a snippet decides at run
+time, because a snippet arrives after all of it has already happened:
 
-### Selective linking — most binaries stay parser-free
+- **`self` is dynamic** and its ivars are name-keyed — one compiled snippet may
+  be evaluated against any number of receivers.
+- **A bare name that IS one of the caller's locals reads that local.** prism
+  parsed the snippet alone, so such a name could only arrive as a vcall.
+- **Nothing registers.** `CompileMode::Eval` leaves a `def`, a `class`, a
+  mixin and every visibility statement to the emitter's run-time arms, which is
+  what makes them install at their own document position.
+- **The definee is a run-time question.** `zeo_rt_eval_define` consults the
+  live `instance_eval`/`class_eval` definee first and the eval's own mode only
+  as the fallback — the `def` may be sitting in a proc the eval merely BUILT,
+  which something else then runs under an `instance_eval` of its own.
+- **The cref is a run-time class chain**, travelling as class ids (the one
+  thing compiler and runtime always agreed on), with every static fold standing
+  down beside it.
 
-`ruby-prism` is a C library and the single largest size lever in the runtime, so
-the default runtime never links it. The compiler statically detects whether a
-program can reach the VM (`Hir::uses_runtime_eval` — a receiverless
-`Kernel#eval`, or a string-form `instance_eval`/`class_eval`/`module_eval` —
-and `Hir::needs_prism_runtime`, which additionally catches any mention of
-`RubyVM`, whose `AbstractSyntaxTree.parse` and `InstructionSequence.compile`
-parse at run time) and
-only then links the prism-backed `eval-vm` runtime variant (`backend::Runtime`).
-A program that uses `eval` still compiles and runs out of the box; it just opts
-*its own* binary into carrying prism, while every other binary stays lean. This
-is work matz's interpreter can't do — CRuby always ships its parser because it
-can't know in advance whether a program evals. Built without the feature, the
-VM's entry point is an honest stub that raises `NotImplementedError` naming
-`--features eval-vm`.
+A `class`/`module` written in a snippet mints or reuses its class through the
+runtime, and its BODY runs as one more `class_eval` of its own source text —
+which is what a class body IS in CRuby: a separate iseq with its own cref and
+its own locals, sharing nothing with the scope around it.
 
-### What the VM does
+### The compiler is absent from a program that cannot eval
 
-An `eval` runs with a correct `self`: its receiver's ivars, implicit-self calls,
-constants, and globals all resolve. The invoking surface decides where a `def`
-inside the source installs (CRuby's "default definee"): an instance method for
-`class_eval`, a singleton for `instance_eval`, and `self`'s class for a plain
-`eval` (a top-level eval's `self` is the main object, so `def` lands on
-`Object`). Eval'd code can `def` methods, run blocks passed to calls, and
-`yield`/`return` inside an eval-defined method; each such method or block
-re-parses its own captured source per invocation.
+`ProgramDesc.eval_install` names `zeo_eval_install` only when
+`Hir::uses_runtime_eval` (a receiverless `Kernel#eval`, or a string-form
+`instance_eval`/`class_eval`/`module_eval`) says the program can reach one. An
+eval-free binary references nothing in the compiler, so `-dead_strip` /
+`--gc-sections` drops all of it: measured at G6, `hello` links 35,230,152 bytes
+and the same program with an `eval` 60,452,216. This is work matz's interpreter
+cannot do — CRuby always ships its parser because it cannot know in advance
+whether a program evals.
+
+A program the scan MISSED — `send(m, src)` with a computed name, which no
+static analysis can see — raises the runtime's own `NotImplementedError`
+saying the binary carries no compiler. Never silent wrong output.
+
+### What zeo declines
+
+A snippet is held to the same contract a program is: CRuby-identical, or a
+`NotImplementedError` naming the shape. What it names today: a `refine` or
+`using` (refinements are a compile-time decision, and a snippet's call sites
+were decided before the `refine` ran), an `FFI::Library` declaration (analyze
+assembles that surface from markers), a `Ruby::Box`, and a bare `super` or
+`block_given?` at a snippet's own level (both need the enclosing method's
+arguments or block channel, which nothing hands a snippet).
+
+A prism-walking interpreter answered here until 2026-08-21. It was the
+differential oracle every widening of the compiled path was measured against,
+and it is gone: nothing in the tree implements Ruby twice any more.
 
 ## `Binding` — the caller's locals, by reference
 
@@ -107,24 +124,25 @@ Proc`.
 The reflective spelling works too: `send(:eval, src)` and `obj.send(:eval, src)`
 compile exactly like a direct `eval`, taking their locals from the caller's
 frame and their `self` from the receiver, and a literal `send(:eval, …)` also
-counts as an eval site for the VM-linking scan.
+counts as an eval site for the installer scan.
 
 **Bounds.** A `binding` inside an inline-spliced iterator block sees that
 block's own parameters only when the enclosing scope is already a binding scope
-(the spliced param is otherwise a plain per-iteration `let`). `send` with a
+(the spliced param is otherwise a plain per-iteration slot). `send` with a
 COMPUTED method name (`m = :eval; send(m, src)`) is invisible to every static
-analysis here: it neither links the VM nor gets a scope, and the honest failure
-mode is the runtime's own `NotImplementedError` or a `NameError` on the first
-caller local. So is `method(:eval).call(src)` — a `Method` carries no binding.
+analysis here: it neither installs the compiler nor gets a scope, and the honest
+failure mode is the runtime's own `NotImplementedError` or a `NameError` on the
+first caller local. So is `method(:eval).call(src)` — a `Method` carries no
+binding.
 
-## Runtime metaprogramming without a parser
+## Runtime metaprogramming without a compile
 
-Some runtime metaprogramming needs no parser at all: a compiled block is already
+Some runtime metaprogramming needs no compile at all: a compiled block is already
 an `Arc<dyn Fn>`, so a class or method defined at runtime *from a block* needs
 only a runtime-mutable method registry, not an interpreter. That foundation is
 `zeo-rt/src/runtime_meta.rs`: a lock-guarded overlay beside the frozen
-`OnceLock` registry, gated by a single `is_live()` atomic so parser-free
-programs pay nothing. On it:
+`OnceLock` registry, gated by a single `is_live()` atomic so programs that
+never reach it pay nothing. On it:
 
 - **Runtime `define_method`** (computed name, in a class-body `each` loop) — the
   block becomes a `MethodImpl::Dynamic`. Class-body statements execute, and a
@@ -149,6 +167,6 @@ both as the compile-time lexical rewrite and as runtime `Module#refine` /
 `using Module.new { … }` overlays. The one enduring non-goal here is a
 *reflective* eval the static analysis cannot see — a `send(m, str)` whose
 method name is computed at runtime hides the eval site from
-`uses_runtime_eval`, so its binary may not link the VM; the honest failure
+`uses_runtime_eval`, so its binary may carry no compiler; the honest failure
 mode there is the runtime's own `NotImplementedError`, never silent wrong
 output.

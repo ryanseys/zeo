@@ -8,8 +8,10 @@ Ruby's object model and built-in classes (String with full multi-encoding
 support, the numeric tower with Bignum, Hash, Array, Regexp via oniguruma,
 Fiber, Thread, and the rest), plus the standard extensions (`socket`, `json`,
 `zlib`, `openssl`, `ffi`, and more) behind per-extension cargo features.
-The optional `eval-vm` feature links Ruby's prism parser for programs that
-call `eval` at runtime; every other program stays parser-free.
+It links Ruby's prism parser, which the parse-only surfaces
+(`RubyVM::AbstractSyntaxTree`, the `prism` gem's native half) read; a
+run-time `eval` is COMPILED by `zeo` itself, through a seam this crate
+declares and the compiler fills.
 
 You do not depend on this crate directly: the `zeo` compiler builds and links
 it for you. Install the [`zeo`](https://crates.io/crates/zeo) CLI instead.

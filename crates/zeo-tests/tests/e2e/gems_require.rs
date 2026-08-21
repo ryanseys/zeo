@@ -433,7 +433,7 @@ fn ripper_is_declined_and_the_load_error_says_so() {
     // The alternative the message points at is real and covered by the gem
     // probe (`require "prism"` compiles as a probed gem; its whole-graph
     // golden was retired from the suite). Not re-asserted here: it pulls the
-    // gem and the eval-vm runtime, which cost this test minutes.
+    // gem, which cost this test minutes.
 }
 
 #[test]
@@ -924,7 +924,7 @@ fn box_eval_defines_and_returns_across_the_boundary() {
 }
 
 /// A NON-literal `box.eval` source (a variable, a computed string) routes
-/// through the runtime eval VM in the box's dimension -- the same fall-through
+/// through the runtime `eval` in the box's dimension -- the same fall-through
 /// `Kernel#eval` uses for a dynamic source, but carrying `box_id`. A dynamic
 /// eval reads/calls the box's own (`require`-defined) constants and classes,
 /// its globals stay isolated from main, and a non-String source raises a
@@ -1014,7 +1014,7 @@ fn box_globals_are_fully_separate() {
 /// nothing could reference) and box operations outside their recognized
 /// positions. (`.current`/`.enabled?` are ordinary runtime calls now that
 /// the class carries real rows; a non-literal `box.eval` source is NOT
-/// rejected here -- it routes to the runtime eval VM, so a non-string
+/// rejected here -- it routes to the runtime `eval`, so a non-string
 /// source is a catchable runtime `TypeError`, exactly like `Kernel#eval`;
 /// see `box_eval_dynamic_source_routes_through_the_vm`. An
 /// expression-position literal `box.eval` defining a class used to be

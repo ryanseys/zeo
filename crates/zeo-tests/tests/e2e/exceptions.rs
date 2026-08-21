@@ -36,7 +36,7 @@ fn parse_error_is_a_clean_error_not_a_panic() {
 #[test]
 fn eval_of_invalid_literal_source_raises_a_catchable_syntax_error() {
     // A literal `eval("...")` whose source doesn't parse does not fail the
-    // COMPILE: it falls through to the runtime eval VM and raises a catchable
+    // COMPILE: it falls through to the runtime `eval` and raises a catchable
     // SyntaxError, exactly as CRuby does.
     let result = run_ruby(r#"begin; eval("1 +"); rescue SyntaxError; puts "caught"; end"#);
     assert!(result.status.success(), "stderr: {}", result.stderr);

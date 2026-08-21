@@ -8,8 +8,6 @@
 //! `:UNKNOWN`, location intact, no children) rather than raising -- walkers
 //! recurse `children`, so an honest leaf degrades gracefully.
 //!
-//! Parsing requires the `eval-vm` feature (the prism runtime); without it
-//! the parse entry points raise the eval VM's NotImplementedError shape.
 //! `node_id` is zeo's own post-order numbering (prism's ids are not exposed
 //! through its Rust bindings) -- documented divergence: CRuby's exact ids
 //! are parse-internal and differ.
@@ -303,14 +301,6 @@ fn location_value(span: Span) -> RubyValue {
 
 // ---------------------------------------------------------------- parsing
 
-#[cfg(not(feature = "eval-vm"))]
-fn parse_to_node(_src: &str, _opts: Option<&RubyValue>) -> Result<RubyValue, Signal> {
-    Err(crate::builtins::not_impl_error!(
-        "RubyVM::AbstractSyntaxTree.parse requires the eval VM (build zeo-rt with --features eval-vm)"
-    ))
-}
-
-#[cfg(feature = "eval-vm")]
 fn parse_to_node(src: &str, opts: Option<&RubyValue>) -> Result<RubyValue, Signal> {
     let opt = |name: &str| -> bool {
         if let Some(RubyValue::Hash(h)) = opts {
@@ -326,7 +316,6 @@ fn parse_to_node(src: &str, opts: Option<&RubyValue>) -> Result<RubyValue, Signa
     translate::parse(src, error_tolerant, keep_script_lines)
 }
 
-#[cfg(feature = "eval-vm")]
 mod translate {
     use super::*;
     use ruby_prism::Node as P;
