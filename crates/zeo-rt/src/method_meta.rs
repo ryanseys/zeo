@@ -378,6 +378,37 @@ pub(crate) fn builtin_arity(class: ClassId, kind: MethodKind, name: Symbol) -> O
         })
 }
 
+/// The signature a native row SPELLS (`params "..."` in the DSL), or `None`
+/// for a row that spells none -- which is still most of them.
+///
+/// The walk stops at the first ancestor whose table OWNS the name, and answers
+/// that ancestor's spelling even when it has none. Continuing past the owner
+/// would let a further ancestor's signature stand in for a row that never
+/// declared one, which is a wrong answer rather than a missing one.
+fn builtin_params(class: ClassId, kind: MethodKind, name: Symbol) -> Option<Descriptor> {
+    let n = name.name();
+    let n = n.as_str();
+    crate::dispatch::ancestors_of_value(class).iter().find_map(|&anc| {
+        let (arity, params) = match kind {
+            MethodKind::Instance => (
+                crate::builtins::class_arity_table(anc),
+                crate::builtins::class_params_table(anc),
+            ),
+            MethodKind::Singleton => (
+                crate::builtins::class_method_arity_table(anc),
+                crate::builtins::class_method_params_table(anc),
+            ),
+        };
+        arity?(n)?;
+        let rows = params?(n)?;
+        Some(
+            rows.iter()
+                .map(|(k, name)| (*k, name.map(str::to_string)))
+                .collect(),
+        )
+    })
+}
+
 /// CRuby's signed arity for one descriptor. Required positionals (a post arg is
 /// emitted as a trailing `Req`, so it counts here too) form the mandatory base.
 /// An optional positional or a rest makes the method variadic. Keywords act as
@@ -409,14 +440,22 @@ pub(crate) fn arity_of(d: &[(ParamKind, Option<String>)]) -> i64 {
 /// so its shape is synthesized from its declared arity the way CRuby reports a
 /// C function: `n >= 0` mandatory anonymous slots, or `-n-1` of them followed
 /// by a rest.
+///
+/// TOTAL, and that is the fix to a divergence: a row nothing knows about is
+/// reported at arity `-1`, and `-1` IS `[[:rest]]`. Answering `None` here left
+/// the two callers spelling their own empty-Array fallback, so the same unknown
+/// row said `-1` through `#arity` and `[]` through `#parameters` -- two
+/// catch-alls that contradicted each other. `Exception#exception` was one.
 pub fn parameters(
     recv: Option<&RubyValue>,
     class: ClassId,
     kind: MethodKind,
     name: Symbol,
-) -> Option<RubyValue> {
+) -> RubyValue {
     let d = descriptor_of(recv, class, kind, name)
-        .or_else(|| builtin_arity(class, kind, name).map(anonymous_descriptor))?;
+        .or_else(|| builtin_params(class, kind, name))
+        .or_else(|| builtin_arity(class, kind, name).map(anonymous_descriptor))
+        .unwrap_or_else(|| anonymous_descriptor(-1));
     let pairs = d
         .into_iter()
         .map(|(kind, pname)| {
@@ -427,7 +466,7 @@ pub fn parameters(
             RubyValue::Array(crate::array_new(entry))
         })
         .collect();
-    Some(RubyValue::Array(crate::array_new(pairs)))
+    RubyValue::Array(crate::array_new(pairs))
 }
 
 /// `Method#source_location` / `UnboundMethod#source_location`: the

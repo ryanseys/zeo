@@ -295,12 +295,195 @@ impl MethodDef {
     }
 }
 
+/// One parameter kind, exactly as `Method#parameters` reports it. Mirrored
+/// here rather than shared with the runtime because the dependency runs the
+/// other way: `zeo-rt` reads this crate through the proc-macro, never back.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SigKind {
+    Req,
+    Opt,
+    Rest,
+    KeyReq,
+    Key,
+    KeyRest,
+    Block,
+}
+
+impl SigKind {
+    /// The runtime `ParamKind` variant this maps to, as a bare ident the
+    /// proc-macro pastes under `crate::method_meta::ParamKind`.
+    pub fn variant(self) -> &'static str {
+        match self {
+            SigKind::Req => "Req",
+            SigKind::Opt => "Opt",
+            SigKind::Rest => "Rest",
+            SigKind::KeyReq => "KeyReq",
+            SigKind::Key => "Key",
+            SigKind::KeyRest => "KeyRest",
+            SigKind::Block => "Block",
+        }
+    }
+}
+
+/// One entry of a `params "..."` spelling. `name` is `None` for an anonymous
+/// slot (`*`, `**`, `&`), which is what a native row reports when it has a
+/// forwarding slot with no name of its own.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct SigParam {
+    pub kind: SigKind,
+    pub name: Option<String>,
+}
+
+/// Split a signature at its TOP-LEVEL commas. A default value is arbitrary
+/// Ruby (`opt = [1, 2]`, `enc = Encoding::UTF_8`), so the split tracks bracket
+/// depth and string quoting rather than counting commas.
+fn split_params(spec: &str) -> Vec<String> {
+    let (mut out, mut cur, mut depth) = (Vec::new(), String::new(), 0i32);
+    let mut quote: Option<char> = None;
+    for c in spec.chars() {
+        match quote {
+            Some(q) => {
+                cur.push(c);
+                if c == q {
+                    quote = None;
+                }
+                continue;
+            }
+            None => {}
+        }
+        match c {
+            '\'' | '"' => {
+                quote = Some(c);
+                cur.push(c);
+            }
+            '(' | '[' | '{' => {
+                depth += 1;
+                cur.push(c);
+            }
+            ')' | ']' | '}' => {
+                depth -= 1;
+                cur.push(c);
+            }
+            ',' if depth == 0 => {
+                out.push(std::mem::take(&mut cur));
+            }
+            _ => cur.push(c),
+        }
+    }
+    if !cur.trim().is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+/// Parse a `params "..."` spelling -- ruby's own `def` signature without the
+/// parentheses -- into what `Method#parameters` answers.
+///
+/// This is metadata, not a binding: the def's Rust parameter list says how the
+/// BODY receives its arguments, and this says what ruby REPORTS. They are
+/// different questions for a native row, which is why the DSL could not spell
+/// a keyword at all before -- a keyword arrives inside the options Hash the
+/// body already takes as one positional slot.
+///
+/// The default value after `=` or `key:` is read only to tell an optional
+/// parameter from a required one; nothing keeps it, because
+/// `Method#parameters` does not report defaults either.
+pub fn parse_signature(spec: &str) -> Result<Vec<SigParam>, String> {
+    let mut out = Vec::new();
+    for raw in split_params(spec) {
+        let p = raw.trim();
+        if p.is_empty() {
+            return Err(format!("empty parameter in params \"{spec}\""));
+        }
+        let named = |rest: &str| -> Option<String> {
+            let r = rest.trim();
+            (!r.is_empty()).then(|| r.to_string())
+        };
+        let entry = if let Some(rest) = p.strip_prefix("**") {
+            SigParam { kind: SigKind::KeyRest, name: named(rest) }
+        } else if let Some(rest) = p.strip_prefix('*') {
+            SigParam { kind: SigKind::Rest, name: named(rest) }
+        } else if let Some(rest) = p.strip_prefix('&') {
+            SigParam { kind: SigKind::Block, name: named(rest) }
+        } else if let Some((head, tail)) = split_keyword(p) {
+            // `name:` is required, `name: default` is optional -- ruby's own
+            // rule, and the only thing the default text is read for.
+            let kind = if tail.trim().is_empty() { SigKind::KeyReq } else { SigKind::Key };
+            SigParam { kind, name: Some(head.to_string()) }
+        } else if let Some((head, _)) = p.split_once('=') {
+            SigParam { kind: SigKind::Opt, name: named(head) }
+        } else {
+            SigParam { kind: SigKind::Req, name: Some(p.to_string()) }
+        };
+        if entry.name.as_deref().is_some_and(|n| !is_param_name(n)) {
+            return Err(format!("'{p}' is not a parameter spelling (in params \"{spec}\")"));
+        }
+        out.push(entry);
+    }
+    Ok(out)
+}
+
+/// `name:` / `name: default`, told apart from a `::` scope inside a default
+/// (`enc = Encoding::UTF_8` must not read as a keyword named `enc = Encoding`).
+fn split_keyword(p: &str) -> Option<(&str, &str)> {
+    let bytes = p.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b':' {
+            if bytes.get(i + 1) == Some(&b':') {
+                return None;
+            }
+            let (head, tail) = p.split_at(i);
+            return is_param_name(head.trim()).then_some((head.trim(), &tail[1..]));
+        }
+        if bytes[i] == b'=' {
+            return None;
+        }
+        i += 1;
+    }
+    None
+}
+
+fn is_param_name(n: &str) -> bool {
+    !n.is_empty()
+        && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        && !n.starts_with(|c: char| c.is_ascii_digit())
+}
+
+/// CRuby's signed arity for a `params` spelling -- the same equation
+/// `zeo_rt::method_meta::arity_of` applies to a compiled method's descriptor,
+/// so a row that spells its parameters needs no `arity N` override and the two
+/// answers cannot drift.
+pub fn signature_arity(d: &[SigParam]) -> i64 {
+    let mut mandatory = d.iter().filter(|p| p.kind == SigKind::Req).count() as i64;
+    let mut variadic = d
+        .iter()
+        .any(|p| matches!(p.kind, SigKind::Opt | SigKind::Rest));
+    if d.iter().any(|p| p.kind == SigKind::KeyReq) {
+        mandatory += 1;
+    } else if d
+        .iter()
+        .any(|p| matches!(p.kind, SigKind::Key | SigKind::KeyRest))
+    {
+        variadic = true;
+    }
+    if variadic { -mandatory - 1 } else { mandatory }
+}
+
 /// One Ruby method name plus an explicit `Method#arity` override. Normally
 /// `None`: the number comes from the parameter list. It exists for a def whose
 /// `|`-joined names genuinely differ (`"<<"` is 1 where `push` is variadic).
 pub struct MethodName {
     pub ruby: String,
     pub arity: Option<i64>,
+    /// A `params "path, mode = nil, opt: nil"` spelling: what
+    /// `Method#parameters` reports for this name. `None` -- the default, and
+    /// most rows -- falls back to the anonymous descriptor the runtime derives
+    /// from the arity, which names no parameter at all.
+    ///
+    /// Per-NAME for the same reason `arity` is: `|`-joined names share a body
+    /// but not a signature.
+    pub params: Option<Vec<SigParam>>,
     /// Per-NAME [`MethodDef::inherits`], for a def whose `|`-joined names
     /// differ in ownership: ruby reaches `Regexp.new` through `Class#new` but
     /// declares `Regexp.compile` on Regexp itself, and both share one body.
@@ -523,6 +706,17 @@ fn parse_def(
         } else {
             None
         };
+        // `params "..."` -- ruby's own signature for this name. Written after
+        // `arity` when both appear, though a spelling makes the override
+        // redundant: the arity falls out of it (`signature_arity`).
+        let params = if peek_ident(input, "params") {
+            input.parse::<Ident>()?; // `params`
+            let lit: syn::LitStr = input.parse()?;
+            let spec = lit.value();
+            Some(parse_signature(&spec).map_err(|e| syn::Error::new(lit.span(), e))?)
+        } else {
+            None
+        };
         // A per-NAME `inherits` is recognized only when another `|`-joined
         // name follows it. A TRAILING one would be indistinguishable from the
         // def-wide marker parsed below, and silently qualifying just the last
@@ -535,6 +729,7 @@ fn parse_def(
         names.push(MethodName {
             ruby,
             arity,
+            params,
             inherits,
         });
         if input.peek(Token![|]) {

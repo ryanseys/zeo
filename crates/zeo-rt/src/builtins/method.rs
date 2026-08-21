@@ -506,10 +506,7 @@ ruby_class! {
     }
     def "parameters"(recv) {
         let m = recv_method(recv);
-        // Builtins have no baked signature -- CRuby reports them as a lone rest;
-        // mirror that so `#parameters` is always an Array.
-        Ok(crate::method_meta::parameters(Some(&m.recv), m.home, m.kind, m.name)
-            .unwrap_or_else(|| RubyValue::Array(crate::array_new(vec![]))))
+        Ok(crate::method_meta::parameters(Some(&m.recv), m.home, m.kind, m.name))
     }
     // CRuby unbinds to the OWNER, not to the class the method was reached
     // through: `Sub.new.method(:greet).unbind` is `Base`'s.

@@ -67,6 +67,10 @@ struct Entry {
     /// What `Method#arity` reports: the def's parameter list, unless this name
     /// carries an explicit override.
     arity: i64,
+    /// What `Method#parameters` reports, from a `params "..."` spelling.
+    /// `None` for every row that does not spell one, which the runtime answers
+    /// with the anonymous descriptor derived from `arity`.
+    params: Option<Vec<zeo_dsl::SigParam>>,
     /// Outer attributes (`#[cfg(...)]`) gating this entry -- shared with the
     /// impl fn so a cfg'd-out method drops its fn AND its table rows together.
     attrs: Vec<syn::Attribute>,
@@ -205,7 +209,16 @@ fn expand(spec: &ClassSpec) -> TokenStream2 {
                     .get(alias_n)
                     .cloned()
                     .unwrap_or_else(|| fn_ident.clone()),
-                arity: name.arity.unwrap_or(derived),
+                // A spelled signature IS the arity: ruby derives one from the
+                // other, so a row that spells its parameters cannot disagree
+                // with itself. An explicit `arity N` still wins, for the row
+                // whose C function accepts a count its signature does not show.
+                arity: name.arity.unwrap_or_else(|| {
+                    name.params
+                        .as_deref()
+                        .map_or(derived, zeo_dsl::signature_arity)
+                }),
+                params: name.params.clone(),
                 attrs: method.attrs.clone(),
                 is_private: declared_private,
                 is_protected: declared_protected,
@@ -247,6 +260,7 @@ fn expand(spec: &ClassSpec) -> TokenStream2 {
                     ruby: alias.new_name.clone(),
                     fn_ident: t.fn_ident.clone(),
                     arity: t.arity,
+                    params: t.params.clone(),
                     attrs: t.attrs.clone(),
                     is_private: t.is_private,
                     is_protected: t.is_protected,
@@ -466,6 +480,7 @@ fn gen_method_table(
     let lookup_fn = format_ident!("{lookup}");
     let names_fn = format_ident!("{names}");
     let arity_fn = format_ident!("{arity}");
+    let params_fn = format_ident!("{lookup}_params");
     let private_fn = format_ident!("{lookup}_is_private");
     let protected_fn = format_ident!("{lookup}_is_protected");
     let allocs_fn = format_ident!("{lookup}_allocs");
@@ -482,6 +497,22 @@ fn gen_method_table(
     let arity_arms = entries.iter().map(|e| {
         let (ruby, a, attrs) = (&e.ruby, e.arity, &e.attrs);
         quote! { #( #attrs )* #ruby => Some(#a), }
+    });
+    // Only a name that SPELLS its signature gets an arm. A table where none
+    // does compiles to `None` for every name, which is the anonymous
+    // descriptor the runtime already derived from the arity -- so annotating
+    // rows is additive and a class can be done a few names at a time.
+    let params_arms = entries.iter().filter(|e| e.params.is_some()).map(|e| {
+        let (ruby, attrs) = (&e.ruby, &e.attrs);
+        let rows = e.params.as_ref().expect("filtered").iter().map(|p| {
+            let kind = format_ident!("{}", p.kind.variant());
+            let name = match &p.name {
+                Some(n) => quote! { Some(#n) },
+                None => quote! { None },
+            };
+            quote! { (crate::method_meta::ParamKind::#kind, #name) }
+        });
+        quote! { #( #attrs )* #ruby => Some(&[ #( #rows ),* ]), }
     });
     // Only the PRIVATE names get an arm; a table with none compiles to
     // `false`, which is every class that declares no `module_function` and no
@@ -527,6 +558,13 @@ fn gen_method_table(
             }
         }
         #[allow(dead_code)]
+        pub(crate) fn #params_fn(name: &str) -> Option<crate::builtins::ParamRows> {
+            match name {
+                #( #params_arms )*
+                _ => None,
+            }
+        }
+        #[allow(dead_code)]
         pub(crate) fn #private_fn(name: &str) -> bool {
             match name {
                 #( #private_arms )*
@@ -560,6 +598,7 @@ fn gen_method_table(
             lookup: #lookup_fn,
             names: #names_fn,
             arity: #arity_fn,
+            params: #params_fn,
             is_private: #private_fn,
             is_protected: #protected_fn,
             allocs: #allocs_fn,

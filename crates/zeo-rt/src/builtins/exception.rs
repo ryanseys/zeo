@@ -846,71 +846,93 @@ fn exc_backtrace_locations(
     Ok(RubyValue::Array(array_new(locations)))
 }
 
-/// Which exception class CRuby files each native on -- see the call site.
+/// Which exception class CRuby files each native on, AND the signature each
+/// one reports -- see the call site.
 /// Every other id carries the same rows for dispatch and lists none of them,
 /// exactly as a CRuby subclass with an empty body does.
+///
+/// The kinds ride in the same rows as the ownership marks so the two cannot
+/// drift. They are needed because these rows are hand-registered and reach no
+/// arity table, and zeo's two catch-alls for an unknown row disagree: `#arity`
+/// answers `-1` while `#parameters` answers `[]`. Every reader here is
+/// arity 0, so both were wrong. Parameters are unnamed, the way CRuby reports
+/// every C method's.
 fn mark_owned_names(registry: &mut ClassRegistry, id: ClassId) {
-    /// One owning class and the names it declares. The id is a THUNK because a
-    /// `ClassId` const is not usable in a const initializer here.
-    type Owned = (fn() -> ClassId, &'static [&'static str]);
+    use crate::method_meta::ParamKind::{Req, Rest};
+    /// One owning class and the names it declares, each with its kinds. The id
+    /// is a THUNK because a `ClassId` const is not usable in a const
+    /// initializer here.
+    type Owned = (
+        fn() -> ClassId,
+        &'static [(&'static str, &'static [crate::method_meta::ParamKind])],
+    );
     const BY_OWNER: &[Owned] = &[
         (
             || EXCEPTION_CLASS,
             &[
-                "message",
-                "to_s",
-                "==",
-                "exception",
-                "backtrace",
-                "backtrace_locations",
-                "set_backtrace",
-                "cause",
-                "full_message",
-                "detailed_message",
-                "inspect",
-                "respond_to?",
+                ("message", &[]),
+                ("to_s", &[]),
+                ("==", &[Req]),
+                ("exception", &[Rest]),
+                ("backtrace", &[]),
+                ("backtrace_locations", &[]),
+                ("set_backtrace", &[Req]),
+                ("cause", &[]),
+                ("full_message", &[Rest]),
+                ("detailed_message", &[Rest]),
+                ("inspect", &[]),
+                ("respond_to?", &[Rest]),
             ],
         ),
         (
             || NAME_ERROR_CLASS,
-            &["name", "receiver", "local_variables"],
+            &[("name", &[]), ("receiver", &[]), ("local_variables", &[])],
         ),
-        (|| NO_METHOD_ERROR_CLASS, &["args", "private_call?"]),
-        (|| KEY_ERROR_CLASS, &["key", "receiver"]),
-        (|| FROZEN_ERROR_CLASS, &["receiver"]),
-        (|| zeo_abi::RACTOR_REMOTE_ERROR_CLASS, &["ractor"]),
-        (|| LOAD_ERROR_CLASS, &["path"]),
-        (|| zeo_abi::SYNTAX_ERROR_CLASS, &["path"]),
-        (|| SYSTEM_CALL_ERROR_CLASS, &["errno"]),
-        (|| LOCAL_JUMP_ERROR_CLASS, &["reason", "exit_value"]),
-        (|| SYSTEM_EXIT_CLASS, &["status", "success?"]),
-        (|| UNCAUGHT_THROW_ERROR_CLASS, &["to_s", "tag", "value"]),
-        (|| SIGNAL_EXCEPTION_CLASS, &["signm", "signo"]),
-        (|| STOP_ITERATION_CLASS, &["result"]),
+        (
+            || NO_METHOD_ERROR_CLASS,
+            &[("args", &[]), ("private_call?", &[])],
+        ),
+        (|| KEY_ERROR_CLASS, &[("key", &[]), ("receiver", &[])]),
+        (|| FROZEN_ERROR_CLASS, &[("receiver", &[])]),
+        (|| zeo_abi::RACTOR_REMOTE_ERROR_CLASS, &[("ractor", &[])]),
+        (|| LOAD_ERROR_CLASS, &[("path", &[])]),
+        (|| zeo_abi::SYNTAX_ERROR_CLASS, &[("path", &[])]),
+        (|| SYSTEM_CALL_ERROR_CLASS, &[("errno", &[])]),
+        (
+            || LOCAL_JUMP_ERROR_CLASS,
+            &[("reason", &[]), ("exit_value", &[])],
+        ),
+        (|| SYSTEM_EXIT_CLASS, &[("status", &[]), ("success?", &[])]),
+        (
+            || UNCAUGHT_THROW_ERROR_CLASS,
+            &[("to_s", &[]), ("tag", &[]), ("value", &[])],
+        ),
+        (|| SIGNAL_EXCEPTION_CLASS, &[("signm", &[]), ("signo", &[])]),
+        (|| STOP_ITERATION_CLASS, &[("result", &[])]),
         (
             || zeo_abi::NO_MATCHING_PATTERN_KEY_ERROR_CLASS,
-            &["key", "matchee"],
+            &[("key", &[]), ("matchee", &[])],
         ),
         (
             || zeo_abi::UNDEFINED_CONVERSION_ERROR_CLASS,
             &[
-                "source_encoding",
-                "source_encoding_name",
-                "destination_encoding",
-                "destination_encoding_name",
-                "error_char",
+                ("source_encoding", &[]),
+                ("source_encoding_name", &[]),
+                ("destination_encoding", &[]),
+                ("destination_encoding_name", &[]),
+                ("error_char", &[]),
             ],
         ),
         (
             || zeo_abi::INVALID_BYTE_SEQUENCE_ERROR_CLASS,
             &[
-                "source_encoding",
-                "source_encoding_name",
-                "destination_encoding",
-                "destination_encoding_name",
-                "error_bytes",
-                "readagain_bytes",
-                "incomplete_input?",
+                ("source_encoding", &[]),
+                ("source_encoding_name", &[]),
+                ("destination_encoding", &[]),
+                ("destination_encoding_name", &[]),
+                ("error_bytes", &[]),
+                ("readagain_bytes", &[]),
+                ("incomplete_input?", &[]),
             ],
         ),
     ];
@@ -918,8 +940,9 @@ fn mark_owned_names(registry: &mut ClassRegistry, id: ClassId) {
         if owner() != id {
             continue;
         }
-        for name in *names {
+        for (name, kinds) in *names {
             registry.mark_own(id, Symbol::intern(name));
+            instance_method_signature(id, name, kinds);
         }
     }
     // `Exception`'s three PRIVATE rows. The mark goes on every id -- flat
@@ -964,6 +987,14 @@ fn mark_owned_names(registry: &mut ClassRegistry, id: ClassId) {
 /// CRuby reports every C method's.
 fn class_method_signature(id: ClassId, name: &str, kinds: &[crate::method_meta::ParamKind]) {
     crate::method_meta::MethodMeta::singleton(id.0, name)
+        .with_params(kinds.iter().map(|&k| (k, None)).collect())
+        .register();
+}
+
+/// The same for an INSTANCE row. Called for every name in `BY_OWNER`, which is
+/// where the kinds live.
+fn instance_method_signature(id: ClassId, name: &str, kinds: &[crate::method_meta::ParamKind]) {
+    crate::method_meta::MethodMeta::instance(id.0, name)
         .with_params(kinds.iter().map(|&k| (k, None)).collect())
         .register();
 }

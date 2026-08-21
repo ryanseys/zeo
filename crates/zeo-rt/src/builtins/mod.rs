@@ -101,6 +101,12 @@ pub(crate) mod yielder;
 pub type BuiltinMethodFn =
     fn(&RubyValue, &[RubyValue], Option<RubyValue>) -> Result<RubyValue, Signal>;
 
+/// One native row's `Method#parameters` answer, as the `params "..."` DSL
+/// spelling was parsed into it. `&'static` throughout: the whole descriptor is
+/// baked by the proc-macro, so reporting one allocates nothing but the Ruby
+/// Array the caller sees.
+pub type ParamRows = &'static [(crate::method_meta::ParamKind, Option<&'static str>)];
+
 /// One method surface (instance OR class): the same drift-free set every
 /// `ruby_class!`/`ruby_module!` table derives from a single row set.
 ///
@@ -114,6 +120,10 @@ pub struct MethodTable {
     pub lookup: fn(&str) -> Option<BuiltinMethodFn>,
     pub names: fn() -> &'static [&'static str],
     pub arity: fn(&str) -> Option<i64>,
+    /// The spelled signature, for a row that carries one. `None` -- the
+    /// default -- leaves `Method#parameters` with the anonymous descriptor
+    /// derived from `arity`, which names no parameter.
+    pub params: fn(&str) -> Option<ParamRows>,
     /// CRuby-private: reachable through implicit self/`send`/`super`, but
     /// invisible to `respond_to?` and to reflection. `false` for all but the
     /// `module_function` instance copies today.
@@ -269,6 +279,20 @@ pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> 
         zeo_abi::DATETIME_CLASS => crate::ext::date::lookup_arity,
         _ => return None,
     })
+}
+
+/// `class_arity_table`'s parameter twin: ClassId -> the instance-method
+/// signature table (`<lookup>_params`). Answers `None` for a class with no
+/// registered table AND for a name in one that spells no signature -- both mean
+/// "fall back to the anonymous descriptor", which is what nearly every row
+/// still does.
+pub(crate) fn class_params_table(id: ClassId) -> Option<fn(&str) -> Option<ParamRows>> {
+    Some(side_of(id, Side::Instance)?.params)
+}
+
+/// `class_params_table`'s CLASS-METHOD counterpart.
+pub(crate) fn class_method_params_table(id: ClassId) -> Option<fn(&str) -> Option<ParamRows>> {
+    Some(side_of(id, Side::Class)?.params)
 }
 
 /// The static ClassId -> CLASS-METHOD table map -- `class_table`'s

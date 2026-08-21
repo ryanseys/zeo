@@ -69,7 +69,8 @@ ruby_module! {
     const OPTS = RubyValue::Array(crate::array_new(Vec::new()));
     const INTERNAL_CONSTANTS = empty_hash();
 
-    def self."start" | "compact" arity 0 (_recv, *_args, &_block) {
+    def self."start" params "full_mark: true, immediate_mark: true, immediate_sweep: true"
+        | "compact" arity 0 (_recv, *_args, &_block) {
         // No tracing collector to drive, but this is the honest moment to run
         // finalizers for objects whose last strong reference has dropped.
         COUNT.fetch_add(1, Ordering::Relaxed);
