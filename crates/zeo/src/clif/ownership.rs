@@ -296,6 +296,8 @@ pub(crate) fn truthy(fx: &mut Fx, op: Operand) -> ir::Value {
                 TagInfo::Known(t) if t != ValueTag::Nil as u8 && t != ValueTag::Bool as u8 => {
                     fx.b.ins().iconst(types::I8, 1)
                 }
+                // A Class immediate is truthy like any other non-nil.
+                TagInfo::Class(_) => fx.b.ins().iconst(types::I8, 1),
                 TagInfo::Known(_) | TagInfo::Unknown => fx
                     .call("zeo_rt_truthy", &[addr])
                     .expect("truthy returns i8"),

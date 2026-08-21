@@ -2139,7 +2139,7 @@ pub(crate) fn class_immediate(fx: &mut Fx, cid: crate::compiler::ClassId) -> Ope
     Operand::Slot {
         ss,
         owned: false,
-        tag: TagInfo::Known(ValueTag::Class as u8),
+        tag: TagInfo::Class(cid.0),
     }
 }
 

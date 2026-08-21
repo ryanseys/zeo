@@ -20,6 +20,13 @@ pub const SYMS: &str = "zeo_syms";
 /// `OnceLock` is not valid zero bytes, so the slots cannot be left as they
 /// come out of `.bss`).
 pub const CALLSITES: &str = "zeo_callsites";
+
+/// The `.bss` array of class-method caches -- one `ClassMethodSite` slot per
+/// send whose RECEIVER is a Class immediate the emitter resolved.
+/// `send_value_cached` rules a Class receiver out on purpose (its methods
+/// resolve through a singleton-chain arm of its own), so `Foo.new` needs
+/// this second array or it walks the chain on every call.
+pub const CM_SITES: &str = "zeo_cm_sites";
 /// Startup initialization: interns the symbol table (and, later, the
 /// `.bss` site slots).
 pub const UNIT_INIT: &str = "zeo_unit_init";

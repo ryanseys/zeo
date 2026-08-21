@@ -20,6 +20,7 @@ zeo_rt_cell_release ([Ptr]) -> None
 zeo_rt_cell_store ([Ptr, Ptr]) -> None
 zeo_rt_check_ints ([]) -> Some(I32)
 zeo_rt_class_of ([Ptr]) -> Some(U32)
+zeo_rt_classmethod_site_init ([Ptr]) -> None
 zeo_rt_complex_lit ([Ptr, Ptr]) -> None
 zeo_rt_conceal_class ([U32]) -> None
 zeo_rt_conditional_class_ref ([U32, Ptr, Usize, U32, Ptr]) -> Some(I32)
@@ -146,6 +147,7 @@ zeo_rt_scope_const_defined ([Ptr, Ptr, Usize]) -> Some(I8)
 zeo_rt_scope_const_get ([Ptr, Ptr, Usize, Ptr]) -> Some(I32)
 zeo_rt_scope_const_get_or_nil ([Ptr, Ptr, Usize, Ptr]) -> Some(I32)
 zeo_rt_scope_const_set ([Ptr, Ptr, Usize, Ptr, Ptr]) -> Some(I32)
+zeo_rt_send_class_cached ([Ptr, U32, Ptr, U32, Ptr, Usize, Ptr, U32, Ptr]) -> Some(I32)
 zeo_rt_send_super_class_from_args ([U32, U32, U32, Ptr, U8, Ptr, Ptr, Ptr]) -> Some(I32)
 zeo_rt_send_super_dynamic_args ([Ptr, Ptr, U8, Ptr, Ptr, Ptr]) -> Some(I32)
 zeo_rt_send_super_from_args ([Ptr, U32, U32, Ptr, U8, Ptr, Ptr, Ptr]) -> Some(I32)

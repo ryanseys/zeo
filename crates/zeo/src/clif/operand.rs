@@ -8,6 +8,10 @@ use zeo_abi::abi::ValueTag;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum TagInfo {
     Known(u8),
+    /// A `Class` immediate whose id the emitter also knows -- what lets a
+    /// class-method send take its own inline cache, which is keyed by the
+    /// receiver class rather than by the receiver's class.
+    Class(u32),
     Unknown,
 }
 
@@ -17,6 +21,8 @@ impl TagInfo {
     pub fn heap(self) -> Option<bool> {
         match self {
             TagInfo::Known(t) => Some(t >= zeo_abi::abi::FIRST_HEAP_TAG),
+            // A `Class` is an immediate.
+            TagInfo::Class(_) => Some(false),
             TagInfo::Unknown => None,
         }
     }
@@ -55,6 +61,15 @@ impl Operand {
             Operand::Float(_) => TagInfo::Known(ValueTag::Float as u8),
             Operand::Bool(_) => TagInfo::Known(ValueTag::Bool as u8),
             Operand::Slot { tag, .. } | Operand::Ptr { tag, .. } => *tag,
+        }
+    }
+
+    /// The class this operand REFERS to, when it is a `Class` immediate the
+    /// emitter resolved -- not the class OF the operand.
+    pub fn class_id(&self) -> Option<u32> {
+        match self.tag() {
+            TagInfo::Class(cid) => Some(cid),
+            TagInfo::Known(_) | TagInfo::Unknown => None,
         }
     }
 

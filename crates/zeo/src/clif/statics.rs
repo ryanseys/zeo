@@ -70,11 +70,22 @@ pub(crate) fn define_callsites(em: &mut Emitter) -> Result<(), String> {
         .map_err(|e| format!("defining {}: {e}", names::CALLSITES))
 }
 
+/// Define the `zeo_cm_sites` array -- the class-method caches. Same
+/// zero-bytes-are-not-a-slot rule as [`define_callsites`].
+pub(crate) fn define_cm_sites(em: &mut Emitter) -> Result<(), String> {
+    let mut data = DataDescription::new();
+    data.define_zeroinit(em.cm_sites.max(1) * abi::CLASSMETHOD_SITE_SIZE);
+    data.set_align(8);
+    em.module
+        .define_data(em.cm_sites_id, &data)
+        .map_err(|e| format!("defining {}: {e}", names::CM_SITES))
+}
+
 /// `zeo_unit_init`: intern every symbol name into `zeo_syms`, then hand
-/// every `zeo_callsites` slot its caller class. `None` when the program
-/// has neither.
+/// every `zeo_callsites` slot its caller class and initialise every
+/// `zeo_cm_sites` slot. `None` when the program has none of the three.
 pub(crate) fn define_unit_init(em: &mut Emitter) -> Result<Option<FuncId>, String> {
-    if em.syms.is_empty() && em.callsites.is_empty() {
+    if em.syms.is_empty() && em.callsites.is_empty() && em.cm_sites == 0 {
         return Ok(None);
     }
     let sig = em.module.make_signature();
@@ -95,6 +106,8 @@ pub(crate) fn define_unit_init(em: &mut Emitter) -> Result<Option<FuncId>, Strin
 
     let f_site_init = em.import("zeo_rt_callsite_init");
     let callers: Vec<u32> = em.callsites.clone();
+    let f_cm_init = em.import("zeo_rt_classmethod_site_init");
+    let n_cm = em.cm_sites;
 
     let mut func = ir::Function::with_name_signature(UserFuncName::user(0, 2), sig);
     let intern = em.module.declare_func_in_func(f_intern, &mut func);
@@ -102,6 +115,8 @@ pub(crate) fn define_unit_init(em: &mut Emitter) -> Result<Option<FuncId>, Strin
     let rodata_gv = em.module.declare_data_in_func(em.rodata_id, &mut func);
     let syms_gv = em.module.declare_data_in_func(em.syms_id, &mut func);
     let sites_gv = em.module.declare_data_in_func(em.callsites_id, &mut func);
+    let cm_gv = em.module.declare_data_in_func(em.cm_sites_id, &mut func);
+    let cm_init = em.module.declare_func_in_func(f_cm_init, &mut func);
     let cfg = em.module.target_config();
     let mut fbc = FunctionBuilderContext::new();
     let mut b = FunctionBuilder::new(&mut func, &mut fbc);
@@ -132,6 +147,18 @@ pub(crate) fn define_unit_init(em: &mut Emitter) -> Result<Option<FuncId>, Strin
             };
             let caller_v = b.ins().iconst(ir::types::I32, i64::from(caller));
             b.ins().call(site_init, &[slot, caller_v]);
+        }
+    }
+    if n_cm > 0 {
+        let cm = b.ins().symbol_value(em.ptr, cm_gv);
+        for i in 0..n_cm {
+            let off = (i * abi::CLASSMETHOD_SITE_SIZE) as i64;
+            let slot = if off == 0 {
+                cm
+            } else {
+                b.ins().iadd_imm_u(cm, off)
+            };
+            b.ins().call(cm_init, &[slot]);
         }
     }
     b.ins().return_(&[]);

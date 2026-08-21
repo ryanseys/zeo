@@ -196,8 +196,17 @@ pub fn send_value_cached(
 /// The caller class is cached alongside, so a shared body -- whose caller
 /// varies per call -- misses instead of skipping a visibility question that
 /// was answered for somebody else.
+/// A site whose flat probe MISSES remembers that too. `Foo.new` on a
+/// compiled class is the shape that forced it: `new` is served by the
+/// class's constructor rather than by a class-method row, so the probe
+/// never hits, and an unfillable site otherwise re-ran the visibility
+/// barrier and the failed probe on every single call -- strictly more work
+/// than the uncached route it was meant to replace. A remembered miss goes
+/// straight to [`send_value_in`], which is LESS work than the uncached
+/// route: the barrier was answered when the site filled, and its answer is
+/// a function of the same `(receiver class, name, caller)` the key is.
 pub struct ClassMethodSite {
-    hit: std::sync::OnceLock<(u32, ValueImpl, Option<&'static str>)>,
+    hit: std::sync::OnceLock<(u32, Option<(ValueImpl, Option<&'static str>)>)>,
 }
 
 impl Default for ClassMethodSite {
@@ -243,10 +252,15 @@ pub fn send_class_cached(
         && !crate::runtime_meta::gates_moved(gates)
         && matches!(recv, RubyValue::Class(c) if c.0 == cid)
     {
-        if let Some((cached_caller, f, label)) = site.hit.get() {
+        if let Some((cached_caller, target)) = site.hit.get() {
             if *cached_caller == caller_class {
-                note_dispatch_gated(gates, name);
-                return with_c_frame(*label, || f.call(recv, args, block));
+                return match target {
+                    Some((f, label)) => {
+                        note_dispatch_gated(gates, name);
+                        with_c_frame(*label, || f.call(recv, args, block))
+                    }
+                    None => send_value_in(0, recv, name, args, block),
+                };
             }
         } else {
             // Vetted BEFORE it fills, exactly as `send_value_cached` does, so
@@ -254,14 +268,17 @@ pub fn send_class_cached(
             if let Some(reason) = explicit_call_barrier(recv, name, caller_class) {
                 return Err(raise_method_missing(recv, &name.to_string(), args, reason));
             }
-            if let Some((f, label)) = REGISTRY
+            let target = REGISTRY
                 .get()
-                .and_then(|r| r.flat_class_hit(ClassId(cid), name))
-            {
-                note_dispatch_gated(gates, name);
-                let _ = site.hit.set((caller_class, f, label));
-                return with_c_frame(label, || f.call(recv, args, block));
-            }
+                .and_then(|r| r.flat_class_hit(ClassId(cid), name));
+            let _ = site.hit.set((caller_class, target));
+            return match target {
+                Some((f, label)) => {
+                    note_dispatch_gated(gates, name);
+                    with_c_frame(label, || f.call(recv, args, block))
+                }
+                None => send_value_in(0, recv, name, args, block),
+            };
         }
     }
     send_value_explicit_in(0, recv, name, args, block, caller_class)

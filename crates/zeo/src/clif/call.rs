@@ -509,12 +509,13 @@ pub(crate) fn dynamic_send_value(
     args: &[ArrayElem],
     bypass: bool,
 ) -> Result<Operand, String> {
+    let recv_class = recv_op.class_id();
     let recv_ptr = ownership::borrow_ptr(fx, &recv_op);
     if recv_op.owned() {
         ownership::pool_owned(fx, recv_ptr, recv_op.tag());
     }
     let argv_ptr = build_argv(fx, site, args)?;
-    dynamic_send_argv(fx, recv_ptr, name, argv_ptr, args.len(), bypass)
+    dynamic_send_argv(fx, recv_ptr, recv_class, name, argv_ptr, args.len(), bypass)
 }
 
 /// [`dynamic_send_value`] over an ALREADY-BUILT argv -- what a runtime
@@ -527,16 +528,22 @@ pub(crate) fn dynamic_send_ptr(
     argv_ptr: cranelift_codegen::ir::Value,
     argc: usize,
 ) -> Result<Operand, String> {
+    let recv_class = recv_op.class_id();
     let recv_ptr = ownership::borrow_ptr(fx, &recv_op);
     if recv_op.owned() {
         ownership::pool_owned(fx, recv_ptr, recv_op.tag());
     }
-    dynamic_send_argv(fx, recv_ptr, name, argv_ptr, argc, false)
+    dynamic_send_argv(fx, recv_ptr, recv_class, name, argv_ptr, argc, false)
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one send's own shape: receiver, its static class, name, argv, arity, barrier"
+)]
 fn dynamic_send_argv(
     fx: &mut Fx,
     recv_ptr: cranelift_codegen::ir::Value,
+    recv_class: Option<u32>,
     name: &str,
     argv_ptr: cranelift_codegen::ir::Value,
     argc: usize,
@@ -552,15 +559,39 @@ fn dynamic_send_argv(
     // against once, so only a statically known caller can cache. A body
     // whose `self` only the run time knows asks `self` per call
     // (`Caller::Runtime`) and keeps the uncached entry.
-    let status = match static_caller(fx, bypass) {
-        Some(caller) => {
+    let caller = static_caller(fx, bypass);
+    // A CLASS receiver never fills the value cache -- `send_value_cached`
+    // rules it out on purpose, since a class value's methods resolve
+    // through a singleton-chain arm of its own -- so `Foo.new` walks that
+    // chain on every call unless it gets the class-method cache instead.
+    // The emitted `cid` is compared against the receiver at run time, so a
+    // constant reassigned since is a MISS, never a wrong answer.
+    // `send_class_cached` falls back through box 0, so a boxed body keeps
+    // the ordinary route.
+    let class_cached = match (recv_class, caller) {
+        (Some(cid), Some(caller)) if fx.box_id == 0 => Some((cid, caller)),
+        _ => None,
+    };
+    let status = match (class_cached, caller) {
+        (Some((cid, caller)), _) => {
+            let site = fx.cm_site_ptr();
+            let cid_v = fx.b.ins().iconst(types::I32, i64::from(cid));
+            let caller_v = fx.b.ins().iconst(types::I32, i64::from(caller));
+            fx.call(
+                "zeo_rt_send_class_cached",
+                &[
+                    site, cid_v, recv_ptr, sym, argv_ptr, argc_v, null, caller_v, out,
+                ],
+            )
+        }
+        (None, Some(caller)) => {
             let cache = fx.callsite_ptr(caller);
             fx.call(
                 "zeo_rt_send_value_cached",
                 &[cache, zero_box, recv_ptr, sym, argv_ptr, argc_v, null, out],
             )
         }
-        None => {
+        (None, None) => {
             let caller = caller_class(fx, bypass);
             fx.call(
                 "zeo_rt_send_value_explicit_in",

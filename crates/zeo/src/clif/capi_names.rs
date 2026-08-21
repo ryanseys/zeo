@@ -128,6 +128,11 @@ pub const CAPI: &[CapiSig] = &[
         ret: Some(U32),
     },
     CapiSig {
+        name: "zeo_rt_classmethod_site_init",
+        params: &[Ptr],
+        ret: None,
+    },
+    CapiSig {
         name: "zeo_rt_complex_lit",
         params: &[Ptr, Ptr],
         ret: None,
@@ -757,6 +762,11 @@ pub const CAPI: &[CapiSig] = &[
     CapiSig {
         name: "zeo_rt_scope_const_set",
         params: &[Ptr, Ptr, Usize, Ptr, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
+        name: "zeo_rt_send_class_cached",
+        params: &[Ptr, U32, Ptr, U32, Ptr, Usize, Ptr, U32, Ptr],
         ret: Some(I32),
     },
     CapiSig {

@@ -490,6 +490,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
     let unit_init = statics::define_unit_init(em)?;
     statics::define_syms(em)?;
     statics::define_callsites(em)?;
+    statics::define_cm_sites(em)?;
     let mut vm_rows: Vec<statics::VmRowSpec> = defs
         .iter()
         .map(|d| statics::VmRowSpec {
@@ -848,6 +849,10 @@ pub(crate) struct Emitter {
     /// is vetted against (`u32::MAX` = ruby's FCALL, no visibility
     /// question). The index IS the slot index.
     pub callsites: Vec<u32>,
+    pub cm_sites_id: DataId,
+    /// How many class-method cache slots the program needs; the index IS
+    /// the slot index, and a slot carries no per-site constant.
+    pub cm_sites: usize,
     pub syms: statics::SymPool,
     rodata: Vec<u8>,
     rodata_offsets: HashMap<Vec<u8>, u32>,
@@ -956,6 +961,9 @@ impl Emitter {
         let callsites_id = module
             .declare_data(names::CALLSITES, Linkage::Local, true, false)
             .map_err(|e| format!("declaring {}: {e}", names::CALLSITES))?;
+        let cm_sites_id = module
+            .declare_data(names::CM_SITES, Linkage::Local, true, false)
+            .map_err(|e| format!("declaring {}: {e}", names::CM_SITES))?;
         Ok(Emitter {
             module,
             ptr,
@@ -963,6 +971,8 @@ impl Emitter {
             syms_id,
             callsites_id,
             callsites: Vec::new(),
+            cm_sites_id,
+            cm_sites: 0,
             syms: statics::SymPool::default(),
             rodata: Vec::new(),
             rodata_offsets: HashMap::new(),
