@@ -1758,6 +1758,13 @@ fn inline_accessor(
 }
 
 pub(crate) fn resolve_class_here(fx: &Fx, name: &str) -> Option<crate::compiler::ClassId> {
+    // A snippet under a run-time cref may see a constant that shadows the
+    // one this (fresh) compiler would fold to, and the compiler cannot
+    // know: the class was minted by a compile that is already over. So the
+    // fold stands down and every name takes the run-time walk.
+    if fx.eval_cref.is_some() {
+        return None;
+    }
     fx.an
         .compiler
         .resolve_class(name, cref_chain(fx), fx.box_id)
@@ -1867,6 +1874,17 @@ pub(crate) fn const_read(fx: &mut Fx, id: NodeId, name: &str) -> Result<Operand,
         lexical_class(fx).unwrap_or(top)
     };
     let compiler = &fx.an.compiler;
+    // A run-time cref answers the whole question: its own table, then the
+    // top. There is no claim map to consult and no lexical parent to walk
+    // -- CRuby's string `*_eval` has one cref and no nesting either.
+    if let Some(cref) = fx.eval_cref.clone() {
+        let chain = match cref.0 {
+            Some(cid) if cid != top.0 => vec![cid, top.0],
+            _ => vec![top.0],
+        };
+        let qualified = format!("{}::{name}", cref.1);
+        return const_cref_call(fx, &chain, name, &qualified, false);
+    }
     let owner = compiler
         .class(defining)
         .const_owners
@@ -1896,12 +1914,24 @@ pub(crate) fn const_read(fx: &mut Fx, id: NodeId, name: &str) -> Result<Operand,
     } else {
         format!("{}::{name}", compiler.fq_name(defining))
     };
+    const_cref_call(fx, &chain, name, &qualified, hook)
+}
+
+/// The cref walk itself: ids in `.rodata`, the name, and the qualified
+/// spelling the NameError carries on a miss.
+fn const_cref_call(
+    fx: &mut Fx,
+    chain: &[u32],
+    name: &str,
+    qualified: &str,
+    hook: bool,
+) -> Result<Operand, String> {
     let bytes: Vec<u8> = chain.iter().flat_map(|c| c.to_le_bytes()).collect();
     let ids_off = fx.em.intern_rodata_aligned(&bytes, 4);
     let ids_ptr = fx.rod(ids_off);
     let n_ids = fx.b.ins().iconst(fx.em.ptr, chain.len() as i64);
     let (nptr, nlen) = rodata_name(fx, name);
-    let (qptr, qlen) = rodata_name(fx, &qualified);
+    let (qptr, qlen) = rodata_name(fx, qualified);
     let flags = u8::from(hook) | if fx.box_id == 0 { 0 } else { 2 };
     let hook_v = fx.b.ins().iconst(types::I8, i64::from(flags));
     let ss = fx.temp_slot();
@@ -3844,6 +3874,32 @@ fn runtime_def(
     let sym = fx.sym_id(name);
     let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
 
+    // A `def` inside a run-time `eval` installs where CRuby installs it,
+    // and only the run time knows: the receiver decides, and one compiled
+    // snippet may be evaluated against many. `def self.x` keeps the
+    // singleton send below -- it names its own receiver.
+    if let Some(mode) = fx.eval_mode
+        && is_def
+        && !is_class_method
+    {
+        let mode_v = fx.b.ins().iconst(types::I8, i64::from(mode));
+        let out_ss = fx.temp_slot();
+        let out = fx.slot_addr(out_ss, 0);
+        let status = fx
+            .call(
+                "zeo_rt_eval_define",
+                &[mode_v, self_ptr, sym, proc_addr, out],
+            )
+            .expect("eval_define returns a status");
+        fx.owned_consumed += 1;
+        fx.fallible(status);
+        fx.owned_created += 1;
+        return Ok(Operand::Slot {
+            ss: out_ss,
+            owned: true,
+            tag: TagInfo::Known(ValueTag::Symbol as u8),
+        });
+    }
     if is_class_method || !is_def {
         // Both are ordinary sends to `self`; the proc MOVES into the args.
         let verb = if is_class_method {

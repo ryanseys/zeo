@@ -2509,6 +2509,42 @@ pub fn define_in_default_definee(
 /// emitter stamps that mark itself, at sites where the definee is a
 /// compile-time fact; the CLIF emitter hands it here, because a `def` in a
 /// `Class.new` body installs on a class only the run time can name.
+/// Install an eval'd `def` -- see `capi::objects::zeo_rt_eval_define`.
+/// `mode` is `eval_vm::EvalMode` as a byte (0 Caller, 1 ClassEval,
+/// 2 InstanceEval).
+pub fn eval_define(
+    mode: u8,
+    slf: &RubyValue,
+    name: Symbol,
+    body: RubyValue,
+) -> Result<RubyValue, Signal> {
+    let (definee, installer) = match (mode, slf) {
+        (2, _) => (slf.clone(), "define_singleton_method"),
+        (_, RubyValue::Class(_)) => (slf.clone(), "define_method"),
+        _ => (RubyValue::Class(slf.class_id()), "define_method"),
+    };
+    let out = send_value(
+        &definee,
+        Symbol::intern(installer),
+        &[RubyValue::Symbol(name), body],
+        None,
+    )?;
+    // Only the TOP level's `def` is private, and the top level is exactly
+    // where `self` is the main object -- a `def` inside an eval in a
+    // method is an ordinary public method of that method's class.
+    if mode == 0
+        && crate::builtins::basic_object::value_identity(slf, &crate::main_object())
+        && let RubyValue::Class(id) = &definee
+    {
+        crate::runtime_meta::runtime_set_visibility(
+            *id,
+            &[RubyValue::Symbol(name)],
+            MethodVisibility::Private,
+        )?;
+    }
+    Ok(out)
+}
+
 pub fn define_in_default_definee_vis(
     cref: &RubyValue,
     slf: &RubyValue,

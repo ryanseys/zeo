@@ -70,7 +70,15 @@ pub(crate) fn lower_counted(
     // in ruby. This splice shares the enclosing scope, where the name was
     // hoisted once, so each iteration resets it -- a conditional first
     // assignment (`x = v if cond`) must not carry into the next.
-    let implicit_locals = params.implicit_block_locals.clone();
+    // ...except in a run-time `eval`, where prism parsed the snippet alone
+    // and marked a name block-local only because it could not see the
+    // CALLER's declaration of it. A name the eval's own scope already
+    // holds came from the Binding, so the caller assigned it first, and
+    // ruby shares it.
+    let mut implicit_locals = params.implicit_block_locals.clone();
+    if fx.eval_mode.is_some() {
+        implicit_locals.retain(|n| !fx.locals.contains_key(n));
+    }
     // `|i; n|`: names the block DECLARES as its own. They shadow any
     // enclosing local of the same name and rebind fresh per iteration,
     // exactly like the implicit ones.

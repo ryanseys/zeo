@@ -62,7 +62,7 @@ struct Compiled {
 /// Keyed by everything the lowering depends on. The cell list is part of
 /// it because the entry loads its locals BY INDEX: the same source under a
 /// Binding with different names is a different function.
-type Key = (String, u32, Vec<String>);
+type Key = (String, u32, Vec<String>, u8, u32);
 
 static CACHE: Mutex<Option<HashMap<Key, &'static Compiled>>> = Mutex::new(None);
 
@@ -71,7 +71,13 @@ fn compiled_for(req: &EvalRequest<'_>) -> Result<&'static Compiled, String> {
     // READS one of them arrives as a vcall (prism parsed it alone), so the
     // cell has to exist whether or not the source assigns it.
     let scope_names = req.binding.map(|b| b.local_names()).unwrap_or_default();
-    let key: Key = (req.src.to_string(), req.box_id, scope_names.clone());
+    let key: Key = (
+        req.src.to_string(),
+        req.box_id,
+        scope_names.clone(),
+        mode_byte(req.mode),
+        zeo_rt::eval::cref_of(req).0.map_or(u32::MAX, |c| c.0),
+    );
     if let Some(&c) = CACHE
         .lock()
         .expect("the eval cache is never poisoned")
@@ -89,22 +95,30 @@ fn compiled_for(req: &EvalRequest<'_>) -> Result<&'static Compiled, String> {
     Ok(compiled)
 }
 
+/// `EvalMode` as the byte the emitter and `zeo_rt_eval_define` speak.
+fn mode_byte(mode: zeo_rt::eval::EvalMode) -> u8 {
+    match mode {
+        zeo_rt::eval::EvalMode::Caller => 0,
+        zeo_rt::eval::EvalMode::ClassEval => 1,
+        zeo_rt::eval::EvalMode::InstanceEval => 2,
+    }
+}
+
 fn build(req: &EvalRequest<'_>, scope_names: &[String]) -> Result<Compiled, String> {
-    if req.mode != zeo_rt::eval::EvalMode::Caller {
-        return Err("only a plain `Kernel#eval` compiles yet".to_string());
-    }
-    // A Binding captured inside a class or module carries that cref, and
-    // every constant the source reads resolves against it -- knowledge the
-    // fresh compiler below does not have, because the class was minted by
-    // a compile that is already over. `Object` is the exception, and the
-    // common case: its chain IS the top level, which is what a snippet
-    // compiled with no cref at all already searches.
-    if req
-        .binding
-        .is_some_and(|b| b.cref.is_some_and(|c| c != zeo_abi::OBJECT_CLASS))
-    {
-        return Err("the caller's cref is a run-time class".to_string());
-    }
+    // The cref is a RUN-TIME class, so it travels as its id: the fresh
+    // compiler below has no entry for it, and every static fold stands
+    // down for that reason (`Fx::eval_cref`). `Object` needs none of it --
+    // its table IS the top level, which a snippet already searches.
+    let cref = match zeo_rt::eval::cref_of(req) {
+        (Some(cid), _) if cid == zeo_abi::OBJECT_CLASS => None,
+        (Some(cid), Some(name)) => Some(std::rc::Rc::new((Some(cid.0), name))),
+        (Some(_), None) => return Err("the cref is a class with no name".to_string()),
+        // No cref, but a NAME: `instance_eval` on a class resolves in its
+        // SINGLETON, which owns no constants -- the miss is the answer,
+        // and CRuby spells the miss `#<Class:X>::NAME`.
+        (None, Some(name)) => Some(std::rc::Rc::new((None, name))),
+        (None, None) => None,
+    };
     // `__FILE__` and every frame the snippet raises from name the file the
     // CALLER gave (`(eval at f.rb:14)` when it gave none) and count from
     // the line it gave, so the snippet is lowered under both.
@@ -137,6 +151,8 @@ fn build(req: &EvalRequest<'_>, scope_names: &[String]) -> Result<Compiled, Stri
         cells: &cells,
         box_id: req.box_id,
         label: req.label,
+        cref,
+        mode: mode_byte(req.mode),
     };
     let program = crate::clif::eval::compile(&analyzed, &spec)?;
     if let Some(init) = program.unit_init {

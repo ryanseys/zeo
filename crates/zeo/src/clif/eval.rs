@@ -38,6 +38,11 @@ pub struct EvalSpec<'a> {
     /// The enclosing frame's label -- what a block written in the snippet
     /// names itself after.
     pub label: &'a str,
+    /// The class the source resolves constants against, when it is one
+    /// only the run time knows -- see `Fx::eval_cref`.
+    pub cref: Option<std::rc::Rc<(Option<u32>, String)>>,
+    /// Which surface invoked the eval (`eval_vm::EvalMode` as a byte).
+    pub mode: u8,
 }
 
 /// A JITted snippet. The module owns the code, so it must outlive every
@@ -127,6 +132,8 @@ fn define_entry(
     // caller's locals could only arrive as a vcall -- ruby reads it as the
     // local, and the cells below are its storage.
     fx.in_eval_splice = true;
+    fx.eval_cref = spec.cref.clone();
+    fx.eval_mode = Some(spec.mode);
 
     // The caller's cells first: unowned (the caller holds the reference
     // and drops it when the call returns).

@@ -638,6 +638,32 @@ pub unsafe extern "C" fn zeo_rt_define_in_default_definee(
     )
 }
 
+/// A `def` written inside a run-time `eval`, installed where CRuby installs
+/// it -- the `mode` byte is `eval_vm::EvalMode`, and the rule is the
+/// interpreter's own `initial_definee`: `instance_eval` installs on the
+/// receiver's SINGLETON, `class_eval` on the receiver (a Class), and a
+/// plain `Kernel#eval` on the receiver's class -- privately when that
+/// receiver is `main`, which is the whole of what makes a top-level `def`
+/// private.
+///
+/// The definee cannot be a compile-time constant the way a program's is:
+/// one snippet is compiled once and may be evaluated against any number
+/// of receivers.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_eval_define(
+    mode: u8,
+    slf: *const RubyValue,
+    name: u32,
+    body: *mut RubyValue,
+    out: *mut RubyValue,
+) -> i32 {
+    let body = unsafe { body.read() };
+    super::leakcheck::consumed(&body);
+    let slf = unsafe { &*slf };
+    let name = crate::Symbol::from_u32(name);
+    super::dispatch::status_out(crate::dispatch::eval_define(mode, slf, name, body), out)
+}
+
 /// The visibility a runtime-installed `def` carries from its class body's
 /// running default (`private`/`protected` mode), and the one a REOPEN's
 /// `private :m` applies at its document position. Verb 0 = private, 1 =

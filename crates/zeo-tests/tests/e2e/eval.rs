@@ -155,6 +155,67 @@ fn an_evaled_def_binds_the_whole_parameter_surface() {
 }
 
 #[test]
+fn instance_eval_binds_the_receiver_and_its_singleton() {
+    agree(
+        r#"
+        obj = Object.new
+        obj.instance_variable_set(:@v, 3)
+        read = "@v * 2"
+        p obj.instance_eval(read)
+        defn = "def dbl; @v * 4; end"
+        obj.instance_eval(defn)
+        p obj.dbl
+        "#,
+        "6\n12\n",
+    );
+}
+
+#[test]
+fn class_eval_resolves_constants_in_the_receiver() {
+    // The receiver is a class only the RUN TIME knows -- the snippet's own
+    // compiler has no entry for it, so its id travels as an immediate and
+    // every static fold stands down. The `def`'s body inherits the same
+    // cref, which is what makes `def tell = SECRET` find `Host::SECRET`.
+    agree(
+        r#"
+        class Host
+          SECRET = :host_secret
+        end
+        reader = "SECRET"
+        p Host.class_eval(reader)
+        defn = "def tell = SECRET"
+        Host.class_eval(defn)
+        p Host.new.tell
+        p Host.private_instance_methods(false)
+        "#,
+        ":host_secret\n:host_secret\n[]\n",
+    );
+}
+
+#[test]
+fn a_block_in_the_source_writes_the_callers_local() {
+    // prism parsed the snippet alone, so it marked `total` a block-local:
+    // it could not see the caller's declaration. The name the eval's own
+    // scope holds came from the Binding, so the caller assigned it first
+    // and ruby shares it -- both the capture and the per-invocation nil
+    // fill have to agree about that. A third shape the eval VM never
+    // covered (a block with a parameter inside an eval), so the compiler
+    // is held to CRuby alone.
+    let source = r#"
+        total = 5
+        src = "[1,2].each { |x| total += x }; total"
+        p eval(src)
+        p total
+        "#;
+    let run = compiled(source);
+    assert_eq!(run.stdout, "8\n8\n", "stderr: {}", run.stderr);
+    assert!(
+        interpreted(source).stderr.contains("NotImplementedError"),
+        "the eval VM was expected to decline this shape"
+    );
+}
+
+#[test]
 fn a_shape_the_compiler_declines_still_runs() {
     // A `class` in the source mints a run-time class, which this compiler
     // does not lower yet -- the interpreter answers it, and the program

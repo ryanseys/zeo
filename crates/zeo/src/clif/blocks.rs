@@ -88,10 +88,29 @@ fn captured_names(
                 .collect(),
             false => std::collections::BTreeSet::default(),
         };
+    // Inside a run-time `eval` the enclosing scope's locals are the
+    // CALLER's, and they exist in no HIR the capture analysis can see --
+    // prism parsed the snippet alone, so a name the block assigns looks
+    // block-local to it and the block would get an `n` of its own where
+    // ruby shares the caller's. Every local the snippet's own scope holds
+    // is a caller cell (that is what makes it a cell), so a name the body
+    // MENTIONS and the scope holds is shared, which is ruby's rule with
+    // the outer assignment supplied by the Binding instead of the source.
+    let eval_reach: std::collections::BTreeSet<String> = match fx.eval_mode {
+        Some(_) => {
+            let own = params.bound_names();
+            let mut seen = std::collections::BTreeSet::new();
+            mentioned_names(&fx.an.compiler.hir, body, &mut seen);
+            seen.retain(|n| !own.contains(n));
+            seen
+        }
+        None => std::collections::BTreeSet::default(),
+    };
     let mut names: Vec<String> = caps
         .locals
         .union(&zsuper_params)
         .chain(binding_reach.iter())
+        .chain(eval_reach.iter())
         .filter(|n| fx.locals.contains_key(n.as_str()))
         .cloned()
         .collect();
@@ -113,6 +132,39 @@ fn captured_names(
     // slot is one it found unshared, and the block declares its own.
     names.retain(|n| matches!(fx.locals.get(n), Some(Local::Cell { .. })));
     Ok(names)
+}
+
+/// Every local NAME a body mentions -- read, written, or spelled as the
+/// bare vcall prism makes of a name it cannot see a declaration for.
+fn mentioned_names(
+    hir: &crate::hir::Hir,
+    body: &[NodeId],
+    out: &mut std::collections::BTreeSet<String>,
+) {
+    let mut stack: Vec<NodeId> = body.to_vec();
+    while let Some(id) = stack.pop() {
+        hir[id].for_each_child(&mut |c| stack.push(c));
+        match &hir[id] {
+            crate::hir::HirNode::LocalRead(name) => {
+                out.insert(name.clone());
+            }
+            crate::hir::HirNode::LocalWrite(name, _) => {
+                out.insert(name.clone());
+            }
+            crate::hir::HirNode::Call {
+                receiver: None,
+                name,
+                args,
+                kwargs,
+                block,
+                block_arg,
+                ..
+            } if args.is_empty() && kwargs.is_empty() && block.is_none() && block_arg.is_none() => {
+                out.insert(name.clone());
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Build the block's `RProc` into a fresh slot; the caller passes it as
@@ -518,6 +570,13 @@ fn define_block_fn(
     // name-keyed -- and a block written in one of its methods reads the same
     // storage (`@items` inside `synchronize { }` answered nil).
     let dyn_ivars = fx.dyn_ivars;
+    // A body written inside a run-time `eval` keeps the snippet's own
+    // scope facts: the constants it reads resolve against the eval's cref
+    // (`class_eval("def m = HOST_C")` reads the CLASS's constant), a `def`
+    // it contains installs the way the eval's own would, and a bare name
+    // that is one of the caller's locals is still that local.
+    let (eval_cref, eval_mode, in_eval_splice) =
+        (fx.eval_cref.clone(), fx.eval_mode, fx.in_eval_splice);
     // A `super` written inside a block targets the ENCLOSING method (ruby:
     // blocks have no `super` of their own), so the block fn carries that
     // method's identity -- its defining class, name and parameter list.
@@ -597,6 +656,9 @@ fn define_block_fn(
             ) = enclosing;
         }
     }
+    bfx.eval_cref = eval_cref;
+    bfx.eval_mode = eval_mode;
+    bfx.in_eval_splice = in_eval_splice;
     bfx.frame_label = base;
     bfx.block_depth = depth;
     // A re-homed block (`recv.instance_eval { }`) runs under a `self` only
@@ -858,12 +920,19 @@ fn define_block_fn(
         super::stmt::lower_multi_group(&mut bfx, *read, group, ptr)?;
     }
     // Block-locals (and implicit ones): fresh nil EVERY invocation --
-    // and every `redo` iteration (they sit inside the loop).
+    // and every `redo` iteration (they sit inside the loop). A CAPTURED
+    // name is not one of them: inside a run-time `eval` prism marked a
+    // name block-local only because it could not see the caller's
+    // declaration, and nil-filling the shared cell would erase the value
+    // the block was supposed to add to.
     for name in params
         .block_locals
         .iter()
         .chain(&params.implicit_block_locals)
     {
+        if captured.contains(name) {
+            continue;
+        }
         ownership::write_local(&mut bfx, name, &Operand::Nil);
     }
     // `&b`: nil when the block was called blockless, else the call-site

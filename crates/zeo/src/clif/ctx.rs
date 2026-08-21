@@ -116,6 +116,17 @@ pub(crate) struct Fx<'e, 'f> {
     /// enclosing scope's locals could only arrive as a vcall; ruby reads
     /// it as the local (`Ctx::in_eval_splice`).
     pub in_eval_splice: bool,
+    /// Lowering a run-time `eval` snippet whose constants resolve against a
+    /// class only the RUN TIME knows (`zeo::eval`): its id and its name.
+    /// The fresh compiler a snippet is lowered by has no entry for it --
+    /// class ids are the one thing both sides always agreed on, so the id
+    /// travels as an immediate and every static fold stands down.
+    pub eval_cref: Option<std::rc::Rc<(Option<u32>, String)>>,
+    /// Lowering a run-time `eval` snippet: which surface invoked it
+    /// (`eval_vm::EvalMode` as a byte). A `def` inside one installs where
+    /// the RUN TIME says, because one snippet may be evaluated against any
+    /// number of receivers.
+    pub eval_mode: Option<u8>,
     /// The `Ruby::Box` this code runs in (`0` = main). Every dynamic send,
     /// global and constant owner is keyed by it, which is the AOT
     /// translation of CRuby's loading-box context (`Ctx::box_id`).
@@ -217,6 +228,8 @@ impl<'e, 'f> Fx<'e, 'f> {
             define_method_body: false,
             self_is_dynamic: false,
             in_eval_splice: false,
+            eval_cref: None,
+            eval_mode: None,
             box_id: 0,
             method_origin: None,
             ret: None,

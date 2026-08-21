@@ -40,6 +40,32 @@ pub struct EvalRequest<'a> {
     pub binding: Option<&'a RBinding>,
 }
 
+/// The class a snippet resolves its constants against, and the name a
+/// NameError qualifies with -- CRuby's rule, and the interpreter's own
+/// (`eval_vm::imp::eval_string`'s `(cref, cref_name)` pair and
+/// `RBinding::cref`): a Binding names its capture's lexical class;
+/// otherwise only the two `*_eval` string forms on a CLASS have one, and
+/// `instance_eval`'s is the singleton, which owns no constants at all --
+/// so the miss IS the answer, in the `#<Class:X>` spelling.
+///
+/// Both evaluators must read this from ONE place, or the same snippet
+/// resolves `K` differently depending on which one ran it.
+pub fn cref_of(req: &EvalRequest<'_>) -> (Option<zeo_abi::ClassId>, Option<String>) {
+    if let Some(b) = req.binding {
+        return (b.cref, b.cref.and_then(crate::dispatch::class_name));
+    }
+    match (req.mode, &req.self_val) {
+        (EvalMode::ClassEval, RubyValue::Class(cid)) => {
+            (Some(*cid), crate::dispatch::class_name(*cid))
+        }
+        (EvalMode::InstanceEval, RubyValue::Class(cid)) => (
+            None,
+            crate::dispatch::class_name(*cid).map(|n| format!("#<Class:{n}>")),
+        ),
+        _ => (None, None),
+    }
+}
+
 /// The C signature a compiled snippet's entry function has: the status
 /// protocol every compiled function speaks, over the caller's cell array
 /// (one `*mut Cell` per local the snippet binds, in the order the compiler
@@ -68,15 +94,24 @@ pub unsafe fn call(
         req.line,
         0,
     );
-    let mut out = std::mem::MaybeUninit::<RubyValue>::uninit();
-    let status = unsafe { f(cells.as_ptr(), &req.self_val, out.as_mut_ptr()) };
-    if status == zeo_abi::abi::STATUS_OK {
-        let v = unsafe { out.assume_init() };
-        crate::capi::leakcheck::consumed(&v);
-        Ok(v)
-    } else {
-        Err(crate::signal::take_pending()
-            .expect("a compiled eval answered STATUS_SIGNAL with an empty pending slot"))
+    let enter = || {
+        let mut out = std::mem::MaybeUninit::<RubyValue>::uninit();
+        let status = unsafe { f(cells.as_ptr(), &req.self_val, out.as_mut_ptr()) };
+        if status == zeo_abi::abi::STATUS_OK {
+            let v = unsafe { out.assume_init() };
+            crate::capi::leakcheck::consumed(&v);
+            Ok(v)
+        } else {
+            Err(crate::signal::take_pending()
+                .expect("a compiled eval answered STATUS_SIGNAL with an empty pending slot"))
+        }
+    };
+    // `instance_eval`'s default definee is the receiver's SINGLETON, which
+    // is a run-time fact the emitted `def` asks the runtime for -- the
+    // block form marks it the same way (`BasicObject#instance_eval`).
+    match req.mode {
+        EvalMode::InstanceEval => crate::runtime_meta::with_singleton_definee(&req.self_val, enter),
+        _ => enter(),
     }
 }
 
