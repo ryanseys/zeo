@@ -988,6 +988,15 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
         // stamped the tables (undefined marks, module-function copies) and
         // the statements run nothing.
         HirNode::Undef(..) | HirNode::ModuleFunction(..) => Ok(()),
+        // A `refine` marker analyze already CONSUMED runs nothing where it
+        // was written: the holder module owns the methods and the
+        // `Refinement` row says what they refine. It reaches statement
+        // position only when the class-body walk kept the enclosing
+        // statement whole -- power_assert writes its refinements under a
+        // runtime `if`, which is what made `rspec_end_to_end` refuse. An
+        // UNregistered marker is a different thing and still refuses,
+        // rather than losing the refinement silently.
+        HirNode::Refine { .. } if fx.an.compiler.refinement_marker_registered(stmt) => Ok(()),
         HirNode::Include(_)
         | HirNode::Extend(_)
         | HirNode::Prepend(_)

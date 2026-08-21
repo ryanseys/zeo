@@ -48,6 +48,24 @@ const RUN_DEADLINE: Duration = Duration::from_secs(60);
 /// the observed normal peak and a fraction of what a runaway wants.
 const MAX_CHILD_RSS: u64 = 512 << 20; // 512 MiB
 
+/// [`MAX_CHILD_RSS`], with an env override (`ZEO_GOLDEN_MAX_RSS`, in MiB)
+/// for the cases that legitimately need more, the same way
+/// `ZEO_GOLDEN_RUN_DEADLINE` stretches the clock for them. A case that
+/// compiles a whole gem's require graph in the child -- `rspec_end_to_end`
+/// splices core, expectations, mocks, support and diff-lcs into ONE
+/// program -- is doing real work at a scale the 512 MiB figure was never
+/// measured against (it is 40x the peak of an ORDINARY golden).
+fn max_child_rss() -> u64 {
+    static M: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *M.get_or_init(|| {
+        std::env::var("ZEO_GOLDEN_MAX_RSS")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .map(|mib| mib << 20)
+            .unwrap_or(MAX_CHILD_RSS)
+    })
+}
+
 /// The address-space ceiling, which is a DIFFERENT quantity from the RSS cap
 /// above and must not borrow its number.
 ///
@@ -219,9 +237,9 @@ fn run_bounded(
             // Every ~100ms, not every 10ms: reading RSS is a syscall per child
             // and a runaway needs seconds to matter, not milliseconds.
             if let Some(rss) = child_rss(pid)
-                && rss > MAX_CHILD_RSS
+                && rss > max_child_rss()
             {
-                limit = Some(format!("allocated more than {} MiB", MAX_CHILD_RSS >> 20));
+                limit = Some(format!("allocated more than {} MiB", max_child_rss() >> 20));
             }
         }
         if limit.is_some() {
