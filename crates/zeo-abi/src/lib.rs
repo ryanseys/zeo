@@ -2492,6 +2492,10 @@ pub const NAME_ERROR_CLASS: ClassId = exc_id(16);
 /// `NoMethodError` (a `NameError`) -- additionally exposes `#args`.
 pub const NO_METHOD_ERROR_CLASS: ClassId = exc_id(17);
 
+/// `ZeroDivisionError` -- named because the emitted integer `/`/`%` guards
+/// raise it inline rather than through a dispatch.
+pub const ZERO_DIVISION_ERROR_CLASS: ClassId = exc_id(30);
+
 /// `UncaughtThrowError` -- exposes `#tag`/`#value` from an uncaught `throw`.
 pub const UNCAUGHT_THROW_ERROR_CLASS: ClassId = exc_id(35);
 

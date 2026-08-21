@@ -20,6 +20,8 @@ pub enum CTy {
     U8,
     /// `i8` (boolean answers) -- sign-extended per the C ABI.
     I8,
+    /// `f64` (the Float operator slow paths take unboxed operands).
+    F64,
 }
 
 /// One imported runtime function: its exact exported name and C shape.
@@ -29,7 +31,7 @@ pub struct CapiSig {
     pub ret: Option<CTy>,
 }
 
-use CTy::{I8, I32, Ptr, U8, U32, Usize};
+use CTy::{F64, I8, I32, Ptr, U8, U32, Usize};
 
 /// Every runtime symbol the emitter can import, alphabetical by name.
 /// Grows with the lowerings; `sig` panics on a name not listed -- an
@@ -276,6 +278,21 @@ pub const CAPI: &[CapiSig] = &[
         ret: None,
     },
     CapiSig {
+        name: "zeo_rt_float_cmp",
+        params: &[F64, F64, Ptr],
+        ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_float_mod_checked",
+        params: &[F64, F64, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
+        name: "zeo_rt_float_pow_checked",
+        params: &[F64, F64, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
         name: "zeo_rt_for_begin",
         params: &[Ptr, U8, Ptr],
         ret: Some(I32),
@@ -381,9 +398,34 @@ pub const CAPI: &[CapiSig] = &[
         ret: None,
     },
     CapiSig {
+        name: "zeo_rt_int_div",
+        params: &[Ptr, Ptr, Ptr],
+        ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_int_mod",
+        params: &[Ptr, Ptr, Ptr],
+        ret: None,
+    },
+    CapiSig {
         name: "zeo_rt_int_mul_slow",
         params: &[Ptr, Ptr, Ptr],
         ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_int_pow",
+        params: &[Ptr, Ptr, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
+        name: "zeo_rt_int_shl",
+        params: &[Ptr, Ptr, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
+        name: "zeo_rt_int_shr",
+        params: &[Ptr, Ptr, Ptr],
+        ret: Some(I32),
     },
     CapiSig {
         name: "zeo_rt_int_sub_slow",

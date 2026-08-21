@@ -50,6 +50,9 @@ zeo_rt_ffi_sym ([U32, Ptr, Usize, Ptr, Usize, U8, Ptr]) -> Some(I32)
 zeo_rt_ffi_sym_slot ([U32, Usize, Ptr, Usize, Ptr]) -> Some(I32)
 zeo_rt_flip_flop_on ([U32]) -> Some(U8)
 zeo_rt_flip_flop_set ([U32, U8]) -> None
+zeo_rt_float_cmp ([F64, F64, Ptr]) -> None
+zeo_rt_float_mod_checked ([F64, F64, Ptr]) -> Some(I32)
+zeo_rt_float_pow_checked ([F64, F64, Ptr]) -> Some(I32)
 zeo_rt_for_begin ([Ptr, U8, Ptr]) -> Some(I32)
 zeo_rt_for_end ([Ptr]) -> None
 zeo_rt_for_next ([Ptr, Ptr, Ptr]) -> None
@@ -71,7 +74,12 @@ zeo_rt_home_pop ([]) -> None
 zeo_rt_home_push ([]) -> None
 zeo_rt_int_add_slow ([Ptr, Ptr, Ptr]) -> None
 zeo_rt_int_digits ([U8, Ptr, Ptr, Ptr]) -> None
+zeo_rt_int_div ([Ptr, Ptr, Ptr]) -> None
+zeo_rt_int_mod ([Ptr, Ptr, Ptr]) -> None
 zeo_rt_int_mul_slow ([Ptr, Ptr, Ptr]) -> None
+zeo_rt_int_pow ([Ptr, Ptr, Ptr]) -> Some(I32)
+zeo_rt_int_shl ([Ptr, Ptr, Ptr]) -> Some(I32)
+zeo_rt_int_shr ([Ptr, Ptr, Ptr]) -> Some(I32)
 zeo_rt_int_sub_slow ([Ptr, Ptr, Ptr]) -> None
 zeo_rt_ivar_get_dyn ([Ptr, Ptr, Usize, Ptr]) -> Some(I32)
 zeo_rt_ivar_get_slot ([Ptr, Usize, Ptr]) -> None

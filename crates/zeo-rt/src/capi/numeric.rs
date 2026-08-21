@@ -126,3 +126,59 @@ pub unsafe extern "C" fn zeo_rt_complex_lit(imag: *const RubyValue, out: *mut Ru
     super::leakcheck::created(&v);
     unsafe { out.write(v) };
 }
+
+/// `a ** b` over Integer operands -- fallible: a negative exponent is a
+/// Rational, `0 ** -n` raises.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_int_pow(
+    a: *const RubyValue,
+    b: *const RubyValue,
+    out: *mut RubyValue,
+) -> i32 {
+    super::dispatch::status_out(unsafe { integer::int_pow(&*a, &*b) }, out)
+}
+
+/// `a << b` -- fallible: a shift width beyond `u32` raises RangeError.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_int_shl(
+    a: *const RubyValue,
+    b: *const RubyValue,
+    out: *mut RubyValue,
+) -> i32 {
+    super::dispatch::status_out(unsafe { integer::int_shl(&*a, &*b) }, out)
+}
+
+/// `a >> b` -- same contract as [`zeo_rt_int_shl`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_int_shr(
+    a: *const RubyValue,
+    b: *const RubyValue,
+    out: *mut RubyValue,
+) -> i32 {
+    super::dispatch::status_out(unsafe { integer::int_shr(&*a, &*b) }, out)
+}
+
+/// `Float#%` -- a zero divisor raises where every other Float operator is
+/// total, so it takes the fallible shape.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_float_mod_checked(a: f64, b: f64, out: *mut RubyValue) -> i32 {
+    super::dispatch::status_out(crate::arith::float_mod_checked(a, b), out)
+}
+
+/// `Float#**` -- a negative base to a fractional power leaves the reals,
+/// so the result may be a Complex.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_float_pow_checked(a: f64, b: f64, out: *mut RubyValue) -> i32 {
+    super::dispatch::status_out(crate::arith::float_pow_checked(a, b), out)
+}
+
+/// `Float#<=>` -- `nil` against a NaN, which is why it is not one of the
+/// inline comparisons.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_float_cmp(a: f64, b: f64, out: *mut RubyValue) {
+    let v = match crate::arith::float_cmp(a, b) {
+        Some(n) => RubyValue::Int(n),
+        None => RubyValue::Nil,
+    };
+    unsafe { out.write(v) };
+}
