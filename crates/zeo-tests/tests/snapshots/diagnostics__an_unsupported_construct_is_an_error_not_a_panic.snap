@@ -4,4 +4,4 @@ expression: render(err)
 ---
 zeo::codegen
 
-  × the CLIF backend cannot lower a refined call through `&.` yet (-e:8)
+  × the CLIF backend cannot lower a splat at a refined call yet (-e:8)

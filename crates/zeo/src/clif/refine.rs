@@ -7,7 +7,8 @@
 //! and a refined name actually meet -- which is a handful of sites in the
 //! rare program that refines at all.
 
-use cranelift_codegen::ir::{InstBuilder, types};
+use cranelift_codegen::ir::condcodes::IntCC;
+use cranelift_codegen::ir::{InstBuilder, MemFlagsData, types};
 
 use crate::compiler::ClassId;
 use crate::hir::{ArrayElem, HirNode, KwArg, NodeId};
@@ -87,37 +88,11 @@ pub(crate) fn refined_call(fx: &mut Fx, site: NodeId) -> Result<Option<Operand>,
     {
         return fx.unsupported(site, "a splat at a refined call").map(Some);
     }
-    if safe {
-        return fx
-            .unsupported(site, "a refined call through `&.`")
-            .map(Some);
-    }
     let set = if slots.is_empty() {
         Cands::Static(&cands)
     } else {
         Cands::Slots(&slots)
     };
-    lower(
-        fx, site, receiver, &name, &args, &kwargs, block, block_arg, set,
-    )
-    .map(Some)
-}
-
-#[allow(
-    clippy::too_many_arguments,
-    reason = "one refined-call entry: the call's whole written shape plus the candidate set the site's `using` decided"
-)]
-fn lower(
-    fx: &mut Fx,
-    site: NodeId,
-    receiver: Option<NodeId>,
-    name: &str,
-    args: &[ArrayElem],
-    kwargs: &[KwArg],
-    block: Option<NodeId>,
-    block_arg: Option<NodeId>,
-    cands: Cands<'_>,
-) -> Result<Operand, String> {
     // An EXPLICIT receiver runs the visibility check the refined entry
     // makes: a `private def` inside a `refine` block refuses one.
     let explicit = receiver.is_some_and(|r| !matches!(fx.an.compiler.hir[r], HirNode::SelfRef));
@@ -132,6 +107,61 @@ fn lower(
         }
         None => fx.self_ptr.expect("self_ptr is set in the prologue"),
     };
+    if !safe {
+        return lower(
+            fx, site, recv_ptr, explicit, &name, &args, &kwargs, block, block_arg, set,
+        )
+        .map(Some);
+    }
+    // `recv&.m` where a `using` covers `m`: the nil test is the only
+    // difference. A nil receiver answers nil and evaluates neither the
+    // arguments nor the block, so the whole refined call sits in the
+    // non-nil branch -- the shape `expr`'s ordinary safe-navigation arm
+    // uses.
+    let ss = fx.temp_slot();
+    let dst = fx.slot_addr(ss, 0);
+    let b_nil = fx.b.create_block();
+    let b_call = fx.b.create_block();
+    let join = fx.b.create_block();
+    let tv =
+        fx.b.ins()
+            .load(types::I8, MemFlagsData::trusted(), recv_ptr, 0);
+    let is_nil = fx.b.ins().icmp_imm_u(IntCC::Equal, tv, 0);
+    fx.b.ins().brif(is_nil, b_nil, &[], b_call, &[]);
+    fx.b.switch_to_block(b_nil);
+    ownership::write_move_into(fx, &Operand::Nil, dst);
+    fx.b.ins().jump(join, &[]);
+    fx.b.switch_to_block(b_call);
+    let res = lower(
+        fx, site, recv_ptr, explicit, &name, &args, &kwargs, block, block_arg, set,
+    )?;
+    ownership::write_move_into(fx, &res, dst);
+    fx.b.ins().jump(join, &[]);
+    fx.b.switch_to_block(join);
+    fx.owned_created += 1;
+    Ok(Some(Operand::Slot {
+        ss,
+        owned: true,
+        tag: TagInfo::Unknown,
+    }))
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one refined-call entry: the call's whole written shape plus the candidate set the site's `using` decided"
+)]
+fn lower(
+    fx: &mut Fx,
+    site: NodeId,
+    recv_ptr: cranelift_codegen::ir::Value,
+    explicit: bool,
+    name: &str,
+    args: &[ArrayElem],
+    kwargs: &[KwArg],
+    block: Option<NodeId>,
+    block_arg: Option<NodeId>,
+    cands: Cands<'_>,
+) -> Result<Operand, String> {
     let argv = super::call::build_argv(fx, site, args)?;
     let kw = if kwargs.is_empty() {
         fx.b.ins().iconst(fx.em.ptr, 0)
