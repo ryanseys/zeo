@@ -63,9 +63,33 @@ pub fn is_inline_block_fast_path(
     receiver: Option<NodeId>,
     name: &str,
     kwargs_empty: bool,
+    block: NodeId,
 ) -> bool {
-    is_times_fast_path(compiler, receiver, name, kwargs_empty)
-        || is_range_each_fast_path(compiler, receiver, name, kwargs_empty)
+    fusable_block_params(compiler, block)
+        && (is_times_fast_path(compiler, receiver, name, kwargs_empty)
+            || is_range_each_fast_path(compiler, receiver, name, kwargs_empty))
+}
+
+/// Whether `block` has the parameter shape a fused loop can bind: at most one
+/// required name, and nothing else.
+///
+/// Ruby binds every other shape happily -- `3.times { |a, b| }` gives `b` nil
+/// -- so a block this answers false for takes the ordinary block send. That
+/// makes it a real `Proc`, which is why the CAPTURE scans have to ask the
+/// same question: a shared outer local must escape into a cell.
+pub fn fusable_block_params(compiler: &Compiler, block: NodeId) -> bool {
+    let HirNode::Block { params, .. } = &compiler.hir[block] else {
+        return false;
+    };
+    params.destructures.is_empty()
+        && params.optional.is_empty()
+        && params.rest.is_none()
+        && !params.implicit_rest
+        && params.post.is_empty()
+        && params.keywords.is_empty()
+        && params.keyword_rest.is_none()
+        && params.block.is_none()
+        && params.required.len() <= 1
 }
 
 /// The DESCEND decision for the hoisting/exception scans: any spliced block
@@ -80,6 +104,7 @@ pub fn is_spliced_block_body(
     kwargs_empty: bool,
     block: NodeId,
 ) -> bool {
-    is_inline_block_fast_path(compiler, receiver, name, kwargs_empty)
-        || compiler.inline_iter_sites.contains_key(&block)
+    is_inline_block_fast_path(compiler, receiver, name, kwargs_empty, block)
+        || (compiler.inline_iter_sites.contains_key(&block)
+            && fusable_block_params(compiler, block))
 }

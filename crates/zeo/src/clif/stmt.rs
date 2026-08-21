@@ -1276,6 +1276,7 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
             // where most of them are written, since `each`'s value is
             // rarely wanted.
             if args.is_empty()
+                && super::iter::fusable_block(fx, blk)
                 && let Some(r) = receiver
                 && fx.an.compiler.inline_iter_sites.get(&blk)
                     == Some(&crate::compiler::InlineIterKind::ArrayEach)
@@ -1284,6 +1285,7 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
                 return Ok(());
             }
             if args.is_empty()
+                && super::iter::fusable_block(fx, blk)
                 && let Some(counted) = super::iter::counted_of(fx, receiver, &name, true)
             {
                 return super::iter::lower_counted(fx, stmt, &counted, blk, None);

@@ -391,14 +391,18 @@ fn node_contains_escaping_return(compiler: &Compiler, id: NodeId, in_escaping: b
         | HirNode::SuperCall { block, .. } => *block,
         _ => None,
     };
-    let in_block = match node {
-        HirNode::Call {
-            receiver,
-            name,
-            kwargs,
-            ..
-        } => {
-            in_escaping || !is_inline_block_fast_path(compiler, *receiver, name, kwargs.is_empty())
+    let in_block = match (node, block) {
+        (
+            HirNode::Call {
+                receiver,
+                name,
+                kwargs,
+                ..
+            },
+            Some(b),
+        ) => {
+            in_escaping
+                || !is_inline_block_fast_path(compiler, *receiver, name, kwargs.is_empty(), b)
         }
         _ => true,
     };
@@ -1030,7 +1034,8 @@ fn walk(
                 let HirNode::Block { params, body } = &compiler.hir[*b] else {
                     panic!("internal error: a Block node should only be reached via the Call that invokes it");
                 };
-                let is_inline = is_inline_block_fast_path(compiler, *receiver, name, kwargs.is_empty());
+                let is_inline =
+                    is_inline_block_fast_path(compiler, *receiver, name, kwargs.is_empty(), *b);
                 // A real escaping block nested inside another escaping block
                 // (Proc-within-Proc, e.g. `Thread.new { m.synchronize { } }`,
                 // a canonical idiom) COMPOSES through this walk

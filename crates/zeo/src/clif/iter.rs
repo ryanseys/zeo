@@ -41,6 +41,28 @@ pub(crate) enum Counted {
     ArrayEach { recv: ir::Value },
 }
 
+/// Whether `block` has the parameter shape a fused loop can bind: one
+/// required name at most, and nothing else.
+///
+/// Asked by the DECISION to splice, not by the splice. Ruby binds every other
+/// shape happily -- `3.times { |a, b| }` gives `b` nil -- so a block this
+/// answers false for takes the ordinary block send, which binds through the
+/// runtime binder and gets it right.
+pub(crate) fn fusable_block(fx: &Fx<'_, '_>, block: NodeId) -> bool {
+    let HirNode::Block { params, .. } = &fx.an.compiler.hir[block] else {
+        return false;
+    };
+    params.destructures.is_empty()
+        && params.optional.is_empty()
+        && params.rest.is_none()
+        && !params.implicit_rest
+        && params.post.is_empty()
+        && params.keywords.is_empty()
+        && params.keyword_rest.is_none()
+        && params.block.is_none()
+        && params.required.len() <= 1
+}
+
 /// Lower one fused counted loop. `result` = the loop's value slot when in
 /// value position (`None` = statement position, value discarded).
 pub(crate) fn lower_counted(
@@ -53,18 +75,10 @@ pub(crate) fn lower_counted(
     let HirNode::Block { params, body } = &fx.an.compiler.hir[block] else {
         return fx.unsupported(site, "a non-literal block");
     };
-    if !(params.destructures.is_empty()
-        && params.optional.is_empty()
-        && params.rest.is_none()
-        && !params.implicit_rest
-        && params.post.is_empty()
-        && params.keywords.is_empty()
-        && params.keyword_rest.is_none()
-        && params.block.is_none()
-        && params.required.len() <= 1)
-    {
-        return fx.unsupported(site, "this block's parameter shape");
-    }
+    debug_assert!(
+        fusable_block(fx, block),
+        "the splice decision checks the parameter shape first"
+    );
     let param = params.required.first().cloned();
     // A name first-assigned INSIDE the block is fresh on every invocation
     // in ruby. This splice shares the enclosing scope, where the name was

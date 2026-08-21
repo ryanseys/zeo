@@ -1038,6 +1038,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             // the other arm. The literal shapes below never nominate --
             // their receivers are not locals -- so the order is free.
             if args.is_empty()
+                && super::iter::fusable_block(fx, blk)
                 && let Some(r) = receiver
                 && fx.an.compiler.inline_iter_sites.get(&blk)
                     == Some(&crate::compiler::InlineIterKind::ArrayEach)
@@ -1046,6 +1047,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                     .expect("a wanted result is always built"));
             }
             if args.is_empty()
+                && super::iter::fusable_block(fx, blk)
                 && let Some(counted) = super::iter::counted_of(fx, receiver, &name, true)
             {
                 let ss = fx.temp_slot();

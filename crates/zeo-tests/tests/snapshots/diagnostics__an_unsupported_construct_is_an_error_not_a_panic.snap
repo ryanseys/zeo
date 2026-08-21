@@ -1,7 +1,0 @@
----
-source: crates/zeo-tests/tests/diagnostics.rs
-expression: render(err)
----
-zeo::codegen
-
-  × the CLIF backend cannot lower this block's parameter shape yet (-e:1)

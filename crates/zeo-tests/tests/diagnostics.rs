@@ -33,22 +33,48 @@ fn a_parse_failure_renders_without_an_excerpt() {
     insta::assert_snapshot!(render(err));
 }
 
-/// A construct the emitter cannot lower reports as an error rather than
-/// unwinding, which is what lets an unsupported repro be checked in as an
-/// XFAIL gap.
+/// Every construct the Cranelift emitter used to refuse now compiles.
 ///
-/// **This test is about the REPORT, not the construct.** The probe has moved
-/// three times as refusals closed: `Foo&.bar` (refused only by the retired
-/// rustc emitter), a refined call through `&.`, then a splat at a refined
-/// call. Re-point it at another live refusal rather than deleting the test.
+/// This test replaced `an_unsupported_construct_is_an_error_not_a_panic`,
+/// which asserted that a refusal renders as a typed diagnostic rather than a
+/// panic. That test had to be pointed at a LIVE refusal, and it was re-pointed
+/// four times on 2026-08-21 as each one was fixed -- at which point no
+/// reachable user-facing emitter refusal was left to point it at. Every
+/// `Fx::unsupported` site that remains guards an internal invariant (a
+/// non-literal block where the walk proves one is literal, a marker shape
+/// `lower::ffi` always writes) or a construct ruby itself rejects.
+///
+/// So the coverage moves from "a refusal reports well" to "these do not
+/// refuse". The lowering stage still proves the first, in the two tests
+/// below.
 #[test]
-fn an_unsupported_construct_is_an_error_not_a_panic() {
-    // Through EMISSION, not just the front end: `fx.unsupported` is the
-    // emitter's own refusal channel, and `--emit-clif` is the cheapest way
-    // to reach it (no object file, no linker).
-    let err = zeo::compile_to_clif_text("3.times { |a, b| p [a, b] }\n", &Default::default())
-        .expect_err("a fused loop with a multi-parameter block is rejected");
-    insta::assert_snapshot!(render(err));
+fn every_shape_the_emitter_once_refused_now_compiles() {
+    for (what, src) in [
+        // Refused by the retired rustc emitter only; CLIF always lowered it.
+        (
+            "safe navigation on a class method",
+            "class F\n  def self.b = 1\nend\np F&.b\n",
+        ),
+        (
+            "a refined call through `&.`",
+            "module R\n  refine String do\n    def sh = upcase\n  end\nend\nusing R\np \"h\"&.sh\n",
+        ),
+        (
+            "a splat at a refined call",
+            "module R\n  refine Array do\n    def pick(*n) = n\n  end\nend\nusing R\ni = [0]\np [1].pick(*i)\n",
+        ),
+        (
+            "a fused loop with a multi-parameter block",
+            "3.times { |a, b| p [a, b] }\n",
+        ),
+        (
+            "a multi-parameter fused block capturing an outer local",
+            "seen = []\n3.times { |a, b| seen << a }\np seen\n",
+        ),
+    ] {
+        zeo::compile_to_clif_text(src, &Default::default())
+            .unwrap_or_else(|e| panic!("{what} should compile: {}", String::from(e)));
+    }
 }
 
 /// A failure past lowering carries its stage as the diagnostic code, and the
