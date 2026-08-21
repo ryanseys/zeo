@@ -252,8 +252,8 @@ ruby_module! {
         }
     }
     // `alphanumeric(n = 16, chars: [A-Za-z0-9])`.
-    def "alphanumeric" params "n = nil, chars: nil"(recv, n?, **opts) {
-        let chars = chars_kwarg(opts);
+    ruby def "alphanumeric"(recv, n?, chars:?) {
+        let chars = chars_list(chars);
         let n = count(n, 16)?;
         choose(recv, &chars, n)
     }
@@ -326,14 +326,13 @@ fn to_f(v: &RubyValue) -> Result<f64, Signal> {
 
 /// Split a trailing `chars:` keyword hash off `alphanumeric`'s args, returning
 /// the positional args and the chosen alphabet.
-fn chars_kwarg(opts: Option<&RubyValue>) -> Vec<RubyValue> {
-    if let Some(RubyValue::Hash(h)) = opts {
-        let chars = crate::collections::hash_get(h, &RubyValue::Symbol(Symbol::intern("chars")));
-        if let RubyValue::Array(a) = chars {
-            return a.lock().to_vec();
-        }
+/// The `chars:` keyword's alphabet, or CRuby's default set. The keyword itself
+/// is bound by the DSL now; this is only the Array-or-default rule.
+fn chars_list(chars: Option<RubyValue>) -> Vec<RubyValue> {
+    match chars {
+        Some(RubyValue::Array(a)) => a.lock().to_vec(),
+        _ => default_alnum(),
     }
-    default_alnum()
 }
 
 #[cfg(test)]

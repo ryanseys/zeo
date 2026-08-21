@@ -1230,8 +1230,7 @@ ruby_class! {
     // Shares Kernel#rand's generator, which `srand` reseeds.
     // A `random:` keyword supplies the RNG (a Random-like object responding to
     // `rand`); without it the shared PRNG is used.
-    def "sample" params "n = nil, random: nil"(recv, n?, **opts) {
-        let random = take_random_kwarg(opts);
+    ruby def "sample"(recv, n?, random:?) {
         let items = rary.lock().clone();
         let len = items.len();
         let Some(v) = n else {
@@ -1284,8 +1283,7 @@ ruby_class! {
         }
         Ok(RubyValue::Array(crate::array_new(out)))
     }
-    def "shuffle" params "random: nil"(recv, **opts) {
-        let random = take_random_kwarg(opts);
+    ruby def "shuffle"(recv, random:?) {
         let mut items = rary.lock().to_vec();
         // Fisher-Yates, top down, exactly as ruby walks it.
         for i in (1..items.len()).rev() {
@@ -1461,8 +1459,7 @@ ruby_class! {
     }
     // In-place Fisher-Yates shuffle (mirrors `shuffle` but writes back and
     // answers the receiver).
-    def "shuffle!" params "random: nil"(recv, **opts) {
-        let random = take_random_kwarg(opts);
+    ruby def "shuffle!"(recv, random:?) {
         let handle = rary;
         check_frozen(handle, recv)?;
         let mut items = handle.lock().clone();
@@ -1613,16 +1610,6 @@ fn union_of(recv: &crate::collections::RArray, others: &[Vec<RubyValue>]) -> Vec
         }
     }
     out
-}
-
-/// Split off a trailing `random:` keyword argument (`sample` and `shuffle`
-/// both accept one).
-fn take_random_kwarg(opts: Option<&RubyValue>) -> Option<RubyValue> {
-    let RubyValue::Hash(h) = opts? else {
-        return None;
-    };
-    let key = RubyValue::Symbol(crate::Symbol::intern("random"));
-    crate::hash_has_key(h, &key).then(|| crate::hash_get(h, &key))
 }
 
 /// A random index in `0..bound`, from the supplied RNG (`random.rand(bound)`)

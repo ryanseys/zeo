@@ -142,7 +142,8 @@ mod yjit {
         def self."enabled?" | "stats_enabled?" | "log_enabled?" | "trace_exit_locations_enabled?" (_recv) {
             Ok(RubyValue::Bool(false))
         }
-        def self."enable" params "stats: nil, log: nil, mem_size: nil, call_threshold: nil"(_recv, **_opts) {
+        ruby def self."enable"(_recv, stats:?, log:?, mem_size:?, call_threshold:?) {
+            let _ = (&stats, &log, &mem_size, &call_threshold);
             Ok(RubyValue::Bool(false))
         }
         def self."runtime_stats" params "key = nil"(_recv, *_args) {

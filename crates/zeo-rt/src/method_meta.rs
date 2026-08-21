@@ -376,6 +376,14 @@ pub(crate) fn builtin_arity(class: ClassId, kind: MethodKind, name: Symbol) -> O
             }
             .and_then(|f| f(n))
         })
+        .or_else(|| {
+            // Same extend route the signature lookup takes, so a row cannot
+            // report a signature from one place and an arity from another.
+            let m = (kind == MethodKind::Singleton)
+                .then(|| extend_source(class, name))
+                .flatten()?;
+            crate::builtins::class_arity_table(m)?(n)
+        })
 }
 
 /// The signature a native row SPELLS (`params "..."` in the DSL), or `None`
@@ -409,13 +417,33 @@ fn builtin_params(class: ClassId, kind: MethodKind, name: Symbol) -> Option<Desc
             continue;
         }
         // This ancestor owns the row. Its answer is the answer, spelled or not.
-        return params?(n).map(|rows| {
-            rows.iter()
-                .map(|(k, name)| (*k, name.map(str::to_string)))
-                .collect()
-        });
+        return params?(n).map(to_descriptor);
+    }
+    // A class method an `extend` supplies is an INSTANCE row seated in the
+    // singleton chain, which the walk above cannot see -- `SecureRandom.hex`
+    // is `Random::Formatter#hex`, and `Method#owner` already says so.
+    if kind == MethodKind::Singleton
+        && let Some(m) = extend_source(class, name)
+        && let Some(table) = crate::builtins::class_params_table(m)
+    {
+        return table(n).map(to_descriptor);
     }
     None
+}
+
+fn to_descriptor(rows: crate::builtins::ParamRows) -> Descriptor {
+    rows.iter()
+        .map(|(k, name)| (*k, name.map(str::to_string)))
+        .collect()
+}
+
+/// The module an `extend` supplies a class method from, asked only when the
+/// ordinary walk missed. Behind the overlay gate, because an extend is a
+/// runtime fact and a program that never made one must not pay for the probe.
+fn extend_source(class: ClassId, name: Symbol) -> Option<ClassId> {
+    crate::runtime_meta::is_live()
+        .then(|| crate::dispatch::class_method_extend_source(class, name))
+        .flatten()
 }
 
 /// CRuby's signed arity for one descriptor. Required positionals (a post arg is

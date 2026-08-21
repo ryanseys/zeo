@@ -13,6 +13,15 @@
 # through a `params` field on `MethodTable`. A row that spells nothing keeps
 # the arity-derived descriptor, so annotating is additive.
 #
+# The notation was then unified: `params "..."` duplicated the parameter list
+# and the body still hand-peeled `**opts`, so the DSL grew named keywords and a
+# `ruby def` marker whose list IS ruby's signature, with the macro deriving the
+# binding and the report from it. Opt-in per def, because deriving names from
+# every list would invent them for the 1,025 rows ruby names nothing on and
+# misreport the 793 whose body shape differs on purpose -- only 19 rows match
+# ruby by ident alone. `params "..."` stays for the rows where the two lists
+# genuinely say different things (47 of 77).
+#
 # It also gave the DSL a KEYWORD spelling, which it had none of. That is not an
 # oversight being corrected: a native body receives a keyword inside the
 # options Hash it already takes as one positional slot, so what the body

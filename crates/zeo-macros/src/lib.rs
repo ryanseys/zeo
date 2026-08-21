@@ -218,7 +218,10 @@ fn expand(spec: &ClassSpec) -> TokenStream2 {
                         .as_deref()
                         .map_or(derived, zeo_dsl::signature_arity)
                 }),
-                params: name.params.clone(),
+                // A per-name `params "..."` wins over the def's own list, for
+                // the row whose `|`-joined names differ in signature. Without
+                // one, a `ruby def` reports the list it already declares.
+                params: name.params.clone().or_else(|| method.derived_params()),
                 attrs: method.attrs.clone(),
                 is_private: declared_private,
                 is_protected: declared_protected,
@@ -391,20 +394,72 @@ fn gen_preamble(method: &zeo_dsl::MethodDef) -> TokenStream2 {
     // CRuby's own condition for `rb_scan_args`' `:` (`n_mand < argc`), and
     // without it a Hash passed as a real ARGUMENT vanishes:
     // `Ractor.make_shareable(a_hash)` reported `given 0, expected 1`.
-    let (slice, kw_binding) = match &method.kwrest {
-        Some(name) => (
-            quote! { __pos },
-            quote! {
-                let (#name, __pos): (Option<&crate::RubyValue>, &[crate::RubyValue]) =
-                    match __args.last() {
-                        Some(h @ crate::RubyValue::Hash(_)) if __args.len() > #min => {
-                            (Some(h), &__args[..__args.len() - 1])
-                        }
-                        _ => (None, __args),
+    let has_kw = !method.keywords.is_empty();
+    let (slice, (kw_peel, kw_binds_after)) = if method.kwrest.is_none() && !has_kw {
+        (quote! { __args }, (quote! {}, quote! {}))
+    } else {
+        // The peel happens once; named keywords and a `**kwrest` both read the
+        // Hash it produced.
+        // A def that NAMES its keywords requires the caller's keyword mark, so
+        // `f(h)` and `f(**h)` stay the different calls ruby treats them as.
+        // A `**kwrest`-only def keeps the looser rule it has always had.
+        let peel_fn = if has_kw {
+            quote! { peel_keywords }
+        } else {
+            quote! { peel_kwargs }
+        };
+        let peel = quote! {
+            let (__kwsrc, __pos): (Option<&crate::RubyValue>, &[crate::RubyValue]) =
+                crate::builtins::#peel_fn(__args, #min);
+        };
+        let names: Vec<String> = method.keywords.iter().map(|k| k.name.to_string()).collect();
+        let name_lits = names.iter().map(|n| quote! { #n });
+        let kw_binds = method.keywords.iter().map(|k| {
+            let ident = &k.name;
+            let lit = ident.to_string();
+            match &k.kind {
+                zeo_dsl::KwKind::Maybe => quote! {
+                    let #ident: Option<crate::RubyValue> =
+                        crate::builtins::kw_take(__kwsrc, #lit);
+                },
+                zeo_dsl::KwKind::Required => quote! {
+                    let #ident: crate::RubyValue =
+                        crate::builtins::kw_required(__kwsrc, #lit)?;
+                },
+                // The default is evaluated only on the branch that needs it,
+                // the same shape an optional POSITIONAL default already takes.
+                zeo_dsl::KwKind::Optional(default) => quote! {
+                    let #ident: crate::RubyValue = match crate::builtins::kw_take(__kwsrc, #lit) {
+                        Some(v) => v,
+                        None => { #default }
                     };
+                },
+            }
+        });
+        let rest_or_check = match (&method.kwrest, has_kw) {
+            // Both: the rest gets the keys the named ones did not take.
+            (Some(name), true) => quote! {
+                let #name: Option<crate::RubyValue> =
+                    crate::builtins::kw_rest(__kwsrc, &[ #( #name_lits ),* ]);
+                let #name: Option<&crate::RubyValue> = #name.as_ref();
             },
-        ),
-        None => (quote! { __args }, quote! {}),
+            // A `**kwrest` alone borrows the peeled Hash, exactly as before.
+            (Some(name), false) => quote! {
+                let #name: Option<&crate::RubyValue> = __kwsrc;
+            },
+            // Named keywords with no rest: ruby refuses an undeclared key.
+            (None, true) => quote! {
+                crate::builtins::kw_check_unknown(__kwsrc, &[ #( #name_lits ),* ])?;
+            },
+            (None, false) => quote! {},
+        };
+        // The peel has to happen before the guard (which counts `__pos`), but
+        // the BINDINGS come after it: an arity error outranks a missing
+        // keyword, which is the order ruby reports them in.
+        (
+            quote! { __pos },
+            (peel, quote! { #( #kw_binds )* #rest_or_check }),
+        )
     };
 
     // A wide-open signature accepts everything, so there is nothing to check --
@@ -458,8 +513,9 @@ fn gen_preamble(method: &zeo_dsl::MethodDef) -> TokenStream2 {
     };
 
     quote! {
-        #kw_binding
+        #kw_peel
         #guard
+        #kw_binds_after
         #( #bindings )*
         #rest
         #block

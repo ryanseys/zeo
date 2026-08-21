@@ -602,6 +602,125 @@ pub(crate) fn check_arity(given: usize, min: usize, max: Option<usize>) -> Resul
     Ok(())
 }
 
+/// Split the trailing keyword Hash off an argument slice -- what a `ruby def`
+/// with keywords, or any `**kwrest`, binds from.
+///
+/// The `given > min` condition is CRuby's own (`rb_scan_args`' `:`, whose test
+/// is `n_mand < argc`) and it is load-bearing: without it a Hash passed as a
+/// real ARGUMENT is swallowed as keywords, which is how
+/// `Ractor.make_shareable(a_hash)` came to report `given 0, expected 1`.
+#[inline(always)]
+pub(crate) fn peel_kwargs(args: &[RubyValue], min: usize) -> (Option<&RubyValue>, &[RubyValue]) {
+    match args.last() {
+        Some(h @ RubyValue::Hash(_)) if args.len() > min => (Some(h), &args[..args.len() - 1]),
+        _ => (None, args),
+    }
+}
+
+/// The same split, but only for a Hash the CALLER marked as keywords.
+///
+/// What tells `f(h)` from `f(**h)`, which ruby answers three different ways:
+/// `[1,2].sample(h)` is a TypeError (the Hash is the positional `n`),
+/// `[1,2].shuffle(h)` is an arity error, and `[1,2].shuffle(**h)` is
+/// `unknown keyword: :x`. [`peel_kwargs`] cannot tell them apart and never
+/// could -- harmless while an unmatched key was silently ignored, and a wrong
+/// RAISE once a def declares its keywords by name.
+///
+/// `peel_kwargs` keeps its looser rule so a `**kwrest`-only def behaves exactly
+/// as it did; only a def naming its keywords takes this one.
+#[inline(always)]
+pub(crate) fn peel_keywords(args: &[RubyValue], min: usize) -> (Option<&RubyValue>, &[RubyValue]) {
+    match args.last() {
+        Some(h @ RubyValue::Hash(inner))
+            if args.len() > min && crate::collections::hash_is_kwargs(inner) =>
+        {
+            (Some(h), &args[..args.len() - 1])
+        }
+        _ => (None, args),
+    }
+}
+
+/// One named keyword, CLONED out of the peeled Hash.
+///
+/// Owned rather than borrowed, and the asymmetry with a positional is forced:
+/// a positional is an element of the caller's argv, alive for the whole call,
+/// while a keyword lives inside an `Arc<Mutex<..>>` whose guard must not be
+/// held across body code. The clone is an `Arc` bump for a heap value and
+/// nothing for an immediate -- and it is exactly what every hand-written peel
+/// this replaces already returned.
+#[inline(always)]
+pub(crate) fn kw_take(src: Option<&RubyValue>, name: &str) -> Option<RubyValue> {
+    let RubyValue::Hash(h) = src? else {
+        return None;
+    };
+    let key = RubyValue::Symbol(crate::Symbol::intern(name));
+    crate::collections::hash_has_key(h, &key).then(|| crate::collections::hash_get(h, &key))
+}
+
+/// A REQUIRED keyword: ruby's `missing keyword: :k` when it is absent.
+///
+/// Unreached by the builtin surface, and measured rather than assumed: ruby
+/// declares NO required keyword on any row reachable from `Object` (a live
+/// diff of `#parameters` over 3,526 of its own rows finds zero `keyreq`).
+/// Kept because the grammar is complete without an exception, and because the
+/// corelib's vendored Ruby does use them.
+#[allow(dead_code)]
+#[inline(always)]
+pub(crate) fn kw_required(src: Option<&RubyValue>, name: &str) -> Result<RubyValue, Signal> {
+    kw_take(src, name).ok_or_else(|| {
+        crate::dispatch::raise_error("ArgumentError", format!("missing keyword: :{name}"))
+    })
+}
+
+/// Whatever keys a `**kwrest` gets after the NAMED keywords have been taken.
+///
+/// The one allocation this design adds, and only for a def declaring both --
+/// a `**kwrest` on its own keeps borrowing the peeled Hash untouched.
+///
+/// Also unreached today, for the same measured reason: no ruby builtin row
+/// declares named keywords AND a keyrest. The shapes that carry a keyrest all
+/// carry the ANONYMOUS forwarding trio (`*, **, &`) instead.
+#[allow(dead_code)]
+#[inline(always)]
+pub(crate) fn kw_rest(src: Option<&RubyValue>, taken: &[&str]) -> Option<RubyValue> {
+    let RubyValue::Hash(h) = src? else {
+        return src.cloned();
+    };
+    Some(RubyValue::Hash(crate::collections::hash_except_keys(
+        h, taken,
+    )))
+}
+
+/// Ruby refuses a keyword a method does not declare, unless it takes a
+/// `**kwrest`. Only emitted for a def that declares named keywords WITHOUT
+/// one, since that is the only shape where an unknown key is an error.
+pub(crate) fn kw_check_unknown(src: Option<&RubyValue>, known: &[&str]) -> Result<(), Signal> {
+    let Some(RubyValue::Hash(h)) = src else {
+        return Ok(());
+    };
+    let extra = crate::collections::hash_except_keys(h, known);
+    let names = crate::collections::hash_keys(&extra);
+    let RubyValue::Array(a) = names else {
+        return Ok(());
+    };
+    let list: Vec<String> = a
+        .lock()
+        .iter()
+        .map(|k| match k {
+            RubyValue::Symbol(s) => format!(":{}", s.name()),
+            other => other.inspect_string(),
+        })
+        .collect();
+    if list.is_empty() {
+        return Ok(());
+    }
+    let plural = if list.len() == 1 { "" } else { "s" };
+    Err(crate::dispatch::raise_error(
+        "ArgumentError",
+        format!("unknown keyword{plural}: {}", list.join(", ")),
+    ))
+}
+
 /// CRuby's exact wording, oracle-verified against 4.0.6: `expected 2` for a
 /// fixed count, `expected 1..2` for a range, `expected 2+` when a splat leaves
 /// the maximum open.
@@ -740,6 +859,84 @@ pub(crate) use need_block;
 mod tests {
     use super::*;
     use zeo_abi::*;
+
+    fn kw_hash(pairs: &[(&str, i64)], marked: bool) -> RubyValue {
+        let pairs: Vec<(RubyValue, RubyValue)> = pairs
+            .iter()
+            .map(|(k, v)| {
+                (
+                    RubyValue::Symbol(crate::Symbol::intern(k)),
+                    RubyValue::Int(*v),
+                )
+            })
+            .collect();
+        let h = crate::value::collections::hash_new(pairs);
+        if marked {
+            crate::value::collections::hash_mark_kwargs(&h);
+        }
+        RubyValue::Hash(h)
+    }
+
+    /// The mark is what tells `f(h)` from `f(**h)`, and it is the whole reason
+    /// a def naming its keywords peels differently from a `**kwrest`-only one.
+    #[test]
+    fn only_a_marked_hash_is_keywords() {
+        let marked = [kw_hash(&[("a", 1)], true)];
+        let plain = [kw_hash(&[("a", 1)], false)];
+
+        assert!(peel_keywords(&marked, 0).0.is_some());
+        assert!(
+            peel_keywords(&plain, 0).0.is_none(),
+            "an unmarked Hash is a positional argument, not keywords"
+        );
+        // The looser rule a `**kwrest`-only def keeps: any trailing Hash.
+        assert!(peel_kwargs(&plain, 0).0.is_some());
+        // ...but never one the mandatory positionals still need. This is
+        // CRuby's `n_mand < argc`, and without it a Hash ARGUMENT vanishes.
+        assert!(peel_kwargs(&plain, 1).0.is_none());
+        assert!(peel_keywords(&marked, 1).0.is_none());
+    }
+
+    #[test]
+    fn a_keyword_is_taken_by_name_and_a_required_one_must_be_there() {
+        let args = [kw_hash(&[("a", 1), ("b", 2)], true)];
+        let (src, pos) = peel_keywords(&args, 0);
+        assert!(pos.is_empty());
+
+        assert!(matches!(kw_take(src, "a"), Some(RubyValue::Int(1))));
+        assert!(kw_take(src, "nope").is_none());
+        assert!(matches!(kw_required(src, "b"), Ok(RubyValue::Int(2))));
+        // The ABSENT case raises, so it is asserted where a raise is legal --
+        // `tests/a_builtin_row_reports_its_parameter_names.rb`, against the
+        // oracle. Building the exception here needs a booted class registry.
+    }
+
+    /// A `**kwrest` beside NAMED keywords gets only what they did not take --
+    /// the one allocation this design adds, and only for a def declaring both.
+    #[test]
+    fn a_keyrest_gets_what_the_named_keywords_left() {
+        let args = [kw_hash(&[("a", 1), ("b", 2), ("c", 3)], true)];
+        let (src, _) = peel_keywords(&args, 0);
+        let rest = kw_rest(src, &["a"]).expect("a Hash remains");
+        let RubyValue::Hash(h) = &rest else {
+            panic!("kw_rest answers a Hash")
+        };
+        let key = |n: &str| RubyValue::Symbol(crate::Symbol::intern(n));
+        assert!(!crate::collections::hash_has_key(h, &key("a")), "taken");
+        assert!(crate::collections::hash_has_key(h, &key("b")));
+        assert!(crate::collections::hash_has_key(h, &key("c")));
+    }
+
+    /// Without a `**kwrest`, ruby refuses a keyword the method never declared.
+    #[test]
+    fn a_declared_keyword_set_accepts_its_own_names() {
+        let args = [kw_hash(&[("a", 1), ("zz", 2)], true)];
+        let (src, _) = peel_keywords(&args, 0);
+        assert!(kw_check_unknown(src, &["a", "zz"]).is_ok());
+        // Nothing to refuse when the call passed no keywords at all.
+        assert!(kw_check_unknown(None, &["a"]).is_ok());
+        // The refusal itself is a golden, for the same registry reason.
+    }
 
     #[test]
     fn fallback_chains_match_the_oracle_hierarchy() {

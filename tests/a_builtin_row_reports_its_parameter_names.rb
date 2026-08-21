@@ -38,3 +38,36 @@ p Exception.instance_method(:full_message).parameters
 p Exception.instance_method(:message).parameters
 p NameError.instance_method(:receiver).arity
 p SystemExit.instance_method(:success?).arity
+
+# A `ruby def` spells the signature ONCE, in the parameter list, and the macro
+# derives both the binding and the report from it. `random` below is bound
+# directly as `Option<RubyValue>` -- the exact type the hand-written peel it
+# replaced returned -- so a converted row keeps its semantics.
+p Array.instance_method(:shuffle).parameters
+p Array.instance_method(:shuffle!).parameters
+
+# Ruby refuses a keyword the method does not declare. zeo used to ignore it
+# silently, because the whole options Hash arrived as one `**opts` slot that
+# nothing checked.
+begin
+  [1, 2].shuffle(bogus: 1)
+rescue ArgumentError => e
+  puts "ArgumentError: #{e.message}"
+end
+
+# A class method an `extend` supplies is an INSTANCE row seated in the
+# singleton chain, which the ancestry walk cannot see. `Method#owner` already
+# named the module; the signature lookup now takes the same route.
+require "securerandom"
+p SecureRandom.method(:alphanumeric).parameters
+p SecureRandom.method(:hex).parameters
+p SecureRandom.method(:hex).owner
+
+# `f(h)` and `f(**h)` are different calls, and ruby answers them three
+# different ways. Only the caller's KEYWORD MARK tells them apart, so a def
+# naming its keywords requires it -- a `**kwrest`-only def keeps the looser
+# rule it has always had, where any trailing Hash is keywords.
+h = { x: 1 }
+begin; [1, 2, 3].sample(h);   rescue Exception => e; puts "#{e.class}: #{e.message}"; end
+begin; [1, 2, 3].shuffle(h);  rescue Exception => e; puts "#{e.class}: #{e.message}"; end
+begin; [1, 2, 3].shuffle(**h); rescue Exception => e; puts "#{e.class}: #{e.message}"; end

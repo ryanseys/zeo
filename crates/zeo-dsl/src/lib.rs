@@ -51,8 +51,35 @@
 //! (recv, *items)                // -1       any number
 //! (recv, at, *rest)             // -2       one or more -- "expected 1+"
 //! (recv, fmt, **opts)           // -2       kwargs count as one extra slot
+//! (recv, n?, random:?)          // -1       a NAMED keyword, bound from the
+//!                               //          same trailing Hash `**opts` peels
+//! (recv, sep = nil, chomp:)     // -2       `k:` is required -- absent raises
 //! (recv, &block)                // 0        a block never counts
 //! ```
+//!
+//! A keyword binds OWNED (`RubyValue` / `Option<RubyValue>`) where a positional
+//! binds borrowed, and the asymmetry is forced rather than sloppy: a positional
+//! is an element of the caller's argv, alive for the whole call, while a
+//! keyword lives inside a Hash whose lock must not be held across body code.
+//! The clone is an `Arc` bump for a heap value and nothing for an immediate.
+//! A def that declares named keywords and NO `**kwrest` refuses an undeclared
+//! key, as ruby does.
+//!
+//! `ruby def` marks a list as ruby's OWN signature, so `Method#parameters`
+//! reports its names and kinds instead of the anonymous descriptor derived from
+//! the arity -- and the arity then falls out of the same list, so the two
+//! answers cannot disagree:
+//!
+//! ```text
+//! ruby def "sample"(recv, n?, random:?) { .. }   // [[:opt, :n], [:key, :random]], -1
+//! ```
+//!
+//! It is opt-in per def because it has to be: ruby reports NO parameter name on
+//! 1,025 of its own builtin rows, and 793 more have a body shape that differs
+//! from the signature on purpose (they take `*args` and peel). Deriving names
+//! from every list would invent the first group and misreport the second. An
+//! unmarked def is byte-identical to before. Where the two genuinely differ, a
+//! per-name `params "..."` states ruby's answer directly.
 //!
 //! The number follows CRuby's equation in `proc.c`: `min` and `max` from the
 //! signature, then `(min == max) ? min : -min-1`. CRuby applies it to C methods
@@ -178,6 +205,18 @@ pub struct MethodDef {
     pub params: Vec<Param>,
     /// `*rest` -- makes the accepted count unbounded.
     pub rest: Option<Ident>,
+    /// Named keyword parameters (`k:`, `k: EXPR`, `k:?`), taken out of the
+    /// same trailing Hash `kwrest` peels. Declared AFTER `*rest` and before
+    /// `**kwrest`, which is ruby's own order.
+    pub keywords: Vec<KwParam>,
+    /// `ruby def` -- this parameter list is ruby's OWN signature, so
+    /// `Method#parameters` reports its names and kinds rather than the
+    /// anonymous descriptor derived from the arity.
+    ///
+    /// Opt-in per def, and it has to be: ruby reports NO parameter name for
+    /// 1,025 of its own builtin rows, so deriving names from every list would
+    /// invent that many. An unmarked def is byte-identical to before.
+    pub ruby_sig: bool,
     /// `**kwrest` -- the trailing options Hash, which CRuby counts as exactly
     /// one extra positional slot.
     pub kwrest: Option<Ident>,
@@ -249,6 +288,35 @@ pub enum ParamKind {
     Maybe,
 }
 
+/// How a KEYWORD parameter is declared. The three mirror the positional kinds
+/// and answer the same question ruby's `#parameters` does.
+pub enum KwKind {
+    /// `k:` -- required; an absent key raises `ArgumentError`. Binds
+    /// `RubyValue`.
+    Required,
+    /// `k: EXPR` -- the default is evaluated only when the key is absent.
+    /// Binds `RubyValue`.
+    Optional(Box<Expr>),
+    /// `k:?` -- binds `Option<RubyValue>`, for a body that must tell an absent
+    /// keyword from an explicit `nil`. The common spelling, and the one every
+    /// hand-written peel this replaces already returned.
+    Maybe,
+}
+
+/// One named keyword parameter.
+///
+/// OWNED, where a positional is borrowed, and the asymmetry is forced rather
+/// than sloppy: a positional is an element of the `&[RubyValue]` argv the
+/// caller owns for the whole call, so a borrow is free and safe, while a
+/// keyword lives INSIDE a Hash behind an `Arc<Mutex<..>>` whose guard this
+/// runtime forbids holding across body code (the re-entry rule `Freezable`
+/// documents). So the value is cloned out: an `Arc` bump for a heap value,
+/// nothing for an immediate.
+pub struct KwParam {
+    pub name: Ident,
+    pub kind: KwKind,
+}
+
 impl MethodDef {
     /// The fewest arguments this method accepts.
     pub fn min_args(&self) -> usize {
@@ -264,6 +332,57 @@ impl MethodDef {
             return None;
         }
         Some(self.params.len() + usize::from(self.kwrest.is_some()))
+    }
+
+    /// The descriptor this parameter list implies, in ruby's canonical order --
+    /// what `Method#parameters` reports for a `ruby def`.
+    ///
+    /// `None` for a def not marked `ruby`, whose list describes how the BODY
+    /// receives its arguments rather than what ruby reports. The two are
+    /// genuinely different for a native row: 793 of them take `*args` and
+    /// peel, where ruby reports a real signature.
+    pub fn derived_params(&self) -> Option<Vec<SigParam>> {
+        if !self.ruby_sig {
+            return None;
+        }
+        let named = |i: &Ident| Some(i.to_string());
+        let mut out: Vec<SigParam> = self
+            .params
+            .iter()
+            .map(|p| SigParam {
+                kind: match p.kind {
+                    ParamKind::Required => SigKind::Req,
+                    ParamKind::Optional(_) | ParamKind::Maybe => SigKind::Opt,
+                },
+                name: named(&p.name),
+            })
+            .collect();
+        if let Some(r) = &self.rest {
+            out.push(SigParam {
+                kind: SigKind::Rest,
+                name: named(r),
+            });
+        }
+        out.extend(self.keywords.iter().map(|k| SigParam {
+            kind: match k.kind {
+                KwKind::Required => SigKind::KeyReq,
+                KwKind::Optional(_) | KwKind::Maybe => SigKind::Key,
+            },
+            name: named(&k.name),
+        }));
+        if let Some(k) = &self.kwrest {
+            out.push(SigParam {
+                kind: SigKind::KeyRest,
+                name: named(k),
+            });
+        }
+        if let Some(b) = &self.block {
+            out.push(SigParam {
+                kind: SigKind::Block,
+                name: named(b),
+            });
+        }
+        Some(out)
     }
 
     /// What `Method#arity` reports, by CRuby's own equation
@@ -286,6 +405,13 @@ impl MethodDef {
     pub fn derived_arity(&self) -> i64 {
         if self.cfunc {
             return -1;
+        }
+        // A `ruby def` derives its arity from the signature it declares, so
+        // `#arity` and `#parameters` cannot disagree -- the same equation
+        // CRuby applies, where any REQUIRED keyword adds one mandatory slot
+        // and an optional one only makes the method variadic.
+        if let Some(sig) = self.derived_params() {
+            return signature_arity(&sig);
         }
         let min = self.min_args();
         match self.max_args() {
@@ -684,7 +810,10 @@ fn parse_item(input: ParseStream, spec: &mut ClassSpec) -> syn::Result<()> {
             };
             spec.methods.push(parse_def(input, visibility, attrs)?);
         }
-        "def" => {
+        // `def` and `ruby def` reach the same parser; `parse_def` consumes the
+        // marker itself, so the two arms differ only in what the dispatcher
+        // had to look at to get here.
+        "def" | "ruby" => {
             spec.methods
                 .push(parse_def(input, Visibility::Public, attrs)?);
         }
@@ -720,6 +849,14 @@ fn parse_def(
     visibility: Visibility,
     attrs: Vec<Attribute>,
 ) -> syn::Result<MethodDef> {
+    // `ruby def` -- the parameter list that follows is ruby's OWN signature,
+    // so its names and kinds are what `Method#parameters` reports. Written
+    // here rather than inferred, because ruby names no parameter at all on
+    // 1,025 of its builtin rows and inferring would invent that many.
+    let ruby_sig = peek_ident(input, "ruby");
+    if ruby_sig {
+        input.parse::<Ident>()?; // `ruby`
+    }
     input.parse::<Ident>()?; // `def`
 
     // `self .` marks a class/singleton method.
@@ -812,7 +949,7 @@ fn parse_def(
     let buf;
     parenthesized!(buf in input);
     let recv: Ident = buf.parse()?;
-    let (params, rest, kwrest, block) = parse_params(&buf)?;
+    let (params, rest, keywords, kwrest, block) = parse_params(&buf)?;
 
     // The body block, captured verbatim (braces stripped) as real Rust.
     let body_buf;
@@ -829,6 +966,8 @@ fn parse_def(
         recv,
         params,
         rest,
+        keywords,
+        ruby_sig,
         kwrest,
         block,
         cfunc,
@@ -839,7 +978,7 @@ fn parse_def(
 }
 
 /// Parse the parameters after the receiver slot:
-/// `required* optional* [*rest] [**kwrest] [&block]`.
+/// `required* optional* [*rest] keyword* [**kwrest] [&block]`.
 ///
 /// Order is enforced here rather than left to the reader, because the order is
 /// what makes the argument-count guard and the reported arity derivable at all.
@@ -848,9 +987,16 @@ fn parse_def(
 #[allow(clippy::type_complexity)]
 fn parse_params(
     input: ParseStream,
-) -> syn::Result<(Vec<Param>, Option<Ident>, Option<Ident>, Option<Ident>)> {
+) -> syn::Result<(
+    Vec<Param>,
+    Option<Ident>,
+    Vec<KwParam>,
+    Option<Ident>,
+    Option<Ident>,
+)> {
     let mut params: Vec<Param> = Vec::new();
     let mut rest = None;
+    let mut keywords: Vec<KwParam> = Vec::new();
     let mut kwrest = None;
     let mut block = None;
 
@@ -886,9 +1032,37 @@ fn parse_params(
             continue;
         }
 
-        if block.is_some() || kwrest.is_some() || rest.is_some() {
-            return Err(input
-                .error("positional parameters must come before `*rest`, `**kwrest` and `&block`"));
+        // `k:` / `k: EXPR` / `k:?` -- a NAMED keyword. Told from a positional
+        // by the `:` that follows the name, so it is peeked before the
+        // positional arm claims the ident.
+        if input.peek(Ident) && input.peek2(Token![:]) && !input.peek2(Token![::]) {
+            let name: Ident = input.parse()?;
+            input.parse::<Token![:]>()?;
+            let kind = if input.peek(Token![?]) {
+                input.parse::<Token![?]>()?;
+                KwKind::Maybe
+            } else if input.peek(Token![,]) || input.is_empty() {
+                KwKind::Required
+            } else {
+                KwKind::Optional(Box::new(input.parse()?))
+            };
+            if keywords.iter().any(|k| k.name == name) {
+                return Err(syn::Error::new(name.span(), "duplicate keyword parameter"));
+            }
+            if block.is_some() || kwrest.is_some() {
+                return Err(syn::Error::new(
+                    name.span(),
+                    "keyword parameters must come before `**kwrest` and `&block`",
+                ));
+            }
+            keywords.push(KwParam { name, kind });
+            continue;
+        }
+
+        if block.is_some() || kwrest.is_some() || rest.is_some() || !keywords.is_empty() {
+            return Err(input.error(
+                "positional parameters must come before `*rest`, keywords, `**kwrest` and `&block`",
+            ));
         }
 
         let name: Ident = input.parse()?;
@@ -913,7 +1087,7 @@ fn parse_params(
         params.push(Param { name, kind });
     }
 
-    Ok((params, rest, kwrest, block))
+    Ok((params, rest, keywords, kwrest, block))
 }
 
 /// A Ruby method/alias name: either a string literal (operators, `?`/`!`
@@ -1197,6 +1371,78 @@ mod tests {
     fn a_signature_that_is_not_a_signature_is_an_error() {
         assert!(parse_signature("a b").is_err());
         assert!(parse_signature("a,,b").is_err());
+    }
+
+    /// The keyword grammar, and the descriptor a `ruby def` derives from it.
+    #[test]
+    fn a_ruby_def_derives_its_own_parameters() {
+        let spec = parse_class(quote! {
+            A = A_CLASS;
+            ruby def "sample"(recv, n?, random:?) { }
+            ruby def "glob"(recv, pattern, flags = 0, *extra, base:?, sort: true, **rest, &blk) { }
+            ruby def "need"(recv, k:) { }
+            def "plain"(recv, arg, **opts) { }
+        });
+        let d = |i: usize| {
+            spec.methods[i]
+                .derived_params()
+                .map(|v| v.into_iter().map(|p| (p.kind, p.name)).collect::<Vec<_>>())
+        };
+        let n = |s: &str| Some(s.to_string());
+        assert_eq!(
+            d(0),
+            Some(vec![(SigKind::Opt, n("n")), (SigKind::Key, n("random"))])
+        );
+        // Ruby's canonical order, whatever order the reader expects:
+        // positionals, rest, keywords, keyrest, block.
+        assert_eq!(
+            d(1),
+            Some(vec![
+                (SigKind::Req, n("pattern")),
+                (SigKind::Opt, n("flags")),
+                (SigKind::Rest, n("extra")),
+                (SigKind::Key, n("base")),
+                (SigKind::Key, n("sort")),
+                (SigKind::KeyRest, n("rest")),
+                (SigKind::Block, n("blk")),
+            ])
+        );
+        assert_eq!(d(2), Some(vec![(SigKind::KeyReq, n("k"))]));
+        // An UNMARKED def derives nothing -- its list describes how the body
+        // receives arguments, not what ruby reports.
+        assert_eq!(d(3), None);
+    }
+
+    /// A `ruby def`'s arity comes from the signature it declares, so the two
+    /// reflection answers cannot disagree.
+    #[test]
+    fn a_ruby_defs_arity_comes_from_its_signature() {
+        let spec = parse_class(quote! {
+            A = A_CLASS;
+            ruby def "sample"(recv, n?, random:?) { }
+            ruby def "need"(recv, a, k:) { }
+            ruby def "two"(recv, a, b) { }
+            ruby def "blk"(recv, a, &b) { }
+        });
+        let a = |i: usize| spec.methods[i].derived_arity();
+        assert_eq!(a(0), -1, "an optional positional makes it variadic");
+        assert_eq!(a(1), 2, "a REQUIRED keyword adds one mandatory slot");
+        assert_eq!(a(2), 2);
+        assert_eq!(a(3), 1, "a block never counts");
+    }
+
+    #[test]
+    fn keywords_come_after_the_positionals_and_before_the_rest() {
+        let bad = ClassSpec::parse_class.parse2(quote! {
+            A = A_CLASS;
+            ruby def "x"(recv, k:, tail) { }
+        });
+        assert!(bad.is_err());
+        let dup = ClassSpec::parse_class.parse2(quote! {
+            A = A_CLASS;
+            ruby def "x"(recv, k:, k:) { }
+        });
+        assert!(dup.is_err());
     }
 
     #[test]
