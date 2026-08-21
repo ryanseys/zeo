@@ -1,0 +1,12 @@
+plain(x)
+blk(x)
+esc(x)
+lam(x)
+str(x)
+[]
+[:blk, :lambda_arg, :plain, :string_name, :unbound]
+[:blk, :lambda_arg, :plain, :string_name, :unbound]
+esc(y)
+private method 'unbound' called for an instance of Host
+[:only_instance]
+[]
