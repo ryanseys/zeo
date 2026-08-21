@@ -1,0 +1,3 @@
+true
+["#<Class:Three>", "SA", "#<Class:Object>", "#<Class:BasicObject>", "Class", "Module", "Object", "Kernel", "BasicObject"]
+["SA", "#<Class:One>", "#<Class:Object>", "#<Class:BasicObject>", "Class", "Module", "Object", "Kernel", "BasicObject"]

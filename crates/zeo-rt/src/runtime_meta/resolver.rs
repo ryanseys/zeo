@@ -146,6 +146,19 @@ pub fn singleton_prepend_super_below(id: ClassId, mid: ClassId, name: Symbol) ->
         .find_map(|m| extended_class_method(m, name))
 }
 
+/// The modules prepended into `id`'s singleton class, LATEST FIRST -- the
+/// order they occupy in `id.singleton_class.ancestors`, ahead of the
+/// singleton head itself.
+pub fn singleton_prepends_of(id: ClassId) -> Vec<ClassId> {
+    maps()
+        .classes
+        .read()
+        .unwrap()
+        .get(&id.0)
+        .map(|e| e.singleton_prepends.iter().rev().copied().collect())
+        .unwrap_or_default()
+}
+
 /// Whether `mid` was prepended into `id`'s singleton class
 /// (`id.singleton_class.prepend(mid)`) -- how `send_super_class_from` learns
 /// that a `defining_class` missing from the ancestry sits in the prepend

@@ -728,8 +728,19 @@ fn refresh_singleton_ancestors(recv: &RubyValue) {
     let Some(sid) = maps().singleton_classes.read().unwrap().get(&key).copied() else {
         return;
     };
-    let mut anc = vec![sid];
+    // A singleton PREPEND sits AHEAD of the singleton class -- that is what
+    // prepend means, and it is where CRuby puts it. `extend` sits behind.
+    // Both arrive through the extended list (the method copies need it), so
+    // the prepends are seeded here and the dedup below drops the second
+    // sighting rather than the first.
+    let mut anc: Vec<ClassId> = match recv {
+        RubyValue::Class(cid) => resolver::singleton_prepends_of(*cid),
+        _ => Vec::new(),
+    };
+    anc.push(sid);
     anc.extend(singleton_super_chain(recv));
+    let mut seen = crate::FSet::default();
+    anc.retain(|&a| seen.insert(a));
     let leaked: &'static [ClassId] = Box::leak(anc.into_boxed_slice());
     if let Some(entry) = maps().classes.write().unwrap().get_mut(&sid.0) {
         entry.ancestors = leaked;

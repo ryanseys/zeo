@@ -1039,11 +1039,7 @@ fn walk_class_body(
                         // argument, which zeo has no compile-time class for --
                         // so a module that defines either stays a clean
                         // rejection instead of being handed the wrong receiver.
-                        if compiler.overrides_mixin_primitive(target, "prepend_features")
-                            || compiler
-                                .class_method_in_chain(target, "prepended")
-                                .is_some()
-                        {
+                        if defines_prepend_hook(compiler, target) {
                             return Err(format!(
                                 "`prepend {m}` inside `class << self` isn't supported when {m} \
                                  defines `prepended`/`prepend_features` (zeo limitation: the hook \
@@ -1637,4 +1633,25 @@ pub(super) fn defer_mixin_to_runtime(compiler: &mut Compiler, module: ClassId) {
         names.push(scope.name.clone());
     }
     compiler.runtime_patches.extend(names);
+}
+
+/// Whether `module` wants to be told it was prepended -- it defines
+/// `prepended`, or overrides the `prepend_features` primitive that performs
+/// the mix-in.
+///
+/// A compile-time ancestry edit emits no statement, so it can never call
+/// either. Both callers use this to hand such a module to the run time
+/// instead (or, for the `class << self` spelling, to reject).
+pub(super) fn defines_prepend_hook(compiler: &Compiler, module: ClassId) -> bool {
+    // `own_class_methods`, not `class_method_in_chain`: both callers run
+    // DURING the statement walk, before `mro::materialize_class_methods` has
+    // flattened anything, so the chain answers no for every module. The
+    // module's own `def self.prepended` is registered by then, and an
+    // INHERITED hook on a mixin module is not a shape ruby code writes.
+    compiler.overrides_mixin_primitive(module, "prepend_features")
+        || compiler
+            .class(module)
+            .own_class_methods
+            .iter()
+            .any(|&sid| compiler.scope(sid).name == "prepended")
 }

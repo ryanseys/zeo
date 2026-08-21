@@ -1129,15 +1129,18 @@ pub(super) fn try_prepend_call_edit(
         }
         return false;
     }
-    // Registered in REVERSE argument order so `mro`'s uniform
-    // "later-registered-is-closer" flatten yields source order in the ancestry
-    // (`prepend A, B` -> [A, B, self]) -- the same rule the class-body multi-arg
-    // lowering follows (see `lower/defs.rs`).
-    for m in modules.into_iter().rev() {
-        let ci = &mut compiler.classes[target.0 as usize];
-        ci.class_method_prepends.push(m);
-    }
-    true
+    // The SINGLETON side takes the same route, and for the same two reasons.
+    // A compile-time edit emits no statement, so it can call no `prepended`
+    // hook -- and it teaches the COMPILER's ancestry without teaching the
+    // RUNTIME's, so `K.singleton_class.ancestors` never showed the module at
+    // all. Both are what `defer_singleton_prepend` (in the caller) already
+    // pays for on the shapes it declines; paying it here too makes one
+    // spelling behave one way.
+    //
+    // `class << self; prepend M; end` is NOT this shape and keeps the edit:
+    // it is written inside the body it edits, where there is no send to run.
+    let _ = (target, modules);
+    false
 }
 
 /// The class/module a bare-constant expression names (resolved in `cref`), or

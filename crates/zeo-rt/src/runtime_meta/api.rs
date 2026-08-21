@@ -1506,6 +1506,15 @@ pub fn runtime_define_singleton_method(
 /// primitive lands back in [`extend_object_default`], which is this function's
 /// body minus the routing and the hook.
 pub fn runtime_extend(recv: &RubyValue, module_val: &RubyValue) -> Result<RubyValue, Signal> {
+    extend_object_or_primitive(recv, module_val)?;
+    fire_mixin_hook(module_val, "extended", recv)?;
+    Ok(recv.clone())
+}
+
+/// The mix-in half of [`runtime_extend`] with no notification: the module's
+/// own `extend_object` when it overrides one, the default splice otherwise.
+/// Shared with the singleton-class path, which sends a different hook.
+fn extend_object_or_primitive(recv: &RubyValue, module_val: &RubyValue) -> Result<(), Signal> {
     let RubyValue::Class(mid) = module_val else {
         return Err(type_error!(
             "wrong argument type {} (expected Module)",
@@ -1523,8 +1532,7 @@ pub fn runtime_extend(recv: &RubyValue, module_val: &RubyValue) -> Result<RubyVa
         }
         false => extend_object_default(recv, module_val)?,
     }
-    fire_mixin_hook(module_val, "extended", recv)?;
-    Ok(recv.clone())
+    Ok(())
 }
 
 /// `Module#extend_object`'s default body -- the mixin itself, without the
@@ -1756,8 +1764,18 @@ fn mix_in(
                     prepend_into_class_singleton(*owner_id, module_val)?;
                     fire_mixin_hook(module_val, "prepended", recv)?;
                 }
+                // The INSTALL is the extend table either way (that is what a
+                // zeo singleton is), but the NOTIFICATION is the one ruby
+                // sends for the verb that was written, with the singleton
+                // CLASS as its argument -- `singleton_class.include M` fires
+                // `M.included(#<Class:K>)`, not `M.extended(K)`.
                 _ => {
-                    runtime_extend(&owner, module_val)?;
+                    extend_object_or_primitive(&owner, module_val)?;
+                    let hook = match placement {
+                        Placement::Before => "prepended",
+                        Placement::After => "included",
+                    };
+                    fire_mixin_hook(module_val, hook, recv)?;
                 }
             }
         }
