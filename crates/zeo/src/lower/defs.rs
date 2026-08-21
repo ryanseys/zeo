@@ -1774,9 +1774,7 @@ fn lower_class_body_statement(
     //
     // Only the shapes that REACH here need it: `define_method(:name) { }`
     // desugared into a `DefMethod` further up and returned before this.
-    if *module_function
-        && let Some(name) = runtime_defined_method_name(node)
-    {
+    if *module_function && let Some(name) = runtime_defined_method_name(node) {
         let sym = hir.push(HirNode::SymbolLit(name));
         out.push(hir.push(HirNode::Call {
             receiver: None,
