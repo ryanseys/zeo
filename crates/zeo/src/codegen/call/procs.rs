@@ -704,13 +704,24 @@ fn emit_lambda_arity_check(
     } else {
         quote! { let __argc = #args_ident.len(); }
     };
+    // The COUNT ruby reports is the whole accepted shape, not the minimum:
+    // `->(a, b = 10, *r){}.call` says `expected 1+`, and `->(a, b = 10){}`
+    // says `expected 1..2` -- the same three shapes the method binder
+    // builds (`capi::bind`).
+    let expected = if has_rest {
+        format!("{min_lit}+")
+    } else if nopt > 0 {
+        format!("{min_lit}..{}", nreq + nopt + npost)
+    } else {
+        format!("{min_lit}")
+    };
     let err = crate::codegen::expr::emit_boxed_new(
         cx,
         "ArgumentError",
         vec![quote! {
             zeo_rt::RubyValue::Str(zeo_rt::string_new(format!(
                 "wrong number of arguments (given {}, expected {})",
-                __argc, #min_lit
+                __argc, #expected
             )))
         }],
     );

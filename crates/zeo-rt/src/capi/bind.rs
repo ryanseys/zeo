@@ -294,10 +294,17 @@ unsafe fn bind_block(
         };
         let min = nreq + npost;
         if argc < min || (!has_rest && argc > nreq + nopt + npost) {
-            return Err(crate::dispatch::raise_error(
-                "ArgumentError",
-                format!("wrong number of arguments (given {argc}, expected {min})"),
-            ));
+            // The whole accepted shape, not the minimum: `->(a, b = 10,
+            // *r){}.call` says `expected 1+` and `->(a, b = 10){}` says
+            // `expected 1..2`, exactly as the method binder above reports.
+            let expected = if has_rest {
+                format!("{min}+")
+            } else if nopt == 0 {
+                format!("{min}")
+            } else {
+                format!("{min}..{}", nreq + nopt + npost)
+            };
+            return Err(crate::dispatch::wrong_arity(argc, &expected));
         }
     }
 

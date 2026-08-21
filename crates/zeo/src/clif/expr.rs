@@ -3063,6 +3063,30 @@ fn lower_defined(fx: &mut Fx, site: NodeId, inner: NodeId) -> Result<Operand, St
             .expect("super_defined answers");
         return Ok(defined_cond(fx, hit, "super"));
     }
+    // Inside a RUN-TIME eval a bare name that IS one of the caller's
+    // locals could only arrive as a vcall -- prism parsed the source
+    // alone. `defined?` has to call it what ruby calls it, or a name the
+    // caller holds reports as an undefined method.
+    //
+    // The compile-time SPLICE is deliberately not included: it shares the
+    // enclosing scope's storage outright, so a name an EARLIER splice
+    // introduced is still hoisted there, and ruby -- whose eval locals
+    // die with the call -- answers nil for it.
+    if fx.eval_mode.is_some()
+        && fx
+            .an
+            .compiler
+            .hir
+            .has_flag(inner, crate::hir::NodeFlag::VCALL)
+        && let HirNode::Call {
+            receiver: None,
+            name,
+            ..
+        } = &fx.an.compiler.hir[inner]
+        && fx.locals.contains_key(name)
+    {
+        return Ok(defined_static(fx, Some("local-variable")));
+    }
     // `defined?(a_call)`: evaluate the receiver (its raise SWALLOWED to
     // nil -- CRuby's catch entry over the whole expression) and probe it.
     if let HirNode::Call { receiver, name, .. } = &fx.an.compiler.hir[inner] {

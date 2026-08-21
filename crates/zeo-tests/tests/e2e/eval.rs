@@ -216,6 +216,53 @@ fn a_block_in_the_source_writes_the_callers_local() {
 }
 
 #[test]
+fn a_def_in_the_source_has_a_home_of_its_own() {
+    // `super`, `yield` and `return` need the enclosing method's identity,
+    // block channel and return target -- which a snippet's own level does
+    // not have, but a `def` written INSIDE it does: the emitter's
+    // run-time-installed body reads its defining class off the method
+    // frame stack. So the refusal is about where they sit, not what they
+    // are.
+    agree(
+        r#"
+        class Base
+          def greet = "base"
+        end
+        class Kid < Base; end
+        src = "def greet; %(kid+) + super; end"
+        Kid.class_eval(src)
+        p Kid.new.greet
+        yielder = "def y_it; yield 5; end"
+        eval(yielder)
+        p(y_it { |v| v * 3 })
+        "#,
+        "\"kid+base\"\n15\n",
+    );
+}
+
+#[test]
+fn defined_calls_a_callers_local_a_local() {
+    // prism could only call it a vcall (it parsed the snippet alone), so
+    // `defined?` reported an undefined method for a name the caller
+    // holds. The eval VM answers `nil` here; CRuby and the compiler agree
+    // on "local-variable".
+    let source = r#"
+        loc = 5
+        here = "defined?(loc)"
+        gone = "defined?(nope)"
+        p eval(here)
+        p eval(gone)
+        "#;
+    let run = compiled(source);
+    assert_eq!(
+        run.stdout, "\"local-variable\"\nnil\n",
+        "stderr: {}",
+        run.stderr
+    );
+    assert_eq!(interpreted(source).stdout, "nil\nnil\n");
+}
+
+#[test]
 fn a_shape_the_compiler_declines_still_runs() {
     // A `class` in the source mints a run-time class, which this compiler
     // does not lower yet -- the interpreter answers it, and the program

@@ -171,6 +171,14 @@ fn build(req: &EvalRequest<'_>, scope_names: &[String]) -> Result<Compiled, Stri
 /// snippet, because their lowering reads a decision only a whole-program
 /// compile makes. Each is a widening this compiler owes (G6-1/G6-2).
 fn refusals(analyzed: &crate::analyze::Analyzed) -> Result<(), String> {
+    scope_refusals(analyzed)?;
+    home_refusals(analyzed)
+}
+
+/// The shapes that are wrong ANYWHERE in a snippet, `def` bodies
+/// included: their lowering reads a decision only a whole-program compile
+/// makes. Each is a widening this compiler owes (G6-1/G6-2).
+fn scope_refusals(analyzed: &crate::analyze::Analyzed) -> Result<(), String> {
     let compiler = &analyzed.compiler;
     // `CompileMode::Eval` registers nothing, so nothing can be hoisted
     // past the walk below -- but a compile that DID register would emit
@@ -184,11 +192,20 @@ fn refusals(analyzed: &crate::analyze::Analyzed) -> Result<(), String> {
         "an eval snippet registered a method"
     );
     let hir = &compiler.hir;
+    // `super`, `yield` and `return` all need a home the SNIPPET does not
+    // have -- but a `def` written inside it does have one, and the
+    // emitter's run-time-installed body already carries it (it reads the
+    // defining class off the method-frame stack). So they are refused at
+    // the snippet's own level and allowed inside a `def` there: this walk
+    // stops at one.
     let mut refused = None;
     let mut stack: Vec<crate::hir::NodeId> = analyzed.main_statements.clone();
     while let Some(id) = stack.pop() {
         if refused.is_some() {
             break;
+        }
+        if matches!(hir[id], HirNode::DefMethod { .. }) {
+            continue;
         }
         hir[id].for_each_child(&mut |c| stack.push(c));
         refused = match &hir[id] {
@@ -211,25 +228,48 @@ fn refusals(analyzed: &crate::analyze::Analyzed) -> Result<(), String> {
             | HirNode::DefHook { .. }
             | HirNode::Refine { .. }
             | HirNode::Using { .. } => Some("a definition-level statement"),
-            // A home the snippet does not have: `super` resumes from the
-            // class the body was written in, `yield`/`return` belong to
-            // the enclosing method.
-            HirNode::SuperCall { .. } => Some("a `super`"),
-            HirNode::Yield { .. } | HirNode::BlockGiven => Some("a `yield`"),
-            HirNode::Return(..) => Some("a `return`"),
             // An owner the fresh compiler resolves statically.
             HirNode::ClassVarRead(..) | HirNode::ClassVarWrite { .. } => Some("a class variable"),
             HirNode::ConstWrite { .. } | HirNode::DynConstWrite { .. } => {
                 Some("a constant assignment")
             }
-            // `defined?` classifies its operand at compile time, and a
-            // bare name in a snippet may be the caller's local.
-            HirNode::Defined(..) => Some("a `defined?`"),
             // Compile-time-only surfaces.
             HirNode::Eval(..) | HirNode::Ffi(..) => Some("a nested compiler surface"),
             HirNode::BoxScope { .. } | HirNode::BoxHandle(..) => Some("a `Ruby::Box`"),
             HirNode::PreExec(..) => Some("a `BEGIN` block"),
             HirNode::FlipFlop { .. } => Some("a flip-flop"),
+            _ => None,
+        };
+    }
+    match refused {
+        Some(what) => Err(format!("the source has {what}")),
+        None => Ok(()),
+    }
+}
+
+/// The shapes that need a HOME -- the enclosing method's identity, block
+/// channel or return target. A snippet's own level has none; a `def`
+/// written inside it does, so this walk stops at one.
+fn home_refusals(analyzed: &crate::analyze::Analyzed) -> Result<(), String> {
+    let hir = &analyzed.compiler.hir;
+    let mut refused = None;
+    let mut stack: Vec<crate::hir::NodeId> = analyzed.main_statements.clone();
+    while let Some(id) = stack.pop() {
+        if refused.is_some() {
+            break;
+        }
+        if matches!(hir[id], HirNode::DefMethod { .. }) {
+            continue;
+        }
+        hir[id].for_each_child(&mut |c| stack.push(c));
+        refused = match &hir[id] {
+            // `super` resumes from the class the body was written in;
+            // `yield`/`return` belong to the method the eval sits inside,
+            // whose block channel and return target the snippet's own
+            // frame does not carry.
+            HirNode::SuperCall { .. } => Some("a top-level `super`"),
+            HirNode::Yield { .. } | HirNode::BlockGiven => Some("a top-level `yield`"),
+            HirNode::Return(..) => Some("a top-level `return`"),
             _ => None,
         };
     }
