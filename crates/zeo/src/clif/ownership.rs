@@ -117,7 +117,7 @@ fn take_into(fx: &mut Fx, op: &Operand, dst: ir::Value, release_dst: bool) {
         fx.owned_consumed += 1;
     }
     if release_dst {
-        fx.call("zeo_rt_release", &[dst]);
+        release_if_heap(fx, dst);
     }
     store_bits(fx, op, dst);
 }
@@ -150,6 +150,29 @@ pub(crate) fn pool_owned(fx: &mut Fx, addr: ir::Value, tag: TagInfo) {
             fx.b.switch_to_block(cont);
         }
     }
+}
+
+/// Release the value at `addr` iff its runtime tag is a heap tag -- an
+/// assignment's release of the old value. `zeo_rt_release` is already a
+/// no-op for an immediate, so the guard buys nothing but the CALL, which
+/// is the whole point: a loop that reassigns an Int local made one per
+/// iteration. A released slot's poison byte is itself above the heap
+/// boundary, so a double release still reaches the runtime's check.
+pub(crate) fn release_if_heap(fx: &mut Fx, addr: ir::Value) {
+    let fl = MemFlagsData::trusted();
+    let t = fx.b.ins().load(types::I8, fl, addr, 0);
+    let is_heap = fx.b.ins().icmp_imm_u(
+        ir::condcodes::IntCC::UnsignedGreaterThanOrEqual,
+        t,
+        i64::from(FIRST_HEAP_TAG),
+    );
+    let do_release = fx.b.create_block();
+    let cont = fx.b.create_block();
+    fx.b.ins().brif(is_heap, do_release, &[], cont, &[]);
+    fx.b.switch_to_block(do_release);
+    fx.call("zeo_rt_release", &[addr]);
+    fx.b.ins().jump(cont, &[]);
+    fx.b.switch_to_block(cont);
 }
 
 /// Retain the value at `addr` iff its runtime tag is a heap tag.
