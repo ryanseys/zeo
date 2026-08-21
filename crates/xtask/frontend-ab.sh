@@ -12,7 +12,7 @@
 #   crates/xtask/frontend-ab.sh <baseline-zeo> <candidate-zeo> [runs] [panel]
 #
 # Reads `codegen_ms` out of conformance/gem-probe-timings.tsv, which is the
-# wall time of the whole `zeo --emit-rust` subprocess. Restores the ledger
+# wall time of the whole `zeo --emit-clif` subprocess. Restores the ledger
 # afterwards -- probing rewrites it and those rows are not the measurement.
 #
 # TWO PANELS, because they answer different questions:

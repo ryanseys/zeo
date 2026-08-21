@@ -4,7 +4,7 @@
 //! generated binaries, this measures what the COMPILER produces and costs on a
 //! fixed program set spanning hello-world to bundler scale. Per program:
 //!
-//! - `frontend_ms` -- best-of-N wall time of `zeo <file> --emit-rust` (parse -> lower ->
+//! - `frontend_ms` -- best-of-N wall time of `zeo <file> --emit-clif` (parse -> lower ->
 //!   analyze -> codegen -> emit, no rustc)
 //! - `rust_lines`  -- line count of the emitted (compact) output
 //! - `rust_bytes`  -- byte length of the build-path source (the `bytes=` field
@@ -198,7 +198,7 @@ fn report(row: &Row, base: Option<&Row>) {
 }
 
 fn run_one(zeo_bin: &Path, name: &str, rb: &Path, runs: usize) -> Result<Row, String> {
-    // Frontend: best-of-N `--emit-rust` wall time, which is the renderer the
+    // Frontend: best-of-N `--emit-clif` wall time, which is the renderer the
     // BUILD path uses. It measured `--dump=rust` until the peak-memory work
     // showed what that was costing -- a `syn` re-parse, a prettyplease pass
     // and the whole program held as a `String`, none of which any build does.
@@ -208,7 +208,7 @@ fn run_one(zeo_bin: &Path, name: &str, rb: &Path, runs: usize) -> Result<Row, St
     // best-of-N measurement because the fastest run is the one least
     // disturbed by the machine, but memory is a ceiling question, and the
     // most a compile ever held is the number that decides whether it fits.
-    let emitted = std::env::temp_dir().join(format!("zeo-compile-bench-{name}.rs"));
+    let emitted = std::env::temp_dir().join(format!("zeo-compile-bench-{name}.clif"));
     let mut best_ms: Option<u64> = None;
     let mut rust_lines = 0u64;
     let mut peak_rss = 0u64;
@@ -216,15 +216,15 @@ fn run_one(zeo_bin: &Path, name: &str, rb: &Path, runs: usize) -> Result<Row, St
         let started = Instant::now();
         let out = Command::new(zeo_bin)
             .arg(rb)
-            .arg(format!("--emit-rust={}", emitted.display()))
+            .arg(format!("--emit-clif={}", emitted.display()))
             .arg("-W0")
             .env("ZEO_TIMINGS", "1")
             .output()
-            .map_err(|e| format!("invoking zeo --emit-rust: {e}"))?;
+            .map_err(|e| format!("invoking zeo --emit-clif: {e}"))?;
         let ms = started.elapsed().as_millis() as u64;
         if !out.status.success() {
             return Err(format!(
-                "zeo --emit-rust failed: {}",
+                "zeo --emit-clif failed: {}",
                 String::from_utf8_lossy(&out.stderr)
                     .lines()
                     .next()

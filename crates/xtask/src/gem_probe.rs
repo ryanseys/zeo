@@ -21,10 +21,6 @@
 //!   probe    require "<entry>"  -> a Stage and an Outcome
 //!   record   the verdict        -> conformance/gem-probe.tsv       (committed)
 //!
-//! The emitted Rust is kept, gzipped, under `vendor/.probe-rs/`, so a later
-//! sweep can climb to `build` for the whole corpus without paying for
-//! codegen twice.
-//!
 //! Probing an unpacked tree needs no network and is deterministic, so a ledger
 //! row reproduces from its recorded version alone.
 //!
@@ -405,14 +401,15 @@ struct Row {
     /// so it belongs in the committed ledger: it diffs when codegen changes
     /// and is silent otherwise. Absent when the front end never got there.
     ///
-    /// UNITS CHANGED when the probe moved from `--dump=rust` to `--emit-rust`.
+    /// UNITS CHANGED when the probe moved from `--dump=rust` to `--emit-rust`,
+    /// and again when it moved to `--emit-clif` (2026-08-21).
     /// Every row written before that measured PRETTYPLEASE output, which no
     /// build ever compiles and which runs about 2.5x the real thing
     /// (actionmailer: 305 MB pretty, 125 MB compact). The new number is what
     /// rustc is actually handed. Rows re-probed since carry it; the rest still
     /// carry the old one, so a cross-row byte comparison is only meaningful
     /// within one sweep until the corpus is swept through.
-    rust_bytes: Option<u64>,
+    emitted_bytes: Option<u64>,
     /// Bytes of the linked binary, when `--build` ran. Deterministic for a
     /// given toolchain; a rustc upgrade moves every row at once, which is
     /// rare and worth seeing. The binary itself is deleted once measured --
@@ -444,7 +441,7 @@ impl Row {
             version: version.to_string(),
             stage,
             outcome,
-            rust_bytes: None,
+            emitted_bytes: None,
             binary_bytes: None,
             site: None,
             digest,
@@ -456,7 +453,7 @@ impl Row {
             version,
             stage: v.stage,
             outcome: v.outcome.clone(),
-            rust_bytes: v.rust_bytes,
+            emitted_bytes: v.emitted_bytes,
             binary_bytes: v.binary_bytes,
             site: v.site.clone(),
             digest,
@@ -1449,14 +1446,13 @@ fn probe(
         // earlier dependency or bundled copy squatting the same path.
         .arg("--root-gem")
         .arg(name)
-        // `--emit-rust`, not `--dump=rust`. The two compile the same program;
-        // what differs is who holds it. `--dump=rust` renders through `syn`
-        // and prettyplease for a person to read -- two more whole-program
-        // copies in the child -- and then writes it to a pipe this process
-        // reads into memory, which for the largest gems was a gigabyte in each
-        // of them. Streamed to a file, the child's peak drops by a third and
-        // this side holds nothing.
-        .arg(format!("--emit-rust={}", emitted_path.display()));
+        // `--emit-clif`, streamed to a file: the child's peak stays low and
+        // this side holds nothing. It was `--emit-rust` until the rustc
+        // backend was retired (2026-08-21), which means the `codegen` rung
+        // used to measure the FROZEN emitter's front end rather than the
+        // product. It measures Cranelift emission now, which is what a reader
+        // of this ledger assumes it always did.
+        .arg(format!("--emit-clif={}", emitted_path.display()));
     budget.apply(&mut cmd);
     let started = std::time::Instant::now();
     let emitted = crate::exec::run_with_timeout(cmd, None, timeout);
@@ -1512,15 +1508,7 @@ fn probe(
     let mut verdict = Verdict::stopped(Stage::Codegen, Outcome::Ok).timed(codegen_ms);
     // From the filesystem, not from a capture: the child streamed the program
     // to a file and neither process ever held it whole.
-    verdict.rust_bytes = std::fs::metadata(&emitted_path).ok().map(|m| m.len());
-    // The Rust is kept so a later sweep can climb the next rung without paying
-    // for codegen again -- emit once for the whole corpus, then build. gzip
-    // because the uncompressed corpus does not fit: the generated source is
-    // large and repetitive, and a disk that cannot hold the store is a store
-    // nobody keeps.
-    if let Err(e) = store_rust(root, name, version, &emitted_path) {
-        eprintln!("gem-probe: {name}: keeping the generated Rust: {e}");
-    }
+    verdict.emitted_bytes = std::fs::metadata(&emitted_path).ok().map(|m| m.len());
     let _ = std::fs::remove_file(&emitted_path);
     if !tiers.build {
         return verdict;
@@ -1591,7 +1579,7 @@ fn probe(
         };
     }
     // Measured, then removed. One binary per gem is 20-30 MB and the corpus
-    // would be tens of gigabytes; `rust_bytes`/`binary_bytes` are what a later
+    // would be tens of gigabytes; `emitted_bytes`/`binary_bytes` are what a later
     // reader wants, and the stored Rust is what a later BUILD wants.
     let _ = std::fs::remove_file(&out);
     verdict
@@ -1610,7 +1598,7 @@ struct Tiers {
 struct Verdict {
     stage: Stage,
     outcome: Outcome,
-    rust_bytes: Option<u64>,
+    emitted_bytes: Option<u64>,
     binary_bytes: Option<u64>,
     site: Option<String>,
     codegen_ms: Option<u128>,
@@ -1623,7 +1611,7 @@ impl Verdict {
         Verdict {
             stage,
             outcome,
-            rust_bytes: None,
+            emitted_bytes: None,
             binary_bytes: None,
             site: None,
             codegen_ms: None,
@@ -2028,34 +2016,6 @@ fn confirmed(question: &str) -> bool {
     std::io::stdin().read_line(&mut answer).is_ok() && answer.trim().eq_ignore_ascii_case("y")
 }
 
-/// Where the emitted Rust is kept, so climbing to `build` later does not
-/// pay for codegen again. Under `vendor/`, which is gitignored.
-fn rust_store(root: &Path) -> PathBuf {
-    root.join("vendor/.probe-rs")
-}
-
-/// Keeps one gem's generated Rust, gzipped.
-///
-/// Compressed because the uncompressed corpus does not fit: generated Rust is
-/// large and extremely repetitive, and a store that fills the disk is a store
-/// that gets deleted before it is ever used. `.rs.gz` is read back by the
-/// build tier and by hand with `gunzip -c`.
-///
-/// Copied from `emitted` a block at a time rather than from a `&[u8]`: the
-/// program is up to a gigabyte, and the point of streaming it to a file was
-/// that no process has to hold it whole.
-fn store_rust(root: &Path, name: &str, version: &str, emitted: &Path) -> Result<(), String> {
-    let dir = rust_store(root);
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let mut src = std::fs::File::open(emitted).map_err(|e| e.to_string())?;
-    let file = std::fs::File::create(dir.join(format!("{name}-{version}.rs.gz")))
-        .map_err(|e| e.to_string())?;
-    let mut gz = flate2::write::GzEncoder::new(file, flate2::Compression::default());
-    std::io::copy(&mut src, &mut gz).map_err(|e| e.to_string())?;
-    gz.finish().map_err(|e| e.to_string())?;
-    Ok(())
-}
-
 /// Runs a probed gem's binary with the OS holding the leash.
 ///
 /// This is the only rung that executes code from rubygems, so confinement is
@@ -2204,14 +2164,14 @@ fn read_ledger(root: &Path) -> Result<BTreeMap<String, Row>, String> {
             let row = match Stage::from_tag(third) {
                 Some(stage) => {
                     let tag = f.next().unwrap_or("");
-                    let rust_bytes = num(f.next());
+                    let emitted_bytes = num(f.next());
                     let binary_bytes = num(f.next());
                     let outcome = Outcome::from_ledger(tag, &tsv_unfield(f.next().unwrap_or("")));
                     Row {
                         version: version.to_string(),
                         stage,
                         outcome,
-                        rust_bytes,
+                        emitted_bytes,
                         binary_bytes,
                         site: text(f.next()),
                         digest: text(f.next()),
@@ -2223,7 +2183,7 @@ fn read_ledger(root: &Path) -> Result<BTreeMap<String, Row>, String> {
                         version: version.to_string(),
                         stage: outcome.implied_stage(),
                         outcome,
-                        rust_bytes: None,
+                        emitted_bytes: None,
                         binary_bytes: None,
                         site: text(f.next()),
                         digest: text(f.next()),
@@ -2296,7 +2256,7 @@ fn write_timings(
     let mut out = match std::fs::read_to_string(&path) {
         Ok(t) => t,
         Err(_) => String::from(
-            "gem\tversion\tstage\tcodegen_ms\tbuild_ms\trun_ms\trust_bytes\tbinary_bytes\n",
+            "gem\tversion\tstage\tcodegen_ms\tbuild_ms\trun_ms\temitted_bytes\tbinary_bytes\n",
         ),
     };
     let ms = |v: Option<u128>| v.map(|n| n.to_string()).unwrap_or_default();
@@ -2309,7 +2269,7 @@ fn write_timings(
             ms(v.codegen_ms),
             ms(v.build_ms),
             ms(v.run_ms),
-            by(v.rust_bytes),
+            by(v.emitted_bytes),
             by(v.binary_bytes),
         ));
     }
@@ -2565,17 +2525,17 @@ fn write_ledger(root: &Path, rows: &BTreeMap<String, Row>) -> Result<(), String>
     // empty fields are written rather than dropped for the same reason.
     let render = |selected: &mut dyn Iterator<Item = (&String, &Row)>| {
         let mut tsv = String::from(
-            "gem\tversion\tstage\toutcome\trust_bytes\tbinary_bytes\tdetail\twhere\tsha256\n",
+            "gem\tversion\tstage\toutcome\temitted_bytes\tbinary_bytes\tdetail\twhere\tsha256\n",
         );
         for (name, r) in selected {
             let num = |v: Option<u64>| v.map(|n| n.to_string()).unwrap_or_default();
-            let (rust_bytes, binary_bytes) = (num(r.rust_bytes), num(r.binary_bytes));
+            let (emitted_bytes, binary_bytes) = (num(r.emitted_bytes), num(r.binary_bytes));
             let fields = [
                 name.as_str(),
                 r.version.as_str(),
                 r.stage.tag(),
                 r.outcome.tag(),
-                rust_bytes.as_str(),
+                emitted_bytes.as_str(),
                 binary_bytes.as_str(),
                 r.outcome.detail(),
                 r.site.as_deref().unwrap_or(""),
@@ -2620,7 +2580,7 @@ fn write_ledger(root: &Path, rows: &BTreeMap<String, Row>) -> Result<(), String>
          to fix -- the rest are facts about the gem or the harness. The `where` column \
          points at the Ruby line the compiler rejected, relative to the repository root, \
          and `sha256` pins the `.gem` the row was measured against. \
-         `rust_bytes`/`binary_bytes` are reproducible and so are committed; wall-clock \
+         `emitted_bytes`/`binary_bytes` are reproducible and so are committed; wall-clock \
          timings are not, and go to the gitignored `gem-probe-timings.tsv` instead.\n\n\
          `gem-probe-ignored.tsv` lists gems the sweep declines to probe, each with a \
          reason. Those are facts about the gem or the platform, never about zeo -- a gem \
@@ -2651,7 +2611,7 @@ fn write_ledger(root: &Path, rows: &BTreeMap<String, Row>) -> Result<(), String>
                 r.version,
                 r.stage.tag(),
                 r.outcome.tag(),
-                r.rust_bytes.map(|n| n.to_string()).unwrap_or_default(),
+                r.emitted_bytes.map(|n| n.to_string()).unwrap_or_default(),
                 r.outcome.detail().replace('|', "\\|")
             ));
         }
@@ -4044,7 +4004,7 @@ mod tests {
         assert_eq!(back["alpha"].stage, Stage::Codegen);
         assert_eq!(back["alpha"].digest.as_deref(), Some("deadbeef"));
         // A legacy row measured no bytes; recording 0 would claim it did.
-        assert_eq!(back["alpha"].rust_bytes, None);
+        assert_eq!(back["alpha"].emitted_bytes, None);
         assert_eq!(back["beta"].stage, Stage::Unpack);
         assert_eq!(back["gamma"].stage, Stage::Fetch);
         let _ = std::fs::remove_dir_all(&root);
@@ -4340,7 +4300,7 @@ requires_grid "not_a_require"
                 version: "1.0.0".into(),
                 stage: (Outcome::Ok).implied_stage(),
                 outcome: Outcome::Ok,
-                rust_bytes: None,
+                emitted_bytes: None,
                 binary_bytes: None,
                 site: None,
                 digest: None,
@@ -4352,7 +4312,7 @@ requires_grid "not_a_require"
                 version: "2.1.0".into(),
                 stage: (Outcome::LoweringGap("some gap".into())).implied_stage(),
                 outcome: Outcome::LoweringGap("some gap".into()),
-                rust_bytes: None,
+                emitted_bytes: None,
                 binary_bytes: None,
                 site: Some("vendor/gems/beta/lib/beta.rb:12".into()),
                 digest: Some("d0d0cafe".into()),
@@ -4364,7 +4324,7 @@ requires_grid "not_a_require"
                 version: "3.0.0".into(),
                 stage: (Outcome::NativeExtension).implied_stage(),
                 outcome: Outcome::NativeExtension,
-                rust_bytes: None,
+                emitted_bytes: None,
                 binary_bytes: None,
                 site: None,
                 digest: None,
@@ -4405,7 +4365,7 @@ requires_grid "not_a_require"
                 version: "1.0.0".into(),
                 stage: (Outcome::LoweringGap(detail.into())).implied_stage(),
                 outcome: Outcome::LoweringGap(detail.into()),
-                rust_bytes: None,
+                emitted_bytes: None,
                 binary_bytes: None,
                 site: None,
                 digest: None,
@@ -4440,7 +4400,7 @@ requires_grid "not_a_require"
                     version: "1.0.0".into(),
                     stage: (Outcome::Ok).implied_stage(),
                     outcome: Outcome::Ok,
-                    rust_bytes: None,
+                    emitted_bytes: None,
                     binary_bytes: None,
                     site: None,
                     digest: None,
@@ -4518,7 +4478,7 @@ requires_grid "not_a_require"
                 version: "1.0.0".into(),
                 stage: (Outcome::LoweringGap("a gap".into())).implied_stage(),
                 outcome: Outcome::LoweringGap("a gap".into()),
-                rust_bytes: None,
+                emitted_bytes: None,
                 binary_bytes: None,
                 site: None,
                 digest: None,
@@ -4862,7 +4822,7 @@ requires_grid "not_a_require"
                     version: "1.0.0".into(),
                     stage: (Outcome::Ok).implied_stage(),
                     outcome: Outcome::Ok,
-                    rust_bytes: None,
+                    emitted_bytes: None,
                     binary_bytes: None,
                     site: None,
                     digest: None,
@@ -4889,7 +4849,7 @@ requires_grid "not_a_require"
                 version: "1.0.0".into(),
                 stage: (Outcome::Ok).implied_stage(),
                 outcome: Outcome::Ok,
-                rust_bytes: None,
+                emitted_bytes: None,
                 binary_bytes: None,
                 site: None,
                 digest: None,
@@ -4955,7 +4915,7 @@ requires_grid "not_a_require"
             version: "1.0.0".into(),
             stage,
             outcome,
-            rust_bytes: None,
+            emitted_bytes: None,
             binary_bytes: None,
             site: None,
             digest: None,

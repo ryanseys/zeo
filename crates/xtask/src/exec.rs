@@ -14,7 +14,7 @@
 //! gigabyte, and with several children in flight the sweep's own memory was in
 //! the same class as the compiles it was measuring. Nothing needs those bytes
 //! any more. A caller that wants a child's program output asks the child to
-//! write it to a file (`zeo --emit-rust`), which is both cheaper and the only
+//! write it to a file (`zeo --emit-clif`), which is both cheaper and the only
 //! shape that works at gem scale.
 //!
 //! stderr IS kept, bounded at [`MAX_CAPTURE`] -- every caller classifies a

@@ -1,6 +1,6 @@
 //! `cargo run -p xtask -- stdlib-status [<lib-dir>]`: sweeps every `*.rb`
 //! under a Ruby stdlib `lib` directory and records whether `zeo` can
-//! COMPILE it -- Ruby -> Rust codegen only (via `zeo --emit-rust`; no `rustc`, no
+//! COMPILE it -- front end plus Cranelift emission only (via `zeo --emit-clif`; no linker, no
 //! execution), the fast first-cut triage of how much real stdlib the compiler
 //! accepts today.
 //!
@@ -165,20 +165,19 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
     }
 }
 
-/// Compiles one file with `zeo <file> -I <lib-dir> --emit-rust /dev/null`
+/// Compiles one file with `zeo <file> -I <lib-dir> --emit-clif=/dev/null`
 /// (codegen only) and maps the outcome to a [`Status`]. Exit 0 = codegen
 /// succeeded; a non-zero exit (a clean rejection or a compiler panic) = a
 /// failure, bucketed by its message.
 fn classify(zeo: &Path, lib_dir: &Path, file: &Path, budget: crate::jobs::Budget) -> Status {
     let mut cmd = Command::new(zeo);
-    // `--emit-rust /dev/null`: this reads the exit status and stderr and never
-    // the program, so there is no reason to pay for `--dump=rust`'s `syn`
-    // re-parse and prettyplease pass -- two whole-program copies in the child,
-    // for output nothing looks at.
+    // `--emit-clif=/dev/null`: this reads the exit status and stderr and never
+    // the program, so it wants the cheapest full compile there is -- front end
+    // plus emission, with the output thrown away.
     cmd.arg(file)
         .arg("-I")
         .arg(lib_dir)
-        .arg("--emit-rust=/dev/null");
+        .arg("--emit-clif=/dev/null");
     budget.apply(&mut cmd);
     match run_with_timeout(cmd, None, COMPILE_TIMEOUT) {
         Err(e) => Status::HarnessError(e),

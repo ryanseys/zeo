@@ -267,13 +267,50 @@ pub fn compile_to_object_with(
     })
 }
 
+/// What the front end spent, for `ZEO_TIMINGS`. Recorded by
+/// [`analyze_on_this_thread`] and reported by whichever emitter ran, since
+/// only the emitter knows how much output there was.
+///
+/// The arena is a first-class term in the compiler's peak -- one `HirNode` is
+/// as wide as the largest variant -- so the node count and its width ride
+/// along.
+pub(crate) struct FrontEnd {
+    start: std::time::Instant,
+    parse_lower: std::time::Duration,
+    analyze: std::time::Duration,
+    nodes: usize,
+    node_bytes: usize,
+}
+
+impl FrontEnd {
+    /// One `zeo-timings:` line, once the emitter knows its output size.
+    /// `lines` is 0 where the emitter does not count them.
+    pub(crate) fn report(&self, emit: std::time::Duration, bytes: u64, lines: u64) {
+        if !timings_enabled() {
+            return;
+        }
+        let (nodes, node_bytes) = (self.nodes, self.node_bytes);
+        eprintln!(
+            "zeo-timings: parse_lower={}ms analyze={}ms codegen={}ms total={}ms bytes={bytes} lines={lines} nodes={nodes} node_bytes={node_bytes} peak_rss={}",
+            self.parse_lower.as_millis(),
+            self.analyze.as_millis(),
+            emit.as_millis(),
+            self.start.elapsed().as_millis(),
+            // `0` for a compile that finished inside the poller's first
+            // interval -- absent, not zero. `compile-bench` reads it as such.
+            memguard::peak_bytes().unwrap_or(0),
+        );
+    }
+}
+
 /// The shared Cranelift front half: parse, gem reporting, analyze -- what
 /// every clif-backed entry (`aot` object, `jit` run, `--emit-clif`) does
 /// before its own emission. Runs on the caller's (compile) thread.
 fn analyze_on_this_thread(
     source: &str,
     opts: &CompileOptions,
-) -> Result<analyze::Analyzed, CompileError> {
+) -> Result<(analyze::Analyzed, FrontEnd), CompileError> {
+    let start = std::time::Instant::now();
     memguard::set_phase(memguard::Phase::ParseLower);
     let (hir, root, gem_records) = parse::parse_and_lower_with(
         source,
@@ -287,14 +324,30 @@ fn analyze_on_this_thread(
         opts.lockfile.as_deref(),
         opts.root_gem.as_ref(),
     )?;
+    let parse_lower = start.elapsed();
     if let Some(path) = &opts.gem_report {
         gem_report::write_report(&gem_records, path)
             .map_err(|message| CompileError::Report { message })?;
     }
+    let (nodes, node_bytes) = (
+        hir.all_nodes().len(),
+        std::mem::size_of_val(hir.all_nodes()),
+    );
+    let t_analyze = std::time::Instant::now();
     memguard::set_phase(memguard::Phase::Analyze);
     let analyzed = analyze::analyze(hir, root)?;
+    let analyze = t_analyze.elapsed();
     memguard::set_phase(memguard::Phase::Codegen);
-    Ok(analyzed)
+    Ok((
+        analyzed,
+        FrontEnd {
+            start,
+            parse_lower,
+            analyze,
+            nodes,
+            node_bytes,
+        },
+    ))
 }
 
 fn compile_object_on_this_thread(
@@ -302,8 +355,10 @@ fn compile_object_on_this_thread(
     opts: &CompileOptions,
     debuginfo: bool,
 ) -> Result<ObjectOutput, CompileError> {
-    let analyzed = analyze_on_this_thread(source, opts)?;
+    let (analyzed, front) = analyze_on_this_thread(source, opts)?;
+    let t_emit = std::time::Instant::now();
     let object = clif::emit::compile(&analyzed, debuginfo).map_err(CompileError::codegen)?;
+    front.report(t_emit.elapsed(), object.len() as u64, 0);
     Ok(ObjectOutput { object, debuginfo })
 }
 
@@ -339,7 +394,9 @@ pub fn analyze_program(
         std::thread::Builder::new()
             .name("zeo-compile".into())
             .stack_size(COMPILE_STACK_SIZE)
-            .spawn_scoped(scope, || analyze_on_this_thread(source, opts))
+            .spawn_scoped(scope, || {
+                analyze_on_this_thread(source, opts).map(|(a, _)| a)
+            })
             .expect("spawning the compiler thread")
             .join()
             .unwrap_or_else(|payload| std::panic::resume_unwind(payload))
@@ -383,7 +440,7 @@ pub fn run_jit_with(
             .name("zeo-compile".into())
             .stack_size(COMPILE_STACK_SIZE)
             .spawn_scoped(scope, || {
-                let analyzed = analyze_on_this_thread(source, opts)?;
+                let (analyzed, _front) = analyze_on_this_thread(source, opts)?;
                 match backend::jit::run(analyzed, program_name, program_args) {
                     Err(message) => Err(CompileError::codegen(message)),
                     Ok(never) => match never {},
@@ -404,9 +461,15 @@ pub fn compile_to_clif_text(source: &str, opts: &CompileOptions) -> Result<Strin
             .name("zeo-compile".into())
             .stack_size(COMPILE_STACK_SIZE)
             .spawn_scoped(scope, || {
-                let analyzed = analyze_on_this_thread(source, opts)?;
+                let (analyzed, front) = analyze_on_this_thread(source, opts)?;
+                let t_emit = std::time::Instant::now();
                 let (_bytes, text) =
                     clif::emit::compile_with_clif(&analyzed).map_err(CompileError::codegen)?;
+                front.report(
+                    t_emit.elapsed(),
+                    text.len() as u64,
+                    text.lines().count() as u64,
+                );
                 Ok(text)
             })
             .expect("spawning the compiler thread")
