@@ -12,7 +12,6 @@ product.
 |---|---|---|
 | `jit` | lowers HIR to Cranelift IR and runs it **in this process** | `zeo file.rb`, `zeo -e` |
 | `aot` | lowers the same IR to an object file and links a binary | `zeo -o out file.rb`, `--compile` |
-| `rustc` | writes Rust text and shells `rustc` | `--backend rustc`, dev tree only |
 
 `jit` and `aot` share **one** lowering (`crates/zeo/src/clif/`) and one
 runtime. The only difference between them is `is_pic`, how imported
@@ -22,12 +21,11 @@ the dev loop and the test corpus fast (~21 ms for `zeo -e 'puts 1'`), and
 because a compiler that can run in-process is what lets `eval` compile for
 real later.
 
-`rustc` is the **differential oracle**: the original emitter, frozen, kept
-because "the two backends disagree" is a far better bug report than "the
-output looks wrong". It is not built for anyone's use — it needs this
-repo's own cargo target dir, it is uncached, and it pays a real `rustc`
-(~13 s for hello). See [CONTRIBUTING.md](../CONTRIBUTING.md) for how to
-run a suite through it.
+There was a third mode, `rustc`, which wrote Rust text and shelled out to
+`rustc`. It was zeo's original backend and then its differential oracle
+during the Cranelift bring-up. It was retired on 2026-08-21, once the
+Cranelift path had been the product for a release and the corpus agreed with
+CRuby on both legs; `archive/rustc-backend` keeps it readable.
 
 ## The layers
 
@@ -152,7 +150,6 @@ Platforms differ in where the DWARF ends up, so `-g` changes the link:
 |---|---|
 | `zeo --emit-clif[=<path>] file.rb` | the Cranelift IR, per function |
 | `ZEO_CLIF_VERIFY=1` | Cranelift's verifier + the ownership ledger in a release build |
-| `zeo --backend rustc file.rb` | what the frozen emitter does with the same HIR |
 | `ZEO_RT_LEAKCHECK=1` | ownership, per tag, with poison |
 | `cargo nextest run -p zeo` | the CLIF snapshots — the only thing that sees emitter SHAPE |
 

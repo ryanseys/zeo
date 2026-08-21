@@ -200,20 +200,17 @@ They are rungs rather than columns because the ladder **terminates**: the pass
 a row names implies success at every pass before it, and that no pass after it
 was attempted. A column per pass would restate that.
 
-`codegen ok` means Zeo produced Rust and nothing more: no rustc ran, no binary
-exists, and the gem's own code may not have been compiled at all — Zeo can
-decline a unit and defer it to a runtime `LoadError`, which only the `run`
-stage sees. `build` and `run` are opt-in (`--build`, `--run`).
+`codegen ok` means Zeo emitted code and nothing more: no binary exists, and
+the gem's own code may not have been compiled at all — Zeo can decline a unit
+and defer it to a runtime `LoadError`, which only the `run` stage sees.
+`build` and `run` are opt-in (`--build`, `--run`).
 
-**Which backend the number measures.** The probe drives `--emit-rust`, so
-`codegen ok` is a claim about the **frozen rustc emitter**, not about the
-Cranelift backend that every default run uses since the M1 flip. The four
-rungs before it are backend-independent (they are the front end, which both
-backends share), so a `parse`/`lower`/`analyze` row means the same thing
-either way — only the last rung is emitter-specific. The golden corpora are
-what measure Cranelift, and they are at 100 %. Re-pointing the probe at the
-default backend would re-run 195,778 rows and is a decision of its own, not
-a docs fix.
+**Which backend the number measures.** The probe drives `--emit-clif`, so
+every rung measures the backend that ships. It drove `--emit-rust` until
+2026-08-21, which meant the headline number was a claim about the frozen Rust
+emitter's front end rather than about the product; the sweep that re-bases the
+ledger against Cranelift is a run of its own, and until it completes the
+committed rows are the older measurement.
 
 This was two files, split on whether the outcome was `ok`. They carried the
 same columns and one parser served both, so the split was a filter frozen into

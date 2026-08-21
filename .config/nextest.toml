@@ -1,8 +1,7 @@
-# Every suite here compiles its `.rb` files and runs the result. Since the
-# M1 flip that means CRANELIFT -- in-process for a JIT golden, plus one `cc`
-# link for an AOT or e2e case. No `rustc` runs in a default nextest run at
-# all any more; `--backend rustc` is a dev-tree oracle a golden reaches only
-# under `ZEO_GOLDEN_BACKEND=rustc`.
+# Every suite here compiles its `.rb` files and runs the result. That means
+# CRANELIFT -- in-process for a JIT golden, plus one `cc` link for an AOT or
+# e2e case. No `rustc` runs anywhere in the suite: the backend that shelled
+# out to one was retired on 2026-08-21.
 #
 # What the group still bounds is therefore MEMORY, not toolchain processes:
 # each golden spawns a child `zeo` that holds a compile arena, and the
@@ -14,7 +13,7 @@
 #
 # The width below was chosen when a test could launch a rustc, and has NOT
 # been re-measured against the Cranelift path -- it is a ceiling nobody has
-# shown is the right one. Re-measuring belongs to the perf pass, not to a
+# shown is the right one, and now certainly a generous one. Re-measuring belongs to the perf pass, not to a
 # correctness run. In practice the gate is run at `--test-threads 4` on a
 # 16 GB machine, which sits under it anyway.
 [test-groups]
@@ -55,8 +54,7 @@ slow-timeout = { period = "360s", terminate-after = 2 }
 
 # The rspec end-to-end golden splices the entire rspec stack (core,
 # expectations, mocks, support, diff-lcs) into one program -- minutes, like a
-# gemtests case, and nothing caches it: the test bin-cache was deleted with
-# the rest of the rustc build machinery, so every run is a cold compile.
+# gemtests case, and nothing caches it -- every run is a cold compile.
 # No binary() anchor: it was born in gaps and lives in examples now, and an
 # anchored pattern goes silently stale on promotion.
 [[profile.default.overrides]]
@@ -73,8 +71,7 @@ slow-timeout = { period = "60s", terminate-after = 3 }
 
 # The CLI suite spawns the real `zeo` binary, which compiles the same way
 # every golden does -- same group, same reasoning. No terminate: its
-# minitest case legitimately compiles a whole require graph, and one case
-# deliberately runs the rustc oracle.
+# minitest case legitimately compiles a whole require graph.
 [[profile.default.overrides]]
 filter = "binary(cli)"
 test-group = "golden"

@@ -118,12 +118,6 @@ foo.rb ─prism─▶ HIR arena ─analyze─▶ typed classes, MRO,   ─clif�
   real coroutine `Fiber`s, real OS-thread `Thread`s, Ruby 4.0's `Ractor` port
   model. `#![forbid(unsafe_code)]` outside the FFI and syscall layers.
 
-**`--backend rustc`** is the third mode: the original emitter, which writes
-Rust text and calls `rustc`. It is frozen and kept as the **differential
-oracle** — the same HIR through a second, independent backend — until the
-Cranelift backend is retired-into (`docs/ROADMAP.md`). It is much slower; use
-it to bisect a suspected miscompile, not to build.
-
 The compiler crate and the runtime crate agree only through **`zeo-abi`**,
 which assigns a numeric `ClassId` to every built-in class. The compiler bakes
 the number into the emitted code; the runtime's dispatch reads it.
@@ -146,7 +140,7 @@ for any removed spelling.
 | `-e <code>` | Compile and run inline code (repeatable; joined with newlines). With `-o`, writes a binary instead. |
 | `-o <output>` | Write a native binary here instead of running. |
 | `--compile` | Write a native binary at the input path minus its extension. |
-| `--backend <jit\|aot\|rustc>` | Pick the code generator. Default: `jit` when running, `aot` with `-o`. `ZEO_BACKEND` is the env spelling. |
+| `--backend <jit\|aot>` | Pick the output mode. Default: `jit` when running, `aot` with `-o`. `ZEO_BACKEND` is the env spelling. |
 | `-I <dir>` | Add a `require` search root (repeatable; `-I<dir>` and `-I=<dir>` too). |
 | `--gems <dir>` | Add a directory of vendored gems — each subdirectory with a `.gemspec` is one gem (repeatable). |
 | `--root-gem <name>` | Treat this gem as the root package when several provide the same feature (Bundler-root semantics). |
@@ -154,7 +148,6 @@ for any removed spelling.
 | `--bundle-gemfile <path>` | The Gemfile whose lockfile selects versions in the store. Defaults to `BUNDLE_GEMFILE`. |
 | `--report[=<path>]` | Write the `zeo-gems.json` disclosure record (default: beside the artifact). Off by default. |
 | `--emit-clif[=<path>]` | Print the Cranelift IR and stop. |
-| `--emit-rust[=<path>]` | Print the rustc backend's generated Rust and stop. `--pretty` formats it. |
 | `-w`, `-W[0-2]`, `-W:[no-]<category>` | Accepted in Ruby's shapes. Zeo emits no warnings of its own, so they change nothing. |
 | `-v`, `--version`, `-h`, `--help` | Print and stop. |
 
@@ -171,7 +164,7 @@ for any removed spelling.
 |---|---|
 | `RUBYOPT` / `RUBYLIB` | As in CRuby. `RUBYOPT` accepts only `-I`, `-w`, `-W`. |
 | `GEM_PATH` / `BUNDLE_GEMFILE` | Defaults for `--gem-path` / `--bundle-gemfile`. An ambient store alone never changes a compile. |
-| `ZEO_BACKEND` | `jit`, `aot` or `rustc`; the `--backend` flag wins. |
+| `ZEO_BACKEND` | `jit` or `aot`; the `--backend` flag wins. |
 | `ZEO_LOG` / `RUST_LOG` | A `tracing` `EnvFilter` directive, e.g. `zeo::analyze=debug,zeo::lower=trace`. Unset means no subscriber and no output. |
 | `ZEO_MEMORY_LIMIT` | Bytes of resident memory a compile may use (default: half of RAM, capped at 8 GiB). A breach exits 12 and names the phase. |
 | `ZEO_GVL` | `1` runs threads on CRuby's schedule (a FIFO global lock with a 100 ms timer). The default is parallel OS threads. |
@@ -283,8 +276,8 @@ crates/
   Prism tree into a typed HIR arena; `analyze/` computes ancestors, method
   tables, local types and fusion decisions; `clif/` lowers HIR to Cranelift IR;
   `backend/` finalizes it in process (JIT) or emits an object and links it
-  (AOT). `codegen/` is the frozen rustc emitter. It is a **library** as well as
-  a binary — see [Public API](#public-api).
+  (AOT). It is a **library** as well as a binary — see
+  [Public API](#public-api).
 - **`zeo-rt`** — the runtime. One `enum RubyValue`; collections are
   `Arc<Freezable<…>>` so `freeze` and sharing are cheap; user objects are
   `Arc<dyn RubyObject>`. Memory is reference-counted with **no tracing
@@ -368,7 +361,7 @@ targets — one case per `.rb` file:
   agreeing with Ruby the suite goes red and `scripts/promote-gap.sh` moves it.
 
 `ZEO_GOLDEN_BACKEND=aot` runs the goldens through a linked binary instead of
-the JIT; `ZEO_GOLDEN_BACKEND=rustc` runs them through the frozen oracle.
+the JIT.
 
 Goldens are only ever written by `cargo run -p xtask -- bless <filter>`, which
 runs Ruby with `--disable-error_highlight --disable-did_you_mean`, records

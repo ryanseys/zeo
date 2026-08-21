@@ -76,27 +76,18 @@ compiler; `crates/zeo/src/clif/` is where it lives.
 |---|---|---|
 | `zeo file.rb`, `zeo -e` | **jit** (default) | finalizes the CLIF into this process and runs it in place |
 | `zeo file.rb -o app` | **aot** (default) | writes an object file and links it against `libzeo.a` |
-| `zeo --backend rustc file.rb` | **rustc** | the frozen differential oracle |
 
-There is a second, older backend: `crates/zeo/src/codegen/` emits Rust source
-text and hands it to `rustc`. It was the only backend until Cranelift reached
-parity, and it is **frozen** — bug fixes only, and only when Cranelift and it
-disagree about something CRuby settles. It exists so a suspect Cranelift
-result can be diffed against a backend that was correct before it, and it is
-deleted once parity is proved (M3). Don't add features to it; don't let its
-existence talk you into writing anything twice.
+There was a second, older backend: `crates/zeo/src/codegen/` emitted Rust
+source text and handed it to `rustc`. It was the only backend until Cranelift
+reached parity, then the differential oracle during the bring-up, and it was
+retired on 2026-08-21. The branch `archive/rustc-backend` keeps it readable.
+The oracle for correctness is `ruby` on `PATH`.
 
-It is dev-tree only and slow on purpose: nothing caches a built program any
-more, so `--backend rustc hello.rb` pays a real `rustc` (~13 s). That is the
-right cost for what it is actually used for — rerunning **one** golden that
-diverged.
-
-The golden suites take the same three legs:
+The golden suites take two legs:
 
 ```console
 $ cargo nextest run -p zeo-tests --test examples                      # jit
 $ ZEO_GOLDEN_BACKEND=aot   cargo nextest run -p zeo-tests --test examples
-$ ZEO_GOLDEN_BACKEND=rustc cargo nextest run -p zeo-tests --test examples
 ```
 
 `crates/zeo/tests/clif.rs` holds insta snapshots of the emitted CLIF. They
