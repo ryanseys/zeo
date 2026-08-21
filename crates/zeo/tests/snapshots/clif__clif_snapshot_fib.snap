@@ -123,7 +123,7 @@ block9:
     v42 = iconst.i8 3
     v43 = icmp.i8 eq v30, v42  ; v42 = 3
     v44 = band v41, v43
-    brif v44, block12, block10
+    brif v44, block12, block13
 
 block12:
     v45 = load.f64 notrap aligned v24+8
@@ -134,321 +134,445 @@ block12:
     store notrap aligned v47, v28+8
     jump block11
 
-block10:
-    v49 = load.i32 notrap aligned v4
-    v50 = iconst.i32 0
-    v51 = iconst.i64 1
-    v52 = iconst.i64 0
-    v53 = call fn5(v50, v24, v49, v26, v51, v52, v28)  ; v50 = 0, v51 = 1, v52 = 0
-    brif v53, block1, block13
-
 block13:
+    v49 = band.i8 v41, v34
+    brif v49, block14, block15
+
+block14:
+    v50 = load.f64 notrap aligned v24+8
+    v51 = load.i64 notrap aligned v26+8
+    v52 = fcvt_from_sint.f64 v51
+    v53 = fcmp lt v50, v52
+    v54 = iconst.i8 1
+    store notrap aligned v54, v28  ; v54 = 1
+    store notrap aligned v53, v28+8
+    jump block11
+
+block15:
+    v55 = band.i8 v32, v43
+    brif v55, block16, block17
+
+block16:
+    v56 = load.i64 notrap aligned v24+8
+    v57 = fcvt_from_sint.f64 v56
+    v58 = load.f64 notrap aligned v26+8
+    v59 = fcmp lt v57, v58
+    v60 = iconst.i8 1
+    store notrap aligned v60, v28  ; v60 = 1
+    store notrap aligned v59, v28+8
+    jump block11
+
+block17:
+    jump block10
+
+block10:
+    v61 = load.i32 notrap aligned v4
+    v62 = iconst.i32 0
+    v63 = iconst.i64 1
+    v64 = iconst.i64 0
+    v65 = call fn5(v62, v24, v61, v26, v63, v64, v28)  ; v62 = 0, v63 = 1, v64 = 0
+    brif v65, block1, block18
+
+block18:
     jump block11
 
 block11:
-    v54 = stack_addr.i64 ss2
-    v55 = load.i8 notrap aligned v54
-    v56 = iconst.i8 16
-    v57 = icmp uge v55, v56  ; v56 = 16
-    brif v57, block14, block15
-
-block14:
-    call fn6(v54)
-    jump block15
-
-block15:
-    v58 = call fn7(v54)
-    v59 = stack_addr.i64 ss3
-    brif v58, block16, block17
-
-block16:
-    v60 = iconst.i32 3
-    call fn4(v60)  ; v60 = 3
-    v61 = stack_addr.i64 ss0
-    v62 = load.i8 notrap aligned v61
-    v63 = iconst.i8 16
-    v64 = icmp uge v62, v63  ; v63 = 16
-    brif v64, block19, block20
+    v66 = stack_addr.i64 ss2
+    v67 = load.i8 notrap aligned v66
+    v68 = iconst.i8 16
+    v69 = icmp uge v67, v68  ; v68 = 16
+    brif v69, block19, block20
 
 block19:
-    call fn1(v61)
+    call fn6(v66)
     jump block20
 
 block20:
-    v65 = load.i64 notrap aligned v61
-    store notrap aligned v65, v59
-    v66 = load.i64 notrap aligned v61+8
-    store notrap aligned v66, v59+8
-    v67 = load.i64 notrap aligned v61+16
-    store notrap aligned v67, v59+16
-    jump block18
-
-block17:
-    v68 = iconst.i32 5
-    call fn4(v68)  ; v68 = 5
-    v69 = stack_addr.i64 ss0
-    v70 = iconst.i64 1
-    v71 = stack_addr.i64 ss4
-    v72 = iconst.i8 2
-    store notrap aligned v72, v71  ; v72 = 2
-    store notrap aligned v70, v71+8  ; v70 = 1
-    v73 = stack_addr.i64 ss5
-    v74 = load.i8 notrap aligned v69
-    v75 = load.i8 notrap aligned v71
-    v76 = iconst.i8 2
-    v77 = icmp eq v74, v76  ; v76 = 2
-    v78 = iconst.i8 2
-    v79 = icmp eq v75, v78  ; v78 = 2
-    v80 = band v77, v79
-    brif v80, block21, block22
+    v70 = call fn7(v66)
+    v71 = stack_addr.i64 ss3
+    brif v70, block21, block22
 
 block21:
-    v81 = load.i64 notrap aligned v69+8
-    v82 = load.i64 notrap aligned v71+8
-    v83, v84 = ssub_overflow v81, v82
-    brif v84, block25, block26
-
-block26:
-    v85 = iconst.i8 2
-    store notrap aligned v85, v73  ; v85 = 2
-    store.i64 notrap aligned v83, v73+8
-    jump block24
-
-block25:
-    call fn8(v69, v71, v73)
-    jump block24
-
-block22:
-    v86 = iconst.i8 3
-    v87 = icmp.i8 eq v74, v86  ; v86 = 3
-    v88 = iconst.i8 3
-    v89 = icmp.i8 eq v75, v88  ; v88 = 3
-    v90 = band v87, v89
-    brif v90, block27, block23
-
-block27:
-    v91 = load.f64 notrap aligned v69+8
-    v92 = load.f64 notrap aligned v71+8
-    v93 = fsub v91, v92
-    v94 = iconst.i8 3
-    store notrap aligned v94, v73  ; v94 = 3
-    store notrap aligned v93, v73+8
-    jump block24
-
-block23:
-    v95 = load.i32 notrap aligned v4+4
-    v96 = iconst.i32 0
-    v97 = iconst.i64 1
-    v98 = iconst.i64 0
-    v99 = call fn5(v96, v69, v95, v71, v97, v98, v73)  ; v96 = 0, v97 = 1, v98 = 0
-    brif v99, block1, block28
-
-block28:
-    jump block24
+    v72 = iconst.i32 3
+    call fn4(v72)  ; v72 = 3
+    v73 = stack_addr.i64 ss0
+    v74 = load.i8 notrap aligned v73
+    v75 = iconst.i8 16
+    v76 = icmp uge v74, v75  ; v75 = 16
+    brif v76, block24, block25
 
 block24:
-    v100 = stack_addr.i64 ss5
-    v101 = load.i8 notrap aligned v100
-    v102 = iconst.i8 16
-    v103 = icmp uge v101, v102  ; v102 = 16
-    brif v103, block29, block30
+    call fn1(v73)
+    jump block25
 
-block29:
-    call fn6(v100)
-    jump block30
+block25:
+    v77 = load.i64 notrap aligned v73
+    store notrap aligned v77, v71
+    v78 = load.i64 notrap aligned v73+8
+    store notrap aligned v78, v71+8
+    v79 = load.i64 notrap aligned v73+16
+    store notrap aligned v79, v71+16
+    jump block23
 
-block30:
-    v104 = stack_addr.i64 ss6
-    v105 = call fn9(v0, v100, v104)
-    brif v105, block1, block31
+block22:
+    v80 = iconst.i32 5
+    call fn4(v80)  ; v80 = 5
+    v81 = stack_addr.i64 ss0
+    v82 = iconst.i64 1
+    v83 = stack_addr.i64 ss4
+    v84 = iconst.i8 2
+    store notrap aligned v84, v83  ; v84 = 2
+    store notrap aligned v82, v83+8  ; v82 = 1
+    v85 = stack_addr.i64 ss5
+    v86 = load.i8 notrap aligned v81
+    v87 = load.i8 notrap aligned v83
+    v88 = iconst.i8 2
+    v89 = icmp eq v86, v88  ; v88 = 2
+    v90 = iconst.i8 2
+    v91 = icmp eq v87, v90  ; v90 = 2
+    v92 = band v89, v91
+    brif v92, block26, block27
+
+block26:
+    v93 = load.i64 notrap aligned v81+8
+    v94 = load.i64 notrap aligned v83+8
+    v95, v96 = ssub_overflow v93, v94
+    brif v96, block30, block31
 
 block31:
-    v106 = stack_addr.i64 ss6
-    v107 = load.i8 notrap aligned v106
-    v108 = iconst.i8 16
-    v109 = icmp uge v107, v108  ; v108 = 16
-    brif v109, block32, block33
+    v97 = iconst.i8 2
+    store notrap aligned v97, v85  ; v97 = 2
+    store.i64 notrap aligned v95, v85+8
+    jump block29
+
+block30:
+    call fn8(v81, v83, v85)
+    jump block29
+
+block27:
+    v98 = iconst.i8 3
+    v99 = icmp.i8 eq v86, v98  ; v98 = 3
+    v100 = iconst.i8 3
+    v101 = icmp.i8 eq v87, v100  ; v100 = 3
+    v102 = band v99, v101
+    brif v102, block32, block33
 
 block32:
-    call fn6(v106)
-    jump block33
+    v103 = load.f64 notrap aligned v81+8
+    v104 = load.f64 notrap aligned v83+8
+    v105 = fsub v103, v104
+    v106 = iconst.i8 3
+    store notrap aligned v106, v85  ; v106 = 3
+    store notrap aligned v105, v85+8
+    jump block29
 
 block33:
-    v110 = stack_addr.i64 ss0
-    v111 = iconst.i64 2
-    v112 = stack_addr.i64 ss7
-    v113 = iconst.i8 2
-    store notrap aligned v113, v112  ; v113 = 2
-    store notrap aligned v111, v112+8  ; v111 = 2
-    v114 = stack_addr.i64 ss8
-    v115 = load.i8 notrap aligned v110
-    v116 = load.i8 notrap aligned v112
-    v117 = iconst.i8 2
-    v118 = icmp eq v115, v117  ; v117 = 2
-    v119 = iconst.i8 2
-    v120 = icmp eq v116, v119  ; v119 = 2
-    v121 = band v118, v120
-    brif v121, block34, block35
+    v107 = band.i8 v99, v91
+    brif v107, block34, block35
 
 block34:
-    v122 = load.i64 notrap aligned v110+8
-    v123 = load.i64 notrap aligned v112+8
-    v124, v125 = ssub_overflow v122, v123
-    brif v125, block38, block39
-
-block39:
-    v126 = iconst.i8 2
-    store notrap aligned v126, v114  ; v126 = 2
-    store.i64 notrap aligned v124, v114+8
-    jump block37
-
-block38:
-    call fn8(v110, v112, v114)
-    jump block37
+    v108 = load.f64 notrap aligned v81+8
+    v109 = load.i64 notrap aligned v83+8
+    v110 = fcvt_from_sint.f64 v109
+    v111 = fsub v108, v110
+    v112 = iconst.i8 3
+    store notrap aligned v112, v85  ; v112 = 3
+    store notrap aligned v111, v85+8
+    jump block29
 
 block35:
-    v127 = iconst.i8 3
-    v128 = icmp.i8 eq v115, v127  ; v127 = 3
-    v129 = iconst.i8 3
-    v130 = icmp.i8 eq v116, v129  ; v129 = 3
-    v131 = band v128, v130
-    brif v131, block40, block36
-
-block40:
-    v132 = load.f64 notrap aligned v110+8
-    v133 = load.f64 notrap aligned v112+8
-    v134 = fsub v132, v133
-    v135 = iconst.i8 3
-    store notrap aligned v135, v114  ; v135 = 3
-    store notrap aligned v134, v114+8
-    jump block37
+    v113 = band.i8 v89, v101
+    brif v113, block36, block37
 
 block36:
-    v136 = load.i32 notrap aligned v4+4
-    v137 = iconst.i32 0
-    v138 = iconst.i64 1
-    v139 = iconst.i64 0
-    v140 = call fn5(v137, v110, v136, v112, v138, v139, v114)  ; v137 = 0, v138 = 1, v139 = 0
-    brif v140, block1, block41
-
-block41:
-    jump block37
+    v114 = load.i64 notrap aligned v81+8
+    v115 = fcvt_from_sint.f64 v114
+    v116 = load.f64 notrap aligned v83+8
+    v117 = fsub v115, v116
+    v118 = iconst.i8 3
+    store notrap aligned v118, v85  ; v118 = 3
+    store notrap aligned v117, v85+8
+    jump block29
 
 block37:
-    v141 = stack_addr.i64 ss8
-    v142 = load.i8 notrap aligned v141
-    v143 = iconst.i8 16
-    v144 = icmp uge v142, v143  ; v143 = 16
-    brif v144, block42, block43
+    jump block28
+
+block28:
+    v119 = load.i32 notrap aligned v4+4
+    v120 = iconst.i32 0
+    v121 = iconst.i64 1
+    v122 = iconst.i64 0
+    v123 = call fn5(v120, v81, v119, v83, v121, v122, v85)  ; v120 = 0, v121 = 1, v122 = 0
+    brif v123, block1, block38
+
+block38:
+    jump block29
+
+block29:
+    v124 = stack_addr.i64 ss5
+    v125 = load.i8 notrap aligned v124
+    v126 = iconst.i8 16
+    v127 = icmp uge v125, v126  ; v126 = 16
+    brif v127, block39, block40
+
+block39:
+    call fn6(v124)
+    jump block40
+
+block40:
+    v128 = stack_addr.i64 ss6
+    v129 = call fn9(v0, v124, v128)
+    brif v129, block1, block41
+
+block41:
+    v130 = stack_addr.i64 ss6
+    v131 = load.i8 notrap aligned v130
+    v132 = iconst.i8 16
+    v133 = icmp uge v131, v132  ; v132 = 16
+    brif v133, block42, block43
 
 block42:
-    call fn6(v141)
+    call fn6(v130)
     jump block43
 
 block43:
-    v145 = stack_addr.i64 ss9
-    v146 = call fn10(v0, v141, v145)
-    brif v146, block1, block44
+    v134 = stack_addr.i64 ss0
+    v135 = iconst.i64 2
+    v136 = stack_addr.i64 ss7
+    v137 = iconst.i8 2
+    store notrap aligned v137, v136  ; v137 = 2
+    store notrap aligned v135, v136+8  ; v135 = 2
+    v138 = stack_addr.i64 ss8
+    v139 = load.i8 notrap aligned v134
+    v140 = load.i8 notrap aligned v136
+    v141 = iconst.i8 2
+    v142 = icmp eq v139, v141  ; v141 = 2
+    v143 = iconst.i8 2
+    v144 = icmp eq v140, v143  ; v143 = 2
+    v145 = band v142, v144
+    brif v145, block44, block45
 
 block44:
-    v147 = stack_addr.i64 ss9
-    v148 = load.i8 notrap aligned v147
-    v149 = iconst.i8 16
-    v150 = icmp uge v148, v149  ; v149 = 16
-    brif v150, block45, block46
+    v146 = load.i64 notrap aligned v134+8
+    v147 = load.i64 notrap aligned v136+8
+    v148, v149 = ssub_overflow v146, v147
+    brif v149, block48, block49
+
+block49:
+    v150 = iconst.i8 2
+    store notrap aligned v150, v138  ; v150 = 2
+    store.i64 notrap aligned v148, v138+8
+    jump block47
+
+block48:
+    call fn8(v134, v136, v138)
+    jump block47
 
 block45:
-    call fn6(v147)
+    v151 = iconst.i8 3
+    v152 = icmp.i8 eq v139, v151  ; v151 = 3
+    v153 = iconst.i8 3
+    v154 = icmp.i8 eq v140, v153  ; v153 = 3
+    v155 = band v152, v154
+    brif v155, block50, block51
+
+block50:
+    v156 = load.f64 notrap aligned v134+8
+    v157 = load.f64 notrap aligned v136+8
+    v158 = fsub v156, v157
+    v159 = iconst.i8 3
+    store notrap aligned v159, v138  ; v159 = 3
+    store notrap aligned v158, v138+8
+    jump block47
+
+block51:
+    v160 = band.i8 v152, v144
+    brif v160, block52, block53
+
+block52:
+    v161 = load.f64 notrap aligned v134+8
+    v162 = load.i64 notrap aligned v136+8
+    v163 = fcvt_from_sint.f64 v162
+    v164 = fsub v161, v163
+    v165 = iconst.i8 3
+    store notrap aligned v165, v138  ; v165 = 3
+    store notrap aligned v164, v138+8
+    jump block47
+
+block53:
+    v166 = band.i8 v142, v154
+    brif v166, block54, block55
+
+block54:
+    v167 = load.i64 notrap aligned v134+8
+    v168 = fcvt_from_sint.f64 v167
+    v169 = load.f64 notrap aligned v136+8
+    v170 = fsub v168, v169
+    v171 = iconst.i8 3
+    store notrap aligned v171, v138  ; v171 = 3
+    store notrap aligned v170, v138+8
+    jump block47
+
+block55:
     jump block46
 
 block46:
-    v151 = stack_addr.i64 ss10
-    v152 = load.i8 notrap aligned v106
-    v153 = load.i8 notrap aligned v147
-    v154 = iconst.i8 2
-    v155 = icmp eq v152, v154  ; v154 = 2
-    v156 = iconst.i8 2
-    v157 = icmp eq v153, v156  ; v156 = 2
-    v158 = band v155, v157
-    brif v158, block47, block48
+    v172 = load.i32 notrap aligned v4+4
+    v173 = iconst.i32 0
+    v174 = iconst.i64 1
+    v175 = iconst.i64 0
+    v176 = call fn5(v173, v134, v172, v136, v174, v175, v138)  ; v173 = 0, v174 = 1, v175 = 0
+    brif v176, block1, block56
+
+block56:
+    jump block47
 
 block47:
-    v159 = load.i64 notrap aligned v106+8
-    v160 = load.i64 notrap aligned v147+8
-    v161, v162 = sadd_overflow v159, v160
-    brif v162, block51, block52
+    v177 = stack_addr.i64 ss8
+    v178 = load.i8 notrap aligned v177
+    v179 = iconst.i8 16
+    v180 = icmp uge v178, v179  ; v179 = 16
+    brif v180, block57, block58
 
-block52:
-    v163 = iconst.i8 2
-    store notrap aligned v163, v151  ; v163 = 2
-    store.i64 notrap aligned v161, v151+8
-    jump block50
+block57:
+    call fn6(v177)
+    jump block58
 
-block51:
-    call fn11(v106, v147, v151)
-    jump block50
+block58:
+    v181 = stack_addr.i64 ss9
+    v182 = call fn10(v0, v177, v181)
+    brif v182, block1, block59
 
-block48:
-    v164 = iconst.i8 3
-    v165 = icmp.i8 eq v152, v164  ; v164 = 3
-    v166 = iconst.i8 3
-    v167 = icmp.i8 eq v153, v166  ; v166 = 3
-    v168 = band v165, v167
-    brif v168, block53, block49
+block59:
+    v183 = stack_addr.i64 ss9
+    v184 = load.i8 notrap aligned v183
+    v185 = iconst.i8 16
+    v186 = icmp uge v184, v185  ; v185 = 16
+    brif v186, block60, block61
 
-block53:
-    v169 = load.f64 notrap aligned v106+8
-    v170 = load.f64 notrap aligned v147+8
-    v171 = fadd v169, v170
-    v172 = iconst.i8 3
-    store notrap aligned v172, v151  ; v172 = 3
-    store notrap aligned v171, v151+8
-    jump block50
+block60:
+    call fn6(v183)
+    jump block61
 
-block49:
-    v173 = load.i32 notrap aligned v4+8
-    v174 = iconst.i32 0
-    v175 = iconst.i64 1
-    v176 = iconst.i64 0
-    v177 = call fn5(v174, v106, v173, v147, v175, v176, v151)  ; v174 = 0, v175 = 1, v176 = 0
-    brif v177, block1, block54
+block61:
+    v187 = stack_addr.i64 ss10
+    v188 = load.i8 notrap aligned v130
+    v189 = load.i8 notrap aligned v183
+    v190 = iconst.i8 2
+    v191 = icmp eq v188, v190  ; v190 = 2
+    v192 = iconst.i8 2
+    v193 = icmp eq v189, v192  ; v192 = 2
+    v194 = band v191, v193
+    brif v194, block62, block63
 
-block54:
-    jump block50
+block62:
+    v195 = load.i64 notrap aligned v130+8
+    v196 = load.i64 notrap aligned v183+8
+    v197, v198 = sadd_overflow v195, v196
+    brif v198, block66, block67
 
-block50:
-    v178 = stack_addr.i64 ss10
-    v179 = load.i64 notrap aligned v178
-    store notrap aligned v179, v59
-    v180 = load.i64 notrap aligned v178+8
-    store notrap aligned v180, v59+8
-    v181 = load.i64 notrap aligned v178+16
-    store notrap aligned v181, v59+16
-    jump block18
+block67:
+    v199 = iconst.i8 2
+    store notrap aligned v199, v187  ; v199 = 2
+    store.i64 notrap aligned v197, v187+8
+    jump block65
 
-block18:
-    v182 = stack_addr.i64 ss3
-    v183 = load.i64 notrap aligned v182
-    store notrap aligned v183, v2
-    v184 = load.i64 notrap aligned v182+8
-    store notrap aligned v184, v2+8
-    v185 = load.i64 notrap aligned v182+16
-    store notrap aligned v185, v2+16
+block66:
+    call fn11(v130, v183, v187)
+    jump block65
+
+block63:
+    v200 = iconst.i8 3
+    v201 = icmp.i8 eq v188, v200  ; v200 = 3
+    v202 = iconst.i8 3
+    v203 = icmp.i8 eq v189, v202  ; v202 = 3
+    v204 = band v201, v203
+    brif v204, block68, block69
+
+block68:
+    v205 = load.f64 notrap aligned v130+8
+    v206 = load.f64 notrap aligned v183+8
+    v207 = fadd v205, v206
+    v208 = iconst.i8 3
+    store notrap aligned v208, v187  ; v208 = 3
+    store notrap aligned v207, v187+8
+    jump block65
+
+block69:
+    v209 = band.i8 v201, v193
+    brif v209, block70, block71
+
+block70:
+    v210 = load.f64 notrap aligned v130+8
+    v211 = load.i64 notrap aligned v183+8
+    v212 = fcvt_from_sint.f64 v211
+    v213 = fadd v210, v212
+    v214 = iconst.i8 3
+    store notrap aligned v214, v187  ; v214 = 3
+    store notrap aligned v213, v187+8
+    jump block65
+
+block71:
+    v215 = band.i8 v191, v203
+    brif v215, block72, block73
+
+block72:
+    v216 = load.i64 notrap aligned v130+8
+    v217 = fcvt_from_sint.f64 v216
+    v218 = load.f64 notrap aligned v183+8
+    v219 = fadd v217, v218
+    v220 = iconst.i8 3
+    store notrap aligned v220, v187  ; v220 = 3
+    store notrap aligned v219, v187+8
+    jump block65
+
+block73:
+    jump block64
+
+block64:
+    v221 = load.i32 notrap aligned v4+8
+    v222 = iconst.i32 0
+    v223 = iconst.i64 1
+    v224 = iconst.i64 0
+    v225 = call fn5(v222, v130, v221, v183, v223, v224, v187)  ; v222 = 0, v223 = 1, v224 = 0
+    brif v225, block1, block74
+
+block74:
+    jump block65
+
+block65:
+    v226 = stack_addr.i64 ss10
+    v227 = load.i64 notrap aligned v226
+    store notrap aligned v227, v71
+    v228 = load.i64 notrap aligned v226+8
+    store notrap aligned v228, v71+8
+    v229 = load.i64 notrap aligned v226+16
+    store notrap aligned v229, v71+16
+    jump block23
+
+block23:
+    v230 = stack_addr.i64 ss3
+    v231 = load.i64 notrap aligned v230
+    store notrap aligned v231, v2
+    v232 = load.i64 notrap aligned v230+8
+    store notrap aligned v232, v2+8
+    v233 = load.i64 notrap aligned v230+16
+    store notrap aligned v233, v2+16
     jump block2
 
 block2:
-    v186 = stack_addr.i64 ss0
-    call fn12(v186)
+    v234 = stack_addr.i64 ss0
+    call fn12(v234)
     call fn13()
-    v187 = iconst.i32 0
-    return v187  ; v187 = 0
+    v235 = iconst.i32 0
+    return v235  ; v235 = 0
 
 block1:
-    v188 = stack_addr.i64 ss0
-    call fn12(v188)
+    v236 = stack_addr.i64 ss0
+    call fn12(v236)
     call fn13()
-    v189 = iconst.i32 1
-    return v189  ; v189 = 1
+    v237 = iconst.i32 1
+    return v237  ; v237 = 1
 }
 
 ;; trampoline

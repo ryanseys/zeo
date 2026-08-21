@@ -2453,20 +2453,36 @@ fn int_arm(
     }
 }
 
-/// The Float arm: both operands carry the `Float` tag. Ends by jumping to
-/// `join`. `false` = this operator has no Float arm at all.
+/// Load one operand's payload as an `f64`: a Float reads its own bits, an
+/// Int promotes -- ruby's numeric tower, where `1 + 2.0` runs the Float
+/// operation on both sides.
+fn as_f64(
+    fx: &mut Fx,
+    p: cranelift_codegen::ir::Value,
+    is_int: bool,
+) -> cranelift_codegen::ir::Value {
+    let fl = MemFlagsData::trusted();
+    let payload = payload_off();
+    if is_int {
+        let i = fx.b.ins().load(types::I64, fl, p, payload);
+        fx.b.ins().fcvt_from_sint(types::F64, i)
+    } else {
+        fx.b.ins().load(types::F64, fl, p, payload)
+    }
+}
+
+/// The Float arm, over the two already-promoted payloads. Ends by jumping
+/// to `join`.
 fn float_arm(
     fx: &mut Fx,
     op: BinOp,
-    pa: cranelift_codegen::ir::Value,
-    pb: cranelift_codegen::ir::Value,
+    av: cranelift_codegen::ir::Value,
+    bv: cranelift_codegen::ir::Value,
     dst: cranelift_codegen::ir::Value,
     join: cranelift_codegen::ir::Block,
 ) {
     let fl = MemFlagsData::trusted();
     let payload = payload_off();
-    let av = fx.b.ins().load(types::F64, fl, pa, payload);
-    let bv = fx.b.ins().load(types::F64, fl, pb, payload);
     match op.float_shape() {
         FloatShape::None => unreachable!("an armless operator never reaches here"),
         FloatShape::Compare(cc) => {
@@ -2542,14 +2558,29 @@ fn boxed_binop(
     if matches!(op.float_shape(), FloatShape::None) {
         fx.b.ins().jump(b_dyn, &[]);
     } else {
-        let b_float = fx.b.create_block();
+        // The three remaining numeric pairs, each its own arm: a MIXED pair
+        // is ruby's numeric tower, not a coercion protocol call -- `1 + 2.0`
+        // promotes the Int side and runs `Float#+`. Leaving them to the
+        // dynamic send is what made `2 * zr` (an Int literal against a Float
+        // local, in the middle of `bm_so_mandelbrot`'s inner loop) a full
+        // dispatch per evaluation.
         let float_tag = i64::from(ValueTag::Float as u8);
         let a_f = fx.b.ins().icmp_imm_u(IntCC::Equal, ta, float_tag);
         let b_f = fx.b.ins().icmp_imm_u(IntCC::Equal, tb, float_tag);
-        let both_f = fx.b.ins().band(a_f, b_f);
-        fx.b.ins().brif(both_f, b_float, &[], b_dyn, &[]);
-        fx.b.switch_to_block(b_float);
-        float_arm(fx, op, pa, pb, dst, join);
+        for (a_is_int, b_is_int) in [(false, false), (false, true), (true, false)] {
+            let arm = fx.b.create_block();
+            let next = fx.b.create_block();
+            let a_ok = if a_is_int { a_int } else { a_f };
+            let b_ok = if b_is_int { b_int_p } else { b_f };
+            let both = fx.b.ins().band(a_ok, b_ok);
+            fx.b.ins().brif(both, arm, &[], next, &[]);
+            fx.b.switch_to_block(arm);
+            let av = as_f64(fx, pa, a_is_int);
+            let bv = as_f64(fx, pb, b_is_int);
+            float_arm(fx, op, av, bv, dst, join);
+            fx.b.switch_to_block(next);
+        }
+        fx.b.ins().jump(b_dyn, &[]);
     }
 
     fx.b.switch_to_block(b_dyn);
