@@ -407,7 +407,7 @@ impl<'e, 'f> Fx<'e, 'f> {
 
     /// The source location of `node`, for refusal messages and line stamps.
     pub fn location(&self, node: crate::hir::NodeId) -> Option<(&str, u32)> {
-        crate::codegen::source_location(&self.an.compiler, node)
+        crate::analyze::source::source_location(&self.an.compiler, node)
     }
 
     /// A fresh nil-initialized value slot.

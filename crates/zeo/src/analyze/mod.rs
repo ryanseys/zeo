@@ -19,6 +19,7 @@ pub(crate) mod local_storage;
 mod locals;
 mod methods;
 mod scans;
+pub(crate) mod source;
 pub(crate) mod svars;
 mod top_stmts;
 use classes::*;

@@ -279,7 +279,7 @@ fn emit_rescue_match_cond(cx: &Ctx, classes: &[String], splats: &[NodeId]) -> To
             // raises one (this `||`-joined check runs only while matching, and
             // short-circuits once an earlier listed class has matched) -- so a
             // `rescue` clause that never fires still compiles.
-            let (scope, leaf) = super::expr::split_const_path(name);
+            let (scope, leaf) = crate::hir::split_const_path(name);
             let val = super::expr::emit_const_read(cx, scope, leaf);
             return quote! {
                 match zeo_rt::rescue_matches_any(&__exc, &(#val)) {

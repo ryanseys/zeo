@@ -1307,7 +1307,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
                 // first, so a genuinely unset one raises the same `NameError`
                 // before the right-hand side runs.
                 if let Some(s) = scope.as_deref() {
-                    let (head, leaf) = split_const_path(s);
+                    let (head, leaf) = crate::hir::split_const_path(s);
                     let sc = emit_const_read(cx, head.filter(|h| !h.is_empty()), leaf);
                     let v = emit_expr(cx, *value);
                     let v = box_if_object_typed(cx, *value, v);
@@ -1871,7 +1871,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             // and `alias` answer nil, `private :a` answers `:a`), so the next
             // one to be wired needs to be told apart from its siblings in the
             // ledger.
-            let kind = definition_kind(&cx.compiler.hir[id]);
+            let kind = crate::hir::definition_kind(&cx.compiler.hir[id]);
             crate::codegen::unsupported_at(
                 cx.compiler,
                 id,
@@ -1881,35 +1881,6 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
                 ),
             )
         }
-    }
-}
-
-/// The Ruby spelling of a definition-level node, for the rejection above and
-/// for the one `codegen::consumed_tail_value` raises over the same nodes.
-pub(crate) fn definition_kind(node: &HirNode) -> &'static str {
-    match node {
-        HirNode::Program(_) => "a program body",
-        HirNode::ClassDef {
-            is_module: true, ..
-        } => "a module definition",
-        HirNode::ClassDef { .. } => "a class definition",
-        HirNode::DefMethod { .. } => "a method definition",
-        HirNode::Refine { .. } => "refine",
-        HirNode::Undef(_) => "undef",
-        HirNode::ClassMethodUndef(_) => "undef on a singleton class",
-        HirNode::AliasMethod { .. } => "alias",
-        HirNode::MethodVisibility { .. } => "a visibility directive",
-        HirNode::ClassMethodVisibility { .. } => "a class-method visibility directive",
-        HirNode::ModuleFunction(_) => "module_function",
-        HirNode::MethodRedefine { .. } => "a method redefinition",
-        HirNode::ConstantVisibility { .. } => "a constant visibility directive",
-        HirNode::Include(_) => "include",
-        HirNode::Extend(_) => "extend",
-        HirNode::Prepend(_) | HirNode::ClassMethodPrepend(_) => "prepend",
-        HirNode::Using(_) => "using",
-        HirNode::Call { name, .. } if name.starts_with("attr_") => "an attribute reader/writer",
-        HirNode::Call { .. } => "a call the walk consumed",
-        _ => "a construct with no value form",
     }
 }
 
@@ -2720,15 +2691,6 @@ fn qualified_const_class(cx: &Ctx, scope: &str, name: &str) -> Option<ClassId> {
         })
 }
 
-/// Split a written constant PATH into the `(scope, leaf)` pair
-/// [`emit_const_read`] takes: `"M::ALIAS"` -> `(Some("M"), "ALIAS")`.
-pub(crate) fn split_const_path(path: &str) -> (Option<&str>, &str) {
-    match path.rsplit_once("::") {
-        Some((scope, leaf)) => (Some(scope), leaf),
-        None => (None, path),
-    }
-}
-
 /// The guard a `Scope::NAME` naming a `private_constant` carries. `None` for a
 /// public name, and for a BARE name -- `private_constant` rejects the scope
 /// OPERATOR, not the reader: `M::S` is a NameError everywhere, even inside
@@ -2844,7 +2806,7 @@ pub(super) fn emit_const_read(cx: &Ctx, scope: Option<&str>, name: &str) -> Toke
         if let Some(s) = scope {
             // A TOP-ANCHORED scope (`::Tilt::Template`) splits with an empty
             // head; that is the anchor, not a namespace to look `Tilt` up in.
-            let (head, leaf) = split_const_path(s);
+            let (head, leaf) = crate::hir::split_const_path(s);
             let head = head.filter(|h| !h.is_empty());
             let scope_expr = emit_const_read(cx, head, leaf);
             // `Object` is never NAMED as the scope: ruby reports

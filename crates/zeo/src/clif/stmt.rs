@@ -60,7 +60,7 @@ fn singleton_frame(
     };
     let (file, line) = (file.to_string(), line);
     stamp_line(fx, origin);
-    let end_line = crate::codegen::source_end_line(&fx.an.compiler, origin);
+    let end_line = crate::analyze::source::source_end_line(&fx.an.compiler, origin);
     let label = "singleton class";
     let foff = fx.em.intern_rodata(file.as_bytes());
     let loff = fx.em.intern_rodata(label.as_bytes());
@@ -435,7 +435,7 @@ fn const_multi_write(
         .copied()
         .unwrap_or(owner_class)
         .0;
-    let Some((file, line)) = crate::codegen::source_location(&fx.an.compiler, site) else {
+    let Some((file, line)) = crate::analyze::source::source_location(&fx.an.compiler, site) else {
         return fx.unsupported(site, "a span-less constant multi-assignment");
     };
     let (file, line) = (file.to_string(), line);
@@ -1469,7 +1469,7 @@ pub(crate) fn eval_class_def(fx: &mut Fx, stmt: NodeId) -> Result<super::operand
     if name == crate::compiler::SINGLETON_SURROGATE {
         return fx.unsupported(stmt, "a `class << self` inside an `eval`");
     }
-    let (scope, leaf) = crate::codegen::split_const_path(&name);
+    let (scope, leaf) = crate::hir::split_const_path(&name);
 
     // The owner of the bare name: the scope when one is written, else the
     // snippet's own cref -- and the top level when it has none.
@@ -1564,7 +1564,7 @@ fn eval_body_source(
     body: &[NodeId],
 ) -> Result<(String, String, u32), String> {
     let hir = &fx.an.compiler.hir;
-    let Some((file, line)) = crate::codegen::source_location(&fx.an.compiler, stmt) else {
+    let Some((file, line)) = crate::analyze::source::source_location(&fx.an.compiler, stmt) else {
         return Err("a span-less `class` inside an `eval`".to_string());
     };
     let (file, mut line) = (file.to_string(), line);

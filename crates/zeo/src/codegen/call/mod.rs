@@ -2567,7 +2567,7 @@ fn dispatch(
             // qualified `M::ALIAS` is looked up under `M` -- and
             // ancestry-check the id it holds.
             let recv_boxed = box_if_object_typed(cx, recv_id, recv_expr.clone());
-            let (scope, leaf) = super::expr::split_const_path(&target_name);
+            let (scope, leaf) = crate::hir::split_const_path(&target_name);
             let read = super::expr::emit_const_read(cx, scope, leaf);
             return quote! {
                 {

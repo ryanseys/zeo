@@ -238,8 +238,8 @@ fn invalid_yield(analyzed: &crate::analyze::Analyzed) -> Result<(), Refusal> {
         }
         hir[id].for_each_child(&mut |c| stack.push(c));
         if matches!(hir[id], HirNode::Yield(_)) {
-            let (file, line) =
-                crate::codegen::source_location(&analyzed.compiler, id).unwrap_or(("(eval)", 1));
+            let (file, line) = crate::analyze::source::source_location(&analyzed.compiler, id)
+                .unwrap_or(("(eval)", 1));
             return Err(Refusal::SyntaxAt(
                 format!("{file}:{line}: Invalid yield"),
                 file.to_string(),

@@ -1141,7 +1141,7 @@ fn collect_methods(em: &mut Emitter, analyzed: &Analyzed) -> Result<Vec<DefSpec>
         let name = compiler.names.str(entry.name).to_string();
         let at = scope
             .def_node
-            .and_then(|n| crate::codegen::source_location(compiler, n))
+            .and_then(|n| crate::analyze::source::source_location(compiler, n))
             .map(|(f, l)| format!(" ({f}:{l})"))
             .unwrap_or_default();
         let refuse = |what: &str| Err(format!("the CLIF backend cannot lower {what} yet{at}"));
@@ -1212,7 +1212,7 @@ fn meta_row(
     alias_of: Option<&str>,
 ) -> statics::MetaRowSpec {
     let (file, line) = node
-        .and_then(|n| crate::codegen::source_location(&analyzed.compiler, n))
+        .and_then(|n| crate::analyze::source::source_location(&analyzed.compiler, n))
         .map_or((String::new(), 0), |(f, l)| (f.to_string(), l));
     statics::MetaRowSpec {
         class,
@@ -1453,7 +1453,11 @@ fn collect_class_bodies(
                 || compiler
                     .class_method_in_chain(decl_owner, "const_added")
                     .is_some_and(|(_, hook)| {
-                        crate::codegen::hook_installed_before(compiler, hook, site.def_node)
+                        crate::analyze::def_hooks::hook_installed_before(
+                            compiler,
+                            hook,
+                            site.def_node,
+                        )
                     })))
         .then(|| (decl_owner.0, compiler.leaf_name(site.class).to_string()));
         // `Super.inherited(C)` fires when the class is CREATED, so only its
@@ -1466,7 +1470,11 @@ fn collect_class_bodies(
                 compiler
                     .class_method_in_chain(parent, "inherited")
                     .is_some_and(|(_, hook)| {
-                        crate::codegen::hook_installed_before(compiler, hook, site.def_node)
+                        crate::analyze::def_hooks::hook_installed_before(
+                            compiler,
+                            hook,
+                            site.def_node,
+                        )
                     })
             })
             .map(|parent| parent.0);
@@ -1499,7 +1507,7 @@ fn collect_class_bodies(
         let const_loc = (declares)
             .then(|| {
                 site.def_node
-                    .and_then(|n| crate::codegen::source_location(compiler, n))
+                    .and_then(|n| crate::analyze::source::source_location(compiler, n))
                     .map(|(file, line)| {
                         (
                             decl_owner.0,
@@ -1612,7 +1620,7 @@ fn body_tail(
             // `private_constant :Hidden` answers the module it hid the
             // constant on, which is the body's own class.
             HirNode::ConstantVisibility { .. } => BodyTail::OwnClass,
-            node => BodyTail::Unknown(crate::codegen::definition_kind(node)),
+            node => BodyTail::Unknown(crate::hir::definition_kind(node)),
         };
     }
     // A definition-level construct that survived into the statement list
@@ -1638,7 +1646,7 @@ fn body_tail(
         | HirNode::Extend(_)
         | HirNode::Prepend(_)
         | HirNode::ClassMethodPrepend(_) => {
-            BodyTail::Unknown(crate::codegen::definition_kind(&compiler.hir[last]))
+            BodyTail::Unknown(crate::hir::definition_kind(&compiler.hir[last]))
         }
         _ => BodyTail::Own,
     }
@@ -1714,11 +1722,11 @@ fn method_frame(
 ) -> (Option<String>, String, u32, u32) {
     let sep = if class_method { "." } else { "#" };
     let label = format!("{owner_name}{sep}{name}");
-    let here = node.and_then(|n| crate::codegen::source_location(&analyzed.compiler, n));
+    let here = node.and_then(|n| crate::analyze::source::source_location(&analyzed.compiler, n));
     let (line, end_line) = match node {
         Some(node) => (
             here.map_or(0, |(_, l)| l),
-            crate::codegen::source_end_line(&analyzed.compiler, node),
+            crate::analyze::source::source_end_line(&analyzed.compiler, node),
         ),
         None => (0, 0),
     };

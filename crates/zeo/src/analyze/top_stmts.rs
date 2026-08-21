@@ -506,7 +506,7 @@ pub(super) fn previous_definition_of(
         .iter()
         .find(|s| s.class == cid)
         .and_then(|s| s.def_node)
-        .and_then(|n| crate::codegen::source_location(compiler, n))
+        .and_then(|n| crate::analyze::source::source_location(compiler, n))
         .map_or((String::new(), String::new()), |(f, l)| {
             (f.to_string(), l.to_string())
         });

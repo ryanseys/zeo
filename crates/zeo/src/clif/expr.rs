@@ -1507,7 +1507,8 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                         .0
                 }
             };
-            let Some((file, line)) = crate::codegen::source_location(&fx.an.compiler, id) else {
+            let Some((file, line)) = crate::analyze::source::source_location(&fx.an.compiler, id)
+            else {
                 return fx.unsupported(id, "a span-less constant write");
             };
             let op = lower_expr(fx, value)?;
@@ -1995,7 +1996,7 @@ fn const_cref_call(
 /// MATCHING, so a name that resolves to nothing here may still hold one
 /// then (`ALIAS = Base`, `Foo = Class.new`).
 pub(crate) fn const_path_read(fx: &mut Fx, id: NodeId, path: &str) -> Result<Operand, String> {
-    match crate::codegen::split_const_path(path) {
+    match crate::hir::split_const_path(path) {
         (Some(scope), leaf) if !scope.is_empty() => scoped_const_read(fx, id, scope, leaf),
         (_, leaf) => const_read(fx, id, leaf),
     }
@@ -2121,7 +2122,7 @@ fn runtime_scope_const_read(
 ) -> Result<Operand, String> {
     // A TOP-ANCHORED scope (`::Tilt::Template`) splits with an empty head;
     // that is the anchor, not a namespace to look `Tilt` up in.
-    let (head, leaf) = crate::codegen::split_const_path(scope);
+    let (head, leaf) = crate::hir::split_const_path(scope);
     let leaf = leaf.to_string();
     let scope_op = match head.filter(|h| !h.is_empty()) {
         Some(h) => {
@@ -3542,7 +3543,7 @@ pub(crate) fn const_added_send(
         else {
             return Ok(());
         };
-        if !crate::codegen::hook_installed_before(&fx.an.compiler, hook, at) {
+        if !crate::analyze::def_hooks::hook_installed_before(&fx.an.compiler, hook, at) {
             return Ok(());
         }
     }
@@ -4409,7 +4410,7 @@ fn runtime_scope_const_write(
     name: &str,
     value: NodeId,
 ) -> Result<Operand, String> {
-    let (head, leaf) = crate::codegen::split_const_path(scope);
+    let (head, leaf) = crate::hir::split_const_path(scope);
     let leaf = leaf.to_string();
     let scope_op = match head.filter(|h| !h.is_empty()) {
         Some(h) => {

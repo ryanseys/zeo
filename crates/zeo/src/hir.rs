@@ -3722,3 +3722,41 @@ mod span_tests {
         assert_eq!(real.known(), Some(real));
     }
 }
+
+/// Split a written constant PATH into the `(scope, leaf)` pair a constant
+/// read takes: `"M::ALIAS"` -> `(Some("M"), "ALIAS")`.
+pub(crate) fn split_const_path(path: &str) -> (Option<&str>, &str) {
+    match path.rsplit_once("::") {
+        Some((scope, leaf)) => (Some(scope), leaf),
+        None => (None, path),
+    }
+}
+
+/// The Ruby spelling of a definition-level node, for the rejection an emitter
+/// raises when one reaches value position.
+pub(crate) fn definition_kind(node: &HirNode) -> &'static str {
+    match node {
+        HirNode::Program(_) => "a program body",
+        HirNode::ClassDef {
+            is_module: true, ..
+        } => "a module definition",
+        HirNode::ClassDef { .. } => "a class definition",
+        HirNode::DefMethod { .. } => "a method definition",
+        HirNode::Refine { .. } => "refine",
+        HirNode::Undef(_) => "undef",
+        HirNode::ClassMethodUndef(_) => "undef on a singleton class",
+        HirNode::AliasMethod { .. } => "alias",
+        HirNode::MethodVisibility { .. } => "a visibility directive",
+        HirNode::ClassMethodVisibility { .. } => "a class-method visibility directive",
+        HirNode::ModuleFunction(_) => "module_function",
+        HirNode::MethodRedefine { .. } => "a method redefinition",
+        HirNode::ConstantVisibility { .. } => "a constant visibility directive",
+        HirNode::Include(_) => "include",
+        HirNode::Extend(_) => "extend",
+        HirNode::Prepend(_) | HirNode::ClassMethodPrepend(_) => "prepend",
+        HirNode::Using(_) => "using",
+        HirNode::Call { name, .. } if name.starts_with("attr_") => "an attribute reader/writer",
+        HirNode::Call { .. } => "a call the walk consumed",
+        _ => "a construct with no value form",
+    }
+}

@@ -300,3 +300,31 @@ fn global_hooks(compiler: &Compiler) -> Vec<&'static str> {
         })
         .collect()
 }
+
+/// Whether the hook body `hook` was already installed at position `at`.
+///
+/// A hook INSTALLED after the thing it would report never saw it. minitest
+/// reopens `Runnable` at the very end of its main file purely to add
+/// `inherited`, so that the `Test`/`Result` subclasses defined above stay out
+/// of the runnables registry -- fire it for them and `Result`, which implements
+/// no `runnable_methods`, joins the run and raises.
+///
+/// Compared by SPAN, and only within one file: `doc_order` numbers class-body
+/// statements, and a `def` is not one of those (it is hoisted into the class's
+/// method table). Two positions in different files are left alone -- a spliced
+/// `require` puts another file's statements in the middle of this one, so raw
+/// offsets do not order across files -- as is anything span-less. All of those
+/// keep firing.
+pub(crate) fn hook_installed_before(
+    compiler: &Compiler,
+    hook: crate::compiler::ScopeId,
+    at: Option<crate::hir::NodeId>,
+) -> bool {
+    let where_ = |n: Option<crate::hir::NodeId>| {
+        n.and_then(|n| compiler.hir.span(n)).and_then(|s| s.known())
+    };
+    match (where_(compiler.scope(hook).def_node), where_(at)) {
+        (Some(installed), Some(at)) if installed.file == at.file => installed.start <= at.start,
+        _ => true,
+    }
+}

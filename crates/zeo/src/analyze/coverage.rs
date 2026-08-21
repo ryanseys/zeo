@@ -31,7 +31,8 @@ pub(crate) fn def_lines(
         for &s in body {
             match &compiler.hir[s] {
                 crate::hir::HirNode::DefMethod { .. } => {
-                    if let Some((file, line)) = crate::codegen::source_location(compiler, s) {
+                    if let Some((file, line)) = crate::analyze::source::source_location(compiler, s)
+                    {
                         out.entry(file.to_string()).or_default().insert(line);
                     }
                 }

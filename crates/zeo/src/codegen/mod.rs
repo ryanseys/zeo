@@ -21,7 +21,8 @@ mod collections;
 pub(crate) use crate::analyze::constfold;
 mod exceptions;
 mod expr;
-pub(crate) use expr::{definition_kind, split_const_path};
+pub(crate) use crate::analyze::def_hooks::hook_installed_before;
+pub(crate) use crate::analyze::source::{source_end_line, source_location};
 mod hoisting;
 mod ident;
 mod loops;
@@ -555,43 +556,6 @@ fn wrap_method_return(needs_return_catch: bool, inner: TokenStream) -> TokenStre
     } else {
         inner
     }
-}
-
-/// The `(file name, 1-based line)` of `node`'s span start -- `None` for a
-/// synthetic node (the exception prelude, `eval` bodies). Backing for
-/// backtrace-frame emission: the file string is baked into the binary and
-/// the line comes from the file's prebuilt newline index (`line_at`).
-pub(crate) fn source_location(
-    compiler: &Compiler,
-    node: crate::hir::NodeId,
-) -> Option<(&str, u32)> {
-    let span = compiler.hir.span(node)?;
-    let file = compiler.hir.files.get(span.file.0 as usize)?;
-    let upto = (span.start as usize).min(file.source.len());
-    // Borrowed, not cloned. This is asked once per emitted statement and once
-    // per call site, and `pooled_file` dedups the answer anyway -- so a clone
-    // here was a fresh allocation per statement for a string that already
-    // lives in the arena and outlives every caller.
-    Some((file.name.as_str(), file.line_at(upto as u32)))
-}
-
-/// The line `node`'s span ENDS on -- a `def`/`class` node's `end` keyword
-/// line, which is what `TracePoint` reports for `:return`/`:end` (0, the
-/// no-trace-events marker, when the node is span-less).
-pub(crate) fn source_end_line(compiler: &Compiler, node: crate::hir::NodeId) -> u32 {
-    let Some(span) = compiler.hir.span(node) else {
-        return 0;
-    };
-    let Some(file) = compiler.hir.files.get(span.file.0 as usize) else {
-        return 0;
-    };
-    let upto = (span.end as usize).min(file.source.len());
-    // `line_at`, not a newline count from byte 0 -- the same quadratic its
-    // own docs describe, left behind here when `source_location` was
-    // converted. Every emitted method asks this once, and the file it scans
-    // is the whole SPLICED require graph: 96% of a gem-scale compile's
-    // samples landed in this one `filter().count()`.
-    file.line_at(upto as u32)
 }
 
 /// The backtrace-frame push for one method scope: `Class#method` /
@@ -3127,7 +3091,7 @@ fn consumed_tail_value(compiler: &Compiler, site: &crate::compiler::ClassBodySit
             let id = site.class.0;
             TailValue::Known(quote! { zeo_rt::RubyValue::Class(zeo_rt::ClassId(#id)) })
         }
-        node => TailValue::Unknown(last, crate::codegen::expr::definition_kind(node)),
+        node => TailValue::Unknown(last, crate::hir::definition_kind(node)),
     }
 }
 
@@ -3557,34 +3521,6 @@ fn emit_declaration_const_location(
     let owner = declaration_owner(compiler, site.class).0;
     let name = compiler.leaf_name(site.class);
     quote! { zeo_rt::record_const_location(#owner, #name, #file, #line); }
-}
-
-/// Whether the hook body `hook` was already installed at position `at`.
-///
-/// A hook INSTALLED after the thing it would report never saw it. minitest
-/// reopens `Runnable` at the very end of its main file purely to add
-/// `inherited`, so that the `Test`/`Result` subclasses defined above stay out
-/// of the runnables registry -- fire it for them and `Result`, which implements
-/// no `runnable_methods`, joins the run and raises.
-///
-/// Compared by SPAN, and only within one file: `doc_order` numbers class-body
-/// statements, and a `def` is not one of those (it is hoisted into the class's
-/// method table). Two positions in different files are left alone -- a spliced
-/// `require` puts another file's statements in the middle of this one, so raw
-/// offsets do not order across files -- as is anything span-less. All of those
-/// keep firing.
-pub(crate) fn hook_installed_before(
-    compiler: &Compiler,
-    hook: crate::compiler::ScopeId,
-    at: Option<crate::hir::NodeId>,
-) -> bool {
-    let where_ = |n: Option<crate::hir::NodeId>| {
-        n.and_then(|n| compiler.hir.span(n)).and_then(|s| s.known())
-    };
-    match (where_(compiler.scope(hook).def_node), where_(at)) {
-        (Some(installed), Some(at)) if installed.file == at.file => installed.start <= at.start,
-        _ => true,
-    }
 }
 
 /// `Module#const_added` -- Ruby announces a constant the moment it becomes
