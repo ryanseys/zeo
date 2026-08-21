@@ -64,6 +64,13 @@ fn process_top_stmt_inner(
                 | HirNode::Include(_)
                 | HirNode::Extend(_)
                 | HirNode::Prepend(_)
+                | HirNode::AliasMethod { .. }
+                | HirNode::Undef(_)
+                | HirNode::ClassMethodUndef(_)
+                | HirNode::MethodVisibility { .. }
+                | HirNode::ClassMethodVisibility { .. }
+                | HirNode::ModuleFunction(_)
+                | HirNode::ConstantVisibility { .. }
         )
     {
         main_statements.push(stmt);

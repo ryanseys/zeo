@@ -3950,12 +3950,21 @@ fn runtime_def(
         && !is_class_method
     {
         let mode_v = fx.b.ins().iconst(types::I8, i64::from(mode));
+        // A snippet's own body IS the class body here, so its running
+        // visibility default rides along whatever the definee turns out
+        // to be (`class_eval("private; def x; end")`).
+        let vis = match visibility {
+            crate::hir::Visibility::Private => 1,
+            crate::hir::Visibility::Protected => 2,
+            crate::hir::Visibility::Public => 0,
+        };
+        let vis = fx.b.ins().iconst(types::I8, i64::from(vis));
         let out_ss = fx.temp_slot();
         let out = fx.slot_addr(out_ss, 0);
         let status = fx
             .call(
                 "zeo_rt_eval_define",
-                &[mode_v, self_ptr, sym, proc_addr, out],
+                &[mode_v, self_ptr, sym, proc_addr, vis, out],
             )
             .expect("eval_define returns a status");
         fx.owned_consumed += 1;

@@ -242,12 +242,6 @@ fn scope_refusals(analyzed: &crate::analyze::Analyzed) -> Result<(), String> {
             // not register one). The rest still belong to the interpreter.
             HirNode::ClassDef { .. } => Some("a `class`/`module`"),
             HirNode::MethodRedefine { .. } => Some("a redefinition"),
-            HirNode::AliasMethod { .. } => Some("an `alias`"),
-            HirNode::Undef(..) | HirNode::ClassMethodUndef { .. } => Some("an `undef`"),
-            HirNode::MethodVisibility { .. }
-            | HirNode::ClassMethodVisibility { .. }
-            | HirNode::ModuleFunction { .. }
-            | HirNode::ConstantVisibility { .. } => Some("a visibility statement"),
             HirNode::ClassMethodPrepend { .. }
             | HirNode::DefHook { .. }
             | HirNode::Refine { .. }

@@ -2517,22 +2517,13 @@ pub fn eval_define(
     slf: &RubyValue,
     name: Symbol,
     body: RubyValue,
+    vis: u8,
 ) -> Result<RubyValue, Signal> {
-    // The RUN TIME decides first, and it has to: the `def` may be sitting
-    // in a proc the eval only BUILT, which something else then runs under
-    // an `instance_eval`/`class_eval` of its own (forwardable's
-    // `_delegator_method` is exactly that shape). Only when nothing has
-    // opened a definee does the eval's own mode answer.
-    let (definee, installer) = if crate::runtime_meta::singleton_definee(slf) {
-        (slf.clone(), "define_singleton_method")
-    } else if let Some(cid) = crate::runtime_meta::module_definee(slf) {
-        (RubyValue::Class(cid), "define_method")
+    let (definee, singleton) = eval_definee_parts(mode, slf);
+    let installer = if singleton {
+        "define_singleton_method"
     } else {
-        match (mode, slf) {
-            (2, _) => (slf.clone(), "define_singleton_method"),
-            (_, RubyValue::Class(_)) => (slf.clone(), "define_method"),
-            _ => (RubyValue::Class(slf.class_id()), "define_method"),
-        }
+        "define_method"
     };
     let out = send_value(
         &definee,
@@ -2540,6 +2531,17 @@ pub fn eval_define(
         &[RubyValue::Symbol(name), body],
         None,
     )?;
+    // The snippet's own running visibility default, applied to whatever
+    // definee was resolved -- `class_eval("private; def x; end")` marks
+    // `x` private exactly as the same two lines in a class body do.
+    if let Some(v) = match vis {
+        1 => Some(MethodVisibility::Private),
+        2 => Some(MethodVisibility::Protected),
+        _ => None,
+    } && let RubyValue::Class(id) = &definee
+    {
+        crate::runtime_meta::runtime_set_visibility(*id, &[RubyValue::Symbol(name)], v)?;
+    }
     // Only the TOP level's `def` is private, and the top level is exactly
     // where `self` is the main object -- a `def` inside an eval in a
     // method is an ordinary public method of that method's class.
@@ -2554,6 +2556,39 @@ pub fn eval_define(
         )?;
     }
     Ok(out)
+}
+
+/// Where a `def`, `alias`, `undef` or visibility statement written in a
+/// run-time `eval` lands, and whether that definee is a SINGLETON.
+///
+/// The RUN TIME decides first, and it has to: the statement may be sitting
+/// in a proc the eval only BUILT, which something else then runs under an
+/// `instance_eval`/`class_eval` of its own (forwardable's
+/// `_delegator_method` is exactly that shape). Only when nothing has
+/// opened a definee does the eval's own mode answer.
+fn eval_definee_parts(mode: u8, slf: &RubyValue) -> (RubyValue, bool) {
+    if crate::runtime_meta::singleton_definee(slf) {
+        return (slf.clone(), true);
+    }
+    if let Some(cid) = crate::runtime_meta::module_definee(slf) {
+        return (RubyValue::Class(cid), false);
+    }
+    match (mode, slf) {
+        (2, _) => (slf.clone(), true),
+        (_, RubyValue::Class(_)) => (slf.clone(), false),
+        _ => (RubyValue::Class(slf.class_id()), false),
+    }
+}
+
+/// The definee itself, as the receiver a definition-level send names --
+/// `alias_method`, `undef_method`, `private`, `module_function`. An
+/// `instance_eval`'s is the receiver's SINGLETON, which is the class those
+/// verbs have to reach.
+pub fn eval_definee(mode: u8, slf: &RubyValue) -> Result<RubyValue, Signal> {
+    match eval_definee_parts(mode, slf) {
+        (v, false) => Ok(v),
+        (v, true) => send_value(&v, Symbol::intern("singleton_class"), &[], None),
+    }
 }
 
 pub fn define_in_default_definee_vis(

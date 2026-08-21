@@ -655,13 +655,31 @@ pub unsafe extern "C" fn zeo_rt_eval_define(
     slf: *const RubyValue,
     name: u32,
     body: *mut RubyValue,
+    vis: u8,
     out: *mut RubyValue,
 ) -> i32 {
     let body = unsafe { body.read() };
     super::leakcheck::consumed(&body);
     let slf = unsafe { &*slf };
     let name = crate::Symbol::from_u32(name);
-    super::dispatch::status_out(crate::dispatch::eval_define(mode, slf, name, body), out)
+    super::dispatch::status_out(
+        crate::dispatch::eval_define(mode, slf, name, body, vis),
+        out,
+    )
+}
+
+/// The class a definition-level statement written inside a run-time `eval`
+/// names -- `alias`, `undef`, `private`, `module_function`,
+/// `private_constant`. Same rule as [`zeo_rt_eval_define`]'s definee, with
+/// an `instance_eval`'s singleton materialized, since those verbs are
+/// Module's and have to reach a class.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_eval_definee(
+    mode: u8,
+    slf: *const RubyValue,
+    out: *mut RubyValue,
+) -> i32 {
+    super::dispatch::status_out(crate::dispatch::eval_definee(mode, unsafe { &*slf }), out)
 }
 
 /// The visibility a runtime-installed `def` carries from its class body's

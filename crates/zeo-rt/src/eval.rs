@@ -117,8 +117,16 @@ pub unsafe fn call(
     // `instance_eval`'s default definee is the receiver's SINGLETON, which
     // is a run-time fact the emitted `def` asks the runtime for -- the
     // block form marks it the same way (`BasicObject#instance_eval`).
-    match req.mode {
-        EvalMode::InstanceEval => crate::runtime_meta::with_singleton_definee(&req.self_val, enter),
+    match (req.mode, &req.self_val) {
+        (EvalMode::InstanceEval, _) => {
+            crate::runtime_meta::with_singleton_definee(&req.self_val, enter)
+        }
+        // A `class_eval` STRING is a class body, so a bare
+        // `private`/`module_function` written in it is a cursor every `def`
+        // after it reads -- the same body frame the BLOCK form opens.
+        (EvalMode::ClassEval, RubyValue::Class(cid)) => {
+            crate::runtime_meta::with_body_frame(*cid, enter)
+        }
         _ => enter(),
     }
 }

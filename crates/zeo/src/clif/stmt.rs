@@ -578,6 +578,49 @@ fn lower_tail_expr(fx: &mut Fx, tail: NodeId) -> Result<super::operand::Operand,
         // its body's last value; a body ending in a definition-level
         // construct answers nil, since nothing necessarily reads it.
         HirNode::ClassDef { .. } => class_body_value(fx, tail, false),
+        // A snippet's definition-level statements run and answer what ruby
+        // answers: the KEYWORD forms (`alias`, `undef`, `private_constant`)
+        // are nil, and the CALL forms answer what the send does.
+        HirNode::AliasMethod { .. }
+        | HirNode::Undef(..)
+        | HirNode::ClassMethodUndef(..)
+        | HirNode::ConstantVisibility { .. }
+            if fx.eval_mode.is_some() =>
+        {
+            lower_stmt(fx, tail)?;
+            Ok(Operand::Nil)
+        }
+        HirNode::MethodVisibility { name, visibility } if fx.eval_mode.is_some() => {
+            let (name, visibility) = (name.clone(), *visibility);
+            let verb = match visibility {
+                crate::hir::Visibility::Private => "private",
+                crate::hir::Visibility::Protected => "protected",
+                crate::hir::Visibility::Public => "public",
+            };
+            eval_definee_send_value(fx, verb, std::slice::from_ref(&name), false)
+        }
+        HirNode::ClassMethodVisibility { name, visibility } if fx.eval_mode.is_some() => {
+            let (name, visibility) = (name.clone(), *visibility);
+            let verb = match visibility {
+                crate::hir::Visibility::Private => "private_class_method",
+                _ => "public_class_method",
+            };
+            eval_definee_send_value(fx, verb, std::slice::from_ref(&name), false)
+        }
+        HirNode::ModuleFunction(name) if fx.eval_mode.is_some() => {
+            let name = name.clone();
+            eval_definee_send_value(fx, "module_function", std::slice::from_ref(&name), false)
+        }
+        // `include M`/`extend`/`prepend` answer the receiver, which the
+        // send already does -- in a snippet they ARE a send (nothing was
+        // edited into an ancestry at compile time).
+        HirNode::Include(module) | HirNode::Extend(module) | HirNode::Prepend(module)
+            if fx.eval_mode.is_some() =>
+        {
+            let module = module.clone();
+            let verb = mixin_verb(&fx.an.compiler.hir[tail]);
+            eval_mixin_send_value(fx, tail, &module, verb)
+        }
         other => {
             let what = format!("this tail expression ({})", statement_kind(other));
             fx.unsupported(tail, &what)
@@ -942,6 +985,17 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
         // copy scope (user source) or an alias row (builtin source), and a
         // builtin row's source is validated at this body's END
         // (`validate_class_aliases`) -- the statement itself runs nothing.
+        // In a SNIPPET nothing was registered, so the keyword is the send
+        // ruby writes on the run-time definee.
+        HirNode::AliasMethod {
+            new_name,
+            old_name,
+            is_class_method,
+        } if fx.eval_mode.is_some() => {
+            let names = vec![new_name.clone(), old_name.clone()];
+            let singleton = *is_class_method;
+            eval_definee_send(fx, "alias_method", &names, singleton)
+        }
         HirNode::AliasMethod { .. } => Ok(()),
         // A `def` reached HERE is one analyze did not register statically
         // (written inside a method body or a block): a RUNTIME install,
@@ -958,6 +1012,16 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
         // start-of-program override rows -- so they apply HERE.
         HirNode::MethodVisibility { name, visibility } => {
             let (name, visibility) = (name.clone(), *visibility);
+            // In a snippet the class is only a run-time fact, and the verb
+            // is the one ruby writes: `definee.private(:name)`.
+            if fx.eval_mode.is_some() {
+                let verb = match visibility {
+                    crate::hir::Visibility::Private => "private",
+                    crate::hir::Visibility::Protected => "protected",
+                    crate::hir::Visibility::Public => "public",
+                };
+                return eval_definee_send(fx, verb, std::slice::from_ref(&name), false);
+            }
             let verb = match visibility {
                 crate::hir::Visibility::Private => 0,
                 crate::hir::Visibility::Protected => 1,
@@ -967,6 +1031,13 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
         }
         HirNode::ClassMethodVisibility { name, visibility } => {
             let (name, visibility) = (name.clone(), *visibility);
+            if fx.eval_mode.is_some() {
+                let verb = match visibility {
+                    crate::hir::Visibility::Private => "private_class_method",
+                    _ => "public_class_method",
+                };
+                return eval_definee_send(fx, verb, std::slice::from_ref(&name), false);
+            }
             let private = u8::from(visibility == crate::hir::Visibility::Private);
             apply_visibility(
                 fx,
@@ -979,14 +1050,36 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
         // An `undef` in a REOPENED `class << self`: a call written between
         // the two bodies still answers, so the retirement has a position.
         HirNode::ClassMethodUndef(names) => {
-            for name in names.clone() {
+            let names = names.clone();
+            if fx.eval_mode.is_some() {
+                return eval_definee_send(fx, "undef_method", &names, true);
+            }
+            for name in names {
                 apply_visibility(fx, stmt, "zeo_rt_runtime_undef_class_method", &name, None)?;
             }
             Ok(())
         }
         // `undef` and `module_function` stay pure REGISTRATION: analyze
         // stamped the tables (undefined marks, module-function copies) and
-        // the statements run nothing.
+        // the statements run nothing. In a SNIPPET analyze registered
+        // nothing, so each is the send ruby writes on the run-time definee.
+        HirNode::Undef(names) if fx.eval_mode.is_some() => {
+            let names = names.clone();
+            eval_definee_send(fx, "undef_method", &names, false)
+        }
+        HirNode::ModuleFunction(name) if fx.eval_mode.is_some() => {
+            let name = name.clone();
+            eval_definee_send(fx, "module_function", std::slice::from_ref(&name), false)
+        }
+        HirNode::ConstantVisibility { names, private } if fx.eval_mode.is_some() => {
+            let (names, private) = (names.clone(), *private);
+            let verb = if private {
+                "private_constant"
+            } else {
+                "public_constant"
+            };
+            eval_definee_send(fx, verb, &names, false)
+        }
         HirNode::Undef(..) | HirNode::ModuleFunction(..) => Ok(()),
         // A `refine` marker analyze already CONSUMED runs nothing where it
         // was written: the holder module owns the methods and the
@@ -1274,15 +1367,123 @@ fn mixin_verb(node: &HirNode) -> &'static str {
 /// `Module#include` is public but `main.include` is not -- the same
 /// FCALL barrier a bare `include` at the top level passes.
 fn eval_mixin_send(fx: &mut Fx, site: NodeId, module: &str, verb: &str) -> Result<(), String> {
+    let op = eval_mixin_send_value(fx, site, module, verb)?;
+    ownership::discard(fx, op);
+    Ok(())
+}
+
+fn eval_mixin_send_value(
+    fx: &mut Fx,
+    site: NodeId,
+    module: &str,
+    verb: &str,
+) -> Result<super::operand::Operand, String> {
     let arg = super::expr::const_read(fx, site, module)?;
     let tag = arg.tag();
     let argv = ownership::borrow_ptr(fx, &arg);
     if arg.owned() {
         ownership::pool_owned(fx, argv, tag);
     }
-    let op = super::call::implicit_send_ptr(fx, verb, argv, 1)?;
+    super::call::implicit_send_ptr(fx, verb, argv, 1)
+}
+
+/// The class a definition-level statement written in a snippet names --
+/// `alias`, `undef`, `private`, `module_function`, `private_constant`. Only
+/// the run time knows it (`zeo_rt_eval_definee`), and one compiled snippet
+/// may be evaluated against any number of receivers.
+fn eval_definee(fx: &mut Fx, singleton: bool) -> Result<super::operand::Operand, String> {
+    use super::operand::Operand;
+    let mode = fx.eval_mode.expect("guarded by the eval arms");
+    let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
+    let mode_v = fx.b.ins().iconst(types::I8, i64::from(mode));
+    let ss = fx.temp_slot();
+    let out = fx.slot_addr(ss, 0);
+    let status = fx
+        .call("zeo_rt_eval_definee", &[mode_v, self_ptr, out])
+        .expect("eval_definee returns a status");
+    fx.fallible(status);
+    fx.owned_created += 1;
+    let definee = Operand::Slot {
+        ss,
+        owned: true,
+        tag: super::operand::TagInfo::Unknown,
+    };
+    if !singleton {
+        return Ok(definee);
+    }
+    let ptr = ownership::borrow_ptr(fx, &definee);
+    ownership::pool_owned(fx, ptr, definee.tag());
+    let empty = fx.b.ins().iconst(fx.em.ptr, 0);
+    eval_definee_call(fx, ptr, "singleton_class", empty, 0)
+}
+
+/// `definee.<verb>(:a, :b, ...)` -- ruby writes these as private methods of
+/// `Module`, so the send lowers the visibility barrier the way an implicit
+/// receiver does.
+fn eval_definee_send(
+    fx: &mut Fx,
+    verb: &str,
+    names: &[String],
+    singleton: bool,
+) -> Result<(), String> {
+    let op = eval_definee_send_value(fx, verb, names, singleton)?;
     ownership::discard(fx, op);
     Ok(())
+}
+
+pub(crate) fn eval_definee_send_value(
+    fx: &mut Fx,
+    verb: &str,
+    names: &[String],
+    singleton: bool,
+) -> Result<super::operand::Operand, String> {
+    let definee = eval_definee(fx, singleton)?;
+    let recv = ownership::borrow_ptr(fx, &definee);
+    if definee.owned() {
+        ownership::pool_owned(fx, recv, definee.tag());
+    }
+    let argv =
+        fx.b.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(
+            cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
+            (names.len().max(1) * zeo_abi::abi::VALUE_SIZE) as u32,
+            3,
+        ));
+    for (i, name) in names.iter().enumerate() {
+        let sym = fx.sym_id(name);
+        let slot = fx.slot_addr(argv, (i * zeo_abi::abi::VALUE_SIZE) as i32);
+        fx.call("zeo_rt_sym_value", &[sym, slot]);
+    }
+    let a0 = fx.slot_addr(argv, 0);
+    eval_definee_call(fx, recv, verb, a0, names.len())
+}
+
+fn eval_definee_call(
+    fx: &mut Fx,
+    recv: cranelift_codegen::ir::Value,
+    verb: &str,
+    argv: cranelift_codegen::ir::Value,
+    argc: usize,
+) -> Result<super::operand::Operand, String> {
+    use super::operand::Operand;
+    let sym = fx.sym_id(verb);
+    let bx = fx.box_v();
+    let argc_v = fx.b.ins().iconst(fx.em.ptr, argc as i64);
+    let null = fx.b.ins().iconst(fx.em.ptr, 0);
+    let ss = fx.temp_slot();
+    let out = fx.slot_addr(ss, 0);
+    let status = fx
+        .call(
+            "zeo_rt_send_value_in",
+            &[bx, recv, sym, argv, argc_v, null, out],
+        )
+        .expect("send returns a status");
+    fx.fallible(status);
+    fx.owned_created += 1;
+    Ok(Operand::Slot {
+        ss,
+        owned: true,
+        tag: super::operand::TagInfo::Unknown,
+    })
 }
 
 fn mixin_hook_send(fx: &mut Fx, module: &str, hook: &str) -> Result<(), String> {

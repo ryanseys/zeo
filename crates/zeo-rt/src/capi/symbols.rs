@@ -76,6 +76,7 @@ capi_symbols!(
     dispatch::zeo_rt_defined_method,
     values::zeo_rt_eq,
     objects::zeo_rt_eval_define,
+    objects::zeo_rt_eval_definee,
     kernel::zeo_rt_eval_value_in_scope,
     ffi::zeo_rt_ffi_enum_field,
     ffi::zeo_rt_ffi_enum_store,
