@@ -4,4 +4,4 @@ expression: render(err)
 ---
 zeo::codegen
 
-  × safe-navigation on a class-method call isn't supported yet (zeo limitation)
+  × the CLIF backend cannot lower a refined call through `&.` yet (-e:8)

@@ -869,7 +869,7 @@ fn missing_require_relative_reports_the_absolutized_path() {
 fn pathless_require_relative_cannot_infer_basepath() {
     // `compile_to_rust` (no input path) mirrors CRuby's eval/irb context:
     // require_relative has no requiring-file directory to resolve against.
-    let err = zeo::compile_to_rust("require_relative \"x\"\n").unwrap_err();
+    let err = zeo::check_program("require_relative \"x\"\n").unwrap_err();
     assert!(
         err.contains("cannot infer basepath"),
         "unexpected error: {err}"
@@ -1741,7 +1741,7 @@ fn require_of_a_missing_feature_off_top_level_defers_to_runtime() {
     // non-top-level position -- lowers to a runtime `Kernel#require` (raising
     // LoadError), so it COMPILES rather than failing the build.
     assert!(
-        zeo::compile_to_rust("if true\n  require \"some_lib\"\nend\n").is_ok(),
+        zeo::check_program("if true\n  require \"some_lib\"\nend\n").is_ok(),
         "a missing require off top level should compile (defers to runtime)"
     );
 }
@@ -1759,7 +1759,7 @@ fn an_explicit_so_require_resolves_a_statically_linked_extension() {
     // plain require) it lowers to a runtime `Kernel#require` raising LoadError --
     // it COMPILES rather than failing the build.
     assert!(
-        zeo::compile_to_rust("require \"nope.so\"\n").is_ok(),
+        zeo::check_program("require \"nope.so\"\n").is_ok(),
         "an unresolvable .so require should compile (defers to runtime)"
     );
 }

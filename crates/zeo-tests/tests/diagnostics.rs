@@ -19,7 +19,7 @@ fn render(err: zeo::CompileError) -> String {
 /// gap, not your syntax" framing in code + help.
 #[test]
 fn an_unsupported_construct_renders_a_located_excerpt() {
-    let err = zeo::compile_to_rust_with("x = 1\nputs(1) if /foo/\n", &Default::default())
+    let err = zeo::check_program_with("x = 1\nputs(1) if /foo/\n", &Default::default())
         .expect_err("a bare condition regexp is rejected");
     insta::assert_snapshot!(render(err));
 }
@@ -28,20 +28,30 @@ fn an_unsupported_construct_renders_a_located_excerpt() {
 /// renders span-less: message, code, and help only.
 #[test]
 fn a_parse_failure_renders_without_an_excerpt() {
-    let err = zeo::compile_to_rust_with("def foo(\n", &Default::default())
+    let err = zeo::check_program_with("def foo(\n", &Default::default())
         .expect_err("malformed source is rejected");
     insta::assert_snapshot!(render(err));
 }
 
-/// A construct codegen can't emit reports as an error rather than unwinding,
-/// which is what lets an unsupported repro be checked in as an XFAIL gap.
+/// A construct the emitter cannot lower reports as an error rather than
+/// unwinding, which is what lets an unsupported repro be checked in as an
+/// XFAIL gap.
+///
+/// **This test is about the REPORT, not the construct.** The probe was
+/// `Foo&.bar` until 2026-08-21, when the rustc emitter -- the only backend
+/// that refused it -- was retired; CLIF has always lowered it. If a refined
+/// call through `&.` gains support too, re-point this at another live
+/// refusal rather than deleting the test.
 #[test]
-fn an_unsupported_codegen_construct_is_an_error_not_a_panic() {
-    let err = zeo::compile_to_rust_with(
-        "class Foo\n  def self.bar = 1\nend\np Foo&.bar\n",
+fn an_unsupported_construct_is_an_error_not_a_panic() {
+    // Through EMISSION, not just the front end: `fx.unsupported` is the
+    // emitter's own refusal channel, and `--emit-clif` is the cheapest way
+    // to reach it (no object file, no linker).
+    let err = zeo::compile_to_clif_text(
+        "module R\n  refine String do\n    def shout = upcase\n  end\nend\nusing R\ns = \"hi\"\np s&.shout\n",
         &Default::default(),
     )
-    .expect_err("safe navigation on a class-method call is rejected");
+    .expect_err("a refined call through `&.` is rejected");
     insta::assert_snapshot!(render(err));
 }
 
@@ -57,7 +67,7 @@ fn an_analyze_error_is_coded_with_its_stage() {
     // it compiles into that raise now) and subclassing a built-in class
     // (every built-in class is subclassable now -- see
     // `zeo_abi::NOT_PAYLOAD_ROOTS`).
-    let err = zeo::compile_to_rust_with(
+    let err = zeo::check_program_with(
         "module M\n  def self.prepend_features(base)\n    super\n  end\nend\nclass K\n  class << self\n    prepend M\n  end\nend\n",
         &Default::default(),
     )
@@ -75,7 +85,7 @@ fn an_analyze_error_is_coded_with_its_stage() {
 /// probe is an `attach_function` naming an undeclared type.)
 #[test]
 fn a_class_body_directive_names_its_own_line() {
-    let err = zeo::compile_to_rust_with(
+    let err = zeo::check_program_with(
         "require 'ffi'\nmodule Native\n  extend FFI::Library\n  ffi_lib 'm'\n  attach_function :f, [:nope_type], :int\nend\n",
         &Default::default(),
     )
@@ -86,7 +96,7 @@ fn a_class_body_directive_names_its_own_line() {
 /// The same for an FFI `layout`, which takes its own dispatch arm.
 #[test]
 fn an_ffi_layout_names_its_own_line() {
-    let err = zeo::compile_to_rust_with(
+    let err = zeo::check_program_with(
         "require 'ffi'\nclass Rec < FFI::Struct\n  layout :a, :int,\n         :b, :nope_type\nend\n",
         &Default::default(),
     )

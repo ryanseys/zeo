@@ -89,7 +89,7 @@ pub fn compile_project(
     files: &[(&str, &str)],
     entry: &str,
     roots: &[&str],
-) -> Result<(zeo::CompileOutput, std::path::PathBuf), String> {
+) -> Result<std::path::PathBuf, String> {
     compile_packages(files, entry, roots, &[])
 }
 
@@ -100,10 +100,10 @@ pub fn compile_packages(
     entry: &str,
     roots: &[&str],
     package_dirs: &[&str],
-) -> Result<(zeo::CompileOutput, std::path::PathBuf), String> {
+) -> Result<std::path::PathBuf, String> {
     let (dir, entry_source, opts) = write_project(files, entry, roots, package_dirs);
-    match zeo::compile_to_rust_with(&entry_source, &opts) {
-        Ok(rust) => Ok((rust, dir)),
+    match zeo::check_program_with(&entry_source, &opts) {
+        Ok(()) => Ok(dir),
         // The message alone -- negative-path tests assert on the same text
         // the pre-typed-error harness always saw.
         Err(e) => Err(String::from(e)),

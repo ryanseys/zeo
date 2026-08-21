@@ -13,7 +13,7 @@ fn gem_disclosure_report_records_how_each_library_was_satisfied() {
         gem_report: Some(report.clone()),
         ..Default::default()
     };
-    zeo::compile_to_rust_with(
+    zeo::check_program_with(
         "require \"json\"\nrequire \"optparse\"\nrequire \"base64\"\nputs 1\n",
         &opts,
     )
@@ -293,7 +293,7 @@ fn autoload_with_a_dynamic_feature_defers_to_the_runtime_row() {
     // (`zeo_rt::features`). Compiling is the assertion -- what the call then
     // finds is covered by `tests/autoload_dsl_computes_its_own_path.rb`.
     assert!(
-        zeo::compile_to_rust("autoload :X, some_method_call").is_ok(),
+        zeo::check_program("autoload :X, some_method_call").is_ok(),
         "a computed autoload target should compile and defer to the runtime"
     );
 }
@@ -459,14 +459,14 @@ fn requires_that_cannot_be_resolved_at_compile_time() {
         "begin\n  require \"optional_dep\"\nrescue LoadError\nend\n",
     ] {
         assert!(
-            zeo::compile_to_rust(src).is_ok(),
+            zeo::check_program(src).is_ok(),
             "expected {src:?} to compile (unresolvable require defers to runtime)"
         );
     }
 
     // A missing `require_relative`, by contrast, IS a compile error: it names a
     // project-local file that must exist, never an optional dependency.
-    let err = zeo::compile_to_rust("require_relative \"no_such_sibling\"\n").unwrap_err();
+    let err = zeo::check_program("require_relative \"no_such_sibling\"\n").unwrap_err();
     assert!(
         err.contains("cannot load such file") || err.contains("cannot infer basepath"),
         "unexpected error: {err}"
@@ -650,11 +650,21 @@ fn the_root_gem_outranks_an_alphabetically_earlier_provider() {
         root_gem: Some(zeo::Gem::named("zeta")),
         ..Default::default()
     };
-    let compiled = zeo::compile_to_rust_with("require \"common\"\n", &opts)
+    let compiled = zeo::analyze_program("require \"common\"\n", &opts)
         .unwrap_or_else(|e| panic!("compile failed: {}", String::from(e)));
+    // Ask the LOADER what it spliced rather than searching the emitted text
+    // for a puts string: the question is which copy of `common.rb` won, and
+    // `loaded_files` answers it exactly.
+    let loaded: Vec<_> = compiled
+        .compiler
+        .hir
+        .loaded_files
+        .iter()
+        .map(|f| f.canonical.to_string_lossy().into_owned())
+        .collect();
     assert!(
-        compiled.rust_source.contains("from-zeta") && !compiled.rust_source.contains("from-alpha"),
-        "the root gem's copy should have been spliced"
+        loaded.iter().any(|p| p.contains("zeta")) && !loaded.iter().any(|p| p.contains("alpha")),
+        "the root gem's copy should have been spliced, loaded: {loaded:?}"
     );
 }
 
@@ -1032,10 +1042,10 @@ fn ruby_box_rejections_are_clean_errors() {
         result.stdout,
         "Ruby Box is disabled. Set RUBY_BOX=1 environment variable to use Ruby::Box.\n"
     );
-    let err = zeo::compile_to_rust("box = Ruby::Box.new\nx = [box.require(\"f\")]\n").unwrap_err();
+    let err = zeo::check_program("box = Ruby::Box.new\nx = [box.require(\"f\")]\n").unwrap_err();
     assert!(err.contains("top-level statement"), "{err}");
     // The once-rejected expression-position class-defining eval splice.
-    zeo::compile_to_rust("box = Ruby::Box.new\nv = box.eval(\"class X; end\")\n")
+    zeo::check_program("box = Ruby::Box.new\nv = box.eval(\"class X; end\")\n")
         .expect("a literal box.eval defining a class registers and compiles now");
 }
 

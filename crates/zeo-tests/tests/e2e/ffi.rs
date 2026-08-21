@@ -17,7 +17,7 @@ fn external_gem_store_resolves_pure_ruby_and_excludes_native() {
         gem_report: Some(report.clone()),
         ..Default::default()
     };
-    zeo::compile_to_rust_with("require \"purelib\"\nputs Purelib::VERSION\n", &opts)
+    zeo::check_program_with("require \"purelib\"\nputs Purelib::VERSION\n", &opts)
         .expect("a pure-Ruby store gem resolves and compiles");
     let json = std::fs::read_to_string(&report).unwrap();
     let _ = std::fs::remove_file(&report);
@@ -42,7 +42,7 @@ fn external_gem_store_resolves_pure_ruby_and_excludes_native() {
         ..Default::default()
     };
     let err =
-        String::from(zeo::compile_to_rust_with("require \"nativelib\"\n", &strict).unwrap_err());
+        String::from(zeo::check_program_with("require \"nativelib\"\n", &strict).unwrap_err());
     assert!(err.contains("native (C) extension"), "{err}");
 }
 

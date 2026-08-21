@@ -141,7 +141,7 @@ fn an_alias_inside_class_of_an_object_lowers() {
         end
     "#;
     assert!(
-        zeo::compile_to_rust(src).is_ok(),
+        zeo::check_program(src).is_ok(),
         "class << obj with an alias should compile"
     );
 }
@@ -157,7 +157,7 @@ fn class_of_an_object_with_a_self_body_lowers() {
         def gem_class; class << Foo; self; end; end
     "#;
     assert!(
-        zeo::compile_to_rust(src).is_ok(),
+        zeo::check_program(src).is_ok(),
         "class << obj with a self body should compile"
     );
 }
@@ -223,9 +223,11 @@ fn eval_of_a_non_literal_argument_runs_in_the_vm() {
 #[test]
 fn needs_prism_runtime_selects_the_runtime_variant() {
     let needs = |src: &str| {
-        zeo::compile_to_rust_with(src, &Default::default())
+        zeo::analyze_program(src, &Default::default())
             .expect("compiles")
-            .needs_prism_runtime
+            .compiler
+            .hir
+            .needs_prism_runtime()
     };
 
     // No eval anywhere -> lean.

@@ -26,7 +26,7 @@ fn raise_with_a_splat_argument_reraises_the_class_and_message() {
 
 #[test]
 fn parse_error_is_a_clean_error_not_a_panic() {
-    let err = zeo::compile_to_rust("def foo(\n").unwrap_err();
+    let err = zeo::check_program("def foo(\n").unwrap_err();
     assert!(
         err.contains("parse error"),
         "expected a parse error, got: {err}"
@@ -49,7 +49,7 @@ fn eval_of_a_class_definition_is_not_a_compile_error() {
     // `eval("class Foo; end")` falls through to the runtime VM instead of
     // failing the compile. (Actually DEFINING a class inside eval is a later
     // increment; the point here is that it compiles.)
-    assert!(zeo::compile_to_rust(r#"eval("class Foo; end")"#).is_ok());
+    assert!(zeo::check_program(r#"eval("class Foo; end")"#).is_ok());
 }
 
 #[test]
@@ -1468,7 +1468,7 @@ fn an_invalid_interpolated_pattern_raises_a_catchable_regexp_error() {
 
 #[test]
 fn a_bare_regexp_literal_used_as_an_implicit_condition_is_a_clean_lowering_error() {
-    let err = zeo::compile_to_rust(
+    let err = zeo::check_program(
         r#"
         if /foo/
           puts "matched"

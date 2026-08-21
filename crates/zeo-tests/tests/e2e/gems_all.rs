@@ -87,7 +87,7 @@ fn every_bundled_gem_compiles() {
             continue;
         }
         let source = format!("require {:?}\n", entry_point(gem));
-        match zeo::compile_to_rust_with(&source, &opts) {
+        match zeo::check_program_with(&source, &opts) {
             Ok(_) => compiled += 1,
             Err(e) => failures.push(format!("  {gem}: {e}")),
         }

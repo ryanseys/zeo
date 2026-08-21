@@ -1225,7 +1225,7 @@ fn const_struct_matches_the_oracle() {
 /// anonymous path, not worth reintroducing a compile-time special case for.
 #[test]
 fn struct_new_string_name_at_const_mints_at_runtime() {
-    assert!(zeo::compile_to_rust("P = Struct.new(\"Name\", :a)\n").is_ok());
+    assert!(zeo::check_program("P = Struct.new(\"Name\", :a)\n").is_ok());
 }
 
 #[test]

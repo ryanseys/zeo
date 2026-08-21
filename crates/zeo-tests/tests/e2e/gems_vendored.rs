@@ -131,9 +131,19 @@ fn the_vendored_versions_agree_with_their_manifest_tags() {
 /// "rubygems"` alone pulls hundreds of files through parse, analyze and
 /// codegen, so the suite pays for it once and asserts several things about
 /// the one result.
-fn compiled_graph() -> &'static (String, String) {
+/// `Analyzed` owns the whole `Compiler`, which is full of `RefCell`/`Cell`
+/// and deliberately not `Sync`, so the memo holds the ANSWERS rather than the
+/// analysis: every registered class's fully-qualified name, whether
+/// `Gem::Package::TarWriter` kept its own `def self.new`, and the disclosure
+/// record.
+struct GraphFacts {
+    classes: Vec<String>,
+    tar_writer_has_own_new: bool,
+}
+
+fn compiled_graph() -> &'static (GraphFacts, String) {
     use std::sync::OnceLock;
-    static ONCE: OnceLock<(String, String)> = OnceLock::new();
+    static ONCE: OnceLock<(GraphFacts, String)> = OnceLock::new();
     ONCE.get_or_init(|| {
         let report =
             std::env::temp_dir().join(format!("zeo-vendored-gems-{}.json", std::process::id()));
@@ -142,24 +152,38 @@ fn compiled_graph() -> &'static (String, String) {
             gem_report: Some(report.clone()),
             ..Default::default()
         };
-        let out = zeo::compile_to_rust_with(
+        let out = zeo::analyze_program(
             "require \"rubygems\"\nrequire \"bundler\"\np Gem::Version.new(\"1.0\").to_s\n",
             &opts,
         )
         .expect("rubygems + bundler reach codegen");
         let json = std::fs::read_to_string(&report).expect("report was written");
         let _ = std::fs::remove_file(&report);
-        (out.rust_source, json)
+        let ids = (0..out.compiler.classes.len()).map(|i| zeo::compiler::ClassId(i as u32));
+        let classes: Vec<String> = ids.clone().map(|c| out.compiler.fq_name(c)).collect();
+        let tar_writer_has_own_new = ids
+            .clone()
+            .find(|&c| out.compiler.fq_name(c) == "Gem::Package::TarWriter")
+            .is_some_and(|c| out.compiler.lookup_class_method(c, "new").is_some());
+        (
+            GraphFacts {
+                classes,
+                tar_writer_has_own_new,
+            },
+            json,
+        )
     })
 }
 
 #[test]
 fn the_whole_require_graph_reaches_codegen() {
-    let (rust, _) = compiled_graph();
-    // Reaching codegen is not enough on its own: a class the analyze walk never
-    // registered is dropped silently, and the program still "compiles". Each
-    // name below is one the goldens then exercise, spelled as `ruby_class!`
-    // records it.
+    let (facts, _) = compiled_graph();
+    // Reaching the emitter is not enough on its own: a class the analyze walk
+    // never registered is dropped silently, and the program still "compiles".
+    // Each name below is one the goldens then exercise. Asked of the CLASS
+    // TABLE, which is the thing that would be missing -- a substring search of
+    // emitted text answers the same question far less precisely.
+
     for class in [
         "Gem::Version",
         "Gem::Requirement",
@@ -176,8 +200,8 @@ fn the_whole_require_graph_reaches_codegen() {
         "Bundler::ConnectionPool::TimeoutError",
     ] {
         assert!(
-            rust.contains(&format!("{class:?}")),
-            "generated program has no class named {class}"
+            facts.classes.iter().any(|n| n == class),
+            "the compiler registered no class named {class}"
         );
     }
 }
@@ -188,9 +212,9 @@ fn a_class_with_its_own_self_new_keeps_the_wrapper() {
     // yields and closes. Routing `.new` past it would drop the block on the
     // floor, which compiles fine and writes an empty gem -- so assert the
     // class-method channel is what the generated program calls.
-    let (rust, _) = compiled_graph();
+    let (facts, _) = compiled_graph();
     assert!(
-        rust.contains("__cm_new"),
+        facts.tar_writer_has_own_new,
         "no user `def self.new` is dispatched as a class method"
     );
 }

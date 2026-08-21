@@ -307,6 +307,45 @@ fn compile_object_on_this_thread(
     Ok(ObjectOutput { object, debuginfo })
 }
 
+/// `analyze_program` reduced to its verdict: `Ok(())` if zeo accepts this
+/// program, the typed error if it does not. For an accept/reject check that
+/// has no use for the analysis itself.
+pub fn check_program_with(source: &str, opts: &CompileOptions) -> Result<(), CompileError> {
+    analyze_program(source, opts).map(|_| ())
+}
+
+/// `analyze_program` with the default options, for a caller that only wants
+/// the verdict: `Ok(())` if zeo accepts this program, the rendered message if
+/// it does not.
+pub fn check_program(source: &str) -> Result<(), String> {
+    analyze_program(source, &CompileOptions::default())
+        .map(|_| ())
+        .map_err(String::from)
+}
+
+/// The front end alone, on the compile thread: a whole PROGRAM in, its
+/// analysis out.
+///
+/// What a caller wants when the question is "does zeo accept this?" rather
+/// than "what does it emit?" -- loader policy, gem resolution, require
+/// splicing and every analyze rejection, without paying for emission. The
+/// test suite's accept/reject checks are all this shape, and the gem sweeps
+/// would pay for object emission they never read.
+pub fn analyze_program(
+    source: &str,
+    opts: &CompileOptions,
+) -> Result<analyze::Analyzed, CompileError> {
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .name("zeo-compile".into())
+            .stack_size(COMPILE_STACK_SIZE)
+            .spawn_scoped(scope, || analyze_on_this_thread(source, opts))
+            .expect("spawning the compiler thread")
+            .join()
+            .unwrap_or_else(|payload| std::panic::resume_unwind(payload))
+    })
+}
+
 /// The front end alone, on the CALLER's thread: one snippet in, its
 /// analysis out. What a run-time `eval` compiles (see `crate::eval`) --
 /// no loader roots, no gem report, and no compile thread, because a
