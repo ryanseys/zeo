@@ -42,6 +42,14 @@ pub struct LowerDiagnostic {
 }
 
 impl LowerDiagnostic {
+    /// See `CompileError::syntax_message`. The `parse error:` lead is this
+    /// diagnostic's own -- it names the PASS for a reader of the CLI --
+    /// while ruby's `SyntaxError` carries prism's message alone.
+    fn syntax_message(&self) -> Option<&str> {
+        let msg = (self.kind == LowerErrorKind::Syntax).then_some(self.message.as_str())?;
+        Some(msg.strip_prefix("parse error: ").unwrap_or(msg))
+    }
+
     fn new(err: LowerError, files: &[SourceFile]) -> LowerDiagnostic {
         let located = err.span.map(|s: Span| {
             let f = &files[s.file.0 as usize];
@@ -289,6 +297,18 @@ pub enum CompileError {
 }
 
 impl CompileError {
+    /// The message of a SOURCE-level rejection -- one prism refused to
+    /// parse -- and `None` for every rejection about a shape zeo declines.
+    /// A run-time `eval` needs the two apart: the first is the program's
+    /// own `SyntaxError` to raise, the second is a compiler limit.
+    #[must_use]
+    pub fn syntax_message(&self) -> Option<&str> {
+        match self {
+            CompileError::Lower(d) => d.syntax_message(),
+            _ => None,
+        }
+    }
+
     /// The driver-boundary conversion -- see `LowerDiagnostic`.
     pub fn lower(err: LowerError, files: &[SourceFile]) -> CompileError {
         CompileError::Lower(LowerDiagnostic::new(err, files))

@@ -814,12 +814,15 @@ impl Hir {
     /// answer by walking `CREF_NEXT` past singleton and eval crefs and
     /// raising when it runs off the end.)
     pub fn cvar_is_toplevel(&self) -> bool {
-        // An `eval` SNIPPET has no lexical cref of its own, and that is not
-        // the same as being at the top level: its cref is the class the
-        // caller was in, which only the run time knows. The fold that
-        // stands a `@@x` up as ruby's toplevel RuntimeError would decide
-        // that question at compile time and answer it wrong.
-        self.cref_names.is_empty() && self.mode != crate::CompileMode::Eval
+        match self.mode {
+            crate::CompileMode::Program => self.cref_names.is_empty(),
+            // An `eval` SNIPPET has no lexical cref of its OWN, and that is
+            // not the same as being at the top level: its cref is the class
+            // the caller was in. The caller knows whether there was one, so
+            // the fold is right either way -- and a `class` body inside the
+            // snippet opens a cref `cref_names` tracks like any other.
+            crate::CompileMode::Eval { cref } => self.cref_names.is_empty() && !cref,
+        }
     }
 }
 

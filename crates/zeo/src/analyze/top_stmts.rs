@@ -55,7 +55,7 @@ fn process_top_stmt_inner(
     // analyze could not register, and a mixin is the ordinary send ruby
     // writes. The prelude still registers: it is the bootstrap set every
     // compile starts from, snippet or not.
-    if compiler.hir.mode == crate::CompileMode::Eval
+    if compiler.hir.mode.is_eval()
         && !bootstrap
         && matches!(
             compiler.hir[stmt],

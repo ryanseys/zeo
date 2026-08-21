@@ -66,6 +66,14 @@ pub fn cref_of(req: &EvalRequest<'_>) -> (Option<zeo_abi::ClassId>, Option<Strin
     }
 }
 
+/// The `SyntaxError` a snippet that does not parse raises. Both
+/// evaluators must build it here, or the same unparsable source raises a
+/// different exception depending on which one ran it.
+#[must_use]
+pub fn syntax_error(message: String) -> Signal {
+    crate::dispatch::raise_error("SyntaxError", message)
+}
+
 /// The C signature a compiled snippet's entry function has: the status
 /// protocol every compiled function speaks, over the caller's cell array
 /// (one `*mut Cell` per local the snippet binds, in the order the compiler

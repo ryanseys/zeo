@@ -80,7 +80,19 @@ pub mod types;
 pub enum CompileMode {
     #[default]
     Program,
-    Eval,
+    /// A run-time `eval` snippet. `cref` says whether the caller's scope
+    /// has a lexical class for the snippet to resolve against -- a
+    /// RUN-TIME fact the front end needs, because a `@@x` with no cref is
+    /// ruby's toplevel `RuntimeError` and that stands up at LOWER time.
+    Eval { cref: bool },
+}
+
+impl CompileMode {
+    /// Whether this compile is one `eval` snippet.
+    #[must_use]
+    pub fn is_eval(self) -> bool {
+        matches!(self, CompileMode::Eval { .. })
+    }
 }
 
 /// The compile-time file context `require` resolution needs --

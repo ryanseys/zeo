@@ -42,13 +42,33 @@ impl EvalCompiler for Jit {
     fn eval(&self, req: &EvalRequest<'_>) -> Option<Result<RubyValue, Signal>> {
         match compiled_for(req) {
             Ok(c) => Some(run(req, c)),
-            Err(why) => {
+            // Source prism refuses is the PROGRAM's error, not a compiler
+            // limit: `eval("1 +")` raises a catchable `SyntaxError` in
+            // ruby, and handing it to a second evaluator would only make
+            // that one raise it instead.
+            Err(Refusal::Syntax(msg)) => Some(Err(zeo_rt::eval::syntax_error(msg))),
+            Err(Refusal::NotCompiled(why)) => {
                 if std::env::var_os("ZEO_EVAL_DEBUG").is_some() {
                     eprintln!("zeo: eval falls back to the interpreter: {why}");
                 }
                 None
             }
         }
+    }
+}
+
+/// Why a snippet did not run through this compiler.
+enum Refusal {
+    /// The source does not parse -- the snippet's own `SyntaxError`.
+    Syntax(String),
+    /// A shape this compiler does not lower correctly yet, so the
+    /// interpreter answers it (G6-1).
+    NotCompiled(String),
+}
+
+impl From<String> for Refusal {
+    fn from(why: String) -> Refusal {
+        Refusal::NotCompiled(why)
     }
 }
 
@@ -66,7 +86,7 @@ type Key = (String, u32, Vec<String>, u8, u32);
 
 static CACHE: Mutex<Option<HashMap<Key, &'static Compiled>>> = Mutex::new(None);
 
-fn compiled_for(req: &EvalRequest<'_>) -> Result<&'static Compiled, String> {
+fn compiled_for(req: &EvalRequest<'_>) -> Result<&'static Compiled, Refusal> {
     // The names the caller's scope already carries: a snippet that only
     // READS one of them arrives as a vcall (prism parsed it alone), so the
     // cell has to exist whether or not the source assigns it.
@@ -104,7 +124,7 @@ fn mode_byte(mode: zeo_rt::eval::EvalMode) -> u8 {
     }
 }
 
-fn build(req: &EvalRequest<'_>, scope_names: &[String]) -> Result<Compiled, String> {
+fn build(req: &EvalRequest<'_>, scope_names: &[String]) -> Result<Compiled, Refusal> {
     // The cref is a RUN-TIME class, so it travels as its id: the fresh
     // compiler below has no entry for it, and every static fold stands
     // down for that reason (`Fx::eval_cref`). `Object` needs none of it --
@@ -112,7 +132,7 @@ fn build(req: &EvalRequest<'_>, scope_names: &[String]) -> Result<Compiled, Stri
     let cref = match zeo_rt::eval::cref_of(req) {
         (Some(cid), _) if cid == zeo_abi::OBJECT_CLASS => None,
         (Some(cid), Some(name)) => Some(std::rc::Rc::new((Some(cid.0), name))),
-        (Some(_), None) => return Err("the cref is a class with no name".to_string()),
+        (Some(_), None) => return Err("the cref is a class with no name".to_string().into()),
         // No cref, but a NAME: `instance_eval` on a class resolves in its
         // SINGLETON, which owns no constants -- the miss is the answer,
         // and CRuby spells the miss `#<Class:X>::NAME`.
@@ -125,11 +145,17 @@ fn build(req: &EvalRequest<'_>, scope_names: &[String]) -> Result<Compiled, Stri
     let opts = crate::CompileOptions {
         file_name: Some(std::path::PathBuf::from(req.file)),
         line_offset: req.line.saturating_sub(1),
-        mode: crate::CompileMode::Eval,
+        mode: crate::CompileMode::Eval {
+            cref: cref.is_some(),
+        },
         ..crate::CompileOptions::default()
     };
-    let analyzed = crate::analyze_snippet(req.src, &opts).map_err(|e| e.to_string())?;
-    refusals(&analyzed, cref.as_ref().and_then(|c| c.0).is_none())?;
+    let analyzed =
+        crate::analyze_snippet(req.src, &opts).map_err(|e| match e.syntax_message() {
+            Some(msg) => Refusal::Syntax(msg.to_string()),
+            None => Refusal::NotCompiled(e.to_string()),
+        })?;
+    refusals(&analyzed)?;
 
     // The snippet's own locals join the caller's: under a Binding every
     // one of them is a cell, so a name the source introduces lands in the
@@ -171,15 +197,15 @@ fn build(req: &EvalRequest<'_>, scope_names: &[String]) -> Result<Compiled, Stri
 /// The shapes that would lower without complaint and be WRONG in a
 /// snippet, because their lowering reads a decision only a whole-program
 /// compile makes. Each is a widening this compiler owes (G6-1/G6-2).
-fn refusals(analyzed: &crate::analyze::Analyzed, no_cref: bool) -> Result<(), String> {
-    scope_refusals(analyzed, no_cref)?;
+fn refusals(analyzed: &crate::analyze::Analyzed) -> Result<(), String> {
+    scope_refusals(analyzed)?;
     home_refusals(analyzed)
 }
 
 /// The shapes that are wrong ANYWHERE in a snippet, `def` bodies
 /// included: their lowering reads a decision only a whole-program compile
 /// makes. Each is a widening this compiler owes (G6-1/G6-2).
-fn scope_refusals(analyzed: &crate::analyze::Analyzed, no_cref: bool) -> Result<(), String> {
+fn scope_refusals(analyzed: &crate::analyze::Analyzed) -> Result<(), String> {
     let compiler = &analyzed.compiler;
     // `CompileMode::Eval` registers nothing, so nothing can be hoisted
     // past the walk below -- but a compile that DID register would emit
@@ -226,13 +252,6 @@ fn scope_refusals(analyzed: &crate::analyze::Analyzed, no_cref: bool) -> Result<
             | HirNode::DefHook { .. }
             | HirNode::Refine { .. }
             | HirNode::Using { .. } => Some("a definition-level statement"),
-            // A class variable's owner is the cref, and a snippet's cref is
-            // a run-time class only when it HAS one: a top-level eval's
-            // `@@x` is ruby's own "class variable access from toplevel",
-            // which this compiler does not raise yet.
-            HirNode::ClassVarRead(..) | HirNode::ClassVarWrite { .. } if no_cref => {
-                Some("a class variable with no cref")
-            }
             // Compile-time-only surfaces.
             HirNode::Eval(..) | HirNode::Ffi(..) => Some("a nested compiler surface"),
             HirNode::BoxScope { .. } | HirNode::BoxHandle(..) => Some("a `Ruby::Box`"),
