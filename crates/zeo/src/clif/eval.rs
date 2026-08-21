@@ -47,6 +47,7 @@ pub struct EvalSpec<'a> {
     /// compiled by a FRESH compiler whose ids start at zero, which are the
     /// running program's own -- see `zeo_rt::eval::reserve_flip_flops`.
     pub flip_flop_base: u32,
+    pub using_base: u32,
 }
 
 /// A JITted snippet. The module owns the code, so it must outlive every
@@ -144,6 +145,7 @@ fn define_entry(
     // the same answer.
     fx.runtime_method_body = true;
     fx.flip_flop_base = spec.flip_flop_base;
+    fx.using_base = spec.using_base;
 
     // The caller's cells first: unowned (the caller holds the reference
     // and drops it when the call returns).

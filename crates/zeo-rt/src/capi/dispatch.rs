@@ -840,3 +840,44 @@ pub unsafe extern "C" fn zeo_rt_reflect_dispatch_in(
         crate::dispatch::reflect_dispatch_in(box_id, unsafe { &*recv }, entry, args, block, &cands);
     status_out(r, out)
 }
+
+/// [`zeo_rt_reflect_dispatch_in`] for a SNIPPET, where the candidates
+/// arrive as activation slots rather than resolved class ids.
+///
+/// `send`/`public_send`/`respond_to?`/`method` at a site some `using`
+/// covers. Two questions are open and neither is decidable at compile
+/// time: which of the entries the receiver's chain actually resolves to
+/// (any class may define its own), and whether a refinement answers the
+/// name it was handed. `entry` is the written one, as
+/// `zeo_abi::abi::REFLECT_*`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_eval_reflect_dispatch(
+    box_id: u32,
+    recv: *const RubyValue,
+    entry: u8,
+    argv: *const RubyValue,
+    argc: usize,
+    blk: *mut RubyValue,
+    slots: *const u32,
+    n_slots: usize,
+    out: *mut RubyValue,
+) -> i32 {
+    use crate::dispatch::Reflect;
+    let entry = match entry {
+        zeo_abi::abi::REFLECT_SEND => Reflect::Send,
+        zeo_abi::abi::REFLECT_PUBLIC_SEND => Reflect::PublicSend,
+        zeo_abi::abi::REFLECT_RESPOND_TO => Reflect::RespondTo,
+        zeo_abi::abi::REFLECT_METHOD => Reflect::Method,
+        other => panic!("reflect_dispatch_in: unknown entry {other}"),
+    };
+    let slots = if n_slots == 0 {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(slots, n_slots) }
+    };
+    let cands = crate::eval::using_candidates(slots);
+    let (args, block) = unsafe { call_views(argv, argc, blk) };
+    let r =
+        crate::dispatch::reflect_dispatch_in(box_id, unsafe { &*recv }, entry, args, block, &cands);
+    status_out(r, out)
+}

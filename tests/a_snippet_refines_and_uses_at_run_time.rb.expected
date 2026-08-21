@@ -1,0 +1,13 @@
+1
+Refinement
+false
+21
+true
+21
+"#<refinement:Integer@Outer>"
+[3, 6]
+15
+outside: NoMethodError
+[:a, :a]
+main
+Host

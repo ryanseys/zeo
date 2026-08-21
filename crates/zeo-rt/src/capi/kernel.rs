@@ -214,6 +214,86 @@ pub unsafe extern "C" fn zeo_rt_eval_super(recv: *const RubyValue, out: *mut Rub
     status_out(crate::eval::home_super(&recv), out)
 }
 
+/// `using M` written in a snippet: fill the site's activation slot.
+///
+/// # Safety
+/// `module` is a live value.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_eval_using(module: *const RubyValue, slot: u32) -> i32 {
+    let m = match unsafe { module.as_ref() } {
+        Some(v) => v.clone(),
+        None => RubyValue::Nil,
+    };
+    match crate::eval::using_activate(slot, &m) {
+        Ok(()) => zeo_abi::abi::STATUS_OK,
+        Err(s) => {
+            crate::signal::set_pending(s);
+            zeo_abi::abi::STATUS_SIGNAL
+        }
+    }
+}
+
+/// A call site in a snippet that one or more `using`s cover: the refined
+/// bodies win where the receiver is of a refined class, and everything
+/// else is the ordinary send. Same shape as `zeo_rt_refined_send_in`,
+/// except that the candidates arrive as ACTIVATION SLOTS -- a snippet's
+/// `using` names a run-time module, so what it refines is only known once
+/// it has run.
+///
+/// # Safety
+/// The send convention of `zeo_rt_refined_send_in`; `slots` covers
+/// `n_slots` activation ids.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_eval_refined_send(
+    box_id: u32,
+    recv: *const RubyValue,
+    sym: u32,
+    argv: *const RubyValue,
+    argc: usize,
+    kw: *const RubyValue,
+    blk: *mut RubyValue,
+    slots: *const u32,
+    n_slots: usize,
+    explicit: u8,
+    out: *mut RubyValue,
+) -> i32 {
+    let slots = if n_slots == 0 {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(slots, n_slots) }
+    };
+    let cands = crate::eval::using_candidates(slots);
+    let mut args: Vec<RubyValue> = if argc == 0 {
+        Vec::new()
+    } else {
+        unsafe { std::slice::from_raw_parts(argv, argc) }.to_vec()
+    };
+    if let Some(kw @ RubyValue::Hash(h)) = unsafe { kw.as_ref() }
+        && !h.lock().is_empty()
+    {
+        crate::value::collections::hash_mark_kwargs(h);
+        args.push(kw.clone());
+    }
+    let block = if blk.is_null() {
+        None
+    } else {
+        super::leakcheck::consumed(unsafe { &*blk });
+        Some(unsafe { std::ptr::read(blk) })
+    };
+    status_out(
+        crate::dispatch::refined_send_in(
+            box_id,
+            unsafe { &*recv },
+            crate::Symbol::from_u32(sym),
+            &args,
+            block,
+            &cands,
+            explicit != 0,
+        ),
+        out,
+    )
+}
+
 /// One statement hit -- emitted beside every `set_line` stamp of a
 /// coverage-activated program, and nothing at all in one without.
 #[unsafe(no_mangle)]

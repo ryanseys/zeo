@@ -197,6 +197,10 @@ fn build(req: &EvalRequest<'_>, scope_names: &[String]) -> Result<Compiled, Refu
             0 => 0,
             n => zeo_rt::eval::reserve_flip_flops(n),
         },
+        using_base: match analyzed.compiler.eval_activations.len() {
+            0 => 0,
+            n => zeo_rt::eval::reserve_using_slots(n as u32),
+        },
     };
     let program = crate::clif::eval::compile(&analyzed, &spec)?;
     if let Some(init) = program.unit_init {
@@ -290,11 +294,6 @@ fn scope_refusals(analyzed: &crate::analyze::Analyzed) -> Result<(), String> {
             HirNode::MethodRedefine { .. } => Some("a redefinition analyze resolved"),
             HirNode::DefHook { .. } => Some("a definition hook analyze spliced"),
             HirNode::ClassMethodPrepend { .. } => Some("a singleton `prepend`"),
-            // Refinements are a COMPILE-TIME decision: a covered call site
-            // gives up its static dispatch, and a snippet's sites were
-            // decided before the `refine` ran.
-            HirNode::Refine { .. } => Some("a `refine`"),
-            HirNode::Using { .. } => Some("a `using`"),
             // Compile-time-only surfaces.
             // The FFI surface is assembled by analyze from markers a
             // whole-program compile consumes.

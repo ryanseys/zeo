@@ -187,6 +187,81 @@ pub fn reserve_flip_flops(n: u32) -> u32 {
     crate::flipflop::reserve(n)
 }
 
+/// One `using` site's activation slot: the refinements the module named
+/// there holds, resolved when the `using` RUNS.
+///
+/// A snippet's `using` cannot be resolved at compile time -- the module is
+/// a run-time constant, and what it refines lives in the running program's
+/// registry, which the snippet's own fresh compiler has no entry for. So
+/// the site reserves a slot (ids are global, exactly like a flip-flop
+/// latch's), fills it when it runs, and every call site the `using` covers
+/// reads it. A slot outlives the call, which is what lets a `def` written
+/// after the `using` in the same snippet still see the refinement.
+static USING_SLOTS: std::sync::LazyLock<
+    std::sync::Mutex<Vec<Vec<(zeo_abi::ClassId, zeo_abi::ClassId, bool)>>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(Vec::new()));
+
+/// Reserve `n` consecutive activation slots for one compiled snippet.
+#[must_use]
+pub fn reserve_using_slots(n: u32) -> u32 {
+    let mut slots = USING_SLOTS
+        .lock()
+        .expect("the using table is never poisoned");
+    let base = slots.len();
+    slots.resize(base + n as usize, Vec::new());
+    base as u32
+}
+
+/// `using M` running in a snippet: record what `M` refines.
+pub fn using_activate(slot: u32, module: &RubyValue) -> Result<(), Signal> {
+    let RubyValue::Class(mid) = module else {
+        return Err(crate::builtins::type_error!(
+            "wrong argument type {} (expected Module)",
+            crate::builtins::class_name_of(module)
+        ));
+    };
+    if crate::dispatch::class_is_module(*mid) != Some(true) {
+        return Err(crate::builtins::type_error!(
+            "wrong argument type Class (expected Module)"
+        ));
+    }
+    // `(target, holder, singleton)`, the shape `refinement_home` matches.
+    // The singleton form (`refine C.singleton_class`) is not distinguished:
+    // the registry records a refinement's target class, not whether the
+    // `refine` named its singleton, so a snippet activating one refines the
+    // instance side. Recorded as a divergence rather than guessed.
+    let candidates: Vec<(zeo_abi::ClassId, zeo_abi::ClassId, bool)> =
+        crate::dispatch::refinements_of(*mid)
+            .into_iter()
+            .filter_map(|holder| {
+                crate::dispatch::refinement_of(holder).map(|(_, target)| (target, holder, false))
+            })
+            .collect();
+    let mut slots = USING_SLOTS
+        .lock()
+        .expect("the using table is never poisoned");
+    if let Some(entry) = slots.get_mut(slot as usize) {
+        *entry = candidates;
+    }
+    Ok(())
+}
+
+/// The refinements active at one call site: every slot the `using`s
+/// covering it filled, innermost last (a later `using` wins).
+#[must_use]
+pub fn using_candidates(slots: &[u32]) -> Vec<(zeo_abi::ClassId, zeo_abi::ClassId, bool)> {
+    let table = USING_SLOTS
+        .lock()
+        .expect("the using table is never poisoned");
+    let mut out = Vec::new();
+    for &slot in slots.iter().rev() {
+        if let Some(entry) = table.get(slot as usize) {
+            out.extend(entry.iter().copied());
+        }
+    }
+    out
+}
+
 /// The `SyntaxError` a snippet that does not parse raises. Both
 /// evaluators must build it here, or the same unparsable source raises a
 /// different exception depending on which one ran it.

@@ -293,6 +293,16 @@ pub const CAPI: &[CapiSig] = &[
         ret: None,
     },
     CapiSig {
+        name: "zeo_rt_eval_refined_send",
+        params: &[U32, Ptr, U32, Ptr, Usize, Ptr, Ptr, Ptr, Usize, U8, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
+        name: "zeo_rt_eval_reflect_dispatch",
+        params: &[U32, Ptr, U8, Ptr, Usize, Ptr, Ptr, Usize, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
         name: "zeo_rt_eval_super",
         params: &[Ptr, Ptr],
         ret: Some(I32),
@@ -301,6 +311,11 @@ pub const CAPI: &[CapiSig] = &[
         name: "zeo_rt_eval_super_defined",
         params: &[Ptr],
         ret: Some(I8),
+    },
+    CapiSig {
+        name: "zeo_rt_eval_using",
+        params: &[Ptr, U32],
+        ret: Some(I32),
     },
     CapiSig {
         name: "zeo_rt_eval_value_in_scope",

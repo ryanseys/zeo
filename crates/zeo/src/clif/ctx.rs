@@ -144,6 +144,10 @@ pub(crate) struct Fx<'e, 'f> {
     /// What every flip-flop id in this function is offset by -- zero in a
     /// program, a reserved base in an `eval` snippet (see `EvalSpec`).
     pub flip_flop_base: u32,
+    /// The base activation slot id this snippet's `using` sites reserved --
+    /// global, like a flip-flop latch's, because a snippet's own compiler
+    /// numbers from zero (`zeo_rt::eval::reserve_using_slots`).
+    pub using_base: u32,
     /// The `Ruby::Box` this code runs in (`0` = main). Every dynamic send,
     /// global and constant owner is keyed by it, which is the AOT
     /// translation of CRuby's loading-box context (`Ctx::box_id`).
@@ -247,6 +251,7 @@ impl<'e, 'f> Fx<'e, 'f> {
             in_eval_splice: false,
             eval_cref: None,
             flip_flop_base: 0,
+            using_base: 0,
             eval_mode: None,
             box_id: 0,
             method_origin: None,

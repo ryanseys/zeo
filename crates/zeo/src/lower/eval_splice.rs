@@ -189,3 +189,25 @@ pub(crate) fn defines_a_class(hir: &Hir, body: &[NodeId]) -> bool {
     body.iter()
         .any(|&id| matches!(hir[id], HirNode::ClassDef { .. }))
 }
+
+/// Whether the compile-time SPLICE would change what the snippet means.
+///
+/// The splice is an optimization: a literal `eval` runs as ordinary
+/// compiled code sharing the enclosing scope's storage. Two constructs
+/// are not the enclosing scope's to carry -- a `using`, whose activation
+/// covers the SNIPPET and whose module a program compile resolves against
+/// the wrong lexical range, and a `BEGIN` block, which analyze hoists to
+/// the head of the PROGRAM rather than the snippet. Both reached the
+/// emitter as a hard compile error where CRuby simply runs, so a snippet
+/// carrying either falls through to the run-time `eval`, which compiles
+/// it correctly.
+pub(crate) fn splice_changes_meaning(hir: &Hir, body: &[NodeId]) -> bool {
+    let mut stack: Vec<NodeId> = body.to_vec();
+    while let Some(id) = stack.pop() {
+        if matches!(hir[id], HirNode::Using(_) | HirNode::PreExec(_)) {
+            return true;
+        }
+        hir[id].for_each_child(&mut |c| stack.push(c));
+    }
+    false
+}

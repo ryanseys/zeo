@@ -591,6 +591,17 @@ fn lower_tail_expr(fx: &mut Fx, tail: NodeId) -> Result<super::operand::Operand,
             lower_stmt(fx, tail)?;
             Ok(Operand::Nil)
         }
+        // `using M` answers the receiver it activated on -- `main` at a
+        // snippet's own level, the class under `class_eval`.
+        HirNode::Using(..) if fx.eval_mode.is_some() => {
+            lower_stmt(fx, tail)?;
+            let addr = fx.self_ptr.expect("self_ptr is set in the prologue");
+            Ok(Operand::Ptr {
+                addr,
+                owned: false,
+                tag: super::operand::TagInfo::Unknown,
+            })
+        }
         HirNode::MethodVisibility { name, visibility } if fx.eval_mode.is_some() => {
             let (name, visibility) = (name.clone(), *visibility);
             let verb = match visibility {
@@ -1096,6 +1107,29 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
         // UNregistered marker is a different thing and still refuses,
         // rather than losing the refinement silently.
         HirNode::Refine { .. } if fx.an.compiler.refinement_marker_registered(stmt) => Ok(()),
+        // `using M` in a SNIPPET: the module is a run-time constant, so
+        // the site resolves it and fills its activation slot. Every call
+        // site the `using` covers reads that slot -- which outlives the
+        // call, so a `def` written after it here still sees the refinement.
+        HirNode::Using(module) if fx.eval_mode.is_some() => {
+            let module = module.clone();
+            let Some(slot) = fx.an.compiler.eval_activation_slot(stmt) else {
+                return Err("a `using` inside an `eval` that analyze did not place".to_string());
+            };
+            let op = super::expr::const_read(fx, stmt, &module)?;
+            let ptr = ownership::borrow_ptr(fx, &op);
+            if op.owned() {
+                ownership::pool_owned(fx, ptr, op.tag());
+            }
+            let slot_v =
+                fx.b.ins()
+                    .iconst(types::I32, i64::from(fx.using_base + slot));
+            let status = fx
+                .call("zeo_rt_eval_using", &[ptr, slot_v])
+                .expect("eval_using returns a status");
+            fx.fallible(status);
+            Ok(())
+        }
         HirNode::Include(_)
         | HirNode::Extend(_)
         | HirNode::Prepend(_)

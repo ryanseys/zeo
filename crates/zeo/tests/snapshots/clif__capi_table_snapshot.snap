@@ -53,8 +53,11 @@ zeo_rt_eval_definee ([U8, Ptr, Ptr]) -> Some(I32)
 zeo_rt_eval_home_block ([Ptr]) -> None
 zeo_rt_eval_home_pop ([]) -> None
 zeo_rt_eval_home_push ([Ptr, Ptr, U8, Ptr, U32, U32]) -> None
+zeo_rt_eval_refined_send ([U32, Ptr, U32, Ptr, Usize, Ptr, Ptr, Ptr, Usize, U8, Ptr]) -> Some(I32)
+zeo_rt_eval_reflect_dispatch ([U32, Ptr, U8, Ptr, Usize, Ptr, Ptr, Usize, Ptr]) -> Some(I32)
 zeo_rt_eval_super ([Ptr, Ptr]) -> Some(I32)
 zeo_rt_eval_super_defined ([Ptr]) -> Some(I8)
+zeo_rt_eval_using ([Ptr, U32]) -> Some(I32)
 zeo_rt_eval_value_in_scope ([Ptr, Ptr, Ptr, Ptr, Ptr, Ptr]) -> Some(I32)
 zeo_rt_eval_value_in_scope_argv ([Ptr, Ptr, Ptr]) -> Some(I32)
 zeo_rt_eval_yield ([Ptr, Usize, Ptr]) -> Some(I32)

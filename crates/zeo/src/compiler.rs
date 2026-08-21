@@ -841,6 +841,8 @@ pub struct Compiler {
     /// Every `using M`, as the LEXICAL byte range it covers. See
     /// [`Activation`] and [`Compiler::refinements_active_at`].
     pub(crate) activations: Vec<Activation>,
+    /// A snippet's `using` sites, in source order -- see [`EvalActivation`].
+    pub(crate) eval_activations: Vec<EvalActivation>,
     /// Block call sites whose receiver's STATIC type admits a native inline
     /// loop (`analyze::mark_inline_iter_sites`), keyed by the BLOCK node.
     /// Soundness lives in the emitted match GUARD (a mistyped receiver takes
@@ -972,6 +974,18 @@ pub(crate) struct Refinement {
 /// sits inside the range, and one written above it is not.
 pub(crate) struct Activation {
     pub module: ClassId,
+    pub file: crate::hir::FileId,
+    pub start: u32,
+    pub end: u32,
+}
+
+/// One `using` written in a SNIPPET. The module is a run-time constant and
+/// what it refines lives in the running program's registry, so nothing here
+/// names either: the site is recorded by SPAN, reserves an activation slot
+/// (`zeo_rt::eval::reserve_using_slots`) and fills it when it runs. Every
+/// call site the span covers reads the slot.
+pub(crate) struct EvalActivation {
+    pub marker: crate::hir::NodeId,
     pub file: crate::hir::FileId,
     pub start: u32,
     pub end: u32,
@@ -1137,6 +1151,7 @@ impl Compiler {
             redefined_int_ops: FSet::default(),
             redefined_float_ops: FSet::default(),
             activations: Vec::new(),
+            eval_activations: Vec::new(),
             inline_iter_sites: FMap::default(),
             times_literal_suppressed: false,
             range_each_literal_suppressed: false,
@@ -1447,6 +1462,32 @@ impl Compiler {
     /// `(refining module, refined target)` for a `refine` holder -- what
     /// codegen registers so `Module#refinements` and `Refinement#target` can
     /// answer at run time. `None` for an ordinary module.
+    /// The `using` sites covering `node` in a SNIPPET, outermost first --
+    /// the activation SLOT ids a refined call there reads. Empty for a
+    /// program, where refinements resolve at compile time.
+    pub(crate) fn eval_activations_at(&self, node: crate::hir::NodeId) -> Vec<u32> {
+        if self.eval_activations.is_empty() {
+            return Vec::new();
+        }
+        let Some(span) = self.hir.span(node).and_then(|s| s.known()) else {
+            return Vec::new();
+        };
+        self.eval_activations
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| a.file == span.file && span.start >= a.start && span.start < a.end)
+            .map(|(i, _)| i as u32)
+            .collect()
+    }
+
+    /// The slot index one `using` marker reserved.
+    pub(crate) fn eval_activation_slot(&self, marker: crate::hir::NodeId) -> Option<u32> {
+        self.eval_activations
+            .iter()
+            .position(|a| a.marker == marker)
+            .map(|i| i as u32)
+    }
+
     pub(crate) fn refinement_of(&self, holder: ClassId) -> Option<(ClassId, ClassId)> {
         self.refinements
             .iter()

@@ -1584,7 +1584,13 @@ fn lower_class_body_statement(
         // emits a module's own methods as `RubyValue`-self functions)
         // carries it with no new machinery. Its name is unwritable as a
         // constant, so it claims no name inside the enclosing module.
+        // A SNIPPET's `refine` is the run-time one: `Module#refine` mints
+        // the holder, marks it and runs the block with the holder as self
+        // and definee. The compile-time desugar below cannot serve one --
+        // it registers a holder class the snippet's own compiler mints and
+        // the running program has never heard of.
         if name == "refine"
+            && !hir.mode.is_eval()
             && let (Some(args), Some(block)) = (call.arguments(), call.block())
         {
             let arg_list: Vec<_> = args.arguments().iter().collect();

@@ -60,13 +60,24 @@ pub(crate) fn refined_call(fx: &mut Fx, site: NodeId) -> Result<Option<Operand>,
     // compile-time fact, and neither is whether the receiver's own chain
     // shadows the entry.
     let active = fx.an.compiler.refinements_active_at(site);
-    if !active.is_empty()
+    let reflect_slots = fx.an.compiler.eval_activations_at(site);
+    if !(active.is_empty() && reflect_slots.is_empty())
         && let Some(entry) = reflect_entry(&name, &args, &kwargs, block, block_arg)
     {
-        return lower_reflect(fx, site, receiver, entry, &args, block, &active).map(Some);
+        let set = if reflect_slots.is_empty() {
+            Cands::Static(&active)
+        } else {
+            Cands::Slots(&reflect_slots)
+        };
+        return lower_reflect(fx, site, receiver, entry, &args, block, set).map(Some);
     }
+    // In a SNIPPET the candidates are a run-time question: the module a
+    // `using` names is a run-time constant, and what it refines lives in
+    // the running program's registry. The site carries the ACTIVATION
+    // SLOTS the `using`s covering it filled instead.
+    let slots = fx.an.compiler.eval_activations_at(site);
     let cands = candidates(fx, site, &name);
-    if cands.is_empty() {
+    if cands.is_empty() && slots.is_empty() {
         return Ok(None);
     }
     // The refined entry takes one flat argument list, so a splat -- whose
@@ -81,8 +92,13 @@ pub(crate) fn refined_call(fx: &mut Fx, site: NodeId) -> Result<Option<Operand>,
             .unsupported(site, "a refined call through `&.`")
             .map(Some);
     }
+    let set = if slots.is_empty() {
+        Cands::Static(&cands)
+    } else {
+        Cands::Slots(&slots)
+    };
     lower(
-        fx, site, receiver, &name, &args, &kwargs, block, block_arg, &cands,
+        fx, site, receiver, &name, &args, &kwargs, block, block_arg, set,
     )
     .map(Some)
 }
@@ -100,7 +116,7 @@ fn lower(
     kwargs: &[KwArg],
     block: Option<NodeId>,
     block_arg: Option<NodeId>,
-    cands: &[(ClassId, ClassId, bool)],
+    cands: Cands<'_>,
 ) -> Result<Operand, String> {
     // An EXPLICIT receiver runs the visibility check the refined entry
     // makes: a `private def` inside a `refine` block refuses one.
@@ -130,7 +146,7 @@ fn lower(
             return fx.unsupported(site, "a literal block beside a `&` block argument");
         }
     };
-    let (ids_ptr, n_ids) = candidate_table(fx, cands);
+    let (ids_ptr, n_ids) = cands.table(fx);
     let sym = fx.sym_id(name);
     let zero_box = fx.box_v();
     let argc = fx.b.ins().iconst(fx.em.ptr, args.len() as i64);
@@ -140,7 +156,7 @@ fn lower(
     let out = fx.slot_addr(ss, 0);
     let status = fx
         .call(
-            "zeo_rt_refined_send_in",
+            cands.entry(),
             &[
                 zero_box, recv_ptr, sym, argv, argc, kw, blk_ptr, ids_ptr, n_ids, explicit_v, out,
             ],
@@ -157,6 +173,48 @@ fn lower(
         owned: true,
         tag: TagInfo::Unknown,
     })
+}
+
+/// Which refinements a site asks about: the set a whole-program compile
+/// resolved, or -- in a snippet -- the activation slots a `using` fills
+/// when it runs.
+#[derive(Clone, Copy)]
+enum Cands<'a> {
+    Static(&'a [(ClassId, ClassId, bool)]),
+    Slots(&'a [u32]),
+}
+
+impl Cands<'_> {
+    fn entry(self) -> &'static str {
+        match self {
+            Cands::Static(_) => "zeo_rt_refined_send_in",
+            Cands::Slots(_) => "zeo_rt_eval_refined_send",
+        }
+    }
+
+    fn reflect_entry(self) -> &'static str {
+        match self {
+            Cands::Static(_) => "zeo_rt_reflect_dispatch_in",
+            Cands::Slots(_) => "zeo_rt_eval_reflect_dispatch",
+        }
+    }
+
+    fn table(self, fx: &mut Fx) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+        match self {
+            Cands::Static(cands) => candidate_table(fx, cands),
+            Cands::Slots(slots) => {
+                let base = fx.using_base;
+                let bytes: Vec<u8> = slots
+                    .iter()
+                    .flat_map(|s| (base + s).to_le_bytes())
+                    .collect();
+                let off = fx.em.intern_rodata_aligned(&bytes, 4);
+                let ptr = fx.rod(off);
+                let n = fx.b.ins().iconst(fx.em.ptr, slots.len() as i64);
+                (ptr, n)
+            }
+        }
+    }
 }
 
 /// The candidate set as one 4-aligned `.rodata` `u32` triple array.
@@ -210,7 +268,7 @@ fn lower_reflect(
     entry: u8,
     args: &[ArrayElem],
     block: Option<NodeId>,
-    active: &[(ClassId, ClassId, bool)],
+    active: Cands<'_>,
 ) -> Result<Operand, String> {
     let recv_ptr = match receiver {
         Some(r) => {
@@ -228,7 +286,7 @@ fn lower_reflect(
         Some(b) => Some(super::blocks::literal_block_ptr(fx, site, b)?),
         None => None,
     };
-    let (ids_ptr, n_ids) = candidate_table(fx, active);
+    let (ids_ptr, n_ids) = active.table(fx);
     let zero_box = fx.box_v();
     let entry_v = fx.b.ins().iconst(types::I8, i64::from(entry));
     let argc = fx.b.ins().iconst(fx.em.ptr, args.len() as i64);
@@ -237,7 +295,7 @@ fn lower_reflect(
     let out = fx.slot_addr(ss, 0);
     let status = fx
         .call(
-            "zeo_rt_reflect_dispatch_in",
+            active.reflect_entry(),
             &[
                 zero_box, recv_ptr, entry_v, argv, argc, blk_ptr, ids_ptr, n_ids, out,
             ],

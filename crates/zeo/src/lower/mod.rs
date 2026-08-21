@@ -1537,6 +1537,7 @@ fn lower_call_node(
             if let Ok(body) = parse_and_lower_into(hir, &src)
                 && reject_top_level_defs(hir, &body).is_ok()
                 && !(hir.is_in_def_body() && eval_splice::defines_a_class(hir, &body))
+                && !eval_splice::splice_changes_meaning(hir, &body)
             {
                 return Ok(hir.push(HirNode::Eval(body)));
             }

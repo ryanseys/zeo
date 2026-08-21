@@ -323,6 +323,23 @@ fn process_top_stmt_inner(
         // spans from that same file.
         let m = m.clone();
         record_activation(compiler, stmt, &m, &[], 0, u32::MAX);
+        // In a SNIPPET the module is a run-time constant and its
+        // refinements live in the running program's registry, so the
+        // activation above resolves nothing: the site is recorded by span
+        // and RUNS, filling a slot the covered call sites read.
+        if compiler.hir.mode.is_eval()
+            && let Some(span) = compiler.hir.span(stmt).and_then(|s| s.known())
+        {
+            compiler
+                .eval_activations
+                .push(crate::compiler::EvalActivation {
+                    marker: stmt,
+                    file: span.file,
+                    start: span.start,
+                    end: u32::MAX,
+                });
+            main_statements.push(stmt);
+        }
     } else if let HirNode::Undef(names) = &compiler.hir[stmt] {
         // Top-level `undef m` -- Object's reopen, exactly like the
         // `include` above and like the class-body arm in `walk_class_body`.
