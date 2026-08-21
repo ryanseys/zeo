@@ -125,10 +125,11 @@ fn build(req: &EvalRequest<'_>, scope_names: &[String]) -> Result<Compiled, Stri
     let opts = crate::CompileOptions {
         file_name: Some(std::path::PathBuf::from(req.file)),
         line_offset: req.line.saturating_sub(1),
+        mode: crate::CompileMode::Eval,
         ..crate::CompileOptions::default()
     };
     let analyzed = crate::analyze_snippet(req.src, &opts).map_err(|e| e.to_string())?;
-    refusals(&analyzed)?;
+    refusals(&analyzed, cref.as_ref().and_then(|c| c.0).is_none())?;
 
     // The snippet's own locals join the caller's: under a Binding every
     // one of them is a cell, so a name the source introduces lands in the
@@ -170,15 +171,15 @@ fn build(req: &EvalRequest<'_>, scope_names: &[String]) -> Result<Compiled, Stri
 /// The shapes that would lower without complaint and be WRONG in a
 /// snippet, because their lowering reads a decision only a whole-program
 /// compile makes. Each is a widening this compiler owes (G6-1/G6-2).
-fn refusals(analyzed: &crate::analyze::Analyzed) -> Result<(), String> {
-    scope_refusals(analyzed)?;
+fn refusals(analyzed: &crate::analyze::Analyzed, no_cref: bool) -> Result<(), String> {
+    scope_refusals(analyzed, no_cref)?;
     home_refusals(analyzed)
 }
 
 /// The shapes that are wrong ANYWHERE in a snippet, `def` bodies
 /// included: their lowering reads a decision only a whole-program compile
 /// makes. Each is a widening this compiler owes (G6-1/G6-2).
-fn scope_refusals(analyzed: &crate::analyze::Analyzed) -> Result<(), String> {
+fn scope_refusals(analyzed: &crate::analyze::Analyzed, no_cref: bool) -> Result<(), String> {
     let compiler = &analyzed.compiler;
     // `CompileMode::Eval` registers nothing, so nothing can be hoisted
     // past the walk below -- but a compile that DID register would emit
@@ -228,10 +229,12 @@ fn scope_refusals(analyzed: &crate::analyze::Analyzed) -> Result<(), String> {
             | HirNode::DefHook { .. }
             | HirNode::Refine { .. }
             | HirNode::Using { .. } => Some("a definition-level statement"),
-            // An owner the fresh compiler resolves statically.
-            HirNode::ClassVarRead(..) | HirNode::ClassVarWrite { .. } => Some("a class variable"),
-            HirNode::ConstWrite { .. } | HirNode::DynConstWrite { .. } => {
-                Some("a constant assignment")
+            // A class variable's owner is the cref, and a snippet's cref is
+            // a run-time class only when it HAS one: a top-level eval's
+            // `@@x` is ruby's own "class variable access from toplevel",
+            // which this compiler does not raise yet.
+            HirNode::ClassVarRead(..) | HirNode::ClassVarWrite { .. } if no_cref => {
+                Some("a class variable with no cref")
             }
             // Compile-time-only surfaces.
             HirNode::Eval(..) | HirNode::Ffi(..) => Some("a nested compiler surface"),

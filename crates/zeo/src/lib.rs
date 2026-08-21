@@ -101,6 +101,8 @@ pub struct CompileOptions {
     /// a run-time `eval` given a `line` argument numbers from it, and
     /// every span, backtrace row and `__LINE__` follows.
     pub line_offset: u32,
+    /// What this compile is FOR -- see [`CompileMode`].
+    pub mode: CompileMode,
     /// Ordered `-I` search roots for plain `require "feature"`.
     pub load_roots: Vec<std::path::PathBuf>,
     /// Ordered directories of vendored gems (each subdirectory with a
@@ -266,6 +268,7 @@ fn analyze_on_this_thread(
         opts.input_path.as_deref(),
         opts.file_name.as_deref(),
         opts.line_offset,
+        opts.mode,
         &opts.load_roots,
         &opts.package_dirs,
         &opts.gem_paths,
@@ -300,18 +303,18 @@ pub fn analyze_snippet(
     source: &str,
     opts: &CompileOptions,
 ) -> Result<analyze::Analyzed, CompileError> {
-    let (mut hir, root, _records) = parse::parse_and_lower_with(
+    let (hir, root, _records) = parse::parse_and_lower_with(
         source,
         opts.input_path.as_deref(),
         opts.file_name.as_deref(),
         opts.line_offset,
+        opts.mode,
         &opts.load_roots,
         &opts.package_dirs,
         &opts.gem_paths,
         opts.lockfile.as_deref(),
         opts.root_gem.as_ref(),
     )?;
-    hir.mode = CompileMode::Eval;
     analyze::analyze(hir, root)
 }
 
@@ -430,6 +433,7 @@ fn compile_on_this_thread(
         opts.input_path.as_deref(),
         opts.file_name.as_deref(),
         opts.line_offset,
+        opts.mode,
         &opts.load_roots,
         &opts.package_dirs,
         &opts.gem_paths,

@@ -146,8 +146,18 @@ end
 /// back explicitly rather than requiring callers to know it's always the
 /// last-pushed node.
 pub fn parse_and_lower(source: &str) -> Result<(Hir, NodeId), CompileError> {
-    let (hir, root, _gem_records) =
-        parse_and_lower_with(source, None, None, 0, &[], &[], &[], None, None)?;
+    let (hir, root, _gem_records) = parse_and_lower_with(
+        source,
+        None,
+        None,
+        0,
+        crate::CompileMode::Program,
+        &[],
+        &[],
+        &[],
+        None,
+        None,
+    )?;
     Ok((hir, root))
 }
 
@@ -222,6 +232,7 @@ pub fn parse_and_lower_with(
     input_path: Option<&std::path::Path>,
     file_name: Option<&std::path::Path>,
     line_offset: u32,
+    mode: crate::CompileMode,
     load_roots: &[std::path::PathBuf],
     package_dirs: &[std::path::PathBuf],
     gem_paths: &[std::path::PathBuf],
@@ -258,6 +269,9 @@ pub fn parse_and_lower_with(
         };
     }
     hir.frozen_string_literal = magic_frozen_string_literal(source);
+    // Before a single statement lowers: what a compile is FOR decides a
+    // handful of folds (see `Hir::cvar_is_toplevel`).
+    hir.mode = mode;
     hir.builtin_exceptions_len = statements.len();
     // This is THE boundary where a located `LowerError` becomes a renderable
     // `CompileError`: the error and the `Hir::files` table it points into

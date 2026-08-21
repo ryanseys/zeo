@@ -647,6 +647,7 @@ fn run() -> Result<(), MainError> {
         input_path: input_path.clone(),
         file_name: None,
         line_offset: 0,
+        mode: zeo::CompileMode::Program,
         load_roots: args.load_roots.clone(),
         package_dirs,
         gem_report,

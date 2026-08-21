@@ -447,6 +447,14 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
         // define it (rustc's `const_owner_id_opt` miss arm).
         HirNode::ConstReadOrNil(scope, name) => {
             let (scope, name) = (scope.clone(), name.clone());
+            // A run-time cref owns the constant a snippet writes bare, and
+            // it is a class the fresh compiler has no entry for -- so the
+            // id goes straight through, with no claim map to consult.
+            let eval_owner = fx
+                .eval_cref
+                .as_ref()
+                .and_then(|c| c.0)
+                .filter(|_| scope.is_none());
             let owner_class = match scope.as_deref() {
                 Some(s) => match resolve_class_here(fx, s) {
                     Some(cid) => cid,
@@ -454,15 +462,19 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 },
                 None => fx.method_class.unwrap_or(crate::compiler::OBJECT_CLASS),
             };
-            let owner = fx
-                .an
-                .compiler
-                .class(owner_class)
-                .const_owners
-                .get(&name)
-                .copied()
-                .unwrap_or(owner_class)
-                .0;
+            let owner = match eval_owner {
+                Some(cid) => cid,
+                None => {
+                    fx.an
+                        .compiler
+                        .class(owner_class)
+                        .const_owners
+                        .get(&name)
+                        .copied()
+                        .unwrap_or(owner_class)
+                        .0
+                }
+            };
             let owner_v = fx.b.ins().iconst(types::I32, i64::from(owner));
             let (nptr, nlen) = rodata_name(fx, &name);
             let ss = fx.temp_slot();
@@ -1448,6 +1460,14 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
         }
         HirNode::ConstWrite { scope, name, value } => {
             let (scope, name, value) = (scope.clone(), name.clone(), *value);
+            // As in the `||=` read half above: a run-time cref owns what a
+            // snippet writes bare, and the fresh compiler has no entry for
+            // it, so the id goes straight through.
+            let eval_owner = fx
+                .eval_cref
+                .as_ref()
+                .and_then(|c| c.0)
+                .filter(|_| scope.is_none());
             // An explicit `Scope::NAME = ..` whose scope isn't a registered
             // class takes rustc's runtime-scope path -- not lowered yet.
             let owner_class = match scope.as_deref() {
@@ -1467,15 +1487,19 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 // otherwise -- rustc's `const_owner_id_opt` fallback.
                 None => fx.method_class.unwrap_or_else(|| box_top(fx)),
             };
-            let owner = fx
-                .an
-                .compiler
-                .class(owner_class)
-                .const_owners
-                .get(&name)
-                .copied()
-                .unwrap_or(owner_class)
-                .0;
+            let owner = match eval_owner {
+                Some(cid) => cid,
+                None => {
+                    fx.an
+                        .compiler
+                        .class(owner_class)
+                        .const_owners
+                        .get(&name)
+                        .copied()
+                        .unwrap_or(owner_class)
+                        .0
+                }
+            };
             let Some((file, line)) = crate::codegen::source_location(&fx.an.compiler, id) else {
                 return fx.unsupported(id, "a span-less constant write");
             };
@@ -3461,6 +3485,12 @@ pub(crate) fn const_added_send(
     name: &str,
     at: Option<NodeId>,
 ) -> Result<(), String> {
+    // A snippet's owner may be a RUN-TIME class the fresh compiler has no
+    // entry for at all -- the announcement is unconditional there, and the
+    // runtime's own dispatch decides whether a hook answers it.
+    if fx.eval_cref.is_some() && owner as usize >= fx.an.compiler.classes.len() {
+        return const_added_announce(fx, owner, name);
+    }
     // A `class Module; def const_added` reopen answers for every module,
     // and no per-class scan can see it -- `Compiler::global_def_hooks`.
     if !fx.an.compiler.global_def_hooks.contains("const_added") {
@@ -3513,6 +3543,12 @@ pub(crate) fn const_added_announce(fx: &mut Fx, owner: u32, name: &str) -> Resul
 }
 
 pub(crate) fn cvar_owner(fx: &Fx, name: &str) -> u32 {
+    // A snippet's cvar belongs to its cref, which is a RUN-TIME class the
+    // fresh compiler has no entry for: no owner walk to do, and the
+    // runtime's own `cvar_get`/`set` climb the live ancestry from there.
+    if let Some(cid) = fx.eval_cref.as_ref().and_then(|c| c.0) {
+        return cid;
+    }
     // Where the code was WRITTEN, never the receiver that reaches it: a
     // class method inherited by a subclass still reads its own class's
     // storage (`Sub.note` writes `Base`'s `@@subs`), so a materialized

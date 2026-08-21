@@ -263,6 +263,32 @@ fn defined_calls_a_callers_local_a_local() {
 }
 
 #[test]
+fn a_class_variable_and_a_constant_belong_to_the_cref() {
+    // Both are owned by the class the eval runs in, which is a RUN-TIME
+    // class -- so the id goes straight through, and the constant lands on
+    // the receiver rather than on `Object`. The `@@n` needed the LOWERING
+    // to know too: a snippet has no lexical cref, which is not the same as
+    // being at the top level, and the fold that stands `@@x` up as ruby's
+    // toplevel RuntimeError answered that question at compile time.
+    let source = r#"
+        class Counter
+          @@n = 1
+          def self.n = @@n
+          SEED = 10
+        end
+        bump = "@@n += SEED; @@n"
+        p Counter.class_eval(bump)
+        p Counter.n
+        add = "GRAND = @@n * 2"
+        Counter.class_eval(add)
+        p Counter::GRAND
+        p Object.const_defined?(:GRAND)
+        "#;
+    let run = compiled(source);
+    assert_eq!(run.stdout, "11\n11\n22\nfalse\n", "stderr: {}", run.stderr);
+}
+
+#[test]
 fn a_shape_the_compiler_declines_still_runs() {
     // A `class` in the source mints a run-time class, which this compiler
     // does not lower yet -- the interpreter answers it, and the program
