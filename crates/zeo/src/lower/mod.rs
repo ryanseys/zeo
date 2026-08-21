@@ -243,7 +243,9 @@ fn record_call_line(hir: &mut Hir, id: NodeId, node: &Node<'_>) {
     let Some(call) = node.as_call_node() else {
         return;
     };
-    let Some(msg) = call.message_loc() else { return };
+    let Some(msg) = call.message_loc() else {
+        return;
+    };
     let (Some(file), Some(span)) = (hir.lowering_file, hir.span(id)) else {
         return;
     };
