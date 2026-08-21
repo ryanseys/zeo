@@ -79,7 +79,10 @@ pub fn float_pow(a: f64, b: f64) -> f64 {
 /// This used to raise `Math::DomainError` instead, which was a divergence
 /// rather than a limit: the Complex tower it needed was already here.
 pub fn float_pow_checked(a: f64, b: f64) -> Result<crate::RubyValue, crate::Signal> {
-    if a < 0.0 && b.is_finite() && b.fract() != 0.0 {
+    // CRuby's own test is `dy != round(dy)`, which a NaN exponent SATISFIES
+    // (`NaN != NaN`) while an infinite one does not (`inf == inf`) -- so a
+    // negative base to a NaN power is the Complex NaN, not the real one.
+    if a < 0.0 && b != b.round() {
         return dbl_complex_polar_pi((-a).powf(b), b);
     }
     Ok(crate::RubyValue::Float(a.powf(b)))

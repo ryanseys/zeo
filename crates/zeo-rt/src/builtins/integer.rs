@@ -230,6 +230,21 @@ fn int_mod_slow(a: &RubyValue, b: &RubyValue) -> RubyValue {
 /// "may be too big" posture by answering Float::INFINITY for |a| > 1
 /// (the warning itself is a documented scope-cut).
 pub fn int_pow(a: &RubyValue, b: &RubyValue) -> Result<RubyValue, Signal> {
+    // A base of 1 or -1 answers an INTEGER whatever the exponent's sign --
+    // CRuby tests both before it looks at the sign at all, which is why
+    // `1 ** -1` is `1` where `2 ** -1` is `(1/2)`. (A BigInt is never
+    // either, by the demotion invariant.)
+    match a {
+        RubyValue::Int(1) => return Ok(RubyValue::Int(1)),
+        RubyValue::Int(-1) => {
+            let even = match b {
+                RubyValue::Int(y) => y % 2 == 0,
+                _ => to_bigint(b).is_even(),
+            };
+            return Ok(RubyValue::Int(if even { 1 } else { -1 }));
+        }
+        _ => {}
+    }
     // Small-small fast half.
     if let (RubyValue::Int(x), RubyValue::Int(y)) = (a, b)
         && *y >= 0
