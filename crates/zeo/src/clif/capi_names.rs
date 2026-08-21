@@ -198,6 +198,11 @@ pub const CAPI: &[CapiSig] = &[
         ret: None,
     },
     CapiSig {
+        name: "zeo_rt_const_visibility",
+        params: &[Ptr, Ptr, Usize, U8],
+        ret: None,
+    },
+    CapiSig {
         name: "zeo_rt_cov_file_loaded",
         params: &[Ptr, Usize],
         ret: None,

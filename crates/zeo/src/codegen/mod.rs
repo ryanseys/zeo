@@ -842,27 +842,6 @@ fn emit_class_method_visibility_rows(compiler: &Compiler, id: u32) {
     }
 }
 
-/// `private_constant :A` -- the listing half. The `M::A` reference that
-/// must raise is rejected at compile time (`emit_const_read`), so this
-/// only keeps `Module#constants` and `defined?` honest.
-fn emit_private_constant_listing(
-    compiler: &Compiler,
-    id: u32,
-    registrations: &mut Vec<TokenStream>,
-) {
-    let priv_consts: Vec<&str> = compiler
-        .class(ClassId(id))
-        .private_constants
-        .iter()
-        .map(String::as_str)
-        .collect();
-    if !priv_consts.is_empty() {
-        registrations.push(quote! {
-            zeo_rt::const_set_private(#id, &[#(#priv_consts),*], true);
-        });
-    }
-}
-
 /// `class C; extend M; end` puts M on C's SINGLETON chain, which the
 /// linearized `ancestors` deliberately excludes -- so it is registered
 /// separately, and answers `C.is_a?(M)` and `C.singleton_class.ancestors`.
@@ -1991,7 +1970,6 @@ fn codegen(analyzed: &Analyzed, sink: &mut ItemSink<'_>) -> std::io::Result<()> 
         // name out of this class's table. See `ClassEntry::undefined_methods`.
         // Sorted: a HashSet has no stable order, and generated source should
         // not vary between compiles of the same program.
-        emit_private_constant_listing(compiler, id, &mut registrations);
         emit_extends_registration(compiler, id, &mut registrations);
         // A `refine` holder is a module in every respect but one: its own
         // `.class` is `Refinement`, which is what a refined `Method#owner`
@@ -2494,7 +2472,6 @@ fn codegen(analyzed: &Analyzed, sink: &mut ItemSink<'_>) -> std::io::Result<()> 
         // private) but recorded nowhere, so `respond_to?` and
         // `singleton_methods` both reported the method as public.
         emit_class_method_visibility_rows(compiler, id);
-        emit_private_constant_listing(compiler, id, &mut registrations);
         emit_extends_registration(compiler, id, &mut registrations);
         builtin_class_bodies.extend(hoisted_sites_for(ClassId(id)));
         // Always-on builtins with their DEFAULT ancestors are registered

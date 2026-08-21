@@ -244,6 +244,16 @@ pub fn const_set_private(owner_class_id: u32, names: &[&str], private: bool) {
     }
 }
 
+/// [`const_set_private`] against the RECEIVER a class body's directive
+/// names -- `self`, which is the class. A non-class receiver cannot reach
+/// the directive (`private_constant` is a `Module` method), so a value
+/// that is not one records nothing.
+pub fn const_set_private_value(owner: &RubyValue, names: &[&str], private: bool) {
+    if let RubyValue::Class(cid) = owner {
+        const_set_private(cid.0, names, private);
+    }
+}
+
 /// Whether `owner` marks constant `name` private.
 pub fn const_is_private(owner_class_id: u32, name: &str) -> bool {
     PRIVATE_CONSTANTS

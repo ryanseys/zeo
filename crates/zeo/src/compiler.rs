@@ -119,6 +119,13 @@ pub struct ClassInfo {
     /// of these from OUTSIDE `M`'s lexical scope is a NameError, and
     /// `M.constants` omits it.
     pub private_constants: std::collections::BTreeSet<String>,
+    /// Every constant name this class's body names in a `private_constant`
+    /// or `public_constant` directive, whether or not the last one hid it.
+    /// Privacy is POSITIONAL -- each directive runs where it is written --
+    /// so a read of one of these names asks the run time rather than
+    /// folding either way. [`private_constants`] stays the compile-time
+    /// view for the folds that can still take one.
+    pub const_visibility_names: std::collections::BTreeSet<String>,
     /// `extend`ed modules, in source order -- NOT part of `ancestors()` at
     /// all, which linearizes INSTANCE-method resolution. An extended module
     /// joins this class's SINGLETON chain instead, so it drives
@@ -1079,6 +1086,7 @@ impl Compiler {
                 prepends: Vec::new(),
                 includes: Vec::new(),
                 private_constants: Default::default(),
+                const_visibility_names: Default::default(),
                 extends: Vec::new(),
                 class_method_prepends: Vec::new(),
                 undefined: FSet::default(),
@@ -1728,6 +1736,7 @@ impl Compiler {
             prepends: Vec::new(),
             includes: Vec::new(),
             private_constants: Default::default(),
+            const_visibility_names: Default::default(),
             extends: Vec::new(),
             class_method_prepends: Vec::new(),
             undefined: FSet::default(),

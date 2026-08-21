@@ -268,6 +268,27 @@ pub unsafe extern "C" fn zeo_rt_const_set_at(
     crate::constants::const_set_at(owner, name, unsafe { &*v }.clone(), file, line);
 }
 
+/// `private_constant :A` / `public_constant :A` running at its DOCUMENT
+/// POSITION -- privacy is a run-time flag a later directive restores, and
+/// a read written between the two must see what had run by then.
+/// `owner` is the DEFINEE the directive names -- `self`, which in a class
+/// body is the class.
+///
+/// # Safety
+/// `owner` is a live value; `name` covers `name_len` bytes of UTF-8.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_const_visibility(
+    owner: *const RubyValue,
+    name: *const u8,
+    name_len: usize,
+    private: u8,
+) {
+    let name = unsafe { super::str_slice(name, name_len) };
+    if let Some(v) = unsafe { owner.as_ref() } {
+        crate::constants::const_set_private_value(v, &[name], private != 0);
+    }
+}
+
 /// `zeo_rt_const_get_cref`'s `flags`: the owner's chain defines a user
 /// `const_missing`, so a miss DISPATCHES it.
 pub const CONST_CREF_HOOK: u8 = 1;

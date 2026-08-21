@@ -63,6 +63,7 @@ capi_symbols!(
     objects::zeo_rt_const_get_scoped,
     dispatch::zeo_rt_const_private,
     objects::zeo_rt_const_set_at,
+    objects::zeo_rt_const_visibility,
     kernel::zeo_rt_cov_file_loaded,
     kernel::zeo_rt_cov_line,
     objects::zeo_rt_cvar_get,

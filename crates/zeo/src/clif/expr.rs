@@ -2018,9 +2018,12 @@ fn emit_private_constant_guard(fx: &mut Fx, scope_cid: crate::compiler::ClassId,
         .get(name)
         .copied()
         .unwrap_or(scope_cid);
-    // The compiler saw the directive, or nothing static can see it and the
-    // run time is the only place the answer lives.
-    if !compiler.class(owner_cid).private_constants.contains(name)
+    // A directive named the constant somewhere (privacy is positional, so
+    // WHICH one last ran is the run time's answer), or nothing static can
+    // see one and the run time is the only place the answer lives.
+    let info = compiler.class(owner_cid);
+    if !info.const_visibility_names.contains(name)
+        && !info.private_constants.contains(name)
         && !compiler.hir.constant_privacy_is_runtime()
     {
         return;

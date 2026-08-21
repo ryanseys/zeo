@@ -817,13 +817,23 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         // what is left is the value ruby answers, which is the module
         // (oracle-checked). A body with no enclosing class is `main`'s, whose
         // constants live on Object.
-        HirNode::ConstantVisibility { .. } => {
-            let cid = cx
-                .self_class()
-                .cid
-                .unwrap_or(crate::compiler::OBJECT_CLASS)
-                .0;
-            quote! { zeo_rt::RubyValue::Class(zeo_rt::ClassId(#cid)) }
+        // `private_constant :A` / `public_constant :A`: a run-time flag a
+        // later directive restores, so it runs where it is WRITTEN rather
+        // than at startup. Its VALUE is the module it applied to, which is
+        // the body's own class (oracle-checked) -- rspec-openapi and three
+        // others end a module body with one.
+        HirNode::ConstantVisibility { names, private } => {
+            let slf =
+                super::call::boxed_implicit_self(cx).expect("every context has an implicit self");
+            let names: Vec<&str> = names.iter().map(String::as_str).collect();
+            let private = *private;
+            quote! {
+                {
+                    let __definee = #slf;
+                    zeo_rt::const_set_private_value(&__definee, &[#(#names),*], #private);
+                    __definee
+                }
+            }
         }
         HirNode::SelfRef => {
             // Inside an escaping block, `self` is the closure's own receiver
@@ -2773,11 +2783,14 @@ pub(super) fn private_const_guard(
 ) -> Option<TokenStream> {
     let scope = scope?;
     let owner = const_owner_id_opt(cx, Some(scope), name)?;
-    if !cx
-        .compiler
-        .class(ClassId(owner))
-        .private_constants
-        .contains(name)
+    // A directive named the constant somewhere: WHICH one last ran is the
+    // run time's answer, since privacy is positional. A program that can
+    // `eval` (or send `private_constant` dynamically) has no static view
+    // of it at all.
+    let info = cx.compiler.class(ClassId(owner));
+    if !info.const_visibility_names.contains(name)
+        && !info.private_constants.contains(name)
+        && !cx.compiler.hir.constant_privacy_is_runtime()
     {
         return None;
     }

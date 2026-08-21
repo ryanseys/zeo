@@ -1096,6 +1096,20 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
             };
             eval_definee_send(fx, verb, &names, false)
         }
+        // `private_constant :A` / `public_constant :A` in a PROGRAM: a
+        // registration for reflection, and a run-time flag a later
+        // directive restores -- so it runs where it is WRITTEN rather than
+        // at startup, or a read between the two sees the wrong answer.
+        HirNode::ConstantVisibility { names, private } => {
+            let (names, private) = (names.clone(), *private);
+            let owner_v = fx.self_ptr.expect("self_ptr is set in the prologue");
+            let private_v = fx.b.ins().iconst(types::I8, i64::from(u8::from(private)));
+            for name in &names {
+                let (nptr, nlen) = super::expr::rodata_name(fx, name);
+                fx.call("zeo_rt_const_visibility", &[owner_v, nptr, nlen, private_v]);
+            }
+            Ok(())
+        }
         HirNode::Undef(..) | HirNode::ModuleFunction(..) => Ok(()),
         // A `refine` marker analyze already CONSUMED runs nothing where it
         // was written: the holder module owns the methods and the

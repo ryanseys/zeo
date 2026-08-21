@@ -189,7 +189,6 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
         undef_rows,
         conceal,
         singleton_surrogates,
-        private_consts,
         redefs,
         boot_redefs,
         set_ancestors,
@@ -209,7 +208,6 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
         collected.undef_rows,
         collected.conceal,
         collected.singleton_surrogates,
-        collected.private_consts,
         collected.redefs,
         collected.boot_redefs,
         collected.set_ancestors,
@@ -678,20 +676,6 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             flag: 0,
         }));
     }
-    // `private_constant` marks.
-    reg_rows.extend(
-        private_consts
-            .iter()
-            .map(|(class, name)| statics::RegRowSpec {
-                kind: zeo_abi::abi::REG_CONST_PRIVATE,
-                class: *class,
-                a: name.clone(),
-                b: String::new(),
-                f: None,
-                ids: vec![],
-                flag: 0,
-            }),
-    );
     // A `refine` holder is a module in every respect but one: its own
     // `.class` is `Refinement`, which is what a refined `Method#owner`
     // reports -- and the mark is what makes the runtime's refined lookup
@@ -1635,6 +1619,10 @@ fn body_tail(
     // runs for effect; everything else is an ordinary expression the tail
     // lowering computes (and refuses loudly where it cannot).
     match &compiler.hir[last] {
+        // `private_constant :Hidden` answers the module it hid the
+        // constant on -- and it RUNS where it is written, so it is an
+        // ordinary body statement whose value is the body's own class.
+        HirNode::ConstantVisibility { .. } => BodyTail::OwnClass,
         HirNode::Program(_)
         | HirNode::Refine { .. }
         | HirNode::Using(_)
@@ -1643,7 +1631,6 @@ fn body_tail(
         | HirNode::AliasMethod { .. }
         | HirNode::MethodVisibility { .. }
         | HirNode::ClassMethodVisibility { .. }
-        | HirNode::ConstantVisibility { .. }
         | HirNode::ModuleFunction(_)
         | HirNode::MethodRedefine { .. }
         | HirNode::DefHook { .. }

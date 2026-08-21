@@ -953,17 +953,24 @@ fn walk_class_body(
                         .push((name.clone(), *visibility));
                 }
             }
-            // `private_constant :A` / `public_constant :A`. Applied in source
-            // order, so a later `public_constant` restores the name.
+            // `private_constant :A` / `public_constant :A`. Privacy is a
+            // RUN-TIME flag a later directive restores, so the statement
+            // stays and runs where it is written; the compile-time sets
+            // are the folds' view of it (`const_visibility_names` says the
+            // answer is positional, so a read of that name asks).
             HirNode::ConstantVisibility { names, private } => {
-                let set = &mut compiler.classes[class_id.0 as usize].private_constants;
-                for name in names {
-                    if *private {
-                        set.insert(name.clone());
+                let names = names.clone();
+                let private = *private;
+                let info = &mut compiler.classes[class_id.0 as usize];
+                for name in &names {
+                    info.const_visibility_names.insert(name.clone());
+                    if private {
+                        info.private_constants.insert(name.clone());
                     } else {
-                        set.remove(name);
+                        info.private_constants.remove(name);
                     }
                 }
+                compiler.class_body_sites[site_idx].stmts.push(stmt);
             }
             HirNode::Prepend(m) => {
                 let m = m.clone();

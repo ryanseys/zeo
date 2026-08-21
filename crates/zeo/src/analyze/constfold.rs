@@ -128,18 +128,17 @@ pub(crate) fn const_form_resolves(env: &ConstEnv, id: NodeId) -> Option<bool> {
             if let Some(scope) = path.scope()
                 && let Some(sid) = env.resolve_class(scope)
             {
+                // Privacy is POSITIONAL, and one the compiler cannot see
+                // at all is a run-time fact either way -- `defined?` of a
+                // private constant is nil, so the fold stands down and the
+                // probe asks.
                 if env
                     .compiler
                     .class(sid)
-                    .private_constants
+                    .const_visibility_names
                     .contains(path.base())
+                    || env.compiler.hir.constant_privacy_is_runtime()
                 {
-                    return Some(false);
-                }
-                // Privacy the compiler cannot see is a runtime fact, and
-                // `defined?` of a private constant is nil -- so the fold
-                // stands down and the probe asks.
-                if env.compiler.hir.constant_privacy_is_runtime() {
                     return None;
                 }
             }
@@ -188,17 +187,15 @@ pub(crate) fn const_form_resolves(env: &ConstEnv, id: NodeId) -> Option<bool> {
                 return None;
             }
             // `defined?(M::S)` is nil for a private constant -- the same
-            // rejection of the scope operator the read itself gets.
+            // rejection of the scope operator the read itself gets -- and
+            // WHEN it is private is positional, so the probe asks.
             if env
                 .compiler
                 .class(scope_id)
-                .private_constants
+                .const_visibility_names
                 .contains(name)
+                || env.compiler.hir.constant_privacy_is_runtime()
             {
-                return Some(false);
-            }
-            // Privacy the compiler cannot see is a runtime fact.
-            if env.compiler.hir.constant_privacy_is_runtime() {
                 return None;
             }
             if defined_only_later(env, id, &[scope_id], name) {
