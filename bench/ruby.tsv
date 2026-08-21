@@ -48,6 +48,7 @@ bm_so_mandelbrot	0.981
 bm_sort_by	0.039
 bm_spectral_norm	0.059
 bm_splay	0.141
+bm_stark_field	0.787
 bm_str_concat	0.032
 bm_structaref	0.170
 bm_structaset	0.153
@@ -56,4 +57,6 @@ bm_tak	0.389
 bm_tarai	0.289
 bm_template	0.572
 bm_throw	0.181
+bm_tree_walker	1.413
+bm_tree_walker_frames	0.261
 bm_wordfreq	0.034
