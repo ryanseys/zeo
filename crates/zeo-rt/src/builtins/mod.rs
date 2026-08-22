@@ -254,8 +254,11 @@ pub(crate) fn side_of(id: ClassId, side: Side) -> Option<&'static MethodTable> {
 /// walk reaches them as ancestors of Array/Hash/Range and of any user class
 /// that `include`s them, exactly like every other builtin module.
 pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMethodFn>> {
-    if id == zeo_abi::IO_CLASS {
-        return Some(gate::io_lookup);
+    if gate::gated(id) {
+        return Some(match id {
+            zeo_abi::RUBY_BOX_CLASS => gate::box_lookup,
+            _ => gate::io_lookup,
+        });
     }
     // A macro-registered class is fully described by its own table and has no
     // match arm below, so consult the projection first.
@@ -274,8 +277,11 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
 /// `Method#arity` consults this for a builtin-receiver method object, walking
 /// the receiver's ancestry so an inherited builtin resolves against its owner.
 pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> {
-    if id == zeo_abi::IO_CLASS {
-        return Some(gate::io_arity);
+    if gate::gated(id) {
+        return Some(match id {
+            zeo_abi::RUBY_BOX_CLASS => gate::box_arity,
+            _ => gate::io_arity,
+        });
     }
     if let Some(m) = side_of(id, Side::Instance) {
         return Some(m.arity);
@@ -293,16 +299,22 @@ pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> 
 /// "fall back to the anonymous descriptor", which is what nearly every row
 /// still does.
 pub(crate) fn class_params_table(id: ClassId) -> Option<fn(&str) -> Option<ParamRows>> {
-    if id == zeo_abi::IO_CLASS {
-        return Some(gate::io_params);
+    if gate::gated(id) {
+        return Some(match id {
+            zeo_abi::RUBY_BOX_CLASS => gate::box_params,
+            _ => gate::io_params,
+        });
     }
     Some(side_of(id, Side::Instance)?.params)
 }
 
 /// `class_params_table`'s CLASS-METHOD counterpart.
 pub(crate) fn class_method_params_table(id: ClassId) -> Option<fn(&str) -> Option<ParamRows>> {
-    if id == zeo_abi::IO_CLASS {
-        return Some(gate::io_class_params);
+    if gate::gated(id) {
+        return Some(match id {
+            zeo_abi::RUBY_BOX_CLASS => gate::box_class_params,
+            _ => gate::io_class_params,
+        });
     }
     Some(side_of(id, Side::Class)?.params)
 }
@@ -323,8 +335,11 @@ pub(crate) fn class_method_params_table(id: ClassId) -> Option<fn(&str) -> Optio
 /// instance -- rows generally ignore it (`Time.now` needs no receiver), but
 /// it keeps the `BuiltinMethodFn` ABI uniform with `class_table`'s.
 pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMethodFn>> {
-    if id == zeo_abi::IO_CLASS {
-        return Some(gate::io_class_lookup);
+    if gate::gated(id) {
+        return Some(match id {
+            zeo_abi::RUBY_BOX_CLASS => gate::box_class_lookup,
+            _ => gate::io_class_lookup,
+        });
     }
     if let Some(m) = side_of(id, Side::Class) {
         return Some(m.lookup);
@@ -343,8 +358,11 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
 /// `class_method_table`'s arity twin -- what `Foo.method(:bar).arity` reads
 /// for a builtin class method, the singleton mirror of [`class_arity_table`].
 pub(crate) fn class_method_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> {
-    if id == zeo_abi::IO_CLASS {
-        return Some(gate::io_class_arity);
+    if gate::gated(id) {
+        return Some(match id {
+            zeo_abi::RUBY_BOX_CLASS => gate::box_class_arity,
+            _ => gate::io_class_arity,
+        });
     }
     if let Some(m) = side_of(id, Side::Class) {
         return Some(m.arity);
@@ -409,8 +427,8 @@ pub(crate) fn builtin_row_inherits(id: ClassId, name: &str, class_side: bool) ->
 /// class exposes (for `instance_methods`/`methods`). Mirrors `class_table`'s
 /// arms exactly -- each `<mod>::lookup` has a paste-generated `<mod>::lookup_names`.
 pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
-    if id == zeo_abi::IO_CLASS {
-        return gate::io_names(Side::Instance);
+    if gate::gated(id) {
+        return gate::names(id, Side::Instance);
     }
     if registered_table(id).is_some() {
         return side_of(id, Side::Instance)
@@ -427,8 +445,8 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
 /// `class_method_table`'s reflection companion: the CLASS-method NAMES a
 /// builtin exposes (for `SomeClass.singleton_methods` / `.methods`).
 pub(crate) fn class_method_table_names(id: ClassId) -> &'static [&'static str] {
-    if id == zeo_abi::IO_CLASS {
-        return gate::io_names(Side::Class);
+    if gate::gated(id) {
+        return gate::names(id, Side::Class);
     }
     if registered_table(id).is_some() {
         return side_of(id, Side::Class).map(|m| (m.names)()).unwrap_or(&[]);
@@ -1116,8 +1134,18 @@ pub(crate) mod gate {
         seen
     }
 
+    /// `Ruby::Box`'s gate-only rows -- CRuby defines these six only under
+    /// `RUBY_BOX=1`, so without it the class carries six fewer methods and
+    /// calling one is a `NoMethodError`. zeo's rows are in a static table
+    /// built at compile time, so the GATE has to hide them.
+    const BOX_ENABLED: &[&str] = &["main?", "master?", "root?"];
+    const BOX_ENABLED_CLASS: &[&str] = &["main", "master", "root"];
+
     /// Whether a name in `id`'s instance table is answerable yet.
     pub(crate) fn instance_ok(id: ClassId, name: &str) -> bool {
+        if id == zeo_abi::RUBY_BOX_CLASS && BOX_ENABLED.contains(&name) {
+            return crate::boxes::boxes_enabled();
+        }
         if id != zeo_abi::IO_CLASS {
             return true;
         }
@@ -1132,78 +1160,101 @@ pub(crate) mod gate {
 
     /// `instance_ok`'s class-method twin.
     pub(crate) fn class_ok(id: ClassId, name: &str) -> bool {
+        if id == zeo_abi::RUBY_BOX_CLASS && BOX_ENABLED_CLASS.contains(&name) {
+            return crate::boxes::boxes_enabled();
+        }
         if id != zeo_abi::IO_CLASS || !IO_CONSOLE_CLASS.contains(&name) {
             return true;
         }
         required(&CONSOLE, "io/console")
     }
 
-    /// `IO`'s instance lookups, with the gated rows hidden until required.
-    /// Plain `fn` items because the projections hand back fn POINTERS.
-    pub(crate) fn io_lookup(name: &str) -> Option<super::BuiltinMethodFn> {
-        if !instance_ok(zeo_abi::IO_CLASS, name) {
-            return None;
-        }
-        (super::side_of(zeo_abi::IO_CLASS, super::Side::Instance)?.lookup)(name)
+    /// Whether `id` has gated rows at all -- the one question the six table
+    /// projections ask before taking the filtering view.
+    pub(crate) fn gated(id: ClassId) -> bool {
+        id == zeo_abi::IO_CLASS || id == zeo_abi::RUBY_BOX_CLASS
     }
 
-    pub(crate) fn io_arity(name: &str) -> Option<i64> {
-        if !instance_ok(zeo_abi::IO_CLASS, name) {
-            return None;
-        }
-        (super::side_of(zeo_abi::IO_CLASS, super::Side::Instance)?.arity)(name)
-    }
-
-    pub(crate) fn io_params(name: &str) -> Option<super::ParamRows> {
-        if !instance_ok(zeo_abi::IO_CLASS, name) {
-            return None;
-        }
-        (super::side_of(zeo_abi::IO_CLASS, super::Side::Instance)?.params)(name)
-    }
-
-    pub(crate) fn io_class_lookup(name: &str) -> Option<super::BuiltinMethodFn> {
-        if !class_ok(zeo_abi::IO_CLASS, name) {
-            return None;
-        }
-        (super::side_of(zeo_abi::IO_CLASS, super::Side::Class)?.lookup)(name)
-    }
-
-    pub(crate) fn io_class_arity(name: &str) -> Option<i64> {
-        if !class_ok(zeo_abi::IO_CLASS, name) {
-            return None;
-        }
-        (super::side_of(zeo_abi::IO_CLASS, super::Side::Class)?.arity)(name)
-    }
-
-    pub(crate) fn io_class_params(name: &str) -> Option<super::ParamRows> {
-        if !class_ok(zeo_abi::IO_CLASS, name) {
-            return None;
-        }
-        (super::side_of(zeo_abi::IO_CLASS, super::Side::Class)?.params)(name)
-    }
-
-    /// The name lists, filtered once. The gate's answer is fixed for a
-    /// program run: the compiler seeds `$LOADED_FEATURES` with every feature
-    /// it satisfied, wherever in the file the `require` was written.
-    pub(crate) fn io_names(side: super::Side) -> &'static [&'static str] {
-        static INSTANCE: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
-        static CLASS: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
-        let cell = match side {
-            super::Side::Instance => &INSTANCE,
-            super::Side::Class => &CLASS,
+    /// The gated instance/class views: the class's own table with the rows
+    /// the gate hides taken out. Plain `fn` items because the projections
+    /// hand back fn POINTERS, so the class id rides in the name each one
+    /// consults rather than in a capture -- hence one pair per gated class.
+    macro_rules! gated_views {
+        ($lookup:ident, $arity:ident, $params:ident,
+         $clookup:ident, $carity:ident, $cparams:ident, $id:expr) => {
+            pub(crate) fn $lookup(name: &str) -> Option<super::BuiltinMethodFn> {
+                instance_ok($id, name).then(|| ())?;
+                (super::side_of($id, super::Side::Instance)?.lookup)(name)
+            }
+            pub(crate) fn $arity(name: &str) -> Option<i64> {
+                instance_ok($id, name).then(|| ())?;
+                (super::side_of($id, super::Side::Instance)?.arity)(name)
+            }
+            pub(crate) fn $params(name: &str) -> Option<super::ParamRows> {
+                instance_ok($id, name).then(|| ())?;
+                (super::side_of($id, super::Side::Instance)?.params)(name)
+            }
+            pub(crate) fn $clookup(name: &str) -> Option<super::BuiltinMethodFn> {
+                class_ok($id, name).then(|| ())?;
+                (super::side_of($id, super::Side::Class)?.lookup)(name)
+            }
+            pub(crate) fn $carity(name: &str) -> Option<i64> {
+                class_ok($id, name).then(|| ())?;
+                (super::side_of($id, super::Side::Class)?.arity)(name)
+            }
+            pub(crate) fn $cparams(name: &str) -> Option<super::ParamRows> {
+                class_ok($id, name).then(|| ())?;
+                (super::side_of($id, super::Side::Class)?.params)(name)
+            }
         };
-        cell.get_or_init(|| {
-            let all = super::side_of(zeo_abi::IO_CLASS, side)
-                .map(|m| (m.names)())
-                .unwrap_or(&[]);
-            all.iter()
-                .copied()
-                .filter(|n| match side {
-                    super::Side::Instance => instance_ok(zeo_abi::IO_CLASS, n),
-                    super::Side::Class => class_ok(zeo_abi::IO_CLASS, n),
-                })
-                .collect()
-        })
+    }
+
+    gated_views!(
+        io_lookup,
+        io_arity,
+        io_params,
+        io_class_lookup,
+        io_class_arity,
+        io_class_params,
+        zeo_abi::IO_CLASS
+    );
+    gated_views!(
+        box_lookup,
+        box_arity,
+        box_params,
+        box_class_lookup,
+        box_class_arity,
+        box_class_params,
+        zeo_abi::RUBY_BOX_CLASS
+    );
+
+    /// The name lists, filtered once per `(class, side)`. The gate's answer is
+    /// fixed for a program run: the compiler seeds `$LOADED_FEATURES` with
+    /// every feature it satisfied wherever in the file the `require` was
+    /// written, and `RUBY_BOX` is read once at startup.
+    pub(crate) fn names(id: ClassId, side: super::Side) -> &'static [&'static str] {
+        static CACHE: std::sync::RwLock<Option<crate::FMap<(u32, bool), &'static [&'static str]>>> =
+            std::sync::RwLock::new(None);
+        let key = (id.0, matches!(side, super::Side::Instance));
+        if let Some(hit) = CACHE.read().unwrap().as_ref().and_then(|m| m.get(&key)) {
+            return hit;
+        }
+        let all = super::side_of(id, side).map(|m| (m.names)()).unwrap_or(&[]);
+        let kept: Vec<&'static str> = all
+            .iter()
+            .copied()
+            .filter(|n| match side {
+                super::Side::Instance => instance_ok(id, n),
+                super::Side::Class => class_ok(id, n),
+            })
+            .collect();
+        let leaked: &'static [&'static str] = Vec::leak(kept);
+        CACHE
+            .write()
+            .unwrap()
+            .get_or_insert_with(crate::FMap::default)
+            .insert(key, leaked);
+        leaked
     }
 
     #[cfg(test)]
