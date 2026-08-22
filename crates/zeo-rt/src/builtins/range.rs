@@ -757,7 +757,12 @@ ruby_class! {
             !empty_region(sb, oe, ox) && !empty_region(ob, se, sx),
         ))
     }
-    def "last"(recv, arg?) {
+    def "last"(recv, *args, &_block) {
+        // See `first` for why the bound is `1`.
+        if args.len() > 1 {
+            return Err(crate::builtins::arity_err(args.len(), 1, Some(1)));
+        }
+        let arg = args.first();
         let (start, end, exclusive) = range_parts(recv);
         match arg {
             // Like `first`, `last` is NOT `end` under another name: an endless
@@ -847,6 +852,12 @@ ruby_class! {
     // `first` is NOT `begin` under another name: a beginless range HAS no
     // first element, where its `begin` is plainly nil.
     def "first"(recv, *args, &_block) {
+        // CRuby's message for `Range#first`/`#last` names `1` rather than
+        // `0..1` -- oracle-verified, so the bound is spelled the way it
+        // prints rather than the way the binder would.
+        if args.len() > 1 {
+            return Err(crate::builtins::arity_err(args.len(), 1, Some(1)));
+        }
         // `first` with an argument is Enumerable's n-form; only the 0-arg
         // endpoint accessor lives here. Falling through on arity would be
         // wrong (Enumerable#first(n) IS reachable next in the chain), so:

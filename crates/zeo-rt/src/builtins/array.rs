@@ -321,13 +321,15 @@ ruby_class! {
     def "empty?" (recv) {
         Ok(RubyValue::Bool(crate::array_len(rary) == 0))
     }
-    def "first" params "n = nil"(recv, *args, &_block) {
+    // The count is bound by the DSL, so an extra argument is CRuby's own
+    // ArgumentError rather than a silently dropped one.
+    def "first" params "n = nil"(recv, n?) {
         // `first(n)` is Enumerable's n-form (next ancestor in the chain
         // implements it) -- only the 0-arg head accessor lives here. A negative
         // count is caught here so it carries Array's own message ("negative
         // array size"), distinct from Enumerable's generic one.
-        if !args.is_empty() {
-            let n = convert::to_index(&args[0])?;
+        if let Some(arg) = n {
+            let n = convert::to_index(arg)?;
             if n < 0 {
                 return Err(arg_error!("negative array size"));
             }
