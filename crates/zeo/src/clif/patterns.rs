@@ -442,7 +442,7 @@ fn array_pattern(
     if let Some(name) = constant {
         class_check(fx, site, name, scrut, fail)?;
     }
-    let arr = deconstruct(fx, scrut, false, fail)?;
+    let arr = deconstruct(fx, scrut, Protocol::Array, fail)?;
     let len = fx
         .call("zeo_rt_pat_array_len", &[arr])
         .expect("array_len returns a length");
@@ -504,7 +504,7 @@ fn find_pattern(
     if let Some(name) = constant {
         class_check(fx, site, name, scrut, fail)?;
     }
-    let arr = deconstruct(fx, scrut, false, fail)?;
+    let arr = deconstruct(fx, scrut, Protocol::Array, fail)?;
     let len = fx
         .call("zeo_rt_pat_array_len", &[arr])
         .expect("array_len returns a length");
@@ -585,7 +585,16 @@ fn hash_pattern(
     if let Some(name) = constant {
         class_check(fx, site, name, scrut, fail)?;
     }
-    let h = deconstruct(fx, scrut, true, fail)?;
+    // CRuby passes the NAMED keys, and `nil` for a pattern that can take
+    // everything: one with a rest (`**r` or `**nil`) or with no keys at
+    // all. Oracle-verified in all four shapes.
+    let named: Option<Vec<String>> = match rest {
+        HashPatternRest::None if !pairs.is_empty() => {
+            Some(pairs.iter().map(|(k, _)| k.clone()).collect())
+        }
+        _ => None,
+    };
+    let h = deconstruct(fx, scrut, Protocol::Keys(named.as_deref()), fail)?;
     // `in {}` is NOT the lenient form: an EMPTY hash pattern asks for an
     // empty hash, ruby's one exception to hash-pattern leniency.
     if pairs.is_empty() && matches!(rest, HashPatternRest::None) {
@@ -692,10 +701,19 @@ fn hash_except(fx: &mut Fx, h: ir::Value, pairs: &[(String, Option<Pattern>)]) -
 
 /// `#deconstruct` / `#deconstruct_keys`: an Array/Hash is itself, a value
 /// answering the protocol is asked, anything else simply does not match.
+/// Which destructuring protocol a pattern asks for.
+enum Protocol<'a> {
+    /// `#deconstruct` -- an array pattern.
+    Array,
+    /// `#deconstruct_keys`, with the keys the pattern NAMES, or `None` for
+    /// CRuby's `nil` (a pattern that can take everything).
+    Keys(Option<&'a [String]>),
+}
+
 fn deconstruct(
     fx: &mut Fx,
     scrut: ir::Value,
-    keys: bool,
+    protocol: Protocol<'_>,
     fail: ir::Block,
 ) -> Result<ir::Value, String> {
     let out = fx.temp_slot();
@@ -706,14 +724,36 @@ fn deconstruct(
         0,
     ));
     let flag_ptr = fx.slot_addr(flag, 0);
-    let f = if keys {
-        "zeo_rt_pat_deconstruct_keys"
-    } else {
-        "zeo_rt_pat_deconstruct"
-    };
-    let st = fx
-        .call(f, &[scrut, dst, flag_ptr])
-        .expect("deconstruct returns a status");
+    let st = match protocol {
+        // The keys the pattern NAMES, as interned symbol ids. A null
+        // pointer is CRuby's `nil` -- what it passes for a pattern that can
+        // take everything.
+        Protocol::Keys(named) => {
+            let named: &[String] = named.unwrap_or(&[]);
+            let (ptr, n) = if named.is_empty() {
+                (fx.b.ins().iconst(fx.em.ptr, 0), 0)
+            } else {
+                let ss = fx.b.create_sized_stack_slot(ir::StackSlotData::new(
+                    ir::StackSlotKind::ExplicitSlot,
+                    named.len() as u32 * 4,
+                    2,
+                ));
+                for (i, k) in named.iter().enumerate() {
+                    let sym = fx.sym_id(k);
+                    let at = fx.slot_addr(ss, i as i32 * 4);
+                    fx.b.ins().store(MemFlagsData::trusted(), sym, at, 0);
+                }
+                (fx.slot_addr(ss, 0), named.len())
+            };
+            let count = fx.b.ins().iconst(fx.em.ptr, n as i64);
+            fx.call(
+                "zeo_rt_pat_deconstruct_keys",
+                &[scrut, ptr, count, dst, flag_ptr],
+            )
+        }
+        Protocol::Array => fx.call("zeo_rt_pat_deconstruct", &[scrut, dst, flag_ptr]),
+    }
+    .expect("deconstruct returns a status");
     fx.fallible(st);
     let matched =
         fx.b.ins()

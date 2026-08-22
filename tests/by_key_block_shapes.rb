@@ -1,24 +1,13 @@
-# GAP -- imported from the spinel corpus at fa06b601.
+# `min_by` / `max_by` / `minmax_by` / `sort_by` over the block shapes their
+# arms once refused: a block with NO parameter, a key that IS nil, a key
+# whose type differs per element, and a key CRuby cannot order.
 #
-# `sort_by` (and its `min_by`/`max_by`/`minmax_by` siblings) raise
-# `ArgumentError: comparison failed` for block shapes CRuby sorts.
-#
-# The keys the block returns compare fine on their own, so the failure is in
-# how the sort compares the computed keys rather than in the comparison
-# itself -- CRuby sorts by the key with `<=>` and zeo reaches a pair it
-# cannot order.
-#
-# The original header follows. It describes the PREDECESSOR project's
-# version of this test and its own fix, not zeo's divergence above.
-#
-# min_by / max_by / minmax_by / sort_by over block shapes their arms refused.
-# Each refusal dropped the call to the unresolved-call gate, so the METHOD was
-# reported undefined -- or, where the arm did emit, it emitted C that did not
-# compile (#4006's leftovers).
-#
-# 1. A block with NO parameter. The winning element was read back from `lv_` +
-#    the parameter name, and with no parameter that was a bare `lv_`, which is
-#    not an identifier: `[3,1,2].min_by { 5 }` never compiled.
+# The last one to close was the nil key, and it was not the by-key drivers
+# at all: `rb_cmp` had no `Object#<=>` fallback, so a pair of `nil`s was
+# INCOMPARABLE. Every element ties on nil, so `sort_by {}` raised
+# "comparison failed" -- and so did `[nil, nil].sort`, `[true, true].sort`
+# and any other pair of equal values with no ordering arm of its own.
+
 p [3, 1, 2].min_by { 5 }
 p [3, 1, 2].max_by { 5 }
 p [3, 1, 2].minmax_by { 5 }

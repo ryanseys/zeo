@@ -634,7 +634,7 @@ pub const CAPI: &[CapiSig] = &[
     },
     CapiSig {
         name: "zeo_rt_pat_deconstruct_keys",
-        params: &[Ptr, Ptr, Ptr],
+        params: &[Ptr, Ptr, Ptr, Ptr, Ptr],
         ret: Some(I32),
     },
     CapiSig {

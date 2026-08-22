@@ -121,7 +121,7 @@ zeo_rt_pat_array_get ([Ptr, Usize, Ptr]) -> None
 zeo_rt_pat_array_len ([Ptr]) -> Some(Usize)
 zeo_rt_pat_array_slice ([Ptr, Usize, Usize, Ptr]) -> None
 zeo_rt_pat_deconstruct ([Ptr, Ptr, Ptr]) -> Some(I32)
-zeo_rt_pat_deconstruct_keys ([Ptr, Ptr, Ptr]) -> Some(I32)
+zeo_rt_pat_deconstruct_keys ([Ptr, Ptr, Ptr, Ptr, Ptr]) -> Some(I32)
 zeo_rt_pat_fail_case_eq ([Ptr, Ptr]) -> None
 zeo_rt_pat_fail_find ([Ptr]) -> None
 zeo_rt_pat_fail_guard ([]) -> None

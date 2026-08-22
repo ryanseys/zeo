@@ -1267,6 +1267,12 @@ impl RubyValue {
                     None => None,
                 }
             }
+            // `Object#<=>`, which every value inherits: 0 when the two are
+            // `==`, incomparable otherwise. Without it a pair of `nil`s (or
+            // of `true`s, or of the same Class) was incomparable, so
+            // `[nil, nil].sort` raised and `sort_by {}` -- where every key
+            // ties on nil -- raised with it.
+            _ if self.rb_eq(other) => Some(0),
             _ => None,
         }
     }

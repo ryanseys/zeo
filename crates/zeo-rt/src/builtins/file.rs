@@ -324,40 +324,251 @@ fn split_records(bytes: &[u8], sep: &str, chomp: bool) -> Vec<RubyValue> {
     out
 }
 
-/// Glob-match `name` against a shell pattern (`*`, `?`, `[set]`) -- the subset
-/// of `File.fnmatch` the corpus exercises. `*` does NOT cross `/` only under
-/// `FNM_PATHNAME`, which the corpus doesn't use, so `*` here spans everything.
-fn fnmatch(pattern: &str, name: &str) -> bool {
-    fn rec(p: &[char], n: &[char]) -> bool {
+/// `File.fnmatch`'s five flags, CRuby's own values.
+const FNM_NOESCAPE: i64 = 1;
+const FNM_PATHNAME: i64 = 2;
+const FNM_DOTMATCH: i64 = 4;
+const FNM_CASEFOLD: i64 = 8;
+const FNM_EXTGLOB: i64 = 16;
+
+/// Glob-match `name` against a shell pattern, CRuby's `fnmatch` rules.
+///
+/// `FNM_EXTGLOB` is expansion rather than matching -- `{a,b}` becomes two
+/// patterns, and the braces nest -- so it happens here, once, and the
+/// matcher below never sees a brace.
+fn fnmatch(pattern: &str, name: &str, flags: i64) -> bool {
+    if flags & FNM_EXTGLOB != 0 {
+        return expand_braces(pattern)
+            .iter()
+            .any(|p| fnmatch_one(p, name, flags));
+    }
+    fnmatch_one(pattern, name, flags)
+}
+
+/// `{a,b}` -> `["a", "b"]`, applied to the whole pattern and recursively to
+/// what each alternative expands into (`{a,{b,c}}` is three patterns). An
+/// UNBALANCED brace is a literal, which is what makes `fnmatch("{a,b}",
+/// "{a,b}")` true with the flag as well as without it.
+fn expand_braces(pattern: &str) -> Vec<String> {
+    let chars: Vec<char> = pattern.chars().collect();
+    let mut open = None;
+    let mut i = 0;
+    while i < chars.len() {
+        match chars[i] {
+            '\\' => i += 1,
+            '{' => {
+                open = Some(i);
+                break;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    let Some(open) = open else {
+        return vec![pattern.to_string()];
+    };
+    let mut parts: Vec<String> = Vec::new();
+    let mut start = open + 1;
+    let mut close = None;
+    let mut depth = 0usize;
+    let mut j = open + 1;
+    while j < chars.len() {
+        match chars[j] {
+            '\\' => j += 1,
+            '{' => depth += 1,
+            '}' if depth == 0 => {
+                parts.push(chars[start..j].iter().collect());
+                close = Some(j);
+                break;
+            }
+            '}' => depth -= 1,
+            ',' if depth == 0 => {
+                parts.push(chars[start..j].iter().collect());
+                start = j + 1;
+            }
+            _ => {}
+        }
+        j += 1;
+    }
+    let Some(close) = close else {
+        return vec![pattern.to_string()];
+    };
+    let prefix: String = chars[..open].iter().collect();
+    let suffix: String = chars[close + 1..].iter().collect();
+    parts
+        .into_iter()
+        .flat_map(|part| expand_braces(&format!("{prefix}{part}{suffix}")))
+        .collect()
+}
+
+/// One brace-free pattern.
+///
+/// `period` tracks the LEADING-DOT rule: a `.` at the start of the name --
+/// and, under `FNM_PATHNAME`, at the start of every component -- is matched
+/// only by a literal `.` in the pattern, unless `FNM_DOTMATCH` is set.
+fn fnmatch_one(pattern: &str, name: &str, flags: i64) -> bool {
+    let fold = flags & FNM_CASEFOLD != 0;
+    let pathname = flags & FNM_PATHNAME != 0;
+    let dotmatch = flags & FNM_DOTMATCH != 0;
+    let escapes = flags & FNM_NOESCAPE == 0;
+
+    fn same(a: char, b: char, fold: bool) -> bool {
+        a == b || (fold && a.to_lowercase().eq(b.to_lowercase()))
+    }
+
+    /// Does the pattern begin with a LITERAL `.`?
+    fn literal_dot(p: &[char], escapes: bool) -> bool {
+        match p.first() {
+            Some('.') => true,
+            Some('\\') if escapes => p.get(1) == Some(&'.'),
+            _ => false,
+        }
+    }
+
+    /// The index of the `]` closing a set that opens at `p[0]`.
+    ///
+    /// A `]` in the FIRST position is the close, not a member -- glob's
+    /// rule is the other way round, but `fnmatch("[]]", "]")` is false in
+    /// CRuby, oracle-verified.
+    fn set_close(p: &[char], escapes: bool) -> Option<usize> {
+        let mut i = 1;
+        if matches!(p.get(i), Some('!') | Some('^')) {
+            i += 1;
+        }
+        while i < p.len() {
+            match p[i] {
+                '\\' if escapes => i += 1,
+                ']' => return Some(i),
+                _ => {}
+            }
+            i += 1;
+        }
+        None
+    }
+
+    /// Whether `ch` is in the bracket set `set` (ranges included).
+    fn in_set(set: &[char], ch: char, fold: bool, escapes: bool) -> bool {
+        let mut i = 0;
+        while i < set.len() {
+            let lo = match set[i] {
+                '\\' if escapes && i + 1 < set.len() => {
+                    i += 1;
+                    set[i]
+                }
+                c => c,
+            };
+            // `a-z`, but a `-` that ENDS the set is a member of it.
+            if set.get(i + 1) == Some(&'-') && i + 2 < set.len() {
+                let hi = match set[i + 2] {
+                    '\\' if escapes && i + 3 < set.len() => set[i + 3],
+                    c => c,
+                };
+                let hit = (lo..=hi).contains(&ch)
+                    || (fold
+                        && ch
+                            .to_lowercase()
+                            .chain(ch.to_uppercase())
+                            .any(|c| (lo..=hi).contains(&c)));
+                if hit {
+                    return true;
+                }
+                i += if matches!(set[i + 2], '\\') && escapes {
+                    4
+                } else {
+                    3
+                };
+                continue;
+            }
+            if same(lo, ch, fold) {
+                return true;
+            }
+            i += 1;
+        }
+        false
+    }
+
+    struct Cx {
+        fold: bool,
+        pathname: bool,
+        dotmatch: bool,
+        escapes: bool,
+    }
+
+    fn rec(p: &[char], n: &[char], period: bool, cx: &Cx) -> bool {
+        if period && n.first() == Some(&'.') && !cx.dotmatch && !literal_dot(p, cx.escapes) {
+            return false;
+        }
         match p.first() {
             None => n.is_empty(),
             Some('*') => {
-                // `*` matches zero or more chars: try consuming none, then one.
-                rec(&p[1..], n) || (!n.is_empty() && rec(p, &n[1..]))
-            }
-            Some('?') => !n.is_empty() && rec(&p[1..], &n[1..]),
-            Some('[') => {
-                let Some(close) = p.iter().position(|&c| c == ']') else {
-                    // A stray `[` is a literal.
-                    return n.first() == Some(&'[') && rec(&p[1..], &n[1..]);
-                };
-                let (set, negate) = {
-                    let inner = &p[1..close];
-                    match inner.first() {
-                        Some('!') | Some('^') => (&inner[1..], true),
-                        _ => (inner, false),
+                let mut i = 1;
+                while p.get(i) == Some(&'*') {
+                    i += 1;
+                }
+                let rest = &p[i..];
+                if rest.is_empty() {
+                    // `*` never crosses a separator under FNM_PATHNAME.
+                    return !(cx.pathname && n.contains(&'/'));
+                }
+                let mut k = 0;
+                loop {
+                    if rec(rest, &n[k..], false, cx) {
+                        return true;
                     }
+                    if k >= n.len() || (cx.pathname && n[k] == '/') {
+                        return false;
+                    }
+                    k += 1;
+                }
+            }
+            Some('?') => match n.first() {
+                Some(&c) if !(cx.pathname && c == '/') => rec(&p[1..], &n[1..], false, cx),
+                _ => false,
+            },
+            Some('[') => {
+                let Some(close) = set_close(p, cx.escapes) else {
+                    // A stray `[` is a literal.
+                    return n.first() == Some(&'[') && rec(&p[1..], &n[1..], false, cx);
+                };
+                let inner = &p[1..close];
+                let (set, negate) = match inner.first() {
+                    Some('!') | Some('^') => (&inner[1..], true),
+                    _ => (inner, false),
                 };
                 let Some(&ch) = n.first() else { return false };
-                let hit = set.contains(&ch);
-                (hit != negate) && rec(&p[close + 1..], &n[1..])
+                // A set never matches the separator under FNM_PATHNAME,
+                // negated or not.
+                if cx.pathname && ch == '/' {
+                    return false;
+                }
+                (in_set(set, ch, cx.fold, cx.escapes) != negate)
+                    && rec(&p[close + 1..], &n[1..], false, cx)
             }
-            Some(&c) => n.first() == Some(&c) && rec(&p[1..], &n[1..]),
+            Some('\\') if cx.escapes && p.len() > 1 => match (p[1], n.first()) {
+                (c, Some(&x)) if same(c, x, cx.fold) => {
+                    rec(&p[2..], &n[1..], cx.pathname && c == '/', cx)
+                }
+                _ => false,
+            },
+            Some(&c) => match n.first() {
+                Some(&x) if same(c, x, cx.fold) => {
+                    rec(&p[1..], &n[1..], cx.pathname && c == '/', cx)
+                }
+                _ => false,
+            },
         }
     }
+
     rec(
         &pattern.chars().collect::<Vec<_>>(),
         &name.chars().collect::<Vec<_>>(),
+        true,
+        &Cx {
+            fold,
+            pathname,
+            dotmatch,
+            escapes,
+        },
     )
 }
 
@@ -937,20 +1148,11 @@ ruby_class! {
     def self."fnmatch" | "fnmatch?" cfunc (_recv, arg1, arg2, arg3?) {
         let pat = path_arg(arg1, "fnmatch")?;
         let name = path_arg(arg2, "fnmatch")?;
-        // `FNM_CASEFOLD` (8) folds both sides before matching. The flags were
-        // parsed and dropped, so a case-insensitive match answered false.
-        const FNM_CASEFOLD: i64 = 8;
         let flags = match arg3 {
             Some(RubyValue::Int(n)) => *n,
             _ => 0,
         };
-        if flags & FNM_CASEFOLD != 0 {
-            return Ok(RubyValue::Bool(fnmatch(
-                &pat.to_lowercase(),
-                &name.to_lowercase(),
-            )));
-        }
-        Ok(RubyValue::Bool(fnmatch(&pat, &name)))
+        Ok(RubyValue::Bool(fnmatch(&pat, &name, flags)))
     }
     def self."write" cfunc (_recv, arg1, arg2, arg3?) {
         let path = path_arg(arg1, "write")?;

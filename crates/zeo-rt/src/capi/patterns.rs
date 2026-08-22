@@ -49,23 +49,41 @@ pub unsafe extern "C" fn zeo_rt_pat_deconstruct(
     }
 }
 
-/// [`zeo_rt_pat_deconstruct`]'s hash twin (`#deconstruct_keys`, called with
-/// `nil` as the rustc backend calls it).
+/// [`zeo_rt_pat_deconstruct`]'s hash twin (`#deconstruct_keys`).
+///
+/// `keys`/`n_keys` are the keys the pattern NAMES, as interned symbol
+/// ids; a null pointer is CRuby's `nil`, which it passes for a pattern
+/// that can take everything (one with a `**rest`, `**nil`, or no keys at
+/// all). The argument is the whole reason the protocol takes one: an
+/// implementation that builds only what was asked for cannot tell the two
+/// cases apart otherwise, and one that BRANCHES on nil takes the wrong
+/// branch.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zeo_rt_pat_deconstruct_keys(
     v: *const RubyValue,
+    keys: *const u32,
+    n_keys: usize,
     out: *mut RubyValue,
     matched: *mut u8,
 ) -> i32 {
     let recv = unsafe { &*v };
     let dec = Symbol::intern("deconstruct_keys");
+    let named = if keys.is_null() {
+        RubyValue::Nil
+    } else {
+        RubyValue::Array(crate::array_new(
+            (0..n_keys)
+                .map(|i| RubyValue::Symbol(Symbol::from_u32(unsafe { *keys.add(i) })))
+                .collect(),
+        ))
+    };
     match recv {
         RubyValue::Hash(_) => {
             unsafe { matched.write(1) };
             status_out(Ok(recv.clone()), out)
         }
         other if crate::dispatch::responds_to(other.class_id(), dec, false) => {
-            match crate::dispatch::send_value(other, dec, &[RubyValue::Nil], None) {
+            match crate::dispatch::send_value(other, dec, &[named], None) {
                 Ok(h) => {
                     unsafe { matched.write(1) };
                     status_out(Ok(h), out)
