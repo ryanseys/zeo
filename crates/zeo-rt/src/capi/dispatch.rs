@@ -499,18 +499,10 @@ pub unsafe extern "C" fn zeo_rt_method_capture_inherited(
     name_arg: *const RubyValue,
     out: *mut RubyValue,
 ) -> i32 {
-    match crate::builtins::method::method_capture_inherited(unsafe { &*recv }, unsafe {
-        &*name_arg
-    }) {
-        Ok(v) => {
-            unsafe { out.write(v) };
-            STATUS_OK
-        }
-        Err(sig) => {
-            crate::signal::set_pending(sig);
-            STATUS_SIGNAL
-        }
-    }
+    status_out(
+        crate::builtins::method::method_capture_inherited(unsafe { &*recv }, unsafe { &*name_arg }),
+        out,
+    )
 }
 
 /// `when *candidates`: the splat form -- `===` over every element of the

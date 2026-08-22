@@ -168,7 +168,9 @@ pub unsafe extern "C" fn zeo_rt_eval_block_given() -> i8 {
 /// `out` is a live uninitialized value slot.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zeo_rt_eval_home_block(out: *mut RubyValue) {
-    unsafe { out.write(crate::eval::home_block().unwrap_or(RubyValue::Nil)) };
+    let v = crate::eval::home_block().unwrap_or(RubyValue::Nil);
+    super::leakcheck::created(&v);
+    unsafe { out.write(v) };
 }
 
 /// `yield args` written at a snippet's own level.
