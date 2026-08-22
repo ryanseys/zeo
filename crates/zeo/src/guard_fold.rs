@@ -1576,6 +1576,14 @@ fn call_fold(
                 Some(p) => (recv, p),
                 None => (*arg, literal_pattern(compiler, recv)?),
             };
+            // `=~` WRITES `$~`, and folding it away loses that. A build gate
+            // asks about a fact (`RUBY_PLATFORM`), so the trade is worth it
+            // there and the emitter re-runs the match for its effect. A
+            // STRING LITERAL subject is not a gate -- it is ordinary code,
+            // where `if "ab" =~ /a/` must leave `$~` set.
+            if name == "=~" && matches!(compiler.hir[subject], HirNode::StringLit(_)) {
+                return None;
+            }
             let subject = static_string(compiler, cref, box_id, subject, depth)?;
             pattern.matches(&subject)
         }

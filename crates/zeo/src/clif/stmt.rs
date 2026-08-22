@@ -693,6 +693,15 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
             // ruby zeo is not, and may name constructs this emitter would
             // refuse.
             if let Some(taken) = static_cond(fx, cond) {
+                // The fold decides the BRANCH; it must not eat the
+                // condition's own effect. A build gate written `=~` still
+                // writes `$~`, and the line after it may read one. Only the
+                // match is re-run: the fold succeeded, so both of its
+                // operands are static and nothing else in it can raise.
+                if let Some(m) = folded_match(fx, cond) {
+                    let v = lower_expr(fx, m)?;
+                    ownership::discard(fx, v);
+                }
                 return lower_stmts(fx, if taken { &then_body } else { &else_body });
             }
             let c = lower_expr(fx, cond)?;
@@ -2419,6 +2428,16 @@ fn apply_visibility(
 
 /// The compile-time verdict on an `if` condition, or `None` when it has to be
 /// asked at run time. See `analyze::constfold::static_cond`.
+/// The `=~` a folded condition performed, if the condition IS one. Its
+/// operands are static by construction (that is why the fold succeeded), so
+/// re-running it for `$~` cannot raise or repeat work.
+fn folded_match(fx: &Fx<'_, '_>, cond: crate::hir::NodeId) -> Option<crate::hir::NodeId> {
+    match &fx.an.compiler.hir[cond] {
+        crate::hir::HirNode::Call { name, .. } if name == "=~" => Some(cond),
+        _ => None,
+    }
+}
+
 pub(crate) fn static_cond(fx: &Fx<'_, '_>, cond: crate::hir::NodeId) -> Option<bool> {
     let env = crate::analyze::constfold::ConstEnv {
         compiler: &fx.an.compiler,

@@ -616,6 +616,25 @@ fn push_octal(out: &mut String, first: u32, chars: &mut Chars) {
 /// `(?#`, or a possessive quantifier (`*+` `++` `?+` `}+`). Scanned on the
 /// ALREADY-escape-translated pattern; a `\\` consumes its next char so an
 /// escaped backslash before a digit isn't mistaken for a backreference.
+/// Whether `pattern` names a captured group again -- `\1`..`\9`, `\k<name>`,
+/// `\k'name'`. Under `/i` ruby compares the two FOLDED (`/(a)\1/i` matches
+/// `"aA"`), which of this crate's engines only Oniguruma does.
+fn has_backref(pattern: &str) -> bool {
+    let bytes = pattern.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\\' {
+            if matches!(bytes.get(i + 1), Some(n) if n.is_ascii_digit() || *n == b'k') {
+                return true;
+            }
+            i += 2;
+            continue;
+        }
+        i += 1;
+    }
+    false
+}
+
 fn needs_fancy(pattern: &str) -> bool {
     let bytes = pattern.as_bytes();
     let mut i = 0;
@@ -936,6 +955,89 @@ pub fn regexp_new(
 /// `/s`, `/u`). The flag changes nothing about matching -- the pattern is
 /// ASCII-only wherever the encoding would otherwise differ, which lowering
 /// enforces -- only what the regexp reports about itself.
+/// CRuby's `rb_reg_preprocess` for the `\u` escapes, which the ENGINE never
+/// sees: `\u{...}` is a SPACE-SEPARATED LIST of codepoints (`/\u{61 62}/` is
+/// `/ab/`) and `\uHHHH` is exactly four hex digits, and both are expanded
+/// before compilation.
+///
+/// An ASCII codepoint becomes `\xHH`, not the character: `re.c::append_utf8`
+/// writes it that way so `\u{2e}` stays a literal dot rather than becoming
+/// the metacharacter. Above ASCII the character goes in raw.
+///
+/// `#source` keeps the original text, so this is engine input only.
+fn preprocess_unicode(source: &str) -> Result<std::borrow::Cow<'_, str>, String> {
+    if !source.contains("\\u") {
+        return Ok(std::borrow::Cow::Borrowed(source));
+    }
+    let b = source.as_bytes();
+    let mut out = String::with_capacity(source.len());
+    let mut i = 0;
+    let push_code = |out: &mut String, code: u32| -> Result<(), String> {
+        let ch = char::from_u32(code).ok_or_else(|| "invalid Unicode range".to_string())?;
+        if code < 0x80 {
+            out.push_str(&format!("\\x{code:02X}"));
+        } else {
+            out.push(ch);
+        }
+        Ok(())
+    };
+    while i < b.len() {
+        if b[i] != b'\\' {
+            let ch = source[i..].chars().next().expect("a char boundary");
+            out.push(ch);
+            i += ch.len_utf8();
+            continue;
+        }
+        if b.get(i + 1) != Some(&b'u') {
+            out.push('\\');
+            match source[i + 1..].chars().next() {
+                Some(ch) => {
+                    out.push(ch);
+                    i += 1 + ch.len_utf8();
+                }
+                None => i += 1,
+            }
+            continue;
+        }
+        i += 2;
+        if b.get(i) == Some(&b'{') {
+            i += 1;
+            let mut any = false;
+            loop {
+                while b.get(i).is_some_and(u8::is_ascii_whitespace) {
+                    i += 1;
+                }
+                let start = i;
+                while b.get(i).is_some_and(u8::is_ascii_hexdigit) {
+                    i += 1;
+                }
+                if i == start {
+                    break;
+                }
+                if i - start > 6 {
+                    return Err("invalid Unicode range".into());
+                }
+                let code = u32::from_str_radix(&source[start..i], 16)
+                    .map_err(|_| "invalid Unicode range".to_string())?;
+                push_code(&mut out, code)?;
+                any = true;
+            }
+            if !any || b.get(i) != Some(&b'}') {
+                return Err("invalid Unicode list".into());
+            }
+            i += 1;
+        } else {
+            if i + 4 > b.len() || !b[i..i + 4].iter().all(u8::is_ascii_hexdigit) {
+                return Err("invalid Unicode escape".into());
+            }
+            let code = u32::from_str_radix(&source[i..i + 4], 16).expect("four hex digits");
+            push_code(&mut out, code)?;
+            i += 4;
+        }
+    }
+    Ok(std::borrow::Cow::Owned(out))
+}
+
 pub fn regexp_new_enc(
     source: &str,
     ignore_case: bool,
@@ -945,20 +1047,25 @@ pub fn regexp_new_enc(
 ) -> Result<RRegexp, String> {
     validate_posix_classes(source)?;
     validate_repeat_ranges(source)?;
+    // The ENGINE sees the expanded pattern; `#source` and every error message
+    // keep the text as written.
+    let preprocessed = preprocess_unicode(source).map_err(|e| format!("{e}: /{source}/"))?;
+    let written = source;
+    let source = preprocessed.as_ref();
     // A pattern with Ruby-specific semantics goes straight to Oniguruma (the
     // raw source, no escape translation).
-    if needs_onig(source) {
+    if needs_onig(source) || (ignore_case && has_backref(source)) {
         return match build_onig(source, ignore_case, extended, multiline) {
             Ok(r) => Ok(Arc::new(RegexpData {
                 engine: Engine::Onig(Arc::new(r)),
-                source: source.to_string(),
+                source: written.to_string(),
                 ignore_case,
                 extended,
                 multiline,
                 encoding,
                 frozen: std::sync::atomic::AtomicBool::new(false),
             })),
-            Err(e) => Err(cruby_regex_error(source, &e)),
+            Err(e) => Err(cruby_regex_error(written, &e)),
         };
     }
     let translated = translate_ruby_escapes(source);
@@ -978,7 +1085,7 @@ pub fn regexp_new_enc(
             // real Oniguruma (Ruby's engine) may still accept it.
             Err(e) => match build_onig(source, ignore_case, extended, multiline) {
                 Ok(r) => Engine::Onig(Arc::new(r)),
-                Err(_) => return Err(cruby_regex_error(source, &e)),
+                Err(_) => return Err(cruby_regex_error(written, &e)),
             },
         }
     } else {
@@ -999,14 +1106,14 @@ pub fn regexp_new_enc(
                 Ok(r) => Engine::Fancy(r),
                 Err(_) => match build_onig(source, ignore_case, extended, multiline) {
                     Ok(r) => Engine::Onig(Arc::new(r)),
-                    Err(_) => return Err(cruby_regex_error(source, &fast_err.to_string())),
+                    Err(_) => return Err(cruby_regex_error(written, &fast_err.to_string())),
                 },
             },
         }
     };
     Ok(Arc::new(RegexpData {
         engine,
-        source: source.to_string(),
+        source: written.to_string(),
         ignore_case,
         extended,
         multiline,
