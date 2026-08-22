@@ -966,7 +966,24 @@ fn lower_one_class_body_stmt<'a>(
             let leaf = name.rsplit("::").next().unwrap_or(name);
             hir.ffi_struct_layouts.insert(leaf.to_string(), layout);
         }
-        out.extend(parse_and_lower_into(hir, &source)?);
+        // In a SNIPPET the accessors are never emitted: a class body inside
+        // an `eval` runs as one more `class_eval` of its own source text,
+        // which the emitter recovers from the statements' SPANS. So the
+        // synthesized text has to be a file of its own there, or the spans
+        // would be offsets into it read against the snippet. In a whole
+        // program the nodes are what runs and the enclosing file is the
+        // right provenance -- a synthesized accessor reports the line its
+        // `layout` was written on.
+        out.extend(if hir.mode.is_eval() {
+            let name = format!("<ffi-struct:{}>", st.cref.unwrap_or("?"));
+            let file = hir.add_file(name, source.as_str());
+            let prev = hir.lowering_file.replace(file);
+            let ids = parse_and_lower_into(hir, &source);
+            hir.lowering_file = prev;
+            ids?
+        } else {
+            parse_and_lower_into(hir, &source)?
+        });
         return Ok(());
     }
     lower_class_body_statement(result, hir, stmt, st.visibility, st.module_function, out)
