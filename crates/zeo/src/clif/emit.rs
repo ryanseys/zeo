@@ -945,7 +945,13 @@ impl Emitter {
             "enable_verifier",
             if verify { "true" } else { "false" },
         )?;
-        let isa = cranelift_native::builder()
+        // An object file is a SHIPPED artifact, so it takes the triple's
+        // baseline and infers nothing. `cranelift_native::builder()` reads the
+        // BUILD machine's CPU -- AVX/AVX2/FMA/BMI1/BMI2/LZCNT on x86,
+        // lse/pauth/fp16/dotprod on aarch64 -- and a binary built with them
+        // executes an illegal instruction on an older chip. The JIT may
+        // legitimately infer: its code runs in this process, on this CPU.
+        let isa = cranelift_native::builder_with_options(jit)
             .map_err(|e| format!("cranelift has no backend for this host: {e}"))?
             .finish(settings::Flags::new(flags))
             .map_err(|e| format!("building the target ISA: {e}"))?;
@@ -2565,5 +2571,58 @@ pub(crate) fn release_locals(fx: &mut Fx) {
             }
             super::ctx::Local::Cell { owned: false, .. } => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use cranelift_module::Module;
+
+    /// Every ISA feature `cranelift_native::infer_native_flags` can turn on
+    /// by reading the build machine's CPU. A binary carrying one of these
+    /// runs only where that chip does.
+    const INFERRED: &[&str] = &[
+        "has_sse3",
+        "has_ssse3",
+        "has_sse41",
+        "has_sse42",
+        "has_avx",
+        "has_avx2",
+        "has_fma",
+        "has_avx512bitalg",
+        "has_avx512dq",
+        "has_avx512f",
+        "has_avx512vl",
+        "has_avx512vbmi",
+        "has_bmi1",
+        "has_bmi2",
+        "has_lzcnt",
+        "has_lse",
+        "has_pauth",
+        "has_fp16",
+        "has_dotprod",
+        "sign_return_address",
+        "sign_return_address_with_bkey",
+    ];
+
+    /// `zeo -o` emits for the triple's BASELINE. Inferring the build
+    /// machine's features ties the artifact to that microarchitecture and
+    /// SIGILLs on an older chip -- the JIT is the only mode allowed to infer,
+    /// because its code never leaves the process that built it.
+    #[test]
+    fn an_object_binary_is_not_tied_to_the_build_machine() {
+        let emitter = super::Emitter::new(false).expect("an ISA for this host");
+        let on: Vec<String> = emitter
+            .module
+            .isa()
+            .isa_flags()
+            .iter()
+            .filter(|v| INFERRED.contains(&v.name) && v.as_bool() == Some(true))
+            .map(|v| v.name.to_string())
+            .collect();
+        assert!(
+            on.is_empty(),
+            "the object path enabled host-inferred CPU features: {on:?}"
+        );
     }
 }
