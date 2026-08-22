@@ -1,0 +1,567 @@
+### "case x; when *y, 3 then 1; end"
+SCOPE 1,0-1,30
+  []
+  nil
+  CASE 1,0-1,30
+    VCALL 1,5-1,6
+      :x
+    WHEN 1,8-1,26
+      ARGSPUSH 1,13-1,18
+        SPLAT 1,13-1,15
+          VCALL 1,14-1,15
+            :y
+        INTEGER 1,17-1,18
+          3
+      INTEGER 1,24-1,25
+        1
+      nil
+### "case x; when *y, 3, 4 then 1; end"
+SCOPE 1,0-1,33
+  []
+  nil
+  CASE 1,0-1,33
+    VCALL 1,5-1,6
+      :x
+    WHEN 1,8-1,29
+      ARGSCAT 1,13-1,21
+        SPLAT 1,13-1,15
+          VCALL 1,14-1,15
+            :y
+        LIST 1,17-1,21
+          INTEGER 1,17-1,18
+            3
+          INTEGER 1,20-1,21
+            4
+          nil
+      INTEGER 1,27-1,28
+        1
+      nil
+### "case x; when 1, *y then 1; end"
+SCOPE 1,0-1,30
+  []
+  nil
+  CASE 1,0-1,30
+    VCALL 1,5-1,6
+      :x
+    WHEN 1,8-1,26
+      ARGSCAT 1,13-1,18
+        LIST 1,13-1,14
+          INTEGER 1,13-1,14
+            1
+          nil
+        VCALL 1,17-1,18
+          :y
+      INTEGER 1,24-1,25
+        1
+      nil
+### "case x; when 1, *y, 2 then 1; end"
+SCOPE 1,0-1,33
+  []
+  nil
+  CASE 1,0-1,33
+    VCALL 1,5-1,6
+      :x
+    WHEN 1,8-1,29
+      ARGSPUSH 1,13-1,21
+        ARGSCAT 1,13-1,18
+          LIST 1,13-1,14
+            INTEGER 1,13-1,14
+              1
+            nil
+          VCALL 1,17-1,18
+            :y
+        INTEGER 1,20-1,21
+          2
+      INTEGER 1,27-1,28
+        1
+      nil
+### "case x; when *y then 1; end"
+SCOPE 1,0-1,27
+  []
+  nil
+  CASE 1,0-1,27
+    VCALL 1,5-1,6
+      :x
+    WHEN 1,8-1,23
+      SPLAT 1,13-1,15
+        VCALL 1,14-1,15
+          :y
+      INTEGER 1,21-1,22
+        1
+      nil
+### "f(*y, 3)"
+SCOPE 1,0-1,8
+  []
+  nil
+  FCALL 1,0-1,8
+    :f
+    ARGSPUSH 1,2-1,7
+      SPLAT 1,2-1,4
+        VCALL 1,3-1,4
+          :y
+      INTEGER 1,6-1,7
+        3
+### "f(1, *y)"
+SCOPE 1,0-1,8
+  []
+  nil
+  FCALL 1,0-1,8
+    :f
+    ARGSCAT 1,2-1,7
+      LIST 1,2-1,3
+        INTEGER 1,2-1,3
+          1
+        nil
+      VCALL 1,6-1,7
+        :y
+### "[*y, 3]"
+SCOPE 1,0-1,7
+  []
+  nil
+  ARGSPUSH 1,0-1,7
+    SPLAT 1,1-1,3
+      VCALL 1,2-1,3
+        :y
+    INTEGER 1,5-1,6
+      3
+### "[1, *y, 2]"
+SCOPE 1,0-1,10
+  []
+  nil
+  ARGSPUSH 1,0-1,10
+    ARGSCAT 1,1-1,6
+      LIST 1,1-1,2
+        INTEGER 1,1-1,2
+          1
+        nil
+      VCALL 1,5-1,6
+        :y
+    INTEGER 1,8-1,9
+      2
+### "a = *y, 3"
+SCOPE 1,0-1,9
+  [:a]
+  nil
+  LASGN 1,0-1,9
+    :a
+    ARGSPUSH 1,4-1,9
+      SPLAT 1,4-1,6
+        VCALL 1,5-1,6
+          :y
+      INTEGER 1,8-1,9
+        3
+### "x = begin; 1; rescue; 2; end"
+SCOPE 1,0-1,28
+  [:x]
+  nil
+  LASGN 1,0-1,28
+    :x
+    BEGIN 1,4-1,28
+      RESCUE 1,9-1,24
+        BLOCK 1,9-1,12
+          BEGIN 1,9-1,9
+            nil
+          INTEGER 1,11-1,12
+            1
+        RESBODY 1,14-1,24
+          nil
+          nil
+          INTEGER 1,22-1,23
+            2
+          nil
+        nil
+### "x = begin; 1; ensure; 2; end"
+SCOPE 1,0-1,28
+  [:x]
+  nil
+  LASGN 1,0-1,28
+    :x
+    BEGIN 1,4-1,28
+      ENSURE 1,9-1,24
+        BLOCK 1,9-1,12
+          BEGIN 1,9-1,9
+            nil
+          INTEGER 1,11-1,12
+            1
+        BLOCK 1,20-1,23
+          BEGIN 1,20-1,20
+            nil
+          INTEGER 1,22-1,23
+            2
+### "x = begin\n1\nend"
+SCOPE 1,0-3,3
+  [:x]
+  nil
+  LASGN 1,0-3,3
+    :x
+    BEGIN 1,4-3,3
+      INTEGER 2,0-2,1
+        1
+### "x = begin 1 end"
+SCOPE 1,0-1,15
+  [:x]
+  nil
+  LASGN 1,0-1,15
+    :x
+    BEGIN 1,4-1,15
+      INTEGER 1,10-1,11
+        1
+### "begin; 1; rescue; 2; end"
+SCOPE 1,0-1,24
+  []
+  nil
+  RESCUE 1,5-1,20
+    BLOCK 1,5-1,8
+      BEGIN 1,5-1,5
+        nil
+      INTEGER 1,7-1,8
+        1
+    RESBODY 1,10-1,20
+      nil
+      nil
+      INTEGER 1,18-1,19
+        2
+      nil
+    nil
+### "class K\n1\nend"
+SCOPE 1,0-3,3
+  []
+  nil
+  CLASS 1,0-3,3
+    COLON2 1,6-1,7
+      nil
+      :K
+    nil
+    SCOPE 1,0-3,3
+      []
+      nil
+      BLOCK 1,7-2,1
+        BEGIN 1,7-1,7
+          nil
+        INTEGER 2,0-2,1
+          1
+### "class K; 1; end"
+SCOPE 1,0-1,15
+  []
+  nil
+  CLASS 1,0-1,15
+    COLON2 1,6-1,7
+      nil
+      :K
+    nil
+    SCOPE 1,0-1,15
+      []
+      nil
+      BLOCK 1,7-1,10
+        BEGIN 1,7-1,7
+          nil
+        INTEGER 1,9-1,10
+          1
+### "class K < Object\n1\nend"
+SCOPE 1,0-3,3
+  []
+  nil
+  CLASS 1,0-3,3
+    COLON2 1,6-1,7
+      nil
+      :K
+    CONST 1,10-1,16
+      :Object
+    SCOPE 1,0-3,3
+      []
+      nil
+      INTEGER 2,0-2,1
+        1
+### "class K;end"
+SCOPE 1,0-1,11
+  []
+  nil
+  CLASS 1,0-1,11
+    COLON2 1,6-1,7
+      nil
+      :K
+    nil
+    SCOPE 1,0-1,11
+      []
+      nil
+      BEGIN 1,7-1,7
+        nil
+### "module M\n1\nend"
+SCOPE 1,0-3,3
+  []
+  nil
+  MODULE 1,0-3,3
+    COLON2 1,7-1,8
+      nil
+      :M
+    SCOPE 1,0-3,3
+      []
+      nil
+      BLOCK 1,8-2,1
+        BEGIN 1,8-1,8
+          nil
+        INTEGER 2,0-2,1
+          1
+### "class << self\n1\nend"
+SCOPE 1,0-3,3
+  []
+  nil
+  SCLASS 1,0-3,3
+    SELF 1,9-1,13
+    SCOPE 1,0-3,3
+      []
+      nil
+      INTEGER 2,0-2,1
+        1
+### "def m; 1; end"
+SCOPE 1,0-1,13
+  []
+  nil
+  DEFN 1,0-1,13
+    :m
+    SCOPE 1,0-1,13
+      []
+      ARGS 1,5-1,5
+        0
+        nil
+        nil
+        nil
+        0
+        nil
+        nil
+        nil
+        nil
+        nil
+      INTEGER 1,7-1,8
+        1
+### "def m; ; 1; end"
+SCOPE 1,0-1,15
+  []
+  nil
+  DEFN 1,0-1,15
+    :m
+    SCOPE 1,0-1,15
+      []
+      ARGS 1,5-1,5
+        0
+        nil
+        nil
+        nil
+        0
+        nil
+        nil
+        nil
+        nil
+        nil
+      BLOCK 1,6-1,10
+        BEGIN 1,6-1,6
+          nil
+        INTEGER 1,9-1,10
+          1
+### "while x; 1; end"
+SCOPE 1,0-1,15
+  []
+  nil
+  WHILE 1,0-1,15
+    VCALL 1,6-1,7
+      :x
+    INTEGER 1,9-1,10
+      1
+    true
+### "if x; 1; end"
+SCOPE 1,0-1,12
+  []
+  nil
+  IF 1,0-1,12
+    VCALL 1,3-1,4
+      :x
+    INTEGER 1,6-1,7
+      1
+    nil
+### "[1].each do |z|\n1\nend"
+SCOPE 1,0-3,3
+  []
+  nil
+  ITER 1,0-3,3
+    CALL 1,0-1,8
+      LIST 1,0-1,3
+        INTEGER 1,1-1,2
+          1
+        nil
+      :each
+      nil
+    SCOPE 1,9-3,3
+      [:z]
+      ARGS 1,13-1,14
+        1
+        nil
+        nil
+        nil
+        0
+        nil
+        nil
+        nil
+        nil
+        nil
+      INTEGER 2,0-2,1
+        1
+### "[1].each do |z|; 1; end"
+SCOPE 1,0-1,23
+  []
+  nil
+  ITER 1,0-1,23
+    CALL 1,0-1,8
+      LIST 1,0-1,3
+        INTEGER 1,1-1,2
+          1
+        nil
+      :each
+      nil
+    SCOPE 1,9-1,23
+      [:z]
+      ARGS 1,13-1,14
+        1
+        nil
+        nil
+        nil
+        0
+        nil
+        nil
+        nil
+        nil
+        nil
+      BLOCK 1,15-1,18
+        BEGIN 1,15-1,15
+          nil
+        INTEGER 1,17-1,18
+          1
+### "[1].each {; 1 }"
+SCOPE 1,0-1,15
+  []
+  nil
+  ITER 1,0-1,15
+    CALL 1,0-1,8
+      LIST 1,0-1,3
+        INTEGER 1,1-1,2
+          1
+        nil
+      :each
+      nil
+    SCOPE 1,9-1,15
+      []
+      nil
+      BLOCK 1,10-1,13
+        BEGIN 1,10-1,10
+          nil
+        INTEGER 1,12-1,13
+          1
+### "x = (1)"
+SCOPE 1,0-1,7
+  [:x]
+  nil
+  LASGN 1,0-1,7
+    :x
+    BLOCK 1,4-1,7
+      INTEGER 1,5-1,6
+        1
+### "x = (; 1)"
+SCOPE 1,0-1,9
+  [:x]
+  nil
+  LASGN 1,0-1,9
+    :x
+    BLOCK 1,4-1,9
+      BLOCK 1,5-1,8
+        BEGIN 1,5-1,5
+          nil
+        INTEGER 1,7-1,8
+          1
+### "case x; when 1 then 2; end"
+SCOPE 1,0-1,26
+  []
+  nil
+  CASE 1,0-1,26
+    VCALL 1,5-1,6
+      :x
+    WHEN 1,8-1,22
+      LIST 1,13-1,14
+        INTEGER 1,13-1,14
+          1
+        nil
+      INTEGER 1,20-1,21
+        2
+      nil
+### "case x; when 1 then 2 end"
+SCOPE 1,0-1,25
+  []
+  nil
+  CASE 1,0-1,25
+    VCALL 1,5-1,6
+      :x
+    WHEN 1,8-1,21
+      LIST 1,13-1,14
+        INTEGER 1,13-1,14
+          1
+        nil
+      INTEGER 1,20-1,21
+        2
+      nil
+### "case x; when 1; end"
+SCOPE 1,0-1,19
+  []
+  nil
+  CASE 1,0-1,19
+    VCALL 1,5-1,6
+      :x
+    WHEN 1,8-1,15
+      LIST 1,13-1,14
+        INTEGER 1,13-1,14
+          1
+        nil
+      BEGIN 1,15-1,15
+        nil
+      nil
+### "A::B"
+SCOPE 1,0-1,4
+  []
+  nil
+  COLON2 1,0-1,4
+    CONST 1,0-1,1
+      :A
+    :B
+### "::A::B"
+SCOPE 1,0-1,6
+  []
+  nil
+  COLON2 1,0-1,6
+    COLON3 1,0-1,3
+      :A
+    :B
+### "A::B = 1"
+SCOPE 1,0-1,8
+  []
+  nil
+  CDECL 1,0-1,8
+    COLON2 1,0-1,4
+      CONST 1,0-1,1
+        :A
+      :B
+    :B
+    INTEGER 1,7-1,8
+      1
+### "x = __FILE__"
+SCOPE 1,0-1,12
+  [:x]
+  nil
+  LASGN 1,0-1,12
+    :x
+    FILE 1,4-1,12
+      ""
+### "x = __LINE__"
+SCOPE 1,0-1,12
+  [:x]
+  nil
+  LASGN 1,0-1,12
+    :x
+    LINE 1,4-1,12
+      1

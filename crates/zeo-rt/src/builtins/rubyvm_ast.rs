@@ -322,10 +322,29 @@ mod translate {
 
     /// The whole-parse context: source geometry, script retention, and the
     /// post-order node counter.
+    /// What a construct's grammar eats between its header and its first
+    /// statement -- see [`Cx::leading_terminator`], which is where the
+    /// measurements behind these three live.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Absorb {
+        /// Nothing: a `class`/`module` body with no superclass clause, the one
+        /// place CRuby's grammar leaves even a newline in the statements list.
+        None,
+        /// A run of newlines, never a `;`: `begin`, a block body, a
+        /// parenthesised list.
+        Newlines,
+        /// One terminator of either kind: `def`'s arglist, `while`'s `do`,
+        /// `if`'s `then`. Only a SECOND separator survives there.
+        One,
+    }
+
     struct Cx {
         line_starts: Vec<usize>,
         script: Option<Arc<ScriptSource>>,
         next_id: i64,
+        /// The source bytes, for the handful of spans CRuby measures by
+        /// TERMINATOR rather than by node -- see [`Cx::through_terminator`].
+        src: Vec<u8>,
     }
 
     impl Cx {
@@ -341,6 +360,63 @@ mod translate {
             let (fl, fc) = self.pos(start);
             let (ll, lc) = self.pos(end);
             Span { fl, fc, ll, lc }
+        }
+
+        /// The offset of a leading terminator the grammar did NOT absorb.
+        ///
+        /// CRuby's `stmts: none` reduces to `NEW_BEGIN(0)` before the first
+        /// real statement, so a body whose text starts with a terminator
+        /// carries a zero-width `BEGIN nil` ahead of it. Which terminators
+        /// survive is a grammar fact, measured against the oracle: a `\n` is
+        /// absorbed everywhere it can be (`def`'s arglist, `while`'s `do`,
+        /// `if`'s `then`, a `class ... < Super`'s term, a block's parameter
+        /// list) while a `;` never is -- except in a `class`/`module` body
+        /// with NO superclass clause, where nothing is there to take either.
+        fn leading_gap(&self, from: usize, absorb: Absorb) -> Option<usize> {
+            let space = |mut i: usize| {
+                while matches!(self.src.get(i), Some(b' ' | b'\t' | b'\r')) {
+                    i += 1;
+                }
+                i
+            };
+            // Where the statements list starts parsing: past whatever the
+            // grammar took, and NOT past the whitespace after it -- CRuby
+            // sites the empty statement exactly there.
+            let mut at = from;
+            match absorb {
+                Absorb::None => {}
+                Absorb::Newlines => {
+                    let mut i = space(at);
+                    while matches!(self.src.get(i), Some(b'\n')) {
+                        at = i + 1;
+                        i = space(at);
+                    }
+                }
+                Absorb::One => {
+                    let i = space(at);
+                    if matches!(self.src.get(i), Some(b';' | b'\n')) {
+                        at = i + 1;
+                    }
+                }
+            }
+            match self.src.get(space(at)) {
+                Some(b';') => Some(at),
+                Some(b'\n') if absorb == Absorb::None => Some(at),
+                _ => None,
+            }
+        }
+
+        /// `end`, plus a `;` sitting immediately after it.
+        ///
+        /// A `when`/`in` arm runs to the SEPARATOR in CRuby, not to its last
+        /// statement -- `when 1 then 2; end` ends past the `;` while
+        /// `when 1 then 2 end` ends at the `2`. prism has no node for the
+        /// separator, so the byte is what says which of the two this is.
+        fn through_terminator(&self, end: usize) -> usize {
+            match self.src.get(end) {
+                Some(b';') => end + 1,
+                _ => end,
+            }
         }
     }
 
@@ -379,6 +455,7 @@ mod translate {
             line_starts,
             script,
             next_id: 0,
+            src: src.as_bytes().to_vec(),
         };
         let program = result.node();
         let Some(program) = program.as_program_node() else {
@@ -439,14 +516,37 @@ mod translate {
         let body: Vec<_> = stmts.body().iter().collect();
         match body.len() {
             0 => RubyValue::Nil,
-            1 => translate(&body[0], cx, in_block),
+            1 => translate_stmt(&body[0], cx, in_block),
             _ => {
-                let kids: Vec<RubyValue> =
-                    body.iter().map(|n| translate(n, cx, in_block)).collect();
+                let kids: Vec<RubyValue> = body
+                    .iter()
+                    .map(|n| translate_stmt(n, cx, in_block))
+                    .collect();
                 let loc = stmts.location();
                 node(cx, "BLOCK", loc.start_offset(), loc.end_offset(), kids)
             }
         }
+    }
+
+    /// [`translate`] in STATEMENT position, which one shape is measured by:
+    /// a `begin ... end` carries a `BEGIN` wrapper as an EXPRESSION
+    /// (`x = begin 1 end` is `LASGN[:x, BEGIN[INTEGER]]`) and none as a
+    /// statement. Prism's node is the same either way, so the position has to
+    /// come from the caller -- and every statement context in this translator
+    /// reaches its children through `statements_body`.
+    fn translate_stmt(n: &P<'_>, cx: &mut Cx, in_block: bool) -> RubyValue {
+        if let Some(x) = n.as_begin_node() {
+            let loc = n.location();
+            return begin_body(
+                &x,
+                cx,
+                in_block,
+                loc.start_offset(),
+                loc.end_offset(),
+                false,
+            );
+        }
+        translate(n, cx, in_block)
     }
 
     fn opt_statements(
@@ -492,6 +592,55 @@ mod translate {
 
     /// An EMPTY body, which CRuby renders as a `BEGIN` node holding one nil
     /// rather than as nothing.
+    /// A body's statements, with the leading empty statement CRuby's grammar
+    /// leaves ahead of an unabsorbed terminator -- see
+    /// [`Cx::leading_terminator`], which decides whether there is one.
+    ///
+    /// `header_end` is where the construct's opening ends: past `begin`, past
+    /// `class K`, past a block's `{`/`do` and its parameter list.
+    fn body_after(
+        stmts: Option<ruby_prism::StatementsNode<'_>>,
+        header_end: usize,
+        absorb: Absorb,
+        cx: &mut Cx,
+        b: bool,
+    ) -> RubyValue {
+        let gap = cx.leading_gap(header_end, absorb);
+        let els: Vec<P<'_>> = stmts
+            .as_ref()
+            .map(|st| st.body().iter().collect())
+            .unwrap_or_default();
+        match (gap, els.is_empty()) {
+            // Nothing but the terminator: the empty statement IS the body.
+            (Some(at), true) => empty_begin(cx, at),
+            (None, true) => RubyValue::Nil,
+            (None, false) => statements_body(&stmts.expect("non-empty"), cx, b),
+            (Some(at), false) => {
+                let mut kids = vec![empty_begin(cx, at)];
+                kids.extend(els.iter().map(|n| translate_stmt(n, cx, b)));
+                let loc = stmts.expect("non-empty").location();
+                node(cx, "BLOCK", at, loc.end_offset(), kids)
+            }
+        }
+    }
+
+    /// A `when`/`in` arm's body. An EMPTY one is CRuby's zero-width `BEGIN`
+    /// holding nil, sited where the arm's header ends, not a bare nil.
+    fn arm_body(
+        stmts: Option<ruby_prism::StatementsNode<'_>>,
+        at: usize,
+        cx: &mut Cx,
+        b: bool,
+    ) -> RubyValue {
+        match stmts {
+            Some(st) if st.body().iter().next().is_some() => statements_body(&st, cx, b),
+            _ => {
+                let at = cx.through_terminator(at);
+                empty_begin(cx, at)
+            }
+        }
+    }
+
     fn empty_begin(cx: &mut Cx, at: usize) -> RubyValue {
         node(cx, "BEGIN", at, at, vec![RubyValue::Nil])
     }
@@ -504,22 +653,17 @@ mod translate {
         };
         let loc = w.location();
         let conds: Vec<P<'_>> = w.conditions().iter().collect();
-        // A lone splat stands alone; every other shape is a LIST.
-        let head = if conds.len() == 1 && conds[0].as_splat_node().is_some() {
-            translate(&conds[0], cx, b)
-        } else {
-            let lo = conds
-                .first()
-                .map_or(loc.start_offset(), |c| c.location().start_offset());
-            let hi = conds
-                .last()
-                .map_or(loc.end_offset(), |c| c.location().end_offset());
-            let elems: Vec<RubyValue> = conds.iter().map(|c| translate(c, cx, b)).collect();
-            list_node(cx, lo, hi, elems)
-        };
-        let body = opt_statements(w.statements(), cx, b);
+        let lo = conds
+            .first()
+            .map_or(loc.start_offset(), |c| c.location().start_offset());
+        let hi = conds
+            .last()
+            .map_or(loc.end_offset(), |c| c.location().end_offset());
+        let head = arg_list(&conds, lo, hi, cx, b).unwrap_or(RubyValue::Nil);
+        let body = arm_body(w.statements(), loc.end_offset(), cx, b);
         let next = when_chain(arms, idx + 1, tail, cx, b);
         let (ws, we) = through(loc.start_offset(), loc.end_offset(), &next);
+        let we = cx.through_terminator(we);
         node(cx, "WHEN", ws, we, vec![head, body, next])
     }
 
@@ -544,14 +688,23 @@ mod translate {
         cx: &mut Cx,
         b: bool,
         s: usize,
-        _e: usize,
+        e: usize,
+        wrap: bool,
     ) -> RubyValue {
         // An empty body sits at the END of the keyword that opened it, and is
         // a `BEGIN` holding one nil rather than nothing.
         let body_at = x.begin_keyword_loc().map_or(s, |k| k.end_offset());
-        let mut inner = match x.statements() {
-            Some(stmts) if stmts.body().iter().next().is_some() => statements_body(&stmts, cx, b),
-            _ => empty_begin(cx, body_at),
+        let mut inner = match x.begin_keyword_loc() {
+            Some(k) => body_after(x.statements(), k.end_offset(), Absorb::Newlines, cx, b),
+            // A `def`/block body prism also models as a BeginNode when it
+            // carries a rescue: there is no `begin` keyword, and the
+            // terminator ahead of it belongs to the enclosing construct.
+            None => match x.statements() {
+                Some(stmts) if stmts.body().iter().next().is_some() => {
+                    statements_body(&stmts, cx, b)
+                }
+                _ => empty_begin(cx, body_at),
+            },
         };
         // A RESCUE/ENSURE spans from the BODY it wraps, never from `begin`.
         let start = range_of(&inner).map_or(s, |(st, _)| st);
@@ -565,14 +718,18 @@ mod translate {
         }
         if let Some(en) = x.ensure_clause() {
             let at = en.ensure_keyword_loc().end_offset();
-            let body = match en.statements() {
-                Some(stmts) if stmts.body().iter().next().is_some() => {
-                    statements_body(&stmts, cx, b)
-                }
-                _ => empty_begin(cx, at),
+            let body = match body_after(en.statements(), at, Absorb::Newlines, cx, b) {
+                RubyValue::Nil => empty_begin(cx, at),
+                other => other,
             };
             let end = range_of(&body).map_or(start, |(_, en2)| en2);
+            let end = cx.through_terminator(end);
             inner = node(cx, "ENSURE", start, end, vec![inner, body]);
+        }
+        // The expression-position wrapper, spanning `begin` through `end` --
+        // see [`translate_stmt`].
+        if wrap {
+            inner = node(cx, "BEGIN", s, e, vec![inner]);
         }
         inner
     }
@@ -607,6 +764,9 @@ mod translate {
         };
         let next = resbody_chain(r.subsequent(), cx, b);
         let (rs, re) = through(loc.start_offset(), loc.end_offset(), &next);
+        // A `rescue` clause runs to its SEPARATOR, the same rule a `when`
+        // arm follows -- see `Cx::through_terminator`.
+        let re = cx.through_terminator(re);
         node(cx, "RESBODY", rs, re, vec![classes, binding, body, next])
     }
 
@@ -702,6 +862,164 @@ mod translate {
     fn list_node(cx: &mut Cx, start: usize, end: usize, mut elems: Vec<RubyValue>) -> RubyValue {
         elems.push(RubyValue::Nil);
         node(cx, "LIST", start, end, elems)
+    }
+
+    /// One element list built the way CRuby's `arg_append`/`arg_concat`
+    /// (parse.y) build it, which is what every splat-carrying list is: a call's
+    /// arguments, an array literal, a multiple assignment's right side, and a
+    /// `when`'s conditions.
+    ///
+    /// The accumulator changes SHAPE as the splats land. A run of plain
+    /// elements is a `LIST`; a splat concatenates onto it (`ARGSCAT`, whose
+    /// body is the splatted VALUE, not a `SPLAT` node); a plain element after a
+    /// splat pushes onto that (`ARGSPUSH`); and a SECOND plain element folds
+    /// the push back into an `ARGSCAT` over a two-element `LIST` -- CRuby's
+    /// `nd_set_type(node1, NODE_ARGSCAT)`. A list with no splat is the ordinary
+    /// `LIST`, and a lone splat is a bare `SPLAT`.
+    struct Arg {
+        kind: ArgKind,
+        lo: usize,
+        hi: usize,
+    }
+
+    enum ArgKind {
+        List(Vec<RubyValue>),
+        /// A lone splat: its VALUE, wrapped in `SPLAT` when built.
+        Splat(RubyValue),
+        /// `ARGSCAT(head, value)` -- the splatted value verbatim.
+        Cat(Box<Arg>, RubyValue),
+        /// `ARGSCAT(head, LIST(elems))`, the fold an `ARGSPUSH` becomes.
+        CatList(Box<Arg>, Vec<RubyValue>, usize, usize),
+        /// `ARGSPUSH(head, tail)`, carrying the tail's own START for the fold
+        /// -- the `LIST` it becomes begins there, and ends at whatever the
+        /// element that triggers the fold ends at.
+        Push(Box<Arg>, RubyValue, usize),
+    }
+
+    /// Materialize, with `start`/`end` overriding the OUTERMOST span: an array
+    /// literal's brackets, a call's argument list. Everything underneath spans
+    /// exactly the elements it covers.
+    fn build_arg(a: Arg, cx: &mut Cx, start: usize, end: usize) -> RubyValue {
+        let nested = |h: Box<Arg>, cx: &mut Cx| {
+            let (l, r) = (h.lo, h.hi);
+            build_arg(*h, cx, l, r)
+        };
+        match a.kind {
+            ArgKind::List(elems) => list_node(cx, start, end, elems),
+            ArgKind::Splat(v) => node(cx, "SPLAT", start, end, vec![v]),
+            ArgKind::Cat(head, v) => {
+                let h = nested(head, cx);
+                node(cx, "ARGSCAT", start, end, vec![h, v])
+            }
+            ArgKind::CatList(head, elems, blo, bhi) => {
+                let h = nested(head, cx);
+                let list = list_node(cx, blo, bhi, elems);
+                node(cx, "ARGSCAT", start, end, vec![h, list])
+            }
+            ArgKind::Push(head, tail, _) => {
+                let h = nested(head, cx);
+                node(cx, "ARGSPUSH", start, end, vec![h, tail])
+            }
+        }
+    }
+
+    fn arg_append(acc: Option<Arg>, tail: RubyValue, lo: usize, hi: usize) -> Arg {
+        let Some(a) = acc else {
+            return Arg {
+                kind: ArgKind::List(vec![tail]),
+                lo,
+                hi,
+            };
+        };
+        let l = a.lo;
+        let kind = match a.kind {
+            ArgKind::List(mut elems) => {
+                elems.push(tail);
+                ArgKind::List(elems)
+            }
+            ArgKind::Push(head, first, flo) => ArgKind::CatList(head, vec![first, tail], flo, hi),
+            ArgKind::CatList(head, mut elems, blo, _) => {
+                elems.push(tail);
+                ArgKind::CatList(head, elems, blo, hi)
+            }
+            other => ArgKind::Push(
+                Box::new(Arg {
+                    kind: other,
+                    lo: l,
+                    hi: a.hi,
+                }),
+                tail,
+                lo,
+            ),
+        };
+        Arg { kind, lo: l, hi }
+    }
+
+    fn arg_concat(acc: Option<Arg>, value: RubyValue, lo: usize, hi: usize) -> Arg {
+        match acc {
+            // A lone splat stands alone, as a `SPLAT`.
+            None => Arg {
+                kind: ArgKind::Splat(value),
+                lo,
+                hi,
+            },
+            Some(a) => {
+                let l = a.lo;
+                Arg {
+                    kind: ArgKind::Cat(Box::new(a), value),
+                    lo: l,
+                    hi,
+                }
+            }
+        }
+    }
+
+    /// `break`/`next`/`return`'s argument, which is an ordinary element list
+    /// except that `unwrap_single` kinds hand a LONE argument through bare
+    /// (`return 1` is the INTEGER, `next 1` is a one-element LIST).
+    fn jump_arg(
+        args: Option<ruby_prism::ArgumentsNode<'_>>,
+        unwrap_single: bool,
+        cx: &mut Cx,
+        b: bool,
+    ) -> RubyValue {
+        let Some(a) = args else {
+            return RubyValue::Nil;
+        };
+        let els: Vec<P<'_>> = a.arguments().iter().collect();
+        if unwrap_single && els.len() == 1 && els[0].as_splat_node().is_none() {
+            return translate(&els[0], cx, b);
+        }
+        let al = a.location();
+        arg_list(&els, al.start_offset(), al.end_offset(), cx, b).unwrap_or(RubyValue::Nil)
+    }
+
+    /// The shared driver: translate `els` left to right, splats through
+    /// [`arg_concat`] and everything else through [`arg_append`]. `None` for an
+    /// empty list, so a caller with nothing to say answers nil.
+    fn arg_list(
+        els: &[P<'_>],
+        start: usize,
+        end: usize,
+        cx: &mut Cx,
+        b: bool,
+    ) -> Option<RubyValue> {
+        let mut acc: Option<Arg> = None;
+        for el in els {
+            let loc = el.location();
+            let (lo, hi) = (loc.start_offset(), loc.end_offset());
+            acc = Some(match el.as_splat_node().and_then(|sp| sp.expression()) {
+                Some(v) => {
+                    let value = translate(&v, cx, b);
+                    arg_concat(acc, value, lo, hi)
+                }
+                None => {
+                    let v = translate(el, cx, b);
+                    arg_append(acc, v, lo, hi)
+                }
+            });
+        }
+        acc.map(|a| build_arg(a, cx, start, end))
     }
 
     fn is_operator(name: &str) -> bool {
@@ -834,17 +1152,63 @@ mod translate {
         if let Some(x) = n.as_constant_read_node() {
             return node(cx, "CONST", s, e, vec![sym_val(x.name().as_slice())]);
         }
+        // `A::B` is COLON2 over its scope; a top-level `::A` is COLON3, which
+        // holds the NAME alone -- there is nothing to its left.
+        if let Some(x) = n.as_constant_path_node() {
+            let name = match x.name() {
+                Some(nm) => sym_val(nm.as_slice()),
+                None => RubyValue::Nil,
+            };
+            return match x.parent() {
+                Some(p) => {
+                    let scope = translate(&p, cx, in_block);
+                    node(cx, "COLON2", s, e, vec![scope, name])
+                }
+                None => node(cx, "COLON3", s, e, vec![name]),
+            };
+        }
+        // `__FILE__` carries the script name, which for a string parse is
+        // empty; `__LINE__` carries the line it sits on.
+        if n.as_source_file_node().is_some() {
+            let name = cx
+                .script
+                .as_ref()
+                .map_or_else(String::new, |_| String::new());
+            return node(
+                cx,
+                "FILE",
+                s,
+                e,
+                vec![RubyValue::Str(crate::string_new(name))],
+            );
+        }
+        if n.as_source_line_node().is_some() {
+            let (line, _) = cx.pos(s);
+            return node(cx, "LINE", s, e, vec![RubyValue::Int(line)]);
+        }
+        if n.as_source_encoding_node().is_some() {
+            return node(cx, "ENCODING", s, e, vec![]);
+        }
         if let Some(x) = n.as_constant_write_node() {
             let value = translate(&x.value(), cx, in_block);
             return node(cx, "CDECL", s, e, vec![sym_val(x.name().as_slice()), value]);
         }
+        // `A::B = 1` -- a SCOPED write names its scope as well as its leaf,
+        // so the CDECL carries three children where a bare one carries two.
+        if let Some(x) = n.as_constant_path_write_node() {
+            let target = x.target();
+            let path = translate(&target.as_node(), cx, in_block);
+            let name = match target.name() {
+                Some(nm) => sym_val(nm.as_slice()),
+                None => RubyValue::Nil,
+            };
+            let value = translate(&x.value(), cx, in_block);
+            return node(cx, "CDECL", s, e, vec![path, name, value]);
+        }
         if let Some(x) = n.as_array_node() {
-            let elems: Vec<RubyValue> = x
-                .elements()
-                .iter()
-                .map(|el| translate(&el, cx, in_block))
-                .collect();
-            return list_node(cx, s, e, elems);
+            let els: Vec<P<'_>> = x.elements().iter().collect();
+            return arg_list(&els, s, e, cx, in_block)
+                .unwrap_or_else(|| list_node(cx, s, e, Vec::new()));
         }
         if let Some(x) = n.as_hash_node() {
             let mut pairs = Vec::new();
@@ -895,6 +1259,14 @@ mod translate {
                         (l.start_offset(), l.end_offset())
                     })
                     .unwrap_or((bloc.start_offset(), bloc.start_offset()));
+                // A block's parameter list takes the newline after it, never
+                // a `;` -- so `do |z|; 1; end` carries the empty statement and
+                // `do |z|\n1\nend` does not. `pe` is past the last parameter;
+                // the closing `|` is the byte after it.
+                let after_header = match &params {
+                    Some(_) => pe + 1,
+                    None => block.opening_loc().end_offset(),
+                };
                 let args = match &params {
                     Some(_) => args_node(params, ps, pe, cx, true),
                     None => RubyValue::Nil,
@@ -904,10 +1276,13 @@ mod translate {
                     .iter()
                     .map(|l| sym_val(l.as_slice()))
                     .collect();
-                let body = match block.body().and_then(|b| b.as_statements_node()) {
-                    Some(stmts) => statements_body(&stmts, cx, true),
-                    None => RubyValue::Nil,
-                };
+                let body = body_after(
+                    block.body().and_then(|b| b.as_statements_node()),
+                    after_header,
+                    Absorb::Newlines,
+                    cx,
+                    true,
+                );
                 let scope = node(
                     cx,
                     "SCOPE",
@@ -937,9 +1312,11 @@ mod translate {
                 });
             let args = args_node(params, ps, pe, cx, false);
             // A `def` with its own `rescue`/`ensure` has a `begin` for a body.
+            // Its argument list takes ONE terminator, so only a SECOND
+            // separator (`def m; ; 1; end`) leaves the empty statement.
             let body = match x.body() {
                 Some(b) => match b.as_statements_node() {
-                    Some(stmts) => statements_body(&stmts, cx, false),
+                    Some(stmts) => body_after(Some(stmts), pe, Absorb::One, cx, false),
                     None => translate(&b, cx, false),
                 },
                 None => RubyValue::Nil,
@@ -1096,7 +1473,7 @@ mod translate {
             return node(cx, "CASE3", s, e, vec![subject, chain]);
         }
         if let Some(x) = n.as_begin_node() {
-            return begin_body(&x, cx, in_block, s, e);
+            return begin_body(&x, cx, in_block, s, e, true);
         }
         // `a rescue b` -- the modifier form is a RESCUE whose single RESBODY
         // names no exception class and binds nothing.
@@ -1144,56 +1521,15 @@ mod translate {
             return node(cx, "UNTIL", s, e, vec![cond, body, RubyValue::Bool(true)]);
         }
         if let Some(x) = n.as_break_node() {
-            let arg = match x.arguments() {
-                Some(a) => {
-                    let elems: Vec<RubyValue> = a
-                        .arguments()
-                        .iter()
-                        .map(|el| translate(&el, cx, in_block))
-                        .collect();
-                    if elems.len() == 1 {
-                        elems.into_iter().next().expect("one element")
-                    } else {
-                        let al = a.location();
-                        list_node(cx, al.start_offset(), al.end_offset(), elems)
-                    }
-                }
-                None => RubyValue::Nil,
-            };
+            let arg = jump_arg(x.arguments(), true, cx, in_block);
             return node(cx, "BREAK", s, e, vec![arg]);
         }
         if let Some(x) = n.as_next_node() {
-            let arg = match x.arguments() {
-                Some(a) => {
-                    let elems: Vec<RubyValue> = a
-                        .arguments()
-                        .iter()
-                        .map(|el| translate(&el, cx, in_block))
-                        .collect();
-                    let al = a.location();
-                    list_node(cx, al.start_offset(), al.end_offset(), elems)
-                }
-                None => RubyValue::Nil,
-            };
+            let arg = jump_arg(x.arguments(), false, cx, in_block);
             return node(cx, "NEXT", s, e, vec![arg]);
         }
         if let Some(x) = n.as_return_node() {
-            let arg = match x.arguments() {
-                Some(a) => {
-                    let elems: Vec<RubyValue> = a
-                        .arguments()
-                        .iter()
-                        .map(|el| translate(&el, cx, in_block))
-                        .collect();
-                    if elems.len() == 1 {
-                        elems.into_iter().next().expect("one element")
-                    } else {
-                        let al = a.location();
-                        list_node(cx, al.start_offset(), al.end_offset(), elems)
-                    }
-                }
-                None => RubyValue::Nil,
-            };
+            let arg = jump_arg(x.arguments(), true, cx, in_block);
             return node(cx, "RETURN", s, e, vec![arg]);
         }
         if let Some(x) = n.as_and_node() {
@@ -1230,11 +1566,21 @@ mod translate {
                 .superclass()
                 .map(|sc| sc.location().end_offset())
                 .unwrap_or(cloc.end_offset());
+            // A superclass clause takes the terminator after it; with no
+            // clause nothing does, so even a newline leaves the empty
+            // statement CRuby's `stmts: none` reduces to. An empty body is
+            // that statement alone.
+            let absorb = match x.superclass() {
+                Some(_) => Absorb::One,
+                None => Absorb::None,
+            };
             let body = match x.body().and_then(|b| b.as_statements_node()) {
-                Some(stmts) => statements_body(&stmts, cx, false),
-                // The empty class body is a zero-width BEGIN just past the
-                // path/superclass (parse.y's shape).
-                None => node(cx, "BEGIN", body_end, body_end, vec![RubyValue::Nil]),
+                Some(stmts) => body_after(Some(stmts), body_end, absorb, cx, false),
+                None => body_after(None, body_end, absorb, cx, false),
+            };
+            let body = match body {
+                RubyValue::Nil => node(cx, "BEGIN", body_end, body_end, vec![RubyValue::Nil]),
+                other => other,
             };
             let scope = node(
                 cx,
@@ -1248,6 +1594,32 @@ mod translate {
                 ],
             );
             return node(cx, "CLASS", s, e, vec![cpath_node, superclass, scope]);
+        }
+        // `class << expr` -- SCLASS over the receiver and a SCOPE. The `<<`
+        // rule takes the terminator after the expression, so the body carries
+        // no leading empty statement.
+        if let Some(x) = n.as_singleton_class_node() {
+            let recv = translate(&x.expression(), cx, in_block);
+            let at = x.expression().location().end_offset();
+            let body = body_after(
+                x.body().and_then(|b| b.as_statements_node()),
+                at,
+                Absorb::One,
+                cx,
+                false,
+            );
+            let scope = node(
+                cx,
+                "SCOPE",
+                s,
+                e,
+                vec![
+                    RubyValue::Array(crate::array_new(vec![])),
+                    RubyValue::Nil,
+                    body,
+                ],
+            );
+            return node(cx, "SCLASS", s, e, vec![recv, scope]);
         }
         if let Some(x) = n.as_module_node() {
             let cpath = x.constant_path();
@@ -1265,15 +1637,18 @@ mod translate {
                 }
                 None => translate(&cpath, cx, in_block),
             };
-            let body = match x.body().and_then(|b| b.as_statements_node()) {
-                Some(stmts) => statements_body(&stmts, cx, false),
-                None => node(
-                    cx,
-                    "BEGIN",
-                    cloc.end_offset(),
-                    cloc.end_offset(),
-                    vec![RubyValue::Nil],
-                ),
+            // A module body has no superclass clause to take the terminator
+            // -- see the `class` arm.
+            let at = cloc.end_offset();
+            let body = match body_after(
+                x.body().and_then(|b| b.as_statements_node()),
+                at,
+                Absorb::None,
+                cx,
+                false,
+            ) {
+                RubyValue::Nil => node(cx, "BEGIN", at, at, vec![RubyValue::Nil]),
+                other => other,
             };
             let scope = node(
                 cx,
@@ -1288,10 +1663,14 @@ mod translate {
             );
             return node(cx, "MODULE", s, e, vec![cpath_node, scope]);
         }
+        // A parenthesised statements list is a `BLOCK` in CRuby, spanning the
+        // parens -- `x = (1)` is `LASGN[:x, BLOCK[INTEGER]]`.
         if let Some(x) = n.as_parentheses_node()
             && let Some(body) = x.body().and_then(|b| b.as_statements_node())
         {
-            return statements_body(&body, cx, in_block);
+            let at = x.opening_loc().end_offset();
+            let inner = body_after(Some(body), at, Absorb::Newlines, cx, in_block);
+            return node(cx, "BLOCK", s, e, vec![inner]);
         }
         if let Some(x) = n.as_statements_node() {
             return statements_body(&x, cx, in_block);
@@ -1325,14 +1704,10 @@ mod translate {
             .map(|a| a.location().end_offset())
             .unwrap_or(msg.1);
         let name_sym = RubyValue::Symbol(crate::Symbol::intern(name));
-        let args = x.arguments().map(|a| {
+        let args = x.arguments().and_then(|a| {
             let al = a.location();
-            let elems: Vec<RubyValue> = a
-                .arguments()
-                .iter()
-                .map(|el| translate(&el, cx, in_block))
-                .collect();
-            list_node(cx, al.start_offset(), al.end_offset(), elems)
+            let els: Vec<P<'_>> = a.arguments().iter().collect();
+            arg_list(&els, al.start_offset(), al.end_offset(), cx, in_block)
         });
         match x.receiver() {
             Some(recv) => {
@@ -1364,14 +1739,10 @@ mod translate {
         let loc = x.location();
         let (s, e) = (loc.start_offset(), loc.end_offset());
         let name_sym = RubyValue::Symbol(crate::Symbol::intern(name));
-        let args = x.arguments().map(|a| {
+        let args = x.arguments().and_then(|a| {
             let al = a.location();
-            let elems: Vec<RubyValue> = a
-                .arguments()
-                .iter()
-                .map(|el| translate(&el, cx, in_block))
-                .collect();
-            list_node(cx, al.start_offset(), al.end_offset(), elems)
+            let els: Vec<P<'_>> = a.arguments().iter().collect();
+            arg_list(&els, al.start_offset(), al.end_offset(), cx, in_block)
         });
         match x.receiver() {
             Some(recv) => {
