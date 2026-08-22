@@ -93,6 +93,20 @@ jobs:
         env:
           ZEO_GOLDEN_BACKEND: aot
 
+      # The compiled-ownership ledger over the whole golden corpus. Every
+      # capi entry that hands an owned heap value to compiled code counts it
+      # in and every entry that takes one back counts it out, so a non-zero
+      # balance at exit is a leak or a double-consume in the emitted
+      # ownership lowering, and a released slot aborts naming the entry.
+      #
+      # A golden cannot see any of that on its own -- the programs print the
+      # same answers either way, which is how a moved-in block proc leaked
+      # for as long as it did. Only the three golden corpora run under it:
+      # the ledger measures EMITTED code, and a Rust unit test emits none.
+      - run: cargo nextest run -p zeo-tests --test examples --test spinel --test gaps --no-fail-fast
+        env:
+          ZEO_RT_LEAKCHECK: "1"
+
       # The native-library table an AOT link names after the archive is
       # HAND-WRITTEN (backend/link.rs), and nothing tells it about a
       # `#[link(name = ..)]` added anywhere in zeo-rt. This test asks rustc
