@@ -39,7 +39,6 @@ pub fn resolve(compiler: &mut Compiler) {
         // Plain generated-struct classes only -- the one registration shape
         // whose methods are reachable as inherent fns for a trampoline.
         if idx == 0
-            || ci.is_module
             || ci.is_builtin
             || ci.is_bootstrap
             || compiler.is_exception_backed(cid)

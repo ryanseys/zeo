@@ -159,12 +159,40 @@ fn replace_method_impl(id: ClassId, name: Symbol, imp: crate::dispatch::MethodIm
     {
         let mut w = maps().classes.write().unwrap();
         let e = w.entry(id.0).or_insert_with(OverlayEntry::delta);
-        e.methods.insert(name, imp);
+        e.methods.insert(name, imp.clone());
         e.undefs.remove(&name);
         e.removed.remove(&name);
     }
+    // A per-object `extend` COPIES the module's rows into that object's
+    // singleton table, so nothing above reaches them. `extended_names` records
+    // which module supplied each copied name, which is exactly what a
+    // refresh needs -- and an object whose OWN `def` later claimed the name
+    // has already been cleared from that table, so it keeps its own body.
+    refresh_extended_copies(id, name, &imp);
     patch_class(id);
     mark_live();
+}
+
+/// Re-copy `name`'s new body into every per-object singleton table that took
+/// it from module `id`. A no-op for a class (nothing extends one per-object)
+/// and for a module nothing has extended.
+fn refresh_extended_copies(id: ClassId, name: Symbol, imp: &crate::dispatch::MethodImpl) {
+    let keys: Vec<usize> = {
+        let r = maps().extended_names.read().unwrap();
+        r.iter()
+            .filter(|(_, t)| t.get(&name) == Some(&id))
+            .map(|(&k, _)| k)
+            .collect()
+    };
+    if keys.is_empty() {
+        return;
+    }
+    let mut w = maps().singletons.write().unwrap();
+    for key in keys {
+        if let Some(table) = w.get_mut(&key) {
+            table.insert(name, imp.clone());
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq)]
