@@ -8,6 +8,7 @@ zeo_rt_array_len ([Ptr]) -> Some(Usize)
 zeo_rt_array_new ([Usize, Ptr]) -> None
 zeo_rt_array_push ([Ptr, Ptr]) -> None
 zeo_rt_array_push_splat ([Ptr, Ptr]) -> Some(I32)
+zeo_rt_bare_super_outside_a_method ([]) -> Some(I32)
 zeo_rt_bind_block_params ([Ptr, U8, Ptr, Usize, Ptr, Ptr]) -> Some(I32)
 zeo_rt_bind_params ([Ptr, Ptr, Usize, Ptr, Ptr]) -> Some(I32)
 zeo_rt_binding_new ([Ptr, Ptr, Ptr, Usize, Ptr, Usize, U32, U32, U32, Ptr]) -> None
@@ -197,6 +198,7 @@ zeo_rt_str_append_value ([Ptr, Ptr]) -> Some(I32)
 zeo_rt_str_lit ([Ptr, Ptr, U8, Ptr]) -> None
 zeo_rt_str_new ([Ptr, Usize, U8, Ptr]) -> None
 zeo_rt_super_defined ([Ptr, U32, U32]) -> Some(I8)
+zeo_rt_super_defined_dynamic ([Ptr]) -> Some(I8)
 zeo_rt_svar_scope_pop ([]) -> None
 zeo_rt_svar_scope_push ([]) -> None
 zeo_rt_sym_intern ([Ptr, Usize]) -> Some(U32)

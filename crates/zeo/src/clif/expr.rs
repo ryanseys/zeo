@@ -3210,6 +3210,21 @@ fn lower_defined(fx: &mut Fx, site: NodeId, inner: NodeId) -> Result<Operand, St
             .expect("eval_super_defined answers");
         return Ok(defined_cond(fx, hit, "super"));
     }
+    // A scope with no method NAME of its own is either outside any method --
+    // the top level, a class body, where ruby answers nil -- or a block that
+    // BECOMES one at run time (`K.define_method(:m) { }`, and the same call
+    // through `send`, which the compiler cannot recognize as a definition at
+    // all). Only the run time can tell those apart, and it does: the same
+    // method-frame stack `send_super_dynamic` resumes from, empty outside a
+    // method. Answering the static "method" for both reported a super target
+    // where there was none.
+    if matches!(&fx.an.compiler.hir[inner], HirNode::SuperCall { .. }) && fx.method_name.is_none() {
+        let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
+        let hit = fx
+            .call("zeo_rt_super_defined_dynamic", &[self_ptr])
+            .expect("super_defined_dynamic answers");
+        return Ok(defined_cond(fx, hit, "super"));
+    }
     // Inside a RUN-TIME eval a bare name that IS one of the caller's
     // locals could only arrive as a vcall -- prism parsed the source
     // alone. `defined?` has to call it what ruby calls it, or a name the

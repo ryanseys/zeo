@@ -68,6 +68,11 @@ pub const CAPI: &[CapiSig] = &[
         ret: Some(I32),
     },
     CapiSig {
+        name: "zeo_rt_bare_super_outside_a_method",
+        params: &[],
+        ret: Some(I32),
+    },
+    CapiSig {
         name: "zeo_rt_bind_block_params",
         params: &[Ptr, U8, Ptr, Usize, Ptr, Ptr],
         ret: Some(I32),
@@ -1012,6 +1017,11 @@ pub const CAPI: &[CapiSig] = &[
     CapiSig {
         name: "zeo_rt_super_defined",
         params: &[Ptr, U32, U32],
+        ret: Some(I8),
+    },
+    CapiSig {
+        name: "zeo_rt_super_defined_dynamic",
+        params: &[Ptr],
         ret: Some(I8),
     },
     CapiSig {

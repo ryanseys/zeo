@@ -703,6 +703,23 @@ pub unsafe extern "C" fn zeo_rt_super_defined(
     ))
 }
 
+/// A BARE `super` in a scope with no compile-time method -- the raise, chosen
+/// by whether this body became a method at run time. Always fails.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_bare_super_outside_a_method() -> i32 {
+    crate::signal::set_pending(crate::runtime_meta::bare_super_outside_a_method());
+    zeo_abi::abi::STATUS_SIGNAL
+}
+
+/// `defined?(super)` for a body whose owner only the RUN TIME knows -- a
+/// `define_method` block, whose home is the method frame it entered under.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_super_defined_dynamic(recv: *const RubyValue) -> i8 {
+    i8::from(crate::runtime_meta::super_defined_dynamic(unsafe {
+        &*recv
+    }))
+}
+
 /// `defined?(@iv)`: set on self RIGHT NOW -- behind CRuby's Ractor guard
 /// (which can raise, hence the status).
 #[unsafe(no_mangle)]

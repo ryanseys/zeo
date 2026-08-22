@@ -162,6 +162,40 @@ pub(super) fn pop_method_frame() {
 /// Raises `RuntimeError` when there is no active runtime frame (a `super`
 /// written outside any method), matching CRuby's runtime error rather than a
 /// compile-time rejection.
+/// The raise for a BARE `super` in a scope with no compile-time method of its
+/// own. A block that BECAME a method at run time (`define_method`, and the
+/// same call through `send`) gets ruby's own refusal -- a zsuper forwards the
+/// method's parameters and a block-shaped body has none to forward. Anywhere
+/// else there is no method at all.
+pub fn bare_super_outside_a_method() -> Signal {
+    let in_method = METHOD_FRAMES.with(|f| !f.borrow().is_empty())
+        || crate::eval::home_super_target().is_some();
+    if in_method {
+        runtime_error!(
+            "implicit argument passing of super from method defined by \
+             define_method() is not supported. Specify all arguments explicitly."
+        )
+    } else {
+        crate::dispatch::raise_error(
+            "NoMethodError",
+            "super called outside of method".to_string(),
+        )
+    }
+}
+
+/// [`send_super_dynamic`]'s `defined?(super)` twin: whether a target exists,
+/// asked without calling. A body with no method frame and no eval home is not
+/// in a method at all, which is ruby's `nil`.
+pub fn super_defined_dynamic(recv: &RubyValue) -> bool {
+    let seat = METHOD_FRAMES
+        .with(|f| f.borrow().last().copied())
+        .or_else(crate::eval::home_super_target);
+    match seat {
+        Some((defining, name)) => crate::dispatch::super_defined(recv, defining, name),
+        None => false,
+    }
+}
+
 pub fn send_super_dynamic(
     recv: &RubyValue,
     args: &[RubyValue],
@@ -174,7 +208,13 @@ pub fn send_super_dynamic(
         // call (`zeo_rt::eval::EvalHome`).
         None => match crate::eval::home_super_target() {
             Some((defining, name)) => send_super_from(recv, defining, name, args, block),
-            None => Err(runtime_error!("super called outside of method")),
+            // Ruby's own class for it (`vm_insnhelper.c` raises through
+            // `rb_vm_call_super` with no cref), and the same one the
+            // emitter's static twin uses when it can see there is no method.
+            None => Err(crate::dispatch::raise_error(
+                "NoMethodError",
+                "super called outside of method".to_string(),
+            )),
         },
     }
 }

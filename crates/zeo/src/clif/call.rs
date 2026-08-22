@@ -919,7 +919,21 @@ pub(crate) fn lower_super(
                 tag: TagInfo::Unknown,
             });
         }
-        None => return super_outside_a_method(fx),
+        // A block with no method of its own may still BECOME one at run
+        // time (`K.define_method(:m) { }`, and the same call through `send`,
+        // which the compiler cannot recognize as a definition at all). An
+        // explicit-argument `super` there travels the dynamic walk below,
+        // which raises for itself when there is no method frame; a BARE one
+        // cannot, and the run time picks which of the two refusals ruby
+        // gives.
+        None if zsuper => {
+            let status = fx
+                .call("zeo_rt_bare_super_outside_a_method", &[])
+                .expect("bare_super_outside_a_method returns a status");
+            fx.fallible(status);
+            return Ok(Operand::Nil);
+        }
+        None => crate::hir::Params::default(),
     };
 
     // The argument Array (rustc's `__super_args` Vec) + kw hash + unmark.
@@ -992,7 +1006,7 @@ pub(crate) fn lower_super(
     // A RUNTIME-installed body's defining class is minted at run time, so
     // the walk resumes from the (class, name) pair the method-frame stack
     // recorded when the body was entered -- rustc's `send_super_dynamic`.
-    if fx.runtime_method_body {
+    if fx.runtime_method_body || fx.method_name.is_none() {
         let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
         let ss = fx.temp_slot();
         let out = fx.slot_addr(ss, 0);
