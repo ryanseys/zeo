@@ -1,0 +1,35 @@
+SCOPE 1,0-1,28
+  [:x]
+  nil
+  LASGN 1,0-1,28
+    :x
+    BEGIN 1,4-1,28
+      RESCUE 1,9-1,24
+        BLOCK 1,9-1,12
+          BEGIN 1,9-1,9
+            nil
+          INTEGER 1,11-1,12
+            1
+        RESBODY 1,14-1,24
+          nil
+          nil
+          INTEGER 1,22-1,23
+            2
+          nil
+        nil
+SCOPE 1,0-1,30
+  []
+  nil
+  CASE 1,0-1,30
+    VCALL 1,5-1,6
+      :x
+    WHEN 1,8-1,26
+      ARGSPUSH 1,13-1,18
+        SPLAT 1,13-1,15
+          VCALL 1,14-1,15
+            :y
+        INTEGER 1,17-1,18
+          3
+      INTEGER 1,24-1,25
+        1
+      nil

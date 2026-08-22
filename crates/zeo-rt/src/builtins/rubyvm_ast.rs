@@ -460,6 +460,244 @@ mod translate {
         }
     }
 
+    /// The byte range a translated node covers -- what a parent whose span
+    /// runs to the END of its chain reads back off its tail.
+    fn range_of(v: &RubyValue) -> Option<(usize, usize)> {
+        let RubyValue::Object(o) = v else {
+            return None;
+        };
+        o.as_any().downcast_ref::<RAstNode>().map(|n| n.byte_range)
+    }
+
+    /// A node's span extended to cover `tail` -- CRuby's `WHEN`/`RESBODY`
+    /// chains each run to the end of everything after them.
+    fn through(start: usize, own_end: usize, tail: &RubyValue) -> (usize, usize) {
+        (
+            start,
+            range_of(tail).map_or(own_end, |(_, e)| e.max(own_end)),
+        )
+    }
+
+    /// An `else` clause's body, or nil.
+    fn else_body(
+        clause: Option<&ruby_prism::ElseNode<'_>>,
+        cx: &mut Cx,
+        in_block: bool,
+    ) -> RubyValue {
+        match clause {
+            Some(c) => opt_statements(c.statements(), cx, in_block),
+            None => RubyValue::Nil,
+        }
+    }
+
+    /// An EMPTY body, which CRuby renders as a `BEGIN` node holding one nil
+    /// rather than as nothing.
+    fn empty_begin(cx: &mut Cx, at: usize) -> RubyValue {
+        node(cx, "BEGIN", at, at, vec![RubyValue::Nil])
+    }
+
+    /// The `when` arms from `idx` on, ending in `tail` (the `else` body, or
+    /// nil).
+    fn when_chain(arms: &[P<'_>], idx: usize, tail: RubyValue, cx: &mut Cx, b: bool) -> RubyValue {
+        let Some(w) = arms.get(idx).and_then(P::as_when_node) else {
+            return tail;
+        };
+        let loc = w.location();
+        let conds: Vec<P<'_>> = w.conditions().iter().collect();
+        // A lone splat stands alone; every other shape is a LIST.
+        let head = if conds.len() == 1 && conds[0].as_splat_node().is_some() {
+            translate(&conds[0], cx, b)
+        } else {
+            let lo = conds
+                .first()
+                .map_or(loc.start_offset(), |c| c.location().start_offset());
+            let hi = conds
+                .last()
+                .map_or(loc.end_offset(), |c| c.location().end_offset());
+            let elems: Vec<RubyValue> = conds.iter().map(|c| translate(c, cx, b)).collect();
+            list_node(cx, lo, hi, elems)
+        };
+        let body = opt_statements(w.statements(), cx, b);
+        let next = when_chain(arms, idx + 1, tail, cx, b);
+        let (ws, we) = through(loc.start_offset(), loc.end_offset(), &next);
+        node(cx, "WHEN", ws, we, vec![head, body, next])
+    }
+
+    /// [`when_chain`] for `case/in`'s arms.
+    fn in_chain(arms: &[P<'_>], idx: usize, tail: RubyValue, cx: &mut Cx, b: bool) -> RubyValue {
+        let Some(arm) = arms.get(idx).and_then(P::as_in_node) else {
+            return tail;
+        };
+        let loc = arm.location();
+        let pattern = translate(&arm.pattern(), cx, b);
+        let body = opt_statements(arm.statements(), cx, b);
+        let next = in_chain(arms, idx + 1, tail, cx, b);
+        let (is, ie) = through(loc.start_offset(), loc.end_offset(), &next);
+        node(cx, "IN", is, ie, vec![pattern, body, next])
+    }
+
+    /// A `begin` block: the body, wrapped in RESCUE when it has rescue
+    /// clauses and in ENSURE when it has an ensure -- in that order, so
+    /// `begin/rescue/ensure` is `ENSURE(RESCUE(..), ..)`.
+    fn begin_body(
+        x: &ruby_prism::BeginNode<'_>,
+        cx: &mut Cx,
+        b: bool,
+        s: usize,
+        _e: usize,
+    ) -> RubyValue {
+        // An empty body sits at the END of the keyword that opened it, and is
+        // a `BEGIN` holding one nil rather than nothing.
+        let body_at = x.begin_keyword_loc().map_or(s, |k| k.end_offset());
+        let mut inner = match x.statements() {
+            Some(stmts) if stmts.body().iter().next().is_some() => statements_body(&stmts, cx, b),
+            _ => empty_begin(cx, body_at),
+        };
+        // A RESCUE/ENSURE spans from the BODY it wraps, never from `begin`.
+        let start = range_of(&inner).map_or(s, |(st, _)| st);
+        if let Some(r) = x.rescue_clause() {
+            let els = else_body(x.else_clause().as_ref(), cx, b);
+            let chain = resbody_chain(Some(r), cx, b);
+            let end = range_of(&els)
+                .or_else(|| range_of(&chain))
+                .map_or(start, |(_, en)| en);
+            inner = node(cx, "RESCUE", start, end, vec![inner, chain, els]);
+        }
+        if let Some(en) = x.ensure_clause() {
+            let at = en.ensure_keyword_loc().end_offset();
+            let body = match en.statements() {
+                Some(stmts) if stmts.body().iter().next().is_some() => {
+                    statements_body(&stmts, cx, b)
+                }
+                _ => empty_begin(cx, at),
+            };
+            let end = range_of(&body).map_or(start, |(_, en2)| en2);
+            inner = node(cx, "ENSURE", start, end, vec![inner, body]);
+        }
+        inner
+    }
+
+    /// One `rescue` clause and everything after it: `[classes, binding, body,
+    /// next]`, where the binding is the assignment `=> e` desugars to.
+    fn resbody_chain(
+        clause: Option<ruby_prism::RescueNode<'_>>,
+        cx: &mut Cx,
+        b: bool,
+    ) -> RubyValue {
+        let Some(r) = clause else {
+            return RubyValue::Nil;
+        };
+        let loc = r.location();
+        let excs: Vec<P<'_>> = r.exceptions().iter().collect();
+        let classes = if excs.is_empty() {
+            RubyValue::Nil
+        } else {
+            let lo = excs[0].location().start_offset();
+            let hi = excs[excs.len() - 1].location().end_offset();
+            let elems: Vec<RubyValue> = excs.iter().map(|c| translate(c, cx, b)).collect();
+            list_node(cx, lo, hi, elems)
+        };
+        let binding = match r.reference() {
+            Some(t) => error_binding(&t, r.operator_loc().map(|o| o.start_offset()), cx),
+            None => RubyValue::Nil,
+        };
+        let body = match r.statements() {
+            Some(stmts) if stmts.body().iter().next().is_some() => statements_body(&stmts, cx, b),
+            _ => empty_begin(cx, loc.end_offset()),
+        };
+        let next = resbody_chain(r.subsequent(), cx, b);
+        let (rs, re) = through(loc.start_offset(), loc.end_offset(), &next);
+        node(cx, "RESBODY", rs, re, vec![classes, binding, body, next])
+    }
+
+    fn opt_translate(n: Option<&P<'_>>, cx: &mut Cx, b: bool) -> RubyValue {
+        match n {
+            Some(v) => translate(v, cx, b),
+            None => RubyValue::Nil,
+        }
+    }
+
+    /// A pattern's element LIST, or nil when there are none.
+    fn pattern_list(elems: &[P<'_>], cx: &mut Cx, b: bool) -> RubyValue {
+        if elems.is_empty() {
+            return RubyValue::Nil;
+        }
+        let lo = elems[0].location().start_offset();
+        let hi = elems[elems.len() - 1].location().end_offset();
+        let kids: Vec<RubyValue> = elems.iter().map(|n| translate(n, cx, b)).collect();
+        list_node(cx, lo, hi, kids)
+    }
+
+    /// A pattern's `*rest`: the binding it names, or the marker symbol for a
+    /// nameless one.
+    fn splat_target(rest: Option<&P<'_>>, cx: &mut Cx) -> RubyValue {
+        let Some(r) = rest else {
+            return RubyValue::Nil;
+        };
+        let Some(sp) = r.as_splat_node() else {
+            return RubyValue::Nil;
+        };
+        // The binding spans the `*` too.
+        let from = Some(r.location().start_offset());
+        match sp.expression() {
+            Some(t) => asgn_node(&t, from, RubyValue::Nil, cx),
+            None => RubyValue::Symbol(crate::Symbol::intern("NODE_SPECIAL_NO_NAME_REST")),
+        }
+    }
+
+    /// [`splat_target`] over an already-unwrapped splat expression.
+    fn splat_target_of(expr: Option<P<'_>>, cx: &mut Cx) -> RubyValue {
+        match expr {
+            Some(t) => asgn_node(&t, None, RubyValue::Nil, cx),
+            None => RubyValue::Symbol(crate::Symbol::intern("NODE_SPECIAL_NO_NAME_REST")),
+        }
+    }
+
+    /// A pattern node's span: the extent of the parts it actually has,
+    /// falling back to the whole construct when it has none (`in []`).
+    fn pattern_span(loc: ruby_prism::Location<'_>, parts: &[&RubyValue]) -> (usize, usize) {
+        let ranges: Vec<(usize, usize)> = parts.iter().filter_map(|p| range_of(p)).collect();
+        match (
+            ranges.iter().map(|r| r.0).min(),
+            ranges.iter().map(|r| r.1).max(),
+        ) {
+            (Some(lo), Some(hi)) => (lo, hi),
+            _ => (loc.start_offset(), loc.end_offset()),
+        }
+    }
+
+    /// `rescue => e` is an ASSIGNMENT of `ERRINFO` in CRuby's tree, named
+    /// after the target's kind.
+    fn error_binding(target: &P<'_>, from: Option<usize>, cx: &mut Cx) -> RubyValue {
+        let loc = target.location();
+        let (s, e) = (from.unwrap_or(loc.start_offset()), loc.end_offset());
+        let errinfo = node(cx, "ERRINFO", s, e, vec![]);
+        asgn_node(target, from, errinfo, cx)
+    }
+
+    /// An assignment node named after the target's kind, holding `value` --
+    /// `ERRINFO` for a `rescue => e`, nil for a pattern binding, which is how
+    /// CRuby renders both.
+    fn asgn_node(target: &P<'_>, from: Option<usize>, value: RubyValue, cx: &mut Cx) -> RubyValue {
+        let loc = target.location();
+        // A `rescue`'s assignment spans `=> e`, operator included.
+        let (s, e) = (from.unwrap_or(loc.start_offset()), loc.end_offset());
+        let (kind, name) = if let Some(t) = target.as_local_variable_target_node() {
+            ("LASGN", t.name())
+        } else if let Some(t) = target.as_instance_variable_target_node() {
+            ("IASGN", t.name())
+        } else if let Some(t) = target.as_global_variable_target_node() {
+            ("GASGN", t.name())
+        } else if let Some(t) = target.as_class_variable_target_node() {
+            ("CVASGN", t.name())
+        } else if let Some(t) = target.as_constant_target_node() {
+            ("CDECL", t.name())
+        } else {
+            return RubyValue::Nil;
+        };
+        node(cx, kind, s, e, vec![sym_val(name.as_slice()), value])
+    }
+
     /// `LIST` -- CRuby's cons-shaped array node: elements then a trailing nil.
     fn list_node(cx: &mut Cx, start: usize, end: usize, mut elems: Vec<RubyValue>) -> RubyValue {
         elems.push(RubyValue::Nil);
@@ -691,10 +929,19 @@ mod translate {
                     let l = p.location();
                     (l.start_offset(), l.end_offset())
                 })
-                .unwrap_or((s, s));
+                .unwrap_or_else(|| {
+                    // No parameter list: CRuby puts the empty ARGS right after
+                    // the method NAME.
+                    let n = x.name_loc().end_offset();
+                    (n, n)
+                });
             let args = args_node(params, ps, pe, cx, false);
-            let body = match x.body().and_then(|b| b.as_statements_node()) {
-                Some(stmts) => statements_body(&stmts, cx, false),
+            // A `def` with its own `rescue`/`ensure` has a `begin` for a body.
+            let body = match x.body() {
+                Some(b) => match b.as_statements_node() {
+                    Some(stmts) => statements_body(&stmts, cx, false),
+                    None => translate(&b, cx, false),
+                },
                 None => RubyValue::Nil,
             };
             let scope = node(
@@ -705,6 +952,165 @@ mod translate {
                 vec![RubyValue::Array(crate::array_new(locals)), args, body],
             );
             return node(cx, "DEFN", s, e, vec![sym_val(x.name().as_slice()), scope]);
+        }
+        // `case/when` -- CASE with a subject, CASE2 without. The whens are a
+        // CHAIN: each WHEN's third child is the NEXT one, and the last one's
+        // is the `else` body, which is how parse.y conses them up.
+        // The `case/in` PATTERN family. Each is a fixed-shape node CRuby
+        // builds in parse.y, and the shapes are not guessable: an absent
+        // part is `nil`, a NAMELESS `*` is the symbol
+        // `:NODE_SPECIAL_NO_NAME_REST`, and `**nil` is
+        // `:NODE_SPECIAL_NO_REST_KEYWORD`.
+        if let Some(x) = n.as_array_pattern_node() {
+            let konst = opt_translate(x.constant().as_ref(), cx, in_block);
+            let pre: Vec<P<'_>> = x.requireds().iter().collect();
+            let post: Vec<P<'_>> = x.posts().iter().collect();
+            let pre_list = pattern_list(&pre, cx, in_block);
+            let rest = splat_target(x.rest().as_ref(), cx);
+            let post_list = pattern_list(&post, cx, in_block);
+            let (ps, pe) = pattern_span(x.location(), &[&konst, &pre_list, &rest, &post_list]);
+            return node(cx, "ARYPTN", ps, pe, vec![konst, pre_list, rest, post_list]);
+        }
+        if let Some(x) = n.as_find_pattern_node() {
+            let konst = opt_translate(x.constant().as_ref(), cx, in_block);
+            let mid: Vec<P<'_>> = x.requireds().iter().collect();
+            let left = splat_target_of(x.left().expression(), cx);
+            let mid_list = pattern_list(&mid, cx, in_block);
+            let right = splat_target(Some(&x.right()), cx);
+            let (ps, pe) = pattern_span(x.location(), &[&konst, &left, &mid_list, &right]);
+            return node(cx, "FNDPTN", ps, pe, vec![konst, left, mid_list, right]);
+        }
+        if let Some(x) = n.as_hash_pattern_node() {
+            let konst = opt_translate(x.constant().as_ref(), cx, in_block);
+            let pairs: Vec<P<'_>> = x.elements().iter().collect();
+            let hash = if pairs.is_empty() {
+                RubyValue::Nil
+            } else {
+                let mut kids = Vec::with_capacity(pairs.len() * 2);
+                for a in &pairs {
+                    let Some(a) = a.as_assoc_node() else { continue };
+                    kids.push(translate(&a.key(), cx, in_block));
+                    let v = a.value();
+                    kids.push(match v.as_implicit_node() {
+                        // `{a:}` -- the value is the binding the key implies,
+                        // and it spans the KEY, colon included.
+                        Some(i) => {
+                            let inner = i.value();
+                            match inner.as_local_variable_target_node() {
+                                Some(t) => {
+                                    let l = a.location();
+                                    let errinfo = RubyValue::Nil;
+                                    node(
+                                        cx,
+                                        "LASGN",
+                                        l.start_offset(),
+                                        l.end_offset(),
+                                        vec![sym_val(t.name().as_slice()), errinfo],
+                                    )
+                                }
+                                None => translate(&inner, cx, in_block),
+                            }
+                        }
+                        None => translate(&v, cx, in_block),
+                    });
+                }
+                let lo = pairs[0].location().start_offset();
+                let hi = pairs[pairs.len() - 1].location().end_offset();
+                let list = list_node(cx, lo, hi, kids);
+                node(cx, "HASH", lo, hi, vec![list])
+            };
+            let rest = match x.rest() {
+                // `**nil` -- "and no other keys", which is a marker, not a
+                // binding.
+                Some(r) if r.as_no_keywords_parameter_node().is_some() => {
+                    RubyValue::Symbol(crate::Symbol::intern("NODE_SPECIAL_NO_REST_KEYWORD"))
+                }
+                Some(r) => match r.as_assoc_splat_node().and_then(|a| a.value()) {
+                    Some(t) => asgn_node(&t, None, RubyValue::Nil, cx),
+                    None => RubyValue::Nil,
+                },
+                None => RubyValue::Nil,
+            };
+            let (ps, pe) = pattern_span(x.location(), &[&konst, &hash, &rest]);
+            return node(cx, "HSHPTN", ps, pe, vec![konst, hash, rest]);
+        }
+        if let Some(x) = n.as_alternation_pattern_node() {
+            let l = translate(&x.left(), cx, in_block);
+            let r = translate(&x.right(), cx, in_block);
+            return node(cx, "OR", s, e, vec![l, r]);
+        }
+        // `Integer => n` -- CRuby renders a capture as a two-element HASH of
+        // the pattern and the binding it feeds.
+        if let Some(x) = n.as_capture_pattern_node() {
+            let pat = translate(&x.value(), cx, in_block);
+            let target = x.target().as_node();
+            let bind = asgn_node(&target, None, RubyValue::Nil, cx);
+            let list = list_node(cx, s, e, vec![pat, bind]);
+            return node(cx, "HASH", s, e, vec![list]);
+        }
+        if let Some(x) = n.as_pinned_variable_node() {
+            return translate(&x.variable(), cx, in_block);
+        }
+        // A bare name in a pattern BINDS; every other target kind does too.
+        if n.as_local_variable_target_node().is_some()
+            || n.as_instance_variable_target_node().is_some()
+            || n.as_global_variable_target_node().is_some()
+            || n.as_class_variable_target_node().is_some()
+        {
+            return asgn_node(n, None, RubyValue::Nil, cx);
+        }
+        // `*x` outside an argument list -- a `when *y`, a splatted assignment
+        // right-hand side. One child: the expression.
+        if let Some(x) = n.as_splat_node() {
+            let inner = match x.expression() {
+                Some(v) => translate(&v, cx, in_block),
+                None => RubyValue::Nil,
+            };
+            return node(cx, "SPLAT", s, e, vec![inner]);
+        }
+        if let Some(x) = n.as_case_node() {
+            let subject = match x.predicate() {
+                Some(p) => translate(&p, cx, in_block),
+                None => RubyValue::Nil,
+            };
+            let kind = if x.predicate().is_some() {
+                "CASE"
+            } else {
+                "CASE2"
+            };
+            let els = else_body(x.else_clause().as_ref(), cx, in_block);
+            let arms: Vec<P<'_>> = x.conditions().iter().collect();
+            let chain = when_chain(&arms, 0, els, cx, in_block);
+            return node(cx, kind, s, e, vec![subject, chain]);
+        }
+        // `case/in` is a different node kind all the way down: CASE3 over IN
+        // arms, chained the same way.
+        if let Some(x) = n.as_case_match_node() {
+            let subject = match x.predicate() {
+                Some(p) => translate(&p, cx, in_block),
+                None => RubyValue::Nil,
+            };
+            let els = else_body(x.else_clause().as_ref(), cx, in_block);
+            let arms: Vec<P<'_>> = x.conditions().iter().collect();
+            let chain = in_chain(&arms, 0, els, cx, in_block);
+            return node(cx, "CASE3", s, e, vec![subject, chain]);
+        }
+        if let Some(x) = n.as_begin_node() {
+            return begin_body(&x, cx, in_block, s, e);
+        }
+        // `a rescue b` -- the modifier form is a RESCUE whose single RESBODY
+        // names no exception class and binds nothing.
+        if let Some(x) = n.as_rescue_modifier_node() {
+            let body = translate(&x.expression(), cx, in_block);
+            let handler = translate(&x.rescue_expression(), cx, in_block);
+            let resbody = node(
+                cx,
+                "RESBODY",
+                x.keyword_loc().start_offset(),
+                e,
+                vec![RubyValue::Nil, RubyValue::Nil, handler, RubyValue::Nil],
+            );
+            return node(cx, "RESCUE", s, e, vec![body, resbody, RubyValue::Nil]);
         }
         if let Some(x) = n.as_if_node() {
             let cond = translate(&x.predicate(), cx, in_block);
