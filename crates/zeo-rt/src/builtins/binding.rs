@@ -38,6 +38,16 @@ use crate::value::RubyValue;
 /// and writes (see `codegen::hoisting::LocalStorage::Captured`).
 pub type LocalCell = Arc<Mutex<RubyValue>>;
 
+/// The one constructor for a captured local. A cell is the only storage a
+/// cycle can run through that is not an object graph -- `x = nil; f = -> { x
+/// }; x = f` closes through one -- so the allocation registry records it
+/// like any other node.
+pub fn new_cell(v: RubyValue) -> LocalCell {
+    let c: LocalCell = Arc::new(Mutex::new(v));
+    crate::gc::record_cell(&c);
+    c
+}
+
 /// The variable environment behind a `Binding` -- see the module docs for
 /// the two-tier split.
 pub struct BindingScope {
@@ -96,7 +106,7 @@ impl BindingScope {
         if let Some(c) = self.cell(name) {
             return c;
         }
-        let cell: LocalCell = Arc::new(Mutex::new(RubyValue::Nil));
+        let cell: LocalCell = new_cell(RubyValue::Nil);
         self.added
             .lock()
             .insert(0, (name.to_string(), Arc::clone(&cell)));

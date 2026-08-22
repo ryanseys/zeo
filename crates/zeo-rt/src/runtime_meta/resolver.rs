@@ -478,7 +478,7 @@ pub fn runtime_allocate(id: ClassId) -> Option<RubyValue> {
         // its own id.
         match crate::dispatch::ancestor_allocator_of(id) {
             Some(alloc) => RubyValue::Object(alloc(id)),
-            None => RubyValue::Object(Arc::new(DynObject::new(id))),
+            None => RubyValue::Object(super::dyn_object::dyn_alloc(id)),
         }
     })
 }

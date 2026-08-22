@@ -155,6 +155,21 @@ impl RProc {
         Arc::as_ptr(&self.0) as *const () as usize
     }
 
+    /// The one place a `Proc` value is built. Every constructor below funnels
+    /// through it, so the allocation registry sees each proc exactly once.
+    fn of(data: ProcData) -> RProc {
+        let p = RProc(Arc::new(data));
+        crate::gc::record_proc(&p);
+        p
+    }
+
+    /// A weak handle on the shared payload, for the allocation registry.
+    /// Two handles to the same proc downgrade to the same node, which is
+    /// what keeps `Proc#dup` from registering a second candidate.
+    pub(crate) fn downgrade(&self) -> std::sync::Weak<ProcData> {
+        Arc::downgrade(&self.0)
+    }
+
     /// A runtime-internal proc: var-args arity (`-1`), not a lambda. Its
     /// body has no Ruby `self` to speak of (Enumerator shuttles,
     /// `Symbol#to_proc`, ...), so it ignores the receiver and reports nil as
@@ -162,7 +177,7 @@ impl RProc {
     pub fn new(
         f: impl Fn(&[RubyValue]) -> Result<RubyValue, Signal> + Send + Sync + 'static,
     ) -> RProc {
-        RProc(Arc::new(ProcData {
+        RProc::of(ProcData {
             class_id: zeo_abi::PROC_CLASS,
             f: Arc::new(move |_self, args, _block| f(args)),
             self_val: RubyValue::Nil,
@@ -175,7 +190,7 @@ impl RProc {
             origin: None,
             outer_capture: None,
             frozen: std::sync::atomic::AtomicBool::new(false),
-        }))
+        })
     }
 
     /// A proc built from Ruby source, whose `Params` codegen knows, and
@@ -186,7 +201,7 @@ impl RProc {
         arity: i32,
         is_lambda: bool,
     ) -> RProc {
-        RProc(Arc::new(ProcData {
+        RProc::of(ProcData {
             class_id: zeo_abi::PROC_CLASS,
             f: Arc::new(move |_self, args, _block| f(args)),
             self_val: RubyValue::Nil,
@@ -199,7 +214,7 @@ impl RProc {
             origin: None,
             outer_capture: None,
             frozen: std::sync::atomic::AtomicBool::new(false),
-        }))
+        })
     }
 
     /// A proc built from Ruby source whose body DOES use `self` -- codegen
@@ -232,7 +247,7 @@ impl RProc {
         arity: i32,
         is_lambda: bool,
     ) -> RProc {
-        RProc(Arc::new(ProcData {
+        RProc::of(ProcData {
             class_id: zeo_abi::PROC_CLASS,
             f: Arc::new(f),
             self_val,
@@ -245,7 +260,7 @@ impl RProc {
             origin: None,
             outer_capture: None,
             frozen: std::sync::atomic::AtomicBool::new(false),
-        }))
+        })
     }
 
     /// A proc whose body is a Cranelift-compiled [`crate::capi::BlockFn`]:
@@ -263,7 +278,7 @@ impl RProc {
         arity: i32,
         is_lambda: bool,
     ) -> RProc {
-        RProc(Arc::new(ProcData {
+        RProc::of(ProcData {
             class_id: zeo_abi::PROC_CLASS,
             f: Arc::new(move |recv, args, block| {
                 crate::capi::procs::call_block_fn(f, &env, recv, args, block)
@@ -278,7 +293,7 @@ impl RProc {
             origin: None,
             outer_capture: None,
             frozen: std::sync::atomic::AtomicBool::new(false),
-        }))
+        })
     }
 
     /// Attach the static `Proc#parameters` metadata codegen computed from the
@@ -518,7 +533,7 @@ impl RProc {
         if self.0.is_lambda {
             return self.clone();
         }
-        RProc(Arc::new(ProcData {
+        RProc::of(ProcData {
             class_id: zeo_abi::PROC_CLASS,
             f: Arc::clone(&self.0.f),
             self_val: self.0.self_val.clone(),
@@ -531,7 +546,7 @@ impl RProc {
             origin: self.0.origin,
             outer_capture: self.0.outer_capture,
             frozen: std::sync::atomic::AtomicBool::new(false),
-        }))
+        })
     }
 
     /// The class this proc is an instance of -- `Proc` unless a
@@ -548,7 +563,7 @@ impl RProc {
         if self.0.class_id == class_id {
             return self.clone();
         }
-        RProc(Arc::new(ProcData {
+        RProc::of(ProcData {
             class_id,
             f: Arc::clone(&self.0.f),
             self_val: self.0.self_val.clone(),
@@ -561,11 +576,11 @@ impl RProc {
             origin: self.0.origin,
             outer_capture: self.0.outer_capture,
             frozen: std::sync::atomic::AtomicBool::new(false),
-        }))
+        })
     }
 
     pub fn dup_data(&self, frozen: bool) -> RProc {
-        RProc(Arc::new(ProcData {
+        RProc::of(ProcData {
             class_id: zeo_abi::PROC_CLASS,
             f: Arc::clone(&self.0.f),
             self_val: self.0.self_val.clone(),
@@ -578,7 +593,7 @@ impl RProc {
             origin: self.0.origin,
             outer_capture: self.0.outer_capture,
             frozen: std::sync::atomic::AtomicBool::new(frozen),
-        }))
+        })
     }
 }
 

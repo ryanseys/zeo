@@ -31,7 +31,7 @@ pub(crate) fn dyn_object_construct(
     args: &[RubyValue],
     block: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    let obj: RObj = Arc::new(DynObject::new(id));
+    let obj: RObj = dyn_alloc(id);
     let init = Symbol::intern("initialize");
     if walk_runtime_class(id, init).is_some() {
         crate::dispatch::send_in(0, &obj, init, args, block)?;
@@ -48,7 +48,7 @@ pub(crate) fn dyn_object_construct(
 /// answers (the root class is instantiable in real Ruby, and its instance is
 /// exactly the blank object `Object.new` builds, under its own id).
 pub(crate) fn blank_instance(id: ClassId) -> RubyValue {
-    RubyValue::Object(Arc::new(DynObject::new(id)))
+    RubyValue::Object(dyn_alloc(id))
 }
 
 /// An instance of a runtime-created class. Like the root `Object`, its ivars
@@ -133,6 +133,14 @@ pub(super) struct DynObject {
     ivars: parking_lot::Mutex<indexmap::IndexMap<String, RubyValue>>,
 }
 
+/// A blank name-keyed instance as an `RObj`. The one place a `DynObject`
+/// becomes a value, so the allocation registry sees each of them once.
+pub(crate) fn dyn_alloc(class_id: ClassId) -> RObj {
+    let o: RObj = Arc::new(DynObject::new(class_id));
+    crate::gc::record_object(&o);
+    o
+}
+
 impl DynObject {
     pub(super) fn new(class_id: ClassId) -> DynObject {
         DynObject {
@@ -203,6 +211,8 @@ impl RubyObject for DynObject {
         if copy_frozen && self.is_frozen() {
             d.set_frozen();
         }
-        Arc::new(d)
+        let o: RObj = Arc::new(d);
+        crate::gc::record_object(&o);
+        o
     }
 }

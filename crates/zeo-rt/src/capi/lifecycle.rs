@@ -37,6 +37,7 @@ unsafe fn main_inner(
         "zeo_rt_main: corelib registration is not yet emitted (G8)"
     );
     crate::mark_sole_thread();
+    crate::gc::configure_from_env();
     let args: Vec<String> = (0..usize::try_from(argc).unwrap_or(0))
         .map(|i| {
             unsafe { CStr::from_ptr(*argv.add(i)) }

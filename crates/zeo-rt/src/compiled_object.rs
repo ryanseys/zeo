@@ -81,12 +81,14 @@ pub struct CompiledObject {
 impl CompiledObject {
     /// A fresh instance of `id`: every slot `Nil`/unassigned, unfrozen.
     pub fn alloc(id: ClassId, layout: &'static ClassLayout) -> RObj {
-        std::sync::Arc::new(CompiledObject {
+        let o: RObj = std::sync::Arc::new(CompiledObject {
             class_id: AtomicU32::new(id.0),
             frozen: AtomicBool::new(false),
             layout,
             ivars: IvarSlots::with_len(layout.slots()),
-        })
+        });
+        crate::gc::record_object(&o);
+        o
     }
 }
 

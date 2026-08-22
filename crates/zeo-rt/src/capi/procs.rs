@@ -139,7 +139,7 @@ pub unsafe extern "C" fn zeo_rt_cell_new(init: *mut RubyValue) -> *mut Cell {
         super::leakcheck::consumed(unsafe { &*init });
         unsafe { std::ptr::read(init) }
     };
-    Arc::into_raw(Arc::new(parking_lot::Mutex::new(v))).cast_mut()
+    Arc::into_raw(crate::builtins::binding::new_cell(v)).cast_mut()
 }
 
 /// One more owner of the cell.

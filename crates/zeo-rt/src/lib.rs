@@ -45,6 +45,7 @@ pub use libc;
 mod fiber;
 mod flipflop;
 mod frames;
+pub mod gc;
 mod globals;
 pub mod gvl;
 mod handling;
