@@ -274,6 +274,11 @@ pub fn parse_and_lower_with(
     // handful of folds (see `Hir::cvar_is_toplevel`).
     hir.mode = mode;
     hir.builtin_exceptions_len = statements.len();
+    // A snippet is its own compile and would otherwise have never heard of an
+    // FFI type an earlier one -- or the program -- declared.
+    if mode.is_eval() {
+        crate::ffi_vocab::seed(&mut hir);
+    }
     // This is THE boundary where a located `LowerError` becomes a renderable
     // `CompileError`: the error and the `Hir::files` table it points into
     // are both in scope here and nowhere further out.
@@ -294,6 +299,7 @@ pub fn parse_and_lower_with(
         Err(e) => return Err(CompileError::lower(e, &hir.files)),
     };
     statements.extend(main_statements);
+    crate::ffi_vocab::publish(&hir);
     let root = hir.push(HirNode::Program(statements));
     Ok((hir, root, gem_records))
 }
