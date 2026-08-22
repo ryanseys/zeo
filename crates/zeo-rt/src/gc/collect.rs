@@ -11,6 +11,10 @@
 //! live, and so is everything it reaches. Whatever is left over is
 //! unreachable from anywhere, cycles included.
 //!
+//! Reconciliation is what this lowering can support, not the only design that
+//! could work -- see [`super`] for why tracing is a larger project here
+//! rather than an impossible one.
+//!
 //! This is Bacon-Rajan's trial-deletion TEST with the candidate set supplied
 //! by the registry rather than by a decrement hook, which is what makes it
 //! buildable here: decrements are implicit `Arc::drop` from everywhere in

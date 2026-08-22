@@ -7,12 +7,25 @@
 //! # Why a registry at all
 //!
 //! zeo is `Arc`-refcounted, so a cycle's counts never reach zero and the
-//! objects in it are never dropped. A tracing mark-and-sweep cannot fix that
-//! here: it needs every ROOT, and five independent strong-reference holders
-//! are permanently un-enumerable -- Cranelift stack slots (there are no stack
-//! maps), the program's own per-site constant caches, a `Proc` built from a
-//! Rust closure, a suspended fiber's native stack, and the frame release
-//! pools. That is infeasible rather than hard.
+//! objects in it are never dropped. That is a property of reference counting,
+//! not a zeo bug: Rust has no collector, its answer for shared ownership is
+//! `Arc`, and `Arc` leaks cycles by definition.
+//!
+//! A tracing mark-and-sweep needs every ROOT, and under THIS lowering it
+//! cannot have them. Five independent strong-reference holders: values
+//! Cranelift keeps in stack slots, the program's own per-site constant
+//! caches, a `Proc` built from a Rust closure, a suspended fiber's native
+//! stack, and the frame release pools.
+//!
+//! Only two of those five are hard. Cranelift supports user stack maps
+//! (`declare_var_needs_stack_map`, a safepoint at every non-tail call), and
+//! the constant caches and release pools are runtime tables that could
+//! register themselves. What stays out of reach is a Rust closure's captures
+//! -- which no reflection can see, and which is why a `Proc` is the one node
+//! kind here that owns references nothing can enumerate -- and a fiber
+//! suspended on a native stack. So tracing is a much larger project rather
+//! than an impossible one, and its real prize would not be cycles: it would
+//! be retiring the atomic refcount traffic every value copy pays today.
 //!
 //! What IS possible is the other family of algorithms: Bacon-Rajan's trial
 //! deletion, which needs no roots at all. It asks, of a candidate set, "is
