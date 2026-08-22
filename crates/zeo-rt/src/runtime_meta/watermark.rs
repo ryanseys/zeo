@@ -159,8 +159,25 @@ pub fn global_def_hook_owner(id: ClassId, name: Symbol) -> bool {
     }
 }
 
-/// One chain's version of the splice: `mid`'s ancestry inserted at `target`'s
-/// own position in `current`, skipping ancestors this chain already has.
+/// One chain's version of the splice: CRuby's `include_modules_at`, run
+/// against the flat chain `current`.
+///
+/// The insertion point walks: `mid`'s own ancestry is inserted element by
+/// element, keeping ITS relative order, and an element the chain already
+/// carries is not added -- it MOVES the insertion point past itself instead,
+/// so the next new module lands after it. That is what makes
+/// `include A; include M(includes A)` answer `[C, M, A]` while
+/// `include A; include M(prepends A)` answers `[C, A, M]`.
+///
+/// The search scope is what the two verbs disagree about, and it is the whole
+/// of the difference between them. `rb_include_module` passes
+/// `search_super = TRUE`, so an `include` skips a module already ANYWHERE in
+/// the chain -- inherited from a superclass included. `rb_prepend_module`
+/// passes `FALSE`, so a `prepend` looks only at the PREPEND AREA and adds a
+/// module that is merely included below, giving the chain two occurrences of
+/// it. Document order therefore decides: whichever verb runs first finds an
+/// empty area and takes effect.
+///
 /// `None` when the chain doesn't pass through `target` or gains nothing.
 fn splice_into_chain(
     current: &[ClassId],
@@ -170,36 +187,48 @@ fn splice_into_chain(
 ) -> Option<Vec<ClassId>> {
     // Not `current[0]`: after a prepend, self is no longer first.
     let at = current.iter().position(|&a| a == target)?;
-    let present: HashSet<ClassId> = current.iter().copied().collect();
-    let fresh: Vec<ClassId> = fresh_src
-        .iter()
-        .copied()
-        .filter(|m| !present.contains(m))
+    let mut new_anc = current.to_vec();
+    // The target's PREPEND AREA inside this chain. In the target's own chain
+    // that is everything ahead of it; in a SUBCLASS's chain the entries ahead
+    // of the target also hold the subclass and the subclass's own prepends,
+    // which belong to a different origin -- so the area is named by the
+    // target's own chain rather than by position alone.
+    let own = ancestors_of_value(target);
+    let own_prepends: HashSet<ClassId> = own.iter().copied().take_while(|&a| a != target).collect();
+    let mut area: Vec<usize> = (0..at)
+        .filter(|&p| own_prepends.contains(&new_anc[p]))
         .collect();
-    if fresh.is_empty() {
-        return None;
-    }
-    let cut = if placement == Placement::Before {
-        // CRuby's `rb_prepend_module` puts the new module at the FRONT of the
-        // target's origin chain -- ahead of everything ALREADY prepended to
-        // it, not merely ahead of the class itself. `prepend Loud` then
-        // `prepend Also` is `[Also, Loud, Dog]`, so the cut is the first
-        // position `current` shares with the target's existing prepend block.
-        let own = ancestors_of_value(target);
-        let prepended: HashSet<ClassId> =
-            own.iter().copied().take_while(|&a| a != target).collect();
-        current
-            .iter()
-            .position(|a| prepended.contains(a))
-            .unwrap_or(at)
+    let mut ins = if placement == Placement::Before {
+        area.first().copied().unwrap_or(at)
     } else {
         at + 1
     };
-    let mut new_anc = Vec::with_capacity(current.len() + fresh.len());
-    new_anc.extend_from_slice(&current[..cut]);
-    new_anc.extend_from_slice(&fresh);
-    new_anc.extend_from_slice(&current[cut..]);
-    Some(new_anc)
+    let mut added = false;
+    for &m in fresh_src {
+        let seen = if placement == Placement::Before {
+            area.iter().copied().find(|&p| new_anc[p] == m)
+        } else {
+            new_anc.iter().position(|&a| a == m)
+        };
+        match seen {
+            Some(p) => ins = p + 1,
+            None => {
+                new_anc.insert(ins, m);
+                if placement == Placement::Before {
+                    for p in &mut area {
+                        if *p >= ins {
+                            *p += 1;
+                        }
+                    }
+                    area.push(ins);
+                    area.sort_unstable();
+                }
+                ins += 1;
+                added = true;
+            }
+        }
+    }
+    added.then_some(new_anc)
 }
 
 /// Splices `mid`'s ancestry into `cid`'s -- and into EVERY chain that passes
