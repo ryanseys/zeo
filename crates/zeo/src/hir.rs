@@ -1292,6 +1292,12 @@ impl Hir {
                 // a call site can hold in anything.
                 "eval" => true,
                 "instance_eval" | "class_eval" | "module_eval" => !args.is_empty(),
+                // A `require`/`load` that SURVIVED lowering is one the
+                // loader could not resolve -- a computed target, or a file
+                // under no compile-time root. It reaches the same compiler
+                // at run time (`features::UnitCompiler`), so a program that
+                // can reach one carries it.
+                "require" | "require_relative" | "load" => true,
                 // A reflective `send(:eval, src)` is an eval site too, and a
                 // LITERAL method symbol is one static analysis can see.
                 "send" | "__send__" | "public_send" => args

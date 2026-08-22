@@ -64,6 +64,118 @@ impl UnitImpl {
     }
 }
 
+/// The seam a file the compiler never saw reaches the compiler through --
+/// the twin of [`crate::eval::EvalCompiler`], installed by the same
+/// `zeo_eval_install`, so a program that can reach a run-time load carries
+/// exactly the machinery a program that can `eval` does.
+///
+/// The compiler-side half compiles the source as a TOP-LEVEL file: its own
+/// `def`s land on `Object`, its classes mint, and its own `require`s come
+/// straight back here.
+pub trait UnitCompiler: Send + Sync {
+    fn load(&self, source: &str, path: &str, box_id: u32) -> Result<RubyValue, Signal>;
+}
+
+static UNIT_COMPILER: std::sync::OnceLock<&'static dyn UnitCompiler> = std::sync::OnceLock::new();
+
+/// See [`UnitCompiler`].
+pub fn install_unit_compiler(compiler: &'static dyn UnitCompiler) {
+    let _ = UNIT_COMPILER.set(compiler);
+}
+
+/// The path `feature` names on DISK for box `box_id`, or `None`.
+///
+/// CRuby's own resolution: a path that is absolute or explicitly relative
+/// (`./`, `../`) stands alone; every other spelling is tried under each
+/// `$LOAD_PATH` root in order. A spelling with no `.rb` suffix is tried
+/// with one first, which is what makes `require "json"` and `require
+/// "json.rb"` the same feature.
+pub fn resolve_on_disk(feature: &str, box_id: u32, append_rb: bool) -> Option<std::path::PathBuf> {
+    let spellings = |base: std::path::PathBuf| -> Vec<std::path::PathBuf> {
+        if feature.ends_with(".rb") || !append_rb {
+            vec![base]
+        } else {
+            vec![base.with_extension("rb"), base]
+        }
+    };
+    let first_readable = |candidates: Vec<std::path::PathBuf>| {
+        candidates
+            .into_iter()
+            .find(|p| p.is_file())
+            .and_then(|p| p.canonicalize().ok())
+    };
+    if feature.starts_with('/') || feature.starts_with("./") || feature.starts_with("../") {
+        return first_readable(spellings(std::path::PathBuf::from(feature)));
+    }
+    let RubyValue::Array(roots) = crate::globals::global_get(box_id, "$LOAD_PATH") else {
+        return None;
+    };
+    let roots: Vec<String> = roots
+        .lock()
+        .iter()
+        .filter_map(|r| match r {
+            RubyValue::Str(s) => Some(s.lock().to_utf8_lossy().into_owned()),
+            _ => None,
+        })
+        .collect();
+    roots
+        .into_iter()
+        .find_map(|root| first_readable(spellings(std::path::Path::new(&root).join(feature))))
+}
+
+/// Compile and run the file `feature` names on disk, in box `box_id`.
+///
+/// `None` means it resolved to nothing -- the caller raises the `LoadError`
+/// it would have raised anyway. `Some(Ok(false))` is CRuby's answer for a
+/// file already loaded, or one loading further up the stack (which is what
+/// makes a require CYCLE terminate rather than recurse). `reload` is
+/// `Kernel#load`'s rule: run it again, and answer `true` either way.
+pub fn load_from_disk(feature: &str, box_id: u32, reload: bool) -> Option<Result<bool, Signal>> {
+    // `load` names an exact file; `require` appends `.rb` to a suffix-less
+    // spelling, which is what makes `require "json"` and `require "json.rb"`
+    // one feature.
+    let path = resolve_on_disk(feature, box_id, !reload)?;
+    let key = path.to_string_lossy().into_owned();
+    if !reload {
+        let mut st = state().lock();
+        if st.disk_loaded.contains(&key) || !st.disk_loading.insert(key.clone()) {
+            return Some(Ok(false));
+        }
+    }
+    let Some(compiler) = UNIT_COMPILER.get() else {
+        state().lock().disk_loading.remove(&key);
+        return Some(Err(crate::builtins::not_impl_error!(
+            "this program was compiled without the unit compiler, so it cannot load `{feature}`              at run time (zeo links it only into a program it can see reach a computed require)"
+        )));
+    };
+    let source = match std::fs::read_to_string(&path) {
+        Ok(s) => s,
+        Err(e) => {
+            state().lock().disk_loading.remove(&key);
+            return Some(Err(crate::dispatch::raise_error(
+                "LoadError",
+                format!("cannot load such file -- {feature} ({e})"),
+            )));
+        }
+    };
+    let result = compiler.load(&source, &key, box_id);
+    let mut st = state().lock();
+    st.disk_loading.remove(&key);
+    match result {
+        // A file that raised is NOT loaded: CRuby leaves it out of
+        // `$LOADED_FEATURES` so a later require retries it.
+        Err(e) => Some(Err(e)),
+        Ok(_) => {
+            st.disk_loaded.insert(key.clone());
+            drop(st);
+            if !reload {
+                crate::globals::append_loaded_feature_in(box_id, &key);
+            }
+            Some(Ok(true))
+        }
+    }
+}
+
 static UNITS: std::sync::OnceLock<HashMap<&'static str, UnitImpl>> = std::sync::OnceLock::new();
 
 #[derive(Default)]
@@ -81,6 +193,11 @@ struct LoadState {
     /// Autoload targets declared DURING a unit load, run when the outermost
     /// load returns -- see [`defer_autoload_target`].
     autoload_queue: Vec<String>,
+    /// The same two sets for a file loaded from DISK at run time, keyed by
+    /// its canonical path -- which is the identity CRuby's `$LOADED_FEATURES`
+    /// uses, and the only one available for a file no unit was compiled for.
+    disk_loaded: HashSet<String>,
+    disk_loading: HashSet<String>,
 }
 
 fn state() -> &'static parking_lot::Mutex<LoadState> {

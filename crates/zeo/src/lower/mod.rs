@@ -1411,11 +1411,20 @@ fn lower_call_node(
                 // to raise the LoadError its rescue catches; a
                 // guard-gated site keeps its call to load its unit only
                 // when the guard passes.
-                let site_kept = hir.lowering_file.is_some_and(|file| {
-                    let key = (file, call.location().start_offset() as u32);
-                    (name == "require_relative" && hir.optional_require_sites.contains(&key))
-                        || hir.conditional_require_sites.contains(&key)
-                });
+                // A SNIPPET splices no `require_relative`: it has no
+                // compile-time file to resolve against, so the loader leaves
+                // the call for `dynamic_require_relative`, which resolves it
+                // against the CALLING file the frame carries. Folding to
+                // `true` here would have been a lie about a load that never
+                // happened. (The two conditions agree by construction: an
+                // eval compile never carries an `input_path`, which is the
+                // only thing that gives the loader a directory.)
+                let site_kept = (hir.mode.is_eval() && name == "require_relative")
+                    || hir.lowering_file.is_some_and(|file| {
+                        let key = (file, call.location().start_offset() as u32);
+                        (name == "require_relative" && hir.optional_require_sites.contains(&key))
+                            || hir.conditional_require_sites.contains(&key)
+                    });
                 if !unresolvable && !site_kept && !hir.deferred_requires.contains(&feature) {
                     return Ok(hir.push(HirNode::BoolLit(true)));
                 }

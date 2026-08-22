@@ -460,7 +460,13 @@ pub fn seed_load_path(paths: &[&str]) {
 /// records, so a second `require` of it answers `false` (see
 /// [`crate::features::load_feature`]).
 pub fn append_loaded_feature(name: &str) {
-    if let RubyValue::Array(a) = global_get(0, "$LOADED_FEATURES") {
+    append_loaded_feature_in(0, name);
+}
+
+/// [`append_loaded_feature`] for a BOX -- each box has its own list, so a
+/// file it loads counts as loaded there and nowhere else.
+pub fn append_loaded_feature_in(box_id: u32, name: &str) {
+    if let RubyValue::Array(a) = global_get(box_id, "$LOADED_FEATURES") {
         a.lock()
             .push(RubyValue::Str(crate::string_new(name.to_string())));
     }

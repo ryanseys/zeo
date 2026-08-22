@@ -25,6 +25,10 @@ use zeo_rt::{RubyValue, Signal};
 /// `ProgramDesc` carries the installer.
 pub fn install() {
     zeo_rt::eval::install(&Jit);
+    // The same compiler, reached from the load path: a file the front end
+    // could not resolve at compile time is compiled where it is FOUND, by
+    // the machinery an `eval` already carries.
+    zeo_rt::features::install_unit_compiler(&Jit);
 }
 
 /// The installer an emitted program's `ProgramDesc.eval_install` names.
@@ -51,6 +55,26 @@ impl EvalCompiler for Jit {
             // same contract a program's compile has.
             Err(Refusal::NotCompiled(why)) => Err(zeo_rt::eval::not_compiled(why)),
         }
+    }
+}
+
+impl zeo_rt::features::UnitCompiler for Jit {
+    fn load(&self, source: &str, path: &str, box_id: u32) -> Result<RubyValue, Signal> {
+        // A file loaded at RUN time is one more top-level scope: its `def`s
+        // land on `Object`, its classes mint, its constants belong to the
+        // box's top level, and its own `require`s come straight back to the
+        // load path. That is exactly what the eval seam already does for a
+        // snippet whose `self` is main -- the only difference is the NAME,
+        // which is the file's own, so `__FILE__` and every backtrace row
+        // inside it say where the code really is.
+        zeo_rt::eval::eval_string_located(
+            source,
+            zeo_rt::main_object(),
+            box_id,
+            zeo_rt::eval::EvalMode::Caller,
+            Some(path),
+            Some(1),
+        )
     }
 }
 

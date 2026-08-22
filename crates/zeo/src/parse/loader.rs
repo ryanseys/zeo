@@ -1190,6 +1190,15 @@ impl Loader {
         if name == "require" && hir.unresolvable_requires.contains(&feature) {
             return Ok(None);
         }
+        // A SNIPPET (an `eval`, or a file the load path compiled at run
+        // time) has no compile-time file context, so `require_relative` has
+        // no directory to resolve against here. CRuby resolves it at run
+        // time against the CALLING file, which the frame carries -- so the
+        // call is left in place for `dynamic_require_relative` rather than
+        // failing the compile with "cannot infer basepath".
+        if hir.mode.is_eval() && name == "require_relative" && dir.is_none() {
+            return Ok(None);
+        }
         // The optional-native-half idiom: this exact call site was recorded
         // as missing-but-rescued, so it keeps its CALL and raises a runtime
         // `LoadError` for the rescue to catch. A guard-gated site keeps its

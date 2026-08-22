@@ -1,0 +1,17 @@
+true
+false
+[1, 1]
+"top 7"
+true
+1
+true
+[1, 2]
+[:raised, "boom from the file"]
+[:raised, "boom from the file"]
+[:missing, "cannot load such file -- no_such_feature_at_all"]
+true
+2
+from inner
+a_file_the_compiler_never_saw_loads_at_run_time/deep/inner.rb:6:in 'RuntimeInner.boom'
+a_file_the_compiler_never_saw_loads_at_run_time/top.rb:10:in 'Raiser#boom'
+a_file_the_compiler_never_saw_loads_at_run_time.rb:58:in '<main>'

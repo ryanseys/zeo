@@ -4067,11 +4067,22 @@ fn runtime_def(
     // A `def`'s frame is labeled after the METHOD it creates; a
     // `define_method` body is genuinely the block ruby labels it as.
     let frame = if is_def {
-        super::blocks::FrameName::Method(match fx.method_class {
-            Some(c) if c != crate::compiler::OBJECT_CLASS => {
-                format!("{}#{name}", fx.an.compiler.fq_name(c))
+        // A `class` body written in a snippet compiles as one more
+        // `class_eval` whose CREF is that class, and its `def`s install
+        // there -- so the frame names the class, not the `Object` the
+        // snippet's own top level would give.
+        let owner = match (&fx.eval_cref, fx.method_class) {
+            (Some(cref), _) => Some(cref.name.clone()),
+            (None, Some(c)) if c != crate::compiler::OBJECT_CLASS => {
+                Some(fx.an.compiler.fq_name(c))
             }
-            _ => format!("Object#{name}"),
+            _ => None,
+        };
+        // A CLASS method's frame separator is `.`, an instance method's `#`.
+        let sep = if is_class_method { '.' } else { '#' };
+        super::blocks::FrameName::Method(match owner {
+            Some(owner) => format!("{owner}{sep}{name}"),
+            None => format!("Object{sep}{name}"),
         })
     } else {
         super::blocks::FrameName::Block

@@ -154,6 +154,14 @@ ruby_module! {
     // its signature, so it reports -1 where `require` reports 1. zeo resolves
     // all three the same way, so `load` delegates.
     module_function def "load" cfunc (recv, arg1, _arg2?) {
+        // `load` RE-EXECUTES, always, and names an exact file -- so the disk
+        // tier comes first and asks for no `.rb` to be appended. A feature
+        // the compiler spliced has no file to re-read, so it falls through
+        // to `require`'s once-only answer.
+        let path = crate::builtins::convert::to_rstr(arg1)?.lock().to_utf8_lossy().into_owned();
+        if let Some(result) = crate::features::load_from_disk(&path, 0, true) {
+            return result.map(RubyValue::Bool);
+        }
         require_feature(recv, std::slice::from_ref(arg1), None)
     }
     module_function def "require" as require_feature (_recv, arg1) {
@@ -1718,6 +1726,13 @@ pub(crate) fn dynamic_require(arg1: &RubyValue) -> Result<RubyValue, crate::Sign
     if let Some(result) = crate::features::load_feature(&path) {
         return result.map(RubyValue::Bool);
     }
+    // ...and, failing that, the file on DISK: a target under no compile-time
+    // root at all (`$LOAD_PATH.unshift(dir); require "x"`, or an absolute
+    // path). Compiled where it is found, by the same compiler an `eval`
+    // reaches.
+    if let Some(result) = crate::features::load_from_disk(&path, 0, false) {
+        return result.map(RubyValue::Bool);
+    }
     // `#path` carries the feature as WRITTEN. CRuby absolutizes it for
     // `require_relative` only, against the calling file's directory -- a
     // compiled binary has no such directory, so the argument stands.
@@ -1774,6 +1789,11 @@ pub(crate) fn dynamic_require_relative(arg1: &RubyValue) -> Result<RubyValue, cr
         return Ok(RubyValue::Bool(false));
     }
     if let Some(result) = crate::features::load_feature(&path) {
+        return result.map(RubyValue::Bool);
+    }
+    // The ABSOLUTIZED spelling on disk -- `require_relative` resolves
+    // against the calling file's directory, which is what the frame carries.
+    if let Some(result) = crate::features::load_from_disk(&abs, 0, false) {
         return result.map(RubyValue::Bool);
     }
     Err(missing_feature_error(&abs))
