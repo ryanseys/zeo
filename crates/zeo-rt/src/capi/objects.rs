@@ -475,6 +475,19 @@ pub unsafe extern "C" fn zeo_rt_runtime_replace_method(
     crate::runtime_meta::runtime_replace_method_c(ClassId(class), Symbol::intern(name), f);
 }
 
+/// [`zeo_rt_runtime_replace_method`]'s CLASS-METHOD twin -- a `def self.x`
+/// applied at its document position.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_runtime_replace_class_method(
+    class: u32,
+    name: *const u8,
+    name_len: usize,
+    f: super::ValueFn,
+) {
+    let name = unsafe { super::str_slice(name, name_len) };
+    crate::runtime_meta::runtime_replace_class_method_c(ClassId(class), Symbol::intern(name), f);
+}
+
 /// `Foo::NAME`'s lenient half (`||=`'s read, `defined?`'s probe): an
 /// absent constant -- or a scope class the compiler never registered --
 /// is `nil`, never a raise.

@@ -3627,6 +3627,22 @@ fn send_value_in_reason_inner(
         {
             return p.call_with_self_and_block(recv, args, block);
         }
+        // An ANCESTOR's class method as the overlay holds it NOW, probed
+        // BEFORE the flat table below rather than after. Materialization
+        // copies an inherited `def self.x` onto every descendant, so the flat
+        // answer is a copy of the FINAL body -- and a parent's redefinition
+        // TIMELINE was therefore lost for every subclass, which answered the
+        // last body from the program's first line.
+        //
+        // Only for a name the receiver does not define ITSELF, and the walk
+        // stops at the first ancestor that really defines one, so a nearer
+        // `def self.x` still wins -- ruby's placement rule, unchanged.
+        if crate::runtime_meta::is_live()
+            && !crate::dispatch::class_method_defined_here(*cid, name)
+            && let Some((anc, p)) = crate::runtime_meta::inherited_overlay_class_method(*cid, name)
+        {
+            return crate::runtime_meta::call_value_body(anc, name, &p, recv, args, block);
+        }
         // A USER `def self.x` and the builtin Class/Module table, flattened
         // into one probe (user rows win -- real Ruby's placement rule: the
         // singleton method is strictly closer than one inherited from
@@ -3778,18 +3794,15 @@ fn send_value_in_reason_inner(
         // zeo probed the receiver's own overlay alone and stopped. Last, so
         // nothing that already resolves changes order: a frozen `def self.x`
         // nearer the receiver still wins, which is ruby's placement rule too.
-        if crate::runtime_meta::is_live() {
-            let inherited = ancestors_of_value(*cid).iter().skip(1).find_map(|&anc| {
-                crate::runtime_meta::overlay_class_method(anc, name).map(|p| (anc, p))
-            });
-            // The ANCESTOR is the defining class, and it has to be pushed as
-            // the method frame: this body was installed at run time and has no
-            // compile-time defining class of its own, so a `super` in it reads
-            // the frame. Without one, `Class.new(RtBase).tag` ran RtBase's
-            // body and then found no super target at all.
-            if let Some((anc, p)) = inherited {
-                return crate::runtime_meta::call_value_body(anc, name, &p, recv, args, block);
-            }
+        // The same probe WITHOUT the own-row gate the early one carries, for
+        // a receiver whose flat table never held the name at all (a class born
+        // at run time). The ANCESTOR is the defining class and is pushed as
+        // the method frame: an overlay body has no compile-time defining class
+        // of its own, so a `super` in it reads the frame.
+        if crate::runtime_meta::is_live()
+            && let Some((anc, p)) = crate::runtime_meta::inherited_overlay_class_method(*cid, name)
+        {
+            return crate::runtime_meta::call_value_body(anc, name, &p, recv, args, block);
         }
     }
     // THE MRO WALK -- the receiver's real ancestor chain, most

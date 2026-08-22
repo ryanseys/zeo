@@ -1197,14 +1197,27 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
         // A redefinition applied at its document position: the install
         // replaces the overlay body, and the definition's own
         // `method_added` report is a separate `DefHook` right after it.
-        HirNode::MethodRedefine { class, name, scope } => {
-            let (class, name, scope) = (*class, name.clone(), *scope);
+        HirNode::MethodRedefine {
+            class,
+            name,
+            scope,
+            singleton,
+        } => {
+            let (class, name, scope, singleton) = (*class, name.clone(), *scope, *singleton);
             let tramp = fx.em.redef_tramps[&(class, scope)];
             let f_ref = fx.em.module.declare_func_in_func(tramp, fx.b.func);
             let f_addr = fx.b.ins().func_addr(fx.em.ptr, f_ref);
             let cid = fx.b.ins().iconst(types::I32, i64::from(class));
             let (nptr, nlen) = super::expr::rodata_name(fx, &name);
-            fx.call("zeo_rt_runtime_replace_method", &[cid, nptr, nlen, f_addr]);
+            // The two channels are different overlay maps, and a class method
+            // must not land on the instance one -- `C.t` would keep answering
+            // the frozen row while `C.new.t` gained a method ruby never
+            // defined.
+            let entry = match singleton {
+                true => "zeo_rt_runtime_replace_class_method",
+                false => "zeo_rt_runtime_replace_method",
+            };
+            fx.call(entry, &[cid, nptr, nlen, f_addr]);
             Ok(())
         }
         HirNode::DefHook {

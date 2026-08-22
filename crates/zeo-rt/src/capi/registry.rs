@@ -214,11 +214,17 @@ pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
             abi::REG_CONST_PRIVATE => {
                 crate::constants::const_set_private(r.class, &[text(r.a)], true);
             }
-            abi::REG_BOOT_REDEF => crate::runtime_meta::runtime_replace_method_c(
-                ClassId(r.class),
-                Symbol::intern(text(r.a)),
-                value_fn(r.f.expect("a boot-redef row carries its fn")),
-            ),
+            // `flag` is the CHANNEL: a `def self.x`'s first body installs on
+            // the class-method side, whose overlay row is a different map.
+            abi::REG_BOOT_REDEF => {
+                let id = ClassId(r.class);
+                let name = Symbol::intern(text(r.a));
+                let f = value_fn(r.f.expect("a boot-redef row carries its fn"));
+                match r.flag {
+                    0 => crate::runtime_meta::runtime_replace_method_c(id, name, f),
+                    _ => crate::runtime_meta::runtime_replace_class_method_c(id, name, f),
+                }
+            }
             abi::REG_SINGLETON_SURROGATE => {
                 let owner = unsafe { *r.ids };
                 crate::runtime_meta::register_singleton_surrogate(ClassId(owner), ClassId(r.class));

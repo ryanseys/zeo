@@ -2790,6 +2790,9 @@ pub enum HirNode {
         name: String,
         /// The `ScopeId` (as raw index) whose body becomes current here.
         scope: u32,
+        /// `def self.x` rather than `def x` -- the install goes to the
+        /// class-method channel, whose overlay row is a different map.
+        singleton: bool,
     },
     /// `refine Target do ... end` in a module body. The block's `def`s lower
     /// into a HOLDER module (a `ClassDef` pushed immediately before this

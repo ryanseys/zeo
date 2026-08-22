@@ -860,6 +860,11 @@ pub const CAPI: &[CapiSig] = &[
         ret: Some(I32),
     },
     CapiSig {
+        name: "zeo_rt_runtime_replace_class_method",
+        params: &[U32, Ptr, Usize, Ptr],
+        ret: None,
+    },
+    CapiSig {
         name: "zeo_rt_runtime_replace_method",
         params: &[U32, Ptr, Usize, Ptr],
         ret: None,

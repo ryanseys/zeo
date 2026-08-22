@@ -183,6 +183,29 @@ pub fn inherited_singleton_prepend(id: ClassId, name: Symbol) -> Option<RProc> {
     None
 }
 
+/// An ANCESTOR's class method as the OVERLAY currently holds it, for a
+/// receiver that inherits it -- with the ancestor it came from.
+///
+/// Materialization copies an inherited `def self.x` onto every descendant's
+/// flat table, so the flat probe answers with a copy of the FINAL body. A
+/// parent whose class method has an observable redefinition TIMELINE keeps the
+/// live body in its own overlay instead, and without this a subclass call
+/// answered the final body from the program's first line.
+///
+/// `None` as soon as a nearer ancestor DEFINES the name itself: that row is
+/// closer than any overlay further up, and the flat path already serves it.
+pub fn inherited_overlay_class_method(id: ClassId, name: Symbol) -> Option<(ClassId, RProc)> {
+    for &anc in crate::dispatch::ancestors_of_value(id).iter().skip(1) {
+        if let Some(p) = overlay_class_method(anc, name) {
+            return Some((anc, p));
+        }
+        if crate::dispatch::class_method_defined_here(anc, name) {
+            return None;
+        }
+    }
+    None
+}
+
 /// [`overlay_class_method`] with the singleton-PREPEND layer skipped -- the
 /// resume point for a prepended module method's own `super`, which must reach
 /// the shadowed `def self.x` rather than the copy of itself.

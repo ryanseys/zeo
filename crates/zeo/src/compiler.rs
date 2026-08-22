@@ -199,7 +199,9 @@ pub struct ClassInfo {
     /// positional installs (`HirNode::MethodRedefine`) and the boot install
     /// of the first body ([`Compiler::positional_redefs`]) have a trampoline
     /// target. See `analyze::redefs`.
-    pub redef_scopes: Vec<ScopeId>,
+    /// `(scope, is_class_method)` -- the channel decides which overlay map
+    /// the install writes and whether the body's `self` is a class.
+    pub redef_scopes: Vec<(ScopeId, bool)>,
     /// Names from a `module_function :m` whose `m` is INHERITED rather than
     /// defined in this body -- recorded by `analyze::register_class` from a
     /// `HirNode::ModuleFunction` and resolved by `mro::resolve_module_functions`
@@ -812,7 +814,7 @@ pub struct Compiler {
     /// the runtime overlay before the first statement runs, and each later
     /// redefinition re-installs at its own document position
     /// (`HirNode::MethodRedefine`). Filled by `analyze::redefs`.
-    pub positional_redefs: Vec<(ClassId, String, ScopeId)>,
+    pub positional_redefs: Vec<(ClassId, String, ScopeId, bool)>,
     /// One of those sites names its method with something other than a literal
     /// (`Node.send(:define_method, computed)`, a bare `private`), so NO name is
     /// safe to fold. Kept apart from the set above because it is the expensive

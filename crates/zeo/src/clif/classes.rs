@@ -118,6 +118,9 @@ pub(crate) struct RedefSpec {
     pub hir_params: crate::hir::Params,
     pub has_blk: bool,
     pub ruby2_keywords: bool,
+    /// `def self.x` rather than `def x`. The body's `self` is the class, and
+    /// the install writes the class-method side of the overlay.
+    pub singleton: bool,
 }
 
 /// One module method: body + `ValueFn` trampoline, registered as a
@@ -186,7 +189,7 @@ pub(crate) struct CollectedClasses {
     /// Every body of a redefined method, superseded ones included.
     pub redefs: Vec<RedefSpec>,
     /// `(class, name, scope)` -- the FIRST body, installed at boot.
-    pub boot_redefs: Vec<(u32, String, crate::compiler::ScopeId)>,
+    pub boot_redefs: Vec<(u32, String, crate::compiler::ScopeId, bool)>,
     /// `(class, ancestor ids)` -- a builtin reopen that CHANGED the
     /// ancestry patches the entry `register_builtins` already made.
     pub set_ancestors: Vec<(u32, Vec<u32>)>,
@@ -1100,7 +1103,7 @@ pub(crate) fn collect_classes(
         // Every body of a method with an observable redefinition timeline
         // (rustc's `__redef_<id>` containers): the superseded ones AND the
         // final one, each installed at its own document position.
-        for &sid in &class.redef_scopes {
+        for &(sid, singleton) in &class.redef_scopes {
             let scope = compiler.scope(sid);
             let mname = scope.name.clone();
             let refuse_r = |what: &str| {
@@ -1143,6 +1146,7 @@ pub(crate) fn collect_classes(
                 hir_params: p.clone(),
                 has_blk,
                 ruby2_keywords: scope.ruby2_keywords,
+                singleton,
             });
         }
         emit_singleton_super_targets(
@@ -1201,10 +1205,10 @@ pub(crate) fn collect_classes(
             undef_rows.push((idx as u32, n.clone()));
         }
     }
-    let boot_redefs: Vec<(u32, String, crate::compiler::ScopeId)> = compiler
+    let boot_redefs: Vec<(u32, String, crate::compiler::ScopeId, bool)> = compiler
         .positional_redefs
         .iter()
-        .map(|(cid, name, sid)| (cid.0, name.clone(), *sid))
+        .map(|(cid, name, sid, singleton)| (cid.0, name.clone(), *sid, *singleton))
         .collect();
     Ok(CollectedClasses {
         classes,

@@ -300,7 +300,9 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             node: m.node,
             has_blk: m.has_blk,
             ruby2_keywords: m.ruby2_keywords,
-            self_is_class: false,
+            // A `def self.x` body runs with the CLASS as `self`, so its `@x`
+            // is a class-level ivar and its `@@x` resolves against the class.
+            self_is_class: m.singleton,
             label_override: None,
             discard_value: false,
             dyn_ivars: false,
@@ -651,14 +653,16 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
     reg_rows.extend(
         boot_redefs
             .iter()
-            .map(|(class, name, sid)| statics::RegRowSpec {
+            .map(|(class, name, sid, singleton)| statics::RegRowSpec {
                 kind: zeo_abi::abi::REG_BOOT_REDEF,
                 class: *class,
                 a: name.clone(),
                 b: String::new(),
                 f: Some(em.redef_tramps[&(*class, sid.0)]),
                 ids: vec![],
-                flag: 0,
+                // The channel: a `def self.x` installs on the class-method
+                // side of the overlay, whose row is a different map.
+                flag: u8::from(*singleton),
             }),
     );
     // A definition hook written on `Module`/`Class`/`BasicObject` itself

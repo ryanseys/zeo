@@ -32,8 +32,11 @@ pub fn resolve(compiler: &mut Compiler) {
         .iter()
         .any(|&o| compiler.method_in_chain(o, "method_added").is_some());
 
-    // (class, name) pairs with more than one Added instance-method row.
-    let mut candidates: Vec<(ClassId, String)> = Vec::new();
+    // (class, name, is_class_method) triples with more than one Added row on
+    // that channel. The two channels are counted apart: `def x` and
+    // `def self.x` are different methods, and only same-channel bodies
+    // supersede one another.
+    let mut candidates: Vec<(ClassId, String, bool)> = Vec::new();
     for (idx, ci) in compiler.classes.iter().enumerate() {
         let cid = ClassId(idx as u32);
         // Plain generated-struct classes only -- the one registration shape
@@ -51,21 +54,19 @@ pub fn resolve(compiler: &mut Compiler) {
         // entry: with both the dedup scan and the count scan linear in the
         // history, finding a class's redefined names cost a pass per
         // definition it had.
-        let mut counts: crate::compiler::FMap<&str, usize> = Default::default();
+        let mut counts: crate::compiler::FMap<(&str, bool), usize> = Default::default();
         for (name, is_class_method, _, _) in &ci.method_history {
-            if !*is_class_method {
-                *counts.entry(name.as_str()).or_default() += 1;
-            }
+            *counts.entry((name.as_str(), *is_class_method)).or_default() += 1;
         }
         // Still walked in history order, so `candidates` keeps the order the
         // scan produced -- the node ids and patch sets downstream follow it.
-        let mut seen: crate::compiler::FSet<&str> = Default::default();
+        let mut seen: crate::compiler::FSet<(&str, bool)> = Default::default();
         for (name, is_class_method, _, _) in &ci.method_history {
-            if *is_class_method || !seen.insert(name.as_str()) {
+            if !seen.insert((name.as_str(), *is_class_method)) {
                 continue;
             }
-            if counts[name.as_str()] >= 2 {
-                candidates.push((cid, name.clone()));
+            if counts[&(name.as_str(), *is_class_method)] >= 2 {
+                candidates.push((cid, name.clone(), *is_class_method));
             }
         }
     }
@@ -77,13 +78,13 @@ pub fn resolve(compiler: &mut Compiler) {
         sites_by_class.entry(site.class).or_default().push(si);
     }
 
-    for (cid, name) in candidates {
+    for (cid, name, singleton) in candidates {
         // The bodies, oldest first. `compiler.scopes` is append-only, so
         // every superseded row is still there to emit.
         let mut rows: Vec<(u32, ScopeId)> = compiler.classes[cid.0 as usize]
             .method_history
             .iter()
-            .filter(|(m, s, _, _)| !s && *m == name)
+            .filter(|(m, s, _, _)| *s == singleton && *m == name)
             .map(|&(_, _, seq, sid)| (seq, sid))
             .collect();
         rows.sort_by_key(|&(seq, _)| seq);
@@ -96,7 +97,7 @@ pub fn resolve(compiler: &mut Compiler) {
         for &si in sites_by_class.get(&cid).map_or(&[][..], Vec::as_slice) {
             let site = &compiler.class_body_sites[si];
             for (di, d) in site.defs.iter().enumerate() {
-                if d.event == DefEvent::Added && !d.singleton && d.name == name {
+                if d.event == DefEvent::Added && d.singleton == singleton && d.name == name {
                     defs.push((si, di, d.seq));
                 }
             }
@@ -113,10 +114,14 @@ pub fn resolve(compiler: &mut Compiler) {
                     |&(si, di, _): &(usize, usize, u32)| compiler.class_body_sites[si].defs[di].at;
                 at(defs.last().unwrap()) != at(&defs[0])
             };
-            let hooked = global_method_added
-                || compiler
-                    .class_method_in_chain(cid, "method_added")
-                    .is_some();
+            // `method_added` announces an INSTANCE method;
+            // `singleton_method_added` is the class-method channel's own hook.
+            let hook = match singleton {
+                true => "singleton_method_added",
+                false => "method_added",
+            };
+            let hooked = (!singleton && global_method_added)
+                || compiler.class_method_in_chain(cid, hook).is_some();
             multi_site || stmts_between || hooked
         };
         if !observable {
@@ -126,14 +131,14 @@ pub fn resolve(compiler: &mut Compiler) {
         compiler.runtime_patches.insert(name.clone());
         compiler
             .positional_redefs
-            .push((cid, name.clone(), rows[0].1));
+            .push((cid, name.clone(), rows[0].1, singleton));
         // Every body, the final one included: even the last redefinition
         // re-installs at its position, and all installs go through the
         // receiver-generic free-function emission.
         for &(_, sid) in &rows {
             let list = &mut compiler.classes[cid.0 as usize].redef_scopes;
-            if !list.contains(&sid) {
-                list.push(sid);
+            if !list.iter().any(|&(s, _)| s == sid) {
+                list.push((sid, singleton));
             }
         }
 
@@ -151,6 +156,7 @@ pub fn resolve(compiler: &mut Compiler) {
                 class: cid.0,
                 name: name.clone(),
                 scope: rows[k].1.0,
+                singleton,
             });
             compiler.class_body_sites[si].stmts.insert(def_at, node);
             for d in &mut compiler.class_body_sites[si].defs {

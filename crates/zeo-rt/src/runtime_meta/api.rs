@@ -155,6 +155,39 @@ pub fn runtime_replace_method_c(id: ClassId, name: Symbol, f: crate::capi::Value
     replace_method_impl(id, name, crate::dispatch::MethodImpl::CValue(f));
 }
 
+/// [`runtime_replace_method_c`]'s CLASS-METHOD twin: `f` becomes `id`'s
+/// current `def self.<name>` in the overlay.
+///
+/// The two channels are different maps, and the class one holds an `RProc`
+/// where a compiled trampoline is a `ValueFn` -- so the fn is wrapped as the
+/// value-receiver proc every class-method row here already is. The wrapper
+/// passes `self` straight through, which is what a receiver-generic compiled
+/// body expects.
+///
+/// It fires NO definition hook: `singleton_method_added` reports where the
+/// `def` is written, and `analyze::redefs` splices that report separately, at
+/// the same position.
+pub fn runtime_replace_class_method_c(id: ClassId, name: Symbol, f: crate::capi::ValueFn) {
+    let body = RProc::with_self_and_block(
+        crate::dispatch::ValueImpl::C(f).into_fn(),
+        RubyValue::Nil,
+        -1,
+        true,
+    );
+    {
+        let mut w = maps().classes.write().unwrap();
+        let e = w.entry(id.0).or_insert_with(OverlayEntry::delta);
+        e.class_methods.insert(name, body);
+        // A redefinition is the class's OWN, so it is neither an extend copy
+        // nor a removal any more.
+        e.extended_class_methods.remove(&name);
+        e.class_removed.remove(&name);
+    }
+    mark_singletons();
+    patch_class(id);
+    mark_live();
+}
+
 fn replace_method_impl(id: ClassId, name: Symbol, imp: crate::dispatch::MethodImpl) {
     {
         let mut w = maps().classes.write().unwrap();
