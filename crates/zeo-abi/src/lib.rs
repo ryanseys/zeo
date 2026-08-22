@@ -1573,12 +1573,15 @@ pub const BUILTINS: &[BuiltinClass] = &[
         includes: &[],
         feature: None,
     },
+    // A real `Struct` subclass, as `rb_struct_define` makes it in CRuby --
+    // which is where its `to_a`/`to_h`/`==`/`each`/`[]`/`dig`/`deconstruct`
+    // come from. `Enumerable` rides in with `Struct`, so it is not listed.
     BuiltinClass {
         id: PROCESS_TMS_CLASS,
         name: "Process::Tms",
         is_module: false,
-        superclass: Some(OBJECT_CLASS),
-        includes: &[COMPARABLE_CLASS],
+        superclass: Some(STRUCT_CLASS),
+        includes: &[],
         feature: None,
     },
     // `require "socket"`. TCPSocket < IPSocket (inherits BasicSocket's raw-fd
@@ -1670,7 +1673,7 @@ pub const BUILTINS: &[BuiltinClass] = &[
         id: ETC_PASSWD_CLASS,
         name: "Etc::Passwd",
         is_module: false,
-        superclass: Some(OBJECT_CLASS),
+        superclass: Some(STRUCT_CLASS),
         includes: &[],
         feature: Some("etc"),
     },
@@ -1678,7 +1681,7 @@ pub const BUILTINS: &[BuiltinClass] = &[
         id: ETC_GROUP_CLASS,
         name: "Etc::Group",
         is_module: false,
-        superclass: Some(OBJECT_CLASS),
+        superclass: Some(STRUCT_CLASS),
         includes: &[],
         feature: Some("etc"),
     },

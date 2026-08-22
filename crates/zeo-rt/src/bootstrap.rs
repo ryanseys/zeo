@@ -34,6 +34,25 @@ pub fn register_builtins(registry: &mut ClassRegistry) {
     undefine_builtin_methods(registry);
 }
 
+/// The builtin classes CRuby defines with `rb_struct_define`. They are real
+/// `Struct` subclasses there, so the whole struct protocol -- `to_a`, `to_h`,
+/// `==`, `each`, `[]`, `dig`, `size`, `deconstruct`, `Marshal` -- is
+/// inherited rather than written per class. All each one has to supply is a
+/// member list here and `hidden_ivar_get`/`_set` on its payload, which is
+/// what the protocol reads a member by.
+fn register_native_structs() {
+    for (id, members) in [
+        (
+            zeo_abi::PROCESS_TMS_CLASS,
+            crate::builtins::process::TMS_MEMBERS.as_slice(),
+        ),
+        (zeo_abi::ETC_PASSWD_CLASS, crate::ext::etc::PASSWD_MEMBERS),
+        (zeo_abi::ETC_GROUP_CLASS, crate::ext::etc::GROUP_MEMBERS),
+    ] {
+        crate::register_compiled_struct(id, members, false, None);
+    }
+}
+
 /// `Object.new` -- the bare sentinel instance of the runtime root. Both
 /// backends FOLD a literal `Object.new` (no ivar layout exists to allocate
 /// from: `Object`'s container holds top-level defs as free functions), but
@@ -112,6 +131,7 @@ impl ClassRegistry {
         crate::builtins::stat::register_stat(&mut registry);
         crate::builtins::io_buffer::register_io_buffer(&mut registry);
         crate::builtins::ruby_box::register_ruby_box(&mut registry);
+        register_native_structs();
         registry
     }
 }

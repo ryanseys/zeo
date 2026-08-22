@@ -1,0 +1,19 @@
+"Struct"
+true
+true
+true
+false
+"Struct"
+[true, true, false]
+[4, 4, ["utime", "stime", "cutime", "cstime"], ["utime", "stime", "cutime", "cstime"]]
+[4, 4, 4]
+["Float", 2, 4]
+true
+true
+"zzz"
+"yyy"
+["[]", "each", "inspect", "keyword_init?", "members", "new"]
+["[]", "inspect", "keyword_init?", "members", "new"]
+"a"
+nil
+true

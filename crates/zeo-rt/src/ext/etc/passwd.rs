@@ -1,35 +1,29 @@
-//! `Etc::Passwd` -- one password-database row, a Struct-like value object. The
-//! BSD/Darwin `struct passwd` carries three extra fields CRuby exposes as
-//! `change`/`uclass`/`expire`; glibc's does not, so both the payload fields and
-//! their accessor `def`s are `#[cfg(target_vendor = "apple")]`-gated -- the
-//! `#[cfg]` on a `def` drops the method from the lookup/names/arity surface as a
-//! unit, exactly matching CRuby's platform-dependent method set.
+//! `Etc::Passwd` -- one password-database row. A real `Struct` subclass, as
+//! `rb_struct_define` makes it in CRuby, so `to_a`/`to_h`/`==`/`each`/`[]`/
+//! `dig`/`size`/`deconstruct`/`Marshal` are all inherited: this file supplies
+//! only the member list, the per-member accessors, and the two `hidden_ivar`
+//! hooks the struct protocol reads a member by.
+//!
+//! The BSD/Darwin `struct passwd` carries three extra fields CRuby exposes as
+//! `change`/`uclass`/`expire`; glibc's does not, so both the members and their
+//! accessor `def`s are `#[cfg(target_vendor = "apple")]`-gated -- the `#[cfg]`
+//! on a `def` drops the method from the lookup/names/arity surface as a unit,
+//! exactly matching CRuby's platform-dependent method set.
 
 use std::sync::Arc;
 
-use super::{
-    StructRow, members_array, str_val, struct_each, struct_index, struct_inspect, struct_to_a,
-    struct_to_h,
-};
+use parking_lot::Mutex;
+
+use super::str_val;
 use crate::RubyValue;
 use crate::dispatch::{RObj, RubyObject};
 use zeo_abi::{ClassId, ETC_PASSWD_CLASS};
 use zeo_macros::ruby_class;
 
 pub(crate) struct RPasswd {
-    name: String,
-    passwd: String,
-    uid: u32,
-    gid: u32,
-    gecos: String,
-    dir: String,
-    shell: String,
-    #[cfg(target_vendor = "apple")]
-    change: i64,
-    #[cfg(target_vendor = "apple")]
-    uclass: String,
-    #[cfg(target_vendor = "apple")]
-    expire: i64,
+    /// The members in `Struct` order, mutable behind the `Arc` every `RObj`
+    /// lives in -- a Struct has writers.
+    slots: Mutex<Vec<RubyValue>>,
 }
 
 #[cfg(target_vendor = "apple")]
@@ -41,29 +35,8 @@ pub(crate) const PASSWD_MEMBERS: &[&str] =
     &["name", "passwd", "uid", "gid", "gecos", "dir", "shell"];
 
 impl RPasswd {
-    fn field(&self, name: &str) -> Option<RubyValue> {
-        Some(match name {
-            "name" => str_val(self.name.clone()),
-            "passwd" => str_val(self.passwd.clone()),
-            "uid" => RubyValue::Int(self.uid as i64),
-            "gid" => RubyValue::Int(self.gid as i64),
-            "gecos" => str_val(self.gecos.clone()),
-            "dir" => str_val(self.dir.clone()),
-            "shell" => str_val(self.shell.clone()),
-            #[cfg(target_vendor = "apple")]
-            "change" => RubyValue::Int(self.change),
-            #[cfg(target_vendor = "apple")]
-            "uclass" => str_val(self.uclass.clone()),
-            #[cfg(target_vendor = "apple")]
-            "expire" => RubyValue::Int(self.expire),
-            _ => return None,
-        })
-    }
-}
-
-impl StructRow for RPasswd {
-    fn field(&self, n: &str) -> Option<RubyValue> {
-        RPasswd::field(self, n)
+    fn get(&self, at: usize) -> RubyValue {
+        self.slots.lock()[at].clone()
     }
 }
 
@@ -84,21 +57,22 @@ impl RubyObject for RPasswd {
     fn ivar_values(&self) -> Vec<RubyValue> {
         Vec::new()
     }
+    // The struct protocol reaches a member by INDEX through these two -- see
+    // `RubyObject::hidden_ivar_get`. Implementing them is the whole of what
+    // makes this a real Struct.
+    fn hidden_ivar_get(&self, i: usize) -> Option<RubyValue> {
+        (i < PASSWD_MEMBERS.len()).then(|| self.get(i))
+    }
+    fn hidden_ivar_set(&self, i: usize, v: RubyValue) -> bool {
+        let ok = i < PASSWD_MEMBERS.len();
+        if ok {
+            self.slots.lock()[i] = v;
+        }
+        ok
+    }
     fn dup_object(&self, _copy_frozen: bool) -> RObj {
         Arc::new(RPasswd {
-            name: self.name.clone(),
-            passwd: self.passwd.clone(),
-            uid: self.uid,
-            gid: self.gid,
-            gecos: self.gecos.clone(),
-            dir: self.dir.clone(),
-            shell: self.shell.clone(),
-            #[cfg(target_vendor = "apple")]
-            change: self.change,
-            #[cfg(target_vendor = "apple")]
-            uclass: self.uclass.clone(),
-            #[cfg(target_vendor = "apple")]
-            expire: self.expire,
+            slots: Mutex::new(self.slots.lock().clone()),
         })
     }
 }
@@ -113,74 +87,136 @@ fn recv_passwd(recv: &RubyValue) -> &RPasswd {
     }
 }
 
+fn set(recv: &RubyValue, at: usize, v: &RubyValue) -> Result<RubyValue, crate::Signal> {
+    recv_passwd(recv).slots.lock()[at] = v.clone();
+    Ok(v.clone())
+}
+
 /// Copy a libc `struct passwd` into an owned `Etc::Passwd` value.
 pub(crate) unsafe fn passwd_from(pw: *const libc::passwd) -> RubyValue {
     let pw = unsafe { &*pw };
+    let mut slots = vec![
+        str_val(unsafe { super::cstr(pw.pw_name) }),
+        str_val(unsafe { super::cstr(pw.pw_passwd) }),
+        RubyValue::Int(i64::from(pw.pw_uid)),
+        RubyValue::Int(i64::from(pw.pw_gid)),
+        str_val(unsafe { super::cstr(pw.pw_gecos) }),
+        str_val(unsafe { super::cstr(pw.pw_dir) }),
+        str_val(unsafe { super::cstr(pw.pw_shell) }),
+    ];
+    #[cfg(target_vendor = "apple")]
+    slots.extend([
+        RubyValue::Int(pw.pw_change),
+        str_val(unsafe { super::cstr(pw.pw_class) }),
+        RubyValue::Int(pw.pw_expire),
+    ]);
     RubyValue::Object(Arc::new(RPasswd {
-        name: unsafe { super::cstr(pw.pw_name) },
-        passwd: unsafe { super::cstr(pw.pw_passwd) },
-        uid: pw.pw_uid,
-        gid: pw.pw_gid,
-        gecos: unsafe { super::cstr(pw.pw_gecos) },
-        dir: unsafe { super::cstr(pw.pw_dir) },
-        shell: unsafe { super::cstr(pw.pw_shell) },
-        #[cfg(target_vendor = "apple")]
-        change: pw.pw_change,
-        #[cfg(target_vendor = "apple")]
-        uclass: unsafe { super::cstr(pw.pw_class) },
-        #[cfg(target_vendor = "apple")]
-        expire: pw.pw_expire,
+        slots: Mutex::new(slots),
     }))
 }
 
-ruby_class! {
-    Passwd = zeo_abi::ETC_PASSWD_CLASS < zeo_abi::OBJECT_CLASS;
+/// `Etc::Passwd[..]` / `.new(..)` -- the Struct constructor, which CRuby
+/// leaves on the class because `rb_struct_define` put it there. Fewer
+/// arguments than members leaves the rest nil.
+pub(crate) fn passwd_construct(args: &[RubyValue]) -> Result<RubyValue, crate::Signal> {
+    if args.len() > PASSWD_MEMBERS.len() {
+        return Err(crate::builtins::arg_error!("struct size differs"));
+    }
+    let mut slots = vec![RubyValue::Nil; PASSWD_MEMBERS.len()];
+    for (slot, v) in slots.iter_mut().zip(args) {
+        *slot = v.clone();
+    }
+    Ok(RubyValue::Object(Arc::new(RPasswd {
+        slots: Mutex::new(slots),
+    })))
+}
 
-    def "name"(recv) { Ok(str_val(recv_passwd(recv).name.clone())) }
-    def "passwd"(recv) { Ok(str_val(recv_passwd(recv).passwd.clone())) }
-    def "uid"(recv) { Ok(RubyValue::Int(recv_passwd(recv).uid as i64)) }
-    def "gid"(recv) { Ok(RubyValue::Int(recv_passwd(recv).gid as i64)) }
-    def "gecos"(recv) { Ok(str_val(recv_passwd(recv).gecos.clone())) }
-    def "dir"(recv) { Ok(str_val(recv_passwd(recv).dir.clone())) }
-    def "shell"(recv) { Ok(str_val(recv_passwd(recv).shell.clone())) }
+ruby_class! {
+    Passwd = zeo_abi::ETC_PASSWD_CLASS < zeo_abi::STRUCT_CLASS;
+
+    // The class methods a `Struct` subclass carries in its OWN singleton --
+    // `rb_struct_define` installs them there, so reflection reports them as
+    // this class's rather than `Struct`'s.
+    def self."[]" cfunc (_recv, *args, &_block) {
+        passwd_construct(args)
+    }
+    def self."new" cfunc (_recv, *args, &_block) {
+        passwd_construct(args)
+    }
+    // Never keyword-initialized: `rb_struct_define` builds it positionally.
+    def self."keyword_init?"(_recv) {
+        Ok(RubyValue::Nil)
+    }
+    // A Struct subclass re-declares `inspect` on its own singleton, where it
+    // answers exactly what `Module#inspect` answers. Declaring it here is what
+    // puts the name in `singleton_methods(false)`.
+    def self."inspect"(recv) {
+        crate::builtins::inherited_row!(rmodule, "inspect", recv, __args, None)
+    }
+    // `Etc::Passwd.each` -- Etc's own cursor over the whole database, the
+    // same walk `Etc.passwd` runs with a block.
+    def self."each"(_recv, &block) {
+        super::each_passwd(block)
+    }
+
+    def "name"(recv) { Ok(recv_passwd(recv).get(0)) }
+    def "name=" params "_"(recv, v) { set(recv, 0, v) }
+    def "passwd"(recv) { Ok(recv_passwd(recv).get(1)) }
+    def "passwd=" params "_"(recv, v) { set(recv, 1, v) }
+    def "uid"(recv) { Ok(recv_passwd(recv).get(2)) }
+    def "uid=" params "_"(recv, v) { set(recv, 2, v) }
+    def "gid"(recv) { Ok(recv_passwd(recv).get(3)) }
+    def "gid=" params "_"(recv, v) { set(recv, 3, v) }
+    def "gecos"(recv) { Ok(recv_passwd(recv).get(4)) }
+    def "gecos=" params "_"(recv, v) { set(recv, 4, v) }
+    def "dir"(recv) { Ok(recv_passwd(recv).get(5)) }
+    def "dir=" params "_"(recv, v) { set(recv, 5, v) }
+    def "shell"(recv) { Ok(recv_passwd(recv).get(6)) }
+    def "shell=" params "_"(recv, v) { set(recv, 6, v) }
 
     // The BSD/Darwin-only accessors -- the `#[cfg]` gates the fn AND its
     // lookup/names/arity rows, so on glibc they simply don't exist.
     #[cfg(target_vendor = "apple")]
-    def "change"(recv) { Ok(recv_passwd(recv).field("change").unwrap()) }
+    def "change"(recv) { Ok(recv_passwd(recv).get(7)) }
     #[cfg(target_vendor = "apple")]
-    def "uclass"(recv) { Ok(recv_passwd(recv).field("uclass").unwrap()) }
+    def "change=" params "_"(recv, v) { set(recv, 7, v) }
     #[cfg(target_vendor = "apple")]
-    def "expire"(recv) { Ok(recv_passwd(recv).field("expire").unwrap()) }
-
-    def "members"(_recv) { Ok(members_array(PASSWD_MEMBERS)) }
-    def "to_a" | "values"(recv) { Ok(struct_to_a(recv_passwd(recv), PASSWD_MEMBERS)) }
-    def "to_h"(recv) { Ok(struct_to_h(recv_passwd(recv), PASSWD_MEMBERS)) }
-    def "each"(recv, &block) { struct_each(recv_passwd(recv), PASSWD_MEMBERS, block, recv) }
-    def "[]"(recv, arg) { struct_index(recv_passwd(recv), PASSWD_MEMBERS, arg) }
-    def "to_s" | "inspect"(recv) { Ok(str_val(struct_inspect("Etc::Passwd", recv_passwd(recv), PASSWD_MEMBERS))) }
+    def "uclass"(recv) { Ok(recv_passwd(recv).get(8)) }
+    #[cfg(target_vendor = "apple")]
+    def "uclass=" params "_"(recv, v) { set(recv, 8, v) }
+    #[cfg(target_vendor = "apple")]
+    def "expire"(recv) { Ok(recv_passwd(recv).get(9)) }
+    #[cfg(target_vendor = "apple")]
+    def "expire=" params "_"(recv, v) { set(recv, 9, v) }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Symbol;
+
+    impl RPasswd {
+        fn field(&self, name: &str) -> Option<RubyValue> {
+            PASSWD_MEMBERS
+                .iter()
+                .position(|&m| m == name)
+                .map(|i| self.get(i))
+        }
+    }
 
     fn a_passwd() -> RPasswd {
+        let mut slots = vec![
+            str_val("alice".into()),
+            str_val("*".into()),
+            RubyValue::Int(1000),
+            RubyValue::Int(2000),
+            str_val("Alice".into()),
+            str_val("/home/alice".into()),
+            str_val("/bin/zsh".into()),
+        ];
+        #[cfg(target_vendor = "apple")]
+        slots.extend([RubyValue::Int(0), str_val(String::new()), RubyValue::Int(0)]);
         RPasswd {
-            name: "alice".into(),
-            passwd: "*".into(),
-            uid: 1000,
-            gid: 2000,
-            gecos: "Alice".into(),
-            dir: "/home/alice".into(),
-            shell: "/bin/zsh".into(),
-            #[cfg(target_vendor = "apple")]
-            change: 0,
-            #[cfg(target_vendor = "apple")]
-            uclass: String::new(),
-            #[cfg(target_vendor = "apple")]
-            expire: 0,
+            slots: Mutex::new(slots),
         }
     }
 
@@ -194,65 +230,18 @@ mod tests {
         assert!(pw.field("nonexistent").is_none());
     }
 
+    /// The two hooks the whole inherited protocol reads a member by: index in
+    /// range answers, out of range declines, and a write is visible to the
+    /// next read.
     #[test]
-    fn struct_to_a_and_to_h_cover_every_member_in_order() {
+    fn hidden_slots_are_the_members_in_order() {
         let pw = a_passwd();
-        let to_a = struct_to_a(&pw, PASSWD_MEMBERS);
-        let RubyValue::Array(a) = to_a else {
-            panic!("to_a is an Array")
-        };
-        assert_eq!(a.lock().to_vec().len(), PASSWD_MEMBERS.len());
-        // First three values, in member order.
-        assert_eq!(a.lock().to_vec()[0].inspect_string(), "\"alice\"");
-        assert_eq!(a.lock().to_vec()[2].inspect_string(), "1000");
-
-        let RubyValue::Hash(_) = struct_to_h(&pw, PASSWD_MEMBERS) else {
-            panic!("to_h is a Hash")
-        };
-    }
-
-    #[test]
-    fn struct_index_accepts_int_symbol_and_string() {
-        let pw = a_passwd();
-        assert_eq!(
-            struct_index(&pw, PASSWD_MEMBERS, &RubyValue::Int(0))
-                .unwrap()
-                .inspect_string(),
-            "\"alice\""
-        );
-        // Negative index counts from the end (shell is member index 6).
-        assert_eq!(
-            struct_index(
-                &pw,
-                PASSWD_MEMBERS,
-                &RubyValue::Int(-(PASSWD_MEMBERS.len() as i64))
-            )
-            .unwrap()
-            .inspect_string(),
-            "\"alice\""
-        );
-        assert_eq!(
-            struct_index(
-                &pw,
-                PASSWD_MEMBERS,
-                &RubyValue::Symbol(Symbol::intern("uid"))
-            )
-            .unwrap()
-            .inspect_string(),
-            "1000"
-        );
-        // (Out-of-range / unknown-member RAISES are covered by the e2e tests,
-        // which run with the full class registry; constructing an exception in
-        // this registry-less unit context would panic.)
-    }
-
-    #[test]
-    fn inspect_has_the_struct_shape() {
-        let s = struct_inspect("Etc::Passwd", &a_passwd(), PASSWD_MEMBERS);
-        assert!(
-            s.starts_with("#<struct Etc::Passwd name=\"alice\", passwd=\"*\", uid=1000"),
-            "{s}"
-        );
+        assert_eq!(pw.hidden_ivar_get(0).unwrap().inspect_string(), "\"alice\"");
+        assert_eq!(pw.hidden_ivar_get(2).unwrap().inspect_string(), "1000");
+        assert!(pw.hidden_ivar_get(PASSWD_MEMBERS.len()).is_none());
+        assert!(pw.hidden_ivar_set(2, RubyValue::Int(7)));
+        assert_eq!(pw.hidden_ivar_get(2).unwrap().inspect_string(), "7");
+        assert!(!pw.hidden_ivar_set(PASSWD_MEMBERS.len(), RubyValue::Nil));
     }
 
     // The `#[cfg]`-on-`def` DSL feature: the BSD-only accessors are in the
@@ -267,9 +256,11 @@ mod tests {
             |name: &str| (table.lookup)(name).is_some() && (table.names)().contains(&name);
         // Portable accessors are always there.
         assert!(present("name") && present("shell"));
+        assert!(present("name=") && present("shell="));
         let expected = cfg!(target_vendor = "apple");
         assert_eq!(present("change"), expected);
         assert_eq!(present("uclass"), expected);
         assert_eq!(present("expire"), expected);
+        assert_eq!(present("expire="), expected);
     }
 }

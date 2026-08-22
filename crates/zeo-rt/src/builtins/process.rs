@@ -607,8 +607,7 @@ ruby_module! {
     // `Process::Tms` -- the CPU-times struct `Process.times` answers. Instances
     // are the `RTms` payload (defined below) carrying utime/stime/cutime/cstime
     // as Float seconds.
-    class Tms = zeo_abi::PROCESS_TMS_CLASS < zeo_abi::OBJECT_CLASS {
-        include zeo_abi::COMPARABLE_CLASS;
+    class Tms = zeo_abi::PROCESS_TMS_CLASS < zeo_abi::STRUCT_CLASS {
 
         // `Process::Tms` is a `Struct` in CRuby, so it carries the class
         // methods every Struct has and a writer per member.
@@ -656,45 +655,6 @@ ruby_module! {
         }
         def "cstime=" params "_"(recv, v) {
             tms_set(recv, 3, v)
-        }
-        // A `Struct`'s value equality: same class, members `==` pairwise.
-        // Without it `Process.times == Process.times.dup` was identity, and
-        // so was the `===` a `case` runs.
-        def "==" | "==="(recv, other) {
-            let (RubyValue::Object(a), RubyValue::Object(b)) = (recv, other) else {
-                return Ok(RubyValue::Bool(false));
-            };
-            // A value compared with ITSELF takes one lock twice otherwise,
-            // which is a self-deadlock rather than a wrong answer.
-            if std::sync::Arc::ptr_eq(a, b) {
-                return Ok(RubyValue::Bool(true));
-            }
-            let (Some(a), Some(b)) = (
-                a.as_any().downcast_ref::<RTms>(),
-                b.as_any().downcast_ref::<RTms>(),
-            ) else {
-                return Ok(RubyValue::Bool(false));
-            };
-            let x = a.members.lock().clone();
-            let y = b.members.lock().clone();
-            Ok(RubyValue::Bool(x.iter().zip(&y).all(|(p, q)| p.rb_eq(q))))
-        }
-        def "to_a" | "values"(recv) {
-            Ok(RubyValue::Array(crate::array_new(
-                recv_tms(recv).members.lock().to_vec(),
-            )))
-        }
-        def "to_s" | "inspect"(recv) {
-            // Ruby renders a whole-valued Float as `1.0`; `inspect_string` on a
-            // Float value is exactly that formatter, so the struct line matches.
-            let fields: Vec<String> = TMS_MEMBERS
-                .iter()
-                .zip(recv_tms(recv).members.lock().iter())
-                .map(|(name, v)| format!("{name}={}", v.inspect_string()))
-                .collect();
-            Ok(RubyValue::Str(crate::string_new(format!(
-                "#<struct Process::Tms {}>", fields.join(", ")
-            ))))
         }
     }
 
@@ -1375,8 +1335,26 @@ impl RTms {
     }
 }
 
+/// The `Struct` protocol reaches a member by INDEX through these two -- see
+/// `RubyObject::hidden_ivar_get`. Implementing them is the whole of what makes
+/// `Process::Tms` a real Struct: `to_a`, `to_h`, `==`, `each`, `[]`, `dig`,
+/// `size`, `deconstruct` and `Marshal` all read the slots this way, so none of
+/// them has to be written here.
+impl RTms {
+    fn slot_get(&self, i: usize) -> Option<RubyValue> {
+        (i < TMS_MEMBERS.len()).then(|| self.members.lock()[i].clone())
+    }
+    fn slot_set(&self, i: usize, v: RubyValue) -> bool {
+        let ok = i < TMS_MEMBERS.len();
+        if ok {
+            self.members.lock()[i] = v;
+        }
+        ok
+    }
+}
+
 /// `Process::Tms`'s `Struct` member names, in order.
-const TMS_MEMBERS: [&str; 4] = ["utime", "stime", "cutime", "cstime"];
+pub(crate) const TMS_MEMBERS: [&str; 4] = ["utime", "stime", "cutime", "cstime"];
 
 impl RubyObject for RTms {
     fn class_id(&self) -> ClassId {
@@ -1394,6 +1372,12 @@ impl RubyObject for RTms {
     fn set_frozen(&self) {}
     fn ivar_values(&self) -> Vec<RubyValue> {
         Vec::new()
+    }
+    fn hidden_ivar_get(&self, i: usize) -> Option<RubyValue> {
+        self.slot_get(i)
+    }
+    fn hidden_ivar_set(&self, i: usize, v: RubyValue) -> bool {
+        self.slot_set(i, v)
     }
     fn dup_object(&self, _copy_frozen: bool) -> RObj {
         Arc::new(RTms {
@@ -2186,20 +2170,34 @@ mod tests {
             float(&call(imethod(PROCESS_TMS_CLASS, "cstime"), &t, &[])),
             4.0
         );
-        // `to_a`/`values` share one body -- both answer the four in order.
-        for name in ["to_a", "values"] {
-            let RubyValue::Array(a) = call(imethod(PROCESS_TMS_CLASS, name), &t, &[]) else {
-                panic!("{name} is an Array")
-            };
-            let a = a.lock();
-            assert_eq!(a.len(), 4);
-            assert_eq!(float(&a[0]), 1.0);
-            assert_eq!(float(&a[3]), 4.0);
-        }
-        assert_eq!(
-            text(&call(imethod(PROCESS_TMS_CLASS, "inspect"), &t, &[])),
-            "#<struct Process::Tms utime=1.0, stime=2.0, cutime=3.0, cstime=4.0>"
+        // A writer round-trips, which is what makes it a mutable Struct.
+        call(
+            imethod(PROCESS_TMS_CLASS, "stime="),
+            &t,
+            &[RubyValue::Float(9.0)],
         );
+        assert_eq!(
+            float(&call(imethod(PROCESS_TMS_CLASS, "stime"), &t, &[])),
+            9.0
+        );
+    }
+
+    /// The two hooks the INHERITED struct protocol (`to_a`, `to_h`, `==`,
+    /// `each`, `[]`, `dig`, `deconstruct`, `Marshal`) reads a member by. None
+    /// of those rows lives on `Process::Tms` any more -- they are `Struct`'s,
+    /// and reaching them needs a class registry, so the goldens cover them and
+    /// this covers the bridge.
+    #[test]
+    fn tms_members_are_hidden_slots_in_order() {
+        let RubyValue::Object(o) = new_tms(1.0, 2.0, 3.0, 4.0) else {
+            panic!("Tms is an object")
+        };
+        assert_eq!(float(&o.hidden_ivar_get(0).unwrap()), 1.0);
+        assert_eq!(float(&o.hidden_ivar_get(3).unwrap()), 4.0);
+        assert!(o.hidden_ivar_get(TMS_MEMBERS.len()).is_none());
+        assert!(o.hidden_ivar_set(1, RubyValue::Float(9.0)));
+        assert_eq!(float(&o.hidden_ivar_get(1).unwrap()), 9.0);
+        assert!(!o.hidden_ivar_set(TMS_MEMBERS.len(), RubyValue::Nil));
     }
 
     /// `Process.times` answers a live `Process::Tms` whose accessors work.

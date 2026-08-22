@@ -5,11 +5,12 @@
 //!
 //! `require`-gated on `"etc"`. The `Etc` module itself lives in `etc_module.rs`;
 //! the user/group lookups return `Etc::Passwd` / `Etc::Group` value objects
-//! (`passwd.rs` / `group.rs`) -- the `Process::Tms` pattern: a small payload
-//! struct with matching accessors plus the Struct-like `to_a`/`to_h`/`members`/
-//! `each`/`[]`, whose shared implementation lives here. The database calls are
-//! NOT reentrant (they hand back pointers into a shared static buffer), so every
-//! one runs under `PWDB_LOCK`, copying the fields out before releasing it.
+//! (`passwd.rs` / `group.rs`) -- real `Struct` subclasses, as CRuby's
+//! `rb_struct_define` makes them, so the whole struct protocol is inherited
+//! and each file supplies only its members and accessors. The database calls
+//! are NOT reentrant (they hand back pointers into a shared static buffer), so
+//! every one runs under `PWDB_LOCK`, copying the fields out before releasing
+//! it.
 
 mod etc_module;
 mod group;
@@ -19,7 +20,7 @@ use std::ffi::{CStr, CString};
 
 use parking_lot::Mutex;
 
-use crate::builtins::{arg_error, type_error};
+use crate::builtins::arg_error;
 use crate::dispatch::raise_error;
 use crate::{RubyValue, Signal, Symbol};
 
@@ -33,6 +34,8 @@ fn str_val(s: String) -> RubyValue {
 }
 
 pub(crate) use crate::errno_ptr;
+pub(crate) use group::GROUP_MEMBERS;
+pub(crate) use passwd::PASSWD_MEMBERS;
 
 /// A libc C string to an owned Rust `String` (empty for NULL).
 unsafe fn cstr(p: *const libc::c_char) -> String {
@@ -43,102 +46,68 @@ unsafe fn cstr(p: *const libc::c_char) -> String {
     }
 }
 
-// ---------------------------------------------------------------------------
-// The shared Struct-like surface over a Passwd/Group payload.
-// ---------------------------------------------------------------------------
-
-/// The shared Struct-like surface (`members`/`to_a`/`to_h`/`each`/`[]`/inspect)
-/// over any payload exposing `field(name)`.
-pub(crate) trait StructRow {
-    fn field(&self, name: &str) -> Option<RubyValue>;
-}
-
-pub(crate) fn members_array(members: &[&str]) -> RubyValue {
-    RubyValue::Array(crate::array_new(
-        members
-            .iter()
-            .map(|m| RubyValue::Symbol(Symbol::intern(m)))
-            .collect(),
-    ))
-}
-
-pub(crate) fn struct_to_a(row: &dyn StructRow, members: &[&str]) -> RubyValue {
-    RubyValue::Array(crate::array_new(
-        members.iter().map(|m| row.field(m).unwrap()).collect(),
-    ))
-}
-
-pub(crate) fn struct_to_h(row: &dyn StructRow, members: &[&str]) -> RubyValue {
-    RubyValue::Hash(crate::collections::hash_new(
-        members
-            .iter()
-            .map(|m| (RubyValue::Symbol(Symbol::intern(m)), row.field(m).unwrap()))
-            .collect(),
-    ))
-}
-
-pub(crate) fn struct_each(
-    row: &dyn StructRow,
-    members: &[&str],
-    block: Option<RubyValue>,
-    recv: &RubyValue,
-) -> Result<RubyValue, Signal> {
+/// `Etc::Passwd.each` / `Etc.passwd { }` -- walk the user database from the
+/// current cursor, one `Etc::Passwd` per row. Without a block it is a single
+/// `getpwent`, which is what CRuby answers too.
+pub(crate) fn each_passwd(block: Option<RubyValue>) -> Result<RubyValue, Signal> {
     let Some(RubyValue::Proc(p)) = block else {
-        // No block -> an Enumerator over the values, matching Struct#each.
-        return Ok(crate::builtins::enumerator::enumerator_for(
-            recv,
-            "each",
-            &[],
-        ));
+        let _g = PWDB_LOCK.lock();
+        let pw = unsafe { libc::getpwent() };
+        return if pw.is_null() {
+            Ok(RubyValue::Nil)
+        } else {
+            Ok(unsafe { passwd::passwd_from(pw) })
+        };
     };
-    for m in members {
-        p.call(&[row.field(m).unwrap()])?;
-    }
-    Ok(recv.clone())
-}
-
-pub(crate) fn struct_index(
-    row: &dyn StructRow,
-    members: &[&str],
-    key: &RubyValue,
-) -> Result<RubyValue, Signal> {
-    match key {
-        RubyValue::Int(i) => {
-            let idx = if *i < 0 {
-                *i + members.len() as i64
+    loop {
+        let next = {
+            let _g = PWDB_LOCK.lock();
+            let pw = unsafe { libc::getpwent() };
+            if pw.is_null() {
+                None
             } else {
-                *i
-            };
-            let name = members
-                .get(usize::try_from(idx).unwrap_or(usize::MAX))
-                .copied()
-                .ok_or_else(|| {
-                    arg_error!("offset {i} too large for struct(size:{})", members.len())
-                })?;
-            Ok(row.field(name).unwrap())
+                Some(unsafe { passwd::passwd_from(pw) })
+            }
+        };
+        match next {
+            Some(v) => {
+                p.call(&[v])?;
+            }
+            None => break,
         }
-        RubyValue::Symbol(s) => {
-            let n = s.name();
-            row.field(&n).ok_or_else(|| name_error_no_member(&n))
-        }
-        RubyValue::Str(s) => {
-            let n = s.lock().to_utf8_lossy().into_owned();
-            row.field(&n).ok_or_else(|| name_error_no_member(&n))
-        }
-        _ => Err(type_error!("no implicit conversion into Integer")),
     }
+    Ok(RubyValue::Nil)
 }
 
-fn name_error_no_member(name: &str) -> Signal {
-    raise_error("NameError", format!("no member '{name}' in struct"))
-}
-
-pub(crate) fn struct_inspect(class: &str, row: &dyn StructRow, members: &[&str]) -> String {
-    let body: Vec<String> = members
-        .iter()
-        .map(|m| format!("{m}={}", row.field(m).unwrap().inspect_string()))
-        .collect();
-    format!("#<struct {class} {}>", body.join(", "))
+/// [`each_passwd`]'s group twin.
+pub(crate) fn each_group(block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    let Some(RubyValue::Proc(p)) = block else {
+        let _g = PWDB_LOCK.lock();
+        let gr = unsafe { libc::getgrent() };
+        return if gr.is_null() {
+            Ok(RubyValue::Nil)
+        } else {
+            Ok(unsafe { group::group_from(gr) })
+        };
+    };
+    loop {
+        let next = {
+            let _g = PWDB_LOCK.lock();
+            let gr = unsafe { libc::getgrent() };
+            if gr.is_null() {
+                None
+            } else {
+                Some(unsafe { group::group_from(gr) })
+            }
+        };
+        match next {
+            Some(v) => {
+                p.call(&[v])?;
+            }
+            None => break,
+        }
+    }
+    Ok(RubyValue::Nil)
 }
 
 // ---------------------------------------------------------------------------
