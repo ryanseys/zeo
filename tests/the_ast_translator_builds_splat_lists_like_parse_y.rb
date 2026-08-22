@@ -88,6 +88,12 @@ end
   ':"a#{b}"',
   '/a#{b}/',
   '`a#{b}`',
+  # Adjacent string literals are ONE literal, and the second lends its span to
+  # the interpolation it consists of.
+  '"a" "#{b}"',
+  # A heredoc part ends AT its newline: a column past that line's last
+  # character, not column 0 of the next one.
+  "x = <<~H\n  a\#{b}\nH",
 ].each do |s|
   puts "### #{s.inspect}"
   dump(RubyVM::AbstractSyntaxTree.parse(s))

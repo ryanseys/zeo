@@ -358,8 +358,22 @@ mod translate {
 
         fn span(&self, start: usize, end: usize) -> Span {
             let (fl, fc) = self.pos(start);
-            let (ll, lc) = self.pos(end);
+            let (ll, lc) = self.end_pos(end);
             Span { fl, fc, ll, lc }
+        }
+
+        /// [`Cx::pos`] for an END offset. CRuby does not roll one that sits
+        /// exactly on a line start onto the next line: a heredoc part ending
+        /// AT its newline reports `2,8` -- a column past that line's last
+        /// character -- where the start convention would say `3,0`.
+        fn end_pos(&self, byte: usize) -> (i64, i64) {
+            if byte > 0
+                && let Ok(line) = self.line_starts.binary_search(&byte)
+                && line > 0
+            {
+                return (line as i64, (byte - self.line_starts[line - 1]) as i64);
+            }
+            self.pos(byte)
         }
 
         /// The offset of a leading terminator the grammar did NOT absorb.
@@ -868,13 +882,23 @@ mod translate {
     /// An interpolated literal's parts, with adjacent string literals
     /// FLATTENED: `"a" "#{b}"` is one literal in CRuby, and prism nests the
     /// second inside the first's parts.
-    fn flat_parts(list: ruby_prism::NodeList<'_>) -> Vec<P<'_>> {
+    fn flat_parts(list: ruby_prism::NodeList<'_>) -> Vec<(P<'_>, Option<(usize, usize)>)> {
         let mut out = Vec::new();
         for p in list.iter() {
-            match p.as_interpolated_string_node() {
-                Some(inner) => out.extend(flat_parts(inner.parts())),
-                None => out.push(p),
+            let Some(inner) = p.as_interpolated_string_node() else {
+                out.push((p, None));
+                continue;
+            };
+            let loc = inner.location();
+            let mut nested = flat_parts(inner.parts());
+            // An inner literal that is exactly ONE interpolation lends it its
+            // span, which the flattening would otherwise lose.
+            if let [(only, span)] = nested.as_mut_slice()
+                && only.as_string_node().is_none()
+            {
+                *span = Some((loc.start_offset(), loc.end_offset()));
             }
+            out.extend(nested);
         }
         out
     }
@@ -882,16 +906,13 @@ mod translate {
     fn dstr(
         cx: &mut Cx,
         kind: &'static str,
-        parts: &[P<'_>],
+        parts: &[(P<'_>, Option<(usize, usize)>)],
         s: usize,
         e: usize,
         b: bool,
     ) -> RubyValue {
-        // Adjacent string literals are ONE literal in CRuby (`"a" "#{b}"`),
-        // and prism nests the second inside the first's parts. Flatten, so
-        // the three-child shape is over the whole run.
         // The literal text before the first interpolation, if any.
-        let (lead, rest) = match parts.first().and_then(|p| p.as_string_node()) {
+        let (lead, rest) = match parts.first().and_then(|(p, _)| p.as_string_node()) {
             Some(str_node) => (
                 String::from_utf8_lossy(str_node.unescaped()).into_owned(),
                 &parts[1..],
@@ -899,17 +920,25 @@ mod translate {
             None => (String::new(), parts),
         };
         let lead = RubyValue::Str(crate::string_new(lead));
-        let Some((head, tail)) = rest.split_first() else {
+        let Some(((head, head_span), tail)) = rest.split_first() else {
             return node(cx, kind, s, e, vec![lead, RubyValue::Nil, RubyValue::Nil]);
         };
-        let whole = tail.is_empty() && rest.len() == parts.len();
-        let first = dstr_part(cx, head, whole.then_some((s, e)), b);
+        // A literal that is exactly one interpolation lends it its span --
+        // the whole node's when nothing was flattened, and the INNER
+        // literal's when something was.
+        let whole = match head_span {
+            Some(sp) => Some(*sp),
+            None => (tail.is_empty() && rest.len() == parts.len()).then_some((s, e)),
+        };
+        let first = dstr_part(cx, head, whole, b);
         let rest_list = match tail.split_first() {
             None => RubyValue::Nil,
-            Some((h, _)) => {
+            Some(((h, _), _)) => {
                 let hl = h.location();
-                let elems: Vec<RubyValue> =
-                    tail.iter().map(|p| dstr_part(cx, p, None, b)).collect();
+                let elems: Vec<RubyValue> = tail
+                    .iter()
+                    .map(|(p, sp)| dstr_part(cx, p, *sp, b))
+                    .collect();
                 list_node(cx, hl.start_offset(), hl.end_offset(), elems)
             }
         };

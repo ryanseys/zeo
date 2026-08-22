@@ -660,3 +660,28 @@ SCOPE 1,0-1,7
       VCALL 1,4-1,5
         :b
     nil
+### "\"a\" \"\#{b}\""
+SCOPE 1,0-1,10
+  []
+  nil
+  DSTR 1,0-1,10
+    "a"
+    EVSTR 1,4-1,10
+      VCALL 1,7-1,8
+        :b
+    nil
+### "x = <<~H\n  a\#{b}\nH"
+SCOPE 1,0-1,8
+  [:x]
+  nil
+  LASGN 1,0-1,8
+    :x
+    DSTR 1,4-1,8
+      "a"
+      EVSTR 2,3-2,7
+        VCALL 2,5-2,6
+          :b
+      LIST 2,7-2,8
+        STR 2,7-2,8
+          "\n"
+        nil
