@@ -63,7 +63,7 @@ fn object_construct(
     args: &[RubyValue],
     blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    let obj = RubyValue::Object(std::sync::Arc::new(crate::Object::default()));
+    let obj = crate::Object::new_value();
     if crate::dispatch::responds_to_value(&obj, Symbol::intern("initialize"), true) {
         crate::dispatch::send_value(&obj, Symbol::intern("initialize"), args, blk)?;
     } else if !args.is_empty() {

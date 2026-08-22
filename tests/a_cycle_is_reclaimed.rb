@@ -120,6 +120,30 @@ def through_a_string_leaf(seen)
   nil
 end
 
+# `Object.new` keeps its ivars in a name-keyed map rather than in struct
+# fields, because the top level's `self` has no compile-time class whose ivar
+# list codegen could have materialized.
+def through_a_bare_object(seen)
+  o = Object.new
+  o.instance_variable_set(:@peer, o)
+  seen[o] = true
+  nil
+end
+
+# A `Struct.new` the compiler cannot see is a run-time instance, whose
+# members AND ivars are both mutable owned slots. `Pair` above is the
+# compile-time twin, which is a generated class instead.
+def through_a_runtime_struct(seen)
+  k = Struct.new(:peer)
+  s = k.new(nil)
+  s.peer = s
+  m = Struct.new(:tag).new(1)
+  m.instance_variable_set(:@peer, m)
+  seen[s] = true
+  seen[m] = true
+  nil
+end
+
 def through_runtime_class(seen)
   k = Class.new { attr_accessor :peer }
   x = k.new
@@ -170,6 +194,8 @@ through_a_struct(seen)
 through_an_invented_ivar(seen)
 through_a_string_leaf(seen)
 through_runtime_class(seen)
+through_a_bare_object(seen)
+through_a_runtime_struct(seen)
 held_by_a_global(seen)
 held_by_a_container(seen, keep)
 

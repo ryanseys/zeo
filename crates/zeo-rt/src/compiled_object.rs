@@ -168,12 +168,14 @@ impl RubyObject for CompiledObject {
     }
 
     fn dup_object(&self, copy_frozen: bool) -> RObj {
-        std::sync::Arc::new(CompiledObject {
+        let copy: RObj = std::sync::Arc::new(CompiledObject {
             class_id: AtomicU32::new(self.class_id.load(Ordering::Relaxed)),
             frozen: AtomicBool::new(copy_frozen && self.is_frozen()),
             layout: self.layout,
             ivars: self.ivars.duplicate(),
-        })
+        });
+        crate::gc::record_object(&copy);
+        copy
     }
 
     fn retag_moved(&self) -> bool {

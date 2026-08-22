@@ -28,7 +28,7 @@ pub unsafe extern "C" fn zeo_rt_object_alloc(cid: u32, out: *mut RubyValue) {
 /// `RubyValue::Object(Arc::new(Object::default()))` in `codegen::call::new`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zeo_rt_object_new_sentinel(out: *mut RubyValue) {
-    let v = RubyValue::Object(std::sync::Arc::new(crate::Object::default()));
+    let v = crate::Object::new_value();
     super::leakcheck::created(&v);
     unsafe { out.write(v) };
 }

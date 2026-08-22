@@ -263,6 +263,18 @@ pub struct Object {
 
 impl Object {
     pub const CLASS_ID: ClassId = ClassId(0);
+
+    /// A fresh `Object.new`, registered with the cycle collector.
+    ///
+    /// Every allocation of this type goes through here. Its ivars are the
+    /// only edges it owns, and a name-keyed map of `RubyValue` is a place a
+    /// reference cycle can close -- `o.instance_variable_set(:@self, o)` at
+    /// the top level is the shortest one there is.
+    pub fn new_value() -> RubyValue {
+        let o: RObj = Arc::new(Object::default());
+        crate::gc::record_object(&o);
+        RubyValue::Object(o)
+    }
 }
 
 /// The builtin `Enumerable` MODULE -- an ordinary
@@ -360,12 +372,22 @@ impl RubyObject for Object {
         // survivors.
         self.ivars.lock().shift_remove(name)
     }
+    fn gc_visit(&self, out: &mut Vec<RubyValue>, take: bool) {
+        let mut ivars = self.ivars.lock();
+        if take {
+            out.extend(std::mem::take(&mut *ivars).into_values());
+        } else {
+            out.extend(ivars.values().cloned());
+        }
+    }
     fn dup_object(&self, copy_frozen: bool) -> RObj {
-        Arc::new(Object {
+        let copy: RObj = Arc::new(Object {
             ivars: parking_lot::Mutex::new(self.ivars.lock().clone()),
             frozen: std::sync::atomic::AtomicBool::new(copy_frozen && self.is_frozen()),
             moved: std::sync::atomic::AtomicBool::new(false),
-        })
+        });
+        crate::gc::record_object(&copy);
+        copy
     }
 }
 
@@ -504,7 +526,7 @@ pub fn main_object() -> RubyValue {
 
 fn main_slot() -> &'static RubyValue {
     static MAIN: std::sync::OnceLock<RubyValue> = std::sync::OnceLock::new();
-    MAIN.get_or_init(|| RubyValue::Object(Arc::new(Object::default())))
+    MAIN.get_or_init(Object::new_value)
 }
 
 /// Whether `o` IS `main`. CRuby installs `to_s`/`inspect` singletons on the

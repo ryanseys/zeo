@@ -171,12 +171,14 @@ pub struct StructInstance {
 
 impl StructInstance {
     pub(crate) fn new_robj(class_id: ClassId, slots: Vec<RubyValue>) -> RObj {
-        Arc::new(StructInstance {
+        let o: RObj = Arc::new(StructInstance {
             class_id,
             frozen: AtomicBool::new(false),
             slots: Mutex::new(slots),
             ivars: Mutex::new(Vec::new()),
-        })
+        });
+        crate::gc::record_object(&o);
+        o
     }
 }
 
@@ -195,6 +197,28 @@ impl RubyObject for StructInstance {
     }
     fn set_frozen(&self) {
         self.frozen.store(true, Ordering::Relaxed);
+    }
+    /// A member slot and an ivar are both owned, mutable `RubyValue`
+    /// storage, so both are edges and both can be cleared. Two locks, taken
+    /// one at a time: nothing here reaches back into the other.
+    fn gc_visit(&self, out: &mut Vec<RubyValue>, take: bool) {
+        let mut slots = self.slots.lock();
+        if take {
+            out.extend(
+                slots
+                    .iter_mut()
+                    .map(|v| std::mem::replace(v, RubyValue::Nil)),
+            );
+        } else {
+            out.extend(slots.iter().cloned());
+        }
+        drop(slots);
+        let mut ivars = self.ivars.lock();
+        if take {
+            out.extend(std::mem::take(&mut *ivars).into_iter().map(|(_, v)| v));
+        } else {
+            out.extend(ivars.iter().map(|(_, v)| v.clone()));
+        }
     }
     fn ivar_values(&self) -> Vec<RubyValue> {
         self.ivars.lock().iter().map(|(_, v)| v.clone()).collect()

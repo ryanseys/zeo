@@ -557,7 +557,7 @@ macro_rules! ruby_class {
             // handle clone -- nested objects stay shared), frozen flag
             // carried over only for `clone` (`copy_frozen`).
             fn dup_object(&self, copy_frozen: bool) -> $crate::RObj {
-                std::sync::Arc::new($name {
+                let copy: $crate::RObj = std::sync::Arc::new($name {
                     __frozen: std::sync::atomic::AtomicBool::new(
                         copy_frozen && $crate::RubyObject::is_frozen(self),
                     ),
@@ -566,7 +566,9 @@ macro_rules! ruby_class {
                     __class: std::sync::atomic::AtomicU32::new(
                         self.__class.load(std::sync::atomic::Ordering::Relaxed),
                     ),
-                })
+                });
+                $crate::gc::record_object(&copy);
+                copy
             }
         }
 
