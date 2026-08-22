@@ -56,13 +56,15 @@ pub struct ValueSubclass {
 impl ValueSubclass {
     /// Allocates directly as the trait-object handle every caller stores.
     fn alloc(class_id: ClassId, root: ClassId, payload: RubyValue) -> RObj {
-        Arc::new(ValueSubclass {
+        let o: RObj = Arc::new(ValueSubclass {
             class_id: AtomicU32::new(class_id.0),
             root,
             frozen: AtomicBool::new(false),
             payload: Mutex::new(payload),
             ivars: Mutex::new(Vec::new()),
-        })
+        });
+        crate::gc::record_object(&o);
+        o
     }
 
     fn store_ivar(&self, name: &str, v: RubyValue) {
@@ -95,6 +97,25 @@ impl RubyObject for ValueSubclass {
     fn set_frozen(&self) {
         self.frozen.store(true, Ordering::Relaxed);
     }
+    fn gc_visit(&self, out: &mut Vec<RubyValue>, take: bool) {
+        // The wrapped value AND the ivars. The payload is the reference a
+        // `class Sub < Array` closes a cycle through: the Array it holds is
+        // a registered node in its own right, and it holds the wrapper back.
+        let mut payload = self.payload.lock();
+        out.push(if take {
+            std::mem::replace(&mut *payload, RubyValue::Nil)
+        } else {
+            payload.clone()
+        });
+        drop(payload);
+        let mut ivars = self.ivars.lock();
+        if take {
+            out.extend(std::mem::take(&mut *ivars).into_iter().map(|(_, v)| v));
+        } else {
+            out.extend(ivars.iter().map(|(_, v)| v.clone()));
+        }
+    }
+
     fn ivar_values(&self) -> Vec<RubyValue> {
         self.ivars.lock().iter().map(|(_, v)| v.clone()).collect()
     }

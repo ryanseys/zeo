@@ -446,11 +446,13 @@ macro_rules! ruby_class {
             /// subclass's id when `Class.new(CompiledBase)` allocates its
             /// instances through the compiled ancestor's struct.
             pub fn __allocate(class: $crate::ClassId) -> $crate::RObj {
-                std::sync::Arc::new($name {
+                let o: $crate::RObj = std::sync::Arc::new($name {
                     __frozen: std::sync::atomic::AtomicBool::new(false),
                     __ivars: $crate::IvarCell::new(),
                     __class: std::sync::atomic::AtomicU32::new(class.0),
-                })
+                });
+                $crate::gc::record_object(&o);
+                o
             }
 
             $(
@@ -543,6 +545,10 @@ macro_rules! ruby_class {
                     self.__ivars.set(slot, value);
                 }
             }
+            fn gc_visit(&self, out: &mut Vec<$crate::RubyValue>, take: bool) {
+                self.__ivars.gc_visit(out, take);
+            }
+
             fn take_linked_ivars(&self, out: &mut Vec<$crate::RubyValue>) {
                 self.__ivars.take_linked(out);
             }

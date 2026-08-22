@@ -77,7 +77,7 @@ pub struct RubyException {
 
 impl RubyException {
     fn new(class_id: ClassId) -> Arc<Self> {
-        Arc::new(RubyException {
+        let e = Arc::new(RubyException {
             class_id,
             frozen: AtomicBool::new(false),
             mesg: Mutex::new(RubyValue::Nil),
@@ -86,7 +86,9 @@ impl RubyException {
             details: Mutex::new(Vec::new()),
             backtrace: Mutex::new(None),
             ivars: Mutex::new(Vec::new()),
-        })
+        });
+        crate::gc::record_object(&(e.clone() as RObj));
+        e
     }
 
     /// Set one hidden detail slot (last write wins), used at raise time or by a
@@ -163,8 +165,39 @@ impl RubyObject for RubyException {
         self.store_ivar(name, v);
         true
     }
+    fn gc_visit(&self, out: &mut Vec<RubyValue>, take: bool) {
+        // Every hidden slot as well as the ivars: `mesg`, `res`, `cause` and
+        // the typed `details` are invisible to `instance_variables` but own
+        // references like any other, and a `cause` chain is exactly the shape
+        // that closes a cycle.
+        let mut slot = |m: &Mutex<RubyValue>| {
+            let mut g = m.lock();
+            out.push(if take {
+                std::mem::replace(&mut *g, RubyValue::Nil)
+            } else {
+                g.clone()
+            });
+        };
+        slot(&self.mesg);
+        slot(&self.res);
+        slot(&self.cause);
+        let mut details = self.details.lock();
+        if take {
+            out.extend(std::mem::take(&mut *details).into_iter().map(|(_, v)| v));
+        } else {
+            out.extend(details.iter().map(|(_, v)| v.clone()));
+        }
+        drop(details);
+        let mut ivars = self.ivars.lock();
+        if take {
+            out.extend(std::mem::take(&mut *ivars).into_iter().map(|(_, v)| v));
+        } else {
+            out.extend(ivars.iter().map(|(_, v)| v.clone()));
+        }
+    }
+
     fn dup_object(&self, copy_frozen: bool) -> RObj {
-        Arc::new(RubyException {
+        let copy: RObj = Arc::new(RubyException {
             class_id: self.class_id,
             frozen: AtomicBool::new(copy_frozen && self.is_frozen()),
             mesg: Mutex::new(self.mesg.lock().clone()),
@@ -175,7 +208,9 @@ impl RubyObject for RubyException {
             // `init_copy` copies the whole object, backtrace included).
             backtrace: Mutex::new(self.backtrace.lock().clone()),
             ivars: Mutex::new(self.ivars.lock().clone()),
-        })
+        });
+        crate::gc::record_object(&copy);
+        copy
     }
 }
 

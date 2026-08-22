@@ -21,6 +21,12 @@ class Node
   attr_accessor :peer, :tag
   def initialize(tag = nil) = @tag = tag
 end
+class ArraySub < Array; end
+class HashSub < Hash; end
+class Boom < StandardError
+  attr_accessor :peer
+end
+Pair = Struct.new(:peer)
 
 def pair(seen)
   a = Node.new
@@ -70,6 +76,50 @@ def through_containers(seen)
   nil
 end
 
+def through_a_value_subclass(seen)
+  a = ArraySub.new
+  a << a
+  h = HashSub.new
+  h[:me] = h
+  seen[a] = true
+  seen[h] = true
+  nil
+end
+
+def through_an_exception(seen)
+  e = Boom.new("x")
+  e.peer = e
+  seen[e] = true
+  nil
+end
+# Deliberately absent: a cycle closed through `Exception#cause`. zeo reclaims
+# it; CRuby keeps the most recently raised exception reachable from its own VM
+# error slot, so the oracle answers one more than zeo does and the shape is
+# not portable. The `cause` slot is still enumerated like every other hidden
+# one -- the corpus's own raising goldens exercise it under the collector's
+# debug over-count check.
+
+def through_a_struct(seen)
+  s = Pair.new(nil)
+  s.peer = s
+  seen[s] = true
+  nil
+end
+
+def through_an_invented_ivar(seen)
+  n = Node.new
+  n.instance_variable_set(:@invented, n)
+  seen[n] = true
+  nil
+end
+
+def through_a_string_leaf(seen)
+  n = Node.new
+  n.peer = ["a#{1}b", n]
+  seen[n] = true
+  nil
+end
+
 def through_runtime_class(seen)
   k = Class.new { attr_accessor :peer }
   x = k.new
@@ -101,6 +151,12 @@ def held_by_a_container(seen, keep)
   nil
 end
 
+# CRuby scans the machine stack conservatively, so a pointer a returned frame
+# left behind can keep a dead object alive for a while. Overwriting that stack
+# is what makes the oracle's answer deterministic; zeo needs no such help,
+# because a reference count is exact.
+def scrub(n) = n.zero? ? [0] * 512 : scrub(n - 1)
+
 keep = []
 pair(seen)
 self_loop(seen)
@@ -108,10 +164,16 @@ chain(seen)
 through_array(seen)
 through_hash(seen)
 through_containers(seen)
+through_a_value_subclass(seen)
+through_an_exception(seen)
+through_a_struct(seen)
+through_an_invented_ivar(seen)
+through_a_string_leaf(seen)
 through_runtime_class(seen)
 held_by_a_global(seen)
 held_by_a_container(seen, keep)
 
+scrub(60)
 GC.start
 GC.start
 

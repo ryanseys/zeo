@@ -1,0 +1,4 @@
+proc_cell	0
+range_endpoint	0
+per_object_singleton	0
+ivar_on_a_bare_value	0
