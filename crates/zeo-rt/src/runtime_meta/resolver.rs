@@ -191,22 +191,6 @@ pub fn overlay_class_method_below_prepends(id: ClassId, name: Symbol) -> Option<
     c.get(&id.0)?.class_methods.get(&name).cloned()
 }
 
-/// The next `name` in `id`'s singleton-PREPEND stack STRICTLY BELOW `mid` --
-/// an EARLIER prepend, which later ones outrank -- or `None` when only the
-/// host's own `def self.x` is left. The resume point for a prepended module
-/// method's `super` when more than one module prepends the same name.
-pub fn singleton_prepend_super_below(id: ClassId, mid: ClassId, name: Symbol) -> Option<RProc> {
-    let below: Vec<ClassId> = {
-        let c = maps().classes.read().unwrap();
-        let stack = &c.get(&id.0)?.singleton_prepends;
-        let pos = stack.iter().position(|&m| m == mid)?;
-        stack[..pos].iter().rev().copied().collect()
-    };
-    below
-        .into_iter()
-        .find_map(|m| extended_class_method(m, name))
-}
-
 /// The modules prepended into `id`'s singleton class, LATEST FIRST -- the
 /// order they occupy in `id.singleton_class.ancestors`, ahead of the
 /// singleton head itself.

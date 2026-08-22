@@ -562,8 +562,13 @@ ruby_class! {
     // class, not the class itself).
     def "owner"(recv) {
         let m = recv_method(recv);
+        // `chain()`, not `home`: after `#super_method` re-seats, `home` IS the
+        // owner, and asking whether the OWNER extended the module answers no
+        // for the module itself -- so a re-seated extend owner rendered as
+        // `#<Class:M1>` where ruby names the module bare. The receiver's own
+        // class is what the question is about, and it is what `chain()` keeps.
         crate::builtins::unbound_method::owner_value(
-            m.home, m.owner().unwrap_or(m.home), m.name, m.kind,
+            m.chain(), m.owner().unwrap_or(m.home), m.name, m.kind,
         )
     }
     // `Method#original_name` -- the name the method was DEFINED under, which
@@ -591,11 +596,16 @@ ruby_class! {
         // Resume past THIS copy of the owner. A re-seat recorded which one it
         // picked; a Method never re-seated is at the owner's first position,
         // which is where ordinary dispatch found it.
-        let Some(at) = m
-            .seat
-            .map(|s| s.at)
-            .or_else(|| crate::dispatch::chain_index_of(m.chain(), owner))
-        else {
+        // A seat records the position a re-seat picked. Without one the
+        // Method sits at the owner's FIRST position -- where ordinary
+        // dispatch found it -- and the two channels index different
+        // sequences, so each asks its own.
+        let Some(at) = m.seat.map(|s| s.at).or_else(|| match m.kind {
+            MethodKind::Instance => crate::dispatch::chain_index_of(m.chain(), owner),
+            MethodKind::Singleton => {
+                crate::dispatch::singleton_chain_index_of(m.chain(), owner)
+            }
+        }) else {
             return Ok(RubyValue::Nil);
         };
         let next = match m.kind {

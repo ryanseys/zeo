@@ -868,6 +868,18 @@ fn rebase_compiled_surrogate(sid: ClassId, recv: &RubyValue) {
     mark_live();
 }
 
+/// The row a module seated in a singleton chain supplies for `name`, wrapped
+/// as a class method -- a value-receiver `RProc` invoked with the Class as
+/// `self`, which is what an `extend`ed instance method IS when it serves as a
+/// class method.
+///
+/// Public because the class-method walk visits each mixed-in module as a
+/// POSITION of its own now, rather than reading the host's flattened copy: a
+/// module reached both ways has two positions and one copy.
+pub fn singleton_mixin_method(module: ClassId, name: Symbol) -> Option<RProc> {
+    watermark::extended_class_method(module, name)
+}
+
 /// A singleton class's ancestry, built the way CRuby's two verbs build one.
 ///
 /// A `prepend` searches only the PREPEND AREA and an `include`/`extend`
@@ -891,6 +903,11 @@ fn singleton_chain(prepend_area: Vec<ClassId>, tail: Vec<ClassId>) -> Vec<ClassI
     };
     let mut chain = dedup(prepend_area);
     chain.extend(dedup(tail));
+    // Arms the duplicate gate, which is what lets a class-method `super`
+    // resume past the copy that is RUNNING rather than past the first one.
+    // Every other linearized chain is noted where it is installed; this one
+    // is built here and leaked straight into the overlay entry.
+    crate::dispatch::note_chain(&chain);
     chain
 }
 

@@ -130,7 +130,7 @@ pub fn responds_to_or_missing(
         // A CLASS receiver's hook is a CLASS-level `respond_to_missing?`
         // (`def self.respond_to_missing?`, faker's Base) -- probed through
         // the same singleton-chain resolution its `method_missing` twin uses.
-        return Ok(send_class_walking(*cid, 0, rtm, &args, None)?.truthy());
+        return Ok(crate::dispatch::send_class_chain(*cid, rtm, &args, None)?.truthy());
     }
     // The VALUE channel, for both receiver shapes: a builtin REOPEN's hook
     // (`class Integer; def respond_to_missing?...`), and every method of a
@@ -353,20 +353,26 @@ pub(crate) fn class_method_fn(cid: ClassId, name: Symbol) -> Option<ValueImpl> {
 }
 
 /// [`class_method_owner`]'s `#super_method` companion: the next definer
-/// strictly after `after`.
+/// strictly after position `from` on `cid`'s SINGLETON chain.
+///
+/// Over the singleton walk, not the instance ancestry -- an `extend`ed module
+/// is seated in the first and absent from the second, so
+/// `OwnFirst.method(:tag).super_method` answered nil where ruby names the
+/// module. The index it returns is a walk position, which is what makes a
+/// module seated twice re-seat past the copy it is on rather than back onto
+/// the first.
 pub fn class_method_owner_after(
     cid: ClassId,
     from: usize,
     name: Symbol,
 ) -> Option<(ClassId, usize)> {
-    let owner = scan_class_method_owner(cid, from, name).map(|(owner, _)| owner)?;
-    let at = ancestors_of_value(cid)
-        .iter()
-        .enumerate()
-        .skip(from)
-        .find(|&(_, &a)| a == owner)
-        .map(|(i, _)| i)?;
-    Some((owner, at))
+    crate::dispatch::singleton_owner_from(cid, from, name)
+}
+
+/// The singleton-chain position of `after`, for a `#super_method` walk with
+/// no recorded seat -- [`chain_index_of`]'s class-method twin.
+pub fn singleton_chain_index_of(recv_class: ClassId, after: ClassId) -> Option<usize> {
+    crate::dispatch::singleton_position_of(recv_class, after)
 }
 
 /// The shared scan, answering `(owner, reached through an extend)`. Wider than
@@ -395,13 +401,16 @@ pub(crate) fn scan_class_method_owner(
         .skip(skip)
         .copied()
         .find_map(|anc| {
-            // `remove_method` in `class << self` empties THIS position without
-            // ending the walk -- an ancestor's `def self.x` is meant to answer
-            // now, which is what separates it from the `undef` above.
-            if crate::runtime_meta::is_live()
-                && crate::runtime_meta::overlay_class_removed(anc, name)
-            {
-                return None;
+            // `remove_method` in `class << self` empties THIS ancestor's OWN
+            // position without ending the walk -- an ancestor's `def self.x`
+            // is meant to answer now, which is what separates it from the
+            // `undef` above. It empties only the own layer: a module this
+            // ancestor `extend`ed sits at a position of its own, behind it,
+            // and `remove_method` on the singleton never touched that one.
+            let removed_here = crate::runtime_meta::is_live()
+                && crate::runtime_meta::overlay_class_removed(anc, name);
+            if removed_here {
+                return extended_class_method_owner(anc, name).map(|m| (m, true));
             }
             // A RUNTIME `extend` copies the module's rows into the overlay, so
             // the overlay hit alone cannot tell the two apart -- the set the

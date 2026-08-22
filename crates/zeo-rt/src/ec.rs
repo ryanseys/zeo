@@ -79,6 +79,12 @@ pub struct Ec {
     /// it, so it is live across every call the body makes -- `Fiber.yield`
     /// among them.
     mro_resume: Option<crate::dispatch::MroResume>,
+    /// The same fact for the CLASS-METHOD channel
+    /// (`dispatch::CLASS_MRO_RESUME`). A second cell rather than a wider
+    /// first one: the two index different sequences -- an instance ancestry
+    /// against a singleton walk -- so a module used both ways would have them
+    /// collide on `defining_class`.
+    class_mro_resume: Option<crate::dispatch::ClassResume>,
 }
 
 impl Default for Ec {
@@ -97,6 +103,7 @@ impl Default for Ec {
             svar_scopes: Vec::new(),
             eval_homes: Vec::new(),
             mro_resume: None,
+            class_mro_resume: None,
         }
     }
 }
@@ -120,5 +127,6 @@ pub fn swap(ec: Ec) -> Ec {
         svar_scopes,
         eval_homes: crate::eval::swap_eval_homes(ec.eval_homes),
         mro_resume: crate::dispatch::swap_mro_resume(ec.mro_resume),
+        class_mro_resume: crate::dispatch::swap_class_mro_resume(ec.class_mro_resume),
     }
 }

@@ -43,6 +43,11 @@ impl RUnboundMethod {
             return Some(seat.owner);
         }
         match self.kind {
+            // A singleton class's own instance methods ARE its owner's class
+            // methods, and they live on the owner's tables -- so the ordinary
+            // scan finds nothing at the chain head and reports the first
+            // `extend`ed module instead. See `singleton_head_owns`.
+            MethodKind::Instance if singleton_head_owns(self.home, self.name) => Some(self.home),
             MethodKind::Instance => crate::dispatch::method_owner(self.home, self.name),
             MethodKind::Singleton => {
                 crate::dispatch::class_method_owner_reported(self.home, self.name)
@@ -96,11 +101,43 @@ pub fn unbound_method_new(cid: ClassId, name_arg: &RubyValue) -> Result<RubyValu
         name,
         // `instance_method` always asks the INSTANCE chain -- `Foo.bar` is
         // reached through `Foo.singleton_class.instance_method(:bar)`.
-        home: crate::dispatch::method_owner(cid, name).unwrap_or(cid),
+        home: instance_method_home(cid, name),
         kind: MethodKind::Instance,
         snapshot: Some(crate::builtins::method::freeze_entry(cid, name)),
         seat: None,
     })))
+}
+
+/// Where `instance_method` seats its lookup.
+///
+/// A SINGLETON class's instance methods ARE its owner's class methods, and
+/// they live on the OWNER's tables rather than on the minted singleton -- so
+/// the ordinary instance walk finds nothing at the chain head and reports the
+/// first `extend`ed module instead. `Chained.singleton_class.instance_method(
+/// :tag).owner` answered `S2` where ruby answers `#<Class:Chained>`, whose own
+/// `def self.tag` sits ahead of every extend.
+fn instance_method_home(cid: ClassId, name: Symbol) -> ClassId {
+    match singleton_head_owns(cid, name) {
+        true => cid,
+        false => crate::dispatch::method_owner(cid, name).unwrap_or(cid),
+    }
+}
+
+/// Whether `cid` is a minted SINGLETON class whose own owner really defines
+/// class method `name` -- so `cid` itself is where the row lives.
+///
+/// Nothing is stored on the minted class: a `def self.x` lands on the owner's
+/// tables. The ordinary instance walk therefore sees an empty head and reports
+/// the nearest `extend`ed module, which is a position BEHIND the head.
+///
+/// It asks the CHAIN rather than "does the class define one", because a module
+/// PREPENDED into the singleton sits AHEAD of the head and rightly owns the
+/// lookup even when the class defines the name itself.
+fn singleton_head_owns(cid: ClassId, name: Symbol) -> bool {
+    matches!(
+        crate::runtime_meta::singleton_owner_value(cid),
+        Some(RubyValue::Class(owner)) if crate::dispatch::singleton_resolves_at_head(owner, name)
+    )
 }
 
 /// The class an `#owner` reports. A SINGLETON lookup lives on the owner's
@@ -125,7 +162,13 @@ pub(crate) fn owner_value(
         // real `def self.x` is reported as owned by a singleton class.
         MethodKind::Singleton
             if crate::dispatch::class_method_extend_source(home, name) == Some(owner)
-                || crate::runtime_meta::singleton_prepend_owner(home, name) == Some(owner) =>
+                || crate::runtime_meta::singleton_prepend_owner(home, name) == Some(owner)
+                // The by-NAME questions above cannot answer after
+                // `#super_method` has re-seated onto a module the host also
+                // defines the name on -- `OwnFirst` owns `tag`, so nothing
+                // "extends" it there, and the re-seated `M1` rendered as
+                // `#<Class:M1>`. Where the chain SEATS the owner settles it.
+                || crate::dispatch::singleton_seats_as_mixin(home, owner) =>
         {
             Ok(RubyValue::Class(owner))
         }
