@@ -35,6 +35,10 @@ struct StatPayload {
 /// re-init, marshal's load path); it is a value snapshot everywhere else.
 pub struct RStat {
     payload: Mutex<StatPayload>,
+    /// `Kernel#freeze`'s own flag. A Stat is a value snapshot, so freezing
+    /// gates nothing -- but `frozen?` answers what was written, which a
+    /// hardcoded `false` did not.
+    frozen: std::sync::atomic::AtomicBool,
 }
 
 impl RubyObject for RStat {
@@ -47,18 +51,20 @@ impl RubyObject for RStat {
     fn as_any_rc(self: Arc<Self>) -> Arc<dyn std::any::Any + Send + Sync> {
         self
     }
-    // A `Stat` is a value snapshot; freezing is meaningless (CRuby's is
-    // unfrozen too) and a copy is just the same fields.
     fn is_frozen(&self) -> bool {
-        false
+        self.frozen.load(std::sync::atomic::Ordering::Relaxed)
     }
-    fn set_frozen(&self) {}
+    fn set_frozen(&self) {
+        self.frozen
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
     fn ivar_values(&self) -> Vec<RubyValue> {
         Vec::new()
     }
-    fn dup_object(&self, _copy_frozen: bool) -> RObj {
+    fn dup_object(&self, copy_frozen: bool) -> RObj {
         Arc::new(RStat {
             payload: Mutex::new(*self.payload.lock()),
+            frozen: std::sync::atomic::AtomicBool::new(copy_frozen && self.is_frozen()),
         })
     }
 }
@@ -67,6 +73,7 @@ impl RubyObject for RStat {
 fn stat_value(st: libc::stat, birth: Option<(i64, i64)>) -> RubyValue {
     RubyValue::Object(Arc::new(RStat {
         payload: Mutex::new(StatPayload { st, birth }),
+        frozen: std::sync::atomic::AtomicBool::new(false),
     }))
 }
 
@@ -80,6 +87,7 @@ fn stat_allocate(_id: ClassId) -> RObj {
             st: unsafe { std::mem::zeroed() },
             birth: None,
         }),
+        frozen: std::sync::atomic::AtomicBool::new(false),
     })
 }
 

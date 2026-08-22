@@ -313,6 +313,10 @@ pub struct RDir {
     pos: AtomicUsize,
     /// `false` after `#close`; every later operation raises IOError.
     open: AtomicBool,
+    /// `Kernel#freeze`'s own flag. It gates nothing here (a Dir's state is
+    /// its descriptor, which `#close` owns) -- but `frozen?` must answer
+    /// what was written, which a hardcoded `false` did not.
+    frozen: AtomicBool,
     /// The live descriptor `#fileno` answers, and which `Dir.for_fd`/`fchdir`
     /// need. `-1` when there is none.
     fd: std::sync::atomic::AtomicI32,
@@ -338,26 +342,33 @@ impl RubyObject for RDir {
         self
     }
     fn is_frozen(&self) -> bool {
-        false
+        self.frozen.load(Ordering::Relaxed)
     }
-    fn set_frozen(&self) {}
+    fn set_frozen(&self) {
+        self.frozen.store(true, Ordering::Relaxed);
+    }
     fn ivar_values(&self) -> Vec<RubyValue> {
         Vec::new()
     }
-    fn dup_object(&self, _copy_frozen: bool) -> RObj {
+    fn dup_object(&self, copy_frozen: bool) -> RObj {
         // The copy gets its own descriptor, so closing either leaves the other
         // usable -- CRuby's `Dir#dup` reopens for the same reason.
         let fd = match self.fd.load(Ordering::Relaxed) {
             n if n >= 0 => unsafe { libc::dup(n) },
             _ => -1,
         };
-        Arc::new(RDir {
+        let copy = RDir {
             path: Mutex::new(self.path.lock().clone()),
             entries: Mutex::new(self.entries.lock().clone()),
             pos: AtomicUsize::new(self.pos.load(Ordering::Relaxed)),
             open: AtomicBool::new(self.open.load(Ordering::Relaxed)),
             fd: std::sync::atomic::AtomicI32::new(fd),
-        })
+            frozen: AtomicBool::new(false),
+        };
+        if copy_frozen {
+            copy.set_frozen();
+        }
+        Arc::new(copy)
     }
 }
 
@@ -371,6 +382,7 @@ fn dir_value(path: Option<String>, mut entries: Vec<String>, fd: libc::c_int) ->
         pos: AtomicUsize::new(0),
         open: AtomicBool::new(true),
         fd: std::sync::atomic::AtomicI32::new(fd),
+        frozen: AtomicBool::new(false),
     }))
 }
 

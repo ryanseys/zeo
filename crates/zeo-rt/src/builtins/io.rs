@@ -127,6 +127,10 @@ pub struct RIo {
     /// for STDERR, a socket, a popen handle, and a pipe's write end; false for
     /// a file, STDOUT, STDIN, and a pipe's read end.
     sync: std::sync::atomic::AtomicBool,
+    /// `Kernel#freeze`'s own flag. It gates nothing -- what a handle holds
+    /// is a descriptor, not a Ruby-visible field -- but `frozen?` answers
+    /// what was written, which a hardcoded `false` did not.
+    frozen: std::sync::atomic::AtomicBool,
     /// Bytes pushed back by `#ungetbyte`/`#ungetc`, read out (LIFO) before the
     /// stream itself. The next byte read drains this first.
     unget: parking_lot::Mutex<Vec<u8>>,
@@ -222,12 +226,16 @@ impl RubyObject for RIo {
     fn as_any_rc(self: Arc<Self>) -> Arc<dyn std::any::Any + Send + Sync> {
         self
     }
-    // The std streams are process-wide state holders; freezing them is
-    // meaningless (CRuby's are unfrozen too).
+    // Freezing an IO gates nothing -- what a handle holds is a descriptor,
+    // not a Ruby-visible field -- but `frozen?` answers what was written,
+    // the std streams included.
     fn is_frozen(&self) -> bool {
-        false
+        self.frozen.load(std::sync::atomic::Ordering::Relaxed)
     }
-    fn set_frozen(&self) {}
+    fn set_frozen(&self) {
+        self.frozen
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
     fn ivar_values(&self) -> Vec<RubyValue> {
         Vec::new()
     }
@@ -317,6 +325,7 @@ impl RIo {
             lineno: std::sync::atomic::AtomicI64::new(0),
             binmode: std::sync::atomic::AtomicBool::new(false),
             autoclose: std::sync::atomic::AtomicBool::new(true),
+            frozen: std::sync::atomic::AtomicBool::new(false),
             unget: parking_lot::Mutex::new(Vec::new()),
             rbuf: parking_lot::Mutex::new(ReadBuf::default()),
             class_override: None,

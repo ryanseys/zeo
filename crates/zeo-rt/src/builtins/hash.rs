@@ -713,7 +713,29 @@ ruby_class! {
     // Each calls the very row it would otherwise have inherited, so `.owner`
     // and `instance_methods(false)` agree and there is still only one body.
     def "any?" cfunc (recv, *_args, &block) { own_row!(recv, |s| enumerable::any_all(s, __args, block, enumerable::Quantifier::Any)) }
-    def "eql?"(recv, _other) { inherited_row!(kernel, "eql?", recv, __args, None) }
+    // `Hash#eql?` is `==` with the VALUES compared strictly (CRuby's
+    // `hash_equal(.., eql = TRUE)`), so `{a: 1}.eql?({a: 1.0})` is false
+    // where `==` is true. The keys are already strict: a Hash looks one up
+    // by `eql?`/`hash`, which is why only the values need saying.
+    def "eql?"(recv, arg) {
+        let RubyValue::Hash(other) = arg else {
+            return Ok(RubyValue::Bool(false));
+        };
+        let me = rhash;
+        if std::sync::Arc::ptr_eq(me, other) {
+            return Ok(RubyValue::Bool(true));
+        }
+        // A snapshot, not a held guard: a value's own `eql?` may be a user
+        // method that touches either hash.
+        let pairs: Vec<(RubyValue, RubyValue)> = me.lock().values().cloned().collect();
+        let eq = crate::hash_len(me) == crate::hash_len(other)
+            && pairs.iter().all(|(k, v)| {
+                crate::hash_has_key(other, k)
+                    && crate::collections::hash_key(v)
+                        == crate::collections::hash_key(&crate::hash_get(other, k))
+            });
+        Ok(RubyValue::Bool(eq))
+    }
     def "freeze"(recv) { inherited_row!(kernel, "freeze", recv, __args, None) }
     def "hash"(recv) { inherited_row!(kernel, "hash", recv, __args, None) }
     def "inspect"(recv) { inherited_row!(kernel, "inspect", recv, __args, None) }

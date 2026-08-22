@@ -1,26 +1,22 @@
-# GAP -- imported from the spinel corpus at fa06b601.
-#
 # Object's universal protocol -- `===`, `==`, `!=`, `equal?`, `eql?`,
-# `frozen?`, `freeze` -- answers differently on several native handle and
-# value kinds.
+# `frozen?`, `freeze` -- over the native handle and value kinds, promoted
+# from `tests/gaps/` on 2026-08-21.
 #
-# Three rows of the table diverge, and they are not one rule: an identity
-# comparison that should be true is false, and two that should be false are
-# true. Heap handles compare by IDENTITY in CRuby and carry their own frozen
-# bit; the kinds here are the ones zeo represents as something other than an
-# ordinary object, which is where the two models meet.
+# The rule is not one rule. A heap HANDLE (Fiber, Mutex, Queue, Thread, IO,
+# Dir, MatchData) compares by IDENTITY and carries a frozen bit of its own.
+# A by-VALUE kind (Time, `Process::Tms`, a Struct-backed row) compares
+# structurally under `==` and `===`, answers no `equal?`, and -- for most of
+# them -- no `frozen?` either. A Range is the exception that is always
+# frozen.
 #
-# The original header follows. It describes the PREDECESSOR project's
-# version of this test and its own fix, not zeo's divergence above.
+# `eql?` follows NEITHER, which is why the last block pins it as a table.
+# `Set`, `Time`, `Date`, `Pathname` and `BigDecimal` answer it by value;
+# `FFI::Pointer` and an `Exception` answer `==` by value and `eql?` by
+# IDENTITY. Nothing zeo can see predicts the split, so
+# `Kernel#eql?`'s `owns_value_eql` allowlist is measured against the oracle
+# and this table is what keeps it honest.
 #
-# Object's universal protocol -- ===, ==, !=, equal?, eql?, frozen?, freeze --
-# on the native handle and value kinds that used to be refused at compile
-# time. Heap handles compare by identity and carry the frozen bit; Random,
-# OpenStruct, Exception, File::Stat, Time and Process::Tms compare
-# structurally under == and ===; a poly operand is unwrapped in place; a
-# case/when answers the way an explicit === does. The by-value kinds (Time,
-# Tms, a String range) answer no equal? and no frozen? (bar the Range, always
-# frozen). Expected output is CRuby's.
+# Expected output is CRuby's.
 require "socket"
 require "ostruct"
 
@@ -156,3 +152,32 @@ mixed = [1, "s"]
 p(noisy == mixed[0])
 p(noisy === mixed[1])
 p(noisy != mixed[0])
+
+# The `eql?` table. A class here either owns a value `eql?` or inherits
+# Object's identity one; measured, because the split follows no rule.
+require "set"
+require "date"
+require "pathname"
+require "bigdecimal"
+require "ffi"
+def eql_row(label, a, b)
+  print "#{label}: "
+  p [a == b, a.eql?(b), a.equal?(b)]
+end
+eql_row("Set", Set[1, 2], Set[2, 1])
+eql_row("Time", Time.at(5), Time.at(5))
+eql_row("Date", Date.new(2020, 1, 1), Date.new(2020, 1, 1))
+eql_row("DateTime", DateTime.new(2020, 1, 1), DateTime.new(2020, 1, 1))
+eql_row("Pathname", Pathname.new("/a"), Pathname.new("/a"))
+eql_row("BigDecimal", BigDecimal("1.5"), BigDecimal("1.5"))
+eql_row("Encoding", Encoding::UTF_8, Encoding::UTF_8)
+eql_row("Range", (1..2), (1..2))
+eql_row("ArithSeq", 1.step(5, 2), 1.step(5, 2))
+eql_row("Rational", Rational(1, 2), Rational(1, 2))
+eql_row("Regexp", /a/, /a/)
+eql_row("Pointer", FFI::Pointer.new(8), FFI::Pointer.new(8))
+eql_row("Exception", ArgumentError.new("x"), ArgumentError.new("x"))
+eql_row("Lazy", [1].lazy, [1].lazy)
+eql_row("Enumerator", [1].each, [1].each)
+tms = Process.times
+eql_row("Tms", tms, tms.dup)

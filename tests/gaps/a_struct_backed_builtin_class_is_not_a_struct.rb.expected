@@ -3,3 +3,4 @@ true
 true
 false
 "Struct"
+[true, true, false]

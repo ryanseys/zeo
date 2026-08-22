@@ -609,9 +609,21 @@ ruby_module! {
             RubyValue::Nil
         })
     }
-    // `eql?`: same class AND `==` (what makes `1.eql?(1.0)` false while
-    // `1 == 1.0` is true -- oracle-verified).
+    // `Object#eql?` is IDENTITY in CRuby (`rb_obj_equal`); every type that
+    // wants value semantics owns its own row. zeo's Object-backed handle
+    // kinds (a Random, a File::Stat, a Dir, a Method) inherit this one and
+    // must get identity, or `Random.new(7).eql?(Random.new(7))` answers
+    // true where ruby says false.
+    //
+    // Every OTHER `RubyValue` variant reaching this row is a kind CRuby
+    // owns `eql?` on, and zeo's rows for those delegate here rather than
+    // repeating the comparison -- so they keep the value form: same class
+    // AND `==`, which is what makes `1.eql?(1.0)` false while `1 == 1.0`
+    // is true.
     def "eql?"(recv, arg) {
+        if matches!(recv, RubyValue::Object(_)) && !owns_value_eql(recv) {
+            return Ok(RubyValue::Bool(crate::builtins::basic_object::value_identity(recv, arg)));
+        }
         Ok(RubyValue::Bool(
             recv.class_id() == (*arg).class_id() && recv.rb_eq(arg),
         ))
@@ -1710,6 +1722,36 @@ pub fn kernel_puts(args: &[RubyValue]) -> Result<RubyValue, Signal> {
 /// shape -- honest, and rescuable by `begin; require dyn; rescue LoadError`
 /// -- rather than a silent no-op. A non-String-convertible argument raises
 /// the same TypeError CRuby's path coercion does.
+/// Whether an Object-backed value's class owns a VALUE `eql?` in CRuby --
+/// the exceptions to `Object#eql?`'s identity that zeo serves from this
+/// one row rather than from a row of their own.
+///
+/// MEASURED against the oracle rather than reasoned about, because the
+/// split does not follow from anything zeo can see: `Time`, `Date`,
+/// `Pathname`, `Set` and `BigDecimal` answer `eql?` by VALUE, while
+/// `FFI::Pointer` and an `Exception` -- both of which answer `==` by value
+/// -- answer `eql?` by identity. `Etc::Passwd`/`Etc::Group` and
+/// `Process::Tms` are Structs, which own a value `eql?` like every other.
+///
+/// `tests/native_object_protocol.rb` pins the whole table, so a class that
+/// lands on the wrong side of it shows up there rather than in a Hash
+/// lookup that quietly misses.
+fn owns_value_eql(recv: &RubyValue) -> bool {
+    matches!(
+        recv.class_id(),
+        zeo_abi::TIME_CLASS
+            | zeo_abi::PROCESS_TMS_CLASS
+            | zeo_abi::SET_CLASS
+            | zeo_abi::SET_CORE_SET_CLASS
+            | zeo_abi::DATE_CLASS
+            | zeo_abi::DATETIME_CLASS
+            | zeo_abi::PATHNAME_CLASS
+            | zeo_abi::BIGDECIMAL_CLASS
+            | zeo_abi::ETC_PASSWD_CLASS
+            | zeo_abi::ETC_GROUP_CLASS
+    )
+}
+
 pub(crate) fn dynamic_require(arg1: &RubyValue) -> Result<RubyValue, crate::Signal> {
     let path = crate::builtins::convert::to_rstr(arg1)?
         .lock()

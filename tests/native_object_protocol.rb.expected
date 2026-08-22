@@ -36,3 +36,19 @@ receiver
 false
 receiver
 true
+Set: [true, true, false]
+Time: [true, true, false]
+Date: [true, true, false]
+DateTime: [true, true, false]
+Pathname: [true, true, false]
+BigDecimal: [true, true, false]
+Encoding: [true, true, true]
+Range: [true, true, false]
+ArithSeq: [true, true, false]
+Rational: [true, true, false]
+Regexp: [true, true, false]
+Pointer: [true, false, false]
+Exception: [true, false, false]
+Lazy: [false, false, false]
+Enumerator: [false, false, false]
+Tms: [true, true, false]

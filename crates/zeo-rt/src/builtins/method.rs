@@ -58,6 +58,10 @@ pub struct RMethod {
     /// `prepend` finds the prepended module again and the walk never
     /// advances), and `#call` runs exactly this ancestor's body.
     pub(crate) seat: Option<ClassId>,
+    /// `Kernel#freeze`'s own flag. A Method is a value snapshot, so
+    /// freezing gates nothing -- but `frozen?` answers what was written,
+    /// which a hardcoded `false` did not.
+    frozen: std::sync::atomic::AtomicBool,
 }
 
 /// Which LAYER answered when a `Method`/`UnboundMethod` was taken.
@@ -193,6 +197,7 @@ pub(crate) fn method_value_with(
         kind,
         snapshot,
         seat,
+        frozen: std::sync::atomic::AtomicBool::new(false),
     }))
 }
 
@@ -240,13 +245,16 @@ impl RubyObject for RMethod {
         self
     }
     fn is_frozen(&self) -> bool {
-        false
+        self.frozen.load(std::sync::atomic::Ordering::Relaxed)
     }
-    fn set_frozen(&self) {}
+    fn set_frozen(&self) {
+        self.frozen
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
     fn ivar_values(&self) -> Vec<RubyValue> {
         Vec::new()
     }
-    fn dup_object(&self, _copy_frozen: bool) -> RObj {
+    fn dup_object(&self, copy_frozen: bool) -> RObj {
         Arc::new(RMethod {
             recv: self.recv.clone(),
             name: self.name,
@@ -254,6 +262,7 @@ impl RubyObject for RMethod {
             kind: self.kind,
             snapshot: self.snapshot.clone(),
             seat: self.seat,
+            frozen: std::sync::atomic::AtomicBool::new(copy_frozen && self.is_frozen()),
         })
     }
 }

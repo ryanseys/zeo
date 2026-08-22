@@ -1170,6 +1170,23 @@ impl RubyValue {
             }
             // Reference identity -- CRuby's `Object#==` default (an
             // enumerator never equals a structurally-identical sibling).
+            // `MatchData#==` is STRUCTURAL in CRuby (`match_equal`): same
+            // regexp source, same haystack, same offsets. Without an arm it
+            // fell to the `_ => false` tail, so even `md == md` was false.
+            (RubyValue::MatchData(a), RubyValue::MatchData(b)) => {
+                std::sync::Arc::ptr_eq(a, b)
+                    || (a.haystack == b.haystack
+                        && a.groups == b.groups
+                        && a.regexp.source == b.regexp.source
+                        && a.regexp.ignore_case == b.regexp.ignore_case
+                        && a.regexp.extended == b.regexp.extended
+                        && a.regexp.multiline == b.regexp.multiline)
+            }
+            // A Fiber is a HANDLE: `==` is identity, exactly as
+            // `Object#==` gives every other one. Without an arm it fell to
+            // the `_ => false` tail, so `f == f` was FALSE -- and so was
+            // the `===` a `case` runs.
+            (RubyValue::Fiber(a), RubyValue::Fiber(b)) => std::sync::Arc::ptr_eq(a, b),
             (RubyValue::Enumerator(a), RubyValue::Enumerator(b)) => std::sync::Arc::ptr_eq(a, b),
             (RubyValue::Yielder(a), RubyValue::Yielder(b)) => a.ptr_eq(b),
             // The concurrency handles compare by identity too -- what

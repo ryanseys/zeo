@@ -657,6 +657,28 @@ ruby_module! {
         def "cstime=" params "_"(recv, v) {
             tms_set(recv, 3, v)
         }
+        // A `Struct`'s value equality: same class, members `==` pairwise.
+        // Without it `Process.times == Process.times.dup` was identity, and
+        // so was the `===` a `case` runs.
+        def "==" | "==="(recv, other) {
+            let (RubyValue::Object(a), RubyValue::Object(b)) = (recv, other) else {
+                return Ok(RubyValue::Bool(false));
+            };
+            // A value compared with ITSELF takes one lock twice otherwise,
+            // which is a self-deadlock rather than a wrong answer.
+            if std::sync::Arc::ptr_eq(a, b) {
+                return Ok(RubyValue::Bool(true));
+            }
+            let (Some(a), Some(b)) = (
+                a.as_any().downcast_ref::<RTms>(),
+                b.as_any().downcast_ref::<RTms>(),
+            ) else {
+                return Ok(RubyValue::Bool(false));
+            };
+            let x = a.members.lock().clone();
+            let y = b.members.lock().clone();
+            Ok(RubyValue::Bool(x.iter().zip(&y).all(|(p, q)| p.rb_eq(q))))
+        }
         def "to_a" | "values"(recv) {
             Ok(RubyValue::Array(crate::array_new(
                 recv_tms(recv).members.lock().to_vec(),

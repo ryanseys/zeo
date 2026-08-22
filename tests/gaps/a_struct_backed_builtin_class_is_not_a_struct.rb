@@ -27,3 +27,6 @@ p Etc::Passwd.ancestors.include?(Struct)
 p pw.respond_to?(:name=)
 p Etc::Passwd.instance_methods(false).include?(:to_a)
 p Process::Tms.superclass.to_s
+# ... and a Struct's `==`/`eql?` compare BY VALUE, so two reads of the same
+# passwd entry are equal in ruby and merely identical-to-themselves in zeo.
+p [pw == Etc.getpwuid, pw.eql?(Etc.getpwuid), pw.equal?(Etc.getpwuid)]

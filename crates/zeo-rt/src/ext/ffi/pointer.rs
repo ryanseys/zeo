@@ -356,7 +356,9 @@ ruby_class! {
         let delta = crate::ffi::to_i64(other)? as usize;
         Ok(RubyValue::Object(Arc::new(ptr_of(recv).offset(delta))))
     }
-    def "==" | "eql?"(recv, other) {
+    // `eql?` is NOT an alias of this: CRuby's ffi gem defines only `==`, so a
+    // pointer's `eql?` is `Object#eql?` -- identity. Measured, not assumed.
+    def "=="(recv, other) {
         Ok(RubyValue::Bool(address_of(other) == Some(ptr_of(recv).address())))
     }
     def "slice"(recv, arg1, arg2) {
