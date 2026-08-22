@@ -1027,11 +1027,11 @@ fn box_globals_are_fully_separate() {
 /// the class carries real rows; a non-literal `box.eval` source is NOT
 /// rejected here -- it routes to the runtime `eval`, so a non-string
 /// source is a catchable runtime `TypeError`, exactly like `Kernel#eval`;
-/// see `box_eval_dynamic_source_routes_through_the_vm`. An
-/// expression-position literal `box.eval` defining a class used to be
-/// rejected too -- the registration walk couldn't see into the splice --
-/// but the walk descends every container now, so it registers and
-/// compiles.)
+/// see `box_eval_dynamic_source_routes_through_the_vm`. Two shapes that
+/// used to be rejected here compile now: an expression-position literal
+/// `box.eval` defining a class (the registration walk descends every
+/// container), and an expression-position `box.require` (which reaches the
+/// box's own run-time load path).)
 #[test]
 fn ruby_box_rejections_are_clean_errors() {
     // An expression-position `.new` compiles to a dynamic send and raises
@@ -1043,8 +1043,12 @@ fn ruby_box_rejections_are_clean_errors() {
         result.stdout,
         "Ruby Box is disabled. Set RUBY_BOX=1 environment variable to use Ruby::Box.\n"
     );
-    let err = zeo::check_program("box = Ruby::Box.new\nx = [box.require(\"f\")]\n").unwrap_err();
-    assert!(err.contains("top-level statement"), "{err}");
+    // An expression-position `box.require` used to be a compile-time
+    // rejection. It compiles now -- the ordinary send reaches the box's own
+    // run-time load path -- and a target that resolves to nothing is the
+    // `LoadError` it would be in ruby.
+    zeo::check_program("box = Ruby::Box.new\nx = [box.require(\"f\")]\n")
+        .expect("an expression-position box.require reaches the run-time load path now");
     // The once-rejected expression-position class-defining eval splice.
     zeo::check_program("box = Ruby::Box.new\nv = box.eval(\"class X; end\")\n")
         .expect("a literal box.eval defining a class registers and compiles now");

@@ -36,6 +36,19 @@ fn box_construct(
     boxes::new_box()
 }
 
+/// `Ruby::Box#require`/`#load`: the box's own load path, and its own
+/// once-only table.
+fn box_load(box_id: u32, feature: &RubyValue, reload: bool) -> Result<RubyValue, crate::Signal> {
+    let path = crate::builtins::convert::to_rstr(feature)?
+        .lock()
+        .to_utf8_lossy()
+        .into_owned();
+    match crate::features::load_from_disk(&path, box_id, reload) {
+        Some(result) => result.map(RubyValue::Bool),
+        None => Err(crate::builtins::kernel::missing_feature_error(&path)),
+    }
+}
+
 /// Whether `recv` is the handle for exactly box `want`.
 fn box_kind_is(recv: &RubyValue, want: u32) -> bool {
     boxes::box_of_surrogate(recv) == Some(want)
@@ -115,17 +128,27 @@ mod box_class {
             let box_id = boxes::box_of_surrogate(recv).unwrap_or(0);
             Ok(crate::globals::global_get(box_id, "$LOAD_PATH"))
         }
-        // zeo requires are compile-time splices (`box.require` at the top
-        // level already works); a DYNAMIC require has no source to splice.
-        def "require" | "require_relative" (_recv, _feature) {
-            Err(crate::builtins::not_impl_error!(
-                "dynamic `Ruby::Box#require`/`#load` isn't supported (zeo requires splice at compile time; write `box.require \"feature\"` as a top-level statement)"
-            ))
+        // A box's own load path, searched in the box's own
+        // `$LOADED_FEATURES` -- so a file already loaded in MAIN loads
+        // again here, which is CRuby's rule and the whole point of a box.
+        //
+        // A feature the compiler SPLICED into main has no file to re-read
+        // and no unit of its own, so it raises the ordinary `LoadError`.
+        // See `tests/gaps/a_box_cannot_require_a_spliced_feature.rb`.
+        def "require" | "require_relative" (recv, feature) {
+            let box_id = boxes::box_of_surrogate(recv).unwrap_or(0);
+            box_load(box_id, feature, false)
         }
-        def "load"(_recv, *_args) {
-            Err(crate::builtins::not_impl_error!(
-                "dynamic `Ruby::Box#require`/`#load` isn't supported (zeo requires splice at compile time; write `box.require \"feature\"` as a top-level statement)"
-            ))
+        def "load"(recv, *args) {
+            crate::builtins::check_arity(args.len(), 1, Some(2))?;
+            if matches!(args.get(1), Some(v) if v.truthy()) {
+                return Err(crate::builtins::not_impl_error!(
+                    "`Ruby::Box#load`'s `wrap:` isn't supported (CRuby wraps the file in an \
+                     anonymous module; zeo has no equivalent definee)"
+                ));
+            }
+            let box_id = boxes::box_of_surrogate(recv).unwrap_or(0);
+            box_load(box_id, &args[0], true)
         }
         // CRuby's own form: `#<Ruby::Box:4,user,optional>`. The number is
         // the DISPLAY id (master 1, root 2, main 3, users from 4), never

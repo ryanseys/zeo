@@ -135,7 +135,8 @@ pub fn load_from_disk(feature: &str, box_id: u32, reload: bool) -> Option<Result
     // spelling, which is what makes `require "json"` and `require "json.rb"`
     // one feature.
     let path = resolve_on_disk(feature, box_id, !reload)?;
-    let key = path.to_string_lossy().into_owned();
+    let path = path.to_string_lossy().into_owned();
+    let key = (box_id, path.clone());
     if !reload {
         let mut st = state().lock();
         if st.disk_loaded.contains(&key) || !st.disk_loading.insert(key.clone()) {
@@ -158,7 +159,7 @@ pub fn load_from_disk(feature: &str, box_id: u32, reload: bool) -> Option<Result
             )));
         }
     };
-    let result = compiler.load(&source, &key, box_id);
+    let result = compiler.load(&source, &path, box_id);
     let mut st = state().lock();
     st.disk_loading.remove(&key);
     match result {
@@ -166,10 +167,10 @@ pub fn load_from_disk(feature: &str, box_id: u32, reload: bool) -> Option<Result
         // `$LOADED_FEATURES` so a later require retries it.
         Err(e) => Some(Err(e)),
         Ok(_) => {
-            st.disk_loaded.insert(key.clone());
+            st.disk_loaded.insert(key);
             drop(st);
             if !reload {
-                crate::globals::append_loaded_feature_in(box_id, &key);
+                crate::globals::append_loaded_feature_in(box_id, &path);
             }
             Some(Ok(true))
         }
@@ -194,10 +195,13 @@ struct LoadState {
     /// load returns -- see [`defer_autoload_target`].
     autoload_queue: Vec<String>,
     /// The same two sets for a file loaded from DISK at run time, keyed by
-    /// its canonical path -- which is the identity CRuby's `$LOADED_FEATURES`
-    /// uses, and the only one available for a file no unit was compiled for.
-    disk_loaded: HashSet<String>,
-    disk_loading: HashSet<String>,
+    /// `(box, canonical path)`. The path is the identity CRuby's
+    /// `$LOADED_FEATURES` uses and the only one available for a file no
+    /// unit was compiled for; the BOX is what makes a file re-execute per
+    /// box, which is CRuby's own rule and falls out of each box having its
+    /// own `$LOADED_FEATURES`.
+    disk_loaded: HashSet<(u32, String)>,
+    disk_loading: HashSet<(u32, String)>,
 }
 
 fn state() -> &'static parking_lot::Mutex<LoadState> {

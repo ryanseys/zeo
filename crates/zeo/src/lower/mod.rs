@@ -1492,24 +1492,16 @@ fn lower_call_node(
                 ).into());
         }
         // Operations on a bound box handle outside their recognized
-        // positions: `box.require`-family must be a TOP-LEVEL
-        // statement (same rule as receiver-less `require`);
-        // expression-position `box.eval` is allowed but, like root
-        // `eval`, can't define classes/methods.
+        // positions. A TOP-LEVEL `box.require` is spliced by the loader
+        // (the fast, statically typed path); anywhere else it is the
+        // ordinary send, which reaches the box's own run-time load path.
+        // An expression-position `box.eval` is a run-time compile too.
         if let Some(lv) = recv.as_local_variable_read_node() {
             let lname = String::from_utf8_lossy(lv.name().as_slice()).into_owned();
-            if let Some(bx) = context::current_box_binding(&lname) {
-                match name.as_str() {
-                    "require" | "require_relative" | "load" => {
-                        return Err(format!(
-                                "`{lname}.{name}` is only supported as a top-level statement (same rule as the receiver-less `{name}`)"
-                            ).into());
-                    }
-                    "eval" => {
-                        return lower_box_eval(hir, result, &call, bx, false);
-                    }
-                    _ => {}
-                }
+            if let Some(bx) = context::current_box_binding(&lname)
+                && name == "eval"
+            {
+                return lower_box_eval(hir, result, &call, bx, false);
             }
         }
     }
