@@ -545,6 +545,13 @@ fn run_via_cli(
     if std::fs::metadata(format!("{}.gc", rb.display())).is_ok() {
         cmd.env("ZEO_GC", "1");
     }
+    // A `.leakcheck` sidecar runs the program under the compiled-ownership
+    // ledger. Only a golden ABOUT that ledger wants it -- it aborts the
+    // process on the first bad slot, which is exactly what makes such a
+    // golden fail until the emitter stops producing one.
+    if std::fs::metadata(format!("{}.leakcheck", rb.display())).is_ok() {
+        cmd.env("ZEO_RT_LEAKCHECK", "1");
+    }
     cmd.current_dir(run_cwd);
     run_bounded(&mut cmd, stdin, "zeo CLI (ZEO_GOLDEN_BACKEND)")
 }

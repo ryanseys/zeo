@@ -28,6 +28,35 @@ fn tag_of(v: &RubyValue) -> u8 {
     unsafe { *(v as *const RubyValue).cast::<u8>() }
 }
 
+/// The counter row for a tag, or `None` when the byte is not a tag at all.
+///
+/// A slot handed to this ledger is supposed to be a live `RubyValue`, so a
+/// byte outside the tag range means the caller passed one that has been
+/// released or never held a value -- the exact bug the ledger exists to
+/// find. Reporting it is the whole point; indexing the table with it just
+/// panics inside the diagnostic and says nothing about the program.
+fn row(t: u8, who: &str) -> &'static AtomicI64 {
+    if t == POISON_TAG {
+        report(&format!("{who} was handed a RELEASED value slot"));
+    }
+    match LIVE.get(t as usize) {
+        Some(row) => row,
+        None => report(&format!(
+            "{who} was handed a slot whose tag byte is {t}, which is not a \
+             value tag -- the slot holds no live value"
+        )),
+    }
+}
+
+/// End the process naming what the ledger found. A `panic!` rather than a
+/// bare `abort`: it cannot unwind out of an `extern "C"` frame and ends the
+/// process either way, but it prints the message AND, under
+/// `RUST_BACKTRACE=1`, the capi entry the bad slot came through -- which is
+/// the only thing that leads back to the emitted code that produced it.
+fn report(what: &str) -> ! {
+    panic!("ZEO_RT_LEAKCHECK: {what}");
+}
+
 /// An owned heap value crossed INTO compiled code.
 pub(crate) fn created(v: &RubyValue) {
     if !enabled() {
@@ -35,7 +64,7 @@ pub(crate) fn created(v: &RubyValue) {
     }
     let t = tag_of(v);
     if t >= FIRST_HEAP_TAG {
-        LIVE[t as usize].fetch_add(1, Ordering::Relaxed);
+        row(t, "created").fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -47,7 +76,7 @@ pub(crate) fn consumed(v: &RubyValue) {
     }
     let t = tag_of(v);
     if t >= FIRST_HEAP_TAG {
-        LIVE[t as usize].fetch_sub(1, Ordering::Relaxed);
+        row(t, "consumed").fetch_sub(1, Ordering::Relaxed);
     }
 }
 
@@ -58,8 +87,7 @@ pub(crate) fn check_not_poisoned(p: *const RubyValue, who: &str) {
     }
     let t = unsafe { *p.cast::<u8>() };
     if t == POISON_TAG {
-        eprintln!("ZEO_RT_LEAKCHECK: {who} touched a released value slot");
-        std::process::abort();
+        report(&format!("{who} touched a released value slot"));
     }
 }
 
