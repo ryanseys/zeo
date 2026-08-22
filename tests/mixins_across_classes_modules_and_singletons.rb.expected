@@ -66,3 +66,9 @@ true
 -- a frozen target refuses both verbs
 [FrozenError, "can't modify frozen Class: FrozenTarget"]
 [FrozenError, "can't modify frozen Class: FrozenTarget"]
+-- a module reached both ways holds TWO singleton positions, and order decides
+[["SP", "#<Class:Both1>", "SP", "#<Class:Object>"], true]
+[["SP", "#<Class:Both2>", "SP", "#<Class:Object>"], true]
+["SP", "#<Class:Rev1>", "#<Class:Object>"]
+["SP", "#<Class:Rev2>", "#<Class:Object>"]
+["SP", "#<Class:Twice>", "#<Class:Object>"]

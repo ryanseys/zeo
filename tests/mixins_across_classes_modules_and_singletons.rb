@@ -162,3 +162,37 @@ class FrozenTarget; end
 FrozenTarget.freeze
 begin; FrozenTarget.include R1; rescue => e; p [e.class, e.message]; end
 begin; FrozenTarget.prepend R1; rescue => e; p [e.class, e.message]; end
+
+puts "-- a module reached both ways holds TWO singleton positions, and order decides"
+# `rb_include_module` searches the whole chain and `rb_prepend_module` only the
+# prepend area, so whichever verb runs FIRST is the one that finds an empty
+# scope. `extend` then `prepend` gives two positions; the reverse gives one.
+module SP
+  def sp = "sp"
+end
+class Both1
+  extend SP
+  singleton_class.prepend SP
+end
+p [Both1.singleton_class.ancestors.map(&:to_s).first(4), Both1.is_a?(SP)]
+
+class Both2
+  singleton_class.include SP
+  singleton_class.prepend SP
+end
+p [Both2.singleton_class.ancestors.map(&:to_s).first(4), Both2.is_a?(SP)]
+
+class Rev1; end
+Rev1.singleton_class.prepend SP
+Rev1.singleton_class.include SP
+p Rev1.singleton_class.ancestors.map(&:to_s).first(3)
+
+class Rev2; end
+Rev2.singleton_class.prepend SP
+Rev2.extend SP
+p Rev2.singleton_class.ancestors.map(&:to_s).first(3)
+
+class Twice; end
+Twice.singleton_class.prepend SP
+Twice.singleton_class.prepend SP
+p Twice.singleton_class.ancestors.map(&:to_s).first(3)

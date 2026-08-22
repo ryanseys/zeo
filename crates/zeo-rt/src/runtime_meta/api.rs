@@ -1632,7 +1632,17 @@ pub fn extend_object_default(recv: &RubyValue, module_val: &RubyValue) -> Result
     // FIRST one gave it, so re-copying its methods would wrongly promote it
     // over a module extended in between. The `extended` hook still fires each
     // time -- which it does, because the caller owns it (both oracle-verified).
-    if extended_modules(recv).contains(mid) {
+    //
+    // A module already PREPENDED into this singleton counts as present, and
+    // that is the whole of what makes document order decide. `rb_include_
+    // module` searches the whole chain (`search_super = TRUE`), so an extend
+    // after a prepend finds it and adds nothing; `rb_prepend_module` searches
+    // only the prepend area, so a prepend after an extend adds a SECOND
+    // position. Oracle-verified in all four orders.
+    if extended_modules(recv).contains(mid)
+        || matches!(recv, RubyValue::Class(cid)
+            if resolver::singleton_prepends_of(*cid).contains(mid))
+    {
         return Ok(());
     }
     let names = module_extendable_method_names(*mid);
@@ -1772,10 +1782,17 @@ fn prepend_into_class_singleton(owner: ClassId, module_val: &RubyValue) -> Resul
         }
         entry.singleton_prepends.push(*mid);
     }
-    // The method copies make the module ANSWER on the owner; the extended
-    // record is what makes the owner BE one (`is_a?`, `===`,
-    // `singleton_class.ancestors` -- see `extend_object_default`).
-    record_extended(&owner_val, *mid);
+    // A prepend is NOT recorded as an extend. It used to be, so that `is_a?`
+    // and `singleton_class.ancestors` would see it -- and that is exactly what
+    // made a module reached BOTH ways (`extend M; singleton_class.prepend M`)
+    // indistinguishable from one reached only by prepending. Ruby gives the
+    // first TWO chain positions and the second one, so the two verbs are
+    // recorded apart now: `singleton_prepends` above for the prepend area,
+    // the extended list for the include side. `value_extends` reads both.
+    //
+    // The gate still arms: it says "some singleton chain has been mixed
+    // into", and the readers behind it must run.
+    GATES.fetch_or(GATE_ANY_EXTENDED, std::sync::atomic::Ordering::Release);
     refresh_singleton_ancestors(&owner_val);
     mark_singletons();
     mark_ancestry_mutated();

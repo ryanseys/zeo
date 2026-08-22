@@ -664,6 +664,17 @@ pub fn value_extends(recv: &RubyValue, target: ClassId) -> bool {
     if GATES.load(Ordering::Acquire) & GATE_ANY_EXTENDED == 0 {
         return false;
     }
+    // A module PREPENDED into a singleton class is in that chain too, and it
+    // is not in the extended list: the two verbs are recorded apart, because
+    // a module reached BOTH ways holds two positions and one list cannot say
+    // so. See `singleton_chain`.
+    if let RubyValue::Class(cid) = recv
+        && resolver::singleton_prepends_of(*cid)
+            .into_iter()
+            .any(reaches)
+    {
+        return true;
+    }
     let Some(key) = extend_key(recv) else {
         return false;
     };
@@ -826,17 +837,25 @@ fn rebase_compiled_surrogate(sid: ClassId, recv: &RubyValue) {
     if maps().classes.read().unwrap().contains_key(&sid.0) {
         return;
     }
-    let mut anc: Vec<ClassId> = crate::dispatch::ancestors_of_value(sid)
+    let compiled: Vec<ClassId> = crate::dispatch::ancestors_of_value(sid)
         .iter()
         .copied()
         .take_while(|&a| a != zeo_abi::OBJECT_CLASS)
         .collect();
-    if !anc.contains(&sid) {
-        anc.push(sid);
-    }
-    anc.extend(singleton_super_chain(recv));
-    let mut seen = crate::FSet::default();
-    anc.retain(|&a| seen.insert(a));
+    // Everything ahead of the surrogate in its compiled chain IS its prepend
+    // area; the surrogate and what follows are the include side.
+    let at = compiled.iter().position(|&a| a == sid);
+    let (area, rest) = match at {
+        Some(i) => (compiled[..i].to_vec(), compiled[i..].to_vec()),
+        None => (Vec::new(), {
+            let mut v = compiled;
+            v.push(sid);
+            v
+        }),
+    };
+    let mut tail = rest;
+    tail.extend(singleton_super_chain(recv));
+    let anc = singleton_chain(area, tail);
     let name = crate::dispatch::class_name(sid);
     maps().classes.write().unwrap().insert(
         sid.0,
@@ -847,6 +866,32 @@ fn rebase_compiled_surrogate(sid: ClassId, recv: &RubyValue) {
         },
     );
     mark_live();
+}
+
+/// A singleton class's ancestry, built the way CRuby's two verbs build one.
+///
+/// A `prepend` searches only the PREPEND AREA and an `include`/`extend`
+/// searches the whole chain -- `rb_prepend_module`'s `search_super = FALSE`
+/// against `rb_include_module`'s `TRUE`, the same rule the instance side
+/// replays in `splice_into_chain`. So a module reached BOTH ways holds two
+/// positions: `extend M; singleton_class.prepend M` is
+/// `[M, #<Class:K>, M, ..]` in ruby.
+///
+/// One dedup over the concatenation collapsed them into one, and that was two
+/// bugs at once: `K.singleton_class.ancestors` was a row short, and a `super`
+/// from the prepended copy re-entered the same copy until the stack died,
+/// because the walk could not tell the two positions apart.
+///
+/// Each side dedups against ITSELF, which is all either verb's scope allows.
+fn singleton_chain(prepend_area: Vec<ClassId>, tail: Vec<ClassId>) -> Vec<ClassId> {
+    let dedup = |mut v: Vec<ClassId>| {
+        let mut seen = crate::FSet::default();
+        v.retain(|&a| seen.insert(a));
+        v
+    };
+    let mut chain = dedup(prepend_area);
+    chain.extend(dedup(tail));
+    chain
 }
 
 /// Rebuild an ALREADY-MINTED singleton class's ancestry after an `extend`.
@@ -862,17 +907,15 @@ fn refresh_singleton_ancestors(recv: &RubyValue) {
     // A singleton PREPEND sits AHEAD of the singleton class -- that is what
     // prepend means, and it is where CRuby puts it. `extend` sits behind.
     // Both arrive through the extended list (the method copies need it), so
-    // the prepends are seeded here and the dedup below drops the second
-    // sighting rather than the first.
-    let mut anc: Vec<ClassId> = match recv {
+    // the prepend area is built from the prepends alone and the include side
+    // from everything else.
+    let area: Vec<ClassId> = match recv {
         RubyValue::Class(cid) => resolver::singleton_prepends_of(*cid),
         _ => Vec::new(),
     };
-    anc.push(sid);
-    anc.extend(singleton_super_chain(recv));
-    let mut seen = crate::FSet::default();
-    anc.retain(|&a| seen.insert(a));
-    let leaked: &'static [ClassId] = Box::leak(anc.into_boxed_slice());
+    let mut tail = vec![sid];
+    tail.extend(singleton_super_chain(recv));
+    let leaked: &'static [ClassId] = Box::leak(singleton_chain(area, tail).into_boxed_slice());
     if let Some(entry) = maps().classes.write().unwrap().get_mut(&sid.0) {
         entry.ancestors = leaked;
     }
