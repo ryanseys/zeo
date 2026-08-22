@@ -7,25 +7,21 @@
 # duplicate and `dispatch::MRO_RESUME` tells a `super` which copy is running.
 # The CLASS-METHOD side is a different mechanism and is not covered by it.
 # zeo has no singleton-class objects, so a class method resolves through
-# `send_super_class_from`'s three branches over `class_method_prepends` and
-# the flattened `class_methods` tables, never over a singleton ancestry
-# `Vec`. There is nothing there to hold a module twice, and the branch that
-# resumes a singleton-prepended module's `super` finds the same copy again.
+# `send_super_class_from`'s three branches over `class_method_prepends`, the
+# extend sources and the flattened `class_methods` tables, never over a
+# singleton ancestry `Vec`. There is nothing there to hold a module twice.
 #
-# Two symptoms, and the difference between them says where the fix goes:
+# What the singleton chain DOES answer now, and did not: a prepended module
+# with no row beneath it (its `super` and its `defined?(super)` used to
+# disagree, because the probe scanned the layer the walk skips); a subclass
+# inheriting its parent's singleton prepend; and a prepend on an ANCESTOR
+# reached by `super` from a prepend on the subclass. Those needed one
+# resolution shared by the call and the probe, plus the own-set to tell a
+# class's real `def self.x` from the copy materialization gave it.
 #
-#   * `extend M` + `singleton_class.prepend M` ANSWERS correctly
-#     (`cm(own(cm(top)))`) because the flattening already puts the module on
-#     both sides of the host's own row -- only `singleton_class.ancestors`
-#     lists it once.
-#   * `singleton_class.include M` + `singleton_class.prepend M` RECURSES
-#     until `SystemStackError`: with no own `def self.x` between them, the
-#     prepended copy's `super` resolves back to itself.
-#
-# Pre-existing; the instance-side MRO pass neither caused nor fixed it. The
-# fix shape is a singleton ancestry that is a real linearized chain -- the
-# same `include_modules_at` replay the instance side now runs -- rather than
-# three special-cased branches over two side tables.
+# The fix shape for the rest is a singleton ancestry that is a real linearized
+# chain -- the same `include_modules_at` replay the instance side runs -- with
+# positions to walk, rather than branches over side tables.
 
 module CM
   def hi = "cm(#{defined?(super) ? super : 'top'})"

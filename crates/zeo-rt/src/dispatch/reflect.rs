@@ -265,6 +265,21 @@ pub fn class_method_owner(cid: ClassId, name: Symbol) -> Option<ClassId> {
     scan_class_method_owner(cid, 0, name).map(|(owner, _)| owner)
 }
 
+/// Whether `cid`'s `def self.<name>` is written HERE rather than materialized
+/// down from an ancestor -- the distinction the flattened `class_methods` map
+/// cannot make. A runtime definition counts; a class that recorded no own-set
+/// falls back to "it has the row".
+pub fn class_method_defined_here(cid: ClassId, name: Symbol) -> bool {
+    if crate::runtime_meta::is_live()
+        && crate::runtime_meta::overlay_class_method_below_prepends(cid, name).is_some()
+    {
+        return true;
+    }
+    REGISTRY
+        .get()
+        .is_some_and(|r| r.class_method_is_own(cid, name))
+}
+
 /// [`class_method_owner`]'s REPORTING twin -- what `Method#owner` answers.
 ///
 /// A module PREPENDED into a singleton class wins the lookup, and ruby names

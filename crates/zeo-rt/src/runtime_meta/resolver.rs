@@ -149,6 +149,40 @@ pub fn overlay_class_method(id: ClassId, name: Symbol) -> Option<RProc> {
         .cloned()
 }
 
+/// A module prepended into an ANCESTOR's singleton class, for a receiver that
+/// inherits it.
+///
+/// `prepended_class_methods` is keyed on the class the `prepend` named, and a
+/// subclass's singleton chain runs through its parent's -- `A5.singleton_class
+/// .ancestors` is `[#<Class:A5>, CM, #<Class:A2>]` when `CM` was prepended
+/// into `A2`'s. Ordinary class-method dispatch probes the RECEIVER's own
+/// entry and then the flat table, which holds the inherited `def self.x`, so
+/// without this the parent's own row answered where the module should.
+///
+/// `None` as soon as a nearer ancestor defines the name itself: that row is
+/// closer than any prepend further up, and the flat path already serves it.
+pub fn inherited_singleton_prepend(id: ClassId, name: Symbol) -> Option<RProc> {
+    for &anc in crate::dispatch::ancestors_of_value(id).iter() {
+        if let Some(p) = maps()
+            .classes
+            .read()
+            .unwrap()
+            .get(&anc.0)
+            .and_then(|e| e.prepended_class_methods.get(&name).cloned())
+        {
+            return Some(p);
+        }
+        // Stop at the first ancestor that DEFINES the name, since its own row
+        // is closer than any prepend further up and the flat path serves it.
+        // `class_methods` alone cannot answer that: materialization flattens
+        // an inherited `def self.x` onto every descendant's table.
+        if crate::dispatch::class_method_defined_here(anc, name) {
+            return None;
+        }
+    }
+    None
+}
+
 /// [`overlay_class_method`] with the singleton-PREPEND layer skipped -- the
 /// resume point for a prepended module method's own `super`, which must reach
 /// the shadowed `def self.x` rather than the copy of itself.

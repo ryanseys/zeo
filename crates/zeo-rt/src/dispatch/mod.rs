@@ -1504,9 +1504,23 @@ fn super_class_defined(recv_class: ClassId, defining_class: ClassId, name: Symbo
             name,
         )
         .is_some()
-            || owner_from(pos).is_some();
+            // The walk's own question, asked without calling -- see
+            // `resolve_class_walking`. `owner_from(pos)` would scan the
+            // prepend layer this `super` came THROUGH and answer yes for the
+            // module's own row.
+            || resolve_class_walking(recv_class, pos, true, name).is_some()
+            || instance_tail_defines(recv_class, name);
     }
     owner_from(1).is_some()
+}
+
+/// The class-method walk's tail: `#<Class:BasicObject>` inherits from `Class`,
+/// so a class-method `super` with nothing above it continues into `Class`'s
+/// own INSTANCE methods. `send_class_walking_inner` ends there, and the probe
+/// has to as well.
+fn instance_tail_defines(recv_class: ClassId, name: Symbol) -> bool {
+    let recv = RubyValue::Class(recv_class);
+    crate::dispatch::reflect::scan_owner_from(recv.class_id(), 0, name).is_some()
 }
 
 /// The `super` dispatch for an exception-backed receiver.
@@ -1826,6 +1840,48 @@ fn send_class_walking_inner(
     block: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
     let recv = RubyValue::Class(recv_class);
+    if let Some(hit) = resolve_class_walking(recv_class, start, first_below_prepends, name) {
+        return match hit {
+            ClassHit::Overlay(p) => p.call_with_self_and_block(&recv, args, block),
+            ClassHit::Row(f) => f.call(&recv, args, block),
+            ClassHit::Builtin(f) => f(&recv, args, block),
+        };
+    }
+    // The singleton chain does not stop at the last ancestor: `#<Class:
+    // BasicObject>` inherits from `Class` itself, so a class-method `super`
+    // with nothing above it continues into `Class`'s own INSTANCE methods,
+    // with the class object as `self`. That is where the default
+    // allocate-then-`initialize` lives -- what a `def self.new` wrapping
+    // construction reaches by `super` (rubygems'
+    // `Gem::Package::TarWriter.new`). `send_walking` raises the same
+    // `MissingReason::Super` if that comes up empty too.
+    send_walking(&recv, 0, name, args, block)
+}
+
+/// What a class-method walk found -- the three layers a position can answer
+/// from, in the order [`resolve_class_walking`] asks them.
+enum ClassHit {
+    Overlay(crate::rproc::RProc),
+    Row(ValueImpl),
+    Builtin(crate::BuiltinMethodFn),
+}
+
+/// The class-method walk's RESOLUTION, factored out of
+/// [`send_class_walking_inner`] so `defined?(super)` can ask the same
+/// question the call answers.
+///
+/// It could not before: the probe scanned from the target's own position,
+/// which INCLUDES a module prepended into its singleton, while the walk skips
+/// that layer (it got there THROUGH it). A singleton-prepended module with no
+/// row beneath it therefore reported a super target and then raised looking
+/// for it -- or, with an `extend` of the same module underneath, re-entered
+/// its own copy until the stack died.
+fn resolve_class_walking(
+    recv_class: ClassId,
+    start: usize,
+    first_below_prepends: bool,
+    name: Symbol,
+) -> Option<ClassHit> {
     let method_name = name.to_string();
     for (i, &anc) in ancestors_of_value(recv_class)
         .iter()
@@ -1841,31 +1897,29 @@ fn send_class_walking_inner(
                 false => crate::runtime_meta::overlay_class_method(anc, name),
             };
             if let Some(p) = overlay {
-                return p.call_with_self_and_block(&recv, args, block);
+                return Some(ClassHit::Overlay(p));
             }
         }
-        if let Some(f) = registry()
-            .entries
-            .get(&anc.0)
-            .and_then(|e| e.class_methods.get(&name).copied())
+        // Only a row this ancestor really OWNS answers here. Materialization
+        // flattens an inherited `def self.x` onto every descendant's table, so
+        // taking the nearest one would step over a module prepended into an
+        // ancestor's singleton further up -- which sits AHEAD of the class
+        // that really defines the name.
+        if registry().class_method_is_own(anc, name)
+            && let Some(f) = registry()
+                .entries
+                .get(&anc.0)
+                .and_then(|e| e.class_methods.get(&name).copied())
         {
-            return f.call(&recv, args, block);
+            return Some(ClassHit::Row(f));
         }
         if let Some(f) =
             crate::builtins::class_method_table(anc).and_then(|lookup| lookup(&method_name))
         {
-            return f(&recv, args, block);
+            return Some(ClassHit::Builtin(f));
         }
     }
-    // The singleton chain does not stop at the last ancestor: `#<Class:
-    // BasicObject>` inherits from `Class` itself, so a class-method `super`
-    // with nothing above it continues into `Class`'s own INSTANCE methods,
-    // with the class object as `self`. That is where the default
-    // allocate-then-`initialize` lives -- what a `def self.new` wrapping
-    // construction reaches by `super` (rubygems'
-    // `Gem::Package::TarWriter.new`). `send_walking` raises the same
-    // `MissingReason::Super` if that comes up empty too.
-    send_walking(&recv, 0, name, args, block)
+    None
 }
 
 /// Dispatch a `super` whose target the COMPILER resolved against the
@@ -3241,6 +3295,15 @@ fn send_value_in_reason(
             // desugars to a method-body lambda whose `yield` reads the
             // block the METHOD was called with. Dropping it here made
             // `M.wrap { "hi" }` raise LocalJumpError.
+            return p.call_with_self_and_block(recv, args, block);
+        }
+        // A module prepended into an ANCESTOR's singleton class. A subclass's
+        // singleton chain runs through its parent's, so the module sits ahead
+        // of the parent's own `def self.x` -- which is what the flat probe
+        // below would otherwise answer with.
+        if crate::runtime_meta::is_live()
+            && let Some(p) = crate::runtime_meta::inherited_singleton_prepend(*cid, name)
+        {
             return p.call_with_self_and_block(recv, args, block);
         }
         // A USER `def self.x` and the builtin Class/Module table, flattened

@@ -1,0 +1,10 @@
+"L1(top)"
+"L1(own)"
+["L1(B0)", "L1(B0)", "L1(B0)"]
+["L1(B0)", "L1(B0)", "L2(L1(B0))"]
+["L2", "#<Class:B2>", "#<Class:B1>", "L1", "#<Class:B0>"]
+"B3(L1(B0))"
+["#<Class:B3>", "L1", "#<Class:B0>", "#<Class:Object>"]
+"L1(top)"
+"own2"
+"d1(D1)"

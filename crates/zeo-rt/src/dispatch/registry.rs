@@ -1034,6 +1034,17 @@ impl ClassRegistry {
         }
     }
 
+    /// Whether `id`'s `def self.<name>` is written HERE rather than
+    /// materialized down from an ancestor -- the distinction the flattened
+    /// `class_methods` map cannot make. An empty own-set means this class
+    /// wrote none, which is exactly what a subclass that only INHERITS class
+    /// methods looks like.
+    pub(super) fn class_method_is_own(&self, id: ClassId, name: Symbol) -> bool {
+        self.entries
+            .get(&id.0)
+            .is_some_and(|e| e.own_class_methods.contains(&name))
+    }
+
     /// The `(caller's box, name)` probe with the root fallback -- CRuby's
     /// def->box resolution rule: a box's own patch wins inside the box,
     /// root patches are visible everywhere, and nothing else is.
