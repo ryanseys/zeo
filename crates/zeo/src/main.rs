@@ -36,6 +36,13 @@ struct Args {
     load_roots: Vec<PathBuf>,
     /// `--gems <dir>`: vendored-gem directories (repeatable).
     package_dirs: Vec<PathBuf>,
+    /// `--embed-sources <dir>`: directories whose `.rb` files travel INSIDE
+    /// the program, for a `require` only the run time can resolve
+    /// (repeatable).
+    embed_sources: Vec<PathBuf>,
+    /// `--strict-static-require`: a `require`/`load` target the compiler
+    /// cannot resolve is an error HERE, not at run time.
+    strict_static_require: bool,
     /// `--root-gem <name>`: the distinguished root package -- it outranks
     /// every other provider for an ambiguous feature (Bundler-root
     /// semantics). The gem probe names its subject here.
@@ -173,6 +180,15 @@ options:
                         (repeatable; `-I<dir>` and `-I=<dir>` also accepted)
   --gems <dir>          add a directory of vendored gems: every subdirectory
                         with a `.gemspec` is discovered as a gem (repeatable)
+  --embed-sources <dir> carry this directory's `.rb` files INSIDE the program,
+                        so a require only the run time can resolve -- a
+                        computed feature name -- finds them without a
+                        filesystem (repeatable; off by default, since a
+                        hermetic binary is the point)
+  --strict-static-require
+                        refuse at COMPILE time a `require`/`load` whose
+                        target this compile cannot resolve, instead of
+                        leaving it to the run-time loader
   --root-gem <name>     treat the named gem as the root package: it outranks
                         every other provider when a feature is found in
                         multiple gems (Bundler-root semantics)
@@ -231,6 +247,8 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
     let mut debuginfo = std::env::var_os("ZEO_DEBUGINFO").is_some_and(|v| v != "0");
     let mut load_roots = Vec::new();
     let mut package_dirs = Vec::new();
+    let mut embed_sources = Vec::new();
+    let mut strict_static_require = false;
     let mut root_gem: Option<String> = None;
     let mut report = Report::Off;
     let mut gem_paths: Vec<PathBuf> = Vec::new();
@@ -306,6 +324,10 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
                 "compile" => compile = true,
                 "backend" => backend = Some(zeo::backend::Backend::parse(&value("--backend")?)?),
                 "gems" => package_dirs.push(PathBuf::from(value("--gems")?)),
+                "embed-sources" => {
+                    embed_sources.push(PathBuf::from(value("--embed-sources")?));
+                }
+                "strict-static-require" => strict_static_require = true,
                 "root-gem" => root_gem = Some(value("--root-gem")?),
                 "gem-path" => gem_paths.push(PathBuf::from(value("--gem-path")?)),
                 "bundle-gemfile" => {
@@ -448,6 +470,8 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
     }
 
     Ok(Parsed::Run(Box::new(Args {
+        embed_sources,
+        strict_static_require,
         source,
         output,
         compile,
@@ -616,6 +640,8 @@ fn run() -> Result<(), MainError> {
         gem_paths: args.gem_paths.clone(),
         lockfile: args.lockfile.clone(),
         root_gem: args.root_gem.clone().map(zeo::Gem::named),
+        embed_sources: args.embed_sources.clone(),
+        strict_static_require: args.strict_static_require,
     };
     if let Some(target) = &args.emit_clif {
         let text = zeo::compile_to_clif_text(&source, &opts)?;

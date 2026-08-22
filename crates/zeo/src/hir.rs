@@ -347,6 +347,11 @@ pub struct Hir {
     /// this loader already splices requires program-wide. See
     /// `activate_feature`.
     pub activated_features: crate::compiler::FSet<String>,
+    /// `--embed-sources`: `(load-path-relative spelling, text)` for every
+    /// `.rb` under the named directories. The RUN TIME resolves a require
+    /// against these before it looks at disk, which is what lets a hermetic
+    /// binary answer a require its compiler could not.
+    pub embedded_sources: Vec<(String, String)>,
     /// Plain `require "feature"` targets zeo could NOT resolve to a file,
     /// builtin, or shim -- recorded by the loader's resolvability pre-scan.
     /// Their `require` CALL lowers to a runtime `Kernel#require` (which raises
@@ -1284,6 +1289,19 @@ impl Hir {
     /// a computed name, which no static analysis can see -- raises the
     /// runtime's own `NotImplementedError` saying the program carries no
     /// compiler, never silent wrong output.
+    /// The name of a `require`/`load` whose target this compile could not
+    /// resolve, if there is one -- what `--strict-static-require` refuses.
+    pub fn unresolved_require(&self) -> Option<&str> {
+        self.nodes.iter().find_map(|node| match node {
+            HirNode::Call { name, .. }
+                if matches!(name.as_str(), "require" | "require_relative" | "load") =>
+            {
+                Some(name.as_str())
+            }
+            _ => None,
+        })
+    }
+
     pub fn uses_runtime_eval(&self) -> bool {
         self.nodes.iter().any(|node| match node {
             HirNode::Call { name, args, .. } => match name.as_str() {

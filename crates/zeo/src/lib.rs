@@ -61,6 +61,7 @@ pub mod lower_error;
 pub mod rename;
 
 pub use parse::gem_compat::{GemCompatEntry, GemCompatOutcome, gem_compat, gem_compat_installed};
+mod embed;
 mod guard_fold;
 pub(crate) mod names;
 pub mod parse;
@@ -142,6 +143,19 @@ pub struct CompileOptions {
     /// probe passes its subject here so a squatted feature resolves to the
     /// gem actually under test.
     pub root_gem: Option<Gem>,
+    /// Directories whose `.rb` files travel INSIDE the program
+    /// (`--embed-sources`), so a `require` the compiler could not resolve
+    /// finds them at run time without a filesystem.
+    ///
+    /// Empty by default, and deliberately: a hermetic binary is the choice
+    /// zeo makes, and embedding every source a program can see would double
+    /// the artifact for a tier most programs never reach.
+    pub embed_sources: Vec<std::path::PathBuf>,
+    /// Turn a `require`/`load` target the compiler cannot resolve into a
+    /// COMPILE-time error (`--strict-static-require`), rather than leaving
+    /// it to the run-time loader. What a build that wants to know its whole
+    /// dependency graph statically asks for.
+    pub strict_static_require: bool,
 }
 
 /// A gem named by the caller -- the public identity type `CompileOptions`
@@ -241,7 +255,7 @@ fn analyze_on_this_thread(
 ) -> Result<(analyze::Analyzed, FrontEnd), CompileError> {
     let start = std::time::Instant::now();
     memguard::set_phase(memguard::Phase::ParseLower);
-    let (hir, root, gem_records) = parse::parse_and_lower_with(
+    let (mut hir, root, gem_records) = parse::parse_and_lower_with(
         source,
         opts.input_path.as_deref(),
         opts.file_name.as_deref(),
@@ -253,6 +267,22 @@ fn analyze_on_this_thread(
         opts.lockfile.as_deref(),
         opts.root_gem.as_ref(),
     )?;
+    // A `require`/`load` that SURVIVED lowering is one the loader could not
+    // resolve. `--strict-static-require` makes that an error HERE rather
+    // than a run-time question -- the same predicate
+    // `Hir::uses_runtime_eval` reads to decide whether the compiler travels
+    // with the program.
+    if opts.strict_static_require
+        && let Some(name) = hir.unresolved_require()
+    {
+        return Err(CompileError::Report {
+            message: format!(
+                "`{name}` has a target this compile cannot resolve, and \
+                 --strict-static-require refuses one"
+            ),
+        });
+    }
+    hir.embedded_sources = embed::collect(&opts.embed_sources)?;
     let parse_lower = start.elapsed();
     if let Some(path) = &opts.gem_report {
         gem_report::write_report(&gem_records, path)

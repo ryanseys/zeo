@@ -1,6 +1,6 @@
 use crate::support::{
-    compile_packages, compile_project, run_ruby, run_ruby_boxed, run_ruby_packages,
-    run_ruby_project, run_ruby_project_boxed,
+    compile_packages, compile_project, compile_project_strict, run_ruby, run_ruby_boxed,
+    run_ruby_packages, run_ruby_project, run_ruby_project_boxed, run_ruby_project_embedded,
 };
 
 #[test]
@@ -1561,4 +1561,105 @@ fn an_absent_autoload_target_is_left_to_the_constant_read() {
         "loaded\n\"hi\"\n\"definitely_no_such_feature_xyz\"\n\
          LoadError: cannot load such file -- definitely_no_such_feature_xyz\ndone\n"
     );
+}
+
+/// `--embed-sources`: a computed `require` the compiler cannot resolve finds
+/// the file inside the PROGRAM, with no filesystem involved.
+#[test]
+fn embedded_sources_answer_a_computed_require() {
+    let out = run_ruby_project_embedded(
+        &[
+            (
+                "lib/greeter.rb",
+                "module Greeter\n  def self.hi(n) = \"hi #{n}\"\nend\n",
+            ),
+            ("lib/deep/nested.rb", "NESTED_OK = :nested\n"),
+            (
+                "prog.rb",
+                "name = [\"greeter\", \"\"].first\n\
+                 require name\n\
+                 p Greeter.hi(\"x\")\n\
+                 p require(name)\n\
+                 require [\"deep/nested\", \"\"].first\n\
+                 p NESTED_OK\n\
+                 p $LOADED_FEATURES.grep(/greeter/)\n",
+            ),
+        ],
+        "prog.rb",
+        &[],
+        &["lib"],
+        &[],
+    );
+    assert_eq!(
+        out.stdout,
+        "\"hi x\"\nfalse\n:nested\n[\"<embedded>/greeter.rb\"]\n"
+    );
+}
+
+/// Without the flag the same program raises the LoadError it always did --
+/// a hermetic binary is the default, not an accident.
+#[test]
+fn a_computed_require_without_the_pack_is_a_load_error() {
+    let out = run_ruby_project(
+        &[
+            ("lib/greeter.rb", "module Greeter; end\n"),
+            ("prog.rb", "require [\"greeter\", \"\"].first\n"),
+        ],
+        "prog.rb",
+        &[],
+    );
+    assert!(
+        out.stderr.contains("cannot load such file -- greeter"),
+        "stderr: {}",
+        out.stderr
+    );
+}
+
+/// A BOX requires out of the pack too, and gets its own private copy.
+#[test]
+fn a_box_requires_out_of_the_embedded_pack() {
+    let out = run_ruby_project_embedded(
+        &[
+            (
+                "lib/greeter.rb",
+                "module Greeter\n  def self.hi(n) = \"hi #{n}\"\nend\n",
+            ),
+            (
+                "prog.rb",
+                "name = [\"greeter\", \"\"].first\n\
+                 require name\n\
+                 p Greeter.hi(\"main\")\n\
+                 b = Ruby::Box.new\n\
+                 p b.require(name)\n\
+                 p b.eval(\"Greeter.hi('box')\")\n",
+            ),
+        ],
+        "prog.rb",
+        &[],
+        &["lib"],
+        &[("RUBY_BOX", "1")],
+    );
+    assert_eq!(out.stdout, "\"hi main\"\ntrue\n\"hi box\"\n");
+}
+
+/// `--strict-static-require` refuses a target this compile cannot resolve,
+/// and only that: a literal require still compiles.
+#[test]
+fn strict_static_require_refuses_a_computed_target() {
+    let err = compile_project_strict(
+        &[("prog.rb", "require [\"set\", \"\"].first\n")],
+        "prog.rb",
+        &[],
+    )
+    .expect_err("a computed require is refused under --strict-static-require");
+    assert!(
+        err.contains("--strict-static-require"),
+        "unexpected error: {err}"
+    );
+    compile_project_strict(
+        &[("prog.rb", "require \"set\"\np Set[1].size\n")],
+        "prog.rb",
+        &[],
+    )
+    .expect("a literal require resolves at compile time");
 }

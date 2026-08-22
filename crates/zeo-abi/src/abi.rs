@@ -479,6 +479,14 @@ pub struct CovFile {
 /// today's generated `main` order. (The rustc backend's `__FILES`/`__SYMS`
 /// pools have no row here: CLIF programs reference `.rodata` strings
 /// directly and `unit_init` interns its own symbol table.)
+/// One embedded source file: the load-path-relative spelling it answers to,
+/// and its text.
+#[repr(C)]
+pub struct SourceRow {
+    pub path: Str,
+    pub text: Str,
+}
+
 #[repr(C)]
 pub struct ProgramDesc {
     pub abi_version: u32,
@@ -510,6 +518,12 @@ pub struct ProgramDesc {
     pub n_load_path: usize,
     pub parse_warnings: *const Str,
     pub n_warnings: usize,
+    /// The `--embed-sources` pack: ruby source the RUN TIME may need for a
+    /// require the compiler could not resolve. Empty unless the flag was
+    /// given -- a hermetic binary is the default, and embedding every
+    /// source would silently double the artifact.
+    pub sources: *const SourceRow,
+    pub n_sources: usize,
     /// `__END__`'s carrier file (`len == 0` = none) and byte offset.
     pub data_section: Str,
     pub data_offset: u64,

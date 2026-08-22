@@ -587,6 +587,70 @@ fn define_unit_rows(em: &mut Emitter, rows: &[(String, FuncId)]) -> Result<Optio
     Ok(Some(id))
 }
 
+/// The `SourceRow` table: `--embed-sources`' pack, one row per file.
+fn define_source_rows(
+    em: &mut Emitter,
+    rows: &[(String, String)],
+) -> Result<Option<DataId>, String> {
+    if rows.is_empty() {
+        return Ok(None);
+    }
+    let size = std::mem::size_of::<zeo_abi::abi::SourceRow>();
+    let id = em
+        .module
+        .declare_data("zeo_source_pack", Linkage::Local, false, false)
+        .map_err(|e| format!("declaring zeo_source_pack: {e}"))?;
+    let interned: Vec<(u32, u32)> = rows
+        .iter()
+        .map(|(path, text)| {
+            (
+                em.intern_rodata(path.as_bytes()),
+                em.intern_rodata(text.as_bytes()),
+            )
+        })
+        .collect();
+    let mut data = DataDescription::new();
+    let mut bytes = vec![0u8; size * rows.len()];
+    for (i, (path, text)) in rows.iter().enumerate() {
+        for (field, len) in [
+            (
+                std::mem::offset_of!(zeo_abi::abi::SourceRow, path),
+                path.len(),
+            ),
+            (
+                std::mem::offset_of!(zeo_abi::abi::SourceRow, text),
+                text.len(),
+            ),
+        ] {
+            let at = i * size + field + std::mem::offset_of!(Str, len);
+            bytes[at..at + 8].copy_from_slice(&(len as u64).to_le_bytes());
+        }
+    }
+    data.define(bytes.into_boxed_slice());
+    data.set_align(8);
+    let rodata_gv = em.module.declare_data_in_data(em.rodata_id, &mut data);
+    for (i, (path_off, text_off)) in interned.iter().enumerate() {
+        let base = i * size;
+        for (field, off) in [
+            (
+                std::mem::offset_of!(zeo_abi::abi::SourceRow, path),
+                *path_off,
+            ),
+            (
+                std::mem::offset_of!(zeo_abi::abi::SourceRow, text),
+                *text_off,
+            ),
+        ] {
+            let at = (base + field + std::mem::offset_of!(Str, ptr)) as u32;
+            data.write_data_addr(at, rodata_gv, i64::from(off));
+        }
+    }
+    em.module
+        .define_data(id, &data)
+        .map_err(|e| format!("defining zeo_source_pack: {e}"))?;
+    Ok(Some(id))
+}
+
 fn define_reg_rows(em: &mut Emitter, rows: &[RegRowSpec]) -> Result<Option<DataId>, String> {
     if rows.is_empty() {
         return Ok(None);
@@ -1083,6 +1147,7 @@ pub(crate) fn define_desc(
     let foreign_table = define_foreign_rows(em, foreign_rows)?;
     let meta_table = define_meta_rows(em, meta_rows)?;
     let unit_table = define_unit_rows(em, unit_rows)?;
+    let source_table = define_source_rows(em, &analyzed.compiler.hir.embedded_sources)?;
     let (cov_table, n_cov) = define_cov_rows(em, analyzed)?;
     let hir = &analyzed.compiler.hir;
     let mut loaded: Vec<String> = hir
@@ -1209,6 +1274,11 @@ pub(crate) fn define_desc(
         std::mem::offset_of!(ProgramDesc, n_units),
         unit_rows.len() as u64,
     );
+    put_u64(
+        &mut buf,
+        std::mem::offset_of!(ProgramDesc, n_sources),
+        analyzed.compiler.hir.embedded_sources.len() as u64,
+    );
     put_u64(&mut buf, std::mem::offset_of!(ProgramDesc, n_cov), n_cov);
     // `DATA` -- only a script with an `__END__` carries the path, so every
     // other program neither holds it nor opens anything at startup.
@@ -1293,6 +1363,10 @@ pub(crate) fn define_desc(
     if let Some(ut) = unit_table {
         let gv = em.module.declare_data_in_data(ut, &mut desc);
         desc.write_data_addr(std::mem::offset_of!(ProgramDesc, units) as u32, gv, 0);
+    }
+    if let Some(t) = source_table {
+        let gv = em.module.declare_data_in_data(t, &mut desc);
+        desc.write_data_addr(std::mem::offset_of!(ProgramDesc, sources) as u32, gv, 0);
     }
     let toplevel_ref = em.module.declare_func_in_data(toplevel, &mut desc);
     desc.write_function_addr(

@@ -327,6 +327,13 @@ pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
                 .collect();
         crate::features::install_feature_units_c(Vec::leak(units));
     }
+    if desc.n_sources > 0 {
+        let pack: Vec<(&'static str, &'static str)> = unsafe { rows(desc.sources, desc.n_sources) }
+            .iter()
+            .map(|r| (text(r.path), text(r.text)))
+            .collect();
+        crate::features::install_sources(Vec::leak(pack));
+    }
     if desc.n_declined > 0 {
         let declined: Vec<(&'static str, &'static str)> =
             unsafe { rows(desc.declined, desc.n_declined) }

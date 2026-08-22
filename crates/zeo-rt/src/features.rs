@@ -123,6 +123,26 @@ pub fn resolve_on_disk(feature: &str, box_id: u32, append_rb: bool) -> Option<st
         .find_map(|root| first_readable(spellings(std::path::Path::new(&root).join(feature))))
 }
 
+/// The `--embed-sources` pack: the ruby source that travelled inside the
+/// program, keyed by the load-path-relative spelling a `require` writes.
+static SOURCES: std::sync::OnceLock<HashMap<&'static str, &'static str>> =
+    std::sync::OnceLock::new();
+
+/// Installs the pack. Emitted once, at startup, beside the feature units.
+pub fn install_sources(rows: &'static [(&'static str, &'static str)]) {
+    let _ = SOURCES.set(rows.iter().copied().collect());
+}
+
+/// The embedded source `feature` names, with the spelling it answers to.
+///
+/// The pack is consulted BEFORE disk: a hermetic binary answers the same way
+/// wherever it runs, which is the point of embedding at all.
+fn resolve_embedded(feature: &str) -> Option<(&'static str, &'static str)> {
+    let pack = SOURCES.get()?;
+    let bare = feature.strip_suffix(".rb").unwrap_or(feature);
+    pack.get_key_value(bare).map(|(k, v)| (*k, *v))
+}
+
 /// Compile and run the file `feature` names on disk, in box `box_id`.
 ///
 /// `None` means it resolved to nothing -- the caller raises the `LoadError`
@@ -134,8 +154,16 @@ pub fn load_from_disk(feature: &str, box_id: u32, reload: bool) -> Option<Result
     // `load` names an exact file; `require` appends `.rb` to a suffix-less
     // spelling, which is what makes `require "json"` and `require "json.rb"`
     // one feature.
-    let path = resolve_on_disk(feature, box_id, !reload)?;
-    let path = path.to_string_lossy().into_owned();
+    // The embedded pack first, then disk -- see `resolve_embedded`.
+    let (path, embedded) = match resolve_embedded(feature) {
+        Some((name, text)) => (format!("<embedded>/{name}.rb"), Some(text)),
+        None => (
+            resolve_on_disk(feature, box_id, !reload)?
+                .to_string_lossy()
+                .into_owned(),
+            None,
+        ),
+    };
     let key = (box_id, path.clone());
     if !reload {
         let mut st = state().lock();
@@ -149,15 +177,18 @@ pub fn load_from_disk(feature: &str, box_id: u32, reload: bool) -> Option<Result
             "this program was compiled without the unit compiler, so it cannot load `{feature}`              at run time (zeo links it only into a program it can see reach a computed require)"
         )));
     };
-    let source = match std::fs::read_to_string(&path) {
-        Ok(s) => s,
-        Err(e) => {
-            state().lock().disk_loading.remove(&key);
-            return Some(Err(crate::dispatch::raise_error(
-                "LoadError",
-                format!("cannot load such file -- {feature} ({e})"),
-            )));
-        }
+    let source = match embedded {
+        Some(text) => text.to_string(),
+        None => match std::fs::read_to_string(&path) {
+            Ok(s) => s,
+            Err(e) => {
+                state().lock().disk_loading.remove(&key);
+                return Some(Err(crate::dispatch::raise_error(
+                    "LoadError",
+                    format!("cannot load such file -- {feature} ({e})"),
+                )));
+            }
+        },
     };
     let result = compiler.load(&source, &path, box_id);
     let mut st = state().lock();

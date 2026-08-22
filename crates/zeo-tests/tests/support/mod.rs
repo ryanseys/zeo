@@ -95,6 +95,36 @@ pub fn run_ruby_packages(
     compile_link_run(&source, &opts, &[], &[])
 }
 
+/// `run_ruby_project` with `--embed-sources` roots -- the ruby source that
+/// travels INSIDE the program, for a require only the run time can resolve.
+#[allow(dead_code)]
+pub fn run_ruby_project_embedded(
+    files: &[(&str, &str)],
+    entry: &str,
+    roots: &[&str],
+    embed: &[&str],
+    env: &[(&str, &str)],
+) -> RunResult {
+    let (dir, source, mut opts) = write_project(files, entry, roots, &[]);
+    opts.embed_sources = embed.iter().map(|r| dir.join(r)).collect();
+    compile_link_run(&source, &opts, env, &[])
+}
+
+/// `compile_project` under `--strict-static-require`.
+#[allow(dead_code)]
+pub fn compile_project_strict(
+    files: &[(&str, &str)],
+    entry: &str,
+    roots: &[&str],
+) -> Result<std::path::PathBuf, String> {
+    let (dir, entry_source, mut opts) = write_project(files, entry, roots, &[]);
+    opts.strict_static_require = true;
+    match zeo::check_program_with(&entry_source, &opts) {
+        Ok(()) => Ok(dir),
+        Err(e) => Err(String::from(e)),
+    }
+}
+
 /// The compile-only half of `run_ruby_project`, exposed separately so
 /// negative-path tests can assert on the compile error without a build.
 /// Returns the generated Rust plus the temp project dir (caller cleans up
