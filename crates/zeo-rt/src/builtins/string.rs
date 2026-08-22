@@ -1709,7 +1709,7 @@ ruby_class! {
                 RubyValue::Str(s) => extra.extend_from_slice(s.lock().bytes()),
                 other => {
                     return Err(type_error!("wrong argument type {} (expected String or Integer)",
-                            crate::builtins::class_name_of(other)))
+                            crate::builtins::check_type_name(other)))
                 }
             }
         }
@@ -2137,7 +2137,7 @@ ruby_class! {
             Some(other) => match convert::check_to_str(other)? {
                 Some(s) => Some(s),
                 None => return Err(type_error!("wrong argument type {} (expected Regexp)",
-                        crate::builtins::class_name_of(other))),
+                        crate::builtins::check_type_name(other))),
             },
         };
         let result = match &sep_arg {
@@ -2423,8 +2423,17 @@ ruby_class! {
     // `bytesplice(index, length, str)` / `bytesplice(range, str)`: replaces
     // the byte span in place with `str`'s bytes and answers `str`. A frozen
     // receiver raises. (The 5-arg `str`-sub-span form is a separate gap.)
-    def "bytesplice" cfunc (recv, _first, _second, _third?) {
+    def "bytesplice" cfunc (recv, _first, _second, _third?, _fourth?, _fifth?) {
         let args = __args;
+        // CRuby's four shapes: `(range, str)`, `(index, length, str)`,
+        // `(range, str, str_range)` and
+        // `(index, length, str, str_index, str_length)`. Four arguments is
+        // none of them, and CRuby says so by listing the counts.
+        if args.len() == 4 {
+            return Err(arg_error!(
+                "wrong number of arguments (given 4, expected 2, 3, or 5)"
+            ));
+        }
         let s = rstr;
         if s.is_frozen() {
             return Err(crate::dispatch::raise_error_details(
@@ -2445,7 +2454,7 @@ ruby_class! {
         let (start, len, repl, orig_index) = if is_range_form {
             let RubyValue::Range(__rg) = &args[0] else {
                 return Err(type_error!("wrong argument type {} (expected Range)",
-                        crate::builtins::class_name_of(&args[0])));
+                        crate::builtins::check_type_name(&args[0])));
             };
             let (begin, end, exclusive) = __rg.parts();
             let start = match begin {
@@ -2468,6 +2477,42 @@ ruby_class! {
             let orig = convert::to_index(&args[0])?;
             let start = if orig < 0 { orig + total } else { orig };
             (start, convert::to_index(&args[1])?, convert::to_rstr(&args[2])?, orig)
+        };
+        // The REPLACEMENT's own byte window, when the caller gave one: a
+        // trailing Range in the range form, a trailing (index, length) pair
+        // in the index form. Both are byte offsets into the replacement,
+        // and both normalize from its end when negative.
+        let repl = match (is_range_form, args.len()) {
+            (true, 3) => {
+                let RubyValue::Range(rg) = &args[2] else {
+                    return Err(type_error!(
+                        "wrong argument type {} (expected Range)",
+                        crate::builtins::check_type_name(&args[2])
+                    ));
+                };
+                let size = repl.lock().bytesize() as i64;
+                let (begin, end, exclusive) = rg.parts();
+                let from = match begin {
+                    Some(v) => convert::to_index(v)?,
+                    None => 0,
+                };
+                let from = if from < 0 { from + size } else { from };
+                let to = match end {
+                    Some(v) => {
+                        let v = convert::to_index(v)?;
+                        let v = if v < 0 { v + size } else { v };
+                        if exclusive { v } else { v + 1 }
+                    }
+                    None => size,
+                };
+                repl_window(&repl, from, (to - from).max(0))?
+            }
+            (false, 5) => {
+                let from = convert::to_index(&args[3])?;
+                let len = convert::to_index(&args[4])?;
+                repl_window(&repl, from, len)?
+            }
+            _ => repl,
         };
         // Start bounds first (message names the caller's original index), then
         // the length, whose own message is distinct.
@@ -2631,11 +2676,14 @@ ruby_class! {
     }
     // `casecmp` is an ASCII case-insensitive `<=>`; `casecmp?` its boolean
     // (Unicode-aware) sibling. A non-String argument answers nil.
+    // `casecmp` is the ASCII-ONLY comparison (`rb_str_casecmp`, which walks
+    // BYTES and folds only `A-Z`); `casecmp?` below is the Unicode one,
+    // which case-folds both sides first. That split is why the two exist,
+    // and folding here made `"Ä".casecmp("ä")` answer 0 where ruby says -1.
     def "casecmp" (recv, arg) {
         let RubyValue::Str(o) = arg else { return Ok(RubyValue::Nil) };
-        let a = rstr.lock().to_utf8_lossy().to_lowercase();
-        let b = o.lock().to_utf8_lossy().to_lowercase();
-        Ok(RubyValue::Int(a.cmp(&b) as i64))
+        let (a, b) = (rstr.lock().bytes().to_vec(), o.lock().bytes().to_vec());
+        Ok(RubyValue::Int(ascii_casecmp(&a, &b) as i64))
     }
     def "casecmp?" (recv, arg) {
         guard_valid_case(recv)?;
@@ -3134,7 +3182,7 @@ ruby_class! {
             }
             other => {
                 return Err(type_error!("wrong argument type {} (expected Regexp)",
-                        crate::builtins::class_name_of(other)));
+                        crate::builtins::check_type_name(other)));
             }
         };
         // With a block, yield each match and return the receiver; without one,
@@ -3296,6 +3344,46 @@ fn byte_at_char(text: &str, char_idx: usize) -> usize {
 
 /// Wraps a `Regexp` or `String` pattern argument as a compiled Regexp --
 /// `match`/`match?`'s shared coercion (a String pattern compiles literally).
+/// The `[from, len]` BYTE window of a `bytesplice` replacement -- the
+/// trailing arguments of its 3-argument range form and its 5-argument
+/// index form. Out of range is CRuby's own IndexError, naming the
+/// replacement rather than the receiver.
+fn repl_window(
+    repl: &crate::collections::RStr,
+    from: i64,
+    len: i64,
+) -> Result<crate::collections::RStr, Signal> {
+    let size = repl.lock().bytesize() as i64;
+    let from = if from < 0 { from + size } else { from };
+    if from < 0 || from > size {
+        return Err(index_error!("index {from} out of string"));
+    }
+    if len < 0 {
+        return Err(index_error!("negative length {len}"));
+    }
+    let (bytes, enc) = {
+        let buf = repl.lock();
+        (buf.bytes().to_vec(), buf.encoding())
+    };
+    let end = ((from + len) as usize).min(bytes.len());
+    Ok(crate::collections::string_wrap(
+        crate::enc::StrBuf::from_bytes(bytes[from as usize..end].to_vec(), enc),
+    ))
+}
+
+/// CRuby's `rb_str_casecmp`: byte order with only the ASCII letter range
+/// folded, and a shorter prefix ordering before a longer string.
+pub(crate) fn ascii_casecmp(a: &[u8], b: &[u8]) -> std::cmp::Ordering {
+    let fold = |c: u8| c.to_ascii_lowercase();
+    for (x, y) in a.iter().zip(b) {
+        let ord = fold(*x).cmp(&fold(*y));
+        if ord != std::cmp::Ordering::Equal {
+            return ord;
+        }
+    }
+    a.len().cmp(&b.len())
+}
+
 fn to_regexp(v: &RubyValue) -> Result<crate::regexp::RRegexp, Signal> {
     if let Some(re) = crate::regexp::as_regexp(v) {
         return Ok(re);
@@ -3306,7 +3394,7 @@ fn to_regexp(v: &RubyValue) -> Result<crate::regexp::RRegexp, Signal> {
             .map_err(|e| regexp_error!("{e}")),
         other => Err(type_error!(
             "wrong argument type {} (expected Regexp)",
-            crate::builtins::class_name_of(other)
+            crate::builtins::check_type_name(other)
         )),
     }
 }
@@ -3603,7 +3691,7 @@ fn sub_gsub(
             None => {
                 return Err(type_error!(
                     "wrong argument type {} (expected Regexp)",
-                    crate::builtins::class_name_of(other)
+                    crate::builtins::check_type_name(other)
                 ));
             }
         },

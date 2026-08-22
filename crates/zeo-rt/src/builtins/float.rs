@@ -9,15 +9,6 @@ use crate::builtins::{arg_error, inherited_row, type_error};
 use crate::{RubyValue, Signal};
 use zeo_macros::ruby_class;
 
-/// CRuby's coercion TypeError shape (`1.0 + "x"` -> `String can't be
-/// coerced into Float`; `1.0 + nil` -> `nil can't be coerced into Float`).
-fn coerce_error(arg: &RubyValue) -> Signal {
-    type_error!(
-        "{} can't be coerced into Float",
-        crate::builtins::coerce_operand_name(arg)
-    )
-}
-
 use crate::builtins::numeric::num_op_row;
 
 ruby_class! {
@@ -96,18 +87,13 @@ ruby_class! {
     }
     // `coerce(other)` promotes both operands to Float (`[Float(other), self]`).
     def "coerce" (recv, arg) {
-        // A String goes through `Float()`, not the operator coercion: ruby's
-        // `num_coerce` is `[Float(y), Float(x)]`, so `2.5.coerce("3")` is
-        // [3.0, 2.5] and `2.5.coerce("")` is `Float()`'s ArgumentError -- not
-        // the "can't coerce" TypeError an arithmetic operator would give.
-        let other = match arg {
-            RubyValue::Str(_) => {
-                match crate::builtins::kernel::float_impl(std::slice::from_ref(arg))? {
-                    RubyValue::Float(f) => f,
-                    other => crate::builtins::numeric::num_to_f64_unchecked(&other),
-                }
-            }
-            _ => numeric_f64_arg(arg, "can't coerce")?,
+        // Ruby's `num_coerce` is literally `[Float(y), Float(x)]`, so EVERY
+        // argument goes through `Float()` and every failure is its own --
+        // naming the VALUE and `Float` (`can't convert nil into Float`),
+        // not the "can't coerce" TypeError an arithmetic operator gives.
+        let other = match crate::builtins::kernel::float_impl(std::slice::from_ref(arg))? {
+            RubyValue::Float(f) => f,
+            other => crate::builtins::numeric::num_to_f64_unchecked(&other),
         };
         Ok(RubyValue::Array(crate::array_new(vec![
             RubyValue::Float(other),
@@ -202,26 +188,6 @@ fn recv_f64(recv: &RubyValue) -> f64 {
     match recv {
         RubyValue::Float(f) => *f,
         _ => unreachable!("Float table row dispatched on a non-Float receiver"),
-    }
-}
-
-/// A numeric argument as `f64` for `coerce`/`div`; a non-numeric argument is
-/// a TypeError with the given verb (`can't coerce X into Float`).
-fn numeric_f64_arg(v: &RubyValue, verb: &str) -> Result<f64, Signal> {
-    use crate::builtins::numeric::num_to_f64_unchecked;
-    match v {
-        RubyValue::Int(_) | RubyValue::BigInt(_) | RubyValue::Float(_) | RubyValue::Rational(_) => {
-            Ok(num_to_f64_unchecked(v))
-        }
-        // A real-valued Complex (imaginary part zero) coerces to its real part;
-        // a non-real one can't become a Float.
-        RubyValue::Complex(c) if num_to_f64_unchecked(&c.imag) == 0.0 => {
-            Ok(num_to_f64_unchecked(&c.real))
-        }
-        other => Err(type_error!(
-            "{verb} {} into Float",
-            crate::builtins::class_name_of(other)
-        )),
     }
 }
 
@@ -472,9 +438,11 @@ fn float_round_family(
     op: impl Fn(f64) -> f64,
 ) -> Result<RubyValue, Signal> {
     let f = recv_f64(recv);
+    // `NUM2INT`, which is what CRuby's rounding family reads the digit
+    // count with -- so a non-numeric one is "no implicit conversion",
+    // never the coercion failure an ARITHMETIC operand would give.
     let ndigits = match ndigits {
-        Some(RubyValue::Int(n)) => *n,
-        Some(other) => return Err(coerce_error(other)),
+        Some(v) => crate::builtins::convert::to_index(v)?,
         None => 0,
     };
     if ndigits > 0 {

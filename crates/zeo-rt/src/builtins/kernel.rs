@@ -1975,9 +1975,13 @@ pub fn kernel_pp(args: &[RubyValue]) -> Result<RubyValue, Signal> {
 /// The raw bytes of an output-separator global (`$,`, `$\`), or `None` when it
 /// is nil -- which is its default and the overwhelmingly common case, so the
 /// caller adds nothing at all rather than an empty slice.
-fn output_separator(name: &str) -> Option<Vec<u8>> {
+/// `$,` (the output FIELD separator) or `$\` (the output RECORD
+/// separator) as raw bytes, or `None` when unset -- which is the default
+/// for both. Ruby resolves them at the CALL, never at stream creation, so
+/// every reader asks here.
+pub(crate) fn output_separator(name: &str) -> Option<crate::enc::StrBuf> {
     match crate::globals::global_get(0, name) {
-        RubyValue::Str(s) => Some(s.lock().bytes().to_vec()),
+        RubyValue::Str(s) => Some(s.lock().clone()),
         _ => None,
     }
 }
@@ -1995,7 +1999,7 @@ pub fn kernel_print(args: &[RubyValue]) -> Result<RubyValue, Signal> {
         if i > 0
             && let Some(s) = &field_sep
         {
-            buf.extend_from_slice(s);
+            buf.extend_from_slice(s.bytes());
         }
         if let Err(sig) = crate::builtins::io::display_bytes(a, &mut buf) {
             rendered = Err(sig);
@@ -2005,7 +2009,7 @@ pub fn kernel_print(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     if rendered.is_ok()
         && let Some(s) = output_separator("$\\")
     {
-        buf.extend_from_slice(&s);
+        buf.extend_from_slice(s.bytes());
     }
     // Flush-then-propagate, same as `kernel_puts`.
     crate::builtins::io::write_bytes(&crate::builtins::io::current_stdout(), &buf)?;

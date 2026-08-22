@@ -962,6 +962,8 @@ fn enum_size(e: &EnumeratorData) -> RubyValue {
             | "each_pair" | "each_index" | "map!" | "select!" | "reject!" | "transform_keys"
             | "transform_values" => receiver_size(recv),
             "times" => recv.clone(),
+            // `then`/`yield_self` yields the receiver exactly once.
+            "then" | "yield_self" => RubyValue::Int(1),
             // `cycle` repeats the receiver forever, or `n` times: `n * size`,
             // and 0 for an empty receiver or a non-positive count.
             "cycle" => {

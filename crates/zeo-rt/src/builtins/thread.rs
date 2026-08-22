@@ -101,7 +101,7 @@ ruby_class! {
         let RubyValue::Thread(target) = target else {
             return Err(type_error!(
                 "wrong argument type {} (expected VM/thread)",
-                crate::builtins::class_name_of(target)
+                crate::builtins::check_type_name(target)
             ));
         };
         thread_kill(target);

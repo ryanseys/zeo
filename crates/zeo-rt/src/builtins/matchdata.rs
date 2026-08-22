@@ -206,7 +206,7 @@ ruby_class! {
                         let RubyValue::Symbol(s) = k else {
                             return Err(type_error!(
                                 "wrong argument type {} (expected Symbol)",
-                                crate::builtins::class_name_of(k)
+                                crate::builtins::check_type_name(k)
                             ));
                         };
                         match named.iter().find(|(n, _)| *n == s.name()) {

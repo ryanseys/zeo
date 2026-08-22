@@ -1,27 +1,16 @@
-# GAP -- imported from the spinel corpus at fa06b601.
+# The arity guard on calls the bare-call spec cannot reach: block-carrying
+# calls (their accepted counts are probed separately -- `Array#fill` drops
+# to 0..2 under a block), zero-arity readers, Struct member access, native
+# instances, and receivers beyond the original eight.
 #
-# Two rows in zeo's builtin ARITY table are narrower than CRuby's, and one
-# call raises the wrong error entirely.
-#
-#   Array#fill under a block   zeo accepts 2..3, CRuby 2..5
-#   Numeric#step with a block  a zero-argument call raises
-#                              `comparison of Integer with NilClass failed`
-#                              from inside `step`, where CRuby raises the
-#                              ordinary ArgumentError before the body runs
-#
-# The arity ratchet (`conformance/builtin-arity.tsv`) gates the declared
-# counts, so the first is a table row to correct. The second is a missing
-# guard: the call reaches the body with a nil bound and fails on the
-# comparison, which reports a cause the caller never wrote.
-#
-# The original header follows. It describes the PREDECESSOR project's
-# version of this test and its own fix, not zeo's divergence above.
-#
-# The arity guard on calls the bare-call spec could not reach: block-carrying
-# calls (their accepted counts are probed separately -- Array#fill drops to
-# 0..2 under a block), zero-arity readers, Struct member access, native-class
-# instances, and receivers beyond the original eight (nil, bools, Rational,
-# Complex, user objects falling back to Object's universal rows).
+# Three things this file was FILED for, all fixed. `String#bytesplice`
+# accepted 2..3 where CRuby has four shapes up to five arguments -- the
+# replacement's own byte window was simply missing. A Struct MEMBER
+# accessor counted nothing, so `s.a(2)` answered the member and
+# `s.send(:a=)` indexed an empty slice. And `1.step(nil)` read the explicit
+# nil as a BOUND, so the first comparison failed on a NilClass the caller
+# never wrote, where ruby's endless form runs.
+
 require "stringio"
 
 # block-carrying calls check the with-block quartet

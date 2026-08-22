@@ -355,11 +355,21 @@ ruby_class! {
         write_at(&mut s, &arg_bytes(other));
         Ok(recv.clone())
     }
+    // Joined by `$,` and closed by `$\`, both nil unless the program sets
+    // them -- `IO#print` and `Kernel#print` read the same two globals, at
+    // the CALL rather than at stream creation.
     def "print" (recv, *args, &_block) {
         check_writable(recv)?;
+        let field_sep = crate::builtins::kernel::output_separator("$,");
         let mut s = io_of(recv).state.lock();
-        for a in args {
+        for (i, a) in args.iter().enumerate() {
+            if i > 0 && let Some(sep) = &field_sep {
+                write_at(&mut s, sep.bytes());
+            }
             write_at(&mut s, &arg_bytes(a));
+        }
+        if let Some(sep) = crate::builtins::kernel::output_separator("$\\") {
+            write_at(&mut s, sep.bytes());
         }
         Ok(RubyValue::Nil)
     }

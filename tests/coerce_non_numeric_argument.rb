@@ -1,25 +1,22 @@
-# GAP -- imported from the spinel corpus at fa06b601.
+# `Integer#coerce` / `Float#coerce` raise `Float()`'s own errors.
 #
-# `Integer#coerce` / `Float#coerce` with a non-numeric argument raise the
-# WRONG TypeError message, and from the wrong place.
+# Ruby's `num_coerce` is literally `[Float(y), Float(x)]`, so a failure
+# names the VALUE and `Float` (`can't convert nil into Float`) rather than
+# reporting a coercion failure naming the class and the receiver's type.
+# An INTEGER pair stays integral, which is `rb_int_coerce`'s own rule.
 #
-#   1.coerce(nil)   CRuby "can't convert nil into Float"
-#                   zeo   "can't coerce NilClass into Integer"
-#
-# CRuby's `coerce` answers `[Float(other), Float(self)]`, so the error is
-# `Float()`'s and it names the VALUE (`nil`) and the target (`Float`). zeo
-# reports its own coercion failure instead, naming the CLASS and the
-# receiver's type. Both are TypeErrors, so a rescue still fires; a message
-# match does not.
+# The fix closed one more divergence with it: `5.coerce(Rational(1,2))`
+# raised where ruby answers `[0.5, 5.0]`.
 #
 # The original header follows. It describes the PREDECESSOR project's
-# version of this test and its own fix, not zeo's divergence above.
+# version of this test and its own fix.
 #
 # Integer#coerce / Float#coerce with a non-numeric argument. CRuby answers
 # `[Float(other), Float(self)]`, so the errors are Float()'s: a TypeError for
 # nil / true / an Array / a Symbol, and an ArgumentError for an unparseable
 # String. spinel put the argument straight into the Integer pair's slot, so a
 # String stopped the C BUILD and a nil answered a coerced 0 (#4011).
+
 [nil, true, false, "x", [1], { a: 1 }, :s].each do |v|
   begin
     p 5.coerce(v)

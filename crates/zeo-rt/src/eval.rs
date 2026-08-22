@@ -228,7 +228,7 @@ pub fn using_activate(slot: u32, module: &RubyValue) -> Result<(), Signal> {
     let RubyValue::Class(mid) = module else {
         return Err(crate::builtins::type_error!(
             "wrong argument type {} (expected Module)",
-            crate::builtins::class_name_of(module)
+            crate::builtins::check_type_name(module)
         ));
     };
     if crate::dispatch::class_is_module(*mid) != Some(true) {

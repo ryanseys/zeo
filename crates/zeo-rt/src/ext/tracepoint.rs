@@ -28,7 +28,7 @@
 //! (CRuby's own reentrancy rule, which is what keeps a `:line` handler
 //! from tracing itself forever).
 
-use crate::builtins::{arg_error, class_name_of, runtime_error, type_error};
+use crate::builtins::{arg_error, runtime_error, type_error};
 use crate::collections::string_new;
 use crate::dispatch::{RObj, RubyObject};
 use crate::{RProc, RubyValue, Signal, Symbol};
@@ -544,7 +544,7 @@ fn parse_events(args: &[RubyValue]) -> Result<u8, Signal> {
             other => {
                 return Err(type_error!(
                     "wrong argument type {} (expected Symbol)",
-                    class_name_of(other)
+                    crate::builtins::check_type_name(other)
                 ));
             }
         };

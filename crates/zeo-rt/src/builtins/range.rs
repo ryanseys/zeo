@@ -738,7 +738,7 @@ ruby_class! {
     def "overlap?" (recv, arg) {
         let RubyValue::Range(__rg) = arg else {
             return Err(type_error!("wrong argument type {} (expected Range)",
-                    crate::builtins::class_name_of(arg)));
+                    crate::builtins::check_type_name(arg)));
         };
         let (sb, se, sx) = range_parts(recv);
         let (ob, oe, ox) = __rg.parts();

@@ -1042,7 +1042,7 @@ pub fn refinement_import_methods(
         if !ok {
             return Err(crate::builtins::type_error!(
                 "wrong argument type {} (expected Module)",
-                crate::builtins::class_name_of(m)
+                crate::builtins::check_type_name(m)
             ));
         }
     }

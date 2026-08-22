@@ -256,7 +256,7 @@ ruby_module! {
         let RubyValue::Symbol(s) = arg else {
             return Err(type_error!(
                 "wrong argument type {} (expected Symbol)",
-                crate::builtins::class_name_of(arg)
+                crate::builtins::check_type_name(arg)
             ));
         };
         Ok(RubyValue::Bool(s.name() == "lines"))

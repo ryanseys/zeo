@@ -159,7 +159,7 @@ mod ast {
                 other => {
                     return Err(crate::builtins::type_error!(
                         "wrong argument type {} (expected String)",
-                        crate::builtins::class_name_of(other)
+                        crate::builtins::check_type_name(other)
                     ));
                 }
             };

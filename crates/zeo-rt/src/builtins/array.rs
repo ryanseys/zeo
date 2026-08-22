@@ -717,8 +717,11 @@ ruby_class! {
         // way `String#+` does it -- never through the lossy display text,
         // which replaced every non-UTF-8 byte with U+FFFD and so could not
         // rejoin the pieces of a compressed stream (or anything else binary).
+        // An absent separator falls back to `$,`, the output field
+        // separator -- ruby reads it at the CALL, so a program that sets it
+        // around one `join` gets it for that call only.
         let sep = match arg {
-            None | Some(RubyValue::Nil) => None,
+            None | Some(RubyValue::Nil) => crate::builtins::kernel::output_separator("$,"),
             Some(other) => Some(convert::to_rstr(other)?.lock().clone()),
         };
         let elems = rary.lock().clone();
@@ -1973,6 +1976,9 @@ fn walk_permutations(
 fn take_items_via_each(src: &RubyValue, n: usize) -> Result<Vec<RubyValue>, crate::Signal> {
     let each = crate::symbol::wk::each();
     if !crate::dispatch::responds_to_value(src, each, false) {
+        // NOT a `Check_Type` message: `rb_zip`'s own uses `rb_obj_class`,
+        // so `nil` reads as `NilClass` here where the expected-Y form reads
+        // it as the value. Oracle-verified.
         return Err(type_error!(
             "wrong argument type {} (must respond to :each)",
             crate::builtins::class_name_of(src)

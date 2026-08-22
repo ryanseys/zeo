@@ -1518,7 +1518,7 @@ fn extend_object_or_primitive(recv: &RubyValue, module_val: &RubyValue) -> Resul
     let RubyValue::Class(mid) = module_val else {
         return Err(type_error!(
             "wrong argument type {} (expected Module)",
-            crate::builtins::class_name_of(module_val)
+            crate::builtins::check_type_name(module_val)
         ));
     };
     match overrides_mixin_primitive(*mid, "extend_object") {
@@ -1541,7 +1541,7 @@ pub fn extend_object_default(recv: &RubyValue, module_val: &RubyValue) -> Result
     let RubyValue::Class(mid) = module_val else {
         return Err(type_error!(
             "wrong argument type {} (expected Module)",
-            crate::builtins::class_name_of(module_val)
+            crate::builtins::check_type_name(module_val)
         ));
     };
     // A repeat `extend` re-ranks nothing: the module keeps the position its
@@ -1657,7 +1657,7 @@ fn prepend_into_class_singleton(owner: ClassId, module_val: &RubyValue) -> Resul
     let RubyValue::Class(mid) = module_val else {
         return Err(type_error!(
             "wrong argument type {} (expected Module)",
-            crate::builtins::class_name_of(module_val)
+            crate::builtins::check_type_name(module_val)
         ));
     };
     if crate::dispatch::class_frozen(owner) {
@@ -1804,7 +1804,7 @@ fn mix_in(
         let RubyValue::Class(mid) = module_val else {
             return Err(type_error!(
                 "wrong argument type {} (expected Module)",
-                crate::builtins::class_name_of(module_val)
+                crate::builtins::check_type_name(module_val)
             ));
         };
         // `Module#include` is DEFINED IN TERMS of `append_features` and does no
@@ -1855,7 +1855,7 @@ pub fn splice_mixin(target: &RubyValue, module: &RubyValue, before: bool) -> Res
     let (RubyValue::Class(cid), RubyValue::Class(mid)) = (target, module) else {
         return Err(type_error!(
             "wrong argument type {} (expected Module)",
-            crate::builtins::class_name_of(target)
+            crate::builtins::check_type_name(target)
         ));
     };
     if crate::dispatch::class_frozen(*cid) {

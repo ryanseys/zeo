@@ -213,7 +213,7 @@ pub fn kind_of_type_value(v: &RubyValue) -> Result<FfiKind, Signal> {
     }
     Err(type_error!(
         "wrong argument type {} (expected an FFI type)",
-        crate::builtins::class_name_of(v)
+        crate::builtins::check_type_name(v)
     ))
 }
 

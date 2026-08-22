@@ -814,7 +814,13 @@ ruby_class! {
                 limit = Some(to);
             }
         }
-        if let Some(l) = to {
+        // An explicit `nil` limit is UNBOUNDED, exactly as an absent one is
+        // -- `1.step(nil) { break :x }` is ruby's endless form. Reading it
+        // as a bound made the first comparison fail on a NilClass the
+        // caller never wrote.
+        if let Some(l) = to
+            && !matches!(l, RubyValue::Nil)
+        {
             limit = Some(l.clone());
         }
         if let Some(s) = by {

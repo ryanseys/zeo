@@ -1,18 +1,15 @@
-# GAP -- imported from the spinel corpus at fa06b601.
+# CRuby's argument-conversion TypeErrors, message included.
 #
-# Several argument-conversion TypeErrors carry zeo's message where CRuby has
-# its own, and the two describe different things:
-#
-#   CRuby  "no implicit conversion from nil to integer"
-#   zeo    "NilClass can't be coerced into Integer"
-#
-# CRuby's `rb_to_int`-family message names the CONVERSION that was not
-# available; zeo reports a coercion failure instead. The exception CLASS
-# agrees in every case, so a rescue still fires -- only a message match does
-# not.
+# Four rules, each spelled where CRuby spells it: a `Check_Type` message
+# (`wrong argument type X (expected Y)`) names `nil`/`true`/`false` as the
+# VALUE rather than the class; `rb_num2long` says "no implicit conversion
+# from nil to integer" where `rb_to_int` says "of nil into Integer";
+# `StringScanner`'s pattern slot reads with `StringValue`, so its refusal
+# is the STRING conversion's; and a rounding digit count, a radix and a
+# random seed are conversions, never arithmetic coercions.
 #
 # The original header follows. It describes the PREDECESSOR project's
-# version of this test and its own fix, not zeo's divergence above.
+# version of this test and its own fix.
 #
 # CRuby's argument validation at builtin boundaries: a compile-time-known
 # nil / true / false (or wrong-classed scalar) entering a String- or
@@ -21,6 +18,7 @@
 # accepts nil in keep working.
 
 # nil / bool into Integer slots ("from nil to integer" wording)
+
 begin
   p([10, 20, 30].take(nil))
 rescue TypeError, ArgumentError => e

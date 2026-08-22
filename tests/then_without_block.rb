@@ -1,14 +1,8 @@
-# GAP -- imported from the spinel corpus at fa06b601.
-#
-# `Kernel#then` (and `yield_self`) without a block answers `nil` where CRuby
-# returns an ENUMERATOR of one element, so `1.then.first` is `1` in CRuby and
-# a NoMethodError on nil in zeo.
-#
-# The block-less enumerator form is what makes `obj.then.each { }` and the
-# lazy chains built on it work.
+# `Kernel#then` / `yield_self` without a block is an Enumerator over one
+# element -- the receiver -- and it knows its own SIZE.
 #
 # The original header follows. It describes the PREDECESSOR project's
-# version of this test and its own fix, not zeo's divergence above.
+# version of this test and its own fix.
 #
 # `then` / `yield_self` given no block is an Enumerator over exactly one
 # element, the receiver -- spinel refused the call outright (#4028):
@@ -17,6 +11,7 @@
 #
 # and a `then` whose block body is EMPTY declared its result slot `void`,
 # because the desugared `then { nil }` types as nil, which has no C slot.
+
 [].then{}
 p([].then{})
 p(5.then{})

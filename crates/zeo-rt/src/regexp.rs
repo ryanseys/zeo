@@ -1391,10 +1391,13 @@ pub fn scanner_match(
             };
             (vec![Some((start, start + literal.len()))], Vec::new())
         }
+        // `StringScanner` reads a non-Regexp pattern with `StringValue`,
+        // so its refusal is the STRING conversion's, not the
+        // regexp-expected `Check_Type` one every other pattern slot gives.
         other => {
             return Err(crate::builtins::type_error!(
-                "wrong argument type {} (expected Regexp)",
-                crate::builtins::class_name_of(other)
+                "no implicit conversion of {} into String",
+                crate::builtins::check_type_name(other)
             ));
         }
     };

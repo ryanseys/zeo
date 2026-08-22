@@ -221,15 +221,17 @@ ruby_class! {
     def "end_with?"(recv, *args, &block) { sym_via_name(recv, "end_with?", args, block) }
     // Case-insensitive name comparison. `casecmp` answers -1/0/1 (nil if the
     // argument isn't a Symbol); `casecmp?` answers true/false/nil.
+    // The String rule, and for the same reason -- see `String#casecmp`:
+    // ASCII-only folding over BYTES, with `casecmp?` carrying the Unicode
+    // comparison.
     def "casecmp" (recv, arg) {
         let RubyValue::Symbol(other) = arg else {
             return Ok(RubyValue::Nil);
         };
-        let ord = recv_sym(recv)
-            .name()
-            .to_lowercase()
-            .cmp(&other.name().to_lowercase());
-        Ok(RubyValue::Int(ord as i64))
+        let (a, b) = (recv_sym(recv).name(), other.name());
+        Ok(RubyValue::Int(
+            crate::builtins::string::ascii_casecmp(a.as_bytes(), b.as_bytes()) as i64,
+        ))
     }
     def "casecmp?" (recv, arg) {
         let RubyValue::Symbol(other) = arg else {

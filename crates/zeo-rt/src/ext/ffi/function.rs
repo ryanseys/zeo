@@ -43,7 +43,7 @@ fn arg_kinds_of(v: &RubyValue) -> Result<Vec<FfiKind>, Signal> {
     let RubyValue::Array(a) = v else {
         return Err(type_error!(
             "wrong argument type {} (expected Array)",
-            crate::builtins::class_name_of(v)
+            crate::builtins::check_type_name(v)
         ));
     };
     a.lock().iter().map(kind_of_type_value).collect()
@@ -60,7 +60,7 @@ fn target_address(v: &RubyValue) -> Result<usize, Signal> {
     }
     Err(type_error!(
         "wrong argument type {} (expected a pointer or Proc)",
-        crate::builtins::class_name_of(v)
+        crate::builtins::check_type_name(v)
     ))
 }
 
@@ -189,7 +189,7 @@ mod invoker {
         let RubyValue::Array(a) = arg2 else {
             return Err(type_error!(
                 "wrong argument type {} (expected Array)",
-                crate::builtins::class_name_of(arg2)
+                crate::builtins::check_type_name(arg2)
             ));
         };
         let types: Vec<RubyValue> = a.lock().iter().cloned().collect();

@@ -1,19 +1,17 @@
-# GAP -- imported from the spinel corpus at fa06b601.
+# `Process.clock_gettime` takes a clock as a SYMBOL name.
 #
-# `Process.clock_gettime` accepts a clock as a SYMBOL name in CRuby
-# (`:CLOCK_MONOTONIC`) as well as a constant or a raw id. zeo takes only the
-# integer, so the symbol raises `TypeError: no implicit conversion of Symbol
-# into Integer`.
-#
-# The symbol spelling is the portable one -- a constant a platform does not
-# define is a NameError, while the symbol form lets a caller rescue -- so
-# this is the shape a library actually writes.
+# The symbol spelling is the portable one -- a constant the platform does
+# not define is a `NameError` at the read, where the symbol form is a
+# rescuable `Errno::EINVAL` -- so it is the shape a library actually
+# writes. The name is looked up against `Process`'s own `CLOCK_*`
+# constants, so the two cannot drift.
 #
 # The original header follows. It describes the PREDECESSOR project's
-# version of this test and its own fix, not zeo's divergence above.
+# version of this test and its own fix.
 #
 # `Process.clock_gettime` takes a clock as a SYMBOL name as well as a constant
 # or a raw id. The symbol went into an Integer slot and raised (#4044).
+
 p Process.clock_gettime(:CLOCK_MONOTONIC).class
 p Process.clock_gettime(Process::CLOCK_MONOTONIC).class
 p Process.clock_gettime(:CLOCK_REALTIME).class

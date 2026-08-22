@@ -478,6 +478,19 @@ pub(crate) fn class_name_of(v: &RubyValue) -> String {
         .unwrap_or_else(|| format!("#<Class:{}>", v.class_id().0))
 }
 
+/// How a `Check_Type` TypeError (`wrong argument type X (expected Y)`)
+/// names the offending value -- CRuby's `builtin_class_name`: `nil`,
+/// `true` and `false` read as the VALUE, everything else as its class
+/// name. Distinct from `coerce_operand_name`, which also reads a Symbol,
+/// a fixnum and a Float as their inspect form.
+pub(crate) fn check_type_name(v: &RubyValue) -> String {
+    match v {
+        RubyValue::Nil => "nil".to_string(),
+        RubyValue::Bool(b) => b.to_string(),
+        other => class_name_of(other),
+    }
+}
+
 /// How a numeric-coercion TypeError names the offending operand -- CRuby's
 /// `coerce_failed` rule: special constants (nil/true/false, a fixnum
 /// Integer, a Symbol) and Floats read as their `inspect` form (`nil can't

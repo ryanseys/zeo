@@ -68,7 +68,9 @@ impl RubyObject for RandomObj {
 fn seed_from(arg: Option<&RubyValue>) -> Result<(crate::mt::Mt, RubyValue), Signal> {
     let from_big = |b: BigInt| (crate::mt::Mt::from_bigint(&b), int_value(b));
     Ok(match arg {
-        None | Some(RubyValue::Nil) => {
+        // Only an ABSENT seed is the time-based one: an explicit `nil` is
+        // CRuby's `rb_to_int` TypeError, in both `srand` and `Random.new`.
+        None => {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_nanos() as u64)
@@ -445,7 +447,7 @@ ruby_class! {
         let RubyValue::Array(a) = dump else {
             return Err(type_error!(
                 "wrong argument type {} (expected Array)",
-                crate::builtins::class_name_of(dump)
+                crate::builtins::check_type_name(dump)
             ));
         };
         let items = a.lock().iter().cloned().collect::<Vec<_>>();

@@ -53,14 +53,14 @@ ruby_class! {
     def self."ruby2_keywords_hash" (_recv, hash) {
         let RubyValue::Hash(h) = hash else {
             return Err(type_error!("wrong argument type {} (expected Hash)",
-                crate::builtins::class_name_of(hash)));
+                crate::builtins::check_type_name(hash)));
         };
         Ok(RubyValue::Hash(crate::hash_new(h.lock().values().cloned().collect())))
     }
     def self."ruby2_keywords_hash?" (_recv, hash) {
         if !matches!(hash, RubyValue::Hash(_)) {
             return Err(type_error!("wrong argument type {} (expected Hash)",
-                crate::builtins::class_name_of(hash)));
+                crate::builtins::check_type_name(hash)));
         }
         Ok(RubyValue::Bool(false))
     }

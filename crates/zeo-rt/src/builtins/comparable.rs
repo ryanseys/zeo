@@ -90,7 +90,7 @@ ruby_module! {
             let RubyValue::Range(__rg) = min else {
                 return Err(type_error!(
                     "wrong argument type {} (expected Range)",
-                    crate::builtins::class_name_of(min)
+                    crate::builtins::check_type_name(min)
                 ));
             };
             let (lo, hi, exclusive) = __rg.parts();

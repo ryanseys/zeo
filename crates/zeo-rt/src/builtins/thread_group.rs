@@ -98,7 +98,7 @@ ruby_class! {
         if !matches!(arg, RubyValue::Thread(_)) {
             return Err(type_error!(
                 "wrong argument type {} (expected VM/thread)",
-                crate::builtins::class_name_of(arg)
+                crate::builtins::check_type_name(arg)
             ));
         }
         Ok(recv.clone())

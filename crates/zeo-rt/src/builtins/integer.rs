@@ -661,24 +661,18 @@ ruby_class! {
     // two-element Array (`other`-first, CRuby's order).
     def "coerce" (recv, arg) {
         let pair = match arg {
-            RubyValue::Float(f) => vec![
-                RubyValue::Float(*f),
-                RubyValue::Float(to_bigint(recv).to_f64().unwrap_or(f64::NAN)),
-            ],
+            // An INTEGER pair stays integral (`rb_int_coerce`); every other
+            // argument is ruby's `num_coerce`, which is literally
+            // `[Float(y), Float(x)]` -- so the failures are `Float()`'s,
+            // naming the VALUE and `Float`, and not a "can't coerce"
+            // TypeError naming the class and the receiver's type.
             RubyValue::Int(_) | RubyValue::BigInt(_) => vec![(*arg).clone(), recv.clone()],
-            // A String goes through `Float()` -- `num_coerce` is
-            // `[Float(y), Float(x)]` -- so `42.coerce("3")` is [3.0, 42.0] and
-            // `42.coerce("l")` raises `Float()`'s ArgumentError, not a
-            // "can't coerce" TypeError.
-            RubyValue::Str(_) => {
+            _ => {
                 let f = crate::builtins::kernel::float_impl(std::slice::from_ref(arg))?;
                 vec![
                     f,
                     RubyValue::Float(to_bigint(recv).to_f64().unwrap_or(f64::NAN)),
                 ]
-            }
-            other => {
-                return Err(type_error!("can't coerce {} into Integer", crate::builtins::class_name_of(other)))
             }
         };
         Ok(RubyValue::Array(crate::array_new(pair)))
@@ -827,8 +821,14 @@ ruby_class! {
             Some(RubyValue::Int(b)) => {
                 return Err(arg_error!("invalid radix {b}"))
             }
+            // `rb_num2long` reads the radix, so a non-numeric one is "no
+            // implicit conversion", never an arithmetic coercion failure.
             Some(other) => {
-                return Err(coerce_error(other, "Integer"));
+                let b = crate::builtins::convert::to_index(other)?;
+                if !(2..=36).contains(&b) {
+                    return Err(arg_error!("invalid radix {b}"));
+                }
+                b as u32
             }
             None => 10,
         };
@@ -852,7 +852,14 @@ ruby_class! {
                 }
                 b
             }
-            Some(other) => return Err(coerce_error(other, "Integer")),
+            // `rb_to_int` reads this base, where `to_s` reads its radix
+            // with `rb_num2long` -- the two spell the nil message
+            // differently, so each uses the conversion CRuby uses.
+            Some(other) => match crate::builtins::convert::to_int(other)? {
+                RubyValue::Int(n) => BigInt::from(n),
+                RubyValue::BigInt(b) => (*b).clone(),
+                _ => unreachable!("to_int post-checks its answer"),
+            },
             None => BigInt::from(10),
         };
         let mut n = to_bigint(recv);

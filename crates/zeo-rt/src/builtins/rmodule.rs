@@ -1237,7 +1237,7 @@ ruby_class! {
         let RubyValue::Class(target_id) = target else {
             return Err(type_error!(
                 "wrong argument type {} (expected Class or Module)",
-                crate::builtins::class_name_of(target)
+                crate::builtins::check_type_name(target)
             ));
         };
         let Some(RubyValue::Proc(b)) = &block else {

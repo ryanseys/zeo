@@ -417,7 +417,7 @@ fn encode(value: &RubyValue, t: BufType, out: &mut [u8]) -> Result<(), Signal> {
             other => {
                 return Err(type_error!(
                     "wrong argument type {} (expected Float)",
-                    crate::builtins::class_name_of(other)
+                    crate::builtins::check_type_name(other)
                 ));
             }
         };
@@ -448,7 +448,7 @@ fn encode(value: &RubyValue, t: BufType, out: &mut [u8]) -> Result<(), Signal> {
         other => {
             return Err(type_error!(
                 "wrong argument type {} (expected Integer)",
-                crate::builtins::class_name_of(other)
+                crate::builtins::check_type_name(other)
             ));
         }
     };
@@ -593,7 +593,7 @@ ruby_class! {
         let RubyValue::Str(s) = arg else {
             return Err(type_error!(
                 "wrong argument type {} (expected String)",
-                crate::builtins::class_name_of(arg)
+                crate::builtins::check_type_name(arg)
             ));
         };
         let bytes = s.lock().bytes().to_vec();
@@ -972,7 +972,7 @@ ruby_class! {
         let RubyValue::Str(s) = &args[0] else {
             return Err(type_error!(
                 "wrong argument type {} (expected String)",
-                crate::builtins::class_name_of(&args[0])
+                crate::builtins::check_type_name(&args[0])
             ));
         };
         let src = s.lock().bytes().to_vec();
@@ -993,7 +993,7 @@ ruby_class! {
         let Some(src) = as_buffer(&args[0]) else {
             return Err(type_error!(
                 "wrong argument type {} (expected IO::Buffer)",
-                crate::builtins::class_name_of(&args[0])
+                crate::builtins::check_type_name(&args[0])
             ));
         };
         let src_bytes = window_bytes(&src.state.lock());
@@ -1052,7 +1052,7 @@ ruby_class! {
         let Some(o) = as_buffer(other) else {
             return Err(type_error!(
                 "wrong argument type {} (expected IO::Buffer)",
-                crate::builtins::class_name_of(other)
+                crate::builtins::check_type_name(other)
             ));
         };
         let a = window_bytes(&recv_buffer(recv).state.lock());
@@ -1068,7 +1068,7 @@ ruby_class! {
         let Some(o) = as_buffer(other) else {
             return Err(type_error!(
                 "wrong argument type {} (expected IO::Buffer)",
-                crate::builtins::class_name_of(other)
+                crate::builtins::check_type_name(other)
             ));
         };
         let a = window_bytes(&recv_buffer(recv).state.lock());
@@ -1340,7 +1340,7 @@ fn mask_binop(
     let Some(o) = as_buffer(other) else {
         return Err(type_error!(
             "wrong argument type {} (expected IO::Buffer)",
-            crate::builtins::class_name_of(other)
+            crate::builtins::check_type_name(other)
         ));
     };
     let a = window_bytes(&recv_buffer(recv).state.lock());
@@ -1373,7 +1373,7 @@ fn mask_inplace(
     let Some(o) = as_buffer(other) else {
         return Err(type_error!(
             "wrong argument type {} (expected IO::Buffer)",
-            crate::builtins::class_name_of(other)
+            crate::builtins::check_type_name(other)
         ));
     };
     let m = window_bytes(&o.state.lock());

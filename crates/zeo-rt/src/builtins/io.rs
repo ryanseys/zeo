@@ -1564,14 +1564,26 @@ ruby_class! {
         Ok(RubyValue::Nil)
     }
 
+    // The arguments are joined by `$,` and closed by `$\`, both nil (so
+    // both empty) unless the program sets them -- `Kernel#print` is the
+    // same body over `$stdout`, and neither reads them at stream creation.
     def "print" (recv, *args, &_blk) {
         let mut buf = Vec::new();
         let mut rendered = Ok(());
-        for a in args {
+        let field_sep = crate::builtins::kernel::output_separator("$,");
+        for (i, a) in args.iter().enumerate() {
+            if i > 0 && let Some(s) = &field_sep {
+                buf.extend_from_slice(s.bytes());
+            }
             if let Err(sig) = display_bytes(a, &mut buf) {
                 rendered = Err(sig);
                 break;
             }
+        }
+        if rendered.is_ok()
+            && let Some(s) = crate::builtins::kernel::output_separator("$\\")
+        {
+            buf.extend_from_slice(s.bytes());
         }
         // Flush-then-propagate on a raising `to_s` -- see `kernel_puts`.
         write_bytes(recv_io(recv)?, &buf)?;

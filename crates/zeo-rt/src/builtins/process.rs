@@ -170,13 +170,13 @@ ruby_module! {
         Ok(RubyValue::Int(unsafe { libc::getppid() } as i64))
     }
     module_function def clock_gettime cfunc (_recv, arg1, arg2?) {
-        let clock = int_arg(arg1)?;
+        let clock = clock_arg(arg1, "clock_gettime")?;
         clock_in_unit(clock_seconds(clock)?, arg2)
     }
     // `Process.clock_getres(clock_id [, unit])` -- the clock's resolution, in the
     // same units `clock_gettime` accepts (default a Float of seconds).
     module_function def clock_getres cfunc (_recv, arg1, arg2?) {
-        let clock = int_arg(arg1)?;
+        let clock = clock_arg(arg1, "clock_getres")?;
         clock_in_unit(clock_res_seconds(clock)?, arg2)
     }
     // Real/effective user and group ids (libc getuid/geteuid/getgid/getegid).
@@ -1187,6 +1187,26 @@ fn clock_in_unit(secs: f64, unit: Option<&RubyValue>) -> Result<RubyValue, crate
 /// Coerce an argument to an `i64` through the `to_int` protocol.
 fn int_arg(v: &RubyValue) -> Result<i64, crate::Signal> {
     crate::builtins::convert::to_index(v)
+}
+
+/// A clock argument: an Integer id, or a SYMBOL naming one of `Process`'s
+/// own `CLOCK_*` constants. The symbol is the portable spelling -- a
+/// constant the platform does not define is a `NameError` at the read,
+/// where the symbol form is a rescuable `Errno::EINVAL` -- so it is the
+/// one a library actually writes. A String is not accepted, exactly as in
+/// CRuby.
+fn clock_arg(v: &RubyValue, verb: &str) -> Result<i64, crate::Signal> {
+    let RubyValue::Symbol(sym) = v else {
+        return int_arg(v);
+    };
+    let name = sym.name();
+    match crate::constants::const_get(zeo_abi::PROCESS_CLASS.0, &name) {
+        Some(RubyValue::Int(id)) if name.starts_with("CLOCK_") => Ok(id),
+        _ => Err(raise_error(
+            "Errno::EINVAL",
+            format!("Invalid argument - {verb}(:{name})"),
+        )),
+    }
 }
 
 // ---------------------------------------------------------------------------

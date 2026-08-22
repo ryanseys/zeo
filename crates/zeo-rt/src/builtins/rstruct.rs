@@ -455,10 +455,16 @@ pub(crate) fn build_inspect(recv: &RubyValue) -> Result<RubyValue, Signal> {
         INSPECTING.with(|s| s.borrow_mut().pop());
     }
     rendered?;
-    // The separator goes BETWEEN the pieces, never ahead of the list: a
-    // memberless Data is `#<data Empty>`, not `#<data Empty >`.
+    // CRuby writes `#<struct ` and then the NAME, so the separator belongs
+    // to the name's position: a named memberless struct is `#<struct
+    // Empty>` and an ANONYMOUS one keeps the space it would have gone in
+    // (`#<struct >`, oracle-verified). Members follow one more space.
     let body = if parts.is_empty() {
-        String::new()
+        if named.is_empty() {
+            " ".to_string()
+        } else {
+            String::new()
+        }
     } else {
         format!(" {}", parts.join(", "))
     };
@@ -920,7 +926,12 @@ pub(crate) fn define_value_class(
     for (i, &m) in members.iter().enumerate() {
         methods.insert(
             m,
-            MethodImpl::Dynamic(Arc::new(move |recv: &RObj, _a: &[RubyValue], _b| {
+            MethodImpl::Dynamic(Arc::new(move |recv: &RObj, a: &[RubyValue], _b| {
+                // A member reader takes NOTHING and a writer exactly one:
+                // both counts are the caller's, so an `expect`/index in the
+                // body is the wrong instrument (`s.a(2)` answered the member
+                // and `s.send(:a=)` indexed an empty slice).
+                crate::builtins::check_arity(a.len(), 0, Some(0))?;
                 let inst = recv
                     .as_any()
                     .downcast_ref::<StructInstance>()
@@ -932,6 +943,7 @@ pub(crate) fn define_value_class(
             methods.insert(
                 Symbol::intern(&format!("{}=", m.name())),
                 MethodImpl::Dynamic(Arc::new(move |recv: &RObj, a: &[RubyValue], _b| {
+                    crate::builtins::check_arity(a.len(), 1, Some(1))?;
                     let inst = recv
                         .as_any()
                         .downcast_ref::<StructInstance>()
