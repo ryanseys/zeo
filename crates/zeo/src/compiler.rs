@@ -1427,6 +1427,27 @@ impl Compiler {
         self.box_surrogates.get(&box_id).copied()
     }
 
+    /// Records a surrogate whose id ANOTHER compile decided -- the program a
+    /// snippet is evaluated inside, or the run time that minted the box.
+    ///
+    /// A snippet is its own compile and mints no boxes, so without this its
+    /// emitter would find no surrogate for the box the `eval` runs in and
+    /// fall back on `Object`, which is MAIN's top level. Class ids are the
+    /// one thing both sides always agree on, so the id is taken as given --
+    /// and because this compiler's own table is shorter than it, the gap is
+    /// filled with placeholder modules. Nothing can name one (no Ruby
+    /// source spells `#<zeo:reserved N>`) and a snippet registers nothing,
+    /// so none of them reaches an emitted table.
+    pub fn adopt_box_surrogate(&mut self, box_id: u32, cid: ClassId) {
+        while self.classes.len() <= cid.0 as usize {
+            let n = self.classes.len();
+            self.add_class(format!("#<zeo:reserved {n}>"), None, true);
+        }
+        self.classes[cid.0 as usize].box_id = box_id;
+        self.classes[cid.0 as usize].name = format!("#<Ruby::Box:{box_id}>");
+        self.box_surrogates.insert(box_id, cid);
+    }
+
     /// Whether `cid` is a singleton-class SURROGATE -- the module a
     /// constant-bearing `class << self` body registers under the reserved
     /// name (see `lower::defs`). Display name and reflection identity come

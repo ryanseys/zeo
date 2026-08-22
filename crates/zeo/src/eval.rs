@@ -160,11 +160,26 @@ fn build(req: &EvalRequest<'_>, scope_names: &[String]) -> Result<Compiled, Refu
         },
         ..crate::CompileOptions::default()
     };
-    let analyzed =
+    let mut analyzed =
         crate::analyze_snippet(req.src, &opts).map_err(|e| match e.syntax_message() {
             Some(msg) => Refusal::Syntax(msg.to_string()),
             None => Refusal::NotCompiled(e.to_string()),
         })?;
+    // A box's top-level constants and definitions live on its SURROGATE
+    // class, and a whole-program compile mints one per `Ruby::Box.new` it
+    // sees. This compile saw none -- it is one snippet -- so the emitter's
+    // `box_top()` would find no surrogate for the box the eval runs in and
+    // fall back on `Object`, which is main's top level. The RUN TIME knows
+    // the id, and a class id is the one thing both sides always agree on,
+    // so the fresh compiler is told it here.
+    if req.box_id != 0 {
+        match zeo_rt::boxes::surrogate_of(req.box_id) {
+            0 => return Err(format!("a box (id {}) with no surrogate class", req.box_id).into()),
+            cid => analyzed
+                .compiler
+                .adopt_box_surrogate(req.box_id, crate::compiler::ClassId(cid)),
+        }
+    }
     refusals(&analyzed)?;
     if !zeo_rt::eval::has_home() {
         invalid_yield(&analyzed)?;
