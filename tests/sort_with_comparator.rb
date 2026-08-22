@@ -1,7 +1,11 @@
-# GAP -- imported from the spinel corpus at c55d9bdb.
-# Array#sort with a comparator block is STABLE in zeo (Rust's sort_by) and
-# UNSTABLE in ruby (ruby_qsort), so equal keys come out in a different
-# order. Deliberate: see tests/spinel/UPSTREAM.md.
+# A DECIDED DIVERGENCE. `Array#sort` with a comparator block is STABLE in zeo
+# (Rust's `sort_by`) and UNSTABLE in ruby (`ruby_qsort`), so equal comparator
+# keys come out in a different order -- the mixed-case word list below is the
+# line that shows it.
+#
+# The golden here records ZEO's output, not the oracle's, and the
+# `.divergence` sidecar carries the reason and ruby's own answer. Imported
+# from the spinel corpus at c55d9bdb; see tests/spinel/UPSTREAM.md.
 #
 a = [5, 3, 9, 1, 3, 7, 0, 3, 8, 2]
 p a.sort { |x, y| x <=> y }

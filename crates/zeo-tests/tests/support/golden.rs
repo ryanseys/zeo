@@ -384,6 +384,17 @@ struct Sidecars {
     stdin: Option<Vec<u8>>,
     expected_out: Option<PathBuf>,
     expected_err: Option<PathBuf>,
+    /// A `.divergence` sidecar marks a golden whose `.expected` records
+    /// **zeo's own** output rather than the oracle's, because zeo has DECIDED
+    /// to answer differently -- reproducing ruby here would make zeo's
+    /// behaviour worse (an unstable sort, a `move:` that destroys the source
+    /// before it refuses) or cost more than the divergence does.
+    ///
+    /// The file states the reason and carries the oracle's output verbatim, so
+    /// the divergence stays executable evidence rather than prose. `bless`
+    /// reads it and records zeo instead of ruby, which is what keeps these
+    /// goldens machine-recorded like every other.
+    divergence: Option<PathBuf>,
 }
 
 /// Resolve `<rb>.args` / `<rb>.stdin` / `<rb>.expected` / `<rb>.err.expected`
@@ -409,6 +420,7 @@ fn sidecars(rb: &Path) -> std::io::Result<Sidecars> {
         stdin,
         expected_out: side(".expected"),
         expected_err: side(".err.expected"),
+        divergence: side(".divergence"),
     })
 }
 
@@ -604,10 +616,12 @@ fn run_oracle(
 }
 
 /// Under `cargo xtask bless`: (re)write `<rb>.expected` (+ `.err.expected`)
-/// from the oracle.
-/// A stdout-only suite (`check_stderr == false`, i.e. examples) never keeps a
-/// stderr golden -- ruby's parse warnings / experimental notices / thread
-/// exception reports aren't part of the contract there.
+/// from the oracle -- or, for a `.divergence` golden, from zeo.
+/// A stdout-only suite (`check_stderr == false`) never keeps a stderr golden:
+/// ruby's parse warnings, experimental notices and thread exception reports
+/// aren't part of the contract there. Every suite passes `true` today, so the
+/// arm exists for a caller that does not want stderr rather than for one that
+/// exists.
 fn bless(
     rb: &Path,
     source: &str,
@@ -616,7 +630,20 @@ fn bless(
     check_stderr: bool,
     env: &SuiteEnv,
 ) -> datatest_stable::Result<()> {
-    let (stdout, stderr) = run_oracle(rb, source, &sc.args, sc.stdin.as_deref(), run_cwd, env)?;
+    // A `.divergence` golden records ZEO's output on purpose -- see
+    // `Sidecars::divergence`. Recording the oracle's here would replace the
+    // golden with the very answer the file exists to differ from, and the
+    // test would then fail for a reason nobody could read.
+    let (stdout, stderr) = match &sc.divergence {
+        Some(_) => compile_and_run_contained(rb, source, sc, run_cwd, env).map_err(|e| {
+            format!(
+                "{}: this golden records zeo's own output ({}), and zeo failed: {e}",
+                rb.display(),
+                sc.divergence.as_ref().expect("just matched").display()
+            )
+        })?,
+        None => run_oracle(rb, source, &sc.args, sc.stdin.as_deref(), run_cwd, env)?,
+    };
     let out = norm(&stdout, rb, run_cwd);
     std::fs::write(format!("{}.expected", rb.display()), &out)?;
     let err_path = format!("{}.err.expected", rb.display());

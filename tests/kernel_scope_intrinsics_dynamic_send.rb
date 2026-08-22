@@ -1,4 +1,7 @@
-# The permanently-hard half of the scope-intrinsics gap: `send(name)` where
+# A DECIDED DIVERGENCE -- the golden records ZEO's output and the
+# `.divergence` sidecar carries the reason and ruby's answer.
+#
+# The permanently-hard half of the scope intrinsics: `send(name)` where
 # `name` is COMPUTED at runtime. A literal `send(:block_given?)` can be folded
 # into the caller at compile time exactly like the direct spelling (that half
 # is tracked in `kernel_scope_intrinsics.rb`), but a dynamic name resolves to

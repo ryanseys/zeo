@@ -98,3 +98,39 @@ fn bench_inputs_carry_no_goldens() {
         stray.join("\n")
     );
 }
+
+/// A `.divergence` sidecar says `.expected` records ZEO's own output rather
+/// than the oracle's, so it must have an `.expected` to describe, and it must
+/// not sit in `tests/gaps/`: a gap is work, and a decided divergence is not.
+/// Both mistakes are silent -- the first leaves `bless` recording zeo into a
+/// file nothing reads, and the second leaves an XFAIL whose fix nobody
+/// intends.
+#[test]
+fn every_divergence_sidecar_describes_a_committed_zeo_golden() {
+    let mut wrong: Vec<String> = Vec::new();
+    for dir in suite_dirs() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for path in entries
+            .filter_map(Result::ok)
+            .map(|e| e.path())
+            .filter(|p| p.to_string_lossy().ends_with(".divergence"))
+        {
+            let name = path.to_string_lossy().to_string();
+            if !name.ends_with(".rb.divergence") {
+                wrong.push(format!("{name}: not a `.rb.divergence` sidecar"));
+                continue;
+            }
+            if !Path::new(&name.replace(".divergence", ".expected")).exists() {
+                wrong.push(format!("{name}: no `.expected` beside it"));
+            }
+            if dir.ends_with("gaps") {
+                wrong.push(format!(
+                    "{name}: a decided divergence belongs in tests/, not tests/gaps/"
+                ));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "divergence sidecars: {wrong:#?}");
+}

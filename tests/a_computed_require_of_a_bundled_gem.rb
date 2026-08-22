@@ -1,5 +1,7 @@
 # A computed `require` of a BUNDLED GEM finds nothing, and that is a
-# DECISION rather than a missing mechanism.
+# DECISION rather than a missing mechanism. The golden records ZEO's output --
+# the LoadError -- and the `.divergence` sidecar carries the reason and ruby's
+# answer.
 #
 # `x = ["json", ""].first; require x` raises `LoadError: cannot load such
 # file -- json`, where the same require spelled literally splices json in

@@ -1,0 +1,25 @@
+zeo answers this differently ON PURPOSE, so `.expected` records ZEO's output
+and this file records why -- with ruby's own answer below it.
+
+Two movable-set divergences, and both follow from zeo's VALUE MODEL rather
+than from a ractor decision.
+
+1. An IO does not migrate. CRuby moves the fd across a `move:` send and husks
+   the source IO -- `$stdout` included, which is how this was found. zeo's IO
+   handles are `Arc`-shared, so a move would hand two ractors the same
+   allocation; it refuses with `can not move IO object.` instead.
+
+2. A moved Range does not husk. A Range is a heap object in CRuby, so the
+   shell poisons; zeo's Range is an inline value with no shared identity, so
+   there is nothing to poison and the shell survives. The last line is the
+   sharp edge of how narrow that is: the ENDPOINTS move and poison correctly,
+   and `lo.length` does raise `Ractor::MovedError` on both sides. Fixing the
+   shell means giving Range a heap identity, which is a value-representation
+   change, not a ractor one.
+
+--- ruby 4.0.6 answers ---
+:got
+[:io_husk, Ractor::MovedError]
+"a".."z"
+[:range_husk, Ractor::MovedError]
+[:endpoint_poisoned, Ractor::MovedError]

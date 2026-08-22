@@ -1,7 +1,9 @@
-# GAP -- imported from the spinel corpus at c55d9bdb.
-# Array#sort! is STABLE in zeo (Rust's sort_by) and UNSTABLE in ruby
-# (ruby_qsort), so equal comparator keys come out in a different order.
-# Deliberate: see tests/spinel/UPSTREAM.md.
+# A DECIDED DIVERGENCE on its FIRST line only: `Array#sort!` is STABLE in zeo
+# (Rust's `sort_by`) and UNSTABLE in ruby (`ruby_qsort`), and this comparator
+# orders by a pair of ranks, so ties are common. The golden records ZEO's
+# output; the `.divergence` sidecar carries the reason and ruby's answer.
+#
+# The SECOND line is what the file was imported for, and it agrees:
 #
 # A local bound from a container read (`pair_a = pairs[a]`, where `pairs` is a
 # table of int arrays) is narrowed to the element type. That decision and the

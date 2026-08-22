@@ -16,15 +16,11 @@
 # shared object arrives twice with one husk. Both are cheap to implement and
 # both lose a safety property.
 #
-# NOTE the placement rule in this directory's README -- a divergence zeo has
-# DECIDED not to reproduce belongs in a passing test that documents it, not
-# here. These two have never been through that decision explicitly; they are
-# filed as gaps and behave as deliberate. Worth resolving one way or the other
-# rather than leaving the file arguing with the rule.
-#
-# Either way a program that RELIES on an accident (checking `MovedError` to
-# detect a failed move, say) behaves differently under zeo without announcing
-# it.
+# Resolved 2026-08-22: both are DECISIONS, so this is a passing test whose
+# golden records ZEO's output, with the reason and ruby's own answer in the
+# `.divergence` sidecar beside it. A program that RELIES on an accident
+# (checking `MovedError` to detect a failed move, say) behaves differently
+# under zeo, and this file is where that is announced.
 #
 # The last line is the sharpest: `got[0].equal?(got[1])` is `false` in CRuby
 # because the second slot is a husk, and `true` here. Identity through a move

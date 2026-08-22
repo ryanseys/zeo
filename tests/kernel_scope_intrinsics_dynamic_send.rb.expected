@@ -1,0 +1,3 @@
+dynamic block_given?: NotImplementedError
+dynamic binding: NotImplementedError
+dynamic local_variables: NotImplementedError

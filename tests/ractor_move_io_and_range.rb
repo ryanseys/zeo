@@ -11,15 +11,13 @@
 # there is no shared allocation to poison. Fixing it means giving Range a heap
 # identity, which is a value-representation change, not a ractor one.
 #
-# ALSO DIVERGENT, not asserted here (a golden cannot hold it -- the report
-# carries a heap address, and `IO#reopen` onto a file is broken besides, see
-# `an_io_reopen_onto_a_file_fails.rb`): a ractor that dies of an uncaught
-# exception prints NO report on stderr, where CRuby prints the same
-# `#<Thread:0x...> terminated with exception (report_on_exception is true):`
-# banner a Thread gets. zeo prints the THREAD form correctly, so this is a
-# missing call on the ractor's own termination path -- `zeo_rt::ractor::finish`
-# records the outcome and nothing reports it. `#value` still raises
-# `Ractor::RemoteError` correctly, so the failure is silent rather than lost.
+# The two above are DECISIONS, so this is a passing test whose golden records
+# ZEO's output; the `.divergence` sidecar carries the reason and ruby's own
+# answer.
+#
+# A third divergence this file used to record was a real BUG, and it is fixed:
+# a ractor that died of an uncaught exception printed NO report, where CRuby
+# prints the Thread banner. See `a_ractor_reports_its_uncaught_exception.rb`.
 $stderr.reopen(IO::NULL)
 
 r = Ractor.new { Ractor.receive; :got }

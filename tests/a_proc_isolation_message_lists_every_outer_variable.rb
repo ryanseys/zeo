@@ -1,7 +1,10 @@
-# `Ractor.new { ... }` over an outer local raises CRuby's own ArgumentError
-# now (see `a_ractor_block_isolates_at_runtime.rb`), but the VARIABLE LIST in
-# the message is zeo's, not ruby's. Two rules behind CRuby's list, neither
-# mirrorable from a lowered HIR:
+# A DECIDED DIVERGENCE in message TEXT only. `Ractor.new { ... }` over an
+# outer local raises CRuby's own ArgumentError (see
+# `a_ractor_block_isolates_at_runtime.rb`); the VARIABLE LIST in the message
+# is zeo's. The golden records ZEO's output and the `.divergence` sidecar
+# carries the reason and ruby's answer.
+#
+# Two rules behind CRuby's list, neither mirrorable from a lowered HIR:
 #
 # 1. ORDER is the ENCLOSING SCOPE's declaration order, not the block's use
 #    order and not alphabetical. `zz = 1; aa = 2; mm = 3` then

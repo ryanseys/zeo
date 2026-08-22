@@ -1,3 +1,0 @@
-"can not isolate a Proc because it accesses outer variables (zz, aa, mm)."
-"can not isolate a Proc because it accesses outer variables (zz)."
-"can not isolate a Proc because it accesses outer variables (only)."
