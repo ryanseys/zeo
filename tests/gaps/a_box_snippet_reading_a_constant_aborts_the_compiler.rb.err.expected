@@ -1,3 +1,0 @@
-eval:1:in '<compiled>': uninitialized constant K (NameError)
-	from gaps/a_box_snippet_reading_a_constant_aborts_the_compiler.rb:30:in 'Ruby::Box#eval'
-	from gaps/a_box_snippet_reading_a_constant_aborts_the_compiler.rb:30:in '<main>'

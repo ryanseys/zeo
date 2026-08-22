@@ -57,14 +57,16 @@ pub fn lower_box_eval(
         }
         return Ok(hir.push(HirNode::BoxScope { box_id, body }));
     }
-    // Non-literal source: evaluate through the runtime `eval` entry in the box's
-    // dimension. A receiver-less `eval` Call inside the `BoxScope` picks up
-    // `box_id` from codegen's box context (see `codegen::call`'s eval
-    // special-case); `self` is the ambient main object, consistent with the
-    // literal path and with CRuby's `box.eval("self")` returning `main`.
+    // Non-literal source: the box's OWN `eval` row, on the handle. A
+    // receiverless `eval` here would reach `Kernel#eval`, which names itself
+    // that way in every backtrace -- and a box's snippet reports `eval:1:in
+    // '<compiled>'` under a `Ruby::Box#eval` frame, all three different.
+    // `self` is the ambient main object either way, which is what CRuby's
+    // `box.eval("self")` answers.
     let source = lower_node(result, hir, &args[0])?;
+    let handle = hir.push(HirNode::BoxHandle(box_id));
     let eval_call = hir.push(HirNode::Call {
-        receiver: None,
+        receiver: Some(handle),
         name: "eval".to_string(),
         args: vec![ArrayElem::Single(source)],
         kwargs: Vec::new(),

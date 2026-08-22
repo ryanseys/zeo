@@ -112,17 +112,19 @@ mod box_class {
         def "root?"(recv) { Ok(RubyValue::Bool(box_kind_is(recv, boxes::ROOT))) }
         def "master?"(recv) { Ok(RubyValue::Bool(box_kind_is(recv, boxes::MASTER))) }
         def "eval"(recv, src) {
+            // `StringValue`, not `Check_Type`: CRuby's box eval coerces, so a
+            // non-String is "no implicit conversion of X into String".
             let source = match src {
                 RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
                 other => {
                     return Err(crate::builtins::type_error!(
-                        "wrong argument type {} (expected String)",
-                        crate::builtins::check_type_name(other)
+                        "no implicit conversion of {} into String",
+                        crate::builtins::convert_name_of(other)
                     ));
                 }
             };
             let box_id = boxes::box_of_surrogate(recv).unwrap_or(0);
-            crate::eval_string(&source, crate::dispatch::main_object(), box_id)
+            crate::eval::eval_string_in_box(&source, crate::dispatch::main_object(), box_id)
         }
         def "load_path"(recv) {
             let box_id = boxes::box_of_surrogate(recv).unwrap_or(0);

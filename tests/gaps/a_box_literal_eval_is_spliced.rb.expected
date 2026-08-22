@@ -1,0 +1,2 @@
+"eval"
+["eval:1:in '<compiled>'", "a_box_literal_eval_is_spliced.rb:19:in 'Ruby::Box#eval'"]

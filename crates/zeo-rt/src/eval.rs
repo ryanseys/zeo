@@ -556,10 +556,50 @@ pub fn eval_string_located(
     file: Option<&str>,
     line: Option<u32>,
 ) -> Result<RubyValue, Signal> {
+    eval_string_entered(src, self_val, box_id, mode, file, line, None)
+}
+
+/// A BOX's `eval`, which names itself differently everywhere a backtrace can
+/// see it: the file is `eval` (not `(eval at f.rb:14)`), the snippet's own
+/// scope is `<compiled>` (not the caller's), and the frame between the two
+/// is `Ruby::Box#eval`. Oracle-verified in all three positions.
+pub fn eval_string_in_box(
+    src: &str,
+    self_val: RubyValue,
+    box_id: u32,
+) -> Result<RubyValue, Signal> {
+    eval_string_entered(
+        src,
+        self_val,
+        box_id,
+        EvalMode::Caller,
+        Some(BOX_EVAL_FILE),
+        Some(1),
+        Some(("Ruby::Box#eval", BOX_EVAL_SCOPE)),
+    )
+}
+
+/// What a box's snippet calls its file and its top-level scope.
+const BOX_EVAL_FILE: &str = "eval";
+const BOX_EVAL_SCOPE: &str = "<compiled>";
+
+fn eval_string_entered(
+    src: &str,
+    self_val: RubyValue,
+    box_id: u32,
+    mode: EvalMode,
+    file: Option<&str>,
+    line: Option<u32>,
+    named: Option<(&'static str, &'static str)>,
+) -> Result<RubyValue, Signal> {
     // The enclosing scope's label, read BEFORE the cfunc frame goes on --
     // the snippet runs in the caller's name, not the cfunc's.
-    let label = crate::frames::current_frame_label().unwrap_or("<main>");
-    let _c = crate::frames::synthetic_c_frame(entry_label(mode));
+    let label = match named {
+        Some((_, scope)) => scope,
+        None => crate::frames::current_frame_label().unwrap_or("<main>"),
+    };
+    let entry = named.map_or_else(|| entry_label(mode), |(e, _)| e);
+    let _c = crate::frames::synthetic_c_frame(entry);
     let path = eval_path(file);
     let req = EvalRequest {
         src,
