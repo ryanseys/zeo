@@ -625,15 +625,39 @@ pub fn runtime_remove_method(id: ClassId, args: &[RubyValue]) -> Result<RubyValu
                 crate::dispatch::class_name(id).unwrap_or_else(|| "?".to_string())
             ));
         }
-        {
-            let mut w = maps().classes.write().unwrap();
+        removed_names.push(name);
+    }
+    // A removal on a MODULE reaches the classes that mixed it in. Analyze
+    // materializes a module's rows onto each host at compile time, so
+    // `Host.new.m` resolves through the HOST's own row and never asks the
+    // module -- and a tombstone keyed on the module sits at a position the
+    // lookup does not visit.
+    //
+    // The hosts are named BEFORE the module's own tombstone lands: the
+    // question "whose copy is this" is `method_owner`, and once the overlay
+    // is live that walk SKIPS a removed position -- so writing first made the
+    // module stop being the owner and the sweep find nobody.
+    let hosts = mixin_hosts(id, &removed_names);
+    {
+        let mut w = maps().classes.write().unwrap();
+        for &name in &removed_names {
             let e = w.entry(id.0).or_insert_with(OverlayEntry::delta);
             e.methods.remove(&name);
             e.value_bodies.remove(&name);
             e.methods_vis.remove(&name);
             e.removed.insert(name);
         }
-        removed_names.push(name);
+        for host in &hosts {
+            let e = w.entry(host.0).or_insert_with(OverlayEntry::delta);
+            for &name in &removed_names {
+                e.removed.insert(name);
+            }
+        }
+    }
+    for host in hosts {
+        // The host's own caches answered before the removal and would keep
+        // answering: a reflection read taken ahead of it fills them.
+        patch_class(host);
     }
     patch_class(id);
     mark_live();
@@ -641,6 +665,38 @@ pub fn runtime_remove_method(id: ClassId, args: &[RubyValue]) -> Result<RubyValu
         fire_def_hook(DefTarget::Class(id), DefEvent::Removed, name)?;
     }
     Ok(RubyValue::Class(id))
+}
+
+/// The classes that carry `mid`'s copy of one of `names` as their own row --
+/// every class whose chain holds `mid` and whose winner for the name IS
+/// `mid`. A host with a definition of its own is not one: ruby leaves that
+/// standing when the module's copy goes.
+///
+/// `mid` must be a module; a class is nobody's mixin, and the sweep is
+/// skipped for one.
+fn mixin_hosts(mid: ClassId, names: &[Symbol]) -> Vec<ClassId> {
+    if names.is_empty() || crate::dispatch::class_is_module(mid) != Some(true) {
+        return Vec::new();
+    }
+    let mut hosts: Vec<ClassId> = crate::dispatch::classes_with_ancestor(mid)
+        .into_iter()
+        .map(ClassId)
+        .collect();
+    {
+        let r = maps().classes.read().unwrap();
+        for (&id, e) in r.iter() {
+            if e.ancestors.contains(&mid) && !hosts.contains(&ClassId(id)) {
+                hosts.push(ClassId(id));
+            }
+        }
+    }
+    hosts.retain(|&h| {
+        h != mid
+            && names
+                .iter()
+                .any(|&n| crate::dispatch::method_owner(h, n) == Some(mid))
+    });
+    hosts
 }
 
 /// [`runtime_remove_method`] reached through a class's SINGLETON class, where

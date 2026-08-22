@@ -233,6 +233,14 @@ pub fn class_defines_own_instance_method(cid: ClassId, name: Symbol) -> bool {
     registry().defines_own(cid, name)
 }
 
+/// [`class_defines_own_instance_method`] for a caller that can run before the
+/// registry is installed -- the overlay resolver, which the runtime's own unit
+/// tests drive with no program registered. No registry means no frozen
+/// definitions, so the answer is no.
+pub fn class_defines_own_instance_method_if_registered(cid: ClassId, name: Symbol) -> bool {
+    REGISTRY.get().is_some_and(|r| r.defines_own(cid, name))
+}
+
 /// Whether `cid` has an OWN class method `name` -- a `def self.x` materialized
 /// into the registry, or a runtime singleton def -- as opposed to one merely
 /// inherited from `Class`/`Module`. `extend` consults this so a receiver's own
@@ -695,6 +703,13 @@ fn scan_owner(recv_class: ClassId, skip: usize, name: Symbol) -> Option<ClassId>
 /// builtin) when installed and populated for `id`, else the ABI-derived
 /// fallback chain (this crate's own unit tests; identical for builtins by
 /// construction -- both derive from `zeo_abi::BUILTINS`).
+/// `id`'s chain as the COMPILE-TIME tables have it -- what the frozen flat
+/// lookup can reach, ignoring anything a run-time `include`/`prepend` spliced
+/// in. Empty when nothing registered `id`.
+pub(crate) fn frozen_ancestors(id: ClassId) -> &'static [ClassId] {
+    REGISTRY.get().map_or(&[], |r| r.ancestors_of(id))
+}
+
 pub(crate) fn ancestors_of_value(id: ClassId) -> &'static [ClassId] {
     // The OVERLAY wins when it has a chain: a class born at runtime
     // (`Class.new`) has no frozen entry at all, and a runtime `include`/
@@ -846,7 +861,14 @@ pub fn instance_method_names(class: ClassId, filter: VisFilter, inherit: bool) -
         seen.insert(n);
     }
     let mut out = Vec::new();
+    let live = crate::runtime_meta::is_live();
     for anc in chain {
+        // A `remove_method` here empties only THIS position, so the name is
+        // dropped from what `anc` contributes and the walk carries on -- an
+        // ancestor that still defines it says so later in this same loop.
+        // (An `undef` is the other rule and claims the name outright, which
+        // is why it rides in the overlay list below instead.)
+        let removed = |n: Symbol| live && crate::runtime_meta::overlay_is_removed(anc, n);
         // The overlay first, and it CLAIMS every name it has an opinion about
         // (`seen.insert` before the filter): a runtime `private :m` has to beat
         // the registry's compile-time public flag below, and an `undef_method`
@@ -862,7 +884,7 @@ pub fn instance_method_names(class: ClassId, filter: VisFilter, inherit: bool) -
             // `inherit=false` restricts the user-method set to this class's own
             // definitions (materialization otherwise flattens inherited in).
             for (name, vis) in r.own_instance_method_names(anc, !inherit) {
-                if filter.matches(vis) && seen.insert(name) {
+                if !removed(name) && filter.matches(vis) && seen.insert(name) {
                     out.push(name);
                 }
             }
@@ -895,7 +917,7 @@ pub fn instance_method_names(class: ClassId, filter: VisFilter, inherit: bool) -
                 continue;
             }
             let sym = Symbol::intern(n);
-            if seen.insert(sym) {
+            if !removed(sym) && seen.insert(sym) {
                 out.push(sym);
             }
         }
