@@ -17,14 +17,14 @@ Each item states what is measured and what is only suspected. An item that
 says "not yet root-caused" means exactly that — start by measuring it, not by
 writing the fix.
 
-**Good places to start**, roughly by size: a `to_utf8_lossy` site in
-[Correctness](#correctness) (one judgment each, no design work); an AST node
-kind in [the mapped tier](#rubyvmabstractsyntaxtree--widen-the-mapped-tier)
-(dump the oracle's tree, add one match arm, extend the fixture); an iterator
-kind in [lever 2](#2-iterator-inlining-wave-3) (the machinery exists, each
-kind is self-contained); a row for `irb`, `minitest` or `openssl` in
-[`gems/UPSTREAM.md`](../gems/UPSTREAM.md). [`CONTRIBUTING.md`](../CONTRIBUTING.md)
-gives the house rule for all of them: oracle-verified, divergence-documented.
+**Good places to start**, roughly by size: an AST node kind in
+[the mapped tier](#rubyvmabstractsyntaxtree--widen-the-mapped-tier) (dump the
+oracle's tree, add one match arm, extend the fixture); an iterator kind in
+[Performance](#performance) (`arr.each` proved the shape; each remaining kind
+is the same guard with a different accumulator); a row for `irb`, `minitest`
+or `openssl` in [`gems/UPSTREAM.md`](../gems/UPSTREAM.md).
+[`CONTRIBUTING.md`](../CONTRIBUTING.md) gives the house rule for all of them:
+oracle-verified, divergence-documented.
 
 ## Divergences (tracked as executable gaps)
 
@@ -44,104 +44,6 @@ than an absence, so the `LoadError` says so and an e2e test asserts it
 are diffed against the oracle, and ruby loads ripper.
 
 ## Correctness
-
-### The lossy-UTF-8 audit
-
-`StrBuf::to_utf8_lossy` renders a string's bytes for display. It is neither
-injective (an undecodable byte becomes U+FFFD, so distinct bytes collapse) nor
-length-preserving (a Latin-1 `é` renders as two UTF-8 bytes), so any SEMANTIC
-use of it — comparing, slicing, matching, or building a result — answers
-wrongly for a non-UTF-8 receiver.
-
-**Measured against ruby 4.0.6** with a 269-operation probe (46 String
-operations × 6 encodings: UTF-8, ISO-8859-1, ASCII-8BIT, broken UTF-8, KOI8-R,
-EUC-JP): **105 divergences, now 27.** UTF-8 receivers never diverged, which is
-why the corpus did not catch this.
-
-What is fixed: results now carry the receiver's encoding through the
-strip/pad/chop/tr/delete/squeeze family (`str_value_like`), through
-`sub`/`gsub`/`split`/`scan` (`reencode_strs` at each exit), and through
-`MatchData` (which remembers the encoding its haystack was decoded from).
-`chars`/`each_char` slice `char_ranges` instead of decoding; `codepoints`
-answers the receiver's own code point; `<=>` compares raw bytes.
-`tests/string_encoding_preserved.rb` pins all of it.
-
-The 27 that remain are two classes, both recorded as executable gaps:
-
-- **23 — no validity gate.** Ruby REFUSES most operations on a string whose
-  bytes are invalid in its own encoding; Zeo substitutes U+FFFD and answers.
-  Needs a `coderange != Broken` check raising `ArgumentError` /
-  `Encoding::CompatibilityError`, not an encoding change.
-  [`tests/gaps/issue_string_ops_on_broken_encoding.rb`](../tests/gaps/issue_string_ops_on_broken_encoding.rb)
-- **4 — symbols carry no encoding.**
-  [`tests/gaps/issue_symbol_loses_encoding.rb`](../tests/gaps/issue_symbol_loses_encoding.rb)
-
-**The site count is not the progress metric.** It went 277 → 279 across this
-work while divergences fell 105 → 27: the fixes re-encode RESULTS, and several
-still read through `to_utf8_lossy` to get there. Two further problems with the
-count as written — it includes comments, test asserts and the definition
-itself, and it misses `chars()`/`char_vec()`, which are implemented on
-`to_utf8_lossy` and are equally lossy, so a site can lower it with no semantic
-gain. Driving the count down means moving `sub`/`split`/`scan` onto
-`char_ranges` splicing so the decode disappears rather than being re-encoded.
-
-The per-site judgment is unchanged: a DISPLAY path (`to_s`-ish rendering, error
-text) keeps the lossy call; a SEMANTIC path must go byte/encoding-aware through
-the StrBuf layer. Remaining files by value: `format.rs`, `pack.rs`, `regexp.rs`
-haystacks, `io.rs` line reading.
-
-### Raw `\xNN` string literals are not byte-faithful
-
-`"caf\xE9"` reaches the runtime as the UTF-8 bytes for `é` (Latin-1 promotion
-in the literal path) where CRuby keeps the single raw byte `0xE9`, UTF-8-tagged
-and `valid_encoding?` false. The `"…".force_encoding("ENC")` recognizer already
-byte-round-trips its narrow shape; the general literal path needs the same
-treatment — a HIR literal representation carrying bytes, not `String`.
-Encoding end-to-end tests construct bytes via `chr` until then.
-
-The same family: binary `Digest#digest` bytes still transcode through
-pack/Base64/format. The CONCAT and OUTPUT legs are fixed (`StrBuf::push_buf`
-byte concat, the raw-byte print family); pack/Base64/format still funnel
-through lossy text.
-
-### The block-local scoping fix
-
-[`tests/gaps/block_local_shadows_later_outer.rb`](../tests/gaps/block_local_shadows_later_outer.rb)
-records the divergence; the fix is real design work, so it earns a row here
-too. Ruby's rule is textual: a name assigned inside a block is block-local
-unless the enclosing scope assigned it EARLIER in the source. Zeo's capture
-analysis (`codegen/captures.rs::collect_escaping_captures`) is order-blind —
-it unions block-referenced names against names the scope assigns ANYWHERE, so
-a block-local that shares a name with a LATER outer local becomes a shared
-`Captured` cell, and the block's write leaks out. The same misclassification
-makes `Ractor.new { e = 1 }` refuse isolation when main rescue-binds an `e`
-further down. The fix: the capture set must only admit names whose outer
-assignment textually precedes the block. Position data exists in the HIR;
-the work is threading it through `collect_locals` and the capture filter
-without disturbing the params half (see the `set`-package note in
-`captures.rs`).
-
-### Ruby::Box stage 2 — the enabled-mode seams
-
-Stage 1 landed: the census surface, the env gate with CRuby's messages, and
-the eval-VM top-owner fix (a dynamic `box.eval("X = 1")` lands on the box's
-surrogate, not `Object`). Four seams remain for real enabled-mode isolation,
-all designed in the pass-4 plan:
-
-- **Box-keyed runtime method overlay.** `OverlayEntry` grows
-  `boxed_methods: FMap<(box_id, Symbol), MethodImpl>` beside the unkeyed map,
-  so a box's monkeypatch of a shared builtin stays in the box. Probes check
-  `(box, name)` only behind the existing `is_live()` gate — the disabled path
-  must stay bit-identical (add no atomic loads).
-- **Per-box load bookkeeping.** Stamp `LoadedFile.box_id` at splice time,
-  seed `$LOADED_FEATURES` per box, key `feature_already_loaded` by box.
-- **Runtime `box.require`/`load`** through the run-time compiler, searching the box's
-  own `$LOAD_PATH`; `wrap:` refused loudly. Today both raise
-  `NotImplementedError` naming the compile-time model.
-- **`Box.current` as a value.** Today it answers `nil` (the disabled-mode
-  answer). The design: a codegen intrinsic answering the enclosing
-  `Ctx.box_id` — Zeo's baked box id IS CRuby's "code runs in its defining
-  file's box" rule — with the snippet's own compile carrying the box id.
 
 ### RubyVM::AbstractSyntaxTree — widen the mapped tier
 
@@ -164,57 +66,23 @@ A receive that can never be fed blocks forever; CRuby detects the cycle and
 raises. Zeo has the pieces (every wait parks on a known port in a known
 ractor), so detection is a wait-for graph over the port tables. Unmeasured:
 whether CRuby's message (`No live threads left. Deadlock?`-family) is
-reachable byte-for-byte from Zeo's model. Related, larger, and owned by the
-Ruby::Box overlay work above: globals and cvars are process-shared across
-ractors where CRuby raises `Ractor::IsolationError` on non-main access.
-
-### Backtrace frames
-
-Everything else in the 20-case oracle battery matches ruby 4.0.6 verbatim.
-These four do not. Per the house rule the first step is writing their gap
-files; the frame machinery is the work after that:
-
-- **No C-method frames.** CRuby shows a frame for most C methods —
-  `Array#each` between a block and its caller, `Integer#/` at a division's
-  line — attributed to the CALLER's file:line. Zeo's builtins are native fns
-  that push no frame, so those rows are absent; surrounding Ruby-level frames
-  are correct. Fixing this needs a frame push at the dynamic-dispatch boundary
-  plus the codegen fast paths. Note `Class#new` is one CRuby itself omits.
-- **Arity-error attribution.** CRuby raises "wrong number of arguments" inside
-  the CALLEE's frame; Zeo checks arity at the call site, so the innermost frame
-  is the caller's.
-- **`define_method(:m) { … }` labels.** The literal form desugars to a `def` at
-  compile time, so frames say `Foo#m` where CRuby says `block in <class:Foo>`.
-- **Class-body execution order.** Class bodies run before top-level statements,
-  so a rescued raise in a class body prints before earlier top-level output,
-  and the `<main>` frame under a class-body frame reads line 0.
-
-### `pp` prints ENV when StringIO grows an `each_*` method
-
-`pp` printed the whole ENV hash instead of its argument. The trigger is sharp:
-adding `StringIO#each_byte` — a plain `def "each_byte"` in `ext/stringio.rs`,
-blockless-returns-Enumerator like the existing `each_line` — was enough on its
-own to make `tests/pp_pretty_print.rb` print ENV as its FIRST output.
-`getbyte`/`readbyte`, added in the same commit, did NOT trigger it; only the
-`each_*` one did.
-
-StringIO includes `Enumerable`, and ENV is a hand-rolled native object with its
-own lookup. A second `each_*` on an Enumerable-including builtin shifts
-something in materialization or the builtin-surface tables such that a
-top-level `pp` call resolves against ENV.
-
-Not a gap: the change was reverted, so nothing reproduces it in the tree today,
-and the deterministic failure was seen at `-O2` through the CLI while the gap
-harness builds `-O0`. To reproduce: re-add the `each_byte` block and run
-`cargo nextest run -E 'test(pp_pretty_print)'`. `StringIO#each_byte` is still
-missing because of this.
+reachable byte-for-byte from Zeo's model. Related and larger: globals and cvars are process-shared across ractors
+where CRuby raises `Ractor::IsolationError` on non-main access. That one is
+owned by the box-keyed runtime overlay, tracked as
+[`tests/gaps/a_box_write_on_a_shared_class_reaches_main.rb`](../tests/gaps/a_box_write_on_a_shared_class_reaches_main.rb).
 
 ## Gem corpus
 
-**1641 of 1960 probed gems emit Rust** (`cargo xtask gem-probe`, ledger in
-`conformance/gem-probe-{compiles,fails}.tsv` + `gem-probe.md`). The probe runs
-the compiler front end over a real gem in an isolated view of itself and its
-declared dependencies, pinned by the `.gem`'s sha256.
+**185,734 of 195,778 probed gems reach `codegen ok`** — but read the date and
+the backend before quoting it. That sweep ran on **2026-08-14**, against the
+front end of the **rustc emitter that has since been deleted**, and its
+`rust_bytes` column says so. The probe drives `--emit-clif` now; the ledger has
+not been re-run. A stratified sample re-probe is owed before the number is
+quoted anywhere public.
+
+The ledger is not in git — see [`GEM_TESTING.md`](GEM_TESTING.md). The probe
+runs the compiler front end over a real gem in an isolated view of itself and
+its declared dependencies, pinned by the `.gem`'s sha256.
 
 ### What that number does and does not say
 
@@ -227,7 +95,7 @@ same rung with opposite results. A sweep climbs no further than `codegen`:
 | `queued` | the registry names it; nothing has been measured | — |
 | `fetch` / `unpack` | the archive resolved and had a `lib/` | — |
 | `parse` / `lower` / `analyze` / `codegen` | **how far zeo's front-end passes got** | yes |
-| `build` | rustc accepted that Rust and linked a binary | `--build` |
+| `build` | the emitted object linked into a binary | `--build` |
 | `run` | the binary executed and exited 0 | `--run` |
 
 The four front-end rungs are zeo's own passes, and a rejection is recorded at
@@ -235,8 +103,8 @@ the pass that made it — zeo prints that as the diagnostic's code (`zeo::parse`
 `zeo::lower`, `zeo::analyze`, `zeo::codegen`), so a front-end failure says which
 pass refused rather than landing in one bucket.
 
-Reaching `codegen` is deliberately the weakest useful claim. **No rustc runs, no
-binary exists, and the gem's own code may not have been compiled at all** — zeo
+Reaching `codegen` is deliberately the weakest useful claim. **Nothing is
+linked, no binary exists, and the gem's own code may not have been compiled at all** — zeo
 can decline a unit and defer it to a runtime `LoadError`, so a gem can reach
 `codegen` and `build` and still fail to load itself. A sampled build of four
 such rows found two that did exactly that. Only `run` distinguishes them.
@@ -317,15 +185,9 @@ are gated on those extensions' maturity.
 
 ## Library
 
-### Vendor test-unit 3.7.8
-
-`require "test/unit"` — `Test::Unit::TestCase`, the assertion set, the runner.
-Add a golden. It depends on power_assert for its `assert { }` form: decide
-whether to vendor power_assert too or to narrow the surface and say so.
-
 ### Promote the rubygems/bundler goldens to the umbrella require
 
-`tests/gems/rubygems.rb` and `tests/gems/bundler.rb` enter at their own files
+`tests/bench/rubygems.rb` and `tests/bench/bundler.rb` enter at their own files
 (`rubygems/version`, `rubygems/requirement`, `rubygems/dependency`,
 `rubygems/platform`; `bundler/version`) rather than `require "rubygems"` /
 `require "bundler"`, and each header says why.
@@ -348,281 +210,56 @@ dependencies, `full_name`/`file_name`, `to_yaml`/`to_ruby`),
 `Gem.rubygems_version`; give bundler back `LockfileParser` (specs, transitive
 deps, platforms, sources, `sections_in_lockfile`), `Bundler::Dependency`
 groups/platforms/`to_lock`, `SpecSet`, and the error hierarchy with its exit
-codes. Then delete the "entered at those files" headers and drop the
-compensating notes from `tests/e2e/gems_vendored.rs`.
+codes. Then delete the "entered at those files" headers.
 
 ## Performance
 
-Measured against CRuby 4.0.6 on 2026-08-14, both timed in the same run
-(`--runs 5 --ruby`): **1.71× faster over all 58 benchmarks, and 1.20× over the
-36 where CRuby takes 0.10 s or more.** 42 of 58 are faster, 16 slower. The
-difference between the two aggregates is process startup on 14 sub-50 ms
-benchmarks. Full table and method: [`bench/README.md`](../bench/README.md);
-`bench/baseline.tsv` and `bench/compile-baseline.tsv` are the banked records.
+Measured 2026-08-20, the Cranelift backend against the retired rustc baseline:
+two waves took it to **+52.3%** (kwargs -87%, `Foo.new` -54%, accessors -68%,
+`arr.each` -79%). Against CRuby, compute-bound work still runs at about
+**0.71x** — see the README. `bench/baseline.tsv` is the banked record and
+`bench/README.md` the method.
 
-The 2026-07-31 figures were 1.78×/1.23× with 47 faster, and the two runs are
-less different than they look: the CRuby oracle re-timed **5.5% faster**
-(median over 58) while Zeo's median time was unchanged, so several benchmarks
-sitting just above parity crossed below it without Zeo slowing down. What did
-change for real, in both directions: `so_lists` 0.74× → 1.44× and
-`partial_sums` → 1.68×, against a builtin-call-bound group (`template`,
-`matmul`, `structaref`, `csv_process`, `sudoku`) that lost 11–19% to
-builtin-frame fidelity and to making every native class subclassable.
+**Perf is not a gate.** These levers are recorded so a pass starts from
+measurement rather than from a guess, ranked by the gap they close.
 
-The staged overhaul that produced this is complete. It took the
-compute-bound geomean from 0.86× to 1.23× by replacing the per-call frame
-push/pop with a bump pointer, devirtualizing accessors, narrowing the
-process-wide deopt latch to four class-keyed flags, compiling a literal
-`Struct.new` to a real class, interning the class-ivar and constant sites,
-collapsing the per-ivar mutexes into one cell per object and giving it a
-single-threaded fast path, sharing duplicate materialized method bodies, and
-caching what each dynamic call site resolved to. Compile time fell with it:
-`uri_parse_and_build` rustc went 54.9 s → 19.4 s, which closed the rustc-time
-lever that used to sit in this list.
+| Lever | Gap | What it needs |
+|---|---|---|
+| `send_rubyfunc_block` | +483% | `obj.ruby_func` on a local whose class analyze KNOWS — a direct compiled-to-compiled call. Needs `analyze::locals`' TyKind map plumbed into `Fx` with the shadowing rules replicated exactly (block params, `for_var_override`, the binding demotion). **A wrong type is a MISCOMPILE, not a missed fold.** A project of its own. |
+| the other typed `InlineIterKind`s | so_lists +227%, rbtree +142%, splay +102%, life +99% | `ArrayMap`/`Select`/`Reject`/`EachWithIndex`/`Sum`/`Count`/`Inject`/`HashEach`. `arr.each` proved the shape; each kind is the same guard with a different accumulator. **Statement position builds no result at all, and that alone was more than half the `arr.each` win.** |
+| `getivar_module` | +187% | A class-level ivar read is name-keyed per read (a mutex plus two hash lookups). `CivarSite` and `CIVAR_SITE_SIZE` exist and the emitter never emits one. Same `.bss` plumbing as `zeo_callsites`. |
+| per-call capi block | fib +113%, tak +132%, tarai +127%, ackermann +123% | Five capi calls per call (`stack_check`, `frame_push`, `set_line`, `check_ints`, `frame_pop`). One per-thread hot block fetched once per function turns push/pop/set_line into stores and `check_ints` into a load-and-branch. Borrow-through params is the other named lever. |
+| the boxed local | setivar family +84%, loops_times +94%, nested_loop +97% | `TyKind`-driven unboxing. Same miscompile risk as the first row. |
 
-### The 11 remaining losses
+### Rules about measuring, each learned the hard way
 
-`life` 0.52×, `rbtree` 0.66×, `linked_list` 0.70×, `splay` 0.74×, `so_lists`
-0.74×, `structaset` 0.75×, `inline` 0.83×, `getivar_module` 0.91×, `ao_render`
-0.93×, `ruby_xor` 0.95×, `attr_accessor` 0.99×.
-
-**What is measured about them:** they build and tear down object graphs, so
-their profiles are dominated by `RubyValue` clone and drop — `so_lists` spends
-43% of its samples in `RubyValue::clone` plus `drop_glue` — and by allocation.
-The dispatch lever is spent: the inline caches moved this set by 13–16% and did
-not carry any of it past 1.00×.
-
-Four levers remain, ordered by expected value. Evidence cites the banked
-baselines; anything not yet root-caused says so.
-
-### 1. Tier C: an 8-byte tagged `RubyValue` (largest, deferred)
-
-**Measured payoff** — a tagged word with manual refcounting against today's
-24-byte enum, best-of-five on one Apple-silicon laptop:
-
-| operation | 24 B | 8 B | |
-|---|---:|---:|---|
-| clone + drop, `Arc` arm | 4.019 ns | 3.977 ns | **−1%** |
-| clone + drop, `Int` arm | 2.448 ns | 0.344 ns | −86% |
-| traverse a 4M-element array | 0.564 ns | 0.189 ns | −66% |
-| call returning `Result<V, Signal>` | 4.479 ns | 0.880 ns | −80% |
-
-Two facts decide the sequencing. The reference-count traffic that dominates the
-remaining losses does **not** get cheaper — the `Arc` atomic pair survives the
-shrink unchanged, so the headline reason to want this is wrong. What does get
-cheaper is immediates, array density, and the call return: −3.6 ns on every
-Ruby method call, which nothing else can buy, because
-`Result<RubyValue, Signal>` has to reach 16 bytes to return in registers and
-boxing `Signal` alone measured *worse* (4.91 → 5.15 ns).
-
-**Cost:** manual reference counting in `unsafe` across 91k lines of `zeo-rt`,
-where a miscount is a use-after-free rather than a wrong answer. Deferred on
-that basis, not abandoned.
-
-**Verify:** the whole corpus, plus the concurrency suite under Miri; the
-`ObjectSpace`/`Marshal`/finalizer families are where a miscount would surface
-as a wrong answer instead of a crash.
-
-### 2. Iterator inlining wave 3
-
-**Evidence:** waves 1–2 are proven machinery — analyze-mark
-(`inline_iter_sites`), guarded splice, the `zeo_rt::iter_inline_ok` runtime
-gate. `InlineIterKind` currently covers `times`/`upto`/`downto`/`step`/range
-`each`/array `each`/`each_with_index`/`map`/`select`/`reject`/`sum`/hash
-`each`. The remaining common kinds still allocate an RProc per call-site
-execution and dispatch dynamically.
-
-**Kinds to add:** `inject`/`reduce` (accumulator threading — value-mode like
-`sum`, but the block computes the next accumulator), `each_with_object`,
-`find`/`detect` (early exit with a value), `min_by`/`max_by`,
-`each_slice`/`each_cons` (chunked yields), `count`-with-block, and the in-place
-`map!`/`select!`/`reject!` — the in-place family still snapshots, so this is
-also a correctness alignment with the live-view decision.
-
-**Verify:** per-kind oracle scratches (especially mutation-during-iteration for
-the in-place forms); the enumerable golden family; bench sudoku / nqueens /
-life / sort_by.
-
-### 3. Outline the dynamic numeric match arms
-
-**Evidence:** the float arms cost about +5% emitted lines at gem scale (uri
-+5.1%, rubygems +5.5%; bm_fib +36% at small-program scale) and the recursion
-micros gave back +2–7% — I-cache pressure at `-O2` is the suspect.
-
-**Design:** move the Int-Int and Float/mixed arm ladder into per-op `#[inline]`
-zeo-rt helpers so each emitted site shrinks to one call plus the
-`send_value_in` fallback; `-O2` static builds inline the ladder back (expect
-both the recursion recovery and the line shrink). Semantics must stay EXACTLY
-the current arms (tower Flo-lane, `*i as f64` promotion) — one shared source
-also kills the arm-vs-row drift risk.
-
-**Gate:** the `-O0` test corpus turns the helpers into real calls; verify suite
-wall clock and a hot golden subset do not regress before banking. compile-bench
-lines/bytes is the success metric.
-
-### 4. Emission diet round 2
-
-**Candidates:** hash literals still emit per-entry inserts — batch them into
-one `zeo_rt::hash_from_pairs(&[…])`, keeping key/value evaluation order
-left-to-right and duplicate-key last-wins semantics with its existing parse
-warning; pool non-frozen string literals, which allocate twice per evaluation
-today (the pool holds the template and each evaluation clones from it).
-Remaining match-scaffolding dedupe is mostly covered by lever 3.
-
-Two candidates from this family are **retired, both by measurement**. Coalescing
-consecutive `set_line` calls is worth 0.6% of a method call once the frame stack
-is a bump pointer, against a real backtrace-correctness risk. Interning the
-frame string literals was implemented and reverted: the shared method bodies
-removed the duplication it targeted, and it cost +6.6% rustc on uri and +52.9%
-on rubygems, because a large `static [Frame; N]` is not free to const-evaluate.
-
-**Metric:** compile-bench lines/bytes down, with no `--emit-rust --pretty` semantic
-diffs beyond the intended shapes.
+- **A neuter gate measures how much cost EXISTS, not what the design
+  RECOVERS.** Frames measured -4.7% neutered and -0.4% recovered.
+- **Measure width by WIDENING (one attribute), not by narrowing.**
+- **An unfillable inline cache is WORSE than none.** `gcbench` regressed +23%
+  until the site remembered its MISS. `new` on a compiled class is served by
+  the constructor, not a class-method row, so that site never fills.
+- **A second `AtomicBool` beside `is_live` cost 2.6% on dispatch.** Fold a new
+  gate into `GATES`' bits.
+- **A bench delta needs a CONTROL run.** `bench/baseline.tsv` drifts; +2.6%
+  ambient was measured once. Bench HEAD in a worktree. The `%` column is NOT
+  the med5 median.
+- **`--filter X --update-baseline` rewrites `baseline.tsv` to ONLY X.**
+  Rebuild it from `history.tsv` if that happens.
 
 ### Considered, not scheduled
 
-- **`-C panic=abort` for `-o` binaries** — investigated 2026-08-11 and
-  retired as structurally unsafe, not by measurement: dropping a suspended
-  corosensei coroutine works by force-unwinding its stack (corosensei's own
-  documented contract — "if `force_unwind` fails then the program is
-  aborted"), and Ruby programs drop suspended Fibers/Enumerators routinely
-  (`Enumerator#next`, lazy chains, an unfinished external iteration going
-  out of scope). With the `panic_abort` runtime linked, that forced unwind
-  aborts the process. The runtime's `catch_unwind` boundaries (the dead-proc
-  guard in `rproc`, coroutine panic propagation in `thread`, the Gvl's
-  handler shield) would also silently stop catching — rustc happily links an
-  unwind-built rlib into an abort binary, so nothing would even fail loudly.
-  Revisit only if fibers ever move off unwinding entirely.
-- **Block & proc call overhead** — send_cfunc_block (1.21×) and
-  send_rubyfunc_block (1.68×) are no longer losses, but they are the weakest
-  call-path ratios that are not object-graph bound. A leaner block-invoke path
-  (no per-call boxing, a direct call for statically-known blocks) would close
-  them. Deferred deliberately: it touches the call ABI everywhere, and Tier C
-  would rewrite that ABI anyway.
-- **Interning identifier names in the HIR** — retired 2026-08-13 **by
-  measurement**, before any of it was written. The idea was to replace the
-  43 `String`s in `HirNode`, `Params`' six `Vec<String>` fields and
-  `Scope::local_types`' keys with a `NameId`, on the theory that identifier
-  handling was a real share of front-end cost. A `sample` profile of a real
-  compile (activesupport, 61.5 MB emitted, 942 active samples) says it is
-  not:
-
-  | area | share of active samples |
-  |---|---|
-  | `proc_macro2` / `quote` token building | 40.2% |
-  | writing and formatting the output | 21.2% |
-  | allocator + memcpy serving those two | 28.0% |
-  | **everything else** — parse, lower, analyze, mro, guard_fold | **10.5%** |
-
-  Identifier `String` work is a fraction of that last 10.5%, so interning
-  cannot reach the ≥5% gate it was given no matter how well it is done. The
-  MEMORY half of its rationale was answered far more cheaply by boxing the
-  arena's two widest payloads (3a504e8d): `size_of::<HirNode>()` 304 → 112,
-  where interning every name would not have moved the maximum at all, since
-  the widest variant's cost is its two `Vec`s, not its `String`.
-
-  What the profile says instead: the front end is an emitter, and the levers
-  are `proc_macro2` token traffic (`Vec<TokenTree>::clone` and
-  `validate_ident` are visible line items) and the output writer. That is
-  Wave 7b's territory, and it now has a number behind it.
-- **A pending-label register for synthetic C frames** — retired 2026-08-14
-  **by measurement**, before any of it was written. Every builtin dispatch
-  pushes a synthetic frame (`frames::synthetic_c_frame`) and pops it on
-  drop; the idea was to keep the label in a `Cell` on the TLS `Stack` and
-  materialize a real frame only when something looks (a raise, a backtrace,
-  a Ruby call pushing under it). Two measurements, each best-of-5 with the
-  three binaries interleaved inside every round:
-
-  | benchmark | frames fully NEUTERED | the register's ceiling |
-  |---|---|---|
-  | bm_ruby_xor | −9.2% | −1.2% |
-  | bm_template | −7.7% | −0.6% |
-  | bm_matmul | −5.8% | −0.7% |
-  | bm_structaset | −0.2% | −0.0% |
-  | bm_structaref | −0.1% | +0.4% |
-  | **geomean** | **−4.7%** | **−0.4%** |
-
-  The neuter (return `None` from `c_frame_label` and hand back a no-op
-  guard) is the upper bound and it passes the ≥5% gate the design was
-  given. The register does not get to spend it: the second column is a
-  prototype that keeps exactly what the design keeps — one `STACK.with` in
-  the guard's ctor for the dedupe read, one in its drop — and writes no
-  frame at all. It recovers **0.4% of the 4.7%**.
-
-  So the cost is the thread-local ACCESSES, not the frame write or the
-  pointer bump, and the register keeps both accesses by construction. The
-  plan's assumption that it would recover "roughly half" was wrong by an
-  order of magnitude. Anything that moves this number has to remove a TLS
-  round-trip from the builtin dispatch path, not make the frame cheaper.
-- **A 16-byte `RubyValue`** — retired 2026-08-14 **by measurement**. The
-  enum is 24 bytes because `RObj = Arc<dyn RubyObject>` is a fat pointer and
-  `Range` carried a 17-byte payload; Wave 9 fixed the second half, and the
-  first would need a thin `ObjHeader` handle across 424 `RubyValue::Object(`
-  sites, 62 `impl RubyObject`, two class-generating macros, and a custom
-  thin `Weak` (WeakMap/WeakRef/finalizers), with no `ptr::metadata` on
-  stable.
-
-  What that would buy was measured the cheap way round — by making the enum
-  WIDER (`#[repr(align(32))]`, one attribute) and timing the object-graph
-  benchmarks, best-of-5 interleaved:
-
-  | benchmark | cost of +8 bytes |
-  |---|---|
-  | bm_so_lists | +3.0% |
-  | bm_linked_list | +2.6% |
-  | bm_binary_trees | +0.8% |
-  | bm_structaset | +0.3% |
-  | bm_rbtree | −0.7% |
-  | **geomean** | **+1.2%** |
-
-  Eight bytes of width are worth about 1% on exactly the benchmarks the
-  change was aimed at, against a ≥5% gate. The direction is not perfectly
-  symmetric — 24→16 also fits two elements per half cache line where
-  24→32 only pads — but it is the right order of magnitude, and it agrees
-  with what the losing benchmarks already say: they are refcount and
-  allocation bound, not width bound. Revisit only if Arc traffic itself is
-  addressed first.
-- **Mixed Integer↔Float comparison exactness** — a pre-existing divergence:
+- **`-C panic=abort` for `-o` binaries** — investigated 2026-08-11 and retired
+  as structurally unsafe, not by measurement: dropping a suspended corosensei
+  coroutine works by force-unwinding its stack, and Ruby programs drop
+  suspended Fibers and Enumerators routinely. With the `panic_abort` runtime
+  linked, that forced unwind aborts the process. Revisit only if fibers ever
+  move off unwinding entirely.
+- **Mixed Integer/Float comparison exactness** — a pre-existing divergence:
   `num_cmp`'s Flo lane converts via `as f64`, lossy past 2^53
   (`9007199254740993 == 9007199254740992.0` answers true; CRuby compares
-  exactly and answers false). A fix must update `num_cmp` AND the one inline-arm
-  codegen site together. Conformance work, not perf.
-
-## Tooling
-
-### `gem-compat --verify`: compile the gems, don't just classify them
-
-`cargo xtask gem-compat` reports a **resolvability** number, not a
-**compiles-successfully** one. Its `pure-ruby` bucket means "Zeo resolved the
-gem's `lib/` and would attempt to compile it" — a static classification, never
-a real compile. So the headline overstates: many pure-Ruby gems still fail on
-stdlib or dependency gaps.
-
-`--verify` should close that the way `stdlib-status` measures stdlib coverage:
-
-1. Classify as today (reuse `zeo::gem_compat` / `gem_compat_installed`).
-2. For every `pure-ruby` gem, compile a probe — synthesize a temp `Gemfile.lock`
-   from the installed set (`gem_store::installed_as_lockfile` already produces
-   exactly this) or reuse the user's lockfile, then run `zeo` on a
-   `require "<name>"` probe with `--gem-path <store> --bundle-gemfile <temp>
-   --emit-rust=/dev/null`.
-   Exit 0 → `compiles`; a clean rejection or a panic → `pure-ruby (fails)`,
-   bucketed by stderr (`stdlib_status::reason_bucket` is the existing distiller
-   — factor it out and share it).
-3. Parallelize like `stdlib-status` (a worker pool over a queue, `zeo` built
-   once up front so workers don't race cargo).
-4. Report the real number and write per-gem failure reasons to
-   `conformance/gem-compat.tsv`, most-common bucket first. That TSV becomes the
-   work-list.
-
-**Gotchas.** Opt-in only — the verify pass is 150+ subprocess compiles. The
-number WILL drop from the resolvability figure; that is the point. A probe
-pulls the gem's whole require graph, so a failure may be a transitive
-dependency rather than the gem — keep the bucketed reason so those aggregate.
-Add `-I $(ruby -e 'print RbConfig::CONFIG["rubylibdir"]')` to the probe so a gem
-needing only a plain-Ruby stdlib file resolves it, matching how `stdlib-status`
-reaches the installed stdlib; without it the number understates for a different
-reason than it overstates today.
+  exactly and answers false). A fix must update `num_cmp` AND the one
+  inline-arm codegen site together. Conformance work, not perf.
 
 ## Docs
 
