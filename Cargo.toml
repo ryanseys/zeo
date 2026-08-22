@@ -191,12 +191,20 @@ opt-level = 2
 # built zeo-rt at 16 (in the anchor workspace it is a dependency, so the
 # package."*" override applied); the dev tree now matches.
 #
-# `lto = "thin"` is NOT optional next to cgu 16: without it the runtime lost
-# its cross-unit inlining and the bench geomean regressed +23.6% (ruby_xor
-# +290%). For the rlib it mainly means embed-bitcode, so the generated
-# binary's own `-C lto=thin` release link (backend::rustc_flags) can inline
-# across both the unit and the crate boundary -- something the old cgu-1
-# rlib never had.
+# There is deliberately no `lto` here, and the reasoning that once demanded
+# one died with the rustc backend. That argument was about the GENERATED
+# binary's own `-C lto=thin` release link, which needed embedded bitcode in
+# the rlib to inline across the crate boundary; there is no generated crate
+# any more, and `zeo-rt` gets its cross-unit inlining from the cgu-1 override
+# below.
+#
+# Measured 2026-08-22, release/release over all 61 benches, three runs each:
+# thin LTO is **geomean -0.02%** -- a null result, with a scatter of +-3%
+# either way (`ruby_xor`, the old comment's own -290% headline, moves -3.7%).
+# It costs a 74s release build turning into 3m06s and `libzeo.a` growing
+# 78.5 MB -> 175.8 MB, which G12 pays six times over in per-triple archives.
+# `[profile.dist]` keeps it: paid once per release, where the build time does
+# not matter.
 [profile.release]
 strip = "symbols"
 codegen-units = 16
