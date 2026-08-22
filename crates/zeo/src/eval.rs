@@ -1,17 +1,15 @@
-//! The real compiler behind a run-time `eval` (plan G6).
+//! The real compiler behind a run-time `eval`.
 //!
 //! `zeo_rt` cannot depend on the compiler, so it declares the seam
 //! (`zeo_rt::eval::EvalCompiler`) and this module reaches down into it.
 //! One snippet = one front-end run + one `JITModule`, kept for the
 //! process's life exactly as CRuby keeps an eval's iseq.
 //!
-//! **What it accepts is deliberately narrow, and grows.** `eval` answers
-//! `None` for every shape this compiler does not yet lower CORRECTLY, and
-//! the interpreter answers those -- which keeps the interpreter as the
-//! differential oracle for each shape until it takes over (G6-4). The
-//! refusals are shapes that would COMPILE and be wrong, not shapes the
-//! emitter rejects: a rejection is already an error the caller falls back
-//! on. `ZEO_EVAL_DEBUG=1` prints why one fell back.
+//! **A refusal is loud.** `eval` answers `None` only for a shape this
+//! compiler would lower INCORRECTLY, and the caller then raises. There is
+//! no interpreter behind it, so a silent wrong answer has nowhere to hide.
+//! The refusals are shapes that would COMPILE and be wrong, not shapes the
+//! emitter rejects -- a rejection is already an error the caller reports.
 
 use crate::hir::HirNode;
 use std::collections::HashMap;
@@ -325,7 +323,7 @@ fn scope_refusals(analyzed: &crate::analyze::Analyzed) -> Result<(), String> {
             // Registration: `CompileMode::Eval` leaves these unregistered,
             // and only a `def` has a run-time install path already (the
             // emitter's own arm for a `def` written where analyze could
-            // not register one). The rest still belong to the interpreter.
+            // not register one). Nothing else has one.
             // Analyze registers nothing in a snippet, so neither of these
             // can be synthesized here -- they are refused because a
             // silently wrong answer is the alternative, not because the

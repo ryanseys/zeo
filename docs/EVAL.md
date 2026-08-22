@@ -1,19 +1,15 @@
 # Runtime `eval` and `binding`
 
-`zeo` handles `eval("literal string")` at *compile time* (`HirNode::Eval`, wired
-up in `parse/mod.rs`): the recognizer parses the literal, lowers it, and splices
-the resulting HIR into the arena at the call site — the same trick `require` uses
-for a file's contents. This works because the argument is a
-compile-time-constant `StringLit` (no interpolation): Zeo already has the whole
-program in front of it, so "the instant this code would run" and "compile time"
-are the same moment for a literal, and no runtime parser is ever needed.
+**Every `eval` is a run-time compile.** A literal string and a string built
+from I/O take the same path: the snippet goes through the same front end, the
+same `analyze`, and the same Cranelift emitter a whole program goes through.
 
-A **dynamic** `eval` — a runtime-computed string (interpolated, read from a
-variable, built from I/O) — is a different problem for a whole-program AOT
-compiler: the source being "compiled" isn't known until the program is already
-running. Zeo answers it the only way that keeps one implementation of Ruby in
-the tree: it **compiles the snippet**, with the same front end, the same
-`analyze`, and the same Cranelift emitter a whole program goes through.
+It was not always so. A literal string used to be recognized at compile time
+and spliced into the HIR arena as `HirNode::Eval`, the way `require` splices a
+file's contents. That path was deleted on 2026-08-21 along with the prism
+interpreter behind it. One path is worth the run-time cost: a splice and a
+compile answered differently often enough that the second implementation was
+the bug, and a snippet built from I/O could never use the splice anyway.
 
 ## One snippet, one compile (`crates/zeo/src/eval.rs`, `clif/eval.rs`)
 
@@ -105,10 +101,9 @@ That makes `eval` faithful in both directions. A receiver-less `eval(src)`
 compiles into a Binding of the calling frame, so the source reads and writes the
 caller's own locals; new locals it introduces live in a child layer and die with
 the call, as CRuby's do. `Binding#eval` and `eval(src, b)` run in the Binding
-itself, where new locals persist. The AOT literal-splice path resolves a bare
-name in the snippet back to the enclosing scope's local the same way
-(`Ctx::in_eval_splice`), so `x = 1; eval("x + 1")` needs no runtime parser at
-all and still answers `2`.
+itself, where new locals persist. So `x = 1; eval("x + 1")` answers `2` because
+the snippet's compile takes `x` from the caller's Binding by name, not because
+anything was spliced.
 
 `Proc#binding` follows from the same capture. A block literal's construction
 site emits a Binding of *its enclosing* scope — the one the block was written

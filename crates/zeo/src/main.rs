@@ -745,8 +745,8 @@ fn main() -> ExitCode {
             Box::new(miette::MietteHandlerOpts::new().wrap_lines(false).build())
         }));
     }
-    // The compiler IS the runtime's evaluator, for whatever shapes it
-    // accepts (`ZEO_EVAL=compiler` selects it; plan G6).
+    // The compiler IS the runtime's evaluator. Every `eval` is a run-time
+    // compile; there is no interpreter to fall back to.
     zeo::eval::install();
     match run() {
         Ok(()) => ExitCode::SUCCESS,

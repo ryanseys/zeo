@@ -45,7 +45,8 @@ miette.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
-# `flock(2)` for the cross-process runtime-build lock in `backend`.
+# `memguard`'s RSS and physical-memory reads, and the libc type widths
+# `lower::ffi` folds into an emitted program's FFI struct layouts.
 libc.workspace = true
 # Fast non-DoS-resistant hashing for compiler-internal name sets (same
 # policy zeo-rt already uses for its internal maps).

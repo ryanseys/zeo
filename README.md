@@ -198,10 +198,9 @@ cannot disagree.
 - **Reflection** — `Method#parameters`/`#arity`/`#source_location`,
   `TracePoint`, line coverage, `ObjectSpace`, `RubyVM::AbstractSyntaxTree` and
   `RubyVM::InstructionSequence`, `Ruby::Box`.
-- **`eval`** — a literal `eval("…")` is parsed and spliced at compile time; a
-  dynamic one is COMPILED at run time by the same compiler
-  ([`docs/EVAL.md`](docs/EVAL.md)), which is linked only into programs that
-  can reach it.
+- **`eval`** — every `eval` is COMPILED at run time by the same compiler,
+  a literal string included ([`docs/EVAL.md`](docs/EVAL.md)). The compiler is
+  linked only into programs that can reach it.
 
 For what does not match yet, read
 [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md); for the extension model,
@@ -257,9 +256,10 @@ finish inside CRuby's ~30 ms of boot, where a native binary starts instantly.
 That is a real advantage of shipping a binary and it is not a claim about
 generated code.
 
-**The Cranelift backend is correctness-complete and has not finished its
-performance pass.** On compute-bound work it is behind CRuby, and behind the
-Rust-emitting backend it replaced. It wins big where the emitter has a fused
+**The Cranelift backend is correctness-complete and its performance pass is
+not finished.** Two waves have run — they took it to **+52.3%** over the
+Rust-emitting backend it replaced — and on compute-bound work it is still
+behind CRuby. It wins big where the emitter has a fused
 loop or an inline cache (`range_each` 3.27×, `so_mandelbrot` 2.18×,
 `attr_accessor` 1.27×) and loses where it does not (`rbtree` 0.25×,
 `send_rubyfunc_block` 0.31×, `life` 0.35×, `getivar_module` 0.35×). Those
@@ -431,18 +431,23 @@ Zeo is experimental. The known limits, all of them deliberate and recorded:
   exceptions and their subclasses; a cycle closed through a `Proc`'s captured
   local, a `Range`, or a value carrying its own singleton or ivars still leaks
   (`tests/gaps/a_cycle_can_still_leak.rb` says why for each). There is no
-  automatic trigger and no tracing collector: zeo's roots are not enumerable,
-  so the pass reconciles reference counts instead of tracing from roots.
+  automatic trigger and no tracing collector: the pass reconciles reference
+  counts rather than tracing, because zeo's lowering declares no stack maps
+  for Cranelift to build root sets from.
 - **No C-extension gems.** A gem whose native half Zeo has no built-in for
   fails with a clear error. Use the `ffi` gem API, which Zeo compiles ahead of
   time. Source-compatible C extensions are on the roadmap.
-- **`Ruby::Box` is compile-time.** `box = Ruby::Box.new` works as a top-level
-  statement and `box.eval` isolates constants and globals; a box created at run
-  time, or a run-time `box.require`, raises `NotImplementedError`.
+- **`Ruby::Box` isolation is partial.** A box works at compile time and at
+  run time — `Ruby::Box.new`, `box.eval`, `box.require` and `Box.current` all
+  answer — and it isolates constants and globals. What it does not yet isolate
+  is a monkeypatch of a shared builtin, which reaches main, and a box cannot
+  require a feature the whole-program compile already spliced. Both are
+  tracked in [`tests/gaps/`](tests/gaps).
 - **Four extensions are partial** — `coverage`, `nkf`, `openssl`, `TracePoint`.
   See [`docs/EXTENSIONS.md`](docs/EXTENSIONS.md).
-- **The Cranelift backend has not finished its performance pass.** Correctness
-  is complete; code quality is not. On compute-bound work it currently runs at
+- **The Cranelift backend's performance pass is not finished.** Correctness
+  is complete; code quality is not. Two waves have run and the levers left are
+  ranked and measured. On compute-bound work it currently runs at
   **0.71× of CRuby** — see [Performance](#performance).
 
 [`docs/ROADMAP.md`](docs/ROADMAP.md) tracks the rest.

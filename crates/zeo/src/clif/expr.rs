@@ -4394,8 +4394,8 @@ pub(crate) fn site_decided_call(fx: &Fx, id: NodeId) -> bool {
 /// `Kernel#eval`, which reads its LOCALS from the caller's frame either
 /// way and takes `self` from the receiver.
 ///
-/// The string-LITERAL form never reaches here: it lowered to
-/// `HirNode::Eval`, an inline splice, at lower time.
+/// Every form reaches here, a literal string included: an `eval` is a
+/// run-time compile, never a lower-time splice.
 fn runtime_eval(
     fx: &mut Fx,
     id: NodeId,

@@ -12,20 +12,6 @@ KOI8, mac* and Thai families) are generated from the oracle itself by
 mappings -- including which vendor-page bytes have NO Unicode mapping --
 are exact. Known divergences:
 
-- **31 rows are registered by NAME only.** They answer every reflection
-  question and carry ASCII through, but this runtime holds no
-  byte<->character mapping for them, so converting a high byte raises
-  `Encoding::ConverterNotFoundError` where CRuby converts, and their
-  strings count one character per byte where CRuby counts one per
-  multibyte sequence. The rows are the multibyte families whose tables are
-  not in the tree (EUC-KR, EUC-TW, GB18030, GB2312, CP949/950/951, the
-  Big5 variants, `UTF8-MAC`, `eucJP-ms`, `CP51932`, `EUC-JIS-2004`,
-  `Emacs-Mule`, `MacJapanese`, `GB12345`, `stateless-ISO-2022-JP`, and the
-  DoCoMo/KDDI/SoftBank emoji pages), the four single-byte rows CRuby
-  itself registers with no transcoder (`Windows-1258`, `GB1988`,
-  `macCentEuro`, `macThai` -- those raise the same class there), and the
-  stateful JIS dummies beyond `ISO-2022-JP`. Executable record:
-  [`tests/gaps/encoding_registered_only.rb`](../tests/gaps/encoding_registered_only.rb).
 - **Shift_JIS mappings are CP932's.** Both the `Shift_JIS` and
   `Windows-31J` rows transcode through encoding_rs's WHATWG `shift_jis`
   table, which matches Windows-31J/CP932. CRuby's strict `Shift_JIS`
@@ -49,33 +35,9 @@ are exact. Known divergences:
   encoding TO them, and reading FROM them requires one (no BOM is an
   invalid sequence) -- both CRuby-observed; the difference is only that
   error messages name the BE row (`UTF-16BE`) where CRuby says `UTF-16`.
-- **A converter's `#primitive_convert` cuts at a different point under a
-  `dst_bytesize` limit.** Zeo refuses the first character whose bytes would
-  not fit and consumes nothing more, so the source string keeps everything
-  that did not convert. CRuby converts past the limit and holds the overflow
-  in an internal buffer, so its source is shorter and the extra bytes arrive
-  on the next call. Where the cut falls is a property of CRuby's buffer
-  sizes; the end state after draining is the same either way. Executable
-  record:
-  [`tests/gaps/encoding_converter_buffer_full.rb`](../tests/gaps/encoding_converter_buffer_full.rb).
-  `#putback` answers an empty String for the same reason a converter never
-  needs it: Zeo's decoders consume an offending sequence whole, so
+- **`#putback` answers an empty String**, for the same reason a converter
+  never needs it: Zeo's decoders consume an offending sequence whole, so
   `#primitive_errinfo`'s fifth element is always empty.
-- **A string whose bytes are invalid in its own encoding does not raise.**
-  Ruby refuses most operations on such a string (`ArgumentError`, "invalid
-  byte sequence"; `Encoding::CompatibilityError` for the strip family); Zeo
-  renders the bad bytes as U+FFFD and answers. Derived strings otherwise keep
-  the receiver's encoding correctly. Executable record:
-  [`tests/gaps/issue_string_ops_on_broken_encoding.rb`](../tests/gaps/issue_string_ops_on_broken_encoding.rb).
-- **Symbols do not carry an encoding.** `str.to_sym.to_s` answers UTF-8
-  whatever `str` was, and two strings with the same bytes in different
-  encodings intern to the SAME symbol where ruby keeps them distinct. The
-  interner keys on `&'static str` and stores nothing else. Executable record:
-  [`tests/gaps/issue_symbol_loses_encoding.rb`](../tests/gaps/issue_symbol_loses_encoding.rb).
-- **String literals with raw high `\xNN` escapes** are not yet
-  byte-faithful through the compiler's lowering (see
-  [`docs/ROADMAP.md`](ROADMAP.md)); runtime-constructed bytes (`chr`, IO reads,
-  `force_encoding`) are exact.
 
 How Zeo satisfies a `require`, and where its answer is **not** the upstream
 gem or C extension. This is prose, not a percentage: each entry carries a
@@ -310,10 +272,8 @@ Known divergences of the native slice:
 - **ISO-2022-JP-style pivot messages don't apply here, but EUC-JP limits
   do**: values reachable only through JIS X 0212 (see the encoding notes
   above) behave per the encoding engine, not per libc nkf.
-- The vendored Ruby half carries two marked deviations: the JRuby loader
-  branch is reduced to `require "bigdecimal.so"`, and
-  `private_class_method def` is unwrapped to a plain def (a compiler gap,
-  `tests/gaps/issue_private_class_method_def.rb`) -- visibility-only.
+- The vendored Ruby half carries one marked deviation: the JRuby loader
+  branch is reduced to `require "bigdecimal.so"`.
 
 ### `fiddle`
 
@@ -414,13 +374,11 @@ this event"`, `"unknown event: x"`) are oracle-matched live
   and `:script_compiled` never fire, so `TracePoint.new` naming one
   raises `RuntimeError: event :x is not supported by zeo` where CRuby
   accepts it -- loud, not a handler that silently never runs.
-- **`#self`, `#binding`, `#return_value`, `#parameters`,
-  `#eval_script` and `#instruction_sequence` are defined and REFUSE**, with
-  CRuby's own `RuntimeError: not supported by this event` (and its
-  `access from outside` when no handler is running). The lightweight frame
-  deliberately carries no receiver or bindings. Four of the six are what
-  CRuby answers for a `:line` event too; `#self` and `#binding` are the
-  divergence, tracked in `tests/gaps/tracepoint_self_and_binding.rb`.
+- **`#return_value`, `#parameters`, `#eval_script` and
+  `#instruction_sequence` are defined and REFUSE**, with CRuby's own
+  `RuntimeError: not supported by this event` (and its `access from outside`
+  when no handler is running) -- which is what CRuby answers for a `:line`
+  event too. `#self` and `#binding` answer (`tests/tracepoint_self_and_binding.rb`).
 - **An explicit early `return` reports the `end` line** for `:return`
   where CRuby reports the `return` statement's line (the frame pop
   cannot tell the exit paths apart; an exception unwind reports the
@@ -536,15 +494,6 @@ behind it — `Symbol#to_proc` and the other runtime-internal ones — raises
 CRuby's `ArgumentError: Can't create Binding from C level Proc`, and so does any
 proc in a program the compiler never saw ask for a `Proc#binding` (the capture
 is pay-per-use; see `docs/EVAL.md`).
-
-### Pattern matching
-
-A hash pattern that misses a KEY raises `NoMatchingPatternError` where CRuby
-raises its `NoMatchingPatternKeyError` subclass. The subclass exists and its
-`#key`/`#matchee` accessors match CRuby when it is constructed directly; what
-diverges is the raise site, since `codegen/patterns.rs` compiles a whole
-pattern to one boolean and the raise arm cannot name the failing key. Tracked
-in `tests/gaps/pattern_key_error_class.rb`.
 
 ### `Hash.ruby2_keywords_hash`
 
@@ -678,45 +627,21 @@ divergences:
   gates whole classes rather than methods, so it answers where ruby raises
   `NoMethodError`, never the reverse. `#find` walks the tree itself rather
   than through `Find`, so `Find.prune` has nothing to prune.
-- **`#path` reads as PUBLIC.** ruby makes it protected. This is not about
-  Pathname: a builtin row declared `protected` collapses into public because
-  the method table carries one visibility bit, and `#path` is the whole
-  population. A method defined in RUBY is unaffected. Executable record:
-  [`tests/gaps/builtin_protected_rows.rb`](../tests/gaps/builtin_protected_rows.rb).
-
-### `respond_to?` and a not-implemented stub
-
-Answers TRUE where ruby answers false. CRuby defines the calls a platform
-lacks (`Kernel#syscall` on macOS, `Process::Sys.setresuid` where the syscall
-is absent) with `rb_f_notimplement`: still LISTED by every reflection reader,
-but `respond_to?` reports false, which is how a program is meant to detect
-the absence before calling. Zeo's method rows carry no "this is a stub" bit.
-Calling one refuses identically either way. Executable record:
-[`tests/gaps/notimplement_stub_respond_to.rb`](../tests/gaps/notimplement_stub_respond_to.rb).
 
 ### `Kernel#block_given?`, `#iterator?`, `#binding`, `#local_variables` through `send`
 
-These four raise NoMethodError where ruby answers, and `respond_to?`/`method`
-do not find them. `block_given?`/`iterator?` need the CALLER's block and
-`binding`/`local_variables` need its local scope; neither travels to a method
-row, and Zeo's call `Frame` deliberately carries only `(file, line, label)` --
-40 bytes, pushed on every call -- so widening it would tax every call in the
-program for a reflection path almost nothing takes. Called DIRECTLY all four
-work: the compiler folds each into the caller, where the block and the scope
-are in hand. Executable record:
-[`tests/gaps/kernel_scope_intrinsics.rb`](../tests/gaps/kernel_scope_intrinsics.rb).
+All four work called directly and through a LITERAL `send`: the compiler
+folds each into the caller, where the block and the scope are in hand
+(`tests/kernel_scope_intrinsics.rb`).
 
-### A Hash as a Hash KEY
-
-Keyed by IDENTITY, not by value: `{ {a: 1} => "x" }[{a: 1}]` answers nil, and
-`{a: 1}.hash` differs between two equal literals. The key projection has
-structural forms for String, Array, Range, Regexp and the whole numeric tower
-and none for Hash. What the missing one needs beyond a variant: ruby's
-`Hash#hash` is order-INSENSITIVE while the projection's derived `PartialEq`
-over a `Vec` is order-sensitive, so a naive variant would hash two
-equal-but-differently-ordered hashes alike and then compare them unequal --
-worse than today. Executable record:
-[`tests/gaps/hash_and_regexp_as_hash_keys.rb`](../tests/gaps/hash_and_regexp_as_hash_keys.rb).
+What stays divergent is a send with a COMPUTED name (`m = :binding; send(m)`).
+`block_given?`/`iterator?` need the CALLER's block and `binding`/
+`local_variables` need its local scope; neither travels to a method row, and
+Zeo's call `Frame` deliberately carries only `(file, line, label)` -- 40 bytes,
+pushed on every call -- so widening it would tax every call in the program for
+a reflection path almost nothing takes. This is a DECIDED divergence:
+`tests/kernel_scope_intrinsics_dynamic_send.rb` and its `.divergence` sidecar
+record zeo's answer on purpose.
 
 ### `Random::Formatter` carries its whole surface from the start
 

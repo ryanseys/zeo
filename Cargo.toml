@@ -22,9 +22,10 @@ categories = ["compilers", "command-line-utilities"]
 
 [workspace.dependencies]
 # The whole family is version-locked (`=`): the compiler emits code against an
-# exact runtime surface, the bin-cache generation hashes runtime sources, and
-# CLASS_SURFACE is projected from an exact zeo-rt revision. Anything looser
-# invites drift crates.io cannot express. Releases bump all crates in lockstep.
+# exact runtime surface, every emitted object is linked against that exact
+# `libzeo.a`, and CLASS_SURFACE is projected from an exact zeo-rt revision.
+# Anything looser invites drift crates.io cannot express. Releases bump all
+# crates in lockstep.
 zeo = { path = "crates/zeo", version = "=0.1.0" }
 zeo-abi = { path = "crates/zeo-abi", version = "=0.1.0" }
 zeo-rt = { path = "crates/zeo-rt", version = "=0.1.0" }
