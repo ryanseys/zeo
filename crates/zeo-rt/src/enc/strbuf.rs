@@ -4,7 +4,9 @@
 use std::borrow::Cow;
 use std::cell::Cell;
 
-use crate::enc::case::{CaseMode, ascii_case_byte, case_bytes, case_single_byte, case_unicode};
+use crate::enc::case::{
+    CaseMode, CaseOptions, ascii_case_byte, case_bytes, case_single_byte, case_unicode_opts,
+};
 use crate::enc::coderange::{CodeRange, compute_coderange};
 use crate::enc::table::{EncKind, EncodingId, UTF_8};
 use crate::enc::transcode::utf8_seq_len;
@@ -358,21 +360,29 @@ impl StrBuf {
     /// case mapping (identical to the pre-encoding behavior); the single-byte
     /// encodings fold ASCII always, plus Latin-1's own accented-letter range.
     pub fn upcased(&self) -> StrBuf {
-        self.case_mapped(CaseMode::Up)
+        self.case_mapped(CaseMode::Up, CaseOptions::default())
     }
     pub fn downcased(&self) -> StrBuf {
-        self.case_mapped(CaseMode::Down)
+        self.case_mapped(CaseMode::Down, CaseOptions::default())
     }
     pub fn swapcased(&self) -> StrBuf {
-        self.case_mapped(CaseMode::Swap)
+        self.case_mapped(CaseMode::Swap, CaseOptions::default())
     }
     pub fn capitalized(&self) -> StrBuf {
-        self.case_mapped(CaseMode::Cap)
+        self.case_mapped(CaseMode::Cap, CaseOptions::default())
     }
 
-    fn case_mapped(&self, mode: CaseMode) -> StrBuf {
+    /// The four rows under ruby's `:ascii`/`:turkic`/`:lithuanian`/`:fold`
+    /// options.
+    pub(crate) fn cased_with(&self, mode: CaseMode, opts: CaseOptions) -> StrBuf {
+        self.case_mapped(mode, opts)
+    }
+
+    fn case_mapped(&self, mode: CaseMode, opts: CaseOptions) -> StrBuf {
         match self.enc.kind() {
-            EncKind::Utf8 => StrBuf::from_utf8(case_unicode(&self.to_utf8_lossy(), mode)),
+            EncKind::Utf8 => {
+                StrBuf::from_utf8(case_unicode_opts(&self.to_utf8_lossy(), mode, opts))
+            }
             EncKind::Ascii | EncKind::Binary | EncKind::Registered => {
                 StrBuf::from_bytes(case_bytes(&self.bytes, mode, ascii_case_byte), self.enc)
             }

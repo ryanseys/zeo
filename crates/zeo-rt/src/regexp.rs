@@ -635,6 +635,79 @@ fn has_backref(pattern: &str) -> bool {
     false
 }
 
+/// Whether `pattern` LOOPS a capturing group whose body can match empty --
+/// `(a?)*`, `(a*)*`, `(|a)*`.
+///
+/// Ruby runs one final iteration that consumes nothing, and the group holds
+/// the EMPTY string at the position the loop stopped; the Rust engines keep
+/// the last non-empty match, so the group and the overall match disagree
+/// about where the loop ended. Onig follows ruby's rule (it is ruby's rule),
+/// and over-routing to it costs speed and never correctness -- so the body
+/// test is deliberately conservative: a body that always CONSUMES
+/// (`(a)*`, `(\d+)*`) is left where it was, and that is the common shape.
+fn empty_iteration_capture(pattern: &str) -> bool {
+    let b = pattern.as_bytes();
+    // (body start, capturing)
+    let mut open: Vec<(usize, bool)> = Vec::new();
+    let mut i = 0;
+    let mut in_class = false;
+    let mut class_start = false;
+    while i < b.len() {
+        let c = b[i];
+        if c == b'\\' {
+            i += 2;
+            continue;
+        }
+        if in_class {
+            match c {
+                b']' if !class_start => in_class = false,
+                _ => class_start = false,
+            }
+            i += 1;
+            continue;
+        }
+        match c {
+            b'[' => {
+                in_class = true;
+                class_start = true;
+            }
+            b'(' => {
+                let capturing = match b.get(i + 1) {
+                    Some(b'?') => {
+                        b.get(i + 2) == Some(&b'\'')
+                            || (b.get(i + 2) == Some(&b'<')
+                                && !matches!(b.get(i + 3), Some(b'=' | b'!')))
+                    }
+                    _ => true,
+                };
+                open.push((i + 1, capturing));
+            }
+            b')' => {
+                if let Some((start, capturing)) = open.pop()
+                    && capturing
+                    && matches!(b.get(i + 1), Some(b'*' | b'+' | b'{'))
+                {
+                    let body = &pattern[start..i];
+                    // A body that can produce nothing: an optional or starred
+                    // atom, an empty alternative, or an empty body.
+                    if body.is_empty()
+                        || body.contains('?')
+                        || body.contains('*')
+                        || body.starts_with('|')
+                        || body.ends_with('|')
+                        || body.contains("||")
+                    {
+                        return true;
+                    }
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    false
+}
+
 fn needs_fancy(pattern: &str) -> bool {
     let bytes = pattern.as_bytes();
     let mut i = 0;
@@ -1054,7 +1127,8 @@ pub fn regexp_new_enc(
     let source = preprocessed.as_ref();
     // A pattern with Ruby-specific semantics goes straight to Oniguruma (the
     // raw source, no escape translation).
-    if needs_onig(source) || (ignore_case && has_backref(source)) {
+    if needs_onig(source) || (ignore_case && has_backref(source)) || empty_iteration_capture(source)
+    {
         return match build_onig(source, ignore_case, extended, multiline) {
             Ok(r) => Ok(Arc::new(RegexpData {
                 engine: Engine::Onig(Arc::new(r)),

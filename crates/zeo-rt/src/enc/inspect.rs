@@ -175,6 +175,17 @@ fn push_inspect_char(out: &mut String, c: char, next: Option<char>, is_utf8: boo
                 out.push_str(&format!("\\x{cp:02X}"));
             }
         }
+        // Above ASCII, a codepoint ruby does not consider PRINTABLE is
+        // escaped rather than shown: `\uXXXX` in the BMP, `\u{XXXXX}` above
+        // it. Which ones those are is the oracle's answer, not a rule --
+        // see `crate::enc::printable`.
+        _ if is_utf8 && crate::enc::printable::escapes(cp) => {
+            if cp <= 0xFFFF {
+                out.push_str(&format!("\\u{cp:04X}"));
+            } else {
+                out.push_str(&format!("\\u{{{cp:X}}}"));
+            }
+        }
         _ => out.push(c),
     }
 }

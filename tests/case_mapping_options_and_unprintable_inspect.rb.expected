@@ -1,0 +1,24 @@
+[0, "STRAßE", "straße", "Straße", "STRAßE"]
+[1, "ÄB", "Äb", "Äb", "Äb"]
+[2, "äB", "äb", "äb", "äB"]
+[3, "äB", "äb", "äb", "äb"]
+[4, "I", "i", "I", "I"]
+[5, "I", "i", "I", "i"]
+["ss", "fi", "σσ", "i̇"]
+["İ", "ı", "i", "I"]
+["İstanbul", "İı", "İ"]
+["I", "i", "İ"]
+:äB
+"äB"
+"option :fold only allowed for downcasing"
+"option :fold only allowed for downcasing"
+"too many options"
+"invalid option"
+"invalid option"
+"too many options"
+"invalid second option"
+["", "\uFFFE", "­"]
+["\u0378", "\u{10FFFF}", "😀"]
+"a\uFFFEb"
+:"\uFFFE"
+:あ

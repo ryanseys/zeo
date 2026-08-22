@@ -23,27 +23,6 @@ use zeo_macros::ruby_class;
 /// `String#*` guard for the full rationale.
 const MAX_STRING_SIZE: usize = 1 << 30;
 
-/// `capitalize`'s rule: first char upcased, the REST downcased.
-pub(crate) fn capitalize_str(s: &str) -> String {
-    let mut chars = s.chars();
-    match chars.next() {
-        Some(c) => c.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase(),
-        None => String::new(),
-    }
-}
-
-pub(crate) fn swapcase_str(s: &str) -> String {
-    s.chars()
-        .flat_map(|c| {
-            if c.is_uppercase() {
-                c.to_lowercase().collect::<Vec<_>>()
-            } else {
-                c.to_uppercase().collect::<Vec<_>>()
-            }
-        })
-        .collect()
-}
-
 /// `rb_str_upto_each` (string.c) -- the `succ` walk from `beg` to `end` that
 /// BOTH `String#upto` and a String/Symbol `Range`'s `each` are built on. One
 /// copy, because CRuby has one: `range_each` calls this very function, which
@@ -1980,21 +1959,17 @@ ruby_class! {
     // Casing is encoding-aware (`StrBuf::*cased`): full Unicode for UTF-8
     // (unchanged), ASCII-only for BINARY/US-ASCII, Latin-1's own case map for
     // ISO-8859-1 -- and the result keeps the receiver's encoding.
-    def "upcase" cfunc (recv) {
-        guard_valid_case(recv)?;
-        Ok(RubyValue::Str(crate::string_wrap(rstr.lock().upcased())))
+    def "upcase" cfunc (recv, *_opts) {
+        cased(recv, __args, crate::encoding::CaseMode::Up)
     }
-    def "downcase" cfunc (recv) {
-        guard_valid_case(recv)?;
-        Ok(RubyValue::Str(crate::string_wrap(rstr.lock().downcased())))
+    def "downcase" cfunc (recv, *_opts) {
+        cased(recv, __args, crate::encoding::CaseMode::Down)
     }
-    def "capitalize" cfunc (recv) {
-        guard_valid_case(recv)?;
-        Ok(RubyValue::Str(crate::string_wrap(rstr.lock().capitalized())))
+    def "capitalize" cfunc (recv, *_opts) {
+        cased(recv, __args, crate::encoding::CaseMode::Cap)
     }
-    def "swapcase" cfunc (recv) {
-        guard_valid_case(recv)?;
-        Ok(RubyValue::Str(crate::string_wrap(rstr.lock().swapcased())))
+    def "swapcase" cfunc (recv, *_opts) {
+        cased(recv, __args, crate::encoding::CaseMode::Swap)
     }
     def "strip" cfunc (recv) {
         guard_valid_compat(recv)?;
@@ -3394,6 +3369,38 @@ fn repl_window(
 
 /// CRuby's `rb_str_casecmp`: byte order with only the ASCII letter range
 /// folded, and a shorter prefix ordering before a longer string.
+/// [`cased`] over plain text -- what `Symbol`'s four twins map through, so
+/// the options and their refusals cannot drift between the two surfaces.
+pub(crate) fn cased_text(
+    text: &str,
+    args: &[RubyValue],
+    mode: crate::encoding::CaseMode,
+) -> Result<String, Signal> {
+    let opts =
+        crate::encoding::check_case_options(args, matches!(mode, crate::encoding::CaseMode::Down))?;
+    Ok(crate::encoding::StrBuf::from_utf8(text.to_string())
+        .cased_with(mode, opts)
+        .to_utf8_lossy()
+        .into_owned())
+}
+
+/// The shared body of `upcase`/`downcase`/`capitalize`/`swapcase` and their
+/// `!` twins: ruby's case-mapping OPTIONS, then the encoding-aware map.
+fn cased(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    mode: crate::encoding::CaseMode,
+) -> Result<RubyValue, Signal> {
+    let opts =
+        crate::encoding::check_case_options(args, matches!(mode, crate::encoding::CaseMode::Down))?;
+    guard_valid_case(recv)?;
+    let RubyValue::Str(rstr) = recv else {
+        unreachable!("a String row's receiver is a String")
+    };
+    let buf = rstr.lock().cased_with(mode, opts);
+    Ok(RubyValue::Str(crate::string_wrap(buf)))
+}
+
 pub(crate) fn ascii_casecmp(a: &[u8], b: &[u8]) -> std::cmp::Ordering {
     let fold = |c: u8| c.to_ascii_lowercase();
     for (x, y) in a.iter().zip(b) {

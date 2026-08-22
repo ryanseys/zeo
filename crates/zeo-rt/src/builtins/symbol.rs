@@ -63,8 +63,12 @@ pub(crate) fn needs_quoting(name: &str) -> bool {
 /// name, so `:café`, `:λ`, and even `:😀` print bare, while ASCII punctuation
 /// (a space, a leading digit) forces quoting.
 fn is_plain_ident(s: &str) -> bool {
-    let is_start = |c: char| c == '_' || c.is_ascii_alphabetic() || !c.is_ascii();
-    let is_cont = |c: char| c == '_' || c.is_ascii_alphanumeric() || !c.is_ascii();
+    // A non-ASCII character counts as an identifier character only when it
+    // is one ruby would PRINT: an unassigned or noncharacter codepoint is
+    // not, so `:"\u{FFFE}"` quotes where `:あ` does not.
+    let ident_char = |c: char| !c.is_ascii() && !crate::encoding::escapes_in_inspect(c as u32);
+    let is_start = |c: char| c == '_' || c.is_ascii_alphabetic() || ident_char(c);
+    let is_cont = |c: char| c == '_' || c.is_ascii_alphanumeric() || ident_char(c);
     let mut chars = s.chars();
     match chars.next() {
         Some(c) if is_start(c) => {}
@@ -241,25 +245,18 @@ ruby_class! {
             recv_sym(recv).name().to_lowercase() == other.name().to_lowercase(),
         ))
     }
-    def "upcase" cfunc (recv) {
-        Ok(RubyValue::Symbol(Symbol::intern(
-            &recv_sym(recv).name().to_uppercase(),
-        )))
+    // The four take ruby's case-mapping options, same as String's.
+    def "upcase" cfunc (recv, *_opts) {
+        sym_cased(recv, __args, crate::encoding::CaseMode::Up)
     }
-    def "downcase" cfunc (recv) {
-        Ok(RubyValue::Symbol(Symbol::intern(
-            &recv_sym(recv).name().to_lowercase(),
-        )))
+    def "downcase" cfunc (recv, *_opts) {
+        sym_cased(recv, __args, crate::encoding::CaseMode::Down)
     }
-    def "capitalize" cfunc (recv) {
-        Ok(RubyValue::Symbol(Symbol::intern(
-            &crate::builtins::string::capitalize_str(&recv_sym(recv).name()),
-        )))
+    def "capitalize" cfunc (recv, *_opts) {
+        sym_cased(recv, __args, crate::encoding::CaseMode::Cap)
     }
-    def "swapcase" cfunc (recv) {
-        Ok(RubyValue::Symbol(Symbol::intern(
-            &crate::builtins::string::swapcase_str(&recv_sym(recv).name()),
-        )))
+    def "swapcase" cfunc (recv, *_opts) {
+        sym_cased(recv, __args, crate::encoding::CaseMode::Swap)
     }
     def "succ" | "next" (recv) {
         Ok(RubyValue::Symbol(Symbol::intern(
@@ -339,4 +336,13 @@ mod tests {
         let r = p.call(&[s]).unwrap();
         assert!(matches!(r, RubyValue::Int(3)));
     }
+}
+
+fn sym_cased(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    mode: crate::encoding::CaseMode,
+) -> Result<RubyValue, crate::Signal> {
+    let text = crate::builtins::string::cased_text(&recv_sym(recv).name(), args, mode)?;
+    Ok(RubyValue::Symbol(Symbol::intern(&text)))
 }

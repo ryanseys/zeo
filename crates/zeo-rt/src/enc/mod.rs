@@ -16,9 +16,12 @@
 //! to the exact CRuby exception classes at its boundary.
 
 mod case;
+mod casefold;
 mod coderange;
 mod defaults;
 mod inspect;
+mod printable;
+
 pub(crate) mod iso2022jp;
 mod mb;
 mod registry;
@@ -28,12 +31,14 @@ mod table;
 mod transcode;
 mod wide;
 
+pub(crate) use case::{CaseMode, check_case_options};
 pub use coderange::CodeRange;
 pub use defaults::{
     default_external, default_internal, set_default_external, set_default_internal,
 };
 pub use inspect::inspect;
 pub use mb::{MbCodepointError, MbFamily, mb_codepoint_bytes};
+pub(crate) use printable::escapes as escapes_in_inspect;
 pub use single_byte::SingleByteTable;
 pub use strbuf::{IncompatibleEncodings, StrBuf, compat_concat_enc};
 // Every encoding's id constant, straight from the generated registry -- one
