@@ -543,6 +543,26 @@ fn finish(r: &RRactor, result: Result<RubyValue, Signal>, aborted: bool) {
     }
 }
 
+/// A ractor that dies of an uncaught exception reports it on stderr as it
+/// terminates, exactly as a Thread does -- CRuby runs a ractor's body on a
+/// thread, so it prints that thread's own banner and then the ordinary
+/// uncaught report. `#value` raising `Ractor::RemoteError` is a separate
+/// mechanism, and a program sees both.
+///
+/// The banner carries no origin where `Thread#inspect`'s does: CRuby's ractor
+/// thread was not created by `Thread.new`, so it has no call site to name.
+/// `Thread.report_on_exception` governs it, as it governs a thread's.
+fn report_terminated(r: &RRactor, exc: &RubyValue) {
+    if !crate::thread::report_on_exception_default() {
+        return;
+    }
+    let preamble = format!(
+        "#<Thread:0x{:016x} run> terminated with exception (report_on_exception is true):",
+        Arc::as_ptr(r) as *const () as usize
+    );
+    crate::builtins::exception::report_exception(exc, Some(&preamble));
+}
+
 /// Records the abort even when the body PANICS (a zeo-rt bug or a
 /// resource-limit hit, not a Ruby exception) so joiners see `:aborted`
 /// instead of hanging forever.
@@ -643,6 +663,9 @@ pub fn ractor_new(
             let result = body.call_with_self(&RubyValue::Ractor(for_thread.clone()), &crossed);
             guard.disarm();
             let aborted = result.is_err();
+            if let Err(Signal::Raise(exc)) = &result {
+                report_terminated(&for_thread, exc);
+            }
             finish(&for_thread, result, aborted);
         })
         .expect("spawning a Ractor's OS thread");
