@@ -684,6 +684,17 @@ pub fn run_golden_env(
         return Ok(());
     }
 
+    // A `.jit-only` sidecar marks a golden that depends on the COMPILER and
+    // the program sharing one process, which only the JIT does. A linked
+    // binary carries an embedded compiler in a process of its own, so any
+    // compile-time state the whole-program compile published is absent from
+    // it. The file's content states which state and what the fix would be.
+    if std::env::var("ZEO_GOLDEN_BACKEND").is_ok_and(|b| b != "jit")
+        && std::fs::metadata(format!("{}.jit-only", rb.display())).is_ok()
+    {
+        return Ok(());
+    }
+
     let source = std::fs::read_to_string(rb)?;
     let sc = sidecars(rb)?;
 
