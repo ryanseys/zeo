@@ -655,43 +655,43 @@ block16:
     jump block11
 
 block10:
-    v153 = func_addr.i64 fn19
-    v154 = stack_addr.i64 ss0
-    v155 = load.i64 notrap aligned v154
-    v156 = stack_addr.i64 ss12
-    store notrap aligned v155, v156
+    v153 = iconst.i64 0
+    v154 = func_addr.i64 fn19
+    v155 = stack_addr.i64 ss0
+    v156 = load.i64 notrap aligned v155
     v157 = stack_addr.i64 ss12
-    v158 = iconst.i64 1
-    v159 = iconst.i64 0
-    v160 = iconst.i32 1
-    v161 = iconst.i32 0
-    v162 = iconst.i8 0
-    v163 = stack_addr.i64 ss13
-    store notrap aligned v162, v163  ; v162 = 0
-    v164 = iconst.i64 44
-    v165 = iadd.i64 v1, v164  ; v164 = 44
-    v166 = stack_addr.i64 ss13+8
-    store notrap aligned v165, v166
-    v167 = iconst.i64 1
-    v168 = stack_addr.i64 ss13+16
-    store notrap aligned v167, v168  ; v167 = 1
-    v169 = stack_addr.i64 ss13
-    v170 = iconst.i64 1
-    v171 = iconst.i64 2
-    v172 = iconst.i32 3
-    v173 = iconst.i64 45
-    v174 = iadd.i64 v1, v173  ; v173 = 45
-    v175 = iconst.i64 5
-    v176 = stack_addr.i64 ss11
-    call fn20(v153, v157, v158, v12, v159, v159, v160, v161, v169, v170, v1, v171, v172, v174, v175, v176)  ; v158 = 1, v159 = 0, v159 = 0, v160 = 1, v161 = 0, v170 = 1, v171 = 2, v172 = 3, v175 = 5
+    store notrap aligned v156, v157
+    v158 = stack_addr.i64 ss12
+    v159 = iconst.i64 1
+    v160 = iconst.i64 0
+    v161 = iconst.i32 1
+    v162 = iconst.i32 0
+    v163 = iconst.i8 0
+    v164 = stack_addr.i64 ss13
+    store notrap aligned v163, v164  ; v163 = 0
+    v165 = iconst.i64 44
+    v166 = iadd.i64 v1, v165  ; v165 = 44
+    v167 = stack_addr.i64 ss13+8
+    store notrap aligned v166, v167
+    v168 = iconst.i64 1
+    v169 = stack_addr.i64 ss13+16
+    store notrap aligned v168, v169  ; v168 = 1
+    v170 = stack_addr.i64 ss13
+    v171 = iconst.i64 1
+    v172 = iconst.i64 2
+    v173 = iconst.i32 3
+    v174 = iconst.i64 45
+    v175 = iadd.i64 v1, v174  ; v174 = 45
+    v176 = iconst.i64 5
     v177 = stack_addr.i64 ss11
-    v178 = iconst.i64 0
+    call fn20(v154, v158, v159, v12, v160, v160, v161, v162, v170, v171, v1, v172, v173, v175, v176, v177)  ; v159 = 1, v160 = 0, v160 = 0, v161 = 1, v162 = 0, v171 = 1, v172 = 2, v173 = 3, v176 = 5
+    v178 = stack_addr.i64 ss11
     v179 = load.i32 notrap aligned v2+8
     v180 = iconst.i32 0
     v181 = iconst.i64 0
     v182 = stack_addr.i64 ss6
     v183 = symbol_value.i64 gv3
-    v184 = call fn21(v183, v180, v75, v179, v178, v181, v177, v182)  ; v180 = 0, v178 = 0, v181 = 0
+    v184 = call fn21(v183, v180, v75, v179, v153, v181, v178, v182)  ; v180 = 0, v153 = 0, v181 = 0
     brif v184, block36, block35
 
 block36:

@@ -114,19 +114,6 @@ pub(crate) fn direct_call_kw(
     block: Option<NodeId>,
 ) -> Result<Operand, String> {
     let decl_has_blk = fx.em.methods[name].has_blk;
-    // A literal block on a method that never uses one is never invoked --
-    // nothing to build (Ruby's own rule).
-    let blk_ptr = match (block, decl_has_blk) {
-        (Some(blk_node), true) => {
-            let (proc_ss, _) = super::blocks::build_proc(fx, site, blk_node)?;
-            // The callee consumes the moved-in proc.
-            fx.owned_consumed += 1;
-            Some(fx.slot_addr(proc_ss, 0))
-        }
-        (Some(_), false) => None,
-        (None, true) => Some(fx.b.ins().iconst(fx.em.ptr, 0)),
-        (None, false) => None,
-    };
     let ptrs = arg_ptrs(fx, site, args)?;
     // Keyword VALUES evaluate in written order (they are ordinary
     // argument expressions), and land in the callee's DECLARED order --
@@ -148,6 +135,20 @@ pub(crate) fn direct_call_kw(
             }
             order.iter().map(|&i| written[i]).collect()
         }
+    };
+    // The proc is built LAST -- see `BlockChannel`. A literal block on a
+    // method that never uses one is never invoked, so it is not built at
+    // all (Ruby's own rule).
+    let blk_ptr = match (block, decl_has_blk) {
+        (Some(blk_node), true) => {
+            let (proc_ss, _) = super::blocks::build_proc(fx, site, blk_node)?;
+            // The callee consumes the moved-in proc.
+            fx.owned_consumed += 1;
+            Some(fx.slot_addr(proc_ss, 0))
+        }
+        (Some(_), false) => None,
+        (None, true) => Some(fx.b.ins().iconst(fx.em.ptr, 0)),
+        (None, false) => None,
     };
     super::stmt::stamp_call_line(fx, site);
     let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
@@ -314,14 +315,13 @@ pub(crate) fn construct_compiled(
     site: NodeId,
     cid: crate::compiler::ClassId,
     args: &[ArrayElem],
-    blk: Option<cranelift_codegen::ir::Value>,
+    blk: super::blocks::BlockChannel,
 ) -> Result<Operand, String> {
     let argv_ptr = build_argv(fx, site, args)?;
+    let blk_ptr = blk.open(fx, site)?;
     super::stmt::stamp_call_line(fx, site);
     let cid_v = fx.b.ins().iconst(types::I32, i64::from(cid.0));
     let argc_v = fx.b.ins().iconst(fx.em.ptr, args.len() as i64);
-    // `literal_block_ptr` already books the move to the callee.
-    let blk_ptr = blk.unwrap_or_else(|| fx.b.ins().iconst(fx.em.ptr, 0));
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
     let status = fx
@@ -460,9 +460,8 @@ pub(crate) fn splat_send(
     name: &str,
     args: &[ArrayElem],
     kwargs: &[crate::hir::KwArg],
-    blk: Option<cranelift_codegen::ir::Value>,
+    blk: super::blocks::BlockChannel,
 ) -> Result<Operand, String> {
-    let _ = site;
     let bypass = recv.bypass;
     let recv_ptr = match &recv.op {
         Some(op) => {
@@ -485,7 +484,7 @@ pub(crate) fn splat_send(
     // `ruby2_keywords`' whole purpose: a marked forwarder's splat keeps a
     // trailing hash's keyword mark.
     let unmark = fx.b.ins().iconst(types::I8, i64::from(!fx.ruby2_keywords));
-    let blk_ptr = blk.unwrap_or_else(|| fx.b.ins().iconst(fx.em.ptr, 0));
+    let blk_ptr = blk.open(fx, site)?;
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
     let status = match recv.op {
@@ -506,7 +505,7 @@ pub(crate) fn splat_send(
         ),
     }
     .expect("splat sends return a status");
-    if blk.is_some() {
+    if blk.is_open() {
         super::blocks::catch_break(fx, status, out);
     } else {
         fx.fallible(status);
@@ -530,7 +529,7 @@ pub(crate) fn kw_send(
     name: &str,
     args: &[ArrayElem],
     kwargs: &[crate::hir::KwArg],
-    blk: Option<cranelift_codegen::ir::Value>,
+    blk: super::blocks::BlockChannel,
 ) -> Result<Operand, String> {
     let bypass = recv.bypass;
     let recv_ptr = match &recv.op {
@@ -548,7 +547,7 @@ pub(crate) fn kw_send(
     let sym = fx.sym_id(name);
     let zero_box = fx.box_v();
     let argc_v = fx.b.ins().iconst(fx.em.ptr, args.len() as i64);
-    let blk_ptr = blk.unwrap_or_else(|| fx.b.ins().iconst(fx.em.ptr, 0));
+    let blk_ptr = blk.open(fx, site)?;
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
     let status = match recv.op {
@@ -569,7 +568,7 @@ pub(crate) fn kw_send(
         ),
     }
     .expect("kw sends return a status");
-    if blk.is_some() {
+    if blk.is_open() {
         super::blocks::catch_break(fx, status, out);
     } else {
         fx.fallible(status);

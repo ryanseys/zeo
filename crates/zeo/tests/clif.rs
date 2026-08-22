@@ -55,6 +55,22 @@ fn clif_snapshot_fused_each_guards() {
     ));
 }
 
+/// A send whose argument list runs before its literal block: the argument
+/// is lowered, and only then does `zeo_rt_proc_new` build the proc.
+///
+/// The order is load-bearing, not cosmetic. The proc is MOVED to the
+/// callee, so no landing can release it; an argument that raises between
+/// the two leaks it, which is what
+/// `a_raise_in_an_argument_keeps_the_block_unbuilt.rb` measures. It is
+/// also ruby's own order -- the receiver and the arguments run first, and
+/// the block is made last.
+#[test]
+fn clif_snapshot_block_after_arguments() {
+    insta::assert_snapshot!(clif_of(
+        "def take(n)\n  yield n\nend\ndef arg\n  1\nend\ndef go\n  take(arg) { |x| p x }\nend\ngo\n",
+    ));
+}
+
 /// Two compiles of one program are byte-identical -- object emission is a
 /// pure function of the CLIF.
 #[test]

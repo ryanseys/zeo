@@ -872,7 +872,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                         "initialize",
                         &elems,
                         &kwargs,
-                        None,
+                        super::blocks::BlockChannel::None,
                     )?
                 };
                 ownership::discard(fx, init);
@@ -904,11 +904,11 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 })
             {
                 let elems: Vec<ArrayElem> = args.iter().map(|&a| ArrayElem::Single(a)).collect();
-                let blk_ptr = match block {
-                    Some(b) => Some(super::blocks::literal_block_ptr(fx, id, b)?),
-                    None => None,
+                let blk = match block {
+                    Some(b) => super::blocks::BlockChannel::Literal(b),
+                    None => super::blocks::BlockChannel::None,
                 };
-                return super::call::construct_compiled(fx, id, cid, &elems, blk_ptr);
+                return super::call::construct_compiled(fx, id, cid, &elems, blk);
             }
             // A statically-known class is a Class immediate; a constant
             // holding a RUNTIME class (`Struct.new`/`Data.define`) is read
@@ -919,18 +919,15 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 // `Foo.new(x) { .. }`: the literal block forwards to
                 // `initialize`, so `yield`/`block_given?` inside it see it.
                 (Some(blk), true) => super::blocks::block_send_op(fx, id, recv, "new", &elems, blk),
-                (Some(blk), false) => {
-                    let bp = super::blocks::literal_block_ptr(fx, id, blk)?;
-                    super::call::kw_send(
-                        fx,
-                        id,
-                        super::call::Recv::at(recv),
-                        "new",
-                        &elems,
-                        &kwargs,
-                        Some(bp),
-                    )
-                }
+                (Some(blk), false) => super::call::kw_send(
+                    fx,
+                    id,
+                    super::call::Recv::at(recv),
+                    "new",
+                    &elems,
+                    &kwargs,
+                    super::blocks::BlockChannel::Literal(blk),
+                ),
                 (None, true) => super::call::dynamic_send_value(fx, id, recv, "new", &elems, false),
                 (None, false) => super::call::kw_send(
                     fx,
@@ -939,7 +936,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                     "new",
                     &elems,
                     &kwargs,
-                    None,
+                    super::blocks::BlockChannel::None,
                 ),
             }
         }
@@ -1012,8 +1009,8 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                     &kwargs,
                     blk,
                 )?
-            } else if let Some(bp) = blk {
-                super::blocks::send_with_block_ptr_ops(fx, id, through, &name, &args, bp, bypass)?
+            } else if blk.is_open() {
+                super::blocks::send_with_block_ptr_ops(fx, id, through, &name, &args, blk, bypass)?
             } else if let Some(op) = through {
                 super::call::dynamic_send_value(fx, id, op, &name, &args, bypass)?
             } else {
@@ -1089,7 +1086,6 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                     Some(r) => Some(lower_expr(fx, r)?),
                     None => None,
                 };
-                let bp = super::blocks::literal_block_ptr(fx, id, blk)?;
                 let bypass = bypasses_visibility(fx, receiver);
                 return super::call::splat_send(
                     fx,
@@ -1098,7 +1094,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                     &name,
                     &args,
                     &[],
-                    Some(bp),
+                    super::blocks::BlockChannel::Literal(blk),
                 );
             }
             super::blocks::block_send(fx, id, receiver, &name, &args, blk)
@@ -1164,7 +1160,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                     &name,
                     &args,
                     &[],
-                    None,
+                    super::blocks::BlockChannel::None,
                 );
             }
             match receiver {
@@ -1643,11 +1639,14 @@ fn block_channel(
     id: NodeId,
     block: Option<NodeId>,
     block_arg: Option<NodeId>,
-) -> Result<Option<cranelift_codegen::ir::Value>, String> {
+) -> Result<super::blocks::BlockChannel, String> {
+    use super::blocks::BlockChannel;
     match (block, block_arg) {
-        (None, None) => Ok(None),
-        (Some(blk), None) => Ok(Some(super::blocks::literal_block_ptr(fx, id, blk)?)),
-        (None, Some(ba)) => Ok(Some(super::blocks::block_arg_ptr(fx, ba)?)),
+        (None, None) => Ok(BlockChannel::None),
+        // The literal stays UNBUILT; the `&expr` conversion cannot, since
+        // it runs ruby code of its own and belongs in written order.
+        (Some(blk), None) => Ok(BlockChannel::Literal(blk)),
+        (None, Some(ba)) => Ok(BlockChannel::Ready(super::blocks::block_arg_ptr(fx, ba)?)),
         (Some(_), Some(_)) => fx.unsupported(id, "a literal block beside a `&` block argument"),
     }
 }

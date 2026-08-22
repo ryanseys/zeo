@@ -1093,8 +1093,54 @@ pub(crate) fn block_send_op(
     args: &[ArrayElem],
     block: NodeId,
 ) -> Result<Operand, String> {
-    let blk_ptr = literal_block_ptr(fx, site, block)?;
-    send_with_block_ptr_ops(fx, site, Some(recv), name, args, blk_ptr, false)
+    send_with_block_ptr_ops(
+        fx,
+        site,
+        Some(recv),
+        name,
+        args,
+        BlockChannel::Literal(block),
+        false,
+    )
+}
+
+/// The block a call site opens, held UNBUILT until the call is ready.
+///
+/// A literal block's proc is MOVED to the callee, so nothing between the
+/// proc's creation and the call may raise. An unwind in that window leaks
+/// the proc: the frame epilogue cannot release the slot, because on every
+/// other path the callee has already taken the value out of it. Keeping
+/// the block unbuilt until the receiver and the arguments are lowered is
+/// what keeps the window empty -- and it is ruby's own order, which makes
+/// the block last.
+#[derive(Clone, Copy)]
+pub(crate) enum BlockChannel {
+    /// The site writes no block.
+    None,
+    /// `{ .. }` / `do .. end`.
+    Literal(NodeId),
+    /// A pointer built elsewhere -- a `&expr` conversion, or a forwarded
+    /// block. Whoever built it books the move.
+    Ready(ir::Value),
+}
+
+impl BlockChannel {
+    /// Whether the callee is handed a block at all. A `&expr` that
+    /// converts to nil still opens the channel: the send needs the
+    /// `break` landing either way.
+    pub(crate) fn is_open(self) -> bool {
+        !matches!(self, Self::None)
+    }
+
+    /// Build the proc, last. The answer is the callee's `blk` argument --
+    /// a null pointer when the site writes no block.
+    pub(crate) fn open(self, fx: &mut Fx, site: NodeId) -> Result<ir::Value, String> {
+        match self {
+            Self::None => Ok(fx.b.ins().iconst(fx.em.ptr, 0)),
+            Self::Literal(block) => literal_block_ptr(fx, site, block),
+            Self::Ready(ptr) => Ok(ptr),
+        }
+    }
 }
 
 /// The block channel a literal `{ .. }`/`do .. end` opens: the proc is
@@ -1154,8 +1200,7 @@ pub(crate) fn block_send(
     args: &[ArrayElem],
     block: NodeId,
 ) -> Result<Operand, String> {
-    let blk_ptr = literal_block_ptr(fx, site, block)?;
-    send_with_block_ptr(fx, site, recv, name, args, blk_ptr)
+    send_with_block_ptr(fx, site, recv, name, args, BlockChannel::Literal(block))
 }
 
 /// A call site's `&expr` block argument: convert (Proc through, Symbol to
@@ -1177,7 +1222,15 @@ pub(crate) fn block_arg_send(
         None => None,
     };
     let blk_ptr = block_arg_ptr(fx, block_arg)?;
-    send_with_block_ptr_ops(fx, site, recv_op, name, args, blk_ptr, bypass)
+    send_with_block_ptr_ops(
+        fx,
+        site,
+        recv_op,
+        name,
+        args,
+        BlockChannel::Ready(blk_ptr),
+        bypass,
+    )
 }
 
 /// [`block_send`]'s tail with the receiver already lowered.
@@ -1187,14 +1240,14 @@ fn send_with_block_ptr(
     recv: Option<NodeId>,
     name: &str,
     args: &[ArrayElem],
-    blk_ptr: ir::Value,
+    blk: BlockChannel,
 ) -> Result<Operand, String> {
     let bypass = super::expr::bypasses_visibility(fx, recv);
     let recv_op = match recv {
         Some(r) => Some(super::expr::lower_expr(fx, r)?),
         None => None,
     };
-    send_with_block_ptr_ops(fx, site, recv_op, name, args, blk_ptr, bypass)
+    send_with_block_ptr_ops(fx, site, recv_op, name, args, blk, bypass)
 }
 
 pub(crate) fn send_with_block_ptr_ops(
@@ -1203,7 +1256,7 @@ pub(crate) fn send_with_block_ptr_ops(
     recv: Option<Operand>,
     name: &str,
     args: &[ArrayElem],
-    blk_ptr: ir::Value,
+    blk: BlockChannel,
     bypass: bool,
 ) -> Result<Operand, String> {
     let recv_ptr = match recv {
@@ -1231,10 +1284,11 @@ pub(crate) fn send_with_block_ptr_ops(
             name,
             args,
             &[],
-            Some(blk_ptr),
+            blk,
         );
     }
     let argv_ptr = super::call::build_argv(fx, site, args)?;
+    let blk_ptr = blk.open(fx, site)?;
     let sym = fx.sym_id(name);
     let zero_box = fx.box_v();
     let argc_v = fx.b.ins().iconst(fx.em.ptr, args.len() as i64);

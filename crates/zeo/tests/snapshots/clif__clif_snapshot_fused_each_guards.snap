@@ -399,33 +399,33 @@ block16:
     jump block11
 
 block10:
-    v78 = func_addr.i64 fn15
-    v79 = iconst.i64 0
+    v78 = iconst.i64 0
+    v79 = func_addr.i64 fn15
     v80 = iconst.i64 0
     v81 = iconst.i64 0
-    v82 = iconst.i32 1
-    v83 = iconst.i32 0
-    v84 = iconst.i8 0
-    v85 = stack_addr.i64 ss7
-    store notrap aligned v84, v85  ; v84 = 0
-    v86 = iconst.i64 44
-    v87 = iadd.i64 v2, v86  ; v86 = 44
-    v88 = stack_addr.i64 ss7+8
-    store notrap aligned v87, v88
-    v89 = iconst.i64 1
-    v90 = stack_addr.i64 ss7+16
-    store notrap aligned v89, v90  ; v89 = 1
-    v91 = stack_addr.i64 ss7
-    v92 = iconst.i64 1
-    v93 = iconst.i64 2
-    v94 = iconst.i32 3
-    v95 = iconst.i64 45
-    v96 = iadd.i64 v2, v95  ; v95 = 45
-    v97 = iconst.i64 0
-    v98 = stack_addr.i64 ss1
-    call fn16(v78, v79, v80, v0, v81, v81, v82, v83, v91, v92, v2, v93, v94, v96, v97, v98)  ; v79 = 0, v80 = 0, v81 = 0, v81 = 0, v82 = 1, v83 = 0, v92 = 1, v93 = 2, v94 = 3, v97 = 0
+    v82 = iconst.i64 0
+    v83 = iconst.i32 1
+    v84 = iconst.i32 0
+    v85 = iconst.i8 0
+    v86 = stack_addr.i64 ss7
+    store notrap aligned v85, v86  ; v85 = 0
+    v87 = iconst.i64 44
+    v88 = iadd.i64 v2, v87  ; v87 = 44
+    v89 = stack_addr.i64 ss7+8
+    store notrap aligned v88, v89
+    v90 = iconst.i64 1
+    v91 = stack_addr.i64 ss7+16
+    store notrap aligned v90, v91  ; v90 = 1
+    v92 = stack_addr.i64 ss7
+    v93 = iconst.i64 1
+    v94 = iconst.i64 2
+    v95 = iconst.i32 3
+    v96 = iconst.i64 45
+    v97 = iadd.i64 v2, v96  ; v96 = 45
+    v98 = iconst.i64 0
     v99 = stack_addr.i64 ss1
-    v100 = iconst.i64 0
+    call fn16(v79, v80, v81, v0, v82, v82, v83, v84, v92, v93, v2, v94, v95, v97, v98, v99)  ; v80 = 0, v81 = 0, v82 = 0, v82 = 0, v83 = 1, v84 = 0, v93 = 1, v94 = 2, v95 = 3, v98 = 0
+    v100 = stack_addr.i64 ss1
     v101 = load.i32 notrap aligned v3+4
     v102 = iconst.i32 0
     v103 = iconst.i64 0
@@ -433,7 +433,7 @@ block10:
     v105 = symbol_value.i64 gv3
     v106 = iconst.i64 112
     v107 = iadd v105, v106  ; v106 = 112
-    v108 = call fn13(v107, v102, v30, v101, v100, v103, v99, v104)  ; v102 = 0, v100 = 0, v103 = 0
+    v108 = call fn13(v107, v102, v30, v101, v78, v103, v100, v104)  ; v102 = 0, v78 = 0, v103 = 0
     brif v108, block24, block23
 
 block24:
