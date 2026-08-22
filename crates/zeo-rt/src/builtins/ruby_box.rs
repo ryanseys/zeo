@@ -1,11 +1,12 @@
 //! `Ruby::Box` -- namespace isolation, env-gated exactly like CRuby's
-//! (`RUBY_BOX=1`). zeo's boxes are COMPILE-TIME: `box = Ruby::Box.new` as a
-//! top-level statement allocates one in the compiler, `box.eval`/`box.require`
-//! splice AOT, and each box's top-level constants live on a surrogate class
-//! (`#<Ruby::Box:N>` -- see `crate::boxes`). The rows here carry the dynamic
-//! surface: the disabled-mode refusals with CRuby's messages, and `eval` on a
-//! box value routed through the runtime `eval` entry with the box's OWN top-level owner
-//! (so a dynamic `box.eval("X = 1")` lands in the box, not on `Object`).
+//! (`RUBY_BOX=1`).
+//!
+//! A box's top-level constants live on a SURROGATE class. `box =
+//! Ruby::Box.new` as a top-level statement allocates one at COMPILE time
+//! (so `box.eval`/`box.require` splice AOT, which is the fast, statically
+//! typed path); anywhere else it mints one at run time. Either way the
+//! handle IS the surrogate class -- `Ruby::Box < Module` in CRuby too --
+//! and `crate::boxes` owns the table both halves share.
 //!
 //! `Ruby` itself is the identity namespace: the `RUBY_*` constants under
 //! their modern spellings, seeded by bootstrap from the same one source.
@@ -23,22 +24,21 @@ mod ruby_ns {
     }
 }
 
-/// The DYNAMIC allocation path (an expression-position `.new` the
-/// compile-time box loader did not claim): CRuby's disabled refusal when
-/// ungated, the compile-time-model refusal otherwise. A `ConstructorFn`
-/// rather than a table row, so `Ruby::Box.singleton_methods(false)` stays
-/// `[:current, :enabled?]` like CRuby's (the Pathname precedent).
+/// The RUN-TIME allocation path -- an expression-position `.new`, or one
+/// the compile-time box loader did not claim. A `ConstructorFn` rather
+/// than a table row, so `Ruby::Box.singleton_methods(false)` matches
+/// CRuby's (the Pathname precedent).
 fn box_construct(
     _id: crate::ClassId,
     _args: &[RubyValue],
     _block: Option<RubyValue>,
 ) -> Result<RubyValue, crate::Signal> {
-    if !boxes::boxes_enabled() {
-        return Err(boxes::disabled_error());
-    }
-    Err(crate::builtins::not_impl_error!(
-        "dynamic `Ruby::Box.new` isn't supported (zeo boxes are compile-time; write `box = Ruby::Box.new` as a top-level statement)"
-    ))
+    boxes::new_box()
+}
+
+/// Whether `recv` is the handle for exactly box `want`.
+fn box_kind_is(recv: &RubyValue, want: u32) -> bool {
+    boxes::box_of_surrogate(recv) == Some(want)
 }
 
 pub fn register_ruby_box(registry: &mut crate::dispatch::ClassRegistry) {
@@ -76,21 +76,28 @@ mod box_class {
         def self."enabled?"(_recv) {
             Ok(RubyValue::Bool(boxes::boxes_enabled()))
         }
-        // The current box as a VALUE. zeo bakes the enclosing box into each
-        // emit site at compile time (there is no runtime current-box), so the
-        // dynamic row answers what CRuby's disabled mode answers; box-scoped
-        // code sees its own box through the compile-time handle instead.
+        // The box the CALLER runs in. A method row cannot see that -- a
+        // `MethodFn` takes no box -- so the emitter FOLDS every literal
+        // `Ruby::Box.current` to its own site's box, and this row is what a
+        // computed `Ruby::Box.send(:current)` reaches: main, which is where
+        // all but a box's own code runs.
         def self."current"(_recv) {
+            if !boxes::boxes_enabled() {
+                return Ok(RubyValue::Nil);
+            }
+            boxes::handle_of(boxes::MAIN)
+        }
+        def self."main"(_recv) { boxes::handle_of(boxes::MAIN) }
+        def self."root"(_recv) { boxes::handle_of(boxes::ROOT) }
+        def self."master"(_recv) { boxes::handle_of(boxes::MASTER) }
+        // `Ruby::Box.new` runs the CONSTRUCTOR (`box_construct`), which
+        // mints; `initialize` exists so the row set matches CRuby's.
+        private def "initialize"(_recv) {
             Ok(RubyValue::Nil)
         }
-        private def "initialize"(_recv) {
-            if !boxes::boxes_enabled() {
-                return Err(boxes::disabled_error());
-            }
-            Err(crate::builtins::not_impl_error!(
-                "dynamic `Ruby::Box.new` isn't supported (zeo boxes are compile-time; write `box = Ruby::Box.new` as a top-level statement)"
-            ))
-        }
+        def "main?"(recv) { Ok(RubyValue::Bool(box_kind_is(recv, boxes::MAIN))) }
+        def "root?"(recv) { Ok(RubyValue::Bool(box_kind_is(recv, boxes::ROOT))) }
+        def "master?"(recv) { Ok(RubyValue::Bool(box_kind_is(recv, boxes::MASTER))) }
         def "eval"(recv, src) {
             let source = match src {
                 RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
@@ -120,13 +127,14 @@ mod box_class {
                 "dynamic `Ruby::Box#require`/`#load` isn't supported (zeo requires splice at compile time; write `box.require \"feature\"` as a top-level statement)"
             ))
         }
+        // CRuby's own form: `#<Ruby::Box:4,user,optional>`. The number is
+        // the DISPLAY id (master 1, root 2, main 3, users from 4), never
+        // the internal one codegen bakes.
         def "inspect"(recv) {
-            let RubyValue::Class(cid) = recv else {
+            let Some(bx) = boxes::box_of_surrogate(recv) else {
                 return Err(raise_error("TypeError", "not a box".to_string()));
             };
-            let name = crate::dispatch::class_name(*cid)
-                .unwrap_or_else(|| "#<Ruby::Box>".to_string());
-            Ok(RubyValue::Str(crate::string_new(name)))
+            Ok(RubyValue::Str(crate::string_new(boxes::describe(bx))))
         }
     }
 }

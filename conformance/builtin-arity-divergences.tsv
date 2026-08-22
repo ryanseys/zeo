@@ -41,3 +41,9 @@ zeo-only	Random::Formatter	i	random_bytes	no random_bytes in CRuby's chain
 zeo-only	Random::Formatter	i	urlsafe_base64	no urlsafe_base64 in CRuby's chain
 zeo-only	Random::Formatter	i	uuid	no uuid in CRuby's chain
 zeo-only	Random::Formatter	i	uuid_v4	no uuid_v4 in CRuby's chain
+zeo-only	Ruby::Box	i	main?	the gate-only rows: ruby defines them under RUBY_BOX=1 and the oracle dump runs without it (see tests/gaps/a_disabled_box_still_carries_its_gate_rows.rb)
+zeo-only	Ruby::Box	i	master?	as `main?`
+zeo-only	Ruby::Box	i	root?	as `main?`
+zeo-only	Ruby::Box	s	main	as `main?`
+zeo-only	Ruby::Box	s	master	as `main?`
+zeo-only	Ruby::Box	s	root	as `main?`

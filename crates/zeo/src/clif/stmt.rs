@@ -429,9 +429,8 @@ fn const_multi_write(
     let owner = fx
         .an
         .compiler
-        .class(owner_class)
-        .const_owners
-        .get(name)
+        .class_opt(owner_class)
+        .and_then(|c| c.const_owners.get(name))
         .copied()
         .unwrap_or(owner_class)
         .0;

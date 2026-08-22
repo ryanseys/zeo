@@ -1445,13 +1445,18 @@ impl Compiler {
     /// source spells `#<zeo:reserved N>`) and a snippet registers nothing,
     /// so none of them reaches an emitted table.
     pub fn adopt_box_surrogate(&mut self, box_id: u32, cid: ClassId) {
-        while self.classes.len() <= cid.0 as usize {
-            let n = self.classes.len();
-            self.add_class(format!("#<zeo:reserved {n}>"), None, true);
-        }
-        self.classes[cid.0 as usize].box_id = box_id;
-        self.classes[cid.0 as usize].name = format!("#<Ruby::Box:{box_id}>");
         self.box_surrogates.insert(box_id, cid);
+    }
+
+    /// [`class`](Self::class) for an id this compiler may have no entry
+    /// for. A snippet ADOPTS the surrogate of the box its `eval` runs in
+    /// (see [`adopt_box_surrogate`](Self::adopt_box_surrogate)) without
+    /// materializing a class for it -- a run-time box's id is above
+    /// `RUNTIME_CLASS_ID_BASE` and could not be materialized anyway -- so
+    /// every LEXICAL question about it answers "nothing", which is
+    /// correct: a snippet has no lexical knowledge of it.
+    pub fn class_opt(&self, id: ClassId) -> Option<&ClassInfo> {
+        self.classes.get(id.0 as usize)
     }
 
     /// Whether `cid` is a singleton-class SURROGATE -- the module a
@@ -2303,6 +2308,7 @@ impl Compiler {
     /// `methods` -- used for `ClassName.foo(...)` call sites (see
     /// `HirNode::ClassRef`'s docs).
     pub fn class_method_in_chain(&self, class: ClassId, name: &str) -> Option<(ClassId, ScopeId)> {
+        self.class_opt(class)?;
         self.lookup_class_method(class, name)
             .map(|e| (e.defined_class(self), e.def))
     }

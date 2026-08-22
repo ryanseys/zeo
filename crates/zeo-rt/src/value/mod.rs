@@ -557,6 +557,11 @@ impl RubyValue {
             // through to the `to_s` rendering and lost the suffix, so
             // `K.inspect` and `p K` disagreed.
             RubyValue::Class(cid) => {
+                // A box HANDLE renders as the box, not as the surrogate
+                // module standing in for its top level.
+                if let Some(bx) = crate::boxes::box_of_surrogate_class(*cid) {
+                    return Ok(crate::boxes::describe(bx));
+                }
                 let mut n = crate::dispatch::class_name(*cid)
                     .unwrap_or_else(|| format!("#<Class:{}>", cid.0));
                 if crate::builtins::rstruct::keyword_init_suffix(*cid) {
@@ -710,6 +715,12 @@ impl RubyValue {
                 // `runtime_meta::module_owner_class`.
                 if let Some(owner) = crate::runtime_meta::module_owner_class(*cid) {
                     owner
+                } else if crate::boxes::box_of_surrogate_class(*cid).is_some() {
+                    // A box HANDLE is a module -- `Ruby::Box < Module` in
+                    // CRuby too, which is why `box::X` resolves -- but it is
+                    // an instance of `Ruby::Box`, not of `Module`. Without
+                    // this `box.eval` silently found `Kernel#eval`.
+                    zeo_abi::RUBY_BOX_CLASS
                 } else if crate::dispatch::class_is_refinement(*cid) {
                     zeo_abi::REFINEMENT_CLASS
                 } else if crate::dispatch::class_is_module(*cid).unwrap_or(false) {

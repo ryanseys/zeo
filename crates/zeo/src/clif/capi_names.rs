@@ -88,6 +88,16 @@ pub const CAPI: &[CapiSig] = &[
         ret: Some(I32),
     },
     CapiSig {
+        name: "zeo_rt_box_current",
+        params: &[U32, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
+        name: "zeo_rt_box_handle",
+        params: &[U32, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
         name: "zeo_rt_call_singleton_super_target_args",
         params: &[U32, U8, U32, U32, Ptr, U8, Ptr, Ptr, Ptr],
         ret: Some(I32),

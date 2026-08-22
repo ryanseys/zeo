@@ -311,6 +311,10 @@ pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
             .collect();
         crate::globals::seed_load_path(&paths);
     }
+    // Each COMPILE-TIME box gets its own copy of what main was just
+    // seeded with. A run-time box seeds itself when it is minted; both go
+    // through the one seeder, so the two cannot drift.
+    crate::boxes::seed_compile_time_boxes();
     if desc.n_units > 0 {
         let units: Vec<(&'static str, crate::features::CUnitFn)> =
             unsafe { rows(desc.units, desc.n_units) }

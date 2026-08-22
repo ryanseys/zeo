@@ -399,6 +399,30 @@ pub fn seed_default_globals() {
     global_alias(0, "$\"", "$LOADED_FEATURES");
 }
 
+/// Seeds a freshly minted box's own globals. Oracle-verified against
+/// CRuby: `$LOAD_PATH` is a COPY of the creating box's (so a later
+/// `unshift` on either is invisible to the other) and `$LOADED_FEATURES`
+/// is EMPTY -- no feature main loaded counts as loaded in a new box.
+pub fn seed_box_globals(box_id: u32) {
+    let paths: Vec<RubyValue> = match global_get(0, "$LOAD_PATH") {
+        RubyValue::Array(a) => a.lock().iter().cloned().collect(),
+        _ => Vec::new(),
+    };
+    global_set(
+        box_id,
+        "$LOAD_PATH",
+        RubyValue::Array(crate::array_new(paths)),
+    );
+    global_alias(box_id, "$:", "$LOAD_PATH");
+    global_alias(box_id, "$-I", "$LOAD_PATH");
+    global_set(
+        box_id,
+        "$LOADED_FEATURES",
+        RubyValue::Array(crate::array_new(Vec::new())),
+    );
+    global_alias(box_id, "$\"", "$LOADED_FEATURES");
+}
+
 /// Fills `$LOADED_FEATURES` with the files the front end spliced -- called once
 /// from generated `main()`, after `seed_default_globals`.
 ///

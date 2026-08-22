@@ -56,6 +56,21 @@ pub fn run_ruby(source: &str) -> RunResult {
     run_ruby_configured(source, &[], &[])
 }
 
+/// [`run_ruby`] under CRuby's own box gate. `RUBY_BOX=1` is a RUN-TIME
+/// flag both ruby and zeo read, so a program that allocates a box is run
+/// under it -- and one that pins the DISABLED shape deliberately is not.
+#[allow(dead_code)] // each test binary compiles its own copy of this module
+pub fn run_ruby_boxed(source: &str) -> RunResult {
+    run_ruby_configured(source, &[("RUBY_BOX", "1")], &[])
+}
+
+/// [`run_ruby_project`] under the box gate -- see [`run_ruby_boxed`].
+#[allow(dead_code)]
+pub fn run_ruby_project_boxed(files: &[(&str, &str)], entry: &str, roots: &[&str]) -> RunResult {
+    let (_dir, source, opts) = write_project(files, entry, roots, &[]);
+    compile_link_run(&source, &opts, &[("RUBY_BOX", "1")], &[])
+}
+
 /// Multi-file harness for compile-time `require` resolution:
 /// writes `files` (relative path -> source) into a fresh per-test temp
 /// project directory, compiles `entry` (a key in `files`) with the project

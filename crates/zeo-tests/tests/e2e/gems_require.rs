@@ -1,5 +1,6 @@
 use crate::support::{
-    compile_packages, compile_project, run_ruby, run_ruby_packages, run_ruby_project,
+    compile_packages, compile_project, run_ruby, run_ruby_boxed, run_ruby_packages,
+    run_ruby_project, run_ruby_project_boxed,
 };
 
 #[test]
@@ -863,10 +864,10 @@ fn object_new_builds_a_distinct_boxed_sentinel() {
     assert_eq!(result.stdout, "false\ntrue\ntrue\n");
 }
 
-// -- Ruby::Box. Oracle: `RUBY_BOX=1 ruby -W:no-experimental`
-// (where our AOT model deliberately diverges -- handle inspect suffix,
-// compile-time rejections -- the expectation below states OUR documented
-// behavior).
+// -- Ruby::Box. Oracle: `RUBY_BOX=1 ruby -W:no-experimental`, which is
+// what `run_ruby_boxed`/`run_ruby_project_boxed` run the program under.
+// Where our AOT model deliberately diverges -- the compile-time
+// rejections -- the expectation states OUR documented behaviour.
 
 /// The keystone: a box-required file's classes are DISTINCT from main's
 /// (same file, different class objects), builtins are SHARED
@@ -875,7 +876,7 @@ fn object_new_builds_a_distinct_boxed_sentinel() {
 /// box model.
 #[test]
 fn box_isolation_and_shared_builtins() {
-    let result = run_ruby_project(
+    let result = run_ruby_project_boxed(
         &[
             (
                 "widget.rb",
@@ -902,7 +903,7 @@ fn box_isolation_and_shared_builtins() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(
         result.stdout,
-        "\"main widget\"\n\"box widget\"\nfalse\ntrue\n99\nnil\n#<Ruby::Box:1>\n"
+        "\"main widget\"\n\"box widget\"\nfalse\ntrue\n99\nnil\n#<Ruby::Box:4,user,optional>\n"
     );
 }
 
@@ -912,7 +913,7 @@ fn box_isolation_and_shared_builtins() {
 /// eval'ing the same class name get distinct classes.
 #[test]
 fn box_eval_defines_and_returns_across_the_boundary() {
-    let result = run_ruby(
+    let result = run_ruby_boxed(
         r#"
         box = Ruby::Box.new
         box.eval("class Gadget; def spin; 'spinning'; end; end")
@@ -941,7 +942,7 @@ fn box_eval_defines_and_returns_across_the_boundary() {
 /// catchable `TypeError` at runtime rather than a compile error.
 #[test]
 fn box_eval_dynamic_source_routes_through_the_vm() {
-    let result = run_ruby_project(
+    let result = run_ruby_project_boxed(
         &[
             (
                 "lib.rb",
@@ -981,7 +982,7 @@ fn box_eval_dynamic_source_routes_through_the_vm() {
 /// through the SHARED bootstrap superclass chain, and `e.class` names it.
 #[test]
 fn box_exceptions_are_rescuable_in_main() {
-    let result = run_ruby_project(
+    let result = run_ruby_project_boxed(
         &[
             (
                 "thrower.rb",
@@ -1006,7 +1007,7 @@ fn box_exceptions_are_rescuable_in_main() {
 /// a box reads nil for main's `$g`, and a box's write never reaches main.
 #[test]
 fn box_globals_are_fully_separate() {
-    let result = run_ruby(
+    let result = run_ruby_boxed(
         r#"
         $g = "main value"
         box = Ruby::Box.new
@@ -1054,7 +1055,7 @@ fn ruby_box_rejections_are_clean_errors() {
 /// failures rather than leaking main's definitions.
 #[test]
 fn main_definitions_are_invisible_inside_a_box() {
-    let result = run_ruby(
+    let result = run_ruby_boxed(
         r#"
         MAIN_ONLY = 42
         box = Ruby::Box.new
@@ -1071,7 +1072,7 @@ fn main_definitions_are_invisible_inside_a_box() {
 /// main's own `Object` table.
 #[test]
 fn master_constants_stay_visible_inside_a_box() {
-    let result = run_ruby(
+    let result = run_ruby_boxed(
         r#"
         VERSION_COPY = RUBY_VERSION
         box = Ruby::Box.new

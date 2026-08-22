@@ -522,6 +522,11 @@ fn run_via_cli(
     if !args.is_empty() {
         cmd.arg("--").args(args);
     }
+    // `RUBY_BOX=1` is a RUN-TIME flag both sides read, so the child gets
+    // exactly what the oracle gets (see `run_oracle`).
+    if source.contains("Ruby::Box.new") {
+        cmd.env("RUBY_BOX", "1");
+    }
     cmd.current_dir(run_cwd);
     run_bounded(&mut cmd, stdin, "zeo CLI (ZEO_GOLDEN_BACKEND)")
 }
@@ -584,9 +589,15 @@ fn run_oracle(
     for inc in &env.oracle_includes {
         cmd.arg("-I").arg(inc);
     }
-    // `Ruby::Box` examples need the experimental namespace flag + env.
+    // `Ruby::Box` examples need the experimental namespace flag, and one
+    // that ALLOCATES a box needs the gate. Naming the class is not enough:
+    // CRuby's disabled-mode surface is a smaller one, and
+    // `ruby_box_surface.rb` is what pins it.
     if source.contains("Ruby::Box") {
-        cmd.arg("-W:no-experimental").env("RUBY_BOX", "1");
+        cmd.arg("-W:no-experimental");
+        if source.contains("Ruby::Box.new") {
+            cmd.env("RUBY_BOX", "1");
+        }
     }
     cmd.arg(rb).args(args).current_dir(run_cwd);
     run_bounded(&mut cmd, stdin, "ruby oracle")

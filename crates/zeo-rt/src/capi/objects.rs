@@ -289,6 +289,31 @@ pub unsafe extern "C" fn zeo_rt_const_visibility(
     }
 }
 
+/// The HANDLE value for a box -- `Ruby::Box.new` at a program's top level
+/// (which allocates a COMPILE-time box) and `Ruby::Box.current`.
+///
+/// The env gate lives here rather than at the compile that allocated the
+/// box: `RUBY_BOX=1` is a run-time flag, and asking it while compiling
+/// would bake the build machine's environment into the program.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_box_handle(box_id: u32, out: *mut RubyValue) -> i32 {
+    // The refusal is CRuby's `Ruby::Box#initialize` one, so the frame it
+    // reports is that method's.
+    let _c = crate::frames::synthetic_c_frame("Ruby::Box#initialize");
+    super::dispatch::status_out(crate::boxes::handle_of(box_id), out)
+}
+
+/// `Ruby::Box.current` for a site in box `box_id`. Disabled mode answers
+/// `nil`, as CRuby's does.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_box_current(box_id: u32, out: *mut RubyValue) -> i32 {
+    if !crate::boxes::boxes_enabled() {
+        unsafe { out.write(RubyValue::Nil) };
+        return zeo_abi::abi::STATUS_OK;
+    }
+    super::dispatch::status_out(crate::boxes::handle_of(box_id), out)
+}
+
 /// `zeo_rt_const_get_cref`'s `flags`: the owner's chain defines a user
 /// `const_missing`, so a miss DISPATCHES it.
 pub const CONST_CREF_HOOK: u8 = 1;

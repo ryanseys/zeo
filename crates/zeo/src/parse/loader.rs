@@ -859,8 +859,14 @@ impl Loader {
                 hir.boxes += 1;
                 let box_id = hir.boxes;
                 frame.bind(lname.clone(), box_id);
+                // The handle asks the RUN TIME for the box (the `RUBY_BOX`
+                // gate is the program's own), so the statement's span is
+                // what a refusal reports.
+                let span = crate::lower::span_of(hir, &n);
+                hir.push_span(span);
                 let handle = hir.push(HirNode::BoxHandle(box_id));
                 let id = hir.push(HirNode::LocalWrite(lname, handle));
+                hir.pop_span();
                 combined.push(id);
                 own.push(id);
                 continue;

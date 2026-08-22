@@ -1,5 +1,6 @@
 use crate::support::{
     compile_packages, compile_project, run_ruby, run_ruby_packages, run_ruby_project,
+    run_ruby_project_boxed,
 };
 
 #[test]
@@ -1044,7 +1045,7 @@ fn qualified_class_paths_work_in_patterns_and_is_a() {
 /// motivating example, dispatch by DEFINING box.
 #[test]
 fn boxes_reexecute_files_and_patch_builtins_privately() {
-    let result = run_ruby_project(
+    let result = run_ruby_project_boxed(
         &[
             (
                 "blank.rb",

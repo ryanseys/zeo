@@ -40,6 +40,8 @@ capi_symbols!(
     bind::zeo_rt_bind_params,
     procs::zeo_rt_binding_new,
     procs::zeo_rt_block_arg_to_proc,
+    objects::zeo_rt_box_current,
+    objects::zeo_rt_box_handle,
     dispatch::zeo_rt_call_singleton_super_target_args,
     dispatch::zeo_rt_callsite_init,
     dispatch::zeo_rt_case_eq,

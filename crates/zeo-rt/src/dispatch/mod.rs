@@ -2141,6 +2141,12 @@ pub(crate) fn box_surrogate_class(box_id: u32) -> Option<ClassId> {
     box_surrogates()?.0.get(&box_id).map(|&c| ClassId(c))
 }
 
+/// The highest COMPILE-TIME box id this program declared -- where a
+/// run-time `Ruby::Box.new` starts numbering. 0 when it declared none.
+pub(crate) fn highest_compile_time_box() -> u32 {
+    box_surrogates().map_or(0, |m| m.0.keys().copied().max().unwrap_or(0))
+}
+
 /// The box a surrogate class belongs to -- [`box_surrogate_class`]'s reverse.
 pub(crate) fn box_of_surrogate_class(cid: ClassId) -> Option<u32> {
     box_surrogates()?.1.get(&cid.0).copied()

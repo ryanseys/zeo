@@ -482,9 +482,8 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 None => {
                     fx.an
                         .compiler
-                        .class(owner_class)
-                        .const_owners
-                        .get(&name)
+                        .class_opt(owner_class)
+                        .and_then(|c| c.const_owners.get(&name))
                         .copied()
                         .unwrap_or(owner_class)
                         .0
@@ -777,13 +776,13 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 tag: TagInfo::Unknown,
             })
         }
-        // The handle VALUE `box = Ruby::Box.new` binds: a Class of the
-        // box's top-level surrogate, so `p box` prints its registered
-        // `#<Ruby::Box:N>` name and handle equality works.
-        HirNode::BoxHandle(box_id) => match fx.an.compiler.box_surrogate(*box_id) {
-            Some(cid) => Ok(class_immediate(fx, cid)),
-            None => fx.unsupported(id, "a box with no surrogate"),
-        },
+        // The handle VALUE `box = Ruby::Box.new` binds. It IS the box's
+        // top-level surrogate class, which the emitter knows -- but the
+        // ENV GATE is a run-time question (`RUBY_BOX=1` is read by the
+        // program, not by the compile that built it), so the handle comes
+        // from the run time, which raises CRuby's refusal when boxes are
+        // off.
+        HirNode::BoxHandle(box_id) => box_handle(fx, *box_id),
         HirNode::Ffi(call) => {
             let call = call.clone();
             super::ffi::lower_ffi_call(fx, id, &call)
@@ -1103,6 +1102,9 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
         } if kwargs.is_empty() => {
             let (receiver, name, args) = (self_receiver(fx, *receiver), name.clone(), args.clone());
             if let Some(op) = module_nesting(fx, receiver, &name, &args)? {
+                return Ok(op);
+            }
+            if let Some(op) = box_current(fx, receiver, &name, &args)? {
                 return Ok(op);
             }
             // `__method__`/`__callee__` under an ALIAS: `__method__` is the
@@ -1514,9 +1516,8 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 None => {
                     fx.an
                         .compiler
-                        .class(owner_class)
-                        .const_owners
-                        .get(&name)
+                        .class_opt(owner_class)
+                        .and_then(|c| c.const_owners.get(&name))
                         .copied()
                         .unwrap_or(owner_class)
                         .0
@@ -1708,6 +1709,23 @@ fn cref_chain<'a>(fx: &'a Fx) -> &'a [crate::compiler::ClassId] {
     lexical_class(fx)
         .map(|c| fx.an.compiler.cref_of_ref(c))
         .unwrap_or(&[])
+}
+
+/// The run-time handle for a box, gate and all -- see the `BoxHandle` arm.
+pub(crate) fn box_handle(fx: &mut Fx, box_id: u32) -> Result<Operand, String> {
+    let bx = fx.b.ins().iconst(types::I32, i64::from(box_id));
+    let ss = fx.temp_slot();
+    let out = fx.slot_addr(ss, 0);
+    let status = fx
+        .call("zeo_rt_box_handle", &[bx, out])
+        .expect("box_handle returns a status");
+    fx.fallible(status);
+    fx.owned_created += 1;
+    Ok(Operand::Slot {
+        ss,
+        owned: true,
+        tag: TagInfo::Unknown,
+    })
 }
 
 /// The class a cref-less constant belongs to: `Object`, or -- inside a BOX
@@ -1940,9 +1958,8 @@ pub(crate) fn const_read(fx: &mut Fx, id: NodeId, name: &str) -> Result<Operand,
         return const_cref_call(fx, &chain, name, &qualified, true);
     }
     let owner = compiler
-        .class(defining)
-        .const_owners
-        .get(name)
+        .class_opt(defining)
+        .and_then(|c| c.const_owners.get(name))
         .copied()
         .unwrap_or(defining);
     // A miss on an owner whose chain defines a USER `const_missing`
@@ -1953,12 +1970,12 @@ pub(crate) fn const_read(fx: &mut Fx, id: NodeId, name: &str) -> Result<Operand,
         .class_method_in_chain(owner, "const_missing")
         .is_some();
     let mut chain: Vec<u32> = vec![owner.0];
-    let mut at = compiler.class(owner).cref_parent;
+    let mut at = compiler.class_opt(owner).and_then(|c| c.cref_parent);
     while let Some(cid) = at {
         if cid != owner && cid != top {
             chain.push(cid.0);
         }
-        at = compiler.class(cid).cref_parent;
+        at = compiler.class_opt(cid).and_then(|c| c.cref_parent);
     }
     if owner != top {
         chain.push(top.0);
@@ -3940,6 +3957,57 @@ pub(crate) fn binding_value_with_self(
 /// innermost first. It is compile-time knowledge and nothing else: a builtin
 /// row runs with no view of its caller's lexical scope, so folding here is
 /// the only way to answer anything but `[]` (rustc folds it the same way).
+/// `Ruby::Box.current` -- the box the SITE runs in.
+///
+/// No method row could answer this: a `MethodFn` takes no box, so a
+/// builtin row cannot see its caller's. The emitter can, because
+/// `Ctx.box_id` is baked at every site including a snippet's, so the
+/// literal spelling folds here and the row is left for a computed send.
+fn box_current(
+    fx: &mut Fx,
+    receiver: Option<crate::hir::NodeId>,
+    name: &str,
+    args: &[ArrayElem],
+) -> Result<Option<Operand>, String> {
+    if name != "current" || !args.is_empty() {
+        return Ok(None);
+    }
+    let Some(r) = receiver else { return Ok(None) };
+    // A whole-program compile folds `Ruby::Box` to a `ClassRef`; a SNIPPET
+    // folds nothing, so the same source arrives as an unresolved constant
+    // path -- and a snippet is exactly where this fold matters most.
+    // A whole-program compile folds `Ruby::Box` to a `ClassRef`; a SNIPPET
+    // folds nothing, so the same source arrives as a scoped constant read
+    // -- and a snippet is exactly where this fold matters most.
+    let names =
+        |scope: &str, leaf: &str| (scope.trim_start_matches("::").to_string(), leaf.to_string());
+    let (scope, leaf) = match &fx.an.compiler.hir[r] {
+        HirNode::ClassRef(n) => {
+            let (s, l) = crate::hir::split_const_path(n.trim_start_matches("::"));
+            names(s.unwrap_or(""), l)
+        }
+        HirNode::QualifiedConstRead(s, n) => names(s, n),
+        HirNode::ConstReadOrNil(s, n) => names(s.as_deref().unwrap_or(""), n),
+        _ => return Ok(None),
+    };
+    if !(scope == "Ruby" && leaf == "Box") {
+        return Ok(None);
+    }
+    let bx = fx.box_v();
+    let ss = fx.temp_slot();
+    let out = fx.slot_addr(ss, 0);
+    let status = fx
+        .call("zeo_rt_box_current", &[bx, out])
+        .expect("box_current returns a status");
+    fx.fallible(status);
+    fx.owned_created += 1;
+    Ok(Some(Operand::Slot {
+        ss,
+        owned: true,
+        tag: TagInfo::Unknown,
+    }))
+}
+
 /// `cref_chain` is outermost-first.
 fn module_nesting(
     fx: &mut Fx,
