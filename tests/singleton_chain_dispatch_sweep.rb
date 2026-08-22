@@ -310,3 +310,50 @@ puts "== the walk is stable across repeated asks"
 3.times { print Chained.tag, " " }
 puts
 p Chained.singleton_class.ancestors.map(&:to_s).first(4)
+
+puts "== a def self.x inside a singleton body is one level FURTHER up"
+class MetaHost
+  class << self
+    def plain = "plain"
+    def self.meta = "meta"
+  end
+end
+p MetaHost.plain
+p (MetaHost.meta rescue "MetaHost.meta -> #{$!.class}")
+p MetaHost.singleton_class.meta
+p MetaHost.singleton_class.singleton_methods(false)
+p MetaHost.singleton_methods(false).sort
+
+puts "== the same inside class << obj"
+target = Object.new
+class << target
+  def plain = "obj_plain"
+  def self.meta = "obj_meta"
+end
+p target.plain
+p (target.meta rescue "target.meta -> #{$!.class}")
+p target.singleton_class.meta
+
+puts "== a meta method takes arguments and a block like any other"
+class MetaArgs
+  class << self
+    def self.build(a, b = 2) = "build(#{a},#{b})"
+    def self.each_twice = [yield(1), yield(2)]
+  end
+end
+p MetaArgs.singleton_class.build(9)
+p MetaArgs.singleton_class.build(9, 3)
+p(MetaArgs.singleton_class.each_twice { |i| i * 10 })
+
+puts "== a meta method beside a mixin in the same singleton body"
+module MetaMix
+  def mixed = "mixed"
+end
+class MetaBoth
+  class << self
+    extend MetaMix
+    def self.meta = "meta"
+  end
+end
+p MetaBoth.singleton_class.meta
+p MetaBoth.singleton_class.mixed

@@ -47,6 +47,8 @@ fn desugar_singleton_items(
     #[allow(clippy::large_enum_variant)]
     enum Item {
         Def(String, Params, Vec<NodeId>),
+        /// `def self.x` in a `class << obj` body -- see its emission arm.
+        MetaDef(String, Params, Vec<NodeId>),
         Const,
         Nested(String, Option<String>, Vec<NodeId>, bool),
         Cond(NodeId, Vec<NodeId>, Vec<NodeId>),
@@ -75,6 +77,16 @@ fn desugar_singleton_items(
                 is_class_method: false,
                 ..
             } => Item::Def(name.clone(), (**params).clone(), body.clone()),
+            // `def self.x` here defines on the singleton's own singleton --
+            // `obj.singleton_class.x`. The `class << self` form takes the same
+            // route; see its `MetaMethod`.
+            HirNode::DefMethod {
+                name,
+                params,
+                body,
+                is_class_method: true,
+                ..
+            } => Item::MetaDef(name.clone(), (**params).clone(), body.clone()),
             // A constant inside `class << obj` (`class << RANDOM; MAX = ...;
             // def next; MAX; end; end`, tmpdir) lives on the object's singleton
             // class in real Ruby. zeo has no per-object singleton-class
@@ -202,21 +214,22 @@ fn desugar_singleton_items(
         match item {
             Item::Def(mname, params, body) => {
                 let recv = lower_node(result, hir, recv_node)?;
-                let lambda = hir.push(HirNode::Lambda {
-                    params: Box::new(params),
-                    body,
-                    method_body: true,
-                });
-                let sym = hir.push(HirNode::SymbolLit(mname));
-                out.push(hir.push(HirNode::Call {
-                    receiver: Some(recv),
-                    name: "define_singleton_method".to_string(),
-                    args: vec![ArrayElem::Single(sym), ArrayElem::Single(lambda)],
+                out.push(define_singleton_method_call(hir, recv, mname, params, body));
+            }
+            // `def self.x` inside `class << obj` -- one level further up
+            // again, on `obj.singleton_class`'s own singleton.
+            Item::MetaDef(mname, params, body) => {
+                let obj = lower_node(result, hir, recv_node)?;
+                let recv = hir.push(HirNode::Call {
+                    receiver: Some(obj),
+                    name: "singleton_class".to_string(),
+                    args: vec![],
                     kwargs: vec![],
                     block: None,
                     block_arg: None,
                     safe: false,
-                }));
+                });
+                out.push(define_singleton_method_call(hir, recv, mname, params, body));
             }
             Item::Const | Item::Passthrough => out.push(id),
             Item::Nested(name, superclass, body, is_module) => {
@@ -526,6 +539,33 @@ fn literal_symbol_args(hir: &Hir, args: &[ArrayElem]) -> Option<Vec<String>> {
 
 /// `self.singleton_class` evaluated in the enclosing class body -- `self` there
 /// is the class object, so this is the very class `class << self` opens.
+/// `recv.define_singleton_method(:name, ->(params) { body })` -- how a `def`
+/// written for a specific OBJECT reaches that object's singleton class, which
+/// zeo has no compile-time namespace for.
+fn define_singleton_method_call(
+    hir: &mut Hir,
+    recv: NodeId,
+    name: String,
+    params: Params,
+    body: Vec<NodeId>,
+) -> NodeId {
+    let lambda = hir.push(HirNode::Lambda {
+        params: Box::new(params),
+        body,
+        method_body: true,
+    });
+    let sym = hir.push(HirNode::SymbolLit(name));
+    hir.push(HirNode::Call {
+        receiver: Some(recv),
+        name: "define_singleton_method".to_string(),
+        args: vec![ArrayElem::Single(sym), ArrayElem::Single(lambda)],
+        kwargs: vec![],
+        block: None,
+        block_arg: None,
+        safe: false,
+    })
+}
+
 fn own_singleton_class(hir: &mut Hir) -> NodeId {
     let me = hir.push(HirNode::SelfRef);
     let recv = hir.push(HirNode::Call {
@@ -563,6 +603,9 @@ pub(super) fn map_class_self_items(
         ExtendSingleton(String),
         SingletonIvarWrite(String, NodeId),
         SingletonIvarRead(String),
+        /// A `def self.x` written in the singleton body -- a method of the
+        /// singleton's OWN singleton. See the `DefMethod` arm below.
+        MetaMethod(String, Params, Vec<NodeId>),
         SingletonSelf,
         SelfSend,
         /// Runs unchanged once every `self` it names is rewritten to
@@ -581,6 +624,20 @@ pub(super) fn map_class_self_items(
     }
     for &id in ids {
         let item = match &hir[id] {
+            // A `def self.x` HERE is one level further up: it defines a method
+            // on `#<Class:#<Class:K>>`, reached as `K.singleton_class.x`.
+            // Retagging it like a plain `def` put it one level too LOW, which
+            // answered `K.x` -- where ruby raises NoMethodError -- and left
+            // `K.singleton_class.x` undefined. The singleton class is an
+            // ordinary object at run time, so the def is a per-object
+            // singleton method ON it, exactly as `class << obj` spells one.
+            HirNode::DefMethod {
+                name,
+                params,
+                body,
+                is_class_method: true,
+                ..
+            } => Item::MetaMethod(name.clone(), (**params).clone(), body.clone()),
             HirNode::DefMethod { .. } => Item::Method,
             // `alias new old` here aliases a SINGLETON method (`class <<
             // self; alias split shellsplit`) -- retag it so analyze/mro
@@ -745,6 +802,10 @@ pub(super) fn map_class_self_items(
             Item::ClassAlias => {
                 hir.set_alias_is_class_method(id);
                 out.push(id);
+            }
+            Item::MetaMethod(mname, params, body) => {
+                let recv = own_singleton_class(hir);
+                out.push(define_singleton_method_call(hir, recv, mname, params, body));
             }
             Item::Passthrough => out.push(id),
             Item::Extend(m) => out.push(hir.push(HirNode::Extend(m))),

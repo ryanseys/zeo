@@ -86,3 +86,20 @@ FrozenError
 == the walk is stable across repeated asks
 own(S2(S1)) own(S2(S1)) own(S2(S1)) 
 ["#<Class:Chained>", "S2", "S1", "#<Class:Object>"]
+== a def self.x inside a singleton body is one level FURTHER up
+"plain"
+"MetaHost.meta -> NoMethodError"
+"meta"
+[:meta]
+[:plain]
+== the same inside class << obj
+"obj_plain"
+"target.meta -> NoMethodError"
+"obj_meta"
+== a meta method takes arguments and a block like any other
+"build(9,2)"
+"build(9,3)"
+[10, 20]
+== a meta method beside a mixin in the same singleton body
+"meta"
+"mixed"
