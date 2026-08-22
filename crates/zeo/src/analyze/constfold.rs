@@ -151,7 +151,7 @@ pub(crate) fn const_form_resolves(env: &ConstEnv, id: NodeId) -> Option<bool> {
                 // Registered but not PROMISED -- whether a runtime-conditional
                 // class's constant exists is a runtime fact, foldable in
                 // neither direction.
-                if env.compiler.class(cid).runtime_conditional {
+                if env.compiler.constant_is_positional(cid) {
                     return None;
                 }
                 return Some(true);
@@ -183,7 +183,7 @@ pub(crate) fn const_form_resolves(env: &ConstEnv, id: NodeId) -> Option<bool> {
             };
             // A runtime-conditional SCOPE makes the whole path a runtime
             // question.
-            if env.compiler.class(scope_id).runtime_conditional {
+            if env.compiler.constant_is_positional(scope_id) {
                 return None;
             }
             // `defined?(M::S)` is nil for a private constant -- the same
@@ -204,7 +204,7 @@ pub(crate) fn const_form_resolves(env: &ConstEnv, id: NodeId) -> Option<bool> {
             // The scope OPERATOR, so a top-level constant does not answer:
             // `defined?(K::TOP)` is nil even where `TOP` is set.
             let nested = class_const_in(env, scope_id, name, ObjectReach::Excluded);
-            if nested.is_some_and(|c| env.compiler.class(c).runtime_conditional) {
+            if nested.is_some_and(|c| env.compiler.constant_is_positional(c)) {
                 return None;
             }
             let known = nested.is_some()

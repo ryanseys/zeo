@@ -1345,15 +1345,18 @@ pub(super) fn splice_decidable_ifs(
 /// the feature IS resolvable, making the rescue dead. Deliberately narrow
 /// (literals only): a false negative just keeps the `begin` whole.
 fn body_cannot_raise(compiler: &Compiler, body: &[NodeId]) -> bool {
-    body.iter().all(|&s| {
-        matches!(
-            &compiler.hir[s],
-            HirNode::BoolLit(_)
-                | HirNode::NilLit
-                | HirNode::IntegerLit(_)
-                | HirNode::FloatLit(_)
-                | HirNode::SymbolLit(_)
-        )
+    body.iter().all(|&s| match &compiler.hir[s] {
+        HirNode::BoolLit(_)
+        | HirNode::NilLit
+        | HirNode::IntegerLit(_)
+        | HirNode::FloatLit(_)
+        | HirNode::SymbolLit(_) => true,
+        // The record a resolved `require` of a native feature leaves at its
+        // own line: an array append and two flags, and it is exactly what a
+        // guarded `require` now lowers to beside its load result.
+        HirNode::FeatureLoaded { .. } => true,
+        HirNode::Seq(parts) => body_cannot_raise(compiler, parts),
+        _ => false,
     })
 }
 

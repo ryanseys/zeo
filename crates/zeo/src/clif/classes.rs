@@ -275,6 +275,19 @@ pub(crate) fn collect_classes(
         }
         if zeo_abi::is_gated_builtin(cid) {
             register_builtin.push((idx as u32, compiler.fq_name(cid), class.is_module, chain()));
+            // ...and it starts CONCEALED. A require-gated extension's constant
+            // does not exist until its `require` runs, which is a POSITION in
+            // the program, not a whole-program fact -- `HirNode::FeatureLoaded`
+            // reveals it there. The compile-time gate above is the other
+            // question: a feature nothing requires anywhere registers nothing
+            // at all.
+            if !crate::lower::features::is_preloaded_at_boot(
+                zeo_abi::builtin_class(cid)
+                    .and_then(|b| b.feature)
+                    .unwrap_or(""),
+            ) {
+                conceal.push(idx as u32);
+            }
         } else if class.ancestors != zeo_abi::declared_ancestors(cid) {
             set_ancestors.push((idx as u32, chain()));
         }

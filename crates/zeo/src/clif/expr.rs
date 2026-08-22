@@ -2338,7 +2338,7 @@ fn class_value_of(
     // Registered but not PROMISED: whether a runtime-conditional class's
     // constant exists is settled by the guarded body having run, so the
     // reference asks -- `NameError` until `reveal_class` fires there.
-    if fx.an.compiler.class(cid).runtime_conditional {
+    if fx.an.compiler.constant_is_positional(cid) {
         let fq = fx.an.compiler.fq_name(cid);
         let owner = fx
             .an
@@ -3548,7 +3548,7 @@ fn defined_rest(fx: &mut Fx, site: NodeId, inner: NodeId) -> Result<Operand, Str
         };
         if crate::analyze::constfold::const_form_resolves(&env, inner).is_none()
             && let Some(cid) = resolve_class_here(fx, &name)
-            && fx.an.compiler.class(cid).runtime_conditional
+            && fx.an.compiler.constant_is_positional(cid)
         {
             let owner = fx
                 .an

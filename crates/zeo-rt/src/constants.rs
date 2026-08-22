@@ -284,9 +284,11 @@ static CONCEALED_CLASSES: LazyLock<Mutex<std::collections::HashSet<u32>>> =
     LazyLock::new(|| Mutex::new(std::collections::HashSet::new()));
 
 /// One relaxed load spares every by-name lookup the lock in the common
-/// program, which conceals nothing. Never cleared: a program that concealed
-/// anything keeps paying the lock, and reveal-all is not distinguishable
-/// cheaply from reveal-most.
+/// program, which conceals nothing -- and the common program that DOES
+/// conceal reveals everything early (a require-gated builtin's feature is
+/// required near the top), so it is cleared again the moment the set empties.
+/// Nothing conceals after the registration prologue, so a cleared flag stays
+/// cleared unless a later program run sets it.
 static ANY_CONCEALED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Registers `id` as concealed. Called from `main`'s registration prologue,
@@ -299,11 +301,20 @@ pub fn conceal_class(id: u32) {
 /// The guarded definition ran: the constant exists from here on. Idempotent
 /// (a reopened conditional class reveals at every site).
 pub fn reveal_class(id: u32) {
-    if ANY_CONCEALED.load(Ordering::Acquire) && CONCEALED_CLASSES.lock().remove(&id) {
-        // Per-site caches may hold a miss-shaped answer for a name this
-        // reveal just made resolvable.
-        bump_const_epoch();
+    if !ANY_CONCEALED.load(Ordering::Acquire) {
+        return;
     }
+    let mut concealed = CONCEALED_CLASSES.lock();
+    if !concealed.remove(&id) {
+        return;
+    }
+    if concealed.is_empty() {
+        ANY_CONCEALED.store(false, Ordering::Release);
+    }
+    drop(concealed);
+    // Per-site caches may hold a miss-shaped answer for a name this reveal
+    // just made resolvable.
+    bump_const_epoch();
 }
 
 /// A `require` of `feature` ran: every builtin class that feature gates

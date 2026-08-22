@@ -1947,7 +1947,7 @@ fn const_name_fold(
     if let Some(cid) = compiler.resolve_class(joined, cref, box_id) {
         // Registered but not PROMISED: whether a runtime-conditional class's
         // constant exists is settled by its guarded body having run.
-        if compiler.class(cid).runtime_conditional {
+        if compiler.constant_is_positional(cid) {
             return None;
         }
         return Some(true);

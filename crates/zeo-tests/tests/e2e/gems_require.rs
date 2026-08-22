@@ -1257,16 +1257,16 @@ fn require_of_a_boot_preloaded_feature_is_false_even_the_first_time() {
     assert_eq!(result.stdout, "false\nfalse\n");
 }
 
-/// `Monitor` is invisible without its require -- the ext gate, not a
-/// permanently-present constant.
+/// `Monitor` needs NO require: ruby 4.0 loads `monitor` before the program's
+/// first line, so its constant is there whatever the program says
+/// (oracle-verified). The ext gate is about a feature ruby does NOT preload;
+/// `Base64` is the shape that test belongs to, and it lives beside the
+/// positional-require golden.
 #[test]
-fn monitor_needs_its_require() {
-    let result = run_ruby("Monitor.new\n");
-    assert!(
-        !result.status.success() || result.stderr.contains("Monitor"),
-        "Monitor must not resolve without `require \"monitor\"`: {}",
-        result.stderr
-    );
+fn a_boot_preloaded_feature_needs_no_require() {
+    let result = run_ruby("p Monitor.new.class\n");
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "Monitor\n");
 }
 
 // ---- gems with two halves: a native half plus a Ruby half ----

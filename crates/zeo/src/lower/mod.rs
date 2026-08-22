@@ -1399,11 +1399,20 @@ fn lower_call_node(
         if matches!(name.as_str(), "require" | "require_relative") {
             if let Some(feature) = single_literal_string_arg(result, hir, &call)? {
                 if name == "require" && features::is_builtin_feature(&feature) {
-                    let newly_loaded = hir
-                        .activated_features
-                        .insert(features::canonical_ext_feature(&feature).to_string());
+                    let canonical = features::canonical_ext_feature(&feature).to_string();
+                    let newly_loaded = hir.activated_features.insert(canonical.clone());
                     let first = newly_loaded && !features::is_preloaded_at_boot(&feature);
-                    return Ok(hir.push(HirNode::BoolLit(first)));
+                    // The activation itself is positional wherever the require
+                    // is written (`Loader::activate_static_ext` is only the
+                    // TOP-LEVEL half of this rule), so the marker rides ahead
+                    // of the load result. It is idempotent, so a second
+                    // require of one feature still records nothing.
+                    let marker = hir.push(HirNode::FeatureLoaded {
+                        entry: format!("<zeo-builtin>/{canonical}.rb"),
+                        feature: Some(canonical),
+                    });
+                    let value = hir.push(HirNode::BoolLit(first));
+                    return Ok(hir.push(HirNode::Seq(vec![marker, value])));
                 }
                 let unresolvable =
                     name == "require" && hir.unresolvable_requires.contains(&feature);

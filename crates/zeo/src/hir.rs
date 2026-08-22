@@ -340,12 +340,11 @@ pub struct Hir {
     pub search_roots: Vec<String>,
     /// In-tree `ext/` features (`zeo_abi::is_ext_feature`) whose `require`
     /// fired anywhere in the program -- the set that makes a require-gated
-    /// builtin's constant resolvable (`Compiler::resolve_class`'s feature
-    /// gate). Whole-program AOT: activation is program-GLOBAL (a `require
-    /// "base64"` in any file exposes `Base64` everywhere), a documented
-    /// simplification of CRuby's file-ordered visibility that matches how
-    /// this loader already splices requires program-wide. See
-    /// `activate_feature`.
+    /// builtin's constant REGISTER at all (`Compiler::resolve_class`'s feature
+    /// gate). Whole-program AOT, so this set is program-GLOBAL: a feature no
+    /// file requires registers nowhere. WHERE the constant starts existing is
+    /// the other question, and a positional one -- `HirNode::FeatureLoaded`
+    /// reveals it at the require's own line. See `activate_feature`.
     pub activated_features: crate::compiler::FSet<String>,
     /// `--embed-sources`: `(load-path-relative spelling, text)` for every
     /// `.rb` under the named directories. The RUN TIME resolves a require

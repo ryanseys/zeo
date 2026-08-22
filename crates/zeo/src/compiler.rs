@@ -1305,7 +1305,40 @@ impl Compiler {
     pub(crate) fn feature_active(&self, cid: ClassId) -> bool {
         match self.class(cid).feature_gate {
             None => true,
-            Some(feature) => self.hir.activated_features.contains(feature),
+            // A feature ruby loads before line 1 needs no `require` to make
+            // its constant resolve: `Monitor` answers in a program that never
+            // mentions `monitor`, oracle-verified.
+            Some(feature) => {
+                crate::lower::features::is_preloaded_at_boot(feature)
+                    || self.hir.activated_features.contains(feature)
+            }
+        }
+    }
+
+    /// Whether `cid`'s CONSTANT exists is a run-time question rather than a
+    /// compile-time one -- so `defined?`, a bare reference and every constant
+    /// fold must ask instead of answering.
+    ///
+    /// Two shapes: a class defined under a guard zeo cannot decide
+    /// ([`ClassInfo::runtime_conditional`]), and a require-gated builtin,
+    /// whose constant exists only from its `require`'s own line
+    /// (`HirNode::FeatureLoaded`). A feature ruby has loaded before line 1 is
+    /// neither -- it is simply there.
+    pub(crate) fn constant_is_positional(&self, cid: ClassId) -> bool {
+        if self.class(cid).runtime_conditional {
+            return true;
+        }
+        // Exactly the classes `clif::classes` conceals: a gated builtin this
+        // program REGISTERS (some file requires its feature) and that ruby
+        // does not load before line 1. A feature nothing requires registers
+        // no builtin at all, so the name belongs to whatever the program
+        // defines under it.
+        match zeo_abi::builtin_class(cid).and_then(|b| b.feature) {
+            Some(feature) => {
+                !crate::lower::features::is_preloaded_at_boot(feature)
+                    && self.hir.activated_features.contains(feature)
+            }
+            None => false,
         }
     }
 
