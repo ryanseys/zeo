@@ -3,7 +3,6 @@
 
 use super::dispatch::status_out;
 use crate::builtins::binding::LocalCell;
-use crate::rproc::RProc;
 use crate::{RubyValue, Signal};
 use std::sync::Arc;
 
@@ -58,6 +57,36 @@ pub struct ProcEnvOwned {
 }
 
 impl ProcEnvOwned {
+    /// The `RubyValue`s this environment owns: the enclosing method's block
+    /// and the captured `binding`. The CELLS travel [`ProcEnvOwned::gc_cells`]
+    /// instead, and a cell's own contents are enumerated by the cell.
+    pub(crate) fn gc_edges(&self, out: &mut Vec<crate::RubyValue>) {
+        out.extend(self.lexical_blk.iter().cloned());
+        out.extend(self.binding.iter().cloned());
+    }
+
+    /// Every captured cell, by address -- the identity a registered cell node
+    /// answers with. This is the edge that makes `obj.callback = -> { obj }`
+    /// visible to the collector at all.
+    pub(crate) fn gc_cells(&self, out: &mut Vec<usize>) {
+        out.extend(
+            self.cells
+                .iter()
+                .map(|c| Arc::as_ptr(c) as *const () as usize),
+        );
+    }
+
+    /// A second owner of the SAME cells, for a `dup`/`clone`/`#lambda` copy
+    /// that shares the one closure allocation. The raw view is rebuilt
+    /// rather than copied, so it points at the cells this struct holds.
+    pub(crate) fn share(&self) -> ProcEnvOwned {
+        ProcEnvOwned::new(
+            self.cells.clone(),
+            self.lexical_blk.clone(),
+            self.binding.clone(),
+        )
+    }
+
     fn new(
         cells: Box<[LocalCell]>,
         lexical_blk: Option<RubyValue>,
@@ -218,7 +247,7 @@ pub unsafe extern "C" fn zeo_rt_proc_new(
     };
     let defining_scope = opt(binding);
     let env = ProcEnvOwned::new(owned, opt(lexical_blk), defining_scope.clone());
-    let mut proc = RProc::from_c(
+    let mut b = crate::rproc::ProcBuilder::from_c(
         f,
         env,
         unsafe { (*self_).clone() },
@@ -229,14 +258,14 @@ pub unsafe extern "C" fn zeo_rt_proc_new(
     // `binding`/bare `yield` written inside the body, this one serves
     // `Proc#binding` asked from outside.
     if let Some(scope) = defining_scope {
-        proc = proc.with_binding(scope);
+        b = b.binding(scope);
     }
     if flags & PROC_HOME != 0 {
-        proc = proc.with_home();
+        b = b.home();
     }
     if n_params > 0 {
         let rows = unsafe { std::slice::from_raw_parts(params, n_params) };
-        proc = proc.with_params_owned(
+        b = b.params(
             rows.iter()
                 .map(|p| crate::ProcParamMeta {
                     kind: proc_param_kind(p.kind),
@@ -247,14 +276,14 @@ pub unsafe extern "C" fn zeo_rt_proc_new(
         );
     }
     if file_len > 0 {
-        proc = proc.with_location(unsafe { super::str_slice(file, file_len) }, line);
+        b = b.location(unsafe { super::str_slice(file, file_len) }, line);
     }
     // The Ractor-isolation verdict rides ON THE VALUE: a dynamic proc's
     // creation site and its `Ractor.new` site only meet at run time.
     if outer_len > 0 {
-        proc = proc.with_outer_capture(unsafe { super::static_str(outer, outer_len) });
+        b = b.outer_capture(unsafe { super::static_str(outer, outer_len) });
     }
-    let v = RubyValue::Proc(proc);
+    let v = RubyValue::Proc(b.build());
     super::leakcheck::created(&v);
     unsafe { out.write(v) };
 }

@@ -508,18 +508,21 @@ ruby_class! {
         let m = recv_method(recv);
         let (target, name) = (m.recv.clone(), m.name);
         let arity = crate::method_meta::arity(Some(&m.recv), m.home, m.kind, m.name).unwrap_or(-1) as i32;
-        let p = crate::RProc::with_meta(
-            move |args: &[RubyValue]| crate::dispatch::send_value(&target, name, args, None),
+        let b = crate::rproc::ProcBuilder::from_rust(
+            move |_self: &RubyValue, args: &[RubyValue], _block| {
+                crate::dispatch::send_value(&target, name, args, None)
+            },
+            RubyValue::Nil,
             arity,
             true,
         );
         // The proc reports the METHOD's own source location (CRuby's
         // method_to_proc carries the method, and source_location delegates).
-        let p = match crate::method_meta::source_pair(m.home, m.kind, m.name) {
-            Some((file, line)) => p.with_location(file, line),
-            None => p,
+        let b = match crate::method_meta::source_pair(m.home, m.kind, m.name) {
+            Some((file, line)) => b.location(file, line),
+            None => b,
         };
-        Ok(RubyValue::Proc(p))
+        Ok(RubyValue::Proc(b.build()))
     }
     def "arity"(recv) {
         let m = recv_method(recv);

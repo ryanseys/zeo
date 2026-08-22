@@ -112,6 +112,16 @@ pub fn record_object(o: &RObj) {
     }
 }
 
+/// Record a freshly built `Proc`. Its captured cells are the one channel a
+/// closure can close a cycle through, and no reflection reaches inside an
+/// `Arc<dyn Fn>` -- which is why [`crate::rproc::ProcBuilder`] exists.
+#[inline]
+pub fn record_proc(p: &crate::RProc) {
+    if recording() {
+        record(Node::Proc(p.downgrade()));
+    }
+}
+
 /// Record a freshly built captured local -- the cell a block shares with the
 /// scope it closed over, and the one place a cycle can run through a local
 /// rather than through an object graph.

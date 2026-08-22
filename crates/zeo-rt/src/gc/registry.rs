@@ -38,17 +38,19 @@ pub(crate) enum Node {
     Hash(Weak<Freezable<RHashData>>),
     Object(Weak<dyn RubyObject>),
     Cell(Weak<Mutex<RubyValue>>),
+    Proc(Weak<crate::rproc::ProcData>),
 }
 
 impl Node {
     /// Whether the node is still alive, without building a value for it.
     /// The collector's way back to a `RubyValue` arrives with the collector.
-    fn is_live(&self) -> bool {
+    pub(crate) fn is_live(&self) -> bool {
         match self {
             Node::Array(w) => w.strong_count() > 0,
             Node::Hash(w) => w.strong_count() > 0,
             Node::Object(w) => w.strong_count() > 0,
             Node::Cell(w) => w.strong_count() > 0,
+            Node::Proc(w) => w.strong_count() > 0,
         }
     }
 }
@@ -62,6 +64,7 @@ pub(crate) enum Strong {
     Hash(crate::collections::RHash),
     Object(crate::dispatch::RObj),
     Cell(crate::LocalCell),
+    Proc(crate::RProc),
 }
 
 impl Strong {
@@ -73,6 +76,7 @@ impl Strong {
             Strong::Hash(h) => std::sync::Arc::as_ptr(h) as *const () as usize,
             Strong::Object(o) => std::sync::Arc::as_ptr(o) as *const () as usize,
             Strong::Cell(c) => std::sync::Arc::as_ptr(c) as *const () as usize,
+            Strong::Proc(p) => p.identity(),
         }
     }
 
@@ -86,6 +90,7 @@ impl Strong {
             Strong::Hash(h) => std::sync::Arc::strong_count(h),
             Strong::Object(o) => std::sync::Arc::strong_count(o),
             Strong::Cell(c) => std::sync::Arc::strong_count(c),
+            Strong::Proc(p) => p.owners(),
         }
     }
 
@@ -105,6 +110,34 @@ impl Strong {
                     g.clone()
                 });
             }
+            // A Proc's captures are immutable, so the sweep has nothing to
+            // release them through -- see [`crate::RProc::gc_edges`] and the
+            // collector's own docs for why reporting them anyway is sound.
+            Strong::Proc(p) => {
+                if !take {
+                    p.gc_edges(out);
+                }
+            }
+        }
+    }
+
+    /// Cell addresses this node owns a reference to. Only a Proc has any: a
+    /// cell is not a `RubyValue` and cannot travel [`Strong::gc_visit`].
+    pub(crate) fn gc_cells(&self, out: &mut Vec<usize>) {
+        if let Strong::Proc(p) = self {
+            p.gc_cells(out);
+        }
+    }
+
+    /// A weak handle to this node -- what the collector's self-check holds
+    /// while it lets go of the strong ones.
+    pub(crate) fn downgrade(&self) -> Node {
+        match self {
+            Strong::Array(a) => Node::Array(std::sync::Arc::downgrade(a)),
+            Strong::Hash(h) => Node::Hash(std::sync::Arc::downgrade(h)),
+            Strong::Object(o) => Node::Object(std::sync::Arc::downgrade(o)),
+            Strong::Cell(c) => Node::Cell(std::sync::Arc::downgrade(c)),
+            Strong::Proc(p) => Node::Proc(p.downgrade()),
         }
     }
 }
@@ -117,6 +150,7 @@ impl Node {
             Node::Hash(w) => w.upgrade().map(Strong::Hash),
             Node::Object(w) => w.upgrade().map(Strong::Object),
             Node::Cell(w) => w.upgrade().map(Strong::Cell),
+            Node::Proc(w) => crate::RProc::upgrade(w).map(Strong::Proc),
         }
     }
 }

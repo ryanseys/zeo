@@ -31,7 +31,14 @@ use std::sync::Arc;
 /// allocation, exactly CRuby's split (the copy is a new object built from
 /// the same block).
 type ProcFn = Arc<
-    dyn Fn(&RubyValue, &[RubyValue], Option<RubyValue>) -> Result<RubyValue, Signal> + Send + Sync,
+    dyn Fn(
+            Option<&crate::capi::procs::ProcEnvOwned>,
+            &RubyValue,
+            &[RubyValue],
+            Option<RubyValue>,
+        ) -> Result<RubyValue, Signal>
+        + Send
+        + Sync,
 >;
 
 /// The closure a `Proc` value wraps, plus the two facts about its
@@ -125,6 +132,49 @@ pub struct ProcData {
     /// methods exist), and `dup`/`clone` follow the standard flag rule via
     /// `dup_data`.
     frozen: std::sync::atomic::AtomicBool,
+    /// A compiled block's captured environment, held BESIDE the closure and
+    /// handed to it per call rather than captured inside it.
+    ///
+    /// It used to live inside the `Arc<dyn Fn>`, where nothing could see it.
+    /// The cycle collector has to enumerate the captured cells --
+    /// `obj.callback = -> { obj }`, the canonical ruby leak, closes through
+    /// exactly those -- and no reflection opens a Rust closure. Passing it as
+    /// a parameter keeps it visible without a second allocation.
+    ///
+    /// `None` for every proc built from a Rust closure, which captures no
+    /// Ruby cells.
+    env: Option<crate::capi::procs::ProcEnvOwned>,
+}
+
+impl ProcData {
+    /// Every field but the ones a copy constructor overrides. `dup`, `clone`,
+    /// `#lambda` and a `Proc` subclass all mint a FRESH `ProcData` (fresh
+    /// identity, fresh frozen flag) sharing the one closure allocation, which
+    /// is CRuby's own copy semantics.
+    fn copy(&self) -> ProcData {
+        ProcData {
+            class_id: self.class_id,
+            f: Arc::clone(&self.f),
+            self_val: self.self_val.clone(),
+            arity: self.arity,
+            is_lambda: self.is_lambda,
+            params: self.params.clone(),
+            home: self.home.clone(),
+            binding: self.binding.clone(),
+            location: self.location,
+            origin: self.origin,
+            outer_capture: self.outer_capture,
+            frozen: std::sync::atomic::AtomicBool::new(false),
+            // A copy shares the one closure allocation, so it must run under
+            // the same environment. `ProcEnvOwned` owns raw views into its
+            // own cells and cannot be duplicated; the copy takes its own
+            // references to the same cells instead.
+            env: self
+                .env
+                .as_ref()
+                .map(crate::capi::procs::ProcEnvOwned::share),
+        }
+    }
 }
 
 /// One entry of `Proc#parameters` -- a parameter's kind (`"req"`, `"opt"`,
@@ -136,6 +186,121 @@ pub struct ProcData {
 pub struct ProcParamMeta {
     pub kind: &'static str,
     pub name: Option<&'static str>,
+}
+
+/// Fills a [`ProcData`] before the single `Arc::new` that seals it.
+///
+/// It replaces eight `Arc::get_mut` setters that ran AFTER construction and
+/// worked only while the handle's refcount was still 1. That was already
+/// fragile; registering a proc with the cycle collector made it impossible,
+/// because `Arc::downgrade` makes `Arc::get_mut` fail forever. Every setter
+/// would have become a silent no-op -- no `source_location`, no
+/// `#parameters`, no `return` home, no `#binding` -- and nothing would have
+/// said so.
+///
+/// Filling the struct first removes the hazard rather than working around
+/// it: there is no window in which the data is reachable and incomplete.
+pub struct ProcBuilder(ProcData);
+
+impl ProcBuilder {
+    /// A proc whose body is a plain Rust closure: an Enumerator shuttle,
+    /// `Symbol#to_proc`, `Method#to_proc`, and every other runtime-internal
+    /// one. It captures no Ruby cells, so it carries no environment.
+    pub fn from_rust(
+        f: impl Fn(&RubyValue, &[RubyValue], Option<RubyValue>) -> Result<RubyValue, Signal>
+        + Send
+        + Sync
+        + 'static,
+        self_val: RubyValue,
+        arity: i32,
+        is_lambda: bool,
+    ) -> ProcBuilder {
+        ProcBuilder(ProcData {
+            class_id: zeo_abi::PROC_CLASS,
+            f: Arc::new(move |_env, recv, args, block| f(recv, args, block)),
+            self_val,
+            arity,
+            is_lambda,
+            params: std::borrow::Cow::Borrowed(&[]),
+            home: None,
+            binding: None,
+            location: None,
+            origin: None,
+            outer_capture: None,
+            frozen: std::sync::atomic::AtomicBool::new(false),
+            env: None,
+        })
+    }
+
+    /// A proc whose body is a Cranelift-compiled [`crate::capi::BlockFn`].
+    ///
+    /// The environment is shared: the closure holds one handle and bridges
+    /// every invocation through `capi::procs::call_block_fn`, and
+    /// [`ProcData::env`] holds another so the collector can see the captured
+    /// cells. `self` stays a per-call parameter -- `instance_exec` keeps
+    /// working -- and the call-site block forwards into the body's own `blk`
+    /// slot; parameter binding (auto-splat included) lives INSIDE the
+    /// compiled body, exactly as it lives inside the Rust closures above.
+    pub fn from_c(
+        f: crate::capi::BlockFn,
+        env: crate::capi::procs::ProcEnvOwned,
+        self_val: RubyValue,
+        arity: i32,
+        is_lambda: bool,
+    ) -> ProcBuilder {
+        let mut b = ProcBuilder::from_rust(|_, _, _| unreachable!(), self_val, arity, is_lambda);
+        b.0.f = Arc::new(move |env, recv, args, block| {
+            let env = env.expect("a compiled block always carries its environment");
+            crate::capi::procs::call_block_fn(f, env, recv, args, block)
+        });
+        b.0.env = Some(env);
+        b
+    }
+
+    /// The static `Proc#parameters` list the compiler computed from the
+    /// block/lambda's signature.
+    pub fn params(mut self, params: Vec<ProcParamMeta>) -> ProcBuilder {
+        self.0.params = std::borrow::Cow::Owned(params);
+        self
+    }
+
+    /// Capture the current method activation as this proc's home (see
+    /// [`ProcData::home`]). A runtime-internal proc skips it.
+    pub fn home(mut self) -> ProcBuilder {
+        self.0.home = crate::signal::home_current();
+        self
+    }
+
+    /// The defining scope, as this proc's `#binding` (see
+    /// [`ProcData::binding`]).
+    pub fn binding(mut self, binding: RubyValue) -> ProcBuilder {
+        self.0.binding = Some(binding);
+        self
+    }
+
+    /// Where the block/lambda was written (see [`ProcData::location`]).
+    pub fn location(mut self, file: &'static str, line: u32) -> ProcBuilder {
+        self.0.location = Some((file, line));
+        self
+    }
+
+    /// Tag this proc as derived from a Symbol (see [`ProcData::origin`]).
+    pub fn symbol_origin(mut self, name: crate::Symbol) -> ProcBuilder {
+        self.0.origin = Some(name);
+        self
+    }
+
+    /// The first outer local this block captures (see
+    /// [`ProcData::outer_capture`]) -- `Ractor.new`'s refusal evidence.
+    pub fn outer_capture(mut self, name: &'static str) -> ProcBuilder {
+        self.0.outer_capture = Some(name);
+        self
+    }
+
+    /// Seal the data into a `Proc` value and register it with the collector.
+    pub fn build(self) -> RProc {
+        RProc::of(self.0)
+    }
 }
 
 /// A `Proc` value's payload. A newtype over `Arc<ProcData>` rather than the
@@ -157,16 +322,60 @@ impl RProc {
 
     /// The one place a `Proc` value is built.
     ///
-    /// It deliberately does NOT register the proc with the cycle collector,
-    /// and the reason is a trap worth naming: `Arc::downgrade` makes
-    /// `Arc::get_mut` fail, and the eight `with_*` builders below are all
-    /// `Arc::get_mut` on a refcount-1 handle. A weak handle taken here would
-    /// silently turn every one of them into a no-op -- no `source_location`,
-    /// no `#parameters`, no `return` home, no `#binding`. Registering a proc
-    /// therefore waits until its captured cells can be enumerated, which is
-    /// the same change that has to unpick this builder chain anyway.
+    /// Registering here is what forced [`ProcBuilder`] into being:
+    /// `Arc::downgrade` makes `Arc::get_mut` fail FOREVER, and the metadata
+    /// setters this type used to expose were all `Arc::get_mut` on a
+    /// refcount-1 handle. Taking a weak handle here would have turned every
+    /// one of them into a silent no-op.
     fn of(data: ProcData) -> RProc {
-        RProc(Arc::new(data))
+        let p = RProc(Arc::new(data));
+        crate::gc::record_proc(&p);
+        p
+    }
+
+    /// A weak handle to this proc's payload -- the allocation registry's way
+    /// of holding a candidate without keeping it alive.
+    pub(crate) fn downgrade(&self) -> std::sync::Weak<ProcData> {
+        Arc::downgrade(&self.0)
+    }
+
+    /// The proc a weak handle names, or `None` once it has been dropped.
+    pub(crate) fn upgrade(w: &std::sync::Weak<ProcData>) -> Option<RProc> {
+        w.upgrade().map(RProc)
+    }
+
+    /// How many owners this proc has, including the caller's handle.
+    pub(crate) fn owners(&self) -> usize {
+        Arc::strong_count(&self.0)
+    }
+
+    /// Every strong reference this proc owns that the collector can match to
+    /// a registered node: the lexical `self` a body reads `@ivars` through,
+    /// the enclosing block a nested bare `yield` reaches, and the `#binding`
+    /// it captured.
+    ///
+    /// Unlike every other node, a Proc reports edges it cannot RELEASE --
+    /// its captures are immutable by construction, which is why it reported
+    /// nothing at all before. See [`crate::gc::collect`] for why that is
+    /// sound: a reclaimed proc's owners are themselves reclaimed and
+    /// cleared, so the proc dies with the pass's handles and takes its
+    /// captures with it, and the pass CHECKS that it did.
+    pub(crate) fn gc_edges(&self, out: &mut Vec<RubyValue>) {
+        out.push(self.0.self_val.clone());
+        if let Some(b) = &self.0.binding {
+            out.push(b.clone());
+        }
+        if let Some(env) = &self.0.env {
+            env.gc_edges(out);
+        }
+    }
+
+    /// The captured cells this proc owns a reference to, by address. A cell
+    /// is not a `RubyValue`, so it cannot travel [`RProc::gc_edges`].
+    pub(crate) fn gc_cells(&self, out: &mut Vec<usize>) {
+        if let Some(env) = &self.0.env {
+            env.gc_cells(out);
+        }
     }
 
     /// A runtime-internal proc: var-args arity (`-1`), not a lambda. Its
@@ -176,20 +385,13 @@ impl RProc {
     pub fn new(
         f: impl Fn(&[RubyValue]) -> Result<RubyValue, Signal> + Send + Sync + 'static,
     ) -> RProc {
-        RProc::of(ProcData {
-            class_id: zeo_abi::PROC_CLASS,
-            f: Arc::new(move |_self, args, _block| f(args)),
-            self_val: RubyValue::Nil,
-            arity: -1,
-            is_lambda: false,
-            params: std::borrow::Cow::Borrowed(&[]),
-            home: None,
-            binding: None,
-            location: None,
-            origin: None,
-            outer_capture: None,
-            frozen: std::sync::atomic::AtomicBool::new(false),
-        })
+        ProcBuilder::from_rust(
+            move |_self, args, _block| f(args),
+            RubyValue::Nil,
+            -1,
+            false,
+        )
+        .build()
     }
 
     /// A proc built from Ruby source, whose `Params` codegen knows, and
@@ -200,20 +402,13 @@ impl RProc {
         arity: i32,
         is_lambda: bool,
     ) -> RProc {
-        RProc::of(ProcData {
-            class_id: zeo_abi::PROC_CLASS,
-            f: Arc::new(move |_self, args, _block| f(args)),
-            self_val: RubyValue::Nil,
+        ProcBuilder::from_rust(
+            move |_self, args, _block| f(args),
+            RubyValue::Nil,
             arity,
             is_lambda,
-            params: std::borrow::Cow::Borrowed(&[]),
-            home: None,
-            binding: None,
-            location: None,
-            origin: None,
-            outer_capture: None,
-            frozen: std::sync::atomic::AtomicBool::new(false),
-        })
+        )
+        .build()
     }
 
     /// A proc built from Ruby source whose body DOES use `self` -- codegen
@@ -246,82 +441,7 @@ impl RProc {
         arity: i32,
         is_lambda: bool,
     ) -> RProc {
-        RProc::of(ProcData {
-            class_id: zeo_abi::PROC_CLASS,
-            f: Arc::new(f),
-            self_val,
-            arity,
-            is_lambda,
-            params: std::borrow::Cow::Borrowed(&[]),
-            home: None,
-            binding: None,
-            location: None,
-            origin: None,
-            outer_capture: None,
-            frozen: std::sync::atomic::AtomicBool::new(false),
-        })
-    }
-
-    /// A proc whose body is a Cranelift-compiled [`crate::capi::BlockFn`]:
-    /// the closure owns the C environment (captured cells, lexical block,
-    /// binding) and bridges every invocation through
-    /// `capi::procs::call_block_fn`. `self` stays a per-call parameter --
-    /// `instance_exec` keeps working -- and the call-site block forwards
-    /// into the body's own `blk` slot; parameter binding (auto-splat
-    /// included) lives INSIDE the compiled body, exactly as it lives inside
-    /// the Rust-emitted closures.
-    pub fn from_c(
-        f: crate::capi::BlockFn,
-        env: crate::capi::procs::ProcEnvOwned,
-        self_val: RubyValue,
-        arity: i32,
-        is_lambda: bool,
-    ) -> RProc {
-        RProc::of(ProcData {
-            class_id: zeo_abi::PROC_CLASS,
-            f: Arc::new(move |recv, args, block| {
-                crate::capi::procs::call_block_fn(f, &env, recv, args, block)
-            }),
-            self_val,
-            arity,
-            is_lambda,
-            params: std::borrow::Cow::Borrowed(&[]),
-            home: None,
-            binding: None,
-            location: None,
-            origin: None,
-            outer_capture: None,
-            frozen: std::sync::atomic::AtomicBool::new(false),
-        })
-    }
-
-    /// Attach the static `Proc#parameters` metadata codegen computed from the
-    /// block/lambda's signature. Called immediately after construction (refcount
-    /// 1), so `Arc::get_mut` always succeeds; a no-op on the rare shared handle.
-    pub fn with_params(mut self, params: Vec<ProcParamMeta>) -> RProc {
-        if let Some(data) = Arc::get_mut(&mut self.0) {
-            data.params = std::borrow::Cow::Owned(params);
-        }
-        self
-    }
-
-    /// `with_params` from a per-signature `static` table -- codegen's form:
-    /// no allocation per construction.
-    pub fn with_params_static(mut self, params: &'static [ProcParamMeta]) -> RProc {
-        if let Some(data) = Arc::get_mut(&mut self.0) {
-            data.params = std::borrow::Cow::Borrowed(params);
-        }
-        self
-    }
-
-    /// [`RProc::with_params_static`] for a caller that BUILT the list --
-    /// the C ABI hands one over per construction rather than pointing at a
-    /// per-signature static (the names themselves are still `.rodata`).
-    pub fn with_params_owned(mut self, params: Vec<ProcParamMeta>) -> RProc {
-        if let Some(data) = Arc::get_mut(&mut self.0) {
-            data.params = std::borrow::Cow::Owned(params);
-        }
-        self
+        ProcBuilder::from_rust(f, self_val, arity, is_lambda).build()
     }
 
     /// The `Proc#parameters` metadata (empty for a runtime-internal proc).
@@ -329,55 +449,9 @@ impl RProc {
         self.0.params.as_ref()
     }
 
-    /// Capture the current method activation as this Proc's home (see
-    /// `ProcData::home`). Codegen appends this to every block/lambda it builds
-    /// from Ruby source, right after construction (refcount 1, like
-    /// `with_params`); runtime-internal procs skip it, leaving `home: None`.
-    pub fn with_home(mut self) -> RProc {
-        let home = crate::signal::home_current();
-        if let Some(data) = Arc::get_mut(&mut self.0) {
-            data.home = home;
-        }
-        self
-    }
-
-    /// Attach the defining scope as this Proc's `#binding` (see
-    /// `ProcData::binding`). Appended at construction like `with_home`.
-    pub fn with_binding(mut self, binding: RubyValue) -> RProc {
-        if let Some(data) = Arc::get_mut(&mut self.0) {
-            data.binding = Some(binding);
-        }
-        self
-    }
-
     /// The defining scope this Proc captured, if codegen supplied one.
     pub fn binding(&self) -> Option<&RubyValue> {
         self.0.binding.as_ref()
-    }
-
-    /// Record where this block/lambda was written (see `ProcData::location`).
-    pub fn with_location(mut self, file: &'static str, line: u32) -> RProc {
-        if let Some(data) = Arc::get_mut(&mut self.0) {
-            data.location = Some((file, line));
-        }
-        self
-    }
-
-    /// Tag this proc as derived from a Symbol (see `ProcData::origin`).
-    pub fn with_symbol_origin(mut self, name: crate::Symbol) -> RProc {
-        if let Some(data) = Arc::get_mut(&mut self.0) {
-            data.origin = Some(name);
-        }
-        self
-    }
-
-    /// Record the first outer local this block captures (see
-    /// `ProcData::outer_capture`). Appended at construction like `with_home`.
-    pub fn with_outer_capture(mut self, name: &'static str) -> RProc {
-        if let Some(data) = Arc::get_mut(&mut self.0) {
-            data.outer_capture = Some(name);
-        }
-        self
     }
 
     /// The outer local that makes this proc non-isolable, if codegen found
@@ -432,7 +506,7 @@ impl RProc {
 
     /// Invoke under the block's own lexical self -- ordinary `#call`/`yield`.
     pub fn call(&self, args: &[RubyValue]) -> Result<RubyValue, Signal> {
-        let result = (self.0.f)(&self.0.self_val, args, None);
+        let result = (self.0.f)(self.0.env.as_ref(), &self.0.self_val, args, None);
         self.resolve_home_return(result)
     }
 
@@ -454,7 +528,7 @@ impl RProc {
         args: &[RubyValue],
         block: Option<RubyValue>,
     ) -> Result<RubyValue, Signal> {
-        let result = (self.0.f)(recv, args, block);
+        let result = (self.0.f)(self.0.env.as_ref(), recv, args, block);
         self.resolve_home_return(result)
     }
 
@@ -468,7 +542,7 @@ impl RProc {
         args: &[RubyValue],
         block: Option<RubyValue>,
     ) -> Result<RubyValue, Signal> {
-        let result = (self.0.f)(&self.0.self_val, args, block);
+        let result = (self.0.f)(self.0.env.as_ref(), &self.0.self_val, args, block);
         self.resolve_home_return(result)
     }
 
@@ -533,18 +607,8 @@ impl RProc {
             return self.clone();
         }
         RProc::of(ProcData {
-            class_id: zeo_abi::PROC_CLASS,
-            f: Arc::clone(&self.0.f),
-            self_val: self.0.self_val.clone(),
-            arity: self.0.arity,
             is_lambda: true,
-            params: self.0.params.clone(),
-            home: self.0.home.clone(),
-            binding: self.0.binding.clone(),
-            location: self.0.location,
-            origin: self.0.origin,
-            outer_capture: self.0.outer_capture,
-            frozen: std::sync::atomic::AtomicBool::new(false),
+            ..self.0.copy()
         })
     }
 
@@ -564,34 +628,14 @@ impl RProc {
         }
         RProc::of(ProcData {
             class_id,
-            f: Arc::clone(&self.0.f),
-            self_val: self.0.self_val.clone(),
-            arity: self.0.arity,
-            is_lambda: self.0.is_lambda,
-            params: self.0.params.clone(),
-            home: self.0.home.clone(),
-            binding: self.0.binding.clone(),
-            location: self.0.location,
-            origin: self.0.origin,
-            outer_capture: self.0.outer_capture,
-            frozen: std::sync::atomic::AtomicBool::new(false),
+            ..self.0.copy()
         })
     }
 
     pub fn dup_data(&self, frozen: bool) -> RProc {
         RProc::of(ProcData {
-            class_id: zeo_abi::PROC_CLASS,
-            f: Arc::clone(&self.0.f),
-            self_val: self.0.self_val.clone(),
-            arity: self.0.arity,
-            is_lambda: self.0.is_lambda,
-            params: self.0.params.clone(),
-            home: self.0.home.clone(),
-            binding: self.0.binding.clone(),
-            location: self.0.location,
-            origin: self.0.origin,
-            outer_capture: self.0.outer_capture,
             frozen: std::sync::atomic::AtomicBool::new(frozen),
+            ..self.0.copy()
         })
     }
 }
@@ -766,8 +810,14 @@ mod tests {
     #[test]
     fn a_captured_home_gates_return_between_propagate_and_localjump() {
         crate::signal::home_push();
-        let live =
-            RProc::with_meta(|_| Err(Signal::Return(RubyValue::Int(1))), 0, false).with_home();
+        let live = ProcBuilder::from_rust(
+            |_, _, _| Err(Signal::Return(RubyValue::Int(1))),
+            RubyValue::Nil,
+            0,
+            false,
+        )
+        .home()
+        .build();
         // Home is on the stack: the return propagates.
         assert!(matches!(
             live.call(&[]),
@@ -783,7 +833,14 @@ mod tests {
     /// home-return resolution even if its body yields a `Signal::Return`.
     #[test]
     fn a_lambda_never_converts_a_return() {
-        let lam = RProc::with_meta(|_| Err(Signal::Return(RubyValue::Int(9))), 0, true).with_home();
+        let lam = ProcBuilder::from_rust(
+            |_, _, _| Err(Signal::Return(RubyValue::Int(9))),
+            RubyValue::Nil,
+            0,
+            true,
+        )
+        .home()
+        .build();
         assert!(matches!(
             lam.call(&[]),
             Err(Signal::Return(RubyValue::Int(9)))

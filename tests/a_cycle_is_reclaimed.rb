@@ -154,6 +154,35 @@ def through_runtime_class(seen)
   nil
 end
 
+# A compiled block's captured cell, which is where `obj.callback = -> { obj }`
+# -- the canonical ruby leak -- closes. The environment lives inside an
+# `Arc<dyn Fn>` that no reflection can open, so the proc holds a copy of it
+# beside the closure purely so the walk can enumerate the cells.
+def through_a_captured_cell(seen)
+  n = Node.new
+  n.peer = -> { n }
+  seen[n] = true
+  nil
+end
+
+# The same cell shared by two procs: reported once by each, which is what the
+# over-count check is there to catch if it is ever reported twice by one.
+def through_two_procs_sharing_a_cell(seen)
+  n = Node.new
+  n.peer = [-> { n }, -> { n }]
+  seen[n] = true
+  nil
+end
+
+# A block's lexical `self`, which is a capture the closure does not hold at
+# all -- it rides beside the body so `instance_exec` can rebind it.
+def through_a_block_self(seen)
+  n = Node.new
+  n.peer = proc { @anything }
+  seen[n] = true
+  nil
+end
+
 # -- the survivors ---------------------------------------------------------
 
 def held_by_a_global(seen)
@@ -196,6 +225,9 @@ through_a_string_leaf(seen)
 through_runtime_class(seen)
 through_a_bare_object(seen)
 through_a_runtime_struct(seen)
+through_a_captured_cell(seen)
+through_two_procs_sharing_a_cell(seen)
+through_a_block_self(seen)
 held_by_a_global(seen)
 held_by_a_container(seen, keep)
 

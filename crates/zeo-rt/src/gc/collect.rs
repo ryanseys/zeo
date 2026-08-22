@@ -85,11 +85,18 @@ pub fn collect() -> usize {
     let mut edge_starts: Vec<u32> = Vec::with_capacity(nodes.len() + 1);
     let mut edge_targets: Vec<u32> = Vec::with_capacity(nodes.len());
     let mut buf: Vec<RubyValue> = Vec::new();
+    let mut cells: Vec<usize> = Vec::new();
     for node in &nodes {
         edge_starts.push(edge_targets.len() as u32);
         buf.clear();
+        cells.clear();
         node.gc_visit(&mut buf, false);
-        for target in buf.drain(..).filter_map(|v| value_addr(&v)) {
+        node.gc_cells(&mut cells);
+        let targets = buf
+            .drain(..)
+            .filter_map(|v| value_addr(&v))
+            .chain(cells.drain(..));
+        for target in targets {
             if let Some(&t) = index.get(&target) {
                 unexplained[t] -= 1;
                 edge_targets.push(t as u32);
@@ -126,6 +133,25 @@ pub fn collect() -> usize {
         stack.extend(targets_of(i).iter().map(|&t| t as usize));
     }
 
+    // The self-check the whole golden corpus runs as an under-release
+    // detector. It asks the only question that matters -- a node the pass
+    // reclaimed must actually be FREED once the pass lets go of it -- and
+    // that needs a weak handle taken while the strong ones are still here.
+    //
+    // Owner counting cannot ask it. A Proc's captures are immutable, so the
+    // sweep cannot clear them; a reclaimed proc still owns its cells at the
+    // end of the sweep and only lets go when it is itself dropped. That is
+    // sound, because every owner of a reclaimed node is a reclaimed node
+    // whose own edges WERE cleared -- an unreported edge would have left its
+    // target with an unexplained owner, which makes the target live.
+    #[cfg(debug_assertions)]
+    let corpses: Vec<registry::Node> = nodes
+        .iter()
+        .zip(&live)
+        .filter(|(_, l)| !**l)
+        .map(|(n, _)| n.downgrade())
+        .collect();
+
     let mut drained: Vec<RubyValue> = Vec::new();
     let mut reclaimed = 0;
     for (i, node) in nodes.iter().enumerate() {
@@ -151,13 +177,16 @@ pub fn collect() -> usize {
     }
 
     #[cfg(debug_assertions)]
-    for (i, node) in nodes.iter().enumerate() {
-        assert!(
-            live[i] || node.owners() == 1,
-            "gc: a reclaimed node still has {} owners -- an edge was counted \
-             but not released",
-            node.owners()
-        );
+    {
+        drop(nodes);
+        for (k, corpse) in corpses.iter().enumerate() {
+            assert!(
+                !corpse.is_live(),
+                "gc: reclaimed node {k} of {} was not freed -- an edge was \
+                 counted but neither released nor carried by a dying owner",
+                corpses.len(),
+            );
+        }
     }
     reclaimed
 }
@@ -170,6 +199,7 @@ fn value_addr(v: &RubyValue) -> Option<usize> {
         RubyValue::Array(a) => Arc::as_ptr(a) as *const () as usize,
         RubyValue::Hash(h) => Arc::as_ptr(h) as *const () as usize,
         RubyValue::Object(o) => Arc::as_ptr(o) as *const () as usize,
+        RubyValue::Proc(p) => p.identity(),
         _ => return None,
     })
 }

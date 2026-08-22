@@ -1,0 +1,5 @@
+[:literal, true]
+[:forwarded, :raised, "the lambda method requires a literal block"]
+[:send_literal, true]
+[:send_forwarded, :raised, "the lambda method requires a literal block"]
+[:method_object, :raised, "the lambda method requires a literal block"]

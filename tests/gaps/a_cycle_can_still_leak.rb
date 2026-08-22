@@ -1,29 +1,25 @@
-# Four shapes the cycle collector cannot reclaim. Each is a different cause,
+# Three shapes the cycle collector cannot reclaim. Each is a different cause,
 # and none of them is a bug in the reconciliation pass itself -- the pass is
-# exact about what it can see, and these are four things it cannot.
+# exact about what it can see, and these are three things it cannot.
 #
 # The companion `tests/a_cycle_is_reclaimed.rb` is what DOES work. Read that
 # first; this file is its boundary.
 #
-# 1. A CELL A COMPILED PROC CAPTURED. `n.peer = -> { n }` closes through the
-#    cell the block and its enclosing scope share. The cell is a registered
-#    node, but its owner is the `ProcEnvOwned` inside an `Arc<dyn Fn>`, which
-#    no enumeration can reach -- so the cell keeps an owner the walk cannot
-#    account for and everything it reaches stays live. Registering a proc
-#    means holding the env beside the closure instead of inside it, AND
-#    unpicking the `with_*` builder chain: those eight builders are
-#    `Arc::get_mut` on a refcount-1 handle, and one weak handle taken at
-#    construction silently turns every one of them into a no-op.
+# `proc_cell` used to be the fourth and is now reclaimed, so it lives there
+# instead. It is kept HERE as the control: it is the shape closest to the
+# three below, and a regression in the proc channel would show up as this
+# row answering 1 again rather than as a silent loss of coverage.
 #
-# 2. A RANGE. `RangeData` is immutable by design (a Range is frozen in ruby
+# 1. A RANGE. `RangeData` is immutable by design (a Range is frozen in ruby
 #    and the `Arc` buys sharing with no interior mutability at all), so the
-#    sweep has nothing to release its endpoints through. The rule the
-#    collector is built on is that a type reporting an edge must be able to
-#    release it -- reporting one it cannot clear would let the pass reclaim a
-#    node that edge still points at -- so a Range reports nothing and a cycle
-#    through one survives.
+#    sweep has nothing to release its endpoints through. A Proc is immutable
+#    too and reports its captures anyway, because every owner of a reclaimed
+#    proc is itself reclaimed and cleared, so the proc dies with the pass's
+#    handles -- a Range is reached from an ARRAY that the sweep empties, and
+#    the same argument would hold. What it lacks is the enumeration, not the
+#    release.
 #
-# 3. A PER-OBJECT SINGLETON, and 4. AN IVAR ON A BARE VALUE. Both side tables
+# 2. A PER-OBJECT SINGLETON, and 3. AN IVAR ON A BARE VALUE. Both side tables
 #    are keyed by the owner's ADDRESS and hold a STRONG reference to it, so a
 #    dead value's address can never be handed to an unrelated later one that
 #    would inherit its rows. The pin makes the owner permanently live, which

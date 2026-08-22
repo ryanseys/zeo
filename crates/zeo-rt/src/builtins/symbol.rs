@@ -139,7 +139,7 @@ pub(crate) fn symbol_to_proc(name: Symbol) -> RubyValue {
     // block it was called with, so `:map.to_proc.call([1,2]) { |x| x * 3 }`
     // runs the block instead of answering an Enumerator. Dropping the block
     // was invisible until something called the proc with one.
-    let p: RProc = RProc::with_self_and_block(
+    let p: RProc = crate::rproc::ProcBuilder::from_rust(
         move |_self: &RubyValue, args: &[RubyValue], block: Option<RubyValue>| {
             let Some((recv, rest)) = args.split_first() else {
                 return Err(arg_error!("no receiver given"));
@@ -149,8 +149,10 @@ pub(crate) fn symbol_to_proc(name: Symbol) -> RubyValue {
         RubyValue::Nil,
         -2,
         true,
-    );
-    RubyValue::Proc(p.with_symbol_origin(name))
+    )
+    .symbol_origin(name)
+    .build();
+    RubyValue::Proc(p)
 }
 
 ruby_class! {
