@@ -229,9 +229,53 @@ pub(crate) fn rat_cmp(a: &RubyValue, b: &RubyValue) -> i64 {
     }
 }
 
-/// The `f64` view (`Rational#to_f`).
+/// The `f64` view (`Rational#to_f`), CRuby's `rb_int_fdiv_double`: ONE
+/// rounding, from the exact quotient.
+///
+/// Converting each half to a double and dividing rounds twice and lands a
+/// ULP away -- `Rational(1, 10**30).to_f` came out `9.999999999999999e-31`
+/// where ruby answers `1.0e-30`, and the numerator alone can overflow the
+/// double before the division ever happens. The quotient is taken in
+/// integers instead, shifted so it carries ~64 significant bits, and the
+/// power of two is put back afterwards.
 pub(crate) fn rat_to_f64(r: &RRationalData) -> f64 {
-    r.num.to_f64().unwrap_or(f64::INFINITY) / r.den.to_f64().unwrap_or(f64::INFINITY)
+    big_ratio_f64(&r.num, &r.den)
+}
+
+pub(crate) fn big_ratio_f64(num: &BigInt, den: &BigInt) -> f64 {
+    use num_traits::Zero;
+    if den.is_zero() {
+        return match num.sign() {
+            num_bigint::Sign::Minus => f64::NEG_INFINITY,
+            num_bigint::Sign::NoSign => f64::NAN,
+            num_bigint::Sign::Plus => f64::INFINITY,
+        };
+    }
+    if num.is_zero() {
+        return 0.0;
+    }
+    let spread = num.bits() as i64 - den.bits() as i64;
+    // 64 significant bits is two more than a double keeps, so the truncated
+    // tail can only change the answer when the exact value sits within
+    // 2**-64 of a rounding boundary -- and an exact tie divides evenly here,
+    // so ties still round to even.
+    let shift = (64 - spread).max(0) as u64;
+    let q = (num << shift) / den;
+    scale_pow2(q.to_f64().unwrap_or(f64::INFINITY), -(shift as i32))
+}
+
+/// `v * 2**e`, in steps a double can hold (`ldexp`, which Rust's std does
+/// not expose).
+fn scale_pow2(mut v: f64, mut e: i32) -> f64 {
+    while e > 1000 {
+        v *= 2f64.powi(1000);
+        e -= 1000;
+    }
+    while e < -1000 {
+        v *= 2f64.powi(-1000);
+        e += 1000;
+    }
+    v * 2f64.powi(e)
 }
 
 /// `to_s` is `"3/4"`; `inspect` is `"(3/4)"` -- both oracle-verified.

@@ -143,31 +143,59 @@ ruby_class! {
         }
     }
     // The rounding family: ndigits <= 0 produces an Integer, > 0 a Float.
-    // Naive power-of-ten scaling -- CRuby switches to exact rational
-    // arithmetic when double precision is insufficient (`2.675.round(2)`),
-    // a documented divergence.
+    // CRuby's shape, compensation for compensation -- see `round_half` and
+    // `float_round_family`; a naive `op(x * 10**n) / 10**n` reads the scaled
+    // product's own representation error as part of the value.
     // A `half:` keyword selects the tie-break mode (:up default).
     def "round" (recv, ndigits?, **opts) {
         let mode = round_half_mode(opts)?;
-        float_round_family(recv, ndigits, move |x| round_half(x, mode))
+        float_round_family(recv, ndigits, RoundOp::Round(mode))
     }
     def "floor" (recv, ndigits?) {
-        float_round_family(recv, ndigits, f64::floor)
+        float_round_family(recv, ndigits, RoundOp::Floor)
     }
     def "ceil" (recv, ndigits?) {
-        float_round_family(recv, ndigits, f64::ceil)
+        float_round_family(recv, ndigits, RoundOp::Ceil)
     }
+    // `truncate` is `floor` for a positive value and `ceil` for a negative
+    // one -- CRuby's `flo_truncate`, which reads the SIGN BIT, so `-0.0`
+    // takes the ceil path and answers positive zero the way ruby does.
     def "truncate" (recv, ndigits?) {
-        float_round_family(recv, ndigits, f64::trunc)
+        let op = if recv_f64(recv).is_sign_negative() { RoundOp::Ceil } else { RoundOp::Floor };
+        float_round_family(recv, ndigits, op)
     }
 
     // ---- rows ruby OWNS on this class while the body lives on an ancestor.
     // Each calls the very row it would otherwise have inherited, so `.owner`
     // and `instance_methods(false)` agree and there is still only one body.
-    def "<"(recv, _other) { inherited_row!(comparable, "<", recv, __args, None) }
-    def "<="(recv, _other) { inherited_row!(comparable, "<=", recv, __args, None) }
-    def ">"(recv, _other) { inherited_row!(comparable, ">", recv, __args, None) }
-    def ">="(recv, _other) { inherited_row!(comparable, ">=", recv, __args, None) }
+    // `< <= > >=` between an Integer and a Float answer FALSE for an
+    // incomparable pair (a NaN) where Comparable RAISES -- CRuby hand-writes
+    // these rows for exactly that. Every other operand keeps Comparable's
+    // body, and with it ruby's `comparison of X with Y failed`.
+    def "<"(recv, other) {
+        match crate::builtins::numeric::int_float_relop(recv, other, |o| o < 0) {
+            Some(b) => Ok(RubyValue::Bool(b)),
+            None => inherited_row!(comparable, "<", recv, __args, None),
+        }
+    }
+    def "<="(recv, other) {
+        match crate::builtins::numeric::int_float_relop(recv, other, |o| o <= 0) {
+            Some(b) => Ok(RubyValue::Bool(b)),
+            None => inherited_row!(comparable, "<=", recv, __args, None),
+        }
+    }
+    def ">"(recv, other) {
+        match crate::builtins::numeric::int_float_relop(recv, other, |o| o > 0) {
+            Some(b) => Ok(RubyValue::Bool(b)),
+            None => inherited_row!(comparable, ">", recv, __args, None),
+        }
+    }
+    def ">="(recv, other) {
+        match crate::builtins::numeric::int_float_relop(recv, other, |o| o >= 0) {
+            Some(b) => Ok(RubyValue::Bool(b)),
+            None => inherited_row!(comparable, ">=", recv, __args, None),
+        }
+    }
     def "==="(recv, _other) { inherited_row!(kernel, "===", recv, __args, None) }
     def "eql?"(recv, _other) { inherited_row!(kernel, "eql?", recv, __args, None) }
     def "hash"(recv) { inherited_row!(kernel, "hash", recv, __args, None) }
@@ -362,48 +390,132 @@ fn float_rationalize(d: f64, eps: Option<&RubyValue>) -> Result<RubyValue, Signa
     crate::builtins::rational::rational_new(if neg { -p } else { p }, q)
 }
 
-/// `Float#round`'s tie-break mode (the `half:` keyword).
-#[derive(Clone, Copy)]
-enum HalfMode {
-    Up,
-    Down,
-    Even,
+use crate::builtins::integer::{HalfMode, RoundMode as IntRoundMode};
+
+/// `frexp`'s exponent -- the `e` in `x = m * 2**e` with `0.5 <= |m| < 1`.
+/// CRuby's rounding family reads it to decide whether a scale is reachable
+/// at all, so the two have to agree exactly; read off the bits rather than
+/// through `log2`, which is not exact at the powers of two.
+fn frexp_exp(x: f64) -> i32 {
+    let bits = x.to_bits();
+    let raw = ((bits >> 52) & 0x7ff) as i32;
+    if raw != 0 {
+        return raw - 1022;
+    }
+    let mantissa = bits & ((1u64 << 52) - 1);
+    if mantissa == 0 {
+        0
+    } else {
+        -1010 - mantissa.leading_zeros() as i32
+    }
 }
 
-/// Round `x` to the nearest integer, breaking an exact `.5` tie per `mode`
-/// (`:up` = away from zero, `:down` = toward zero, `:even` = banker's).
-fn round_half(x: f64, mode: HalfMode) -> f64 {
-    let fl = x.floor();
-    let diff = x - fl;
-    if diff < 0.5 {
-        fl
-    } else if diff > 0.5 {
-        fl + 1.0
+/// CRuby's `float_round_overflow`: at this many digits the scaled value is
+/// already an integer, so the answer is the number itself.
+fn float_round_overflow(ndigits: i64, binexp: i32) -> bool {
+    const FLOAT_DIG: i64 = 15 + 2; // DBL_DIG + 2
+    let exp = i64::from(if binexp > 0 {
+        binexp / 4
     } else {
-        match mode {
-            HalfMode::Up => {
-                if x >= 0.0 {
-                    fl + 1.0
-                } else {
-                    fl
-                }
-            }
-            HalfMode::Down => {
-                if x >= 0.0 {
-                    fl
-                } else {
-                    fl + 1.0
-                }
-            }
-            HalfMode::Even => {
-                if (fl as i64) % 2 == 0 {
-                    fl
-                } else {
-                    fl + 1.0
-                }
-            }
-        }
+        binexp / 3 - 1
+    });
+    ndigits >= FLOAT_DIG - exp
+}
+
+/// CRuby's `float_round_underflow`: the place asked for is so far above the
+/// value that nothing of it survives.
+fn float_round_underflow(ndigits: i64, binexp: i32) -> bool {
+    let exp = i64::from(if binexp > 0 {
+        binexp / 3 + 1
+    } else {
+        binexp / 4
+    });
+    ndigits < -exp
+}
+
+/// CRuby's `ACCURATE_POW10`: past this a `10**n` scale is not exact as a
+/// double and the answer comes from exact rational arithmetic instead.
+fn accurate_pow10(ndigits: i64) -> bool {
+    ndigits < 15 // DBL_DIG
+}
+
+/// Round `x` to the nearest integer of the `1/s` grid, breaking an exact
+/// `.5` tie per `mode` -- CRuby's `round_half_up`/`_down`/`_even`, verbatim.
+///
+/// The `s` is not decoration. Scaling first and rounding after reads the
+/// SCALED product's own representation error as part of the value:
+/// `1.005 * 100` is `100.49999999999999`, so the digit that should round up
+/// rounds down. Each form asks whether the half-way point of the answer it
+/// is about to give still lies on the near side of `x` -- `(f + 0.5) / s
+/// <= x` -- and steps once when it does. That question is asked in the
+/// UNSCALED domain, where the original value is exact.
+fn round_half(x: f64, s: f64, mode: HalfMode) -> f64 {
+    match mode {
+        HalfMode::Up => round_half_up(x, s),
+        HalfMode::Down => round_half_down(x, s),
+        HalfMode::Even => round_half_even(x, s),
     }
+}
+
+fn round_half_up(x: f64, s: f64) -> f64 {
+    let mut f = (x * s).round();
+    if s == 1.0 {
+        return f;
+    }
+    if x > 0.0 {
+        if (f + 0.5) / s <= x {
+            f += 1.0;
+        }
+    } else if (f - 0.5) / s >= x {
+        f -= 1.0;
+    }
+    f
+}
+
+fn round_half_down(x: f64, s: f64) -> f64 {
+    let mut f = (x * s).round();
+    if x > 0.0 {
+        if (f - 0.5) / s >= x {
+            f -= 1.0;
+        }
+    } else if (f + 0.5) / s <= x {
+        f += 1.0;
+    }
+    f
+}
+
+fn round_half_even(x: f64, s: f64) -> f64 {
+    let u = x.trunc();
+    let v = x - u;
+    let us = u * s;
+    let vs = v * s;
+    let mut r = x;
+    if x > 0.0 {
+        let f = vs.floor();
+        let uf = us + f;
+        let d = vs - f;
+        let d = if d > 0.5 {
+            1.0
+        } else if d == 0.5 || (uf + 0.5) / s <= x {
+            uf % 2.0
+        } else {
+            0.0
+        };
+        r = f + d;
+    } else if x < 0.0 {
+        let f = vs.ceil();
+        let uf = us + f;
+        let d = f - vs;
+        let d = if d > 0.5 {
+            1.0
+        } else if d == 0.5 || (uf - 0.5) / s >= x {
+            (-uf) % 2.0
+        } else {
+            0.0
+        };
+        r = f - d;
+    }
+    us + r
 }
 
 /// Split a trailing `half:` keyword Hash off `round`'s arguments, returning the
@@ -432,10 +544,34 @@ fn round_half_mode(opts: Option<&RubyValue>) -> Result<HalfMode, Signal> {
     Ok(HalfMode::Up)
 }
 
+/// Which of the four rounding rows is asking. They share the argument
+/// conversion and the `ndigits <= 0` half; the positive-digit half differs
+/// per row, because CRuby compensates each one differently on purpose.
+#[derive(Clone, Copy)]
+enum RoundOp {
+    Round(HalfMode),
+    Floor,
+    Ceil,
+}
+
+impl RoundOp {
+    /// The row's answer for a whole number of digits (`ndigits <= 0`).
+    fn to_integer_op(self) -> fn(f64) -> f64 {
+        match self {
+            // `round`'s own whole-number answer is the half rule's, applied
+            // by the caller; this is the `flo_to_i` a NEGATIVE digit count
+            // takes before it rounds at the place.
+            RoundOp::Round(_) => f64::trunc,
+            RoundOp::Floor => f64::floor,
+            RoundOp::Ceil => f64::ceil,
+        }
+    }
+}
+
 fn float_round_family(
     recv: &RubyValue,
     ndigits: Option<&RubyValue>,
-    op: impl Fn(f64) -> f64,
+    op: RoundOp,
 ) -> Result<RubyValue, Signal> {
     let f = recv_f64(recv);
     // `NUM2INT`, which is what CRuby's rounding family reads the digit
@@ -445,28 +581,120 @@ fn float_round_family(
         Some(v) => crate::builtins::convert::to_index(v)?,
         None => 0,
     };
+    // Zero keeps its SIGN as a Float and loses it as an Integer.
+    if f == 0.0 {
+        return if ndigits > 0 {
+            Ok(RubyValue::Float(f))
+        } else {
+            float_to_integer(0.0)
+        };
+    }
     if ndigits > 0 {
-        // A very large `ndigits` overflows the `10^n` scale to infinity; scaling
-        // then rounding then unscaling would be `op(Inf)/Inf == NaN`. But asking
-        // for more fractional digits than a Float carries leaves the value
-        // unchanged, so answer `f` directly rather than the NaN.
-        let scale = 10f64.powi(ndigits.min(1024) as i32);
-        if !scale.is_finite() || !(f * scale).is_finite() {
+        if !f.is_finite() {
             return Ok(RubyValue::Float(f));
         }
-        return Ok(RubyValue::Float(op(f * scale) / scale));
+        let binexp = frexp_exp(f);
+        // More digits than the value carries: the answer is the value.
+        if float_round_overflow(ndigits, binexp) {
+            return Ok(RubyValue::Float(f));
+        }
+        // Below the value's own magnitude. `round` collapses from either
+        // side; `floor` only from above and `ceil` only from below, and each
+        // answers POSITIVE zero.
+        let underflows = float_round_underflow(ndigits, binexp)
+            && match op {
+                RoundOp::Round(_) => true,
+                RoundOp::Floor => f > 0.0,
+                RoundOp::Ceil => f < 0.0,
+            };
+        if underflows {
+            return Ok(RubyValue::Float(0.0));
+        }
+        if !accurate_pow10(ndigits) {
+            return round_by_rational(f, ndigits, op);
+        }
+        let s = 10f64.powi(ndigits as i32);
+        let scaled = match op {
+            RoundOp::Round(mode) => return Ok(RubyValue::Float(round_half(f, s, mode) / s)),
+            // `floor` is the one row that compensates: `1.005 * 1000` is
+            // `1004.9999999999999`, so the naive `floor(x * s) / s` loses a
+            // decimal. CRuby asks whether the NEXT grid point is still at or
+            // below `x` and takes it when it is.
+            RoundOp::Floor => {
+                let mul = (f * s).floor();
+                let res = (mul + 1.0) / s;
+                if res > f { mul / s } else { res }
+            }
+            RoundOp::Ceil => (f * s).ceil() / s,
+        };
+        return Ok(RubyValue::Float(scaled));
     }
+    let to_int = op.to_integer_op();
     if ndigits == 0 {
-        return float_to_integer(op(f));
+        return match op {
+            RoundOp::Round(mode) => float_to_integer(round_half(f, 1.0, mode)),
+            _ => float_to_integer(to_int(f)),
+        };
     }
-    // Negative `ndigits`: round to the `10^|n|` place. A very large `|n|`
-    // overflows the scale; the place then dwarfs the value, so the result is 0
-    // (the `0.0 * Inf == NaN` the naive path would produce is the bug).
-    let scale = 10f64.powi((-ndigits).min(1024) as i32);
-    if !scale.is_finite() {
-        return float_to_integer(0.0);
-    }
-    float_to_integer(op(f / scale) * scale)
+    // Negative `ndigits`: CRuby converts to an Integer FIRST and rounds
+    // there (`rb_int_round`/`_floor`/`_ceil`). Scaling in doubles instead
+    // rounds the VALUE before the place is reached, so `1e300.floor(-3)`
+    // came out with a different tail than ruby's.
+    let whole = float_to_integer(to_int(f))?;
+    let (mode, half) = match op {
+        RoundOp::Round(m) => (IntRoundMode::HalfAway, m),
+        RoundOp::Floor => (IntRoundMode::Floor, HalfMode::Up),
+        RoundOp::Ceil => (IntRoundMode::Ceil, HalfMode::Up),
+    };
+    crate::builtins::integer::int_round_family(&whole, Some(&RubyValue::Int(ndigits)), mode, half)
+}
+
+/// The positive-digit answer over EXACT rationals, for the digit counts where
+/// `10**n` is no longer an exact double (CRuby's `rb_flo_*_by_rational`).
+/// `x` becomes its exact dyadic rational, the grid point is chosen there, and
+/// only the last division is a float.
+fn round_by_rational(x: f64, ndigits: i64, op: RoundOp) -> Result<RubyValue, Signal> {
+    use num_bigint::BigInt;
+    use num_traits::{Signed, Zero};
+    let neg = x < 0.0;
+    let (p, q) = float_exact_parts(x.abs());
+    let p = if neg { -p } else { p };
+    let scale = BigInt::from(10u32).pow(ndigits as u32);
+    // `n / d` is `x * 10**ndigits`, exactly.
+    let n = p * &scale;
+    let d = q;
+    let (quot, rem) = (&n / &d, &n % &d);
+    // `quot` truncates toward zero, so the floor is one lower for a negative
+    // remainder; every other grid point is named relative to that floor.
+    let floor = if rem.is_negative() {
+        &quot - 1
+    } else {
+        quot.clone()
+    };
+    let exact = rem.is_zero();
+    let k = match op {
+        _ if exact => floor.clone(),
+        RoundOp::Floor => floor,
+        RoundOp::Ceil => floor + 1,
+        RoundOp::Round(mode) => {
+            // Compare the fractional part against a half by doubling.
+            let frac2: BigInt = (&n - &floor * &d) * 2;
+            let up = match frac2.cmp(&d) {
+                std::cmp::Ordering::Greater => true,
+                std::cmp::Ordering::Less => false,
+                std::cmp::Ordering::Equal => match mode {
+                    HalfMode::Up => !neg,
+                    HalfMode::Down => neg,
+                    HalfMode::Even => (&floor % 2u32) != BigInt::zero(),
+                },
+            };
+            if up { floor + 1 } else { floor }
+        }
+    };
+    let v = crate::builtins::rational::rational_new(k, scale)?;
+    Ok(RubyValue::Float(
+        crate::builtins::numeric::num_to_f64_unchecked(&v),
+    ))
 }
 
 #[cfg(test)]

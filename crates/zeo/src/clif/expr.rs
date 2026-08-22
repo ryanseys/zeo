@@ -2816,6 +2816,16 @@ fn boxed_binop(
         let float_tag = i64::from(ValueTag::Float as u8);
         let a_f = fx.b.ins().icmp_imm_u(IntCC::Equal, ta, float_tag);
         let b_f = fx.b.ins().icmp_imm_u(IntCC::Equal, tb, float_tag);
+        // A MIXED pair's COMPARISON is exact in ruby (`rb_integer_float_cmp`),
+        // and promoting the Int to a double is not: `2**53 + 1` and
+        // `2.0**53` are different numbers that share one double, so an
+        // inline `fcmp` answers `==` true. Past 2**53 the arm gives the pair
+        // up to the runtime, which compares in integers. Arithmetic keeps
+        // the promotion -- that IS what ruby's `1 + 2.0` does.
+        let exact_pair = matches!(
+            op.float_shape(),
+            FloatShape::Compare(_) | FloatShape::Spaceship
+        );
         for (a_is_int, b_is_int) in [(false, false), (false, true), (true, false)] {
             let arm = fx.b.create_block();
             let next = fx.b.create_block();
@@ -2824,6 +2834,18 @@ fn boxed_binop(
             let both = fx.b.ins().band(a_ok, b_ok);
             fx.b.ins().brif(both, arm, &[], next, &[]);
             fx.b.switch_to_block(arm);
+            if exact_pair && a_is_int != b_is_int {
+                let p_int = if a_is_int { pa } else { pb };
+                let i = fx.b.ins().load(types::I64, fl, p_int, payload_off());
+                // `|i| <= 2**53`, as one unsigned compare on the biased value.
+                let biased = fx.b.ins().iadd_imm_s(i, 1 << 53);
+                let exact =
+                    fx.b.ins()
+                        .icmp_imm_u(IntCC::UnsignedLessThanOrEqual, biased, 1 << 54);
+                let ok = fx.b.create_block();
+                fx.b.ins().brif(exact, ok, &[], next, &[]);
+                fx.b.switch_to_block(ok);
+            }
             let av = as_f64(fx, pa, a_is_int);
             let bv = as_f64(fx, pb, b_is_int);
             float_arm(fx, op, av, bv, dst, join);

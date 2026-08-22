@@ -15,7 +15,9 @@
 //! fallback re-dispatches through `send_value`).
 
 use crate::builtins::complex::{cpx_add, cpx_div, cpx_eq, cpx_mul, cpx_pow, cpx_sub};
-use crate::builtins::integer::{int_add, int_cmp, int_div, int_mod, int_mul, int_pow, int_sub};
+use crate::builtins::integer::{
+    int_add, int_cmp, int_div, int_mod, int_mul, int_pow, int_sub, to_bigint,
+};
 use crate::builtins::rational::{
     as_ratio, rat_add, rat_cmp, rat_div, rat_mul, rat_pow, rat_sub, rat_to_f64, rational_new,
 };
@@ -469,6 +471,9 @@ pub(crate) fn step_size(
 /// complexes have no ordering).
 pub fn num_cmp(a: &RubyValue, b: &RubyValue) -> Option<Option<i64>> {
     let joined = lane(a)?.max(lane(b)?);
+    if let Some((i, y, flip)) = integer_float_pair(a, b) {
+        return Some(integer_float_cmp(i, y).map(|o| if flip { -o } else { o }));
+    }
     Some(match joined {
         NumLane::Int => Some(int_cmp(a, b)),
         NumLane::Rat => Some(rat_cmp(a, b)),
@@ -488,6 +493,87 @@ pub fn num_eq(a: &RubyValue, b: &RubyValue) -> Option<bool> {
         NumLane::Cpx => cpx_eq(a, b),
         _ => matches!(num_cmp(a, b)?, Some(0)),
     })
+}
+
+/// `<`, `<=`, `>`, `>=` with an `Integer` or `Float` receiver -- CRuby's
+/// `fix_lt`, `big_op` and `flo_lt`, which read `<=>`'s answer and map a NIL
+/// one to FALSE rather than raising. A NaN on either side is that nil, so
+/// `1 < Float::NAN` is false, not `ArgumentError`.
+///
+/// A `Rational` operand belongs here too, because CRuby reaches it through
+/// `rb_num_coerce_relop`, whose coercion makes the pair two Floats and then
+/// asks `Float#<` -- which answers false for a NaN and never nil. Note the
+/// asymmetry that follows and is real: `Float::NAN < Rational(1,2)` is
+/// false while `Rational(1,2) < Float::NAN` RAISES, because a Rational
+/// receiver keeps Comparable's row.
+///
+/// `None` means the operand is something else (a Complex, a String) and the
+/// caller falls through to `Comparable`, where ruby's
+/// `comparison of X with Y failed` still lives.
+pub(crate) fn int_float_relop(
+    recv: &RubyValue,
+    other: &RubyValue,
+    want: fn(i64) -> bool,
+) -> Option<bool> {
+    let coercible = |v: &RubyValue| {
+        matches!(
+            v,
+            RubyValue::Int(_) | RubyValue::BigInt(_) | RubyValue::Float(_) | RubyValue::Rational(_)
+        )
+    };
+    if !coercible(recv) || !coercible(other) {
+        return None;
+    }
+    Some(num_cmp(recv, other)?.is_some_and(want))
+}
+
+/// An `Integer`/`Float` pair in either order, as `(integer, float, flipped)`.
+fn integer_float_pair<'a>(
+    a: &'a RubyValue,
+    b: &'a RubyValue,
+) -> Option<(&'a RubyValue, f64, bool)> {
+    match (a, b) {
+        (i @ (RubyValue::Int(_) | RubyValue::BigInt(_)), RubyValue::Float(y)) => {
+            Some((i, *y, false))
+        }
+        (RubyValue::Float(y), i @ (RubyValue::Int(_) | RubyValue::BigInt(_))) => {
+            Some((i, *y, true))
+        }
+        _ => None,
+    }
+}
+
+/// `Integer <=> Float`, CRuby's `rb_integer_float_cmp`: the comparison is
+/// EXACT, decided against the float's own integer part with the fraction as
+/// the tie-break.
+///
+/// Comparing the pair as doubles instead answers `10**100 == 1.0e100` TRUE.
+/// They are different numbers; the double simply cannot tell, and the
+/// silent wrong answer is the dangerous direction.
+fn integer_float_cmp(i: &RubyValue, y: f64) -> Option<i64> {
+    use num_traits::FromPrimitive;
+    if y.is_nan() {
+        return None;
+    }
+    if y.is_infinite() {
+        return Some(if y > 0.0 { -1 } else { 1 });
+    }
+    // Below 2**53 an `i64` is exact as a double, so the plain comparison
+    // already IS the exact one -- and this is the pair nearly every program
+    // writes.
+    if let RubyValue::Int(n) = i
+        && n.unsigned_abs() < (1u64 << 53)
+    {
+        return (*n as f64).partial_cmp(&y).map(|o| o as i64);
+    }
+    let yi = y.trunc();
+    let yf = y - yi;
+    let whole = num_bigint::BigInt::from_f64(yi)?;
+    let rel = to_bigint(i).cmp(&whole) as i64;
+    if yf == 0.0 || rel != 0 {
+        return Some(rel);
+    }
+    Some(if yf < 0.0 { 1 } else { -1 })
 }
 
 // The GENERIC Numeric rows (CRuby's `Numeric` ownership: methods defined

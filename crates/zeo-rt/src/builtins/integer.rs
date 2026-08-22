@@ -1028,10 +1028,34 @@ ruby_class! {
     // ---- rows ruby OWNS on this class while the body lives on an ancestor.
     // Each calls the very row it would otherwise have inherited, so `.owner`
     // and `instance_methods(false)` agree and there is still only one body.
-    def "<"(recv, _other) { inherited_row!(comparable, "<", recv, __args, None) }
-    def "<="(recv, _other) { inherited_row!(comparable, "<=", recv, __args, None) }
-    def ">"(recv, _other) { inherited_row!(comparable, ">", recv, __args, None) }
-    def ">="(recv, _other) { inherited_row!(comparable, ">=", recv, __args, None) }
+    // `< <= > >=` between an Integer and a Float answer FALSE for an
+    // incomparable pair (a NaN) where Comparable RAISES -- CRuby hand-writes
+    // these rows for exactly that. Every other operand keeps Comparable's
+    // body, and with it ruby's `comparison of X with Y failed`.
+    def "<"(recv, other) {
+        match crate::builtins::numeric::int_float_relop(recv, other, |o| o < 0) {
+            Some(b) => Ok(RubyValue::Bool(b)),
+            None => inherited_row!(comparable, "<", recv, __args, None),
+        }
+    }
+    def "<="(recv, other) {
+        match crate::builtins::numeric::int_float_relop(recv, other, |o| o <= 0) {
+            Some(b) => Ok(RubyValue::Bool(b)),
+            None => inherited_row!(comparable, "<=", recv, __args, None),
+        }
+    }
+    def ">"(recv, other) {
+        match crate::builtins::numeric::int_float_relop(recv, other, |o| o > 0) {
+            Some(b) => Ok(RubyValue::Bool(b)),
+            None => inherited_row!(comparable, ">", recv, __args, None),
+        }
+    }
+    def ">="(recv, other) {
+        match crate::builtins::numeric::int_float_relop(recv, other, |o| o >= 0) {
+            Some(b) => Ok(RubyValue::Bool(b)),
+            None => inherited_row!(comparable, ">=", recv, __args, None),
+        }
+    }
     def "==="(recv, _other) { inherited_row!(kernel, "===", recv, __args, None) }
     def "divmod"(recv, _other) { inherited_row!(numeric, "divmod", recv, __args, None) }
     def "remainder"(recv, _other) { inherited_row!(numeric, "remainder", recv, __args, None) }
@@ -1040,7 +1064,7 @@ ruby_class! {
 }
 
 /// The Integer rounding family's shared core.
-enum RoundMode {
+pub(crate) enum RoundMode {
     HalfAway,
     Floor,
     Ceil,
@@ -1051,7 +1075,7 @@ enum RoundMode {
 /// boundary: `:up` (away from zero, the default), `:down` (toward zero), or
 /// `:even` (banker's rounding).
 #[derive(Clone, Copy)]
-enum HalfMode {
+pub(crate) enum HalfMode {
     Up,
     Down,
     Even,
@@ -1111,7 +1135,7 @@ fn round_half_mag(m: &BigInt, p: &BigInt, half: HalfMode) -> BigInt {
     }
 }
 
-fn int_round_family(
+pub(crate) fn int_round_family(
     recv: &RubyValue,
     ndigits: Option<&RubyValue>,
     mode: RoundMode,
