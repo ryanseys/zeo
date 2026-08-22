@@ -3,8 +3,9 @@
 #! `zeo-only` (zeo defines a method CRuby has nowhere in the chain) and
 #! `oracle-missing` (the dump could not reach the class at all). An arity
 #! that simply disagrees with the oracle is a BUG in the parameter list --
-#! it fails the test and cannot be recorded here. Regenerate with
-#! `ZEO_BLESS=1 cargo nextest run -p zeo --test builtin_arity`.
+#! it fails the test and cannot be recorded here. `cargo xtask bless
+#! builtin_arity` rewrites the ROWS -- it also replaces every hand-written
+#! reason below with a generic one, so re-add them after a bless.
 #!
 #! Every PUBLIC method zeo declares on a class ruby also has now resolves,
 #! so a public `zeo-only` row means one landed on the wrong class or was

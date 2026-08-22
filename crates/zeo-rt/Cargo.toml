@@ -150,6 +150,11 @@ libc.workspace = true
 # To ADD an extension, see the checklist in `src/ext/mod.rs`. In brief: an ABI
 # row (zeo-abi), an `ext/<name>.rs` module, three cfg-gated dispatch arms in
 # `builtins/mod.rs`, and one line here (+ its umbrella entry).
+# cargo-machete greps for the crate name; `md-5` is imported as `md5`, so it
+# reads as unused. It is not -- see ext/digest/mod.rs.
+[package.metadata.cargo-machete]
+ignored = ["md-5"]
+
 [features]
 default = ["ext-all"]
 ext-all = [

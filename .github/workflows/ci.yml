@@ -139,12 +139,24 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
         with:
-          tool: cargo-deny
+          tool: cargo-deny,cargo-machete
 
       # Permissive licenses only, and no yanked or advisory-flagged crate.
       # zeo-rt ships inside every compiled program, so its tree is the user's
       # tree. See deny.toml.
       - run: cargo deny check
+
+      # An unused dependency still ships in the .crate file and still has to
+      # be audited. `md-5` is ignored in zeo-rt's manifest because the crate
+      # is imported under a different name; every other exception should be
+      # a deletion instead.
+      - run: cargo machete
+
+      # A documented environment variable with no reader is a silent no-op.
+      # Three of those shipped at once: `ZEO_BLESS=1` had been replaced by
+      # `ZEO_BLESS_FROM_XTASK`, and two ledgers plus a doc still told the
+      # reader to use the spelling that does nothing.
+      - run: scripts/check-documented-env-vars.sh
 
       # A file this large in the working tree is almost always a build
       # artifact committed by mistake. History was rewritten to strip blobs

@@ -27,11 +27,11 @@ shape — it requires each gated feature before measuring.
 
 - The oracle side is recorded in `conformance/method-census.tsv`, dumped from
   `mise exec ruby@4.0.6 -- ruby`.
-- The gate is `crates/zeo/tests/method_census.rs`. It classifies each
+- The gate is `crates/zeo-tests/tests/method_census.rs`. It classifies each
   divergence as `absent-module`, `constant`, `owner` (the name answers, but
   the wrong class owns it), or `unreachable` (absent from that kind's set —
   a wrong visibility lands here too).
-- `ZEO_BLESS=1 cargo test -p zeo --test method_census` rewrites the ledger.
+- `cargo xtask bless method_coverage_only_shrinks` rewrites the ledger.
   The deleted rows are the review artifact.
 - A new class must land with its full census-visible surface in the same
   commit: closing an `absent-module` row exposes that module's whole oracle

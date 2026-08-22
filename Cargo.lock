@@ -2346,7 +2346,6 @@ dependencies = [
  "object 0.39.1",
  "proc-macro2",
  "ruby-prism",
- "serde_json",
  "syn 2.0.118",
  "tar",
  "target-lexicon",

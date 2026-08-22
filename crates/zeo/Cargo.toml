@@ -40,7 +40,6 @@ ruby-prism.workspace = true
 # (`@height´` is a legal ivar), so `names::transliterate` needs the real
 # classification to build a symbol fragment.
 unicode-ident.workspace = true
-syn.workspace = true
 miette.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
@@ -58,11 +57,9 @@ foldhash.workspace = true
 # binary and the test harnesses inherit it.
 mimalloc.workspace = true
 # The registry install tier (`cargo install zeo`): tar+flate2 unpack the
-# embedded gems archive; serde_json reads cargo's --message-format=json
-# stream to locate the crates.io-built zeo-rt rlib.
+# embedded gems archive into the payload (`home::stage_embedded_gems`).
 tar.workspace = true
 flate2.workspace = true
-serde_json.workspace = true
 
 [dev-dependencies]
 # CLIF snapshot pinning (`tests/clif.rs`).
