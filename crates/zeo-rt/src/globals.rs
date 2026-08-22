@@ -423,13 +423,15 @@ pub fn seed_box_globals(box_id: u32) {
     global_alias(box_id, "$\"", "$LOADED_FEATURES");
 }
 
-/// Fills `$LOADED_FEATURES` with the files the front end spliced -- called once
-/// from generated `main()`, after `seed_default_globals`.
+/// Fills `$LOADED_FEATURES` with what ruby has loaded before the program's
+/// first line -- called once from generated `main()`, after
+/// `seed_default_globals`.
 ///
-/// It stays a real, mutable Array (a program may push to it), but nothing else
-/// ever appends: every require was resolved at compile time. Its one functional
-/// use is [`crate::builtins::kernel::feature_already_loaded`], which lets a
-/// DYNAMIC require of an already-spliced path answer `false` instead of raising.
+/// Everything the program itself requires appends at its own document
+/// position instead ([`crate::features::feature_loaded`], CRuby's
+/// `rb_provide_feature`). Its one functional use is
+/// [`crate::builtins::kernel::feature_already_loaded`], which lets a DYNAMIC
+/// require of an already-loaded path answer `false` instead of raising.
 pub fn seed_loaded_features(paths: &[&str]) {
     let values = paths
         .iter()
@@ -463,18 +465,17 @@ pub fn append_loaded_feature(name: &str) {
     append_loaded_feature_in(0, name);
 }
 
-/// Whether any entry of the main box's `$LOADED_FEATURES` names `feature` --
-/// the runtime's answer to "was this required?" for a library zeo satisfies
-/// natively, whose entries read `<zeo-builtin>/io/console.rb`.
-pub fn loaded_features_mention(feature: &str) -> bool {
-    let RubyValue::Array(a) = global_get(0, "$LOADED_FEATURES") else {
+/// Whether this box's `$LOADED_FEATURES` already names `entry` -- what makes
+/// a second `require` of one feature record nothing.
+pub fn loaded_feature_recorded(box_id: u32, entry: &str) -> bool {
+    let RubyValue::Array(a) = global_get(box_id, "$LOADED_FEATURES") else {
         return false;
     };
-    let needle = format!("{feature}.");
-    a.lock().iter().any(|v| match v {
-        RubyValue::Str(s) => s.lock().to_utf8_lossy().contains(&needle),
+    let found = a.lock().iter().any(|v| match v {
+        RubyValue::Str(s) => s.lock().to_utf8_lossy() == entry,
         _ => false,
-    })
+    });
+    found
 }
 
 /// [`append_loaded_feature`] for a BOX -- each box has its own list, so a

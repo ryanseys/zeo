@@ -1087,14 +1087,14 @@ impl Loader {
             // `Dir.glob("#{__dir__}/smtp/auth_*.rb") { |r| require_relative r }`
             // -- net/smtp's authenticators, rubygems' plugins. The pattern is
             // a compile-time fact, so the matches splice here exactly like an
-            // ordinary require; the CALL itself still lowers. Deduped through
-            // the shared `required` table.
+            // ordinary require; the CALL itself still lowers, and finds every
+            // match already loaded. Deduped through the shared `required`
+            // table.
             //
-            // At the statement's own position, which is where CRuby runs
-            // them: a dev tree still HAS the source the glob names, so the
-            // call really does require each match at run time, and a splice
-            // landing after it would define everything the file defines
-            // twice.
+            // At the statement's own position, not at the end of the file: a
+            // dev tree still HAS the source the glob names, so the call really
+            // does require each match at run time -- and a splice that landed
+            // after it would define everything the file defines twice.
             let mut globs = Vec::new();
             collect_glob_requires(&n, &mut globs);
             for call in &globs {
@@ -1593,8 +1593,19 @@ impl Loader {
         // (`parse::mod`) reads to decide whether it evaluates to `true` or
         // `false`. Alias spellings collapse first, so `require "yaml"`
         // activates the same `psych` feature `require "psych"` does.
-        hir.activate_feature(canonical_ext_feature(bare));
-        Ok(Vec::new())
+        let feature = canonical_ext_feature(bare).to_string();
+        hir.activate_feature(&feature);
+        // Loading a statically linked extension is POSITIONAL:
+        // `$LOADED_FEATURES` names it and its require-gated rows become
+        // answerable from HERE, not from line 1. The compile-time set above
+        // stays what it always was -- a NAME-RESOLUTION gate, so a class
+        // nothing requires anywhere resolves nowhere -- and this marker is
+        // what carries the ordering inside one program.
+        let entry = format!("<zeo-builtin>/{feature}.rb");
+        Ok(vec![hir.push(HirNode::FeatureLoaded {
+            entry,
+            feature: Some(feature),
+        })])
     }
 
     /// Parses and lowers one resolved file into the arena, recording its
@@ -1823,8 +1834,18 @@ impl Loader {
         hir.lowering_file = prev_file;
         hir.lowering_package = prev_package;
         hir.lowering_dir = prev_dir;
-        let statements = statements?;
+        let mut statements = statements?;
         self.splicing.pop();
+        // CRuby records a feature BEFORE it evaluates the file (which is what
+        // makes a circular require answer `false` rather than recurse), so
+        // the marker leads the spliced statements.
+        statements.insert(
+            0,
+            hir.push(HirNode::FeatureLoaded {
+                entry: canonical.display().to_string(),
+                feature: None,
+            }),
+        );
         Ok(statements)
     }
 

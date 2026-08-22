@@ -358,6 +358,11 @@ pub const CAPI: &[CapiSig] = &[
         ret: Some(I32),
     },
     CapiSig {
+        name: "zeo_rt_feature_loaded",
+        params: &[U32, Ptr, Usize, Ptr, Usize],
+        ret: None,
+    },
+    CapiSig {
         name: "zeo_rt_ffi_enum_field",
         params: &[Usize, U8, Ptr, Ptr],
         ret: Some(I32),

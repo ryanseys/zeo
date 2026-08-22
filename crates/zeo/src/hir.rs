@@ -943,6 +943,7 @@ impl HirNode {
             | HirNode::PreExec(..)
             | HirNode::AliasGlobal(..)
             | HirNode::Undef(..)
+            | HirNode::FeatureLoaded { .. }
             | HirNode::ClassMethodUndef(..)
             | HirNode::AliasMethod { .. }
             | HirNode::MethodVisibility { .. }
@@ -3151,6 +3152,26 @@ pub enum HirNode {
     /// this class -- which removes them from the one table both dispatch
     /// paths and `respond_to?` consult.
     Undef(Vec<String>),
+    /// A `require` that SUCCEEDED, at its own document position -- what
+    /// CRuby's `rb_provide_feature` does before it evaluates the file
+    /// (`load.c`), and what makes `$LOADED_FEATURES` answer positionally
+    /// rather than for the whole program at once.
+    ///
+    /// `entry` is the `$LOADED_FEATURES` string: a spliced file's canonical
+    /// path, or `<zeo-builtin>/<feature>.rb` for a statically linked
+    /// extension. `feature` names the canonical `ext/` feature when the
+    /// require ACTIVATES one, which is what a require-gated builtin row
+    /// (`IO#getch`) and a require-gated constant wait for; `None` for an
+    /// ordinary spliced file, which activates nothing.
+    ///
+    /// It is emitted at the HEAD of a splice, before the file's own
+    /// statements, because CRuby records the feature before it runs the
+    /// file -- which is what makes a circular require answer `false`
+    /// instead of recursing.
+    FeatureLoaded {
+        entry: String,
+        feature: Option<String>,
+    },
     /// `undef foo` / `undef_method :foo` written inside `class << self` -- the
     /// singleton half of [`HirNode::Undef`], which makes those names raise
     /// NoMethodError as CLASS methods of the enclosing class, inherited ones
@@ -3297,6 +3318,7 @@ impl HirNode {
             | HirNode::Prepend(_)
             | HirNode::ClassMethodPrepend(_)
             | HirNode::Refine { .. }
+            | HirNode::FeatureLoaded { .. }
             | HirNode::Undef(_)
             | HirNode::ClassMethodUndef(_)
             | HirNode::AliasMethod { .. }
@@ -3657,6 +3679,7 @@ impl HirNode {
             | HirNode::Refine { .. }
             | HirNode::Using(_)
             | HirNode::DefHook { .. }
+            | HirNode::FeatureLoaded { .. }
             | HirNode::MethodRedefine { .. }
             | HirNode::Undef(_)
             | HirNode::ClassMethodUndef(_)

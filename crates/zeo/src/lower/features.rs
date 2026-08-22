@@ -28,11 +28,12 @@ pub fn canonical_ext_feature(feature: &str) -> &str {
 /// gates CONSTANT visibility, so pre-seeding `monitor` there would make
 /// `Monitor` resolve without its require.
 pub fn is_preloaded_at_boot(feature: &str) -> bool {
-    matches!(
-        feature,
-        "set" | "monitor" | "rational" | "complex" | "thread"
-    )
+    PRELOADED_AT_BOOT.contains(&feature)
 }
+
+/// [`is_preloaded_at_boot`]'s list, as data: the `$LOADED_FEATURES` seed
+/// needs to ENUMERATE it, not just ask about one name.
+pub const PRELOADED_AT_BOOT: &[&str] = &["set", "monitor", "rational", "complex", "thread"];
 
 /// Whether `feature` names a stdlib feature the runtime compiles in, so
 /// `require`ing it is a no-op (nothing to splice). `tmpdir` (`Dir.mktmpdir`)

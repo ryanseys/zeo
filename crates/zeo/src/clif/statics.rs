@@ -1150,28 +1150,23 @@ pub(crate) fn define_desc(
     let source_table = define_source_rows(em, &analyzed.compiler.hir.embedded_sources)?;
     let (cov_table, n_cov) = define_cov_rows(em, analyzed)?;
     let hir = &analyzed.compiler.hir;
-    let mut loaded: Vec<String> = hir
-        .loaded_files
-        .iter()
-        .filter(|f| !f.is_unit)
-        .map(|f| f.canonical.to_string_lossy().into_owned())
-        .collect();
-    let ambient_rbconfig = "<zeo-shim>/rbconfig.rb".to_string();
-    if !loaded.contains(&ambient_rbconfig) {
-        loaded.push(ambient_rbconfig);
-    }
-    // A feature zeo satisfies with a BUILTIN (`require "set"`, `require
-    // "json"`) splices no file, so nothing above records it -- and CRuby's
-    // `$LOADED_FEATURES` names one entry per loaded feature whatever
-    // supplied it (rustc's `<zeo-builtin>` listing).
-    let mut activated: Vec<&String> = hir.activated_features.iter().collect();
-    activated.sort();
-    for feature in activated {
-        let entry = format!("<zeo-builtin>/{feature}.rb");
-        if !loaded.contains(&entry) {
-            loaded.push(entry);
-        }
-    }
+    // Only what is loaded BEFORE the program's first line. Every feature the
+    // program itself requires -- a spliced file and a statically linked
+    // extension alike -- records itself at its own document position through
+    // `HirNode::FeatureLoaded`, which is CRuby's `rb_provide_feature`. Seeding
+    // them here instead made `$LOADED_FEATURES` name a library from line 1
+    // however late the `require` was written.
+    let mut loaded: Vec<String> = vec!["<zeo-shim>/rbconfig.rb".to_string()];
+    // What ruby 4.0 has loaded before the program's first line, whether or
+    // not the program mentions it (`set.rb`, `thread.rb`, `monitor.rb`,
+    // `rational.so`, `complex.so` -- oracle-verified). Requiring one of these
+    // answers `false` and records nothing, which is what
+    // `features::is_preloaded_at_boot` already told the require-fold.
+    loaded.extend(
+        crate::lower::features::PRELOADED_AT_BOOT
+            .iter()
+            .map(|f| format!("<zeo-builtin>/{f}.rb")),
+    );
     let warnings: Vec<String> = hir.warnings.iter().map(ToString::to_string).collect();
 
     // One Str-array object: loaded features first, then warnings.

@@ -564,6 +564,7 @@ fn lower_tail_expr(fx: &mut Fx, tail: NodeId) -> Result<super::operand::Operand,
         | HirNode::DynConstRead { .. }
         | HirNode::DynConstWrite { .. }
         | HirNode::AliasGlobal(..)
+        | HirNode::FeatureLoaded { .. }
         | HirNode::RegexpLit(..)
         | HirNode::Ffi(..)
         | HirNode::BoxScope { .. }
@@ -1357,6 +1358,7 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
         | HirNode::DynConstRead { .. }
         | HirNode::DynConstWrite { .. }
         | HirNode::AliasGlobal(..)
+        | HirNode::FeatureLoaded { .. }
         | HirNode::RegexpLit(..)
         | HirNode::Ffi(..)
         | HirNode::BoxScope { .. }

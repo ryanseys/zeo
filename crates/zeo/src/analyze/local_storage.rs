@@ -396,6 +396,7 @@ pub(crate) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Locals) 
         | HirNode::GlobalRead(_)
         | HirNode::LastMatchRef(_)
         | HirNode::Undef(_)
+        | HirNode::FeatureLoaded { .. }
         | HirNode::ClassMethodUndef(_)
         | HirNode::AliasMethod {
             new_name: _,

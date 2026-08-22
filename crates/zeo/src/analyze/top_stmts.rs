@@ -966,6 +966,7 @@ fn for_each_nested_stmt(
         | HirNode::PreExec(_)
         | HirNode::AliasGlobal(..)
         | HirNode::Undef(_)
+        | HirNode::FeatureLoaded { .. }
         | HirNode::ClassMethodUndef(_)
         | HirNode::AliasMethod { .. }
         | HirNode::MethodVisibility { .. }

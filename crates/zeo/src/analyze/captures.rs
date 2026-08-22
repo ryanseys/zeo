@@ -1122,6 +1122,7 @@ fn walk(
         | HirNode::GlobalRead(_)
         | HirNode::LastMatchRef(_)
         | HirNode::Undef(_)
+        | HirNode::FeatureLoaded { .. }
         | HirNode::ClassMethodUndef(_)
         | HirNode::AliasMethod {
             new_name: _,

@@ -407,6 +407,21 @@ pub unsafe extern "C" fn zeo_rt_const_get_scoped(
     }
 }
 
+/// A `require` succeeded, at its own document position -- CRuby's
+/// `rb_provide_feature`. `feature` is empty for an ordinary spliced file.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_feature_loaded(
+    box_id: u32,
+    entry: *const u8,
+    entry_len: usize,
+    feature: *const u8,
+    feature_len: usize,
+) {
+    let entry = unsafe { super::str_slice(entry, entry_len) };
+    let feature = unsafe { super::str_slice(feature, feature_len) };
+    crate::features::feature_loaded(box_id, entry, feature);
+}
+
 /// `alias $new $old` -- a real, bidirectional alias of the STORAGE, so
 /// writing either name is visible through both.
 #[unsafe(no_mangle)]

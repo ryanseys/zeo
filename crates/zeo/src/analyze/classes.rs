@@ -1141,6 +1141,7 @@ fn walk_class_body(
             | HirNode::DynConstWrite { .. }
             | HirNode::PreExec(_)
             | HirNode::AliasGlobal(..)
+            | HirNode::FeatureLoaded { .. }
             | HirNode::LastMatchRef(_)
             | HirNode::Seq(_)
             | HirNode::FlipFlop { .. } => {

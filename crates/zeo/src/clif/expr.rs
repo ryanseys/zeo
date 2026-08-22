@@ -444,6 +444,18 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             fx.call("zeo_rt_gvar_alias", &[bx, nptr, nlen, optr, olen]);
             Ok(Operand::Nil)
         }
+        // A `require` that succeeded, at its own document position: record
+        // the feature the way CRuby's `rb_provide_feature` does, before the
+        // file it names runs. Answers nil -- the require's own `true`/`false`
+        // was folded at its call site.
+        HirNode::FeatureLoaded { entry, feature } => {
+            let (entry, feature) = (entry.clone(), feature.clone());
+            let bx = fx.box_v();
+            let (eptr, elen) = rodata_name(fx, &entry);
+            let (fptr, flen) = rodata_name(fx, feature.as_deref().unwrap_or(""));
+            fx.call("zeo_rt_feature_loaded", &[bx, eptr, elen, fptr, flen]);
+            Ok(Operand::Nil)
+        }
         // A `class`/`module` written where a value is READ -- `x = class C;
         // 7; end`, or a `class << self` body ending a method. Ruby's value
         // is the body's last statement, which the site computes.

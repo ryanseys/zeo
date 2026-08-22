@@ -1067,9 +1067,9 @@ mod tests {
 /// is observable beyond reflection: `respond_to?(:getch)` is how a library
 /// decides whether the console extension is there at all.
 ///
-/// The gate reads `$LOADED_FEATURES`, which the compiler seeds with every
-/// feature it satisfied natively. It is asked only for `IO`, and only until
-/// the answer is known.
+/// The gate is armed by the `require` itself, at its own document position
+/// (`features::feature_loaded`), so the rows appear where CRuby's do rather
+/// than from line 1. It is asked only for `IO`.
 pub(crate) mod gate {
     use std::sync::atomic::{AtomicU8, Ordering};
     use zeo_abi::ClassId;
@@ -1117,21 +1117,30 @@ pub(crate) mod gate {
     /// `IO`'s only gated CLASS method.
     const IO_CONSOLE_CLASS: &[&str] = &["console"];
 
-    /// 0 = not asked yet, 1 = required, 2 = not required. Answered from
-    /// `$LOADED_FEATURES` the first time a gated name is looked up, which is
-    /// always after `zeo_rt_main` has seeded it.
+    /// 0 = not required yet, 1 = required. Flipped by [`activate`] at the
+    /// `require`'s own document position, so a program that requires
+    /// `io/console` on its last line does not answer `getch` on its first.
+    ///
+    /// Deliberately NOT read back out of `$LOADED_FEATURES`: that array is a
+    /// mutable Ruby value a program may push anything into, and the question
+    /// here is whether zeo's own loader activated the extension.
     static CONSOLE: AtomicU8 = AtomicU8::new(0);
     static NONBLOCK: AtomicU8 = AtomicU8::new(0);
 
-    fn required(cell: &AtomicU8, feature: &str) -> bool {
-        match cell.load(Ordering::Relaxed) {
-            1 => return true,
-            2 => return false,
-            _ => {}
+    fn required(cell: &AtomicU8) -> bool {
+        cell.load(Ordering::Acquire) == 1
+    }
+
+    /// A `require` of `feature` ran. Idempotent; a feature that gates no rows
+    /// is a no-op here (its gating is the CONSTANT's, see
+    /// `constants::reveal_feature_classes`).
+    pub(crate) fn activate(feature: &str) {
+        match feature {
+            "io/console" => CONSOLE.store(1, Ordering::Release),
+            "io/nonblock" => NONBLOCK.store(1, Ordering::Release),
+            _ => return,
         }
-        let seen = crate::globals::loaded_features_mention(feature);
-        cell.store(if seen { 1 } else { 2 }, Ordering::Relaxed);
-        seen
+        NAME_CACHE.write().unwrap().take();
     }
 
     /// `Ruby::Box`'s gate-only rows -- CRuby defines these six only under
@@ -1150,10 +1159,10 @@ pub(crate) mod gate {
             return true;
         }
         if IO_CONSOLE.binary_search(&name).is_ok() {
-            return required(&CONSOLE, "io/console");
+            return required(&CONSOLE);
         }
         if IO_NONBLOCK.contains(&name) {
-            return required(&NONBLOCK, "io/nonblock");
+            return required(&NONBLOCK);
         }
         true
     }
@@ -1166,7 +1175,7 @@ pub(crate) mod gate {
         if id != zeo_abi::IO_CLASS || !IO_CONSOLE_CLASS.contains(&name) {
             return true;
         }
-        required(&CONSOLE, "io/console")
+        required(&CONSOLE)
     }
 
     /// Whether `id` has gated rows at all -- the one question the six table
@@ -1228,15 +1237,23 @@ pub(crate) mod gate {
         zeo_abi::RUBY_BOX_CLASS
     );
 
-    /// The name lists, filtered once per `(class, side)`. The gate's answer is
-    /// fixed for a program run: the compiler seeds `$LOADED_FEATURES` with
-    /// every feature it satisfied wherever in the file the `require` was
-    /// written, and `RUBY_BOX` is read once at startup.
+    /// The name lists, filtered once per `(class, side)` -- [`names`]'
+    /// memo. Dropped by [`activate`]: the filtered list is an
+    /// answer about a moment, and a `require` written below a reflection call
+    /// changes it. The slices it holds are `Vec::leak`ed, so a dropped entry
+    /// stays valid for any `&'static` a caller is still holding.
+    static NAME_CACHE: std::sync::RwLock<
+        Option<crate::FMap<(u32, bool), &'static [&'static str]>>,
+    > = std::sync::RwLock::new(None);
+
     pub(crate) fn names(id: ClassId, side: super::Side) -> &'static [&'static str] {
-        static CACHE: std::sync::RwLock<Option<crate::FMap<(u32, bool), &'static [&'static str]>>> =
-            std::sync::RwLock::new(None);
         let key = (id.0, matches!(side, super::Side::Instance));
-        if let Some(hit) = CACHE.read().unwrap().as_ref().and_then(|m| m.get(&key)) {
+        if let Some(hit) = NAME_CACHE
+            .read()
+            .unwrap()
+            .as_ref()
+            .and_then(|m| m.get(&key))
+        {
             return hit;
         }
         let all = super::side_of(id, side).map(|m| (m.names)()).unwrap_or(&[]);
@@ -1249,7 +1266,7 @@ pub(crate) mod gate {
             })
             .collect();
         let leaked: &'static [&'static str] = Vec::leak(kept);
-        CACHE
+        NAME_CACHE
             .write()
             .unwrap()
             .get_or_insert_with(crate::FMap::default)

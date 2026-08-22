@@ -384,3 +384,22 @@ pub fn install_declined_features(rows: &'static [(&'static str, &'static str)]) 
 pub fn decline_reason(feature: &str) -> Option<&'static str> {
     DECLINED.get()?.get(key(feature)).copied()
 }
+
+/// A `require` succeeded, at its own document position. `entry` joins this
+/// box's `$LOADED_FEATURES` (CRuby's `rb_provide_feature`, which runs BEFORE
+/// the file it names) and `feature`, when non-empty, activates a
+/// statically linked extension: its require-gated rows become answerable and
+/// its gated constants become visible from here on, not from line 1.
+pub fn feature_loaded(box_id: u32, entry: &str, feature: &str) {
+    // Idempotent: a second `require` of a feature records nothing. The
+    // compiler splices a file once, but a require written twice under two
+    // different guards reaches this twice -- and a feature ruby has loaded
+    // before line 1 is already in the seed.
+    if !crate::globals::loaded_feature_recorded(box_id, entry) {
+        crate::globals::append_loaded_feature_in(box_id, entry);
+    }
+    if !feature.is_empty() {
+        crate::builtins::gate::activate(feature);
+        crate::constants::reveal_feature_classes(feature);
+    }
+}

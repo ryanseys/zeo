@@ -96,6 +96,7 @@ capi_symbols!(
     kernel::zeo_rt_eval_value_in_scope,
     kernel::zeo_rt_eval_value_in_scope_argv,
     kernel::zeo_rt_eval_yield,
+    objects::zeo_rt_feature_loaded,
     ffi::zeo_rt_ffi_enum_field,
     ffi::zeo_rt_ffi_enum_store,
     ffi::zeo_rt_ffi_invoke,

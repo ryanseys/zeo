@@ -306,6 +306,21 @@ pub fn reveal_class(id: u32) {
     }
 }
 
+/// A `require` of `feature` ran: every builtin class that feature gates
+/// becomes visible from here on. The compiler conceals them in the
+/// registration prologue, so the constant answers `NameError` until this
+/// fires -- CRuby's own answer for `Base64` before `require "base64"`.
+///
+/// The feature -> class mapping is `zeo_abi::BUILTINS`, the same table the
+/// compiler's gate reads, so the two cannot drift.
+pub fn reveal_feature_classes(feature: &str) {
+    for b in zeo_abi::BUILTINS.iter() {
+        if b.feature == Some(feature) {
+            reveal_class(b.id.0);
+        }
+    }
+}
+
 /// Whether `id` is registered but concealed.
 pub fn class_concealed(id: u32) -> bool {
     ANY_CONCEALED.load(Ordering::Acquire) && CONCEALED_CLASSES.lock().contains(&id)

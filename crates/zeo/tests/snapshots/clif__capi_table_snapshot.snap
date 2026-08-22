@@ -66,6 +66,7 @@ zeo_rt_eval_using ([Ptr, U32]) -> Some(I32)
 zeo_rt_eval_value_in_scope ([Ptr, Ptr, Ptr, Ptr, Ptr, Ptr]) -> Some(I32)
 zeo_rt_eval_value_in_scope_argv ([Ptr, Ptr, Ptr]) -> Some(I32)
 zeo_rt_eval_yield ([Ptr, Usize, Ptr]) -> Some(I32)
+zeo_rt_feature_loaded ([U32, Ptr, Usize, Ptr, Usize]) -> None
 zeo_rt_ffi_enum_field ([Usize, U8, Ptr, Ptr]) -> Some(I32)
 zeo_rt_ffi_enum_store ([Usize, Ptr, Usize, Ptr]) -> Some(I32)
 zeo_rt_ffi_invoke ([Ptr, Usize, Ptr, Usize, Ptr]) -> Some(I32)
