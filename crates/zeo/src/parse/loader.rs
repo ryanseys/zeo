@@ -1084,6 +1084,30 @@ impl Loader {
                 combined.extend(spliced);
             }
 
+            // `Dir.glob("#{__dir__}/smtp/auth_*.rb") { |r| require_relative r }`
+            // -- net/smtp's authenticators, rubygems' plugins. The pattern is
+            // a compile-time fact, so the matches splice here exactly like an
+            // ordinary require; the CALL itself still lowers. Deduped through
+            // the shared `required` table.
+            //
+            // At the statement's own position, which is where CRuby runs
+            // them: a dev tree still HAS the source the glob names, so the
+            // call really does require each match at run time, and a splice
+            // landing after it would define everything the file defines
+            // twice.
+            let mut globs = Vec::new();
+            collect_glob_requires(&n, &mut globs);
+            for call in &globs {
+                let Some(glob) = glob_require_call(call, dir) else {
+                    continue;
+                };
+                for path in expand_glob(&glob.pattern) {
+                    let spliced =
+                        self.splice_feature(hir, &path, &glob.flavor, dir, file_idx, current_box)?;
+                    combined.extend(spliced);
+                }
+            }
+
             combined.push(id);
             own.push(id);
         }
@@ -1091,27 +1115,6 @@ impl Loader {
             rename::isolate_file_locals(hir, &own, idx);
         }
         drop(frame);
-
-        // `Dir.glob("#{__dir__}/smtp/auth_*.rb") { |r| require_relative r }` --
-        // net/smtp's authenticators, rubygems' plugins. The pattern is a
-        // compile-time fact, so the matches are spliced here exactly like an
-        // `autoload`; the CALL itself still lowers below, where the glob finds
-        // nothing at runtime (an AOT binary has no source tree) and the block
-        // never runs. Deduped through the shared `required` table.
-        let mut globs = Vec::new();
-        for n in body.iter() {
-            collect_glob_requires(&n, &mut globs);
-        }
-        for call in &globs {
-            let Some(glob) = glob_require_call(call, dir) else {
-                continue;
-            };
-            for path in expand_glob(&glob.pattern) {
-                let spliced =
-                    self.splice_feature(hir, &path, &glob.flavor, dir, file_idx, current_box)?;
-                combined.extend(spliced);
-            }
-        }
 
         // The method-body `require_relative`s, plus any require the statement
         // loop could not reach (one written inside an autoload/glob target).
