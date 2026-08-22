@@ -211,7 +211,7 @@ fn publish(chunk: Vec<Node>) {
     if total >= COMPACT_AT.load(Relaxed) {
         let live = compact_locked(&mut chunks);
         PUBLISHED.store(live, Relaxed);
-        COMPACT_AT.store((live * 2).max(2 * CHUNK), Relaxed);
+        COMPACT_AT.store(live + (live / 2).max(2 * CHUNK), Relaxed);
     }
 }
 

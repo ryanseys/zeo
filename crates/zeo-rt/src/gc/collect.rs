@@ -63,28 +63,52 @@ pub fn collect() -> usize {
         return 0;
     }
 
-    let index: FMap<usize, usize> = nodes
-        .iter()
-        .enumerate()
-        .map(|(i, n)| (n.addr(), i))
-        .collect();
+    let mut index: FMap<usize, usize> = FMap::with_capacity_and_hasher(nodes.len(), <_>::default());
+    for (i, n) in nodes.iter().enumerate() {
+        index.insert(n.addr(), i);
+    }
 
     // Every owner count is read BEFORE any edge is cloned, so the walk's own
     // temporary handles cannot be mistaken for a program's references.
     // Minus one for the handle this pass holds.
     let mut unexplained: Vec<isize> = nodes.iter().map(|n| n.owners() as isize - 1).collect();
 
-    let mut edges: Vec<Vec<usize>> = vec![Vec::new(); nodes.len()];
+    // The graph is held flat -- one run of targets per node, indexed by a
+    // start offset -- rather than as a `Vec` per node. A real program's heap
+    // has hundreds of thousands of nodes, and a `Vec` each would be that
+    // many tiny allocations, costing far more in memory and allocator churn
+    // than the graph itself.
+    let mut edge_starts: Vec<u32> = Vec::with_capacity(nodes.len() + 1);
+    let mut edge_targets: Vec<u32> = Vec::with_capacity(nodes.len());
     let mut buf: Vec<RubyValue> = Vec::new();
-    for (i, node) in nodes.iter().enumerate() {
+    for node in &nodes {
+        edge_starts.push(edge_targets.len() as u32);
         buf.clear();
         node.gc_visit(&mut buf, false);
         for target in buf.drain(..).filter_map(|v| value_addr(&v)) {
             if let Some(&t) = index.get(&target) {
                 unexplained[t] -= 1;
-                edges[i].push(t);
+                edge_targets.push(t as u32);
             }
         }
+    }
+    edge_starts.push(edge_targets.len() as u32);
+    let targets_of = |i: usize| {
+        let (lo, hi) = (edge_starts[i] as usize, edge_starts[i + 1] as usize);
+        &edge_targets[lo..hi]
+    };
+
+    // A count driven below zero means an edge was reported that is not an
+    // owned reference, or one reference was reported twice -- the one
+    // direction that can reclaim a live node. Checked before anything is
+    // cleared, so the corpus reports the bug rather than the corruption.
+    #[cfg(debug_assertions)]
+    for (i, n) in unexplained.iter().enumerate() {
+        assert!(
+            *n >= 0,
+            "gc: node {i} has {n} unexplained owners -- an edge was reported \
+             that is not an owned reference, or one was reported twice"
+        );
     }
 
     // A node with an owner the registry cannot account for is reachable from
@@ -95,7 +119,7 @@ pub fn collect() -> usize {
         if std::mem::replace(&mut live[i], true) {
             continue;
         }
-        stack.extend(edges[i].iter().copied());
+        stack.extend(targets_of(i).iter().map(|&t| t as usize));
     }
 
     let mut drained: Vec<RubyValue> = Vec::new();
@@ -108,6 +132,19 @@ pub fn collect() -> usize {
     }
     // Released outside every guard the sweep held: a drop cascades.
     drop(drained);
+
+    // `ZEO_RT_GCSTATS=1` reports one line per collection, beside
+    // `ZEO_RT_LEAKCHECK`'s counters. A pass that reclaims nothing looks
+    // exactly like one that never ran, and telling those apart from outside
+    // the process is otherwise guesswork.
+    if std::env::var_os("ZEO_RT_GCSTATS").is_some() {
+        eprintln!(
+            "gc: nodes={} edges={} live={} reclaimed={reclaimed}",
+            nodes.len(),
+            edge_targets.len(),
+            nodes.len() - reclaimed,
+        );
+    }
 
     #[cfg(debug_assertions)]
     for (i, node) in nodes.iter().enumerate() {
