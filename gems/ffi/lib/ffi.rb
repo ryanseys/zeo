@@ -427,41 +427,141 @@ module FFI
     def offset_of(name) = self[name].offset
   end
 
-  # A library module `extend`s this and speaks in DIRECTIVES the compiler
-  # resolves at lowering time. The module exists at runtime because a
-  # `def self.extended(host)` hook runs `host.extend FFI::Library` (and then
-  # `host.typedef ...`) for real when the host's class body executes --
-  # chef's Win32 API modules all share their FFI setup that way. By then
-  # every attach site is already compiled, so the directives the hooks call
-  # are no-ops.
+  # A library module `extend`s this and speaks in DIRECTIVES.
+  #
+  # zeo has TWO tiers for them, and which one runs is decided by whether the
+  # compiler could see the declaration. A declaration written in a file the
+  # compiler lowered is consumed there: `attach_function` becomes an
+  # `FfiCall` node whose whole C signature rides in `.rodata`, and nothing
+  # below ever runs. A declaration the compiler could NOT see -- one a
+  # run-time `eval` compiled, a `def self.extended(host)` hook replaying
+  # `host.typedef`, a directive under a computed send -- runs here, and
+  # attaches for real over the gem's own runtime objects
+  # (`DynamicLibrary`, `Function`, `VariadicInvoker`).
+  #
+  # The two tiers answer the same questions with the same engine: both end
+  # at libffi, both resolve a symbol with `dlsym`, both mangle a bare
+  # library name through `LibraryPath`.
   module Library
     LIBC = FFI::Platform::LIBC
 
-    def typedef(*) end
+    # `typedef :uint32, :OM_uint32`. The compiler resolved every alias for
+    # the signatures it lowered; recording it here as well is what lets a
+    # signature attached at RUN time name one.
+    def typedef(old = nil, add = nil, *)
+      FFI.add_typedef(old, add) if old && add
+      nil
+    end
 
+    # cdecl vs stdcall is a 32-bit Windows distinction; no target zeo
+    # builds for has a second convention to pick.
     def ffi_convention(*) end
 
-    # The two directives the compiler MUST have consumed. Reaching either
-    # at run time means it did not see the declaration at all -- a snippet
-    # a run-time `eval` compiled, or a computed send -- and zeo has no
-    # run-time attach path to fall back on, so it says so rather than
-    # answering `NoMethodError` as though the name were misspelled.
-    def ffi_lib(*)
-      raise NotImplementedError,
-            "zeo resolves an `FFI::Library` declaration at compile time, so `ffi_lib` cannot be " \
-            "reached at run time (an `eval`'d declaration, or a computed send)"
+    # The libraries every subsequent `attach_function` searches, in
+    # declaration order. Each name is opened EAGERLY -- an unopenable
+    # library raises `LoadError` at this statement, as the gem does -- and
+    # is tried as written and then through `LibraryPath`'s mangling
+    # (`m` -> `libm.dylib`).
+    def ffi_lib(*names)
+      flags = FFI::DynamicLibrary::RTLD_LAZY | FFI::DynamicLibrary::RTLD_LOCAL
+      @ffi_libs = names.flatten.map do |name|
+        if name.equal?(FFI::CURRENT_PROCESS)
+          FFI::DynamicLibrary.open(nil, flags)
+        else
+          zeo_open_library(name, flags)
+        end
+      end
     end
 
-    def attach_function(*)
-      raise NotImplementedError,
-            "zeo resolves an `FFI::Library` declaration at compile time, so `attach_function` " \
-            "cannot be reached at run time (an `eval`'d declaration, or a computed send)"
+    # The gem raises rather than defaulting to the process image: an
+    # `attach_function` with no library named is a declaration bug.
+    def ffi_libraries
+      raise LoadError, "no library specified" if @ffi_libs.nil? || @ffi_libs.empty?
+
+      @ffi_libs
     end
 
-    def attach_variable(*)
-      raise NotImplementedError,
-            "zeo resolves an `FFI::Library` declaration at compile time, so `attach_variable` " \
-            "cannot be reached at run time (an `eval`'d declaration, or a computed send)"
+    # `attach_function(name, [args], ret)` or
+    # `attach_function(ruby_name, c_name, [args], ret)`, either with a
+    # trailing options hash. Answers the callable it installed, as the gem
+    # does, and installs it BOTH as a singleton method and as a public
+    # instance method -- a library module is `include`d as often as it is
+    # called through.
+    def attach_function(name, a2, a3, a4 = nil, a5 = nil)
+      cname, arg_types, ret_type, options =
+        if a4 && (a2.is_a?(String) || a2.is_a?(Symbol))
+          [a2, a3, a4, a5]
+        else
+          [name.to_s, a2, a3, a4]
+        end
+      map = options && options[:type_map]
+      types = Array(arg_types).map { |t| FFI.find_type(t, map) }
+      ret = FFI.find_type(ret_type, map)
+      ptr = zeo_find_symbol(cname, :find_function)
+      fn = if types.include?(FFI::Type::Builtin::VARARGS)
+             FFI::VariadicInvoker.new(ptr, types, ret, options || {})
+           else
+             FFI::Function.new(ret, types, ptr, options || {})
+           end
+      define_singleton_method(name) { |*args, &blk| fn.call(*args, &blk) }
+      define_method(name) { |*args, &blk| fn.call(*args, &blk) }
+      fn
+    end
+
+    # `attach_variable(name, [c_name,] type)`: a reader and a writer over
+    # the symbol's own storage. There is no compile-time tier for this one
+    # -- the compiler leaves the directive as an ordinary call -- so this
+    # runs for a declaration in a compiled file too.
+    def attach_variable(name, a2, a3 = nil)
+      cname, type = a3 ? [a2, a3] : [name.to_s, a2]
+      ptr = zeo_find_symbol(cname, :find_variable)
+      reader, writer = FFI::Library.zeo_accessors(FFI.find_type(type))
+      define_singleton_method(name) { ptr.send(reader) }
+      define_singleton_method("#{name}=") { |v| ptr.send(writer, v); v }
+      ptr
+    end
+
+    # The `Pointer` read/write pair one native type is stored through.
+    # `:string` is deliberately absent: a `char *` variable is a POINTER to
+    # the bytes, and reading it as a String would need a second
+    # dereference the gem spells `read_pointer.read_string`.
+    ZEO_ACCESSORS = {
+      "INT8" => %i[read_int8 write_int8], "UINT8" => %i[read_uint8 write_uint8],
+      "INT16" => %i[read_int16 write_int16], "UINT16" => %i[read_uint16 write_uint16],
+      "INT32" => %i[read_int32 write_int32], "UINT32" => %i[read_uint32 write_uint32],
+      "INT64" => %i[read_int64 write_int64], "UINT64" => %i[read_uint64 write_uint64],
+      "LONG" => %i[read_long write_long], "ULONG" => %i[read_ulong write_ulong],
+      "FLOAT32" => %i[read_float write_float], "FLOAT64" => %i[read_double write_double],
+      "BOOL" => %i[read_int8 write_int8], "POINTER" => %i[read_pointer write_pointer]
+    }.freeze
+
+    def self.zeo_accessors(type)
+      ZEO_ACCESSORS[type.inspect] ||
+        raise(TypeError, "`attach_variable` cannot store a #{type.inspect} (zeo limitation)")
+    end
+
+    private
+
+    def zeo_open_library(name, flags)
+      errors = []
+      [name.to_s, FFI::LibraryPath.wrap(name.to_s).to_s].uniq.each do |candidate|
+        return FFI::DynamicLibrary.open(candidate, flags)
+      rescue LoadError => e
+        errors << e.message
+      end
+      raise LoadError, "Could not open library '#{name}': #{errors.join('; ')}"
+    end
+
+    # `dlsym` across the module's libraries in declaration order, exactly
+    # as the gem's own `attach_function` searches them.
+    def zeo_find_symbol(cname, verb)
+      libs = ffi_libraries
+      libs.each do |lib|
+        sym = lib.send(verb, cname.to_s)
+        return sym unless sym.null?
+      end
+      raise FFI::NotFoundError,
+            "Function '#{cname}' not found in [#{libs.map { |l| l.name || 'current process' }.join(', ')}]"
     end
   end
 

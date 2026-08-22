@@ -294,10 +294,10 @@ fn scope_refusals(analyzed: &crate::analyze::Analyzed) -> Result<(), String> {
             HirNode::MethodRedefine { .. } => Some("a redefinition analyze resolved"),
             HirNode::DefHook { .. } => Some("a definition hook analyze spliced"),
             HirNode::ClassMethodPrepend { .. } => Some("a singleton `prepend`"),
-            // Compile-time-only surfaces.
-            // The FFI surface is assembled by analyze from markers a
-            // whole-program compile consumes.
-            HirNode::Ffi(..) => Some("an `FFI::Library` declaration"),
+            // Compile-time-only surfaces. An `FFI::Library` declaration is
+            // NOT one of them any more: `lower::defs`' `is_ffi` gate is off
+            // in a snippet, so the directives stay ordinary calls and
+            // `FFI::Library`'s own rows attach at run time.
             HirNode::BoxScope { .. } | HirNode::BoxHandle(..) => Some("a `Ruby::Box`"),
             _ => None,
         };

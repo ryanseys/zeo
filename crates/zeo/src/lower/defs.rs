@@ -905,9 +905,11 @@ fn lower_one_class_body_stmt<'a>(
         return Ok(());
     }
     if st.is_ffi {
-        if is_extend_ffi_library(stmt) {
-            return Ok(()); // `extend FFI::Library` is the marker, no output
-        }
+        // `extend FFI::Library` is the marker AND an ordinary `extend`: the
+        // directives below it are consumed at compile time, but the module
+        // really does extend `FFI::Library` in ruby -- which is what makes
+        // `M.is_a?(FFI::Library)` true and puts the run-time tier's own
+        // `typedef`/`attach_variable` rows in reach. So it falls through.
         if lower_ffi_directive(result, hir, stmt, st.ffi_lib, st.ffi_aliases, out, st.body)? {
             return Ok(());
         }

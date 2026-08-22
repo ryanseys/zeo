@@ -1584,33 +1584,73 @@ fn eval_body_source(
     let (Some(a), Some(b)) = (hir.span(*first), hir.span(*last)) else {
         return Err("a span-less statement in a `class` inside an `eval`".to_string());
     };
-    // The body's TEXT is what runs (a class body inside a snippet is one
-    // more `class_eval` of its own source), so a statement analyze
-    // synthesized -- whose span points into some other file entirely --
-    // would slice nonsense out of the snippet and hand it to prism. An
-    // `FFI::Struct` subclass is the one shape that does: its `layout` is
-    // replayed from the gem's own source.
+    // The body's TEXT is what runs -- a class body inside a snippet is one
+    // more `class_eval` of its own source -- so the usual case is one slice
+    // of the snippet between the first and last statement, which keeps every
+    // line number exactly where the snippet put it.
     let own = hir
         .span(stmt)
         .and_then(|s| s.known())
         .ok_or_else(|| "a span-less `class` inside an `eval`".to_string())?;
-    if a.file != own.file || a.start < own.start || b.end > own.end {
-        return Err(
-            "a `class` inside an `eval` whose body analyze rewrote (an `FFI::Struct` layout is \
-             the one shape that does)"
-                .to_string(),
-        );
+    if a.file == own.file && a.start >= own.start && b.end <= own.end {
+        let src = hir
+            .files
+            .get(a.file.0 as usize)
+            .ok_or_else(|| "a `class` body from an unknown file".to_string())?;
+        let (start, end) = (a.start as usize, (b.end as usize).min(src.source.len()));
+        if start > end {
+            return Err("a `class` body whose statements run backwards".to_string());
+        }
+        line = src.line_at(a.start);
+        return Ok((src.source[start..end].to_string(), file, line));
     }
-    let src = hir
-        .files
-        .get(a.file.0 as usize)
-        .ok_or_else(|| "a `class` body from an unknown file".to_string())?;
-    let (start, end) = (a.start as usize, (b.end as usize).min(src.source.len()));
-    if start > end {
-        return Err("a `class` body whose statements run backwards".to_string());
+    // A body analyze REWROTE reaches here: some of its statements are
+    // synthesized, and their spans point into a source of analyze's own
+    // making rather than into the snippet. An `FFI::Struct` subclass is the
+    // shape that does it -- its `layout` is replaced in place by the
+    // accessors `lower::ffi::synthesize_ffi_struct` writes -- and that
+    // synthesized text is real Ruby, so the body is still recoverable: slice
+    // each RUN of same-file statements from its own file and join the runs.
+    // What this cannot keep is the line numbering, since the runs come from
+    // different files; the class reports its own line for the whole body,
+    // which is where the compiled tier attributes a synthesized accessor
+    // too.
+    let mut parts: Vec<String> = Vec::new();
+    let mut run: Option<(crate::hir::FileId, u32, u32)> = None;
+    let flush = |run: Option<(crate::hir::FileId, u32, u32)>,
+                 parts: &mut Vec<String>|
+     -> Result<(), String> {
+        let Some((f, start, end)) = run else {
+            return Ok(());
+        };
+        let src = hir
+            .files
+            .get(f.0 as usize)
+            .ok_or_else(|| "a `class` body from an unknown file".to_string())?;
+        let (start, end) = (start as usize, (end as usize).min(src.source.len()));
+        if start > end {
+            return Err("a `class` body whose statements run backwards".to_string());
+        }
+        parts.push(src.source[start..end].to_string());
+        Ok(())
+    };
+    for id in body {
+        let span = hir
+            .span(*id)
+            .and_then(|s| s.known())
+            .ok_or_else(|| "a span-less statement in a `class` inside an `eval`".to_string())?;
+        run = match run {
+            Some((f, start, end)) if f == span.file && span.start >= end => {
+                Some((f, start, span.end))
+            }
+            other => {
+                flush(other, &mut parts)?;
+                Some((span.file, span.start, span.end))
+            }
+        };
     }
-    line = src.line_at(a.start);
-    Ok((src.source[start..end].to_string(), file, line))
+    flush(run, &mut parts)?;
+    Ok((parts.join("\n"), file, line))
 }
 
 /// The class a definition-level statement written in a snippet names --

@@ -309,26 +309,36 @@ fn a_class_name_already_taken_is_a_type_error() {
 }
 
 #[test]
-fn a_shape_zeo_declines_raises_and_names_itself() {
-    // There is no second evaluator to hand a declined shape to, and
-    // answering one approximately would break the compile contract. It
-    // raises, and the message says which shape it was. An `FFI::Struct`
-    // subclass is the shape here: its `layout` is replayed from the gem's
-    // own source, so the body text a snippet's class body needs is not in
-    // the snippet at all (`tests/gaps/an_ffi_declaration_inside_an_eval.rb`).
+fn every_shape_an_eval_once_declined_now_compiles() {
+    // There is no second evaluator to hand a declined shape to, so a shape
+    // the compiler cannot lower raises `NotImplementedError` naming itself.
+    // This test used to pin one such message -- and it had to be re-pointed
+    // every time a shape closed, which is a test that rots into a lie. It
+    // pins the CLOSURES instead: every shape a snippet once declined, each
+    // answering what ruby answers.
     agree(
         r#"
         require "ffi"
-        src = "class EvalStruct < FFI::Struct; layout :a, :int; end"
-        begin
-          eval(src)
-        rescue NotImplementedError => e
-          puts e.message
-        end
+        # an `FFI::Library` declaration: the directives stay ordinary calls
+        # in a snippet, and the module's own rows attach at run time.
+        eval <<~SRC
+          module EvalLib
+            extend FFI::Library
+            ffi_lib FFI::Library::LIBC
+            attach_function :abs, [:int], :int
+          end
+        SRC
+        p EvalLib.abs(-3)
+        # a `class < FFI::Struct`: its `layout` is replaced in place by
+        # synthesized accessors, whose own source is the body text that runs.
+        eval "class EvalStruct < FFI::Struct; layout :a, :int, :b, :int; end"
+        p EvalStruct.size
+        # `refine`/`using` at run time. (A `Ruby::Box` closed with them and
+        # is pinned by `tests/gaps/a_snippet_mints_no_compile_time_box.rb`,
+        # which the golden harness runs with `RUBY_BOX=1`.)
+        eval "module EvalRef; refine(String) { def shout = upcase + '!' }; end"
+        p eval("using EvalRef; 'hi'.shout")
         "#,
-        concat!(
-            "zeo cannot compile this `eval`: a `class` inside an `eval` whose body analyze ",
-            "rewrote (an `FFI::Struct` layout is the one shape that does)\n"
-        ),
+        "3\n8\n\"HI!\"\n",
     );
 }
