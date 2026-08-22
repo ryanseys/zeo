@@ -8,9 +8,7 @@ use super::capi_names::{self, CTy};
 use super::ctx::Fx;
 use super::{names, statics, stmt, verify};
 use crate::analyze::Analyzed;
-use cranelift_codegen::ir::{
-    self, AbiParam, InstBuilder, MemFlagsData, StackSlotData, StackSlotKind, UserFuncName, types,
-};
+use cranelift_codegen::ir::{self, AbiParam, InstBuilder, MemFlagsData, UserFuncName, types};
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::{JITBuilder, JITModule};
@@ -2231,6 +2229,7 @@ fn define_method_body(
         epilogue(&mut fx, 1);
     }
 
+    fx.drain_slot_inits();
     verify::check(&fx, &label);
     let Fx { mut b, .. } = fx;
     b.seal_all_blocks();
@@ -2425,6 +2424,7 @@ fn define_toplevel(
     fx.b.switch_to_block(land);
     epilogue(&mut fx, 1);
 
+    fx.drain_slot_inits();
     verify::check(&fx, &sym);
     let Fx { mut b, .. } = fx;
     b.seal_all_blocks();
@@ -2551,8 +2551,7 @@ pub(crate) fn init_cell_local(fx: &mut Fx, name: String, seed: Option<ir::Value>
     let cellp = fx
         .call("zeo_rt_cell_new", &[init])
         .expect("cell_new returns the cell");
-    let ss =
-        fx.b.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
+    let ss = fx.new_cell_slot();
     let dst = fx.slot_addr(ss, 0);
     fx.b.ins().store(MemFlagsData::trusted(), cellp, dst, 0);
     fx.locals

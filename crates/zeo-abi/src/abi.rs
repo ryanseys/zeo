@@ -61,6 +61,10 @@ pub enum ValueTag {
 /// retain/release.
 pub const FIRST_HEAP_TAG: u8 = 16;
 
+/// The highest tag [`ValueTag`] defines. A byte above it is not a tag at
+/// all, which is how the runtime tells an uninitialised slot from a value.
+pub const LAST_HEAP_TAG: u8 = ValueTag::Ractor as u8;
+
 /// A compiled function returned normally; `out` holds the value.
 pub const STATUS_OK: i32 = 0;
 /// A signal is pending in the per-fiber slot; `out` is untouched.

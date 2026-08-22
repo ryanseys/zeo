@@ -151,6 +151,13 @@ pub unsafe extern "C" fn zeo_rt_cell_retain(cell: *mut Cell) {
 /// Release one owner (frees the cell at zero).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zeo_rt_cell_release(cell: *mut Cell) {
+    // Null is "this scope never created a cell". A cell slot is nulled in
+    // the entry block and filled where the binding happens, and the two can
+    // be different paths -- a fused loop's inline arm creates the cell, and
+    // the guard's fallback arm reaches the same epilogue without it.
+    if cell.is_null() {
+        return;
+    }
     drop(unsafe { Arc::from_raw(cell.cast_const()) });
 }
 

@@ -709,9 +709,7 @@ fn define_block_fn(
     }
     for (i, name) in captured.iter().enumerate() {
         let cellp = bfx.b.ins().load(ptr_ty, fl, cells_base, (i * 8) as i32);
-        let ss =
-            bfx.b
-                .create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
+        let ss = bfx.new_cell_slot();
         let dst = bfx.slot_addr(ss, 0);
         bfx.b.ins().store(fl, cellp, dst, 0);
         bfx.locals
@@ -762,11 +760,7 @@ fn define_block_fn(
             let cellp = bfx
                 .call("zeo_rt_cell_new", &[null])
                 .expect("cell_new returns the cell");
-            let ss = bfx.b.create_sized_stack_slot(StackSlotData::new(
-                StackSlotKind::ExplicitSlot,
-                8,
-                3,
-            ));
+            let ss = bfx.new_cell_slot();
             let dst = bfx.slot_addr(ss, 0);
             bfx.b.ins().store(fl, cellp, dst, 0);
             bfx.locals.insert(name, Local::Cell { ss, owned: true });
@@ -1071,6 +1065,7 @@ fn define_block_fn(
         epilogue(&mut bfx, 1);
     }
 
+    bfx.drain_slot_inits();
     super::verify::check(&bfx, &label);
     let Fx { mut b, .. } = bfx;
     b.seal_all_blocks();

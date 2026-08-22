@@ -370,8 +370,7 @@ fn new_cell_local(fx: &mut Fx) -> super::ctx::Local {
     let cellp = fx
         .call("zeo_rt_cell_new", &[null])
         .expect("cell_new returns the cell");
-    let ss =
-        fx.b.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
+    let ss = fx.new_cell_slot();
     let dst = fx.slot_addr(ss, 0);
     fx.b.ins().store(MemFlagsData::trusted(), cellp, dst, 0);
     super::ctx::Local::Cell { ss, owned: true }

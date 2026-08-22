@@ -4,6 +4,7 @@
 
 use super::emit::Emitter;
 use crate::analyze::Analyzed;
+use cranelift_codegen::cursor::{Cursor, FuncCursor};
 use cranelift_codegen::ir::{self, InstBuilder, MemFlagsData, StackSlotData, StackSlotKind, types};
 use cranelift_frontend::FunctionBuilder;
 use cranelift_module::Module;
@@ -206,6 +207,13 @@ pub(crate) struct Fx<'e, 'f> {
     /// Inside a block fn: the binding head `redo` jumps to (re-running the
     /// param bindings, ruby's rule) -- set once the bindings exist.
     pub block_redo: Option<ir::Block>,
+    /// The function's entry block. Every slot's initialization is emitted
+    /// here by [`Fx::drain_slot_inits`], never where the slot was created.
+    entry: ir::Block,
+    /// Value slots owing their three nil words. See [`Fx::new_value_slot`].
+    deferred_zero: Vec<ir::StackSlot>,
+    /// Cell-pointer slots owing their null. See [`Fx::new_cell_slot`].
+    deferred_null: Vec<ir::StackSlot>,
 }
 
 impl<'e, 'f> Fx<'e, 'f> {
@@ -216,6 +224,11 @@ impl<'e, 'f> Fx<'e, 'f> {
         rodata_base_of: impl FnOnce(&mut Emitter, &mut FunctionBuilder<'f>) -> (ir::Value, ir::Value),
     ) -> Fx<'e, 'f> {
         let (rodata_base, syms_base) = rodata_base_of(em, &mut b);
+        // Every caller creates the entry block inside `rodata_base_of` and
+        // leaves it current, which is what makes it reachable here.
+        let entry = b
+            .current_block()
+            .expect("rodata_base_of leaves the entry block current");
         let land = b.create_block();
         Fx {
             em,
@@ -264,6 +277,9 @@ impl<'e, 'f> Fx<'e, 'f> {
             owned_consumed: 0,
             ruby2_keywords: false,
             block_redo: None,
+            entry,
+            deferred_zero: Vec::new(),
+            deferred_null: Vec::new(),
         }
     }
 
@@ -411,18 +427,84 @@ impl<'e, 'f> Fx<'e, 'f> {
     }
 
     /// A fresh nil-initialized value slot.
+    ///
+    /// The three nil words are NOT emitted here. They are deferred to the
+    /// entry block, because a caller may be building a block that only one
+    /// path reaches -- a fused loop's inline arm behind its guards -- while
+    /// the epilogue and the landing release every slot in `locals`
+    /// unconditionally. A slot initialized where it was created is then
+    /// released uninitialised on every path that skipped that block, and
+    /// `zeo_rt_release` runs `drop_in_place` over whatever the stack held.
     pub fn new_value_slot(&mut self) -> ir::StackSlot {
         let ss = self.b.create_sized_stack_slot(StackSlotData::new(
             StackSlotKind::ExplicitSlot,
             VALUE_SIZE,
             3,
         ));
-        let dst = self.slot_addr(ss, 0);
-        let z = self.b.ins().iconst(types::I64, 0);
-        for off in [0, 8, 16] {
-            self.b.ins().store(MemFlagsData::trusted(), z, dst, off);
-        }
+        self.deferred_zero.push(ss);
         ss
+    }
+
+    /// A fresh cell-pointer slot, nulled in the entry block.
+    ///
+    /// Null is the "no cell here" sentinel `zeo_rt_cell_release` skips, for
+    /// the same reason [`Fx::new_value_slot`] defers its nil words: the
+    /// creating block may not run.
+    pub fn new_cell_slot(&mut self) -> ir::StackSlot {
+        let ss =
+            self.b
+                .create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
+        self.deferred_null.push(ss);
+        ss
+    }
+
+    /// Emit every slot's initialization at the top of the entry block. Runs
+    /// once, immediately before the builder is finalized, so that a slot
+    /// created anywhere in the function is initialised on every path.
+    ///
+    /// Asserts the invariant the epilogue depends on: every slot in `locals`
+    /// was created through [`Fx::new_value_slot`] or [`Fx::new_cell_slot`],
+    /// so `release_locals` -- which walks `locals` unconditionally from both
+    /// the normal exit and the landing -- can never be handed one that no
+    /// path initialised.
+    pub fn drain_slot_inits(&mut self) {
+        let zero = std::mem::take(&mut self.deferred_zero);
+        let null = std::mem::take(&mut self.deferred_null);
+        #[cfg(debug_assertions)]
+        {
+            let init: std::collections::HashSet<ir::StackSlot> =
+                zero.iter().chain(null.iter()).copied().collect();
+            for (name, l) in &self.locals {
+                let ss = match l {
+                    Local::Slot(ss) | Local::Cell { ss, .. } => *ss,
+                };
+                assert!(
+                    init.contains(&ss),
+                    "ICE: local `{name}`'s slot is released by the epilogue but was \
+                     not created through new_value_slot/new_cell_slot, so no path \
+                     initialises it"
+                );
+            }
+        }
+        if zero.is_empty() && null.is_empty() {
+            return;
+        }
+        let ptr = self.em.ptr;
+        let mut c = FuncCursor::new(self.b.func).at_first_insertion_point(self.entry);
+        let z = c.ins().iconst(types::I64, 0);
+        for ss in zero {
+            let dst = c.ins().stack_addr(ptr, ss, 0);
+            for off in [0, 8, 16] {
+                c.ins().store(MemFlagsData::trusted(), z, dst, off);
+            }
+        }
+        if !null.is_empty() {
+            let n = c.ins().iconst(ptr, 0);
+            for ss in null {
+                let dst = c.ins().stack_addr(ptr, ss, 0);
+                c.ins().store(MemFlagsData::trusted(), n, dst, 0);
+            }
+        }
     }
 
     /// The `*mut Cell` a captured local's pointer slot holds.

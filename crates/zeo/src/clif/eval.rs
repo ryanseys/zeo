@@ -18,9 +18,7 @@ use super::ctx::{Fx, Local};
 use super::emit::{ClifModule, Emitter};
 use super::{statics, verify};
 use crate::analyze::Analyzed;
-use cranelift_codegen::ir::{
-    self, AbiParam, InstBuilder, MemFlagsData, StackSlotData, StackSlotKind, UserFuncName, types,
-};
+use cranelift_codegen::ir::{self, AbiParam, InstBuilder, MemFlagsData, UserFuncName, types};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::JITModule;
 use cranelift_module::{Linkage, Module};
@@ -154,8 +152,7 @@ fn define_entry(
     let ptr_ty = fx.em.ptr;
     for (i, name) in spec.cells.iter().enumerate() {
         let cellp = fx.b.ins().load(ptr_ty, fl, cells_p, (i * 8) as i32);
-        let ss =
-            fx.b.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
+        let ss = fx.new_cell_slot();
         let dst = fx.slot_addr(ss, 0);
         fx.b.ins().store(fl, cellp, dst, 0);
         fx.locals
@@ -198,6 +195,7 @@ fn define_entry(
     fx.b.switch_to_block(land);
     epilogue(&mut fx, 1);
 
+    fx.drain_slot_inits();
     verify::check(&fx, ENTRY);
     let Fx { mut b, .. } = fx;
     b.seal_all_blocks();

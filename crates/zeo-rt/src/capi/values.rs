@@ -18,9 +18,42 @@ pub unsafe extern "C" fn zeo_rt_retain(v: *const RubyValue) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zeo_rt_release(v: *mut RubyValue) {
     super::leakcheck::check_not_poisoned(v, "zeo_rt_release");
+    debug_tag_check(v);
     super::leakcheck::consumed(unsafe { &*v });
     unsafe { std::ptr::drop_in_place(v) };
     super::leakcheck::poison(v);
+}
+
+/// Abort naming the byte when a slot handed to `zeo_rt_release` holds no
+/// value tag at all.
+///
+/// `drop_in_place` reads the discriminant of a `#[repr(C, u8)]` enum, so a
+/// slot the emitter left uninitialised runs a destructor chosen by stack
+/// garbage. That shipped once: a fused loop's block parameter was
+/// nil-initialised inside the inline arm and released unconditionally, so
+/// every path that took the fallback arm released a slot that never held a
+/// value.
+///
+/// Release builds skip it -- this runs for every local at every function
+/// exit, which is a path where a naive frame push once cost `ruby_xor`
+/// 0.996s -> 3.8s. `ZEO_CLIF_VERIFY=1` turns it on in a release build.
+#[inline]
+fn debug_tag_check(v: *const RubyValue) {
+    if !cfg!(debug_assertions) && !verify_enabled() {
+        return;
+    }
+    let t = unsafe { *v.cast::<u8>() };
+    assert!(
+        t <= zeo_abi::abi::LAST_HEAP_TAG,
+        "zeo_rt_release: tag byte {t} is not a value tag -- the emitter \
+         handed over a slot that holds no live value"
+    );
+}
+
+/// `ZEO_CLIF_VERIFY=1`: arm [`debug_tag_check`] in a release build.
+fn verify_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("ZEO_CLIF_VERIFY").is_some_and(|v| !v.is_empty()))
 }
 
 /// Move the heap temporary at `v` into the frame-scoped release pool; it

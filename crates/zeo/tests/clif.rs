@@ -32,6 +32,29 @@ fn clif_snapshot_block_send() {
     ));
 }
 
+/// A guarded fused `arr.each`: the receiver tag test, `iter_inline_ok_for`,
+/// the inline arm and the dynamic fallback arm, all in one function.
+///
+/// This shape is why slot initialization moved to the entry block. The
+/// block parameter's slot is created inside the INLINE arm, and the
+/// epilogue releases every slot in `locals` unconditionally from both the
+/// normal exit and the shared landing -- so a slot zeroed where it was
+/// created is released uninitialised on the fallback path.
+///
+/// A golden cannot see this. Both arms print the right answer either way,
+/// and every attempt to build a small failing program came out clean,
+/// because the released bytes are stack garbage that happens to be benign
+/// in a short frame. The snapshot is the proof: the zeroing stores belong
+/// at the top of the entry block, ahead of the guards.
+#[test]
+fn clif_snapshot_fused_each_guards() {
+    // The receiver must be a local analyze TYPES as an Array, or the block
+    // compiles to an ordinary block fn and none of this appears.
+    insta::assert_snapshot!(clif_of(
+        "def each_of\n  a = [1, 2]\n  a.each { |x| p x }\nend\neach_of\n",
+    ));
+}
+
 /// Two compiles of one program are byte-identical -- object emission is a
 /// pure function of the CLIF.
 #[test]

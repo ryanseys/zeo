@@ -1,0 +1,3 @@
+The path this golden covers -- a raise reaching the shared landing before a
+fused loop ever ran -- produces identical output whether or not the loop's
+slot was initialised. Only the ownership ledger can see the difference.
