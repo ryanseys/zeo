@@ -19,9 +19,39 @@
 # resolution shared by the call and the probe, plus the own-set to tell a
 # class's real `def self.x` from the copy materialization gave it.
 #
-# The fix shape for the rest is a singleton ancestry that is a real linearized
-# chain -- the same `include_modules_at` replay the instance side runs -- with
-# positions to walk, rather than branches over side tables.
+# HALF OF IT LANDED 2026-08-22, and the file is down to ONE diverging line.
+# `runtime_meta::singleton_chain` builds the two areas apart, so both
+# `singleton_class.ancestors` rows below are byte-identical to ruby and hold
+# the module twice. P1's dispatch was already right. What is left is P2's, and
+# it is the SystemStackError.
+#
+# WHAT IS LEFT, mapped. `send_super_class_from(P2, CM, :hi)` finds CM in no
+# instance ancestor, sees `has_singleton_prepend(P2, CM)`, finds no other
+# prepend below it, and re-enters `send_class_walking_inner` with
+# `first_below_prepends`. That skips the PREPENDED copy and finds the EXTENDED
+# one -- correct -- but the extended copy's baked `defining_class` is also CM,
+# so its own `super` takes the identical branch and re-enters forever. Both
+# copies name the same module; only their POSITION differs, and the walk has
+# none.
+#
+# The instance side solved exactly this with `dispatch::MRO_RESUME`: the walk
+# that enters a body publishes `(defining_class, next_index)` and `super_resume`
+# reads it back, so a `super` resumes past the copy that is RUNNING rather than
+# past the first one. The class-method channel needs the same fact, and needs
+# positions to number:
+#
+#   * a derived singleton walk -- for each non-module ancestor, its singleton
+#     prepends (latest first), then its own `def self.x` layer, then its
+#     extends (latest first). That is CRuby's parallel metaclass chain, and it
+#     is the order `scan_class_method_owner` already half-walks;
+#   * `resolve_class_walking` returning the POSITION it hit as well as the hit,
+#     and `send_class_walking_inner` publishing it around the call;
+#   * its own resume cell rather than `MRO_RESUME`. The two channels index
+#     different sequences, and a module used BOTH as an instance mixin and a
+#     singleton one would have them collide on `defining_class`. A second cell
+#     joins the `Ec` bundle, as the first did;
+#   * `super_class_defined` reading the same resolution, or the probe and the
+#     walk drift again -- which is the shape this file has already hit twice.
 
 module CM
   def hi = "cm(#{defined?(super) ? super : 'top'})"
