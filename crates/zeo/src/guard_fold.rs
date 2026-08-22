@@ -1299,7 +1299,7 @@ fn builtin_provides_instance_method(
             None => all_projected = false,
         }
         let info = compiler.class(c);
-        queue.extend(info.includes.iter().copied());
+        queue.extend(info.includes());
         queue.extend(info.parent);
     }
     all_projected.then_some(false)
@@ -1386,7 +1386,7 @@ fn compiled_method_in_chain(compiler: &Compiler, class: ClassId, name: &str) -> 
         }) {
             return Some(sid);
         }
-        queue.extend(info.includes.iter().copied());
+        queue.extend(info.includes());
         queue.extend(info.parent);
     }
     None

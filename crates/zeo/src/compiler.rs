@@ -107,13 +107,15 @@ pub struct ClassInfo {
     /// carries no such history, so the reopen that declares its superclass
     /// establishes it.
     pub bare_definition: bool,
-    /// `prepend`ed modules, in source order (see `analyze::mro`'s
-    /// linearization -- expanded in REVERSE source order, so the most
-    /// recently prepended module ends up closest).
-    pub prepends: Vec<ClassId>,
-    /// `include`d modules, in source order (same reverse-expansion rule as
-    /// `prepends`).
-    pub includes: Vec<ClassId>,
+    /// Every compile-time mixin this class's body ran, in DOCUMENT order,
+    /// each tagged `true` for a `prepend`.
+    ///
+    /// ONE list, not an `includes` beside a `prepends`, because the
+    /// interleaving decides the chain: the two verbs search different scopes,
+    /// so whichever runs first finds an empty one (see
+    /// `crate::analyze::mro::compute_ancestors`). `includes()` and
+    /// `prepends()` read the halves back out.
+    pub mixin_order: Vec<(ClassId, bool)>,
     /// The constants this class's body marked with `private_constant`, minus
     /// any a later `public_constant` restored. A qualified `M::A` naming one
     /// of these from OUTSIDE `M`'s lexical scope is a NameError, and
@@ -374,6 +376,29 @@ pub struct ClassInfo {
     /// ride the runtime overlay the same way. See
     /// `analyze`'s guarded-top-definition rewrite for what sets it.
     pub runtime_conditional: bool,
+}
+
+impl ClassInfo {
+    /// The `include`d modules, in source order.
+    pub fn includes(&self) -> impl Iterator<Item = ClassId> + '_ {
+        self.mixin_order
+            .iter()
+            .filter(|&&(_, prepend)| !prepend)
+            .map(|&(m, _)| m)
+    }
+
+    /// The `prepend`ed modules, in source order.
+    pub fn prepends(&self) -> impl Iterator<Item = ClassId> + '_ {
+        self.mixin_order
+            .iter()
+            .filter(|&&(_, prepend)| prepend)
+            .map(|&(m, _)| m)
+    }
+
+    /// Whether this class's body ran any `prepend`.
+    pub fn has_prepends(&self) -> bool {
+        self.mixin_order.iter().any(|&(_, prepend)| prepend)
+    }
 }
 
 /// One name, bound on one class -- CRuby's `rb_method_entry_t` (method.h:55).
@@ -1083,12 +1108,11 @@ impl Compiler {
                 qualified_def: false,
                 is_bootstrap: false,
                 parent: None,
-                prepends: Vec::new(),
-                includes: Vec::new(),
                 private_constants: Default::default(),
                 const_visibility_names: Default::default(),
                 extends: Vec::new(),
                 class_method_prepends: Vec::new(),
+                mixin_order: Vec::new(),
                 undefined: FSet::default(),
                 class_undefined: FSet::default(),
                 runtime_undefs: FSet::default(),
@@ -1182,7 +1206,7 @@ impl Compiler {
             );
             let ci = &mut compiler.classes[id.0 as usize];
             ci.is_builtin = true;
-            ci.includes = b.includes.to_vec();
+            ci.mixin_order = b.includes.iter().map(|&m| (m, false)).collect();
             ci.feature_gate = b.feature;
         }
         // The two edge kinds no `BuiltinClass` field carries, and both are
@@ -1192,7 +1216,9 @@ impl Compiler {
             compiler.classes[id.0 as usize].extends = modules.to_vec();
         }
         for &(id, modules) in zeo_abi::BUILTIN_PREPENDS {
-            compiler.classes[id.0 as usize].prepends = modules.to_vec();
+            compiler.classes[id.0 as usize]
+                .mixin_order
+                .extend(modules.iter().map(|&m| (m, true)));
         }
         // A nested builtin name (`"Digest::SHA256"`, `"Enumerator::Lazy"`) is
         // stored as its LEAF under a lexical parent, so a constant path
@@ -1214,7 +1240,10 @@ impl Compiler {
         // `Object < BasicObject`, `include Kernel` -- so EVERY chain ends
         // `..., Object, Kernel, BasicObject`, the real Ruby tail.
         compiler.classes[0].parent = Some(zeo_abi::OBJECT_SUPERCLASS);
-        compiler.classes[0].includes = zeo_abi::OBJECT_INCLUDES.to_vec();
+        compiler.classes[0].mixin_order = zeo_abi::OBJECT_INCLUDES
+            .iter()
+            .map(|&m| (m, false))
+            .collect();
         compiler
     }
 
@@ -1737,12 +1766,11 @@ impl Compiler {
             qualified_def: false,
             is_bootstrap: false,
             parent,
-            prepends: Vec::new(),
-            includes: Vec::new(),
             private_constants: Default::default(),
             const_visibility_names: Default::default(),
             extends: Vec::new(),
             class_method_prepends: Vec::new(),
+            mixin_order: Vec::new(),
             undefined: FSet::default(),
             class_undefined: FSet::default(),
             runtime_undefs: FSet::default(),

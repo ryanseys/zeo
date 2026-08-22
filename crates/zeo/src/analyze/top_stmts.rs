@@ -315,9 +315,10 @@ fn process_top_stmt_inner(
         // bare `M`-method call resolves through implicit self.
         let m = m.clone();
         match resolve_module_target(compiler, &m, &[], 0) {
-            MixinTarget::Static(target) => compiler.classes[OBJECT_CLASS.0 as usize]
-                .includes
-                .push(target),
+            MixinTarget::Static(target) => {
+                let ci = &mut compiler.classes[OBJECT_CLASS.0 as usize];
+                ci.mixin_order.push((target, false));
+            }
             // Registration-only otherwise, so the deferred read has to be added
             // to the statements codegen emits or it would never run.
             MixinTarget::DeferredRead => {
@@ -2631,7 +2632,8 @@ pub(super) fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(),
                 "{name} or {marker} went missing right after registration"
             ));
         };
-        compiler.classes[cls.0 as usize].includes.push(module);
+        let ci = &mut compiler.classes[cls.0 as usize];
+        ci.mixin_order.push((module, false));
     }
     // The second spellings. `zeo-abi::ERRNO_ALIASES` holds the `Errno` half:
     // a name the platform gives the same value as an earlier one

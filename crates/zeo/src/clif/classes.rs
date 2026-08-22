@@ -264,7 +264,7 @@ pub(crate) fn collect_classes(
     for (idx, class) in compiler.classes.iter().enumerate() {
         let cid = crate::compiler::ClassId(idx as u32);
         let chain = || class.ancestors.iter().map(|a| a.0).collect::<Vec<u32>>();
-        if class.is_bootstrap && !(class.prepends.is_empty() && class.includes.is_empty()) {
+        if class.is_bootstrap && !(class.mixin_order.is_empty()) {
             set_ancestors.push((idx as u32, chain()));
         }
         if !((class.is_builtin || idx == 0) && compiler.feature_active(cid))
@@ -625,7 +625,7 @@ pub(crate) fn collect_classes(
         // def does, and on a native-backed class its body cannot register
         // as an object-channel bridge -- that shape wants rustc's
         // `promote_own_impl` twin, not built yet.
-        if !class.prepends.is_empty() && kind != zeo_abi::abi::CLASS_PLAIN {
+        if class.has_prepends() && kind != zeo_abi::abi::CLASS_PLAIN {
             let winners: std::collections::HashSet<crate::compiler::ScopeId> =
                 class.methods.iter().map(|e| e.def).collect();
             let shadows_own = class.own_methods.iter().any(|sid| {
@@ -924,7 +924,7 @@ pub(crate) fn collect_classes(
         // materialized table -- its body still compiles, reachable ONLY
         // through the module copy's `super` (rustc's `__own_` bridge +
         // `define_super_target_value`).
-        if !class.prepends.is_empty() && !class.is_module && !immediate {
+        if class.has_prepends() && !class.is_module && !immediate {
             let winners: std::collections::HashSet<crate::compiler::ScopeId> =
                 class.methods.iter().map(|e| e.def).collect();
             for &sid in &class.own_methods {

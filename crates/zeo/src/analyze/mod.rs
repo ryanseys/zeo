@@ -668,8 +668,7 @@ mod tests {
             "module M1\nend\nmodule M2\nend\nclass Foo\n  include M1\nend\nclass Foo\n  include M2\nend\n",
         );
         let ci = a.compiler.class(class_named(&a, "Foo"));
-        assert_eq!(ci.includes.len(), 1);
-        assert_eq!(ci.includes[0], class_named(&a, "M1"));
+        assert_eq!(ci.includes().collect::<Vec<_>>(), [class_named(&a, "M1")]);
     }
 
     /// The reopen guards, each mirroring CRuby's own TypeError

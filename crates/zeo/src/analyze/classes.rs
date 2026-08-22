@@ -760,7 +760,8 @@ fn walk_class_body(
                             defer_positional_mixin(compiler, site_idx, stmt, target);
                             continue;
                         } else {
-                            compiler.classes[class_id.0 as usize].includes.push(target);
+                            let ci = &mut compiler.classes[class_id.0 as usize];
+                            ci.mixin_order.push((target, false));
                         }
                         compiler.class_body_sites[site_idx].stmts.push(stmt);
                     }
@@ -998,7 +999,8 @@ fn walk_class_body(
                             defer_positional_mixin(compiler, site_idx, stmt, target);
                             continue;
                         } else {
-                            compiler.classes[class_id.0 as usize].prepends.push(target);
+                            let ci = &mut compiler.classes[class_id.0 as usize];
+                            ci.mixin_order.push((target, true));
                         }
                         compiler.class_body_sites[site_idx].stmts.push(stmt);
                     }

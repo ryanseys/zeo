@@ -21,53 +21,90 @@ use crate::compiler::{ClassId, Compiler, MethodEntry, NameId, OBJECT_CLASS, Scop
 use crate::compiler::{FMap, FSet};
 use crate::hir::{HirNode, NodeId, Span, Visibility};
 
-/// Real Ruby's actual linearization (not classic C3): for `class_id` with
-/// prepends `P1..Pk` and includes `M1..Mn`, both in source order,
-/// `ancestors = expand(Pk)..expand(P1) ++ [self] ++ expand(Mn)..expand(M1)
-/// ++ ancestors(parent)`, recursively expanding each module's own
-/// prepends/includes the same way, deduped keeping the FIRST occurrence.
+/// Real Ruby's linearization: CRuby's own `include_modules_at`, replayed.
+///
+/// A chain starts as `[self] ++ ancestors(superclass)` and each mixin in the
+/// class body MUTATES it, in DOCUMENT order. `include M` walks `M`'s own
+/// chain inserting each element after `self`, keeping `M`'s relative order,
+/// and skips an element the chain already carries ANYWHERE -- an inherited
+/// one included -- moving the insertion point past it instead. `prepend M`
+/// inserts at the front and searches only the PREPEND AREA, so a module
+/// merely included below is added again and the chain holds it TWICE.
+///
+/// The two search scopes are `rb_include_module`'s `search_super = TRUE` and
+/// `rb_prepend_module`'s `FALSE`, and they are the whole difference between
+/// the verbs. Document order therefore decides: `include A; prepend A` gives
+/// `[A, C, A]` because the include ran against an empty chain, while
+/// `prepend A; include A` gives `[A, C]` because the include found it.
+///
 /// This is the one place zeo deliberately does NOT copy spinel's own
 /// shortcut -- spinel's separately generated `.ancestors` reflection only
 /// expands a class's own DIRECT includes, which is measurably wrong for a
-/// module-including-module diamond (confirmed by running a repro against
-/// spinel's own binary -- see the plan). Consulting this SAME list for
-/// dispatch, reflection, AND class-variable ownership avoids that class of
-/// bug entirely.
+/// module-including-module diamond. Consulting this SAME list for dispatch,
+/// reflection, AND class-variable ownership avoids that class of bug
+/// entirely.
 pub fn compute_ancestors(compiler: &Compiler, class_id: ClassId) -> Vec<ClassId> {
-    let mut out = Vec::new();
-    expand_into(compiler, class_id, &mut out);
-    out
+    chain_of(compiler, class_id, &mut Vec::new())
 }
 
-fn expand_into(compiler: &Compiler, class_id: ClassId, out: &mut Vec<ClassId>) {
-    if out.contains(&class_id) {
-        return;
+/// `class_id`'s chain, built by replaying its mixins over `[self] ++
+/// ancestors(superclass)`. `active` is the recursion path, so a cycle in a
+/// structure that is supposed to be a list terminates instead of hanging.
+fn chain_of(compiler: &Compiler, class_id: ClassId, active: &mut Vec<ClassId>) -> Vec<ClassId> {
+    if active.contains(&class_id) {
+        return Vec::new();
     }
+    active.push(class_id);
     let info = compiler.class(class_id);
-    for &p in info.prepends.iter().rev() {
-        expand_into(compiler, p, out);
-    }
-    if !out.contains(&class_id) {
-        out.push(class_id);
-    }
-    for &m in info.includes.iter().rev() {
-        expand_into(compiler, m, out);
-    }
+    let mut chain = vec![class_id];
     if let Some(parent) = info.parent {
-        // A module reached twice is an ordinary diamond and the `contains`
-        // check above absorbs it. A SUPERCLASS reached twice is a cycle in a
-        // chain that is supposed to be a list, and every walk over it that
-        // isn't guarded the way this one is runs forever -- which is how
-        // `require "active_record"` died. Say so once, here, where the shape is
-        // visible.
-        if out.contains(&parent) {
+        // A module reached twice is an ordinary diamond, absorbed by the
+        // insertion walk. A SUPERCLASS reached twice is a cycle in a chain
+        // that is supposed to be a list, and every walk over it that isn't
+        // guarded the way this one is runs forever -- which is how
+        // `require "active_record"` died. Say so once, here, where the shape
+        // is visible.
+        if active.contains(&parent) {
             tracing::warn!(
                 class = compiler.fq_name(class_id),
                 superclass = compiler.fq_name(parent),
                 "mro: superclass cycle -- the chain already holds this class"
             );
         }
-        expand_into(compiler, parent, out);
+        chain.extend(chain_of(compiler, parent, active));
+    }
+    // `origin` is self's own position: everything ahead of it is the prepend
+    // area, which grows as prepends land.
+    let mut origin = 0usize;
+    for &(m, is_prepend) in &info.mixin_order {
+        let sub = chain_of(compiler, m, active);
+        mix_into(&mut chain, &mut origin, &sub, is_prepend);
+    }
+    active.pop();
+    chain
+}
+
+/// One mixin applied to `chain`: `sub`'s elements inserted in order, an
+/// element already in scope moving the insertion point instead of being
+/// added. `origin` is the host's own index, which a prepend pushes down.
+fn mix_into(chain: &mut Vec<ClassId>, origin: &mut usize, sub: &[ClassId], is_prepend: bool) {
+    let mut ins = if is_prepend { 0 } else { *origin + 1 };
+    for &m in sub {
+        let seen = if is_prepend {
+            chain[..*origin].iter().position(|&a| a == m)
+        } else {
+            chain.iter().position(|&a| a == m)
+        };
+        match seen {
+            Some(p) => ins = p + 1,
+            None => {
+                chain.insert(ins, m);
+                ins += 1;
+                if is_prepend {
+                    *origin += 1;
+                }
+            }
+        }
     }
 }
 
@@ -120,8 +157,8 @@ pub fn materialize(
         };
         let s = &mut compiler.classes[surrogate.0 as usize];
         for m in prepends {
-            if !s.prepends.contains(&m) {
-                s.prepends.push(m);
+            if !s.prepends().any(|p| p == m) {
+                s.mixin_order.push((m, true));
             }
         }
     }
