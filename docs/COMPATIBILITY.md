@@ -560,13 +560,32 @@ is TRUE of it rather than raising: zero collections, no compaction, an empty
 `stat`/`stat_heap`, and `GC.config` naming the implementation `"refcount"`
 where MRI says `"default"`. `GC::OPTS` and `GC::INTERNAL_CONSTANTS` are empty
 for the same reason — they describe MRI's build and slot layout. `.enable`/
-`.disable` answer false (the collector is never enabled, because there isn't
-one) and `.stress=`/`.auto_compact=`/`.measure_total_time=` record what they
-were told so a reader gets its own value back. `GC.latest_gc_info` and
+`.disable` answer the PREVIOUS state, which is what the restore idiom reads,
+and `.stress=`/`.auto_compact=`/`.measure_total_time=` record what they were
+told so a reader gets its own value back. `GC.latest_gc_info` and
 `.latest_compact_info` answer exactly what CRuby answers in a process that has
-not yet collected. `GC.start`/`.compact` do run finalizers for objects whose
-last reference has dropped, which is the one real thing there is to do.
-Cycles genuinely leak; see `docs/ROADMAP.md`.
+not yet collected.
+
+`GC.start`, `GC#garbage_collect` and `ObjectSpace.garbage_collect` are one
+entry. Each runs the cycle collector when `ZEO_GC=1` armed it and `GC.disable`
+has not gated it, then runs finalizers for everything whose last reference has
+dropped. **Without `ZEO_GC=1` there is no collector and a cycle leaks**, which
+is the default; the flag is a RUN-TIME one, read where the program runs rather
+than where it was compiled.
+
+Armed, the pass reclaims cycles among objects, Arrays, Hashes, Structs,
+exceptions and value subclasses. Four shapes still leak, each for its own
+reason, and `tests/gaps/a_cycle_can_still_leak.rb` reproduces all four: a
+cycle closed through a compiled `Proc`'s captured local (the cell's owner
+lives inside an `Arc<dyn Fn>` that no enumeration reaches), one closed through
+a `Range` (immutable by design, so a sweep has nothing to release its
+endpoints through), and anything carrying a per-object singleton or an ivar
+written on a bare value (both side tables pin their owner by design, so an
+address can never be handed to an unrelated later value).
+
+zeo also reclaims one shape CRuby does not, in the other direction: a cycle
+closed through `Exception#cause`. CRuby keeps the most recently raised
+exception reachable from its own VM error slot; a reference count does not.
 
 ### `Fiber`
 

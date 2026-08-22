@@ -293,9 +293,10 @@ crates/
   [Public API](#public-api).
 - **`zeo-rt`** — the runtime. One `enum RubyValue`; collections are
   `Arc<Freezable<…>>` so `freeze` and sharing are cheap; user objects are
-  `Arc<dyn RubyObject>`. Memory is reference-counted with **no tracing
-  collector**, so reference cycles leak. Each core class is one module under
-  `builtins/`, and `linkme` collects their method tables at link time.
+  `Arc<dyn RubyObject>`. Memory is reference-counted; an opt-in cycle
+  collector (`ZEO_GC=1`) reclaims what refcounting cannot. Each core class is
+  one module under `builtins/`, and `linkme` collects their method tables at
+  link time.
 - **`zeo-abi`** — the only shared contract: `ClassId` numbering, the `BUILTINS`
   hierarchy table, `RUNTIME_CLASS_ID_BASE`, `RUBY_VERSION`, and the C-ABI row
   layouts the two sides pass over.
@@ -422,8 +423,16 @@ scripts/     corpus import, gap promotion, ruby-against-zeo comparison
 
 Zeo is experimental. The known limits, all of them deliberate and recorded:
 
-- **No tracing garbage collector.** Memory is reference-counted, so a reference
-  cycle leaks. `GC.start` runs the finalizers it can.
+- **Cycles are collected only on request.** Memory is reference-counted, so a
+  reference cycle leaks unless `ZEO_GC=1` arms the cycle collector, which then
+  reclaims one at the next `GC.start`. It is off by default because recording
+  every allocation into the registry it walks costs about 1.5% over the bench
+  corpus. Armed, it reclaims cycles among objects, Arrays, Hashes, Structs,
+  exceptions and their subclasses; a cycle closed through a `Proc`'s captured
+  local, a `Range`, or a value carrying its own singleton or ivars still leaks
+  (`tests/gaps/a_cycle_can_still_leak.rb` says why for each). There is no
+  automatic trigger and no tracing collector: zeo's roots are not enumerable,
+  so the pass reconciles reference counts instead of tracing from roots.
 - **No C-extension gems.** A gem whose native half Zeo has no built-in for
   fails with a clear error. Use the `ffi` gem API, which Zeo compiles ahead of
   time. Source-compatible C extensions are on the roadmap.

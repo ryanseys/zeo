@@ -90,7 +90,11 @@ Three things check it:
   `ZEO_CLIF_VERIFY=1` otherwise.
 - `ZEO_RT_LEAKCHECK=1` — per-tag live counts across the boundary, plus
   poison-on-release (`0xFF` into the tag byte), so a use-after-release
-  aborts at the site instead of corrupting a later value.
+  aborts at the site instead of corrupting a later value. A tag byte that
+  is neither a value tag nor the poison is a slot that never held a value,
+  and it reports that too. **It currently finds five programs in
+  `tests/*.rb`** — see `tests/gaps/compiled_code_releases_a_dead_slot.rb`,
+  which reproduces both shapes in a few lines each.
 - valgrind, on the Linux leg (`scripts/linux/verify.sh valgrind`).
 
 Pool retention is the known cost: a temporary lives to the end of its
@@ -150,7 +154,9 @@ Platforms differ in where the DWARF ends up, so `-g` changes the link:
 |---|---|
 | `zeo --emit-clif[=<path>] file.rb` | the Cranelift IR, per function |
 | `ZEO_CLIF_VERIFY=1` | Cranelift's verifier + the ownership ledger in a release build |
-| `ZEO_RT_LEAKCHECK=1` | ownership, per tag, with poison |
+| `ZEO_RT_LEAKCHECK=1` | ownership, per tag, with poison and bad-tag reports |
+| `ZEO_GC=1` | arm the cycle collector; without it a cycle leaks |
+| `ZEO_RT_GCSTATS=1` | one line per collection: nodes, edges, live, reclaimed |
 | `cargo nextest run -p zeo` | the CLIF snapshots — the only thing that sees emitter SHAPE |
 
 That last row is a standing rule: **a change under `clif/` runs `cargo
