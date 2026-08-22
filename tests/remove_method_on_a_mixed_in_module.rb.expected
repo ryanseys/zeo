@@ -1,0 +1,6 @@
+["s", "s", "own"]
+["NoMethodError", "NoMethodError", "own"]
+["s3", "s3", "own"]
+[true, "T"]
+[false, false, [], []]
+"NameError"
