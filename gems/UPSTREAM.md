@@ -54,7 +54,7 @@ ship and Zeo does not vendor.
 
 **zeo-authored Ruby halves** of libraries whose native half lives in
 `zeo-rt` (`json`, `monitor`, `openssl`, `optparse`, `psych`, `strscan`,
-`zlib`, `pty`, `syslog`, `nkf`, `ffi`) -- these are intended to match
+`zlib`, `socket`, `pty`, `syslog`, `nkf`, `ffi`) -- these are intended to match
 upstream behaviour;
 divergences are documented in `docs/COMPATIBILITY.md`. Two files inside them
 are faithful vendored copies rather than zeo-authored:

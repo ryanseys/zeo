@@ -386,7 +386,19 @@ fn getaddrinfo(args: &[RubyValue]) -> Result<RubyValue, Signal> {
         );
         if rc != 0 {
             let msg = std::ffi::CStr::from_ptr(libc::gai_strerror(rc)).to_string_lossy();
-            return Err(raise_error("SocketError", format!("getaddrinfo: {msg}")));
+            // CRuby's own class since 3.4, and it inherits `SocketError` so a
+            // `rescue SocketError` still catches. `#error_code` is the
+            // `getaddrinfo` return code, which is the whole reason the class
+            // exists.
+            let signal = raise_error("Socket::ResolutionError", format!("getaddrinfo: {msg}"));
+            if let Signal::Raise(exc) = &signal {
+                crate::builtins::exception::set_exception_ivar(
+                    exc,
+                    "error_code",
+                    RubyValue::Int(i64::from(rc)),
+                );
+            }
+            return Err(signal);
         }
         let mut out = Vec::new();
         let mut node = res;

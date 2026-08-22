@@ -97,30 +97,36 @@ pub(crate) fn host_port(args: &[RubyValue], default_host: &str) -> Result<(Strin
 }
 
 /// A port from an `Integer` or a numeric-looking `String` ("80"). Service-name
-/// lookup (`"http"`) is out of scope -- an unparseable name is a `SocketError`,
-/// matching CRuby's `getaddrinfo: unknown service`.
+/// lookup (`"http"`) is out of scope -- an unparseable name is a
+/// `Socket::ResolutionError`, matching CRuby's `getaddrinfo: unknown service`.
 pub(crate) fn port_of(v: &RubyValue) -> Result<u16, Signal> {
     match v {
         RubyValue::Int(i) => Ok((*i).clamp(0, u16::MAX as i64) as u16),
-        RubyValue::Str(s) => s
-            .lock()
-            .to_utf8_lossy()
-            .trim()
-            .parse::<u16>()
-            .map_err(|_| raise_error("SocketError", "getaddrinfo: unknown service".to_string())),
+        RubyValue::Str(s) => s.lock().to_utf8_lossy().trim().parse::<u16>().map_err(|_| {
+            raise_error(
+                "Socket::ResolutionError",
+                "getaddrinfo: unknown service".to_string(),
+            )
+        }),
         other => Ok(crate::builtins::convert::to_index(other)? as u16),
     }
 }
 
 /// Resolve `(host, port)` to the first matching `SocketAddr` via the platform
-/// resolver, or a `SocketError` (CRuby's `getaddrinfo` failure class).
+/// resolver, or a `Socket::ResolutionError` (CRuby's `getaddrinfo` failure
+/// class, a `SocketError`).
 pub(crate) fn resolve_one(host: &str, port: u16) -> Result<SocketAddr, Signal> {
     use std::net::ToSocketAddrs;
     (host, port)
         .to_socket_addrs()
-        .map_err(|e| raise_error("SocketError", format!("getaddrinfo: {e}")))?
+        .map_err(|e| raise_error("Socket::ResolutionError", format!("getaddrinfo: {e}")))?
         .next()
-        .ok_or_else(|| raise_error("SocketError", "getaddrinfo: no address".to_string()))
+        .ok_or_else(|| {
+            raise_error(
+                "Socket::ResolutionError",
+                "getaddrinfo: no address".to_string(),
+            )
+        })
 }
 
 /// One `accept(2)` that never waits: the accepted descriptor plus the peer

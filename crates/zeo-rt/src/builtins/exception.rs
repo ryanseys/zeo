@@ -623,6 +623,15 @@ pub fn set_load_error_path(exc_value: &RubyValue, path: &str) {
     }
 }
 
+/// Stamp one Ruby-level ivar on a freshly built exception, for a raise site
+/// whose reader is an `attr_reader` in a gem's Ruby half rather than a native
+/// row (`Socket::ResolutionError#error_code`). A no-op for a non-object value.
+pub fn set_exception_ivar(exc_value: &RubyValue, name: &str, v: RubyValue) {
+    if let RubyValue::Object(o) = exc_value {
+        o.ivar_set_named(name, v);
+    }
+}
+
 /// `KeyError#key` -- the key that was not found. `ArgumentError` when unset
 /// (`KeyError.new("m").key`), CRuby's behavior.
 fn exc_key(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
