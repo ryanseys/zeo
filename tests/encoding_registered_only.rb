@@ -1,16 +1,15 @@
-# 31 of the 103 encodings are registered by NAME only: they answer every
-# reflection question (`Encoding.list`, `#names`, `#dummy?`,
-# `#ascii_compatible?`, their constants) and carry ASCII through, but this
-# runtime holds no byte<->character mapping for them, so converting a high
-# byte raises `Encoding::ConverterNotFoundError` where CRuby converts.
+# The multibyte mapping tables landed, so the rows below convert exactly as
+# CRuby does: EUC-KR, GB18030, GB2312, CP949, Big5-HKSCS, UTF8-MAC, eucJP-ms
+# and CP51932 all round-trip here.
 #
-# They are the multibyte families whose mapping tables are not in the tree
-# (EUC-KR, EUC-TW, GB18030, GB2312, the Big5 variants, the emoji vendor
-# pages, ...), the four single-byte rows CRuby itself registers with no
-# transcoder, and the stateful JIS dummies beyond ISO-2022-JP. See
-# `EncKind::Registered`; the fix shape is a mapping table per family, the
-# same shape `tools/encoding_tables.rb` already generates for the single-byte
-# rows.
+# What still answers `Encoding::ConverterNotFoundError` answers it under ruby
+# TOO, which is why this is a pinned agreement and not a gap: EUC-TW, and the
+# single-byte rows CRuby itself registers with no transcoder of its own
+# (`Windows-1258`, `macThai` and their two siblings).
+#
+# The point of the file is that a registered-only row stays complete in every
+# OTHER way -- `#length`, `#valid_encoding?` and the reflection surface answer
+# whatever ruby answers. See `EncKind::Registered`.
 
 def show(label)
   puts "#{label}: #{yield.inspect}"

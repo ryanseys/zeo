@@ -1,18 +1,14 @@
-# A converter's `#primitive_convert`, given a `dst_bytesize` limit, stops at
-# a different point than CRuby does. (This first line avoids naming the class
-# outright: ruby would read `coding:` inside it as a magic comment.)
+# A converter's `#primitive_convert` cuts at CRuby's own point under a
+# `dst_bytesize` limit. (This first line avoids naming the class outright:
+# ruby would read `coding:` inside it as a magic comment.)
 #
-# zeo refuses the first character whose bytes would not fit and consumes
-# nothing more, so the source keeps every character that did not convert.
-# CRuby converts further than the limit and holds the overflow in an internal
-# output buffer, so its source is shorter and the extra bytes arrive on the
-# NEXT call. Where the cut falls is a property of CRuby's buffer sizes, not
-# of the conversion.
+# This was a gap. zeo used to refuse the first character whose bytes would not
+# fit and consume nothing more, so its source kept every character that did
+# not convert while CRuby's was shorter. `ConvState` now holds the output
+# produced past the limit and drains it ahead of the next conversion, which is
+# what makes the INTERMEDIATE state agree and not just the end state.
 #
-# The end state after draining is the same either way -- the same bytes reach
-# the destination in the same order -- so this is an intermediate observable
-# only. Fix shape: give `ConvState` a third buffer holding output produced
-# past the limit, and drain it ahead of the next conversion.
+# Both rows below are pinned: where the cut falls, and what a drain answers.
 
 def show(label)
   puts "#{label}: #{yield.inspect}"

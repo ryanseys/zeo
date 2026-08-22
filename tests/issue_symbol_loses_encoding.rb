@@ -1,12 +1,13 @@
-# A Symbol does not remember the encoding of the String it came from, so
-# `str.to_sym.to_s` answers UTF-8 whatever `str` was.
+# A Symbol remembers the encoding of the String it came from, so
+# `str.to_sym.to_s` answers that encoding and those bytes.
 #
-# The interner (crates/zeo-rt/src/symbol.rs) keys on `&'static str` and stores
-# nothing else, so `Symbol::intern` is handed `to_utf8_lossy` text and the
-# encoding is gone by the time the id exists. Ruby interns by BYTES plus
-# encoding -- `:"caf\xE9"` in ISO-8859-1 and the same bytes in UTF-8 are two
-# different symbols -- so this needs the interner to carry an encoding per
-# name, not just a re-encode at the boundary.
+# This was a gap. The interner used to key on `&'static str` and store nothing
+# else, so `Symbol::intern` was handed `to_utf8_lossy` text and the encoding
+# was gone by the time the id existed. Ruby interns by BYTES plus encoding --
+# `:"caf\xE9"` in ISO-8859-1 and the same bytes in UTF-8 are two different
+# symbols -- and so does zeo now.
+#
+# Each row pins the round trip for one non-UTF-8 encoding.
 {
   "latin1" => "caf\xE9 x".dup.force_encoding("ISO-8859-1"),
   "binary" => "caf\xE9 x".dup.force_encoding("ASCII-8BIT"),
