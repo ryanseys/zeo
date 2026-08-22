@@ -25,16 +25,43 @@ pub fn resolve_dynamic(recv: &RObj, id: ClassId, name: Symbol) -> Option<MethodI
         // 2b. Frozen class: check this class AND every frozen ancestor for a
         // runtime method delta, so a `class_eval`/`define_method`/`class_exec`
         // that reopened a SUPERCLASS or an included MODULE is inherited (a
-        // subclass instance / an includer sees it). The frozen registry's own
-        // materialized methods are consulted separately by `send_in`'s MRO
-        // walk; here we only add the overlay deltas, self-first.
+        // subclass instance / an includer sees it).
+        //
+        // The walk STOPS at the first ancestor that has a frozen definition of
+        // its own, and answers nothing: that definition is closer than any
+        // overlay delta further along the chain, and `send_in`'s MRO walk is
+        // what runs it. Without the stop, `M.define_method(:m)` on an included
+        // module beat the includer's own compiled `def m` -- ruby keeps the
+        // class's own.
+        //
+        // Only a position the FROZEN walk reaches IN THE SAME ORDER can stop
+        // it, which is the prefix the two chains share. A run-time
+        // `include`/`prepend` splices a module the frozen flat table knows
+        // nothing about, and from the splice onward the frozen walk's order is
+        // a different one -- so those rows reach the receiver through the
+        // host's `prepended` map, further along this same walk, and stopping
+        // early would lose them.
         let chain = ancestors_of_value(id);
+        let frozen = crate::dispatch::frozen_ancestors(id);
         let c = maps().classes.read().unwrap();
-        chain.iter().find_map(|anc| {
-            c.get(&anc.0)
+        // The walk itself never stops early: a run-time `prepend`'s body is
+        // filed under the HOST, which sits BEHIND the module it spliced in.
+        let mut trusted = true;
+        for (at, anc) in chain.iter().enumerate() {
+            if let Some(m) = c
+                .get(&anc.0)
                 .and_then(|e| e.prepended.get(&name).or_else(|| e.methods.get(&name)))
-                .cloned()
-        })
+            {
+                return Some(m.clone());
+            }
+            trusted &= frozen.get(at) == Some(anc);
+            if trusted
+                && crate::dispatch::class_defines_own_instance_method_if_registered(*anc, name)
+            {
+                return None;
+            }
+        }
+        None
     }
 }
 

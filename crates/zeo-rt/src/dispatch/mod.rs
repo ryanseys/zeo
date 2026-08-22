@@ -1438,21 +1438,23 @@ fn with_mro_resume<T>(value: Option<MroResume>, f: impl FnOnce() -> T) -> T {
     f()
 }
 
-/// The ancestry index a `super` written in `defining_class` resumes at.
+/// The ancestry index a `super` written in `defining_class` resumes at, or
+/// `None` when this chain does not pass through `defining_class` at all.
+///
 /// The published resume when it names this very copy, and otherwise the
 /// position after the first occurrence -- which is the whole answer for
 /// every chain that holds `defining_class` once.
-fn super_resume(ancestors: &[ClassId], defining_class: ClassId) -> usize {
+fn super_resume(ancestors: &[ClassId], defining_class: ClassId) -> Option<usize> {
     if mro_duplicates()
         && let Some(r) = MRO_RESUME.with(|c| c.get())
         && r.defining == defining_class
     {
-        return r.next;
+        return Some(r.next);
     }
     ancestors
         .iter()
         .position(|&a| a == defining_class)
-        .map_or(0, |p| p + 1)
+        .map(|p| p + 1)
 }
 
 /// The fiber swap for [`MRO_RESUME`] -- see `crate::ec`.
@@ -1471,13 +1473,13 @@ pub fn super_defined(recv: &RubyValue, defining_class: ClassId, name: Symbol) ->
     if let RubyValue::Class(cid) = recv {
         return super_class_defined(*cid, defining_class, name);
     }
+    // An unrecognized `defining_class` -- a `define_method` body installed on
+    // a module, which has no defining class of its own -- answers NO. Walking
+    // from the top instead would find the body's own row and say yes.
     let ancestors = ancestors_of_value(recv.class_id());
-    crate::dispatch::reflect::scan_owner_from(
-        recv.class_id(),
-        super_resume(&ancestors, defining_class),
-        name,
-    )
-    .is_some()
+    super_resume(&ancestors, defining_class)
+        .and_then(|from| crate::dispatch::reflect::scan_owner_from(recv.class_id(), from, name))
+        .is_some()
 }
 
 /// [`super_defined`]'s class-method half: the question
@@ -1543,7 +1545,7 @@ pub fn send_super_from(
     // A module the chain holds TWICE resumes past the copy that is actually
     // running -- see `super_resume`.
     let ancestors = ancestors_of_value(recv.class_id());
-    let start = super_resume(&ancestors, defining_class);
+    let start = super_resume(&ancestors, defining_class).unwrap_or(0);
     send_walking(recv, start, name, args, block)
 }
 
