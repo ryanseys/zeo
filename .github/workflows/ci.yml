@@ -173,21 +173,17 @@ jobs:
       # the .crate file. This fails if they drift from their sources.
       - run: cargo run -p xtask -- stage-publish --check
 
-      # The README quotes the ledger's numbers from a generated block. This
-      # reads only the committed ledger and the README, so it always runs.
-      - name: the README stats block matches the ledger
-        run: cargo run -p xtask -- gem-probe --check
-
-      # A gem that compiled and no longer does is a regression. This reads the
-      # committed ledger and re-probes at the versions it records, so it needs
-      # the cached vendor/gems tree; it is skipped when that is absent rather
-      # than downloading the corpus on every CI run.
+      # A gem that compiled and no longer does is a regression. This re-probes
+      # the ledger at the versions it records, so it needs BOTH the cached
+      # vendor/gems tree and the ledger itself. The ledger is a release asset
+      # rather than a tracked file (it is 21MB, over the blob gate above), so
+      # neither is present on an ordinary run and the step skips.
       - name: no gem stopped compiling
         run: |
-          if [ -d vendor/gems ]; then
+          if [ -d vendor/gems ] && [ -f conformance/gem-probe.tsv ]; then
             cargo run -p xtask -- gem-probe --all --check
           else
-            echo "vendor/gems not cached; skipping the gem-probe regression gate"
+            echo "vendor/gems or the ledger is absent; skipping the gem-probe regression gate"
           fi
 
       # The dist tree is assembled from a REWRITE of the root manifest, so it

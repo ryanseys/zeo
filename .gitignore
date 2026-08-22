@@ -17,6 +17,14 @@ conformance/rubygems-names.txt
 # reproducible, live in the committed ledger instead.
 conformance/gem-probe-timings.tsv
 
+# The gem-probe ledger and its rendered report. NOT committed: at 21MB and
+# 11MB they break the `no tracked file over 1MB` release-hygiene gate, and
+# 195,778 rows of measurement are not source. A sweep writes them locally; a
+# refreshed ledger is attached to a GitHub release by hand. See
+# docs/GEM_TESTING.md.
+conformance/gem-probe.tsv
+conformance/gem-probe.md
+
 # Publish-time artifacts staged by `cargo xtask stage-publish`; never committed.
 crates/zeo/gems.pregen.tar.gz
 crates/zeo/src/class_surface.pregen.rs

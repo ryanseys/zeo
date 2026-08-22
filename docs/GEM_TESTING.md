@@ -167,11 +167,17 @@ ledger; that is what makes the result a record rather than a note.
 
 One file, one row per gem:
 
-| File | Holds |
-|---|---|
-| [`../conformance/gem-probe.tsv`](../conformance/gem-probe.tsv) | every gem the registry names — its verdict, or `unprobed` |
-| [`../conformance/gem-probe-ignored.tsv`](../conformance/gem-probe-ignored.tsv) | gems the sweep declines to probe, and why |
-| [`../conformance/gem-probe.md`](../conformance/gem-probe.md) | the counts, regenerated with the ledger |
+| File | Holds | Tracked |
+|---|---|---|
+| `conformance/gem-probe.tsv` | every gem the registry names — its verdict, or `unprobed` | no |
+| [`../conformance/gem-probe-ignored.tsv`](../conformance/gem-probe-ignored.tsv) | gems the sweep declines to probe, and why | yes |
+| `conformance/gem-probe.md` | the counts, regenerated with the ledger | no |
+
+**The ledger is not in git.** At 21 MB and 11 MB the two generated files break
+the `no tracked file over 1MB` gate in `release-hygiene`, and 195,778 rows of
+measurement are not source. A sweep writes them locally; a refreshed ledger is
+attached to a GitHub release by hand. Without them present, the `no gem stopped
+compiling` CI step skips rather than fails.
 
 **Two columns carry the verdict, and they are read together.** `stage` is the
 RUNG the row is about; `outcome` is what happened there. Neither claims
