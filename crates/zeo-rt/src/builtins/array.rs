@@ -16,37 +16,41 @@ fn range_slice(
     start: Option<&RubyValue>,
     end: Option<&RubyValue>,
     exclusive: bool,
-) -> RubyValue {
+) -> Result<RubyValue, crate::Signal> {
+    // CRuby's `rb_range_beg_len` converts BOTH endpoints with `NUM2LONG`
+    // before it asks anything about the array, so an endpoint that is not an
+    // index is an ERROR rather than a miss: a bignum raises RangeError, a
+    // String raises TypeError, and a Float truncates. `nil` answers the
+    // array's own edge -- a beginless or endless range, not a conversion.
+    let bound = |v: Option<&RubyValue>| match v {
+        None | Some(RubyValue::Nil) => Ok(None),
+        Some(v) => convert::to_index(v).map(Some),
+    };
+    let s = bound(start)?;
+    let e = bound(end)?;
     let guard = rary.lock();
     let n = guard.len() as i64;
-    let s = match start {
-        Some(RubyValue::Int(v)) => {
-            if *v < 0 {
-                v + n
-            } else {
-                *v
-            }
-        }
+    let s = match s {
+        Some(v) if v < 0 => v + n,
+        Some(v) => v,
         None => 0,
-        _ => return RubyValue::Nil,
     };
-    let e = match end {
-        Some(RubyValue::Int(v)) => {
-            let v = if *v < 0 { v + n } else { *v };
+    let e = match e {
+        Some(v) => {
+            let v = if v < 0 { v + n } else { v };
             if exclusive { v - 1 } else { v }
         }
         None => n - 1,
-        _ => return RubyValue::Nil,
     };
     if s < 0 || s > n {
-        return RubyValue::Nil;
+        return Ok(RubyValue::Nil);
     }
     let e = e.min(n - 1);
-    RubyValue::Array(crate::array_new(if e < s {
+    Ok(RubyValue::Array(crate::array_new(if e < s {
         Vec::new()
     } else {
         guard[s as usize..=e as usize].to_vec()
-    }))
+    })))
 }
 
 /// An arithmetic sequence's endpoint or step, as an array index. CRuby's
@@ -81,7 +85,7 @@ fn arith_seq_slice(rary: &crate::RArray, seq: &RubyValue) -> Result<RubyValue, c
         v => Some(v),
     };
     if stride == 1 {
-        return Ok(range_slice(rary, begin, end, exclude_end));
+        return range_slice(rary, begin, end, exclude_end);
     }
     // A descending sequence walks the SAME span from its far end, so the
     // endpoints swap -- and an exclusive end, now the span's low side,
@@ -226,7 +230,7 @@ ruby_class! {
             // `arr[1..3]` -- Range slicing.
             RubyValue::Range(__rg) => {
                 let (start, end, exclusive) = __rg.parts();
-                Ok(range_slice(rary, start, end, exclusive))
+                range_slice(rary, start, end, exclusive)
             }
             // `arr[(1..10).step(2)]` -- an arithmetic sequence slices with a
             // STRIDE (CRuby's `rb_arithmetic_sequence_beg_len_step`).

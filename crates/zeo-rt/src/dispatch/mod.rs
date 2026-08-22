@@ -833,20 +833,27 @@ const NOFRAME: &[&str] = &[
 ];
 
 /// Rows CRuby answers with a SPECIALIZED VM instruction rather than a call:
-/// `opt_ltlt` and `opt_aset` push no control frame, so a raise from inside one
-/// names only the caller (`"x".freeze << "y"` reports `<main>`, where a
-/// hand-written `def <<` would report itself).
+/// `opt_ltlt`, `opt_aset` and `opt_aref` push no control frame, so a raise
+/// from inside one names only the caller (`"x".freeze << "y"` reports
+/// `<main>`, where a hand-written `def <<` would report itself).
 ///
 /// Keyed by (class, name), because the specialization is per receiver type and
 /// the general fallback DOES frame: `opt_ltlt` covers String and Array and
 /// nothing else, so `IO#<<` reports `IO#write` / `IO#<<` and must not be
-/// silenced by a name-only rule. Only the rows whose fast path can RAISE are
-/// listed -- the frozen checks and nothing else; an `opt_aref` or an `opt_eq`
-/// has no way to reach a backtrace.
+/// silenced by a name-only rule. `opt_aref` covers Array and Hash alone, so
+/// `String#[]` keeps its frame -- oracle-verified in both directions
+/// (`[1,2][2**70]` reports `<main>`, `"ab"[2**70]` reports `String#[]`).
+///
+/// The cost of a per-ROW table where CRuby decides per SITE: `a.send(:[], i)`
+/// is a real call in CRuby and frames, and here it does not. That is the same
+/// trade the `<<` and `[]=` rows already make, and it errs toward the
+/// spelling that is written.
 const SPECIALIZED: &[(ClassId, &str)] = &[
     (zeo_abi::STRING_CLASS, "<<"),
     (zeo_abi::ARRAY_CLASS, "<<"),
+    (zeo_abi::ARRAY_CLASS, "[]"),
     (zeo_abi::ARRAY_CLASS, "[]="),
+    (zeo_abi::HASH_CLASS, "[]"),
     (zeo_abi::HASH_CLASS, "[]="),
 ];
 
@@ -877,16 +884,23 @@ fn c_frame_label(owner: ClassId, name: Symbol, sep: char) -> Option<&'static str
     Some(label)
 }
 
-/// Run `f` under the row's synthetic C frame, or bare for a `None` label.
+/// Run `f` under the row's synthetic C frame, or bare for a `None` label,
+/// and turn a key-projection exception parked under it back into an error
+/// (see `collections::take_key_raise` -- a user `hash` has no return channel
+/// inside the projection, so the row it ran under reports it).
 #[inline]
-fn with_c_frame<R>(label: Option<&'static str>, f: impl FnOnce() -> R) -> R {
-    match label {
+fn with_c_frame(
+    label: Option<&'static str>,
+    f: impl FnOnce() -> Result<RubyValue, Signal>,
+) -> Result<RubyValue, Signal> {
+    let r = match label {
         Some(l) => {
             let _frame = crate::frames::synthetic_c_frame(l);
             f()
         }
         None => f(),
-    }
+    };
+    crate::value::collections::check_key_raise(r)
 }
 
 /// Every registered class that has `id` in its ancestry, `id` itself excluded

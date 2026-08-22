@@ -92,7 +92,7 @@ zeo_rt_gvar_get ([U32, Ptr, Usize, Ptr]) -> None
 zeo_rt_handling_pop ([]) -> None
 zeo_rt_handling_push ([Ptr]) -> None
 zeo_rt_hash_new ([Ptr]) -> None
-zeo_rt_hash_set ([Ptr, Ptr, Ptr]) -> None
+zeo_rt_hash_set ([Ptr, Ptr, Ptr]) -> Some(I32)
 zeo_rt_home_pop ([]) -> None
 zeo_rt_home_push ([]) -> None
 zeo_rt_int_add_slow ([Ptr, Ptr, Ptr]) -> None

@@ -551,6 +551,45 @@ impl indexmap::Equivalent<HashKey> for StrProbe<'_> {
     }
 }
 
+thread_local! {
+    /// The exception a user `hash` raised while a key was being projected.
+    /// Parked rather than returned because the projection is infallible; the
+    /// first raise wins, and whoever takes it turns it back into an error.
+    static PENDING_KEY_RAISE: std::cell::RefCell<Option<crate::Signal>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+fn park_key_raise(sig: crate::Signal) {
+    PENDING_KEY_RAISE.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(sig);
+        }
+    });
+}
+
+/// The parked key-projection exception, if a user `hash` raised since the
+/// last check. Taken by every Ruby-visible operation that can project a key.
+pub(crate) fn key_raise_pending() -> bool {
+    PENDING_KEY_RAISE.with(|slot| slot.borrow().is_some())
+}
+
+/// The parked key-projection exception, if a user `hash` raised since the
+/// last check. Taken by every Ruby-visible operation that can project a key.
+pub fn take_key_raise() -> Option<crate::Signal> {
+    PENDING_KEY_RAISE.with(|slot| slot.borrow_mut().take())
+}
+
+/// `Ok(v)` unless a user `hash` raised while projecting a key under it.
+pub(crate) fn check_key_raise(
+    r: Result<RubyValue, crate::Signal>,
+) -> Result<RubyValue, crate::Signal> {
+    match take_key_raise() {
+        Some(sig) => Err(sig),
+        None => r,
+    }
+}
+
 /// The structural projection (the default, `eql?`/`hash`-based). Every
 /// context-free caller -- `Object#hash`, symbol-key rebuild, `Lazy#uniq` --
 /// wants this, never identity.
@@ -661,13 +700,20 @@ fn hash_key_rec(v: &RubyValue, by_identity: bool, seen: &mut Seen) -> HashKey {
         // A user-defined `hash` (dispatched once per
         // insertion/lookup through the registry) projects the object
         // through its RESULT -- see `HashKey::Computed`'s docs; identity
-        // stays the default (real Ruby's own `Object#hash`). A `hash` that
-        // raises is a loud panic (no exception channel here).
+        // stays the default (real Ruby's own `Object#hash`).
+        //
+        // A `hash` that RAISES has no return channel here -- the whole key
+        // projection is infallible and reached from ~40 sites -- so the
+        // exception is parked in [`PENDING_KEY_RAISE`] and this key falls
+        // back to identity. The enclosing builtin row (`with_c_frame`) or
+        // capi entry takes it and returns it as its own error, which is one
+        // dispatch away from where ruby raises it.
         RubyValue::Object(o) => match crate::dispatch::call_user_method(o, "hash", &[]) {
             Some(Ok(v)) => HashKey::Computed(Box::new(hash_key_rec(&v, false, seen))),
-            Some(Err(_)) => panic!(
-                "a user-defined `hash` raised inside a Hash key lookup (zeo limitation: no exception channel here)"
-            ),
+            Some(Err(sig)) => {
+                park_key_raise(sig);
+                HashKey::Identity(Arc::as_ptr(o) as *const () as usize)
+            }
             // A value-builtin subclass (D3) with no `hash` override keys by its
             // payload -- `Tag.new("k")` is the same Hash key as `"k"`.
             None => match o.builtin_payload() {
@@ -1345,6 +1391,13 @@ pub fn hash_set(h: &RHash, key: RubyValue, value: RubyValue) -> RubyValue {
         }
     }
     let k = hash_key_in(&key, g.compare_by_identity);
+    // The key's own `hash` raised (parked -- see `PENDING_KEY_RAISE`), so
+    // this write never happens: ruby's raise leaves the hash untouched, and
+    // inserting under the identity fallback would leave a key nothing can
+    // ever look up again.
+    if key_raise_pending() {
+        return value;
+    }
     let key = snapshot_key(key, g.compare_by_identity);
     g.insert(k, (key, value.clone()));
     value

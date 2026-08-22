@@ -362,7 +362,10 @@ pub(crate) fn build_hash(
                 let kptr = ownership::move_ptr(fx, &kop);
                 let vop = lower_expr(fx, *v)?;
                 let vptr = ownership::move_ptr(fx, &vop);
-                fx.call("zeo_rt_hash_set", &[out, kptr, vptr]);
+                let status = fx
+                    .call("zeo_rt_hash_set", &[out, kptr, vptr])
+                    .expect("hash_set returns a status");
+                fx.fallible(status);
             }
             crate::hir::KwArg::DoubleSplat(e) => {
                 let op = lower_expr(fx, *e)?;
@@ -827,7 +830,10 @@ pub(crate) fn build_zsuper_args(
             fx.owned_consumed += 1; // hash_set moves the key temp
             let vop = ownership::read_local(fx, &key).expect("a param is always bound");
             let vp = ownership::move_ptr(fx, &vop);
-            fx.call("zeo_rt_hash_set", &[kw, sptr, vp]);
+            let status = fx
+                .call("zeo_rt_hash_set", &[kw, sptr, vp])
+                .expect("hash_set returns a status");
+            fx.fallible(status);
         }
         if let Some(Some(krest)) = &params.keyword_rest {
             let op = ownership::read_local(fx, krest).expect("a param is always bound");

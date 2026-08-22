@@ -92,13 +92,16 @@ pub unsafe extern "C" fn zeo_rt_hash_new(out: *mut RubyValue) {
     unsafe { out.write(v) };
 }
 
-/// Store `k => v` (both moved) -- literal construction's insert.
+/// Store `k => v` (both moved) -- literal construction's insert. Fallible
+/// because the key's own `hash` is user code: it can raise, and then the
+/// literal raises rather than storing a key nothing could look up.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zeo_rt_hash_set(
     h: *const RubyValue,
     k: *mut RubyValue,
     v: *mut RubyValue,
-) {
+) -> i32 {
+    use zeo_abi::abi::{STATUS_OK, STATUS_SIGNAL};
     super::leakcheck::consumed(unsafe { &*k });
     super::leakcheck::consumed(unsafe { &*v });
     let key = unsafe { std::ptr::read(k) };
@@ -108,6 +111,13 @@ pub unsafe extern "C" fn zeo_rt_hash_set(
             crate::value::collections::hash_set(hash, key, value);
         }
         other => panic!("zeo_rt_hash_set on a non-hash: {other:?}"),
+    }
+    match crate::value::collections::take_key_raise() {
+        Some(sig) => {
+            crate::signal::set_pending(sig);
+            STATUS_SIGNAL
+        }
+        None => STATUS_OK,
     }
 }
 

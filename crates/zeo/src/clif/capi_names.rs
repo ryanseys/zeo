@@ -490,7 +490,7 @@ pub const CAPI: &[CapiSig] = &[
     CapiSig {
         name: "zeo_rt_hash_set",
         params: &[Ptr, Ptr, Ptr],
-        ret: None,
+        ret: Some(I32),
     },
     CapiSig {
         name: "zeo_rt_home_pop",

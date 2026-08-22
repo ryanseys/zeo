@@ -1193,18 +1193,23 @@ fn slice_bang_impl(
         }
         (RubyValue::Range(__rg), None) => {
             let (s, e, exclusive) = __rg.parts();
-            let start = match s {
-                Some(RubyValue::Int(v)) => norm(*v),
-                None => 0,
-                _ => return Ok(RubyValue::Nil),
+            // `rb_range_beg_len` converts both endpoints before it measures
+            // the string, so an endpoint that is not an index RAISES rather
+            // than answering nil (a bignum RangeError, a String TypeError).
+            let bound = |v: Option<&RubyValue>| match v {
+                None | Some(RubyValue::Nil) => Ok(None),
+                Some(v) => crate::builtins::convert::to_index(v).map(Some),
             };
-            let end = match e {
-                Some(RubyValue::Int(v)) => {
-                    let v = norm(*v);
+            let start = match bound(s)? {
+                Some(v) => norm(v),
+                None => 0,
+            };
+            let end = match bound(e)? {
+                Some(v) => {
+                    let v = norm(v);
                     if exclusive { v } else { v + 1 }
                 }
                 None => n,
-                _ => return Ok(RubyValue::Nil),
             };
             if start < 0 || start > n {
                 return Ok(RubyValue::Nil);
@@ -2626,6 +2631,22 @@ ruby_class! {
             let text = rstr.lock().to_utf8_lossy().into_owned();
             return regexp_index(re, &text, len);
         }
+        // `rb_range_beg_len` converts BOTH endpoints with `NUM2LONG` before
+        // it measures the string, so an endpoint that is not an index RAISES
+        // rather than answering nil: a bignum RangeError, a String
+        // TypeError, a Float truncated. The conversion can run a user
+        // `to_int`, so it happens BEFORE the receiver is locked.
+        let range_bounds = match index {
+            RubyValue::Range(rg) => {
+                let (b, e, _) = rg.parts();
+                let bound = |v: Option<&RubyValue>| match v {
+                    None | Some(RubyValue::Nil) => Ok(None),
+                    Some(v) => convert::to_index(v).map(Some),
+                };
+                Some((bound(b)?, bound(e)?))
+            }
+            _ => None,
+        };
         let s = rstr.lock();
         let n = s.char_len() as i64;
         let wrap = |buf: Option<crate::encoding::StrBuf>| match buf {
@@ -2638,19 +2659,19 @@ ruby_class! {
         }
         match index {
             RubyValue::Range(__rg) => {
-                let (start, end, exclusive) = __rg.parts();
+                let exclusive = __rg.parts().2;
+                let (start, end) = range_bounds.expect("a Range index converts its bounds above");
                 let start_i = match start {
-                    Some(RubyValue::Int(v)) => if *v < 0 { v + n } else { *v },
+                    Some(v) if v < 0 => v + n,
+                    Some(v) => v,
                     None => 0,
-                    _ => return Ok(RubyValue::Nil),
                 };
                 let end_i = match end {
-                    Some(RubyValue::Int(v)) => {
-                        let v = if *v < 0 { v + n } else { *v };
+                    Some(v) => {
+                        let v = if v < 0 { v + n } else { v };
                         if exclusive { v - 1 } else { v }
                     }
                     None => n - 1,
-                    _ => return Ok(RubyValue::Nil),
                 };
                 Ok(wrap(s.char_substr(start_i, (end_i - start_i + 1).max(0))))
             }
