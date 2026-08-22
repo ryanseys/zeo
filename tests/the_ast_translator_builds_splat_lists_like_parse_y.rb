@@ -79,6 +79,15 @@ end
   "A::B = 1",
   "x = __FILE__",
   "x = __LINE__",
+  # Interpolated literals, in CRuby's three-child shape.
+  '"a#{b}c#{d}e"',
+  '"#{b}"',
+  '"#{1}#{2}"',
+  '"a#@iv"',
+  '"a#{ }b"',
+  ':"a#{b}"',
+  '/a#{b}/',
+  '`a#{b}`',
 ].each do |s|
   puts "### #{s.inspect}"
   dump(RubyVM::AbstractSyntaxTree.parse(s))

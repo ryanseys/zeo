@@ -858,6 +858,94 @@ mod translate {
         node(cx, kind, s, e, vec![sym_val(name.as_slice()), value])
     }
 
+    /// An interpolated literal, in CRuby's three-child shape -- see the call
+    /// sites for what the three are.
+    ///
+    /// One span is not derivable from the parts and is copied: the first
+    /// `EVSTR` takes the WHOLE literal's span when the literal is exactly one
+    /// interpolation (`"#{b}"`), and its own when anything else is there
+    /// (`"a#{b}"`, `"#{b}c"`).
+    /// An interpolated literal's parts, with adjacent string literals
+    /// FLATTENED: `"a" "#{b}"` is one literal in CRuby, and prism nests the
+    /// second inside the first's parts.
+    fn flat_parts(list: ruby_prism::NodeList<'_>) -> Vec<P<'_>> {
+        let mut out = Vec::new();
+        for p in list.iter() {
+            match p.as_interpolated_string_node() {
+                Some(inner) => out.extend(flat_parts(inner.parts())),
+                None => out.push(p),
+            }
+        }
+        out
+    }
+
+    fn dstr(
+        cx: &mut Cx,
+        kind: &'static str,
+        parts: &[P<'_>],
+        s: usize,
+        e: usize,
+        b: bool,
+    ) -> RubyValue {
+        // Adjacent string literals are ONE literal in CRuby (`"a" "#{b}"`),
+        // and prism nests the second inside the first's parts. Flatten, so
+        // the three-child shape is over the whole run.
+        // The literal text before the first interpolation, if any.
+        let (lead, rest) = match parts.first().and_then(|p| p.as_string_node()) {
+            Some(str_node) => (
+                String::from_utf8_lossy(str_node.unescaped()).into_owned(),
+                &parts[1..],
+            ),
+            None => (String::new(), parts),
+        };
+        let lead = RubyValue::Str(crate::string_new(lead));
+        let Some((head, tail)) = rest.split_first() else {
+            return node(cx, kind, s, e, vec![lead, RubyValue::Nil, RubyValue::Nil]);
+        };
+        let whole = tail.is_empty() && rest.len() == parts.len();
+        let first = dstr_part(cx, head, whole.then_some((s, e)), b);
+        let rest_list = match tail.split_first() {
+            None => RubyValue::Nil,
+            Some((h, _)) => {
+                let hl = h.location();
+                let elems: Vec<RubyValue> =
+                    tail.iter().map(|p| dstr_part(cx, p, None, b)).collect();
+                list_node(cx, hl.start_offset(), hl.end_offset(), elems)
+            }
+        };
+        node(cx, kind, s, e, vec![lead, first, rest_list])
+    }
+
+    /// One part of an interpolated literal: a literal run is `STR`, an
+    /// interpolation is `EVSTR` over what it holds. `span` overrides the
+    /// EVSTR's own -- see [`dstr`].
+    fn dstr_part(cx: &mut Cx, p: &P<'_>, span: Option<(usize, usize)>, b: bool) -> RubyValue {
+        let loc = p.location();
+        let (ps, pe) = span.unwrap_or((loc.start_offset(), loc.end_offset()));
+        if let Some(str_node) = p.as_string_node() {
+            let v = RubyValue::Str(crate::string_new(
+                String::from_utf8_lossy(str_node.unescaped()).into_owned(),
+            ));
+            return node(cx, "STR", ps, pe, vec![v]);
+        }
+        let inner = match p.as_embedded_statements_node() {
+            // `#{}` holds CRuby's zero-width empty statement, sited just past
+            // the opening delimiter.
+            Some(es) => {
+                let at = es.opening_loc().end_offset();
+                match body_after(es.statements(), at, Absorb::Newlines, cx, b) {
+                    RubyValue::Nil => empty_begin(cx, at),
+                    other => other,
+                }
+            }
+            None => match p.as_embedded_variable_node() {
+                Some(ev) => translate(&ev.variable(), cx, b),
+                None => translate(p, cx, b),
+            },
+        };
+        node(cx, "EVSTR", ps, pe, vec![inner])
+    }
+
     /// `LIST` -- CRuby's cons-shaped array node: elements then a trailing nil.
     fn list_node(cx: &mut Cx, start: usize, end: usize, mut elems: Vec<RubyValue>) -> RubyValue {
         elems.push(RubyValue::Nil);
@@ -1110,6 +1198,27 @@ mod translate {
                 String::from_utf8_lossy(x.unescaped()).into_owned(),
             ));
             return node(cx, "STR", s, e, vec![v]);
+        }
+        // An INTERPOLATED literal: `DSTR [leading_text, first_part, rest]`,
+        // where `rest` is a LIST of everything after the first part and the
+        // leading text is a bare Ruby String -- `""` when the interpolation
+        // comes first. `:"..."` is DSYM, `/.../` DREGX, a backtick command
+        // DXSTR, all three the same three children.
+        if let Some(x) = n.as_interpolated_string_node() {
+            let parts = flat_parts(x.parts());
+            return dstr(cx, "DSTR", &parts, s, e, in_block);
+        }
+        if let Some(x) = n.as_interpolated_symbol_node() {
+            let parts = flat_parts(x.parts());
+            return dstr(cx, "DSYM", &parts, s, e, in_block);
+        }
+        if let Some(x) = n.as_interpolated_regular_expression_node() {
+            let parts = flat_parts(x.parts());
+            return dstr(cx, "DREGX", &parts, s, e, in_block);
+        }
+        if let Some(x) = n.as_interpolated_x_string_node() {
+            let parts = flat_parts(x.parts());
+            return dstr(cx, "DXSTR", &parts, s, e, in_block);
         }
         if let Some(x) = n.as_symbol_node() {
             return node(cx, "SYM", s, e, vec![sym_val(x.unescaped())]);
