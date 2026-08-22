@@ -303,6 +303,13 @@ pub enum KwKind {
     Maybe,
 }
 
+/// A DSL ident as ruby spells it: a raw ident (`r#in`, for a ruby name that
+/// collides with a Rust keyword) drops the `r#`.
+pub fn ruby_ident(i: &Ident) -> String {
+    let s = i.to_string();
+    s.strip_prefix("r#").map_or(s.clone(), str::to_owned)
+}
+
 /// One named keyword parameter.
 ///
 /// OWNED, where a positional is borrowed, and the asymmetry is forced rather
@@ -345,7 +352,9 @@ impl MethodDef {
         if !self.ruby_sig {
             return None;
         }
-        let named = |i: &Ident| Some(i.to_string());
+        // A RAW ident (`r#in`) spells a ruby name that is a Rust keyword;
+        // the `r#` is Rust's escape and never part of what ruby calls it.
+        let named = |i: &Ident| Some(ruby_ident(i));
         let mut out: Vec<SigParam> = self
             .params
             .iter()

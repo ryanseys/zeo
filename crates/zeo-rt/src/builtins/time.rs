@@ -1594,34 +1594,13 @@ ruby_class! {
     // The `in:` keyword supplies the DISPLAY utc_offset (the instant itself is
     // the absolute epoch value, so no shift -- unlike `Time.new`, whose
     // components are local to that offset).
-    // NO `**opts`: the DSL peels ANY trailing hash before the arity guard, so
-    // `Time.at({})` lost its only argument and failed the count where ruby
-    // answers a TypeError about the Hash. The `in:` keyword is peeled here
-    // instead, and only when the hash really carries that key -- an ordinary
-    // Hash argument stays positional.
-    def self."at" params "time, subsec = nil, unit = nil, in: nil" allocs (_recv, _time, _subsec?, _unit?, _opts?) {
+    // `in:` is a NAMED keyword, spelled `r#in` because ruby's name is a Rust
+    // one. That is what keeps the arity range at ruby's 1..3 -- a `**kwrest`
+    // would peel any trailing hash before the guard ran (so `Time.at({})`
+    // lost its only argument) and a fourth optional SLOT reported 1..4.
+    ruby def self."at" allocs (_recv, time, subsec?, unit?, r#in:?) {
         use num_bigint::BigInt;
-        // The `in:` keyword is peeled from the END of the argument list, and
-        // ONLY when the trailing hash really carries that key. The DSL's
-        // `**kwrest` would peel any trailing hash before the arity guard ran,
-        // which lost `Time.at({})` its only argument; a plain optional slot
-        // would instead swallow `Time.at(0, in: "+09:00")`'s keyword into
-        // `subsec`. Neither is right, so the split happens here.
-        let in_key = RubyValue::Symbol(crate::Symbol::intern("in"));
-        let (positional, in_offset) = match __args.last() {
-            Some(RubyValue::Hash(h)) if crate::collections::hash_has_key(h, &in_key) => {
-                let v = crate::hash_get(h, &in_key);
-                (
-                    &__args[..__args.len() - 1],
-                    (!v.is_nil()).then_some(v),
-                )
-            }
-            _ => (__args, None),
-        };
-        let time = positional
-            .first()
-            .ok_or_else(|| crate::builtins::arity_err(0, 1, Some(3)))?;
-        let (subsec, unit) = (positional.get(1), positional.get(2));
+        let in_offset = r#in.filter(|v| !v.is_nil());
         let offset = match &in_offset {
             None => None,
             Some(RubyValue::Int(off)) => Some(check_offset(*off)?),

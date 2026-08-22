@@ -412,11 +412,15 @@ fn gen_preamble(method: &zeo_dsl::MethodDef) -> TokenStream2 {
             let (__kwsrc, __pos): (Option<&crate::RubyValue>, &[crate::RubyValue]) =
                 crate::builtins::#peel_fn(__args, #min);
         };
-        let names: Vec<String> = method.keywords.iter().map(|k| k.name.to_string()).collect();
+        let names: Vec<String> = method
+            .keywords
+            .iter()
+            .map(|k| zeo_dsl::ruby_ident(&k.name))
+            .collect();
         let name_lits = names.iter().map(|n| quote! { #n });
         let kw_binds = method.keywords.iter().map(|k| {
             let ident = &k.name;
-            let lit = ident.to_string();
+            let lit = zeo_dsl::ruby_ident(ident);
             match &k.kind {
                 zeo_dsl::KwKind::Maybe => quote! {
                     let #ident: Option<crate::RubyValue> =
