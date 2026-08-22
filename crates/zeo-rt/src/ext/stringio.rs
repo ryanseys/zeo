@@ -517,7 +517,11 @@ ruby_class! {
     def "flush" (recv) {
         Ok(recv.clone())
     }
+    // `binmode` is not a no-op: CRuby's `strio_binmode` retags the buffer
+    // ASCII-8BIT, which is the whole point of asking for it -- a caller
+    // binmodes a stream precisely so nothing interprets the bytes.
     def "binmode" (recv) {
+        io_of(recv).state.lock().enc = crate::encoding::ASCII_8BIT;
         Ok(recv.clone())
     }
     def "fsync" (_recv) {

@@ -1836,16 +1836,6 @@ ruby_class! {
     // `IO#to_s` is NOT `#inspect`: CRuby leaves `to_s` as `Object`'s address
     // form (`#<IO:0x...>`, `#<File:0x...>`) even for `STDIN`, and only
     // `inspect` describes the stream. Interpolating an IO shows the address.
-    def "to_s" (recv, &_blk) {
-        let class = crate::builtins::class_name_of(recv);
-        let addr = match recv {
-            RubyValue::Object(o) => Arc::as_ptr(o) as *const () as usize,
-            _ => 0,
-        };
-        Ok(RubyValue::Str(crate::collections::string_new(format!(
-            "#<{class}:0x{addr:016x}>"
-        ))))
-    }
     def "inspect" (recv, &_blk) {
         let name = match stream_of(recv) {
             Some(StdStream::Stdin) => "#<IO:<STDIN>>".to_string(),
@@ -2398,10 +2388,15 @@ ruby_class! {
         Ok(RubyValue::Bool(closed))
     }
 
-    // `#binmode` -- record binary mode (a no-op on Unix behaviourally); answers self.
+    // `#binmode` -- binary mode. The newline half is a no-op on Unix, but the
+    // ENCODING half is not: CRuby's `rb_io_binmode` sets the external
+    // encoding to ASCII-8BIT, so everything the stream hands back is bytes.
     def "binmode" (recv, &_blk) {
         if let Some(io) = as_rio(recv) {
             io.binmode.store(true, Relaxed);
+            let mut encs = io.encodings.lock();
+            encs.0 = Some(crate::encoding::ASCII_8BIT);
+            encs.1 = None;
         }
         Ok(recv.clone())
     }
@@ -2422,9 +2417,12 @@ ruby_class! {
         if let Some(id) = io.encodings.lock().0 {
             return Ok(crate::builtins::encoding::encoding_value(id));
         }
-        let write_only = matches!(stream_of(recv), Some(StdStream::Stdout | StdStream::Stderr))
-            || fd_access_mode(recv) == Some(libc::O_WRONLY);
-        Ok(if write_only {
+        // CRuby's `rb_io_external_encoding` asks WRITABLE, not write-only:
+        // a stream opened `"w+"` answers nil too, because nothing has said
+        // what its bytes are to be read as.
+        let writable = matches!(stream_of(recv), Some(StdStream::Stdout | StdStream::Stderr))
+            || matches!(fd_access_mode(recv), Some(libc::O_WRONLY | libc::O_RDWR));
+        Ok(if writable {
             RubyValue::Nil
         } else {
             crate::builtins::encoding::encoding_value(crate::encoding::default_external())

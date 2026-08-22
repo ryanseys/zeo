@@ -463,6 +463,20 @@ pub fn append_loaded_feature(name: &str) {
     append_loaded_feature_in(0, name);
 }
 
+/// Whether any entry of the main box's `$LOADED_FEATURES` names `feature` --
+/// the runtime's answer to "was this required?" for a library zeo satisfies
+/// natively, whose entries read `<zeo-builtin>/io/console.rb`.
+pub fn loaded_features_mention(feature: &str) -> bool {
+    let RubyValue::Array(a) = global_get(0, "$LOADED_FEATURES") else {
+        return false;
+    };
+    let needle = format!("{feature}.");
+    a.lock().iter().any(|v| match v {
+        RubyValue::Str(s) => s.lock().to_utf8_lossy().contains(&needle),
+        _ => false,
+    })
+}
+
 /// [`append_loaded_feature`] for a BOX -- each box has its own list, so a
 /// file it loads counts as loaded there and nowhere else.
 pub fn append_loaded_feature_in(box_id: u32, name: &str) {

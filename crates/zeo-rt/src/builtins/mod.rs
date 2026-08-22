@@ -254,6 +254,9 @@ pub(crate) fn side_of(id: ClassId, side: Side) -> Option<&'static MethodTable> {
 /// walk reaches them as ancestors of Array/Hash/Range and of any user class
 /// that `include`s them, exactly like every other builtin module.
 pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMethodFn>> {
+    if id == zeo_abi::IO_CLASS {
+        return Some(gate::io_lookup);
+    }
     // A macro-registered class is fully described by its own table and has no
     // match arm below, so consult the projection first.
     if let Some(m) = side_of(id, Side::Instance) {
@@ -271,6 +274,9 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
 /// `Method#arity` consults this for a builtin-receiver method object, walking
 /// the receiver's ancestry so an inherited builtin resolves against its owner.
 pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> {
+    if id == zeo_abi::IO_CLASS {
+        return Some(gate::io_arity);
+    }
     if let Some(m) = side_of(id, Side::Instance) {
         return Some(m.arity);
     }
@@ -287,11 +293,17 @@ pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> 
 /// "fall back to the anonymous descriptor", which is what nearly every row
 /// still does.
 pub(crate) fn class_params_table(id: ClassId) -> Option<fn(&str) -> Option<ParamRows>> {
+    if id == zeo_abi::IO_CLASS {
+        return Some(gate::io_params);
+    }
     Some(side_of(id, Side::Instance)?.params)
 }
 
 /// `class_params_table`'s CLASS-METHOD counterpart.
 pub(crate) fn class_method_params_table(id: ClassId) -> Option<fn(&str) -> Option<ParamRows>> {
+    if id == zeo_abi::IO_CLASS {
+        return Some(gate::io_class_params);
+    }
     Some(side_of(id, Side::Class)?.params)
 }
 
@@ -311,6 +323,9 @@ pub(crate) fn class_method_params_table(id: ClassId) -> Option<fn(&str) -> Optio
 /// instance -- rows generally ignore it (`Time.now` needs no receiver), but
 /// it keeps the `BuiltinMethodFn` ABI uniform with `class_table`'s.
 pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMethodFn>> {
+    if id == zeo_abi::IO_CLASS {
+        return Some(gate::io_class_lookup);
+    }
     if let Some(m) = side_of(id, Side::Class) {
         return Some(m.lookup);
     }
@@ -328,6 +343,9 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
 /// `class_method_table`'s arity twin -- what `Foo.method(:bar).arity` reads
 /// for a builtin class method, the singleton mirror of [`class_arity_table`].
 pub(crate) fn class_method_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> {
+    if id == zeo_abi::IO_CLASS {
+        return Some(gate::io_class_arity);
+    }
     if let Some(m) = side_of(id, Side::Class) {
         return Some(m.arity);
     }
@@ -391,6 +409,9 @@ pub(crate) fn builtin_row_inherits(id: ClassId, name: &str, class_side: bool) ->
 /// class exposes (for `instance_methods`/`methods`). Mirrors `class_table`'s
 /// arms exactly -- each `<mod>::lookup` has a paste-generated `<mod>::lookup_names`.
 pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
+    if id == zeo_abi::IO_CLASS {
+        return gate::io_names(Side::Instance);
+    }
     if registered_table(id).is_some() {
         return side_of(id, Side::Instance)
             .map(|m| (m.names)())
@@ -406,6 +427,9 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
 /// `class_method_table`'s reflection companion: the CLASS-method NAMES a
 /// builtin exposes (for `SomeClass.singleton_methods` / `.methods`).
 pub(crate) fn class_method_table_names(id: ClassId) -> &'static [&'static str] {
+    if id == zeo_abi::IO_CLASS {
+        return gate::io_names(Side::Class);
+    }
     if registered_table(id).is_some() {
         return side_of(id, Side::Class).map(|m| (m.names)()).unwrap_or(&[]);
     }
@@ -1014,5 +1038,183 @@ mod tests {
         assert!(class_table(BASIC_OBJECT_CLASS).is_some());
         assert!(class_table(ENUMERABLE_CLASS).is_some());
         assert!(class_table(ClassId(999)).is_none());
+    }
+}
+
+/// Rows a builtin's table declares that ruby only grows at a `require`.
+///
+/// CRuby ships `io/console` and `io/nonblock` as require-gated extensions;
+/// zeo implements them natively, so their rows sit in `IO`'s own table --
+/// one class owns one table -- and were answerable before the require. That
+/// is observable beyond reflection: `respond_to?(:getch)` is how a library
+/// decides whether the console extension is there at all.
+///
+/// The gate reads `$LOADED_FEATURES`, which the compiler seeds with every
+/// feature it satisfied natively. It is asked only for `IO`, and only until
+/// the answer is known.
+pub(crate) mod gate {
+    use std::sync::atomic::{AtomicU8, Ordering};
+    use zeo_abi::ClassId;
+
+    /// `IO`'s `io/console` rows, in the order the table declares them.
+    const IO_CONSOLE: &[&str] = &[
+        "beep",
+        "check_winsize_changed",
+        "clear_screen",
+        "console_mode",
+        "console_mode=",
+        "cooked",
+        "cooked!",
+        "cursor",
+        "cursor=",
+        "cursor_down",
+        "cursor_left",
+        "cursor_right",
+        "cursor_up",
+        "echo=",
+        "echo?",
+        "erase_line",
+        "erase_screen",
+        "getch",
+        "getpass",
+        "goto",
+        "goto_column",
+        "iflush",
+        "ioflush",
+        "noecho",
+        "oflush",
+        "pressed?",
+        "raw",
+        "raw!",
+        "scroll_backward",
+        "scroll_forward",
+        "ttyname",
+        "winsize",
+        "winsize=",
+    ];
+
+    /// `IO`'s `io/nonblock` rows.
+    const IO_NONBLOCK: &[&str] = &["nonblock", "nonblock=", "nonblock?"];
+
+    /// `IO`'s only gated CLASS method.
+    const IO_CONSOLE_CLASS: &[&str] = &["console"];
+
+    /// 0 = not asked yet, 1 = required, 2 = not required. Answered from
+    /// `$LOADED_FEATURES` the first time a gated name is looked up, which is
+    /// always after `zeo_rt_main` has seeded it.
+    static CONSOLE: AtomicU8 = AtomicU8::new(0);
+    static NONBLOCK: AtomicU8 = AtomicU8::new(0);
+
+    fn required(cell: &AtomicU8, feature: &str) -> bool {
+        match cell.load(Ordering::Relaxed) {
+            1 => return true,
+            2 => return false,
+            _ => {}
+        }
+        let seen = crate::globals::loaded_features_mention(feature);
+        cell.store(if seen { 1 } else { 2 }, Ordering::Relaxed);
+        seen
+    }
+
+    /// Whether a name in `id`'s instance table is answerable yet.
+    pub(crate) fn instance_ok(id: ClassId, name: &str) -> bool {
+        if id != zeo_abi::IO_CLASS {
+            return true;
+        }
+        if IO_CONSOLE.binary_search(&name).is_ok() {
+            return required(&CONSOLE, "io/console");
+        }
+        if IO_NONBLOCK.contains(&name) {
+            return required(&NONBLOCK, "io/nonblock");
+        }
+        true
+    }
+
+    /// `instance_ok`'s class-method twin.
+    pub(crate) fn class_ok(id: ClassId, name: &str) -> bool {
+        if id != zeo_abi::IO_CLASS || !IO_CONSOLE_CLASS.contains(&name) {
+            return true;
+        }
+        required(&CONSOLE, "io/console")
+    }
+
+    /// `IO`'s instance lookups, with the gated rows hidden until required.
+    /// Plain `fn` items because the projections hand back fn POINTERS.
+    pub(crate) fn io_lookup(name: &str) -> Option<super::BuiltinMethodFn> {
+        if !instance_ok(zeo_abi::IO_CLASS, name) {
+            return None;
+        }
+        (super::side_of(zeo_abi::IO_CLASS, super::Side::Instance)?.lookup)(name)
+    }
+
+    pub(crate) fn io_arity(name: &str) -> Option<i64> {
+        if !instance_ok(zeo_abi::IO_CLASS, name) {
+            return None;
+        }
+        (super::side_of(zeo_abi::IO_CLASS, super::Side::Instance)?.arity)(name)
+    }
+
+    pub(crate) fn io_params(name: &str) -> Option<super::ParamRows> {
+        if !instance_ok(zeo_abi::IO_CLASS, name) {
+            return None;
+        }
+        (super::side_of(zeo_abi::IO_CLASS, super::Side::Instance)?.params)(name)
+    }
+
+    pub(crate) fn io_class_lookup(name: &str) -> Option<super::BuiltinMethodFn> {
+        if !class_ok(zeo_abi::IO_CLASS, name) {
+            return None;
+        }
+        (super::side_of(zeo_abi::IO_CLASS, super::Side::Class)?.lookup)(name)
+    }
+
+    pub(crate) fn io_class_arity(name: &str) -> Option<i64> {
+        if !class_ok(zeo_abi::IO_CLASS, name) {
+            return None;
+        }
+        (super::side_of(zeo_abi::IO_CLASS, super::Side::Class)?.arity)(name)
+    }
+
+    pub(crate) fn io_class_params(name: &str) -> Option<super::ParamRows> {
+        if !class_ok(zeo_abi::IO_CLASS, name) {
+            return None;
+        }
+        (super::side_of(zeo_abi::IO_CLASS, super::Side::Class)?.params)(name)
+    }
+
+    /// The name lists, filtered once. The gate's answer is fixed for a
+    /// program run: the compiler seeds `$LOADED_FEATURES` with every feature
+    /// it satisfied, wherever in the file the `require` was written.
+    pub(crate) fn io_names(side: super::Side) -> &'static [&'static str] {
+        static INSTANCE: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
+        static CLASS: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
+        let cell = match side {
+            super::Side::Instance => &INSTANCE,
+            super::Side::Class => &CLASS,
+        };
+        cell.get_or_init(|| {
+            let all = super::side_of(zeo_abi::IO_CLASS, side)
+                .map(|m| (m.names)())
+                .unwrap_or(&[]);
+            all.iter()
+                .copied()
+                .filter(|n| match side {
+                    super::Side::Instance => instance_ok(zeo_abi::IO_CLASS, n),
+                    super::Side::Class => class_ok(zeo_abi::IO_CLASS, n),
+                })
+                .collect()
+        })
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn the_gated_row_list_is_sorted_for_the_binary_search() {
+            let mut sorted = IO_CONSOLE.to_vec();
+            sorted.sort_unstable();
+            assert_eq!(sorted.as_slice(), IO_CONSOLE);
+        }
     }
 }
