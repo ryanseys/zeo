@@ -30,8 +30,9 @@ work or a decision.
 run-time boxes (`a_box_*`, `a_class_written_in_a_box_escapes_it`,
 `a_top_level_def_in_a_box_escapes_it`), the cycle collector and heap
 enumeration (`a_reference_cycle_is_never_reclaimed`,
-`there_is_no_heap_enumeration`), the MRO occurrence change
-(`a_module_both_prepended_and_included`), reflection surfaces
+`there_is_no_heap_enumeration`), the singleton chain's missing linearization
+(`a_doubled_module_in_a_singleton_chain`, `remove_method_on_a_mixed_in_module`),
+reflection surfaces
 (`builtin_method_parameter_names`, `a_require_gated_builtin_row_is_always_present`,
 `a_struct_backed_builtin_class_is_not_a_struct`,
 `the_ast_translator_answers_unknown_for_some_shapes`), and the two prism-id

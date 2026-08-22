@@ -1,0 +1,10 @@
+["MX", "Both", "MX", "Object", "Kernel", "BasicObject"]
+"mx(Both)"
+["MX", "Runtime", "MX", "Object", "Kernel", "BasicObject"]
+["MW", "Sandwich", "MW", "Object", "Kernel", "BasicObject"]
+"mw(own(mw(top)))"
+2
+"top"
+["mv(1)", "mv(2)", "mv(2)", "mv(1)", "mv(2)", "mv(2)"]
+["MW", "Sandwich", "MW"]
+["MW", "Sandwich", "MW"]
