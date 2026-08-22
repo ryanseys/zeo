@@ -36,6 +36,55 @@ pub fn surrogate_of(box_id: u32) -> u32 {
         .unwrap_or(0)
 }
 
+/// Every class a BOX owns, by class id. Empty for a program that declares
+/// no box, which is why every reader short-circuits on `is_empty` -- box 0
+/// pays one atomic-free read and nothing else.
+///
+/// A box's top-level class keeps its bare ruby name (`Escapee` written in
+/// a box is called `Escapee`), and the registry's name table is what
+/// `Object.constants` and a bare constant read scan. Without this mark
+/// main would reach a class the box wrote.
+static BOX_CLASSES: std::sync::OnceLock<std::sync::RwLock<crate::FMap<u32, u32>>> =
+    std::sync::OnceLock::new();
+
+fn box_classes() -> &'static std::sync::RwLock<crate::FMap<u32, u32>> {
+    BOX_CLASSES.get_or_init(Default::default)
+}
+
+/// Records that `cid` belongs to box `box_id` -- `REG_MARK_BOX_CLASS`, and
+/// (later) a class a run-time box mints.
+pub fn mark_box_class(cid: crate::ClassId, box_id: u32) {
+    box_classes()
+        .write()
+        .expect("no poisoned box-class writers")
+        .insert(cid.0, box_id);
+}
+
+/// The box `cid` belongs to: 0 for main, which is every class in a program
+/// that declares no box.
+pub fn class_box(cid: crate::ClassId) -> u32 {
+    let table = box_classes().read().expect("no poisoned box-class readers");
+    if table.is_empty() {
+        return 0;
+    }
+    table.get(&cid.0).copied().unwrap_or(0)
+}
+
+/// Whether any box owns a class at all -- the short-circuit every scan
+/// over the registry's name table takes first.
+pub fn any_box_classes() -> bool {
+    !box_classes()
+        .read()
+        .expect("no poisoned box-class readers")
+        .is_empty()
+}
+
+/// The box a surrogate CLASS ID belongs to -- the reverse of
+/// [`surrogate_of`], asked of the id rather than of a value.
+pub fn box_of_surrogate_class(cid: crate::ClassId) -> Option<u32> {
+    crate::dispatch::box_of_surrogate_class(cid)
+}
+
 /// The box a surrogate class belongs to -- the reverse of [`surrogate_of`].
 pub fn box_of_surrogate(v: &RubyValue) -> Option<u32> {
     let RubyValue::Class(cid) = v else {

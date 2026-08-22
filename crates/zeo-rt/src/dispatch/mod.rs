@@ -2177,11 +2177,17 @@ pub fn nested_class_names(id: ClassId) -> Vec<String> {
     // `Object.constants` has to match the names with no separator at all.
     // Without this it listed `RUBY_VERSION` and the other seeded constants
     // while omitting `Array`, `String` and ~104 more.
-    if id == crate::ClassId(0) {
+    // A BOX's top level lists the box's own top-level classes, and main's
+    // lists everything else: one name table, separated by the box a class
+    // belongs to.
+    let box_of = crate::boxes::box_of_surrogate_class(id);
+    if id == crate::ClassId(0) || box_of.is_some() {
+        let want = box_of.unwrap_or(0);
         return registry
             .by_name
             .iter()
             .filter(|&(_, &cid)| !crate::constants::class_concealed(cid))
+            .filter(|&(_, &cid)| crate::boxes::class_box(crate::ClassId(cid)) == want)
             .map(|(name, _)| name)
             .filter(|name| !name.contains("::") && !name.contains('#') && !name.contains('.'))
             .map(String::clone)

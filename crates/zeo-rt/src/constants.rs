@@ -198,11 +198,21 @@ fn const_search(owner_class_id: u32, name: &str, skip_object: bool) -> Option<Ru
 /// registry rather than the constants table, so an ancestor walk that only
 /// consulted the table missed it: `include OpenSSL` then a bare `SSL` (which
 /// is how net/ftp reaches `OpenSSL::SSL`) found nothing.
-fn nested_class_of(owner: crate::ClassId, name: &str) -> Option<crate::ClassId> {
+pub(crate) fn nested_class_of(owner: crate::ClassId, name: &str) -> Option<crate::ClassId> {
+    // A BOX's top level owns the box's own top-level classes, under their
+    // bare names -- a class written in a box keeps its ruby name. The
+    // registry has one name table for the whole program, so the box a
+    // class belongs to is what separates them.
+    if let Some(bx) = crate::boxes::box_of_surrogate_class(owner) {
+        return crate::dispatch::class_id_by_name(name)
+            .filter(|&cid| crate::boxes::class_box(cid) == bx);
+    }
     // A TOP-LEVEL class is a constant of `Object` under its bare name -- there
-    // is no `Object::` prefix on it in the registry.
+    // is no `Object::` prefix on it in the registry. A box's is not one of
+    // them, whatever it is called.
     if owner.0 == 0 {
-        return crate::dispatch::class_id_by_name(name);
+        return crate::dispatch::class_id_by_name(name)
+            .filter(|&cid| crate::boxes::class_box(cid) == 0);
     }
     let owner_name = crate::dispatch::class_name(owner)?;
     crate::dispatch::class_id_by_name(&format!("{owner_name}::{name}"))

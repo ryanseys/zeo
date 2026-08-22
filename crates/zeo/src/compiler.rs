@@ -1316,7 +1316,13 @@ impl Compiler {
                 .class_in_scope(None, name, 0)
                 .filter(|&c| {
                     let ci = self.class(c);
-                    ci.is_builtin || ci.is_bootstrap
+                    // The implicit `Object` root predates the builtin
+                    // placeholders and carries neither flag, so it is
+                    // checked by id -- without which a box's own `class
+                    // Object` (which is what a top-level `def` in a box
+                    // means) minted a SECOND class called `Object`
+                    // instead of the box's overlay of the real one.
+                    ci.is_builtin || ci.is_bootstrap || c == OBJECT_CLASS
                 })
                 .filter(|&c| self.feature_active(c))
             {

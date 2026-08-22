@@ -1486,11 +1486,14 @@ pub(crate) fn eval_class_def(fx: &mut Fx, stmt: NodeId) -> Result<super::operand
     let owner = match scope.filter(|s| !s.is_empty()) {
         Some(s) => super::expr::const_path_read(fx, stmt, s)?,
         None => {
+            // The snippet's own cref when it has one, else its TOP LEVEL --
+            // which inside a box is the box's surrogate, not `Object`.
+            // Binding on `Object` let main reach a class the box wrote.
             let cid = fx
                 .eval_cref
                 .as_ref()
                 .and_then(|c| c.chain.first().copied())
-                .map_or(crate::compiler::OBJECT_CLASS, crate::compiler::ClassId);
+                .map_or_else(|| super::expr::box_top(fx), crate::compiler::ClassId);
             super::expr::class_immediate(fx, cid)
         }
     };

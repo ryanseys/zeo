@@ -434,6 +434,15 @@ pub const REFLECT_METHOD: u8 = 3;
 /// refined `Method#owner` reports.
 pub const REG_MARK_REFINEMENT: u8 = 16;
 
+/// A class or module a `Ruby::Box` owns: `class` = the class,
+/// `ids[0]` = the box's internal id. A box's top-level classes are
+/// registered under their bare ruby names -- `Escapee` inside a box is
+/// still called `Escapee` -- so without this mark the registry's name
+/// table would hand main a class the box wrote. Emitted only for a class
+/// whose box is not 0, so a program with no box registers no rows and the
+/// runtime's side table stays empty.
+pub const REG_MARK_BOX_CLASS: u8 = 17;
+
 /// The byte size of the emitter's opaque `for`-loop state slot -- one
 /// stack slot per loop, filled by `zeo_rt_for_begin` and released by
 /// `zeo_rt_for_end`. The runtime asserts its own struct fits.

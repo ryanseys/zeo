@@ -165,6 +165,32 @@ fn process_top_stmt_inner(
         let (bx, body) = (*box_id, body.clone());
         let mut rest = Vec::new();
         for s in body {
+            // A top-level `def` in a box is a private instance method of
+            // the BOX's `Object`, exactly as one in main is of main's. The
+            // arm below registers a `ClassDef` under the box, so the def
+            // becomes the `class Object` reopen it already means -- without
+            // this it fell through to the run-time install, which knows one
+            // `Object` and let main call a method the box wrote.
+            let s = match &mut compiler.hir[s] {
+                HirNode::DefMethod {
+                    is_class_method: false,
+                    visibility,
+                    ..
+                } => {
+                    *visibility = crate::hir::Visibility::Private;
+                    let span = compiler.hir.span(s).unwrap_or(crate::hir::Span::SYNTH);
+                    compiler.hir.push_span(span);
+                    let wrapped = compiler.hir.push(HirNode::ClassDef {
+                        name: "Object".to_string(),
+                        superclass: None,
+                        body: vec![s],
+                        is_module: false,
+                    });
+                    compiler.hir.pop_span();
+                    wrapped
+                }
+                _ => s,
+            };
             if let HirNode::ClassDef {
                 name,
                 superclass,

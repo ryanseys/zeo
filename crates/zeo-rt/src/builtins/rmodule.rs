@@ -131,12 +131,12 @@ fn is_const_path(name: &str) -> bool {
 /// under their qualified name, which is what this reads -- the same source
 /// `Module#constants` lists from, so the two cannot disagree.
 fn class_constant(owner: crate::ClassId, name: &str) -> Option<RubyValue> {
-    let path = if owner.0 == 0 {
-        name.to_owned()
-    } else {
-        format!("{}::{name}", crate::dispatch::class_name(owner)?)
-    };
-    crate::dispatch::class_id_by_name(&path).map(RubyValue::Class)
+    // One walk, shared with the constant-read path: a nested class is a
+    // constant of its namespace, and a BOX's top-level class is a constant
+    // of the box rather than of `Object`. Two copies of that rule
+    // disagreed -- `Object.const_defined?` answered for a class a box
+    // wrote where the bare read had stopped saying so.
+    crate::constants::nested_class_of(owner, name).map(RubyValue::Class)
 }
 
 /// Which of ruby's constant searches to run -- the `(recurse, exclude)` pair

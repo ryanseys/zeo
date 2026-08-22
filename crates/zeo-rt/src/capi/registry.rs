@@ -205,6 +205,9 @@ pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
                 let target = unsafe { *r.ids.add(1) };
                 registry.mark_refinement(ClassId(r.class), ClassId(module), ClassId(target));
             }
+            abi::REG_MARK_BOX_CLASS => {
+                crate::boxes::mark_box_class(ClassId(r.class), unsafe { *r.ids });
+            }
             abi::REG_MARK_GLOBAL_DEF_HOOK => {
                 crate::runtime_meta::mark_global_def_hook(text(r.a));
             }

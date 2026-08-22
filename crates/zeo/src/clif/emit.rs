@@ -694,6 +694,23 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             });
         }
     }
+    // A class a BOX owns. Its ruby name is bare -- `Escapee` written in a
+    // box is called `Escapee` -- so the registry's name table would let
+    // main reach it as a nested class of `Object`. The mark is what keeps
+    // the two apart; a program with no box emits none of these.
+    for (idx, class) in analyzed.compiler.classes.iter().enumerate() {
+        if class.box_id != 0 {
+            reg_rows.push(statics::RegRowSpec {
+                kind: zeo_abi::abi::REG_MARK_BOX_CLASS,
+                class: idx as u32,
+                a: String::new(),
+                b: String::new(),
+                f: None,
+                ids: vec![class.box_id],
+                flag: 0,
+            });
+        }
+    }
     // Singleton-class surrogates seed the runtime mint.
     reg_rows.extend(
         singleton_surrogates
