@@ -491,6 +491,45 @@ fn range_bsearch_float(
 /// Whether integer `i` is still within an integer-start range whose end is
 /// `end` -- unbounded for an endless (`nil`/`None`) or `+Float::INFINITY`
 /// end, so an infinite range keeps yielding until its consumer stops pulling.
+/// An INTEGER endpoint at full width, whichever the value arrived in. The
+/// range machinery narrows to `i64` almost everywhere, which is right until
+/// an endpoint does not fit -- `(2**70..2**70+2)` is three elements and ruby
+/// walks it happily.
+fn big_endpoint(v: Option<&RubyValue>) -> Option<num_bigint::BigInt> {
+    match v {
+        Some(RubyValue::Int(i)) => Some(num_bigint::BigInt::from(*i)),
+        Some(RubyValue::BigInt(b)) => Some((**b).clone()),
+        _ => None,
+    }
+}
+
+/// [`int_in_range`] at full width -- the bound test a bignum walk needs.
+fn big_in_range(i: &num_bigint::BigInt, end: Option<&RubyValue>, exclusive: bool) -> bool {
+    match end {
+        None | Some(RubyValue::Nil) => true,
+        Some(RubyValue::Float(f)) if f.is_infinite() => *f > 0.0,
+        Some(v) => match big_endpoint(Some(v)) {
+            Some(e) => {
+                if exclusive {
+                    *i < e
+                } else {
+                    *i <= e
+                }
+            }
+            // A Float end compares against the bignum's own double image,
+            // which is what CRuby's `rb_int_lt` does for the mixed pair.
+            None => match v {
+                RubyValue::Float(f) => {
+                    let x =
+                        crate::builtins::rational::big_ratio_f64(i, &num_bigint::BigInt::from(1));
+                    if exclusive { x < *f } else { x <= *f }
+                }
+                _ => false,
+            },
+        },
+    }
+}
+
 fn int_in_range(i: i64, end: Option<&RubyValue>, exclusive: bool) -> bool {
     match end {
         None | Some(RubyValue::Nil) => true,
@@ -575,6 +614,16 @@ ruby_class! {
                     i += 1;
                 }
             }
+            // A BIGNUM start walks the same way at full width. It reaches an
+            // `Int` end too (`(2**70..2**70+2)` narrows back down as it goes),
+            // so the counter -- not the endpoint -- decides the width.
+            Some(RubyValue::BigInt(s)) => {
+                let mut i = (**s).clone();
+                while big_in_range(&i, end, exclusive) {
+                    p.call(&[crate::builtins::integer::int_value(i.clone())])?;
+                    i += 1;
+                }
+            }
             // A String range IS `rb_str_upto_each` in CRuby (`range_each`
             // calls it directly), so both share the one walk -- including its
             // all-digit and single-character branches, which a length-ordered
@@ -624,6 +673,40 @@ ruby_class! {
         // (CRuby's approach), so a representable boundary converges exactly.
         if matches!(start, Some(RubyValue::Float(_))) || matches!(end, Some(RubyValue::Float(_))) {
             return range_bsearch_float(start, end, exclusive, &p);
+        }
+        // An endpoint past i64 bisects at full width -- the same two modes,
+        // over `BigInt` bounds. Bounded only: bracketing an ENDLESS bignum
+        // range would double from a start that is already unbounded.
+        if matches!(start, Some(RubyValue::BigInt(_))) || matches!(end, Some(RubyValue::BigInt(_))) {
+            if let (Some(lo0), Some(hi0)) = (big_endpoint(start), big_endpoint(end)) {
+                let one = num_bigint::BigInt::from(1);
+                let (mut lo, mut hi) = (lo0, if exclusive { hi0 } else { hi0 + &one });
+                let mut found = None;
+                while lo < hi {
+                    let mid: num_bigint::BigInt = &lo + (&hi - &lo) / 2;
+                    let r = p.call(&[crate::builtins::integer::int_value(mid.clone())])?;
+                    let cmp = match r {
+                        RubyValue::Int(n) => Some(n.cmp(&0)),
+                        RubyValue::Float(f) => f.partial_cmp(&0.0),
+                        _ => None,
+                    };
+                    match cmp {
+                        Some(std::cmp::Ordering::Equal) => {
+                            found = Some(mid);
+                            break;
+                        }
+                        Some(std::cmp::Ordering::Less) => hi = mid,
+                        Some(std::cmp::Ordering::Greater) => lo = mid + &one,
+                        None if r.truthy() => {
+                            found = Some(mid.clone());
+                            hi = mid;
+                        }
+                        None => lo = mid + &one,
+                    }
+                }
+                return Ok(found.map_or(RubyValue::Nil, crate::builtins::integer::int_value));
+            }
+            return Err(type_error!("can't do binary search for the given Range"));
         }
         let Some(RubyValue::Int(lo0)) = start else {
             return Err(type_error!("can't do binary search for the given Range"));
@@ -800,6 +883,14 @@ ruby_class! {
     }
     def "size" (recv) {
         let (start, end, exclusive) = range_parts(recv);
+        // Both endpoints integers -- at ANY width -- is the closed form
+        // (`end - begin + 1`), which is why ruby answers `(1..2**70).size`
+        // instantly rather than counting to it.
+        if let (Some(b), Some(e)) = (big_endpoint(start), big_endpoint(end)) {
+            let last = if exclusive { e - 1 } else { e };
+            let n: num_bigint::BigInt = last - b + 1;
+            return Ok(crate::builtins::integer::int_value(n.max(num_bigint::BigInt::from(0))));
+        }
         // The begin must be an Integer (CRuby iterates from it via `succ`).
         let s = match start {
             Some(RubyValue::Int(s)) => *s,
@@ -1050,8 +1141,46 @@ ruby_class! {
             if open_endpoint(start) || open_endpoint(end) {
                 return Ok(RubyValue::Float(f64::INFINITY));
             }
+            // An integer range counts in closed form -- `#size` IS the count,
+            // and the Enumerable walk over `(1..2**70)` never returns.
+            if big_endpoint(start).is_some() && big_endpoint(end).is_some() {
+                return crate::dispatch::send_value(recv, crate::Symbol::intern("size"), &[], None);
+            }
         }
         own_row!(recv, |s| enumerable::count_own(s, __args, block))
+    }
+    // `range.c`'s `range_sum`: an integer range with no block is Gauss's
+    // formula, which is why ruby answers `(1..2**70).sum` at all. Everything
+    // else -- a block, a non-integer endpoint, an `init` argument -- walks.
+    def "sum" cfunc (recv, *_args, &block) {
+        let (start, end, exclusive) = range_parts(recv);
+        if block.is_none()
+            && __args.len() <= 1
+            && let (Some(b), Some(e)) = (big_endpoint(start), big_endpoint(end))
+        {
+            let one = num_bigint::BigInt::from(1);
+            let last = if exclusive { e - &one } else { e };
+            if last >= b {
+                let n = &last - &b + &one;
+                let total: num_bigint::BigInt = (&b + &last) * n / 2;
+                let init = match __args.first() {
+                    None => num_bigint::BigInt::from(0),
+                    Some(v) => match big_endpoint(Some(v)) {
+                        Some(i) => i,
+                        // A non-integer `init` makes the whole sum its type,
+                        // which the walk is the honest way to reach.
+                        None => return own_row!(recv, |s| enumerable::sum_own(s, __args, block)),
+                    },
+                };
+                return Ok(crate::builtins::integer::int_value(total + init));
+            }
+            // An empty range sums to the init, or 0.
+            return Ok(match __args.first() {
+                Some(v) => v.clone(),
+                None => RubyValue::Int(0),
+            });
+        }
+        own_row!(recv, |s| enumerable::sum_own(s, __args, block))
     }
     // `range.c`'s `range_minmax`: WITHOUT a block it is the pair `[min, max]`
     // re-dispatched through this range's own rows, so it inherits every
