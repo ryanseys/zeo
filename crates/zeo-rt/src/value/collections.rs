@@ -277,6 +277,23 @@ impl ArrayStore {
         self.buf.append(other);
     }
 
+    /// The collector's enumerator: every element, either cloned (`take` =
+    /// false, the reference walk) or MOVED OUT leaving the store empty
+    /// (`take` = true, the sweep). One method for both so the list the walk
+    /// counted and the list the sweep releases cannot disagree -- an edge
+    /// reported but not released would let the collector clear a node
+    /// something still points at.
+    ///
+    /// Values move into `out` rather than dropping here: a drop can cascade
+    /// into another container's lock, and this one is held.
+    pub fn gc_visit(&mut self, out: &mut Vec<RubyValue>, take: bool) {
+        if take {
+            out.append(self.vec());
+        } else {
+            out.extend(self.iter().cloned());
+        }
+    }
+
     pub fn insert(&mut self, index: usize, v: RubyValue) {
         self.vec().insert(index, v);
     }
@@ -958,6 +975,28 @@ impl RHashData {
         }
     }
 
+    /// [`ArrayStore::gc_visit`] for a Hash: every key and value, plus the
+    /// per-instance default and default block, which are owned references
+    /// like any other.
+    pub fn gc_visit(&mut self, out: &mut Vec<RubyValue>, take: bool) {
+        if take {
+            match &mut self.repr {
+                HashRepr::Small(rows) => {
+                    out.extend(rows.drain(..).flat_map(|(_, (k, v))| [k, v]));
+                }
+                HashRepr::Big(map) => {
+                    out.extend(std::mem::take(map).into_values().flat_map(|(k, v)| [k, v]));
+                }
+            }
+            out.push(std::mem::replace(&mut self.default, RubyValue::Nil));
+            out.extend(self.default_proc.take());
+        } else {
+            out.extend(self.values().flat_map(|(k, v)| [k.clone(), v.clone()]));
+            out.push(self.default.clone());
+            out.extend(self.default_proc.clone());
+        }
+    }
+
     pub fn values(&self) -> HashValuesIter<'_> {
         match &self.repr {
             HashRepr::Small(rows) => HashValuesIter::Small(rows.iter()),
@@ -1577,9 +1616,7 @@ pub fn hash_except_keys(h: &RHash, keys: &[&str]) -> RHash {
 
 #[inline]
 pub fn string_new(s: String) -> RStr {
-    let s: RStr = Arc::new(Freezable::new(crate::encoding::StrBuf::from_utf8(s)));
-    crate::gc::record_str(&s);
-    s
+    Arc::new(Freezable::new(crate::encoding::StrBuf::from_utf8(s)))
 }
 
 /// The key of the frozen-string pool: a string's exact identity is its bytes
@@ -1607,10 +1644,6 @@ pub fn intern_frozen(buf: crate::encoding::StrBuf) -> RStr {
     let s = Arc::new(Freezable::new(buf));
     s.set_frozen();
     pool.insert(key, s.clone());
-    // Deliberately unregistered: the pool holds this string for the process
-    // lifetime, so it is neither collectable nor a candidate that could ever
-    // be dropped from the registry -- recording it would only add a permanent
-    // entry to every walk.
     s
 }
 
@@ -1618,20 +1651,16 @@ pub fn intern_frozen(buf: crate::encoding::StrBuf) -> RStr {
 /// `String#b`, `force_encoding`, IO byte reads, and `\xNN`-bearing literals
 /// build (the byte-level sibling of `string_new`'s UTF-8 text path).
 pub fn string_from_bytes(bytes: Vec<u8>, enc: crate::encoding::EncodingId) -> RStr {
-    let s: RStr = Arc::new(Freezable::new(crate::encoding::StrBuf::from_bytes(
+    Arc::new(Freezable::new(crate::encoding::StrBuf::from_bytes(
         bytes, enc,
-    )));
-    crate::gc::record_str(&s);
-    s
+    )))
 }
 
 /// Wraps an already-built `StrBuf` (carrying its own encoding) as an `RStr` --
 /// the constructor for the encoding-aware string builders (`char_at`,
 /// `reversed`, `upcased`, ...).
 pub fn string_wrap(buf: crate::encoding::StrBuf) -> RStr {
-    let s: RStr = Arc::new(Freezable::new(buf));
-    crate::gc::record_str(&s);
-    s
+    Arc::new(Freezable::new(buf))
 }
 
 /// Character-indexed (not byte-indexed), matching Ruby's own UTF-8-aware

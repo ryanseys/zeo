@@ -29,7 +29,10 @@
 //! BEFORE it builds a handle, so a program that never opts in pays no
 //! `Arc::downgrade` and touches no thread-local.
 
+mod collect;
 pub(crate) mod registry;
+
+pub use collect::collect;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -67,7 +70,7 @@ pub(crate) fn stop_recording() {
     RECORDING.store(false, Ordering::Relaxed);
 }
 
-use crate::collections::{RArray, RHash, RStr};
+use crate::collections::{RArray, RHash};
 use crate::dispatch::RObj;
 use registry::{Node, record};
 
@@ -87,41 +90,12 @@ pub fn record_hash(h: &RHash) {
     }
 }
 
-/// Record a freshly built String. A String owns no `RubyValue` and so can
-/// never be part of a cycle; it is registered for the `ObjectSpace` census,
-/// which has no such restriction.
-#[inline]
-pub fn record_str(s: &RStr) {
-    if recording() {
-        record(Node::Str(std::sync::Arc::downgrade(s)));
-    }
-}
-
 /// Record a freshly allocated object -- a compiled class's instance, a
 /// `Class.new` instance, or one of the runtime's own.
 #[inline]
 pub fn record_object(o: &RObj) {
     if recording() {
         record(Node::Object(std::sync::Arc::downgrade(o)));
-    }
-}
-
-/// Record a freshly built Range.
-#[inline]
-pub fn record_range(r: &crate::RRange) {
-    if recording() {
-        record(Node::Range(std::sync::Arc::downgrade(r)));
-    }
-}
-
-/// Record a freshly built Proc. Only a proc whose body is COMPILED can be
-/// part of a collectable cycle: one built from a Rust closure captures
-/// values no enumeration can reach, so it is registered and then always
-/// answers "externally referenced" -- see [`registry::Node`].
-#[inline]
-pub fn record_proc(p: &crate::RProc) {
-    if recording() {
-        record(Node::Proc(p.downgrade()));
     }
 }
 

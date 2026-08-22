@@ -155,19 +155,18 @@ impl RProc {
         Arc::as_ptr(&self.0) as *const () as usize
     }
 
-    /// The one place a `Proc` value is built. Every constructor below funnels
-    /// through it, so the allocation registry sees each proc exactly once.
+    /// The one place a `Proc` value is built.
+    ///
+    /// It deliberately does NOT register the proc with the cycle collector,
+    /// and the reason is a trap worth naming: `Arc::downgrade` makes
+    /// `Arc::get_mut` fail, and the eight `with_*` builders below are all
+    /// `Arc::get_mut` on a refcount-1 handle. A weak handle taken here would
+    /// silently turn every one of them into a no-op -- no `source_location`,
+    /// no `#parameters`, no `return` home, no `#binding`. Registering a proc
+    /// therefore waits until its captured cells can be enumerated, which is
+    /// the same change that has to unpick this builder chain anyway.
     fn of(data: ProcData) -> RProc {
-        let p = RProc(Arc::new(data));
-        crate::gc::record_proc(&p);
-        p
-    }
-
-    /// A weak handle on the shared payload, for the allocation registry.
-    /// Two handles to the same proc downgrade to the same node, which is
-    /// what keeps `Proc#dup` from registering a second candidate.
-    pub(crate) fn downgrade(&self) -> std::sync::Weak<ProcData> {
-        Arc::downgrade(&self.0)
+        RProc(Arc::new(data))
     }
 
     /// A runtime-internal proc: var-args arity (`-1`), not a lambda. Its

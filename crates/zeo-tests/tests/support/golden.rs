@@ -539,6 +539,12 @@ fn run_via_cli(
     if source.contains("Ruby::Box.new") {
         cmd.env("RUBY_BOX", "1");
     }
+    // A `.gc` sidecar marks a golden that needs zeo's cycle collector armed
+    // to answer what ruby answers. The oracle needs no counterpart: CRuby
+    // always collects. The file's content states what the program depends on.
+    if std::fs::metadata(format!("{}.gc", rb.display())).is_ok() {
+        cmd.env("ZEO_GC", "1");
+    }
     cmd.current_dir(run_cwd);
     run_bounded(&mut cmd, stdin, "zeo CLI (ZEO_GOLDEN_BACKEND)")
 }

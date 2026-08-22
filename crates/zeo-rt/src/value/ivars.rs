@@ -344,6 +344,33 @@ impl<V: Store<RubyValue>, Q: Store<Seq>> IvarCellCore<V, Q> {
         }
     }
 
+    /// The collector's enumerator: every slot this object owns -- declared,
+    /// invented, and the hidden `Struct`/`Data` members past the declared
+    /// ones, which [`Self::values`] deliberately skips because Ruby does not
+    /// count them as instance variables. The collector must see them: they
+    /// own references like any other slot.
+    ///
+    /// `take` = false clones for the reference walk; `take` = true moves each
+    /// value out and leaves the slot `Nil`, for the sweep. One method for
+    /// both, so the two lists cannot disagree. Values move into `out` rather
+    /// than dropping here, because this cell's guard is held.
+    pub fn gc_visit(&self, out: &mut Vec<RubyValue>, take: bool) {
+        let mut inner = self.held();
+        if take {
+            for v in inner.vals.as_mut().iter_mut() {
+                out.push(std::mem::replace(v, RubyValue::Nil));
+            }
+            if let Some(invented) = inner.invented.take() {
+                out.extend(invented.into_iter().map(|i| i.value));
+            }
+        } else {
+            out.extend(inner.vals.as_ref().iter().cloned());
+            if let Some(invented) = &inner.invented {
+                out.extend(invented.iter().map(|i| i.value.clone()));
+            }
+        }
+    }
+
     /// A declared slot's value -- `nil` for one never assigned, as in Ruby.
     #[inline(always)]
     pub fn get(&self, index: usize) -> RubyValue {

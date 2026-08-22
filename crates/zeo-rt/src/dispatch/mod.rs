@@ -64,6 +64,25 @@ pub trait RubyObject: Any + Send + Sync {
     /// is a harmless no-op, matching CRuby's own already-frozen guard.
     fn set_frozen(&self);
 
+    /// The cycle collector's enumerator: every strong reference this object
+    /// owns, each EXACTLY once. `take` = false clones them (the reference
+    /// walk); `take` = true moves them out and leaves the slots `Nil` (the
+    /// sweep). One method serves both so the list the walk counted and the
+    /// list the sweep releases cannot disagree.
+    ///
+    /// The two failure directions are not symmetric, which is what makes the
+    /// empty default safe and the rollout incremental: an OMITTED edge only
+    /// leaks (the target keeps an unexplained reference, so the collector
+    /// reads it as live), while a duplicated or invented one over-subtracts
+    /// and could clear an object something still points at. So a type that
+    /// cannot release a reference must not report it either -- an immutable
+    /// payload (`Range`, `Proc`) reports nothing and is simply never
+    /// reclaimed.
+    ///
+    /// `out` is where values GO rather than being dropped here: a drop can
+    /// cascade into another container's lock, and the caller may hold one.
+    fn gc_visit(&self, _out: &mut Vec<RubyValue>, _take: bool) {}
+
     /// A snapshot of every ivar's current value -- the runtime
     /// ivar ENUMERATION `Ractor`'s recursive shareability check and
     /// `make_shareable`'s deep-freeze traversal need. (Ractor sends still

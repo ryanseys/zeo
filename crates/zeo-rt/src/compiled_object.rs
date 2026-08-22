@@ -113,6 +113,10 @@ impl RubyObject for CompiledObject {
         self.frozen.store(true, Ordering::Relaxed);
     }
 
+    fn gc_visit(&self, out: &mut Vec<RubyValue>, take: bool) {
+        self.ivars.gc_visit(out, take);
+    }
+
     fn ivar_values(&self) -> Vec<RubyValue> {
         self.ivars.values(self.layout.names.len())
     }

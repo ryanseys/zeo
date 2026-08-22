@@ -47,13 +47,11 @@ pub fn range_new(start: Option<RubyValue>, end: Option<RubyValue>, exclusive: bo
         Some(RubyValue::Nil) | None => None,
         other => other,
     };
-    let r: RRange = Arc::new(RangeData {
+    Arc::new(RangeData {
         start: strip(start),
         end: strip(end),
         exclusive,
-    });
-    crate::gc::record_range(&r);
-    r
+    })
 }
 
 /// `range_new` as a `RubyValue` -- what codegen emits for a range literal.

@@ -183,9 +183,11 @@ ruby_module! {
     module_function def "_id2ref"(_recv, _object_id) {
         Err(not_impl_error!("ObjectSpace._id2ref is not available (zeo has no id-to-object table)"))
     }
-    // `garbage_collect` is `GC.start` by another name -- a no-op sweep (plus
-    // the finalizer/weakmap sweep once those land).
+    // `garbage_collect` IS `GC.start` in CRuby, and now here too: it runs the
+    // cycle pass and the finalizer sweep through the same entry, so the two
+    // spellings cannot drift.
     module_function def "garbage_collect" params "full_mark: true, immediate_mark: true, immediate_sweep: true"(_recv, *_args, &_block) {
+        crate::builtins::gc::run_collection();
         Ok(RubyValue::Nil)
     }
     // An empty per-class census: no fabricated counts, matching `GC.stat`'s

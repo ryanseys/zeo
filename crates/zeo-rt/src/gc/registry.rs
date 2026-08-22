@@ -26,7 +26,6 @@
 use crate::RubyValue;
 use crate::collections::{ArrayStore, Freezable, RHashData};
 use crate::dispatch::RubyObject;
-use crate::encoding::StrBuf;
 use parking_lot::Mutex;
 use std::cell::RefCell;
 use std::sync::Weak;
@@ -37,10 +36,7 @@ use std::sync::Weak;
 pub(crate) enum Node {
     Array(Weak<Freezable<ArrayStore>>),
     Hash(Weak<Freezable<RHashData>>),
-    Str(Weak<Freezable<StrBuf>>),
     Object(Weak<dyn RubyObject>),
-    Proc(Weak<crate::rproc::ProcData>),
-    Range(Weak<crate::RangeData>),
     Cell(Weak<Mutex<RubyValue>>),
 }
 
@@ -51,13 +47,109 @@ impl Node {
         match self {
             Node::Array(w) => w.strong_count() > 0,
             Node::Hash(w) => w.strong_count() > 0,
-            Node::Str(w) => w.strong_count() > 0,
             Node::Object(w) => w.strong_count() > 0,
-            Node::Proc(w) => w.strong_count() > 0,
-            Node::Range(w) => w.strong_count() > 0,
             Node::Cell(w) => w.strong_count() > 0,
         }
     }
+}
+
+/// A registered node, held strongly for the duration of one collection.
+///
+/// The kind decides two things the collector cannot ask a bare pointer:
+/// which references the node OWNS, and whether it can release them.
+pub(crate) enum Strong {
+    Array(crate::collections::RArray),
+    Hash(crate::collections::RHash),
+    Object(crate::dispatch::RObj),
+    Cell(crate::LocalCell),
+}
+
+impl Strong {
+    /// This node's identity: the payload address, which is what an edge
+    /// pointing at it also spells.
+    pub(crate) fn addr(&self) -> usize {
+        match self {
+            Strong::Array(a) => std::sync::Arc::as_ptr(a) as *const () as usize,
+            Strong::Hash(h) => std::sync::Arc::as_ptr(h) as *const () as usize,
+            Strong::Object(o) => std::sync::Arc::as_ptr(o) as *const () as usize,
+            Strong::Cell(c) => std::sync::Arc::as_ptr(c) as *const () as usize,
+        }
+    }
+
+    /// How many owners this node has, INCLUDING the handle held here. Every
+    /// reference compiled code holds is one of these, which is what makes
+    /// the count a sound input: no capi entry hands out a borrow into a
+    /// container, so there is no reference the count does not see.
+    pub(crate) fn owners(&self) -> usize {
+        match self {
+            Strong::Array(a) => std::sync::Arc::strong_count(a),
+            Strong::Hash(h) => std::sync::Arc::strong_count(h),
+            Strong::Object(o) => std::sync::Arc::strong_count(o),
+            Strong::Cell(c) => std::sync::Arc::strong_count(c),
+        }
+    }
+
+    /// See [`crate::dispatch::RubyObject::gc_visit`] for the contract, which
+    /// is the same one here: clone for the walk, move out for the sweep, and
+    /// report nothing you cannot release.
+    pub(crate) fn gc_visit(&self, out: &mut Vec<RubyValue>, take: bool) {
+        match self {
+            Strong::Array(a) => a.lock().gc_visit(out, take),
+            Strong::Hash(h) => h.lock().gc_visit(out, take),
+            Strong::Object(o) => o.gc_visit(out, take),
+            Strong::Cell(c) => {
+                let mut g = c.lock();
+                out.push(if take {
+                    std::mem::replace(&mut *g, RubyValue::Nil)
+                } else {
+                    g.clone()
+                });
+            }
+        }
+    }
+}
+
+impl Node {
+    /// The node this handle names, or `None` if it has already been dropped.
+    fn upgrade(&self) -> Option<Strong> {
+        match self {
+            Node::Array(w) => w.upgrade().map(Strong::Array),
+            Node::Hash(w) => w.upgrade().map(Strong::Hash),
+            Node::Object(w) => w.upgrade().map(Strong::Object),
+            Node::Cell(w) => w.upgrade().map(Strong::Cell),
+        }
+    }
+}
+
+/// Every live node, one handle each, in allocation order. Publishes this
+/// thread's partial chunk first: a node still sitting in a buffer is
+/// invisible to the walk, which only ever costs a cycle one more collection
+/// to be noticed.
+pub(crate) fn snapshot() -> Vec<Strong> {
+    flush_local();
+    let chunks = CHUNKS.lock();
+    let mut seen = crate::FMap::default();
+    let mut out = Vec::new();
+    for node in chunks.iter().flat_map(|c| c.iter()) {
+        let Some(strong) = node.upgrade() else {
+            continue;
+        };
+        // A constructor that registered twice must not become two candidates:
+        // the second handle would inflate the node's own owner count and make
+        // it look externally referenced forever.
+        if seen.insert(strong.addr(), ()).is_none() {
+            out.push(strong);
+        }
+    }
+    out
+}
+
+/// Publish this thread's partial chunk.
+fn flush_local() {
+    let _ = LOCAL.try_with(|l| {
+        let taken = std::mem::take(&mut l.borrow_mut().0);
+        publish(taken);
+    });
 }
 
 /// How many nodes a thread buffers before publishing. Big enough that the
@@ -143,10 +235,7 @@ mod tests {
     /// How many registered nodes are still alive. Test-only until the
     /// collector reads the registry for real.
     fn live_count() -> usize {
-        LOCAL.with(|l| {
-            let taken = std::mem::take(&mut l.borrow_mut().0);
-            publish(taken);
-        });
+        flush_local();
         CHUNKS
             .lock()
             .iter()

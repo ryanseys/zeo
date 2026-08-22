@@ -31,6 +31,19 @@ static PROFILING: AtomicBool = AtomicBool::new(false);
 /// `GC.count` and `GC.stat(:count)` answer.
 static COUNT: AtomicU64 = AtomicU64::new(0);
 
+/// One collection: reclaim what the cycle collector can (nothing unless
+/// `ZEO_GC` armed the registry), then run finalizers for everything whose
+/// last strong reference has dropped -- including what the pass just
+/// reclaimed. `GC.disable` gates the cycle pass and not the finalizers,
+/// which are ordinary refcount consequences rather than collector work.
+pub(crate) fn run_collection() {
+    COUNT.fetch_add(1, Ordering::Relaxed);
+    if !DISABLED.load(Ordering::Relaxed) {
+        crate::gc::collect();
+    }
+    crate::builtins::weak::run_finalizers_for_dead();
+}
+
 fn hash_of(pairs: Vec<(&str, RubyValue)>) -> RubyValue {
     RubyValue::Hash(crate::collections::hash_new(
         pairs
@@ -71,17 +84,13 @@ ruby_module! {
 
     def self."start" params "full_mark: true, immediate_mark: true, immediate_sweep: true"
         | "compact" arity 0 (_recv, *_args, &_block) {
-        // No tracing collector to drive, but this is the honest moment to run
-        // finalizers for objects whose last strong reference has dropped.
-        COUNT.fetch_add(1, Ordering::Relaxed);
-        crate::builtins::weak::run_finalizers_for_dead();
+        run_collection();
         Ok(RubyValue::Nil)
     }
     // `GC#garbage_collect` -- the instance twin of `GC.start`, which a class
     // gets by `include GC`. Public, as CRuby lists it.
     def "garbage_collect" params "full_mark: nil, immediate_mark: nil, immediate_sweep: nil" (_recv, *_args, &_block) {
-        COUNT.fetch_add(1, Ordering::Relaxed);
-        crate::builtins::weak::run_finalizers_for_dead();
+        run_collection();
         Ok(RubyValue::Nil)
     }
     // Both answer the PREVIOUS disabled state, which is what the restore idiom

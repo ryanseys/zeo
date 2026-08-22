@@ -172,6 +172,15 @@ impl RubyObject for DynObject {
     fn set_frozen(&self) {
         self.frozen.store(true, Ordering::Release);
     }
+    fn gc_visit(&self, out: &mut Vec<RubyValue>, take: bool) {
+        let mut ivars = self.ivars.lock();
+        if take {
+            out.extend(std::mem::take(&mut *ivars).into_values());
+        } else {
+            out.extend(ivars.values().cloned());
+        }
+    }
+
     fn ivar_values(&self) -> Vec<RubyValue> {
         self.ivars.lock().values().cloned().collect()
     }
