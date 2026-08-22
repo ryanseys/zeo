@@ -1608,12 +1608,24 @@ fn eval_body_source(
             .files
             .get(a.file.0 as usize)
             .ok_or_else(|| "a `class` body from an unknown file".to_string())?;
-        let (start, end) = (a.start as usize, (b.end as usize).min(src.source.len()));
+        // To the class's own `end`, not to the last STATEMENT's end. A
+        // `class << self` is not a statement -- `lower::defs` splices it into
+        // the enclosing body as a surrogate reopen plus the retagged `def`s --
+        // so the last statement stops short of the `end` that closes the
+        // singleton body, and prism then reports an unterminated `class`.
+        let closing = (own.end as usize)
+            .checked_sub(3)
+            .filter(|&at| src.source.get(at..at + 3) == Some("end"))
+            .filter(|&at| at >= b.end as usize);
+        let (start, end) = (
+            a.start as usize,
+            closing.unwrap_or(b.end as usize).min(src.source.len()),
+        );
         if start > end {
             return Err("a `class` body whose statements run backwards".to_string());
         }
         line = src.line_at(a.start);
-        return Ok((src.source[start..end].to_string(), file, line));
+        return Ok((src.source[start..end].trim_end().to_string(), file, line));
     }
     // A body analyze REWROTE reaches here: some of its statements are
     // synthesized, and their spans point into a source of analyze's own
