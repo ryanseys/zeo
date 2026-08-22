@@ -57,11 +57,24 @@ pub struct RMethod {
     /// one. `#owner` answers it verbatim (re-scanning from `home` under
     /// `prepend` finds the prepended module again and the walk never
     /// advances), and `#call` runs exactly this ancestor's body.
-    pub(crate) seat: Option<ClassId>,
+    pub(crate) seat: Option<Seat>,
     /// `Kernel#freeze`'s own flag. A Method is a value snapshot, so
     /// freezing gates nothing -- but `frozen?` answers what was written,
     /// which a hardcoded `false` did not.
     frozen: std::sync::atomic::AtomicBool,
+}
+
+/// A `#super_method` re-seat's position: the ancestor AND its INDEX in the
+/// chain.
+///
+/// The index is what makes the walk advance through a module the chain holds
+/// TWICE (one both `include`d and `prepend`ed). The ancestor alone names both
+/// copies, so the next re-seat would find the first one again and the chain
+/// would never end.
+#[derive(Clone, Copy)]
+pub(crate) struct Seat {
+    pub(crate) owner: ClassId,
+    pub(crate) at: usize,
 }
 
 /// Which LAYER answered when a `Method`/`UnboundMethod` was taken.
@@ -118,7 +131,7 @@ impl RMethod {
     /// definer -- so resolving from it answers both cases.
     pub(crate) fn owner(&self) -> Option<ClassId> {
         if let Some(seat) = self.seat {
-            return Some(seat);
+            return Some(seat.owner);
         }
         // A PER-OBJECT singleton method's owner IS its recorded home (the
         // extending module, or the object's own singleton class -- see
@@ -187,7 +200,7 @@ pub(crate) fn method_value_with(
     name: Symbol,
     home: ClassId,
     kind: MethodKind,
-    seat: Option<ClassId>,
+    seat: Option<Seat>,
     snapshot: Option<FrozenEntry>,
 ) -> RubyValue {
     RubyValue::Object(Arc::new(RMethod {
@@ -449,7 +462,10 @@ ruby_class! {
         // exactly that ancestor's body. Bypassing the overrides (and
         // prepends) above it is what naming the position means, so this
         // outranks the frozen-entry probe, whose layer is chain-rooted.
-        let seat = m.seat.or_else(|| (m.home != m.chain()).then_some(m.home));
+        let seat = m
+            .seat
+            .map(|s| s.owner)
+            .or_else(|| (m.home != m.chain()).then_some(m.home));
         if let Some(seat) = seat {
             return match m.kind {
                 MethodKind::Instance => match &m.snapshot {
@@ -572,19 +588,34 @@ ruby_class! {
         let Some(owner) = m.owner() else {
             return Ok(RubyValue::Nil);
         };
+        // Resume past THIS copy of the owner. A re-seat recorded which one it
+        // picked; a Method never re-seated is at the owner's first position,
+        // which is where ordinary dispatch found it.
+        let Some(at) = m
+            .seat
+            .map(|s| s.at)
+            .or_else(|| crate::dispatch::chain_index_of(m.chain(), owner))
+        else {
+            return Ok(RubyValue::Nil);
+        };
         let next = match m.kind {
-            MethodKind::Instance => {
-                crate::dispatch::method_owner_after(m.chain(), owner, m.name)
-            }
+            MethodKind::Instance => crate::dispatch::method_owner_after(m.chain(), at + 1, m.name),
             MethodKind::Singleton => {
-                crate::dispatch::class_method_owner_after(m.chain(), owner, m.name)
+                crate::dispatch::class_method_owner_after(m.chain(), at + 1, m.name)
             }
         };
         Ok(match next {
             // The re-seat records its position in `seat`: `#owner` must
             // answer it verbatim (a fresh scan from `home` under `prepend`
             // finds the prepended module again and the walk never advances).
-            Some(home) => method_value_with(m.recv.clone(), m.name, home, m.kind, Some(home), None),
+            Some((home, at)) => method_value_with(
+                m.recv.clone(),
+                m.name,
+                home,
+                m.kind,
+                Some(Seat { owner: home, at }),
+                None,
+            ),
             None => RubyValue::Nil,
         })
     }

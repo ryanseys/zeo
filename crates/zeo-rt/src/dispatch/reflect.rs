@@ -331,9 +331,19 @@ pub(crate) fn class_method_fn(cid: ClassId, name: Symbol) -> Option<ValueImpl> {
 
 /// [`class_method_owner`]'s `#super_method` companion: the next definer
 /// strictly after `after`.
-pub fn class_method_owner_after(cid: ClassId, after: ClassId, name: Symbol) -> Option<ClassId> {
-    let at = ancestors_of_value(cid).iter().position(|&a| a == after)?;
-    scan_class_method_owner(cid, at + 1, name).map(|(owner, _)| owner)
+pub fn class_method_owner_after(
+    cid: ClassId,
+    from: usize,
+    name: Symbol,
+) -> Option<(ClassId, usize)> {
+    let owner = scan_class_method_owner(cid, from, name).map(|(owner, _)| owner)?;
+    let at = ancestors_of_value(cid)
+        .iter()
+        .enumerate()
+        .skip(from)
+        .find(|&(_, &a)| a == owner)
+        .map(|(i, _)| i)?;
+    Some((owner, at))
 }
 
 /// The shared scan, answering `(owner, reached through an extend)`. Wider than
@@ -605,18 +615,42 @@ pub fn undefined_method_names(class: ClassId) -> Vec<Symbol> {
     names
 }
 
-/// The next class up that defines `name` -- the one strictly AFTER `after` in
-/// `recv_class`'s MRO. Backs `Method#super_method`: `nil` once the chain runs
-/// out, and `nil` too for an `after` that isn't in this chain at all.
-pub fn method_owner_after(recv_class: ClassId, after: ClassId, name: Symbol) -> Option<ClassId> {
+/// The next class up that defines `name` -- the one strictly AFTER position
+/// `from` in `recv_class`'s MRO, WITH its own position. Backs
+/// `Method#super_method`: `None` once the chain runs out.
+///
+/// The position rides back out because a module the chain holds twice would
+/// otherwise re-seat onto its first copy forever -- see
+/// `builtins::method::Seat`.
+pub fn method_owner_after(
+    recv_class: ClassId,
+    from: usize,
+    name: Symbol,
+) -> Option<(ClassId, usize)> {
+    let owner = scan_owner(recv_class, from, name)?;
     let at = ancestors_of_value(recv_class)
         .iter()
-        .position(|&a| a == after)?;
-    scan_owner(recv_class, at + 1, name)
+        .enumerate()
+        .skip(from)
+        .find(|&(_, &a)| a == owner)
+        .map(|(i, _)| i)?;
+    Some((owner, at))
+}
+
+/// The chain index of `after` in `recv_class`'s MRO -- where a
+/// `#super_method` walk that has no recorded position starts.
+pub fn chain_index_of(recv_class: ClassId, after: ClassId) -> Option<usize> {
+    ancestors_of_value(recv_class)
+        .iter()
+        .position(|&a| a == after)
 }
 
 /// The shared MRO scan: the first ancestor from `skip` positions in that
 /// carries a definition of `name` itself.
+pub(super) fn scan_owner_from(recv_class: ClassId, skip: usize, name: Symbol) -> Option<ClassId> {
+    scan_owner(recv_class, skip, name)
+}
+
 fn scan_owner(recv_class: ClassId, skip: usize, name: Symbol) -> Option<ClassId> {
     let n = name.name_str();
     let overlay_live = crate::runtime_meta::is_live();

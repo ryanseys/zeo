@@ -74,6 +74,11 @@ pub struct Ec {
     /// read (`eval::EvalHome`): published per compiled scope, so it swaps
     /// with the frames it brackets.
     eval_homes: Vec<crate::eval::EvalHome>,
+    /// Which copy of a DUPLICATED module the running body is
+    /// (`dispatch::MRO_RESUME`): published by the `super` walk that entered
+    /// it, so it is live across every call the body makes -- `Fiber.yield`
+    /// among them.
+    mro_resume: Option<crate::dispatch::MroResume>,
 }
 
 impl Default for Ec {
@@ -91,6 +96,7 @@ impl Default for Ec {
             svar_base: None,
             svar_scopes: Vec::new(),
             eval_homes: Vec::new(),
+            mro_resume: None,
         }
     }
 }
@@ -113,5 +119,6 @@ pub fn swap(ec: Ec) -> Ec {
         svar_base,
         svar_scopes,
         eval_homes: crate::eval::swap_eval_homes(ec.eval_homes),
+        mro_resume: crate::dispatch::swap_mro_resume(ec.mro_resume),
     }
 }

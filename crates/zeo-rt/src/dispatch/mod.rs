@@ -1377,6 +1377,89 @@ pub fn construct_by_class_id(
     }
 }
 
+/// Where a `super` written in a DUPLICATED module must resume, and which
+/// copy it belongs to.
+///
+/// A module both `include`d and `prepend`ed into one class occupies TWO
+/// positions in the chain, and ruby runs its body once per position. The
+/// baked `defining_class` a compiled body hands `super` names the module,
+/// which cannot say WHICH copy is running -- so a first-match walk resumes
+/// past the first copy forever. CRuby has the answer on the control frame
+/// (`cfp->cme->defined_class` is the iclass, not the module); this cell is
+/// the same fact, published by the walk that entered the body.
+#[derive(Clone, Copy)]
+pub(crate) struct MroResume {
+    defining: ClassId,
+    next: usize,
+}
+
+std::thread_local! {
+    /// The resume for the body currently running, or `None` when it was
+    /// entered by ordinary dispatch (which always finds the FIRST copy, so
+    /// the first-match walk is already right). Saved and restored around
+    /// every invocation that can change the answer -- see [`MRO_DUPLICATES`]
+    /// for why almost no program ever touches it.
+    static MRO_RESUME: std::cell::Cell<Option<MroResume>> = const {
+        std::cell::Cell::new(None)
+    };
+}
+
+/// Arms `runtime_meta`'s duplicate gate when `chain` holds a repeat. Called
+/// wherever a linearized chain is installed: registration, `set_ancestors`,
+/// and the run-time splice.
+pub(crate) fn note_chain(chain: &[ClassId]) {
+    if mro_duplicates() {
+        return;
+    }
+    let mut seen = FSet::default();
+    if chain.iter().any(|&a| !seen.insert(a)) {
+        crate::runtime_meta::mark_mro_duplicates();
+    }
+}
+
+/// Whether any chain in this process holds a class twice.
+#[inline]
+fn mro_duplicates() -> bool {
+    crate::runtime_meta::mro_duplicates()
+}
+
+/// Runs `f` with the resume cell set to `value`, restoring the caller's on
+/// every exit path. `None` is what ORDINARY dispatch installs: it always
+/// lands on the first copy, so a `super` from the body it entered resumes
+/// past that one.
+fn with_mro_resume<T>(value: Option<MroResume>, f: impl FnOnce() -> T) -> T {
+    struct Restore(Option<MroResume>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            MRO_RESUME.with(|c| c.set(self.0));
+        }
+    }
+    let _restore = Restore(MRO_RESUME.with(|c| c.replace(value)));
+    f()
+}
+
+/// The ancestry index a `super` written in `defining_class` resumes at.
+/// The published resume when it names this very copy, and otherwise the
+/// position after the first occurrence -- which is the whole answer for
+/// every chain that holds `defining_class` once.
+fn super_resume(ancestors: &[ClassId], defining_class: ClassId) -> usize {
+    if mro_duplicates()
+        && let Some(r) = MRO_RESUME.with(|c| c.get())
+        && r.defining == defining_class
+    {
+        return r.next;
+    }
+    ancestors
+        .iter()
+        .position(|&a| a == defining_class)
+        .map_or(0, |p| p + 1)
+}
+
+/// The fiber swap for [`MRO_RESUME`] -- see `crate::ec`.
+pub(crate) fn swap_mro_resume(v: Option<MroResume>) -> Option<MroResume> {
+    MRO_RESUME.with(|c| c.replace(v))
+}
+
 /// `defined?(super)`'s probe: whether a super target exists for `name` past
 /// `defining_class` on `recv`'s chain -- the same resolution
 /// [`send_super_from`] walks, answered as a boolean instead of a call.
@@ -1388,7 +1471,13 @@ pub fn super_defined(recv: &RubyValue, defining_class: ClassId, name: Symbol) ->
     if let RubyValue::Class(cid) = recv {
         return super_class_defined(*cid, defining_class, name);
     }
-    method_owner_after(recv.class_id(), defining_class, name).is_some()
+    let ancestors = ancestors_of_value(recv.class_id());
+    crate::dispatch::reflect::scan_owner_from(
+        recv.class_id(),
+        super_resume(&ancestors, defining_class),
+        name,
+    )
+    .is_some()
 }
 
 /// [`super_defined`]'s class-method half: the question
@@ -1451,11 +1540,10 @@ pub fn send_super_from(
     }
     // Resume AFTER the class this `super` is written in; an unrecognized
     // `defining_class` (never expected) degrades to a full walk from the top.
+    // A module the chain holds TWICE resumes past the copy that is actually
+    // running -- see `super_resume`.
     let ancestors = ancestors_of_value(recv.class_id());
-    let start = ancestors
-        .iter()
-        .position(|&a| a == defining_class)
-        .map_or(0, |p| p + 1);
+    let start = super_resume(&ancestors, defining_class);
     send_walking(recv, start, name, args, block)
 }
 
@@ -1593,7 +1681,16 @@ fn send_walking(
     };
     let ancestors = ancestors_of_value(recv.class_id());
     let method_name = name.to_string();
-    for &anc in ancestors.iter().skip(start) {
+    // The body this walk enters must know WHICH copy of `anc` it is running
+    // as, or its own `super` restarts past the first one. Only a chain with a
+    // repeat can disagree, so the publication is gated.
+    let publish = |at: usize| {
+        mro_duplicates().then(|| MroResume {
+            defining: ancestors[at],
+            next: at + 1,
+        })
+    };
+    for (at, &anc) in ancestors.iter().enumerate().skip(start) {
         // Each position contributes its OWN definitions only -- never the
         // flattened `methods` table, whose winner at a position can be a
         // PREPENDED module's copy sitting BEFORE this position in the MRO
@@ -1619,13 +1716,16 @@ fn send_walking(
             if crate::runtime_meta::is_live()
                 && let Some(m) = crate::runtime_meta::overlay_own_method(anc, name)
             {
-                return m.call(obj, args, block);
+                return with_mro_resume(publish(at), || m.call(obj, args, block));
             }
             if let Some(m) = registry().super_target(anc, name) {
-                return m.call(obj, args, block);
+                return with_mro_resume(publish(at), || m.call(obj, args, block));
             }
         }
-        if let Some(r) = probe_generic_row(recv, anc, name, args, block.clone()) {
+        let found = with_mro_resume(publish(at), || {
+            probe_generic_row(recv, anc, name, args, block.clone())
+        });
+        if let Some(r) = found {
             return r;
         }
     }
@@ -2498,7 +2598,7 @@ fn note_dispatch(name: Symbol) {
 /// fast route and then called `note_dispatch`, which loaded it again -- an
 /// atomic re-read per hit on the hottest path in every generated program.
 #[inline]
-fn note_dispatch_gated(gates: u8, name: Symbol) {
+fn note_dispatch_gated(gates: u16, name: Symbol) {
     if crate::runtime_meta::gates_arity_debug(gates) {
         CURRENT_METHOD.with(|c| c.set(Some(name)));
     }
@@ -3467,6 +3567,26 @@ fn send_in_reason(
     block: Option<RubyValue>,
     reason: MissingReason,
 ) -> Result<RubyValue, Signal> {
+    // Ordinary dispatch always lands on the FIRST copy of whatever wins, so
+    // the body it enters must not inherit a resume an enclosing `super` walk
+    // published for a LATER copy of the same module.
+    if mro_duplicates() {
+        return with_mro_resume(None, || {
+            send_in_reason_inner(box_id, recv, name, args, block, reason)
+        });
+    }
+    send_in_reason_inner(box_id, recv, name, args, block, reason)
+}
+
+/// [`send_in_reason`] past the duplicate-chain guard.
+fn send_in_reason_inner(
+    box_id: u32,
+    recv: &RObj,
+    name: Symbol,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+    reason: MissingReason,
+) -> Result<RubyValue, Signal> {
     let id = recv.class_id();
     // A retagged husk short-circuits: every `Ractor::MovedObject` row raises
     // this same error, so the direct raise is behaviorally identical and
@@ -3484,7 +3604,7 @@ fn send_in_reason(
     // nothing above is an ordinary miss. Outside a hook body -- every program
     // that defines none -- this is one relaxed atomic load.
     if crate::runtime_meta::pending_here(id, name) {
-        return match method_owner_after(id, id, name) {
+        return match chain_index_of(id, id).and_then(|at| method_owner_after(id, at + 1, name)) {
             Some(_) => send_super_from(&RubyValue::Object(recv.clone()), id, name, args, block),
             None => method_missing_or_raise(recv, id, name, args, block, reason),
         };

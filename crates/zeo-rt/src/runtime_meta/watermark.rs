@@ -124,7 +124,9 @@ fn listed_pending(class: ClassId, name: Symbol) -> bool {
 /// and a `Sub#to_s` written below the hook still leaves `Object#to_s`
 /// reachable. Only ever asked inside a hook body.
 fn inherited(class: ClassId, name: Symbol) -> bool {
-    crate::dispatch::method_owner_after(class, class, name).is_some()
+    crate::dispatch::chain_index_of(class, class)
+        .and_then(|at| crate::dispatch::method_owner_after(class, at + 1, name))
+        .is_some()
 }
 
 /// `Module#const_added` -- ruby announces a constant right after it becomes
@@ -268,6 +270,7 @@ pub(super) fn splice_module_into(cid: ClassId, mid: ClassId, placement: Placemen
     for id in candidates {
         let current = ancestors_of_value(ClassId(id));
         if let Some(new_anc) = splice_into_chain(current, cid, &fresh_src, placement) {
+            crate::dispatch::note_chain(&new_anc);
             updates.push((id, Box::leak(new_anc.into_boxed_slice())));
         }
     }

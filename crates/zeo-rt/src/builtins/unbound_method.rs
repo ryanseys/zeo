@@ -33,14 +33,14 @@ pub struct RUnboundMethod {
     pub(crate) snapshot: Option<crate::builtins::method::FrozenEntry>,
     /// The RESOLVED chain position after a `#super_method` re-seat -- see
     /// [`RMethod::seat`](crate::builtins::method::RMethod::seat).
-    pub(crate) seat: Option<ClassId>,
+    pub(crate) seat: Option<crate::builtins::method::Seat>,
 }
 
 impl RUnboundMethod {
     /// The class or module that actually defines this method.
     pub(crate) fn owner(&self) -> Option<ClassId> {
         if let Some(seat) = self.seat {
-            return Some(seat);
+            return Some(seat.owner);
         }
         match self.kind {
             MethodKind::Instance => crate::dispatch::method_owner(self.home, self.name),
@@ -228,6 +228,7 @@ ruby_class! {
         if um.kind == MethodKind::Instance {
             let seat = um
                 .seat
+                .map(|s| s.owner)
                 .or_else(|| (um.home != receiver.class_id()).then_some(um.home));
             if let Some(seat) = seat {
                 return match &um.snapshot {
@@ -266,16 +267,24 @@ ruby_class! {
         let Some(owner) = um.owner() else {
             return Ok(RubyValue::Nil);
         };
+        // Resume past THIS copy of the owner -- see `builtins::method::Seat`.
+        let Some(at) = um
+            .seat
+            .map(|s| s.at)
+            .or_else(|| crate::dispatch::chain_index_of(um.class_id, owner))
+        else {
+            return Ok(RubyValue::Nil);
+        };
         let next = match um.kind {
             MethodKind::Instance => {
-                crate::dispatch::method_owner_after(um.class_id, owner, um.name)
+                crate::dispatch::method_owner_after(um.class_id, at + 1, um.name)
             }
             MethodKind::Singleton => {
-                crate::dispatch::class_method_owner_after(um.class_id, owner, um.name)
+                crate::dispatch::class_method_owner_after(um.class_id, at + 1, um.name)
             }
         };
         Ok(match next {
-            Some(home) => RubyValue::Object(Arc::new(RUnboundMethod {
+            Some((home, at)) => RubyValue::Object(Arc::new(RUnboundMethod {
                 class_id: um.class_id,
                 name: um.name,
                 home,
@@ -283,7 +292,7 @@ ruby_class! {
                 // A `#super_method` re-seat picks a position the ordinary walk
                 // would not reach, so it keeps the resolve-and-send path.
                 snapshot: None,
-                seat: Some(home),
+                seat: Some(crate::builtins::method::Seat { owner: home, at }),
             })),
             None => RubyValue::Nil,
         })

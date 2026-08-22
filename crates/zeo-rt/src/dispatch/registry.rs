@@ -254,6 +254,7 @@ impl ClassRegistry {
         constructor: Option<ConstructorFn>,
     ) {
         self.by_name.insert(name.to_string(), id.0);
+        super::note_chain(&ancestors);
         self.entries.insert(
             id.0,
             ClassEntry {
@@ -656,6 +657,7 @@ impl ClassRegistry {
     /// of its own to carry the new chain, and re-registering would reinstall
     /// the native method set over the program's own deltas.
     pub fn set_ancestors(&mut self, id: ClassId, ancestors: Vec<ClassId>) {
+        super::note_chain(&ancestors);
         if let Some(e) = self.entries.get_mut(&id.0) {
             e.ancestors = ancestors;
         }

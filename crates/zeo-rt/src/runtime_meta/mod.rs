@@ -45,7 +45,7 @@ use crate::{FMap, FSet};
 use std::any::Any;
 use std::cell::RefCell;
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
 use zeo_abi::RUNTIME_CLASS_ID_BASE;
 
@@ -300,28 +300,34 @@ struct OverlayMaps {
 /// As a second flag beside the first, the pending gate measured +2.6% on a
 /// loop whose body is nothing but a cached dynamic send; folded in here it
 /// is free -- the moved gate rides the same byte for the same reason.
-static GATES: AtomicU8 = AtomicU8::new(0);
-const GATE_OVERLAY: u8 = 1;
-const GATE_PENDING: u8 = 2;
-const GATE_MOVED: u8 = 4;
+static GATES: AtomicU16 = AtomicU16::new(0);
+const GATE_OVERLAY: u16 = 1;
+const GATE_PENDING: u16 = 2;
+const GATE_MOVED: u16 = 4;
 /// `ZEO_ARITY_DEBUG` is armed -- folded into the gate byte the dispatch path
 /// already loads, per the standing rule: a second flag word beside the gates
 /// measured 2.6% on dispatch.
-const GATE_ARITY_DEBUG: u8 = 8;
+const GATE_ARITY_DEBUG: u16 = 8;
 /// The four latches below used to be separate `AtomicBool`s, which put FOUR
 /// acquire loads in `iter_inline_ok_for` -- a fused loop's entry test, i.e.
 /// the check every inlined `each`/`map` pays before it may splice. They ride
 /// the gate byte for exactly the reason the pending and moved gates do: the
 /// byte is loaded once and masked. That fills the `u8`; a ninth gate needs a
 /// `u16`, not a second word.
-const GATE_PATCHED_ANY: u8 = 16;
-const GATE_ANY_SINGLETONS: u8 = 32;
-const GATE_ANCESTRY_MUTATED: u8 = 64;
-const GATE_ANY_EXTENDED: u8 = 128;
-const GATE_LIVE_MASK: u8 = GATE_OVERLAY | GATE_PENDING;
+const GATE_PATCHED_ANY: u16 = 16;
+const GATE_ANY_SINGLETONS: u16 = 32;
+const GATE_ANCESTRY_MUTATED: u16 = 64;
+const GATE_ANY_EXTENDED: u16 = 128;
+/// A chain in this process holds a class TWICE -- a module both `include`d
+/// and `prepend`ed into one class. Part of [`GATE_LIVE_MASK`] on purpose:
+/// the inline caches must deopt, because a cache hit skips the walk that
+/// publishes WHICH copy is running and a `super` from the body would then
+/// resume past the wrong one.
+const GATE_MRO_DUPLICATES: u16 = 256;
+const GATE_LIVE_MASK: u16 = GATE_OVERLAY | GATE_PENDING | GATE_MRO_DUPLICATES;
 /// What forbids a fused-iterator splice, apart from the receiver's own
 /// patched state.
-const GATE_ITER_BLOCKED: u8 = GATE_ANY_SINGLETONS | GATE_ANCESTRY_MUTATED | GATE_MOVED;
+const GATE_ITER_BLOCKED: u16 = GATE_ANY_SINGLETONS | GATE_ANCESTRY_MUTATED | GATE_MOVED;
 static OVERLAY: OnceLock<OverlayMaps> = OnceLock::new();
 
 fn maps() -> &'static OverlayMaps {
@@ -357,22 +363,22 @@ pub fn is_live() -> bool {
 /// same single atomic load `is_live` costs, split by [`gates_live`]/
 /// [`gates_moved`] with plain register tests.
 #[inline(always)]
-pub(crate) fn gates() -> u8 {
+pub(crate) fn gates() -> u16 {
     GATES.load(Ordering::Acquire)
 }
 
 #[inline(always)]
-pub(crate) fn gates_live(g: u8) -> bool {
+pub(crate) fn gates_live(g: u16) -> bool {
     g & GATE_LIVE_MASK != 0
 }
 
 #[inline(always)]
-pub(crate) fn gates_moved(g: u8) -> bool {
+pub(crate) fn gates_moved(g: u16) -> bool {
     g & GATE_MOVED != 0
 }
 
 #[inline(always)]
-pub(crate) fn gates_arity_debug(g: u8) -> bool {
+pub(crate) fn gates_arity_debug(g: u16) -> bool {
     g & GATE_ARITY_DEBUG != 0
 }
 
@@ -468,7 +474,7 @@ pub fn class_maybe_patched(id: ClassId) -> bool {
 }
 
 #[inline(always)]
-fn class_maybe_patched_gated(gates: u8, id: ClassId) -> bool {
+fn class_maybe_patched_gated(gates: u16, id: ClassId) -> bool {
     if id.0 >= RUNTIME_CLASS_ID_BASE {
         return true;
     }
@@ -496,6 +502,17 @@ fn mark_singletons() {
 
 fn mark_ancestry_mutated() {
     GATES.fetch_or(GATE_ANCESTRY_MUTATED, Ordering::Release);
+}
+
+/// Arms [`GATE_MRO_DUPLICATES`] -- see it for what it costs and why.
+pub fn mark_mro_duplicates() {
+    GATES.fetch_or(GATE_MRO_DUPLICATES, Ordering::Release);
+}
+
+/// Whether any chain in this process holds a class twice.
+#[inline]
+pub fn mro_duplicates() -> bool {
+    GATES.load(Ordering::Acquire) & GATE_MRO_DUPLICATES != 0
 }
 
 fn mark_live() {
