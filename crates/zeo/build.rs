@@ -343,6 +343,100 @@ struct Surface {
     constants: Vec<String>,
 }
 
+/// Does every `#[cfg]` on this item hold for the target `zeo` is built for?
+///
+/// The projection used to push every row, so the surface was the UNION of
+/// every platform -- and `respond_to?` folded TRUE for a method the target
+/// does not compile (`Etc::Passwd#expire` claimed on Linux,
+/// `Process::CLOCK_UPTIME_RAW` on both). A fold miss only degrades to runtime
+/// dispatch, but a fold HIT on an absent row is an answer ruby does not give.
+///
+/// Cargo hands a build script the target's own configuration, and today the
+/// target IS the host, so this makes the surface exact. When `--target`
+/// arrives (G12) the same predicate reads `TargetSpec` instead, in this one
+/// place.
+fn cfg_holds(attrs: &[syn::Attribute]) -> bool {
+    attrs
+        .iter()
+        .filter(|a| a.path().is_ident("cfg"))
+        .all(|a| match a.parse_args::<syn::Meta>() {
+            Ok(m) => eval_cfg(&m),
+            Err(e) => panic!("a ruby_class! row has a #[cfg] this build cannot read: {e}"),
+        })
+}
+
+/// One `cfg` predicate. Anything unrecognized PANICS rather than answering
+/// false: a predicate nobody taught this evaluator would silently delete rows
+/// from the surface, which is the bug it exists to fix.
+fn eval_cfg(m: &syn::Meta) -> bool {
+    match m {
+        // A bare flag (`unix`, `windows`). Cargo sets `CARGO_CFG_UNIX` to the
+        // empty string when it holds and omits it otherwise, so presence is
+        // the answer.
+        syn::Meta::Path(p) => {
+            let name = last_ident(p);
+            match name.as_str() {
+                "unix" | "windows" => {
+                    std::env::var_os(format!("CARGO_CFG_{}", name.to_uppercase())).is_some()
+                }
+                // The projection describes the SHIPPED surface, so a `#[cfg(test)]`
+                // module never contributes to it -- including one that invokes
+                // `ruby_class!` to build a fixture.
+                "test" => false,
+                other => panic!("a ruby_class! row is gated on an unknown cfg flag `{other}`"),
+            }
+        }
+        syn::Meta::List(l) => {
+            let name = last_ident(&l.path);
+            let inner = l
+                .parse_args_with(
+                    syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
+                )
+                .unwrap_or_else(|e| panic!("a ruby_class! row has a malformed cfg `{name}`: {e}"));
+            match name.as_str() {
+                "not" => !inner.iter().all(eval_cfg),
+                "any" => inner.iter().any(eval_cfg),
+                "all" => inner.iter().all(eval_cfg),
+                other => panic!("a ruby_class! row is gated on an unknown cfg operator `{other}`"),
+            }
+        }
+        syn::Meta::NameValue(nv) => {
+            let key = last_ident(&nv.path);
+            let syn::Expr::Lit(syn::ExprLit {
+                lit: syn::Lit::Str(s),
+                ..
+            }) = &nv.value
+            else {
+                panic!("a ruby_class! row's cfg `{key}` is not compared against a string");
+            };
+            let want = s.value();
+            // A `feature` on a builtin row names one of `zeo-rt`'s `ext-*`
+            // features, and this build script reads `zeo-rt`'s SOURCE rather
+            // than its resolved feature set. Every one of them is in the
+            // shipped `ext-all` default, so they hold; a build that disables
+            // an ext gets an over-approximate surface for that ext alone,
+            // which is what every row got before this function existed.
+            if key == "feature" {
+                return true;
+            }
+            let var = format!("CARGO_CFG_{}", key.to_uppercase());
+            let Ok(have) = std::env::var(&var) else {
+                panic!("a ruby_class! row is gated on `{key}`, which cargo does not set as {var}");
+            };
+            // Multi-valued keys (`target_family`) arrive comma-separated.
+            have.split(',').any(|v| v == want)
+        }
+    }
+}
+
+fn last_ident(path: &syn::Path) -> String {
+    path.segments
+        .last()
+        .expect("a cfg predicate has at least one segment")
+        .ident
+        .to_string()
+}
+
 /// Render a name list as Rust `"a", "b"` string-literal elements.
 fn str_list(items: &[String]) -> String {
     items
@@ -387,8 +481,8 @@ fn collect_from_file(path: &Path, out: &mut Vec<Surface>) {
 fn collect_from_items(items: &[syn::Item], out: &mut Vec<Surface>) {
     for item in items {
         match item {
-            syn::Item::Macro(m) => surface_from_macro(m, out),
-            syn::Item::Mod(m) => {
+            syn::Item::Macro(m) if cfg_holds(&m.attrs) => surface_from_macro(m, out),
+            syn::Item::Mod(m) if cfg_holds(&m.attrs) => {
                 if let Some((_, inner)) = &m.content {
                     collect_from_items(inner, out);
                 }
@@ -427,6 +521,10 @@ fn surface_from_spec(spec: &ClassSpec, out: &mut Vec<Surface>) {
     let mut instance_methods = Vec::new();
     let mut class_methods = Vec::new();
     for method in &spec.methods {
+        // A row this target does not compile is not surface -- see `cfg_holds`.
+        if !cfg_holds(&method.attrs) {
+            continue;
+        }
         for name in &method.names {
             // `module_function def` defines the method BOTH ways, exactly as
             // CRuby's `module_function` does -- so `Math.sqrt` is a class
@@ -460,7 +558,12 @@ fn surface_from_spec(spec: &ClassSpec, out: &mut Vec<Surface>) {
         includes: spec.includes.iter().map(const_name).collect(),
         instance_methods,
         class_methods,
-        constants: spec.consts.iter().map(|c| c.name.to_string()).collect(),
+        constants: spec
+            .consts
+            .iter()
+            .filter(|c| cfg_holds(&c.attrs))
+            .map(|c| c.name.to_string())
+            .collect(),
     });
 
     // A nested `class Status = ... { .. }` is a class in its own right, with
