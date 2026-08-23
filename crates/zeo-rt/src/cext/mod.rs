@@ -14,4 +14,6 @@
 //! object, and a layout reader that zeo cannot answer raises rather than
 //! guesses.
 
+pub mod handles;
+pub mod scope;
 pub mod value;

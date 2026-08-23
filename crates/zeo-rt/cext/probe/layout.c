@@ -14,6 +14,14 @@
 #define RUBY_UNTYPED_DATA_WARNING 0
 #include <ruby.h>
 
+/* zeo's Handle opens with these two words and nothing before them, so a
+ * third field or a wider one would silently move `klass` out from under
+ * RBASIC_CLASS. `handles.rs` asserts the same two numbers from the Rust
+ * side. */
+RBIMPL_STATIC_ASSERT(zeo_rbasic_is_two_words,
+                     sizeof(struct RBasic) == 2 * sizeof(VALUE));
+RBIMPL_STATIC_ASSERT(zeo_rbasic_has_no_shape_id, RBASIC_SHAPE_ID_FIELD == 0);
+
 struct box { VALUE held; int n; };
 
 static void box_mark(void *p) { rb_gc_mark(((struct box *)p)->held); }
