@@ -155,6 +155,12 @@ libc.workspace = true
 [package.metadata.cargo-machete]
 ignored = ["md-5"]
 
+[build-dependencies]
+# `csrc/cext_jmp.c`, built only under the `cext` feature. `cc` is already in
+# the tree through onig and libffi, which vendor and build their own C
+# libraries.
+cc = "1"
+
 [features]
 default = ["ext-all"]
 ext-all = [

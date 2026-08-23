@@ -9,6 +9,22 @@ use std::process::Command;
 fn main() {
     println!("cargo:rustc-env=ZEO_RUBY_PLATFORM={}", ruby_platform());
     println!("cargo:rerun-if-changed=build.rs");
+    build_cext();
+}
+
+/// `csrc/cext_jmp.c` is the `setjmp` half of the C extension surface. It is C
+/// and not Rust because a `longjmp` past a live Rust frame skips its
+/// destructors, which is undefined rather than merely leaky --
+/// `crates/zeo-rt/src/cext/jmp.rs` states the whole rule.
+fn build_cext() {
+    println!("cargo:rerun-if-changed=csrc/cext_jmp.c");
+    if std::env::var_os("CARGO_FEATURE_CEXT").is_none() {
+        return;
+    }
+    cc::Build::new()
+        .file("csrc/cext_jmp.c")
+        .warnings(true)
+        .compile("zeo_cext");
 }
 
 /// `<cpu>-<os>` in Ruby's spelling (its `RUBY_PLATFORM` convention), from the

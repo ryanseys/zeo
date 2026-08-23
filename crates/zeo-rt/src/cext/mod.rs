@@ -17,5 +17,6 @@
 pub mod alloc;
 pub mod data;
 pub mod handles;
+pub mod jmp;
 pub mod scope;
 pub mod value;

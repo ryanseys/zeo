@@ -79,8 +79,14 @@ impl Scope {
 impl Drop for Scope {
     fn drop(&mut self) {
         let pinned = SCOPES.with_borrow_mut(|s| {
-            debug_assert_eq!(s.len(), self.depth, "cext scopes popped out of order");
-            s.pop().unwrap_or_default()
+            // Not an equality assert: `jmp::protect` may already have unwound
+            // this scope by hand after a longjmp, and then there is nothing
+            // left to pop and nothing wrong.
+            debug_assert!(s.len() <= self.depth, "cext scopes popped out of order");
+            (s.len() == self.depth)
+                .then(|| s.pop())
+                .flatten()
+                .unwrap_or_default()
         });
         for addr in pinned {
             super::handles::unpin(addr);
@@ -104,6 +110,28 @@ pub(super) fn pin(addr: usize) {
 /// How deep the scope stack is. `cext::jmp` unwinds against it.
 pub fn depth() -> usize {
     SCOPES.with_borrow(Vec::len)
+}
+
+/// Pop every scope above `depth`, releasing its pins.
+///
+/// A `longjmp` out of C skips `Scope::drop` for every frame it flies past, so
+/// `cext::jmp::protect` calls this on the raising path. Without it every
+/// handle an extension touched before it raised would stay pinned for the
+/// life of the process, and a gem that raises in a loop would be an
+/// unbounded leak.
+///
+/// The `Scope` values themselves are gone with the C stack; this is only the
+/// bookkeeping they would have done.
+pub(super) fn unwind_to(depth: usize) {
+    loop {
+        let Some(pinned) = SCOPES.with_borrow_mut(|s| (s.len() > depth).then(|| s.pop()).flatten())
+        else {
+            return;
+        };
+        for addr in pinned {
+            super::handles::unpin(addr);
+        }
+    }
 }
 
 #[cfg(test)]
