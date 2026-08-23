@@ -102,7 +102,7 @@ pub(super) fn pin(addr: usize) {
 }
 
 /// How deep the scope stack is. `cext::jmp` unwinds against it.
-pub(super) fn depth() -> usize {
+pub fn depth() -> usize {
     SCOPES.with_borrow(Vec::len)
 }
 

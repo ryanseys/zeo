@@ -83,3 +83,17 @@ would have answered with a byte zeo does not own:
 
 Each is a compile error naming its line. That is the design: loud at the call,
 never a wrong answer.
+
+## Known divergences
+
+A C extension cannot load yet, so none of these is a gap file: a gap is a
+runnable Ruby program, and there is nothing to run. They move to
+`tests/gaps/` as the loader lands.
+
+| Divergence | Why |
+|---|---|
+| `dup` on a `T_DATA` object gives a copy whose `DATA_PTR` is NULL | CRuby calls the class's allocator and copies into a fresh zeroed struct. zeo has no allocator table until `rb_define_alloc_func`. A shallow copy is not an option: two objects sharing one pointer means `dfree` runs twice on it. |
+| A cycle closed through a C struct is never reclaimed | A `dmark` enumerates edges and cannot clear one, so `CData::gc_visit` reports on the walk and nothing on the sweep. The asymmetry rule makes this the safe direction: an omitted edge leaks, a reported one that cannot be released can clear a live object. A cycle that merely passes THROUGH a `T_DATA` object is still reclaimed, at its Ruby links. |
+| `RB_FLONUM_P` is true for the same doubles as MRI, but an `Integer` outside the Fixnum range is a fresh handle each time | Which is what CRuby does with a Bignum too, so two equal ones are correctly not `equal?`. |
+| `ROBJECT_FIELDS` raises `NotImplementedError` | There is no ivar array to hand out. Nothing in the 23-gem census calls it. |
+| `RMATCH_EXT`, `RREGEXP(re)->usecnt`, `RFILE(v)->fptr` and `RTYPEDDATA(v)->data` are compile errors | The payload structs are opaque. Each is a direct layout read; see the table above. |

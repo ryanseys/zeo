@@ -47,11 +47,15 @@ use crate::dispatch::ClassId;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::ffi::c_void;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::AtomicUsize;
 
 /// `ruby_value_type`, from `ruby/internal/value_type.h`. Every one of these
 /// was read off the oracle with `ObjectSpace.dump`, not guessed: `Range` is
 /// `T_STRUCT` and `Proc` is `T_DATA`, and neither is obvious.
+///
+/// `T_FILE` is absent because zeo has no `RubyValue` for an IO yet; it
+/// arrives with the IO handles, and until then an IO refuses a handle rather
+/// than being tagged something it is not.
 mod t {
     pub const OBJECT: usize = 0x01;
     pub const CLASS: usize = 0x02;
@@ -63,7 +67,6 @@ mod t {
     pub const HASH: usize = 0x08;
     pub const STRUCT: usize = 0x09;
     pub const BIGNUM: usize = 0x0a;
-    pub const FILE: usize = 0x0b;
     pub const DATA: usize = 0x0c;
     pub const MATCH: usize = 0x0d;
     pub const COMPLEX: usize = 0x0e;
@@ -97,11 +100,6 @@ pub struct Handle {
     basic: RBasic,
     /// The strong reference. While this handle lives, the object does.
     value: RubyValue,
-    /// `DATA_PTR` and `RTYPEDDATA_DATA` are assigned through, so this is the
-    /// slot both hand back.
-    data: AtomicUsize,
-    /// `RTYPEDDATA_TYPE`. Null for anything that is not TypedData.
-    dtype: AtomicUsize,
     /// The table key, so a handle can find its own entry without a search.
     identity: usize,
 }
@@ -116,23 +114,28 @@ impl Handle {
         &self.value
     }
 
-    pub fn data_slot(&self) -> *mut *mut c_void {
-        std::ptr::from_ref(&self.data).cast_mut().cast()
+    /// The object behind this handle, when it is a `T_DATA`.
+    fn cdata(&self) -> Option<&super::data::CData> {
+        match &self.value {
+            RubyValue::Object(o) => o.as_any().downcast_ref::<super::data::CData>(),
+            _ => None,
+        }
     }
 
-    pub fn data_type(&self) -> *const c_void {
-        self.dtype.load(Ordering::Relaxed) as *const c_void
+    /// The slot `DATA_PTR` and `RTYPEDDATA_DATA` hand back, which C assigns
+    /// through.
+    ///
+    /// It lives in the [`super::data::CData`], not in the handle: the object
+    /// is what owns the pointer, and a handle is only how C names the object.
+    /// Two slots would be two answers.
+    pub fn data_slot(&self) -> Option<*mut *mut c_void> {
+        self.cdata().map(super::data::CData::slot)
     }
 
-    /// Mark this handle as TypedData and give it its descriptor. The flag is
-    /// what `rbimpl_rtypeddata_p` reads, and the descriptor is what the
-    /// eventual `dmark`/`dfree` come from.
-    pub fn set_typed_data(&self, dtype: *const c_void, data: *mut c_void) {
-        self.dtype.store(dtype as usize, Ordering::Relaxed);
-        self.data.store(data as usize, Ordering::Relaxed);
-        self.basic
-            .flags
-            .fetch_or(FL_IS_TYPED_DATA, Ordering::Relaxed);
+    /// `RTYPEDDATA_TYPE`. Null for the untyped `Data_Wrap_Struct` form.
+    pub fn data_type(&self) -> *const super::data::DataType {
+        self.cdata()
+            .map_or(std::ptr::null(), super::data::CData::data_type)
     }
 }
 
@@ -272,6 +275,15 @@ fn intern(t: &mut Table, v: &RubyValue, tag: usize) -> Addr {
     if v.is_frozen() {
         flags |= FL_FREEZE;
     }
+    // What `rbimpl_rtypeddata_p` reads. Setting it here is what lets that
+    // function stay unpatched.
+    if let RubyValue::Object(o) = v
+        && o.as_any()
+            .downcast_ref::<super::data::CData>()
+            .is_some_and(super::data::CData::is_typed)
+    {
+        flags |= FL_IS_TYPED_DATA;
+    }
     // `klass` is the object's class as a `VALUE`. A class is itself a handle,
     // so this would recurse; the class handle is minted lazily on the first
     // `RBASIC_CLASS` instead, and the field starts as `Qnil`.
@@ -281,8 +293,6 @@ fn intern(t: &mut Table, v: &RubyValue, tag: usize) -> Addr {
             klass: AtomicUsize::new(value::Q_NIL),
         },
         value: v.clone(),
-        data: AtomicUsize::new(0),
-        dtype: AtomicUsize::new(0),
         identity: key.unwrap_or(0),
     });
     let addr = Addr(std::ptr::from_ref(handle.as_ref()) as usize);
@@ -354,6 +364,7 @@ const _: () = {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::Ordering;
 
     fn a_string(s: &str) -> RubyValue {
         crate::builtins::string::str_value_in_enc(crate::encoding::UTF_8, s)
