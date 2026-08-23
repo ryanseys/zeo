@@ -62,6 +62,9 @@ fn desugar_singleton_items(
         /// Runs unchanged once every `self` it names becomes
         /// `recv.singleton_class`.
         RetargetSelf,
+        /// A statement naming an ivar ANYWHERE under it -- see
+        /// `retarget_ivars_to_singleton`.
+        SingletonIvars,
         /// Runs as the body of a `recv.singleton_class.class_eval`, which is
         /// where ruby runs it -- see the `SingletonBody` arm.
         SingletonBody,
@@ -184,6 +187,10 @@ fn desugar_singleton_items(
                 else_body: None,
                 ensure_body: None,
             } => Item::Guarded(body.clone(), rescues.clone()),
+            // An `@x` here names an ivar of the OBJECT'S SINGLETON CLASS,
+            // which is a different object from the object -- the `class <<
+            // self` mapping's twin, and for the same reason.
+            _ if names_an_ivar(hir, id) => Item::SingletonIvars,
             // Anything that never consults `self` means the same thing wherever
             // it runs, so it runs unchanged at this position -- the rule the
             // `Guarded` rescue bodies below already apply, and the one the
@@ -353,6 +360,23 @@ fn desugar_singleton_items(
                 }
                 out.push(id);
             }
+            Item::SingletonIvars => {
+                let mut err = None;
+                retarget_ivars_to_singleton(hir, id, |hir| {
+                    match lower_node(result, hir, recv_node) {
+                        Ok(n) => n,
+                        Err(e) => {
+                            let n = hir.push(HirNode::SelfRef);
+                            err = Some(e);
+                            n
+                        }
+                    }
+                });
+                if let Some(e) = err {
+                    return Err(e);
+                }
+                out.push(id);
+            }
             Item::SingletonBody => {
                 let recv = lower_node(result, hir, recv_node)?;
                 let singleton = hir.push(singleton_class_of(recv));
@@ -511,6 +535,74 @@ fn evaluated_self_sites(hir: &Hir, id: NodeId) -> Vec<NodeId> {
     sites
 }
 
+/// Whether `id` reads or writes an ivar at THIS level -- the statements
+/// [`retarget_ivars_to_singleton`] has to rewrite.
+fn names_an_ivar(hir: &Hir, id: NodeId) -> bool {
+    !evaluated_ivar_sites(hir, id).is_empty()
+}
+
+/// Rewrites every ivar under `id` onto `recv.singleton_class`, in place.
+///
+/// An `@x` named in a `class << X` body belongs to X's SINGLETON CLASS, which
+/// is a different object from X -- so the `attr_accessor` written beside it
+/// does NOT read what the body wrote (oracle-verified). Only the two bare
+/// statement forms used to be mapped, so `@echo = @seen` read the wrong
+/// object and `@n += 1` raised on nil.
+///
+/// `build_recv` mints a fresh receiver per site, the same rule (and the same
+/// side-effecting-receiver caveat) as every other rebinding here.
+fn retarget_ivars_to_singleton(
+    hir: &mut Hir,
+    id: NodeId,
+    mut build_recv: impl FnMut(&mut Hir) -> NodeId,
+) {
+    for site in evaluated_ivar_sites(hir, id) {
+        let recv = build_recv(hir);
+        let singleton = hir.push(singleton_class_of(recv));
+        // `IvarRead`/`IvarWrite` carry the BARE name; the reflection methods
+        // want the sigil.
+        let (verb, name, args) = match &hir[site] {
+            HirNode::IvarRead(name) => ("instance_variable_get", name.clone(), None),
+            HirNode::IvarWrite(name, value) => {
+                ("instance_variable_set", name.clone(), Some(*value))
+            }
+            _ => unreachable!("evaluated_ivar_sites yields only ivar nodes"),
+        };
+        let sym = hir.push(HirNode::SymbolLit(format!("@{name}")));
+        let mut call_args = vec![ArrayElem::Single(sym)];
+        call_args.extend(args.map(ArrayElem::Single));
+        hir[site] = HirNode::Call {
+            receiver: Some(singleton),
+            name: verb.to_string(),
+            args: call_args,
+            kwargs: vec![],
+            block: None,
+            block_arg: None,
+            safe: false,
+        };
+    }
+}
+
+/// Every ivar node under `id` that is READ OR WRITTEN here. Stops at a
+/// definition boundary for the reason [`evaluated_self_sites`] does: a `def`
+/// body's ivars belong to whatever `self` it runs against.
+fn evaluated_ivar_sites(hir: &Hir, id: NodeId) -> Vec<NodeId> {
+    let mut stack = vec![id];
+    let mut sites = Vec::new();
+    while let Some(n) = stack.pop() {
+        match &hir[n] {
+            HirNode::IvarRead(_) | HirNode::IvarWrite(..) => sites.push(n),
+            HirNode::DefMethod { .. }
+            | HirNode::Lambda {
+                method_body: true, ..
+            } => continue,
+            _ => {}
+        }
+        hir[n].for_each_child(&mut |child| stack.push(child));
+    }
+    sites
+}
+
 /// `<recv>.singleton_class`, the node every singleton rebinding is built from.
 fn singleton_class_of(recv: NodeId) -> HirNode {
     HirNode::Call {
@@ -605,8 +697,9 @@ pub(super) fn map_class_self_items(
         ClassUndef(Vec<String>),
         ClassVisibility(String, crate::hir::Visibility),
         ExtendSingleton(String),
-        SingletonIvarWrite(String, NodeId),
-        SingletonIvarRead(String),
+        /// A statement naming an ivar ANYWHERE under it -- see
+        /// `retarget_ivars_to_singleton`.
+        SingletonIvars,
         /// A `def self.x` written in the singleton body -- a method of the
         /// singleton's OWN singleton. See the `DefMethod` arm below.
         MetaMethod(String, Params, Vec<NodeId>),
@@ -723,8 +816,7 @@ pub(super) fn map_class_self_items(
             // halves of that: the accessor still answers nil, and a direct
             // `Foo.singleton_class.instance_variable_get(:@slack)` answers what
             // was written.
-            HirNode::IvarWrite(name, value) => Item::SingletonIvarWrite(name.clone(), *value),
-            HirNode::IvarRead(name) => Item::SingletonIvarRead(name.clone()),
+            _ if names_an_ivar(hir, id) => Item::SingletonIvars,
             // `private_constant :X` names a constant of the SINGLETON class,
             // and zeo hoists such a constant into the enclosing class (the
             // `ConstWrite` passthrough above). Passing the directive through
@@ -831,33 +923,9 @@ pub(super) fn map_class_self_items(
                     safe: false,
                 }));
             }
-            Item::SingletonIvarWrite(name, value) => {
-                let singleton = own_singleton_class(hir);
-                // `IvarWrite`/`IvarRead` carry the BARE name; the reflection
-                // methods want the sigil.
-                let sym = hir.push(HirNode::SymbolLit(format!("@{name}")));
-                out.push(hir.push(HirNode::Call {
-                    receiver: Some(singleton),
-                    name: "instance_variable_set".to_string(),
-                    args: vec![ArrayElem::Single(sym), ArrayElem::Single(value)],
-                    kwargs: vec![],
-                    block: None,
-                    block_arg: None,
-                    safe: false,
-                }));
-            }
-            Item::SingletonIvarRead(name) => {
-                let singleton = own_singleton_class(hir);
-                let sym = hir.push(HirNode::SymbolLit(format!("@{name}")));
-                out.push(hir.push(HirNode::Call {
-                    receiver: Some(singleton),
-                    name: "instance_variable_get".to_string(),
-                    args: vec![ArrayElem::Single(sym)],
-                    kwargs: vec![],
-                    block: None,
-                    block_arg: None,
-                    safe: false,
-                }));
+            Item::SingletonIvars => {
+                retarget_ivars_to_singleton(hir, id, |hir| hir.push(HirNode::SelfRef));
+                out.push(id);
             }
             Item::SingletonSelf => {
                 let singleton = own_singleton_class(hir);

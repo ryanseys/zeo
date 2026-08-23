@@ -1,0 +1,10 @@
+a: [7, nil]
+b: [7, nil]
+c: 3
+d: [2, "set"]
+e: "nil"
+f: nil
+g: ["g1", "g2"]
+i: [:@a, :@b]
+j: [3, 2]
+k: [nil, "singleton"]
