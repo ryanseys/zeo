@@ -179,6 +179,9 @@ mod yjit {
 pub(crate) struct RIseq {
     src: String,
     label: String,
+    /// Whether `label` is a real one. False only for a Proc-derived `.of`
+    /// handle, whose frame name zeo does not record.
+    has_label: bool,
     path: String,
     absolute_path: Option<String>,
     first_lineno: i64,
@@ -208,6 +211,7 @@ impl RubyObject for RIseq {
         let d = Arc::new(RIseq {
             src: self.src.clone(),
             label: self.label.clone(),
+            has_label: self.has_label,
             path: self.path.clone(),
             absolute_path: self.absolute_path.clone(),
             first_lineno: self.first_lineno,
@@ -240,6 +244,79 @@ fn parse_check(src: &str) -> Result<(), Signal> {
     }
 }
 
+/// The `[file, line]` a callable was written at, or `None` for one with no
+/// Ruby source this runtime tracks -- a builtin row, or a `define_method`
+/// body, both of which `#source_location` already reports `nil` for.
+fn callable_source(what: &RubyValue) -> Option<(String, i64)> {
+    let loc = match what {
+        RubyValue::Proc(p) => {
+            let (file, line) = p.location()?;
+            return Some((file.to_string(), i64::from(line)));
+        }
+        RubyValue::Object(o) => match o
+            .as_any()
+            .downcast_ref::<crate::builtins::method::RMethod>()
+        {
+            Some(m) => crate::method_meta::source_location(m.home, m.kind, m.name),
+            None => {
+                let u = o
+                    .as_any()
+                    .downcast_ref::<crate::builtins::unbound_method::RUnboundMethod>()?;
+                crate::method_meta::source_location(u.home, u.kind, u.name)
+            }
+        },
+        _ => return None,
+    };
+    let RubyValue::Array(a) = loc else {
+        return None;
+    };
+    let a = a.lock();
+    match (a.first(), a.get(1)) {
+        (Some(RubyValue::Str(f)), Some(RubyValue::Int(l))) => {
+            Some((f.lock().to_utf8_lossy().into_owned(), *l))
+        }
+        _ => None,
+    }
+}
+
+/// A Method/UnboundMethod's iseq label, which is its own name.
+fn method_label(what: &RubyValue) -> String {
+    let RubyValue::Object(o) = what else {
+        return String::new();
+    };
+    if let Some(m) = o
+        .as_any()
+        .downcast_ref::<crate::builtins::method::RMethod>()
+    {
+        return m.name.name().to_string();
+    }
+    match o
+        .as_any()
+        .downcast_ref::<crate::builtins::unbound_method::RUnboundMethod>()
+    {
+        Some(u) => u.name.name().to_string(),
+        None => String::new(),
+    }
+}
+
+/// The handle `.of` answers. `label` is `None` for a Proc, whose frame name
+/// zeo does not record -- `#label` then refuses rather than inventing one.
+fn of_iseq_value(label: Option<String>, path: String, line: i64) -> RubyValue {
+    let absolute = std::path::Path::new(&path)
+        .canonicalize()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| path.clone());
+    RubyValue::Object(Arc::new(RIseq {
+        src: String::new(),
+        has_label: label.is_some(),
+        label: label.unwrap_or_default(),
+        path,
+        absolute_path: Some(absolute),
+        first_lineno: line,
+        frozen: AtomicBool::new(false),
+    }))
+}
+
 fn iseq_value(
     src: String,
     label: String,
@@ -250,6 +327,7 @@ fn iseq_value(
     RubyValue::Object(Arc::new(RIseq {
         src,
         label,
+        has_label: true,
         path,
         absolute_path,
         first_lineno,
@@ -318,10 +396,24 @@ mod iseq {
                 .lock() = value.clone();
             Ok(value.clone())
         }
-        // `nil`, never a raise: C-defined is the answer for every compiled
-        // method, and irb's source finder leans on `.of(m)&.script_lines`.
-        def self."of"(_recv, _what) {
-            Ok(RubyValue::Nil)
+        // An iseq for a callable written in Ruby, `nil` for a C-defined one
+        // -- which is the question callers actually ask of this row, and irb's
+        // source finder leans on `.of(m)&.script_lines`.
+        //
+        // The handle carries no bytecode (there is none), so `#to_a`,
+        // `#to_binary` and `#disasm` refuse on it exactly as they do on a
+        // compiled one. `#label` on a PROC-derived handle refuses too: CRuby
+        // answers the enclosing frame's name (`block in <main>`) and a zeo
+        // Proc carries no label, only a location.
+        def self."of"(_recv, what) {
+            let Some((path, line)) = callable_source(what) else {
+                return Ok(RubyValue::Nil);
+            };
+            let label = match what {
+                RubyValue::Proc(_) => None,
+                _ => Some(method_label(what)),
+            };
+            Ok(of_iseq_value(label, path, line))
         }
         def self."disasm" | "disassemble" (_recv, _what) {
             Err(not_impl_error!("{}", NO_YARV))
@@ -335,7 +427,15 @@ mod iseq {
             crate::eval_string(&iseq.src, crate::dispatch::main_object(), 0)
         }
         def "label" | "base_label" (recv) {
-            Ok(RubyValue::Str(crate::string_new(recv_iseq(recv).label.clone())))
+            let iseq = recv_iseq(recv);
+            if !iseq.has_label {
+                return Err(not_impl_error!(
+                    "RubyVM::InstructionSequence#label is not available for a Proc: \
+                     CRuby names the enclosing frame (`block in <main>`) and zeo \
+                     records a Proc's location, not its frame label"
+                ));
+            }
+            Ok(RubyValue::Str(crate::string_new(iseq.label.clone())))
         }
         def "path"(recv) {
             Ok(RubyValue::Str(crate::string_new(recv_iseq(recv).path.clone())))

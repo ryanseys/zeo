@@ -1,0 +1,14 @@
+a proc: RubyVM::InstructionSequence
+a lambda: RubyVM::InstructionSequence
+a ruby method: RubyVM::InstructionSequence
+an unbound: RubyVM::InstructionSequence
+a c method: NilClass
+a c row: NilClass
+nil arg: NilClass
+proc lineno: 18
+proc path: "rubyvm_iseq_of_answers_for_a_ruby_callable.rb"
+proc absolute: true
+m label: "ruby_method"
+m base_label: "ruby_method"
+m lineno: 17
+m path: "rubyvm_iseq_of_answers_for_a_ruby_callable.rb"

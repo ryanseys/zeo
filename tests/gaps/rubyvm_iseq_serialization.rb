@@ -1,8 +1,7 @@
 # The YARV-shaped corners of RubyVM. zeo compiles ahead of time and has no
 # bytecode, so InstructionSequence#to_a/#to_binary/#disasm raise
 # NotImplementedError naming that reality where CRuby answers real data;
-# InstructionSequence.of answers nil for EVERY callable (CRuby builds a real
-# iseq for a Ruby-defined proc); YJIT.enable truthfully answers false (there
+# a Proc-derived `InstructionSequence.of` handle has no frame label; YJIT.enable truthfully answers false (there
 # is no JIT to switch on -- CRuby answers true); and AST node ids are
 # zeo-numbered (prism's parse-internal ids are not exposed through its Rust
 # bindings). Each is a deliberate refusal or renumbering, not a missing
@@ -13,13 +12,18 @@
 #   to_a / to_binary / disasm   PERMANENT. There is no bytecode to serialize.
 #                               A faithful answer would mean emitting YARV
 #                               zeo never runs.
-#   InstructionSequence.of      Answers nil for every callable, where CRuby
-#                               builds a real iseq for a Ruby-defined proc.
-#                               Permanent for the same reason; a caller using
-#                               it to ask "was this defined in Ruby?" gets the
-#                               wrong answer rather than a refusal, which is
-#                               the one row here that is quietly wrong instead
-#                               of loudly absent.
+#   InstructionSequence.of      FIXED. It answers a real handle for a Ruby
+#                               callable and nil for a C-defined one, with the
+#                               location rows exact -- see
+#                               `tests/rubyvm_iseq_of_answers_for_a_ruby_callable.rb`.
+#                               One row of it is still absent and now refuses
+#                               LOUDLY: `#label`/`#base_label` on a
+#                               PROC-derived handle. CRuby names the enclosing
+#                               frame (`block in <main>`, base `<main>`) and a
+#                               zeo Proc carries a location, not a frame label.
+#                               Giving it one means a third static word on
+#                               every proc construction, which is a perf
+#                               question of its own.
 #   YJIT.enable                 Truthful, not a gap in spirit: there is no JIT
 #                               to switch on, so `false` is the honest answer
 #                               where CRuby's `true` reports a real state
@@ -62,5 +66,10 @@ rescue NotImplementedError => e
   p [:disasm, e.class]
 end
 p RubyVM::InstructionSequence.of(proc { 1 }).class
+begin
+  p RubyVM::InstructionSequence.of(proc { 1 }).label
+rescue NotImplementedError => e
+  p [:label, e.class]
+end
 p RubyVM::YJIT.enable
 p RubyVM::AbstractSyntaxTree.parse("x = 1 + 2\ny = x").node_id
