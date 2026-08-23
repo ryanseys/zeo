@@ -148,6 +148,11 @@ pub const CAPI: &[CapiSig] = &[
         ret: None,
     },
     CapiSig {
+        name: "zeo_rt_cext_load",
+        params: &[Ptr, Usize, Ptr, Usize],
+        ret: Some(I32),
+    },
+    CapiSig {
         name: "zeo_rt_check_ints",
         params: &[],
         ret: Some(I32),

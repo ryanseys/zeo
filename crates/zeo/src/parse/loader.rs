@@ -183,6 +183,13 @@ pub(super) struct Loader {
     /// a `require` of one fails with the store's precise reason (which native
     /// layout, why) instead of the generic "cannot load such file".
     store_exclusions: HashMap<String, String>,
+    /// External-store gems whose C is shipped as SOURCE, by gem name. A
+    /// `require` that reaches one builds it -- see [`Loader::build_cext`].
+    native_exts: HashMap<String, super::gem_store::NativeExt>,
+    /// Extensions already built in this compile, `gem name -> (library,
+    /// init)`. A gem's Ruby half often requires its native half from more
+    /// than one file, and building twice would relink for nothing.
+    built_cexts: HashMap<String, (String, String)>,
     /// How each `require`d library was satisfied, in require order.
     /// A LOG of what resolution did, not a property of the program -- it used
     /// to hang off `Hir`, which made the IR depend on the gem reporter for
@@ -314,6 +321,8 @@ pub(super) fn lower_main_file(
         splicing: Vec::new(),
         in_unit_sweep: false,
         store_exclusions: HashMap::new(),
+        native_exts: HashMap::new(),
+        built_cexts: HashMap::new(),
         gem_records: Vec::new(),
         gem_names: std::collections::HashSet::new(),
         require_memo: std::cell::RefCell::new(HashMap::new()),
@@ -339,6 +348,9 @@ pub(super) fn lower_main_file(
                     .map(|g| g.version.clone());
                 loader.packages.push(Gem::from_parts(name, roots, version));
             }
+        }
+        for ext in resolution.native_exts {
+            loader.native_exts.insert(ext.name.clone(), ext);
         }
         for record in resolution.disclosures {
             // An excluded gem's reason is kept so a `require` of it fails
@@ -1341,7 +1353,11 @@ impl Loader {
                         .or_else(|| feature.strip_suffix(".bundle"))
                         .or_else(|| feature.strip_suffix(".o"))
                         .unwrap_or(feature);
-                    is_builtin_feature(bare) || self.store_exclusions.contains_key(bare)
+                    is_builtin_feature(bare)
+                        || self.store_exclusions.contains_key(bare)
+                        // A gem shipping its C as source: zeo builds it, so
+                        // the require HAS a compile-time verdict.
+                        || self.cext_gem(bare).is_some()
                 }
             }
         }
@@ -1575,6 +1591,12 @@ impl Loader {
             .or_else(|| feature.strip_suffix(".o"))
             .unwrap_or(feature);
         if !is_builtin_feature(bare) {
+            // A gem that ships its C as SOURCE is built HERE, at the require
+            // that reached it -- an AOT compiler builds only what a require
+            // reaches, which is why this is not eager.
+            if let Some(node) = self.build_cext(hir, bare)? {
+                return Ok(vec![node]);
+            }
             // A gem the external store locked but zeo can't provide gets its
             // precise reason (which native layout, why), not the generic miss.
             if let Some(reason) = self.store_exclusions.get(bare) {
@@ -1615,6 +1637,76 @@ impl Loader {
             entry,
             feature: Some(feature),
         })])
+    }
+
+    /// Build the C extension `feature` names, if a store gem ships one.
+    ///
+    /// `require "foo/foo"` and `require "foo"` both belong to the gem `foo`:
+    /// the first segment is the gem name, which is RubyGems' own convention
+    /// and what `create_makefile("foo/foo")` produces. Anything else answers
+    /// `None` and falls through to the ordinary miss.
+    ///
+    /// The build runs `extconf.rb` and then compiles and links, both through
+    /// [`crate::cext`]. A failure is a COMPILE error naming the gem: the
+    /// alternative is a program that builds and then cannot load, which is
+    /// the failure mode the whole C0 design exists to avoid.
+    fn build_cext(&mut self, hir: &mut Hir, feature: &str) -> PResult<Option<NodeId>> {
+        let Some(gem) = self.cext_gem(feature) else {
+            return Ok(None);
+        };
+        if let Some((library, init)) = self.built_cexts.get(gem) {
+            return Ok(Some(hir.push(HirNode::CExtLoaded {
+                library: library.clone(),
+                init: init.clone(),
+            })));
+        }
+        let ext = &self.native_exts[gem];
+        let zeo =
+            crate::cext::zeo_binary().map_err(|e| format!("building {gem}'s C extension: {e}"))?;
+        // A gem may ship more than one extension. Every one is built, and the
+        // FIRST is what the feature names -- mkmf's own convention, since a
+        // second extension has its own `create_makefile` and its own require.
+        let mut first: Option<(String, String)> = None;
+        for extconf in &ext.extconfs {
+            let path = ext.gem_dir.join(extconf);
+            let Some(dir) = path.parent() else { continue };
+            let name = path.file_name().unwrap_or_default().to_string_lossy();
+            // Out of tree: the gem store is shared and often read only, and a
+            // build that wrote into it would leave one project's artifacts
+            // where another reads them.
+            let library = crate::cext::build_out_of_tree(&zeo, gem, dir, &name)
+                .map_err(|e| format!("building {gem}'s C extension: {e}"))?;
+            if first.is_none() {
+                let init = library
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or(gem)
+                    .to_string();
+                first = Some((library.display().to_string(), init));
+            }
+        }
+        let Some((library, init)) = first else {
+            return Ok(None);
+        };
+        self.built_cexts
+            .insert(gem.to_string(), (library.clone(), init.clone()));
+        self.record_gem(crate::gem_report::GemRecord {
+            name: gem.to_string(),
+            by: crate::gem_report::SatisfiedBy::CompiledExt {
+                library: library.clone(),
+            },
+        });
+        Ok(Some(hir.push(HirNode::CExtLoaded { library, init })))
+    }
+
+    /// Which store gem, if any, would build `feature`.
+    ///
+    /// `require "foo/foo"` and `require "foo"` both belong to the gem `foo`:
+    /// the first segment is the gem name, which is RubyGems' own convention
+    /// and what `create_makefile("foo/foo")` produces.
+    fn cext_gem<'a>(&self, feature: &'a str) -> Option<&'a str> {
+        let gem = feature.split('/').next().unwrap_or(feature);
+        self.native_exts.contains_key(gem).then_some(gem)
     }
 
     /// Parses and lowers one resolved file into the arena, recording its
@@ -2026,10 +2118,17 @@ fn resolve_require_relative(feature: &str, dir: Option<&Path>) -> PResult<PathBu
         // (eval/irb): here, a source compiled without an input path.
         return Err("cannot infer basepath -- `require_relative` needs the requiring file's directory (compile from a file path)".to_string().into());
     };
+    // A `require_relative` of a `.so`/`.bundle` names a compiled object by
+    // PATH rather than by feature, so the store's build never sees it -- zeo
+    // compiles a gem's extension from the `s.extensions` its gemspec
+    // declares, and nothing here says which gem this file belongs to.
     if is_native_feature(feature) {
         return Err(format!(
-            "`require_relative \"{feature}\"`: native (.so/.bundle) features aren't supported (zeo limitation)"
-        ).into());
+            "`require_relative \"{feature}\"`: zeo builds a gem's C extension from its \
+             gemspec's `extensions`, not from a path -- a `require_relative` of a compiled \
+             object names no gem to build"
+        )
+        .into());
     }
     // ORDER MATTERS, and CRuby's is the inverse of the obvious one.
     // `rb_require_relative_entrypoint` (load.c:1054) absolutizes against the

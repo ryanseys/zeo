@@ -239,6 +239,14 @@ fn install(owner: ClassId, name: Symbol, body: RProc) -> Result<(), Signal> {
 /// does: the constant is what makes it findable, and the name is what
 /// `#inspect` prints.
 fn new_class(outer: ClassId, name: &str, superclass: Option<RubyValue>) -> Result<Value, Signal> {
+    // MRI REOPENS: `rb_define_class` answers the existing constant when it
+    // is already a class. Every gem whose Ruby half and C half share a
+    // namespace depends on that -- creating a second class would leave the
+    // constant pointing at whichever half ran last, and the other half's
+    // methods invisible.
+    if let Some(existing @ RubyValue::Class(_)) = crate::constants::const_get_own(outer.0, name) {
+        return to_value(&existing);
+    }
     let cls = crate::runtime_meta::runtime_class_new(superclass, None)?;
     if let RubyValue::Class(cid) = &cls {
         let full = qualified(outer, name);
@@ -445,6 +453,10 @@ crate::cext_fn! {
 }
 
 fn new_module(outer: ClassId, name: &str) -> Result<Value, Signal> {
+    // Reopen, for the reason `new_class` states.
+    if let Some(existing @ RubyValue::Class(_)) = crate::constants::const_get_own(outer.0, name) {
+        return to_value(&existing);
+    }
     let m = crate::runtime_meta::runtime_module_new(None)?;
     if let RubyValue::Class(cid) = &m {
         let full = qualified(outer, name);

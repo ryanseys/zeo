@@ -24,6 +24,7 @@
 )]
 
 pub mod bind;
+pub mod cext;
 pub mod concurrency;
 pub mod dispatch;
 pub mod ffi;

@@ -187,10 +187,15 @@ ext-all = [
     "ext-coverage",
     "ext-tracepoint",
     "ext-prism",
+    "cext",
 ]
-# The C extension surface (`crates/zeo-rt/cext/`). Off by default while C0 is
-# built: an ext-free binary must stay byte-identical, and the module has to
-# dead-strip to prove it.
+# The C extension surface (`crates/zeo-rt/cext/`).
+#
+# ON by default as of C0. It was off while the surface was built, on the
+# argument that an ext-free binary should stay byte-identical -- but a zeo
+# that can COMPILE a gem's extension and then cannot load it is not a
+# configuration anyone wants, and `zeo_rt_cext_load` sits in the capi symbol
+# table either way, so nothing dead-strips regardless.
 cext = []
 ext-base64 = []
 ext-prism = []

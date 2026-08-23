@@ -84,6 +84,161 @@ pub fn configure(zeo: &Path, dir: &Path, extconf: &Path, args: &[String]) -> Res
     ))
 }
 
+/// The `zeo` binary to run an `extconf.rb` with.
+///
+/// `current_exe` is right whenever zeo IS the running program, and wrong
+/// whenever it is not -- under a test the running program is the harness, and
+/// spawning that with an `extconf.rb` runs the test suite instead of
+/// configuring anything. That is not a hypothetical: it is what this function
+/// exists to have already gone wrong once.
+///
+/// So the exe is used only when it is actually named `zeo`. Otherwise the
+/// binary is found beside it -- a test binary lives in
+/// `target/<profile>/deps/`, and `target/<profile>/zeo` is the zeo that built
+/// it -- and failing that, under the resolved home.
+pub fn zeo_binary() -> Result<PathBuf, String> {
+    let exe = std::env::current_exe().map_err(|e| format!("finding the zeo binary: {e}"))?;
+    if exe.file_stem().is_some_and(|s| s == "zeo") {
+        return Ok(exe);
+    }
+    for up in [1usize, 2] {
+        let mut dir = exe.clone();
+        for _ in 0..up {
+            dir.pop();
+        }
+        let cand = dir.join("zeo");
+        if cand.is_file() {
+            return Ok(cand);
+        }
+    }
+    if let ZeoHome::Installed { payload, .. } = crate::home::zeo_home()
+        && let Some(prefix) = payload.parent().and_then(std::path::Path::parent)
+    {
+        let cand = prefix.join("bin/zeo");
+        if cand.is_file() {
+            return Ok(cand);
+        }
+    }
+    Err(format!(
+        "cannot find the `zeo` binary to run an extconf.rb with (looked beside {})",
+        exe.display()
+    ))
+}
+
+/// Where an extension is BUILT, which is never the gem store.
+///
+/// mkmf and the compiler write a Makefile, a `.o` per source and the shared
+/// object into the directory they run in. rubygems does that in place because
+/// a gem directory is per-user and writable; a zeo gem store is neither -- it
+/// is shared, often read-only, and a build that wrote into it would leave one
+/// project's artifacts where another project reads them.
+///
+/// So the sources are COPIED into a cache directory keyed by the gem, its
+/// version and the bytes of its `ext/` tree. A second compile of the same
+/// gem finds the shared object already there and skips the build.
+pub fn build_dir(gem: &str, key: &str) -> PathBuf {
+    cache_root().join("cext").join(format!("{gem}-{key}"))
+}
+
+/// Copy `src` into `dst`, files and directories, leaving what is already
+/// there. Used to stage a gem's `ext/` into the build directory.
+fn stage(src: &Path, dst: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let (from, to) = (entry.path(), dst.join(entry.file_name()));
+        if from.is_dir() {
+            stage(&from, &to)?;
+        } else {
+            std::fs::copy(&from, &to)?;
+        }
+    }
+    Ok(())
+}
+
+/// A content key for an `ext/` tree: every file's relative path and bytes.
+///
+/// A modification time would be cheaper and wrong -- a gem re-unpacked from
+/// its `.gem` gets fresh mtimes and identical bytes, and rebuilding then is
+/// pure waste. Hashing the bytes also means an edited source rebuilds, which
+/// is what a developer working on a gem needs.
+pub fn content_key(dir: &Path) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut files = Vec::new();
+    collect(dir, dir, &mut files);
+    files.sort();
+    for rel in files {
+        for byte in rel.as_bytes() {
+            hash = (hash ^ u64::from(*byte)).wrapping_mul(0x100_0000_01b3);
+        }
+        if let Ok(bytes) = std::fs::read(dir.join(&rel)) {
+            for byte in bytes {
+                hash = (hash ^ u64::from(byte)).wrapping_mul(0x100_0000_01b3);
+            }
+        }
+    }
+    format!("{hash:016x}")
+}
+
+fn collect(root: &Path, dir: &Path, out: &mut Vec<String>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect(root, &path, out);
+        } else if let Ok(rel) = path.strip_prefix(root) {
+            out.push(rel.to_string_lossy().into_owned());
+        }
+    }
+}
+
+/// The user cache, which is where a build lands. Read from `zeo::home`'s own
+/// resolution so an install and the dev tree agree.
+fn cache_root() -> PathBuf {
+    match crate::home::zeo_home() {
+        ZeoHome::DevTree { root } => root.join("target/zeo-cext"),
+        ZeoHome::Installed { cache, .. } | ZeoHome::Registry { cache } => cache.clone(),
+    }
+}
+
+/// Configure and build `gem`'s extension out of tree, and answer the shared
+/// object.
+///
+/// `ext_dir` is the directory holding `extconf.rb` inside the gem. It is
+/// copied into the cache and built there, so the gem store is never written
+/// to.
+pub fn build_out_of_tree(
+    zeo: &Path,
+    gem: &str,
+    ext_dir: &Path,
+    extconf: &str,
+) -> Result<PathBuf, String> {
+    let key = content_key(ext_dir);
+    let dir = build_dir(gem, &key);
+    // An already-built product with the same content key is the same
+    // product, which is the whole reason the key hashes bytes.
+    if let Some(found) = product_of(&dir) {
+        return Ok(found);
+    }
+    // A partial build from an interrupted run would confuse mkmf's own
+    // freshness checks, so the directory starts clean.
+    let _ = std::fs::remove_dir_all(&dir);
+    stage(ext_dir, &dir).map_err(|e| format!("staging {gem}'s ext into {}: {e}", dir.display()))?;
+    configure(zeo, &dir, Path::new(extconf), &[])?;
+    build_extension(&dir, jobs())
+}
+
+/// How many compiles to run at once.
+///
+/// The same width the rest of zeo's build uses, and bounded the same way: a
+/// C compile is memory-hungry, and a 16-core machine running 16 of them
+/// against a large `ext/` is how a build gets OOM-killed rather than fast.
+pub fn jobs() -> usize {
+    std::thread::available_parallelism().map_or(4, |n| n.get().min(8))
+}
+
 /// Build the extension whose Makefile is in `dir`, and answer the shared
 /// object.
 ///
@@ -110,7 +265,7 @@ pub fn build_extension(dir: &Path, jobs: usize) -> Result<PathBuf, String> {
 /// The shared object a `make` run left behind. The Makefile names it in
 /// `TARGET_SO`, so that is what is read rather than a directory scan -- a
 /// scan would pick up a `.bundle` from an earlier build of a different gem.
-fn product_of(dir: &Path) -> Option<PathBuf> {
+pub fn product_of(dir: &Path) -> Option<PathBuf> {
     let text = std::fs::read_to_string(dir.join("Makefile")).ok()?;
     let name = makefile::Makefile::parse(&text).get("TARGET_SO");
     let path = dir.join(name.trim());

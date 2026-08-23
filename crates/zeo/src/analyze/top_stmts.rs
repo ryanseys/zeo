@@ -967,6 +967,7 @@ fn for_each_nested_stmt(
         | HirNode::AliasGlobal(..)
         | HirNode::Undef(_)
         | HirNode::FeatureLoaded { .. }
+        | HirNode::CExtLoaded { .. }
         | HirNode::ClassMethodUndef(_)
         | HirNode::AliasMethod { .. }
         | HirNode::MethodVisibility { .. }
@@ -1354,6 +1355,9 @@ fn body_cannot_raise(compiler: &Compiler, body: &[NodeId]) -> bool {
         // The record a resolved `require` of a native feature leaves at its
         // own line: an array append and two flags, and it is exactly what a
         // guarded `require` now lowers to beside its load result.
+        //
+        // `CExtLoaded` is deliberately NOT here: it dlopens and runs the
+        // extension's `Init_`, and either can raise.
         HirNode::FeatureLoaded { .. } => true,
         HirNode::Seq(parts) => body_cannot_raise(compiler, parts),
         _ => false,

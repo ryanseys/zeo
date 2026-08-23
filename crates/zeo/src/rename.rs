@@ -389,6 +389,7 @@ impl Walker {
             | HirNode::LastMatchRef(_)
             | HirNode::Undef(_)
             | HirNode::FeatureLoaded { .. }
+            | HirNode::CExtLoaded { .. }
             | HirNode::ClassMethodUndef(_)
             | HirNode::AliasMethod {
                 new_name: _,

@@ -145,10 +145,20 @@ pub(crate) fn host_triple() -> &'static str {
 /// `debuginfo` is exactly when those symbols ARE read: the Mach-O debug
 /// map is a set of local stab entries naming `object`, so `-x` would
 /// throw away the only pointer to the DWARF.
+/// `loads_cext` publishes the C API. An extension's `.so` leaves every `rb_*`
+/// undefined and resolves it against the host at load, and two separate
+/// things would otherwise stop that: `-dead_strip` prunes what nothing calls,
+/// and a Mach-O export table holds only what was asked for. `-export_dynamic`
+/// answers both -- an exported symbol is a dead-strip root.
+///
+/// It is a flag rather than always on because the export table is exactly
+/// what `-dead_strip` prunes against: exporting unconditionally would keep
+/// the whole runtime in every hello-world.
 pub fn link_binary(
     object: &std::path::Path,
     output: &std::path::Path,
     debuginfo: bool,
+    loads_cext: bool,
 ) -> Result<(), String> {
     let archive = runtime_archive()?;
     let natlibs = natlibs_for(host_triple())?;
@@ -158,6 +168,9 @@ pub fn link_binary(
         cmd.arg(format!("-Wl,-force_load,{}", archive.display()));
         cmd.args(natlibs);
         cmd.arg("-Wl,-dead_strip");
+        if loads_cext {
+            cmd.arg("-Wl,-export_dynamic");
+        }
         if !debuginfo {
             cmd.arg("-Wl,-x");
         }
@@ -167,6 +180,9 @@ pub fn link_binary(
         cmd.arg("-Wl,--no-whole-archive");
         cmd.args(natlibs);
         cmd.arg("-Wl,--gc-sections");
+        if loads_cext {
+            cmd.arg("-Wl,--export-dynamic");
+        }
         if !debuginfo {
             cmd.arg("-Wl,-x");
         }

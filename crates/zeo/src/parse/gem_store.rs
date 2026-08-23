@@ -9,11 +9,21 @@
 //! store that has only the precompiled variant means the gem is unusable, and
 //! that is a recorded exclusion, not a silent miss.
 //!
-//! Three ways a gem turns out native, all detected (the plan's "three native
-//! layouts"): `s.extensions` is set (a locally-built ext, layout 1); the
-//! gemspec carries a non-ruby `s.platform` (a precompiled gem, layout 2); or a
-//! `.bundle`/`.so` sits under a require path (belt-and-suspenders). A default
-//! gem (layout 3) is compiled into the interpreter and is zeo's own to
+//! Three ways a gem turns out native, and they no longer share an answer.
+//!
+//! | Signal | Means | zeo |
+//! |---|---|---|
+//! | `s.extensions` is set | the C is SHIPPED, and builds from source | builds it |
+//! | `s.platform` is not `ruby` | a precompiled binary gem | excluded |
+//! | a `.bundle`/`.so` under a require path | a prebuilt object, no `s.extensions` | excluded |
+//!
+//! The first row is what changed: zeo compiles a gem's `ext/**/*.c` from
+//! source against MRI's own headers, so a gem that ships its C is buildable.
+//! The other two ship a `.so` built against MRI's ABI, which zeo can never
+//! load -- and the reason it cannot is worth saying precisely, because
+//! "no built-in" invited the wrong fix.
+//!
+//! A default gem is compiled into the interpreter and is zeo's own to
 //! provide, so it is caught earlier by the builtin-feature check.
 
 use std::path::{Path, PathBuf};
@@ -31,6 +41,21 @@ pub(super) struct StoreResolution {
     /// Divergence (a gem zeo satisfies natively) and exclusion (a native
     /// gem zeo can't provide) records for the disclosure report.
     pub disclosures: Vec<GemRecord>,
+    /// Gems whose C is shipped as source. The loader builds one when a
+    /// `require` reaches its feature -- never eagerly, because an AOT
+    /// compiler only builds what a require reaches.
+    pub native_exts: Vec<NativeExt>,
+}
+
+/// A gem zeo can compile from source.
+pub(super) struct NativeExt {
+    pub name: String,
+    /// The unpacked gem's own directory, which every `s.extensions` path is
+    /// relative to.
+    pub gem_dir: PathBuf,
+    /// `s.extensions`: one `extconf.rb` per extension, and a gem may ship
+    /// more than one.
+    pub extconfs: Vec<String>,
 }
 
 /// Resolve `lockfile`'s gems against the `stores` directories (each a `gem
@@ -41,6 +66,7 @@ pub(super) struct StoreResolution {
 pub(super) fn resolve(stores: &[PathBuf], lockfile: &Lockfile) -> PResult<StoreResolution> {
     let mut roots = Vec::new();
     let mut disclosures = Vec::new();
+    let mut native_exts = Vec::new();
 
     for locked in &lockfile.gems {
         // Only RubyGems-store gems live in `specifications/`; a git checkout or
@@ -102,16 +128,31 @@ pub(super) fn resolve(stores: &[PathBuf], lockfile: &Lockfile) -> PResult<StoreR
         let version = spec.version.as_deref().unwrap_or(&locked.version);
         let gem_dir = store.join("gems").join(format!("{}-{version}", spec.name));
 
-        if is_native(&spec, &gem_dir) {
-            disclosures.push(excluded(
-                &name,
-                "native-extension",
-                format!(
-                    "`{name}` has a native (C) extension zeo has no built-in for. \
-                     See docs/EXTENSIONS.md; the FFI path is the intended escape hatch."
-                ),
-            ));
-            continue;
+        match native_kind(&spec, &gem_dir) {
+            // The C is shipped: zeo compiles it from source. The extension's
+            // own require path is added like any other, and the build happens
+            // when a `require` reaches the feature.
+            NativeKind::Buildable => {
+                native_exts.push(NativeExt {
+                    name: name.clone(),
+                    gem_dir: gem_dir.clone(),
+                    extconfs: spec.extensions.clone(),
+                });
+            }
+            NativeKind::PrecompiledAbi => {
+                disclosures.push(excluded(
+                    &name,
+                    "precompiled-extension",
+                    format!(
+                        "`{name}` ships a PRECOMPILED extension built against CRuby's ABI, \
+                         which zeo cannot load. zeo builds an extension from source; install \
+                         the ruby-platform variant of this gem (`bundle config set \
+                         force_ruby_platform true`) and it will compile."
+                    ),
+                ));
+                continue;
+            }
+            NativeKind::No => {}
         }
 
         // Pure Ruby: its `require_paths`, in order (`lib/` shadows an ext dir,
@@ -131,7 +172,11 @@ pub(super) fn resolve(stores: &[PathBuf], lockfile: &Lockfile) -> PResult<StoreR
         roots.push((name, gem_roots));
     }
 
-    Ok(StoreResolution { roots, disclosures })
+    Ok(StoreResolution {
+        roots,
+        disclosures,
+        native_exts,
+    })
 }
 
 /// A synthetic `Lockfile` naming every gem installed in the store, one per
@@ -223,24 +268,43 @@ fn locate_gemspec(specs: &Path, name: &str, version: &str) -> Located {
     }
 }
 
-/// Whether a resolved gemspec is native -- any of the three detectable
-/// signals (see the module docs).
-fn is_native(spec: &super::gemspec::GemSpec, gem_dir: &Path) -> bool {
+/// What kind of native a gem is, which decides what happens to it.
+#[derive(Debug, PartialEq)]
+pub(super) enum NativeKind {
+    /// Pure Ruby.
+    No,
+    /// The C is shipped as source and zeo can compile it.
+    Buildable,
+    /// A `.so` built against CRuby's ABI. zeo can never load one.
+    PrecompiledAbi,
+}
+
+/// Which of the three signals a resolved gemspec carries.
+///
+/// `s.extensions` is checked FIRST and wins: a gem that ships its C source
+/// also ships the `.so` from an earlier build in the same directory, and
+/// reading that as "precompiled" would refuse a gem zeo can build.
+fn native_kind(spec: &super::gemspec::GemSpec, gem_dir: &Path) -> NativeKind {
     if !spec.extensions.is_empty() {
-        return true;
+        return NativeKind::Buildable;
     }
     if spec
         .platform
         .as_deref()
         .is_some_and(|p| p != "ruby" && !p.is_empty())
     {
-        return true;
+        return NativeKind::PrecompiledAbi;
     }
-    // A `.bundle`/`.so` under any require path -- a precompiled gem that
-    // declared no `s.extensions`.
-    spec.require_paths
+    // A `.bundle`/`.so` under a require path with no `s.extensions` at all:
+    // the object is all there is, so there is no source to build.
+    if spec
+        .require_paths
         .iter()
         .any(|rp| dir_has_native_object(&gem_dir.join(rp)))
+    {
+        return NativeKind::PrecompiledAbi;
+    }
+    NativeKind::No
 }
 
 /// Recursively: does this directory tree contain a `.bundle`/`.so`/`.dylib`?

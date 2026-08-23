@@ -3,10 +3,10 @@ use crate::support::run_ruby;
 #[test]
 fn external_gem_store_resolves_pure_ruby_and_excludes_native() {
     // `--gem-path` + `--lockfile` against a self-contained fixture
-    // store (tests/fixtures/gem_store/store). Covers all three provider paths:
-    // a pure-Ruby gem resolves and compiles; a gem declaring a native
-    // extension and a precompiled-platform-only gem are both excluded, with a
-    // reason recorded in the disclosure report.
+    // store (tests/fixtures/gem_store/store). Covers all three provider
+    // paths: a pure-Ruby gem resolves and compiles; a gem shipping its C as
+    // SOURCE is compiled from it; a precompiled-platform-only gem is
+    // excluded, with a reason recorded in the disclosure report.
     let store =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/gem_store/store");
     let report = std::env::temp_dir().join(format!("zeo-store-{}.json", std::process::id()));
@@ -26,24 +26,85 @@ fn external_gem_store_resolves_pure_ruby_and_excludes_native() {
         "{json}"
     );
     assert!(
-        json.contains(r#""nativelib": {"by": null, "excluded": "native-extension""#),
-        "{json}"
-    );
-    assert!(
         json.contains(r#""precompiled": {"by": null, "excluded": "precompiled-platform-gem""#),
         "{json}"
     );
+}
 
-    // Actually requiring an excluded gem fails with the store's precise reason,
-    // not the generic "cannot load such file".
-    let strict = zeo::CompileOptions {
+/// A gem that ships its C as SOURCE is COMPILED, loaded and called.
+///
+/// The whole path in one test: the gemspec's `extensions` names an
+/// `extconf.rb`, zeo runs it, mkmf writes a Makefile, zeo compiles and links
+/// without `make`, and the program dlopens the result and calls a method
+/// `Init_nativelib` defined. Nothing short of running it proves the last
+/// three steps.
+#[test]
+fn a_store_gem_shipping_c_source_is_compiled_and_loaded() {
+    if std::process::Command::new("cc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        eprintln!("skipping: this machine has no C compiler");
+        return;
+    }
+    let store =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/gem_store/store");
+    let opts = zeo::CompileOptions {
         gem_paths: vec![store.clone()],
         lockfile: Some(store.join("Gemfile.lock")),
         ..Default::default()
     };
-    let err =
-        String::from(zeo::check_program_with("require \"nativelib\"\n", &strict).unwrap_err());
-    assert!(err.contains("native (C) extension"), "{err}");
+    let out = crate::support::compile_link_run(
+        "require \"nativelib\"\np Nativelib::BUILT\nputs Nativelib.greet\n",
+        &opts,
+        &[],
+        &[],
+    );
+    assert_eq!(out.stdout, "true\nhello from C\n", "stderr: {}", out.stderr);
+}
+
+/// The build is OUT OF TREE. A gem store is shared and often read only, so a
+/// build that wrote into it would leave one project's artifacts where
+/// another project reads them -- and would dirty this fixture in the repo.
+#[test]
+fn building_an_extension_leaves_the_gem_store_untouched() {
+    if std::process::Command::new("cc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        eprintln!("skipping: this machine has no C compiler");
+        return;
+    }
+    let store =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/gem_store/store");
+    let ext = store.join("gems/nativelib-1.0.0/ext/nativelib");
+    let before: Vec<String> = listing(&ext);
+    let opts = zeo::CompileOptions {
+        gem_paths: vec![store.clone()],
+        lockfile: Some(store.join("Gemfile.lock")),
+        ..Default::default()
+    };
+    zeo::check_program_with("require \"nativelib\"\n", &opts).expect("the extension builds");
+    assert_eq!(
+        listing(&ext),
+        before,
+        "the build wrote into the gem store; it must stage into the cache"
+    );
+}
+
+fn listing(dir: &std::path::Path) -> Vec<String> {
+    let mut out: Vec<String> = std::fs::read_dir(dir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect()
+        })
+        .unwrap_or_default();
+    out.sort();
+    out
 }
 
 /// The lockfile picks the version, not the store.

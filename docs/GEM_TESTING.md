@@ -117,7 +117,9 @@ emit into. Those are different kinds of work.
 | `timeout` | Still running at `--timeout`. No verdict at all. |
 | `out-of-memory` | Hit the ceiling this sweep handed it. A fact about the host. |
 | `invalid-ruby` | Not Ruby any release parses. Zeo parses with prism, CRuby's own parser. |
-| `native-extension` | Needs a compiled half. See [EXTENSIONS.md](EXTENSIONS.md). |
+| `native-extension` | Names its compiled half by path, so no gem's `extensions` says what to build. See [EXTENSIONS.md](EXTENSIONS.md). |
+| `precompiled-extension` | Ships a `.so` built against CRuby's ABI. Install the ruby-platform variant and zeo compiles it from source. |
+| `extension-build-failed` | zeo tried to build the gem's C and the compiler or linker refused; the detail names the gem. |
 | `missing-dependency` | A `require` reached outside the gem and its closure. |
 | `ambiguous-require` | Two gems on the view provide it. A fact about the probe, not the gem. |
 | `no-lib-dir` | A load path that does not exist in the archive. |

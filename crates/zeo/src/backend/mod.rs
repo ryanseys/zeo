@@ -83,7 +83,12 @@ pub fn run_program(
         // JIT is what an ordinary `zeo file.rb` takes.
         CompiledProgram::Aot(compiled) => {
             let bin = std::env::temp_dir().join(format!("zeo-e-{}", std::process::id()));
-            object::object_to_binary(&compiled.object, compiled.debuginfo, &bin)?;
+            object::object_to_binary(
+                &compiled.object,
+                compiled.debuginfo,
+                compiled.loads_cext,
+                &bin,
+            )?;
             let status = std::process::Command::new(&bin)
                 .args(program_args)
                 .status()
@@ -98,8 +103,11 @@ pub fn run_program(
 /// binary at `output` for `compiled`.
 pub fn build_artifact(compiled: &CompiledProgram<'_>, output: &Path) -> Result<(), String> {
     match compiled {
-        CompiledProgram::Aot(compiled) => {
-            object::object_to_binary(&compiled.object, compiled.debuginfo, output)
-        }
+        CompiledProgram::Aot(compiled) => object::object_to_binary(
+            &compiled.object,
+            compiled.debuginfo,
+            compiled.loads_cext,
+            output,
+        ),
     }
 }

@@ -456,6 +456,21 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             fx.call("zeo_rt_feature_loaded", &[bx, eptr, elen, fptr, flen]);
             Ok(Operand::Nil)
         }
+        // A gem's compiled C extension, loaded at its own document position.
+        // `Init_` runs here, so everything the extension defines becomes
+        // answerable from this line and not from line 1.
+        HirNode::CExtLoaded { library, init } => {
+            let (library, init) = (library.clone(), init.clone());
+            let (lptr, llen) = rodata_name(fx, &library);
+            let (iptr, ilen) = rodata_name(fx, &init);
+            let status = fx
+                .call("zeo_rt_cext_load", &[lptr, llen, iptr, ilen])
+                .expect("cext_load returns a status");
+            // A dlopen failure and a raise from inside `Init_` both travel,
+            // which is why this is fallible where `FeatureLoaded` is not.
+            fx.fallible(status);
+            Ok(Operand::Nil)
+        }
         // A `class`/`module` written where a value is READ -- `x = class C;
         // 7; end`, or a `class << self` body ending a method. Ruby's value
         // is the body's last statement, which the site computes.

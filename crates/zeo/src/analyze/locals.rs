@@ -389,6 +389,7 @@ fn track_node(
         | HirNode::LastMatchRef(_)
         | HirNode::Undef(_)
         | HirNode::FeatureLoaded { .. }
+        | HirNode::CExtLoaded { .. }
         | HirNode::ClassMethodUndef(_)
         | HirNode::AliasMethod { .. }
         | HirNode::MethodVisibility { .. }

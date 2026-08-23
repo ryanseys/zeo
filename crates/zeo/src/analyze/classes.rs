@@ -1142,6 +1142,7 @@ fn walk_class_body(
             | HirNode::PreExec(_)
             | HirNode::AliasGlobal(..)
             | HirNode::FeatureLoaded { .. }
+            | HirNode::CExtLoaded { .. }
             | HirNode::LastMatchRef(_)
             | HirNode::Seq(_)
             | HirNode::FlipFlop { .. } => {

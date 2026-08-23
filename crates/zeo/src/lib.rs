@@ -191,6 +191,14 @@ pub struct ObjectOutput {
     /// at, so a `-g` link keeps that object and keeps the symbol table
     /// that names it.
     pub debuginfo: bool,
+    /// Whether the program loads a C extension. The LINK reads this too:
+    /// an extension resolves every `rb_*` against the host at load, so the
+    /// binary has to EXPORT the C API rather than dead-strip it.
+    ///
+    /// A flag rather than always exporting, because the export table is what
+    /// `-dead_strip` prunes against: exporting everything unconditionally
+    /// would keep the whole runtime in every hello-world.
+    pub loads_cext: bool,
 }
 
 /// The Cranelift pipeline: front end, then `clif::emit`.
@@ -318,9 +326,23 @@ fn compile_object_on_this_thread(
 ) -> Result<ObjectOutput, CompileError> {
     let (analyzed, front) = analyze_on_this_thread(source, opts)?;
     let t_emit = std::time::Instant::now();
+    // Does any require in the whole program load a C extension? The arena is
+    // the only place that is written down, and the LINK needs to know: an
+    // extension resolves `rb_*` against the host, so the binary has to export
+    // the C API rather than let `-dead_strip` prune it.
+    let loads_cext = analyzed
+        .compiler
+        .hir
+        .all_nodes()
+        .iter()
+        .any(|n| matches!(n, hir::HirNode::CExtLoaded { .. }));
     let object = clif::emit::compile(&analyzed, debuginfo).map_err(CompileError::codegen)?;
     front.report(t_emit.elapsed(), object.len() as u64, 0);
-    Ok(ObjectOutput { object, debuginfo })
+    Ok(ObjectOutput {
+        object,
+        debuginfo,
+        loads_cext,
+    })
 }
 
 /// `analyze_program` reduced to its verdict: `Ok(())` if zeo accepts this

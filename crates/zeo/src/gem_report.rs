@@ -38,6 +38,11 @@ pub enum SatisfiedBy {
     BundledGem { path: String },
     /// A file found on a `-I` load root (the installed Ruby's own stdlib).
     StdlibRoot { path: String },
+    /// The gem shipped its C as SOURCE and zeo compiled it. `library` is
+    /// the shared object, which the program dlopens at the require's own
+    /// line -- so it has to be there at RUN time too, and naming it is what
+    /// makes that checkable.
+    CompiledExt { library: String },
     /// Recorded but unavailable: a native gem the external store located but
     /// zeo has no ext for, or a library only a method body required.
     Excluded { kind: String, reason: String },
@@ -122,6 +127,10 @@ fn entry_body(r: &GemRecord) -> String {
         SatisfiedBy::StdlibRoot { path } => {
             fields.push("\"by\": \"stdlib-root\"".to_string());
             fields.push(format!("\"path\": {}", json_str(path)));
+        }
+        SatisfiedBy::CompiledExt { library } => {
+            fields.push("\"by\": \"compiled-ext\"".to_string());
+            fields.push(format!("\"library\": {}", json_str(library)));
         }
         SatisfiedBy::Excluded { kind, reason } => {
             fields.push("\"by\": null".to_string());

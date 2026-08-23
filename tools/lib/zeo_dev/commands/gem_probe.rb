@@ -661,11 +661,18 @@ module ZeoDev
         # are different verdicts: a missing dependency is a gem the sweep
         # failed to put on the load path, and re-running with it there changes
         # the answer; a native extension is one zeo cannot compile at all.
+        # zeo compiles a gem's C from SOURCE now, so what is left in this
+        # arm is the two it cannot: a PRECOMPILED extension built against
+        # CRuby's ABI, and a build that failed.
+        return [stage, "precompiled-extension", ""] if msg.include?("PRECOMPILED extension")
+        if (rest = msg.split("building ")[1]) && msg.include?("C extension:")
+          return [stage, "extension-build-failed", rest.split("'").first.to_s.strip]
+        end
         return [stage, "native-extension", ""] if msg.include?("native (C) extension")
-        # The `require_relative "x.so"` spelling of the same verdict: an
-        # UNPROTECTED native require, a gem whose pure-ruby half insists on its
-        # native half. The rescued spelling never errors.
-        return [stage, "native-extension", ""] if msg.include?("native (.so/.bundle) features aren't supported")
+        # The `require_relative "x.so"` spelling: a gem naming its compiled
+        # object by PATH, which names no gem for zeo to build. The rescued
+        # spelling never errors.
+        return [stage, "native-extension", ""] if msg.include?("names no gem to build")
 
         if (rest = msg.split("cannot load such file -- ")[1])
           feature = rest.split(/\s/).first.to_s.delete("`:.")

@@ -35,6 +35,7 @@ use syn::parse::Parser;
 use zeo_dsl::ClassSpec;
 
 fn main() {
+    export_cext_surface();
     let manifest_dir =
         std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR set by cargo");
     let manifest_dir = Path::new(&manifest_dir);
@@ -608,5 +609,35 @@ fn surface_from_spec(spec: &ClassSpec, out: &mut Vec<Surface>) {
     // so `Process::Status` and `Process::Tms` folded blind.
     for nested in &spec.nested {
         surface_from_spec(nested, out);
+    }
+}
+
+/// Publish the C API so a loaded extension can resolve it.
+///
+/// An extension's `.so` leaves every `rb_*` undefined and resolves it against
+/// the host at load. Two things stop that by default, and both need saying
+/// because each fails differently:
+///
+/// * Nothing in `zeo` CALLS `rb_define_module`, so the linker never pulls
+///   that archive member in. `-force_load` takes every member whether it is
+///   referenced or not.
+/// * A Mach-O executable's export table holds only what was asked for.
+///   `-export_dynamic` publishes the rest, which is what `dlsym` reads.
+///
+/// Without the first the symbol is absent; without the second it is present
+/// and invisible. Either way the extension's first call jumps to nothing --
+/// which is a SIGSEGV inside `Init_`, with no diagnostic at all.
+///
+/// CRuby links its own interpreter the same way, for the same reason.
+fn export_cext_surface() {
+    println!("cargo:rustc-link-arg-bins=-Wl,-export_dynamic");
+    if cfg!(target_vendor = "apple") {
+        // `-all_load` rather than `-force_load,<path>`: cargo does not tell a
+        // build script where `libzeo.a` will land, and every other archive on
+        // the line is a Rust dependency whose members were already selected.
+        println!("cargo:rustc-link-arg-bins=-Wl,-all_load");
+    } else {
+        println!("cargo:rustc-link-arg-bins=-Wl,--whole-archive");
+        println!("cargo:rustc-link-arg-bins=-Wl,--no-whole-archive");
     }
 }

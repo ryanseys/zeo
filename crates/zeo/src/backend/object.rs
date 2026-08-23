@@ -12,7 +12,12 @@ use std::path::Path;
 /// file it came from, and lldb (or `dsymutil`) reads the DWARF back out
 /// of that file at the recorded path. A scratch `.o` in the temp dir,
 /// deleted a moment later, is a path to nothing.
-pub fn object_to_binary(object: &[u8], debuginfo: bool, output: &Path) -> Result<(), String> {
+pub fn object_to_binary(
+    object: &[u8],
+    debuginfo: bool,
+    loads_cext: bool,
+    output: &Path,
+) -> Result<(), String> {
     let obj_path = if debuginfo {
         let mut p = output.to_path_buf();
         let name = p
@@ -25,7 +30,7 @@ pub fn object_to_binary(object: &[u8], debuginfo: bool, output: &Path) -> Result
     };
     std::fs::write(&obj_path, object)
         .map_err(|e| format!("writing {}: {e}", obj_path.display()))?;
-    let linked = super::link::link_binary(&obj_path, output, debuginfo);
+    let linked = super::link::link_binary(&obj_path, output, debuginfo, loads_cext);
     if !debuginfo {
         let _ = std::fs::remove_file(&obj_path);
     }

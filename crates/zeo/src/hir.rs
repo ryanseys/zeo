@@ -961,6 +961,7 @@ impl HirNode {
             | HirNode::AliasGlobal(..)
             | HirNode::Undef(..)
             | HirNode::FeatureLoaded { .. }
+            | HirNode::CExtLoaded { .. }
             | HirNode::ClassMethodUndef(..)
             | HirNode::AliasMethod { .. }
             | HirNode::MethodVisibility { .. }
@@ -3198,6 +3199,19 @@ pub enum HirNode {
         entry: String,
         feature: Option<String>,
     },
+    /// A gem's compiled C extension is loaded HERE.
+    ///
+    /// The shared object was built at compile time (`zeo::cext`) and this is
+    /// where its `Init_<init>` runs -- which is positional in exactly the way
+    /// [`HirNode::FeatureLoaded`] is, because everything the extension
+    /// defines becomes answerable from this point and not from line 1.
+    ///
+    /// `library` is an absolute path. A relative one would resolve against
+    /// the working directory, which is the caller's and not the compiler's.
+    CExtLoaded {
+        library: String,
+        init: String,
+    },
     /// `undef foo` / `undef_method :foo` written inside `class << self` -- the
     /// singleton half of [`HirNode::Undef`], which makes those names raise
     /// NoMethodError as CLASS methods of the enclosing class, inherited ones
@@ -3345,6 +3359,7 @@ impl HirNode {
             | HirNode::ClassMethodPrepend(_)
             | HirNode::Refine { .. }
             | HirNode::FeatureLoaded { .. }
+            | HirNode::CExtLoaded { .. }
             | HirNode::Undef(_)
             | HirNode::ClassMethodUndef(_)
             | HirNode::AliasMethod { .. }
@@ -3706,6 +3721,7 @@ impl HirNode {
             | HirNode::Using(_)
             | HirNode::DefHook { .. }
             | HirNode::FeatureLoaded { .. }
+            | HirNode::CExtLoaded { .. }
             | HirNode::MethodRedefine { .. }
             | HirNode::Undef(_)
             | HirNode::ClassMethodUndef(_)

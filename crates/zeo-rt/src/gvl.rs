@@ -465,6 +465,33 @@ pub fn process_gvl() -> &'static Arc<Gvl> {
     PROCESS_GVL.get_or_init(Gvl::from_env)
 }
 
+/// A C extension has loaded: from here the process runs under CRuby's rules.
+///
+/// Two things change, and the second is the one that cannot be skipped.
+///
+/// The Gvl is ARMED, so two Ruby threads no longer run at once -- an
+/// extension's `Init_` may start a thread, and its C code holds Ruby objects
+/// in locals no other thread's view accounts for. This only takes effect when
+/// nothing has read [`process_gvl`] yet: the mode is decided once, on first
+/// access, and the `Arc` cannot be swapped under a thread already holding it.
+/// A program that had already touched it keeps the mode it chose, which is
+/// reported rather than silently ignored.
+///
+/// The sole-thread claim is CLEARED unconditionally. That is the lock-free
+/// fast path over containers, and its premise -- exactly one Ruby thread, and
+/// it is this one -- is exactly what an extension can break without telling
+/// anyone. Clearing it costs a lock per container access and is never wrong.
+///
+/// Answers whether the Gvl actually armed.
+pub fn arm_for_cext() -> bool {
+    clear_sole_thread();
+    MULTI_THREADED.store(true, Ordering::Release);
+    // A `false` here is not a failure: the program asked for the parallel
+    // default and got it, and the fast path -- the part an extension can
+    // actually corrupt -- is off either way. The caller decides what to say.
+    PROCESS_GVL.get_or_init(Gvl::armed).is_armed()
+}
+
 /// Run `f` with the process Gvl released -- the wrapper every potentially
 /// blocking syscall site uses so an armed (`ZEO_GVL=1`) holder can't stall
 /// its siblings behind a read/accept/child-wait. A call-through when the

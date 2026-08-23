@@ -30,6 +30,7 @@ pub mod globals;
 pub mod handles;
 pub mod io;
 pub mod jmp;
+pub mod load;
 pub mod method;
 pub mod misc;
 pub mod numeric;

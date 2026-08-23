@@ -7,7 +7,7 @@
 //! user's program.
 
 use super::{
-    bind, concurrency, dispatch, ffi, forloop, frames, kernel, lifecycle, literals, numeric,
+    bind, cext, concurrency, dispatch, ffi, forloop, frames, kernel, lifecycle, literals, numeric,
     objects, patterns, procs, registry, signals, values,
 };
 
@@ -42,6 +42,7 @@ capi_symbols!(
     bind::zeo_rt_bind_params,
     procs::zeo_rt_binding_new,
     procs::zeo_rt_block_arg_to_proc,
+    cext::zeo_rt_cext_load,
     objects::zeo_rt_box_current,
     objects::zeo_rt_box_handle,
     dispatch::zeo_rt_call_singleton_super_target_args,
