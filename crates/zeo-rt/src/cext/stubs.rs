@@ -22,7 +22,7 @@
 //! safe. The caller passes arguments in registers and on a stack it
 //! cleans up itself, the callee reads none of them, and it never
 //! returns -- so there is no return value to disagree about and no
-//! frame to unwind. Writing 888 correct signatures would
+//! frame to unwind. Writing 876 correct signatures would
 //! buy nothing: not one of these functions runs.
 //!
 //! # The globals
@@ -3079,20 +3079,12 @@ pub extern "C" fn rb_str_buf_append() -> ! {
     unimplemented("rb_str_buf_append")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_str_buf_cat() -> ! {
-    unimplemented("rb_str_buf_cat")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_str_buf_cat2() -> ! {
     unimplemented("rb_str_buf_cat2")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_str_buf_cat_ascii() -> ! {
     unimplemented("rb_str_buf_cat_ascii")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_str_buf_new() -> ! {
-    unimplemented("rb_str_buf_new")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_str_buf_new_cstr() -> ! {
@@ -3103,16 +3095,8 @@ pub extern "C" fn rb_str_capacity() -> ! {
     unimplemented("rb_str_capacity")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_str_cat() -> ! {
-    unimplemented("rb_str_cat")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_str_cat2() -> ! {
     unimplemented("rb_str_cat2")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_str_cat_cstr() -> ! {
-    unimplemented("rb_str_cat_cstr")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_str_catf() -> ! {
@@ -3137,10 +3121,6 @@ pub extern "C" fn rb_str_drop_bytes() -> ! {
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_str_dump() -> ! {
     unimplemented("rb_str_dump")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_str_dup() -> ! {
-    unimplemented("rb_str_dup")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_str_dup_frozen() -> ! {
@@ -3175,10 +3155,6 @@ pub extern "C" fn rb_str_free() -> ! {
     unimplemented("rb_str_free")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_str_freeze() -> ! {
-    unimplemented("rb_str_freeze")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_str_hash() -> ! {
     unimplemented("rb_str_hash")
 }
@@ -3209,14 +3185,6 @@ pub extern "C" fn rb_str_modify() -> ! {
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_str_modify_expand() -> ! {
     unimplemented("rb_str_modify_expand")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_str_new() -> ! {
-    unimplemented("rb_str_new")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_str_new_cstr() -> ! {
-    unimplemented("rb_str_new_cstr")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_str_new_frozen() -> ! {
@@ -3655,24 +3623,8 @@ pub extern "C" fn rb_update_max_fd() -> ! {
     unimplemented("rb_update_max_fd")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_usascii_str_new() -> ! {
-    unimplemented("rb_usascii_str_new")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_usascii_str_new_cstr() -> ! {
-    unimplemented("rb_usascii_str_new_cstr")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_usascii_str_new_static() -> ! {
     unimplemented("rb_usascii_str_new_static")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_utf8_str_new() -> ! {
-    unimplemented("rb_utf8_str_new")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_utf8_str_new_cstr() -> ! {
-    unimplemented("rb_utf8_str_new_cstr")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_utf8_str_new_static() -> ! {

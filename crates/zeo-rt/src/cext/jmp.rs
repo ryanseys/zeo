@@ -208,10 +208,10 @@ impl Drop for SwitchGuard {
 /// one that leaks a `String` across a `longjmp` would come from.
 #[macro_export]
 macro_rules! cext_fn {
-    (
+    ($(
         $(#[$meta:meta])*
         fn $name:ident($($arg:ident : $ty:ty),* $(,)?) -> $ret:ty $body:block
-    ) => {
+    )*) => {$(
         $(#[$meta])*
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn $name($($arg : $ty),*) -> $ret {
@@ -221,7 +221,7 @@ macro_rules! cext_fn {
                 ::std::result::Result::Err(sig) => $crate::cext::jmp::raise(sig),
             }
         }
-    };
+    )*};
 }
 
 #[cfg(test)]

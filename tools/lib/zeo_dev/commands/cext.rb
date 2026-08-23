@@ -138,7 +138,11 @@ module ZeoDev
           # them as done.
           File.basename(f) == "stubs.rs"
         end.flat_map do |f|
-          File.read(f).scan(/#\[unsafe\(no_mangle\)\]\s*(?:pub\s+)?(?:unsafe\s+)?extern "C" fn (\w+)/)
+          # Two spellings reach the same place: a hand-written export, and
+          # the `cext_fn!` macro that wraps a `Result` body into one.
+          src = File.read(f)
+          src.scan(/#\[unsafe\(no_mangle\)\]\s*(?:pub\s+)?(?:unsafe\s+)?extern "C" fn (\w+)/) +
+            src.scan(/^\s*fn (rb_\w+|ruby_\w+)\s*\(/)
         end.flatten.to_set
       end
 
