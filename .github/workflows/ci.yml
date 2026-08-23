@@ -190,9 +190,9 @@ jobs:
           fi
           echo "no tracked file over 1MB"
 
-      # Each vendored gem must still match the commit gems.toml pins, so a
+      # Each vendored gem must still match the commit upstream.rb pins, so a
       # hand-edit to gems/ cannot silently diverge from its upstream source.
-      - run: cargo run -p xtask -- gem sync --check
+      - run: tools/zeo-dev gem sync --check
 
       # The published `zeo` crate carries pregenerated artifacts that its
       # build script would otherwise derive from sibling crates absent from

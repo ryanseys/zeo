@@ -2428,6 +2428,7 @@ dependencies = [
  "libc",
  "miette",
  "object 0.39.1",
+ "serde_json",
  "zeo",
  "zeo-abi",
  "zeo-dsl",

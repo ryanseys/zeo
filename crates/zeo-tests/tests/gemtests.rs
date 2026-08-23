@@ -5,7 +5,7 @@
 //! wall-clock lines stubbed by the driver.
 //!
 //! The test trees come from `cargo xtask gemtests sync`
-//! (`conformance/gemtests.toml` pins them) into gitignored
+//! (`upstream.rb`'s `gemtest` entries pin them) into gitignored
 //! `vendor/gemtests/<gem>/`; when a tree hasn't been fetched the suite skips
 //! rather than failing, so a fresh clone stays green until it opts in.
 //!

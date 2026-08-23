@@ -23,8 +23,10 @@
 require "zeo_dev/cli"
 require "zeo_dev/exec"
 require "zeo_dev/jobs"
+require "zeo_dev/manifest"
 require "zeo_dev/ruby"
 require "zeo_dev/tsv"
+require "zeo_dev/vendor"
 
 module ZeoDev
   ROOT = File.expand_path("../..", __dir__)

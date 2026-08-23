@@ -6,7 +6,7 @@ each compile's `zeo-gems.json`). Three origins -- git-sourced, vendored from
 the oracle's installation, and zeo-authored:
 
 **Git-sourced.** 24 gems are fetched from their own upstream repository by
-`cargo run -p xtask -- gem`, pinned in `gems.toml` by `github`, release `tag`
+`tools/zeo-dev gem`, pinned in `upstream.rb` by `github`, release `tag`
 and a full commit `rev` (the reproducible pin; `bundler` also carries a
 `subdir`). Their versions live in each gem's own gemspec, their licenses in
 each gem's own tree. Currently: `abbrev`, `benchmark`, `bundler`, `csv`,

@@ -30,9 +30,7 @@ mod bench;
 mod bless;
 mod dist;
 mod exec;
-mod gem;
 mod gem_probe;
-mod gemtests;
 mod jobs;
 mod method_census;
 mod stage_publish;
@@ -59,8 +57,6 @@ fn main() -> ExitCode {
         Some("bench") => bench::main(&root, &args),
         Some("bless") => bless::main(&root, &args),
         Some("gem-probe") => gem_probe::main(&root, &args),
-        Some("gem") => gem::main(&root, &args),
-        Some("gemtests") => gemtests::main(&root, &args),
         Some("arity-oracle") => arity_oracle::main(&root, &args),
         Some("method-census") => method_census::main(&root, &args),
         Some("stage-publish") => stage_publish::main(&root, &args),
@@ -68,8 +64,8 @@ fn main() -> ExitCode {
         _ => {
             eprintln!(
                 "usage: cargo run -p xtask -- \
-                 <bench|bless|gem|gem-probe|gemtests|arity-oracle|\
-                 method-census|stage-publish|dist>"
+                 <bench|bless|gem-probe|arity-oracle|method-census|\
+                 stage-publish|dist>"
             );
             ExitCode::FAILURE
         }

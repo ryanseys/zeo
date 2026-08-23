@@ -1,4 +1,4 @@
-# rubygems vendored (`gems.toml`: rubygems/rubygems). Version arithmetic,
+# rubygems vendored (`upstream.rb`: rubygems/rubygems). Version arithmetic,
 # requirement matching and platform parsing are what every gemspec and lockfile
 # is written against, and they are pure computation.
 #

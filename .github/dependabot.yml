@@ -1,6 +1,6 @@
 version: 2
 updates:
-  # Cargo only. The gems in gems/ are pinned by commit in gems.toml and
+  # Cargo only. The gems in gems/ are pinned by commit in upstream.rb and
   # vendored by `cargo xtask gem`; Dependabot would not understand that
   # layout, and `cargo xtask gem outdated` is the tool for those.
   - package-ecosystem: cargo

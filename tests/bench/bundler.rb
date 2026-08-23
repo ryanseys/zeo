@@ -1,5 +1,5 @@
 # bundler vendored -- the same upstream repo as rubygems, reached through
-# `gems.toml`'s `subdir` key.
+# `upstream.rb`'s `subdir` key.
 #
 # What runs here is deliberately small, and the reason is worth stating: every
 # other bundler entry point reaches `bundler/rubygems_ext`, which requires

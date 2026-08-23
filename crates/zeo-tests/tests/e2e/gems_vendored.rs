@@ -18,24 +18,26 @@ fn repo(rel: &str) -> PathBuf {
     Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join(rel)
 }
 
-/// The `[gems.<name>]` block's key/value pairs, in file order.
-fn manifest_block(name: &str) -> Vec<(String, String)> {
-    let text = std::fs::read_to_string(repo("gems.toml")).expect("gems.toml is readable");
-    text.lines()
-        .skip_while(|l| l.trim() != format!("[gems.{name}]"))
-        .skip(1)
-        .take_while(|l| !l.trim().starts_with('['))
-        .filter_map(|l| l.split_once('='))
-        .map(|(k, v)| (k.trim().to_string(), v.trim().trim_matches('"').to_string()))
-        .collect()
+/// One gem's entry in `upstream.lock` -- the DERIVED manifest. `upstream.rb`
+/// is the source, and it is ruby, so nothing outside `tools/` reads it.
+fn manifest_entry(name: &str) -> serde_json::Value {
+    let text = std::fs::read_to_string(repo("upstream.lock")).expect("upstream.lock is readable");
+    let lock: serde_json::Value =
+        serde_json::from_str(&text).expect("upstream.lock is valid JSON");
+    lock["gems"]
+        .as_array()
+        .expect("upstream.lock has a gems array")
+        .iter()
+        .find(|e| e["name"] == name)
+        .unwrap_or_else(|| panic!("upstream.lock has no gem {name}"))
+        .clone()
 }
 
 fn manifest_value(name: &str, key: &str) -> String {
-    manifest_block(name)
-        .into_iter()
-        .find(|(k, _)| k == key)
-        .unwrap_or_else(|| panic!("gems.toml [gems.{name}] has no `{key}`"))
-        .1
+    manifest_entry(name)[key]
+        .as_str()
+        .unwrap_or_else(|| panic!("upstream.lock gem {name} has no `{key}`"))
+        .to_string()
 }
 
 #[test]
@@ -49,9 +51,7 @@ fn both_gems_are_pinned_to_the_one_upstream_repo() {
     // vendors rubygems' `lib/` twice and bundler is simply absent.
     assert_eq!(manifest_value("bundler", "subdir"), "bundler");
     assert!(
-        !manifest_block("rubygems")
-            .iter()
-            .any(|(k, _)| k == "subdir"),
+        manifest_entry("rubygems").get("subdir").is_none(),
         "rubygems is the repo root; a subdir there would vendor the wrong tree"
     );
     for gem in ["rubygems", "bundler"] {

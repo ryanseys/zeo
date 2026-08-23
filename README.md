@@ -214,7 +214,7 @@ For what does not match yet, read
 Zeo ships the gems in [`gems/`](gems) — 65 of them, including `bundler` and
 `rubygems` themselves. A program that requires `csv` gets the copy in this
 repository with no `Gemfile` at all. `gems/UPSTREAM.md` records each gem's
-origin, version and licence; `gems.toml` pins the ones tracked from git.
+origin, version and licence; `upstream.rb` pins the ones tracked from git.
 
 To compile an application against its own locked dependencies:
 
@@ -409,7 +409,7 @@ anywhere; `ZEO_HOME` overrides the search. Building a binary needs a linker
 crates/      the seven workspace crates (above)
 docs/        COMPATIBILITY, EXTENSIONS, EVAL, GEM_TESTING, METHOD_COVERAGE, ROADMAP
 tests/       example goldens, the spinel corpus, the gaps tracker, gemtests drivers
-gems/        65 bundled gems (gems.toml pins the git-tracked ones)
+gems/        65 bundled gems (upstream.rb pins the git-tracked ones)
 bench/       58 benchmark programs; read bench/README.md
 conformance/ what the ruby oracle reports, recorded for the drift tests
 vendor/      rubygems and fetched test trees (gitignored)
