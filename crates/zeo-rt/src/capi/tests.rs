@@ -322,24 +322,28 @@ fn a_compiled_object_allocates_and_slots_roundtrip() {
     let obj = unsafe { obj.assume_init() };
     assert_eq!(unsafe { zeo_rt_class_of(&obj) }, cid);
 
-    // Unassigned slot reads nil; a write lands and reads back.
+    // The HIDDEN member slots come first, so `@a`/`@b` are slots 1 and 2.
+    // A subclass of a compiled struct inherits the member list, and members
+    // laid out last would move the moment the subclass declared an ivar of
+    // its own -- putting `@p` where the ancestor's `initialize` writes the
+    // member.
     let mut out = MaybeUninit::<RubyValue>::uninit();
-    unsafe { zeo_rt_ivar_get_slot(&obj, 0, out.as_mut_ptr()) };
+    unsafe { zeo_rt_ivar_get_slot(&obj, 1, out.as_mut_ptr()) };
     assert!(matches!(unsafe { out.assume_init() }, RubyValue::Nil));
     let mut v = MaybeUninit::new(RubyValue::Int(5));
     assert_eq!(
-        unsafe { zeo_rt_ivar_set_slot(&obj, 1, v.as_mut_ptr()) },
+        unsafe { zeo_rt_ivar_set_slot(&obj, 2, v.as_mut_ptr()) },
         STATUS_OK
     );
     let mut out = MaybeUninit::<RubyValue>::uninit();
-    unsafe { zeo_rt_ivar_get_slot(&obj, 1, out.as_mut_ptr()) };
+    unsafe { zeo_rt_ivar_get_slot(&obj, 2, out.as_mut_ptr()) };
     assert!(matches!(unsafe { out.assume_init() }, RubyValue::Int(5)));
 
     // Reflection reports first-assignment order and skips the hidden slot.
     let RubyValue::Object(o) = &obj else { panic!() };
     let mut h = MaybeUninit::new(RubyValue::Int(9));
     assert_eq!(
-        unsafe { zeo_rt_ivar_set_slot(&obj, 2, h.as_mut_ptr()) },
+        unsafe { zeo_rt_ivar_set_slot(&obj, 0, h.as_mut_ptr()) },
         STATUS_OK
     );
     assert_eq!(
@@ -351,6 +355,7 @@ fn a_compiled_object_allocates_and_slots_roundtrip() {
         "members are not instance variables"
     );
     assert!(matches!(o.hidden_ivar_get(0), Some(RubyValue::Int(9))));
+    assert!(matches!(o.ivar_get_named("b"), Some(RubyValue::Int(5))));
 }
 
 #[test]

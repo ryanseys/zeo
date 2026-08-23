@@ -1,0 +1,11 @@
+["P<ex>", "ex", ["ex"]]
+[:@presenter]
+#<struct Sub example="ex">
+["given", "ex", ["ex"]]
+[1, 2, "m"]
+[1, 2, "changed"]
+[:@a, :@b]
+[10, 20, 30, "m"]
+[:@a, :@b, :@c]
+[:example]
+{example: "z"}

@@ -125,16 +125,25 @@ pub(crate) fn extended_singleton_super(
     })
 }
 
-/// The `IvarCell` slot index of `@name` on `class`: declared ivars first,
-/// then hidden ivars (Struct/Data members) after them.
+/// The `IvarCell` slot index of `@name` on `class`: hidden ivars (Struct/Data
+/// members) FIRST, then declared ivars after them.
+///
+/// Members first is what lets a subclass of a compiled struct share its
+/// ancestor's compiled bodies. The subclass inherits the member list, so
+/// laying the members out after the declared ivars moved them the moment the
+/// subclass declared one of its own -- `class Sub < Struct.new(:example)`
+/// with an `@p` put `@p` at the slot Struct's `initialize` writes.
 pub(crate) fn slot_of(compiler: &Compiler, class: ClassId, name: &str) -> Option<usize> {
     let info = compiler.class(class);
-    info.ivars.iter().position(|iv| iv == name).or_else(|| {
-        info.hidden_ivars
-            .iter()
-            .position(|iv| iv == name)
-            .map(|i| info.ivars.len() + i)
-    })
+    info.hidden_ivars
+        .iter()
+        .position(|iv| iv == name)
+        .or_else(|| {
+            info.ivars
+                .iter()
+                .position(|iv| iv == name)
+                .map(|i| info.hidden_ivars.len() + i)
+        })
 }
 
 /// `K.method(:name)` where every own `def self.name` sits LATER in the

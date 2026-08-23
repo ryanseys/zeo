@@ -429,23 +429,26 @@ impl<V: Store<RubyValue>, Q: Store<Seq>> IvarCellCore<V, Q> {
     }
 
     /// By-NAME access, for a receiver whose concrete class the compiler could
-    /// not know. `names` is the class's declared ivar list, positionally
-    /// matching the slots; a name not in it is an invented ivar.
+    /// not know. `names` is the class's declared ivar list in slot order, and
+    /// `base` is the slot the first of them sits at -- a `Struct`/`Data`
+    /// class's hidden member slots come FIRST, so that a subclass and its
+    /// struct ancestor put a member at the same index. A name not in the list
+    /// is an invented ivar.
     ///
     /// `Some(Nil)` for a declared-but-unassigned slot, `None` only for a name
     /// this object has no storage for at all -- the distinction a probe needs.
-    pub fn get_named(&self, names: &[&str], name: &str) -> Option<RubyValue> {
+    pub fn get_named(&self, base: usize, names: &[&str], name: &str) -> Option<RubyValue> {
         if let Some(index) = names.iter().position(|n| *n == name) {
-            return Some(self.get(index));
+            return Some(self.get(base + index));
         }
         let inner = self.held();
         let at = inner.find(name)?;
         Some(inner.invented.as_ref()?[at].value.clone())
     }
 
-    pub fn set_named(&self, names: &[&str], name: &str, value: RubyValue) {
+    pub fn set_named(&self, base: usize, names: &[&str], name: &str, value: RubyValue) {
         if let Some(index) = names.iter().position(|n| *n == name) {
-            self.set(index, value);
+            self.set(base + index, value);
             return;
         }
         let mut inner = self.held();
@@ -470,9 +473,9 @@ impl<V: Store<RubyValue>, Q: Store<Seq>> IvarCellCore<V, Q> {
         }
     }
 
-    pub fn remove_named(&self, names: &[&str], name: &str) -> Option<RubyValue> {
+    pub fn remove_named(&self, base: usize, names: &[&str], name: &str) -> Option<RubyValue> {
         if let Some(index) = names.iter().position(|n| *n == name) {
-            return self.take(index);
+            return self.take(base + index);
         }
         let mut inner = self.held();
         let at = inner.find(name)?;
@@ -485,11 +488,12 @@ impl<V: Store<RubyValue>, Q: Store<Seq>> IvarCellCore<V, Q> {
     /// Every ASSIGNED ivar as `("@name", value)`, in first-assignment order --
     /// what `instance_variables` and the default `Object#inspect` report, and
     /// what CRuby reports.
-    pub fn pairs(&self, names: &[&str]) -> Vec<(String, RubyValue)> {
+    pub fn pairs(&self, base: usize, names: &[&str]) -> Vec<(String, RubyValue)> {
         let inner = self.held();
         let mut out: Vec<(Seq, String, RubyValue)> = names
             .iter()
             .enumerate()
+            .map(|(i, n)| (base + i, n))
             .filter(|(i, _)| inner.seq.as_ref()[*i] != 0)
             .map(|(i, n)| {
                 (
@@ -516,9 +520,9 @@ impl<V: Store<RubyValue>, Q: Store<Seq>> IvarCellCore<V, Q> {
     /// anything past it is a `Struct`/`Data` member, which Ruby does not count
     /// as one. [`Self::pairs`] gets the same bound for free from the length of
     /// the name list it walks.
-    pub fn values(&self, declared: usize) -> Vec<RubyValue> {
+    pub fn values(&self, base: usize, declared: usize) -> Vec<RubyValue> {
         let inner = self.held();
-        let mut out: Vec<(Seq, RubyValue)> = (0..declared)
+        let mut out: Vec<(Seq, RubyValue)> = (base..base + declared)
             .filter(|i| inner.seq.as_ref()[*i] != 0)
             .map(|i| (inner.seq.as_ref()[i], inner.vals.as_ref()[i].clone()))
             .collect();
@@ -644,7 +648,7 @@ mod tests {
     }
 
     fn names_of(cell: &IvarCell<3>) -> Vec<String> {
-        cell.pairs(NAMES).into_iter().map(|(n, _)| n).collect()
+        cell.pairs(0, NAMES).into_iter().map(|(n, _)| n).collect()
     }
 
     #[test]
@@ -691,17 +695,17 @@ mod tests {
     #[test]
     fn invented_ivars_interleave_by_assignment_order() {
         let cell = IvarCell::<3>::new();
-        cell.set_named(NAMES, "z", RubyValue::Int(26));
+        cell.set_named(0, NAMES, "z", RubyValue::Int(26));
         cell.set(1, RubyValue::Int(2));
-        cell.set_named(NAMES, "y", RubyValue::Int(25));
+        cell.set_named(0, NAMES, "y", RubyValue::Int(25));
         assert_eq!(names_of(&cell), vec!["@z", "@b", "@y"]);
         assert_eq!(
-            int(&cell.get_named(NAMES, "z").unwrap()),
+            int(&cell.get_named(0, NAMES, "z").unwrap()),
             Some(26),
             "an invented name reads back"
         );
         // A declared name routes to its slot, not the invented list.
-        cell.set_named(NAMES, "a", RubyValue::Int(1));
+        cell.set_named(0, NAMES, "a", RubyValue::Int(1));
         assert_eq!(int(&cell.get(0)), Some(1));
         assert_eq!(names_of(&cell), vec!["@z", "@b", "@y", "@a"]);
     }
@@ -709,19 +713,19 @@ mod tests {
     #[test]
     fn removing_an_invented_ivar_takes_its_name_with_it() {
         let cell = IvarCell::<3>::new();
-        cell.set_named(NAMES, "z", RubyValue::Int(26));
-        assert_eq!(int(&cell.remove_named(NAMES, "z").unwrap()), Some(26));
-        assert!(cell.remove_named(NAMES, "z").is_none());
-        assert!(cell.get_named(NAMES, "z").is_none());
+        cell.set_named(0, NAMES, "z", RubyValue::Int(26));
+        assert_eq!(int(&cell.remove_named(0, NAMES, "z").unwrap()), Some(26));
+        assert!(cell.remove_named(0, NAMES, "z").is_none());
+        assert!(cell.get_named(0, NAMES, "z").is_none());
         // A DECLARED name never answers `None`, assigned or not.
-        assert!(cell.get_named(NAMES, "a").is_some());
+        assert!(cell.get_named(0, NAMES, "a").is_some());
     }
 
     #[test]
     fn duplicate_copies_values_and_order_but_not_identity() {
         let cell = IvarCell::<3>::new();
         cell.set(2, RubyValue::Int(3));
-        cell.set_named(NAMES, "z", RubyValue::Int(26));
+        cell.set_named(0, NAMES, "z", RubyValue::Int(26));
         let copy = cell.duplicate();
         assert_eq!(names_of(&copy), vec!["@c", "@z"]);
         copy.set(0, RubyValue::Int(1));
@@ -736,8 +740,8 @@ mod tests {
         cell.set(1, RubyValue::Int(2));
         cell.set(0, RubyValue::Int(1));
         for i in 0..300 {
-            cell.set_named(NAMES, &format!("inv{i}"), RubyValue::Int(i));
-            cell.remove_named(NAMES, &format!("inv{i}"));
+            cell.set_named(0, NAMES, &format!("inv{i}"), RubyValue::Int(i));
+            cell.remove_named(0, NAMES, &format!("inv{i}"));
         }
         assert_eq!(names_of(&cell), vec!["@b", "@a"]);
         cell.set(2, RubyValue::Int(3));
@@ -772,8 +776,8 @@ mod tests {
         cell.set(0, RubyValue::Int(9));
         assert_eq!(int(&cell.get(0)), Some(9));
         // The by-name paths still lock, and must see the same storage.
-        assert_eq!(int(&cell.get_named(NAMES, "a").unwrap()), Some(9));
-        cell.set_named(NAMES, "z", RubyValue::Int(26));
+        assert_eq!(int(&cell.get_named(0, NAMES, "a").unwrap()), Some(9));
+        cell.set_named(0, NAMES, "z", RubyValue::Int(26));
         assert_eq!(names_of(&cell), vec!["@a", "@c", "@z"]);
         assert_eq!(int(&cell.take(0).unwrap()), Some(9));
     }
@@ -810,7 +814,7 @@ mod tests {
         let cell = IvarCell::<3>::new();
         cell.set(2, RubyValue::Int(3));
         cell.set(0, RubyValue::Int(1));
-        let vals: Vec<Option<i64>> = cell.values(3).iter().map(int).collect();
+        let vals: Vec<Option<i64>> = cell.values(0, 3).iter().map(int).collect();
         assert_eq!(vals, vec![Some(3), Some(1)]);
     }
 }

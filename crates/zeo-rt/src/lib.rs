@@ -394,9 +394,10 @@ macro_rules! ruby_class {
             /// generated reads and writes carry the index.
             pub const __IVAR_NAMES: &'static [&'static str] = &[$(stringify!($ivar)),*];
 
-            /// Where the hidden slots start -- the count of real ivars. A
-            /// `Struct` member's own index is relative to this.
-            pub const __HIDDEN_BASE: usize = Self::__IVAR_NAMES.len();
+            /// Where the NAMED slots start -- the hidden `Struct`/`Data`
+            /// members come first, so a subclass and its struct ancestor put
+            /// a member at the same index (see `ClassLayout::hidden`).
+            pub const __IVAR_BASE: usize = Self::__HIDDEN_COUNT;
 
             /// How many `Struct`/`Data` members this class declares; `0` for
             /// every ordinary class.
@@ -494,14 +495,14 @@ macro_rules! ruby_class {
             // Only ASSIGNED ivars, here and in `ivar_pairs`: a declared slot
             // nothing ever wrote does not exist as far as Ruby is concerned.
             fn ivar_values(&self) -> Vec<$crate::RubyValue> {
-                self.__ivars.values(Self::__HIDDEN_BASE)
+                self.__ivars.values(Self::__IVAR_BASE, Self::__IVAR_NAMES.len())
             }
             // Field-declaration order, `@`-prefixed to match Ruby's ivar
             // names -- the field idents ARE the names minus the `@` (see
             // `ivar_get_named`'s `stringify!` note), so no extra list to keep
             // in sync.
             fn ivar_pairs(&self) -> Vec<(String, $crate::RubyValue)> {
-                self.__ivars.pairs(Self::__IVAR_NAMES)
+                self.__ivars.pairs(Self::__IVAR_BASE, Self::__IVAR_NAMES)
             }
             // By-NAME ivar access, for receivers whose concrete class codegen
             // couldn't know statically (`instance_exec`'s rebound self). The
@@ -510,10 +511,10 @@ macro_rules! ruby_class {
             // to keep in sync. See the trait's docs for the invented-ivar
             // TODO.
             fn ivar_get_named(&self, name: &str) -> Option<$crate::RubyValue> {
-                self.__ivars.get_named(Self::__IVAR_NAMES, name)
+                self.__ivars.get_named(Self::__IVAR_BASE, Self::__IVAR_NAMES, name)
             }
             fn ivar_set_named(&self, name: &str, v: $crate::RubyValue) -> bool {
-                self.__ivars.set_named(Self::__IVAR_NAMES, name, v);
+                self.__ivars.set_named(Self::__IVAR_BASE, Self::__IVAR_NAMES, name, v);
                 true
             }
             // `Kernel#remove_instance_variable` -- empties the slot and returns
@@ -521,17 +522,17 @@ macro_rules! ruby_class {
             // caller raises `NameError`), which is now a real distinction
             // rather than the approximation the old always-present slot forced.
             fn ivar_remove_named(&self, name: &str) -> Option<$crate::RubyValue> {
-                self.__ivars.remove_named(Self::__IVAR_NAMES, name)
+                self.__ivars.remove_named(Self::__IVAR_BASE, Self::__IVAR_NAMES, name)
             }
             // A `Struct`/`Data` MEMBER by position -- see the trait method's
             // docs. Offset past the real ivars, which is what keeps a member
             // out of every by-name path while costing it nothing to reach.
             fn hidden_ivar_get(&self, i: usize) -> Option<$crate::RubyValue> {
-                (i < Self::__HIDDEN_COUNT).then(|| self.__ivars.get(Self::__HIDDEN_BASE + i))
+                (i < Self::__HIDDEN_COUNT).then(|| self.__ivars.get(i))
             }
             fn hidden_ivar_set(&self, i: usize, v: $crate::RubyValue) -> bool {
                 let ok = i < Self::__HIDDEN_COUNT;
-                if ok { self.__ivars.set(Self::__HIDDEN_BASE + i, v); }
+                if ok { self.__ivars.set(i, v); }
                 ok
             }
             // By-SLOT ivar access, for a body shared across a hierarchy: the
@@ -542,14 +543,14 @@ macro_rules! ruby_class {
             // `Struct` and a subclass of it agree on where a member lives even
             // though one calls it a member and the other an ivar.
             fn ivar_slot_get(&self, slot: usize) -> $crate::RubyValue {
-                if slot < Self::__HIDDEN_BASE + Self::__HIDDEN_COUNT {
+                if slot < Self::__IVAR_BASE + Self::__IVAR_NAMES.len() {
                     self.__ivars.get(slot)
                 } else {
                     $crate::RubyValue::Nil
                 }
             }
             fn ivar_slot_set(&self, slot: usize, value: $crate::RubyValue) {
-                if slot < Self::__HIDDEN_BASE + Self::__HIDDEN_COUNT {
+                if slot < Self::__IVAR_BASE + Self::__IVAR_NAMES.len() {
                     self.__ivars.set(slot, value);
                 }
             }

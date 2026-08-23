@@ -19,14 +19,22 @@ use zeo_abi::ClassId;
 /// object holds a plain reference, never a count.
 pub struct ClassLayout {
     /// Declared ivar names WITHOUT the `@`, in slot order (the compiler's
-    /// parent-first slot layout).
+    /// parent-first slot layout). They start at slot [`hidden`].
     pub names: &'static [&'static str],
-    /// How many hidden `Struct`/`Data` member slots follow the named ones.
+    /// How many hidden `Struct`/`Data` member slots come FIRST, before the
+    /// named ones.
+    ///
+    /// First, not last, and that is the whole point: a subclass of a compiled
+    /// struct inherits the member list, and putting the members after the
+    /// named ivars moved them whenever the subclass declared one of its own.
+    /// `Sub < Struct.new(:example)` with an `@p` then had `@p` where its
+    /// ancestor's compiled `initialize` writes the member, so `super` wrote
+    /// the member's value into `@p` and the member read back nil.
     pub hidden: usize,
 }
 
 impl ClassLayout {
-    /// Total slot count: named ivars then hidden members.
+    /// Total slot count: hidden members then named ivars.
     fn slots(&self) -> usize {
         self.names.len() + self.hidden
     }
@@ -118,35 +126,39 @@ impl RubyObject for CompiledObject {
     }
 
     fn ivar_values(&self) -> Vec<RubyValue> {
-        self.ivars.values(self.layout.names.len())
+        self.ivars
+            .values(self.layout.hidden, self.layout.names.len())
     }
 
     fn ivar_pairs(&self) -> Vec<(String, RubyValue)> {
-        self.ivars.pairs(self.layout.names)
+        self.ivars.pairs(self.layout.hidden, self.layout.names)
     }
 
     fn ivar_get_named(&self, name: &str) -> Option<RubyValue> {
-        self.ivars.get_named(self.layout.names, name)
+        self.ivars
+            .get_named(self.layout.hidden, self.layout.names, name)
     }
 
     fn ivar_set_named(&self, name: &str, v: RubyValue) -> bool {
-        self.ivars.set_named(self.layout.names, name, v);
+        self.ivars
+            .set_named(self.layout.hidden, self.layout.names, name, v);
         true
     }
 
     fn ivar_remove_named(&self, name: &str) -> Option<RubyValue> {
-        self.ivars.remove_named(self.layout.names, name)
+        self.ivars
+            .remove_named(self.layout.hidden, self.layout.names, name)
     }
 
     fn hidden_ivar_get(&self, i: usize) -> Option<RubyValue> {
-        (i < self.layout.hidden).then(|| self.ivars.get(self.layout.names.len() + i))
+        (i < self.layout.hidden).then(|| self.ivars.get(i))
     }
 
     fn hidden_ivar_set(&self, i: usize, v: RubyValue) -> bool {
         if i >= self.layout.hidden {
             return false;
         }
-        self.ivars.set(self.layout.names.len() + i, v);
+        self.ivars.set(i, v);
         true
     }
 

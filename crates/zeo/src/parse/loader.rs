@@ -2845,6 +2845,28 @@ struct Autoload<'a> {
     scope: Vec<String>,
 }
 
+/// Enters a `class`/`module` header's lexical path and answers the path to
+/// restore on the way out. `None` for a header this pass cannot read, whose
+/// body it therefore does not walk -- an autoload keyed to the wrong owner
+/// gates the wrong constant, and a missing key only leaves the runtime row.
+///
+/// The COMPACT form is why this is not one `push`: `module RSpec::Core::
+/// Formatters` contributes three segments, and prism's `name` on that node
+/// is the last one alone. rspec-core writes exactly that, and keying its nine
+/// formatter autoloads under `Formatters::` meant no constant read ever
+/// matched -- so `RSpec::Core::Formatters::ProgressFormatter` resolved to a
+/// class whose body had never run, and nothing registered it as a formatter.
+/// An absolute `::A::B` replaces the path rather than extending it.
+fn enter_cref(path: &ruby_prism::Node<'_>, scope: &mut Vec<String>) -> Option<Vec<String>> {
+    let name = crate::lower::consts::constant_path_name(path).ok()?;
+    let saved = scope.clone();
+    match name.strip_prefix("::") {
+        Some(absolute) => *scope = absolute.split("::").map(str::to_string).collect(),
+        None => scope.extend(name.split("::").map(str::to_string)),
+    }
+    Some(saved)
+}
+
 fn collect_autoloads_in<'a>(
     node: &ruby_prism::Node<'a>,
     scope: &mut Vec<String>,
@@ -2855,16 +2877,18 @@ fn collect_autoloads_in<'a>(
             collect_autoloads_in(&n, scope, out);
         }
     } else if let Some(m) = node.as_module_node() {
-        if let Some(body) = m.body() {
-            scope.push(String::from_utf8_lossy(m.name().as_slice()).into_owned());
+        if let Some(body) = m.body()
+            && let Some(saved) = enter_cref(&m.constant_path(), scope)
+        {
             collect_autoloads_in(&body, scope, out);
-            scope.pop();
+            *scope = saved;
         }
     } else if let Some(c) = node.as_class_node() {
-        if let Some(body) = c.body() {
-            scope.push(String::from_utf8_lossy(c.name().as_slice()).into_owned());
+        if let Some(body) = c.body()
+            && let Some(saved) = enter_cref(&c.constant_path(), scope)
+        {
             collect_autoloads_in(&body, scope, out);
-            scope.pop();
+            *scope = saved;
         }
     } else if let Some(sc) = node.as_singleton_class_node() {
         if let Some(body) = sc.body() {
