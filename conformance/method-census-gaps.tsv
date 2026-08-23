@@ -1,4 +1,0 @@
-# Coverage gaps against ruby 4.0.6, gated by crates/zeo/tests/method_census.rs.
-# Columns: tag <TAB> module <TAB> kind <TAB> name.
-# Regenerate with `cargo xtask bless method_coverage_only_shrinks`.
-# This file may only SHRINK -- a new gap fails the test, a closed one must be deleted.
