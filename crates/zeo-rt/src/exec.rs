@@ -100,6 +100,7 @@ where
         .stack_size(64 * 1024 * 1024)
         .spawn(move || {
             crate::gvl::mark_sole_thread();
+            crate::thread::claim_main_os_thread();
             let _ctx = crate::gvl::install_ctx();
             let _held = crate::gvl::process_gvl().hold();
             let result = body();

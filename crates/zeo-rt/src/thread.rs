@@ -255,6 +255,28 @@ fn main_thread() -> RThread {
 
 std::thread_local!(static CURRENT: PlMutex<Option<RThread>> = const { PlMutex::new(None) });
 
+/// The [`execution_id`] of the OS thread running the program's toplevel. Zero
+/// until a program starts, which is never in a unit test -- see
+/// [`is_ruby_thread`]. `execution_id` counts from 1, so zero is unambiguous.
+static MAIN_EXECUTION: AtomicU64 = AtomicU64::new(0);
+
+/// Marks this OS thread as the one the toplevel runs on. Called once, from the
+/// `ruby-main` spawn that both backends enter through.
+pub fn claim_main_os_thread() {
+    MAIN_EXECUTION.store(execution_id(), Ordering::Relaxed);
+}
+
+/// Whether the current OS thread is a Ruby thread: a `Thread.new` body, or the
+/// one running the toplevel.
+///
+/// A bare OS thread the runtime spawned for its own purposes is NOT one, and
+/// the difference matters to deadlock detection -- such a thread can push to a
+/// Queue that a Ruby thread is parked on, so counting its wait against the
+/// Ruby thread total reports a deadlock that a live producer is about to end.
+pub fn is_ruby_thread() -> bool {
+    CURRENT.with(|c| c.lock().is_some()) || execution_id() == MAIN_EXECUTION.load(Ordering::Relaxed)
+}
+
 /// One fiber's `Thread#[]` storage -- shared by handle so the root fiber's
 /// map IS the thread's [`ThreadData::locals`] field.
 pub type FiberLocals = Arc<PlMutex<HashMap<Symbol, RubyValue>>>;

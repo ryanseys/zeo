@@ -524,28 +524,37 @@ pub fn current_ctx() -> Option<Arc<ThreadCtx>> {
 /// thread between two waits is briefly absent from the count without being
 /// runnable in any useful sense, and one poll would call that a deadlock.
 pub mod deadlock {
-    use super::{AtomicU32, Ordering, process_gvl};
+    use super::{AtomicU32, Ordering};
 
     /// Threads parked in a wait only another Ruby thread can end.
     static BLOCKED: AtomicU32 = AtomicU32::new(0);
     /// How many consecutive polls have seen every thread blocked.
     static STREAK: AtomicU32 = AtomicU32::new(0);
 
-    /// Registers a blocking wait for as long as it lives.
-    pub struct Waiting;
+    /// Registers a blocking wait for as long as it lives. A wait on a thread
+    /// ruby does not know about registers nothing -- see
+    /// [`crate::thread::is_ruby_thread`].
+    pub struct Waiting {
+        counted: bool,
+    }
 
     impl Waiting {
         /// Enter a wait only another Ruby thread can end.
         #[must_use]
         pub fn enter() -> Waiting {
-            BLOCKED.fetch_add(1, Ordering::SeqCst);
-            Waiting
+            let counted = crate::thread::is_ruby_thread();
+            if counted {
+                BLOCKED.fetch_add(1, Ordering::SeqCst);
+            }
+            Waiting { counted }
         }
     }
 
     impl Drop for Waiting {
         fn drop(&mut self) {
-            BLOCKED.fetch_sub(1, Ordering::SeqCst);
+            if self.counted {
+                BLOCKED.fetch_sub(1, Ordering::SeqCst);
+            }
             STREAK.store(0, Ordering::SeqCst);
         }
     }
@@ -560,6 +569,9 @@ pub mod deadlock {
     /// that count declares a deadlock while the thread about to push is still
     /// running. minitest's parallel executor does exactly that on every run.
     pub fn no_progress_possible() -> bool {
+        if !crate::thread::is_ruby_thread() {
+            return false;
+        }
         let live = crate::thread::live_thread_count().max(1) as u32;
         if BLOCKED.load(Ordering::SeqCst) < live {
             STREAK.store(0, Ordering::SeqCst);
