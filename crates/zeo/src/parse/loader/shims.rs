@@ -13,6 +13,12 @@ pub(super) fn synthetic_shim_source(feature: &str) -> Option<&'static str> {
         // Rendered by build.rs from shims/rbconfig.rb.in with the build
         // target's platform facts (arch, darwin major, dlext, ...).
         "rbconfig" => Some(include_str!(concat!(env!("OUT_DIR"), "/rbconfig.rb"))),
+        // `lib/mkmf.rb`, vendored VERBATIM from the same `ruby/ruby` pin the
+        // C API headers ride (`crates/zeo-rt/cext/`). An `extconf.rb` runs
+        // under zeo and writes a real Makefile, so mkmf is Ruby zeo RUNS
+        // rather than a thing it reimplements -- 3,061 lines of probing and
+        // Makefile generation that no summary of would stay true.
+        "mkmf" => Some(include_str!("../../../tools-lib/mkmf.rb")),
         "securerandom" => Some(include_str!("../shims/securerandom.rb")),
         "gem-securerandom" => Some(include_str!("../shims/gem_securerandom.rb")),
         // CRuby's C `erb/escape` extension -- defined as a pure-Ruby shim over

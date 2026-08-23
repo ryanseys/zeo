@@ -70,6 +70,8 @@ module ZeoDev
 
       def patches = Dir.glob(File.join(patch_dir, "*.patch")).sort
 
+      MKMF_RB = "crates/zeo/tools-lib/mkmf.rb"
+
       # Upstream's `include/` at the pinned rev, with the patch series applied
       # on top, materialized in a scratch directory.
       def build_expected(dest)
@@ -509,16 +511,32 @@ module ZeoDev
           if opts[:check]
             return report_drift(want) unless Vendor.dirs_equal?(want, include_dir)
 
+            unless File.read(File.join(ROOT, MKMF_RB)) == upstream_mkmf
+              warn "cext: #{MKMF_RB} is not upstream #{entry.tag}'s lib/mkmf.rb"
+              return 1
+            end
             puts "cext: #{Vendor.list_files(want).size} headers match upstream " \
-                 "#{entry.tag} + #{patches.size} patch(es)"
+                 "#{entry.tag} + #{patches.size} patch(es), and mkmf.rb matches"
             return 0
           end
           FileUtils.rm_rf(include_dir)
           Vendor.copy_tree(want, include_dir)
+          sync_mkmf
           puts "cext: vendored #{Vendor.list_files(include_dir).size} headers from " \
                "#{entry.url} @ #{entry.tag} + #{patches.size} patch(es)"
         end
         0
+      end
+
+      # `lib/mkmf.rb` is vendored VERBATIM: it is 3,061 lines of Ruby that zeo
+      # runs rather than reimplements, and a local edit to it would be a
+      # divergence nobody could see. It rides the same pin as the headers.
+      def upstream_mkmf
+        File.read(File.join(Vendor.fetch_checkout(entry, entry.rev), "lib", "mkmf.rb"))
+      end
+
+      def sync_mkmf
+        File.write(File.join(ROOT, MKMF_RB), upstream_mkmf)
       end
 
       # Name every file that differs, not just the count: a header tree is too

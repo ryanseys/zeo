@@ -16,6 +16,11 @@ module RbConfig
   prefix = "/usr/local"
   arch = "@RUBY_PLATFORM@"
 
+  # Where `crates/zeo-rt/cext/` landed. `zeo` exports these before it runs an
+  # `extconf.rb`; the fallbacks are the dev tree.
+  hdrdir = ENV["ZEO_CEXT_HDRDIR"] || "@CEXT_HDRDIR@"
+  archhdrdir = ENV["ZEO_CEXT_ARCHHDRDIR"] || "@CEXT_ARCHHDRDIR@"
+
   CONFIG = {
     "MAJOR" => "4",
     "MINOR" => "0",
@@ -71,26 +76,99 @@ module RbConfig
     # Feature flags rubygems consults.
     "ENABLE_SHARED" => "yes",
     "host_os_version" => "@OS_VERSION@",
-    "CC" => "cc",
-    "CXX" => "c++",
+    "CC" => ENV["CC"] || "cc",
+    "CXX" => ENV["CXX"] || "c++",
+    "LD" => ENV["LD"] || "ld",
+    "AR" => "ar",
     "LDSHARED" => "@LDSHARED@",
     "DLDFLAGS" => "",
     "configure_args" => "",
-  }.freeze
 
+    # --- The keys `mkmf` reads. -------------------------------------------
+    #
+    # zeo has no build tree, so the header directories are where the INSTALL
+    # put `crates/zeo-rt/cext/`. That is a run-time fact, not a compile-time
+    # one, so `zeo` exports it before it runs an `extconf.rb`; the fallback is
+    # the dev tree, which is where it is during development.
+    "topdir" => hdrdir,
+    "hdrdir" => hdrdir,
+    "rubyhdrdir" => hdrdir,
+    "rubyarchhdrdir" => archhdrdir,
+    "srcdir" => ".",
+    "build_os" => "@HOST_OS@",
+    "GCC" => "yes",
+    "CC_WRAPPER" => "",
+    "CCDLFLAGS" => "-fPIC",
+    "CSRCFLAG" => "",
+    "COUTFLAG" => "-o ",
+    "OUTFLAG" => "-o ",
+    "CPPOUTFILE" => "-o conftest.i",
+    "PATH_SEPARATOR" => ":",
+    "NULLCMD" => ":",
+    "MKMF_VERBOSE" => "0",
+    "DEFS" => "",
+    "DLDLIBS" => "",
+    "EXTDLDFLAGS" => "",
+    "LIBRUBY" => "",
+    "LIBRUBY_A" => "",
+    "LIBRUBYARG" => "",
+    "LIBRUBYARG_SHARED" => "",
+    "LIBRUBYARG_STATIC" => "",
+    "LIBS" => "-lm -lpthread",
+    "SOLIBS" => "",
+    "cflags" => "$(optflags) $(debugflags) $(warnflags)",
+    "cxxflags" => "$(optflags) $(debugflags) $(warnflags)",
+    "cppflags" => "",
+    "optflags" => "-O2",
+    "debugflags" => "-g",
+    "warnflags" => "-Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers",
+    "CFLAGS" => "$(cflags) -fPIC",
+    "CXXFLAGS" => "$(cxxflags) -fPIC",
+    "CPPFLAGS" => "$(DEFS) $(cppflags)",
+    "LDFLAGS" => "",
+    "ARCH_FLAG" => "",
+    "STRIP" => "strip -A -n",
+    "TRY_LINK" => "",
+    "COMMON_HEADERS" => "",
+    "COMMON_MACROS" => "",
+    "COMMON_LIBS" => "",
+    "RUBY_PROGRAM_VERSION" => ruby_version,
+    "UNIVERSAL_ARCHNAMES" => "",
+    "universal" => "",
+  }
+
+  # `MAKEFILE_CONFIG`'s values keep their `$(var)` references: mkmf writes
+  # them into the Makefile verbatim, and `make` is what expands them. `CONFIG`
+  # is the same table with every reference already resolved, which is what
+  # `expand` below does.
   MAKEFILE_CONFIG = CONFIG.dup
-  TOPDIR = CONFIG["prefix"]
+  TOPDIR = CONFIG["topdir"]
 
   # `RbConfig.ruby` -- the full path to the running interpreter.
   def self.ruby
     File.join(CONFIG["bindir"], CONFIG["ruby_install_name"] + CONFIG["EXEEXT"])
   end
 
-  # `RbConfig.expand` normally substitutes `$(var)` references; every value here
-  # is already fully expanded, so this is an identity pass.
-  def self.expand(val, _config = CONFIG)
-    val
+  # Substitute `$(var)` and `$$` references, as real rbconfig does. mkmf
+  # depends on this: `CFLAGS` is `$(cflags) -fPIC` and `cflags` is three more
+  # references, and an unexpanded one reaches the compiler as a literal.
+  #
+  # A reference to a key that is not here expands to the empty string, which
+  # is what real rbconfig does for an unset one.
+  def self.expand(val, config = CONFIG)
+    return val unless val.is_a?(String)
+
+    10.times do
+      before = val
+      val = val.gsub(/\$\((\w+)\)/) { config[Regexp.last_match(1)] || "" }
+      break if val == before
+    end
+    val.gsub("$$", "$")
   end
 end
 
+# Resolve every `$(var)` in `CONFIG` itself. `MAKEFILE_CONFIG` keeps them.
+RbConfig::CONFIG.each_key do |k|
+  RbConfig::CONFIG[k] = RbConfig.expand(RbConfig::CONFIG[k], RbConfig::CONFIG)
+end
 RbConfig::CONFIG.freeze
