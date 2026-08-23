@@ -451,8 +451,10 @@ pub(crate) fn qualified_const_mints_runtime_class(hir: &Hir, name: &str) -> bool
 /// `"IMPL"` and the path `Collection::IMPL` never matched it. concurrent-ruby
 /// writes exactly that pair --
 ///
-///     MapImplementation = case ... MriMapBackend ... end
-///     class Map < Collection::MapImplementation
+/// ```text
+/// MapImplementation = case ... MriMapBackend ... end
+/// class Map < Collection::MapImplementation
+/// ```
 ///
 /// -- so `Map` was judged to have a compile-time superclass, went down the
 /// static path, and was DROPPED when nothing there could resolve the name.

@@ -263,9 +263,11 @@ ruby_class! {
 /// `Proc#inspect`/`#to_s` -- what tells two procs apart: the identity, where
 /// it was written, and whether it is a lambda.
 ///
-///     #<Proc:0x00000001234 file.rb:3>
-///     #<Proc:0x00000001234 file.rb:4 (lambda)>
-///     #<Proc:0x00000001234 (lambda)>        -- a runtime-internal proc
+/// ```text
+/// #<Proc:0x00000001234 file.rb:3>
+/// #<Proc:0x00000001234 file.rb:4 (lambda)>
+/// #<Proc:0x00000001234 (lambda)>        -- a runtime-internal proc
+/// ```
 ///
 /// A proc with no recorded location is CRuby's C-level Proc, which prints
 /// the identity alone. A `Symbol#to_proc` carries its symbol and renders as

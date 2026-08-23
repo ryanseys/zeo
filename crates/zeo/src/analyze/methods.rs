@@ -300,14 +300,16 @@ fn defer_runtime_mixin(compiler: &mut Compiler, stmt: NodeId) -> NodeId {
 /// table right here, which is only sound when that table is complete. i18n
 /// writes its delegators as a string eval in a loop:
 ///
-///     %w(locale backend default_locale ...).each do |method|
-///       module_eval <<-DELEGATORS
-///         def #{method} ... end
-///         def #{method}= ... end
-///       DELEGATORS
-///     end
-///     ...
-///     extend Base
+/// ```text
+/// %w(locale backend default_locale ...).each do |method|
+///   module_eval <<-DELEGATORS
+///     def #{method} ... end
+///     def #{method}= ... end
+///   DELEGATORS
+/// end
+/// ...
+/// extend Base
+/// ```
 ///
 /// The literal `def`s in `Base` reached `I18n`; the eight delegator pairs did
 /// not, so `I18n.backend = ...` was a NoMethodError while `I18n.translate`

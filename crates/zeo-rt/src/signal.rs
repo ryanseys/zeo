@@ -42,7 +42,9 @@ pub enum Signal {
     /// `Signal` -- and so of `Result<RubyValue, Signal>`, the return type of
     /// EVERY ruby method call in every generated program:
     ///
-    ///     size_of::<Result<RubyValue, Signal>>()   48 -> 32
+    /// ```text
+    /// size_of::<Result<RubyValue, Signal>>()   48 -> 32
+    /// ```
     ///
     /// The allocation lands on `throw`, which is rare control flow already
     /// unwinding through arbitrary frames, instead of on every return.
