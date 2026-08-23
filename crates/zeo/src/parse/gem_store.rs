@@ -58,6 +58,52 @@ pub(super) struct NativeExt {
     pub extconfs: Vec<String>,
 }
 
+impl NativeExt {
+    /// Does this gem's extension provide `feature`?
+    ///
+    /// The answer is the argument to `create_makefile`, which is what mkmf
+    /// turns into `TARGET` and `target_prefix` and therefore what a
+    /// `require` has to spell. Reading it out of the `extconf.rb` is a
+    /// LITERAL scan: a computed argument is not seen, and the require then
+    /// falls through to the ordinary miss rather than to a wrong gem.
+    pub fn provides(&self, feature: &str) -> bool {
+        self.extconfs.iter().any(|extconf| {
+            let path = self.gem_dir.join(extconf);
+            std::fs::read_to_string(&path)
+                .ok()
+                .is_some_and(|text| create_makefile_names(&text).iter().any(|n| n == feature))
+        })
+    }
+}
+
+/// Every literal `create_makefile("...")` argument in an `extconf.rb`.
+///
+/// A gem may call it more than once (one Makefile per extension in a
+/// multi-extension `ext/` tree), so this collects rather than answering the
+/// first.
+fn create_makefile_names(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for (i, _) in text.match_indices("create_makefile") {
+        let rest = &text[i + "create_makefile".len()..];
+        let rest = rest.trim_start();
+        let rest = rest.strip_prefix('(').unwrap_or(rest).trim_start();
+        let Some(quote) = rest.chars().next().filter(|c| *c == '"' || *c == '\'') else {
+            continue;
+        };
+        let body = &rest[1..];
+        // A name with an interpolation or an escape is not a literal, and
+        // guessing at one is how a require lands on the wrong gem.
+        let Some(end) = body.find(quote) else {
+            continue;
+        };
+        let name = &body[..end];
+        if !name.is_empty() && !name.contains(['#', '\\']) {
+            out.push(name.to_string());
+        }
+    }
+    out
+}
+
 /// Resolve `lockfile`'s gems against the `stores` directories (each a `gem
 /// env gemdir` -- `GEM_PATH` is a list, probed in order, first hit per gem
 /// wins). Never fails on an individual gem -- an unusable one becomes a

@@ -980,6 +980,13 @@ fn endpoint(v: &RubyValue, default: c_long) -> Result<c_long, Signal> {
 /// Could `s` be written as a bare `:symbol`? Constants, locals, ivars,
 /// globals, setters and the operator names all can; anything else needs
 /// quoting.
+///
+/// `rb_enc_symname_p` asks the same question with an encoding, which changes
+/// nothing: every spelling that parses bare is ASCII.
+pub(super) fn symname_is_plain(s: &str) -> bool {
+    plain_symbol_name(s)
+}
+
 fn plain_symbol_name(s: &str) -> bool {
     const OPERATORS: &[&str] = &[
         "+", "-", "*", "/", "%", "**", "==", "!=", "<", "<=", ">", ">=", "<=>", "===", "=~", "!~",

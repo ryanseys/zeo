@@ -48,8 +48,9 @@ fn gem_disclosure_report_records_how_each_library_was_satisfied() {
 #[test]
 fn gem_compat_classifies_each_locked_gem() {
     // The LAYOUT classification `zeo::gem_compat` answers, over the
-    // self-contained fixture store -- pure Ruby compiles, a native-extension
-    // gem and a precompiled-only gem are both native-unsupported.
+    // self-contained fixture store: pure Ruby compiles, a gem shipping its C
+    // as SOURCE is native-source, and a precompiled-only gem is the one that
+    // stays unsupported.
     use zeo::GemCompatOutcome;
     let store =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/gem_store/store");
@@ -64,10 +65,15 @@ fn gem_compat_classifies_each_locked_gem() {
     };
 
     assert_eq!(outcome("purelib"), GemCompatOutcome::Compiled);
-    assert!(matches!(
-        outcome("nativelib"),
-        GemCompatOutcome::NativeUnsupported { ref kind, .. } if kind == "native-extension"
-    ));
+    assert!(
+        matches!(
+            outcome("nativelib"),
+            GemCompatOutcome::NativeSource { ref extensions }
+                if extensions == &["ext/nativelib/extconf.rb"]
+        ),
+        "{:?}",
+        outcome("nativelib")
+    );
     assert!(matches!(
         outcome("precompiled"),
         GemCompatOutcome::NativeUnsupported { ref kind, .. } if kind == "precompiled-platform-gem"
@@ -85,7 +91,7 @@ fn gem_compat_classifies_each_locked_gem() {
     assert_eq!(sweep_outcome("purelib"), Some(GemCompatOutcome::Compiled));
     assert!(matches!(
         sweep_outcome("nativelib"),
-        Some(GemCompatOutcome::NativeUnsupported { .. })
+        Some(GemCompatOutcome::NativeSource { .. })
     ));
     assert!(matches!(
         sweep_outcome("precompiled"),

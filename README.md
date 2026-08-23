@@ -233,9 +233,12 @@ For some libraries Zeo substitutes its own implementation (`json` on serde_json,
 vendored OpenSSL 3). `--report` writes a `zeo-gems.json` record naming every
 substitution beside the artifact.
 
-A gem with a **C extension** that Zeo has no built-in for fails with a clear
-error naming the gem and pointing at the FFI path — never as an unknown
-language feature.
+A gem that ships its **C extension as source** is compiled from it: Zeo runs
+the gemspec's `extconf.rb`, reads the Makefile mkmf writes, and compiles and
+links without `make`. A gem shipping a *precompiled* `.so` is a different
+matter — that object is built against CRuby's ABI and can never load — and
+Zeo says so, naming the gem and the fix (install the ruby-platform variant).
+See [`docs/EXTENSIONS.md`](docs/EXTENSIONS.md).
 
 ---
 
@@ -434,9 +437,13 @@ Zeo is experimental. The known limits, all of them deliberate and recorded:
   automatic trigger and no tracing collector: the pass reconciles reference
   counts rather than tracing, because zeo's lowering declares no stack maps
   for Cranelift to build root sets from.
-- **No C-extension gems.** A gem whose native half Zeo has no built-in for
-  fails with a clear error. Use the `ffi` gem API, which Zeo compiles ahead of
-  time. Source-compatible C extensions are on the roadmap.
+- **C extensions are source-only.** A gem that ships its C compiles and
+  loads; 947 of the 980 `rb_*` entry points are answered, and the 33 that are
+  not each raise with the reason (they boot an interpreter, or expose a
+  representation Zeo does not have). A gem shipping a *precompiled* `.so`
+  never loads: that object is CRuby's ABI. Autotools and `mini_portile`
+  builds of a vendored C library are out of scope; `have_library` works.
+  Loading an extension arms the GVL process-wide.
 - **`Ruby::Box` isolation is partial.** A box works at compile time and at
   run time — `Ruby::Box.new`, `box.eval`, `box.require` and `Box.current` all
   answer — and it isolates constants and globals. What it does not yet isolate

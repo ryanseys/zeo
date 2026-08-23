@@ -1,91 +1,91 @@
 //! `ruby_xmalloc` and friends.
 //!
 //! An extension allocates its C struct with these and frees it with
-//! `ruby_xfree`, and `RUBY_DEFAULT_FREE` means "this came from here". MRI
-//! routes them through its own allocator so it can count bytes against the GC
-//! trigger; zeo routes them through Rust's global allocator so the two halves
-//! of a `ruby_xmalloc`/`ruby_xfree` pair agree, which is the only property
-//! the extension can observe.
+//! `ruby_xfree`. MRI routes them through its own allocator so it can count
+//! bytes against the GC trigger; zeo routes them straight to `malloc`.
 //!
-//! The size is stored in a header word before the block, because `dealloc`
-//! needs the `Layout` and `ruby_xfree` is handed only the pointer. That word
-//! is also what makes `ruby_xrealloc` able to copy the right number of bytes.
+//! # Why libc's allocator and not Rust's
+//!
+//! Because the two allocators MUST be interchangeable, and Rust's cannot be.
+//!
+//! `ruby/util.h` does `#define strdup(s) ruby_strdup(s)` unconditionally --
+//! upstream's own comment calls the idea unwise -- so a gem writing plain
+//! `strdup` gets zeo's allocator and then writes `free(p)`. On MRI that
+//! works: `ruby_xmalloc` IS `malloc` plus accounting, with no header.
+//!
+//! This used to wrap Rust's global allocator, which needs the `Layout` back
+//! at `dealloc` and therefore needs the size stored somewhere -- a header
+//! word before the payload. A libc `free` on that pointer is 16 bytes past
+//! the real block, and libmalloc aborts. `bcrypt` did exactly that, at
+//! `free(salt)` on the result of a `strdup` it never knew was rewritten, and
+//! the abort named neither the gem nor the allocator.
+//!
+//! `malloc` needs no size to free, so there is no header, and the two
+//! spellings are the same operation. That is the property an extension
+//! assumes, and it is not one zeo gets to redefine.
 
-use std::alloc::Layout;
 use std::ffi::c_void;
 
-/// The header is one `usize` and the payload is 16-aligned after it, which
-/// covers every C type an extension can declare on zeo's targets.
-const ALIGN: usize = 16;
-
-fn layout(size: usize) -> Layout {
-    Layout::from_size_align(size + ALIGN, ALIGN).expect("a C allocation size")
-}
-
 /// # Safety
 ///
-/// The block must be freed with [`xfree`] and nothing else.
+/// The block must be freed with [`xfree`] or libc's `free`, which are the
+/// same operation -- see the module docs.
 pub unsafe fn xmalloc(size: usize) -> *mut c_void {
-    // SAFETY: the layout is non-zero because of the header.
-    let base = unsafe { std::alloc::alloc(layout(size)) };
-    if base.is_null() {
-        // An extension has no way to recover, and MRI raises NoMemoryError
-        // here. Aborting is louder and, at C0, honest about what zeo does.
-        std::alloc::handle_alloc_error(layout(size));
+    // A zero-size `malloc` may answer null, and MRI's own `ruby_xmalloc`
+    // never does: an extension tests the result against null to mean
+    // failure, and a legitimate empty allocation would read as one.
+    // SAFETY: a plain allocation.
+    let p = unsafe { libc::malloc(size.max(1)) };
+    if p.is_null() {
+        no_memory(size);
     }
-    // SAFETY: `base` is a fresh block of `size + ALIGN` bytes.
-    unsafe {
-        base.cast::<usize>().write(size);
-        base.add(ALIGN).cast()
-    }
-}
-
-/// # Safety
-///
-/// `p` must come from [`xmalloc`] or [`xrealloc`], or be null.
-pub unsafe fn xcalloc(count: usize, size: usize) -> *mut c_void {
-    let total = count.checked_mul(size).expect("a C allocation size");
-    // SAFETY: same contract as `xmalloc`.
-    let p = unsafe { xmalloc(total) };
-    // SAFETY: `p` names `total` freshly allocated bytes.
-    unsafe { std::ptr::write_bytes(p.cast::<u8>(), 0, total) };
     p
 }
 
 /// # Safety
 ///
-/// `p` must come from [`xmalloc`] or [`xrealloc`], or be null.
-pub unsafe fn xfree(p: *mut c_void) {
+/// The block must be freed with [`xfree`] or libc's `free`.
+pub unsafe fn xcalloc(count: usize, size: usize) -> *mut c_void {
+    // SAFETY: a plain allocation; `calloc` does the overflow check itself
+    // and answers null, which is checked.
+    let p = unsafe { libc::calloc(count.max(1), size.max(1)) };
     if p.is_null() {
-        return;
+        no_memory(count.saturating_mul(size));
     }
-    // SAFETY: the caller's contract puts the header one ALIGN before `p`.
-    unsafe {
-        let base = p.cast::<u8>().sub(ALIGN);
-        let size = base.cast::<usize>().read();
-        std::alloc::dealloc(base, layout(size));
-    }
+    p
 }
 
 /// # Safety
 ///
-/// `p` must come from [`xmalloc`] or [`xrealloc`], or be null.
+/// `p` must come from [`xmalloc`], [`xrealloc`] or libc's `malloc`, or be
+/// null.
+pub unsafe fn xfree(p: *mut c_void) {
+    // SAFETY: the caller's contract. `free(NULL)` is defined and does
+    // nothing, so the null case needs no branch of its own.
+    unsafe { libc::free(p) };
+}
+
+/// # Safety
+///
+/// `p` must come from [`xmalloc`], [`xrealloc`] or libc's `malloc`, or be
+/// null.
 pub unsafe fn xrealloc(p: *mut c_void, size: usize) -> *mut c_void {
-    if p.is_null() {
-        // SAFETY: no prior block to honour.
-        return unsafe { xmalloc(size) };
+    // SAFETY: the caller's contract. `realloc(NULL, n)` is `malloc(n)`.
+    let out = unsafe { libc::realloc(p, size.max(1)) };
+    if out.is_null() {
+        no_memory(size);
     }
-    // SAFETY: the caller's contract.
-    unsafe {
-        let base = p.cast::<u8>().sub(ALIGN);
-        let old = base.cast::<usize>().read();
-        let grown = std::alloc::realloc(base, layout(old), size + ALIGN);
-        if grown.is_null() {
-            std::alloc::handle_alloc_error(layout(size));
-        }
-        grown.cast::<usize>().write(size);
-        grown.add(ALIGN).cast()
-    }
+    out
+}
+
+/// An allocation an extension has no way to recover from. MRI raises
+/// `NoMemoryError`; zeo raises the same, so a `rescue NoMemoryError` around
+/// a big allocation still works.
+fn no_memory(size: usize) -> ! {
+    crate::cext::jmp::raise(crate::dispatch::raise_error(
+        "NoMemoryError",
+        format!("failed to allocate {size} bytes"),
+    ))
 }
 
 /// The five names C spells. `xmalloc` and its neighbours are the
@@ -180,12 +180,65 @@ mod tests {
         }
     }
 
+    /// A zero-size allocation must not answer null: an extension tests the
+    /// result against null to mean FAILURE, and MRI's own never answers one.
     #[test]
-    fn a_block_is_aligned_for_any_c_type() {
+    fn a_zero_size_allocation_is_not_null() {
         unsafe {
-            let p = xmalloc(1);
-            assert_eq!(p as usize % ALIGN, 0);
+            let p = xmalloc(0);
+            assert!(!p.is_null());
+            xfree(p);
+            let p = xcalloc(0, 0);
+            assert!(!p.is_null());
             xfree(p);
         }
+    }
+
+    /// The property the whole file exists for: a block from `ruby_xmalloc`
+    /// is freeable by libc's `free`, and one from libc's `malloc` is
+    /// freeable by `ruby_xfree`. `ruby/util.h` rewrites plain `strdup` into
+    /// `ruby_strdup` unconditionally, so a gem crosses the two without ever
+    /// writing either name -- and a header word in front made that abort.
+    #[test]
+    fn the_two_allocators_are_one() {
+        unsafe {
+            let ours = xmalloc(32);
+            libc::free(ours);
+
+            let theirs = libc::malloc(32);
+            xfree(theirs);
+        }
+    }
+
+    /// `ruby_strdup`'s result reaches libc's `free`, which is the exact path
+    /// `bcrypt` takes through `crypt_gensalt_ra`.
+    #[test]
+    fn a_ruby_strdup_result_is_freeable_by_libc() {
+        let src = c"a salt-shaped string";
+        // SAFETY: a NUL-terminated literal.
+        let dup = unsafe { ruby_strdup_for_test(src.as_ptr()) };
+        // SAFETY: the copy is NUL-terminated by construction.
+        assert_eq!(unsafe { std::ffi::CStr::from_ptr(dup) }, src);
+        // SAFETY: the whole point -- libc frees what zeo allocated.
+        unsafe { libc::free(dup.cast()) };
+    }
+
+    /// `ruby_strdup`'s body, reachable without the `cext_fn!` wrapper's
+    /// longjmp -- which a unit test has no protected frame for.
+    ///
+    /// # Safety
+    ///
+    /// `s` must be NUL-terminated.
+    unsafe fn ruby_strdup_for_test(s: *const std::ffi::c_char) -> *mut std::ffi::c_char {
+        // SAFETY: the caller's contract.
+        let len = unsafe { std::ffi::CStr::from_ptr(s) }.to_bytes().len();
+        // SAFETY: `len + 1` bytes, freed by the caller.
+        let out = unsafe { xmalloc(len + 1) }.cast::<u8>();
+        // SAFETY: both runs are `len` bytes and `out` has room for the NUL.
+        unsafe {
+            std::ptr::copy_nonoverlapping(s.cast::<u8>(), out, len);
+            out.add(len).write(0);
+        }
+        out.cast()
     }
 }

@@ -72,6 +72,71 @@ target.
 |---|---|---|
 | _(none currently)_ | | |
 
+## A gem's own C extension
+
+A gem that ships its C as SOURCE is compiled from it. zeo is
+**source-compatible with CRuby and ABI-incompatible**: a gem's `ext/**/*.c`
+builds against MRI's own headers (`crates/zeo-rt/cext/include/`, vendored
+verbatim from `ruby/ruby` at the pinned tag plus one patch), and a prebuilt
+MRI `.so` never loads.
+
+The whole path, per gem:
+
+1. The gemspec's `s.extensions` names an `extconf.rb`.
+2. zeo runs it, with `RbConfig::CONFIG` supplied by its own shim and `mkmf`
+   vendored from the same pin as the headers. mkmf writes a Makefile.
+3. zeo reads that Makefile's variables, then compiles and links from them --
+   in parallel and without `make`. A Makefile carrying a rule mkmf did not
+   write (a `depend` file, a generated header) goes to real `make` instead;
+   `ZEO_CEXT_MAKE=1` forces that path for everything.
+4. The program `dlopen`s the result at the `require`'s own line and calls
+   `Init_<name>`.
+
+The build is **out of tree**. A gem store is shared and often read only, so
+the sources are staged into zeo's cache and built there, keyed by their own
+bytes -- a second compile of the same gem finds the shared object and skips
+the build.
+
+### What this does not do
+
+* **A precompiled binary gem never loads.** `nokogiri-1.16.0-arm64-darwin`
+  ships a `.so` built against CRuby's ABI. Install the ruby-platform variant
+  (`bundle config set force_ruby_platform true`) and zeo compiles it.
+* **Autotools and `mini_portile` builds of a vendored C library are out of
+  scope.** System-library mode through `have_library` works.
+* **Loading an extension arms the GVL** and turns off the lock-free
+  container path, process-wide. That is a real cost and it is not optional:
+  an extension may start a thread, and its C holds Ruby objects no other
+  thread's view accounts for.
+* **The shared object has to be there at run time.** An AOT binary dlopens
+  it from the cache; it is not linked in. The gem report names the path.
+
+### The C API surface
+
+947 of the 980 `rb_*`/`ruby_*` symbols an extension can link against are
+answered; `conformance/cext-api.tsv` is the ledger. The remaining 33 are
+REFUSALS, not gaps, and each raises with its reason:
+
+| What | Why |
+|---|---|
+| 21 `ruby_*` entries | they boot, configure or shut down an interpreter, and an extension loaded INTO a running one cannot |
+| 5 `rb_big_*` entries | they expose MRI's Bignum digit array; `rb_integer_pack`/`rb_integer_unpack` are the supported way and both work |
+| `rb_hash_tbl`, `rb_hash_bulk_insert_into_st_table` | they hand out a Ruby Hash's internal `st_table` |
+| `rb_load_file`, `rb_load_file_str` | they answer a `NODE*`, MRI's parse tree |
+| `rb_add_event_hook`, `rb_remove_event_hook` | the C-level TracePoint, whose event set does not line up |
+| `rb_marshal_define_compat` | Marshal's internal compatibility table |
+
+Two divergences worth knowing before you debug one:
+
+* `RSTRING_PTR` **pins**. A zeo String's bytes are a `Vec` behind a lock with
+  no stable address, so the pointer is into a scope-owned copy and a write
+  through it lands on the Ruby string at scope pop. An extension that writes
+  through the pointer and then reads the string through Ruby *in the same C
+  call* sees the old bytes.
+* `rb_frame_this_func` and `rb_frame_callee` answer the same thing. MRI
+  separates the defined name from the called one, and an alias is what
+  separates them; zeo's frame carries one label.
+
 ## FFI — the real `ffi` gem, AOT-compiled
 
 Zeo implements the **real `ffi` gem API**, not a custom DSL, so a program

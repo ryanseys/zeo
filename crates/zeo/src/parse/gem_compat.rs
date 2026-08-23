@@ -26,6 +26,11 @@ pub enum GemCompatOutcome {
         diverges: bool,
         note: Option<String>,
     },
+    /// The gem ships its C as SOURCE, and zeo compiles it. Distinguished
+    /// from [`GemCompatOutcome::Compiled`] because it needs a C toolchain and
+    /// the vendored headers, so a machine without either turns this row into
+    /// a build failure and the pure-Ruby row into nothing.
+    NativeSource { extensions: Vec<String> },
     /// A native gem zeo can't provide -- the detected layout and why.
     NativeUnsupported { kind: String, reason: String },
     /// A GIT/PATH-source lockfile gem, not drawn from the RubyGems store.
@@ -63,6 +68,11 @@ fn classify(
 
     let compiled: std::collections::HashSet<&str> =
         resolution.roots.iter().map(|(n, _)| n.as_str()).collect();
+    let native: std::collections::HashMap<&str, &[String]> = resolution
+        .native_exts
+        .iter()
+        .map(|e| (e.name.as_str(), e.extconfs.as_slice()))
+        .collect();
     let disclosed: std::collections::HashMap<&str, &crate::gem_report::SatisfiedBy> = resolution
         .disclosures
         .iter()
@@ -73,6 +83,10 @@ fn classify(
     for gem in &parsed.gems {
         let outcome = if gem.source != GemSource::Rubygems {
             GemCompatOutcome::ExternalSource
+        } else if let Some(extconfs) = native.get(gem.name.as_str()) {
+            GemCompatOutcome::NativeSource {
+                extensions: extconfs.to_vec(),
+            }
         } else if compiled.contains(gem.name.as_str()) {
             GemCompatOutcome::Compiled
         } else {

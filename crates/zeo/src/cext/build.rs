@@ -65,6 +65,9 @@ pub enum Refusal {
     CustomRules(Vec<String>),
     /// A source whose extension has no compile rule here.
     UnknownSource(String),
+    /// An object with no source beside it. A gem that GENERATES one has a
+    /// rule for it, and that rule is `make`'s to run.
+    NoSource(String),
     /// mkmf wrote no `TARGET`, which means `create_makefile` never ran.
     NoTarget,
 }
@@ -81,22 +84,30 @@ impl std::fmt::Display for Refusal {
                 )
             }
             Refusal::UnknownSource(s) => write!(f, "{s} has no compile rule zeo knows"),
+            Refusal::NoSource(o) => write!(f, "no source file beside {o}"),
             Refusal::NoTarget => write!(f, "the Makefile declares no TARGET"),
         }
     }
 }
 
-/// The compiler for a source, by its extension. C++ and Objective-C++ go
-/// through `$(CXX)` and take `$(CXXFLAGS)` -- using the C pair would compile
-/// a `.cpp` as C and fail on the first `class`.
-fn toolchain(source: &str) -> Option<(&'static str, &'static str)> {
-    let ext = Path::new(source).extension()?.to_str()?;
+/// The compiler for a source, by its extension, and which flags it takes.
+///
+/// C++ and Objective-C++ go through `$(CXX)` and `$(CXXFLAGS)` -- using the C
+/// pair would compile a `.cpp` as C and fail on the first `class`. Assembly
+/// goes through `$(CC)` too, which is what make's own built-in `.S.o` rule
+/// does: the file needs the preprocessor before the assembler.
+fn toolchain(ext: &str) -> Option<(&'static str, &'static str)> {
     Some(match ext {
-        "c" | "m" => ("CC", "CFLAGS"),
+        "c" | "m" | "S" | "s" => ("CC", "CFLAGS"),
         "cc" | "cpp" | "cxx" | "C" | "mm" => ("CXX", "CXXFLAGS"),
         _ => return None,
     })
 }
+
+/// The suffixes an object's source may have, in the order make searches
+/// `.SUFFIXES`. mkmf writes exactly this list, plus `.S` from make's own
+/// built-in rules.
+const SOURCE_SUFFIXES: &[&str] = &["c", "m", "cc", "mm", "cxx", "cpp", "C", "S", "s"];
 
 impl Plan {
     /// Read `dir/Makefile` and decide what to run.
@@ -110,6 +121,13 @@ impl Plan {
 
     /// The same decision over an already-parsed Makefile, so a test can make
     /// one without writing a file.
+    ///
+    /// The walk is over `OBJS`, not `SRCS`, because that is what `make`
+    /// builds -- `SRCS` is a dependency list and the two are not even the
+    /// same length. `bcrypt` sets `$objs` by hand to include `x86.o`, whose
+    /// source is `x86.S`; mkmf still writes `x86.c` into `SRCS`, and pairing
+    /// the two lists positionally asks the compiler for a file that does not
+    /// exist.
     pub fn from_makefile(dir: &Path, mk: &Makefile) -> Result<Plan, Refusal> {
         if !mk.is_stock() {
             let extra = mk.extra_rules().iter().map(|s| (*s).to_string()).collect();
@@ -127,35 +145,29 @@ impl Plan {
             s if s.trim().is_empty() => ".".to_string(),
             s => s,
         };
-        let sources = mk.words("SRCS");
         let objects = mk.words("OBJS");
         let common: Vec<String> = ["INCFLAGS", "CPPFLAGS"]
             .iter()
             .flat_map(|k| mk.words(k))
             .collect();
 
-        let mut compiles = Vec::with_capacity(sources.len());
-        for (i, source) in sources.iter().enumerate() {
-            let Some((cc, flags)) = toolchain(source) else {
+        let mut compiles = Vec::with_capacity(objects.len());
+        for object in &objects {
+            let (source, ext) = source_for(dir, &srcdir, object)
+                .ok_or_else(|| Refusal::NoSource(object.clone()))?;
+            let Some((cc, flags)) = toolchain(&ext) else {
                 return Err(Refusal::UnknownSource(source.clone()));
             };
-            // mkmf lists `OBJS` in the same order as `SRCS`. When it does
-            // not -- a gem that set `$objs` by hand -- the object name is
-            // derived, which is what the suffix rule would have produced.
-            let object = objects
-                .get(i)
-                .cloned()
-                .unwrap_or_else(|| object_for(source));
             let mut args = common.clone();
             args.extend(mk.words(flags));
             args.push("-o".into());
             args.push(object.clone());
             args.push("-c".into());
-            args.push(join(&srcdir, source));
+            args.push(source.clone());
             compiles.push(Compile {
                 program: nonempty(mk.get("CC_WRAPPER"), mk.get(cc), "cc"),
                 args,
-                source: PathBuf::from(join(&srcdir, source)),
+                source: PathBuf::from(source),
                 object: PathBuf::from(object),
             });
         }
@@ -322,15 +334,26 @@ fn nonempty(wrapper: String, cc: String, fallback: &str) -> String {
         .to_string()
 }
 
-/// `foo/bar.c` compiles to `bar.o`, in the build directory rather than
-/// beside the source. That is what mkmf's suffix rule produces, because
-/// `make` resolves `$@` against the target list.
-fn object_for(source: &str) -> String {
-    let stem = Path::new(source)
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("a");
-    format!("{stem}.o")
+/// The source `make` would build `object` from: the same stem with each
+/// suffix in `.SUFFIXES` order, first one that exists.
+///
+/// Answers the path as the compile line should spell it, plus the extension
+/// that decided the toolchain.
+fn source_for(dir: &Path, srcdir: &str, object: &str) -> Option<(String, String)> {
+    let stem = Path::new(object).file_stem()?.to_str()?;
+    for ext in SOURCE_SUFFIXES {
+        let name = format!("{stem}.{ext}");
+        let rel = join(srcdir, &name);
+        let abs = if Path::new(&rel).is_absolute() {
+            PathBuf::from(&rel)
+        } else {
+            dir.join(&rel)
+        };
+        if abs.is_file() {
+            return Some((rel, (*ext).to_string()));
+        }
+    }
+    None
 }
 
 fn join(dir: &str, name: &str) -> String {
@@ -344,8 +367,35 @@ fn join(dir: &str, name: &str) -> String {
 mod tests {
     use super::*;
 
+    /// A scratch build directory holding `files`, so the suffix search has
+    /// something to find. The plan reads the FILESYSTEM now -- which is what
+    /// `make` does, and what the `x86.S` case forced.
+    struct Dir(PathBuf);
+
+    impl Dir {
+        fn with(name: &str, files: &[&str]) -> Dir {
+            let dir = std::env::temp_dir().join(format!(
+                "zeo-plan-{name}-{}-{:?}",
+                std::process::id(),
+                std::thread::current().id()
+            ));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).expect("a scratch directory");
+            for f in files {
+                std::fs::write(dir.join(f), "").expect("a scratch source");
+            }
+            Dir(dir)
+        }
+    }
+
+    impl Drop for Dir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
     /// A Makefile of the shape mkmf writes, cut down to what the plan reads.
-    fn stock(extra: &str) -> Makefile {
+    fn stock(objs: &str, extra: &str) -> Makefile {
         Makefile::parse(&format!(
             "\
 srcdir = .
@@ -362,9 +412,7 @@ LIBPATH = -L.
 DLDFLAGS = -Wl,-undefined,dynamic_lookup
 LOCAL_LIBS =
 LIBS = -lm -lpthread
-ORIG_SRCS = a.c b.c
-SRCS = $(ORIG_SRCS)
-OBJS = a.o b.o
+OBJS = {objs}
 TARGET = probe
 DLLIB = $(TARGET).bundle
 TARGET_SO = $(DLLIB)
@@ -382,7 +430,8 @@ $(TARGET_SO): $(OBJS) Makefile
 
     #[test]
     fn the_compile_line_is_the_suffix_rules_own() {
-        let plan = Plan::from_makefile(Path::new("/tmp/x"), &stock(""))
+        let dir = Dir::with("compile", &["a.c", "b.c"]);
+        let plan = Plan::from_makefile(&dir.0, &stock("a.o b.o", ""))
             .unwrap_or_else(|e| panic!("refused: {e}"));
         assert_eq!(plan.compiles.len(), 2);
         let first = &plan.compiles[0];
@@ -399,7 +448,8 @@ $(TARGET_SO): $(OBJS) Makefile
     /// `-o` would hand `clang` a `-dynamic` it reads as a link input.
     #[test]
     fn the_link_line_keeps_ldshareds_own_arguments_in_front() {
-        let plan = Plan::from_makefile(Path::new("/tmp/x"), &stock(""))
+        let dir = Dir::with("link", &["a.c", "b.c"]);
+        let plan = Plan::from_makefile(&dir.0, &stock("a.o b.o", ""))
             .unwrap_or_else(|e| panic!("refused: {e}"));
         assert_eq!(plan.link.program, "clang");
         assert_eq!(
@@ -420,39 +470,46 @@ $(TARGET_SO): $(OBJS) Makefile
         assert_eq!(plan.product, Path::new("probe.bundle"));
     }
 
+    /// The `bcrypt` case. `$objs` names `x86.o`, whose source is `x86.S`;
+    /// mkmf still writes `x86.c` into `SRCS`. Pairing `SRCS` and `OBJS`
+    /// positionally asks the compiler for a file that does not exist, which
+    /// is exactly what this used to do.
+    #[test]
+    fn an_object_finds_its_source_by_suffix_not_by_position() {
+        let dir = Dir::with("suffix", &["one.c", "x86.S", "two.cpp"]);
+        let plan = Plan::from_makefile(&dir.0, &stock("one.o x86.o two.o", ""))
+            .unwrap_or_else(|e| panic!("refused: {e}"));
+        let sources: Vec<&Path> = plan.compiles.iter().map(|c| c.source.as_path()).collect();
+        assert_eq!(
+            sources,
+            [Path::new("one.c"), Path::new("x86.S"), Path::new("two.cpp")]
+        );
+        // Assembly goes through `$(CC)`, which is make's own built-in rule.
+        assert_eq!(plan.compiles[1].program, "cc");
+        // And C++ through `$(CXX)`, with its own flags.
+        assert_eq!(plan.compiles[2].program, "c++");
+        assert!(plan.compiles[2].args.contains(&"-std=c++17".to_string()));
+    }
+
     /// A rule mkmf did not write is the whole reason `make` is still here.
     /// Driving such a Makefile would skip it silently.
     #[test]
     fn an_extra_rule_sends_the_build_to_make() {
-        let mk = stock("generated.h: gen.rb\n\truby gen.rb\n");
-        match Plan::from_makefile(Path::new("/tmp/x"), &mk) {
+        let dir = Dir::with("extra", &["a.c", "b.c"]);
+        let mk = stock("a.o b.o", "generated.h: gen.rb\n\truby gen.rb\n");
+        match Plan::from_makefile(&dir.0, &mk) {
             Err(Refusal::CustomRules(rules)) => assert_eq!(rules, ["generated.h"]),
             other => panic!("expected a refusal, got {:?}", other.err()),
         }
     }
 
-    /// A C++ source takes `$(CXX)` and `$(CXXFLAGS)`. Compiling it as C
-    /// fails on the first `class`, and the flags differ too.
+    /// An object with no source beside it means the gem GENERATES one, and
+    /// the rule that does is `make`'s to run.
     #[test]
-    fn a_cpp_source_uses_the_cxx_toolchain() {
-        let mk = Makefile::parse(
-            "srcdir = .\nCC = cc\nCXX = c++\nCFLAGS = -fPIC\nCXXFLAGS = -fPIC -std=c++17\n\
-             INCFLAGS = -I.\nSRCS = a.cpp\nOBJS = a.o\nTARGET = x\nTARGET_SO = x.bundle\n\
-             LDSHARED = clang -bundle\n",
-        );
-        let plan = Plan::from_makefile(Path::new("/tmp/x"), &mk)
-            .unwrap_or_else(|e| panic!("refused: {e}"));
-        assert_eq!(plan.compiles[0].program, "c++");
-        assert!(plan.compiles[0].args.contains(&"-std=c++17".to_string()));
-    }
-
-    #[test]
-    fn a_source_with_no_rule_is_refused_by_name() {
-        let mk = Makefile::parse(
-            "srcdir = .\nCC = cc\nSRCS = a.rs\nOBJS = a.o\nTARGET = x\nTARGET_SO = x.bundle\n",
-        );
-        match Plan::from_makefile(Path::new("/tmp/x"), &mk) {
-            Err(Refusal::UnknownSource(s)) => assert_eq!(s, "a.rs"),
+    fn an_object_with_no_source_is_refused_by_name() {
+        let dir = Dir::with("nosource", &["a.c"]);
+        match Plan::from_makefile(&dir.0, &stock("a.o generated.o", "")) {
+            Err(Refusal::NoSource(o)) => assert_eq!(o, "generated.o"),
             other => panic!("expected a refusal, got {:?}", other.err()),
         }
     }
@@ -461,29 +518,28 @@ $(TARGET_SO): $(OBJS) Makefile
     /// while the objects stay in the build directory.
     #[test]
     fn an_out_of_tree_srcdir_reaches_the_sources_and_not_the_objects() {
-        let mk = Makefile::parse(
-            "srcdir = /gem/ext/foo\nCC = cc\nCFLAGS =\nINCFLAGS =\nSRCS = a.c\nOBJS = a.o\n\
+        let dir = Dir::with("outoftree", &[]);
+        let src = dir.0.join("src");
+        std::fs::create_dir_all(&src).expect("a source directory");
+        std::fs::write(src.join("a.c"), "").expect("a scratch source");
+        let mk = Makefile::parse(&format!(
+            "srcdir = {}\nCC = cc\nCFLAGS =\nINCFLAGS =\nOBJS = a.o\n\
              TARGET = foo\nTARGET_SO = foo.bundle\nLDSHARED = cc -bundle\n",
-        );
-        let plan = Plan::from_makefile(Path::new("/build"), &mk)
-            .unwrap_or_else(|e| panic!("refused: {e}"));
-        assert_eq!(plan.compiles[0].source, Path::new("/gem/ext/foo/a.c"));
+            src.display()
+        ));
+        let plan = Plan::from_makefile(&dir.0, &mk).unwrap_or_else(|e| panic!("refused: {e}"));
+        assert_eq!(plan.compiles[0].source, src.join("a.c"));
         assert_eq!(plan.compiles[0].object, Path::new("a.o"));
-        assert!(plan.compiles[0].args.ends_with(&[
-            "-o".to_string(),
-            "a.o".to_string(),
-            "-c".to_string(),
-            "/gem/ext/foo/a.c".to_string()
-        ]));
     }
 
     /// `create_makefile` never ran, so there is nothing to build. Saying so
     /// beats linking an empty bundle.
     #[test]
     fn a_makefile_with_no_target_is_refused() {
+        let dir = Dir::with("notarget", &[]);
         let mk = Makefile::parse("CC = cc\n");
         assert!(matches!(
-            Plan::from_makefile(Path::new("/tmp/x"), &mk),
+            Plan::from_makefile(&dir.0, &mk),
             Err(Refusal::NoTarget)
         ));
     }

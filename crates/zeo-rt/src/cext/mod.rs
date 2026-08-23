@@ -20,6 +20,7 @@ pub mod call;
 pub mod collection;
 pub mod convert;
 pub mod data;
+pub mod encoding;
 pub mod error;
 pub mod eval;
 pub mod r#final;
@@ -41,6 +42,7 @@ pub mod string;
 pub mod stubs;
 pub mod symbol;
 pub mod thread;
+pub mod util;
 pub mod value;
 
 #[cfg(test)]

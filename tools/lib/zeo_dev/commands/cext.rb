@@ -167,10 +167,34 @@ module ZeoDev
         end
       end
 
+      # Every public header a gem may include, not just what `<ruby.h>` pulls
+      # in transitively.
+      #
+      # This was `#include <ruby.h>` alone, and the gap was not academic:
+      # `ruby/encoding.h` is included by `fast_blank`, `rb_enc_codepoint_len`
+      # was therefore absent from the census, no stub was generated for it,
+      # and the gem linked and then SIGSEGVd on its first call. A symbol the
+      # census cannot see is a symbol nothing promises.
+      #
+      # The Windows and Oniguruma headers are excluded: `win32.h` does not
+      # parse on a POSIX host, and `onigmo.h`/`oniguruma.h`/`regex.h` declare
+      # the regexp ENGINE's own surface, which zeo answers with its own onig
+      # build rather than through the C API.
+      SKIP_HEADERS = %w[win32.h onigmo.h oniguruma.h regex.h].freeze
+
+      def public_headers
+        Dir.glob(File.join(include_dir, "ruby", "*.h"))
+           .map { |f| File.basename(f) }
+           .reject { |f| SKIP_HEADERS.include?(f) }
+           .sort
+      end
+
       def scan_api
         Dir.mktmpdir("zeo-cext-api") do |tmp|
           tu = File.join(tmp, "all.c")
-          File.write(tu, "#include <ruby.h>\n")
+          includes = ["#include <ruby.h>"] +
+                     public_headers.map { |h| "#include <ruby/#{h}>" }
+          File.write(tu, includes.join("\n") + "\n")
           res = Exec.run([ENV["CC"] || "cc", "-fsyntax-only", "-Xclang", "-ast-dump",
                           "-fno-color-diagnostics",
                           "-I", File.join(ROOT, "crates/zeo-rt/cext/config"),

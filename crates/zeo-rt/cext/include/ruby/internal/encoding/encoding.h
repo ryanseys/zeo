@@ -95,12 +95,18 @@ RB_ENCODING_SET_INLINED(VALUE obj, int encindex)
  * @param[in]  obj  Target object.
  * @return     `obj`'s encoding index.
  */
+/* zeo: declared here because this inline is defined above upstream's own
+ * declaration, which now has a caller. */
+int rb_enc_get_index(VALUE obj);
+
 static inline int
 RB_ENCODING_GET_INLINED(VALUE obj)
 {
-    VALUE ret = RB_FL_TEST_RAW(obj, RUBY_ENCODING_MASK) >> RUBY_ENCODING_SHIFT;
-
-    return RBIMPL_CAST((int)ret);
+    /* zeo: a zeo String keeps its encoding in the object, not in the flags
+     * word, and `force_encoding` moves it -- so the bits here would be a
+     * snapshot that goes stale rather than merely absent. The call always
+     * answers what the string carries NOW. */
+    return rb_enc_get_index(obj);
 }
 
 #define ENCODING_SET_INLINED(obj,i) RB_ENCODING_SET_INLINED(obj,i) /**< @old{RB_ENCODING_SET_INLINED} */
@@ -194,14 +200,8 @@ int rb_enc_get_index(VALUE obj);
 static inline int
 RB_ENCODING_GET(VALUE obj)
 {
-    int encindex = RB_ENCODING_GET_INLINED(obj);
-
-    if (encindex == RUBY_ENCODING_INLINE_MAX) {
-        return rb_enc_get_index(obj);
-    }
-    else {
-        return encindex;
-    }
+    /* zeo: see RB_ENCODING_GET_INLINED. There is no inline half to try. */
+    return rb_enc_get_index(obj);
 }
 
 /**

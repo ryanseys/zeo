@@ -85,16 +85,24 @@ pub fn load(path: &str, init: &str) -> Result<bool, Signal> {
 
 /// `dlopen`, or the dynamic loader's own reason.
 ///
-/// `RTLD_LAZY | RTLD_GLOBAL`: lazy because an extension's own `rb_*`
-/// references resolve against this process, and GLOBAL because a second
-/// extension may reference the first's symbols -- which is what
-/// `rb_ext_resolve_symbol` is for.
+/// `RTLD_NOW | RTLD_GLOBAL`.
+///
+/// `RTLD_NOW` rather than MRI's `RTLD_LAZY`, and the difference is the whole
+/// value of `cext/stubs.rs`. Lazily, a `rb_*` zeo does not export binds to
+/// nothing and the extension SIGSEGVs at the call -- no symbol name, no
+/// backtrace, no way to tell a zeo gap from a bug in the gem. `fast_blank`
+/// did exactly that when the census had not seen `ruby/encoding.h`.
+/// Resolving eagerly turns the same gap into a `LoadError` naming the
+/// symbol, which is the promise the stub file exists to keep.
+///
+/// `RTLD_GLOBAL` because a second extension may reference the first's
+/// symbols -- which is what `rb_ext_resolve_symbol` is for.
 ///
 /// A `Result<_, String>` rather than a `Signal`: building the `LoadError`
 /// needs the class registry, and this is the half a unit test can look at.
 fn open_library(path: &std::ffi::CStr) -> Result<*mut c_void, String> {
     // SAFETY: a NUL-terminated path; a failure answers null and is reported.
-    let handle = unsafe { libc::dlopen(path.as_ptr(), libc::RTLD_LAZY | libc::RTLD_GLOBAL) };
+    let handle = unsafe { libc::dlopen(path.as_ptr(), libc::RTLD_NOW | libc::RTLD_GLOBAL) };
     if handle.is_null() {
         return Err(dlerror());
     }

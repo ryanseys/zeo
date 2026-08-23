@@ -91,12 +91,19 @@ RBIMPL_ATTR_PURE_UNLESS_DEBUG()
  * @param[in]  obj  Target object.
  * @return     An enum ::ruby_coderange_type.
  */
+/* zeo: declared here because this header is included before string.h,
+ * which is where upstream declares it. */
+int rb_enc_str_coderange(VALUE str);
+
 static inline enum ruby_coderange_type
 RB_ENC_CODERANGE(VALUE obj)
 {
-    VALUE ret = RB_FL_TEST_RAW(obj, RUBY_ENC_CODERANGE_MASK);
-
-    return RBIMPL_CAST((enum ruby_coderange_type)ret);
+    /* zeo: the coderange is computed from the bytes and cached inside the
+     * String, not stored in the flags word. Reading the bits would answer
+     * UNKNOWN for every string, and a caller that trusts UNKNOWN rescans --
+     * which is correct but wasteful -- while one that trusts a stale 7BIT
+     * is wrong. The call answers what the string actually is. */
+    return RBIMPL_CAST((enum ruby_coderange_type)rb_enc_str_coderange(obj));
 }
 
 RBIMPL_ATTR_PURE_UNLESS_DEBUG()
@@ -128,8 +135,11 @@ RB_ENC_CODERANGE_ASCIIONLY(VALUE obj)
 static inline void
 RB_ENC_CODERANGE_SET(VALUE obj, enum ruby_coderange_type cr)
 {
-    RB_FL_UNSET_RAW(obj, RUBY_ENC_CODERANGE_MASK);
-    RB_FL_SET_RAW(obj, cr);
+    /* zeo: the coderange is derived from the bytes, so there is nothing to
+     * assign. A caller sets it to record what it already knows; zeo
+     * recomputes on demand and reaches the same answer. */
+    (void)obj;
+    (void)cr;
 }
 
 /**

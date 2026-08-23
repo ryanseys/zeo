@@ -13,8 +13,19 @@
 //! new thread a real Ruby thread with a real `Ec` -- and that matters,
 //! because the body will call back into Ruby.
 //!
-//! `rb_thread_call_without_gvl` is NOT here. It belongs with the GVL, and
-//! the C0 gate does not reach it; a gem that calls it gets the loud stub.
+//! # Releasing the GVL, and the one thing it cannot promise
+//!
+//! `rb_thread_call_without_gvl(f, arg, ubf, ubf_arg)` runs `f` with the lock
+//! released, so a sibling thread can make progress across a slow C call.
+//! `bcrypt` wraps every hash in one, which is what a cost-12 bcrypt needs.
+//!
+//! The `ubf` -- the unblocking function -- is what MRI calls to interrupt a
+//! thread parked inside `f`, so `Thread#kill` lands on a blocking read. zeo
+//! never calls it: interrupting opaque C means knowing what `f` is blocked
+//! ON, and zeo has no `ubf` registry to consult from a signal handler. So a
+//! thread inside a C call is not killable until the call returns. That is a
+//! divergence, not an omission, and it is stated here rather than left to be
+//! discovered.
 //!
 //! # Sleeping is `Kernel#sleep`
 //!
@@ -100,6 +111,62 @@ pub(super) unsafe fn block_proc(
 }
 
 crate::cext_fn! {
+    // ---- releasing the GVL -----------------------------------------------
+
+    /// `rb_thread_call_without_gvl(f, arg, ubf, ubf_arg)`. See this module's
+    /// docs for what the `ubf` does not do.
+    ///
+    /// `f` must not call back into Ruby -- MRI's contract too, and the
+    /// reason `rb_thread_call_with_gvl` exists.
+    fn rb_thread_call_without_gvl(
+        f: unsafe extern "C" fn(*mut c_void) -> *mut c_void,
+        arg: *mut c_void,
+        _ubf: *mut c_void,
+        _ubf_arg: *mut c_void,
+    ) -> *mut c_void {
+        // SAFETY: the caller's own function and its own argument. It runs
+        // OUTSIDE any protected frame, so it must not raise -- which is
+        // MRI's contract for it too.
+        Ok(crate::gvl::without_gvl(|| unsafe { f(arg) }))
+    }
+
+    /// `rb_thread_call_without_gvl2`: the same, and MRI answers null when the
+    /// thread was interrupted before `f` ran. zeo has no interrupt to check
+    /// at that point, so `f` always runs.
+    fn rb_thread_call_without_gvl2(
+        f: unsafe extern "C" fn(*mut c_void) -> *mut c_void,
+        arg: *mut c_void,
+        ubf: *mut c_void,
+        ubf_arg: *mut c_void,
+    ) -> *mut c_void {
+        unsafe { Ok(rb_thread_call_without_gvl(f, arg, ubf, ubf_arg)) }
+    }
+
+    /// `rb_thread_call_with_gvl(f, arg)`: re-acquire, for a callback that
+    /// needs Ruby from inside a `without_gvl` body.
+    ///
+    /// zeo's release is SCOPED -- `without_gvl` restores the lock when its
+    /// closure returns -- so there is no out-of-band release to invert and
+    /// the call is direct. What that costs: a nested `with_gvl` does not
+    /// serialise against a sibling thread the way MRI's does, which matters
+    /// only to an extension that relies on the nesting for mutual exclusion
+    /// rather than for correctness of the Ruby calls inside.
+    fn rb_thread_call_with_gvl(
+        f: unsafe extern "C" fn(*mut c_void) -> *mut c_void,
+        arg: *mut c_void,
+    ) -> *mut c_void {
+        // SAFETY: the caller's own function and argument.
+        Ok(unsafe { f(arg) })
+    }
+
+    /// `rb_thread_lock_native_thread()`: pin this Ruby thread to its OS
+    /// thread, which a gem needs when a C library keeps thread-local state.
+    /// zeo runs every Ruby thread on its own OS thread already, so the
+    /// pinning it asks for is what it already has.
+    fn rb_thread_lock_native_thread() -> bool {
+        Ok(true)
+    }
+
     // ---- threads ---------------------------------------------------------
 
     fn rb_thread_current() -> Value {

@@ -1651,9 +1651,10 @@ impl Loader {
     /// alternative is a program that builds and then cannot load, which is
     /// the failure mode the whole C0 design exists to avoid.
     fn build_cext(&mut self, hir: &mut Hir, feature: &str) -> PResult<Option<NodeId>> {
-        let Some(gem) = self.cext_gem(feature) else {
+        let Some(gem) = self.cext_gem(feature).map(str::to_string) else {
             return Ok(None);
         };
+        let gem = gem.as_str();
         if let Some((library, init)) = self.built_cexts.get(gem) {
             return Ok(Some(hir.push(HirNode::CExtLoaded {
                 library: library.clone(),
@@ -1701,12 +1702,25 @@ impl Loader {
 
     /// Which store gem, if any, would build `feature`.
     ///
-    /// `require "foo/foo"` and `require "foo"` both belong to the gem `foo`:
-    /// the first segment is the gem name, which is RubyGems' own convention
-    /// and what `create_makefile("foo/foo")` produces.
-    fn cext_gem<'a>(&self, feature: &'a str) -> Option<&'a str> {
+    /// Two rules, and the second is not optional. `require "foo/foo"` and
+    /// `require "foo"` belong to the gem `foo`: the first segment is the gem
+    /// name, which is RubyGems' convention and what `create_makefile("foo/foo")`
+    /// produces.
+    ///
+    /// But the convention is only a convention. `bcrypt`'s Ruby half does
+    /// `require "bcrypt_ext"`, because its extconf says
+    /// `create_makefile("bcrypt_ext")` -- so the feature shares no prefix
+    /// with the gem at all. The extconf is where the answer is written down,
+    /// so it is read.
+    fn cext_gem<'a>(&'a self, feature: &'a str) -> Option<&'a str> {
         let gem = feature.split('/').next().unwrap_or(feature);
-        self.native_exts.contains_key(gem).then_some(gem)
+        if self.native_exts.contains_key(gem) {
+            return Some(gem);
+        }
+        self.native_exts
+            .values()
+            .find(|ext| ext.provides(feature))
+            .map(|ext| ext.name.as_str())
     }
 
     /// Parses and lowers one resolved file into the arena, recording its
