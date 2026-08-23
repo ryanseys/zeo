@@ -248,7 +248,7 @@ struct OverlayMaps {
     /// that this object no longer answers it. `OverlayEntry::undefs` is the
     /// per-CLASS twin; there is no per-object `OverlayEntry` to put this in.
     singleton_undefs: RwLock<FMap<usize, FSet<Symbol>>>,
-    /// A strong reference to every value that has ever received a singleton
+    /// A weak reference to every value that has ever received a singleton
     /// method, keyed by the same identity the tables above use.
     ///
     /// Identity here IS a heap address, so it is only unique while the object
@@ -256,9 +256,15 @@ struct OverlayMaps {
     /// the allocator hand its address to an unrelated later object, which
     /// silently inherited the dead one's methods -- `def s.shout` on a string
     /// built in a loop made every later same-sized string answer `shout`.
-    /// Holding the owner makes the address un-reusable, which is the only
+    /// Holding the ALLOCATION makes the address un-reusable, which is the only
     /// thing that makes the key sound.
-    pinned: RwLock<FMap<usize, RubyValue>>,
+    ///
+    /// A `Weak` holds exactly that and no more. A strong reference held the
+    /// VALUE too, which made every receiver of a singleton method immortal --
+    /// a leak of its own, and one the cycle collector correctly read as "this
+    /// node is referenced from outside the registry". [`sweep_pinned`] drops
+    /// the rows whose owner is gone.
+    pinned: RwLock<FMap<usize, crate::value::WeakOwner>>,
     /// The modules `recv.extend(M)` mixed into one receiver, newest LAST,
     /// keyed by [`extend_key`]. Separate from the method tables above because
     /// `extend` changes what the receiver IS, not only what it answers:
@@ -560,16 +566,97 @@ pub(crate) fn value_identity(v: &RubyValue) -> Option<usize> {
 /// addresses, so nothing can collide with them.
 pub(crate) fn pin_identity(v: &RubyValue) -> Option<usize> {
     let key = value_identity(v)?;
-    if !matches!(v, RubyValue::Nil | RubyValue::Bool(_)) {
-        maps()
-            .pinned
-            .write()
-            .unwrap()
-            .entry(key)
-            .or_insert_with(|| v.clone());
+    if let Some(weak) = crate::value::weak_owner(v) {
+        let len = {
+            let mut pinned = maps().pinned.write().unwrap();
+            pinned.insert(key, weak);
+            pinned.len()
+        };
+        if len >= PIN_SWEEP_AT.load(Ordering::Relaxed) {
+            sweep_pinned();
+        }
     }
     Some(key)
 }
+
+/// Retire every identity whose owner is gone.
+///
+/// **The order is the whole correctness argument.** Dropping a pin is what
+/// frees the allocation, and freeing the allocation is what lets the allocator
+/// hand that address to an unrelated later value. So every row keyed by a dead
+/// address is removed FIRST, and the pins go LAST. Reversed, there is a window
+/// in which a new value can be born at a reused address and inherit a dead
+/// object's singleton methods -- which is the exact bug the pin exists to
+/// prevent, and which `tests/spinel/singleton_address_reuse.rb` catches.
+///
+/// Only keys the pin table names are touched. A Class receiver is keyed by
+/// [`class_identity`] and never pinned, so its rows are never candidates.
+///
+/// Amortized against the table's own growth, the same bargain a `Vec` makes:
+/// the next sweep waits until the table has grown by half again, so the scan
+/// costs O(1) per pin taken.
+fn sweep_pinned() {
+    let dead: Vec<usize> = maps()
+        .pinned
+        .read()
+        .unwrap()
+        .iter()
+        .filter(|(_, w)| w.strong_count() == 0)
+        .map(|(k, _)| *k)
+        .collect();
+    if dead.is_empty() {
+        let len = maps().pinned.read().unwrap().len();
+        PIN_SWEEP_AT.store(len + (len / 2).max(64), Ordering::Relaxed);
+        return;
+    }
+
+    // A singleton class outlives its owner in one more table: the inverse map
+    // holds the object STRONGLY, so it has to go with the rest.
+    let mut classes = maps().singleton_classes.write().unwrap();
+    let mut owners = maps().singleton_owner.write().unwrap();
+    for k in &dead {
+        if let Some(cid) = classes.remove(k) {
+            owners.remove(&cid.0);
+        }
+    }
+    drop(owners);
+    drop(classes);
+
+    maps()
+        .singletons
+        .write()
+        .unwrap()
+        .retain(|k, _| !dead.contains(k));
+    maps()
+        .value_singletons
+        .write()
+        .unwrap()
+        .retain(|k, _| !dead.contains(k));
+    maps()
+        .singleton_undefs
+        .write()
+        .unwrap()
+        .retain(|k, _| !dead.contains(k));
+    maps()
+        .extended
+        .write()
+        .unwrap()
+        .retain(|k, _| !dead.contains(k));
+    maps()
+        .extended_names
+        .write()
+        .unwrap()
+        .retain(|k, _| !dead.contains(k));
+
+    let mut pinned = maps().pinned.write().unwrap();
+    for k in &dead {
+        pinned.remove(k);
+    }
+    PIN_SWEEP_AT.store(pinned.len() + (pinned.len() / 2).max(64), Ordering::Relaxed);
+}
+
+/// How many pins the table may hold before the next [`sweep_pinned`].
+static PIN_SWEEP_AT: AtomicUsize = AtomicUsize::new(64);
 
 /// A Class's key in the identity-keyed maps. A class has no `Arc` address to
 /// stand for it, so its id is lifted past the address space -- `1 << 48` is
@@ -1015,7 +1102,9 @@ pub fn copy_value_singletons(from: &RubyValue, to: &RubyValue) {
         copied = true;
     }
     if copied {
-        maps().pinned.write().unwrap().insert(tk, to.clone());
+        if let Some(weak) = crate::value::weak_owner(to) {
+            maps().pinned.write().unwrap().insert(tk, weak);
+        }
     }
 }
 

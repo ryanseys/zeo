@@ -339,6 +339,13 @@ impl RProc {
         Arc::downgrade(&self.0)
     }
 
+    /// The same handle, type-erased, for a side table that only needs the
+    /// allocation held open so this proc's address stays unique.
+    pub(crate) fn weak_owner(&self) -> std::sync::Weak<dyn std::any::Any + Send + Sync> {
+        let erased: Arc<dyn std::any::Any + Send + Sync> = self.0.clone();
+        Arc::downgrade(&erased)
+    }
+
     /// The proc a weak handle names, or `None` once it has been dropped.
     pub(crate) fn upgrade(w: &std::sync::Weak<ProcData>) -> Option<RProc> {
         w.upgrade().map(RProc)

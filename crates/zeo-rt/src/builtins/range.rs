@@ -47,11 +47,21 @@ pub fn range_new(start: Option<RubyValue>, end: Option<RubyValue>, exclusive: bo
         Some(RubyValue::Nil) | None => None,
         other => other,
     };
-    Arc::new(RangeData {
+    let r = Arc::new(RangeData {
         start: strip(start),
         end: strip(end),
         exclusive,
-    })
+    });
+    // Only a Range that could BE in a cycle is worth recording. A Range over
+    // immediates -- `1..n`, the overwhelming majority, and the one on the hot
+    // path of every `Integer#times`-shaped loop -- owns nothing and can never
+    // close one, so it stays off the registry entirely.
+    if r.start.as_ref().is_some_and(crate::gc::can_close_a_cycle)
+        || r.end.as_ref().is_some_and(crate::gc::can_close_a_cycle)
+    {
+        crate::gc::record_range(&r);
+    }
+    r
 }
 
 /// `range_new` as a `RubyValue` -- what codegen emits for a range literal.

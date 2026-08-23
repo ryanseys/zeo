@@ -122,6 +122,26 @@ pub fn record_proc(p: &crate::RProc) {
     }
 }
 
+/// Record a freshly built `Range`, which the caller has already checked can
+/// hold a heap endpoint. A Range is immutable, so the sweep cannot clear its
+/// endpoints -- it reports them anyway, for the reason [`crate::RProc`] does.
+#[inline]
+pub fn record_range(r: &crate::builtins::range::RRange) {
+    if recording() {
+        record(Node::Range(std::sync::Arc::downgrade(r)));
+    }
+}
+
+/// Whether `v` is a heap value, and therefore something an edge can point at.
+/// An immediate is a 24-byte copy that owns nothing.
+#[inline]
+#[must_use]
+pub fn can_close_a_cycle(v: &crate::RubyValue) -> bool {
+    // The tag byte sits at offset 0 -- the `abi_layout` test pins it.
+    let tag = unsafe { *(v as *const crate::RubyValue).cast::<u8>() };
+    tag >= zeo_abi::abi::FIRST_HEAP_TAG
+}
+
 /// Record a freshly built captured local -- the cell a block shares with the
 /// scope it closed over, and the one place a cycle can run through a local
 /// rather than through an object graph.

@@ -39,6 +39,7 @@ pub(crate) enum Node {
     Object(Weak<dyn RubyObject>),
     Cell(Weak<Mutex<RubyValue>>),
     Proc(Weak<crate::rproc::ProcData>),
+    Range(Weak<crate::builtins::range::RangeData>),
 }
 
 impl Node {
@@ -51,6 +52,7 @@ impl Node {
             Node::Object(w) => w.strong_count() > 0,
             Node::Cell(w) => w.strong_count() > 0,
             Node::Proc(w) => w.strong_count() > 0,
+            Node::Range(w) => w.strong_count() > 0,
         }
     }
 }
@@ -65,6 +67,7 @@ pub(crate) enum Strong {
     Object(crate::dispatch::RObj),
     Cell(crate::LocalCell),
     Proc(crate::RProc),
+    Range(crate::builtins::range::RRange),
 }
 
 impl Strong {
@@ -77,6 +80,7 @@ impl Strong {
             Strong::Object(o) => std::sync::Arc::as_ptr(o) as *const () as usize,
             Strong::Cell(c) => std::sync::Arc::as_ptr(c) as *const () as usize,
             Strong::Proc(p) => p.identity(),
+            Strong::Range(r) => std::sync::Arc::as_ptr(r) as *const () as usize,
         }
     }
 
@@ -91,6 +95,7 @@ impl Strong {
             Strong::Object(o) => std::sync::Arc::strong_count(o),
             Strong::Cell(c) => std::sync::Arc::strong_count(c),
             Strong::Proc(p) => p.owners(),
+            Strong::Range(r) => std::sync::Arc::strong_count(r),
         }
     }
 
@@ -118,6 +123,15 @@ impl Strong {
                     p.gc_edges(out);
                 }
             }
+            // A Range is frozen in ruby and holds its endpoints with no
+            // interior mutability at all, so like a Proc it reports what it
+            // cannot release.
+            Strong::Range(r) => {
+                if !take {
+                    out.extend(r.start.iter().cloned());
+                    out.extend(r.end.iter().cloned());
+                }
+            }
         }
     }
 
@@ -138,6 +152,7 @@ impl Strong {
             Strong::Object(o) => Node::Object(std::sync::Arc::downgrade(o)),
             Strong::Cell(c) => Node::Cell(std::sync::Arc::downgrade(c)),
             Strong::Proc(p) => Node::Proc(p.downgrade()),
+            Strong::Range(r) => Node::Range(std::sync::Arc::downgrade(r)),
         }
     }
 }
@@ -151,6 +166,7 @@ impl Node {
             Node::Object(w) => w.upgrade().map(Strong::Object),
             Node::Cell(w) => w.upgrade().map(Strong::Cell),
             Node::Proc(w) => crate::RProc::upgrade(w).map(Strong::Proc),
+            Node::Range(w) => w.upgrade().map(Strong::Range),
         }
     }
 }

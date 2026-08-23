@@ -1,3 +1,0 @@
-The gap is about what the collector cannot reach, so it has to run with the
-collector ARMED -- without `ZEO_GC=1` every line would answer 1 for the
-uninteresting reason that no collector ran at all.

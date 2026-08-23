@@ -14,6 +14,11 @@
 # holding it. The survivors are held on purpose, and are the half that
 # matters most: a collector that reclaims a live object is far worse than one
 # that misses a dead one.
+#
+# Four of these arrived from `tests/gaps/a_cycle_can_still_leak.rb`, which is
+# gone: a captured proc cell, a Range endpoint, a per-object singleton, and an
+# ivar on a bare value. Their causes are recorded beside each one, because
+# each was a different mechanism rather than four instances of one bug.
 seen = ObjectSpace::WeakMap.new
 $held = []
 
@@ -183,6 +188,40 @@ def through_a_block_self(seen)
   nil
 end
 
+# A Range holds its endpoints with no interior mutability at all -- it is
+# frozen in ruby, and the `Arc` buys sharing and object identity, nothing
+# else. So it reports edges the sweep cannot clear, exactly as a Proc does.
+# Only a Range that COULD be in a cycle is registered: `1..n` owns nothing.
+def through_a_range_endpoint(seen)
+  a = []
+  a << (a..nil)
+  seen[a] = true
+  nil
+end
+
+# A per-object singleton files its methods in a side table keyed by the
+# receiver's ADDRESS, which is unique only while the receiver lives. The pin
+# that stops a later value inheriting those methods is a WEAK reference: it
+# holds the allocation, so the address stays reserved, without holding the
+# value.
+def through_a_per_object_singleton(seen)
+  n = Node.new
+  def n.only_mine = 1
+  n.peer = n
+  seen[n] = true
+  nil
+end
+
+# An ivar on a bare value is the other table with that shape, and the same
+# weak pin.
+def through_an_ivar_on_a_bare_value(seen)
+  a = []
+  a << a
+  a.instance_variable_set(:@tag, 1)
+  seen[a] = true
+  nil
+end
+
 # -- the survivors ---------------------------------------------------------
 
 def held_by_a_global(seen)
@@ -228,6 +267,9 @@ through_a_runtime_struct(seen)
 through_a_captured_cell(seen)
 through_two_procs_sharing_a_cell(seen)
 through_a_block_self(seen)
+through_a_range_endpoint(seen)
+through_a_per_object_singleton(seen)
+through_an_ivar_on_a_bare_value(seen)
 held_by_a_global(seen)
 held_by_a_container(seen, keep)
 

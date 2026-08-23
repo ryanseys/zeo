@@ -23,6 +23,7 @@
 pub(crate) mod collections;
 pub(crate) mod ivars;
 pub(crate) mod value_ivars;
+
 use crate::builtins::{arg_error, type_error};
 use crate::collections::{RArray, RHash, RStr};
 use crate::dispatch::{
@@ -36,6 +37,44 @@ use crate::ractor::RRactor;
 use crate::regexp::{RMatchData, RRegexp};
 use crate::thread::{RMutex, RQueue, RThread};
 use crate::{RObj, RProc, Symbol};
+
+/// A weak handle to an owner, type-erased.
+///
+/// Only one question is ever asked of it -- is the value still there -- so
+/// there is no reason to remember which variant it came from. `Weak<dyn Any>`
+/// names the same allocation whatever the payload was, and holding it is what
+/// keeps the address from being handed to an unrelated later value.
+pub(crate) type WeakOwner = std::sync::Weak<dyn std::any::Any + Send + Sync>;
+
+/// A weak handle to `v`'s allocation, for every kind that can be named by one.
+///
+/// Every arm is `Arc::downgrade` after an unsizing coercion, which keeps the
+/// pointer -- so the handle names the same allocation the key was taken from.
+/// An immediate answers `None`: it has no allocation, and no side table
+/// keyed by address can be asked about one.
+pub(crate) fn weak_owner(v: &RubyValue) -> Option<WeakOwner> {
+    use std::sync::Arc;
+    fn erase<T: std::any::Any + Send + Sync>(a: &std::sync::Arc<T>) -> WeakOwner {
+        let erased: std::sync::Arc<dyn std::any::Any + Send + Sync> = a.clone();
+        std::sync::Arc::downgrade(&erased)
+    }
+    Some(match v {
+        RubyValue::Object(o) => Arc::downgrade(&o.clone().as_any_rc()),
+        RubyValue::Str(s) => erase(s),
+        RubyValue::Array(a) => erase(a),
+        RubyValue::Hash(h) => erase(h),
+        RubyValue::Regexp(r) => erase(r),
+        RubyValue::MatchData(m) => erase(m),
+        RubyValue::Enumerator(e) => erase(e),
+        RubyValue::Fiber(f) => erase(f),
+        RubyValue::Thread(t) => erase(t),
+        RubyValue::Mutex(m) => erase(m),
+        RubyValue::Queue(q) => erase(q),
+        RubyValue::Ractor(r) => erase(r),
+        RubyValue::Proc(p) | RubyValue::Yielder(p) => p.weak_owner(),
+        _ => return None,
+    })
+}
 
 // `repr(C, u8)` = tag byte + payload union: size 24, align 8, every payload
 // at offset 8, `Option`/`Result` niches preserved -- asserted by the

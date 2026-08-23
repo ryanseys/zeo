@@ -200,6 +200,7 @@ fn value_addr(v: &RubyValue) -> Option<usize> {
         RubyValue::Hash(h) => Arc::as_ptr(h) as *const () as usize,
         RubyValue::Object(o) => Arc::as_ptr(o) as *const () as usize,
         RubyValue::Proc(p) => p.identity(),
+        RubyValue::Range(r) => Arc::as_ptr(r) as *const () as usize,
         _ => return None,
     })
 }

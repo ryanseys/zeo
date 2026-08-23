@@ -522,15 +522,22 @@ dropped. **Without `ZEO_GC=1` there is no collector and a cycle leaks**, which
 is the default; the flag is a RUN-TIME one, read where the program runs rather
 than where it was compiled.
 
-Armed, the pass reclaims cycles among objects, Arrays, Hashes, Structs,
-exceptions and value subclasses. Four shapes still leak, each for its own
-reason, and `tests/gaps/a_cycle_can_still_leak.rb` reproduces all four: a
-cycle closed through a compiled `Proc`'s captured local (the cell's owner
-lives inside an `Arc<dyn Fn>` that no enumeration reaches), one closed through
-a `Range` (immutable by design, so a sweep has nothing to release its
-endpoints through), and anything carrying a per-object singleton or an ivar
-written on a bare value (both side tables pin their owner by design, so an
-address can never be handed to an unrelated later value).
+Armed, the pass reclaims every shape `tests/a_cycle_is_reclaimed.rb` builds:
+cycles among objects, Arrays, Hashes, Structs, exceptions and value
+subclasses, and cycles closed through a compiled `Proc`'s captured local, a
+`Range` endpoint, a per-object singleton, or an ivar written on a bare value.
+
+Two of those needed the collector's own rule widened. A `Proc` and a `Range`
+are immutable, so the sweep cannot clear what they hold; they report their
+edges anyway, because every owner of a reclaimed node is itself reclaimed and
+cleared, so the node dies with the pass's own handles. The pass checks it --
+its self-check is that a reclaimed node is actually FREED once the pass lets
+go, not that its owner count reached one.
+
+The other two were side tables that pinned their owner STRONGLY so an address
+could never be reused. The pin is now a `Weak`, which holds the allocation --
+all the uniqueness needed -- without holding the value. That removed a
+standing leak from the runtime as well as a blind spot in the collector.
 
 zeo also reclaims one shape CRuby does not, in the other direction: a cycle
 closed through `Exception#cause`. CRuby keeps the most recently raised

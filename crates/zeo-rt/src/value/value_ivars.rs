@@ -11,9 +11,16 @@
 //!
 //! This is `runtime_meta`'s `value_singletons` shape, and it inherits that
 //! table's soundness rule: an `Arc` address identifies a value only while the
-//! value lives, so every write PINS its owner (see [`OWNERS`]). Without the pin
-//! a dead value's address gets handed to an unrelated later one, which would
-//! silently inherit its ivars.
+//! value lives, so every write PINS its owner. Without the pin a dead value's
+//! address gets handed to an unrelated later one, which would silently
+//! inherit its ivars.
+//!
+//! The pin is WEAK, and that matters twice. A `Weak` holds the allocation
+//! open, so the address stays unique -- which is the whole job. A strong one
+//! would also keep the VALUE alive forever, which made this table a permanent
+//! leak in its own right and made every owner permanently reachable from
+//! outside the cycle collector's registry. [`sweep`] drops the rows whose
+//! owner is gone, amortized against the table's own growth.
 //!
 //! `ANY` keeps the cost off every other program: until something actually
 //! writes one of these, every read is a single relaxed load.
@@ -28,11 +35,13 @@ use crate::{FMap, RubyValue};
 /// enough of them for the linear scan to matter.
 type Slots = Vec<(String, RubyValue)>;
 
+use crate::value::WeakOwner;
+
 struct Store {
     ivars: RwLock<FMap<usize, Slots>>,
-    /// A strong reference to every value that has ever been given an ivar, so
+    /// A weak reference to every value that has ever been given an ivar, so
     /// its address can never be reused. See the module docs.
-    owners: RwLock<FMap<usize, RubyValue>>,
+    owners: RwLock<FMap<usize, WeakOwner>>,
 }
 
 static ANY: AtomicBool = AtomicBool::new(false);
@@ -92,6 +101,43 @@ fn key(v: &RubyValue) -> Option<usize> {
     Some(addr as usize)
 }
 
+/// Drop every row whose owner is gone.
+///
+/// The ivars go FIRST and the pins LAST. Dropping a pin frees the allocation,
+/// and freeing the allocation is what lets that address be handed to an
+/// unrelated later value -- which must never find a dead one's ivars still
+/// filed under it. Both locks are held across the whole sweep, so no reader
+/// can interleave either way; the order is written down because the same
+/// mistake in `runtime_meta`'s twin made a live String answer a dead one's
+/// singleton method.
+///
+/// Amortized against the table's own growth, the same bargain a `Vec` makes:
+/// the next sweep waits until the table has grown by half again, so the scan
+/// costs O(1) per row written.
+fn sweep(owners: &mut FMap<usize, WeakOwner>, ivars: &mut FMap<usize, Slots>) {
+    ivars.retain(|k, _| owners.get(k).is_some_and(|w| w.strong_count() > 0));
+    owners.retain(|_, w| w.strong_count() > 0);
+    SWEEP_AT.store(owners.len() + (owners.len() / 2).max(64), Ordering::Relaxed);
+}
+
+/// How many rows `owners` may hold before the next [`sweep`].
+static SWEEP_AT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(64);
+
+/// Record `v` as the owner of key `k`, sweeping the table when it has grown
+/// enough to be worth the scan. Both locks are taken here, in one order, and
+/// this is the only place that holds them at once.
+fn pin(k: usize, v: &RubyValue) {
+    let Some(weak) = crate::value::weak_owner(v) else {
+        return;
+    };
+    let mut owners = store().owners.write().unwrap();
+    owners.insert(k, weak);
+    if owners.len() >= SWEEP_AT.load(Ordering::Relaxed) {
+        let mut ivars = store().ivars.write().unwrap();
+        sweep(&mut owners, &mut ivars);
+    }
+}
+
 /// `v`'s `@name` (bare, no `@`), or `None` if it has none.
 pub(crate) fn get(v: &RubyValue, name: &str) -> Option<RubyValue> {
     if !any() {
@@ -113,12 +159,7 @@ pub(crate) fn set(v: &RubyValue, name: &str, value: RubyValue) -> bool {
     let Some(k) = key(v) else {
         return false;
     };
-    store()
-        .owners
-        .write()
-        .unwrap()
-        .entry(k)
-        .or_insert_with(|| v.clone());
+    pin(k, v);
     let mut ivars = store().ivars.write().unwrap();
     let slots = ivars.entry(k).or_default();
     match slots.iter_mut().find(|(n, _)| n == name) {
@@ -176,12 +217,7 @@ pub(crate) fn copy(from: &RubyValue, to: &RubyValue) {
     let Some(slots) = slots.filter(|s| !s.is_empty()) else {
         return;
     };
-    store()
-        .owners
-        .write()
-        .unwrap()
-        .entry(dst)
-        .or_insert_with(|| to.clone());
+    pin(dst, to);
     store().ivars.write().unwrap().insert(dst, slots);
 }
 

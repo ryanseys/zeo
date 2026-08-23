@@ -427,10 +427,10 @@ Zeo is experimental. The known limits, all of them deliberate and recorded:
   reference cycle leaks unless `ZEO_GC=1` arms the cycle collector, which then
   reclaims one at the next `GC.start`. It is off by default because recording
   every allocation into the registry it walks costs about 1.5% over the bench
-  corpus. Armed, it reclaims cycles among objects, Arrays, Hashes, Structs,
-  exceptions and their subclasses; a cycle closed through a `Proc`'s captured
-  local, a `Range`, or a value carrying its own singleton or ivars still leaks
-  (`tests/gaps/a_cycle_can_still_leak.rb` says why for each). There is no
+  corpus. Armed, it reclaims every cycle `tests/a_cycle_is_reclaimed.rb`
+  builds -- among objects, Arrays, Hashes, Structs, exceptions and their
+  subclasses, and through a `Proc`'s captured local, a `Range` endpoint, a
+  per-object singleton and an ivar written on a bare value. There is no
   automatic trigger and no tracing collector: the pass reconciles reference
   counts rather than tracing, because zeo's lowering declares no stack maps
   for Cranelift to build root sets from.
