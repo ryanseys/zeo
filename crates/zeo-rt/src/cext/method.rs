@@ -190,6 +190,30 @@ pub unsafe fn method_proc(f: MethodPtr, argc: c_int) -> Result<RProc, Signal> {
     .build())
 }
 
+/// Which classes got a C allocator, and which one.
+///
+/// `rb_get_alloc_func` is the only reader, and it answers null for a class
+/// that has none -- which is how a caller tells a C-allocated class from a
+/// plain Ruby one.
+static ALLOC_FUNCS: std::sync::Mutex<Option<std::collections::HashMap<u32, usize>>> =
+    std::sync::Mutex::new(None);
+
+fn remember_alloc_func(owner: ClassId, addr: usize) {
+    if let Ok(mut g) = ALLOC_FUNCS.lock() {
+        g.get_or_insert_with(std::collections::HashMap::new)
+            .insert(owner.0, addr);
+    }
+}
+
+/// The allocator installed for `owner`, or null.
+pub(super) fn alloc_func_of(owner: ClassId) -> *const c_void {
+    ALLOC_FUNCS
+        .lock()
+        .ok()
+        .and_then(|g| g.as_ref().and_then(|m| m.get(&owner.0).copied()))
+        .map_or(std::ptr::null(), |a| a as *const c_void)
+}
+
 /// # Safety
 ///
 /// `v` must be a live `VALUE` naming a Class or Module.
@@ -331,6 +355,9 @@ crate::cext_fn! {
     fn rb_define_alloc_func(klass: Value, f: unsafe extern "C" fn(Value) -> Value) -> () {
         let owner = unsafe { as_class(klass)? };
         let addr = f as usize;
+        // `rb_get_alloc_func` reads this back. Nothing else can: the
+        // allocator is inside a closure by the time it is installed.
+        remember_alloc_func(owner, addr);
         let cls = RubyValue::Class(owner);
 
         let alloc = move |recv: &RubyValue, _args: &[RubyValue], _b: Option<RubyValue>| {

@@ -111,7 +111,9 @@ module ZeoDev
             warn "cext: stale -- run `zeo-dev cext api`: #{drift.join(", ")}"
             return 1
           end
-          puts "cext: #{decls.size} linkable symbols, #{decls.count { |d| d[:status] == "stub" }} stubbed"
+          puts "cext: #{decls.size} linkable symbols, " \
+               "#{decls.count { |d| d[:status] == "stub" }} stubbed, " \
+               "#{decls.count { |d| d[:status] == "refused" }} refused"
           return 0
         end
         Tsv.write(File.join(ROOT, API_TSV), tsv)
@@ -121,7 +123,9 @@ module ZeoDev
         # file and `--check` reports drift the generator cannot fix.
         Exec.run(["rustfmt", "--edition", "2024", File.join(ROOT, STUBS_RS)])
         puts "cext: wrote #{API_TSV} and #{STUBS_RS} " \
-             "(#{decls.size} symbols, #{decls.count { |d| d[:status] == "stub" }} stubbed)"
+             "(#{decls.size} symbols, " \
+             "#{decls.count { |d| d[:status] == "stub" }} stubbed, " \
+             "#{decls.count { |d| d[:status] == "refused" }} refused)"
         0
       end
 
@@ -201,11 +205,69 @@ module ZeoDev
                          # whether the loader can fill it. `cext::globals`
                          # reports the ones it cannot.
                          "global"
+                       elsif REFUSED.key?(d[:name])
+                         "refused"
                        else
                          "stub"
                        end
         end
       end
+
+      # Entries zeo will NOT implement, each with the reason.
+      #
+      # The distinction from `stub` is the whole point: a stub is work not
+      # done, and the count going down is progress. A refusal is a decision,
+      # and it stays. Without the split, 33 permanent refusals read as 33
+      # outstanding items forever.
+      #
+      # The message an extension sees carries the reason, so a gem that calls
+      # one gets an answer rather than a bare "not implemented".
+      EMBEDDING = "zeo's VM is already running: these boot, configure or shut down an " \
+                  "interpreter, and an extension loaded INTO one cannot do that"
+      BIGNUM_LAYOUT = "this exposes MRI's Bignum digit array, which zeo does not have; " \
+                      "rb_integer_pack and rb_integer_unpack are the supported way"
+      HASH_TABLE = "this hands out a Ruby Hash's internal st_table, which zeo does not " \
+                   "store; rb_hash_foreach and rb_hash_aset reach the same data"
+      PARSE_TREE = "this answers a NODE*, MRI's parse tree; zeo compiles through prism " \
+                   "and builds no such thing"
+
+      REFUSED = {
+        "ruby_init" => EMBEDDING,
+        "ruby_setup" => EMBEDDING,
+        "ruby_cleanup" => EMBEDDING,
+        "ruby_finalize" => EMBEDDING,
+        "ruby_sig_finalize" => EMBEDDING,
+        "ruby_stop" => EMBEDDING,
+        "ruby_options" => EMBEDDING,
+        "ruby_process_options" => EMBEDDING,
+        "ruby_prog_init" => EMBEDDING,
+        "ruby_sysinit" => EMBEDDING,
+        "ruby_init_loadpath" => EMBEDDING,
+        "ruby_init_stack" => EMBEDDING,
+        "ruby_incpush" => EMBEDDING,
+        "ruby_script" => EMBEDDING,
+        "ruby_set_argv" => EMBEDDING,
+        "ruby_set_script_name" => EMBEDDING,
+        "ruby_show_copyright" => EMBEDDING,
+        "ruby_show_version" => EMBEDDING,
+        "ruby_run_node" => EMBEDDING,
+        "ruby_exec_node" => EMBEDDING,
+        "ruby_executable_node" => EMBEDDING,
+        "rb_big_new" => BIGNUM_LAYOUT,
+        "rb_big_resize" => BIGNUM_LAYOUT,
+        "rb_big_pack" => BIGNUM_LAYOUT,
+        "rb_big_unpack" => BIGNUM_LAYOUT,
+        "rb_big_2comp" => BIGNUM_LAYOUT,
+        "rb_hash_tbl" => HASH_TABLE,
+        "rb_hash_bulk_insert_into_st_table" => HASH_TABLE,
+        "rb_load_file" => PARSE_TREE,
+        "rb_load_file_str" => PARSE_TREE,
+        "rb_add_event_hook" => "the C-level TracePoint; zeo's TracePoint is Ruby-level and " \
+                               "its event set does not line up with rb_event_flag_t",
+        "rb_remove_event_hook" => "the C-level TracePoint; see rb_add_event_hook",
+        "rb_marshal_define_compat" => "this writes Marshal's internal compatibility table, " \
+                                      "which zeo's Marshal does not have"
+      }.freeze
 
       def render_tsv(decls)
         rows = decls.map { |d| [d[:name], d[:kind], d[:status], d[:sig]].join("\t") }
@@ -213,9 +275,11 @@ module ZeoDev
           # Every rb_*/ruby_* symbol a C extension can link against, from clang's AST
           # of the vendored headers. Regenerate with `tools/zeo-dev cext api`.
           #
-          # status=zeo    the runtime exports it
-          # status=stub   crates/zeo-rt/src/cext/stubs.rs raises NotImplementedError
-          # status=global a VALUE symbol stubs.rs defines and cext::globals fills
+          # status=zeo     the runtime exports it
+          # status=stub    not written yet; stubs.rs raises NotImplementedError
+          # status=refused a DECISION, with the reason in the raise; see REFUSED in
+          #                tools/lib/zeo_dev/commands/cext.rb
+          # status=global  a VALUE symbol stubs.rs defines and cext::globals fills
           symbol\tkind\tstatus\tsignature
         HEAD
       end
@@ -228,13 +292,37 @@ module ZeoDev
       # them, and it never returns -- so there is no return value to disagree
       # about and no frame to unwind. Writing 800 correct signatures instead
       # would buy nothing: not one of these functions runs.
+      # `unimplemented` exists only while something still uses it. The count
+      # is zero today, and a re-vendor at a later Ruby is what brings new
+      # symbols and needs it back.
+      def unimplemented_fn(stubs)
+        return "" if stubs.empty?
+
+        <<~RS
+          /// Raise, naming the symbol the extension asked for.
+          fn unimplemented(what: &'static str) -> ! {
+              crate::cext::jmp::raise(crate::dispatch::raise_error(
+                  "NotImplementedError",
+                  format!("{what} is not implemented by zeo"),
+              ))
+          }
+        RS
+      end
+
       def render_stubs(decls)
         stubs = decls.select { |d| d[:kind] == "fn" && d[:status] == "stub" }
+        refused = decls.select { |d| d[:kind] == "fn" && d[:status] == "refused" }
         vars = decls.select { |d| d[:kind] == "var" && d[:status] == "global" }
         body = stubs.map { |d| <<~RS }.join
           #[unsafe(no_mangle)]
           pub extern "C" fn #{d[:name]}() -> ! {
               unimplemented(#{d[:name].inspect})
+          }
+        RS
+        body += refused.map { |d| <<~RS }.join
+          #[unsafe(no_mangle)]
+          pub extern "C" fn #{d[:name]}() -> ! {
+              refused(#{d[:name].inspect}, #{REFUSED.fetch(d[:name]).inspect})
           }
         RS
         globals = vars.map { |d| <<~RS }.join
@@ -248,6 +336,11 @@ module ZeoDev
           //! Generated by `tools/zeo-dev cext api`. Do not edit.
           //!
           //! # Why every one of them exists
+          //!
+          //! Two kinds live here. A STUB is work not done, and the count
+          //! going down is progress. A REFUSAL is a decision that stays, and
+          //! it carries its reason into the raise -- so a gem author reading
+          //! the message learns what to reach for instead.
           //!
           //! A gem's `ext/**/*.c` is compiled and linked as a whole. One
           //! reference to a function zeo has not written yet would fail the
@@ -268,7 +361,8 @@ module ZeoDev
           //! cleans up itself, the callee reads none of them, and it never
           //! returns -- so there is no return value to disagree about and no
           //! frame to unwind. Writing #{stubs.size} correct signatures would
-          //! buy nothing: not one of these functions runs.
+          //! buy nothing: not one of these functions runs. #{refused.size}
+          //! of them are refusals rather than gaps.
           //!
           //! # The globals
           //!
@@ -304,11 +398,14 @@ module ZeoDev
                   .map(|(_, g)| g.load(Ordering::Relaxed))
           }
 
-          /// Raise, naming the symbol the extension asked for.
-          fn unimplemented(what: &'static str) -> ! {
+          #{unimplemented_fn(stubs)}
+          /// The same, for an entry zeo has DECIDED not to implement. The
+          /// reason travels with the raise, so a gem author reading the
+          /// message learns what to reach for instead.
+          fn refused(what: &'static str, why: &'static str) -> ! {
               crate::cext::jmp::raise(crate::dispatch::raise_error(
                   "NotImplementedError",
-                  format!("{what} is not implemented by zeo"),
+                  format!("{what} is not supported by zeo: {why}"),
               ))
           }
 

@@ -233,6 +233,175 @@ VALUE rb_struct_define_under(VALUE outer, const char *name, ...)
     return zeo_cext_struct_define(outer, name, members, n);
 }
 
+/*
+ * `rb_ary_new_from_args(n, a, b, c)` and `rb_yield_values(n, ...)` both take
+ * a count and that many `VALUE`s, which is the simplest vararg shape there is.
+ */
+extern VALUE rb_ary_new_from_values(long n, const VALUE *elts);
+extern VALUE rb_yield_values2(int argc, const VALUE *argv);
+extern VALUE zeo_cext_data_define(VALUE super, const char **members, int n);
+extern VALUE zeo_cext_struct_define_noaccessor(VALUE outer, const char *name,
+                                               VALUE super, const char **members,
+                                               int n);
+
+static int zeo_collect_values(va_list ap, VALUE *out, int n)
+{
+    int i;
+
+    if (n < 0) {
+        n = 0;
+    }
+    if (n > ZEO_MAX_ARGS) {
+        n = ZEO_MAX_ARGS;
+    }
+    for (i = 0; i < n; i++) {
+        out[i] = va_arg(ap, VALUE);
+    }
+    return n;
+}
+
+VALUE rb_ary_new_from_args(long n, ...)
+{
+    VALUE items[ZEO_MAX_ARGS];
+    va_list ap;
+    int count;
+
+    va_start(ap, n);
+    count = zeo_collect_values(ap, items, (int)n);
+    va_end(ap);
+    return rb_ary_new_from_values(count, items);
+}
+
+VALUE rb_yield_values(int n, ...)
+{
+    VALUE items[ZEO_MAX_ARGS];
+    va_list ap;
+    int count;
+
+    va_start(ap, n);
+    count = zeo_collect_values(ap, items, n);
+    va_end(ap);
+    return rb_yield_values2(count, items);
+}
+
+/* `rb_data_define(super, "a", "b", NULL)` -- Data.define, whose member list
+ * is NUL-terminated like `rb_struct_define`'s. */
+VALUE rb_data_define(VALUE super, ...)
+{
+    const char *members[ZEO_MAX_SLOTS];
+    va_list ap;
+    int n;
+
+    va_start(ap, super);
+    n = zeo_collect_names(ap, members);
+    va_end(ap);
+    return zeo_cext_data_define(super, members, n);
+}
+
+/*
+ * `rb_struct_define_without_accessor(name, super, alloc, "a", "b", NULL)`.
+ *
+ * The `alloc` argument is MRI's own allocator override, and it is DROPPED:
+ * zeo's Struct allocates through the class, and installing a C allocator here
+ * would run it instead of the one that builds the members. No gem in the
+ * census passes a non-NULL one.
+ */
+VALUE rb_struct_define_without_accessor(const char *name, VALUE super,
+                                        void *alloc, ...)
+{
+    const char *members[ZEO_MAX_SLOTS];
+    va_list ap;
+    int n;
+
+    (void)alloc;
+    va_start(ap, alloc);
+    n = zeo_collect_names(ap, members);
+    va_end(ap);
+    return zeo_cext_struct_define_noaccessor(0, name, super, members, n);
+}
+
+VALUE rb_struct_define_without_accessor_under(VALUE outer, const char *name,
+                                              VALUE super, void *alloc, ...)
+{
+    const char *members[ZEO_MAX_SLOTS];
+    va_list ap;
+    int n;
+
+    (void)alloc;
+    va_start(ap, alloc);
+    n = zeo_collect_names(ap, members);
+    va_end(ap);
+    return zeo_cext_struct_define_noaccessor(outer, name, super, members, n);
+}
+
+/*
+ * `rb_scan_args_kw(kw_splat, argc, argv, fmt, ...)`.
+ *
+ * zeo peels a trailing keyword Hash from the argument list at the call, so
+ * `kw_splat` describes a distinction that is already gone by the time a C
+ * body runs. The rest is `rb_scan_args` exactly.
+ */
+int rb_scan_args_kw(int kw_splat, int argc, const VALUE *argv, const char *fmt, ...)
+{
+    int required = 0, optional = 0, splat = 0, block = 0;
+    va_list ap;
+    int i, taken, given;
+    VALUE *slot;
+
+    (void)kw_splat;
+    if (!zeo_cext_scan_plan(fmt, &required, &optional, &splat, &block)) {
+        return 0;
+    }
+    if (argc < 0) {
+        argc = 0;
+    }
+
+    va_start(ap, fmt);
+    given = argc;
+    taken = required + optional;
+    if (taken > given) {
+        taken = given;
+    }
+    for (i = 0; i < required + optional; i++) {
+        slot = va_arg(ap, VALUE *);
+        if (slot != NULL) {
+            *slot = (i < taken) ? argv[i] : (VALUE)0x04 /* Qnil */;
+        }
+    }
+    if (splat) {
+        slot = va_arg(ap, VALUE *);
+        if (slot != NULL) {
+            *slot = zeo_cext_scan_slice(argc, argv, taken, argc);
+        }
+        taken = argc;
+    }
+    if (block) {
+        slot = va_arg(ap, VALUE *);
+        if (slot != NULL) {
+            *slot = (VALUE)0x04;
+        }
+    }
+    va_end(ap);
+    return taken;
+}
+
+/*
+ * `rb_vrescue2` is `rb_rescue2` with the class list already in a `va_list`.
+ * Walking it here is the only way to read it.
+ */
+VALUE rb_vrescue2(VALUE (*body)(VALUE), VALUE barg,
+                  VALUE (*resc)(VALUE, VALUE), VALUE rarg, va_list ap)
+{
+    VALUE classes[ZEO_MAX_ARGS];
+    int n = 0;
+    VALUE c;
+
+    while (n < ZEO_MAX_ARGS && (c = va_arg(ap, VALUE)) != 0) {
+        classes[n++] = c;
+    }
+    return zeo_cext_rescue2(body, barg, resc, rarg, classes, n);
+}
+
 VALUE rb_struct_new(VALUE klass, ...)
 {
     VALUE values[ZEO_MAX_ARGS];

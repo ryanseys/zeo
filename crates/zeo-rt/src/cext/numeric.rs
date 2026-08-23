@@ -631,7 +631,32 @@ crate::cext_fn! {
     }
 }
 
-/// `Integer#to_s(base)`, through the method rather than a second formatter.
+/// How many bits the magnitude needs. `rb_absint_numwords`'s caller sizes a
+/// buffer from this, so one too few is a truncated number.
+///
+/// # Safety
+///
+/// `v` must be a live `VALUE`.
+pub(super) unsafe fn abs_bits(v: Value) -> Result<usize, Signal> {
+    let n = unsafe { as_big(v)? }.abs();
+    Ok(if n.is_zero() { 0 } else { n.bits() as usize })
+}
+
+/// Is the magnitude a power of two? Exactly one bit set is the whole test.
+///
+/// # Safety
+///
+/// `v` must be a live `VALUE`.
+pub(super) unsafe fn abs_is_power_of_two(v: Value) -> Result<bool, Signal> {
+    let n = unsafe { as_big(v)? }.abs();
+    if n.is_zero() {
+        return Ok(false);
+    }
+    // `n & (n - 1) == 0` is the classic test, and `BigInt` supports both.
+    Ok((&n & (&n - 1u32)).is_zero())
+}
+
+/// `Integer#to_s(base)`, through the method rather than a second formatter./// `Integer#to_s(base)`, through the method rather than a second formatter.
 fn int_to_str(n: &BigInt, base: c_int) -> Result<RubyValue, Signal> {
     if !(2..=36).contains(&base) {
         return Err(crate::dispatch::raise_error(

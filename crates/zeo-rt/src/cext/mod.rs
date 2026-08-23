@@ -22,6 +22,7 @@ pub mod convert;
 pub mod data;
 pub mod error;
 pub mod eval;
+pub mod r#final;
 pub mod format;
 pub mod forward;
 pub mod gc;
@@ -105,7 +106,7 @@ mod tests {
     fn every_ledger_row_is_answered() {
         for (name, kind, status) in ledger() {
             assert!(
-                matches!(status.as_str(), "zeo" | "stub" | "global"),
+                matches!(status.as_str(), "zeo" | "stub" | "refused" | "global"),
                 "{name} ({kind}) has status {status:?}, which resolves to nothing"
             );
             assert_eq!(

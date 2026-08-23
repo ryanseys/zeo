@@ -4,6 +4,11 @@
 //!
 //! # Why every one of them exists
 //!
+//! Two kinds live here. A STUB is work not done, and the count
+//! going down is progress. A REFUSAL is a decision that stays, and
+//! it carries its reason into the raise -- so a gem author reading
+//! the message learns what to reach for instead.
+//!
 //! A gem's `ext/**/*.c` is compiled and linked as a whole. One
 //! reference to a function zeo has not written yet would fail the
 //! LINK, with a message naming a symbol and no gem, no file and no
@@ -22,8 +27,9 @@
 //! safe. The caller passes arguments in registers and on a stack it
 //! cleans up itself, the callee reads none of them, and it never
 //! returns -- so there is no return value to disagree about and no
-//! frame to unwind. Writing 124 correct signatures would
-//! buy nothing: not one of these functions runs.
+//! frame to unwind. Writing 0 correct signatures would
+//! buy nothing: not one of these functions runs. 33
+//! of them are refusals rather than gaps.
 //!
 //! # The globals
 //!
@@ -153,11 +159,13 @@ pub fn global(name: &str) -> Option<usize> {
         .map(|(_, g)| g.load(Ordering::Relaxed))
 }
 
-/// Raise, naming the symbol the extension asked for.
-fn unimplemented(what: &'static str) -> ! {
+/// The same, for an entry zeo has DECIDED not to implement. The
+/// reason travels with the raise, so a gem author reading the
+/// message learns what to reach for instead.
+fn refused(what: &'static str, why: &'static str) -> ! {
     crate::cext::jmp::raise(crate::dispatch::raise_error(
         "NotImplementedError",
-        format!("{what} is not implemented by zeo"),
+        format!("{what} is not supported by zeo: {why}"),
     ))
 }
 
@@ -347,498 +355,233 @@ pub static rb_stdin: Global = unfilled();
 pub static rb_stdout: Global = unfilled();
 
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_Hash() -> ! {
-    unimplemented("rb_Hash")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_absint_numwords() -> ! {
-    unimplemented("rb_absint_numwords")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_absint_singlebit_p() -> ! {
-    unimplemented("rb_absint_singlebit_p")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_add_event_hook() -> ! {
-    unimplemented("rb_add_event_hook")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_arithmetic_sequence_beg_len_step() -> ! {
-    unimplemented("rb_arithmetic_sequence_beg_len_step")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_arithmetic_sequence_extract() -> ! {
-    unimplemented("rb_arithmetic_sequence_extract")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_ary_new_from_args() -> ! {
-    unimplemented("rb_ary_new_from_args")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_assert_failure() -> ! {
-    unimplemented("rb_assert_failure")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_autoload_load() -> ! {
-    unimplemented("rb_autoload_load")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_autoload_p() -> ! {
-    unimplemented("rb_autoload_p")
+    refused(
+        "rb_add_event_hook",
+        "the C-level TracePoint; zeo's TracePoint is Ruby-level and its event set does not line up with rb_event_flag_t",
+    )
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_big_2comp() -> ! {
-    unimplemented("rb_big_2comp")
+    refused(
+        "rb_big_2comp",
+        "this exposes MRI's Bignum digit array, which zeo does not have; rb_integer_pack and rb_integer_unpack are the supported way",
+    )
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_big_new() -> ! {
-    unimplemented("rb_big_new")
+    refused(
+        "rb_big_new",
+        "this exposes MRI's Bignum digit array, which zeo does not have; rb_integer_pack and rb_integer_unpack are the supported way",
+    )
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_big_pack() -> ! {
-    unimplemented("rb_big_pack")
+    refused(
+        "rb_big_pack",
+        "this exposes MRI's Bignum digit array, which zeo does not have; rb_integer_pack and rb_integer_unpack are the supported way",
+    )
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_big_resize() -> ! {
-    unimplemented("rb_big_resize")
+    refused(
+        "rb_big_resize",
+        "this exposes MRI's Bignum digit array, which zeo does not have; rb_integer_pack and rb_integer_unpack are the supported way",
+    )
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_big_unpack() -> ! {
-    unimplemented("rb_big_unpack")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_bug_errno() -> ! {
-    unimplemented("rb_bug_errno")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_class_descendants() -> ! {
-    unimplemented("rb_class_descendants")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_clear_constant_cache() -> ! {
-    unimplemented("rb_clear_constant_cache")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_clear_constant_cache_for_id() -> ! {
-    unimplemented("rb_clear_constant_cache_for_id")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_close_before_exec() -> ! {
-    unimplemented("rb_close_before_exec")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_cmperr() -> ! {
-    unimplemented("rb_cmperr")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_cmpint() -> ! {
-    unimplemented("rb_cmpint")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_const_list() -> ! {
-    unimplemented("rb_const_list")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_convert_type() -> ! {
-    unimplemented("rb_convert_type")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_data_define() -> ! {
-    unimplemented("rb_data_define")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_debug_rstring_null_ptr() -> ! {
-    unimplemented("rb_debug_rstring_null_ptr")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_define_finalizer() -> ! {
-    unimplemented("rb_define_finalizer")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_detach_process() -> ! {
-    unimplemented("rb_detach_process")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_ext_ractor_safe() -> ! {
-    unimplemented("rb_ext_ractor_safe")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_ext_resolve_symbol() -> ! {
-    unimplemented("rb_ext_resolve_symbol")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_external_str_new() -> ! {
-    unimplemented("rb_external_str_new")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_external_str_new_cstr() -> ! {
-    unimplemented("rb_external_str_new_cstr")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_extract_keywords() -> ! {
-    unimplemented("rb_extract_keywords")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_f_sprintf() -> ! {
-    unimplemented("rb_f_sprintf")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_filesystem_str_new() -> ! {
-    unimplemented("rb_filesystem_str_new")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_filesystem_str_new_cstr() -> ! {
-    unimplemented("rb_filesystem_str_new_cstr")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_flt_rationalize() -> ! {
-    unimplemented("rb_flt_rationalize")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_flt_rationalize_with_prec() -> ! {
-    unimplemented("rb_flt_rationalize_with_prec")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_get_alloc_func() -> ! {
-    unimplemented("rb_get_alloc_func")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_get_kwargs() -> ! {
-    unimplemented("rb_get_kwargs")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_get_values_at() -> ! {
-    unimplemented("rb_get_values_at")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_glob() -> ! {
-    unimplemented("rb_glob")
+    refused(
+        "rb_big_unpack",
+        "this exposes MRI's Bignum digit array, which zeo does not have; rb_integer_pack and rb_integer_unpack are the supported way",
+    )
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_hash_bulk_insert_into_st_table() -> ! {
-    unimplemented("rb_hash_bulk_insert_into_st_table")
+    refused(
+        "rb_hash_bulk_insert_into_st_table",
+        "this hands out a Ruby Hash's internal st_table, which zeo does not store; rb_hash_foreach and rb_hash_aset reach the same data",
+    )
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_hash_tbl() -> ! {
-    unimplemented("rb_hash_tbl")
+    refused(
+        "rb_hash_tbl",
+        "this hands out a Ruby Hash's internal st_table, which zeo does not store; rb_hash_foreach and rb_hash_aset reach the same data",
+    )
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_load_file() -> ! {
-    unimplemented("rb_load_file")
+    refused(
+        "rb_load_file",
+        "this answers a NODE*, MRI's parse tree; zeo compiles through prism and builds no such thing",
+    )
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_load_file_str() -> ! {
-    unimplemented("rb_load_file_str")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_locale_str_new() -> ! {
-    unimplemented("rb_locale_str_new")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_locale_str_new_cstr() -> ! {
-    unimplemented("rb_locale_str_new_cstr")
+    refused(
+        "rb_load_file_str",
+        "this answers a NODE*, MRI's parse tree; zeo compiles through prism and builds no such thing",
+    )
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_marshal_define_compat() -> ! {
-    unimplemented("rb_marshal_define_compat")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_mem_clear() -> ! {
-    unimplemented("rb_mem_clear")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_memcicmp() -> ! {
-    unimplemented("rb_memcicmp")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_memory_id() -> ! {
-    unimplemented("rb_memory_id")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_mod_const_at() -> ! {
-    unimplemented("rb_mod_const_at")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_mod_const_of() -> ! {
-    unimplemented("rb_mod_const_of")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_must_asciicompat() -> ! {
-    unimplemented("rb_must_asciicompat")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_notimplement() -> ! {
-    unimplemented("rb_notimplement")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_obj_hide() -> ! {
-    unimplemented("rb_obj_hide")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_obj_reveal() -> ! {
-    unimplemented("rb_obj_reveal")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_obj_setup() -> ! {
-    unimplemented("rb_obj_setup")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_out_of_int() -> ! {
-    unimplemented("rb_out_of_int")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_proc_exec() -> ! {
-    unimplemented("rb_proc_exec")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_proc_times() -> ! {
-    unimplemented("rb_proc_times")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_process_status_wait() -> ! {
-    unimplemented("rb_process_status_wait")
+    refused(
+        "rb_marshal_define_compat",
+        "this writes Marshal's internal compatibility table, which zeo's Marshal does not have",
+    )
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_remove_event_hook() -> ! {
-    unimplemented("rb_remove_event_hook")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_reset_random_seed() -> ! {
-    unimplemented("rb_reset_random_seed")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_ruby_debug_ptr() -> ! {
-    unimplemented("rb_ruby_debug_ptr")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_ruby_verbose_ptr() -> ! {
-    unimplemented("rb_ruby_verbose_ptr")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_scan_args_bad_format() -> ! {
-    unimplemented("rb_scan_args_bad_format")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_scan_args_kw() -> ! {
-    unimplemented("rb_scan_args_kw")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_scan_args_length_mismatch() -> ! {
-    unimplemented("rb_scan_args_length_mismatch")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_set_end_proc() -> ! {
-    unimplemented("rb_set_end_proc")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_singleton_class_clone() -> ! {
-    unimplemented("rb_singleton_class_clone")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_spawn() -> ! {
-    unimplemented("rb_spawn")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_spawn_err() -> ! {
-    unimplemented("rb_spawn_err")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_struct_define_without_accessor() -> ! {
-    unimplemented("rb_struct_define_without_accessor")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_struct_define_without_accessor_under() -> ! {
-    unimplemented("rb_struct_define_without_accessor_under")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_syswait() -> ! {
-    unimplemented("rb_syswait")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_thread_fd_close() -> ! {
-    unimplemented("rb_thread_fd_close")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_thread_fd_select() -> ! {
-    unimplemented("rb_thread_fd_select")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_thread_fd_writable() -> ! {
-    unimplemented("rb_thread_fd_writable")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_thread_wait_fd() -> ! {
-    unimplemented("rb_thread_wait_fd")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_thread_wait_for() -> ! {
-    unimplemented("rb_thread_wait_for")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_typeddata_inherited_p() -> ! {
-    unimplemented("rb_typeddata_inherited_p")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_typeddata_is_kind_of() -> ! {
-    unimplemented("rb_typeddata_is_kind_of")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_uint2big() -> ! {
-    unimplemented("rb_uint2big")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_uint2inum() -> ! {
-    unimplemented("rb_uint2inum")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_undefine_finalizer() -> ! {
-    unimplemented("rb_undefine_finalizer")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_unexpected_type() -> ! {
-    unimplemented("rb_unexpected_type")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_uv_to_utf8() -> ! {
-    unimplemented("rb_uv_to_utf8")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_varargs_bad_length() -> ! {
-    unimplemented("rb_varargs_bad_length")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_vrescue2() -> ! {
-    unimplemented("rb_vrescue2")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_waitpid() -> ! {
-    unimplemented("rb_waitpid")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_yield_values() -> ! {
-    unimplemented("rb_yield_values")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn ruby_brace_glob() -> ! {
-    unimplemented("ruby_brace_glob")
+    refused(
+        "rb_remove_event_hook",
+        "the C-level TracePoint; see rb_add_event_hook",
+    )
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn ruby_cleanup() -> ! {
-    unimplemented("ruby_cleanup")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn ruby_default_signal() -> ! {
-    unimplemented("ruby_default_signal")
+    refused(
+        "ruby_cleanup",
+        "zeo's VM is already running: these boot, configure or shut down an interpreter, and an extension loaded INTO one cannot do that",
+    )
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn ruby_exec_node() -> ! {
-    unimplemented("ruby_exec_node")
+    refused(
+        "ruby_exec_node",
+        "zeo's VM is already running: these boot, configure or shut down an interpreter, and an extension loaded INTO one cannot do that",
+    )
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn ruby_executable_node() -> ! {
-    unimplemented("ruby_executable_node")
+    refused(
+        "ruby_executable_node",
+        "zeo's VM is already running: these boot, configure or shut down an interpreter, and an extension loaded INTO one cannot do that",
+    )
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn ruby_finalize() -> ! {
-    unimplemented("ruby_finalize")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn ruby_glob() -> ! {
-    unimplemented("ruby_glob")
+    refused(
+        "ruby_finalize",
+        "zeo's VM is already running: these boot, configure or shut down an interpreter, and an extension loaded INTO one cannot do that",
+    )
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn ruby_incpush() -> ! {
-    unimplemented("ruby_incpush")
+    refused(
+        "ruby_incpush",
+        "zeo's VM is already running: these boot, configure or shut down an interpreter, and an extension loaded INTO one cannot do that",
+    )
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn ruby_init() -> ! {
-    unimplemented("ruby_init")
+    refused(
+        "ruby_init",
+        "zeo's VM is already running: these boot, configure or shut down an interpreter, and an extension loaded INTO one cannot do that",
+    )
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn ruby_init_loadpath() -> ! {
-    unimplemented("ruby_init_loadpath")
+    refused(
+        "ruby_init_loadpath",
+        "zeo's VM is already running: these boot, configure or shut down an interpreter, and an extension loaded INTO one cannot do that",
+    )
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn ruby_init_stack() -> ! {
-    unimplemented("ruby_init_stack")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn ruby_malloc_add_size_overflow() -> ! {
-    unimplemented("ruby_malloc_add_size_overflow")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn ruby_malloc_size_overflow() -> ! {
-    unimplemented("ruby_malloc_size_overflow")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn ruby_native_thread_p() -> ! {
-    unimplemented("ruby_native_thread_p")
+    refused(
+        "ruby_init_stack",
+        "zeo's VM is already running: these boot, configure or shut down an interpreter, and an extension loaded INTO one cannot do that",
+    )
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn ruby_options() -> ! {
-    unimplemented("ruby_options")
+    refused(
+        "ruby_options",
+        "zeo's VM is already running: these boot, configure or shut down an interpreter, and an extension loaded INTO one cannot do that",
+    )
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn ruby_process_options() -> ! {
-    unimplemented("ruby_process_options")
+    refused(
+        "ruby_process_options",
+        "zeo's VM is already running: these boot, configure or shut down an interpreter, and an extension loaded INTO one cannot do that",
+    )
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn ruby_prog_init() -> ! {
-    unimplemented("ruby_prog_init")
+    refused(
+        "ruby_prog_init",
+        "zeo's VM is already running: these boot, configure or shut down an interpreter, and an extension loaded INTO one cannot do that",
+    )
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn ruby_run_node() -> ! {
-    unimplemented("ruby_run_node")
+    refused(
+        "ruby_run_node",
+        "zeo's VM is already running: these boot, configure or shut down an interpreter, and an extension loaded INTO one cannot do that",
+    )
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn ruby_script() -> ! {
-    unimplemented("ruby_script")
+    refused(
+        "ruby_script",
+        "zeo's VM is already running: these boot, configure or shut down an interpreter, and an extension loaded INTO one cannot do that",
+    )
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn ruby_set_argv() -> ! {
-    unimplemented("ruby_set_argv")
+    refused(
+        "ruby_set_argv",
+        "zeo's VM is already running: these boot, configure or shut down an interpreter, and an extension loaded INTO one cannot do that",
+    )
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn ruby_set_script_name() -> ! {
-    unimplemented("ruby_set_script_name")
+    refused(
+        "ruby_set_script_name",
+        "zeo's VM is already running: these boot, configure or shut down an interpreter, and an extension loaded INTO one cannot do that",
+    )
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn ruby_setup() -> ! {
-    unimplemented("ruby_setup")
+    refused(
+        "ruby_setup",
+        "zeo's VM is already running: these boot, configure or shut down an interpreter, and an extension loaded INTO one cannot do that",
+    )
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn ruby_show_copyright() -> ! {
-    unimplemented("ruby_show_copyright")
+    refused(
+        "ruby_show_copyright",
+        "zeo's VM is already running: these boot, configure or shut down an interpreter, and an extension loaded INTO one cannot do that",
+    )
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn ruby_show_version() -> ! {
-    unimplemented("ruby_show_version")
+    refused(
+        "ruby_show_version",
+        "zeo's VM is already running: these boot, configure or shut down an interpreter, and an extension loaded INTO one cannot do that",
+    )
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn ruby_sig_finalize() -> ! {
-    unimplemented("ruby_sig_finalize")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn ruby_signal_name() -> ! {
-    unimplemented("ruby_signal_name")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn ruby_stack_check() -> ! {
-    unimplemented("ruby_stack_check")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn ruby_stack_length() -> ! {
-    unimplemented("ruby_stack_length")
+    refused(
+        "ruby_sig_finalize",
+        "zeo's VM is already running: these boot, configure or shut down an interpreter, and an extension loaded INTO one cannot do that",
+    )
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn ruby_stop() -> ! {
-    unimplemented("ruby_stop")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn ruby_strtoul() -> ! {
-    unimplemented("ruby_strtoul")
+    refused(
+        "ruby_stop",
+        "zeo's VM is already running: these boot, configure or shut down an interpreter, and an extension loaded INTO one cannot do that",
+    )
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn ruby_sysinit() -> ! {
-    unimplemented("ruby_sysinit")
+    refused(
+        "ruby_sysinit",
+        "zeo's VM is already running: these boot, configure or shut down an interpreter, and an extension loaded INTO one cannot do that",
+    )
 }

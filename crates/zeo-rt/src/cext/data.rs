@@ -184,6 +184,35 @@ thread_local! {
 }
 
 /// `rb_gc_mark`'s Rust half: record one edge, if anything is listening.
+/// Does `child`'s `parent` chain reach `parent`? A subclass's descriptor
+/// names its parent's, and a plain pointer comparison would answer no.
+pub fn type_inherits(child: *const DataType, parent: *const DataType) -> bool {
+    let mut at = child;
+    while !at.is_null() {
+        if std::ptr::eq(at, parent) {
+            return true;
+        }
+        // SAFETY: a descriptor is a static in the extension's own image.
+        at = unsafe { (*at).parent };
+    }
+    false
+}
+
+/// Is `v` a TypedData whose descriptor inherits from `ty`?
+///
+/// # Safety
+///
+/// `v` must be a live `VALUE`.
+pub unsafe fn is_kind_of(v: super::value::Value, ty: *const DataType) -> bool {
+    let val = unsafe { super::convert::value_of(v) };
+    let RubyValue::Object(o) = &val else {
+        return false;
+    };
+    o.as_any()
+        .downcast_ref::<CData>()
+        .is_some_and(|d| type_inherits(d.data_type(), ty))
+}
+
 pub fn mark_edge(v: RubyValue) {
     MARK_SINK.with_borrow_mut(|s| {
         if let Some(sink) = s.as_mut() {
