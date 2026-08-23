@@ -151,6 +151,92 @@ fn read_some(recv: &RubyValue, len: usize) -> Result<Vec<u8>, Signal> {
     Ok(buf)
 }
 
+/// One `SSL_read` with the DESCRIPTOR non-blocking, so a record that has not
+/// arrived answers `WouldBlock` instead of parking the thread.
+///
+/// The flag is restored on every path: the same fd is the blocking `sysread`'s
+/// too, and leaving it set would turn that into a spurious EAGAIN.
+fn read_some_nonblock(recv: &RubyValue, len: usize) -> Result<Option<Vec<u8>>, Signal> {
+    let sock = sock_of(recv);
+    let fd = sock.st.lock().fd;
+    let mut st = sock.st.lock();
+    let stream = established(&mut st)?;
+    crate::builtins::io::set_fd_nonblock(fd, true)?;
+    let mut buf = vec![0u8; len];
+    let got = stream.read(&mut buf);
+    let restore = crate::builtins::io::set_fd_nonblock(fd, false);
+    let got = match got {
+        Ok(n) => n,
+        Err(e) if would_block(&e) => {
+            restore?;
+            return Ok(None);
+        }
+        Err(e) => {
+            restore?;
+            return Err(ssl_error(format!("SSL_read: {e}")));
+        }
+    };
+    restore?;
+    buf.truncate(got);
+    Ok(Some(buf))
+}
+
+/// [`read_some_nonblock`]'s write twin.
+fn write_some_nonblock(recv: &RubyValue, data: &[u8]) -> Result<Option<usize>, Signal> {
+    let sock = sock_of(recv);
+    let fd = sock.st.lock().fd;
+    let mut st = sock.st.lock();
+    let stream = established(&mut st)?;
+    crate::builtins::io::set_fd_nonblock(fd, true)?;
+    let put = stream.write(data);
+    let restore = crate::builtins::io::set_fd_nonblock(fd, false);
+    match put {
+        Ok(n) => {
+            restore?;
+            Ok(Some(n))
+        }
+        Err(e) if would_block(&e) => {
+            restore?;
+            Ok(None)
+        }
+        Err(e) => {
+            restore?;
+            Err(ssl_error(format!("SSL_write: {e}")))
+        }
+    }
+}
+
+/// The `exception:` keyword, defaulting to true.
+fn wants_exception(opts: Option<&RubyValue>) -> bool {
+    let key = RubyValue::Symbol(crate::Symbol::intern("exception"));
+    match opts {
+        Some(RubyValue::Hash(h)) => match crate::value::collections::hash_get(h, &key) {
+            RubyValue::Nil => true,
+            v => v.truthy(),
+        },
+        _ => true,
+    }
+}
+
+/// The shared answer for "nothing is ready" -- `IO`'s own, so a caller's
+/// rescue of `IO::WaitReadable` works on a TLS socket too.
+fn nothing_ready(exception: bool, what: &str) -> Result<RubyValue, Signal> {
+    crate::builtins::io::would_block(what == "write", exception, what)
+}
+
+/// Whether the error is "nothing ready yet". openssl-rs reports a starved
+/// read as `WouldBlock` on the inner stream; a TLS session that wants more
+/// bytes to finish a record surfaces the same way.
+fn would_block(e: &std::io::Error) -> bool {
+    matches!(
+        e.kind(),
+        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
+    ) || e
+        .get_ref()
+        .and_then(|inner| inner.downcast_ref::<std::io::Error>())
+        .is_some_and(|inner| inner.kind() == std::io::ErrorKind::WouldBlock)
+}
+
 /// Relay a call to the underlying socket -- upstream's `SocketForwarder`,
 /// which delegates the whole descriptor-level family to `to_io` because a
 /// TLS session has nothing of its own to say about any of it.
@@ -260,6 +346,40 @@ ruby_class! {
             return Err(raise_error("EOFError", "end of file reached".to_string()));
         }
         Ok(bin_str(chunk))
+    }
+
+    // The non-blocking primitives `OpenSSL::Buffering#read_nonblock` and
+    // `#write_nonblock` are written against. `:wait_readable` / `:wait_writable`
+    // when nothing is ready, or the matching `IO::Wait*` exception.
+    def "sysread_nonblock" params "maxlen, buf = nil, exception: true" (recv, arg1, arg2?, **opts) {
+        let len = match arg1 {
+            RubyValue::Nil => 16384,
+            v => convert::to_index(v)? as usize,
+        };
+        let exception = wants_exception(opts);
+        let Some(chunk) = read_some_nonblock(recv, len)? else {
+            return nothing_ready(exception, "read");
+        };
+        if chunk.is_empty() && len > 0 {
+            return match exception {
+                true => Err(raise_error("EOFError", "end of file reached".to_string())),
+                false => Ok(RubyValue::Nil),
+            };
+        }
+        match arg2 {
+            Some(b @ RubyValue::Str(s)) => {
+                s.lock().replace_bytes(chunk, crate::encoding::ASCII_8BIT);
+                Ok(b.clone())
+            }
+            _ => Ok(bin_str(chunk)),
+        }
+    }
+    def "syswrite_nonblock" params "s, exception: true" (recv, arg1, **opts) {
+        let data = str_bytes(arg1)?;
+        match write_some_nonblock(recv, &data)? {
+            Some(n) => Ok(RubyValue::Int(n as i64)),
+            None => nothing_ready(wants_exception(opts), "write"),
+        }
     }
 
     // TLS session facts.

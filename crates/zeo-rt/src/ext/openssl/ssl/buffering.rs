@@ -7,9 +7,11 @@
 //! in. Read state lives in the receiver's `@rbuffer`/`@eof` ivars, which is
 //! what lets `ungetc` push a character back.
 //!
-//! One divergence, inherited from the socket underneath: `read_nonblock` and
-//! `write_nonblock` work a BLOCKING descriptor, so they never answer
-//! `:wait_readable`.
+//! `read_nonblock`/`write_nonblock` delegate to the includer's
+//! `sysread_nonblock`/`syswrite_nonblock`, exactly as upstream does, so the
+//! `:wait_readable` and `exception: false` answers are the includer's to give.
+//! Whether the DESCRIPTOR under an `SSLSocket` is non-blocking is that
+//! socket's own question, not this module's.
 
 use crate::builtins::{block_or_enum, convert, eof_error};
 use crate::dispatch::send_value_in;
@@ -38,6 +40,81 @@ fn ivar_get(recv: &RubyValue, name: &str) -> RubyValue {
 fn ivar_set(recv: &RubyValue, name: &str, v: RubyValue) {
     if let RubyValue::Object(o) = recv {
         o.ivar_set_named(name, v);
+    }
+}
+
+/// `maxlen`, with `nil` meaning one block -- the argument both partial reads
+/// take.
+fn read_len(arg: &RubyValue) -> Result<usize, Signal> {
+    match arg {
+        RubyValue::Nil => Ok(BLOCK_SIZE as usize),
+        v => Ok(convert::to_index(v)? as usize),
+    }
+}
+
+/// The `maxlen == 0` answer both rows open with: the caller's buffer,
+/// cleared, or a fresh empty String.
+fn empty_read(
+    _recv: &RubyValue,
+    want: usize,
+    buf: Option<&RubyValue>,
+) -> Result<Option<RubyValue>, Signal> {
+    if want != 0 {
+        return Ok(None);
+    }
+    Ok(Some(match buf {
+        Some(b @ RubyValue::Str(s)) => {
+            s.lock()
+                .replace_bytes(Vec::new(), crate::encoding::ASCII_8BIT);
+            b.clone()
+        }
+        _ => bin_str(Vec::new()),
+    }))
+}
+
+/// The positional arguments a `sys*` primitive takes.
+fn sys_args(want: usize, buf: Option<&RubyValue>) -> Vec<RubyValue> {
+    let mut args = vec![RubyValue::Int(want as i64)];
+    if let Some(b) = buf {
+        args.push(b.clone());
+    }
+    args
+}
+
+/// `{exception: <given or true>}`, marked as keywords so the receiver's own
+/// `**` binding sees it as one.
+fn exception_kwargs(opts: Option<&RubyValue>) -> RubyValue {
+    let key = RubyValue::Symbol(Symbol::intern("exception"));
+    let given = match opts {
+        Some(RubyValue::Hash(h)) => crate::value::collections::hash_get(h, &key),
+        _ => RubyValue::Nil,
+    };
+    let given = match given {
+        RubyValue::Nil => None,
+        v => Some(v),
+    };
+    let h = crate::hash_new(vec![(key, given.unwrap_or(RubyValue::Bool(true)))]);
+    crate::value::collections::hash_mark_kwargs(&h);
+    RubyValue::Hash(h)
+}
+
+/// Bytes out of `@rbuffer`, replacing INTO the caller's buffer and answering
+/// that same object when one was given -- which is the half a caller pooling
+/// one String across reads depends on.
+fn buffered_read(
+    recv: &RubyValue,
+    want: usize,
+    buf: Option<&RubyValue>,
+) -> Result<RubyValue, Signal> {
+    let mut have = rbuffer(recv)?;
+    let rest = have.split_off(want.min(have.len()));
+    set_rbuffer(recv, rest);
+    match buf {
+        Some(b @ RubyValue::Str(s)) => {
+            s.lock().replace_bytes(have, crate::encoding::ASCII_8BIT);
+            Ok(b.clone())
+        }
+        _ => Ok(bin_str(have)),
     }
 }
 
@@ -179,8 +256,13 @@ ruby_module! {
         Ok((*arg).clone())
     }
 
-    def "write" | "write_nonblock" arity -2 (recv, *args, &_block) {
+    def "write" arity -2 (recv, *args, &_block) {
         Ok(RubyValue::Int(write_args(recv, args)?))
+    }
+    // `flush` then the non-blocking primitive, upstream's shape. Nothing is
+    // held back here, so the flush is the no-op row above.
+    def "write_nonblock" params "s, exception: true" (recv, arg1, **opts) {
+        send(recv, "syswrite_nonblock", &[arg1.clone(), exception_kwargs(opts)])
     }
     def "<<" (recv, s) {
         send(recv, "syswrite", std::slice::from_ref(s))?;
@@ -231,16 +313,34 @@ ruby_module! {
         }
         Ok(bin_str(out))
     }
-    // Whatever is buffered, or one `sysread`'s worth; EOFError at the end.
-    def "readpartial" | "read_nonblock" (recv, arg1, _arg2?, _arg3?) {
-        let want = match arg1 {
-            RubyValue::Nil => BLOCK_SIZE as usize,
-            v => convert::to_index(v)? as usize,
-        };
-        if rbuffer(recv)?.is_empty() && !fill(recv)? && want > 0 {
-            return Err(eof_error!("end of file reached"));
+    // Whatever is buffered; an empty buffer DELEGATES to `sysread`, which is
+    // where the EOFError comes from.
+    def "readpartial" (recv, arg1, arg2?) {
+        let want = read_len(arg1)?;
+        if let Some(v) = empty_read(recv, want, arg2)? {
+            return Ok(v);
         }
-        Ok(bin_str(take(recv, Some(want))?))
+        if rbuffer(recv)?.is_empty() {
+            return send(recv, "sysread", &sys_args(want, arg2));
+        }
+        buffered_read(recv, want, arg2)
+    }
+    // The `readpartial` shape with the NON-blocking primitive underneath, and
+    // the keyword passed through. Aliasing the two broke the contract three
+    // ways -- it blocked, it ignored `exception: false`, and it ignored the
+    // output buffer -- and `Net::BufferedIO#rbuf_fill` is written against all
+    // three, so an HTTPS keep-alive read never returned.
+    def "read_nonblock" params "maxlen, buf = nil, exception: true" (recv, arg1, arg2?, **opts) {
+        let want = read_len(arg1)?;
+        if let Some(v) = empty_read(recv, want, arg2)? {
+            return Ok(v);
+        }
+        if rbuffer(recv)?.is_empty() {
+            let mut args = sys_args(want, arg2);
+            args.push(exception_kwargs(opts));
+            return send(recv, "sysread_nonblock", &args);
+        }
+        buffered_read(recv, want, arg2)
     }
 
     def "gets" (recv, arg1?, _arg2?) {

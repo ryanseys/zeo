@@ -2332,23 +2332,35 @@ fn short_circuit(fx: &mut Fx, a: NodeId, b: NodeId, keep_truthy: bool) -> Result
 /// resolves. Emitted only for a constant a literal `autoload` named, and the
 /// runtime call itself is one relaxed load when nothing is pending.
 fn emit_autoload_touch(fx: &mut Fx, cid: crate::compiler::ClassId) {
-    let fq = fx.an.compiler.fq_name(cid);
-    if !fx.an.compiler.hir.autoload_consts.contains(&fq) {
+    if fx.an.compiler.hir.autoload_consts.is_empty() {
         return;
     }
-    let owner = fx
-        .an
-        .compiler
-        .class(cid)
-        .lexical_parent
-        .unwrap_or(crate::compiler::OBJECT_CLASS);
-    let leaf = fq.rsplit("::").next().unwrap_or(&fq).to_string();
-    let owner_v = fx.b.ins().iconst(types::I32, i64::from(owner.0));
-    let (nptr, nlen) = rodata_name(fx, &leaf);
-    let st = fx
-        .call("zeo_rt_autoload_touch", &[owner_v, nptr, nlen])
-        .expect("autoload_touch returns a status");
-    fx.fallible(st);
+    // Every PREFIX, outermost first. `autoload :OpenSSL, "openssl"` names the
+    // namespace, and net/http reads `OpenSSL::SSL::SSLContext` -- so keying
+    // only on the whole path never fired, and the read found a class whose
+    // unit had not run.
+    let fq = fx.an.compiler.fq_name(cid);
+    let parts: Vec<&str> = fq.split("::").collect();
+    for i in 1..=parts.len() {
+        let prefix = parts[..i].join("::");
+        if !fx.an.compiler.hir.autoload_consts.contains(&prefix) {
+            continue;
+        }
+        let owner = match i {
+            1 => crate::compiler::OBJECT_CLASS,
+            _ => match resolve_class_here(fx, &parts[..i - 1].join("::")) {
+                Some(c) => c,
+                None => continue,
+            },
+        };
+        let leaf = parts[i - 1].to_string();
+        let owner_v = fx.b.ins().iconst(types::I32, i64::from(owner.0));
+        let (nptr, nlen) = rodata_name(fx, &leaf);
+        let st = fx
+            .call("zeo_rt_autoload_touch", &[owner_v, nptr, nlen])
+            .expect("autoload_touch returns a status");
+        fx.fallible(st);
+    }
 }
 
 fn class_value_of(

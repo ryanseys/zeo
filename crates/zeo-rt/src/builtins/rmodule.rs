@@ -1145,13 +1145,22 @@ ruby_class! {
     def "autoload?" cfunc (recv, sym, inherit?) {
         let name = const_name_arg(sym)?;
         let cid = recv_cid(recv);
-        // A constant that resolved is loaded, and CRuby answers nil for that
-        // whatever the registration said.
-        if const_lookup(cid, &name, inherit_search(inherit)).is_some() {
+        let pending = peek_autoload_target(cid.0, &name);
+        // A constant that already resolved reports nil, whatever was
+        // registered -- CRuby's rule, and `autoload :Integer, "x"` is the
+        // case. But a compiled-in unit's classes are in zeo's tables FROM
+        // STARTUP, so "resolves" would be true for every pending target too.
+        // A target whose unit has not run yet is the one exception: what
+        // resolves there is zeo's early registration, not a real definition.
+        let unrun = pending
+            .as_deref()
+            .is_some_and(|p| crate::features::has_feature(p)
+                && !crate::builtins::kernel::feature_already_loaded(p));
+        if !unrun && const_lookup(cid, &name, inherit_search(inherit)).is_some() {
             return Ok(RubyValue::Nil);
         }
-        Ok(match pending_autoloads().lock().get(&(cid.0, name)) {
-            Some(path) => RubyValue::Str(crate::string_new(path.clone())),
+        Ok(match pending {
+            Some(path) => RubyValue::Str(crate::string_new(path)),
             None => RubyValue::Nil,
         })
     }
