@@ -23,6 +23,7 @@ pub mod jmp;
 pub mod scope;
 pub mod string;
 pub mod stubs;
+pub mod symbol;
 pub mod value;
 
 #[cfg(test)]

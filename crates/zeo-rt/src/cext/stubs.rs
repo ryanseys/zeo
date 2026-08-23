@@ -22,7 +22,7 @@
 //! safe. The caller passes arguments in registers and on a stack it
 //! cleans up itself, the callee reads none of them, and it never
 //! returns -- so there is no return value to disagree about and no
-//! frame to unwind. Writing 862 correct signatures would
+//! frame to unwind. Writing 846 correct signatures would
 //! buy nothing: not one of these functions runs.
 //!
 //! # The globals
@@ -1583,16 +1583,8 @@ pub extern "C" fn rb_fix2ushort() -> ! {
     unimplemented("rb_fix2ushort")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_float_new() -> ! {
-    unimplemented("rb_float_new")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_float_new_in_heap() -> ! {
     unimplemented("rb_float_new_in_heap")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_float_value() -> ! {
-    unimplemented("rb_float_value")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_flt_rationalize() -> ! {
@@ -1871,16 +1863,8 @@ pub extern "C" fn rb_hash_update_by() -> ! {
     unimplemented("rb_hash_update_by")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_id2name() -> ! {
-    unimplemented("rb_id2name")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_id2str() -> ! {
     unimplemented("rb_id2str")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_id2sym() -> ! {
-    unimplemented("rb_id2sym")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_id_attrset() -> ! {
@@ -1899,28 +1883,12 @@ pub extern "C" fn rb_int2big() -> ! {
     unimplemented("rb_int2big")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_int2inum() -> ! {
-    unimplemented("rb_int2inum")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_integer_pack() -> ! {
     unimplemented("rb_integer_pack")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_integer_unpack() -> ! {
     unimplemented("rb_integer_unpack")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_intern() -> ! {
-    unimplemented("rb_intern")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_intern2() -> ! {
-    unimplemented("rb_intern2")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_intern_str() -> ! {
-    unimplemented("rb_intern_str")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_interned_str() -> ! {
@@ -2093,10 +2061,6 @@ pub extern "C" fn rb_lastline_get() -> ! {
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_lastline_set() -> ! {
     unimplemented("rb_lastline_set")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_ll2inum() -> ! {
-    unimplemented("rb_ll2inum")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_load() -> ! {
@@ -2339,24 +2303,8 @@ pub extern "C" fn rb_notimplement() -> ! {
     unimplemented("rb_notimplement")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_num2dbl() -> ! {
-    unimplemented("rb_num2dbl")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_num2fix() -> ! {
     unimplemented("rb_num2fix")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_num2int() -> ! {
-    unimplemented("rb_num2int")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_num2ll() -> ! {
-    unimplemented("rb_num2ll")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_num2long() -> ! {
-    unimplemented("rb_num2long")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_num2short() -> ! {
@@ -3311,14 +3259,6 @@ pub extern "C" fn rb_struct_size() -> ! {
     unimplemented("rb_struct_size")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_sym2id() -> ! {
-    unimplemented("rb_sym2id")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_sym2str() -> ! {
-    unimplemented("rb_sym2str")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_sym_all_symbols() -> ! {
     unimplemented("rb_sym_all_symbols")
 }
@@ -3537,10 +3477,6 @@ pub extern "C" fn rb_uint2big() -> ! {
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_uint2inum() -> ! {
     unimplemented("rb_uint2inum")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_ull2inum() -> ! {
-    unimplemented("rb_ull2inum")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_undef() -> ! {
