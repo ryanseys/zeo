@@ -1,0 +1,8 @@
+# The cycle this program builds on purpose, and the census the
+# `ZEO_RT_GCCHECK=1` leg gates against. A cycle alive at exit is not a
+# defect: it is a ring the program never broke. What the leg gates is a
+# CHANGE to the line below.
+#
+# A torus grid: every Cell holds its neighbours and the wraparound closes the ring.
+
+cycle leak: 24 objects (Array x12, Cell x12)

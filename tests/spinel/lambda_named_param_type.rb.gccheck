@@ -1,0 +1,8 @@
+# The cycle this program builds on purpose, and the census the
+# `ZEO_RT_GCCHECK=1` leg gates against. A cycle alive at exit is not a
+# defect: it is a ring the program never broke. What the leg gates is a
+# CHANGE to the line below.
+#
+# A Holder holds a lambda that closed over the Holder.
+
+cycle leak: 2 objects (Holder x1, Proc x1)

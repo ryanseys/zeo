@@ -1,0 +1,8 @@
+# The cycle this program builds on purpose, and the census the
+# `ZEO_RT_GCCHECK=1` leg gates against. A cycle alive at exit is not a
+# defect: it is a ring the program never broke. What the leg gates is a
+# CHANGE to the line below.
+#
+# A Syn holds its source Neu and that Neu's `syns_out` holds the Syn back.
+
+cycle leak: 10 objects (Array x4, Syn x4, Neu x2)

@@ -1,0 +1,8 @@
+# The cycle this program builds on purpose, and the census the
+# `ZEO_RT_GCCHECK=1` leg gates against. A cycle alive at exit is not a
+# defect: it is a ring the program never broke. What the leg gates is a
+# CHANGE to the line below.
+#
+# PrettyPrint's own graph, reached through `pp`. See pp_pretty_print.rb.gccheck.
+
+cycle leak: 11 objects (Array x7, PP x1, PrettyPrint::Group x1, PrettyPrint::GroupQueue x1, Proc x1)

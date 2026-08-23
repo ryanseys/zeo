@@ -107,6 +107,21 @@ jobs:
         env:
           ZEO_RT_LEAKCHECK: "1"
 
+      # The cycle census. Every program's exit residue is recorded in a
+      # `.gccheck` sidecar naming the ring the program builds on purpose --
+      # a self-referential array, a lambda that reaches itself through a
+      # captured local, a grid of cells that link their neighbours -- so the
+      # leg cannot gate on zero and does not try to.
+      #
+      # It gates CHANGE. The census is deterministic, so a new shape or a new
+      # count means either the program's object graph moved or the collector
+      # stopped seeing part of it. A program with no sidecar must report no
+      # cycle at all.
+      - run: cargo nextest run -p zeo-tests --test examples --test spinel --test gaps --test gemtests --no-fail-fast
+        env:
+          ZEO_GC: "1"
+          ZEO_RT_GCCHECK: "1"
+
       # The native-library table an AOT link names after the archive is
       # HAND-WRITTEN (backend/link.rs), and nothing tells it about a
       # `#[link(name = ..)]` added anywhere in zeo-rt. This test asks rustc

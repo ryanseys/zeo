@@ -60,6 +60,12 @@ use crate::{FMap, RubyValue};
 /// stop them all in time is abandoned -- always safe, and it leaks exactly
 /// what leaks today.
 pub fn collect() -> usize {
+    collect_census(None)
+}
+
+/// [`collect`], plus the kind of every node it reclaimed. Only the exit
+/// census asks for the labels; a `None` costs one branch per reclaimed node.
+pub(crate) fn collect_census(mut census: Option<&mut Vec<String>>) -> usize {
     if !super::recording() {
         return 0;
     }
@@ -166,6 +172,9 @@ pub fn collect() -> usize {
     let mut reclaimed = 0;
     for (i, node) in nodes.iter().enumerate() {
         if !live[i] {
+            if let Some(c) = census.as_deref_mut() {
+                c.push(node.kind_label());
+            }
             node.gc_visit(&mut drained, true);
             reclaimed += 1;
         }

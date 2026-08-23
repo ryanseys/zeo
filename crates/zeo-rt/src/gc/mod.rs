@@ -235,8 +235,18 @@ pub fn check_at_exit() {
         );
         return;
     }
-    let leaked = collect();
+    let mut census: Vec<String> = Vec::new();
+    let leaked = collect::collect_census(Some(&mut census));
     if leaked > 0 {
-        eprintln!("cycle leak: {leaked} objects");
+        // The kinds, most numerous first. A bare count says a program leaks
+        // and nothing about what shape to look for.
+        let mut counts: std::collections::BTreeMap<&str, usize> = Default::default();
+        for k in &census {
+            *counts.entry(k.as_str()).or_default() += 1;
+        }
+        let mut rows: Vec<_> = counts.into_iter().collect();
+        rows.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
+        let shapes: Vec<String> = rows.iter().map(|(k, n)| format!("{k} x{n}")).collect();
+        eprintln!("cycle leak: {leaked} objects ({})", shapes.join(", "));
     }
 }

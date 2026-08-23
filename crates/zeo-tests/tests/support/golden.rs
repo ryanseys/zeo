@@ -12,6 +12,10 @@
 //! - `Mode::Xfail` (gaps): zeo must DIVERGE from the golden -- a match means the
 //!   gap is fixed and the test FAILS with a "promote" message.
 //!
+//! A `.gccheck` sidecar records the exit cycle census the `ZEO_RT_GCCHECK=1`
+//! leg gates against. It is not a leak report: it names the ring the program
+//! builds on purpose. See [`check_gccheck_census`].
+//!
 //! `tools/zeo-dev bless <filter>` re-records the goldens from the real `ruby` oracle
 //! (`--disable-error_highlight --disable-did_you_mean`, resolved via `mise`)
 //! instead of asserting. This is the single golden writer.
@@ -760,6 +764,20 @@ pub fn run_golden_env(
     // Pass / Xfail: build + run, then diff against the golden.
     let actual = compile_and_run_contained(rb, &source, &sc, run_cwd, env);
 
+    // Under the `ZEO_RT_GCCHECK` leg the runtime writes one census line to
+    // stderr at exit. Take it out of the ordinary comparison and gate it on
+    // its own sidecar -- see `check_gccheck_census`.
+    let (actual, census) = match (std::env::var_os("ZEO_RT_GCCHECK"), actual) {
+        (Some(_), Ok((out, err))) => {
+            let (err, census) = split_gccheck(&err);
+            (Ok((out, err)), Some(census))
+        }
+        (_, other) => (other, None),
+    };
+    if let Some(census) = census {
+        check_gccheck_census(rb, &census)?;
+    }
+
     // The reference: committed `.expected` (+ optional `.err.expected`), else a
     // live ruby-oracle run (a test without a committed stdout snapshot).
     let (expected_out, expected_err) = match &sc.expected_out {
@@ -895,4 +913,59 @@ mod tests {
         // Uppercase hex is `%X` output, never an address rendering.
         assert_eq!(scrub("0xDEADBEEFCAFEF00D"), "0xDEADBEEFCAFEF00D");
     }
+}
+
+/// The `cycle leak:` line `ZEO_RT_GCCHECK=1` writes at exit, split out of
+/// stderr so it does not break every other comparison.
+fn split_gccheck(err: &[u8]) -> (Vec<u8>, String) {
+    let text = String::from_utf8_lossy(err).into_owned();
+    let mut census = String::new();
+    let mut kept = String::new();
+    for line in text.split_inclusive('\n') {
+        if line.starts_with("cycle leak: ") {
+            census = line.trim_end().to_string();
+        } else {
+            kept.push_str(line);
+        }
+    }
+    (kept.into_bytes(), census)
+}
+
+/// Gate one program's exit census against its `.gccheck` sidecar.
+///
+/// **A cycle alive at exit is not a defect.** A program that builds a ring and
+/// never breaks it -- `a << a`, a lambda that calls itself through a captured
+/// local, a grid of cells that link their neighbours -- is SUPPOSED to have
+/// one, and every residue the corpus reports today is of that kind. So the leg
+/// cannot gate on zero.
+///
+/// What it gates is CHANGE. The census is deterministic, so a new shape or a
+/// new count means the program's object graph moved or the collector stopped
+/// seeing part of it, and a sidecar records what each program is known to
+/// build. No sidecar means no cycle.
+fn check_gccheck_census(rb: &Path, census: &str) -> datatest_stable::Result<()> {
+    let path = format!("{}.gccheck", rb.display());
+    let want = std::fs::read_to_string(&path).unwrap_or_default();
+    let want = want
+        .lines()
+        .find(|l| l.starts_with("cycle leak: "))
+        .unwrap_or("")
+        .trim_end();
+    if census == want {
+        return Ok(());
+    }
+    Err(format!(
+        "{}: the exit cycle census changed.\n  expected: {}\n  actual:   {}\n\
+         Record it in {} (with a line saying WHICH cycle the program builds), \
+         or find what stopped the collector seeing it.",
+        rb.display(),
+        if want.is_empty() { "<no cycle>" } else { want },
+        if census.is_empty() {
+            "<no cycle>"
+        } else {
+            census
+        },
+        path,
+    )
+    .into())
 }

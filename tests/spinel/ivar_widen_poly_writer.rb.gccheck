@@ -1,0 +1,8 @@
+# The cycle this program builds on purpose, and the census the
+# `ZEO_RT_GCCHECK=1` leg gates against. A cycle alive at exit is not a
+# defect: it is a ring the program never broke. What the leg gates is a
+# CHANGE to the line below.
+#
+# `c.neighbours` is filled with the cells including `c` itself.
+
+cycle leak: 6 objects (Array x3, Cell x3)

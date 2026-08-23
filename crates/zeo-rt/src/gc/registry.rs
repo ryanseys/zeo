@@ -135,6 +135,21 @@ impl Strong {
         }
     }
 
+    /// What this node is, for the exit census. An Object answers its class,
+    /// because "Object" alone names every user class at once.
+    pub(crate) fn kind_label(&self) -> String {
+        match self {
+            Strong::Array(_) => "Array".into(),
+            Strong::Hash(_) => "Hash".into(),
+            Strong::Object(o) => {
+                crate::dispatch::class_name(o.class_id()).unwrap_or_else(|| "Object".into())
+            }
+            Strong::Cell(_) => "cell".into(),
+            Strong::Proc(_) => "Proc".into(),
+            Strong::Range(_) => "Range".into(),
+        }
+    }
+
     /// Cell addresses this node owns a reference to. Only a Proc has any: a
     /// cell is not a `RubyValue` and cannot travel [`Strong::gc_visit`].
     pub(crate) fn gc_cells(&self, out: &mut Vec<usize>) {

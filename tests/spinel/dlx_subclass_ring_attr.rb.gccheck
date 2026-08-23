@@ -1,0 +1,8 @@
+# The cycle this program builds on purpose, and the census the
+# `ZEO_RT_GCCHECK=1` leg gates against. A cycle alive at exit is not a
+# defect: it is a ring the program never broke. What the leg gates is a
+# CHANGE to the line below.
+#
+# Dancing Links. The whole data structure is a ring of Columns and Nodes by definition.
+
+cycle leak: 10 objects (Node x6, Column x4)
