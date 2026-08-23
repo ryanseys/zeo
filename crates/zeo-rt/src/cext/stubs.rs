@@ -22,7 +22,7 @@
 //! safe. The caller passes arguments in registers and on a stack it
 //! cleans up itself, the callee reads none of them, and it never
 //! returns -- so there is no return value to disagree about and no
-//! frame to unwind. Writing 846 correct signatures would
+//! frame to unwind. Writing 834 correct signatures would
 //! buy nothing: not one of these functions runs.
 //!
 //! # The globals
@@ -1151,20 +1151,12 @@ pub extern "C" fn rb_debug_rstring_null_ptr() -> ! {
     unimplemented("rb_debug_rstring_null_ptr")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_define_alias() -> ! {
-    unimplemented("rb_define_alias")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_define_alloc_func() -> ! {
     unimplemented("rb_define_alloc_func")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_define_attr() -> ! {
     unimplemented("rb_define_attr")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_define_class() -> ! {
-    unimplemented("rb_define_class")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_define_class_id() -> ! {
@@ -1175,16 +1167,8 @@ pub extern "C" fn rb_define_class_id_under() -> ! {
     unimplemented("rb_define_class_id_under")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_define_class_under() -> ! {
-    unimplemented("rb_define_class_under")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_define_class_variable() -> ! {
     unimplemented("rb_define_class_variable")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_define_const() -> ! {
-    unimplemented("rb_define_const")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_define_finalizer() -> ! {
@@ -1203,16 +1187,8 @@ pub extern "C" fn rb_define_hooked_variable() -> ! {
     unimplemented("rb_define_hooked_variable")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_define_method() -> ! {
-    unimplemented("rb_define_method")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_define_method_id() -> ! {
     unimplemented("rb_define_method_id")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_define_module() -> ! {
-    unimplemented("rb_define_module")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_define_module_function() -> ! {
@@ -1227,24 +1203,8 @@ pub extern "C" fn rb_define_module_id_under() -> ! {
     unimplemented("rb_define_module_id_under")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_define_module_under() -> ! {
-    unimplemented("rb_define_module_under")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_define_private_method() -> ! {
-    unimplemented("rb_define_private_method")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_define_protected_method() -> ! {
-    unimplemented("rb_define_protected_method")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_define_readonly_variable() -> ! {
     unimplemented("rb_define_readonly_variable")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_define_singleton_method() -> ! {
-    unimplemented("rb_define_singleton_method")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_define_variable() -> ! {
@@ -2029,14 +1989,6 @@ pub extern "C" fn rb_ivar_defined() -> ! {
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_ivar_foreach() -> ! {
     unimplemented("rb_ivar_foreach")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_ivar_get() -> ! {
-    unimplemented("rb_ivar_get")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_ivar_set() -> ! {
-    unimplemented("rb_ivar_set")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_jump_tag() -> ! {

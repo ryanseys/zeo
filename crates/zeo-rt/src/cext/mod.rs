@@ -20,6 +20,7 @@ pub mod convert;
 pub mod data;
 pub mod handles;
 pub mod jmp;
+pub mod method;
 pub mod scope;
 pub mod string;
 pub mod stubs;
