@@ -2533,6 +2533,10 @@ pub const INVALID_BYTE_SEQUENCE_ERROR_CLASS: ClassId = exc_id(8);
 
 pub const LOCAL_JUMP_ERROR_CLASS: ClassId = exc_id(20);
 
+/// CRuby's internal `fatal`, raised when no thread can make progress. It
+/// descends straight from `Exception`, so `rescue => e` does not catch it.
+pub const FATAL_CLASS: ClassId = exc_id(57);
+
 /// `RuntimeError` -- the one class whose EMPTY message renders as
 /// `unhandled exception` rather than the class name (`rb_decorate_message`).
 pub const RUNTIME_ERROR_CLASS: ClassId = exc_id(22);
@@ -2591,7 +2595,7 @@ pub const EXCEPTION_CLASSES: &[ExceptionClass] = &EXCEPTION_CLASS_ROWS;
 /// The rows written out by hand: every exception whose id does not depend on
 /// how many errnos the platform names. [`ERRNO_CLASSES`] follows this block,
 /// then [`WAIT_EXCEPTIONS`], which subclasses two of the `Errno` rows.
-const CORE_EXCEPTIONS: [ExceptionClass; 57] = [
+const CORE_EXCEPTIONS: [ExceptionClass; 58] = [
     ExceptionClass {
         id: exc_id(0),
         name: "Exception",
@@ -2955,6 +2959,19 @@ const CORE_EXCEPTIONS: [ExceptionClass; 57] = [
         id: exc_id(56),
         name: "IO::Buffer::MaskError",
         superclass: Some(exc_id(5)),
+        is_module: false,
+    },
+    // CRuby's internal `fatal`, which is what a detected deadlock raises. The
+    // lower-case name is not an accident and not a constant: `fatal` cannot be
+    // written in Ruby source at all (a constant must start upper-case, and
+    // `const_defined?("fatal")` raises `wrong constant name`), so the class is
+    // reachable only as `raise`d and as `e.class`. It descends straight from
+    // `Exception`, so `rescue => e` does NOT catch it and `rescue Exception`
+    // does -- which is the whole point of the tier.
+    ExceptionClass {
+        id: exc_id(57),
+        name: "fatal",
+        superclass: Some(exc_id(0)),
         is_module: false,
     },
 ];

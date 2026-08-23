@@ -221,6 +221,24 @@ pub fn thread_list() -> Vec<RubyValue> {
         .collect()
 }
 
+/// How many Ruby threads are alive -- main plus every still-running spawned
+/// one. The deadlock verdict's denominator: [`crate::gvl::Gvl::live_members`]
+/// counts only threads that installed a scheduling CONTEXT, and a thread
+/// installs one lazily, the first time it sleeps or waits. A runnable thread
+/// that has never waited is therefore invisible there, and calling that a
+/// deadlock declares one while the thread about to push is still running --
+/// which is what minitest's parallel executor does on every run.
+pub fn live_thread_count() -> usize {
+    let _ = main_thread();
+    let mut guard = live().lock();
+    guard.retain(|w| w.strong_count() > 0);
+    guard
+        .iter()
+        .filter_map(|w| w.upgrade())
+        .filter(thread_alive)
+        .count()
+}
+
 /// The main thread's `Thread` object -- one process-wide instance, so
 /// `Thread.main` and a top-level `Thread.current` are the same identity.
 static MAIN_THREAD: OnceLock<RThread> = OnceLock::new();
@@ -996,6 +1014,9 @@ pub fn queue_pop(q: &RQueue) -> Result<RubyValue, Signal> {
 }
 
 fn queue_pop_locked(q: &RQueue) -> Result<RubyValue, Signal> {
+    // Only another Ruby thread can end this wait, so it counts toward the
+    // deadlock verdict for as long as it lasts.
+    let _waiting = crate::gvl::deadlock::Waiting::enter();
     let mut inner = q.inner.lock();
     loop {
         if let Some(v) = inner.items.pop_front() {
@@ -1009,6 +1030,11 @@ fn queue_pop_locked(q: &RQueue) -> Result<RubyValue, Signal> {
         q.waiting.fetch_add(1, Ordering::Relaxed);
         let _ = q.not_empty.wait_for(&mut inner, Duration::from_millis(2));
         q.waiting.fetch_sub(1, Ordering::Relaxed);
+        // Nobody left who could push: CRuby's `fatal`, not a hang.
+        if crate::gvl::deadlock::no_progress_possible() {
+            drop(inner);
+            return Err(crate::gvl::deadlock::signal());
+        }
         // Deliver a pending kill/raise now that we're awake, dropping the lock
         // first so the unwinding thread isn't holding the queue mutex.
         if interrupt_pending() {

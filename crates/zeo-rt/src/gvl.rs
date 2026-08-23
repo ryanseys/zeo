@@ -509,6 +509,75 @@ pub fn current_ctx() -> Option<Arc<ThreadCtx>> {
     CTX.with(|c| c.borrow().clone())
 }
 
+/// Deadlock detection: nobody left who could make progress.
+///
+/// CRuby raises `fatal: No live threads left. Deadlock?` when the thread about
+/// to sleep would leave no runnable thread behind. zeo asks the same question
+/// from the other end, because its blocking waits already poll: a wait that
+/// only another RUBY thread can end registers itself here, and when every live
+/// thread is registered, none of them can be the one to end another's wait.
+///
+/// Only untimed waits count. `sleep 2` ends by itself, so a thread inside one
+/// is not blocked on anybody -- CRuby draws the same line.
+///
+/// The verdict needs the condition to hold across two consecutive polls. A
+/// thread between two waits is briefly absent from the count without being
+/// runnable in any useful sense, and one poll would call that a deadlock.
+pub mod deadlock {
+    use super::{AtomicU32, Ordering, process_gvl};
+
+    /// Threads parked in a wait only another Ruby thread can end.
+    static BLOCKED: AtomicU32 = AtomicU32::new(0);
+    /// How many consecutive polls have seen every thread blocked.
+    static STREAK: AtomicU32 = AtomicU32::new(0);
+
+    /// Registers a blocking wait for as long as it lives.
+    pub struct Waiting;
+
+    impl Waiting {
+        /// Enter a wait only another Ruby thread can end.
+        #[must_use]
+        pub fn enter() -> Waiting {
+            BLOCKED.fetch_add(1, Ordering::SeqCst);
+            Waiting
+        }
+    }
+
+    impl Drop for Waiting {
+        fn drop(&mut self) {
+            BLOCKED.fetch_sub(1, Ordering::SeqCst);
+            STREAK.store(0, Ordering::SeqCst);
+        }
+    }
+
+    /// Called once per poll from inside a wait. `true` means nothing in this
+    /// process can make progress.
+    ///
+    /// The denominator is the live RUBY thread count, not the number of
+    /// threads that installed a scheduling context. A context is installed
+    /// lazily -- the first time a thread sleeps or waits -- so a runnable
+    /// thread that has never waited is invisible to `live_members`, and using
+    /// that count declares a deadlock while the thread about to push is still
+    /// running. minitest's parallel executor does exactly that on every run.
+    pub fn no_progress_possible() -> bool {
+        let live = crate::thread::live_thread_count().max(1) as u32;
+        if BLOCKED.load(Ordering::SeqCst) < live {
+            STREAK.store(0, Ordering::SeqCst);
+            return false;
+        }
+        STREAK.fetch_add(1, Ordering::SeqCst) >= 1
+    }
+
+    /// The `fatal` CRuby raises. Its message is the FIRST LINE of CRuby's,
+    /// which is the part that describes the program rather than the VM: the
+    /// rest is a thread dump of native addresses and `rb_thread_t` pointers
+    /// that no other implementation can produce and no program can act on.
+    #[must_use]
+    pub fn signal() -> crate::Signal {
+        crate::dispatch::raise_error("fatal", "No live threads left. Deadlock?".to_string())
+    }
+}
+
 /// The stop-the-world rendezvous a cycle collection needs.
 ///
 /// Reference-count reconciliation reads every node's owner count and compares

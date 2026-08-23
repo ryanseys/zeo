@@ -447,6 +447,10 @@ fn port_receive_locked(port: &RPort) -> Result<RubyValue, Signal> {
         r.status.store(STATUS_BLOCKING, Ordering::SeqCst);
         let _ = r.recv_cv.wait_for(&mut table, Duration::from_millis(2));
         r.status.store(STATUS_RUNNING, Ordering::SeqCst);
+        if crate::gvl::deadlock::no_progress_possible() {
+            drop(table);
+            return Err(crate::gvl::deadlock::signal());
+        }
         // Deliver a pending kill/raise now that we're awake, dropping the
         // lock first so the unwinding thread isn't holding the table mutex.
         if crate::thread::interrupt_pending() {
@@ -877,6 +881,10 @@ fn select_wait_locked(me: &RRactor, entries: &[SelectEntry]) -> Result<(usize, R
         me.status.store(STATUS_BLOCKING, Ordering::SeqCst);
         let _ = me.recv_cv.wait_for(&mut table, Duration::from_millis(2));
         me.status.store(STATUS_RUNNING, Ordering::SeqCst);
+        if crate::gvl::deadlock::no_progress_possible() {
+            drop(table);
+            return Err(crate::gvl::deadlock::signal());
+        }
         if crate::thread::interrupt_pending() {
             drop(table);
             crate::thread::check_interrupt()?;

@@ -2548,6 +2548,12 @@ pub(super) fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(),
         ("IO::Buffer::AccessError", "RuntimeError"),
         ("IO::Buffer::InvalidatedError", "RuntimeError"),
         ("IO::Buffer::MaskError", "ArgumentError"),
+        // CRuby's internal `fatal`, which a detected deadlock raises. The
+        // lower-case name cannot be written in Ruby source at all -- a
+        // constant must start upper-case -- so the class is reachable only
+        // through `e.class`. It descends straight from `Exception`, which is
+        // what makes `rescue => e` miss it and `rescue Exception` catch it.
+        ("fatal", "Exception"),
     ] {
         register_class(
             compiler,
