@@ -36,7 +36,13 @@ pub(crate) fn needs_quoting(name: &str) -> bool {
         return false;
     }
     // Sigil-prefixed names: an @ivar, @@cvar, or $gvar whose remainder is a
-    // plain identifier prints bare; the bare sigil (`:@`) does not.
+    // plain identifier prints bare; the bare sigil (`:@`) does not. A `$` also
+    // takes ruby's special-global spellings, which are not identifiers.
+    if let Some(rest) = name.strip_prefix('$')
+        && is_special_global(rest)
+    {
+        return false;
+    }
     for sigil in ["@@", "@", "$"] {
         if let Some(rest) = name.strip_prefix(sigil) {
             return !is_plain_ident(rest);
@@ -55,6 +61,28 @@ pub(crate) fn needs_quoting(name: &str) -> bool {
         return false;
     }
     true
+}
+
+/// The part after a `$` in one of ruby's special global names, which print
+/// bare even though they are not identifiers. Mirrors `is_special_global_name`:
+/// one punctuation character from a fixed set, `$0`, a run of digits, or `$-`
+/// with exactly one alphanumeric after it. The name must end there, so `$00`
+/// and `$-ab` quote.
+fn is_special_global(rest: &str) -> bool {
+    const PUNCT: &[char] = &[
+        '~', '*', '$', '?', '!', '@', '/', '\\', ';', ',', '.', '=', ':', '<', '>', '"', '&', '`',
+        '\'', '+', '0',
+    ];
+    let mut chars = rest.chars();
+    match chars.next() {
+        None => false,
+        Some('-') => {
+            matches!(chars.next(), Some(c) if c.is_ascii_alphanumeric()) && chars.next().is_none()
+        }
+        Some(c) if PUNCT.contains(&c) => chars.next().is_none(),
+        Some(c) if c.is_ascii_digit() => rest.bytes().all(|b| b.is_ascii_digit()),
+        Some(_) => false,
+    }
 }
 
 /// A bare Ruby identifier: an underscore, an ASCII letter, or ANY non-ASCII
@@ -94,14 +122,28 @@ pub(crate) fn quoted_name(name: &str) -> String {
     crate::encoding::inspect(&crate::encoding::StrBuf::from_utf8(name.to_string()))
 }
 
-/// A symbol hash key in the `name:` shorthand: bare when the name prints bare
-/// (`{a: 1}`), otherwise quoted (`{"k space": 2}`).
+/// A symbol hash key in the `name:` shorthand: bare when the name reads back
+/// as a label (`{a: 1}`), otherwise quoted (`{"k space": 2}`, `{"+": 3}`).
+///
+/// STRICTER than [`needs_quoting`], and deliberately so -- `:+` prints bare as
+/// a symbol but `{+: 1}` is not a hash literal anyone can paste back. Mirrors
+/// CRuby's `symbol_key_needs_quote`: on top of the symbol rule, a leading `@`,
+/// `$`, or `!` quotes, and so does a trailing operator character.
 pub(crate) fn hash_key(name: &str) -> String {
-    if needs_quoting(name) {
+    if needs_quoting(name) || !bare_label(name) {
         quoted_name(name)
     } else {
         name.to_string()
     }
+}
+
+/// Whether a name that already prints bare as a symbol also reads as a hash
+/// label. See [`hash_key`].
+fn bare_label(name: &str) -> bool {
+    const TRAILING: &[char] = &[
+        '+', '-', '*', '/', '`', '%', '^', '&', '|', ']', '<', '=', '>', '~', '@',
+    ];
+    !name.starts_with(['@', '$', '!']) && !name.ends_with(TRAILING)
 }
 
 /// A Struct/Data member label in `#<struct ...>` inspect: bare when the name is
