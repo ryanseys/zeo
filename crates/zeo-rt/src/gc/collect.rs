@@ -55,13 +55,23 @@ use crate::{FMap, RubyValue};
 
 /// Run one collection. Answers how many nodes it reclaimed.
 ///
-/// A no-op unless the registry is recording and this is the only Ruby
-/// thread: the multi-thread rendezvous is not built yet, and abandoning a
-/// collection is always safe -- it leaks exactly what leaks today.
+/// A no-op unless the registry is recording. With other Ruby threads alive
+/// they are stopped first (`gvl`'s rendezvous), and a request that cannot
+/// stop them all in time is abandoned -- always safe, and it leaks exactly
+/// what leaks today.
 pub fn collect() -> usize {
-    if !super::recording() || !crate::gvl::sole_thread() {
+    if !super::recording() {
         return 0;
     }
+    // A sole thread has nobody to wait for and takes no locks to prove it.
+    let _world = if crate::gvl::sole_thread() {
+        None
+    } else {
+        match crate::gvl::stop_the_world() {
+            Some(held) => Some(held),
+            None => return 0,
+        }
+    };
     let nodes = registry::snapshot();
     if nodes.is_empty() {
         return 0;

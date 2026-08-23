@@ -226,6 +226,9 @@ pub fn check_ints() -> Result<(), Signal> {
         // Quantum tick first (a yield under an armed GVL, a no-op consume
         // otherwise), then any queued kill/raise for THIS thread.
         gvl::service_timer();
+        // Before the thread's own interrupts: a kill delivered here would
+        // unwind past a collector that is waiting for this thread to park.
+        gvl::park_if_asked();
         thread::check_interrupt()?;
     }
     Ok(())

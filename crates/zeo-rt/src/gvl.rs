@@ -138,6 +138,11 @@ pub const INT_TIMER: u32 = 1;
 /// A `Thread#kill`/`#raise` is queued for this thread (the payload itself
 /// stays in `thread.rs`' pending map; this bit is only the wakeup edge).
 pub const INT_PENDING: u32 = 1 << 1;
+/// A cycle collection wants this thread parked at its next checkpoint. It
+/// rides the interrupt word rather than a gate of its own for the standing
+/// reason: `check_ints`' fast path must stay one relaxed load, and a second
+/// flag word beside it measured 2.6% on dispatch.
+pub const INT_GC: u32 = 1 << 2;
 
 /// Per-Ruby-thread scheduling state: the interrupt bits `check_ints`' slow
 /// path filters on, and a private lock+condvar so `sleep` is interruptible
@@ -291,6 +296,26 @@ impl Gvl {
         let mut m = self.members.lock();
         m.retain(|w| w.strong_count() > 0);
         m.push(Arc::downgrade(ctx));
+    }
+
+    /// Post [`INT_GC`] to every attached thread but the caller, answering how
+    /// many were asked. A thread whose ctx has been dropped is gone and is not
+    /// counted.
+    pub fn post_gc_to_others(&self) -> usize {
+        let me = current_ctx();
+        let m = self.members.lock();
+        let mut asked = 0;
+        for w in m.iter() {
+            let Some(ctx) = w.upgrade() else {
+                continue;
+            };
+            if me.as_ref().is_some_and(|mine| Arc::ptr_eq(mine, &ctx)) {
+                continue;
+            }
+            ctx.post(INT_GC);
+            asked += 1;
+        }
+        asked
     }
 
     /// The number of live attached threads -- the timer's arming predicate.
@@ -484,6 +509,148 @@ pub fn current_ctx() -> Option<Arc<ThreadCtx>> {
     CTX.with(|c| c.borrow().clone())
 }
 
+/// The stop-the-world rendezvous a cycle collection needs.
+///
+/// Reference-count reconciliation reads every node's owner count and compares
+/// it against the edges it can enumerate. A thread mutating the heap while
+/// that runs would make the two disagree, and the pass would read a live node
+/// as garbage -- the one direction that can corrupt. So every other Ruby
+/// thread parks first.
+///
+/// Parking happens ONLY at a `check_ints` checkpoint, never at an allocation
+/// site. An allocation can happen inside a container's own guard -- growing a
+/// Hash while its lock is held -- and stopping the world there would hand the
+/// collector a locked node it must read. The checkpoint sites hold no guard by
+/// construction.
+///
+/// Abandoning is always safe and is the answer to every thread that will not
+/// come. One parked in a blocking syscall through [`without_gvl`] never
+/// reaches a checkpoint; rather than reason about what it might be holding,
+/// the request expires and the collection does not run. That leaks exactly
+/// what leaks today.
+mod rendezvous {
+    use super::{Condvar, INT_GC, Mutex, Ordering, process_gvl};
+    use std::time::{Duration, Instant};
+
+    /// How long a request waits for the world to stop. Generous next to a
+    /// checkpoint's spacing (every loop body and every method prologue) and
+    /// short next to a person noticing a pause.
+    const DEADLINE: Duration = Duration::from_millis(250);
+
+    struct World {
+        /// Set for the length of one stop. A thread that reaches a
+        /// checkpoint while it is set parks, which is what stops one woken
+        /// by an unrelated interrupt from running through the middle of a
+        /// collection.
+        stopped: bool,
+        /// Which stop this is. A straggler from an ABANDONED request wakes
+        /// up in a later generation and leaves without touching its count --
+        /// the alternative, decrementing on the way out, underflows exactly
+        /// when a request has already given up on it.
+        generation: u64,
+        /// How many threads have parked in `generation`. Reset by the next
+        /// stop rather than by the threads leaving this one.
+        parked: usize,
+    }
+
+    static WORLD: Mutex<World> = Mutex::new(World {
+        stopped: false,
+        generation: 0,
+        parked: 0,
+    });
+    static CV: Condvar = Condvar::new();
+    /// One collection at a time, whichever thread asked.
+    static COLLECTING: Mutex<()> = Mutex::new(());
+
+    /// Hold the world stopped for as long as this lives.
+    pub(crate) struct Stopped(#[allow(dead_code)] parking_lot::MutexGuard<'static, ()>);
+
+    impl Drop for Stopped {
+        fn drop(&mut self) {
+            let mut w = WORLD.lock();
+            w.stopped = false;
+            CV.notify_all();
+        }
+    }
+
+    /// Stop every other Ruby thread, or answer `None` if they do not all
+    /// arrive in time.
+    pub(crate) fn stop_the_world() -> Option<Stopped> {
+        let guard = COLLECTING.try_lock()?;
+        let generation = {
+            let mut w = WORLD.lock();
+            w.generation += 1;
+            w.parked = 0;
+            w.stopped = true;
+            w.generation
+        };
+        // Built BEFORE anything can fail, so every exit below clears the flag
+        // and releases whoever did park.
+        let held = Stopped(guard);
+        // The flag is set first: a thread that reaches its checkpoint between
+        // the post and the flag would see nothing to park for, and the wait
+        // below would then time out for no reason.
+        let others = process_gvl().post_gc_to_others();
+        if others == 0 {
+            return Some(held);
+        }
+        let deadline = Instant::now() + DEADLINE;
+        let mut w = WORLD.lock();
+        while w.parked < others {
+            if CV.wait_until(&mut w, deadline).timed_out() {
+                // Release the lock before `held` drops -- its own `Drop`
+                // takes it.
+                drop(w);
+                return None;
+            }
+        }
+        debug_assert_eq!(w.generation, generation);
+        drop(w);
+        Some(held)
+    }
+
+    /// A checkpoint on a thread the collector asked to stop: park until the
+    /// collection finishes. Answers whether this thread parked at all.
+    pub(crate) fn park_if_asked() -> bool {
+        let Some(ctx) = super::current_ctx() else {
+            return false;
+        };
+        if !ctx.take(INT_GC) {
+            return false;
+        }
+        // The collector is about to read every node's owner count, so a node
+        // this thread has LOCKED would be read under that guard. Checkpoint
+        // sites hold none by construction; the whole golden corpus is what
+        // tests that claim.
+        #[cfg(debug_assertions)]
+        crate::collections::debug_assert_no_live_fast_guards("a GC safepoint");
+        let mut w = WORLD.lock();
+        if !w.stopped {
+            // The request was abandoned before this thread noticed it.
+            return false;
+        }
+        let mine = w.generation;
+        w.parked += 1;
+        CV.notify_all();
+        while w.stopped && w.generation == mine {
+            CV.wait(&mut w);
+        }
+        true
+    }
+
+    /// Whether a collection is running right now, for a test that wants to
+    /// know without parking.
+    #[cfg(test)]
+    pub(crate) fn world_is_stopped() -> bool {
+        WORLD.lock().stopped
+    }
+
+    /// Silence the unused-import warning in builds where nothing reads it.
+    const _: Ordering = Ordering::Relaxed;
+}
+
+pub(crate) use rendezvous::{park_if_asked, stop_the_world};
+
 /// Consume a pending quantum tick: under an ARMED Gvl the holder rejoins
 /// the back of the queue (CRuby's preemption action); the bit is consumed
 /// harmlessly everywhere else. Called from `check_ints`' slow path.
@@ -582,6 +749,75 @@ mod tests {
         })
         .join()
         .unwrap();
+    }
+
+    /// The rendezvous stops a running thread and lets it go again. Worth a
+    /// unit test rather than only a golden: this is the one place a bug is a
+    /// hang, and `cargo miri test` runs it for the data races a golden
+    /// cannot see.
+    #[test]
+    fn the_world_stops_and_starts_again() {
+        let running = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        // The worker is ATTACHED before this barrier releases, so the request
+        // below always has someone to wait for.
+        let entered = Arc::new(std::sync::Barrier::new(2));
+        let worker = {
+            let (running, entered) = (running.clone(), entered.clone());
+            std::thread::spawn(move || {
+                install_ctx();
+                entered.wait();
+                // A checkpoint loop, which is what a compiled body is.
+                while running.load(Ordering::Relaxed) {
+                    park_if_asked();
+                    std::thread::yield_now();
+                }
+            })
+        };
+        install_ctx();
+        entered.wait();
+
+        let held = stop_the_world().expect("a thread at a checkpoint parks");
+        assert!(rendezvous::world_is_stopped());
+        drop(held);
+
+        // A second stop must work too: the generation counter is what stops a
+        // straggler from the first one being counted in the second.
+        let held = stop_the_world().expect("the rendezvous is reusable");
+        drop(held);
+
+        running.store(false, Ordering::Relaxed);
+        worker.join().unwrap();
+    }
+
+    /// A thread that never reaches a checkpoint costs a bounded pause and a
+    /// missed collection, never a hang.
+    #[test]
+    fn a_thread_that_never_parks_is_abandoned() {
+        // Two barriers, and the first one is the test: without it the worker
+        // may not have ATTACHED yet, the request finds nobody to wait for,
+        // and the abandon path is never exercised at all.
+        let attached = Arc::new(std::sync::Barrier::new(2));
+        let release = Arc::new(std::sync::Barrier::new(2));
+        let worker = {
+            let (attached, release) = (attached.clone(), release.clone());
+            std::thread::spawn(move || {
+                install_ctx();
+                attached.wait();
+                release.wait();
+            })
+        };
+        attached.wait();
+        // The worker is attached and will not poll, so the request expires.
+        assert!(
+            stop_the_world().is_none(),
+            "a thread that never checkpoints must not be waited on forever"
+        );
+        assert!(
+            !rendezvous::world_is_stopped(),
+            "an abandoned request leaves nothing stopped"
+        );
+        release.wait();
+        worker.join().unwrap();
     }
 
     /// Bits post/consume exactly once each, and the global fast-path
