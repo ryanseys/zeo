@@ -258,6 +258,13 @@ fn seed_ruby_constants() {
         format!("ruby {VERSION} ({RELEASE_DATE} revision {short_rev}) +PRISM [{PLATFORM}]");
     const_set(object, "RUBY_DESCRIPTION", rb_str(&description));
 
+    // CRuby sets this at the VM level (`ruby.c`), not in any library, so it
+    // is ALWAYS defined and `nil` for an ordinary build. `mkmf` reads it at
+    // module-body level -- `if !CROSS_COMPILING` decides which `mkintpath` to
+    // define -- so an undefined one is a NameError that stops mkmf loading,
+    // and therefore stops every C extension from building.
+    const_set(object, "CROSS_COMPILING", RubyValue::Nil);
+
     // CRuby copyright line, verbatim from `version.c`.
     const COPYRIGHT: &str = "ruby - Copyright (C) 1993-2026 Yukihiro Matsumoto";
     const_set(object, "RUBY_COPYRIGHT", rb_str(COPYRIGHT));

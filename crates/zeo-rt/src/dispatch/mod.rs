@@ -537,6 +537,27 @@ pub fn is_main_object(o: &RObj) -> bool {
     matches!(main_slot(), RubyValue::Object(m) if Arc::ptr_eq(m, o))
 }
 
+/// `main.include(Mod)` and its two siblings: the mixin lands on `Object`,
+/// which is what makes the methods visible everywhere afterwards.
+///
+/// `None` means the name is not one of the three, and the ordinary dispatch
+/// continues -- so this costs one symbol compare on a path that already
+/// checked object identity.
+fn main_mixin(name: Symbol, args: &[RubyValue]) -> Option<Result<RubyValue, Signal>> {
+    // `include` and NOTHING ELSE. Oracle-checked: main's singletons are
+    // `define_method`, `include`, `inspect`, `private`, `public`,
+    // `ruby2_keywords`, `to_s` and `using` -- there is no `prepend` and no
+    // `extend`, so routing either would shadow a user's own top-level `def`.
+    // Adding `prepend` here broke `spinel::anon_double_splat_forward.rb`,
+    // whose `def prepend(**)` is an ordinary method that happens to share
+    // the name.
+    if name.name_str() != "include" {
+        return None;
+    }
+    let target = RubyValue::Class(zeo_abi::OBJECT_CLASS);
+    Some(crate::runtime_meta::runtime_include(&target, args))
+}
+
 /// Read `@name` off a receiver whose concrete class isn't statically known
 /// -- what codegen emits for an ivar access when `self` is a `RubyValue`
 /// rather than an `Arc<Concrete>` (top level, or a block whose self
@@ -3645,6 +3666,22 @@ fn send_value_in_reason_inner(
         return Err(crate::ractor::moved_object_error());
     }
     if let RubyValue::Object(o) = recv {
+        // The top-level self carries `include` as a PRIVATE SINGLETON in
+        // CRuby (`ruby.c` installs it on `rb_vm_top_self`), where it mixes
+        // into `Object`. zeo has no singleton on `main` --
+        // installing one at startup would mark the overlay maps live for
+        // every program -- so the routing is here instead, behind the
+        // identity check that already exists for `to_s`.
+        //
+        // `include Mod` with a literal constant never reaches this: the
+        // lowering turns that into a compile-time `HirNode::Include`. What
+        // does reach it is a COMPUTED module -- `m = Module.new { ... };
+        // include m` -- which is the shape `mkmf` ends on.
+        if is_main_object(o)
+            && let Some(out) = main_mixin(name, args)
+        {
+            return out;
+        }
         return send_in_reason(box_id, o, name, args, block, reason);
     }
     // A singleton method installed directly on this VALUE (`def SOME_ARRAY.[]`)
@@ -3654,7 +3691,10 @@ fn send_value_in_reason_inner(
     if crate::runtime_meta::is_live()
         && let Some(m) = crate::runtime_meta::value_singleton_method(recv, name)
     {
-        return m.call_with_self_and_block(recv, args, block);
+        // Through the frame pusher, not `call_with_self_and_block` directly:
+        // a `super` in the body needs a seat, and a bare value's singleton
+        // has no `MethodImpl` wrapper to push one.
+        return crate::runtime_meta::call_value_singleton(&m, recv, name, args, block);
     }
     note_dispatch(name);
     // The flat one-probe path below -- almost every send in almost every

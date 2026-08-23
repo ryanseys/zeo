@@ -205,6 +205,35 @@ crate::cext_fn! {
         Ok(v)
     }
 
+    /// The `*_str_new_static` family: MRI keeps the caller's pointer and
+    /// never copies, on the promise that it names a C STRING LITERAL that
+    /// outlives the process.
+    ///
+    /// zeo copies. A zeo String owns its bytes -- there is no way to hand one
+    /// a foreign buffer -- so the promise buys nothing here, and taking a
+    /// copy is right whether or not the caller kept its side of it.
+    /// `rb_str_new_static` is what `rb_str_new_cstr` expands to for a
+    /// literal, so this is not a corner: it is on the common path.
+    fn rb_str_new_static(p: *const c_char, len: c_long) -> Value {
+        let bytes = unsafe { borrow_bytes(p, len) };
+        to_value(&new_str(bytes, crate::encoding::ASCII_8BIT))
+    }
+
+    fn rb_utf8_str_new_static(p: *const c_char, len: c_long) -> Value {
+        let bytes = unsafe { borrow_bytes(p, len) };
+        to_value(&new_str(bytes, crate::encoding::UTF_8))
+    }
+
+    fn rb_usascii_str_new_static(p: *const c_char, len: c_long) -> Value {
+        let bytes = unsafe { borrow_bytes(p, len) };
+        to_value(&new_str(bytes, crate::encoding::US_ASCII))
+    }
+
+    fn rb_enc_str_new_static(p: *const c_char, len: c_long, e: *const std::ffi::c_void) -> Value {
+        let bytes = unsafe { borrow_bytes(p, len) };
+        to_value(&new_str(bytes, super::misc::encoding_of(e)))
+    }
+
     /// `rb_str_freeze`. Answers the receiver, as MRI does.
     fn rb_str_freeze(v: Value) -> Value {
         let s = unsafe { as_str(v)? };

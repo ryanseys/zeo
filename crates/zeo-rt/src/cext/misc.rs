@@ -27,6 +27,10 @@ fn enc_token(id: EncodingId) -> Encoding {
     (id.0 as usize + 1) as Encoding
 }
 
+pub(super) fn encoding_of(e: Encoding) -> EncodingId {
+    enc_of(e)
+}
+
 fn enc_of(e: Encoding) -> EncodingId {
     match (e as usize).checked_sub(1) {
         Some(n) => EncodingId(n as u8),

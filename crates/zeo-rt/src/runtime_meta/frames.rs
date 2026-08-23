@@ -27,6 +27,29 @@ pub fn dynamic_from_proc(defining: ClassId, name: Symbol, body: RProc) -> Method
     }))
 }
 
+/// Run a BARE VALUE's singleton method inside a method frame.
+///
+/// [`dynamic_from_proc`] does this for an `Object` receiver by wrapping the
+/// proc in a `MethodImpl`. A bare value has no `RObj` to bind, so its
+/// singleton stays an `RProc` in its own table and the call site is the only
+/// place the frame can be pushed -- without it, a `super` in
+/// `class << "str"; def to_s = "x" + super; end` has no seat to walk up from
+/// and raises "super called outside of method".
+pub fn call_value_singleton(
+    body: &RProc,
+    recv: &RubyValue,
+    name: Symbol,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    push_method_frame(SINGLETON_DEFINING, name);
+    // `Result<_, Signal>` throughout, never an unwinding panic, so the pop
+    // runs on every exit without a guard type -- same as `dynamic_from_proc`.
+    let out = body.call_with_self_and_block(recv, args, block);
+    pop_method_frame();
+    out
+}
+
 // ---------------------------------------------------------------------------
 // Runtime method frames -- what a `super` in a runtime-defined method resolves
 // against
@@ -142,7 +165,7 @@ pub(super) fn update_frame_for(id: ClassId, f: impl FnOnce(&mut BodyFrame)) {
 /// ancestor lookup misses it and resumes from the TOP of the receiver's own
 /// ancestry -- which is exactly where a singleton method's `super` belongs (the
 /// conceptual singleton class sits ahead of the object's real class).
-pub(super) const SINGLETON_DEFINING: ClassId = ClassId(u32::MAX);
+pub const SINGLETON_DEFINING: ClassId = ClassId(u32::MAX);
 
 pub(super) fn push_method_frame(defining: ClassId, name: Symbol) {
     METHOD_FRAMES.with(|f| f.borrow_mut().push((defining, name)));

@@ -1,4 +1,10 @@
-# frozen_string_literal: true
+# frozen_string_literal: false
+#
+# NOT frozen-literal, and not by omission. Real rbconfig's values are mutable
+# strings -- `RbConfig::CONFIG["cflags"].frozen?` is false on the oracle --
+# and both `RbConfig.expand` and mkmf's `init_mkmf` write THROUGH them with
+# `String#replace`. A frozen literal here is a `FrozenError` before any
+# extension is configured.
 #
 # Synthesized `rbconfig` shim, built into zeo (spliced by parse/loader.rs when a
 # program `require`s "rbconfig"). Real Ruby generates rbconfig.rb at build time
@@ -81,7 +87,12 @@ module RbConfig
     "LD" => ENV["LD"] || "ld",
     "AR" => "ar",
     "LDSHARED" => "@LDSHARED@",
-    "DLDFLAGS" => "",
+    # A C extension is a BUNDLE that resolves `rb_*` against the host binary
+    # at load, so its own link must leave them undefined. Without this every
+    # extension fails to link with "Undefined symbols ... _rb_define_method",
+    # which reads like a missing implementation and is not one.
+    # The oracle's own `DLDFLAGS` carries the same flag.
+    "DLDFLAGS" => "@UNDEFINED_FLAG@",
     "configure_args" => "",
 
     # --- The keys `mkmf` reads. -------------------------------------------
@@ -149,26 +160,56 @@ module RbConfig
     File.join(CONFIG["bindir"], CONFIG["ruby_install_name"] + CONFIG["EXEEXT"])
   end
 
-  # Substitute `$(var)` and `$$` references, as real rbconfig does. mkmf
-  # depends on this: `CFLAGS` is `$(cflags) -fPIC` and `cflags` is three more
-  # references, and an unexpanded one reaches the compiler as a literal.
+  # `RbConfig.expand` -- upstream's implementation, transcribed.
   #
-  # A reference to a key that is not here expands to the empty string, which
-  # is what real rbconfig does for an unset one.
+  # Two details are load-bearing and neither is obvious. It MUTATES `val` in
+  # place (`val.replace`) and callers depend on that: mkmf writes
+  # `RbConfig.expand(srcdir = srcprefix.dup)` and then reads `srcdir`,
+  # discarding the return value. And it expands the config entry it reaches
+  # THROUGH, memoizing the result, so `$(CFLAGS)` resolves the whole chain in
+  # one pass and a cycle raises instead of spinning.
+  #
+  # An earlier version here returned a new String and left `val` alone. Every
+  # generated Makefile came out with an empty `SRCS`, because mkmf's `srcdir`
+  # stayed the literal `$(srcdir)` and globbed nothing.
   def self.expand(val, config = CONFIG)
     return val unless val.is_a?(String)
 
-    10.times do
-      before = val
-      val = val.gsub(/\$\((\w+)\)/) { config[Regexp.last_match(1)] || "" }
-      break if val == before
+    newval = val.gsub(/\$\$|\$\(([^()]+)\)|\$\{([^{}]+)\}/) do
+      var = Regexp.last_match(0)
+      name = Regexp.last_match(1) || Regexp.last_match(2)
+      if name.nil?
+        "$"
+      else
+        # `$(var:pat=sub)` -- a make-style suffix substitution.
+        name = name[/\A[^:]+(?=(?::(.*?)=(.*))?\z)/]
+        pat = Regexp.last_match(1)
+        sub = Regexp.last_match(2)
+        key = config[name]
+        if key
+          config[name] = false
+          config[name] = key = expand(key, config)
+          key = key.gsub(/#{Regexp.quote(pat)}(?=\s|\z)/) { sub } if pat
+          key
+        elsif key == false
+          raise "recursive expansion of #{var}"
+        else
+          var
+        end
+      end
     end
-    val.gsub("$$", "$")
+    val.replace(newval) unless newval == val
+    val
   end
 end
 
-# Resolve every `$(var)` in `CONFIG` itself. `MAKEFILE_CONFIG` keeps them.
+# Resolve every `$(var)` in `CONFIG` itself. `MAKEFILE_CONFIG` keeps them,
+# because that is the table mkmf writes into the Makefile for `make` to
+# expand.
+#
+# Neither is FROZEN, and real rbconfig does not freeze them either. mkmf
+# writes into both -- `init_mkmf` rewrites `warnflags` and `CC_WRAPPER` --
+# so a frozen table is a `FrozenError` before any extension is configured.
 RbConfig::CONFIG.each_key do |k|
   RbConfig::CONFIG[k] = RbConfig.expand(RbConfig::CONFIG[k], RbConfig::CONFIG)
 end
-RbConfig::CONFIG.freeze

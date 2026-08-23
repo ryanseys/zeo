@@ -157,16 +157,37 @@ fn render_rbconfig(manifest_dir: &Path, out_dir: &Path) {
     // `zeo-rt/build.rs`), so `guard_fold` can decide `if RUBY_PLATFORM ==
     // 'java'` and friends the way the program itself would answer.
     println!("cargo:rustc-env=ZEO_RUBY_PLATFORM={arch}-{os}");
-    let (vendor, host_os, dlext, soext, ldshared) = match target_os().as_str() {
+    // The last field is `DLDFLAGS`: a C extension is a bundle or shared
+    // object that resolves the runtime's `rb_*` against the HOST binary at
+    // load time, so its own link must permit them to be undefined. The two
+    // linkers spell that differently, and getting it wrong reads as a missing
+    // implementation ("Undefined symbols ... _rb_define_method") when it is
+    // only a link-line flag. The oracle's own `DLDFLAGS` carries the same.
+    let (vendor, host_os, dlext, soext, ldshared, undefined) = match target_os().as_str() {
         "macos" | "ios" | "tvos" | "watchos" => (
             "apple",
             format!("darwin{}", darwin_major()),
             "bundle",
             "dylib",
             "clang -dynamic -bundle",
+            "-Wl,-undefined,dynamic_lookup",
         ),
-        "linux" => ("pc", "linux-gnu".to_string(), "so", "so", "cc -shared"),
-        other => ("unknown", other.to_string(), "so", "so", "cc -shared"),
+        "linux" => (
+            "pc",
+            "linux-gnu".to_string(),
+            "so",
+            "so",
+            "cc -shared",
+            "-Wl,--allow-shlib-undefined",
+        ),
+        other => (
+            "unknown",
+            other.to_string(),
+            "so",
+            "so",
+            "cc -shared",
+            "-Wl,--allow-shlib-undefined",
+        ),
     };
     // The same `RbConfig::CONFIG` entries the shim above renders, exported so
     // a compile-time guard can read them without parsing the shim -- gems
@@ -186,6 +207,7 @@ fn render_rbconfig(manifest_dir: &Path, out_dir: &Path) {
         .replace("@SOEXT@", soext)
         .replace("@OS_VERSION@", &darwin_major())
         .replace("@LDSHARED@", ldshared)
+        .replace("@UNDEFINED_FLAG@", undefined)
         // Where `crates/zeo-rt/cext/` sits in the DEV tree. An installed zeo
         // exports `ZEO_CEXT_HDRDIR` instead, because the install path is a
         // run-time fact and this is a compile-time constant.

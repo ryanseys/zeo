@@ -22,7 +22,7 @@
 //! safe. The caller passes arguments in registers and on a stack it
 //! cleans up itself, the callee reads none of them, and it never
 //! returns -- so there is no return value to disagree about and no
-//! frame to unwind. Writing 683 correct signatures would
+//! frame to unwind. Writing 680 correct signatures would
 //! buy nothing: not one of these functions runs.
 //!
 //! # The globals
@@ -2527,10 +2527,6 @@ pub extern "C" fn rb_str_new_shared() -> ! {
     unimplemented("rb_str_new_shared")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_str_new_static() -> ! {
-    unimplemented("rb_str_new_static")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_str_new_with_class() -> ! {
     unimplemented("rb_str_new_with_class")
 }
@@ -2857,14 +2853,6 @@ pub extern "C" fn rb_unexpected_type() -> ! {
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_update_max_fd() -> ! {
     unimplemented("rb_update_max_fd")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_usascii_str_new_static() -> ! {
-    unimplemented("rb_usascii_str_new_static")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_utf8_str_new_static() -> ! {
-    unimplemented("rb_utf8_str_new_static")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_uv_to_utf8() -> ! {

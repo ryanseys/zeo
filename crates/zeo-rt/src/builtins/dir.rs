@@ -159,17 +159,29 @@ fn seg_matches(pat: &str, name: &str, dotmatch: bool) -> bool {
 /// `out`. `prefix` is the path built so far (as the caller wants it echoed
 /// back -- glob answers paths relative to the same root the pattern was).
 #[allow(clippy::too_many_arguments)]
+/// One pattern segment, plus the literal text that precedes it.
+///
+/// `Dir["./*.c"]` answers `["./probe.c"]` -- ruby keeps a `.` or a doubled
+/// slash in the ANSWER even though neither changes which file matches. So the
+/// noise rides along as display text: it is prepended to the matched name,
+/// which also leaves `base/./name` resolving to the same file it always did.
+struct Seg<'a> {
+    noise: String,
+    pat: &'a str,
+}
+
 fn glob_walk(
     base: &str,
     prefix: &str,
-    segs: &[&str],
+    segs: &[Seg<'_>],
     out: &mut Vec<String>,
     dotmatch: bool,
     dirs_only: bool,
 ) {
-    let Some((seg, rest)) = segs.split_first() else {
+    let Some((first, rest)) = segs.split_first() else {
         return;
     };
+    let (noise, seg) = (first.noise.as_str(), &first.pat);
     // For an absolute pattern `base` is empty and the root to read is `/`
     // (an empty `read_dir("")` reads nothing -- the bug that made absolute
     // globs return nothing). A relative pattern's base is ".".
@@ -192,7 +204,22 @@ fn glob_walk(
                 out.push(finish(prefix, dirs_only));
             }
         } else {
-            glob_walk(base, prefix, rest, out, dotmatch, dirs_only);
+            // Zero segments still spends the `**`'s own display noise:
+            // `Dir["./**/*.rb"]` answers `["./x.rb"]`, not `["x.rb"]`. Hand
+            // it to whichever segment ends up first.
+            let carried: Vec<Seg<'_>> = rest
+                .iter()
+                .enumerate()
+                .map(|(i, s)| Seg {
+                    noise: if i == 0 {
+                        format!("{noise}{}", s.noise)
+                    } else {
+                        s.noise.clone()
+                    },
+                    pat: s.pat,
+                })
+                .collect();
+            glob_walk(base, prefix, &carried, out, dotmatch, dirs_only);
         }
         // One or more: descend into every visible subdirectory and retry the
         // whole `**` there.
@@ -206,11 +233,22 @@ fn glob_walk(
             }
             if e.path().is_dir() {
                 let next = if prefix.is_empty() {
-                    name
+                    format!("{noise}{name}")
                 } else {
-                    format!("{prefix}/{name}")
+                    format!("{prefix}/{noise}{name}")
                 };
-                glob_walk(base, &next, segs, out, dotmatch, dirs_only);
+                // The noise is spent on the FIRST component `**` produces;
+                // deeper levels must not repeat it, or `./**/*.rb` answers
+                // `./sub/./x.rb`.
+                let mut deeper: Vec<Seg<'_>> = segs
+                    .iter()
+                    .map(|s| Seg {
+                        noise: s.noise.clone(),
+                        pat: s.pat,
+                    })
+                    .collect();
+                deeper[0].noise = String::new();
+                glob_walk(base, &next, &deeper, out, dotmatch, dirs_only);
             }
         }
         return;
@@ -238,9 +276,9 @@ fn glob_walk(
             continue;
         }
         let next = if prefix.is_empty() {
-            name.clone()
+            format!("{noise}{name}")
         } else {
-            format!("{prefix}/{name}")
+            format!("{prefix}/{noise}{name}")
         };
         let child = if prefix.is_empty() {
             format!("{base}/{name}")
@@ -268,6 +306,31 @@ fn finish(path: &str, dirs_only: bool) -> String {
     }
 }
 
+/// Split a pattern on `/`, folding every `.` and empty segment into the next
+/// real one as display noise.
+///
+/// `.` and `//` change nothing about which file matches -- but ruby keeps
+/// them in the answer, so `Dir["./*.c"]` is `["./probe.c"]` and not
+/// `["probe.c"]`. mkmf globs its sources as `Dir[File.join(srcdir, "*.c")]`
+/// with `srcdir == "."`, so dropping them found no sources at all and every
+/// generated Makefile came out with an empty `SRCS`.
+fn split_segments(pat: &str) -> Vec<Seg<'_>> {
+    let mut out: Vec<Seg<'_>> = Vec::new();
+    let mut noise = String::new();
+    for part in pat.split('/') {
+        if part.is_empty() || part == "." {
+            noise.push_str(part);
+            noise.push('/');
+            continue;
+        }
+        out.push(Seg {
+            noise: std::mem::take(&mut noise),
+            pat: part,
+        });
+    }
+    out
+}
+
 /// One glob pattern -> matching paths, relative to `root` (the `base:` keyword
 /// or the cwd), or absolute if the pattern is. Ruby sorts glob results.
 fn glob(pattern: &str, dotmatch: bool, root: Option<&str>) -> Vec<String> {
@@ -278,7 +341,7 @@ fn glob(pattern: &str, dotmatch: bool, root: Option<&str>) -> Vec<String> {
     } else {
         (root.unwrap_or("."), pattern)
     };
-    let segs: Vec<&str> = pat.split('/').filter(|s| !s.is_empty()).collect();
+    let segs = split_segments(pat);
     let mut out = Vec::new();
     glob_walk(
         if absolute { "" } else { base },

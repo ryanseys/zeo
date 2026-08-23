@@ -21,6 +21,7 @@ mod support;
 pub const REPO_PACKAGES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../gems");
 
 mod blocks_procs;
+mod cext_build;
 mod classes;
 mod codegen;
 mod collections;
