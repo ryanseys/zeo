@@ -12,17 +12,21 @@ fn main() {
     build_cext();
 }
 
-/// `csrc/cext_jmp.c` is the `setjmp` half of the C extension surface. It is C
-/// and not Rust because a `longjmp` past a live Rust frame skips its
-/// destructors, which is undefined rather than merely leaky --
-/// `crates/zeo-rt/src/cext/jmp.rs` states the whole rule.
+/// The two pieces of the C extension surface that have to BE C.
+///
+/// `cext_jmp.c` holds the only `setjmp`: a `longjmp` past a live Rust frame
+/// skips its destructors, which is undefined rather than merely leaky.
+/// `cext_va.c` holds every variadic entry: Rust cannot read a `va_list`, and
+/// guessing is how a pointer gets read out of the wrong register.
 fn build_cext() {
     println!("cargo:rerun-if-changed=csrc/cext_jmp.c");
+    println!("cargo:rerun-if-changed=csrc/cext_va.c");
     if std::env::var_os("CARGO_FEATURE_CEXT").is_none() {
         return;
     }
     cc::Build::new()
         .file("csrc/cext_jmp.c")
+        .file("csrc/cext_va.c")
         .warnings(true)
         .compile("zeo_cext");
 }

@@ -97,8 +97,26 @@ runnable Ruby program, and there is nothing to run. They move to
 | `RB_FLONUM_P` is true for the same doubles as MRI, but an `Integer` outside the Fixnum range is a fresh handle each time | Which is what CRuby does with a Bignum too, so two equal ones are correctly not `equal?`. |
 | `ROBJECT_FIELDS` raises `NotImplementedError` | There is no ivar array to hand out. Nothing in the 23-gem census calls it. |
 | `RMATCH_EXT`, `RREGEXP(re)->usecnt`, `RFILE(v)->fptr` and `RTYPEDDATA(v)->data` are compile errors | The payload structs are opaque. Each is a direct layout read; see the table above. |
-| `rb_raise`'s format string is taken verbatim | zeo runs no `printf` over it. Reading varargs whose types are described only by a runtime string is the classic way to read the wrong register. An extension that passes `"%s"` gets a message containing `%s` -- wrong, but visible, where a misread pointer is neither. |
-| `rb_rescue2`'s class list is not read | Same varargs problem. The rescue arm runs for every `StandardError`, which is what a bare `rescue` means and what all four census uses ask for. A non-StandardError still propagates. |
+| `rb_scan_args` does not fill the `&block` slot | The block is not in `argv`, and zeo's C method frame carries it separately. The slot is set to `Qnil`; `rb_block_given_p` and `rb_yield` are the working spellings. |
+| `ST_DELETE` from an `rb_hash_foreach` callback is not honoured | Deleting under an iteration is a shape zeo's hash does not support, and answering "deleted" without deleting would be worse. `ST_CONTINUE` and `ST_STOP` both work, and the walk runs over a snapshot so the callback may touch the hash. |
+| `rb_str_resize` pads with NUL and truncates, and does not preserve capacity | zeo's strings have no separate capacity to preserve. |
 | A `rb_encoding *` is an opaque token, not an `OnigEncodingType` | It is `EncodingId + 1` cast to a pointer, so binary (id 0) is not NULL. Every census use passes it around rather than reading it. An extension that dereferences one faults at the read rather than getting a wrong byte. |
 | `rb_enc_interned_str` builds an ordinary frozen String | zeo does not intern strings. From the caller's side an interned string IS a frozen one, minus the sharing. |
 | The `st_*` hash table is stubbed | Only `st_strcasecmp` and `st_strncasecmp` are implemented, and they are 8 of the 13 `st_*` uses across the 23 gems -- neither touches the table. MRI's `st.c` is 3,224 lines and pulls in five internal headers; vendoring it to serve the other five uses is not a trade worth making. |
+
+## The variadic entries
+
+`rb_funcall(recv, mid, 3, a, b, c)`, `rb_raise(exc, "%s: %d", s, n)`,
+`rb_scan_args(argc, argv, "11", &a, &b)`, `rb_rescue2(..., cls, 0)` and the
+three variadic `Struct` entries take arguments whose count and types are
+described only at run time. Rust cannot read a `va_list` -- there is no stable
+way to, and guessing is how a pointer gets read out of the wrong register.
+
+So all of them live in `csrc/cext_va.c`, where `<stdarg.h>` means what it
+says. Each one does exactly one thing: pack the varargs into an array (or, for
+`rb_raise`, run `vsnprintf` over them) and hand that to the Rust entry that
+does the real work. Nothing in that file allocates from the Ruby heap, calls
+back into Ruby, or holds a `VALUE` past its own frame.
+
+That is why `rb_raise` formats its message properly and `rb_rescue2` reads its
+real class list, rather than each carrying a divergence.

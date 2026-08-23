@@ -83,17 +83,17 @@ crate::cext_fn! {
         to_value(&crate::dispatch::send_value(&recv, symbol_of(mid), &args, block)?)
     }
 
-    /// `rb_raise(exc, fmt, ...)`. The format string is taken VERBATIM.
+    /// `rb_raise`'s worker. The format string was already run through
+    /// `vsnprintf` by `csrc/cext_va.c`, which is where the `va_list` can be
+    /// read safely -- see that file.
     ///
-    /// zeo does not run a `printf` over it, and this is a real divergence
-    /// rather than an omission: reading varargs whose types are described
-    /// only by a runtime string is the classic way to read the wrong
-    /// register. An extension that passes `"%s"` gets a message containing
-    /// `%s`, which is wrong but visible, where a misread pointer is neither.
-    fn rb_raise(exc: Value, fmt: *const c_char) -> Value {
-        let class = unsafe { value_of(exc) };
-        let msg = unsafe { cstr(fmt) };
-        Err(raise_with(&class, msg))
+    /// `exc == 0` is `rb_fatal`, which has no class of its own.
+    fn zeo_cext_raise_str(exc: Value, msg: *const c_char) -> Value {
+        let msg = unsafe { cstr(msg) };
+        if exc == 0 {
+            return Err(crate::dispatch::raise_error("RuntimeError", msg));
+        }
+        Err(raise_with(&unsafe { value_of(exc) }, msg))
     }
 
     fn rb_exc_raise(exc: Value) -> Value {
@@ -144,22 +144,21 @@ crate::cext_fn! {
         out
     }
 
-    /// `rb_rescue2(body, barg, rescue, rarg, ...classes, 0)`.
-    ///
-    /// The class list is variadic and zeo does not read it, for the same
-    /// reason `rb_raise` does not read its format arguments. So the rescue
-    /// arm runs for every `StandardError`, which is what an empty `rescue`
-    /// means in ruby and what all four census uses of this function ask for.
-    /// A non-StandardError still propagates.
-    fn rb_rescue2(
+    /// `rb_rescue2`'s worker. `csrc/cext_va.c` walked the `0`-terminated
+    /// class list into `classes`; an EMPTY list is `rb_rescue`, which means
+    /// `StandardError`.
+    fn zeo_cext_rescue2(
         body: unsafe extern "C" fn(Value) -> Value,
         barg: Value,
         resc: unsafe extern "C" fn(Value, Value) -> Value,
         rarg: Value,
+        classes: *const Value,
+        nclasses: c_int,
     ) -> Value {
+        let wanted = unsafe { args_of(nclasses, classes) };
         match super::jmp::protect(|| unsafe { body(barg) }) {
             Ok(v) => Ok(v),
-            Err(Signal::Raise(exc)) if is_standard_error(&exc) => {
+            Err(Signal::Raise(exc)) if rescued_by(&exc, &wanted) => {
                 set_errinfo(&Signal::Raise(exc.clone()));
                 let e = to_value(&exc)?;
                 super::jmp::protect(|| unsafe { resc(rarg, e) })
@@ -168,15 +167,35 @@ crate::cext_fn! {
         }
     }
 
-    /// `rb_rescue` is `rb_rescue2` with the class list left out entirely,
-    /// which already means StandardError.
-    fn rb_rescue(
-        body: unsafe extern "C" fn(Value) -> Value,
-        barg: Value,
-        resc: unsafe extern "C" fn(Value, Value) -> Value,
-        rarg: Value,
-    ) -> Value {
-        unsafe { Ok(rb_rescue2(body, barg, resc, rarg)) }
+    /// `rb_scan_args`'s format parser. The slots themselves are walked in
+    /// `csrc/cext_va.c`, which is the only part that needs a `va_list`.
+    fn zeo_cext_scan_plan(
+        fmt: *const c_char,
+        required: *mut c_int,
+        optional: *mut c_int,
+        splat: *mut c_int,
+        block: *mut c_int,
+    ) -> c_int {
+        let Some((r, o, s, b)) = scan_args_plan(&unsafe { cstr(fmt) }) else {
+            return Ok(0);
+        };
+        // SAFETY: four `int` slots the caller owns.
+        unsafe {
+            required.write(r as c_int);
+            optional.write(o as c_int);
+            splat.write(c_int::from(s));
+            block.write(c_int::from(b));
+        }
+        Ok(1)
+    }
+
+    /// `rb_scan_args`'s splat slot: `argv[from..to]` as an Array.
+    fn zeo_cext_scan_slice(argc: c_int, argv: *const Value, from: c_int, to: c_int) -> Value {
+        let all = unsafe { args_of(argc, argv) };
+        let lo = from.max(0) as usize;
+        let hi = (to.max(0) as usize).min(all.len());
+        let rest = all.get(lo..hi).unwrap_or(&[]).to_vec();
+        to_value(&RubyValue::Array(crate::value::collections::array_new(rest)))
     }
 
     /// `rb_jump_tag(state)`: leave with the pending exception `rb_protect`
@@ -336,8 +355,15 @@ pub fn root_values() -> Vec<Value> {
         .collect()
 }
 
-fn is_standard_error(exc: &RubyValue) -> bool {
-    crate::dispatch::is_a(exc.class_id(), zeo_abi::exc_id(4))
+/// Does `exc` match one of the classes `rb_rescue2` named?
+///
+/// An empty list is `rb_rescue`, which means `StandardError` -- the same
+/// thing a bare `rescue` means in Ruby.
+fn rescued_by(exc: &RubyValue, classes: &[RubyValue]) -> bool {
+    if classes.is_empty() {
+        return crate::dispatch::is_a(exc.class_id(), zeo_abi::exc_id(4));
+    }
+    classes.iter().any(|c| value_is_a(exc, c))
 }
 
 /// Build the exception `rb_raise` asks for. `exc` is a class in every census

@@ -35,6 +35,10 @@ fn enc_of(e: Encoding) -> EncodingId {
     }
 }
 
+fn out_of_range(what: &str) -> Signal {
+    crate::dispatch::raise_error("RangeError", format!("{what} out of range"))
+}
+
 fn wrong_type(v: &RubyValue, want: &str) -> Signal {
     crate::dispatch::raise_error(
         "TypeError",
@@ -269,6 +273,177 @@ crate::cext_fn! {
         let m = unsafe { value_of(module) };
         crate::runtime_meta::runtime_extend(&t, &m)?;
         Ok(target)
+    }
+
+    /// `rb_str_substr(str, beg, len)` -- `String#[]` with two Integers.
+    fn rb_str_substr(v: Value, beg: c_long, len: c_long) -> Value {
+        let s = unsafe { value_of(v) };
+        to_value(&crate::dispatch::send_value(
+            &s,
+            crate::Symbol::intern("[]"),
+            &[RubyValue::Int(beg as i64), RubyValue::Int(len as i64)],
+            None,
+        )?)
+    }
+
+    /// `rb_str_resize(str, len)`. Growing pads with NUL bytes, as MRI does;
+    /// shrinking truncates. Answers the receiver.
+    fn rb_str_resize(v: Value, len: c_long) -> Value {
+        let sv = unsafe { value_of(v) };
+        let RubyValue::Str(s) = &sv else {
+            return Err(wrong_type(&sv, "String"));
+        };
+        let want = len.max(0) as usize;
+        let mut g = s.lock();
+        let mut bytes = g.bytes().to_vec();
+        bytes.resize(want, 0);
+        let enc = g.encoding();
+        g.replace_bytes(bytes, enc);
+        Ok(v)
+    }
+
+    /// `rb_hash_foreach(hash, f, arg)`. `f` answers `ST_CONTINUE` (0) to keep
+    /// going and `ST_STOP` (1) to stop; `ST_DELETE` (2) is not honoured,
+    /// because deleting under an iteration is a shape zeo's hash does not
+    /// support and answering "deleted" without deleting would be worse.
+    fn rb_hash_foreach(
+        h: Value,
+        f: unsafe extern "C" fn(Value, Value, Value) -> c_int,
+        arg: Value,
+    ) -> Value {
+        let hv = unsafe { value_of(h) };
+        let RubyValue::Hash(hh) = &hv else {
+            return Err(wrong_type(&hv, "Hash"));
+        };
+        // A snapshot, so the callback may touch the hash without the walk
+        // reading a moved row.
+        let pairs: Vec<(RubyValue, RubyValue)> =
+            hh.lock().iter().map(|(_, (k, v))| (k.clone(), v.clone())).collect();
+        for (k, v) in pairs {
+            let (k, v) = (to_value(&k)?, to_value(&v)?);
+            let go = super::jmp::protect(|| unsafe { f(k, v, arg) })?;
+            if go != 0 {
+                break;
+            }
+        }
+        Ok(h)
+    }
+
+    /// `rb_big2ll` / `rb_big2ull`: the whole Integer, or a `RangeError`.
+    fn rb_big2ll(v: Value) -> i64 {
+        match unsafe { value_of(v) } {
+            RubyValue::Int(n) => Ok(n),
+            RubyValue::BigInt(b) => i64::try_from(&*b)
+                .map_err(|_| out_of_range("bignum too big to convert into `long long'")),
+            other => Err(wrong_type(&other, "Integer")),
+        }
+    }
+
+    fn rb_big2ull(v: Value) -> u64 {
+        match unsafe { value_of(v) } {
+            RubyValue::Int(n) => u64::try_from(n)
+                .map_err(|_| out_of_range("negative value into unsigned")),
+            RubyValue::BigInt(b) => u64::try_from(&*b)
+                .map_err(|_| out_of_range("bignum too big to convert into `unsigned long long'")),
+            other => Err(wrong_type(&other, "Integer")),
+        }
+    }
+
+    /// `rb_absint_size(v, &nlz_bits)` -- how many bytes the absolute value
+    /// needs. An extension sizes a buffer with it before packing.
+    fn rb_absint_size(v: Value, nlz_bits: *mut c_int) -> usize {
+        let bits = match unsafe { value_of(v) } {
+            RubyValue::Int(n) => 64 - n.unsigned_abs().leading_zeros(),
+            RubyValue::BigInt(b) => b.magnitude().bits() as u32,
+            other => return Err(wrong_type(&other, "Integer")),
+        };
+        let bytes = usize::try_from(bits.div_ceil(8)).unwrap_or(0).max(1);
+        if !nlz_bits.is_null() {
+            // SAFETY: the caller's own `int` slot.
+            unsafe { nlz_bits.write((bytes as u32 * 8 - bits.max(1)) as c_int) };
+        }
+        Ok(bytes)
+    }
+
+    /// `rb_proc_call_with_block(proc, argc, argv, block)`.
+    fn rb_proc_call_with_block(
+        p: Value,
+        argc: c_int,
+        argv: *const Value,
+        block: Value,
+    ) -> Value {
+        let recv = unsafe { value_of(p) };
+        let args: Vec<RubyValue> = (0..argc.max(0))
+            .map(|i| unsafe { value_of(argv.offset(i as isize).read()) })
+            .collect();
+        let block = match unsafe { value_of(block) } {
+            RubyValue::Nil => None,
+            b => Some(b),
+        };
+        to_value(&crate::dispatch::send_value(
+            &recv,
+            crate::Symbol::intern("call"),
+            &args,
+            block,
+        )?)
+    }
+
+    /// `rb_struct_define`'s worker. `outer == 0` is the top-level form.
+    fn zeo_cext_struct_define(
+        outer: Value,
+        name: *const c_char,
+        members: *const *const c_char,
+        n: c_int,
+    ) -> Value {
+        let mut args: Vec<RubyValue> = Vec::with_capacity(n.max(0) as usize + 1);
+        for i in 0..n.max(0) {
+            // SAFETY: `n` NUL-terminated names, collected by cext_va.c.
+            let m = unsafe { super::string::borrow_bytes(*members.offset(i as isize), -1) };
+            args.push(RubyValue::Symbol(crate::Symbol::intern(
+                &String::from_utf8_lossy(&m),
+            )));
+        }
+        let cls = crate::dispatch::send_value(
+            &RubyValue::Class(zeo_abi::STRUCT_CLASS),
+            crate::Symbol::intern("new"),
+            &args,
+            None,
+        )?;
+        // A named Struct is a constant under its namespace, exactly as
+        // `Struct.new` assigned to a constant would be.
+        let name = unsafe { super::string::borrow_bytes(name, -1) };
+        if !name.is_empty()
+            && let RubyValue::Class(cid) = &cls
+        {
+            let owner = if outer == 0 {
+                zeo_abi::OBJECT_CLASS
+            } else {
+                unsafe { as_class(outer)? }
+            };
+            let leaf = String::from_utf8_lossy(&name).into_owned();
+            crate::runtime_meta::name_runtime_class_if_anonymous(*cid, &leaf);
+            crate::constants::const_set(owner.0, &leaf, cls.clone());
+        }
+        to_value(&cls)
+    }
+
+    /// How many members a Struct class has, so `csrc/cext_va.c` knows how
+    /// many varargs to read.
+    fn zeo_cext_struct_size(klass: Value) -> c_long {
+        let cls = unsafe { value_of(klass) };
+        let members = crate::dispatch::send_value(&cls, crate::Symbol::intern("members"), &[], None)?;
+        Ok(match members {
+            RubyValue::Array(a) => a.lock().len() as c_long,
+            _ => 0,
+        })
+    }
+
+    fn zeo_cext_struct_new(klass: Value, values: *const Value, n: c_int) -> Value {
+        let cls = unsafe { value_of(klass) };
+        let args: Vec<RubyValue> = (0..n.max(0))
+            .map(|i| unsafe { value_of(values.offset(i as isize).read()) })
+            .collect();
+        to_value(&crate::dispatch::send_value(&cls, crate::Symbol::intern("new"), &args, None)?)
     }
 
     /// `rb_hash_lookup(hash, key)`. Unlike `rb_hash_aref` it does NOT consult

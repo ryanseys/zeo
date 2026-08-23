@@ -20,6 +20,7 @@ pub mod collection;
 pub mod convert;
 pub mod data;
 pub mod forward;
+pub mod globals;
 pub mod handles;
 pub mod jmp;
 pub mod method;
@@ -87,14 +88,20 @@ mod tests {
     }
 
     /// The whole point of the stub file: every symbol a gem can reference
-    /// resolves. A row is either implemented by the runtime or stubbed, and
-    /// never neither.
+    /// resolves. A row is implemented by the runtime, stubbed, or a `VALUE`
+    /// global -- never none of the three, because none of the three is a
+    /// link error in a gem.
     #[test]
     fn every_ledger_row_is_answered() {
         for (name, kind, status) in ledger() {
             assert!(
-                status == "zeo" || status == "stub",
-                "{name} ({kind}) has no status"
+                matches!(status.as_str(), "zeo" | "stub" | "global"),
+                "{name} ({kind}) has status {status:?}, which resolves to nothing"
+            );
+            assert_eq!(
+                status == "global",
+                kind == "var",
+                "{name}: only a variable can have the `global` status"
             );
         }
     }

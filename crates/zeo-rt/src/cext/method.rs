@@ -320,6 +320,89 @@ crate::cext_fn! {
     /// An extension writes `rb_ivar_set(self, rb_intern("@x"), v)`, so the
     /// `ID` already carries the `@`. `instance_variable_get` wants the same
     /// spelling, so the symbol passes straight through.
+    /// `rb_define_alloc_func(klass, f)`. The allocator runs for `Klass.new`
+    /// before `initialize`, and is how a TypedData class gets its struct.
+    ///
+    /// zeo's own allocator hook is a plain `fn(ClassId) -> RObj` with no room
+    /// for a captured C pointer, so this installs the pair of singleton
+    /// methods `Class#new` is DEFINED as instead: `allocate`, and a `new`
+    /// that calls it and then `initialize`. That is the same two steps in the
+    /// same order, expressed where a closure fits.
+    fn rb_define_alloc_func(klass: Value, f: unsafe extern "C" fn(Value) -> Value) -> () {
+        let owner = unsafe { as_class(klass)? };
+        let addr = f as usize;
+        let cls = RubyValue::Class(owner);
+
+        let alloc = move |recv: &RubyValue, _args: &[RubyValue], _b: Option<RubyValue>| {
+            let scope = Scope::enter();
+            let this = to_value(recv)?;
+            let out = super::jmp::protect(|| {
+                // SAFETY: the extension registered this function for exactly
+                // this call.
+                let f: unsafe extern "C" fn(Value) -> Value =
+                    unsafe { std::mem::transmute(addr as *const c_void) };
+                unsafe { f(this) }
+            })?;
+            scope.keep(out);
+            let answer = unsafe { value_of(out) };
+            drop(scope);
+            Ok(answer)
+        };
+        let allocate =
+            crate::rproc::ProcBuilder::from_rust(alloc, cls.clone(), 0, true).build();
+        crate::runtime_meta::runtime_define_singleton_method(
+            &cls,
+            Symbol::intern("allocate"),
+            allocate,
+        )?;
+
+        // `Class#new` IS allocate-then-initialize. Spelling it out keeps the
+        // C allocator on the path a plain `Klass.new` takes.
+        let new = crate::rproc::ProcBuilder::from_rust(
+            move |recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>| {
+                let obj = crate::dispatch::send_value(recv, Symbol::intern("allocate"), &[], None)?;
+                crate::dispatch::send_value(&obj, Symbol::intern("initialize"), args, block)?;
+                Ok(obj)
+            },
+            cls.clone(),
+            -1,
+            true,
+        )
+        .build();
+        crate::runtime_meta::runtime_define_singleton_method(&cls, Symbol::intern("new"), new)?;
+        Ok(())
+    }
+
+    /// `rb_undef_alloc_func(klass)`. Leaves the class unable to allocate,
+    /// which is what an extension asks for on a class only IT may build.
+    fn rb_undef_alloc_func(klass: Value) -> () {
+        let owner = unsafe { as_class(klass)? };
+        let cls = RubyValue::Class(owner);
+        for name in ["allocate", "new"] {
+            let refuse = crate::rproc::ProcBuilder::from_rust(
+                move |recv: &RubyValue, _a: &[RubyValue], _b: Option<RubyValue>| {
+                    Err(crate::dispatch::raise_error(
+                        "TypeError",
+                        format!(
+                            "allocator undefined for {}",
+                            crate::dispatch::class_name(recv.class_id()).unwrap_or("Class".into())
+                        ),
+                    ))
+                },
+                cls.clone(),
+                -1,
+                true,
+            )
+            .build();
+            crate::runtime_meta::runtime_define_singleton_method(
+                &cls,
+                Symbol::intern(name),
+                refuse,
+            )?;
+        }
+        Ok(())
+    }
+
     fn rb_ivar_get(obj: Value, id: Id) -> Value {
         let recv = unsafe { value_of(obj) };
         let name = RubyValue::Symbol(symbol_of(id));

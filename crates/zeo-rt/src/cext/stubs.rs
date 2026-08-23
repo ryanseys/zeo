@@ -22,7 +22,7 @@
 //! safe. The caller passes arguments in registers and on a stack it
 //! cleans up itself, the callee reads none of them, and it never
 //! returns -- so there is no return value to disagree about and no
-//! frame to unwind. Writing 698 correct signatures would
+//! frame to unwind. Writing 683 correct signatures would
 //! buy nothing: not one of these functions runs.
 //!
 //! # The globals
@@ -367,10 +367,6 @@ pub extern "C" fn rb_absint_singlebit_p() -> ! {
     unimplemented("rb_absint_singlebit_p")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_absint_size() -> ! {
-    unimplemented("rb_absint_size")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_add_event_hook() -> ! {
     unimplemented("rb_add_event_hook")
 }
@@ -519,20 +515,12 @@ pub extern "C" fn rb_big2dbl() -> ! {
     unimplemented("rb_big2dbl")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_big2ll() -> ! {
-    unimplemented("rb_big2ll")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_big2long() -> ! {
     unimplemented("rb_big2long")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_big2str() -> ! {
     unimplemented("rb_big2str")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_big2ull() -> ! {
-    unimplemented("rb_big2ull")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_big2ulong() -> ! {
@@ -935,10 +923,6 @@ pub extern "C" fn rb_debug_rstring_null_ptr() -> ! {
     unimplemented("rb_debug_rstring_null_ptr")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_define_alloc_func() -> ! {
-    unimplemented("rb_define_alloc_func")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_define_attr() -> ! {
     unimplemented("rb_define_attr")
 }
@@ -1183,10 +1167,6 @@ pub extern "C" fn rb_f_untrace_var() -> ! {
     unimplemented("rb_f_untrace_var")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_fatal() -> ! {
-    unimplemented("rb_fatal")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_fd_fix_cloexec() -> ! {
     unimplemented("rb_fd_fix_cloexec")
 }
@@ -1347,10 +1327,6 @@ pub extern "C" fn rb_frozen_error_raise() -> ! {
     unimplemented("rb_frozen_error_raise")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_funcall() -> ! {
-    unimplemented("rb_funcall")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_funcall_passing_block() -> ! {
     unimplemented("rb_funcall_passing_block")
 }
@@ -1497,10 +1473,6 @@ pub extern "C" fn rb_hash_bulk_insert_into_st_table() -> ! {
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_hash_delete_if() -> ! {
     unimplemented("rb_hash_delete_if")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_hash_foreach() -> ! {
-    unimplemented("rb_hash_foreach")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_hash_set_ifnone() -> ! {
@@ -2031,10 +2003,6 @@ pub extern "C" fn rb_proc_call_kw() -> ! {
     unimplemented("rb_proc_call_kw")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_proc_call_with_block() -> ! {
-    unimplemented("rb_proc_call_with_block")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_proc_call_with_block_kw() -> ! {
     unimplemented("rb_proc_call_with_block_kw")
 }
@@ -2209,10 +2177,6 @@ pub extern "C" fn rb_ruby_debug_ptr() -> ! {
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_ruby_verbose_ptr() -> ! {
     unimplemented("rb_ruby_verbose_ptr")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_scan_args() -> ! {
-    unimplemented("rb_scan_args")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_scan_args_bad_format() -> ! {
@@ -2575,10 +2539,6 @@ pub extern "C" fn rb_str_offset() -> ! {
     unimplemented("rb_str_offset")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_str_resize() -> ! {
-    unimplemented("rb_str_resize")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_str_resurrect() -> ! {
     unimplemented("rb_str_resurrect")
 }
@@ -2609,10 +2569,6 @@ pub extern "C" fn rb_str_subpos() -> ! {
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_str_subseq() -> ! {
     unimplemented("rb_str_subseq")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_str_substr() -> ! {
-    unimplemented("rb_str_substr")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_str_tmp_new() -> ! {
@@ -2663,14 +2619,6 @@ pub extern "C" fn rb_struct_alloc_noinit() -> ! {
     unimplemented("rb_struct_alloc_noinit")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_struct_define() -> ! {
-    unimplemented("rb_struct_define")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_struct_define_under() -> ! {
-    unimplemented("rb_struct_define_under")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_struct_define_without_accessor() -> ! {
     unimplemented("rb_struct_define_without_accessor")
 }
@@ -2685,10 +2633,6 @@ pub extern "C" fn rb_struct_getmember() -> ! {
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_struct_initialize() -> ! {
     unimplemented("rb_struct_initialize")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_struct_new() -> ! {
-    unimplemented("rb_struct_new")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_struct_s_members() -> ! {
@@ -2897,10 +2841,6 @@ pub extern "C" fn rb_uint2inum() -> ! {
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_undef() -> ! {
     unimplemented("rb_undef")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_undef_alloc_func() -> ! {
-    unimplemented("rb_undef_alloc_func")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_undef_method() -> ! {

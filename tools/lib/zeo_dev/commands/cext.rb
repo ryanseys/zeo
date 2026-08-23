@@ -149,7 +149,16 @@ module ZeoDev
           src = File.read(f)
           src.scan(/#\[unsafe\(no_mangle\)\]\s*(?:pub\s+)?(?:unsafe\s+)?extern "C" fn (\w+)/) +
             src.scan(/^\s*fn (rb_\w+|ruby_\w+)\s*\(/)
-        end.flatten.to_set
+        end.flatten.concat(implemented_in_c).to_set
+      end
+
+      # The variadic entries live in `csrc/*.c`, because Rust cannot read a
+      # `va_list`. A definition there is as real as one in Rust, and missing
+      # it would leave a duplicate symbol at link time.
+      def implemented_in_c
+        Dir.glob(File.join(ROOT, "crates/zeo-rt/csrc/*.c")).flat_map do |f|
+          File.read(f).scan(/^(?:\w[\w *]*?)\b((?:rb|ruby|st)_\w+)\s*\([^;]*$/).flatten
+        end
       end
 
       def scan_api
@@ -183,7 +192,16 @@ module ZeoDev
           end
         end
         seen.values.sort_by { |d| d[:name] }.each do |d|
-          d[:status] = implemented.include?(d[:name]) ? "zeo" : "stub"
+          d[:status] = if implemented.include?(d[:name])
+                         "zeo"
+                       elsif d[:kind] == "var"
+                         # A global is always a real symbol; what varies is
+                         # whether the loader can fill it. `cext::globals`
+                         # reports the ones it cannot.
+                         "global"
+                       else
+                         "stub"
+                       end
         end
       end
 
@@ -193,8 +211,9 @@ module ZeoDev
           # Every rb_*/ruby_* symbol a C extension can link against, from clang's AST
           # of the vendored headers. Regenerate with `tools/zeo-dev cext api`.
           #
-          # status=zeo  the runtime exports it
-          # status=stub crates/zeo-rt/src/cext/stubs.rs raises NotImplementedError
+          # status=zeo    the runtime exports it
+          # status=stub   crates/zeo-rt/src/cext/stubs.rs raises NotImplementedError
+          # status=global a VALUE symbol stubs.rs defines and cext::globals fills
           symbol\tkind\tstatus\tsignature
         HEAD
       end
@@ -209,7 +228,7 @@ module ZeoDev
       # would buy nothing: not one of these functions runs.
       def render_stubs(decls)
         stubs = decls.select { |d| d[:kind] == "fn" && d[:status] == "stub" }
-        vars = decls.select { |d| d[:kind] == "var" && d[:status] == "stub" }
+        vars = decls.select { |d| d[:kind] == "var" && d[:status] == "global" }
         body = stubs.map { |d| <<~RS }.join
           #[unsafe(no_mangle)]
           pub extern "C" fn #{d[:name]}() -> ! {
