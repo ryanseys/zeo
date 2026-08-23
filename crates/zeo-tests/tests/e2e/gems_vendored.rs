@@ -22,8 +22,7 @@ fn repo(rel: &str) -> PathBuf {
 /// is the source, and it is ruby, so nothing outside `tools/` reads it.
 fn manifest_entry(name: &str) -> serde_json::Value {
     let text = std::fs::read_to_string(repo("upstream.lock")).expect("upstream.lock is readable");
-    let lock: serde_json::Value =
-        serde_json::from_str(&text).expect("upstream.lock is valid JSON");
+    let lock: serde_json::Value = serde_json::from_str(&text).expect("upstream.lock is valid JSON");
     lock["gems"]
         .as_array()
         .expect("upstream.lock has a gems array")

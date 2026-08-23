@@ -3266,6 +3266,20 @@ pub fn value_class(recv: &RubyValue) -> RubyValue {
     RubyValue::Class(recv.class_id())
 }
 
+/// The builtin row for `name` on `id` itself, ignoring any user definition.
+///
+/// An alias of a builtin must reach the BODY, not the name: a later `def old`
+/// otherwise captures it and the standard wrap idiom recurses. Own class only
+/// -- an inherited row can need the subclass payload bridge.
+fn builtin_row(id: ClassId, name: Symbol) -> Option<crate::builtins::BuiltinMethodFn> {
+    crate::builtins::class_table(id)?(name.name_str())
+}
+
+/// [`builtin_row`]'s singleton-side twin.
+fn builtin_class_row(id: ClassId, name: Symbol) -> Option<crate::builtins::BuiltinMethodFn> {
+    crate::builtins::class_method_table(id)?(name.name_str())
+}
+
 /// The `old` name behind a builtin-alias row visible to instances of `id` --
 /// closest ancestor wins, so a subclass resolves an alias its parent (or an
 /// included module) declared. `None` for every ordinary name; consulted only
@@ -3951,13 +3965,18 @@ fn send_value_in_reason_inner(
     if let RubyValue::Class(cid) = recv
         && let Some(old) = class_alias_target(*cid, name)
     {
+        if let Some(f) = builtin_class_row(*cid, old) {
+            return with_c_frame(c_frame_label(*cid, old, '.'), || f(recv, args, block));
+        }
         return send_value_in_reason(box_id, recv, old, args, block, reason);
     }
-    // A builtin-alias row (`alias_method :dup!, :dup`): rewrite the name and
-    // re-dispatch. Probed only after every real method missed -- a real
-    // definition of the alias name always wins -- and rows are terminal, so
-    // the re-entry can't loop. See `alias_target`.
+    // A builtin-alias row (`alias_method :dup!, :dup`), after every real
+    // method missed. See `builtin_row` for why it binds the body, not the name.
     if let Some(old) = alias_target(recv.class_id(), name) {
+        let cid = recv.class_id();
+        if let Some(f) = builtin_row(cid, old) {
+            return with_c_frame(c_frame_label(cid, old, '#'), || f(recv, args, block));
+        }
         return send_value_in_reason(box_id, recv, old, args, block, reason);
     }
     // A CLASS-level `method_missing` (`def self.method_missing`, or one in
@@ -4249,9 +4268,23 @@ fn send_in_reason_inner(
 
     // A builtin-alias row (`alias_method :raise!, :raise`): rewrite the name
     // and re-dispatch -- after every real method (a real definition of the
-    // alias name wins) and BEFORE `method_missing` (an alias is a real
-    // method in Ruby). Rows are terminal, so the re-entry can't loop.
+    // alias name wins) and BEFORE `method_missing` (an alias is a real method
+    // in Ruby).
     if let Some(old) = alias_target(id, name) {
+        // The payload bridge the flat arm above runs: a builtin row wants the
+        // wrapped value, not the boxed subclass instance.
+        if let Some(root) = payload_root
+            && let Some(ref p) = payload
+            && let Some(f) = builtin_row(root, old)
+        {
+            let r = with_c_frame(c_frame_label(root, old, '#'), || f(p, args, block))?;
+            return Ok(crate::builtins::value_subclass::rewrap_self_return(
+                r,
+                p,
+                recv,
+                old.name_str(),
+            ));
+        }
         return send_in_reason(box_id, recv, old, args, block, reason);
     }
     method_missing_or_raise(recv, id, name, args, block, reason)
