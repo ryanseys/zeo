@@ -26,10 +26,13 @@ pub mod builtins {
     pub type BuiltinMethodFn =
         fn(&RubyValue, &[RubyValue], Option<RubyValue>) -> Result<RubyValue, Signal>;
 
+    pub type ParamRows = &'static [(crate::method_meta::ParamKind, Option<&'static str>)];
+
     pub struct MethodTable {
         pub lookup: fn(&str) -> Option<BuiltinMethodFn>,
         pub names: fn() -> &'static [&'static str],
         pub arity: fn(&str) -> Option<i64>,
+        pub params: fn(&str) -> Option<ParamRows>,
         pub is_private: fn(&str) -> bool,
         pub is_protected: fn(&str) -> bool,
         pub allocs: fn(&str) -> bool,
@@ -53,6 +56,20 @@ pub mod builtins {
             return Err(Signal);
         }
         Ok(())
+    }
+}
+
+/// Mirrors the runtime enum a `params "..."` spelling names.
+pub mod method_meta {
+    #[derive(Clone, Copy, PartialEq, Debug)]
+    pub enum ParamKind {
+        Req,
+        Opt,
+        Rest,
+        KeyReq,
+        Key,
+        KeyRest,
+        Block,
     }
 }
 
@@ -109,6 +126,13 @@ mod comparable {
         }
         // `*rest` after a required parameter is "one or more" -- min 1, no max.
         def "splat" (_recv, _head, *rest) { Ok(RubyValue::Int(rest.len() as i64)) }
+
+        // A `params "..."` spelling names what `Method#parameters` reports.
+        // Every other row leaves it `None` and keeps the anonymous descriptor
+        // the arity derives.
+        def "spelled" params "a, b = 1, *rest, k:, j: 2, **opts, &blk" (_recv, *_args, &_block) {
+            Ok(RubyValue::Nil)
+        }
 
         // A `module_function` is emitted into BOTH the instance and class
         // tables (like `Math.sqrt` / `include Math; sqrt`).
@@ -220,6 +244,30 @@ fn instance_lookup_arity_and_names() {
     assert!(names.contains(&"<"));
     assert!(names.contains(&"between?"));
     assert!(names.contains(&"lteq"));
+}
+
+/// A `params "..."` spelling is the only source of a named signature. Every
+/// other row answers `None` and keeps the anonymous descriptor.
+#[test]
+fn a_spelled_signature_reaches_the_table_and_no_other_row_gets_one() {
+    use crate::method_meta::ParamKind::*;
+
+    assert_eq!(
+        comparable::lookup_params("spelled"),
+        Some(
+            &[
+                (Req, Some("a")),
+                (Opt, Some("b")),
+                (Rest, Some("rest")),
+                (KeyReq, Some("k")),
+                (Key, Some("j")),
+                (KeyRest, Some("opts")),
+                (Block, Some("blk")),
+            ][..]
+        )
+    );
+    assert_eq!(comparable::lookup_params("<"), None);
+    assert_eq!(comparable::lookup_params("nope"), None);
 }
 
 /// The parameter list is one declaration serving two purposes: the guard the

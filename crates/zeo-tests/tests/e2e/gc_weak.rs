@@ -121,7 +121,8 @@ fn objectspace_module_surface_and_honest_not_implemented() {
     assert_eq!(
         result.stdout,
         "Hash\nnil\n\
-         each_object: ObjectSpace.each_object is not available (zeo has no heap enumeration)\n\
+         each_object: ObjectSpace.each_object over instances needs the allocation registry, \
+          which only ZEO_GC=1 arms\n\
          _id2ref: ObjectSpace._id2ref is not available (zeo has no id-to-object table)\n\
          nil\nInteger\n"
     );
@@ -154,7 +155,7 @@ fn objspace_declines_name_the_missing_capability() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(
         result.stdout,
-        "ObjectSpace.memsize_of_all is not available (zeo has no heap enumeration)\n\
+        "ObjectSpace.memsize_of_all needs the allocation registry, which only ZEO_GC=1 arms\n\
          ObjectSpace.reachable_objects_from_root is not available (zeo has no GC root table)\n\
          ObjectSpace.trace_object_allocations_start is not available (zeo has no allocation hook)\n\
          ObjectSpace.trace_object_allocations_stop is not available (zeo has no allocation hook)\n\
