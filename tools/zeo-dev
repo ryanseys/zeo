@@ -1,0 +1,50 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# The project's build and test automation: `tools/zeo-dev <command>`.
+#
+# Replaces `cargo run -p xtask -- <command>`. Runs on `ruby` from PATH, and
+# compiles with zeo for dogfooding -- see `tools/lib/zeo_dev.rb` for why ruby
+# is the mechanism and what the two engines disagree about.
+
+$LOAD_PATH.unshift(File.expand_path("lib", __dir__))
+require "zeo_dev"
+
+USAGE = <<~TEXT
+  usage: tools/zeo-dev <command> [options]
+
+  commands:
+    bless           re-record golden `.expected` files from the ruby oracle
+    arity-oracle    record `conformance/builtin-arity.tsv` from the oracle
+    method-census   record `conformance/method-census.tsv` from the oracle
+    bench           the runtime performance suite under `bench/`
+    gem             manage the vendored upstream gems
+    gemtests        run a vendored gem's own test suite
+    gem-probe       fetch a gem and record whether zeo compiles it
+    stage-publish   stage the artifacts the published crate ships
+
+  `tools/zeo-dev <command> --help` describes one command.
+TEXT
+
+argv = ARGV.dup
+name = argv.shift
+
+if name.nil? || name == "--help" || name == "-h"
+  puts USAGE
+  exit(name.nil? ? 1 : 0)
+end
+
+if name == "--version"
+  puts "zeo-dev (#{RUBY_ENGINE} #{RUBY_VERSION})"
+  exit 0
+end
+
+begin
+  exit ZeoDev.command(name).main(argv)
+rescue ZeoDev::Error => e
+  warn "zeo-dev: #{e.message}"
+  exit 1
+rescue Interrupt
+  warn "zeo-dev: interrupted"
+  exit 130
+end
