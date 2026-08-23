@@ -333,6 +333,10 @@ fn desugar_singleton_items(
             Item::SelfSend => {
                 let recv = lower_node(result, hir, recv_node)?;
                 let singleton = hir.push(singleton_class_of(recv));
+                // Ruby runs this call with no receiver, or with a literal
+                // `self`; neither takes a visibility check. The surrogate is
+                // zeo's, so it must not add one -- fileutils' `public(*METHODS)`.
+                hir.mark_implicit_self_receiver(singleton);
                 if let HirNode::Call { receiver, .. } = &mut hir[id] {
                     *receiver = Some(singleton);
                 }
