@@ -143,11 +143,23 @@ required; Zeo's are always present, so the `require` is ceremony (the shape
   zero such objects exist, not because they couldn't be counted.
 - The `allocation_*` getters answer nil — CRuby's own answer for an object
   allocated outside a trace, which under Zeo is every object.
-- `memsize_of_all`, `reachable_objects_from_root`, the
-  `trace_object_allocations*` family, `dump`/`dump_all`/`dump_shapes`, and
+- `each_object` and `memsize_of_all` walk the allocation registry, so they
+  need `ZEO_GC=1` for the instance forms and refuse without it. `each_object`
+  answers each argument form either COMPLETELY or not at all, because a
+  partial enumeration presented as a whole one silently miscounts:
+  `Class`/`Module` is complete and needs nothing armed (a class is a
+  registered row, not an allocation); a class the registry records -- an
+  Object and its subclasses, Array, Hash, Proc, Range -- is complete while
+  recording; anything else, and the no-argument form, refuses, because a
+  String, a Symbol and an Integer are never registered and "every object" is
+  not a set Zeo can produce. The block form answers the count; there is no
+  Enumerator over a walk that cannot be resumed.
+- `reachable_objects_from_root`, the `trace_object_allocations*` family,
+  `dump`/`dump_all`/`dump_shapes`, `_id2ref`, and
   `internal_class_of`/`internal_super_of` raise `NotImplementedError` naming
-  what they'd need (heap enumeration, a root set, an allocation hook, an
-  object header, internal classes).
+  what they'd need (a root set, per-allocation source positions, an object
+  header, an id table, internal classes). See
+  `tests/gaps/object_identity_and_allocation_tracing.rb`.
 
 ### `zlib`
 
@@ -505,8 +517,8 @@ any hash that was not marked.
 ### `GC`
 
 Zeo's heap is `Arc`-refcounted with no tracing collector, so `GC` reports what
-is TRUE of it rather than raising: zero collections, no compaction, an empty
-`stat`/`stat_heap`, and `GC.config` naming the implementation `"refcount"`
+is TRUE of it rather than raising: zero collections, no compaction, and
+`GC.config` naming the implementation `"refcount"`
 where MRI says `"default"`. `GC::OPTS` and `GC::INTERNAL_CONSTANTS` are empty
 for the same reason — they describe MRI's build and slot layout. `.enable`/
 `.disable` answer the PREVIOUS state, which is what the restore idiom reads,
@@ -514,6 +526,15 @@ and `.stress=`/`.auto_compact=`/`.measure_total_time=` record what they were
 told so a reader gets its own value back. `GC.latest_gc_info` and
 `.latest_compact_info` answer exactly what CRuby answers in a process that has
 not yet collected.
+
+`GC.stat` carries `:count` always -- every explicit collection is one, and in
+a refcounting heap each is trivially a full one. `:total_allocated_objects`
+and `:heap_live_slots` come from the allocation registry, so they are present
+exactly while `ZEO_GC=1` is recording; a key absent from the hash reads `nil`,
+which a caller can tell apart from a fabricated figure. Every other MRI
+statistic describes a slot layout that does not exist here. `stat_heap` stays
+empty for the same reason: one size-pooled heap per slot size is an MRI
+structure, and there are no heaps here to describe.
 
 `GC.start`, `GC#garbage_collect` and `ObjectSpace.garbage_collect` are one
 entry. Each runs the cycle collector when `ZEO_GC=1` armed it and `GC.disable`

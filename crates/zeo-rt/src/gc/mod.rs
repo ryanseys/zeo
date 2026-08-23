@@ -122,6 +122,32 @@ pub fn record_proc(p: &crate::RProc) {
     }
 }
 
+/// Every live registered node as a Ruby value, in allocation order --
+/// `ObjectSpace.each_object`'s walk. Empty when nothing is recording, which
+/// the caller must tell apart from "the heap is empty".
+#[must_use]
+pub fn live_values() -> Vec<crate::RubyValue> {
+    if !recording() {
+        return Vec::new();
+    }
+    registry::snapshot()
+        .iter()
+        .filter_map(registry::Strong::value)
+        .collect()
+}
+
+/// `GC.stat[:heap_live_slots]`.
+#[must_use]
+pub fn live_count() -> usize {
+    registry::live_count()
+}
+
+/// `GC.stat[:total_allocated_objects]`.
+#[must_use]
+pub fn total_allocated() -> u64 {
+    registry::total_allocated()
+}
+
 /// Record a freshly built `Range`, which the caller has already checked can
 /// hold a heap endpoint. A Range is immutable, so the sweep cannot clear its
 /// endpoints -- it reports them anyway, for the reason [`crate::RProc`] does.

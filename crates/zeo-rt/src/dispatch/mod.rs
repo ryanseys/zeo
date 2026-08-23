@@ -963,6 +963,29 @@ pub(crate) fn classes_with_ancestor(id: ClassId) -> Vec<u32> {
         .collect()
 }
 
+/// Every registered class id, or every module id -- `ObjectSpace.each_object`
+/// asked for `Class` or `Module`.
+///
+/// This walk is COMPLETE and needs no allocation registry: a class is not an
+/// `Arc` a program allocates, it is a row registered once at startup (plus
+/// whatever `Class.new` minted since). CRuby's `Module` answer includes
+/// classes, since every Class is a Module.
+pub fn class_ids(modules_too: bool) -> Vec<ClassId> {
+    let Some(reg) = REGISTRY.get() else {
+        return Vec::new();
+    };
+    let mut ids: Vec<ClassId> = reg
+        .entries
+        .iter()
+        .filter(|(_, e)| modules_too || !e.is_module)
+        .map(|(&cid, _)| ClassId(cid))
+        .collect();
+    // The registry is a hash; a program that prints what it yields must not
+    // see a different order per run.
+    ids.sort_unstable_by_key(|c| c.0);
+    ids
+}
+
 /// `recv_class.is_a?(target)` -- a real ancestry check against the SAME
 /// linearized `ancestors` list `super`/reflection uses at compile time (see
 /// `analyze::mro::compute_ancestors`'s docs), not zeo's own two-tier

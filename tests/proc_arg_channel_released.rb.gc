@@ -1,0 +1,3 @@
+This golden reads `GC.stat[:heap_live_slots]`, which only the allocation
+registry can answer, and only `ZEO_GC=1` arms it. CRuby always tracks, so the
+oracle needs no counterpart.

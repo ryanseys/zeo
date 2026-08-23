@@ -143,6 +143,21 @@ impl Strong {
         }
     }
 
+    /// This node as a Ruby value -- what `ObjectSpace.each_object` yields.
+    pub(crate) fn value(&self) -> Option<RubyValue> {
+        Some(match self {
+            Strong::Array(a) => RubyValue::Array(a.clone()),
+            Strong::Hash(h) => RubyValue::Hash(h.clone()),
+            Strong::Object(o) => RubyValue::Object(o.clone()),
+            Strong::Proc(p) => RubyValue::Proc(p.clone()),
+            Strong::Range(r) => RubyValue::Range(r.clone()),
+            // A captured local is a container the runtime owns, not an
+            // object a program can name. CRuby has nothing like it to
+            // enumerate.
+            Strong::Cell(_) => return None,
+        })
+    }
+
     /// A weak handle to this node -- what the collector's self-check holds
     /// while it lets go of the strong ones.
     pub(crate) fn downgrade(&self) -> Node {
@@ -232,9 +247,34 @@ thread_local! {
     static LOCAL: RefCell<Local> = RefCell::new(Local(Vec::with_capacity(CHUNK)));
 }
 
+/// Every node ever recorded, monotone -- `GC.stat[:total_allocated_objects]`.
+/// It counts what the registry SAW, so it is only meaningful while recording,
+/// which is the same condition under which the statistic is reported at all.
+static TOTAL_ALLOCATED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The monotone allocation count.
+pub(crate) fn total_allocated() -> u64 {
+    TOTAL_ALLOCATED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// How many registered nodes are still alive -- `GC.stat[:heap_live_slots]`.
+/// A scan rather than a counter: a decrement would have to ride every
+/// payload's `Drop`, which is a cost on the allocation path for a statistic
+/// almost nothing reads.
+pub(crate) fn live_count() -> usize {
+    flush_local();
+    CHUNKS
+        .lock()
+        .iter()
+        .flat_map(|c| c.iter())
+        .filter(|n| n.is_live())
+        .count()
+}
+
 /// Append one node. The caller has already checked the gate.
 #[inline]
 pub(crate) fn record(node: Node) {
+    TOTAL_ALLOCATED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     // A thread-local access can fail during that thread's own teardown, once
     // this key's destructor has run. Dropping the record is right there: the
     // program is past the point where anything it allocates can be collected.
@@ -281,18 +321,6 @@ mod tests {
     use super::*;
     use crate::RubyValue;
     use crate::collections::array_new;
-
-    /// How many registered nodes are still alive. Test-only until the
-    /// collector reads the registry for real.
-    fn live_count() -> usize {
-        flush_local();
-        CHUNKS
-            .lock()
-            .iter()
-            .flat_map(|c| c.iter())
-            .filter(|n| n.is_live())
-            .count()
-    }
 
     #[test]
     fn the_gate_is_off_by_default_and_records_nothing() {

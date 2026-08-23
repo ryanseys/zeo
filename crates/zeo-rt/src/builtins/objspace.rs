@@ -129,6 +129,63 @@ fn push_ref(out: &mut Vec<RubyValue>, r: &RubyValue) {
 
 /// An empty per-kind census -- `count_objects`' posture, and the shape every
 /// `count_*` row answers with.
+/// `ObjectSpace.each_object`, split by what zeo can answer COMPLETELY.
+///
+/// A partial enumeration presented as a whole one is the worst answer
+/// available: a caller counting instances would silently get the wrong
+/// number. So each argument form is either complete or refused.
+///
+/// * `Class` / `Module`: complete, and needs nothing armed. A class is not an
+///   `Arc` a program allocates -- it is a row registered at startup, plus
+///   whatever `Class.new` has minted since.
+/// * A class whose instances the allocation registry records (an Object and
+///   its subclasses, Array, Hash, Proc, Range): complete while `ZEO_GC=1` is
+///   recording, refused otherwise.
+/// * Anything else, and the no-argument form: refused. A String, a Symbol and
+///   an Integer are never registered, so "every object" is not a set zeo can
+///   produce.
+fn each_object_of(
+    arg: Option<&RubyValue>,
+    block: Option<&RubyValue>,
+) -> Result<RubyValue, crate::Signal> {
+    let Some(RubyValue::Class(cid)) = arg else {
+        return Err(not_impl_error!(
+            "ObjectSpace.each_object needs a class argument: zeo can enumerate \
+             every Class, every Module, and the object kinds the allocation \
+             registry records, but not the whole heap"
+        ));
+    };
+    let cid = *cid;
+    let values: Vec<RubyValue> = if cid == zeo_abi::CLASS_CLASS || cid == zeo_abi::MODULE_CLASS {
+        crate::dispatch::class_ids(cid == zeo_abi::MODULE_CLASS)
+            .into_iter()
+            .map(RubyValue::Class)
+            .collect()
+    } else {
+        if !crate::gc::recording() {
+            return Err(not_impl_error!(
+                "ObjectSpace.each_object over instances needs the allocation \
+                 registry, which only ZEO_GC=1 arms"
+            ));
+        }
+        crate::gc::live_values()
+            .into_iter()
+            .filter(|v| crate::dispatch::is_a_value(v, cid))
+            .collect()
+    };
+    let Some(RubyValue::Proc(block)) = block else {
+        // CRuby answers an Enumerator; zeo has no enumerator over a walk it
+        // cannot resume, so it answers the count -- which is what the
+        // block form answers too.
+        return Ok(RubyValue::Int(values.len() as i64));
+    };
+    let n = values.len() as i64;
+    for v in values {
+        block.call(&[v])?;
+    }
+    Ok(RubyValue::Int(n))
+}
+
 fn empty_census() -> RubyValue {
     RubyValue::Hash(crate::collections::hash_new(Vec::new()))
 }
@@ -174,10 +231,10 @@ ruby_module! {
         });
         Ok(obj.clone())
     }
-    // A `WeakMap` of every live object of a class -- zeo has no heap
-    // enumeration, so this is an honest NotImplementedError (decision #4).
+    // Every live object of a class. See [`each_object_of`] for which
+    // arguments zeo can answer COMPLETELY and why the rest still refuse.
     module_function def "each_object"(_recv, *_args, &_block) {
-        Err(not_impl_error!("ObjectSpace.each_object is not available (zeo has no heap enumeration)"))
+        each_object_of(__args.first(), _block.as_ref())
     }
     // No id->object table exists under Arc refcounting.
     module_function def "_id2ref"(_recv, _object_id) {
@@ -201,10 +258,18 @@ ruby_module! {
     module_function def "memsize_of"(_recv, arg) {
         Ok(RubyValue::Int(memsize_of(arg)))
     }
-    // Summing every live object's size needs the heap walk zeo can't do --
-    // unlike `memsize_of`, whose answer is per-value and computable.
+    // The same walk as `each_object`, folded through the per-value size
+    // `memsize_of` already computes. It needs the allocation registry for the
+    // same reason and refuses for the same reason without it.
     module_function def "memsize_of_all"(_recv, *_args, &_block) {
-        Err(not_impl_error!("ObjectSpace.memsize_of_all is not available (zeo has no heap enumeration)"))
+        if !crate::gc::recording() {
+            return Err(not_impl_error!(
+                "ObjectSpace.memsize_of_all needs the allocation registry, which \
+                 only ZEO_GC=1 arms"
+            ));
+        }
+        let total: i64 = crate::gc::live_values().iter().map(memsize_of).sum();
+        Ok(RubyValue::Int(total))
     }
     module_function def "reachable_objects_from"(_recv, arg) {
         Ok(reachable_objects_from(arg))

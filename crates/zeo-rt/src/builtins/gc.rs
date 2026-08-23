@@ -121,22 +121,23 @@ ruby_module! {
     // this heap has no truthful number for), `stat(hash)` -> fills and
     // answers the hash. Only `:count` carries a real value.
     def self."stat" params "hash_or_key = nil"(_recv, *_args, &_block) {
-        let count = RubyValue::Int(COUNT.load(Ordering::Relaxed) as i64);
+        let rows = stat_rows();
         match _args.first() {
-            Some(RubyValue::Symbol(s)) => Ok(if s.name() == "count" {
-                count
-            } else {
-                RubyValue::Nil
-            }),
+            Some(RubyValue::Symbol(s)) => Ok(rows
+                .iter()
+                .find(|(k, _)| *k == s.name())
+                .map_or(RubyValue::Nil, |(_, v)| v.clone())),
             Some(RubyValue::Hash(h)) => {
-                crate::collections::hash_set(
-                    h,
-                    RubyValue::Symbol(crate::Symbol::intern("count")),
-                    count,
-                );
+                for (k, v) in rows {
+                    crate::collections::hash_set(
+                        h,
+                        RubyValue::Symbol(crate::Symbol::intern(k)),
+                        v,
+                    );
+                }
                 Ok(RubyValue::Hash(h.clone()))
             }
-            _ => Ok(hash_of(vec![("count", count)])),
+            _ => Ok(hash_of(rows)),
         }
     }
     // One size-pooled heap per slot size is an MRI structure; there are no
@@ -330,4 +331,29 @@ mod tests {
         assert!((tbl.lookup)("compact").is_some());
         assert!((tbl.lookup)("nope").is_none());
     }
+}
+
+/// The `GC.stat` keys this heap can answer TRUTHFULLY.
+///
+/// `:count` always: every explicit collection is one. The two allocation
+/// statistics come from the registry, so they exist exactly while it is
+/// recording -- `ZEO_GC=1`. Without it there is no record of an allocation to
+/// report, and inventing a number is worse than the `nil` CRuby never
+/// answers: a caller that reads `nil` knows it asked a heap that cannot say.
+fn stat_rows() -> Vec<(&'static str, RubyValue)> {
+    let mut rows = vec![(
+        "count",
+        RubyValue::Int(COUNT.load(Ordering::Relaxed) as i64),
+    )];
+    if crate::gc::recording() {
+        rows.push((
+            "total_allocated_objects",
+            RubyValue::Int(crate::gc::total_allocated() as i64),
+        ));
+        rows.push((
+            "heap_live_slots",
+            RubyValue::Int(crate::gc::live_count() as i64),
+        ));
+    }
+    rows
 }
