@@ -563,12 +563,6 @@ fn default_package_dirs(input: Option<&std::path::Path>) -> Vec<PathBuf> {
 }
 
 fn run() -> Result<(), MainError> {
-    // The hidden `dev` command comes before argument parsing: it is not a
-    // ruby file and takes none of the compiler's flags.
-    let argv: Vec<String> = std::env::args().skip(1).collect();
-    if zeo::dev::is_dev(&argv) {
-        return zeo::dev::run(&argv[1..]).map_err(MainError::Plain);
-    }
     let mut args = match parse_args()? {
         Parsed::Run(args) => args,
         Parsed::Help => {

@@ -1,6 +1,6 @@
 # Which CLASS owns a builtin method is part of its behaviour, not a detail of
 # reflection: it decides which receivers answer it. This locks the boundaries
-# `conformance/builtin-arity.tsv` proved zeo had drawn in the wrong place.
+# the arity census proved zeo had drawn in the wrong place.
 
 require "pathname"
 require "tmpdir"

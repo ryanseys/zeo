@@ -1,5 +1,6 @@
 # Vendored spinel tests whose body must NOT be refreshed from upstream.
-# `scripts/import-spinel-corpus.sh --refresh` skips every stem listed here.
+# The importer skipped every stem listed here on a refresh. It is deleted;
+# this list records WHY zeo's copy differs from upstream's.
 #
 # A stem lands here when zeo's copy is DELIBERATELY not upstream's: either zeo
 # ported the test to a CRuby-valid API, or upstream's newer body encodes a

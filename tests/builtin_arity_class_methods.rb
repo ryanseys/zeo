@@ -4,7 +4,7 @@
 # CRuby rejects is accepted and the ArgumentError names the wrong range:
 # zeo reports `expected 1..4` where CRuby says `1..3`.
 #
-# One row in the arity table, gated by `conformance/builtin-arity.tsv`.
+# One row the arity census gated before it was retired at zero.
 #
 # The original header follows. It describes the PREDECESSOR project's
 # version of this test and its own fix, not zeo's divergence above.

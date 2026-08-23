@@ -56,7 +56,7 @@ passing tests, each with a **`<name>.rb.divergence`** sidecar beside it.
 
 The sidecar means: **`.expected` records ZEO's own output**, deliberately, and
 the sidecar states why and carries ruby's answer verbatim — so the divergence
-stays executable evidence rather than prose. `cargo xtask bless` reads it and
+stays executable evidence rather than prose. `tools/zeo-dev bless` reads it and
 records zeo instead of the oracle, which keeps these goldens machine-recorded
 like every other one. Seven files moved out on 2026-08-22:
 
@@ -79,17 +79,17 @@ in **`Mode::Xfail`**:
   promote" message. Promote it into the zeo-authored suite (`tests/`) with:
 
   ```sh
-  scripts/promote-gap.sh foo   # moves foo.rb + sidecars to tests/, verifies it
+  tools/zeo-dev promote-gap foo   # moves foo.rb + sidecars to tests/, verifies it
   ```
 
   Promote to **`tests/`**, not `tests/spinel/` — that dir mirrors the vendored
   spinel corpus, and a spinel-origin gap re-promotes on its own the next time
-  `scripts/import-spinel-corpus.sh` triages it.
+  the spinel importer triaged it (now deleted).
 
   A promoted file's goldens carry its OLD path (`gaps/foo.rb:12`), and output
   that embeds the file's own relative path (an rspec backtrace, a seed-driven
   shuffle over example ids) shifts with the move — so re-bless it in its new
-  home right after: `cargo xtask bless foo`. If the source builds paths from
+  home right after: `tools/zeo-dev bless foo`. If the source builds paths from
   `__dir__`, adjust them for the shallower directory first.
 
 Both stdout **and stderr** are compared, byte-exactly, after the shared
@@ -103,16 +103,16 @@ The `.expected` is the **ruby 4.0.6 oracle** output (the target zeo must
 eventually produce). Record/refresh it with:
 
 ```sh
-cargo xtask bless gap::   # all gaps (the filter is required by design)
-cargo xtask bless foo     # one gap
+tools/zeo-dev bless gap::   # all gaps (the filter is required by design)
+tools/zeo-dev bless foo     # one gap
 ```
 
 ## Adding a gap
 
-Drop in `foo.rb`, then `cargo xtask bless foo` to
+Drop in `foo.rb`, then `tools/zeo-dev bless foo` to
 capture its golden. If zeo already matches ruby, the test will tell you it's not
 a gap — put it in the corpus instead. New gaps usually arrive via
-`scripts/import-spinel-corpus.sh` (spinel triage).
+the spinel importer (deleted).
 
 Keep at least one gap here: `datatest-stable` panics rather than reporting zero
 cases, so an empty directory breaks the suite. If the last one is ever fixed,

@@ -1,74 +1,62 @@
 # Method coverage: the census against CRuby 4.0.6
 
-Zeo measures its method surface with a **transitive census**: every `Module`
-reachable from `Object`'s constant tree (depth 4), dumped from both engines
-and diffed. For each module the census records `instance_methods(false)`,
-`singleton_methods(false)`, `private_instance_methods(false)`,
-`constants(false)`, and the inherit-true sets. That last pair is what
-separates "raises `NoMethodError`" from "works, but reflection disagrees".
+**The census is retired.** It reached zero gaps, and a ledger that only ever
+reads zero gates nothing. This page records what it measured, what it never
+reached, and why the remaining work is a long tail of individual fixes rather
+than another sweep.
 
-**The gap ledger is empty.** `conformance/method-census-gaps.tsv` holds zero
-rows: every module, method, constant, owner, and visibility that ruby 4.0.6's
-census reaches has a Zeo answer. The suite keeps it that way — a new gap
-fails the test, and the ledger may only shrink.
+## What it measured, and what it found
 
-**What the census does not reach.** `tools/method_census.rb` requires nothing,
-so it sees the surface a program has before its first `require`. A class that
-a `require` installs — `StringIO`, `Zlib`, `OpenSSL`, `Socket` and the other
-extensions — is absent from `Object`'s constant tree when the census runs, so
-an empty ledger says nothing about it. Those surfaces are covered by the
-per-extension goldens instead, which is a weaker guarantee: a golden proves
-what it exercises, where the census proves a whole class at once. A missing
-`StringIO#read_nonblock` reached `main` this way, found by writing a golden
-rather than by the census. `tools/builtin_arity_oracle.rb` shows the fix
-shape — it requires each gated feature before measuring.
+A **transitive census**: every `Module` reachable from `Object`'s constant
+tree (depth 4), dumped from both engines and diffed. Per module it recorded
+`instance_methods(false)`, `singleton_methods(false)`,
+`private_instance_methods(false)`, `constants(false)`, and the inherit-true
+sets — that last pair is what separates "raises `NoMethodError`" from "works,
+but reflection disagrees". Arity was a second gate of the same shape, diffing
+Zeo's declared parameter lists against what ruby reports.
 
-## How it works
+Both ended at zero. Every module, method, constant, owner, visibility and
+arity that ruby 4.0.6's census reaches has a Zeo answer.
 
-- The oracle side is recorded in `conformance/method-census.tsv`, dumped from
-  `mise exec ruby@4.0.6 -- ruby`.
-- The gate is `crates/zeo-tests/tests/method_census.rs`. It classifies each
-  divergence as `absent-module`, `constant`, `owner` (the name answers, but
-  the wrong class owns it), or `unreachable` (absent from that kind's set —
-  a wrong visibility lands here too).
-- `cargo xtask bless method_coverage_only_shrinks` rewrites the ledger.
-  The deleted rows are the review artifact.
-- A new class must land with its full census-visible surface in the same
-  commit: closing an `absent-module` row exposes that module's whole oracle
-  surface to the diff.
-- Arity is a separate gate with the same shape:
-  `cargo run -p xtask -- arity-oracle` records what ruby reports for every
-  builtin, and `crates/zeo/tests/builtin_arity.rs` diffs Zeo's declared
-  parameter lists against it. A mismatch is not blessable.
+Four passes got there: `module_function` pairs and the full 158-constant
+`Errno` table; the missing methods on existing classes and owner/visibility
+fidelity; the `Ractor` port model with real `move:` semantics and
+`Process::Waiter`; and the final four subsystems — `IO::Buffer` (complete,
+with real `mmap`), `RubyVM::AbstractSyntaxTree` over Prism,
+`RubyVM::InstructionSequence`, `RubyVM::YJIT` (present, permanently disabled),
+and `Ruby`/`Ruby::Box` over Zeo's compile-time box model.
 
-## What "zero rows" does and does not claim
+It replaced an earlier hand-counted figure ("~1,976 missing methods") that
+double-counted inherited methods.
 
-The census measures the **surface**: that the method exists, on the right
-class, with the right visibility and arity. Whether each method's behaviour
-matches ruby is the job of the conformance corpus (`tests/spinel/`, byte-for-
-byte against the oracle) and the per-feature fixtures in `tests/`. Behavioural
-divergences are tracked as executable gaps in `tests/gaps/` and documented in
+## What zero rows never claimed
+
+The census measured the **surface**: that a method exists, on the right class,
+with the right visibility and arity. Whether it BEHAVES like ruby's was always
+the job of the conformance corpus (`tests/spinel/`, byte-for-byte against the
+oracle) and the fixtures in `tests/`. Behavioural divergences are tracked as
+executable gaps in `tests/gaps/` and documented in
 [`COMPATIBILITY.md`](COMPATIBILITY.md).
 
-Two asymmetries are deliberate:
+Two limits are worth keeping in mind, because they are where the remaining
+bugs live:
 
-- The ledger records oracle-has-zeo-lacks only. A name Zeo answers that ruby
-  does not have (for example, a legacy internal class) is not a census
-  failure.
-- Compiler intrinsics (`block_given?`, `binding`, `__method__`, …) answer at
-  call sites without living in the reflection tables; the census accounts for
-  them through the inherit-true sets.
+- **It never saw a require-gated class.** The walker required nothing, so it
+  measured the surface a program has before its first `require`. `StringIO`,
+  `Zlib`, `OpenSSL`, `Socket` and every other extension are absent from
+  `Object`'s constant tree when the census runs. A missing
+  `StringIO#read_nonblock` reached `main` this way, and a golden found it
+  rather than the census.
+- **It was one-directional.** The ledger recorded oracle-has-zeo-lacks only.
+  A name Zeo answers that ruby does not was never a census failure.
 
-## History
+Compiler intrinsics (`block_given?`, `binding`, `__method__`, …) answer at
+call sites without living in the reflection tables; the census accounted for
+them through the inherit-true sets.
 
-The census replaced an earlier hand-counted figure ("~1,976 missing
-methods") that double-counted inherited methods. Four passes brought the
-ledger from its first honest measurement to zero, in roughly this order:
-`module_function` pairs and the full 158-constant `Errno` table; the missing
-methods on existing classes and owner/visibility fidelity; the `Ractor` port
-model with real `move:` semantics and `Process::Waiter`; and the final four
-subsystems — `IO::Buffer` (complete, with real `mmap`),
-`RubyVM::AbstractSyntaxTree` over Prism, `RubyVM::InstructionSequence`,
-`RubyVM::YJIT` (present, permanently disabled), and `Ruby`/`Ruby::Box` over
-Zeo's compile-time box model. The git history carries the details; the
-fixtures under `tests/` pin every surface the waves added.
+## What replaced it
+
+Nothing, deliberately. Surface parity is done; the open work is behavioural
+and per-case, so it is tracked where behaviour is tracked — as executable
+gaps under `tests/gaps/`, each carrying its own diagnosis, and as the
+divergences catalogued in [`COMPATIBILITY.md`](COMPATIBILITY.md).

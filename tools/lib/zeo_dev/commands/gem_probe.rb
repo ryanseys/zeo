@@ -45,7 +45,6 @@ module ZeoDev
     class GemProbe < Cli
       REGISTRY = "https://rubygems.org"
       LEDGER = "conformance/gem-probe.tsv"
-      CORPUS = "conformance/gem-probe-corpus.txt"
 
       # Long enough that a rails-scale require graph finishes -- those take
       # minutes in the front end alone -- and short enough that a gem which
@@ -71,7 +70,6 @@ module ZeoDev
 
         selection (at least one; they add up):
           <name> [version]   one gem; the newest version unless one is given
-          --corpus           every name in conformance/gem-probe-corpus.txt
           --names <file>     every name in <file>, one per line
 
         The default stops after codegen: zeo produced CLIF, nothing was built
@@ -79,12 +77,11 @@ module ZeoDev
       TEXT
 
       def defaults
-        { corpus: false, names: nil, jobs: nil, timeout: DEFAULT_TIMEOUT,
+        { names: nil, jobs: nil, timeout: DEFAULT_TIMEOUT,
           zeo: nil, limit: nil, refresh: false }
       end
 
       def options(o)
-        o.on("--corpus", "probe every name in the committed corpus file") { opts[:corpus] = true }
         o.on("--names FILE", "probe every name in FILE, one per line") { |v| opts[:names] = v }
         o.on("--jobs N", Integer, "gems in flight (default: derived from RAM, not cores)") do |v|
           opts[:jobs] = v
@@ -134,7 +131,6 @@ module ZeoDev
           @named << first
           names << first
         end
-        names.concat(read_names(File.join(ROOT, CORPUS))) if opts[:corpus]
         names.concat(read_names(opts[:names])) if opts[:names]
         names.uniq
       end

@@ -1,5 +1,5 @@
 # Spinel corpus tests deliberately NOT vendored into zeo's corpus (see
-# UPSTREAM.md "Removed tests"). scripts/import-spinel-corpus.sh skips these.
+# UPSTREAM.md "Removed tests"). The importer skipped these; it is deleted.
 compile_time_attribute_singular
 compile_time_attribute_wrapped_record
 compile_time_attributes

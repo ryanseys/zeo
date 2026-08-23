@@ -1,5 +1,5 @@
 # M0-17 (2026-08-19, aarch64-apple-darwin, release zeo + release libzeo.a).
-# A SEPARATE file, not a column in compile-baseline.tsv: the xtask
+# A SEPARATE file, not a column in compile-baseline.tsv: the zeo-dev
 # compile-bench parser owns that file's shape until its zeo-dev port (L1);
 # this merges into the backend column then. Times are wall ms (compile =
 # whole `zeo -o` invocation; run = whole program run). Only the M0 slice

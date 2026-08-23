@@ -7,25 +7,13 @@ zeo-gems.json
 # Vendored upstream sources for the bundler north-star (not part of the build)
 /vendor/
 
-# The registry's gem-name index, cached by `xtask gem-probe --index`. ~3MB of
-# upstream data that changes daily; `--refresh-index` takes a newer copy.
-conformance/rubygems-names.txt
+# Measurement, not source. `conformance/` holds what a sweep WROTE -- the
+# gem-probe ledger is 21MB and 195,778 rows -- and none of it is an input to
+# a build or a test. A refreshed ledger is attached to a GitHub release by
+# hand. See docs/GEM_TESTING.md.
+conformance/
 
-# Per-gem wall-clock timings from `xtask gem-probe`. Deliberately NOT
-# committed: timing is not reproducible, so it would rewrite every row on
-# every sweep and bury the ledger's real diff. The byte counts, which ARE
-# reproducible, live in the committed ledger instead.
-conformance/gem-probe-timings.tsv
-
-# The gem-probe ledger and its rendered report. NOT committed: at 21MB and
-# 11MB they break the `no tracked file over 1MB` release-hygiene gate, and
-# 195,778 rows of measurement are not source. A sweep writes them locally; a
-# refreshed ledger is attached to a GitHub release by hand. See
-# docs/GEM_TESTING.md.
-conformance/gem-probe.tsv
-conformance/gem-probe.md
-
-# Publish-time artifacts staged by `cargo xtask stage-publish`; never committed.
+# Publish-time artifacts staged by `tools/zeo-dev stage-publish`; never committed.
 crates/zeo/gems.pregen.tar.gz
 crates/zeo/src/class_surface.pregen.rs
 
@@ -54,4 +42,3 @@ compile_flags.txt
 # The top-level rule cannot reach it through the negation above.
 /tests/**/.DS_Store
 !/tests/spinel/LICENSE
-conformance/rubygems-popular.txt

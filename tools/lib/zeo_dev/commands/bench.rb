@@ -162,7 +162,7 @@ module ZeoDev
           # Upsert, not append: a filtered run starts from the whole
           # baseline, so the row being re-measured is already there.
           recorded[name] = secs
-          write_pairs(path(BASELINE), "# bench/baseline.tsv -- xtask bench --update-baseline", recorded)
+          write_pairs(path(BASELINE), "# bench/baseline.tsv -- zeo-dev bench --update-baseline", recorded)
         end
 
         report(results, recorded, baseline, failures)

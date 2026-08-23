@@ -170,7 +170,7 @@ jobs:
       # Three of those shipped at once: `ZEO_BLESS=1` had been replaced by
       # `ZEO_BLESS_FROM_XTASK`, and two ledgers plus a doc still told the
       # reader to use the spelling that does nothing.
-      - run: scripts/check-documented-env-vars.sh
+      - run: tools/zeo-dev check-env-vars
 
       # A file this large in the working tree is almost always a build
       # artifact committed by mistake. History was rewritten to strip blobs
@@ -198,19 +198,6 @@ jobs:
       # build script would otherwise derive from sibling crates absent from
       # the .crate file. This fails if they drift from their sources.
       - run: tools/zeo-dev stage-publish --check
-
-      # A gem that compiled and no longer does is a regression. This re-probes
-      # the ledger at the versions it records, so it needs BOTH the cached
-      # vendor/gems tree and the ledger itself. The ledger is a release asset
-      # rather than a tracked file (it is 21MB, over the blob gate above), so
-      # neither is present on an ordinary run and the step skips.
-      - name: no gem stopped compiling
-        run: |
-          if [ -d vendor/gems ] && [ -f conformance/gem-probe.tsv ]; then
-            tools/zeo-dev gem-probe --corpus --limit 25
-          else
-            echo "vendor/gems or the ledger is absent; skipping the gem-probe regression gate"
-          fi
 
       # The dist tree is assembled from a REWRITE of the root manifest, so it
       # can silently stop resolving when a workspace dependency moves.

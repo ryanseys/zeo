@@ -864,7 +864,7 @@ ruby_class! {
     }
 
     // `*args` because CRuby declares `step` with a rest list (arity -1), not
-    // `(limit, step = 1)` -- `conformance/builtin-arity.tsv` gates the shape.
+    // `(limit, step = 1)` -- the shape ruby reports.
     def "step" (recv, *args, &block) {
         let Some(limit) = args.first() else {
             return Err(crate::dispatch::wrong_arity(0, "1..2"));

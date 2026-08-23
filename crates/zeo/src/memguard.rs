@@ -23,7 +23,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 /// The exit status a ceiling breach reports. `12` is `ENOMEM`, chosen so a
 /// harness can tell "this machine could not hold the compile" from an
 /// ordinary compile failure (`1`) without parsing stderr -- see
-/// `xtask`'s gem-probe ledger, which records the two as different outcomes.
+/// the gem-probe ledger, which records the two as different outcomes.
 pub const EXIT_MEMORY_LIMIT: i32 = 12;
 
 /// The stderr line a breach prints, matched by harnesses that only have the
@@ -218,7 +218,7 @@ fn page_size() -> Option<u64> {
 
 /// The machine's physical RAM. Public because a harness that runs several
 /// compiles at once has to divide the same number this does -- see
-/// `xtask`'s job budget.
+/// the gem probe's job budget.
 #[cfg(target_os = "macos")]
 pub fn physical_memory() -> Option<u64> {
     let mut out: u64 = 0;

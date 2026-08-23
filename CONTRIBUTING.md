@@ -6,7 +6,7 @@
   used in development) and a C compiler.
 - A real Ruby matching the oracle version pinned in `mise.toml`
   (via `mise install`) — only needed when re-blessing golden output from the
-  oracle (`xtask bless`); the committed snapshots cover ordinary runs.
+  oracle (`tools/zeo-dev bless`); the committed snapshots cover ordinary runs.
 
 ```console
 $ cargo build --workspace     # do this first, and after every compiler edit
@@ -41,8 +41,8 @@ $ cargo nextest run --workspace                     # unit + e2e + all golden su
 $ cargo nextest run -p zeo-tests --test spinel      # the full ruby-oracle corpus
 $ cargo nextest run -p zeo-tests --test examples --test gaps
 $ cargo nextest run -p zeo-tests -P full            # + the whole-gem cases
-$ cargo run -p xtask -- bless <filter>              # re-record goldens from ruby
-$ cargo run -p xtask -- bench                       # perf vs bench/baseline.tsv
+$ tools/zeo-dev bless <filter>              # re-record goldens from ruby
+$ tools/zeo-dev bench                       # perf vs bench/baseline.tsv
 ```
 
 The default profile is the dev loop. `-P full` adds the cases that compile a
@@ -53,13 +53,13 @@ every run.
 - The golden suites live under `tests/` (examples + the spinel corpus + the
   XFAIL gaps tracker) and run as datatest-stable `cargo test`/nextest targets;
   a green `cargo nextest` is the conformance record. A fixed gap fails CI as an
-  XPASS — promote it with `scripts/promote-gap.sh`, which moves it into
+  XPASS — promote it with `tools/zeo-dev promote-gap`, which moves it into
   `tests/`, the zeo-authored suite. Not `tests/spinel/`, which mirrors the
   vendored spinel corpus (see `tests/spinel/UPSTREAM.md`).
-- `xtask bless` is the only golden writer: `golden.rs` honours
-  `ZEO_BLESS_FROM_XTASK`, which only `xtask bless` sets, so a bare
+- `tools/zeo-dev bless` is the only golden writer: `golden.rs` honours
+  `ZEO_BLESS_FROM_XTASK`, which only `tools/zeo-dev bless` sets, so a bare
   `ZEO_BLESS=1 cargo test` does nothing.
-- Perf-sensitive changes report their `xtask bench` delta; intentional shifts
+- Perf-sensitive changes report their `tools/zeo-dev bench` delta; intentional shifts
   are banked by committing `--update-baseline`'s diff.
 - `cargo clippy --workspace --all-targets` at zero warnings gates CI. Don't
   add `#[allow]`s to dodge lints — fix or discuss.
@@ -111,14 +111,14 @@ so "1 failed" does not mean "1 stale" — fix and re-run until it is quiet.
   `|`-joined name that genuinely differs from its def (`"<<" arity 1 | "push"`),
   and a test fails any override that merely restates the parameter list. Add
   `cfunc` when CRuby declares the method `argc = -1`, which discards a
-  signature the DSL can still express. `cargo run -p xtask -- arity-oracle`
-  records what ruby reports; `builtin_arity` gates every declaration against it
-  and the backlog is zero, so a disagreement is a bug in the parameter list.
+  signature the DSL can still express. The arity oracle that gated this
+  reached zero and is retired (see `docs/METHOD_COVERAGE.md`), so a
+  disagreement with ruby is now found by a golden, not a ledger.
 - Declare a method on the class CRuby owns it on — that decides which receivers
   answer it, so `IO#flock` (File's) and `Module#superclass` (Class's) were
-  behaviour bugs, not reflection details. `builtin_arity`'s `zeo-only` tag
-  catches exactly this and is currently empty, so a new row there is a wrong
-  class or an invented name, not routine bookkeeping.
+  behaviour bugs, not reflection details. Write a golden that calls the
+  method on a receiver only the correct owner gives — that is what catches a
+  wrong class or an invented name now.
 - Module docs explain *design rationale*, not narration; keep them current —
   a stale claim is treated as a bug.
 

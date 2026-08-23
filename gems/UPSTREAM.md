@@ -111,7 +111,7 @@ Zeo tracks each gem's **latest upstream release**, not the version the oracle
 Ruby happens to bundle. The stdlib gems release independently of Ruby itself,
 and pinning to a Ruby release would freeze Zeo behind fixes its users want.
 
-`cargo run -p xtask -- gem outdated` prints, per git-sourced gem, the current
+`tools/zeo-dev gem outdated` prints, per git-sourced gem, the current
 pin beside two reference points: what the oracle install resolves, and the
 newest upstream tag. Bump with `gem update <name> --tag vX.Y.Z` -- nothing
 bumps automatically, so every move is deliberate.

@@ -8,13 +8,13 @@ Many programs are in turn adaptations of classic Ruby benchmark corpora
 benchmarks).
 
 Each `bm_<name>.rb` prints deterministic output; `bm_<name>.rb.expected` is
-that output, oracle-verified against real `ruby`. `cargo run -p xtask -- bench`
+that output, oracle-verified against real `ruby`. `tools/zeo-dev bench`
 compiles each with `zeo -o` (release runtime), verifies the output matches
 (a wrong answer fails the run -- speed of a wrong answer is meaningless),
 times the compiled binary, and compares against `baseline.tsv`.
 
 Regenerate the baseline after an intentional performance change with
-`cargo run -p xtask -- bench --update-baseline` and commit the diff --
+`tools/zeo-dev bench --update-baseline` and commit the diff --
 the baseline is the reviewable record of every accepted regression or win.
 
 Two more data files ride alongside it: `history.tsv` keeps the last five

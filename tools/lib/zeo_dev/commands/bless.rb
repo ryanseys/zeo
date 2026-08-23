@@ -43,7 +43,6 @@ module ZeoDev
 
           tools/zeo-dev bless forward_args
           tools/zeo-dev bless spinel::yield_
-          tools/zeo-dev bless builtin_arity
       TEXT
 
       # Filters that would defeat the point. nextest's `test()` matcher is a

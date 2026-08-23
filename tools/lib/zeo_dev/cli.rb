@@ -15,7 +15,7 @@ module ZeoDev
     # `usage: zeo-dev <name> ...` -- set by each subclass.
     def self.banner = "usage: zeo-dev #{command_name}"
 
-    # `MethodCensus` -> `method-census`.
+    # `GemProbe` -> `gem-probe`.
     def self.command_name
       name.split("::").last.gsub(/([a-z])([A-Z])/, '\1-\2').downcase
     end

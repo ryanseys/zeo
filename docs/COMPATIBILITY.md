@@ -680,8 +680,7 @@ and `require "random/formatter"` REOPENS it to add
 so it carries all of them unconditionally and the require is ceremony. A
 program that calls `Random.new.hex` WITHOUT the require works here and raises
 `NoMethodError` in ruby — the same shape of divergence `require "time"` and
-`require "io/console"` already have. Recorded as nine `zeo-only` rows in
-`conformance/builtin-arity-divergences.tsv`.
+`require "io/console"` already have. Nine methods are affected.
 
 ### `Ractor`
 

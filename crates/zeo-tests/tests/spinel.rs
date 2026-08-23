@@ -1,7 +1,7 @@
 //! The conformance corpus (`tests/spinel/`, the suite vendored from spinel) as
 //! `cargo test`/nextest cases -- one per `.rb`, compiled by zeo and diffed
 //! against its committed ruby-oracle golden (stdout AND stderr). Replaces the
-//! bespoke `xtask conformance run`/scoreboard harness.
+//! bespoke `zeo-dev conformance run`/scoreboard harness.
 //!
 //! Top-level `spinel/*.rb` -> `Mode::Pass` (zeo must match the golden). Fixture
 //! SUBDIRECTORIES (e.g. `frozen_string_literal_per_file/`, `require/`) are data
@@ -9,7 +9,7 @@
 //! only the top level, never a deeper `.rb`. Compile-REJECTION coverage lives in
 //! the e2e suite (`compile_project(...).unwrap_err()`).
 //!
-//! `cargo xtask bless spinel::` re-records the goldens from ruby.
+//! `tools/zeo-dev bless spinel::` re-records the goldens from ruby.
 
 #[path = "support/golden.rs"]
 mod golden;

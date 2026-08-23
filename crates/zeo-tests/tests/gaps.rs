@@ -2,14 +2,14 @@
 //! NOT yet match `ruby` on, checked in and tracked as XFAIL. Each runs through
 //! the shared golden helper in `Mode::Xfail` -- a still-diverging gap PASSES; a
 //! gap that starts matching ruby FAILS with a "promote" message. Promote with
-//! `scripts/promote-gap.sh`, which moves its `.rb` + sidecars into `tests/`,
+//! `tools/zeo-dev promote-gap`, which moves its `.rb` + sidecars into `tests/`,
 //! the zeo-authored suite -- NOT `tests/spinel/`, which mirrors the vendored
 //! spinel corpus.
 //!
 //! The pattern matches the TOP LEVEL only: a subdirectory here holds a gap's
 //! FIXTURES -- files another program requires -- and a fixture is not a test.
 //!
-//! `cargo xtask bless gaps::` re-records each gap's golden from ruby.
+//! `tools/zeo-dev bless gaps::` re-records each gap's golden from ruby.
 
 #[path = "support/golden.rs"]
 mod golden;

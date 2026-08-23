@@ -60,9 +60,6 @@ mimalloc.workspace = true
 # embedded gems archive into the payload (`home::stage_embedded_gems`).
 tar.workspace = true
 flate2.workspace = true
-# `zeo dev scan-decls`: reads the runtime's ruby_class!/ruby_module! headers
-# back out for the ruby toolchain. `spans` gives each declaration a file:line.
-zeo-dsl = { workspace = true, features = ["spans"] }
 
 [dev-dependencies]
 # CLIF snapshot pinning (`tests/clif.rs`).

@@ -1,7 +1,7 @@
 # The benchmark suite
 
 58 golden-output Ruby programs under `bench/`, each with a committed
-`.expected`. `cargo xtask bench` compiles every one with `zeo -o`, checks its
+`.expected`. `tools/zeo-dev bench` compiles every one with `zeo -o`, checks its
 output, times it, and compares against the banked baseline.
 
 Provenance is in [`UPSTREAM.md`](UPSTREAM.md): the programs come from the
@@ -12,12 +12,12 @@ Benchmarks Game and yjit-bench-style micros.
 ## Running it
 
 ```console
-$ cargo run -p xtask -- bench                       # all 58
-$ cargo run -p xtask -- bench --filter fib          # substring match on the name
-$ cargo run -p xtask -- bench --runs 5              # best-of-5 instead of best-of-3
-$ cargo run -p xtask -- bench --ruby                # re-time the CRuby oracle too
-$ cargo run -p xtask -- bench --update-baseline     # bank the result
-$ cargo run -p xtask -- bench --update-baseline --resume   # continue an interrupted bank
+$ tools/zeo-dev bench                       # all 58
+$ tools/zeo-dev bench --filter fib          # substring match on the name
+$ tools/zeo-dev bench --runs 5              # best-of-5 instead of best-of-3
+$ tools/zeo-dev bench --ruby                # re-time the CRuby oracle too
+$ tools/zeo-dev bench --update-baseline     # bank the result
+$ tools/zeo-dev bench --update-baseline --resume   # continue an interrupted bank
 ```
 
 ## Method

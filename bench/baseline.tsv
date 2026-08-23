@@ -1,4 +1,4 @@
-# bench/baseline.tsv -- xtask bench --update-baseline
+# bench/baseline.tsv -- zeo-dev bench --update-baseline
 bm_ackermann	0.209
 bm_ao_render	1.837
 bm_attr_accessor	0.706

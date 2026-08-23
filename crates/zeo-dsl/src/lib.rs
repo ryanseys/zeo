@@ -111,7 +111,6 @@
 //! symbolically (`zeo_abi::OBJECT_CLASS`) and let rustc resolve them, never
 //! evaluating a const itself. Only the header NAME is a plain identifier.
 
-pub mod scan;
 
 use proc_macro2::TokenStream;
 use syn::parse::ParseStream;

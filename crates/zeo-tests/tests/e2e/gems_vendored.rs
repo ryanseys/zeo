@@ -85,7 +85,7 @@ fn the_vendored_trees_carry_the_files_their_requires_name() {
     ] {
         assert!(repo(rel).is_file(), "missing vendored file: {rel}");
     }
-    // The gemspec `xtask gem` writes is what makes the directory a package.
+    // The gemspec `zeo-dev gem` writes is what makes the directory a package.
     for rel in [
         "gems/rubygems/rubygems.gemspec",
         "gems/bundler/bundler.gemspec",

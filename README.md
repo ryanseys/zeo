@@ -31,7 +31,7 @@ Zeo is **experimental** and moving fast. What is measured today:
 | Conformance corpus (`tests/spinel/`) | 2,924 / 2,924 |
 | Example goldens (`tests/*.rb`) | 1,124 / 1,124 |
 | End-to-end suite (`crates/zeo-tests/tests/e2e/`) | 1,072 / 1,072 |
-| Method census vs Ruby 4.0.6 (`conformance/method-census-gaps.tsv`) | zero gaps |
+| Method surface vs Ruby 4.0.6 ([census](docs/METHOD_COVERAGE.md), retired at zero) | zero gaps |
 
 Each of those compares stdout, stderr and the exit status with real Ruby,
 byte for byte. `tests/gaps/` holds the 13 programs that still diverge.
@@ -204,7 +204,8 @@ cannot disagree.
 
 For what does not match yet, read
 [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md); for the extension model,
-[`docs/EXTENSIONS.md`](docs/EXTENSIONS.md); for how the census works,
+[`docs/EXTENSIONS.md`](docs/EXTENSIONS.md); for what the retired method
+census measured and never reached,
 [`docs/METHOD_COVERAGE.md`](docs/METHOD_COVERAGE.md).
 
 ---
@@ -242,7 +243,7 @@ language feature.
 
 A compiled program starts in **under a millisecond**; CRuby needs roughly 30 ms
 before the first line runs. `bench/` holds 58 programs, each with its correct
-output, and `cargo xtask bench` verifies the output before it times anything.
+output, and `tools/zeo-dev bench` verifies the output before it times anything.
 
 Measured 2026-08-21, Zeo and CRuby 4.0.6 timed in the same run:
 
@@ -282,7 +283,6 @@ crates/
   zeo-dsl     the shared `syn` grammar for the ruby_class! / ruby_module! DSL
   zeo-macros  the macro that expands that DSL into runtime code
   zeo-tests   the integration and golden suites (not published)
-  xtask       development commands (bench, gem, gem-probe, bless, dist, …)
 ```
 
 - **`zeo`** — the driver. `parse/` and `lower/` resolve requires and lower the
@@ -329,9 +329,9 @@ def "insert" (recv, at, *rest)                  // -2, and "expected 1+"
 Three consumers read the same grammar, so they cannot drift: `zeo-macros`
 expands it into runtime functions and lookup tables; `zeo`'s `build.rs` derives
 `CLASS_SURFACE`, the names the compiler folds `respond_to?`/`is_a?`/constant
-lookups against (headers only — bodies stay invisible to it); and the dev tools
-check every arity against what real Ruby reports
-(`cargo run -p xtask -- arity-oracle`).
+lookups against (headers only — bodies stay invisible to it). A def's
+parameter list is the only place its shape is written, so it gives both the
+argument-count check and its `Method#arity`.
 
 ### Public API
 
@@ -361,8 +361,8 @@ $ cargo build -p zeo                                    # zeo + libzeo.a
 $ cargo nextest run -p zeo-tests --test-threads 4       # goldens, e2e, ratchets
 $ cargo nextest run -p zeo-tests -P full                # + whole-gem cases
 $ cargo nextest run -p zeo-tests --test spinel          # the conformance corpus
-$ cargo run -p xtask -- bless spinel::                  # re-record goldens from ruby
-$ cargo run -p xtask -- bench                           # the performance suite
+$ tools/zeo-dev bless spinel::                  # re-record goldens from ruby
+$ tools/zeo-dev bench                           # the performance suite
 ```
 
 Suites are [`datatest-stable`](https://crates.io/crates/datatest-stable)
@@ -372,12 +372,12 @@ targets — one case per `.rb` file:
   for byte.
 - **`tests/*.rb`** — Zeo's own example goldens.
 - **`tests/gaps/`** — known divergences. Each **must** fail; when one starts
-  agreeing with Ruby the suite goes red and `scripts/promote-gap.sh` moves it.
+  agreeing with Ruby the suite goes red and `tools/zeo-dev promote-gap` moves it.
 
 `ZEO_GOLDEN_BACKEND=aot` runs the goldens through a linked binary instead of
 the JIT.
 
-Goldens are only ever written by `cargo run -p xtask -- bless <filter>`, which
+Goldens are only ever written by `tools/zeo-dev bless <filter>`, which
 runs Ruby with `--disable-error_highlight --disable-did_you_mean`, records
 instead of comparing, and reports everything it changed. The filter is
 mandatory, so a bless is always scoped. See
@@ -386,7 +386,7 @@ mandatory, so a bless is always scoped. See
 ### A relocatable install
 
 ```console
-$ cargo xtask dist      # target/dist/zeo-<version>-<triple>.tar.gz
+$ tools/zeo-dev dist      # target/dist/zeo-<version>-<triple>.tar.gz
 $ tar xzf zeo-<version>-<triple>.tar.gz -C /usr/local
 ```
 
@@ -411,9 +411,9 @@ docs/        COMPATIBILITY, EXTENSIONS, EVAL, GEM_TESTING, METHOD_COVERAGE, ROAD
 tests/       example goldens, the spinel corpus, the gaps tracker, gemtests drivers
 gems/        65 bundled gems (upstream.rb pins the git-tracked ones)
 bench/       58 benchmark programs; read bench/README.md
-conformance/ what the ruby oracle reports, recorded for the drift tests
+conformance/ what a gem-probe sweep wrote (gitignored; measurement, not source)
 vendor/      rubygems and fetched test trees (gitignored)
-tools/       Ruby helper scripts (the arity oracle, method coverage)
+tools/       the Ruby toolchain: `tools/zeo-dev <command>`, plus table generators
 scripts/     corpus import, gap promotion, ruby-against-zeo comparison
 ```
 

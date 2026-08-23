@@ -94,7 +94,7 @@ impl Diagnostic for LowerDiagnostic {
     fn code(&self) -> Option<Box<dyn fmt::Display + '_>> {
         // One code per PASS, named for the pass: `zeo::parse`, `zeo::lower`,
         // `zeo::analyze`, `zeo::codegen`. The code is how a caller learns
-        // WHICH pass refused without parsing the message -- `xtask gem-probe`
+        // WHICH pass refused without parsing the message -- `zeo-dev gem-probe`
         // records the rung from it, so the four are kept the same shape.
         Some(Box::new(match self.kind {
             LowerErrorKind::Syntax => "zeo::parse",

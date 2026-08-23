@@ -1,7 +1,7 @@
 # Testing Zeo against real gems
 
-Zeo measures gem support with `gem-probe`: it runs the front end over a gem
-and records whether the compiler accepts it (`cargo xtask gem-probe <name>`).
+Zeo measures gem support with `gem-probe`: it fetches a gem, runs the front
+end over its entry point, and records how far it got.
 
 Only a run of the front end answers the question. A gem whose LAYOUT resolves
 cleanly can still fail to compile — concurrent-ruby is pure Ruby and 100%
@@ -11,280 +11,170 @@ as a compatibility number.
 ## Probing a gem
 
 ```console
-$ cargo xtask gem-probe kramdown          # newest release
-$ cargo xtask gem-probe rake 13.3.1       # a pinned version
-$ cargo xtask gem-probe --corpus          # every gem in the corpus file
-$ cargo xtask gem-probe --popular 1000    # the 1000 most downloaded gems
-$ cargo xtask gem-probe --index           # every gem on rubygems.org
-$ cargo xtask gem-probe --index --limit 500
-$ cargo xtask gem-probe --all             # re-probe at recorded versions
-$ cargo xtask gem-probe --all --check     # as above; fail if one regressed
-$ cargo xtask gem-probe --corpus --refresh
-$ cargo xtask gem-probe kramdown --no-deps
+$ tools/zeo-dev gem-probe kramdown          # newest release
+$ tools/zeo-dev gem-probe rake 13.3.1       # a pinned version
+$ tools/zeo-dev gem-probe --names list.txt  # one name per line
+$ tools/zeo-dev gem-probe --names list.txt --limit 50 --jobs 3
 ```
 
-The gem does not need to be installed. Nothing here needs Ruby.
-
-### It resumes, and it writes as it goes
-
-The ledger is rewritten after **every** gem, not once at the end, and a run
-skips whatever the ledger already holds. Both matter at registry scale: the
-compact index lists around 200,000 gems, so a full sweep is measured in hours
-and being interrupted is the normal case, not the exceptional one.
-
-```console
-$ cargo xtask gem-probe --index --limit 500     # a slice
-^C                                             # keep every result so far
-$ cargo xtask gem-probe --index --limit 500     # the NEXT 500, not the same ones
-```
-
-`--all` re-probes everything in the ledger at its recorded version, and
-`--refresh` re-probes a selection that resume would otherwise skip. Use those
-after a compiler change; use plain `--index`/`--corpus` to extend coverage.
+A gem named on the command line always probes. A bulk selection skips names
+the ledger already carries unless `--refresh` is passed.
 
 ## How a probe runs
 
-Four stages, and only the first touches the network:
+Four steps, and only the first touches the network:
 
 ```
-resolve   name [version]      -> an exact version        (rubygems JSON API)
-fetch     the .gem            -> vendor/gems/<name>/     (cached, gitignored)
-probe     require "<entry>"   -> an Outcome              (front end + codegen)
-record    the Outcome         -> conformance/gem-probe-*.tsv      (committed)
+resolve  name [version]     -> an exact version
+fetch    the .gem           -> vendor/gems/<name>/   (cached)
+probe    require "<entry>"  -> a stage and an outcome
+record   the verdict        -> conformance/gem-probe.tsv
 ```
 
-Probing an unpacked tree needs no network and is deterministic, so a ledger row
-reproduces from its recorded version alone.
+Probing an unpacked tree needs no network and is deterministic, so a ledger
+row reproduces from its recorded version alone.
 
-Three details are load-bearing rather than incidental:
+**Resolving and fetching stay on one thread.** They touch the network and
+write the shared `vendor/gems` cache, and two gems routinely share a
+dependency — two workers unpacking the same one into the same directory
+corrupts it. Only the compile runs wide.
 
-- **A gem unpacks to `vendor/gems/<name>/`, not `<name>-<version>/`, and its
-  gemspec is replaced with a stub.** Zeo checks a gemspec's name against its
-  directory name, and parses gemspecs statically — so the computed
-  `s.version = Foo::VERSION` that most real gems use is rejected. This is the
-  same layout `gems/` uses, so a probe exercises the loader path bundled gems
-  take.
-- **Each probe sees only its own gem and that gem's dependencies.** Probing
-  against the whole cache made a verdict depend on what else had been fetched:
-  kramdown reported one gap alone and a different one once
-  kramdown-parser-gfm sat beside it.
-- **The entry point comes from the files the gem ships, never from its name.**
-  `activerecord` ships `active_record.rb`. Requiring a feature that does not
-  exist is not an error in Zeo — an unresolvable `require` lowers to a runtime
-  `Kernel#require` — so codegen succeeds having compiled none of the gem. That
-  bug reported every Rails gem as `compiles`. A gem whose entry point cannot be
-  identified records `no-entry-point` instead of a false pass.
+**How wide, and how much each compile may hold, is one decision.** The limit
+is MEMORY, not cores: one gem-scale compile has been measured at 9.8 GB
+resident, and twelve at once exhausted a 16 GB machine and panicked the
+kernel. A fixed fraction of RAM is the sweep's budget, each job gets an equal
+share, and the share is handed to the child as `ZEO_MEMORY_LIMIT`. `--jobs`
+trades job count against per-job headroom rather than multiplying an unbounded
+number. On a 16 GB / 12-core machine it derives 4.
 
-## Outcomes
+**The sweep probes one binary for its whole run.** `target/probe-bin/zeo-<sha>`
+is a snapshot, so a dev build beside the sweep cannot change what it is
+measuring halfway through. Run a side-by-side sweep at `--jobs 3`; the spare
+slot is the headroom that keeps concurrent probe and dev rustc off each other.
 
-| Outcome | Meaning |
-|---|---|
-| `compiles` | The front end accepted the gem's entry point. |
-| `lowering-gap` | Zeo cannot lower a construct. The detail names it. |
-| `compiler-panic` | Zeo panicked. A bug, not a stated limit. |
-| `native-extension` | The gemspec declares C extensions. |
-| `missing-dependency` | A `require` reached outside the gem and its deps. |
-| `no-lib-dir` | No `lib/`. Usually a meta-gem, like `rails`. |
-| `no-entry-point` | A `lib/`, but no file this gem's name could name. |
-| `fetch-failed` | No such gem, or the registry could not be reached. |
+**Each compile is a subprocess**, because a sweep must survive a gem that
+kills the compiler. `catch_unwind` catches an unwinding panic; it cannot catch
+an abort, a stack overflow, or a compile that never finishes. The OS ends all
+four the same way, and `--timeout` (default 600 s) bounds the last.
 
-## What `compiles` does and does not mean
+### The entry point is a file that exists
 
-It means the gem's conventional entry point reached code generation. It does
-**not** mean the gem works.
+Guessing from the name alone is not good enough, and failing quietly is the
+reason: `require "activerecord"` names no file, Zeo lowers an unresolvable
+require to a RUNTIME `Kernel#require` rather than failing, and codegen then
+trivially succeeds having compiled none of the gem. Every Rails gem reported
+`compiles` that way once.
 
-- Nothing is linked or run. `--run` does that for one gem at a time.
-- The entry point is whatever the gem calls its own. Some gems make that the
-  whole library; `actionpack`'s `action_pack.rb` is one line that requires a
-  version file. `compiles` is a weak signal for the latter.
-- A gem that compiles can still fail at run time on behaviour Zeo diverges on.
+So there is a four-tier ladder, and every tier names a file that exists: the
+gem's own name against its load path; then every top-level file the roots
+ship; then the roots of the gem's own require graph (for the pre-convention
+`lib/<dir>/` layout); then its ruby-shebang executables, `load`ed by absolute
+path exactly as a RubyGems binstub runs them.
 
-Read a `compiles` row as "the compiler has no objection to this source", and
-nothing more.
+### Dependencies, and an isolated view
 
-## Growing the corpus
+The subject is probed against its full runtime dependency **closure**, walked
+breadth-first and capped at depth 6 and 200 gems. A one-level list was the
+probe's largest source of false verdicts: nanoc's view carried nanoc-core but
+not nanoc-core's own `ddplugin`, and 16 gems recorded a lowering-gap for a
+program CRuby would have stopped with a `LoadError`.
 
-[`../conformance/gem-probe-corpus.txt`](../conformance/gem-probe-corpus.txt) is
-the transitive runtime-dependency closure of the 200 most downloaded gems on
-rubygems.org, resolved from the registry rather than guessed. Add a name and run
-`--corpus`.
+Those gems are linked into a view holding only the subject and its
+dependencies. Pointing the probe at the whole of `vendor/gems` made a verdict
+depend on which other gems happened to be cached — kramdown reported one gap
+alone and a different one once kramdown-parser-gfm sat beside it. The subject
+is the distinguished root (`--root-gem`), so a feature it provides resolves to
+it and never to an alphabetically earlier dependency squatting the path.
 
-The corpus is the curated, reviewable list. Two selectors go wider, and both
-accumulate into the same ledger:
+## Reading a verdict
 
-- `--popular N` walks the download ranking, most-downloaded first.
-- `--index` walks every gem the registry knows — useful for finding constructs
-  nothing popular exercises, but it is **alphabetical**, so it meets a
-  well-known gem only by chance.
-
-Prefer `--popular` for coverage that means something. The registry has no top-N
-endpoint (`/api/v1/downloads/top.json` is gone) and
-[rubygems.org/stats](https://rubygems.org/stats) stops at 100, so the ranking
-comes from the search API, which answers a `*` query sorted by download count.
-The cache at `conformance/rubygems-popular.txt` is a prefix of that ranking, so
-raising N extends it rather than re-fetching. The
-[weekly PostgreSQL dumps](https://rubygems.org/pages/data) carry the full
-picture if a more precise ranking is ever needed.
-
-`--all --check` is the regression gate: a gem that compiled and no longer does
-fails the build, whatever its new outcome. That gate runs in CI when a
-`vendor/gems` cache is present.
-
-## Provenance: the ledger holds verdicts, git holds everything else
-
-The ledger records a gem, a version, an outcome and a detail. It carries no
-timestamp, no build SHA and no Zeo version — deliberately.
-
-It is a committed file, so git already holds all of that, and holds it more
-reliably than anything written into the rows:
-
-```console
-# when did any verdict last change, and in which commit?
-$ git log --oneline -- conformance/gem-probe-*.tsv
-
-# when did ONE gem change, and to what?
-$ git log -p -S kramdown -- conformance/gem-probe-*.tsv
-
-# what did a release improve?
-$ git diff v0.1.0..v0.2.0 -- conformance/gem-probe-*.tsv
-```
-
-Writing the time and build into the file would duplicate that, and duplicating
-it costs more than it gives: a timestamp column rewrites every row on every
-run, so a 700-line diff appears when nothing changed and the real signal is
-buried. Leaving it out makes the ledger a pure function of the corpus and the
-Zeo build — two runs on one build produce identical bytes, so **any diff is a
-real change**.
-
-The one thing this does not cover is a probe you never commit. Commit the
-ledger; that is what makes the result a record rather than a note.
-
-## Reading the ledger
-
-One file, one row per gem:
-
-| File | Holds | Tracked |
-|---|---|---|
-| `conformance/gem-probe.tsv` | every gem the registry names — its verdict, or `unprobed` | no |
-| [`../conformance/gem-probe-ignored.tsv`](../conformance/gem-probe-ignored.tsv) | gems the sweep declines to probe, and why | yes |
-| `conformance/gem-probe.md` | the counts, regenerated with the ledger | no |
-
-**The ledger is not in git.** At 21 MB and 11 MB the two generated files break
-the `no tracked file over 1MB` gate in `release-hygiene`, and 195,778 rows of
-measurement are not source. A sweep writes them locally; a refreshed ledger is
-attached to a GitHub release by hand. Without them present, the `no gem stopped
-compiling` CI step skips rather than fails.
-
-**Two columns carry the verdict, and they are read together.** `stage` is the
-RUNG the row is about; `outcome` is what happened there. Neither claims
-anything alone:
+**Two columns carry it, and they are read together.** `stage` is the RUNG the
+row is about; `outcome` is what happened there. Neither claims anything alone:
 
 ```
-excon      1.2.5   codegen   ok             -- Rust was emitted
+excon      1.2.5   codegen   ok             -- CLIF was emitted
 Authorizr  0.2.1   codegen   lowering-gap   -- it was not, and this is why
 ```
 
 The ladder is:
 
 ```
-queued → fetch → unpack → parse → lower → analyze → codegen → build → run
+fetch → unpack → parse → lower → analyze → codegen
 ```
 
 The four middle rungs are Zeo's own front-end passes, and a rejection is
 recorded at the pass that **made** it — Zeo prints that as the diagnostic's
-code (`zeo::parse`, `zeo::lower`, `zeo::analyze`, `zeo::codegen`), so a
-front-end failure says which pass refused instead of landing in one bucket. A
-lowering gap is a construct the front end will not translate; an analyze
-rejection is a definition it will not register; a codegen rejection is a
-position it will not emit into. Those are different kinds of work.
+code (`zeo::parse`, `zeo::lower`, `zeo::analyze`, `zeo::codegen`). A lowering
+gap is a construct the front end will not translate; an analyze rejection is a
+definition it will not register; a codegen rejection is a position it will not
+emit into. Those are different kinds of work.
 
-They are rungs rather than columns because the ladder **terminates**: the pass
-a row names implies success at every pass before it, and that no pass after it
-was attempted. A column per pass would restate that.
+| Outcome | Meaning |
+|---|---|
+| `ok` | The front end accepted the gem's entry point. |
+| `lowering-gap` | Zeo cannot lower a construct. The detail names it. |
+| `compiler-panic` | Zeo panicked. A bug, not a stated limit. |
+| `timeout` | Still running at `--timeout`. No verdict at all. |
+| `out-of-memory` | Hit the ceiling this sweep handed it. A fact about the host. |
+| `invalid-ruby` | Not Ruby any release parses. Zeo parses with prism, CRuby's own parser. |
+| `native-extension` | Needs a compiled half. See [EXTENSIONS.md](EXTENSIONS.md). |
+| `missing-dependency` | A `require` reached outside the gem and its closure. |
+| `ambiguous-require` | Two gems on the view provide it. A fact about the probe, not the gem. |
+| `no-lib-dir` | A load path that does not exist in the archive. |
+| `no-entry-point` | Roots, but no file any tier could name. |
+| `meta-gem` | No Ruby at all — a gemspec that names dependencies, like `rails`. |
+| `ext-only` | The gem's code IS its C extension. |
+| `platform-gem` | Released only as prebuilt platform artifacts; no `ruby` gem exists. |
+| `fetch-failed` | No such gem, or the registry could not be reached. |
 
-`codegen ok` means Zeo emitted code and nothing more: no binary exists, and
-the gem's own code may not have been compiled at all — Zeo can decline a unit
-and defer it to a runtime `LoadError`, which only the `run` stage sees.
-`build` and `run` are opt-in (`--build`, `--run`).
+A panic, a timeout and a memory kill are each their own outcome rather than
+folded into `lowering-gap`: a gap is a limit Zeo REPORTED, a panic is a bug it
+did not, a timeout is the absence of a verdict, and an out-of-memory says what
+this machine could hold rather than anything about the gem.
 
-**Which backend the number measures.** The probe drives `--emit-clif`, so
-every rung measures the backend that ships. It drove `--emit-rust` until
-2026-08-21, which meant the headline number was a claim about the frozen Rust
-emitter's front end rather than about the product; the sweep that re-bases the
-ledger against Cranelift is a run of its own, and until it completes the
-committed rows are the older measurement.
+The `where` column is the site Zeo named, `<repo-relative path>:<line>`. The
+detail alone says what Zeo refused, not where — `subclassing the built-in type
+Module` names a construct that appears in dozens of files across a dependency
+tree.
 
-This was two files, split on whether the outcome was `ok`. They carried the
-same columns and one parser served both, so the split was a filter frozen into
-the filesystem — and it made `stage` read as a claim, because a reader in a
-file called `fails` infers pass/fail from the file and reads the stage on its
-own. A fix also showed up as a deletion in one file and an insertion in
-another, rather than as one changed row. `gem-probe` still READS the old pair
-if it finds them, so an older branch parses, and still refuses to run when a
-gem appears in two of them.
+## What `ok` does and does not mean
 
-### The frontier
+It means the gem's entry point reached code generation. It does **not** mean
+the gem works.
 
-The ledger holds a row for every gem the registry names, not only the ones that
-have been probed. A gem waiting for its first verdict reads:
+- Nothing is linked and nothing is run.
+- The entry point is whatever the gem calls its own. Some gems make that the
+  whole library; `actionpack`'s `action_pack.rb` is one line that requires a
+  version file. `ok` is a weak signal for the latter.
+- Zeo can decline a unit and defer it to a runtime `LoadError`, so the gem's
+  own code may not have been compiled at all.
+- A gem that compiles can still fail at run time on behaviour Zeo diverges on.
 
-```
-MARQ         queued   unprobed
-```
+Read an `ok` row as "the compiler has no objection to this source", and
+nothing more.
 
-It carries a name and nothing else — no version, no digest — so it churns only
-when rubygems gains a gem, and a diff shows exactly what the registry added.
-`queued` is ordered below every real rung, so no `stage >= ...` test counts it
-as progress.
+## The ledger is output, not source
 
-This is what makes "how much of rubygems have we measured" a question the
-committed file answers, rather than one that needs the gitignored index cache
-beside it.
+`conformance/` is not in git. The ledger is 21 MB and 195,778 rows of
+measurement, which is not an input to any build or test. A sweep writes it
+locally; a refreshed one is attached to a GitHub release by hand.
 
-```console
-$ cargo xtask gem-probe --refresh-index --seed-index   # record what is left
-$ cargo xtask gem-probe --unprobed --limit 500         # then work through it
-```
-
-Two rules keep the frontier from distorting everything else, and both are
-tested: **the denominators count gems with a verdict, never the frontier**, and
-`--failing` skips it — an unprobed gem is not a failure, and sweeping it there
-would turn "re-check what a fix moved" into a run over every gem rubygems has
-published.
-
-An ignored gem has no verdict, so it has no row — adding a name to
-`gem-probe-ignored.tsv` prunes it on the next write. Every reason there is a
-fact about the gem or the platform, never about Zeo: a gem Zeo cannot compile
-belongs in the ledger, where it counts against us. `Cartesian` is the case that
-named the file — obsolete, renamed to `cartesian`, and depending on the gem
-that replaced it, which no case-insensitive filesystem can hold beside it.
-
-Everything committed here is scrubbed of absolute paths before it is written.
-
-The registry name index is cached at `conformance/rubygems-names.txt` and is
-gitignored: ~3MB of upstream data that changes daily, and the repository
-refuses tracked files that size. `--refresh-index` takes a newer copy.
-
-**A count of gems is not a count of code.** The corpus is the dependency
-closure of the most downloaded gems, and that pulls in the whole `aws-sdk-*`
-family — well over half the rows. Those are machine-generated from one
-template, so they share one construct and fail identically: almost every one of
-them on `define_method`'s second argument. Read the corpus both ways.
-
-Excluding `aws-*` is the better signal for the language. Including them is the
-better signal for "will my Gemfile work", since a dependency that fails 400
-times still fails.
+That is also why no CI step gates on it: with neither a committed corpus nor a
+committed ledger, there is nothing for a regression check to compare against.
+A sweep is a deliberate act, run when someone wants the number.
 
 ```console
-# both ways
+# how many gems compile, in a ledger you have
 $ awk -F'\t' 'NR>1 && $4=="ok"' conformance/gem-probe.tsv | wc -l
-$ awk -F'\t' 'NR>1 && $4=="ok" && $1 !~ /^aws/' conformance/gem-probe.tsv | wc -l
-```
 
-The useful view is the clustering, not the total. Gaps concentrate into a few
-constructs, and one fix moves every gem behind it:
-
-```console
+# the most common gap, by message
 $ awk -F'\t' '$4=="lowering-gap" {print $7}' conformance/gem-probe.tsv \
-    | sed 's/(.*//' | sort | uniq -c | sort -rn
+    | sort | uniq -c | sort -rn | head -20
 ```
+
+Two traps worth knowing when reading a ledger:
+
+- **A contiguous ALPHABETICAL band of one diagnostic is a truncated sweep, not
+  a cluster.** Roughly 240 rows were once read as a real signal that way.
+- **A big cluster can be one message masking a different upstream refusal.**
+  Grep `unit declined` under `--log-level warn` first.

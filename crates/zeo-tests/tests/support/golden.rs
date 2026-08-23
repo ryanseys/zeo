@@ -12,7 +12,7 @@
 //! - `Mode::Xfail` (gaps): zeo must DIVERGE from the golden -- a match means the
 //!   gap is fixed and the test FAILS with a "promote" message.
 //!
-//! `cargo xtask bless <filter>` re-records the goldens from the real `ruby` oracle
+//! `tools/zeo-dev bless <filter>` re-records the goldens from the real `ruby` oracle
 //! (`--disable-error_highlight --disable-did_you_mean`, resolved via `mise`)
 //! instead of asserting. This is the single golden writer.
 
@@ -289,7 +289,7 @@ pub fn tests_run_cwd() -> PathBuf {
     workspace_root().join("tests")
 }
 
-// ---- normalization (ported verbatim from xtask/src/conformance/{util,runner}.rs) ----
+// ---- normalization (ported verbatim from zeo-dev/src/conformance/{util,runner}.rs) ----
 
 /// Strip a `\r` before every `\n` so goldens compare byte-exactly across OSes.
 fn normalize_crlf(bytes: &[u8]) -> Vec<u8> {
@@ -628,7 +628,7 @@ fn run_oracle(
     run_bounded(&mut cmd, stdin, "ruby oracle")
 }
 
-/// Under `cargo xtask bless`: (re)write `<rb>.expected` (+ `.err.expected`)
+/// Under `tools/zeo-dev bless`: (re)write `<rb>.expected` (+ `.err.expected`)
 /// from the oracle -- or, for a `.divergence` golden, from zeo.
 /// A stdout-only suite (`check_stderr == false`) never keeps a stderr golden:
 /// ruby's parse warnings, experimental notices and thread exception reports
@@ -789,7 +789,7 @@ pub fn run_golden_env(
         }
         Mode::Xfail if matched => Err(format!(
             "GAP FIXED -- {stem} now matches ruby. Promote it: \
-             `scripts/promote-gap.sh {stem}` (moves it + its sidecars into tests/, \
+             `tools/zeo-dev promote-gap {stem}` (moves it + its sidecars into tests/, \
              the zeo-authored suite -- NOT tests/spinel/, which mirrors the vendored \
              spinel corpus).",
             stem = rb.file_stem().unwrap_or(rb.as_os_str()).to_string_lossy()

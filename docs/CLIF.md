@@ -95,7 +95,7 @@ Three things check it:
   and it reports that too. **It currently finds five programs in
   `tests/*.rb`** — see `tests/gaps/compiled_code_releases_a_dead_slot.rb`,
   which reproduces both shapes in a few lines each.
-- valgrind, on the Linux leg (`scripts/linux/verify.sh valgrind`).
+- valgrind, on the Linux leg (`tools/zeo-dev linux valgrind`).
 
 Pool retention is the known cost: a temporary lives to the end of its
 frame, which is observable when a program watches `ObjectSpace::WeakMap`.

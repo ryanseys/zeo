@@ -4,11 +4,11 @@
 //! Two homes exist today:
 //!
 //! - **Dev tree**: the zeo repo itself. `cargo run`, the test harness, and
-//!   xtask all execute from binaries under `target/`, and the repo root (baked
+//!   zeo-dev all execute from binaries under `target/`, and the repo root (baked
 //!   in via `CARGO_MANIFEST_DIR` at compile time) is both the payload (its
 //!   `gems/`, its `crates/zeo-rt`) and the build root (its `target/`).
 //! - **Installed**: a relocatable prefix laid out as `<prefix>/bin/zeo` +
-//!   `<prefix>/share/zeo/{gems,runtime}`, assembled by `cargo xtask dist`.
+//!   `<prefix>/share/zeo/{gems,runtime}`, assembled by `tools/zeo-dev dist`.
 //!   The payload is found relative to the executable, and all build output
 //!   goes to a per-user cache -- the prefix itself is never written to (it
 //!   may be root-owned, as in a Homebrew Cellar).
@@ -142,7 +142,7 @@ fn resolve(
 }
 
 /// The embedded gems archive, staged into the published crate by
-/// `cargo xtask stage-publish`. Absent (and the cfg off) in every dev build.
+/// `tools/zeo-dev stage-publish`. Absent (and the cfg off) in every dev build.
 #[cfg(zeo_embedded_gems)]
 static EMBEDDED_GEMS: &[u8] =
     include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/gems.pregen.tar.gz"));
@@ -183,7 +183,7 @@ pub fn registry_gems_dir(cache: &Path) -> Option<PathBuf> {
     }
 }
 
-/// A payload directory is one `cargo xtask dist` laid out: the runtime
+/// A payload directory is one `tools/zeo-dev dist` laid out: the runtime
 /// workspace is the load-bearing half (`gems/` is optional -- its absence
 /// just contributes no bundled gems, as in the dev tree).
 fn payload_is_valid(payload: &Path) -> bool {
@@ -329,7 +329,7 @@ mod tests {
     }
 
     /// Runs only when a staged `gems.pregen.tar.gz` armed the embedded-gems
-    /// cfg (i.e. after `cargo xtask stage-publish`): the archive must extract
+    /// cfg (i.e. after `tools/zeo-dev stage-publish`): the archive must extract
     /// into a cache dir whose layout IS the bundled-gems dir.
     #[cfg(zeo_embedded_gems)]
     #[test]

@@ -5,7 +5,7 @@
 # Everything here is stdlib only, and everything here runs under BOTH `ruby`
 # from PATH and a zeo-compiled binary. Ruby is the mechanism: a tool that only
 # runs when zeo is correct cannot diagnose zeo when it is not, and `bless`,
-# `arity-oracle` and `gem-probe` are exactly what you reach for when something
+# `bless` and `gem-probe` are exactly what you reach for when something
 # is broken. Compiling the tools with zeo is a dogfooding signal, never the
 # way they run.
 #
@@ -34,12 +34,14 @@ module ZeoDev
   # Every command, in the order `--help` lists them.
   COMMANDS = %w[
     bless
-    arity-oracle
-    method-census
+    diff
+    promote-gap
     bench
     gem
     gemtests
     gem-probe
+    check-env-vars
+    linux
     stage-publish
     dist
   ].freeze

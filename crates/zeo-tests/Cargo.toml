@@ -24,7 +24,6 @@ insta.workspace = true
 datatest-stable.workspace = true
 # The arity drift test re-parses the runtime's DSL declarations with the same
 # grammar the macro expands, so what it checks is what the runtime registers.
-zeo-dsl = { workspace = true, features = ["spans"] }
 # : the derived manifest gems_vendored.rs reads.
 serde_json.workspace = true
 # The link-ledger tests (e2e/linkage.rs) read a linked program's sections

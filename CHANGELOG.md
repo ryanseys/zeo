@@ -36,7 +36,7 @@ The first public release.
 - **51 bundled gems** in `gems/`, resolving without a `Gemfile`.
 - **Standard-library extensions** in `crates/zeo-rt/src/ext/`, each behind a
   Ruby `require` gate and a cargo feature.
-- **Three install tiers.** A relocatable tarball from `cargo xtask dist`,
+- **Three install tiers.** A relocatable tarball from `tools/zeo-dev dist`,
   `cargo install zeo` from crates.io, and a per-platform binary gem.
 - **The disclosure record.** Where Zeo substitutes its own implementation for
   a library, the compile warns, and `--report` writes a `zeo-gems.json` record

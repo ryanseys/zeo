@@ -4,7 +4,7 @@
 //! against the CRuby oracle's golden -- seeded (`.args` carries `--seed`),
 //! wall-clock lines stubbed by the driver.
 //!
-//! The test trees come from `cargo xtask gemtests sync`
+//! The test trees come from `tools/zeo-dev gemtests sync`
 //! (`upstream.rb`'s `gemtest` entries pin them) into gitignored
 //! `vendor/gemtests/<gem>/`; when a tree hasn't been fetched the suite skips
 //! rather than failing, so a fresh clone stays green until it opts in.
@@ -30,7 +30,7 @@ fn gemtest(rb: &Path) -> datatest_stable::Result<()> {
     let vendor = golden::workspace_root().join("vendor").join("gemtests");
     let gem_root = vendor.join(&gem);
     if !gem_root.is_dir() {
-        // Fetch-on-demand: no tree, no test. `cargo xtask gemtests sync`.
+        // Fetch-on-demand: no tree, no test. `tools/zeo-dev gemtests sync`.
         return Ok(());
     }
     // A whole test file is one case; its compile splices the gem's full

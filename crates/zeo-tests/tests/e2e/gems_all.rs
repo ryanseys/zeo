@@ -1,7 +1,7 @@
 //! Every bundled gem reaches codegen.
 //!
 //! `gems/` is zeo's shipped stdlib -- ~50 trees, most of them vendored from
-//! upstream by `xtask gem`. Until this file existed nothing swept them: a
+//! upstream by `zeo-dev gem`. Until this file existed nothing swept them: a
 //! version bump could drag in a construct zeo cannot lower, and the only
 //! signal would be whichever golden happened to `require` that gem, or
 //! nothing at all for the seven gems no golden covers.

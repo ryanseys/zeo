@@ -3,7 +3,7 @@
 
 # The project's build and test automation: `tools/zeo-dev <command>`.
 #
-# Replaces `cargo run -p xtask -- <command>`. Runs on `ruby` from PATH, and
+# Runs on `ruby` from PATH, and
 # compiles with zeo for dogfooding -- see `tools/lib/zeo_dev.rb` for why ruby
 # is the mechanism and what the two engines disagree about.
 
@@ -15,12 +15,14 @@ USAGE = <<~TEXT
 
   commands:
     bless           re-record golden `.expected` files from the ruby oracle
-    arity-oracle    record `conformance/builtin-arity.tsv` from the oracle
-    method-census   record `conformance/method-census.tsv` from the oracle
+    diff            compare a snippet across ruby and zeo, and file a gap
+    promote-gap     move a fixed gap into the passing suite
     bench           the runtime performance suite under `bench/`
     gem             manage the vendored upstream gems
     gemtests        run a vendored gem's own test suite
     gem-probe       fetch a gem and record whether zeo compiles it
+    check-env-vars  every documented ZEO_* variable has a reader
+    linux           run the suites in the linux container
     stage-publish   stage the artifacts the published crate ships
     dist            assemble the relocatable distribution
 

@@ -1,4 +1,4 @@
-# The Linux verification image: what `scripts/linux/verify.sh` runs zeo in.
+# The Linux verification image: what `tools/zeo-dev linux` runs zeo in.
 #
 # zeo is developed on macOS, so Linux is the platform every linkage change
 # is unverified on until this runs -- a different linker (`ld` not `ld64`),
@@ -17,7 +17,7 @@
 # Pin the platform. After ANY amd64 pull, podman resolves `rust:latest` to
 # the cached amd64 image, and x86_64 rustc SIGSEGVs under qemu on an Apple
 # Silicon host. x86_64 coverage goes through cross-compilation from the
-# arm64 container instead (see verify.sh's `cross` stage), never emulation.
+# arm64 container instead (see the `cross` stage), never emulation.
 FROM docker.io/library/rust:latest
 
 # libclang-dev: ruby-prism-sys runs bindgen, and the rust image ships no

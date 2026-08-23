@@ -1,7 +1,7 @@
 //! The zeo-authored example programs (`tests/*.rb`) as `cargo test`/nextest
 //! cases: each compiled by zeo, run, and diffed against its committed
 //! ruby-oracle golden `.rb.expected` (stdout AND stderr). Replaces the old
-//! `xtask test`/`regen`.
+//! `zeo-dev test`/`regen`.
 //!
 //! The pattern matches the top level only, never the `tests/spinel/`,
 //! `tests/gaps/`, or `tests/bench/` subdirectories (the first two are their
@@ -9,7 +9,7 @@
 //! whole-gem programs are the gem probe's coverage, not this suite's, since
 //! each one costs minutes of rustc and bogged down every run).
 //!
-//! `cargo xtask bless examples::` re-records the goldens from ruby.
+//! `tools/zeo-dev bless examples::` re-records the goldens from ruby.
 
 #[path = "support/golden.rs"]
 mod golden;

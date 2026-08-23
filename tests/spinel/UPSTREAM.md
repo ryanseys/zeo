@@ -109,14 +109,15 @@ The corpus is run by `cargo nextest run -p zeo-tests --test spinel`
 (datatest-stable; see `crates/zeo-tests/tests/spinel.rs` +
 `crates/zeo-tests/tests/support/golden.rs`), one nextest case per `.rb`,
 diffing zeo's stdout+stderr against the committed ruby-oracle `.rb.expected`.
-`cargo run -p xtask -- bless spinel::` re-records the goldens from ruby -- and
+`tools/zeo-dev bless spinel::` re-records the goldens from ruby -- and
 is the ONLY thing that does: `golden.rs` honours `ZEO_BLESS_FROM_XTASK`, which
-only `xtask bless` sets, so a bare `ZEO_BLESS=1 cargo test` does nothing. The
+only `zeo-dev bless` sets, so a bare `ZEO_BLESS=1 cargo test` does nothing. The
 old bespoke `xtask conformance run`/scoreboard harness was retired.
 
 ## Syncing from upstream
 
-`scripts/import-spinel-corpus.sh [--refresh] [--no-triage] <SPINEL_TEST_DIR>`
+The importer that produced this corpus has been deleted; the sync below is
+historical.
 closes both drift axes, blessing every golden from the ruby 4.0.6 oracle --
 never from spinel's own `.expected`, which is oracled against ruby 3.4 and
 carries spinel's deviations.
@@ -134,8 +135,6 @@ A full sync is:
 ```sh
 cd ~/dev/spinel && git fetch upstream && git status   # confirm the sha
 cd ~/dev/zeo
-scripts/import-spinel-corpus.sh --no-triage           ~/dev/spinel/test
-scripts/import-spinel-corpus.sh --refresh --no-triage ~/dev/spinel/test
 cargo nextest run -p zeo-tests --test spinel --no-fail-fast
 # every FAIL moves to ../gaps/ with a header naming its cause
 ```

@@ -42,8 +42,6 @@ pub mod builtin_surface;
 pub mod clif;
 pub mod compiler;
 pub(crate) mod debug_flags;
-/// Hidden `zeo dev` bindings for the ruby toolchain.
-pub mod dev;
 pub mod diagnostics;
 pub mod eval;
 pub mod gem_report;
