@@ -3,12 +3,12 @@
 #
 # What runs here is deliberately small, and the reason is worth stating: every
 # other bundler entry point reaches `bundler/rubygems_ext`, which requires
-# rubygems. The method-body require hoist that used to flatten that cycle into
-# one wrongly-ordered program is FIXED; what blocks the umbrella now is eager
-# `Module#autoload` (`tests/gaps/autoload_is_lazy.rb`). Until an autoload runs
-# at the constant's first read, `Bundler::LockfileParser` and friends are
-# covered by the compile-and-register assertions in
-# `crates/zeo/tests/e2e/gems_vendored.rs` rather than here.
+# rubygems. The method-body require hoist and eager `Module#autoload` that
+# used to block that path are both FIXED (`tests/autoload_is_lazy.rb`); a
+# splice-ORDER bug in rubygems.rb still blocks the umbrella, and
+# `tests/bench/rubygems.rb`'s header carries the diagnosis. Until it lands,
+# `Bundler::LockfileParser` and friends are covered by the compile-and-register
+# assertions in `crates/zeo/tests/e2e/gems_vendored.rs` rather than here.
 require "rubygems/version" # `Bundler.gem_version` answers a `Gem::Version`
 require "bundler/version"
 

@@ -3,14 +3,20 @@
 # is written against, and they are pure computation.
 #
 # Entered at those files rather than at `rubygems`, for a reason worth stating
-# rather than hiding. The method-body require hoist that used to block the
-# umbrella is FIXED, and `require "rubygems"` now compiles and runs. What
-# blocks it now is `Module#autoload`, which zeo runs at the DECLARATION where
-# ruby runs it at the constant's first read: `rubygems.rb`'s
-# `autoload :RequestSet` pulls in `request_set/gem_dependency_api.rb` before
-# `rubygems/platform` is required, and it dies on `uninitialized constant
-# Gem::Platform`. See `tests/gaps/autoload_is_lazy.rb`, which carries the
-# diagnosis -- the fix is not a hook at the constant read.
+# rather than hiding. Two blockers under the umbrella are now FIXED: the
+# method-body require hoist, and `Module#autoload` running its target at the
+# declaration (`tests/autoload_is_lazy.rb`).
+#
+# A THIRD is still open, and is a splice-ORDER bug rather than an autoload
+# one. specification.rb's class body runs at main statement 48 while the
+# `module Gem` body holding the autoloads runs at 114, so
+# `Gem::Requirement.default` at specification.rb:157 reads a constant whose
+# declaration has not run. rubygems.rb requires specification.rb at 1418,
+# below the autoloads at 1398-1414, and nothing else requires it -- so the
+# splice moved it. A late top-level `require_relative` is NOT hoisted on its
+# own (verified with a two-file repro), so what moves this one is not yet
+# isolated. It is not filed as a gap because the program takes 149s to
+# compile, which is too slow to run on every push.
 #
 # `Gem::Platform.local` is left out for the same reason as the umbrella file:
 # it reads `Gem.target_rbconfig`, which `rubygems.rb` defines.
