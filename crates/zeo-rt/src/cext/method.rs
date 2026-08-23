@@ -145,8 +145,11 @@ pub unsafe fn method_proc(f: MethodPtr, argc: c_int) -> Result<RProc, Signal> {
     // function lives in the extension's image for the life of the process.
     let addr = f as usize;
     Ok(crate::rproc::ProcBuilder::from_rust(
-        move |recv, args, _block| {
+        move |recv, args, block| {
             let scope = Scope::enter();
+            // `rb_yield` reads the FRAME's block, and this trampoline IS the
+            // C method's frame.
+            let _block = super::call::BlockFrame::enter(block.clone());
             let this = to_value(recv)?;
             let raw: Vec<Value> = args.iter().map(to_value).collect::<Result<_, _>>()?;
 

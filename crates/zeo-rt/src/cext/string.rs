@@ -118,7 +118,7 @@ unsafe fn as_str(v: Value) -> Result<RStr, crate::Signal> {
 /// # Safety
 ///
 /// `p` must name `len` readable bytes, or a NUL-terminated string.
-unsafe fn borrow(p: *const c_char, len: c_long) -> Vec<u8> {
+pub(super) unsafe fn borrow_bytes(p: *const c_char, len: c_long) -> Vec<u8> {
     if p.is_null() {
         return Vec::new();
     }
@@ -140,32 +140,32 @@ crate::cext_fn! {
     /// `rb_str_new(ptr, len)`. Binary, as in MRI: an extension that wants a
     /// text encoding says so with `rb_utf8_str_new` or `rb_enc_str_new`.
     fn rb_str_new(p: *const c_char, len: c_long) -> Value {
-        let bytes = unsafe { borrow(p, len) };
+        let bytes = unsafe { borrow_bytes(p, len) };
         to_value(&new_str(bytes, crate::encoding::ASCII_8BIT))
     }
 
     fn rb_str_new_cstr(p: *const c_char) -> Value {
-        let bytes = unsafe { borrow(p, -1) };
+        let bytes = unsafe { borrow_bytes(p, -1) };
         to_value(&new_str(bytes, crate::encoding::ASCII_8BIT))
     }
 
     fn rb_utf8_str_new(p: *const c_char, len: c_long) -> Value {
-        let bytes = unsafe { borrow(p, len) };
+        let bytes = unsafe { borrow_bytes(p, len) };
         to_value(&new_str(bytes, crate::encoding::UTF_8))
     }
 
     fn rb_utf8_str_new_cstr(p: *const c_char) -> Value {
-        let bytes = unsafe { borrow(p, -1) };
+        let bytes = unsafe { borrow_bytes(p, -1) };
         to_value(&new_str(bytes, crate::encoding::UTF_8))
     }
 
     fn rb_usascii_str_new(p: *const c_char, len: c_long) -> Value {
-        let bytes = unsafe { borrow(p, len) };
+        let bytes = unsafe { borrow_bytes(p, len) };
         to_value(&new_str(bytes, crate::encoding::US_ASCII))
     }
 
     fn rb_usascii_str_new_cstr(p: *const c_char) -> Value {
-        let bytes = unsafe { borrow(p, -1) };
+        let bytes = unsafe { borrow_bytes(p, -1) };
         to_value(&new_str(bytes, crate::encoding::US_ASCII))
     }
 
@@ -186,21 +186,21 @@ crate::cext_fn! {
     /// is the byte-level append, and MRI does not transcode here either.
     fn rb_str_cat(v: Value, p: *const c_char, len: c_long) -> Value {
         let s = unsafe { as_str(v)? };
-        let add = unsafe { borrow(p, len) };
+        let add = unsafe { borrow_bytes(p, len) };
         s.lock().push_bytes(&add);
         Ok(v)
     }
 
     fn rb_str_buf_cat(v: Value, p: *const c_char, len: c_long) -> Value {
         let s = unsafe { as_str(v)? };
-        let add = unsafe { borrow(p, len) };
+        let add = unsafe { borrow_bytes(p, len) };
         s.lock().push_bytes(&add);
         Ok(v)
     }
 
     fn rb_str_cat_cstr(v: Value, p: *const c_char) -> Value {
         let s = unsafe { as_str(v)? };
-        let add = unsafe { borrow(p, -1) };
+        let add = unsafe { borrow_bytes(p, -1) };
         s.lock().push_bytes(&add);
         Ok(v)
     }

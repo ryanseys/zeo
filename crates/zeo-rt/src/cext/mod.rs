@@ -15,12 +15,15 @@
 //! guesses.
 
 pub mod alloc;
+pub mod call;
 pub mod collection;
 pub mod convert;
 pub mod data;
+pub mod forward;
 pub mod handles;
 pub mod jmp;
 pub mod method;
+pub mod misc;
 pub mod scope;
 pub mod string;
 pub mod stubs;

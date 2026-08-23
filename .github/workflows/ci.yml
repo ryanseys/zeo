@@ -212,6 +212,13 @@ jobs:
       # fails to LINK, with a message naming a symbol and no file or line.
       - run: tools/zeo-dev cext api --check
 
+      # The forwarding table is a set of CLAIMS that MRI's `rb_x` is exactly
+      # `Class#method`. The claims are verified against the oracle by
+      # `cext forward --reverify`, which needs ruby 4.0.6 and so never runs
+      # here; what CI checks is that the committed table and the generated
+      # Rust still agree.
+      - run: tools/zeo-dev cext forward --check
+
       # The published `zeo` crate carries pregenerated artifacts that its
       # build script would otherwise derive from sibling crates absent from
       # the .crate file. This fails if they drift from their sources.

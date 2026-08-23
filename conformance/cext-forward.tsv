@@ -1,0 +1,104 @@
+# Each row is a CLAIM: MRI's `rb_x` is exactly `Class#method`, so zeo can
+# answer it by calling that method rather than reimplementing it.
+#
+# Every row was verified against the oracle -- the class has that method,
+# and its arity accepts this many arguments. That rules out a name that
+# merely looks right (`rb_ary_entry` is not `Array#entry`). It does NOT
+# rule out a name that maps onto a real method with different SEMANTICS,
+# so `DENY` in tools/lib/zeo_dev/commands/cext.rb names the seven that do,
+# and this file is committed so every row is reviewable in a diff.
+#
+# Regenerate the Rust with `zeo-dev cext forward`; re-ask the oracle with
+# `--reverify` (needs ruby 4.0.6, so never in CI).
+symbol	class	method	args
+rb_ary_assoc	Array	assoc	1
+rb_ary_cmp	Array	<=>	1
+rb_ary_concat	Array	concat	1
+rb_ary_delete	Array	delete	1
+rb_ary_dup	Array	dup	0
+rb_ary_freeze	Array	freeze	0
+rb_ary_join	Array	join	1
+rb_ary_plus	Array	+	1
+rb_ary_rassoc	Array	rassoc	1
+rb_ary_replace	Array	replace	1
+rb_ary_reverse	Array	reverse	0
+rb_ary_sort	Array	sort	0
+rb_ary_sort_bang	Array	sort!	0
+rb_ary_to_ary	Array	to_ary	0
+rb_ary_to_s	Array	to_s	0
+rb_ary_unshift	Array	unshift	1
+rb_big_clone	Integer	clone	0
+rb_big_cmp	Integer	<=>	1
+rb_big_div	Integer	/	1
+rb_big_divmod	Integer	divmod	1
+rb_big_eql	Integer	eql?	1
+rb_big_lshift	Integer	<<	1
+rb_big_minus	Integer	-	1
+rb_big_modulo	Integer	%	1
+rb_big_plus	Integer	+	1
+rb_big_pow	Integer	**	1
+rb_class_attached_object	Class	attached_object	0
+rb_class_subclasses	Class	subclasses	0
+rb_class_superclass	Class	superclass	0
+rb_complex_abs	Complex	abs	0
+rb_complex_arg	Complex	arg	0
+rb_complex_conjugate	Complex	conjugate	0
+rb_complex_div	Complex	/	1
+rb_complex_imag	Complex	imag	0
+rb_complex_minus	Complex	-	1
+rb_complex_plus	Complex	+	1
+rb_complex_pow	Complex	**	1
+rb_complex_real	Complex	real	0
+rb_fiber_alive_p	Fiber	alive?	0
+rb_hash_delete	Hash	delete	1
+rb_hash_dup	Hash	dup	0
+rb_hash_fetch	Hash	fetch	1
+rb_hash_freeze	Hash	freeze	0
+rb_io_binmode	IO	binmode	0
+rb_io_close	IO	close	0
+rb_io_eof	IO	eof	0
+rb_io_flush	IO	flush	0
+rb_io_getbyte	IO	getbyte	0
+rb_io_gets	IO	gets	0
+rb_io_ungetbyte	IO	ungetbyte	1
+rb_io_ungetc	IO	ungetc	1
+rb_io_write	IO	write	1
+rb_mod_ancestors	Module	ancestors	0
+rb_mod_include_p	Module	include?	1
+rb_mod_included_modules	Module	included_modules	0
+rb_mod_name	Module	name	0
+rb_mod_remove_const	Module	remove_const	1
+rb_mutex_lock	Thread::Mutex	lock	0
+rb_mutex_locked_p	Thread::Mutex	locked?	0
+rb_mutex_sleep	Thread::Mutex	sleep	1
+rb_mutex_unlock	Thread::Mutex	unlock	0
+rb_obj_clone	Object	clone	0
+rb_obj_dup	Object	dup	0
+rb_obj_freeze	Object	freeze	0
+rb_obj_frozen_p	Object	frozen?	0
+rb_obj_instance_variables	Object	instance_variables	0
+rb_obj_method	Object	method	1
+rb_obj_remove_instance_variable	Object	remove_instance_variable	1
+rb_proc_lambda_p	Proc	lambda?	0
+rb_set_clear	Set	clear	0
+rb_str_concat	String	concat	1
+rb_str_dump	String	dump	0
+rb_str_equal	String	==	1
+rb_str_inspect	String	inspect	0
+rb_str_intern	String	intern	0
+rb_str_length	String	length	0
+rb_str_plus	String	+	1
+rb_str_replace	String	replace	1
+rb_str_scrub	String	scrub	1
+rb_str_succ	String	succ	0
+rb_str_times	String	*	1
+rb_str_to_str	String	to_str	0
+rb_struct_aref	Struct	[]	1
+rb_struct_aset	Struct	[]=	2
+rb_struct_members	Struct	members	0
+rb_struct_size	Struct	size	0
+rb_sym_to_s	Symbol	to_s	0
+rb_thread_kill	Thread	kill	0
+rb_thread_run	Thread	run	0
+rb_thread_wakeup	Thread	wakeup	0
+rb_time_utc_offset	Time	utc_offset	0

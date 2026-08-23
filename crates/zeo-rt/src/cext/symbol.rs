@@ -221,6 +221,10 @@ crate::cext_fn! {
 /// NUL-terminated `const char *` and a Rust `str` has no NUL. The copy is
 /// made once per symbol that is asked, which is bounded by the symbol table
 /// and is what MRI's own storage costs.
+pub(super) fn cstr_for_owned(name: &str) -> *const c_char {
+    cstr_for(Box::leak(name.to_string().into_boxed_str()))
+}
+
 fn cstr_for(name: &'static str) -> *const c_char {
     use std::sync::OnceLock;
     static CACHE: OnceLock<parking_lot::Mutex<crate::FMap<&'static str, &'static [u8]>>> =

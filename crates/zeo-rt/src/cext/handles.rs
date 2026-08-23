@@ -47,7 +47,7 @@ use crate::dispatch::ClassId;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::ffi::c_void;
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// `ruby_value_type`, from `ruby/internal/value_type.h`. Every one of these
 /// was read off the oracle with `ObjectSpace.dump`, not guessed: `Range` is
@@ -342,6 +342,33 @@ pub unsafe fn deref<'a>(v: Value) -> &'a Handle {
     // SAFETY: the caller's contract. The address came from a `Box<Handle>`
     // the table still owns, so it is valid and aligned.
     unsafe { &*(v as *const Handle) }
+}
+
+/// The `RUBY_T_*` tag a `VALUE` carries.
+///
+/// Read off the handle's own `RBasic` prefix, which is the same word
+/// `RB_BUILTIN_TYPE` reads -- so `rb_type` and the macro can never disagree.
+/// An immediate answers from its encoding, as MRI's `rb_type` does.
+///
+/// # Safety
+///
+/// `v` must be an immediate or a live handle.
+pub unsafe fn type_tag(v: Value) -> usize {
+    if let Some(imm) = value::from_immediate(v) {
+        return match imm {
+            RubyValue::Nil => 0x11,
+            RubyValue::Bool(true) => 0x12,
+            RubyValue::Bool(false) => 0x13,
+            RubyValue::Symbol(_) => t::SYMBOL,
+            RubyValue::Float(_) => t::FLOAT,
+            _ => 0x15, // T_FIXNUM
+        };
+    }
+    if v == value::Q_UNDEF {
+        return 0x16; // T_UNDEF
+    }
+    // SAFETY: the caller's contract.
+    unsafe { deref(v) }.basic.flags.load(Ordering::Relaxed) & 0x1f
 }
 
 /// How many handles are live. The scope tests read it; nothing else should.

@@ -135,12 +135,19 @@ crate::cext_fn! {
         to_value(&RubyValue::Hash(crate::value::collections::hash_new(Vec::new())))
     }
 
-    /// `rb_hash_aref`. Answers the hash's DEFAULT for a missing key, which is
-    /// what distinguishes it from `rb_hash_lookup`.
+    /// `rb_hash_aref`. Goes through `Hash#[]` rather than the storage, so a
+    /// missing key reaches the hash's DEFAULT -- including a default PROC,
+    /// which is the whole difference from `rb_hash_lookup`.
     fn rb_hash_aref(v: Value, key: Value) -> Value {
-        let h = unsafe { as_hash(v)? };
+        let hv = unsafe { value_of(v) };
+        let _ = unsafe { as_hash(v)? };
         let key = unsafe { value_of(key) };
-        to_value(&crate::value::collections::hash_get(&h, &key))
+        to_value(&crate::dispatch::send_value(
+            &hv,
+            crate::Symbol::intern("[]"),
+            &[key],
+            None,
+        )?)
     }
 
     fn rb_hash_aset(v: Value, key: Value, val: Value) -> Value {
