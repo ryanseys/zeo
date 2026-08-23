@@ -182,6 +182,10 @@ ext-all = [
     "ext-tracepoint",
     "ext-prism",
 ]
+# The C extension surface (`crates/zeo-rt/cext/`). Off by default while C0 is
+# built: an ext-free binary must stay byte-identical, and the module has to
+# dead-strip to prove it.
+cext = []
 ext-base64 = []
 ext-prism = []
 ext-coverage = []

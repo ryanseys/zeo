@@ -51,7 +51,11 @@ fn the_patched_headers_compile_a_c_extension() {
         .filter(|l| l.contains(": warning:"))
         .filter(|l| l.contains("cext/probe/") || l.contains("internal/zeo.h"))
         .collect();
-    assert!(ours.is_empty(), "zeo's own cext files warn:\n{}", ours.join("\n"));
+    assert!(
+        ours.is_empty(),
+        "zeo's own cext files warn:\n{}",
+        ours.join("\n")
+    );
 }
 
 /// The one rule the patch series exists to enforce: no macro an extension

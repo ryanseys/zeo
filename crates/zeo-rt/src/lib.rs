@@ -22,6 +22,8 @@ pub mod boxes;
 mod builtins;
 pub mod capi;
 mod catch;
+#[cfg(feature = "cext")]
+pub mod cext;
 mod civars;
 pub mod compiled_object;
 

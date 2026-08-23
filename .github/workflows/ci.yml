@@ -117,6 +117,11 @@ jobs:
       - run: cargo test -p zeo --lib -- --ignored natlibs_table_matches_rustc --nocapture
         if: runner.os == 'Linux'
 
+      # The C extension surface is off by default -- an ext-free binary has to
+      # stay byte-identical, so the module dead-strips. Its tests still have
+      # to run, and the workspace leg above cannot see them.
+      - run: cargo nextest run -p zeo-rt --features cext
+
       # nextest doesn't run doctests; keep them covered.
       - run: cargo test --workspace --doc
 
