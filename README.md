@@ -406,7 +406,7 @@ anywhere; `ZEO_HOME` overrides the search. Building a binary needs a linker
 ## Project layout
 
 ```
-crates/      the seven workspace crates (above)
+crates/      the six workspace crates (above)
 docs/        COMPATIBILITY, EXTENSIONS, EVAL, GEM_TESTING, METHOD_COVERAGE, ROADMAP
 tests/       example goldens, the spinel corpus, the gaps tracker, gemtests drivers
 gems/        65 bundled gems (upstream.rb pins the git-tracked ones)
@@ -414,7 +414,7 @@ bench/       58 benchmark programs; read bench/README.md
 conformance/ what a gem-probe sweep wrote (gitignored; measurement, not source)
 vendor/      rubygems and fetched test trees (gitignored)
 tools/       the Ruby toolchain: `tools/zeo-dev <command>`, plus table generators
-scripts/     corpus import, gap promotion, ruby-against-zeo comparison
+Dockerfile   the linux verification image (`tools/zeo-dev linux`)
 ```
 
 ---

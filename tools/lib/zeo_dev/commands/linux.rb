@@ -4,11 +4,11 @@ require "fileutils"
 
 module ZeoDev
   module Commands
-    # Run zeo's suites on Linux, in the container `scripts/linux/Dockerfile`
+    # Run zeo's suites on Linux, in the container the repo-root `Dockerfile`
     # builds. The stand-in for a CI leg, and the only place the Linux link
     # path is exercised at all.
     #
-    # Every stage tees its output to `scripts/linux/logs/<stage>.log`. The
+    # Every stage tees its output to `target/linux-logs/<stage>.log`. The
     # container runs `--rm`, so its own logs die with it -- a run whose output
     # only existed there could not be read back.
     #
@@ -88,12 +88,14 @@ module ZeoDev
       def memory = ENV["ZEO_LINUX_MEMORY"] || "10g"
       def volume = ENV["ZEO_LINUX_VOLUME"] || "zeo-linux-target"
       def engine = ENV["ZEO_CONTAINER_ENGINE"] || "podman"
-      def logs = File.join(ROOT, "scripts", "linux", "logs")
+      # Under `target/`, which is already ignored -- a verification log is
+      # build output, not something to keep.
+      def logs = File.join(ROOT, "target", "linux-logs")
 
       def stage(name)
         tag = name.gsub(/[^A-Za-z0-9_.-]+/, "_")
         FileUtils.mkdir_p(logs)
-        puts "=== linux: #{name}  (log: scripts/linux/logs/#{tag}.log)"
+        puts "=== linux: #{name}  (log: target/linux-logs/#{tag}.log)"
         run_in_container(script_for(name), tag)
       end
 

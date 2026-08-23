@@ -12,7 +12,7 @@
 # in the mounted repo pins the version, and rustup honours it on first use,
 # so a toolchain bump needs no image rebuild.
 #
-#   podman build --platform linux/arm64 -t zeo-linux -f scripts/linux/Dockerfile .
+#   podman build --platform linux/arm64 -t zeo-linux .
 #
 # Pin the platform. After ANY amd64 pull, podman resolves `rust:latest` to
 # the cached amd64 image, and x86_64 rustc SIGSEGVs under qemu on an Apple
