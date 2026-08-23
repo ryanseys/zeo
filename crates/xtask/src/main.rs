@@ -18,7 +18,7 @@
 //!   (`bin/zeo` + `share/zeo/{gems,runtime}`) and its tarball -- the single
 //!   artifact the GitHub Release, Homebrew, and the platform gems all carry
 //!   (see `dist.rs`).
-//! - `xtask stage-publish [--check]`: stages the two artifacts the published
+//! (moved to `tools/zeo-dev`)
 //!   `zeo` crate ships but the repo does not commit -- the pregenerated class
 //!   surface and the embedded gems archive (see `stage_publish.rs`).
 //!
@@ -33,7 +33,6 @@ mod exec;
 mod gem_probe;
 mod jobs;
 mod method_census;
-mod stage_publish;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -59,13 +58,11 @@ fn main() -> ExitCode {
         Some("gem-probe") => gem_probe::main(&root, &args),
         Some("arity-oracle") => arity_oracle::main(&root, &args),
         Some("method-census") => method_census::main(&root, &args),
-        Some("stage-publish") => stage_publish::main(&root, &args),
         Some("dist") => dist::main(&root, &args),
         _ => {
             eprintln!(
                 "usage: cargo run -p xtask -- \
-                 <bench|bless|gem-probe|arity-oracle|method-census|\
-                 stage-publish|dist>"
+                 <gem-probe|dist>"
             );
             ExitCode::FAILURE
         }

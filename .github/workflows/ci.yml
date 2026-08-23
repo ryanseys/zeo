@@ -197,7 +197,7 @@ jobs:
       # The published `zeo` crate carries pregenerated artifacts that its
       # build script would otherwise derive from sibling crates absent from
       # the .crate file. This fails if they drift from their sources.
-      - run: cargo run -p xtask -- stage-publish --check
+      - run: tools/zeo-dev stage-publish --check
 
       # A gem that compiled and no longer does is a regression. This re-probes
       # the ledger at the versions it records, so it needs BOTH the cached
@@ -232,7 +232,7 @@ jobs:
       # read are absent from the .crate file.
       - name: packages list cleanly and carry their pregen artifacts
         run: |
-          cargo run -p xtask -- stage-publish
+          tools/zeo-dev stage-publish
           for c in zeo-abi zeo-dsl zeo-macros zeo-rt zeo; do
             n=$(cargo package -p "$c" --list --allow-dirty | wc -l)
             echo "$c: $n files"
