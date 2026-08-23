@@ -35,6 +35,7 @@ capi_symbols!(
     literals::zeo_rt_array_push,
     dispatch::zeo_rt_array_push_splat,
     lifecycle::zeo_rt_at_exit_register,
+    objects::zeo_rt_autoload_touch,
     dispatch::zeo_rt_bare_super_outside_a_method,
     values::zeo_rt_bignum_from_decimal,
     bind::zeo_rt_bind_block_params,

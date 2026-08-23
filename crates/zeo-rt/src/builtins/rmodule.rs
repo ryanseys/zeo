@@ -313,6 +313,74 @@ fn pending_autoloads()
     &MAP
 }
 
+/// Whether any `autoload` is still unloaded. A constant read consults the
+/// map only when this is set, so a program that declares none pays one
+/// relaxed load per gated read and nothing else.
+pub static ANY_PENDING_AUTOLOAD: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Records `path` as the target of `owner::name`, and arms the gate.
+pub fn register_autoload(owner: u32, name: String, path: String) {
+    pending_autoloads().lock().insert((owner, name), path);
+    ANY_PENDING_AUTOLOAD.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The autoload target `owner::name` still owes, if it has one. Reading the
+/// constant is what runs it in ruby, so this is the read's own question.
+pub fn take_autoload_target(owner: u32, name: &str) -> Option<String> {
+    if !ANY_PENDING_AUTOLOAD.load(std::sync::atomic::Ordering::Relaxed) {
+        return None;
+    }
+    let mut pending = pending_autoloads().lock();
+    let path = pending.remove(&(owner, name.to_string()))?;
+    ANY_PENDING_AUTOLOAD.store(!pending.is_empty(), std::sync::atomic::Ordering::Relaxed);
+    Some(path)
+}
+
+/// Whether `owner::name` still owes an autoload target.
+pub fn has_pending_autoload(owner: u32, name: &str) -> bool {
+    pending_autoloads()
+        .lock()
+        .contains_key(&(owner, name.to_string()))
+}
+
+/// The target `owner::name` owes, without spending the registration.
+fn peek_autoload_target(owner: u32, name: &str) -> Option<String> {
+    if !ANY_PENDING_AUTOLOAD.load(std::sync::atomic::Ordering::Relaxed) {
+        return None;
+    }
+    pending_autoloads()
+        .lock()
+        .get(&(owner, name.to_string()))
+        .cloned()
+}
+
+/// Runs the autoload target `owner::name` owes, if any. This is the point
+/// ruby loads at: the constant's first READ.
+///
+/// A target whose load raises goes back to pending -- ANY class, not just
+/// `LoadError`. CRuby runs nothing until the access, so "declared, never
+/// loaded" is exactly its state, and `load_feature` leaves the unit
+/// retryable so a program that reaches the constant again still sees the
+/// error.
+pub fn run_pending_autoload(owner: u32, name: &str) -> Result<(), crate::Signal> {
+    let Some(path) = peek_autoload_target(owner, name) else {
+        return Ok(());
+    };
+    match crate::features::load_feature(&path) {
+        // Loaded: the registration is spent, and `autoload?` answers nil.
+        Some(Ok(_)) => {
+            take_autoload_target(owner, name);
+            Ok(())
+        }
+        Some(Err(e)) => Err(e),
+        // No such feature. The registration STAYS -- reading the constant is
+        // what owes the `LoadError`, and `const_miss_signal` raises it from
+        // the record left here.
+        None => Ok(()),
+    }
+}
+
 /// What a constant MISS raises. A name registered by an `autoload` whose
 /// feature never loaded owes a `LoadError`, because reading the constant is
 /// what triggers the load in ruby and so it is what fails; every other miss
@@ -1052,58 +1120,18 @@ ruby_class! {
         // Ruby announces an autoload at DECLARATION time, not when the file
         // finally loads (`rb_autoload_str`, `variable.c:2890`) -- and on every
         // declaration, re-declaring the same name included (oracle-verified).
-        pending_autoloads()
-            .lock()
-            .insert((recv_cid(recv).0, name.clone()), path.clone());
+        register_autoload(recv_cid(recv).0, name.clone(), path.clone());
         crate::runtime_meta::fire_const_added(recv_cid(recv), &name)?;
-        // zeo loads the target HERE rather than on first reference to the
-        // constant: the constant is already registered (a compiled-in unit's
-        // classes are in the dispatch tables from startup), so there is no
-        // miss left to trigger a lazy load. Same eagerness the compile-time
-        // `autoload :Const, "literal"` splice has always had -- see
-        // `crate::features` -- and it is what makes an `autoload` DSL written
-        // in plain Ruby work: the path it computed lands on a real load.
+        // A compiled-in unit runs at the constant's first READ, which is
+        // ruby's own point. The read cannot MISS -- a unit's classes are in
+        // the dispatch tables from startup -- so the emitter gates the read
+        // instead (`zeo_rt_autoload_touch`), and this row only records.
         if crate::features::has_feature(&path) {
-            // Declared while a unit load is on the stack: the declarer (and
-            // its whole require chain) must finish before the target runs --
-            // it may read constants they define below the declaration point.
-            // The queue drains at outermost-load return; eager main-line
-            // declarations keep the immediate load below.
-            if crate::features::defer_autoload_target(&path) {
-                return Ok(RubyValue::Nil);
-            }
-            match crate::features::load_feature(&path).transpose() {
-                Ok(_) => {
-                    pending_autoloads()
-                        .lock()
-                        .remove(&(recv_cid(recv).0, name.clone()));
-                }
-                // CRuby runs NOTHING at declaration, so a target whose load
-                // raises `LoadError` (a dependency the program does not ship,
-                // e.g. an optional differ requiring an absent gem) must not
-                // fail here either: the registration stays pending -- exactly
-                // the state CRuby is in -- and the error surfaces if the
-                // feature is ever actually required (`load_feature` leaves a
-                // failed unit retryable). Every other exception class stays
-                // loud: it is a real bug in code this program does load.
-                Err(sig) => {
-                    let is_load_error = match &sig {
-                        crate::Signal::Raise(RubyValue::Object(o)) => {
-                            crate::dispatch::is_a(o.class_id(), zeo_abi::LOAD_ERROR_CLASS)
-                        }
-                        _ => false,
-                    };
-                    if !is_load_error {
-                        return Err(sig);
-                    }
-                }
-            }
+            return Ok(RubyValue::Nil);
         } else if crate::builtins::kernel::feature_already_loaded(&path) {
             // Spliced at compile time: the constant is already defined, and
             // CRuby answers `nil` from `autoload?` once a feature has loaded.
-            pending_autoloads()
-                .lock()
-                .remove(&(recv_cid(recv).0, name.clone()));
+            take_autoload_target(recv_cid(recv).0, &name);
         }
         // A target that is not on the load path raises NOTHING here. Ruby
         // registers an autoload without touching the file, so a declaration

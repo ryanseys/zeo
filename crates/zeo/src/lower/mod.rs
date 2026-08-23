@@ -1746,6 +1746,18 @@ fn computed_relative_demand_dir(call: &CallNode<'_>) -> Option<std::path::PathBu
 /// error: the splice target must be known at compile time (like a
 /// non-top-level `require`). The caller has already confirmed `call` is a
 /// receiver-less `autoload`. `pub(super)` for the loader's pre-pass.
+/// The constant an `autoload :Const, "feature"` names, when its first
+/// argument is a literal symbol. `None` for a computed one, which the
+/// compiler cannot gate and the runtime row loads eagerly instead.
+pub fn autoload_const_name(call: &CallNode<'_>) -> Option<String> {
+    let args: Vec<_> = call
+        .arguments()
+        .map(|a| a.arguments().iter().collect())
+        .unwrap_or_default();
+    let sym = args.first()?.as_symbol_node()?;
+    Some(String::from_utf8_lossy(sym.unescaped()).into_owned())
+}
+
 pub fn autoload_feature(call: &CallNode<'_>) -> PResult<String> {
     let args: Vec<_> = call
         .arguments()

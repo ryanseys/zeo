@@ -148,6 +148,32 @@ pub unsafe extern "C" fn zeo_rt_const_get_at(
     }
 }
 
+/// Run the `autoload` target `owner::name` still owes, before the read that
+/// asked for it resolves.
+///
+/// A constant a compiled-in unit provides is in the tables from startup, so
+/// the read never misses and no `const_missing` hook can carry this. The
+/// emitter therefore gates the read itself -- see `clif::expr`'s fold. The
+/// gate is one relaxed load when the program declared no autoload.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_autoload_touch(
+    owner: u32,
+    name: *const u8,
+    name_len: usize,
+) -> i32 {
+    if !crate::builtins::rmodule::ANY_PENDING_AUTOLOAD.load(std::sync::atomic::Ordering::Relaxed) {
+        return STATUS_OK;
+    }
+    let name = unsafe { super::str_slice(name, name_len) };
+    match crate::builtins::rmodule::run_pending_autoload(owner, name) {
+        Ok(()) => STATUS_OK,
+        Err(sig) => {
+            crate::signal::set_pending(sig);
+            STATUS_SIGNAL
+        }
+    }
+}
+
 /// A global variable read (`$foo`) from box `box_id`'s table. Never-assigned
 /// = nil (Ruby's rule), so this is infallible. The `$!`/`$?` specials read
 /// dedicated runtime slots and have their own entries below.
@@ -321,6 +347,25 @@ pub const CONST_CREF_HOOK: u8 = 1;
 /// tail past the box's surrogate reaches the MASTER constants.
 pub const CONST_CREF_MASTER: u8 = 2;
 
+/// Runs the `autoload` any of `owners` declared for `name`, and answers
+/// whether one did. The retry a MISSING constant owes: a target whose body
+/// assigns the constant leaves no class registered, so the read misses and
+/// this is where ruby would have loaded.
+///
+/// Costs one relaxed load when the program declared no autoload.
+fn autoload_retry(owners: &[u32], name: &str) -> Result<bool, crate::Signal> {
+    if !crate::builtins::rmodule::ANY_PENDING_AUTOLOAD.load(std::sync::atomic::Ordering::Relaxed) {
+        return Ok(false);
+    }
+    for &owner in owners {
+        if crate::builtins::rmodule::has_pending_autoload(owner, name) {
+            crate::builtins::rmodule::run_pending_autoload(owner, name)?;
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// A BARE constant read resolved through its compile-time cref chain:
 /// `ids` = the owner first, then each enclosing cref scope, then the top
 /// (the emitter's `emit_const_read` order); each entry searches its own
@@ -361,6 +406,22 @@ pub unsafe extern "C" fn zeo_rt_const_get_cref(
         unsafe { out.write(v) };
         return STATUS_OK;
     }
+    match autoload_retry(ids, name) {
+        Ok(true) => {
+            for &id in ids {
+                if let Some(v) = crate::constants::const_get(id, name) {
+                    super::leakcheck::created(&v);
+                    unsafe { out.write(v) };
+                    return STATUS_OK;
+                }
+            }
+        }
+        Ok(false) => {}
+        Err(sig) => {
+            crate::signal::set_pending(sig);
+            return STATUS_SIGNAL;
+        }
+    }
     if flags & CONST_CREF_HOOK != 0 && crate::dispatch::user_const_missing(ClassId(ids[0])) {
         return status_out(crate::dispatch::const_miss(ClassId(ids[0]), name), out);
     }
@@ -394,8 +455,24 @@ pub unsafe extern "C" fn zeo_rt_const_get_scoped(
             unsafe { out.write(v) };
             STATUS_OK
         }
-        None if hook != 0 => status_out(crate::dispatch::const_miss(ClassId(owner), name), out),
         None => {
+            match autoload_retry(&[owner], name) {
+                Ok(true) => {
+                    if let Some(v) = crate::constants::const_get_scoped(owner, name) {
+                        super::leakcheck::created(&v);
+                        unsafe { out.write(v) };
+                        return STATUS_OK;
+                    }
+                }
+                Ok(false) => {}
+                Err(sig) => {
+                    crate::signal::set_pending(sig);
+                    return STATUS_SIGNAL;
+                }
+            }
+            if hook != 0 {
+                return status_out(crate::dispatch::const_miss(ClassId(owner), name), out);
+            }
             let qualified = unsafe { super::str_slice(qualified, qualified_len) };
             crate::signal::set_pending(crate::builtins::rmodule::const_miss_signal(
                 ClassId(owner),

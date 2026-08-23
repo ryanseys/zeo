@@ -1047,7 +1047,7 @@ impl Loader {
             // hoisted differ.rb ahead of the whole module statement.
             let mut autoloads = Vec::new();
             collect_autoloads(&n, &mut autoloads);
-            for call in &autoloads {
+            for Autoload { call, scope } in &autoloads {
                 // Only a target this pass can NAME is registered. A computed
                 // one -- including the one-argument form an `autoload` DSL
                 // defines over `Module#autoload` -- is left to run: its
@@ -1069,6 +1069,15 @@ impl Loader {
                     continue;
                 }
                 if let Ok(Some((path, package))) = self.resolve_require(&feature) {
+                    // The constant this target provides. A read of it must
+                    // run the unit, and it cannot miss to ask -- so record
+                    // the path the emitter gates.
+                    if let Some(name) = crate::lower::autoload_const_name(call) {
+                        let mut full = scope.clone();
+                        full.push(name);
+                        hir.autoload_consts.insert(full.join("::"));
+                        hir.autoload_features.insert(feature.clone());
+                    }
                     hir.single_unit_demand.insert((
                         package.or_else(|| hir.lowering_package.clone()),
                         path,
@@ -1640,8 +1649,25 @@ impl Loader {
                 continue; // already spliced: it runs at its own position
             }
             let absolute = canonical.with_extension("").to_string_lossy().into_owned();
+            // An autoload unit has NOT run when the program starts, so every
+            // constant its body assigns is undefined until a read triggers
+            // it. The keys this splice adds are exactly those.
+            let gated = hir.autoload_features.contains(&feature);
+            let before: Vec<String> = match gated {
+                true => hir.const_write_names().cloned().collect(),
+                false => Vec::new(),
+            };
             match self.splice_file(hir, &canonical, None, package.clone(), 0) {
                 Ok(body) => {
+                    if gated {
+                        let before: std::collections::BTreeSet<&String> = before.iter().collect();
+                        let fresh: Vec<String> = hir
+                            .const_write_names()
+                            .filter(|k| !before.contains(k))
+                            .cloned()
+                            .collect();
+                        hir.unrun_unit_consts.extend(fresh);
+                    }
                     for lf in hir
                         .loaded_files
                         .iter_mut()
@@ -2497,28 +2523,51 @@ impl<'pr> ruby_prism::Visit<'pr> for RequireCollector<'pr> {
 /// genuinely runtime-dynamic, like a non-top-level `require`); it lowers to a
 /// no-op without a splice, so its constant stays undefined -- a loud
 /// NameError on reference, not silent, and documented.
-fn collect_autoloads<'a>(node: &ruby_prism::Node<'a>, out: &mut Vec<ruby_prism::CallNode<'a>>) {
+fn collect_autoloads<'a>(node: &ruby_prism::Node<'a>, out: &mut Vec<Autoload<'a>>) {
+    collect_autoloads_in(node, &mut Vec::new(), out);
+}
+
+/// One collected `autoload`, with the lexical path its constant hangs off.
+/// The path is what the constant READ resolves against, which is where the
+/// load has to be gated.
+struct Autoload<'a> {
+    call: ruby_prism::CallNode<'a>,
+    scope: Vec<String>,
+}
+
+fn collect_autoloads_in<'a>(
+    node: &ruby_prism::Node<'a>,
+    scope: &mut Vec<String>,
+    out: &mut Vec<Autoload<'a>>,
+) {
     if let Some(stmts) = node.as_statements_node() {
         for n in stmts.body().iter() {
-            collect_autoloads(&n, out);
+            collect_autoloads_in(&n, scope, out);
         }
     } else if let Some(m) = node.as_module_node() {
         if let Some(body) = m.body() {
-            collect_autoloads(&body, out);
+            scope.push(String::from_utf8_lossy(m.name().as_slice()).into_owned());
+            collect_autoloads_in(&body, scope, out);
+            scope.pop();
         }
     } else if let Some(c) = node.as_class_node() {
         if let Some(body) = c.body() {
-            collect_autoloads(&body, out);
+            scope.push(String::from_utf8_lossy(c.name().as_slice()).into_owned());
+            collect_autoloads_in(&body, scope, out);
+            scope.pop();
         }
     } else if let Some(sc) = node.as_singleton_class_node() {
         if let Some(body) = sc.body() {
-            collect_autoloads(&body, out);
+            collect_autoloads_in(&body, scope, out);
         }
     } else if let Some(call) = node.as_call_node()
         && call.receiver().is_none()
         && call.name().as_slice() == b"autoload"
     {
-        out.push(call);
+        out.push(Autoload {
+            call,
+            scope: scope.clone(),
+        });
     }
 }
 

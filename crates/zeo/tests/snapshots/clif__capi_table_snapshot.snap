@@ -8,6 +8,7 @@ zeo_rt_array_len ([Ptr]) -> Some(Usize)
 zeo_rt_array_new ([Usize, Ptr]) -> None
 zeo_rt_array_push ([Ptr, Ptr]) -> None
 zeo_rt_array_push_splat ([Ptr, Ptr]) -> Some(I32)
+zeo_rt_autoload_touch ([U32, Ptr, Usize]) -> Some(I32)
 zeo_rt_bare_super_outside_a_method ([]) -> Some(I32)
 zeo_rt_bind_block_params ([Ptr, U8, Ptr, Usize, Ptr, Ptr]) -> Some(I32)
 zeo_rt_bind_params ([Ptr, Ptr, Usize, Ptr, Ptr]) -> Some(I32)

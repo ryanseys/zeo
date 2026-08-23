@@ -2328,12 +2328,39 @@ fn short_circuit(fx: &mut Fx, a: NodeId, b: NodeId, keep_truthy: bool) -> Result
 }
 
 /// The Class-immediate materialization for an already-resolved id.
+/// Runs the `autoload` target `cid`'s constant still owes, before the read
+/// resolves. Emitted only for a constant a literal `autoload` named, and the
+/// runtime call itself is one relaxed load when nothing is pending.
+fn emit_autoload_touch(fx: &mut Fx, cid: crate::compiler::ClassId) {
+    let fq = fx.an.compiler.fq_name(cid);
+    if !fx.an.compiler.hir.autoload_consts.contains(&fq) {
+        return;
+    }
+    let owner = fx
+        .an
+        .compiler
+        .class(cid)
+        .lexical_parent
+        .unwrap_or(crate::compiler::OBJECT_CLASS);
+    let leaf = fq.rsplit("::").next().unwrap_or(&fq).to_string();
+    let owner_v = fx.b.ins().iconst(types::I32, i64::from(owner.0));
+    let (nptr, nlen) = rodata_name(fx, &leaf);
+    let st = fx
+        .call("zeo_rt_autoload_touch", &[owner_v, nptr, nlen])
+        .expect("autoload_touch returns a status");
+    fx.fallible(st);
+}
+
 fn class_value_of(
     fx: &mut Fx,
     _id: NodeId,
     _name: &str,
     cid: crate::compiler::ClassId,
 ) -> Result<Operand, String> {
+    // A constant a literal `autoload` names: the READ is what runs the
+    // target, and a compiled-in unit's classes are registered from startup,
+    // so nothing misses and no hook can carry it. Gate the fold instead.
+    emit_autoload_touch(fx, cid);
     // Registered but not PROMISED: whether a runtime-conditional class's
     // constant exists is settled by the guarded body having run, so the
     // reference asks -- `NameError` until `reveal_class` fires there.
@@ -3332,7 +3359,15 @@ fn lower_defined(fx: &mut Fx, site: NodeId, inner: NodeId) -> Result<Operand, St
             defining_class: fx.defining_class.or(fx.method_class),
             box_id: 0,
         };
-        if crate::analyze::constfold::const_form_resolves(&env, inner) != Some(true) {
+        // An autoload unit's own assignment does not exist until the unit
+        // runs, so the write the compiler can see is not an answer -- ask.
+        // A scope-less write is keyed by its LEAF, so both spellings count;
+        // matching one too many only costs the fold, never the answer.
+        let unrun = {
+            let set = &fx.an.compiler.hir.unrun_unit_consts;
+            set.contains(&name) || set.contains(&format!("{scope}::{name}"))
+        };
+        if unrun || crate::analyze::constfold::const_form_resolves(&env, inner) != Some(true) {
             let Some(scope_id) = resolve_class_here(fx, &scope) else {
                 // A scope only the run time can name (`Scoped = Module.new`)
                 // -- or one nothing ever defines, where reading it raises

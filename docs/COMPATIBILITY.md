@@ -598,21 +598,21 @@ the fact they report is resolved at COMPILE time and left no runtime record:
   for one that does not. `[]` is exactly what CRuby answers for a constant
   defined in C, and every Zeo constant is: codegen resolves a constant path
   statically and the store keeps no file or line.
-- **`#autoload` loads EAGERLY, never lazily.** Zeo splices a literal
-  `autoload :C, "feature"` at compile time and lowers the call to a no-op, so
-  the constant is already defined and `#autoload?` answers `nil` — CRuby's own
-  answer once a feature has loaded. A computed target (including the
-  one-argument form an `autoload` DSL defines over `Module#autoload`, as
-  `ActiveSupport::Autoload` does) reaches the runtime row, which loads the unit
-  compiled in for it — at the `autoload` call, not at first reference to the
-  constant. A compiled-in class is in the dispatch tables from startup, so
-  there is no constant miss left to trigger a lazy load. Two consequences: a
-  file an autoload names always loads even if nothing ever references the
-  constant, and a later `require` of that same feature answers `false` where
-  CRuby answers `true` (CRuby had not loaded it yet). An `autoload` naming a
-  feature that is not compiled in raises `LoadError` at the declaration, where
-  CRuby would raise it only if something referenced the constant — a loud
-  failure in place of a constant that could never appear.
+- **`#autoload` runs its target at the first constant READ**, as CRuby does.
+  A literal `autoload :C, "feature"` compiles the target in as a lazy unit and
+  keeps the call; the declaration only records. Because a compiled-in class is
+  in the dispatch tables from startup, no constant MISS is left to trigger the
+  load, so the emitter gates the READ instead (`zeo_rt_autoload_touch`), and a
+  miss retries through the same table. `#autoload?` answers the path until the
+  target runs and `nil` after, and a constant the target's body ASSIGNS is
+  undefined until then.
+
+  Two limits remain. Reading the constant BEFORE the declaration runs loads the
+  target, where CRuby raises `NameError` — the compile-time gate has no
+  document position. And a target that names a feature which is not compiled in
+  is loaded eagerly by the runtime row, because a computed path (including the
+  one-argument form `ActiveSupport::Autoload` defines) leaves the compiler
+  nothing to gate.
 - **`#refinements` is empty.** The compiler mints a `Refinement` module per
   `refine` block and marks it, but records no back-link to the refining
   module. Refined dispatch and `Refinement#target` are unaffected.

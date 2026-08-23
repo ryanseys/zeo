@@ -4,9 +4,9 @@
 # hoisted the target's body ahead of the whole `module` statement, so the
 # helper did not exist yet and the load raised NoMethodError.
 #
-# KNOWN DIVERGENCE (unobserved here): zeo runs the target when the
-# `autoload` DECLARATION executes; CRuby waits for the first constant
-# access. The target is side-effect-free so both orders print alike.
+# The target now runs at the constant's first ACCESS, as CRuby's does --
+# see `autoload_is_lazy.rb`. The divergence this header used to record is
+# gone; the shape is kept because it is the one the eager splice broke.
 module Outer
   module Foo
     puts "body-1"

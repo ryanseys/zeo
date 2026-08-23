@@ -383,6 +383,24 @@ pub struct Hir {
     /// known.
     pub single_unit_demand:
         std::collections::BTreeSet<(Option<String>, std::path::PathBuf, String)>,
+    /// Every constant a literal `autoload` names whose target is compiled in
+    /// as a unit, spelled as the FULL path a read resolves to (`Gem::Platform`,
+    /// or a bare `Platform` for a top-level one).
+    ///
+    /// Such a constant is in the tables from startup, so a read never misses
+    /// and no hook can run the unit. The emitter gates the read itself: see
+    /// `zeo_rt_autoload_touch`. Without the gate the row had to load at the
+    /// DECLARATION, which ran a target before the statements above it.
+    pub autoload_consts: std::collections::BTreeSet<String>,
+    /// The features those constants' targets name -- how `materialize_units`
+    /// tells an autoload unit from any other single-file demand.
+    pub autoload_features: std::collections::BTreeSet<String>,
+    /// Constants an autoload unit's body ASSIGNS. They do not exist until the
+    /// unit runs, so `defined?` must ask at run time rather than answer from
+    /// the write the compiler can see. A class the unit defines is a
+    /// different case -- it is registered from startup, and
+    /// [`autoload_consts`](Self::autoload_consts) gates the read of it.
+    pub unrun_unit_consts: std::collections::BTreeSet<String>,
     /// Every `FFI::Struct` subclass's computed layout, keyed by LEAF class
     /// name like `ffi_types` -- how a later `attach_function` resolves a
     /// struct passed by value. Source-order like the rest of the FFI table:
@@ -984,6 +1002,12 @@ impl Hir {
             };
             self.const_writes.entry(key).or_default().push(*value);
         }
+    }
+
+    /// Every constant path something assigns so far, in the spelling
+    /// [`const_writes`](Self::const_writes) keys by.
+    pub fn const_write_names(&self) -> impl Iterator<Item = &String> {
+        self.const_writes.keys()
     }
 
     /// The values assigned to the constant spelled `name` so far, in push
