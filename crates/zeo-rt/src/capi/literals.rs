@@ -246,6 +246,21 @@ pub unsafe extern "C" fn zeo_rt_str_append_value(s: *const RubyValue, v: *const 
     }
 }
 
+/// Where a run-time `eval`'s regexp-literal site ids begin, and the same
+/// hazard `flipflop::EVAL_BASE` names: a program's sites are dense from zero
+/// and minted by ONE compile, and a snippet's fresh compiler starts at zero
+/// again. Sharing the space made a snippet's literal answer the program's
+/// cached regexp -- a silently wrong match, not an error.
+const EVAL_SITE_BASE: u32 = 1 << 20;
+
+static NEXT_EVAL_SITE: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(EVAL_SITE_BASE);
+
+/// Reserve `n` consecutive regexp-literal site ids for one compiled snippet.
+pub fn reserve_regexp_sites(n: u32) -> u32 {
+    NEXT_EVAL_SITE.fetch_add(n, std::sync::atomic::Ordering::Relaxed)
+}
+
 /// A NON-INTERPOLATED regexp literal: ONE frozen object per SITE (the
 /// rustc backend's per-site `RegexpSite` static, keyed here by the
 /// emitter-assigned site id). A bad pattern raises `RegexpError` with the

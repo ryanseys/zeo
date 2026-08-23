@@ -702,6 +702,16 @@ fn site_addrs() -> &'static std::sync::RwLock<std::collections::HashMap<u32, usi
     SITE_ADDRS.get_or_init(Default::default)
 }
 
+/// A run-time `eval`'s symbol-site ids, held apart from the program's the
+/// way `capi::literals::reserve_regexp_sites` holds regexp literals apart.
+/// A collision here resolves a call to ANOTHER site's C function.
+static NEXT_EVAL_SITE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1 << 20);
+
+/// Reserve `n` consecutive symbol-site ids for one compiled snippet.
+pub fn reserve_sym_sites(n: u32) -> u32 {
+    NEXT_EVAL_SITE.fetch_add(n, std::sync::atomic::Ordering::Relaxed)
+}
+
 #[cfg(feature = "ext-ffi")]
 fn cached_site(site: u32) -> Option<*const c_void> {
     site_addrs()

@@ -890,6 +890,10 @@ pub(crate) struct Emitter {
     /// `attach_function` call-site ids -- one resolved C symbol address
     /// per site in the runtime, the rustc per-site `FfiSymSite` twin.
     pub ffi_sites: u32,
+    /// Whether this unit is a run-time `eval`. Both caches above live in the
+    /// RUNNING process, so a snippet's fresh counter would answer the
+    /// program's cached object; a snippet mints from the runtime instead.
+    pub eval_sites: bool,
     /// Line coverage: whether the program activated it, and the statement
     /// lines stamped so far (the `def` lines it never stamps come from
     /// `analyze::coverage::def_lines`). Empty in a program without the
@@ -1015,11 +1019,31 @@ impl Emitter {
             fn_index: 0,
             regexp_sites: 0,
             ffi_sites: 0,
+            eval_sites: false,
             cov_active: false,
             cov_lines: std::collections::BTreeMap::new(),
             clif_text: None,
             debug: None,
         })
+    }
+
+    /// The next regexp-literal site id: the runtime's own space for a
+    /// snippet, this unit's dense counter otherwise.
+    pub(crate) fn mint_regexp_site(&mut self) -> u32 {
+        if self.eval_sites {
+            return zeo_rt::capi::literals::reserve_regexp_sites(1);
+        }
+        self.regexp_sites += 1;
+        self.regexp_sites - 1
+    }
+
+    /// [`Emitter::mint_regexp_site`]'s twin for an `attach_function` site.
+    pub(crate) fn mint_ffi_site(&mut self) -> u32 {
+        if self.eval_sites {
+            return zeo_rt::ffi::reserve_sym_sites(1);
+        }
+        self.ffi_sites += 1;
+        self.ffi_sites - 1
     }
 
     /// `bytes`' offset in the rodata blob (deduplicated).

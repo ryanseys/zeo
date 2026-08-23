@@ -2941,8 +2941,7 @@ fn regexp_lit(
                 StrPart::Interp(_) => unreachable!("static parts only"),
             }
         }
-        let site = fx.em.regexp_sites;
-        fx.em.regexp_sites += 1;
+        let site = fx.em.mint_regexp_site();
         let site_v = fx.b.ins().iconst(types::I32, i64::from(site));
         let off = fx.em.intern_rodata(source.as_bytes());
         let ptr = fx.rod(off);

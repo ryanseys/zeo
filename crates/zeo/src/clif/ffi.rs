@@ -94,8 +94,7 @@ pub(crate) fn lower_ffi_call(fx: &mut Fx, site: NodeId, call: &FfiCall) -> Resul
 /// `FfiSymSite`).
 fn resolve_symbol(fx: &mut Fx, call: &FfiCall) -> cranelift_codegen::ir::Value {
     use zeo_abi::abi::{FFI_SYM_LIB, FFI_SYM_LIB_OR_PROCESS, FFI_SYM_PROCESS};
-    let id = fx.em.ffi_sites;
-    fx.em.ffi_sites += 1;
+    let id = fx.em.mint_ffi_site();
     let site_v = fx.b.ins().iconst(types::I32, i64::from(id));
     let (sym_ptr, sym_len) = super::expr::rodata_name(fx, &call.symbol);
     let addr_ss =
