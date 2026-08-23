@@ -1436,6 +1436,15 @@ pub(crate) fn constructor_of(id: ClassId) -> Option<ConstructorFn> {
 /// registered allocator, or a runtime (`Class.new`) class's name-keyed object.
 /// `None` for modules/builtins (handled at the `allocate` call site).
 pub(crate) fn allocate_of(id: ClassId) -> Option<RubyValue> {
+    // A C extension's `rb_define_alloc_func` wins, and has to: it is what
+    // makes `Foo.new` produce a TypedData rather than a plain object, and
+    // every later `RTYPEDDATA_DATA` on the result depends on it. Checking it
+    // FIRST is also what CRuby does -- the C allocator replaces whatever the
+    // class had.
+    #[cfg(feature = "cext")]
+    if let Some(v) = crate::cext::method::c_allocate(id) {
+        return Some(v);
+    }
     if let Some(v) = REGISTRY.get().and_then(|r| r.allocate_instance(id)) {
         return Some(v);
     }

@@ -1453,11 +1453,88 @@ fn cmd_str(v: &RubyValue) -> Result<String, Signal> {
 /// command (a blank single string), which the callers turn into their own
 /// "nothing ran" answer.
 fn build_command(args: &[RubyValue]) -> Result<Option<Command>, Signal> {
+    // Ruby's shape is `system([env,] command..., [options])`: a LEADING Hash
+    // is the environment and a TRAILING one is options. Neither is a command
+    // argument, and treating one as a string is how `{"CC"=>"cc"}` ends up
+    // on a command line -- which is what mkmf's `xsystem` produced.
+    let (env, args, opts) = peel_hashes(args);
     if args.is_empty() {
         return Err(arg_error!(
             "wrong number of arguments (given 0, expected 1+)"
         ));
     }
+    let mut cmd = build_argv(args)?;
+    if let (Some(cmd), Some(env)) = (cmd.as_mut(), env) {
+        apply_env(cmd, env)?;
+    }
+    if let (Some(cmd), Some(opts)) = (cmd.as_mut(), opts) {
+        apply_options(cmd, opts)?;
+    }
+    Ok(cmd)
+}
+
+/// `(env, command words, options)`. A single Hash with nothing after it is
+/// the COMMAND's, not the environment's -- `system({...})` is not a shape
+/// Ruby accepts, and reading it as an env would silently run nothing.
+fn peel_hashes(args: &[RubyValue]) -> (Option<&RubyValue>, &[RubyValue], Option<&RubyValue>) {
+    let mut rest = args;
+    let mut env = None;
+    if rest.len() > 1 && matches!(rest[0], RubyValue::Hash(_)) {
+        env = Some(&rest[0]);
+        rest = &rest[1..];
+    }
+    let mut opts = None;
+    if rest.len() > 1
+        && let Some(last) = rest.last()
+        && matches!(last, RubyValue::Hash(_))
+    {
+        opts = Some(last);
+        rest = &rest[..rest.len() - 1];
+    }
+    (env, rest, opts)
+}
+
+/// The env Hash: a nil value UNSETS, which is how Ruby spells "run without
+/// this variable" and is not the same as setting it empty.
+fn apply_env(cmd: &mut Command, env: &RubyValue) -> Result<(), Signal> {
+    let RubyValue::Hash(h) = env else {
+        return Ok(());
+    };
+    let pairs: Vec<(RubyValue, RubyValue)> = h
+        .lock()
+        .iter()
+        .map(|(_, (k, v))| (k.clone(), v.clone()))
+        .collect();
+    for (k, v) in pairs {
+        let key = cmd_str(&k)?;
+        match v {
+            RubyValue::Nil => cmd.env_remove(key),
+            v => cmd.env(key, cmd_str(&v)?),
+        };
+    }
+    Ok(())
+}
+
+/// The options Hash. Only `:chdir` is honoured; the redirection keys need
+/// the child's file descriptors, which `Command` sets up elsewhere. An
+/// option zeo does not act on is IGNORED rather than refused -- MRI raises
+/// for an unknown key, but every key here is one MRI knows, and refusing a
+/// known key would break a caller that passes it harmlessly.
+fn apply_options(cmd: &mut Command, opts: &RubyValue) -> Result<(), Signal> {
+    let RubyValue::Hash(h) = opts else {
+        return Ok(());
+    };
+    let chdir = crate::value::collections::hash_lookup(
+        h,
+        &RubyValue::Symbol(crate::Symbol::intern("chdir")),
+    );
+    if let Some(dir) = chdir {
+        cmd.current_dir(cmd_str(&dir)?);
+    }
+    Ok(())
+}
+
+fn build_argv(args: &[RubyValue]) -> Result<Option<Command>, Signal> {
     if args.len() == 1 {
         let s = cmd_str(&args[0])?;
         if needs_shell(&s) {

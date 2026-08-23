@@ -154,7 +154,7 @@ module ZeoDev
           # the `cext_fn!` macro that wraps a `Result` body into one.
           src = File.read(f)
           src.scan(/#\[unsafe\(no_mangle\)\]\s*(?:pub\s+)?(?:unsafe\s+)?extern "C" fn (\w+)/) +
-            src.scan(/^\s*fn (rb_\w+|ruby_\w+)\s*\(/)
+            src.scan(/^\s*fn (rb_\w+|ruby_\w+|rbimpl_zeo_\w+)\s*\(/)
         end.flatten.concat(implemented_in_c).to_set
       end
 
@@ -163,7 +163,7 @@ module ZeoDev
       # it would leave a duplicate symbol at link time.
       def implemented_in_c
         Dir.glob(File.join(ROOT, "crates/zeo-rt/csrc/*.c")).flat_map do |f|
-          File.read(f).scan(/^(?:\w[\w *]*?)\b((?:rb|ruby|st)_\w+)\s*\([^;]*$/).flatten
+          File.read(f).scan(/^(?:\w[\w *]*?)\b((?:rb|ruby|st|rbimpl_zeo)_\w+)\s*\([^;]*$/).flatten
         end
       end
 
@@ -209,8 +209,13 @@ module ZeoDev
       # A linkable declaration is one clang did NOT mark `static inline`: that
       # marker is the whole difference between a macro-shaped helper the gem
       # compiles itself and a symbol it expects zeo to provide.
-      FN = /FunctionDecl 0x\h+ (?:prev 0x\h+ )?<[^>]*> (?:line|col):\S+ (?:used |referenced )?((?:rb|ruby)_\w+) '([^']*)'\s*$/
-      VAR = /VarDecl 0x\h+ (?:prev 0x\h+ )?<[^>]*> (?:line|col):\S+ (?:used |referenced )?((?:rb|ruby)_\w+) '([^']*)'(?::'[^']*')? extern\s*$/
+      # `rbimpl_zeo_*` is in the set because the PATCH introduces those, and
+      # the promise is that every DECLARED symbol resolves -- not every one
+      # upstream declares. `RTYPEDDATA_DATA` expands to
+      # `rbimpl_zeo_data_slot`, which was invisible here and defined nowhere,
+      # so msgpack linked and failed at load.
+      FN = /FunctionDecl 0x\h+ (?:prev 0x\h+ )?<[^>]*> (?:line|col):\S+ (?:used |referenced )?((?:rb|ruby|rbimpl_zeo)_\w+) '([^']*)'\s*$/
+      VAR = /VarDecl 0x\h+ (?:prev 0x\h+ )?<[^>]*> (?:line|col):\S+ (?:used |referenced )?((?:rb|ruby|rbimpl_zeo)_\w+) '([^']*)'(?::'[^']*')? extern\s*$/
 
       def parse_ast(text)
         seen = {}

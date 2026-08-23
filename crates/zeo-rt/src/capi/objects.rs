@@ -45,6 +45,30 @@ pub unsafe extern "C" fn zeo_rt_class_new_instance(
     out: *mut RubyValue,
 ) -> i32 {
     let id = ClassId(cid);
+    // A C extension may have called `rb_define_alloc_func` on this class
+    // AFTER it was compiled -- `msgpack` reopens `MessagePack::Factory` in
+    // Ruby, so the call site is bound to the compiled allocator while the
+    // object has to be a TypedData. The emitter's gate is a compile-time
+    // decision and cannot see a run-time `Init_`, so the interception is
+    // here, at the one entry every static `Foo.new` reaches.
+    #[cfg(feature = "cext")]
+    if let Some(alloc) = crate::cext::method::c_allocate(id) {
+        let args = if argc == 0 {
+            &[]
+        } else {
+            unsafe { std::slice::from_raw_parts(argv, argc) }
+        };
+        let block = if blk.is_null() {
+            None
+        } else {
+            super::leakcheck::consumed(unsafe { &*blk });
+            Some(unsafe { std::ptr::read(blk) })
+        };
+        let init =
+            crate::dispatch::send_value(&alloc, crate::Symbol::intern("initialize"), args, block)
+                .map(|_| alloc);
+        return status_out(init, out);
+    }
     let layout = match compiled_object::layout_of(id) {
         Some(l) => l,
         None => panic!("zeo_rt_class_new_instance: no layout registered for class {cid}"),

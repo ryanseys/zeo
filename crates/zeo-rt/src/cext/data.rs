@@ -414,3 +414,171 @@ mod tests {
         assert_eq!(FREED.load(Ordering::Relaxed), 1);
     }
 }
+
+/// The runtime halves of the macros `patches/0001` turned into calls.
+///
+/// These are `rbimpl_zeo_*` rather than `rb_*` because they are ZEO's, not
+/// MRI's: a gem never writes one, and `ruby/internal/zeo.h` is the only
+/// header that declares them. That is also why the census missed them at
+/// first -- it scanned for `rb_`/`ruby_`/`st_` and these are none of those,
+/// so `RTYPEDDATA_DATA` in msgpack linked against a symbol nothing defined.
+///
+/// It scans for `rbimpl_zeo_` now, and `every_patched_helper_is_defined`
+/// checks the headers against the runtime.
+mod patched {
+    use super::{CData, DataType};
+    use crate::RubyValue;
+    use crate::cext::value::Value;
+    use std::ffi::{c_char, c_void};
+
+    /// The `CData` a `VALUE` names, or the raise for a `VALUE` that is not
+    /// one. Every entry here is reached from a MACRO, so the receiver was
+    /// never type-checked by a function signature.
+    ///
+    /// # Safety
+    ///
+    /// `v` must be a live `VALUE`.
+    unsafe fn cdata<'a>(v: Value) -> Result<&'a CData, crate::Signal> {
+        let val = unsafe { crate::cext::convert::value_of(v) };
+        let RubyValue::Object(o) = &val else {
+            return Err(wrong(&val));
+        };
+        // SAFETY: the object outlives the handle that names it, and the
+        // handle is pinned by the caller's scope.
+        let d: &CData = o
+            .as_any()
+            .downcast_ref::<CData>()
+            .ok_or_else(|| wrong(&val))?;
+        Ok(unsafe { std::mem::transmute::<&CData, &'a CData>(d) })
+    }
+
+    fn wrong(v: &RubyValue) -> crate::Signal {
+        crate::dispatch::raise_error(
+            "TypeError",
+            format!(
+                "wrong argument type {} (expected T_DATA)",
+                crate::dispatch::class_name(v.class_id()).unwrap_or("Object".into())
+            ),
+        )
+    }
+
+    crate::cext_fn! {
+        /// `DATA_PTR(obj)` and `RTYPEDDATA_DATA(obj)`, which are both an
+        /// LVALUE -- `DATA_PTR(o) = p` is a real idiom -- so this answers the
+        /// ADDRESS of the slot and the macro dereferences it.
+        fn rbimpl_zeo_data_slot(v: Value) -> *mut *mut c_void {
+            Ok(unsafe { cdata(v)? }.slot())
+        }
+
+        /// `RTYPEDDATA_TYPE(obj)`. Null for the untyped `Data_Wrap_Struct`
+        /// form, which is what `RTYPEDDATA_P` tests.
+        fn rbimpl_zeo_typeddata_type(v: Value) -> *const DataType {
+            Ok(unsafe { cdata(v)? }.data_type())
+        }
+
+        /// `RREGEXP_SRC(re)`: the pattern String.
+        fn rbimpl_zeo_regexp_src(re: Value) -> Value {
+            let r = unsafe { crate::cext::convert::value_of(re) };
+            let src = crate::cext::object::send(&r, "source", &[])?;
+            crate::cext::convert::to_value(&src)
+        }
+
+        /// `RREGEXP_PTR(re)`: the compiled `regex_t` inside the Regexp.
+        ///
+        /// zeo's Regexp is an onig pattern its own engine owns, and handing
+        /// out that pointer would let an extension call onig against a
+        /// pattern zeo may recompile. `rb_reg_prepare_re` is MRI's supported
+        /// way to get one, and it is refused for the same reason -- so this
+        /// refuses rather than answering a pointer that looks usable.
+        fn rbimpl_zeo_regexp_ptr_slot(_re: Value) -> *mut *mut c_void {
+            Err(crate::dispatch::raise_error(
+                "NotImplementedError",
+                "RREGEXP_PTR reaches into the compiled pattern, which zeo's \
+                 regexp engine owns; use Regexp's own methods"
+                    .into(),
+            ))
+        }
+
+        /// `RMATCH_REGS(match)`: onig's `re_registers` for a MatchData.
+        /// Refused for the reason `RREGEXP_PTR` is -- `MatchData#offset` and
+        /// `#begin` answer the same numbers through the object.
+        fn rbimpl_zeo_match_regs(_m: Value) -> *mut c_void {
+            Err(crate::dispatch::raise_error(
+                "NotImplementedError",
+                "RMATCH_REGS reaches into onig's register array, which zeo's \
+                 MatchData does not expose; use MatchData#begin and #offset"
+                    .into(),
+            ))
+        }
+
+        /// Every other layout macro `patches/0001` could not answer. The
+        /// macro passes its own name, so the raise says which one -- a bare
+        /// "not implemented" would leave the caller reading the patch to
+        /// find out what it asked for.
+        fn rbimpl_zeo_unsupported_ptr(what: *const c_char) -> *mut c_void {
+            let name = unsafe { crate::cext::object::cstr(what) };
+            Err(crate::dispatch::raise_error(
+                "NotImplementedError",
+                format!("{name} reads an object layout zeo does not have"),
+            ))
+        }
+    }
+}
+
+#[cfg(test)]
+mod patched_tests {
+    /// Every `rbimpl_zeo_*` the patched headers name must be a real symbol.
+    ///
+    /// This is the check that was missing. The census scans for
+    /// `rb_`/`ruby_`/`st_`, so a helper the PATCH introduced was invisible to
+    /// it -- `RTYPEDDATA_DATA` linked against nothing and msgpack failed at
+    /// load with a symbol name and no other clue.
+    #[test]
+    fn every_patched_helper_is_defined() {
+        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/cext/include");
+        let mut wanted: Vec<String> = Vec::new();
+        collect(std::path::Path::new(root), &mut wanted);
+        wanted.sort();
+        wanted.dedup();
+        assert!(!wanted.is_empty(), "the patched headers name no helpers");
+
+        // The runtime's own list, from the files that define them.
+        let sources = [
+            include_str!("data.rs"),
+            include_str!("string.rs"),
+            include_str!("collection.rs"),
+        ];
+        for name in &wanted {
+            let defined = sources.iter().any(|s| s.contains(&format!("fn {name}(")));
+            assert!(
+                defined,
+                "{name} is declared in ruby/internal/zeo.h and defined nowhere"
+            );
+        }
+    }
+
+    fn collect(dir: &std::path::Path, out: &mut Vec<String>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                collect(&path, out);
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let mut rest = text.as_str();
+            while let Some(at) = rest.find("rbimpl_zeo_") {
+                let tail = &rest[at..];
+                let end = tail
+                    .find(|c: char| !c.is_alphanumeric() && c != '_')
+                    .unwrap_or(tail.len());
+                out.push(tail[..end].to_string());
+                rest = &tail[end..];
+            }
+        }
+    }
+}

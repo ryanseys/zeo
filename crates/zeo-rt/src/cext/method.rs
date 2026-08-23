@@ -198,6 +198,42 @@ pub unsafe fn method_proc(f: MethodPtr, argc: c_int) -> Result<RProc, Signal> {
 static ALLOC_FUNCS: std::sync::Mutex<Option<std::collections::HashMap<u32, usize>>> =
     std::sync::Mutex::new(None);
 
+/// Run a class's C allocator, if it has one. `dispatch::allocate_of` asks.
+///
+/// A raise from inside the allocator travels: it is an ordinary Ruby raise
+/// by the time it leaves `protect`, which is what a `rescue` around
+/// `Foo.new` expects.
+pub fn c_allocate(owner: ClassId) -> Option<RubyValue> {
+    let addr = ALLOC_FUNCS
+        .lock()
+        .ok()
+        .and_then(|g| g.as_ref().and_then(|m| m.get(&owner.0).copied()))?;
+    let scope = Scope::enter();
+    let this = to_value(&RubyValue::Class(owner)).ok()?;
+    // SAFETY: the extension registered this function for exactly this call,
+    // and it lives in the loaded image for the life of the process.
+    let out = super::jmp::protect(|| {
+        let f: unsafe extern "C" fn(Value) -> Value =
+            unsafe { std::mem::transmute(addr as *const c_void) };
+        unsafe { f(this) }
+    });
+    match out {
+        Ok(v) => {
+            scope.keep(v);
+            let answer = unsafe { value_of(v) };
+            drop(scope);
+            Some(answer)
+        }
+        Err(sig) => {
+            drop(scope);
+            // `allocate_of` answers an Option, so the raise has to travel the
+            // other way -- the pending slot is how every capi entry does it.
+            crate::signal::set_pending(sig);
+            None
+        }
+    }
+}
+
 fn remember_alloc_func(owner: ClassId, addr: usize) {
     if let Ok(mut g) = ALLOC_FUNCS.lock() {
         g.get_or_insert_with(std::collections::HashMap::new)
@@ -355,61 +391,19 @@ crate::cext_fn! {
     /// `rb_define_alloc_func(klass, f)`. The allocator runs for `Klass.new`
     /// before `initialize`, and is how a TypedData class gets its struct.
     ///
-    /// zeo's own allocator hook is a plain `fn(ClassId) -> RObj` with no room
-    /// for a captured C pointer, so this installs the pair of singleton
-    /// methods `Class#new` is DEFINED as instead: `allocate`, and a `new`
-    /// that calls it and then `initialize`. That is the same two steps in the
-    /// same order, expressed where a closure fits.
+    /// It is RECORDED rather than installed as a singleton `allocate`.
+    /// Installing one worked for a class the C half created and only that:
+    /// `msgpack` reopens `MessagePack::Factory` in Ruby, so zeo registers the
+    /// class at compile time and `Factory.new` binds to the registered
+    /// allocator -- a plain object, which the very next `RTYPEDDATA_DATA`
+    /// rejects. `dispatch::allocate_of` is the one funnel every path reaches,
+    /// so that is where the answer belongs.
     fn rb_define_alloc_func(klass: Value, f: unsafe extern "C" fn(Value) -> Value) -> () {
         let owner = unsafe { as_class(klass)? };
-        let addr = f as usize;
-        // `rb_get_alloc_func` reads this back. Nothing else can: the
-        // allocator is inside a closure by the time it is installed.
-        remember_alloc_func(owner, addr);
-        let cls = RubyValue::Class(owner);
-
-        let alloc = move |recv: &RubyValue, _args: &[RubyValue], _b: Option<RubyValue>| {
-            let scope = Scope::enter();
-            let this = to_value(recv)?;
-            let out = super::jmp::protect(|| {
-                // SAFETY: the extension registered this function for exactly
-                // this call.
-                let f: unsafe extern "C" fn(Value) -> Value =
-                    unsafe { std::mem::transmute(addr as *const c_void) };
-                unsafe { f(this) }
-            })?;
-            scope.keep(out);
-            let answer = unsafe { value_of(out) };
-            drop(scope);
-            Ok(answer)
-        };
-        let allocate =
-            crate::rproc::ProcBuilder::from_rust(alloc, cls.clone(), 0, true).build();
-        crate::runtime_meta::runtime_define_singleton_method(
-            &cls,
-            Symbol::intern("allocate"),
-            allocate,
-        )?;
-
-        // `Class#new` IS allocate-then-initialize. Spelling it out keeps the
-        // C allocator on the path a plain `Klass.new` takes.
-        let new = crate::rproc::ProcBuilder::from_rust(
-            move |recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>| {
-                let obj = crate::dispatch::send_value(recv, Symbol::intern("allocate"), &[], None)?;
-                crate::dispatch::send_value(&obj, Symbol::intern("initialize"), args, block)?;
-                Ok(obj)
-            },
-            cls.clone(),
-            -1,
-            true,
-        )
-        .build();
-        crate::runtime_meta::runtime_define_singleton_method(&cls, Symbol::intern("new"), new)?;
+        remember_alloc_func(owner, f as usize);
         Ok(())
     }
 
-    /// `rb_undef_alloc_func(klass)`. Leaves the class unable to allocate,
-    /// which is what an extension asks for on a class only IT may build.
     fn rb_undef_alloc_func(klass: Value) -> () {
         let owner = unsafe { as_class(klass)? };
         let cls = RubyValue::Class(owner);

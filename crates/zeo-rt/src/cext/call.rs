@@ -369,13 +369,33 @@ fn rescued_by(exc: &RubyValue, classes: &[RubyValue]) -> bool {
 /// Build the exception `rb_raise` asks for. `exc` is a class in every census
 /// use; an instance is accepted too, because `rb_raise(rb_eArgError, ...)`
 /// and `rb_raise(some_exception, ...)` are spelled the same.
+/// Build and throw `class.new(msg)`.
+///
+/// Through `exception`/`new` on the CLASS OBJECT, not through
+/// `raise_error(name)`. The name-keyed path reads a registry of classes the
+/// COMPILER knew about, and an extension's own exception class is not one --
+/// `msgpack`'s `MessagePack::MalformedFormatError` is defined inside `Init_`,
+/// so a `rb_raise` naming it panicked with "no such class registered" instead
+/// of raising something a `rescue` could catch.
 fn raise_with(class: &RubyValue, msg: String) -> Signal {
-    match class {
-        RubyValue::Class(cid) => match crate::dispatch::class_name(*cid) {
-            Some(name) => crate::dispatch::raise_error(&name, msg),
-            None => crate::dispatch::raise_error("RuntimeError", msg),
-        },
-        other => Signal::Raise(other.clone()),
+    let RubyValue::Class(_) = class else {
+        // Already an exception INSTANCE, which `rb_raise` also accepts.
+        return Signal::Raise(class.clone());
+    };
+    let text = crate::builtins::string::str_value_in_enc(crate::encoding::UTF_8, &msg);
+    // `exception` is the protocol `raise` itself uses, and a class that
+    // overrides it -- several gems do, to attach state -- is honoured.
+    match crate::dispatch::send_value(class, Symbol::intern("exception"), &[text], None) {
+        Ok(exc) => Signal::Raise(exc),
+        // A class with neither `exception` nor `new` cannot be raised at all;
+        // saying which class beats a bare RuntimeError.
+        Err(_) => crate::dispatch::raise_error(
+            "TypeError",
+            format!(
+                "exception class/object expected: {}",
+                crate::dispatch::class_name(class.class_id()).unwrap_or("Object".into())
+            ),
+        ),
     }
 }
 

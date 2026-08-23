@@ -438,12 +438,14 @@ Zeo is experimental. The known limits, all of them deliberate and recorded:
   counts rather than tracing, because zeo's lowering declares no stack maps
   for Cranelift to build root sets from.
 - **C extensions are source-only.** A gem that ships its C compiles and
-  loads; 947 of the 980 `rb_*` entry points are answered, and the 33 that are
-  not each raise with the reason (they boot an interpreter, or expose a
-  representation Zeo does not have). A gem shipping a *precompiled* `.so`
-  never loads: that object is CRuby's ABI. Autotools and `mini_portile`
-  builds of a vendored C library are out of scope; `have_library` works.
-  Loading an extension arms the GVL process-wide.
+  loads -- `fast_blank`, `bcrypt` and `msgpack` all build and answer, and
+  bcrypt reproduces a published OpenBSD test vector byte for byte. The
+  `rb_*` entry points a gem can link against are answered except for 33,
+  and each of those raises with the reason (they boot an interpreter, or
+  expose a representation Zeo does not have). A gem shipping a *precompiled*
+  `.so` never loads: that object is CRuby's ABI. Autotools and
+  `mini_portile` builds of a vendored C library are out of scope;
+  `have_library` works. Loading an extension arms the GVL process-wide.
 - **`Ruby::Box` isolation is partial.** A box works at compile time and at
   run time — `Ruby::Box.new`, `box.eval`, `box.require` and `Box.current` all
   answer — and it isolates constants and globals. What it does not yet isolate

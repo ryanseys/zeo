@@ -254,8 +254,33 @@ pub fn pin(v: &RubyValue) -> Option<Value> {
     }
     let tag = builtin_type(v)?;
     let addr = with_table(|t| intern(t, v, tag));
+    // A CLASS handle never unpins.
+    //
+    // Every `Init_` opens with `cFoo = rb_define_class(...)` and stores the
+    // `VALUE` in a C static that outlives the call. On MRI that is safe
+    // because a class is never collected. Here the handle is a box the scope
+    // pop frees, and the allocator hands the same address to the next
+    // handle -- so `msgpack`'s `cMessagePack_Packer` came back as a
+    // `Factory`, and `TypedData_Wrap_Struct` wrapped the wrong class.
+    //
+    // A class costs one box and its ClassId is stable for the process, so
+    // keeping it is both cheap and exactly MRI's own guarantee. Anything
+    // else an extension stores past its scope still needs
+    // `rb_gc_register_address`, as it does on MRI.
+    if is_immortal(v) {
+        return Some(addr.0);
+    }
     super::scope::pin(addr.0);
     Some(addr.0)
+}
+
+/// Whether a handle for `v` never unpins.
+///
+/// A predicate rather than an inline match: the end-to-end proof is a gem
+/// loading, and this is the half a unit test can look at -- `pin` itself
+/// needs the class registry to answer a `RUBY_T_*` tag at all.
+fn is_immortal(v: &RubyValue) -> bool {
+    matches!(v, RubyValue::Class(_))
 }
 
 fn intern(t: &mut Table, v: &RubyValue, tag: usize) -> Addr {
@@ -413,6 +438,33 @@ mod tests {
 
     fn a_string(s: &str) -> RubyValue {
         crate::builtins::string::str_value_in_enc(crate::encoding::UTF_8, s)
+    }
+
+    /// A CLASS handle never unpins. Every `Init_` stores `cFoo` in a C
+    /// static that outlives the call, and a freed box's address gets reused
+    /// -- `cMessagePack_Packer` came back as a `Factory`, and
+    /// `TypedData_Wrap_Struct` wrapped the wrong class.
+    ///
+    /// The decision is what is on trial: `pin` needs the class registry to
+    /// answer a tag at all, and a unit test installs none. The end-to-end
+    /// proof is msgpack loading.
+    #[test]
+    fn only_a_class_handle_is_immortal() {
+        assert!(is_immortal(&RubyValue::Class(zeo_abi::OBJECT_CLASS)));
+        assert!(!is_immortal(&a_string("mortal")));
+        assert!(!is_immortal(&RubyValue::Nil));
+    }
+
+    /// An ordinary handle DOES unpin, which is what keeps the table bounded.
+    #[test]
+    fn a_string_handle_goes_with_its_scope() {
+        let before = live_count();
+        {
+            let _scope = super::super::scope::Scope::enter();
+            pin(&a_string("mortal")).expect("a String has a handle");
+            assert_eq!(live_count(), before + 1);
+        }
+        assert_eq!(live_count(), before, "a scope pop left a handle behind");
     }
 
     #[test]

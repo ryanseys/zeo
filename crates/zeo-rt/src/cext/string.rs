@@ -34,7 +34,8 @@ use std::ffi::{c_char, c_int, c_long};
 
 /// One pinned string's bytes: what C sees, and what to write back into.
 struct Pin {
-    owner: RStr,
+    /// WEAK, and that is the whole lifetime rule -- see [`pin_bytes`].
+    owner: std::sync::Weak<crate::Freezable<crate::encoding::StrBuf>>,
     /// `len` bytes, then a NUL, then one guard byte the copy-back checks.
     buf: Vec<u8>,
     len: usize,
@@ -45,25 +46,53 @@ struct Pin {
 const GUARD: u8 = 0xA5;
 
 thread_local! {
-    /// Pinned strings, innermost scope last. Keyed by the payload address, so
-    /// two `RSTRING_PTR` calls on one string answer one pointer.
+    /// Pinned strings, keyed by the payload address, so two `RSTRING_PTR`
+    /// calls on one string answer one pointer.
     static PINS: RefCell<Vec<(usize, Box<Pin>)>> = const { RefCell::new(Vec::new()) };
 }
 
-/// A stable, writable `char *` for `s`, valid until the enclosing scope pops.
+/// A stable, writable `char *` for `s`.
+///
+/// # The lifetime, and why it is the string's and not the scope's
+///
+/// It was the scope's, and that was wrong. An extension is allowed to KEEP
+/// the pointer: `msgpack`'s `Unpacker#feed_reference` stores it in the
+/// buffer and holds the String `VALUE` beside it, which on MRI is exactly
+/// what keeps the bytes valid -- the reference keeps the object alive and
+/// the bytes live in the object. Freeing zeo's copy when the C call returned
+/// left `full_unpack` reading released memory, and it answered plausible
+/// integers rather than crashing.
+///
+/// So the pin lives as long as the STRING does. The `owner` is a `Weak`, and
+/// a pin whose string is gone is evicted at the next scope pop -- so the
+/// pointer is valid for exactly the window MRI's is, and no longer.
+///
+/// A re-pin REFRESHES: Ruby may have rewritten the string since, and the
+/// buffer is a copy. A length change reallocates, which moves the address --
+/// MRI's `RSTRING_PTR` moves on a resize too, and an extension holding one
+/// across a Ruby-side mutation is wrong on both.
 fn pin_bytes(s: &RStr) -> *mut c_char {
     let key = std::sync::Arc::as_ptr(s) as *const () as usize;
+    let (bytes, len) = {
+        let g = s.lock();
+        (g.bytes().to_vec(), g.bytesize())
+    };
     PINS.with_borrow_mut(|pins| {
         if let Some((_, pin)) = pins.iter_mut().find(|(k, _)| *k == key) {
+            if pin.len != len || pin.buf[..pin.len] != bytes[..] {
+                pin.buf.clear();
+                pin.buf.extend_from_slice(&bytes);
+                pin.buf.push(0);
+                pin.buf.push(GUARD);
+                pin.len = len;
+            }
             return pin.buf.as_mut_ptr().cast();
         }
-        let bytes = s.lock().bytes().to_vec();
-        let len = bytes.len();
         let mut buf = bytes;
         buf.push(0);
         buf.push(GUARD);
         let mut pin = Box::new(Pin {
-            owner: s.clone(),
+            owner: std::sync::Arc::downgrade(s),
             buf,
             len,
         });
@@ -73,25 +102,35 @@ fn pin_bytes(s: &RStr) -> *mut c_char {
     })
 }
 
-/// Write every pinned string back, and drop the pins.
+/// Write every pinned string back, and evict the ones whose string is gone.
 ///
 /// Called from [`super::scope::Scope`]'s pop, and from the longjmp unwind, so
 /// a raise does not lose a write the extension had already made.
+///
+/// The write-back happens here and the BUFFER stays -- see [`pin_bytes`] for
+/// why the two have different lifetimes.
 pub(super) fn flush_pins() {
-    let pins = PINS.with_borrow_mut(std::mem::take);
-    for (_, pin) in pins {
-        assert_eq!(
-            pin.buf[pin.len + 1],
-            GUARD,
-            "a C extension wrote past the end of a string it got from RSTRING_PTR"
-        );
-        let bytes = &pin.buf[..pin.len];
-        let mut guard = pin.owner.lock();
-        if guard.bytes() != bytes {
-            let enc = guard.encoding();
-            guard.replace_bytes(bytes.to_vec(), enc);
-        }
-    }
+    PINS.with_borrow_mut(|pins| {
+        pins.retain_mut(|(_, pin)| {
+            let Some(owner) = pin.owner.upgrade() else {
+                // The string is gone, so nothing can hold a pointer into it
+                // that was not already dangling on MRI too.
+                return false;
+            };
+            assert_eq!(
+                pin.buf[pin.len + 1],
+                GUARD,
+                "a C extension wrote past the end of a string it got from RSTRING_PTR"
+            );
+            let bytes = &pin.buf[..pin.len];
+            let mut guard = owner.lock();
+            if guard.bytes() != bytes {
+                let enc = guard.encoding();
+                guard.replace_bytes(bytes.to_vec(), enc);
+            }
+            true
+        });
+    });
 }
 
 /// The `RStr` behind a `VALUE`, or a `TypeError` naming what arrived.
@@ -842,6 +881,67 @@ mod tests {
         let copy = unsafe { rb_str_dup(raw) };
         assert_ne!(copy, raw, "dup answered the same object");
         assert_eq!(bytes_of(&unsafe { value_of(copy) }), b"orig");
+    }
+
+    /// The pin outlives the SCOPE, because an extension is allowed to keep
+    /// the pointer. `msgpack`'s `Unpacker#feed_reference` stores it and
+    /// holds the String beside it, which on MRI is what keeps the bytes
+    /// valid -- freeing zeo's copy at scope pop made `full_unpack` read
+    /// released memory and answer plausible integers.
+    #[test]
+    fn a_pinned_pointer_survives_the_scope_that_made_it() {
+        let s = a_string("held across the boundary");
+        let RubyValue::Str(rs) = &s else {
+            panic!("not a String")
+        };
+        let p = {
+            let _scope = Scope::enter();
+            pin_bytes(rs)
+        };
+        // SAFETY: the string is still alive, so the pin is too.
+        let seen = unsafe { std::ffi::CStr::from_ptr(p) };
+        assert_eq!(seen.to_bytes(), b"held across the boundary");
+    }
+
+    /// And it does NOT outlive the string. A pin whose owner is gone is
+    /// evicted, so the buffer's life is exactly the window MRI's is.
+    #[test]
+    fn a_pin_is_evicted_when_its_string_is_gone() {
+        let before = PINS.with_borrow(Vec::len);
+        {
+            let s = a_string("temporary");
+            let RubyValue::Str(rs) = &s else {
+                panic!("not a String")
+            };
+            let _scope = Scope::enter();
+            pin_bytes(rs);
+            assert_eq!(PINS.with_borrow(Vec::len), before + 1);
+        }
+        // The scope popped and the string dropped; the next flush evicts.
+        flush_pins();
+        assert_eq!(PINS.with_borrow(Vec::len), before, "a dead pin survived");
+    }
+
+    /// A Ruby-side rewrite has to be visible to the next `RSTRING_PTR`. The
+    /// buffer is a COPY, so a stale one would hand C the old bytes forever.
+    #[test]
+    fn a_re_pin_refreshes_from_the_string() {
+        let _scope = Scope::enter();
+        let s = a_string("first");
+        let RubyValue::Str(rs) = &s else {
+            panic!("not a String")
+        };
+        let p = pin_bytes(rs);
+        // SAFETY: just pinned.
+        assert_eq!(unsafe { std::ffi::CStr::from_ptr(p) }.to_bytes(), b"first");
+        {
+            let mut g = rs.lock();
+            let enc = g.encoding();
+            g.replace_bytes(b"second".to_vec(), enc);
+        }
+        let p = pin_bytes(rs);
+        // SAFETY: re-pinned, and the length changed so this is the new one.
+        assert_eq!(unsafe { std::ffi::CStr::from_ptr(p) }.to_bytes(), b"second");
     }
 
     /// A wrong receiver raises rather than reading a byte that means

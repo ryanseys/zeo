@@ -113,8 +113,8 @@ the build.
 
 ### The C API surface
 
-947 of the 980 `rb_*`/`ruby_*` symbols an extension can link against are
-answered; `conformance/cext-api.tsv` is the ledger. The remaining 33 are
+`conformance/cext-api.tsv` is the ledger: every symbol an extension can link
+against, read off clang's AST of every public header. 33 of them are
 REFUSALS, not gaps, and each raises with its reason:
 
 | What | Why |
@@ -126,16 +126,40 @@ REFUSALS, not gaps, and each raises with its reason:
 | `rb_add_event_hook`, `rb_remove_event_hook` | the C-level TracePoint, whose event set does not line up |
 | `rb_marshal_define_compat` | Marshal's internal compatibility table |
 
-Two divergences worth knowing before you debug one:
+### Divergences worth knowing before you debug one
 
-* `RSTRING_PTR` **pins**. A zeo String's bytes are a `Vec` behind a lock with
-  no stable address, so the pointer is into a scope-owned copy and a write
-  through it lands on the Ruby string at scope pop. An extension that writes
-  through the pointer and then reads the string through Ruby *in the same C
-  call* sees the old bytes.
-* `rb_frame_this_func` and `rb_frame_callee` answer the same thing. MRI
+* **`RSTRING_PTR` pins.** A zeo String's bytes are a `Vec` behind a lock with
+  no stable address, so the pointer is into a copy. The copy lives as long as
+  the STRING does -- an extension may keep the pointer across C calls, which
+  is what `msgpack`'s `feed_reference` needs and what MRI allows. What
+  differs: a write through the pointer lands on the Ruby string at the next
+  scope pop, so an extension that writes and then reads the string *through
+  Ruby in the same C call* sees the old bytes. A Ruby-side mutation refreshes
+  the copy at the next `RSTRING_PTR`, and a length change moves the address --
+  MRI's moves on a resize too.
+* **A Class handle is immortal.** Every `Init_` stores `cFoo` in a C static
+  that outlives the call, and MRI can do that because a class is never
+  collected. zeo keeps the handle for the process, which is one box per class
+  an extension touches. Anything ELSE stored past its scope still needs
+  `rb_gc_register_address`, exactly as on MRI.
+* **`rb_thread_call_without_gvl`'s `ubf` is never called.** Interrupting
+  opaque C means knowing what it is blocked on. A thread inside a C call is
+  not killable until the call returns.
+* **`rb_frame_this_func` and `rb_frame_callee` answer the same thing.** MRI
   separates the defined name from the called one, and an alias is what
   separates them; zeo's frame carries one label.
+* **`RREGEXP_PTR` and `RMATCH_REGS` are refused.** Both reach into onig
+  structures zeo's own engine owns, and handing out a pointer zeo may
+  recompile behind would be worse than saying no. `Regexp` and `MatchData`
+  answer the same questions through their methods.
+
+### `dlopen` resolves eagerly
+
+`RTLD_NOW`, where MRI uses `RTLD_LAZY`. MRI has no completeness promise to
+keep; zeo does, and lazily a symbol it does not export binds to nothing and
+faults at the call -- with no symbol name, no backtrace, and no way to tell a
+zeo gap from a bug in the gem. Eagerly the same gap is a `LoadError` naming
+the symbol.
 
 ## FFI — the real `ffi` gem, AOT-compiled
 
