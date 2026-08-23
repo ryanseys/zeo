@@ -410,7 +410,7 @@ pub(super) fn current_block() -> Option<RubyValue> {
     BLOCKS.with_borrow(|b| b.last().cloned().flatten())
 }
 
-fn yield_to_block(args: &[RubyValue]) -> Result<RubyValue, Signal> {
+pub(super) fn yield_to_block(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     match current_block() {
         Some(RubyValue::Proc(p)) => p.call(args),
         Some(other) => crate::dispatch::send_value(&other, Symbol::intern("call"), args, None),

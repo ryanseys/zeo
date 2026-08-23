@@ -222,6 +222,13 @@ fn num_hash(n: StData) -> StIndex {
 
 /// FNV-1a. MRI uses siphash with a per-process random seed, so no extension
 /// can depend on the VALUE of a hash -- only that equal keys hash equally.
+///
+/// `rb_str_hash` answers from here too, so a String used as an `st_table`
+/// key and the same String hashed directly agree.
+pub(super) fn bytes_hash_of(bytes: &[u8]) -> StIndex {
+    bytes_hash(bytes)
+}
+
 fn bytes_hash(bytes: &[u8]) -> StIndex {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for b in bytes {
@@ -760,6 +767,12 @@ st_fn! {
         let (x, y) = unsafe { (key_bytes(a as StData), key_bytes(b as StData)) };
         casecmp(&x[..n.min(x.len())], &y[..n.min(y.len())])
     }
+}
+
+/// Every live row, as raw words. `rb_mark_tbl` and its neighbours read a
+/// table whose keys or values are `VALUE`s, and this is the only way in.
+pub(super) fn rows_of(tbl: *mut StTable) -> Vec<(StData, StData)> {
+    with_store(tbl, |s| s.rows.iter().flatten().copied().collect()).unwrap_or_default()
 }
 
 fn write_out(

@@ -24,7 +24,7 @@ use super::value::Value;
 use crate::RubyValue;
 use crate::collections::{RArray, RHash};
 use std::cell::RefCell;
-use std::ffi::c_long;
+use std::ffi::{c_int, c_long};
 
 thread_local! {
     /// Projected `VALUE` buffers, one per array that asked. Keyed by payload
@@ -272,6 +272,288 @@ pub unsafe extern "C" fn rbimpl_zeo_ary_const_ptr(v: Value) -> *const Value {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rbimpl_zeo_ary_ptr(v: Value) -> *mut Value {
     unsafe { rbimpl_zeo_ary_const_ptr(v).cast_mut() }
+}
+
+crate::cext_fn! {
+    // ---- arrays ----------------------------------------------------------
+
+    /// `rb_assoc_new(a, b)`: the two-element Array a Hash iteration yields.
+    fn rb_assoc_new(a: Value, b: Value) -> Value {
+        let pair = vec![unsafe { value_of(a) }, unsafe { value_of(b) }];
+        to_value(&RubyValue::Array(crate::value::collections::array_new(pair)))
+    }
+
+    /// `rb_ary_hidden_new(capa)`: MRI's internal array, invisible to
+    /// `ObjectSpace`. zeo has no hidden objects, so it is a plain one -- the
+    /// difference is visible only to a heap walk, and an extension using
+    /// this as scratch cannot see it.
+    fn rb_ary_hidden_new(_capa: c_long) -> Value {
+        to_value(&RubyValue::Array(crate::value::collections::array_new(Vec::new())))
+    }
+
+    /// `rb_ary_aref(argc, argv, ary)`: `Array#[]`, which takes an index, a
+    /// pair or a Range depending on `argc`.
+    fn rb_ary_aref(argc: c_int, argv: *const Value, ary: Value) -> Value {
+        let a = unsafe { value_of(ary) };
+        let args = unsafe { super::object::args_of(argc, argv) };
+        to_value(&super::object::send(&a, "[]", &args)?)
+    }
+
+    fn rb_ary_store(v: Value, idx: c_long, item: Value) -> () {
+        let a = unsafe { value_of(v) };
+        let item = unsafe { value_of(item) };
+        super::object::send(&a, "[]=", &[RubyValue::Int(idx as i64), item])?;
+        Ok(())
+    }
+
+    fn rb_ary_delete_at(v: Value, idx: c_long) -> Value {
+        let a = unsafe { value_of(v) };
+        to_value(&super::object::send(&a, "delete_at", &[RubyValue::Int(idx as i64)])?)
+    }
+
+    fn rb_ary_rotate(v: Value, n: c_long) -> Value {
+        let a = unsafe { value_of(v) };
+        to_value(&super::object::send(&a, "rotate!", &[RubyValue::Int(n as i64)])?)
+    }
+
+    fn rb_ary_subseq(v: Value, beg: c_long, len: c_long) -> Value {
+        let a = unsafe { value_of(v) };
+        let args = [RubyValue::Int(beg as i64), RubyValue::Int(len as i64)];
+        to_value(&super::object::send(&a, "[]", &args)?)
+    }
+
+    /// `rb_ary_resize(ary, len)`: grow with nils or truncate, in place.
+    fn rb_ary_resize(v: Value, len: c_long) -> Value {
+        let a = unsafe { as_ary(v)? };
+        check_writable(&a)?;
+        let mut g = a.lock();
+        g.resize(len.max(0) as usize, RubyValue::Nil);
+        drop(g);
+        Ok(v)
+    }
+
+    /// `rb_ary_cat(ary, ptr, len)`: append `len` `VALUE`s at once.
+    fn rb_ary_cat(v: Value, items: *const Value, len: c_long) -> Value {
+        let a = unsafe { as_ary(v)? };
+        check_writable(&a)?;
+        for i in 0..len.max(0) {
+            // SAFETY: the caller promised `len` readable `VALUE`s.
+            let item = unsafe { value_of(items.offset(i as isize).read()) };
+            crate::builtins::array::array_push_checked(&a, item)?;
+        }
+        Ok(v)
+    }
+
+    /// `rb_ary_resurrect(ary)`: a new Array with the same elements.
+    fn rb_ary_resurrect(v: Value) -> Value {
+        let a = unsafe { as_ary(v)? };
+        let copy = a.lock().to_vec();
+        to_value(&RubyValue::Array(crate::value::collections::array_new(copy)))
+    }
+
+    /// `rb_ary_modify(ary)`: MRI un-shares the buffer and checks the freeze.
+    /// zeo has nothing to un-share, so the freeze check is the whole of it.
+    fn rb_ary_modify(v: Value) -> () {
+        let a = unsafe { as_ary(v)? };
+        check_writable(&a)?;
+        Ok(())
+    }
+
+    /// `rb_ary_free(ary)`: MRI releases the element buffer early. zeo's
+    /// Array is refcounted, and freeing it here would leave the `VALUE` the
+    /// extension still holds dangling.
+    fn rb_ary_free(v: Value) -> () {
+        unsafe { as_ary(v)? };
+        Ok(())
+    }
+
+    /// `rb_ary_shared_with_p(a, b)`: do the two share one element buffer?
+    /// zeo's arrays never share, so the honest answer is always false -- and
+    /// false is the answer that makes every caller take the copying path.
+    fn rb_ary_shared_with_p(_a: Value, _b: Value) -> Value {
+        Ok(super::convert::boolean(false))
+    }
+
+    /// `rb_ary_each(ary)`: yield every element to the CURRENT block and
+    /// answer the array. Not `Array#each`, which with no block answers an
+    /// Enumerator -- that is why it cannot be a forwarded row.
+    fn rb_ary_each(v: Value) -> Value {
+        let a = unsafe { as_ary(v)? };
+        let items = a.lock().to_vec();
+        for item in items {
+            super::call::yield_to_block(&[item])?;
+        }
+        Ok(v)
+    }
+
+    /// `rb_ary_ptr_use_start` / `_end`: the pair `RARRAY_PTR_USE` expands
+    /// to. The projection is read-only and lives until the scope pops, so
+    /// the `end` half has nothing to release -- see this module's docs for
+    /// why a store through the pointer cannot reach the Array.
+    fn rb_ary_ptr_use_start(v: Value) -> *mut Value {
+        Ok(unsafe { rbimpl_zeo_ary_const_ptr(v) }.cast_mut())
+    }
+
+    fn rb_ary_ptr_use_end(v: Value) -> () {
+        unsafe { as_ary(v)? };
+        Ok(())
+    }
+
+    // ---- hashes ----------------------------------------------------------
+
+    fn rb_hash(v: Value) -> Value {
+        let recv = unsafe { value_of(v) };
+        to_value(&super::object::send(&recv, "hash", &[])?)
+    }
+
+    fn rb_hash_size_num(v: Value) -> usize {
+        let h = unsafe { as_hash(v)? };
+        let n = h.lock().len();
+        Ok(n)
+    }
+
+    /// `rb_hash_set_ifnone(hash, default)`: the value a missing key answers.
+    fn rb_hash_set_ifnone(v: Value, default: Value) -> Value {
+        let hv = unsafe { value_of(v) };
+        let d = unsafe { value_of(default) };
+        super::object::send(&hv, "default=", &[d])?;
+        Ok(v)
+    }
+
+    /// `rb_hash_bulk_insert(n, pairs, hash)`: `n` alternating keys and
+    /// values, which is how a literal Hash is built.
+    fn rb_hash_bulk_insert(n: c_long, pairs: *const Value, hash: Value) -> () {
+        let h = unsafe { as_hash(hash)? };
+        let mut i = 0;
+        while i + 1 < n.max(0) {
+            // SAFETY: the caller promised `n` readable `VALUE`s.
+            let k = unsafe { value_of(pairs.offset(i as isize).read()) };
+            let val = unsafe { value_of(pairs.offset(i as isize + 1).read()) };
+            crate::value::collections::hash_set(&h, k, val);
+            i += 2;
+        }
+        Ok(())
+    }
+
+    /// `rb_hash_delete_if(hash)`: drop every pair the CURRENT block answers
+    /// truthy for. Not `Hash#delete_if`, which with no block answers an
+    /// Enumerator.
+    fn rb_hash_delete_if(v: Value) -> Value {
+        let h = unsafe { as_hash(v)? };
+        check_hash_writable(&h)?;
+        let pairs: Vec<(RubyValue, RubyValue)> =
+            h.lock().iter().map(|(_, (k, val))| (k.clone(), val.clone())).collect();
+        for (k, val) in pairs {
+            let verdict = super::call::yield_to_block(&[k.clone(), val])?;
+            if super::convert::truthy(to_value(&verdict)?) {
+                crate::value::collections::hash_delete(&h, &k);
+            }
+        }
+        Ok(v)
+    }
+
+    /// `rb_hash_update_by(h1, h2, func)`: merge `h2` into `h1`, asking
+    /// `func(key, old, new)` whenever both have the key. A null `func` takes
+    /// `h2`'s value, which is what `Hash#merge!` without a block does.
+    fn rb_hash_update_by(
+        dst: Value,
+        src: Value,
+        func: Option<unsafe extern "C" fn(Value, Value, Value) -> Value>,
+    ) -> Value {
+        let d = unsafe { as_hash(dst)? };
+        let s = unsafe { as_hash(src)? };
+        check_hash_writable(&d)?;
+        let pairs: Vec<(RubyValue, RubyValue)> =
+            s.lock().iter().map(|(_, (k, v))| (k.clone(), v.clone())).collect();
+        for (k, new) in pairs {
+            let old = crate::value::collections::hash_lookup(&d, &k);
+            let value = match (old, func) {
+                (Some(old), Some(f)) => {
+                    let (rk, ro, rn) = (to_value(&k)?, to_value(&old)?, to_value(&new)?);
+                    // SAFETY: the caller's own callback, on pinned handles.
+                    let out = super::jmp::protect(|| unsafe { f(rk, ro, rn) })?;
+                    unsafe { value_of(out) }
+                }
+                _ => new,
+            };
+            crate::value::collections::hash_set(&d, k, value);
+        }
+        Ok(dst)
+    }
+
+    // ---- Struct ----------------------------------------------------------
+
+    /// `rb_struct_alloc(klass, values)`: build from an ARRAY of values,
+    /// where `Struct#new` takes them splatted. That difference is why this
+    /// cannot be a forwarded row.
+    fn rb_struct_alloc(klass: Value, values: Value) -> Value {
+        let cls = unsafe { value_of(klass) };
+        let args = unsafe { splat(values) };
+        to_value(&crate::dispatch::send_value(&cls, crate::Symbol::intern("new"), &args, None)?)
+    }
+
+    /// `rb_struct_alloc_noinit(klass)`: an instance with every member nil,
+    /// without running `initialize`.
+    fn rb_struct_alloc_noinit(klass: Value) -> Value {
+        let cls = unsafe { value_of(klass) };
+        to_value(&super::object::send(&cls, "allocate", &[])?)
+    }
+
+    /// `rb_struct_initialize(self, values)`: the same array-taking shape.
+    fn rb_struct_initialize(recv: Value, values: Value) -> Value {
+        let s = unsafe { value_of(recv) };
+        let args = unsafe { splat(values) };
+        crate::dispatch::send_value(&s, crate::Symbol::intern("initialize"), &args, None)?;
+        Ok(recv)
+    }
+
+    fn rb_struct_getmember(recv: Value, id: super::symbol::Id) -> Value {
+        let s = unsafe { value_of(recv) };
+        let name = RubyValue::Symbol(super::symbol::symbol_of(id));
+        to_value(&super::object::send(&s, "[]", &[name])?)
+    }
+
+    fn rb_struct_s_members(klass: Value) -> Value {
+        let cls = unsafe { value_of(klass) };
+        to_value(&super::object::send(&cls, "members", &[])?)
+    }
+}
+
+/// A frozen Array cannot be written, and MRI's own message names it.
+fn check_writable(a: &RArray) -> Result<(), crate::Signal> {
+    let v = RubyValue::Array(a.clone());
+    if v.is_frozen() {
+        return Err(crate::dispatch::raise_error(
+            "FrozenError",
+            format!("can't modify frozen Array: {}", v.to_display_string()),
+        ));
+    }
+    Ok(())
+}
+
+fn check_hash_writable(h: &RHash) -> Result<(), crate::Signal> {
+    let v = RubyValue::Hash(h.clone());
+    if v.is_frozen() {
+        return Err(crate::dispatch::raise_error(
+            "FrozenError",
+            format!("can't modify frozen Hash: {}", v.to_display_string()),
+        ));
+    }
+    Ok(())
+}
+
+/// The `values` argument the three `rb_struct_*` entries take: an Array, and
+/// nil for none.
+///
+/// # Safety
+///
+/// `v` must be a live `VALUE`.
+unsafe fn splat(v: Value) -> Vec<RubyValue> {
+    match unsafe { value_of(v) } {
+        RubyValue::Array(a) => a.lock().to_vec(),
+        RubyValue::Nil => Vec::new(),
+        other => vec![other],
+    }
 }
 
 #[cfg(test)]

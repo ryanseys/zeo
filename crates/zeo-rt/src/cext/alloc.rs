@@ -88,6 +88,69 @@ pub unsafe fn xrealloc(p: *mut c_void, size: usize) -> *mut c_void {
     }
 }
 
+/// The five names C spells. `xmalloc` and its neighbours are the
+/// implementation; these are what a gem links against, and a missing one
+/// would send every allocation to a loud stub rather than the allocator.
+///
+/// `ruby_xmalloc2(n, size)` and `ruby_xrealloc2` multiply, and MRI raises
+/// rather than wrapping -- an overflow there is how a short buffer gets
+/// written past.
+macro_rules! alloc_fn {
+    ($(
+        $(#[$meta:meta])*
+        fn $name:ident($($arg:ident : $ty:ty),* $(,)?) -> $ret:ty $body:block
+    )*) => {$(
+        $(#[$meta])*
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn $name($($arg : $ty),*) -> $ret $body
+    )*};
+}
+
+alloc_fn! {
+    fn ruby_xmalloc(size: usize) -> *mut c_void {
+        // SAFETY: the caller frees it with `ruby_xfree`, which is MRI's
+        // contract for this entry too.
+        unsafe { xmalloc(size) }
+    }
+
+    fn ruby_xmalloc2(count: usize, size: usize) -> *mut c_void {
+        // SAFETY: as above.
+        unsafe { xmalloc(checked(count, size)) }
+    }
+
+    fn ruby_xcalloc(count: usize, size: usize) -> *mut c_void {
+        // SAFETY: as above.
+        unsafe { xcalloc(count, size) }
+    }
+
+    fn ruby_xrealloc(p: *mut c_void, size: usize) -> *mut c_void {
+        // SAFETY: the caller's contract -- `p` came from one of these.
+        unsafe { xrealloc(p, size) }
+    }
+
+    fn ruby_xrealloc2(p: *mut c_void, count: usize, size: usize) -> *mut c_void {
+        // SAFETY: as above.
+        unsafe { xrealloc(p, checked(count, size)) }
+    }
+
+    fn ruby_xfree(p: *mut c_void) -> () {
+        // SAFETY: as above.
+        unsafe { xfree(p) };
+    }
+}
+
+/// `count * size`, or the raise MRI makes. A wrapped product is a buffer
+/// shorter than the caller believes and a write past its end.
+fn checked(count: usize, size: usize) -> usize {
+    match count.checked_mul(size) {
+        Some(n) => n,
+        None => crate::cext::jmp::raise(crate::dispatch::raise_error(
+            "NoMemoryError",
+            format!("malloc: possible integer overflow ({count} * {size})"),
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

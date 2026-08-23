@@ -344,6 +344,24 @@ pub unsafe fn deref<'a>(v: Value) -> &'a Handle {
     unsafe { &*(v as *const Handle) }
 }
 
+/// Is `v` an address the handle table still owns?
+///
+/// `rb_gc_mark_maybe` is the reason this exists: the caller found the word by
+/// scanning memory, so it may be anything at all, and dereferencing it
+/// unchecked is the bug that entry exists to avoid.
+pub fn is_live(v: Value) -> bool {
+    !value::is_special_const(v) && with_table(|t| t.entries.contains_key(&Addr(v)))
+}
+
+/// Pin a handle for the life of the process.
+///
+/// `rb_gc_register_mark_object` asks for exactly this, and `globals::fill`
+/// gets the same effect by leaking its scope. Nothing releases these, which
+/// is the point: MRI's own are immortal too.
+pub fn pin_forever(v: Value) {
+    pin_raw(v);
+}
+
 /// The `RUBY_T_*` tag a `VALUE` carries.
 ///
 /// Read off the handle's own `RBasic` prefix, which is the same word

@@ -22,6 +22,7 @@ pub mod data;
 pub mod error;
 pub mod format;
 pub mod forward;
+pub mod gc;
 pub mod globals;
 pub mod handles;
 pub mod jmp;
@@ -34,6 +35,7 @@ pub mod st;
 pub mod string;
 pub mod stubs;
 pub mod symbol;
+pub mod thread;
 pub mod value;
 
 #[cfg(test)]

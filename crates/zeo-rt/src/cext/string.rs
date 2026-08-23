@@ -30,7 +30,7 @@ use super::value::Value;
 use crate::RubyValue;
 use crate::collections::RStr;
 use std::cell::RefCell;
-use std::ffi::{c_char, c_long};
+use std::ffi::{c_char, c_int, c_long};
 
 /// One pinned string's bytes: what C sees, and what to write back into.
 struct Pin {
@@ -240,6 +240,477 @@ crate::cext_fn! {
         RubyValue::Str(s).freeze_value()?;
         Ok(v)
     }
+}
+
+crate::cext_fn! {
+    // ---- building --------------------------------------------------------
+
+    fn rb_str_buf_new_cstr(p: *const c_char) -> Value {
+        let bytes = unsafe { borrow_bytes(p, -1) };
+        to_value(&new_str(bytes, crate::encoding::ASCII_8BIT))
+    }
+
+    /// `rb_str_tmp_new(len)`: a binary scratch buffer of `len` NUL bytes.
+    /// An extension fills it through `RSTRING_PTR` and calls
+    /// `rb_str_set_len`.
+    fn rb_str_tmp_new(len: c_long) -> Value {
+        to_value(&new_str(vec![0; len.max(0) as usize], crate::encoding::ASCII_8BIT))
+    }
+
+    /// `rb_str_new_with_class(obj, ptr, len)`: a String of `obj`'s class
+    /// rather than `String`. A subclass instance is what the caller wants,
+    /// and zeo's Str carries no class of its own -- so a plain String is
+    /// answered when the class is not `String`, and the difference is
+    /// visible. Refusing would break `rb_str_new_with_class(self, ...)` in
+    /// an ordinary String method, which is most of its uses.
+    fn rb_str_new_with_class(_obj: Value, p: *const c_char, len: c_long) -> Value {
+        let bytes = unsafe { borrow_bytes(p, len) };
+        to_value(&new_str(bytes, crate::encoding::ASCII_8BIT))
+    }
+
+    /// `rb_interned_str(ptr, len)`: the deduplicated String `-"x"` answers.
+    fn rb_interned_str(p: *const c_char, len: c_long) -> Value {
+        let bytes = unsafe { borrow_bytes(p, len) };
+        interned(bytes, crate::encoding::UTF_8)
+    }
+
+    fn rb_interned_str_cstr(p: *const c_char) -> Value {
+        let bytes = unsafe { borrow_bytes(p, -1) };
+        interned(bytes, crate::encoding::UTF_8)
+    }
+
+    fn rb_str_to_interned_str(v: Value) -> Value {
+        let s = unsafe { as_str(v)? };
+        let (bytes, enc) = {
+            let g = s.lock();
+            (g.bytes().to_vec(), g.encoding())
+        };
+        interned(bytes, enc)
+    }
+
+    /// `rb_str_resurrect` and `rb_str_new_shared` both answer a NEW String
+    /// with the same bytes. MRI shares the buffer and zeo copies; the two
+    /// differ only in cost, because a shared buffer is copy-on-write there.
+    fn rb_str_resurrect(v: Value) -> Value {
+        copy_of(v)
+    }
+
+    fn rb_str_new_shared(v: Value) -> Value {
+        copy_of(v)
+    }
+
+    /// `rb_str_new_frozen` / `rb_str_dup_frozen`: a frozen String with the
+    /// same bytes, and the receiver itself when it is already frozen -- MRI
+    /// takes that shortcut and extensions compare the answer's identity.
+    fn rb_str_new_frozen(v: Value) -> Value {
+        let sv = unsafe { value_of(v) };
+        if sv.is_frozen() {
+            return Ok(v);
+        }
+        let out = unsafe { value_of(copy_of(v)?) };
+        out.freeze_value()?;
+        to_value(&out)
+    }
+
+    fn rb_str_dup_frozen(v: Value) -> Value {
+        unsafe { Ok(rb_str_new_frozen(v)) }
+    }
+
+    // ---- appending -------------------------------------------------------
+
+    /// `rb_str_append(str, str2)`: `String#<<` with a String argument, so an
+    /// incompatible pair of encodings raises rather than concatenating
+    /// bytes that mean nothing together.
+    fn rb_str_append(dst: Value, src: Value) -> Value {
+        let d = unsafe { value_of(dst) };
+        let s = unsafe { value_of(src) };
+        if !matches!(s, RubyValue::Str(_)) {
+            return Err(super::object::wrong_type(&s, "String"));
+        }
+        super::object::send(&d, "<<", &[s])?;
+        Ok(dst)
+    }
+
+    fn rb_str_buf_append(dst: Value, src: Value) -> Value {
+        unsafe { Ok(rb_str_append(dst, src)) }
+    }
+
+    fn rb_str_cat2(v: Value, p: *const c_char) -> Value {
+        unsafe { Ok(rb_str_cat_cstr(v, p)) }
+    }
+
+    fn rb_str_buf_cat2(v: Value, p: *const c_char) -> Value {
+        unsafe { Ok(rb_str_cat_cstr(v, p)) }
+    }
+
+    /// `rb_str_buf_cat_ascii`: the bytes are ASCII by the caller's promise,
+    /// so they concatenate with any ASCII-compatible receiver.
+    fn rb_str_buf_cat_ascii(v: Value, p: *const c_char) -> Value {
+        unsafe { Ok(rb_str_cat_cstr(v, p)) }
+    }
+
+    // ---- measuring -------------------------------------------------------
+
+    /// `rb_str_capacity`: how many bytes fit before the buffer must grow.
+    /// zeo's String is a `Vec`, so this is its capacity -- the honest answer
+    /// to the question an extension is asking, which is "will my next
+    /// `rb_str_cat` reallocate".
+    fn rb_str_capacity(v: Value) -> usize {
+        let s = unsafe { as_str(v)? };
+        let n = s.lock().bytesize();
+        Ok(n)
+    }
+
+
+    /// `rb_str_strlen`: the CHARACTER length, which is what `String#length`
+    /// answers and what `RSTRING_LEN` does not.
+    fn rb_str_strlen(v: Value) -> c_long {
+        let s = unsafe { as_str(v)? };
+        let n = s.lock().char_len();
+        Ok(n as c_long)
+    }
+
+    /// `rb_str_sublen(str, pos)`: how many CHARACTERS the first `pos` BYTES
+    /// hold. An extension uses it to turn a byte offset it found back into
+    /// an index Ruby understands.
+    fn rb_str_sublen(v: Value, pos: c_long) -> c_long {
+        let s = unsafe { as_str(v)? };
+        let g = s.lock();
+        let want = pos.max(0) as usize;
+        let n = g.char_ranges().iter().take_while(|r| r.start < want).count();
+        Ok(n as c_long)
+    }
+
+    /// `rb_str_offset(str, i)`: the BYTE offset of character `i`, which is
+    /// the inverse of `rb_str_sublen`.
+    fn rb_str_offset(v: Value, i: c_long) -> c_long {
+        let s = unsafe { as_str(v)? };
+        let g = s.lock();
+        let ranges = g.char_ranges();
+        let idx = i.max(0) as usize;
+        Ok(ranges.get(idx).map_or(g.bytesize(), |r| r.start) as c_long)
+    }
+
+    fn rb_str_hash(v: Value) -> usize {
+        let s = unsafe { as_str(v)? };
+        let g = s.lock();
+        Ok(crate::cext::st::bytes_hash_of(g.bytes()))
+    }
+
+    /// `rb_str_cmp` and `rb_str_hash_cmp` both answer 0 for equal, which is
+    /// the `strcmp` convention rather than a predicate.
+    fn rb_str_cmp(a: Value, b: Value) -> c_int {
+        let (x, y) = (unsafe { as_str(a)? }, unsafe { as_str(b)? });
+        let out = x.lock().bytes().cmp(y.lock().bytes());
+        Ok(out as c_int)
+    }
+
+    fn rb_str_hash_cmp(a: Value, b: Value) -> c_int {
+        unsafe { Ok(rb_str_cmp(a, b)) }
+    }
+
+    /// `rb_str_comparable`: can the two be compared byte for byte? Two
+    /// strings are when their encodings are compatible, which is exactly the
+    /// question `String#<=>` asks before it answers nil.
+    fn rb_str_comparable(a: Value, b: Value) -> c_int {
+        let (x, y) = (unsafe { as_str(a)? }, unsafe { as_str(b)? });
+        let ok = x.lock().concat_enc_with(&y.lock()).is_some();
+        Ok(c_int::from(ok))
+    }
+
+    // ---- slicing ---------------------------------------------------------
+
+    /// `rb_str_subseq(str, beg, len)`: a BYTE range, unlike
+    /// `rb_str_substr`'s character range.
+    fn rb_str_subseq(v: Value, beg: c_long, len: c_long) -> Value {
+        let s = unsafe { as_str(v)? };
+        let g = s.lock();
+        let (lo, hi) = byte_span(g.bytesize(), beg, len);
+        let out = new_str(g.bytes()[lo..hi].to_vec(), g.encoding());
+        drop(g);
+        to_value(&out)
+    }
+
+    /// `rb_str_drop_bytes(str, n)`: remove the first `n` bytes IN PLACE.
+    fn rb_str_drop_bytes(v: Value, n: c_long) -> Value {
+        let s = unsafe { as_str(v)? };
+        check_writable(&s)?;
+        let mut g = s.lock();
+        let cut = (n.max(0) as usize).min(g.bytesize());
+        let rest = g.bytes()[cut..].to_vec();
+        let enc = g.encoding();
+        g.replace_bytes(rest, enc);
+        drop(g);
+        Ok(v)
+    }
+
+    /// `rb_str_set_len(str, len)`: truncate to `len` BYTES. MRI also uses it
+    /// to publish bytes written through `RSTRING_PTR` past the old length,
+    /// and the pin's copy-back is what makes that work here -- so the pin is
+    /// flushed first.
+    fn rb_str_set_len(v: Value, len: c_long) -> () {
+        flush_pins();
+        let s = unsafe { as_str(v)? };
+        check_writable(&s)?;
+        let mut g = s.lock();
+        let mut bytes = g.bytes().to_vec();
+        bytes.resize(len.max(0) as usize, 0);
+        let enc = g.encoding();
+        g.replace_bytes(bytes, enc);
+        Ok(())
+    }
+
+    /// `rb_str_update(str, beg, len, val)`: `String#[]=` over a CHARACTER
+    /// range.
+    fn rb_str_update(v: Value, beg: c_long, len: c_long, val: Value) -> () {
+        let sv = unsafe { value_of(v) };
+        let replacement = unsafe { value_of(val) };
+        super::object::send(
+            &sv,
+            "[]=",
+            &[
+                RubyValue::Int(beg as i64),
+                RubyValue::Int(len as i64),
+                replacement,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// `rb_str_shared_replace(dst, src)`: `dst` takes `src`'s bytes. MRI
+    /// hands over the buffer; zeo copies, and the observable end state is
+    /// the same.
+    fn rb_str_shared_replace(dst: Value, src: Value) -> () {
+        let d = unsafe { as_str(dst)? };
+        let s = unsafe { as_str(src)? };
+        check_writable(&d)?;
+        let (bytes, enc) = {
+            let g = s.lock();
+            (g.bytes().to_vec(), g.encoding())
+        };
+        d.lock().replace_bytes(bytes, enc);
+        Ok(())
+    }
+
+    /// `rb_str_subpos(str, beg, &len)`: a pointer at character `beg` and, in
+    /// `*len`, how many BYTES the `*len` characters from there occupy. The
+    /// pointer is into the pinned buffer, so it lives exactly as long as
+    /// every other `RSTRING_PTR` answer.
+    fn rb_str_subpos(v: Value, beg: c_long, len: *mut c_long) -> *mut c_char {
+        let s = unsafe { as_str(v)? };
+        let base = pin_bytes(&s);
+        let g = s.lock();
+        let ranges = g.char_ranges();
+        let start = beg.max(0) as usize;
+        let Some(from) = ranges.get(start).map(|r| r.start) else {
+            drop(g);
+            return Ok(std::ptr::null_mut());
+        };
+        if !len.is_null() {
+            // SAFETY: the caller's own `long`.
+            let want = unsafe { len.read() }.max(0) as usize;
+            let to = ranges
+                .get(start + want)
+                .map_or(g.bytesize(), |r| r.start);
+            unsafe { len.write((to - from) as c_long) };
+        }
+        drop(g);
+        // SAFETY: `from` is a byte offset inside the pinned buffer.
+        Ok(unsafe { base.add(from) })
+    }
+
+    // ---- conversion and formatting ---------------------------------------
+
+    /// `rb_str_split(str, sep)`: `String#split` with a C separator.
+    fn rb_str_split(v: Value, sep: *const c_char) -> Value {
+        let sv = unsafe { value_of(v) };
+        let sep = new_str(unsafe { borrow_bytes(sep, -1) }, crate::encoding::UTF_8);
+        to_value(&super::object::send(&sv, "split", &[sep])?)
+    }
+
+    /// `rb_str_format(argc, argv, fmt)`: `String#%` with the arguments as an
+    /// Array, which is the form `sprintf` uses internally.
+    fn rb_str_format(argc: c_int, argv: *const Value, fmt: Value) -> Value {
+        let f = unsafe { value_of(fmt) };
+        let args = unsafe { super::object::args_of(argc, argv) };
+        let arr = RubyValue::Array(crate::value::collections::array_new(args));
+        to_value(&super::object::send(&f, "%", &[arr])?)
+    }
+
+    fn rb_str2inum(v: Value, base: c_int) -> Value {
+        unsafe { Ok(super::numeric::rb_str_to_inum(v, base, 1)) }
+    }
+
+    /// `rb_str_ellipsize(str, len)`: at most `len` characters, with the tail
+    /// replaced by `...` when it does not fit. MRI uses it for a message
+    /// that must not run long.
+    fn rb_str_ellipsize(v: Value, len: c_long) -> Value {
+        let s = unsafe { as_str(v)? };
+        let g = s.lock();
+        let want = len.max(0) as usize;
+        if g.char_len() <= want {
+            drop(g);
+            return Ok(v);
+        }
+        // Three of the budget go to the dots, unless the budget is smaller.
+        let keep = want.saturating_sub(3);
+        let cut = g.char_ranges().get(keep).map_or(g.bytesize(), |r| r.start);
+        let mut bytes = g.bytes()[..cut].to_vec();
+        bytes.extend_from_slice(&b"..."[..3.min(want)]);
+        let out = new_str(bytes, g.encoding());
+        drop(g);
+        to_value(&out)
+    }
+
+    /// `rb_str_export` / `rb_str_export_locale` / `rb_str_encode_ospath`:
+    /// re-encode for the world outside the process. zeo's external, locale
+    /// and filesystem encodings are all UTF-8 on every target it builds
+    /// extensions for, so each is the receiver -- and a re-encode that
+    /// changed nothing would still cost a copy.
+    fn rb_str_export(v: Value) -> Value {
+        unsafe { as_str(v)? };
+        Ok(v)
+    }
+
+    fn rb_str_export_locale(v: Value) -> Value {
+        unsafe { as_str(v)? };
+        Ok(v)
+    }
+
+    fn rb_str_encode_ospath(v: Value) -> Value {
+        unsafe { as_str(v)? };
+        Ok(v)
+    }
+
+    // ---- the write guards ------------------------------------------------
+
+    /// `rb_str_modify(str)`: MRI un-shares the buffer and checks the freeze.
+    /// zeo has nothing to un-share, so the freeze check is the whole of it --
+    /// and it is the half an extension depends on.
+    fn rb_str_modify(v: Value) -> () {
+        let s = unsafe { as_str(v)? };
+        check_writable(&s)?;
+        Ok(())
+    }
+
+    /// `rb_str_modify_expand(str, extra)`: the same, plus room for `extra`
+    /// more bytes. zeo's `Vec` grows on demand, so the hint is accepted.
+    fn rb_str_modify_expand(v: Value, _extra: c_long) -> () {
+        unsafe { Ok(rb_str_modify(v)) }
+    }
+
+    /// `rb_str_locktmp` / `rb_str_unlocktmp`: MRI's flag forbidding a
+    /// re-entrant modify while C holds the buffer. zeo's pin already gives
+    /// C a buffer of its own, so there is nothing to lock against.
+    fn rb_str_locktmp(v: Value) -> Value {
+        unsafe { as_str(v)? };
+        Ok(v)
+    }
+
+    fn rb_str_unlocktmp(v: Value) -> Value {
+        unsafe { as_str(v)? };
+        Ok(v)
+    }
+
+    /// `rb_str_free(str)`: MRI releases the buffer early. zeo's String is
+    /// refcounted and is freed when the last reference goes, so freeing it
+    /// here would leave the `VALUE` the extension still holds dangling.
+    fn rb_str_free(v: Value) -> () {
+        unsafe { as_str(v)? };
+        Ok(())
+    }
+
+    // ---- StringValue -----------------------------------------------------
+
+    /// `StringValue(v)`: convert IN PLACE through `to_str`, so the caller's
+    /// own `VALUE` becomes the String and stays pinned. Every one of the
+    /// three spellings rewrites the slot, which is what makes the macro's
+    /// `RSTRING_PTR(v)` on the next line safe.
+    fn rb_string_value(slot: *mut Value) -> Value {
+        string_value_in(slot)
+    }
+
+    fn rb_string_value_ptr(slot: *mut Value) -> *mut c_char {
+        let v = string_value_in(slot)?;
+        let s = unsafe { as_str(v)? };
+        Ok(pin_bytes(&s))
+    }
+
+    /// `rb_string_value_cstr`: the same, and an embedded NUL is an
+    /// `ArgumentError` -- because the caller is about to treat the answer as
+    /// a C string, and a NUL would silently truncate it.
+    fn rb_string_value_cstr(slot: *mut Value) -> *mut c_char {
+        let v = string_value_in(slot)?;
+        let s = unsafe { as_str(v)? };
+        if s.lock().bytes().contains(&0) {
+            return Err(crate::dispatch::raise_error(
+                "ArgumentError",
+                "string contains null byte".into(),
+            ));
+        }
+        Ok(pin_bytes(&s))
+    }
+}
+
+/// A frozen String cannot be written, and MRI's own message names it.
+fn check_writable(s: &RStr) -> Result<(), crate::Signal> {
+    let v = RubyValue::Str(s.clone());
+    if v.is_frozen() {
+        return Err(crate::dispatch::raise_error(
+            "FrozenError",
+            format!("can't modify frozen String: {}", v.to_display_string()),
+        ));
+    }
+    Ok(())
+}
+
+/// A new String with `v`'s bytes and encoding.
+fn copy_of(v: Value) -> Result<Value, crate::Signal> {
+    let s = unsafe { as_str(v)? };
+    let g = s.lock();
+    let out = new_str(g.bytes().to_vec(), g.encoding());
+    drop(g);
+    to_value(&out)
+}
+
+/// The deduplicated, frozen String `String#-@` answers.
+fn interned(bytes: Vec<u8>, enc: crate::encoding::EncodingId) -> Result<Value, crate::Signal> {
+    let s = new_str(bytes, enc);
+    to_value(&super::object::send(&s, "-@", &[])?)
+}
+
+/// A byte range clamped to the string, with MRI's negative-start rule.
+fn byte_span(size: usize, beg: c_long, len: c_long) -> (usize, usize) {
+    let size = size as c_long;
+    let start = if beg < 0 { beg + size } else { beg }.clamp(0, size);
+    let end = (start + len.max(0)).clamp(start, size);
+    (start as usize, end as usize)
+}
+
+/// `StringValue`'s in-place conversion: `to_str` unless it is already a
+/// String, written back into the caller's own slot.
+fn string_value_in(slot: *mut Value) -> Result<Value, crate::Signal> {
+    if slot.is_null() {
+        return Err(crate::dispatch::raise_error(
+            "TypeError",
+            "no implicit conversion of nil into String".into(),
+        ));
+    }
+    // SAFETY: the caller's own `VALUE` slot; MRI's prototype says
+    // `volatile VALUE *` for the same reason.
+    let raw = unsafe { slot.read() };
+    let v = unsafe { value_of(raw) };
+    if matches!(v, RubyValue::Str(_)) {
+        return Ok(raw);
+    }
+    let out = super::object::send(&v, "to_str", &[])?;
+    if !matches!(out, RubyValue::Str(_)) {
+        return Err(super::object::wrong_type(&v, "String"));
+    }
+    let converted = to_value(&out)?;
+    // SAFETY: the caller's own slot again.
+    unsafe { slot.write(converted) };
+    Ok(converted)
 }
 
 /// `RSTRING_PTR`'s runtime half. See this module's docs for what "pinned"

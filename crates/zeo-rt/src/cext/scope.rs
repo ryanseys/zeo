@@ -83,6 +83,7 @@ impl Drop for Scope {
         super::string::flush_pins();
         super::collection::flush_projections();
         super::format::flush_texts();
+        super::gc::flush_tmp_buffers();
         let pinned = SCOPES.with_borrow_mut(|s| {
             // Not an equality assert: `jmp::protect` may already have unwound
             // this scope by hand after a longjmp, and then there is nothing
@@ -134,6 +135,7 @@ pub(super) fn unwind_to(depth: usize) {
         super::string::flush_pins();
         super::collection::flush_projections();
         super::format::flush_texts();
+        super::gc::flush_tmp_buffers();
     }
     loop {
         let Some(pinned) = SCOPES.with_borrow_mut(|s| (s.len() > depth).then(|| s.pop()).flatten())
