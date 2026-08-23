@@ -2,7 +2,7 @@
 //! ships from ONE upstream repo (`rubygems/rubygems`, bundler under its
 //! `bundler/` subdirectory).
 //!
-//! The end-to-end behavioural proof is the gem probe's (the compile-bench
+//! The end-to-end behavioural proof is the gem probe's (the compile-side
 //! inputs `tests/bench/rubygems.rb` and `tests/bench/bundler.rb` are the same
 //! whole-graph programs; their golden runs cost minutes each and were retired
 //! from the suite). What lives here is everything cheaper than that: the

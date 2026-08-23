@@ -1,16 +1,12 @@
 # Testing Zeo against real gems
 
-Zeo measures gem support in two places, and they answer different questions.
+Zeo measures gem support with `gem-probe`: it runs the front end over a gem
+and records whether the compiler accepts it (`cargo xtask gem-probe <name>`).
 
-| | Question | Command |
-|---|---|---|
-| **`gem-compat`** | Would this gem's LAYOUT resolve? | `cargo xtask gem-compat <Gemfile.lock>` |
-| **`gem-probe`** | Does the compiler actually accept it? | `cargo xtask gem-probe <name>` |
-
-The distinction matters. `gem-compat` never runs the compiler, so it classifies
-concurrent-ruby as "pure-ruby, 100% resolvable" — a gem that does not compile.
-Only `gem-probe` runs the front end, so only its `compiles` means compiles.
-Do not quote a resolvability percentage as a compatibility number.
+Only a run of the front end answers the question. A gem whose LAYOUT resolves
+cleanly can still fail to compile — concurrent-ruby is pure Ruby and 100%
+resolvable, and it does not compile. Do not quote a resolvability percentage
+as a compatibility number.
 
 ## Probing a gem
 

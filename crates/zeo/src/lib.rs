@@ -241,7 +241,7 @@ impl FrontEnd {
             emit.as_millis(),
             self.start.elapsed().as_millis(),
             // `0` for a compile that finished inside the poller's first
-            // interval -- absent, not zero. `compile-bench` reads it as such.
+            // interval -- absent, not zero. A reader treats it as such.
             memguard::peak_bytes().unwrap_or(0),
         );
     }
@@ -445,8 +445,7 @@ pub fn compile_to_clif_text(source: &str, opts: &CompileOptions) -> Result<Strin
 const COMPILE_STACK_SIZE: usize = 64 * 1024 * 1024;
 
 /// Whether `ZEO_TIMINGS` is set: the phase-timing report `FrontEnd::report`
-/// writes as machine-parseable `zeo-timings:` stderr lines (consumed by
-/// `xtask compile-bench`).
+/// writes as machine-parseable `zeo-timings:` stderr lines.
 pub fn timings_enabled() -> bool {
     std::env::var_os("ZEO_TIMINGS").is_some()
 }

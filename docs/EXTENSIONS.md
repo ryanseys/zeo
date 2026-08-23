@@ -21,7 +21,7 @@ diverge from the upstream gem or C extension, the reason is catalogued in
 The catalog below covers CRuby's full `ext/` set plus the bundled default gems
 that are C-accelerated (base64, json, …). Pure-Ruby stdlib (`shellwords`,
 `ostruct`, `forwardable`, …) is **not** here — it drops in through `-I` load
-roots (see `cargo xtask stdlib-status`), not the `ext/` model.
+roots, not the `ext/` model.
 
 ## Status
 

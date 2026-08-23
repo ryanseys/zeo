@@ -77,7 +77,7 @@ fn no_golden_embeds_a_machine_specific_path() {
     );
 }
 
-/// `tests/bench/` holds compile-bench INPUT programs (whole-gem require
+/// `tests/bench/` holds compile-side INPUT programs (whole-gem require
 /// graphs), deliberately outside every datatest pattern: a golden appearing
 /// there would silently never run, and a bench input gaining a golden means
 /// someone thinks it is a test again -- whole-gem coverage belongs to the gem

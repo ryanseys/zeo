@@ -136,7 +136,7 @@ pub(super) fn resolve(stores: &[PathBuf], lockfile: &Lockfile) -> PResult<StoreR
 
 /// A synthetic `Lockfile` naming every gem installed in the store, one per
 /// name (ruby-platform spec preferred) -- the input to the no-lockfile
-/// `gem-compat` mode, which classifies the whole installed store. A gemspec
+/// store-sweep mode, which classifies the whole installed store. A gemspec
 /// that fails the static parse is skipped rather than aborting the sweep.
 pub(super) fn installed_as_lockfile(store: &Path) -> PResult<Lockfile> {
     use std::collections::BTreeMap;

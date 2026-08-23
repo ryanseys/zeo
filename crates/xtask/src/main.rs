@@ -9,12 +9,6 @@
 //!
 //! - `xtask bench [--filter <substr>] [--runs N] [--update-baseline]`: the
 //!   golden-output performance suite under `bench/` (see `bench.rs`).
-//! - `xtask compile-bench [--filter <substr>] [--runs N] [--update-baseline]`:
-//!   compiler wall time + generated-code size/cleanliness over a fixed program
-//!   set, recorded in `bench/compile-baseline.tsv` (see `compile_bench.rs`).
-//! - `xtask stdlib-status [<lib-dir>]`: sweeps the installed Ruby stdlib `lib`
-//!   (dropped in via `-I`, no bespoke flag) and records which files `zeo`
-//!   can compile -- the stdlib progress tracker (see `stdlib_status.rs`).
 //! - `xtask arity-oracle`: re-records `conformance/builtin-arity.tsv` from the
 //!   installed ruby, which the `builtin_arity` drift test reads.
 //! - `xtask method-census`: re-records `conformance/method-census.tsv` -- what
@@ -34,18 +28,14 @@
 mod arity_oracle;
 mod bench;
 mod bless;
-mod compile_bench;
 mod dist;
 mod exec;
 mod gem;
-mod gem_compat;
 mod gem_probe;
 mod gemtests;
 mod jobs;
 mod method_census;
 mod stage_publish;
-mod stdlib_status;
-mod sweep;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -68,9 +58,6 @@ fn main() -> ExitCode {
     match std::env::args().nth(1).as_deref() {
         Some("bench") => bench::main(&root, &args),
         Some("bless") => bless::main(&root, &args),
-        Some("compile-bench") => compile_bench::main(&root, &args),
-        Some("stdlib-status") => stdlib_status::main(&root, &args),
-        Some("gem-compat") => gem_compat::main(&root, &args),
         Some("gem-probe") => gem_probe::main(&root, &args),
         Some("gem") => gem::main(&root, &args),
         Some("gemtests") => gemtests::main(&root, &args),
@@ -78,12 +65,11 @@ fn main() -> ExitCode {
         Some("method-census") => method_census::main(&root, &args),
         Some("stage-publish") => stage_publish::main(&root, &args),
         Some("dist") => dist::main(&root, &args),
-        Some("sweep") => sweep::main(&root, &args),
         _ => {
             eprintln!(
                 "usage: cargo run -p xtask -- \
-                 <bench|bless|compile-bench|stdlib-status|gem-compat|gem|\
-                 gem-probe|gemtests|arity-oracle|method-census|stage-publish|dist|sweep>"
+                 <bench|bless|gem|gem-probe|gemtests|arity-oracle|\
+                 method-census|stage-publish|dist>"
             );
             ExitCode::FAILURE
         }

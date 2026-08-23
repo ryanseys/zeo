@@ -91,7 +91,7 @@ pub fn set_phase(phase: Phase) {
 ///
 /// Read from the kernel's own high-water mark rather than from the poller:
 /// a sampled maximum only sees what it happens to catch, and the first
-/// attempt at this reported a flat 2 MiB across the whole compile-bench set
+/// attempt at this reported a flat 2 MiB across a whole program set
 /// because every program in it finishes inside one poll interval. The poller
 /// is for ENFORCEMENT, which needs a current reading; this is for
 /// MEASUREMENT, which needs an exact one.

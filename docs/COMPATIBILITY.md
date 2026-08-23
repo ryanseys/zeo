@@ -952,13 +952,10 @@ disclosure line — an AOT compiler only compiles what a require actually
 reaches. `GIT`/`PATH`-source gems (a checkout or a local path in the lockfile)
 are not drawn from the store.
 
-To measure the out-of-the-box number, run `cargo xtask gem-compat` — with no
-argument it classifies **every gem installed** in the store (`Gem.dir` by
-default), or pass a `<Gemfile.lock>` to measure just its locked subset, and
-`--gem-path <dir>` for a different store. It prints a per-gem table and a
-headline like *"163/195 store gems usable (84%) — 151 compiled, 12 built-in, 32
-native unsupported"*, and writes `conformance/gem-compat.{tsv,md}` with the
-native gems grouped by detected layout (the FFI work-list).
+This classification is a layout question, not a compile one. It is available
+programmatically through `zeo::gem_compat` and `zeo::gem_compat_installed`,
+which `gems_require.rs` exercises. To measure whether a gem actually compiles,
+run `gem-probe` — see [`GEM_TESTING.md`](GEM_TESTING.md).
 
 ## The per-compile record
 

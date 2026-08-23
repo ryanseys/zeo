@@ -47,7 +47,7 @@ fn gem_disclosure_report_records_how_each_library_was_satisfied() {
 
 #[test]
 fn gem_compat_classifies_each_locked_gem() {
-    // The classification behind `cargo xtask gem-compat`, over the
+    // The LAYOUT classification `zeo::gem_compat` answers, over the
     // self-contained fixture store -- pure Ruby compiles, a native-extension
     // gem and a precompiled-only gem are both native-unsupported.
     use zeo::GemCompatOutcome;

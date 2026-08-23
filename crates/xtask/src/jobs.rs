@@ -6,7 +6,7 @@
 //! sweeps used to do -- exhausted a 16 GB machine's memory and swap and
 //! panicked the kernel with a watchdog timeout. `gem-probe` answered that with
 //! a hand-tuned `DEFAULT_JOBS = 4`, which is the right number for THIS machine
-//! and says nothing on any other; `stdlib-status` never got the fix at all.
+//! and says nothing on any other.
 //!
 //! So the shared rule is a budget rather than a count. A fixed fraction of RAM
 //! is the whole sweep's to spend, each job gets an equal share, and the share

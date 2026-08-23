@@ -1,8 +1,8 @@
 //! `cargo xtask gem-probe` -- fetch a gem from rubygems.org and try to compile
 //! it, then record the verdict.
 //!
-//! This answers a question `gem-compat` cannot. That command classifies a gem
-//! by its LAYOUT: "pure Ruby, so zeo would compile it". It never runs the
+//! This answers a question a LAYOUT classification cannot. `zeo::gem_compat`
+//! reads a gem as "pure Ruby, so zeo would compile it". It never runs the
 //! compiler, so a gem using a construct zeo cannot lower still reports as
 //! resolvable. concurrent-ruby is the standing example. `gem-probe` runs the
 //! front end for real.

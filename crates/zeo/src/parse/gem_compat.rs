@@ -1,4 +1,5 @@
-//! `cargo xtask gem-compat`: how each gem in a lockfile fares against zeo.
+//! How each gem in a lockfile fares against zeo: a LAYOUT classification that
+//! never runs the compiler. `gems_require.rs` is the consumer.
 //!
 //! Not lowering -- this classifies a gem STORE against a lockfile and is
 //! consumed by the xtask compat matrix (plus one e2e test). It sits beside the
@@ -7,7 +8,7 @@
 
 use super::{gem_store, lockfile};
 
-/// How one lockfile gem fares against zeo, for `cargo xtask gem-compat`.
+/// How one lockfile gem fares against zeo.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GemCompatEntry {
     pub name: String,
@@ -36,7 +37,7 @@ pub enum GemCompatOutcome {
 
 /// Classify every gem in `lockfile` against an installed `store` (`gem env
 /// gemdir`), reusing the same provider. The out-of-the-box resolvability
-/// matrix behind `cargo xtask gem-compat`.
+/// matrix.
 pub fn gem_compat(
     store: &std::path::Path,
     lockfile: &std::path::Path,
@@ -46,9 +47,8 @@ pub fn gem_compat(
 }
 
 /// Like [`gem_compat`], but over EVERY gem installed in the store rather than a
-/// lockfile's subset -- the broad out-of-the-box sample `cargo xtask
-/// gem-compat` runs when given no lockfile. Builds a synthetic gem set from the
-/// store's own `specifications/`.
+/// lockfile's subset -- the broad out-of-the-box sample. Builds a synthetic gem
+/// set from the store's own `specifications/`.
 pub fn gem_compat_installed(store: &std::path::Path) -> Result<Vec<GemCompatEntry>, String> {
     let parsed = gem_store::installed_as_lockfile(store)?;
     classify(store, &parsed)

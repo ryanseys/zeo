@@ -51,7 +51,6 @@ $ cargo run -p xtask -- bench --update-baseline --resume   # continue an interru
 | `baseline.tsv` | the committed regression reference (`name`, `secs`); written only by `--update-baseline`, so its diff is the reviewable record of every accepted shift |
 | `ruby.tsv` | the CRuby 4.0.6 oracle's time per benchmark; re-timed only under `--ruby` and reused by every report's `vs ruby` column |
 | `history.tsv` | the last 5 timings per benchmark, appended by every run; the report's `med5` column is their median, showing drift without touching the baseline |
-| `compile-baseline.tsv` | the compile-side twin, written by `cargo xtask compile-bench`: front-end ms, emitted Rust lines and bytes, rustc ms, binary bytes, and rustc warning count (target 0) over a fixed 10-program set |
 
 `--update-baseline` rewrites `baseline.tsv` after every completed benchmark
 rather than once at the end, so an interrupted run keeps what it finished;

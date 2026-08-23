@@ -393,8 +393,7 @@ fn a_stdlib_style_feature_drops_in_through_an_i_search_root() {
     // bespoke flag) -- pointing `-I` at a Ruby checkout's `lib` makes each
     // `require "feature"` resolve a real stdlib `.rb`. This models that with a
     // pure-Ruby "stdlib" file living under an `-I` root, required by name and
-    // compiled + run through the ordinary loader path (the same mechanism the
-    // `stdlib-status` harness drives against the installed 4.0.6 lib).
+    // compiled + run through the ordinary loader path.
     let result = run_ruby_project(
         &[
             (
