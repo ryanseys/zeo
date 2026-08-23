@@ -39,6 +39,7 @@ pub mod analyze;
 pub mod analyze_error;
 pub mod backend;
 pub mod builtin_surface;
+pub mod cext;
 pub mod clif;
 pub mod compiler;
 pub(crate) mod debug_flags;

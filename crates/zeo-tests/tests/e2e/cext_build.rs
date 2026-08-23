@@ -6,6 +6,9 @@
 //! and the link produces a loadable bundle whose only undefined symbols are
 //! the runtime's own.
 //!
+//! zeo drives the compile and the link itself: `make` appears here only to
+//! prove the fallback still works, and never on the ordinary path.
+//!
 //! Every step failed for its own reason while this was built, and none of
 //! them would have been caught by anything else in the suite:
 //!
@@ -71,17 +74,12 @@ fn an_extension_configures_compiles_and_links() {
             .unwrap_or_else(|e| panic!("copying {f}: {e}"));
     }
 
-    let conf = Command::new(zeo_bin())
-        .arg("extconf.rb")
-        .current_dir(&dir)
-        .output()
-        .expect("zeo runs");
-    assert!(
-        conf.status.success(),
-        "extconf.rb failed under zeo:\n{}\n{}",
-        String::from_utf8_lossy(&conf.stdout),
-        String::from_utf8_lossy(&conf.stderr)
-    );
+    // `zeo::cext::configure` re-enters zeo as a subprocess and exports the
+    // header directories, which is the whole path an installed zeo takes --
+    // spawning the binary by hand here would skip the export and pass only
+    // because the dev tree's fallback happens to be right.
+    zeo::cext::configure(&zeo_bin(), &dir, Path::new("extconf.rb"), &[])
+        .unwrap_or_else(|e| panic!("{e}"));
 
     let makefile = std::fs::read_to_string(dir.join("Makefile")).expect("mkmf wrote a Makefile");
     // The three lines that were empty when `RbConfig.expand` did not mutate.
@@ -93,10 +91,11 @@ fn an_extension_configures_compiles_and_links() {
         );
     }
 
-    let built = Command::new("make")
-        .current_dir(&dir)
-        .output()
-        .expect("make runs");
+    // ZEO drives the build. `make` is not on this path at all -- see
+    // `crates/zeo/src/cext/build.rs` for the two commands and for when it
+    // still hands over.
+    let built = zeo::cext::build_extension(&dir, 4).unwrap_or_else(|e| panic!("{e}"));
+
     // `DLEXT`: `bundle` on macOS, `so` everywhere else -- the same split
     // `crates/zeo/build.rs` renders into the rbconfig shim.
     let dlext = if cfg!(target_vendor = "apple") {
@@ -105,12 +104,25 @@ fn an_extension_configures_compiles_and_links() {
         "so"
     };
     let bundle = dir.join(format!("probe.{dlext}"));
+    assert_eq!(built, bundle, "the driver named a different product");
+    assert!(bundle.is_file(), "{} was not produced", bundle.display());
+    assert!(dir.join("probe.o").is_file(), "the object file is missing");
+
+    // The `make` fallback has to work too, and it is the path a gem with a
+    // custom rule takes -- so it is exercised rather than assumed.
+    for f in ["probe.o", &format!("probe.{dlext}")] {
+        std::fs::remove_file(dir.join(f)).unwrap_or_else(|e| panic!("removing {f}: {e}"));
+    }
+    let made = Command::new("make")
+        .current_dir(&dir)
+        .output()
+        .expect("make runs");
     assert!(
         bundle.is_file(),
         "make did not produce {}:\n{}\n{}",
         bundle.display(),
-        String::from_utf8_lossy(&built.stdout),
-        String::from_utf8_lossy(&built.stderr)
+        String::from_utf8_lossy(&made.stdout),
+        String::from_utf8_lossy(&made.stderr)
     );
 
     let _ = std::fs::remove_dir_all(&dir);
