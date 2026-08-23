@@ -15,6 +15,7 @@
 //! guesses.
 
 pub mod alloc;
+pub mod collection;
 pub mod convert;
 pub mod data;
 pub mod handles;

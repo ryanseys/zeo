@@ -81,6 +81,7 @@ impl Drop for Scope {
         // A pinned `RSTRING_PTR` buffer is written back here, before the
         // handles that keep its owner alive are released.
         super::string::flush_pins();
+        super::collection::flush_projections();
         let pinned = SCOPES.with_borrow_mut(|s| {
             // Not an equality assert: `jmp::protect` may already have unwound
             // this scope by hand after a longjmp, and then there is nothing
@@ -130,6 +131,7 @@ pub(super) fn unwind_to(depth: usize) {
         // Same reason as in `Scope::drop`: a raise must not lose a write the
         // extension had already made through `RSTRING_PTR`.
         super::string::flush_pins();
+        super::collection::flush_projections();
     }
     loop {
         let Some(pinned) = SCOPES.with_borrow_mut(|s| (s.len() > depth).then(|| s.pop()).flatten())

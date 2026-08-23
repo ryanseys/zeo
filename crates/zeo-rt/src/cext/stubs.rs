@@ -22,7 +22,7 @@
 //! safe. The caller passes arguments in registers and on a stack it
 //! cleans up itself, the callee reads none of them, and it never
 //! returns -- so there is no return value to disagree about and no
-//! frame to unwind. Writing 876 correct signatures would
+//! frame to unwind. Writing 862 correct signatures would
 //! buy nothing: not one of these functions runs.
 //!
 //! # The globals
@@ -435,10 +435,6 @@ pub extern "C" fn rb_ary_cat() -> ! {
     unimplemented("rb_ary_cat")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_ary_clear() -> ! {
-    unimplemented("rb_ary_clear")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_ary_cmp() -> ! {
     unimplemented("rb_ary_cmp")
 }
@@ -461,10 +457,6 @@ pub extern "C" fn rb_ary_dup() -> ! {
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_ary_each() -> ! {
     unimplemented("rb_ary_each")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_ary_entry() -> ! {
-    unimplemented("rb_ary_entry")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_ary_free() -> ! {
@@ -491,28 +483,12 @@ pub extern "C" fn rb_ary_modify() -> ! {
     unimplemented("rb_ary_modify")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_ary_new() -> ! {
-    unimplemented("rb_ary_new")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_ary_new_capa() -> ! {
-    unimplemented("rb_ary_new_capa")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_ary_new_from_args() -> ! {
     unimplemented("rb_ary_new_from_args")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_ary_new_from_values() -> ! {
-    unimplemented("rb_ary_new_from_values")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_ary_plus() -> ! {
     unimplemented("rb_ary_plus")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_ary_pop() -> ! {
-    unimplemented("rb_ary_pop")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_ary_ptr_use_end() -> ! {
@@ -521,10 +497,6 @@ pub extern "C" fn rb_ary_ptr_use_end() -> ! {
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_ary_ptr_use_start() -> ! {
     unimplemented("rb_ary_ptr_use_start")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_ary_push() -> ! {
-    unimplemented("rb_ary_push")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_ary_rassoc() -> ! {
@@ -553,10 +525,6 @@ pub extern "C" fn rb_ary_rotate() -> ! {
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_ary_shared_with_p() -> ! {
     unimplemented("rb_ary_shared_with_p")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_ary_shift() -> ! {
-    unimplemented("rb_ary_shift")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_ary_sort() -> ! {
@@ -1843,24 +1811,12 @@ pub extern "C" fn rb_hash() -> ! {
     unimplemented("rb_hash")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_hash_aref() -> ! {
-    unimplemented("rb_hash_aref")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_hash_aset() -> ! {
-    unimplemented("rb_hash_aset")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_hash_bulk_insert() -> ! {
     unimplemented("rb_hash_bulk_insert")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_hash_bulk_insert_into_st_table() -> ! {
     unimplemented("rb_hash_bulk_insert_into_st_table")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_hash_clear() -> ! {
-    unimplemented("rb_hash_clear")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_hash_delete() -> ! {
@@ -1895,20 +1851,8 @@ pub extern "C" fn rb_hash_lookup2() -> ! {
     unimplemented("rb_hash_lookup2")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_hash_new() -> ! {
-    unimplemented("rb_hash_new")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_hash_new_capa() -> ! {
-    unimplemented("rb_hash_new_capa")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_hash_set_ifnone() -> ! {
     unimplemented("rb_hash_set_ifnone")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_hash_size() -> ! {
-    unimplemented("rb_hash_size")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_hash_size_num() -> ! {
