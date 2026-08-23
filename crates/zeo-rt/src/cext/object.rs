@@ -829,13 +829,22 @@ crate::cext_fn! {
 
     // ---- global variables ----------------------------------------------
 
+    /// `rb_gv_get(name)`. A name `rb_define_variable` bound to a C word is
+    /// read from that word, because C may have written it directly since the
+    /// last time anything published it -- see [`super::builtins`].
     fn rb_gv_get(name: *const c_char) -> Value {
         let n = gvar_name(&unsafe { cstr(name) });
+        if let Some(v) = super::builtins::slot_get(&n) {
+            return Ok(v);
+        }
         to_value(&crate::globals::global_get(MAIN_BOX, &n))
     }
 
     fn rb_gv_set(name: *const c_char, val: Value) -> Value {
         let n = gvar_name(&unsafe { cstr(name) });
+        if super::builtins::slot_set(&n, val)? {
+            return Ok(val);
+        }
         crate::globals::global_set(MAIN_BOX, &n, unsafe { value_of(val) });
         Ok(val)
     }

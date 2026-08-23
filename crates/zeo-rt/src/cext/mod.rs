@@ -15,16 +15,19 @@
 //! guesses.
 
 pub mod alloc;
+pub mod builtins;
 pub mod call;
 pub mod collection;
 pub mod convert;
 pub mod data;
 pub mod error;
+pub mod eval;
 pub mod format;
 pub mod forward;
 pub mod gc;
 pub mod globals;
 pub mod handles;
+pub mod io;
 pub mod jmp;
 pub mod method;
 pub mod misc;

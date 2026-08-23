@@ -318,7 +318,7 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
-fn set_errinfo(sig: &Signal) {
+pub(super) fn set_errinfo(sig: &Signal) {
     if let Signal::Raise(e) = sig {
         ERRINFO.with_borrow_mut(|slot| *slot = Some(e.clone()));
     }
