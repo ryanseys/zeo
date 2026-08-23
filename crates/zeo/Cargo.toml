@@ -13,7 +13,7 @@ readme = "../../README.md"
 default-run = "zeo"
 # Packaging whitelist: the integration/golden suites live in `zeo-tests`
 # (repo-rooted, unpublishable); the .crate ships only the compiler itself
-# plus the two publish-time artifacts `cargo xtask stage-publish` stages
+# plus the two publish-time artifacts `tools/zeo-dev stage-publish` stages
 # (the pregen class surface rides inside /src).
 include = ["/src", "/build.rs", "/README.md", "/gems.pregen.tar.gz"]
 

@@ -24,7 +24,7 @@ syn.workspace = true
 [features]
 # Source positions for `scan`. Off by default so `zeo-macros` -- which links
 # this crate to expand every `ruby_class!` -- does not pay for proc-macro2's
-# source map. The build tools in `xtask` turn it on; without it `Decl::line`
+# source map. `zeo dev scan-decls` turns it on; without it `Decl::line`
 # reads 0 and nothing else changes.
 spans = ["proc-macro2/span-locations"]
 

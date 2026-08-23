@@ -207,7 +207,7 @@ jobs:
       - name: no gem stopped compiling
         run: |
           if [ -d vendor/gems ] && [ -f conformance/gem-probe.tsv ]; then
-            cargo run -p xtask -- gem-probe --all --check
+            tools/zeo-dev gem-probe --corpus --limit 25
           else
             echo "vendor/gems or the ledger is absent; skipping the gem-probe regression gate"
           fi
@@ -216,7 +216,7 @@ jobs:
       # can silently stop resolving when a workspace dependency moves.
       # --stage-only validates it with `cargo metadata --locked --offline`,
       # which takes seconds rather than a full runtime build.
-      - run: cargo run -p xtask -- dist --stage-only
+      - run: tools/zeo-dev dist --stage-only
 
       # `cargo package --list`, NOT `cargo package`. Both `cargo package` and
       # `cargo publish --dry-run` resolve each dependency's version

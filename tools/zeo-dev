@@ -22,6 +22,7 @@ USAGE = <<~TEXT
     gemtests        run a vendored gem's own test suite
     gem-probe       fetch a gem and record whether zeo compiles it
     stage-publish   stage the artifacts the published crate ships
+    dist            assemble the relocatable distribution
 
   `tools/zeo-dev <command> --help` describes one command.
 TEXT

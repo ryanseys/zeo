@@ -15,7 +15,7 @@ env:
 
 jobs:
   # Every target builds natively. Cross-compiling zeo-rt is not worth it: the
-  # runtime links C (Prism, Oniguruma, OpenSSL, libffi), and `xtask dist`
+  # runtime links C (Prism, Oniguruma, OpenSSL, libffi), and `zeo-dev dist`
   # finishes with a smoke test that COMPILES AND RUNS a Ruby program with the
   # staged binary -- which a cross build could not do at all.
   dist:
@@ -44,7 +44,7 @@ jobs:
       # Builds the tree, vendors the runtime workspace's crates.io deps, then
       # proves the staged binary works: it resolves its payload relative to
       # bin/, builds zeo-rt offline, and compiles and runs a program.
-      - run: cargo run -p xtask -- dist --target ${{ matrix.target }}
+      - run: tools/zeo-dev dist --target ${{ matrix.target }}
 
       - uses: actions/upload-artifact@v4
         with:

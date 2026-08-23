@@ -41,6 +41,7 @@ module ZeoDev
     gemtests
     gem-probe
     stage-publish
+    dist
   ].freeze
 
   class Error < StandardError; end

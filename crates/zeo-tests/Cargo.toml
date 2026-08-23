@@ -34,7 +34,7 @@ gimli.workspace = true
 
 # Golden-file suites: one nextest case per `.rb`, comparing zeo's output to the
 # committed ruby-oracle `.expected` (see tests/support/golden.rs). `harness =
-# false` hands the target to datatest-stable. `cargo xtask bless <filter>` rewrites goldens.
+# false` hands the target to datatest-stable. `tools/zeo-dev bless <filter>` rewrites goldens.
 [[test]]
 name = "gaps"
 path = "tests/gaps.rs"
