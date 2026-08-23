@@ -40,6 +40,7 @@ module ZeoDev
     gem
     gemtests
     gem-probe
+    cext
     check-env-vars
     linux
     stage-publish

@@ -171,3 +171,18 @@ gemtest "rack",
   github: "rack/rack",
   tag: "v3.2.6",
   rev: "e1f22fdbe99afd2126b6fbf05bb12399359574b7"
+gemtest "msgpack",
+  github: "msgpack/msgpack-ruby",
+  tag: "v1.8.4",
+  rev: "42378b091b0936d27bc9649da366e90798345fe6"
+
+# MRI's public C API headers. zeo compiles a gem's `ext/**/*.c` from source
+# against these, so a prebuilt MRI `.so` never loads. The vendored tree is
+# upstream verbatim plus `crates/zeo-rt/cext/patches/`, which turns the
+# layout-reading macros into calls; `zeo-dev cext sync --check` proves the
+# tree is exactly that sum.
+headers "ruby",
+  github: "ruby/ruby",
+  tag: "v4.0.6",
+  rev: "03b6d3f8898a28604fe6cb00eae3226b821168f4",
+  subdir: "include"

@@ -12,11 +12,14 @@ module ZeoDev
   # the only file anything other than this tool reads. Nothing outside
   # `tools/` should have to run ruby to learn what is pinned.
   #
-  # Two groups. `gems` are vendored into the committed `gems/<name>/` (a stub
-  # gemspec plus the verbatim `lib/`), which is what the compiler reads, so a
-  # fresh clone builds offline. `gemtests` are fetched into the gitignored
-  # `vendor/gemtests/<name>/` as WHOLE checkouts -- a `.gem` archive does not
-  # ship `test/`, so those trees come from the repo and are fetched on demand.
+  # Three groups. `gems` are vendored into the committed `gems/<name>/` (a
+  # stub gemspec plus the verbatim `lib/`), which is what the compiler reads,
+  # so a fresh clone builds offline. `gemtests` are fetched into the
+  # gitignored `vendor/gemtests/<name>/` as WHOLE checkouts -- a `.gem`
+  # archive does not ship `test/`, so those trees come from the repo and are
+  # fetched on demand. `headers` are C headers vendored into the committed
+  # tree and then patched; `zeo-dev cext sync` rebuilds them from upstream
+  # plus the patch series.
   class Manifest
     SOURCE = "upstream.rb"
     LOCK = "upstream.lock"
@@ -57,6 +60,12 @@ module ZeoDev
         @entries << Entry.new(name: name, github: github, tag: tag, rev: rev,
                               subdir: subdir, group: :gemtests)
       end
+
+      # A C header tree vendored verbatim and then patched.
+      def headers(name, github:, tag:, rev: nil, subdir: nil)
+        @entries << Entry.new(name: name, github: github, tag: tag, rev: rev,
+                              subdir: subdir, group: :headers)
+      end
     end
 
     attr_reader :entries
@@ -88,7 +97,8 @@ module ZeoDev
     def lock_json
       "#{JSON.pretty_generate(
         "gems" => group(:gems).map(&:to_h),
-        "gemtests" => group(:gemtests).map(&:to_h)
+        "gemtests" => group(:gemtests).map(&:to_h),
+        "headers" => group(:headers).map(&:to_h)
       )}\n"
     end
 

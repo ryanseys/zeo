@@ -194,6 +194,13 @@ jobs:
       # hand-edit to gems/ cannot silently diverge from its upstream source.
       - run: tools/zeo-dev gem sync --check
 
+      # The MRI C API headers are upstream verbatim PLUS a patch series, and
+      # both halves are load-bearing: the verbatim half is what makes a gem's
+      # ext/ compile at all, and the patch half is what stops it reading a
+      # struct layout zeo does not have. A hand-edit to a vendored header
+      # would be invisible in review among 194 files, so the sum is checked.
+      - run: tools/zeo-dev cext sync --check
+
       # The published `zeo` crate carries pregenerated artifacts that its
       # build script would otherwise derive from sibling crates absent from
       # the .crate file. This fails if they drift from their sources.
