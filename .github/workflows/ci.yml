@@ -206,6 +206,12 @@ jobs:
       # would be invisible in review among 194 files, so the sum is checked.
       - run: tools/zeo-dev cext sync --check
 
+      # `conformance/cext-api.tsv` and `cext/stubs.rs` are both generated from
+      # clang's AST of those headers, so a re-vendor moves them and a new
+      # `rb_*` implementation retires a stub. Stale either way means a gem
+      # fails to LINK, with a message naming a symbol and no file or line.
+      - run: tools/zeo-dev cext api --check
+
       # The published `zeo` crate carries pregenerated artifacts that its
       # build script would otherwise derive from sibling crates absent from
       # the .crate file. This fails if they drift from their sources.

@@ -13,6 +13,11 @@ zeo-gems.json
 # hand. See docs/GEM_TESTING.md.
 conformance/
 
+# ...except the C API census, which is not measurement. `cext/stubs.rs` is
+# generated from it, a unit test reads it back, and CI checks both -- so a
+# fresh clone that could not see it would fail to build.
+!conformance/cext-api.tsv
+
 # Publish-time artifacts staged by `tools/zeo-dev stage-publish`; never committed.
 crates/zeo/gems.pregen.tar.gz
 crates/zeo/src/class_surface.pregen.rs
