@@ -53,6 +53,43 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// module docs for why the gate is checked before any handle is built.
 static RECORDING: AtomicBool = AtomicBool::new(false);
 
+/// A collection is DUE: the registry has grown past its threshold and the
+/// next safepoint should run one.
+///
+/// It is a request, not an action, and that separation is the whole point.
+/// An allocation can happen inside a container's own guard -- growing a Hash
+/// while its lock is held -- and collecting there hands the pass a locked
+/// node it has to read. The registry only ever ARMS this; `check_ints`, which
+/// holds no guard by construction, is where it fires.
+static DUE: AtomicBool = AtomicBool::new(false);
+
+/// Ask for a collection at the next safepoint. Called from the registry when
+/// it has grown enough, never from a `record_*` fast path.
+pub(crate) fn arm_collection() {
+    if !DUE.swap(true, Ordering::Relaxed) {
+        // The `check_ints` fast path is one relaxed load of the interrupt
+        // counter; a request has to move it or nothing will look.
+        crate::gvl::note_posted();
+    }
+}
+
+/// A safepoint: run the collection the registry asked for, if any.
+///
+/// Claimed with a swap, so a re-entrant allocation during the pass -- the
+/// snapshot's own `Vec`, or a `Drop` that builds something -- re-arms for the
+/// NEXT safepoint rather than recursing into this one.
+pub(crate) fn service_due() {
+    if !DUE.swap(false, Ordering::Relaxed) {
+        return;
+    }
+    crate::gvl::note_consumed();
+    // The SAME entry an explicit `GC.start` takes, so the two cannot drift:
+    // `GC.disable` gates both, both bump `GC.count`, and both sweep the
+    // finalizers a reclaimed cycle just made due. CRuby counts its automatic
+    // collections too.
+    crate::builtins::gc::run_collection();
+}
+
 /// Whether this process records allocations.
 #[inline]
 pub fn recording() -> bool {
@@ -175,5 +212,31 @@ pub fn can_close_a_cycle(v: &crate::RubyValue) -> bool {
 pub fn record_cell(c: &crate::LocalCell) {
     if recording() {
         record(Node::Cell(std::sync::Arc::downgrade(c)));
+    }
+}
+
+/// `ZEO_RT_GCCHECK=1`: run one last collection at exit and report what it
+/// found as `cycle leak: N objects`.
+///
+/// Anything reclaimed HERE is a cycle the program built and never collected:
+/// by this point `at_exit` has run and the finalizers have swept, so a node
+/// the pass can prove unreachable was leaked for the program's whole life.
+/// That turns every golden into a cycle-leak regression test, which is the
+/// only way to notice the shape arriving -- a leaked cycle changes no output.
+pub fn check_at_exit() {
+    if !std::env::var_os("ZEO_RT_GCCHECK").is_some_and(|v| !v.is_empty()) {
+        return;
+    }
+    // The check needs the registry, and arming it at exit records nothing
+    // that was allocated before, so it has to have been on all along.
+    if !recording() {
+        eprintln!(
+            "ZEO_RT_GCCHECK: nothing to check -- the allocation registry was never armed (ZEO_GC=1)"
+        );
+        return;
+    }
+    let leaked = collect();
+    if leaked > 0 {
+        eprintln!("cycle leak: {leaked} objects");
     }
 }

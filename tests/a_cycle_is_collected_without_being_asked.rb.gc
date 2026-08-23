@@ -1,0 +1,3 @@
+The collector only exists under `ZEO_GC=1`; without it `GC.start` bumps a
+counter and nothing is reclaimed, so both answers read false. CRuby always
+collects, so the oracle needs no counterpart.

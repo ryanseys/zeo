@@ -229,6 +229,18 @@ static CHUNKS: Mutex<Vec<Vec<Node>>> = Mutex::new(Vec::new());
 /// Entries published since the last [`compact`], plus what survived it --
 /// the threshold that decides when compaction is worth its scan.
 static COMPACT_AT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(2 * CHUNK);
+/// How many live nodes may accumulate before a collection is armed. Raised
+/// after every pass to what survived it plus half again, so a program with a
+/// genuinely large live heap collects on GROWTH rather than on every
+/// compaction.
+static COLLECT_AT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(8 * CHUNK);
+
+/// Re-aim the trigger at what a finished pass left behind.
+pub(crate) fn retarget_collection(live: usize) {
+    use std::sync::atomic::Ordering::Relaxed;
+    COLLECT_AT.store(live + (live / 2).max(8 * CHUNK), Relaxed);
+}
+
 /// Total entries currently in [`CHUNKS`], live or dead.
 static PUBLISHED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
@@ -302,6 +314,13 @@ fn publish(chunk: Vec<Node>) {
         let live = compact_locked(&mut chunks);
         PUBLISHED.store(live, Relaxed);
         COMPACT_AT.store(live + (live / 2).max(2 * CHUNK), Relaxed);
+        // Compaction already told us what survived, so the trigger costs no
+        // scan of its own. Only a heap that keeps GROWING through compactions
+        // is worth a collection: one that churns is already being reclaimed
+        // by ordinary refcounting.
+        if live >= COLLECT_AT.load(Relaxed) {
+            super::arm_collection();
+        }
     }
 }
 

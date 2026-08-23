@@ -229,6 +229,9 @@ pub fn check_ints() -> Result<(), Signal> {
         // Before the thread's own interrupts: a kill delivered here would
         // unwind past a collector that is waiting for this thread to park.
         gvl::park_if_asked();
+        // After parking, so a thread the collector asked to stop does not
+        // start a second collection of its own.
+        gc::service_due();
         thread::check_interrupt()?;
     }
     Ok(())

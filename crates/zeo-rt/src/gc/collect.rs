@@ -177,6 +177,7 @@ pub fn collect() -> usize {
     // `ZEO_RT_LEAKCHECK`'s counters. A pass that reclaims nothing looks
     // exactly like one that never ran, and telling those apart from outside
     // the process is otherwise guesswork.
+    let node_count = nodes.len();
     if std::env::var_os("ZEO_RT_GCSTATS").is_some() {
         eprintln!(
             "gc: nodes={} edges={} live={} reclaimed={reclaimed}",
@@ -185,6 +186,11 @@ pub fn collect() -> usize {
             nodes.len() - reclaimed,
         );
     }
+
+    // Re-aim the allocation trigger at what survived, so a program with a
+    // genuinely large live heap collects on growth rather than every time
+    // the registry compacts.
+    registry::retarget_collection(node_count - reclaimed);
 
     #[cfg(debug_assertions)]
     {

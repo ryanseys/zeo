@@ -72,6 +72,7 @@ unsafe fn main_inner(
     });
     let at_exit_status = crate::run_at_exit();
     crate::run_finalizers();
+    crate::gc::check_at_exit();
     super::leakcheck::check_at_exit();
     if let Err(signal) = result {
         match signal {
