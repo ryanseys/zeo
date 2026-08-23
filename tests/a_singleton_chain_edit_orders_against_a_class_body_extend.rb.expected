@@ -1,0 +1,22 @@
+["M", "#<Class:A>", "#<Class:Object>", "#<Class:BasicObject>", "Class"]
+"m"
+true
+true
+["M", "#<Class:B>", "M", "#<Class:Object>", "#<Class:BasicObject>"]
+"m"
+["#<Class:C>", "M", "#<Class:Object>", "#<Class:BasicObject>", "Class"]
+"m"
+["#<Class:D>", "M", "#<Class:Object>", "#<Class:BasicObject>", "Class"]
+"m"
+["M", "#<Class:E>", "N", "#<Class:Object>", "#<Class:BasicObject>"]
+"m"
+"n"
+["N", "M", "#<Class:F>", "#<Class:Object>", "#<Class:BasicObject>"]
+["M", "#<Class:G>", "G", "Module", "Object"]
+"m"
+["#<Class:H>", "M", "#<Class:Object>", "#<Class:BasicObject>", "Class"]
+["#<Class:Sub>", "M", "#<Class:Base>", "#<Class:Object>", "#<Class:BasicObject>"]
+"m"
+["M", "#<Class:I>", "#<Class:Object>", "#<Class:BasicObject>", "Class"]
+["I", "M", "Object"]
+"m"

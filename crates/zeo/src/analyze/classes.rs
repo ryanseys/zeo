@@ -650,6 +650,21 @@ fn walk_class_body(
             _ => stmt,
         })
         .collect();
+    // A class-body `extend M` is a compile-time ancestry edit applied at class
+    // registration, so it runs before line 1. Ruby runs it where it is written,
+    // and the difference is observable the moment the same body ALSO edits the
+    // singleton chain at run time: `rb_include_module` searches the whole chain
+    // and `rb_prepend_module` only the prepend area, so whichever verb runs
+    // first is the one that finds an empty scope. A `singleton_class.prepend M`
+    // above the `extend M` therefore gives the module ONE position in ruby and
+    // two here.
+    //
+    // The runtime spelling is already right in either order, so a body that
+    // does this sends the extend at its own position instead of registering it.
+    let runtime_singleton_edit = body
+        .iter()
+        .any(|&stmt| mutates_own_singleton_at_runtime(compiler, stmt));
+
     for &stmt in &body {
         // A `define_method(:x) { module M; end }` body is a block, so the
         // `module` keyword in it is legal and lands in THIS body's cref.
@@ -799,6 +814,9 @@ fn walk_class_body(
                         // send at this position.
                         if compiler.overrides_mixin_primitive(target, "extend_object") {
                             defer_mixin_to_runtime(compiler, target);
+                        } else if runtime_singleton_edit {
+                            defer_runtime_mixin_in_body(compiler, site_idx, stmt);
+                            continue;
                         } else {
                             compiler.classes[class_id.0 as usize].extends.push(target);
                         }
@@ -1658,4 +1676,31 @@ pub(super) fn defines_prepend_hook(compiler: &Compiler, module: ClassId) -> bool
             .own_class_methods
             .iter()
             .any(|&sid| compiler.scope(sid).name == "prepended")
+}
+
+/// Whether this class-body statement edits the class's OWN singleton chain at
+/// run time -- `singleton_class.prepend M` and its `include`/`extend` twins,
+/// with the implicit receiver a class body gives them.
+///
+/// A qualified spelling (`K.singleton_class.prepend M`) is left alone: it names
+/// a class by constant, which the body cannot do for itself before the body
+/// ends, so it cannot race the registration this guards.
+fn mutates_own_singleton_at_runtime(compiler: &Compiler, stmt: NodeId) -> bool {
+    let HirNode::Call {
+        receiver: Some(recv),
+        name,
+        ..
+    } = &compiler.hir[stmt]
+    else {
+        return false;
+    };
+    if !matches!(name.as_str(), "prepend" | "include" | "extend") {
+        return false;
+    }
+    matches!(
+        &compiler.hir[*recv],
+        HirNode::Call { receiver, name, .. }
+            if name == "singleton_class"
+                && receiver.is_none_or(|r| matches!(compiler.hir[r], HirNode::SelfRef))
+    )
 }
