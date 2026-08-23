@@ -45,10 +45,11 @@ pub struct Analyzed {
     /// top level to hang this off of.
     pub main_local_types: FMap<String, TyKind>,
     /// The compiled-in load path (see `Hir::feature_units`): each unit's
-    /// top-level statements under the feature name a `require` spells. Walked
-    /// exactly like `main_statements` -- their classes register at startup --
-    /// but emitted as a function the runtime calls on demand.
-    pub feature_units: Vec<(String, String, Vec<NodeId>)>,
+    /// top-level statements under EVERY feature name a `require` can spell
+    /// for it. Walked exactly like `main_statements` -- their classes
+    /// register at startup -- but emitted as a function the runtime calls on
+    /// demand.
+    pub feature_units: Vec<(Vec<String>, String, Vec<NodeId>)>,
     /// Load-path files zeo could not lower -- see `Hir::declined_units`.
     pub declined_units: Vec<(String, String, String)>,
 }
@@ -79,7 +80,7 @@ pub fn analyze(hir: Hir, root: NodeId) -> Result<Analyzed, crate::diagnostics::C
 struct AnalyzedParts {
     main_statements: Vec<NodeId>,
     main_local_types: FMap<String, TyKind>,
-    feature_units: Vec<(String, String, Vec<NodeId>)>,
+    feature_units: Vec<(Vec<String>, String, Vec<NodeId>)>,
     declined_units: Vec<(String, String, String)>,
 }
 
@@ -255,7 +256,9 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
                     d.at += unit_pre_exec.len();
                 }
                 unit_pre_exec.append(&mut stmts);
-                feature_units.push((unit.feature, unit.absolute, unit_pre_exec));
+                let mut names = vec![unit.feature];
+                names.extend(unit.aliases);
+                feature_units.push((names, unit.absolute, unit_pre_exec));
             }
             // Declined like a lowering failure: requiring it raises LoadError
             // naming the gap. The classes its statements BEFORE the failure

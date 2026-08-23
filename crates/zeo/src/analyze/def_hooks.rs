@@ -46,7 +46,7 @@ enum Target {
 pub fn resolve(
     compiler: &mut Compiler,
     main_statements: &mut Vec<NodeId>,
-    feature_units: &mut [(String, String, Vec<NodeId>)],
+    feature_units: &mut [(Vec<String>, String, Vec<NodeId>)],
 ) {
     for hook in global_hooks(compiler) {
         compiler.global_def_hooks.insert(hook.to_string());

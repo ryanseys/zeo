@@ -179,6 +179,23 @@ pub(super) struct Loader {
     /// later requirer with nothing (`rbconfig` inside rspec-support's
     /// `ruby_features.rb` was the corpus case).
     in_unit_sweep: bool,
+    /// Every single-file unit already made, `canonical path -> (index into
+    /// `Hir::feature_units`, the constants its body assigns)`. Demands for
+    /// one file arrive in DIFFERENT ROUNDS of the materialize loop -- rack's
+    /// guarded `require_relative "../lib/rack/media_type"` in round one, and
+    /// the `autoload :MediaType, "rack/media_type"` inside `rack.rb` only
+    /// once rack.rb itself is spliced as a unit in round two. The second
+    /// demand must reach the unit the first one made, or its spelling
+    /// resolves to nothing and the autoload silently never runs.
+    single_units: HashMap<PathBuf, (usize, Vec<String>)>,
+    /// Canonical paths some site requires under a runtime-undecided guard.
+    /// A file like this is a UNIT and never an inline splice, at every site
+    /// that names it -- including the unguarded ones. `abbrev` is required
+    /// both from inside a block and at top level in
+    /// `tests/require_from_a_block_and_top_level.rb`: splicing the second
+    /// site inline would run the body there, at a position the guarded site
+    /// (which comes first) has already passed.
+    unit_only_targets: HashSet<PathBuf>,
     /// External-store gems zeo can't provide, `name -> reason`:
     /// a `require` of one fails with the store's precise reason (which native
     /// layout, why) instead of the generic "cannot load such file".
@@ -320,6 +337,8 @@ pub(super) fn lower_main_file(
         required: HashSet::new(),
         splicing: Vec::new(),
         in_unit_sweep: false,
+        single_units: HashMap::new(),
+        unit_only_targets: HashSet::new(),
         store_exclusions: HashMap::new(),
         native_exts: HashMap::new(),
         built_cexts: HashMap::new(),
@@ -714,6 +733,9 @@ impl Loader {
             if let Some(file) = hir.lowering_file {
                 hir.conditional_require_sites
                     .insert((file, call.location().start_offset() as u32));
+                if let Ok(canonical) = path.canonicalize() {
+                    self.unit_only_targets.insert(canonical);
+                }
                 hir.single_unit_demand.insert((
                     package.or_else(|| hir.lowering_package.clone()),
                     path,
@@ -787,6 +809,7 @@ impl Loader {
                         }
                         hir.feature_units.push(crate::hir::FeatureUnit {
                             feature,
+                            aliases: Vec::new(),
                             absolute,
                             body: spliced,
                         });
@@ -954,6 +977,49 @@ impl Loader {
                 own.push(id);
                 continue;
             }
+            let mut nested = RequireCollector::default();
+            {
+                use ruby_prism::Visit as _;
+                nested.visit(&n);
+            }
+            // A `require` of a feature already loaded answers FALSE. The fold
+            // that turns a resolvable literal require into a boolean sees only
+            // the NAME, so the sites naming a file this compile has already
+            // spliced are marked here. Before `lower_node`, because the fold
+            // is in it -- and before this statement's own splice, which is
+            // what takes the dedup slot the answer is read from. (Two
+            // requires of one file inside a SINGLE statement both read the
+            // slot as free and both answer true; ruby answers true then
+            // false.)
+            if let Some(file) = hir.lowering_file {
+                let mut here: Vec<PathBuf> = Vec::new();
+                for call in &nested.calls {
+                    let cname = String::from_utf8_lossy(call.name().as_slice()).into_owned();
+                    let Some(target) = self.require_target(hir, result, call, &cname, dir)? else {
+                        continue;
+                    };
+                    // Already spliced by an earlier statement, or named twice
+                    // by THIS one -- `p [require_relative("x"),
+                    // require_relative("x")]` loads once and answers true
+                    // then false, and this statement's own splice has not
+                    // happened yet, so the second reads the slot as free.
+                    let again = self.required.contains(&(current_box, target.clone()))
+                        || here.contains(&target);
+                    // A file some guarded site requires is a UNIT, so THIS
+                    // site keeps its call too -- whichever runs first loads
+                    // it, which is ruby's rule and the only one that puts the
+                    // body at the right position for both.
+                    if self.unit_only_targets.contains(&target) {
+                        hir.conditional_require_sites
+                            .insert((file, call.location().start_offset() as u32));
+                    }
+                    here.push(target);
+                    if again {
+                        hir.rerequire_sites
+                            .insert((file, call.location().start_offset() as u32));
+                    }
+                }
+            }
             let id = lower_node(result, hir, &n)?;
             // A require this statement CONTAINS rather than IS, and that
             // LOADING the file runs -- a conditional (`require_relative
@@ -997,11 +1063,6 @@ impl Loader {
                 }
                 _ => Vec::new(),
             };
-            let mut nested = RequireCollector::default();
-            {
-                use ruby_prism::Visit as _;
-                nested.visit(&n);
-            }
             let mut rescued_spliced: Vec<crate::hir::NodeId> = Vec::new();
             for call in &nested.calls {
                 let cname = String::from_utf8_lossy(call.name().as_slice()).into_owned();
@@ -1156,6 +1217,45 @@ impl Loader {
         Ok(combined)
     }
 
+    /// The file this literal `require`/`require_relative` names, canonicalized
+    /// -- the key `Kernel#require`'s already-loaded answer is read from.
+    ///
+    /// Resolution mirrors `splice_feature`'s, and deliberately records
+    /// nothing: this is a QUESTION, asked before the statement lowers, and a
+    /// gem disclosure or a memo write here would make asking it change the
+    /// program. `None` for every shape without one compile-time file --
+    /// a computed name, a builtin (whose re-require answers off
+    /// `activated_features`, in the fold itself), a target that resolves to
+    /// nothing.
+    fn require_target(
+        &mut self,
+        hir: &mut Hir,
+        result: &ruby_prism::ParseResult,
+        call: &ruby_prism::CallNode<'_>,
+        name: &str,
+        dir: Option<&Path>,
+    ) -> PResult<Option<PathBuf>> {
+        let Some(feature) = literal_feature(result, hir, call)? else {
+            return Ok(None);
+        };
+        if name == "require" && is_builtin_feature(&feature) {
+            return Ok(None);
+        }
+        let path = match name {
+            "require_relative" => resolve_require_relative(&feature, dir).ok(),
+            "require" if feature.starts_with("./") || feature.starts_with("../") => {
+                resolve_require_relative(&feature, dir).ok()
+            }
+            "require" => self
+                .resolve_require(&feature)
+                .ok()
+                .flatten()
+                .map(|(p, _)| p),
+            _ => None,
+        };
+        Ok(path.and_then(|p| p.canonicalize().ok()))
+    }
+
     /// One recognized require/require_relative/load statement: validate the
     /// shape, resolve the target, splice (or skip, for a deduped require).
     #[allow(clippy::too_many_arguments)] // one context param per resolution
@@ -1232,6 +1332,32 @@ impl Loader {
             if (name == "require_relative" && hir.optional_require_sites.contains(&key))
                 || hir.conditional_require_sites.contains(&key)
             {
+                return Ok(None);
+            }
+        }
+        // A file some GUARDED site requires is a UNIT, and so is every other
+        // site that names it -- whichever runs first loads it. Splicing an
+        // unguarded site inline instead runs the body THERE, at a position
+        // the guarded site may already have passed: `abbrev` is required
+        // from inside a block and again at top level in
+        // `tests/require_from_a_block_and_top_level.rb`, and the block runs
+        // first.
+        if name != "load"
+            && let Some(file) = hir.lowering_file
+        {
+            let resolved = match name {
+                "require_relative" => resolve_require_relative(&feature, dir).ok(),
+                _ => self
+                    .resolve_require(&feature)
+                    .ok()
+                    .flatten()
+                    .map(|(p, _)| p),
+            };
+            if let Some(target) = resolved.and_then(|p| p.canonicalize().ok())
+                && self.unit_only_targets.contains(&target)
+            {
+                hir.conditional_require_sites
+                    .insert((file, call.location().start_offset() as u32));
                 return Ok(None);
             }
         }
@@ -1747,32 +1873,78 @@ impl Loader {
         // Single-file demands first: a conditional require names exactly one
         // target, and registering it under the feature AS REQUIRED is what
         // lets the runtime call find it.
+        //
+        // GROUPED BY FILE, because one file can be demanded under more than
+        // one spelling: rack writes `autoload :MediaType, "rack/media_type"`
+        // and a guarded `require_relative "../lib/rack/media_type"` for the
+        // same file. Splicing whichever demand the set yielded first and
+        // dropping the rest lost the other spelling -- and when the one lost
+        // was the autoload's, the read that should have run the unit found no
+        // unit under that name. The class was still there (a unit's classes
+        // register at startup) and its body's constants were not, so
+        // `Rack::MediaType.type` raised `uninitialized constant
+        // SPLIT_PATTERN`.
+        let mut grouped: Vec<(PathBuf, Option<String>, Vec<String>)> = Vec::new();
         for (package, path, feature) in std::mem::take(&mut hir.single_unit_demand) {
             let Ok(canonical) = path.canonicalize() else {
                 continue;
             };
+            match grouped.iter_mut().find(|(p, _, _)| p == &canonical) {
+                Some((_, pkg, features)) => {
+                    // A package attribution decides which roots the file's
+                    // own requires resolve against, so a named one outranks
+                    // the `None` a `require_relative` from outside any
+                    // package carries.
+                    if pkg.is_none() {
+                        *pkg = package;
+                    }
+                    if !features.contains(&feature) {
+                        features.push(feature);
+                    }
+                }
+                None => grouped.push((canonical, package, vec![feature])),
+            }
+        }
+        for (canonical, package, mut features) in grouped {
+            // A unit an EARLIER round already made: this round's spellings
+            // join it rather than being dropped, and an autoload among them
+            // gates its constants now.
+            if let Some((idx, consts)) = self.single_units.get(&canonical) {
+                let unit = &mut hir.feature_units[*idx];
+                let fresh: Vec<String> = features
+                    .into_iter()
+                    .filter(|f| f != &unit.feature && !unit.aliases.contains(f))
+                    .collect();
+                let gates = fresh.iter().any(|f| hir.autoload_features.contains(f));
+                unit.aliases.extend(fresh);
+                if gates {
+                    let consts = consts.clone();
+                    hir.unrun_unit_consts.extend(consts);
+                }
+                continue;
+            }
             if !self.required.insert((0, canonical.clone())) {
                 continue; // already spliced: it runs at its own position
             }
             let absolute = canonical.with_extension("").to_string_lossy().into_owned();
-            // An autoload unit has NOT run when the program starts, so every
-            // constant its body assigns is undefined until a read triggers
-            // it. The keys this splice adds are exactly those.
-            let gated = hir.autoload_features.contains(&feature);
-            let before: Vec<String> = match gated {
-                true => hir.const_write_names().cloned().collect(),
-                false => Vec::new(),
-            };
+            // A single-file unit has NOT run when the program starts, so
+            // every constant its body assigns is undefined until something
+            // loads it. The names are recorded whether or not this round
+            // gates them, because a LATER round's autoload of the same file
+            // is what decides that -- and by then the splice is over.
+            let before: std::collections::BTreeSet<String> =
+                hir.const_write_names().cloned().collect();
             match self.splice_file(hir, &canonical, None, package.clone(), 0) {
                 Ok(body) => {
-                    if gated {
-                        let before: std::collections::BTreeSet<&String> = before.iter().collect();
-                        let fresh: Vec<String> = hir
-                            .const_write_names()
-                            .filter(|k| !before.contains(k))
-                            .cloned()
-                            .collect();
-                        hir.unrun_unit_consts.extend(fresh);
+                    let fresh: Vec<String> = hir
+                        .const_write_names()
+                        .filter(|k| !before.contains(*k))
+                        .cloned()
+                        .collect();
+                    // ANY spelling being an autoload target gates the unit:
+                    // the read still has to run it.
+                    if features.iter().any(|f| hir.autoload_features.contains(f)) {
+                        hir.unrun_unit_consts.extend(fresh.iter().cloned());
                     }
                     for lf in hir
                         .loaded_files
@@ -1781,15 +1953,20 @@ impl Loader {
                     {
                         lf.is_unit = true;
                     }
+                    self.single_units
+                        .insert(canonical, (hir.feature_units.len(), fresh));
+                    let feature = features.remove(0);
                     hir.feature_units.push(crate::hir::FeatureUnit {
                         feature,
+                        aliases: features,
                         absolute,
                         body,
                     })
                 }
-                Err(e) => hir
-                    .declined_units
-                    .push((feature, absolute, e.message().to_string())),
+                Err(e) => {
+                    hir.declined_units
+                        .push((features.remove(0), absolute, e.message().to_string()))
+                }
             }
         }
         for (package, dir) in std::mem::take(&mut hir.unit_demand) {
@@ -1839,6 +2016,7 @@ impl Loader {
                             }
                             hir.feature_units.push(crate::hir::FeatureUnit {
                                 feature,
+                                aliases: Vec::new(),
                                 absolute,
                                 body,
                             })
@@ -2509,6 +2687,25 @@ impl<'pr> ruby_prism::Visit<'pr> for RequireCollector<'pr> {
         self.class_depth += 1;
         ruby_prism::visit_singleton_class_node(self, node);
         self.class_depth -= 1;
+    }
+
+    // A block BODY runs only when something yields to it, and how many times
+    // is a runtime fact. rack's `separate_testing do require_relative
+    // "../lib/rack/utils" end` is the shape: the non-SEPARATE definition of
+    // that method does not yield, so CRuby never loads the target and the
+    // eager splice loaded it anyway -- running rack/constants.rb a second
+    // time and warning on all 57 of its constants. Same treatment as an
+    // undecided guard: a gated unit, and the call stays live.
+    fn visit_block_node(&mut self, node: &ruby_prism::BlockNode<'pr>) {
+        self.runtime_cond += 1;
+        ruby_prism::visit_block_node(self, node);
+        self.runtime_cond -= 1;
+    }
+
+    fn visit_lambda_node(&mut self, node: &ruby_prism::LambdaNode<'pr>) {
+        self.runtime_cond += 1;
+        ruby_prism::visit_lambda_node(self, node);
+        self.runtime_cond -= 1;
     }
 
     // A `require` under a statically-false guard (`require 'open3/jruby_windows'

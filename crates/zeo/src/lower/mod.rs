@@ -1435,7 +1435,14 @@ fn lower_call_node(
                             || hir.conditional_require_sites.contains(&key)
                     });
                 if !unresolvable && !site_kept && !hir.deferred_requires.contains(&feature) {
-                    return Ok(hir.push(HirNode::BoolLit(true)));
+                    // FALSE when the loader marked this site as naming a file
+                    // it had already spliced -- ruby's answer for a feature
+                    // that is already loaded.
+                    let again = hir.lowering_file.is_some_and(|file| {
+                        hir.rerequire_sites
+                            .contains(&(file, call.location().start_offset() as u32))
+                    });
+                    return Ok(hir.push(HirNode::BoolLit(!again)));
                 }
             } else if name == "require_relative"
                 && let Some(dir) = computed_relative_demand_dir(&call)

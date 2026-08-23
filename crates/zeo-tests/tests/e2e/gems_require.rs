@@ -1669,3 +1669,74 @@ fn strict_static_require_refuses_a_computed_target() {
     )
     .expect("a literal require resolves at compile time");
 }
+
+/// A block body runs only when something yields to it, so a `require` written
+/// inside one is not a load this compile can perform ahead of time. rack's
+/// test helper is the shape: `separate_testing do require_relative "..." end`,
+/// where the non-SEPARATE definition of that method does not yield.
+#[test]
+fn a_require_in_a_block_that_never_yields_does_not_load() {
+    let out = run_ruby_project(
+        &[
+            ("dep.rb", "puts \"dep ran\"\nDEP = :dep\n"),
+            (
+                "prog.rb",
+                "def self.never_yields\n  :no_yield\nend\n\
+                 never_yields do\n  require_relative \"dep\"\nend\n\
+                 p Object.const_defined?(:DEP)\n\
+                 p [1, 2].map { require_relative \"dep\" }\n\
+                 p DEP\n",
+            ),
+        ],
+        "prog.rb",
+        &[],
+    );
+    assert!(out.status.success(), "stderr: {}", out.stderr);
+    assert_eq!(out.stdout, "false\ndep ran\n[true, false]\n:dep\n");
+}
+
+/// One file demanded twice under two different names: an `autoload` naming it
+/// on the load path, and a guarded `require_relative` naming it by path. rack
+/// writes both, and the second never runs.
+///
+/// The two demands reach the loader in DIFFERENT rounds of its unit sweep --
+/// the `require_relative` while `prog.rb` lowers, the `autoload` only once
+/// `pkg.rb` is itself spliced as a unit -- so a unit registered under
+/// whichever name arrived first dropped the other. When the one dropped was
+/// the autoload's, the read that should have run the unit found no unit under
+/// that name and did nothing: `Pkg::Target` still resolved (a unit's classes
+/// are in the dispatch tables from startup) and `Pkg::Target.read` was still
+/// callable, so the only symptom was its body's constant missing.
+#[test]
+fn an_autoload_and_a_guarded_require_of_one_file_share_its_unit() {
+    let out = run_ruby_project(
+        &[
+            (
+                "lib/pkg.rb",
+                "puts \"pkg ran\"\nmodule Pkg\n  autoload :Target, \"pkg/target\"\nend\n",
+            ),
+            (
+                "lib/pkg/target.rb",
+                "puts \"target ran\"\n\
+                 module Pkg\n  class Target\n    SPLIT = :split\n\
+                 class << self\n  def read = SPLIT\nend\n  end\nend\n",
+            ),
+            (
+                "prog.rb",
+                "def self.never_yields\n  :no_yield\nend\n\
+                 require_relative \"lib/pkg\" if ENV[\"HOME\"]\n\
+                 never_yields do\n  require_relative \"lib/pkg/target\"\nend\n\
+                 puts \"before read\"\n\
+                 p Pkg::Target.read\n",
+            ),
+        ],
+        "prog.rb",
+        &["lib"],
+    );
+    assert!(out.status.success(), "stderr: {}", out.stderr);
+    assert_eq!(
+        out.stdout, "pkg ran\nbefore read\ntarget ran\n:split\n",
+        "stderr: {}",
+        out.stderr
+    );
+}

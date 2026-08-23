@@ -1,0 +1,16 @@
+false
+before once
+once.rb ran
+after once
+true
+false
+lazy.rb ran
+true
+repeat.rb ran
+[true, false, false]
+in_body.rb ran
+:in_body
+never.rb ran
+true
+:never
+false

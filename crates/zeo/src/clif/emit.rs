@@ -479,7 +479,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
     // a program can build: the load-path-relative feature name and the
     // absolute path `File.expand_path("x", __dir__)` produces.
     let mut unit_rows: Vec<(String, FuncId)> = Vec::new();
-    for (i, (feature, absolute, stmts)) in analyzed.feature_units.iter().enumerate() {
+    for (i, (features, absolute, stmts)) in analyzed.feature_units.iter().enumerate() {
         let f = define_toplevel(
             em,
             analyzed,
@@ -489,7 +489,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             },
             stmts,
         )?;
-        unit_rows.push((feature.clone(), f));
+        unit_rows.extend(features.iter().map(|name| (name.clone(), f)));
         unit_rows.push((absolute.clone(), f));
     }
     let unit_init = statics::define_unit_init(em)?;

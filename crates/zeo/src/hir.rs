@@ -377,6 +377,13 @@ pub struct Hir {
     /// compiled in as a feature unit the runtime require loads when the
     /// guard actually passes. Keyed like `optional_require_sites`.
     pub conditional_require_sites: crate::compiler::FSet<(FileId, u32)>,
+    /// Call sites whose target this compile had ALREADY spliced when the
+    /// statement holding them was lowered. `require` answers `false` for a
+    /// feature that is already loaded, and the fold that turns a resolvable
+    /// literal require into a boolean cannot see which file a name resolves
+    /// to -- the loader marks them (`Loader::already_spliced`) before the
+    /// fold runs.
+    pub rerequire_sites: crate::compiler::FSet<(FileId, u32)>,
     /// Single files to compile as feature units: (owning package, path,
     /// feature name as required). The per-file companion to `unit_demand`'s
     /// per-directory walk, for a conditional require whose one target is
@@ -545,6 +552,13 @@ pub struct FeatureUnit {
     /// The name a `require` spells: the path under its load-path root, with
     /// no `.rb`.
     pub feature: String,
+    /// Every OTHER load-path spelling that names this same file. One file
+    /// can be demanded more than once -- rack's `autoload :MediaType,
+    /// "rack/media_type"` and a guarded `require_relative
+    /// "../lib/rack/media_type"` are the same file under two names -- and a
+    /// unit that answers to only one of them leaves the other's require
+    /// finding nothing.
+    pub aliases: Vec<String>,
     /// The same file's absolute path, with no `.rb` -- the OTHER spelling a
     /// program can build, and the one `File.expand_path("x", __dir__)` (the
     /// `autoload` idiom stdlib and bundler use for a sibling file) produces.
