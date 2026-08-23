@@ -12,24 +12,29 @@ fn main() {
     build_cext();
 }
 
-/// The two pieces of the C extension surface that have to BE C.
+/// The pieces of the C extension surface that have to BE C.
 ///
 /// `cext_jmp.c` holds the only `setjmp`: a `longjmp` past a live Rust frame
 /// skips its destructors, which is undefined rather than merely leaky.
-/// `cext_va.c` holds every variadic entry: Rust cannot read a `va_list`, and
-/// guessing is how a pointer gets read out of the wrong register.
+/// `cext_va.c`, `cext_fmt.c` and `cext_err.c` hold every variadic entry: Rust
+/// cannot read a `va_list`, and guessing is how a pointer gets read out of the
+/// wrong register. `cext_err.c` also owns `errno`, which is a macro over a
+/// per-thread location Rust cannot name.
 fn build_cext() {
-    println!("cargo:rerun-if-changed=csrc/cext_jmp.c");
-    println!("cargo:rerun-if-changed=csrc/cext_va.c");
+    for f in CEXT_SOURCES {
+        println!("cargo:rerun-if-changed=csrc/{f}");
+    }
     if std::env::var_os("CARGO_FEATURE_CEXT").is_none() {
         return;
     }
-    cc::Build::new()
-        .file("csrc/cext_jmp.c")
-        .file("csrc/cext_va.c")
-        .warnings(true)
-        .compile("zeo_cext");
+    let mut build = cc::Build::new();
+    for f in CEXT_SOURCES {
+        build.file(format!("csrc/{f}"));
+    }
+    build.warnings(true).compile("zeo_cext");
 }
+
+const CEXT_SOURCES: &[&str] = &["cext_jmp.c", "cext_va.c", "cext_fmt.c", "cext_err.c"];
 
 /// `<cpu>-<os>` in Ruby's spelling (its `RUBY_PLATFORM` convention), from the
 /// Cargo target the crate is being built for.

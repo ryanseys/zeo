@@ -10,7 +10,7 @@
 //! refinements, the same `method_missing` and the same visibility
 //! rules, and cannot drift from the method it stands for.
 //!
-//! Reimplementing 91 of these in Rust would be 91
+//! Reimplementing 99 of these in Rust would be 99
 //! more places for `String#length` to be subtly wrong.
 
 use super::convert::{to_value, value_of};
@@ -54,6 +54,11 @@ fn rb_ary_dup(recv: Value) -> Value {
 /// `Array#freeze`
 fn rb_ary_freeze(recv: Value) -> Value {
     forward(recv, "freeze", &[])
+}
+
+/// `Array#include?`
+fn rb_ary_includes(recv: Value, a0: Value) -> Value {
+    forward(recv, "include?", &[a0])
 }
 
 /// `Array#join`
@@ -106,6 +111,11 @@ fn rb_ary_unshift(recv: Value, a0: Value) -> Value {
     forward(recv, "unshift", &[a0])
 }
 
+/// `Integer#&`
+fn rb_big_and(recv: Value, a0: Value) -> Value {
+    forward(recv, "&", &[a0])
+}
+
 /// `Integer#clone`
 fn rb_big_clone(recv: Value) -> Value {
     forward(recv, "clone", &[])
@@ -126,9 +136,19 @@ fn rb_big_divmod(recv: Value, a0: Value) -> Value {
     forward(recv, "divmod", &[a0])
 }
 
+/// `Integer#==`
+fn rb_big_eq(recv: Value, a0: Value) -> Value {
+    forward(recv, "==", &[a0])
+}
+
 /// `Integer#eql?`
 fn rb_big_eql(recv: Value, a0: Value) -> Value {
     forward(recv, "eql?", &[a0])
+}
+
+/// `Integer#div`
+fn rb_big_idiv(recv: Value, a0: Value) -> Value {
+    forward(recv, "div", &[a0])
 }
 
 /// `Integer#<<`
@@ -146,6 +166,16 @@ fn rb_big_modulo(recv: Value, a0: Value) -> Value {
     forward(recv, "%", &[a0])
 }
 
+/// `Integer#*`
+fn rb_big_mul(recv: Value, a0: Value) -> Value {
+    forward(recv, "*", &[a0])
+}
+
+/// `Integer#|`
+fn rb_big_or(recv: Value, a0: Value) -> Value {
+    forward(recv, "|", &[a0])
+}
+
 /// `Integer#+`
 fn rb_big_plus(recv: Value, a0: Value) -> Value {
     forward(recv, "+", &[a0])
@@ -154,6 +184,16 @@ fn rb_big_plus(recv: Value, a0: Value) -> Value {
 /// `Integer#**`
 fn rb_big_pow(recv: Value, a0: Value) -> Value {
     forward(recv, "**", &[a0])
+}
+
+/// `Integer#>>`
+fn rb_big_rshift(recv: Value, a0: Value) -> Value {
+    forward(recv, ">>", &[a0])
+}
+
+/// `Integer#^`
+fn rb_big_xor(recv: Value, a0: Value) -> Value {
+    forward(recv, "^", &[a0])
 }
 
 /// `Class#attached_object`

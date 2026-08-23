@@ -82,6 +82,7 @@ impl Drop for Scope {
         // handles that keep its owner alive are released.
         super::string::flush_pins();
         super::collection::flush_projections();
+        super::format::flush_texts();
         let pinned = SCOPES.with_borrow_mut(|s| {
             // Not an equality assert: `jmp::protect` may already have unwound
             // this scope by hand after a longjmp, and then there is nothing
@@ -132,6 +133,7 @@ pub(super) fn unwind_to(depth: usize) {
         // extension had already made through `RSTRING_PTR`.
         super::string::flush_pins();
         super::collection::flush_projections();
+        super::format::flush_texts();
     }
     loop {
         let Some(pinned) = SCOPES.with_borrow_mut(|s| (s.len() > depth).then(|| s.pop()).flatten())

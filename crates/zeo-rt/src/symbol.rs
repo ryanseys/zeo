@@ -124,6 +124,15 @@ impl Symbol {
         Symbol(id)
     }
 
+    /// The Symbol for `name` ONLY if something already interned it.
+    ///
+    /// `rb_check_id` needs this: an extension calls it to skip a lookup that
+    /// cannot succeed, and minting the ID here would make every such skip
+    /// take the slow path forever after.
+    pub fn interned(name: &str) -> Option<Symbol> {
+        INTERNER.lock().by_lossy.get(name).copied().map(Symbol)
+    }
+
     /// `String#to_sym`'s entry: intern by the string's exact bytes AND
     /// encoding. ASCII text in any ASCII-compatible encoding is the
     /// US-ASCII symbol and valid UTF-8 the UTF-8 one (both via the default

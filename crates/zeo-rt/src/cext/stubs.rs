@@ -22,7 +22,7 @@
 //! safe. The caller passes arguments in registers and on a stack it
 //! cleans up itself, the callee reads none of them, and it never
 //! returns -- so there is no return value to disagree about and no
-//! frame to unwind. Writing 680 correct signatures would
+//! frame to unwind. Writing 440 correct signatures would
 //! buy nothing: not one of these functions runs.
 //!
 //! # The globals
@@ -347,16 +347,8 @@ pub static rb_stdin: Global = unfilled();
 pub static rb_stdout: Global = unfilled();
 
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_Complex() -> ! {
-    unimplemented("rb_Complex")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_Hash() -> ! {
     unimplemented("rb_Hash")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_Rational() -> ! {
-    unimplemented("rb_Rational")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_absint_numwords() -> ! {
@@ -385,10 +377,6 @@ pub extern "C" fn rb_alloc_tmp_buffer() -> ! {
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_alloc_tmp_buffer_with_count() -> ! {
     unimplemented("rb_alloc_tmp_buffer_with_count")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_any_to_s() -> ! {
-    unimplemented("rb_any_to_s")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_apply() -> ! {
@@ -425,10 +413,6 @@ pub extern "C" fn rb_ary_free() -> ! {
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_ary_hidden_new() -> ! {
     unimplemented("rb_ary_hidden_new")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_ary_includes() -> ! {
-    unimplemented("rb_ary_includes")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_ary_modify() -> ! {
@@ -475,10 +459,6 @@ pub extern "C" fn rb_assert_failure() -> ! {
     unimplemented("rb_assert_failure")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_assert_failure_detail() -> ! {
-    unimplemented("rb_assert_failure_detail")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_assoc_new() -> ! {
     unimplemented("rb_assoc_new")
 }
@@ -511,52 +491,12 @@ pub extern "C" fn rb_backtrace() -> ! {
     unimplemented("rb_backtrace")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_big2dbl() -> ! {
-    unimplemented("rb_big2dbl")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_big2long() -> ! {
-    unimplemented("rb_big2long")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_big2str() -> ! {
-    unimplemented("rb_big2str")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_big2ulong() -> ! {
-    unimplemented("rb_big2ulong")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_big_2comp() -> ! {
     unimplemented("rb_big_2comp")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_big_and() -> ! {
-    unimplemented("rb_big_and")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_big_eq() -> ! {
-    unimplemented("rb_big_eq")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_big_idiv() -> ! {
-    unimplemented("rb_big_idiv")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_big_mul() -> ! {
-    unimplemented("rb_big_mul")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_big_new() -> ! {
     unimplemented("rb_big_new")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_big_norm() -> ! {
-    unimplemented("rb_big_norm")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_big_or() -> ! {
-    unimplemented("rb_big_or")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_big_pack() -> ! {
@@ -567,24 +507,8 @@ pub extern "C" fn rb_big_resize() -> ! {
     unimplemented("rb_big_resize")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_big_rshift() -> ! {
-    unimplemented("rb_big_rshift")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_big_sign() -> ! {
-    unimplemented("rb_big_sign")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_big_unpack() -> ! {
     unimplemented("rb_big_unpack")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_big_xor() -> ! {
-    unimplemented("rb_big_xor")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_bigzero_p() -> ! {
-    unimplemented("rb_bigzero_p")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_binding_new() -> ! {
@@ -627,30 +551,6 @@ pub extern "C" fn rb_catch_obj() -> ! {
     unimplemented("rb_catch_obj")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_category_compile_warn() -> ! {
-    unimplemented("rb_category_compile_warn")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_category_warn() -> ! {
-    unimplemented("rb_category_warn")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_category_warning() -> ! {
-    unimplemented("rb_category_warning")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_check_convert_type() -> ! {
-    unimplemented("rb_check_convert_type")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_check_copyable() -> ! {
-    unimplemented("rb_check_copyable")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_check_frozen() -> ! {
-    unimplemented("rb_check_frozen")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_check_funcall() -> ! {
     unimplemented("rb_check_funcall")
 }
@@ -659,92 +559,8 @@ pub extern "C" fn rb_check_funcall_kw() -> ! {
     unimplemented("rb_check_funcall_kw")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_check_id() -> ! {
-    unimplemented("rb_check_id")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_check_inheritable() -> ! {
-    unimplemented("rb_check_inheritable")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_check_safe_str() -> ! {
-    unimplemented("rb_check_safe_str")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_check_symbol() -> ! {
-    unimplemented("rb_check_symbol")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_check_to_float() -> ! {
-    unimplemented("rb_check_to_float")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_check_to_int() -> ! {
-    unimplemented("rb_check_to_int")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_check_to_integer() -> ! {
-    unimplemented("rb_check_to_integer")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_check_type() -> ! {
-    unimplemented("rb_check_type")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_class_descendants() -> ! {
     unimplemented("rb_class_descendants")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_class_get_superclass() -> ! {
-    unimplemented("rb_class_get_superclass")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_class_instance_methods() -> ! {
-    unimplemented("rb_class_instance_methods")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_class_name() -> ! {
-    unimplemented("rb_class_name")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_class_new() -> ! {
-    unimplemented("rb_class_new")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_class_new_instance() -> ! {
-    unimplemented("rb_class_new_instance")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_class_new_instance_kw() -> ! {
-    unimplemented("rb_class_new_instance_kw")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_class_new_instance_pass_kw() -> ! {
-    unimplemented("rb_class_new_instance_pass_kw")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_class_path() -> ! {
-    unimplemented("rb_class_path")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_class_path_cached() -> ! {
-    unimplemented("rb_class_path_cached")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_class_private_instance_methods() -> ! {
-    unimplemented("rb_class_private_instance_methods")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_class_protected_instance_methods() -> ! {
-    unimplemented("rb_class_protected_instance_methods")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_class_public_instance_methods() -> ! {
-    unimplemented("rb_class_public_instance_methods")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_class_real() -> ! {
-    unimplemented("rb_class_real")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_clear_constant_cache() -> ! {
@@ -787,72 +603,8 @@ pub extern "C" fn rb_cmpint() -> ! {
     unimplemented("rb_cmpint")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_compile_warn() -> ! {
-    unimplemented("rb_compile_warn")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_compile_warning() -> ! {
-    unimplemented("rb_compile_warning")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_complex_mul() -> ! {
-    unimplemented("rb_complex_mul")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_complex_new() -> ! {
-    unimplemented("rb_complex_new")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_complex_new_polar() -> ! {
-    unimplemented("rb_complex_new_polar")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_complex_polar() -> ! {
-    unimplemented("rb_complex_polar")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_complex_raw() -> ! {
-    unimplemented("rb_complex_raw")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_complex_uminus() -> ! {
-    unimplemented("rb_complex_uminus")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_const_defined() -> ! {
-    unimplemented("rb_const_defined")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_const_defined_at() -> ! {
-    unimplemented("rb_const_defined_at")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_const_defined_from() -> ! {
-    unimplemented("rb_const_defined_from")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_const_get() -> ! {
-    unimplemented("rb_const_get")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_const_get_at() -> ! {
-    unimplemented("rb_const_get_at")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_const_get_from() -> ! {
-    unimplemented("rb_const_get_from")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_const_list() -> ! {
     unimplemented("rb_const_list")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_const_remove() -> ! {
-    unimplemented("rb_const_remove")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_const_set() -> ! {
-    unimplemented("rb_const_set")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_convert_type() -> ! {
@@ -861,18 +613,6 @@ pub extern "C" fn rb_convert_type() -> ! {
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_copy_generic_ivar() -> ! {
     unimplemented("rb_copy_generic_ivar")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_cstr2inum() -> ! {
-    unimplemented("rb_cstr2inum")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_cstr_to_dbl() -> ! {
-    unimplemented("rb_cstr_to_dbl")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_cstr_to_inum() -> ! {
-    unimplemented("rb_cstr_to_inum")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_current_receiver() -> ! {
@@ -887,36 +627,8 @@ pub extern "C" fn rb_cv_set() -> ! {
     unimplemented("rb_cv_set")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_cvar_defined() -> ! {
-    unimplemented("rb_cvar_defined")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_cvar_find() -> ! {
-    unimplemented("rb_cvar_find")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_cvar_get() -> ! {
-    unimplemented("rb_cvar_get")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_cvar_set() -> ! {
-    unimplemented("rb_cvar_set")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_data_define() -> ! {
     unimplemented("rb_data_define")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_dbl2big() -> ! {
-    unimplemented("rb_dbl2big")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_dbl_cmp() -> ! {
-    unimplemented("rb_dbl_cmp")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_dbl_complex_new() -> ! {
-    unimplemented("rb_dbl_complex_new")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_debug_rstring_null_ptr() -> ! {
@@ -935,16 +647,8 @@ pub extern "C" fn rb_define_class_id_under() -> ! {
     unimplemented("rb_define_class_id_under")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_define_class_variable() -> ! {
-    unimplemented("rb_define_class_variable")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_define_finalizer() -> ! {
     unimplemented("rb_define_finalizer")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_define_global_const() -> ! {
-    unimplemented("rb_define_global_const")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_define_global_function() -> ! {
@@ -1023,38 +727,6 @@ pub extern "C" fn rb_env_clear() -> ! {
     unimplemented("rb_env_clear")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_eql() -> ! {
-    unimplemented("rb_eql")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_equal() -> ! {
-    unimplemented("rb_equal")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_errno() -> ! {
-    unimplemented("rb_errno")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_errno_ptr() -> ! {
-    unimplemented("rb_errno_ptr")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_errno_set() -> ! {
-    unimplemented("rb_errno_set")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_error_arity() -> ! {
-    unimplemented("rb_error_arity")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_error_frozen() -> ! {
-    unimplemented("rb_error_frozen")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_error_frozen_object() -> ! {
-    unimplemented("rb_error_frozen_object")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_eval_cmd_kw() -> ! {
     unimplemented("rb_eval_cmd_kw")
 }
@@ -1069,22 +741,6 @@ pub extern "C" fn rb_eval_string_protect() -> ! {
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_eval_string_wrap() -> ! {
     unimplemented("rb_eval_string_wrap")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_exc_fatal() -> ! {
-    unimplemented("rb_exc_fatal")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_exc_new() -> ! {
-    unimplemented("rb_exc_new")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_exc_new_cstr() -> ! {
-    unimplemented("rb_exc_new_cstr")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_exc_new_str() -> ! {
-    unimplemented("rb_exc_new_str")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_exec_recursive() -> ! {
@@ -1145,10 +801,6 @@ pub extern "C" fn rb_f_global_variables() -> ! {
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_f_kill() -> ! {
     unimplemented("rb_f_kill")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_f_notimplement() -> ! {
-    unimplemented("rb_f_notimplement")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_f_require() -> ! {
@@ -1267,30 +919,6 @@ pub extern "C" fn rb_find_file_ext() -> ! {
     unimplemented("rb_find_file_ext")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_fix2int() -> ! {
-    unimplemented("rb_fix2int")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_fix2short() -> ! {
-    unimplemented("rb_fix2short")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_fix2str() -> ! {
-    unimplemented("rb_fix2str")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_fix2uint() -> ! {
-    unimplemented("rb_fix2uint")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_fix2ushort() -> ! {
-    unimplemented("rb_fix2ushort")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_float_new_in_heap() -> ! {
-    unimplemented("rb_float_new_in_heap")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_flt_rationalize() -> ! {
     unimplemented("rb_flt_rationalize")
 }
@@ -1321,10 +949,6 @@ pub extern "C" fn rb_free_tmp_buffer() -> ! {
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_freeze_singleton_class() -> ! {
     unimplemented("rb_freeze_singleton_class")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_frozen_error_raise() -> ! {
-    unimplemented("rb_frozen_error_raise")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_funcall_passing_block() -> ! {
@@ -1403,18 +1027,6 @@ pub extern "C" fn rb_gc_writebarrier_unprotect() -> ! {
     unimplemented("rb_gc_writebarrier_unprotect")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_genrand_int32() -> ! {
-    unimplemented("rb_genrand_int32")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_genrand_real() -> ! {
-    unimplemented("rb_genrand_real")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_genrand_ulong_limited() -> ! {
-    unimplemented("rb_genrand_ulong_limited")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_get_alloc_func() -> ! {
     unimplemented("rb_get_alloc_func")
 }
@@ -1447,18 +1059,6 @@ pub extern "C" fn rb_glob() -> ! {
     unimplemented("rb_glob")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_gv_get() -> ! {
-    unimplemented("rb_gv_get")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_gv_set() -> ! {
-    unimplemented("rb_gv_set")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_gvar_readonly_setter() -> ! {
-    unimplemented("rb_gvar_readonly_setter")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_hash() -> ! {
     unimplemented("rb_hash")
 }
@@ -1483,10 +1083,6 @@ pub extern "C" fn rb_hash_size_num() -> ! {
     unimplemented("rb_hash_size_num")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_hash_start() -> ! {
-    unimplemented("rb_hash_start")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_hash_tbl() -> ! {
     unimplemented("rb_hash_tbl")
 }
@@ -1503,36 +1099,12 @@ pub extern "C" fn rb_id_attrset() -> ! {
     unimplemented("rb_id_attrset")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_inspect() -> ! {
-    unimplemented("rb_inspect")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_int2big() -> ! {
-    unimplemented("rb_int2big")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_integer_pack() -> ! {
-    unimplemented("rb_integer_pack")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_integer_unpack() -> ! {
-    unimplemented("rb_integer_unpack")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_interned_str() -> ! {
     unimplemented("rb_interned_str")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_interned_str_cstr() -> ! {
     unimplemented("rb_interned_str_cstr")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_interrupt() -> ! {
-    unimplemented("rb_interrupt")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_invalid_str() -> ! {
-    unimplemented("rb_invalid_str")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_io_addstr() -> ! {
@@ -1559,38 +1131,6 @@ pub extern "C" fn rb_io_puts() -> ! {
     unimplemented("rb_io_puts")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_is_absolute_path() -> ! {
-    unimplemented("rb_is_absolute_path")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_is_attrset_id() -> ! {
-    unimplemented("rb_is_attrset_id")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_is_class_id() -> ! {
-    unimplemented("rb_is_class_id")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_is_const_id() -> ! {
-    unimplemented("rb_is_const_id")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_is_global_id() -> ! {
-    unimplemented("rb_is_global_id")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_is_instance_id() -> ! {
-    unimplemented("rb_is_instance_id")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_is_junk_id() -> ! {
-    unimplemented("rb_is_junk_id")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_is_local_id() -> ! {
-    unimplemented("rb_is_local_id")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_iter_break() -> ! {
     unimplemented("rb_iter_break")
 }
@@ -1601,26 +1141,6 @@ pub extern "C" fn rb_iter_break_value() -> ! {
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_iterate() -> ! {
     unimplemented("rb_iterate")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_iv_get() -> ! {
-    unimplemented("rb_iv_get")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_iv_set() -> ! {
-    unimplemented("rb_iv_set")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_ivar_count() -> ! {
-    unimplemented("rb_ivar_count")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_ivar_defined() -> ! {
-    unimplemented("rb_ivar_defined")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_ivar_foreach() -> ! {
-    unimplemented("rb_ivar_foreach")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_keyword_given_p() -> ! {
@@ -1657,14 +1177,6 @@ pub extern "C" fn rb_load_file_str() -> ! {
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_load_protect() -> ! {
     unimplemented("rb_load_protect")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_loaderror() -> ! {
-    unimplemented("rb_loaderror")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_loaderror_with_path() -> ! {
-    unimplemented("rb_loaderror_with_path")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_locale_str_new() -> ! {
@@ -1723,14 +1235,6 @@ pub extern "C" fn rb_memcicmp() -> ! {
     unimplemented("rb_memcicmp")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_memerror() -> ! {
-    unimplemented("rb_memerror")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_memhash() -> ! {
-    unimplemented("rb_memhash")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_memory_id() -> ! {
     unimplemented("rb_memory_id")
 }
@@ -1759,60 +1263,12 @@ pub extern "C" fn rb_method_call_with_block_kw() -> ! {
     unimplemented("rb_method_call_with_block_kw")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_mod_class_variables() -> ! {
-    unimplemented("rb_mod_class_variables")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_mod_const_at() -> ! {
     unimplemented("rb_mod_const_at")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_mod_const_of() -> ! {
     unimplemented("rb_mod_const_of")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_mod_constants() -> ! {
-    unimplemented("rb_mod_constants")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_mod_init_copy() -> ! {
-    unimplemented("rb_mod_init_copy")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_mod_method_arity() -> ! {
-    unimplemented("rb_mod_method_arity")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_mod_module_eval() -> ! {
-    unimplemented("rb_mod_module_eval")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_mod_module_exec() -> ! {
-    unimplemented("rb_mod_module_exec")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_mod_remove_cvar() -> ! {
-    unimplemented("rb_mod_remove_cvar")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_mod_sys_fail() -> ! {
-    unimplemented("rb_mod_sys_fail")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_mod_sys_fail_str() -> ! {
-    unimplemented("rb_mod_sys_fail_str")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_mod_syserr_fail() -> ! {
-    unimplemented("rb_mod_syserr_fail")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_mod_syserr_fail_str() -> ! {
-    unimplemented("rb_mod_syserr_fail_str")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_module_new() -> ! {
-    unimplemented("rb_module_new")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_must_asciicompat() -> ! {
@@ -1831,14 +1287,6 @@ pub extern "C" fn rb_mutex_trylock() -> ! {
     unimplemented("rb_mutex_trylock")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_name_error() -> ! {
-    unimplemented("rb_name_error")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_name_error_str() -> ! {
-    unimplemented("rb_name_error_str")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_need_block() -> ! {
     unimplemented("rb_need_block")
 }
@@ -1847,112 +1295,8 @@ pub extern "C" fn rb_notimplement() -> ! {
     unimplemented("rb_notimplement")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_num2fix() -> ! {
-    unimplemented("rb_num2fix")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_num2short() -> ! {
-    unimplemented("rb_num2short")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_num2uint() -> ! {
-    unimplemented("rb_num2uint")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_num2ull() -> ! {
-    unimplemented("rb_num2ull")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_num2ulong() -> ! {
-    unimplemented("rb_num2ulong")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_num2ushort() -> ! {
-    unimplemented("rb_num2ushort")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_num_coerce_bin() -> ! {
-    unimplemented("rb_num_coerce_bin")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_num_coerce_bit() -> ! {
-    unimplemented("rb_num_coerce_bit")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_num_coerce_cmp() -> ! {
-    unimplemented("rb_num_coerce_cmp")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_num_coerce_relop() -> ! {
-    unimplemented("rb_num_coerce_relop")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_num_zerodiv() -> ! {
-    unimplemented("rb_num_zerodiv")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_obj_alloc() -> ! {
-    unimplemented("rb_obj_alloc")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_obj_as_string() -> ! {
-    unimplemented("rb_obj_as_string")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_obj_call_init() -> ! {
-    unimplemented("rb_obj_call_init")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_obj_call_init_kw() -> ! {
-    unimplemented("rb_obj_call_init_kw")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_obj_freeze_inline() -> ! {
-    unimplemented("rb_obj_freeze_inline")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_obj_hide() -> ! {
     unimplemented("rb_obj_hide")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_obj_id() -> ! {
-    unimplemented("rb_obj_id")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_obj_init_copy() -> ! {
-    unimplemented("rb_obj_init_copy")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_obj_instance_eval() -> ! {
-    unimplemented("rb_obj_instance_eval")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_obj_instance_exec() -> ! {
-    unimplemented("rb_obj_instance_exec")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_obj_is_fiber() -> ! {
-    unimplemented("rb_obj_is_fiber")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_obj_is_instance_of() -> ! {
-    unimplemented("rb_obj_is_instance_of")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_obj_is_method() -> ! {
-    unimplemented("rb_obj_is_method")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_obj_is_proc() -> ! {
-    unimplemented("rb_obj_is_proc")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_obj_method_arity() -> ! {
-    unimplemented("rb_obj_method_arity")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_obj_respond_to() -> ! {
-    unimplemented("rb_obj_respond_to")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_obj_reveal() -> ! {
@@ -1963,24 +1307,12 @@ pub extern "C" fn rb_obj_setup() -> ! {
     unimplemented("rb_obj_setup")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_obj_singleton_methods() -> ! {
-    unimplemented("rb_obj_singleton_methods")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_out_of_int() -> ! {
     unimplemented("rb_out_of_int")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_p() -> ! {
     unimplemented("rb_p")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_path2class() -> ! {
-    unimplemented("rb_path2class")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_path_to_class() -> ! {
-    unimplemented("rb_path_to_class")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_pipe() -> ! {
@@ -2031,22 +1363,6 @@ pub extern "C" fn rb_provided() -> ! {
     unimplemented("rb_provided")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_random_bytes() -> ! {
-    unimplemented("rb_random_bytes")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_random_int32() -> ! {
-    unimplemented("rb_random_int32")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_random_real() -> ! {
-    unimplemented("rb_random_real")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_random_ulong_limited() -> ! {
-    unimplemented("rb_random_ulong_limited")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_range_beg_len() -> ! {
     unimplemented("rb_range_beg_len")
 }
@@ -2057,30 +1373,6 @@ pub extern "C" fn rb_range_new() -> ! {
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_range_values() -> ! {
     unimplemented("rb_range_values")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_rational_den() -> ! {
-    unimplemented("rb_rational_den")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_rational_new() -> ! {
-    unimplemented("rb_rational_new")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_rational_num() -> ! {
-    unimplemented("rb_rational_num")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_rational_raw() -> ! {
-    unimplemented("rb_rational_raw")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_readwrite_sys_fail() -> ! {
-    unimplemented("rb_readwrite_sys_fail")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_readwrite_syserr_fail() -> ! {
-    unimplemented("rb_readwrite_syserr_fail")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_refinement_new() -> ! {
@@ -2231,14 +1523,6 @@ pub extern "C" fn rb_set_size() -> ! {
     unimplemented("rb_set_size")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_singleton_class() -> ! {
-    unimplemented("rb_singleton_class")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_singleton_class_attached() -> ! {
-    unimplemented("rb_singleton_class_attached")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_singleton_class_clone() -> ! {
     unimplemented("rb_singleton_class_clone")
 }
@@ -2257,170 +1541,6 @@ pub extern "C" fn rb_spawn() -> ! {
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_spawn_err() -> ! {
     unimplemented("rb_spawn_err")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_sprintf() -> ! {
-    unimplemented("rb_sprintf")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_st_add_direct() -> ! {
-    unimplemented("rb_st_add_direct")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_st_cleanup_safe() -> ! {
-    unimplemented("rb_st_cleanup_safe")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_st_clear() -> ! {
-    unimplemented("rb_st_clear")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_st_copy() -> ! {
-    unimplemented("rb_st_copy")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_st_delete() -> ! {
-    unimplemented("rb_st_delete")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_st_delete_safe() -> ! {
-    unimplemented("rb_st_delete_safe")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_st_foreach() -> ! {
-    unimplemented("rb_st_foreach")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_st_foreach_check() -> ! {
-    unimplemented("rb_st_foreach_check")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_st_foreach_safe() -> ! {
-    unimplemented("rb_st_foreach_safe")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_st_foreach_with_replace() -> ! {
-    unimplemented("rb_st_foreach_with_replace")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_st_free_table() -> ! {
-    unimplemented("rb_st_free_table")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_st_get_key() -> ! {
-    unimplemented("rb_st_get_key")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_st_hash() -> ! {
-    unimplemented("rb_st_hash")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_st_hash_end() -> ! {
-    unimplemented("rb_st_hash_end")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_st_hash_start() -> ! {
-    unimplemented("rb_st_hash_start")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_st_hash_uint() -> ! {
-    unimplemented("rb_st_hash_uint")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_st_hash_uint32() -> ! {
-    unimplemented("rb_st_hash_uint32")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_st_init_numtable() -> ! {
-    unimplemented("rb_st_init_numtable")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_st_init_numtable_with_size() -> ! {
-    unimplemented("rb_st_init_numtable_with_size")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_st_init_strcasetable() -> ! {
-    unimplemented("rb_st_init_strcasetable")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_st_init_strcasetable_with_size() -> ! {
-    unimplemented("rb_st_init_strcasetable_with_size")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_st_init_strtable() -> ! {
-    unimplemented("rb_st_init_strtable")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_st_init_strtable_with_size() -> ! {
-    unimplemented("rb_st_init_strtable_with_size")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_st_init_table() -> ! {
-    unimplemented("rb_st_init_table")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_st_init_table_with_size() -> ! {
-    unimplemented("rb_st_init_table_with_size")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_st_insert() -> ! {
-    unimplemented("rb_st_insert")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_st_insert2() -> ! {
-    unimplemented("rb_st_insert2")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_st_keys() -> ! {
-    unimplemented("rb_st_keys")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_st_keys_check() -> ! {
-    unimplemented("rb_st_keys_check")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_st_locale_insensitive_strcasecmp() -> ! {
-    unimplemented("rb_st_locale_insensitive_strcasecmp")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_st_locale_insensitive_strncasecmp() -> ! {
-    unimplemented("rb_st_locale_insensitive_strncasecmp")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_st_lookup() -> ! {
-    unimplemented("rb_st_lookup")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_st_memsize() -> ! {
-    unimplemented("rb_st_memsize")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_st_numcmp() -> ! {
-    unimplemented("rb_st_numcmp")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_st_numhash() -> ! {
-    unimplemented("rb_st_numhash")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_st_shift() -> ! {
-    unimplemented("rb_st_shift")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_st_table_size() -> ! {
-    unimplemented("rb_st_table_size")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_st_update() -> ! {
-    unimplemented("rb_st_update")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_st_values() -> ! {
-    unimplemented("rb_st_values")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_st_values_check() -> ! {
-    unimplemented("rb_st_values_check")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_str2inum() -> ! {
@@ -2453,10 +1573,6 @@ pub extern "C" fn rb_str_capacity() -> ! {
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_str_cat2() -> ! {
     unimplemented("rb_str_cat2")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_str_catf() -> ! {
-    unimplemented("rb_str_catf")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_str_cmp() -> ! {
@@ -2571,16 +1687,8 @@ pub extern "C" fn rb_str_tmp_new() -> ! {
     unimplemented("rb_str_tmp_new")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_str_to_dbl() -> ! {
-    unimplemented("rb_str_to_dbl")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_str_to_interned_str() -> ! {
     unimplemented("rb_str_to_interned_str")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_str_to_inum() -> ! {
-    unimplemented("rb_str_to_inum")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_str_unlocktmp() -> ! {
@@ -2589,10 +1697,6 @@ pub extern "C" fn rb_str_unlocktmp() -> ! {
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_str_update() -> ! {
     unimplemented("rb_str_update")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_str_vcatf() -> ! {
-    unimplemented("rb_str_vcatf")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_string_value() -> ! {
@@ -2641,34 +1745,6 @@ pub extern "C" fn rb_sym_all_symbols() -> ! {
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_symname_p() -> ! {
     unimplemented("rb_symname_p")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_sys_fail() -> ! {
-    unimplemented("rb_sys_fail")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_sys_fail_str() -> ! {
-    unimplemented("rb_sys_fail_str")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_sys_warning() -> ! {
-    unimplemented("rb_sys_warning")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_syserr_fail() -> ! {
-    unimplemented("rb_syserr_fail")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_syserr_fail_str() -> ! {
-    unimplemented("rb_syserr_fail_str")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_syserr_new() -> ! {
-    unimplemented("rb_syserr_new")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_syserr_new_str() -> ! {
-    unimplemented("rb_syserr_new_str")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_syswait() -> ! {
@@ -2803,22 +1879,6 @@ pub extern "C" fn rb_timespec_now() -> ! {
     unimplemented("rb_timespec_now")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_to_float() -> ! {
-    unimplemented("rb_to_float")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_to_id() -> ! {
-    unimplemented("rb_to_id")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_to_int() -> ! {
-    unimplemented("rb_to_int")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_to_symbol() -> ! {
-    unimplemented("rb_to_symbol")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_typeddata_inherited_p() -> ! {
     unimplemented("rb_typeddata_inherited_p")
 }
@@ -2867,20 +1927,8 @@ pub extern "C" fn rb_vrescue2() -> ! {
     unimplemented("rb_vrescue2")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_vsprintf() -> ! {
-    unimplemented("rb_vsprintf")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_waitpid() -> ! {
     unimplemented("rb_waitpid")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_warn() -> ! {
-    unimplemented("rb_warn")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_warning() -> ! {
-    unimplemented("rb_warning")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_write_error() -> ! {
@@ -3015,10 +2063,6 @@ pub extern "C" fn ruby_signal_name() -> ! {
     unimplemented("ruby_signal_name")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn ruby_snprintf() -> ! {
-    unimplemented("ruby_snprintf")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn ruby_stack_check() -> ! {
     unimplemented("ruby_stack_check")
 }
@@ -3037,10 +2081,6 @@ pub extern "C" fn ruby_strtoul() -> ! {
 #[unsafe(no_mangle)]
 pub extern "C" fn ruby_sysinit() -> ! {
     unimplemented("ruby_sysinit")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn ruby_vsnprintf() -> ! {
-    unimplemented("ruby_vsnprintf")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn ruby_xcalloc() -> ! {

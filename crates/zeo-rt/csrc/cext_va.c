@@ -33,6 +33,8 @@ extern VALUE zeo_cext_rescue2(VALUE (*body)(VALUE), VALUE barg,
 extern int zeo_cext_scan_plan(const char *fmt, int *required, int *optional,
                               int *splat, int *block);
 extern VALUE zeo_cext_scan_slice(int argc, const VALUE *argv, int from, int to);
+/* `cext_fmt.c`: MRI's format, `PRIsVALUE` included. */
+extern int zeo_cext_vsnprintf(char *buf, size_t cap, const char *fmt, va_list ap);
 
 /* MRI's own ceiling: `rb_funcall` past this is a bug in the extension, and
  * MRI's `rb_funcall` has the same fixed buffer for the same reason. */
@@ -76,10 +78,10 @@ VALUE rb_funcall3(VALUE recv, ID mid, int argc, const VALUE *argv)
 /*
  * `rb_raise(exc, fmt, ...)`.
  *
- * The format runs through `vsnprintf`, which is what MRI does. That is only
- * safe because it happens HERE: the compiler checked the call site against
- * the prototype, and the same `va_list` the extension built is the one being
- * read.
+ * The format runs through `zeo_cext_vsnprintf` rather than the system one,
+ * because MRI's format is C's plus `PRIsVALUE` -- see `cext_fmt.c`. The
+ * `va_list` is read HERE either way: the compiler checked the call site
+ * against the prototype, and this is the frame that owns it.
  */
 void rb_raise(VALUE exc, const char *fmt, ...)
 {
@@ -87,7 +89,7 @@ void rb_raise(VALUE exc, const char *fmt, ...)
     va_list ap;
 
     va_start(ap, fmt);
-    vsnprintf(msg, sizeof(msg), fmt, ap);
+    zeo_cext_vsnprintf(msg, sizeof(msg), fmt, ap);
     va_end(ap);
     zeo_cext_raise_str(exc, msg);
     /* Not reached: the Rust side longjmps. */
@@ -99,7 +101,7 @@ void rb_fatal(const char *fmt, ...)
     va_list ap;
 
     va_start(ap, fmt);
-    vsnprintf(msg, sizeof(msg), fmt, ap);
+    zeo_cext_vsnprintf(msg, sizeof(msg), fmt, ap);
     va_end(ap);
     zeo_cext_raise_str(0, msg);
 }

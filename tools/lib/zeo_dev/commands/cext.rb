@@ -341,7 +341,10 @@ module ZeoDev
       OPS = {
         "plus" => "+", "minus" => "-", "times" => "*", "div" => "/", "modulo" => "%",
         "pow" => "**", "cmp" => "<=>", "aref" => "[]", "aset" => "[]=",
-        "equal" => "==", "eql" => "eql?", "lshift" => "<<"
+        "equal" => "==", "eq" => "==", "eql" => "eql?", "lshift" => "<<", "rshift" => ">>",
+        "and" => "&", "or" => "|", "xor" => "^", "mul" => "*", "sub" => "-",
+        "idiv" => "div", "uminus" => "-@", "uplus" => "+@", "neg" => "-@",
+        "includes" => "include?", "size" => "size", "length" => "length"
       }.freeze
 
       # Names whose C meaning is NOT the Ruby method they map onto. Each one
@@ -417,17 +420,23 @@ module ZeoDev
         end
       end
 
-      # Every stub whose signature is `VALUE (VALUE, ...)` and whose name maps
-      # onto a class. Nothing else can be a forward: a `char *` or a `long` in
-      # the signature means the function does something a Ruby method call
-      # cannot express.
+      # Every `VALUE (VALUE, ...)` entry whose name maps onto a class.
+      # Nothing else can be a forward: a `char *` or a `long` in the signature
+      # means the function does something a Ruby method call cannot express.
+      #
+      # An entry ALREADY forwarded has status `zeo`, because `forward.rs` is
+      # what implements it -- so filtering on `stub` alone would drop every
+      # existing row on the next reverify. The rule is the SIGNATURE, and the
+      # status only decides whether some other file got there first.
       def candidates
+        forwarded = read_forward_tsv.map { |r| r[:name] }.to_set
         out = []
         File.readlines(File.join(ROOT, API_TSV)).each do |line|
           next if line.start_with?("#", "symbol")
 
           name, kind, status, sig = line.chomp.split("\t")
-          next unless kind == "fn" && status == "stub"
+          next unless kind == "fn"
+          next unless status == "stub" || forwarded.include?(name)
           next unless sig =~ /\AVALUE \(VALUE(, VALUE)*\)\z/
           next if DENY.key?(name)
 

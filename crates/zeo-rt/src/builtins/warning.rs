@@ -34,6 +34,21 @@ fn category_flag(v: &RubyValue) -> Result<&'static AtomicBool, Signal> {
     }
 }
 
+/// Is a category on? The C API's `rb_category_warn` asks by name, because
+/// `rb_warning_category_t` is an enum over the same four categories.
+#[cfg(feature = "cext")]
+pub(crate) fn category_enabled(name: &str) -> bool {
+    match name {
+        "deprecated" => DEPRECATED.load(Ordering::Relaxed),
+        "experimental" => EXPERIMENTAL.load(Ordering::Relaxed),
+        "performance" => PERFORMANCE.load(Ordering::Relaxed),
+        // `strict_unused_block` has no cell, and CRuby leaves it off under a
+        // plain run. An unknown name is not a category and warns anyway.
+        "strict_unused_block" => false,
+        _ => true,
+    }
+}
+
 ruby_module! {
     Warning = zeo_abi::WARNING_MODULE;
 
