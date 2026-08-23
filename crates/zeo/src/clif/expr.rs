@@ -2116,6 +2116,12 @@ fn scoped_const_read(fx: &mut Fx, id: NodeId, scope: &str, name: &str) -> Result
     // class would otherwise fold to a Class immediate below and never ask
     // (`M::Hidden` answered the class where ruby raises).
     if let Some(scope_cid) = resolve_class_here(fx, scope) {
+        // The SCOPE can itself be an `autoload` target, and reading THROUGH
+        // it is a read of it -- CRuby runs the target before it looks the
+        // leaf up. Only `class_value_of` touched, so `Holder::Composed`
+        // alone ran the unit and `Holder::Composed::MARK` raised
+        // `uninitialized constant` for a constant the unit assigns.
+        emit_autoload_touch(fx, scope_cid);
         emit_private_constant_guard(fx, scope_cid, name);
     }
     // `Scope::NAME` naming a nested class/module is a Class immediate.

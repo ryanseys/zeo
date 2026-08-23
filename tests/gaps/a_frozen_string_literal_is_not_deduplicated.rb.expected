@@ -1,0 +1,6 @@
+true
+true
+true
+false
+[TypeError, "can't define singleton"]
+true

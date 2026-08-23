@@ -26,8 +26,16 @@ ruby_class! {
         define_value_class(DATA_CLASS, true, args, block)
     }
 
+    // The freeze happens HERE, not after the constructor returns, because
+    // that is where CRuby puts it (`rb_data_initialize_m`). A subclass whose
+    // own `initialize` writes an ivar AFTER `super` must raise `FrozenError`,
+    // and it cannot if the instance is still mutable until `Data.new` is done
+    // with it.
     def "initialize"(recv, *args, &_block) {
         bind_members(recv, args, true)?;
+        if let RubyValue::Object(o) = recv {
+            o.set_frozen();
+        }
         Ok(RubyValue::Nil)
     }
     // A CONSTRUCTED Data instance is frozen, so a direct send can only

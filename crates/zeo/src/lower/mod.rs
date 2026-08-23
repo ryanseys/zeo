@@ -1813,19 +1813,30 @@ fn interpolated_dir_feature(node: &Node<'_>) -> PResult<Option<String>> {
             out.push_str(&String::from_utf8_lossy(s.unescaped()));
             continue;
         }
-        let is_dir = part
+        let Some(stmts) = part
             .as_embedded_statements_node()
             .and_then(|e| e.statements())
             .map(|s| s.body().iter().collect::<Vec<_>>())
-            .and_then(|stmts| match stmts.as_slice() {
-                [only] => only.as_call_node(),
-                _ => None,
-            })
-            .is_some_and(|c| c.receiver().is_none() && c.name().as_slice() == b"__dir__");
-        if !is_dir {
+        else {
             return Ok(None);
+        };
+        let [only] = stmts.as_slice() else {
+            return Ok(None);
+        };
+        let is_dir = only
+            .as_call_node()
+            .is_some_and(|c| c.receiver().is_none() && c.name().as_slice() == b"__dir__");
+        if is_dir {
+            out.push_str(&current_dir_str()?);
+            continue;
         }
-        out.push_str(&current_dir_str()?);
+        // The two forms COMPOSE: rubygems writes
+        // `"#{File.expand_path("lib", __dir__)}/x"`, which is neither a bare
+        // `__dir__` interpolation nor a whole `File.expand_path` call.
+        match compile_time_feature(only)? {
+            Some(text) => out.push_str(&text),
+            None => return Ok(None),
+        }
     }
     Ok(Some(out))
 }

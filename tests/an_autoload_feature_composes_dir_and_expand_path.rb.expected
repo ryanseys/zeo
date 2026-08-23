@@ -1,0 +1,8 @@
+before
+true
+target ran
+:composed
+false
+"Holder::Composed"
+also ran
+:also

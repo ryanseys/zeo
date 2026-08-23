@@ -870,10 +870,10 @@ pub fn struct_construct(
     });
     // Dispatch `initialize` so a user override (and its `super`) resolve
     // normally; the default member-setter lives in the class_table.
+    // A Data freezes inside its own `initialize` (see `builtins::data`), not
+    // here: a subclass that never calls `super` leaves the instance mutable
+    // in CRuby too, and one that writes an ivar after `super` must raise.
     send_in(0, &handle, Symbol::intern("initialize"), args, block)?;
-    if meta.is_data {
-        handle.set_frozen();
-    }
     Ok(RubyValue::Object(handle))
 }
 

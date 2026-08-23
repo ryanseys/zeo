@@ -64,6 +64,7 @@ pub(crate) fn weak_owner(v: &RubyValue) -> Option<WeakOwner> {
         RubyValue::Array(a) => erase(a),
         RubyValue::Hash(h) => erase(h),
         RubyValue::Regexp(r) => erase(r),
+        RubyValue::Range(r) => erase(r),
         RubyValue::MatchData(m) => erase(m),
         RubyValue::Enumerator(e) => erase(e),
         RubyValue::Fiber(f) => erase(f),
@@ -689,6 +690,15 @@ impl RubyValue {
                     // inspects as its payload (`[1, 2, 3]`).
                     None => match o.builtin_payload() {
                         Some(p) => p.inspect_with(seen)?,
+                        // A `Struct`/`Data` instance reads as its members
+                        // (`#<data D2 m=1>`), which is the row its Ruby-level
+                        // `inspect` answers -- `call_user_method` cannot see
+                        // that row, so an error message built from this
+                        // infallible path reported the address form.
+                        None if crate::builtins::rstruct::meta_of(o.class_id()).is_some() => {
+                            let v = RubyValue::Object(o.clone());
+                            crate::builtins::rstruct::build_inspect(&v)?.display_with(seen)?
+                        }
                         None => default_object_repr(o, true, seen)?,
                     },
                 }

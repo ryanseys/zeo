@@ -546,6 +546,16 @@ pub(crate) fn value_identity(v: &RubyValue) -> Option<usize> {
         RubyValue::Str(s) => Arc::as_ptr(s).cast::<()>(),
         RubyValue::Hash(h) => Arc::as_ptr(h).cast::<()>(),
         RubyValue::Regexp(r) => Arc::as_ptr(r).cast::<()>(),
+        RubyValue::Range(r) => Arc::as_ptr(r).cast::<()>(),
+        RubyValue::MatchData(m) => Arc::as_ptr(m).cast::<()>(),
+        RubyValue::Enumerator(e) => Arc::as_ptr(e).cast::<()>(),
+        RubyValue::Fiber(f) => Arc::as_ptr(f).cast::<()>(),
+        RubyValue::Thread(t) => Arc::as_ptr(t).cast::<()>(),
+        RubyValue::Mutex(m) => Arc::as_ptr(m).cast::<()>(),
+        RubyValue::Queue(q) => Arc::as_ptr(q).cast::<()>(),
+        RubyValue::Ractor(r) => Arc::as_ptr(r).cast::<()>(),
+        // A Proc's payload address, which is what its own `identity` spells.
+        RubyValue::Proc(p) | RubyValue::Yielder(p) => return Some(p.identity()),
         // `nil`/`true`/`false` have exactly ONE instance each, so a fixed key
         // per value IS a per-object identity -- and CRuby accepts a singleton
         // on them for that reason. 0/1/2 can never collide with a real `Arc`
@@ -679,12 +689,14 @@ fn extend_key(recv: &RubyValue) -> Option<usize> {
 /// The identity `singleton_classes` caches a minted singleton class under, or
 /// `None` for a receiver that gets a fresh one each time (see
 /// [`runtime_singleton_class`]).
+///
+/// Every heap value, not only an `Object`: `v.singleton_class` has to answer
+/// the SAME object every time, and a `String`/`Array`/`Hash`/`Range` used to
+/// get a fresh one per call -- so `equal?` was false and a `class << str`
+/// body's ivar read back nil. Identical to [`extend_key`], because the two
+/// answer the same question about the same receiver.
 fn singleton_class_key(recv: &RubyValue) -> Option<usize> {
-    match recv {
-        RubyValue::Object(o) => Some(obj_identity(o)),
-        RubyValue::Class(cid) => Some(class_identity(*cid)),
-        _ => None,
-    }
+    extend_key(recv)
 }
 
 /// File `module_id` as mixed into `recv`'s singleton.

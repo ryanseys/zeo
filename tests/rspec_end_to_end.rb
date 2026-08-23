@@ -26,9 +26,16 @@ end
 # duration/load-time are the only nondeterministic bytes. Runtime defines,
 # not `def` reopens: an overlay definition outranks the loaded gem's own on
 # both engines regardless of load order.
+#
+# The FORMATTED pair, not `duration`/`load_time` themselves. Those two are
+# `Struct` members, and `formatted_duration` reads its one from inside the
+# same class -- a self-call zeo inlines to the slot read, which no later
+# `define_method` reaches. That divergence has its own minimal repro in
+# `tests/gaps/an_inlined_accessor_ignores_a_later_redefinition.rb`; stubbing
+# one method further out keeps this golden measuring rspec rather than it.
 RSpec::Core::Notifications::SummaryNotification.class_eval do
-  define_method(:duration) { 0.0 }
-  define_method(:load_time) { 0.0 }
+  define_method(:formatted_duration) { "0 seconds" }
+  define_method(:formatted_load_time) { "0 seconds" }
 end
 
 # zeo declines `ripper` by policy (its front end is prism), and rspec's
