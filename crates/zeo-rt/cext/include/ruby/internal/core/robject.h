@@ -33,6 +33,7 @@
 #include "ruby/internal/fl_type.h"
 #include "ruby/internal/value.h"
 #include "ruby/internal/value_type.h"
+#include "ruby/internal/zeo.h"
 
 /**
  * Convenient casting macro.
@@ -82,34 +83,12 @@ struct st_table;
  * Ruby's ordinal objects.  Unless otherwise  special cased, all predefined and
  * user-defined classes share this struct to hold their instances.
  */
-struct RObject {
-
-    /** Basic part, including flags and class. */
-    struct RBasic basic;
-
-    /** Object's specific fields. */
-    union {
-
-        /**
-         * Object that use  separated memory region for  instance variables use
-         * this pattern.
-         */
-        struct {
-            /** Pointer to a C array that holds instance variables. */
-            VALUE *fields;
-        } heap;
-
-        /* Embedded instance variables. When an object is small enough, it
-         * uses this area to store the instance variables.
-         *
-         * This is a length 1 array because:
-         *   1. GCC has a bug that does not optimize C flexible array members
-         *      (https://gcc.gnu.org/bugzilla/show_bug.cgi?id=102452)
-         *   2. Zero length arrays are not supported by all compilers
-         */
-        VALUE ary[1];
-    } as;
-};
+/* zeo: opaque. A zeo heap object is a handle whose first two words are a
+ * real `struct RBasic` and whose payload the runtime owns, so there is no
+ * layout here to read. Upstream already declares `struct RClass` this way.
+ * A `RObject(v)->field` is a compile error naming the line, which is the
+ * point: it would otherwise read a byte that means nothing. */
+struct RObject;
 
 RBIMPL_ATTR_PURE_UNLESS_DEBUG()
 RBIMPL_ATTR_ARTIFICIAL()
@@ -128,15 +107,9 @@ static inline VALUE *
 ROBJECT_FIELDS(VALUE obj)
 {
     RBIMPL_ASSERT_TYPE(obj, RUBY_T_OBJECT);
+    (void)obj;
 
-    struct RObject *const ptr = ROBJECT(obj);
-
-    if (RB_UNLIKELY(RB_FL_ANY_RAW(obj, ROBJECT_HEAP))) {
-        return ptr->as.heap.fields;
-    }
-    else {
-        return ptr->as.ary;
-    }
+    return (VALUE *)rbimpl_zeo_unsupported_ptr("ROBJECT_FIELDS");
 }
 
 #endif /* RBIMPL_ROBJECT_H */

@@ -27,6 +27,7 @@
 #include "ruby/internal/core/rstring.h"
 #include "ruby/internal/value.h"
 #include "ruby/internal/value_type.h"
+#include "ruby/internal/zeo.h"
 
 /**
  * Convenient casting macro.
@@ -42,7 +43,7 @@
  * @param   obj  An object, which is in fact an ::RRegexp.
  * @return  The passed object's pattern buffer.
  */
-#define RREGEXP_PTR(obj) (RREGEXP(obj)->ptr)
+#define RREGEXP_PTR(obj) (*(struct re_pattern_buffer **)rbimpl_zeo_regexp_ptr_slot(obj))
 /** @cond INTERNAL_MACRO */
 #define RREGEXP_SRC      RREGEXP_SRC
 #define RREGEXP_SRC_PTR  RREGEXP_SRC_PTR
@@ -57,38 +58,12 @@ struct re_patter_buffer;  /* a.k.a. OnigRegexType, defined in onigmo.h */
  * representation.  This  one holds that  info.  Regexp "match"  operation then
  * executes that IR.
  */
-struct RRegexp {
-
-    /** Basic part, including flags and class. */
-    struct RBasic basic;
-
-    /**
-     * The pattern buffer.   This is a quasi-opaque struct  that holds compiled
-     * intermediate representation of the regular expression.
-     *
-     * @note  Compilation of a regexp could be delayed until actual match.
-     */
-    struct re_pattern_buffer *ptr;
-
-    /** Source code of this expression. */
-    const VALUE src;
-
-    /**
-     * Reference count.  A  regexp match can take extraordinarily  long time to
-     * run.  Ruby's  regular expression is  heavily extended and not  a regular
-     * language any  longer; runs in NP-time  in practice.  Now, Ruby  also has
-     * threads and GVL.  In order to prevent long GVL lockup, our regexp engine
-     * can release it on occasions.  This means that multiple threads can touch
-     * a regular expressions at once.  That  itself is okay.  But their cleanup
-     * phase shall wait for all  the concurrent runs, to prevent use-after-free
-     * situation.  This field is used to  count such threads that are executing
-     * this particular pattern buffer.
-     *
-     * @warning  Of course, touching this field from extension libraries causes
-     *           catastrophic effects.  Just leave it.
-     */
-    unsigned long usecnt;
-};
+/* zeo: opaque. A zeo heap object is a handle whose first two words are a
+ * real `struct RBasic` and whose payload the runtime owns, so there is no
+ * layout here to read. Upstream already declares `struct RClass` this way.
+ * A `RRegexp(v)->field` is a compile error naming the line, which is the
+ * point: it would otherwise read a byte that means nothing. */
+struct RRegexp;
 
 RBIMPL_ATTR_PURE_UNLESS_DEBUG()
 RBIMPL_ATTR_ARTIFICIAL()
@@ -103,7 +78,7 @@ static inline VALUE
 RREGEXP_SRC(VALUE rexp)
 {
     RBIMPL_ASSERT_TYPE(rexp, RUBY_T_REGEXP);
-    VALUE ret = RREGEXP(rexp)->src;
+    VALUE ret = rbimpl_zeo_regexp_src(rexp);
     RBIMPL_ASSERT_TYPE(ret, RUBY_T_STRING);
     return ret;
 }

@@ -34,6 +34,7 @@
 #include "ruby/internal/fl_type.h"
 #include "ruby/internal/value.h"
 #include "ruby/internal/value_type.h"
+#include "ruby/internal/zeo.h"
 #include "ruby/defines.h"
 
 /** @cond INTERNAL_MACRO */
@@ -64,7 +65,7 @@
  * @param   obj  An object, which is in fact an ::RData.
  * @return  The passed object's ::RData::data field.
  */
-#define DATA_PTR(obj)             RDATA(obj)->data
+#define DATA_PTR(obj)             (*rbimpl_zeo_data_slot(obj))
 
 /**
  * This is a value you can set  to ::RData::dfree.  Setting this means the data
@@ -117,37 +118,12 @@ typedef void (*RUBY_DATA_FUNC)(void*);
  * too many warnings  in the core.  Maybe  we want to retry  later...  Just add
  * deprecated document for now.
  */
-struct RData {
-
-    /** Basic part, including flags and class. */
-    struct RBasic basic;
-
-    /**
-     * This function is called when the object is experiencing GC marks.  If it
-     * contains references to  other Ruby objects, you need to  mark them also.
-     * Otherwise GC will smash your data.
-     *
-     * @see      rb_gc_mark()
-     * @warning  This  is  called  during  GC  runs.   Object  allocations  are
-     *           impossible at that moment (that is why GC runs).
-     */
-    RUBY_DATA_FUNC dmark;
-
-    /**
-     * This function is called when the object  is no longer used.  You need to
-     * do whatever necessary to avoid memory leaks.
-     *
-     * @warning  This  is  called  during  GC  runs.   Object  allocations  are
-     *           impossible at that moment (that is why GC runs).
-     */
-    RUBY_DATA_FUNC dfree;
-
-    /** Pointer to the actual C level struct that you want to wrap.
-      * This is after dmark and dfree to allow DATA_PTR to continue to work for
-      * both RData and non-embedded RTypedData.
-      */
-    void *data;
-};
+/* zeo: opaque. A zeo heap object is a handle whose first two words are a
+ * real `struct RBasic` and whose payload the runtime owns, so there is no
+ * layout here to read. Upstream already declares `struct RClass` this way.
+ * A `RData(v)->field` is a compile error naming the line, which is the
+ * point: it would otherwise read a byte that means nothing. */
+struct RData;
 
 RBIMPL_SYMBOL_EXPORT_BEGIN()
 

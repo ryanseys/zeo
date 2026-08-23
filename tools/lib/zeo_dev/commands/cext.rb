@@ -129,7 +129,11 @@ module ZeoDev
 
           out = File.join(patch_dir, "#{format("%04d", patches.size + 1)}-#{name}.patch")
           FileUtils.mkdir_p(patch_dir)
-          File.write(out, rewrite_prefixes(diff.stdout, want))
+          # `git apply` ignores anything before the first `diff --git`, so the
+          # patch carries its own reason. A headerless one says nothing about
+          # WHY a vendored header reads the way it does.
+          header = "Subject: #{name.tr("-", " ")}\n\nTODO: say what this changes and why.\n\n"
+          File.write(out, header + rewrite_prefixes(diff.stdout, want))
           puts "cext: wrote #{out.delete_prefix("#{ROOT}/")}"
         end
         0

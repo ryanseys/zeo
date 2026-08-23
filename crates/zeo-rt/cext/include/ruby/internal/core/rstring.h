@@ -30,6 +30,7 @@
 #include "ruby/internal/fl_type.h"
 #include "ruby/internal/value_type.h"
 #include "ruby/internal/warning_push.h"
+#include "ruby/internal/zeo.h"
 #include "ruby/assert.h"
 
 /**
@@ -193,65 +194,12 @@ enum ruby_rstring_flags {
  * string is no longer an array of anything.  A string is a string -- just like
  * a Time is not an integer.
  */
-struct RString {
-
-    /** Basic part, including flags and class. */
-    struct RBasic basic;
-
-    /**
-     * Length of the string, not including terminating NUL character.
-     *
-     * @note  This is in bytes.
-     */
-    long len;
-
-    /** String's specific fields. */
-    union {
-
-        /**
-         * Strings  that use  separated  memory region  for  contents use  this
-         * pattern.
-         */
-        struct {
-            /**
-             * Pointer to  the contents of  the string.   In the old  days each
-             * string had  dedicated memory  regions.  That  is no  longer true
-             * today,  but there  still are  strings of  such properties.  This
-             * field could be used to point such things.
-             */
-            char *ptr;
-
-            /** Auxiliary info. */
-            union {
-
-                /**
-                 * Capacity of `*ptr`.  A continuous  memory region of at least
-                 * `capa` bytes  is expected to  exist at `*ptr`.  This  can be
-                 * bigger than `len`.
-                 */
-                long capa;
-
-                /**
-                 * Parent  of the  string.   Nowadays strings  can share  their
-                 * contents each other, constructing  gigantic nest of objects.
-                 * This situation is called "shared",  and this is the field to
-                 * control such properties.
-                 */
-                VALUE shared;
-            } aux;
-        } heap;
-
-        /** Embedded contents. */
-        struct {
-            /* This is a length 1 array because:
-             *   1. GCC has a bug that does not optimize C flexible array members
-             *      (https://gcc.gnu.org/bugzilla/show_bug.cgi?id=102452)
-             *   2. Zero length arrays are not supported by all compilers
-             */
-            char ary[1];
-        } embed;
-    } as;
-};
+/* zeo: opaque. A zeo heap object is a handle whose first two words are a
+ * real `struct RBasic` and whose payload the runtime owns, so there is no
+ * layout here to read. Upstream already declares `struct RClass` this way.
+ * A `RString(v)->field` is a compile error naming the line, which is the
+ * point: it would otherwise read a byte that means nothing. */
+struct RString;
 
 RBIMPL_SYMBOL_EXPORT_BEGIN()
 /**
@@ -366,7 +314,7 @@ RBIMPL_ATTR_ARTIFICIAL()
 static inline long
 RSTRING_LEN(VALUE str)
 {
-    return RSTRING(str)->len;
+    return rbimpl_zeo_str_len(str);
 }
 
 RBIMPL_ATTR_ARTIFICIAL()
@@ -380,21 +328,7 @@ RBIMPL_ATTR_ARTIFICIAL()
 static inline char *
 RSTRING_PTR(VALUE str)
 {
-    char *ptr = RB_FL_TEST_RAW(str, RSTRING_NOEMBED) ?
-        RSTRING(str)->as.heap.ptr :
-        RSTRING(str)->as.embed.ary;
-
-    if (RUBY_DEBUG && RB_UNLIKELY(! ptr)) {
-        /* :BEWARE: @shyouhei thinks  that currently, there are  rooms for this
-         * function to return  NULL.  Better check here for maximum safety.
-         *
-         * Also,  this is  not rb_warn()  because RSTRING_PTR()  can be  called
-         * during GC (see  what obj_info() does).  rb_warn()  needs to allocate
-         * Ruby objects.  That is not possible at this moment. */
-        rb_debug_rstring_null_ptr("RSTRING_PTR");
-    }
-
-    return ptr;
+    return rbimpl_zeo_str_ptr(str);
 }
 
 RBIMPL_ATTR_ARTIFICIAL()
@@ -408,17 +342,7 @@ RBIMPL_ATTR_ARTIFICIAL()
 static inline char *
 RSTRING_END(VALUE str)
 {
-    char *ptr = RB_FL_TEST_RAW(str, RSTRING_NOEMBED) ?
-        RSTRING(str)->as.heap.ptr :
-        RSTRING(str)->as.embed.ary;
-    long len = RSTRING_LEN(str);
-
-    if (RUBY_DEBUG && RB_UNLIKELY(!ptr)) {
-        /* Ditto. */
-        rb_debug_rstring_null_ptr("RSTRING_END");
-    }
-
-    return &ptr[len];
+    return rbimpl_zeo_str_ptr(str) + rbimpl_zeo_str_len(str);
 }
 
 RBIMPL_ATTR_ARTIFICIAL()

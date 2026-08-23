@@ -26,6 +26,7 @@
 #include "ruby/internal/core/rbasic.h"
 #include "ruby/internal/value.h"
 #include "ruby/internal/value_type.h"
+#include "ruby/internal/zeo.h"
 #include "ruby/assert.h"
 
 /**
@@ -93,21 +94,12 @@ typedef struct rb_matchext_struct rb_matchext_t;
  *        struct except by actually exercising the match operation of a regular
  *        expression.
  */
-struct RMatch {
-
-    /** Basic part, including flags and class. */
-    struct RBasic basic;
-
-    /**
-     * The target string that the match was made against.
-     */
-    VALUE str;
-
-    /**
-     * The expression of this match.
-     */
-    VALUE regexp;  /* RRegexp */
-};
+/* zeo: opaque. A zeo heap object is a handle whose first two words are a
+ * real `struct RBasic` and whose payload the runtime owns, so there is no
+ * layout here to read. Upstream already declares `struct RClass` this way.
+ * A `RMatch(v)->field` is a compile error naming the line, which is the
+ * point: it would otherwise read a byte that means nothing. */
+struct RMatch;
 
 #define RMATCH_EXT(m) ((rb_matchext_t *)((char *)(m) + sizeof(struct RMatch)))
 
@@ -138,7 +130,7 @@ static inline struct re_registers *
 RMATCH_REGS(VALUE match)
 {
     RBIMPL_ASSERT_TYPE(match, RUBY_T_MATCH);
-    return &RMATCH_EXT(match)->regs;
+    return rbimpl_zeo_match_regs(match);
 }
 
 #endif /* RBIMPL_RMATCH_H */

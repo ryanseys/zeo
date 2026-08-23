@@ -32,14 +32,12 @@ struct rb_io;
  * buffers.   They also  have  encodings.  Various  information are  controlled
  * using this struct.
  */
-struct RFile {
-
-    /** Basic part, including flags and class. */
-    struct RBasic basic;
-
-    /** IO's specific fields. */
-    struct rb_io *fptr;
-};
+/* zeo: opaque. A zeo heap object is a handle whose first two words are a
+ * real `struct RBasic` and whose payload the runtime owns, so there is no
+ * layout here to read. Upstream already declares `struct RClass` this way.
+ * A `RFile(v)->field` is a compile error naming the line, which is the
+ * point: it would otherwise read a byte that means nothing. */
+struct RFile;
 
 /**
  * Convenient casting macro.
