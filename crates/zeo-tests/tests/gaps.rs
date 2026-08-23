@@ -6,6 +6,9 @@
 //! the zeo-authored suite -- NOT `tests/spinel/`, which mirrors the vendored
 //! spinel corpus.
 //!
+//! The pattern matches the TOP LEVEL only: a subdirectory here holds a gap's
+//! FIXTURES -- files another program requires -- and a fixture is not a test.
+//!
 //! `cargo xtask bless gaps::` re-records each gap's golden from ruby.
 
 #[path = "support/golden.rs"]
@@ -18,5 +21,5 @@ fn gap(rb: &Path) -> datatest_stable::Result<()> {
 }
 
 datatest_stable::harness! {
-    { test = gap, root = "../../tests/gaps", pattern = r"\.rb$" },
+    { test = gap, root = "../../tests/gaps", pattern = r"^[^/]+\.rb$" },
 }

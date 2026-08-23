@@ -3,10 +3,14 @@
 # is written against, and they are pure computation.
 #
 # Entered at those files rather than at `rubygems`, for a reason worth stating
-# rather than hiding: `rubygems.rb` reaches `require "bundler"` from a METHOD
-# body. zeo's require graph is static, so that require is spliced where it is
-# written, and bundler's `rubygems_ext` then runs before
-# `rubygems/specification` does -- not the order CRuby loads them in.
+# rather than hiding. The method-body require hoist that used to block the
+# umbrella is FIXED, and `require "rubygems"` now compiles and runs. What
+# blocks it now is `Module#autoload`, which zeo runs at the DECLARATION where
+# ruby runs it at the constant's first read: `rubygems.rb`'s
+# `autoload :RequestSet` pulls in `request_set/gem_dependency_api.rb` before
+# `rubygems/platform` is required, and it dies on `uninitialized constant
+# Gem::Platform`. See `tests/gaps/autoload_is_lazy.rb`, which carries the
+# diagnosis -- the fix is not a hook at the constant read.
 #
 # `Gem::Platform.local` is left out for the same reason as the umbrella file:
 # it reads `Gem.target_rbconfig`, which `rubygems.rb` defines.
