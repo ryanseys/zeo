@@ -46,11 +46,12 @@
 //! 2. **Module** `ext/<name>.rs` declaring its class with the `ruby_class!`
 //!    (instances) or `ruby_module!` (module functions) DSL (mirror `base64.rs`
 //!    for a module, `stringio.rs` for a class with instances).
-//! 3. **Nothing.** `ruby_class!`/`ruby_module!` self-register through `linkme`
-//!    into `BUILTIN_TABLES`, and `class_table` consults `registered_table(id)`
-//!    first, so no hand-written dispatch arm is needed. The exception is
-//!    id-ALIASING (one table answering for several ids), which still wants an
-//!    explicit arm in `builtins/mod.rs`.
+//! 3. **Nothing.** `ruby_class!`/`ruby_module!` export the table under a
+//!    `zeo_ctable_<ID>` symbol that build.rs lists in `CLASS_TABLE_SYMBOLS`,
+//!    and `class_table` consults `registered_table(id)` first, so no
+//!    hand-written dispatch arm is needed. One table answering for several
+//!    ids is `alias_class_tables!`, which keeps the same spelling and so is
+//!    listed the same way.
 //! 4. **Cargo feature** `ext-<name>` in `zeo-rt/Cargo.toml`, added to the
 //!    `ext-all` umbrella (with `dep:` entries if it needs an optional crate).
 //! 5. **Module declaration** below, cfg-gated.

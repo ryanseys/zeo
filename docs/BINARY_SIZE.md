@@ -5,21 +5,32 @@ its binary is runtime, so that is where the size work is.
 
 ## Where it went
 
-Measured with `ld -map` on a `puts 1` binary, attributed by archive member:
+Measured on a `puts 1` binary of **9,764,552 bytes**, by summing `__text`
+per symbol and attributing each to the crate that mangled it:
 
 | bytes | component |
 |---|---|
-| 6,140,527 | `zeo_rt` itself |
-| ~1,010,000 | OpenSSL (`ecp_sm2p256_table` 524 KB, `nistz256` 158 KB, `obj_dat` 132 KB, …) |
-| ~1,250,000 | the Rust `regex` crate (`regex_syntax` + `regex_automata`) |
-| ~470,000 | Oniguruma |
-| ~204,000 | prism |
-| ~217,000 | encoding_rs |
-| ~390,000 | std + core |
-| ~180,000 | rustyline |
+| 3,651,860 | `zeo_rt` itself |
+| 729,016 | the Rust `regex` crate (`regex_syntax` + `regex_automata`) |
+| 572,732 | unattributed (C objects with no mangling to read) |
+| 455,728 | std + core |
+| 227,808 | prism |
+| 186,232 | mimalloc |
+| 149,532 | Oniguruma |
+| 36,028 | encoding_rs + unicode-normalization |
+| 22,908 | rustyline |
+| 11,780 | OpenSSL |
+| **6,027,296** | **`__text` total** |
 
-Inside `zeo_rt`: `builtins` 2.98 MB, `ext` 1.14 MB. A hello reaches almost
-none of it.
+The rest of the file is not code: `__const` 1,238,088, `__eh_frame` 647,464,
+`__gcc_except_tab` 324,916, `__cstring` 98,481, `__unwind_info` 116,176, and
+`__LINKEDIT`.
+
+OpenSSL is 11 KB here and was ~1 MB before the alias tables became named
+symbols; that whole component now arrives only through a class table a program
+names. The `regex` crate is still 729 KB in a program with no regex in it,
+because `Marshal.load` can rebuild a `Regexp` and `Marshal`'s table is
+always-on.
 
 ## The cause: a link-time table is unstrippable
 
@@ -81,14 +92,17 @@ ever naming it — `1.to_s` needs String — so nothing syntactic rules one out.
 A program that can `eval` gets everything, because the embedded compiler can
 name any class at all.
 
-**Result: 15,553,816 → 13,061,176 bytes, −2.49 MB.**
+**Result: 15,553,816 → 13,061,176 bytes, −2.49 MB.** Three later passes
+(alias tables as named symbols, the residual hand-rolled `class_table` arms,
+and moving every bootstrap seeder into its class's own `install_constants`)
+took it to **9,764,552**.
 
 ## What is left
 
 | | |
 |---|---|
-| always-on `builtins` | 2.34 MB of Marshal, RubyVM::AST, Complex, Dir, Process, Signal … that a hello cannot reach but nothing yet proves unreachable. Needs real reachability analysis: which classes a VALUE can flow into, not which the source names. A module is the tractable half — it can only be reached by naming it or by a needed class including it. |
-| three regex engines | `Engine` is `Fast(regex)` / `Fancy(fancy_regex)` / `Onig`, and Cargo.toml already says Oniguruma "will replace fancy-regex". Retiring the two Rust engines drops 1.24 MB plus encoding_rs and unicode-normalization. It is a performance trade and wants its own bench pass. |
+| always-on class tables | A `puts 1` names 93 of the 170 tables, worth 3.84 MB. They are the ones that are not require-gated — Marshal, RubyVM::AST, Time, Complex, Dir, Process, Signal — which a hello cannot reach but nothing yet proves unreachable. Needs real reachability analysis: which classes a VALUE can flow into, not which the source names. A module is the tractable half — it can only be reached by naming it or by a needed class including it. |
+| three regex engines | `Engine` is `Fast(regex)` / `Fancy(fancy_regex)` / `Onig`, and Cargo.toml already says Oniguruma "will replace fancy-regex". Retiring the two Rust engines drops 729 KB plus encoding_rs and unicode-normalization. It is a performance trade and wants its own bench pass. |
 | OpenSSL's provider graph | Self-rooting once anything calls EVP: `evp_generic_fetch` reaches every predefined provider. Gating it at the zeo-rt boundary is the only lever; the class-table work already does this for programs that never require it. |
 
 ## A trap this cost a pass on

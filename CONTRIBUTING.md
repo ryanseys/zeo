@@ -57,7 +57,7 @@ every run.
   `tests/`, the zeo-authored suite. Not `tests/spinel/`, which mirrors the
   vendored spinel corpus (see `tests/spinel/UPSTREAM.md`).
 - `tools/zeo-dev bless` is the only golden writer: `golden.rs` honours
-  `ZEO_BLESS_FROM_XTASK`, which only `tools/zeo-dev bless` sets, so a bare
+  `ZEO_BLESS_FROM_TOOL`, which only `tools/zeo-dev bless` sets, so a bare
   `ZEO_BLESS=1 cargo test` does nothing.
 - Perf-sensitive changes report their `tools/zeo-dev bench` delta; intentional shifts
   are banked by committing `--update-baseline`'s diff.

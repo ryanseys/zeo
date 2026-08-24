@@ -12,7 +12,7 @@ use crate::hir::{ArrayElem, HirNode, NodeId, StrPart};
 /// sub-expression position a `LocalWrite` could appear in), but collects
 /// local-variable names instead of ivar names, and additionally descends
 /// into loop bodies and `MultiWrite`/`For` targets. `pub(crate)`: also used
-/// by `codegen::captures` to compute which names are genuinely shared with
+/// by `analyze::captures` to compute which names are genuinely shared with
 /// an escaping block (as opposed to owned only by that block -- see the
 /// `Call` arm's docs below).
 /// An ORDERED, deduped local-name accumulator -- [`collect_locals`]' output.
@@ -199,7 +199,7 @@ pub(crate) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Locals) 
                 // internal local resets on every separate `.call()`, it
                 // does NOT persist like a captured one), so it must NOT be
                 // hoisted into THIS (enclosing) scope's prelude at all --
-                // `codegen::captures::block_captures`/`emit_proc_own_locals_prelude`
+                // `analyze::captures::block_captures`/`emit_proc_own_locals_prelude`
                 // give it its own fresh declaration INSIDE the closure
                 // instead. Only a name genuinely shared with code outside
                 // the block (which this same traversal will still find,

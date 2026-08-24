@@ -51,8 +51,9 @@ its own locals, sharing nothing with the scope around it.
 `Hir::uses_runtime_eval` (a receiverless `Kernel#eval`, or a string-form
 `instance_eval`/`class_eval`/`module_eval`) says the program can reach one. An
 eval-free binary references nothing in the compiler, so `-dead_strip` /
-`--gc-sections` drops all of it: measured at G6, `hello` links 35,230,152 bytes
-and the same program with an `eval` 60,452,216. This is work matz's interpreter
+`--gc-sections` drops all of it: `puts 1` links 9,764,552 bytes and
+`puts eval("1+1")` links 23,947,944, so the compiler is 14,183,392 of any
+program that can reach one. This is work matz's interpreter
 cannot do — CRuby always ships its parser because it cannot know in advance
 whether a program evals.
 
@@ -80,7 +81,7 @@ A `Binding` is the one place an AOT compiler has to give ground. Every other
 Ruby local is a Rust stack slot; a scope that hands its locals to code that
 isn't compiled yet needs them addressable by NAME and shared by REFERENCE. The
 compiler answers exactly that, and only where it's asked
-(`codegen::captures::binding_scope_names`): a scope containing a `binding` call
+(`analyze::captures::binding_scope_names`): a scope containing a `binding` call
 — or a dynamic `eval`, or a read of `TOPLEVEL_BINDING` — gives **its own**
 locals the `Arc<Mutex<RubyValue>>` cell storage class that escaping-block
 captures already use, then hands the `(name, cell)` list to

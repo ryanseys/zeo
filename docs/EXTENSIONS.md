@@ -43,7 +43,7 @@ roots, not the `ext/` model.
 | monitor | `monitor` | `ext-monitor` | **done** | `Monitor` + `MonitorMixin` |
 | fcntl | `fcntl` | `ext-fcntl` | **done** | `Fcntl`'s `fcntl(2)`/`open(2)` flag constants, read from `libc` and `#[cfg]`'d per platform as CRuby `#ifdef`s them |
 | pty | `pty` | `ext-pty` | **done** | `PTY.open`/`spawn`/`getpty`/`check` over `openpty(3)`, the child under a real controlling terminal; `ChildExited` is the gem's Ruby half, and a `check(pid, true)` raise carries only the message — its `#status` answers nil (a by-name raise can't attach one) |
-| syslog | `syslog`, `syslog/logger` | `ext-syslog` | **done** | `Syslog` over `syslog(3)` — `open`/`log`/`mask` lifecycle, priority shortcuts, the full constant set, `LOG_MASK`/`LOG_UPTO`; the `Constants`/`Level`/`Option`/`Facility`/`Macros` submodules are the gem's Ruby half, and `Syslog::Logger` is vendored upstream (its extend-on-include hook is a known gap: `tests/gaps/issue_included_hook_not_fired.rb`) |
+| syslog | `syslog`, `syslog/logger` | `ext-syslog` | **done** | `Syslog` over `syslog(3)` — `open`/`log`/`mask` lifecycle, priority shortcuts, the full constant set, `LOG_MASK`/`LOG_UPTO`; the `Constants`/`Level`/`Option`/`Facility`/`Macros` submodules are the gem's Ruby half, and `Syslog::Logger` is vendored upstream |
 | readline | `readline` | `ext-readline` | **done** | `Readline.readline` — rustyline (pure Rust) on a terminal, a plain chomped read off `Readline.input =` or a non-tty stdin; the Enumerable `HISTORY` object, `completion_proc` wired into rustyline's completer, and the stored word-break/quote attribute surface. `VERSION` reports `"rustyline"` the way libedit builds report `"EditLine wrapper"` |
 | nkf | `nkf`, `kconv` | `ext-nkf` | **subset** | `NKF.nkf`/`.guess` rebuilt over Zeo's own encoding engine (which grew ISO-2022-JP and the dummy UTF-16/32 rows for it) — the conversion option subset (`-j/-e/-s/-w*`, `-J/-E/-S/-W*`, `--ic/--oc`, `-m[0]` MIME-word decode, `-x/-X` kana folding, `-Z0-2`, `-L[uwm]`), with `Kconv` the gem's vendored Ruby half. NOT nkf's whole grammar; `guess` is a reimplemented heuristic — see `docs/COMPATIBILITY.md` |
 | bigdecimal | `bigdecimal`, `bigdecimal/*` | `ext-bigdecimal` | **done** | `BigDecimal` over a BigUint coefficient — bigdecimal 4.x's C slice (exact add/sub/mult, division to the documented precision rule, the rounding engine, mode/limit state, conversions, `Kernel#BigDecimal`); `**`/`power`/`sqrt`/`BigMath`/`to_d` are the gem's own Ruby, vendored in `gems/bigdecimal` and compiled like user code |
@@ -256,11 +256,15 @@ See the checklist at the top of `crates/zeo-rt/src/ext/mod.rs`. In brief:
 2. **Module** — `crates/zeo-rt/src/ext/<name>.rs` declaring its class with the
    `ruby_class!` (instances) or `ruby_module!` (module functions) DSL. Mirror
    `base64.rs` (module) or `stringio.rs` (class with instances).
-3. **Nothing.** `ruby_class!`/`ruby_module!` self-register through `linkme` into
-   `BUILTIN_TABLES`, and `class_table` consults `registered_table(id)` first, so
-   no hand-written dispatch arm is needed. The exception is id-ALIASING (one
-   table answering for several ids), which still wants an explicit arm in
-   `builtins/mod.rs`.
+3. **Nothing.** `ruby_class!`/`ruby_module!` export the class's table under a
+   `zeo_ctable_<ID>` symbol, `build.rs` scans the runtime sources for the
+   `NAME = zeo_abi::ID` spelling to list it in `CLASS_TABLE_SYMBOLS`, and
+   `class_table` consults `registered_table(id)` first — so no hand-written
+   dispatch arm is needed. `class_tables_are_complete` gates the list against
+   `libzeo.a` in both directions, which is what stops a new class silently
+   losing every method and constant at run time. One table answering for
+   several ids is `alias_class_tables!`, which keeps the same spelling and so
+   is picked up the same way.
 4. **Cargo feature** — `ext-<name>` in `zeo-rt/Cargo.toml`, added to
    `ext-all` (with `dep:` entries if it needs an optional crate).
 5. **Module declaration** — cfg-gated `pub(crate) mod <name>;` in `ext/mod.rs`.

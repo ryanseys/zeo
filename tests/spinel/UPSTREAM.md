@@ -110,7 +110,7 @@ The corpus is run by `cargo nextest run -p zeo-tests --test spinel`
 `crates/zeo-tests/tests/support/golden.rs`), one nextest case per `.rb`,
 diffing zeo's stdout+stderr against the committed ruby-oracle `.rb.expected`.
 `tools/zeo-dev bless spinel::` re-records the goldens from ruby -- and
-is the ONLY thing that does: `golden.rs` honours `ZEO_BLESS_FROM_XTASK`, which
+is the ONLY thing that does: `golden.rs` honours `ZEO_BLESS_FROM_TOOL`, which
 only `zeo-dev bless` sets, so a bare `ZEO_BLESS=1 cargo test` does nothing. The
 old bespoke `xtask conformance run`/scoreboard harness was retired.
 

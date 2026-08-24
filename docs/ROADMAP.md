@@ -265,5 +265,3 @@ measurement rather than from a guess, ranked by the gap they close.
 
 - `gems/UPSTREAM.md` has no rows for `irb`, `minitest` or `openssl` — their
   provenance lives only in gemspec header comments.
-- `docs/EXTENSIONS.md`'s "adding an extension" step 3 predates `linkme` making
-  registration automatic.

@@ -72,9 +72,9 @@ struct Args {
     /// `--emit-clif[=<path>]`: emit the Cranelift IR instead of building --
     /// to the attached path or stdout when bare. Implies the aot pipeline.
     emit_clif: Option<EmitTarget>,
-    /// `--backend <rustc|aot|jit>`: which code generator builds the program
+    /// `--backend <aot|jit>`: which Cranelift mode builds the program
     /// (`ZEO_BACKEND` is the env spelling; the flag wins). `None` = the
-    /// dual-period default, rustc.
+    /// default for the mode, which `Backend::select` decides.
     backend: Option<zeo::backend::Backend>,
     /// `-g`: put DWARF line tables in the emitted object, so a native
     /// debugger or profiler renders a compiled frame as `file.rb:line`.

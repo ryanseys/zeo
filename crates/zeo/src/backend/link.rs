@@ -233,10 +233,10 @@ pub fn host_triple() -> &'static str {
 
 /// Link one emitted object against `libzeo.a` into `output`, through the
 /// system `cc` (the same external-tool requirement rustc's link step has).
-/// Whole-archive because linkme `BUILTIN_TABLES` elements live in
-/// otherwise-unreferenced members; dead-strip/gc-sections then drops
-/// everything unreferenced (the compiler half of an eval-free program
-/// included).
+/// Whole-archive so every member is a candidate, since a class table is
+/// reached by name and nothing else in the archive references it;
+/// dead-strip/gc-sections then drops everything unreferenced (the compiler
+/// half of an eval-free program included).
 ///
 /// `-x` discards the local symbol table. Nothing reads it: a Ruby
 /// backtrace is built from zeo's own frame stack, and the JIT resolves

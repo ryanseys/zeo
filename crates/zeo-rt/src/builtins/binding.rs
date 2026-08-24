@@ -4,7 +4,7 @@
 //! other Ruby local lives as a Rust stack slot, but a scope that calls
 //! `binding` hands its locals out to code that isn't compiled yet, so those
 //! slots must be addressable by NAME and shared by REFERENCE. The compiler
-//! answers exactly that and no more (`codegen::captures::binding_scope_names`):
+//! answers exactly that and no more (`analyze::captures::binding_scope_names`):
 //! a scope containing a `binding` call gives EVERY one of its own locals the
 //! `Arc<Mutex<RubyValue>>` cell storage class an escaping block's captures
 //! already use, then hands the `(name, cell)` list to [`binding_new`]. Nothing

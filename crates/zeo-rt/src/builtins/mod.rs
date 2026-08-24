@@ -160,10 +160,12 @@ pub struct BuiltinClassTable {
     pub install_constants: Option<fn()>,
 }
 
-/// Every `ruby_class!`/`ruby_module!` class self-registers here; linkme
-/// gathers them into one slice at final link (whether the runtime is linked as
-/// an rlib or a dylib -- all elements live inside `zeo-rt`, so the slice is
-/// self-contained either way).
+/// The link-time table slice, populated ONLY in a `cfg(test)` build.
+///
+/// A shipped program does not use it: `ruby_class!` registers a table through
+/// an exported `zeo_ctable_<ID>` symbol the program names, and this slice is
+/// empty. It stays for the runtime's own unit tests, which have no program
+/// desc to install one from -- see `all_tables`.
 #[linkme::distributed_slice]
 pub static BUILTIN_TABLES: [BuiltinClassTable] = [..];
 

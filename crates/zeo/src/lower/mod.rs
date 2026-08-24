@@ -1078,7 +1078,7 @@ fn lower_call_node(
     // spelling of the same caller-scope query, so it folds exactly like
     // the direct one (the `is_sent_eval` precedent) -- rewritten here to
     // the direct name so every recognizer below, and the Binding cell
-    // promotion in `codegen::captures`, sees the plain spelling.
+    // promotion in `analyze::captures`, sees the plain spelling.
     // `public_send` is excluded: all four are private, so CRuby raises
     // NoMethodError there. A COMPUTED name stays a runtime send and
     // reaches the loud refusal rows (see

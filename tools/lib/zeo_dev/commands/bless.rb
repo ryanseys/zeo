@@ -26,7 +26,7 @@ module ZeoDev
       # The handshake `zeo-tests` looks for, named for its only legitimate
       # source -- so a bare `ZEO_BLESS=1 cargo test` does nothing and the
       # spelling says where to go instead.
-      BLESS_VAR = "ZEO_BLESS_FROM_XTASK"
+      BLESS_VAR = "ZEO_BLESS_FROM_TOOL"
 
       # Goldens and generated conformance artifacts: everything a bless can
       # write.

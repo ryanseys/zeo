@@ -1486,7 +1486,7 @@ impl Hir {
     /// named `binding` WITH a receiver, or a `send(:binding)`. Codegen only
     /// captures a block's defining scope when this holds, so a program that
     /// never reflects on a Proc that way pays nothing (see
-    /// `codegen::captures::binding_scope_names`). Memoized: every method
+    /// `analyze::captures::binding_scope_names`). Memoized: every method
     /// scope asks, and the answer is a whole-program property.
     pub fn uses_proc_binding(&self) -> bool {
         *self.proc_binding.get_or_init(|| {

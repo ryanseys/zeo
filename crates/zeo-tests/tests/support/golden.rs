@@ -756,7 +756,7 @@ pub fn run_golden_env(
     let source = std::fs::read_to_string(rb)?;
     let sc = sidecars(rb)?;
 
-    if std::env::var_os("ZEO_BLESS_FROM_XTASK").is_some() && mode != Mode::CompileFail {
+    if std::env::var_os("ZEO_BLESS_FROM_TOOL").is_some() && mode != Mode::CompileFail {
         return bless(rb, &source, &sc, run_cwd, check_stderr, env);
     }
 

@@ -9,7 +9,7 @@ module ZeoDev
     # A documented variable with no reader is a silent no-op: the reader was
     # renamed or deleted and the instruction outlived it. Three of those were
     # found at once -- `ZEO_BLESS=1` had been replaced by
-    # `ZEO_BLESS_FROM_XTASK`, and two ledgers plus a doc still told the reader
+    # `ZEO_BLESS_FROM_TOOL`, and two ledgers plus a doc still told the reader
     # to use the old spelling, which does nothing at all.
     class CheckEnvVars < Cli
       # Spellings the docs mention only to say they are retired. A variable

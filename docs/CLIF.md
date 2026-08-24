@@ -92,9 +92,9 @@ Three things check it:
   poison-on-release (`0xFF` into the tag byte), so a use-after-release
   aborts at the site instead of corrupting a later value. A tag byte that
   is neither a value tag nor the poison is a slot that never held a value,
-  and it reports that too. **It currently finds five programs in
-  `tests/*.rb`** — see `tests/gaps/compiled_code_releases_a_dead_slot.rb`,
-  which reproduces both shapes in a few lines each.
+  and it reports that too. The shapes it
+  catches are pinned by `tests/compiled_code_releases_a_dead_slot.rb`, which
+  reproduces both in a few lines each.
 - valgrind, on the Linux leg (`tools/zeo-dev linux valgrind`).
 
 Pool retention is the known cost: a temporary lives to the end of its
@@ -113,10 +113,10 @@ build`.
 The link line (`backend/link.rs`) has two halves that both fail silently
 if they regress, so both are asserted by `e2e/linkage.rs`:
 
-- **whole-archive** (`-force_load` / `--whole-archive`), because linkme's
-  `BUILTIN_TABLES` elements live in archive members nothing references by
-  name. Lose it and the program still links and runs — it just answers
-  `NoMethodError` for whatever went missing.
+- **whole-archive** (`-force_load` / `--whole-archive`), so an archive member
+  holding a class table is a candidate for the link at all. Lose a table and
+  the program still links and runs — it just answers `NoMethodError` for
+  whatever class went missing.
 - **dead-strip** (`-dead_strip` / `--gc-sections`), because that same
   archive carries the compiler as well as the runtime. Lose it and nothing
   fails; the binary just doubles.

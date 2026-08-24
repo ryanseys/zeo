@@ -47,8 +47,7 @@ impl Backend {
     /// else the default for the MODE. Cranelift is the default backend, and
     /// the two Cranelift modes are not interchangeable: the JIT runs a
     /// program in place, and only the AOT backend produces the artifact
-    /// `-o`/`--compile` asks for. `--backend rustc` stays selectable as the
-    /// differential oracle until M3.
+    /// `-o`/`--compile` asks for.
     pub fn select(cli: Option<Backend>, wants_artifact: bool) -> Result<Backend, String> {
         if let Some(backend) = cli {
             return Ok(backend);

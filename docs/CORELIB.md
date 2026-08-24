@@ -107,20 +107,21 @@ A Ruby row is emitted into every binary that can reach it; a Rust row already
 lives in the shared archive. That is the only reason a segment is ever off, and
 it is a size decision rather than a correctness one — both are CRuby's bytes.
 
-`nilclass.rb` is 63 lines and 5 methods: **+33,856 bytes** (+0.22% on a hello)
+`nilclass.rb` is 63 lines and 5 methods: **+17,328 bytes** (+0.18% on a hello)
 and no measurable compile time. It closes seven divergences — five
 `source_location` rows and two `Method#inspect` renderings, including
 `rationalize(eps=...)` where zeo answered `rationalize(*)`. On by default.
 
-`pathname_builtin.rb` is 1,172 lines and 94 methods. Its emitted code is
-**+421 KB**, which is the honest price of the row. Two things stop it being on
-by default, and both are filed:
+`pathname_builtin.rb` is 1,172 lines and 94 methods. Two things stop it being
+on by default, and both are filed:
 
-- **One `eval` in it costs 8.28 MB.** `pathname_builtin.rb:273` is
+- **One `eval` in it costs 14.18 MB.** `pathname_builtin.rb:273` is
   `eval("$~ = Thread.current[:pathname_sub_matchdata]", block.binding)`. Any
   `eval` sets `Hir::uses_runtime_eval`, which links the whole compiler —
-  1,425 cranelift symbols — into the binary. Measured by deleting that one
-  line: 24.26 MB → 15.97 MB. The source is a LITERAL, so nothing about it
+  1,425 cranelift symbols — into the binary. Measured: a hello is 9,764,552
+  bytes and `puts eval("1+1")` is 23,947,944, so the tax is 14,183,392 on any
+  program at all. Turning pathname on costs 24,246,024 — that same tax plus
+  about 300 KB of actual Ruby. The source is a LITERAL, so nothing about it
   needs a compiler at run time. This is not a gap file: it changes no
   program's output, only the artifact, so there is nothing for an XFAIL to
   compare. See "The literal-eval lever" below.
@@ -135,9 +136,9 @@ by default, and both are filed:
 Pathname is worth both: it holds 41 of the 46 remaining `Method#parameters`
 divergences, and closing it deletes 1,034 lines of Rust.
 
-For scale, `+421 KB` is well under zeo's ordinary rate for Ruby — `require
-"optparse"` is +11.1 MB and `require "csv"` is +9.5 MB, and both of those are
-dominated by the same compiler-embed, because both libraries `eval`.
+For scale, ~300 KB is well under zeo's ordinary rate for Ruby — `require
+"optparse"` is +16.96 MB and `require "csv"` is +15.36 MB, and both of those
+are dominated by the same compiler-embed, because both libraries `eval`.
 
 ## Adding a file
 
@@ -152,9 +153,10 @@ dominated by the same compiler-embed, because both libraries `eval`.
 ## The literal-eval lever
 
 Any `eval` in a program links the whole compiler into its binary, and for
-`pathname_builtin.rb` that is 8.28 MB against 421 KB of actual Ruby. The same
-tax falls on every library that evals: `require "optparse"` is +11.1 MB and
-`require "csv"` is +9.5 MB for this reason and not for their code.
+`pathname_builtin.rb` that is 14.18 MB against about 300 KB of actual Ruby.
+The same tax falls on every library that evals: `require "optparse"` is
++16.96 MB and `require "csv"` is +15.36 MB for this reason and not for their
+code.
 
 **Why it is fixable.** `Hir::uses_runtime_eval` answers true for any `eval`
 call, and a program that answers true carries `zeo_eval_install`, which is

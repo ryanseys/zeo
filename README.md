@@ -28,13 +28,13 @@ Zeo is **experimental** and moving fast. What is measured today:
 
 | Gate | Result |
 |---|---|
-| Conformance corpus (`tests/spinel/`) | 2,924 / 2,924 |
-| Example goldens (`tests/*.rb`) | 1,124 / 1,124 |
-| End-to-end suite (`crates/zeo-tests/tests/e2e/`) | 1,072 / 1,072 |
+| Conformance corpus (`tests/spinel/`) | 3,010 / 3,010 |
+| Example goldens (`tests/*.rb`) | 1,261 / 1,261 |
+| End-to-end suite (`crates/zeo-tests/tests/e2e/`) | 1,106 / 1,106 |
 | Method surface vs Ruby 4.0.6 ([census](docs/METHOD_COVERAGE.md), retired at zero) | zero gaps |
 
 Each of those compares stdout, stderr and the exit status with real Ruby,
-byte for byte. `tests/gaps/` holds the 13 programs that still diverge.
+byte for byte. `tests/gaps/` holds the 17 programs that still diverge.
 
 Every difference is recorded — in
 [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md) when a user can see it, and as
@@ -74,8 +74,8 @@ $ zeo hello.rb --compile          # writes ./hello
 $ zeo -e 'puts "hello, world"'
 $ zeo -e 'puts :ok' -o my_bin
 
-# A literal `eval` is parsed and spliced at COMPILE time -- it costs nothing
-# at run time and still sees the surrounding scope.
+# Every `eval` is a real run-time compile -- the embedded compiler ships in
+# the binary, which is why an eval costs about 14 MB of artifact.
 $ zeo -e "puts eval('1 + 1 + (\"hello\" * 8).length')"
 42
 
@@ -216,7 +216,7 @@ census measured and never reached,
 
 ## Gems, RubyGems and Bundler
 
-Zeo ships the gems in [`gems/`](gems) — 65 of them, including `bundler` and
+Zeo ships the gems in [`gems/`](gems) — 66 of them, including `bundler` and
 `rubygems` themselves. A program that requires `csv` gets the copy in this
 repository with no `Gemfile` at all. `gems/UPSTREAM.md` records each gem's
 origin, version and licence; `upstream.rb` pins the ones tracked from git.
@@ -256,7 +256,7 @@ Measured 2026-08-21, Zeo and CRuby 4.0.6 timed in the same run:
 
 | | geomean |
 |---|---|
-| all 58 benchmarks | **1.17× faster than CRuby** |
+| all 61 benchmarks | **1.17× faster than CRuby** |
 | the 37 where CRuby takes ≥ 0.10 s | **0.71× — slower** |
 
 Read the second row. The first is inflated by process startup: 21 of the 58
@@ -265,9 +265,10 @@ That is a real advantage of shipping a binary and it is not a claim about
 generated code.
 
 **The Cranelift backend is correctness-complete and its performance pass is
-not finished.** Two waves have run — they took it to **+52.3%** over the
-Rust-emitting backend it replaced — and on compute-bound work it is still
-behind CRuby. It wins big where the emitter has a fused
+not finished.** Two waves have run — measured 2026-08-20 at **+52.3%** over
+the Rust-emitting backend it replaced, which is no longer in the tree, so that
+figure is history rather than something you can reproduce — and on
+compute-bound work it is still behind CRuby. It wins big where the emitter has a fused
 loop or an inline cache (`range_each` 3.27×, `so_mandelbrot` 2.18×,
 `attr_accessor` 1.27×) and loses where it does not (`rbtree` 0.25×,
 `send_rubyfunc_block` 0.31×, `life` 0.35×, `getivar_module` 0.35×). Those
@@ -280,7 +281,7 @@ receiver class. [`bench/README.md`](bench/README.md) has the method,
 
 ## The workspace
 
-Seven crates, edition 2024, MSRV 1.94.
+Six crates, edition 2024, MSRV 1.94.
 
 ```
 crates/
@@ -302,8 +303,9 @@ crates/
   `Arc<Freezable<…>>` so `freeze` and sharing are cheap; user objects are
   `Arc<dyn RubyObject>`. Memory is reference-counted; an opt-in cycle
   collector (`ZEO_GC=1`) reclaims what refcounting cannot. Each core class is
-  one module under `builtins/`, and `linkme` collects their method tables at
-  link time.
+  one module under `builtins/` and exports its method table under a
+  `zeo_ctable_<ID>` symbol, which a compiled program names only if it can
+  reach that class -- so a binary links the classes it can use and no more.
 - **`zeo-abi`** — the only shared contract: `ClassId` numbering, the `BUILTINS`
   hierarchy table, `RUNTIME_CLASS_ID_BASE`, `RUBY_VERSION`, and the C-ABI row
   layouts the two sides pass over.
@@ -345,15 +347,15 @@ argument-count check and its `Method#arity`.
 `crates/zeo/src/lib.rs` is a library the CLI and the test harness both call:
 
 ```rust
-use zeo::{compile_to_object_with, compile_to_rust_with, CompileOptions};
+use zeo::{compile_to_clif_text, compile_to_object_with, CompileOptions};
 
 let opts = CompileOptions::default();
 
 // The default pipeline: Ruby in, a linkable object file out.
 let obj = compile_to_object_with("puts 1 + 1", &opts).unwrap();
 
-// The frozen differential oracle: Ruby in, Rust source out.
-let out = compile_to_rust_with("puts 1 + 1", &opts).unwrap();
+// The same lowering, stopped one stage earlier: Ruby in, Cranelift IR out.
+let clif = compile_to_clif_text("puts 1 + 1", &opts).unwrap();
 ```
 
 This is the **compiler's** API. `zeo-rt` is a link target for compiled
@@ -438,10 +440,11 @@ structurally impossible.
 
 ```
 crates/      the six workspace crates (above)
-docs/        COMPATIBILITY, EXTENSIONS, EVAL, GEM_TESTING, METHOD_COVERAGE, ROADMAP
+docs/        BINARY_SIZE, CLIF, COMPATIBILITY, CORELIB, EVAL, EXTENSIONS,
+             GEM_TESTING, METHOD_COVERAGE, ROADMAP
 tests/       example goldens, the spinel corpus, the gaps tracker, gemtests drivers
-gems/        65 bundled gems (upstream.rb pins the git-tracked ones)
-bench/       58 benchmark programs; read bench/README.md
+gems/        66 bundled gems (upstream.rb pins the git-tracked ones)
+bench/       61 benchmark programs; read bench/README.md
 conformance/ what a gem-probe sweep wrote (gitignored; measurement, not source)
 vendor/      rubygems and fetched test trees (gitignored)
 tools/       the Ruby toolchain: `tools/zeo-dev <command>`, plus table generators

@@ -165,7 +165,7 @@ fn an_escaping_block_capturing_self_via_explicit_self_dot_method() {
     // Before `HirNode::SelfRef` existed, an escaping block could only ever
     // capture `self` implicitly via a bare `@ivar` reference --
     // `self.method_name` is another way a block needs the same capture (see
-    // `codegen::captures`'s new `SelfRef` arm). Also exercises implicit-self
+    // `analyze::captures`'s new `SelfRef` arm). Also exercises implicit-self
     // dispatch (`each_num(a, b)`, no receiver) from inside the SAME method
     // that constructs the escaping block.
     let result = run_ruby(
