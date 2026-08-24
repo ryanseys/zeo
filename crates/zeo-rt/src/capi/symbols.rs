@@ -143,6 +143,7 @@ capi_symbols!(
     numeric::zeo_rt_int_shr,
     numeric::zeo_rt_int_sub_slow,
     values::zeo_rt_is_a,
+    dispatch::zeo_rt_is_live,
     dispatch::zeo_rt_iter_inline_ok_for,
     objects::zeo_rt_ivar_get_dyn,
     objects::zeo_rt_ivar_get_slot,

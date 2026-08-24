@@ -578,6 +578,11 @@ pub const CAPI: &[CapiSig] = &[
         ret: None,
     },
     CapiSig {
+        name: "zeo_rt_is_live",
+        params: &[],
+        ret: Some(I8),
+    },
+    CapiSig {
         name: "zeo_rt_iter_inline_ok_for",
         params: &[U32, U32],
         ret: Some(I8),

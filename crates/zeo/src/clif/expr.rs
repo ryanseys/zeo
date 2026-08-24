@@ -1276,7 +1276,9 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                     )
                 }
                 Some(recv) => super::call::dynamic_send(fx, id, recv, &name, &args),
-                None if let Some(folded) = inline_accessor(fx, &name, &args, &[], None, None) => {
+                None if let Some(folded) =
+                    inline_accessor(fx, id, &name, &args, &[], None, None) =>
+                {
                     folded
                 }
                 None => match fx.em.methods.get(&name) {
@@ -1866,6 +1868,40 @@ pub(crate) fn lexical_class(fx: &Fx) -> Option<crate::compiler::ClassId> {
 
 /// Resolve a class name against the current cref and BOX (rustc's
 /// `Ctx::resolve_class`).
+/// A compile-time fold under the run-time-redefinition gate: the fold on one
+/// arm, the ordinary dispatch on the other, joined through a temp slot the
+/// way [`if_expr`] joins an `if`. One call to `zeo_rt_is_live` and a branch.
+fn guarded_fold(
+    fx: &mut Fx,
+    fast: impl FnOnce(&mut Fx) -> Result<Operand, String>,
+    slow: impl FnOnce(&mut Fx) -> Result<Operand, String>,
+) -> Result<Operand, String> {
+    let live = fx
+        .call("zeo_rt_is_live", &[])
+        .expect("is_live answers a flag");
+    let ss = fx.temp_slot();
+    let dst = fx.slot_addr(ss, 0);
+    let b_fast = fx.b.create_block();
+    let b_slow = fx.b.create_block();
+    let join = fx.b.create_block();
+    fx.b.ins().brif(live, b_slow, &[], b_fast, &[]);
+    fx.b.switch_to_block(b_fast);
+    let op = fast(fx)?;
+    ownership::write_move_into(fx, &op, dst);
+    fx.b.ins().jump(join, &[]);
+    fx.b.switch_to_block(b_slow);
+    let op = slow(fx)?;
+    ownership::write_move_into(fx, &op, dst);
+    fx.b.ins().jump(join, &[]);
+    fx.b.switch_to_block(join);
+    fx.owned_created += 1;
+    Ok(Operand::Slot {
+        ss,
+        owned: true,
+        tag: TagInfo::Unknown,
+    })
+}
+
 /// A receiverless (or literal-`self`) call naming an accessor of THIS
 /// body's own class, replaced by the ivar access itself: no dispatch, no
 /// trampoline, no frame. The rustc emitter's `emit_inline_accessor` at a
@@ -1879,13 +1915,22 @@ pub(crate) fn lexical_class(fx: &Fx) -> Option<crate::compiler::ClassId> {
 /// `self`, a native-backed owner, and a name the layout has no slot for
 /// all take the name-keyed path on their own.
 ///
-/// Runtime redefinition is no more a hazard here than at any Path-1 site:
-/// zeo binds these statically in both backends, and a later
-/// `define_method` does not displace them (`tests/gaps/
-/// issue_runtime_redefine_accessor.rb`). This preserves that; it does not
-/// widen it.
+/// A name a run-time definition can reach keeps the fold, under a guard:
+/// the site reads `zeo_rt_is_live` and takes the ordinary dispatch once
+/// anything has been defined at run time. Without it one object answers two
+/// different values for one method depending on who asks -- a `define_method`
+/// wins from outside the class and loses to the fold inside it.
+///
+/// The guard is emitted ONLY for a name
+/// [`Compiler::may_be_patched_at_runtime`] answers for, so a program that
+/// redefines nothing emits exactly what it emitted before.
+///
+/// The WRITER half takes no guard: both arms would lower the argument, and
+/// the slow arm re-lowers it from the same node. It stands down instead,
+/// which is correct by falling through to dispatch.
 fn inline_accessor(
     fx: &mut Fx,
+    id: crate::hir::NodeId,
     name: &str,
     args: &[ArrayElem],
     kwargs: &[crate::hir::KwArg],
@@ -1904,7 +1949,17 @@ fn inline_accessor(
     let scope = fx.an.compiler.scope(scope_id);
     let shape = fx.an.compiler.accessor_shape(cid, scope)?;
     let ivar = shape.ivar.clone();
+    let patchable = fx.an.compiler.may_be_patched_at_runtime(name);
     match (shape.kind, args) {
+        (AccessorKind::Reader, []) if patchable => {
+            let name = name.to_string();
+            Some(guarded_fold(
+                fx,
+                move |fx| super::stmt::ivar_read_op(fx, &ivar),
+                move |fx| super::call::implicit_send(fx, id, &name, &[]),
+            ))
+        }
+        (AccessorKind::Writer, _) if patchable => None,
         (AccessorKind::Reader, []) => Some(super::stmt::ivar_read_op(fx, &ivar)),
         (AccessorKind::Writer, [ArrayElem::Single(arg)]) => {
             let arg = *arg;

@@ -36,6 +36,21 @@ fn clif_snapshot_fib() {
     ));
 }
 
+/// The inlined accessor under the run-time-redefinition gate: the
+/// `zeo_rt_is_live` call, the folded ivar read on one arm and the ordinary
+/// implicit send on the other.
+///
+/// A golden cannot see which arm the site took -- both print the same
+/// answer while nothing is live. The snapshot is what pins that the guard
+/// is EMITTED, and that it is emitted only here: `read_plain` names an
+/// accessor no run-time definition mentions, so it keeps the bare fold.
+#[test]
+fn clif_snapshot_guarded_accessor() {
+    insta::assert_snapshot!(clif_of(
+        "class K\n  attr_reader :v, :u\n  def initialize\n    @v = 1\n    @u = 2\n  end\n  def read = v\n  def read_plain = u\nend\nk = K.new\nK.class_eval { define_method(:v) { 99 } }\nputs k.read\nputs k.read_plain\n",
+    ));
+}
+
 #[test]
 fn clif_snapshot_block_send() {
     insta::assert_snapshot!(clif_of(

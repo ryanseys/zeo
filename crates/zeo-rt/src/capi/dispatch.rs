@@ -357,6 +357,18 @@ pub unsafe extern "C" fn zeo_rt_send_value_explicit_args_in(
     status_out(r, out)
 }
 
+/// Has anything been defined at run time? The compile-time inlined
+/// accessor asks before it may stand in for the ordinary dispatch: a
+/// `define_method` of the same name installs a row the fold cannot see, so
+/// the fold is only sound while the overlay is dormant.
+///
+/// Emitted ONLY at a site whose name `Compiler::may_be_patched_at_runtime`
+/// answers for, so a program that redefines nothing pays nothing.
+#[unsafe(no_mangle)]
+pub extern "C" fn zeo_rt_is_live() -> i8 {
+    i8::from(crate::runtime_meta::is_live())
+}
+
 /// May a fused iteration splice stand in for `recv_class`'s own iterator
 /// method? False once anything has redefined it (or opened an overlay the
 /// splice cannot see), which is what makes the fast arm's guard a runtime
@@ -925,4 +937,29 @@ pub unsafe extern "C" fn zeo_rt_eval_reflect_dispatch(
     let r =
         crate::dispatch::reflect_dispatch_in(box_id, unsafe { &*recv }, entry, args, block, &cands);
     status_out(r, out)
+}
+
+#[cfg(test)]
+mod is_live_tests {
+    use crate::RubyValue;
+    use crate::symbol::Symbol;
+
+    /// The gate the inlined accessor reads: false while nothing has been
+    /// defined at run time, true afterwards, and it never goes back.
+    ///
+    /// `GATES` is process-global, so this asserts the transition rather than
+    /// an absolute value -- nextest gives each test its own process, which is
+    /// what makes the `false` half meaningful.
+    #[test]
+    fn is_live_answers_the_overlay_gate() {
+        assert_eq!(super::zeo_rt_is_live(), 0);
+        let body = crate::RProc::new(|_args| Ok(RubyValue::Nil));
+        crate::runtime_meta::runtime_define_method(
+            zeo_abi::OBJECT_CLASS,
+            Symbol::intern("a_method_defined_at_run_time"),
+            body,
+        )
+        .expect("Object accepts a run-time definition");
+        assert_eq!(super::zeo_rt_is_live(), 1);
+    }
 }

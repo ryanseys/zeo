@@ -110,6 +110,7 @@ zeo_rt_int_pow ([Ptr, Ptr, Ptr]) -> Some(I32)
 zeo_rt_int_shl ([Ptr, Ptr, Ptr]) -> Some(I32)
 zeo_rt_int_shr ([Ptr, Ptr, Ptr]) -> Some(I32)
 zeo_rt_int_sub_slow ([Ptr, Ptr, Ptr]) -> None
+zeo_rt_is_live ([]) -> Some(I8)
 zeo_rt_iter_inline_ok_for ([U32, U32]) -> Some(I8)
 zeo_rt_ivar_get_dyn ([Ptr, Ptr, Usize, Ptr]) -> Some(I32)
 zeo_rt_ivar_get_slot ([Ptr, Usize, Ptr]) -> None
