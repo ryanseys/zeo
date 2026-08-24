@@ -44,6 +44,7 @@ pub mod builtins {
         pub instance: Option<MethodTable>,
         pub class: Option<MethodTable>,
         pub install_constants: Option<fn()>,
+        pub allocate: Option<fn() -> RubyValue>,
     }
 
     #[linkme::distributed_slice]

@@ -634,6 +634,14 @@ fn pathname_construct(
     Ok(pathname_val(path))
 }
 
+/// A blank `Pathname` -- an empty path, which is what CRuby's own
+/// `Pathname.allocate` answers (`#<Pathname:>`, no ivars). The private
+/// `#initialize` row re-seeds the path in place, so an allocated value is a
+/// legal receiver for it.
+fn pathname_allocate() -> RubyValue {
+    pathname_val(String::new())
+}
+
 pub fn register_pathname(registry: &mut crate::dispatch::ClassRegistry) {
     registry.register(
         PATHNAME_CLASS,
@@ -646,6 +654,8 @@ pub fn register_pathname(registry: &mut crate::dispatch::ClassRegistry) {
 
 ruby_class! {
     Pathname = zeo_abi::PATHNAME_CLASS < zeo_abi::OBJECT_CLASS;
+
+    allocate pathname_allocate;
 
     const VERSION = str_val("0.4.0".to_string());
     const SEPARATOR_PAT = separator_pat();

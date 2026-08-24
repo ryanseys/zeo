@@ -158,6 +158,11 @@ pub struct BuiltinClassTable {
     pub class: Option<MethodTable>,
     /// Seeds this class's constants at startup; `None` when it declares none.
     pub install_constants: Option<fn()>,
+    /// A blank instance of this class -- ruby's `allocate`, and the first half
+    /// of ruby's `new`. `None` for the great majority: a class whose
+    /// constructor carries no state needs none, and `Class#allocate` keeps
+    /// raising `TypeError` for it exactly as CRuby does for `Time`.
+    pub allocate: Option<fn() -> crate::RubyValue>,
 }
 
 /// The link-time table slice, populated ONLY in a `cfg(test)` build.
@@ -298,6 +303,14 @@ pub(crate) fn side_of(id: ClassId, side: Side) -> Option<&'static MethodTable> {
         Side::Instance => t.instance.as_ref(),
         Side::Class => t.class.as_ref(),
     }
+}
+
+/// This class's blank-instance fn, or `None` if it declares no `allocate`.
+///
+/// Read through the same registered table the methods come from, so an
+/// allocator costs nothing in a program that does not ship the class.
+pub(crate) fn allocator_of(id: ClassId) -> Option<fn() -> crate::RubyValue> {
+    registered_table(id)?.allocate
 }
 
 /// ClassId -> instance-method table, off the program's own table list.

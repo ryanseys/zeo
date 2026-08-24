@@ -2470,6 +2470,55 @@ pub(crate) fn value_method(id: ClassId, box_id: u32, name: Symbol) -> Option<Val
     REGISTRY.get()?.lookup_value_method(id, box_id, name)
 }
 
+/// Whether a NON-NATIVE `name` wins the lookup for `id` -- a program's reopen
+/// of a builtin, rather than the class's own Rust row.
+///
+/// `Class#new` asks this of `initialize` to decide whether to unfuse into
+/// `allocate` plus `initialize`. The answer must be the same one dispatch
+/// would give, so the walk is the walk: most-derived first, and the FIRST
+/// ancestor owning the name decides. A native row found before any reopen
+/// means the constructor still owns construction.
+///
+/// Both channels are read, because a reopen can arrive either way -- a
+/// compile-time `class Pathname; def initialize` registers a value row, and a
+/// runtime `define_method` lands in the overlay.
+pub(crate) fn reopened_initialize_in_chain(id: ClassId, name: Symbol) -> bool {
+    let live = crate::runtime_meta::is_live();
+    for &anc in ancestors_of_value(id) {
+        if live {
+            if crate::runtime_meta::overlay_is_undefined(anc, name) {
+                return false;
+            }
+            if crate::runtime_meta::overlay_is_removed(anc, name) {
+                continue;
+            }
+            if crate::runtime_meta::overlay_own_method(anc, name).is_some() {
+                return true;
+            }
+        }
+        // The VALUE channel only. A compile-time reopen of a non-bootstrap
+        // builtin registers here, and nothing native does.
+        //
+        // The object channel (`registry().lookup`) cannot be asked: a
+        // BOOTSTRAP builtin keeps its native rows there too, so every
+        // `RuntimeError.new` read as a reopen and lost its own constructor.
+        // Exceptions reopen through that same channel as deltas, so an
+        // exception's `initialize` reopen is a separate question with a
+        // separate answer -- `exception_construct` owns it.
+        if value_method(anc, 0, name).is_some() {
+            return true;
+        }
+        // The class's OWN native row, reached before any reopen: the
+        // constructor keeps construction.
+        if crate::builtins::side_of(anc, crate::builtins::Side::Instance)
+            .is_some_and(|t| (t.lookup)(name.name_str()).is_some())
+        {
+            return false;
+        }
+    }
+    false
+}
+
 /// The frozen registry's own instance method for `id`, CLONED out (a `fn`
 /// copy or an `Arc` bump). The runtime overlay (`runtime_meta`) uses this to
 /// walk a runtime class's frozen ancestors -- a `RuntimeClass < SomeUserClass`

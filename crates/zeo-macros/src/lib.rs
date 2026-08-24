@@ -318,6 +318,14 @@ fn expand(spec: &ClassSpec) -> TokenStream2 {
         )
     };
 
+    // `allocate` -- a blank instance, for `Class#allocate` and for the
+    // allocate-then-`initialize` half of `Class#new`. `None` keeps today's
+    // behaviour: the registered constructor answers and `allocate` raises.
+    let allocate_slot = match &spec.allocate {
+        Some(p) => quote! { Some(#p) },
+        None => quote! { None },
+    };
+
     // The class's method table, under a LINKER symbol an emitted program can
     // name: `zeo_ctable_<ID>`.
     //
@@ -358,6 +366,7 @@ fn expand(spec: &ClassSpec) -> TokenStream2 {
                 instance: #instance_table,
                 class: #class_table,
                 install_constants: #install_slot,
+                allocate: #allocate_slot,
             };
     };
 

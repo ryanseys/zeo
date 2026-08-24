@@ -134,6 +134,16 @@ pub struct ClassSpec {
     /// class's table -- which is the whole point of moving a bootstrap seeder
     /// here.
     pub seeds: Vec<Path>,
+    /// `allocate <path>;` -- a fn answering a blank instance of this class,
+    /// for `Class#allocate` and for the `allocate`-then-`initialize` half of
+    /// `Class#new`.
+    ///
+    /// Only a class whose CONSTRUCTOR CARRIES STATE needs one. Without it
+    /// `Class#new` calls the registered constructor, which is right until a
+    /// program reopens the class with its own `initialize` -- ruby's `new` is
+    /// `allocate` plus `initialize`, and a fused constructor cannot run a body
+    /// it does not know about.
+    pub allocate: Option<Path>,
     pub methods: Vec<MethodDef>,
     pub aliases: Vec<AliasDef>,
     /// Nested classes/modules declared inside this one with a braced body
@@ -711,6 +721,7 @@ impl ClassSpec {
             includes: Vec::new(),
             consts: Vec::new(),
             seeds: Vec::new(),
+            allocate: None,
             methods: Vec::new(),
             aliases: Vec::new(),
             nested: Vec::new(),
@@ -774,7 +785,7 @@ fn parse_item(input: ParseStream, spec: &mut ClassSpec) -> syn::Result<()> {
     }
     let lookahead: Ident = input.fork().parse().map_err(|_| {
         input.error(
-            "expected `include`, `seed`, `const`, `alias`, `private`, `protected`, `module_function`, `def`, `class`, or `module`",
+            "expected `include`, `seed`, `allocate`, `const`, `alias`, `private`, `protected`, `module_function`, `def`, `class`, or `module`",
         )
     })?;
     match lookahead.to_string().as_str() {
@@ -792,6 +803,17 @@ fn parse_item(input: ParseStream, spec: &mut ClassSpec) -> syn::Result<()> {
             }
             input.parse::<Ident>()?; // `seed`
             spec.seeds.push(Path::parse_mod_style(input)?);
+            input.parse::<Token![;]>()?;
+        }
+        "allocate" => {
+            if !attrs.is_empty() {
+                return Err(attrs_forbidden(input));
+            }
+            input.parse::<Ident>()?; // `allocate`
+            if spec.allocate.is_some() {
+                return Err(input.error("a class declares at most one `allocate`"));
+            }
+            spec.allocate = Some(Path::parse_mod_style(input)?);
             input.parse::<Token![;]>()?;
         }
         "receiver" => {

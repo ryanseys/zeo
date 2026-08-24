@@ -20,6 +20,12 @@ use zeo_macros::ruby_class;
 /// because their instances have no payload to allocate -- CRuby's is a blank
 /// object, and so is this.
 pub(crate) fn builtin_allocate(cid: crate::ClassId) -> Option<RubyValue> {
+    // A class that declares `allocate <fn>;` in its `ruby_class!` header
+    // answers through its own table. Asked FIRST so a class can state its own
+    // blank value rather than being added to the match below.
+    if let Some(f) = crate::builtins::allocator_of(cid) {
+        return Some(f());
+    }
     match cid {
         zeo_abi::STRING_CLASS => Some(RubyValue::Str(crate::string_new(String::new()))),
         zeo_abi::ARRAY_CLASS => Some(RubyValue::Array(crate::array_new(Vec::new()))),
@@ -30,6 +36,54 @@ pub(crate) fn builtin_allocate(cid: crate::ClassId) -> Option<RubyValue> {
         }
         _ => None,
     }
+}
+
+/// `Class#new`'s allocate-then-`initialize` half, for a BUILTIN whose
+/// `initialize` a program has reopened.
+///
+/// `Some(v)` means a user row won and `v` is the finished instance; `None`
+/// means the class's own native constructor still owns construction.
+///
+/// **Why the predicate can be exact.** A compile-time reopen of a builtin
+/// registers on the VALUE channel (`ClassEntry::value_methods`), and the
+/// native row lives in the class's static `MethodTable`. They are different
+/// tables. `method_owner` cannot tell them apart -- which the gap file
+/// recorded as "indistinguishable", naming the wrong table rather than a
+/// missing fact.
+///
+/// **Cost.** Asked only when the chain HAS a reopened `initialize`, so a
+/// program that never reopens a builtin pays one set test per `new`.
+/// `bm_object_new` and `bm_object_new_init` measure it.
+fn user_initialize_construct(
+    cid: crate::ClassId,
+    args: &[RubyValue],
+    block: &Option<RubyValue>,
+) -> Result<Option<RubyValue>, crate::Signal> {
+    // A RUST class only. A user or runtime-minted class already constructs
+    // correctly -- its `ConstructorFn` allocates and then runs `initialize`,
+    // and `value_subclass_construct` does the same for a subclass of a
+    // builtin. Unfusing those raised `allocator undefined` for every
+    // `Class.new`-minted namespace.
+    if crate::builtins::registered_table(cid).is_none() {
+        return Ok(None);
+    }
+    let init = crate::symbol::wk::initialize();
+    if !crate::dispatch::reopened_initialize_in_chain(cid, init) {
+        return Ok(None);
+    }
+    let recv = match builtin_allocate(cid) {
+        Some(RubyValue::Object(o)) => o,
+        // A reopened `initialize` on a class with no way to make a blank
+        // instance. Refuse LOUDLY: answering the constructor's value would be
+        // the very bug this fixes, silently.
+        _ => {
+            let n = crate::dispatch::class_name(cid)
+                .unwrap_or_else(|| format!("#<Class:{}>", cid.0));
+            return Err(type_error!("allocator undefined for {n}"));
+        }
+    };
+    crate::dispatch::run_initialize(cid, &recv, args, block.clone())?;
+    Ok(Some(RubyValue::Object(recv)))
 }
 
 ruby_class! {
@@ -107,6 +161,17 @@ ruby_class! {
         if cid == zeo_abi::BASIC_OBJECT_CLASS {
             crate::builtins::check_arity(args.len(), 0, Some(0))?;
             return Ok(crate::runtime_meta::blank_instance(cid));
+        }
+        // Ruby's `new` is `allocate` plus `initialize`, and a builtin's
+        // registered constructor FUSES the two. That is right until a program
+        // reopens the class with its own `initialize`: the constructor cannot
+        // run a body it does not know about, so `Pathname.new` left `@path`
+        // nil and every method read it.
+        //
+        // Unfuse only when a USER row actually wins the lookup. A reopen with
+        // no `initialize` keeps the constructor, which is what CRuby does too.
+        if let Some(v) = user_initialize_construct(cid, args, &block)? {
+            return Ok(v);
         }
         match crate::dispatch::constructor_of(cid) {
             Some(ctor) => ctor(cid, args, block),

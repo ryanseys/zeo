@@ -370,6 +370,9 @@ const fn alias_table(id: crate::ClassId) -> crate::builtins::BuiltinClassTable {
             inherits: lookup_class_inherits,
         }),
         install_constants: None,
+        // An alias never allocates: it is another class's table under a
+        // second id, and the class it copies owns construction.
+        allocate: None,
     }
 }
 
