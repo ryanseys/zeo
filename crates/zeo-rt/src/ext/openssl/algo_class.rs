@@ -8,9 +8,8 @@
 
 use super::digest::new_digest;
 use super::{bin_str, hex, md_by_name, str, str_bytes};
-use crate::builtins::{BUILTIN_TABLES, BuiltinClassTable, MethodTable};
+use crate::builtins::{BuiltinClassTable, MethodTable};
 use crate::{ClassId, RubyValue, Signal};
-use linkme::distributed_slice;
 use zeo_abi::{
     OPENSSL_DIGEST_MD4_CLASS, OPENSSL_DIGEST_MD5_CLASS, OPENSSL_DIGEST_RIPEMD160_CLASS,
     OPENSSL_DIGEST_SHA1_CLASS, OPENSSL_DIGEST_SHA224_CLASS, OPENSSL_DIGEST_SHA256_CLASS,
@@ -18,20 +17,15 @@ use zeo_abi::{
 };
 use zeo_macros::ruby_class;
 
-#[distributed_slice(BUILTIN_TABLES)]
-static MD5_TABLE: BuiltinClassTable = alias_table(OPENSSL_DIGEST_MD5_CLASS);
-#[distributed_slice(BUILTIN_TABLES)]
-static RIPEMD160_TABLE: BuiltinClassTable = alias_table(OPENSSL_DIGEST_RIPEMD160_CLASS);
-#[distributed_slice(BUILTIN_TABLES)]
-static SHA1_TABLE: BuiltinClassTable = alias_table(OPENSSL_DIGEST_SHA1_CLASS);
-#[distributed_slice(BUILTIN_TABLES)]
-static SHA224_TABLE: BuiltinClassTable = alias_table(OPENSSL_DIGEST_SHA224_CLASS);
-#[distributed_slice(BUILTIN_TABLES)]
-static SHA256_TABLE: BuiltinClassTable = alias_table(OPENSSL_DIGEST_SHA256_CLASS);
-#[distributed_slice(BUILTIN_TABLES)]
-static SHA384_TABLE: BuiltinClassTable = alias_table(OPENSSL_DIGEST_SHA384_CLASS);
-#[distributed_slice(BUILTIN_TABLES)]
-static SHA512_TABLE: BuiltinClassTable = alias_table(OPENSSL_DIGEST_SHA512_CLASS);
+crate::alias_class_tables! {
+    MD5_TABLE = zeo_abi::OPENSSL_DIGEST_MD5_CLASS,
+    RIPEMD160_TABLE = zeo_abi::OPENSSL_DIGEST_RIPEMD160_CLASS,
+    SHA1_TABLE = zeo_abi::OPENSSL_DIGEST_SHA1_CLASS,
+    SHA224_TABLE = zeo_abi::OPENSSL_DIGEST_SHA224_CLASS,
+    SHA256_TABLE = zeo_abi::OPENSSL_DIGEST_SHA256_CLASS,
+    SHA384_TABLE = zeo_abi::OPENSSL_DIGEST_SHA384_CLASS,
+    SHA512_TABLE = zeo_abi::OPENSSL_DIGEST_SHA512_CLASS,
+}
 
 const fn alias_table(id: ClassId) -> BuiltinClassTable {
     BuiltinClassTable {

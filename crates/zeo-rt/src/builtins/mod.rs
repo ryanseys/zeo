@@ -167,6 +167,29 @@ pub struct BuiltinClassTable {
 #[linkme::distributed_slice]
 pub static BUILTIN_TABLES: [BuiltinClassTable] = [..];
 
+/// A class whose table is a copy of another class's, registered under its own
+/// id -- the `Digest::SHA1`-style aliases, which `ruby_class!` cannot spell.
+///
+/// This exists so an alias is rooted the same way a `ruby_class!` table is: an
+/// exported `zeo_ctable_<ID>` symbol the emitted program names, never a
+/// `distributed_slice` entry. A linkme entry is a `no_dead_strip` root in its
+/// own right, so seven OpenSSL aliases kept ~3 MB of libcrypto in a program
+/// that cannot reach them.
+///
+/// The `NAME = zeo_abi::ID` spelling is load-bearing: build.rs scans the
+/// runtime sources for exactly that shape to build `CLASS_TABLE_SYMBOLS`.
+/// `alias_table` resolves in the calling module.
+#[macro_export]
+macro_rules! alias_class_tables {
+    ($($name:ident = zeo_abi::$id:ident),* $(,)?) => {
+        $(
+            #[cfg_attr(test, linkme::distributed_slice($crate::builtins::BUILTIN_TABLES))]
+            #[unsafe(export_name = concat!("zeo_ctable_", stringify!($id)))]
+            pub static $name: $crate::builtins::BuiltinClassTable = alias_table(zeo_abi::$id);
+        )*
+    };
+}
+
 /// The registered tables indexed by `ClassId` for O(1) routing, built once
 /// from the link-time-collected slice.
 ///

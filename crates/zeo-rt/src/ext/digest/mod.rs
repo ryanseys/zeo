@@ -19,11 +19,10 @@
 mod algorithm;
 mod digest_module;
 
-use crate::builtins::{BUILTIN_TABLES, BuiltinClassTable, MethodTable};
+use crate::builtins::{BuiltinClassTable, MethodTable};
 use crate::dispatch::{RObj, RubyObject};
 use crate::{ClassId, RubyValue, Signal, string_new};
 use digest::Digest as _;
-use linkme::distributed_slice;
 use parking_lot::Mutex;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -31,12 +30,11 @@ use zeo_abi::{DIGEST_MD5_CLASS, DIGEST_SHA1_CLASS, DIGEST_SHA256_CLASS, DIGEST_S
 
 // `Digest::MD5` self-registers its (shared) table through `algorithm.rs`'s
 // `ruby_class!`; SHA1/SHA256/SHA512 are the same table under a different id.
-#[distributed_slice(BUILTIN_TABLES)]
-static SHA1_TABLE: BuiltinClassTable = alias_table(DIGEST_SHA1_CLASS);
-#[distributed_slice(BUILTIN_TABLES)]
-static SHA256_TABLE: BuiltinClassTable = alias_table(DIGEST_SHA256_CLASS);
-#[distributed_slice(BUILTIN_TABLES)]
-static SHA512_TABLE: BuiltinClassTable = alias_table(DIGEST_SHA512_CLASS);
+crate::alias_class_tables! {
+    SHA1_TABLE = zeo_abi::DIGEST_SHA1_CLASS,
+    SHA256_TABLE = zeo_abi::DIGEST_SHA256_CLASS,
+    SHA512_TABLE = zeo_abi::DIGEST_SHA512_CLASS,
+}
 
 /// One of the SHA algorithm classes, routed at `id` to the shared MD5-carried
 /// table (the methods read the algorithm off the receiver, so the same fns
