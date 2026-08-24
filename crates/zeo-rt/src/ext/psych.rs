@@ -349,6 +349,30 @@ fn dump(v: &RubyValue) -> String {
     }
 }
 
+// `YAML = Psych` -- ruby's `yaml.rb` is that one line, so the alias id
+// carries Psych's class surface and no instance half of its own.
+crate::alias_class_tables! {
+    YAML_TABLE = zeo_abi::YAML_MODULE,
+}
+
+const fn alias_table(id: crate::ClassId) -> crate::builtins::BuiltinClassTable {
+    crate::builtins::BuiltinClassTable {
+        id,
+        instance: None,
+        class: Some(crate::builtins::MethodTable {
+            lookup: lookup_class,
+            names: lookup_class_names,
+            arity: lookup_class_arity,
+            params: lookup_class_params,
+            is_private: lookup_class_is_private,
+            is_protected: lookup_class_is_protected,
+            allocs: lookup_class_allocs,
+            inherits: lookup_class_inherits,
+        }),
+        install_constants: None,
+    }
+}
+
 ruby_module! {
     Psych = zeo_abi::PSYCH_MODULE;
 

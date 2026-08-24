@@ -298,9 +298,9 @@ pub(crate) fn side_of(id: ClassId, side: Side) -> Option<&'static MethodTable> {
     }
 }
 
-/// The static ClassId -> method-table map. A plain match (rustc compiles it
-/// to a jump table); `None` for user classes and for builtins with no table
-/// yet. `Enumerable`/`Comparable` are ordinary rows here too -- the MRO
+/// ClassId -> instance-method table, off the program's own table list.
+/// `None` for a user class and for a builtin this program did not name.
+/// `Enumerable`/`Comparable` are ordinary rows here too -- the MRO
 /// walk reaches them as ancestors of Array/Hash/Range and of any user class
 /// that `include`s them, exactly like every other builtin module.
 pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMethodFn>> {
@@ -310,16 +310,7 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
             _ => gate::io_lookup,
         });
     }
-    // A macro-registered class is fully described by its own table and has no
-    // match arm below, so consult the projection first.
-    if let Some(m) = side_of(id, Side::Instance) {
-        return Some(m.lookup);
-    }
-    Some(match id {
-        #[cfg(feature = "ext-date")]
-        zeo_abi::DATETIME_CLASS => crate::ext::date::lookup,
-        _ => return None,
-    })
+    side_of(id, Side::Instance).map(|m| m.lookup)
 }
 
 /// `class_table`'s arity twin: ClassId -> the instance-method arity table
@@ -333,14 +324,7 @@ pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> 
             _ => gate::io_arity,
         });
     }
-    if let Some(m) = side_of(id, Side::Instance) {
-        return Some(m.arity);
-    }
-    Some(match id {
-        #[cfg(feature = "ext-date")]
-        zeo_abi::DATETIME_CLASS => crate::ext::date::lookup_arity,
-        _ => return None,
-    })
+    side_of(id, Side::Instance).map(|m| m.arity)
 }
 
 /// `class_arity_table`'s parameter twin: ClassId -> the instance-method
@@ -391,18 +375,7 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
             _ => gate::io_class_lookup,
         });
     }
-    if let Some(m) = side_of(id, Side::Class) {
-        return Some(m.lookup);
-    }
-    Some(match id {
-        // In-tree `ext/` extensions, each behind its `ext-<name>` cargo feature.
-        #[cfg(feature = "ext-date")]
-        zeo_abi::DATETIME_CLASS => crate::ext::date::lookup_class,
-        // The `YAML` alias id has no table of its own, so it routes to psych.
-        #[cfg(feature = "ext-psych")]
-        zeo_abi::YAML_MODULE => crate::ext::psych::lookup_class,
-        _ => return None,
-    })
+    side_of(id, Side::Class).map(|m| m.lookup)
 }
 
 /// `class_method_table`'s arity twin -- what `Foo.method(:bar).arity` reads
@@ -414,18 +387,7 @@ pub(crate) fn class_method_arity_table(id: ClassId) -> Option<fn(&str) -> Option
             _ => gate::io_class_arity,
         });
     }
-    if let Some(m) = side_of(id, Side::Class) {
-        return Some(m.arity);
-    }
-    // Only the hand-written tables that declare arities appear here; the rest
-    // of `class_method_table`'s arms are hand-rolled `lookup_class` fns with
-    // no arity twin, so their class methods report the `-1` catch-all.
-    Some(match id {
-        zeo_abi::FILE_TEST_MODULE => file::lookup_class_arity,
-        #[cfg(feature = "ext-psych")]
-        zeo_abi::YAML_MODULE => crate::ext::psych::lookup_class_arity,
-        _ => return None,
-    })
+    side_of(id, Side::Class).map(|m| m.arity)
 }
 
 /// Whether the builtin instance method `name` on `id` is CRuby-private --
@@ -474,22 +436,14 @@ pub(crate) fn builtin_row_inherits(id: ClassId, name: &str, class_side: bool) ->
 }
 
 /// `class_table`'s reflection companion: the instance-method NAMES a builtin
-/// class exposes (for `instance_methods`/`methods`). Mirrors `class_table`'s
-/// arms exactly -- each `<mod>::lookup` has a paste-generated `<mod>::lookup_names`.
+/// class exposes (for `instance_methods`/`methods`).
 pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
     if gate::gated(id) {
         return gate::names(id, Side::Instance);
     }
-    if registered_table(id).is_some() {
-        return side_of(id, Side::Instance)
-            .map(|m| (m.names)())
-            .unwrap_or(&[]);
-    }
-    match id {
-        #[cfg(feature = "ext-date")]
-        zeo_abi::DATETIME_CLASS => crate::ext::date::lookup_names(),
-        _ => &[],
-    }
+    side_of(id, Side::Instance)
+        .map(|m| (m.names)())
+        .unwrap_or(&[])
 }
 
 /// `class_method_table`'s reflection companion: the CLASS-method NAMES a
@@ -498,13 +452,7 @@ pub(crate) fn class_method_table_names(id: ClassId) -> &'static [&'static str] {
     if gate::gated(id) {
         return gate::names(id, Side::Class);
     }
-    if registered_table(id).is_some() {
-        return side_of(id, Side::Class).map(|m| (m.names)()).unwrap_or(&[]);
-    }
-    match id {
-        zeo_abi::FILE_TEST_MODULE => file::lookup_class_names(),
-        _ => &[],
-    }
+    side_of(id, Side::Class).map(|m| (m.names)()).unwrap_or(&[])
 }
 
 /// Registry-FREE ancestor chains for the builtin classes, computed once
