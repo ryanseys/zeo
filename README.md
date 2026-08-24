@@ -396,13 +396,22 @@ $ tar xzf zeo-<version>-<triple>.tar.gz -C /usr/local
 ```
 zeo-<version>-<triple>/
   bin/zeo
-  share/zeo/{gems, runtime, dist-manifest.json}
+  share/zeo/{gems, lib/<triple>/libzeo.a, dist-manifest.json}
   share/doc/zeo/
 ```
 
 The binary finds its payload through `bin/../share/zeo`, so the tree relocates
 anywhere; `ZEO_HOME` overrides the search. Building a binary needs a linker
 (`cc`) on the target machine, the same requirement any native toolchain has.
+
+`libzeo.a` **is** the payload. `zeo -o` links a compiled program against it, so
+a tree without it can run programs and compile none — and the two paths fail
+differently, which is worth knowing when an install misbehaves: `zeo file.rb`
+and `zeo -e` go through the JIT and never touch the archive, while `zeo -o`
+cannot proceed without it. That is why the archive, not the gems, is what
+`share/zeo` is checked for: a payload staged for another platform, or one
+missing the archive, is reported as not a payload at all rather than
+link-failing once per compile.
 
 ---
 

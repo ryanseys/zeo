@@ -37,6 +37,7 @@ mod gc_weak;
 mod gems_all;
 mod gems_require;
 mod gems_vendored;
+mod install;
 mod io_files;
 mod language_core;
 mod linkage;

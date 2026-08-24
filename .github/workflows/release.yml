@@ -41,9 +41,9 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libclang-dev
 
-      # Builds the tree, vendors the runtime workspace's crates.io deps, then
-      # proves the staged binary works: it resolves its payload relative to
-      # bin/, builds zeo-rt offline, and compiles and runs a program.
+      # Builds the tree and stages the payload, then proves the staged binary
+      # works: it resolves its payload relative to bin/, links against the
+      # staged libzeo.a, and compiles and runs a program.
       - run: tools/zeo-dev dist --target ${{ matrix.target }}
 
       - uses: actions/upload-artifact@v4

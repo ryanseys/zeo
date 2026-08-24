@@ -4,11 +4,12 @@
 //! recorded them as owed. They are opposite halves of the same link line
 //! (`backend/link.rs`), and a regression in either is silent:
 //!
-//! - **Keep.** linkme's `BUILTIN_TABLES` elements live in archive members
-//!   nothing references by name, so the link uses `-force_load` /
-//!   `--whole-archive`. Lose that and the program still links and still
-//!   runs -- it just answers `NoMethodError` for whatever classes went
-//!   missing, which reads as a dispatch bug, not a link bug.
+//! - **Keep.** A program names the builtin class tables it can reach
+//!   (`zeo_ctable_<ID>`), and the link uses `-force_load` / `--whole-archive`
+//!   so an archive member holding one is a candidate. Lose a table and the
+//!   program still links and still runs -- it just answers `NoMethodError`
+//!   for whatever class went missing, which reads as a dispatch bug rather
+//!   than a link bug.
 //! - **Drop.** `libzeo.a` carries the COMPILER as well as the runtime
 //!   (one staticlib, plan decision 9), and `-dead_strip` / `--gc-sections`
 //!   is what keeps an eval-free program from shipping Cranelift. Lose that
@@ -66,28 +67,18 @@ fn read(path: &Path) -> Vec<u8> {
     std::fs::read(path).unwrap_or_else(|e| panic!("reading {}: {e}", path.display()))
 }
 
-/// Total byte size of every linkme distributed-slice section in `binary`.
-///
-/// linkme names its section after a hash of the slice, and truncates to
-/// Mach-O's 16-character limit (`__linkmeN8DwnQlp`), so the name cannot be
-/// spelled portably -- every `linkme` section is summed instead. The
-/// runtime declares exactly one distributed slice (`BUILTIN_TABLES`), so
-/// the sum IS its size, and a dropped element shows up as a smaller sum.
-fn linkme_bytes(binary: &Path) -> u64 {
+/// The `zeo_ctable_*` symbols `binary` resolved -- one per builtin class
+/// table the program named, with the leading Mach-O underscore trimmed.
+fn ctable_symbols(binary: &Path) -> std::collections::BTreeSet<String> {
     let bytes = read(binary);
     let file = object::File::parse(&*bytes)
         .unwrap_or_else(|e| panic!("parsing {}: {e}", binary.display()));
-    let total: u64 = file
-        .sections()
-        .filter(|s| s.name().is_ok_and(|n| n.contains("linkme")))
-        .map(|s| s.size())
-        .sum();
-    assert!(
-        total > 0,
-        "{} carries no linkme section at all",
-        binary.display()
-    );
-    total
+    use object::ObjectSymbol;
+    file.symbols()
+        .filter_map(|sym| sym.name().ok())
+        .map(|n| n.strip_prefix('_').unwrap_or(n).to_string())
+        .filter(|n| n.starts_with("zeo_ctable_"))
+        .collect()
 }
 
 /// Total size of `binary`'s executable sections -- the quantity the
@@ -113,19 +104,76 @@ fn text_bytes(binary: &Path) -> u64 {
     total
 }
 
-/// The whole-archive half: a linked program's `BUILTIN_TABLES` is the same
-/// size as the `zeo` binary's, element for element.
+/// A linked program carries exactly the builtin class tables it NAMED --
+/// every one it can reach, and none it cannot.
+///
+/// This is what a program's table list is FOR. A table roots its class's
+/// whole method surface, so `Regexp`'s drags in two regex engines and
+/// `RubyVM::AST`'s drags in prism; naming one a program cannot reach costs
+/// that for nothing, and failing to name one it CAN reach loses every method
+/// and constant that class has, silently and only at run time.
+///
+/// Both directions are asserted, because each fails invisibly on its own. A
+/// symbol the archive defines but the program does not name is simply absent
+/// at run time; a symbol named for a class the program cannot reach just
+/// makes the binary bigger.
+///
+/// Symbols answer this where bytes cannot: `zeo_ctable_*` are exported
+/// (`#[unsafe(export_name)]` in zeo-macros), so they survive the link's `-x`,
+/// which discards only the LOCAL symbol table.
 #[test]
-fn a_linked_program_keeps_every_builtin_table() {
+fn a_linked_program_keeps_the_tables_it_names() {
     let bin = link_program("puts :ok\n");
-    let program = linkme_bytes(&bin);
-    let compiler = linkme_bytes(&zeo_cli());
+    let linked = ctable_symbols(&bin);
     let _ = std::fs::remove_file(&bin);
-    assert_eq!(
-        program, compiler,
-        "the linked program's builtin tables ({program} bytes) differ from the \
-         zeo binary's ({compiler} bytes) -- the link dropped or duplicated \
-         linkme elements (see -force_load/--whole-archive in backend/link.rs)"
+
+    let known: std::collections::BTreeSet<&str> = zeo::builtin_surface::CLASS_TABLE_SYMBOLS
+        .iter()
+        .map(|(_, s)| *s)
+        .collect();
+    let invented: Vec<&String> = linked
+        .iter()
+        .filter(|n| !known.contains(n.as_str()))
+        .collect();
+    assert!(
+        invented.is_empty(),
+        "the program names table symbols the compiler does not know: {invented:?}"
+    );
+
+    // A class any program can reach. `puts :ok` never writes `String`, but a
+    // value of that kind arrives without being named, so its table stays.
+    for core in [
+        "zeo_ctable_STRING_CLASS",
+        "zeo_ctable_ARRAY_CLASS",
+        "zeo_ctable_INTEGER_CLASS",
+        "zeo_ctable_KERNEL_CLASS",
+    ] {
+        assert!(
+            linked.contains(core),
+            "a program without {core} loses that class's every method: {:?}",
+            linked.len()
+        );
+    }
+
+    // A require-gated class this program never asks for. Each of these is a
+    // whole vendored C library -- dropping them is the point.
+    for gated in [
+        "zeo_ctable_OPENSSL_DIGEST_SHA256_CLASS",
+        "zeo_ctable_ZLIB_MODULE",
+        "zeo_ctable_PSYCH_MODULE",
+        "zeo_ctable_SOCKET_CLASS",
+    ] {
+        assert!(
+            !linked.contains(gated),
+            "`puts :ok` cannot reach {gated}, so naming it links that class's \
+             whole surface for nothing"
+        );
+    }
+    assert!(
+        linked.len() < known.len(),
+        "a program that requires nothing named ALL {} tables -- the reachability \
+         gate in `needed_class_tables` is not narrowing at all",
+        known.len()
     );
 }
 

@@ -8,7 +8,7 @@
 //!   in via `CARGO_MANIFEST_DIR` at compile time) is both the payload (its
 //!   `gems/`, its `crates/zeo-rt`) and the build root (its `target/`).
 //! - **Installed**: a relocatable prefix laid out as `<prefix>/bin/zeo` +
-//!   `<prefix>/share/zeo/{gems,runtime}`, assembled by `tools/zeo-dev dist`.
+//!   `<prefix>/share/zeo/{gems,lib}`, assembled by `tools/zeo-dev dist`.
 //!   The payload is found relative to the executable, and all build output
 //!   goes to a per-user cache -- the prefix itself is never written to (it
 //!   may be root-owned, as in a Homebrew Cellar).
@@ -89,8 +89,9 @@ fn resolve(
         }
         return Err(format!(
             "ZEO_HOME is set to `{}`, but that is not a zeo payload directory \
-             (expected `runtime/Cargo.toml` beneath it)",
-            payload.display()
+             (expected `lib/{}/libzeo.a` beneath it)",
+            payload.display(),
+            crate::backend::link::host_triple(),
         ));
     }
 
@@ -131,11 +132,11 @@ fn resolve(
          - ZEO_HOME: not set\n\
          - executable-relative: {}\n\
          - dev tree: {} (no crates/zeo-rt there)\n\
-         An installed zeo expects `share/zeo/{{gems,runtime}}` next to its \
+         An installed zeo expects `share/zeo/{{gems,lib}}` next to its \
          `bin/` directory; set ZEO_HOME to point at a payload directory to \
          override.",
         probed
-            .map(|p| format!("{} (no runtime/Cargo.toml there)", p.display()))
+            .map(|p| format!("{} (no lib/<triple>/libzeo.a there)", p.display()))
             .unwrap_or_else(|| "could not determine the executable's path".into()),
         dev_root.display(),
     ))
@@ -183,11 +184,24 @@ pub fn registry_gems_dir(cache: &Path) -> Option<PathBuf> {
     }
 }
 
-/// A payload directory is one `tools/zeo-dev dist` laid out: the runtime
-/// workspace is the load-bearing half (`gems/` is optional -- its absence
-/// just contributes no bundled gems, as in the dev tree).
+/// A payload directory is one `tools/zeo-dev dist` laid out. The archive is
+/// the load-bearing half -- `zeo -o` links against it and can do nothing
+/// without it. `gems/` is optional: its absence just contributes no bundled
+/// gems, as in the dev tree.
+///
+/// It keys on THIS host's triple, so a payload built for another platform
+/// reads as no payload at all rather than as one whose every link fails.
 fn payload_is_valid(payload: &Path) -> bool {
-    payload.join("runtime").join("Cargo.toml").is_file()
+    payload_archive(payload).is_file()
+}
+
+/// Where an installed zeo's `libzeo.a` sits. Keyed by triple so a payload can
+/// one day carry two (a mac-to-mac cross ships both Darwin arches).
+pub fn payload_archive(payload: &Path) -> PathBuf {
+    payload
+        .join("lib")
+        .join(crate::backend::link::host_triple())
+        .join("libzeo.a")
 }
 
 /// The per-user cache root for installed mode: `ZEO_CACHE_DIR`, else the
@@ -229,7 +243,7 @@ mod tests {
 
     fn payload_fixture(dir: &Path) -> PathBuf {
         let payload = dir.join("share/zeo");
-        touch(&payload.join("runtime/Cargo.toml"));
+        touch(&payload_archive(&payload));
         payload
     }
 
@@ -248,6 +262,33 @@ mod tests {
         touch(&exe);
         let home = resolve(Some(&exe), Some(payload.as_os_str()), &dev).unwrap();
         assert!(matches!(home, ZeoHome::Installed { payload: p, .. } if p == payload));
+    }
+
+    /// A payload staged for a DIFFERENT platform is not a payload here.
+    ///
+    /// The archive is the whole point of the directory, and one built for
+    /// another triple cannot link a thing. Reading it as a valid payload
+    /// would turn a wrong-platform download into a link error per compile
+    /// instead of one honest message at resolution.
+    #[test]
+    fn a_payload_for_another_triple_is_not_a_payload() {
+        let tmp = tempdir("wrong-triple");
+        let payload = tmp.join("share/zeo");
+        touch(&payload.join("lib/powerpc-unknown-linux-gnu/libzeo.a"));
+        let dev = dev_fixture(&tmp);
+        let err = resolve(None, Some(payload.as_os_str()), &dev).unwrap_err();
+        assert!(err.contains("not a zeo payload directory"), "{err}");
+    }
+
+    /// `gems/` is optional; the archive is not.
+    #[test]
+    fn a_payload_without_the_archive_is_not_a_payload() {
+        let tmp = tempdir("no-archive");
+        let payload = tmp.join("share/zeo");
+        touch(&payload.join("gems/json/json.gemspec"));
+        let dev = dev_fixture(&tmp);
+        let err = resolve(None, Some(payload.as_os_str()), &dev).unwrap_err();
+        assert!(err.contains("libzeo.a"), "{err}");
     }
 
     #[test]

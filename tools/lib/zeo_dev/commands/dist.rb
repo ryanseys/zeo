@@ -16,38 +16,28 @@ module ZeoDev
     #   zeo-<version>-<triple>/
     #     bin/zeo                          # dist-profile build
     #     share/zeo/
-    #       dist-manifest.json             # {schema, version, target, vendored}
+    #       dist-manifest.json             # {schema, version, target}
     #       gems/                          # the repo's gems/, verbatim
-    #       runtime/                       # a REAL mini-workspace
-    #       ...
+    #       lib/<triple>/libzeo.a          # what `zeo -o` links against
     #     share/doc/zeo/                   # README + licenses
     #
-    # The runtime workspace's root manifest is REWRITTEN from the live root
-    # `Cargo.toml` -- members pruned to the four runtime crates, the `zeo`
-    # workspace-dependency entry dropped, everything else carried verbatim --
-    # so it cannot drift from what the dev tree builds.
-    #
-    # KNOWN BROKEN, and ported as-is rather than fixed here. The staged tree
-    # never carries `libzeo.a`, so an installed `zeo -o` cannot find an
-    # archive at all; the smoke test passes anyway because it uses `zeo -e`,
-    # which takes the JIT path. Fixing that, and dropping the mini-workspace
-    # and vendor tree whose only consumer was deleted, is the distribution
-    # phase's first task.
+    # `libzeo.a` is the payload: `zeo -o` links a compiled program against it,
+    # so a tree without it can run programs (the JIT path) and compile none.
+    # It is keyed by triple because a payload may one day carry two -- see the
+    # mac<->mac cross note in the distribution plan.
     class Dist < Cli
-      RUNTIME_CRATES = %w[zeo-rt zeo-abi zeo-dsl zeo-macros].freeze
 
       def self.summary = "assemble the relocatable distribution"
 
       def self.banner
-        "usage: zeo-dev dist [--target <triple>] [--no-vendor] [--no-smoke] " \
+        "usage: zeo-dev dist [--target <triple>] [--no-smoke] " \
           "[--stage-only] [-o <dir>]"
       end
 
-      def defaults = { target: nil, vendor: true, smoke: true, stage_only: false, out: nil }
+      def defaults = { target: nil, smoke: true, stage_only: false, out: nil }
 
       def options(o)
         o.on("--target TRIPLE", "build for TRIPLE instead of the host") { |v| opts[:target] = v }
-        o.on("--no-vendor", "skip the crates.io vendor tree") { opts[:vendor] = false }
         o.on("--no-smoke", "skip the smoke test") { opts[:smoke] = false }
         o.on("--stage-only", "stage and check coherence; build no binary") { opts[:stage_only] = true }
         o.on("-o DIR", "stage into DIR instead of target/dist") { |v| opts[:out] = v }
@@ -66,29 +56,21 @@ module ZeoDev
         payload = File.join(stage, "share", "zeo")
 
         copy_tree(File.join(ROOT, "gems"), File.join(payload, "gems"))
-        runtime = stage_runtime(payload, version)
         File.write(File.join(payload, "dist-manifest.json"), <<~JSON)
           {
             "schema": 1,
             "version": "#{version}",
-            "target": "#{triple}",
-            "vendored": #{opts[:vendor]}
+            "target": "#{triple}"
           }
         JSON
         stage_docs(stage)
 
         if opts[:stage_only]
-          # Coherence gate: the staged workspace must resolve with exactly its
-          # shipped lock (and vendor tree, when present) -- what an installed
-          # zeo's `--locked --offline` build will demand.
-          check = %w[metadata --format-version 1 --locked]
-          check << "--offline" if opts[:vendor]
-          cargo!(runtime, check, quiet: true)
-          puts "dist: staged #{stage} (stage-only, coherence OK)"
+          puts "dist: staged #{stage} (stage-only, no binary and no archive)"
           return 0
         end
 
-        stage_binary(stage)
+        stage_binary(stage, payload, triple)
         smoke_test(stage) if opts[:smoke]
         tarball(out_dir, dist_name)
         0
@@ -111,54 +93,6 @@ module ZeoDev
         line.delete_prefix("host: ").strip
       end
 
-      def stage_runtime(payload, _version)
-        runtime = File.join(payload, "runtime")
-        RUNTIME_CRATES.each do |name|
-          copy_tree(File.join(ROOT, "crates", name), File.join(runtime, "crates", name),
-                    skip: %w[target])
-        end
-        File.write(File.join(runtime, "Cargo.toml"), runtime_manifest)
-        # The lock: seed with the root's (the versions the dev tree tested),
-        # then let cargo prune the compiler-only entries.
-        FileUtils.cp(File.join(ROOT, "Cargo.lock"), File.join(runtime, "Cargo.lock"))
-        cargo!(runtime, %w[generate-lockfile])
-        if opts[:vendor]
-          cargo!(runtime, %w[vendor --locked vendor])
-          FileUtils.mkdir_p(File.join(runtime, ".cargo"))
-          File.write(File.join(runtime, ".cargo", "config.toml"), <<~TOML)
-            [source.crates-io]
-            replace-with = "vendored-sources"
-
-            [source.vendored-sources]
-            directory = "vendor"
-          TOML
-        end
-        runtime
-      end
-
-      # The payload's runtime-workspace manifest, rewritten from the LIVE root
-      # manifest so the two cannot drift: members pruned to the runtime
-      # crates, the `zeo` workspace-dependency entry (whose path does not
-      # exist in the payload) dropped, every other table carried verbatim.
-      #
-      # Line-based, because the schema is fixed and this repo owns it. The
-      # two edits are a members array written on its own lines and one
-      # dependency entry on one line.
-      def runtime_manifest
-        src = File.read(File.join(ROOT, "Cargo.toml"))
-        members = RUNTIME_CRATES.map { |n| %(    "crates/#{n}",) }.join("\n")
-        out = src.sub(/^members = \[\n.*?^\]\n/m, "members = [\n#{members}\n]\n")
-        raise Error, "the root manifest's [workspace] members array did not match" if out == src
-
-        # The comment block above the entry goes with it. It explains the
-        # version lock on the `zeo` dependency, and a payload that does not
-        # carry that dependency should not carry its rationale either.
-        without_zeo = out.sub(/(?:^#[^\n]*\n)*^zeo = \{[^\n]*\}\n/, "")
-        raise Error, "the root manifest has no `zeo = { .. }` workspace dependency" if without_zeo == out
-
-        "# @generated by `tools/zeo-dev dist` from the repo's root Cargo.toml.\n#{without_zeo}"
-      end
-
       def stage_docs(stage)
         doc = File.join(stage, "share", "doc", "zeo")
         FileUtils.mkdir_p(doc)
@@ -171,40 +105,62 @@ module ZeoDev
       # The `dist` profile: single-codegen-unit plus thin LTO, the
       # maximum-optimization shape the everyday `release` profile gives up for
       # build parallelism. Shipped artifacts pay it once per release.
-      def stage_binary(stage)
+      # One cargo invocation builds both halves: `zeo`'s crate-type is
+      # `["rlib", "staticlib"]`, so the binary and `libzeo.a` come out of the
+      # same profile directory and cannot be from different sources.
+      def stage_binary(stage, payload, triple)
         build = %w[build --profile dist -p zeo]
         build.push("--target", opts[:target]) if opts[:target]
         cargo!(ROOT, build)
         built = if opts[:target]
-                  File.join(ROOT, "target", opts[:target], "dist", "zeo")
+                  File.join(ROOT, "target", opts[:target], "dist")
                 else
-                  File.join(ROOT, "target", "dist", "zeo")
+                  File.join(ROOT, "target", "dist")
                 end
         FileUtils.mkdir_p(File.join(stage, "bin"))
-        FileUtils.cp(built, File.join(stage, "bin", "zeo"))
+        FileUtils.cp(File.join(built, "zeo"), File.join(stage, "bin", "zeo"))
+        archive = File.join(built, "libzeo.a")
+        raise Error, "cargo built no #{archive} -- `zeo -o` cannot link without it" unless File.file?(archive)
+
+        lib = File.join(payload, "lib", triple)
+        FileUtils.mkdir_p(lib)
+        FileUtils.cp(archive, File.join(lib, "libzeo.a"))
       end
 
       # The staged tree must work with no help from the environment: a temp
       # cache, no ZEO_HOME, no ambient CARGO_TARGET_DIR.
+      #
+      # It COMPILES and runs, rather than `zeo -e`. `-e` takes the JIT path,
+      # which needs no archive, so it passed for as long as the staged tree
+      # carried no `libzeo.a` at all. Only `-o` proves the payload.
       def smoke_test(stage)
-        cache = File.join(Dir.tmpdir, "zeo-dist-smoke-#{Process.pid}")
-        FileUtils.rm_rf(cache)
-        puts "dist: smoke test (cold runtime build -- takes a few minutes)..."
-        res = Exec.run([File.join(stage, "bin", "zeo"), "-e",
-                        %(require "json"; puts JSON.generate({smoke: "ok"}))],
-                       # An explicit cwd, so the test never depends on where
-                       # dist was launched from -- and never inherits a
-                       # directory staging deletes.
-                       chdir: Dir.tmpdir,
-                       env: { "ZEO_CACHE_DIR" => cache, "ZEO_HOME" => nil,
-                              "CARGO_TARGET_DIR" => nil },
-                       capture_stdout: true)
-        ok = res.success? && res.stdout.include?(%({"smoke":"ok"}))
-        FileUtils.rm_rf(cache)
-        return puts("dist: smoke test passed") if ok
+        Dir.mktmpdir("zeo-dist-smoke") do |work|
+          cache = File.join(work, "cache")
+          src = File.join(work, "smoke.rb")
+          bin = File.join(work, "smoke")
+          File.write(src, %(require "json"\nputs JSON.generate({smoke: "ok"})\n))
+          puts "dist: smoke test (compile and run)..."
+          env = { "ZEO_CACHE_DIR" => cache, "ZEO_HOME" => nil, "CARGO_TARGET_DIR" => nil }
+          zeo = File.join(stage, "bin", "zeo")
+          # An explicit cwd, so the test never depends on where dist was
+          # launched from -- and never inherits a directory staging deletes.
+          build = Exec.run([zeo, "-o", bin, src], chdir: work, env: env,
+                                                  capture_stdout: true)
+          raise Error, smoke_failure("compile", build) unless build.success?
 
-        raise Error, "smoke test FAILED (exit #{res.code.inspect}):\n" \
-                     "stdout: #{res.stdout}\nstderr: #{res.stderr}"
+          res = Exec.run([bin], chdir: work, env: env, capture_stdout: true)
+          raise Error, smoke_failure("run", res) unless res.success?
+          unless res.stdout.include?(%({"smoke":"ok"}))
+            raise Error, smoke_failure("output", res)
+          end
+
+          puts "dist: smoke test passed"
+        end
+      end
+
+      def smoke_failure(stage, res)
+        "smoke test FAILED at #{stage} (exit #{res.code.inspect}):\n" \
+          "stdout: #{res.stdout}\nstderr: #{res.stderr}"
       end
 
       def tarball(out_dir, dist_name)

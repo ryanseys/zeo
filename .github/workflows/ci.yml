@@ -254,10 +254,9 @@ jobs:
       # the .crate file. This fails if they drift from their sources.
       - run: tools/zeo-dev stage-publish --check
 
-      # The dist tree is assembled from a REWRITE of the root manifest, so it
-      # can silently stop resolving when a workspace dependency moves.
-      # --stage-only validates it with `cargo metadata --locked --offline`,
-      # which takes seconds rather than a full runtime build.
+      # Stage the payload without building it: proves the tree lays out and
+      # the docs and gems copy. The archive and the compile-and-run smoke test
+      # need a dist-profile build, which the release workflow does.
       - run: tools/zeo-dev dist --stage-only
 
       # `cargo package --list`, NOT `cargo package`. Both `cargo package` and

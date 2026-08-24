@@ -40,6 +40,20 @@ pub fn runtime_archive() -> Result<PathBuf, String> {
             return Ok(archive);
         }
     }
+    // An installed zeo: the archive rides in the payload rather than beside
+    // the binary, because `<prefix>/bin` is for executables.
+    if let crate::home::ZeoHome::Installed { payload, .. } = crate::home::zeo_home() {
+        let staged = crate::home::payload_archive(payload);
+        if staged.is_file() {
+            return Ok(staged);
+        }
+        return Err(format!(
+            "runtime archive missing: {} -- this zeo install cannot compile a \
+             program. Reinstall from a release tarball built for {}.",
+            staged.display(),
+            host_triple()
+        ));
+    }
     Err(format!(
         "runtime archive missing: {} (rerun `cargo build` -- \
          `libzeo.a` is built beside the `zeo` binary)",
@@ -95,7 +109,7 @@ pub fn natlibs_for(triple: &str) -> Result<&'static [&'static str], String> {
 }
 
 /// The host's target triple, for the natlibs table and the link shape.
-pub(crate) fn host_triple() -> &'static str {
+pub fn host_triple() -> &'static str {
     if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
         "aarch64-apple-darwin"
     } else if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
