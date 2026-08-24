@@ -258,25 +258,24 @@ pub fn parse_and_lower_with(
     // only the exceptions, and the corelib statements fall into the ordinary
     // walk right behind them.
     static BUILTIN_PREFIX: std::sync::LazyLock<
-        Result<(Hir, Vec<NodeId>, usize), crate::lower_error::LowerError>,
+        Result<(Hir, Vec<NodeId>), crate::lower_error::LowerError>,
     > = std::sync::LazyLock::new(|| {
         let mut hir = Hir::default();
-        let mut statements = parse_and_lower_into(&mut hir, BUILTIN_EXCEPTIONS_RB).map_err(
-            |e| crate::lower_error::LowerError {
+        let statements = parse_and_lower_into(&mut hir, BUILTIN_EXCEPTIONS_RB).map_err(|e| {
+            crate::lower_error::LowerError {
                 message: format!(
                     "internal error in zeo's built-in exception classes (this is a zeo bug): {e}"
                 ),
                 ..e
-            },
-        )?;
-        let exceptions = statements.len();
-        corelib::lower_into(&mut hir, &mut statements)?;
-        Ok((hir, statements, exceptions))
+            }
+        })?;
+        Ok((hir, statements))
     });
-    let (mut hir, mut statements, exceptions_len) = match &*BUILTIN_PREFIX {
-        Ok((h, s, n)) => (h.clone(), s.clone(), *n),
+    let (mut hir, mut statements) = match &*BUILTIN_PREFIX {
+        Ok((h, s)) => (h.clone(), s.clone()),
         Err(e) => return Err(CompileError::lower(e.clone(), &[])),
     };
+    let exceptions_len = statements.len();
     // An `eval` snippet runs inside a program that already HAS the corelib
     // rows, so compiling them again would re-emit and re-install every one at
     // the snippet's position. `forwardable`'s `def_delegators` is a
@@ -285,8 +284,10 @@ pub fn parse_and_lower_with(
     // `class NilClass` again. Same rule `analyze` already applies to a
     // snippet's own definitions -- the exceptions stay, because they are the
     // bootstrap set every compile resolves against.
-    if mode.is_eval() || corelib == crate::Corelib::Rust {
-        statements.truncate(exceptions_len);
+    if !mode.is_eval()
+        && let Err(e) = corelib::lower_into(&mut hir, &mut statements, &corelib)
+    {
+        return Err(CompileError::lower(e, &hir.files));
     }
     if let Some(name) = magic_encoding_comment(source) {
         hir.script_encoding = match encoding_const_name(&name) {

@@ -170,27 +170,50 @@ pub struct CompileOptions {
 /// back that is not a rebuild; the whole golden corpus runs in both. It is a
 /// compile-time choice, not a run-time one: the rows are emitted or they are
 /// not.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Corelib {
-    /// The vendored `crates/zeo/corelib/*.rb`, compiled in. The default.
+    /// Each vendored segment's own default. Some are on and some are not,
+    /// and the reason is SIZE: a Ruby row is emitted into every binary that
+    /// can reach it, while a Rust row already lives in the shared archive.
     #[default]
-    Ruby,
-    /// zeo's Rust builtins, as before the corelib landed.
+    Default,
+    /// zeo's Rust builtins throughout, as before the corelib landed.
     Rust,
+    /// Exactly these segments, whatever their own default says.
+    Only(Vec<String>),
 }
 
 impl Corelib {
-    /// `ZEO_CORELIB=rust` picks the Rust rows; anything else is the default.
+    /// `ZEO_CORELIB=rust` turns every segment off; a comma-separated list
+    /// names exactly the ones to compile in; unset takes each segment's own
+    /// default.
     ///
     /// Read where a `CompileOptions` is BUILT -- the CLI -- rather than deep
     /// in the front end, so a library caller gets the default whatever the
-    /// ambient environment says and a test can pin either row.
+    /// ambient environment says and a test can pin any row.
     #[must_use]
     pub fn from_env() -> Self {
-        match std::env::var("ZEO_CORELIB").as_deref() {
-            Ok("rust") => Corelib::Rust,
-            _ => Corelib::Ruby,
+        match std::env::var("ZEO_CORELIB") {
+            Err(_) => Corelib::Default,
+            Ok(v) if v == "rust" => Corelib::Rust,
+            Ok(v) if v.is_empty() => Corelib::Default,
+            Ok(v) => Corelib::Only(v.split(',').map(|s| s.trim().to_string()).collect()),
         }
+    }
+
+    /// The segment names this policy names but the corelib does not have --
+    /// a typo in `ZEO_CORELIB` is otherwise a silent no-op.
+    #[must_use]
+    pub fn unknown_segments(&self) -> Vec<String> {
+        let Corelib::Only(names) = self else {
+            return Vec::new();
+        };
+        let known = parse::corelib::names();
+        names
+            .iter()
+            .filter(|n| !known.contains(&n.as_str()))
+            .cloned()
+            .collect()
     }
 }
 
@@ -310,7 +333,7 @@ fn analyze_on_this_thread(
         &opts.gem_paths,
         opts.lockfile.as_deref(),
         opts.root_gem.as_ref(),
-        opts.corelib,
+        opts.corelib.clone(),
     )?;
     // A `require`/`load` that SURVIVED lowering is one the loader could not
     // resolve. `--strict-static-require` makes that an error HERE rather
@@ -440,7 +463,7 @@ pub fn analyze_snippet(
         &opts.gem_paths,
         opts.lockfile.as_deref(),
         opts.root_gem.as_ref(),
-        opts.corelib,
+        opts.corelib.clone(),
     )?;
     analyze::analyze(hir, root)
 }

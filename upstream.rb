@@ -210,4 +210,4 @@ corelib "ruby",
   github: "ruby/ruby",
   tag: "v4.0.6",
   rev: "03b6d3f8898a28604fe6cb00eae3226b821168f4",
-  files: %w[nilclass.rb]
+  files: %w[nilclass.rb pathname_builtin.rb]

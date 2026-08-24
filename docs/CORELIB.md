@@ -79,28 +79,65 @@ acd5666c71d08d9ebf35e12e4ca90543d9930539
 
 | | |
 |---|---|
-| `ZEO_CORELIB=ruby` | **default.** The vendored Ruby answers. |
-| `ZEO_CORELIB=rust` | the Rust builtin answers, as before the corelib landed. |
+| unset | each segment's own default — see below. |
+| `ZEO_CORELIB=rust` | the Rust builtins answer, as before the corelib landed. |
+| `ZEO_CORELIB=<names>` | exactly those segments. |
 
-The switch is read once per compile, and the whole golden corpus runs in both
-modes. It exists so the two rows can be A/B'd and so a corelib bug has a way
-back that is not a rebuild — not as a permanent fork. The Rust rows stay.
+The switch is read once per compile, where the `CompileOptions` is built, and
+the whole golden corpus runs with the defaults and with `rust`. It exists so
+the two rows can be A/B'd and so a corelib bug has a way back that is not a
+rebuild — not as a permanent fork. The Rust rows stay.
+
+## Choosing segments
+
+`ZEO_CORELIB` selects them:
+
+| | |
+|---|---|
+| unset | each segment's own default |
+| `rust` | every segment off — the Rust builtins throughout |
+| `nilclass,pathname` | exactly those, whatever their defaults say |
+
+A name that is not a segment is an error, not a silent no-op. The whole golden
+corpus runs with the defaults and with `rust`.
 
 ## What it costs, measured
 
-`nilclass.rb` is 63 lines and 5 methods. Compiling it in costs **+33,856 bytes**
-per binary (+0.22% on a hello) and no measurable compile time, and it closes
-seven divergences: five `source_location` rows and two `Method#inspect`
-renderings, including `rationalize(eps=...)` where zeo answered
-`rationalize(*)`.
+A Ruby row is emitted into every binary that can reach it; a Rust row already
+lives in the shared archive. That is the only reason a segment is ever off, and
+it is a size decision rather than a correctness one — both are CRuby's bytes.
 
-Bigger files are not free. Compiling `pathname_builtin.rb` (1,172 lines) costs
-**+8.7 MB** against the +34 KB its Rust row costs today, because the Rust row
-already lives in the shared archive while a Ruby row is emitted into every
-program that uses it. That is zeo's ordinary rate for Ruby — `require
-"optparse"` is +11.1 MB and `require "csv"` is +9.5 MB — so it is the price of
-a Ruby row, not a corelib surcharge. It is why the segment table gates each
-file rather than compiling the whole corelib in unconditionally.
+`nilclass.rb` is 63 lines and 5 methods: **+33,856 bytes** (+0.22% on a hello)
+and no measurable compile time. It closes seven divergences — five
+`source_location` rows and two `Method#inspect` renderings, including
+`rationalize(eps=...)` where zeo answered `rationalize(*)`. On by default.
+
+`pathname_builtin.rb` is 1,172 lines and 94 methods. Its emitted code is
+**+421 KB**, which is the honest price of the row. Two things stop it being on
+by default, and both are filed:
+
+- **One `eval` in it costs 8.28 MB.** `pathname_builtin.rb:273` is
+  `eval("$~ = Thread.current[:pathname_sub_matchdata]", block.binding)`. Any
+  `eval` sets `Hir::uses_runtime_eval`, which links the whole compiler —
+  1,425 cranelift symbols — into the binary. Measured by deleting that one
+  line: 24.26 MB → 15.97 MB. The source is a LITERAL, so nothing about it
+  needs a compiler at run time. This is not a gap file: it changes no
+  program's output, only the artifact, so there is nothing for an XFAIL to
+  compare. See "The literal-eval lever" below.
+- **A reopened Rust class ignores a Ruby `initialize`.** `Pathname.new` runs
+  the Rust constructor, so `@path` is never set and every Ruby method reads
+  nil. Everything else about a reopen already works -- an overridden method,
+  and a Ruby ivar on a String, Array, Hash, Struct, Exception or Object. The
+  one broken row is `Class#new`, which calls a builtin's registered
+  constructor unconditionally where ruby does `allocate` plus `initialize`.
+  See `tests/gaps/a_reopened_rust_class_ignores_a_ruby_initialize.rb`.
+
+Pathname is worth both: it holds 41 of the 46 remaining `Method#parameters`
+divergences, and closing it deletes 1,034 lines of Rust.
+
+For scale, `+421 KB` is well under zeo's ordinary rate for Ruby — `require
+"optparse"` is +11.1 MB and `require "csv"` is +9.5 MB, and both of those are
+dominated by the same compiler-embed, because both libraries `eval`.
 
 ## Adding a file
 
@@ -111,3 +148,34 @@ file rather than compiling the whole corelib in unconditionally.
    `<internal:>` name for it.
 5. Write a golden that reflects on the rows, and run the corpus in **both**
    `ZEO_CORELIB` modes.
+
+## The literal-eval lever
+
+Any `eval` in a program links the whole compiler into its binary, and for
+`pathname_builtin.rb` that is 8.28 MB against 421 KB of actual Ruby. The same
+tax falls on every library that evals: `require "optparse"` is +11.1 MB and
+`require "csv"` is +9.5 MB for this reason and not for their code.
+
+**Why it is fixable.** `Hir::uses_runtime_eval` answers true for any `eval`
+call, and a program that answers true carries `zeo_eval_install`, which is
+what stops `-dead_strip` dropping cranelift and prism. But an eval compile is
+parameterized by the caller's scope through exactly one input — `scope_names`,
+which exists only to tell an identifier from a vcall, because a binding's
+locals travel as shared **cells** rather than a baked frame layout. Everything
+else the snippet needs (cref, `self`, the binding itself) is a run-time
+**value** the entry already takes.
+
+So a snippet that names no local is compilable at build time.
+
+**The rule.** A literal source whose parse has no local read or write, no
+`yield`/`super`/`block_given?`, and no `def`/`class`/`module` is
+scope-agnostic. Compile it into the program as an ordinary body, key it by
+source, and have the eval entry call it before reaching for `compiler()`. A
+program whose every eval site is covered stops setting `uses_runtime_eval`.
+
+This is **not** the retired literal-eval splice (`docs/EVAL.md`). That inlined
+the snippet into the caller, which got the home wrong for `yield` and `super`
+— and those are exactly the shapes the rule above excludes. The body is
+*called* with the binding rather than spliced into it.
+
+Until it lands, `pathname` stays off by default and no binary pays for it.

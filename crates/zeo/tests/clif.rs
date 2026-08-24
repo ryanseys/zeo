@@ -178,7 +178,7 @@ fn capi_table_snapshot() {
 /// between a corelib row and a native one.
 #[test]
 fn clif_snapshot_corelib_nilclass() {
-    let text = clif_with("nil.to_i\n", zeo::Corelib::Ruby);
+    let text = clif_with("nil.to_i\n", zeo::Corelib::Only(vec!["nilclass".into()]));
     let names: Vec<&str> = text
         .lines()
         .filter(|l| l.starts_with(";; NilClass#"))

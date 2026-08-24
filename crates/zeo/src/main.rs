@@ -645,7 +645,18 @@ fn run() -> Result<(), MainError> {
         // Read HERE, not in the front end: a library caller gets the default
         // whatever the ambient environment says, and this is the process the
         // golden corpus's `ZEO_CORELIB` leg spawns.
-        corelib: zeo::Corelib::from_env(),
+        corelib: {
+            let policy = zeo::Corelib::from_env();
+            let unknown = policy.unknown_segments();
+            if !unknown.is_empty() {
+                return Err(format!(
+                    "ZEO_CORELIB names no such corelib segment: {}",
+                    unknown.join(", ")
+                )
+                .into());
+            }
+            policy
+        },
     };
     if let Some(target) = &args.emit_clif {
         let text = zeo::compile_to_clif_text(&source, &opts)?;

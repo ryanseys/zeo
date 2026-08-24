@@ -76,6 +76,13 @@ module ZeoDev
           return 1
         end
         bad = 0
+        # A name in `upstream.rb` with no row here was never vendored -- see
+        # `Manifest.corelib_digests`. Caught before the hashes, because a
+        # missing file is a missing check rather than a failing one.
+        (entry.files.sort - rows.map { |r| r["path"] }).each do |rel|
+          warn "corelib: #{rel} is named in upstream.rb but not vendored -- run `corelib sync`"
+          bad += 1
+        end
         rows.each do |row|
           path = File.join(dir, row["path"])
           unless File.file?(path)
@@ -124,7 +131,9 @@ module ZeoDev
         end
         return drift.zero? ? 0 : 1 if opts[:check]
 
-        manifest.write_lock!
+        # Re-loaded, not reused: the digests are derived from the bytes on
+        # disk, and the bytes just changed.
+        Manifest.load(ROOT).write_lock!
         puts "corelib: re-locked #{Manifest::LOCK}"
         0
       end

@@ -39,35 +39,77 @@
 use crate::hir::{Hir, NodeId};
 use crate::lower_error::LowerError;
 
-/// One vendored file: the name CRuby reports for it, and its bytes.
+/// One vendored file: what it is called, what CRuby reports for it, and
+/// whether it is compiled in unless asked otherwise.
 struct Segment {
+    /// The name `ZEO_CORELIB` selects it by.
+    name: &'static str,
     /// What `#source_location` and a frame answer. CRuby's own spelling --
     /// `<internal:nilclass>`, not a path -- because that is what a program
     /// reading either one gets from ruby.
     internal_name: &'static str,
     source: &'static str,
+    /// Whether it is on with no `ZEO_CORELIB` set.
+    ///
+    /// This is a SIZE decision, and the only one. A Ruby row is emitted into
+    /// every binary that can reach it, while a Rust row already lives in the
+    /// shared archive -- so `nilclass` costs 34 KB and is on, and `pathname`
+    /// costs 8.7 MB and is not. Nothing about correctness differs: both are
+    /// CRuby's own bytes and both pass the corpus.
+    ///
+    /// Gating `pathname` on `require "pathname"` is NOT available, and that
+    /// is a fact about ruby rather than a limitation here: ruby 4.0 loads
+    /// `pathname.so` before the first line, so `Pathname.new` answers with no
+    /// require at all and only `#find`/`#rmtree` arrive with one.
+    on_by_default: bool,
 }
 
-/// The vendored corelib, in the order it is compiled in. Every entry is
-/// unconditional today; a file bound to a `require` would gate here.
-const SEGMENTS: &[Segment] = &[Segment {
-    internal_name: "<internal:nilclass>",
-    source: include_str!(concat!(env!("OUT_DIR"), "/corelib_nilclass.rb")),
-}];
+impl Segment {
+    /// Whether this compile carries the segment.
+    fn selected(&self, policy: &crate::Corelib) -> bool {
+        match policy {
+            crate::Corelib::Default => self.on_by_default,
+            crate::Corelib::Rust => false,
+            crate::Corelib::Only(names) => names.iter().any(|n| n == self.name),
+        }
+    }
+}
 
-/// Lower every segment into `hir`, appending its statements.
+/// The vendored corelib, in the order it is compiled in.
+const SEGMENTS: &[Segment] = &[
+    Segment {
+        name: "nilclass",
+        internal_name: "<internal:nilclass>",
+        source: include_str!(concat!(env!("OUT_DIR"), "/corelib_nilclass.rb")),
+        on_by_default: true,
+    },
+    Segment {
+        name: "pathname",
+        internal_name: "<internal:pathname_builtin>",
+        source: include_str!(concat!(env!("OUT_DIR"), "/corelib_pathname_builtin.rb")),
+        on_by_default: false,
+    },
+];
+
+/// Lower the SELECTED segments into `hir`, appending their statements.
 ///
-/// Always called: the prefix arena is built once and cloned per compile, so
-/// `ZEO_CORELIB=rust` and an `eval` snippet TRUNCATE the cloned statement
-/// list instead of building a second arena. See `parse_and_lower_with`.
+/// Per compile, not once: the exception prelude is cached in a template arena
+/// and cloned, and an unselected corelib segment must not be lowered into it
+/// at all. Leaving one there as dead nodes is not free -- `uses_runtime_eval`
+/// and every other whole-arena scan reads `Hir::nodes` directly, so a
+/// segment nobody selected still linked the compiler into every binary.
 ///
 /// Each file is registered in the source table under its `<internal:>` name
 /// and lowered with `lowering_file` pointing at it, so a `def` inside one
 /// carries that name and the file's own line -- which is what makes
 /// `NilClass.instance_method(:to_i).source_location` answer
 /// `["<internal:nilclass>", 36]` the way ruby's does.
-pub(super) fn lower_into(hir: &mut Hir, statements: &mut Vec<NodeId>) -> Result<(), LowerError> {
-    for seg in SEGMENTS {
+pub(super) fn lower_into(
+    hir: &mut Hir,
+    statements: &mut Vec<NodeId>,
+    policy: &crate::Corelib,
+) -> Result<(), LowerError> {
+    for seg in SEGMENTS.iter().filter(|s| s.selected(policy)) {
         let file = hir.add_file(seg.internal_name, seg.source);
         // Not part of the program in any sense a program can observe --
         // see `Hir::internal_files`.
@@ -84,4 +126,10 @@ pub(super) fn lower_into(hir: &mut Hir, statements: &mut Vec<NodeId>) -> Result<
         statements.extend(lowered?);
     }
     Ok(())
+}
+
+/// Every segment name, for the CLI's error when `ZEO_CORELIB` names one that
+/// does not exist -- a typo there is otherwise a silent no-op.
+pub(crate) fn names() -> Vec<&'static str> {
+    SEGMENTS.iter().map(|s| s.name).collect()
 }

@@ -110,10 +110,14 @@ module ZeoDev
       new(dsl.entries.sort_by { |e| [e.group.to_s, e.name] }, root)
     end
 
+    # A file named in `upstream.rb` but not yet vendored is SKIPPED, not an
+    # error: `corelib sync` has to load the manifest to learn what to fetch,
+    # so a newly added name has no bytes to hash until it has run. `corelib
+    # verify` is where the two lists are reconciled.
     def self.corelib_digests(entry, root)
-      entry.files.sort.map do |rel|
+      entry.files.sort.filter_map do |rel|
         path = File.join(root, CORELIB_DIR, rel)
-        raise Error, "#{CORELIB_DIR}/#{rel} is missing -- run `zeo-dev corelib sync`" unless File.file?(path)
+        next unless File.file?(path)
 
         bytes = File.binread(path)
         { "path" => rel, "blob" => blob_oid(bytes), "sha256" => Digest::SHA256.hexdigest(bytes) }

@@ -251,6 +251,11 @@
           "path": "nilclass.rb",
           "blob": "acd5666c71d08d9ebf35e12e4ca90543d9930539",
           "sha256": "695e5391dea52fc8fd45511957595c4d07afd37e6d87d0b57307f3760a33beac"
+        },
+        {
+          "path": "pathname_builtin.rb",
+          "blob": "878603d4d69cd0f3d29829ce9751d608612926e1",
+          "sha256": "87090e49e2aca1e96583d7c361af595e2d81401060fc18a1a4d70bc252efb377"
         }
       ]
     }
