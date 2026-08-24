@@ -1,0 +1,17 @@
+constant-named:
+  a_runtime_class_names_its_own_frames.rb:23:in 'K#m'
+anonymous:
+  a_runtime_class_names_its_own_frames.rb:31:in 'm'
+subclass of a runtime class:
+  a_runtime_class_names_its_own_frames.rb:39:in 'Sub#n'
+runtime module method:
+  a_runtime_class_names_its_own_frames.rb:47:in 'M#mm'
+nested under a runtime namespace:
+  a_runtime_class_names_its_own_frames.rb:59:in 'NS::Inner#deep'
+top-level def called from a runtime method:
+  a_runtime_class_names_its_own_frames.rb:68:in 'Object#helper'
+  a_runtime_class_names_its_own_frames.rb:72:in 'Caller#outer'
+define_method block:
+  a_runtime_class_names_its_own_frames.rb:80:in 'block (2 levels) in <main>'
+ordinary compiled class:
+  a_runtime_class_names_its_own_frames.rb:87:in 'Plain#p1'

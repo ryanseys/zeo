@@ -112,6 +112,20 @@ pub fn meta_of(class_id: ClassId) -> Option<Arc<StructMeta>> {
     None
 }
 
+/// The class a struct/data meta is registered ON -- `class_id` itself, or the
+/// nearest ancestor carrying one. `meta_of` answers the META; this answers
+/// WHOSE it is, which is what names the constructor's frame.
+fn data_meta_owner(class_id: ClassId) -> Option<ClassId> {
+    let table = STRUCT_META.read().unwrap();
+    if table.contains_key(&class_id.0) {
+        return Some(class_id);
+    }
+    crate::dispatch::ancestors_of_value(class_id)
+        .iter()
+        .find(|anc| table.contains_key(&anc.0))
+        .copied()
+}
+
 /// Whether `class_id` is (or descends from) a native struct/data class -- gates
 /// the struct class-method hook in `dispatch::send_value_in`.
 pub fn is_struct_class(class_id: ClassId) -> bool {
@@ -825,6 +839,37 @@ pub(crate) fn bind_members(
 // ---------------------------------------------------------------------------
 
 pub fn struct_construct(
+    class_id: ClassId,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    // A DATA class's `new` is a distinct cfunc in ruby (`rb_data_s_new`, the
+    // one that zips positionals against the member list), so it reports a
+    // frame of its own -- `D.new`. `Struct`'s `new` is the ordinary
+    // `Class#new` and reports none, which is why only this arm frames.
+    //
+    // It wraps the WHOLE construction, not just the `initialize` dispatch: an
+    // arity error from the zip is raised inside that cfunc in ruby too, and
+    // reports under it.
+    //
+    // The label names the class that OWNS the cfunc, so a subclass of
+    // `D = Data.define(:m)` still reports `D.new`. Oracle-verified.
+    let framed = meta_of(class_id)
+        .filter(|m| m.is_data)
+        .and_then(|_| crate::dispatch::class_name(data_meta_owner(class_id)?))
+        .map(|owner| {
+            crate::frames::synthetic_c_frame_push_raw(crate::frames::intern_label(&format!(
+                "{owner}.new"
+            )))
+        });
+    let out = struct_construct_inner(class_id, args, block);
+    if let Some(pushed) = framed {
+        crate::frames::synthetic_c_frame_pop_raw(pushed);
+    }
+    out
+}
+
+fn struct_construct_inner(
     class_id: ClassId,
     args: &[RubyValue],
     block: Option<RubyValue>,

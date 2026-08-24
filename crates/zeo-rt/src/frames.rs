@@ -357,10 +357,60 @@ impl Drop for CFrameGuard {
     }
 }
 
+// A label handed over by a RUNTIME method install, for the one frame push
+// that follows it.
+//
+// A `def` inside a runtime-minted class body (`Class.new { def m; end }`,
+// `class D2 < SomethingRuntime`) is lifted to a top-level method and
+// installed on the class afterwards, so the emitter bakes `Object#m` -- the
+// only owner it can see. Ruby names the frame from the class's name AT RAISE
+// TIME, which is not a compile-time fact at all: the class may be anonymous
+// until a constant assignment names it.
+//
+// So the installer, which knows the real class, hands the label over and the
+// next push takes it. ONE-SHOT on purpose: a top-level `def foo` called from
+// inside such a method must keep its own `Object#foo`, and matching on the
+// name alone would mislabel a top-level `def m` called from a runtime `m`.
+thread_local! {
+    static PENDING_LABEL: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
+}
+
+/// Hand `label` to the next frame push on this thread. Answers the previous
+/// value so the caller can restore it -- a body that pushes no frame of its
+/// own must not leak the label to whatever pushes next.
+pub fn set_pending_frame_label(label: Option<&'static str>) -> Option<&'static str> {
+    PENDING_LABEL.with(|c| c.replace(label))
+}
+
+/// A `&'static str` for a label built at run time, one leak per distinct
+/// string and cached. A frame holds `&'static str` because the overwhelming
+/// majority are `.rodata`; a runtime-minted class's name is the exception.
+pub fn intern_label(label: &str) -> &'static str {
+    static LABELS: std::sync::Mutex<Option<crate::FMap<String, &'static str>>> =
+        std::sync::Mutex::new(None);
+    let mut cache = LABELS.lock().expect("label cache");
+    let map = cache.get_or_insert_with(crate::FMap::default);
+    if let Some(&s) = map.get(label) {
+        return s;
+    }
+    let leaked: &'static str = Box::leak(label.to_string().into_boxed_str());
+    map.insert(label.to_string(), leaked);
+    leaked
+}
+
 /// [`FrameGuard::push`] without the guard -- the capi push/pop twins call
 /// these so Cranelift-compiled code (which has no Rust drops) brackets a
 /// frame explicitly while the traced-pop logic stays in one place.
 pub(crate) fn frame_push_raw(file: &'static str, method: &'static str, line: u32, end_line: u32) {
+    // The handover replaces only the emitter's UNKNOWN-OWNER fallback. The
+    // same install path also carries a genuine `define_method` block, whose
+    // body keeps its own `block in ...` label in ruby -- overriding that one
+    // renamed every such frame after its class. Taken either way, so the
+    // one-shot still expires.
+    let method = match PENDING_LABEL.with(|c| c.take()) {
+        Some(label) if method.starts_with("Object#") => label,
+        _ => method,
+    };
     std::mem::forget(FrameGuard::push(file, method, line, end_line));
 }
 
@@ -504,4 +554,90 @@ pub fn caller_frames(start: usize) -> Vec<(&'static str, u32, &'static str)> {
             .map(|fr| (fr.file, fr.line, fr.method))
             .collect()
     })
+}
+
+#[cfg(test)]
+mod pending_label_tests {
+    use super::*;
+
+    /// Push a frame the way an emitted body does, and read back the label it
+    /// landed under.
+    fn push_and_read(baked: &'static str) -> &'static str {
+        frame_push_raw("t.rb", baked, 1, 0);
+        let got = current_frame_label().expect("a frame was pushed");
+        frame_pop_raw();
+        got
+    }
+
+    /// A handed-over label replaces the emitter's UNKNOWN-OWNER fallback.
+    ///
+    /// A `def` inside a runtime-minted class body is lifted to a top-level
+    /// method, so the emitter can only bake `Object#name`. The installer knows
+    /// the real class and hands the label over; ruby names such a frame from
+    /// the class's name at RAISE time, which no compile-time table has.
+    #[test]
+    fn a_handed_over_label_replaces_the_object_fallback() {
+        set_pending_frame_label(Some("K#m"));
+        assert_eq!(push_and_read("Object#m"), "K#m");
+    }
+
+    /// It is ONE-SHOT. A top-level `def foo` called from inside such a method
+    /// must keep its own label -- the pending is consumed by the first push,
+    /// so the nested one cannot pick it up.
+    #[test]
+    fn a_handed_over_label_is_consumed_by_one_push() {
+        set_pending_frame_label(Some("K#m"));
+        assert_eq!(push_and_read("Object#m"), "K#m");
+        assert_eq!(
+            push_and_read("Object#helper"),
+            "Object#helper",
+            "the second push must not reuse the label"
+        );
+    }
+
+    /// A label of any OTHER shape keeps its own. The same install path also
+    /// carries a genuine `define_method` block, whose body reports
+    /// `block in ...` in ruby -- overriding that renamed every one of them.
+    /// Taken either way, so the one-shot still expires.
+    #[test]
+    fn a_block_label_is_not_replaced_and_still_expires() {
+        set_pending_frame_label(Some("K#dm"));
+        assert_eq!(
+            push_and_read("block (2 levels) in <main>"),
+            "block (2 levels) in <main>"
+        );
+        assert_eq!(
+            push_and_read("Object#m"),
+            "Object#m",
+            "a rejected handover must still be consumed"
+        );
+    }
+
+    /// With nothing pending, a push is exactly what the body baked -- the
+    /// path every ordinary method takes.
+    #[test]
+    fn no_pending_label_leaves_the_baked_one() {
+        set_pending_frame_label(None);
+        assert_eq!(push_and_read("Plain#p1"), "Plain#p1");
+    }
+
+    /// The setter answers the PREVIOUS value, which is what lets a nested
+    /// install restore its caller's pending rather than clearing it.
+    #[test]
+    fn setting_a_label_answers_the_previous_one() {
+        set_pending_frame_label(None);
+        assert_eq!(set_pending_frame_label(Some("A#x")), None);
+        assert_eq!(set_pending_frame_label(Some("B#y")), Some("A#x"));
+        assert_eq!(set_pending_frame_label(None), Some("B#y"));
+    }
+
+    /// One leak per distinct string, and the same string answers the same
+    /// pointer -- a runtime-minted class's frames must not leak per call.
+    #[test]
+    fn an_interned_label_is_leaked_once() {
+        let a = intern_label("Runtime#method");
+        let b = intern_label("Runtime#method");
+        assert_eq!(a, b);
+        assert!(std::ptr::eq(a, b), "the cache must answer the same pointer");
+    }
 }

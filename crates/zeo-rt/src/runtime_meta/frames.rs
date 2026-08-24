@@ -19,12 +19,41 @@ pub fn dynamic_from_proc(defining: ClassId, name: Symbol, body: RProc) -> Method
     MethodImpl::Dynamic(Arc::new(move |recv: &RObj, args: &[RubyValue], block| {
         let self_val = RubyValue::Object(recv.clone());
         push_method_frame(defining, name);
+        // The body was lifted to a top-level method before being installed
+        // here, so it bakes `Object#name` -- the only owner the emitter could
+        // see. This class is the real one, and ruby names the frame from its
+        // name at RAISE time. Handed over one-shot; see `set_pending_frame_label`.
+        let prev = crate::frames::set_pending_frame_label(runtime_frame_label(defining, name));
         // Control flow here is `Result<_, Signal>`, never an unwinding panic, so
         // this pop runs on every exit (value OR signal) without a guard type.
         let out = body.call_with_self_and_block(&self_val, args, block);
+        crate::frames::set_pending_frame_label(prev);
         pop_method_frame();
         out
     }))
+}
+
+/// `Owner#name` for a runtime-installed body, or `None` to keep the label the
+/// body already baked.
+///
+/// `None` for an ANONYMOUS class, which is what ruby reports there: a bare
+/// `initialize`, no owner prefix. `None` too when the class resolves to
+/// `Object`, where the baked label is already right and interning a second
+/// copy of it would be waste.
+fn runtime_frame_label(defining: ClassId, name: Symbol) -> Option<&'static str> {
+    if defining == zeo_abi::OBJECT_CLASS || defining == SINGLETON_DEFINING {
+        return None;
+    }
+    // An ANONYMOUS class has no name to qualify with, and ruby prints the
+    // bare method name there rather than inventing one -- `Class.new { def
+    // initialize; end }` assigned to a LOCAL reports `initialize`, where the
+    // same class assigned to a CONSTANT reports `K#initialize`, because the
+    // assignment named it. Both are the class's name at RAISE time.
+    let owner = crate::dispatch::class_name(defining).filter(|n| !n.starts_with("#<"));
+    Some(match owner {
+        Some(owner) => crate::frames::intern_label(&format!("{owner}#{}", name.name_str())),
+        None => crate::frames::intern_label(name.name_str()),
+    })
 }
 
 /// Run a BARE VALUE's singleton method inside a method frame.
