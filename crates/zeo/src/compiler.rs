@@ -1326,6 +1326,30 @@ impl Compiler {
     /// decides if its method table is named in `ProgramDesc::class_tables`
     /// and so kept in the binary. A class the compiler never registered has
     /// no constant and no dispatch path.
+    /// The `RubyVM` surfaces whose bodies PARSE at run time, and which no
+    /// program can reach without naming `RubyVM`.
+    ///
+    /// They are the four prism-backed tables plus the iseq one, and together
+    /// they cost 187,008 bytes of a `puts 1` binary (`zeo-dev size`) --
+    /// `RUBYVM_AST_MODULE` alone is 152,784, the fourth-largest table there
+    /// is. `RubyVM` itself STAYS: ruby defines it in every program, and these
+    /// five are namespaced under it, so only `RubyVM.constants` can see them
+    /// go and that already names `RubyVM`.
+    ///
+    /// This is what [`crate::hir::Hir::needs_prism_runtime`] was written for.
+    /// It had zero readers -- dead since the backend machinery went at
+    /// M0.5-4 -- and it is exactly the right question.
+    pub(crate) fn prism_surface_is_reachable(&self, id: ClassId) -> bool {
+        const PRISM_BACKED: &[ClassId] = &[
+            zeo_abi::RUBYVM_AST_MODULE,
+            zeo_abi::RUBYVM_AST_NODE_CLASS,
+            zeo_abi::RUBYVM_AST_LOCATION_CLASS,
+            zeo_abi::RUBYVM_ISEQ_CLASS,
+            zeo_abi::RUBYVM_YJIT_MODULE,
+        ];
+        !PRISM_BACKED.contains(&id) || self.hir.needs_prism_runtime()
+    }
+
     pub(crate) fn builtin_is_reachable(&self, id: zeo_abi::ClassId) -> bool {
         // A builtin's compiler ClassId IS its abi id -- the same identity
         // `classes.rs`'s registration loop relies on. Past the end is a class
@@ -1336,9 +1360,10 @@ impl Compiler {
         // one `register_builtins` covers, and dropping its table drops its
         // CONSTANTS with it -- `File::RDWR` went missing that way.
         let idx = id.0 as usize;
-        idx >= self.classes.len()
+        (idx >= self.classes.len()
             || !zeo_abi::is_gated_builtin(ClassId(id.0))
-            || self.feature_active(ClassId(id.0))
+            || self.feature_active(ClassId(id.0)))
+            && self.prism_surface_is_reachable(ClassId(id.0))
     }
 
     pub(crate) fn feature_active(&self, cid: ClassId) -> bool {

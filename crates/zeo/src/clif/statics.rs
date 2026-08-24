@@ -1834,11 +1834,16 @@ fn define_class_tables(em: &mut Emitter, analyzed: &Analyzed) -> Result<Option<D
 /// class at all.
 fn needed_class_tables(analyzed: &Analyzed) -> Vec<&'static str> {
     let all = crate::builtin_surface::CLASS_TABLE_SYMBOLS;
+    // The measurement hatch: drop exactly one table so a link can price it.
+    // See `debug_flags::dropped_table` -- the miss is loud, not silent.
+    let dropped = crate::debug_flags::dropped_table();
+    let keep = |sym: &&'static str| dropped != Some(*sym);
     if analyzed.compiler.compiles_at_runtime() {
-        return all.iter().map(|(_, sym)| *sym).collect();
+        return all.iter().map(|(_, sym)| *sym).filter(keep).collect();
     }
     all.iter()
         .filter(|(id, _)| analyzed.compiler.builtin_is_reachable(*id))
         .map(|(_, sym)| *sym)
+        .filter(keep)
         .collect()
 }

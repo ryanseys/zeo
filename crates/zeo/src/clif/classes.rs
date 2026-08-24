@@ -251,7 +251,7 @@ pub(crate) fn collect_classes(
             continue;
         }
         if (class.is_builtin || class.is_bootstrap)
-            && !compiler.feature_active(crate::compiler::ClassId(idx as u32))
+            && !compiler.builtin_is_reachable(zeo_abi::ClassId(idx as u32))
         {
             continue;
         }
@@ -279,7 +279,8 @@ pub(crate) fn collect_classes(
         if class.is_bootstrap && !(class.mixin_order.is_empty()) {
             set_ancestors.push((idx as u32, chain()));
         }
-        if !((class.is_builtin || idx == 0) && compiler.feature_active(cid))
+        if !((class.is_builtin || idx == 0)
+            && compiler.builtin_is_reachable(zeo_abi::ClassId(cid.0)))
             || class.builtin_overlay.is_some()
             || class.box_id != 0
         {
@@ -368,7 +369,7 @@ pub(crate) fn collect_classes(
         // A require-gated builtin whose feature never fired: no code can
         // resolve its constant, so its rows would be dead weight -- rustc
         // skips it entirely (the register-only-enabled-features rule).
-        if !compiler.feature_active(crate::compiler::ClassId(idx as u32)) {
+        if !compiler.builtin_is_reachable(zeo_abi::ClassId(idx as u32)) {
             continue;
         }
         // A per-box OVERLAY never registers an entry of its own -- instances
@@ -1180,7 +1181,7 @@ pub(crate) fn collect_classes(
     let mut undef_rows: Vec<(u32, String)> = Vec::new();
     for (idx, class) in compiler.classes.iter().enumerate() {
         if (class.is_builtin || class.is_bootstrap)
-            && !compiler.feature_active(crate::compiler::ClassId(idx as u32))
+            && !compiler.builtin_is_reachable(zeo_abi::ClassId(idx as u32))
         {
             continue;
         }

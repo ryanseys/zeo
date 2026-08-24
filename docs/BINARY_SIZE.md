@@ -95,13 +95,60 @@ name any class at all.
 **Result: 15,553,816 → 13,061,176 bytes, −2.49 MB.** Three later passes
 (alias tables as named symbols, the residual hand-rolled `class_table` arms,
 and moving every bootstrap seeder into its class's own `install_constants`)
-took it to **9,764,552**.
+took it to **9,764,552**, and narrowing the prism-backed `RubyVM` tables
+took it to **9,252,936**.
+
+### The prism-backed `RubyVM` surfaces
+
+`RubyVM::AbstractSyntaxTree` and `RubyVM::InstructionSequence` PARSE at run
+time, and no program can reach either without naming `RubyVM` — they are
+namespaced under it. So a program that never does carries neither, and the
+prism library they root goes with them: **−528,800 bytes**, taking `puts 1`
+to **9,252,936**.
+
+`RubyVM` itself stays, because ruby defines it in every program. Only
+`RubyVM.constants` can see the five go, and that already names `RubyVM`.
+
+The predicate is `Hir::needs_prism_runtime`, which had zero readers — dead
+since the backend machinery went — and was exactly the right question.
+
+## How to measure it
+
+`tools/zeo-dev size` links `puts 1`, then links it again once per class table
+with that table dropped (`ZEO_DEBUG_DROP_TABLE`), and diffs. That is exact
+per-table attribution, and there is no other way to get it; every figure in
+this document before it was prose. `zeo-dev size --check` is a CI gate on the
+baseline, so a regression is loud.
+
+The columns OVERLAP: two tables can root the same code, so they do not sum.
+The largest, measured 2026-08-24:
+
+| table | bytes |
+|---|---:|
+| `STRING_CLASS` | 318,144 |
+| `IO_CLASS` | 202,176 |
+| `ARRAY_CLASS` | 200,448 |
+| `RUBYVM_AST_MODULE` | 152,784 |
+| `PATHNAME_CLASS` | 116,976 |
+| `HASH_CLASS` | 100,592 |
+| `INTEGER_CLASS` | 85,552 |
+| `TIME_CLASS` | 83,936 |
+| `IO_BUFFER_CLASS` | 83,504 |
+| `MARSHAL_MODULE` | 66,816 |
+| `SET_CLASS` | 66,752 |
+
+Below those the tail is flat at roughly 34 KB a table for 150 of them, which
+is what makes the always-on set worth more than any single row in it.
+
+Dropping a table is safe to measure because a missing one is now LOUD:
+`builtins::registered_table` aborts naming the class rather than answering
+`NoMethodError` for every row it has and losing its constants silently.
 
 ## What is left
 
 | | |
 |---|---|
-| always-on class tables | A `puts 1` names 93 of the 170 tables, worth 3.84 MB. They are the ones that are not require-gated — Marshal, RubyVM::AST, Time, Complex, Dir, Process, Signal — which a hello cannot reach but nothing yet proves unreachable. Needs real reachability analysis: which classes a VALUE can flow into, not which the source names. A module is the tractable half — it can only be reached by naming it or by a needed class including it. |
+| always-on class tables | A `puts 1` still names most of the 170. The whole set attributes 2,482,240 bytes with the columns overlapping, and the core of it — String, Array, Hash, Integer, Float, Range — is unavoidable: a value of that kind arrives without the program naming it. What is left needs real reachability analysis (which classes a VALUE can flow into, not which the source names) plus give-everything hatches for `Marshal`, `ObjectSpace`, a computed `const_get` and a computed `send`. A module is the tractable half — it can only be reached by naming it or by a needed class including it. |
 | three regex engines | `Engine` is `Fast(regex)` / `Fancy(fancy_regex)` / `Onig`, and Cargo.toml already says Oniguruma "will replace fancy-regex". Retiring the two Rust engines drops 729 KB plus encoding_rs and unicode-normalization. It is a performance trade and wants its own bench pass. |
 | OpenSSL's provider graph | Self-rooting once anything calls EVP: `evp_generic_fetch` reaches every predefined provider. Gating it at the zeo-rt boundary is the only lever; the class-table work already does this for programs that never require it. |
 

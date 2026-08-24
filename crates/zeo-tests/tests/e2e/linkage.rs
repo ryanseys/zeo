@@ -297,3 +297,54 @@ fn a_deferred_require_of_a_compiled_unit_dead_strips_the_compiler() {
         );
     }
 }
+
+/// The prism-backed `RubyVM` surfaces are not always-on.
+///
+/// `RubyVM::AbstractSyntaxTree` and `RubyVM::InstructionSequence` PARSE at run
+/// time, and no program can reach either without naming `RubyVM` -- they are
+/// namespaced under it. So a program that never does carries neither, and
+/// with them goes the prism library they root: 528,800 bytes of a `puts 1`
+/// binary, measured with `zeo-dev size`.
+///
+/// `RubyVM` itself stays. ruby defines it in every program, and only
+/// `RubyVM.constants` can see the five go -- which already names `RubyVM`.
+#[test]
+fn a_program_that_never_names_rubyvm_drops_the_parser_tables() {
+    let plain = link_program("puts :ok\n");
+    let plain_tables = ctable_symbols(&plain);
+    let baseline = text_bytes(&plain);
+    let _ = std::fs::remove_file(&plain);
+
+    for gone in [
+        "zeo_ctable_RUBYVM_AST_MODULE",
+        "zeo_ctable_RUBYVM_AST_NODE_CLASS",
+        "zeo_ctable_RUBYVM_AST_LOCATION_CLASS",
+        "zeo_ctable_RUBYVM_ISEQ_CLASS",
+        "zeo_ctable_RUBYVM_YJIT_MODULE",
+    ] {
+        assert!(
+            !plain_tables.contains(gone),
+            "`puts :ok` cannot reach {gone} without naming RubyVM"
+        );
+    }
+    // `RubyVM` itself is always there, because ruby's is.
+    assert!(
+        plain_tables.contains("zeo_ctable_RUBYVM_CLASS"),
+        "RubyVM is a constant in every ruby program"
+    );
+
+    // Naming it brings them all back, and the program is bigger for it.
+    let bin = link_program("puts RubyVM::AbstractSyntaxTree.parse(\"1\").type\n");
+    let named = ctable_symbols(&bin);
+    let with_ast = text_bytes(&bin);
+    let _ = std::fs::remove_file(&bin);
+    assert!(
+        named.contains("zeo_ctable_RUBYVM_AST_MODULE"),
+        "a program that parses an AST must carry the table that does it"
+    );
+    assert!(
+        with_ast > baseline,
+        "the AST surface costs {with_ast} against {baseline} -- it should not \
+         be free, and if it is, the drop above is not what made it absent"
+    );
+}

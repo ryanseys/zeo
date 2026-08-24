@@ -43,6 +43,7 @@ $ cargo nextest run -p zeo-tests --test examples --test gaps
 $ cargo nextest run -p zeo-tests -P full            # + the whole-gem cases
 $ tools/zeo-dev bless <filter>              # re-record goldens from ruby
 $ tools/zeo-dev bench                       # perf vs bench/baseline.tsv
+$ tools/zeo-dev size                        # what each class table costs a binary
 ```
 
 The default profile is the dev loop. `-P full` adds the cases that compile a

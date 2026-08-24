@@ -1318,7 +1318,7 @@ impl Hir {
     /// Whether the program names a `RubyVM` surface whose body parses at
     /// runtime (`AbstractSyntaxTree.parse`, `InstructionSequence.compile`) --
     /// those link the prism runtime exactly like a dynamic `eval` does.
-    fn mentions_rubyvm_parser(&self) -> bool {
+    pub(crate) fn mentions_rubyvm_parser(&self) -> bool {
         self.nodes.iter().any(|node| match node {
             HirNode::ClassRef(n) => n == "RubyVM",
             HirNode::QualifiedConstRead(scope, n) => {

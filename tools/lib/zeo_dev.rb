@@ -42,6 +42,7 @@ module ZeoDev
     gem-probe
     cext
     check-env-vars
+    size
     linux
     stage-publish
     dist

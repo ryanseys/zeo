@@ -373,6 +373,7 @@ $ cargo nextest run -p zeo-tests -P full                # + whole-gem cases
 $ cargo nextest run -p zeo-tests --test spinel          # the conformance corpus
 $ tools/zeo-dev bless spinel::                  # re-record goldens from ruby
 $ tools/zeo-dev bench                           # the performance suite
+$ tools/zeo-dev size                            # what each class table costs
 ```
 
 Suites are [`datatest-stable`](https://crates.io/crates/datatest-stable)

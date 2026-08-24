@@ -272,14 +272,60 @@ pub(crate) fn registered_table(id: ClassId) -> Option<&'static BuiltinClassTable
         }
         Map { dense, sparse }
     });
-    if id.0 < DENSE_LIMIT {
-        return BY_ID.dense.get(id.0 as usize).copied().flatten();
+    let found = if id.0 < DENSE_LIMIT {
+        BY_ID.dense.get(id.0 as usize).copied().flatten()
+    } else {
+        BY_ID
+            .sparse
+            .iter()
+            .find(|(key, _)| *key == id.0)
+            .map(|(_, t)| *t)
+    };
+    if found.is_none() {
+        table_is_missing(id);
     }
-    BY_ID
-        .sparse
-        .iter()
-        .find(|(key, _)| *key == id.0)
-        .map(|(_, t)| *t)
+    found
+}
+
+/// The four always-on builtins that declare no `ruby_class!` table at all --
+/// they are registered another way, so `None` is their right answer.
+///
+/// Written out rather than inferred because the runtime cannot see the
+/// compiler's table list. `every_tableless_builtin_is_listed` asserts this IS
+/// the set, so a fifth one cannot join it silently.
+const NO_TABLE: &[&str] = &[
+    "Ruby::Box::Entry",
+    "Set::CoreSet",
+    "UnicodeNormalize",
+    "WeakRef",
+];
+
+/// Abort if `id` is a class this program was supposed to carry a table for.
+///
+/// Without this the miss is silent: `side_of` uses `?`, so a dropped table
+/// becomes `NoMethodError` for every row that class has -- and its CONSTANTS
+/// vanish too, because `install_core_constants` iterates `all_tables()`. That
+/// reads as a dispatch bug anywhere but here.
+///
+/// A GATED builtin legitimately has no table in a program that never required
+/// it; that is the whole point of `needed_class_tables`. An always-on one has
+/// no such excuse.
+#[cold]
+#[inline(never)]
+fn table_is_missing(id: ClassId) {
+    let Some(b) = zeo_abi::BUILTINS.iter().find(|b| b.id.0 == id.0) else {
+        return; // a user class, a runtime-minted one, or an exception id
+    };
+    if b.feature.is_some() || NO_TABLE.contains(&b.name) {
+        return;
+    }
+    panic!(
+        "zeo: internal error -- this program carries no method table for the \
+         always-on builtin `{}` (id {}), so every method and constant it has \
+         is missing. The emitter's `needed_class_tables` dropped a table the \
+         program can reach.",
+        b.name, id.0
+    );
 }
 
 /// Which side of a builtin's tables a question addresses.
@@ -1297,5 +1343,39 @@ pub(crate) mod gate {
             sorted.sort_unstable();
             assert_eq!(sorted.as_slice(), IO_CONSOLE);
         }
+    }
+}
+
+#[cfg(test)]
+mod table_tests {
+    /// `NO_TABLE` IS the set of always-on builtins with no `ruby_class!`
+    /// table. If a fifth one appears, the ICE beside it would abort a working
+    /// program; if one of these four grows a table, the list is dead weight
+    /// hiding a real miss.
+    #[test]
+    fn every_tableless_builtin_is_listed() {
+        let mut found: Vec<&str> = zeo_abi::BUILTINS
+            .iter()
+            .filter(|b| b.feature.is_none() && super::registered_table(b.id).is_none())
+            .map(|b| b.name)
+            .collect();
+        found.sort_unstable();
+        assert_eq!(
+            found,
+            super::NO_TABLE,
+            "the always-on builtins with no table are not what `NO_TABLE` says"
+        );
+    }
+
+    /// A GATED builtin with no table is the ordinary answer -- that is what
+    /// `needed_class_tables` narrowing produces -- so it must not abort.
+    #[test]
+    fn a_gated_builtin_without_a_table_is_not_an_error() {
+        let gated = zeo_abi::BUILTINS
+            .iter()
+            .find(|b| b.feature.is_some() && super::registered_table(b.id).is_none());
+        // In a unit-test binary every table is linked in, so this may find
+        // none; the assertion is that asking did not abort.
+        let _ = gated;
     }
 }

@@ -69,3 +69,25 @@ pub(crate) fn debug(flag: DebugFlag) -> bool {
     });
     bits & (1 << (flag as u32)) != 0
 }
+
+/// The one builtin class table `ZEO_DEBUG_DROP_TABLE` names, if any.
+///
+/// A VALUE rather than a bit, so it sits beside [`debug`] rather than in it.
+/// It exists for one job: `tools/zeo-dev size` links `puts 1` once per table
+/// with that table dropped and diffs the binary, which is exact per-table
+/// attribution and cannot be got any other way -- every size figure in the
+/// docs before this was prose.
+///
+/// Safe precisely because a missing table is now LOUD: `builtins::
+/// registered_table` aborts naming the class rather than answering
+/// `NoMethodError` for every row it has. Dropping one cannot produce a
+/// quietly wrong program.
+pub(crate) fn dropped_table() -> Option<&'static str> {
+    static NAME: OnceLock<Option<String>> = OnceLock::new();
+    NAME.get_or_init(|| {
+        std::env::var("ZEO_DEBUG_DROP_TABLE")
+            .ok()
+            .filter(|v| !v.is_empty())
+    })
+    .as_deref()
+}
