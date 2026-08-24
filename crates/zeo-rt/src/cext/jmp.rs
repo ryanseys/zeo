@@ -214,6 +214,15 @@ macro_rules! cext_fn {
     )*) => {$(
         $(#[$meta])*
         #[unsafe(no_mangle)]
+        // The immediately-called closure is the POINT, not a clumsy block:
+        // it gives the body a frame that ends before `raise` longjmps out.
+        // Inlining it would leave the body's locals live across the jump,
+        // which is the leak this macro exists to prevent.
+        #[allow(clippy::redundant_closure_call)]
+        // Every one of these is a C ABI entry point with one contract --
+        // C calls it with arguments matching the declared signature -- so
+        // 400 identical `# Safety` sections would say nothing this does not.
+        #[allow(clippy::missing_safety_doc)]
         pub unsafe extern "C" fn $name($($arg : $ty),*) -> $ret {
             let outcome: ::std::result::Result<$ret, $crate::Signal> = (|| $body)();
             match outcome {

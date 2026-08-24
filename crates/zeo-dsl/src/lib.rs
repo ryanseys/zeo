@@ -488,15 +488,12 @@ fn split_params(spec: &str) -> Vec<String> {
     let (mut out, mut cur, mut depth) = (Vec::new(), String::new(), 0i32);
     let mut quote: Option<char> = None;
     for c in spec.chars() {
-        match quote {
-            Some(q) => {
-                cur.push(c);
-                if c == q {
-                    quote = None;
-                }
-                continue;
+        if let Some(q) = quote {
+            cur.push(c);
+            if c == q {
+                quote = None;
             }
-            None => {}
+            continue;
         }
         match c {
             '\'' | '"' => {

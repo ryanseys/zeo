@@ -74,6 +74,13 @@ impl Scope {
     pub fn len(&self) -> usize {
         SCOPES.with_borrow(|s| s.last().map_or(0, Vec::len))
     }
+
+    /// Whether this scope holds no handles. Tests read it; it exists because
+    /// a `len` without one reads as an oversight.
+    #[cfg(test)]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 impl Drop for Scope {

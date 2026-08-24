@@ -471,11 +471,11 @@ pub fn loaded_feature_recorded(box_id: u32, entry: &str) -> bool {
     let RubyValue::Array(a) = global_get(box_id, "$LOADED_FEATURES") else {
         return false;
     };
-    let found = a.lock().iter().any(|v| match v {
+
+    a.lock().iter().any(|v| match v {
         RubyValue::Str(s) => s.lock().to_utf8_lossy() == entry,
         _ => false,
-    });
-    found
+    })
 }
 
 /// [`append_loaded_feature`] for a BOX -- each box has its own list, so a

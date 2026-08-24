@@ -203,7 +203,7 @@ crate::cext_fn! {
     fn rb_jump_tag(_state: c_int) -> Value {
         Err(ERRINFO.with_borrow_mut(Option::take).map_or_else(
             || crate::dispatch::raise_error("RuntimeError", "rb_jump_tag with no pending exception".into()),
-            |e| Signal::Raise(e),
+            Signal::Raise,
         ))
     }
 
@@ -460,11 +460,10 @@ fn value_is_a(v: &RubyValue, klass: &RubyValue) -> bool {
 pub fn scan_args_plan(fmt: &str) -> Option<(usize, usize, bool, bool)> {
     let mut chars = fmt.chars().peekable();
     let digit = |c: Option<&char>| c.and_then(|c| c.to_digit(10)).map(|d| d as usize);
-    let required = digit(chars.peek()).map(|d| {
+    let required = digit(chars.peek()).inspect(|_d| {
         chars.next();
-        d
     })?;
-    let optional = digit(chars.peek()).unwrap_or_else(|| 0);
+    let optional = digit(chars.peek()).unwrap_or(0);
     if optional > 0 || chars.peek() == Some(&'0') {
         chars.next();
     }

@@ -246,6 +246,31 @@ ruby_module! {
     }
 }
 
+/// The `GC.stat` keys this heap can answer TRUTHFULLY.
+///
+/// `:count` always: every explicit collection is one. The two allocation
+/// statistics come from the registry, so they exist exactly while it is
+/// recording -- `ZEO_GC=1`. Without it there is no record of an allocation to
+/// report, and inventing a number is worse than the `nil` CRuby never
+/// answers: a caller that reads `nil` knows it asked a heap that cannot say.
+fn stat_rows() -> Vec<(&'static str, RubyValue)> {
+    let mut rows = vec![(
+        "count",
+        RubyValue::Int(COUNT.load(Ordering::Relaxed) as i64),
+    )];
+    if crate::gc::recording() {
+        rows.push((
+            "total_allocated_objects",
+            RubyValue::Int(crate::gc::total_allocated() as i64),
+        ));
+        rows.push((
+            "heap_live_slots",
+            RubyValue::Int(crate::gc::live_count() as i64),
+        ));
+    }
+    rows
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -331,29 +356,4 @@ mod tests {
         assert!((tbl.lookup)("compact").is_some());
         assert!((tbl.lookup)("nope").is_none());
     }
-}
-
-/// The `GC.stat` keys this heap can answer TRUTHFULLY.
-///
-/// `:count` always: every explicit collection is one. The two allocation
-/// statistics come from the registry, so they exist exactly while it is
-/// recording -- `ZEO_GC=1`. Without it there is no record of an allocation to
-/// report, and inventing a number is worse than the `nil` CRuby never
-/// answers: a caller that reads `nil` knows it asked a heap that cannot say.
-fn stat_rows() -> Vec<(&'static str, RubyValue)> {
-    let mut rows = vec![(
-        "count",
-        RubyValue::Int(COUNT.load(Ordering::Relaxed) as i64),
-    )];
-    if crate::gc::recording() {
-        rows.push((
-            "total_allocated_objects",
-            RubyValue::Int(crate::gc::total_allocated() as i64),
-        ));
-        rows.push((
-            "heap_live_slots",
-            RubyValue::Int(crate::gc::live_count() as i64),
-        ));
-    }
-    rows
 }

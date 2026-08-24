@@ -205,8 +205,12 @@ pub fn send_value_cached(
 /// straight to [`send_value_in`], which is LESS work than the uncached
 /// route: the barrier was answered when the site filled, and its answer is
 /// a function of the same `(receiver class, name, caller)` the key is.
+/// What one site remembers: the receiver class it filled for, and either the
+/// resolved row and its owner, or `None` for a remembered MISS.
+type ClassMethodHit = (u32, Option<(ValueImpl, Option<&'static str>)>);
+
 pub struct ClassMethodSite {
-    hit: std::sync::OnceLock<(u32, Option<(ValueImpl, Option<&'static str>)>)>,
+    hit: std::sync::OnceLock<ClassMethodHit>,
 }
 
 impl Default for ClassMethodSite {

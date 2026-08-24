@@ -428,7 +428,7 @@ const _: () = {
     assert!(std::mem::align_of::<Handle>() >= std::mem::align_of::<Value>());
     // The 8-alignment is what makes `RB_SPECIAL_CONST_P` right unpatched:
     // an immediate is anything with a low bit set, and a handle has none.
-    assert!(std::mem::align_of::<Handle>() % 8 == 0);
+    assert!(std::mem::align_of::<Handle>().is_multiple_of(8));
 };
 
 #[cfg(test)]

@@ -108,7 +108,7 @@ pub fn start_recording() {
 /// is off, so the default stays off until the collector that reads the
 /// registry is worth its price.
 pub fn configure_from_env() {
-    if std::env::var_os("ZEO_GC").is_some_and(|v| v != "0" && v != "") {
+    if std::env::var_os("ZEO_GC").is_some_and(|v| v != "0" && !v.is_empty()) {
         start_recording();
     }
 }

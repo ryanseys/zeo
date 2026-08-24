@@ -317,6 +317,15 @@ ruby_class! {
     def "==="(recv, _other) { inherited_row!(kernel, "===", recv, __args, None) }
 }
 
+fn sym_cased(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    mode: crate::encoding::CaseMode,
+) -> Result<RubyValue, crate::Signal> {
+    let text = crate::builtins::string::cased_text(&recv_sym(recv).name(), args, mode)?;
+    Ok(RubyValue::Symbol(Symbol::intern(&text)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -380,13 +389,4 @@ mod tests {
         let r = p.call(&[s]).unwrap();
         assert!(matches!(r, RubyValue::Int(3)));
     }
-}
-
-fn sym_cased(
-    recv: &RubyValue,
-    args: &[RubyValue],
-    mode: crate::encoding::CaseMode,
-) -> Result<RubyValue, crate::Signal> {
-    let text = crate::builtins::string::cased_text(&recv_sym(recv).name(), args, mode)?;
-    Ok(RubyValue::Symbol(Symbol::intern(&text)))
 }

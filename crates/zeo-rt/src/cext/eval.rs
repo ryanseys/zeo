@@ -353,7 +353,7 @@ crate::cext_fn! {
             "method_defined?"
         };
         let name = RubyValue::Symbol(symbol_of(id));
-        let out = send(&k, meth, &[name.clone()])
+        let out = send(&k, meth, std::slice::from_ref(&name))
             .or_else(|_| send(&k, "private_method_defined?", &[name]))?;
         Ok(c_int::from(super::convert::truthy(to_value(&out)?)))
     }

@@ -78,17 +78,24 @@ fn char_width(source: &str, off: usize) -> usize {
     }
 }
 
+/// What every rendered line shares: the source, its line offsets, the gutter
+/// width, and the line number the first offset stands for.
+struct Listing<'a> {
+    source: &'a str,
+    offsets: &'a [usize],
+    width: usize,
+    start_line: i32,
+}
+
 /// One source line, with prism's start/end elision applied.
 fn format_line(
     out: &mut String,
-    source: &str,
-    offsets: &[usize],
-    width: usize,
-    start_line: i32,
+    l: &Listing<'_>,
     line: i32,
     column_start: usize,
     column_end: usize,
 ) {
+    let (source, offsets, width, start_line) = (l.source, l.offsets, l.width, l.start_line);
     let index = (line - start_line) as usize;
     let Some(&line_start) = offsets.get(index) else {
         return;
@@ -134,6 +141,12 @@ fn rich_report(
     inline_messages: bool,
 ) {
     let (width, divider) = gutter(errors[0].line, errors[errors.len() - 1].line);
+    let listing = Listing {
+        source,
+        offsets,
+        width,
+        start_line,
+    };
     let blank = format!("  {} | ", " ".repeat(width));
     let mut last_line = start_line - 1;
     let mut last_column_start = 0usize;
@@ -145,10 +158,10 @@ fn rich_report(
                     out.push_str(&divider);
                 }
                 out.push_str("  ");
-                format_line(out, source, offsets, width, start_line, e.line - 2, 0, 0);
+                format_line(out, &listing, e.line - 2, 0, 0);
             }
             out.push_str("  ");
-            format_line(out, source, offsets, width, start_line, e.line - 1, 0, 0);
+            format_line(out, &listing, e.line - 1, 0, 0);
         }
         if idx == 0 || e.line != last_line {
             out.push_str("> ");
@@ -160,16 +173,7 @@ fn rich_report(
                 }
                 column_end = column_end.max(next.column_end);
             }
-            format_line(
-                out,
-                source,
-                offsets,
-                width,
-                start_line,
-                e.line,
-                e.column_start,
-                column_end,
-            );
+            format_line(out, &listing, e.line, e.column_start, column_end);
         }
         let line_start = offsets[(e.line - start_line) as usize];
         if line_start == source.len() {
@@ -213,7 +217,7 @@ fn rich_report(
             }
             last_line += 1;
             out.push_str("  ");
-            format_line(out, source, offsets, width, start_line, last_line, 0, 0);
+            format_line(out, &listing, last_line, 0, 0);
         }
     }
 }

@@ -172,7 +172,8 @@ crate::cext_fn! {
     /// `rb_obj_call_init_kw`. zeo peels a trailing keyword Hash from the
     /// argument list itself, so the `kw_splat` flag adds nothing here.
     fn rb_obj_call_init_kw(obj: Value, argc: c_int, argv: *const Value, _kw: c_int) -> () {
-        unsafe { Ok(rb_obj_call_init(obj, argc, argv)) }
+        unsafe { rb_obj_call_init(obj, argc, argv);
+        Ok(()) }
     }
 
     /// `rb_obj_as_string(v)`: `to_s`, and a non-String answer is stringified

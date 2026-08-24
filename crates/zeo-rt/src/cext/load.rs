@@ -133,10 +133,9 @@ mod tests {
     #[test]
     fn a_path_loads_at_most_once() {
         let path = "/zeo/test/only-the-table-is-on-trial.bundle";
-        LOADED.lock().ok().and_then(|mut g| {
+        if let Ok(mut g) = LOADED.lock() {
             g.get_or_insert_with(HashSet::new).insert(path.to_string());
-            Some(())
-        });
+        }
         // The second call short-circuits before `dlopen`, so a path that
         // does not exist still answers rather than raising.
         assert_eq!(load(path, "whatever").ok(), Some(false));

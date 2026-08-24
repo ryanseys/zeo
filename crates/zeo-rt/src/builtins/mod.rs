@@ -1240,9 +1240,10 @@ pub(crate) mod gate {
     /// answer about a moment, and a `require` written below a reflection call
     /// changes it. The slices it holds are `Vec::leak`ed, so a dropped entry
     /// stays valid for any `&'static` a caller is still holding.
-    static NAME_CACHE: std::sync::RwLock<
-        Option<crate::FMap<(u32, bool), &'static [&'static str]>>,
-    > = std::sync::RwLock::new(None);
+    /// Keyed by `(class id, is instance side)`.
+    type NameMemo = crate::FMap<(u32, bool), &'static [&'static str]>;
+
+    static NAME_CACHE: std::sync::RwLock<Option<NameMemo>> = std::sync::RwLock::new(None);
 
     pub(crate) fn names(id: ClassId, side: super::Side) -> &'static [&'static str] {
         let key = (id.0, matches!(side, super::Side::Instance));

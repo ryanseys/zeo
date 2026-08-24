@@ -332,7 +332,7 @@ crate::cext_fn! {
     fn rb_set_delete(set: Value, item: Value) -> bool {
         let s = unsafe { value_of(set) };
         let v = unsafe { value_of(item) };
-        let had = super::convert::truthy(to_value(&send(&s, "include?", &[v.clone()])?)?);
+        let had = super::convert::truthy(to_value(&send(&s, "include?", std::slice::from_ref(&v))?)?);
         send(&s, "delete", &[v])?;
         Ok(had)
     }
@@ -375,11 +375,11 @@ crate::cext_fn! {
     // ---- Time ------------------------------------------------------------
 
     fn rb_time_new(sec: i64, usec: c_long) -> Value {
-        time_at(sec, i64::from(usec) * 1_000)
+        time_at(sec, usec * 1_000)
     }
 
     fn rb_time_nano_new(sec: i64, nsec: c_long) -> Value {
-        time_at(sec, i64::from(nsec))
+        time_at(sec, nsec)
     }
 
     fn rb_time_num_new(seconds: Value, offset: Value) -> Value {

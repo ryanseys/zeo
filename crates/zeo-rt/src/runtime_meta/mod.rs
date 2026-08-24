@@ -1113,10 +1113,8 @@ pub fn copy_value_singletons(from: &RubyValue, to: &RubyValue) {
         maps().extended.write().unwrap().insert(tk, mods);
         copied = true;
     }
-    if copied {
-        if let Some(weak) = crate::value::weak_owner(to) {
-            maps().pinned.write().unwrap().insert(tk, weak);
-        }
+    if copied && let Some(weak) = crate::value::weak_owner(to) {
+        maps().pinned.write().unwrap().insert(tk, weak);
     }
 }
 

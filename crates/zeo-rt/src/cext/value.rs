@@ -212,15 +212,12 @@ mod tests {
 
     #[test]
     fn a_flonum_round_trips_and_the_rest_ask_for_a_handle() {
-        for d in [0.0, 1.0, -1.0, 0.5, -0.5, 3.14, 1e10, -1e-10, 1.5e-100] {
-            match flonum(d) {
-                Some(v) => {
-                    assert!(is_flonum(v) && is_special_const(v), "{d}");
-                    assert_eq!(flonum_value(v), d, "{d}");
-                }
-                // Out of the encodable range is a fine answer; a WRONG value
-                // is not, and that is what the assert above rules out.
-                None => {}
+        for d in [0.0, 1.0, -1.0, 0.5, -0.5, 3.25, 1e10, -1e-10, 1.5e-100] {
+            // Out of the encodable range is a fine answer; a WRONG value is
+            // not, and that is what the asserts rule out.
+            if let Some(v) = flonum(d) {
+                assert!(is_flonum(v) && is_special_const(v), "{d}");
+                assert_eq!(flonum_value(v), d, "{d}");
             }
         }
         // The extremes of the exponent are outside the three nibbles.

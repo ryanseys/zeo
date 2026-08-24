@@ -309,6 +309,8 @@ macro_rules! st_fn {
     )*) => {$(
         $(#[$meta])*
         #[unsafe(no_mangle)]
+        // A C ABI entry point with MRI's own `st_*` contract.
+        #[allow(clippy::missing_safety_doc)]
         pub unsafe extern "C" fn $name($($arg : $ty),*) -> $ret $body
     )*};
 }
@@ -1052,7 +1054,11 @@ mod tests {
         static SEEN: AtomicUsize = AtomicUsize::new(0);
         unsafe extern "C" fn drop_evens(k: StData, _v: StData, _a: StData) -> c_int {
             SEEN.fetch_add(1, Ordering::Relaxed);
-            if k % 2 == 0 { ST_DELETE } else { ST_CONTINUE }
+            if k.is_multiple_of(2) {
+                ST_DELETE
+            } else {
+                ST_CONTINUE
+            }
         }
         unsafe extern "C" fn stop_at_two(_k: StData, _v: StData, _a: StData) -> c_int {
             if SEEN.fetch_add(1, Ordering::Relaxed) >= 1 {

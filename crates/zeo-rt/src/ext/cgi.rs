@@ -313,7 +313,7 @@ fn escape_element(args: &[RubyValue]) -> RubyValue {
     let text = in_bytes(&args[0]);
     let names = element_names(&args[1..]);
     let spans = element_spans(&text, &names, TagText::Plain);
-    out_like(&args[0], rewrite_spans(&text, &spans, |m| html_escape(m)))
+    out_like(&args[0], rewrite_spans(&text, &spans, html_escape))
 }
 
 fn unescape_element(args: &[RubyValue]) -> RubyValue {

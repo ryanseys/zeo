@@ -635,7 +635,8 @@ crate::cext_fn! {
     /// `rb_str_modify_expand(str, extra)`: the same, plus room for `extra`
     /// more bytes. zeo's `Vec` grows on demand, so the hint is accepted.
     fn rb_str_modify_expand(v: Value, _extra: c_long) -> () {
-        unsafe { Ok(rb_str_modify(v)) }
+        unsafe { rb_str_modify(v);
+        Ok(()) }
     }
 
     /// `rb_str_locktmp` / `rb_str_unlocktmp`: MRI's flag forbidding a

@@ -131,7 +131,7 @@ fn parse_int_core(text: &str, base: c_int, badcheck: bool) -> Result<RubyValue, 
 fn coerce_and_apply(x: Value, y: Value, op: &str, relop: bool) -> Result<Value, Signal> {
     let xv = unsafe { value_of(x) };
     let yv = unsafe { value_of(y) };
-    let pair = match send(&yv, "coerce", &[xv.clone()]) {
+    let pair = match send(&yv, "coerce", std::slice::from_ref(&xv)) {
         Ok(RubyValue::Array(a)) if a.lock().len() == 2 => {
             let g = a.lock();
             (g[0].clone(), g[1].clone())
@@ -521,7 +521,7 @@ crate::cext_fn! {
     }
 
     fn rb_random_bytes(rng: Value, n: c_long) -> Value {
-        let count = RubyValue::Int(n.max(0) as i64);
+        let count = RubyValue::Int(n.max(0));
         to_value(&random_call_on(rng, "bytes", &[count])?)
     }
 

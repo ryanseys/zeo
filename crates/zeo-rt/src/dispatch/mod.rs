@@ -1571,7 +1571,7 @@ pub fn super_defined(recv: &RubyValue, defining_class: ClassId, name: Symbol) ->
     // a module, which has no defining class of its own -- answers NO. Walking
     // from the top instead would find the body's own row and say yes.
     let ancestors = ancestors_of_value(recv.class_id());
-    super_resume(&ancestors, defining_class)
+    super_resume(ancestors, defining_class)
         .and_then(|from| crate::dispatch::reflect::scan_owner_from(recv.class_id(), from, name))
         .is_some()
 }
@@ -1635,7 +1635,7 @@ pub fn send_super_from(
     // A module the chain holds TWICE resumes past the copy that is actually
     // running -- see `super_resume`.
     let ancestors = ancestors_of_value(recv.class_id());
-    let start = super_resume(&ancestors, defining_class).unwrap_or(0);
+    let start = super_resume(ancestors, defining_class).unwrap_or(0);
     send_walking(recv, start, name, args, block)
 }
 

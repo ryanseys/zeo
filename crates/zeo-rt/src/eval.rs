@@ -208,9 +208,11 @@ pub fn reserve_flip_flops(n: u32) -> u32 {
 /// latch's), fills it when it runs, and every call site the `using` covers
 /// reads it. A slot outlives the call, which is what lets a `def` written
 /// after the `using` in the same snippet still see the refinement.
-static USING_SLOTS: std::sync::LazyLock<
-    std::sync::Mutex<Vec<Vec<(zeo_abi::ClassId, zeo_abi::ClassId, bool)>>>,
-> = std::sync::LazyLock::new(|| std::sync::Mutex::new(Vec::new()));
+/// One slot's activations: `(refined class, refinement module, is class side)`.
+type Activations = Vec<(zeo_abi::ClassId, zeo_abi::ClassId, bool)>;
+
+static USING_SLOTS: std::sync::LazyLock<std::sync::Mutex<Vec<Activations>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(Vec::new()));
 
 /// Reserve `n` consecutive activation slots for one compiled snippet.
 #[must_use]
