@@ -44,26 +44,34 @@ fn truthy_arg(arg: Option<&RubyValue>) -> bool {
 /// The methods installed on this value BY IDENTITY -- what both
 /// `singleton_methods(false)` and `methods(false)` report for a receiver that
 /// is not a class.
+/// The per-object singleton names whose visibility satisfies `keep`. An
+/// unmarked row is public, which is what `def obj.x` writes.
+fn singleton_names_where(
+    recv: &RubyValue,
+    keep: impl Fn(crate::dispatch::MethodVisibility) -> bool,
+) -> Vec<Symbol> {
+    crate::runtime_meta::singleton_method_names(recv)
+        .into_iter()
+        .filter(|&n| {
+            keep(
+                crate::runtime_meta::singleton_visibility(recv, n)
+                    .unwrap_or(crate::dispatch::MethodVisibility::Public),
+            )
+        })
+        .collect()
+}
+
 fn own_singleton_names(recv: &RubyValue) -> Vec<Symbol> {
     match recv {
         RubyValue::Class(cid) => crate::dispatch::public_class_method_names(*cid, false),
         // Both report the PUBLIC surface. `def obj.x` is public as written, so
-        // the filter only ever removes a name the singleton class was
-        // explicitly told to hide -- and that mark lives on the singleton
-        // class, which exists only if something named it.
-        _ => {
-            let names = crate::runtime_meta::singleton_method_names(recv);
-            let Some(sclass) = crate::runtime_meta::minted_singleton_class(recv) else {
-                return names;
-            };
-            names
-                .into_iter()
-                .filter(|&n| {
-                    crate::dispatch::value_singleton_visibility(sclass, n)
-                        != crate::dispatch::MethodVisibility::Private
-                })
-                .collect()
-        }
+        // the filter only ever removes a name the object was explicitly told
+        // to hide -- a `private` cursor over a `class << obj` body, a
+        // `private :x` sent to its singleton class, or an `extend` that copied
+        // a `module_function` name in.
+        _ => singleton_names_where(recv, |vis| {
+            vis != crate::dispatch::MethodVisibility::Private
+        }),
     }
 }
 
@@ -233,7 +241,14 @@ ruby_module! {
         // Each goes through `Module#extend_object` when the module overrides
         // it, the same route `include` takes through `append_features` -- see
         // `runtime_meta::runtime_extend`.
-        for m in std::iter::once(first).chain(rest) {
+        //
+        // LAST argument first, which is CRuby's `rb_obj_extend` loop
+        // (`object.c`, `argc-1` down to `0`). Each `extend` layers ABOVE the
+        // one before it, so walking backwards is what leaves the FIRST module
+        // nearest the object -- `extend(A, B).singleton_class.ancestors` is
+        // `[singleton, A, B, ...]`.
+        let mods: Vec<&RubyValue> = std::iter::once(first).chain(rest).collect();
+        for m in mods.into_iter().rev() {
             crate::runtime_meta::runtime_extend(recv, m)?;
         }
         Ok(recv.clone())
@@ -739,7 +754,10 @@ ruby_module! {
         if let RubyValue::Class(cid) = recv {
             names.extend(crate::dispatch::public_class_method_names(*cid, true));
         }
-        // `Object#methods` returns public AND protected names.
+        // `Object#methods` returns public AND protected names -- the object's
+        // OWN rows included, which no class-id walk can reach.
+        names.extend(singleton_names_where(
+            recv, |v| v != crate::dispatch::MethodVisibility::Private));
         names.extend(crate::dispatch::instance_method_names(
             recv.class_id(),
             crate::dispatch::VisFilter::NotPrivate,
@@ -747,9 +765,13 @@ ruby_module! {
         ));
         Ok(syms_to_array(dedup_syms(names)))
     }
+    // A per-object singleton row sits AHEAD of the class chain, so all three
+    // report it. Its visibility is the object's own mark, not anything the
+    // class walk can answer.
     def "public_methods"(recv, arg?) {
         let inherit = truthy_arg(arg);
-        let mut names = Vec::new();
+        let mut names = singleton_names_where(
+            recv, |v| v == crate::dispatch::MethodVisibility::Public);
         if let RubyValue::Class(cid) = recv {
             names.extend(crate::dispatch::public_class_method_names(*cid, inherit));
         }
@@ -762,21 +784,25 @@ ruby_module! {
     }
     def "private_methods"(recv, arg?) {
         let inherit = truthy_arg(arg);
-        let names = crate::dispatch::instance_method_names(
+        let mut names = singleton_names_where(
+            recv, |v| v == crate::dispatch::MethodVisibility::Private);
+        names.extend(crate::dispatch::instance_method_names(
             recv.class_id(),
             crate::dispatch::VisFilter::Private,
             inherit,
-        );
-        Ok(syms_to_array(names))
+        ));
+        Ok(syms_to_array(dedup_syms(names)))
     }
     def "protected_methods"(recv, arg?) {
         let inherit = truthy_arg(arg);
-        let names = crate::dispatch::instance_method_names(
+        let mut names = singleton_names_where(
+            recv, |v| v == crate::dispatch::MethodVisibility::Protected);
+        names.extend(crate::dispatch::instance_method_names(
             recv.class_id(),
             crate::dispatch::VisFilter::Protected,
             inherit,
-        );
-        Ok(syms_to_array(names))
+        ));
+        Ok(syms_to_array(dedup_syms(names)))
     }
     // A class/module receiver's own singleton methods are its `def self.`
     // methods; other receivers have no per-object singletons in this runtime's
@@ -959,8 +985,28 @@ ruby_module! {
     // `lambda { }` answers the block as a LAMBDA -- `#lambda?` true, and a
     // `return` inside it returns from the lambda rather than its defining
     // method.
+    //
+    // It takes a block WRITTEN AT THE SITE THAT INVOKES IT and refuses one
+    // that arrives any other way. The rule is a property of the block
+    // HANDLER, not of the block: `RProc::is_literal_block` carries it.
     module_function def "lambda"(_recv, &block) {
-        let p = crate::builtins::need_block!(block);
+        let Some(RubyValue::Proc(p)) = block else {
+            return Err(crate::builtins::arg_error!(
+                "tried to create Proc object without a block"
+            ));
+        };
+        // An iseq handler becomes a lambda. A proc handler that IS ALREADY a
+        // lambda comes back UNCHANGED -- same object, which
+        // `lambda(&lam).equal?(lam)` reads. Anything else is refused, and
+        // `Symbol#to_proc`/`Method#to_proc` pass because both are lambdas.
+        if p.is_lambda() {
+            return Ok(RubyValue::Proc(p));
+        }
+        if !p.is_literal_block() {
+            return Err(crate::builtins::arg_error!(
+                "the lambda method requires a literal block"
+            ));
+        }
         Ok(RubyValue::Proc(p.as_lambda()))
     }
     // The frame readers. A builtin row pushes no frame of its own, so the

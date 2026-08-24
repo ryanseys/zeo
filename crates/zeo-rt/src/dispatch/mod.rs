@@ -2451,6 +2451,15 @@ pub fn reflect_dispatch_in(
         });
     };
     let target = method_name_symbol(target)?;
+    // `public_send` re-wraps the block as a PROC handler where `send`
+    // forwards the iseq handler unchanged -- a CRuby wart, and the only
+    // thing that makes the two disagree about the same block
+    // (`Kernel.send(:lambda) { }` is accepted, `public_send` is not).
+    if entry == Reflect::PublicSend
+        && let Some(RubyValue::Proc(p)) = &block
+    {
+        p.clear_literal_block();
+    }
     match entry {
         Reflect::Send | Reflect::PublicSend => refined_send_dynamic(
             box_id,
@@ -3497,23 +3506,32 @@ pub fn send_value_public_in(
 ) -> Result<RubyValue, Signal> {
     // A CLASS receiver's class methods have their own visibility table -- the
     // instance walk below reads Class/Module's, which says nothing about them.
-    if let RubyValue::Class(cid) = recv
-        && class_method_is_private(*cid, name)
-    {
-        return Err(raise_method_missing(
-            recv,
-            &name.to_string(),
-            args,
-            MissingReason::Private,
-        ));
+    if let RubyValue::Class(cid) = recv {
+        if class_method_is_private(*cid, name) {
+            return missing_or_raise(recv, name, args, block, MissingReason::Private);
+        }
+        // A class-method row ANSWERS this call, so the instance walk below
+        // must not veto it: that walk reads Class/Module's own ancestry,
+        // Kernel included. `module_function` is exactly this shape -- the
+        // name is a PRIVATE instance method of the module and a PUBLIC
+        // method on its singleton, and `Kernel.public_send(:puts, ..)`
+        // reaches the second.
+        if class_method_owner(*cid, name).is_some() {
+            return send_value_in(box_id, recv, name, args, block);
+        }
     }
-    let reason = match instance_method_visibility(recv.class_id(), name) {
+    // A row installed on THIS OBJECT answers before its class does, so its own
+    // mark decides. `recv.class_id()` names the ordinary class and knows
+    // nothing about it -- `obj.extend(SomeModuleFunction)` is the case that
+    // shows it.
+    let own = object_singleton_visibility(recv, name);
+    let reason = match own.or_else(|| instance_method_visibility(recv.class_id(), name)) {
         Some(MethodVisibility::Private) => Some(MissingReason::Private),
         Some(MethodVisibility::Protected) => Some(MissingReason::Protected),
         _ => None,
     };
     match reason {
-        Some(reason) => Err(raise_method_missing(recv, &name.to_string(), args, reason)),
+        Some(reason) => missing_or_raise(recv, name, args, block, reason),
         None => send_value_in(box_id, recv, name, args, block),
     }
 }
@@ -3589,6 +3607,72 @@ fn call_refined(
     ))
 }
 
+/// Whether a USER-WRITTEN `method_missing` would answer for `recv`.
+///
+/// A BUILTIN row is not one. `BasicObject#method_missing` exists so an
+/// override's `super` has something to reach, and `Exception#method_missing`
+/// is a row of its own -- both raise for a name NOTHING defines, so handing a
+/// VISIBILITY refusal to either answers "undefined method" where ruby says
+/// "private method". Only a row the program wrote may intercept.
+fn user_method_missing(recv: &RubyValue, mm: Symbol) -> bool {
+    if crate::runtime_meta::is_live() && crate::runtime_meta::object_has_singleton_method(recv, mm)
+    {
+        return true;
+    }
+    let Some(owner) = method_owner(recv.class_id(), mm) else {
+        return false;
+    };
+    // A CORE owner's row is a native one unless the program reopened the class
+    // with its own. `class_table` alone cannot answer: a bootstrap builtin
+    // (every Exception) keeps its native rows on the OBJECT channel, so
+    // `Exception#method_missing` is invisible there -- and the exception ids
+    // are not in `BUILTINS` either. `core_class` covers both tables.
+    if !zeo_abi::is_core_class(owner) {
+        return true;
+    }
+    crate::runtime_meta::is_live() && crate::runtime_meta::overlay_has_instance_method(owner, mm)
+}
+
+/// A refusal that must still go through the `method_missing` protocol.
+///
+/// CRuby refuses an explicit-receiver call to a private or protected method by
+/// CALLING `method_missing` with that reason; its default body is what turns
+/// the reason into "private method 'x' called for ...". An override sees the
+/// call first, which is how a delegator forwards a name its target keeps
+/// private. Building the error here instead would make the hook unreachable.
+///
+/// Every receiver shape, so the class-method side behaves like the instance
+/// side. A receiver with no hook -- and the `method_missing` name itself, which
+/// must not recurse -- falls through to the raise.
+pub(crate) fn missing_or_raise(
+    recv: &RubyValue,
+    name: Symbol,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+    reason: MissingReason,
+) -> Result<RubyValue, Signal> {
+    let mm = crate::symbol::wk::method_missing();
+    if name != mm {
+        match recv {
+            // Only a USER hook. The root `BasicObject#method_missing` exists so
+            // an override's `super` has something to reach, and its body raises
+            // for a name NOTHING defines -- handing a visibility refusal to it
+            // would answer "undefined method" where ruby says "private method".
+            RubyValue::Object(o) if user_method_missing(recv, mm) => {
+                return method_missing_or_raise(o, recv.class_id(), name, args, block, reason);
+            }
+            RubyValue::Class(cid) if class_defines_user_hook(*cid, mm) => {
+                let mut full = Vec::with_capacity(args.len() + 1);
+                full.push(RubyValue::Symbol(name));
+                full.extend_from_slice(args);
+                return send_class_chain(*cid, mm, &full, block);
+            }
+            _ => {}
+        }
+    }
+    Err(raise_method_missing(recv, &name.to_string(), args, reason))
+}
+
 /// A call site the active refinements may answer. The refined body wins
 /// outright when the receiver is of the refined class; otherwise this is an
 /// ordinary send, which is what keeps an unrefined receiver -- and a name
@@ -3607,12 +3691,7 @@ pub fn refined_send_in(
         // inside a `refine` block (or a private row `import_methods` copied in)
         // refuses an explicit receiver.
         if explicit && instance_method_visibility(holder, name) == Some(MethodVisibility::Private) {
-            return Err(raise_method_missing(
-                recv,
-                &name.to_string(),
-                args,
-                MissingReason::Private,
-            ));
+            return missing_or_raise(recv, name, args, block, MissingReason::Private);
         }
         if let Some(r) = call_refined(holder, recv, name, args, block.clone()) {
             return r;

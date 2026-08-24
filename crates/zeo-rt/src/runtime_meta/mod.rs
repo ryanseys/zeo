@@ -242,6 +242,23 @@ struct OverlayMaps {
     /// `RObj` to bind: the body stays an `RProc` and runs with the value itself
     /// as `self`. See `value_identity`.
     value_singletons: RwLock<FMap<usize, FMap<Symbol, RProc>>>,
+    /// The VISIBILITY of a per-object singleton method, keyed by the same
+    /// identity the two tables above use.
+    ///
+    /// A per-object singleton row is a name and a body and nothing else, so
+    /// there was nowhere to record whether it is public, protected or private.
+    /// Three things write one: a `private`/`protected` cursor running over a
+    /// `class << obj` body, a `private :name` sent to the object's singleton
+    /// class, and `obj.extend(M)`, which copies M's own marks along with its
+    /// bodies -- a `module_function` name is PRIVATE on the instance side, and
+    /// CRuby refuses `obj.extend(MF).public_send(:helper)` for exactly that
+    /// reason.
+    ///
+    /// Keyed by identity rather than by the singleton class id, because a
+    /// singleton class is minted only when something NAMES it: `def obj.x`
+    /// alone mints nothing, and recording a mark must not be what forces one.
+    /// An absent entry is public, which is what `def obj.x` writes.
+    singleton_vis: RwLock<FMap<usize, FMap<Symbol, crate::dispatch::MethodVisibility>>>,
     /// Names `obj.singleton_class.undef_method(:name)` retired for ONE object,
     /// keyed by the same identity the two tables above use. A tombstone, not an
     /// absence: the class still defines the name, and the point of the undef is
@@ -341,6 +358,7 @@ fn maps() -> &'static OverlayMaps {
         classes: RwLock::new(FMap::default()),
         singletons: RwLock::new(FMap::default()),
         value_singletons: RwLock::new(FMap::default()),
+        singleton_vis: RwLock::new(FMap::default()),
         singleton_undefs: RwLock::new(FMap::default()),
         extended: RwLock::new(FMap::default()),
         extended_names: RwLock::new(FMap::default()),
@@ -639,6 +657,11 @@ fn sweep_pinned() {
         .retain(|k, _| !dead.contains(k));
     maps()
         .value_singletons
+        .write()
+        .unwrap()
+        .retain(|k, _| !dead.contains(k));
+    maps()
+        .singleton_vis
         .write()
         .unwrap()
         .retain(|k, _| !dead.contains(k));
@@ -1057,6 +1080,55 @@ pub fn singleton_method_names(recv: &RubyValue) -> Vec<Symbol> {
     names
 }
 
+/// The visibility of the singleton method `name` installed directly on
+/// `recv` -- see [`OverlayMaps::singleton_vis`]. `None` means no mark, which
+/// reads as public: `def obj.x` and `define_singleton_method` both write one.
+pub fn singleton_visibility(
+    recv: &RubyValue,
+    name: Symbol,
+) -> Option<crate::dispatch::MethodVisibility> {
+    let key = value_identity(recv)?;
+    maps()
+        .singleton_vis
+        .read()
+        .unwrap()
+        .get(&key)
+        .and_then(|t| t.get(&name).copied())
+}
+
+/// Record the visibility of a per-object singleton method. A `Public` mark is
+/// stored rather than dropped: it has to be able to CLEAR an earlier private
+/// one, which `obj.singleton_class.public :x` does.
+pub(crate) fn set_singleton_visibility(
+    recv: &RubyValue,
+    name: Symbol,
+    vis: crate::dispatch::MethodVisibility,
+) {
+    let Some(key) = pin_identity(recv) else {
+        return;
+    };
+    maps()
+        .singleton_vis
+        .write()
+        .unwrap()
+        .entry(key)
+        .or_default()
+        .insert(name, vis);
+    mark_singletons();
+    mark_live();
+}
+
+/// Drop any visibility mark for `name` on `recv` -- a re-`def` resets the name
+/// to the body's running default, exactly as it does on a class.
+pub(crate) fn clear_singleton_visibility(recv: &RubyValue, name: Symbol) {
+    let Some(key) = value_identity(recv) else {
+        return;
+    };
+    if let Some(t) = maps().singleton_vis.write().unwrap().get_mut(&key) {
+        t.remove(&name);
+    }
+}
+
 /// The singleton method `name` installed directly on `recv`, or `None`. Always
 /// behind `is_live()`; the identity lookup is what a class-id walk cannot do.
 pub fn value_singleton_method(recv: &RubyValue, name: Symbol) -> Option<RProc> {
@@ -1093,6 +1165,13 @@ pub fn copy_value_singletons(from: &RubyValue, to: &RubyValue) {
         && !t.is_empty()
     {
         maps().value_singletons.write().unwrap().insert(tk, t);
+        copied = true;
+    }
+    let vis = maps().singleton_vis.read().unwrap().get(&fk).cloned();
+    if let Some(t) = vis
+        && !t.is_empty()
+    {
+        maps().singleton_vis.write().unwrap().insert(tk, t);
         copied = true;
     }
     // The per-name provenance travels with the copied tables, so the

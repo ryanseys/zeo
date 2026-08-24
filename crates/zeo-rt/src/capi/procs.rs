@@ -296,6 +296,11 @@ pub unsafe extern "C" fn zeo_rt_proc_new(
 pub unsafe extern "C" fn zeo_rt_block_arg_to_proc(v: *const RubyValue, out: *mut RubyValue) -> i32 {
     match crate::rproc::block_arg_to_proc(unsafe { &*v }.clone()) {
         Ok(Some(p)) => {
+            // A `&expr` is CRuby's PROC handler, not an iseq handler: the
+            // block was named before it got here. `Kernel#lambda` refuses one.
+            if let RubyValue::Proc(pr) = &p {
+                pr.clear_literal_block();
+            }
             super::leakcheck::created(&p);
             unsafe { out.write(p) };
             zeo_abi::abi::STATUS_OK

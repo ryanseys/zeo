@@ -48,7 +48,12 @@ pub fn responds_to_value(recv: &RubyValue, name: Symbol, include_all: bool) -> b
     if crate::runtime_meta::is_live()
         && crate::runtime_meta::object_has_singleton_method(recv, name)
     {
-        return true;
+        // The default `respond_to?` reports the PUBLIC surface, on a
+        // per-object row exactly as on a class one. `include_all` lifts it.
+        return include_all
+            || crate::runtime_meta::singleton_visibility(recv, name)
+                .unwrap_or(MethodVisibility::Public)
+                == MethodVisibility::Public;
     }
     // A class/module receiver also responds to its class methods -- a user
     // `def self.x`, a `module_function`, or a `class << self` accessor (stored
@@ -495,7 +500,27 @@ fn is_notimplement_row(cid: ClassId, name: Symbol) -> bool {
 /// singleton CLASS was told otherwise (`obj.singleton_class.send(:private,
 /// :x)`), which marks that class id's own overlay.
 pub(crate) fn value_singleton_visibility(sclass: ClassId, name: Symbol) -> MethodVisibility {
-    crate::runtime_meta::overlay_method_visibility(sclass, name).unwrap_or(MethodVisibility::Public)
+    // The mark rides on the OBJECT, not on its singleton class id: a
+    // singleton class is minted only when something names it, and `def obj.x`
+    // names nothing. `overlay_method_visibility` stays the fallback for a
+    // mark written before the owner was recorded.
+    crate::runtime_meta::singleton_owner_value(sclass)
+        .and_then(|owner| crate::runtime_meta::singleton_visibility(&owner, name))
+        .or_else(|| crate::runtime_meta::overlay_method_visibility(sclass, name))
+        .unwrap_or(MethodVisibility::Public)
+}
+
+/// The visibility of a per-object singleton method reached through the OBJECT
+/// rather than through its singleton class -- what the explicit-receiver
+/// barrier asks, since `recv.class_id()` names the object's ordinary class and
+/// says nothing about its own rows.
+pub fn object_singleton_visibility(recv: &RubyValue, name: Symbol) -> Option<MethodVisibility> {
+    if !crate::runtime_meta::is_live()
+        || !crate::runtime_meta::object_has_singleton_method(recv, name)
+    {
+        return None;
+    }
+    Some(crate::runtime_meta::singleton_visibility(recv, name).unwrap_or(MethodVisibility::Public))
 }
 
 /// Does `recv_class`, or any ancestor, provide `name`?
@@ -864,6 +889,13 @@ pub fn instance_method_names(class: ClassId, filter: VisFilter, inherit: bool) -
             Some(owner) => {
                 return crate::runtime_meta::singleton_method_names(&owner)
                     .into_iter()
+                    // CRuby files an `extend`ed module in the singleton's SUPER
+                    // chain, so its rows are not the singleton's own. zeo copies
+                    // the bodies in and records where each came from; `inherit`
+                    // is what decides whether the copies count.
+                    .filter(|&n| {
+                        inherit || crate::runtime_meta::extended_name_source(&owner, n).is_none()
+                    })
                     .filter(|&n| filter.matches(value_singleton_visibility(class, n)))
                     .collect();
             }

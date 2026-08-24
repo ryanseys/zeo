@@ -3121,6 +3121,16 @@ const EXCEPTION_INCLUDES: &[(ClassId, &[ClassId])] = &[
     (wait_id(5), &[wait_id(1)]),
 ];
 
+/// Whether `id` names a class this ABI defines -- `Object`, a [`BUILTINS`]
+/// row, or an [`EXCEPTION_CLASSES`] row. What separates a row the runtime
+/// provides from one a program wrote.
+#[must_use]
+pub fn is_core_class(id: ClassId) -> bool {
+    id == OBJECT_CLASS
+        || BUILTINS.iter().any(|b| b.id == id)
+        || EXCEPTION_CLASSES.iter().any(|e| e.id == id)
+}
+
 /// A core class's `(superclass, includes)` edges, covering `Object`, every
 /// [`BUILTINS`] row, and every [`EXCEPTION_CLASSES`] row. The single source both
 /// the compiler's seeding (`Compiler::new`) and the runtime's registry

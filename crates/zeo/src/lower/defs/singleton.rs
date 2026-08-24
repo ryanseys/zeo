@@ -46,7 +46,7 @@ fn desugar_singleton_items(
     // allocation per def for a lint that doesn't matter at this lifetime.
     #[allow(clippy::large_enum_variant)]
     enum Item {
-        Def(String, Params, Vec<NodeId>),
+        Def(String, Params, Vec<NodeId>, crate::hir::Visibility),
         /// `def self.x` in a `class << obj` body -- see its emission arm.
         MetaDef(String, Params, Vec<NodeId>),
         Const,
@@ -68,6 +68,8 @@ fn desugar_singleton_items(
         /// Runs as the body of a `recv.singleton_class.class_eval`, which is
         /// where ruby runs it -- see the `SingletonBody` arm.
         SingletonBody,
+        /// `private :m` / `protected :m` naming a per-object singleton method.
+        Vis(String, crate::hir::Visibility),
         Skip,
     }
     let mut out = Vec::with_capacity(ids.len());
@@ -78,8 +80,9 @@ fn desugar_singleton_items(
                 params,
                 body,
                 is_class_method: false,
+                visibility,
                 ..
-            } => Item::Def(name.clone(), (**params).clone(), body.clone()),
+            } => Item::Def(name.clone(), (**params).clone(), body.clone(), *visibility),
             // `def self.x` here defines on the singleton's own singleton --
             // `obj.singleton_class.x`. The `class << self` form takes the same
             // route; see its `MetaMethod`.
@@ -117,12 +120,12 @@ fn desugar_singleton_items(
                 then_body,
                 else_body,
             } => Item::Cond(*cond, then_body.clone(), else_body.clone()),
-            // A `private def foo` already lowered the def WITH its visibility
-            // and matches the `Def` arm above; a bare `private`/`private :m`
-            // leaves a `MethodVisibility` with no per-object singleton spelling
-            // -- drop it (compile-only best-effort: the method is still defined
-            // on the singleton, just not marked private there).
-            HirNode::MethodVisibility { .. } => Item::Skip,
+            // `private :m` NAMING a method -- the singleton half of
+            // `MethodVisibility`, and exactly `recv.singleton_class.send
+            // (:private, :m)`. A bare `private` leaves no node at all: the
+            // lowering's running default already stamped every `def` after it,
+            // which is what the `Def` arm above carries.
+            HirNode::MethodVisibility { name, visibility } => Item::Vis(name.clone(), *visibility),
             // `alias new old` inside a singleton (`class << IPSocket; alias
             // getaddress_orig getaddress; ...`, ipaddr) aliases a method on the
             // object's singleton class -- rebind it to
@@ -219,9 +222,26 @@ fn desugar_singleton_items(
             _ => Item::SingletonBody,
         };
         match item {
-            Item::Def(mname, params, body) => {
+            Item::Def(mname, params, body, visibility) => {
                 let recv = lower_node(result, hir, recv_node)?;
+                let marked = mname.clone();
                 out.push(define_singleton_method_call(hir, recv, mname, params, body));
+                // The body's running default (`private` on its own line, or a
+                // `private def`) belongs to the row this just installed. The
+                // install itself has no visibility parameter, so the mark
+                // follows it as the call ruby spells the same thing with.
+                if let Some(mark) =
+                    singleton_visibility_mark(result, hir, recv_node, &marked, visibility)?
+                {
+                    out.push(mark);
+                }
+            }
+            Item::Vis(mname, visibility) => {
+                if let Some(mark) =
+                    singleton_visibility_mark(result, hir, recv_node, &mname, visibility)?
+                {
+                    out.push(mark);
+                }
             }
             // `def self.x` inside `class << obj` -- one level further up
             // again, on `obj.singleton_class`'s own singleton.
@@ -638,6 +658,39 @@ fn literal_symbol_args(hir: &Hir, args: &[ArrayElem]) -> Option<Vec<String>> {
 /// `recv.define_singleton_method(:name, ->(params) { body })` -- how a `def`
 /// written for a specific OBJECT reaches that object's singleton class, which
 /// zeo has no compile-time namespace for.
+/// `recv.singleton_class.send(:private, :name)` -- how ruby spells a
+/// visibility mark on ONE object's row. `None` for `Public`, which is what an
+/// unmarked install already is.
+///
+/// `send` and not a bare call: `Module#private` is itself private, so the
+/// singleton class refuses an explicit-receiver call to it.
+fn singleton_visibility_mark(
+    result: &ruby_prism::ParseResult,
+    hir: &mut Hir,
+    recv_node: &Node<'_>,
+    name: &str,
+    visibility: crate::hir::Visibility,
+) -> PResult<Option<NodeId>> {
+    let verb = match visibility {
+        crate::hir::Visibility::Public => return Ok(None),
+        crate::hir::Visibility::Private => "private",
+        crate::hir::Visibility::Protected => "protected",
+    };
+    let recv = lower_node(result, hir, recv_node)?;
+    let singleton = hir.push(singleton_class_of(recv));
+    let verb_sym = hir.push(HirNode::SymbolLit(verb.to_string()));
+    let name_sym = hir.push(HirNode::SymbolLit(name.to_string()));
+    Ok(Some(hir.push(HirNode::Call {
+        receiver: Some(singleton),
+        name: "send".to_string(),
+        args: vec![ArrayElem::Single(verb_sym), ArrayElem::Single(name_sym)],
+        kwargs: vec![],
+        block: None,
+        block_arg: None,
+        safe: false,
+    })))
+}
+
 fn define_singleton_method_call(
     hir: &mut Hir,
     recv: NodeId,

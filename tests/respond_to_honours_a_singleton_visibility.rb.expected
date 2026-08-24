@@ -1,0 +1,8 @@
+[:respond, false]
+[:respond_all, true]
+[:defined, nil]
+[:r_respond, false]
+[:r_respond_all, true]
+[:r_defined, nil]
+[:r_back, true]
+[:prot_respond, false]

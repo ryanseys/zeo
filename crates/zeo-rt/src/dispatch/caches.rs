@@ -143,7 +143,7 @@ pub fn send_value_cached(
             // `bm_rbtree` and `bm_splay` actually have. The site is vetted
             // before it fills, so every later hit on it is vetted too.
             if let Some(reason) = explicit_call_barrier(recv, name, site.caller_class) {
-                return Err(raise_method_missing(recv, &name.to_string(), args, reason));
+                return missing_or_raise(recv, name, args, block, reason);
             }
             match recv {
                 RubyValue::Object(o) if id != zeo_abi::OBJECT_CLASS => {
@@ -270,7 +270,7 @@ pub fn send_class_cached(
             // Vetted BEFORE it fills, exactly as `send_value_cached` does, so
             // every later hit on the site is vetted too.
             if let Some(reason) = explicit_call_barrier(recv, name, caller_class) {
-                return Err(raise_method_missing(recv, &name.to_string(), args, reason));
+                return missing_or_raise(recv, name, args, block, reason);
             }
             let target = REGISTRY
                 .get()
@@ -299,7 +299,7 @@ pub fn send_value_explicit_in(
     caller_class: u32,
 ) -> Result<RubyValue, Signal> {
     match explicit_call_barrier(recv, name, caller_class) {
-        Some(reason) => Err(raise_method_missing(recv, &name.to_string(), args, reason)),
+        Some(reason) => missing_or_raise(recv, name, args, block, reason),
         None => send_value_in(box_id, recv, name, args, block),
     }
 }
@@ -350,6 +350,19 @@ fn explicit_call_barrier(
         && crate::builtins::env::lookup(name.name_str()).is_some()
     {
         return None;
+    }
+    // A row installed on THIS OBJECT answers before its class does, so its own
+    // mark decides. `recv.class_id()` names the ordinary class and knows
+    // nothing about it. Asked here and not in `method_vet`, which caches by
+    // `(class, name)`: a per-object mark is not a function of the class -- and
+    // a program with any singleton at all is `is_live`, so no cache serves it.
+    if let Some(vis) = object_singleton_visibility(recv, name) {
+        return match vis {
+            MethodVisibility::Public => None,
+            MethodVisibility::Private => Some(MissingReason::Private),
+            // The singleton class is the owner, and nothing else is kin to it.
+            MethodVisibility::Protected => Some(MissingReason::Protected),
+        };
     }
     match instance_method_visibility(recv.class_id(), name)? {
         MethodVisibility::Public => None,
@@ -466,7 +479,7 @@ pub fn send_value_dyn_cached(
         if let Some((cached, vet, target)) = site.hit.get() {
             if *cached == id.0 {
                 if let Some(reason) = vet_denies(*vet, caller_class) {
-                    return Err(raise_method_missing(recv, &name.to_string(), args, reason));
+                    return missing_or_raise(recv, name, args, block, reason);
                 }
                 note_dispatch_gated(gates, name);
                 return match (target, recv) {
@@ -487,7 +500,7 @@ pub fn send_value_dyn_cached(
             // re-raised) on every call, the shape the uncached path has.
             let vet = method_vet(id, name);
             if let Some(reason) = vet_denies(vet, caller_class) {
-                return Err(raise_method_missing(recv, &name.to_string(), args, reason));
+                return missing_or_raise(recv, name, args, block, reason);
             }
             match recv {
                 RubyValue::Object(o) if id != zeo_abi::OBJECT_CLASS => {

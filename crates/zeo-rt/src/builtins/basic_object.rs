@@ -284,6 +284,13 @@ pub(crate) fn public_dynamic_send(
             ));
         }
     };
+    // `public_send` re-wraps the block as CRuby's PROC handler where `send`
+    // forwards the iseq handler unchanged. That wart is the only thing that
+    // makes the two disagree about the same block: `Kernel.send(:lambda) { }`
+    // is accepted and `Kernel.public_send(:lambda) { }` is not.
+    if let Some(RubyValue::Proc(p)) = &block {
+        p.clear_literal_block();
+    }
     crate::dispatch::send_value_public_in(0, recv, sym, rest, block)
 }
 

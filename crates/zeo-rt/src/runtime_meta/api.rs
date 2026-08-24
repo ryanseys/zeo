@@ -28,12 +28,19 @@ pub fn runtime_define_method(id: ClassId, name: Symbol, body: RProc) -> Result<R
                 .and_then(|e| e.singleton_default_vis)
         });
         let out = runtime_define_singleton_method(&owner, name, body)?;
-        if let (Some(v), RubyValue::Class(cid)) = (vis, &owner) {
-            runtime_class_method_visibility(
-                *cid,
-                &[RubyValue::Symbol(name)],
-                v != crate::dispatch::MethodVisibility::Public,
-            )?;
+        match (vis, &owner) {
+            (Some(v), RubyValue::Class(cid)) => {
+                runtime_class_method_visibility(
+                    *cid,
+                    &[RubyValue::Symbol(name)],
+                    v != crate::dispatch::MethodVisibility::Public,
+                )?;
+            }
+            // An OBJECT owner has no class-method table to mark. Its rows are
+            // per-object, so the cursor is recorded per object -- without it a
+            // `class << obj; private; def x; end` body installed a PUBLIC row.
+            (Some(v), _) => set_singleton_visibility(&owner, name, v),
+            (None, _) => {}
         }
         return Ok(out);
     }
@@ -507,6 +514,11 @@ fn runtime_alias_singleton_method(
             crate::dispatch::class_name(singleton).unwrap_or_default()
         ));
     };
+    // The alias inherits its source's CURRENT visibility -- the copied method
+    // entry keeps its flags, on an object exactly as on a class. Resolved
+    // before the install so a stale mark under `new` cannot shadow it.
+    let vis = singleton_visibility(owner, old)
+        .or_else(|| crate::dispatch::instance_method_visibility(owner.class_id(), old));
     maps()
         .singletons
         .write()
@@ -514,6 +526,10 @@ fn runtime_alias_singleton_method(
         .entry(key)
         .or_default()
         .insert(new, m);
+    match vis {
+        Some(v) => set_singleton_visibility(owner, new, v),
+        None => clear_singleton_visibility(owner, new),
+    }
     // An alias DEFINES the new name, so it lifts any tombstone standing over it.
     if let Some(t) = maps().singleton_undefs.write().unwrap().get_mut(&key) {
         t.remove(&new);
@@ -1051,6 +1067,27 @@ pub fn runtime_set_visibility(
             &marks,
             vis == crate::dispatch::MethodVisibility::Private,
         )?;
+        return Ok(result);
+    }
+    // An ORDINARY OBJECT's singleton class: its instance methods are that one
+    // object's singleton methods, so the mark is that object's too. Writing it
+    // into the singleton class's own entry would be invisible to every reader
+    // that reaches the rows by identity.
+    if let Some(owner) = singleton_owner_value(id)
+        && !matches!(owner, RubyValue::Class(_))
+    {
+        for &sym in &syms {
+            if !crate::dispatch::responds_to_value(&owner, sym, true) {
+                return Err(name_error!(
+                    "undefined method '{}' for class '{}'",
+                    sym.name(),
+                    crate::dispatch::class_name(id).unwrap_or_default()
+                ));
+            }
+        }
+        for &sym in &syms {
+            set_singleton_visibility(&owner, sym, vis);
+        }
         return Ok(result);
     }
     for &sym in &syms {
@@ -1622,6 +1659,9 @@ pub fn runtime_define_singleton_method(
                 let mut w = maps().singletons.write().unwrap();
                 w.entry(key).or_default().insert(name, m);
             }
+            // A fresh `def` resets the name to the body's running default; the
+            // caller re-applies a cursor if one is live.
+            clear_singleton_visibility(recv, name);
             clear_extended_name(key, name);
             mark_singletons();
             mark_live();
@@ -1713,6 +1753,28 @@ fn extend_object_or_primitive(recv: &RubyValue, module_val: &RubyValue) -> Resul
     Ok(())
 }
 
+/// Carry the source module's own visibility marks onto the copies `extend`
+/// just installed on ONE object.
+///
+/// `module_function` is why this exists: the name is a PRIVATE instance
+/// method of the module and a public method on the module's singleton, and
+/// `obj.extend(MF)` copies the instance side. Without the mark the copy read
+/// as public and `obj.public_send(:helper)` answered where CRuby refuses.
+///
+/// Only a non-public mark is recorded. A missing entry already means public,
+/// and the object may hold an earlier mark for the same name -- which a
+/// public copy has to clear.
+fn carry_module_visibility(recv: &RubyValue, mid: ClassId, copied: &[Symbol]) {
+    for &name in copied {
+        match crate::dispatch::instance_method_visibility(mid, name) {
+            Some(crate::dispatch::MethodVisibility::Public) | None => {
+                clear_singleton_visibility(recv, name);
+            }
+            Some(vis) => set_singleton_visibility(recv, name, vis),
+        }
+    }
+}
+
 /// `Module#extend_object`'s default body -- the mixin itself, without the
 /// `extended` notification its caller owns. See [`runtime_extend`].
 pub fn extend_object_default(recv: &RubyValue, module_val: &RubyValue) -> Result<(), Signal> {
@@ -1759,6 +1821,7 @@ pub fn extend_object_default(recv: &RubyValue, module_val: &RubyValue) -> Result
                 }
             }
             record_extended_names(key, *mid, &copied);
+            carry_module_visibility(recv, *mid, &copied);
         }
         RubyValue::Class(cid) => {
             if crate::dispatch::class_frozen(*cid) {
@@ -1772,8 +1835,27 @@ pub fn extend_object_default(recv: &RubyValue, module_val: &RubyValue) -> Result
                 // Own `def self.x` (materialized into the registry) outranks the
                 // module, so leave it be -- also what keeps SecureRandom's own
                 // `gen_random` from being shadowed by the mixin's bridge copy.
-                .filter(|&name| !crate::dispatch::class_defines_own_class_method(*cid, name))
+                //
+                // An earlier extend's COPY is not an own definition, though it
+                // reads as one here. `extend(A, B)` walks backwards, so A is
+                // installed over B's copy of a shared name and must be allowed
+                // to replace it -- which is what makes A the nearer module in
+                // dispatch as well as in `ancestors`.
+                .filter(|&name| {
+                    !crate::dispatch::class_defines_own_class_method(*cid, name)
+                        || overlay_class_method_is_extended(*cid, name)
+                })
                 .filter_map(|name| extended_class_method(*mid, name).map(|p| (name, p)))
+                .collect();
+            // The module's own marks, resolved BEFORE the write lock:
+            // `instance_method_visibility` reads the overlay.
+            let marks: Vec<(Symbol, bool)> = installs
+                .iter()
+                .map(|(name, _)| {
+                    let private = crate::dispatch::instance_method_visibility(*mid, *name)
+                        == Some(crate::dispatch::MethodVisibility::Private);
+                    (*name, private)
+                })
                 .collect();
             let mut w = maps().classes.write().unwrap();
             let entry = w.entry(cid.0).or_insert_with(OverlayEntry::delta);
@@ -1782,6 +1864,19 @@ pub fn extend_object_default(recv: &RubyValue, module_val: &RubyValue) -> Result
                 // so it wins on a name collision between two mixins.
                 entry.class_methods.insert(name, proc_);
                 entry.extended_class_methods.insert(name);
+            }
+            // A `module_function` name is PRIVATE on the module's instance
+            // side, and `extend` copies that side -- so the class method it
+            // becomes is private too. A public copy CLEARS any earlier mark.
+            for (name, private) in marks {
+                match private {
+                    true => {
+                        entry.class_methods_vis.insert(name, true);
+                    }
+                    false => {
+                        entry.class_methods_vis.remove(&name);
+                    }
+                }
             }
         }
         other => {
@@ -1815,6 +1910,7 @@ pub fn extend_object_default(recv: &RubyValue, module_val: &RubyValue) -> Result
                 }
             }
             record_extended_names(key, *mid, &copied);
+            carry_module_visibility(recv, *mid, &copied);
         }
     }
     // The method copies above make the module ANSWER on `recv`; this is what

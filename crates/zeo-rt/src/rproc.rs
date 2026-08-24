@@ -144,6 +144,20 @@ pub struct ProcData {
     /// `None` for every proc built from a Rust closure, which captures no
     /// Ruby cells.
     env: Option<crate::capi::procs::ProcEnvOwned>,
+    /// Was this handle written as a LITERAL block at a call site, and has it
+    /// reached the callee without being named on the way?
+    ///
+    /// CRuby's frame carries either an iseq block handler -- a `{ }` written
+    /// at this very call -- or a proc handler, and `rb_block_lambda` refuses
+    /// the second. Nothing about the VALUE distinguishes them, so the mark
+    /// rides here: every emitter-built proc sets it, and the `&expr`
+    /// conversion clears it, because naming a proc and passing it with `&`
+    /// is what turns an iseq handler into a proc handler. `Kernel#lambda` is
+    /// the only reader.
+    ///
+    /// Cleared IN PLACE rather than on a copy: once a handle has been passed
+    /// with `&`, it can never be a literal again.
+    literal_block: std::sync::atomic::AtomicBool,
 }
 
 impl ProcData {
@@ -165,6 +179,9 @@ impl ProcData {
             origin: self.origin,
             outer_capture: self.outer_capture,
             frozen: std::sync::atomic::AtomicBool::new(false),
+            // A copy is a NAMED handle, never the literal block a call site
+            // wrote -- `dup`, `clone` and `#lambda` all mint one.
+            literal_block: std::sync::atomic::AtomicBool::new(false),
             // A copy shares the one closure allocation, so it must run under
             // the same environment. `ProcEnvOwned` owns raw views into its
             // own cells and cannot be duplicated; the copy takes its own
@@ -229,6 +246,7 @@ impl ProcBuilder {
             outer_capture: None,
             frozen: std::sync::atomic::AtomicBool::new(false),
             env: None,
+            literal_block: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -254,6 +272,10 @@ impl ProcBuilder {
             crate::capi::procs::call_block_fn(f, env, recv, args, block)
         });
         b.0.env = Some(env);
+        // Every proc the emitter builds came from a block WRITTEN in the
+        // source at a call site. `Kernel#lambda` reads it; the `&expr`
+        // conversion clears it.
+        b.0.literal_block = std::sync::atomic::AtomicBool::new(true);
         b
     }
 
@@ -599,6 +621,22 @@ impl RProc {
         self.0
             .frozen
             .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Did a call site write this handle as a LITERAL block -- see
+    /// [`ProcData::literal_block`]. `Kernel#lambda` is the only reader.
+    pub fn is_literal_block(&self) -> bool {
+        self.0
+            .literal_block
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Retire the literal-block mark: this handle has now been named and
+    /// passed with `&`, which is CRuby's proc handler. One-way.
+    pub fn clear_literal_block(&self) {
+        self.0
+            .literal_block
+            .store(false, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// `Proc#dup`/`#clone`'s payload copy: a FRESH `ProcData` (new object
@@ -969,5 +1007,52 @@ mod tests {
     fn a_non_convertible_double_splat_is_a_type_error() {
         let r = std::panic::catch_unwind(|| to_hash_coerce(&RubyValue::Int(1)));
         assert!(r.is_err());
+    }
+}
+
+#[cfg(test)]
+mod literal_block_tests {
+    use crate::{RProc, RubyValue};
+
+    fn rust_proc() -> RProc {
+        RProc::new(|_args| Ok(RubyValue::Nil))
+    }
+
+    /// A proc the RUNTIME builds is CRuby's C-level Proc, never a block a
+    /// call site wrote. Only `ProcBuilder::from_c` -- the emitter's path --
+    /// sets the mark.
+    #[test]
+    fn a_runtime_proc_is_not_a_literal_block() {
+        assert!(!rust_proc().is_literal_block());
+    }
+
+    /// The mark is one-way: once a handle has been named and passed with
+    /// `&`, it can never be a literal block again.
+    #[test]
+    fn clearing_the_mark_is_one_way() {
+        let p =
+            super::ProcBuilder::from_rust(|_, _, _| Ok(RubyValue::Nil), RubyValue::Nil, 0, false)
+                .build();
+        p.0.literal_block
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        assert!(p.is_literal_block());
+        p.clear_literal_block();
+        assert!(!p.is_literal_block());
+        p.clear_literal_block();
+        assert!(!p.is_literal_block());
+    }
+
+    /// `dup`, `clone` and `#lambda` all mint a fresh `ProcData`, and each one
+    /// is a NAMED handle. A copy that carried the mark would let
+    /// `lambda(&pr.dup)` through.
+    #[test]
+    fn a_copy_is_never_a_literal_block() {
+        let p =
+            super::ProcBuilder::from_rust(|_, _, _| Ok(RubyValue::Nil), RubyValue::Nil, 0, false)
+                .build();
+        p.0.literal_block
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        assert!(!p.as_lambda().is_literal_block());
+        assert!(!p.dup_data(false).is_literal_block());
     }
 }

@@ -476,6 +476,12 @@ ruby_class! {
     // find the override it was reached through and recurse.
     def "call" | "[]" | "===" (recv, *args, &blk) {
         let m = recv_method(recv);
+        // A Method object forwards the block as CRuby's PROC handler, so a
+        // literal block written at THIS call is not one at the callee's.
+        // `Kernel.method(:lambda).call { 1 }` is the case that shows it.
+        if let Some(RubyValue::Proc(p)) = &blk {
+            p.clear_literal_block();
+        }
         // A method whose position was NAMED -- a `#super_method` re-seat, or
         // an ancestor's `instance_method` bound down to a descendant -- runs
         // exactly that ancestor's body. Bypassing the overrides (and

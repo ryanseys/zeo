@@ -264,6 +264,20 @@ pub(super) fn record_extended_names(key: usize, mid: ClassId, names: &[Symbol]) 
     }
 }
 
+/// Which module an `extend` copied `name` onto this object from, or `None`
+/// for a row the object defines itself -- the per-object twin of
+/// `overlay_class_method_is_extended`. CRuby files an extended module in the
+/// singleton class's SUPER chain, so its rows are not the singleton's OWN.
+pub fn extended_name_source(recv: &RubyValue, name: Symbol) -> Option<ClassId> {
+    let key = value_identity(recv)?;
+    maps()
+        .extended_names
+        .read()
+        .unwrap()
+        .get(&key)
+        .and_then(|t| t.get(&name).copied())
+}
+
 /// Drop the extended-module record for one name -- every OWN definition (and
 /// undef) of a per-object singleton owns the name from then on.
 pub(super) fn clear_extended_name(key: usize, name: Symbol) {
