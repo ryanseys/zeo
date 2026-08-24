@@ -1375,6 +1375,35 @@ impl Hir {
         })
     }
 
+    /// The name that makes `id` an eval-shaped call, and whether it was
+    /// written with an explicit RECEIVER -- [`Hir::uses_runtime_eval`]'s test
+    /// for one node, so the narrowed answer and the flat scan cannot drift.
+    pub fn eval_shaped(&self, id: NodeId) -> Option<(&str, bool)> {
+        let HirNode::Call { name, receiver, .. } = &self[id] else {
+            return None;
+        };
+        self.eval_shaped_node(&self[id])
+            .then(|| (name.as_str(), receiver.is_some()))
+    }
+
+    fn eval_shaped_node(&self, node: &HirNode) -> bool {
+        match node {
+            HirNode::Call { name, args, .. } => match name.as_str() {
+                "eval" => true,
+                "instance_eval" | "class_eval" | "module_eval" => !args.is_empty(),
+                "require" | "require_relative" | "load" => true,
+                "send" | "__send__" | "public_send" => args
+                    .first()
+                    .and_then(|a| self.sent_name(a.node_id()))
+                    .is_some_and(|n| {
+                        matches!(n, "eval" | "instance_eval" | "class_eval" | "module_eval")
+                    }),
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
     pub fn uses_runtime_eval(&self) -> bool {
         self.nodes.iter().any(|node| match node {
             HirNode::Call { name, args, .. } => match name.as_str() {

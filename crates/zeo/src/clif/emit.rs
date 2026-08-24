@@ -881,7 +881,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
     // installed the compiler itself. A LINKED program names the installer
     // so the linker keeps the compiler for it -- and only for it.
     let eval_install =
-        matches!(em.module, ClifModule::Object(_)) && analyzed.compiler.hir.uses_runtime_eval();
+        matches!(em.module, ClifModule::Object(_)) && analyzed.compiler.compiles_at_runtime();
     let desc = statics::define_desc(
         em,
         analyzed,

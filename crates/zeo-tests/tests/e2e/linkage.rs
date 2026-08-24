@@ -205,3 +205,39 @@ fn an_eval_free_program_dead_strips_the_compiler() {
          that flag takes this ratio from 0.52 to 1.21."
     );
 }
+
+/// A program whose only `load`/`eval`/`require` calls are ITS OWN methods
+/// dead-strips the compiler too.
+///
+/// The predicate that decides matched a call's NAME and nothing else, so
+/// `def load(x); load(1); end` shipped Cranelift and all 170 class tables --
+/// 14 MB, measured. A receiverless call resolves the way dispatch resolves
+/// it, and Kernel's row is unreachable from a class that defines its own.
+///
+/// Measured against the eval-free program rather than an absolute size: what
+/// is asserted is that the two carry the same thing.
+#[test]
+fn a_program_with_its_own_load_dead_strips_the_compiler() {
+    let plain = link_program("puts :ok\n");
+    let baseline = text_bytes(&plain);
+    let plain_tables = ctable_symbols(&plain);
+    let _ = std::fs::remove_file(&plain);
+
+    let bin = link_program("def load(x) = x\nputs load(1)\n");
+    let program = text_bytes(&bin);
+    let tables = ctable_symbols(&bin);
+    let _ = std::fs::remove_file(&bin);
+
+    let ratio = program as f64 / baseline as f64;
+    assert!(
+        ratio < 1.10,
+        "a program whose `load` is its own has {program} bytes of text, \
+         {ratio:.2}x an eval-free program's {baseline} -- it is carrying the \
+         compiler. See `Compiler::runtime_eval`."
+    );
+    assert_eq!(
+        tables, plain_tables,
+        "it should name the same class tables as an eval-free program, not \
+         the whole set an eval-capable one takes"
+    );
+}

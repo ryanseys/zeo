@@ -820,6 +820,23 @@ pub struct Compiler {
     /// safe to fold. Kept apart from the set above because it is the expensive
     /// answer: it de-optimizes every direct call in the program.
     pub runtime_patches_any_name: bool,
+    /// Whether the program can really compile Ruby at RUN time.
+    ///
+    /// [`crate::hir::Hir::uses_runtime_eval`] matches a call's NAME and
+    /// nothing else, so a program that defines its own `load` -- or a class
+    /// with its own `eval` -- reads as an eval site. That decides whether the
+    /// binary carries the embedded compiler and all 170 class tables, which
+    /// is 14 MB; `OptionParser#load` calling itself was paying it.
+    ///
+    /// A RECEIVERLESS call resolves the way DISPATCH resolves it: a user
+    /// method of that name in the enclosing class's chain is what runs, and
+    /// Kernel's is unreachable from there. Every other shape keeps the
+    /// conservative answer, so this only ever narrows a site ruby itself
+    /// would not send to Kernel.
+    ///
+    /// Set by `analyze`; `true` until then, which is what keeps a caller that
+    /// asks too early safe.
+    pub runtime_eval: bool,
     /// Whether the program calls `freeze` anywhere. A REOPEN of a frozen class
     /// is a `FrozenError` and its body never runs, so the definitions the
     /// compile-time tables carry for it have to be retractable -- which costs
@@ -1173,6 +1190,7 @@ impl Compiler {
             unit_scopes: FSet::default(),
             positional_redefs: Vec::new(),
             runtime_patches_any_name: false,
+            runtime_eval: true,
             program_freezes: false,
             class_index: std::cell::RefCell::new(FMap::default()),
             indexed_upto: std::cell::Cell::new(0),
@@ -1900,7 +1918,14 @@ impl Compiler {
     /// armed, and omitting it where a hook IS armed would answer `#self`
     /// wrongly.
     pub fn notes_frame_self(&self) -> bool {
-        self.traces_calls() || self.hir.uses_runtime_eval()
+        self.traces_calls() || self.runtime_eval
+    }
+
+    /// See [`Compiler::runtime_eval`]. The one question every post-analyze
+    /// reader asks; the flat `Hir` scan stays for the loader, which runs
+    /// before any of this is known.
+    pub fn compiles_at_runtime(&self) -> bool {
+        self.runtime_eval
     }
 
     /// See [`Hir::uses_ractor`](crate::hir::Hir::uses_ractor).

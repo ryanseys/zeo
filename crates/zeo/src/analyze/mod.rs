@@ -354,6 +354,7 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
     // and the main scope's just computed, mark the typed-receiver iterator
     // sites codegen can fuse into native loops.
     mark_inline_iter_sites(compiler, &main_statements, &main_local_types);
+    compiler.runtime_eval = narrow_runtime_eval(compiler, &main_statements);
 
     Ok(AnalyzedParts {
         main_statements,
@@ -1189,5 +1190,89 @@ mod class_value_tests {
         );
         assert_eq!(chain(BASIC_OBJECT_CLASS), vec![BASIC_OBJECT_CLASS]);
         assert_eq!(chain(KERNEL_CLASS), vec![KERNEL_CLASS]);
+    }
+}
+
+/// The narrowed answer to "can this program compile Ruby at RUN time" -- see
+/// [`Compiler::runtime_eval`].
+///
+/// `Hir::uses_runtime_eval` matches a call's NAME. This walks the same nodes
+/// with the class chain in hand and drops the ones a USER method answers: a
+/// receiverless call resolves the way dispatch resolves it, so a `load` inside
+/// a class that defines `load` never reaches Kernel's.
+///
+/// Only receiverless calls are narrowed. `Binding#eval` is a real eval on an
+/// explicit receiver, and no static rule separates it from `obj.eval` on a
+/// user object without types -- so those keep the conservative answer.
+fn narrow_runtime_eval(compiler: &Compiler, main_statements: &[NodeId]) -> bool {
+    let hir = &compiler.hir;
+    let mut pending: crate::compiler::FSet<NodeId> = crate::compiler::FSet::default();
+    // An explicit receiver is never narrowed -- `Binding#eval` is real -- so
+    // those go straight in and stay.
+    for id in hir.node_ids() {
+        if hir.eval_shaped(id).is_some() {
+            pending.insert(id);
+        }
+    }
+    if pending.is_empty() {
+        return false;
+    }
+    let mut answered_by_user = |class: Option<crate::compiler::ClassId>, stmts: &[NodeId]| {
+        let Some(class) = class else { return };
+        for &stmt in stmts {
+            discount_user_answers(compiler, class, stmt, &mut pending);
+        }
+    };
+    answered_by_user(Some(crate::compiler::OBJECT_CLASS), main_statements);
+    for unit in &hir.feature_units {
+        let body = unit.body.clone();
+        answered_by_user(Some(crate::compiler::OBJECT_CLASS), &body);
+    }
+    for scope in &compiler.scopes {
+        let body = scope.body.clone();
+        answered_by_user(scope.class, &body);
+    }
+    // What is left is what the binary carries the compiler for. Naming each
+    // one is the only way to tell a real `eval` from a name-only match --
+    // `ZEO_LOG=zeo=debug` prints them.
+    for &id in &pending {
+        let (name, _) = compiler
+            .hir
+            .eval_shaped(id)
+            .expect("pending is eval-shaped");
+        match crate::analyze::source::source_location(compiler, id) {
+            Some((file, line)) => {
+                tracing::debug!(target: "zeo::eval", "runtime-eval site: {name} at {file}:{line}");
+            }
+            None => tracing::debug!(target: "zeo::eval", "runtime-eval site: {name}"),
+        }
+    }
+    !pending.is_empty()
+}
+
+/// Drop from `pending` every receiverless eval-shaped call under `id` that a
+/// user method of `class`'s chain answers. Stops at a nested `def`, which has
+/// a `Scope` of its own and a class of its own.
+fn discount_user_answers(
+    compiler: &Compiler,
+    class: crate::compiler::ClassId,
+    id: NodeId,
+    pending: &mut crate::compiler::FSet<NodeId>,
+) {
+    if pending.is_empty() {
+        return;
+    }
+    if let Some((name, false)) = compiler.hir.eval_shaped(id)
+        && compiler.method_in_chain(class, name).is_some()
+    {
+        pending.remove(&id);
+    }
+    if matches!(compiler.hir[id], crate::hir::HirNode::DefMethod { .. }) {
+        return;
+    }
+    let mut kids = Vec::new();
+    compiler.hir[id].for_each_child(&mut |c| kids.push(c));
+    for c in kids {
+        discount_user_answers(compiler, class, c, pending);
     }
 }

@@ -1,0 +1,7 @@
+[:top_level_load, 1]
+[:k_eval, "x"]
+[:k_eval, "ignored"]
+[:m_require, "a"]
+[:m_require, "nothing"]
+2
+"method"

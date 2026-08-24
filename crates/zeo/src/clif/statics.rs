@@ -1834,7 +1834,7 @@ fn define_class_tables(em: &mut Emitter, analyzed: &Analyzed) -> Result<Option<D
 /// class at all.
 fn needed_class_tables(analyzed: &Analyzed) -> Vec<&'static str> {
     let all = crate::builtin_surface::CLASS_TABLE_SYMBOLS;
-    if analyzed.compiler.hir.uses_runtime_eval() {
+    if analyzed.compiler.compiles_at_runtime() {
         return all.iter().map(|(_, sym)| *sym).collect();
     }
     all.iter()
