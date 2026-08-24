@@ -1230,7 +1230,12 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
             // earlier one: ruby's re-`def` resets a name to the class body's
             // running default, so a `private :v` written between two bodies
             // stops applying here.
-            let vis = match fx.an.compiler.scope(crate::compiler::ScopeId(scope)).visibility {
+            let vis = match fx
+                .an
+                .compiler
+                .scope(crate::compiler::ScopeId(scope))
+                .visibility
+            {
                 crate::hir::Visibility::Private => 0i64,
                 crate::hir::Visibility::Protected => 1,
                 crate::hir::Visibility::Public => 2,

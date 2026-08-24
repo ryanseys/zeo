@@ -77,8 +77,8 @@ fn user_initialize_construct(
         // instance. Refuse LOUDLY: answering the constructor's value would be
         // the very bug this fixes, silently.
         _ => {
-            let n = crate::dispatch::class_name(cid)
-                .unwrap_or_else(|| format!("#<Class:{}>", cid.0));
+            let n =
+                crate::dispatch::class_name(cid).unwrap_or_else(|| format!("#<Class:{}>", cid.0));
             return Err(type_error!("allocator undefined for {n}"));
         }
     };
