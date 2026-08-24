@@ -313,7 +313,7 @@ ruby_class! {
     }
     def "source_location"(recv) {
         let um = recv_unbound(recv);
-        Ok(crate::method_meta::source_location(um.meta.as_ref(), um.home, um.kind, um.name))
+        Ok(crate::method_meta::source_location(um.meta.as_ref(), None, um.home, um.kind, um.name))
     }
     // The unbound twin of `Method#super_method`, walking the chain of the
     // class this method was fetched from.

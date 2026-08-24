@@ -264,8 +264,16 @@ static META: LazyLock<RwLock<FMap<MethodKey, Arc<MethodMeta>>>> =
 /// heap identity the method itself is stored under. It cannot go in [`META`]:
 /// that table is keyed by class, and a per-object singleton would then claim to
 /// describe every instance of the object's class.
-static SINGLETON_PARAMS: LazyLock<RwLock<FMap<usize, FMap<Symbol, Descriptor>>>> =
+static SINGLETON_PARAMS: LazyLock<RwLock<FMap<usize, FMap<Symbol, SingletonMeta>>>> =
     LazyLock::new(|| RwLock::new(FMap::default()));
+
+/// What a per-object singleton records: the same two facts a class-keyed row
+/// carries, minus the ones only a class has.
+#[derive(Clone)]
+struct SingletonMeta {
+    params: Descriptor,
+    source: Option<(&'static str, u32)>,
+}
 
 /// A `Proc`'s parameter metadata as a method [`Descriptor`]. Codegen records a
 /// proc's kinds in Ruby's canonical (lambda) spelling, which is the spelling a
@@ -280,11 +288,15 @@ pub(crate) fn descriptor_from_proc(body: &crate::RProc) -> Descriptor {
 /// Record what a runtime `def obj.name` / `define_singleton_method` installed on
 /// the object with heap identity `key`. See [`SINGLETON_PARAMS`].
 pub(crate) fn record_singleton_params(key: usize, name: Symbol, body: &crate::RProc) {
-    SINGLETON_PARAMS
-        .write()
-        .entry(key)
-        .or_default()
-        .insert(name, descriptor_from_proc(body));
+    SINGLETON_PARAMS.write().entry(key).or_default().insert(
+        name,
+        SingletonMeta {
+            params: descriptor_from_proc(body),
+            // Where the body was written -- `def obj.m` reports it like any
+            // other Ruby definition.
+            source: body.location(),
+        },
+    );
 }
 
 /// Record what a runtime `define_method` / `class_eval`-`def` installed on
@@ -303,7 +315,13 @@ pub(crate) fn record_runtime_params(
     let meta = MethodMeta {
         key,
         params: descriptor_from_proc(body),
-        source: None,
+        // Where the BODY was written. A runtime `def` and a `define_method`
+        // both arrive as a proc that already knows its own location, and
+        // dropping it here was why every method of a runtime-minted class --
+        // `Class.new { def m; end }`, a subclass of one, a `Data.define`
+        // subclass -- answered `nil` for `source_location` while its
+        // `parameters` and `arity` were right.
+        source: body.location(),
         original_name: None,
     };
     META.write().insert(key, Arc::new(meta));
@@ -313,6 +331,12 @@ pub(crate) fn record_runtime_params(
 /// installed one there. Asked BEFORE the class-keyed tables, because a
 /// `def obj.m` shadows whatever the object's class says about `m`.
 fn singleton_descriptor(recv: &RubyValue, name: Symbol) -> Option<Descriptor> {
+    Some(singleton_meta(recv, name)?.params)
+}
+
+/// The whole per-object row for `name` on `recv`, if the runtime installed
+/// one there.
+fn singleton_meta(recv: &RubyValue, name: Symbol) -> Option<SingletonMeta> {
     let key = crate::runtime_meta::value_identity(recv)?;
     SINGLETON_PARAMS.read().get(&key)?.get(&name).cloned()
 }
@@ -534,11 +558,12 @@ pub fn parameters(
 /// synthesized. CRuby answers `nil` for its own C methods the same way.
 pub fn source_location(
     snap: Option<&Arc<MethodMeta>>,
+    recv: Option<&RubyValue>,
     class: ClassId,
     kind: MethodKind,
     name: Symbol,
 ) -> RubyValue {
-    let Some((file, line)) = source_pair(snap, class, kind, name) else {
+    let Some((file, line)) = source_pair(snap, recv, class, kind, name) else {
         return RubyValue::Nil;
     };
     RubyValue::Array(crate::array_new(vec![
@@ -551,10 +576,16 @@ pub fn source_location(
 /// wants, so `Method#to_proc` can carry its method's location.
 pub(crate) fn source_pair(
     snap: Option<&Arc<MethodMeta>>,
+    recv: Option<&RubyValue>,
     class: ClassId,
     kind: MethodKind,
     name: Symbol,
 ) -> Option<(&'static str, u32)> {
+    // A per-object singleton shadows whatever the object's class says, and
+    // lives in its own table -- the same precedence `descriptor_of` applies.
+    if let Some(m) = recv.and_then(|r| singleton_meta(r, name)) {
+        return m.source;
+    }
     match snap {
         Some(m) => m.source,
         None => lookup(class, kind, name).and_then(|m| m.source),
@@ -744,6 +775,154 @@ mod tests {
         assert_eq!(
             arity_of(&[req("a"), (ParamKind::Block, Some("b".into()))]),
             1
+        );
+    }
+
+    /// A proc that knows where it was written, the way a compiled `def` body
+    /// or a `define_method` block arrives.
+    fn located_proc(file: &'static str, line: u32) -> crate::RProc {
+        crate::rproc::ProcBuilder::from_rust(
+            |_recv, _args, _block| Ok(RubyValue::Nil),
+            RubyValue::Nil,
+            -1,
+            false,
+        )
+        .location(file, line)
+        .build()
+    }
+
+    /// A RUNTIME-installed method carries the location of the body it was
+    /// installed from.
+    ///
+    /// `record_runtime_params` held the proc and built its row with
+    /// `source: None`, so every method of a runtime-minted class answered nil
+    /// for `source_location` while its `parameters` and `arity` were right.
+    /// The whole family took this one path: `Class.new { def m; end }`, a
+    /// subclass of one, a `define_method` body, and every method of a
+    /// `Data.define` subclass -- which is why a Data subclass's backtrace
+    /// frame could not be named either.
+    #[test]
+    fn a_runtime_installed_method_records_where_its_body_was_written() {
+        // A REAL class id: `lookup` resolves through the ancestry, so a
+        // synthetic id has no chain to find its own row on.
+        let class = zeo_abi::STRING_CLASS;
+        let name = Symbol::intern("runtime_installed");
+        record_runtime_params(
+            class,
+            MethodKind::Instance,
+            name,
+            &located_proc("mint.rb", 12),
+        );
+        assert_eq!(
+            source_pair(None, None, class, MethodKind::Instance, name),
+            Some(("mint.rb", 12))
+        );
+    }
+
+    /// A body with no location -- a Rust-implemented proc -- records none,
+    /// and the row still answers for `parameters`. `nil` is the right answer
+    /// there, and it is what ruby gives a C-defined method.
+    #[test]
+    fn a_bodiless_proc_records_no_location() {
+        let class = zeo_abi::STRING_CLASS;
+        let name = Symbol::intern("no_location");
+        record_runtime_params(
+            class,
+            MethodKind::Instance,
+            name,
+            &crate::RProc::new(|_| Ok(RubyValue::Nil)),
+        );
+        assert_eq!(
+            source_pair(None, None, class, MethodKind::Instance, name),
+            None
+        );
+    }
+
+    /// A per-object singleton keeps its own row, and that row carries a
+    /// location too. It cannot live in `META`, which is keyed by class: a
+    /// `def obj.m` would then claim to describe every instance of the
+    /// object's class.
+    #[test]
+    fn a_per_object_singleton_records_its_own_location() {
+        let recv = RubyValue::Str(crate::string_new("receiver".to_string()));
+        let key = crate::runtime_meta::value_identity(&recv).expect("a heap value has identity");
+        let name = Symbol::intern("only_on_this_one");
+        record_singleton_params(key, name, &located_proc("singleton.rb", 7));
+        // Asked WITH the receiver it answers; the class-keyed lookup for the
+        // same name does not, which is the separation the table exists for.
+        assert_eq!(
+            source_pair(
+                None,
+                Some(&recv),
+                zeo_abi::STRING_CLASS,
+                MethodKind::Instance,
+                name
+            ),
+            Some(("singleton.rb", 7))
+        );
+        assert_eq!(
+            source_pair(
+                None,
+                None,
+                zeo_abi::STRING_CLASS,
+                MethodKind::Instance,
+                name
+            ),
+            None
+        );
+    }
+
+    /// A per-object singleton SHADOWS the class-keyed row for the same name,
+    /// on the source channel exactly as it already does on the parameter one.
+    #[test]
+    fn a_singleton_row_shadows_the_class_row() {
+        let class = zeo_abi::ARRAY_CLASS;
+        let name = Symbol::intern("shadowed");
+        record_runtime_params(
+            class,
+            MethodKind::Instance,
+            name,
+            &located_proc("class_row.rb", 1),
+        );
+        let recv = RubyValue::Array(crate::array_new(vec![]));
+        let key = crate::runtime_meta::value_identity(&recv).expect("a heap value has identity");
+        record_singleton_params(key, name, &located_proc("singleton_row.rb", 2));
+        assert_eq!(
+            source_pair(None, Some(&recv), class, MethodKind::Instance, name),
+            Some(("singleton_row.rb", 2)),
+            "the object's own row must win"
+        );
+    }
+
+    /// A CAPTURED row wins over the live table -- the `Method` handle
+    /// snapshot. Re-recording the same key must not change what a handle
+    /// taken earlier answers.
+    #[test]
+    fn a_captured_row_outranks_a_later_redefinition() {
+        let class = zeo_abi::HASH_CLASS;
+        let name = Symbol::intern("redefined_later");
+        record_runtime_params(
+            class,
+            MethodKind::Instance,
+            name,
+            &located_proc("first.rb", 3),
+        );
+        let captured = lookup(class, MethodKind::Instance, name).expect("the row was recorded");
+        record_runtime_params(
+            class,
+            MethodKind::Instance,
+            name,
+            &located_proc("second.rb", 9),
+        );
+        assert_eq!(
+            source_pair(Some(&captured), None, class, MethodKind::Instance, name),
+            Some(("first.rb", 3)),
+            "a captured row must not follow the redefinition"
+        );
+        assert_eq!(
+            source_pair(None, None, class, MethodKind::Instance, name),
+            Some(("second.rb", 9)),
+            "and the live table must"
         );
     }
 

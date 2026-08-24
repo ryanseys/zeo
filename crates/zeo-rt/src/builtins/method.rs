@@ -537,7 +537,7 @@ ruby_class! {
         );
         // The proc reports the METHOD's own source location (CRuby's
         // method_to_proc carries the method, and source_location delegates).
-        let b = match crate::method_meta::source_pair(m.meta.as_ref(), m.home, m.kind, m.name) {
+        let b = match crate::method_meta::source_pair(m.meta.as_ref(), Some(&m.recv), m.home, m.kind, m.name) {
             Some((file, line)) => b.location(file, line),
             None => b,
         };
@@ -606,7 +606,7 @@ ruby_class! {
     // `nil` for C-defined methods.
     def "source_location"(recv) {
         let m = recv_method(recv);
-        Ok(crate::method_meta::source_location(m.meta.as_ref(), m.home, m.kind, m.name))
+        Ok(crate::method_meta::source_location(m.meta.as_ref(), Some(&m.recv), m.home, m.kind, m.name))
     }
     // `Method#super_method` -- the same method as the NEXT ancestor up defines
     // it, or `nil` at the end of the chain. The result is re-seated onto that
