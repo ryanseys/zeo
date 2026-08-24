@@ -1219,6 +1219,12 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
                 false => "zeo_rt_runtime_replace_method",
             };
             fx.call(entry, &[cid, nptr, nlen, f_addr]);
+            // The body is only half of a `def`. Its reflection row -- arity,
+            // parameters, source location -- installs at the same position,
+            // or the window keeps answering for the last body written.
+            let meta = fx.em.redef_metas[&(class, scope)];
+            let idx = fx.b.ins().iconst(types::I32, i64::from(meta));
+            fx.call("zeo_rt_install_meta_row", &[idx]);
             Ok(())
         }
         HirNode::DefHook {

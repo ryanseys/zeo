@@ -403,9 +403,10 @@ pub const REG_SINGLETON_SURROGATE: u8 = 12;
 
 /// The BOOT install of the first body of a method with an observable
 /// redefinition timeline: `class` = the owner, `a` = the method name, `f`
-/// = that body's trampoline. It runs before the first statement, so the
-/// window before each reopen's positional re-install dispatches the way
-/// ruby's install-where-it-stands does.
+/// = that body's trampoline, `ids[0]` = its row in [`ProgramDesc::redef_metas`].
+/// It runs before the first statement, so the window before each reopen's
+/// positional re-install dispatches -- and reflects -- the way ruby's
+/// install-where-it-stands does.
 pub const REG_BOOT_REDEF: u8 = 13;
 
 /// One `private_constant` name: `class` = the owner, `a` = the name. The
@@ -508,6 +509,13 @@ pub struct ProgramDesc {
     pub n_vis_rows: usize,
     pub meta_rows: *const MetaRowC,
     pub n_meta_rows: usize,
+    /// One reflection row per BODY of a method with an observable
+    /// redefinition timeline, in the order `analyze::redefs` compiled them.
+    /// They are NOT registered at boot: the row for the position that is
+    /// live installs itself, from [`REG_BOOT_REDEF`] for the first body and
+    /// from the positional install for each later one.
+    pub redef_metas: *const MetaRowC,
+    pub n_redef_metas: usize,
     pub reg_rows: *const RegRow,
     pub n_reg_rows: usize,
     pub units: *const UnitRow,

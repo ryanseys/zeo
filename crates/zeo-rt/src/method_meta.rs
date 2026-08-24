@@ -210,6 +210,26 @@ impl MetaRow {
     }
 }
 
+/// The reflection rows of every BODY of a redefined method, held UNregistered
+/// -- see [`install_redef_meta`].
+static REDEF_METAS: std::sync::OnceLock<&'static [MetaRow]> = std::sync::OnceLock::new();
+
+/// Hand the redefinition-timeline rows over. They are not registered here:
+/// each one is registered by the install at its own body's position.
+pub fn seed_redef_metas(rows: &'static [MetaRow]) {
+    let _ = REDEF_METAS.set(rows);
+}
+
+/// Register one redefinition-timeline row, at the position its body installs
+/// at. Out of range is impossible from emitted code (the index comes from the
+/// same table) and is ignored rather than trusted.
+pub fn install_redef_meta(idx: usize) {
+    let Some(r) = REDEF_METAS.get().and_then(|rows| rows.get(idx)) else {
+        return;
+    };
+    register_meta_rows(std::slice::from_ref(r));
+}
+
 pub fn register_meta_rows(rows: &'static [MetaRow]) {
     let mut map = META.write();
     for r in rows {

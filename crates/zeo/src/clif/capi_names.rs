@@ -523,6 +523,11 @@ pub const CAPI: &[CapiSig] = &[
         ret: None,
     },
     CapiSig {
+        name: "zeo_rt_install_meta_row",
+        params: &[U32],
+        ret: None,
+    },
+    CapiSig {
         name: "zeo_rt_int_add_slow",
         params: &[Ptr, Ptr, Ptr],
         ret: None,

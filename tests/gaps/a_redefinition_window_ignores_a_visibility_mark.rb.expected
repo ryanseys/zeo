@@ -1,7 +1,3 @@
-[0, "r1"]
-[1, "r2"]
-[0, "cr1"]
-[1, "cr2"]
 ["NoMethodError", "v1"]
 "v2"
 ["NoMethodError", "cv1"]

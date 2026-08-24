@@ -948,8 +948,13 @@ pub(crate) struct MetaRowSpec {
     pub aliased_from: String,
 }
 
-/// The `zeo_meta_rows` table + its one shared parameter array.
-fn define_meta_rows(em: &mut Emitter, rows: &[MetaRowSpec]) -> Result<Option<DataId>, String> {
+/// A reflection-row table + its one shared parameter array. `sym` names the
+/// pair, so the redefinition-timeline rows can live in a table of their own.
+fn define_meta_rows(
+    em: &mut Emitter,
+    rows: &[MetaRowSpec],
+    sym: &str,
+) -> Result<Option<DataId>, String> {
     if rows.is_empty() {
         return Ok(None);
     }
@@ -957,8 +962,8 @@ fn define_meta_rows(em: &mut Emitter, rows: &[MetaRowSpec]) -> Result<Option<Dat
     let psize = std::mem::size_of::<ParamC>();
     let id = em
         .module
-        .declare_data("zeo_meta_rows", Linkage::Local, false, false)
-        .map_err(|e| format!("declaring zeo_meta_rows: {e}"))?;
+        .declare_data(sym, Linkage::Local, false, false)
+        .map_err(|e| format!("declaring {sym}: {e}"))?;
     let names: Vec<u32> = rows
         .iter()
         .map(|r| em.intern_rodata(r.name.as_bytes()))
@@ -991,8 +996,8 @@ fn define_meta_rows(em: &mut Emitter, rows: &[MetaRowSpec]) -> Result<Option<Dat
     } else {
         let pid = em
             .module
-            .declare_data("zeo_meta_params", Linkage::Local, false, false)
-            .map_err(|e| format!("declaring zeo_meta_params: {e}"))?;
+            .declare_data(&format!("{sym}_params"), Linkage::Local, false, false)
+            .map_err(|e| format!("declaring {sym}_params: {e}"))?;
         let mut pd = DataDescription::new();
         let mut pbytes = vec![0u8; psize * n_params];
         let mut i = 0usize;
@@ -1072,7 +1077,7 @@ fn define_meta_rows(em: &mut Emitter, rows: &[MetaRowSpec]) -> Result<Option<Dat
     }
     em.module
         .define_data(id, &data)
-        .map_err(|e| format!("defining zeo_meta_rows: {e}"))?;
+        .map_err(|e| format!("defining {sym}: {e}"))?;
     Ok(Some(id))
 }
 
@@ -1136,6 +1141,7 @@ pub(crate) fn define_desc(
     reg_rows: &[RegRowSpec],
     foreign_rows: &[(u32, String)],
     meta_rows: &[MetaRowSpec],
+    redef_metas: &[MetaRowSpec],
     unit_rows: &[(String, FuncId)],
 ) -> Result<DataId, String> {
     let vm_table = define_vm_rows(em, vm_rows)?;
@@ -1145,7 +1151,8 @@ pub(crate) fn define_desc(
     let cm_table = define_cm_rows(em, cm_rows)?;
     let reg_table = define_reg_rows(em, reg_rows)?;
     let foreign_table = define_foreign_rows(em, foreign_rows)?;
-    let meta_table = define_meta_rows(em, meta_rows)?;
+    let meta_table = define_meta_rows(em, meta_rows, "zeo_meta_rows")?;
+    let redef_meta_table = define_meta_rows(em, redef_metas, "zeo_redef_metas")?;
     let unit_table = define_unit_rows(em, unit_rows)?;
     let source_table = define_source_rows(em, &analyzed.compiler.hir.embedded_sources)?;
     let (cov_table, n_cov) = define_cov_rows(em, analyzed)?;
@@ -1266,6 +1273,11 @@ pub(crate) fn define_desc(
     );
     put_u64(
         &mut buf,
+        std::mem::offset_of!(ProgramDesc, n_redef_metas),
+        redef_metas.len() as u64,
+    );
+    put_u64(
+        &mut buf,
         std::mem::offset_of!(ProgramDesc, n_units),
         unit_rows.len() as u64,
     );
@@ -1350,6 +1362,10 @@ pub(crate) fn define_desc(
     if let Some(mt) = meta_table {
         let gv = em.module.declare_data_in_data(mt, &mut desc);
         desc.write_data_addr(std::mem::offset_of!(ProgramDesc, meta_rows) as u32, gv, 0);
+    }
+    if let Some(mt) = redef_meta_table {
+        let gv = em.module.declare_data_in_data(mt, &mut desc);
+        desc.write_data_addr(std::mem::offset_of!(ProgramDesc, redef_metas) as u32, gv, 0);
     }
     if let Some(rt) = reg_table {
         let gv = em.module.declare_data_in_data(rt, &mut desc);

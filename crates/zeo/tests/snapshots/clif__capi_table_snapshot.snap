@@ -1,6 +1,5 @@
 ---
 source: crates/zeo/tests/clif.rs
-assertion_line: 158
 expression: rendered
 ---
 zeo_rt_alias_in_default_definee ([Ptr, Ptr, Ptr, Ptr, Ptr]) -> Some(I32)
@@ -100,6 +99,7 @@ zeo_rt_hash_new ([Ptr]) -> None
 zeo_rt_hash_set ([Ptr, Ptr, Ptr]) -> Some(I32)
 zeo_rt_home_pop ([]) -> None
 zeo_rt_home_push ([]) -> None
+zeo_rt_install_meta_row ([U32]) -> None
 zeo_rt_int_add_slow ([Ptr, Ptr, Ptr]) -> None
 zeo_rt_int_digits ([U8, Ptr, Ptr, Ptr]) -> None
 zeo_rt_int_div ([Ptr, Ptr, Ptr]) -> None

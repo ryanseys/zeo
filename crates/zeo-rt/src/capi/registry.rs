@@ -140,6 +140,10 @@ pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
     // rustc's `main` puts its builtin registrations: a row cannot be defined
     // on a class the registry has not seen, and a chain patch must be in
     // place before anything walks it.
+    // A boot redef's reflection row cannot be installed here: the meta table
+    // it belongs to is registered below, and would overwrite it with the LAST
+    // body's row. Collected and applied after.
+    let mut boot_metas: Vec<u32> = Vec::new();
     for r in unsafe { rows(desc.reg_rows, desc.n_reg_rows) } {
         let ids = || {
             unsafe { rows(r.ids, r.n_ids) }
@@ -224,6 +228,9 @@ pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
                     0 => crate::runtime_meta::runtime_replace_method_c(id, name, f),
                     _ => crate::runtime_meta::runtime_replace_class_method_c(id, name, f),
                 }
+                if r.n_ids > 0 {
+                    boot_metas.push(unsafe { *r.ids });
+                }
             }
             abi::REG_SINGLETON_SURROGATE => {
                 let owner = unsafe { *r.ids };
@@ -271,37 +278,51 @@ pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
     registry.mark_visibility_rows(&vis);
     crate::dispatch::install_class_registry(registry);
 
+    let meta_row = |m: &abi::MetaRowC| {
+        let mut row = if m.singleton != 0 {
+            MetaRow::sing(m.class, text(m.name))
+        } else {
+            MetaRow::inst(m.class, text(m.name))
+        };
+        if m.n_params > 0 {
+            let params: &'static [(ParamKind, Option<&'static str>)] = Vec::leak(
+                unsafe { rows(m.params, m.n_params) }
+                    .iter()
+                    .map(|p| {
+                        let name = (p.name.len > 0).then(|| text(p.name));
+                        (param_kind(p.kind), name)
+                    })
+                    .collect(),
+            );
+            row = row.params(params);
+        }
+        if m.file.len > 0 {
+            row = row.at(text(m.file), m.line);
+        }
+        if m.aliased_from.len > 0 {
+            row = row.alias(text(m.aliased_from));
+        }
+        row
+    };
     let metas: Vec<MetaRow> = unsafe { rows(desc.meta_rows, desc.n_meta_rows) }
         .iter()
-        .map(|m| {
-            let mut row = if m.singleton != 0 {
-                MetaRow::sing(m.class, text(m.name))
-            } else {
-                MetaRow::inst(m.class, text(m.name))
-            };
-            if m.n_params > 0 {
-                let params: &'static [(ParamKind, Option<&'static str>)] = Vec::leak(
-                    unsafe { rows(m.params, m.n_params) }
-                        .iter()
-                        .map(|p| {
-                            let name = (p.name.len > 0).then(|| text(p.name));
-                            (param_kind(p.kind), name)
-                        })
-                        .collect(),
-                );
-                row = row.params(params);
-            }
-            if m.file.len > 0 {
-                row = row.at(text(m.file), m.line);
-            }
-            if m.aliased_from.len > 0 {
-                row = row.alias(text(m.aliased_from));
-            }
-            row
-        })
+        .map(meta_row)
         .collect();
     if !metas.is_empty() {
         crate::method_meta::register_meta_rows(Vec::leak(metas));
+    }
+    // The redefinition-timeline rows are seeded UNregistered: each is
+    // registered by the install at its own body's position, and the first
+    // body's install already ran above.
+    if desc.n_redef_metas > 0 {
+        let redefs: Vec<MetaRow> = unsafe { rows(desc.redef_metas, desc.n_redef_metas) }
+            .iter()
+            .map(meta_row)
+            .collect();
+        crate::method_meta::seed_redef_metas(Vec::leak(redefs));
+        for idx in boot_metas {
+            crate::method_meta::install_redef_meta(idx as usize);
+        }
     }
 
     crate::bootstrap::install_core_constants();

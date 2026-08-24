@@ -213,8 +213,13 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
     );
     // Populated BEFORE any body is defined: a class body's
     // `MethodRedefine` statement reads it while its own fn is built.
-    for m in &redefs {
+    for (i, m) in redefs.iter().enumerate() {
         em.redef_tramps.insert((m.owner.0, m.scope.0), m.tramp);
+        // Each body's reflection row rides the same key. It is the half of a
+        // redefinition timeline the overlay did not carry: the body installed
+        // where it stands, and `#arity`/`#parameters`/`#source_location`
+        // still answering from the LAST one.
+        em.redef_metas.insert((m.owner.0, m.scope.0), i as u32);
     }
     for def in &defs {
         let func = em.methods[&def.name].body;
@@ -657,7 +662,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
                 a: name.clone(),
                 b: String::new(),
                 f: Some(em.redef_tramps[&(*class, sid.0)]),
-                ids: vec![],
+                ids: vec![em.redef_metas[&(*class, sid.0)]],
                 // The channel: a `def self.x` installs on the class-method
                 // side of the overlay, whose row is a different map.
                 flag: u8::from(*singleton),
@@ -791,6 +796,22 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             m.alias_of.as_deref(),
         ));
     }
+    // One row per BODY of a redefined method, in `redefs` order. They are not
+    // registered at boot -- the position that is live installs its own.
+    let redef_metas: Vec<statics::MetaRowSpec> = redefs
+        .iter()
+        .map(|m| {
+            meta_row(
+                analyzed,
+                m.owner.0,
+                m.singleton,
+                &m.name,
+                &m.hir_params,
+                m.node,
+                None,
+            )
+        })
+        .collect();
     // A re-scoped inherited method reflects on THIS class: after `private
     // :x`, ruby answers the subclass for `instance_method(:x).owner` while
     // still running the ancestor's body (rustc's `zsuper` meta pass).
@@ -846,6 +867,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
         &reg_rows,
         &foreign,
         &meta_rows,
+        &redef_metas,
         &unit_rows,
     )?;
     let main = define_main(em, desc)?;
@@ -883,6 +905,10 @@ pub(crate) struct Emitter {
     /// `(class, scope)` -> the trampoline that installs that body, for the
     /// boot install and each positional `MethodRedefine`.
     pub redef_tramps: HashMap<(u32, u32), FuncId>,
+    /// The same key's row in `ProgramDesc::redef_metas` -- what the install
+    /// at this body's document position registers so reflection answers the
+    /// body that is live rather than the last one written.
+    pub redef_metas: HashMap<(u32, u32), u32>,
     fn_index: u32,
     /// Regexp-literal site ids -- one cached frozen object per site
     /// (`zeo_rt_regexp_lit`), the rustc per-site `RegexpSite` twin.
@@ -1016,6 +1042,7 @@ impl Emitter {
             methods: HashMap::new(),
             class_bodies: HashMap::new(),
             redef_tramps: HashMap::new(),
+            redef_metas: HashMap::new(),
             fn_index: 0,
             regexp_sites: 0,
             ffi_sites: 0,

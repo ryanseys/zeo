@@ -589,6 +589,18 @@ pub unsafe extern "C" fn zeo_rt_runtime_replace_class_method(
     crate::runtime_meta::runtime_replace_class_method_c(ClassId(class), Symbol::intern(name), f);
 }
 
+/// One body's reflection row, registered at the position that body
+/// installs at. `idx` names a row in `ProgramDesc::redef_metas`.
+///
+/// The overlay carried a redefinition timeline's BODIES and nothing beside
+/// them, so `#arity`, `#parameters` and `#source_location` answered the last
+/// `def` from the program's first line. They are compile-time tables keyed by
+/// `(class, name)` with no position; this is the position.
+#[unsafe(no_mangle)]
+pub extern "C" fn zeo_rt_install_meta_row(idx: u32) {
+    crate::method_meta::install_redef_meta(idx as usize);
+}
+
 /// `Foo::NAME`'s lenient half (`||=`'s read, `defined?`'s probe): an
 /// absent constant -- or a scope class the compiler never registered --
 /// is `nil`, never a raise.
