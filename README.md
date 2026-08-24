@@ -446,7 +446,6 @@ docs/        BINARY_SIZE, CLIF, COMPATIBILITY, EVAL, EXTENSIONS,
 tests/       example goldens, the spinel corpus, the gaps tracker, gemtests drivers
 gems/        66 bundled gems (upstream.rb pins the git-tracked ones)
 bench/       61 benchmark programs; read bench/README.md
-conformance/ what a gem-probe sweep wrote (gitignored; measurement, not source)
 vendor/      rubygems and fetched test trees (gitignored)
 tools/       the Ruby toolchain: `tools/zeo-dev <command>`, plus table generators
 Dockerfile   the linux verification image (`tools/zeo-dev linux`)

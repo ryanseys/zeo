@@ -15,6 +15,7 @@
 //! guesses.
 
 pub mod alloc;
+pub mod api;
 pub mod builtins;
 pub mod call;
 pub mod collection;
@@ -47,19 +48,12 @@ pub mod value;
 
 #[cfg(test)]
 mod tests {
-    /// `conformance/cext-api.tsv` is the ledger the stub file is generated
-    /// from, and the two are checked against each other in CI by
-    /// `zeo-dev cext api --check`. What that check cannot see is whether the
-    /// ledger still describes the runtime, so these do.
-    fn ledger() -> Vec<(String, String, String)> {
-        let text = include_str!("../../../../conformance/cext-api.tsv");
-        text.lines()
-            .filter(|l| !l.starts_with('#') && !l.starts_with("symbol\t"))
-            .filter_map(|l| {
-                let mut f = l.split('\t');
-                Some((f.next()?.into(), f.next()?.into(), f.next()?.into()))
-            })
-            .collect()
+    /// `api::API` is the census the stub file is generated from, and the two
+    /// are checked against each other in CI by `zeo-dev cext api --check`.
+    /// What that check cannot see is whether the census still describes the
+    /// RUNTIME, so these do.
+    fn ledger() -> &'static [(&'static str, &'static str, &'static str, &'static str)] {
+        super::api::API
     }
 
     /// One `VALUE` global per row the ledger calls a variable, and every one
@@ -67,10 +61,10 @@ mod tests {
     /// error in a gem, with a message naming a symbol and no file or line.
     #[test]
     fn every_value_global_the_ledger_names_is_a_real_symbol() {
-        let want: Vec<String> = ledger()
-            .into_iter()
-            .filter(|(_, kind, _)| kind == "var")
-            .map(|(name, _, _)| name)
+        let want: Vec<&str> = ledger()
+            .iter()
+            .filter(|(_, kind, _, _)| *kind == "var")
+            .map(|(name, _, _, _)| *name)
             .collect();
         assert!(!want.is_empty(), "the ledger has no variables at all");
         assert_eq!(
@@ -101,20 +95,46 @@ mod tests {
         }
     }
 
+    /// Every forwarded `rb_*` is a symbol the runtime EXPORTS, not a stub.
+    ///
+    /// `forward.rs` implements each one, so the census has to agree -- a row
+    /// the census still calls `stub` would mean two files define the same
+    /// symbol, or that a real implementation is being reported as missing.
+    #[test]
+    fn every_forwarded_entry_is_implemented() {
+        let forwarded = super::forward::FORWARDED;
+        assert!(!forwarded.is_empty(), "the forwarding table is empty");
+        let mut sorted: Vec<&str> = forwarded.iter().map(|(n, _, _, _)| *n).collect();
+        let unsorted = sorted.clone();
+        sorted.sort_unstable();
+        assert_eq!(sorted, unsorted, "FORWARDED must stay sorted by symbol");
+        let mut bad: Vec<String> = Vec::new();
+        for (name, klass, meth, _) in forwarded {
+            match ledger().iter().find(|(n, _, _, _)| n == name) {
+                None => bad.push(format!("{name} ({klass}#{meth}) is in no census row")),
+                Some((_, _, status, _)) if *status != "zeo" => {
+                    bad.push(format!("{name} forwards but the census says {status:?}"));
+                }
+                Some(_) => {}
+            }
+        }
+        assert!(bad.is_empty(), "{bad:?}");
+    }
+
     /// The whole point of the stub file: every symbol a gem can reference
     /// resolves. A row is implemented by the runtime, stubbed, or a `VALUE`
     /// global -- never none of the three, because none of the three is a
     /// link error in a gem.
     #[test]
     fn every_ledger_row_is_answered() {
-        for (name, kind, status) in ledger() {
+        for (name, kind, status, _) in ledger() {
             assert!(
-                matches!(status.as_str(), "zeo" | "stub" | "refused" | "global"),
+                matches!(*status, "zeo" | "stub" | "refused" | "global"),
                 "{name} ({kind}) has status {status:?}, which resolves to nothing"
             );
             assert_eq!(
-                status == "global",
-                kind == "var",
+                *status == "global",
+                *kind == "var",
                 "{name}: only a variable can have the `global` status"
             );
         }

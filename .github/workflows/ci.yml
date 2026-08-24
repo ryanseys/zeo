@@ -229,7 +229,7 @@ jobs:
       # would be invisible in review among 194 files, so the sum is checked.
       - run: tools/zeo-dev cext sync --check
 
-      # `conformance/cext-api.tsv` and `cext/stubs.rs` are both generated from
+      # `cext/api.rs` and `cext/stubs.rs` are both generated from
       # clang's AST of those headers, so a re-vendor moves them and a new
       # `rb_*` implementation retires a stub. Stale either way means a gem
       # fails to LINK, with a message naming a symbol and no file or line.

@@ -113,7 +113,7 @@ the build.
 
 ### The C API surface
 
-`conformance/cext-api.tsv` is the ledger: every symbol an extension can link
+`crates/zeo-rt/src/cext/api.rs` is the census: every symbol an extension can link
 against, read off clang's AST of every public header. 33 of them are
 REFUSALS, not gaps, and each raises with its reason:
 

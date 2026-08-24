@@ -241,3 +241,59 @@ fn a_program_with_its_own_load_dead_strips_the_compiler() {
          the whole set an eval-capable one takes"
     );
 }
+
+/// A `require` inside a method body, of a feature this compile emitted as a
+/// UNIT, dead-strips the compiler too.
+///
+/// The call stays a runtime `Kernel#require` on purpose -- CRuby loads such a
+/// file when the method runs -- and `dynamic_require` asks
+/// `features::load_feature` before the on-disk tier that needs a compiler. So
+/// the unit answers it, and the 14 MB is not owed. It used to be: the
+/// predicate matched the call's NAME, and this program linked Cranelift and
+/// all 170 class tables.
+///
+/// The two shapes that still carry the compiler are the point of the second
+/// half: a feature that resolved to NO unit, and a COMPUTED target. Both are
+/// correct, and asserting them is what keeps the narrowing exact rather than
+/// optimistic.
+#[test]
+fn a_deferred_require_of_a_compiled_unit_dead_strips_the_compiler() {
+    let plain = link_program("puts :ok\n");
+    let baseline = text_bytes(&plain);
+    let plain_tables = ctable_symbols(&plain);
+    let _ = std::fs::remove_file(&plain);
+
+    let bin = link_program("def lazy = require \"prettyprint\"\nputs lazy\n");
+    let program = text_bytes(&bin);
+    let tables = ctable_symbols(&bin);
+    let _ = std::fs::remove_file(&bin);
+
+    let ratio = program as f64 / baseline as f64;
+    assert!(
+        ratio < 1.20,
+        "a deferred require of a compiled-in unit has {program} bytes of text, \
+         {ratio:.2}x an eval-free program's {baseline} -- it is carrying the \
+         compiler. See `analyze::compiled_in_requires`."
+    );
+    assert_eq!(
+        tables, plain_tables,
+        "it should name the same class tables as an eval-free program"
+    );
+
+    // A feature no unit answers, and a COMPUTED target: both reach the
+    // on-disk tier, so both must still carry the compiler.
+    for src in [
+        "def lazy\n  require \"no_such_feature_anywhere\"\nrescue LoadError\n  :no\nend\nputs lazy\n",
+        "def lazy(n)\n  require n\nrescue LoadError\n  :no\nend\nputs lazy(\"prettyprint\")\n",
+    ] {
+        let bin = link_program(src);
+        let program = text_bytes(&bin);
+        let _ = std::fs::remove_file(&bin);
+        assert!(
+            program as f64 / baseline as f64 > 1.50,
+            "`{}` has {program} bytes of text against {baseline} -- it needs \
+             the compiler and must not have been narrowed",
+            src.lines().next().unwrap_or(src)
+        );
+    }
+}

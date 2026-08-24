@@ -354,7 +354,7 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
     // and the main scope's just computed, mark the typed-receiver iterator
     // sites codegen can fuse into native loops.
     mark_inline_iter_sites(compiler, &main_statements, &main_local_types);
-    compiler.runtime_eval = narrow_runtime_eval(compiler, &main_statements);
+    compiler.runtime_eval = narrow_runtime_eval(compiler, &main_statements, &feature_units);
 
     Ok(AnalyzedParts {
         main_statements,
@@ -1137,7 +1137,11 @@ mod class_value_tests {
 /// Only receiverless calls are narrowed. `Binding#eval` is a real eval on an
 /// explicit receiver, and no static rule separates it from `obj.eval` on a
 /// user object without types -- so those keep the conservative answer.
-fn narrow_runtime_eval(compiler: &Compiler, main_statements: &[NodeId]) -> bool {
+fn narrow_runtime_eval(
+    compiler: &Compiler,
+    main_statements: &[NodeId],
+    units: &[(Vec<String>, String, Vec<NodeId>)],
+) -> bool {
     let hir = &compiler.hir;
     let mut pending: crate::compiler::FSet<NodeId> = crate::compiler::FSet::default();
     // An explicit receiver is never narrowed -- `Binding#eval` is real -- so
@@ -1146,6 +1150,9 @@ fn narrow_runtime_eval(compiler: &Compiler, main_statements: &[NodeId]) -> bool 
         if hir.eval_shaped(id).is_some() {
             pending.insert(id);
         }
+    }
+    for id in compiled_in_requires(compiler, units) {
+        pending.remove(&id);
     }
     if pending.is_empty() {
         return false;
@@ -1181,6 +1188,51 @@ fn narrow_runtime_eval(compiler: &Compiler, main_statements: &[NodeId]) -> bool 
         }
     }
     !pending.is_empty()
+}
+
+/// Every `require` node whose literal feature this compile already emitted as
+/// a unit -- so the call reaches `zeo_rt::features::load_feature`, which runs
+/// before the on-disk tier that needs a compiler.
+///
+/// Only a plain `require` with a LITERAL argument qualifies, and only when the
+/// name matches a unit exactly. `require_relative` resolves against the
+/// calling file's directory, which is a run-time fact; `load` re-executes and
+/// asks DISK first, so its unit is not the row it takes. Both keep the
+/// conservative answer.
+fn compiled_in_requires(
+    compiler: &Compiler,
+    units: &[(Vec<String>, String, Vec<NodeId>)],
+) -> Vec<NodeId> {
+    let hir = &compiler.hir;
+    if units.is_empty() {
+        return Vec::new();
+    }
+    let mut names: crate::compiler::FSet<&str> = crate::compiler::FSet::default();
+    for (spellings, absolute, _) in units {
+        names.insert(absolute.as_str());
+        names.extend(spellings.iter().map(String::as_str));
+    }
+    hir.node_ids()
+        .filter(|&id| {
+            let HirNode::Call {
+                name,
+                receiver: None,
+                args,
+                ..
+            } = &hir[id]
+            else {
+                return false;
+            };
+            if name != "require" {
+                return false;
+            }
+            let [crate::hir::ArrayElem::Single(arg)] = args[..] else {
+                return false;
+            };
+            crate::lower::eval_splice::literal_string_text(hir, arg)
+                .is_some_and(|f| names.contains(f.strip_suffix(".rb").unwrap_or(&f)))
+        })
+        .collect()
 }
 
 /// Drop from `pending` every receiverless eval-shaped call under `id` that a

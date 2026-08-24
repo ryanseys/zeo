@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 module ZeoDev
-  # Reading and writing the committed ledgers under `conformance/` and
+  # Reading and writing the generated tables under `crates/` and
   # `bench/`.
   #
   # Every one of them is compared byte for byte by a test or by `--check`, so

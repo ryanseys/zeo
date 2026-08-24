@@ -26,7 +26,7 @@ module ZeoDev
     #   resolve  name [version]     -> an exact version
     #   fetch    the .gem           -> vendor/gems/<name>/   (cached)
     #   probe    require "<entry>"  -> a stage and an outcome
-    #   record   the verdict        -> conformance/gem-probe.tsv
+    #   record   the verdict        -> measurements/gem-probe.tsv
     #
     # Probing an unpacked tree needs no network and is deterministic, so a
     # ledger row reproduces from its recorded version alone.
@@ -44,7 +44,7 @@ module ZeoDev
     # It is the output of a sweep, and a sweep is run deliberately.
     class GemProbe < Cli
       REGISTRY = "https://rubygems.org"
-      LEDGER = "conformance/gem-probe.tsv"
+      LEDGER = "measurements/gem-probe.tsv"
 
       # Long enough that a rails-scale require graph finishes -- those take
       # minutes in the front end alone -- and short enough that a gem which
@@ -65,7 +65,7 @@ module ZeoDev
         usage: zeo-dev gem-probe [<name> [version]] [selection] [options]
 
         Compiles real rubygems with zeo and records how far each one got in
-        conformance/gem-probe.tsv. Two columns carry the verdict and are read
+        measurements/gem-probe.tsv. Two columns carry the verdict and are read
         together: `stage` is the rung, `outcome` is what happened there.
 
         selection (at least one; they add up):

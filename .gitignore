@@ -7,16 +7,13 @@ zeo-gems.json
 # Vendored upstream sources for the bundler north-star (not part of the build)
 /vendor/
 
-# Measurement, not source. `conformance/` holds what a sweep WROTE -- the
-# gem-probe ledger is 21MB and 195,778 rows -- and none of it is an input to
-# a build or a test. A refreshed ledger is attached to a GitHub release by
-# hand. See docs/GEM_TESTING.md.
-conformance/
-
-# ...except the C API census, which is not measurement. `cext/stubs.rs` is
-# generated from it, a unit test reads it back, and CI checks both -- so a
-# fresh clone that could not see it would fail to build.
-!conformance/cext-api.tsv
+# Measurement, not source: what a gem-probe sweep WROTE. The ledger is 21MB
+# and 195,778 rows, and nothing builds or tests against it -- a refreshed one
+# is attached to a GitHub release by hand. See docs/GEM_TESTING.md.
+#
+# Anything that IS an input lives in the tree as generated Rust instead
+# (`cext/api.rs`, `cext/forward.rs`), so a fresh clone builds.
+/measurements/
 
 # Publish-time artifacts staged by `tools/zeo-dev stage-publish`; never committed.
 crates/zeo/gems.pregen.tar.gz

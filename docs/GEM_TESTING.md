@@ -28,7 +28,7 @@ Four steps, and only the first touches the network:
 resolve  name [version]     -> an exact version
 fetch    the .gem           -> vendor/gems/<name>/   (cached)
 probe    require "<entry>"  -> a stage and an outcome
-record   the verdict        -> conformance/gem-probe.tsv
+record   the verdict        -> measurements/gem-probe.tsv
 ```
 
 Probing an unpacked tree needs no network and is deterministic, so a ledger
@@ -157,7 +157,7 @@ nothing more.
 
 ## The ledger is output, not source
 
-`conformance/` is not in git. The ledger is 21 MB and 195,778 rows of
+`measurements/` is not in git. The ledger is 21 MB and 195,778 rows of
 measurement, which is not an input to any build or test. A sweep writes it
 locally; a refreshed one is attached to a GitHub release by hand.
 
@@ -167,10 +167,10 @@ A sweep is a deliberate act, run when someone wants the number.
 
 ```console
 # how many gems compile, in a ledger you have
-$ awk -F'\t' 'NR>1 && $4=="ok"' conformance/gem-probe.tsv | wc -l
+$ awk -F'\t' 'NR>1 && $4=="ok"' measurements/gem-probe.tsv | wc -l
 
 # the most common gap, by message
-$ awk -F'\t' '$4=="lowering-gap" {print $7}' conformance/gem-probe.tsv \
+$ awk -F'\t' '$4=="lowering-gap" {print $7}' measurements/gem-probe.tsv \
     | sort | uniq -c | sort -rn | head -20
 ```
 
