@@ -7,11 +7,15 @@
 
 use std::path::PathBuf;
 
-/// `libzeo.a` beside the running `zeo` binary -- the staticlib half of
-/// this crate's own build (see `[lib] crate-type` in Cargo.toml), which an
-/// installed payload places beside the executable too. Missing means the
-/// tree is half-built: the fix is `cargo build`, never shelling cargo from
-/// here (the same purity rule `build_binary` keeps).
+/// `libzeo.a` -- the staticlib half of this crate's own build (see `[lib]
+/// crate-type` in Cargo.toml), found wherever this zeo's install tier put it.
+///
+/// Four tiers, in the order they are probed: beside the binary (the dev
+/// tree), one level up (a cargo TEST binary, which lives in `deps/`), the
+/// payload of a release tarball or platform gem, and -- for a `cargo
+/// install`ed zeo, which has no archive anywhere -- one built on demand into
+/// the cache. In the dev tree, missing means the tree is half-built and the
+/// fix is `cargo build`.
 ///
 /// No mtime staleness check: the archive and the binary come out of ONE
 /// cargo build with the archive written first, so "archive older than the
@@ -40,6 +44,11 @@ pub fn runtime_archive() -> Result<PathBuf, String> {
             return Ok(archive);
         }
     }
+    // A `cargo install`ed zeo: nothing put an archive anywhere, so build one
+    // once into the cache. See `registry_archive`.
+    if let crate::home::ZeoHome::Registry { cache } = crate::home::zeo_home() {
+        return registry_archive(cache);
+    }
     // An installed zeo: the archive rides in the payload rather than beside
     // the binary, because `<prefix>/bin` is for executables.
     if let crate::home::ZeoHome::Installed { payload, .. } = crate::home::zeo_home() {
@@ -59,6 +68,85 @@ pub fn runtime_archive() -> Result<PathBuf, String> {
          `libzeo.a` is built beside the `zeo` binary)",
         archive.display()
     ))
+}
+
+/// `libzeo.a` for a `cargo install`ed zeo, built once into the per-user cache.
+///
+/// `cargo install` copies BINARIES and nothing else. The staticlib is built
+/// during the install -- it is a crate-type of the same lib the binary links
+/// -- and then discarded with the temporary target directory, so an installed
+/// zeo has no archive and cannot link a program at all. crates.io cannot carry
+/// one either: the archive is 78 MB against a 10 MB crate limit.
+///
+/// So it is materialized on first `zeo -o`, through an anchor workspace that
+/// depends on this exact `zeo` version. `cargo build -p zeo` inside it builds
+/// the dependency's lib target with every crate-type it declares, `libzeo.a`
+/// included -- verified, not assumed.
+///
+/// This is the ONE place zeo shells out to cargo, and it is deliberate: the
+/// alternative is an install that silently cannot compile. Every other tier
+/// (dev tree, release tarball, platform gem) ships an archive and never
+/// reaches here. Nothing is fetched that `cargo install zeo` did not already
+/// download, so the build runs offline against the local registry cache.
+fn registry_archive(cache: &std::path::Path) -> Result<PathBuf, String> {
+    let version = env!("CARGO_PKG_VERSION");
+    let dest = cache.join(format!("runtime-{version}")).join("libzeo.a");
+    if dest.is_file() {
+        return Ok(dest);
+    }
+    let anchor = cache.join(format!(".runtime-build-{version}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&anchor);
+    std::fs::create_dir_all(anchor.join("src"))
+        .map_err(|e| format!("creating {}: {e}", anchor.display()))?;
+    std::fs::write(
+        anchor.join("Cargo.toml"),
+        format!(
+            "[package]\nname = \"zeo-runtime-anchor\"\nversion = \"0.0.0\"\n\
+             edition = \"2021\"\n\n[dependencies]\nzeo = \"={version}\"\n\n[workspace]\n"
+        ),
+    )
+    .map_err(|e| format!("writing the anchor manifest: {e}"))?;
+    std::fs::write(anchor.join("src/main.rs"), "fn main() {}\n")
+        .map_err(|e| format!("writing the anchor main: {e}"))?;
+
+    // It takes minutes. A compile that looks hung is worse than a slow one.
+    eprintln!("zeo: building the runtime archive for {version} (once, a few minutes)...");
+    let out = std::process::Command::new("cargo")
+        .args(["build", "--release", "-p", "zeo"])
+        .current_dir(&anchor)
+        .output()
+        .map_err(|e| {
+            format!(
+                "zeo was installed with `cargo install`, which ships no runtime \
+                 archive, and building one needs cargo on PATH: {e}"
+            )
+        })?;
+    if !out.status.success() {
+        let _ = std::fs::remove_dir_all(&anchor);
+        return Err(format!(
+            "building the runtime archive failed:\n{}",
+            link_diagnostics(&String::from_utf8_lossy(&out.stderr))
+        ));
+    }
+    let built = anchor.join("target").join("release").join("libzeo.a");
+    if !built.is_file() {
+        let _ = std::fs::remove_dir_all(&anchor);
+        return Err(format!(
+            "the runtime build produced no {} -- this is a zeo bug",
+            built.display()
+        ));
+    }
+    // Publish through a rename so a concurrent first run never reads a
+    // half-copied archive; last writer wins on identical content.
+    let dir = dest
+        .parent()
+        .expect("the destination always has a parent directory");
+    std::fs::create_dir_all(dir).map_err(|e| format!("creating {}: {e}", dir.display()))?;
+    let staging = dir.join(format!(".libzeo.a.{}", std::process::id()));
+    std::fs::copy(&built, &staging).map_err(|e| format!("staging the archive: {e}"))?;
+    std::fs::rename(&staging, &dest).map_err(|e| format!("publishing the archive: {e}"))?;
+    let _ = std::fs::remove_dir_all(&anchor);
+    Ok(dest)
 }
 
 /// What `rustc --print=native-static-libs` reports for the `zeo` staticlib
@@ -232,6 +320,69 @@ fn link_diagnostics(stderr: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A cached archive is returned as-is. The expensive path shells out to
+    /// cargo, so "already built" has to be decided before anything else --
+    /// this is what stops every `zeo -o` on an installed zeo taking minutes.
+    #[test]
+    fn a_cached_registry_archive_is_reused() {
+        let cache = std::env::temp_dir().join(format!("zeo-regcache-{}", std::process::id()));
+        let dir = cache.join(format!("runtime-{}", env!("CARGO_PKG_VERSION")));
+        std::fs::create_dir_all(&dir).expect("creating the fake cache");
+        let archive = dir.join("libzeo.a");
+        std::fs::write(&archive, b"not really an archive").expect("writing the fake archive");
+        assert_eq!(
+            registry_archive(&cache).expect("a cached archive needs no build"),
+            archive
+        );
+        let _ = std::fs::remove_dir_all(&cache);
+    }
+
+    /// `cargo build -p zeo` from a package that merely DEPENDS on zeo builds
+    /// the dependency's lib target with every crate-type it declares, so
+    /// `libzeo.a` appears. `registry_archive` stands on exactly that, and
+    /// nothing in cargo's documented behaviour promises it.
+    ///
+    /// Ignored by default: it is a full release build of the workspace in a
+    /// target dir of its own, minutes rather than milliseconds. It uses a
+    /// PATH dependency because the real one resolves `zeo = "=X.Y.Z"` from
+    /// crates.io, which cannot be exercised before the version is published.
+    #[test]
+    #[ignore = "CI leg: a release build in a probe target dir"]
+    fn a_dependency_position_zeo_still_builds_the_staticlib() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let anchor = std::env::temp_dir().join(format!("zeo-anchor-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&anchor);
+        std::fs::create_dir_all(anchor.join("src")).expect("creating the anchor");
+        std::fs::write(
+            anchor.join("Cargo.toml"),
+            format!(
+                "[package]\nname = \"zeo-anchor-probe\"\nversion = \"0.0.0\"\n\
+                 edition = \"2021\"\n\n[dependencies]\nzeo = {{ path = {:?} }}\n\n\
+                 [workspace]\n",
+                root
+            ),
+        )
+        .expect("writing the anchor manifest");
+        std::fs::write(anchor.join("src/main.rs"), "fn main() {}\n").expect("writing main");
+        let out = std::process::Command::new(env!("CARGO"))
+            .args(["build", "--release", "-p", "zeo"])
+            .current_dir(&anchor)
+            .output()
+            .expect("cargo must run");
+        assert!(
+            out.status.success(),
+            "the anchor build failed:\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let built = anchor.join("target").join("release").join("libzeo.a");
+        assert!(
+            built.is_file(),
+            "a dependency-position zeo built no {} -- `registry_archive` cannot work",
+            built.display()
+        );
+        let _ = std::fs::remove_dir_all(&anchor);
+    }
 
     #[test]
     fn every_supported_triple_has_a_table() {

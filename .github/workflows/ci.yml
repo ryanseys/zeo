@@ -140,6 +140,14 @@ jobs:
       - run: cargo test -p zeo --lib -- --ignored natlibs_table_matches_rustc --nocapture
         if: runner.os == 'Linux'
 
+      # `cargo install` ships no runtime archive, so an installed zeo builds
+      # one on first `zeo -o` through an anchor workspace. That stands on
+      # `cargo build -p zeo` building the staticlib from a DEPENDENCY
+      # position, which nothing in cargo's documented behaviour promises.
+      # One platform is enough -- the claim is about cargo, not the target.
+      - run: cargo test -p zeo --lib -- --ignored a_dependency_position_zeo --nocapture
+        if: runner.os == 'macOS'
+
       # The C extension surface is off by default -- an ext-free binary has to
       # stay byte-identical, so the module dead-strips. Its tests still have
       # to run, and the workspace leg above cannot see them.

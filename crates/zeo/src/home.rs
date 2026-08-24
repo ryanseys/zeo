@@ -33,10 +33,11 @@ pub enum ZeoHome {
     Installed { payload: PathBuf, cache: PathBuf },
     /// A `cargo install`ed zeo: no payload directory anywhere. The gems ride
     /// EMBEDDED in the binary (`gems.pregen.tar.gz`, staged into the crate at
-    /// publish time) and extract once into the cache; the runtime is fetched
-    /// from crates.io through a materialized anchor workspace pinning
-    /// `zeo-rt = "=X.Y.Z"` (see `backend`). Only constructible when the
-    /// binary carries the embedded archive (`zeo_embedded_gems` cfg).
+    /// publish time) and extract once into the cache; `libzeo.a` is built once
+    /// into the cache through a materialized anchor workspace pinning
+    /// `zeo = "=X.Y.Z"` (`backend::link::registry_archive`), because
+    /// `cargo install` copies binaries and nothing else. Only constructible
+    /// when the binary carries the embedded archive (`zeo_embedded_gems` cfg).
     Registry { cache: PathBuf },
 }
 

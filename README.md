@@ -89,7 +89,11 @@ $ zeo test/foo_test.rb -- --seed 42
 There are no subcommands: the command line follows `ruby`'s. `zeo foo.rb`
 compiles **and runs**; a binary artifact is the opt-in (`-o` / `--compile`).
 
-`cargo install zeo` and `gem install zeo` arrive with the 0.1.0 release.
+`cargo install zeo` and `gem install zeo` arrive with the 0.1.0 release. A
+`cargo install`ed zeo builds its runtime archive once, on the first `zeo -o` —
+`cargo install` copies binaries and nothing else, and the archive is 78 MB
+against crates.io's 10 MB crate limit, so it cannot ride along. The release
+tarball and the platform gems carry it and never do this.
 
 ---
 
