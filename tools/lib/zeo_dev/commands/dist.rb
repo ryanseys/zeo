@@ -85,6 +85,14 @@ module ZeoDev
         line.split("=", 2).last.strip.delete('"')
       end
 
+      # Where cargo actually wrote. NOT `ROOT/target`: the linux container
+      # builds with `CARGO_TARGET_DIR=/target` (a named volume, so rebuilds
+      # stay incremental) while the repo is mounted at /src, and a staged
+      # tree assembled from the wrong root finds no binary at all.
+      def cargo_target_root
+        ENV["CARGO_TARGET_DIR"] || File.join(ROOT, "target")
+      end
+
       def host_triple
         out = `rustc -vV 2>/dev/null`
         line = out.lines.find { |l| l.start_with?("host: ") }
@@ -113,9 +121,9 @@ module ZeoDev
         build.push("--target", opts[:target]) if opts[:target]
         cargo!(ROOT, build)
         built = if opts[:target]
-                  File.join(ROOT, "target", opts[:target], "dist")
+                  File.join(cargo_target_root, opts[:target], "dist")
                 else
-                  File.join(ROOT, "target", "dist")
+                  File.join(cargo_target_root, "dist")
                 end
         FileUtils.mkdir_p(File.join(stage, "bin"))
         FileUtils.cp(File.join(built, "zeo"), File.join(stage, "bin", "zeo"))

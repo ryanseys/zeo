@@ -23,7 +23,7 @@ module ZeoDev
     # out -- do not bless it away.
     class Linux < Cli
       DEFAULT_STAGES = %w[build jit aot units natlibs valgrind].freeze
-      STAGES = (DEFAULT_STAGES + %w[cross shell all]).freeze
+      STAGES = (DEFAULT_STAGES + %w[cross dist shell all]).freeze
 
       def self.summary = "run the suites in the linux container"
 
@@ -38,6 +38,7 @@ module ZeoDev
           natlibs   diff link.rs's glibc table against rustc
           valgrind  leak-check a linked program
           cross     x86_64 compile check
+          dist      build a linux release tarball into target/dist
           shell     an interactive prompt in the image
           all       #{DEFAULT_STAGES.join(" ")}
 
@@ -118,6 +119,11 @@ module ZeoDev
           "cargo test -p zeo --lib -- --ignored natlibs_table_matches_rustc --nocapture"
         when "valgrind" then valgrind_script
         when "cross" then cross_script
+        # A NATIVE linux build of the release tarball, from a mac. zeo does
+        # not cross-compile to linux; this is the supported path, and the
+        # artifact is a genuinely natively-built one, so a cross-compile
+        # divergence is structurally impossible.
+        when "dist" then "tools/zeo-dev dist"
         when "shell" then "exec bash"
         when "-E"
           "cargo nextest run #{cargo_profile} -p zeo-tests --test-threads #{threads} " \

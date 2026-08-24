@@ -704,7 +704,7 @@ fn surface_from_spec(spec: &ClassSpec, out: &mut Vec<Surface>) {
 /// * Nothing in `zeo` CALLS `rb_define_module`, so the linker never pulls
 ///   that archive member in. `-force_load` takes every member whether it is
 ///   referenced or not.
-/// * A Mach-O executable's export table holds only what was asked for.
+/// * An executable's dynamic symbol table holds only what was asked for.
 ///   `-export_dynamic` publishes the rest, which is what `dlsym` reads.
 ///
 /// Without the first the symbol is absent; without the second it is present
@@ -712,14 +712,22 @@ fn surface_from_spec(spec: &ClassSpec, out: &mut Vec<Surface>) {
 /// which is a SIGSEGV inside `Init_`, with no diagnostic at all.
 ///
 /// CRuby links its own interpreter the same way, for the same reason.
+///
+/// The two spellings are NOT interchangeable, and getting it wrong is worse
+/// than a missing flag: GNU ld reads `-export_dynamic` as `-e xport_dynamic`,
+/// because `-e` takes the entry symbol and the rest of the word is its
+/// argument. It warns, picks an arbitrary entry point, and links a binary
+/// that starts in the wrong place -- which surfaced as a `capacity overflow`
+/// panic from a thread with no name, nowhere near any zeo code.
 fn export_cext_surface() {
-    println!("cargo:rustc-link-arg-bins=-Wl,-export_dynamic");
     if cfg!(target_vendor = "apple") {
+        println!("cargo:rustc-link-arg-bins=-Wl,-export_dynamic");
         // `-all_load` rather than `-force_load,<path>`: cargo does not tell a
         // build script where `libzeo.a` will land, and every other archive on
         // the line is a Rust dependency whose members were already selected.
         println!("cargo:rustc-link-arg-bins=-Wl,-all_load");
     } else {
+        println!("cargo:rustc-link-arg-bins=-Wl,--export-dynamic");
         println!("cargo:rustc-link-arg-bins=-Wl,--whole-archive");
         println!("cargo:rustc-link-arg-bins=-Wl,--no-whole-archive");
     }

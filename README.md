@@ -413,6 +413,21 @@ cannot proceed without it. That is why the archive, not the gems, is what
 missing the archive, is reported as not a payload at all rather than
 link-failing once per compile.
 
+Releases are built **natively on each platform** — `aarch64-apple-darwin`,
+`x86_64-apple-darwin`, and both Linux triples. zeo does not cross-compile to
+Linux, and that is a decision rather than a gap: `libzeo.a` bundles Prism,
+Oniguruma, OpenSSL and libffi, glibc cannot be redistributed, and a cross build
+cannot smoke-test itself — it could not run the program it just compiled. From
+a Mac, build a Linux tarball in the container instead:
+
+```console
+$ podman build --platform linux/arm64 -t zeo-linux .
+$ tools/zeo-dev linux dist      # target/dist/zeo-<version>-<triple>.tar.gz
+```
+
+The artifact is genuinely natively built, so a cross-compile divergence is
+structurally impossible.
+
 ---
 
 ## Project layout

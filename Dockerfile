@@ -27,9 +27,12 @@ FROM docker.io/library/rust:latest
 #   leaks nothing underneath it.
 # gcc-x86-64-linux-gnu: the cross-compile linker for the x86_64 stage.
 # file/binutils: reading what came out of a link (`file`, `nm`, `readelf`).
+# ruby: `tools/zeo-dev` is a ruby program, and the `dist` stage runs it in
+#   here. Deliberately the distro's ruby and not zeo's own: a tool that only
+#   works when zeo is correct cannot diagnose zeo when it is not.
 RUN apt-get update -qq \
  && apt-get install -y -qq --no-install-recommends \
-      libclang-dev valgrind gcc-x86-64-linux-gnu file binutils \
+      libclang-dev valgrind gcc-x86-64-linux-gnu file binutils ruby \
  && rm -rf /var/lib/apt/lists/*
 
 # nextest is the meter every zeo suite is run through (plain `cargo test`
