@@ -1299,20 +1299,13 @@ impl Hir {
         format!("{prefix}{}", self.nodes.len())
     }
 
-    /// Whether the final binary must link the PRISM-BACKED runtime variant,
-    /// or can stay lean (parser-free) -- what `backend::Runtime` decides
-    /// from.
+    /// The half of [`Compiler::needs_prism_runtime`] the `Hir` owns: the
+    /// program `require`s prism itself, whose `ext-prism` module calls the
+    /// same C library's serialize entry points.
     ///
-    /// Two things reach prism, and they are separate questions. The runtime
-    /// eval is one ([`Hir::uses_runtime_eval`]). The other is `require
-    /// "prism"`, whose `ext-prism` module calls the same C library's
-    /// serialize entry points: the lean variant does not link it, so such a
-    /// program would otherwise fail at LINK time, where no message can
-    /// explain itself.
-    pub fn needs_prism_runtime(&self) -> bool {
+    /// [`Compiler::needs_prism_runtime`]: crate::compiler::Compiler::needs_prism_runtime
+    pub(crate) fn activates_prism(&self) -> bool {
         self.activated_features.contains("prism")
-            || self.uses_runtime_eval()
-            || self.mentions_rubyvm_parser()
     }
 
     /// Whether the program names a `RubyVM` surface whose body parses at

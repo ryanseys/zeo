@@ -214,19 +214,18 @@ fn eval_of_a_non_literal_argument_runs_in_the_vm() {
     assert_eq!(result.stdout, "42\n");
 }
 
-/// The `needs_prism_runtime` verdict drives `backend::Runtime` selection:
-/// `true` links the prism-backed runtime, `false` keeps the binary lean. This
-/// asserts the decision itself (not just that programs run), because a false
-/// negative would ship a lean binary whose `eval` is a `NotImplementedError`
-/// stub -- or, for `require "prism"`, one that does not LINK -- and a false
-/// positive needlessly drags prism into a binary that never reaches it.
+/// The `needs_prism_runtime` verdict decides whether the binary carries the
+/// parser and the five prism-backed `RubyVM` tables. This asserts the
+/// decision itself (not just that programs run), because a false negative
+/// would ship a binary whose `eval` is a `NotImplementedError` stub -- or,
+/// for `require "prism"`, one that does not LINK -- and a false positive
+/// drags 187,008 bytes into a binary that never reaches them.
 #[test]
 fn needs_prism_runtime_selects_the_runtime_variant() {
     let needs = |src: &str| {
         zeo::analyze_program(src, &Default::default())
             .expect("compiles")
             .compiler
-            .hir
             .needs_prism_runtime()
     };
 
@@ -253,6 +252,25 @@ fn needs_prism_runtime_selects_the_runtime_variant() {
     assert!(needs("module M; end\nM.module_eval(\"1 + 2\")\n"));
     // The BLOCK form of either still runs a real block -> lean.
     assert!(!needs("class Foo; end\nFoo.class_eval { 1 + 2 }\n"));
+
+    // Naming a `RubyVM` parsing surface reaches prism with no eval at all.
+    assert!(needs("puts RubyVM::AbstractSyntaxTree.parse(\"1\").type\n"));
+
+    // The eval half asks the NARROWED answer, so what `analyze` proved is
+    // not an eval site is not one here either. A receiverless call to a
+    // method of the enclosing class ...
+    assert!(!needs("def load(x) = x\nputs load(1)\n"));
+    // ... and a deferred `require` this compile emitted as a UNIT: the
+    // compiled-in feature answers it, so no compiler and no parser.
+    assert!(!needs("def lazy = require \"prettyprint\"\nputs lazy\n"));
+    // A feature no unit answers, and a COMPUTED target, both reach the
+    // on-disk tier and so keep both.
+    assert!(needs(
+        "def lazy = require \"no_such_feature_anywhere\"\nputs lazy\n"
+    ));
+    assert!(needs(
+        "def lazy(n) = require n\nputs lazy(\"prettyprint\")\n"
+    ));
 }
 
 #[test]

@@ -1335,10 +1335,6 @@ impl Compiler {
     /// is. `RubyVM` itself STAYS: ruby defines it in every program, and these
     /// five are namespaced under it, so only `RubyVM.constants` can see them
     /// go and that already names `RubyVM`.
-    ///
-    /// This is what [`crate::hir::Hir::needs_prism_runtime`] was written for.
-    /// It had zero readers -- dead since the backend machinery went at
-    /// M0.5-4 -- and it is exactly the right question.
     pub(crate) fn prism_surface_is_reachable(&self, id: ClassId) -> bool {
         const PRISM_BACKED: &[ClassId] = &[
             zeo_abi::RUBYVM_AST_MODULE,
@@ -1347,7 +1343,23 @@ impl Compiler {
             zeo_abi::RUBYVM_ISEQ_CLASS,
             zeo_abi::RUBYVM_YJIT_MODULE,
         ];
-        !PRISM_BACKED.contains(&id) || self.hir.needs_prism_runtime()
+        !PRISM_BACKED.contains(&id) || self.needs_prism_runtime()
+    }
+
+    /// Whether the binary must carry the prism parser at all.
+    ///
+    /// Three things reach it, and they are separate questions: a run-time
+    /// `eval` compiles Ruby text; `require "prism"` calls the same C
+    /// library's serialize entry points; and a `RubyVM` parsing surface
+    /// parses in its own body.
+    ///
+    /// The eval half asks the NARROWED answer ([`Compiler::runtime_eval`]),
+    /// never the flat `Hir` scan. A program whose `load` is its own method
+    /// is not an eval site, and reading the scan here kept all five
+    /// prism-backed tables in a binary that had already dead-stripped the
+    /// compiler.
+    pub fn needs_prism_runtime(&self) -> bool {
+        self.hir.activates_prism() || self.runtime_eval || self.hir.mentions_rubyvm_parser()
     }
 
     pub(crate) fn builtin_is_reachable(&self, id: zeo_abi::ClassId) -> bool {

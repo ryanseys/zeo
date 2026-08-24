@@ -109,8 +109,11 @@ to **9,252,936**.
 `RubyVM` itself stays, because ruby defines it in every program. Only
 `RubyVM.constants` can see the five go, and that already names `RubyVM`.
 
-The predicate is `Hir::needs_prism_runtime`, which had zero readers — dead
-since the backend machinery went — and was exactly the right question.
+The predicate is `Compiler::needs_prism_runtime`. Its eval half reads the
+NARROWED `runtime_eval` flag, not the flat `Hir` scan — a program whose
+`load` is its own method, or whose deferred `require` names a feature this
+compile emitted as a unit, dead-strips the compiler, and it must drop these
+five with it.
 
 ## How to measure it
 
