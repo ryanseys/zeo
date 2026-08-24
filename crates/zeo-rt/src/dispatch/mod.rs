@@ -935,7 +935,7 @@ const SPECIALIZED: &[(ClassId, &str)] = &[
 /// and [`SPECIALIZED`].
 /// One leak per distinct row, cached, so the cold MRO-walk paths can ask on
 /// every call; the flat maps precompute it into [`FlatHit`] instead.
-fn c_frame_label(owner: ClassId, name: Symbol, sep: char) -> Option<&'static str> {
+pub(crate) fn c_frame_label(owner: ClassId, name: Symbol, sep: char) -> Option<&'static str> {
     let n = name.name_str();
     if NOFRAME.contains(&n) {
         return None;
@@ -962,7 +962,7 @@ fn c_frame_label(owner: ClassId, name: Symbol, sep: char) -> Option<&'static str
 /// (see `collections::take_key_raise` -- a user `hash` has no return channel
 /// inside the projection, so the row it ran under reports it).
 #[inline]
-fn with_c_frame(
+pub(crate) fn with_c_frame(
     label: Option<&'static str>,
     f: impl FnOnce() -> Result<RubyValue, Signal>,
 ) -> Result<RubyValue, Signal> {

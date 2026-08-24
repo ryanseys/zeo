@@ -27,6 +27,16 @@ pub const CALLSITES: &str = "zeo_callsites";
 /// resolve through a singleton-chain arm of its own), so `Foo.new` needs
 /// this second array or it walks the chain on every call.
 pub const CM_SITES: &str = "zeo_cm_sites";
+/// The `.bss` byte array of builtin-reopen flags -- one byte per
+/// `(builtin class, method name)` a program reopens at compile time.
+///
+/// A reopen's row registers at STARTUP, so without this every call written
+/// ABOVE the `class Foo ... end` answers with the reopened body. The class
+/// body stores 1 at its own document position; until then the reopened body
+/// defers to the row it replaced. Both ends are emitted here, so there is no
+/// table to register and nothing for the runtime to look up.
+pub const REOPEN_FLAGS: &str = "zeo_reopen_flags";
+
 /// Startup initialization: interns the symbol table (and, later, the
 /// `.bss` site slots).
 pub const UNIT_INIT: &str = "zeo_unit_init";

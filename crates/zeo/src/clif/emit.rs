@@ -169,6 +169,7 @@ pub fn compile_jit(analyzed: &Analyzed) -> Result<Jitted, String> {
 /// mode-blind. Returns the emitted C `main`.
 fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String> {
     em.cov_active = crate::analyze::coverage::active(&analyzed.compiler);
+    collect_reopen_flags(em, analyzed);
     let defs = collect_methods(em, analyzed)?;
     let collected = super::classes::collect_classes(em, analyzed)?;
     let class_bodies = collect_class_bodies(em, analyzed)?;
@@ -376,6 +377,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             body,
             params: &def.hir_params,
             has_blk,
+            reopen_flag: None,
             name: &def.name,
             file: file.as_deref(),
             label: &label,
@@ -405,6 +407,10 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
                     body,
                     params: &m.hir_params,
                     has_blk: m.has_blk,
+                    reopen_flag: em
+                        .reopen_flags
+                        .get(&(m.defining_class.0, m.name.clone()))
+                        .copied(),
                     name: &m.name,
                     file: file.as_deref(),
                     label: &label,
@@ -427,6 +433,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             body: m.body_fn,
             params: &m.hir_params,
             has_blk: m.has_blk,
+            reopen_flag: None,
             name: &m.name,
             file: file.as_deref(),
             label: &label,
@@ -444,6 +451,10 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             body: m.body_fn,
             params: &m.hir_params,
             has_blk: m.has_blk,
+            reopen_flag: em
+                .reopen_flags
+                .get(&(m.defining_class.0, m.name.clone()))
+                .copied(),
             name: &m.name,
             file: file.as_deref(),
             label: &label,
@@ -461,6 +472,10 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             body: m.body_fn,
             params: &m.hir_params,
             has_blk: m.has_blk,
+            // The CLASS-method side takes no flag: a native class-method row
+            // is reached through the singleton chain, not the value channel
+            // the forward walks.
+            reopen_flag: None,
             name: &m.name,
             file: file.as_deref(),
             label: &label,
@@ -501,6 +516,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
     statics::define_syms(em)?;
     statics::define_callsites(em)?;
     statics::define_cm_sites(em)?;
+    statics::define_reopen_flags(em)?;
     let mut vm_rows: Vec<statics::VmRowSpec> = defs
         .iter()
         .map(|d| statics::VmRowSpec {
@@ -904,6 +920,11 @@ pub(crate) struct Emitter {
     /// How many class-method cache slots the program needs; the index IS
     /// the slot index, and a slot carries no per-site constant.
     pub cm_sites: usize,
+    pub reopen_flags_id: DataId,
+    /// `(builtin class id, method name)` -> its byte in `zeo_reopen_flags`.
+    /// See [`names::REOPEN_FLAGS`]; empty for a program that reopens no
+    /// builtin, which is almost all of them.
+    pub reopen_flags: HashMap<(u32, String), u32>,
     pub syms: statics::SymPool,
     rodata: Vec<u8>,
     rodata_offsets: HashMap<Vec<u8>, u32>,
@@ -1039,12 +1060,17 @@ impl Emitter {
         let cm_sites_id = module
             .declare_data(names::CM_SITES, Linkage::Local, true, false)
             .map_err(|e| format!("declaring {}: {e}", names::CM_SITES))?;
+        let reopen_flags_id = module
+            .declare_data(names::REOPEN_FLAGS, Linkage::Local, true, false)
+            .map_err(|e| format!("declaring {}: {e}", names::REOPEN_FLAGS))?;
         Ok(Emitter {
             module,
             ptr,
             rodata_id,
             syms_id,
             callsites_id,
+            reopen_flags_id,
+            reopen_flags: HashMap::new(),
             callsites: Vec::new(),
             cm_sites_id,
             cm_sites: 0,
@@ -1423,6 +1449,9 @@ pub(crate) struct ClassBodyCall {
     /// FALSE. Everything the site registers rides inside the branch too: a
     /// class whose guard failed was never defined.
     pub guard: Option<(crate::hir::NodeId, bool)>,
+    /// Bytes in `zeo_reopen_flags` this site's `def`s own -- stored at the
+    /// site's own document position, which is what makes a reopen positional.
+    pub reopen_flags: Vec<u32>,
 }
 
 /// One compiled class body (a separate Ruby scope, lifted to its own
@@ -1514,7 +1543,14 @@ fn collect_class_bodies(
         // that hangs off "declares" (const-location record, const_added /
         // inherited announcements) applies.
         let builtin = ci.is_builtin || ci.is_bootstrap || site.class.0 == 0;
-        if builtin && site.stmts.is_empty() {
+        let mut reopen_flags: Vec<u32> = site
+            .installs
+            .iter()
+            .filter_map(|n| em.reopen_flags.get(&(site.class.0, n.clone())).copied())
+            .collect();
+        reopen_flags.sort_unstable();
+        reopen_flags.dedup();
+        if builtin && site.stmts.is_empty() && reopen_flags.is_empty() {
             continue;
         }
         if builtin && !compiler.feature_active(site.class) {
@@ -1634,6 +1670,7 @@ fn collect_class_bodies(
             freeze_guard,
             tail,
             guard,
+            reopen_flags,
         };
         let is_inline = site.def_node.is_some_and(|n| inline.contains(&n));
         if is_inline && let Some(marker) = site.def_node {
@@ -1649,6 +1686,73 @@ fn collect_class_bodies(
         });
     }
     Ok(specs)
+}
+
+/// Whether a class-body site was written in an `<internal:>` file -- the
+/// corelib segments and the exception prelude. Those bodies are part of the
+/// runtime, not of the program's document, so their reopens are not
+/// positional. See `Hir::internal_files`.
+fn internal_site(
+    compiler: &crate::compiler::Compiler,
+    site: &crate::compiler::ClassBodySite,
+) -> bool {
+    site.def_node.is_some_and(|n| {
+        compiler
+            .hir
+            .span(n)
+            .is_some_and(|sp| compiler.hir.internal_files.contains(&sp.file))
+    })
+}
+
+/// Allocate one `zeo_reopen_flags` byte per `(builtin class, method name)`
+/// this program reopens at COMPILE time.
+///
+/// A reopen's row registers at startup, so without a flag every call written
+/// ABOVE the `class Foo ... end` answers with the reopened body -- statically
+/// bound and dynamic sites alike. The class body stores 1 at its own document
+/// position and the reopened body reads it, forwarding to the row it replaced
+/// until then.
+///
+/// Runs before anything is emitted: a flagged body needs its caller's BLOCK to
+/// forward, so it takes a block parameter whether or not it names one, and the
+/// signature is decided in `collect_classes`.
+///
+/// Excluded: `Object` (a top-level `def` reopens nothing), a BOOTSTRAP builtin
+/// (the exception prelude, whose bodies are the runtime's own), and any site
+/// written in an `<internal:>` file.
+fn collect_reopen_flags(em: &mut Emitter, analyzed: &Analyzed) {
+    let compiler = &analyzed.compiler;
+    // A LAZY unit's file is excluded. Its body runs on require rather than at
+    // a document position this compile can point at, and a unit whose body
+    // never runs would leave the flag at zero for the whole program -- which
+    // would turn a working reopen into `undefined method`. Registering the row
+    // at startup is what those keep, exactly as before.
+    let unit_files: crate::compiler::FSet<String> = analyzed
+        .feature_units
+        .iter()
+        .map(|(_, absolute, _)| format!("{absolute}.rb"))
+        .collect();
+    for site in &compiler.class_body_sites {
+        if !compiler.class(site.class).is_builtin || internal_site(compiler, site) {
+            continue;
+        }
+        let in_unit = site.def_node.is_some_and(|n| {
+            crate::analyze::source::source_location(compiler, n)
+                .is_some_and(|(file, _)| unit_files.contains(file))
+        });
+        if in_unit {
+            continue;
+        }
+        let mut names: Vec<&String> = site.installs.iter().collect();
+        names.sort();
+        names.dedup();
+        for n in names {
+            let next = em.reopen_flags.len() as u32;
+            em.reopen_flags
+                .entry((site.class.0, n.clone()))
+                .or_insert(next);
+        }
+    }
 }
 
 /// A class body whose ONE statement is an `If` is a `class ... end if cond`

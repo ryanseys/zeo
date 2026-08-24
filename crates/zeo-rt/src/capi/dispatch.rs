@@ -357,6 +357,53 @@ pub unsafe extern "C" fn zeo_rt_send_value_explicit_args_in(
     status_out(r, out)
 }
 
+/// A builtin reopen's body ran ABOVE its own `class Foo ... end`, so the row
+/// it REPLACED is what ruby answers with. Call that row.
+///
+/// Not `super`: `super` resumes PAST the reopened class, and a name the
+/// builtin owns outright (`Array#size`) has nothing above it -- ruby raises
+/// "no superclass method" for a `super` written there, and rightly. The row
+/// being replaced sits ON one of these ancestors, so the walk starts at the
+/// receiver's own class and takes the first NATIVE table hit.
+///
+/// A name the builtin never had answers ruby's plain `undefined method`: the
+/// reopen has not run, so nothing defines it yet.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_native_row_call(
+    recv: *const RubyValue,
+    sym: u32,
+    argv: *const RubyValue,
+    argc: usize,
+    blk: *mut RubyValue,
+    out: *mut RubyValue,
+) -> i32 {
+    let recv = unsafe { &*recv };
+    let name = Symbol::from_u32(sym);
+    let n = name.name_str();
+    let (args, block) = unsafe { call_views(argv, argc, blk) };
+    let row = crate::dispatch::ancestors_of_value(recv.class_id())
+        .iter()
+        .find_map(|&anc| {
+            crate::builtins::class_table(anc)
+                .and_then(|lookup| lookup(n))
+                .map(|f| (anc, f))
+        });
+    let r = match row {
+        Some((anc, f)) => {
+            crate::dispatch::with_c_frame(crate::dispatch::c_frame_label(anc, name, '#'), || {
+                f(recv, args, block)
+            })
+        }
+        None => Err(crate::dispatch::raise_method_missing(
+            recv,
+            n,
+            args,
+            crate::dispatch::MissingReason::NoEntry,
+        )),
+    };
+    status_out(r, out)
+}
+
 /// Has anything been defined at run time? The compile-time inlined
 /// accessor asks before it may stand in for the ordinary dispatch: a
 /// `define_method` of the same name installs a row the fold cannot see, so
@@ -937,6 +984,53 @@ pub unsafe extern "C" fn zeo_rt_eval_reflect_dispatch(
     let r =
         crate::dispatch::reflect_dispatch_in(box_id, unsafe { &*recv }, entry, args, block, &cands);
     status_out(r, out)
+}
+
+#[cfg(test)]
+mod native_row_tests {
+    use crate::RubyValue;
+    use crate::symbol::Symbol;
+
+    /// The forward finds the row on the receiver's OWN class -- the position a
+    /// `super` written there would resume PAST. `Array#size` is the case: ruby
+    /// has no `size` above `Array`, so a `super` raises where this must not.
+    #[test]
+    fn the_forward_reaches_the_receivers_own_native_row() {
+        let recv = RubyValue::Array(crate::array_new(vec![RubyValue::Int(1), RubyValue::Int(2)]));
+        let mut out = RubyValue::Nil;
+        let st = unsafe {
+            super::zeo_rt_native_row_call(
+                &raw const recv,
+                Symbol::intern("size").to_u32(),
+                std::ptr::null(),
+                0,
+                std::ptr::null_mut(),
+                &raw mut out,
+            )
+        };
+        assert_eq!(st, zeo_abi::abi::STATUS_OK);
+        assert!(matches!(out, RubyValue::Int(2)));
+    }
+
+    /// A name the builtin never had has no row to forward to, and the walk
+    /// says so -- the shim then raises ruby's plain `undefined method`.
+    ///
+    /// The raise itself is not asserted here: building an exception needs a
+    /// registered program, which a `zeo-rt` unit test has no way to install.
+    /// `tests/a_reopened_builtin_answers_from_its_own_line.rb` pins the
+    /// message.
+    #[test]
+    fn a_name_the_builtin_never_had_has_no_row() {
+        let recv = RubyValue::Array(crate::array_new(Vec::new()));
+        let name = Symbol::intern("brand_new_name");
+        assert!(
+            crate::dispatch::ancestors_of_value(recv.class_id())
+                .iter()
+                .all(|&anc| crate::builtins::class_table(anc)
+                    .and_then(|lookup| lookup(name.name_str()))
+                    .is_none())
+        );
+    }
 }
 
 #[cfg(test)]

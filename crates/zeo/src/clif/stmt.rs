@@ -2347,6 +2347,21 @@ fn class_body_site_run(
             .expect("guard_class_reopen returns a status");
         fx.fallible(st);
     }
+    // The reopen is POSITIONAL: from here on the reopened bodies answer for
+    // themselves, and above this line they defer to the rows they replaced.
+    // Set before the body's own statements, which may call one.
+    if !call.reopen_flags.is_empty() {
+        let gv = fx
+            .em
+            .module
+            .declare_data_in_func(fx.em.reopen_flags_id, fx.b.func);
+        let base = fx.b.ins().symbol_value(fx.em.ptr, gv);
+        let one = fx.b.ins().iconst(types::I8, 1);
+        for &idx in &call.reopen_flags {
+            fx.b.ins()
+                .store(MemFlagsData::trusted(), one, base, idx as i32);
+        }
+    }
     // A runtime-conditional class's guarded definition just RAN: the
     // constant exists from here on, before any declaration bookkeeping and
     // at EVERY site (whichever branch runs must reveal).

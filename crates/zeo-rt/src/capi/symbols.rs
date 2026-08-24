@@ -158,6 +158,7 @@ capi_symbols!(
     registry::zeo_rt_main_object,
     dispatch::zeo_rt_method_capture_inherited,
     literals::zeo_rt_multi_split,
+    dispatch::zeo_rt_native_row_call,
     objects::zeo_rt_object_alloc,
     objects::zeo_rt_object_new_sentinel,
     patterns::zeo_rt_pat_array_get,

@@ -143,6 +143,15 @@ pub(crate) struct TrampSpec<'a> {
     pub body: FuncId,
     pub params: &'a Params,
     pub has_blk: bool,
+    /// This row's byte in `zeo_reopen_flags`, for a compile-time reopen of a
+    /// BUILTIN. While it reads zero the `class Foo ... end` is still ahead,
+    /// and the trampoline forwards to the row this one replaced.
+    ///
+    /// Guarded HERE and not in the body: the trampoline holds the call's own
+    /// argv and block in the shape a native row takes, and it runs before the
+    /// frame is pushed -- so the raise for a name that does not exist yet
+    /// lands at the CALL, exactly where ruby's does.
+    pub reopen_flag: Option<u32>,
     /// The Ruby method name (binder error text).
     pub name: &'a str,
     /// The callee frame the binder's raises run under.
@@ -267,6 +276,54 @@ pub(crate) fn define_trampoline(
     }
 }
 
+/// The reopen guard both trampolines open with: while the flag byte reads
+/// zero the `class Foo ... end` has not been reached, so the call goes to the
+/// row this one replaced and returns.
+///
+/// Emitted before anything else the trampoline does -- no frame, no arity
+/// check, no binder -- so the argv and block arrive exactly as the caller
+/// passed them and a raise lands at the CALL.
+fn emit_reopen_guard(
+    em: &mut Emitter,
+    b: &mut FunctionBuilder<'_>,
+    entry: ir::Block,
+    spec: &TrampSpec<'_>,
+) -> Result<(), String> {
+    let Some(idx) = spec.reopen_flag else {
+        return Ok(());
+    };
+    let recv = b.block_params(entry)[0];
+    let argv = b.block_params(entry)[1];
+    let argc = b.block_params(entry)[2];
+    let blk = b.block_params(entry)[3];
+    let out = b.block_params(entry)[4];
+    let flags_gv = em.module.declare_data_in_func(em.reopen_flags_id, b.func);
+    let base = b.ins().symbol_value(em.ptr, flags_gv);
+    let ready = b
+        .ins()
+        .load(types::I8, ir::MemFlagsData::trusted(), base, idx as i32);
+    let installed = b.create_block();
+    let deferred = b.create_block();
+    b.ins().brif(ready, installed, &[], deferred, &[]);
+    b.switch_to_block(deferred);
+    let f_id = em.import("zeo_rt_native_row_call");
+    let native = em.module.declare_func_in_func(f_id, b.func);
+    let slot = em.syms.intern(spec.name);
+    let syms_gv = em.module.declare_data_in_func(em.syms_id, b.func);
+    let syms = b.ins().symbol_value(em.ptr, syms_gv);
+    let sym_id = b.ins().load(
+        types::I32,
+        ir::MemFlagsData::trusted(),
+        syms,
+        (slot * 4) as i32,
+    );
+    let call = b.ins().call(native, &[recv, sym_id, argv, argc, blk, out]);
+    let status = b.func.dfg.inst_results(call)[0];
+    b.ins().return_(&[status]);
+    b.switch_to_block(installed);
+    Ok(())
+}
+
 /// The general trampoline: bind argv into a stack slot array through the
 /// runtime, pass per-slot pointers (null = absent optional), release the
 /// owned slots after the body call.
@@ -302,6 +359,7 @@ fn define_bound_trampoline(
     let entry = b.create_block();
     b.append_block_params_for_function_params(entry);
     b.switch_to_block(entry);
+    emit_reopen_guard(em, &mut b, entry, spec)?;
     let recv = b.block_params(entry)[0];
     let argv = b.block_params(entry)[1];
     let argc = b.block_params(entry)[2];
@@ -428,6 +486,7 @@ fn define_plain_trampoline(
     let entry = b.create_block();
     b.append_block_params_for_function_params(entry);
     b.switch_to_block(entry);
+    emit_reopen_guard(em, &mut b, entry, spec)?;
     let recv = b.block_params(entry)[0];
     let argv = b.block_params(entry)[1];
     let argc = b.block_params(entry)[2];

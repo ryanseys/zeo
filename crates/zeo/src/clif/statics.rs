@@ -70,6 +70,18 @@ pub(crate) fn define_callsites(em: &mut Emitter) -> Result<(), String> {
         .map_err(|e| format!("defining {}: {e}", names::CALLSITES))
 }
 
+/// Define the `zeo_reopen_flags` array: one zeroed byte per builtin reopen.
+/// Zero means "the reopen has not run yet", which is exactly what `.bss`
+/// gives, so no `zeo_unit_init` row is needed.
+pub(crate) fn define_reopen_flags(em: &mut Emitter) -> Result<(), String> {
+    let mut data = DataDescription::new();
+    data.define_zeroinit(em.reopen_flags.len().max(1));
+    data.set_align(1);
+    em.module
+        .define_data(em.reopen_flags_id, &data)
+        .map_err(|e| format!("defining {}: {e}", names::REOPEN_FLAGS))
+}
+
 /// Define the `zeo_cm_sites` array -- the class-method caches. Same
 /// zero-bytes-are-not-a-slot rule as [`define_callsites`].
 pub(crate) fn define_cm_sites(em: &mut Emitter) -> Result<(), String> {

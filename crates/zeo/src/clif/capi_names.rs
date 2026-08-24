@@ -643,6 +643,11 @@ pub const CAPI: &[CapiSig] = &[
         ret: Some(I32),
     },
     CapiSig {
+        name: "zeo_rt_native_row_call",
+        params: &[Ptr, U32, Ptr, Usize, Ptr, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
         name: "zeo_rt_object_new_sentinel",
         params: &[Ptr],
         ret: None,

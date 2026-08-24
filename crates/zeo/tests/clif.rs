@@ -51,6 +51,20 @@ fn clif_snapshot_guarded_accessor() {
     ));
 }
 
+/// A builtin reopen under its positional flag: the `zeo_reopen_flags` load,
+/// the forward to the row it replaced on one arm and the reopened body on the
+/// other, and the store at the `class Array ... end` marker.
+///
+/// A golden cannot see which arm ran -- both print the right answer once the
+/// class body is above the call. The snapshot is what pins that the guard is
+/// emitted at all, and that the forwarded call carries the block.
+#[test]
+fn clif_snapshot_positional_builtin_reopen() {
+    insta::assert_snapshot!(clif_of(
+        "p [1, 2].take_while { true }\nclass Array\n  def take_while\n    :array_own\n  end\nend\np [1, 2].take_while { true }\n",
+    ));
+}
+
 #[test]
 fn clif_snapshot_block_send() {
     insta::assert_snapshot!(clif_of(
