@@ -31,10 +31,13 @@ Zeo is **experimental** and moving fast. What is measured today:
 | Conformance corpus (`tests/spinel/`) | 3,010 / 3,010 |
 | Example goldens (`tests/*.rb`) | 1,261 / 1,261 |
 | End-to-end suite (`crates/zeo-tests/tests/e2e/`) | 1,106 / 1,106 |
-| Method surface vs Ruby 4.0.6 (census, retired at zero) | zero gaps |
 
 Each of those compares stdout, stderr and the exit status with real Ruby,
 byte for byte. `tests/gaps/` holds the 17 programs that still diverge.
+
+Separately, every module, method, constant and visibility Ruby 4.0.6 reaches
+has a Zeo answer. The census that measured that reached zero rows and was
+retired, so what remains is behavioural rather than missing surface.
 
 Every difference is recorded — in
 [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md) when a user can see it, and as
