@@ -189,7 +189,10 @@ pub(crate) struct CollectedClasses {
     /// Every body of a redefined method, superseded ones included.
     pub redefs: Vec<RedefSpec>,
     /// `(class, name, scope)` -- the FIRST body, installed at boot.
-    pub boot_redefs: Vec<(u32, String, crate::compiler::ScopeId, bool)>,
+    /// `(class, name, scope, singleton, visibility)`. The visibility is the
+    /// scope's own -- a `private :v` between two bodies retagged the FIRST
+    /// `def` at lower time, so each body already carries its own mark.
+    pub boot_redefs: Vec<(u32, String, crate::compiler::ScopeId, bool, crate::hir::Visibility)>,
     /// `(class, ancestor ids)` -- a builtin reopen that CHANGED the
     /// ancestry patches the entry `register_builtins` already made.
     pub set_ancestors: Vec<(u32, Vec<u32>)>,
@@ -1205,11 +1208,20 @@ pub(crate) fn collect_classes(
             undef_rows.push((idx as u32, n.clone()));
         }
     }
-    let boot_redefs: Vec<(u32, String, crate::compiler::ScopeId, bool)> = compiler
-        .positional_redefs
-        .iter()
-        .map(|(cid, name, sid, singleton)| (cid.0, name.clone(), *sid, *singleton))
-        .collect();
+    let boot_redefs: Vec<(u32, String, crate::compiler::ScopeId, bool, crate::hir::Visibility)> =
+        compiler
+            .positional_redefs
+            .iter()
+            .map(|(cid, name, sid, singleton)| {
+                (
+                    cid.0,
+                    name.clone(),
+                    *sid,
+                    *singleton,
+                    compiler.scope(*sid).visibility,
+                )
+            })
+            .collect();
     Ok(CollectedClasses {
         classes,
         methods,

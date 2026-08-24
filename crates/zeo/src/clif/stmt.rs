@@ -1225,6 +1225,23 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
             let meta = fx.em.redef_metas[&(class, scope)];
             let idx = fx.b.ins().iconst(types::I32, i64::from(meta));
             fx.call("zeo_rt_install_meta_row", &[idx]);
+            // A `def` carries a VISIBILITY as well as a body, and both belong
+            // at the `def`'s own position. This mark is also what CLEARS an
+            // earlier one: ruby's re-`def` resets a name to the class body's
+            // running default, so a `private :v` written between two bodies
+            // stops applying here.
+            let vis = match fx.an.compiler.scope(crate::compiler::ScopeId(scope)).visibility {
+                crate::hir::Visibility::Private => 0i64,
+                crate::hir::Visibility::Protected => 1,
+                crate::hir::Visibility::Public => 2,
+            };
+            let sym = fx.sym_id(&name);
+            let verb = fx.b.ins().iconst(types::I8, vis);
+            let chan = fx.b.ins().iconst(types::I8, i64::from(singleton));
+            fx.call(
+                "zeo_rt_install_positional_visibility",
+                &[cid, sym, verb, chan],
+            );
             Ok(())
         }
         HirNode::DefHook {

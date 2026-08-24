@@ -249,9 +249,22 @@ pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
                 let id = ClassId(r.class);
                 let name = Symbol::intern(text(r.a));
                 let f = value_fn(r.f.expect("a boot-redef row carries its fn"));
-                match r.flag {
-                    0 => crate::runtime_meta::runtime_replace_method_c(id, name, f),
-                    _ => crate::runtime_meta::runtime_replace_class_method_c(id, name, f),
+                // Bit 0 is the channel; bits 1-2 are this body's own
+                // visibility. A `private :v` written between two bodies
+                // retagged THIS `def` at lower time, so the first body's mark
+                // has to be in place before the first statement runs.
+                let singleton = r.flag & 1 != 0;
+                match singleton {
+                    false => crate::runtime_meta::runtime_replace_method_c(id, name, f),
+                    true => crate::runtime_meta::runtime_replace_class_method_c(id, name, f),
+                }
+                let vis = match (r.flag >> 1) & 3 {
+                    0 => crate::dispatch::MethodVisibility::Private,
+                    1 => crate::dispatch::MethodVisibility::Protected,
+                    _ => crate::dispatch::MethodVisibility::Public,
+                };
+                if vis != crate::dispatch::MethodVisibility::Public {
+                    crate::runtime_meta::install_positional_visibility(id, name, vis, singleton);
                 }
                 if r.n_ids > 0 {
                     boot_metas.push(unsafe { *r.ids });

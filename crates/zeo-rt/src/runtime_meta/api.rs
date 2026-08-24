@@ -1090,6 +1090,45 @@ pub fn runtime_set_visibility(
     Ok(result)
 }
 
+/// The visibility a POSITIONAL `def` carries, written beside the body that
+/// install just replaced.
+///
+/// A `def` carries a visibility as well as a body, and both belong at the
+/// `def`'s own position. A `private :v` between two bodies retags the FIRST
+/// body at lower time, so by the time a redefinition timeline is built each
+/// body already knows its own mark -- and the later body's mark is what
+/// clears the earlier one, exactly as ruby's re-`def` resets a name to the
+/// class body's running default.
+///
+/// Deliberately NOT `runtime_set_visibility`: that resolves the name first
+/// and fires `method_added` for an inherited one. Neither applies here. The
+/// install on the line above created the method, and `analyze::redefs`
+/// splices the definition's own hook report separately.
+pub fn install_positional_visibility(
+    id: ClassId,
+    name: Symbol,
+    vis: crate::dispatch::MethodVisibility,
+    singleton: bool,
+) {
+    {
+        let mut w = maps().classes.write().unwrap();
+        let e = w.entry(id.0).or_insert_with(OverlayEntry::delta);
+        // The class-method channel records only private-or-not: ruby has no
+        // `protected_class_method`, so its map is a bool.
+        match singleton {
+            true => {
+                e.class_methods_vis
+                    .insert(name, vis == crate::dispatch::MethodVisibility::Private);
+            }
+            false => {
+                e.methods_vis.insert(name, vis);
+            }
+        }
+    }
+    patch_class(id);
+    mark_live();
+}
+
 /// The explicit runtime visibility mark for `name` on class `id`'s OWN
 /// overlay entry -- `instance_method_visibility` probes this per ancestor,
 /// nearest mark winning, ahead of the frozen registry's flags.

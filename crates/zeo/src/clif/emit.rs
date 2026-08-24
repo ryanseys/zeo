@@ -651,21 +651,34 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
         ids: vec![],
         flag: 0,
     }));
+    // The verb byte `zeo_rt_runtime_set_visibility` and
+    // `zeo_rt_install_positional_visibility` both read.
+    fn vis_byte(v: crate::hir::Visibility) -> u8 {
+        match v {
+            crate::hir::Visibility::Private => 0,
+            crate::hir::Visibility::Protected => 1,
+            crate::hir::Visibility::Public => 2,
+        }
+    }
     // The FIRST body of every observable redefinition timeline installs
     // before the first statement runs.
     reg_rows.extend(
         boot_redefs
             .iter()
-            .map(|(class, name, sid, singleton)| statics::RegRowSpec {
+            .map(|(class, name, sid, singleton, vis)| statics::RegRowSpec {
                 kind: zeo_abi::abi::REG_BOOT_REDEF,
                 class: *class,
                 a: name.clone(),
                 b: String::new(),
                 f: Some(em.redef_tramps[&(*class, sid.0)]),
                 ids: vec![em.redef_metas[&(*class, sid.0)]],
-                // The channel: a `def self.x` installs on the class-method
-                // side of the overlay, whose row is a different map.
-                flag: u8::from(*singleton),
+                // Bit 0 is the CHANNEL: a `def self.x` installs on the
+                // class-method side of the overlay, whose row is a different
+                // map. Bits 1-2 are this body's own VISIBILITY, which the
+                // first body needs marked before the first statement runs --
+                // a `private :v` written between two bodies retagged this
+                // `def` at lower time.
+                flag: u8::from(*singleton) | (vis_byte(*vis) << 1),
             }),
     );
     // A definition hook written on `Module`/`Class`/`BasicObject` itself

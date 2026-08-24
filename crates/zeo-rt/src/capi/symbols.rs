@@ -131,6 +131,7 @@ capi_symbols!(
     signals::zeo_rt_home_push,
     values::zeo_rt_inspect_to_stderr,
     objects::zeo_rt_install_meta_row,
+    objects::zeo_rt_install_positional_visibility,
     numeric::zeo_rt_int_add_slow,
     numeric::zeo_rt_int_cmp_slow,
     numeric::zeo_rt_int_digits,

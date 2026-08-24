@@ -963,6 +963,33 @@ pub unsafe extern "C" fn zeo_rt_runtime_set_visibility(cid: u32, name: u32, verb
     }
 }
 
+/// The visibility a POSITIONAL `def` carries, applied beside the body the
+/// install on the line above replaced. `verb` is the byte
+/// `zeo_rt_runtime_set_visibility` uses; `singleton` picks the channel.
+///
+/// Infallible, and that is the difference from
+/// `zeo_rt_runtime_set_visibility`: there is no name to resolve and no hook
+/// to fire, because the install just created the method.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_install_positional_visibility(
+    cid: u32,
+    name: u32,
+    verb: u8,
+    singleton: u8,
+) {
+    let vis = match verb {
+        0 => crate::dispatch::MethodVisibility::Private,
+        1 => crate::dispatch::MethodVisibility::Protected,
+        _ => crate::dispatch::MethodVisibility::Public,
+    };
+    crate::runtime_meta::install_positional_visibility(
+        ClassId(cid),
+        crate::Symbol::from_u32(name),
+        vis,
+        singleton != 0,
+    );
+}
+
 /// The FROZEN-REOPEN guard: a class body that would install a name the
 /// class does not already carry raises `FrozenError` when the class was
 /// frozen, and retires the names it could not install. `names` is a

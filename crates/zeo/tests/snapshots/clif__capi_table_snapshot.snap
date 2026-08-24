@@ -100,6 +100,7 @@ zeo_rt_hash_set ([Ptr, Ptr, Ptr]) -> Some(I32)
 zeo_rt_home_pop ([]) -> None
 zeo_rt_home_push ([]) -> None
 zeo_rt_install_meta_row ([U32]) -> None
+zeo_rt_install_positional_visibility ([U32, U32, U8, U8]) -> None
 zeo_rt_int_add_slow ([Ptr, Ptr, Ptr]) -> None
 zeo_rt_int_digits ([U8, Ptr, Ptr, Ptr]) -> None
 zeo_rt_int_div ([Ptr, Ptr, Ptr]) -> None
