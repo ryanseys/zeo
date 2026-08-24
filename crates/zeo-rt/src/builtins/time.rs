@@ -169,12 +169,39 @@ pub(crate) fn time_from_parts(sec: i64, nsec: u32) -> RubyValue {
     time_value(sec, nsec, None)
 }
 
-fn recv_time(recv: &RubyValue) -> &RTime {
+/// A blank `Time` -- what `Time.allocate` answers, and what `Class#new`
+/// allocates before running a reopened Ruby `initialize`.
+///
+/// `den` is zero, which no real instant can be (it is a rational denominator
+/// and always positive), so the marker costs no field and no bytes.
+fn time_uninit() -> RubyValue {
+    use num_bigint::BigInt;
+    RubyValue::Object(Arc::new(RTime {
+        num: BigInt::from(0),
+        den: BigInt::from(0),
+        offset: parking_lot::Mutex::new(None),
+    }))
+}
+
+/// The receiver's instant, or CRuby's refusal for one that was allocated and
+/// never initialized.
+///
+/// Fallible because ruby's is: every `Time` row raises `uninitialized Time`
+/// on a blank receiver, and only object IDENTITY answers without reading the
+/// instant. A panic would be wrong twice over -- it is a rescuable TypeError
+/// there, and a program reaches this by writing `Time.allocate`.
+fn recv_time(recv: &RubyValue) -> Result<&RTime, Signal> {
     match recv {
-        RubyValue::Object(o) => o
-            .as_any()
-            .downcast_ref::<RTime>()
-            .expect("Time table row dispatched on a non-Time receiver"),
+        RubyValue::Object(o) => {
+            let t = o
+                .as_any()
+                .downcast_ref::<RTime>()
+                .expect("Time table row dispatched on a non-Time receiver");
+            if t.den.sign() == num_bigint::Sign::NoSign {
+                return Err(raise_error("TypeError", "uninitialized Time".to_string()));
+            }
+            Ok(t)
+        }
         _ => panic!("Time table row dispatched on a non-Object receiver"),
     }
 }
@@ -1582,6 +1609,8 @@ ruby_class! {
     Time = zeo_abi::TIME_CLASS < zeo_abi::OBJECT_CLASS;
     include zeo_abi::COMPARABLE_CLASS;
 
+    allocate time_uninit;
+
     def self."now" params "in: nil" as time_now cfunc allocs (_recv) {
         let d = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -1733,20 +1762,20 @@ ruby_class! {
     }
 
     def "to_i" | "tv_sec" (recv) {
-        Ok(RubyValue::Int(recv_time(recv).sec()))
+        Ok(RubyValue::Int(recv_time(recv)?.sec()))
     }
     def "to_f" (recv) {
-        let t = recv_time(recv);
+        let t = recv_time(recv)?;
         // From the exact rational, not from `sec + nsec/1e9`: that rounds
         // twice and can't round-trip a Float epoch (`Time.at(1.25).to_f`).
         let (n, d) = (t.num.clone(), t.den.clone());
         Ok(RubyValue::Float(bigint_to_f64(&n) / bigint_to_f64(&d)))
     }
     def "nsec" | "tv_nsec" (recv) {
-        Ok(RubyValue::Int(recv_time(recv).nsec() as i64))
+        Ok(RubyValue::Int(recv_time(recv)?.nsec() as i64))
     }
     def "usec" | "tv_usec" (recv) {
-        Ok(RubyValue::Int((recv_time(recv).nsec() / 1000) as i64))
+        Ok(RubyValue::Int((recv_time(recv)?.nsec() / 1000) as i64))
     }
     // The fraction of a second, EXACTLY: a Rational (`Time.at(0.5).subsec`
     // is `(1/2)`, not 0.5), or Integer 0 for a whole second -- oracle-
@@ -1756,41 +1785,41 @@ ruby_class! {
         // The EXACT fraction, whatever its denominator -- `Time.at(10.8).subsec`
         // is `(225179981368525/281474976710656)`, the double's true value, not
         // a nanosecond approximation of it (oracle-verified).
-        let (n, d) = recv_time(recv).frac();
+        let (n, d) = recv_time(recv)?.frac();
         if n == num_bigint::BigInt::from(0) {
             return Ok(RubyValue::Int(0));
         }
         crate::builtins::rational::rational_new(n, d)
     }
     def "year" (recv) {
-        Ok(RubyValue::Int(civil(recv_time(recv)).tm.tm_year as i64 + 1900))
+        Ok(RubyValue::Int(civil(recv_time(recv)?).tm.tm_year as i64 + 1900))
     }
     def "month" | "mon" (recv) {
-        Ok(RubyValue::Int(civil(recv_time(recv)).tm.tm_mon as i64 + 1))
+        Ok(RubyValue::Int(civil(recv_time(recv)?).tm.tm_mon as i64 + 1))
     }
     def "day" | "mday" (recv) {
-        Ok(RubyValue::Int(civil(recv_time(recv)).tm.tm_mday as i64))
+        Ok(RubyValue::Int(civil(recv_time(recv)?).tm.tm_mday as i64))
     }
     def "hour" (recv) {
-        Ok(RubyValue::Int(civil(recv_time(recv)).tm.tm_hour as i64))
+        Ok(RubyValue::Int(civil(recv_time(recv)?).tm.tm_hour as i64))
     }
     def "min" (recv) {
-        Ok(RubyValue::Int(civil(recv_time(recv)).tm.tm_min as i64))
+        Ok(RubyValue::Int(civil(recv_time(recv)?).tm.tm_min as i64))
     }
     def "sec" (recv) {
-        Ok(RubyValue::Int(civil(recv_time(recv)).tm.tm_sec as i64))
+        Ok(RubyValue::Int(civil(recv_time(recv)?).tm.tm_sec as i64))
     }
     def "wday" (recv) {
-        Ok(RubyValue::Int(civil(recv_time(recv)).tm.tm_wday as i64))
+        Ok(RubyValue::Int(civil(recv_time(recv)?).tm.tm_wday as i64))
     }
     def "yday" (recv) {
-        Ok(RubyValue::Int(civil(recv_time(recv)).tm.tm_yday as i64 + 1))
+        Ok(RubyValue::Int(civil(recv_time(recv)?).tm.tm_yday as i64 + 1))
     }
     def "utc_offset" | "gmt_offset" | "gmtoff" (recv) {
-        Ok(RubyValue::Int(civil(recv_time(recv)).offset as i64))
+        Ok(RubyValue::Int(civil(recv_time(recv)?).offset as i64))
     }
     def "zone" (recv) {
-        let z = civil(recv_time(recv)).zone;
+        let z = civil(recv_time(recv)?).zone;
         // A fixed-offset (non-UTC) Time has no zone NAME -- nil, not "".
         if z.is_empty() {
             return Ok(RubyValue::Nil);
@@ -1801,39 +1830,39 @@ ruby_class! {
     // reports a plain bool, so anything that isn't a positive answer is
     // false -- the same `> 0` test `to_a`/`strftime` already use above.
     def "isdst" | "dst?" (recv) {
-        Ok(RubyValue::Bool(civil(recv_time(recv)).tm.tm_isdst > 0))
+        Ok(RubyValue::Bool(civil(recv_time(recv)?).tm.tm_isdst > 0))
     }
     def "utc?" | "gmt?" (recv) {
-        Ok(RubyValue::Bool(recv_time(recv).is_utc()))
+        Ok(RubyValue::Bool(recv_time(recv)?.is_utc()))
     }
     // The MUTATING converters: they change which zone the receiver RENDERS
     // in and answer self, leaving the instant alone. Callers observe the
     // mutation (`t.utc; t.to_s` renders UTC), which is why `offset` is
     // interior-mutable -- see `RTime`.
     def "utc" | "gmtime" (recv) {
-        *recv_time(recv).offset.lock() = Some(RTime::UTC);
+        *recv_time(recv)?.offset.lock() = Some(RTime::UTC);
         Ok(recv.clone())
     }
     def "localtime"(recv, arg?) {
         // No arg -> system-local (offset None); an Integer/String arg fixes it.
-        *recv_time(recv).offset.lock() = offset_arg(arg)?;
+        *recv_time(recv)?.offset.lock() = offset_arg(arg)?;
         Ok(recv.clone())
     }
     // ...and their non-mutating counterparts, which answer a fresh Time.
     def "getutc" | "getgm" (recv) {
-        let t = recv_time(recv);
+        let t = recv_time(recv)?;
         Ok(time_value(t.sec(), t.nsec(), Some(RTime::UTC)))
     }
     def "getlocal"(recv, arg?) {
-        let t = recv_time(recv);
+        let t = recv_time(recv)?;
         // No arg -> system-local; an Integer/String arg fixes the utc_offset.
         Ok(time_value(t.sec(), t.nsec(), offset_arg(arg)?))
     }
     def "to_s" (recv) {
-        Ok(RubyValue::Str(crate::collections::string_new(render(recv_time(recv), false))))
+        Ok(RubyValue::Str(crate::collections::string_new(render(recv_time(recv)?, false))))
     }
     def "inspect" (recv) {
-        Ok(RubyValue::Str(crate::collections::string_new(render(recv_time(recv), true))))
+        Ok(RubyValue::Str(crate::collections::string_new(render(recv_time(recv)?, true))))
     }
     def "strftime" (recv, arg) {
         let __fmt_check = crate::builtins::convert::to_rstr(arg)?;
@@ -1843,15 +1872,15 @@ ruby_class! {
         }
         let f = &crate::builtins::convert::to_rstr(arg)?;
         let fmt = f.lock().to_utf8_lossy().into_owned();
-        Ok(RubyValue::Str(crate::collections::string_new(strftime(recv_time(recv), &fmt))))
+        Ok(RubyValue::Str(crate::collections::string_new(strftime(recv_time(recv)?, &fmt))))
     }
     // `t + n` -> a Time n seconds later; `t - other_time` -> a Float count of
     // seconds BETWEEN them, but `t - n` -> a Time. The argument's type picks.
     def "+" (recv, other) {
-        shift(recv_time(recv), other, 1)
+        shift(recv_time(recv)?, other, 1)
     }
     def "-" (recv, other) {
-        let t = recv_time(recv);
+        let t = recv_time(recv)?;
         if let RubyValue::Object(o) = other
             && let Some(other) = o.as_any().downcast_ref::<RTime>() {
                 let a = t.sec() as f64 + t.nsec() as f64 / 1e9;
@@ -1862,7 +1891,7 @@ ruby_class! {
     }
     // Drives Comparable (`<`, `between?`, `clamp`) -- see the module docs.
     def "<=>" (recv, other) {
-        let t = recv_time(recv);
+        let t = recv_time(recv)?;
         let RubyValue::Object(o) = other else {
             return Ok(RubyValue::Nil);
         };
@@ -1881,7 +1910,7 @@ ruby_class! {
         ))
     }
     def "==" | "eql?" (recv, other) {
-        let t = recv_time(recv);
+        let t = recv_time(recv)?;
         if let RubyValue::Object(o) = other
             && let Some(other) = o.as_any().downcast_ref::<RTime>() {
                 // The canonical (reduced) fields compare directly -- see
@@ -1891,7 +1920,7 @@ ruby_class! {
         Ok(RubyValue::Bool(false))
     }
     def "hash" (recv) {
-        let t = recv_time(recv);
+        let t = recv_time(recv)?;
         // Must agree with `==` above: derived from the canonical instant
         // alone, never from the rendering offset (`t == t.getutc` is true, so
         // they must hash alike).
@@ -1901,23 +1930,23 @@ ruby_class! {
         t.den.hash(&mut h);
         Ok(RubyValue::Int(h.finish() as i64))
     }
-    def "sunday?" (recv) { Ok(RubyValue::Bool(civil(recv_time(recv)).tm.tm_wday == 0)) }
-    def "monday?" (recv) { Ok(RubyValue::Bool(civil(recv_time(recv)).tm.tm_wday == 1)) }
-    def "tuesday?" (recv) { Ok(RubyValue::Bool(civil(recv_time(recv)).tm.tm_wday == 2)) }
-    def "wednesday?" (recv) { Ok(RubyValue::Bool(civil(recv_time(recv)).tm.tm_wday == 3)) }
-    def "thursday?" (recv) { Ok(RubyValue::Bool(civil(recv_time(recv)).tm.tm_wday == 4)) }
-    def "friday?" (recv) { Ok(RubyValue::Bool(civil(recv_time(recv)).tm.tm_wday == 5)) }
-    def "saturday?" (recv) { Ok(RubyValue::Bool(civil(recv_time(recv)).tm.tm_wday == 6)) }
+    def "sunday?" (recv) { Ok(RubyValue::Bool(civil(recv_time(recv)?).tm.tm_wday == 0)) }
+    def "monday?" (recv) { Ok(RubyValue::Bool(civil(recv_time(recv)?).tm.tm_wday == 1)) }
+    def "tuesday?" (recv) { Ok(RubyValue::Bool(civil(recv_time(recv)?).tm.tm_wday == 2)) }
+    def "wednesday?" (recv) { Ok(RubyValue::Bool(civil(recv_time(recv)?).tm.tm_wday == 3)) }
+    def "thursday?" (recv) { Ok(RubyValue::Bool(civil(recv_time(recv)?).tm.tm_wday == 4)) }
+    def "friday?" (recv) { Ok(RubyValue::Bool(civil(recv_time(recv)?).tm.tm_wday == 5)) }
+    def "saturday?" (recv) { Ok(RubyValue::Bool(civil(recv_time(recv)?).tm.tm_wday == 6)) }
 
     // `asctime`/`ctime`: the fixed C `ctime` shape, in the Time's own zone.
     def "asctime" | "ctime" (recv) {
         Ok(RubyValue::Str(crate::collections::string_new(
-            strftime(recv_time(recv), "%a %b %e %H:%M:%S %Y"),
+            strftime(recv_time(recv)?, "%a %b %e %H:%M:%S %Y"),
         )))
     }
     // `[sec, min, hour, mday, mon, year, wday, yday, isdst, zone]`.
     def "to_a" (recv) {
-        let c = civil(recv_time(recv));
+        let c = civil(recv_time(recv)?);
         let zone = if c.zone.is_empty() {
             RubyValue::Nil
         } else {
@@ -1939,23 +1968,23 @@ ruby_class! {
     // The exact instant as `Rational` seconds since the epoch (always a
     // Rational, even for a whole second: `Time.at(100).to_r == (100/1)`).
     def "to_r" (recv) {
-        let t = recv_time(recv);
+        let t = recv_time(recv)?;
         crate::builtins::rational::rational_new(t.num.clone(), t.den.clone())
     }
     def "round"(recv, ndigits?) {
-        time_reduce(recv_time(recv), ndigits, Rounding::Round)
+        time_reduce(recv_time(recv)?, ndigits, Rounding::Round)
     }
     def "floor"(recv, ndigits?) {
-        time_reduce(recv_time(recv), ndigits, Rounding::Floor)
+        time_reduce(recv_time(recv)?, ndigits, Rounding::Floor)
     }
     def "ceil"(recv, ndigits?) {
-        time_reduce(recv_time(recv), ndigits, Rounding::Ceil)
+        time_reduce(recv_time(recv)?, ndigits, Rounding::Ceil)
     }
     // ISO 8601 / `xmlschema`: `YYYY-MM-DDTHH:MM:SS`, an optional `.fff`
     // fractional part (`fraction_digits`), and the zone (`Z` for UTC else
     // `+HH:MM`).
     def "xmlschema" | "iso8601"(recv, fraction_digits?) {
-        let t = recv_time(recv);
+        let t = recv_time(recv)?;
         let mut s = strftime(t, "%Y-%m-%dT%H:%M:%S");
         let digits = round_ndigits(fraction_digits)?;
         if digits > 0 {
@@ -1977,7 +2006,7 @@ ruby_class! {
     // A pattern-matching view: `nil` -> every field, an Array -> only the
     // requested keys (in the requested order), CRuby's shape.
     def "deconstruct_keys" (recv, arg) {
-        let all = time_field_pairs(recv_time(recv));
+        let all = time_field_pairs(recv_time(recv)?);
         let pairs: Vec<(RubyValue, RubyValue)> = match arg {
             RubyValue::Nil => all
                 .into_iter()
@@ -2008,7 +2037,12 @@ ruby_class! {
     private def "initialize" cfunc (_recv, *_args, &_block) {
         Err(type_error!("already initialized Time"))
     }
-    private def "initialize_copy"(_recv, _other) {
+    private def "initialize_copy"(_recv, other) {
+        // The SOURCE is read first: copying a blank Time is refused for being
+        // blank, not for the target being built already. `Time.allocate.dup`
+        // says `uninitialized Time` in ruby, and the order is the only thing
+        // that decides which message comes out.
+        recv_time(other)?;
         Err(type_error!("already initialized Time"))
     }
 
@@ -2018,7 +2052,7 @@ ruby_class! {
     // Time arm serving the FULL wire format, so only a hand-called `_dump`
     // sees the difference.
     private def "_dump" cfunc (recv, *_args) {
-        let (bytes, _ivars) = time_mdump(recv_time(recv));
+        let (bytes, _ivars) = time_mdump(recv_time(recv)?);
         Ok(RubyValue::Str(crate::string_from_bytes(
             bytes,
             crate::encoding::ASCII_8BIT,
