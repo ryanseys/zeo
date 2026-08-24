@@ -130,10 +130,11 @@ module FFI
     DOUBLE_SIZE = Type::Builtin::DOUBLE.size * 8
     DOUBLE_ALIGN = Type::Builtin::DOUBLE.alignment * 8
     # zeo has no `:long_double` type to measure, so these come from the ABI
-    # rule instead: Apple makes `long double` an alias of `double`, and every
-    # other target zeo builds for (x86_64 and aarch64 SysV) gives it a
-    # 16-byte slot.
-    LONG_DOUBLE_SIZE = IS_MAC ? 64 : 128
+    # rule instead. Every target zeo builds for gives `long double` a 16-byte
+    # slot -- 80-bit extended on x86_64, IEEE quad on aarch64 SysV -- with one
+    # exception: Apple aliases it to `double` on arm64 ONLY. An Intel Mac
+    # answers 128.
+    LONG_DOUBLE_SIZE = IS_MAC && ARCH == "aarch64" ? 64 : 128
     LONG_DOUBLE_ALIGN = LONG_DOUBLE_SIZE
 
     # Test if current OS is a *BSD (includes Mac).

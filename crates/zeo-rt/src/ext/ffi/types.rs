@@ -133,7 +133,9 @@ impl Builtin {
             Void | Varargs => (1, 1),
             // Apple aliases `long double` to `double`; every other target
             // zeo builds for gives it a 16-byte slot.
-            LongDouble if cfg!(target_vendor = "apple") => (8, 8),
+            // Apple aliases `long double` to `double` on arm64 only; an
+            // Intel Mac gives it a 16-byte slot like every other target.
+            LongDouble if cfg!(all(target_vendor = "apple", target_arch = "aarch64")) => (8, 8),
             LongDouble => (16, 16),
             other => {
                 let k = other.kind().expect("every other type marshals");

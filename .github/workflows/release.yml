@@ -27,6 +27,11 @@ jobs:
         include:
           - os: macos-14
             target: aarch64-apple-darwin
+          # macos-13 is the last Intel runner GitHub offers, and it is what
+          # makes this row NATIVE. Building it on macos-14 would be a cross
+          # build, which the note above rules out.
+          - os: macos-13
+            target: x86_64-apple-darwin
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
           - os: ubuntu-22.04-arm

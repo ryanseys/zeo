@@ -1161,8 +1161,12 @@ pub(crate) fn ffi_platform_string(leaf: &str) -> Option<String> {
 /// width on `ADDRESS_SIZE == 64` and crabstone its `:size_t` on
 /// `ADDRESS_SIZE == 32`.
 pub(crate) fn ffi_platform_integer(leaf: &str) -> Option<i64> {
-    let long_double = match seeded_string_const("RUBY_PLATFORM")?.contains("darwin") {
-        // Apple aliases `long double` to `double`; SysV gives it 16 bytes.
+    // `long double` is 16 bytes everywhere zeo emits -- 80-bit extended on
+    // x86_64, IEEE quad on aarch64 Linux -- with ONE exception: Apple aliases
+    // it to `double` on arm64 only. Testing `darwin` alone answered 64 on an
+    // Intel Mac, where CRuby's ffi says 128.
+    let platform = seeded_string_const("RUBY_PLATFORM")?;
+    let long_double = match platform.contains("darwin") && platform.starts_with("arm64") {
         true => 64,
         false => 128,
     };
