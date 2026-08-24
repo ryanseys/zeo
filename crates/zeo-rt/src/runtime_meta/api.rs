@@ -1465,12 +1465,32 @@ pub fn runtime_define_method_from_method(
 /// form: install the source method's definition as a per-object singleton (or
 /// a class method for a `Class` receiver). The compatibility check runs
 /// against the RECEIVER's class, matching CRuby's singleton bind rule.
+/// Refuse a singleton on a SHARED object.
+///
+/// An interned frozen string literal is one object for the whole program, so
+/// attaching a singleton to it would reach every other part holding the same
+/// literal. Ruby refuses for that reason -- `"lit".freeze.singleton_class` is
+/// `TypeError: can't define singleton` -- and this is what makes interning
+/// `.freeze` safe rather than a way to leak state between unrelated code.
+///
+/// A frozen string that arrived any other way is unshared and allowed:
+/// `s = +"x"; s.freeze; s.singleton_class` answers a Class on both engines.
+pub(crate) fn refuse_shared_singleton(recv: &RubyValue) -> Result<(), Signal> {
+    if let RubyValue::Str(s) = recv
+        && crate::value::collections::is_interned(s)
+    {
+        return Err(type_error!("can't define singleton"));
+    }
+    Ok(())
+}
+
 pub fn runtime_define_singleton_from_method(
     recv: &RubyValue,
     name: Symbol,
     owner: ClassId,
     src_name: Symbol,
 ) -> Result<RubyValue, Signal> {
+    refuse_shared_singleton(recv)?;
     let recv_class = recv.class_id();
     // Module-owned sources bind anywhere -- see
     // `runtime_define_method_from_method`.
@@ -1565,6 +1585,7 @@ pub fn runtime_define_singleton_method(
     name: Symbol,
     body: RProc,
 ) -> Result<RubyValue, Signal> {
+    refuse_shared_singleton(recv)?;
     match recv {
         RubyValue::Class(cid) => {
             if crate::dispatch::class_frozen(*cid) {
@@ -1662,6 +1683,7 @@ pub fn runtime_define_singleton_method(
 /// primitive lands back in [`extend_object_default`], which is this function's
 /// body minus the routing and the hook.
 pub fn runtime_extend(recv: &RubyValue, module_val: &RubyValue) -> Result<RubyValue, Signal> {
+    refuse_shared_singleton(recv)?;
     extend_object_or_primitive(recv, module_val)?;
     fire_mixin_hook(module_val, "extended", recv)?;
     Ok(recv.clone())

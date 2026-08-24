@@ -589,6 +589,8 @@ pub fn runtime_singleton_class(recv: &RubyValue) -> Result<RubyValue, Signal> {
     ) {
         return Err(type_error!("can't define singleton"));
     }
+    // A shared object refuses a singleton -- see `refuse_shared_singleton`.
+    super::api::refuse_shared_singleton(recv)?;
     let cache_key = singleton_class_key(recv);
     let real = recv.class_id();
     let owner = recv.clone();

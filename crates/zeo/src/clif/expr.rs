@@ -14,6 +14,79 @@ use zeo_abi::abi::{PAYLOAD_OFFSET, ValueTag};
 /// `EncodingId(1)` = UTF-8, every plain source literal's encoding.
 const ENC_UTF8: i64 = 1;
 
+/// Whether `String#freeze` is still the builtin row this fold stands in for.
+///
+/// TWO questions, because they are recorded in different places and asking
+/// only one is a wrong answer rather than a missed fold:
+///
+/// * a RUNTIME (re)definition -- `define_method(:freeze)`, a `send` to a
+///   definition verb -- joins `runtime_patches`;
+/// * a COMPILE-TIME reopen (`class String; def freeze`) does NOT. It
+///   registers on the value channel, and `a_later_def_on_a_builtin_reaches_back`
+///   records that `runtime_patches` never sees one.
+///
+/// Gating on the first alone let `class String; def freeze = "x"; end` keep
+/// answering the literal, which is a silently wrong program rather than a
+/// slower one.
+///
+/// The whole chain is asked, not just `String`: a `Kernel#freeze` or an
+/// `Object#freeze` reopen intercepts the same call.
+///
+/// One narrow divergence stays, and it is the pre-existing one rather than a
+/// new one. CRuby checks its redefinition flag when the instruction RUNS, so
+/// a literal frozen BEFORE a later `define_method(:freeze)` still interns
+/// there. zeo decides per program, so a program that redefines `freeze`
+/// anywhere gets the ordinary dispatch everywhere.
+fn freeze_is_pristine(fx: &Fx) -> bool {
+    let c = &fx.an.compiler;
+    !c.may_be_patched_at_runtime("freeze")
+        && c.method_in_chain(crate::compiler::STRING_CLASS, "freeze")
+            .is_none()
+}
+
+/// The text of a string literal `.freeze` may fold, or `None`.
+///
+/// Only the shape the interned path can serve: no interpolation, no raw-byte
+/// segment, and no `# encoding:` magic comment (which tags every literal in
+/// the file byte-built and skips the frozen pool, as the ordinary literal
+/// path already records).
+fn frozen_foldable_literal(fx: &Fx, recv: crate::hir::NodeId) -> Option<String> {
+    let HirNode::StringLit(parts) = &fx.an.compiler.hir[recv] else {
+        return None;
+    };
+    if script_encoding_id(fx).is_some() || parts.iter().any(|p| matches!(p, StrPart::Bytes(_))) {
+        return None;
+    }
+    pure_literal(parts)
+}
+
+/// A non-interpolated string literal, straight out of `.rodata`.
+///
+/// `frozen` picks the entry: the interned immortal twin, so two equal
+/// literals are ONE object, or a fresh allocation per evaluation. Shared by
+/// the ordinary literal path and by the `.freeze` fold, which is the same
+/// question asked at one site rather than per file.
+fn emit_pure_str_literal(fx: &mut Fx, text: &str, frozen: bool) -> Operand {
+    use cranelift_codegen::ir::InstBuilder;
+    let off = fx.em.intern_rodata(text.as_bytes());
+    let ss = fx.temp_slot();
+    let dst = fx.slot_addr(ss, 0);
+    let ptr = fx.rod(off);
+    let len_v = fx.b.ins().iconst(fx.em.ptr, text.len() as i64);
+    let enc = fx.b.ins().iconst(types::I8, ENC_UTF8);
+    let entry = match frozen {
+        true => "zeo_rt_str_lit",
+        false => "zeo_rt_str_new",
+    };
+    fx.call(entry, &[ptr, len_v, enc, dst]);
+    fx.owned_created += 1;
+    Operand::Slot {
+        ss,
+        owned: true,
+        tag: TagInfo::Known(ValueTag::Str as u8),
+    }
+}
+
 pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
     // `blk.call(..)` on the scope's own `&block` parameter -- see
     // `block_param_call`.
@@ -118,27 +191,11 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             let bytes_built =
                 script_enc.is_some() || parts.iter().any(|p| matches!(p, StrPart::Bytes(_)));
             if !bytes_built && let Some(text) = pure_literal(&parts) {
-                let off = fx.em.intern_rodata(text.as_bytes());
-                let ss = fx.temp_slot();
-                let dst = fx.slot_addr(ss, 0);
-                let ptr = fx.rod(off);
-                let len_v = fx.b.ins().iconst(fx.em.ptr, text.len() as i64);
-                let enc = fx.b.ins().iconst(types::I8, ENC_UTF8);
                 // `# frozen_string_literal: true`: a non-interpolated
                 // literal IS its interned frozen twin (equal literals share
                 // one object, and mutation raises).
-                let entry = if fx.an.compiler.hir.literal_frozen_at(id) {
-                    "zeo_rt_str_lit"
-                } else {
-                    "zeo_rt_str_new"
-                };
-                fx.call(entry, &[ptr, len_v, enc, dst]);
-                fx.owned_created += 1;
-                return Ok(Operand::Slot {
-                    ss,
-                    owned: true,
-                    tag: TagInfo::Known(ValueTag::Str as u8),
-                });
+                let frozen = fx.an.compiler.hir.literal_frozen_at(id);
+                return Ok(emit_pure_str_literal(fx, &text, frozen));
             }
             // The builder: a fresh mutable string, literal pieces appended
             // raw, interpolated values through the runtime's to_s dispatch
@@ -775,6 +832,33 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
         // The four `__zeo_ffi_*` markers a deferred `ffi_lib`/`enum`
         // desugars to (see `lower::ffi`): they run where they stand, in
         // class-body order.
+        // `"lit".freeze` on a LITERAL receiver IS the interned frozen twin --
+        // CRuby compiles it to `opt_str_freeze`, so two of them are one
+        // object. The rule is about the literal receiver and nothing else:
+        // `s = +"x"; s.freeze` allocates and dedups nothing on either engine.
+        //
+        // Guarded on `freeze` not being reopened, exactly as CRuby guards
+        // `opt_str_freeze` on its own redefinition flag. A program that
+        // redefines `String#freeze` takes the ordinary dispatch.
+        HirNode::Call {
+            receiver: Some(recv),
+            name,
+            args,
+            kwargs,
+            block,
+            block_arg,
+            safe: false,
+        } if name == "freeze"
+            && args.is_empty()
+            && kwargs.is_empty()
+            && block.is_none()
+            && block_arg.is_none()
+            && freeze_is_pristine(fx)
+            && frozen_foldable_literal(fx, *recv).is_some() =>
+        {
+            let text = frozen_foldable_literal(fx, *recv).expect("checked in the guard");
+            Ok(emit_pure_str_literal(fx, &text, true))
+        }
         HirNode::Call {
             receiver: None,
             name,

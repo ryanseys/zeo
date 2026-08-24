@@ -1647,6 +1647,26 @@ pub fn intern_frozen(buf: crate::encoding::StrBuf) -> RStr {
     s
 }
 
+/// Whether `s` IS the pool's entry for its own content -- an fstring.
+///
+/// Asked by object identity, not by a flag: the pool holds one `RStr` per
+/// `(bytes, encoding)`, so being interned means being THAT `Arc`. A frozen
+/// string that arrived any other way (`s = +"x"; s.freeze`) is unshared and
+/// answers false, which is the distinction ruby draws too.
+///
+/// Reached only from the singleton-creation refusal, a cold path, so taking
+/// the pool lock here costs nothing that matters.
+pub fn is_interned(s: &RStr) -> bool {
+    let key = {
+        let buf = s.lock();
+        (buf.bytes().to_vec(), buf.encoding())
+    };
+    FROZEN_STRINGS
+        .lock()
+        .get(&key)
+        .is_some_and(|pooled| Arc::ptr_eq(pooled, s))
+}
+
 /// A string from raw bytes tagged with an explicit encoding -- what
 /// `String#b`, `force_encoding`, IO byte reads, and `\xNN`-bearing literals
 /// build (the byte-level sibling of `string_new`'s UTF-8 text path).
