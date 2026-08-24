@@ -257,12 +257,12 @@ fn callable_source(what: &RubyValue) -> Option<(String, i64)> {
             .as_any()
             .downcast_ref::<crate::builtins::method::RMethod>()
         {
-            Some(m) => crate::method_meta::source_location(m.home, m.kind, m.name),
+            Some(m) => crate::method_meta::source_location(m.meta.as_ref(), m.home, m.kind, m.name),
             None => {
                 let u = o
                     .as_any()
                     .downcast_ref::<crate::builtins::unbound_method::RUnboundMethod>()?;
-                crate::method_meta::source_location(u.home, u.kind, u.name)
+                crate::method_meta::source_location(u.meta.as_ref(), u.home, u.kind, u.name)
             }
         },
         _ => return None,

@@ -34,6 +34,9 @@ pub struct RUnboundMethod {
     /// The RESOLVED chain position after a `#super_method` re-seat -- see
     /// [`RMethod::seat`](crate::builtins::method::RMethod::seat).
     pub(crate) seat: Option<crate::builtins::method::Seat>,
+    /// The REFLECTION row as it resolved when this object was made -- see
+    /// [`RMethod::meta`](crate::builtins::method::RMethod::meta).
+    pub(crate) meta: Option<Arc<crate::method_meta::MethodMeta>>,
 }
 
 impl RUnboundMethod {
@@ -81,6 +84,7 @@ impl RubyObject for RUnboundMethod {
             kind: self.kind,
             snapshot: self.snapshot.clone(),
             seat: self.seat,
+            meta: self.meta.clone(),
         })
     }
 }
@@ -105,6 +109,11 @@ pub fn unbound_method_new(cid: ClassId, name_arg: &RubyValue) -> Result<RubyValu
         kind: MethodKind::Instance,
         snapshot: Some(crate::builtins::method::freeze_entry(cid, name)),
         seat: None,
+        meta: crate::method_meta::lookup(
+            instance_method_home(cid, name),
+            MethodKind::Instance,
+            name,
+        ),
     })))
 }
 
@@ -227,9 +236,11 @@ fn bind_target(um: &RUnboundMethod, obj: &RubyValue) -> Result<RubyValue, Signal
             ),
         });
     }
-    // The bound Method inherits the UNBOUND one's frozen entry and seat:
-    // `#bind` must not re-resolve a name that has been redefined since, nor
-    // forget a `#super_method` re-seat.
+    // The bound Method inherits the UNBOUND one's frozen entry, seat and
+    // reflection row: `#bind` must not re-resolve a name that has been
+    // redefined since, nor forget a `#super_method` re-seat. The row travels
+    // for the same reason the entry does -- `um.arity` and
+    // `um.bind(o).arity` describe one definition.
     Ok(crate::builtins::method::method_value_with(
         obj.clone(),
         um.name,
@@ -237,6 +248,7 @@ fn bind_target(um: &RUnboundMethod, obj: &RubyValue) -> Result<RubyValue, Signal
         um.kind,
         um.seat,
         um.snapshot.clone(),
+        um.meta.clone(),
     ))
 }
 
@@ -249,12 +261,12 @@ ruby_class! {
     def "arity"(recv) {
         let um = recv_unbound(recv);
         Ok(RubyValue::Int(
-            crate::method_meta::arity(None, um.home, um.kind, um.name).unwrap_or(-1),
+            crate::method_meta::arity(um.meta.as_ref(), None, um.home, um.kind, um.name).unwrap_or(-1),
         ))
     }
     def "parameters"(recv) {
         let um = recv_unbound(recv);
-        Ok(crate::method_meta::parameters(None, um.home, um.kind, um.name)
+        Ok(crate::method_meta::parameters(um.meta.as_ref(), None, um.home, um.kind, um.name)
             .unwrap_or_else(|| RubyValue::Array(crate::array_new(vec![]))))
     }
     def "bind"(recv, arg) {
@@ -301,7 +313,7 @@ ruby_class! {
     }
     def "source_location"(recv) {
         let um = recv_unbound(recv);
-        Ok(crate::method_meta::source_location(um.home, um.kind, um.name))
+        Ok(crate::method_meta::source_location(um.meta.as_ref(), um.home, um.kind, um.name))
     }
     // The unbound twin of `Method#super_method`, walking the chain of the
     // class this method was fetched from.
@@ -336,6 +348,7 @@ ruby_class! {
                 // would not reach, so it keeps the resolve-and-send path.
                 snapshot: None,
                 seat: Some(crate::builtins::method::Seat { owner: home, at }),
+                meta: None,
             })),
             None => RubyValue::Nil,
         })
@@ -360,7 +373,7 @@ ruby_class! {
                 separator: if um.kind == MethodKind::Singleton { '.' } else { '#' },
                 name: um.name,
                 original: crate::method_meta::alias_origin(um.home, um.kind, um.name),
-                params: crate::method_meta::printable_params(None, um.home, um.kind, um.name),
+                params: crate::method_meta::printable_params(um.meta.as_ref(), None, um.home, um.kind, um.name),
                 source: crate::method_meta::source_of(um.home, um.kind, um.name),
             }
             .render(),

@@ -349,6 +349,7 @@ pub fn lookup(class: ClassId, kind: MethodKind, name: Symbol) -> Option<Arc<Meth
 /// no registration of their own, so their shape is derived from the struct meta
 /// instead.
 fn descriptor_of(
+    snap: Option<&Arc<MethodMeta>>,
     recv: Option<&RubyValue>,
     class: ClassId,
     kind: MethodKind,
@@ -356,6 +357,12 @@ fn descriptor_of(
 ) -> Option<Descriptor> {
     if let Some(d) = recv.and_then(|r| singleton_descriptor(r, name)) {
         return Some(d);
+    }
+    // A handle that captured its row reflects through THAT row. `lookup`
+    // answers the row that is live NOW, which is the wrong answer for a
+    // `Method` taken before a redefinition -- see `RMethod::meta`.
+    if let Some(meta) = snap {
+        return Some(meta.params.clone());
     }
     if let Some(meta) = lookup(class, kind, name) {
         return Some(meta.params.clone());
@@ -370,12 +377,13 @@ fn descriptor_of(
 /// the sign). `None` for a method with no registered descriptor (a builtin),
 /// letting the caller fall back to its `-1` catch-all.
 pub fn arity(
+    snap: Option<&Arc<MethodMeta>>,
     recv: Option<&RubyValue>,
     class: ClassId,
     kind: MethodKind,
     name: Symbol,
 ) -> Option<i64> {
-    if let Some(d) = descriptor_of(recv, class, kind, name) {
+    if let Some(d) = descriptor_of(snap, recv, class, kind, name) {
         return Some(arity_of(&d));
     }
     builtin_arity(class, kind, name)
@@ -498,12 +506,13 @@ pub(crate) fn arity_of(d: &[(ParamKind, Option<String>)]) -> i64 {
 /// C function: `n >= 0` mandatory anonymous slots, or `-n-1` of them followed
 /// by a rest.
 pub fn parameters(
+    snap: Option<&Arc<MethodMeta>>,
     recv: Option<&RubyValue>,
     class: ClassId,
     kind: MethodKind,
     name: Symbol,
 ) -> Option<RubyValue> {
-    let d = descriptor_of(recv, class, kind, name)
+    let d = descriptor_of(snap, recv, class, kind, name)
         .or_else(|| builtin_params(class, kind, name))
         .or_else(|| builtin_arity(class, kind, name).map(anonymous_descriptor))?;
     let pairs = d
@@ -523,8 +532,13 @@ pub fn parameters(
 /// `[file, line]` codegen baked from the `def` keyword's span, or `nil` for a
 /// method with no Ruby source here -- a builtin, or a body this runtime
 /// synthesized. CRuby answers `nil` for its own C methods the same way.
-pub fn source_location(class: ClassId, kind: MethodKind, name: Symbol) -> RubyValue {
-    let Some((file, line)) = source_pair(class, kind, name) else {
+pub fn source_location(
+    snap: Option<&Arc<MethodMeta>>,
+    class: ClassId,
+    kind: MethodKind,
+    name: Symbol,
+) -> RubyValue {
+    let Some((file, line)) = source_pair(snap, class, kind, name) else {
         return RubyValue::Nil;
     };
     RubyValue::Array(crate::array_new(vec![
@@ -536,11 +550,15 @@ pub fn source_location(class: ClassId, kind: MethodKind, name: Symbol) -> RubyVa
 /// [`source_location`]'s raw pair -- exactly the shape `ProcData::location`
 /// wants, so `Method#to_proc` can carry its method's location.
 pub(crate) fn source_pair(
+    snap: Option<&Arc<MethodMeta>>,
     class: ClassId,
     kind: MethodKind,
     name: Symbol,
 ) -> Option<(&'static str, u32)> {
-    lookup(class, kind, name).and_then(|m| m.source)
+    match snap {
+        Some(m) => m.source,
+        None => lookup(class, kind, name).and_then(|m| m.source),
+    }
 }
 
 /// The pieces of CRuby's `method_inspect` (proc.c), assembled by
@@ -642,12 +660,13 @@ fn render_params(params: &Descriptor) -> String {
 /// The signature to PRINT for `class`'s `name`: the compiler's descriptor when
 /// there is one, else the placeholders derived from a native method's arity.
 pub(crate) fn printable_params(
+    snap: Option<&Arc<MethodMeta>>,
     recv: Option<&RubyValue>,
     class: ClassId,
     kind: MethodKind,
     name: Symbol,
 ) -> Descriptor {
-    descriptor_of(recv, class, kind, name)
+    descriptor_of(snap, recv, class, kind, name)
         .or_else(|| builtin_arity(class, kind, name).map(anonymous_descriptor))
         .unwrap_or_default()
 }

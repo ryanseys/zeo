@@ -58,6 +58,20 @@ pub struct RMethod {
     /// `prepend` finds the prepended module again and the walk never
     /// advances), and `#call` runs exactly this ancestor's body.
     pub(crate) seat: Option<Seat>,
+    /// The REFLECTION row as it resolved when this object was made -- the
+    /// metadata twin of [`RMethod::snapshot`].
+    ///
+    /// `#arity`, `#parameters` and `#source_location` are keyed by
+    /// `(class, name)` with no position, and a redefinition timeline
+    /// re-registers that key at each body's own line. So a handle taken
+    /// before a reopen described the body that replaced it. CRuby's handle
+    /// holds the entry it was built from, which makes every one of these a
+    /// snapshot rather than a lookup.
+    ///
+    /// `None` where [`RMethod::snapshot`] is None, and for the same reason: a
+    /// `#super_method` re-seat names a position the ordinary walk would not
+    /// reach, so it resolves afresh.
+    pub(crate) meta: Option<Arc<crate::method_meta::MethodMeta>>,
     /// `Kernel#freeze`'s own flag. A Method is a value snapshot, so
     /// freezing gates nothing -- but `frozen?` answers what was written,
     /// which a hardcoded `false` did not.
@@ -189,7 +203,8 @@ pub(crate) fn method_value(
     kind: MethodKind,
 ) -> RubyValue {
     let snapshot = entry_snapshot(&recv, name, home, kind);
-    method_value_with(recv, name, home, kind, None, snapshot)
+    let meta = crate::method_meta::lookup(home, kind, name);
+    method_value_with(recv, name, home, kind, None, snapshot, meta)
 }
 
 /// [`method_value`] over an entry frozen ELSEWHERE -- `UnboundMethod#bind`,
@@ -202,6 +217,7 @@ pub(crate) fn method_value_with(
     kind: MethodKind,
     seat: Option<Seat>,
     snapshot: Option<FrozenEntry>,
+    meta: Option<Arc<crate::method_meta::MethodMeta>>,
 ) -> RubyValue {
     RubyValue::Object(Arc::new(RMethod {
         recv,
@@ -210,6 +226,7 @@ pub(crate) fn method_value_with(
         kind,
         snapshot,
         seat,
+        meta,
         frozen: std::sync::atomic::AtomicBool::new(false),
     }))
 }
@@ -275,6 +292,7 @@ impl RubyObject for RMethod {
             kind: self.kind,
             snapshot: self.snapshot.clone(),
             seat: self.seat,
+            meta: self.meta.clone(),
             frozen: std::sync::atomic::AtomicBool::new(copy_frozen && self.is_frozen()),
         })
     }
@@ -362,6 +380,7 @@ pub fn method_capture_inherited(
                 name,
                 seat,
                 MethodKind::Singleton,
+                None,
                 None,
                 None,
             ));
@@ -507,7 +526,7 @@ ruby_class! {
     def "to_proc" as m_to_proc (recv) {
         let m = recv_method(recv);
         let (target, name) = (m.recv.clone(), m.name);
-        let arity = crate::method_meta::arity(Some(&m.recv), m.home, m.kind, m.name).unwrap_or(-1) as i32;
+        let arity = crate::method_meta::arity(m.meta.as_ref(), Some(&m.recv), m.home, m.kind, m.name).unwrap_or(-1) as i32;
         let b = crate::rproc::ProcBuilder::from_rust(
             move |_self: &RubyValue, args: &[RubyValue], _block| {
                 crate::dispatch::send_value(&target, name, args, None)
@@ -518,7 +537,7 @@ ruby_class! {
         );
         // The proc reports the METHOD's own source location (CRuby's
         // method_to_proc carries the method, and source_location delegates).
-        let b = match crate::method_meta::source_pair(m.home, m.kind, m.name) {
+        let b = match crate::method_meta::source_pair(m.meta.as_ref(), m.home, m.kind, m.name) {
             Some((file, line)) => b.location(file, line),
             None => b,
         };
@@ -529,14 +548,14 @@ ruby_class! {
         // A user `def` has a baked descriptor; a builtin has none, so `-1`
         // (var-args) stays the honest catch-all there.
         Ok(RubyValue::Int(
-            crate::method_meta::arity(Some(&m.recv), m.home, m.kind, m.name).unwrap_or(-1),
+            crate::method_meta::arity(m.meta.as_ref(), Some(&m.recv), m.home, m.kind, m.name).unwrap_or(-1),
         ))
     }
     def "parameters"(recv) {
         let m = recv_method(recv);
         // Builtins have no baked signature -- CRuby reports them as a lone rest;
         // mirror that so `#parameters` is always an Array.
-        Ok(crate::method_meta::parameters(Some(&m.recv), m.home, m.kind, m.name)
+        Ok(crate::method_meta::parameters(m.meta.as_ref(), Some(&m.recv), m.home, m.kind, m.name)
             .unwrap_or_else(|| RubyValue::Array(crate::array_new(vec![]))))
     }
     // CRuby unbinds to the OWNER, not to the class the method was reached
@@ -558,6 +577,7 @@ ruby_class! {
             // Method froze, and a re-seat keeps its position.
             snapshot: m.snapshot.clone(),
             seat: m.seat,
+            meta: m.meta.clone(),
         })))
     }
     // `Method#owner` -- the class or module in the receiver's ancestry that
@@ -586,7 +606,7 @@ ruby_class! {
     // `nil` for C-defined methods.
     def "source_location"(recv) {
         let m = recv_method(recv);
-        Ok(crate::method_meta::source_location(m.home, m.kind, m.name))
+        Ok(crate::method_meta::source_location(m.meta.as_ref(), m.home, m.kind, m.name))
     }
     // `Method#super_method` -- the same method as the NEXT ancestor up defines
     // it, or `nil` at the end of the chain. The result is re-seated onto that
@@ -627,6 +647,7 @@ ruby_class! {
                 home,
                 m.kind,
                 Some(Seat { owner: home, at }),
+                None,
                 None,
             ),
             None => RubyValue::Nil,
@@ -733,7 +754,7 @@ ruby_class! {
                 separator,
                 name: m.name,
                 original,
-                params: crate::method_meta::printable_params(Some(&m.recv), m.home, m.kind, m.name),
+                params: crate::method_meta::printable_params(m.meta.as_ref(), Some(&m.recv), m.home, m.kind, m.name),
                 source: crate::method_meta::source_of(m.home, m.kind, m.name),
             }
             .render(),
