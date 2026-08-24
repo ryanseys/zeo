@@ -8,9 +8,9 @@ differently from ruby — does not belong here. It belongs in
 day someone fixes it. This file holds only **work**: things to build, measure,
 or decide.
 
-Where the surface stands: the method census is at **zero rows**
-([`METHOD_COVERAGE.md`](METHOD_COVERAGE.md)) — every module, method, constant
-and visibility ruby 4.0.6 reaches has a Zeo answer. What remains is
+Where the surface stands: the method census reached **zero rows** and was
+retired — every module, method, constant and visibility ruby 4.0.6 reaches has
+a Zeo answer. What remains is
 behavioural: the gaps directory, and the build-work below.
 
 Each item states what is measured and what is only suspected. An item that

@@ -31,7 +31,7 @@ Zeo is **experimental** and moving fast. What is measured today:
 | Conformance corpus (`tests/spinel/`) | 3,010 / 3,010 |
 | Example goldens (`tests/*.rb`) | 1,261 / 1,261 |
 | End-to-end suite (`crates/zeo-tests/tests/e2e/`) | 1,106 / 1,106 |
-| Method surface vs Ruby 4.0.6 ([census](docs/METHOD_COVERAGE.md), retired at zero) | zero gaps |
+| Method surface vs Ruby 4.0.6 (census, retired at zero) | zero gaps |
 
 Each of those compares stdout, stderr and the exit status with real Ruby,
 byte for byte. `tests/gaps/` holds the 17 programs that still diverge.
@@ -208,9 +208,7 @@ cannot disagree.
 
 For what does not match yet, read
 [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md); for the extension model,
-[`docs/EXTENSIONS.md`](docs/EXTENSIONS.md); for what the retired method
-census measured and never reached,
-[`docs/METHOD_COVERAGE.md`](docs/METHOD_COVERAGE.md).
+[`docs/EXTENSIONS.md`](docs/EXTENSIONS.md).
 
 ---
 
@@ -441,7 +439,7 @@ structurally impossible.
 ```
 crates/      the six workspace crates (above)
 docs/        BINARY_SIZE, CLIF, COMPATIBILITY, CORELIB, EVAL, EXTENSIONS,
-             GEM_TESTING, METHOD_COVERAGE, ROADMAP
+             GEM_TESTING, ROADMAP
 tests/       example goldens, the spinel corpus, the gaps tracker, gemtests drivers
 gems/        66 bundled gems (upstream.rb pins the git-tracked ones)
 bench/       61 benchmark programs; read bench/README.md

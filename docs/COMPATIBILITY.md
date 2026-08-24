@@ -51,8 +51,7 @@ catalogue; that file is the per-program ledger.
 
 ## Ractor, IO::Buffer, RubyVM, Ruby::Box
 
-These subsystems carry their full census surface (see
-[`METHOD_COVERAGE.md`](METHOD_COVERAGE.md)); the divergences below are
+These subsystems carry their full census surface; the divergences below are
 behavioural, each deliberate, each narrower than the CRuby behaviour it
 replaces.
 
@@ -688,7 +687,7 @@ Zeo runs no ractors. The six error classes exist so a `rescue
 Ractor::ClosedError` in portable code resolves its constant, with CRuby's
 exact ancestry (`ClosedError < StopIteration`, the rest under `Ractor::Error <
 RuntimeError`); nothing raises them, and `Ractor::RemoteError#ractor` answers
-nil. `Ractor`'s own 23 methods stay absent — see `docs/METHOD_COVERAGE.md`.
+nil. `Ractor`'s own 23 methods stay absent.
 
 ### `GC::Profiler`
 

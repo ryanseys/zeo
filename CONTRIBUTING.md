@@ -112,8 +112,8 @@ so "1 failed" does not mean "1 stale" — fix and re-run until it is quiet.
   and a test fails any override that merely restates the parameter list. Add
   `cfunc` when CRuby declares the method `argc = -1`, which discards a
   signature the DSL can still express. The arity oracle that gated this
-  reached zero and is retired (see `docs/METHOD_COVERAGE.md`), so a
-  disagreement with ruby is now found by a golden, not a ledger.
+  reached zero and is retired, so a disagreement with ruby is now found by a
+  golden, not a ledger.
 - Declare a method on the class CRuby owns it on — that decides which receivers
   answer it, so `IO#flock` (File's) and `Module#superclass` (Class's) were
   behaviour bugs, not reflection details. Write a golden that calls the
