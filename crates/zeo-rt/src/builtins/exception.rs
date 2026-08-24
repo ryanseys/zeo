@@ -1021,6 +1021,9 @@ fn mark_owned_names(registry: &mut ClassRegistry, id: ClassId) {
     ];
     if OWN_INITIALIZE.iter().any(|owner| owner() == id) {
         registry.mark_own(id, Symbol::intern("initialize"));
+        // Each takes its own arguments and CRuby declares every one
+        // `argc = -1`, so all of them report `[[:rest]]` and -1.
+        instance_method_signature(id, "initialize", &[Rest]);
     }
 }
 
@@ -2394,4 +2397,54 @@ pub fn pattern_match_error(subject: &RubyValue) -> crate::Signal {
     set_exception_detail(&exc, "key", key);
     set_exception_detail(&exc, "matchee", matchee);
     crate::Signal::Raise(crate::stamp_backtrace(exc))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every class in `OWN_INITIALIZE` declares its own `#initialize`, and
+    /// CRuby declares all of them `argc = -1` -- so reflection answers
+    /// `[[:rest]]` and -1 for each. These rows bypass the `ruby_class!` DSL,
+    /// so nothing else records their shape.
+    #[test]
+    fn every_owned_exception_initialize_reports_rest() {
+        // The process-wide registry is installed by generated `main`, which
+        // no unit test runs -- so build the core world here. `with_core` runs
+        // `register_exceptions`, which is what records these signatures.
+        // Generated `main` installs the process registry; no unit test does,
+        // and `method_meta::lookup` walks ancestors THROUGH it -- so an
+        // uninstalled registry answers `None` for every row. nextest runs each
+        // test in its own process, so this write is isolated.
+        crate::dispatch::install_class_registry(ClassRegistry::with_core());
+        let owners: &[(&str, ClassId)] = &[
+            ("Exception", EXCEPTION_CLASS),
+            ("FrozenError", FROZEN_ERROR_CLASS),
+            ("Interrupt", zeo_abi::INTERRUPT_CLASS),
+            ("KeyError", KEY_ERROR_CLASS),
+            ("NameError", NAME_ERROR_CLASS),
+            (
+                "NoMatchingPatternKeyError",
+                zeo_abi::NO_MATCHING_PATTERN_KEY_ERROR_CLASS,
+            ),
+            ("NoMethodError", NO_METHOD_ERROR_CLASS),
+            ("SignalException", SIGNAL_EXCEPTION_CLASS),
+            ("SyntaxError", zeo_abi::SYNTAX_ERROR_CLASS),
+            ("SystemCallError", SYSTEM_CALL_ERROR_CLASS),
+            ("SystemExit", SYSTEM_EXIT_CLASS),
+            ("UncaughtThrowError", UNCAUGHT_THROW_ERROR_CLASS),
+        ];
+        let mut bad: Vec<String> = Vec::new();
+        for (name, id) in owners {
+            let sym = Symbol::intern("initialize");
+            let kind = crate::method_meta::MethodKind::Instance;
+            let params = crate::method_meta::parameters(None, None, *id, kind, sym)
+                .map(|v| v.inspect_string());
+            let arity = crate::method_meta::arity(None, None, *id, kind, sym);
+            if params.as_deref() != Some("[[:rest]]") || arity != Some(-1) {
+                bad.push(format!("{name}#initialize: {params:?} / {arity:?}"));
+            }
+        }
+        assert!(bad.is_empty(), "ruby says [[:rest]] / -1 for each: {bad:?}");
+    }
 }

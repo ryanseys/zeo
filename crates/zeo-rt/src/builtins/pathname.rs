@@ -663,12 +663,12 @@ ruby_class! {
     def self."getwd" | "pwd"(_recv) {
         Ok(wrap(dir_call("pwd", &[], None)?))
     }
-    def self."glob" cfunc (_recv, pattern, *rest, &block) {
+    def self."glob" params "*args, **kwargs" (_recv, pattern, *rest, &block) {
         let mut args = vec![pattern.clone()];
         args.extend_from_slice(rest);
         yield_or_return(wrap_array(dir_call("glob", &args, None)?), block)
     }
-    def self."mktmpdir" cfunc (_recv, *args, &block) {
+    def self."mktmpdir" params "" (_recv, *args, &block) {
         Ok(wrap(dir_call("mktmpdir", args, block)?))
     }
 
@@ -684,7 +684,7 @@ ruby_class! {
     }
     // Re-init replaces the stored path in place, accepting the same
     // String/Pathname/#to_path set (and null-byte refusal) as `Pathname.new`.
-    private def "initialize"(recv, path) {
+    private ruby def "initialize"(recv, path) {
         if let RubyValue::Object(o) = recv
             && o.is_frozen()
         {
@@ -706,7 +706,7 @@ ruby_class! {
         Ok(RubyValue::Int(h.finish() as i64))
     }
     // Only another Pathname compares equal -- a String never does.
-    def "==" | "===" | "eql?"(recv, other) {
+    ruby def "==" | "===" | "eql?"(recv, other) {
         Ok(RubyValue::Bool(
             as_pathname(other).is_some_and(|p| *p.path.lock() == recv_path(recv)),
         ))
@@ -723,12 +723,12 @@ ruby_class! {
     }
 
     // ---- path algebra
-    def "+" | "/"(recv, other) {
+    ruby def "+" | "/"(recv, other) {
         Ok(pathname_val(plus(&recv_path(recv), &arg_path(other)?)))
     }
     // Right to left, stopping at the first absolute piece: everything to its
     // left is unreachable, which is what makes `join("b", "/c")` answer `/c`.
-    def "join" cfunc (recv, *args) {
+    ruby def "join"(recv, *args) {
         let mut result: Option<String> = None;
         for arg in args.iter().rev() {
             let piece = arg_path(arg)?;
@@ -747,21 +747,21 @@ ruby_class! {
         })
     }
     def "parent"(recv) { Ok(pathname_val(plus(&recv_path(recv), ".."))) }
-    def "cleanpath"(recv, consider_symlink?) {
+    ruby def "cleanpath"(recv, consider_symlink?) {
         let p = recv_path(recv);
         Ok(pathname_val(match consider_symlink {
             Some(v) if v.truthy() => cleanpath_conservative(&p),
             _ => cleanpath_aggressive(&p),
         }))
     }
-    def "relative_path_from"(recv, base) {
+    def "relative_path_from" params "base_directory" (recv, base) {
         Ok(pathname_val(relative_path_from(&recv_path(recv), &arg_path(base)?)?))
     }
 
     // ---- ruby's private path-algebra helpers (`pathname_builtin.rb`), as
     // real rows so `private_instance_methods` and a dynamic `send` agree
     // with CRuby. Each wraps the Rust fn the public rows already share.
-    private def "chop_basename"(_recv, path) {
+    private ruby def "chop_basename"(_recv, path) {
         let p = arg_path(path)?;
         Ok(match chop_basename(&p) {
             Some((pre, base)) => RubyValue::Array(crate::array_new(vec![
@@ -772,7 +772,7 @@ ruby_class! {
         })
     }
     // `[prefix, names]` -- the un-peelable head plus every component after it.
-    private def "split_names"(_recv, path) {
+    private ruby def "split_names"(_recv, path) {
         let p = arg_path(path)?;
         let mut pre = p.as_str();
         let mut names: Vec<RubyValue> = Vec::new();
@@ -785,23 +785,23 @@ ruby_class! {
             RubyValue::Array(crate::array_new(names)),
         ])))
     }
-    private def "prepend_prefix"(_recv, prefix, relpath) {
+    private ruby def "prepend_prefix"(_recv, prefix, relpath) {
         Ok(str_val(prepend_prefix(&arg_path(prefix)?, &arg_path(relpath)?)))
     }
-    private def "has_trailing_separator?"(_recv, path) {
+    private ruby def "has_trailing_separator?"(_recv, path) {
         Ok(RubyValue::Bool(has_trailing_separator(&arg_path(path)?)))
     }
-    private def "add_trailing_separator"(_recv, path) {
+    private ruby def "add_trailing_separator"(_recv, path) {
         Ok(str_val(add_trailing_separator(&arg_path(path)?)))
     }
-    private def "del_trailing_separator"(_recv, path) {
+    private ruby def "del_trailing_separator"(_recv, path) {
         Ok(str_val(del_trailing_separator(&arg_path(path)?).to_string()))
     }
     // Plain equality: ruby 4.0 compares verbatim even on macOS (oracle-pinned).
-    private def "same_paths?"(_recv, a, b) {
+    private ruby def "same_paths?"(_recv, a, b) {
         Ok(RubyValue::Bool(arg_path(a)? == arg_path(b)?))
     }
-    private def "plus"(_recv, path1, path2) {
+    private ruby def "plus"(_recv, path1, path2) {
         Ok(str_val(plus(&arg_path(path1)?, &arg_path(path2)?)))
     }
     private def "cleanpath_aggressive"(recv) {
@@ -810,7 +810,7 @@ ruby_class! {
     private def "cleanpath_conservative"(recv) {
         Ok(pathname_val(cleanpath_conservative(&recv_path(recv))))
     }
-    def "sub_ext"(recv, repl) {
+    ruby def "sub_ext"(recv, repl) {
         let newext = arg_path(repl)?;
         let path = recv_path(recv);
         let cur = extname_of(&path);
@@ -855,10 +855,10 @@ ruby_class! {
     }
 
     // ---- names, through the File rows that already spell them
-    def "basename"(recv, suffix?) { on_file_path(recv, "basename", &opt(suffix)) }
+    def "basename" params "*, **, &" (recv, suffix?) { on_file_path(recv, "basename", &opt(suffix)) }
     def "dirname"(recv) { on_file_path(recv, "dirname", &[]) }
     def "extname"(recv) { on_file(recv, "extname", &[], None) }
-    def "expand_path"(recv, base?) { on_file_path(recv, "expand_path", &opt(base)) }
+    def "expand_path" params "*, **, &" (recv, base?) { on_file_path(recv, "expand_path", &opt(base)) }
     def "split"(recv) { Ok(wrap_array(on_file(recv, "split", &[], None)?)) }
     def "sub" cfunc (recv, *args, &block) {
         let replaced = crate::dispatch::send_value(
@@ -870,7 +870,7 @@ ruby_class! {
         Ok(wrap(replaced))
     }
     // `File.fnmatch` takes the PATTERN first, so the receiver goes second.
-    def "fnmatch" | "fnmatch?"(recv, pattern, flags?) {
+    def "fnmatch" params "pattern, *, **, &" | "fnmatch?" params "pattern, *, **, &"(recv, pattern, flags?) {
         let mut args = vec![pattern.clone(), str_val(recv_path(recv).to_string())];
         args.extend(opt(flags));
         file_call("fnmatch", &args, None)
@@ -929,55 +929,55 @@ ruby_class! {
         Ok(RubyValue::Bool((same_dev && same_ino) || !same_dev))
     }
 
-    def "read" cfunc (recv, *rest) { on_file(recv, "read", rest, None) }
-    def "binread" cfunc (recv, *rest) { on_file(recv, "binread", rest, None) }
-    def "readlines" cfunc (recv, *rest) { on_file(recv, "readlines", rest, None) }
-    def "write" cfunc (recv, *rest) { on_file(recv, "write", rest, None) }
-    def "binwrite" cfunc (recv, *rest) { on_file(recv, "binwrite", rest, None) }
-    def "open" cfunc (recv, *rest, &block) { on_file(recv, "open", rest, block) }
-    def "each_line" cfunc (recv, *rest, &block) { on_file(recv, "foreach", rest, block) }
-    def "sysopen" cfunc (recv, *rest) { on_file(recv, "sysopen", rest, None) }
-    def "truncate"(recv, len) { on_file(recv, "truncate", std::slice::from_ref(len), None) }
+    def "read" params "*, **, &" (recv, *rest) { on_file(recv, "read", rest, None) }
+    def "binread" params "*, **, &" (recv, *rest) { on_file(recv, "binread", rest, None) }
+    def "readlines" params "*, **, &" (recv, *rest) { on_file(recv, "readlines", rest, None) }
+    def "write" params "*, **, &" (recv, *rest) { on_file(recv, "write", rest, None) }
+    def "binwrite" params "*, **, &" (recv, *rest) { on_file(recv, "binwrite", rest, None) }
+    def "open" params "*, **, &" (recv, *rest, &block) { on_file(recv, "open", rest, block) }
+    def "each_line" params "*, **, &" (recv, *rest, &block) { on_file(recv, "foreach", rest, block) }
+    def "sysopen" params "*, **, &" (recv, *rest) { on_file(recv, "sysopen", rest, None) }
+    def "truncate" params "length" (recv, len) { on_file(recv, "truncate", std::slice::from_ref(len), None) }
     def "unlink" | "delete"(recv) { on_file(recv, "delete", &[], None) }
     def "readlink"(recv) { on_file_path(recv, "readlink", &[]) }
-    def "realpath"(recv, base?) { on_file_path(recv, "realpath", &opt(base)) }
-    def "realdirpath"(recv, base?) { on_file_path(recv, "realdirpath", &opt(base)) }
+    def "realpath" params "*, **, &" (recv, base?) { on_file_path(recv, "realpath", &opt(base)) }
+    def "realdirpath" params "*, **, &" (recv, base?) { on_file_path(recv, "realdirpath", &opt(base)) }
     // These take the path LAST, so they cannot go through `on_file`.
-    def "chmod"(recv, mode) {
+    ruby def "chmod"(recv, mode) {
         file_call("chmod", &[mode.clone(), str_val(recv_path(recv).to_string())], None)
     }
-    def "lchmod"(recv, mode) {
+    ruby def "lchmod"(recv, mode) {
         file_call("lchmod", &[mode.clone(), str_val(recv_path(recv).to_string())], None)
     }
-    def "chown"(recv, owner, group) {
+    ruby def "chown"(recv, owner, group) {
         file_call(
             "chown",
             &[owner.clone(), group.clone(), str_val(recv_path(recv).to_string())],
             None,
         )
     }
-    def "lchown"(recv, owner, group) {
+    ruby def "lchown"(recv, owner, group) {
         file_call(
             "lchown",
             &[owner.clone(), group.clone(), str_val(recv_path(recv).to_string())],
             None,
         )
     }
-    def "utime"(recv, atime, mtime) {
+    ruby def "utime"(recv, atime, mtime) {
         file_call(
             "utime",
             &[atime.clone(), mtime.clone(), str_val(recv_path(recv).to_string())],
             None,
         )
     }
-    def "lutime"(recv, atime, mtime) {
+    ruby def "lutime"(recv, atime, mtime) {
         file_call(
             "lutime",
             &[atime.clone(), mtime.clone(), str_val(recv_path(recv).to_string())],
             None,
         )
     }
-    def "rename"(recv, to) {
+    ruby def "rename"(recv, to) {
         file_call(
             "rename",
             &[str_val(recv_path(recv).to_string()), str_val(arg_path(to)?)],
@@ -985,18 +985,18 @@ ruby_class! {
         )
     }
     // `old` is the EXISTING file; the receiver is the new name.
-    def "make_link"(recv, old) {
+    ruby def "make_link"(recv, old) {
         file_call("link", &[str_val(arg_path(old)?), str_val(recv_path(recv).to_string())], None)
     }
-    def "make_symlink"(recv, old) {
+    ruby def "make_symlink"(recv, old) {
         file_call("symlink", &[str_val(arg_path(old)?), str_val(recv_path(recv).to_string())], None)
     }
 
-    def "mkdir" cfunc (recv, *rest) { on_dir(recv, "mkdir", rest, None) }
+    def "mkdir" params "*, **, &" (recv, *rest) { on_dir(recv, "mkdir", rest, None) }
     def "rmdir"(recv) { on_dir(recv, "rmdir", &[], None) }
-    def "opendir"(recv, &block) { on_dir(recv, "open", &[], block) }
+    ruby def "opendir"(recv, &block) { on_dir(recv, "open", &[], block) }
     def "entries"(recv) { Ok(wrap_array(on_dir(recv, "entries", &[], None)?)) }
-    def "each_entry"(recv, &block) {
+    ruby def "each_entry"(recv, &block) {
         let names = wrap_array(on_dir(recv, "entries", &[], None)?);
         let RubyValue::Array(items) = &names else { return Ok(RubyValue::Nil) };
         let items: Vec<RubyValue> = items.lock().iter().cloned().collect();
@@ -1006,23 +1006,23 @@ ruby_class! {
     }
     // `with_directory` false answers bare names; the default prefixes each
     // with the receiver, which is what makes the answers usable as paths.
-    def "children"(recv, with_directory?) {
+    ruby def "children"(recv, with_directory?) {
         Ok(RubyValue::Array(crate::array_new(child_paths(recv, with_directory)?)))
     }
-    def "each_child"(recv, with_directory?, &block) {
+    def "each_child" params "with_directory = nil, &b" (recv, with_directory?, &block) {
         let kids = child_paths(recv, with_directory)?;
         let proc = block_or_enum!(recv, &[], block);
         for k in kids { proc.call(&[k])?; }
         Ok(recv.clone())
     }
-    def "glob" cfunc (recv, pattern, *rest, &block) {
+    def "glob" params "*args, **kwargs" (recv, pattern, *rest, &block) {
         let joined = str_val(plus(&recv_path(recv), &arg_path(pattern)?));
         let mut args = vec![joined];
         args.extend_from_slice(rest);
         yield_or_return(wrap_array(dir_call("glob", &args, None)?), block)
     }
     // Every missing directory on the way, root-most first.
-    def "mkpath" cfunc (recv, *_rest) {
+    def "mkpath" params "mode: nil" (recv, *_rest) {
         let mut steps = ascend_paths(&cleanpath_aggressive(&recv_path(recv)));
         steps.reverse();
         for step in steps {
@@ -1036,15 +1036,353 @@ ruby_class! {
     }
     // `require "pathname"` is what adds these two in ruby; zeo gates whole
     // classes rather than methods, so they are here from the start.
-    def "rmtree" cfunc (recv, *_rest) {
+    def "rmtree" params "noop: nil, verbose: nil, secure: nil" (recv, *_rest) {
         remove_tree(&recv_path(recv))?;
         Ok(RubyValue::Nil)
     }
-    def "find" cfunc (recv, *_rest, &block) {
+    def "find" params "ignore_error: true" (recv, *_rest, &block) {
         let proc = block_or_enum!(recv, &[], block);
         let mut found = Vec::new();
         collect_tree(&recv_path(recv), &mut found)?;
         for f in found { proc.call(&[f])?; }
         Ok(RubyValue::Nil)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pathname_val;
+    use crate::builtins::{MethodTable, ParamRows};
+    use crate::method_meta::ParamKind;
+    use crate::{RubyValue, string_new};
+    use zeo_abi::PATHNAME_CLASS;
+
+    /// Every `Pathname` row's `#parameters` and `#arity`, recorded from ruby
+    /// 4.0.6 with `pathname` and `tmpdir` loaded. `#` is an instance row
+    /// (private ones included), `.` a class row.
+    ///
+    /// CRuby writes Pathname in Ruby, so it reports real parameter NAMES where
+    /// most builtin rows report none. That is why these rows carry a `ruby def`
+    /// or a `params "..."` spelling and most of the runtime's do not.
+    const ORACLE: &[(&str, &str, i64)] = &[
+        ("#+", "[[:req, :other]]", 1),
+        ("#/", "[[:req, :other]]", 1),
+        ("#<=>", "[[:req]]", 1),
+        ("#==", "[[:req, :other]]", 1),
+        ("#===", "[[:req, :other]]", 1),
+        ("#absolute?", "[]", 0),
+        ("#add_trailing_separator", "[[:req, :path]]", 1),
+        ("#ascend", "[]", 0),
+        ("#atime", "[]", 0),
+        (
+            "#basename",
+            "[[:rest, :*], [:keyrest, :**], [:block, :&]]",
+            -1,
+        ),
+        (
+            "#binread",
+            "[[:rest, :*], [:keyrest, :**], [:block, :&]]",
+            -1,
+        ),
+        (
+            "#binwrite",
+            "[[:rest, :*], [:keyrest, :**], [:block, :&]]",
+            -1,
+        ),
+        ("#birthtime", "[]", 0),
+        ("#blockdev?", "[]", 0),
+        ("#chardev?", "[]", 0),
+        ("#children", "[[:opt, :with_directory]]", -1),
+        ("#chmod", "[[:req, :mode]]", 1),
+        ("#chop_basename", "[[:req, :path]]", 1),
+        ("#chown", "[[:req, :owner], [:req, :group]]", 2),
+        ("#cleanpath", "[[:opt, :consider_symlink]]", -1),
+        ("#cleanpath_aggressive", "[]", 0),
+        ("#cleanpath_conservative", "[]", 0),
+        ("#ctime", "[]", 0),
+        ("#del_trailing_separator", "[[:req, :path]]", 1),
+        ("#delete", "[]", 0),
+        ("#descend", "[]", 0),
+        ("#directory?", "[]", 0),
+        ("#dirname", "[]", 0),
+        ("#each_child", "[[:opt, :with_directory], [:block, :b]]", -1),
+        ("#each_entry", "[[:block, :block]]", 0),
+        ("#each_filename", "[]", 0),
+        (
+            "#each_line",
+            "[[:rest, :*], [:keyrest, :**], [:block, :&]]",
+            -1,
+        ),
+        ("#empty?", "[]", 0),
+        ("#entries", "[]", 0),
+        ("#eql?", "[[:req, :other]]", 1),
+        ("#executable?", "[]", 0),
+        ("#executable_real?", "[]", 0),
+        ("#exist?", "[]", 0),
+        (
+            "#expand_path",
+            "[[:rest, :*], [:keyrest, :**], [:block, :&]]",
+            -1,
+        ),
+        ("#extname", "[]", 0),
+        ("#file?", "[]", 0),
+        ("#find", "[[:key, :ignore_error]]", -1),
+        (
+            "#fnmatch",
+            "[[:req, :pattern], [:rest, :*], [:keyrest, :**], [:block, :&]]",
+            -2,
+        ),
+        (
+            "#fnmatch?",
+            "[[:req, :pattern], [:rest, :*], [:keyrest, :**], [:block, :&]]",
+            -2,
+        ),
+        ("#freeze", "[]", 0),
+        ("#ftype", "[]", 0),
+        ("#glob", "[[:rest, :args], [:keyrest, :kwargs]]", -1),
+        ("#grpowned?", "[]", 0),
+        ("#has_trailing_separator?", "[[:req, :path]]", 1),
+        ("#hash", "[]", 0),
+        ("#initialize", "[[:req, :path]]", 1),
+        ("#inspect", "[]", 0),
+        ("#join", "[[:rest, :args]]", -1),
+        ("#lchmod", "[[:req, :mode]]", 1),
+        ("#lchown", "[[:req, :owner], [:req, :group]]", 2),
+        ("#lstat", "[]", 0),
+        ("#lutime", "[[:req, :atime], [:req, :mtime]]", 2),
+        ("#make_link", "[[:req, :old]]", 1),
+        ("#make_symlink", "[[:req, :old]]", 1),
+        ("#mkdir", "[[:rest, :*], [:keyrest, :**], [:block, :&]]", -1),
+        ("#mkpath", "[[:key, :mode]]", -1),
+        ("#mountpoint?", "[]", 0),
+        ("#mtime", "[]", 0),
+        ("#open", "[[:rest, :*], [:keyrest, :**], [:block, :&]]", -1),
+        ("#opendir", "[[:block, :block]]", 0),
+        ("#owned?", "[]", 0),
+        ("#parent", "[]", 0),
+        ("#path", "[]", 0),
+        ("#pipe?", "[]", 0),
+        ("#plus", "[[:req, :path1], [:req, :path2]]", 2),
+        ("#prepend_prefix", "[[:req, :prefix], [:req, :relpath]]", 2),
+        ("#read", "[[:rest, :*], [:keyrest, :**], [:block, :&]]", -1),
+        ("#readable?", "[]", 0),
+        ("#readable_real?", "[]", 0),
+        (
+            "#readlines",
+            "[[:rest, :*], [:keyrest, :**], [:block, :&]]",
+            -1,
+        ),
+        ("#readlink", "[]", 0),
+        (
+            "#realdirpath",
+            "[[:rest, :*], [:keyrest, :**], [:block, :&]]",
+            -1,
+        ),
+        (
+            "#realpath",
+            "[[:rest, :*], [:keyrest, :**], [:block, :&]]",
+            -1,
+        ),
+        ("#relative?", "[]", 0),
+        ("#relative_path_from", "[[:req, :base_directory]]", 1),
+        ("#rename", "[[:req, :to]]", 1),
+        ("#rmdir", "[]", 0),
+        (
+            "#rmtree",
+            "[[:key, :noop], [:key, :verbose], [:key, :secure]]",
+            -1,
+        ),
+        ("#root?", "[]", 0),
+        ("#same_paths?", "[[:req, :a], [:req, :b]]", 2),
+        ("#setgid?", "[]", 0),
+        ("#setuid?", "[]", 0),
+        ("#size", "[]", 0),
+        ("#size?", "[]", 0),
+        ("#socket?", "[]", 0),
+        ("#split", "[]", 0),
+        ("#split_names", "[[:req, :path]]", 1),
+        ("#stat", "[]", 0),
+        ("#sticky?", "[]", 0),
+        ("#sub", "[[:rest]]", -1),
+        ("#sub_ext", "[[:req, :repl]]", 1),
+        ("#symlink?", "[]", 0),
+        (
+            "#sysopen",
+            "[[:rest, :*], [:keyrest, :**], [:block, :&]]",
+            -1,
+        ),
+        ("#to_path", "[]", 0),
+        ("#to_s", "[]", 0),
+        ("#truncate", "[[:req, :length]]", 1),
+        ("#unlink", "[]", 0),
+        ("#utime", "[[:req, :atime], [:req, :mtime]]", 2),
+        ("#world_readable?", "[]", 0),
+        ("#world_writable?", "[]", 0),
+        ("#writable?", "[]", 0),
+        ("#writable_real?", "[]", 0),
+        ("#write", "[[:rest, :*], [:keyrest, :**], [:block, :&]]", -1),
+        ("#zero?", "[]", 0),
+        (".getwd", "[]", 0),
+        (".glob", "[[:rest, :args], [:keyrest, :kwargs]]", -1),
+        (".mktmpdir", "[]", 0),
+        (".pwd", "[]", 0),
+    ];
+
+    /// Render a row's signature the way `Method#parameters` prints it, so a
+    /// failure reads as ruby's own answer rather than a Rust debug dump.
+    fn render(rows: Option<ParamRows>, arity: i64) -> String {
+        // No spelling: the anonymous descriptor the arity implies, which is
+        // what `method_meta` hands reflection for such a row.
+        let Some(rows) = rows else {
+            let (required, variadic) = if arity < 0 {
+                ((-arity - 1) as usize, true)
+            } else {
+                (arity as usize, false)
+            };
+            let mut out: Vec<&str> = vec!["[:req]"; required];
+            if variadic {
+                out.push("[:rest]");
+            }
+            return format!("[{}]", out.join(", "));
+        };
+        let body: Vec<String> = rows
+            .iter()
+            .map(|(kind, name)| {
+                let k = match kind {
+                    ParamKind::Req => "req",
+                    ParamKind::Opt => "opt",
+                    ParamKind::Rest => "rest",
+                    ParamKind::KeyReq => "keyreq",
+                    ParamKind::Key => "key",
+                    ParamKind::KeyRest => "keyrest",
+                    ParamKind::Block => "block",
+                };
+                match name {
+                    Some(n) => format!("[:{k}, :{n}]"),
+                    None => format!("[:{k}]"),
+                }
+            })
+            .collect();
+        format!("[{}]", body.join(", "))
+    }
+
+    fn table(side: char) -> &'static MethodTable {
+        let t = crate::builtins::registered_table(PATHNAME_CLASS)
+            .expect("Pathname is a registered builtin table");
+        match side {
+            '#' => t.instance.as_ref().expect("Pathname has instance rows"),
+            _ => t.class.as_ref().expect("Pathname has class rows"),
+        }
+    }
+
+    /// The whole surface at once. A per-row assert stops at the first failure
+    /// and hides how far a drift goes, so this collects every mismatch.
+    #[test]
+    fn every_pathname_row_reports_rubys_own_signature() {
+        let mut bad: Vec<String> = Vec::new();
+        for (label, want_params, want_arity) in ORACLE {
+            let (side, name) = label.split_at(1);
+            let t = table(side.chars().next().expect("a one-char side"));
+            let Some(got_arity) = (t.arity)(name) else {
+                bad.push(format!("{label}: no row"));
+                continue;
+            };
+            let got_params = render((t.params)(name), got_arity);
+            if got_params != *want_params || got_arity != *want_arity {
+                bad.push(format!(
+                    "{label}\n       ruby: {want_params} / {want_arity}\n       zeo : {got_params} / {got_arity}"
+                ));
+            }
+        }
+        assert!(
+            bad.is_empty(),
+            "{} rows diverge from ruby:\n     {}",
+            bad.len(),
+            bad.join("\n     ")
+        );
+    }
+
+    /// Coverage is part of the claim: a row added to the DSL with no recorded
+    /// answer would pass the loop above by never being asked about.
+    #[test]
+    fn the_oracle_answers_every_row_pathname_declares() {
+        let mut missing: Vec<String> = Vec::new();
+        for (side, names) in [('#', (table('#').names)()), ('.', (table('.').names)())] {
+            for n in names {
+                let label = format!("{side}{n}");
+                if !ORACLE.iter().any(|(l, _, _)| *l == label) {
+                    missing.push(label);
+                }
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "no recorded ruby answer for: {missing:?}"
+        );
+    }
+
+    fn imethod(name: &str) -> crate::builtins::BuiltinMethodFn {
+        ((table('#')).lookup)(name).unwrap_or_else(|| panic!("Pathname#{name} is defined"))
+    }
+
+    fn path(s: &str) -> RubyValue {
+        pathname_val(s.to_string())
+    }
+
+    fn str(s: &str) -> RubyValue {
+        RubyValue::Str(string_new(s.to_string()))
+    }
+
+    fn call(name: &str, recv: &RubyValue, args: &[RubyValue]) -> String {
+        imethod(name)(recv, args, None)
+            .unwrap_or_else(|_| panic!("Pathname#{name} answers"))
+            .inspect_string()
+    }
+
+    /// The path ALGEBRA -- the half written here rather than delegated to
+    /// `File`/`Dir`. Every expectation is ruby 4.0.6's own answer.
+    #[test]
+    fn the_path_algebra_matches_the_oracle() {
+        assert_eq!(call("to_s", &path("/a/b"), &[]), "\"/a/b\"");
+        assert_eq!(call("inspect", &path("/a"), &[]), "\"#<Pathname:/a>\"");
+        assert_eq!(call("+", &path("/a"), &[path("b")]), "#<Pathname:/a/b>");
+        assert_eq!(call("+", &path("/a"), &[path("/c")]), "#<Pathname:/c>");
+        assert_eq!(call("+", &path("a"), &[path("..")]), "#<Pathname:.>");
+        assert_eq!(call("/", &path("/a"), &[str("b")]), "#<Pathname:/a/b>");
+        assert_eq!(call("parent", &path("/a/b"), &[]), "#<Pathname:/a>");
+        assert_eq!(call("cleanpath", &path("a/../b"), &[]), "#<Pathname:b>");
+        assert_eq!(call("cleanpath", &path("/a/./b/"), &[]), "#<Pathname:/a/b>");
+        assert_eq!(
+            call("sub_ext", &path("a.rb"), &[str(".txt")]),
+            "#<Pathname:a.txt>"
+        );
+        assert_eq!(
+            call("join", &path("/a"), &[path("b"), path("c")]),
+            "#<Pathname:/a/b/c>"
+        );
+        assert_eq!(
+            call("join", &path("/a"), &[path("b"), path("/c")]),
+            "#<Pathname:/c>"
+        );
+        assert_eq!(
+            call("relative_path_from", &path("/a/b/c"), &[path("/a")]),
+            "#<Pathname:b/c>"
+        );
+        assert_eq!(call("absolute?", &path("/a"), &[]), "true");
+        assert_eq!(call("relative?", &path("a"), &[]), "true");
+        assert_eq!(call("root?", &path("/"), &[]), "true");
+        assert_eq!(call("root?", &path("/a"), &[]), "false");
+    }
+
+    /// A Pathname equals only another Pathname -- never the String that spells
+    /// the same path.
+    #[test]
+    fn equality_refuses_a_string() {
+        assert_eq!(call("==", &path("/a"), &[path("/a")]), "true");
+        assert_eq!(call("==", &path("/a"), &[path("/b")]), "false");
+        assert_eq!(call("==", &path("/a"), &[str("/a")]), "false");
+        assert_eq!(call("eql?", &path("/a"), &[str("/a")]), "false");
+        assert_eq!(call("<=>", &path("/a"), &[path("/b")]), "-1");
+        assert_eq!(call("<=>", &path("/a"), &[RubyValue::Int(1)]), "nil");
     }
 }

@@ -1696,7 +1696,10 @@ fn lower_class_body_statement(
                         out.push(getter);
                     }
                     if matches!(name.as_str(), "attr_writer" | "attr_accessor") {
-                        let param = "value".to_string();
+                        // `__`-prefixed, so `param_entries` reports the slot
+                        // ANONYMOUSLY -- ruby answers `[[:req]]` for an
+                        // `attr_accessor` writer, naming nothing.
+                        let param = "__value".to_string();
                         let read_param = hir.push(HirNode::LocalRead(param.clone()));
                         let write = hir.push(HirNode::IvarWrite(ivar.clone(), read_param));
                         let setter = hir.push(HirNode::DefMethod {

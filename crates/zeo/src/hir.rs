@@ -14,12 +14,6 @@
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct NodeId(u32);
 
-impl NodeId {
-    /// The arena's first node. A stand-in where a `NodeId` is only a SPAN
-    /// hint and the caller has none -- never dereferenced.
-    pub(crate) const ROOT: NodeId = NodeId(0);
-}
-
 /// One per-node boolean fact, as a bit in [`Hir`]'s `flags` array. Read and
 /// written through [`Hir::has_flag`]/[`Hir::set_flag`].
 ///

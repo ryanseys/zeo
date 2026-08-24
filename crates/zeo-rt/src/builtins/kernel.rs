@@ -172,18 +172,24 @@ ruby_module! {
         }
         require_feature(recv, std::slice::from_ref(arg1), None)
     }
-    module_function def "require" as require_feature (_recv, arg1) {
+    // Written as two defs rather than one `module_function`: CRuby defines
+    // `Kernel#require` and `Kernel.require` separately, and only the instance
+    // one reports its parameter name.
+    private def "require" params "path" as require_feature (_recv, arg1) {
         dynamic_require(arg1)
+    }
+    def self."require"(recv, arg1) {
+        require_feature(recv, std::slice::from_ref(arg1), None)
     }
     // Resolved against the CALLING file's directory, which a compiled binary
     // still knows -- see `dynamic_require_relative`.
     module_function def "require_relative" (_recv, arg1) {
         dynamic_require_relative(arg1)
     }
-    private def "pp"(_recv, *args, &_block) {
+    private def "pp" params "*objs" (_recv, *args, &_block) {
         kernel_pp(args)
     }
-    module_function def "warn"(_recv, *args, &_block) {
+    module_function def "warn" params "*msgs, uplevel: nil, category: nil" (_recv, *args, &_block) {
         kernel_warn(args)
     }
     // Spawning a child. `system` inherits stdout/stderr and answers a
@@ -425,12 +431,12 @@ ruby_module! {
     // `exception:` keyword is taken by `with_exception_kw` instead, which peels
     // a trailing hash only when it really carries that key -- leaving an
     // ordinary Hash argument positional, where it belongs.
-    module_function def "Integer" as kernel_integer (_recv, _arg, _base?, _opts?) {
+    module_function def "Integer" params "arg, base = 0, exception: true" as kernel_integer (_recv, _arg, _base?, _opts?) {
         let _frame = conversion_frame("Kernel#Integer");
         with_exception_kw(__args, integer_impl)
     }
     // The second slot is the `exception:` hash -- see `Integer`'s note.
-    module_function def "Float" as kernel_float (_recv, _arg, _opts?) {
+    module_function def "Float" params "arg, exception: true" as kernel_float (_recv, _arg, _opts?) {
         let _frame = conversion_frame("Kernel#Float");
         with_exception_kw(__args, float_impl)
     }
@@ -459,7 +465,7 @@ ruby_module! {
     }
     // `Kernel#Pathname(str)` -- PRIVATE, and there with no require, because
     // ruby 4.0 loads `pathname.so` before the first line.
-    module_function def "Pathname"(_recv, arg) {
+    module_function def "Pathname" params "path" (_recv, arg) {
         crate::builtins::pathname::kernel_pathname(arg)
     }
     module_function def "Complex" as kernel_complex cfunc (_recv, _real, _imaginary?, _opts?) {
@@ -525,7 +531,7 @@ ruby_module! {
             _ => recv.dup_value(false)?,
         })
     }
-    def "clone"(recv, arg?) {
+    def "clone" params "freeze: nil" (recv, arg?) {
         // `clone(freeze: nil)` PRESERVES the original's frozen state (the
         // default), `freeze: true` forces the copy frozen, `freeze: false`
         // forces it unfrozen. The keyword arrives as a trailing options Hash.
@@ -2490,6 +2496,74 @@ mod tests {
             .expect("Kernel has instance methods")
             .lookup)(name)
         .unwrap_or_else(|| panic!("Kernel#{name} is defined"))
+    }
+
+    /// The `Kernel` rows CRuby names parameters on. Every other Kernel row
+    /// reports the anonymous descriptor, which is also ruby's answer.
+    ///
+    /// `require` is the asymmetric one: `Kernel#require` names its parameter
+    /// and `Kernel.require` does not, because CRuby defines the two
+    /// separately -- which is why they are two defs here rather than one
+    /// `module_function`.
+    #[test]
+    fn the_named_kernel_rows_report_rubys_own_signature() {
+        fn render(rows: Option<crate::builtins::ParamRows>) -> String {
+            let Some(rows) = rows else {
+                return "<none>".to_string();
+            };
+            let body: Vec<String> = rows
+                .iter()
+                .map(|(k, n)| {
+                    use crate::method_meta::ParamKind;
+                    let k = match k {
+                        ParamKind::Req => "req",
+                        ParamKind::Opt => "opt",
+                        ParamKind::Rest => "rest",
+                        ParamKind::KeyReq => "keyreq",
+                        ParamKind::Key => "key",
+                        ParamKind::KeyRest => "keyrest",
+                        ParamKind::Block => "block",
+                    };
+                    match n {
+                        Some(n) => format!("[:{k}, :{n}]"),
+                        None => format!("[:{k}]"),
+                    }
+                })
+                .collect();
+            format!("[{}]", body.join(", "))
+        }
+        let t = crate::builtins::registered_table(zeo_abi::KERNEL_CLASS).expect("Kernel");
+        let inst = t.instance.as_ref().expect("Kernel instance rows");
+        let cls = t.class.as_ref().expect("Kernel class rows");
+        let want: &[(&str, &str, i64)] = &[
+            ("Float", "[[:req, :arg], [:key, :exception]]", -2),
+            (
+                "Integer",
+                "[[:req, :arg], [:opt, :base], [:key, :exception]]",
+                -2,
+            ),
+            ("Pathname", "[[:req, :path]]", 1),
+            ("clone", "[[:key, :freeze]]", -1),
+            ("pp", "[[:rest, :objs]]", -1),
+            ("require", "[[:req, :path]]", 1),
+            (
+                "warn",
+                "[[:rest, :msgs], [:key, :uplevel], [:key, :category]]",
+                -1,
+            ),
+        ];
+        let mut bad: Vec<String> = Vec::new();
+        for (name, params, arity) in want {
+            let got = (render((inst.params)(name)), (inst.arity)(name));
+            if got.0 != *params || got.1 != Some(*arity) {
+                bad.push(format!("Kernel#{name}: {got:?} want {params} / {arity}"));
+            }
+        }
+        assert!(bad.is_empty(), "{bad:?}");
+        // The class-side `require` reports no name, and answers the same body.
+        assert_eq!(render((cls.params)("require")), "<none>");
+        assert_eq!((cls.arity)("require"), Some(1));
+        assert!((cls.lookup)("require").is_some());
     }
 
     #[test]

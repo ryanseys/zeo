@@ -70,7 +70,6 @@ fn desugar_singleton_items(
         SingletonBody,
         /// `private :m` / `protected :m` naming a per-object singleton method.
         Vis(String, crate::hir::Visibility),
-        Skip,
     }
     let mut out = Vec::with_capacity(ids.len());
     for id in ids {
@@ -444,7 +443,6 @@ fn desugar_singleton_items(
                     ensure_body: None,
                 }));
             }
-            Item::Skip => {}
         }
     }
     Ok(out)

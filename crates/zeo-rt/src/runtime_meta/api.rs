@@ -1198,14 +1198,6 @@ pub fn singleton_owner_value(id: ClassId) -> Option<RubyValue> {
     maps().singleton_owner.read().unwrap().get(&id.0).cloned()
 }
 
-/// The singleton class ALREADY minted for `recv`, if any -- without minting
-/// one, which is what makes it safe to ask from a reflection row. `def obj.x`
-/// alone mints nothing; only naming `obj.singleton_class` does.
-pub fn minted_singleton_class(recv: &RubyValue) -> Option<ClassId> {
-    let key = singleton_class_key(recv)?;
-    maps().singleton_classes.read().unwrap().get(&key).copied()
-}
-
 /// Whether a runtime `private_class_method`/`public_class_method` marked class
 /// method `name` on `id`, and which way. `None` when neither was called for it.
 pub(crate) fn overlay_class_method_private(id: ClassId, name: Symbol) -> Option<bool> {

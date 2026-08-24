@@ -154,7 +154,7 @@ pub fn accessor_params(class_id: ClassId, name: Symbol) -> Option<crate::method_
     let n = name.name();
     if let Some(base) = n.strip_suffix('=') {
         if !meta.is_data && meta.members.iter().any(|m| m.name() == base) {
-            return Some(vec![(ParamKind::Req, Some("value".to_string()))]);
+            return Some(vec![(ParamKind::Req, Some("_".to_string()))]);
         }
         return None;
     }
@@ -1166,4 +1166,35 @@ fn class_keyword_init(
         Some(b) => RubyValue::Bool(b),
         None => RubyValue::Nil,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A Struct WRITER reports one required parameter, which ruby names `_`;
+    /// a reader reports none, and a name that is not a member has no
+    /// accessor descriptor at all.
+    #[test]
+    fn a_struct_accessor_reports_rubys_own_parameter_name() {
+        use crate::method_meta::ParamKind;
+        let members = [
+            RubyValue::Symbol(Symbol::intern("a")),
+            RubyValue::Symbol(Symbol::intern("b")),
+        ];
+        let cls = define_value_class(STRUCT_CLASS, false, &members, None)
+            .expect("Struct.new(:a, :b) mints a class");
+        let RubyValue::Class(id) = cls else {
+            panic!("Struct.new answers a Class");
+        };
+        let writer = accessor_params(id, Symbol::intern("a=")).expect("a= is an accessor");
+        assert_eq!(writer.len(), 1);
+        assert!(matches!(writer[0].0, ParamKind::Req));
+        assert_eq!(writer[0].1.as_deref(), Some("_"));
+        assert_eq!(
+            accessor_params(id, Symbol::intern("a")).map(|d| d.len()),
+            Some(0)
+        );
+        assert!(accessor_params(id, Symbol::intern("nope")).is_none());
+    }
 }

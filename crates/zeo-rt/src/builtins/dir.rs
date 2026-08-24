@@ -790,7 +790,7 @@ ruby_class! {
     // a fresh snapshot and descriptor, cursor rewound, the old descriptor
     // closed. No frozen check -- a frozen Dir re-inits fine (oracle-pinned).
     // Accepts `(name, encoding: ...)` like `Dir.new`; the kwargs are ignored.
-    private def "initialize"(recv, name, **_opts) {
+    private def "initialize" params "name, encoding: nil" (recv, name, **_opts) {
         let d = recv_dir(recv)?;
         let path = path_arg(name, "open")?;
         let mut entries = read_names(&path)?;

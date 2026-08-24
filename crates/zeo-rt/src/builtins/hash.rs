@@ -440,7 +440,7 @@ ruby_class! {
     // ruby's `rb_hash_initialize`: sets the DEFAULT channel and nothing
     // else -- an already-filled receiver keeps its entries (oracle-pinned:
     // `{a: 1}.send(:initialize, 9)` stays `{a: 1}` with default 9).
-    private def "initialize"(recv, ifnone?, &block) {
+    private def "initialize" params "ifnone = nil, capacity: 0, &block" (recv, ifnone?, &block) {
         guard_hash_frozen(recv)?;
         if let Some(RubyValue::Proc(_)) = &block {
             if ifnone.is_some() {

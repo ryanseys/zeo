@@ -240,7 +240,40 @@ pub(crate) fn synthesize_struct_class(
     };
     hir.set_span(class_def, written_at);
     hir.struct_members.insert(class_def, members.to_vec());
+    name_struct_writer_parameters(hir, class_def);
     Ok(class_def)
+}
+
+/// Ruby names a Struct WRITER's parameter `_`, where an `attr_accessor`
+/// writer names nothing. Both spell the same generated accessor here, so the
+/// struct half renames its slot after lowering -- which keeps the
+/// `ATTR_GENERATED` mark, and with it the frame elision on every struct write.
+fn name_struct_writer_parameters(hir: &mut Hir, class_def: NodeId) {
+    let HirNode::ClassDef { body, .. } = hir[class_def].clone() else {
+        return;
+    };
+    for stmt in body {
+        let HirNode::DefMethod { name, params, .. } = &hir[stmt] else {
+            continue;
+        };
+        if !name.ends_with('=') || params.required.len() != 1 {
+            continue;
+        }
+        let old = params.required[0].clone();
+        let HirNode::DefMethod { params, body, .. } = &mut hir[stmt] else {
+            continue;
+        };
+        params.required[0] = "_".to_string();
+        let body = body.clone();
+        for node in body {
+            if let HirNode::IvarWrite(_, value) = hir[node].clone()
+                && let HirNode::LocalRead(read) = &mut hir[value]
+                && *read == old
+            {
+                *read = "_".to_string();
+            }
+        }
+    }
 }
 
 /// `Name = Module.new` -- the block body, or `None` for the bodyless form --

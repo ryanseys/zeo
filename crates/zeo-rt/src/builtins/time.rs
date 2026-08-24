@@ -2034,7 +2034,7 @@ ruby_class! {
 
     // Every reachable zeo Time is constructed, and CRuby refuses to re-run
     // either hook on one -- the rows ARE that refusal.
-    private def "initialize" cfunc (_recv, *_args, &_block) {
+    private def "initialize" params "year = nil, mon = nil, mday = nil, hour = nil, min = nil, sec = nil, zone = nil, in: nil, precision: 9" (_recv, *_args, &_block) {
         Err(type_error!("already initialized Time"))
     }
     private def "initialize_copy"(_recv, other) {
