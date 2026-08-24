@@ -88,11 +88,26 @@ pub fn resolve(
     // `class Module; def method_added(n); end; end` announced
     // `Exception#initialize` and its siblings ahead of everything the user
     // wrote.
+    //
+    // A CORELIB definition is the same fact arriving a different way: CRuby
+    // compiles those sources into the interpreter, so no hook sees them
+    // either. It cannot ride `native_default` -- that marks a body the
+    // runtime installs and codegen must NOT emit, and a corelib body is
+    // exactly the one that must. The file it was written in is the mark.
     let prelude: std::collections::HashSet<NodeId> = compiler
         .scopes
         .iter()
-        .filter(|s| s.native_default)
         .filter_map(|s| s.def_node)
+        .filter(|&n| {
+            compiler
+                .scopes
+                .iter()
+                .any(|s| s.def_node == Some(n) && s.native_default)
+                || compiler
+                    .hir
+                    .span(n)
+                    .is_some_and(|sp| compiler.hir.internal_files.contains(&sp.file))
+        })
         .collect();
     for (class, defs, target) in taken {
         let sends = surviving(compiler, class, &defs, &global, &future, &prelude);

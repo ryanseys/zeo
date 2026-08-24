@@ -309,6 +309,15 @@ pub struct Hir {
     /// tells the two apart once lowering has finished. `None` for a pathless
     /// source string. Read by `analyze`'s `__FILE__ == $0` fold.
     pub main_file: Option<FileId>,
+    /// The files the vendored corelib registered (`parse::corelib`).
+    ///
+    /// CRuby compiles those sources INTO the interpreter, so they are not part
+    /// of the program in any sense a program can observe: a `method_added`
+    /// hook never sees their `def`s, and `Coverage` never counts their lines.
+    /// zeo compiles them as ordinary statements -- that is what makes the rows
+    /// real Ruby -- so the difference has to be recorded rather than implied
+    /// by position.
+    pub internal_files: crate::compiler::FSet<FileId>,
     /// The file whose source is currently being lowered -- the drivers (the
     /// compiler's `parse_and_lower_with` and its loader) set/restore this
     /// around each file's statements; `None` (source strings with no file
@@ -1170,6 +1179,25 @@ impl Hir {
             line_offset,
         });
         FileId((self.files.len() - 1) as u32)
+    }
+
+    /// The program's OWN file -- what a `<main>` frame names, what tells a
+    /// spliced require's top level apart from it, and the DWARF unit name.
+    ///
+    /// Not `files[0]`. The vendored corelib registers its `<internal:>`
+    /// sources ahead of the main file (see `parse::corelib`), so position
+    /// stopped being the answer and three emitter sites started naming
+    /// `<internal:nilclass>` as every `<main>` frame's file. `main_file` is
+    /// unset for `-e`, which has no path, so the fallback skips the corelib
+    /// segments rather than taking the first row.
+    pub fn entry_file_name(&self) -> Option<&str> {
+        if let Some(id) = self.main_file {
+            return Some(self.files[id.0 as usize].name.as_str());
+        }
+        self.files
+            .iter()
+            .map(|f| f.name.as_str())
+            .find(|n| !n.starts_with("<internal:"))
     }
 
     /// The entry file's name AS GIVEN on the command line -- the same string

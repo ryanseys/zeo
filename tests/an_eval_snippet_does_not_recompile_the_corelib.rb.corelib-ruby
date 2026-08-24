@@ -1,0 +1,3 @@
+Line 3 asserts the `<internal:nilclass>` attribution, which `ZEO_CORELIB=rust`
+answers `nil` for. The rest of the file passes in both modes; the rust leg
+skips the whole file rather than carry a second `.expected`.

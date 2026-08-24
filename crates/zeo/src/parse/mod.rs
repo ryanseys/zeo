@@ -5,6 +5,7 @@
 //! module is the filesystem-touching layer that drives it file-by-file, feeding
 //! per-file state through `crate::lower::context`.
 
+pub(crate) mod corelib;
 pub mod gem_compat;
 mod gem_store;
 mod gemspec;
@@ -158,6 +159,7 @@ pub fn parse_and_lower(source: &str) -> Result<(Hir, NodeId), CompileError> {
         &[],
         None,
         None,
+        crate::Corelib::default(),
     )?;
     Ok((hir, root))
 }
@@ -239,30 +241,53 @@ pub fn parse_and_lower_with(
     gem_paths: &[std::path::PathBuf],
     lockfile: Option<&std::path::Path>,
     root_gem: Option<&crate::Gem>,
+    corelib: crate::Corelib,
 ) -> Result<(Hir, NodeId, Vec<crate::gem_report::GemRecord>), CompileError> {
-    // The exception-class prefix is the same ~100 lines for every compile,
-    // so it is lowered ONCE into a template arena and cloned in, rather than
-    // re-parsed per compile. Sound because the prefix is always the FIRST
-    // thing in the arena (node/file ids are identical either way) and its
-    // source contains nothing that reads ambient state (`__ENCODING__`).
+    // The exception-class prefix plus the vendored corelib (see `corelib`):
+    // the same source for every compile, so it is lowered ONCE into a template
+    // arena and cloned in, rather than re-parsed per compile. Sound because
+    // the prefix is always the FIRST thing in the arena (node/file ids are
+    // identical either way) and its source contains nothing that reads ambient
+    // state (`__ENCODING__`).
+    //
+    // The two halves are counted APART. An exception body is BOOTSTRAP -- the
+    // runtime installs it, so codegen must not re-emit it and the statement
+    // never joins the emitted stream. A corelib body is the opposite: it IS
+    // the row the program dispatches to, so it registers and emits like any
+    // other top-level class body. `builtin_exceptions_len` therefore counts
+    // only the exceptions, and the corelib statements fall into the ordinary
+    // walk right behind them.
     static BUILTIN_PREFIX: std::sync::LazyLock<
-        Result<(Hir, Vec<NodeId>), crate::lower_error::LowerError>,
+        Result<(Hir, Vec<NodeId>, usize), crate::lower_error::LowerError>,
     > = std::sync::LazyLock::new(|| {
         let mut hir = Hir::default();
-        let statements = parse_and_lower_into(&mut hir, BUILTIN_EXCEPTIONS_RB).map_err(|e| {
-            crate::lower_error::LowerError {
+        let mut statements = parse_and_lower_into(&mut hir, BUILTIN_EXCEPTIONS_RB).map_err(
+            |e| crate::lower_error::LowerError {
                 message: format!(
                     "internal error in zeo's built-in exception classes (this is a zeo bug): {e}"
                 ),
                 ..e
-            }
-        })?;
-        Ok((hir, statements))
+            },
+        )?;
+        let exceptions = statements.len();
+        corelib::lower_into(&mut hir, &mut statements)?;
+        Ok((hir, statements, exceptions))
     });
-    let (mut hir, mut statements) = match &*BUILTIN_PREFIX {
-        Ok((h, s)) => (h.clone(), s.clone()),
+    let (mut hir, mut statements, exceptions_len) = match &*BUILTIN_PREFIX {
+        Ok((h, s, n)) => (h.clone(), s.clone(), *n),
         Err(e) => return Err(CompileError::lower(e.clone(), &[])),
     };
+    // An `eval` snippet runs inside a program that already HAS the corelib
+    // rows, so compiling them again would re-emit and re-install every one at
+    // the snippet's position. `forwardable`'s `def_delegators` is a
+    // `module_eval` per delegated name, and that is a hang rather than a slow
+    // program: each eval is a run-time compile, and each compile was emitting
+    // `class NilClass` again. Same rule `analyze` already applies to a
+    // snippet's own definitions -- the exceptions stay, because they are the
+    // bootstrap set every compile resolves against.
+    if mode.is_eval() || corelib == crate::Corelib::Rust {
+        statements.truncate(exceptions_len);
+    }
     if let Some(name) = magic_encoding_comment(source) {
         hir.script_encoding = match encoding_const_name(&name) {
             Ok(n) => n.map(str::to_string),
@@ -273,7 +298,7 @@ pub fn parse_and_lower_with(
     // Before a single statement lowers: what a compile is FOR decides a
     // handful of folds (see `Hir::cvar_is_toplevel`).
     hir.mode = mode;
-    hir.builtin_exceptions_len = statements.len();
+    hir.builtin_exceptions_len = exceptions_len;
     // A snippet is its own compile and would otherwise have never heard of an
     // FFI type an earlier one -- or the program -- declared.
     if mode.is_eval() {

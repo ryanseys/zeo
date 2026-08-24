@@ -31,7 +31,15 @@ pub(crate) fn def_lines(
         for &s in body {
             match &compiler.hir[s] {
                 crate::hir::HirNode::DefMethod { .. } => {
+                    // A corelib `def` is CRuby's own, compiled into the
+                    // interpreter -- ruby's `Coverage` never sees one, so
+                    // neither does zeo's. See `Hir::internal_files`.
+                    let internal = compiler
+                        .hir
+                        .span(s)
+                        .is_some_and(|sp| compiler.hir.internal_files.contains(&sp.file));
                     if let Some((file, line)) = crate::analyze::source::source_location(compiler, s)
+                        && !internal
                     {
                         out.entry(file.to_string()).or_default().insert(line);
                     }

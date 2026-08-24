@@ -275,7 +275,7 @@ pub(crate) enum FrameName {
 /// a block inside a method or a class body already inherits that scope's
 /// own label, in the required file as anywhere else.
 fn block_base(fx: &Fx, file: Option<&str>) -> String {
-    let main = fx.an.compiler.hir.files.first().map(|f| f.name.as_str());
+    let main = fx.an.compiler.hir.entry_file_name();
     if fx.frame_label == "<main>" && file.is_some() && file != main {
         return "<top (required)>".to_string();
     }
@@ -557,7 +557,7 @@ fn define_block_fn(
         (
             loc.map_or(0, |(_, l)| l),
             loc.map(|(f, _)| f.to_string())
-                .or_else(|| fx.an.compiler.hir.files.first().map(|f| f.name.clone())),
+                .or_else(|| fx.an.compiler.hir.entry_file_name().map(str::to_string)),
         )
     };
     let (label, base, depth) = match frame {

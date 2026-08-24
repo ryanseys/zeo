@@ -1812,7 +1812,7 @@ fn method_frame(
     // up.
     let file = here
         .map(|(f, _)| f.to_string())
-        .or_else(|| analyzed.compiler.hir.files.first().map(|f| f.name.clone()));
+        .or_else(|| analyzed.compiler.hir.entry_file_name().map(str::to_string));
     (file, label, line, end_line)
 }
 
@@ -2322,7 +2322,7 @@ fn define_toplevel(
         TopScope::Main { .. } => (
             names::TOPLEVEL.to_string(),
             "<main>".to_string(),
-            analyzed.compiler.hir.files.first().map(|f| f.name.clone()),
+            analyzed.compiler.hir.entry_file_name().map(str::to_string),
             0,
         ),
         TopScope::Unit { index, file } => (

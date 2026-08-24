@@ -2178,14 +2178,18 @@ fn stamp_line(fx: &mut Fx, stmt: NodeId) {
     if fx.prev_line == Some(line) && fx.prev_file.as_deref() == Some(file.as_str()) {
         return;
     }
+    // The main script never qualifies for coverage: its top level began
+    // before `Coverage.start` ran. `entry_file_name`, not `files[0]` -- the
+    // vendored corelib registers its own sources ahead of the main file, so
+    // the corelib -> main transition looked like entering a spliced file and
+    // reported the main script.
     let entering_spliced_file = fx.prev_file.as_deref().is_some_and(|f| f != file)
         && fx
             .an
             .compiler
             .hir
-            .files
-            .first()
-            .is_none_or(|f0| f0.name != file);
+            .entry_file_name()
+            .is_none_or(|name| name != file);
     fx.prev_line = Some(line);
     fx.prev_file = Some(file.clone());
     let v = fx.b.ins().iconst(types::I32, i64::from(line));

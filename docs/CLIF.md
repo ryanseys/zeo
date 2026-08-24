@@ -157,6 +157,8 @@ Platforms differ in where the DWARF ends up, so `-g` changes the link:
 | `ZEO_RT_LEAKCHECK=1` | ownership, per tag, with poison and bad-tag reports |
 | `ZEO_GC=1` | arm the cycle collector; without it a cycle leaks |
 | `ZEO_RT_GCSTATS=1` | one line per collection: nodes, edges, live, reclaimed |
+| `ZEO_RT_GCCHECK=1` | the exit cycle census, gated per program by a `.gccheck` sidecar |
+| `ZEO_CORELIB=rust` | answer from the Rust builtins instead of the vendored corelib ruby ([CORELIB.md](CORELIB.md)) |
 | `cargo nextest run -p zeo` | the CLIF snapshots — the only thing that sees emitter SHAPE |
 
 That last row is a standing rule: **a change under `clif/` runs `cargo

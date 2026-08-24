@@ -158,6 +158,40 @@ pub struct CompileOptions {
     /// it to the run-time loader. What a build that wants to know its whole
     /// dependency graph statically asks for.
     pub strict_static_require: bool,
+    /// Which row answers for a class CRuby writes in Ruby -- see
+    /// [`Corelib`] and `docs/CORELIB.md`.
+    pub corelib: Corelib,
+}
+
+/// Whether a program's core rows come from CRuby's own vendored Ruby or from
+/// zeo's Rust builtins.
+///
+/// The switch exists so the two can be A/B'd and so a corelib bug has a way
+/// back that is not a rebuild; the whole golden corpus runs in both. It is a
+/// compile-time choice, not a run-time one: the rows are emitted or they are
+/// not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Corelib {
+    /// The vendored `crates/zeo/corelib/*.rb`, compiled in. The default.
+    #[default]
+    Ruby,
+    /// zeo's Rust builtins, as before the corelib landed.
+    Rust,
+}
+
+impl Corelib {
+    /// `ZEO_CORELIB=rust` picks the Rust rows; anything else is the default.
+    ///
+    /// Read where a `CompileOptions` is BUILT -- the CLI -- rather than deep
+    /// in the front end, so a library caller gets the default whatever the
+    /// ambient environment says and a test can pin either row.
+    #[must_use]
+    pub fn from_env() -> Self {
+        match std::env::var("ZEO_CORELIB").as_deref() {
+            Ok("rust") => Corelib::Rust,
+            _ => Corelib::Ruby,
+        }
+    }
 }
 
 /// A gem named by the caller -- the public identity type `CompileOptions`
@@ -276,6 +310,7 @@ fn analyze_on_this_thread(
         &opts.gem_paths,
         opts.lockfile.as_deref(),
         opts.root_gem.as_ref(),
+        opts.corelib,
     )?;
     // A `require`/`load` that SURVIVED lowering is one the loader could not
     // resolve. `--strict-static-require` makes that an error HERE rather
@@ -405,6 +440,7 @@ pub fn analyze_snippet(
         &opts.gem_paths,
         opts.lockfile.as_deref(),
         opts.root_gem.as_ref(),
+        opts.corelib,
     )?;
     analyze::analyze(hir, root)
 }

@@ -239,5 +239,20 @@
       "rev": "03b6d3f8898a28604fe6cb00eae3226b821168f4",
       "subdir": "include"
     }
+  ],
+  "corelib": [
+    {
+      "name": "ruby",
+      "github": "ruby/ruby",
+      "tag": "v4.0.6",
+      "rev": "03b6d3f8898a28604fe6cb00eae3226b821168f4",
+      "files": [
+        {
+          "path": "nilclass.rb",
+          "blob": "acd5666c71d08d9ebf35e12e4ca90543d9930539",
+          "sha256": "695e5391dea52fc8fd45511957595c4d07afd37e6d87d0b57307f3760a33beac"
+        }
+      ]
+    }
   ]
 }
