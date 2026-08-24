@@ -1688,22 +1688,6 @@ fn collect_class_bodies(
     Ok(specs)
 }
 
-/// Whether a class-body site was written in an `<internal:>` file -- the
-/// corelib segments and the exception prelude. Those bodies are part of the
-/// runtime, not of the program's document, so their reopens are not
-/// positional. See `Hir::internal_files`.
-fn internal_site(
-    compiler: &crate::compiler::Compiler,
-    site: &crate::compiler::ClassBodySite,
-) -> bool {
-    site.def_node.is_some_and(|n| {
-        compiler
-            .hir
-            .span(n)
-            .is_some_and(|sp| compiler.hir.internal_files.contains(&sp.file))
-    })
-}
-
 /// Allocate one `zeo_reopen_flags` byte per `(builtin class, method name)`
 /// this program reopens at COMPILE time.
 ///
@@ -1717,9 +1701,8 @@ fn internal_site(
 /// forward, so it takes a block parameter whether or not it names one, and the
 /// signature is decided in `collect_classes`.
 ///
-/// Excluded: `Object` (a top-level `def` reopens nothing), a BOOTSTRAP builtin
-/// (the exception prelude, whose bodies are the runtime's own), and any site
-/// written in an `<internal:>` file.
+/// Excluded: `Object` (a top-level `def` reopens nothing) and a BOOTSTRAP
+/// builtin (the exception prelude, whose bodies are the runtime's own).
 fn collect_reopen_flags(em: &mut Emitter, analyzed: &Analyzed) {
     let compiler = &analyzed.compiler;
     // A LAZY unit's file is excluded. Its body runs on require rather than at
@@ -1733,7 +1716,7 @@ fn collect_reopen_flags(em: &mut Emitter, analyzed: &Analyzed) {
         .map(|(_, absolute, _)| format!("{absolute}.rb"))
         .collect();
     for site in &compiler.class_body_sites {
-        if !compiler.class(site.class).is_builtin || internal_site(compiler, site) {
+        if !compiler.class(site.class).is_builtin {
             continue;
         }
         let in_unit = site.def_node.is_some_and(|n| {
@@ -2668,7 +2651,7 @@ fn main_installs(
 }
 
 /// The exported C `main(argc, argv)`: tail-calls `zeo_rt_main` with the
-/// program description (corelib null until G8).
+/// program description.
 fn define_main(em: &mut Emitter, desc: DataId) -> Result<FuncId, String> {
     let mut sig = em.module.make_signature();
     sig.params.push(AbiParam::new(types::I32));
@@ -2692,8 +2675,7 @@ fn define_main(em: &mut Emitter, desc: DataId) -> Result<FuncId, String> {
     let argc = b.block_params(entry)[0];
     let argv = b.block_params(entry)[1];
     let desc_ptr = b.ins().symbol_value(em.ptr, desc_gv);
-    let corelib = b.ins().iconst(em.ptr, 0);
-    let call = b.ins().call(rt_main, &[argc, argv, desc_ptr, corelib]);
+    let call = b.ins().call(rt_main, &[argc, argv, desc_ptr]);
     let code = b.func.dfg.inst_results(call)[0];
     b.ins().return_(&[code]);
     b.seal_all_blocks();

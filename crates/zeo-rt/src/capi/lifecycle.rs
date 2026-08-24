@@ -5,37 +5,27 @@
 //! `std::env::args()` is empty on musl, so the seeds read the stash here.
 
 use crate::{RubyValue, Signal};
-use std::ffi::{CStr, c_char, c_void};
+use std::ffi::{CStr, c_char};
 use std::mem::MaybeUninit;
 use zeo_abi::ClassId;
 use zeo_abi::abi::{ProgramDesc, STATUS_OK, STATUS_SIGNAL};
 
 /// The whole program: returns the process exit status for the emitted
-/// `main` to return. `corelib` is null until the corelib mechanism (G8).
+/// `main` to return.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zeo_rt_main(
     argc: i32,
     argv: *const *const c_char,
     prog: *const ProgramDesc,
-    corelib: *const c_void,
 ) -> i32 {
-    let status = unsafe { main_inner(argc, argv, prog, corelib) };
+    let status = unsafe { main_inner(argc, argv, prog) };
     // This RETURNS to the emitted C `main`, which is past everything that
     // would otherwise write the buffer out (see `exec::flush_stdio`).
     crate::exec::flush_stdio();
     status
 }
 
-unsafe fn main_inner(
-    argc: i32,
-    argv: *const *const c_char,
-    prog: *const ProgramDesc,
-    corelib: *const c_void,
-) -> i32 {
-    assert!(
-        corelib.is_null(),
-        "zeo_rt_main: corelib registration is not yet emitted (G8)"
-    );
+unsafe fn main_inner(argc: i32, argv: *const *const c_char, prog: *const ProgramDesc) -> i32 {
     crate::mark_sole_thread();
     crate::gc::configure_from_env();
     let args: Vec<String> = (0..usize::try_from(argc).unwrap_or(0))

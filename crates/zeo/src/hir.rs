@@ -309,15 +309,6 @@ pub struct Hir {
     /// tells the two apart once lowering has finished. `None` for a pathless
     /// source string. Read by `analyze`'s `__FILE__ == $0` fold.
     pub main_file: Option<FileId>,
-    /// The files the vendored corelib registered (`parse::corelib`).
-    ///
-    /// CRuby compiles those sources INTO the interpreter, so they are not part
-    /// of the program in any sense a program can observe: a `method_added`
-    /// hook never sees their `def`s, and `Coverage` never counts their lines.
-    /// zeo compiles them as ordinary statements -- that is what makes the rows
-    /// real Ruby -- so the difference has to be recorded rather than implied
-    /// by position.
-    pub internal_files: crate::compiler::FSet<FileId>,
     /// The file whose source is currently being lowered -- the drivers (the
     /// compiler's `parse_and_lower_with` and its loader) set/restore this
     /// around each file's statements; `None` (source strings with no file

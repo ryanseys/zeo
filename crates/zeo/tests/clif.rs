@@ -5,18 +5,7 @@
 use std::path::PathBuf;
 
 fn clif_of(source: &str) -> String {
-    clif_with(source, zeo::Corelib::Rust)
-}
-
-/// Every snapshot below pins ONE emitted shape, so they compile with
-/// `Corelib::Rust`: the vendored corelib adds five functions to every
-/// program, and a snapshot about a block send should not re-pin them. The
-/// corelib's own emission has a snapshot of its own.
-fn clif_with(source: &str, corelib: zeo::Corelib) -> String {
-    let opts = zeo::CompileOptions {
-        corelib,
-        ..Default::default()
-    };
+    let opts = zeo::CompileOptions::default();
     let text = zeo::compile_to_clif_text(source, &opts).expect("the slice program must lower");
     // The default calling convention names the host (`apple_aarch64`,
     // `system_v`); normalize so the snapshots hold on every platform.
@@ -246,21 +235,4 @@ fn capi_table_snapshot() {
         ));
     }
     insta::assert_snapshot!(rendered);
-}
-
-/// The vendored corelib emits CRuby's own `nilclass.rb` into every program.
-///
-/// A golden cannot see this: `nil.to_i` answers 0 either way, and the only
-/// Ruby-visible difference is a `source_location`. What the snapshot pins is
-/// that the five bodies are EMITTED -- that the segment is compiled rather
-/// than registered like the exception prelude, which is the whole difference
-/// between a corelib row and a native one.
-#[test]
-fn clif_snapshot_corelib_nilclass() {
-    let text = clif_with("nil.to_i\n", zeo::Corelib::Only(vec!["nilclass".into()]));
-    let names: Vec<&str> = text
-        .lines()
-        .filter(|l| l.starts_with(";; NilClass#"))
-        .collect();
-    insta::assert_snapshot!(names.join("\n"));
 }

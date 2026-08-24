@@ -441,7 +441,7 @@ structurally impossible.
 
 ```
 crates/      the six workspace crates (above)
-docs/        BINARY_SIZE, CLIF, COMPATIBILITY, CORELIB, EVAL, EXTENSIONS,
+docs/        BINARY_SIZE, CLIF, COMPATIBILITY, EVAL, EXTENSIONS,
              GEM_TESTING, ROADMAP
 tests/       example goldens, the spinel corpus, the gaps tracker, gemtests drivers
 gems/        66 bundled gems (upstream.rb pins the git-tracked ones)

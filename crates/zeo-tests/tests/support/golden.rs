@@ -12,8 +12,6 @@
 //! - `Mode::Xfail` (gaps): zeo must DIVERGE from the golden -- a match means the
 //!   gap is fixed and the test FAILS with a "promote" message.
 //!
-//! A `.corelib-ruby` sidecar marks a golden that depends on the vendored
-//! corelib Ruby being the live row; the `ZEO_CORELIB=rust` leg skips it.
 //!
 //! A `.gccheck` sidecar records the exit cycle census the `ZEO_RT_GCCHECK=1`
 //! leg gates against. It is not a leak report: it names the ring the program
@@ -738,17 +736,6 @@ pub fn run_golden_env(
     // it. The file's content states which state and what the fix would be.
     if std::env::var("ZEO_GOLDEN_BACKEND").is_ok_and(|b| b != "jit")
         && std::fs::metadata(format!("{}.jit-only", rb.display())).is_ok()
-    {
-        return Ok(());
-    }
-
-    // A `.corelib-ruby` sidecar marks a golden whose answers come from the
-    // vendored corelib Ruby (`docs/CORELIB.md`). `ZEO_CORELIB=rust` answers
-    // from the Rust builtin instead and diverges on purpose, so the rust leg
-    // skips it rather than recording a second `.expected` for a mode that is
-    // not the default.
-    if std::env::var("ZEO_CORELIB").as_deref() == Ok("rust")
-        && std::fs::metadata(format!("{}.corelib-ruby", rb.display())).is_ok()
     {
         return Ok(());
     }

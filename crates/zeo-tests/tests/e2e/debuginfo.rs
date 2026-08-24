@@ -71,14 +71,10 @@ const PROGRAM: &str = "def add(a, b)\n  a + b\nend\n\nx = add(2, 3)\nputs x\n";
 fn a_debug_build_maps_addresses_to_ruby_lines() {
     let object = object_for(PROGRAM, "adder.rb", true);
     let rows = line_rows(&object);
-    // Every row names a Ruby file. Two kinds qualify: the program's own
-    // source, and a vendored corelib segment -- CRuby's `nilclass.rb` is
-    // compiled into every program and its bodies carry line rows of their
-    // own, under the `<internal:>` name CRuby itself reports.
+    // Every row names the program's own Ruby source.
     assert!(
-        rows.iter()
-            .all(|(f, _)| f.ends_with("adder.rb") || f.starts_with("<internal:")),
-        "every row names the Ruby source or a corelib segment, got {:?}",
+        rows.iter().all(|(f, _)| f.ends_with("adder.rb")),
+        "every row names the Ruby source, got {:?}",
         rows.iter()
             .map(|(f, _)| f)
             .collect::<std::collections::BTreeSet<_>>()

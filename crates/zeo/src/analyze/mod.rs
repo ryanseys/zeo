@@ -508,25 +508,6 @@ fn mark_inline_iter_sites(
     // table by design, yet it must still suppress fusion -- a fused loop is
     // not a call, so there is nothing left to de-optimize once the guard
     // turns out to be true.
-    // A VENDORED CORELIB body does not count as a reopen.
-    //
-    // CRuby writes several core methods in Ruby and compiles them into the
-    // interpreter, so `Integer#times` being Ruby there is not a program
-    // reopening it -- and zeo lowers those files as ordinary statements,
-    // which is what makes the rows real Ruby. Without this a vendored
-    // `array.rb` or `numeric.rb` would carry a `def each` or a `def times`
-    // and kill `InlineIterKind` fusion PROGRAM-WIDE, for every program, on
-    // the strength of a body CRuby does not treat as a definition either.
-    //
-    // The file it was written in is the mark, the same one `def_hooks` and
-    // `coverage` already use for their own carve-outs.
-    let is_corelib = |s: crate::compiler::ScopeId| {
-        compiler
-            .scope(s)
-            .def_node
-            .and_then(|n| compiler.hir.span(n))
-            .is_some_and(|sp| compiler.hir.internal_files.contains(&sp.file))
-    };
     let reopened = |cname: &str, m: &str| {
         compiler.may_be_patched_at_runtime(m)
             || compiler.resolve_class(cname, &[], 0).is_some_and(|cid| {
@@ -535,7 +516,7 @@ fn mark_inline_iter_sites(
                         .class(a)
                         .own_methods
                         .iter()
-                        .any(|&s| compiler.scope(s).name == m && !is_corelib(s))
+                        .any(|&s| compiler.scope(s).name == m)
                 })
             })
     };
@@ -570,55 +551,7 @@ mod tests {
         analyze(hir, root).expect("analyze")
     }
 
-    /// Lower `corelib` as an internal file, then `src` as the program, and
-    /// analyze the pair -- what a compile with a vendored corelib segment
-    /// builds, without needing a real segment that defines the name.
-    fn analyze_with_corelib(corelib: &'static str, src: &str) -> Analyzed {
-        let (mut hir, root) = crate::parse::parse_and_lower(src).expect("parse");
-        let crate::hir::HirNode::Program(main) = hir[root].clone() else {
-            panic!("the root is a Program");
-        };
-        // The order a real compile builds: the exception prelude, THEN the
-        // corelib, then the program. Putting the corelib ahead of the
-        // exceptions shifts every exception class id and trips the ABI drift
-        // assert -- `builtin_exceptions_len` is what keeps the prefix intact.
-        let split = hir.builtin_exceptions_len;
-        let mut statements: Vec<_> = main[..split].to_vec();
-        crate::parse::corelib::lower_as_internal(
-            &mut hir,
-            &mut statements,
-            "<internal:test>",
-            corelib,
-        )
-        .expect("corelib lowers");
-        statements.extend_from_slice(&main[split..]);
-        let root = hir.push(crate::hir::HirNode::Program(statements));
-        analyze(hir, root).expect("analyze")
-    }
-
-    /// A vendored corelib body is not a REOPEN, so it must not suppress
-    /// fused-iterator lowering.
-    ///
-    /// CRuby writes several core methods in Ruby and compiles them into the
-    /// interpreter; `Integer#times` being Ruby there is not a program
-    /// redefining it. Without the carve-out, vendoring `array.rb` or
-    /// `numeric.rb` -- both of which carry exactly these names -- would kill
-    /// fusion program-wide for EVERY program, silently and at no gate.
-    #[test]
-    fn a_corelib_body_does_not_suppress_fusion() {
-        let a = analyze_with_corelib(
-            "class Integer\n  def times\n    self\n  end\nend\n",
-            "3.times { |i| i }\n",
-        );
-        assert!(
-            !a.compiler.times_literal_suppressed,
-            "a corelib `def times` suppressed fusion: a vendored numeric.rb would \
-             cost every program its fused loops"
-        );
-    }
-
-    /// The control, and the half that makes the test above mean anything: the
-    /// SAME `def times` written in the PROGRAM does suppress it.
+    /// A program's own `def times` stands the fused loop down.
     #[test]
     fn a_program_body_still_suppresses_fusion() {
         let a =

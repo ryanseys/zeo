@@ -1,0 +1,8 @@
+NilClass#to_i: ["<internal:nilclass>", 36]
+NilClass#to_f: ["<internal:nilclass>", 48]
+NilClass#to_r: ["<internal:nilclass>", 60]
+NilClass#to_c: ["<internal:nilclass>", 24]
+NilClass#rationalize: ["<internal:nilclass>", 12]
+Pathname#basename: ["<internal:pathname_builtin>", 972]
+Method#inspect: #<UnboundMethod: NilClass#to_i() <internal:nilclass>:36>
+String#upcase: nil

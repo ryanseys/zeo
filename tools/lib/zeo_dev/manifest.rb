@@ -20,15 +20,10 @@ module ZeoDev
   # archive does not ship `test/`, so those trees come from the repo and are
   # fetched on demand. `headers` are C headers vendored into the committed
   # tree and then patched; `zeo-dev cext sync` rebuilds them from upstream
-  # plus the patch series. `corelib` are the Ruby files CRuby compiles INTO
-  # the interpreter, vendored verbatim and never patched -- see
-  # `zeo-dev corelib`.
+  # plus the patch series.
   class Manifest
     SOURCE = "upstream.rb"
     LOCK = "upstream.lock"
-    # Where the vendored corelib Ruby lives, relative to the repo root. The
-    # compiler embeds these with `include_str!`.
-    CORELIB_DIR = "crates/zeo/corelib"
 
     # Git's own object id for a file's bytes: `sha1("blob <len>\0" + bytes)`.
     # Recorded beside the SHA-256 because it is what GitHub's contents API
@@ -44,9 +39,6 @@ module ZeoDev
     # and trusted from then on. `subdir` is the directory INSIDE the checkout
     # holding the tree, for a repo that ships more than one gem --
     # `rubygems/rubygems` carries bundler under `bundler/`.
-    # `files` is the corelib group's per-file digest list -- `path`, the git
-    # blob OID, and the SHA-256. It is DERIVED from the vendored bytes, so it
-    # lives in the lock and never in `upstream.rb`.
     Entry = Struct.new(:name, :github, :tag, :rev, :subdir, :group, :files, :digests,
                        keyword_init: true) do
       def url = "https://github.com/#{github}"
@@ -85,14 +77,6 @@ module ZeoDev
         @entries << Entry.new(name: name, github: github, tag: tag, rev: rev,
                               subdir: subdir, group: :headers)
       end
-
-      # Ruby files CRuby compiles INTO the interpreter (`BUILTIN_RB_SRCS`),
-      # vendored verbatim. `files` names them relative to the checkout root;
-      # their digests are derived and live in the lock.
-      def corelib(name, github:, tag:, rev: nil, subdir: nil, files: [])
-        @entries << Entry.new(name: name, github: github, tag: tag, rev: rev,
-                              subdir: subdir, group: :corelib, files: files)
-      end
     end
 
     attr_reader :entries
@@ -103,25 +87,7 @@ module ZeoDev
 
       dsl = Dsl.new
       dsl.instance_eval(File.read(path), path)
-      # A corelib entry's digests are DERIVED from the committed bytes, so the
-      # lock always describes the working tree -- which is what makes
-      # `gem lock --check` an offline tamper check on the vendored Ruby.
-      dsl.entries.each { |e| e.digests = corelib_digests(e, root) if e.group == :corelib }
       new(dsl.entries.sort_by { |e| [e.group.to_s, e.name] }, root)
-    end
-
-    # A file named in `upstream.rb` but not yet vendored is SKIPPED, not an
-    # error: `corelib sync` has to load the manifest to learn what to fetch,
-    # so a newly added name has no bytes to hash until it has run. `corelib
-    # verify` is where the two lists are reconciled.
-    def self.corelib_digests(entry, root)
-      entry.files.sort.filter_map do |rel|
-        path = File.join(root, CORELIB_DIR, rel)
-        next unless File.file?(path)
-
-        bytes = File.binread(path)
-        { "path" => rel, "blob" => blob_oid(bytes), "sha256" => Digest::SHA256.hexdigest(bytes) }
-      end
     end
 
     def initialize(entries, root = ROOT)
@@ -143,8 +109,7 @@ module ZeoDev
       "#{JSON.pretty_generate(
         "gems" => group(:gems).map(&:to_h),
         "gemtests" => group(:gemtests).map(&:to_h),
-        "headers" => group(:headers).map(&:to_h),
-        "corelib" => group(:corelib).map(&:to_h)
+        "headers" => group(:headers).map(&:to_h)
       )}\n"
     end
 

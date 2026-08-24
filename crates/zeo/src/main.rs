@@ -642,21 +642,6 @@ fn run() -> Result<(), MainError> {
         root_gem: args.root_gem.clone().map(zeo::Gem::named),
         embed_sources: args.embed_sources.clone(),
         strict_static_require: args.strict_static_require,
-        // Read HERE, not in the front end: a library caller gets the default
-        // whatever the ambient environment says, and this is the process the
-        // golden corpus's `ZEO_CORELIB` leg spawns.
-        corelib: {
-            let policy = zeo::Corelib::from_env();
-            let unknown = policy.unknown_segments();
-            if !unknown.is_empty() {
-                return Err(format!(
-                    "ZEO_CORELIB names no such corelib segment: {}",
-                    unknown.join(", ")
-                )
-                .into());
-            }
-            policy
-        },
     };
     if let Some(target) = &args.emit_clif {
         let text = zeo::compile_to_clif_text(&source, &opts)?;

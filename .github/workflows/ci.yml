@@ -122,14 +122,6 @@ jobs:
           ZEO_GC: "1"
           ZEO_RT_GCCHECK: "1"
 
-      # The corelib rows are CRuby's own Ruby, compiled in (docs/CORELIB.md).
-      # `ZEO_CORELIB=rust` answers from the Rust builtins instead, and the
-      # switch is only honest if both rows pass the corpus -- it exists so a
-      # corelib bug has a way back that is not a rebuild.
-      - run: cargo nextest run -p zeo-tests --test examples --test spinel --test gaps --no-fail-fast
-        env:
-          ZEO_CORELIB: rust
-
       # The native-library table an AOT link names after the archive is
       # HAND-WRITTEN (backend/link.rs), and nothing tells it about a
       # `#[link(name = ..)]` added anywhere in zeo-rt. This test asks rustc
@@ -207,13 +199,6 @@ jobs:
       # `ZEO_BLESS_FROM_XTASK`, and two ledgers plus a doc still told the
       # reader to use the spelling that does nothing.
       - run: tools/zeo-dev check-env-vars
-
-      # The vendored corelib Ruby is CRuby's own bytes (docs/CORELIB.md).
-      # Offline on purpose: this is the check a release tarball and a machine
-      # with no network can still run, and it is the only one a downstream
-      # consumer can. `corelib sync --check` is the network half and runs when
-      # the pin moves.
-      - run: tools/zeo-dev corelib verify
 
       # A file this large in the working tree is almost always a build
       # artifact committed by mistake. History was rewritten to strip blobs

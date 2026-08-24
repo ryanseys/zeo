@@ -1,9 +1,0 @@
----
-source: crates/zeo/tests/clif.rs
-expression: "names.join(\"\\n\")"
----
-;; NilClass#rationalize
-;; NilClass#to_c
-;; NilClass#to_i
-;; NilClass#to_f
-;; NilClass#to_r

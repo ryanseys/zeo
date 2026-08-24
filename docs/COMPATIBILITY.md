@@ -640,6 +640,27 @@ cannot read another's execution state:
   the rule `TracePoint.new` already follows for the events Zeo cannot raise:
   refuse loudly rather than accept a handler that never runs.
 
+### `#source_location` on a row ruby writes in Ruby
+
+CRuby implements 329 method rows across 21 `<internal:>` files -- Ruby it
+compiles into its own interpreter -- and each answers a real
+`["<internal:nilclass>", 36]`. Zeo implements every one of them in Rust, which
+answers `nil`, exactly as ruby answers `nil` for its own C rows.
+
+Only `#source_location` and the `file:line` tail of `Method#inspect` differ.
+`#parameters`, `#arity`, `#owner`, visibility and behaviour agree row for row:
+the whole-surface census over the 2,594 rows both declare is zero
+(`tests/builtin_rows_report_rubys_signature.rb`).
+
+Zeo did vendor CRuby's own `nilclass.rb` and `pathname_builtin.rb` and compile
+them, which made these rows answer byte-identically. Measurement retired it:
+the compiled Ruby ran **22.7x slower** than the Rust rows (0.359 s against
+8.148 s over 200,000 Pathname operations -- and CRuby itself runs the same
+source in 1.018 s), cost **3.5x the bytes**, and pulled a 14.48 MB embedded
+compiler in for one `eval`. It bought only the signatures, and those are now
+spelled in the DSL directly. `tests/gaps/a_row_ruby_writes_in_ruby_names_its_
+source.rb` records ruby's answer and the shape of a fix.
+
 ### `Pathname`
 
 A core class here, with no `require`, matching ruby 4.0 -- it loads
@@ -654,6 +675,11 @@ divergences:
   gates whole classes rather than methods, so it answers where ruby raises
   `NoMethodError`, never the reverse. `#find` walks the tree itself rather
   than through `Find`, so `Find.prune` has nothing to prune.
+
+Every one of the 113 rows reports the parameters and arity ruby reports,
+including the private helpers -- CRuby writes Pathname in Ruby, so it names
+them, and the DSL spells each one. `#source_location` is the one thing that
+differs; see the section above.
 
 ### `Kernel#block_given?`, `#iterator?`, `#binding`, `#local_variables` through `send`
 

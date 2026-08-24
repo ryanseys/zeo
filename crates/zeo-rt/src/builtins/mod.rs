@@ -291,8 +291,8 @@ pub(crate) enum Side {
 
 /// THE registered-table projection: the one place a `(class, side)` becomes a
 /// method-table view. Every routing question below reads through this, so a
-/// runtime row store consulted in policy order (Track 2's corelib rows before
-/// the Rust rows) slots in here without touching a single reader. The
+/// runtime row store consulted in policy order slots in here without touching
+/// a single reader. The
 /// hand-rolled ext residuals (date, psych's `YAML` alias, `FileTest`) stay in
 /// their per-question arms below -- they are asymmetric (FileTest declares
 /// class arity/names but no class lookup) and disappear as the ext migration
@@ -730,8 +730,7 @@ pub(crate) fn kw_take(src: Option<&RubyValue>, name: &str) -> Option<RubyValue> 
 /// Unreached by the builtin surface, and measured rather than assumed: ruby
 /// declares NO required keyword on any row reachable from `Object` (a live
 /// diff of `#parameters` over 3,526 of its own rows finds zero `keyreq`).
-/// Kept because the grammar is complete without an exception, and because the
-/// corelib's vendored Ruby does use them.
+/// Kept because the grammar is complete without an exception.
 #[allow(dead_code)]
 #[inline(always)]
 pub(crate) fn kw_required(src: Option<&RubyValue>, name: &str) -> Result<RubyValue, Signal> {

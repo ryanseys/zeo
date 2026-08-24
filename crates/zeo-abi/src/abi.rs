@@ -195,7 +195,7 @@ pub struct ObjRow {
     pub f: ValueFn,
 }
 
-/// [`VmRow::flags`] bits. Zero until the corelib mechanism (G8) emits them.
+/// [`VmRow::flags`] bits.
 pub const VM_SHADOW: u32 = 1;
 pub const VM_INTERNAL: u32 = 2;
 pub const VM_CFUNC: u32 = 4;

@@ -1,4 +1,0 @@
-The five NilClass rows here come from the vendored `<internal:nilclass>`, so
-`ZEO_CORELIB=rust` answers `nil` for every `source_location` and renders
-`rationalize(*)` in `Method#inspect`. The rust leg skips this file; the
-divergence between the two modes is the point of docs/CORELIB.md's table.

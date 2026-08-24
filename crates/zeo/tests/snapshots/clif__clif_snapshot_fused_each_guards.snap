@@ -688,12 +688,11 @@ block0:
 ;; main
 function u0:1(i32, i64) -> i32 ccall {
     gv0 = symbol colocated userextname1
-    sig0 = (i32, i64, i64, i64) -> i32 ccall
+    sig0 = (i32, i64, i64) -> i32 ccall
     fn0 = u0:33 sig0
 
 block0(v0: i32, v1: i64):
     v2 = symbol_value.i64 gv0
-    v3 = iconst.i64 0
-    v4 = call fn0(v0, v1, v2, v3)  ; v3 = 0
-    return v4
+    v3 = call fn0(v0, v1, v2)
+    return v3
 }

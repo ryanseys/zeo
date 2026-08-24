@@ -186,28 +186,3 @@ headers "ruby",
   tag: "v4.0.6",
   rev: "03b6d3f8898a28604fe6cb00eae3226b821168f4",
   subdir: "include"
-
-# The Ruby files CRuby compiles INTO the interpreter (`BUILTIN_RB_SRCS` in
-# common.mk), vendored VERBATIM into `crates/zeo/corelib/` and embedded by the
-# compiler. Same `ruby/ruby` pin the C API headers ride.
-#
-# NEVER PATCHED. A corelib file is upstream's bytes or it is not corelib: the
-# whole point is that the rows a program dispatches to are CRuby's own code,
-# and a local edit makes that claim false. The headers carry a `patches/`
-# series for exactly the opposite reason -- they describe zeo's object layout,
-# not ruby's behaviour.
-#
-# Only files with NO `Primitive.`, `__builtin` or `cexpr!` are eligible; the
-# primitive protocol is a separate mechanism zeo does not have. At v4.0.6 that
-# is 5 of the 24: nilclass.rb, pathname_builtin.rb, prelude.rb, gem_prelude.rb
-# and the jit_hook/jit_undef pair.
-#
-# Their digests are DERIVED from the committed bytes and live in
-# `upstream.lock` -- a SHA-256 and the git blob OID, which is what GitHub's
-# contents API answers, so anyone can verify a file against github.com with
-# one request and no clone. See `tools/zeo-dev corelib`.
-corelib "ruby",
-  github: "ruby/ruby",
-  tag: "v4.0.6",
-  rev: "03b6d3f8898a28604fe6cb00eae3226b821168f4",
-  files: %w[nilclass.rb pathname_builtin.rb]

@@ -41,7 +41,6 @@ module ZeoDev
     gemtests
     gem-probe
     cext
-    corelib
     check-env-vars
     linux
     stage-publish

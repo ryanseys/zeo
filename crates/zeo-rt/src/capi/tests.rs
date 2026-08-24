@@ -894,7 +894,7 @@ fn zeo_rt_main_runs_the_toplevel_and_owns_argv() {
     let prog = c"widget-prog";
     let arg = c"alpha";
     let argv = [prog.as_ptr(), arg.as_ptr()];
-    let code = unsafe { super::lifecycle::zeo_rt_main(2, argv.as_ptr(), &desc, std::ptr::null()) };
+    let code = unsafe { super::lifecycle::zeo_rt_main(2, argv.as_ptr(), &desc) };
     assert_eq!(code, 0);
     // `$0` and `ARGV` were seeded from the STASHED argv, not env::args.
     match crate::globals::global_get(0, "$0") {
@@ -928,7 +928,7 @@ fn zeo_rt_main_reports_an_uncaught_raise_as_exit_1() {
     let desc = empty_desc(raising_toplevel);
     let prog = c"widget-prog";
     let argv = [prog.as_ptr()];
-    let code = unsafe { super::lifecycle::zeo_rt_main(1, argv.as_ptr(), &desc, std::ptr::null()) };
+    let code = unsafe { super::lifecycle::zeo_rt_main(1, argv.as_ptr(), &desc) };
     assert_eq!(code, 1);
 }
 
