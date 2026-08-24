@@ -176,13 +176,7 @@ pub fn install_core_constants() {
         "BasicObject",
         crate::RubyValue::Class(zeo_abi::BASIC_OBJECT_CLASS),
     );
-    crate::builtins::encoding::seed_encoding_constants();
-    crate::builtins::pathname::seed_pathname_constants();
-    crate::builtins::converter::seed_converter_constants();
-    crate::builtins::regexp::seed_regexp_constants();
     crate::constants::seed_argv();
-    crate::builtins::io::seed_stdio();
-    crate::builtins::io::seed_io_constants();
     crate::builtins::env::seed_env();
     // `File`'s constants now seed via its ruby_class! `const` rows (installed
     // by the BUILTIN_TABLES loop below).

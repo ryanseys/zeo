@@ -127,6 +127,8 @@ fn resolve_name(name: &str) -> Result<EncodingId, Signal> {
 ruby_class! {
     Encoding = zeo_abi::ENCODING_CLASS < zeo_abi::OBJECT_CLASS;
 
+    seed seed_encoding_constants;
+
     def self."list"(_recv) {
         let all = encoding::all().map(encoding_value).collect();
         Ok(RubyValue::Array(crate::array_new(all)))

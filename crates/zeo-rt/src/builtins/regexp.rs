@@ -15,6 +15,8 @@ static TIMEOUT: std::sync::LazyLock<parking_lot::Mutex<Option<RubyValue>>> =
 ruby_class! {
     Regexp = zeo_abi::REGEXP_CLASS < zeo_abi::OBJECT_CLASS;
 
+    seed seed_regexp_constants;
+
     // `Regexp.timeout` -- the process-wide default match timeout. zeo enforces
     // none, so the setter records the value and the getter reads it back
     // (CRuby answers a Float or nil); a match never times out either way.

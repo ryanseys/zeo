@@ -297,7 +297,7 @@ fn expand(spec: &ClassSpec) -> TokenStream2 {
     );
 
     // Constant installer + the table's `install_constants` slot.
-    let (const_items, install_slot) = if spec.consts.is_empty() {
+    let (const_items, install_slot) = if spec.consts.is_empty() && spec.seeds.is_empty() {
         (quote! {}, quote! { None })
     } else {
         let sets = spec.consts.iter().map(|c| {
@@ -306,10 +306,12 @@ fn expand(spec: &ClassSpec) -> TokenStream2 {
             let value = &c.value;
             quote! { #( #attrs )* crate::constants::const_set(#id.0, #name, { #value }); }
         });
+        let seeds = spec.seeds.iter().map(|p| quote! { #p(); });
         (
             quote! {
                 pub(crate) fn install_constants() {
                     #( #sets )*
+                    #( #seeds )*
                 }
             },
             quote! { Some(install_constants) },

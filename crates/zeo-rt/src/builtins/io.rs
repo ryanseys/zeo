@@ -1559,6 +1559,9 @@ fn file_class_row(
 ruby_class! {
     IO = zeo_abi::IO_CLASS < zeo_abi::OBJECT_CLASS;
     include zeo_abi::ENUMERABLE_CLASS;
+
+    seed seed_io_constants;
+    seed seed_stdio;
     // The open/lock flags, shared with `File` -- see `file.rs`. Listed after
     // Enumerable, so the resulting `IO.ancestors` is CRuby's
     // `[IO, File::Constants, Enumerable, ...]`.

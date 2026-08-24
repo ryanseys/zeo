@@ -742,6 +742,8 @@ pub fn seed_converter_constants() {
 ruby_class! {
     Converter = zeo_abi::ENCODING_CONVERTER_CLASS < zeo_abi::OBJECT_CLASS;
 
+    seed seed_converter_constants;
+
     // The ascii-compatible encoding a converter reads `arg` THROUGH, or nil.
     // An unknown name answers nil rather than raising, as CRuby does.
     def self."asciicompat_encoding"(_recv, arg) {

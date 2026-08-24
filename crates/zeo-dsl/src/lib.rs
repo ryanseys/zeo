@@ -126,6 +126,14 @@ pub struct ClassSpec {
     /// Mixins in source order, as `ClassId` consts.
     pub includes: Vec<Path>,
     pub consts: Vec<ConstDef>,
+    /// `seed <path>;` -- a fn the class's `install_constants` thunk calls.
+    ///
+    /// For a constant set a `const` row cannot express: one computed name, a
+    /// loop over a table, a value that also seeds a global. It runs where a
+    /// `const` row runs, so it is paid only by a program that ships this
+    /// class's table -- which is the whole point of moving a bootstrap seeder
+    /// here.
+    pub seeds: Vec<Path>,
     pub methods: Vec<MethodDef>,
     pub aliases: Vec<AliasDef>,
     /// Nested classes/modules declared inside this one with a braced body
@@ -705,6 +713,7 @@ impl ClassSpec {
             id,
             includes: Vec::new(),
             consts: Vec::new(),
+            seeds: Vec::new(),
             methods: Vec::new(),
             aliases: Vec::new(),
             nested: Vec::new(),
@@ -768,7 +777,7 @@ fn parse_item(input: ParseStream, spec: &mut ClassSpec) -> syn::Result<()> {
     }
     let lookahead: Ident = input.fork().parse().map_err(|_| {
         input.error(
-            "expected `include`, `const`, `alias`, `private`, `protected`, `module_function`, `def`, `class`, or `module`",
+            "expected `include`, `seed`, `const`, `alias`, `private`, `protected`, `module_function`, `def`, `class`, or `module`",
         )
     })?;
     match lookahead.to_string().as_str() {
@@ -778,6 +787,14 @@ fn parse_item(input: ParseStream, spec: &mut ClassSpec) -> syn::Result<()> {
             }
             input.parse::<Ident>()?; // `include`
             spec.includes.push(Path::parse_mod_style(input)?);
+            input.parse::<Token![;]>()?;
+        }
+        "seed" => {
+            if !attrs.is_empty() {
+                return Err(attrs_forbidden(input));
+            }
+            input.parse::<Ident>()?; // `seed`
+            spec.seeds.push(Path::parse_mod_style(input)?);
             input.parse::<Token![;]>()?;
         }
         "receiver" => {

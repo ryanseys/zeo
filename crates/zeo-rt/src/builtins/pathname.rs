@@ -591,12 +591,15 @@ fn yield_or_return(all: RubyValue, block: Option<RubyValue>) -> Result<RubyValue
     Ok(RubyValue::Nil)
 }
 
-/// `Pathname::VERSION` and `SEPARATOR_PAT` -- seeded from generated `main()`.
-pub fn seed_pathname_constants() {
-    crate::const_set(PATHNAME_CLASS.0, "VERSION", str_val("0.4.0".to_string()));
-    if let Ok(pat) = crate::regexp::regexp_new("/", false, false, false) {
-        crate::const_set(PATHNAME_CLASS.0, "SEPARATOR_PAT", RubyValue::Regexp(pat));
-    }
+/// `Pathname::SEPARATOR_PAT` -- ruby's own `/#{Regexp.quote(File::SEPARATOR)}/`.
+///
+/// A `const` row rather than a bootstrap seeder because a seeder runs in
+/// EVERY program: this compiled a regex before line 1 of `puts 1`, which put
+/// the whole regex engine in every binary.
+fn separator_pat() -> RubyValue {
+    let pat =
+        crate::regexp::regexp_new("/", false, false, false).expect("`/` is a valid regexp source");
+    RubyValue::Regexp(pat)
 }
 
 /// `Kernel#Pathname(str)` -- the private conversion function, present with no
@@ -643,6 +646,9 @@ pub fn register_pathname(registry: &mut crate::dispatch::ClassRegistry) {
 
 ruby_class! {
     Pathname = zeo_abi::PATHNAME_CLASS < zeo_abi::OBJECT_CLASS;
+
+    const VERSION = str_val("0.4.0".to_string());
+    const SEPARATOR_PAT = separator_pat();
 
     def self."getwd" | "pwd"(_recv) {
         Ok(wrap(dir_call("pwd", &[], None)?))
