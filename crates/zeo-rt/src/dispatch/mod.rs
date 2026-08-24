@@ -911,6 +911,17 @@ const NOFRAME: &[&str] = &[
 /// trade the `<<` and `[]=` rows already make, and it errs toward the
 /// spelling that is written.
 const SPECIALIZED: &[(ClassId, &str)] = &[
+    // `Foo.new` pushes NO frame in ruby: an ordinary class, a Struct
+    // subclass and an exception subclass all report the CALLER directly.
+    // Two shapes do frame, and each pushes its own rather than relying on
+    // this row -- `Class.new { }` MINTING a class (`Class#initialize` +
+    // `Class#new`), and a Data class, whose `new` is a distinct cfunc and
+    // reports as `D.new`. Both are oracle-verified.
+    //
+    // Suppressed here rather than at the call because the rule is about the
+    // RECEIVER (`Class` itself vs an ordinary class) and this table is keyed
+    // by the row's owner, which is `Class` in both cases.
+    (zeo_abi::CLASS_CLASS, "new"),
     (zeo_abi::STRING_CLASS, "<<"),
     (zeo_abi::ARRAY_CLASS, "<<"),
     (zeo_abi::ARRAY_CLASS, "[]"),
