@@ -516,6 +516,16 @@ pub struct ProgramDesc {
     /// from the positional install for each later one.
     pub redef_metas: *const MetaRowC,
     pub n_redef_metas: usize,
+    /// The builtin class method tables this program can reach, as pointers to
+    /// the `zeo_ctable_*` symbols `ruby_class!` exports.
+    ///
+    /// A program NAMES its tables because a link-time collection cannot be
+    /// dropped: a `linkme` slice entry is a `no_dead_strip` root in its own
+    /// right, so every builtin method body was unstrippable and a `puts 1`
+    /// binary carried Date's parser, Marshal and all of OpenSSL. Naming them
+    /// here lets the linker keep exactly what the program can use.
+    pub class_tables: *const *const core::ffi::c_void,
+    pub n_class_tables: usize,
     pub reg_rows: *const RegRow,
     pub n_reg_rows: usize,
     pub units: *const UnitRow,

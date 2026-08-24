@@ -19,6 +19,12 @@ use zeo_abi::ClassId;
 /// fold.
 pub struct ClassSurface {
     pub id: ClassId,
+    /// The linker symbol `ruby_class!` exported this class's method table
+    /// under -- `zeo_ctable_<ID_CONST>`. An emitted program references the
+    /// ones it can reach, and the rest of the runtime strips; see
+    /// `zeo-macros`' `register` block for why the tables are not collected
+    /// at link time any more.
+    pub table_symbol: &'static str,
     /// The `ruby_class!` header identifier -- what the shape test checks
     /// against `zeo_abi::BUILTINS`' Ruby name.
     pub header_name: &'static str,

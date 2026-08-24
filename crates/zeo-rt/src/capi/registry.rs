@@ -77,6 +77,19 @@ pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
         desc.abi_version,
         abi::ABI_VERSION,
     );
+    // The builtin class tables this program named. Installed BEFORE anything
+    // dispatches: `registered_table` memoizes its id map on first use, and a
+    // lookup that ran first would cache an empty one -- which is a class that
+    // silently loses every method, seen as `uninitialized constant
+    // File::RDWR` in every program that required anything.
+    if desc.n_class_tables > 0 {
+        let raw = unsafe { std::slice::from_raw_parts(desc.class_tables, desc.n_class_tables) };
+        let tables: Vec<&'static crate::builtins::BuiltinClassTable> = raw
+            .iter()
+            .map(|p| unsafe { &*p.cast::<crate::builtins::BuiltinClassTable>() })
+            .collect();
+        crate::builtins::install_program_tables(Vec::leak(tables));
+    }
     let mut registry = ClassRegistry::with_core();
     for c in unsafe { rows(desc.classes, desc.n_classes) } {
         let id = ClassId(c.id);
@@ -140,6 +153,18 @@ pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
     // rustc's `main` puts its builtin registrations: a row cannot be defined
     // on a class the registry has not seen, and a chain patch must be in
     // place before anything walks it.
+    // The builtin class tables this program named. Installed BEFORE anything
+    // dispatches: `registered_table` memoizes its id map on first use, and a
+    // lookup that ran first would cache an empty one.
+    if desc.n_class_tables > 0 {
+        let raw = unsafe { std::slice::from_raw_parts(desc.class_tables, desc.n_class_tables) };
+        let tables: Vec<&'static crate::builtins::BuiltinClassTable> = raw
+            .iter()
+            .map(|p| unsafe { &*p.cast::<crate::builtins::BuiltinClassTable>() })
+            .collect();
+        crate::builtins::install_program_tables(Vec::leak(tables));
+    }
+
     // A boot redef's reflection row cannot be installed here: the meta table
     // it belongs to is registered below, and would overwrite it with the LAST
     // body's row. Collected and applied after.

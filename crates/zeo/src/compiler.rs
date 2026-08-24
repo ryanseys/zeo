@@ -1304,6 +1304,25 @@ impl Compiler {
     /// reopen detection must still SEE the gated slot to attach to it.
     /// `pub(crate)` so codegen skips a gated-inactive builtin's runtime
     /// `ClassRegistry` registration (nothing can reference it, so it's dead).
+    /// Whether an emitted program can reach a BUILTIN class at all -- what
+    /// decides if its method table is named in `ProgramDesc::class_tables`
+    /// and so kept in the binary. A class the compiler never registered has
+    /// no constant and no dispatch path.
+    pub(crate) fn builtin_is_reachable(&self, id: zeo_abi::ClassId) -> bool {
+        // A builtin's compiler ClassId IS its abi id -- the same identity
+        // `classes.rs`'s registration loop relies on. Past the end is a class
+        // this compile never saw: keep it, because a missing table is a class
+        // that silently loses every method.
+        // Both halves of `classes.rs`'s own registration test. `feature_active`
+        // alone is not enough: a class can carry a feature gate and still be
+        // one `register_builtins` covers, and dropping its table drops its
+        // CONSTANTS with it -- `File::RDWR` went missing that way.
+        let idx = id.0 as usize;
+        idx >= self.classes.len()
+            || !zeo_abi::is_gated_builtin(ClassId(id.0))
+            || self.feature_active(ClassId(id.0))
+    }
+
     pub(crate) fn feature_active(&self, cid: ClassId) -> bool {
         match self.class(cid).feature_gate {
             None => true,

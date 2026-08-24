@@ -187,6 +187,31 @@ pub static BUILTIN_TABLES: [BuiltinClassTable] = [..];
 /// So the array covers the dense range only, and the sparse keys -- one
 /// today -- ride in a list scanned linearly. The scan is off the hot path by
 /// construction: a real class id never reaches it.
+/// The tables the running program named, installed by `register_program`
+/// before any Ruby runs. See [`BUILTIN_TABLES`] for why they are not
+/// collected at link time.
+static PROGRAM_TABLES: std::sync::OnceLock<&'static [&'static BuiltinClassTable]> =
+    std::sync::OnceLock::new();
+
+/// Hand the program's tables over. Called once, from `register_program`.
+pub fn install_program_tables(tables: &'static [&'static BuiltinClassTable]) {
+    let _ = PROGRAM_TABLES.set(tables);
+}
+
+/// Every table this process has: the program's own, then the link-time slice
+/// (empty in a release build). THE source for both readers -- the id map and
+/// `bootstrap`'s constant installers -- because a table missing from either
+/// is a class with no methods or a class with no constants.
+pub(crate) fn all_tables() -> impl Iterator<Item = &'static BuiltinClassTable> {
+    PROGRAM_TABLES
+        .get()
+        .copied()
+        .unwrap_or(&[])
+        .iter()
+        .copied()
+        .chain(BUILTIN_TABLES.iter())
+}
+
 pub(crate) fn registered_table(id: ClassId) -> Option<&'static BuiltinClassTable> {
     /// Keys at or above this are reserved markers, not class ids. The
     /// runtime block itself starts here, and no `ruby_class!` table is
@@ -198,15 +223,17 @@ pub(crate) fn registered_table(id: ClassId) -> Option<&'static BuiltinClassTable
         sparse: Vec<(u32, &'static BuiltinClassTable)>,
     }
     static BY_ID: LazyLock<Map> = LazyLock::new(|| {
-        let len = BUILTIN_TABLES
-            .iter()
+        // The program's own list first (`ProgramDesc::class_tables`); the
+        // link-time slice is the fallback, and in a release build it is
+        // EMPTY -- see `install_program_tables`.
+        let len = all_tables()
             .map(|t| t.id.0)
             .filter(|id| *id < DENSE_LIMIT)
             .max()
             .map_or(0, |m| m as usize + 1);
         let mut dense = vec![None; len];
         let mut sparse = Vec::new();
-        for t in BUILTIN_TABLES {
+        for t in all_tables() {
             if t.id.0 < DENSE_LIMIT {
                 dense[t.id.0 as usize] = Some(t);
             } else {

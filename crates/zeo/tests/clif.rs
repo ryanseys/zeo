@@ -139,6 +139,56 @@ fn capi_surface_is_exported_by_the_archive() {
     }
 }
 
+/// `CLASS_TABLE_SYMBOLS` names EVERY `zeo_ctable_*` the archive defines, and
+/// nothing it does not.
+///
+/// Both directions are failures with no other detector. A symbol the list
+/// misses is a builtin class whose table no program ever names -- it loses
+/// every method and every constant, silently, and only at run time. A name in
+/// the list that the archive lacks is a link error in every program.
+///
+/// The list is scanned out of the runtime's sources by build.rs rather than
+/// derived from `CLASS_SURFACE`, which reads only `builtins/` and `ext/`: at
+/// the time of writing that was five classes short (`Ractor` lives at
+/// `src/ractor.rs`, `FFI::Type` outside `ext/`), and two heuristics that
+/// looked right produced phantom names from `let x = zeo_abi::..` lines.
+#[test]
+fn class_tables_are_complete() {
+    let mut dir = std::env::current_exe().expect("test binary path");
+    dir.pop();
+    dir.pop();
+    let archive: PathBuf = dir.join("libzeo.a");
+    assert!(
+        archive.is_file(),
+        "libzeo.a must sit beside the test profile dir"
+    );
+    let out = std::process::Command::new("nm")
+        .arg(&archive)
+        .output()
+        .expect("nm must run");
+    let nm = String::from_utf8_lossy(&out.stdout);
+    assert!(!nm.is_empty(), "nm produced no listing");
+    let in_archive: std::collections::BTreeSet<String> = nm
+        .lines()
+        .filter_map(|l| l.rsplit(' ').next())
+        .map(|s| s.strip_prefix('_').unwrap_or(s))
+        .filter(|s| s.starts_with("zeo_ctable_"))
+        .map(str::to_string)
+        .collect();
+    let listed: std::collections::BTreeSet<String> = zeo::builtin_surface::CLASS_TABLE_SYMBOLS
+        .iter()
+        .map(|(_, s)| (*s).to_string())
+        .collect();
+    let missing: Vec<&String> = in_archive.difference(&listed).collect();
+    let phantom: Vec<&String> = listed.difference(&in_archive).collect();
+    assert!(
+        missing.is_empty() && phantom.is_empty(),
+        "CLASS_TABLE_SYMBOLS is out of step with libzeo.a\n           in the archive but NOT listed (these classes would lose every \
+         method and constant): {missing:?}\n           listed but NOT in the archive (a link error in every program): {phantom:?}"
+    );
+    assert!(!listed.is_empty(), "no class tables at all");
+}
+
 /// Every symbol the emitter can import resolves through the runtime's
 /// in-process table (`zeo_rt::capi::symbols`) -- what the JIT run path
 /// links against (the `zeo` binary does not export `zeo_rt_*`, so this

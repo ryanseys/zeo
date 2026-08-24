@@ -748,6 +748,8 @@ fn empty_desc(toplevel: abi::UnitFn) -> abi::ProgramDesc {
         n_meta_rows: 0,
         redef_metas: std::ptr::null(),
         n_redef_metas: 0,
+        class_tables: std::ptr::null(),
+        n_class_tables: 0,
         reg_rows: std::ptr::null(),
         n_reg_rows: 0,
         units: std::ptr::null(),

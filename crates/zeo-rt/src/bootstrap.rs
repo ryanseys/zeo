@@ -204,7 +204,7 @@ pub fn install_core_constants() {
     // the data-driven replacement for the per-class `seed_*` calls above, run
     // as each class moves off them. Independent per class, so ordering after
     // the legacy seeders is fine.
-    for table in crate::builtins::BUILTIN_TABLES {
+    for table in crate::builtins::all_tables() {
         if let Some(install) = table.install_constants {
             install();
         }

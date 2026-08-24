@@ -1153,6 +1153,7 @@ pub(crate) fn define_desc(
     let foreign_table = define_foreign_rows(em, foreign_rows)?;
     let meta_table = define_meta_rows(em, meta_rows, "zeo_meta_rows")?;
     let redef_meta_table = define_meta_rows(em, redef_metas, "zeo_redef_metas")?;
+    let class_table_ptrs = define_class_tables(em, analyzed)?;
     let unit_table = define_unit_rows(em, unit_rows)?;
     let source_table = define_source_rows(em, &analyzed.compiler.hir.embedded_sources)?;
     let (cov_table, n_cov) = define_cov_rows(em, analyzed)?;
@@ -1278,6 +1279,11 @@ pub(crate) fn define_desc(
     );
     put_u64(
         &mut buf,
+        std::mem::offset_of!(ProgramDesc, n_class_tables),
+        needed_class_tables(analyzed).len() as u64,
+    );
+    put_u64(
+        &mut buf,
         std::mem::offset_of!(ProgramDesc, n_units),
         unit_rows.len() as u64,
     );
@@ -1366,6 +1372,14 @@ pub(crate) fn define_desc(
     if let Some(mt) = redef_meta_table {
         let gv = em.module.declare_data_in_data(mt, &mut desc);
         desc.write_data_addr(std::mem::offset_of!(ProgramDesc, redef_metas) as u32, gv, 0);
+    }
+    if let Some(ct) = class_table_ptrs {
+        let gv = em.module.declare_data_in_data(ct, &mut desc);
+        desc.write_data_addr(
+            std::mem::offset_of!(ProgramDesc, class_tables) as u32,
+            gv,
+            0,
+        );
     }
     if let Some(rt) = reg_table {
         let gv = em.module.declare_data_in_data(rt, &mut desc);
@@ -1757,4 +1771,62 @@ fn define_cov_rows(em: &mut Emitter, analyzed: &Analyzed) -> Result<(Option<Data
         .define_data(id, &data)
         .map_err(|e| format!("defining the coverage table: {e}"))?;
     Ok((Some(id), files.len() as u64))
+}
+
+/// `zeo_class_tables`: one pointer per builtin class method table the program
+/// can reach, in `CLASS_TABLE_SYMBOLS` order.
+///
+/// Each entry is a relocation against a `zeo_ctable_*` symbol the runtime
+/// exports, so referencing one is what keeps that class's methods in the
+/// binary -- and not referencing one is what lets them strip. Every table is
+/// named today; narrowing the set is the size lever this exists for.
+fn define_class_tables(em: &mut Emitter, analyzed: &Analyzed) -> Result<Option<DataId>, String> {
+    let symbols = needed_class_tables(analyzed);
+    if symbols.is_empty() {
+        return Ok(None);
+    }
+    let id = em
+        .module
+        .declare_data("zeo_class_tables", Linkage::Local, false, false)
+        .map_err(|e| format!("declaring zeo_class_tables: {e}"))?;
+    let mut data = DataDescription::new();
+    data.define(vec![0u8; symbols.len() * 8].into_boxed_slice());
+    for (i, sym) in symbols.iter().enumerate() {
+        let table = em
+            .module
+            .declare_data(sym, Linkage::Import, false, false)
+            .map_err(|e| format!("declaring {sym}: {e}"))?;
+        let gv = em.module.declare_data_in_data(table, &mut data);
+        data.write_data_addr((i * 8) as u32, gv, 0);
+    }
+    em.module
+        .define_data(id, &data)
+        .map_err(|e| format!("defining zeo_class_tables: {e}"))?;
+    Ok(Some(id))
+}
+
+/// Which builtin class tables this program can reach.
+///
+/// The rule is the emitter's OWN registration gate, not a second opinion: a
+/// require-gated extension registers per program (`classes.rs`), so a class
+/// that gate excludes has no constant and no dispatch path. That is what
+/// takes OpenSSL, socket, zlib, StringIO and FFI out of a program that never
+/// asks for them.
+///
+/// An always-on class stays. A value of that kind can arrive without the
+/// program naming it -- `1.to_s` needs String -- so nothing syntactic rules
+/// one out, and narrowing those wants real reachability analysis.
+///
+/// A program that can compile code at RUN time gets everything: `eval` and an
+/// unresolved `require` both reach the embedded compiler, which can name any
+/// class at all.
+fn needed_class_tables(analyzed: &Analyzed) -> Vec<&'static str> {
+    let all = crate::builtin_surface::CLASS_TABLE_SYMBOLS;
+    if analyzed.compiler.hir.uses_runtime_eval() {
+        return all.iter().map(|(_, sym)| *sym).collect();
+    }
+    all.iter()
+        .filter(|(id, _)| analyzed.compiler.builtin_is_reachable(*id))
+        .map(|(_, sym)| *sym)
+        .collect()
 }

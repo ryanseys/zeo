@@ -316,16 +316,41 @@ fn expand(spec: &ClassSpec) -> TokenStream2 {
         )
     };
 
-    // The linkme registration. A unique static name per class so multiple
-    // ruby_class! invocations (each in its own module) never collide;
-    // upper-cased since it's a static.
+    // The class's method table, under a LINKER symbol an emitted program can
+    // name: `zeo_ctable_<ID>`.
+    //
+    // The export name is built from the ID path's last segment rather than
+    // the class name, because the id consts are unique by construction and
+    // the names are not -- `Random`, `Location` and `Digest` each name two
+    // classes in different modules, and `#[export_name]` is global.
+    //
+    // Why an exported symbol at all: a `linkme` slice entry is a
+    // `no_dead_strip` root in its OWN right -- nothing has to read it -- so
+    // collecting every table at link time made every builtin method body
+    // unstrippable. `ld -why_live` on Date's parser in a `puts 1` binary
+    // terminated at `___RUBY_CLASS_TABLE_DATE`, and OpenSSL's 3 MB at
+    // `SHA1_TABLE`. A program names the tables it can reach instead, and the
+    // rest strip.
     let register_ident = format_ident!(
         "__RUBY_CLASS_TABLE_{}",
         spec.name.to_string().to_uppercase()
     );
+    let export_name = format!(
+        "zeo_ctable_{}",
+        spec.id
+            .segments
+            .last()
+            .expect("a class id path has a last segment")
+            .ident
+    );
+    // The linkme slice survives for zeo-rt's OWN unit tests, which never run
+    // `register_program` and so have no program-supplied array to read. In a
+    // release build the slice has no entries at all, which is the point: an
+    // entry is a root whether or not anything reads it.
     let register = quote! {
-        #[linkme::distributed_slice(crate::builtins::BUILTIN_TABLES)]
-        static #register_ident: crate::builtins::BuiltinClassTable =
+        #[cfg_attr(test, linkme::distributed_slice(crate::builtins::BUILTIN_TABLES))]
+        #[unsafe(export_name = #export_name)]
+        pub static #register_ident: crate::builtins::BuiltinClassTable =
             crate::builtins::BuiltinClassTable {
                 id: #id,
                 instance: #instance_table,
