@@ -110,21 +110,38 @@ pub(super) fn lower_into(
     policy: &crate::Corelib,
 ) -> Result<(), LowerError> {
     for seg in SEGMENTS.iter().filter(|s| s.selected(policy)) {
-        let file = hir.add_file(seg.internal_name, seg.source);
-        // Not part of the program in any sense a program can observe --
-        // see `Hir::internal_files`.
-        hir.internal_files.insert(file);
-        let saved = hir.lowering_file.replace(file);
-        let lowered = crate::lower::parse_and_lower_into(hir, seg.source).map_err(|e| LowerError {
-            message: format!(
-                "internal error in zeo's vendored corelib {} (this is a zeo bug): {}",
-                seg.internal_name, e.message
-            ),
-            ..e
-        });
-        hir.lowering_file = saved;
-        statements.extend(lowered?);
+        lower_as_internal(hir, statements, seg.internal_name, seg.source)?;
     }
+    Ok(())
+}
+
+/// Lower `source` as an INTERNAL file named `internal_name`, appending its
+/// statements.
+///
+/// One place registers the file and marks it internal, so every carve-out
+/// keyed on `Hir::internal_files` -- the `method_added` hook, `Coverage`, and
+/// the fused-iterator guard -- covers a segment by construction rather than
+/// by each remembering to.
+pub(crate) fn lower_as_internal(
+    hir: &mut Hir,
+    statements: &mut Vec<NodeId>,
+    internal_name: &str,
+    source: &'static str,
+) -> Result<(), LowerError> {
+    let file = hir.add_file(internal_name, source);
+    // Not part of the program in any sense a program can observe --
+    // see `Hir::internal_files`.
+    hir.internal_files.insert(file);
+    let saved = hir.lowering_file.replace(file);
+    let lowered = crate::lower::parse_and_lower_into(hir, source).map_err(|e| LowerError {
+        message: format!(
+            "internal error in zeo's vendored corelib {internal_name} (this is a zeo bug): {}",
+            e.message
+        ),
+        ..e
+    });
+    hir.lowering_file = saved;
+    statements.extend(lowered?);
     Ok(())
 }
 
