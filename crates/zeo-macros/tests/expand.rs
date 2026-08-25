@@ -37,6 +37,8 @@ pub mod builtins {
         pub is_protected: fn(&str) -> bool,
         pub allocs: fn(&str) -> bool,
         pub inherits: fn(&str) -> bool,
+        pub gate: fn(&str) -> Option<&'static str>,
+        pub has_gated: bool,
     }
 
     pub struct BuiltinClassTable {
