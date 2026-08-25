@@ -14,7 +14,15 @@ module ZeoDev
     # `tests/spinel/` is NOT a promotion target: it mirrors a vendored corpus,
     # and a spinel-origin gap belongs in `tests/` like any other.
     class PromoteGap < Cli
-      SIDECARS = %w[rb rb.expected rb.err.expected rb.args rb.stdin].freeze
+      # EVERY suffix the harness recognizes (golden.rs is the reference).
+      # This list once knew only five of them, and promoting a gap that
+      # carried a `.gccheck`, `.gc`, `.leakcheck`, `.divergence` or a
+      # platform/leg skip silently left the sidecar behind in tests/gaps/ --
+      # changing the promoted test's behavior and orphaning a file.
+      SIDECARS = %w[
+        rb rb.expected rb.err.expected rb.args rb.stdin rb.divergence
+        rb.gc rb.leakcheck rb.gccheck rb.macos-only rb.jit-only
+      ].freeze
 
       def self.summary = "move a fixed gap into the passing suite"
       def self.banner = "usage: zeo-dev promote-gap <gap-stem>"

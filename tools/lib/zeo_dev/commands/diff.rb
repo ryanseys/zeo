@@ -122,18 +122,16 @@ module ZeoDev
         0
       end
 
-      # Blessed at cwd=tests/ with a RELATIVE path, so the source paths in a
-      # backtrace match what the harness normalizer expects.
-      #
-      # An ABSENT `.err.expected` is a real assertion -- it says stderr must
-      # be empty -- so an empty capture deletes the file rather than writing
-      # zero bytes.
+      # Delegates to `zeo-dev bless` -- the ONE golden writer -- so the
+      # recorded output goes through the harness's own normalization (CRLF,
+      # source-path relativization, address scrubbing). A hand-rolled
+      # oracle capture here once skipped the address scrub, so a snippet
+      # printing `#<Object:0x...>` recorded a raw process-random address
+      # into its golden.
       def bless_gap(name)
-        tests = File.join(ROOT, "tests")
-        res = Exec.run(Ruby.oracle_argv("gaps/#{name}.rb"), chdir: tests, capture_stdout: true)
-        File.write(File.join(tests, "gaps", "#{name}.rb.expected"), res.stdout)
-        err_path = File.join(tests, "gaps", "#{name}.rb.err.expected")
-        res.stderr.to_s.empty? ? FileUtils.rm_f(err_path) : File.write(err_path, res.stderr)
+        res = Exec.run([File.join(ROOT, "tools", "zeo-dev"), "bless", name],
+                       chdir: ROOT, capture_stdout: true)
+        raise Error, "bless failed for #{name}:\n#{res.stderr}" unless res.success?
       end
     end
   end

@@ -28,9 +28,8 @@ module ZeoDev
       # spelling says where to go instead.
       BLESS_VAR = "ZEO_BLESS_FROM_TOOL"
 
-      # Goldens and generated conformance artifacts: everything a bless can
-      # write.
-      WATCHED = %w[tests conformance].freeze
+      # Everything a bless can write.
+      WATCHED = %w[tests].freeze
 
       def self.summary = "re-record golden .expected files from the ruby oracle"
 
