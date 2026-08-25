@@ -469,11 +469,20 @@ fn boxed_binop(fx: &mut Fx, op: BinOp, name: &str, a: Operand, b_op: Operand) ->
 
     fx.b.switch_to_block(b_dyn);
     {
+        // A monomorphic inline cache, vetted against FCALL like the
+        // operator's ruby form (operators run no visibility check). One
+        // site per lowered operator: `"a" + b` in a loop fills once with
+        // String and hits from then on. `send_value_in` here was a full
+        // uncached walk per evaluation.
         let sym = fx.sym_id(name);
+        let cache = fx.callsite_ptr(super::call::FCALL);
         let zero = fx.b.ins().iconst(types::I32, 0);
         let one = fx.b.ins().iconst(fx.em.ptr, 1);
         let null = fx.b.ins().iconst(fx.em.ptr, 0);
-        let status = fx.call_status("zeo_rt_send_value_in", &[zero, pa, sym, pb, one, null, dst]);
+        let status = fx.call_status(
+            "zeo_rt_send_value_cached",
+            &[cache, zero, pa, sym, pb, one, null, dst],
+        );
         fx.fallible(status);
         fx.b.ins().jump(join, &[]);
     }

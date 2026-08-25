@@ -15,7 +15,7 @@
 //! `<=>` dispatch itself raises, real Ruby's own failure shape.
 
 use crate::builtins::{arg_error, type_error};
-use crate::{RubyValue, Signal, Symbol};
+use crate::{RubyValue, Signal};
 use zeo_macros::ruby_module;
 
 /// The receiver's own `<=>`, reduced to a sign -- `Ok(None)` is Ruby's
