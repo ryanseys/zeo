@@ -2244,11 +2244,16 @@ pub fn register_exception_subclass(
         ancestors,
         Some(exception_construct as ConstructorFn),
     );
-    for row in EXC_ROWS {
+    // Row names interned ONCE for the whole hierarchy, not per class: this
+    // runs for every one of ~171 classes at boot, and each intern is an
+    // interner-mutex acquire.
+    static ROW_SYMS: std::sync::OnceLock<Vec<Symbol>> = std::sync::OnceLock::new();
+    let row_syms =
+        ROW_SYMS.get_or_init(|| EXC_ROWS.iter().map(|r| Symbol::intern(r.name)).collect());
+    for (row, &sym) in EXC_ROWS.iter().zip(row_syms) {
         if !row.gate.admits(id, &ancestry) {
             continue;
         }
-        let sym = Symbol::intern(row.name);
         match row.body {
             ExcBody::Instance(f) => registry.define_method_own(id, sym, f),
             ExcBody::ClassMethod(f) => registry.define_class_method(id, sym, f),

@@ -369,10 +369,19 @@ pub(crate) fn allocator_of(id: ClassId) -> Option<fn() -> crate::RubyValue> {
 /// walk reaches them as ancestors of Array/Hash/Range and of any user class
 /// that `include`s them, exactly like every other builtin module.
 pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMethodFn>> {
-    if gate::gated(id) {
+    let t = registered_table(id)?;
+    if table_gated(t) {
         return Some(gate::views(id).lookup);
     }
-    side_of(id, Side::Instance).map(|m| m.lookup)
+    t.instance.as_ref().map(|m| m.lookup)
+}
+
+/// Whether this entry carries gate-hidden rows on either side -- read off an
+/// already-probed entry, so a projection costs ONE table-map probe instead
+/// of the three `gate::gated` + `side_of` paid before.
+fn table_gated(t: &BuiltinClassTable) -> bool {
+    t.instance.as_ref().is_some_and(|m| m.has_gated)
+        || t.class.as_ref().is_some_and(|m| m.has_gated)
 }
 
 /// `class_table`'s arity twin: ClassId -> the instance-method arity table
@@ -380,10 +389,11 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
 /// `Method#arity` consults this for a builtin-receiver method object, walking
 /// the receiver's ancestry so an inherited builtin resolves against its owner.
 pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> {
-    if gate::gated(id) {
+    let t = registered_table(id)?;
+    if table_gated(t) {
         return Some(gate::views(id).arity);
     }
-    side_of(id, Side::Instance).map(|m| m.arity)
+    t.instance.as_ref().map(|m| m.arity)
 }
 
 /// `class_arity_table`'s parameter twin: ClassId -> the instance-method
@@ -392,18 +402,20 @@ pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> 
 /// "fall back to the anonymous descriptor", which is what nearly every row
 /// still does.
 pub(crate) fn class_params_table(id: ClassId) -> Option<fn(&str) -> Option<ParamRows>> {
-    if gate::gated(id) {
+    let t = registered_table(id)?;
+    if table_gated(t) {
         return Some(gate::views(id).params);
     }
-    Some(side_of(id, Side::Instance)?.params)
+    Some(t.instance.as_ref()?.params)
 }
 
 /// `class_params_table`'s CLASS-METHOD counterpart.
 pub(crate) fn class_method_params_table(id: ClassId) -> Option<fn(&str) -> Option<ParamRows>> {
-    if gate::gated(id) {
+    let t = registered_table(id)?;
+    if table_gated(t) {
         return Some(gate::views(id).class_params);
     }
-    Some(side_of(id, Side::Class)?.params)
+    Some(t.class.as_ref()?.params)
 }
 
 /// The static ClassId -> CLASS-METHOD table map -- `class_table`'s
@@ -422,19 +434,21 @@ pub(crate) fn class_method_params_table(id: ClassId) -> Option<fn(&str) -> Optio
 /// instance -- rows generally ignore it (`Time.now` needs no receiver), but
 /// it keeps the `BuiltinMethodFn` ABI uniform with `class_table`'s.
 pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMethodFn>> {
-    if gate::gated(id) {
+    let t = registered_table(id)?;
+    if table_gated(t) {
         return Some(gate::views(id).class_lookup);
     }
-    side_of(id, Side::Class).map(|m| m.lookup)
+    t.class.as_ref().map(|m| m.lookup)
 }
 
 /// `class_method_table`'s arity twin -- what `Foo.method(:bar).arity` reads
 /// for a builtin class method, the singleton mirror of [`class_arity_table`].
 pub(crate) fn class_method_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> {
-    if gate::gated(id) {
+    let t = registered_table(id)?;
+    if table_gated(t) {
         return Some(gate::views(id).class_arity);
     }
-    side_of(id, Side::Class).map(|m| m.arity)
+    t.class.as_ref().map(|m| m.arity)
 }
 
 /// Whether the builtin instance method `name` on `id` is CRuby-private --
@@ -1252,8 +1266,9 @@ pub(crate) mod gate {
         }
     }
 
-    /// Whether `id` has gated rows at all -- the one question the table
-    /// projections ask before taking the filtering view.
+    /// Whether `id` has gated rows at all. Reflection-path only (`names`,
+    /// the wiring test); the hot table projections read `has_gated` off
+    /// their single `registered_table` probe instead (`table_gated`).
     pub(crate) fn gated(id: ClassId) -> bool {
         super::side_of(id, super::Side::Instance).is_some_and(|m| m.has_gated)
             || super::side_of(id, super::Side::Class).is_some_and(|m| m.has_gated)
