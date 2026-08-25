@@ -2244,8 +2244,8 @@ ruby_class! {
             RubyValue::Array(a) => a.lock().to_vec(),
             other => vec![other.clone()],
         };
-        Ok(str_value(crate::builtins::format::sprintf(
-            &rstr.lock().to_utf8_lossy(),
+        Ok(str_value(crate::builtins::format::sprintf_cached(
+            rstr,
             &format_args,
         )?))
     }

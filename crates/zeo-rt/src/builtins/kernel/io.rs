@@ -173,9 +173,8 @@ pub fn kernel_format(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     let Some((RubyValue::Str(template), rest)) = args.split_first() else {
         return Err(type_error!("no format string given"));
     };
-    let template = template.lock().to_utf8_lossy().into_owned();
     Ok(RubyValue::Str(crate::string_new(
-        crate::builtins::format::sprintf(&template, rest)?,
+        crate::builtins::format::sprintf_cached(template, rest)?,
     )))
 }
 

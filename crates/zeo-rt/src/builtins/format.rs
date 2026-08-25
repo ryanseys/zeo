@@ -636,89 +636,135 @@ fn star_int(args: &[RubyValue], next_arg: &mut usize) -> Result<i64, Signal> {
     }
 }
 
-/// The engine: `sprintf("%05.1f|%<x>d", args)`. Supports flags (`-+ 0#`),
-/// width/precision (fixed, `*`-from-arg), positional (`%2$s`) and named
-/// (`%<name>d` / `%{name}`) argument references.
-pub fn sprintf(template: &str, args: &[RubyValue]) -> Result<String, Signal> {
-    let mut out = String::new();
+/// One recorded step of a directive's flag/width/precision/reference
+/// loop, replayed IN OCCURRENCE ORDER at render time -- which is what
+/// keeps `*` argument consumption, style notes, and overwrite semantics
+/// byte-identical to the old single-pass engine.
+enum Op {
+    Minus,
+    Plus,
+    Space,
+    Alt,
+    Zero,
+    /// `*`: width from the next sequential argument (negative flips `-`).
+    WidthStar,
+    /// A digit run that was a width (`None` = the digits overflowed parse).
+    WidthFixed(Option<usize>),
+    /// `.*`: precision from the next argument (negative = no precision).
+    PrecStar,
+    /// `.NNN` (empty digits parse as 0).
+    PrecFixed(usize),
+    /// `%<name>` -- notes the Named style and records the reference.
+    NamedRef(String),
+    /// `N$` -- notes the Numbered style and records the position.
+    ArgIndex(usize),
+    /// The bare Named style note a malformed `%<`/`%{` made before its
+    /// read failed -- only ever the last op before a [`Piece::Fail`].
+    NoteNamed,
+}
+
+/// One parsed piece of a template.
+enum Piece {
+    /// A literal run between directives.
+    Text(String),
+    /// `%{name}`: the flag ops replay (a `%*{x}` really consumes an
+    /// argument), then the value renders as-is.
+    NamedInline { ops: Vec<Op>, name: String },
+    /// An ordinary `%...X` directive (`conv == '%'` renders a literal `%`
+    /// after its ops replay, consuming no argument).
+    Directive { ops: Vec<Op>, conv: char },
+    /// A malformed tail: its ops replay first (argument consumption and
+    /// style notes may raise their own errors, exactly where the
+    /// single-pass engine raised them), then `msg` raises. Always the
+    /// last piece.
+    Fail { ops: Vec<Op>, msg: String },
+}
+
+/// A parsed template, ready to render against any argument list --
+/// what the frozen-template cache stores.
+pub struct Template {
+    pieces: Vec<Piece>,
+}
+
+/// Parse a template into replayable pieces. Infallible: malformed input
+/// becomes a [`Piece::Fail`] raised when RENDER reaches it, so error
+/// ORDER against argument errors stays exactly the single-pass engine's.
+pub fn parse_template(template: &str) -> Template {
+    let mut pieces = Vec::new();
+    let mut text = String::new();
     let mut chars = template.chars().peekable();
-    let mut next_arg = 0usize;
-    // CRuby refuses a template that mixes the three ways of naming an
-    // argument: sequential (`%s`), numbered (`%1$s`) and named (`%<a>s` /
-    // `%{a}`). Mixing them makes the argument stream ambiguous, so the
-    // FIRST style a template uses is the only one it may use.
-    let mut style: Option<ArgStyle> = None;
     'directive: while let Some(c) = chars.next() {
         if c != '%' {
-            out.push(c);
+            text.push(c);
             continue;
         }
-        let mut spec = Spec::default();
-        let mut named: Option<String> = None;
-        let mut arg_index: Option<usize> = None;
+        if !text.is_empty() {
+            pieces.push(Piece::Text(std::mem::take(&mut text)));
+        }
+        let mut ops: Vec<Op> = Vec::new();
         // The flag/width/precision/reference loop -- broken by the conversion
         // char. Order is loose (CRuby's own), except `.precision` after width.
         loop {
             match chars.peek().copied() {
                 Some('-') => {
-                    spec.minus = true;
+                    ops.push(Op::Minus);
                     chars.next();
                 }
                 Some('+') => {
-                    spec.plus = true;
+                    ops.push(Op::Plus);
                     chars.next();
                 }
                 Some(' ') => {
-                    spec.space = true;
+                    ops.push(Op::Space);
                     chars.next();
                 }
                 Some('#') => {
-                    spec.alt = true;
+                    ops.push(Op::Alt);
                     chars.next();
                 }
                 Some('0') => {
-                    spec.zero = true;
+                    ops.push(Op::Zero);
                     chars.next();
                 }
                 Some('<') => {
                     chars.next();
-                    note_style(&mut style, ArgStyle::Named)?;
-                    named = Some(read_until(&mut chars, '>')?);
+                    match read_until(&mut chars, '>') {
+                        Ok(name) => ops.push(Op::NamedRef(name)),
+                        Err(msg) => {
+                            ops.push(Op::NoteNamed);
+                            pieces.push(Piece::Fail { ops, msg });
+                            break 'directive;
+                        }
+                    }
                 }
                 Some('{') => {
                     // `%{name}` is a complete directive: the value as-is (`%s`).
                     chars.next();
-                    note_style(&mut style, ArgStyle::Named)?;
-                    let name = read_until(&mut chars, '}')?;
-                    out.push_str(&named_get(args, &name, true)?.try_display_string()?);
+                    match read_until(&mut chars, '}') {
+                        Ok(name) => pieces.push(Piece::NamedInline { ops, name }),
+                        Err(msg) => {
+                            ops.push(Op::NoteNamed);
+                            pieces.push(Piece::Fail { ops, msg });
+                            break 'directive;
+                        }
+                    }
                     continue 'directive;
                 }
                 Some('*') => {
                     chars.next();
-                    let n = star_int(args, &mut next_arg)?;
-                    if n < 0 {
-                        spec.minus = true;
-                        spec.width = Some((-n) as usize);
-                    } else {
-                        spec.width = Some(n as usize);
-                    }
+                    ops.push(Op::WidthStar);
                 }
                 Some('.') => {
                     chars.next();
                     if chars.peek() == Some(&'*') {
                         chars.next();
-                        // A NEGATIVE `*` precision is CRuby's "no precision at
-                        // all" (`sprintf.c`: `if (prec < 0) goto no_precision`),
-                        // not a precision of zero -- `%.*f` with -2 renders the
-                        // default six places.
-                        let n = star_int(args, &mut next_arg)?;
-                        spec.precision = (n >= 0).then_some(n as usize);
+                        ops.push(Op::PrecStar);
                     } else {
                         let mut prec = String::new();
                         while chars.peek().is_some_and(|c| c.is_ascii_digit()) {
                             prec.push(chars.next().expect("peeked"));
                         }
-                        spec.precision = Some(prec.parse().unwrap_or(0));
+                        ops.push(Op::PrecFixed(prec.parse().unwrap_or(0)));
                     }
                 }
                 Some(d) if d.is_ascii_digit() => {
@@ -728,20 +774,111 @@ pub fn sprintf(template: &str, args: &[RubyValue]) -> Result<String, Signal> {
                     }
                     if chars.peek() == Some(&'$') {
                         chars.next();
-                        note_style(&mut style, ArgStyle::Numbered)?;
-                        arg_index = Some(num.parse::<usize>().unwrap_or(0));
+                        ops.push(Op::ArgIndex(num.parse::<usize>().unwrap_or(0)));
                     } else {
-                        spec.width = num.parse().ok();
+                        ops.push(Op::WidthFixed(num.parse().ok()));
                     }
                 }
                 _ => break,
             }
         }
-        let Some(conv) = chars.next() else {
-            return Err(arg_error(
-                "incomplete format specifier; use %% (double %) instead".to_string(),
-            ));
+        match chars.next() {
+            Some(conv) => pieces.push(Piece::Directive { ops, conv }),
+            None => {
+                pieces.push(Piece::Fail {
+                    ops,
+                    msg: "incomplete format specifier; use %% (double %) instead".to_string(),
+                });
+                break 'directive;
+            }
+        }
+    }
+    if !text.is_empty() {
+        pieces.push(Piece::Text(text));
+    }
+    Template { pieces }
+}
+
+/// Replay one directive's ops into its [`Spec`]/references, consuming
+/// `*` arguments and noting styles exactly where the single-pass engine
+/// did.
+fn replay_ops<'t>(
+    ops: &'t [Op],
+    args: &[RubyValue],
+    next_arg: &mut usize,
+    style: &mut Option<ArgStyle>,
+) -> Result<(Spec, Option<&'t str>, Option<usize>), Signal> {
+    let mut spec = Spec::default();
+    let mut named: Option<&str> = None;
+    let mut arg_index: Option<usize> = None;
+    for op in ops {
+        match op {
+            Op::Minus => spec.minus = true,
+            Op::Plus => spec.plus = true,
+            Op::Space => spec.space = true,
+            Op::Alt => spec.alt = true,
+            Op::Zero => spec.zero = true,
+            Op::WidthStar => {
+                let n = star_int(args, next_arg)?;
+                if n < 0 {
+                    spec.minus = true;
+                    spec.width = Some((-n) as usize);
+                } else {
+                    spec.width = Some(n as usize);
+                }
+            }
+            Op::WidthFixed(w) => spec.width = *w,
+            // A NEGATIVE `*` precision is CRuby's "no precision at all"
+            // (`sprintf.c`: `if (prec < 0) goto no_precision`), not a
+            // precision of zero -- `%.*f` with -2 renders the default six
+            // places.
+            Op::PrecStar => {
+                let n = star_int(args, next_arg)?;
+                spec.precision = (n >= 0).then_some(n as usize);
+            }
+            Op::PrecFixed(p) => spec.precision = Some(*p),
+            Op::NamedRef(name) => {
+                note_style(style, ArgStyle::Named)?;
+                named = Some(name);
+            }
+            Op::ArgIndex(i) => {
+                note_style(style, ArgStyle::Numbered)?;
+                arg_index = Some(*i);
+            }
+            Op::NoteNamed => note_style(style, ArgStyle::Named)?,
+        }
+    }
+    Ok((spec, named, arg_index))
+}
+
+/// Render a parsed template against one argument list.
+pub fn render_template(t: &Template, args: &[RubyValue]) -> Result<String, Signal> {
+    let mut out = String::new();
+    let mut next_arg = 0usize;
+    // CRuby refuses a template that mixes the three ways of naming an
+    // argument: sequential (`%s`), numbered (`%1$s`) and named (`%<a>s` /
+    // `%{a}`). Mixing them makes the argument stream ambiguous, so the
+    // FIRST style a template uses is the only one it may use.
+    let mut style: Option<ArgStyle> = None;
+    for piece in &t.pieces {
+        let (ops, conv) = match piece {
+            Piece::Text(s) => {
+                out.push_str(s);
+                continue;
+            }
+            Piece::NamedInline { ops, name } => {
+                replay_ops(ops, args, &mut next_arg, &mut style)?;
+                note_style(&mut style, ArgStyle::Named)?;
+                out.push_str(&named_get(args, name, true)?.try_display_string()?);
+                continue;
+            }
+            Piece::Fail { ops, msg } => {
+                replay_ops(ops, args, &mut next_arg, &mut style)?;
+                return Err(arg_error(msg.clone()));
+            }
+            Piece::Directive { ops, conv } => (ops, *conv),
         };
+        let (mut spec, named, arg_index) = replay_ops(ops, args, &mut next_arg, &mut style)?;
         if conv == '%' {
             out.push('%');
             continue;
@@ -749,7 +886,7 @@ pub fn sprintf(template: &str, args: &[RubyValue]) -> Result<String, Signal> {
         spec.conv = conv;
         // Pick the argument: a named reference, an explicit `N$` position, or
         // the next sequential argument.
-        let arg = if let Some(name) = &named {
+        let arg = if let Some(name) = named {
             named_get(args, name, false)?
         } else if let Some(i) = arg_index {
             args.get(i.wrapping_sub(1))
@@ -792,11 +929,59 @@ pub fn sprintf(template: &str, args: &[RubyValue]) -> Result<String, Signal> {
     Ok(out)
 }
 
+/// The engine: `sprintf("%05.1f|%<x>d", args)`. Supports flags (`-+ 0#`),
+/// width/precision (fixed, `*`-from-arg), positional (`%2$s`) and named
+/// (`%<name>d` / `%{name}`) argument references.
+pub fn sprintf(template: &str, args: &[RubyValue]) -> Result<String, Signal> {
+    render_template(&parse_template(template), args)
+}
+
+/// The parsed-template cache behind [`sprintf_cached`]: FROZEN templates
+/// keyed by their `Arc` address. The stored strong `RStr` keeps the
+/// allocation alive, so the address can never be reused while its entry
+/// stands (no ABA); a frozen string's bytes can never change, so the
+/// parse stays valid forever.
+static TEMPLATES: std::sync::Mutex<
+    Option<crate::FMap<usize, (crate::RStr, std::sync::Arc<Template>)>>,
+> = std::sync::Mutex::new(None);
+
+/// [`sprintf`] for a caller holding the template as an `RStr`: a frozen
+/// template (the common literal `"..." % args` shape under
+/// frozen-string-literal, and every interned literal) parses ONCE and
+/// renders from the cached pieces -- also skipping the per-call
+/// `to_utf8_lossy` copy. A mutable template parses per call, as before.
+pub fn sprintf_cached(template: &crate::RStr, args: &[RubyValue]) -> Result<String, Signal> {
+    if template.is_frozen() {
+        let key = std::sync::Arc::as_ptr(template) as usize;
+        let cached = TEMPLATES
+            .lock()
+            .expect("template cache lock")
+            .as_ref()
+            .and_then(|m| m.get(&key).map(|(_, t)| t.clone()));
+        let t = match cached {
+            Some(t) => t,
+            None => {
+                let t = std::sync::Arc::new(parse_template(&template.lock().to_utf8_lossy()));
+                TEMPLATES
+                    .lock()
+                    .expect("template cache lock")
+                    .get_or_insert_with(crate::FMap::default)
+                    .insert(key, (template.clone(), t.clone()));
+                t
+            }
+        };
+        return render_template(&t, args);
+    }
+    let text = template.lock().to_utf8_lossy().into_owned();
+    sprintf(&text, args)
+}
+
 /// Consumes chars up to (and including) `end`, returning the text between.
+/// The `Err` is the message a [`Piece::Fail`] raises at render time.
 fn read_until(
     chars: &mut std::iter::Peekable<std::str::Chars>,
     end: char,
-) -> Result<String, Signal> {
+) -> Result<String, String> {
     let mut name = String::new();
     for c in chars.by_ref() {
         if c == end {
@@ -804,9 +989,9 @@ fn read_until(
         }
         name.push(c);
     }
-    Err(arg_error(format!(
+    Err(format!(
         "malformed name - unmatched delimiter, expected '{end}'"
-    )))
+    ))
 }
 
 #[cfg(test)]
