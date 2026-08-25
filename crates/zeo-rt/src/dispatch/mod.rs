@@ -29,6 +29,8 @@ mod relations;
 mod send_obj;
 mod send_value;
 mod singleton;
+#[cfg(test)]
+mod tests;
 mod walk;
 pub use alloc::*;
 pub use caches::*;

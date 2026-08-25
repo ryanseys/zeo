@@ -58,6 +58,13 @@ impl CallSite {
             caller_class,
         }
     }
+
+    /// The receiver class this site filled for, or `None` while empty --
+    /// test-only introspection of the fill-once contract.
+    #[cfg(test)]
+    pub(super) fn cached_class(&self) -> Option<u32> {
+        self.hit.get().map(|(c, _)| *c)
+    }
 }
 
 /// [`send_value_in`] with a call-site cache in front of it.
@@ -224,6 +231,20 @@ impl ClassMethodSite {
         ClassMethodSite {
             hit: std::sync::OnceLock::new(),
         }
+    }
+
+    /// The caller class this site filled for, or `None` while empty --
+    /// test-only introspection.
+    #[cfg(test)]
+    pub(super) fn cached_caller(&self) -> Option<u32> {
+        self.hit.get().map(|(c, _)| *c)
+    }
+
+    /// Whether the fill remembered a MISS (`Some(true)`) or a resolved row
+    /// (`Some(false)`); `None` while empty. Test-only introspection.
+    #[cfg(test)]
+    pub(super) fn cached_is_miss(&self) -> Option<bool> {
+        self.hit.get().map(|(_, t)| t.is_none())
     }
 }
 
@@ -442,6 +463,13 @@ impl DynCallerSite {
         DynCallerSite {
             hit: std::sync::OnceLock::new(),
         }
+    }
+
+    /// The receiver class this site filled for, or `None` while empty --
+    /// test-only introspection (a denied call must fill nothing).
+    #[cfg(test)]
+    pub(super) fn cached_class(&self) -> Option<u32> {
+        self.hit.get().map(|(c, _, _)| *c)
     }
 }
 
