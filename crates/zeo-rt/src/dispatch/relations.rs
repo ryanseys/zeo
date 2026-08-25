@@ -79,6 +79,25 @@ const SPECIALIZED: &[(ClassId, &str)] = &[
     (zeo_abi::ARRAY_CLASS, "[]="),
     (zeo_abi::HASH_CLASS, "[]"),
     (zeo_abi::HASH_CLASS, "[]="),
+    // The TOTAL query rows (CRuby's opt_length / opt_size / opt_empty_p /
+    // opt_succ): no argument, no coercion, no raising shape at all -- a
+    // husk receiver raises in DISPATCH, before any frame -- so the frame
+    // was pure per-call cost and its absence is unobservable. The
+    // per-row-vs-per-site trade above does not bite here: there is no
+    // raising fallback shape to mis-report. String#+/==, Symbol#==, and
+    // Array#max/min stay framed: their coercing/raising shapes frame in
+    // CRuby (and opt_newarray_send is per-SITE, literals only).
+    (zeo_abi::ARRAY_CLASS, "length"),
+    (zeo_abi::ARRAY_CLASS, "size"),
+    (zeo_abi::ARRAY_CLASS, "empty?"),
+    (zeo_abi::STRING_CLASS, "length"),
+    (zeo_abi::STRING_CLASS, "size"),
+    (zeo_abi::STRING_CLASS, "empty?"),
+    (zeo_abi::HASH_CLASS, "length"),
+    (zeo_abi::HASH_CLASS, "size"),
+    (zeo_abi::HASH_CLASS, "empty?"),
+    (zeo_abi::INTEGER_CLASS, "succ"),
+    (zeo_abi::STRING_CLASS, "succ"),
 ];
 
 /// The interned backtrace label for a builtin row -- `'Owner#name'` for an
