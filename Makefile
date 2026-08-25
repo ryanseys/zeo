@@ -109,7 +109,7 @@ gate: ci-jit ci-aot ci-memcheck ci-doc $(PLATFORM_CI_LEG)
 	ZEO_RT_LEAKCHECK=1 ZEO_GC=1 ZEO_RT_GCCHECK=1 $(NEXTEST) -p zeo -P full --test gemtests
 
 bench:
-	$(ZEO_DEV) bench
+	$(CARGO) bench -p zeo --bench programs
 
 install:
 	$(CARGO) install --path crates/zeo

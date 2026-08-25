@@ -78,6 +78,9 @@ datatest-stable.workspace = true
 serde_json.workspace = true
 # diagnostics.rs renders compile errors the way the CLI does.
 miette.workspace = true
+# The runtime performance bank (benches/programs.rs). Lean build: no
+# plotters/HTML -- saved baselines + `critcmp` are the comparison story.
+criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
 
 # Golden-file suites: one nextest case per `.rb`, comparing zeo's output to
 # the committed ruby-oracle `.expected` (see zeo-tests/src/golden.rs).
@@ -110,6 +113,14 @@ harness = false
 [[test]]
 name = "insta_pilot"
 path = "tests/insta_pilot.rs"
+harness = false
+
+# The runtime performance bank: every `bench/bm_*.rb` compiled with the
+# release `zeo` and timed end-to-end, under criterion (saved baselines,
+# `critcmp` comparisons). `harness = false` hands main() to criterion.
+[[bench]]
+name = "programs"
+path = "benches/programs.rs"
 harness = false
 
 [build-dependencies]

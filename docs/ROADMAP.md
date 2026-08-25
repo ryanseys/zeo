@@ -220,8 +220,8 @@ codes. Then delete the "entered at those files" headers.
 Measured 2026-08-20, the Cranelift backend against the retired rustc baseline:
 two waves took it to **+52.3%** (kwargs -87%, `Foo.new` -54%, accessors -68%,
 `arr.each` -79%). Against CRuby, compute-bound work still runs at about
-**0.71x** — see the README. `bench/baseline.tsv` is the banked record and
-`bench/README.md` the method.
+**0.71x** — see the README. The bank is a criterion bench target; saved
+baselines are the record and `bench/README.md` the method.
 
 **Perf is not a gate.** These levers are recorded so a pass starts from
 measurement rather than from a guess, ranked by the gap they close.
@@ -229,7 +229,7 @@ measurement rather than from a guess, ranked by the gap they close.
 | Lever | Gap | What it needs |
 |---|---|---|
 | `send_rubyfunc_block` | +483% | `obj.ruby_func` on a local whose class analyze KNOWS — a direct compiled-to-compiled call. Needs `analyze::locals`' TyKind map plumbed into `Fx` with the shadowing rules replicated exactly (block params, `for_var_override`, the binding demotion). **A wrong type is a MISCOMPILE, not a missed fold.** A project of its own. |
-| the other typed `InlineIterKind`s | so_lists +227%, rbtree +142%, splay +102%, life +99% | `ArrayMap`/`Select`/`Reject`/`EachWithIndex`/`Sum`/`Count`/`Inject`/`HashEach`. `arr.each` proved the shape; each kind is the same guard with a different accumulator. **Statement position builds no result at all, and that alone was more than half the `arr.each` win.** |
+| the other typed `InlineIterKind`s | ao_render (six typed-Int `times` sites), stark_field; life/tree_walker_frames only after receiver widening | `ArrayMap`/`Select`/`Reject`/`EachWithIndex`/`Sum`/`Count`/`Inject`/`HashEach`. `arr.each` proved the shape; each kind is the same guard with a different accumulator. **Statement position builds no result at all, and that alone was more than half the `arr.each` win.** NOT a lever for so_lists/rbtree/splay/linked_list/tree_walker — their hot paths have no iterator blocks (verified 2026-08-25); they are dispatch/refcount bound. |
 | `getivar_module` | +187% | A class-level ivar read is name-keyed per read (a mutex plus two hash lookups). `CivarSite` and `CIVAR_SITE_SIZE` exist and the emitter never emits one. Same `.bss` plumbing as `zeo_callsites`. |
 | per-call capi block | fib +113%, tak +132%, tarai +127%, ackermann +123% | Five capi calls per call (`stack_check`, `frame_push`, `set_line`, `check_ints`, `frame_pop`). One per-thread hot block fetched once per function turns push/pop/set_line into stores and `check_ints` into a load-and-branch. Borrow-through params is the other named lever. |
 | the boxed local | setivar family +84%, loops_times +94%, nested_loop +97% | `TyKind`-driven unboxing. Same miscompile risk as the first row. |
@@ -244,11 +244,10 @@ measurement rather than from a guess, ranked by the gap they close.
   the constructor, not a class-method row, so that site never fills.
 - **A second `AtomicBool` beside `is_live` cost 2.6% on dispatch.** Fold a new
   gate into `GATES`' bits.
-- **A bench delta needs a CONTROL run.** `bench/baseline.tsv` drifts; +2.6%
-  ambient was measured once. Bench HEAD in a worktree. The `%` column is NOT
-  the med5 median.
-- **`--filter X --update-baseline` rewrites `baseline.tsv` to ONLY X.**
-  Rebuild it from `history.tsv` if that happens.
+- **A bench delta needs a CONTROL run.** Ambient drift of +2.6% was measured
+  once, and a whole-host shift of ~65% once. Attribute across commits by
+  benching the parent in a worktree with the same tool (criterion saved
+  baselines + `critcmp`).
 
 ### Considered, not scheduled
 

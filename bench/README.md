@@ -1,8 +1,10 @@
 # The benchmark suite
 
 61 golden-output Ruby programs under `bench/`, each with a committed
-`.expected`. `tools/zeo-dev bench` compiles every one with `zeo -o`, checks
-its output, times it, and compares against the banked baseline.
+`.expected`. The harness is a [criterion](https://lib.rs/crates/criterion)
+bench target (`crates/zeo/benches/programs.rs`): each program is compiled
+with the release `zeo -o` and the resulting native binary is timed
+end-to-end as a subprocess.
 
 Provenance is in [`UPSTREAM.md`](UPSTREAM.md): the programs come from the
 `benchmark/` suite of [spinel](https://github.com/matz/spinel), Zeo's
@@ -12,58 +14,78 @@ Benchmarks Game and yjit-bench-style micros.
 ## How to run it
 
 ```console
-$ tools/zeo-dev bench                       # all 61
-$ tools/zeo-dev bench --filter fib          # substring match on the name
-$ tools/zeo-dev bench --runs 5              # best-of-5 instead of best-of-3
-$ tools/zeo-dev bench --ruby                # re-time the CRuby oracle too
-$ tools/zeo-dev bench --update-baseline     # bank the result
-$ tools/zeo-dev bench --update-baseline --resume   # continue an interrupted bank
+$ make bench                                     # the whole bank
+$ cargo bench -p zeo --bench programs            # the same, spelled out
+$ cargo bench -p zeo --bench programs -- 'zeo/bm_fib$'   # one benchmark (regex)
+$ ZEO_BENCH_ORACLE=1 ZEO_BENCH_ORACLE_RUBY="$(mise which ruby)" \
+    cargo bench -p zeo --bench programs -- 'cruby/'      # time the CRuby oracle
 ```
 
-Never combine `--filter` with `--update-baseline`: the bank rewrites
-`baseline.tsv` to only the filtered rows.
+Everything after `--` is criterion's own CLI: name filters are regexes over
+the benchmark id (`zeo/<name>` or `cruby/<name>`).
+
+### Comparing runs (baselines)
+
+Criterion stores results under `target/criterion/` and compares against
+named baselines — no committed data files:
+
+```console
+$ cargo bench -p zeo --bench programs -- --save-baseline before
+  ... apply the change, rebuild ...
+$ cargo bench -p zeo --bench programs -- --baseline before   # report vs "before"
+$ critcmp before after                                       # side-by-side table
+```
+
+`critcmp` (`cargo install critcmp`) renders any two saved baselines side by
+side. To attribute a delta across commits, bench the parent commit from a
+`git worktree` and copy its `target/criterion/` baseline dirs over — same
+tool on both sides, one comparison.
+
+**A baseline is only comparable on the machine state that recorded it.** The
+2026-08-22 bank stopped reproducing on 2026-08-25 — the same source at the
+same commit re-timed ~65% slower (geomean) while the prebuilt CRuby binary
+moved only ~6%, so the shift was the host toolchain/OS, not the tree. When
+every benchmark jumps and code did not change, re-time the baseline-era
+commit in a worktree before believing the number. Baselines live in
+`target/`, so `cargo clean` deletes them.
 
 ## Method
 
 - **The shipped configuration.** Each program is compiled with `zeo -o`, so
   the binary links the RELEASE runtime, statically — what a user would
   actually run, not the `-O0` dynamic build the test harness uses.
-- **Correctness first.** Before any timing, the binary's stdout must match
-  its `.expected` byte for byte. A mismatch fails the run outright: timing a
-  wrong answer is meaningless.
-- **Best-of-N wall clock.** `--runs N` (default 3) executions, keeping the
-  MINIMUM. Noise on a quiet machine is strictly additive, so the minimum is
-  the cleanest estimator.
-- **A repeat budget.** Every benchmark gets its first, correctness-gated
-  run; repeats happen only while total time on THAT benchmark is under 30 s
-  (`REPEAT_BUDGET_SECS`). A minutes-long benchmark is therefore timed once —
-  its own length already averages out scheduler noise.
-- **The oracle is the pinned ruby.** `--ruby` times the `mise.toml` ruby
-  (4.0.6), resolved exactly as the golden harness resolves it — not a bare
-  `ruby` off `PATH`. The oracle's own output is checked against `.expected`
-  too, so a stale snapshot surfaces as a failure instead of a bogus ratio.
-- **Geometric mean of per-benchmark ratios** for the aggregate — the one
-  average that treats a 2× win on a fast benchmark and a 2× loss on a slow
-  one symmetrically.
+- **Correctness first.** Each program's first run must match its
+  `.expected` byte for byte (the oracle group checks `ruby`'s output too, so
+  a stale snapshot fails loudly). Timing a wrong answer is meaningless.
+- **Flat sampling, 10 samples.** Whole-program subprocess timings are
+  criterion `iter_custom` measurements under `SamplingMode::Flat`. Long
+  programs exceed the 2 s target time; criterion warns and takes its 10
+  samples anyway — that warning is expected.
+- **Lazy compilation.** A filtered run compiles only the programs it times.
+- **The oracle is the pinned ruby.** Point `ZEO_BENCH_ORACLE_RUBY` at the
+  `mise.toml` ruby (4.0.6); a bare `ruby` off `PATH` answers a different
+  question.
 
-## The data files
+## Profiling a benchmark
 
-| file | what it records |
-|---|---|
-| `baseline.tsv` | the committed regression reference (`name`, `secs`); written only by `--update-baseline`, so its diff is the reviewable record of every accepted shift |
-| `ruby.tsv` | the CRuby 4.0.6 oracle's time per benchmark; re-timed only under `--ruby` and reused by every report's `vs ruby` column |
-| `history.tsv` | the last 5 timings per benchmark, appended by every run; the report's `med5` column is their median, showing drift without touching the baseline |
+[`cargo-flamegraph`](https://github.com/flamegraph-rs/flamegraph)
+(`cargo install flamegraph`) profiles the compiled program directly — the
+`flamegraph` binary wraps any command, not just cargo targets:
 
-`--update-baseline` rewrites `baseline.tsv` after every completed benchmark
-rather than once at the end, so an interrupted run keeps what it finished;
-`--resume` then skips those and fills in the rest.
+```console
+$ target/release/zeo bench/bm_fib.rb -o /tmp/bm_fib
+$ flamegraph -o fib.svg -- /tmp/bm_fib     # dtrace-based on macOS (may need sudo)
+```
 
-**A baseline is only comparable on the machine state that banked it.** The
-2026-08-22 bank stopped reproducing on 2026-08-25 — the same source at the
-same commit re-timed ~65% slower (geomean) while the prebuilt CRuby binary
-moved only ~6%, so the shift was the host toolchain/OS, not the tree. When
-the geomean-vs-baseline column jumps and code did not change, re-time the
-BASELINE-ERA commit in a worktree before believing the number.
+The AOT binary keeps its symbol table (the export table is load-bearing for
+FFI), so runtime frames resolve by name.
+
+## The compiler-cost instrument
+
+`tools/zeo-dev bench --compile` measures the other side — what a COMPILE
+costs and produces (frontend wall time, emitted CLIF lines, peak RSS,
+binary size) across a hello-world-to-bundler ladder — and banks into
+`compile-baseline.tsv` with `--update-baseline`.
 
 ## Results
 
@@ -100,13 +122,16 @@ The spread, compute-bound only:
 | `matmul` | 1.18× | `getivar_module` | 0.35× |
 | | | `splay` | 0.38× |
 
-Every loser maps to a named, unbuilt lever: the typed `InlineIterKind`
-splices (`so_lists`, `rbtree`, `splay`, `life`, the two `tree_walker`s), a
-`CivarSite` the emitter never emits (`getivar_module`), a direct
-compiled-to-compiled call for a statically-known receiver class
-(`send_rubyfunc_block`), and the per-call runtime block (`tak`, `tarai`).
-The ranked lever list lives in the perf backlog; per decision, perf work is
-its own pass, not part of correctness or refactor sweeps.
+The losers cluster by cause — and NOT under one lever. The object-graph
+programs (`rbtree`, `splay`, `linked_list`, `so_lists`, `tree_walker`) are
+dispatch- and refcount-bound: their hot paths contain no iterator blocks,
+so block fusion cannot serve them (an earlier version of this paragraph
+claimed otherwise). `getivar_module` waits on a `CivarSite` the emitter
+never emits; `send_rubyfunc_block` on a direct compiled-to-compiled call
+for a statically-known receiver class; `tak`/`tarai` on the per-call
+runtime block. Block fusion (`InlineIterKind`) genuinely serves
+`ao_render`'s typed-Int `times` sites and `stark_field` — and `life`/
+`tree_walker_frames` only once nomination widens past bare-local receivers.
 
 Two dated design records still govern this profile:
 

@@ -266,8 +266,8 @@ For what does not match yet, read
 
 A compiled program starts in **under a millisecond**; CRuby needs roughly
 30 ms before the first line runs. `bench/` holds 61 programs, each with its
-correct output, and `tools/zeo-dev bench` verifies the output before it times
-anything.
+correct output, and the criterion bench harness (`make bench`) verifies the
+output before it times anything.
 
 Measured 2026-08-25, Zeo and CRuby 4.0.6 timed in the same run:
 
@@ -399,7 +399,7 @@ Narrower runs go through cargo and the dev CLI directly:
 ```console
 $ cargo nextest run -p zeo --test spinel        # one suite
 $ tools/zeo-dev bless spinel::                  # re-record goldens from ruby
-$ tools/zeo-dev bench                           # the performance suite
+$ make bench                                    # the performance suite (criterion)
 $ tools/zeo-dev size                            # what each class table costs
 ```
 

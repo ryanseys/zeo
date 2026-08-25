@@ -50,7 +50,7 @@ $ cargo nextest run -p zeo --test spinel      # the full ruby-oracle corpus
 $ cargo nextest run -p zeo --test examples --test gaps
 $ cargo nextest run -p zeo -P full            # + the whole-gem cases
 $ tools/zeo-dev bless <filter>              # re-record goldens from ruby
-$ tools/zeo-dev bench                       # perf vs bench/baseline.tsv
+$ make bench                                # the criterion perf bank (bench/README.md)
 $ tools/zeo-dev size                        # what each class table costs a binary
 ```
 
@@ -67,8 +67,9 @@ belong to `make gate`, not to every run.
 - `tools/zeo-dev bless` is the only golden writer: `golden.rs` honours
   `ZEO_BLESS_FROM_TOOL`, which only `tools/zeo-dev bless` sets, so a bare
   `ZEO_BLESS=1 cargo test` does nothing.
-- Perf-sensitive changes report their `tools/zeo-dev bench` delta; intentional shifts
-  are banked by committing `--update-baseline`'s diff.
+- Perf-sensitive changes report their bench delta: save a criterion baseline
+  before the change (`cargo bench -p zeo --bench programs -- --save-baseline
+  before`) and compare after (`critcmp`; see `bench/README.md`).
 - `cargo clippy --workspace --all-targets` at zero warnings gates CI. Don't
   add `#[allow]`s to dodge lints — fix or discuss.
 - The tree is rustfmt-clean, but CI does **not** gate it. `cargo fmt` is safe
