@@ -1,0 +1,10 @@
+{"v" => "123"}
+{"v" => 42}
+{"v" => 3.0}
+{"v" => "hello"}
+Psych::DisallowedClass: Tried to load unspecified class: Psych::Set
+{"v" => {"a" => 1, "b" => 2}}
+Psych::DisallowedClass: Tried to load unspecified class: Symbol
+{"v" => :foo}
+Psych::DisallowedClass: Tried to load unspecified class: OpenStruct
+{"v" => :s}

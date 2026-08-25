@@ -1,0 +1,6 @@
+["y", "Y", true, true, true, "n", false, false, false, true, true, false, true, false]
+[nil, nil, nil, nil, ""]
+[15, 26, 1000, 5]
+{"t" => 3723}
+["1.0e3", 0.5, 5.0, "1E2"]
+[false, true]

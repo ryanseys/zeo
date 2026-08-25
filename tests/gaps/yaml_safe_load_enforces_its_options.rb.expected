@@ -2,3 +2,5 @@ Psych::AliasesNotEnabled
 {"a" => [1], "b" => [1]}
 Psych::DisallowedClass: Tried to load unspecified class: Symbol
 {"d" => #<Date: 2001-02-03 ((2451944j,0s,0n),+0s,-Infj)>}
+{"a" => 1, "b" => 2, "c" => 2}
+{"a" => {"b" => {...}}}

@@ -18,3 +18,7 @@ rescue Psych::DisallowedClass => e
   puts "#{e.class}: #{e.message}"
 end
 p YAML.safe_load("d: 2001-02-03", permitted_classes: [Date])
+# A re-bound anchor resolves to its LATEST value, and a self-referential
+# alias answers the recursive structure ({...}), not nil.
+p YAML.safe_load("a: &x 1\nb: &x 2\nc: *x", aliases: true)
+p YAML.safe_load("a: &x\n  b: *x", aliases: true)

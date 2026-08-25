@@ -1,0 +1,4 @@
+Psych::DisallowedClass: Tried to load unspecified class: Date
+Psych::DisallowedClass: Tried to load unspecified class: Time
+{"t" => 2001-12-14 21:59:43 -0500}
+{"d" => #<Date: 2001-12-14 ((2452258j,0s,0n),+0s,-Infj)>}
