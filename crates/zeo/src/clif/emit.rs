@@ -791,19 +791,23 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
     let desc = statics::define_desc(
         em,
         analyzed,
-        toplevel,
-        unit_init,
-        eval_install,
-        &vm_rows,
-        &vis_rows,
-        &class_specs,
-        &obj_rows,
-        &cm_rows,
-        &reg_rows,
-        &foreign,
-        &meta_rows,
-        &redef_metas,
-        &unit_rows,
+        &statics::DescSpec {
+            toplevel,
+            unit_init,
+            eval_install,
+            rows: statics::DescRows {
+                vm: &vm_rows,
+                vis: &vis_rows,
+                classes: &class_specs,
+                obj: &obj_rows,
+                cm: &cm_rows,
+                reg: &reg_rows,
+                foreign: &foreign,
+                meta: &meta_rows,
+                redef_metas: &redef_metas,
+                unit: &unit_rows,
+            },
+        },
     )?;
     let main = define_main(em, desc)?;
     statics::define_rodata(em)?;

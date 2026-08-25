@@ -10,8 +10,8 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module};
 use std::collections::HashMap;
 use zeo_abi::abi::{
-    self, ClassDesc, CmRow, ForeignRow, MetaRowC, ObjRow, ParamC, ProgramDesc, RegRow, Str, VisRow,
-    VmRow,
+    self, ClassDesc, CmRow, ForeignRow, MetaRowC, ObjRow, ParamC, ProgramDesc, RegRow, SourceRow,
+    Str, UnitRow, VisRow, VmRow,
 };
 
 /// The program's symbol table: names in first-intern order; `zeo_unit_init`
@@ -201,56 +201,94 @@ pub(crate) struct VisRowSpec {
     pub verb: u8,
 }
 
-/// The `zeo_vm_rows` table: `VmRow` structs with name/function relocs.
-fn define_vm_rows(em: &mut Emitter, rows: &[VmRowSpec]) -> Result<Option<DataId>, String> {
+/// One row's cells for [`define_rows`]: where each column sits in the row
+/// struct and what goes there.
+struct RowCells {
+    /// `Str` columns as `(field offset, contents)`; the driver interns the
+    /// contents into rodata, writes `Str::len`, and relocates `Str::ptr`.
+    strs: Vec<(usize, String)>,
+    /// Function-pointer columns as `(field offset, function)`.
+    funcs: Vec<(usize, FuncId)>,
+    /// Little-endian scalar columns as `(field offset, byte width, value)`.
+    scalars: Vec<(usize, usize, u64)>,
+}
+
+/// The shared spine of the simple row tables: `Ok(None)` when `rows` is
+/// empty; declare `sym`; intern every string column into rodata in row
+/// order; write the scalar columns and every `Str::len` into one
+/// `size * rows.len()` blob; align 8; then relocate per row -- string
+/// `ptr`s first, function pointers second -- and define. The per-row
+/// reloc order is what every hand-rolled builder emitted, so converting
+/// one changes no bytes.
+fn define_rows<R>(
+    em: &mut Emitter,
+    sym: &str,
+    size: usize,
+    rows: &[R],
+    cells: impl Fn(&R) -> RowCells,
+) -> Result<Option<DataId>, String> {
     if rows.is_empty() {
         return Ok(None);
     }
-    let size = std::mem::size_of::<VmRow>();
     let id = em
         .module
-        .declare_data("zeo_vm_rows", Linkage::Local, false, false)
-        .map_err(|e| format!("declaring zeo_vm_rows: {e}"))?;
-    let interned: Vec<u32> = rows
+        .declare_data(sym, Linkage::Local, false, false)
+        .map_err(|e| format!("declaring {sym}: {e}"))?;
+    let cells: Vec<RowCells> = rows.iter().map(cells).collect();
+    let interned: Vec<Vec<u32>> = cells
         .iter()
-        .map(|r| em.intern_rodata(r.name.as_bytes()))
+        .map(|c| {
+            c.strs
+                .iter()
+                .map(|(_, s)| em.intern_rodata(s.as_bytes()))
+                .collect()
+        })
         .collect();
     let mut data = DataDescription::new();
     let mut bytes = vec![0u8; size * rows.len()];
-    for (i, row) in rows.iter().enumerate() {
+    for (i, c) in cells.iter().enumerate() {
         let base = i * size;
-        let put_u32 = |bytes: &mut [u8], at: usize, v: u32| {
-            bytes[at..at + 4].copy_from_slice(&v.to_le_bytes());
-        };
-        put_u32(
-            &mut bytes,
-            base + std::mem::offset_of!(VmRow, class),
-            row.class,
-        );
-        put_u32(
-            &mut bytes,
-            base + std::mem::offset_of!(VmRow, box_id),
-            row.box_id,
-        );
-        put_u32(&mut bytes, base + std::mem::offset_of!(VmRow, flags), 0);
-        let at = base + std::mem::offset_of!(VmRow, name) + std::mem::offset_of!(Str, len);
-        bytes[at..at + 8].copy_from_slice(&(row.name.len() as u64).to_le_bytes());
+        for &(field, width, v) in &c.scalars {
+            bytes[base + field..base + field + width].copy_from_slice(&v.to_le_bytes()[..width]);
+        }
+        for (field, s) in &c.strs {
+            let at = base + field + std::mem::offset_of!(Str, len);
+            bytes[at..at + 8].copy_from_slice(&(s.len() as u64).to_le_bytes());
+        }
     }
     data.define(bytes.into_boxed_slice());
     data.set_align(8);
     let rodata_gv = em.module.declare_data_in_data(em.rodata_id, &mut data);
-    for (i, row) in rows.iter().enumerate() {
+    for (i, c) in cells.iter().enumerate() {
         let base = i * size;
-        let name_at =
-            (base + std::mem::offset_of!(VmRow, name) + std::mem::offset_of!(Str, ptr)) as u32;
-        data.write_data_addr(name_at, rodata_gv, i64::from(interned[i]));
-        let f_ref = em.module.declare_func_in_data(row.f, &mut data);
-        data.write_function_addr((base + std::mem::offset_of!(VmRow, f)) as u32, f_ref);
+        for ((field, _), off) in c.strs.iter().zip(&interned[i]) {
+            let at = (base + field + std::mem::offset_of!(Str, ptr)) as u32;
+            data.write_data_addr(at, rodata_gv, i64::from(*off));
+        }
+        for &(field, f) in &c.funcs {
+            let f_ref = em.module.declare_func_in_data(f, &mut data);
+            data.write_function_addr((base + field) as u32, f_ref);
+        }
     }
     em.module
         .define_data(id, &data)
-        .map_err(|e| format!("defining zeo_vm_rows: {e}"))?;
+        .map_err(|e| format!("defining {sym}: {e}"))?;
     Ok(Some(id))
+}
+
+/// The `zeo_vm_rows` table: `VmRow` structs with name/function relocs.
+fn define_vm_rows(em: &mut Emitter, rows: &[VmRowSpec]) -> Result<Option<DataId>, String> {
+    define_rows(em, "zeo_vm_rows", std::mem::size_of::<VmRow>(), rows, |r| {
+        RowCells {
+            strs: vec![(std::mem::offset_of!(VmRow, name), r.name.clone())],
+            funcs: vec![(std::mem::offset_of!(VmRow, f), r.f)],
+            scalars: vec![
+                (std::mem::offset_of!(VmRow, class), 4, u64::from(r.class)),
+                (std::mem::offset_of!(VmRow, box_id), 4, u64::from(r.box_id)),
+                (std::mem::offset_of!(VmRow, flags), 4, 0),
+            ],
+        }
+    })
 }
 
 /// A method's `.rodata` `ParamDescC` (+ its keyword rows): what the bound
@@ -436,167 +474,63 @@ pub(crate) struct ObjRowSpec {
 /// The `zeo_vm_foreign` table: rows a builtin reopen INHERITED, marked
 /// so a `super` walk skips them at that position.
 fn define_foreign_rows(em: &mut Emitter, rows: &[(u32, String)]) -> Result<Option<DataId>, String> {
-    if rows.is_empty() {
-        return Ok(None);
-    }
-    let size = std::mem::size_of::<ForeignRow>();
-    let id = em
-        .module
-        .declare_data("zeo_vm_foreign", Linkage::Local, false, false)
-        .map_err(|e| format!("declaring zeo_vm_foreign: {e}"))?;
-    let interned: Vec<u32> = rows
-        .iter()
-        .map(|(_, name)| em.intern_rodata(name.as_bytes()))
-        .collect();
-    let mut data = DataDescription::new();
-    let mut bytes = vec![0u8; size * rows.len()];
-    for (i, (class, name)) in rows.iter().enumerate() {
-        let base = i * size;
-        bytes[base + std::mem::offset_of!(ForeignRow, class)
-            ..base + std::mem::offset_of!(ForeignRow, class) + 4]
-            .copy_from_slice(&class.to_le_bytes());
-        let at = base + std::mem::offset_of!(ForeignRow, name) + std::mem::offset_of!(Str, len);
-        bytes[at..at + 8].copy_from_slice(&(name.len() as u64).to_le_bytes());
-    }
-    data.define(bytes.into_boxed_slice());
-    data.set_align(8);
-    let rodata_gv = em.module.declare_data_in_data(em.rodata_id, &mut data);
-    for (i, &off) in interned.iter().enumerate() {
-        let base = i * size;
-        let at =
-            (base + std::mem::offset_of!(ForeignRow, name) + std::mem::offset_of!(Str, ptr)) as u32;
-        data.write_data_addr(at, rodata_gv, i64::from(off));
-    }
-    em.module
-        .define_data(id, &data)
-        .map_err(|e| format!("defining zeo_vm_foreign: {e}"))?;
-    Ok(Some(id))
+    define_rows(
+        em,
+        "zeo_vm_foreign",
+        std::mem::size_of::<ForeignRow>(),
+        rows,
+        |(class, name)| RowCells {
+            strs: vec![(std::mem::offset_of!(ForeignRow, name), name.clone())],
+            funcs: vec![],
+            scalars: vec![(
+                std::mem::offset_of!(ForeignRow, class),
+                4,
+                u64::from(*class),
+            )],
+        },
+    )
 }
 
 /// The `zeo_obj_rows` table (same shape as `zeo_vm_rows`, minus box/flags).
 fn define_obj_rows(em: &mut Emitter, rows: &[ObjRowSpec]) -> Result<Option<DataId>, String> {
-    if rows.is_empty() {
-        return Ok(None);
-    }
-    let size = std::mem::size_of::<ObjRow>();
-    let id = em
-        .module
-        .declare_data("zeo_obj_rows", Linkage::Local, false, false)
-        .map_err(|e| format!("declaring zeo_obj_rows: {e}"))?;
-    let interned: Vec<u32> = rows
-        .iter()
-        .map(|r| em.intern_rodata(r.name.as_bytes()))
-        .collect();
-    let mut data = DataDescription::new();
-    let mut bytes = vec![0u8; size * rows.len()];
-    for (i, row) in rows.iter().enumerate() {
-        let base = i * size;
-        bytes[base + std::mem::offset_of!(ObjRow, class)
-            ..base + std::mem::offset_of!(ObjRow, class) + 4]
-            .copy_from_slice(&row.class.to_le_bytes());
-        let at = base + std::mem::offset_of!(ObjRow, name) + std::mem::offset_of!(Str, len);
-        bytes[at..at + 8].copy_from_slice(&(row.name.len() as u64).to_le_bytes());
-    }
-    data.define(bytes.into_boxed_slice());
-    data.set_align(8);
-    let rodata_gv = em.module.declare_data_in_data(em.rodata_id, &mut data);
-    for (i, row) in rows.iter().enumerate() {
-        let base = i * size;
-        let name_at =
-            (base + std::mem::offset_of!(ObjRow, name) + std::mem::offset_of!(Str, ptr)) as u32;
-        data.write_data_addr(name_at, rodata_gv, i64::from(interned[i]));
-        let f_ref = em.module.declare_func_in_data(row.f, &mut data);
-        data.write_function_addr((base + std::mem::offset_of!(ObjRow, f)) as u32, f_ref);
-    }
-    em.module
-        .define_data(id, &data)
-        .map_err(|e| format!("defining zeo_obj_rows: {e}"))?;
-    Ok(Some(id))
+    define_rows(
+        em,
+        "zeo_obj_rows",
+        std::mem::size_of::<ObjRow>(),
+        rows,
+        |r| RowCells {
+            strs: vec![(std::mem::offset_of!(ObjRow, name), r.name.clone())],
+            funcs: vec![(std::mem::offset_of!(ObjRow, f), r.f)],
+            scalars: vec![(std::mem::offset_of!(ObjRow, class), 4, u64::from(r.class))],
+        },
+    )
 }
 
 fn define_cm_rows(em: &mut Emitter, rows: &[CmRowSpec]) -> Result<Option<DataId>, String> {
-    if rows.is_empty() {
-        return Ok(None);
-    }
-    let size = std::mem::size_of::<CmRow>();
-    let id = em
-        .module
-        .declare_data("zeo_cm_rows", Linkage::Local, false, false)
-        .map_err(|e| format!("declaring zeo_cm_rows: {e}"))?;
-    let interned: Vec<u32> = rows
-        .iter()
-        .map(|r| em.intern_rodata(r.name.as_bytes()))
-        .collect();
-    let mut data = DataDescription::new();
-    let mut bytes = vec![0u8; size * rows.len()];
-    for (i, row) in rows.iter().enumerate() {
-        let base = i * size;
-        bytes[base + std::mem::offset_of!(CmRow, class)
-            ..base + std::mem::offset_of!(CmRow, class) + 4]
-            .copy_from_slice(&row.class.to_le_bytes());
-        let at = base + std::mem::offset_of!(CmRow, name) + std::mem::offset_of!(Str, len);
-        bytes[at..at + 8].copy_from_slice(&(row.name.len() as u64).to_le_bytes());
-    }
-    data.define(bytes.into_boxed_slice());
-    data.set_align(8);
-    let rodata_gv = em.module.declare_data_in_data(em.rodata_id, &mut data);
-    for (i, row) in rows.iter().enumerate() {
-        let base = i * size;
-        let name_at =
-            (base + std::mem::offset_of!(CmRow, name) + std::mem::offset_of!(Str, ptr)) as u32;
-        data.write_data_addr(name_at, rodata_gv, i64::from(interned[i]));
-        let f_ref = em.module.declare_func_in_data(row.f, &mut data);
-        data.write_function_addr((base + std::mem::offset_of!(CmRow, f)) as u32, f_ref);
-    }
-    em.module
-        .define_data(id, &data)
-        .map_err(|e| format!("defining zeo_cm_rows: {e}"))?;
-    Ok(Some(id))
+    define_rows(em, "zeo_cm_rows", std::mem::size_of::<CmRow>(), rows, |r| {
+        RowCells {
+            strs: vec![(std::mem::offset_of!(CmRow, name), r.name.clone())],
+            funcs: vec![(std::mem::offset_of!(CmRow, f), r.f)],
+            scalars: vec![(std::mem::offset_of!(CmRow, class), 4, u64::from(r.class))],
+        }
+    })
 }
 
 /// The `UnitRow` table: one row per SPELLING a `require` can use for a
 /// compiled-in load-path file (the load-path-relative feature name and the
 /// absolute path), both pointing at the same unit function.
 fn define_unit_rows(em: &mut Emitter, rows: &[(String, FuncId)]) -> Result<Option<DataId>, String> {
-    if rows.is_empty() {
-        return Ok(None);
-    }
-    let size = std::mem::size_of::<zeo_abi::abi::UnitRow>();
-    let id = em
-        .module
-        .declare_data("zeo_unit_rows", Linkage::Local, false, false)
-        .map_err(|e| format!("declaring zeo_unit_rows: {e}"))?;
-    let interned: Vec<u32> = rows
-        .iter()
-        .map(|(name, _)| em.intern_rodata(name.as_bytes()))
-        .collect();
-    let mut data = DataDescription::new();
-    let mut bytes = vec![0u8; size * rows.len()];
-    for (i, (name, _)) in rows.iter().enumerate() {
-        let at = i * size
-            + std::mem::offset_of!(zeo_abi::abi::UnitRow, feature)
-            + std::mem::offset_of!(Str, len);
-        bytes[at..at + 8].copy_from_slice(&(name.len() as u64).to_le_bytes());
-    }
-    data.define(bytes.into_boxed_slice());
-    data.set_align(8);
-    let rodata_gv = em.module.declare_data_in_data(em.rodata_id, &mut data);
-    for (i, (_, f)) in rows.iter().enumerate() {
-        let base = i * size;
-        let name_at = (base
-            + std::mem::offset_of!(zeo_abi::abi::UnitRow, feature)
-            + std::mem::offset_of!(Str, ptr)) as u32;
-        data.write_data_addr(name_at, rodata_gv, i64::from(interned[i]));
-        let f_ref = em.module.declare_func_in_data(*f, &mut data);
-        data.write_function_addr(
-            (base + std::mem::offset_of!(zeo_abi::abi::UnitRow, f)) as u32,
-            f_ref,
-        );
-    }
-    em.module
-        .define_data(id, &data)
-        .map_err(|e| format!("defining zeo_unit_rows: {e}"))?;
-    Ok(Some(id))
+    define_rows(
+        em,
+        "zeo_unit_rows",
+        std::mem::size_of::<UnitRow>(),
+        rows,
+        |(name, f)| RowCells {
+            strs: vec![(std::mem::offset_of!(UnitRow, feature), name.clone())],
+            funcs: vec![(std::mem::offset_of!(UnitRow, f), *f)],
+            scalars: vec![],
+        },
+    )
 }
 
 /// The `SourceRow` table: `--embed-sources`' pack, one row per file.
@@ -604,63 +538,20 @@ fn define_source_rows(
     em: &mut Emitter,
     rows: &[(String, String)],
 ) -> Result<Option<DataId>, String> {
-    if rows.is_empty() {
-        return Ok(None);
-    }
-    let size = std::mem::size_of::<zeo_abi::abi::SourceRow>();
-    let id = em
-        .module
-        .declare_data("zeo_source_pack", Linkage::Local, false, false)
-        .map_err(|e| format!("declaring zeo_source_pack: {e}"))?;
-    let interned: Vec<(u32, u32)> = rows
-        .iter()
-        .map(|(path, text)| {
-            (
-                em.intern_rodata(path.as_bytes()),
-                em.intern_rodata(text.as_bytes()),
-            )
-        })
-        .collect();
-    let mut data = DataDescription::new();
-    let mut bytes = vec![0u8; size * rows.len()];
-    for (i, (path, text)) in rows.iter().enumerate() {
-        for (field, len) in [
-            (
-                std::mem::offset_of!(zeo_abi::abi::SourceRow, path),
-                path.len(),
-            ),
-            (
-                std::mem::offset_of!(zeo_abi::abi::SourceRow, text),
-                text.len(),
-            ),
-        ] {
-            let at = i * size + field + std::mem::offset_of!(Str, len);
-            bytes[at..at + 8].copy_from_slice(&(len as u64).to_le_bytes());
-        }
-    }
-    data.define(bytes.into_boxed_slice());
-    data.set_align(8);
-    let rodata_gv = em.module.declare_data_in_data(em.rodata_id, &mut data);
-    for (i, (path_off, text_off)) in interned.iter().enumerate() {
-        let base = i * size;
-        for (field, off) in [
-            (
-                std::mem::offset_of!(zeo_abi::abi::SourceRow, path),
-                *path_off,
-            ),
-            (
-                std::mem::offset_of!(zeo_abi::abi::SourceRow, text),
-                *text_off,
-            ),
-        ] {
-            let at = (base + field + std::mem::offset_of!(Str, ptr)) as u32;
-            data.write_data_addr(at, rodata_gv, i64::from(off));
-        }
-    }
-    em.module
-        .define_data(id, &data)
-        .map_err(|e| format!("defining zeo_source_pack: {e}"))?;
-    Ok(Some(id))
+    define_rows(
+        em,
+        "zeo_source_pack",
+        std::mem::size_of::<SourceRow>(),
+        rows,
+        |(path, text)| RowCells {
+            strs: vec![
+                (std::mem::offset_of!(SourceRow, path), path.clone()),
+                (std::mem::offset_of!(SourceRow, text), text.clone()),
+            ],
+            funcs: vec![],
+            scalars: vec![],
+        },
+    )
 }
 
 fn define_reg_rows(em: &mut Emitter, rows: &[RegRowSpec]) -> Result<Option<DataId>, String> {
@@ -1095,67 +986,70 @@ fn define_meta_rows(
 
 /// The `zeo_vis_rows` table.
 fn define_vis_rows(em: &mut Emitter, rows: &[VisRowSpec]) -> Result<Option<DataId>, String> {
-    if rows.is_empty() {
-        return Ok(None);
-    }
-    let size = std::mem::size_of::<VisRow>();
-    let id = em
-        .module
-        .declare_data("zeo_vis_rows", Linkage::Local, false, false)
-        .map_err(|e| format!("declaring zeo_vis_rows: {e}"))?;
-    let interned: Vec<u32> = rows
-        .iter()
-        .map(|r| em.intern_rodata(r.name.as_bytes()))
-        .collect();
-    let mut data = DataDescription::new();
-    let mut bytes = vec![0u8; size * rows.len()];
-    for (i, row) in rows.iter().enumerate() {
-        let base = i * size;
-        bytes[base + std::mem::offset_of!(VisRow, class)
-            ..base + std::mem::offset_of!(VisRow, class) + 4]
-            .copy_from_slice(&row.class.to_le_bytes());
-        bytes[base + std::mem::offset_of!(VisRow, verb)] = row.verb;
-        let at = base + std::mem::offset_of!(VisRow, name) + std::mem::offset_of!(Str, len);
-        bytes[at..at + 8].copy_from_slice(&(row.name.len() as u64).to_le_bytes());
-    }
-    data.define(bytes.into_boxed_slice());
-    data.set_align(8);
-    let rodata_gv = em.module.declare_data_in_data(em.rodata_id, &mut data);
-    for (i, _row) in rows.iter().enumerate() {
-        let base = i * size;
-        let name_at =
-            (base + std::mem::offset_of!(VisRow, name) + std::mem::offset_of!(Str, ptr)) as u32;
-        data.write_data_addr(name_at, rodata_gv, i64::from(interned[i]));
-    }
-    em.module
-        .define_data(id, &data)
-        .map_err(|e| format!("defining zeo_vis_rows: {e}"))?;
-    Ok(Some(id))
+    define_rows(
+        em,
+        "zeo_vis_rows",
+        std::mem::size_of::<VisRow>(),
+        rows,
+        |r| RowCells {
+            strs: vec![(std::mem::offset_of!(VisRow, name), r.name.clone())],
+            funcs: vec![],
+            scalars: vec![
+                (std::mem::offset_of!(VisRow, class), 4, u64::from(r.class)),
+                (std::mem::offset_of!(VisRow, verb), 1, u64::from(r.verb)),
+            ],
+        },
+    )
+}
+
+/// The row tables `zeo_program_desc` points at, one slice per section.
+#[derive(Clone, Copy)]
+pub(crate) struct DescRows<'a> {
+    pub vm: &'a [VmRowSpec],
+    pub vis: &'a [VisRowSpec],
+    pub classes: &'a [super::classes::ClassSpec],
+    pub obj: &'a [ObjRowSpec],
+    pub cm: &'a [CmRowSpec],
+    pub reg: &'a [RegRowSpec],
+    pub foreign: &'a [(u32, String)],
+    pub meta: &'a [MetaRowSpec],
+    pub redef_metas: &'a [MetaRowSpec],
+    pub unit: &'a [(String, FuncId)],
+}
+
+/// Everything [`define_desc`] serializes besides the `Analyzed` program.
+pub(crate) struct DescSpec<'a> {
+    pub toplevel: FuncId,
+    pub unit_init: Option<FuncId>,
+    pub eval_install: bool,
+    pub rows: DescRows<'a>,
 }
 
 /// `zeo_program_desc` + the `Str` tables: the loaded-features seed
 /// and the parse warnings.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "the desc is the one table of tables; every parameter is one of its sections"
-)]
 pub(crate) fn define_desc(
     em: &mut Emitter,
     analyzed: &Analyzed,
-    toplevel: FuncId,
-    unit_init: Option<FuncId>,
-    eval_install: bool,
-    vm_rows: &[VmRowSpec],
-    vis_rows: &[VisRowSpec],
-    classes: &[super::classes::ClassSpec],
-    obj_rows: &[ObjRowSpec],
-    cm_rows: &[CmRowSpec],
-    reg_rows: &[RegRowSpec],
-    foreign_rows: &[(u32, String)],
-    meta_rows: &[MetaRowSpec],
-    redef_metas: &[MetaRowSpec],
-    unit_rows: &[(String, FuncId)],
+    spec: &DescSpec<'_>,
 ) -> Result<DataId, String> {
+    let &DescSpec {
+        toplevel,
+        unit_init,
+        eval_install,
+        rows,
+    } = spec;
+    let DescRows {
+        vm: vm_rows,
+        vis: vis_rows,
+        classes,
+        obj: obj_rows,
+        cm: cm_rows,
+        reg: reg_rows,
+        foreign: foreign_rows,
+        meta: meta_rows,
+        redef_metas,
+        unit: unit_rows,
+    } = rows;
     let vm_table = define_vm_rows(em, vm_rows)?;
     let vis_table = define_vis_rows(em, vis_rows)?;
     let class_table = define_classes(em, classes)?;
