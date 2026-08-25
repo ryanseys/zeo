@@ -447,7 +447,7 @@ pub(crate) fn any_all(
             let elem = pack(yielded);
             return Ok(crate::dispatch::send_value(
                 pat,
-                crate::Symbol::intern("==="),
+                crate::symbol::wk::case_eq(),
                 std::slice::from_ref(&elem),
                 None,
             )?
@@ -872,7 +872,7 @@ pub(crate) fn to_h_pairs<'a>(
 fn case_eq(pattern: &RubyValue, value: &RubyValue) -> Result<bool, Signal> {
     Ok(send_value(
         pattern,
-        Symbol::intern("==="),
+        crate::symbol::wk::case_eq(),
         std::slice::from_ref(value),
         None,
     )?
@@ -1059,7 +1059,7 @@ impl SumAcc {
                 // fast i64 lane from here on.
                 None => SumAcc::Generic(send_value(
                     &RubyValue::Int(a),
-                    Symbol::intern("+"),
+                    crate::symbol::wk::plus(),
                     &[RubyValue::Int(b)],
                     None,
                 )?),
@@ -1092,18 +1092,18 @@ impl SumAcc {
             }
             (SumAcc::Int(a), other) => SumAcc::Generic(send_value(
                 &RubyValue::Int(a),
-                Symbol::intern("+"),
+                crate::symbol::wk::plus(),
                 &[other],
                 None,
             )?),
             (SumAcc::Float { sum, compensation }, other) => SumAcc::Generic(send_value(
                 &RubyValue::Float(sum + compensation),
-                Symbol::intern("+"),
+                crate::symbol::wk::plus(),
                 &[other],
                 None,
             )?),
             (SumAcc::Generic(a), other) => {
-                SumAcc::Generic(send_value(&a, Symbol::intern("+"), &[other], None)?)
+                SumAcc::Generic(send_value(&a, crate::symbol::wk::plus(), &[other], None)?)
             }
         })
     }

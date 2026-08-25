@@ -732,19 +732,21 @@ fn hash_key_rec(v: &RubyValue, by_identity: bool, seen: &mut Seen) -> HashKey {
         // back to identity. The enclosing builtin row (`with_c_frame`) or
         // capi entry takes it and returns it as its own error, which is one
         // dispatch away from where ruby raises it.
-        RubyValue::Object(o) => match crate::dispatch::call_user_method(o, "hash", &[]) {
-            Some(Ok(v)) => HashKey::Computed(Box::new(hash_key_rec(&v, false, seen))),
-            Some(Err(sig)) => {
-                park_key_raise(sig);
-                HashKey::Identity(Arc::as_ptr(o) as *const () as usize)
+        RubyValue::Object(o) => {
+            match crate::dispatch::call_user_method(o, crate::symbol::wk::hash(), &[]) {
+                Some(Ok(v)) => HashKey::Computed(Box::new(hash_key_rec(&v, false, seen))),
+                Some(Err(sig)) => {
+                    park_key_raise(sig);
+                    HashKey::Identity(Arc::as_ptr(o) as *const () as usize)
+                }
+                // A value-builtin subclass (D3) with no `hash` override keys by its
+                // payload -- `Tag.new("k")` is the same Hash key as `"k"`.
+                None => match o.builtin_payload() {
+                    Some(p) => hash_key_rec(&p, by_identity, seen),
+                    None => HashKey::Identity(Arc::as_ptr(o) as *const () as usize),
+                },
             }
-            // A value-builtin subclass (D3) with no `hash` override keys by its
-            // payload -- `Tag.new("k")` is the same Hash key as `"k"`.
-            None => match o.builtin_payload() {
-                Some(p) => hash_key_rec(&p, by_identity, seen),
-                None => HashKey::Identity(Arc::as_ptr(o) as *const () as usize),
-            },
-        },
+        }
         RubyValue::Proc(p) => HashKey::Identity(p.ptr_id()),
         // Value-based, like ruby's own `Regexp#eql?`/`#hash`: two regexps with
         // the same source and flags are ONE key, however they were built.

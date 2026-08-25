@@ -104,8 +104,9 @@ fn send_in_reason_inner(
     //
     // A pointer compare, and the boxed handle is built only past the
     // `lookup_mro` hit below -- the ~100%-hit path pays neither an Arc bump
-    // nor a downcast.
-    let is_env = crate::builtins::env::is_env_obj(recv);
+    // nor a downcast. Gated on the class id already in hand: ENV's class IS
+    // `Object`, so every typed receiver skips the identity probe entirely.
+    let is_env = id == zeo_abi::OBJECT_CLASS && crate::builtins::env::is_env_obj(recv);
     if is_env && let Some(f) = crate::builtins::env::lookup(name.name_str()) {
         return f(&RubyValue::Object(recv.clone()), args, block);
     }
@@ -138,8 +139,9 @@ fn send_in_reason_inner(
     // a real (module) method first, always.
     //
     // The method's TEXT is fetched only where a by-name builtin table or the
-    // value-subclass rewrap needs it: `name_str` takes the interner's global
-    // mutex, and the flat one-probe hit below resolves on the `Symbol` alone.
+    // value-subclass rewrap needs it; the flat one-probe hit below resolves
+    // on the `Symbol` alone. (`name_str` is two lock-free slab indexes now,
+    // so the ordering is tidiness, not a lock.)
     // Value-subclass payload bridge (D3): `class Stack < Array` carries a
     // `RubyValue::Array` payload; at its payload root the inherited builtin
     // method runs against that value, not the boxed object. `None` for every

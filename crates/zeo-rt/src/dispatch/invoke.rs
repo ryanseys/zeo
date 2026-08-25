@@ -13,14 +13,11 @@ use super::*;
 /// inherited/mixed-in definitions resolve exactly like a real call.
 pub(crate) fn call_user_method(
     recv: &RObj,
-    name: &str,
+    name: Symbol,
     args: &[RubyValue],
 ) -> Option<Result<RubyValue, Signal>> {
     let id = recv.class_id();
-    if let Some(f) = REGISTRY
-        .get()
-        .and_then(|r| r.lookup_mro(id, Symbol::intern(name)))
-    {
+    if let Some(f) = REGISTRY.get().and_then(|r| r.lookup_mro(id, name)) {
         return Some(f.call(recv, args, None));
     }
     // A RUNTIME-defined method on the receiver's OWN class (a `define_method`
@@ -28,7 +25,7 @@ pub(crate) fn call_user_method(
     // forwarder) -- so `p`/interpolation honour it, not just `send`. THIS
     // class only, no ancestor walk (see the reentrancy note below).
     if crate::runtime_meta::is_live()
-        && let Some(m) = crate::runtime_meta::overlay_own_method(id, Symbol::intern(name))
+        && let Some(m) = crate::runtime_meta::overlay_own_method(id, name)
     {
         return Some(m.call(recv, args, None));
     }
@@ -44,7 +41,7 @@ pub(crate) fn call_user_method(
     // until the stack died (it did). The ancestor walk belongs to `send_in`,
     // which has no such reentrancy; what this needs is only "does THIS class
     // define the method itself".
-    if let Some(f) = crate::builtins::class_table(id).and_then(|lookup| lookup(name)) {
+    if let Some(f) = crate::builtins::class_table(id).and_then(|lookup| lookup(name.name_str())) {
         return Some(f(&RubyValue::Object(recv.clone()), args, None));
     }
     // ...and an ANCESTOR's builtin table, for a builtin SUBCLASS of a builtin
@@ -67,7 +64,9 @@ pub(crate) fn call_user_method(
             {
                 break;
             }
-            if let Some(f) = crate::builtins::class_table(anc).and_then(|lookup| lookup(name)) {
+            if let Some(f) =
+                crate::builtins::class_table(anc).and_then(|lookup| lookup(name.name_str()))
+            {
                 return Some(f(&RubyValue::Object(recv.clone()), args, None));
             }
         }
@@ -85,7 +84,9 @@ pub(crate) fn call_user_method(
             if !ancestors_contain(id, root) {
                 continue;
             }
-            if let Some(f) = crate::builtins::class_table(root).and_then(|lookup| lookup(name)) {
+            if let Some(f) =
+                crate::builtins::class_table(root).and_then(|lookup| lookup(name.name_str()))
+            {
                 return Some(f(&RubyValue::Object(recv.clone()), args, None));
             }
         }

@@ -512,7 +512,7 @@ impl RubyValue {
             // address is normalized by the conformance harness (see
             // `default_object_repr`).
             RubyValue::Object(o) => {
-                match crate::dispatch::call_user_method(o, "to_s", &[]) {
+                match crate::dispatch::call_user_method(o, crate::symbol::wk::to_s(), &[]) {
                     Some(v) => v?.display_with(seen)?,
                     // A value-builtin subclass (D3) with no `to_s` override
                     // renders as its payload (`Array#to_s` etc.).
@@ -667,7 +667,7 @@ impl RubyValue {
             // order (see `default_object_repr`). NO fallback to a user
             // `to_s` (real Ruby's inspect is independent of to_s).
             RubyValue::Object(o) => {
-                match crate::dispatch::call_user_method(o, "inspect", &[]) {
+                match crate::dispatch::call_user_method(o, crate::symbol::wk::inspect(), &[]) {
                     Some(v) => v?.display_with(seen)?,
                     // A value-builtin subclass (D3) with no `inspect` override
                     // inspects as its payload (`[1, 2, 3]`).
@@ -1150,7 +1150,11 @@ impl RubyValue {
             // reference identity. A user `==` that RAISES is stashed for
             // `rb_eq_checked` to surface as a real exception (see below).
             (RubyValue::Object(o), _) => {
-                match crate::dispatch::call_user_method(o, "==", std::slice::from_ref(other)) {
+                match crate::dispatch::call_user_method(
+                    o,
+                    crate::symbol::wk::eq(),
+                    std::slice::from_ref(other),
+                ) {
                     Some(Ok(v)) => v.truthy(),
                     // A raising user `==` is stashed for the fallible
                     // `rb_eq_checked` wrapper to surface (`rb_eq` itself has
@@ -1174,7 +1178,7 @@ impl RubyValue {
                             RubyValue::Object(b) if std::sync::Arc::ptr_eq(o, b) => true,
                             _ => match crate::dispatch::call_user_method(
                                 o,
-                                "<=>",
+                                crate::symbol::wk::cmp(),
                                 std::slice::from_ref(other),
                             ) {
                                 Some(Ok(v)) => match cmp_int(&v) {
@@ -1239,7 +1243,11 @@ impl RubyValue {
                 | RubyValue::Rational(_)
                 | RubyValue::Complex(_),
                 RubyValue::Object(o),
-            ) => match crate::dispatch::call_user_method(o, "==", std::slice::from_ref(self)) {
+            ) => match crate::dispatch::call_user_method(
+                o,
+                crate::symbol::wk::eq(),
+                std::slice::from_ref(self),
+            ) {
                 Some(Ok(v)) => v.truthy(),
                 Some(Err(sig)) => {
                     stash_cmp_signal(sig);
@@ -1304,7 +1312,11 @@ impl RubyValue {
                 Some((a.len() as i64 - b.len() as i64).signum())
             }
             (RubyValue::Object(o), _) => {
-                match crate::dispatch::call_user_method(o, "<=>", std::slice::from_ref(other)) {
+                match crate::dispatch::call_user_method(
+                    o,
+                    crate::symbol::wk::cmp(),
+                    std::slice::from_ref(other),
+                ) {
                     Some(Ok(v)) => cmp_sign(&v),
                     // `rb_cmp` is infallible, so a raising user `<=>` is
                     // stashed for the fallible `cmp_or_raise` to surface
@@ -1668,7 +1680,11 @@ pub(crate) fn cmp_or_raise(a: &RubyValue, b: &RubyValue) -> Result<i64, crate::S
         // "incomparable"): a raising `<=>` propagates, a value is validated
         // through `rb_cmpint`, and a missing one is incomparable -- except
         // an object always equals itself (`Object#<=>` identity -> 0).
-        return match crate::dispatch::call_user_method(o, "<=>", std::slice::from_ref(b)) {
+        return match crate::dispatch::call_user_method(
+            o,
+            crate::symbol::wk::cmp(),
+            std::slice::from_ref(b),
+        ) {
             Some(Ok(v)) => cmp_int(&v)?.ok_or_else(|| cmp_error(a, b)),
             Some(Err(sig)) => Err(sig),
             None => match b {

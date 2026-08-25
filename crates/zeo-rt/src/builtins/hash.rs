@@ -116,7 +116,7 @@ ruby_class! {
         match (proc, arg) {
             (Some(p), Some(key)) => crate::dispatch::send_value(
                 &p,
-                crate::Symbol::intern("call"),
+                crate::symbol::wk::call(),
                 &[recv.clone(), key.clone()],
                 None,
             ),

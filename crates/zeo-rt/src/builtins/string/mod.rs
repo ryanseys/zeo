@@ -1298,7 +1298,7 @@ ruby_class! {
             if let RubyValue::Array(a) = &result {
                 let pieces: Vec<RubyValue> = a.lock().iter().cloned().collect();
                 for piece in pieces {
-                    crate::dispatch::send_value(blk, crate::Symbol::intern("call"), &[piece], None)?;
+                    crate::dispatch::send_value(blk, crate::symbol::wk::call(), &[piece], None)?;
                 }
             }
             return Ok(recv.clone());

@@ -229,7 +229,7 @@ fn probe_generic_row(
         .filter(|_| !value_row_is_foreign(anc, name))
         .or_else(|| {
             crate::builtins::class_table(anc)
-                .and_then(|t| t(&name.to_string()))
+                .and_then(|t| t(name.name_str()))
                 .map(ValueImpl::Rust)
         })?;
     if let RubyValue::Object(o) = recv
@@ -283,7 +283,6 @@ pub(super) fn send_walking(
         _ => None,
     };
     let ancestors = ancestors_of_value(recv.class_id());
-    let method_name = name.to_string();
     // The body this walk enters must know WHICH copy of `anc` it is running
     // as, or its own `super` restarts past the first one. Only a chain with a
     // repeat can disagree, so the publication is gated.
@@ -334,7 +333,7 @@ pub(super) fn send_walking(
     }
     Err(raise_method_missing(
         recv,
-        &method_name,
+        name.name_str(),
         args,
         MissingReason::Super,
     ))

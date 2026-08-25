@@ -383,7 +383,10 @@ fn send_value_in_reason_inner(
         // lowering turns that into a compile-time `HirNode::Include`. What
         // does reach it is a COMPUTED module -- `m = Module.new { ... };
         // include m` -- which is the shape `mkmf` ends on.
-        if is_main_object(o)
+        // `main`'s class IS `Object` -- the id compare spares every typed
+        // receiver the identity probe.
+        if o.class_id() == zeo_abi::OBJECT_CLASS
+            && is_main_object(o)
             && let Some(out) = main_mixin(name, args)
         {
             return out;

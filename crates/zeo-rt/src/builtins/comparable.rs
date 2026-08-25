@@ -23,7 +23,7 @@ use zeo_macros::ruby_module;
 fn cmp(recv: &RubyValue, other: &RubyValue) -> Result<Option<i64>, Signal> {
     let result = crate::dispatch::send_value(
         recv,
-        Symbol::intern("<=>"),
+        crate::symbol::wk::cmp(),
         std::slice::from_ref(other),
         None,
     )?;
