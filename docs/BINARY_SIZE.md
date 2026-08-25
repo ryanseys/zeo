@@ -129,7 +129,9 @@ still answers `true` in a program with no Marshal table, exactly as CRuby
 does.
 
 **Result: 9,252,936 → 7,493,552 bytes, −1.76 MB.** `puts 1` names 33 class
-tables where it named 88.
+tables where it named 88. The baseline then moved to **7,509,720** when
+`node_id_for_backtrace_location` brought the prism header bindings back:
+that is the feature's own cost, not a regression in the narrowing.
 
 ### The prism-backed `RubyVM` surfaces
 

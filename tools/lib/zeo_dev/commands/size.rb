@@ -23,8 +23,9 @@ module ZeoDev
       # The committed number `--check` defends, in bytes of the whole binary.
       # Recorded 2026-08-24 on aarch64-apple-darwin, release profile, after
       # `analyze::class_reach` narrowed the always-on tables to the set a
-      # program can reach.
-      SIZE_BASELINE = 7_493_552
+      # program can reach, and `node_id_for_backtrace_location` added the
+      # prism header bindings back on top.
+      SIZE_BASELINE = 7_509_720
 
       def self.summary = "what each builtin class table costs a linked binary"
 
