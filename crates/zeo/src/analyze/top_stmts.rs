@@ -125,14 +125,16 @@ fn process_top_stmt_inner(
         let scopes_before = compiler.scopes.len();
         register_class_or_raise(
             compiler,
-            name,
-            superclass,
-            is_module,
-            &body,
-            &[],
-            0,
-            Some(stmt),
-            Conditional::No,
+            &ClassRegistration {
+                name: &name,
+                superclass: &superclass,
+                is_module,
+                body: &body,
+                cref: &[],
+                box_id: 0,
+                def_node: Some(stmt),
+                conditional: Conditional::No,
+            },
         )?;
         // The marker STAYS in the top-level statement stream (non-bootstrap
         // only -- the prelude's bodies keep their hoisted splice): real Ruby
@@ -203,14 +205,16 @@ fn process_top_stmt_inner(
                     (name.clone(), superclass.clone(), body.clone(), *is_module);
                 register_class_or_raise(
                     compiler,
-                    name,
-                    superclass,
-                    is_module,
-                    &body,
-                    &[],
-                    bx,
-                    Some(s),
-                    Conditional::No,
+                    &ClassRegistration {
+                        name: &name,
+                        superclass: &superclass,
+                        is_module,
+                        body: &body,
+                        cref: &[],
+                        box_id: bx,
+                        def_node: Some(s),
+                        conditional: Conditional::No,
+                    },
                 )?;
             }
             // The `ClassDef` marker stays in the box body too (document
@@ -579,29 +583,11 @@ pub(super) fn superclass_mismatch(
 /// class` ruby raises with that exact string. Compiling the program and
 /// aborting where ruby aborts is the same observable behaviour and one fewer
 /// way to be wrong.
-#[allow(clippy::too_many_arguments)] // one wrapper, one signature: `register_class`'s
 pub(super) fn register_class_or_raise(
     compiler: &mut Compiler,
-    name: String,
-    superclass: Option<String>,
-    is_module: bool,
-    body: &[NodeId],
-    cref: &[ClassId],
-    box_id: u32,
-    def_node: Option<NodeId>,
-    conditional: Conditional,
+    reg: &ClassRegistration<'_>,
 ) -> Result<(), String> {
-    let registered = register_class(
-        compiler,
-        name,
-        superclass,
-        is_module,
-        body,
-        cref,
-        box_id,
-        def_node,
-        conditional,
-    );
+    let registered = register_class(compiler, reg);
     if let Err(e) = registered
         && !raise_instead_of_defining(compiler)
     {
@@ -692,14 +678,16 @@ pub(super) fn register_nested_class_defs_in(
             (name.clone(), superclass.clone(), body.clone(), *is_module);
         register_class_or_raise(
             compiler,
-            name,
-            superclass,
-            is_module,
-            &body,
-            cref,
-            box_id,
-            Some(s),
-            conditional,
+            &ClassRegistration {
+                name: &name,
+                superclass: &superclass,
+                is_module,
+                body: &body,
+                cref,
+                box_id,
+                def_node: Some(s),
+                conditional,
+            },
         )?;
     }
     Ok(())
@@ -1366,16 +1354,19 @@ fn register_exception_tail_row(
     compiler: &mut Compiler,
     &(name, superclass, is_module, mixin): &(&str, Option<&str>, bool, Option<&str>),
 ) -> Result<(), String> {
+    let superclass = superclass.map(str::to_string);
     register_class(
         compiler,
-        name.to_string(),
-        superclass.map(str::to_string),
-        is_module,
-        &[],
-        &[],
-        0,
-        None,
-        Conditional::No,
+        &ClassRegistration {
+            name,
+            superclass: &superclass,
+            is_module,
+            body: &[],
+            cref: &[],
+            box_id: 0,
+            def_node: None,
+            conditional: Conditional::No,
+        },
     )?;
     let Some(marker) = mixin else {
         return Ok(());
@@ -1426,17 +1417,20 @@ pub(super) fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(),
     // Every `Errno` class the platform names, in `zeo-abi::ERRNO_CLASSES`
     // order -- one contiguous block, so the ids follow from the table's length
     // and no name has to be restated here.
+    let system_call_error = Some("SystemCallError".to_string());
     for row in zeo_abi::ERRNO_CLASSES {
         register_class(
             compiler,
-            row.name.to_string(),
-            Some("SystemCallError".to_string()),
-            false,
-            &[],
-            &[],
-            0,
-            None,
-            Conditional::No,
+            &ClassRegistration {
+                name: row.name,
+                superclass: &system_call_error,
+                is_module: false,
+                body: &[],
+                cref: &[],
+                box_id: 0,
+                def_node: None,
+                conditional: Conditional::No,
+            },
         )?;
     }
     for row in io_wait {
@@ -1465,14 +1459,16 @@ pub(super) fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(),
         };
         register_class(
             compiler,
-            alias.to_string(),
-            None,
-            false,
-            &[],
-            &[],
-            0,
-            None,
-            Conditional::No,
+            &ClassRegistration {
+                name: alias,
+                superclass: &None,
+                is_module: false,
+                body: &[],
+                cref: &[],
+                box_id: 0,
+                def_node: None,
+                conditional: Conditional::No,
+            },
         )?;
         let Some(cls) = compiler.class_in_scope(
             compiler.class(target).lexical_parent,

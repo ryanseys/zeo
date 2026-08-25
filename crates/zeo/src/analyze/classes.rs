@@ -125,74 +125,60 @@ pub(super) fn resolve_or_create_lexical(
     None
 }
 
+/// One `class`/`module` definition site, threaded whole through the
+/// registration pipeline (target resolution, reopen checking, creation,
+/// body walk). Each field is a distinct piece of the site (same posture
+/// as `register_method`).
+pub(super) struct ClassRegistration<'a> {
+    /// May be a qualified path (`"Store::Item"` -- the `class
+    /// Store::Item ... end` form): the prefix must already resolve (real
+    /// Ruby's own NameError posture), the leaf registers under it as
+    /// namespace parent, and the class is marked `qualified_def` so its
+    /// cref is just itself (see `ClassInfo::qualified_def`'s docs). A
+    /// leading `::` anchors the definition at the top level from any
+    /// nesting depth.
+    pub(super) name: &'a str,
+    pub(super) superclass: &'a Option<String>,
+    pub(super) is_module: bool,
+    pub(super) body: &'a [NodeId],
+    /// The ENCLOSING lexical chain (outermost first, `Compiler::cref_of`'s
+    /// order) -- empty at the top level -- used to resolve the
+    /// qualified-form prefix, the superclass, and include/extend/prepend
+    /// targets, exactly as real Ruby resolves each of those in the scope
+    /// ENCLOSING the definition.
+    pub(super) cref: &'a [ClassId],
+    pub(super) box_id: u32,
+    /// The site's own `ClassDef` marker, for document-order body
+    /// execution (`Compiler::class_body_sites`).
+    pub(super) def_node: Option<NodeId>,
+    /// Rides through to every `def` the body walk registers -- a class
+    /// under a guard zeo cannot decide registers, but nothing in it is
+    /// promised (see `Scope::runtime_conditional`).
+    pub(super) conditional: Conditional,
+}
+
 /// Registers one `class`/`module` definition (or REOPENING) into the
-/// `Compiler`, recursively descending nested `ClassDef`s. `cref` is the
-/// ENCLOSING lexical chain (outermost first,
-/// `Compiler::cref_of`'s order) -- empty at the top level -- used to
-/// resolve the qualified-form prefix, the superclass, and
-/// include/extend/prepend targets, exactly as real Ruby resolves each of
-/// those in the scope ENCLOSING the definition.
-///
-/// `name` may be a qualified path (`"Store::Item"` -- the `class
-/// Store::Item ... end` form): the prefix must already resolve (real
-/// Ruby's own NameError posture), the leaf registers under it as
-/// namespace parent, and the class is marked `qualified_def` so its cref
-/// is just itself (see `ClassInfo::qualified_def`'s docs). A leading `::`
-/// anchors the definition at the top level from any nesting depth.
-// Every parameter is a distinct piece of the definition site (same
-// posture as `register_method`); `def_node` is the site's own `ClassDef`
-// marker for document-order body execution (`Compiler::class_body_sites`).
-// `conditional` rides through to every `def` the body walk registers -- a
-// class under a guard zeo cannot decide registers, but nothing in it is
-// promised (see `Scope::runtime_conditional`).
-#[allow(clippy::too_many_arguments)]
+/// `Compiler`, recursively descending nested `ClassDef`s.
 pub(super) fn register_class(
     compiler: &mut Compiler,
-    name: String,
-    superclass: Option<String>,
-    is_module: bool,
-    body: &[NodeId],
-    cref: &[ClassId],
-    box_id: u32,
-    def_node: Option<NodeId>,
-    conditional: Conditional,
+    reg: &ClassRegistration<'_>,
 ) -> Result<(), String> {
-    let Some(target) = resolve_definition_target(
-        compiler,
-        &name,
-        &superclass,
-        is_module,
-        cref,
-        box_id,
-        def_node,
-    )?
-    else {
+    let Some(target) = resolve_definition_target(compiler, reg)? else {
         // Deferred to a runtime constant read -- nothing registered.
         return Ok(());
     };
-    check_builtin_superclass_restatement(compiler, &name, &superclass, &target, def_node)?;
+    check_builtin_superclass_restatement(
+        compiler,
+        reg.name,
+        reg.superclass,
+        &target,
+        reg.def_node,
+    )?;
     let class_id = match target.existing {
-        Some(cid) => check_reopen_compatibility(
-            compiler,
-            cid,
-            &name,
-            &superclass,
-            is_module,
-            &target,
-            def_node,
-        )?,
-        None => create_class(
-            compiler,
-            &superclass,
-            is_module,
-            target,
-            cref,
-            box_id,
-            conditional,
-            def_node,
-        )?,
+        Some(cid) => check_reopen_compatibility(compiler, cid, reg, &target)?,
+        None => create_class(compiler, reg, target)?,
     };
-    walk_class_body(compiler, class_id, body, box_id, def_node, conditional)
+    walk_class_body(compiler, class_id, reg)
 }
 
 /// What a definition site names, resolved before any registration state is
@@ -208,16 +194,19 @@ struct DefinitionTarget {
     overlay_root: Option<ClassId>,
 }
 
-#[allow(clippy::too_many_arguments)]
 fn resolve_definition_target(
     compiler: &mut Compiler,
-    name: &str,
-    superclass: &Option<String>,
-    is_module: bool,
-    cref: &[ClassId],
-    box_id: u32,
-    def_node: Option<NodeId>,
+    reg: &ClassRegistration<'_>,
 ) -> Result<Option<DefinitionTarget>, String> {
+    let &ClassRegistration {
+        name,
+        superclass,
+        is_module,
+        cref,
+        box_id,
+        def_node,
+        ..
+    } = reg;
     // A superclass naming a constant NOTHING in the program defines (irb's
     // `class CallTracer < ::CallTracer`, whose `require "tracer"` already
     // raised `LoadError`): real Ruby evaluates that expression when the
@@ -418,16 +407,19 @@ fn check_builtin_superclass_restatement(
 /// definition KIND must match (`TypeError: Foo is not a module`), and a
 /// superclass clause, if written at all, must resolve to the original
 /// parent (`TypeError: superclass mismatch for class Foo`).
-#[allow(clippy::too_many_arguments)]
 fn check_reopen_compatibility(
     compiler: &mut Compiler,
     cid: ClassId,
-    name: &str,
-    superclass: &Option<String>,
-    is_module: bool,
+    reg: &ClassRegistration<'_>,
     target: &DefinitionTarget,
-    def_node: Option<NodeId>,
 ) -> Result<ClassId, String> {
+    let &ClassRegistration {
+        name,
+        superclass,
+        is_module,
+        def_node,
+        ..
+    } = reg;
     if compiler.class(cid).is_module != is_module {
         // CRuby names the LEAF (`unmatched_redefinition` takes
         // `rb_id2str(id)`, the id off the cpath), so `module
@@ -519,17 +511,20 @@ fn check_reopen_compatibility(
 /// (`lexical_parent`/`cref_parent`/`qualified_def`/overlay). A fresh class
 /// minted under `Conditional::Yes` is registered but not PROMISED -- see
 /// `ClassInfo::runtime_conditional`.
-#[allow(clippy::too_many_arguments)]
 fn create_class(
     compiler: &mut Compiler,
-    superclass: &Option<String>,
-    is_module: bool,
+    reg: &ClassRegistration<'_>,
     target: DefinitionTarget,
-    cref: &[ClassId],
-    box_id: u32,
-    conditional: Conditional,
-    def_node: Option<NodeId>,
 ) -> Result<ClassId, String> {
+    let &ClassRegistration {
+        superclass,
+        is_module,
+        cref,
+        box_id,
+        def_node,
+        conditional,
+        ..
+    } = reg;
     let parent = if is_module {
         None
     } else {
@@ -609,11 +604,15 @@ fn create_class(
 fn walk_class_body(
     compiler: &mut Compiler,
     class_id: ClassId,
-    body: &[NodeId],
-    box_id: u32,
-    def_node: Option<NodeId>,
-    conditional: Conditional,
+    reg: &ClassRegistration<'_>,
 ) -> Result<(), String> {
+    let &ClassRegistration {
+        body,
+        box_id,
+        def_node,
+        conditional,
+        ..
+    } = reg;
     // The chain this class's OWN body resolves names against -- what nested
     // definitions and include/extend/prepend targets see. Derived from the
     // registered class (not `cref` + push) so a qualified-def class
@@ -749,14 +748,16 @@ fn walk_class_body(
                 compiler.class_body_sites[site_idx].stmts.push(stmt);
                 register_class_or_raise(
                     compiler,
-                    name,
-                    superclass,
-                    is_module,
-                    &body,
-                    &child_cref,
-                    box_id,
-                    Some(stmt),
-                    conditional,
+                    &ClassRegistration {
+                        name: &name,
+                        superclass: &superclass,
+                        is_module,
+                        body: &body,
+                        cref: &child_cref,
+                        box_id,
+                        def_node: Some(stmt),
+                        conditional,
+                    },
                 )?;
             }
             // The ancestry edit itself is compile-time; the node ALSO stays on
@@ -767,7 +768,6 @@ fn walk_class_body(
                 let m = m.clone();
                 if defer_guarded_mixin(
                     compiler,
-                    class_id,
                     site_idx,
                     stmt,
                     &m,
@@ -804,7 +804,6 @@ fn walk_class_body(
                 let m = m.clone();
                 if defer_guarded_mixin(
                     compiler,
-                    class_id,
                     site_idx,
                     stmt,
                     &m,
@@ -1009,7 +1008,6 @@ fn walk_class_body(
                 let m = m.clone();
                 if defer_guarded_mixin(
                     compiler,
-                    class_id,
                     site_idx,
                     stmt,
                     &m,
@@ -1057,7 +1055,6 @@ fn walk_class_body(
                 // simply work.
                 if defer_guarded_mixin(
                     compiler,
-                    class_id,
                     site_idx,
                     stmt,
                     &m,
@@ -1269,10 +1266,8 @@ fn walk_class_body(
 /// edge stands): it is concealed until the same guard passes, so its static
 /// edges are unobservable while the guard is false. `Ok(true)` means the
 /// directive was consumed; the send now sits at its document position.
-#[allow(clippy::too_many_arguments)] // the class-body walk's own context, threaded whole
 fn defer_guarded_mixin(
     compiler: &mut Compiler,
-    class_id: ClassId,
     site_idx: usize,
     stmt: NodeId,
     module: &str,
@@ -1280,6 +1275,9 @@ fn defer_guarded_mixin(
     cref: &[ClassId],
     box_id: u32,
 ) -> Result<bool, String> {
+    // The site owns its class (`ClassBodySite::class`), so the caller does
+    // not restate the id.
+    let class_id = compiler.class_body_sites[site_idx].class;
     if conditional != Conditional::Yes || compiler.class(class_id).runtime_conditional {
         return Ok(false);
     }

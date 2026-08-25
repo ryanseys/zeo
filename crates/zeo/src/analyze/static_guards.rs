@@ -392,14 +392,16 @@ pub(super) fn register_guarded_top_defs(
                         (name.clone(), superclass.clone(), body.clone(), *is_module);
                     register_class_or_raise(
                         compiler,
-                        name,
-                        superclass,
-                        is_module,
-                        &body,
-                        &[],
-                        0,
-                        Some(s),
-                        Conditional::Yes,
+                        &ClassRegistration {
+                            name: &name,
+                            superclass: &superclass,
+                            is_module,
+                            body: &body,
+                            cref: &[],
+                            box_id: 0,
+                            def_node: Some(s),
+                            conditional: Conditional::Yes,
+                        },
                     )?;
                     Ok(s)
                 }
