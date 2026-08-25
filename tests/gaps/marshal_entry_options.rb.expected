@@ -1,0 +1,7 @@
+[4, 8]
+:sym
+[true, true]
+["Array", "Integer", "String", "TrueClass"]
+ArgumentError: exceed depth limit
+TypeError: incompatible marshal file format (can't be read)
+	format version 4.8 required; 9.8 given
