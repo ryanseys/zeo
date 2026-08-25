@@ -1,0 +1,7 @@
+"{\n  \"a\": [\n    1\n  ]\n}"
+true
+"{\"a\":1}"
+"{\"a\"_:1}"
+"{\"k\":\"\\u00e9\"}"
+"\"<\\/script>\""
+JSON::NestingError: nesting of 2 is too deep. Did you try to serialize objects with circular references?

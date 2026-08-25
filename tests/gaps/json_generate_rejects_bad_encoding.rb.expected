@@ -1,0 +1,3 @@
+JSON::GeneratorError: source sequence is illegal/malformed utf-8
+JSON::GeneratorError: "\xE9" from ASCII-8BIT to UTF-8
+"1e+100"

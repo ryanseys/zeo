@@ -1,0 +1,5 @@
+true
+1..3
+"{\"json_class\":\"Range\",\"a\":[1,3,false]}"
+["constant", "constant", "constant"]
+"{\"pre\":[1,2]}"
