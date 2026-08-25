@@ -2,8 +2,7 @@
 //! (`tests/gaps.rs`, `tests/examples.rs`, `tests/spinel.rs`,
 //! `tests/gemtests.rs`).
 //!
-//! One function, [`run_golden`], drives every `.rb`: probe the emitter in
-//! process (so a rejection stays distinguishable), spawn the built `zeo`
+//! One function, [`run_golden`], drives every `.rb`: spawn the built `zeo`
 //! CLI on the chosen backend, then diff stdout/stderr against the committed
 //! **ruby-oracle** golden `.expected` (+ `.err.expected`/`.args`/`.stdin`
 //! sidecars).
@@ -666,27 +665,7 @@ pub fn run_golden_env(
     // `current_dir(run_cwd)`, and so source-path normalization matches.
     let rb = &std::fs::canonicalize(rb).unwrap_or_else(|_| rb.to_path_buf());
 
-    // A `.macos-only` sidecar marks a golden whose source or expected output
-    // is inherently macOS-specific (a hardcoded ioctl number, the errno
-    // constant surface, per-platform dlopen flag values) -- Linux CRuby would
-    // diverge from the committed macOS-oracle `.expected` exactly as zeo
-    // does. The file's content states the reason.
-    if cfg!(not(target_os = "macos"))
-        && std::fs::metadata(format!("{}.macos-only", rb.display())).is_ok()
-    {
-        eprintln!("golden skipped (.macos-only): {}", rb.display());
-        return Ok(());
-    }
-
-    // A `.jit-only` sidecar marks a golden that depends on the COMPILER and
-    // the program sharing one process, which only the JIT does. A linked
-    // binary carries an embedded compiler in a process of its own, so any
-    // compile-time state the whole-program compile published is absent from
-    // it. The file's content states which state and what the fix would be.
-    if std::env::var("ZEO_GOLDEN_BACKEND").is_ok_and(|b| b != "jit")
-        && std::fs::metadata(format!("{}.jit-only", rb.display())).is_ok()
-    {
-        eprintln!("golden skipped (.jit-only): {}", rb.display());
+    if leg_skipped(rb) {
         return Ok(());
     }
 
@@ -870,4 +849,107 @@ mod tests {
         // Uppercase hex is `%X` output, never an address rendering.
         assert_eq!(scrub("0xDEADBEEFCAFEF00D"), "0xDEADBEEFCAFEF00D");
     }
+}
+
+/// The platform/leg skip sidecars, shared by [`run_golden_env`] and the
+/// insta pilot.
+///
+/// `.macos-only` marks a golden whose source or expected output is
+/// inherently macOS-specific (a hardcoded ioctl number, the errno constant
+/// surface, per-platform dlopen flag values) -- Linux CRuby would diverge
+/// from the committed macOS-oracle golden exactly as zeo does. `.jit-only`
+/// marks one that depends on the COMPILER and the program sharing one
+/// process, which only the JIT does. Each file's content states the reason.
+fn leg_skipped(rb: &Path) -> bool {
+    if cfg!(not(target_os = "macos"))
+        && std::fs::metadata(format!("{}.macos-only", rb.display())).is_ok()
+    {
+        eprintln!("golden skipped (.macos-only): {}", rb.display());
+        return true;
+    }
+    if std::env::var("ZEO_GOLDEN_BACKEND").is_ok_and(|b| b != "jit")
+        && std::fs::metadata(format!("{}.jit-only", rb.display())).is_ok()
+    {
+        eprintln!("golden skipped (.jit-only): {}", rb.display());
+        return true;
+    }
+    false
+}
+
+// ---- the insta pilot (tests/insta-pilot/) ----
+//
+// The pilot suite stores its goldens as insta .snap files instead of
+// .expected sidecars; these two functions expose the ENGINE (sidecars,
+// skips, the spawned child, normalization, census gating, oracle) so the
+// pilot target owns only the assert/bless tail. insta itself stays out of
+// this crate: the test target holds it.
+
+/// One combined snapshot body. The stderr section is ABSENT when stderr is
+/// empty -- the same "no `.err.expected` means stderr must be empty" rule
+/// the sidecar system enforces, kept structural so a diff shows a stream
+/// appearing, not just changing.
+fn pilot_body(stdout: &[u8], stderr: &[u8], rb: &Path, run_cwd: &Path) -> String {
+    let out = String::from_utf8_lossy(&norm(stdout, rb, run_cwd)).into_owned();
+    let err = String::from_utf8_lossy(&norm(stderr, rb, run_cwd)).into_owned();
+    let mut body = format!("--- stdout ---\n{out}");
+    if !err.is_empty() {
+        body.push_str(&format!("--- stderr ---\n{err}"));
+    }
+    body
+}
+
+/// Run one pilot case through zeo and hand back its combined body, or
+/// `None` when a platform/leg sidecar skips it. Shares every stage with
+/// [`run_golden`]; the `.gccheck` census is gated HERE and stays outside
+/// the snapshot.
+pub fn pilot_run(rb: &Path, run_cwd: &Path) -> datatest_stable::Result<Option<String>> {
+    let rb = &std::fs::canonicalize(rb).unwrap_or_else(|_| rb.to_path_buf());
+    if leg_skipped(rb) {
+        return Ok(None);
+    }
+    let source = std::fs::read_to_string(rb)?;
+    let sc = sidecars(rb)?;
+    let (stdout, stderr) = compile_and_run(
+        rb,
+        &source,
+        &sc.args,
+        sc.stdin.as_deref(),
+        run_cwd,
+        suite_env_default(),
+    )
+    .map_err(|e| format!("{}: zeo failed to compile/run it: {e}", rb.display()))?;
+    let (stderr, census) = match std::env::var_os("ZEO_RT_GCCHECK") {
+        Some(_) => {
+            let (kept, census) = split_gccheck(&stderr);
+            (kept, Some(census))
+        }
+        None => (stderr, None),
+    };
+    if let Some(census) = census {
+        check_gccheck_census(rb, &census)?;
+    }
+    Ok(Some(pilot_body(&stdout, &stderr, rb, run_cwd)))
+}
+
+/// What the pilot's snapshot SHOULD hold: the ruby oracle's body -- or
+/// zeo's own for a `.divergence` case, exactly as [`bless`] records
+/// `.expected` files. Used by the bless tail and by the live-oracle
+/// fallback for a case with no committed snapshot.
+pub fn pilot_reference(rb: &Path, run_cwd: &Path) -> datatest_stable::Result<String> {
+    let rb = &std::fs::canonicalize(rb).unwrap_or_else(|_| rb.to_path_buf());
+    let source = std::fs::read_to_string(rb)?;
+    let sc = sidecars(rb)?;
+    let env = suite_env_default();
+    let (stdout, stderr) = match &sc.divergence {
+        Some(_) => compile_and_run(rb, &source, &sc.args, sc.stdin.as_deref(), run_cwd, env)
+            .map_err(|e| format!("{}: divergence case, and zeo failed: {e}", rb.display()))?,
+        None => run_oracle(rb, &source, &sc.args, sc.stdin.as_deref(), run_cwd, env)?,
+    };
+    // The reference never carries a census line: the oracle is CRuby, and a
+    // divergence case re-run under the gccheck leg sheds its line here.
+    let stderr = match std::env::var_os("ZEO_RT_GCCHECK") {
+        Some(_) => split_gccheck(&stderr).0,
+        None => stderr,
+    };
+    Ok(pilot_body(&stdout, &stderr, rb, run_cwd))
 }

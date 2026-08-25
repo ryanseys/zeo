@@ -1,0 +1,7 @@
+---
+source: crates/zeo/tests/insta_pilot.rs
+---
+--- stdout ---
+--- stderr ---
+insta-pilot/a_computed_require_of_a_bundled_gem.rb:37:in 'Kernel#require': cannot load such file -- json (LoadError)
+	from insta-pilot/a_computed_require_of_a_bundled_gem.rb:37:in '<main>'

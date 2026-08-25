@@ -1,0 +1,2 @@
+[:ary, RangeError, "bignum too big to convert into 'long'"]
+[:str, RangeError, "bignum too big to convert into 'long'"]

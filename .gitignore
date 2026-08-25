@@ -1,6 +1,10 @@
 target/
 .DS_Store
 
+# insta's pending-snapshot droppings; `tools/zeo-dev bless` writes .snap
+# files directly and nothing should ever review a .snap.new.
+*.snap.new
+
 # Generated per-compile gem-disclosure records (zeo CLI)
 zeo-gems.json
 

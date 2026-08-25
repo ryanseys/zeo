@@ -1,0 +1,9 @@
+This golden needs zeo's cycle collector armed (`ZEO_GC=1`), which is what
+the harness sets when this sidecar is present. The oracle needs no
+counterpart: CRuby always collects.
+
+zeo's heap is reference counted, so a cycle's counts never reach zero and
+the collector is what reclaims one. It is off by default because recording
+every allocation into the registry it walks costs +1.54% geomean over the
+bench corpus, and a program that never makes a cycle should not pay for
+one. Turning it on by default is a separate decision with its own number.

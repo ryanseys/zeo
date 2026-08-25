@@ -1,0 +1,7 @@
+---
+source: crates/zeo/tests/insta_pilot.rs
+---
+--- stdout ---
+0
+1
+2

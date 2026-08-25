@@ -1,0 +1,1 @@
+a_bignum_index_answers_nil_instead_of_raising.rb:34:in '<main>': bignum too big to convert into 'long' (RangeError)

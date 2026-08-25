@@ -103,6 +103,15 @@ name = "spinel"
 path = "tests/spinel.rs"
 harness = false
 
+# The insta PILOT (overhaul decision 2): ~10 goldens duplicated under
+# tests/insta-pilot/ with co-located .snap storage, for the format
+# comparison. Disposable: deleting it is `rm -r tests/insta-pilot` plus
+# this block.
+[[test]]
+name = "insta_pilot"
+path = "tests/insta_pilot.rs"
+harness = false
+
 [build-dependencies]
 # The build.rs projects the compiler's `CLASS_SURFACE` by re-parsing the
 # runtime's ruby_class!/ruby_module! headers with the SAME grammar the macro
