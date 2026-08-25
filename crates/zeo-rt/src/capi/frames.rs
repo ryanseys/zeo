@@ -49,6 +49,21 @@ pub unsafe extern "C" fn zeo_rt_set_line(line: u32) {
     crate::frames::set_line(line);
 }
 
+/// [`zeo_rt_frame_push`] and [`zeo_rt_check_ints`] fused: the pair every
+/// prologue emits back-to-back, as ONE call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_frame_enter(
+    file: *const u8,
+    file_len: usize,
+    label: *const u8,
+    label_len: usize,
+    line: u32,
+    end_line: u32,
+) -> i32 {
+    unsafe { zeo_rt_frame_push(file, file_len, label, label_len, line, end_line) };
+    unsafe { zeo_rt_check_ints() }
+}
+
 /// The interruption checkpoint (loop back-edges, prologues): a queued
 /// `Thread#kill`/`#raise` lands as `STATUS_SIGNAL`.
 #[unsafe(no_mangle)]

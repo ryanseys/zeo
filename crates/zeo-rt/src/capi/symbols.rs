@@ -114,6 +114,7 @@ capi_symbols!(
     forloop::zeo_rt_for_end,
     forloop::zeo_rt_for_next,
     forloop::zeo_rt_for_result,
+    frames::zeo_rt_frame_enter,
     frames::zeo_rt_frame_pop,
     frames::zeo_rt_frame_push,
     objects::zeo_rt_frozen_check,

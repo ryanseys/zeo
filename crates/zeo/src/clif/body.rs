@@ -423,7 +423,13 @@ pub(super) fn define_method_body(
         }
     }
 
-    if let Some(file) = &file {
+    // `$~` is frame-local: a scope that can touch the family gets its own
+    // svar scope, so a match it performs never reaches the caller's `$1`.
+    // The svar push must stay between frame push and checkpoint, so only
+    // the svar-free common case takes the fused call -- this prologue runs
+    // per method CALL.
+    let needs_svar = crate::analyze::svars::body_mentions_svars(&analyzed.compiler, def.body);
+    let status = if let Some(file) = &file {
         let off = fx.em.intern_rodata(file.as_bytes());
         let label_off = fx.em.intern_rodata(label.as_bytes());
         let file_ptr = fx.rod(off);
@@ -432,18 +438,20 @@ pub(super) fn define_method_body(
         let label_len = fx.b.ins().iconst(fx.em.ptr, label.len() as i64);
         let line_v = fx.b.ins().iconst(types::I32, i64::from(line));
         let end_v = fx.b.ins().iconst(types::I32, i64::from(end_line));
-        fx.call(
-            "zeo_rt_frame_push",
-            &[file_ptr, file_len, label_ptr, label_len, line_v, end_v],
-        );
-    }
-    // `$~` is frame-local: a scope that can touch the family gets its own
-    // svar scope, so a match it performs never reaches the caller's `$1`.
-    let needs_svar = crate::analyze::svars::body_mentions_svars(&analyzed.compiler, def.body);
-    if needs_svar {
-        fx.call("zeo_rt_svar_scope_push", &[]);
-    }
-    let status = fx.call_status("zeo_rt_check_ints", &[]);
+        let args = [file_ptr, file_len, label_ptr, label_len, line_v, end_v];
+        if needs_svar {
+            fx.call("zeo_rt_frame_push", &args);
+            fx.call("zeo_rt_svar_scope_push", &[]);
+            fx.call_status("zeo_rt_check_ints", &[])
+        } else {
+            fx.call_status("zeo_rt_frame_enter", &args)
+        }
+    } else {
+        if needs_svar {
+            fx.call("zeo_rt_svar_scope_push", &[]);
+        }
+        fx.call_status("zeo_rt_check_ints", &[])
+    };
     fx.fallible(status);
 
     bind_deferred(&mut fx, &deferred)?;
@@ -686,7 +694,9 @@ pub(super) fn define_toplevel(
         }
     }
 
-    if let Some(file) = &frame {
+    // Frame push and interrupt checkpoint fused into one call when a frame
+    // exists.
+    let status = if let Some(file) = &frame {
         let off = fx.em.intern_rodata(file.as_bytes());
         let main_off = fx.em.intern_rodata(label.as_bytes());
         let file_ptr = fx.rod(off);
@@ -694,12 +704,13 @@ pub(super) fn define_toplevel(
         let label_ptr = fx.rod(main_off);
         let label_len = fx.b.ins().iconst(fx.em.ptr, label.len() as i64);
         let zero = fx.b.ins().iconst(types::I32, 0);
-        fx.call(
-            "zeo_rt_frame_push",
+        fx.call_status(
+            "zeo_rt_frame_enter",
             &[file_ptr, file_len, label_ptr, label_len, zero, zero],
-        );
-    }
-    let status = fx.call_status("zeo_rt_check_ints", &[]);
+        )
+    } else {
+        fx.call_status("zeo_rt_check_ints", &[])
+    };
     fx.fallible(status);
 
     // The toplevel's `self`: one pooled `main` handle, borrowed by every

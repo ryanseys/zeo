@@ -141,9 +141,17 @@ impl BinOp {
 
 /// `a op b`, the rustc emitter's exact three arms. Both operands are
 /// materialized (owned ones handed to the pool -- the arms only borrow),
-/// the result is a fresh owned slot.
-pub(super) fn binop(fx: &mut Fx, name: &str, recv: NodeId, arg: NodeId) -> CResult<Operand> {
+/// the result is a fresh owned slot -- or, when this call IS the condition
+/// a branch site is lowering (`fx.branch_cond`) and the operator is a
+/// comparison, the bare condition bit as `Operand::Bool`.
+pub(super) fn binop(fx: &mut Fx, id: NodeId, name: &str, recv: NodeId, arg: NodeId) -> CResult<Operand> {
     let op = BinOp::of(name).expect("operator_fast_path guarded");
+    // Branch mode only for the six relationals: their Int AND Float arms
+    // are compares, and a dynamic result's truthiness is what the branch
+    // site would compute anyway. `<=>` answers Int and stays boxed.
+    let branch = fx.branch_cond == Some(id)
+        && matches!(op.int_shape(), IntShape::Compare(_))
+        && matches!(op.float_shape(), FloatShape::Compare(_));
     let a = super::expr::lower_expr(fx, recv)?;
     // Park an owned lhs BEFORE the rhs lowers: the rhs may raise, and the
     // raise landing never sees an operand that is owned but unpooled.
@@ -159,7 +167,7 @@ pub(super) fn binop(fx: &mut Fx, name: &str, recv: NodeId, arg: NodeId) -> CResu
         super::expr::park_reassignable(fx, Some(recv), a, &[arg])
     };
     let b_op = super::expr::lower_expr(fx, arg)?;
-    boxed_binop(fx, op, name, a, b_op)
+    boxed_binop(fx, op, name, a, b_op, branch)
 }
 
 /// Whether `name`'s operator fast path may be taken. A user reopen that
@@ -384,8 +392,19 @@ fn float_arm(
     fx.b.ins().jump(join, &[]);
 }
 
-/// The general three-arm shape over boxed operands.
-fn boxed_binop(fx: &mut Fx, op: BinOp, name: &str, a: Operand, b_op: Operand) -> CResult<Operand> {
+/// The general three-arm shape over boxed operands. In `branch` mode the
+/// arms join on a bare i8 condition bit (a `join` block param) instead of
+/// writing a boxed Bool -- the dynamic arm reduces its result through
+/// `zeo_rt_truthy`, exactly what the branch site would do to the boxed
+/// value.
+fn boxed_binop(
+    fx: &mut Fx,
+    op: BinOp,
+    name: &str,
+    a: Operand,
+    b_op: Operand,
+    branch: bool,
+) -> CResult<Operand> {
     let fl = MemFlagsData::trusted();
     // Owned operands hand ownership to the pool; every arm below only
     // borrows the bytes.
@@ -404,6 +423,9 @@ fn boxed_binop(fx: &mut Fx, op: BinOp, name: &str, a: Operand, b_op: Operand) ->
     let not_int = fx.b.create_block();
     let b_dyn = fx.b.create_block();
     let join = fx.b.create_block();
+    if branch {
+        fx.b.append_block_param(join, types::I8);
+    }
 
     let ta = fx.b.ins().load(types::I8, fl, pa, TAG_OFFSET as i32);
     let tb = fx.b.ins().load(types::I8, fl, pb, TAG_OFFSET as i32);
@@ -414,7 +436,17 @@ fn boxed_binop(fx: &mut Fx, op: BinOp, name: &str, a: Operand, b_op: Operand) ->
     fx.b.ins().brif(both_int, b_int, &[], not_int, &[]);
 
     fx.b.switch_to_block(b_int);
-    int_arm(fx, op, pa, pb, dst, join);
+    if branch {
+        let IntShape::Compare(cc) = op.int_shape() else {
+            unreachable!("branch mode admits only comparisons");
+        };
+        let av = fx.b.ins().load(types::I64, fl, pa, payload_off());
+        let bv = fx.b.ins().load(types::I64, fl, pb, payload_off());
+        let bit = fx.b.ins().icmp(cc, av, bv);
+        fx.b.ins().jump(join, &[bit.into()]);
+    } else {
+        int_arm(fx, op, pa, pb, dst, join);
+    }
 
     fx.b.switch_to_block(not_int);
     if matches!(op.float_shape(), FloatShape::None) {
@@ -461,7 +493,15 @@ fn boxed_binop(fx: &mut Fx, op: BinOp, name: &str, a: Operand, b_op: Operand) ->
             }
             let av = as_f64(fx, pa, a_is_int);
             let bv = as_f64(fx, pb, b_is_int);
-            float_arm(fx, op, av, bv, dst, join);
+            if branch {
+                let FloatShape::Compare(fcc) = op.float_shape() else {
+                    unreachable!("branch mode admits only comparisons");
+                };
+                let bit = fx.b.ins().fcmp(fcc, av, bv);
+                fx.b.ins().jump(join, &[bit.into()]);
+            } else {
+                float_arm(fx, op, av, bv, dst, join);
+            }
             fx.b.switch_to_block(next);
         }
         fx.b.ins().jump(b_dyn, &[]);
@@ -484,10 +524,25 @@ fn boxed_binop(fx: &mut Fx, op: BinOp, name: &str, a: Operand, b_op: Operand) ->
             &[cache, zero, pa, sym, pb, one, null, dst],
         );
         fx.fallible(status);
-        fx.b.ins().jump(join, &[]);
+        if branch {
+            // The boxed result only feeds the branch: pool it and reduce
+            // to its truthiness, `ownership::truthy`'s exact order. The
+            // send created an owned value in `dst`; the pool consumes it,
+            // so the ledger records both.
+            fx.owned_created += 1;
+            ownership::pool_owned(fx, dst, TagInfo::Unknown);
+            let bit = fx.call_status("zeo_rt_truthy", &[dst]);
+            fx.b.ins().jump(join, &[bit.into()]);
+        } else {
+            fx.b.ins().jump(join, &[]);
+        }
     }
 
     fx.b.switch_to_block(join);
+    if branch {
+        let bit = fx.b.block_params(join)[0];
+        return Ok(Operand::Bool(bit));
+    }
     fx.owned_created += 1;
     Ok(Operand::Slot {
         ss,

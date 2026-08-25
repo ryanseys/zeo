@@ -412,8 +412,7 @@ fn lower_stmt_inner(fx: &mut Fx, stmt: NodeId) -> CResult<()> {
                 }
                 return lower_stmts(fx, if taken { &then_body } else { &else_body });
             }
-            let c = lower_expr(fx, cond)?;
-            let t = ownership::truthy(fx, c);
+            let t = super::expr::lower_condition(fx, cond)?;
             let b_then = fx.b.create_block();
             let b_else = fx.b.create_block();
             let join = fx.b.create_block();
@@ -1305,8 +1304,7 @@ fn lower_loop(
     fx.b.switch_to_block(head);
     match cond {
         Some((cond_id, negate)) => {
-            let c = lower_expr(fx, cond_id)?;
-            let mut t = ownership::truthy(fx, c);
+            let mut t = super::expr::lower_condition(fx, cond_id)?;
             if negate {
                 // `until`: flip the low bit of the 0/1 truthiness.
                 t =
@@ -1656,8 +1654,7 @@ fn class_body_site(
     let Some((cond, run_when)) = call.guard else {
         return class_body_site_run(fx, call);
     };
-    let c = super::expr::lower_expr(fx, cond)?;
-    let truthy = ownership::truthy(fx, c);
+    let truthy = super::expr::lower_condition(fx, cond)?;
     let ss = fx.temp_slot();
     let dst = fx.slot_addr(ss, 0);
     let b_run = fx.b.create_block();

@@ -81,6 +81,11 @@ pub(crate) struct Fx<'e, 'f> {
     temp_free: Vec<ir::StackSlot>,
     temp_taken: Vec<ir::StackSlot>,
     pub loops: Vec<LoopCtl>,
+    /// The node a condition site is lowering RIGHT NOW (`lower_condition`).
+    /// Consumed only by the operator fast path: a comparison that IS this
+    /// node answers its condition bit directly instead of boxing a Bool.
+    /// Keyed by id so routing stays in `lower_expr` and nothing can drift.
+    pub branch_cond: Option<crate::hir::NodeId>,
     pub prev_line: Option<u32>,
     /// The stamped statement's FILE, tracked beside `prev_line` for line
     /// coverage: a statement that begins a spliced file is what marks the
@@ -241,6 +246,7 @@ impl<'e, 'f> Fx<'e, 'f> {
             temp_free: Vec::new(),
             temp_taken: Vec::new(),
             loops: Vec::new(),
+            branch_cond: None,
             prev_line: None,
             prev_file: None,
             self_ptr: None,

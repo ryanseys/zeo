@@ -1647,7 +1647,7 @@ fn plain_call(
             let [ArrayElem::Single(arg)] = args.as_slice() else {
                 return fx.unsupported(id, "a splat operand");
             };
-            super::binop::binop(fx, &name, recv, *arg)
+            super::binop::binop(fx, id, &name, recv, *arg)
         }
         Some(recv) => super::call::dynamic_send(fx, id, recv, &name, &args),
         None if let Some(folded) =
@@ -1742,6 +1742,22 @@ fn keyword_call(
     }
 }
 
+/// Lower `cond` for a BRANCH: the result is an i8 truthiness value. A
+/// comparison the operator fast path owns answers its condition bit
+/// directly (no boxed Bool, no `zeo_rt_truthy` call); everything else
+/// lowers normally and reduces through `ownership::truthy`. The flag is
+/// keyed by node id and consumed only by the binop arm, so routing stays
+/// in `lower_expr` and cannot drift.
+pub(super) fn lower_condition(
+    fx: &mut Fx,
+    cond: NodeId,
+) -> CResult<cranelift_codegen::ir::Value> {
+    let saved = fx.branch_cond.replace(cond);
+    let r = lower_expr(fx, cond);
+    fx.branch_cond = saved;
+    Ok(ownership::truthy(fx, r?))
+}
+
 /// `if` in VALUE position: both arms move their value into one result
 /// slot.
 fn if_expr(
@@ -1750,8 +1766,7 @@ fn if_expr(
     then_body: &[NodeId],
     else_body: &[NodeId],
 ) -> CResult<Operand> {
-    let c = lower_expr(fx, cond)?;
-    let t = ownership::truthy(fx, c);
+    let t = lower_condition(fx, cond)?;
     let ss = fx.temp_slot();
     // The result address is computed BEFORE the branch, so it dominates
     // both arms.
