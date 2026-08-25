@@ -1251,6 +1251,149 @@ pub(super) fn const_node_class(
     }
 }
 
+/// The `Exception`-tree tail `pin_builtin_exceptions_tail` registers, in
+/// REGISTRATION ORDER -- the order IS each class's id, and
+/// `zeo-abi::EXCEPTION_CLASSES` reserves the matching ids. Columns: name,
+/// superclass (`None` only for the marker modules), is_module, and the
+/// marker module the row mixes in right after registration. The `Errno`
+/// block registers between the last pinned exception row and the first
+/// marker-module row -- see the split in `pin_builtin_exceptions_tail`.
+const EXCEPTION_TAIL: &[(&str, Option<&str>, bool, Option<&str>)] = &[
+    // `Math::DomainError` -- bootstrap like the other exception classes.
+    // `Math` is always present and `StandardError` is already registered.
+    ("Math::DomainError", Some("StandardError"), false, None),
+    // `SyntaxError < ScriptError` -- the eval's parse-failure
+    // class. Pinned here (not in `BUILTIN_EXCEPTIONS_RB`) so it takes the id
+    // immediately after `Math::DomainError`, leaving every other exception id
+    // fixed.
+    ("SyntaxError", Some("ScriptError"), false, None),
+    // `UncaughtThrowError < ArgumentError` -- raised by `throw` with no live
+    // `catch` for its tag. Pinned right after `SyntaxError` so it takes the
+    // matching `zeo-abi::EXCEPTION_CLASSES` id, leaving every other fixed.
+    ("UncaughtThrowError", Some("ArgumentError"), false, None),
+    // The `Exception`-direct tail (`SystemExit`/`SignalException`/`Interrupt`):
+    // uncaught by a bare `rescue`, so a program names them explicitly. Order
+    // matches `zeo-abi::EXCEPTION_CLASSES` exc_id(48..50); `Interrupt`
+    // follows its parent `SignalException`.
+    ("SystemExit", Some("Exception"), false, None),
+    ("SignalException", Some("Exception"), false, None),
+    ("Interrupt", Some("SignalException"), false, None),
+    // The remaining core `Exception`-tree classes. Each parent is already
+    // registered (a builtin exception or, for the nested names, a core class).
+    ("NoMemoryError", Some("Exception"), false, None),
+    ("SecurityError", Some("Exception"), false, None),
+    ("SystemStackError", Some("Exception"), false, None),
+    (
+        "NoMatchingPatternKeyError",
+        Some("NoMatchingPatternError"),
+        false,
+        None,
+    ),
+    ("Regexp::TimeoutError", Some("RegexpError"), false, None),
+    ("IO::TimeoutError", Some("IOError"), false, None),
+    // `WeakRef::RefError` -- nests under the `WeakRef` builtin, a plain
+    // `StandardError`.
+    ("WeakRef::RefError", Some("StandardError"), false, None),
+    // The `Ractor` error tree. zeo runs no ractors, so none of these is
+    // ever raised; they exist so a `rescue Ractor::ClosedError` in
+    // portable code resolves its constant. `ClosedError` descends from
+    // `StopIteration`, not from `Ractor::Error`, which is what lets
+    // `Kernel#loop` swallow it.
+    ("Ractor::Error", Some("RuntimeError"), false, None),
+    ("Ractor::ClosedError", Some("StopIteration"), false, None),
+    ("Ractor::IsolationError", Some("Ractor::Error"), false, None),
+    ("Ractor::MovedError", Some("Ractor::Error"), false, None),
+    ("Ractor::RemoteError", Some("Ractor::Error"), false, None),
+    ("Ractor::UnsafeError", Some("Ractor::Error"), false, None),
+    // The `IO::Buffer` error tree (io_buffer.c's split).
+    ("IO::Buffer::LockedError", Some("RuntimeError"), false, None),
+    (
+        "IO::Buffer::AllocationError",
+        Some("RuntimeError"),
+        false,
+        None,
+    ),
+    ("IO::Buffer::AccessError", Some("RuntimeError"), false, None),
+    (
+        "IO::Buffer::InvalidatedError",
+        Some("RuntimeError"),
+        false,
+        None,
+    ),
+    ("IO::Buffer::MaskError", Some("ArgumentError"), false, None),
+    // CRuby's internal `fatal`, which a detected deadlock raises. The
+    // lower-case name cannot be written in Ruby source at all -- a
+    // constant must start upper-case -- so the class is reachable only
+    // through `e.class`. It descends straight from `Exception`, which is
+    // what makes `rescue => e` miss it and `rescue Exception` catch it.
+    ("fatal", Some("Exception"), false, None),
+    // `IO::WaitReadable`/`WaitWritable` -- marker MODULES, so a would-block
+    // errno can be rescued by protocol. Registered before the classes that
+    // mix them in.
+    ("IO::WaitReadable", None, true, None),
+    ("IO::WaitWritable", None, true, None),
+    // The readiness classes: an `Errno` subclass wearing its marker module.
+    (
+        "IO::EAGAINWaitReadable",
+        Some("Errno::EAGAIN"),
+        false,
+        Some("IO::WaitReadable"),
+    ),
+    (
+        "IO::EAGAINWaitWritable",
+        Some("Errno::EAGAIN"),
+        false,
+        Some("IO::WaitWritable"),
+    ),
+    (
+        "IO::EINPROGRESSWaitReadable",
+        Some("Errno::EINPROGRESS"),
+        false,
+        Some("IO::WaitReadable"),
+    ),
+    (
+        "IO::EINPROGRESSWaitWritable",
+        Some("Errno::EINPROGRESS"),
+        false,
+        Some("IO::WaitWritable"),
+    ),
+];
+
+/// Registers one `EXCEPTION_TAIL` row. A `mixin` column pushes the marker
+/// module directly after registration: `register_class` reads includes out
+/// of a class BODY, and these rows have none.
+fn register_exception_tail_row(
+    compiler: &mut Compiler,
+    &(name, superclass, is_module, mixin): &(&str, Option<&str>, bool, Option<&str>),
+) -> Result<(), String> {
+    register_class(
+        compiler,
+        name.to_string(),
+        superclass.map(str::to_string),
+        is_module,
+        &[],
+        &[],
+        0,
+        None,
+        Conditional::No,
+    )?;
+    let Some(marker) = mixin else {
+        return Ok(());
+    };
+    let (Some(cls), Some(module)) = (
+        compiler.resolve_class(name, &[], 0),
+        compiler.resolve_class(marker, &[], 0),
+    ) else {
+        return Err(format!(
+            "{name} or {marker} went missing right after registration"
+        ));
+    };
+    compiler.classes[cls.0 as usize]
+        .mixin_order
+        .push((module, false));
+    Ok(())
+}
+
 /// Register everything that belongs in id-space right after the built-in
 /// exceptions and before any user class, so those exceptions keep their fixed
 /// `zeo-abi` id block (63..109):
@@ -1268,135 +1411,21 @@ pub(super) fn const_node_class(
 ///    so the shift is invisible.
 pub(super) fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(), String> {
     let before = compiler.classes.len();
-    register_class(
-        compiler,
-        "Math::DomainError".to_string(),
-        Some("StandardError".to_string()),
-        false,
-        &[],
-        &[],
-        0,
-        None,
-        Conditional::No,
-    )?;
-    // `SyntaxError < ScriptError` -- the eval's parse-failure
-    // class. Pinned here (not in `BUILTIN_EXCEPTIONS_RB`) so it takes the id
-    // immediately after `Math::DomainError`, leaving every other exception id
-    // fixed; `zeo-abi::EXCEPTION_CLASSES` reserves the matching id.
-    register_class(
-        compiler,
-        "SyntaxError".to_string(),
-        Some("ScriptError".to_string()),
-        false,
-        &[],
-        &[],
-        0,
-        None,
-        Conditional::No,
-    )?;
-    // `UncaughtThrowError < ArgumentError` -- raised by `throw` with no live
-    // `catch` for its tag. Pinned right after `SyntaxError` so it takes the
-    // matching `zeo-abi::EXCEPTION_CLASSES` id, leaving every other fixed.
-    register_class(
-        compiler,
-        "UncaughtThrowError".to_string(),
-        Some("ArgumentError".to_string()),
-        false,
-        &[],
-        &[],
-        0,
-        None,
-        Conditional::No,
-    )?;
-    // The `Exception`-direct tail (`SystemExit`/`SignalException`/`Interrupt`):
-    // uncaught by a bare `rescue`, so a program names them explicitly. Order
-    // matches `zeo-abi::EXCEPTION_CLASSES` exc_id(48..50); `Interrupt`
-    // follows its parent `SignalException`.
-    register_class(
-        compiler,
-        "SystemExit".to_string(),
-        Some("Exception".to_string()),
-        false,
-        &[],
-        &[],
-        0,
-        None,
-        Conditional::No,
-    )?;
-    register_class(
-        compiler,
-        "SignalException".to_string(),
-        Some("Exception".to_string()),
-        false,
-        &[],
-        &[],
-        0,
-        None,
-        Conditional::No,
-    )?;
-    register_class(
-        compiler,
-        "Interrupt".to_string(),
-        Some("SignalException".to_string()),
-        false,
-        &[],
-        &[],
-        0,
-        None,
-        Conditional::No,
-    )?;
-    // The remaining core `Exception`-tree classes. Each parent is already
-    // registered (a builtin exception or, for the nested names, a core class).
-    for (name, superclass) in [
-        ("NoMemoryError", "Exception"),
-        ("SecurityError", "Exception"),
-        ("SystemStackError", "Exception"),
-        ("NoMatchingPatternKeyError", "NoMatchingPatternError"),
-        ("Regexp::TimeoutError", "RegexpError"),
-        ("IO::TimeoutError", "IOError"),
-        // `WeakRef::RefError` -- nests under the `WeakRef` builtin, a plain
-        // `StandardError`.
-        ("WeakRef::RefError", "StandardError"),
-        // The `Ractor` error tree. zeo runs no ractors, so none of these is
-        // ever raised; they exist so a `rescue Ractor::ClosedError` in
-        // portable code resolves its constant. `ClosedError` descends from
-        // `StopIteration`, not from `Ractor::Error`, which is what lets
-        // `Kernel#loop` swallow it.
-        ("Ractor::Error", "RuntimeError"),
-        ("Ractor::ClosedError", "StopIteration"),
-        ("Ractor::IsolationError", "Ractor::Error"),
-        ("Ractor::MovedError", "Ractor::Error"),
-        ("Ractor::RemoteError", "Ractor::Error"),
-        ("Ractor::UnsafeError", "Ractor::Error"),
-        // The `IO::Buffer` error tree (io_buffer.c's split).
-        ("IO::Buffer::LockedError", "RuntimeError"),
-        ("IO::Buffer::AllocationError", "RuntimeError"),
-        ("IO::Buffer::AccessError", "RuntimeError"),
-        ("IO::Buffer::InvalidatedError", "RuntimeError"),
-        ("IO::Buffer::MaskError", "ArgumentError"),
-        // CRuby's internal `fatal`, which a detected deadlock raises. The
-        // lower-case name cannot be written in Ruby source at all -- a
-        // constant must start upper-case -- so the class is reachable only
-        // through `e.class`. It descends straight from `Exception`, which is
-        // what makes `rescue => e` miss it and `rescue Exception` catch it.
-        ("fatal", "Exception"),
-    ] {
-        register_class(
-            compiler,
-            name.to_string(),
-            Some(superclass.to_string()),
-            false,
-            &[],
-            &[],
-            0,
-            None,
-            Conditional::No,
-        )?;
+    // The `Errno` block registers between the pinned exception rows and the
+    // `IO::Wait*` rows: split the table at its first marker-module row. The
+    // readiness classes subclass `Errno::EAGAIN`/`EINPROGRESS`, so the block
+    // goes first.
+    let split = EXCEPTION_TAIL
+        .iter()
+        .position(|&(_, _, is_module, _)| is_module)
+        .unwrap_or(EXCEPTION_TAIL.len());
+    let (pinned, io_wait) = EXCEPTION_TAIL.split_at(split);
+    for row in pinned {
+        register_exception_tail_row(compiler, row)?;
     }
     // Every `Errno` class the platform names, in `zeo-abi::ERRNO_CLASSES`
     // order -- one contiguous block, so the ids follow from the table's length
-    // and no name has to be restated here. The readiness classes below
-    // subclass two of them, hence the block goes first.
+    // and no name has to be restated here.
     for row in zeo_abi::ERRNO_CLASSES {
         register_class(
             compiler,
@@ -1410,66 +1439,8 @@ pub(super) fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(),
             Conditional::No,
         )?;
     }
-    // `IO::WaitReadable`/`WaitWritable` -- marker MODULES, so a would-block
-    // errno can be rescued by protocol. Registered before the classes that
-    // mix them in, and the `include` is pushed directly: `register_class`
-    // reads includes out of a class BODY, and these have none.
-    for name in ["IO::WaitReadable", "IO::WaitWritable"] {
-        register_class(
-            compiler,
-            name.to_string(),
-            None,
-            true,
-            &[],
-            &[],
-            0,
-            None,
-            Conditional::No,
-        )?;
-    }
-    for (name, superclass, marker) in [
-        (
-            "IO::EAGAINWaitReadable",
-            "Errno::EAGAIN",
-            "IO::WaitReadable",
-        ),
-        (
-            "IO::EAGAINWaitWritable",
-            "Errno::EAGAIN",
-            "IO::WaitWritable",
-        ),
-        (
-            "IO::EINPROGRESSWaitReadable",
-            "Errno::EINPROGRESS",
-            "IO::WaitReadable",
-        ),
-        (
-            "IO::EINPROGRESSWaitWritable",
-            "Errno::EINPROGRESS",
-            "IO::WaitWritable",
-        ),
-    ] {
-        register_class(
-            compiler,
-            name.to_string(),
-            Some(superclass.to_string()),
-            false,
-            &[],
-            &[],
-            0,
-            None,
-            Conditional::No,
-        )?;
-        let (Some(cls), Some(module)) = (
-            compiler.resolve_class(name, &[], 0),
-            compiler.resolve_class(marker, &[], 0),
-        ) else {
-            return Err(format!(
-                "{name} or {marker} went missing right after registration"
-            ));
-        };
-        let ci = &mut compiler.classes[cls.0 as usize];
-        ci.mixin_order.push((module, false));
+    for row in io_wait {
+        register_exception_tail_row(compiler, row)?;
     }
     // The second spellings. `zeo-abi::ERRNO_ALIASES` holds the `Errno` half:
     // a name the platform gives the same value as an earlier one
