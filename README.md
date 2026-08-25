@@ -31,7 +31,7 @@ Zeo is **experimental** and moving fast. What is measured today:
 | Gate | Result |
 |---|---|
 | Conformance corpus (`tests/spinel/`) | 3,010 / 3,010 |
-| Example goldens (`tests/*.rb`) | 1,306 / 1,306 |
+| Example goldens (`tests/*.rb`) | 1,307 / 1,307 |
 | End-to-end suite (`crates/zeo/tests/e2e/`) | 1,110 / 1,110 |
 
 Each gate compares stdout, stderr, and the exit status with real Ruby, byte
@@ -269,12 +269,12 @@ A compiled program starts in **under a millisecond**; CRuby needs roughly
 correct output, and `tools/zeo-dev bench` verifies the output before it times
 anything.
 
-Measured 2026-08-21, Zeo and CRuby 4.0.6 timed in the same run:
+Measured 2026-08-25, Zeo and CRuby 4.0.6 timed in the same run:
 
 | | geomean |
 |---|---|
-| all 61 benchmarks | **1.17× faster than CRuby** |
-| the 37 where CRuby takes ≥ 0.10 s | **0.71× — slower** |
+| all 61 benchmarks | **1.01× — parity with CRuby** |
+| the 40 where CRuby takes ≥ 0.10 s | **0.62× — slower** |
 
 Read the second row. The first is inflated by process startup: about a third
 of the programs finish inside CRuby's ~30 ms of boot, where a native binary
@@ -286,9 +286,9 @@ not finished.** Two optimization waves have run — measured 2026-08-20 at
 **+52.3%** over the Rust-emitting backend they replaced (that backend is no
 longer in the tree, so the figure is history, not reproducible) — and on
 compute-bound work Zeo is still behind CRuby. It wins where the emitter has a
-fused loop or an inline cache (`range_each` 3.27×, `so_mandelbrot` 2.18×,
-`attr_accessor` 1.27×) and loses where it does not (`rbtree` 0.25×,
-`send_rubyfunc_block` 0.31×, `life` 0.35×). The losses are a ranked list of
+fused loop or an inline cache (`range_each` 3.28×, `so_mandelbrot` 2.16×,
+`attr_accessor` 1.26×) and loses where it does not (`rbtree` 0.24×,
+`send_rubyfunc_block` 0.30×, `life` 0.31×). The losses are a ranked list of
 unbuilt levers, not a mystery: typed iterator splices, a class-level ivar
 site, a direct call for a statically-known receiver class.
 [`bench/README.md`](bench/README.md) has the method;
