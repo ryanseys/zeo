@@ -1,0 +1,3 @@
+TypeError: superclass must be an instance of Class (given an instance of Module)
+TypeError: superclass must be an instance of Class (given an instance of Integer)
+TypeError: can't make subclass of Class
