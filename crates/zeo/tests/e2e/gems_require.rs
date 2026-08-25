@@ -1332,9 +1332,10 @@ fn rbconfig_shim_is_built_in() {
     // `host_os`/`arch` are the BUILD host's, so pinning them pinned this
     // test to one machine: it read `darwin25`/`arm64-darwin25`, which is
     // wrong on Linux and goes stale on the next macOS release. What the
-    // shim actually owes is that the two agree -- `arch` is
-    // `<cpu>-<host_os>` -- and that they name the platform this test is
-    // running on.
+    // shim actually owes is CRuby's own agreement rule: `arch` is
+    // `<cpu>-<host_os>` with any `-gnu` suffix DROPPED -- a glibc ruby
+    // reports `host_os` `linux-gnu` beside `arch` `aarch64-linux` -- and
+    // both name the platform this test is running on.
     let (host_os, arch) = (lines[1], lines[3]);
     let family = if cfg!(target_os = "macos") {
         "darwin"
@@ -1345,9 +1346,10 @@ fn rbconfig_shim_is_built_in() {
         host_os.starts_with(family),
         "host_os {host_os:?} does not name this platform"
     );
+    let arch_os = host_os.strip_suffix("-gnu").unwrap_or(host_os);
     let cpu = arch
-        .strip_suffix(&format!("-{host_os}"))
-        .unwrap_or_else(|| panic!("arch {arch:?} must end with -{host_os}"));
+        .strip_suffix(&format!("-{arch_os}"))
+        .unwrap_or_else(|| panic!("arch {arch:?} must end with -{arch_os}"));
     assert!(!cpu.is_empty(), "arch {arch:?} names no cpu");
 }
 
