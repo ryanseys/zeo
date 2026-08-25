@@ -193,6 +193,29 @@ pub(crate) fn retain_if_heap(fx: &mut Fx, addr: ir::Value) {
     fx.b.switch_to_block(cont);
 }
 
+/// [`retain_if_heap`] for a raw trampoline body (no `Fx`): run `retains`
+/// only when the value at `addr` carries a heap tag.
+pub(crate) fn retain_if_heap_raw(
+    b: &mut cranelift_frontend::FunctionBuilder,
+    addr: ir::Value,
+    retains: impl FnOnce(&mut cranelift_frontend::FunctionBuilder),
+) {
+    let fl = MemFlagsData::trusted();
+    let t = b.ins().load(types::I8, fl, addr, TAG_OFFSET as i32);
+    let is_heap = b.ins().icmp_imm_u(
+        ir::condcodes::IntCC::UnsignedGreaterThanOrEqual,
+        t,
+        i64::from(FIRST_HEAP_TAG),
+    );
+    let do_retain = b.create_block();
+    let cont = b.create_block();
+    b.ins().brif(is_heap, do_retain, &[], cont, &[]);
+    b.switch_to_block(do_retain);
+    retains(b);
+    b.ins().jump(cont, &[]);
+    b.switch_to_block(cont);
+}
+
 /// `op` as a pointer whose pointee the callee will MOVE from
 /// (`ivar_set_slot`'s convention). An owned operand hands over its own
 /// storage; a borrowed one is copied to a temp and retained (moving from

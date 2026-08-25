@@ -224,15 +224,15 @@ function u0:1(i64, i64) -> i32 ccall {
     fn19 = u0:19 sig19
 
 block0(v0: i64, v1: i64):
-    v127 = iconst.i64 0
-    v128 = stack_addr.i64 ss0
-    store notrap aligned v127, v128  ; v127 = 0
-    store notrap aligned v127, v128+8  ; v127 = 0
-    store notrap aligned v127, v128+16  ; v127 = 0
-    v129 = stack_addr.i64 ss4
-    store notrap aligned v127, v129  ; v127 = 0
-    store notrap aligned v127, v129+8  ; v127 = 0
-    store notrap aligned v127, v129+16  ; v127 = 0
+    v139 = iconst.i64 0
+    v140 = stack_addr.i64 ss0
+    store notrap aligned v139, v140  ; v139 = 0
+    store notrap aligned v139, v140+8  ; v139 = 0
+    store notrap aligned v139, v140+16  ; v139 = 0
+    v141 = stack_addr.i64 ss4
+    store notrap aligned v139, v141  ; v139 = 0
+    store notrap aligned v139, v141+8  ; v139 = 0
+    store notrap aligned v139, v141+16  ; v139 = 0
     v2 = symbol_value.i64 gv0
     v3 = symbol_value.i64 gv1
     v4 = call fn0()
@@ -468,21 +468,57 @@ block11:
 
 block2:
     v121 = stack_addr.i64 ss0
+    v122 = load.i8 notrap aligned v121
+    v123 = iconst.i8 16
+    v124 = icmp uge v122, v123  ; v123 = 16
+    brif v124, block26, block27
+
+block26:
     call fn8(v121)
-    v122 = stack_addr.i64 ss4
-    call fn8(v122)
+    jump block27
+
+block27:
+    v125 = stack_addr.i64 ss4
+    v126 = load.i8 notrap aligned v125
+    v127 = iconst.i8 16
+    v128 = icmp uge v126, v127  ; v127 = 16
+    brif v128, block28, block29
+
+block28:
+    call fn8(v125)
+    jump block29
+
+block29:
     call fn19()
-    v123 = iconst.i32 0
-    return v123  ; v123 = 0
+    v129 = iconst.i32 0
+    return v129  ; v129 = 0
 
 block1:
-    v124 = stack_addr.i64 ss0
-    call fn8(v124)
-    v125 = stack_addr.i64 ss4
-    call fn8(v125)
+    v130 = stack_addr.i64 ss0
+    v131 = load.i8 notrap aligned v130
+    v132 = iconst.i8 16
+    v133 = icmp uge v131, v132  ; v132 = 16
+    brif v133, block30, block31
+
+block30:
+    call fn8(v130)
+    jump block31
+
+block31:
+    v134 = stack_addr.i64 ss4
+    v135 = load.i8 notrap aligned v134
+    v136 = iconst.i8 16
+    v137 = icmp uge v135, v136  ; v136 = 16
+    brif v137, block32, block33
+
+block32:
+    call fn8(v134)
+    jump block33
+
+block33:
     call fn19()
-    v126 = iconst.i32 1
-    return v126  ; v126 = 1
+    v138 = iconst.i32 1
+    return v138  ; v138 = 1
 }
 
 ;; trampoline

@@ -372,12 +372,22 @@ fn class_value_of(
     Ok(class_immediate(fx, cid))
 }
 
-/// A Symbol value for `name`, interned by `zeo_unit_init`.
+/// A Symbol value for `name`, interned by `zeo_unit_init` -- two inline
+/// stores, like `class_immediate` (the tag byte and the `u32` id).
 pub(crate) fn symbol_value(fx: &mut Fx, name: &str) -> CResult<Operand> {
     let sym = fx.sym_id(name);
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
-    fx.call("zeo_rt_sym_value", &[sym, out]);
+    let fl = MemFlagsData::trusted();
+    let z = fx.b.ins().iconst(types::I64, 0);
+    for off in [0, 8, 16] {
+        fx.b.ins().store(fl, z, out, off);
+    }
+    let tag =
+        fx.b.ins()
+            .iconst(types::I8, i64::from(ValueTag::Symbol as u8));
+    fx.b.ins().store(fl, tag, out, TAG_OFFSET as i32);
+    fx.b.ins().store(fl, sym, out, PAYLOAD_OFFSET as i32);
     fx.owned_created += 1;
     Ok(Operand::Slot {
         ss,

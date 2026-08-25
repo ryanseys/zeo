@@ -795,7 +795,7 @@ pub(crate) fn release_locals(fx: &mut Fx) {
         match l {
             super::ctx::Local::Slot(ss) => {
                 let addr = fx.slot_addr(ss, 0);
-                fx.call("zeo_rt_release", &[addr]);
+                super::ownership::release_if_heap(fx, addr);
             }
             super::ctx::Local::Cell { ss, owned: true } => {
                 let ptr = fx.cell_ptr(ss);

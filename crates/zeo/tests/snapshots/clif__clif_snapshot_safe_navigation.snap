@@ -47,11 +47,11 @@ function u0:0(i64) -> i32 ccall {
     fn12 = u0:13 sig12
 
 block0(v0: i64):
-    v119 = iconst.i64 0
-    v120 = stack_addr.i64 ss0
-    store notrap aligned v119, v120  ; v119 = 0
-    store notrap aligned v119, v120+8  ; v119 = 0
-    store notrap aligned v119, v120+16  ; v119 = 0
+    v125 = iconst.i64 0
+    v126 = stack_addr.i64 ss0
+    store notrap aligned v125, v126  ; v125 = 0
+    store notrap aligned v125, v126+8  ; v125 = 0
+    store notrap aligned v125, v126+16  ; v125 = 0
     v1 = symbol_value.i64 gv0
     v2 = symbol_value.i64 gv1
     v3 = iconst.i64 2
@@ -252,17 +252,35 @@ block19:
     store notrap aligned v114, v0+8  ; v114 = 0
     store notrap aligned v114, v0+16  ; v114 = 0
     v115 = stack_addr.i64 ss0
+    v116 = load.i8 notrap aligned v115
+    v117 = iconst.i8 16
+    v118 = icmp uge v116, v117  ; v117 = 16
+    brif v118, block20, block21
+
+block20:
     call fn10(v115)
+    jump block21
+
+block21:
     call fn12()
-    v116 = iconst.i32 0
-    return v116  ; v116 = 0
+    v119 = iconst.i32 0
+    return v119  ; v119 = 0
 
 block1:
-    v117 = stack_addr.i64 ss0
-    call fn10(v117)
+    v120 = stack_addr.i64 ss0
+    v121 = load.i8 notrap aligned v120
+    v122 = iconst.i8 16
+    v123 = icmp uge v121, v122  ; v122 = 16
+    brif v123, block22, block23
+
+block22:
+    call fn10(v120)
+    jump block23
+
+block23:
     call fn12()
-    v118 = iconst.i32 1
-    return v118  ; v118 = 1
+    v124 = iconst.i32 1
+    return v124  ; v124 = 1
 }
 
 ;; zeo_unit_init

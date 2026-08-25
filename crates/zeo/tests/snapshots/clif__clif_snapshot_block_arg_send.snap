@@ -209,11 +209,11 @@ function u0:1(i64, i64) -> i32 ccall {
     fn14 = u0:12 sig14
 
 block0(v0: i64, v1: i64):
-    v92 = iconst.i64 0
-    v93 = stack_addr.i64 ss0
-    store notrap aligned v92, v93  ; v92 = 0
-    store notrap aligned v92, v93+8  ; v92 = 0
-    store notrap aligned v92, v93+16  ; v92 = 0
+    v98 = iconst.i64 0
+    v99 = stack_addr.i64 ss0
+    store notrap aligned v98, v99  ; v98 = 0
+    store notrap aligned v98, v99+8  ; v98 = 0
+    store notrap aligned v98, v99+16  ; v98 = 0
     v2 = symbol_value.i64 gv0
     v3 = symbol_value.i64 gv1
     v4 = call fn0()
@@ -359,17 +359,35 @@ block12:
 
 block2:
     v88 = stack_addr.i64 ss0
+    v89 = load.i8 notrap aligned v88
+    v90 = iconst.i8 16
+    v91 = icmp uge v89, v90  ; v90 = 16
+    brif v91, block15, block16
+
+block15:
     call fn9(v88)
+    jump block16
+
+block16:
     call fn14()
-    v89 = iconst.i32 0
-    return v89  ; v89 = 0
+    v92 = iconst.i32 0
+    return v92  ; v92 = 0
 
 block1:
-    v90 = stack_addr.i64 ss0
-    call fn9(v90)
+    v93 = stack_addr.i64 ss0
+    v94 = load.i8 notrap aligned v93
+    v95 = iconst.i8 16
+    v96 = icmp uge v94, v95  ; v95 = 16
+    brif v96, block17, block18
+
+block17:
+    call fn9(v93)
+    jump block18
+
+block18:
     call fn14()
-    v91 = iconst.i32 1
-    return v91  ; v91 = 1
+    v97 = iconst.i32 1
+    return v97  ; v97 = 1
 }
 
 ;; trampoline

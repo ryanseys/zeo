@@ -663,8 +663,10 @@ pub(crate) fn define_accessor(
             let one = b.ins().iconst(types::I32, 1);
             b.ins().return_(&[one]);
             b.switch_to_block(go);
-            b.ins().call(retain, &[argv]);
-            b.ins().call(retain, &[argv]);
+            super::ownership::retain_if_heap_raw(&mut b, argv, |b| {
+                b.ins().call(retain, &[argv]);
+                b.ins().call(retain, &[argv]);
+            });
             // out <- a bit-copy (owns one of the two retains).
             let fl = cranelift_codegen::ir::MemFlagsData::trusted();
             for off in [0, 8, 16] {
