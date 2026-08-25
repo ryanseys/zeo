@@ -1717,9 +1717,11 @@ fn nil_p_call(fx: &mut Fx, id: NodeId, recv: NodeId) -> CResult<Option<Operand>>
         return Ok(None);
     }
     // A blank-slate (BasicObject-rooted) receiver must raise
-    // NoMethodError -- `nil?` is Kernel's -- so a static false is only
-    // sound while no such receiver can exist.
+    // NoMethodError -- `nil?` is Kernel's -- and a Ractor-moved husk must
+    // raise its moved error from dispatch, so a static false is only
+    // sound while neither receiver can exist.
     let total = !compiler.blank_slate_possible()
+        && !compiler.moved_receiver_possible()
         && !compiler.scopes.iter().any(|s| s.name == "nil?");
     let bypass = bypasses_visibility(fx, Some(recv));
     let op = lower_expr(fx, recv)?;

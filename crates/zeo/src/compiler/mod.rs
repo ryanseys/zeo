@@ -458,6 +458,8 @@ pub struct Compiler {
     /// Memo for [`Compiler::blank_slate_possible`] -- a whole-arena scan
     /// every universal-row fold would otherwise repeat.
     blank_slate_possible: std::cell::OnceCell<bool>,
+    /// Memo for [`Compiler::moved_receiver_possible`].
+    moved_receiver_possible: std::cell::OnceCell<bool>,
 }
 
 /// See [`Compiler::inline_iter_sites`].
@@ -628,6 +630,7 @@ impl Compiler {
             defines_bang: std::cell::OnceCell::new(),
             uses_ractor: std::cell::OnceCell::new(),
             blank_slate_possible: std::cell::OnceCell::new(),
+            moved_receiver_possible: std::cell::OnceCell::new(),
         };
         // The CRuby-exact hierarchy is DECLARED in the ABI table:
         // superclass edges (`Integer < Numeric`, `Class < Module`,
@@ -894,9 +897,19 @@ impl Compiler {
     /// the documented reachability hatch.
     pub fn blank_slate_possible(&self) -> bool {
         *self.blank_slate_possible.get_or_init(|| {
+            // `Ractor::MovedObject` is BasicObject-rooted and registered in
+            // EVERY program, so counting it here made the answer a constant
+            // `true` and no fold ever fired. A husk is only holdable after
+            // a Ractor move, which [`Compiler::moved_receiver_possible`]
+            // gates separately -- every fold that asks this question must
+            // ask that one too.
             (0..self.classes.len() as u32)
                 .map(ClassId)
-                .any(|cid| cid != BASIC_OBJECT_CLASS && self.is_blank_slate(cid))
+                .any(|cid| {
+                    cid != BASIC_OBJECT_CLASS
+                        && cid != zeo_abi::RACTOR_MOVED_OBJECT_CLASS
+                        && self.is_blank_slate(cid)
+                })
                 || self.hir.iter().any(|n| match n {
                     crate::hir::HirNode::ClassRef(name) => name == "BasicObject",
                     crate::hir::HirNode::QualifiedConstRead(_, name)
@@ -904,6 +917,27 @@ impl Compiler {
                     crate::hir::HirNode::DynConstRead { .. } => true,
                     _ => false,
                 })
+        })
+    }
+
+    /// Whether ANY receiver in this program could be a Ractor-moved husk,
+    /// which raises on every method call (its class word is retagged
+    /// `Ractor::MovedObject`, its value tag stays `Object`). A move needs
+    /// `Ractor`, so the text mentioning it at all is the gate -- the same
+    /// mention-scan envelope as [`Compiler::blank_slate_possible`], with
+    /// the same documented `const_get` hatch. A universal-row fold whose
+    /// static answer would bypass dispatch for an `Object`-tagged receiver
+    /// is sound only while this is false: the husk's raise lives in
+    /// dispatch.
+    pub fn moved_receiver_possible(&self) -> bool {
+        *self.moved_receiver_possible.get_or_init(|| {
+            self.hir.iter().any(|n| match n {
+                crate::hir::HirNode::ClassRef(name) => name == "Ractor",
+                crate::hir::HirNode::QualifiedConstRead(_, name)
+                | crate::hir::HirNode::ConstReadOrNil(_, name) => name == "Ractor",
+                crate::hir::HirNode::DynConstRead { .. } => true,
+                _ => false,
+            })
         })
     }
 
