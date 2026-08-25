@@ -1,0 +1,4 @@
+nil
+false
+nil
+Encoding::CompatibilityError: incompatible character encodings: Shift_JIS and EUC-JP

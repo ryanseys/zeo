@@ -1,0 +1,3 @@
+Encoding::ConverterNotFoundError: code converter not found (UTF-8 to NO-SUCH-ENC)
+Encoding::ConverterNotFoundError: code converter not found (UTF-8 to NO-SUCH-ENC)
+ArgumentError: unknown encoding name - NO-SUCH-ENC
