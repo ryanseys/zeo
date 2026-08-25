@@ -12,7 +12,7 @@
 //! frame, so a callee's matching is invisible to its caller. The stack here
 //! is the compiled spelling of that: every generated METHOD whose body
 //! mentions an svar (`$~`/`$1`/`Regexp.last_match`/...) pushes one scope
-//! ([`svar_scope`], emitted by `codegen::scope_frame_guard`), blocks share
+//! ([`svar_scope`], pushed by `clif::emit`'s method prologue), blocks share
 //! their method's, and the regexp entry points write the innermost scope --
 //! falling back to a thread-base slot outside any (the top level).
 //!

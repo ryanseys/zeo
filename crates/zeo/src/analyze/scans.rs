@@ -365,8 +365,8 @@ fn scan_stmts(hir: &Hir, body: &[NodeId], hit: &impl Fn(&HirNode) -> bool) -> bo
 ///
 /// `yield` and `block_given?` are the obvious two. The third is a bare
 /// `super`: real Ruby forwards the current method's own block to the parent,
-/// and the emitted splice references `__blk` directly (see
-/// `codegen::call::emit_super`), so the method needs the parameter whether or
+/// and the emitted forwarding reads the block parameter directly (see
+/// `clif::call::build_zsuper_args`), so the method needs it whether or
 /// not the parent turns out to use it -- an unused `Option` costs nothing.
 /// A `super { ... }` with a literal block does NOT, though its block body
 /// still might, which the ordinary descent covers.
@@ -382,9 +382,8 @@ fn wants_enclosing_block(node: &HirNode) -> bool {
 /// Descends into nested block and lambda literals: their `yield`/
 /// `block_given?` refers to THIS enclosing method's implicit block in real
 /// Ruby (blocks and lambdas have none of their own), so a method whose only
-/// `yield` sits inside a `.each { ... }` still needs its `__blk` parameter --
-/// and the emitted closure clone-captures it (see
-/// `codegen::call::emit_proc_or_lambda_value`).
+/// `yield` sits inside a `.each { ... }` still needs its block parameter --
+/// and the emitted closure captures it (see `clif::blocks`).
 pub(super) fn scan_bare_block_use(hir: &Hir, id: NodeId) -> bool {
     scan_body(hir, id, &wants_enclosing_block)
 }

@@ -131,12 +131,12 @@ pub(crate) fn try_lower(
     // literal is freshly constructed anyway.
     if let Some(re) = node.as_regular_expression_node() {
         let content = String::from_utf8_lossy(re.unescaped()).into_owned();
-        let encoding = forced_regexp_encoding(
-            re.is_ascii_8bit(),
-            re.is_euc_jp(),
-            re.is_windows_31j(),
-            re.is_utf_8(),
-        );
+        let encoding = forced_regexp_encoding(RegexpEncodingFlags {
+            ascii_8bit: re.is_ascii_8bit(),
+            euc_jp: re.is_euc_jp(),
+            windows_31j: re.is_windows_31j(),
+            utf_8: re.is_utf_8(),
+        });
         return Ok(Some(hir.push(HirNode::RegexpLit(
             vec![StrPart::Lit(content)],
             RegexpFlags {
@@ -150,12 +150,12 @@ pub(crate) fn try_lower(
 
     if let Some(re) = node.as_interpolated_regular_expression_node() {
         let parts = lower_string_parts(result, hir, re.parts().iter())?;
-        let encoding = forced_regexp_encoding(
-            re.is_ascii_8bit(),
-            re.is_euc_jp(),
-            re.is_windows_31j(),
-            re.is_utf_8(),
-        );
+        let encoding = forced_regexp_encoding(RegexpEncodingFlags {
+            ascii_8bit: re.is_ascii_8bit(),
+            euc_jp: re.is_euc_jp(),
+            windows_31j: re.is_windows_31j(),
+            utf_8: re.is_utf_8(),
+        });
         return Ok(Some(hir.push(HirNode::RegexpLit(
             parts,
             RegexpFlags {
@@ -298,19 +298,25 @@ pub(crate) fn assemble_i64(negative: bool, digits: &[u32]) -> Option<i64> {
 ///
 /// ruby2ruby and ruby_parser both open with `ENC_EUC = /x/e.options` -- a
 /// throwaway ASCII pattern whose only purpose is the flag bits.
-fn forced_regexp_encoding(
+struct RegexpEncodingFlags {
     ascii_8bit: bool,
     euc_jp: bool,
     windows_31j: bool,
     utf_8: bool,
-) -> zeo_abi::RegexpEncoding {
+}
+
+fn forced_regexp_encoding(flags: RegexpEncodingFlags) -> zeo_abi::RegexpEncoding {
     use zeo_abi::RegexpEncoding;
-    match (ascii_8bit, euc_jp, windows_31j, utf_8) {
-        (true, ..) => RegexpEncoding::None,
-        (_, true, ..) => RegexpEncoding::EucJp,
-        (_, _, true, _) => RegexpEncoding::Windows31j,
-        (.., true) => RegexpEncoding::Utf8,
-        _ => RegexpEncoding::Source,
+    if flags.ascii_8bit {
+        RegexpEncoding::None
+    } else if flags.euc_jp {
+        RegexpEncoding::EucJp
+    } else if flags.windows_31j {
+        RegexpEncoding::Windows31j
+    } else if flags.utf_8 {
+        RegexpEncoding::Utf8
+    } else {
+        RegexpEncoding::Source
     }
 }
 

@@ -334,9 +334,9 @@ const GATE_ARITY_DEBUG: u16 = 8;
 /// The four latches below used to be separate `AtomicBool`s, which put FOUR
 /// acquire loads in `iter_inline_ok_for` -- a fused loop's entry test, i.e.
 /// the check every inlined `each`/`map` pays before it may splice. They ride
-/// the gate byte for exactly the reason the pending and moved gates do: the
-/// byte is loaded once and masked. That fills the `u8`; a ninth gate needs a
-/// `u16`, not a second word.
+/// the gate word for exactly the reason the pending and moved gates do: the
+/// word is loaded once and masked. The ninth gate widened `GATES` to a
+/// `u16` -- a new gate widens the word, never adds a second one.
 const GATE_PATCHED_ANY: u16 = 16;
 const GATE_ANY_SINGLETONS: u16 = 32;
 const GATE_ANCESTRY_MUTATED: u16 = 64;

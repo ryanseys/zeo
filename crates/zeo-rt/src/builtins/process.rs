@@ -1,6 +1,12 @@
-//! `Process` (CRuby process.c) -- the identity and clock surface. Spawning
-//! (`Process.spawn`/`Kernel#system`/backticks) is a later slice; this one
-//! covers what programs read rather than what they start.
+//! `Process` (CRuby process.c) -- the identity, limit, and clock surface,
+//! plus fork/wait. Spawning itself (`spawn`/`Kernel#system`/backticks)
+//! lives in `kernel.rs`; the `Process::Status` a wait answers lives here.
+//!
+//! SAFETY note for the module: most `unsafe` blocks here wrap libc calls
+//! that take and return plain integers (`getuid`, `setpgid`, `kill`, ...);
+//! for those, `unsafe` marks only the FFI boundary and there is no
+//! invariant to state. Calls that pass pointers or read C static storage
+//! carry their own SAFETY comment at the site.
 //!
 //! `clock_gettime` answers a Float of SECONDS (CRuby's default unit), which
 //! is what `Process.clock_gettime(Process::CLOCK_MONOTONIC)` benchmark
@@ -214,6 +220,8 @@ ruby_module! {
     module_function def getpriority(_recv, arg1, arg2) {
         let which = int_arg(arg1)? as libc::c_int;
         let who = int_arg(arg2)? as libc::id_t;
+        // SAFETY: `errno_ptr` is this thread's own errno location, valid for
+        // the write, the call, and the read-back.
         unsafe { *crate::errno_ptr() = 0 };
         let prio = unsafe { libc::getpriority(which as _, who) };
         if prio == -1 && unsafe { *crate::errno_ptr() } != 0 {
@@ -223,6 +231,8 @@ ruby_module! {
     }
     // `Process.groups` -- the supplementary group ids, as an Array of Integer.
     module_function def groups(_recv) {
+        // SAFETY: the size-then-fill protocol -- a (0, NULL) probe for the
+        // count, then a buffer of exactly that many gid_t for the fill.
         let count = unsafe { libc::getgroups(0, std::ptr::null_mut()) };
         let mut buf = vec![0 as libc::gid_t; count.max(0) as usize];
         let n = unsafe { libc::getgroups(buf.len() as libc::c_int, buf.as_mut_ptr()) };
@@ -332,6 +342,8 @@ ruby_module! {
             .iter()
             .map(|v| int_arg(v).map(|n| n as libc::gid_t))
             .collect::<Result<_, _>>()?;
+        // SAFETY: `gids` is a live Vec; the pointer/length pair describes
+        // exactly its initialized elements.
         if unsafe { libc::setgroups(gids.len() as _, gids.as_ptr()) } != 0 {
             return Err(errno_fail("setgroups"));
         }
@@ -362,6 +374,7 @@ ruby_module! {
             rlim_cur: int_to_rlim(cur),
             rlim_max: int_to_rlim(max),
         };
+        // SAFETY: `lim` is a fully-initialized local; the kernel only reads it.
         if unsafe { libc::setrlimit(res as _, &lim) } != 0 {
             return Err(errno_fail("setrlimit"));
         }
@@ -407,6 +420,7 @@ ruby_module! {
         let gid = int_arg(arg2)? as libc::c_int;
         let cuser = std::ffi::CString::new(user.lock().to_utf8_lossy().into_owned())
             .map_err(|_| arg_error!("string contains null byte"))?;
+        // SAFETY: `cuser` is a NUL-terminated CString that outlives the call.
         if unsafe { libc::initgroups(cuser.as_ptr(), gid as _) } != 0 {
             return Err(errno_fail("initgroups"));
         }
@@ -836,6 +850,8 @@ fn issetugid_now() -> bool {
 fn uid_arg(v: &RubyValue) -> Result<libc::uid_t, Signal> {
     if let RubyValue::Str(s) = v {
         let name = s.lock().to_utf8_lossy().into_owned();
+        // SAFETY: `getpwnam` answers libc's static passwd storage (or NULL);
+        // the one field is copied out before anything can overwrite it.
         let entry = with_cstr(&name, |p| unsafe { libc::getpwnam(p) });
         return match entry {
             Some(pw) if !pw.is_null() => Ok(unsafe { (*pw).pw_uid }),
@@ -873,6 +889,7 @@ fn id_num(v: &RubyValue) -> Result<u32, Signal> {
 fn gid_arg(v: &RubyValue) -> Result<libc::gid_t, Signal> {
     if let RubyValue::Str(s) = v {
         let name = s.lock().to_utf8_lossy().into_owned();
+        // SAFETY: as in [`uid_arg`] -- static group storage, one field copied.
         let entry = with_cstr(&name, |p| unsafe { libc::getgrnam(p) });
         return match entry {
             Some(gr) if !gr.is_null() => Ok(unsafe { (*gr).gr_gid }),
@@ -1071,6 +1088,8 @@ fn errno_fail(syscall: &str) -> crate::Signal {
 pub(crate) fn raw_waitpid(pid: i64, flags: i64) -> Result<Option<(i64, i32)>, Signal> {
     loop {
         let mut raw: libc::c_int = 0;
+        // SAFETY: `raw` outlives the closure; `waitpid` writes it and reads
+        // nothing else.
         let ret = crate::gvl::without_gvl(|| unsafe {
             libc::waitpid(pid as libc::pid_t, &mut raw, flags as libc::c_int)
         });
@@ -1096,6 +1115,7 @@ pub(crate) fn raw_waitpid(pid: i64, flags: i64) -> Result<Option<(i64, i32)>, Si
 /// The current supplementary groups as an Array of Integer -- shared by the
 /// `groups` reader and `initgroups`'s answer.
 fn current_groups() -> RubyValue {
+    // SAFETY: the same size-then-fill protocol as the `groups` reader.
     let count = unsafe { libc::getgroups(0, std::ptr::null_mut()) };
     let mut buf = vec![0 as libc::gid_t; count.max(0) as usize];
     let n = unsafe { libc::getgroups(buf.len() as libc::c_int, buf.as_mut_ptr()) };

@@ -3,8 +3,8 @@
 //! `IvarCell<N>`), CLIF programs share ONE concrete type whose per-class
 //! shape lives in a [`ClassLayout`] row -- ivar names in slot order plus the
 //! hidden `Struct`/`Data` member count -- installed into [`LAYOUTS`] by
-//! `register_program` (or [`register_layout`] directly, until M0-7 lands
-//! it). Ivar storage is [`IvarSlots`], the size-erased twin of `IvarCell`,
+//! `register_program` (or [`register_layout`] directly, in unit tests).
+//! Ivar storage is [`IvarSlots`], the size-erased twin of `IvarCell`,
 //! so the lock discipline and sole-thread fast path are the same
 //! implementation.
 

@@ -31,14 +31,10 @@ use crate::lower::{encoding_const_name, parse_and_lower_into};
 /// `super`. `msg` is a plain REQUIRED param,
 /// not a Ruby-level default (`msg = "..."`, which real Ruby's own
 /// `Exception.new` supports) -- every construction site this compiler
-/// generates (`raise`'s codegen -- see `codegen::expr::emit_raise_value`)
+/// generates (`raise`'s lowering -- see `clif::stmt`'s `Raise` arm)
 /// always supplies a message explicitly (the raising class's own name as a
 /// compile-time string literal, when `raise` itself gave none), so this
-/// narrower shape avoids `codegen::call::emit_new`'s pre-existing,
-/// unrelated gap: it always passes constructor args 1:1 positionally,
-/// with no optional-argument `Some(...)`-wrapping smarts (fine for
-/// required-only signatures like this one; a separate, unrelated fix if a
-/// class's own `initialize` needs real optional-param support via `.new`).
+/// narrower shape needs no optional-parameter support at all.
 const BUILTIN_EXCEPTIONS_RB: &str = r##"
 class Exception
   def initialize(msg = nil)

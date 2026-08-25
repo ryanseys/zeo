@@ -159,7 +159,7 @@ pub trait RubyObject: Any + Send + Sync {
     /// Read one ivar BY SLOT, the index it occupies in this class's
     /// [`crate::IvarCell`].
     ///
-    /// A body SHARED by a base class and its descendants (`codegen::share`)
+    /// A body a base class and its descendants share
     /// has a `RubyValue` receiver, so it cannot name a concrete struct to
     /// index -- but the slot number is still a compile-time constant, because
     /// `analyze::mro` lays every class's slots out parent-first. This pair is
@@ -287,7 +287,7 @@ pub use zeo_abi::ENUMERABLE_CLASS;
 /// struct -- numerically mirrored by `zeo::compiler::BUILTIN_CLASSES`
 /// (same "two `ClassId` types, on purpose" convention as `Object::CLASS_ID`/
 /// `compiler::OBJECT_CLASS`). Registered into the `ClassRegistry` once, from
-/// generated `main()` (`codegen::mod`'s `builtin_registrations`), with the
+/// generated `main()` (`clif::classes`' `register_builtin` rows), with the
 /// SAME linearized `ancestors` every user class gets -- what makes
 /// `5.is_a?(Integer)`/`"x".is_a?(Object)`-style checks against a built-in-
 /// typed receiver work uniformly through the one general `is_a`/`send`
@@ -609,7 +609,7 @@ pub fn ivar_slot_get_dyn_isolated(
 /// Read `@name` from a receiver whose class is one of a known set that all
 /// place `@name` at `slot` -- the shared-body form of `ivar_get_dyn`.
 ///
-/// `codegen::share` proves the index agrees across the set before it emits
+/// The caller must prove the index agrees across the whole set before using
 /// this, and every such receiver is a generated object. `name` serves the
 /// arms that reach neither (a rebound `self`), which is exactly what
 /// `ivar_get_dyn` already answers.
@@ -724,8 +724,8 @@ pub fn ivar_frozen_error(recv: RObj) -> Signal {
 /// a bare `RubyValue` -- see `Signal`'s docs for why this is fixed from the
 /// start rather than retrofitted once `break`/`raise`/non-local `return`
 /// exist. The third parameter is the call's block, if any (`None` when no
-/// block was given) -- see `signal.rs`'s `catch_break` and `codegen::params`'s
-/// docs for how a block crosses the Path 2 boundary.
+/// block was given) -- see `signal.rs`'s `catch_break` and `clif::blocks`'
+/// docs for how a block crosses the dispatch boundary.
 pub type MethodFn = fn(&RObj, &[RubyValue], Option<RubyValue>) -> Result<RubyValue, Signal>;
 
 /// A method body no bare `fn` pointer can represent: a closure carrying

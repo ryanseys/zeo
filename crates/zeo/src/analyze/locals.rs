@@ -228,7 +228,7 @@ fn track_node(
             track_node(compiler, defining, box_id, locals, *iterable);
             // A `for`-in-`Range` variable is provably always `Int` (the only
             // element type `Range` iteration supports -- see
-            // `codegen::loops::emit_for`) when the target is a single plain
+            // `clif::stmt::lower_for`) when the target is a single plain
             // local; an `Array`'s element type isn't tracked per-element (nor
             // is a destructured `for a, b in ...`'s), so those widen to
             // `Poly`.
@@ -261,11 +261,10 @@ fn track_node(
             for arm in arms {
                 let mut b = locals.clone();
                 // A pattern-bound name is always `Poly` from this static
-                // tracker's point of view -- narrowing to a builtin type
-                // after a class-guard match is a `codegen`-only concept
-                // (see `codegen::patterns::collect_narrowing`), scoped to
-                // just that one arm's own emitted body, not this longer-
-                // lived `Scope::local_types` map.
+                // tracker's point of view -- any narrowing after a
+                // class-guard match is the emitter's own per-arm
+                // concern, scoped to that one arm's emitted body, not
+                // this longer-lived `Scope::local_types` map.
                 arm.pattern.for_each_bound_name(&mut |n| {
                     b.entry(n.to_string()).or_insert(TyKind::Poly);
                 });
@@ -353,17 +352,14 @@ fn track_node(
                     track_node(compiler, defining, box_id, locals, n);
                 }
             }
-            // A `begin` body is emitted inside its OWN Rust closure (see
-            // `codegen::exceptions::emit_begin`), while the rescue chain, the
-            // `ensure`, and everything after the `begin` are emitted outside
-            // it. An object-typed local takes its `let` from its own
-            // assignment (`LocalStorage::Shadowed`), so a name first assigned
-            // in there would be confined to that closure -- unreachable from
-            // `ensure` (an E0425), or, if it was already bound outside,
-            // silently shadowed so the outer read sees the stale value.
-            // Widening to `Poly` puts it back in the hoisting prelude, where
-            // one binding spans every clause. The cost is Path-1 dispatch on
-            // those locals; the alternative is a wrong answer.
+            // A `begin` body's clauses lower as separate regions (see
+            // `clif::control::lower_begin`), and the body may stop partway:
+            // a concrete type proven only by an assignment inside it must
+            // not narrow reads in the rescue chain, the `ensure`, or the
+            // code after the `begin`. Widening to `Poly` keeps one
+            // conservative binding spanning every clause. The cost is
+            // dynamic dispatch on those locals; the alternative is a wrong
+            // answer.
             for name in assigned_in(compiler, id) {
                 locals.insert(name, TyKind::Poly);
             }

@@ -35,7 +35,7 @@ use crate::symbol::Symbol;
 use crate::value::RubyValue;
 
 /// One local variable's storage -- the very cell the compiled scope reads
-/// and writes (see `codegen::hoisting::LocalStorage::Captured`).
+/// and writes (`analyze::captures` decides which locals get one).
 pub type LocalCell = Arc<Mutex<RubyValue>>;
 
 /// The one constructor for a captured local. A cell is the only storage a

@@ -1,7 +1,7 @@
 //! The in-process capi symbol table: every exported `zeo_rt_*` function as
 //! a `(name, address)` row. The JIT run path resolves emitted code's
 //! imports here -- the `zeo` binary does not export these symbols, so
-//! `dlsym` cannot (see the M0-8 notes) -- and the table is what keeps
+//! `dlsym` cannot -- and the table is what keeps
 //! "exists in the runtime" and "resolvable by the JIT" the same fact: a
 //! capi function missing a row fails the emitter's coverage test, not a
 //! user's program.

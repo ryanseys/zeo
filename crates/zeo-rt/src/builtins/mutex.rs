@@ -1,9 +1,7 @@
-//! `Mutex`'s Path-2 (runtime `send`) rows -- for a dynamically-typed Mutex
-//! receiver (a mutex held in an Array/Hash/ivar, or a `Poly` `send` target).
-//! The static Path-1 codegen arm (`codegen::call`) emits `mutex_lock`/
-//! `mutex_unlock`/... directly and never reaches here; these rows mirror it
-//! exactly -- same `ThreadError` message text, same self-returning shape --
-//! so both paths agree. `Mutex` has a dedicated `RubyValue::Mutex` variant
+//! `Mutex`'s method rows. Every mutex call dispatches through these rows,
+//! which wrap `crate::thread`'s `mutex_lock`/`mutex_unlock`/... primitives
+//! with CRuby's exact contract -- same `ThreadError` message text, same
+//! self-returning shape. `Mutex` has a dedicated `RubyValue::Mutex` variant
 //! (like Thread/Fiber), so a row unwraps it with `as_mutex_unchecked` rather
 //! than downcasting an `Object` the way `ConditionVariable` does.
 

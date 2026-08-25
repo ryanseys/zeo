@@ -21,7 +21,7 @@
 //!    file, and renaming the file's full assigned-name set consistently
 //!    can never re-point a reference across files.
 //! 2. The rename set is collected by descending into EVERY block/lambda
-//!    body (unlike `codegen::hoisting::collect_locals`, which deliberately
+//!    body (unlike `analyze::local_storage::collect_locals`, which deliberately
 //!    skips escaping-block-own names). Over-collecting a block-OWN name is
 //!    harmless: it's renamed consistently at its every visible site, and a
 //!    fresh-per-invocation binding behaves identically under any name. What

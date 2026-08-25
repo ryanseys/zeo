@@ -9,8 +9,8 @@
 //! plan sketches: with the frame-pool design every consumption is emitted
 //! at the same site as its creation (both sides of a branch count their
 //! own sites), so site-balance is exactly the property that holds when no
-//! lowering forgets an owned value. The dataflow version arrives with the
-//! control-flow shapes that break the one-site-per-value rule (M0-14).
+//! lowering forgets an owned value. A dataflow version becomes necessary
+//! only with control-flow shapes that break the one-site-per-value rule.
 
 use super::ctx::Fx;
 

@@ -385,9 +385,9 @@ impl MatchDataInner {
 /// too -- `regex`'s `dot_matches_new_line`, NOT its own `multi_line` (a
 /// same-named-but-different-meaning trap between the two flag vocabularies).
 /// `/x` maps directly to `ignore_whitespace`. Returns a plain `String` error
-/// message (not a `Signal`/`RubyValue`) -- constructing the catchable
-/// `RegexpError` VALUE needs the class registry, which only generated
-/// `zeo` codegen has access to (see `codegen::collections::emit_regexp_lit`).
+/// message (not a `Signal`/`RubyValue`) -- the catchable `RegexpError`
+/// VALUE is constructed by the `capi::literals` wrappers
+/// (`zeo_rt_regexp_lit`/`zeo_rt_regexp_interp`).
 /// Rewrites the Ruby-flavoured escapes the Rust `regex` crate doesn't
 /// recognise into equivalents it does, leaving everything else byte-for-byte
 /// untouched. Today that is just `\e` (Ruby's ESC, U+001B) -> `\x1b`; the

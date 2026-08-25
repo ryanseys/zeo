@@ -36,7 +36,7 @@ zeo-macros = { path = "crates/zeo-macros", version = "=0.1.0" }
 # zeo <-> zeo-tests dev-cycle out of crates.io.
 zeo-tests = { path = "crates/zeo-tests" }
 
-# The Cranelift backend (plan decision 1): zeo lowers HIR to CLIF itself and
+# The Cranelift backend: zeo lowers HIR to CLIF itself and
 # emits object files -- no rustc/LLVM in the compile path. Pinned to the
 # wasmtime 47 release line; the quarterly bump is deliberate, never floating.
 # `x86 + arm64` covers every dist triple; `host-arch` keeps a from-source
@@ -83,12 +83,12 @@ gimli = "0.33"
 # `cargo nextest` we already run.
 datatest-stable = "0.3"
 
-# Codegen: Rust emitted as TokenStreams, formatted for humans.
+# Proc-macro toolkit for `zeo-macros`/`zeo-dsl` (`ruby_class!` parsing) and
+# the compiler's identifier checks.
 proc-macro2 = "1"
 unicode-ident = "1"
 quote = "1"
 syn = { version = "2", features = ["full", "parsing"] }
-prettyplease = "0.2"
 
 # Runtime foundations.
 parking_lot = "0.12"

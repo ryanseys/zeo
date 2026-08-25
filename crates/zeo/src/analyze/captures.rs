@@ -1,14 +1,13 @@
 //! Free-variable/`self` capture analysis for escaping blocks. See
-//! `codegen::call::is_times_fast_path`'s docs: there is no genuine "escape
+//! `analyze::fastpath::is_times_fast_path`'s docs: there is no genuine "escape
 //! analysis" decision procedure here -- a block escapes (becomes a real,
 //! heap-allocated `Proc`) iff it's NOT the `.times` inline fast path, which
-//! is exactly the same check `codegen::call::dispatch` already makes. This
+//! is exactly the same check the emitter's block lowering makes. This
 //! module answers a different, purely mechanical question: for a scope
 //! (method/top-level body) containing zero or more escaping blocks, which
 //! enclosing LOCAL NAMES (and possibly `self`) do they collectively need to
-//! capture, so `codegen::hoisting` knows which locals need the `Captured`
-//! (`Arc<parking_lot::Mutex<RubyValue>>`) storage class instead of a plain hoisted `let
-//! mut`?
+//! capture, so the emitter knows which locals need the shared `Captured`
+//! cell storage class instead of a plain hoisted slot?
 
 use super::fastpath::is_inline_block_fast_path;
 use crate::compiler::Compiler;
@@ -68,9 +67,9 @@ pub struct Captures {
 
 /// Every name a `Params` list itself binds -- the exclusion set for "is this
 /// name a BLOCK's OWN parameter, not something captured from its enclosing
-/// scope". Also reused by `codegen::params::emit_prologue` to decide which of
+/// scope". Also reused by the emitter's prologue to decide which of
 /// a METHOD's own parameter names need the additional
-/// `Arc<parking_lot::Mutex<_>>`-wrapping shadow (when captured by one of ITS
+/// captured-cell shadow (when captured by one of ITS
 /// OWN escaping blocks).
 ///
 /// Delegates to `Params::bound_names` rather than re-enumerating the param
@@ -201,12 +200,11 @@ pub fn collect_escaping_captures(
 
 /// The PRECISE capture set for ONE SPECIFIC escaping block, given its own
 /// declared params -- unlike `collect_escaping_captures` (which unions every
-/// escaping block in a whole scope, used to decide `codegen::hoisting`'s
-/// storage classes), this is what `codegen::call`'s Proc-construction site
-/// needs: exactly which of the enclosing scope's (already-`Captured`)
-/// names THIS closure must clone-capture, so it doesn't clone names it
-/// never references (which would otherwise show up as unused-variable
-/// warnings in the generated program).
+/// escaping block in a whole scope, used to decide the scope's storage
+/// classes), this is what `clif::blocks`' Proc-construction sites
+/// need: exactly which of the enclosing scope's (already-`Captured`)
+/// names THIS closure must capture, so it doesn't capture names it
+/// never references.
 pub fn block_captures(
     compiler: &Compiler,
     params: &Params,
@@ -292,7 +290,7 @@ pub(crate) fn is_sent_eval(compiler: &Compiler, name: &str, args: &[NodeId]) -> 
 
 /// A scope that materializes a `Binding` has to hand out every one of its own
 /// locals BY REFERENCE, so this promotes them all to the `Captured` cell
-/// storage class (`codegen::hoisting::LocalStorage`) and answers the ordered
+/// storage class and answers the ordered
 /// name list the `binding` call site emits -- CRuby's `local_variables` order:
 /// parameters first, then locals by first assignment.
 ///
@@ -342,13 +340,13 @@ pub fn binding_scope_names(
 
 /// Whether `body` (a WHOLE method's own body) contains a `return` that is
 /// lexically INSIDE an escaping (non-inline, non-lambda) block -- the only
-/// shape that raises a `Signal::Return` homed to THIS method, which its
-/// `codegen::mod` per-method catch must intercept.
+/// shape that raises a `Signal::Return` homed to THIS method, which the
+/// per-method return home `clif::emit` pushes must intercept.
 ///
 /// A `return` written directly in the method body (or in an inline `.times`
-/// block, which shares the method's Rust scope) compiles to a literal Rust
-/// `return`, needs no catch, and does not count. A `return` inside a real
-/// escaping block compiles to `Err(Signal::Return(..))` homed here. A `return`
+/// block, which shares the method's frame) lowers to a direct
+/// return, needs no catch, and does not count. A `return` inside a real
+/// escaping block raises `Signal::Return` homed here. A `return`
 /// inside a nested LAMBDA belongs to the lambda (it catches its own), so the
 /// walk stops at a lambda boundary.
 ///
@@ -465,16 +463,12 @@ fn node_contains_runtime_eval(compiler: &Compiler, id: NodeId) -> bool {
 
 /// Whether `body` lexically contains a `begin`/`rescue`/`else`/`ensure`
 /// construct ANYWHERE (including inside a `.times` inline block, which
-/// shares this same Rust function scope, and inside a real escaping block --
+/// shares this same function scope, and inside a real escaping block --
 /// redundant with that case already being caught by
 /// `body_contains_escaping_block` at the call site, but harmless to also
-/// detect here). See `codegen::exceptions::emit_begin`'s docs: `begin`'s own
-/// body/rescue-clause bodies/`else` are captured via a NON-move,
-/// immediately-invoked closure to test their `Result` against `rescue`
-/// clauses -- a `return` lexically inside one raises `Signal::Return`
-/// instead of a literal Rust `return` (since a literal `return` there would
-/// only exit that inner closure, not the enclosing method), so the SAME
-/// per-method catch `codegen::mod::emit_class` installs for an escaping
+/// detect here). See `clif::control::lower_begin`: a `return`
+/// lexically inside a `begin` travels as `Signal::Return` rather than a
+/// direct return, so the SAME per-method catch installed for an escaping
 /// block must also trigger here, independent of whether any block is
 /// involved at all.
 pub fn body_contains_begin(compiler: &Compiler, body: &[NodeId]) -> bool {
@@ -542,11 +536,11 @@ fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
 /// block's own body (directly, or through an inline `.times` block nested
 /// inside one) -- only then do `LocalRead`/`LocalWrite`/`IvarRead`/
 /// `IvarWrite` actually register as captures. `param_exclusions`: every
-/// The receiverless names codegen emits as DIRECT calls to a runtime free
-/// function, never as a dispatch on `self` (`codegen::call`'s
-/// `fallible_fn`/`never_fn`/`plain_fn` tables and the `proc`/`lambda`/
-/// `at_exit`/`__method__` forms it intercepts just above them). Mentioning
-/// one inside a block therefore doesn't make the block need a receiver.
+/// The receiverless names the emitter lowers as DIRECT calls to a runtime
+/// free function, never as a dispatch on `self` (Kernel's free functions,
+/// and the `proc`/`lambda`/`at_exit`/`__method__` forms it intercepts).
+/// Mentioning one inside a block therefore doesn't make the block need a
+/// receiver.
 ///
 /// Whether the class this block is being compiled under has a real method of
 /// this name -- in which case a receiver-less call to it is NOT the Kernel free
@@ -1064,7 +1058,7 @@ fn walk(
         }
         // A `def`/literal `define_method` compiles to
         // `self.define_method(:name, ->(params){ body })` (see
-        // `codegen::expr`'s `DefMethod` arm): it USES `self` (the install
+        // `clif::expr::lower_expr`'s `DefMethod` arm): it USES `self` (the install
         // target) and its body is an escaping proc.
         //
         // A `define_method` body is a CLOSURE over this scope, so what it reads

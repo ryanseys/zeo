@@ -338,11 +338,7 @@ pub(crate) enum Side {
 /// THE registered-table projection: the one place a `(class, side)` becomes a
 /// method-table view. Every routing question below reads through this, so a
 /// runtime row store consulted in policy order slots in here without touching
-/// a single reader. The
-/// hand-rolled ext residuals (date, psych's `YAML` alias, `FileTest`) stay in
-/// their per-question arms below -- they are asymmetric (FileTest declares
-/// class arity/names but no class lookup) and disappear as the ext migration
-/// finishes.
+/// a single reader.
 pub(crate) fn side_of(id: ClassId, side: Side) -> Option<&'static MethodTable> {
     let t = registered_table(id)?;
     match side {

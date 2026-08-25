@@ -886,7 +886,7 @@ ruby_class! {
     // siblings, and the reason a bare `def self.method_added(n)` needs no
     // `super` guard. What CALLS them is the interesting half: see
     // `runtime_meta::fire_def_hook` for the runtime definitions and
-    // `codegen::emit_class_body_site` for the compiled ones.
+    // `clif::stmt`'s `DefHook` lowering for the compiled ones.
     //
     // The firing side must NOT dispatch these: a hook whose owner resolves to
     // `Module` is this no-op, and paying a send per definition to reach it

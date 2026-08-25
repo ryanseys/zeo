@@ -280,8 +280,8 @@ fn resolve_definition_target(
     };
     // Reopening a BUILTIN class: `class String ... end` at the
     // top level ATTACHES to the existing builtin `ClassInfo` -- its methods
-    // dispatch as value methods on the `RubyValue` itself (see
-    // `codegen::mod::emit_builtin_reopen`), its `@@cvar`/`CONST` body
+    // dispatch as value methods on the `RubyValue` itself (registered by
+    // `clif::classes`), its `@@cvar`/`CONST` body
     // statements ride the ordinary ownership machinery. Only a TOP-LEVEL
     // name can collide: `module Store; class String; end; end` defines a
     // fresh, unrelated `Store::String` (real Ruby's rule), which then
@@ -722,8 +722,8 @@ fn walk_class_body(
             // ordinary `ClassInfo`s, not statements to re-execute through
             // that path) but IS recorded as a marker in this site's list:
             // real Ruby runs the inner body at its position inside the
-            // outer body, and `codegen::stmt`'s `ClassDef` arm recurses
-            // into the child's own site there.
+            // outer body, and `clif::stmt::lower_stmt`'s `ClassDef` arm
+            // recurses into the child's own site there.
             HirNode::ClassDef {
                 name,
                 superclass,

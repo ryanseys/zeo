@@ -23,8 +23,7 @@ pub enum TyKind {
     /// A first-class class/module VALUE: `x = Widget` -- the
     /// payload is the class the value REFERS to (its own class is
     /// `Class`/`Module`). What keeps `x.new(...)`/`x.some_class_method`
-    /// on the static Path 1 (see `codegen::call`'s ClassObj interception)
-    /// and `.class` results statically foldable.
+    /// statically resolvable and `.class` results statically foldable.
     ClassObj(ClassId),
     /// A real `Proc` -- only ever seeded for a named `&block`
     /// parameter (see `analyze::register_class`'s seeding, mirroring how a
@@ -35,8 +34,7 @@ pub enum TyKind {
     /// `hir::HirNode::RegexpLit`'s docs.
     Regexp,
     /// A `Fiber` handle -- only ever produced by `Fiber.new`
-    /// (see the inference arm below), consumed by `codegen::call`'s
-    /// `resume`/`alive?` dispatch.
+    /// (see the inference arm below).
     Fiber,
     /// `Thread`/`Mutex`/`Queue` and `Ractor` -- same
     /// only-from-`.new` inference shape as `Fiber`.
@@ -44,11 +42,9 @@ pub enum TyKind {
     Mutex,
     Queue,
     Ractor,
-    /// The result of a successful `Regexp#match`/`String#match` -- only ever
-    /// produced by `codegen::call`'s own static dispatch (a `MatchData`
-    /// value can't be constructed any other way), so nothing in
+    /// The result of a successful `Regexp#match`/`String#match`. Nothing in
     /// `infer_type_with_locals` itself seeds this; a local holding a match
-    /// result stays `Poly` unless the codegen call site narrows it directly
+    /// result stays `Poly`
     /// (a documented, narrower-than-`New`/literal-driven inference scope-cut,
     /// matching this module's existing "no dataflow through arbitrary method
     /// calls" posture).
@@ -57,10 +53,9 @@ pub enum TyKind {
 }
 
 /// Numeric binary operators whose result stays `Int` when both operands are
-/// statically `Int` -- see `codegen::call`'s use of this same list to decide
-/// the native-arithmetic fast path. Kept here (not codegen) because the
-/// local-type tracker (`analyze::locals`) needs the identical list to
-/// propagate `Int`-ness through a chain like `z = x + y`. `**` is
+/// statically `Int` -- what lets the local-type tracker
+/// (`analyze::locals`) propagate `Int`-ness
+/// through a chain like `z = x + y`. `**` is
 /// deliberately ABSENT since the numeric tower landed:
 /// `2 ** -2` is a Rational -- an Int-Int `**` result types `Poly`.
 /// (Overflow itself is fine: a Bignum result is still `TyKind::Int`, one
@@ -69,8 +64,8 @@ pub const INT_RESULT_BINARY_OPS: &[&str] = &["+", "-", "*", "/", "%", "&", "|", 
 
 /// Numeric binary operators whose result stays `Float` when the operand
 /// pair is Float-Float or mixed Int/Float (Ruby's numeric-tower promotion
-/// widens the `Int` side) -- the exact operand shapes `codegen::call`'s
-/// native float lane covers, whose success value is always a `Float`:
+/// widens the `Int` side) -- the exact operand shapes whose
+/// success value is always a `Float`:
 /// `%` and `**` RAISE on their edge cases (zero modulus, negative base to
 /// a fractional power -- the latter a documented divergence from CRuby's
 /// Complex promotion) rather than returning another class, so `**` CAN be
@@ -383,9 +378,7 @@ pub fn infer_type_with_locals(
                 TyKind::Poly
             }
         }
-        // Unary `-@`/`+@` on a statically-`Float` receiver stays `Float`
-        // (`codegen::call`'s native float-unary lane wraps `float_neg`/
-        // `float_pos` in `RubyValue::Float` for exactly this shape).
+        // Unary `-@`/`+@` on a statically-`Float` receiver stays `Float`.
         HirNode::Call {
             receiver: Some(recv),
             name,
@@ -449,9 +442,8 @@ pub fn infer_type_with_locals(
         }
         // `.length`/`.size` on any of the built-in collection types always
         // returns an `Int` (`zeo_rt::{array,hash,string}_len` all return
-        // `i64`) -- needed for e.g. `i < arr.length` to take the native
-        // `Int` comparison fast path in `codegen::call`, not just literal-
-        // on-literal comparisons.
+        // `i64`) -- needed so e.g. `i < arr.length` still types both
+        // sides `Int`, not just literal-on-literal comparisons.
         HirNode::Call {
             receiver: Some(recv),
             name,

@@ -10,7 +10,7 @@
 //! noise on the program's own stderr, which nothing else in ruby produces.
 //!
 //! The record is populated by `parse::loader` as each require resolves and
-//! rides on `Hir::gem_records`; `lib::compile_to_rust_with` writes the JSON
+//! rides on `Hir::gem_records`; `compile_to_object_with` writes the JSON
 //! once lowering is done.
 
 use std::collections::BTreeMap;

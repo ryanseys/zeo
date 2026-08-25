@@ -127,8 +127,8 @@ fn at_class<T>(r: Result<T, String>, at: impl FnOnce() -> Option<Span>) -> Resul
 /// Computes `ancestors` for every registered class/module, then
 /// materializes `methods`/`ivars` for every non-module class and
 /// `class_methods` for EVERY class/module (a module can have its own `def
-/// self.x` "module functions", e.g. `Math.sqrt`, which need no instance/
-/// struct at all -- see `codegen::mod::emit_class_methods`), then resolves
+/// self.x` "module functions", e.g. `Math.sqrt`, which need no
+/// instances at all), then resolves
 /// class-variable ownership. Call once, after `analyze::analyze`'s
 /// top-level registration loop has processed every `ClassDef`.
 pub fn materialize(
@@ -293,9 +293,8 @@ pub fn materialize(
     // emitter would find nothing. Surface its OWN reopen methods as `methods`
     // so they register as value methods on the module id, where the MRO walk
     // finds them for every includer (`Enumerable`/`Comparable`/`Kernel`/...).
-    // (A USER module's own methods reach the runtime by id through a separate,
-    // self-contained bridge -- see `codegen::emit_user_module_bridges` -- so
-    // they need no change here.)
+    // (A USER module's own methods reach the runtime registered on the
+    // module's own id, so they need no change here.)
     for &cid in &all_ids {
         let is_builtin_module = {
             let ci = compiler.class(cid);
@@ -1367,7 +1366,7 @@ impl NameList {
 /// `ClassRef` counts as a constant ONLY when `name` ISN'T actually a
 /// registered class/module (a real class reference, e.g. `Foo.bar`, is
 /// never a constant-ownership concern -- see `HirNode::ClassRef`'s dual
-/// reuse, `codegen::expr`'s docs); a bare `ConstWrite { scope: None, .. }`
+/// reuse); a bare `ConstWrite { scope: None, .. }`
 /// always counts (an explicit `Foo::NAME` write needs no ownership
 /// DISCOVERY, its target is already named); `ClassVarRead`/`ClassVarWrite`
 /// always count.

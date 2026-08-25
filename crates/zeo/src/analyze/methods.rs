@@ -134,9 +134,8 @@ pub(super) fn register_body_def_method(
     // path is emitted at static call sites AHEAD of the reopened-builtin
     // arm, so leaving it in place would silently bypass the user operator.
     // The suppression is whole-program per (numeric lane, operator) --
-    // recorded here at registration, consulted by `codegen::call::dispatch`
-    // when it emits the four `ops::{INT,FLOAT}_{BINARY,UNARY}_OPS` arms and
-    // the poly runtime-checked fallback's inline `Int`/`Float` arms. A
+    // recorded here at registration, consulted by `clif::expr`'s operator
+    // fast path before it emits an inline `Int`/`Float` arm. A
     // suppressed call site falls through to the reopened-builtin arm (a
     // statically-typed receiver) or `send_value_in`'s MRO walk (a dynamic
     // one), both of which read the reopened row -- the user operator wins

@@ -362,7 +362,7 @@ impl CompileError {
 }
 
 /// The compatibility shim: `Result<_, String>` consumers (the test
-/// harnesses, `compile_to_rust`) get the plain message, kind and span
+/// harnesses, `check_program`) get the plain message, kind and span
 /// dropped at this one boundary.
 impl From<CompileError> for String {
     fn from(err: CompileError) -> String {

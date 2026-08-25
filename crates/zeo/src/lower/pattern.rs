@@ -200,7 +200,7 @@ pub(crate) fn lower_pattern(
     // A bare constant with no capture (`in Integer`, `in SomeClass`, or a
     // qualified `in Store::Item`) -- an `is_a?`-style check,
     // resolved (built-in tag vs. user-class ancestry) entirely in
-    // `codegen::patterns::emit_class_check`.
+    // `clif::patterns::class_check`.
     if let Some(c) = node.as_constant_read_node() {
         let name = String::from_utf8_lossy(c.name().as_slice()).into_owned();
         return Ok(Pattern::ClassCheck(name));

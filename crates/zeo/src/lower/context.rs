@@ -45,8 +45,8 @@ pub fn current_box_binding(name: &str) -> Option<u32> {
 }
 
 /// The file currently being lowered -- `None` when compiling a source
-/// string with no path at all (`compile_to_rust`'s bare form, and the
-/// exception prelude), where real Ruby's own answer would be `"-e"`.
+/// string with no path at all (a pathless compile, and the exception
+/// prelude), where real Ruby's own answer would be `"-e"`.
 pub fn current_source_file() -> Option<PathBuf> {
     SOURCE_FILE.with(|f| f.borrow().last().map(|(p, _)| p.clone()))
 }

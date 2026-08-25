@@ -1,6 +1,7 @@
-//! The `zeo` CLI: argument parsing plus calling into the `zeo`
-//! library's `compile_to_rust`/`backend::build_binary` -- see `lib.rs` for the
-//! actual parse -> analyze -> codegen -> build pipeline.
+//! The `zeo` CLI: argument parsing plus calling into the `zeo` library
+//! (`run_jit_with` to run, `compile_to_object_with` + the `cc` link for an
+//! artifact) -- see `lib.rs` for the parse -> lower -> analyze -> clif
+//! pipeline.
 
 use std::io::IsTerminal;
 use std::path::PathBuf;
@@ -8,7 +9,7 @@ use std::process::ExitCode;
 
 /// What `run` can fail with: a compile error renders as a miette diagnostic
 /// (annotated source excerpt, auto-degrading for pipes/NO_COLOR); everything
-/// else (argument parsing, IO, the `cargo`/`rustc` build step) keeps the
+/// else (argument parsing, IO, the `cc` link step) keeps the
 /// plain `zeo: <msg>` line.
 enum MainError {
     Plain(String),
@@ -586,8 +587,8 @@ fn run() -> Result<(), MainError> {
         Source::File(path) => (zeo::parse::read_source(path)?, Some(path.clone())),
         Source::Eval(code) => (code.clone(), None),
     };
-    // Armed before the compile, not inside it: the ceiling covers the `rustc`
-    // step too, where the generated source is still held in memory. The
+    // Armed before the compile, not inside it: the ceiling covers the whole
+    // compile, emission, and link. The
     // library entry point deliberately does NOT arm one -- an in-process
     // caller (the test harness) owns its own process and must not have it
     // exited out from under it.

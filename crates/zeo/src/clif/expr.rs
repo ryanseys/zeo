@@ -1,7 +1,6 @@
-//! Expression lowering for the M0 slice: literals, local reads, and the
-//! numeric binary operators with their three-arm shape -- inline Int,
-//! inline Float, dynamic `send_value_in` fallback (exactly the rustc
-//! emitter's match).
+//! Expression lowering to Cranelift IR: literals, local reads, calls, and
+//! the numeric binary operators with their three-arm shape -- inline Int,
+//! inline Float, dynamic `send_value_in` fallback.
 
 use super::ctx::Fx;
 use super::operand::{Operand, TagInfo};
@@ -920,8 +919,8 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 (class_name.clone(), args.clone(), kwargs.clone(), *block);
             // `Object.new`: a bare sentinel instance of the runtime root --
             // no registered constructor exists (Object's container holds
-            // top-level defs as free functions), so the rustc backend folds
-            // it to a fresh `Object` and so does this. A user-defined
+            // top-level defs as free functions), so the emitter folds
+            // it to a fresh `Object`. A user-defined
             // `initialize` (top-level `def initialize`, or a `class Object`
             // reopen) still runs, through its VALUE-channel row.
             if let Some(cid) = resolve_class_here(fx, &class_name)
@@ -1345,8 +1344,8 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             // A receiverless keyword call naming a compiled method whose
             // keywords are ALL required, covered exactly by literal keys,
             // fills the slots itself: no Hash, no dynamic send, no binder.
-            // The rustc backend has routed this shape statically all
-            // along; CLIF sent every keyword call the long way round.
+            // The deleted rustc backend routed this shape statically all
+            // along; CLIF once sent every keyword call the long way round.
             if receiver.is_none()
                 && block_arg.is_none()
                 && !args.iter().any(|a| matches!(a, ArrayElem::Splat(_)))
@@ -1904,8 +1903,7 @@ fn guarded_fold(
 
 /// A receiverless (or literal-`self`) call naming an accessor of THIS
 /// body's own class, replaced by the ivar access itself: no dispatch, no
-/// trampoline, no frame. The rustc emitter's `emit_inline_accessor` at a
-/// Path-1 site, with `self` as the statically-typed receiver.
+/// trampoline, no frame, with `self` as the statically-typed receiver.
 ///
 /// `Compiler::accessor_shape` carries the gate that matters -- a
 /// HAND-written accessor keeps its body wherever instrumentation can
@@ -2757,7 +2755,7 @@ fn binop(fx: &mut Fx, op: BinOp, name: &str, recv: NodeId, arg: NodeId) -> Resul
 /// redefines the operator on `Integer`'s or `Float`'s fast-path MRO has to
 /// be honored at EVERY call site, so the whole fast path stands down and the
 /// ordinary dynamic send finds the reopened row -- `analyze` recorded both
-/// lanes for exactly this, and the rustc backend consults the same sets.
+/// lanes for exactly this.
 ///
 /// Both lanes gate the one decision because the boxed shape tests both tags:
 /// a `Float#==` reopen leaves the Int arm sound, but the site cannot know
@@ -4729,8 +4727,7 @@ fn runtime_eval(
 /// keeps a `break` inside an iterator's block a `Signal::Break` for the
 /// iterator to catch instead of the `LocalJumpError` a proc-closure's
 /// break raises. `Enumerable#first` driving a user `each` that forwards
-/// its block is the corpus shape; the rustc backend gets the same fold
-/// wherever it can type a receiver as a Proc.
+/// its block is the corpus shape.
 fn block_param_call(fx: &mut Fx, id: NodeId) -> Result<Option<Operand>, String> {
     let HirNode::Call {
         receiver: Some(recv),

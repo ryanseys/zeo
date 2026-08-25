@@ -136,8 +136,8 @@ fn process_top_stmt_inner(
         // The marker STAYS in the top-level statement stream (non-bootstrap
         // only -- the prelude's bodies keep their hoisted splice): real Ruby
         // executes a class body at its document position, interleaved with
-        // the surrounding top-level code, and `codegen::stmt`'s `ClassDef`
-        // arm emits this site's body right here.
+        // the surrounding top-level code, and `clif::stmt::lower_stmt`'s
+        // `ClassDef` arm emits this site's body right here.
         if !bootstrap {
             main_statements.push(stmt);
         }
@@ -502,8 +502,8 @@ fn process_top_stmt_inner(
 /// Registers every `class`/`module` reachable from a statement the walk keeps
 /// whole -- a `begin` clause, a block body, a loop body, a `case` arm.
 /// Registration is a compile-time fact about shape, so the marker stays put and
-/// `codegen::stmt`'s `ClassDef` arm still runs the body at its document
-/// position; the `BoxScope` arm above splits it the same way.
+/// `clif::stmt::lower_stmt`'s `ClassDef` arm still runs the body at its
+/// document position; the `BoxScope` arm above splits it the same way.
 /// Records that this refusal is one ruby has an EXCEPTION for, so a `rescue`
 /// around the definition can be given the raise instead of the compile error.
 /// See [`Compiler::pending_ruby_raise`] and [`raise_instead_of_defining`].
@@ -516,7 +516,7 @@ fn process_top_stmt_inner(
 /// `unmatched_redefinition` (vm_insnhelper.c) reads
 /// `rb_const_source_location_at`, so the position is the one stamped when the
 /// CONSTANT was created -- the first declaring site, the same rule
-/// `codegen::emit_declaration_const_location` follows, which is why a reopen
+/// `zeo_rt`'s `record_const_location` follows, which is why a reopen
 /// leaves the first declaration's line standing.
 ///
 /// A constant with NO recorded location is still reported, with both fields
@@ -1366,7 +1366,7 @@ fn body_cannot_raise(compiler: &Compiler, body: &[NodeId]) -> bool {
 
 /// Whether any statement in `body` (descending nested `if` branches) is a
 /// node only the top-level walk can register -- exactly the set
-/// `codegen::expr::emit_expr` has no expression form for, minus
+/// `clif::expr::lower_expr` has no expression form for, minus
 /// `DefMethod` (which has a runtime `define_method` emission and so
 /// survives inside an ordinary undecided `if` unchanged).
 fn branch_has_top_defs(compiler: &Compiler, body: &[NodeId]) -> bool {
@@ -1405,7 +1405,7 @@ fn branch_has_top_defs(compiler: &Compiler, body: &[NodeId]) -> bool {
     })
 }
 
-/// `codegen::constfold::static_cond`'s analyze-time sibling: compile-time
+/// `clif::stmt::static_cond`'s analyze-time sibling: compile-time
 /// truthiness of a top-level `if` condition, decided against the classes
 /// REGISTERED SO FAR in the walk -- which is exactly the set real Ruby has
 /// defined when execution reaches this statement, since the walk mirrors
@@ -2139,7 +2139,7 @@ fn static_top_cond(
 ) -> Option<bool> {
     // A build-time target-constant guard folds the same way here (deciding
     // what a conditional REGISTERS) as it does at emission -- see
-    // `crate::guard_fold` and `codegen::constfold::static_cond`. The cref is
+    // `crate::guard_fold` and `clif::stmt::static_cond`. The cref is
     // the guard's lexical position: empty at top level, the enclosing chain
     // for a class-body guard, so a bare constant resolves exactly as it
     // would at that source position.

@@ -1,9 +1,8 @@
 //! `MatchData`'s runtime method table.
 //!
-//! Every method here already existed as a `regexp::matchdata_*` function
-//! reachable from `codegen::call`'s STATIC fast path (`ty ==
-//! TyKind::MatchData`). This table is what makes them reachable when the
-//! receiver's type ISN'T statically known -- which is exactly the `$~` case,
+//! Every method here delegates to a `regexp::matchdata_*` function. This
+//! table is what makes them reachable through dispatch -- crucially for
+//! the `$~` case,
 //! since `$~` is nil whenever the last match failed and so can never infer
 //! as `MatchData`. Without it, `$~[0]` raised NoMethodError while
 //! `re.match(s)[0]` worked.

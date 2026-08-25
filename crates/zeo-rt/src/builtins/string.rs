@@ -3926,7 +3926,7 @@ fn pad(
 }
 
 /// The `encoding:` keyword shared by `String.new` -- reads it from the
-/// trailing options Hash (the G2 kwargs convention), resolving a name string
+/// trailing options Hash (the kwargs convention), resolving a name string
 /// or an `Encoding` value; `None` when absent.
 fn kw_encoding(opts: Option<&RubyValue>) -> Result<Option<crate::encoding::EncodingId>, Signal> {
     let Some(RubyValue::Hash(h)) = opts else {

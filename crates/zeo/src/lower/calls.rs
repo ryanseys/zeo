@@ -181,7 +181,7 @@ pub(crate) fn try_lower(
     // ordinary call), unlike `block_given?` below. Reuses `lower_call_args`
     // (not a bare per-argument `lower_node` map) so a trailing keyword hash
     // (`yield x: 1, y: 2`) is recognized the same way an ordinary call's
-    // is -- `codegen::params::emit_proc_param_bindings` binds a block's own
+    // is -- the block-parameter binding binds a block's own
     // keyword params from the LAST *positional* yielded value, matching
     // real Ruby's auto-conversion of a trailing Hash into block keywords,
     // so the peeled kwargs are folded back into one trailing `HashLit`.
@@ -191,8 +191,8 @@ pub(crate) fn try_lower(
         // `Vec<ArrayElem>` a `Call`'s positional args do, and codegen flattens
         // a `Splat` element at runtime. Keyword args (literal pairs AND `**h`
         // double-splats) fold into one trailing `HashLit`, which codegen
-        // builds via the shared `KwArg` emitter and `emit_proc_param_bindings`
-        // binds a block's keyword params from.
+        // builds via the shared `KwArg` emitter and the block-parameter
+        // binding reads a block's keyword params from.
         //
         // The fold is recorded, because a hash that arrived as KEYWORDS is
         // dropped when it turns out empty at runtime while one the source wrote

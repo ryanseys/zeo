@@ -1,8 +1,6 @@
-//! `Fiber`'s Path-2 (runtime `send`) rows. The static Path-1 fast path in
-//! `codegen::call` emits `fiber_resume`/`fiber_alive` calls directly and
-//! never comes here; these rows serve dynamically-typed receivers (a fiber
-//! held in an ivar/Hash/`send` target), mirroring that codegen arm exactly,
-//! error messages included.
+//! `Fiber`'s method rows. Every fiber call -- statically typed or a
+//! dynamic `send` -- dispatches through these rows, which wrap
+//! `crate::fiber`'s primitives with CRuby-verbatim error messages.
 //!
 //! zeo has no fiber SCHEDULER, and the scheduler quartet says so rather than
 //! pretending: `.scheduler`/`.current_scheduler` answer nil, `.set_scheduler`
@@ -32,8 +30,7 @@ fn key_sym(v: &RubyValue) -> Result<Symbol, Signal> {
 }
 
 /// One outcome mapping for `resume`/`transfer`/`raise` -- every error
-/// variant becomes its CRuby-verbatim `FiberError` (the same messages the
-/// static Path-1 codegen arm emits).
+/// variant becomes its CRuby-verbatim `FiberError`.
 fn outcome(result: FiberResume) -> Result<RubyValue, Signal> {
     match result {
         FiberResume::Value(v) => Ok(v),

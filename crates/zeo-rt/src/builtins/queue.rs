@@ -1,10 +1,9 @@
-//! `Queue`'s Path-2 (runtime `send`) rows -- for a dynamically-typed Queue
-//! receiver (a queue held in an Array/Hash/ivar, or a `Poly` `send` target).
-//! The static Path-1 codegen arm (`codegen::call`) emits `queue_push`/
-//! `queue_pop`/... directly and never reaches here; these rows mirror it
-//! exactly -- `push` to a closed queue is a `ClosedQueueError`, `pop` blocks
-//! until an element arrives, a closed empty queue pops `nil` -- so both paths
-//! agree. `Queue` has a dedicated `RubyValue::Queue` variant (like
+//! `Queue`'s method rows. Every queue call dispatches through these rows,
+//! which wrap `crate::thread`'s `queue_push`/`queue_pop`/... primitives
+//! with CRuby's exact contract -- `push` to a closed queue is a
+//! `ClosedQueueError`, `pop` blocks until an element arrives, a closed
+//! empty queue pops `nil`.
+//! `Queue` has a dedicated `RubyValue::Queue` variant (like
 //! Thread/Fiber), unwrapped with `as_queue_unchecked`. `SizedQueue` (a
 //! sibling file) inherits every instance row here through the ancestry walk,
 //! since `SizedQueue < Queue`, and adds the bound (`max`/`max=`) that only a

@@ -25,7 +25,7 @@
 //! `prepend`/`include` can't be expressed against a fixed ancestry).
 //! [`static_cond`] is the one entry point, shared by both branch-folders:
 //! `analyze`'s `static_top_cond` (what a top-level `if` REGISTERS) and
-//! `codegen::constfold::static_cond` (what an `if` EMITS), so registration and
+//! `clif::stmt::static_cond` (what an `if` EMITS), so registration and
 //! emission always pick the same branch. Callers pass the lexical `cref` at the
 //! guard site (empty at the top level) so a bare `Specification`/const resolves
 //! in its enclosing namespace, exactly as it would at that source position.

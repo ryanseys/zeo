@@ -1,16 +1,15 @@
-//! `zeo`: parse -> lower -> analyze -> codegen -> `cargo build`. Mirrors
-//! zeo's `main.c` driver -- a single binary, no separate parse/analyze/
-//! codegen executables, and the final artifact is a genuine native binary
-//! produced by shelling out to the real Rust toolchain (zeo shells out to
-//! `cc`; we shell out to `cargo`, for the same reason: neither compiler
-//! touches machine code or an object-file format directly).
+//! `zeo`: parse -> lower -> analyze -> clif (Cranelift IR) -> backend.
+//! One binary, like ruby's own `main.c` driver: the backend either runs
+//! the compiled code in-process (JIT) or emits object files and shells
+//! out to `cc` to link them against the prebuilt `libzeo.a` -- the same
+//! reason ruby shells out to `cc`: the compiler proper never touches an
+//! object-file format directly.
 //!
 //! Exposed as a library (not just a `main.rs` binary) so both the CLI and
-//! the in-process test suite (`tests/`) can call `compile_to_rust` and
-//! `backend::build_binary` directly -- no subprocess spawn needed just to
-//! invoke the compiler itself; a subprocess is only unavoidable for the
-//! final `cargo build` of the *generated* program (and running the
-//! resulting binary), since that's a genuinely separate compilation unit.
+//! the in-process test suite (`tests/`) can call `compile_to_object_with`,
+//! `check_program_with`, and `run_jit_with` directly -- a subprocess is
+//! only unavoidable for the final `cc` link of an AOT artifact (and for
+//! running the resulting binary).
 
 // `clippy::wildcard_enum_match_arm` is OFF (user-directed 2026-08-20): the
 // lint fired on far more probes and folds -- where every unlisted variant is
@@ -23,11 +22,11 @@
 /// The runtime, re-exported whole: the re-export is what forces `zeo-rt`
 /// (its `zeo_rt_*` C surface and linkme tables included) into every output
 /// of this lib -- the `zeo` binary AND the `libzeo.a` staticlib AOT
-/// programs link. The eval hook (`zeo_rt::eval::EvalCompiler`, G6) installs
+/// programs link. The eval hook (`zeo_rt::eval::EvalCompiler`) installs
 /// through this path too.
 pub use zeo_rt;
 
-/// The one allocator per process image (plan decision 9): `libzeo.a` is the
+/// The one allocator per process image: `libzeo.a` is the
 /// only Rust staticlib an AOT program ever links, so the allocator it runs
 /// on is declared HERE -- the `zeo` binary and the test harnesses inherit
 /// it. The front end is allocation-heavy (arena nodes, interner strings,
@@ -99,7 +98,7 @@ impl CompileMode {
 
 /// The compile-time file context `require` resolution needs --
 /// see `parse::parse_and_lower_with`. `Default` (no path, no roots) keeps
-/// `compile_to_rust`'s pathless behavior: `require_relative` then fails with
+/// the pathless `-e` behavior: `require_relative` then fails with
 /// CRuby's own "cannot infer basepath", and a plain `require` finds nothing.
 #[derive(Default)]
 pub struct CompileOptions {

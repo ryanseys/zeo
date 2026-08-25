@@ -340,14 +340,14 @@ macro_rules! ruby_class {
             dispatch { $( $dname:literal => $tramp:expr_2021 ),* $(,)? }
         }
     ) => {
-        // A NESTED class's mangled Rust name (`__c46_Item` -- see
-        // `zeo`'s `codegen::ident::class_ident`) is deliberately not
-        // CamelCase; a top-level class's plain name already is.
+        // A caller may pass a mangled, deliberately non-CamelCase Rust
+        // name for a nested class; a top-level class's plain name
+        // already is CamelCase.
         #[allow(non_camel_case_types)]
         pub struct $name {
             /// `.freeze`'s per-object flag -- read through
-            /// `RubyObject::is_frozen` and by the guard codegen emits before
-            /// every ivar write (`emit_ivar_write_stmt`). Double-underscore
+            /// `RubyObject::is_frozen` and by the guard the emitter places
+            /// before every ivar write. Double-underscore
             /// prefixed, matching the `__blk`/`__self` convention for
             /// generated names a user ivar won't realistically collide with
             /// (a literal Ruby `@__frozen` would -- same accepted, vanishing
@@ -406,8 +406,8 @@ macro_rules! ruby_class {
 
             /// Accepts an already-`Arc`-wrapped value (never `Self` by
             /// value): generated code stores every `New`-constructed object
-            /// as `Arc<ConcreteStruct>` from the moment it's built (see
-            /// `codegen::call::emit_new`), so that a local variable holding
+            /// as `Arc<ConcreteStruct>` from the moment it's
+            /// built, so that a local variable holding
             /// it can be read more than once via a cheap, identity-preserving
             /// `Arc::clone()` rather than needing (and not having) a `Clone`
             /// impl on the bare struct itself -- deriving one naively would
@@ -508,8 +508,7 @@ macro_rules! ruby_class {
             // couldn't know statically (`instance_exec`'s rebound self). The
             // field idents ARE the ivar names minus the `@` (codegen's
             // `safe_ident`), so `stringify!` recovers them with no extra list
-            // to keep in sync. See the trait's docs for the invented-ivar
-            // TODO.
+            // to keep in sync. See the trait's docs for the invented-ivar TODO.
             fn ivar_get_named(&self, name: &str) -> Option<$crate::RubyValue> {
                 self.__ivars.get_named(Self::__IVAR_BASE, Self::__IVAR_NAMES, name)
             }
@@ -594,7 +593,7 @@ macro_rules! ruby_class {
             /// macro could derive on its own from the `def` clauses above)
             /// cannot express the binding logic -- zeo already
             /// has the full, precise parameter-kind info to author it
-            /// correctly (see `codegen::params`), so this macro's job
+            /// correctly (`clif::params::define_trampoline`), so this macro's job
             /// shrinks to exactly what its own doc comment always claimed:
             /// struct/impl/registration ceremony, not binding logic.
             ///

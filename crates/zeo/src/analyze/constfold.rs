@@ -5,14 +5,14 @@
 //! * **Constant resolvability** ([`class_const_in`], [`value_const_defined_in`],
 //!   [`const_form_resolves`]) -- whether a `Scope::NAME`/bare-`NAME` reference
 //!   names something that provably exists at compile time. Drives both
-//!   `const_get`/`const_defined?` folding (`codegen::call`) and `defined?`
-//!   classification (`codegen::expr`).
+//!   `const_get`/`const_defined?` folding and `defined?`
+//!   classification (`clif::expr`).
 //! * **Static condition truthiness** ([`static_cond`]) -- when an `if`/`unless`/
 //!   ternary guard can be decided at compile time. The one case that resolves
 //!   is a `defined?(Const)` naming a constant that provably doesn't exist ->
 //!   statically `false`. CRuby folds such a guarded branch away entirely; its
 //!   body may be MRI-only/uncompilable code (`if defined?(RubyVM::YJIT);
-//!   RubyVM::YJIT.enable; end`) that must never reach Rust emission.
+//!   RubyVM::YJIT.enable; end`) that must never reach emission.
 
 use crate::compiler::{ClassId, Compiler, OBJECT_CLASS};
 use crate::hir::{HirNode, NodeId};
@@ -20,7 +20,7 @@ use crate::hir::{HirNode, NodeId};
 /// The lexical environment a constant-resolution question needs -- the
 /// backend-neutral projection of an emitter context: which compiler, which
 /// defining class (for the cref chain), which box. Everything here is
-/// derivable at analyze time; `codegen::Ctx::const_env` builds one.
+/// derivable at analyze time; the emitter builds one per site.
 #[derive(Clone, Copy)]
 pub(crate) struct ConstEnv<'a> {
     pub(crate) compiler: &'a Compiler,
@@ -30,7 +30,7 @@ pub(crate) struct ConstEnv<'a> {
 
 impl<'a> ConstEnv<'a> {
     /// The lexical scope chain enclosing the current code, outermost first --
-    /// `Compiler::cref_of`'s rule (see `codegen::Ctx::cref_chain`, whose twin
+    /// `Compiler::cref_of`'s rule (see `clif::expr::cref_chain`, whose twin
     /// this is). Empty at the top level.
     pub(crate) fn cref_chain(&self) -> &'a [ClassId] {
         self.defining_class

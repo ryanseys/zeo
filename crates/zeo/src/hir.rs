@@ -70,7 +70,7 @@ impl NodeFlag {
     /// iseq-less method, which fires no `:call`/`:return` `TracePoint` event,
     /// where a hand-written `def x; @x; end` is an ordinary method and does. So
     /// a synthesized accessor may devirtualize even under tracing -- see
-    /// `codegen::emit_class`.
+    /// `Compiler::accessor_shape`.
     pub const ATTR_GENERATED: NodeFlag = NodeFlag(1 << 6);
     /// A `DefMethod` written inside a CONSTANT-BEARING `class << self` body.
     /// Its lexical home is the singleton class -- a bare constant there
@@ -252,7 +252,7 @@ pub struct Hir {
     ///
     /// `flags` answers "is this one?" in an array index, but codegen's
     /// inline-marker walk also has to ENUMERATE them
-    /// (`codegen::inline_class_markers`), which a bit array cannot do without
+    /// (`clif/emit.rs`'s `inline_markers`), which a bit array cannot do without
     /// scanning the whole arena. Push order also makes that walk deterministic,
     /// which iterating a `HashSet` never was.
     block_bodied_def_list: Vec<NodeId>,
@@ -276,7 +276,7 @@ pub struct Hir {
     /// mapping splices them in place (that is the retagging model), so
     /// without this they would run in the enclosing body's frame and every
     /// backtrace raised through one would be a frame short -- see
-    /// `codegen::stmt::emit_body`, which groups consecutive entries under one
+    /// `clif/stmt.rs`'s `lower_stmts`, which groups consecutive entries under one
     /// `singleton class` frame.
     pub singleton_frame_stmts: crate::compiler::FMap<NodeId, NodeId>,
     /// `DefMethod` nodes an `alias` cloned, mapped to the name they were born
@@ -488,7 +488,7 @@ pub struct Hir {
     /// bootstrap fallback).
     pub builtin_exceptions_len: usize,
 
-    /// What this compile is FOR (plan G6's `CompileMode`). Every static
+    /// What this compile is FOR (`CompileMode`). Every static
     /// decision the emitter makes belongs to a whole PROGRAM, which owns
     /// the class table it registers into; a snippet compiled for a
     /// run-time `eval` arrives after that program is already running, so
@@ -1432,11 +1432,11 @@ impl Hir {
     /// `TracePoint` or calls `set_trace_func` anywhere.
     ///
     /// Those two events are the only thing a devirtualized accessor stops
-    /// producing (`codegen::params::emit_accessor_trampoline` reaches the
-    /// field with no frame and no callee at all), so codegen keeps the
+    /// producing (`clif/params.rs`'s `define_accessor` reaches the
+    /// field with no frame and no callee at all), so the emitter keeps the
     /// ordinary call shape for a program that could watch for them -- the
     /// same "the instrumentation is ABSENT, not branched on" model
-    /// `codegen::coverage_active` uses.
+    /// the line-coverage emission uses.
     ///
     /// A plain scan of the whole arena, matching `uses_runtime_eval`: it must
     /// see spliced `require`d files and method bodies too. Over-approximation
@@ -1465,8 +1465,7 @@ impl Hir {
     }
 
     /// Whether the program names `Ractor` anywhere -- the emission switch for
-    /// the moved-object guards (`codegen::call::builtins`' `_checked` container
-    /// twins, the inlined-accessor husk check): only a program that can reach
+    /// the moved-object guards: only a program that can reach
     /// `Ractor` can ever poison an object with `send(obj, move: true)`, so
     /// everything else keeps the guard-free fast paths. A plain whole-arena
     /// scan like [`uses_call_tracing`], and over-approximation is the safe
@@ -1547,8 +1546,9 @@ impl ArrayElem {
 /// reads off `ruby_prism::ParametersNode`).
 ///
 /// `default_ids()` below is the one place `analyze::collect_ivars`/
-/// `analyze::locals::track_extra`/`codegen::hoisting`'s per-method scans walk
-/// INTO a default-value expression for `@ivar`/local references -- otherwise
+/// `analyze::locals::track_extra`/`analyze::local_storage::collect_locals`'s
+/// per-method scans walk INTO a default-value expression for `@ivar`/local
+/// references -- otherwise
 /// a default that reads an ivar/local nowhere else referenced (e.g. `def
 /// f(x: @only_here)`) could hit a "no such field" codegen error instead of
 /// working.
@@ -1601,7 +1601,7 @@ pub struct Params {
     /// `&blk` / anonymous `&` -- same `None`/`Some(None)`/`Some(Some(name))`
     /// shape as `rest`/`keyword_rest` again. Bound to `Nil` when the method
     /// is called with no block (real Ruby: an unyielded `&blk` is `nil`, not
-    /// absent) -- see `codegen::params::emit_prologue`. Bare `...`
+    /// absent). Bare `...`
     /// forwarding (which implies a block too, among other things) is still a
     /// clean lowering error -- see `parse/mod.rs::lower_params`'s docs.
     pub block: Option<Option<String>>,
@@ -1640,8 +1640,8 @@ pub struct Params {
 /// DEFAULT for every subsequent `def` in the same class body -- see
 /// `parse::lower_class_body`'s docs) or set retroactively by a same-named
 /// `private`/`public`/`protected :name` / `private def name; ... end` form.
-/// Enforced at `codegen::call::dispatch`'s Path 1 site and `zeo_rt::send`'s
-/// Path 2 dispatch -- see their docs.
+/// Enforced through the caller-class channel every send carries -- see
+/// `clif/call.rs`'s `caller_class` and the runtime dispatch.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Visibility {
     #[default]
@@ -1680,10 +1680,10 @@ impl Params {
     }
 
     /// Every NAME this `Params` binds in the method's scope (required,
-    /// optional, named rest/kwrest/block, post, keywords) -- what
-    /// `codegen::hoisting` consults so a REASSIGNED parameter is rebound
-    /// from its already-bound value (`let mut x = x;`) instead of shadowed
-    /// by the nil-defaulted hoisting declaration (a pre-existing
+    /// optional, named rest/kwrest/block, post, keywords) -- what the
+    /// local collection consults so a REASSIGNED parameter keeps its
+    /// already-bound value instead of being shadowed by a fresh
+    /// nil-defaulted local (a pre-existing
     /// silent wrongness surfaced by bare-`super` forwarding, where
     /// `def f(name); name = name.upcase; super; end` must forward the
     /// reassigned value).
@@ -1836,7 +1836,7 @@ pub enum Pattern {
     Pin(NodeId),
     /// A bare constant used as a pattern with no capture (`in Integer`,
     /// `in SomeClass`) -- an `is_a?`-style ancestry/tag check with no
-    /// binding. See `codegen::patterns::emit_class_check`'s docs for how
+    /// binding. See `clif/patterns.rs`'s `class_check` for how
     /// this resolves both built-in primitive names (`Integer`/`String`/
     /// `Symbol`/`Array`/`Hash`/`Range`/`Proc`/`NilClass`/`TrueClass`/
     /// `FalseClass`, checked via a runtime tag) and user-defined classes
@@ -1844,10 +1844,9 @@ pub enum Pattern {
     /// already consult).
     ClassCheck(String),
     /// `1..10` / `..5` / `1..` as a pattern -- "does the scrutinee fall
-    /// inside this range", not `rb_eq`. Scope-cut, matching `codegen::loops`'
-    /// existing `for`-in-`Range` restriction: only a statically/dynamically
-    /// `Int`-valued scrutinee is supported (checked via `as_int_unchecked`,
-    /// not a general `Comparable`-based `#cover?`).
+    /// inside this range", not `rb_eq`. Lowered as a real `Range` value
+    /// matched via `===` -- see `clif/patterns.rs`'s
+    /// `range_value`/`case_eq_check`.
     Range {
         start: Option<NodeId>,
         end: Option<NodeId>,
@@ -1858,17 +1857,13 @@ pub enum Pattern {
     /// consistent binding to expose otherwise) -- enforced at LOWERING time
     /// (a clean rejection, not silently dropped bindings; see
     /// `parse/mod.rs::lower_pattern`'s validation), so by the time this
-    /// reaches `codegen` every nested `Pattern` here is guaranteed
+    /// reaches the emitter every nested `Pattern` here is guaranteed
     /// binding-free.
     Or(Vec<Pattern>),
     /// `PAT => name` -- binds `name` to the scrutinee ONLY IF `PAT` itself
     /// matches (unlike a bare `Bind`, which always matches). The common,
     /// load-bearing shape is `Capture(Box::new(ClassCheck(_)), name)`
-    /// (`in Integer => n`), which `codegen::patterns::collect_narrowing`
-    /// recognizes specially to statically narrow `name`'s inferred type for
-    /// the rest of the matching arm's body (see that function's docs for
-    /// the deliberate, safety-motivated scope-cut: only built-in, non-
-    /// `Object` types are narrowed this way).
+    /// (`in Integer => n`).
     Capture(Box<Pattern>, String),
     /// `[pre.., *rest, post..]` (a `constant` guard, e.g. `Point[x, y]`, is
     /// optional). `rest`: `None` = no `*` at all (exact-length match);
@@ -1968,10 +1963,10 @@ impl Pattern {
 
     /// Every local-variable name this pattern binds if it matches -- these
     /// leak into the enclosing METHOD scope exactly like an `if`/`case`
-    /// branch's locals do (no new Ruby scope), so `codegen::hoisting`'s
-    /// whole-scope local collection needs to see every one of them up
-    /// front, same as `HirNode::MultiWrite`'s targets. Shared by that
-    /// collection pass and `codegen::patterns::collect_narrowing`.
+    /// branch's locals do (no new Ruby scope), so the whole-scope local
+    /// collection (`analyze::local_storage::collect_locals`) needs to see
+    /// every one of them up front, same as `HirNode::MultiWrite`'s
+    /// targets. Shared by that collection pass and the capture scan.
     pub fn for_each_bound_name(&self, visit: &mut impl FnMut(&str)) {
         match self {
             Pattern::Bind(name) => visit(name),
@@ -2055,11 +2050,12 @@ pub struct PatternArm {
 /// ordinary Ruby method calls (`attr=`/`[]=`), so lowering PRE-BUILDS the
 /// actual write `Call` node (`write_call`) with a synthetic hidden local
 /// (`tmp_name`) standing in for "the value this target will receive" as its
-/// final argument -- codegen only has to bind `tmp_name` to the runtime-
+/// final argument -- the emitter only has to bind `tmp_name` to the runtime-
 /// destructured value BEFORE emitting `write_call` via the ordinary
-/// `emit_expr` path, reusing the EXACT same static/dynamic dispatch
-/// `codegen::call::dispatch` already provides for every other call, with no
-/// bespoke attr/index-write codegen of its own. See `parse::lower_multi_target`.
+/// `lower_expr` path, reusing the EXACT same static/dynamic dispatch
+/// the call lowering (`clif/call.rs`) already provides for every other call,
+/// with no bespoke attr/index-write codegen of its own.
+/// See `lower/assign.rs`'s `lower_multi_target`.
 // `Clone` because `Params` is `Clone` and now carries destructuring groups
 // (`Params::destructures`); the targets themselves are small, owned data.
 #[derive(Debug, Clone)]
@@ -2239,10 +2235,10 @@ impl MultiTargetGroup {
 /// One `rescue [classes] [=> binding] ... end` clause of a `begin`/an
 /// implicit method-body rescue. `classes` empty = a bare `rescue` -- matches
 /// `StandardError` and its descendants (real Ruby's own default), NOT
-/// literally every `Exception` -- see `codegen::exceptions`'s docs for the
-/// matching codegen. `binding`'s name leaks into the enclosing METHOD scope
+/// literally every `Exception` -- see `clif/control.rs`'s `clause_match`
+/// for the matching. `binding`'s name leaks into the enclosing METHOD scope
 /// exactly like a `case/in` pattern's bound names do (no new Ruby scope) --
-/// `codegen::hoisting`'s whole-scope local collection needs to see it up
+/// the whole-scope local collection (`collect_locals`) needs to see it up
 /// front, same treatment as `Pattern::for_each_bound_name`'s callers.
 #[derive(Debug, Clone)]
 pub struct RescueClause {
@@ -2572,16 +2568,15 @@ pub enum HirNode {
     /// `defined?(expr)` -- a compile-time-resolvable classification of
     /// `expr`'s syntactic form (mirrors CRuby's `"expression"`/`"method"`/
     /// `"local-variable"`/`"instance-variable"`/`nil` results), not a
-    /// runtime check. See `codegen::expr::emit_defined`'s docs for the
+    /// runtime check. See `clif/expr.rs`'s `lower_defined` for the
     /// scope-cut this approximates.
     Defined(NodeId),
     /// `if`/`unless`/`elsif`/ternary all normalize to this at lowering time
     /// (`unless` swaps `then_body`/`else_body`; `elsif` is prism's own
     /// `IfNode::subsequent()` recursion, which lowering walks into a nested
     /// `If`; ternary is literally the same `IfNode` shape prism produces for
-    /// `a ? b : c`). Ruby's implicit-last-expression-return and Rust's
-    /// `if`-as-expression are structurally identical, so this maps directly
-    /// onto a Rust `if/else` expression in tail position (see `codegen::expr`).
+    /// `a ? b : c`). Ruby's implicit-last-expression-return makes `If`
+    /// itself an expression, lowered with a result in tail position.
     If {
         cond: NodeId,
         then_body: Vec<NodeId>,
@@ -2626,7 +2621,7 @@ pub enum HirNode {
     /// `RegexpError` at codegen's construction site -- NOT rejected any
     /// earlier at `zeo` compile time, unlike real Ruby's own parse-time
     /// `SyntaxError` for a static pattern: a documented, narrower-timing
-    /// approximation (see `codegen::collections::emit_regexp_lit`'s docs),
+    /// approximation (see `clif/expr.rs`'s `regexp_lit`),
     /// not silent wrongness. Backed by the `regex` crate, not Ruby's own
     /// Onigmo engine -- no backreferences (`\1` inside the PATTERN itself,
     /// as opposed to a `gsub`/`sub` REPLACEMENT string, where they *are*
@@ -2708,7 +2703,7 @@ pub enum HirNode {
         block: Option<NodeId>,
     },
     /// A `super` call. Resolved at RUNTIME against the receiver's live
-    /// linearized ancestry (`codegen::call::super_calls` picks the dispatch
+    /// linearized ancestry (`clif/call.rs`'s `lower_super` picks the dispatch
     /// channel).
     ///
     /// `zsuper` distinguishes real Ruby's two zero-written-argument shapes,
@@ -2749,8 +2744,8 @@ pub enum HirNode {
     /// `-> (x) { ... }` / `lambda { ... }` -- a STANDALONE expression
     /// producing a real `RubyValue::Proc`, unlike `Block` (only ever reached
     /// via the `Call` that invokes it, see that variant's docs). Reuses
-    /// `codegen::call::emit_proc_value`'s whole construction machinery
-    /// (captures, redo-wrapper loop) via a shared helper, differing in
+    /// the proc construction machinery (`clif/blocks.rs`'s `build_lambda`
+    /// beside `build_proc`) via a shared helper, differing in
     /// exactly two ways real Ruby's own lambda semantics require: STRICT
     /// arity checking (raises `ArgumentError`, not a lenient nil-fill/drop),
     /// and `return`/`break` inside the body terminate the LAMBDA CALL
@@ -2771,8 +2766,8 @@ pub enum HirNode {
     },
     /// `class Name < Super ... end` / `module Name ... end` -- `is_module`
     /// distinguishes the two: a module has no `superclass` (always `None`)
-    /// and is never instantiated (no `Name.new`, no generated Rust struct --
-    /// see `codegen::mod::emit_class`'s docs). Both share this one node
+    /// and is never instantiated (no `Name.new`, no instance
+    /// layout). Both share this one node
     /// since everything about their BODY (methods, nested `include`/
     /// `extend`/`prepend`, class variables) lowers identically; only
     /// `analyze::register_class`'s registration differs.
@@ -2899,10 +2894,9 @@ pub enum HirNode {
     /// `while cond ... end` / `until cond ... end` (+ modifier forms
     /// `stmt while cond` / `stmt until cond`) -- `until` folds in here as
     /// `negate: true`, exactly like `unless` folds into `If` by swapping
-    /// branches (see `parse/mod.rs`). Always compiles to a labeled Rust
-    /// `loop { }`, never a bare Rust `while` -- even for plain `while` --
-    /// so `break value` has an expression-position target to jump to
-    /// (Rust's own `while` is never an expression; see `codegen::loops`).
+    /// branches (see `parse/mod.rs`). Always lowers to explicit loop
+    /// blocks whose exit lands in expression position, so `break value`
+    /// has a target to jump to (see `clif/stmt.rs`'s `loop_value`).
     /// The do-while form (`begin ... end while cond`, body always runs at
     /// least once) is a distinct prism shape wrapping a `BeginNode`, which
     /// isn't lowered -- it already falls through to the generic
@@ -2946,8 +2940,8 @@ pub enum HirNode {
         body: Vec<NodeId>,
     },
     /// `break` / `break value` -- unwinds to the end of the nearest *native*
-    /// loop construct (`While`/`Loop`/`For`, or the pre-existing `.times`
-    /// block-inlining special case in `codegen::call`), which `ruby-prism`
+    /// loop construct (`While`/`Loop`/`For`, or the `.times` inlining in
+    /// `clif/iter.rs`'s `lower_counted`), which `ruby-prism`
     /// itself already guarantees is the only place these can appear (a bare
     /// `break`/`next`/`redo` outside any loop/block is a parse error, not
     /// something lowering has to re-validate). Compiles to a literal Rust
@@ -2966,7 +2960,7 @@ pub enum HirNode {
     /// `redo` -- re-runs the current iteration's body from the top WITHOUT
     /// re-testing the loop condition or advancing (the one construct with no
     /// direct native Rust equivalent -- `continue` always re-tests/advances).
-    /// See `codegen::loops`' inner-label trick this needs.
+    /// See `clif/stmt.rs`'s `Redo` arm: a jump back to the body block.
     Redo,
     /// `a, b = 1, 2` / `a, *b, c = arr` / `(a, b), c = ...` / `@x, $y, Z =
     /// ...` -- see `MultiTargetGroup`/`MultiTarget`'s docs for the full
@@ -3029,14 +3023,14 @@ pub enum HirNode {
     /// cleanly.
     ///
     /// Compiles to an invocation of the method's implicit `__blk` parameter
-    /// (see `codegen::params`), raising real Ruby's `LocalJumpError` message
+    /// (see `clif/expr.rs`'s `Yield` arm), raising real Ruby's `LocalJumpError` message
     /// when the method was called without a block.
     ///
     /// `Vec<ArrayElem>` is the shape `Call`'s positional arguments use, so
     /// `yield(*a)` needs no machinery of its own. Lowering folds a trailing
     /// `yield(k: 1)`/`yield(**h)` into one `HashLit`/merge element, which
-    /// `codegen::params::emit_proc_param_bindings` binds a block's keyword
-    /// params from.
+    /// the block-parameter binding (`clif/blocks.rs`) binds a block's
+    /// keyword params from.
     Yield(Vec<ArrayElem>),
     /// `block_given?` -- a zero-arg, no-receiver call-shape recognized at
     /// lowering time (mirrors `loop`/`define_method`'s desugars), not a
@@ -3045,14 +3039,8 @@ pub enum HirNode {
     BlockGiven,
     /// A bare `self` used as a VALUE (an explicit receiver, `self.foo`, or
     /// standalone, `puts self`) -- a real `ruby-prism` `SelfNode`, recognized
-    /// generically (not a call-shape desugar). Only meaningful inside an
-    /// ordinary instance method body (`cx.current_class` is `Some`, see
-    /// `codegen::expr::infer`'s special case); a class method/module
-    /// function has no backing instance to be (zeo has no first-class
-    /// `Class`/`Module` runtime value), so
-    /// `codegen::expr::emit_expr`'s `SelfRef` arm rejects that case with a
-    /// clear error instead of emitting a reference to a Rust `self` that
-    /// doesn't exist in that generated function's signature.
+    /// generically (not a call-shape desugar). Lowered to the current
+    /// frame's own `self` (see `clif/expr.rs`'s `SelfRef` arm).
     SelfRef,
     /// `raise`/`fail` (exact synonyms) -- a zero/one/two-arg call-shape
     /// recognized at lowering time, same as `BlockGiven` above (real Ruby:
@@ -3071,7 +3059,7 @@ pub enum HirNode {
     /// `CaseWhen`, since a pattern's own class-check/destructure/guard logic
     /// can't be expressed as Rust structural patterns generically).
     /// `else_body: None` with no arm matching raises `NoMatchingPatternError`
-    /// (see `codegen::patterns`'s docs) -- a real, distinct case from
+    /// (see `clif/patterns.rs`'s `lower_case_in`) -- a real, distinct case from
     /// `Some(vec![])` (an explicit, empty `else` clause, which just yields
     /// `nil`).
     CaseIn {
@@ -3105,9 +3093,9 @@ pub enum HirNode {
     /// modifier form, including inside an endless method) -- see
     /// `parse/mod.rs`'s recognizers, all of which produce this same shape.
     /// `rescues` are tested top to bottom, first matching clause wins; an
-    /// unmatched raise propagates (a `?` at this node's own codegen site,
+    /// unmatched raise propagates (the node's own site re-signals,
     /// mirroring every other fallible sub-expression -- see
-    /// `codegen::exceptions::emit_begin`). `else_body: Some(_)` runs (and its
+    /// `clif/control.rs`'s `lower_begin`). `else_body: Some(_)` runs (and its
     /// value REPLACES `body`'s own) only when `body` completed with no
     /// exception, matching real Ruby. `ensure_body`, when present, always
     /// runs exactly once after everything else has settled -- including a
@@ -3122,9 +3110,9 @@ pub enum HirNode {
     /// the top (an `ensure` that already ran does NOT re-run). Only valid
     /// lexically inside a `rescue` clause in real Ruby (a real, if rare,
     /// `SyntaxError` otherwise) -- zeo doesn't re-validate that
-    /// positional restriction at lowering time; see
-    /// `codegen::exceptions::emit_retry`'s docs for what happens to a
-    /// mis-scoped one instead (an uncaught `Signal`, not silent wrongness).
+    /// positional restriction at lowering time; `clif/stmt.rs`'s `Retry`
+    /// arm refuses a mis-scoped one with a clear error, not silent
+    /// wrongness.
     Retry,
     /// `$foo` read/write -- a flat, genuinely process-wide store (the
     /// `LazyLock<Mutex<_>>` pattern, same as `cvars`/the Symbol interner),
@@ -3138,11 +3126,11 @@ pub enum HirNode {
     /// (`ConstantPathNode`). The class name must already be a registered
     /// class/module (same rule `constant_name`'s other callers enforce); the
     /// owner search starts there (walking ITS ancestors, the same scheme as
-    /// `ClassVarRead`'s ownership resolution -- see
-    /// `codegen::expr::const_owner_id_opt`), unlike a bare constant (lowered as
-    /// an ordinary `ClassRef`, which falls back to the LEXICALLY-enclosing
-    /// class when used as a plain value -- see `codegen::expr`'s `ClassRef`
-    /// docs). Unlike an ivar/cvar/global's "never assigned" -> `nil`
+    /// `ClassVarRead`'s ownership resolution), unlike a bare constant
+    /// (lowered as an ordinary `ClassRef`, which falls back to the
+    /// LEXICALLY-enclosing class when used as a plain value -- see
+    /// `clif/expr.rs`'s `ClassRef` arm).
+    /// Unlike an ivar/cvar/global's "never assigned" -> `nil`
     /// convention, an unset constant raises a real `NameError` -- matches
     /// actual Ruby.
     QualifiedConstRead(String, String),
@@ -3156,7 +3144,7 @@ pub enum HirNode {
     /// never-assigned constant quietly defines it, while `CONST += v` and
     /// `CONST &&= v` on the same constant still raise.
     ///
-    /// `codegen::expr::emit_defined`'s `Defined` node cannot back this. It
+    /// The `Defined` node (`clif/expr.rs`'s `lower_defined`) cannot back this. It
     /// classifies syntax -- whether something was written as a constant read
     /// -- not whether the constant was ever assigned. So this needs its own
     /// `zeo_rt::const_get`-backed codegen.

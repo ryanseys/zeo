@@ -1244,7 +1244,7 @@ fn name_error_initialize(
 
 /// `KeyError.new(msg = nil, receiver:, key:)` -- the default message plus the
 /// `receiver:`/`key:` keywords the class accepts, which arrive as one trailing
-/// options Hash (the G2 convention). Registered over the shared `initialize` for
+/// options Hash (the kwargs convention). Registered over the shared `initialize` for
 /// `KeyError` and its subclasses.
 fn key_error_initialize(
     recv: &RObj,

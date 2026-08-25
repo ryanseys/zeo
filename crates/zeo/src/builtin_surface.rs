@@ -52,14 +52,6 @@ pub fn provides_class_method(id: ClassId, name: &str) -> bool {
     surface_for(id).is_some_and(|s| s.class_methods.contains(&name))
 }
 
-/// Whether the migrated builtin `id` provides an INSTANCE method named `name`
-/// directly (not via inheritance) -- what tells the compiler that a name
-/// Kernel also defines is SHADOWED further down a receiver's chain, e.g.
-/// `BasicSocket#send` over `Kernel#send`.
-pub fn provides_instance_method(id: ClassId, name: &str) -> bool {
-    surface_for(id).is_some_and(|s| s.instance_methods.contains(&name))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -519,7 +519,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
     // is `define_in_default_definee`'s rule exactly, and NOT `self` (the
     // CALL form `alias_method(:new, :old)` is the one that dispatches to its
     // receiver). Desugared to the internal `__zeo_alias_keyword` marker call
-    // that `codegen::call` emits as `zeo_rt::alias_in_default_definee`.
+    // that `clif::expr` emits as `zeo_rt::alias_in_default_definee`.
     if let Some(alias) = node.as_alias_method_node() {
         // An interpolated name lowers as the runtime EXPRESSION it is --
         // the marker call reads both operands at runtime either way.
@@ -643,8 +643,8 @@ fn lower_call_node(
     // `Fiber`/`Thread` must keep their BLOCK (the body), which
     // `HirNode::New` has no slot for, so all four fall through to the
     // generic `Call` lowering below (receiver becomes an ordinary
-    // `ClassRef(name)`) and are intercepted by
-    // `codegen::call::emit_call`'s builtin-constructor dispatch.
+    // `ClassRef(name)`) and are intercepted by the emitter's
+    // builtin-constructor dispatch.
     if name == "new"
             && let Some(recv) = call.receiver()
             // `box::Widget.new(...)`: the ordinary static `New`, resolved

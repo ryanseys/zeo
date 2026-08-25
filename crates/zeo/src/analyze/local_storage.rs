@@ -1,7 +1,7 @@
 //! `Locals` + `collect_locals`: the ordered local-name collection every
 //! hoisting prelude and capture scan is built from. Pure `Compiler`+HIR
 //! analysis -- the emission side (storage classes, declaration/read/write
-//! shapes) stays in `codegen::hoisting`.
+//! shapes) stays in `clif::ctx`.
 
 use crate::analyze::fastpath::is_spliced_block_body;
 use crate::compiler::Compiler;

@@ -520,8 +520,8 @@ pub(crate) fn try_lower(
     // `break`/`next` (with an optional single value) and `redo` -- `ruby-prism`
     // itself already guarantees these only ever appear inside a loop or block
     // (a bare one anywhere else is a parse error caught before lowering even
-    // starts), so there's no context to re-validate here; `codegen::loops`
-    // is what actually resolves which native loop they target.
+    // starts), so there's no context to re-validate here; the emitter's
+    // loop lowering (`clif::stmt`) resolves which loop they target.
     if let Some(brk) = node.as_break_node() {
         let value = lower_single_optional_argument(result, hir, brk.arguments(), "break")?;
         return Ok(Some(hir.push(HirNode::Break(value))));

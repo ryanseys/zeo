@@ -70,7 +70,7 @@ ruby_class! {
         deconstruct_keys(recv, arg)
     }
     // `d.with(x: 1)` -- a copy with the named members replaced. Changes arrive
-    // as a trailing keyword hash (the G2 convention).
+    // as a trailing keyword hash (the kwargs convention).
     def "with"(recv, *args, &_block) {
         let cid = recv.class_id();
         let meta = meta_of(cid).expect("data instance has meta");

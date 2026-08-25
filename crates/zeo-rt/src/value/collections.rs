@@ -2,7 +2,7 @@
 //! `Arc<parking_lot::Mutex<_>>`-backed collection types, mirroring the same
 //! shared-mutable-identity model `ruby_class!`'s generated structs already
 //! use (`Mutex` ivars) and the `Arc<ConcreteStruct>` wrapping `New`
-//! constructed objects settled on (see `codegen::call::emit_new`'s docs):
+//! constructed objects settled on:
 //! assigning a collection to another local aliases the same underlying
 //! storage rather than deep-copying it, matching Ruby's own reference
 //! semantics for these types. `Arc`/`Mutex` (not `Rc`/`RefCell`) so every
@@ -1160,10 +1160,10 @@ pub fn array_get(arr: &RArray, index: i64) -> RubyValue {
 /// Ruby's `Array#[]=`: an index past the current end pads with `nil` up to
 /// it (`a = []; a[3] = :x` gives `[nil, nil, nil, :x]`); a negative index
 /// that's still out of range raises a real `IndexError` -- `None` here,
-/// which `codegen::call`'s `[]=` dispatch (the only caller) turns into a
+/// which `builtins::array`'s `[]=` row turns into a
 /// proper `Signal::Raise(IndexError.new(...))`. The actual message/exception
-/// CONSTRUCTION happens in codegen, not here, since only codegen has the class
-/// registry needed to build an `IndexError` value.
+/// CONSTRUCTION happens at the caller, which carries CRuby's exact
+/// message text.
 #[inline]
 pub fn array_set(arr: &RArray, index: i64, value: RubyValue) -> Option<RubyValue> {
     let mut arr = arr.lock();
@@ -1710,8 +1710,8 @@ pub fn string_len(s: &RStr) -> i64 {
 /// dropped when `has_splat` is `false` (nothing to catch them), and the
 /// splat captures whatever's left over between the prefix and suffix -- an
 /// empty `Vec`, not `Nil`, when there's nothing there. Verified against real
-/// `ruby`'s exact leniency behavior for every case codegen's `emit_for`/
-/// `emit_multi_write_lets` can produce (see `codegen::loops`'s tests).
+/// `ruby`'s exact leniency behavior for every case the emitter's `for`/
+/// multi-assign lowering (`clif::stmt`) can produce.
 pub fn multi_assign(
     elems: &[RubyValue],
     n_before: usize,
@@ -1797,7 +1797,7 @@ mod multi_assign_tests {
     }
 
     /// Every case here is oracle-verified against real `ruby`'s exact
-    /// destructuring leniency (see `codegen::loops`'s module docs).
+    /// destructuring leniency.
     #[test]
     fn matches_real_ruby_leniency() {
         // (input, n_before, has_splat, n_after) -> (before, splat, after)

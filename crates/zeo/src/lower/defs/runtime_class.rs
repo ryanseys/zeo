@@ -999,7 +999,7 @@ pub(super) fn transform_runtime_class_body(
         };
         let node = match rewrite {
             Rewrite::Nested(name, superclass, inner, is_module) => {
-                runtime_nested_class(hir, name, superclass, inner, is_module, true)?
+                runtime_nested_class(hir, name, superclass, inner, is_module, NestedTarget::OnSelf)?
             }
             Rewrite::Cond(cond, then_body, else_body) => {
                 let then_body = transform_runtime_class_body(hir, then_body)?;
@@ -1230,6 +1230,15 @@ fn visibility_name(v: Visibility) -> &'static str {
     }
 }
 
+/// Where a nested class's const-assignment lands: on `self` (a runtime class
+/// body, where `self` IS the class under construction) or on the enclosing
+/// lexical scope (a `class << recv` body).
+#[derive(PartialEq)]
+pub(super) enum NestedTarget {
+    OnSelf,
+    Lexical,
+}
+
 /// A nested `class C < S; body; end` (or `module`) inside a runtime class body,
 /// rebuilt as a runtime `C = Class.new(S) { body }` / `C = Module.new { body }`
 /// const-assignment -- an ordinary expression that lives in block position. The
@@ -1240,7 +1249,7 @@ pub(super) fn runtime_nested_class(
     superclass: Option<String>,
     body: Vec<NodeId>,
     is_module: bool,
-    on_self: bool,
+    target: NestedTarget,
 ) -> PResult<NodeId> {
     let inner = transform_runtime_class_body(hir, body)?;
     let block = hir.push(HirNode::Block {
@@ -1269,7 +1278,7 @@ pub(super) fn runtime_nested_class(
     // the runtime-class-body caller can say so: inside a `class << obj` body
     // the same nesting still defines the constant LEXICALLY, on the enclosing
     // module, because a singleton opens no cref of its own.
-    if on_self && path.scope().is_none() {
+    if target == NestedTarget::OnSelf && path.scope().is_none() {
         let scope = hir.push(HirNode::SelfRef);
         return Ok(hir.push(HirNode::DynConstWrite {
             scope,

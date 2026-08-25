@@ -51,9 +51,8 @@ pub use procs::{BlockFn, ProcEnv};
 /// `C` arm). `recv`/`argv` are borrowed; `blk` is MOVED in (null = no
 /// block; the callee consumes it); `out` receives the value on
 /// `STATUS_OK`, and `STATUS_SIGNAL` parks the `Signal` in the pending
-/// slot. `zeo-abi` mirrors this shape for the emitter once `ProgramDesc`
-/// lands (M0-7); the two agree by the `abi_layout` assertions, not by
-/// nominal identity.
+/// slot. `zeo-abi` mirrors this shape for the emitter (`ProgramDesc`);
+/// the two agree by the `abi_layout` assertions, not by nominal identity.
 pub type ValueFn = unsafe extern "C" fn(
     recv: *const crate::RubyValue,
     argv: *const crate::RubyValue,

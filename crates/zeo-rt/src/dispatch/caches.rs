@@ -431,9 +431,8 @@ fn vet_denies(vet: Vet, caller_class: u32) -> Option<MissingReason> {
 /// (see [`Vet`]) and the caller-dependent remainder is asked per hit.
 ///
 /// Same fill-once discipline as [`CallSite`], for the same reasons; the
-/// emitted site is a function-local `static`, which is what keeps a shared
-/// body's tokens identical across its group's members (a pooled index would
-/// differ per emission -- see `codegen::share`).
+/// emitter mints one `zeo_cm_sites` slot per site (`Fx::cm_site_ptr`),
+/// never shared between sites.
 pub struct DynCallerSite {
     hit: std::sync::OnceLock<(u32, Vet, Cached)>,
 }

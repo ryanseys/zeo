@@ -20,10 +20,10 @@
 //! fiber body's uncaught `Signal` (a Ruby exception, `break`, etc.)
 //! surfaces at the RESUMER as [`FiberResume::RubyError`] and re-raises
 //! there, with the fiber left dead; `resume` on a dead fiber and
-//! cross-thread `resume` are distinct `FiberError`s CONSTRUCTED BY CODEGEN
-//! (this crate can't build exception objects -- the same division of labor
-//! as `array_set`'s `IndexError` contract, see `codegen::call`'s fiber
-//! dispatch); `Fiber.yield` with no running fiber is the "can't yield from
+//! cross-thread `resume` are distinct `FiberError`s CONSTRUCTED BY THE
+//! CALLER (`builtins::fiber`'s rows map each [`FiberResume`] error variant
+//! to its CRuby-verbatim
+//! message); `Fiber.yield` with no running fiber is the "can't yield from
 //! root fiber" `FiberError`, signalled here by a `None`.
 //!
 //! Value-passing convention (CRuby `make_passing_arg`, `cont.c:1978`):

@@ -1,7 +1,7 @@
 //! The "currently handled exception" stack -- backs a bare `raise` (with no
 //! arguments) re-raising whatever exception the nearest enclosing `rescue`
 //! clause is handling, mirroring real Ruby's `$!`. Pushed/popped around a
-//! `rescue` clause's own body -- see `codegen::exceptions::emit_begin`'s
+//! `rescue` clause's own body -- see `clif::control::lower_begin`'s
 //! docs for exactly where. A plain `Vec` (not a single `Option`) so a
 //! `rescue` clause nested inside another `rescue` clause's own body
 //! correctly restores the OUTER exception once the inner one's handling
@@ -14,7 +14,7 @@
 //! An `ensure` running while an exception PROPAGATES is the second writer --
 //! ruby puts the in-flight exception in `$!` there too, which is what gives a
 //! raise inside an `ensure` its cause. [`PropagatingGuard`] is that push, held
-//! across the ensure body by `codegen::exceptions::emit_begin`.
+//! across the ensure body by `clif::control::lower_begin`.
 //!
 //! **Storage is `thread_local!`**: `$!`/rescue-nesting is per-EXECUTION-
 //! CONTEXT state, and every Ruby `Thread` is its own OS thread, so plain
@@ -54,8 +54,8 @@ pub fn pop_handling() {
 /// The innermost currently-executing `rescue` clause's exception, if any --
 /// what a bare `raise` (re-raise) re-raises. `None` when called outside any
 /// `rescue` clause (a bare top-level `raise`, matching real Ruby: it
-/// constructs a fresh `RuntimeError` instead -- see
-/// `codegen::expr::emit_raise`'s docs).
+/// constructs a fresh `RuntimeError` instead -- see the
+/// emitter's raise lowering in `clif::stmt`).
 pub fn current_exception() -> Option<RubyValue> {
     HANDLING.with(|h| h.borrow().last().cloned())
 }

@@ -188,7 +188,7 @@ fn build_read_string(
 }
 
 /// Whether a trailing keyword Hash carries `name: <truthy>`. Keywords reach
-/// a builtin as one trailing `RubyValue::Hash` (the G2 convention), so this
+/// a builtin as one trailing `RubyValue::Hash` (the kwargs convention), so this
 /// is the shared reader for the option keywords the File rows accept.
 /// An option keyword's raw value from a trailing Hash, `None` when absent --
 /// the distinction `kwarg_truthy` collapses, and which a keyword defaulting to

@@ -980,15 +980,14 @@ ruby_module! {
         )))
     }
 
-    // ---- the FOLDED intrinsics, as real rows.
+    // ---- the once-folded intrinsics, as real rows.
     //
-    // Each of these is compiled straight into the caller by
-    // `codegen::call::kernel`, which is why `Kernel#printf(...)` has always
-    // worked. Without a table row, though, `send(:printf, ...)` raised
+    // Every spelling reaches these rows: a direct `printf(...)`, a
+    // `Kernel.printf(...)` (`lower` drops the redundant receiver), and the
+    // reflective forms. Without a table row, `send(:printf, ...)` raised
     // NoMethodError, `method(:printf)` raised NameError and
     // `respond_to?(:printf, true)` answered false -- ruby answers all three.
-    // The row calls the very function the fold calls, so the two forms cannot
-    // diverge. `module_function`, which is how ruby has them: a PRIVATE
+    // `module_function`, which is how ruby has them: a PRIVATE
     // instance copy (`send(:printf, ...)`) and a PUBLIC singleton one
     // (`Kernel.printf(...)`).
     module_function def "printf" cfunc (_recv, *_args) { kernel_printf(__args) }
@@ -1092,8 +1091,8 @@ ruby_module! {
     }
 
     // The caller-scope intrinsics. Every direct or literal-`send` spelling
-    // folds into the caller at compile time (`lower`'s rewrite,
-    // `codegen::call::kernel`), so these rows exist for REFLECTION --
+    // folds into the caller at compile time (`lower`'s rewrite and the
+    // emitter's intrinsic lowering), so these rows exist for REFLECTION --
     // `respond_to?(:block_given?, true)`, `method(:binding)`, the private
     // NoMethodError for an explicit receiver -- and for the one spelling no
     // fold can serve: a `send` whose name is computed at runtime. A row
@@ -1255,9 +1254,8 @@ fn split_exception_kw(args: &[RubyValue]) -> (&[RubyValue], bool) {
 /// (`f.rb:2:in 'Kernel#Integer'`) where a specialized instruction like
 /// `opt_ltlt` names only the caller.
 ///
-/// Pushed HERE and not at the dispatch boundary because codegen's fast path
-/// calls this very function directly and never reaches that boundary
-/// (`codegen::call::kernel`'s `row_fn`). `synthetic_c_frame`'s exact-repeat
+/// Pushed HERE and not at the dispatch boundary so every route into these
+/// conversions names the frame. `synthetic_c_frame`'s exact-repeat
 /// dedupe keeps the DISPATCH route to one frame, not two.
 fn conversion_frame(label: &'static str) -> crate::frames::CFrameGuard {
     crate::frames::synthetic_c_frame(label)

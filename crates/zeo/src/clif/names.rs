@@ -1,5 +1,5 @@
 //! Symbol names for Cranelift-emitted objects. The method-name mangling
-//! core (crate-level `names.rs`) plugs in when methods lower (M0-11); the
+//! core (crate-level `names.rs`) plugs in when methods lower; the
 //! fixed program-level symbols live here.
 
 /// The compiled `<main>` body -- `ProgramDesc.toplevel` points at it.

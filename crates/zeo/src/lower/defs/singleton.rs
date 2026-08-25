@@ -260,7 +260,12 @@ fn desugar_singleton_items(
             Item::Const | Item::Passthrough => out.push(id),
             Item::Nested(name, superclass, body, is_module) => {
                 out.push(runtime_nested_class(
-                    hir, name, superclass, body, is_module, false,
+                    hir,
+                    name,
+                    superclass,
+                    body,
+                    is_module,
+                    NestedTarget::Lexical,
                 )?);
             }
             Item::Cond(cond, then_body, else_body) => {

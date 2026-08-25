@@ -736,9 +736,9 @@ pub fn yield_pair(p: &RProc, k: RubyValue, v: RubyValue) -> Result<RubyValue, Si
 /// the idiom that makes `Hash#each { |k, v| }` and `each_with_index` read
 /// naturally.
 ///
-/// The DECISION (which param shapes splat at all) is codegen's, made
+/// The DECISION (which param shapes splat at all) is the compiler's, made
 /// statically from the block's own `Params` -- see
-/// `codegen::params::emit_proc_param_bindings`. This function is only
+/// `clif::params::auto_splats`. This function is only
 /// reached once that decision says yes, so it just performs the coercion.
 /// A lambda never comes here (strict arity, no auto-splat).
 ///

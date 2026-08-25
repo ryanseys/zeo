@@ -218,7 +218,7 @@ fn stack_check_and_check_ints_answer_ok_on_a_quiet_thread() {
     assert_eq!(unsafe { zeo_rt_check_ints() }, STATUS_OK);
 }
 
-// -- M0-4: the Rust->C dispatch bridge --------------------------------------
+// -- The Rust->C dispatch bridge ---------------------------------------------
 
 unsafe extern "C" fn double_plus_args(
     recv: *const RubyValue,
@@ -295,7 +295,7 @@ fn the_block_moves_into_the_c_callee() {
     assert_eq!(strong_count(&watcher), 1, "the callee released the block");
 }
 
-// -- M0-5: CompiledObject, LAYOUTS, and slot ivars ---------------------------
+// -- CompiledObject, LAYOUTS, and slot ivars ---------------------------------
 
 use super::objects::*;
 
@@ -362,7 +362,7 @@ fn a_compiled_object_allocates_and_slots_roundtrip() {
 fn frozen_state_flows_through_the_object() {
     // The REFUSAL side (a frozen write raising FrozenError) constructs an
     // exception, which the registry-less unit environment cannot -- the
-    // M0 slice goldens cover it. Here: the flag itself and the clean check.
+    // goldens cover it. Here: the flag itself and the clean check.
     let cid = test_layout_class();
     let mut obj = MaybeUninit::<RubyValue>::uninit();
     unsafe { zeo_rt_object_alloc(cid, obj.as_mut_ptr()) };
@@ -395,7 +395,7 @@ fn dup_object_shares_handles_and_dup_starts_unfrozen() {
     assert_eq!(strong_count(&payload), 2);
 }
 
-// -- M0-6: cells, C-bodied procs, yield --------------------------------------
+// -- Cells, C-bodied procs, yield --------------------------------------------
 
 use super::procs::*;
 
@@ -576,8 +576,8 @@ fn yield_without_a_block_signals() {
 
 // The raise channels (`zeo_rt_raise_error`, `zeo_rt_wrong_arity`) are
 // untestable registry-less: the documented loud panic cannot unwind out of
-// an `extern "C"` fn (it aborts, per decision 13's boundary posture). They
-// are exercised end to end by the M0 slice goldens.
+// an `extern "C"` fn (it aborts; the loud panic is the boundary posture). They
+// are exercised end to end by the goldens.
 
 #[test]
 fn svar_scope_brackets_push_and_pop() {
@@ -607,7 +607,7 @@ fn synthetic_c_frames_dedupe_and_pop_what_they_pushed() {
     }
 }
 
-// -- M0-7 (b): literals and numeric slow paths -------------------------------
+// -- Literals and numeric slow paths -----------------------------------------
 
 use super::literals::*;
 use super::numeric::*;
@@ -711,7 +711,7 @@ fn integer_slow_paths_promote_and_compare() {
     assert!(unsafe { zeo_rt_int_cmp_slow(&a, &b) } > 0);
 }
 
-// -- M0-7: register_program + zeo_rt_main -----------------------------------
+// -- register_program + zeo_rt_main ------------------------------------------
 
 use zeo_abi::abi;
 
@@ -932,7 +932,7 @@ fn zeo_rt_main_reports_an_uncaught_raise_as_exit_1() {
     assert_eq!(code, 1);
 }
 
-// -- M1-1: zeo_rt_bind_params ------------------------------------------------
+// -- zeo_rt_bind_params ------------------------------------------------------
 
 fn bind_desc(nreq: u32, nopt: u32, npost: u32, rest: u8, kwrest: u8) -> abi::ParamDescC {
     abi::ParamDescC {

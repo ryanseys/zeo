@@ -16,8 +16,8 @@ pub use crate::builtins::numeric::{
     num_to_f64_unchecked,
 };
 
-/// Native `f64` arithmetic/comparison -- see `codegen::call`'s
-/// `FLOAT_BINARY_OPS`/mixed-`Int`/`Float`-promotion table. No
+/// Native `f64` arithmetic/comparison -- see `clif::expr`'s
+/// float/mixed-`Int`/`Float` promotion lowering. No
 /// overflow/`Bignum` concerns (`f64` saturates to `inf`, matching real
 /// Ruby's own `Float` behavior exactly, unlike `Integer`'s
 /// promote-on-overflow) -- these are plain, unchecked IEEE 754 operations.
@@ -186,7 +186,7 @@ pub fn float_ge(a: f64, b: f64) -> bool {
 /// Mirrors `Float#<=>`: -1/0/1, or `nil` for a `NaN` comparison (real Ruby's
 /// actual behavior -- `Float::NAN <=> 1.0` is `nil`, not an arbitrary
 /// ordering). Returns `Option<i64>` (unlike `int_cmp`'s infallible `i64`)
-/// for exactly this reason; `codegen::call` maps `None` to `RubyValue::Nil`.
+/// for exactly this reason; `zeo_rt_float_cmp` maps `None` to `Nil`.
 #[inline]
 pub fn float_cmp(a: f64, b: f64) -> Option<i64> {
     a.partial_cmp(&b).map(|o| match o {

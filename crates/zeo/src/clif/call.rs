@@ -585,8 +585,7 @@ pub(crate) fn kw_send(
 /// whether the CALLING method's own class is ancestor-related to the target's
 /// owner, so an explicit-receiver site has to name itself; `private` ignores
 /// it. Outside any class body `self` is `main`, an ordinary `Object`, and
-/// `Object` is what the check compares against there -- the same rule
-/// `codegen::call::visibility::caller_class` spells for the rustc backend.
+/// `Object` is what the check compares against there.
 ///
 /// `bypass` is ruby's `VM_CALL_FCALL`: the site runs no check at all. A
 /// literal `self` receiver never reaches here (it takes the implicit entry --
@@ -618,7 +617,7 @@ pub(crate) fn caller_class(fx: &mut Fx, bypass: bool) -> cranelift_codegen::ir::
     // method, an `instance_eval` block) has no lexical class to compare a
     // `protected` target against -- the enclosing one is `Object`, which is
     // no kind of the class the body will belong to, and the call was
-    // refused. Ask `self` instead, per call (rustc's `Caller::Runtime`).
+    // refused. Ask `self` instead, per call.
     if fx.self_is_dynamic {
         let slf = fx.self_ptr.expect("self_ptr is set in the prologue");
         return fx
@@ -853,7 +852,7 @@ pub(crate) fn build_zsuper_args(
     Ok((out, kw_ptr, unmark))
 }
 
-/// `super` -- rustc's `emit_super`, the instance-method channels only
+/// `super` -- the instance-method channels only
 /// (class-method/singleton-chain `super` and `super` inside a block still
 /// refuse). One runtime mechanism: `send_super_from`'s per-position MRO
 /// walk resumes AFTER the class the `def` was WRITTEN in
@@ -861,8 +860,8 @@ pub(crate) fn build_zsuper_args(
 /// sits in the receiver's ancestry); a value-builtin subclass whose walk
 /// finds no user definition above bridges into the native root instead
 /// (`value_super`). Bare `super` forwards the current method's own params
-/// by NAME (splat rest, keywords as one marked hash -- the G2
-/// convention); the current block forwards unless the site writes one.
+/// by NAME (splat rest, keywords as one marked hash); the current
+/// block forwards unless the site writes one.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn lower_super(
     fx: &mut Fx,

@@ -21,8 +21,8 @@ use std::path::PathBuf;
 /// cargo build with the archive written first, so "archive older than the
 /// binary" is true of every fresh build -- and a bin-only rebuild leaves an
 /// older archive that is still correct (the lib didn't change). Cargo's own
-/// dependency tracking is the freshness guarantee in the dev tree; the
-/// installed payload gets a content fingerprint at G12.
+/// dependency tracking is the freshness guarantee in the dev tree; an
+/// installed payload's freshness is the install tooling's job.
 pub fn runtime_archive() -> Result<PathBuf, String> {
     let exe = std::env::current_exe()
         .map_err(|e| format!("cannot locate the running zeo binary: {e}"))?;

@@ -157,10 +157,9 @@ pub fn literal_string_text(hir: &Hir, id: NodeId) -> Option<String> {
 /// LITERAL top level of `Program`'s (or a class body's) own statement list
 /// for `ClassDef`/`DefMethod` -- an `Eval`'d body's top-level statements are
 /// nested inside its `Eval(body)` node, which that walk never unwraps. A
-/// top-level `class`/`def` inside an eval'd literal would otherwise flow
-/// straight to `codegen::expr::emit_expr`'s "unexpected top-level-only node
-/// in expression position" panic -- this rejects that case with a clean
-/// compile error instead of letting zeo itself panic (zeo limitation: the
+/// top-level `class`/`def` inside an eval'd literal would otherwise
+/// reach emission with no registration behind it -- this rejects that
+/// case with a clean compile error instead (zeo limitation: the
 /// same gap already exists today for any non-eval code that nests a
 /// `class`/`def` inside e.g. an `if`, so this isn't a new hole, just a new
 /// way to trigger an old one).

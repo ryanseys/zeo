@@ -4,21 +4,16 @@
 #
 # Everything here is stdlib only, and everything here runs under BOTH `ruby`
 # from PATH and a zeo-compiled binary. Ruby is the mechanism: a tool that only
-# runs when zeo is correct cannot diagnose zeo when it is not, and `bless`,
-# `bless` and `gem-probe` are exactly what you reach for when something
-# is broken. Compiling the tools with zeo is a dogfooding signal, never the
-# way they run.
+# runs when zeo is correct cannot diagnose zeo when it is not, and `bless`
+# and `gem-probe` are exactly what you reach for when something is broken.
+# Compiling the tools with zeo is a dogfooding signal, never the way they run.
 #
-# Three rules keep both engines working. Each one is a measured zeo bug, and
-# each has a gap file, so this list shrinks as they close:
+# One rule keeps both engines working (this list once had three; the
+# autoload and builtin-alias bugs closed and became passing goldens):
 #
 #   - Never gate the body on `__FILE__ == $PROGRAM_NAME`. Under a compiled
 #     binary `__FILE__` is the source path and `$0` is the executable, so the
 #     guard reads false and the tool does nothing.
-#   - Never `autoload` (`tests/gaps/autoload_is_lazy.rb` -- it runs at the
-#     declaration, not at the first read).
-#   - Never wrap a builtin by aliasing it
-#     (`tests/gaps/an_alias_of_a_builtin_keeps_the_old_body.rb`).
 
 require "zeo_dev/cli"
 require "zeo_dev/exec"

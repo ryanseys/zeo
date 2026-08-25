@@ -236,8 +236,7 @@ pub struct ClassInfo {
     /// body does not itself define. See [`crate::hir::HirNode::ClassMethodVisibility`].
     pub class_visibility_overrides: Vec<(String, crate::hir::Visibility)>,
     /// `true` for `module Name ... end`: never instantiated (no `Name.new`,
-    /// no generated Rust struct/`impl RubyObject`/`ClassRegistry` entry --
-    /// see `codegen::mod::emit_class`'s docs), used only as a source for
+    /// no instance emission at all), used only as a source for
     /// materialization into whatever includes/prepends/extends it.
     pub is_module: bool,
     /// The full flattened ivar set (own methods' ivars ∪ every
@@ -275,8 +274,8 @@ pub struct ClassInfo {
     /// `own_method_at` for `own_class_methods` -- instance and class methods
     /// are separate namespaces, hence the separate index.
     pub own_class_method_at: FMap<String, usize>,
-    /// The full MRO-resolved set `codegen::mod::emit_class` actually emits
-    /// one Rust method per entry for -- own ∪ every name reachable via
+    /// The full MRO-resolved set `clif::classes` registers one method
+    /// row per entry for -- own ∪ every name reachable via
     /// `ancestors` (superclass, `include`, `prepend`). Always populated by
     /// `analyze::mro::materialize`, even for a class with no mixins at all
     /// (closes a latent gap: the compiler never generated a Rust method for a
@@ -313,7 +312,7 @@ pub struct ClassInfo {
     pub cvar_owners: FMap<String, ClassId>,
     /// Bare-constant storage ownership, resolved once at analyze time --
     /// same scheme as `cvar_owners` (nearest ancestor, including self, that
-    /// ever claimed the name first), used by `codegen::expr::const_owner_id_opt`.
+    /// ever claimed the name first), used by `clif::expr`'s constant lowering.
     /// Only bare (`scope: None`) constant writes register ownership this way
     /// -- an explicit `Foo::NAME` write always targets `Foo` directly,
     /// regardless of lexical position (see `HirNode::ConstWrite`'s docs).
@@ -339,12 +338,10 @@ pub struct ClassInfo {
     /// `analyze::mro::materialize` runs.
     pub ancestors: Vec<ClassId>,
     /// `true` for one of the reserved `BUILTIN_CLASSES` placeholders
-    /// (`Integer`/`Array`/etc.) -- never gets a generated Rust
-    /// struct/`impl RubyObject`/`ruby_class!` invocation at all (there's no
-    /// concrete struct to generate: `RubyValue::Int`/`Array`/etc. ARE the
-    /// runtime representation already -- see `codegen::mod`'s filters), only
-    /// a `ClassRegistry` entry (`codegen::mod`'s `builtin_registrations`) so
-    /// `is_a?`/`respond_to?` resolve correctly against it. `false` for
+    /// (`Integer`/`Array`/etc.) -- gets no emitted class body of its own
+    /// (`RubyValue::Int`/`Array`/etc. ARE the runtime representation
+    /// already), only a registration (`clif::classes`' `register_builtin`
+    /// rows) so `is_a?`/`respond_to?` resolve correctly against it. `false` for
     /// `Object` (index 0, handled by its own pre-existing `idx != 0` checks)
     /// and for every ordinary user-defined class/module.
     pub is_builtin: bool,
@@ -544,7 +541,7 @@ pub struct Scope {
     /// Which class/module's HIR body this Scope's `params`/`body` actually
     /// came from -- equal to `class` for an ordinary own-body method, but
     /// set to the true source ancestor for a materialized (inherited or
-    /// mixed-in) method. `super` resolution (`codegen::call::emit_super`)
+    /// mixed-in) method. `super` resolution (`clif::call::lower_super`)
     /// searches `class`'s `ancestors` starting AFTER this position, not
     /// after `class` itself -- see `analyze::mro`'s docs for why these two
     /// need to be distinct once mixins/plain inheritance-without-override
@@ -578,12 +575,12 @@ pub struct Scope {
     /// Whether this method's own body (NOT a nested block's) uses a bare
     /// `yield`/`block_given?` -- computed once by `analyze::register_class`'s
     /// `scan_bare_block_use`. Together with `params.block.is_some()`, this
-    /// decides whether the method gets an implicit trailing `__blk` Rust
-    /// parameter (see `codegen::params`).
+    /// decides whether the method's body signature carries the trailing
+    /// `blk` slot (see `clif::params::body_sig`).
     pub uses_bare_block: bool,
     /// As of the `def`'s own position in its class body -- see
-    /// `hir::Visibility`'s docs. Enforced at `codegen::call::dispatch`'s
-    /// Path 1 site and `zeo_rt::send`'s Path 2 dispatch.
+    /// `hir::Visibility`'s docs. Enforced by the caller class each call
+    /// site passes (`clif::call::caller_class`) into `zeo_rt`'s dispatch.
     pub visibility: Visibility,
     /// Whether this scope IS one of the pristine `BUILTIN_EXCEPTIONS_RB` method
     /// bodies (or a materialized copy of one). The native exception hierarchy is
@@ -627,7 +624,7 @@ pub struct Scope {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct AccessorShape {
     /// WITHOUT its `@` -- exactly the `ClassInfo::ivars` spelling, which is
-    /// what `codegen::ident::safe_ident` turns into the struct's field.
+    /// the key the emitter's ivar-slot lookup uses.
     pub ivar: String,
     pub kind: AccessorKind,
     /// Synthesized by `attr_reader`/`attr_writer`/`attr_accessor`/`attr`
@@ -687,7 +684,7 @@ pub struct Compiler {
     /// appears in the file, re-running each reopen. `ClassInfo`'s flat
     /// `class_body_stmts` keeps the union (the cvar/const collectors and
     /// `mro` read it); codegen executes per SITE: a marker reachable from
-    /// `main_statements` emits inline in document order (`codegen::stmt`'s
+    /// `main_statements` emits inline in document order (`clif::stmt::lower_stmt`'s
     /// `ClassDef` arm), the rest (prelude, `None`) splice at `run_main`'s
     /// head exactly as before. A NESTED `ClassDef` appears as a marker in
     /// its parent's site list, so inner bodies run mid-parent-body.
@@ -863,7 +860,7 @@ pub struct Compiler {
     /// compile-time tables carry for it have to be retractable -- which costs
     /// the name its static call sites. A program that never freezes anything
     /// cannot reach that shape, so it pays neither the check nor the
-    /// de-optimization. See `codegen::emit_frozen_reopen_guard`.
+    /// de-optimization. See `clif::params::emit_reopen_guard`.
     pub program_freezes: bool,
     /// `class_in_scope`'s lazily-drained (box, lexical_parent) -> name -> id
     /// index, replacing its linear whole-`classes` scan (the profiled
@@ -886,7 +883,7 @@ pub struct Compiler {
     /// Per-class set of statement-level bare `NAME = ...` names, frozen with
     /// the identity caches above so `mro::directly_defines_const` -- probed
     /// once per (lexical scope, name) during constant-ownership resolution
-    /// and per ancestor by `codegen::constfold` -- is a set lookup instead of
+    /// and per ancestor by `analyze::constfold` -- is a set lookup instead of
     /// a rescan of the class body.
     pub(crate) direct_const_defs: Option<Vec<FSet<String>>>,
     /// Where each node sits in the program's EXECUTION order, for the nodes
@@ -2030,8 +2027,8 @@ impl Compiler {
 
     /// `scope`'s [`AccessorShape`] when reaching the field DIRECTLY, in place
     /// of calling it, would be indistinguishable -- the shared precondition of
-    /// the dynamic entry (`codegen::params::emit_accessor_trampoline`) and the
-    /// static call site (`codegen::call`'s Path 1).
+    /// the dynamic entry (`clif::params::define_accessor`) and the
+    /// static call site (`clif::expr::inline_accessor`).
     ///
     /// `owner` is the class whose generated struct will be indexed, which is
     /// not always `scope.class`: a Path-1 site resolves the METHOD through the
@@ -2216,7 +2213,7 @@ impl Compiler {
 
     /// Whether the program defines ANY `class P < Proc`. A `RubyValue::Proc`
     /// then no longer implies the class `Proc`, so `.class` cannot be folded
-    /// for a Proc-typed receiver -- see `codegen::call`'s `.class` arm.
+    /// for a Proc-typed receiver.
     pub fn has_proc_subclass(&self) -> bool {
         (0..self.classes.len() as u32).any(|i| self.is_proc_subclass(ClassId(i)))
     }
@@ -2259,8 +2256,8 @@ impl Compiler {
     /// Deliberately NOT a `value_payload_root`: a `ValueSubclass` wrapper would
     /// produce an object with a module inside it, which is not a module -- it
     /// would fail `include`, `Module#===`, constant lookup and `ancestors`. The
-    /// two lists must stay disjoint, or `codegen::call::new` and
-    /// `super_calls` emit the wrong constructor.
+    /// two lists must stay disjoint, or the `.new` and `super`
+    /// constructor lowerings emit the wrong constructor.
     ///
     /// Rails' `ActiveSupport::Deprecation::DeprecatedConstantProxy` is the
     /// shape, and 22 of the corpus's `Module` rows reach the ledger through
@@ -2347,7 +2344,7 @@ impl Compiler {
     /// since `analyze::mro::materialize` already resolved every reachable
     /// name (own, inherited, or mixed-in) onto the class itself. Returns
     /// the ALREADY-RESOLVED `(class, scope)` pair; `super` resolution
-    /// (`codegen::call::emit_super`) is the one place that still
+    /// (`clif::call::lower_super`) is the one place that still
     /// needs to walk `ancestors` explicitly, since it must search PAST
     /// wherever the currently-executing method was actually defined, not
     /// just find the winner from scratch.

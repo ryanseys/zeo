@@ -1,6 +1,6 @@
 //! The single table of runtime symbols emitted code imports, with their
 //! C signatures -- what `emit` declares imports from, and what the
-//! `capi_surface` test (M0-16) asserts against `zeo-rt`'s exports. A
+//! `capi_surface` test asserts against `zeo-rt`'s exports. A
 //! symbol used by any lowering MUST come from here; a name the runtime
 //! does not export fails the link, and this table is where that name is
 //! grepped for.

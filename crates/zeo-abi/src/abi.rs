@@ -93,7 +93,7 @@ pub enum SignalKind {
 /// never assumed zero-valid). All align 8. Asserted by `zeo-rt`'s
 /// `abi_layout` test. The three method-cache sites grew 8 bytes when their
 /// cached entry widened from a bare `ValueMethodFn` to `ValueImpl` (the
-/// Rust-or-C two-word implementation, M0-4).
+/// Rust-or-C two-word implementation).
 pub const CALLSITE_SIZE: usize = 56;
 pub const DYNCALLER_SITE_SIZE: usize = 56;
 pub const CLASSMETHOD_SITE_SIZE: usize = 48;
@@ -554,7 +554,7 @@ pub struct ProgramDesc {
     pub toplevel: UnitFn,
     /// Interns the symbol table and initializes the `.bss` site slots.
     pub unit_init: Option<unsafe extern "C" fn()>,
-    /// `zeo_eval_install` when the program can eval (G6); else `None`.
+    /// `zeo_eval_install` when the program can eval; else `None`.
     pub eval_install: Option<unsafe extern "C" fn()>,
 }
 

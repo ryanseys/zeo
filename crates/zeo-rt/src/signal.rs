@@ -79,7 +79,7 @@ pub struct Thrown {
 /// exactly where real Ruby's own `break` semantics land: it makes the WHOLE
 /// method call (the one the block was passed to) evaluate to the break
 /// value, not just the block invocation. Every call site whose callee might
-/// invoke a block wraps its result in this (`codegen::params::emit_call_args`
+/// invoke a block wraps its result in this (`clif::blocks::catch_break`
 /// and every `send`/`public_send` call site) -- a no-op match when no
 /// `Break` was actually raised, so it's safe to apply unconditionally even
 /// when the specific call didn't pass a block this time.

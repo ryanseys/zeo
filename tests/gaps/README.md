@@ -9,11 +9,9 @@ fixed gap is a plain move into the corpus.
 Every gap is a real divergence with a real cause, and its header comment says
 what that cause is.
 
-A gap may be a program that makes the compiler **panic**. The harness contains
-a panic and counts it as a divergence, so an internal error can be recorded
-here rather than taking the test binary down with it. A `Mode::Pass` failure
-names it as a panic, because a bug and a stated limitation want different
-work.
+A gap may be a program that makes the compiler **panic**. The compile runs in
+a child `zeo` process, so a panic is recorded as one more stderr divergence
+rather than taking the test binary down with it.
 
 A divergence zeo has decided not to reproduce **and has matched deliberately
 differently** belongs in a passing test that documents the choice. One it has
@@ -68,7 +66,7 @@ like every other one.
 
 ## The XFAIL contract
 
-Each gap runs through `crates/zeo-tests/tests/gaps.rs` (a `cargo test`/nextest target)
+Each gap runs through `crates/zeo/tests/gaps.rs` (a `cargo test`/nextest target)
 in **`Mode::Xfail`**:
 
 - A gap that still **diverges** from its golden → the test **PASSES** (the
@@ -90,7 +88,7 @@ in **`Mode::Xfail`**:
   `__dir__`, adjust them for the shallower directory first.
 
 Both stdout **and stderr** are compared, byte-exactly, after the shared
-normalization in `crates/zeo-tests/tests/support/golden.rs` (line endings, the
+normalization in `crates/zeo-tests/src/golden.rs` (line endings, the
 source path, and object addresses — `0x` + 16 hex digits → `0xADDR`, since
 those are process-random on both sides).
 
@@ -112,4 +110,4 @@ a gap — put it in the corpus instead.
 
 Keep at least one gap here: `datatest-stable` panics rather than reporting zero
 cases, so an empty directory breaks the suite. If the last one is ever fixed,
-retire `crates/zeo-tests/tests/gaps.rs` and its `[[test]]` entry along with it.
+retire `crates/zeo/tests/gaps.rs` and its `[[test]]` entry along with it.

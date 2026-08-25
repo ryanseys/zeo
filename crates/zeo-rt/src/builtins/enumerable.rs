@@ -63,8 +63,7 @@ use zeo_macros::ruby_module;
 /// methods here). `None` = not an Enumerable method this runtime implements
 /// (the caller falls through to its `NoMethodError` path) -- the table
 /// below is the SINGLE source of truth for what Enumerable supports;
-/// codegen deliberately keeps no mirror list (see `codegen::call`'s
-/// Enumerable fallback docs).
+/// the compiler deliberately keeps no mirror list.
 pub(crate) fn enumerable_send(
     recv: &RubyValue,
     name: &str,

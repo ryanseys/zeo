@@ -1,6 +1,6 @@
-//! Statement lowering for the M0 slice: assignments, `puts`, `if`,
-//! `while`/`until`/`loop`, `break`/`next`/`redo`, and expression
-//! statements. Everything else refuses loudly with its source location.
+//! Statement lowering to Cranelift IR: assignments, control flow, loop
+//! signals (`break`/`next`/`redo`), definitions, and expression
+//! statements. An unsupported shape refuses loudly with its source location.
 
 use super::ctx::{Fx, LoopCtl, VALUE_SIZE};
 use super::expr::lower_expr;
@@ -2181,8 +2181,8 @@ pub(crate) fn stamp_call_line(fx: &mut Fx, site: NodeId) {
     fx.call("zeo_rt_set_line", &[v]);
 }
 
-/// Mirror the rustc backend's `stamp_line`: a `set_line` only when the
-/// statement's line differs from the previous stamp.
+/// Stamp a `set_line` only when the statement's line differs from the
+/// previous stamp.
 fn stamp_line(fx: &mut Fx, stmt: NodeId) {
     let Some((file, line)) = fx.location(stmt) else {
         return;
