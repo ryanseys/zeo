@@ -47,6 +47,11 @@ The first public release, not yet cut.
 - **The disclosure record.** Where Zeo substitutes its own implementation for
   a library, the compile warns, and `--report` writes a `zeo-gems.json` record
   naming every substitution.
+- **Located codegen diagnostics.** A backend refusal carries the offending
+  node's source span, and the CLI renders the same annotated excerpt the
+  parse and lower stages show. The location left the message text; a
+  run-time `eval`'s `NotImplementedError` keeps its `(file:line)` suffix
+  unchanged.
 
 ### Compatibility
 
