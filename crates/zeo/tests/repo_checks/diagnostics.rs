@@ -115,6 +115,30 @@ fn a_class_body_directive_names_its_own_line() {
     insta::assert_snapshot!(render(err));
 }
 
+/// A codegen error whose span survived to the CLI boundary renders the
+/// same located excerpt the other stages do -- `zeo::codegen` code, the
+/// `╭─[file:line:col]` header, and the position label. Constructed
+/// directly (a `CodegenError` + a registered source file) because every
+/// reachable user-facing emitter refusal compiles today -- see
+/// `every_shape_the_emitter_once_refused_now_compiles`.
+#[test]
+fn a_codegen_error_renders_a_located_excerpt() {
+    let mut hir = zeo::hir::Hir::default();
+    hir.add_file("-e", "x = 1\nlist.compile_me\n");
+    let err = zeo::CompileError::from_codegen(
+        zeo::codegen_error::CodegenError::unsupported(
+            "the CLIF backend cannot lower this construct yet",
+            Some(zeo::hir::Span {
+                file: zeo::hir::FileId(0),
+                start: 6,
+                end: 21,
+            }),
+        ),
+        &hir.files,
+    );
+    insta::assert_snapshot!(render(err));
+}
+
 /// The same for an FFI `layout`, which takes its own dispatch arm.
 #[test]
 fn an_ffi_layout_names_its_own_line() {
