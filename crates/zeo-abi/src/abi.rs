@@ -98,6 +98,7 @@ pub const CALLSITE_SIZE: usize = 56;
 pub const DYNCALLER_SITE_SIZE: usize = 56;
 pub const CLASSMETHOD_SITE_SIZE: usize = 48;
 pub const CONST_SITE_SIZE: usize = 40;
+pub const NEW_SITE_SIZE: usize = 32;
 pub const CIVAR_SITE_SIZE: usize = 40;
 pub const REGEXP_SITE_SIZE: usize = 16;
 pub const FFISYM_SITE_SIZE: usize = 16;

@@ -2273,6 +2273,7 @@ mod abi_layout {
             abi::CLASSMETHOD_SITE_SIZE
         );
         assert_eq!(size_of::<crate::ConstSite>(), abi::CONST_SITE_SIZE);
+        assert_eq!(size_of::<crate::dispatch::ClassNewSite>(), abi::NEW_SITE_SIZE);
         assert_eq!(size_of::<crate::CivarSite>(), abi::CIVAR_SITE_SIZE);
         assert_eq!(size_of::<crate::RegexpSite>(), abi::REGEXP_SITE_SIZE);
         assert_eq!(size_of::<crate::ffi::FfiSymSite>(), abi::FFISYM_SITE_SIZE);
@@ -2281,6 +2282,7 @@ mod abi_layout {
             align_of::<crate::DynCallerSite>(),
             align_of::<crate::ClassMethodSite>(),
             align_of::<crate::ConstSite>(),
+            align_of::<crate::dispatch::ClassNewSite>(),
             align_of::<crate::CivarSite>(),
             align_of::<crate::RegexpSite>(),
             align_of::<crate::ffi::FfiSymSite>(),

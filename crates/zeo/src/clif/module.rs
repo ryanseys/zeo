@@ -124,6 +124,10 @@ pub(crate) struct Emitter {
     /// How many constant-read cache slots the program needs; same
     /// index-is-the-slot rule as `cm_sites`.
     pub const_sites: usize,
+    pub new_sites_id: DataId,
+    /// How many compiled-construction cache slots the program needs; same
+    /// index-is-the-slot rule as `cm_sites`.
+    pub new_sites: usize,
     /// The runtime's `zeo_rt_pending_interrupts` counter (an import, not
     /// a program-local table) -- what `Fx::check_ints` loads inline.
     pub pending_id: DataId,
@@ -294,6 +298,11 @@ impl Emitter {
             .map_err(|e| {
                 CodegenError::internal(format!("declaring {}: {e}", super::names::CONST_SITES))
             })?;
+        let new_sites_id = module
+            .declare_data(super::names::NEW_SITES, Linkage::Local, true, false)
+            .map_err(|e| {
+                CodegenError::internal(format!("declaring {}: {e}", super::names::NEW_SITES))
+            })?;
         let reopen_flags_id = module
             .declare_data(super::names::REOPEN_FLAGS, Linkage::Local, true, false)
             .map_err(|e| {
@@ -323,6 +332,8 @@ impl Emitter {
             cm_sites: 0,
             const_sites_id,
             const_sites: 0,
+            new_sites_id,
+            new_sites: 0,
             pending_id,
             gates_id,
             syms: super::statics::SymPool::default(),

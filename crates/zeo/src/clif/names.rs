@@ -32,6 +32,10 @@ pub const CM_SITES: &str = "zeo_cm_sites";
 /// constant table. Same zero-bytes-are-not-a-slot rule as the call sites:
 /// `zeo_unit_init` constructs the whole array in one bulk call.
 pub const CONST_SITES: &str = "zeo_const_sites";
+/// The `.bss` array of compiled-construction caches -- one `ClassNewSite`
+/// slot per statically-constructed `Foo.new` (`construct_compiled`).
+/// Bulk-initialized like the const sites (no per-slot constant).
+pub const NEW_SITES: &str = "zeo_new_sites";
 /// The `.bss` byte array of builtin-reopen flags -- one byte per
 /// `(builtin class, method name)` a program reopens at compile time.
 ///

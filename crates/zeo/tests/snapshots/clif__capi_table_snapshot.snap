@@ -1,6 +1,5 @@
 ---
 source: crates/zeo/tests/clif.rs
-assertion_line: 384
 expression: rendered
 ---
 zeo_rt_alias_in_default_definee ([Ptr, Ptr, Ptr, Ptr, Ptr]) -> Some(I32)
@@ -32,6 +31,8 @@ zeo_rt_cell_store ([Ptr, Ptr]) -> None
 zeo_rt_cext_load ([Ptr, Usize, Ptr, Usize]) -> Some(I32)
 zeo_rt_check_ints ([]) -> Some(I32)
 zeo_rt_class_new_instance ([U32, Ptr, Usize, Ptr, Ptr]) -> Some(I32)
+zeo_rt_class_new_instance_cached ([Ptr, U32, Ptr, Usize, Ptr, Ptr]) -> Some(I32)
+zeo_rt_class_new_sites_init ([Ptr, Usize]) -> None
 zeo_rt_class_of ([Ptr]) -> Some(U32)
 zeo_rt_classmethod_site_init ([Ptr]) -> None
 zeo_rt_complex_lit ([Ptr, Ptr]) -> None

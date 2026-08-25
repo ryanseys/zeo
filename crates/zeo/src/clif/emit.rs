@@ -424,6 +424,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> CResult<FuncId> {
     statics::define_callsites(em)?;
     statics::define_cm_sites(em)?;
     statics::define_const_sites(em)?;
+    statics::define_new_sites(em)?;
     statics::define_reopen_flags(em)?;
     let mut vm_rows: Vec<statics::VmRowSpec> = defs
         .iter()

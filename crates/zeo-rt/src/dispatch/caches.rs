@@ -473,6 +473,161 @@ fn vet_denies(vet: Vet, caller_class: u32) -> Option<MissingReason> {
     }
 }
 
+/// What one construction site resolved `initialize` to, under quiet gates
+/// -- the exact target [`run_initialize`]'s walk would find, so a hit is
+/// the same call minus the walk. `Dynamic` never caches ([`Cached`]'s
+/// fat-pointer rule), so it has no arm here.
+#[derive(Clone, Copy)]
+enum InitTarget {
+    /// A registry object-channel row (`MethodImpl::Static`).
+    Obj(MethodFn),
+    /// A Cranelift-compiled body (`MethodImpl::CValue`).
+    CObj(crate::capi::ValueFn),
+    /// A value-channel row a builtin REOPEN registered on an ancestor.
+    Value(ValueImpl),
+    /// No `initialize` anywhere in the chain: zero-arity accept, exactly
+    /// `run_initialize`'s tail (including its ArgumentError shape).
+    None,
+}
+
+/// What one `Foo.new` site remembered: the class's layout row (skipping
+/// the `LAYOUTS` lock per construction) and the resolved `initialize`.
+struct NewHit {
+    layout: &'static crate::compiled_object::ClassLayout,
+    init: InitTarget,
+}
+
+/// One compiled-construction site's cache (`Foo.new` where the emitter
+/// proved the class constructs statically). The class id is a per-site
+/// COMPILE-TIME constant -- the emitted `cid` argument -- so the hit needs
+/// no key compare at all; the fill-once `OnceLock` and the gates bypass
+/// carry the invalidation story ([`CallSite`]'s model: anything defined at
+/// runtime flips `gates_live` and the cache stands down wholesale).
+pub struct ClassNewSite {
+    hit: std::sync::OnceLock<NewHit>,
+}
+
+impl Default for ClassNewSite {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ClassNewSite {
+    pub const fn new() -> ClassNewSite {
+        ClassNewSite {
+            hit: std::sync::OnceLock::new(),
+        }
+    }
+}
+
+/// Resolve what [`run_initialize`] would call for `class` UNDER QUIET
+/// GATES: the per-ancestor two-channel walk, minus every `is_live`-gated
+/// probe (all off while the cache is consulted at all). `None` = do not
+/// fill (a `Dynamic` target, or a class with no layout row).
+fn resolve_new_hit(class: ClassId) -> Option<NewHit> {
+    let layout = crate::compiled_object::layout_of(class)?;
+    let init = crate::symbol::wk::initialize();
+    for &anc in ancestors_of_value(class) {
+        if let Some(m) = registry().lookup(anc, init) {
+            return match m {
+                MethodImpl::Static(f) => Some(NewHit {
+                    layout,
+                    init: InitTarget::Obj(*f),
+                }),
+                MethodImpl::CValue(f) => Some(NewHit {
+                    layout,
+                    init: InitTarget::CObj(*f),
+                }),
+                MethodImpl::Dynamic(_) => None,
+            };
+        }
+        if let Some(f) = value_method(anc, 0, init) {
+            return Some(NewHit {
+                layout,
+                init: InitTarget::Value(f),
+            });
+        }
+    }
+    Some(NewHit {
+        layout,
+        init: InitTarget::None,
+    })
+}
+
+/// `Foo.new` on a statically-constructed class, behind a [`ClassNewSite`]:
+/// a hit allocates and calls the remembered `initialize` directly --
+/// no `LAYOUTS` lock, no ancestor walk. Anything the cache does not serve
+/// (live overlay, moved poison, a `Dynamic` target) takes the same
+/// allocate-and-walk the uncached entry runs.
+pub fn class_new_cached(
+    site: &'static ClassNewSite,
+    class: ClassId,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    // A hit never reaches a dynamic entry's stack check, so recursion
+    // through a constructor (`initialize` building children) must be
+    // checked here -- `send_value_cached`'s rule.
+    crate::stack_guard::stack_check()?;
+    let gates = crate::runtime_meta::gates();
+    if !crate::runtime_meta::gates_live(gates) && !crate::runtime_meta::gates_moved(gates) {
+        let hit = match site.hit.get() {
+            Some(h) => Some(h),
+            // Resolve BEFORE the call fills anything (`CallSite`'s rule),
+            // so a recursive constructor hits its own site on the way down.
+            None => match resolve_new_hit(class) {
+                Some(h) => {
+                    let _ = site.hit.set(h);
+                    site.hit.get()
+                }
+                None => None,
+            },
+        };
+        if let Some(h) = hit {
+            let obj = crate::compiled_object::CompiledObject::alloc(class, h.layout);
+            return match &h.init {
+                InitTarget::Obj(f) => f(&obj, args, block).map(|_| RubyValue::Object(obj)),
+                // `MethodImpl::call`'s CValue arm verbatim: a borrowed
+                // VIEW of the receiver, no Arc bump for the call.
+                InitTarget::CObj(f) => {
+                    let view = std::mem::ManuallyDrop::new(RubyValue::Object(unsafe {
+                        std::ptr::read(&obj)
+                    }));
+                    crate::capi::dispatch::call_value_fn(*f, &view, args, block)
+                        .map(|_| RubyValue::Object(obj))
+                }
+                InitTarget::Value(f) => f
+                    .call(&RubyValue::Object(obj.clone()), args, block)
+                    .map(|_| RubyValue::Object(obj)),
+                InitTarget::None => {
+                    // `run_initialize`'s tail, verbatim: the inherited
+                    // zero-arity `initialize` rejects arguments with
+                    // CRuby's message and frame.
+                    if !args.is_empty() {
+                        let __frame = crate::frames::synthetic_c_frame("BasicObject#initialize");
+                        return Err(arg_error!(
+                            "wrong number of arguments (given {}, expected 0)",
+                            args.len()
+                        ));
+                    }
+                    Ok(RubyValue::Object(obj))
+                }
+            };
+        }
+    }
+    // The uncached route: allocate under the LAYOUTS lock and walk.
+    let layout = match crate::compiled_object::layout_of(class) {
+        Some(l) => l,
+        None => panic!(
+            "zeo_rt_class_new_instance: no layout registered for class {}",
+            class.0
+        ),
+    };
+    let obj = crate::compiled_object::CompiledObject::alloc(class, layout);
+    run_initialize(class, &obj, args, block).map(|()| RubyValue::Object(obj))
+}
+
 /// A dynamic call site whose CALLER class is a per-call fact rather than a
 /// per-site constant: a site inside a shared body (one emitted function
 /// serving a whole hierarchy, where the runtime `self.class` decides

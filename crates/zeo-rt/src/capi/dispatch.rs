@@ -55,7 +55,7 @@ pub(crate) fn status_out(r: Result<RubyValue, Signal>, out: *mut RubyValue) -> i
 }
 
 /// The borrowed views a send entry needs from its raw arguments.
-unsafe fn call_views<'a>(
+pub(super) unsafe fn call_views<'a>(
     argv: *const RubyValue,
     argc: usize,
     blk: *mut RubyValue,
@@ -533,6 +533,18 @@ pub unsafe extern "C" fn zeo_rt_classmethod_site_init(slot: *mut crate::dispatch
 pub unsafe extern "C" fn zeo_rt_const_sites_init(base: *mut crate::constants::ConstSite, n: usize) {
     for i in 0..n {
         unsafe { base.add(i).write(crate::constants::ConstSite::new()) };
+    }
+}
+
+/// Initialize the whole `.bss` `zeo_new_sites` array in one call -- same
+/// no-per-slot-constant shape as [`zeo_rt_const_sites_init`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_class_new_sites_init(
+    base: *mut crate::dispatch::ClassNewSite,
+    n: usize,
+) {
+    for i in 0..n {
+        unsafe { base.add(i).write(crate::dispatch::ClassNewSite::new()) };
     }
 }
 

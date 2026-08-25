@@ -89,6 +89,36 @@ pub unsafe extern "C" fn zeo_rt_class_new_instance(
     status_out(init, out)
 }
 
+/// [`zeo_rt_class_new_instance`] behind a per-site [`ClassNewSite`] cache:
+/// a hit skips the `LAYOUTS` lock and the `initialize` ancestor walk. The
+/// C-extension `rb_define_alloc_func` interception stays FIRST and outside
+/// the cache -- an `Init_` can run at any time, so that probe must stay a
+/// per-call question (it is one relaxed load when no extension registered
+/// an allocator).
+///
+/// [`ClassNewSite`]: crate::dispatch::ClassNewSite
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_class_new_instance_cached(
+    site: &'static crate::dispatch::ClassNewSite,
+    cid: u32,
+    argv: *const RubyValue,
+    argc: usize,
+    blk: *mut RubyValue,
+    out: *mut RubyValue,
+) -> i32 {
+    let id = ClassId(cid);
+    #[cfg(feature = "cext")]
+    if let Some(alloc) = crate::cext::method::c_allocate(id) {
+        let (args, block) = unsafe { super::dispatch::call_views(argv, argc, blk) };
+        let init =
+            crate::dispatch::send_value(&alloc, crate::Symbol::intern("initialize"), args, block)
+                .map(|_| alloc);
+        return status_out(init, out);
+    }
+    let (args, block) = unsafe { super::dispatch::call_views(argv, argc, blk) };
+    status_out(crate::dispatch::class_new_cached(site, id, args, block), out)
+}
+
 /// Read one ivar by its compile-time slot index. The receiver is always a
 /// compiled `Object` (the emitter's static-self guarantee).
 #[unsafe(no_mangle)]

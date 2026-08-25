@@ -1,6 +1,5 @@
 ---
 source: crates/zeo/tests/clif.rs
-assertion_line: 93
 expression: "clif_of(\"def times_of\\n  n = 3\\n  t = 0\\n  n.times { |i| t = t + i }\\n  p t\\nend\\ntimes_of\\n\",)"
 ---
 ;; block in Object#times_of
@@ -908,14 +907,17 @@ function u0:2() ccall {
     gv2 = symbol colocated userextname4
     gv3 = symbol colocated userextname5
     gv4 = symbol colocated userextname7
+    gv5 = symbol colocated userextname9
     sig0 = (i64, i64) -> i32 ccall
     sig1 = (i64, i32) ccall
     sig2 = (i64) ccall
     sig3 = (i64, i64) ccall
+    sig4 = (i64, i64) ccall
     fn0 = u0:31 sig0
     fn1 = u0:32 sig1
     fn2 = u0:33 sig2
     fn3 = u0:34 sig3
+    fn4 = u0:35 sig4
 
 block0:
     v0 = symbol_value.i64 gv0
@@ -957,7 +959,7 @@ block0:
 function u0:1(i32, i64) -> i32 ccall {
     gv0 = symbol colocated userextname1
     sig0 = (i32, i64, i64) -> i32 ccall
-    fn0 = u0:36 sig0
+    fn0 = u0:37 sig0
 
 block0(v0: i32, v1: i64):
     v2 = symbol_value.i64 gv0

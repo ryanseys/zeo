@@ -60,6 +60,8 @@ capi_symbols!(
     cext::zeo_rt_cext_load,
     frames::zeo_rt_check_ints,
     objects::zeo_rt_class_new_instance,
+    objects::zeo_rt_class_new_instance_cached,
+    dispatch::zeo_rt_class_new_sites_init,
     values::zeo_rt_class_of,
     dispatch::zeo_rt_classmethod_site_init,
     numeric::zeo_rt_complex_lit,

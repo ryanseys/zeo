@@ -1,6 +1,5 @@
 ---
 source: crates/zeo/tests/clif.rs
-assertion_line: 142
 expression: "clif_of(\"class A\\n  def go = p [defined?(yield), defined?(super)]\\nend\\nclass B < A\\n  def go = super\\nend\\nB.new.go\\n\",)"
 ---
 ;; A#go
@@ -366,7 +365,8 @@ function u0:0(i64) -> i32 ccall {
     ss5 = explicit_slot 24, align = 8
     gv0 = symbol colocated userextname0
     gv1 = symbol colocated userextname1
-    gv2 = symbol colocated userextname12
+    gv2 = symbol colocated userextname11
+    gv3 = symbol colocated userextname13
     sig0 = (i64, i64, i64, i64, i32, i32) -> i32 ccall
     sig1 = (i64) ccall
     sig2 = (i64) ccall
@@ -376,7 +376,7 @@ function u0:0(i64) -> i32 ccall {
     sig6 = (i32) ccall
     sig7 = (i32, i64, i64, i64, i64, i32) ccall
     sig8 = (i64) ccall
-    sig9 = (i32, i64, i64, i64, i64) -> i32 ccall
+    sig9 = (i64, i32, i64, i64, i64, i64) -> i32 ccall
     sig10 = (i64, i32, i64, i32, i64, i64, i64, i64) -> i32 ccall
     sig11 = () ccall
     fn0 = colocated u0:5 sig0
@@ -465,52 +465,53 @@ block4:
     call fn6(v49)  ; v49 = 7
     v50 = iconst.i64 0
     v51 = iconst.i64 0
-    v52 = iconst.i32 404
-    v53 = iconst.i64 0
-    v54 = stack_addr.i64 ss4
-    v55 = call fn9(v52, v50, v53, v51, v54)  ; v52 = 404, v50 = 0, v53 = 0, v51 = 0
-    brif v55, block1, block5
+    v52 = symbol_value.i64 gv2
+    v53 = iconst.i32 404
+    v54 = iconst.i64 0
+    v55 = stack_addr.i64 ss4
+    v56 = call fn9(v52, v53, v50, v54, v51, v55)  ; v53 = 404, v50 = 0, v54 = 0, v51 = 0
+    brif v56, block1, block5
 
 block5:
-    v56 = stack_addr.i64 ss4
-    call fn2(v56)
-    v57 = iconst.i64 0
-    v58 = load.i32 notrap aligned v2
-    v59 = iconst.i32 0
-    v60 = iconst.i64 0
+    v57 = stack_addr.i64 ss4
+    call fn2(v57)
+    v58 = iconst.i64 0
+    v59 = load.i32 notrap aligned v2
+    v60 = iconst.i32 0
     v61 = iconst.i64 0
-    v62 = stack_addr.i64 ss5
-    v63 = symbol_value.i64 gv2
-    v64 = iconst.i64 56
-    v65 = iadd v63, v64  ; v64 = 56
-    v66 = call fn10(v65, v59, v56, v58, v57, v60, v61, v62)  ; v59 = 0, v57 = 0, v60 = 0, v61 = 0
-    brif v66, block1, block6
+    v62 = iconst.i64 0
+    v63 = stack_addr.i64 ss5
+    v64 = symbol_value.i64 gv3
+    v65 = iconst.i64 56
+    v66 = iadd v64, v65  ; v65 = 56
+    v67 = call fn10(v66, v60, v57, v59, v58, v61, v62, v63)  ; v60 = 0, v58 = 0, v61 = 0, v62 = 0
+    brif v67, block1, block6
 
 block6:
-    v67 = stack_addr.i64 ss5
-    v68 = load.i8 notrap aligned v67
-    v69 = iconst.i8 16
-    v70 = icmp uge v68, v69  ; v69 = 16
-    brif v70, block7, block8
+    v68 = stack_addr.i64 ss5
+    v69 = load.i8 notrap aligned v68
+    v70 = iconst.i8 16
+    v71 = icmp uge v69, v70  ; v70 = 16
+    brif v71, block7, block8
 
 block7:
-    call fn2(v67)
+    call fn2(v68)
     jump block8
 
 block8:
     call fn8(v48)
-    v71 = iconst.i64 0
-    store notrap aligned v71, v0  ; v71 = 0
-    store notrap aligned v71, v0+8  ; v71 = 0
-    store notrap aligned v71, v0+16  ; v71 = 0
+    v72 = iconst.i64 0
+    store notrap aligned v72, v0  ; v72 = 0
+    store notrap aligned v72, v0+8  ; v72 = 0
+    store notrap aligned v72, v0+16  ; v72 = 0
     call fn11()
-    v72 = iconst.i32 0
-    return v72  ; v72 = 0
+    v73 = iconst.i32 0
+    return v73  ; v73 = 0
 
 block1:
     call fn11()
-    v73 = iconst.i32 1
-    return v73  ; v73 = 1
+    v74 = iconst.i32 1
+    return v74  ; v74 = 1
 }
 
 ;; zeo_unit_init
@@ -520,14 +521,17 @@ function u0:2() ccall {
     gv2 = symbol colocated userextname4
     gv3 = symbol colocated userextname5
     gv4 = symbol colocated userextname7
+    gv5 = symbol colocated userextname9
     sig0 = (i64, i64) -> i32 ccall
     sig1 = (i64, i32) ccall
     sig2 = (i64) ccall
     sig3 = (i64, i64) ccall
+    sig4 = (i64, i64) ccall
     fn0 = u0:28 sig0
     fn1 = u0:29 sig1
     fn2 = u0:30 sig2
     fn3 = u0:31 sig3
+    fn4 = u0:32 sig4
 
 block0:
     v0 = symbol_value.i64 gv0
@@ -549,6 +553,9 @@ block0:
     v13 = iadd v10, v12  ; v12 = 56
     v14 = iconst.i32 0
     call fn1(v13, v14)  ; v14 = 0
+    v15 = symbol_value.i64 gv5
+    v16 = iconst.i64 1
+    call fn4(v15, v16)  ; v16 = 1
     return
 }
 
@@ -556,7 +563,7 @@ block0:
 function u0:1(i32, i64) -> i32 ccall {
     gv0 = symbol colocated userextname1
     sig0 = (i32, i64, i64) -> i32 ccall
-    fn0 = u0:33 sig0
+    fn0 = u0:34 sig0
 
 block0(v0: i32, v1: i64):
     v2 = symbol_value.i64 gv0
