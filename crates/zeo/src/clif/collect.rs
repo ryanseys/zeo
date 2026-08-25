@@ -4,6 +4,7 @@
 
 use super::module::Emitter;
 use crate::analyze::Analyzed;
+use crate::codegen_error::{CResult, CodegenError};
 use cranelift_module::{FuncId, Linkage, Module};
 
 /// One eligible top-level `def`'s facts (from `Compiler.classes[0]` --
@@ -22,10 +23,7 @@ pub(crate) struct DefSpec {
 /// Collect and DECLARE every top-level `def` the backend can compile
 /// (unconditional; no aliases or accessors). Prelude-native rows are the
 /// runtime's own, never emitted.
-pub(super) fn collect_methods(
-    em: &mut Emitter,
-    analyzed: &Analyzed,
-) -> Result<Vec<DefSpec>, String> {
+pub(super) fn collect_methods(em: &mut Emitter, analyzed: &Analyzed) -> CResult<Vec<DefSpec>> {
     let compiler = &analyzed.compiler;
     let mut out = Vec::new();
     for entry in &compiler.classes[0].methods {
@@ -34,12 +32,13 @@ pub(super) fn collect_methods(
             continue;
         }
         let name = compiler.names.str(entry.name).to_string();
-        let at = scope
-            .def_node
-            .and_then(|n| crate::analyze::source::source_location(compiler, n))
-            .map(|(f, l)| format!(" ({f}:{l})"))
-            .unwrap_or_default();
-        let refuse = |what: &str| Err(format!("the CLIF backend cannot lower {what} yet{at}"));
+        let span = scope.def_node.and_then(|n| compiler.hir.span(n));
+        let refuse = |what: &str| {
+            Err(CodegenError::unsupported(
+                format!("the CLIF backend cannot lower {what} yet"),
+                span,
+            ))
+        };
         if scope.runtime_conditional {
             return refuse("a conditionally-defined method");
         }
@@ -57,7 +56,7 @@ pub(super) fn collect_methods(
                 Linkage::Local,
                 &body_sig,
             )
-            .map_err(|e| format!("declaring {name}: {e}"))?;
+            .map_err(|e| CodegenError::internal(format!("declaring {name}: {e}")))?;
         let tramp_sig = super::params::value_fn_sig(em);
         let tramp_id = em
             .module
@@ -66,7 +65,7 @@ pub(super) fn collect_methods(
                 Linkage::Local,
                 &tramp_sig,
             )
-            .map_err(|e| format!("declaring {name}'s trampoline: {e}"))?;
+            .map_err(|e| CodegenError::internal(format!("declaring {name}'s trampoline: {e}")))?;
         em.methods.insert(
             name.clone(),
             super::module::MethodDecl {
@@ -244,7 +243,7 @@ fn inline_markers(
 pub(super) fn collect_class_bodies(
     em: &mut Emitter,
     analyzed: &Analyzed,
-) -> Result<Vec<ClassBodySpec>, String> {
+) -> CResult<Vec<ClassBodySpec>> {
     let compiler = &analyzed.compiler;
     // Every TOP-LEVEL statement stream: main's, and each compiled-in
     // feature unit's. A unit's `class` marker runs where it stands IN THE
@@ -258,8 +257,9 @@ pub(super) fn collect_class_bodies(
         let ci = compiler.class(site.class);
         let name = compiler.fq_name(site.class);
         let refuse = |what: &str| {
-            Err(format!(
-                "the CLIF backend cannot lower {what} yet (class {name})"
+            Err(CodegenError::unsupported(
+                format!("the CLIF backend cannot lower {what} yet (class {name})"),
+                site.def_node.and_then(|n| compiler.hir.span(n)),
             ))
         };
         // A BUILTIN reopen's body runs like any other -- but the class was
@@ -379,7 +379,9 @@ pub(super) fn collect_class_bodies(
             Some(
                 em.module
                     .declare_function(&format!("zeo_cb_{i}"), Linkage::Local, &sig)
-                    .map_err(|e| format!("declaring the {name} class body: {e}"))?,
+                    .map_err(|e| {
+                        CodegenError::internal(format!("declaring the {name} class body: {e}"))
+                    })?,
             )
         };
         let label = super::body::body_frame_label(compiler, site.class);

@@ -7,6 +7,7 @@ use super::ctx::{Fx, VALUE_SIZE};
 use super::expr::lower_expr;
 use super::operand::{Operand, TagInfo};
 use super::ownership;
+use crate::codegen_error::CResult;
 use crate::hir::{ArrayElem, NodeId};
 use cranelift_codegen::ir::{InstBuilder, StackSlotData, StackSlotKind, types};
 use cranelift_module::Module;
@@ -17,7 +18,7 @@ fn arg_ptrs(
     fx: &mut Fx,
     site: NodeId,
     args: &[ArrayElem],
-) -> Result<Vec<cranelift_codegen::ir::Value>, String> {
+) -> CResult<Vec<cranelift_codegen::ir::Value>> {
     let mut ptrs = Vec::with_capacity(args.len());
     for arg in args {
         let ArrayElem::Single(id) = arg else {
@@ -101,7 +102,7 @@ pub(crate) fn direct_call(
     name: &str,
     args: &[ArrayElem],
     block: Option<NodeId>,
-) -> Result<Operand, String> {
+) -> CResult<Operand> {
     direct_call_kw(fx, site, name, args, None, block)
 }
 
@@ -112,7 +113,7 @@ pub(crate) fn direct_call_kw(
     args: &[ArrayElem],
     kw: Option<(&[crate::hir::KwArg], &[usize])>,
     block: Option<NodeId>,
-) -> Result<Operand, String> {
+) -> CResult<Operand> {
     let decl_has_blk = fx.em.methods[name].has_blk;
     let ptrs = arg_ptrs(fx, site, args)?;
     // Keyword VALUES evaluate in written order (they are ordinary
@@ -190,7 +191,7 @@ pub(crate) fn implicit_send(
     site: NodeId,
     name: &str,
     args: &[ArrayElem],
-) -> Result<Operand, String> {
+) -> CResult<Operand> {
     let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
     // A VCALL -- a bare identifier ruby could have read as a local. The
     // lookup is the same; the MISS is not. Ruby says "undefined local
@@ -241,7 +242,7 @@ pub(crate) fn implicit_send_ptr(
     name: &str,
     argv_ptr: cranelift_codegen::ir::Value,
     argc: usize,
-) -> Result<Operand, String> {
+) -> CResult<Operand> {
     let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
     let sym = fx.sym_id(name);
     let zero_box = fx.box_v();
@@ -272,7 +273,7 @@ pub(crate) fn build_argv(
     fx: &mut Fx,
     site: NodeId,
     args: &[ArrayElem],
-) -> Result<cranelift_codegen::ir::Value, String> {
+) -> CResult<cranelift_codegen::ir::Value> {
     let argc = args.len();
     let argv = (argc > 0).then(|| {
         fx.b.create_sized_stack_slot(StackSlotData::new(
@@ -312,7 +313,7 @@ pub(crate) fn construct_compiled(
     cid: crate::compiler::ClassId,
     args: &[ArrayElem],
     blk: super::blocks::BlockChannel,
-) -> Result<Operand, String> {
+) -> CResult<Operand> {
     let argv_ptr = build_argv(fx, site, args)?;
     let blk_ptr = blk.open(fx, site)?;
     super::stmt::stamp_call_line(fx, site);
@@ -343,7 +344,7 @@ pub(crate) fn construct_compiled(
 pub(crate) fn build_hash(
     fx: &mut Fx,
     pairs: &[crate::hir::KwArg],
-) -> Result<cranelift_codegen::ir::Value, String> {
+) -> CResult<cranelift_codegen::ir::Value> {
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
     fx.call("zeo_rt_hash_new", &[out]);
@@ -380,7 +381,7 @@ pub(crate) fn build_hash(
 pub(crate) fn build_array(
     fx: &mut Fx,
     args: &[ArrayElem],
-) -> Result<cranelift_codegen::ir::Value, String> {
+) -> CResult<cranelift_codegen::ir::Value> {
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
     let cap = fx.b.ins().iconst(fx.em.ptr, args.len() as i64);
@@ -449,7 +450,7 @@ pub(crate) fn splat_send(
     args: &[ArrayElem],
     kwargs: &[crate::hir::KwArg],
     blk: super::blocks::BlockChannel,
-) -> Result<Operand, String> {
+) -> CResult<Operand> {
     let bypass = recv.bypass;
     let recv_ptr = match &recv.op {
         Some(op) => {
@@ -518,7 +519,7 @@ pub(crate) fn kw_send(
     args: &[ArrayElem],
     kwargs: &[crate::hir::KwArg],
     blk: super::blocks::BlockChannel,
-) -> Result<Operand, String> {
+) -> CResult<Operand> {
     let bypass = recv.bypass;
     let recv_ptr = match &recv.op {
         Some(op) => {
@@ -621,7 +622,7 @@ pub(crate) fn dynamic_send(
     recv: NodeId,
     name: &str,
     args: &[ArrayElem],
-) -> Result<Operand, String> {
+) -> CResult<Operand> {
     let bypass = super::expr::bypasses_visibility(fx, Some(recv));
     let later = super::expr::later_nodes(args, &[], None);
     let recv_op = lower_expr(fx, recv)?;
@@ -638,7 +639,7 @@ pub(crate) fn dynamic_send_value(
     name: &str,
     args: &[ArrayElem],
     bypass: bool,
-) -> Result<Operand, String> {
+) -> CResult<Operand> {
     let recv_class = recv_op.class_id();
     let recv_ptr = ownership::borrow_ptr(fx, &recv_op);
     if recv_op.owned() {
@@ -658,7 +659,7 @@ pub(crate) fn dynamic_send_ptr(
     name: &str,
     argv_ptr: cranelift_codegen::ir::Value,
     argc: usize,
-) -> Result<Operand, String> {
+) -> CResult<Operand> {
     let recv_class = recv_op.class_id();
     let recv_ptr = ownership::borrow_ptr(fx, &recv_op);
     if recv_op.owned() {
@@ -679,7 +680,7 @@ fn dynamic_send_argv(
     argv_ptr: cranelift_codegen::ir::Value,
     argc: usize,
     bypass: bool,
-) -> Result<Operand, String> {
+) -> CResult<Operand> {
     let sym = fx.sym_id(name);
     let zero_box = fx.box_v();
     let argc_v = fx.b.ins().iconst(fx.em.ptr, argc as i64);
@@ -752,14 +753,11 @@ fn dynamic_send_argv(
 pub(crate) fn build_zsuper_args(
     fx: &mut Fx,
     params: &crate::hir::Params,
-) -> Result<
-    (
-        cranelift_codegen::ir::Value,
-        cranelift_codegen::ir::Value,
-        bool,
-    ),
-    String,
-> {
+) -> CResult<(
+    cranelift_codegen::ir::Value,
+    cranelift_codegen::ir::Value,
+    bool,
+)> {
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
     let cap = fx.b.ins().iconst(
@@ -851,7 +849,7 @@ pub(crate) fn lower_super(
     zsuper: bool,
     block: Option<NodeId>,
     block_arg: Option<NodeId>,
-) -> Result<Operand, String> {
+) -> CResult<Operand> {
     // A BARE `super` from a `define_method` body is an error in ruby: a
     // zsuper forwards the CURRENT values of the method's parameters, and a
     // block-shaped body has no parameter list to forward from, so ruby
@@ -1117,7 +1115,7 @@ pub(crate) fn lower_super(
 /// a class body. Real Ruby raises at RUNTIME and the raise is rescuable
 /// (`vm_insnhelper.c`), so emit it instead of refusing to compile; rustc's
 /// `super_calls` arm does the same, message verbatim.
-fn super_outside_a_method(fx: &mut Fx) -> Result<Operand, String> {
+fn super_outside_a_method(fx: &mut Fx) -> CResult<Operand> {
     let cid = fx.b.ins().iconst(
         cranelift_codegen::ir::types::I32,
         i64::from(zeo_abi::NO_METHOD_ERROR_CLASS.0),

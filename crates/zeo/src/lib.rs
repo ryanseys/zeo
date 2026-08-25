@@ -40,6 +40,7 @@ pub mod backend;
 pub mod builtin_surface;
 pub mod cext;
 pub mod clif;
+pub mod codegen_error;
 pub mod compiler;
 pub(crate) mod debug_flags;
 pub mod diagnostics;
@@ -324,7 +325,8 @@ fn compile_object_on_this_thread(
         .all_nodes()
         .iter()
         .any(|n| matches!(n, hir::HirNode::CExtLoaded { .. }));
-    let object = clif::emit::compile(&analyzed, debuginfo).map_err(CompileError::codegen)?;
+    let object = clif::emit::compile(&analyzed, debuginfo)
+        .map_err(|e| CompileError::from_codegen(e, &analyzed.compiler.hir.files))?;
     front.report(t_emit.elapsed(), object.len() as u64, 0);
     Ok(ObjectOutput {
         object,
@@ -402,7 +404,7 @@ pub fn run_jit_with(
             .spawn_scoped(scope, || {
                 let (analyzed, _front) = analyze_on_this_thread(source, opts)?;
                 match backend::jit::run(analyzed, program_name, program_args) {
-                    Err(message) => Err(CompileError::codegen(message)),
+                    Err(err) => Err(err),
                     Ok(never) => match never {},
                 }
             })
@@ -423,8 +425,8 @@ pub fn compile_to_clif_text(source: &str, opts: &CompileOptions) -> Result<Strin
             .spawn_scoped(scope, || {
                 let (analyzed, front) = analyze_on_this_thread(source, opts)?;
                 let t_emit = std::time::Instant::now();
-                let (_bytes, text) =
-                    clif::emit::compile_with_clif(&analyzed).map_err(CompileError::codegen)?;
+                let (_bytes, text) = clif::emit::compile_with_clif(&analyzed)
+                    .map_err(|e| CompileError::from_codegen(e, &analyzed.compiler.hir.files))?;
                 front.report(
                     t_emit.elapsed(),
                     text.len() as u64,

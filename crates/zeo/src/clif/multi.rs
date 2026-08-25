@@ -3,6 +3,7 @@
 
 use super::ctx::Fx;
 use super::ownership;
+use crate::codegen_error::CResult;
 use crate::hir::NodeId;
 use cranelift_codegen::ir::{InstBuilder, types};
 
@@ -15,7 +16,7 @@ pub(crate) fn lower_multi_group(
     site: NodeId,
     group: &crate::hir::MultiTargetGroup,
     value_ptr: cranelift_codegen::ir::Value,
-) -> Result<(), String> {
+) -> CResult<()> {
     let n_before = group.before.len();
     let n_after = group.after.len();
     let has_splat = group.splat.is_some();
@@ -71,7 +72,7 @@ pub(super) fn write_multi_target(
     site: NodeId,
     target: &crate::hir::MultiTarget,
     addr: cranelift_codegen::ir::Value,
-) -> Result<(), String> {
+) -> CResult<()> {
     use crate::hir::MultiTarget;
     let op = super::operand::Operand::Ptr {
         addr,
@@ -144,7 +145,7 @@ pub(super) fn const_multi_write(
     scope: Option<&str>,
     name: &str,
     addr: cranelift_codegen::ir::Value,
-) -> Result<(), String> {
+) -> CResult<()> {
     let owner_class = match scope {
         Some(s) => match super::boxes::resolve_class_here(fx, s) {
             Some(cid) => cid,

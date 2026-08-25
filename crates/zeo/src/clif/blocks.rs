@@ -8,6 +8,7 @@ use super::ctx::{Fx, Local, VALUE_SIZE};
 use super::operand::{Operand, TagInfo};
 use super::ownership;
 use crate::analyze::captures;
+use crate::codegen_error::{CResult, CodegenError};
 use crate::hir::{ArrayElem, HirNode, NodeId};
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::{
@@ -52,7 +53,7 @@ fn captured_names(
     site: NodeId,
     params: &crate::hir::Params,
     body: &[NodeId],
-) -> Result<Vec<String>, String> {
+) -> CResult<Vec<String>> {
     let block = site;
     let caps = captures::block_captures(&fx.an.compiler, params, body, fx.method_class);
     // A BARE `super` inside the block forwards the ENCLOSING method's
@@ -165,7 +166,7 @@ pub(crate) fn build_proc(
     fx: &mut Fx,
     site: NodeId,
     block: NodeId,
-) -> Result<(ir::StackSlot, Vec<String>), String> {
+) -> CResult<(ir::StackSlot, Vec<String>)> {
     build_proc_rehomed(fx, site, block, false)
 }
 
@@ -177,7 +178,7 @@ pub(crate) fn build_proc_rehomed(
     site: NodeId,
     block: NodeId,
     site_rehomes: bool,
-) -> Result<(ir::StackSlot, Vec<String>), String> {
+) -> CResult<(ir::StackSlot, Vec<String>)> {
     let HirNode::Block { params, body } = &fx.an.compiler.hir[block] else {
         return fx.unsupported(block, "a non-literal block");
     };
@@ -231,7 +232,7 @@ pub(crate) fn build_lambda(
     site: NodeId,
     params: &crate::hir::Params,
     body: &[NodeId],
-) -> Result<(ir::StackSlot, Vec<String>), String> {
+) -> CResult<(ir::StackSlot, Vec<String>)> {
     build_closure(fx, site, params, body, true)
 }
 
@@ -247,7 +248,7 @@ pub(crate) fn build_method_body(
     body: &[NodeId],
     frame: FrameName,
     kind: MethodBody,
-) -> Result<ir::StackSlot, String> {
+) -> CResult<ir::StackSlot> {
     let (ss, _) = build_closure_with(fx, site, params, body, true, Some(kind), frame, false)?;
     Ok(ss)
 }
@@ -301,7 +302,7 @@ fn build_closure(
     params: &crate::hir::Params,
     body: &[NodeId],
     is_lambda: bool,
-) -> Result<(ir::StackSlot, Vec<String>), String> {
+) -> CResult<(ir::StackSlot, Vec<String>)> {
     build_closure_with(
         fx,
         site,
@@ -327,7 +328,7 @@ fn build_closure_with(
     method_body: Option<MethodBody>,
     frame: FrameName,
     rehomed: bool,
-) -> Result<(ir::StackSlot, Vec<String>), String> {
+) -> CResult<(ir::StackSlot, Vec<String>)> {
     let names = captured_names(fx, site, params, body)?;
     let arity = super::params::proc_arity(params, is_lambda);
     // Bare `yield`/`block_given?` in the body targets the LEXICALLY
@@ -539,7 +540,7 @@ fn define_block_fn(
     method_body: Option<MethodBody>,
     frame: FrameName,
     rehomed: bool,
-) -> Result<cranelift_module::FuncId, String> {
+) -> CResult<cranelift_module::FuncId> {
     let params = params.clone();
     let body = body.to_vec();
     let layout = super::params::layout_of(&params)?;
@@ -627,7 +628,7 @@ fn define_block_fn(
             cranelift_module::Linkage::Local,
             &sig,
         )
-        .map_err(|e| format!("declaring a block fn: {e}"))?;
+        .map_err(|e| CodegenError::internal(format!("declaring a block fn: {e}")))?;
 
     let mut func = ir::Function::with_name_signature(UserFuncName::user(2, idx), sig);
     let cfg = em.module.target_config();
@@ -874,7 +875,7 @@ fn define_block_fn(
                         name: &str,
                         default: NodeId,
                         s: usize|
-         -> Result<(), String> {
+         -> CResult<()> {
             let duplicate = !bound.insert(name.to_string());
             let p = present.expect("optionals imply slots");
             let bit = bfx.b.ins().band_imm_u(p, (1u64 << s) as i64);
@@ -1057,7 +1058,7 @@ fn define_block_fn(
     }
 
     bfx.drain_slot_inits();
-    super::verify::check(&bfx, &label);
+    super::verify::check(&bfx, &label)?;
     let Fx { mut b, .. } = bfx;
     b.seal_all_blocks();
     b.finalize(cfg);
@@ -1066,7 +1067,7 @@ fn define_block_fn(
     ctx.func = func;
     em.module
         .define_function(f_id, &mut ctx)
-        .map_err(|e| format!("compiling {label}: {e}"))?;
+        .map_err(|e| CodegenError::internal(format!("compiling {label}: {e}")))?;
     Ok(f_id)
 }
 
@@ -1083,7 +1084,7 @@ pub(crate) fn block_send_op(
     name: &str,
     args: &[ArrayElem],
     block: NodeId,
-) -> Result<Operand, String> {
+) -> CResult<Operand> {
     send_with_block_ptr_ops(
         fx,
         site,
@@ -1125,7 +1126,7 @@ impl BlockChannel {
 
     /// Build the proc, last. The answer is the callee's `blk` argument --
     /// a null pointer when the site writes no block.
-    pub(crate) fn open(self, fx: &mut Fx, site: NodeId) -> Result<ir::Value, String> {
+    pub(crate) fn open(self, fx: &mut Fx, site: NodeId) -> CResult<ir::Value> {
         match self {
             Self::None => Ok(fx.b.ins().iconst(fx.em.ptr, 0)),
             Self::Literal(block) => literal_block_ptr(fx, site, block),
@@ -1136,11 +1137,7 @@ impl BlockChannel {
 
 /// The block channel a literal `{ .. }`/`do .. end` opens: the proc is
 /// built here and MOVED to the callee, error path included.
-pub(crate) fn literal_block_ptr(
-    fx: &mut Fx,
-    site: NodeId,
-    block: NodeId,
-) -> Result<ir::Value, String> {
+pub(crate) fn literal_block_ptr(fx: &mut Fx, site: NodeId, block: NodeId) -> CResult<ir::Value> {
     literal_block_ptr_rehomed(fx, site, block, false)
 }
 
@@ -1151,7 +1148,7 @@ pub(crate) fn literal_block_ptr_rehomed(
     site: NodeId,
     block: NodeId,
     site_rehomes: bool,
-) -> Result<ir::Value, String> {
+) -> CResult<ir::Value> {
     let (proc_ss, _names) = build_proc_rehomed(fx, site, block, site_rehomes)?;
     let blk_ptr = fx.slot_addr(proc_ss, 0);
     fx.owned_consumed += 1;
@@ -1161,7 +1158,7 @@ pub(crate) fn literal_block_ptr_rehomed(
 /// The block channel a `&expr` argument opens: `nil` is "no block" (a
 /// null blk), anything else converts through `to_proc` and moves to the
 /// callee.
-pub(crate) fn block_arg_ptr(fx: &mut Fx, block_arg: NodeId) -> Result<ir::Value, String> {
+pub(crate) fn block_arg_ptr(fx: &mut Fx, block_arg: NodeId) -> CResult<ir::Value> {
     let op = super::expr::lower_expr(fx, block_arg)?;
     let vp = ownership::borrow_ptr(fx, &op);
     if op.owned() {
@@ -1190,7 +1187,7 @@ pub(crate) fn block_send(
     name: &str,
     args: &[ArrayElem],
     block: NodeId,
-) -> Result<Operand, String> {
+) -> CResult<Operand> {
     send_with_block_ptr(fx, site, recv, name, args, BlockChannel::Literal(block))
 }
 
@@ -1205,7 +1202,7 @@ pub(crate) fn block_arg_send(
     name: &str,
     args: &[ArrayElem],
     block_arg: NodeId,
-) -> Result<Operand, String> {
+) -> CResult<Operand> {
     // The receiver evaluates FIRST (ruby's order), then the block arg.
     let bypass = super::expr::bypasses_visibility(fx, recv);
     let recv_op = match recv {
@@ -1232,7 +1229,7 @@ fn send_with_block_ptr(
     name: &str,
     args: &[ArrayElem],
     blk: BlockChannel,
-) -> Result<Operand, String> {
+) -> CResult<Operand> {
     let bypass = super::expr::bypasses_visibility(fx, recv);
     let recv_op = match recv {
         Some(r) => Some(super::expr::lower_expr(fx, r)?),
@@ -1249,7 +1246,7 @@ pub(crate) fn send_with_block_ptr_ops(
     args: &[ArrayElem],
     blk: BlockChannel,
     bypass: bool,
-) -> Result<Operand, String> {
+) -> CResult<Operand> {
     let recv_ptr = match recv {
         Some(recv_op) => {
             let p = ownership::borrow_ptr(fx, &recv_op);

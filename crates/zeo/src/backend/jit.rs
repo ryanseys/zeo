@@ -4,6 +4,7 @@
 //! binary. The runtime is the one already linked into `zeo` (decision 9);
 //! emitted imports resolve through `zeo_rt::capi::symbols`.
 
+use crate::diagnostics::CompileError;
 use std::ffi::CString;
 use std::os::raw::c_char;
 
@@ -11,20 +12,24 @@ use std::os::raw::c_char;
 /// process with the program's status. Takes the analysis BY VALUE so the
 /// HIR arena is dropped before the program's `main` runs -- the compiler's
 /// memory is handed back first, exactly like the AOT child process
-/// starting fresh.
+/// starting fresh. A codegen error's span is resolved against the file
+/// table HERE, the last point the table is alive.
 pub fn run(
     analyzed: crate::analyze::Analyzed,
     program_name: &str,
     program_args: &[String],
-) -> Result<std::convert::Infallible, String> {
-    let jitted = crate::clif::emit::compile_jit(&analyzed)?;
+) -> Result<std::convert::Infallible, CompileError> {
+    let jitted = crate::clif::emit::compile_jit(&analyzed)
+        .map_err(|e| CompileError::from_codegen(e, &analyzed.compiler.hir.files))?;
     drop(analyzed);
     crate::memguard::set_phase(crate::memguard::Phase::Build);
 
     // argv as the program sees it: `$0` = the script (ruby's shape -- the
     // AOT binary's argv[0] is its own path only because a binary exists).
-    let c_arg =
-        |s: &str| CString::new(s).map_err(|_| format!("argument contains a NUL byte: {s:?}"));
+    let c_arg = |s: &str| {
+        CString::new(s)
+            .map_err(|_| CompileError::codegen(format!("argument contains a NUL byte: {s:?}")))
+    };
     let mut argv_owned: Vec<CString> = Vec::with_capacity(program_args.len() + 1);
     argv_owned.push(c_arg(program_name)?);
     for arg in program_args {

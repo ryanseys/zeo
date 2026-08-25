@@ -4,6 +4,7 @@
 //! cache).
 
 use super::capi_names::{self, CTy};
+use crate::codegen_error::{CResult, CodegenError};
 use cranelift_codegen::ir::{self, AbiParam, types};
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_jit::{JITBuilder, JITModule};
@@ -187,12 +188,12 @@ impl Emitter {
     /// `jit`: emit into in-process code memory instead of an object file.
     /// The only lowering-visible difference is `is_pic` (`JITModule`
     /// requires non-PIC code); everything downstream is mode-blind.
-    pub(crate) fn new(jit: bool) -> Result<Emitter, String> {
+    pub(crate) fn new(jit: bool) -> CResult<Emitter> {
         let mut flags = settings::builder();
         let set = |flags: &mut settings::Builder, k: &str, v: &str| {
             flags
                 .set(k, v)
-                .map_err(|e| format!("cranelift setting {k}={v}: {e}"))
+                .map_err(|e| CodegenError::internal(format!("cranelift setting {k}={v}: {e}")))
         };
         // `speed_and_size` was measured and is a NULL RESULT on both axes:
         // fib/gcbench/nested_loop/loops_times all within noise, and hello
@@ -217,11 +218,15 @@ impl Emitter {
         // executes an illegal instruction on an older chip. The JIT may
         // legitimately infer: its code runs in this process, on this CPU.
         let isa = cranelift_native::builder_with_options(jit)
-            .map_err(|e| format!("cranelift has no backend for this host: {e}"))?
+            .map_err(|e| {
+                CodegenError::internal(format!("cranelift has no backend for this host: {e}"))
+            })?
             .finish(settings::Flags::new(flags))
-            .map_err(|e| format!("building the target ISA: {e}"))?;
+            .map_err(|e| CodegenError::internal(format!("building the target ISA: {e}")))?;
         if isa.triple().endianness() != Ok(target_lexicon::Endianness::Little) {
-            return Err("the clif backend only serializes little-endian tables".to_string());
+            return Err(CodegenError::internal(
+                "the clif backend only serializes little-endian tables",
+            ));
         }
         let mut module = if jit {
             // Imports resolve against the runtime linked into THIS process:
@@ -239,7 +244,9 @@ impl Emitter {
             let elf = isa.triple().binary_format == target_lexicon::BinaryFormat::Elf;
             let mut builder =
                 ObjectBuilder::new(isa, "zeo-p0", cranelift_module::default_libcall_names())
-                    .map_err(|e| format!("cranelift object builder: {e}"))?;
+                    .map_err(|e| {
+                        CodegenError::internal(format!("cranelift object builder: {e}"))
+                    })?;
             builder.per_function_section(true);
             // `.eh_frame` is free on ELF; Mach-O emission panics in
             // cranelift-object 0.134 and is not load-bearing (decision 13).
@@ -249,19 +256,29 @@ impl Emitter {
         let ptr = module.target_config().pointer_type();
         let rodata_id = module
             .declare_data(super::names::RODATA, Linkage::Local, false, false)
-            .map_err(|e| format!("declaring {}: {e}", super::names::RODATA))?;
+            .map_err(|e| {
+                CodegenError::internal(format!("declaring {}: {e}", super::names::RODATA))
+            })?;
         let syms_id = module
             .declare_data(super::names::SYMS, Linkage::Local, true, false)
-            .map_err(|e| format!("declaring {}: {e}", super::names::SYMS))?;
+            .map_err(|e| {
+                CodegenError::internal(format!("declaring {}: {e}", super::names::SYMS))
+            })?;
         let callsites_id = module
             .declare_data(super::names::CALLSITES, Linkage::Local, true, false)
-            .map_err(|e| format!("declaring {}: {e}", super::names::CALLSITES))?;
+            .map_err(|e| {
+                CodegenError::internal(format!("declaring {}: {e}", super::names::CALLSITES))
+            })?;
         let cm_sites_id = module
             .declare_data(super::names::CM_SITES, Linkage::Local, true, false)
-            .map_err(|e| format!("declaring {}: {e}", super::names::CM_SITES))?;
+            .map_err(|e| {
+                CodegenError::internal(format!("declaring {}: {e}", super::names::CM_SITES))
+            })?;
         let reopen_flags_id = module
             .declare_data(super::names::REOPEN_FLAGS, Linkage::Local, true, false)
-            .map_err(|e| format!("declaring {}: {e}", super::names::REOPEN_FLAGS))?;
+            .map_err(|e| {
+                CodegenError::internal(format!("declaring {}: {e}", super::names::REOPEN_FLAGS))
+            })?;
         Ok(Emitter {
             module,
             ptr,

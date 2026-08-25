@@ -1,12 +1,12 @@
 //! The compiler's typed error surface, and how the CLI renders it.
 //!
-//! `CompileError` says which STAGE failed; the `Lower` variant additionally
-//! carries the registered source file and byte span the lowering (`crate::
-//! lower`) stamped on the way out, so `main.rs` can render a miette source
-//! excerpt pointing at the
-//! offending construct. Analyze/codegen errors are typed but message-only
-//! for now -- `Analyze` reserves an `Option<Span>` field so individual sites
-//! can be located incrementally without another signature migration.
+//! `CompileError` says which STAGE failed; the `Lower` and `Codegen`
+//! variants additionally carry the registered source file and byte span
+//! their pass (`crate::lower`, `crate::clif`) stamped on the way out, so
+//! `main.rs` can render a miette source excerpt pointing at the offending
+//! construct. Analyze errors are typed but message-only for now --
+//! `Analyze` reserves an `Option<Span>` field so individual sites can be
+//! located incrementally without another signature migration.
 //!
 //! Rendering lives at the CLI boundary ONLY (miette is not a dependency of
 //! the front end or the runtime): the library API converts to plain `String`s
@@ -358,6 +358,17 @@ impl CompileError {
         files: &[SourceFile],
     ) -> CompileError {
         CompileError::Codegen(CodegenDiagnostic::new(message.into(), span, files))
+    }
+
+    /// The driver-boundary conversion for the emitter -- see
+    /// `CodegenDiagnostic`. The kind is dropped here: unlike lowering, a
+    /// codegen error never has to become a Ruby exception through this
+    /// path (the run-time `eval` boundary converts for itself).
+    pub fn from_codegen(
+        err: crate::codegen_error::CodegenError,
+        files: &[SourceFile],
+    ) -> CompileError {
+        CompileError::codegen_located(err.message, err.span, files)
     }
 }
 

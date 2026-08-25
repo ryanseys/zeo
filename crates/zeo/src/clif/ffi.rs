@@ -15,6 +15,7 @@
 //! plan records as a lever; it changes no observable behaviour, so it does
 //! not gate parity.
 
+use crate::codegen_error::CResult;
 use cranelift_codegen::ir::{InstBuilder, types};
 use cranelift_module::Module;
 use zeo_abi::ffi::CScalar;
@@ -51,11 +52,9 @@ pub(crate) struct CallSpec {
 }
 
 /// The `attach_function` wrapper body: one C call.
-pub(crate) fn lower_ffi_call(fx: &mut Fx, site: NodeId, call: &FfiCall) -> Result<Operand, String> {
-    let spec = match call_spec(call) {
-        Ok(s) => s,
-        Err(what) => return fx.unsupported(site, &what),
-    };
+pub(crate) fn lower_ffi_call(fx: &mut Fx, site: NodeId, call: &FfiCall) -> CResult<Operand> {
+    let spec =
+        call_spec(call).map_err(|e| e.with_span_if_missing(fx.an.compiler.hir.span(site)))?;
     let addr = resolve_symbol(fx, call);
 
     // The arguments, in written order, into one contiguous slot array --
@@ -146,7 +145,7 @@ fn resolve_symbol(fx: &mut Fx, call: &FfiCall) -> cranelift_codegen::ir::Value {
 
 /// A contiguous argv of BORROWED copies, owned temps pooled first --
 /// `call::build_argv`'s shape over plain node ids.
-fn build_argv(fx: &mut Fx, ids: &[NodeId]) -> Result<cranelift_codegen::ir::Value, String> {
+fn build_argv(fx: &mut Fx, ids: &[NodeId]) -> CResult<cranelift_codegen::ir::Value> {
     use cranelift_codegen::ir::{StackSlotData, StackSlotKind};
     use zeo_abi::abi::VALUE_SIZE;
     if ids.is_empty() {
@@ -172,7 +171,7 @@ fn build_argv(fx: &mut Fx, ids: &[NodeId]) -> Result<cranelift_codegen::ir::Valu
 
 /// The whole signature as `.rodata` specs, or the refusal text for a shape
 /// the descriptor cannot carry.
-fn call_spec(call: &FfiCall) -> Result<CallSpec, String> {
+fn call_spec(call: &FfiCall) -> CResult<CallSpec> {
     Ok(CallSpec {
         args: call
             .args
@@ -185,7 +184,7 @@ fn call_spec(call: &FfiCall) -> Result<CallSpec, String> {
     })
 }
 
-fn ty_spec(ty: &FfiType) -> Result<TySpec, String> {
+fn ty_spec(ty: &FfiType) -> CResult<TySpec> {
     Ok(match ty {
         FfiType::Enum(members) => TySpec::Enum(members.clone()),
         FfiType::EnumSlot(slot) => TySpec::EnumSlot(*slot),
@@ -213,7 +212,7 @@ fn ty_spec(ty: &FfiType) -> Result<TySpec, String> {
 /// to its `count` elements, a nested struct recurses. No padding -- libffi
 /// derives offsets from the same natural-alignment rules the recorded
 /// layout's offsets came from.
-fn elems_of(ty: &FfiType) -> Result<Vec<TySpec>, String> {
+fn elems_of(ty: &FfiType) -> CResult<Vec<TySpec>> {
     Ok(match ty {
         FfiType::Array(elem, count) => {
             let one = elems_of(elem)?;
@@ -246,10 +245,10 @@ fn clone_spec(t: &TySpec) -> TySpec {
 /// the HOST --
 /// a Cranelift signature is decided here (`lower::ffi::platform_scalar_of`
 /// is the same table struct layouts already resolve against).
-fn scalar_of(ty: &FfiType) -> Result<CScalar, String> {
+fn scalar_of(ty: &FfiType) -> CResult<CScalar> {
     if let FfiType::PlatformScalar(name) = ty {
         return crate::lower::ffi::platform_scalar_of(name)
-            .ok_or_else(|| format!("the platform C typedef `{name}`"));
+            .ok_or_else(|| cannot_lower(format!("the platform C typedef `{name}`")));
     }
     // A bare struct name in a signature is ruby-ffi's `StructByReference`,
     // whose ABI type is a pointer.
@@ -257,7 +256,16 @@ fn scalar_of(ty: &FfiType) -> Result<CScalar, String> {
         return Ok(CScalar::Pointer);
     }
     ty.c_scalar()
-        .ok_or_else(|| "this FFI type in a call position".to_string())
+        .ok_or_else(|| cannot_lower("this FFI type in a call position"))
+}
+
+/// The signature helpers' refusal: span-less here, stamped with the call
+/// site's own by `lower_ffi_call`.
+fn cannot_lower(what: impl std::fmt::Display) -> crate::codegen_error::CodegenError {
+    crate::codegen_error::CodegenError::unsupported(
+        format!("the CLIF backend cannot lower {what} yet"),
+        None,
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -279,7 +287,7 @@ pub(crate) fn marker_call(
     site: NodeId,
     name: &str,
     args: &[crate::hir::ArrayElem],
-) -> Result<Operand, String> {
+) -> CResult<Operand> {
     let shape = || format!("the `{name}` marker in this shape");
     let ids: Option<Vec<NodeId>> = args
         .iter()
@@ -314,7 +322,7 @@ pub(crate) fn marker_call(
 /// evaluate here, in class-body order, and the runtime dlopens every value
 /// EAGERLY -- so an unopenable library raises `LoadError` at this exact
 /// statement, as CRuby's `ffi_lib` does.
-fn lib_store(fx: &mut Fx, slot: usize, pairs: &[NodeId]) -> Result<Operand, String> {
+fn lib_store(fx: &mut Fx, slot: usize, pairs: &[NodeId]) -> CResult<Operand> {
     use cranelift_codegen::ir::{MemFlagsData, StackSlotData, StackSlotKind};
     let n = pairs.len() / 2;
     let splats = fx.b.create_sized_stack_slot(StackSlotData::new(
@@ -341,7 +349,7 @@ fn lib_store(fx: &mut Fx, slot: usize, pairs: &[NodeId]) -> Result<Operand, Stri
 
 /// `__zeo_ffi_enum(slot, member, ...)`: the member list evaluates here and
 /// lands in the slot every signature lowered under it reads.
-fn enum_store(fx: &mut Fx, slot: usize, members: &[NodeId]) -> Result<Operand, String> {
+fn enum_store(fx: &mut Fx, slot: usize, members: &[NodeId]) -> CResult<Operand> {
     let argv = build_argv(fx, members)?;
     let slot_v = fx.b.ins().iconst(fx.em.ptr, slot as i64);
     let n_v = fx.b.ins().iconst(fx.em.ptr, members.len() as i64);
@@ -349,7 +357,7 @@ fn enum_store(fx: &mut Fx, slot: usize, members: &[NodeId]) -> Result<Operand, S
 }
 
 /// A deferred enum STRUCT FIELD's read (`int` -> Symbol) or write.
-fn enum_field(fx: &mut Fx, slot: usize, value: NodeId, put: bool) -> Result<Operand, String> {
+fn enum_field(fx: &mut Fx, slot: usize, value: NodeId, put: bool) -> CResult<Operand> {
     let op = lower_expr(fx, value)?;
     let ptr = ownership::borrow_ptr(fx, &op);
     if op.owned() {
@@ -366,7 +374,7 @@ fn call_out(
     fx: &mut Fx,
     name: &'static str,
     args: &[cranelift_codegen::ir::Value],
-) -> Result<Operand, String> {
+) -> CResult<Operand> {
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
     let mut all = args.to_vec();

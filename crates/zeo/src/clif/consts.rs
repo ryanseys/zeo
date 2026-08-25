@@ -6,6 +6,7 @@
 use super::ctx::Fx;
 use super::operand::{Operand, TagInfo};
 use super::ownership;
+use crate::codegen_error::CResult;
 use crate::hir::NodeId;
 use cranelift_codegen::ir::{InstBuilder, MemFlagsData, types};
 use zeo_abi::abi::{PAYLOAD_OFFSET, TAG_OFFSET, ValueTag};
@@ -13,7 +14,7 @@ use zeo_abi::abi::{PAYLOAD_OFFSET, TAG_OFFSET, ValueTag};
 /// A constant read: a statically-resolved class becomes a Class immediate;
 /// anything else (a value constant like `ARGV`) reads through the uncached
 /// runtime lookup, `NameError` on miss.
-pub(crate) fn const_read(fx: &mut Fx, id: NodeId, name: &str) -> Result<Operand, String> {
+pub(crate) fn const_read(fx: &mut Fx, id: NodeId, name: &str) -> CResult<Operand> {
     if let Some(cid) = super::boxes::resolve_class_here(fx, name) {
         return class_value_of(fx, id, name, cid);
     }
@@ -104,7 +105,7 @@ fn const_cref_call(
     name: &str,
     qualified: &str,
     hook: bool,
-) -> Result<Operand, String> {
+) -> CResult<Operand> {
     let bytes: Vec<u8> = chain.iter().flat_map(|c| c.to_le_bytes()).collect();
     let ids_off = fx.em.intern_rodata_aligned(&bytes, 4);
     let ids_ptr = fx.rod(ids_off);
@@ -133,7 +134,7 @@ fn const_cref_call(
 /// name needs -- ruby evaluates a clause's class expression only while
 /// MATCHING, so a name that resolves to nothing here may still hold one
 /// then (`ALIAS = Base`, `Foo = Class.new`).
-pub(crate) fn const_path_read(fx: &mut Fx, id: NodeId, path: &str) -> Result<Operand, String> {
+pub(crate) fn const_path_read(fx: &mut Fx, id: NodeId, path: &str) -> CResult<Operand> {
     match crate::hir::split_const_path(path) {
         (Some(scope), leaf) if !scope.is_empty() => scoped_const_read(fx, id, scope, leaf),
         (_, leaf) => const_read(fx, id, leaf),
@@ -192,7 +193,7 @@ pub(super) fn scoped_const_read(
     id: NodeId,
     scope: &str,
     name: &str,
-) -> Result<Operand, String> {
+) -> CResult<Operand> {
     // The private guard comes FIRST: a private constant naming a nested
     // class would otherwise fold to a Class immediate below and never ask
     // (`M::Hidden` answered the class where ruby raises).
@@ -257,12 +258,7 @@ pub(super) fn scoped_const_read(
 /// own rules -- recursively, so `K::C::P` reports a missing HEAD exactly
 /// as a bare miss does -- then the leaf on the class it names (rustc's
 /// `emit_const_read` runtime-scope arm).
-fn runtime_scope_const_read(
-    fx: &mut Fx,
-    id: NodeId,
-    scope: &str,
-    name: &str,
-) -> Result<Operand, String> {
+fn runtime_scope_const_read(fx: &mut Fx, id: NodeId, scope: &str, name: &str) -> CResult<Operand> {
     // A TOP-ANCHORED scope (`::Tilt::Template`) splits with an empty head;
     // that is the anchor, not a namespace to look `Tilt` up in.
     let (head, leaf) = crate::hir::split_const_path(scope);
@@ -341,7 +337,7 @@ fn class_value_of(
     _id: NodeId,
     _name: &str,
     cid: crate::compiler::ClassId,
-) -> Result<Operand, String> {
+) -> CResult<Operand> {
     // A constant a literal `autoload` names: the READ is what runs the
     // target, and a compiled-in unit's classes are registered from startup,
     // so nothing misses and no hook can carry it. Gate the fold instead.
@@ -377,7 +373,7 @@ fn class_value_of(
 }
 
 /// A Symbol value for `name`, interned by `zeo_unit_init`.
-pub(crate) fn symbol_value(fx: &mut Fx, name: &str) -> Result<Operand, String> {
+pub(crate) fn symbol_value(fx: &mut Fx, name: &str) -> CResult<Operand> {
     let sym = fx.sym_id(name);
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
@@ -422,7 +418,7 @@ pub(crate) fn const_added_send(
     owner: u32,
     name: &str,
     at: Option<NodeId>,
-) -> Result<(), String> {
+) -> CResult<()> {
     // A snippet's owner may be a RUN-TIME class the fresh compiler has no
     // entry for at all -- the announcement is unconditional there, and the
     // runtime's own dispatch decides whether a hook answers it.
@@ -447,7 +443,7 @@ pub(crate) fn const_added_send(
 }
 
 /// [`const_added_send`] with the hook check already made by the caller.
-pub(crate) fn const_added_announce(fx: &mut Fx, owner: u32, name: &str) -> Result<(), String> {
+pub(crate) fn const_added_announce(fx: &mut Fx, owner: u32, name: &str) -> CResult<()> {
     let recv = class_immediate(fx, crate::compiler::ClassId(owner));
     let recv_ptr = ownership::borrow_ptr(fx, &recv);
     let arg = symbol_value(fx, name)?;
@@ -488,7 +484,7 @@ pub(super) fn runtime_scope_const_write(
     scope: &str,
     name: &str,
     value: NodeId,
-) -> Result<Operand, String> {
+) -> CResult<Operand> {
     let (head, leaf) = crate::hir::split_const_path(scope);
     let leaf = leaf.to_string();
     let scope_op = match head.filter(|h| !h.is_empty()) {

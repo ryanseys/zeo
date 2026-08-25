@@ -5,6 +5,7 @@
 use super::ctx::Fx;
 use super::operand::{Operand, TagInfo};
 use super::ownership;
+use crate::codegen_error::CResult;
 use crate::hir::{ArrayElem, HirNode, NodeId};
 use cranelift_codegen::ir::{InstBuilder, types};
 
@@ -18,7 +19,7 @@ pub(super) fn cref_chain<'a>(fx: &'a Fx) -> &'a [crate::compiler::ClassId] {
 }
 
 /// The run-time handle for a box, gate and all -- see the `BoxHandle` arm.
-pub(crate) fn box_handle(fx: &mut Fx, box_id: u32) -> Result<Operand, String> {
+pub(crate) fn box_handle(fx: &mut Fx, box_id: u32) -> CResult<Operand> {
     let bx = fx.b.ins().iconst(types::I32, i64::from(box_id));
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
@@ -65,9 +66,9 @@ pub(crate) fn lexical_class(fx: &Fx) -> Option<crate::compiler::ClassId> {
 /// way [`if_expr`] joins an `if`. One call to `zeo_rt_is_live` and a branch.
 pub(super) fn guarded_fold(
     fx: &mut Fx,
-    fast: impl FnOnce(&mut Fx) -> Result<Operand, String>,
-    slow: impl FnOnce(&mut Fx) -> Result<Operand, String>,
-) -> Result<Operand, String> {
+    fast: impl FnOnce(&mut Fx) -> CResult<Operand>,
+    slow: impl FnOnce(&mut Fx) -> CResult<Operand>,
+) -> CResult<Operand> {
     let live = fx.call_status("zeo_rt_is_live", &[]);
     let ss = fx.temp_slot();
     let dst = fx.slot_addr(ss, 0);
@@ -125,7 +126,7 @@ pub(super) fn inline_accessor(
     kwargs: &[crate::hir::KwArg],
     block: Option<crate::hir::NodeId>,
     block_arg: Option<crate::hir::NodeId>,
-) -> Option<Result<Operand, String>> {
+) -> Option<CResult<Operand>> {
     use crate::compiler::AccessorKind;
     if !kwargs.is_empty() || block.is_some() || block_arg.is_some() {
         return None;
@@ -200,7 +201,7 @@ pub(super) fn box_current(
     receiver: Option<crate::hir::NodeId>,
     name: &str,
     args: &[ArrayElem],
-) -> Result<Option<Operand>, String> {
+) -> CResult<Option<Operand>> {
     if name != "current" || !args.is_empty() {
         return Ok(None);
     }
@@ -248,7 +249,7 @@ pub(super) fn module_nesting(
     receiver: Option<NodeId>,
     name: &str,
     args: &[ArrayElem],
-) -> Result<Option<Operand>, String> {
+) -> CResult<Option<Operand>> {
     if name != "nesting" || !args.is_empty() {
         return Ok(None);
     }

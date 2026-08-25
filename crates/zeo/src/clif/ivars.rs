@@ -3,6 +3,7 @@
 
 use super::ctx::Fx;
 use super::ownership;
+use crate::codegen_error::CResult;
 use crate::hir::NodeId;
 use cranelift_codegen::ir::InstBuilder;
 
@@ -20,7 +21,7 @@ pub(crate) fn dyn_ivar_recv(fx: &mut Fx) -> cranelift_codegen::ir::Value {
 /// `@name` read into a fresh owned temp -- slot-indexed for a compiled
 /// class; NAME-KEYED (fallible: the Ractor guard) for a native-backed one,
 /// the rustc `ivar_get_dyn_isolated` shape.
-pub(crate) fn ivar_read_op(fx: &mut Fx, name: &str) -> Result<super::operand::Operand, String> {
+pub(crate) fn ivar_read_op(fx: &mut Fx, name: &str) -> CResult<super::operand::Operand> {
     use super::operand::{Operand, TagInfo};
     if fx.dyn_ivars || fx.self_is_dynamic || fx.self_is_class || fx.method_class.is_none() {
         // A `self_is_class` body's `@x` is a CLASS-level ivar; the runtime's
@@ -53,10 +54,7 @@ pub(crate) fn ivar_read_op(fx: &mut Fx, name: &str) -> Result<super::operand::Op
 
 /// `@name` through the runtime's NAME-keyed path: a native-backed or
 /// class receiver, and any ivar the compiled layout has no slot for.
-pub(super) fn name_keyed_ivar_read(
-    fx: &mut Fx,
-    name: &str,
-) -> Result<super::operand::Operand, String> {
+pub(super) fn name_keyed_ivar_read(fx: &mut Fx, name: &str) -> CResult<super::operand::Operand> {
     let recv = dyn_ivar_recv(fx);
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
@@ -74,11 +72,7 @@ pub(super) fn name_keyed_ivar_read(
 /// `@name = <op>`: the slot write MOVES the value in; the name-keyed
 /// write BORROWS it (the runtime clones), so an owned operand parks in
 /// the pool first -- the write's frozen check can raise.
-pub(crate) fn ivar_write_op(
-    fx: &mut Fx,
-    name: &str,
-    op: super::operand::Operand,
-) -> Result<(), String> {
+pub(crate) fn ivar_write_op(fx: &mut Fx, name: &str, op: super::operand::Operand) -> CResult<()> {
     let slot = ivar_slot_of(fx, name);
     if slot.is_none()
         || fx.dyn_ivars
@@ -109,7 +103,7 @@ pub(crate) fn ivar_write_op(
 }
 
 /// `@name = value`: evaluate then write (see [`ivar_write_op`]).
-pub(super) fn lower_ivar_write(fx: &mut Fx, name: &str, value: NodeId) -> Result<(), String> {
+pub(super) fn lower_ivar_write(fx: &mut Fx, name: &str, value: NodeId) -> CResult<()> {
     let op = super::expr::lower_expr(fx, value)?;
     ivar_write_op(fx, name, op)
 }

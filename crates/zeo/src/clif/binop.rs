@@ -4,6 +4,7 @@
 use super::ctx::Fx;
 use super::operand::{Operand, TagInfo};
 use super::ownership;
+use crate::codegen_error::CResult;
 use crate::hir::NodeId;
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::{InstBuilder, MemFlagsData, types};
@@ -141,7 +142,7 @@ impl BinOp {
 /// `a op b`, the rustc emitter's exact three arms. Both operands are
 /// materialized (owned ones handed to the pool -- the arms only borrow),
 /// the result is a fresh owned slot.
-pub(super) fn binop(fx: &mut Fx, name: &str, recv: NodeId, arg: NodeId) -> Result<Operand, String> {
+pub(super) fn binop(fx: &mut Fx, name: &str, recv: NodeId, arg: NodeId) -> CResult<Operand> {
     let op = BinOp::of(name).expect("operator_fast_path guarded");
     let a = super::expr::lower_expr(fx, recv)?;
     // Park an owned lhs BEFORE the rhs lowers: the rhs may raise, and the
@@ -384,13 +385,7 @@ fn float_arm(
 }
 
 /// The general three-arm shape over boxed operands.
-fn boxed_binop(
-    fx: &mut Fx,
-    op: BinOp,
-    name: &str,
-    a: Operand,
-    b_op: Operand,
-) -> Result<Operand, String> {
+fn boxed_binop(fx: &mut Fx, op: BinOp, name: &str, a: Operand, b_op: Operand) -> CResult<Operand> {
     let fl = MemFlagsData::trusted();
     // Owned operands hand ownership to the pool; every arm below only
     // borrows the bytes.

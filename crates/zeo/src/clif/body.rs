@@ -5,6 +5,7 @@ use super::ctx::Fx;
 use super::module::Emitter;
 use super::{stmt, verify};
 use crate::analyze::Analyzed;
+use crate::codegen_error::{CResult, CodegenError};
 use cranelift_codegen::ir::{self, AbiParam, InstBuilder, MemFlagsData, UserFuncName, types};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_module::{FuncId, Linkage, Module};
@@ -240,7 +241,7 @@ fn bind_param_slots(
 /// Phase B (the frame exists): each deferred optional either copies its
 /// given value or evaluates its default -- user code, in declared order,
 /// so a later default reads every earlier binding.
-fn bind_deferred(fx: &mut Fx, deferred: &[DeferredOpt]) -> Result<(), String> {
+fn bind_deferred(fx: &mut Fx, deferred: &[DeferredOpt]) -> CResult<()> {
     for d in deferred {
         let given = fx.b.create_block();
         let absent = fx.b.create_block();
@@ -276,7 +277,7 @@ pub(super) fn define_method_body(
     em: &mut Emitter,
     analyzed: &Analyzed,
     def: &BodyFnSpec<'_>,
-) -> Result<(), String> {
+) -> CResult<()> {
     let layout = super::params::layout_of(def.hir_params)?;
     let sig = super::params::body_sig(em, layout.n_slots, def.has_blk);
     let idx = em.next_fn_index();
@@ -558,7 +559,7 @@ pub(super) fn define_method_body(
     }
 
     fx.drain_slot_inits();
-    verify::check(&fx, &label);
+    verify::check(&fx, &label)?;
     let Fx { mut b, .. } = fx;
     b.seal_all_blocks();
     b.finalize(cfg);
@@ -568,7 +569,7 @@ pub(super) fn define_method_body(
     ctx.func = func;
     em.module
         .define_function(def.func, &mut ctx)
-        .map_err(|e| format!("compiling {label}: {e}"))?;
+        .map_err(|e| CodegenError::internal(format!("compiling {label}: {e}")))?;
     em.record_debug(&label, def.func, &ctx);
     Ok(())
 }
@@ -596,7 +597,7 @@ pub(super) fn define_toplevel(
     analyzed: &Analyzed,
     scope: &TopScope<'_>,
     stmts: &[crate::hir::NodeId],
-) -> Result<FuncId, String> {
+) -> CResult<FuncId> {
     let mut sig = em.module.make_signature();
     sig.params.push(AbiParam::new(em.ptr));
     sig.returns.push(AbiParam::new(types::I32));
@@ -617,7 +618,7 @@ pub(super) fn define_toplevel(
     let func_id = em
         .module
         .declare_function(&sym, Linkage::Local, &sig)
-        .map_err(|e| format!("declaring {sym}: {e}"))?;
+        .map_err(|e| CodegenError::internal(format!("declaring {sym}: {e}")))?;
 
     let mut locals = crate::analyze::local_storage::Locals::default();
     for &stmt in stmts {
@@ -756,7 +757,7 @@ pub(super) fn define_toplevel(
     epilogue(&mut fx, 1);
 
     fx.drain_slot_inits();
-    verify::check(&fx, &sym);
+    verify::check(&fx, &sym)?;
     let Fx { mut b, .. } = fx;
     b.seal_all_blocks();
     b.finalize(cfg);
@@ -766,7 +767,7 @@ pub(super) fn define_toplevel(
     ctx.func = func;
     em.module
         .define_function(func_id, &mut ctx)
-        .map_err(|e| format!("compiling {sym}: {e}"))?;
+        .map_err(|e| CodegenError::internal(format!("compiling {sym}: {e}")))?;
     em.record_debug(&sym, func_id, &ctx);
     Ok(func_id)
 }

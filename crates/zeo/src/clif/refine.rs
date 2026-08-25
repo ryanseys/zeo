@@ -7,6 +7,7 @@
 //! and a refined name actually meet -- which is a handful of sites in the
 //! rare program that refines at all.
 
+use crate::codegen_error::CResult;
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::{InstBuilder, MemFlagsData, types};
 
@@ -32,7 +33,7 @@ pub(crate) fn candidates(fx: &Fx, site: NodeId, name: &str) -> Vec<(ClassId, Cla
 
 /// The refined lowering for one `HirNode::Call`, or `None` when no
 /// refinement covers it.
-pub(crate) fn refined_call(fx: &mut Fx, site: NodeId) -> Result<Option<Operand>, String> {
+pub(crate) fn refined_call(fx: &mut Fx, site: NodeId) -> CResult<Option<Operand>> {
     let HirNode::Call {
         receiver,
         name,
@@ -157,7 +158,7 @@ fn lower(
     block: Option<NodeId>,
     block_arg: Option<NodeId>,
     cands: Cands<'_>,
-) -> Result<Operand, String> {
+) -> CResult<Operand> {
     // A splat's element count is a run-time number, so those arguments go
     // over as an Array and the runtime flattens them. Everything else stays
     // on the flat argv, which needs no allocation.
@@ -322,7 +323,7 @@ fn lower_reflect(
     args: &[ArrayElem],
     block: Option<NodeId>,
     active: Cands<'_>,
-) -> Result<Operand, String> {
+) -> CResult<Operand> {
     let recv_ptr = match receiver {
         Some(r) => {
             let op = super::expr::lower_expr(fx, r)?;

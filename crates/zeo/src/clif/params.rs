@@ -8,6 +8,7 @@
 //! pointers (null = absent optional; its default runs in the body).
 
 use super::module::Emitter;
+use crate::codegen_error::{CResult, CodegenError};
 use crate::hir::{KeywordParam, Params};
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::{
@@ -37,7 +38,7 @@ pub(crate) struct Layout {
     pub kw_direct: Option<Vec<String>>,
 }
 
-pub(crate) fn layout_of(p: &Params) -> Result<Layout, String> {
+pub(crate) fn layout_of(p: &Params) -> CResult<Layout> {
     let rest_named = matches!(p.rest, Some(Some(_)));
     let kwrest_named = matches!(p.keyword_rest, Some(Some(_)));
     let n_slots = p.required.len()
@@ -47,9 +48,9 @@ pub(crate) fn layout_of(p: &Params) -> Result<Layout, String> {
         + p.keywords.len()
         + usize::from(kwrest_named);
     if n_slots > 64 {
-        return Err(format!(
+        return Err(CodegenError::internal(format!(
             "a method with {n_slots} parameter slots overflows the 64-bit presence bitmap"
-        ));
+        )));
     }
     let mut mask = 0u64;
     let mut s = p.required.len();
@@ -266,7 +267,7 @@ pub(crate) fn define_trampoline(
     em: &mut Emitter,
     spec: &TrampSpec<'_>,
     fn_index: u32,
-) -> Result<(), String> {
+) -> CResult<()> {
     let layout = layout_of(spec.params)?;
     if layout.plain {
         define_plain_trampoline(em, spec, spec.params.required.len(), fn_index)
@@ -287,7 +288,7 @@ fn emit_reopen_guard(
     b: &mut FunctionBuilder<'_>,
     entry: ir::Block,
     spec: &TrampSpec<'_>,
-) -> Result<(), String> {
+) -> CResult<()> {
     let Some(idx) = spec.reopen_flag else {
         return Ok(());
     };
@@ -331,7 +332,7 @@ fn define_bound_trampoline(
     spec: &TrampSpec<'_>,
     layout: &Layout,
     fn_index: u32,
-) -> Result<(), String> {
+) -> CResult<()> {
     let desc_id = super::statics::define_param_desc(
         em,
         &ParamDescSpec {
@@ -452,7 +453,7 @@ fn define_bound_trampoline(
     ctx.func = func;
     em.module
         .define_function(spec.tramp, &mut ctx)
-        .map_err(|e| format!("compiling a trampoline: {e}"))
+        .map_err(|e| CodegenError::internal(format!("compiling a trampoline: {e}")))
 }
 
 /// The lean trampoline for a required-params-only method.
@@ -461,7 +462,7 @@ fn define_plain_trampoline(
     spec: &TrampSpec<'_>,
     arity: usize,
     fn_index: u32,
-) -> Result<(), String> {
+) -> CResult<()> {
     let (tramp, body, has_blk) = (spec.tramp, spec.body, spec.has_blk);
     let sig = value_fn_sig(em);
     let mut func = ir::Function::with_name_signature(UserFuncName::user(1, fn_index), sig);
@@ -549,7 +550,7 @@ fn define_plain_trampoline(
     ctx.func = func;
     em.module
         .define_function(tramp, &mut ctx)
-        .map_err(|e| format!("compiling a trampoline: {e}"))
+        .map_err(|e| CodegenError::internal(format!("compiling a trampoline: {e}")))
 }
 
 /// An `attr_reader`/`attr_writer` trampoline -- the slot access IS the
@@ -562,7 +563,7 @@ pub(crate) fn define_accessor(
     kind: crate::compiler::AccessorKind,
     fn_index: u32,
     frame: Option<(Option<&str>, &str, u32, u32)>,
-) -> Result<(), String> {
+) -> CResult<()> {
     let sig = value_fn_sig(em);
     let mut func = ir::Function::with_name_signature(UserFuncName::user(1, fn_index), sig);
     // An `attr_*`-GENERATED accessor is iseq-less in CRuby: it appears in
@@ -686,5 +687,5 @@ pub(crate) fn define_accessor(
     ctx.func = func;
     em.module
         .define_function(tramp, &mut ctx)
-        .map_err(|e| format!("compiling an accessor: {e}"))
+        .map_err(|e| CodegenError::internal(format!("compiling an accessor: {e}")))
 }

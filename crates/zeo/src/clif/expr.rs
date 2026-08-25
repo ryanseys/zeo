@@ -5,6 +5,7 @@
 use super::ctx::Fx;
 use super::operand::{Operand, TagInfo};
 use super::ownership;
+use crate::codegen_error::CResult;
 use crate::hir::{ArrayElem, HirNode, NodeId, StrPart};
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::{InstBuilder, MemFlagsData, types};
@@ -86,7 +87,14 @@ fn emit_pure_str_literal(fx: &mut Fx, text: &str, frozen: bool) -> Operand {
     }
 }
 
-pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
+/// Stamps the node's span on any error propagating out
+/// (`with_span_if_missing` -- the innermost frame wins), so rejection
+/// sites keep raising bare messages and still end up located.
+pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> CResult<Operand> {
+    lower_expr_inner(fx, id).map_err(|e| e.with_span_if_missing(fx.an.compiler.hir.span(id)))
+}
+
+fn lower_expr_inner(fx: &mut Fx, id: NodeId) -> CResult<Operand> {
     // `blk.call(..)` on the scope's own `&block` parameter -- see
     // `block_param_call`.
     if let Some(op) = block_param_call(fx, id)? {
@@ -1138,7 +1146,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             // one inside the runtime (`nil..5` IS `..5`), and the
             // construction runs CRuby's `begin <=> end` comparability
             // check, so the call is fallible.
-            let park = |fx: &mut Fx, n: Option<NodeId>| -> Result<Option<Operand>, String> {
+            let park = |fx: &mut Fx, n: Option<NodeId>| -> CResult<Option<Operand>> {
                 let Some(n) = n else { return Ok(None) };
                 let op = lower_expr(fx, n)?;
                 let tag = op.tag();
@@ -1431,7 +1439,7 @@ fn safe_nav_call(
     kwargs: Vec<crate::hir::KwArg>,
     block: Option<NodeId>,
     block_arg: Option<NodeId>,
-) -> Result<Operand, String> {
+) -> CResult<Operand> {
     let op = lower_expr(fx, recv)?;
     let tag = op.tag();
     let ptr = ownership::borrow_ptr(fx, &op);
@@ -1510,7 +1518,7 @@ fn literal_block_call(
     name: String,
     args: Vec<ArrayElem>,
     blk: NodeId,
-) -> Result<Operand, String> {
+) -> CResult<Operand> {
     // A typed-receiver `arr.each` (`Compiler::inline_iter_sites`):
     // fused under a runtime guard, with the ordinary block send on
     // the other arm. The literal shapes below never nominate --
@@ -1580,7 +1588,7 @@ fn plain_call(
     receiver: Option<NodeId>,
     name: String,
     args: Vec<ArrayElem>,
-) -> Result<Operand, String> {
+) -> CResult<Operand> {
     if let Some(op) = super::boxes::module_nesting(fx, receiver, &name, &args)? {
         return Ok(op);
     }
@@ -1677,7 +1685,7 @@ fn keyword_call(
     kwargs: Vec<crate::hir::KwArg>,
     block: Option<NodeId>,
     block_arg: Option<NodeId>,
-) -> Result<Operand, String> {
+) -> CResult<Operand> {
     if let Some(op) =
         method_capture_intrinsic(fx, receiver, &name, &args, &kwargs, block, block_arg)?
     {
@@ -1741,7 +1749,7 @@ fn if_expr(
     cond: NodeId,
     then_body: &[NodeId],
     else_body: &[NodeId],
-) -> Result<Operand, String> {
+) -> CResult<Operand> {
     let c = lower_expr(fx, cond)?;
     let t = ownership::truthy(fx, c);
     let ss = fx.temp_slot();
@@ -1775,7 +1783,7 @@ fn block_channel(
     id: NodeId,
     block: Option<NodeId>,
     block_arg: Option<NodeId>,
-) -> Result<super::blocks::BlockChannel, String> {
+) -> CResult<super::blocks::BlockChannel> {
     use super::blocks::BlockChannel;
     match (block, block_arg) {
         (None, None) => Ok(BlockChannel::None),
@@ -1885,7 +1893,7 @@ fn method_capture_intrinsic(
     kwargs: &[crate::hir::KwArg],
     block: Option<NodeId>,
     block_arg: Option<NodeId>,
-) -> Result<Option<Operand>, String> {
+) -> CResult<Option<Operand>> {
     if name != "method"
         || args.len() != 1
         || !kwargs.is_empty()
@@ -1954,7 +1962,7 @@ fn flip_flop(
     left: NodeId,
     right: NodeId,
     exclusive: bool,
-) -> Result<Operand, String> {
+) -> CResult<Operand> {
     let ss = fx.temp_slot();
     let dst = fx.slot_addr(ss, 0);
     let on_blk = fx.b.create_block();
@@ -1967,7 +1975,7 @@ fn flip_flop(
     fx.b.ins().brif(on, on_blk, &[], test_left, &[]);
 
     // Already on: the right operand decides whether this is the last true.
-    let turn_off = |fx: &mut Fx| -> Result<(), String> {
+    let turn_off = |fx: &mut Fx| -> CResult<()> {
         let op = lower_expr(fx, right)?;
         let t = ownership::truthy(fx, op);
         let clear = fx.b.create_block();
@@ -2016,7 +2024,7 @@ fn flip_flop(
 /// `a || b` / `a && b`: keep `a` when its truthiness matches
 /// `keep_truthy`, else evaluate and keep `b` -- the OPERAND is the value,
 /// Ruby's rule.
-fn short_circuit(fx: &mut Fx, a: NodeId, b: NodeId, keep_truthy: bool) -> Result<Operand, String> {
+fn short_circuit(fx: &mut Fx, a: NodeId, b: NodeId, keep_truthy: bool) -> CResult<Operand> {
     let a_op = lower_expr(fx, a)?;
     let ptr = ownership::borrow_ptr(fx, &a_op);
     let a_tag = a_op.tag();
@@ -2081,7 +2089,7 @@ fn regexp_lit(
     fx: &mut Fx,
     parts: &[crate::hir::StrPart],
     flags: crate::hir::RegexpFlags,
-) -> Result<Operand, String> {
+) -> CResult<Operand> {
     use crate::hir::StrPart;
     let enc_byte = match flags.encoding {
         zeo_abi::RegexpEncoding::Source => 0i64,
@@ -2194,7 +2202,7 @@ fn case_when(
     subject: Option<NodeId>,
     arms: &[(Vec<ArrayElem>, Vec<NodeId>)],
     else_body: &[NodeId],
-) -> Result<Operand, String> {
+) -> CResult<Operand> {
     let subj = match subject {
         Some(n) => {
             let op = lower_expr(fx, n)?;
@@ -2381,7 +2389,7 @@ pub(crate) fn method_class_shadows(fx: &Fx, name: &str) -> bool {
 /// `None` when the scope reports no names -- a `binding` reached through a
 /// runtime-computed send, say -- and the ordinary dynamic send raises the
 /// runtime's own refusal.
-pub(crate) fn binding_value(fx: &mut Fx, site: NodeId) -> Result<Option<Operand>, String> {
+pub(crate) fn binding_value(fx: &mut Fx, site: NodeId) -> CResult<Option<Operand>> {
     if fx.binding_names.is_none() {
         return Ok(None);
     }
@@ -2475,7 +2483,7 @@ fn runtime_def(
     is_class_method: bool,
     visibility: crate::hir::Visibility,
     is_def: bool,
-) -> Result<Operand, String> {
+) -> CResult<Operand> {
     use cranelift_codegen::ir::types;
     // A `def`'s frame is labeled after the METHOD it creates; a
     // `define_method` body is genuinely the block ruby labels it as.
@@ -2636,7 +2644,7 @@ fn runtime_def(
 /// block is an ordinary escaping Proc carrying its own isolation verdict
 /// (`RProc::with_outer_capture`), which `zeo_rt_ractor_new` reads and
 /// refuses on at exactly the moment CRuby's own Proc-isolation check does.
-fn ractor_new(fx: &mut Fx, id: NodeId) -> Result<Option<Operand>, String> {
+fn ractor_new(fx: &mut Fx, id: NodeId) -> CResult<Option<Operand>> {
     let HirNode::Call {
         receiver: Some(recv),
         name,
@@ -2760,7 +2768,7 @@ fn runtime_eval(
     receiver: Option<NodeId>,
     name: &str,
     args: &[crate::hir::ArrayElem],
-) -> Result<Option<Operand>, String> {
+) -> CResult<Option<Operand>> {
     let ids: Option<Vec<NodeId>> = args
         .iter()
         .map(|a| match a {
@@ -2860,7 +2868,7 @@ fn runtime_eval(
 /// iterator to catch instead of the `LocalJumpError` a proc-closure's
 /// break raises. `Enumerable#first` driving a user `each` that forwards
 /// its block is the corpus shape.
-fn block_param_call(fx: &mut Fx, id: NodeId) -> Result<Option<Operand>, String> {
+fn block_param_call(fx: &mut Fx, id: NodeId) -> CResult<Option<Operand>> {
     let HirNode::Call {
         receiver: Some(recv),
         name,

@@ -13,11 +13,14 @@
 //! only with control-flow shapes that break the one-site-per-value rule.
 
 use super::ctx::Fx;
+use crate::codegen_error::{CResult, CodegenError};
 
-pub(crate) fn check(fx: &Fx, what: &str) {
-    assert_eq!(
-        fx.owned_created, fx.owned_consumed,
-        "ICE: ownership imbalance lowering {what}: {} owned values created, {} consumed",
-        fx.owned_created, fx.owned_consumed,
-    );
+pub(crate) fn check(fx: &Fx, what: &str) -> CResult<()> {
+    if fx.owned_created != fx.owned_consumed {
+        return Err(CodegenError::internal(format!(
+            "ICE: ownership imbalance lowering {what}: {} owned values created, {} consumed",
+            fx.owned_created, fx.owned_consumed,
+        )));
+    }
+    Ok(())
 }

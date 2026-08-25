@@ -94,6 +94,27 @@ impl From<String> for Refusal {
     }
 }
 
+/// A codegen refusal's text exactly as the raised `NotImplementedError`
+/// has always carried it: the location the error's span points at
+/// re-appended as ` ({file}:{line})`. The emitter no longer writes the
+/// location into the message -- it travels as a span -- so the one
+/// boundary that turns the error into a Ruby exception restores it here,
+/// where the compiler's file table is still alive.
+fn located_message(
+    err: crate::codegen_error::CodegenError,
+    analyzed: &crate::analyze::Analyzed,
+) -> String {
+    let at = err
+        .span
+        .and_then(|s| {
+            let f = analyzed.compiler.hir.files.get(s.file.0 as usize)?;
+            let upto = (s.start as usize).min(f.source.len());
+            Some(format!(" ({}:{})", f.name, f.line_at(upto as u32)))
+        })
+        .unwrap_or_default();
+    format!("{}{at}", err.message)
+}
+
 /// One compiled snippet: the entry's address, and the locals it wants a
 /// cell for, in the order its entry loads them.
 struct Compiled {
@@ -239,7 +260,8 @@ fn build(req: &EvalRequest<'_>, scope_names: &[String]) -> Result<Compiled, Refu
             n => zeo_rt::eval::reserve_using_slots(n as u32),
         },
     };
-    let program = crate::clif::eval::compile(&analyzed, &spec)?;
+    let program = crate::clif::eval::compile(&analyzed, &spec)
+        .map_err(|e| Refusal::NotCompiled(located_message(e, &analyzed)))?;
     if let Some(init) = program.unit_init {
         let init: unsafe extern "C" fn() = unsafe { std::mem::transmute(init) };
         unsafe { init() };

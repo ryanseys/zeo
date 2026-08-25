@@ -15,6 +15,7 @@
 
 use super::ctx::{Fx, LoopCtl};
 use super::ownership;
+use crate::codegen_error::CResult;
 use crate::hir::{HirNode, NodeId};
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::{self, InstBuilder, MemFlagsData, StackSlotData, StackSlotKind, types};
@@ -68,7 +69,7 @@ pub(crate) fn lower_counted(
     counted: &Counted,
     block: NodeId,
     result: Option<ir::Value>,
-) -> Result<(), String> {
+) -> CResult<()> {
     let HirNode::Block { params, body } = &fx.an.compiler.hir[block] else {
         return fx.unsupported(site, "a non-literal block");
     };
@@ -398,7 +399,7 @@ pub(crate) fn lower_array_each(
     recv_id: NodeId,
     block: NodeId,
     want_result: bool,
-) -> Result<Option<super::operand::Operand>, String> {
+) -> CResult<Option<super::operand::Operand>> {
     use super::operand::{Operand, TagInfo};
     // The receiver is evaluated ONCE and both arms borrow it.
     let op = super::expr::lower_expr(fx, recv_id)?;

@@ -9,6 +9,7 @@
 use super::ctx::Fx;
 use super::operand::{Operand, TagInfo};
 use super::ownership;
+use crate::codegen_error::CResult;
 use crate::hir::{NodeId, RescueClause};
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::{self, InstBuilder, types};
@@ -24,7 +25,7 @@ pub(crate) fn lower_begin(
     else_body: Option<&[NodeId]>,
     ensure_body: Option<&[NodeId]>,
     result: Option<ir::Value>,
-) -> Result<(), String> {
+) -> CResult<()> {
     // Resolve every clause's matchers up front: the ids a baked ancestry
     // test settles, and the ones only the run time can (see [`Matcher`]).
     let mut clause_ids: Vec<(Vec<u32>, Vec<Matcher>)> = Vec::with_capacity(rescues.len());
@@ -377,7 +378,7 @@ fn clause_match(
     exc: ir::Value,
     ids: &[u32],
     dynamic: &[Matcher],
-) -> Result<ir::Value, String> {
+) -> CResult<ir::Value> {
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
     let fl = ir::MemFlagsData::trusted();
@@ -430,7 +431,7 @@ fn clause_match(
 
 /// A begin section: statements, with the tail as a value when `result`/// A begin section: statements, with the tail as a value when `result`
 /// asks for one.
-fn lower_section(fx: &mut Fx, stmts: &[NodeId], result: Option<ir::Value>) -> Result<(), String> {
+fn lower_section(fx: &mut Fx, stmts: &[NodeId], result: Option<ir::Value>) -> CResult<()> {
     match result {
         Some(dst) => super::stmt::lower_value_body_into(fx, stmts, dst),
         None => super::stmt::lower_stmts(fx, stmts),

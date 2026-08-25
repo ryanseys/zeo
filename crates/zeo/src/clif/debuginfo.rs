@@ -17,6 +17,7 @@
 //! section-to-section offsets DWARF is full of (`DW_AT_stmt_list` and
 //! friends).
 
+use crate::codegen_error::{CResult, CodegenError};
 use cranelift_codegen::CompiledCode;
 use cranelift_module::FuncId;
 use cranelift_object::ObjectProduct;
@@ -104,7 +105,7 @@ impl DebugInfo {
     }
 
     /// Build the DWARF sections and add them to the object.
-    pub(crate) fn emit(&self, product: &mut ObjectProduct) -> Result<(), String> {
+    pub(crate) fn emit(&self, product: &mut ObjectProduct) -> CResult<()> {
         if self.funcs.is_empty() {
             return Ok(());
         }
@@ -219,13 +220,13 @@ impl DebugInfo {
         let mut sections = Sections::new(Relocate::new(RunTimeEndian::Little));
         dwarf
             .write(&mut sections)
-            .map_err(|e| format!("writing DWARF: {e}"))?;
+            .map_err(|e| CodegenError::internal(format!("writing DWARF: {e}")))?;
 
         // Two passes: every section must exist before a relocation can
         // name one.
         let mut ids: HashMap<SectionId, ObjSectionId> = HashMap::new();
         sections
-            .for_each(|id, w| -> Result<(), String> {
+            .for_each(|id, w| -> CResult<()> {
                 if w.writer.len() == 0 {
                     return Ok(());
                 }
@@ -242,8 +243,8 @@ impl DebugInfo {
                 ids.insert(id, obj_id);
                 Ok(())
             })
-            .map_err(|e: String| e)?;
-        sections.for_each(|id, w| -> Result<(), String> {
+            .map_err(|e: CodegenError| e)?;
+        sections.for_each(|id, w| -> CResult<()> {
             let Some(&obj_id) = ids.get(&id) else {
                 return Ok(());
             };
@@ -272,7 +273,9 @@ impl DebugInfo {
                             },
                         },
                     )
-                    .map_err(|e| format!("relocating a debug section: {e}"))?;
+                    .map_err(|e| {
+                        CodegenError::internal(format!("relocating a debug section: {e}"))
+                    })?;
             }
             Ok(())
         })

@@ -4,6 +4,7 @@
 
 use super::module::Emitter;
 use crate::analyze::Analyzed;
+use crate::codegen_error::CResult;
 use cranelift_codegen::cursor::{Cursor, FuncCursor};
 use cranelift_codegen::ir::{self, InstBuilder, MemFlagsData, StackSlotData, StackSlotKind, types};
 use cranelift_frontend::FunctionBuilder;
@@ -530,12 +531,12 @@ impl<'e, 'f> Fx<'e, 'f> {
         }
     }
 
-    /// A loud "the M0 slice cannot lower this" error, with the location.
-    pub fn unsupported<T>(&self, node: crate::hir::NodeId, what: &str) -> Result<T, String> {
-        let at = self
-            .location(node)
-            .map(|(f, l)| format!(" ({f}:{l})"))
-            .unwrap_or_default();
-        Err(format!("the CLIF backend cannot lower {what} yet{at}"))
+    /// A loud "the M0 slice cannot lower this" error; the location travels
+    /// as the node's span.
+    pub fn unsupported<T>(&self, node: crate::hir::NodeId, what: &str) -> CResult<T> {
+        Err(crate::codegen_error::CodegenError::unsupported(
+            format!("the CLIF backend cannot lower {what} yet"),
+            self.an.compiler.hir.span(node),
+        ))
     }
 }

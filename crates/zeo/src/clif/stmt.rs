@@ -5,11 +5,12 @@
 use super::ctx::{Fx, LoopCtl, VALUE_SIZE};
 use super::expr::lower_expr;
 use super::ownership;
+use crate::codegen_error::CResult;
 use crate::hir::{ArrayElem, HirNode, NodeId};
 use cranelift_codegen::ir::{InstBuilder, StackSlotData, StackSlotKind, types};
 use cranelift_module::Module;
 
-pub(crate) fn lower_stmts(fx: &mut Fx, stmts: &[NodeId]) -> Result<(), String> {
+pub(crate) fn lower_stmts(fx: &mut Fx, stmts: &[NodeId]) -> CResult<()> {
     let mut i = 0;
     while i < stmts.len() {
         // A `class << self` body's statements are SPLICED into the
@@ -53,7 +54,7 @@ fn singleton_frame(
     origin: NodeId,
     group: &[NodeId],
     dst: Option<cranelift_codegen::ir::Value>,
-) -> Result<(), String> {
+) -> CResult<()> {
     let Some((file, line)) = fx.location(origin) else {
         return lower_group(fx, group, dst);
     };
@@ -101,7 +102,7 @@ fn lower_group(
     fx: &mut Fx,
     stmts: &[NodeId],
     dst: Option<cranelift_codegen::ir::Value>,
-) -> Result<(), String> {
+) -> CResult<()> {
     let Some(dst) = dst else {
         for &stmt in stmts {
             let mark = fx.stmt_mark();
@@ -132,7 +133,7 @@ pub(crate) fn lower_value_body_into(
     fx: &mut Fx,
     stmts: &[NodeId],
     dst: cranelift_codegen::ir::Value,
-) -> Result<(), String> {
+) -> CResult<()> {
     let Some((&tail, init)) = stmts.split_last() else {
         ownership::write_move_into(fx, &super::operand::Operand::Nil, dst);
         return Ok(());
@@ -164,7 +165,7 @@ pub(crate) fn lower_value_body_into(
 
 /// A tail position accepts a few statement-shaped nodes whose value Ruby
 /// defines: an assignment answers the assigned value, a loop answers nil.
-fn lower_tail_expr(fx: &mut Fx, tail: NodeId) -> Result<super::operand::Operand, String> {
+fn lower_tail_expr(fx: &mut Fx, tail: NodeId) -> CResult<super::operand::Operand> {
     use super::operand::{Operand, TagInfo};
     match &fx.an.compiler.hir[tail] {
         // A `def` answers its method-name Symbol; the install itself is the
@@ -338,7 +339,14 @@ fn lower_tail_expr(fx: &mut Fx, tail: NodeId) -> Result<super::operand::Operand,
     }
 }
 
-pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
+/// Stamps the statement's span on any error propagating out
+/// (`with_span_if_missing` -- the innermost frame wins), so rejection
+/// sites keep raising bare messages and still end up located.
+pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> CResult<()> {
+    lower_stmt_inner(fx, stmt).map_err(|e| e.with_span_if_missing(fx.an.compiler.hir.span(stmt)))
+}
+
+fn lower_stmt_inner(fx: &mut Fx, stmt: NodeId) -> CResult<()> {
     stamp_line(fx, stmt);
     // A call the SITE decides (a refinement-covered name, `Ractor.new`)
     // lowers as an expression whose value is discarded: the arms below
@@ -857,7 +865,10 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
         HirNode::Using(module) if fx.eval_mode.is_some() => {
             let module = module.clone();
             let Some(slot) = fx.an.compiler.eval_activation_slot(stmt) else {
-                return Err("a `using` inside an `eval` that analyze did not place".to_string());
+                return Err(crate::codegen_error::CodegenError::unsupported(
+                    "a `using` inside an `eval` that analyze did not place",
+                    None,
+                ));
             };
             let op = super::consts::const_read(fx, stmt, &module)?;
             let ptr = ownership::borrow_ptr(fx, &op);
@@ -1190,7 +1201,7 @@ fn mixin_verb(node: &HirNode) -> &'static str {
     }
 }
 
-fn mixin_hook_send(fx: &mut Fx, module: &str, hook: &str) -> Result<(), String> {
+fn mixin_hook_send(fx: &mut Fx, module: &str, hook: &str) -> CResult<()> {
     let (Some(mid), true) = (
         super::boxes::resolve_class_here(fx, module),
         fx.self_is_class,
@@ -1236,7 +1247,7 @@ fn mixin_hook_send(fx: &mut Fx, module: &str, hook: &str) -> Result<(), String> 
 /// `puts` with arbitrary slice-lowerable arguments: a contiguous argv
 /// array of borrowed copies (owned temps hand their value to the pool
 /// first), then the status-protocol call.
-fn lower_puts(fx: &mut Fx, stmt: NodeId, args: &[ArrayElem]) -> Result<(), String> {
+fn lower_puts(fx: &mut Fx, stmt: NodeId, args: &[ArrayElem]) -> CResult<()> {
     let argc = args.len();
     let argv = (argc > 0).then(|| {
         fx.b.create_sized_stack_slot(StackSlotData::new(
@@ -1281,7 +1292,7 @@ fn lower_loop(
     body: &[NodeId],
     post: bool,
     result: Option<cranelift_codegen::ir::Value>,
-) -> Result<(), String> {
+) -> CResult<()> {
     let mark = fx.call_status("zeo_rt_pool_mark", &[]);
     let head = fx.b.create_block();
     let body_blk = fx.b.create_block();
@@ -1354,7 +1365,7 @@ fn lower_for(
     iterable: NodeId,
     body: &[NodeId],
     result: Option<cranelift_codegen::ir::Value>,
-) -> Result<(), String> {
+) -> CResult<()> {
     use crate::hir::MultiTarget;
     let coll = lower_expr(fx, iterable)?;
     let coll_ptr = ownership::borrow_ptr(fx, &coll);
@@ -1443,11 +1454,7 @@ fn lower_for(
 /// down the landing chain and the ensure-carrying `begin` settles it back
 /// onto the loop's own targets ([`super::control::lower_begin`]). `$!` is
 /// left to that chain, which pops exactly what it pushed.
-fn signal_jump(
-    fx: &mut Fx,
-    value: Option<NodeId>,
-    kind: zeo_abi::abi::SignalKind,
-) -> Result<(), String> {
+fn signal_jump(fx: &mut Fx, value: Option<NodeId>, kind: zeo_abi::abi::SignalKind) -> CResult<()> {
     let ptr = match value {
         Some(v) => {
             let op = lower_expr(fx, v)?;
@@ -1468,7 +1475,7 @@ fn signal_jump(
 
 /// A `while`/`until`/`loop`/`for` in VALUE position: its own value is nil
 /// (the collection, for `for`), and a `break v` supplies its own.
-pub(crate) fn loop_value(fx: &mut Fx, node: NodeId) -> Result<super::operand::Operand, String> {
+pub(crate) fn loop_value(fx: &mut Fx, node: NodeId) -> CResult<super::operand::Operand> {
     let ss = fx.temp_slot();
     let dst = fx.slot_addr(ss, 0);
     match &fx.an.compiler.hir[node] {
@@ -1584,7 +1591,7 @@ fn stamp_line(fx: &mut Fx, stmt: NodeId) {
 pub(crate) fn emit_class_body_call(
     fx: &mut Fx,
     call: &super::collect::ClassBodyCall,
-) -> Result<(), String> {
+) -> CResult<()> {
     let op = class_body_site(fx, call)?;
     ownership::discard(fx, op);
     Ok(())
@@ -1598,7 +1605,7 @@ pub(crate) fn class_body_value(
     fx: &mut Fx,
     site: NodeId,
     expression: bool,
-) -> Result<super::operand::Operand, String> {
+) -> CResult<super::operand::Operand> {
     use super::collect::BodyTail;
     let Some(call) = fx.em.class_bodies.get(&site).cloned() else {
         // A hoisted or statement-free site: its body already ran (or has
@@ -1644,7 +1651,7 @@ pub(crate) fn class_body_value(
 fn class_body_site(
     fx: &mut Fx,
     call: &super::collect::ClassBodyCall,
-) -> Result<super::operand::Operand, String> {
+) -> CResult<super::operand::Operand> {
     use cranelift_codegen::ir::InstBuilder;
     let Some((cond, run_when)) = call.guard else {
         return class_body_site_run(fx, call);
@@ -1680,7 +1687,7 @@ fn class_body_site(
 fn class_body_site_run(
     fx: &mut Fx,
     call: &super::collect::ClassBodyCall,
-) -> Result<super::operand::Operand, String> {
+) -> CResult<super::operand::Operand> {
     use cranelift_codegen::ir::{InstBuilder, MemFlagsData, types};
     use cranelift_module::Module;
     // The frozen-reopen guard runs FIRST: a frozen class raises before the
@@ -1826,7 +1833,7 @@ fn apply_visibility(
     entry: &'static str,
     name: &str,
     verb: Option<u8>,
-) -> Result<(), String> {
+) -> CResult<()> {
     use cranelift_codegen::ir::InstBuilder;
     let Some(cid) = fx.defining_class.or(fx.method_class) else {
         return fx.unsupported(stmt, "a visibility retag outside a class body");

@@ -15,6 +15,7 @@
 use super::ctx::Fx;
 use super::operand::{Operand, TagInfo};
 use super::ownership;
+use crate::codegen_error::CResult;
 use crate::hir::{HashPatternRest, NodeId, Pattern, PatternArm};
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::{self, InstBuilder, MemFlagsData, types};
@@ -29,7 +30,7 @@ pub(crate) fn lower_case_in(
     arms: &[PatternArm],
     else_body: &Option<Vec<NodeId>>,
     dst: ir::Value,
-) -> Result<(), String> {
+) -> CResult<()> {
     // The subject is evaluated ONCE and borrowed by every arm; an owned
     // temp hands its value to the pool first so a raising arm cannot
     // strand it.
@@ -98,7 +99,7 @@ pub(crate) fn lower_match_predicate(
     site: NodeId,
     subject: NodeId,
     pattern: &Pattern,
-) -> Result<Operand, String> {
+) -> CResult<Operand> {
     let subject_op = super::expr::lower_expr(fx, subject)?;
     let subj = ownership::borrow_ptr(fx, &subject_op);
     if subject_op.owned() {
@@ -125,7 +126,7 @@ pub(crate) fn lower_match_required(
     site: NodeId,
     subject: NodeId,
     pattern: &Pattern,
-) -> Result<Operand, String> {
+) -> CResult<Operand> {
     let subject_op = super::expr::lower_expr(fx, subject)?;
     let subj = ownership::borrow_ptr(fx, &subject_op);
     if subject_op.owned() {
@@ -152,7 +153,7 @@ fn match_pattern(
     pattern: &Pattern,
     scrut: ir::Value,
     fail: ir::Block,
-) -> Result<(), String> {
+) -> CResult<()> {
     match pattern {
         // A bare identifier always matches, binding the scrutinee.
         Pattern::Bind(name) => {
@@ -234,12 +235,7 @@ fn bind_name(fx: &mut Fx, name: &str, scrut: ir::Value) {
 
 /// `pat === scrut`, recording `P === v does not return true` when it
 /// rejects. Every leaf pattern with a nameable left-hand side comes here.
-fn case_eq_check(
-    fx: &mut Fx,
-    pat: ir::Value,
-    scrut: ir::Value,
-    fail: ir::Block,
-) -> Result<(), String> {
+fn case_eq_check(fx: &mut Fx, pat: ir::Value, scrut: ir::Value, fail: ir::Block) -> CResult<()> {
     let out = fx.temp_slot();
     let dst = fx.slot_addr(out, 0);
     let st = fx.call_status("zeo_rt_case_eq", &[pat, scrut, dst]);
@@ -269,7 +265,7 @@ fn class_check(
     name: &str,
     scrut: ir::Value,
     fail: ir::Block,
-) -> Result<(), String> {
+) -> CResult<()> {
     if let Some(tag) = builtin_tag(name) {
         let fl = MemFlagsData::trusted();
         let t = fx.b.ins().load(types::I8, fl, scrut, TAG_OFFSET as i32);
@@ -313,7 +309,7 @@ fn record_class_miss(
     matched: ir::Value,
     scrut: ir::Value,
     fail: ir::Block,
-) -> Result<(), String> {
+) -> CResult<()> {
     let ok = fx.b.create_block();
     let no = fx.b.create_block();
     fx.b.ins().brif(matched, ok, &[], no, &[]);
@@ -387,8 +383,8 @@ fn range_value(
     start: Option<NodeId>,
     end: Option<NodeId>,
     exclusive: bool,
-) -> Result<ir::Value, String> {
-    let bound = |fx: &mut Fx, n: Option<NodeId>| -> Result<ir::Value, String> {
+) -> CResult<ir::Value> {
+    let bound = |fx: &mut Fx, n: Option<NodeId>| -> CResult<ir::Value> {
         match n {
             Some(n) => {
                 let op = super::expr::lower_expr(fx, n)?;
@@ -429,7 +425,7 @@ fn array_pattern(
     post: &[Pattern],
     scrut: ir::Value,
     fail: ir::Block,
-) -> Result<(), String> {
+) -> CResult<()> {
     if let Some(name) = constant {
         class_check(fx, site, name, scrut, fail)?;
     }
@@ -489,7 +485,7 @@ fn find_pattern(
     post_rest: &Option<String>,
     scrut: ir::Value,
     fail: ir::Block,
-) -> Result<(), String> {
+) -> CResult<()> {
     if let Some(name) = constant {
         class_check(fx, site, name, scrut, fail)?;
     }
@@ -568,7 +564,7 @@ fn hash_pattern(
     rest: &HashPatternRest,
     scrut: ir::Value,
     fail: ir::Block,
-) -> Result<(), String> {
+) -> CResult<()> {
     if let Some(name) = constant {
         class_check(fx, site, name, scrut, fail)?;
     }
@@ -696,7 +692,7 @@ fn deconstruct(
     scrut: ir::Value,
     protocol: Protocol<'_>,
     fail: ir::Block,
-) -> Result<ir::Value, String> {
+) -> CResult<ir::Value> {
     let out = fx.temp_slot();
     let dst = fx.slot_addr(out, 0);
     let flag = fx.b.create_sized_stack_slot(ir::StackSlotData::new(

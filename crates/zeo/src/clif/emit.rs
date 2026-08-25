@@ -8,6 +8,7 @@ use super::ctx::Fx;
 use super::module::{ClifModule, Emitter};
 use super::{statics, stmt};
 use crate::analyze::Analyzed;
+use crate::codegen_error::{CResult, CodegenError};
 use cranelift_codegen::ir::{self, AbiParam, InstBuilder, UserFuncName, types};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::JITModule;
@@ -15,12 +16,12 @@ use cranelift_module::{DataId, FuncId, Linkage, Module};
 
 /// Lower `analyzed` to one object file's bytes. `debuginfo` adds DWARF
 /// line tables (`-g`); see `clif::debuginfo`.
-pub fn compile(analyzed: &Analyzed, debuginfo: bool) -> Result<Vec<u8>, String> {
+pub fn compile(analyzed: &Analyzed, debuginfo: bool) -> CResult<Vec<u8>> {
     compile_inner(analyzed, false, debuginfo).map(|(bytes, _)| bytes)
 }
 
 /// `compile` plus the per-function CLIF text (`--emit-clif`, snapshots).
-pub fn compile_with_clif(analyzed: &Analyzed) -> Result<(Vec<u8>, String), String> {
+pub fn compile_with_clif(analyzed: &Analyzed) -> CResult<(Vec<u8>, String)> {
     compile_inner(analyzed, true, false).map(|(bytes, text)| (bytes, text.expect("collected")))
 }
 
@@ -28,7 +29,7 @@ fn compile_inner(
     analyzed: &Analyzed,
     collect_clif: bool,
     debuginfo: bool,
-) -> Result<(Vec<u8>, Option<String>), String> {
+) -> CResult<(Vec<u8>, Option<String>)> {
     let mut em = Emitter::new(false)?;
     em.clif_text = collect_clif.then(String::new);
     em.debug = debuginfo.then(super::debuginfo::DebugInfo::default);
@@ -44,7 +45,7 @@ fn compile_inner(
     }
     let bytes = product
         .emit()
-        .map_err(|e| format!("emitting the object file: {e}"))?;
+        .map_err(|e| CodegenError::internal(format!("emitting the object file: {e}")))?;
     Ok((bytes, clif))
 }
 
@@ -57,7 +58,7 @@ pub struct Jitted {
 }
 
 /// Lower `analyzed` straight into executable memory (`--backend jit`).
-pub fn compile_jit(analyzed: &Analyzed) -> Result<Jitted, String> {
+pub fn compile_jit(analyzed: &Analyzed) -> CResult<Jitted> {
     let mut em = Emitter::new(true)?;
     let main = emit_program(&mut em, analyzed)?;
     let ClifModule::Jit(mut module) = em.module else {
@@ -65,14 +66,14 @@ pub fn compile_jit(analyzed: &Analyzed) -> Result<Jitted, String> {
     };
     module
         .finalize_definitions()
-        .map_err(|e| format!("finalizing jitted code: {e}"))?;
+        .map_err(|e| CodegenError::internal(format!("finalizing jitted code: {e}")))?;
     let main = module.get_finalized_function(main);
     Ok(Jitted { module, main })
 }
 
 /// The whole program into `em`'s module -- every function and data object,
 /// mode-blind. Returns the emitted C `main`.
-fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String> {
+fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> CResult<FuncId> {
     em.cov_active = crate::analyze::coverage::active(&analyzed.compiler);
     super::collect::collect_reopen_flags(em, analyzed);
     let defs = super::collect::collect_methods(em, analyzed)?;
@@ -888,7 +889,7 @@ pub(super) fn main_installs(
     fx: &mut Fx,
     analyzed: &Analyzed,
     hoisted: &[super::collect::ClassBodyCall],
-) -> Result<(), String> {
+) -> CResult<()> {
     // Alias-carrying classes with no body of their own validate here
     // (`NameError` for a source resolving nowhere); a class WITH a body
     // site validates at its body's end instead.
@@ -939,7 +940,7 @@ pub(super) fn main_installs(
 
 /// The exported C `main(argc, argv)`: tail-calls `zeo_rt_main` with the
 /// program description.
-fn define_main(em: &mut Emitter, desc: DataId) -> Result<FuncId, String> {
+fn define_main(em: &mut Emitter, desc: DataId) -> CResult<FuncId> {
     let mut sig = em.module.make_signature();
     sig.params.push(AbiParam::new(types::I32));
     sig.params.push(AbiParam::new(em.ptr));
@@ -947,7 +948,7 @@ fn define_main(em: &mut Emitter, desc: DataId) -> Result<FuncId, String> {
     let func_id = em
         .module
         .declare_function("main", Linkage::Export, &sig)
-        .map_err(|e| format!("declaring main: {e}"))?;
+        .map_err(|e| CodegenError::internal(format!("declaring main: {e}")))?;
     let f_rt_main = em.import("zeo_rt_main");
 
     let mut func = ir::Function::with_name_signature(UserFuncName::user(0, 1), sig);
@@ -973,7 +974,7 @@ fn define_main(em: &mut Emitter, desc: DataId) -> Result<FuncId, String> {
     ctx.func = func;
     em.module
         .define_function(func_id, &mut ctx)
-        .map_err(|e| format!("compiling main: {e}"))?;
+        .map_err(|e| CodegenError::internal(format!("compiling main: {e}")))?;
     em.record_debug("main", func_id, &ctx);
     Ok(func_id)
 }

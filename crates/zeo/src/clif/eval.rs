@@ -19,6 +19,7 @@ use super::module::{ClifModule, Emitter};
 use super::ownership;
 use super::{statics, verify};
 use crate::analyze::Analyzed;
+use crate::codegen_error::{CResult, CodegenError};
 use crate::hir::{HirNode, NodeId};
 use cranelift_codegen::ir::{self, AbiParam, InstBuilder, MemFlagsData, UserFuncName, types};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
@@ -63,7 +64,7 @@ pub struct EvalProgram {
 }
 
 /// Lower an analyzed snippet into executable memory.
-pub fn compile(analyzed: &Analyzed, spec: &EvalSpec<'_>) -> Result<EvalProgram, String> {
+pub fn compile(analyzed: &Analyzed, spec: &EvalSpec<'_>) -> CResult<EvalProgram> {
     let mut em = Emitter::new(true)?;
     em.eval_sites = true;
     let entry_id = define_entry(&mut em, analyzed, spec)?;
@@ -77,7 +78,7 @@ pub fn compile(analyzed: &Analyzed, spec: &EvalSpec<'_>) -> Result<EvalProgram, 
     };
     module
         .finalize_definitions()
-        .map_err(|e| format!("finalizing an eval: {e}"))?;
+        .map_err(|e| CodegenError::internal(format!("finalizing an eval: {e}")))?;
     let entry = module.get_finalized_function(entry_id);
     let unit_init = unit_init.map(|f| module.get_finalized_function(f));
     Ok(EvalProgram {
@@ -93,7 +94,7 @@ fn define_entry(
     em: &mut Emitter,
     analyzed: &Analyzed,
     spec: &EvalSpec<'_>,
-) -> Result<cranelift_module::FuncId, String> {
+) -> CResult<cranelift_module::FuncId> {
     let stmts = &analyzed.main_statements;
     let mut sig = em.module.make_signature();
     for _ in 0..3 {
@@ -103,7 +104,7 @@ fn define_entry(
     let func_id = em
         .module
         .declare_function(ENTRY, Linkage::Local, &sig)
-        .map_err(|e| format!("declaring {ENTRY}: {e}"))?;
+        .map_err(|e| CodegenError::internal(format!("declaring {ENTRY}: {e}")))?;
 
     let mut func = ir::Function::with_name_signature(UserFuncName::user(0, 0), sig);
     let cfg = em.module.target_config();
@@ -199,7 +200,7 @@ fn define_entry(
     epilogue(&mut fx, 1);
 
     fx.drain_slot_inits();
-    verify::check(&fx, ENTRY);
+    verify::check(&fx, ENTRY)?;
     let Fx { mut b, .. } = fx;
     b.seal_all_blocks();
     b.finalize(cfg);
@@ -209,7 +210,7 @@ fn define_entry(
     ctx.func = func;
     em.module
         .define_function(func_id, &mut ctx)
-        .map_err(|e| format!("compiling {ENTRY}: {e}"))?;
+        .map_err(|e| CodegenError::internal(format!("compiling {ENTRY}: {e}")))?;
     Ok(func_id)
 }
 
@@ -221,12 +222,7 @@ fn define_entry(
 /// read as an ordinary constant. Receiverless because ruby's own
 /// `Module#include` is public but `main.include` is not -- the same
 /// FCALL barrier a bare `include` at the top level passes.
-pub(super) fn eval_mixin_send(
-    fx: &mut Fx,
-    site: NodeId,
-    module: &str,
-    verb: &str,
-) -> Result<(), String> {
+pub(super) fn eval_mixin_send(fx: &mut Fx, site: NodeId, module: &str, verb: &str) -> CResult<()> {
     let op = eval_mixin_send_value(fx, site, module, verb)?;
     ownership::discard(fx, op);
     Ok(())
@@ -237,7 +233,7 @@ pub(super) fn eval_mixin_send_value(
     site: NodeId,
     module: &str,
     verb: &str,
-) -> Result<super::operand::Operand, String> {
+) -> CResult<super::operand::Operand> {
     let arg = super::consts::const_read(fx, site, module)?;
     let tag = arg.tag();
     let argv = ownership::borrow_ptr(fx, &arg);
@@ -261,7 +257,7 @@ pub(super) fn eval_mixin_send_value(
 /// body raises: where a `def` lands, what a bare constant resolves
 /// against, which class owns `@@x`. Lowering the body HERE would need all
 /// of that a second time, against a class id no compile can know.
-pub(crate) fn eval_class_def(fx: &mut Fx, stmt: NodeId) -> Result<super::operand::Operand, String> {
+pub(crate) fn eval_class_def(fx: &mut Fx, stmt: NodeId) -> CResult<super::operand::Operand> {
     use super::operand::{Operand, TagInfo};
     let HirNode::ClassDef {
         name,
@@ -365,21 +361,23 @@ pub(crate) fn eval_class_def(fx: &mut Fx, stmt: NodeId) -> Result<super::operand
 /// The SOURCE TEXT of a body written inside a snippet, sliced from the
 /// statements' own spans -- plus the file and first line they report, so a
 /// backtrace row raised inside it names the same place the snippet does.
-fn eval_body_source(
-    fx: &Fx,
-    stmt: NodeId,
-    body: &[NodeId],
-) -> Result<(String, String, u32), String> {
+fn eval_body_source(fx: &Fx, stmt: NodeId, body: &[NodeId]) -> CResult<(String, String, u32)> {
     let hir = &fx.an.compiler.hir;
     let Some((file, line)) = crate::analyze::source::source_location(&fx.an.compiler, stmt) else {
-        return Err("a span-less `class` inside an `eval`".to_string());
+        return Err(CodegenError::unsupported(
+            "a span-less `class` inside an `eval`",
+            None,
+        ));
     };
     let (file, mut line) = (file.to_string(), line);
     let (Some(first), Some(last)) = (body.first(), body.last()) else {
         return Ok((String::new(), file, line));
     };
     let (Some(a), Some(b)) = (hir.span(*first), hir.span(*last)) else {
-        return Err("a span-less statement in a `class` inside an `eval`".to_string());
+        return Err(CodegenError::unsupported(
+            "a span-less statement in a `class` inside an `eval`",
+            None,
+        ));
     };
     // The body's TEXT is what runs -- a class body inside a snippet is one
     // more `class_eval` of its own source -- so the usual case is one slice
@@ -388,12 +386,12 @@ fn eval_body_source(
     let own = hir
         .span(stmt)
         .and_then(|s| s.known())
-        .ok_or_else(|| "a span-less `class` inside an `eval`".to_string())?;
+        .ok_or_else(|| CodegenError::unsupported("a span-less `class` inside an `eval`", None))?;
     if a.file == own.file && a.start >= own.start && b.end <= own.end {
         let src = hir
             .files
             .get(a.file.0 as usize)
-            .ok_or_else(|| "a `class` body from an unknown file".to_string())?;
+            .ok_or_else(|| CodegenError::internal("a `class` body from an unknown file"))?;
         // To the class's own `end`, not to the last STATEMENT's end. A
         // `class << self` is not a statement -- `lower::defs` splices it into
         // the enclosing body as a surrogate reopen plus the retagged `def`s --
@@ -408,7 +406,9 @@ fn eval_body_source(
             closing.unwrap_or(b.end as usize).min(src.source.len()),
         );
         if start > end {
-            return Err("a `class` body whose statements run backwards".to_string());
+            return Err(CodegenError::internal(
+                "a `class` body whose statements run backwards",
+            ));
         }
         line = src.line_at(a.start);
         return Ok((src.source[start..end].trim_end().to_string(), file, line));
@@ -426,28 +426,28 @@ fn eval_body_source(
     // too.
     let mut parts: Vec<String> = Vec::new();
     let mut run: Option<(crate::hir::FileId, u32, u32)> = None;
-    let flush = |run: Option<(crate::hir::FileId, u32, u32)>,
-                 parts: &mut Vec<String>|
-     -> Result<(), String> {
-        let Some((f, start, end)) = run else {
-            return Ok(());
+    let flush =
+        |run: Option<(crate::hir::FileId, u32, u32)>, parts: &mut Vec<String>| -> CResult<()> {
+            let Some((f, start, end)) = run else {
+                return Ok(());
+            };
+            let src = hir
+                .files
+                .get(f.0 as usize)
+                .ok_or_else(|| CodegenError::internal("a `class` body from an unknown file"))?;
+            let (start, end) = (start as usize, (end as usize).min(src.source.len()));
+            if start > end {
+                return Err(CodegenError::internal(
+                    "a `class` body whose statements run backwards",
+                ));
+            }
+            parts.push(src.source[start..end].to_string());
+            Ok(())
         };
-        let src = hir
-            .files
-            .get(f.0 as usize)
-            .ok_or_else(|| "a `class` body from an unknown file".to_string())?;
-        let (start, end) = (start as usize, (end as usize).min(src.source.len()));
-        if start > end {
-            return Err("a `class` body whose statements run backwards".to_string());
-        }
-        parts.push(src.source[start..end].to_string());
-        Ok(())
-    };
     for id in body {
-        let span = hir
-            .span(*id)
-            .and_then(|s| s.known())
-            .ok_or_else(|| "a span-less statement in a `class` inside an `eval`".to_string())?;
+        let span = hir.span(*id).and_then(|s| s.known()).ok_or_else(|| {
+            CodegenError::unsupported("a span-less statement in a `class` inside an `eval`", None)
+        })?;
         run = match run {
             Some((f, start, end)) if f == span.file && span.start >= end => {
                 Some((f, start, span.end))
@@ -466,7 +466,7 @@ fn eval_body_source(
 /// `alias`, `undef`, `private`, `module_function`, `private_constant`. Only
 /// the run time knows it (`zeo_rt_eval_definee`), and one compiled snippet
 /// may be evaluated against any number of receivers.
-fn eval_definee(fx: &mut Fx, singleton: bool) -> Result<super::operand::Operand, String> {
+fn eval_definee(fx: &mut Fx, singleton: bool) -> CResult<super::operand::Operand> {
     use super::operand::Operand;
     let mode = fx.eval_mode.expect("guarded by the eval arms");
     let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
@@ -498,7 +498,7 @@ pub(super) fn eval_definee_send(
     verb: &str,
     names: &[String],
     singleton: bool,
-) -> Result<(), String> {
+) -> CResult<()> {
     let op = eval_definee_send_value(fx, verb, names, singleton)?;
     ownership::discard(fx, op);
     Ok(())
@@ -509,7 +509,7 @@ pub(crate) fn eval_definee_send_value(
     verb: &str,
     names: &[String],
     singleton: bool,
-) -> Result<super::operand::Operand, String> {
+) -> CResult<super::operand::Operand> {
     let definee = eval_definee(fx, singleton)?;
     let recv = ownership::borrow_ptr(fx, &definee);
     if definee.owned() {
@@ -536,7 +536,7 @@ pub(super) fn eval_definee_call(
     verb: &str,
     argv: cranelift_codegen::ir::Value,
     argc: usize,
-) -> Result<super::operand::Operand, String> {
+) -> CResult<super::operand::Operand> {
     use super::operand::Operand;
     let sym = fx.sym_id(verb);
     let bx = fx.box_v();

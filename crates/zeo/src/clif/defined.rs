@@ -5,6 +5,7 @@
 use super::ctx::Fx;
 use super::operand::{Operand, TagInfo};
 use super::ownership;
+use crate::codegen_error::CResult;
 use crate::hir::{HirNode, NodeId};
 use cranelift_codegen::ir::{InstBuilder, types};
 use zeo_abi::abi::{TAG_OFFSET, ValueTag};
@@ -46,7 +47,7 @@ fn defined_cond(fx: &mut Fx, hit: cranelift_codegen::ir::Value, s: &str) -> Oper
 /// what a collection literal answers, CRuby recursing into its elements.
 /// Each element's own `defined?` is lowered and the answers are ANDed; an
 /// empty literal is defined outright.
-fn defined_all_or_nil(fx: &mut Fx, site: NodeId, nodes: &[NodeId]) -> Result<Operand, String> {
+fn defined_all_or_nil(fx: &mut Fx, site: NodeId, nodes: &[NodeId]) -> CResult<Operand> {
     let ss = fx.temp_slot();
     let dst = fx.slot_addr(ss, 0);
     let yes = fx.b.create_block();
@@ -138,7 +139,7 @@ fn is_predefined_global(name: &str) -> bool {
 /// runtime-probing forms call one capi each; everything else classifies
 /// statically. The collection-literal recursion and dynamic-scope const
 /// forms still refuse.
-pub(super) fn lower_defined(fx: &mut Fx, site: NodeId, inner: NodeId) -> Result<Operand, String> {
+pub(super) fn lower_defined(fx: &mut Fx, site: NodeId, inner: NodeId) -> CResult<Operand> {
     // `defined?(yield)`: runtime -- the block channel is or isn't there.
     if matches!(&fx.an.compiler.hir[inner], HirNode::Yield(_)) {
         // A snippet's own level has no channel; the one it means is the
@@ -389,8 +390,8 @@ pub(super) fn lower_defined(fx: &mut Fx, site: NodeId, inner: NodeId) -> Result<
 fn defined_const_under_runtime_scope(
     fx: &mut Fx,
     name: &str,
-    scope: impl FnOnce(&mut Fx) -> Result<Operand, String>,
-) -> Result<Operand, String> {
+    scope: impl FnOnce(&mut Fx) -> CResult<Operand>,
+) -> CResult<Operand> {
     {
         let ss = fx.temp_slot();
         let dst = fx.slot_addr(ss, 0);
@@ -437,7 +438,7 @@ fn defined_const_under_runtime_scope(
 
 /// The rest of [`lower_defined`]'s classification chain, split off only so
 /// that neither half runs to a thousand lines.
-fn defined_rest(fx: &mut Fx, site: NodeId, inner: NodeId) -> Result<Operand, String> {
+fn defined_rest(fx: &mut Fx, site: NodeId, inner: NodeId) -> CResult<Operand> {
     use crate::hir::LastMatch;
     if let HirNode::GlobalRead(name) = &fx.an.compiler.hir[inner] {
         let name = name.clone();

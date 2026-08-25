@@ -7,6 +7,7 @@
 use super::module::Emitter;
 use super::{names, params, statics};
 use crate::analyze::Analyzed;
+use crate::codegen_error::{CResult, CodegenError};
 use crate::compiler::AccessorKind;
 use cranelift_module::{Linkage, Module};
 use zeo_abi::ClassId;
@@ -219,10 +220,7 @@ pub(crate) struct CollectedClasses {
 
 /// Collect + declare every user class and its methods; refusals are loud
 /// and name the class.
-pub(crate) fn collect_classes(
-    em: &mut Emitter,
-    analyzed: &Analyzed,
-) -> Result<CollectedClasses, String> {
+pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<CollectedClasses> {
     let compiler = &analyzed.compiler;
     let mut classes = Vec::new();
     let mut methods = Vec::new();
@@ -386,8 +384,9 @@ pub(crate) fn collect_classes(
             let scope = compiler.scope(entry.def);
             let mname = compiler.names.str(entry.name).to_string();
             let refuse_m = |what: &str| {
-                Err(format!(
-                    "the CLIF backend cannot lower {what} yet ({name}#{mname})"
+                Err(CodegenError::unsupported(
+                    format!("the CLIF backend cannot lower {what} yet ({name}#{mname})"),
+                    scope.def_node.and_then(|n| compiler.hir.span(n)),
                 ))
             };
             let dc = entry.defined_class(compiler);
@@ -417,12 +416,12 @@ pub(crate) fn collect_classes(
                     Linkage::Local,
                     &params::value_fn_sig(em),
                 )
-                .map_err(|e| format!("declaring {name}#{mname}: {e}"))?;
+                .map_err(|e| CodegenError::internal(format!("declaring {name}#{mname}: {e}")))?;
             let sig = params::body_sig(em, layout.n_slots, has_blk);
             let body_fn = em
                 .module
                 .declare_function(&names::method_symbol(&sym, &mname), Linkage::Local, &sig)
-                .map_err(|e| format!("declaring {name}#{mname}: {e}"))?;
+                .map_err(|e| CodegenError::internal(format!("declaring {name}#{mname}: {e}")))?;
             match scope.visibility {
                 crate::hir::Visibility::Private => vis.push(statics::VisRowSpec {
                     class: target.0,
@@ -484,8 +483,9 @@ pub(crate) fn collect_classes(
             let scope = compiler.scope(entry.def);
             let mname = compiler.names.str(entry.name).to_string();
             let refuse_m = |what: &str| {
-                Err(format!(
-                    "the CLIF backend cannot lower {what} yet ({name}.{mname})"
+                Err(CodegenError::unsupported(
+                    format!("the CLIF backend cannot lower {what} yet ({name}.{mname})"),
+                    scope.def_node.and_then(|n| compiler.hir.span(n)),
                 ))
             };
             if scope.runtime_conditional {
@@ -505,7 +505,7 @@ pub(crate) fn collect_classes(
                     Linkage::Local,
                     &params::value_fn_sig(em),
                 )
-                .map_err(|e| format!("declaring {name}.{mname}: {e}"))?;
+                .map_err(|e| CodegenError::internal(format!("declaring {name}.{mname}: {e}")))?;
             let sig = params::body_sig(em, layout.n_slots, has_blk);
             let body_fn = em
                 .module
@@ -514,7 +514,7 @@ pub(crate) fn collect_classes(
                     Linkage::Local,
                     &sig,
                 )
-                .map_err(|e| format!("declaring {name}.{mname}: {e}"))?;
+                .map_err(|e| CodegenError::internal(format!("declaring {name}.{mname}: {e}")))?;
             if entry.visibility == crate::hir::Visibility::Private {
                 vis.push(statics::VisRowSpec {
                     class: target.0,
@@ -580,8 +580,9 @@ pub(crate) fn collect_classes(
         // ruby name.
         let sym = super::names::boxed_owner(&name, class.box_id);
         let refuse = |what: &str| {
-            Err(format!(
-                "the CLIF backend cannot lower {what} yet (class {name})"
+            Err(CodegenError::unsupported(
+                format!("the CLIF backend cannot lower {what} yet (class {name})"),
+                compiler.class_def_span(crate::compiler::ClassId(idx as u32)),
             ))
         };
 
@@ -755,8 +756,9 @@ pub(crate) fn collect_classes(
                 }
                 let mname = scope.name.clone();
                 let refuse_m = |what: &str| {
-                    Err(format!(
-                        "the CLIF backend cannot lower {what} yet ({name}#{mname})"
+                    Err(CodegenError::unsupported(
+                        format!("the CLIF backend cannot lower {what} yet ({name}#{mname})"),
+                        scope.def_node.and_then(|n| compiler.hir.span(n)),
                     ))
                 };
                 if scope.runtime_conditional {
@@ -776,12 +778,16 @@ pub(crate) fn collect_classes(
                         Linkage::Local,
                         &params::value_fn_sig(em),
                     )
-                    .map_err(|e| format!("declaring {name}#{mname}: {e}"))?;
+                    .map_err(|e| {
+                        CodegenError::internal(format!("declaring {name}#{mname}: {e}"))
+                    })?;
                 let sig = params::body_sig(em, layout.n_slots, has_blk);
                 let body_fn = em
                     .module
                     .declare_function(&names::method_symbol(&sym, &mname), Linkage::Local, &sig)
-                    .map_err(|e| format!("declaring {name}#{mname}: {e}"))?;
+                    .map_err(|e| {
+                        CodegenError::internal(format!("declaring {name}#{mname}: {e}"))
+                    })?;
                 match scope.visibility {
                     crate::hir::Visibility::Private => vis.push(statics::VisRowSpec {
                         class: idx as u32,
@@ -833,8 +839,9 @@ pub(crate) fn collect_classes(
             }
             let mname = compiler.names.str(entry.name).to_string();
             let refuse_m = |what: &str| {
-                Err(format!(
-                    "the CLIF backend cannot lower {what} yet ({name}#{mname})"
+                Err(CodegenError::unsupported(
+                    format!("the CLIF backend cannot lower {what} yet ({name}#{mname})"),
+                    scope.def_node.and_then(|n| compiler.hir.span(n)),
                 ))
             };
             // A conditional `def` emits a RUNTIME install at its document
@@ -863,7 +870,10 @@ pub(crate) fn collect_classes(
                         &shape.ivar,
                     )
                     .ok_or_else(|| {
-                        format!("accessor ivar @{} has no slot on {name}", shape.ivar)
+                        CodegenError::internal(format!(
+                            "accessor ivar @{} has no slot on {name}",
+                            shape.ivar
+                        ))
                     })?;
                     Some((slot, shape.kind, shape.attr_generated))
                 }
@@ -876,13 +886,15 @@ pub(crate) fn collect_classes(
                     Linkage::Local,
                     &params::value_fn_sig(em),
                 )
-                .map_err(|e| format!("declaring {name}#{mname}: {e}"))?;
+                .map_err(|e| CodegenError::internal(format!("declaring {name}#{mname}: {e}")))?;
             let body_fn = if accessor.is_none() {
                 let sig = params::body_sig(em, layout.n_slots, has_blk);
                 Some(
                     em.module
                         .declare_function(&names::method_symbol(&sym, &mname), Linkage::Local, &sig)
-                        .map_err(|e| format!("declaring {name}#{mname}: {e}"))?,
+                        .map_err(|e| {
+                            CodegenError::internal(format!("declaring {name}#{mname}: {e}"))
+                        })?,
                 )
             } else {
                 None
@@ -959,8 +971,9 @@ pub(crate) fn collect_classes(
                 }
                 let mname = scope.name.clone();
                 let refuse_m = |what: &str| {
-                    Err(format!(
-                        "the CLIF backend cannot lower {what} yet ({name}#{mname})"
+                    Err(CodegenError::unsupported(
+                        format!("the CLIF backend cannot lower {what} yet ({name}#{mname})"),
+                        scope.def_node.and_then(|n| compiler.hir.span(n)),
                     ))
                 };
                 if scope.runtime_conditional {
@@ -981,7 +994,10 @@ pub(crate) fn collect_classes(
                             &shape.ivar,
                         )
                         .ok_or_else(|| {
-                            format!("accessor ivar @{} has no slot on {name}", shape.ivar)
+                            CodegenError::internal(format!(
+                                "accessor ivar @{} has no slot on {name}",
+                                shape.ivar
+                            ))
                         })?;
                         Some((slot, shape.kind, shape.attr_generated))
                     }
@@ -994,7 +1010,9 @@ pub(crate) fn collect_classes(
                         Linkage::Local,
                         &params::value_fn_sig(em),
                     )
-                    .map_err(|e| format!("declaring {name}#{mname}: {e}"))?;
+                    .map_err(|e| {
+                        CodegenError::internal(format!("declaring {name}#{mname}: {e}"))
+                    })?;
                 let body_fn = if accessor.is_none() {
                     let sig = params::body_sig(em, layout.n_slots, has_blk);
                     Some(
@@ -1004,7 +1022,9 @@ pub(crate) fn collect_classes(
                                 Linkage::Local,
                                 &sig,
                             )
-                            .map_err(|e| format!("declaring {name}#{mname}: {e}"))?,
+                            .map_err(|e| {
+                                CodegenError::internal(format!("declaring {name}#{mname}: {e}"))
+                            })?,
                     )
                 } else {
                     None
@@ -1043,8 +1063,9 @@ pub(crate) fn collect_classes(
             }
             let mname = compiler.names.str(entry.name).to_string();
             let refuse_m = |what: &str| {
-                Err(format!(
-                    "the CLIF backend cannot lower {what} yet ({name}.{mname})"
+                Err(CodegenError::unsupported(
+                    format!("the CLIF backend cannot lower {what} yet ({name}.{mname})"),
+                    scope.def_node.and_then(|n| compiler.hir.span(n)),
                 ))
             };
             if scope.runtime_conditional {
@@ -1064,7 +1085,7 @@ pub(crate) fn collect_classes(
                     Linkage::Local,
                     &params::value_fn_sig(em),
                 )
-                .map_err(|e| format!("declaring {name}.{mname}: {e}"))?;
+                .map_err(|e| CodegenError::internal(format!("declaring {name}.{mname}: {e}")))?;
             let sig = params::body_sig(em, layout.n_slots, has_blk);
             let body_fn = em
                 .module
@@ -1073,7 +1094,7 @@ pub(crate) fn collect_classes(
                     Linkage::Local,
                     &sig,
                 )
-                .map_err(|e| format!("declaring {name}.{mname}: {e}"))?;
+                .map_err(|e| CodegenError::internal(format!("declaring {name}.{mname}: {e}")))?;
             // Only Private gets a row (verb 3).
             if entry.visibility == crate::hir::Visibility::Private {
                 vis.push(statics::VisRowSpec {
@@ -1111,8 +1132,9 @@ pub(crate) fn collect_classes(
             let scope = compiler.scope(sid);
             let mname = scope.name.clone();
             let refuse_r = |what: &str| {
-                Err(format!(
-                    "the CLIF backend cannot lower {what} yet ({name}#{mname})"
+                Err(CodegenError::unsupported(
+                    format!("the CLIF backend cannot lower {what} yet ({name}#{mname})"),
+                    scope.def_node.and_then(|n| compiler.hir.span(n)),
                 ))
             };
             let p = &scope.params;
@@ -1129,7 +1151,7 @@ pub(crate) fn collect_classes(
                     Linkage::Local,
                     &params::value_fn_sig(em),
                 )
-                .map_err(|e| format!("declaring {name}#{mname}: {e}"))?;
+                .map_err(|e| CodegenError::internal(format!("declaring {name}#{mname}: {e}")))?;
             let body_fn = em
                 .module
                 .declare_function(
@@ -1137,7 +1159,7 @@ pub(crate) fn collect_classes(
                     Linkage::Local,
                     &params::body_sig(em, layout.n_slots, has_blk),
                 )
-                .map_err(|e| format!("declaring {name}#{mname}: {e}"))?;
+                .map_err(|e| CodegenError::internal(format!("declaring {name}#{mname}: {e}")))?;
             redefs.push(RedefSpec {
                 owner: ClassId(idx as u32),
                 owner_name: name.clone(),
@@ -1270,7 +1292,7 @@ fn emit_singleton_super_targets(
     cm_def_tramps: &[(crate::compiler::ScopeId, cranelift_module::FuncId)],
     sst: &mut Vec<(u32, u32, String, cranelift_module::FuncId)>,
     class_methods: &mut Vec<CmMethodSpec>,
-) -> Result<(), String> {
+) -> CResult<()> {
     let mut sst_seen: Vec<(ClassId, crate::compiler::ScopeId)> = Vec::new();
     for &(m, sid) in &class.singleton_super_targets {
         if sst_seen.contains(&(m, sid)) {
@@ -1287,8 +1309,9 @@ fn emit_singleton_super_targets(
             continue;
         }
         let refuse_m = |what: &str| {
-            Err(format!(
-                "the CLIF backend cannot lower {what} yet ({name}.{mname})"
+            Err(CodegenError::unsupported(
+                format!("the CLIF backend cannot lower {what} yet ({name}.{mname})"),
+                scope.def_node.and_then(|n| compiler.hir.span(n)),
             ))
         };
         if scope.runtime_conditional {
@@ -1308,7 +1331,7 @@ fn emit_singleton_super_targets(
                 Linkage::Local,
                 &params::value_fn_sig(em),
             )
-            .map_err(|e| format!("declaring {name}.{mname}: {e}"))?;
+            .map_err(|e| CodegenError::internal(format!("declaring {name}.{mname}: {e}")))?;
         let sig = params::body_sig(em, layout.n_slots, has_blk);
         let body_fn = em
             .module
@@ -1317,7 +1340,7 @@ fn emit_singleton_super_targets(
                 Linkage::Local,
                 &sig,
             )
-            .map_err(|e| format!("declaring {name}.{mname}: {e}"))?;
+            .map_err(|e| CodegenError::internal(format!("declaring {name}.{mname}: {e}")))?;
         sst.push((owner.0, m.0, mname.clone(), tramp));
         class_methods.push(CmMethodSpec {
             cm_row: false,

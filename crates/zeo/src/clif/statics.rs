@@ -5,6 +5,7 @@
 use super::module::Emitter;
 use super::names;
 use crate::analyze::Analyzed;
+use crate::codegen_error::{CResult, CodegenError};
 use cranelift_codegen::ir::{self, InstBuilder, MemFlagsData, UserFuncName};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module};
@@ -47,13 +48,13 @@ impl SymPool {
 /// Define the `zeo_syms` array (always present -- a zero-symbol program
 /// gets a 4-byte placeholder so the eager `symbol_value` in every
 /// prologue has something to name).
-pub(crate) fn define_syms(em: &mut Emitter) -> Result<(), String> {
+pub(crate) fn define_syms(em: &mut Emitter) -> CResult<()> {
     let mut data = DataDescription::new();
     data.define_zeroinit((em.syms_len().max(1) * 4) as usize);
     data.set_align(4);
     em.module
         .define_data(em.syms_id, &data)
-        .map_err(|e| format!("defining {}: {e}", names::SYMS))
+        .map_err(|e| CodegenError::internal(format!("defining {}: {e}", names::SYMS)))
 }
 
 /// Define the `zeo_callsites` array: one zeroed `CallSite` per emitted
@@ -61,42 +62,42 @@ pub(crate) fn define_syms(em: &mut Emitter) -> Result<(), String> {
 /// is not zero-initialisable), so nothing may read one before
 /// `zeo_unit_init` has written it -- which is why init runs before the
 /// first statement rather than lazily per site.
-pub(crate) fn define_callsites(em: &mut Emitter) -> Result<(), String> {
+pub(crate) fn define_callsites(em: &mut Emitter) -> CResult<()> {
     let mut data = DataDescription::new();
     data.define_zeroinit(em.callsites.len().max(1) * abi::CALLSITE_SIZE);
     data.set_align(8);
     em.module
         .define_data(em.callsites_id, &data)
-        .map_err(|e| format!("defining {}: {e}", names::CALLSITES))
+        .map_err(|e| CodegenError::internal(format!("defining {}: {e}", names::CALLSITES)))
 }
 
 /// Define the `zeo_reopen_flags` array: one zeroed byte per builtin reopen.
 /// Zero means "the reopen has not run yet", which is exactly what `.bss`
 /// gives, so no `zeo_unit_init` row is needed.
-pub(crate) fn define_reopen_flags(em: &mut Emitter) -> Result<(), String> {
+pub(crate) fn define_reopen_flags(em: &mut Emitter) -> CResult<()> {
     let mut data = DataDescription::new();
     data.define_zeroinit(em.reopen_flags.len().max(1));
     data.set_align(1);
     em.module
         .define_data(em.reopen_flags_id, &data)
-        .map_err(|e| format!("defining {}: {e}", names::REOPEN_FLAGS))
+        .map_err(|e| CodegenError::internal(format!("defining {}: {e}", names::REOPEN_FLAGS)))
 }
 
 /// Define the `zeo_cm_sites` array -- the class-method caches. Same
 /// zero-bytes-are-not-a-slot rule as [`define_callsites`].
-pub(crate) fn define_cm_sites(em: &mut Emitter) -> Result<(), String> {
+pub(crate) fn define_cm_sites(em: &mut Emitter) -> CResult<()> {
     let mut data = DataDescription::new();
     data.define_zeroinit(em.cm_sites.max(1) * abi::CLASSMETHOD_SITE_SIZE);
     data.set_align(8);
     em.module
         .define_data(em.cm_sites_id, &data)
-        .map_err(|e| format!("defining {}: {e}", names::CM_SITES))
+        .map_err(|e| CodegenError::internal(format!("defining {}: {e}", names::CM_SITES)))
 }
 
 /// `zeo_unit_init`: intern every symbol name into `zeo_syms`, then hand
 /// every `zeo_callsites` slot its caller class and initialise every
 /// `zeo_cm_sites` slot. `None` when the program has none of the three.
-pub(crate) fn define_unit_init(em: &mut Emitter) -> Result<Option<FuncId>, String> {
+pub(crate) fn define_unit_init(em: &mut Emitter) -> CResult<Option<FuncId>> {
     if em.syms.is_empty() && em.callsites.is_empty() && em.cm_sites == 0 {
         return Ok(None);
     }
@@ -104,7 +105,7 @@ pub(crate) fn define_unit_init(em: &mut Emitter) -> Result<Option<FuncId>, Strin
     let func_id = em
         .module
         .declare_function(names::UNIT_INIT, Linkage::Local, &sig)
-        .map_err(|e| format!("declaring {}: {e}", names::UNIT_INIT))?;
+        .map_err(|e| CodegenError::internal(format!("declaring {}: {e}", names::UNIT_INIT)))?;
     let f_intern = em.import("zeo_rt_sym_intern");
 
     // Interning may grow rodata, so collect (offset, len) rows first.
@@ -182,7 +183,7 @@ pub(crate) fn define_unit_init(em: &mut Emitter) -> Result<Option<FuncId>, Strin
     ctx.func = func;
     em.module
         .define_function(func_id, &mut ctx)
-        .map_err(|e| format!("compiling {}: {e}", names::UNIT_INIT))?;
+        .map_err(|e| CodegenError::internal(format!("compiling {}: {e}", names::UNIT_INIT)))?;
     Ok(Some(func_id))
 }
 
@@ -226,14 +227,14 @@ fn define_rows<R>(
     size: usize,
     rows: &[R],
     cells: impl Fn(&R) -> RowCells,
-) -> Result<Option<DataId>, String> {
+) -> CResult<Option<DataId>> {
     if rows.is_empty() {
         return Ok(None);
     }
     let id = em
         .module
         .declare_data(sym, Linkage::Local, false, false)
-        .map_err(|e| format!("declaring {sym}: {e}"))?;
+        .map_err(|e| CodegenError::internal(format!("declaring {sym}: {e}")))?;
     let cells: Vec<RowCells> = rows.iter().map(cells).collect();
     let interned: Vec<Vec<u32>> = cells
         .iter()
@@ -272,12 +273,12 @@ fn define_rows<R>(
     }
     em.module
         .define_data(id, &data)
-        .map_err(|e| format!("defining {sym}: {e}"))?;
+        .map_err(|e| CodegenError::internal(format!("defining {sym}: {e}")))?;
     Ok(Some(id))
 }
 
 /// The `zeo_vm_rows` table: `VmRow` structs with name/function relocs.
-fn define_vm_rows(em: &mut Emitter, rows: &[VmRowSpec]) -> Result<Option<DataId>, String> {
+fn define_vm_rows(em: &mut Emitter, rows: &[VmRowSpec]) -> CResult<Option<DataId>> {
     define_rows(em, "zeo_vm_rows", std::mem::size_of::<VmRow>(), rows, |r| {
         RowCells {
             strs: vec![(std::mem::offset_of!(VmRow, name), r.name.clone())],
@@ -297,7 +298,7 @@ fn define_vm_rows(em: &mut Emitter, rows: &[VmRowSpec]) -> Result<Option<DataId>
 pub(crate) fn define_param_desc(
     em: &mut Emitter,
     spec: &super::params::ParamDescSpec<'_>,
-) -> Result<DataId, String> {
+) -> CResult<DataId> {
     use zeo_abi::abi::{KwParamC, PARAM_STAR_ANON, PARAM_STAR_NAMED, PARAM_STAR_NONE, ParamDescC};
     let p = spec.params;
     let put_u32 = |bytes: &mut [u8], at: usize, v: u32| {
@@ -344,10 +345,10 @@ pub(crate) fn define_param_desc(
         let id = em
             .module
             .declare_anonymous_data(false, false)
-            .map_err(|e| format!("declaring a kw table: {e}"))?;
+            .map_err(|e| CodegenError::internal(format!("declaring a kw table: {e}")))?;
         em.module
             .define_data(id, &data)
-            .map_err(|e| format!("defining a kw table: {e}"))?;
+            .map_err(|e| CodegenError::internal(format!("defining a kw table: {e}")))?;
         Some(id)
     };
 
@@ -432,10 +433,10 @@ pub(crate) fn define_param_desc(
     let id = em
         .module
         .declare_anonymous_data(false, false)
-        .map_err(|e| format!("declaring a ParamDesc: {e}"))?;
+        .map_err(|e| CodegenError::internal(format!("declaring a ParamDesc: {e}")))?;
     em.module
         .define_data(id, &data)
-        .map_err(|e| format!("defining a ParamDesc: {e}"))?;
+        .map_err(|e| CodegenError::internal(format!("defining a ParamDesc: {e}")))?;
     Ok(id)
 }
 
@@ -473,7 +474,7 @@ pub(crate) struct ObjRowSpec {
 
 /// The `zeo_vm_foreign` table: rows a builtin reopen INHERITED, marked
 /// so a `super` walk skips them at that position.
-fn define_foreign_rows(em: &mut Emitter, rows: &[(u32, String)]) -> Result<Option<DataId>, String> {
+fn define_foreign_rows(em: &mut Emitter, rows: &[(u32, String)]) -> CResult<Option<DataId>> {
     define_rows(
         em,
         "zeo_vm_foreign",
@@ -492,7 +493,7 @@ fn define_foreign_rows(em: &mut Emitter, rows: &[(u32, String)]) -> Result<Optio
 }
 
 /// The `zeo_obj_rows` table (same shape as `zeo_vm_rows`, minus box/flags).
-fn define_obj_rows(em: &mut Emitter, rows: &[ObjRowSpec]) -> Result<Option<DataId>, String> {
+fn define_obj_rows(em: &mut Emitter, rows: &[ObjRowSpec]) -> CResult<Option<DataId>> {
     define_rows(
         em,
         "zeo_obj_rows",
@@ -506,7 +507,7 @@ fn define_obj_rows(em: &mut Emitter, rows: &[ObjRowSpec]) -> Result<Option<DataI
     )
 }
 
-fn define_cm_rows(em: &mut Emitter, rows: &[CmRowSpec]) -> Result<Option<DataId>, String> {
+fn define_cm_rows(em: &mut Emitter, rows: &[CmRowSpec]) -> CResult<Option<DataId>> {
     define_rows(em, "zeo_cm_rows", std::mem::size_of::<CmRow>(), rows, |r| {
         RowCells {
             strs: vec![(std::mem::offset_of!(CmRow, name), r.name.clone())],
@@ -519,7 +520,7 @@ fn define_cm_rows(em: &mut Emitter, rows: &[CmRowSpec]) -> Result<Option<DataId>
 /// The `UnitRow` table: one row per SPELLING a `require` can use for a
 /// compiled-in load-path file (the load-path-relative feature name and the
 /// absolute path), both pointing at the same unit function.
-fn define_unit_rows(em: &mut Emitter, rows: &[(String, FuncId)]) -> Result<Option<DataId>, String> {
+fn define_unit_rows(em: &mut Emitter, rows: &[(String, FuncId)]) -> CResult<Option<DataId>> {
     define_rows(
         em,
         "zeo_unit_rows",
@@ -534,10 +535,7 @@ fn define_unit_rows(em: &mut Emitter, rows: &[(String, FuncId)]) -> Result<Optio
 }
 
 /// The `SourceRow` table: `--embed-sources`' pack, one row per file.
-fn define_source_rows(
-    em: &mut Emitter,
-    rows: &[(String, String)],
-) -> Result<Option<DataId>, String> {
+fn define_source_rows(em: &mut Emitter, rows: &[(String, String)]) -> CResult<Option<DataId>> {
     define_rows(
         em,
         "zeo_source_pack",
@@ -554,7 +552,7 @@ fn define_source_rows(
     )
 }
 
-fn define_reg_rows(em: &mut Emitter, rows: &[RegRowSpec]) -> Result<Option<DataId>, String> {
+fn define_reg_rows(em: &mut Emitter, rows: &[RegRowSpec]) -> CResult<Option<DataId>> {
     if rows.is_empty() {
         return Ok(None);
     }
@@ -562,7 +560,7 @@ fn define_reg_rows(em: &mut Emitter, rows: &[RegRowSpec]) -> Result<Option<DataI
     let id = em
         .module
         .declare_data("zeo_reg_rows", Linkage::Local, false, false)
-        .map_err(|e| format!("declaring zeo_reg_rows: {e}"))?;
+        .map_err(|e| CodegenError::internal(format!("declaring zeo_reg_rows: {e}")))?;
     let interned: Vec<u32> = rows
         .iter()
         .map(|r| em.intern_rodata(r.a.as_bytes()))
@@ -587,13 +585,13 @@ fn define_reg_rows(em: &mut Emitter, rows: &[RegRowSpec]) -> Result<Option<DataI
         let id = em
             .module
             .declare_data("zeo_reg_row_ids", Linkage::Local, false, false)
-            .map_err(|e| format!("declaring zeo_reg_row_ids: {e}"))?;
+            .map_err(|e| CodegenError::internal(format!("declaring zeo_reg_row_ids: {e}")))?;
         let mut d = DataDescription::new();
         d.define(ids_bytes.into_boxed_slice());
         d.set_align(4);
         em.module
             .define_data(id, &d)
-            .map_err(|e| format!("defining zeo_reg_row_ids: {e}"))?;
+            .map_err(|e| CodegenError::internal(format!("defining zeo_reg_row_ids: {e}")))?;
         Some(id)
     };
     let mut data = DataDescription::new();
@@ -643,7 +641,7 @@ fn define_reg_rows(em: &mut Emitter, rows: &[RegRowSpec]) -> Result<Option<DataI
     }
     em.module
         .define_data(id, &data)
-        .map_err(|e| format!("defining zeo_reg_rows: {e}"))?;
+        .map_err(|e| CodegenError::internal(format!("defining zeo_reg_rows: {e}")))?;
     Ok(Some(id))
 }
 
@@ -653,7 +651,7 @@ fn define_reg_rows(em: &mut Emitter, rows: &[RegRowSpec]) -> Result<Option<DataI
 fn define_classes(
     em: &mut Emitter,
     classes: &[super::classes::ClassSpec],
-) -> Result<Option<DataId>, String> {
+) -> CResult<Option<DataId>> {
     if classes.is_empty() {
         return Ok(None);
     }
@@ -661,7 +659,7 @@ fn define_classes(
     let anc_id = em
         .module
         .declare_data("zeo_class_ancestors", Linkage::Local, false, false)
-        .map_err(|e| format!("declaring zeo_class_ancestors: {e}"))?;
+        .map_err(|e| CodegenError::internal(format!("declaring zeo_class_ancestors: {e}")))?;
     let mut anc_bytes = Vec::new();
     let mut anc_offsets = Vec::with_capacity(classes.len());
     for c in classes {
@@ -675,7 +673,7 @@ fn define_classes(
     anc.set_align(4);
     em.module
         .define_data(anc_id, &anc)
-        .map_err(|e| format!("defining zeo_class_ancestors: {e}"))?;
+        .map_err(|e| CodegenError::internal(format!("defining zeo_class_ancestors: {e}")))?;
 
     // Ivar names, one shared Str array.
     let str_size = std::mem::size_of::<Str>();
@@ -684,7 +682,7 @@ fn define_classes(
         .then(|| {
             em.module
                 .declare_data("zeo_class_ivars", Linkage::Local, false, false)
-                .map_err(|e| format!("declaring zeo_class_ivars: {e}"))
+                .map_err(|e| CodegenError::internal(format!("declaring zeo_class_ivars: {e}")))
         })
         .transpose()?;
     let mut ivar_offsets = Vec::with_capacity(classes.len());
@@ -711,7 +709,7 @@ fn define_classes(
         }
         em.module
             .define_data(ivars_id, &data)
-            .map_err(|e| format!("defining zeo_class_ivars: {e}"))?;
+            .map_err(|e| CodegenError::internal(format!("defining zeo_class_ivars: {e}")))?;
     } else {
         ivar_offsets.resize(classes.len(), 0);
     }
@@ -722,7 +720,7 @@ fn define_classes(
         .then(|| {
             em.module
                 .declare_data("zeo_class_members", Linkage::Local, false, false)
-                .map_err(|e| format!("declaring zeo_class_members: {e}"))
+                .map_err(|e| CodegenError::internal(format!("declaring zeo_class_members: {e}")))
         })
         .transpose()?;
     let mut member_offsets = Vec::with_capacity(classes.len());
@@ -749,7 +747,7 @@ fn define_classes(
         }
         em.module
             .define_data(members_id, &data)
-            .map_err(|e| format!("defining zeo_class_members: {e}"))?;
+            .map_err(|e| CodegenError::internal(format!("defining zeo_class_members: {e}")))?;
     } else {
         member_offsets.resize(classes.len(), 0);
     }
@@ -758,7 +756,7 @@ fn define_classes(
     let id = em
         .module
         .declare_data("zeo_classes", Linkage::Local, false, false)
-        .map_err(|e| format!("declaring zeo_classes: {e}"))?;
+        .map_err(|e| CodegenError::internal(format!("declaring zeo_classes: {e}")))?;
     let name_offs: Vec<u32> = classes
         .iter()
         .map(|c| em.intern_rodata(c.name.as_bytes()))
@@ -830,7 +828,7 @@ fn define_classes(
     }
     em.module
         .define_data(id, &data)
-        .map_err(|e| format!("defining zeo_classes: {e}"))?;
+        .map_err(|e| CodegenError::internal(format!("defining zeo_classes: {e}")))?;
     Ok(Some(id))
 }
 
@@ -853,11 +851,7 @@ pub(crate) struct MetaRowSpec {
 
 /// A reflection-row table + its one shared parameter array. `sym` names the
 /// pair, so the redefinition-timeline rows can live in a table of their own.
-fn define_meta_rows(
-    em: &mut Emitter,
-    rows: &[MetaRowSpec],
-    sym: &str,
-) -> Result<Option<DataId>, String> {
+fn define_meta_rows(em: &mut Emitter, rows: &[MetaRowSpec], sym: &str) -> CResult<Option<DataId>> {
     if rows.is_empty() {
         return Ok(None);
     }
@@ -866,7 +860,7 @@ fn define_meta_rows(
     let id = em
         .module
         .declare_data(sym, Linkage::Local, false, false)
-        .map_err(|e| format!("declaring {sym}: {e}"))?;
+        .map_err(|e| CodegenError::internal(format!("declaring {sym}: {e}")))?;
     let names: Vec<u32> = rows
         .iter()
         .map(|r| em.intern_rodata(r.name.as_bytes()))
@@ -900,7 +894,7 @@ fn define_meta_rows(
         let pid = em
             .module
             .declare_data(&format!("{sym}_params"), Linkage::Local, false, false)
-            .map_err(|e| format!("declaring {sym}_params: {e}"))?;
+            .map_err(|e| CodegenError::internal(format!("declaring {sym}_params: {e}")))?;
         let mut pd = DataDescription::new();
         let mut pbytes = vec![0u8; psize * n_params];
         let mut i = 0usize;
@@ -928,7 +922,7 @@ fn define_meta_rows(
         }
         em.module
             .define_data(pid, &pd)
-            .map_err(|e| format!("defining zeo_meta_params: {e}"))?;
+            .map_err(|e| CodegenError::internal(format!("defining zeo_meta_params: {e}")))?;
         Some(pid)
     };
     let mut data = DataDescription::new();
@@ -980,12 +974,12 @@ fn define_meta_rows(
     }
     em.module
         .define_data(id, &data)
-        .map_err(|e| format!("defining {sym}: {e}"))?;
+        .map_err(|e| CodegenError::internal(format!("defining {sym}: {e}")))?;
     Ok(Some(id))
 }
 
 /// The `zeo_vis_rows` table.
-fn define_vis_rows(em: &mut Emitter, rows: &[VisRowSpec]) -> Result<Option<DataId>, String> {
+fn define_vis_rows(em: &mut Emitter, rows: &[VisRowSpec]) -> CResult<Option<DataId>> {
     define_rows(
         em,
         "zeo_vis_rows",
@@ -1031,7 +1025,7 @@ pub(crate) fn define_desc(
     em: &mut Emitter,
     analyzed: &Analyzed,
     spec: &DescSpec<'_>,
-) -> Result<DataId, String> {
+) -> CResult<DataId> {
     let &DescSpec {
         toplevel,
         unit_init,
@@ -1093,7 +1087,7 @@ pub(crate) fn define_desc(
     let tables_id = em
         .module
         .declare_data(names::STR_TABLES, Linkage::Local, false, false)
-        .map_err(|e| format!("declaring {}: {e}", names::STR_TABLES))?;
+        .map_err(|e| CodegenError::internal(format!("declaring {}: {e}", names::STR_TABLES)))?;
     let mut tables = DataDescription::new();
     let mut bytes = vec![0u8; str_size * entries.len()];
     for (i, &(_, len)) in entries.iter().enumerate() {
@@ -1109,12 +1103,12 @@ pub(crate) fn define_desc(
     }
     em.module
         .define_data(tables_id, &tables)
-        .map_err(|e| format!("defining {}: {e}", names::STR_TABLES))?;
+        .map_err(|e| CodegenError::internal(format!("defining {}: {e}", names::STR_TABLES)))?;
 
     let desc_id = em
         .module
         .declare_data(names::PROGRAM_DESC, Linkage::Local, false, false)
-        .map_err(|e| format!("declaring {}: {e}", names::PROGRAM_DESC))?;
+        .map_err(|e| CodegenError::internal(format!("declaring {}: {e}", names::PROGRAM_DESC)))?;
     let mut desc = DataDescription::new();
     let mut buf = vec![0u8; std::mem::size_of::<ProgramDesc>()];
     let put_u32 = |buf: &mut [u8], at: usize, v: u32| {
@@ -1320,7 +1314,9 @@ pub(crate) fn define_desc(
         let f = em
             .module
             .declare_function(names::EVAL_INSTALL, Linkage::Import, &sig)
-            .map_err(|e| format!("declaring {}: {e}", names::EVAL_INSTALL))?;
+            .map_err(|e| {
+                CodegenError::internal(format!("declaring {}: {e}", names::EVAL_INSTALL))
+            })?;
         let f_ref = em.module.declare_func_in_data(f, &mut desc);
         desc.write_function_addr(
             std::mem::offset_of!(ProgramDesc, eval_install) as u32,
@@ -1329,13 +1325,13 @@ pub(crate) fn define_desc(
     }
     em.module
         .define_data(desc_id, &desc)
-        .map_err(|e| format!("defining {}: {e}", names::PROGRAM_DESC))?;
+        .map_err(|e| CodegenError::internal(format!("defining {}: {e}", names::PROGRAM_DESC)))?;
     Ok(desc_id)
 }
 
 /// The accumulated read-only bytes, defined LAST (interning happens
 /// throughout emission).
-pub(crate) fn define_rodata(em: &mut Emitter) -> Result<(), String> {
+pub(crate) fn define_rodata(em: &mut Emitter) -> CResult<()> {
     let mut data = DataDescription::new();
     let bytes = em.take_rodata();
     data.define(if bytes.is_empty() {
@@ -1346,7 +1342,7 @@ pub(crate) fn define_rodata(em: &mut Emitter) -> Result<(), String> {
     data.set_align(8);
     em.module
         .define_data(em.rodata_id, &data)
-        .map_err(|e| format!("defining {}: {e}", names::RODATA))
+        .map_err(|e| CodegenError::internal(format!("defining {}: {e}", names::RODATA)))
 }
 
 /// A `Str` array built on the STACK from `.rodata` bytes, as
@@ -1449,7 +1445,7 @@ fn define_ffi_data(
     what: &str,
     bytes: Vec<u8>,
     relocs: Vec<FfiReloc>,
-) -> Result<DataId, String> {
+) -> CResult<DataId> {
     let mut data = DataDescription::new();
     data.define(bytes.into_boxed_slice());
     data.set_align(8);
@@ -1457,18 +1453,15 @@ fn define_ffi_data(
     let id = em
         .module
         .declare_anonymous_data(false, false)
-        .map_err(|e| format!("declaring {what}: {e}"))?;
+        .map_err(|e| CodegenError::internal(format!("declaring {what}: {e}")))?;
     em.module
         .define_data(id, &data)
-        .map_err(|e| format!("defining {what}: {e}"))?;
+        .map_err(|e| CodegenError::internal(format!("defining {what}: {e}")))?;
     Ok(id)
 }
 
 /// One `FfiTypeC`'s bytes plus the pointer fields still to fill in.
-fn ffi_type_bytes(
-    em: &mut Emitter,
-    ty: &super::ffi::TySpec,
-) -> Result<(Vec<u8>, Vec<FfiReloc>), String> {
+fn ffi_type_bytes(em: &mut Emitter, ty: &super::ffi::TySpec) -> CResult<(Vec<u8>, Vec<FfiReloc>)> {
     use super::ffi::TySpec;
     use zeo_abi::abi::{
         FFI_TY_CALLBACK, FFI_TY_ENUM, FFI_TY_ENUM_SLOT, FFI_TY_SCALAR, FFI_TY_STRPTR,
@@ -1550,7 +1543,7 @@ fn ffi_type_bytes(
 }
 
 /// An array of `FfiTypeC` as one anonymous data object; `None` when empty.
-fn ffi_type_array(em: &mut Emitter, tys: &[super::ffi::TySpec]) -> Result<Option<DataId>, String> {
+fn ffi_type_array(em: &mut Emitter, tys: &[super::ffi::TySpec]) -> CResult<Option<DataId>> {
     if tys.is_empty() {
         return Ok(None);
     }
@@ -1566,10 +1559,7 @@ fn ffi_type_array(em: &mut Emitter, tys: &[super::ffi::TySpec]) -> Result<Option
 }
 
 /// One `attach_function` call site's `FfiCallC`.
-pub(crate) fn define_ffi_call(
-    em: &mut Emitter,
-    spec: &super::ffi::CallSpec,
-) -> Result<DataId, String> {
+pub(crate) fn define_ffi_call(em: &mut Emitter, spec: &super::ffi::CallSpec) -> CResult<DataId> {
     use zeo_abi::abi::FfiCallC;
     let args_id = ffi_type_array(em, &spec.args)?;
     let (ret_bytes, ret_relocs) = ffi_type_bytes(em, &spec.ret)?;
@@ -1592,7 +1582,7 @@ pub(crate) fn define_ffi_call(
 /// lines stamped during emission, and the `def` lines no statement stream
 /// ever passes. Empty (and so absent) in a program that never activated
 /// coverage.
-fn define_cov_rows(em: &mut Emitter, analyzed: &Analyzed) -> Result<(Option<DataId>, u64), String> {
+fn define_cov_rows(em: &mut Emitter, analyzed: &Analyzed) -> CResult<(Option<DataId>, u64)> {
     use zeo_abi::abi::CovFile;
     if !em.cov_active {
         return Ok((None, 0));
@@ -1672,10 +1662,10 @@ fn define_cov_rows(em: &mut Emitter, analyzed: &Analyzed) -> Result<(Option<Data
     let id = em
         .module
         .declare_anonymous_data(false, false)
-        .map_err(|e| format!("declaring the coverage table: {e}"))?;
+        .map_err(|e| CodegenError::internal(format!("declaring the coverage table: {e}")))?;
     em.module
         .define_data(id, &data)
-        .map_err(|e| format!("defining the coverage table: {e}"))?;
+        .map_err(|e| CodegenError::internal(format!("defining the coverage table: {e}")))?;
     Ok((Some(id), files.len() as u64))
 }
 
@@ -1686,7 +1676,7 @@ fn define_cov_rows(em: &mut Emitter, analyzed: &Analyzed) -> Result<(Option<Data
 /// exports, so referencing one is what keeps that class's methods in the
 /// binary -- and not referencing one is what lets them strip. Every table is
 /// named today; narrowing the set is the size lever this exists for.
-fn define_class_tables(em: &mut Emitter, analyzed: &Analyzed) -> Result<Option<DataId>, String> {
+fn define_class_tables(em: &mut Emitter, analyzed: &Analyzed) -> CResult<Option<DataId>> {
     let symbols = needed_class_tables(analyzed);
     if symbols.is_empty() {
         return Ok(None);
@@ -1694,20 +1684,20 @@ fn define_class_tables(em: &mut Emitter, analyzed: &Analyzed) -> Result<Option<D
     let id = em
         .module
         .declare_data("zeo_class_tables", Linkage::Local, false, false)
-        .map_err(|e| format!("declaring zeo_class_tables: {e}"))?;
+        .map_err(|e| CodegenError::internal(format!("declaring zeo_class_tables: {e}")))?;
     let mut data = DataDescription::new();
     data.define(vec![0u8; symbols.len() * 8].into_boxed_slice());
     for (i, sym) in symbols.iter().enumerate() {
         let table = em
             .module
             .declare_data(sym, Linkage::Import, false, false)
-            .map_err(|e| format!("declaring {sym}: {e}"))?;
+            .map_err(|e| CodegenError::internal(format!("declaring {sym}: {e}")))?;
         let gv = em.module.declare_data_in_data(table, &mut data);
         data.write_data_addr((i * 8) as u32, gv, 0);
     }
     em.module
         .define_data(id, &data)
-        .map_err(|e| format!("defining zeo_class_tables: {e}"))?;
+        .map_err(|e| CodegenError::internal(format!("defining zeo_class_tables: {e}")))?;
     Ok(Some(id))
 }
 
