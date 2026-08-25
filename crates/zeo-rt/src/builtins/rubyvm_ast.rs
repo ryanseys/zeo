@@ -246,6 +246,45 @@ fn line_at(src: &[u8], offset: usize) -> usize {
         .count()
 }
 
+/// Whether `v` is something CRuby would look for an ISEQ on: a `Proc`, a
+/// `Method`, or a `Thread::Backtrace::Location`.
+fn is_iseq_bearing(v: &RubyValue) -> bool {
+    matches!(v, RubyValue::Proc(_))
+        || matches!(
+            class_id_of(v),
+            Some(
+                zeo_abi::METHOD_CLASS
+                    | zeo_abi::UNBOUND_METHOD_CLASS
+                    | zeo_abi::BACKTRACE_LOCATION_CLASS
+            )
+        )
+}
+
+/// Whether the callable really has a body ruby compiled. A backtrace
+/// location always names one; a Method or Proc has one when it reports a
+/// source, which is what tells a Ruby-defined row from a C one.
+///
+/// An `UnboundMethod` answers nil in CRuby whatever it wraps, so it never
+/// has one here.
+fn has_iseq(v: &RubyValue) -> bool {
+    if class_id_of(v) == Some(zeo_abi::BACKTRACE_LOCATION_CLASS) {
+        return true;
+    }
+    if class_id_of(v) == Some(zeo_abi::UNBOUND_METHOD_CLASS) {
+        return false;
+    }
+    crate::builtins::rubyvm::callable_source(v).is_some()
+}
+
+/// The class of an OBJECT-backed value. `None` for every immediate, which is
+/// enough here: none of the shapes this module asks about is one.
+fn class_id_of(v: &RubyValue) -> Option<ClassId> {
+    match v {
+        RubyValue::Object(o) => Some(o.class_id()),
+        _ => None,
+    }
+}
+
 const PRISM_ERROR: &str = "cannot get AST for ISEQ compiled by prism";
 
 mod ast {
@@ -278,11 +317,27 @@ mod ast {
         // Compiled code has no retained AST -- byte-for-byte what ruby 4.0.6
         // itself answers (prism is its default compiler): a raise for Ruby-level
         // callables, `nil` for a C-defined method.
+        // Every ISEQ ruby builds is prism-compiled, so CRuby refuses each of
+        // these rather than answering an AST -- and that refusal is a
+        // CONTRACT: `error_highlight` rescues it by name and reparses with
+        // prism itself (`ErrorHighlight.prism_find`). Answering `nil` looked
+        // harmless and silently turned every spot off.
+        //
+        // Only a callable with an ISEQ refuses. A C-defined method has none
+        // -- `method(:puts)` is nil in CRuby, not an error -- and neither
+        // does an `UnboundMethod`. Anything that is not a callable at all is
+        // a TypeError naming its class.
         def self."of" params "body, keep_script_lines: nil, error_tolerant: nil, keep_tokens: nil"(_recv, what, **_opts) {
-            match what {
-                RubyValue::Proc(_) => Err(raise_error("RuntimeError", PRISM_ERROR.to_string())),
-                _ => Ok(RubyValue::Nil),
+            if !is_iseq_bearing(what) {
+                return Err(crate::builtins::type_error!(
+                    "wrong argument type {} (expected method)",
+                    crate::builtins::check_type_name(what)
+                ));
             }
+            if !has_iseq(what) {
+                return Ok(RubyValue::Nil);
+            }
+            Err(raise_error("RuntimeError", PRISM_ERROR.to_string()))
         }
         def self."node_id_for_backtrace_location" params "backtrace_location"(_recv, loc) {
             node_id_for_location(loc)

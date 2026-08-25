@@ -247,7 +247,7 @@ fn parse_check(src: &str) -> Result<(), Signal> {
 /// The `[file, line]` a callable was written at, or `None` for one with no
 /// Ruby source this runtime tracks -- a builtin row, or a `define_method`
 /// body, both of which `#source_location` already reports `nil` for.
-fn callable_source(what: &RubyValue) -> Option<(String, i64)> {
+pub(crate) fn callable_source(what: &RubyValue) -> Option<(String, i64)> {
     let loc = match what {
         RubyValue::Proc(p) => {
             let (file, line) = p.location()?;
