@@ -239,6 +239,24 @@ pub fn check_ints() -> Result<(), Signal> {
     Ok(())
 }
 
+/// The checkpoint a BLOCKING primitive runs before it parks: the same
+/// timer/collector servicing as [`check_ints`] -- a sleeper must
+/// acknowledge a collector's park request before going quiet -- but with
+/// RAW interrupt delivery. A park entry is a delivery point in CRuby even
+/// for a spawned thread's first checkpoint, so the `body_entered` one-shot
+/// does not apply here (`Thread.new { sleep }` + an immediate `#raise`
+/// must wake now, not park forever).
+#[inline]
+pub fn blocking_checkpoint() -> Result<(), Signal> {
+    if gvl::interrupts_pending_anywhere() {
+        gvl::service_timer();
+        gvl::park_if_asked();
+        gc::service_due();
+        thread::check_interrupt()?;
+    }
+    Ok(())
+}
+
 /// The C `errno` slot for this thread (the accessor's name is per-libc).
 pub(crate) fn errno_ptr() -> *mut libc::c_int {
     #[cfg(target_vendor = "apple")]

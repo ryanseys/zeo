@@ -1316,11 +1316,7 @@ pub(crate) fn sleep_impl(args: &[RubyValue]) -> Result<RubyValue, Signal> {
         // the target was still starting up finds no ctx to wake (this call
         // registers it), so a check only on the wake path would sit out the
         // whole sleep before noticing.
-        // The RAW check, not the emitted-checkpoint wrapper: a blocking
-        // primitive's entry is always a delivery point in CRuby, even a
-        // spawned thread's first (`Thread.new { sleep }` + an immediate
-        // `#raise` must wake now, not park forever).
-        crate::thread::check_interrupt()?;
+        crate::blocking_checkpoint()?;
         let remaining = match deadline {
             Some(d) => {
                 let now = std::time::Instant::now();

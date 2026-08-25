@@ -563,10 +563,7 @@ pub fn thread_stop_current() -> Result<RubyValue, Signal> {
     while t.stopped.load(Ordering::Relaxed) {
         // Before parking, for the reason `sleep_impl` documents: an interrupt
         // posted while this thread was starting up found no ctx to wake.
-        // The RAW check, not the emitted-checkpoint wrapper -- a blocking
-        // primitive's entry delivers even a spawned thread's first pending
-        // interrupt (see `sleep_impl`).
-        check_interrupt()?;
+        crate::blocking_checkpoint()?;
         crate::gvl::process_gvl().without(|| ctx.sleep(None));
     }
     Ok(RubyValue::Nil)
