@@ -61,10 +61,10 @@ live builtin, so `memsize_of`/`reachable_objects_from`/`count_symbols` answer
 without the require (`crates/zeo-rt/src/builtins/objspace.rs`; what it declines
 and why is in [`docs/COMPATIBILITY.md`](COMPATIBILITY.md)). `ARGF` is a live
 builtin (`zeo_abi::ARGF_CLASS`), and `rbconfig` resolves through a synthetic
-shim (`crates/zeo/src/parse/shims/rbconfig.rb`, spliced by
-`parse/loader.rs::splice_synthetic_shim`). The shim's first-pass limitation is
-a static arm64-macOS platform and paths, not values derived from the build
-target.
+shim (`crates/zeo/src/parse/shims/rbconfig.rb.in`, rendered by build.rs from
+the build target's platform facts and spliced by
+`parse/loader/splice.rs::splice_synthetic_shim`). The shim's remaining
+limitation is a synthesized FHS install prefix, not a real install layout.
 
 ## Deferred (catalogued, no module yet)
 
@@ -269,7 +269,7 @@ See the checklist at the top of `crates/zeo-rt/src/ext/mod.rs`. In brief:
    `ext-all` (with `dep:` entries if it needs an optional crate).
 5. **Module declaration** — cfg-gated `pub(crate) mod <name>;` in `ext/mod.rs`.
 6. **Require aliases** — if the `require` has sub-spellings (`cgi/util`,
-   `digest/sha2`), map them in `parse/loader.rs`'s `canonical_ext_feature`.
+   `digest/sha2`), map them in `lower/features.rs`'s `canonical_ext_feature`.
 
 Every method lands with a `#[cfg(test)]` unit test and (for real methods) an
 oracle-matched `examples/` fixture.

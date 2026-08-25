@@ -145,7 +145,7 @@ binding.
 Some runtime metaprogramming needs no compile at all: a compiled block is already
 an `Arc<dyn Fn>`, so a class or method defined at runtime *from a block* needs
 only a runtime-mutable method registry, not an interpreter. That foundation is
-`zeo-rt/src/runtime_meta.rs`: a lock-guarded overlay beside the frozen
+`zeo-rt/src/runtime_meta/`: a lock-guarded overlay beside the frozen
 `OnceLock` registry, gated by a single `is_live()` atomic so programs that
 never reach it pay nothing. On it:
 

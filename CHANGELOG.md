@@ -39,7 +39,7 @@ The first public release, not yet cut.
 - **RubyGems and Bundler support.** `--gem-path` and `--bundle-gemfile` read
   the store and lockfile that Bundler already wrote, so a compile agrees with
   `bundle exec`. Zeo resolves no dependency graph and contacts no network.
-- **66 bundled gems** in `gems/`, resolving without a `Gemfile`.
+- **67 bundled gems** in `gems/`, resolving without a `Gemfile`.
 - **Standard-library extensions** in `crates/zeo-rt/src/ext/`, each behind a
   Ruby `require` gate and a cargo feature.
 - **Three install tiers.** A relocatable tarball from `tools/zeo-dev dist`,
@@ -68,7 +68,7 @@ The first public release, not yet cut.
   disagree.
 - The **method census** compared every module, method, constant and visibility
   reachable in Ruby 4.0.6 against Zeo's surface. It was retired at zero rows.
-- The **conformance corpus** compiles 4,288 programs and compares stdout,
+- The **conformance corpus** compiles 4,393 programs and compares stdout,
   stderr and the exit status with real Ruby byte for byte. Programs that do
   not yet agree live in `tests/gaps/` as tests that must fail.
 
