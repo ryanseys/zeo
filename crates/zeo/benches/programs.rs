@@ -270,12 +270,63 @@ fn bench_cruby(c: &mut Criterion, corpus: &[PathBuf], lazy: bool) {
     g.finish();
 }
 
+/// After an unfiltered bank: every benchmark's median, written to the
+/// CHECKED-IN `bench/results.tsv`. Overwrite and commit -- the git diff
+/// against the previous bank IS the progress record. `cruby` rows are
+/// written only when the oracle group ran THIS bank, so a skipped oracle
+/// never re-publishes stale numbers.
+fn export_results(root: &Path, oracle: bool) {
+    let outer = std::env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| root.join("target"));
+    let mut rows: Vec<(&str, String, f64)> = Vec::new();
+    let groups: &[&str] = if oracle { &["zeo", "cruby"] } else { &["zeo"] };
+    for group in groups {
+        let dir = outer.join("criterion").join(group);
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for e in entries {
+            let p = e.expect("readable criterion entry").path();
+            let Ok(bytes) = std::fs::read(p.join("new").join("estimates.json")) else {
+                continue;
+            };
+            let v: serde_json::Value =
+                serde_json::from_slice(&bytes).expect("criterion estimates.json parses");
+            let ns = v["median"]["point_estimate"]
+                .as_f64()
+                .expect("a median point estimate");
+            let name = p.file_name().expect("a benchmark dir").to_string_lossy().into_owned();
+            rows.push((group, name, ns / 1e9));
+        }
+    }
+    rows.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
+    let sha = Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .current_dir(root)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    let mut out = format!(
+        "# bench/results.tsv -- medians from the last full bank (make bench) at {sha}\n\
+         # group\tbenchmark\tmedian_secs\n"
+    );
+    for (g, n, s) in &rows {
+        out.push_str(&format!("{g}\t{n}\t{s:.4}\n"));
+    }
+    std::fs::write(root.join("bench/results.tsv"), out).expect("write bench/results.tsv");
+    eprintln!("wrote bench/results.tsv ({} rows)", rows.len());
+}
+
 fn main() {
     let root = repo_root();
     ZEO.set(build_snapshot(&root)).expect("main runs once");
     let corpus = programs(&root);
     assert!(!corpus.is_empty(), "no programs under bench/");
     let lazy = lazy_mode();
+    let oracle = std::env::var_os("ZEO_BENCH_ORACLE").is_some_and(|v| v == "1");
     // Defaults BEFORE configure_from_args, so criterion's own CLI flags
     // (--warm-up-time, --measurement-time, ...) still win.
     let mut c = Criterion::default()
@@ -283,8 +334,13 @@ fn main() {
         .measurement_time(Duration::from_secs(2))
         .configure_from_args();
     bench_zeo(&mut c, &corpus, lazy);
-    if std::env::var_os("ZEO_BENCH_ORACLE").is_some_and(|v| v == "1") {
+    if oracle {
         bench_cruby(&mut c, &corpus, lazy);
     }
     c.final_summary();
+    // A filtered run measured a subset; only a full bank rewrites the
+    // committed record.
+    if !lazy {
+        export_results(&root, oracle);
+    }
 }
