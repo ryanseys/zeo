@@ -72,6 +72,7 @@ pub fn compile(analyzed: &Analyzed, spec: &EvalSpec<'_>) -> CResult<EvalProgram>
     statics::define_syms(&mut em)?;
     statics::define_callsites(&mut em)?;
     statics::define_cm_sites(&mut em)?;
+    statics::define_const_sites(&mut em)?;
     statics::define_rodata(&mut em)?;
     let ClifModule::Jit(mut module) = em.module else {
         unreachable!("Emitter::new(true) builds a JIT module")

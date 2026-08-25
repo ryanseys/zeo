@@ -116,9 +116,13 @@ fn const_cref_call(
     let hook_v = fx.b.ins().iconst(types::I8, i64::from(flags));
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
+    // Per-site epoch-validated cache: a hit is two atomic loads and a
+    // clone; the locked walk runs only until the site fills (and again
+    // after any constant write, which bumps the epoch).
+    let site = fx.const_site_ptr();
     let status = fx.call_status(
-        "zeo_rt_const_get_cref",
-        &[ids_ptr, n_ids, nptr, nlen, qptr, qlen, hook_v, out],
+        "zeo_rt_const_get_cref_cached",
+        &[site, ids_ptr, n_ids, nptr, nlen, qptr, qlen, hook_v, out],
     );
     fx.fallible(status);
     fx.owned_created += 1;

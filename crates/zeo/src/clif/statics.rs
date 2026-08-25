@@ -94,11 +94,25 @@ pub(crate) fn define_cm_sites(em: &mut Emitter) -> CResult<()> {
         .map_err(|e| CodegenError::internal(format!("defining {}: {e}", names::CM_SITES)))
 }
 
+/// Define the `zeo_const_sites` array -- the constant-read caches. Same
+/// zero-bytes-are-not-a-slot rule as [`define_callsites`]; `zeo_unit_init`
+/// constructs the whole array with ONE bulk call (a slot carries no
+/// per-site constant).
+pub(crate) fn define_const_sites(em: &mut Emitter) -> CResult<()> {
+    let mut data = DataDescription::new();
+    data.define_zeroinit(em.const_sites.max(1) * abi::CONST_SITE_SIZE);
+    data.set_align(8);
+    em.module
+        .define_data(em.const_sites_id, &data)
+        .map_err(|e| CodegenError::internal(format!("defining {}: {e}", names::CONST_SITES)))
+}
+
 /// `zeo_unit_init`: intern every symbol name into `zeo_syms`, then hand
 /// every `zeo_callsites` slot its caller class and initialise every
-/// `zeo_cm_sites` slot. `None` when the program has none of the three.
+/// `zeo_cm_sites` and `zeo_const_sites` slot. `None` when the program has
+/// none of them.
 pub(crate) fn define_unit_init(em: &mut Emitter) -> CResult<Option<FuncId>> {
-    if em.syms.is_empty() && em.callsites.is_empty() && em.cm_sites == 0 {
+    if em.syms.is_empty() && em.callsites.is_empty() && em.cm_sites == 0 && em.const_sites == 0 {
         return Ok(None);
     }
     let sig = em.module.make_signature();
@@ -121,6 +135,8 @@ pub(crate) fn define_unit_init(em: &mut Emitter) -> CResult<Option<FuncId>> {
     let callers: Vec<u32> = em.callsites.clone();
     let f_cm_init = em.import("zeo_rt_classmethod_site_init");
     let n_cm = em.cm_sites;
+    let f_const_init = em.import("zeo_rt_const_sites_init");
+    let n_const = em.const_sites;
 
     let mut func = ir::Function::with_name_signature(UserFuncName::user(0, 2), sig);
     let intern = em.module.declare_func_in_func(f_intern, &mut func);
@@ -130,6 +146,8 @@ pub(crate) fn define_unit_init(em: &mut Emitter) -> CResult<Option<FuncId>> {
     let sites_gv = em.module.declare_data_in_func(em.callsites_id, &mut func);
     let cm_gv = em.module.declare_data_in_func(em.cm_sites_id, &mut func);
     let cm_init = em.module.declare_func_in_func(f_cm_init, &mut func);
+    let const_gv = em.module.declare_data_in_func(em.const_sites_id, &mut func);
+    let const_init = em.module.declare_func_in_func(f_const_init, &mut func);
     let cfg = em.module.target_config();
     let mut fbc = FunctionBuilderContext::new();
     let mut b = FunctionBuilder::new(&mut func, &mut fbc);
@@ -173,6 +191,11 @@ pub(crate) fn define_unit_init(em: &mut Emitter) -> CResult<Option<FuncId>> {
             };
             b.ins().call(cm_init, &[slot]);
         }
+    }
+    if n_const > 0 {
+        let base = b.ins().symbol_value(em.ptr, const_gv);
+        let n_v = b.ins().iconst(em.ptr, n_const as i64);
+        b.ins().call(const_init, &[base, n_v]);
     }
     b.ins().return_(&[]);
     b.seal_all_blocks();

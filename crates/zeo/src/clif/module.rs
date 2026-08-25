@@ -120,6 +120,10 @@ pub(crate) struct Emitter {
     /// How many class-method cache slots the program needs; the index IS
     /// the slot index, and a slot carries no per-site constant.
     pub cm_sites: usize,
+    pub const_sites_id: DataId,
+    /// How many constant-read cache slots the program needs; same
+    /// index-is-the-slot rule as `cm_sites`.
+    pub const_sites: usize,
     pub reopen_flags_id: DataId,
     /// `(builtin class id, method name)` -> its byte in `zeo_reopen_flags`.
     /// See [`super::names::REOPEN_FLAGS`]; empty for a program that reopens no
@@ -274,6 +278,11 @@ impl Emitter {
             .map_err(|e| {
                 CodegenError::internal(format!("declaring {}: {e}", super::names::CM_SITES))
             })?;
+        let const_sites_id = module
+            .declare_data(super::names::CONST_SITES, Linkage::Local, true, false)
+            .map_err(|e| {
+                CodegenError::internal(format!("declaring {}: {e}", super::names::CONST_SITES))
+            })?;
         let reopen_flags_id = module
             .declare_data(super::names::REOPEN_FLAGS, Linkage::Local, true, false)
             .map_err(|e| {
@@ -290,6 +299,8 @@ impl Emitter {
             callsites: Vec::new(),
             cm_sites_id,
             cm_sites: 0,
+            const_sites_id,
+            const_sites: 0,
             syms: super::statics::SymPool::default(),
             rodata: Vec::new(),
             rodata_offsets: HashMap::new(),

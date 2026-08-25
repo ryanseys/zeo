@@ -526,6 +526,16 @@ pub unsafe extern "C" fn zeo_rt_classmethod_site_init(slot: *mut crate::dispatch
     unsafe { slot.write(crate::dispatch::ClassMethodSite::new()) };
 }
 
+/// Initialize the whole `.bss` `zeo_const_sites` array in one call -- the
+/// sites carry no per-slot constant, so `zeo_unit_init` needs one bulk
+/// write, not a call per slot.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_const_sites_init(base: *mut crate::constants::ConstSite, n: usize) {
+    for i in 0..n {
+        unsafe { base.add(i).write(crate::constants::ConstSite::new()) };
+    }
+}
+
 /// `case`/`when`: does `pattern === subject`? Dispatches the candidate's
 /// own `===` (a user class overriding it is the whole point of `case`).
 /// `*hit` gets 0/1 on success; a raising `===` propagates.

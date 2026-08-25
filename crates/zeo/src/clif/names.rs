@@ -27,6 +27,11 @@ pub const CALLSITES: &str = "zeo_callsites";
 /// resolve through a singleton-chain arm of its own), so `Foo.new` needs
 /// this second array or it walks the chain on every call.
 pub const CM_SITES: &str = "zeo_cm_sites";
+/// The `.bss` array of constant-read caches -- one `ConstSite` slot per
+/// emitted bare-constant read, epoch-validated against the runtime's
+/// constant table. Same zero-bytes-are-not-a-slot rule as the call sites:
+/// `zeo_unit_init` constructs the whole array in one bulk call.
+pub const CONST_SITES: &str = "zeo_const_sites";
 /// The `.bss` byte array of builtin-reopen flags -- one byte per
 /// `(builtin class, method name)` a program reopens at compile time.
 ///

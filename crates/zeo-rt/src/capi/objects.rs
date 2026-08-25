@@ -388,6 +388,55 @@ fn autoload_retry(owners: &[u32], name: &str) -> Result<bool, crate::Signal> {
     Ok(false)
 }
 
+/// The PURE half of the cref walk: the chain's own tables, then -- inside
+/// a box -- the master tail. No autoload, no `const_missing`, no raise:
+/// exactly the part a [`crate::constants::ConstSite`] may cache.
+fn cref_table_probe(ids: &[u32], name: &str, flags: u8) -> Option<RubyValue> {
+    for &id in ids {
+        if let Some(v) = crate::constants::const_get(id, name) {
+            return Some(v);
+        }
+    }
+    // Inside a BOX the chain ends at the box's own surrogate, and the tail
+    // past it reaches only the MASTER constants -- the ones installed
+    // before the main program ran. Falling through to `Object` would hand
+    // the box main's own top-level constants, which a box (a copy of
+    // master) never sees.
+    if flags & CONST_CREF_MASTER != 0 {
+        return crate::constants::const_get_master(name);
+    }
+    None
+}
+
+/// [`zeo_rt_const_get_cref`] behind a per-site epoch-validated cache. A hit
+/// is two atomic loads and a clone. Only the pure table probe is cached:
+/// the autoload/`const_missing`/miss tail stays outside the cache (its
+/// answers must re-run per read, and a successful autoload bumps the epoch
+/// anyway), delegated to the uncached entry.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_const_get_cref_cached(
+    site: &'static crate::constants::ConstSite,
+    ids: *const u32,
+    n_ids: usize,
+    name: *const u8,
+    name_len: usize,
+    qualified: *const u8,
+    qualified_len: usize,
+    flags: u8,
+    out: *mut RubyValue,
+) -> i32 {
+    let name_s = unsafe { super::str_slice(name, name_len) };
+    let ids_s = unsafe { std::slice::from_raw_parts(ids, n_ids) };
+    if let Some(v) = site.get(|| cref_table_probe(ids_s, name_s, flags)) {
+        super::leakcheck::created(&v);
+        unsafe { out.write(v) };
+        return STATUS_OK;
+    }
+    unsafe {
+        zeo_rt_const_get_cref(ids, n_ids, name, name_len, qualified, qualified_len, flags, out)
+    }
+}
+
 /// A BARE constant read resolved through its compile-time cref chain:
 /// `ids` = the owner first, then each enclosing cref scope, then the top
 /// (the emitter's `emit_const_read` order); each entry searches its own
@@ -409,21 +458,7 @@ pub unsafe extern "C" fn zeo_rt_const_get_cref(
 ) -> i32 {
     let name = unsafe { super::str_slice(name, name_len) };
     let ids = unsafe { std::slice::from_raw_parts(ids, n_ids) };
-    for &id in ids {
-        if let Some(v) = crate::constants::const_get(id, name) {
-            super::leakcheck::created(&v);
-            unsafe { out.write(v) };
-            return STATUS_OK;
-        }
-    }
-    // Inside a BOX the chain ends at the box's own surrogate, and the tail
-    // past it reaches only the MASTER constants -- the ones installed
-    // before the main program ran. Falling through to `Object` would hand
-    // the box main's own top-level constants, which a box (a copy of
-    // master) never sees.
-    if flags & CONST_CREF_MASTER != 0
-        && let Some(v) = crate::constants::const_get_master(name)
-    {
+    if let Some(v) = cref_table_probe(ids, name, flags) {
         super::leakcheck::created(&v);
         unsafe { out.write(v) };
         return STATUS_OK;

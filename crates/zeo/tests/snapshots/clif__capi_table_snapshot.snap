@@ -1,5 +1,6 @@
 ---
 source: crates/zeo/tests/clif.rs
+assertion_line: 330
 expression: rendered
 ---
 zeo_rt_alias_in_default_definee ([Ptr, Ptr, Ptr, Ptr, Ptr]) -> Some(I32)
@@ -34,11 +35,13 @@ zeo_rt_conceal_class ([U32]) -> None
 zeo_rt_conditional_class_ref ([U32, Ptr, Usize, U32, Ptr]) -> Some(I32)
 zeo_rt_const_get_at ([U32, Ptr, Usize, Ptr]) -> Some(I32)
 zeo_rt_const_get_cref ([Ptr, Usize, Ptr, Usize, Ptr, Usize, U8, Ptr]) -> Some(I32)
+zeo_rt_const_get_cref_cached ([Ptr, Ptr, Usize, Ptr, Usize, Ptr, Usize, U8, Ptr]) -> Some(I32)
 zeo_rt_const_get_on_value ([Ptr, Ptr, Usize, Ptr, Usize, Ptr]) -> Some(I32)
 zeo_rt_const_get_or_nil ([U32, Ptr, Usize, Ptr]) -> None
 zeo_rt_const_get_scoped ([U32, Ptr, Usize, Ptr, Usize, U8, Ptr]) -> Some(I32)
 zeo_rt_const_private ([U32, Ptr, Usize]) -> Some(I8)
 zeo_rt_const_set_at ([U32, Ptr, Usize, Ptr, Ptr, Usize, U32]) -> None
+zeo_rt_const_sites_init ([Ptr, Usize]) -> None
 zeo_rt_const_visibility ([Ptr, Ptr, Usize, U8]) -> None
 zeo_rt_cov_file_loaded ([Ptr, Usize]) -> None
 zeo_rt_cov_line ([Ptr, Usize, U32]) -> None
@@ -84,6 +87,7 @@ zeo_rt_for_begin ([Ptr, U8, Ptr]) -> Some(I32)
 zeo_rt_for_end ([Ptr]) -> None
 zeo_rt_for_next ([Ptr, Ptr, Ptr]) -> None
 zeo_rt_for_result ([Ptr, Ptr]) -> None
+zeo_rt_frame_enter ([Ptr, Usize, Ptr, Usize, U32, U32]) -> Some(I32)
 zeo_rt_frame_pop ([]) -> None
 zeo_rt_frame_push ([Ptr, Usize, Ptr, Usize, U32, U32]) -> None
 zeo_rt_frozen_check ([Ptr]) -> Some(I32)

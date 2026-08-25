@@ -380,6 +380,26 @@ impl<'e, 'f> Fx<'e, 'f> {
         }
     }
 
+    /// A fresh constant-read cache slot in `zeo_const_sites`, as a pointer.
+    /// One per SITE, like [`Fx::callsite_ptr`]; the slot carries no
+    /// per-site constant (the resolve chain rides in the call's own
+    /// arguments).
+    pub fn const_site_ptr(&mut self) -> ir::Value {
+        let idx = self.em.const_sites;
+        self.em.const_sites += 1;
+        let gv = self
+            .em
+            .module
+            .declare_data_in_func(self.em.const_sites_id, self.b.func);
+        let base = self.b.ins().symbol_value(self.em.ptr, gv);
+        let off = (idx * zeo_abi::abi::CONST_SITE_SIZE) as i64;
+        if off == 0 {
+            base
+        } else {
+            self.b.ins().iadd_imm_u(base, off)
+        }
+    }
+
     /// A 24-byte temp slot, recycled at statement boundaries.
     pub fn temp_slot(&mut self) -> ir::StackSlot {
         let ss = self.temp_free.pop().unwrap_or_else(|| {
