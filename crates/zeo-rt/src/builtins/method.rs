@@ -779,3 +779,78 @@ ruby_class! {
 fn class_name(cid: ClassId) -> String {
     crate::dispatch::class_name(cid).unwrap_or_else(|| "Object".to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dispatch::send_value;
+
+    // Each test runs in its own nextest process -- see the crate README for
+    // the with_core() bootstrap pattern.
+    fn install_core() {
+        crate::dispatch::install_class_registry(crate::dispatch::ClassRegistry::with_core());
+    }
+
+    fn call(recv: &RubyValue, name: &str, args: &[RubyValue]) -> Result<RubyValue, Signal> {
+        send_value(recv, Symbol::intern(name), args, None)
+    }
+
+    #[test]
+    fn a_method_binds_name_receiver_and_owner() {
+        install_core();
+        let five = RubyValue::Int(5);
+        let m = method_new(&five, &RubyValue::Symbol(Symbol::intern("+"))).unwrap();
+
+        assert!(matches!(
+            call(&m, "name", &[]),
+            Ok(RubyValue::Symbol(s)) if s == Symbol::intern("+")
+        ));
+        assert!(matches!(call(&m, "receiver", &[]), Ok(RubyValue::Int(5))));
+        assert!(matches!(
+            call(&m, "owner", &[]),
+            Ok(RubyValue::Class(c)) if c == zeo_abi::INTEGER_CLASS
+        ));
+        assert!(matches!(
+            call(&m, "call", &[RubyValue::Int(2)]),
+            Ok(RubyValue::Int(7))
+        ));
+    }
+
+    #[test]
+    fn an_unknown_name_refuses_at_construction() {
+        install_core();
+        let err = method_new(
+            &RubyValue::Int(5),
+            &RubyValue::Symbol(Symbol::intern("nope")),
+        );
+        let Err(Signal::Raise(exc)) = err else {
+            panic!("expected a NameError raise");
+        };
+        assert_eq!(
+            exc.as_object_unchecked().class_id(),
+            zeo_abi::NAME_ERROR_CLASS
+        );
+    }
+
+    #[test]
+    fn equality_compares_receivers_by_identity() {
+        install_core();
+        let a = RubyValue::Str(crate::string_new("a".to_string()));
+        let a_twin = RubyValue::Str(crate::string_new("a".to_string()));
+        let upcase = RubyValue::Symbol(Symbol::intern("upcase"));
+        let m1 = method_new(&a, &upcase).unwrap();
+        let m2 = method_new(&a, &upcase).unwrap();
+        let m3 = method_new(&a_twin, &upcase).unwrap();
+
+        // Same name, same owner, same receiver OBJECT: equal.
+        assert!(matches!(
+            call(&m1, "==", std::slice::from_ref(&m2)),
+            Ok(RubyValue::Bool(true))
+        ));
+        // An equal-but-distinct receiver is a different Method.
+        assert!(matches!(
+            call(&m1, "==", std::slice::from_ref(&m3)),
+            Ok(RubyValue::Bool(false))
+        ));
+    }
+}

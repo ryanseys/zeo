@@ -51,3 +51,60 @@ ruby_module! {
 fn one(name: &str, path: &RubyValue) -> Result<RubyValue, Signal> {
     file_test_forward(name, std::slice::from_ref(path))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Symbol;
+
+    // Each test runs in its own nextest process -- see the crate README for
+    // the with_core() bootstrap pattern.
+    fn install_core() {
+        crate::dispatch::install_class_registry(crate::dispatch::ClassRegistry::with_core());
+    }
+
+    fn ask(module: crate::ClassId, name: &str, path: &str) -> Result<RubyValue, crate::Signal> {
+        crate::dispatch::send_value(
+            &RubyValue::Class(module),
+            Symbol::intern(name),
+            &[RubyValue::Str(crate::string_new(path.to_string()))],
+            None,
+        )
+    }
+
+    #[test]
+    fn the_forwarding_rows_answer_like_files_own() {
+        install_core();
+        // The test binary itself: a real file every run can see.
+        let exe = std::env::current_exe().unwrap().display().to_string();
+        for (name, path) in [
+            ("exist?", "/"),
+            ("exist?", "/definitely/not/here"),
+            ("directory?", "/"),
+            ("file?", exe.as_str()),
+            ("file?", "/"),
+        ] {
+            let via_file_test = ask(zeo_abi::FILE_TEST_MODULE, name, path).unwrap();
+            let via_file = ask(zeo_abi::FILE_CLASS, name, path).unwrap();
+            let (RubyValue::Bool(a), RubyValue::Bool(b)) = (&via_file_test, &via_file) else {
+                panic!("both answer booleans");
+            };
+            assert_eq!(a, b, "FileTest.{name}({path:?}) diverged from File's");
+        }
+    }
+
+    #[test]
+    fn file_test_is_not_the_whole_of_files_surface() {
+        install_core();
+        // `FileTest.read` must be the NoMethodError CRuby raises -- the module
+        // no longer shares File's entire table.
+        let err = ask(zeo_abi::FILE_TEST_MODULE, "read", "/etc/hosts");
+        let Err(crate::Signal::Raise(exc)) = err else {
+            panic!("expected a NoMethodError raise");
+        };
+        assert_eq!(
+            exc.as_object_unchecked().class_id(),
+            zeo_abi::NO_METHOD_ERROR_CLASS
+        );
+    }
+}

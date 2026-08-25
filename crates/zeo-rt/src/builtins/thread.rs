@@ -403,3 +403,55 @@ ruby_class! {
         Ok(RubyValue::Bool(same))
     }
 }
+
+// Only what is honest without spawning: `Thread.current`'s identity and the
+// storage rows it carries. Spawn/join/kill and the GVL states belong to the
+// goldens -- a unit-test thread start can deadlock an armed GVL.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Each test runs in its own nextest process -- see the crate README for
+    // the with_core() bootstrap pattern.
+    fn install_core() {
+        crate::dispatch::install_class_registry(crate::dispatch::ClassRegistry::with_core());
+    }
+
+    fn call(recv: &RubyValue, name: &str, args: &[RubyValue]) -> Result<RubyValue, Signal> {
+        crate::dispatch::send_value(recv, Symbol::intern(name), args, None)
+    }
+
+    #[test]
+    fn thread_current_answers_one_stable_handle() {
+        install_core();
+        let a = call(&RubyValue::Class(zeo_abi::THREAD_CLASS), "current", &[]).unwrap();
+        let b = call(&RubyValue::Class(zeo_abi::THREAD_CLASS), "current", &[]).unwrap();
+        let (RubyValue::Thread(a), RubyValue::Thread(b)) = (&a, &b) else {
+            panic!("Thread.current answers a Thread");
+        };
+        assert!(std::sync::Arc::ptr_eq(a, b));
+    }
+
+    #[test]
+    fn fiber_local_storage_round_trips_and_coerces_string_keys() {
+        install_core();
+        let t = call(&RubyValue::Class(zeo_abi::THREAD_CLASS), "current", &[]).unwrap();
+        let key = RubyValue::Symbol(Symbol::intern("zeo_test_key"));
+
+        call(&t, "[]=", &[key.clone(), RubyValue::Int(42)]).unwrap();
+        assert!(matches!(
+            call(&t, "[]", std::slice::from_ref(&key)),
+            Ok(RubyValue::Int(42))
+        ));
+        // A String key names the same slot (`key_sym`'s coercion).
+        let str_key = RubyValue::Str(crate::string_new("zeo_test_key".to_string()));
+        assert!(matches!(
+            call(&t, "[]", std::slice::from_ref(&str_key)),
+            Ok(RubyValue::Int(42))
+        ));
+        assert!(matches!(
+            call(&t, "key?", std::slice::from_ref(&key)),
+            Ok(RubyValue::Bool(true))
+        ));
+    }
+}

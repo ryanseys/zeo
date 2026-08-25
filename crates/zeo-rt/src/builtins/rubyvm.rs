@@ -489,3 +489,61 @@ mod iseq {
 }
 
 static COMPILE_OPTION: std::sync::OnceLock<PlMutex<RubyValue>> = std::sync::OnceLock::new();
+
+// The compile rows parse-check and mint a handle; nothing needs a live
+// program, so they are honest unit-test material. `#eval`/`.of` go through
+// the real compiler seam and stay with the e2e suites.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Symbol;
+
+    // Each test runs in its own nextest process -- see the crate README for
+    // the with_core() bootstrap pattern.
+    fn install_core() {
+        crate::dispatch::install_class_registry(crate::dispatch::ClassRegistry::with_core());
+    }
+
+    fn call(recv: &RubyValue, name: &str, args: &[RubyValue]) -> Result<RubyValue, Signal> {
+        crate::dispatch::send_value(recv, Symbol::intern(name), args, None)
+    }
+
+    fn compile(src: &str) -> Result<RubyValue, Signal> {
+        call(
+            &RubyValue::Class(zeo_abi::RUBYVM_ISEQ_CLASS),
+            "compile",
+            &[RubyValue::Str(crate::string_new(src.to_string()))],
+        )
+    }
+
+    #[test]
+    fn compile_answers_a_handle_with_the_default_names() {
+        install_core();
+        let iseq = compile("1 + 1").expect("a valid snippet compiles");
+        assert!(matches!(
+            call(&iseq, "label", &[]),
+            Ok(RubyValue::Str(s)) if s.lock().to_utf8_lossy() == "<compiled>"
+        ));
+        assert!(matches!(
+            call(&iseq, "path", &[]),
+            Ok(RubyValue::Str(s)) if s.lock().to_utf8_lossy() == "<compiled>"
+        ));
+        assert!(matches!(
+            call(&iseq, "first_lineno", &[]),
+            Ok(RubyValue::Int(1))
+        ));
+    }
+
+    #[test]
+    fn a_parse_error_raises_syntax_error_at_compile_time() {
+        install_core();
+        let err = compile("def");
+        let Err(Signal::Raise(exc)) = err else {
+            panic!("expected a SyntaxError raise");
+        };
+        assert_eq!(
+            exc.as_object_unchecked().class_id(),
+            zeo_abi::SYNTAX_ERROR_CLASS
+        );
+    }
+}

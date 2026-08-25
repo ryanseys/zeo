@@ -208,3 +208,67 @@ ruby_class! {
         Ok(RubyValue::Str(string_new(format!("{:?}", rendered(loc_of(recv))))))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// One Location row, called straight off the builtin table -- the rows
+    /// are pure accessors, so no registry is needed.
+    fn row(recv: &RubyValue, name: &str) -> String {
+        let lookup =
+            crate::builtins::class_table(BACKTRACE_LOCATION_CLASS).expect("Location has a table");
+        let f = lookup(name).expect("the row exists");
+        match f(recv, &[], None) {
+            Ok(RubyValue::Str(s)) => s.lock().to_utf8_lossy().into_owned(),
+            Ok(RubyValue::Int(n)) => n.to_string(),
+            _ => panic!("expected a Str or Int answer"),
+        }
+    }
+
+    #[test]
+    fn label_method_names_the_method_inside_a_frame_label() {
+        assert_eq!(label_method("Object#inner").as_deref(), Some("inner"));
+        assert_eq!(label_method("Foo.bar").as_deref(), Some("bar"));
+        assert_eq!(label_method("block in outer").as_deref(), Some("outer"));
+        assert_eq!(label_method("<main>"), None);
+        assert_eq!(label_method("<class:Foo>"), None);
+    }
+
+    #[test]
+    fn a_location_reports_its_triple_and_renders_like_caller() {
+        let loc = location_new("/a.rb", 3, "Object#inner");
+        assert_eq!(row(&loc, "path"), "/a.rb");
+        assert_eq!(row(&loc, "absolute_path"), "/a.rb");
+        assert_eq!(row(&loc, "lineno"), "3");
+        assert_eq!(row(&loc, "label"), "Object#inner");
+        assert_eq!(row(&loc, "to_s"), "/a.rb:3:in 'Object#inner'");
+    }
+
+    #[test]
+    fn base_label_strips_the_block_prefix_and_the_owner() {
+        let cases = [
+            ("Object#inner", "inner"),
+            ("Foo.bar", "bar"),
+            ("block (2 levels) in Object#outer", "outer"),
+            ("<main>", "<main>"),
+        ];
+        for (label, want) in cases {
+            let loc = location_new("/a.rb", 1, label);
+            assert_eq!(row(&loc, "base_label"), want, "for label {label:?}");
+        }
+    }
+
+    #[test]
+    fn thread_callees_take_the_previous_frames_label() {
+        let rows = vec![
+            ("/a.rb".to_string(), 1, "Object#inner".to_string()),
+            ("/a.rb".to_string(), 5, "Object#outer".to_string()),
+        ];
+        let locs = thread_callees(&rows, Some("raise".to_string()));
+        // Location 0's callee is handed in; location 1's is what location 0
+        // invoked -- the method its label names.
+        assert_eq!(callee_of(&locs[0]).as_deref(), Some("raise"));
+        assert_eq!(callee_of(&locs[1]).as_deref(), Some("inner"));
+    }
+}

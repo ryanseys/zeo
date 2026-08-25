@@ -408,3 +408,113 @@ ruby_class! {
     def "clone"(recv) { inherited_row!(kernel, "clone", recv, __args, None) }
     def "dup"(recv) { inherited_row!(kernel, "dup", recv, __args, None) }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dispatch::send_value;
+
+    // Each test runs in its own nextest process -- see the crate README for
+    // the with_core() bootstrap pattern.
+    fn install_core() {
+        crate::dispatch::install_class_registry(crate::dispatch::ClassRegistry::with_core());
+    }
+
+    fn call(recv: &RubyValue, name: &str, args: &[RubyValue]) -> Result<RubyValue, Signal> {
+        send_value(recv, Symbol::intern(name), args, None)
+    }
+
+    fn sym(name: &str) -> RubyValue {
+        RubyValue::Symbol(Symbol::intern(name))
+    }
+
+    /// A binding over one local `x`, handing the shared cell back too --
+    /// the shape a compiled scope's own `binding` call builds.
+    fn binding_with_x(value: RubyValue) -> (RubyValue, LocalCell) {
+        let cell = new_cell(value);
+        let b = binding_new(
+            RubyValue::Nil,
+            vec![("x", Arc::clone(&cell))],
+            "test.rb",
+            3,
+            0,
+            u32::MAX,
+        );
+        (b, cell)
+    }
+
+    #[test]
+    fn a_local_reads_and_writes_through_the_shared_cell() {
+        install_core();
+        let (b, cell) = binding_with_x(RubyValue::Int(1));
+
+        assert!(matches!(
+            call(&b, "local_variable_get", &[sym("x")]),
+            Ok(RubyValue::Int(1))
+        ));
+        // A write through the Binding reaches the frame's own cell...
+        call(&b, "local_variable_set", &[sym("x"), RubyValue::Int(5)]).unwrap();
+        assert!(matches!(*cell.lock(), RubyValue::Int(5)));
+        // ...and a frame-side write is visible through the Binding.
+        *cell.lock() = RubyValue::Int(9);
+        assert!(matches!(
+            call(&b, "local_variable_get", &[sym("x")]),
+            Ok(RubyValue::Int(9))
+        ));
+    }
+
+    #[test]
+    fn a_new_name_lands_on_the_bindings_own_layer() {
+        install_core();
+        let (b, _cell) = binding_with_x(RubyValue::Int(1));
+
+        assert!(matches!(
+            call(&b, "local_variable_defined?", &[sym("y")]),
+            Ok(RubyValue::Bool(false))
+        ));
+        call(&b, "local_variable_set", &[sym("y"), RubyValue::Int(2)]).unwrap();
+        assert!(matches!(
+            call(&b, "local_variable_get", &[sym("y")]),
+            Ok(RubyValue::Int(2))
+        ));
+        // `local_variables` order: the Binding's own additions first, then
+        // the frame's declaration order.
+        let Ok(RubyValue::Array(names)) = call(&b, "local_variables", &[]) else {
+            panic!("local_variables answers an Array");
+        };
+        let names = names.lock().to_vec();
+        assert!(matches!(&names[0], RubyValue::Symbol(s) if *s == Symbol::intern("y")));
+        assert!(matches!(&names[1], RubyValue::Symbol(s) if *s == Symbol::intern("x")));
+    }
+
+    #[test]
+    fn a_missing_local_raises_name_error() {
+        install_core();
+        let (b, _cell) = binding_with_x(RubyValue::Int(1));
+
+        let err = call(&b, "local_variable_get", &[sym("missing")]);
+        let Err(Signal::Raise(exc)) = err else {
+            panic!("expected a NameError raise");
+        };
+        assert_eq!(
+            exc.as_object_unchecked().class_id(),
+            zeo_abi::NAME_ERROR_CLASS
+        );
+    }
+
+    #[test]
+    fn receiver_and_source_location_report_the_capture() {
+        install_core();
+        let cell = new_cell(RubyValue::Nil);
+        let this = RubyValue::Int(7);
+        let b = binding_new(this, vec![("x", cell)], "test.rb", 3, 0, u32::MAX);
+
+        assert!(matches!(call(&b, "receiver", &[]), Ok(RubyValue::Int(7))));
+        let Ok(RubyValue::Array(loc)) = call(&b, "source_location", &[]) else {
+            panic!("source_location answers an Array");
+        };
+        let loc = loc.lock().to_vec();
+        assert!(matches!(&loc[0], RubyValue::Str(s) if s.lock().to_utf8_lossy() == "test.rb"));
+        assert!(matches!(loc[1], RubyValue::Int(3)));
+    }
+}

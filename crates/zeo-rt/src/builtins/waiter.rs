@@ -19,3 +19,21 @@ ruby_class! {
         ))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The class declares exactly one own row, and it degrades to nil for a
+    /// receiver that is not a Thread -- the whole shape, pinned.
+    #[test]
+    fn the_one_row_is_pid_and_it_degrades_to_nil() {
+        let lookup = crate::builtins::class_table(zeo_abi::PROCESS_WAITER_CLASS)
+            .expect("Waiter has a table");
+        let pid = lookup("pid").expect("the pid row exists");
+        assert!(matches!(
+            pid(&RubyValue::Nil, &[], None),
+            Ok(RubyValue::Nil)
+        ));
+    }
+}

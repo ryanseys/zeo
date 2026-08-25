@@ -163,3 +163,30 @@ mod box_class {
         }
     }
 }
+
+// Only the disabled-mode surface is honest here: boxes arm at program
+// startup (the env gate), which no unit test runs. Minting and loading into
+// a box need the compiler seam and stay with the goldens.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Symbol;
+
+    // Each test runs in its own nextest process -- see the crate README for
+    // the with_core() bootstrap pattern.
+    fn install_core() {
+        crate::dispatch::install_class_registry(crate::dispatch::ClassRegistry::with_core());
+    }
+
+    #[test]
+    fn outside_an_enabled_program_boxes_read_as_off() {
+        install_core();
+        let class = RubyValue::Class(zeo_abi::RUBY_BOX_CLASS);
+        let enabled =
+            crate::dispatch::send_value(&class, Symbol::intern("enabled?"), &[], None).unwrap();
+        assert!(matches!(enabled, RubyValue::Bool(false)));
+        let current =
+            crate::dispatch::send_value(&class, Symbol::intern("current"), &[], None).unwrap();
+        assert!(matches!(current, RubyValue::Nil));
+    }
+}

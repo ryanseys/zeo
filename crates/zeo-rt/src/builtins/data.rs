@@ -108,3 +108,96 @@ ruby_class! {
         build_inspect(recv)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Signal;
+
+    // Each test runs in its own nextest process -- see the crate README for
+    // the with_core() bootstrap pattern.
+    fn install_core() {
+        crate::dispatch::install_class_registry(crate::dispatch::ClassRegistry::with_core());
+    }
+
+    fn call(recv: &RubyValue, name: &str, args: &[RubyValue]) -> Result<RubyValue, Signal> {
+        send_value(recv, Symbol::intern(name), args, None)
+    }
+
+    fn point_class() -> RubyValue {
+        call(
+            &RubyValue::Class(DATA_CLASS),
+            "define",
+            &[
+                RubyValue::Symbol(Symbol::intern("x")),
+                RubyValue::Symbol(Symbol::intern("y")),
+            ],
+        )
+        .expect("Data.define succeeds")
+    }
+
+    #[test]
+    fn define_mints_a_class_whose_instances_read_their_members() {
+        install_core();
+        let point = point_class();
+        let p = call(&point, "new", &[RubyValue::Int(1), RubyValue::Int(2)]).unwrap();
+
+        assert!(matches!(call(&p, "x", &[]), Ok(RubyValue::Int(1))));
+        assert!(matches!(call(&p, "y", &[]), Ok(RubyValue::Int(2))));
+        let Ok(RubyValue::Array(members)) = call(&p, "members", &[]) else {
+            panic!("members answers an Array");
+        };
+        let members = members.lock().to_vec();
+        assert!(matches!(&members[0], RubyValue::Symbol(s) if *s == Symbol::intern("x")));
+        assert!(matches!(&members[1], RubyValue::Symbol(s) if *s == Symbol::intern("y")));
+    }
+
+    #[test]
+    fn a_constructed_instance_is_frozen() {
+        install_core();
+        let point = point_class();
+        let p = call(&point, "new", &[RubyValue::Int(1), RubyValue::Int(2)]).unwrap();
+        assert!(p.is_frozen());
+    }
+
+    #[test]
+    fn equal_slots_make_equal_values() {
+        install_core();
+        let point = point_class();
+        let a = call(&point, "new", &[RubyValue::Int(1), RubyValue::Int(2)]).unwrap();
+        let b = call(&point, "new", &[RubyValue::Int(1), RubyValue::Int(2)]).unwrap();
+        let c = call(&point, "new", &[RubyValue::Int(9), RubyValue::Int(2)]).unwrap();
+
+        assert!(matches!(
+            call(&a, "==", std::slice::from_ref(&b)),
+            Ok(RubyValue::Bool(true))
+        ));
+        assert!(matches!(
+            call(&a, "==", std::slice::from_ref(&c)),
+            Ok(RubyValue::Bool(false))
+        ));
+    }
+
+    #[test]
+    fn with_replaces_named_members_on_a_copy() {
+        install_core();
+        let point = point_class();
+        let p = call(&point, "new", &[RubyValue::Int(1), RubyValue::Int(2)]).unwrap();
+        let kw = RubyValue::Hash(crate::hash_new(vec![(
+            RubyValue::Symbol(Symbol::intern("y")),
+            RubyValue::Int(3),
+        )]));
+
+        let q = call(&p, "with", &[kw]).expect("with succeeds");
+        assert!(matches!(call(&q, "x", &[]), Ok(RubyValue::Int(1))));
+        assert!(matches!(call(&q, "y", &[]), Ok(RubyValue::Int(3))));
+        // The original is untouched.
+        assert!(matches!(call(&p, "y", &[]), Ok(RubyValue::Int(2))));
+        // An unknown keyword is refused.
+        let bad = RubyValue::Hash(crate::hash_new(vec![(
+            RubyValue::Symbol(Symbol::intern("z")),
+            RubyValue::Int(9),
+        )]));
+        assert!(call(&p, "with", &[bad]).is_err());
+    }
+}

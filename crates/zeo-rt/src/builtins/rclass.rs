@@ -264,3 +264,77 @@ ruby_class! {
         Ok(RubyValue::Nil)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Signal;
+    use crate::Symbol;
+
+    // Each test runs in its own nextest process -- see the crate README for
+    // the with_core() bootstrap pattern.
+    fn install_core() {
+        crate::dispatch::install_class_registry(crate::dispatch::ClassRegistry::with_core());
+    }
+
+    fn call(recv: &RubyValue, name: &str, args: &[RubyValue]) -> Result<RubyValue, Signal> {
+        crate::dispatch::send_value(recv, Symbol::intern(name), args, None)
+    }
+
+    #[test]
+    fn a_builtin_allocate_answers_the_empty_value() {
+        install_core();
+        let s = call(&RubyValue::Class(zeo_abi::STRING_CLASS), "allocate", &[]).unwrap();
+        assert!(matches!(&s, RubyValue::Str(s) if s.lock().bytesize() == 0));
+        let a = call(&RubyValue::Class(zeo_abi::ARRAY_CLASS), "allocate", &[]).unwrap();
+        assert!(matches!(&a, RubyValue::Array(a) if a.lock().to_vec().is_empty()));
+    }
+
+    #[test]
+    fn superclass_walks_past_modules_and_ends_nil_at_the_root() {
+        install_core();
+        // String's chain runs through Comparable (a module); the superclass
+        // is the first non-module entry: Object.
+        assert!(matches!(
+            call(&RubyValue::Class(zeo_abi::STRING_CLASS), "superclass", &[]),
+            Ok(RubyValue::Class(c)) if c == zeo_abi::OBJECT_CLASS
+        ));
+        assert!(matches!(
+            call(
+                &RubyValue::Class(zeo_abi::BASIC_OBJECT_CLASS),
+                "superclass",
+                &[]
+            ),
+            Ok(RubyValue::Nil)
+        ));
+    }
+
+    #[test]
+    fn a_module_has_no_new() {
+        install_core();
+        let err = call(&RubyValue::Class(zeo_abi::ENUMERABLE_CLASS), "new", &[]);
+        let Err(Signal::Raise(exc)) = err else {
+            panic!("expected a NoMethodError raise");
+        };
+        assert_eq!(
+            exc.as_object_unchecked().class_id(),
+            zeo_abi::NO_METHOD_ERROR_CLASS
+        );
+    }
+
+    #[test]
+    fn an_uninitialized_class_refuses_use() {
+        install_core();
+        // `Class.allocate` hands out a class with NO superclass at all.
+        let bare = call(&RubyValue::Class(zeo_abi::CLASS_CLASS), "allocate", &[]).unwrap();
+        let sup = call(&bare, "superclass", &[]);
+        let Err(Signal::Raise(exc)) = sup else {
+            panic!("expected a TypeError raise");
+        };
+        assert_eq!(
+            exc.as_object_unchecked().class_id(),
+            zeo_abi::TYPE_ERROR_CLASS
+        );
+        assert!(call(&bare, "new", &[]).is_err());
+    }
+}

@@ -389,3 +389,85 @@ ruby_class! {
     def "eql?"(recv, _other) { inherited_row!(kernel, "eql?", recv, __args, None) }
     def "hash"(recv) { inherited_row!(kernel, "hash", recv, __args, None) }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dispatch::send_value;
+
+    // Each test runs in its own nextest process -- see the crate README for
+    // the with_core() bootstrap pattern.
+    fn install_core() {
+        crate::dispatch::install_class_registry(crate::dispatch::ClassRegistry::with_core());
+    }
+
+    fn call(recv: &RubyValue, name: &str, args: &[RubyValue]) -> Result<RubyValue, Signal> {
+        send_value(recv, Symbol::intern(name), args, None)
+    }
+
+    fn rstr(s: &str) -> RubyValue {
+        RubyValue::Str(crate::string_new(s.to_string()))
+    }
+
+    #[test]
+    fn an_unbound_method_reports_name_and_owner() {
+        install_core();
+        let upcase = RubyValue::Symbol(Symbol::intern("upcase"));
+        let um = unbound_method_new(zeo_abi::STRING_CLASS, &upcase).unwrap();
+
+        assert!(matches!(
+            call(&um, "name", &[]),
+            Ok(RubyValue::Symbol(s)) if s == Symbol::intern("upcase")
+        ));
+        assert!(matches!(
+            call(&um, "owner", &[]),
+            Ok(RubyValue::Class(c)) if c == zeo_abi::STRING_CLASS
+        ));
+    }
+
+    #[test]
+    fn bind_rebinds_and_bind_call_runs_in_one_step() {
+        install_core();
+        let upcase = RubyValue::Symbol(Symbol::intern("upcase"));
+        let um = unbound_method_new(zeo_abi::STRING_CLASS, &upcase).unwrap();
+
+        let bound = call(&um, "bind", &[rstr("hi")]).expect("bind succeeds");
+        let out = call(&bound, "call", &[]).expect("call succeeds");
+        assert!(matches!(&out, RubyValue::Str(s) if s.lock().to_utf8_lossy() == "HI"));
+
+        let out = call(&um, "bind_call", &[rstr("ho")]).expect("bind_call succeeds");
+        assert!(matches!(&out, RubyValue::Str(s) if s.lock().to_utf8_lossy() == "HO"));
+    }
+
+    #[test]
+    fn bind_refuses_an_instance_of_another_class() {
+        install_core();
+        let upcase = RubyValue::Symbol(Symbol::intern("upcase"));
+        let um = unbound_method_new(zeo_abi::STRING_CLASS, &upcase).unwrap();
+
+        let err = call(&um, "bind", &[RubyValue::Int(5)]);
+        let Err(Signal::Raise(exc)) = err else {
+            panic!("expected a TypeError raise");
+        };
+        assert_eq!(
+            exc.as_object_unchecked().class_id(),
+            zeo_abi::TYPE_ERROR_CLASS
+        );
+    }
+
+    #[test]
+    fn an_unknown_name_refuses_at_construction() {
+        install_core();
+        let err = unbound_method_new(
+            zeo_abi::STRING_CLASS,
+            &RubyValue::Symbol(Symbol::intern("nope")),
+        );
+        let Err(Signal::Raise(exc)) = err else {
+            panic!("expected a NameError raise");
+        };
+        assert_eq!(
+            exc.as_object_unchecked().class_id(),
+            zeo_abi::NAME_ERROR_CLASS
+        );
+    }
+}

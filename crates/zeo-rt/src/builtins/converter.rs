@@ -1040,3 +1040,53 @@ fn append_bytes(dst: &Arc<crate::collections::Freezable<crate::encoding::StrBuf>
     let enc = g.encoding();
     g.replace_bytes(all, enc);
 }
+
+// Construction, option parsing and a plain conversion are honest unit-test
+// material; the streaming `primitive_convert` states stay with the goldens.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Symbol;
+
+    // Each test runs in its own nextest process -- see the crate README for
+    // the with_core() bootstrap pattern.
+    fn install_core() {
+        crate::dispatch::install_class_registry(crate::dispatch::ClassRegistry::with_core());
+    }
+
+    fn call(recv: &RubyValue, name: &str, args: &[RubyValue]) -> Result<RubyValue, Signal> {
+        crate::dispatch::send_value(recv, Symbol::intern(name), args, None)
+    }
+
+    fn rstr(s: &str) -> RubyValue {
+        RubyValue::Str(crate::string_new(s.to_string()))
+    }
+
+    fn converter(src: &str, dst: &str) -> Result<RubyValue, Signal> {
+        call(
+            &RubyValue::Class(zeo_abi::ENCODING_CONVERTER_CLASS),
+            "new",
+            &[rstr(src), rstr(dst)],
+        )
+    }
+
+    #[test]
+    fn a_conversion_produces_the_destination_bytes() {
+        install_core();
+        let conv = converter("UTF-8", "UTF-16BE").expect("the pair converts");
+        let out = call(&conv, "convert", &[rstr("ab")]).expect("convert succeeds");
+        let RubyValue::Str(s) = out else {
+            panic!("convert answers a String");
+        };
+        assert_eq!(s.lock().bytes(), &[0, b'a', 0, b'b']);
+        // Nothing is buffered for this stateless pair: finish adds no tail.
+        let tail = call(&conv, "finish", &[]).expect("finish succeeds");
+        assert!(matches!(&tail, RubyValue::Str(s) if s.lock().bytes().is_empty()));
+    }
+
+    #[test]
+    fn an_unknown_encoding_pair_is_refused_at_construction() {
+        install_core();
+        assert!(converter("UTF-8", "BOGUS-ENCODING").is_err());
+    }
+}
