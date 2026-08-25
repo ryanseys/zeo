@@ -407,11 +407,11 @@ fn const_multi_write(
     addr: cranelift_codegen::ir::Value,
 ) -> Result<(), String> {
     let owner_class = match scope {
-        Some(s) => match super::expr::resolve_class_here(fx, s) {
+        Some(s) => match super::boxes::resolve_class_here(fx, s) {
             Some(cid) => cid,
             None => return fx.unsupported(site, "a constant multi-assignment on a runtime scope"),
         },
-        None => fx.method_class.unwrap_or_else(|| super::expr::box_top(fx)),
+        None => fx.method_class.unwrap_or_else(|| super::boxes::box_top(fx)),
     };
     let owner = fx
         .an
@@ -1133,7 +1133,7 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
             let Some(slot) = fx.an.compiler.eval_activation_slot(stmt) else {
                 return Err("a `using` inside an `eval` that analyze did not place".to_string());
             };
-            let op = super::expr::const_read(fx, stmt, &module)?;
+            let op = super::consts::const_read(fx, stmt, &module)?;
             let ptr = ownership::borrow_ptr(fx, &op);
             if op.owned() {
                 ownership::pool_owned(fx, ptr, op.tag());
@@ -1167,7 +1167,7 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
             // the strength of it. The notification follows either way,
             // exactly as ruby fires `included` even when an override skipped
             // the splice.
-            let overrides = super::expr::resolve_class_here(fx, &module)
+            let overrides = super::boxes::resolve_class_here(fx, &module)
                 .is_some_and(|mid| fx.an.compiler.overrides_mixin_primitive(mid, primitive));
             if overrides {
                 mixin_hook_send(fx, &module, primitive)?;
@@ -1241,7 +1241,7 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
         } => {
             let (class, hook, name, pending) =
                 (*class, hook.clone(), name.clone(), pending.clone());
-            let recv = super::expr::class_immediate(fx, crate::compiler::ClassId(class));
+            let recv = super::consts::class_immediate(fx, crate::compiler::ClassId(class));
             let recv_ptr = ownership::borrow_ptr(fx, &recv);
             let arg_ss = fx.temp_slot();
             let argv = fx.slot_addr(arg_ss, 0);
@@ -1475,7 +1475,7 @@ fn eval_mixin_send_value(
     module: &str,
     verb: &str,
 ) -> Result<super::operand::Operand, String> {
-    let arg = super::expr::const_read(fx, site, module)?;
+    let arg = super::consts::const_read(fx, site, module)?;
     let tag = arg.tag();
     let argv = ownership::borrow_ptr(fx, &arg);
     if arg.owned() {
@@ -1519,7 +1519,7 @@ pub(crate) fn eval_class_def(fx: &mut Fx, stmt: NodeId) -> Result<super::operand
     // The owner of the bare name: the scope when one is written, else the
     // snippet's own cref -- and the top level when it has none.
     let owner = match scope.filter(|s| !s.is_empty()) {
-        Some(s) => super::expr::const_path_read(fx, stmt, s)?,
+        Some(s) => super::consts::const_path_read(fx, stmt, s)?,
         None => {
             // The snippet's own cref when it has one, else its TOP LEVEL --
             // which inside a box is the box's surrogate, not `Object`.
@@ -1528,8 +1528,8 @@ pub(crate) fn eval_class_def(fx: &mut Fx, stmt: NodeId) -> Result<super::operand
                 .eval_cref
                 .as_ref()
                 .and_then(|c| c.chain.first().copied())
-                .map_or_else(|| super::expr::box_top(fx), crate::compiler::ClassId);
-            super::expr::class_immediate(fx, cid)
+                .map_or_else(|| super::boxes::box_top(fx), crate::compiler::ClassId);
+            super::consts::class_immediate(fx, cid)
         }
     };
     let owner_ptr = ownership::borrow_ptr(fx, &owner);
@@ -1538,7 +1538,7 @@ pub(crate) fn eval_class_def(fx: &mut Fx, stmt: NodeId) -> Result<super::operand
     }
     let super_ptr = match &superclass {
         Some(sup) => {
-            let op = super::expr::const_path_read(fx, stmt, sup)?;
+            let op = super::consts::const_path_read(fx, stmt, sup)?;
             let p = ownership::borrow_ptr(fx, &op);
             if op.owned() {
                 ownership::pool_owned(fx, p, op.tag());
@@ -1796,7 +1796,7 @@ fn eval_definee_call(
 
 fn mixin_hook_send(fx: &mut Fx, module: &str, hook: &str) -> Result<(), String> {
     let (Some(mid), true) = (
-        super::expr::resolve_class_here(fx, module),
+        super::boxes::resolve_class_here(fx, module),
         fx.self_is_class,
     ) else {
         return Ok(());
@@ -1809,9 +1809,9 @@ fn mixin_hook_send(fx: &mut Fx, module: &str, hook: &str) -> Result<(), String> 
     {
         return Ok(());
     }
-    let recv = super::expr::class_immediate(fx, mid);
+    let recv = super::consts::class_immediate(fx, mid);
     let recv_ptr = ownership::borrow_ptr(fx, &recv);
-    let arg = super::expr::class_immediate(fx, target);
+    let arg = super::consts::class_immediate(fx, target);
     let argv = ownership::borrow_ptr(fx, &arg);
     let sym = fx.sym_id(hook);
     let ss = fx.temp_slot();
@@ -2215,11 +2215,11 @@ pub(crate) fn class_body_value(
         BodyTail::Sym(name) => {
             ownership::discard(fx, op);
             let name = name.clone();
-            super::expr::symbol_value(fx, &name)
+            super::consts::symbol_value(fx, &name)
         }
         BodyTail::OwnClass => {
             ownership::discard(fx, op);
-            Ok(super::expr::class_immediate(
+            Ok(super::consts::class_immediate(
                 fx,
                 crate::compiler::ClassId(call.class),
             ))
@@ -2321,7 +2321,7 @@ fn class_body_site_run(
     // The constant is set, so ruby announces it -- before `inherited` and
     // before the body, the order `vm_declare_class` hard-codes.
     if let Some((owner, name)) = &call.const_added {
-        super::expr::const_added_announce(fx, *owner, name)?;
+        super::consts::const_added_announce(fx, *owner, name)?;
     }
     if let Some((owner, name, file, line)) = &call.const_loc {
         let owner_v = fx.b.ins().iconst(types::I32, i64::from(*owner));
@@ -2336,9 +2336,9 @@ fn class_body_site_run(
     // ...then `Super.inherited(C)`, the order `vm_declare_class` hard-codes
     // (the constant is set, the hook fires, then the body runs).
     if let Some(parent) = call.inherited {
-        let recv = super::expr::class_immediate(fx, crate::compiler::ClassId(parent));
+        let recv = super::consts::class_immediate(fx, crate::compiler::ClassId(parent));
         let recv_ptr = ownership::borrow_ptr(fx, &recv);
-        let arg = super::expr::class_immediate(fx, crate::compiler::ClassId(call.class));
+        let arg = super::consts::class_immediate(fx, crate::compiler::ClassId(call.class));
         let argv = ownership::borrow_ptr(fx, &arg);
         let sym = fx.sym_id("inherited");
         let ss = fx.temp_slot();

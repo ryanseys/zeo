@@ -291,13 +291,13 @@ fn class_check(
         };
         return record_class_miss(fx, name, matched, scrut, fail);
     }
-    if let Some(cid) = super::expr::resolve_class_here(fx, name) {
+    if let Some(cid) = super::boxes::resolve_class_here(fx, name) {
         let id = fx.b.ins().iconst(types::I32, i64::from(cid.0));
         let matched = fx.call_status("zeo_rt_pat_is_a", &[scrut, id]);
         return record_class_miss(fx, name, matched, scrut, fail);
     }
     // Not a statically-known class: read the constant and match by `===`.
-    let konst = super::expr::const_read(fx, site, name)?;
+    let konst = super::consts::const_read(fx, site, name)?;
     let p = ownership::borrow_ptr(fx, &konst);
     if konst.owned() {
         ownership::pool_owned(fx, p, konst.tag());
@@ -346,7 +346,7 @@ fn record_class_miss(
 /// primitive name resolves through the abi table, a user class through the
 /// compiler.
 fn class_of_name(fx: &Fx, name: &str) -> Option<zeo_abi::ClassId> {
-    if let Some(cid) = super::expr::resolve_class_here(fx, name) {
+    if let Some(cid) = super::boxes::resolve_class_here(fx, name) {
         return Some(cid);
     }
     zeo_abi::BUILTINS

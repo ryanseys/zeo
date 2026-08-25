@@ -4,13 +4,17 @@
 //! cannot express refuses loudly with its source location -- the
 //! compile contract is CRuby-identical or FAIL, never a silent drop.
 
+pub(crate) mod binop;
 pub(crate) mod blocks;
+pub(crate) mod boxes;
 pub(crate) mod call;
 pub mod capi_names;
 pub(crate) mod classes;
+pub(crate) mod consts;
 pub(crate) mod control;
 pub(crate) mod ctx;
 pub(crate) mod debuginfo;
+pub(crate) mod defined;
 pub mod emit;
 pub(crate) mod eval;
 pub(crate) mod expr;

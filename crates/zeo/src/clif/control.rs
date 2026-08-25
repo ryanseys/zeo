@@ -47,7 +47,7 @@ pub(crate) fn lower_begin(
             // The clause's own CREF, not the top level: a method copied onto
             // a subclass keeps the cref it was WRITTEN in, so `rescue Boom`
             // inside `M::Base#go` still names `M::Boom` when `Sub` runs it.
-            match super::expr::resolve_class_here(fx, name) {
+            match super::boxes::resolve_class_here(fx, name) {
                 // `rescue` matches via `===`, and the baked ancestry test
                 // IS `Module#===` -- so it stands only while nothing can
                 // override the matcher's own `===`.
@@ -397,10 +397,12 @@ fn clause_match(
     }
     for matcher in dynamic {
         let val = match matcher {
-            Matcher::Class(cid) => super::expr::class_immediate(fx, crate::compiler::ClassId(*cid)),
+            Matcher::Class(cid) => {
+                super::consts::class_immediate(fx, crate::compiler::ClassId(*cid))
+            }
             Matcher::Const(name) => {
                 let name = name.clone();
-                super::expr::const_path_read(fx, site, &name)?
+                super::consts::const_path_read(fx, site, &name)?
             }
             Matcher::Splat(node) => super::expr::lower_expr(fx, *node)?,
         };
