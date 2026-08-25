@@ -76,7 +76,9 @@ fn emit_pure_str_literal(fx: &mut Fx, text: &str, frozen: bool) -> Operand {
     let enc = fx.b.ins().iconst(types::I8, ENC_UTF8);
     let entry = match frozen {
         true => "zeo_rt_str_lit",
-        false => "zeo_rt_str_new",
+        // The rodata bytes are process-lived, so the fresh string BORROWS
+        // them (COW) instead of copying per evaluation.
+        false => "zeo_rt_str_lit_ro",
     };
     fx.call(entry, &[ptr, len_v, enc, dst]);
     fx.owned_created += 1;

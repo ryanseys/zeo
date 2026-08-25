@@ -252,6 +252,7 @@ capi_symbols!(
     literals::zeo_rt_str_append_lit,
     literals::zeo_rt_str_append_value,
     literals::zeo_rt_str_lit,
+    literals::zeo_rt_str_lit_ro,
     literals::zeo_rt_str_new,
     dispatch::zeo_rt_super_defined,
     dispatch::zeo_rt_super_defined_dynamic,

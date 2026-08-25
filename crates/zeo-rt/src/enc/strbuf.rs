@@ -16,9 +16,53 @@ use crate::enc::transcode::utf8_seq_len;
 /// `StrBuf` lives behind the `Freezable` mutex (see `collections::RStr`), so
 /// the interior mutation is never concurrent.
 pub struct StrBuf {
-    bytes: Vec<u8>,
+    bytes: Bytes,
     enc: EncodingId,
     coderange: Cell<CodeRange>,
+}
+
+/// The byte storage, copy-on-write: a string built from a program's
+/// `.rodata` literal BORROWS it (`Ro`) until the first mutation promotes
+/// it to its own `Vec` (`Owned`). The field is private to this module and
+/// every `&mut` path goes through [`Bytes::owned`], so a mutation that
+/// misses the promotion is a compile error, not a bug.
+///
+/// `Deref<Target = [u8]>` keeps every read site spelling `self.bytes[..]`
+/// / `.len()` / `.get(i)` unchanged.
+#[derive(Clone)]
+enum Bytes {
+    /// Borrowed program bytes. `'static` holds for AOT `.rodata` by
+    /// construction, and for JIT/eval literals through the
+    /// `EvalProgram` process-lifetime contract (compiled units are never
+    /// unloaded).
+    Ro(&'static [u8]),
+    Owned(Vec<u8>),
+}
+
+impl std::ops::Deref for Bytes {
+    type Target = [u8];
+    #[inline]
+    fn deref(&self) -> &[u8] {
+        match self {
+            Bytes::Ro(b) => b,
+            Bytes::Owned(v) => v,
+        }
+    }
+}
+
+impl Bytes {
+    /// The writable `Vec`, promoting a read-only borrow by copying it --
+    /// the COW seam every mutator below goes through.
+    #[inline]
+    fn owned(&mut self) -> &mut Vec<u8> {
+        if let Bytes::Ro(b) = self {
+            *self = Bytes::Owned(b.to_vec());
+        }
+        match self {
+            Bytes::Owned(v) => v,
+            Bytes::Ro(_) => unreachable!("just promoted"),
+        }
+    }
 }
 
 /// [`StrBuf::chars`]'s iterator: a plain borrow of the bytes whenever they
@@ -66,7 +110,7 @@ impl StrBuf {
     /// no codegen emission site has to move.
     pub fn from_utf8(s: String) -> StrBuf {
         StrBuf {
-            bytes: s.into_bytes(),
+            bytes: Bytes::Owned(s.into_bytes()),
             enc: UTF_8,
             coderange: Cell::new(CodeRange::Unknown),
         }
@@ -76,7 +120,19 @@ impl StrBuf {
     /// `force_encoding`, IO reads, and `\xNN`-bearing literals build strings.
     pub fn from_bytes(bytes: Vec<u8>, enc: EncodingId) -> StrBuf {
         StrBuf {
-            bytes,
+            bytes: Bytes::Owned(bytes),
+            enc,
+            coderange: Cell::new(CodeRange::Unknown),
+        }
+    }
+
+    /// A read-only borrow of program bytes -- the non-frozen string
+    /// LITERAL's constructor. No copy until the first mutation promotes
+    /// (see [`Bytes`]); a literal that is never mutated never allocates
+    /// its bytes at all.
+    pub fn from_static(bytes: &'static [u8], enc: EncodingId) -> StrBuf {
+        StrBuf {
+            bytes: Bytes::Ro(bytes),
             enc,
             coderange: Cell::new(CodeRange::Unknown),
         }
@@ -99,7 +155,7 @@ impl StrBuf {
     /// its string's storage, and this is what lets zeo's share one too.
     pub fn bytes_mut(&mut self) -> &mut [u8] {
         self.coderange.set(CodeRange::Unknown);
-        &mut self.bytes
+        self.bytes.owned().as_mut_slice()
     }
 
     pub fn bytesize(&self) -> usize {
@@ -424,7 +480,7 @@ impl StrBuf {
             // (Shift_JIS trail 0x61 is `a`), so the fold walks by CHARACTER
             // and touches only 1-byte units.
             EncKind::MultiByte(family) => {
-                let mut bytes = self.bytes.clone();
+                let mut bytes = self.bytes.to_vec();
                 for (r, _) in crate::enc::mb::mb_ranges(family, &self.bytes) {
                     if r.len() == 1 && bytes[r.start] < 0x80 {
                         let up = match mode {
@@ -478,7 +534,7 @@ impl StrBuf {
     /// crate keeps `Signal` out of the encoding layer).
     pub fn push_buf(&mut self, other: &StrBuf) -> Result<(), IncompatibleEncodings> {
         let enc = compat_concat_enc(self, other).ok_or(IncompatibleEncodings)?;
-        self.bytes.extend_from_slice(&other.bytes);
+        self.bytes.owned().extend_from_slice(other.bytes());
         self.enc = enc;
         self.coderange.set(CodeRange::Unknown);
         Ok(())
@@ -486,27 +542,27 @@ impl StrBuf {
 
     /// Appends valid UTF-8 text; resets the coderange cache.
     pub fn push_str(&mut self, s: &str) {
-        self.bytes.extend_from_slice(s.as_bytes());
+        self.bytes.owned().extend_from_slice(s.as_bytes());
         self.coderange.set(CodeRange::Unknown);
     }
 
     /// Appends raw bytes; resets the coderange cache.
     pub fn push_bytes(&mut self, b: &[u8]) {
-        self.bytes.extend_from_slice(b);
+        self.bytes.owned().extend_from_slice(b);
         self.coderange.set(CodeRange::Unknown);
     }
 
     /// Replaces the contents with fresh UTF-8 text, keeping the current
     /// encoding tag (the common `*guard = new_string` mutation).
     pub fn replace_utf8(&mut self, s: String) {
-        self.bytes = s.into_bytes();
+        self.bytes = Bytes::Owned(s.into_bytes());
         self.coderange.set(CodeRange::Unknown);
     }
 
     /// Replaces both the bytes and the encoding (`String#encode!`, IO
     /// re-tagging).
     pub fn replace_bytes(&mut self, bytes: Vec<u8>, enc: EncodingId) {
-        self.bytes = bytes;
+        self.bytes = Bytes::Owned(bytes);
         self.enc = enc;
         self.coderange.set(CodeRange::Unknown);
     }
@@ -535,7 +591,7 @@ impl StrBuf {
 
     /// Sets one byte in place (`String#setbyte`); resets the coderange.
     pub fn setbyte(&mut self, i: usize, b: u8) {
-        self.bytes[i] = b;
+        self.bytes.owned()[i] = b;
         self.coderange.set(CodeRange::Unknown);
     }
 }
@@ -610,7 +666,7 @@ impl std::fmt::Display for StrBuf {
 /// world.
 impl PartialEq for StrBuf {
     fn eq(&self, other: &StrBuf) -> bool {
-        self.bytes == other.bytes && self.hash_key_tag() == other.hash_key_tag()
+        self.bytes[..] == other.bytes[..] && self.hash_key_tag() == other.hash_key_tag()
     }
 }
 impl Eq for StrBuf {}

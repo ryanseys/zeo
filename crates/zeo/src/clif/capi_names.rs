@@ -1095,6 +1095,11 @@ pub const CAPI: &[CapiSig] = &[
         ret: None,
     },
     CapiSig {
+        name: "zeo_rt_str_lit_ro",
+        params: &[Ptr, Usize, U8, Ptr],
+        ret: None,
+    },
+    CapiSig {
         name: "zeo_rt_str_new",
         params: &[Ptr, Usize, U8, Ptr],
         ret: None,

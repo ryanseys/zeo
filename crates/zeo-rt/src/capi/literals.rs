@@ -27,6 +27,33 @@ pub unsafe extern "C" fn zeo_rt_str_new(ptr: *const u8, len: usize, enc: u8, out
     unsafe { out.write(v) };
 }
 
+/// A fresh, mutable string BORROWING its literal bytes -- the non-frozen
+/// literal's constructor. No byte copy at all until a mutation promotes
+/// the buffer (see `StrBuf::from_static`); each evaluation still mints a
+/// distinct object, as ruby's literals do.
+///
+/// # Safety
+/// `ptr` must point at bytes that live for the whole process: `.rodata`
+/// on the AOT path, and JIT/eval unit memory (never unloaded -- the
+/// `EvalProgram` process-lifetime contract) on the JIT path.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_str_lit_ro(
+    ptr: *const u8,
+    len: usize,
+    enc: u8,
+    out: *mut RubyValue,
+) {
+    let bytes: &'static [u8] = if len == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(ptr, len) }
+    };
+    let buf = StrBuf::from_static(bytes, EncodingId(enc));
+    let v = RubyValue::Str(std::sync::Arc::new(crate::collections::Freezable::new(buf)));
+    super::leakcheck::created(&v);
+    unsafe { out.write(v) };
+}
+
 /// Intern a symbol name -- `zeo_unit_init` fills the program's `zeo_syms`
 /// table through this.
 #[unsafe(no_mangle)]
