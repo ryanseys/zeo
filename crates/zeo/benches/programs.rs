@@ -206,7 +206,17 @@ fn time_runs(cmd: &mut Command, iters: u64) -> Duration {
     total
 }
 
-fn bench_zeo(c: &mut Criterion, corpus: &[PathBuf], lazy: bool) {
+/// `[N/M pct]` progress line ahead of one benchmark -- what a `tail -f`
+/// of a bank's log reads to see how far along the run is.
+fn progress(done: usize, total: usize, group: &str, name: &str) {
+    let n = done + 1;
+    eprintln!(
+        "[{n}/{total} {:.0}%] {group}/{name}",
+        done as f64 * 100.0 / total as f64
+    );
+}
+
+fn bench_zeo(c: &mut Criterion, corpus: &[PathBuf], lazy: bool, done: &mut usize, total: usize) {
     let mut g = c.benchmark_group("zeo");
     g.sampling_mode(SamplingMode::Flat).sample_size(10);
     for rb in corpus {
@@ -227,6 +237,8 @@ fn bench_zeo(c: &mut Criterion, corpus: &[PathBuf], lazy: bool) {
                 b.iter_custom(|iters| time_runs(&mut Command::new(bin), iters));
             });
         } else {
+            progress(*done, total, "zeo", &name);
+            *done += 1;
             let bin = compile(&rb, &name);
             let one_run = gate(&mut Command::new(&bin), &rb, "zeo binary");
             eprintln!("gate zeo/{name}: {:.3}s", one_run.as_secs_f64());
@@ -239,7 +251,7 @@ fn bench_zeo(c: &mut Criterion, corpus: &[PathBuf], lazy: bool) {
     g.finish();
 }
 
-fn bench_cruby(c: &mut Criterion, corpus: &[PathBuf], lazy: bool) {
+fn bench_cruby(c: &mut Criterion, corpus: &[PathBuf], lazy: bool, done: &mut usize, total: usize) {
     let ruby =
         std::env::var("ZEO_BENCH_ORACLE_RUBY").unwrap_or_else(|_| "ruby".to_string());
     let mut g = c.benchmark_group("cruby");
@@ -259,6 +271,8 @@ fn bench_cruby(c: &mut Criterion, corpus: &[PathBuf], lazy: bool) {
                 b.iter_custom(|iters| time_runs(Command::new(&ruby).arg(&rb), iters));
             });
         } else {
+            progress(*done, total, "cruby", &name);
+            *done += 1;
             let one_run = gate(Command::new(&ruby).arg(&rb), &rb, "oracle ruby");
             eprintln!("gate cruby/{name}: {:.3}s", one_run.as_secs_f64());
             g.measurement_time(target_for(one_run));
@@ -272,15 +286,17 @@ fn bench_cruby(c: &mut Criterion, corpus: &[PathBuf], lazy: bool) {
 
 /// After an unfiltered bank: every benchmark's median, written to the
 /// CHECKED-IN `bench/results.tsv`. Overwrite and commit -- the git diff
-/// against the previous bank IS the progress record. `cruby` rows are
-/// written only when the oracle group ran THIS bank, so a skipped oracle
-/// never re-publishes stale numbers.
-fn export_results(root: &Path, oracle: bool) {
+/// against the previous bank IS the progress record. `cruby` rows carry
+/// over from whatever data the last oracle run left in
+/// `target/criterion` -- the oracle is a MANUAL, once-in-a-while group
+/// (`ZEO_BENCH_ORACLE=1`); a zeo-only bank keeps the standing CRuby
+/// medians beside its fresh zeo ones so the comparison never vanishes.
+fn export_results(root: &Path, _oracle: bool) {
     let outer = std::env::var_os("CARGO_TARGET_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| root.join("target"));
     let mut rows: Vec<(&str, String, f64)> = Vec::new();
-    let groups: &[&str] = if oracle { &["zeo", "cruby"] } else { &["zeo"] };
+    let groups: &[&str] = &["zeo", "cruby"];
     for group in groups {
         let dir = outer.join("criterion").join(group);
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -333,9 +349,11 @@ fn main() {
         .warm_up_time(Duration::from_millis(500))
         .measurement_time(Duration::from_secs(2))
         .configure_from_args();
-    bench_zeo(&mut c, &corpus, lazy);
+    let total = corpus.len() * if oracle { 2 } else { 1 };
+    let mut done = 0;
+    bench_zeo(&mut c, &corpus, lazy, &mut done, total);
     if oracle {
-        bench_cruby(&mut c, &corpus, lazy);
+        bench_cruby(&mut c, &corpus, lazy, &mut done, total);
     }
     c.final_summary();
     // A filtered run measured a subset; only a full bank rewrites the
