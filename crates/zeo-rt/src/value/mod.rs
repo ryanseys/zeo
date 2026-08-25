@@ -344,14 +344,15 @@ impl RubyValue {
     /// INFALLIBLE wrapper over [`Self::try_display_string`] for the paths
     /// that have no exception channel (the `Debug` impl, error-message
     /// construction inside builtins): a user `to_s`/`inspect` that RAISES
-    /// mid-render panics here. Every user-reachable display consumer
+    /// mid-render degrades to a placeholder here -- these strings only feed
+    /// zeo-internal diagnostics, and an abort is strictly worse than a
+    /// blunt rendering. Every user-reachable display consumer
     /// (`puts`/`p`/`print`/interpolation/`format`/exception reporting)
     /// uses the fallible form, so the raise is catchable where Ruby says
     /// it is.
     pub fn to_display_string(&self) -> String {
-        self.try_display_string().unwrap_or_else(|_| {
-            panic!("a user-defined `to_s` raised inside an infallible display path")
-        })
+        self.try_display_string()
+            .unwrap_or_else(|_| "#<to_s raised>".to_string())
     }
 
     /// `to_display_string`'s fallible form: a user-defined `to_s` (or a
@@ -551,12 +552,11 @@ impl RubyValue {
     /// recursion markers (`[1, [...]]` / `{k: {...}}`, oracle-verified) via
     /// the shared visited-stack guard -- see `container_identity`.
     /// INFALLIBLE wrapper -- same contract as [`Self::to_display_string`]
-    /// (panics if a user `inspect` raises; the user-reachable consumers use
-    /// [`Self::try_inspect_string`]).
+    /// (a raising user `inspect` degrades to a placeholder; the
+    /// user-reachable consumers use [`Self::try_inspect_string`]).
     pub fn inspect_string(&self) -> String {
-        self.try_inspect_string().unwrap_or_else(|_| {
-            panic!("a user-defined `inspect` raised inside an infallible display path")
-        })
+        self.try_inspect_string()
+            .unwrap_or_else(|_| "#<inspect raised>".to_string())
     }
 
     /// `inspect_string`'s fallible form -- a raising user `inspect`

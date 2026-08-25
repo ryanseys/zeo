@@ -967,15 +967,30 @@ ruby_class! {
     def "truncate"(recv, ndigits?) {
         int_round_family(recv, ndigits, RoundMode::Trunc, HalfMode::Up)
     }
-    // Iteration primitives; blockless forms return Enumerators (Phase
-    // 17.2). Counts beyond i64 are physically unrunnable -- loud.
+    // Iteration primitives; blockless forms return Enumerators.
     def "times" (recv, &block) {
         let p = block_or_enum!(recv, &[], block);
-        let RubyValue::Int(n) = recv else {
-            panic!("Integer#times receiver exceeds i64 (unrunnable iteration count)");
-        };
-        for i in 0..*n {
-            p.call(&[RubyValue::Int(i)])?;
+        if let RubyValue::Int(n) = recv {
+            for i in 0..*n {
+                p.call(&[RubyValue::Int(i)])?;
+            }
+            return Ok(recv.clone());
+        }
+        // A BigInt receiver still counts from 0 (CRuby yields lazily, so
+        // an early `break`/raise works). The demotion invariant puts a
+        // BigInt outside i64: negative yields nothing; positive can never
+        // finish, but the first i64::MAX steps are real, and the BigInt
+        // tail beyond them is physically unreachable.
+        if to_bigint(recv).is_positive() {
+            for i in 0..i64::MAX {
+                p.call(&[RubyValue::Int(i)])?;
+            }
+            let mut i = BigInt::from(i64::MAX);
+            let n = to_bigint(recv);
+            while i < n {
+                p.call(&[int_value(i.clone())])?;
+                i += 1;
+            }
         }
         Ok(recv.clone())
     }
