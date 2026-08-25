@@ -238,6 +238,7 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
         let mut failed = None;
         let sites_before = compiler.class_body_sites.len();
         let defs_before = compiler.top_level_defs.len();
+        let classes_before = compiler.classes.len();
         for stmt in unit.body {
             if let Err(e) = process_top_stmt(compiler, stmt, false, &mut stmts, &mut unit_pre_exec)
             {
@@ -255,6 +256,16 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
                 for d in &mut compiler.top_level_defs[defs_before..] {
                     d.unit = Some(uidx);
                     d.at += unit_pre_exec.len();
+                }
+                // Same resolution for the classes this unit DEFINED: their
+                // names appear when it runs. A class the main file already
+                // registered is not in this range, so a unit that merely
+                // REOPENS one leaves it eager, which is right -- it existed
+                // before the unit did.
+                for c in &mut compiler.classes[classes_before..] {
+                    if c.unit == Some(crate::compiler::Compiler::UNIT_UNRESOLVED) {
+                        c.unit = Some(uidx);
+                    }
                 }
                 unit_pre_exec.append(&mut stmts);
                 let mut names = vec![unit.feature];

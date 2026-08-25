@@ -3751,23 +3751,42 @@ fn defined_rest(fx: &mut Fx, site: NodeId, inner: NodeId) -> Result<Operand, Str
             defining_class: fx.defining_class.or(fx.method_class),
             box_id: 0,
         };
-        if crate::analyze::constfold::const_form_resolves(&env, inner).is_none()
-            && let Some(cid) = resolve_class_here(fx, &name)
-            && fx.an.compiler.constant_is_positional(cid)
-        {
-            let owner = fx
-                .an
-                .compiler
-                .class(cid)
-                .lexical_parent
-                .unwrap_or(crate::compiler::OBJECT_CLASS);
-            let leaf = fx.an.compiler.leaf_name(cid).to_string();
-            let sid = fx.b.ins().iconst(types::I32, i64::from(owner.0));
-            let (nptr, nlen) = rodata_name(fx, &leaf);
-            let hit = fx
-                .call("zeo_rt_defined_const_in", &[sid, nptr, nlen])
-                .expect("defined_const_in answers");
-            return Ok(defined_cond(fx, hit, "constant"));
+        if crate::analyze::constfold::const_form_resolves(&env, inner).is_none() {
+            let positional = resolve_class_here(fx, &name)
+                .filter(|&cid| fx.an.compiler.constant_is_positional(cid))
+                .map(|cid| {
+                    (
+                        fx.an
+                            .compiler
+                            .class(cid)
+                            .lexical_parent
+                            .unwrap_or(crate::compiler::OBJECT_CLASS),
+                        fx.an.compiler.leaf_name(cid).to_string(),
+                    )
+                })
+                // A VALUE constant a compiled-in unit assigns names no class
+                // at all, so the class probe above cannot see it -- and it is
+                // undefined until that file runs just the same.
+                .or_else(|| {
+                    let leaf = crate::constpath::ConstPath::parse(&name).base().to_string();
+                    let set = &fx.an.compiler.hir.unrun_unit_consts;
+                    (set.contains(&leaf) || set.contains(&name)).then(|| {
+                        (
+                            fx.defining_class
+                                .or(fx.method_class)
+                                .unwrap_or(crate::compiler::OBJECT_CLASS),
+                            leaf,
+                        )
+                    })
+                });
+            if let Some((owner, leaf)) = positional {
+                let sid = fx.b.ins().iconst(types::I32, i64::from(owner.0));
+                let (nptr, nlen) = rodata_name(fx, &leaf);
+                let hit = fx
+                    .call("zeo_rt_defined_const_in", &[sid, nptr, nlen])
+                    .expect("defined_const_in answers");
+                return Ok(defined_cond(fx, hit, "constant"));
+            }
         }
     }
     // The static classification tail -- rustc's, in its order.

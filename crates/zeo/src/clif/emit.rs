@@ -1666,7 +1666,7 @@ fn collect_class_bodies(
             const_loc,
             const_added,
             inherited,
-            reveal: ci.runtime_conditional,
+            reveal: ci.runtime_conditional || compiler.class_waits_for_its_unit(site.class),
             freeze_guard,
             tail,
             guard,

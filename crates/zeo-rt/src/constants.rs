@@ -348,6 +348,14 @@ pub fn conditional_class_ref(
 ) -> Result<RubyValue, crate::Signal> {
     if class_concealed(id.0) {
         let leaf = fq_name.rsplit("::").next().unwrap_or(fq_name);
+        // Reading the constant is what runs an `autoload` in ruby, and a
+        // concealed class is exactly the shape one targets: registered for
+        // dispatch, no constant yet. Run it, then ask again -- the unit's
+        // body reveals the class.
+        crate::builtins::rmodule::run_pending_autoload(owner.0, leaf)?;
+        if !class_concealed(id.0) {
+            return Ok(RubyValue::Class(id));
+        }
         Err(crate::Signal::Raise(crate::dispatch::stamp_backtrace(
             crate::dispatch::make_name_error(
                 format!("uninitialized constant {fq_name}"),

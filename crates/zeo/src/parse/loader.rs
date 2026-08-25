@@ -187,7 +187,7 @@ pub(super) struct Loader {
     /// once rack.rb itself is spliced as a unit in round two. The second
     /// demand must reach the unit the first one made, or its spelling
     /// resolves to nothing and the autoload silently never runs.
-    single_units: HashMap<PathBuf, (usize, Vec<String>)>,
+    single_units: HashMap<PathBuf, usize>,
     /// Canonical paths some site requires under a runtime-undecided guard.
     /// A file like this is a UNIT and never an inline splice, at every site
     /// that names it -- including the unguarded ones. `abbrev` is required
@@ -1907,20 +1907,14 @@ impl Loader {
         }
         for (canonical, package, mut features) in grouped {
             // A unit an EARLIER round already made: this round's spellings
-            // join it rather than being dropped, and an autoload among them
-            // gates its constants now.
-            if let Some((idx, consts)) = self.single_units.get(&canonical) {
+            // join it rather than being dropped.
+            if let Some(idx) = self.single_units.get(&canonical) {
                 let unit = &mut hir.feature_units[*idx];
                 let fresh: Vec<String> = features
                     .into_iter()
                     .filter(|f| f != &unit.feature && !unit.aliases.contains(f))
                     .collect();
-                let gates = fresh.iter().any(|f| hir.autoload_features.contains(f));
                 unit.aliases.extend(fresh);
-                if gates {
-                    let consts = consts.clone();
-                    hir.unrun_unit_consts.extend(consts);
-                }
                 continue;
             }
             if !self.required.insert((0, canonical.clone())) {
@@ -1929,9 +1923,8 @@ impl Loader {
             let absolute = canonical.with_extension("").to_string_lossy().into_owned();
             // A single-file unit has NOT run when the program starts, so
             // every constant its body assigns is undefined until something
-            // loads it. The names are recorded whether or not this round
-            // gates them, because a LATER round's autoload of the same file
-            // is what decides that -- and by then the splice is over.
+            // loads it -- whatever spelling reaches it. `defined?` and every
+            // constant fold ask the run time for these names.
             let before: std::collections::BTreeSet<String> =
                 hir.const_write_names().cloned().collect();
             match self.splice_file(hir, &canonical, None, package.clone(), 0) {
@@ -1941,11 +1934,7 @@ impl Loader {
                         .filter(|k| !before.contains(*k))
                         .cloned()
                         .collect();
-                    // ANY spelling being an autoload target gates the unit:
-                    // the read still has to run it.
-                    if features.iter().any(|f| hir.autoload_features.contains(f)) {
-                        hir.unrun_unit_consts.extend(fresh.iter().cloned());
-                    }
+                    hir.unrun_unit_consts.extend(fresh.iter().cloned());
                     for lf in hir
                         .loaded_files
                         .iter_mut()
@@ -1953,8 +1942,7 @@ impl Loader {
                     {
                         lf.is_unit = true;
                     }
-                    self.single_units
-                        .insert(canonical, (hir.feature_units.len(), fresh));
+                    self.single_units.insert(canonical, hir.feature_units.len());
                     let feature = features.remove(0);
                     hir.feature_units.push(crate::hir::FeatureUnit {
                         feature,

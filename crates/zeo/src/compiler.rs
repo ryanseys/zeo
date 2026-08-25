@@ -378,6 +378,19 @@ pub struct ClassInfo {
     /// ride the runtime overlay the same way. See
     /// `analyze`'s guarded-top-definition rewrite for what sets it.
     pub runtime_conditional: bool,
+    /// The compiled-in load-path unit this class is DEFINED by, if any.
+    ///
+    /// A unit is a file nothing has required yet -- it runs when a `require`
+    /// or an `autoload` reaches it, which is exactly when CRuby defines its
+    /// constants. `None` means the class exists before the first statement
+    /// runs: a main-file definition, a spliced `require`, or a builtin.
+    ///
+    /// The class is registered for DISPATCH at startup either way (call
+    /// sites bind by id). What waits for the unit is its NAME:
+    /// `Compiler::UNIT_UNRESOLVED` until `analyze` accepts the unit, and
+    /// still that if the unit is DECLINED -- such a unit never runs, so its
+    /// classes never get one.
+    pub unit: Option<u32>,
 }
 
 impl ClassInfo {
@@ -1174,6 +1187,7 @@ impl Compiler {
                 builtin_overlay: None,
                 feature_gate: None,
                 runtime_conditional: false,
+                unit: None,
             }],
             scopes: Vec::new(),
             names: Names::default(),
@@ -1398,6 +1412,21 @@ impl Compiler {
                     .is_none_or(|set| set.contains(&cid)))
     }
 
+    /// Whether `cid`'s constant must WAIT for the file that defines it.
+    ///
+    /// A compiled-in unit is a load-path file nothing has required yet. Its
+    /// classes register for dispatch at startup because the static MRO needs
+    /// a shape, but CRuby has no such constant until the file runs -- so
+    /// `defined?(PrettyPrint)` before the `require` is nil, not "constant".
+    ///
+    /// That is exactly the runtime-conditional shape, and it takes the same
+    /// two emissions: `conceal_class` in the registration prologue and
+    /// `reveal_class` at the head of the class's body site, which lives in
+    /// the unit's own function and so runs when the unit does.
+    pub(crate) fn class_waits_for_its_unit(&self, cid: ClassId) -> bool {
+        self.class(cid).unit.is_some()
+    }
+
     pub(crate) fn feature_active(&self, cid: ClassId) -> bool {
         match self.class(cid).feature_gate {
             None => true,
@@ -1421,7 +1450,7 @@ impl Compiler {
     /// (`HirNode::FeatureLoaded`). A feature ruby has loaded before line 1 is
     /// neither -- it is simply there.
     pub(crate) fn constant_is_positional(&self, cid: ClassId) -> bool {
-        if self.class(cid).runtime_conditional {
+        if self.class(cid).runtime_conditional || self.class_waits_for_its_unit(cid) {
             return true;
         }
         // Exactly the classes `clif::classes` conceals: a gated builtin this
@@ -1886,6 +1915,10 @@ impl Compiler {
     /// `Some(_)` for an ordinary class (`register_class` always resolves a
     /// concrete `Some(OBJECT_CLASS)` default when no `< Super` was
     /// written).
+    /// A class registered during a unit walk whose unit has not been
+    /// accepted yet -- see [`ClassInfo::unit`].
+    pub const UNIT_UNRESOLVED: u32 = u32::MAX;
+
     pub fn add_class(&mut self, name: String, parent: Option<ClassId>, is_module: bool) -> ClassId {
         self.classes.push(ClassInfo {
             name,
@@ -1934,6 +1967,11 @@ impl Compiler {
             builtin_overlay: None,
             feature_gate: None,
             runtime_conditional: false,
+            // The real index lands when the unit SURVIVES (`analyze_impl`'s
+            // unit loop); the sentinel only marks it as not-main until then,
+            // and a DECLINED unit keeps it -- that unit never runs, so its
+            // classes never get a name.
+            unit: self.unit_walk.then_some(Self::UNIT_UNRESOLVED),
         });
         ClassId((self.classes.len() - 1) as u32)
     }

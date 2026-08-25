@@ -591,7 +591,9 @@ pub(crate) fn collect_classes(
         // A runtime-CONDITIONAL class registers its shape (the static MRO
         // needs one) but starts CONCEALED: the constant does not exist
         // until the guarded body runs and reveals it.
-        if class.runtime_conditional {
+        if class.runtime_conditional
+            || compiler.class_waits_for_its_unit(crate::compiler::ClassId(idx as u32))
+        {
             conceal.push(idx as u32);
         }
         // A `class << self` body is homed on a surrogate module; seeding
