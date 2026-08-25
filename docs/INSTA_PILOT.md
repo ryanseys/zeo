@@ -40,29 +40,60 @@ case with no snapshot at all (the live-oracle fallback).
 
 ## Where `.expected` wins
 
-- **Byte fidelity.** A `.snap` body is a Rust `String`; the pilot decodes
-  output with `from_utf8_lossy`. The encoding corpus asserts **invalid
-  UTF-8 byte sequences** in goldens today — a lossy decode would corrupt
-  exactly the cases the encoding work exists to pin. A bulk migration
-  would need escaping machinery insta does not natively give.
-- **No new tool surface.** `--unreferenced` and snapshot review need the
-  `cargo-insta` binary — not installed, not pinned in `mise.toml`, and
-  its review/accept workflow is precisely what the bless guard must keep
-  disarmed.
-- **Diff noise.** Each `.snap` carries a YAML header + section markers;
-  4,392 goldens would each grow boilerplate lines, and the one-time
-  migration diff touches every golden file in the repo.
+- **Byte fidelity.** A `.snap` body is a Rust `String` and the pilot
+  decodes output with `from_utf8_lossy`. **Measured 2026-08-24: zero of
+  the 4,395 committed `.expected` files contain invalid UTF-8 today**, so
+  this is a future-hazard needing an escape hatch (a case kept on
+  `.expected`, or insta's experimental `assert_binary_snapshot!`), not a
+  present blocker. The sharper present risk is **trailing-newline
+  leniency**: exactly 3 goldens pin output with no trailing newline
+  (`stdout_survives_*` — the AOT stdout-flush bug class), and insta's
+  text comparison must be verified byte-strict there or the body format
+  must end with an explicit terminator line.
+- **The vendored corpus.** `tests/spinel/` (3,010 cases, 69% of the
+  corpus) vendors upstream's own `.rb.expected` files and the sync diffs
+  them — migrating it breaks upstream diffability, so it stays
+  `.expected` under any adoption: two formats along the
+  zeo-authored/vendored boundary.
+- **Orphan detection is not free under nextest.** `--unreferenced`
+  requires running the suite through `cargo insta test`; CI runs
+  nextest, so the practical orphan check is a few lines in
+  `goldens_hygiene.rs` — available to either format.
+- **The authority model.** insta's headline ergonomics (`cargo insta
+  review`/`accept`) let a HUMAN decide truth; zeo's goldens let RUBY
+  decide. Review/accept must stay fenced forever, so adoption uses insta
+  as storage + diff rendering only.
 - **LOC.** insta absorbed only "store + diff one string": the pilot ADDS
-  ~190 lines (harness tail + engine plumbing) while deleting nothing —
-  all sidecar/bless/watchdog/normalization machinery stays custom in
-  either format.
+  ~190 lines while deleting nothing — sidecar/bless/watchdog/
+  normalization machinery stays custom in either format.
 
-## Recommendation
+## Deep-dive addendum (2026-08-24, insta.rs docs + corpus measurement)
 
-Do **not** bulk-migrate. The engine — the part that was ever expensive —
-is shared either way; insta's real wins (inline diffs, orphan checks) are
-small against a whole-corpus format churn, a hard UTF-8 fidelity hazard,
-and a new tool in the loop that the bless discipline must actively fence.
-`tests/spinel/` was staying `.expected` regardless, which would leave the
-repo running two formats forever. Keep `.expected`; delete the pilot, or
-keep it as a living reference.
+Alternatives examined and rejected:
+
+- **`insta::glob!` instead of datatest-stable**: glob runs the whole
+  corpus inside ONE `#[test]`, forfeiting nextest's per-case processes —
+  and with them the 60s per-case deadline, the per-child RSS watchdog,
+  the golden-group width, and per-case reporting. Non-negotiable losses
+  for a 4,392-case corpus with runaway-child history.
+- **Inline Ruby in `.rs` tests** (the e2e shape, applied to the corpus):
+  the corpus stops being runnable under plain `ruby`/`zeo` — the probe
+  workflow used daily — and bless becomes a Rust-source rewriter at
+  4,392-case scale. The e2e tier is where hand-authored assertions
+  belong; oracle-recorded output is not that.
+- **Single-file format (`__END__`/DATA golden inside the `.rb`)**: max
+  file reduction (one file per case), stays ruby-runnable, byte-exact —
+  but bespoke beyond even `.expected` (zero external tooling), collides
+  with programs that use `DATA` themselves (1 today), and appends zeo
+  data to every vendored spinel body, wrecking upstream diffs.
+- **Magic-comment sidecars** (`#@ args:` in the `.rb`): only 70 sidecar
+  files exist besides the goldens (6 `.args`, 1 `.stdin`, 11
+  `.divergence`, 34 `.gccheck`, 8 `.macos-only`, …); folding them in
+  saves little and adds a directive parser plus spinel sync noise.
+
+What migration would actually buy, measured against the pilot: one
+co-located `.snap` per case instead of `.expected` (+ sometimes
+`.err.expected`), insta's inline unified diff on failure, and a format
+editors highlight. Costs: a ~2,800-file mechanical commit, a permanent
+two-format repo (spinel), the trailing-newline verification/mitigation,
+and cargo-insta as fenced-but-present tooling.
