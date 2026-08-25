@@ -102,8 +102,8 @@ $ ZEO_E2E_BACKEND=aot      cargo nextest run -p zeo --test e2e  # link per test
 
 `crates/zeo/tests/clif.rs` holds insta snapshots of the emitted CLIF. They
 record emitter *shape*, which no golden can see, so **run `cargo nextest run
--p zeo` after any `clif/` change**. insta stops at the first failing snapshot,
-so "1 failed" does not mean "1 stale" — fix and re-run until it is quiet.
+-p zeo` after any `clif/` change**. Each snapshot is its own `#[test]`, so
+one run reports every stale one.
 
 ## Code conventions
 

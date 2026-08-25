@@ -162,8 +162,8 @@ Platforms differ in where the DWARF ends up, so `-g` changes the link:
 
 That last row is a standing rule: **a change under `clif/` runs `cargo
 nextest run -p zeo`.** The golden corpora compare what a program printed,
-which is blind to the IR that printed it, and insta stops at the first
-stale snapshot — so three of them can sit stale behind one report.
+which is blind to the IR that printed it. Each snapshot sits in its own
+`#[test]`, so one nextest run reports every stale one at once.
 
 ## What is not done
 
