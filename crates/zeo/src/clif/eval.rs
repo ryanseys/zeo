@@ -16,8 +16,10 @@
 
 use super::ctx::{Fx, Local};
 use super::emit::{ClifModule, Emitter};
+use super::ownership;
 use super::{statics, verify};
 use crate::analyze::Analyzed;
+use crate::hir::{HirNode, NodeId};
 use cranelift_codegen::ir::{self, AbiParam, InstBuilder, MemFlagsData, UserFuncName, types};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::JITModule;
@@ -209,4 +211,348 @@ fn define_entry(
         .define_function(func_id, &mut ctx)
         .map_err(|e| format!("compiling {ENTRY}: {e}"))?;
     Ok(func_id)
+}
+
+// ---------------------------------------------------------------------
+// Lowering rules for statements inside an eval snippet: class bodies,
+// mixins, and the default definee, all resolved at run time.
+
+/// `include M` inside an `eval`: the receiverless send, with the module
+/// read as an ordinary constant. Receiverless because ruby's own
+/// `Module#include` is public but `main.include` is not -- the same
+/// FCALL barrier a bare `include` at the top level passes.
+pub(super) fn eval_mixin_send(
+    fx: &mut Fx,
+    site: NodeId,
+    module: &str,
+    verb: &str,
+) -> Result<(), String> {
+    let op = eval_mixin_send_value(fx, site, module, verb)?;
+    ownership::discard(fx, op);
+    Ok(())
+}
+
+pub(super) fn eval_mixin_send_value(
+    fx: &mut Fx,
+    site: NodeId,
+    module: &str,
+    verb: &str,
+) -> Result<super::operand::Operand, String> {
+    let arg = super::consts::const_read(fx, site, module)?;
+    let tag = arg.tag();
+    let argv = ownership::borrow_ptr(fx, &arg);
+    if arg.owned() {
+        ownership::pool_owned(fx, argv, tag);
+    }
+    super::call::implicit_send_ptr(fx, verb, argv, 1)
+}
+
+/// `class Foo < Bar ... end` / `module M ... end` written inside a run-time
+/// `eval`.
+///
+/// The HEADER runs here: the owner is the snippet's own cref (or the scope
+/// `A::B` names), the superclass is an ordinary constant read in THIS
+/// scope, and the runtime reuses or mints the class.
+///
+/// The BODY runs as one more `class_eval` of its own source text. That is
+/// not a shortcut -- a class body in CRuby is a separate iseq with its own
+/// cref and its own locals, sharing nothing with the scope around it, and
+/// this compiler's `class_eval` path already answers every question such a
+/// body raises: where a `def` lands, what a bare constant resolves
+/// against, which class owns `@@x`. Lowering the body HERE would need all
+/// of that a second time, against a class id no compile can know.
+pub(crate) fn eval_class_def(fx: &mut Fx, stmt: NodeId) -> Result<super::operand::Operand, String> {
+    use super::operand::{Operand, TagInfo};
+    let HirNode::ClassDef {
+        name,
+        superclass,
+        body,
+        is_module,
+    } = &fx.an.compiler.hir[stmt]
+    else {
+        unreachable!("guarded by the ClassDef arm")
+    };
+    let (name, superclass, body, is_module) =
+        (name.clone(), superclass.clone(), body.clone(), *is_module);
+    if name == crate::compiler::SINGLETON_SURROGATE {
+        return fx.unsupported(stmt, "a `class << self` inside an `eval`");
+    }
+    let (scope, leaf) = crate::hir::split_const_path(&name);
+
+    // The owner of the bare name: the scope when one is written, else the
+    // snippet's own cref -- and the top level when it has none.
+    let owner = match scope.filter(|s| !s.is_empty()) {
+        Some(s) => super::consts::const_path_read(fx, stmt, s)?,
+        None => {
+            // The snippet's own cref when it has one, else its TOP LEVEL --
+            // which inside a box is the box's surrogate, not `Object`.
+            // Binding on `Object` let main reach a class the box wrote.
+            let cid = fx
+                .eval_cref
+                .as_ref()
+                .and_then(|c| c.chain.first().copied())
+                .map_or_else(|| super::boxes::box_top(fx), crate::compiler::ClassId);
+            super::consts::class_immediate(fx, cid)
+        }
+    };
+    let owner_ptr = ownership::borrow_ptr(fx, &owner);
+    if owner.owned() {
+        ownership::pool_owned(fx, owner_ptr, owner.tag());
+    }
+    let super_ptr = match &superclass {
+        Some(sup) => {
+            let op = super::consts::const_path_read(fx, stmt, sup)?;
+            let p = ownership::borrow_ptr(fx, &op);
+            if op.owned() {
+                ownership::pool_owned(fx, p, op.tag());
+            }
+            p
+        }
+        None => fx.b.ins().iconst(fx.em.ptr, 0),
+    };
+    let (nptr, nlen) = super::expr::rodata_name(fx, leaf);
+    let is_module_v = fx.b.ins().iconst(types::I8, i64::from(u8::from(is_module)));
+    let class_ss = fx.temp_slot();
+    let class_ptr = fx.slot_addr(class_ss, 0);
+    let status = fx.call_status(
+        "zeo_rt_eval_class_open",
+        &[owner_ptr, nptr, nlen, super_ptr, is_module_v, class_ptr],
+    );
+    fx.fallible(status);
+    fx.owned_created += 1;
+    ownership::pool_owned(
+        fx,
+        class_ptr,
+        TagInfo::Known(zeo_abi::abi::ValueTag::Class as u8),
+    );
+
+    let (src, file, line) = eval_body_source(fx, stmt, &body)?;
+    let (sptr, slen) = super::expr::rodata_name(fx, &src);
+    let (fptr, flen) = super::expr::rodata_name(fx, &file);
+    let kind = if is_module { "module" } else { "class" };
+    let (lptr, llen) = super::expr::rodata_name(fx, &format!("<{kind}:{leaf}>"));
+    let line_v = fx.b.ins().iconst(types::I32, i64::from(line));
+    let bx = fx.box_v();
+    // The chain THIS scope searches, which the body prepends its own class
+    // to: `class Inside` written in `Wrap.class_eval` still sees
+    // `Wrap::IN_WRAP`.
+    let outer: Vec<u32> = fx
+        .eval_cref
+        .as_ref()
+        .map(|c| c.chain.clone())
+        .unwrap_or_default();
+    let bytes: Vec<u8> = outer.iter().flat_map(|c| c.to_le_bytes()).collect();
+    let outer_off = fx.em.intern_rodata_aligned(&bytes, 4);
+    let outer_ptr = fx.rod(outer_off);
+    let n_outer = fx.b.ins().iconst(fx.em.ptr, outer.len() as i64);
+    let out_ss = fx.temp_slot();
+    let out = fx.slot_addr(out_ss, 0);
+    let status = fx.call_status(
+        "zeo_rt_eval_class_body",
+        &[
+            class_ptr, sptr, slen, fptr, flen, line_v, lptr, llen, bx, outer_ptr, n_outer, out,
+        ],
+    );
+    fx.fallible(status);
+    fx.owned_created += 1;
+    Ok(Operand::Slot {
+        ss: out_ss,
+        owned: true,
+        tag: TagInfo::Unknown,
+    })
+}
+
+/// The SOURCE TEXT of a body written inside a snippet, sliced from the
+/// statements' own spans -- plus the file and first line they report, so a
+/// backtrace row raised inside it names the same place the snippet does.
+fn eval_body_source(
+    fx: &Fx,
+    stmt: NodeId,
+    body: &[NodeId],
+) -> Result<(String, String, u32), String> {
+    let hir = &fx.an.compiler.hir;
+    let Some((file, line)) = crate::analyze::source::source_location(&fx.an.compiler, stmt) else {
+        return Err("a span-less `class` inside an `eval`".to_string());
+    };
+    let (file, mut line) = (file.to_string(), line);
+    let (Some(first), Some(last)) = (body.first(), body.last()) else {
+        return Ok((String::new(), file, line));
+    };
+    let (Some(a), Some(b)) = (hir.span(*first), hir.span(*last)) else {
+        return Err("a span-less statement in a `class` inside an `eval`".to_string());
+    };
+    // The body's TEXT is what runs -- a class body inside a snippet is one
+    // more `class_eval` of its own source -- so the usual case is one slice
+    // of the snippet between the first and last statement, which keeps every
+    // line number exactly where the snippet put it.
+    let own = hir
+        .span(stmt)
+        .and_then(|s| s.known())
+        .ok_or_else(|| "a span-less `class` inside an `eval`".to_string())?;
+    if a.file == own.file && a.start >= own.start && b.end <= own.end {
+        let src = hir
+            .files
+            .get(a.file.0 as usize)
+            .ok_or_else(|| "a `class` body from an unknown file".to_string())?;
+        // To the class's own `end`, not to the last STATEMENT's end. A
+        // `class << self` is not a statement -- `lower::defs` splices it into
+        // the enclosing body as a surrogate reopen plus the retagged `def`s --
+        // so the last statement stops short of the `end` that closes the
+        // singleton body, and prism then reports an unterminated `class`.
+        let closing = (own.end as usize)
+            .checked_sub(3)
+            .filter(|&at| src.source.get(at..at + 3) == Some("end"))
+            .filter(|&at| at >= b.end as usize);
+        let (start, end) = (
+            a.start as usize,
+            closing.unwrap_or(b.end as usize).min(src.source.len()),
+        );
+        if start > end {
+            return Err("a `class` body whose statements run backwards".to_string());
+        }
+        line = src.line_at(a.start);
+        return Ok((src.source[start..end].trim_end().to_string(), file, line));
+    }
+    // A body analyze REWROTE reaches here: some of its statements are
+    // synthesized, and their spans point into a source of analyze's own
+    // making rather than into the snippet. An `FFI::Struct` subclass is the
+    // shape that does it -- its `layout` is replaced in place by the
+    // accessors `lower::ffi::synthesize_ffi_struct` writes -- and that
+    // synthesized text is real Ruby, so the body is still recoverable: slice
+    // each RUN of same-file statements from its own file and join the runs.
+    // What this cannot keep is the line numbering, since the runs come from
+    // different files; the class reports its own line for the whole body,
+    // which is where the compiled tier attributes a synthesized accessor
+    // too.
+    let mut parts: Vec<String> = Vec::new();
+    let mut run: Option<(crate::hir::FileId, u32, u32)> = None;
+    let flush = |run: Option<(crate::hir::FileId, u32, u32)>,
+                 parts: &mut Vec<String>|
+     -> Result<(), String> {
+        let Some((f, start, end)) = run else {
+            return Ok(());
+        };
+        let src = hir
+            .files
+            .get(f.0 as usize)
+            .ok_or_else(|| "a `class` body from an unknown file".to_string())?;
+        let (start, end) = (start as usize, (end as usize).min(src.source.len()));
+        if start > end {
+            return Err("a `class` body whose statements run backwards".to_string());
+        }
+        parts.push(src.source[start..end].to_string());
+        Ok(())
+    };
+    for id in body {
+        let span = hir
+            .span(*id)
+            .and_then(|s| s.known())
+            .ok_or_else(|| "a span-less statement in a `class` inside an `eval`".to_string())?;
+        run = match run {
+            Some((f, start, end)) if f == span.file && span.start >= end => {
+                Some((f, start, span.end))
+            }
+            other => {
+                flush(other, &mut parts)?;
+                Some((span.file, span.start, span.end))
+            }
+        };
+    }
+    flush(run, &mut parts)?;
+    Ok((parts.join("\n"), file, line))
+}
+
+/// The class a definition-level statement written in a snippet names --
+/// `alias`, `undef`, `private`, `module_function`, `private_constant`. Only
+/// the run time knows it (`zeo_rt_eval_definee`), and one compiled snippet
+/// may be evaluated against any number of receivers.
+fn eval_definee(fx: &mut Fx, singleton: bool) -> Result<super::operand::Operand, String> {
+    use super::operand::Operand;
+    let mode = fx.eval_mode.expect("guarded by the eval arms");
+    let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
+    let mode_v = fx.b.ins().iconst(types::I8, i64::from(mode));
+    let ss = fx.temp_slot();
+    let out = fx.slot_addr(ss, 0);
+    let status = fx.call_status("zeo_rt_eval_definee", &[mode_v, self_ptr, out]);
+    fx.fallible(status);
+    fx.owned_created += 1;
+    let definee = Operand::Slot {
+        ss,
+        owned: true,
+        tag: super::operand::TagInfo::Unknown,
+    };
+    if !singleton {
+        return Ok(definee);
+    }
+    let ptr = ownership::borrow_ptr(fx, &definee);
+    ownership::pool_owned(fx, ptr, definee.tag());
+    let empty = fx.b.ins().iconst(fx.em.ptr, 0);
+    eval_definee_call(fx, ptr, "singleton_class", empty, 0)
+}
+
+/// `definee.<verb>(:a, :b, ...)` -- ruby writes these as private methods of
+/// `Module`, so the send lowers the visibility barrier the way an implicit
+/// receiver does.
+pub(super) fn eval_definee_send(
+    fx: &mut Fx,
+    verb: &str,
+    names: &[String],
+    singleton: bool,
+) -> Result<(), String> {
+    let op = eval_definee_send_value(fx, verb, names, singleton)?;
+    ownership::discard(fx, op);
+    Ok(())
+}
+
+pub(crate) fn eval_definee_send_value(
+    fx: &mut Fx,
+    verb: &str,
+    names: &[String],
+    singleton: bool,
+) -> Result<super::operand::Operand, String> {
+    let definee = eval_definee(fx, singleton)?;
+    let recv = ownership::borrow_ptr(fx, &definee);
+    if definee.owned() {
+        ownership::pool_owned(fx, recv, definee.tag());
+    }
+    let argv =
+        fx.b.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(
+            cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
+            (names.len().max(1) * zeo_abi::abi::VALUE_SIZE) as u32,
+            3,
+        ));
+    for (i, name) in names.iter().enumerate() {
+        let sym = fx.sym_id(name);
+        let slot = fx.slot_addr(argv, (i * zeo_abi::abi::VALUE_SIZE) as i32);
+        fx.call("zeo_rt_sym_value", &[sym, slot]);
+    }
+    let a0 = fx.slot_addr(argv, 0);
+    eval_definee_call(fx, recv, verb, a0, names.len())
+}
+
+pub(super) fn eval_definee_call(
+    fx: &mut Fx,
+    recv: cranelift_codegen::ir::Value,
+    verb: &str,
+    argv: cranelift_codegen::ir::Value,
+    argc: usize,
+) -> Result<super::operand::Operand, String> {
+    use super::operand::Operand;
+    let sym = fx.sym_id(verb);
+    let bx = fx.box_v();
+    let argc_v = fx.b.ins().iconst(fx.em.ptr, argc as i64);
+    let null = fx.b.ins().iconst(fx.em.ptr, 0);
+    let ss = fx.temp_slot();
+    let out = fx.slot_addr(ss, 0);
+    let status = fx.call_status(
+        "zeo_rt_send_value_in",
+        &[bx, recv, sym, argv, argc_v, null, out],
+    );
+    fx.fallible(status);
+    fx.owned_created += 1;
+    Ok(Operand::Slot {
+        ss,
+        owned: true,
+        tag: super::operand::TagInfo::Unknown,
+    })
 }

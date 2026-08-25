@@ -329,7 +329,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             if op.owned() {
                 ownership::pool_owned(fx, ptr, tag);
             }
-            super::stmt::lower_multi_group(fx, id, &targets, ptr)?;
+            super::multi::lower_multi_group(fx, id, &targets, ptr)?;
             Ok(Operand::Ptr {
                 addr: ptr,
                 owned: false,
@@ -463,7 +463,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             if cref.owned() {
                 ownership::pool_owned(fx, cref_ptr, cref.tag());
             }
-            let self_ptr = super::stmt::dyn_ivar_recv(fx);
+            let self_ptr = super::ivars::dyn_ivar_recv(fx);
             let new_op = lower_expr(fx, new_id)?;
             let new_ptr = ownership::borrow_ptr(fx, &new_op);
             if new_op.owned() {
@@ -526,7 +526,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
         // A `class`/`module` written where a value is READ -- `x = class C;
         // 7; end`, or a `class << self` body ending a method. Ruby's value
         // is the body's last statement, which the site computes.
-        HirNode::ClassDef { .. } if fx.eval_mode.is_some() => super::stmt::eval_class_def(fx, id),
+        HirNode::ClassDef { .. } if fx.eval_mode.is_some() => super::eval::eval_class_def(fx, id),
         HirNode::ClassDef { .. } => super::stmt::class_body_value(fx, id, true),
         HirNode::ClassRef(name) => {
             let name = name.clone();
@@ -776,7 +776,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
         }
         HirNode::IvarRead(name) => {
             let name = name.clone();
-            super::stmt::ivar_read_op(fx, &name)
+            super::ivars::ivar_read_op(fx, &name)
         }
         HirNode::Defined(v) => {
             let v = *v;
@@ -1496,7 +1496,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
         }
         HirNode::ClassVarRead(name) => {
             let name = name.clone();
-            let owner = cvar_owner(fx, &name);
+            let owner = super::ivars::cvar_owner(fx, &name);
             let owner_v = fx.b.ins().iconst(types::I32, i64::from(owner));
             let (nptr, nlen) = rodata_name(fx, &name);
             let ss = fx.temp_slot();
@@ -1539,7 +1539,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 owned: false,
                 tag,
             };
-            super::stmt::ivar_write_op(fx, &name, borrowed)?;
+            super::ivars::ivar_write_op(fx, &name, borrowed)?;
             Ok(Operand::Ptr {
                 addr: ptr,
                 owned: false,
@@ -1548,7 +1548,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
         }
         HirNode::ClassVarWrite(name, value) => {
             let (name, value) = (name.clone(), *value);
-            let owner = cvar_owner(fx, &name);
+            let owner = super::ivars::cvar_owner(fx, &name);
             let op = lower_expr(fx, value)?;
             let tag = op.tag();
             let ptr = ownership::borrow_ptr(fx, &op);
@@ -2120,45 +2120,6 @@ fn regexp_lit(
         owned: true,
         tag: TagInfo::Known(ValueTag::Regexp as u8),
     })
-}
-
-/// The class that OWNS `@@name` at this lowering site -- the rustc
-/// emitter's `cvar_owner_id` rule: the lexically enclosing class (`Object`
-/// at the toplevel), looked through a `class << self` surrogate, then
-/// resolved through the analyzer's `cvar_owners` claim map (a subclass
-/// writing a parent-declared cvar stores on the parent).
-pub(crate) fn cvar_owner(fx: &Fx, name: &str) -> u32 {
-    // A snippet's cvar belongs to its cref, which is a RUN-TIME class the
-    // fresh compiler has no entry for: no owner walk to do, and the
-    // runtime's own `cvar_get`/`set` climb the live ancestry from there.
-    if let Some(cid) = fx.eval_cref.as_ref().and_then(|c| c.chain.first().copied()) {
-        return cid;
-    }
-    // Where the code was WRITTEN, never the receiver that reaches it: a
-    // class method inherited by a subclass still reads its own class's
-    // storage (`Sub.note` writes `Base`'s `@@subs`), so a materialized
-    // copy's `defining_class` -- not `method_class` -- is the question.
-    let defining = fx
-        .defining_class
-        .or(fx.method_class)
-        .unwrap_or(crate::compiler::OBJECT_CLASS);
-    let defining = if fx.an.compiler.is_singleton_surrogate(defining) {
-        fx.an
-            .compiler
-            .class(defining)
-            .lexical_parent
-            .unwrap_or(defining)
-    } else {
-        defining
-    };
-    fx.an
-        .compiler
-        .class(defining)
-        .cvar_owners
-        .get(name)
-        .copied()
-        .unwrap_or(defining)
-        .0
 }
 
 /// `case`/`when` in VALUE position: the subject is evaluated once and

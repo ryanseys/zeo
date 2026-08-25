@@ -254,7 +254,7 @@ pub(super) fn lower_defined(fx: &mut Fx, site: NodeId, inner: NodeId) -> Result<
         let check = fx.b.create_block();
         match receiver {
             None => {
-                let self_ptr = super::stmt::dyn_ivar_recv(fx);
+                let self_ptr = super::ivars::dyn_ivar_recv(fx);
                 let one = fx.b.ins().iconst(types::I8, 1);
                 fx.call("zeo_rt_defined_method", &[self_ptr, sym, one, hit_ptr]);
                 fx.b.ins().jump(check, &[]);
@@ -496,7 +496,7 @@ fn defined_rest(fx: &mut Fx, site: NodeId, inner: NodeId) -> Result<Operand, Str
     }
     if let HirNode::IvarRead(name) = &fx.an.compiler.hir[inner] {
         let name = name.clone();
-        let self_ptr = super::stmt::dyn_ivar_recv(fx);
+        let self_ptr = super::ivars::dyn_ivar_recv(fx);
         let (nptr, nlen) = super::expr::rodata_name(fx, &name);
         let hit_ss = fx.temp_slot();
         let hit_ptr = fx.slot_addr(hit_ss, 0);
@@ -508,7 +508,7 @@ fn defined_rest(fx: &mut Fx, site: NodeId, inner: NodeId) -> Result<Operand, Str
     }
     if let HirNode::ClassVarRead(name) = &fx.an.compiler.hir[inner] {
         let name = name.clone();
-        let owner = super::expr::cvar_owner(fx, &name);
+        let owner = super::ivars::cvar_owner(fx, &name);
         let ov = fx.b.ins().iconst(types::I32, i64::from(owner));
         let (nptr, nlen) = super::expr::rodata_name(fx, &name);
         let hit = fx.call_status("zeo_rt_defined_cvar", &[ov, nptr, nlen]);

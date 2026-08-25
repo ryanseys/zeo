@@ -942,7 +942,7 @@ fn define_block_fn(
         if op.owned() {
             ownership::pool_owned(&mut bfx, ptr, tag);
         }
-        super::stmt::lower_multi_group(&mut bfx, *read, group, ptr)?;
+        super::multi::lower_multi_group(&mut bfx, *read, group, ptr)?;
     }
     // Block-locals (and implicit ones): fresh nil EVERY invocation --
     // and every `redo` iteration (they sit inside the loop). A CAPTURED

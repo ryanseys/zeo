@@ -2270,7 +2270,7 @@ fn define_method_body(
         if op.owned() {
             super::ownership::pool_owned(&mut fx, ptr, tag);
         }
-        super::stmt::lower_multi_group(&mut fx, *read, group, ptr)?;
+        super::multi::lower_multi_group(&mut fx, *read, group, ptr)?;
     }
     // A scope that lexically contains a run-time `eval` publishes what a
     // snippet's `yield`, `block_given?` and bare `super` mean: CRuby reads

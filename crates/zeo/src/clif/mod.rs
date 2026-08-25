@@ -20,6 +20,8 @@ pub(crate) mod eval;
 pub(crate) mod expr;
 pub(crate) mod ffi;
 pub(crate) mod iter;
+pub(crate) mod ivars;
+pub(crate) mod multi;
 pub mod names;
 pub(crate) mod operand;
 pub(crate) mod ownership;

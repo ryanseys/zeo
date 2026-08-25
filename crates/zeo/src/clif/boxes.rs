@@ -144,12 +144,12 @@ pub(super) fn inline_accessor(
             let name = name.to_string();
             Some(guarded_fold(
                 fx,
-                move |fx| super::stmt::ivar_read_op(fx, &ivar),
+                move |fx| super::ivars::ivar_read_op(fx, &ivar),
                 move |fx| super::call::implicit_send(fx, id, &name, &[]),
             ))
         }
         (AccessorKind::Writer, _) if patchable => None,
-        (AccessorKind::Reader, []) => Some(super::stmt::ivar_read_op(fx, &ivar)),
+        (AccessorKind::Reader, []) => Some(super::ivars::ivar_read_op(fx, &ivar)),
         (AccessorKind::Writer, [ArrayElem::Single(arg)]) => {
             let arg = *arg;
             Some((|| {
@@ -166,7 +166,7 @@ pub(super) fn inline_accessor(
                     owned: false,
                     tag,
                 };
-                super::stmt::ivar_write_op(fx, &ivar, borrowed())?;
+                super::ivars::ivar_write_op(fx, &ivar, borrowed())?;
                 Ok(borrowed())
             })())
         }
