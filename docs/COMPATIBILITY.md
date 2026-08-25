@@ -939,9 +939,11 @@ repeat `extend` leaves the module at the rank its first one gave it. The same
 holds for a per-object `obj.extend(M)`: `obj.is_a?(M)` is true while
 `obj.class` and every other instance of that class stay untouched.
 
-What Zeo does not carry is the extension across `clone`. Real Ruby's `clone`
-copies the singleton class and `dup` drops it; Zeo drops it either way, for an
-extended module exactly as for a `def obj.method` singleton.
+The copies carry it the way Ruby's do: an object's `clone` copies the
+singleton class (extended modules and `def obj.method` rows) and `dup` drops
+it; a class's `dup` and `clone` both keep it, because `rb_mod_init_copy`
+clones the singleton class either way. Pinned by
+`tests/an_extended_receiver_copies_like_ruby.rb`.
 
 ## Compiling against an installed gem store
 

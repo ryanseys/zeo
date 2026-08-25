@@ -807,6 +807,7 @@ pub fn runtime_class_dup(cid: ClassId, clone: bool) -> Result<RubyValue, Signal>
         let v = crate::cvars::cvar_get(cid.0, &name);
         crate::cvars::cvar_set(id_num, &name, v)?;
     }
+    super::copy_class_extensions(cid, new_id);
     mark_live();
     if clone && crate::dispatch::class_frozen(cid) {
         crate::dispatch::class_set_frozen(new_id);
@@ -897,6 +898,7 @@ pub fn runtime_module_dup(mid: ClassId) -> Result<RubyValue, Signal> {
             },
         );
     }
+    super::copy_class_extensions(mid, new_id);
     mark_live();
     Ok(RubyValue::Class(new_id))
 }

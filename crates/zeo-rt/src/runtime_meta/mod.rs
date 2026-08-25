@@ -1197,6 +1197,26 @@ pub fn copy_value_singletons(from: &RubyValue, to: &RubyValue) {
     }
 }
 
+/// The CLASS half of the carry above: `Class#dup`/`#clone` both clone the
+/// source's singleton class (CRuby's `rb_mod_init_copy`), so the extend
+/// table and its per-name provenance travel to the copy's identity.
+pub(crate) fn copy_class_extensions(from: ClassId, to: ClassId) {
+    let fk = class_identity(from);
+    let tk = class_identity(to);
+    let mods = maps().extended.read().unwrap().get(&fk).cloned();
+    if let Some(mods) = mods
+        && !mods.is_empty()
+    {
+        maps().extended.write().unwrap().insert(tk, mods);
+    }
+    let owners = maps().extended_names.read().unwrap().get(&fk).cloned();
+    if let Some(t) = owners
+        && !t.is_empty()
+    {
+        maps().extended_names.write().unwrap().insert(tk, t);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
