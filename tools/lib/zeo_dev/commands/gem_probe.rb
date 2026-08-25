@@ -496,7 +496,7 @@ module ZeoDev
             bytes = File.exist?(clif) ? File.size(clif) : 0
             return row(name, version, "codegen", "ok", rust_bytes: bytes, sha256: sha256)
           end
-          text = res.stderr.to_s.dup.force_encoding(Encoding::UTF_8).scrub
+          text = utf8(res.stderr)
           stage, outcome, detail = classify(text, dir)
           site = site_of(text)
           # A gem the verdict points INTO that cannot run without a compiled
@@ -633,17 +633,18 @@ module ZeoDev
 
       # ---- classification ------------------------------------------------
 
+      # The captured stderr is bytes. A diagnostic can carry any byte a gem's
+      # source does, so it is scrubbed to valid UTF-8 rather than assumed to
+      # be text -- comparing a BINARY string against box-drawing characters
+      # otherwise raises.
+      def utf8(bytes) = bytes.to_s.dup.force_encoding(Encoding::UTF_8).scrub
+
       # A panic, a timeout and a memory kill are each their own outcome rather
       # than folded into `lowering-gap`: a gap is a limit zeo REPORTED, a panic
       # is a bug it did not, a timeout is no verdict at all, and an
       # out-of-memory says what this MACHINE could hold rather than anything
-      # about the gem.
-      def classify(stderr, dir)
-        # The captured stderr is bytes. A diagnostic can carry any byte a gem's
-        # source does, so it is scrubbed to valid UTF-8 rather than assumed to
-        # be text -- comparing a BINARY string against the box-drawing
-        # characters below otherwise raises.
-        text = stderr.to_s.dup.force_encoding(Encoding::UTF_8).scrub
+      # about the gem. `text` is already scrubbed UTF-8.
+      def classify(text, dir)
         stage = front_end_stage(text)
         if (i = text.lines.index { |l| l.include?("panicked at") })
           msg = text.lines[i + 1].to_s.strip
@@ -654,7 +655,11 @@ module ZeoDev
 
         msg = scrub(message_of(text), dir)
         msg = "compile failed" if msg.empty?
+        verdict(stage, msg)
+      end
 
+      # The diagnostic-message ladder, in the order the arms must run.
+      def verdict(stage, msg)
         # NATIVE EXTENSION FIRST. zeo says so INSIDE a `cannot load such file`
         # message, so testing the load-failure prefix first swallows every one
         # of them into `missing-dependency` and leaves this arm dead. The two

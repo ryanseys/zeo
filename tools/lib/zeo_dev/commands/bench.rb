@@ -136,21 +136,8 @@ module ZeoDev
             next
           end
 
-          window = (history[name] ||= [])
-          window << [Time.now.to_i, secs]
-          window.shift while window.size > 5
-          write_history(history)
-
-          if opts[:ruby]
-            begin
-              ruby_times[name] = time_oracle(rb)
-              write_pairs(path(RUBY_TIMES),
-                          "# bench/ruby.tsv -- oracle `ruby` wall time; refresh with --ruby",
-                          ruby_times)
-            rescue Error => e
-              progress(format("%-28s (ruby timing failed: %s)", name, e.message))
-            end
-          end
+          window = bank_history(history, name, secs)
+          refresh_ruby_time(ruby_times, name, rb) if opts[:ruby]
 
           progress(format("%-28s %8.3fs  med5 %7.3fs  %-24s %s",
                           name, secs, median(window.map(&:last)),
@@ -166,6 +153,25 @@ module ZeoDev
         end
 
         report(results, recorded, baseline, failures)
+      end
+
+      # Append to the benchmark's rolling window, cap it at 5, and write the
+      # file so an interrupted run keeps what it measured. Answers the window.
+      def bank_history(history, name, secs)
+        window = (history[name] ||= [])
+        window << [Time.now.to_i, secs]
+        window.shift while window.size > 5
+        write_history(history)
+        window
+      end
+
+      def refresh_ruby_time(ruby_times, name, rb)
+        ruby_times[name] = time_oracle(rb)
+        write_pairs(path(RUBY_TIMES),
+                    "# bench/ruby.tsv -- oracle `ruby` wall time; refresh with --ruby",
+                    ruby_times)
+      rescue Error => e
+        progress(format("%-28s (ruby timing failed: %s)", name, e.message))
       end
 
       def report(results, recorded, baseline, failures)

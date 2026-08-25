@@ -357,26 +357,37 @@ module ZeoDev
         RS
       end
 
-      def render_stubs(decls)
-        stubs = decls.select { |d| d[:kind] == "fn" && d[:status] == "stub" }
-        refused = decls.select { |d| d[:kind] == "fn" && d[:status] == "refused" }
-        vars = decls.select { |d| d[:kind] == "var" && d[:status] == "global" }
-        body = stubs.map { |d| <<~RS }.join
+      def stub_fns(stubs)
+        stubs.map { |d| <<~RS }.join
           #[unsafe(no_mangle)]
           pub extern "C" fn #{d[:name]}() -> ! {
               unimplemented(#{d[:name].inspect})
           }
         RS
-        body += refused.map { |d| <<~RS }.join
+      end
+
+      def refused_fns(refused)
+        refused.map { |d| <<~RS }.join
           #[unsafe(no_mangle)]
           pub extern "C" fn #{d[:name]}() -> ! {
               refused(#{d[:name].inspect}, #{REFUSED.fetch(d[:name]).inspect})
           }
         RS
-        globals = vars.map { |d| <<~RS }.join
+      end
+
+      def global_statics(vars)
+        vars.map { |d| <<~RS }.join
           #[unsafe(no_mangle)]
           pub static #{d[:name]}: Global = unfilled();
         RS
+      end
+
+      def render_stubs(decls)
+        stubs = decls.select { |d| d[:kind] == "fn" && d[:status] == "stub" }
+        refused = decls.select { |d| d[:kind] == "fn" && d[:status] == "refused" }
+        vars = decls.select { |d| d[:kind] == "var" && d[:status] == "global" }
+        body = stub_fns(stubs) + refused_fns(refused)
+        globals = global_statics(vars)
         table = vars.map { |d| "    (#{d[:name].inspect}, &#{d[:name]})," }.join("\n")
         <<~RS
           //! One loud stub per `rb_*` zeo does not answer yet.
@@ -604,13 +615,15 @@ module ZeoDev
         out
       end
 
-      def render_forward_rs(rows)
-        sorted = rows.sort_by { |r| r[:name] }
-        table = sorted.map { |r|
+      def forward_table(sorted)
+        sorted.map { |r|
           "    (#{r[:name].inspect}, #{r[:klass].inspect}, " \
             "#{r[:meth].inspect}, #{r[:nargs]}),"
         }.join("\n")
-        entries = sorted.map { |r|
+      end
+
+      def forward_bodies(sorted)
+        sorted.map { |r|
           args = (0...r[:nargs]).map { |i| "a#{i}: Value" }.join(", ")
           sep = r[:nargs].zero? ? "" : ", "
           passed = (0...r[:nargs]).map { |i| "a#{i}" }.join(", ")
@@ -621,6 +634,12 @@ module ZeoDev
             }
           RS
         }.join("\n")
+      end
+
+      def render_forward_rs(rows)
+        sorted = rows.sort_by { |r| r[:name] }
+        table = forward_table(sorted)
+        entries = forward_bodies(sorted)
         <<~RS
           //! `rb_*` entries that ARE a Ruby method call.
           //!
