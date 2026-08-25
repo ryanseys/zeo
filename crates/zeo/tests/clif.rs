@@ -83,6 +83,17 @@ fn clif_snapshot_fused_each_guards() {
     ));
 }
 
+/// The nil guards: `x == nil` / `x != nil` branch on the receiver tag
+/// under the NilClass-pristine gate (non-nil receivers keep the cached
+/// dynamic arm), and `x.nil?` folds to a bare tag test when no scope in
+/// the program defines a `nil?` and no blank-slate receiver can exist.
+#[test]
+fn clif_snapshot_nil_guards() {
+    insta::assert_snapshot!(clif_of(
+        "def f(x)\n  p x.nil?\n  p(x == nil)\n  p(x != nil)\nend\nf(nil)\nf(1)\n",
+    ));
+}
+
 /// The typed-Int twin of the guarded `each`: `n.times` on a local analyze
 /// types as an Int. The Int tag test, `iter_inline_ok_for` on
 /// `Integer#times`, the payload load feeding the counted loop, and the

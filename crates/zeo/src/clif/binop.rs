@@ -179,6 +179,18 @@ pub(super) fn binop(fx: &mut Fx, id: NodeId, name: &str, recv: NodeId, arg: Node
 /// Both lanes gate the one decision because the boxed shape tests both tags:
 /// a `Float#==` reopen leaves the Int arm sound, but the site cannot know
 /// which arm it will take.
+/// Whether NilClass's `==`/`!=` are provably untouched for the whole run:
+/// nothing in the program's text defines either on NilClass, and no
+/// runtime-definition machinery could. The same per-program divergence
+/// model as `freeze_is_pristine` -- decided ahead of time, never per call.
+fn nil_eq_pristine(fx: &Fx) -> bool {
+    let c = &fx.an.compiler;
+    c.method_in_chain(zeo_abi::NIL_CLASS, "==").is_none()
+        && c.method_in_chain(zeo_abi::NIL_CLASS, "!=").is_none()
+        && !c.may_be_patched_at_runtime("==")
+        && !c.may_be_patched_at_runtime("!=")
+}
+
 pub(super) fn operator_fast_path(fx: &Fx, name: &str) -> bool {
     BinOp::of(name).is_some()
         && !fx.an.compiler.redefined_int_ops.contains(name)
@@ -428,6 +440,35 @@ fn boxed_binop(
     }
 
     let ta = fx.b.ins().load(types::I8, fl, pa, TAG_OFFSET as i32);
+    // `x == nil` / `x != nil` against a LITERAL nil, with NilClass's own
+    // rows untouched: a receiver whose tag IS Nil answers the constant --
+    // that answer is NilClass#=='s, which pristineness pins. Every other
+    // receiver falls through to the ordinary arms, so a user-defined `==`
+    // still sees its nil argument. The guard also peels NilClass off the
+    // operator's CallSite: a nil-terminated walk (`while n != nil`) was
+    // NilClass|Node polymorphic, which a fill-once site can never serve.
+    if matches!(op, BinOp::Eq | BinOp::Ne)
+        && matches!(b_op.tag(), TagInfo::Known(t) if t == ValueTag::Nil as u8)
+        && nil_eq_pristine(fx)
+    {
+        let fast = fx.b.create_block();
+        let rest = fx.b.create_block();
+        let is_nil =
+            fx.b.ins()
+                .icmp_imm_u(IntCC::Equal, ta, i64::from(ValueTag::Nil as u8));
+        fx.b.ins().brif(is_nil, fast, &[], rest, &[]);
+        fx.b.switch_to_block(fast);
+        let c =
+            fx.b.ins()
+                .iconst(types::I8, i64::from(matches!(op, BinOp::Eq)));
+        if branch {
+            fx.b.ins().jump(join, &[c.into()]);
+        } else {
+            store_bool_tag(fx, c, dst);
+            fx.b.ins().jump(join, &[]);
+        }
+        fx.b.switch_to_block(rest);
+    }
     let tb = fx.b.ins().load(types::I8, fl, pb, TAG_OFFSET as i32);
     let int_tag = i64::from(ValueTag::Int as u8);
     let a_int = fx.b.ins().icmp_imm_u(IntCC::Equal, ta, int_tag);

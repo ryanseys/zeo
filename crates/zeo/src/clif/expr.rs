@@ -9,7 +9,7 @@ use crate::codegen_error::CResult;
 use crate::hir::{ArrayElem, HirNode, NodeId, StrPart};
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::{InstBuilder, MemFlagsData, types};
-use zeo_abi::abi::{TAG_OFFSET, ValueTag};
+use zeo_abi::abi::{PAYLOAD_OFFSET, TAG_OFFSET, ValueTag};
 
 /// `EncodingId(1)` = UTF-8, every plain source literal's encoding.
 pub(super) const ENC_UTF8: i64 = 1;
@@ -1658,6 +1658,12 @@ fn plain_call(
             };
             super::binop::binop(fx, id, &name, recv, *arg)
         }
+        Some(recv) if name == "nil?" && args.is_empty() => {
+            match nil_p_call(fx, id, recv)? {
+                Some(fold) => Ok(fold),
+                None => super::call::dynamic_send(fx, id, recv, &name, &args),
+            }
+        }
         Some(recv) => match super::call::indexed_send(fx, id, recv, &name, &args)? {
             Some(fast) => Ok(fast),
             None => super::call::dynamic_send(fx, id, recv, &name, &args),
@@ -1683,6 +1689,90 @@ fn plain_call(
             Some(_) | None => super::call::implicit_send(fx, id, &name, &args),
         },
     }
+}
+
+/// `x.nil?` folded to a receiver tag test, when the answer is provably
+/// the builtin's: NilClass's `nil?` is untouched by the program's text
+/// and no runtime-definition machinery could touch it. Two tiers. When
+/// NO scope anywhere defines a `nil?` (the `defines_bang` shape), the
+/// tag test IS the answer -- `NilClass#nil?` is true and `Kernel#nil?`
+/// is false, the only reachable bodies. When some class defines its own
+/// (the null-object pattern), only the nil receiver folds and every
+/// other receiver dispatches -- which also keeps NilClass off that
+/// site's cache. `None` = no fold, ordinary send.
+fn nil_p_call(fx: &mut Fx, id: NodeId, recv: NodeId) -> CResult<Option<Operand>> {
+    let compiler = &fx.an.compiler;
+    if compiler.may_be_patched_at_runtime("nil?")
+        || compiler
+            .method_in_chain(zeo_abi::NIL_CLASS, "nil?")
+            .is_some()
+    {
+        return Ok(None);
+    }
+    // A blank-slate (BasicObject-rooted) receiver must raise
+    // NoMethodError -- `nil?` is Kernel's -- so a static false is only
+    // sound while no such receiver can exist.
+    let total = !compiler.blank_slate_possible()
+        && !compiler.scopes.iter().any(|s| s.name == "nil?");
+    let bypass = bypasses_visibility(fx, Some(recv));
+    let op = lower_expr(fx, recv)?;
+    if let TagInfo::Known(t) = op.tag() {
+        let is_nil = t == ValueTag::Nil as u8;
+        // A known nil answers under the NilClass gate alone; a known
+        // OTHER tag answers false only when no scope anywhere defines a
+        // `nil?` (a reopened `Integer#nil?` must still dispatch).
+        if is_nil || total {
+            // The compile-time answer; the receiver was still evaluated.
+            ownership::discard(fx, op);
+            let bit = fx.b.ins().iconst(types::I8, i64::from(is_nil));
+            return Ok(Some(Operand::Bool(bit)));
+        }
+    }
+    let pa = ownership::borrow_ptr(fx, &op);
+    if op.owned() {
+        ownership::pool_owned(fx, pa, op.tag());
+    }
+    let fl = MemFlagsData::trusted();
+    let tag = fx.b.ins().load(types::I8, fl, pa, TAG_OFFSET as i32);
+    let is_nil =
+        fx.b.ins()
+            .icmp_imm_u(IntCC::Equal, tag, i64::from(ValueTag::Nil as u8));
+    if total {
+        return Ok(Some(Operand::Bool(is_nil)));
+    }
+    let fast = fx.b.create_block();
+    let slow = fx.b.create_block();
+    let join = fx.b.create_block();
+    let ss = fx.temp_slot();
+    let dst = fx.slot_addr(ss, 0);
+    fx.b.ins().brif(is_nil, fast, &[], slow, &[]);
+
+    fx.b.switch_to_block(fast);
+    let btag =
+        fx.b.ins()
+            .iconst(types::I8, i64::from(ValueTag::Bool as u8));
+    fx.b.ins().store(fl, btag, dst, TAG_OFFSET as i32);
+    let one = fx.b.ins().iconst(types::I8, 1);
+    fx.b.ins().store(fl, one, dst, PAYLOAD_OFFSET as i32);
+    fx.b.ins().jump(join, &[]);
+
+    fx.b.switch_to_block(slow);
+    let borrowed = Operand::Ptr {
+        addr: pa,
+        owned: false,
+        tag: TagInfo::Unknown,
+    };
+    let r = super::call::dynamic_send_value(fx, id, borrowed, "nil?", &[], bypass)?;
+    ownership::write_move_into(fx, &r, dst);
+    fx.b.ins().jump(join, &[]);
+
+    fx.b.switch_to_block(join);
+    fx.owned_created += 1;
+    Ok(Some(Operand::Slot {
+        ss,
+        owned: true,
+        tag: TagInfo::Unknown,
+    }))
 }
 
 /// A keyword-carrying send: the all-required direct-fill shape first,

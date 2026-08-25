@@ -439,6 +439,9 @@ pub struct Compiler {
     /// Memo for [`Hir::uses_ractor`] -- consulted by every collection
     /// fast-path and inlined-accessor emission site.
     uses_ractor: std::cell::OnceCell<bool>,
+    /// Memo for [`Compiler::blank_slate_possible`] -- a whole-arena scan
+    /// every universal-row fold would otherwise repeat.
+    blank_slate_possible: std::cell::OnceCell<bool>,
 }
 
 /// See [`Compiler::inline_iter_sites`].
@@ -607,6 +610,7 @@ impl Compiler {
             traces_calls: std::cell::OnceCell::new(),
             defines_bang: std::cell::OnceCell::new(),
             uses_ractor: std::cell::OnceCell::new(),
+            blank_slate_possible: std::cell::OnceCell::new(),
         };
         // The CRuby-exact hierarchy is DECLARED in the ABI table:
         // superclass edges (`Integer < Numeric`, `Class < Module`,
@@ -860,6 +864,30 @@ impl Compiler {
         *self
             .defines_bang
             .get_or_init(|| self.scopes.iter().any(|s| s.name == "!"))
+    }
+
+    /// Whether ANY receiver in this program could be a Kernel-less
+    /// (BasicObject-rooted) instance: a registered blank-slate class, or
+    /// the text mentioning `BasicObject` at all -- which is what
+    /// `BasicObject.new` and a runtime `Class.new(BasicObject)` both
+    /// need. A computed constant read counts as a mention (it could name
+    /// anything). Kernel's universal rows (`nil?`, ...) may fold to a
+    /// static answer only while this is false: a blank slate must raise
+    /// NoMethodError instead. `const_get` with a computed STRING stays
+    /// the documented reachability hatch.
+    pub fn blank_slate_possible(&self) -> bool {
+        *self.blank_slate_possible.get_or_init(|| {
+            (0..self.classes.len() as u32)
+                .map(ClassId)
+                .any(|cid| cid != BASIC_OBJECT_CLASS && self.is_blank_slate(cid))
+                || self.hir.iter().any(|n| match n {
+                    crate::hir::HirNode::ClassRef(name) => name == "BasicObject",
+                    crate::hir::HirNode::QualifiedConstRead(_, name)
+                    | crate::hir::HirNode::ConstReadOrNil(_, name) => name == "BasicObject",
+                    crate::hir::HirNode::DynConstRead { .. } => true,
+                    _ => false,
+                })
+        })
     }
 
     /// A class registered during a unit walk whose unit has not been
