@@ -21,15 +21,18 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use parking_lot::Mutex;
 use zeo_abi::{
     ClassId, ERRNO_ALIASES, ERRNO_CLASSES, ERRNO_MODULE, EXCEPTION_CLASS, EXCEPTION_CLASSES,
-    FROZEN_ERROR_CLASS, INTERRUPT_CLASS, KEY_ERROR_CLASS, LOAD_ERROR_CLASS, LOCAL_JUMP_ERROR_CLASS,
-    NAME_ERROR_CLASS, NO_METHOD_ERROR_CLASS, SIGNAL_EXCEPTION_CLASS, STOP_ITERATION_CLASS,
-    SYSTEM_CALL_ERROR_CLASS, SYSTEM_EXIT_CLASS, UNCAUGHT_THROW_ERROR_CLASS, declared_ancestors,
-    errno_class,
+    FROZEN_ERROR_CLASS, INTERRUPT_CLASS, INVALID_BYTE_SEQUENCE_ERROR_CLASS, KEY_ERROR_CLASS,
+    LOAD_ERROR_CLASS, LOCAL_JUMP_ERROR_CLASS, NAME_ERROR_CLASS,
+    NO_MATCHING_PATTERN_KEY_ERROR_CLASS, NO_METHOD_ERROR_CLASS, RACTOR_REMOTE_ERROR_CLASS,
+    SIGNAL_EXCEPTION_CLASS, STOP_ITERATION_CLASS, SYNTAX_ERROR_CLASS, SYSTEM_CALL_ERROR_CLASS,
+    SYSTEM_EXIT_CLASS, UNCAUGHT_THROW_ERROR_CLASS, UNDEFINED_CONVERSION_ERROR_CLASS,
+    declared_ancestors, errno_class,
 };
 
 use crate::builtins::{arg_error, type_error};
 use crate::dispatch::{
-    ClassRegistry, ConstructorFn, RObj, RubyObject, class_name, downcast_robj, run_initialize, send,
+    ClassRegistry, ConstructorFn, MethodFn, RObj, RubyObject, ValueMethodFn, class_name,
+    downcast_robj, run_initialize, send,
 };
 use crate::method_meta::ParamKind;
 use crate::signal::Signal;
@@ -929,162 +932,6 @@ fn exc_backtrace_locations(
         });
     let locations = crate::builtins::backtrace_location::thread_callees(&rows, first);
     Ok(RubyValue::Array(array_new(locations)))
-}
-
-/// Which exception class CRuby files each native on, AND the signature each
-/// one reports -- see the call site.
-/// Every other id carries the same rows for dispatch and lists none of them,
-/// exactly as a CRuby subclass with an empty body does.
-///
-/// The kinds ride in the same rows as the ownership marks so the two cannot
-/// drift. They are needed because these rows are hand-registered and reach no
-/// arity table, and zeo's two catch-alls for an unknown row disagree: `#arity`
-/// answers `-1` while `#parameters` answers `[]`. Every reader here is
-/// arity 0, so both were wrong. Parameters are unnamed, the way CRuby reports
-/// every C method's.
-fn mark_owned_names(registry: &mut ClassRegistry, id: ClassId) {
-    use crate::method_meta::ParamKind::{Req, Rest};
-    /// One owning class and the names it declares, each with its kinds. The id
-    /// is a THUNK because a `ClassId` const is not usable in a const
-    /// initializer here.
-    type Owned = (
-        fn() -> ClassId,
-        &'static [(&'static str, &'static [crate::method_meta::ParamKind])],
-    );
-    const BY_OWNER: &[Owned] = &[
-        (
-            || EXCEPTION_CLASS,
-            &[
-                ("message", &[]),
-                ("to_s", &[]),
-                ("==", &[Req]),
-                ("exception", &[Rest]),
-                ("backtrace", &[]),
-                ("backtrace_locations", &[]),
-                ("set_backtrace", &[Req]),
-                ("cause", &[]),
-                ("full_message", &[Rest]),
-                ("detailed_message", &[Rest]),
-                ("inspect", &[]),
-                ("respond_to?", &[Rest]),
-            ],
-        ),
-        (
-            || NAME_ERROR_CLASS,
-            &[("name", &[]), ("receiver", &[]), ("local_variables", &[])],
-        ),
-        (
-            || NO_METHOD_ERROR_CLASS,
-            &[("args", &[]), ("private_call?", &[])],
-        ),
-        (|| KEY_ERROR_CLASS, &[("key", &[]), ("receiver", &[])]),
-        (|| FROZEN_ERROR_CLASS, &[("receiver", &[])]),
-        (|| zeo_abi::RACTOR_REMOTE_ERROR_CLASS, &[("ractor", &[])]),
-        (|| LOAD_ERROR_CLASS, &[("path", &[])]),
-        (|| zeo_abi::SYNTAX_ERROR_CLASS, &[("path", &[])]),
-        (|| SYSTEM_CALL_ERROR_CLASS, &[("errno", &[])]),
-        (
-            || LOCAL_JUMP_ERROR_CLASS,
-            &[("reason", &[]), ("exit_value", &[])],
-        ),
-        (|| SYSTEM_EXIT_CLASS, &[("status", &[]), ("success?", &[])]),
-        (
-            || UNCAUGHT_THROW_ERROR_CLASS,
-            &[("to_s", &[]), ("tag", &[]), ("value", &[])],
-        ),
-        (|| SIGNAL_EXCEPTION_CLASS, &[("signm", &[]), ("signo", &[])]),
-        (|| STOP_ITERATION_CLASS, &[("result", &[])]),
-        (
-            || zeo_abi::NO_MATCHING_PATTERN_KEY_ERROR_CLASS,
-            &[("key", &[]), ("matchee", &[])],
-        ),
-        (
-            || zeo_abi::UNDEFINED_CONVERSION_ERROR_CLASS,
-            &[
-                ("source_encoding", &[]),
-                ("source_encoding_name", &[]),
-                ("destination_encoding", &[]),
-                ("destination_encoding_name", &[]),
-                ("error_char", &[]),
-            ],
-        ),
-        (
-            || zeo_abi::INVALID_BYTE_SEQUENCE_ERROR_CLASS,
-            &[
-                ("source_encoding", &[]),
-                ("source_encoding_name", &[]),
-                ("destination_encoding", &[]),
-                ("destination_encoding_name", &[]),
-                ("error_bytes", &[]),
-                ("readagain_bytes", &[]),
-                ("incomplete_input?", &[]),
-            ],
-        ),
-    ];
-    for (owner, names) in BY_OWNER {
-        if owner() != id {
-            continue;
-        }
-        for (name, kinds) in *names {
-            registry.mark_own(id, Symbol::intern(name));
-            instance_method_signature(id, name, kinds);
-        }
-    }
-    // `Exception`'s three PRIVATE rows. The mark goes on every id -- flat
-    // dispatch put a row on each, and without it
-    // `RuntimeError.new.respond_to?(:initialize)` answers true. Only
-    // `Exception` OWNS `method_missing`/`respond_to_missing?`, so only it
-    // lists those in `private_instance_methods(false)`.
-    for name in ["initialize", "method_missing", "respond_to_missing?"] {
-        let sym = Symbol::intern(name);
-        registry.mark_private(id, sym);
-        if id == EXCEPTION_CLASS && name != "initialize" {
-            registry.mark_own(id, sym);
-        }
-    }
-    // `initialize` is different: every class below takes ARGUMENTS `Exception`
-    // does not, so CRuby declares one on each and reflection has to say so.
-    // (`Interrupt` pins SIGINT, `KeyError` takes `key:`/`receiver:`, and so
-    // on -- each already has its own body registered further down.)
-    const OWN_INITIALIZE: &[fn() -> ClassId] = &[
-        || EXCEPTION_CLASS,
-        || FROZEN_ERROR_CLASS,
-        || zeo_abi::INTERRUPT_CLASS,
-        || KEY_ERROR_CLASS,
-        || NAME_ERROR_CLASS,
-        || zeo_abi::NO_MATCHING_PATTERN_KEY_ERROR_CLASS,
-        || NO_METHOD_ERROR_CLASS,
-        || SIGNAL_EXCEPTION_CLASS,
-        || zeo_abi::SYNTAX_ERROR_CLASS,
-        || SYSTEM_CALL_ERROR_CLASS,
-        || SYSTEM_EXIT_CLASS,
-        || UNCAUGHT_THROW_ERROR_CLASS,
-    ];
-    if OWN_INITIALIZE.iter().any(|owner| owner() == id) {
-        registry.mark_own(id, Symbol::intern("initialize"));
-        // Each takes its own arguments and CRuby declares every one
-        // `argc = -1`, so all of them report `[[:rest]]` and -1.
-        instance_method_signature(id, "initialize", &[Rest]);
-    }
-}
-
-/// The `#arity`/`#parameters` shape of a hand-registered exception CLASS
-/// method. These bypass the `ruby_class!` DSL, so they reach no arity table --
-/// and once the owner mark below is in place, the accidental answer they used
-/// to get from `Module`'s row is gone too. Parameters are unnamed, the way
-/// CRuby reports every C method's.
-fn class_method_signature(id: ClassId, name: &str, kinds: &[crate::method_meta::ParamKind]) {
-    crate::method_meta::MethodMeta::singleton(id.0, name)
-        .with_params(kinds.iter().map(|&k| (k, None)).collect())
-        .register();
-}
-
-/// The same for an INSTANCE row. Called for every name in `BY_OWNER`, which is
-/// where the kinds live.
-fn instance_method_signature(id: ClassId, name: &str, kinds: &[crate::method_meta::ParamKind]) {
-    crate::method_meta::MethodMeta::instance(id.0, name)
-        .with_params(kinds.iter().map(|&k| (k, None)).collect())
-        .register();
 }
 
 /// `NameError#local_variables` -- CRuby fills this with the caller's locals at
@@ -2038,41 +1885,358 @@ pub fn register_exceptions(registry: &mut ClassRegistry) {
     debug_assert_eq!(EXCEPTION_CLASSES[0].id, EXCEPTION_CLASS);
 }
 
-/// Install ONE exception class's registry entry plus the native `Exception`
-/// method set on its own id: the shared `RubyException` constructor and the six
-/// `Exception` methods (`initialize`/`message`/`to_s`/`backtrace`/`full_message`/
-/// `inspect`), plus StopIteration's `result`/`__set_result` when the class
-/// descends from it. Shared by `register_exceptions` (the built-in hierarchy,
-/// from `with_core`) and, for D3, by generated `main()` for each USER
-/// `class MyErr < StandardError` -- unifying user exception subclasses onto the
-/// same native `RubyException` rather than a divergent generated struct. The
-/// subclass's own `def`s then `define_method` OVER these defaults (an override)
-/// or beside them (an addition). `ancestors` is the full linearized chain, so
-/// `carries_result` is decided the same way for a user `class Done < StopIteration`
-/// as for the built-in tree.
+/// One dispatch row of the built-in exception method set -- the declarative
+/// form [`register_exception_subclass`] walks per class id. One shared table
+/// of shared fn pointers, NOT a per-class expansion: the point of this file
+/// (see the module docs) is that every program pays for ONE compiled
+/// implementation of these methods, however many classes carry them.
+///
+/// Each row states in one place what the old imperative install spread over
+/// the install body and two side tables: the Ruby name, the Rust body, where
+/// the row installs (`gate`), which classes CRuby files it on for reflection
+/// (`owners`), its declared signature (`params`), and its visibility.
+struct ExcRow {
+    name: &'static str,
+    body: ExcBody,
+    /// Where the row installs, decided against the class's full linearized
+    /// ancestry -- so a user `class E < NameError` picks up the NameError set
+    /// exactly as the built-in tree does.
+    gate: Gate,
+    /// The classes CRuby declares this row on. Installation is flat (every
+    /// admitted id gets the fn pointer -- what makes `super` and the ancestor
+    /// walk work), but reflection has to answer the class CRuby OWNS each row
+    /// on, or `MyError.instance_methods(false)` would report Exception's
+    /// twelve. `mark_own` and the declared signature go only to these ids;
+    /// every other id carries the row for dispatch and lists nothing, exactly
+    /// as a CRuby subclass with an empty body does.
+    owners: &'static [ClassId],
+    /// The `#parameters` kinds each owner registers, unnamed the way CRuby
+    /// reports every C method's. Needed because these rows reach no arity
+    /// table, and zeo's two catch-alls for an unknown row disagree: `#arity`
+    /// answers `-1` while `#parameters` answers `[]` -- most rows here are
+    /// arity 0, so both were wrong. `None` = declare nothing: the row's body
+    /// routes to an inherited implementation (`inherited_row!`), whose own
+    /// table already answers.
+    params: Option<&'static [ParamKind]>,
+    private: bool,
+}
+
+/// The two dispatch channels a row can install into. An instance row goes
+/// through `define_method_own`, which writes BOTH the flat `methods` entry and
+/// the id's own-`super`-target (`own_impls`) -- the half a `super` walk needs.
+enum ExcBody {
+    Instance(MethodFn),
+    ClassMethod(ValueMethodFn),
+}
+
+/// Which ids a row installs on.
+enum Gate {
+    /// Every exception id.
+    Always,
+    /// Ids whose linearized ancestry reaches ANY of these classes -- which
+    /// includes each class itself and every user subclass of it.
+    On(&'static [ClassId]),
+    /// Exactly this id, subclasses excluded.
+    Only(ClassId),
+}
+
+impl Gate {
+    fn admits(&self, id: ClassId, ancestors: &[ClassId]) -> bool {
+        match self {
+            Gate::Always => true,
+            Gate::On(classes) => classes.iter().any(|c| ancestors.contains(c)),
+            Gate::Only(class) => *class == id,
+        }
+    }
+}
+
+impl ExcRow {
+    const fn inst(name: &'static str, f: MethodFn) -> ExcRow {
+        ExcRow {
+            name,
+            body: ExcBody::Instance(f),
+            gate: Gate::Always,
+            owners: &[],
+            params: None,
+            private: false,
+        }
+    }
+
+    const fn class(name: &'static str, f: ValueMethodFn) -> ExcRow {
+        ExcRow {
+            name,
+            body: ExcBody::ClassMethod(f),
+            gate: Gate::Always,
+            owners: &[],
+            params: None,
+            private: false,
+        }
+    }
+
+    const fn on(mut self, classes: &'static [ClassId]) -> ExcRow {
+        self.gate = Gate::On(classes);
+        self
+    }
+
+    const fn only(mut self, class: ClassId) -> ExcRow {
+        self.gate = Gate::Only(class);
+        self
+    }
+
+    /// Declare the row's owners and the signature each registers.
+    const fn owned(mut self, owners: &'static [ClassId], kinds: &'static [ParamKind]) -> ExcRow {
+        self.owners = owners;
+        self.params = Some(kinds);
+        self
+    }
+
+    /// Owners that LIST the row but declare no signature of their own -- the
+    /// ancestor's table keeps answering `#arity`/`#parameters`.
+    const fn listed(mut self, owners: &'static [ClassId]) -> ExcRow {
+        self.owners = owners;
+        self
+    }
+
+    const fn private(mut self) -> ExcRow {
+        self.private = true;
+        self
+    }
+}
+
+/// Signature shorthands for the table below.
+const NO_PARAMS: &[ParamKind] = &[];
+const ONE_REQ: &[ParamKind] = &[ParamKind::Req];
+const A_REST: &[ParamKind] = &[ParamKind::Rest];
+
+/// The two transcode errors share their four encoding accessors, and CRuby
+/// declares the set on EACH of them.
+const TRANSCODE_ERRORS: &[ClassId] = &[
+    UNDEFINED_CONVERSION_ERROR_CLASS,
+    INVALID_BYTE_SEQUENCE_ERROR_CLASS,
+];
+
+/// The whole built-in exception method set. Order is load-bearing where two
+/// rows share a name: on an id both gates admit, a LATER row replaces an
+/// earlier one (`initialize` runs base -> NameError -> ... -> Interrupt), the
+/// same override order the imperative install spelled out.
+const EXC_ROWS: &[ExcRow] = &[
+    // The shared `Exception` set, on every id. Three rows are private; the
+    // mark goes on every id -- flat dispatch put a row on each, and without
+    // it `RuntimeError.new.respond_to?(:initialize)` answers true. Only
+    // `Exception` lists `method_missing`/`respond_to_missing?` in
+    // `private_instance_methods(false)`. `eql?` is installed but owned
+    // NOWHERE: CRuby's `Exception` does not override it, and the row exists
+    // only because a bare `eql?` would otherwise fall back to `==`.
+    ExcRow::inst("initialize", exc_initialize)
+        .private()
+        // Every `initialize` owner reports `[[:rest]]`/-1: CRuby declares
+        // each one `argc = -1`. `SyntaxError` declares an `initialize` of its
+        // own in CRuby but takes no extra arguments, so the base body serves
+        // it -- the ownership mark is still its own.
+        .owned(&[EXCEPTION_CLASS, SYNTAX_ERROR_CLASS], A_REST),
+    ExcRow::inst("message", exc_message).owned(&[EXCEPTION_CLASS], NO_PARAMS),
+    ExcRow::inst("to_s", exc_to_s).owned(&[EXCEPTION_CLASS], NO_PARAMS),
+    ExcRow::inst("==", exc_equal).owned(&[EXCEPTION_CLASS], ONE_REQ),
+    ExcRow::inst("eql?", exc_eql),
+    ExcRow::inst("exception", exc_exception).owned(&[EXCEPTION_CLASS], A_REST),
+    ExcRow::inst("backtrace", exc_backtrace).owned(&[EXCEPTION_CLASS], NO_PARAMS),
+    ExcRow::inst("backtrace_locations", exc_backtrace_locations)
+        .owned(&[EXCEPTION_CLASS], NO_PARAMS),
+    ExcRow::inst("set_backtrace", exc_set_backtrace).owned(&[EXCEPTION_CLASS], ONE_REQ),
+    ExcRow::inst("cause", exc_cause).owned(&[EXCEPTION_CLASS], NO_PARAMS),
+    ExcRow::inst("full_message", exc_full_message).owned(&[EXCEPTION_CLASS], A_REST),
+    ExcRow::inst("detailed_message", exc_detailed_message).owned(&[EXCEPTION_CLASS], A_REST),
+    ExcRow::inst("inspect", exc_inspect).owned(&[EXCEPTION_CLASS], NO_PARAMS),
+    ExcRow::inst("respond_to?", exc_respond_to).owned(&[EXCEPTION_CLASS], A_REST),
+    ExcRow::inst("method_missing", exc_method_missing)
+        .private()
+        .listed(&[EXCEPTION_CLASS]),
+    ExcRow::inst("respond_to_missing?", exc_respond_to_missing)
+        .private()
+        .listed(&[EXCEPTION_CLASS]),
+    // Class methods, on every id (class-method lookup does not walk
+    // ancestors -- see `dispatch`'s Class-value arm); listed on `Exception`
+    // alone, the same split `owners` makes on the instance side.
+    ExcRow::class("exception", exc_class_exception).owned(&[EXCEPTION_CLASS], A_REST),
+    ExcRow::class("to_tty?", exc_class_to_tty).owned(&[EXCEPTION_CLASS], NO_PARAMS),
+    // Typed introspection accessors, installed by ancestry so a user subclass
+    // of the relevant error inherits them the same way the built-in tree
+    // does. `NoMethodError < NameError`, so it picks up `#name`/`#receiver`
+    // here (CRuby still declares `initialize` on it, hence the second owner)
+    // and adds `#args`/`#private_call?` below.
+    ExcRow::inst("initialize", name_error_initialize)
+        .private()
+        .on(&[NAME_ERROR_CLASS])
+        .owned(&[NAME_ERROR_CLASS, NO_METHOD_ERROR_CLASS], A_REST),
+    ExcRow::inst("name", exc_name)
+        .on(&[NAME_ERROR_CLASS])
+        .owned(&[NAME_ERROR_CLASS], NO_PARAMS),
+    ExcRow::inst("receiver", exc_receiver)
+        .on(&[NAME_ERROR_CLASS])
+        .owned(&[NAME_ERROR_CLASS], NO_PARAMS),
+    ExcRow::inst("local_variables", exc_local_variables)
+        .on(&[NAME_ERROR_CLASS])
+        .owned(&[NAME_ERROR_CLASS], NO_PARAMS),
+    ExcRow::inst("args", exc_args)
+        .on(&[NO_METHOD_ERROR_CLASS])
+        .owned(&[NO_METHOD_ERROR_CLASS], NO_PARAMS),
+    ExcRow::inst("private_call?", exc_private_call)
+        .on(&[NO_METHOD_ERROR_CLASS])
+        .owned(&[NO_METHOD_ERROR_CLASS], NO_PARAMS),
+    ExcRow::inst("initialize", key_error_initialize)
+        .private()
+        .on(&[KEY_ERROR_CLASS])
+        .owned(&[KEY_ERROR_CLASS], A_REST),
+    ExcRow::inst("key", exc_key)
+        .on(&[KEY_ERROR_CLASS])
+        .owned(&[KEY_ERROR_CLASS], NO_PARAMS),
+    ExcRow::inst("receiver", exc_receiver)
+        .on(&[KEY_ERROR_CLASS])
+        .owned(&[KEY_ERROR_CLASS], NO_PARAMS),
+    ExcRow::inst("initialize", frozen_error_initialize)
+        .private()
+        .on(&[FROZEN_ERROR_CLASS])
+        .owned(&[FROZEN_ERROR_CLASS], A_REST),
+    ExcRow::inst("receiver", exc_receiver)
+        .on(&[FROZEN_ERROR_CLASS])
+        .owned(&[FROZEN_ERROR_CLASS], NO_PARAMS),
+    // `Ractor::RemoteError#ractor` -- the ractor whose failure was relayed.
+    // zeo runs no ractors, so this exception is never raised here and the
+    // slot is never filled; the reader answers nil, exactly as CRuby's does
+    // for a hand-constructed one.
+    ExcRow::inst("ractor", exc_ractor)
+        .only(RACTOR_REMOTE_ERROR_CLASS)
+        .owned(&[RACTOR_REMOTE_ERROR_CLASS], NO_PARAMS),
+    ExcRow::inst("path", exc_path)
+        .on(&[LOAD_ERROR_CLASS])
+        .owned(&[LOAD_ERROR_CLASS], NO_PARAMS),
+    // `SyntaxError#path` reads the same slot `LoadError#path` does -- the
+    // file whose parse failed. The two are unrelated in CRuby's tree and
+    // share only the accessor's shape.
+    ExcRow::inst("path", exc_path)
+        .only(SYNTAX_ERROR_CLASS)
+        .owned(&[SYNTAX_ERROR_CLASS], NO_PARAMS),
+    // The conversion errors' accessors read the encoding pair and the
+    // offending input `transcode_signal` attached.
+    ExcRow::inst("source_encoding", exc_source_encoding)
+        .on(TRANSCODE_ERRORS)
+        .owned(TRANSCODE_ERRORS, NO_PARAMS),
+    ExcRow::inst("source_encoding_name", exc_source_encoding_name)
+        .on(TRANSCODE_ERRORS)
+        .owned(TRANSCODE_ERRORS, NO_PARAMS),
+    ExcRow::inst("destination_encoding", exc_destination_encoding)
+        .on(TRANSCODE_ERRORS)
+        .owned(TRANSCODE_ERRORS, NO_PARAMS),
+    ExcRow::inst("destination_encoding_name", exc_destination_encoding_name)
+        .on(TRANSCODE_ERRORS)
+        .owned(TRANSCODE_ERRORS, NO_PARAMS),
+    ExcRow::inst("error_char", exc_error_char)
+        .on(&[UNDEFINED_CONVERSION_ERROR_CLASS])
+        .owned(&[UNDEFINED_CONVERSION_ERROR_CLASS], NO_PARAMS),
+    ExcRow::inst("error_bytes", exc_error_bytes)
+        .on(&[INVALID_BYTE_SEQUENCE_ERROR_CLASS])
+        .owned(&[INVALID_BYTE_SEQUENCE_ERROR_CLASS], NO_PARAMS),
+    ExcRow::inst("readagain_bytes", exc_readagain_bytes)
+        .on(&[INVALID_BYTE_SEQUENCE_ERROR_CLASS])
+        .owned(&[INVALID_BYTE_SEQUENCE_ERROR_CLASS], NO_PARAMS),
+    ExcRow::inst("incomplete_input?", exc_incomplete_input)
+        .on(&[INVALID_BYTE_SEQUENCE_ERROR_CLASS])
+        .owned(&[INVALID_BYTE_SEQUENCE_ERROR_CLASS], NO_PARAMS),
+    ExcRow::inst("initialize", pattern_key_error_initialize)
+        .private()
+        .on(&[NO_MATCHING_PATTERN_KEY_ERROR_CLASS])
+        .owned(&[NO_MATCHING_PATTERN_KEY_ERROR_CLASS], A_REST),
+    ExcRow::inst("key", exc_key)
+        .on(&[NO_MATCHING_PATTERN_KEY_ERROR_CLASS])
+        .owned(&[NO_MATCHING_PATTERN_KEY_ERROR_CLASS], NO_PARAMS),
+    ExcRow::inst("matchee", exc_matchee)
+        .on(&[NO_MATCHING_PATTERN_KEY_ERROR_CLASS])
+        .owned(&[NO_MATCHING_PATTERN_KEY_ERROR_CLASS], NO_PARAMS),
+    ExcRow::inst("initialize", syscall_error_initialize)
+        .private()
+        .on(&[SYSTEM_CALL_ERROR_CLASS])
+        .owned(&[SYSTEM_CALL_ERROR_CLASS], A_REST),
+    ExcRow::inst("errno", exc_errno)
+        .on(&[SYSTEM_CALL_ERROR_CLASS])
+        .owned(&[SYSTEM_CALL_ERROR_CLASS], NO_PARAMS),
+    // On every descendant, not just the owner: class-method lookup does not
+    // walk ancestors, so `Errno::ENOENT === x` needs its own row.
+    ExcRow::class("===", syscall_error_eqq)
+        .on(&[SYSTEM_CALL_ERROR_CLASS])
+        .owned(&[SYSTEM_CALL_ERROR_CLASS], ONE_REQ),
+    ExcRow::inst("reason", exc_reason)
+        .on(&[LOCAL_JUMP_ERROR_CLASS])
+        .owned(&[LOCAL_JUMP_ERROR_CLASS], NO_PARAMS),
+    ExcRow::inst("exit_value", exc_exit_value)
+        .on(&[LOCAL_JUMP_ERROR_CLASS])
+        .owned(&[LOCAL_JUMP_ERROR_CLASS], NO_PARAMS),
+    ExcRow::inst("initialize", system_exit_initialize)
+        .private()
+        .on(&[SYSTEM_EXIT_CLASS])
+        .owned(&[SYSTEM_EXIT_CLASS], A_REST),
+    ExcRow::inst("status", exc_status)
+        .on(&[SYSTEM_EXIT_CLASS])
+        .owned(&[SYSTEM_EXIT_CLASS], NO_PARAMS),
+    ExcRow::inst("success?", exc_success)
+        .on(&[SYSTEM_EXIT_CLASS])
+        .owned(&[SYSTEM_EXIT_CLASS], NO_PARAMS),
+    ExcRow::inst("initialize", uncaught_throw_initialize)
+        .private()
+        .on(&[UNCAUGHT_THROW_ERROR_CLASS])
+        .owned(&[UNCAUGHT_THROW_ERROR_CLASS], A_REST),
+    ExcRow::inst("to_s", uncaught_throw_to_s)
+        .on(&[UNCAUGHT_THROW_ERROR_CLASS])
+        .owned(&[UNCAUGHT_THROW_ERROR_CLASS], NO_PARAMS),
+    ExcRow::inst("tag", exc_tag)
+        .on(&[UNCAUGHT_THROW_ERROR_CLASS])
+        .owned(&[UNCAUGHT_THROW_ERROR_CLASS], NO_PARAMS),
+    ExcRow::inst("value", exc_value)
+        .on(&[UNCAUGHT_THROW_ERROR_CLASS])
+        .owned(&[UNCAUGHT_THROW_ERROR_CLASS], NO_PARAMS),
+    // `Interrupt` pins SIGINT and defaults its message to the class name, so
+    // its `initialize` row REPLACES the `SignalException` one above it; both
+    // expose `#signo`/`#signm`.
+    ExcRow::inst("initialize", signal_exception_initialize)
+        .private()
+        .on(&[SIGNAL_EXCEPTION_CLASS])
+        .owned(&[SIGNAL_EXCEPTION_CLASS], A_REST),
+    ExcRow::inst("initialize", interrupt_initialize)
+        .private()
+        .on(&[INTERRUPT_CLASS])
+        .owned(&[INTERRUPT_CLASS], A_REST),
+    ExcRow::inst("signo", exc_signo)
+        .on(&[SIGNAL_EXCEPTION_CLASS])
+        .owned(&[SIGNAL_EXCEPTION_CLASS], NO_PARAMS),
+    ExcRow::inst("signm", exc_signm)
+        .on(&[SIGNAL_EXCEPTION_CLASS])
+        .owned(&[SIGNAL_EXCEPTION_CLASS], NO_PARAMS),
+    // StopIteration's hidden result channel; only `result` is a CRuby row.
+    ExcRow::inst("__set_result", stop_set_result).on(&[STOP_ITERATION_CLASS]),
+    ExcRow::inst("result", stop_result)
+        .on(&[STOP_ITERATION_CLASS])
+        .owned(&[STOP_ITERATION_CLASS], NO_PARAMS),
+];
+
+/// Install ONE exception class's registry entry plus every [`EXC_ROWS`] row
+/// its ancestry admits: the shared `RubyException` constructor, the shared
+/// `Exception` method set, and the typed-accessor sets its gates select.
+/// Shared by `register_exceptions` (the built-in hierarchy, from `with_core`)
+/// and by generated `main()` for each USER `class MyErr < StandardError`
+/// (`capi::registry`) -- unifying user exception subclasses onto the same
+/// native `RubyException` rather than a divergent generated struct. The
+/// subclass's own `def`s then `define_method` OVER these defaults (an
+/// override) or beside them (an addition). `ancestors` is the full linearized
+/// chain, so every gate decides the same way for a user
+/// `class Done < StopIteration` as for the built-in tree.
 pub fn register_exception_subclass(
     registry: &mut ClassRegistry,
     id: ClassId,
     name: &str,
     ancestors: Vec<ClassId>,
 ) {
-    let carries_result = ancestors.contains(&STOP_ITERATION_CLASS);
-    // Ancestry predicates for the typed-accessor sets, decided before `ancestors`
-    // is moved into `register` (same up-front shape as `carries_result`).
-    let is_name_error = ancestors.contains(&NAME_ERROR_CLASS);
-    let is_no_method_error = ancestors.contains(&NO_METHOD_ERROR_CLASS);
-    let is_key_error = ancestors.contains(&KEY_ERROR_CLASS);
-    let is_uncaught_throw = ancestors.contains(&UNCAUGHT_THROW_ERROR_CLASS);
-    let is_signal_exception = ancestors.contains(&SIGNAL_EXCEPTION_CLASS);
-    let is_interrupt = ancestors.contains(&INTERRUPT_CLASS);
-    let is_local_jump = ancestors.contains(&LOCAL_JUMP_ERROR_CLASS);
-    let is_frozen_error = ancestors.contains(&FROZEN_ERROR_CLASS);
-    let is_load_error = ancestors.contains(&LOAD_ERROR_CLASS);
-    let is_system_exit = ancestors.contains(&SYSTEM_EXIT_CLASS);
-    let is_system_call_error = ancestors.contains(&SYSTEM_CALL_ERROR_CLASS);
-    let is_undefined_conversion = ancestors.contains(&zeo_abi::UNDEFINED_CONVERSION_ERROR_CLASS);
-    let is_pattern_key_error = ancestors.contains(&zeo_abi::NO_MATCHING_PATTERN_KEY_ERROR_CLASS);
-    let is_invalid_byte_sequence = ancestors.contains(&zeo_abi::INVALID_BYTE_SEQUENCE_ERROR_CLASS);
+    // The gates read the chain AFTER `register` consumes it; a chain is a
+    // handful of ids, so the copy is install-time noise.
+    let ancestry = ancestors.clone();
     registry.register(
         id,
         name,
@@ -2080,179 +2244,35 @@ pub fn register_exception_subclass(
         ancestors,
         Some(exception_construct as ConstructorFn),
     );
-    // Flat dispatch AND own-`super`-target rows in one: every class needs
-    // the full materialized method set on its own id (the same shape the
-    // compiler emits per generated class), and the natives double as the
-    // id's own `super` targets (see `ClassEntry::own_impls`).
-    registry.define_method_own(id, Symbol::intern("initialize"), exc_initialize);
-    registry.define_method_own(id, Symbol::intern("message"), exc_message);
-    registry.define_method_own(id, Symbol::intern("to_s"), exc_to_s);
-    registry.define_method_own(id, Symbol::intern("=="), exc_equal);
-    registry.define_method_own(id, Symbol::intern("eql?"), exc_eql);
-    registry.define_method_own(id, Symbol::intern("exception"), exc_exception);
-    registry.define_method_own(id, Symbol::intern("backtrace"), exc_backtrace);
-    registry.define_method_own(
-        id,
-        Symbol::intern("backtrace_locations"),
-        exc_backtrace_locations,
-    );
-    registry.define_method_own(id, Symbol::intern("set_backtrace"), exc_set_backtrace);
-    registry.define_method_own(id, Symbol::intern("cause"), exc_cause);
-    registry.define_method_own(id, Symbol::intern("full_message"), exc_full_message);
-    registry.define_method_own(id, Symbol::intern("detailed_message"), exc_detailed_message);
-    registry.define_method_own(id, Symbol::intern("inspect"), exc_inspect);
-    registry.define_method_own(id, Symbol::intern("respond_to?"), exc_respond_to);
-    registry.define_method_own(id, Symbol::intern("method_missing"), exc_method_missing);
-    registry.define_method_own(
-        id,
-        Symbol::intern("respond_to_missing?"),
-        exc_respond_to_missing,
-    );
-    // Typed introspection accessors, installed by ancestry so a user subclass
-    // of the relevant error inherits them the same way the built-in tree does.
-    // `NoMethodError < NameError`, so it picks up `#name`/`#receiver` here and
-    // adds `#args` below.
-    if is_name_error {
-        registry.define_method_own(id, Symbol::intern("initialize"), name_error_initialize);
-        registry.define_method_own(id, Symbol::intern("name"), exc_name);
-        registry.define_method_own(id, Symbol::intern("receiver"), exc_receiver);
-    }
-    if is_no_method_error {
-        registry.define_method_own(id, Symbol::intern("args"), exc_args);
-        registry.define_method_own(id, Symbol::intern("private_call?"), exc_private_call);
-    }
-    if is_key_error {
-        registry.define_method_own(id, Symbol::intern("initialize"), key_error_initialize);
-        registry.define_method_own(id, Symbol::intern("key"), exc_key);
-        registry.define_method_own(id, Symbol::intern("receiver"), exc_receiver);
-    }
-    if is_frozen_error {
-        registry.define_method_own(id, Symbol::intern("initialize"), frozen_error_initialize);
-        registry.define_method_own(id, Symbol::intern("receiver"), exc_receiver);
-    }
-    // `Ractor::RemoteError#ractor` -- the ractor whose failure was relayed.
-    // zeo runs no ractors, so this exception is never raised here and the
-    // slot is never filled; the reader answers nil, exactly as CRuby's does
-    // for a hand-constructed one.
-    if id == zeo_abi::RACTOR_REMOTE_ERROR_CLASS {
-        registry.define_method_own(id, Symbol::intern("ractor"), exc_ractor);
-    }
-    if is_load_error {
-        registry.define_method_own(id, Symbol::intern("path"), exc_path);
-    }
-    // `SyntaxError#path` reads the same slot `LoadError#path` does -- the file
-    // whose parse failed. The two are unrelated in CRuby's tree and share only
-    // the accessor's shape.
-    if id == zeo_abi::SYNTAX_ERROR_CLASS {
-        registry.define_method_own(id, Symbol::intern("path"), exc_path);
-    }
-    // The two conversion errors, whose accessors read the encoding pair and
-    // the offending input `transcode_signal` attached.
-    if is_undefined_conversion || is_invalid_byte_sequence {
-        registry.define_method_own(id, Symbol::intern("source_encoding"), exc_source_encoding);
-        registry.define_method_own(
-            id,
-            Symbol::intern("source_encoding_name"),
-            exc_source_encoding_name,
-        );
-        registry.define_method_own(
-            id,
-            Symbol::intern("destination_encoding"),
-            exc_destination_encoding,
-        );
-        registry.define_method_own(
-            id,
-            Symbol::intern("destination_encoding_name"),
-            exc_destination_encoding_name,
-        );
-    }
-    if is_undefined_conversion {
-        registry.define_method_own(id, Symbol::intern("error_char"), exc_error_char);
-    }
-    if is_invalid_byte_sequence {
-        registry.define_method_own(id, Symbol::intern("error_bytes"), exc_error_bytes);
-        registry.define_method_own(id, Symbol::intern("readagain_bytes"), exc_readagain_bytes);
-        registry.define_method_own(
-            id,
-            Symbol::intern("incomplete_input?"),
-            exc_incomplete_input,
-        );
-    }
-    // `NameError#local_variables` -- the caller's locals at the point of the
-    // miss, which CRuby fills in for a bare-name NameError. zeo raises from
-    // native code with no scope to walk, so the list is empty.
-    if is_name_error {
-        registry.define_method_own(id, Symbol::intern("local_variables"), exc_local_variables);
-    }
-    // Flat dispatch installs every native on EVERY exception id, which is what
-    // makes `super` and the ancestor walk work -- but reflection has to answer
-    // the class CRuby OWNS each one on, or `MyError.instance_methods(false)`
-    // would report Exception's twelve. So the listing is told separately, and
-    // only on the owning id.
-    mark_owned_names(registry, id);
-    if is_pattern_key_error {
-        registry.define_method_own(
-            id,
-            Symbol::intern("initialize"),
-            pattern_key_error_initialize,
-        );
-        registry.define_method_own(id, Symbol::intern("key"), exc_key);
-        registry.define_method_own(id, Symbol::intern("matchee"), exc_matchee);
-    }
-    if is_system_call_error {
-        registry.define_method_own(id, Symbol::intern("initialize"), syscall_error_initialize);
-        registry.define_method_own(id, Symbol::intern("errno"), exc_errno);
-        // On every descendant, not just the owner: class-method lookup does
-        // not walk ancestors, so `Errno::ENOENT === x` needs its own row.
-        registry.define_class_method(id, Symbol::intern("==="), syscall_error_eqq);
-        if id == SYSTEM_CALL_ERROR_CLASS {
-            registry.mark_own_class_method(id, Symbol::intern("==="));
-            class_method_signature(id, "===", &[ParamKind::Req]);
+    for row in EXC_ROWS {
+        if !row.gate.admits(id, &ancestry) {
+            continue;
         }
-    }
-    if is_local_jump {
-        registry.define_method_own(id, Symbol::intern("reason"), exc_reason);
-        registry.define_method_own(id, Symbol::intern("exit_value"), exc_exit_value);
-    }
-    if is_system_exit {
-        registry.define_method_own(id, Symbol::intern("initialize"), system_exit_initialize);
-        registry.define_method_own(id, Symbol::intern("status"), exc_status);
-        registry.define_method_own(id, Symbol::intern("success?"), exc_success);
-    }
-    if is_uncaught_throw {
-        registry.define_method_own(id, Symbol::intern("initialize"), uncaught_throw_initialize);
-        registry.define_method_own(id, Symbol::intern("to_s"), uncaught_throw_to_s);
-        registry.define_method_own(id, Symbol::intern("tag"), exc_tag);
-        registry.define_method_own(id, Symbol::intern("value"), exc_value);
-    }
-    if is_signal_exception {
-        // `Interrupt` pins SIGINT and defaults its message to the class name, so
-        // it takes a distinct `initialize`; both expose `#signo`/`#signm`.
-        let ctor = if is_interrupt {
-            interrupt_initialize
-        } else {
-            signal_exception_initialize
-        };
-        registry.define_method_own(id, Symbol::intern("initialize"), ctor);
-        registry.define_method_own(id, Symbol::intern("signo"), exc_signo);
-        registry.define_method_own(id, Symbol::intern("signm"), exc_signm);
-    }
-    // Class methods, registered per-id (class-method lookup doesn't walk
-    // ancestors -- see `dispatch`'s Class-value arm). The OWN mark goes on
-    // `Exception` alone, the same split `mark_own` makes on the instance side:
-    // every id needs a row to dispatch, only the owner may list one in
-    // `singleton_methods(false)`.
-    registry.define_class_method(id, Symbol::intern("exception"), exc_class_exception);
-    registry.define_class_method(id, Symbol::intern("to_tty?"), exc_class_to_tty);
-    if id == EXCEPTION_CLASS {
-        registry.mark_own_class_method(id, Symbol::intern("exception"));
-        registry.mark_own_class_method(id, Symbol::intern("to_tty?"));
-        class_method_signature(id, "exception", &[ParamKind::Rest]);
-        class_method_signature(id, "to_tty?", &[]);
-    }
-    if carries_result {
-        registry.define_method_own(id, Symbol::intern("__set_result"), stop_set_result);
-        registry.define_method_own(id, Symbol::intern("result"), stop_result);
+        let sym = Symbol::intern(row.name);
+        match row.body {
+            ExcBody::Instance(f) => registry.define_method_own(id, sym, f),
+            ExcBody::ClassMethod(f) => registry.define_class_method(id, sym, f),
+        }
+        if row.private {
+            registry.mark_private(id, sym);
+        }
+        if !row.owners.contains(&id) {
+            continue;
+        }
+        match row.body {
+            ExcBody::Instance(_) => registry.mark_own(id, sym),
+            ExcBody::ClassMethod(_) => registry.mark_own_class_method(id, sym),
+        }
+        if let Some(kinds) = row.params {
+            let meta = match row.body {
+                ExcBody::Instance(_) => crate::method_meta::MethodMeta::instance(id.0, row.name),
+                ExcBody::ClassMethod(_) => {
+                    crate::method_meta::MethodMeta::singleton(id.0, row.name)
+                }
+            };
+            meta.with_params(kinds.iter().map(|&k| (k, None)).collect())
+                .register();
+        }
     }
 }
 
@@ -2481,5 +2501,22 @@ mod tests {
             }
         }
         assert!(bad.is_empty(), "ruby says [[:rest]] / -1 for each: {bad:?}");
+    }
+
+    /// Every declared owner must be an id its row's own gate admits.
+    /// Ownership only registers where the row installs, so an owner outside
+    /// the gate would silently never mark (and never carry its signature) --
+    /// the one drift mode the declarative table adds.
+    #[test]
+    fn every_owner_is_admitted_by_its_rows_gate() {
+        let mut bad: Vec<String> = Vec::new();
+        for row in EXC_ROWS {
+            for owner in row.owners {
+                if !row.gate.admits(*owner, &declared_ancestors(*owner)) {
+                    bad.push(format!("{} declares unreachable owner {owner:?}", row.name));
+                }
+            }
+        }
+        assert!(bad.is_empty(), "gate never admits these owners: {bad:?}");
     }
 }
