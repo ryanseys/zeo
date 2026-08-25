@@ -50,7 +50,7 @@ fn gemtest(rb: &Path) -> datatest_stable::Result<()> {
         load_roots: vec![gem_root.join("test")],
         oracle_includes: vec![gem_root.join("lib"), gem_root.join("test")],
     };
-    golden::run_golden_env(&rb, golden::Mode::Pass, &gem_root, true, &env)
+    golden::run_golden_env(&rb, golden::Mode::Pass, &gem_root, &env)
 }
 
 datatest_stable::harness! {

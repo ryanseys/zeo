@@ -86,9 +86,11 @@ pub fn compile_link_run_aot(
 /// `process_exit.rs` assertions keep their meaning, and an `-e` compile is
 /// named `-e` by the CLI exactly as the in-process harness named it.
 ///
-/// The compiler is probed in process first, so a program zeo REJECTS stays
-/// a loud panic naming the error (the AOT tier's contract) instead of a
-/// nonzero child exit a test would misread as its program's.
+/// A program zeo REJECTS exits nonzero with the compiler's own error on
+/// stderr, which the caller's assertion then shows. (An in-process
+/// `check_program_with` probe once classified rejections up front; it
+/// re-ran the whole front end for every test and bought only a nicer panic
+/// message, so it went.)
 fn run_jit_child(
     source: &str,
     opts: &zeo::CompileOptions,
@@ -102,8 +104,6 @@ fn run_jit_child(
         opts.gem_report.is_none() && opts.root_gem.is_none(),
         "the jit-child tier does not forward gem_report/root_gem; extend run_jit_child"
     );
-    zeo::check_program_with(source, opts)
-        .unwrap_or_else(|e| panic!("check_program_with failed: {}", String::from(e)));
     let cli = crate::golden::zeo_cli().unwrap_or_else(|e| panic!("{e}"));
     let mut cmd = std::process::Command::new(cli);
     cmd.arg("--backend").arg("jit");

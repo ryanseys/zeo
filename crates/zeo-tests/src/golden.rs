@@ -9,9 +9,14 @@
 //! sidecars).
 //!
 //! - `Mode::Pass` (corpus, examples): zeo must MATCH the golden.
-//! - `Mode::CompileFail` (`analyze_fail/`): zeo must REJECT the program.
 //! - `Mode::Xfail` (gaps): zeo must DIVERGE from the golden -- a match means the
 //!   gap is fixed and the test FAILS with a "promote" message.
+//!
+//! A program zeo REJECTS is a divergence like any other: the child prints
+//! the compiler's own error on stderr and the comparison fails on it. (A
+//! `Mode::CompileFail` once probed the emitter in process to classify
+//! rejections exactly -- its suite is gone, and the probe compiled every
+//! golden TWICE, so both went.)
 //!
 //!
 //! A `.gccheck` sidecar records the exit cycle census the `ZEO_RT_GCCHECK=1`
@@ -271,16 +276,15 @@ pub enum Mode {
     Pass,
     /// The program is a known failure: it must NOT match the golden yet.
     Xfail,
-    /// zeo must reject the program at compile time (`analyze_fail/`).
-    CompileFail,
 }
 
-/// The repo root (`crates/zeo/../..`), for deriving per-suite run directories.
+/// The repo root (this crate's `../..`), for deriving per-suite run
+/// directories.
 pub fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(Path::parent)
-        .expect("crates/zeo has a workspace root")
+        .expect("the crate sits two levels under the workspace root")
         .to_path_buf()
 }
 
@@ -292,7 +296,7 @@ pub fn tests_run_cwd() -> PathBuf {
     workspace_root().join("tests")
 }
 
-// ---- normalization (ported verbatim from zeo-dev/src/conformance/{util,runner}.rs) ----
+// ---- normalization ----
 
 /// Strip a `\r` before every `\n` so goldens compare byte-exactly across OSes.
 fn normalize_crlf(bytes: &[u8]) -> Vec<u8> {
@@ -501,12 +505,12 @@ fn newer_compiler_source(binary: &Path) -> Option<PathBuf> {
     None
 }
 
-/// The Cranelift legs' runner. Rejection must stay distinguishable from a
-/// program that built and then failed at run time (the `CompileFail`
-/// contract), and a spawned CLI folds both into "nonzero exit" -- so the
-/// program is object-compiled IN PROCESS first (the identical lowering the
-/// JIT finalizes; decision-free duplication, correctness over speed on a
-/// leg that runs on demand), and only a program that compiles is spawned.
+/// The Cranelift legs' runner: one spawned `zeo` child per golden, which
+/// compiles AND runs the program. This used to be preceded by an in-process
+/// object-compile probe -- a full second compile of every golden -- whose
+/// only consumer was the retired `Mode::CompileFail` classification; a
+/// rejection now surfaces as the compiler's own error on the child's
+/// stderr, which the comparison fails on like any other divergence.
 fn run_via_cli(
     backend: &str,
     rb: &Path,
@@ -516,13 +520,6 @@ fn run_via_cli(
     stdin: Option<&[u8]>,
     run_cwd: &Path,
 ) -> Result<(Vec<u8>, Vec<u8>), String> {
-    // Probe the emitter IN PROCESS first, so a program zeo REJECTS stays
-    // distinguishable from one that compiled and then failed at run time --
-    // the CompileFail contract the goldens are written against. A refusal is
-    // a property of the emitter, so this has to go through it.
-    zeo::compile_to_object_with(source, opts, false)
-        .map(|_| ())
-        .map_err(String::from)?;
     let mut cmd = Command::new(zeo_cli()?);
     cmd.arg("--backend").arg(backend);
     for root in &opts.load_roots {
@@ -644,7 +641,6 @@ fn bless(
     source: &str,
     sc: &Sidecars,
     run_cwd: &Path,
-    check_stderr: bool,
     env: &SuiteEnv,
 ) -> datatest_stable::Result<()> {
     // A `.divergence` golden records ZEO's output on purpose -- see
@@ -652,20 +648,21 @@ fn bless(
     // golden with the very answer the file exists to differ from, and the
     // test would then fail for a reason nobody could read.
     let (stdout, stderr) = match &sc.divergence {
-        Some(_) => compile_and_run_contained(rb, source, sc, run_cwd, env).map_err(|e| {
-            format!(
-                "{}: this golden records zeo's own output ({}), and zeo failed: {e}",
-                rb.display(),
-                sc.divergence.as_ref().expect("just matched").display()
-            )
-        })?,
+        Some(_) => compile_and_run(rb, source, &sc.args, sc.stdin.as_deref(), run_cwd, env)
+            .map_err(|e| {
+                format!(
+                    "{}: this golden records zeo's own output ({}), and zeo failed: {e}",
+                    rb.display(),
+                    sc.divergence.as_ref().expect("just matched").display()
+                )
+            })?,
         None => run_oracle(rb, source, &sc.args, sc.stdin.as_deref(), run_cwd, env)?,
     };
     let out = norm(&stdout, rb, run_cwd);
     std::fs::write(format!("{}.expected", rb.display()), &out)?;
     let err_path = format!("{}.err.expected", rb.display());
     let err = norm(&stderr, rb, run_cwd);
-    if check_stderr && !err.is_empty() {
+    if !err.is_empty() {
         std::fs::write(&err_path, &err)?;
     } else {
         let _ = std::fs::remove_file(&err_path); // absent => "stderr must be empty"
@@ -693,15 +690,9 @@ fn suite_env_default() -> &'static SuiteEnv {
 }
 
 /// Run one golden case. See the module docs for the per-`Mode` contract.
-/// `check_stderr` is false for the stdout-only examples suite, true for the
-/// corpus/gaps (full stdout+stderr fidelity).
-pub fn run_golden(
-    rb: &Path,
-    mode: Mode,
-    run_cwd: &Path,
-    check_stderr: bool,
-) -> datatest_stable::Result<()> {
-    run_golden_env(rb, mode, run_cwd, check_stderr, suite_env_default())
+/// Every suite asserts full stdout+stderr fidelity.
+pub fn run_golden(rb: &Path, mode: Mode, run_cwd: &Path) -> datatest_stable::Result<()> {
+    run_golden_env(rb, mode, run_cwd, suite_env_default())
 }
 
 /// [`run_golden`] with a per-suite [`SuiteEnv`].
@@ -709,7 +700,6 @@ pub fn run_golden_env(
     rb: &Path,
     mode: Mode,
     run_cwd: &Path,
-    check_stderr: bool,
     env: &SuiteEnv,
 ) -> datatest_stable::Result<()> {
     // datatest-stable hands us a path relative to the crate manifest dir (the
@@ -744,27 +734,12 @@ pub fn run_golden_env(
     let source = std::fs::read_to_string(rb)?;
     let sc = sidecars(rb)?;
 
-    if std::env::var_os("ZEO_BLESS_FROM_TOOL").is_some() && mode != Mode::CompileFail {
-        return bless(rb, &source, &sc, run_cwd, check_stderr, env);
-    }
-
-    if mode == Mode::CompileFail {
-        // "Rejected" means zeo can't produce a RUNNABLE binary -- a clean
-        // front-end, emitter or link failure. `compile_and_run` returns `Err`
-        // exactly then (a program that builds and then crashes at runtime
-        // returns `Ok`, so it does NOT count as rejected).
-        return match compile_and_run(rb, &source, &sc.args, sc.stdin.as_deref(), run_cwd, env) {
-            Err(_) => Ok(()),
-            Ok(_) => Err(format!(
-                "{}: expected zeo to REJECT this program, but it built and ran",
-                rb.display()
-            )
-            .into()),
-        };
+    if std::env::var_os("ZEO_BLESS_FROM_TOOL").is_some() {
+        return bless(rb, &source, &sc, run_cwd, env);
     }
 
     // Pass / Xfail: build + run, then diff against the golden.
-    let actual = compile_and_run_contained(rb, &source, &sc, run_cwd, env);
+    let actual = compile_and_run(rb, &source, &sc.args, sc.stdin.as_deref(), run_cwd, env);
 
     // Under the `ZEO_RT_GCCHECK` leg the runtime writes one census line to
     // stderr at exit. Take it out of the ordinary comparison and gate it on
@@ -797,7 +772,7 @@ pub fn run_golden_env(
     let matched = match &actual {
         Ok((out, err)) => {
             norm(out, rb, run_cwd) == norm(&expected_out, rb, run_cwd)
-                && (!check_stderr || norm(err, rb, run_cwd) == norm(&expected_err, rb, run_cwd))
+                && norm(err, rb, run_cwd) == norm(&expected_err, rb, run_cwd)
         }
         Err(_) => false, // zeo couldn't produce/run a binary: it diverges.
     };
@@ -816,40 +791,12 @@ pub fn run_golden_env(
         )
         .into()),
         Mode::Xfail => Ok(()), // still diverges: expected.
-        Mode::CompileFail => unreachable!("handled above"),
     }
 }
 
-/// `compile_and_run`, with a compiler panic turned into an ordinary `Err`.
-///
-/// A panic is a divergence like any other -- ruby ran the program, zeo did not
-/// -- but an uncaught one takes the whole test binary down, so a gap that
-/// panics could not be recorded at all. Containing it lets `tests/gaps/` hold
-/// the panicking program as an XFAIL, which is where a known bug belongs. The
-/// message is kept and prefixed, so a `Mode::Pass` failure still says plainly
-/// that zeo crashed rather than printing a bare output mismatch.
-fn compile_and_run_contained(
-    rb: &Path,
-    source: &str,
-    sc: &Sidecars,
-    run_cwd: &Path,
-    env: &SuiteEnv,
-) -> Result<(Vec<u8>, Vec<u8>), String> {
-    let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        compile_and_run(rb, source, &sc.args, sc.stdin.as_deref(), run_cwd, env)
-    }));
-    caught.unwrap_or_else(|payload| {
-        let msg = payload
-            .downcast_ref::<String>()
-            .map(String::as_str)
-            .or_else(|| payload.downcast_ref::<&str>().copied())
-            .unwrap_or("<non-string panic payload>");
-        Err(format!("{PANIC_PREFIX}{msg}"))
-    })
-}
-
-/// Marks an `Err` that came from a panic rather than a reported error.
-pub const PANIC_PREFIX: &str = "zeo PANICKED: ";
+// A compiler PANIC needs no containment here any more: the compile happens
+// in the spawned child, whose death is an output divergence like any other
+// -- which is what lets `tests/gaps/` hold a panicking program as an XFAIL.
 
 fn mismatch_message(
     rb: &Path,
@@ -880,15 +827,9 @@ fn mismatch_message(
             show(expected_err),
             show(err),
         ),
-        // A panic and a reported error both arrive as `Err`, but they mean
-        // different things to whoever reads the failure: one is a bug in the
-        // compiler, the other a limit it stated.
-        Err(e) if e.starts_with(PANIC_PREFIX) => format!(
-            "{}: THE COMPILER PANICKED (an internal error, not a reported \
-             limitation): {}",
-            rb.display(),
-            e.trim_start_matches(PANIC_PREFIX)
-        ),
+        // `Err` here is a harness-level failure (spawn, or a tripped
+        // capture/deadline/RSS bound) -- a compile error or panic reaches
+        // the Ok arm as the child's own stderr.
         Err(e) => format!("{}: zeo failed to compile/run it: {e}", rb.display()),
     }
 }

@@ -16,7 +16,7 @@ use zeo_tests::golden;
 use std::path::Path;
 
 fn gap(rb: &Path) -> datatest_stable::Result<()> {
-    golden::run_golden(rb, golden::Mode::Xfail, &golden::tests_run_cwd(), true)
+    golden::run_golden(rb, golden::Mode::Xfail, &golden::tests_run_cwd())
 }
 
 datatest_stable::harness! {
