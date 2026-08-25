@@ -1,0 +1,1 @@
+backtrace must be an Array of String or an Array of Thread::Backtrace::Location
