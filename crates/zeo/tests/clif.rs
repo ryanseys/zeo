@@ -83,6 +83,17 @@ fn clif_snapshot_fused_each_guards() {
     ));
 }
 
+/// An explicit-receiver accessor on a statically-classed local
+/// (`a.nxt = b`, `a.nxt`): one call to the guarded attr entry -- fast
+/// arm a slot access inside the runtime, slow arm the full explicit
+/// send -- instead of the dispatch path.
+#[test]
+fn clif_snapshot_explicit_accessor() {
+    insta::assert_snapshot!(clif_of(
+        "class Node\n  attr_accessor :nxt\nend\ndef walk\n  a = Node.new\n  b = Node.new\n  a.nxt = b\n  p a.nxt.nil?\nend\nwalk\n",
+    ));
+}
+
 /// The nil guards: `x == nil` / `x != nil` branch on the receiver tag
 /// under the NilClass-pristine gate (non-nil receivers keep the cached
 /// dynamic arm), and `x.nil?` folds to a bare tag test when no scope in

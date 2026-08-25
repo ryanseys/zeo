@@ -147,6 +147,16 @@ pub enum AccessorKind {
     Writer,
 }
 
+/// One nominated explicit-receiver accessor site: the receiver's static
+/// class, the ivar's resolved slot in that class's layout, and whether
+/// this is the writer half. See [`Compiler::accessor_sites`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct AccessorSite {
+    pub cid: ClassId,
+    pub slot: u32,
+    pub writer: bool,
+}
+
 impl Scope {
     /// Whether this method needs the implicit `__blk: Option<RubyValue>`
     /// trailing parameter -- either it names its block (`&blk`) or uses
@@ -422,6 +432,12 @@ pub struct Compiler {
     /// the escaping-block scans deliberately ignore it -- a marked site keeps
     /// escaping-style cell captures, correct in both arms.
     pub inline_iter_sites: FMap<crate::hir::NodeId, InlineIterKind>,
+    /// Explicit-receiver accessor CALL sites (`node.nxt`, `obj.attr = v`
+    /// on a statically-classed local) the emitter folds through the
+    /// guarded runtime attr entries -- see `analyze::mark_accessor_sites`.
+    /// Purely a hint, like `inline_iter_sites`: the runtime entry's own
+    /// guard decides per call and its slow arm is the full explicit send.
+    pub accessor_sites: FMap<crate::hir::NodeId, AccessorSite>,
     /// A compile-time reopen of `Integer#times` / `Range#each` anywhere in
     /// Integer's/Range's ancestry (`analyze::mark_inline_iter_sites` computes
     /// both): the LITERAL fast paths (`3.times`, `(1..9).each`) must then
@@ -605,6 +621,7 @@ impl Compiler {
             activations: Vec::new(),
             eval_activations: Vec::new(),
             inline_iter_sites: FMap::default(),
+            accessor_sites: FMap::default(),
             times_literal_suppressed: false,
             range_each_literal_suppressed: false,
             traces_calls: std::cell::OnceCell::new(),

@@ -1,6 +1,6 @@
 ---
 source: crates/zeo/tests/clif.rs
-assertion_line: 362
+assertion_line: 384
 expression: rendered
 ---
 zeo_rt_alias_in_default_definee ([Ptr, Ptr, Ptr, Ptr, Ptr]) -> Some(I32)
@@ -11,6 +11,8 @@ zeo_rt_array_len ([Ptr]) -> Some(Usize)
 zeo_rt_array_new ([Usize, Ptr]) -> None
 zeo_rt_array_push ([Ptr, Ptr]) -> None
 zeo_rt_array_push_splat ([Ptr, Ptr]) -> Some(I32)
+zeo_rt_attr_read ([Ptr, U32, Usize, U32, U32, Ptr]) -> Some(I32)
+zeo_rt_attr_write ([Ptr, U32, Usize, U32, U32, Ptr, Ptr]) -> Some(I32)
 zeo_rt_autoload_touch ([U32, Ptr, Usize]) -> Some(I32)
 zeo_rt_bare_super_outside_a_method ([]) -> Some(I32)
 zeo_rt_bind_block_params ([Ptr, U8, Ptr, Usize, Ptr, Ptr]) -> Some(I32)

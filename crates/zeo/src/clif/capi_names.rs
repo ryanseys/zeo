@@ -78,6 +78,16 @@ pub const CAPI: &[CapiSig] = &[
         ret: Some(I32),
     },
     CapiSig {
+        name: "zeo_rt_attr_read",
+        params: &[Ptr, U32, Usize, U32, U32, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
+        name: "zeo_rt_attr_write",
+        params: &[Ptr, U32, Usize, U32, U32, Ptr, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
         name: "zeo_rt_autoload_touch",
         params: &[U32, Ptr, Usize],
         ret: Some(I32),

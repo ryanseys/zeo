@@ -368,6 +368,7 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
     // and the main scope's just computed, mark the typed-receiver iterator
     // sites codegen can fuse into native loops.
     mark_inline_iter_sites(compiler, &main_statements, &main_local_types);
+    mark_accessor_sites(compiler, &main_statements, &main_local_types);
     compiler.runtime_eval = narrow_runtime_eval(compiler, &main_statements, &feature_units);
     // After `runtime_eval`: a program that compiles Ruby at run time can name
     // any class at all, and this reads that answer.
@@ -557,6 +558,90 @@ fn mark_inline_iter_sites(
     }
     sites.retain(|_, k| !suppressed(k));
     compiler.inline_iter_sites = sites;
+}
+
+/// Nominate explicit-receiver accessor calls on statically-classed locals
+/// (`node.nxt`, `obj.attr = v`) for the guarded runtime fold. The
+/// receiver is a `LocalRead` typed `Object(cid)`, the name resolves in
+/// cid's MATERIALIZED chain (which excludes `runtime_conditional` defs by
+/// design) to a PUBLIC accessor scope, and the ivar has a real slot in
+/// cid's layout. Writers only when attr-GENERATED: a hand-written
+/// writer's raise carries its own frame, which the slot store cannot.
+///
+/// No patched/runtime suppression here, unlike the iterator pass: the
+/// fold IS a call -- the runtime entry re-checks the gates, the class'
+/// patched set, and the receiver's exact class per call, and its slow
+/// arm is the full explicit send with the visibility barrier.
+fn mark_accessor_sites(
+    compiler: &mut Compiler,
+    main_statements: &[NodeId],
+    main_local_types: &FMap<String, TyKind>,
+) {
+    use crate::compiler::{AccessorKind, AccessorSite, ClassId};
+
+    fn site_of(
+        compiler: &Compiler,
+        cid: ClassId,
+        name: &str,
+        argc: usize,
+    ) -> Option<AccessorSite> {
+        let (_owner, scope_id) = compiler.method_in_chain(cid, name)?;
+        let scope = compiler.scope(scope_id);
+        if scope.visibility != crate::hir::Visibility::Public {
+            return None;
+        }
+        let shape = compiler.accessor_shape(cid, scope)?;
+        let writer = match (shape.kind, argc) {
+            (AccessorKind::Reader, 0) => false,
+            (AccessorKind::Writer, 1) if shape.attr_generated => true,
+            _ => return None,
+        };
+        let slot = class_query::slot_of(compiler, cid, &shape.ivar)?;
+        Some(AccessorSite {
+            cid,
+            slot: slot as u32,
+            writer,
+        })
+    }
+
+    fn scan(
+        compiler: &Compiler,
+        id: NodeId,
+        locals: &FMap<String, TyKind>,
+        out: &mut FMap<NodeId, AccessorSite>,
+    ) {
+        if let HirNode::Call {
+            receiver: Some(recv),
+            name,
+            args,
+            kwargs,
+            block: None,
+            block_arg: None,
+            safe: false,
+        } = &compiler.hir[id]
+            && kwargs.is_empty()
+            && args
+                .iter()
+                .all(|a| matches!(a, crate::hir::ArrayElem::Single(_)))
+            && let HirNode::LocalRead(rn) = &compiler.hir[*recv]
+            && let Some(TyKind::Object(cid)) = locals.get(rn).copied()
+            && let Some(site) = site_of(compiler, cid, name, args.len())
+        {
+            out.insert(id, site);
+        }
+        compiler.hir[id].for_each_child(&mut |n| scan(compiler, n, locals, out));
+    }
+
+    let mut sites = FMap::default();
+    for scope in &compiler.scopes {
+        for &n in &scope.body {
+            scan(compiler, n, &scope.local_types, &mut sites);
+        }
+    }
+    for &n in main_statements {
+        scan(compiler, n, main_local_types, &mut sites);
+    }
+    compiler.accessor_sites = sites;
 }
 
 #[cfg(test)]

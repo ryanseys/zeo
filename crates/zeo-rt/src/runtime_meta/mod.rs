@@ -543,7 +543,7 @@ pub fn class_maybe_patched(id: ClassId) -> bool {
 }
 
 #[inline(always)]
-fn class_maybe_patched_gated(gates: u16, id: ClassId) -> bool {
+pub(crate) fn class_maybe_patched_gated(gates: u16, id: ClassId) -> bool {
     if id.0 >= RUNTIME_CLASS_ID_BASE {
         return true;
     }

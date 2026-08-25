@@ -131,6 +131,92 @@ pub unsafe extern "C" fn zeo_rt_ivar_set_slot(
     STATUS_OK
 }
 
+/// Guarded accessor READ: the emitter proved at COMPILE time that class
+/// `cid` resolves `sym` to a public ivar-slot reader at `slot`. The fast
+/// arm runs under the conditions a cached send trusts -- gates quiet
+/// (no runtime definition, no move anywhere), the class not patched,
+/// and the receiver's class exactly `cid` -- and reads the slot with no
+/// dispatch, no trampoline, no frame (an attr row is iseq-less in CRuby
+/// too). Anything else takes the full explicit send, visibility barrier
+/// and all: a subclass instance is slower, never wrong.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_attr_read(
+    recv: *const RubyValue,
+    cid: u32,
+    slot: usize,
+    sym: u32,
+    caller: u32,
+    out: *mut RubyValue,
+) -> i32 {
+    let r = unsafe { &*recv };
+    let gates = crate::runtime_meta::gates();
+    if !crate::runtime_meta::gates_live(gates)
+        && !crate::runtime_meta::gates_moved(gates)
+        && !crate::runtime_meta::class_maybe_patched_gated(gates, zeo_abi::ClassId(cid))
+        && let RubyValue::Object(o) = r
+        && o.class_id().0 == cid
+    {
+        let v = o.ivar_slot_get(slot);
+        super::leakcheck::created(&v);
+        unsafe { out.write(v) };
+        return zeo_abi::abi::STATUS_OK;
+    }
+    let name = crate::Symbol::from_u32(sym);
+    status_out(
+        crate::dispatch::send_value_explicit_in(0, r, name, &[], None, caller),
+        out,
+    )
+}
+
+/// Guarded accessor WRITE -- [`zeo_rt_attr_read`]'s twin for an
+/// `attr_writer`-GENERATED row (a hand-written writer never nominates:
+/// its raise carries its own frame). `v` is BORROWED; the fast arm
+/// stores a clone after the frozen check and answers `v` (the
+/// assignment expression's value), both exactly what the trampolined
+/// row does.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_attr_write(
+    recv: *const RubyValue,
+    cid: u32,
+    slot: usize,
+    sym: u32,
+    caller: u32,
+    v: *const RubyValue,
+    out: *mut RubyValue,
+) -> i32 {
+    let r = unsafe { &*recv };
+    let value = unsafe { &*v };
+    let gates = crate::runtime_meta::gates();
+    if !crate::runtime_meta::gates_live(gates)
+        && !crate::runtime_meta::gates_moved(gates)
+        && !crate::runtime_meta::class_maybe_patched_gated(gates, zeo_abi::ClassId(cid))
+        && let RubyValue::Object(o) = r
+        && o.class_id().0 == cid
+    {
+        if let Err(sig) = crate::builtins::check_frozen(r) {
+            crate::signal::set_pending(sig);
+            return STATUS_SIGNAL;
+        }
+        o.ivar_slot_set(slot, value.clone());
+        let vv = value.clone();
+        super::leakcheck::created(&vv);
+        unsafe { out.write(vv) };
+        return zeo_abi::abi::STATUS_OK;
+    }
+    let name = crate::Symbol::from_u32(sym);
+    status_out(
+        crate::dispatch::send_value_explicit_in(
+            0,
+            r,
+            name,
+            std::slice::from_ref(value),
+            None,
+            caller,
+        ),
+        out,
+    )
+}
+
 /// The bare frozen guard (`FrozenError` channel), for the emitted write
 /// paths whose storage is not a compiled-object slot.
 #[unsafe(no_mangle)]

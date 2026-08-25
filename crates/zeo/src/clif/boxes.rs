@@ -177,6 +177,66 @@ pub(super) fn inline_accessor(
     }
 }
 
+/// An explicit-receiver accessor site the analyzer nominated
+/// (`Compiler::accessor_sites`): one call to the guarded runtime attr
+/// entry, whose fast arm is a bare slot access and whose slow arm is
+/// the full explicit send. Operands lower once, in ruby's order.
+pub(super) fn explicit_accessor(
+    fx: &mut Fx,
+    id: crate::hir::NodeId,
+    recv: crate::hir::NodeId,
+    name: &str,
+    args: &[ArrayElem],
+    site: crate::compiler::AccessorSite,
+) -> CResult<Operand> {
+    use cranelift_codegen::ir::types;
+    let bypass = super::expr::bypasses_visibility(fx, Some(recv));
+    let later = super::expr::later_nodes(args, &[], None);
+    let recv_op = super::expr::lower_expr(fx, recv)?;
+    let recv_op = super::expr::park_reassignable(fx, Some(recv), recv_op, &later);
+    let recv_ptr = ownership::borrow_ptr(fx, &recv_op);
+    if recv_op.owned() {
+        ownership::pool_owned(fx, recv_ptr, recv_op.tag());
+    }
+    let vptr = if site.writer {
+        let [ArrayElem::Single(arg)] = args else {
+            unreachable!("nomination admits one plain argument");
+        };
+        let op = super::expr::lower_expr(fx, *arg)?;
+        let p = ownership::borrow_ptr(fx, &op);
+        if op.owned() {
+            ownership::pool_owned(fx, p, op.tag());
+        }
+        Some(p)
+    } else {
+        None
+    };
+    super::stmt::stamp_call_line(fx, id);
+    let sym = fx.sym_id(name);
+    let cid_v = fx.b.ins().iconst(types::I32, i64::from(site.cid.0));
+    let slot_v = fx.b.ins().iconst(fx.em.ptr, i64::from(site.slot));
+    let caller = super::call::caller_class(fx, bypass);
+    let ss = fx.temp_slot();
+    let out = fx.slot_addr(ss, 0);
+    let status = match vptr {
+        Some(v) => fx.call_status(
+            "zeo_rt_attr_write",
+            &[recv_ptr, cid_v, slot_v, sym, caller, v, out],
+        ),
+        None => fx.call_status(
+            "zeo_rt_attr_read",
+            &[recv_ptr, cid_v, slot_v, sym, caller, out],
+        ),
+    };
+    fx.fallible(status);
+    fx.owned_created += 1;
+    Ok(Operand::Slot {
+        ss,
+        owned: true,
+        tag: TagInfo::Unknown,
+    })
+}
+
 pub(crate) fn resolve_class_here(fx: &Fx, name: &str) -> Option<crate::compiler::ClassId> {
     // A snippet under a run-time cref may see a constant that shadows the
     // one this (fresh) compiler would fold to, and the compiler cannot
