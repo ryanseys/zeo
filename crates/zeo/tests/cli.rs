@@ -3,10 +3,10 @@
 //! is exactly the surface `main.rs` owns: mode selection (run vs artifact),
 //! ARGV forwarding, exit-status forwarding, `-I` handling.
 //!
-//! Each test writes its sources into its own temp dir; programs are tiny so
-//! the content-addressed bin-cache keeps reruns cheap. The one deliberately
-//! heavy case (`a_failing_minitest_run_exits_nonzero`) splices the whole
-//! bundled minitest graph -- it is the wave's load-bearing promise
+//! Each test writes its sources into its own temp dir; programs are tiny,
+//! so each compile is cheap. The one deliberately heavy case
+//! (`a_failing_minitest_run_exits_nonzero`) splices the whole bundled
+//! minitest graph -- it is the wave's load-bearing promise
 //! (`zeo test.rb` fails when the tests fail) and worth its compile.
 
 use std::path::{Path, PathBuf};

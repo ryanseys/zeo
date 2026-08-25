@@ -73,7 +73,6 @@ fn main() {
     write_if_changed(&out_dir.join("class_surface.rs"), &code);
 
     render_rbconfig(manifest_dir, out_dir);
-    emit_compiler_fingerprint(manifest_dir, dev_tree, &code);
 }
 
 /// Write only when the content actually differs. rustc's dep-info tracks the
@@ -299,86 +298,6 @@ fn darwin_major() -> String {
     }
     // ruby 4.0.6 era: Darwin 25 (macOS 26). Cosmetic (RUBY_PLATFORM suffix).
     "25".to_string()
-}
-
-/// A deterministic content hash over everything that shapes GENERATED CODE.
-/// `backend::cache` folds it into the bin-cache generation, replacing the
-/// compiler executable's len+mtime -- so a REBUILD of identical source keeps
-/// the cache warm (what lets CI restore `target/zeo-bin-cache` usefully)
-/// while any real compiler change still rolls it.
-///
-/// Dev tree: this crate's sources (and this script), the shared front-end
-/// crates, the PROJECTED class surface, and the lockfile (a dep bump can
-/// change emission). The projection -- not the zeo-rt sources it was read
-/// from -- is what the compiler actually consumes, so a builtin BODY edit
-/// leaves the fingerprint (and this crate's rebuild state) untouched; the
-/// bin-cache still rolls for such an edit through the runtime artifact's
-/// len+mtime, which `generation_hash` folds separately. Packaged crate: the
-/// crate's own sources -- which include the staged pregen surface -- plus the
-/// package version; sound because a published zeo pins its published zeo-rt
-/// at `=X.Y.Z`, so no other runtime-source variation can exist for this
-/// compiler.
-fn emit_compiler_fingerprint(manifest_dir: &Path, dev_tree: bool, class_surface: &str) {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    let mut fold = |bytes: &[u8]| {
-        for &b in bytes {
-            h ^= u64::from(b);
-            h = h.wrapping_mul(0x0000_0100_0000_01b3);
-        }
-    };
-    fold(env!("CARGO_PKG_VERSION").as_bytes());
-    fold(class_surface.as_bytes());
-    let mut files: Vec<std::path::PathBuf> = Vec::new();
-    let mut dirs = vec![manifest_dir.join("src")];
-    if dev_tree {
-        dirs.extend([
-            manifest_dir.join("../zeo-dsl/src"),
-            manifest_dir.join("../zeo-abi/src"),
-        ]);
-    }
-    for dir in dirs {
-        collect_rs_files(&dir, &mut files);
-    }
-    files.push(manifest_dir.join("build.rs"));
-    if dev_tree {
-        files.push(manifest_dir.join("../../Cargo.lock"));
-    }
-    files.sort();
-    for path in files {
-        if let Ok(bytes) = std::fs::read(&path) {
-            // Path RELATIVE to the manifest so the hash is machine-portable.
-            let rel = path
-                .strip_prefix(manifest_dir)
-                .unwrap_or(&path)
-                .to_string_lossy()
-                .into_owned();
-            fold(rel.as_bytes());
-            fold(&bytes);
-        }
-    }
-    println!("cargo:rerun-if-changed=src");
-    if dev_tree {
-        // These paths exist only in the dev tree; a rerun-if-changed on a
-        // missing path makes cargo re-run the script on EVERY build.
-        println!("cargo:rerun-if-changed=../../Cargo.lock");
-        println!("cargo:rerun-if-changed=../zeo-dsl/src");
-        println!("cargo:rerun-if-changed=../zeo-abi/src");
-    }
-    println!("cargo:rustc-env=ZEO_COMPILER_FINGERPRINT={h:016x}");
-}
-
-fn collect_rs_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            collect_rs_files(&path, out);
-        } else if path.extension().is_some_and(|e| e == "rs") {
-            out.push(path);
-        }
-    }
 }
 
 /// One builtin class's projected surface.
