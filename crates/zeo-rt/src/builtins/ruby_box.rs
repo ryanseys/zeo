@@ -72,9 +72,8 @@ mod loader {
         // The box-aware load path. Outside an enabled box these are the
         // ordinary dynamic require/load (Kernel's own body) -- CRuby's
         // Loader methods degrade the same way.
-        module_function def "require" | "require_relative" | "load" (_recv, *args) {
-            crate::builtins::check_arity(args.len(), 1, Some(2))?;
-            crate::builtins::kernel::dynamic_require(&args[0])
+        module_function def "require" | "require_relative" | "load" cfunc (_recv, feature, _wrap?) {
+            crate::builtins::kernel::dynamic_require(feature)
         }
     }
 }
@@ -137,16 +136,15 @@ mod box_class {
             let box_id = boxes::box_of_surrogate(recv).unwrap_or(0);
             box_load(box_id, feature, false)
         }
-        def "load"(recv, *args) {
-            crate::builtins::check_arity(args.len(), 1, Some(2))?;
-            if matches!(args.get(1), Some(v) if v.truthy()) {
+        def "load" cfunc (recv, path, wrap?) {
+            if matches!(wrap, Some(v) if v.truthy()) {
                 return Err(crate::builtins::not_impl_error!(
                     "`Ruby::Box#load`'s `wrap:` isn't supported (CRuby wraps the file in an \
                      anonymous module; zeo has no equivalent definee)"
                 ));
             }
             let box_id = boxes::box_of_surrogate(recv).unwrap_or(0);
-            box_load(box_id, &args[0], true)
+            box_load(box_id, path, true)
         }
         // CRuby's own form: `#<Ruby::Box:4,user,optional>`. The number is
         // the DISPLAY id (master 1, root 2, main 3, users from 4), never

@@ -94,10 +94,9 @@ mod vm {
             RubyValue::Hash(h)
         };
 
-        def self."stat"(_recv, *args) {
-            crate::builtins::check_arity(args.len(), 0, Some(1))?;
+        def self."stat"(_recv, key?) {
             let pairs = stat_pairs();
-            match args.first() {
+            match key {
                 None => Ok(RubyValue::Hash(crate::hash_new(pairs))),
                 Some(RubyValue::Symbol(want)) => {
                     for (k, v) in pairs {
@@ -385,9 +384,8 @@ mod iseq {
         def self."compile" | "new" | "compile_prism" | "compile_parsey" (_recv, *args) {
             compile_body(args)
         }
-        def self."compile_file" | "compile_file_prism" (_recv, *args) {
-            crate::builtins::check_arity(args.len(), 1, Some(2))?;
-            let path = str_arg(&args[0]);
+        def self."compile_file" | "compile_file_prism" cfunc (_recv, path, _opt?) {
+            let path = str_arg(path);
             let src = std::fs::read_to_string(&path)
                 .map_err(|e| crate::builtins::file::raise_errno(&e, "read", &path))?;
             parse_check(&src)?;

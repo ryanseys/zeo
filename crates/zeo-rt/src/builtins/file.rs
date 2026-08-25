@@ -1514,21 +1514,20 @@ ruby_class! {
     }
     // `File.chmod(mode, *paths)` -- set each file's permission bits; answers the
     // number of files changed.
-    def self."chmod" cfunc (_recv, _mode, *_paths, &_block) {
+    def self."chmod" cfunc (_recv, mode, *paths, &_block) {
         use std::os::unix::fs::PermissionsExt;
-        let args = __args;
-        let mode = &match &args[0] {
+        let mode = &match mode {
             RubyValue::Nil => {
                 return Err(type_error!("no implicit conversion of nil into Integer"));
             }
             v => crate::builtins::convert::to_index(v)?,
         };
-        for p in &args[1..] {
+        for p in paths {
             let path = path_arg(p, "chmod")?;
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(*mode as u32))
                 .map_err(|e| raise_errno(&e, "chmod", &path))?;
         }
-        Ok(RubyValue::Int((args.len() - 1) as i64))
+        Ok(RubyValue::Int(paths.len() as i64))
     }
     def self."executable?" (_recv, arg) {
         let p = path_arg(arg, "executable?")?;

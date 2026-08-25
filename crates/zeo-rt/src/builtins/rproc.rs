@@ -41,8 +41,8 @@ ruby_class! {
 
     // `Proc#==`/`#eql?`: same underlying block. `dup`/`clone` share the block,
     // so a copy compares equal (unlike `equal?`, which is allocation identity).
-    def "==" arity 1 | "eql?" arity 1 (recv, *args, &_block) {
-        let eq = matches!(&args[0], RubyValue::Proc(other) if recv_proc(recv).block_eq(other));
+    def "==" | "eql?" (recv, other, &_block) {
+        let eq = matches!(other, RubyValue::Proc(other) if recv_proc(recv).block_eq(other));
         Ok(RubyValue::Bool(eq))
     }
 

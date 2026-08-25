@@ -1471,11 +1471,7 @@ fn build_command(args: &[RubyValue]) -> Result<Option<Command>, Signal> {
     // argument, and treating one as a string is how `{"CC"=>"cc"}` ends up
     // on a command line -- which is what mkmf's `xsystem` produced.
     let (env, args, opts) = peel_hashes(args);
-    if args.is_empty() {
-        return Err(arg_error!(
-            "wrong number of arguments (given 0, expected 1+)"
-        ));
-    }
+    crate::builtins::check_arity(args.len(), 1, None)?;
     let mut cmd = build_argv(args)?;
     if let (Some(cmd), Some(env)) = (cmd.as_mut(), env) {
         apply_env(cmd, env)?;

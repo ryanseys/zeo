@@ -786,33 +786,20 @@ pub(crate) fn bind_members(
     // keyword_init Structs -- CRuby routes keywords to the keyword initializer,
     // which accepts no positional args, so it reports "given N, expected 0".
     if (is_data || meta.keyword_init == Some(true)) && mixes_positional_and_keywords(args) {
-        return Err(arg_error!(
-            "wrong number of arguments (given {}, expected 0)",
-            args.len()
-        ));
+        return Err(crate::builtins::arity_err(args.len(), 0, Some(0)));
     }
 
     // Positional. A plain Struct nil-fills a short arg list; keyword_init and
     // Data require exact arity.
     if meta.keyword_init == Some(true) && !args.is_empty() {
-        return Err(arg_error!(
-            "wrong number of arguments (given {}, expected 0)",
-            args.len()
-        ));
+        return Err(crate::builtins::arity_err(args.len(), 0, Some(0)));
     }
     if args.len() > n || (is_data && args.len() != n && !args.is_empty()) {
-        return Err(crate::builtins::arg_error!(
-            "{}",
-            if is_data {
-                format!(
-                    "wrong number of arguments (given {}, expected {})",
-                    args.len(),
-                    n
-                )
-            } else {
-                "struct size differs".to_string()
-            }
-        ));
+        return Err(if is_data {
+            crate::builtins::arity_err(args.len(), n, Some(n))
+        } else {
+            crate::builtins::arg_error!("struct size differs")
+        });
     }
     if is_data && args.is_empty() && n > 0 {
         let missing: Vec<String> = meta
@@ -888,10 +875,7 @@ fn struct_construct_inner(
         // illegal mix, and must be refused before the zip below turns the
         // trailing hash into a member's value.
         if mixes_positional_and_keywords(args) {
-            return Err(arg_error!(
-                "wrong number of arguments (given {}, expected 0)",
-                args.len()
-            ));
+            return Err(crate::builtins::arity_err(args.len(), 0, Some(0)));
         }
         crate::builtins::check_arity(args.len(), 0, Some(meta.members.len()))?;
         zipped = [RubyValue::Hash(hash_new(

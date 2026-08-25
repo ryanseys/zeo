@@ -1018,9 +1018,7 @@ ruby_class! {
     // itself is `initialize_copy`'s.
     private def "initialize_clone" cfunc (recv, *args, &_block) {
         let Some(orig) = args.first() else {
-            return Err(crate::builtins::arg_error!(
-                "wrong number of arguments (given 0, expected 1)"
-            ));
+            return Err(crate::builtins::arity_err(0, 1, Some(1)));
         };
         inherited_row!(kernel, "initialize_copy", recv, std::slice::from_ref(orig), None)?;
         Ok(recv.clone())

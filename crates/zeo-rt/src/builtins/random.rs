@@ -355,15 +355,9 @@ ruby_class! {
         }
         // Re-seed the generator in place -- the body `Random.new` runs
         // through a subclass `super`, and what a bare re-init does too.
-        private def "initialize" cfunc (recv, *args) {
-            if args.len() > 1 {
-                return Err(arg_error!(
-                    "wrong number of arguments (given {}, expected 0..1)",
-                    args.len()
-                ));
-            }
+        private def "initialize" cfunc (recv, seed?) {
             let r = as_random(recv);
-            let (mt, seed) = seed_from(args.first())?;
+            let (mt, seed) = seed_from(seed)?;
             *r.state.lock() = mt;
             *r.seed.lock() = seed;
             Ok(recv.clone())

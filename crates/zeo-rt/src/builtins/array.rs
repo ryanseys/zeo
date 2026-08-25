@@ -813,16 +813,15 @@ ruby_class! {
         }
         Ok(RubyValue::Nil)
     }
-    def "dig" cfunc (recv, _key, *_rest, &_block) {
-        let args = __args;
-        let cur = index_only(recv, &args[0])?;
-        if args.len() == 1 {
+    def "dig" cfunc (recv, key, *rest, &_block) {
+        let cur = index_only(recv, key)?;
+        if rest.is_empty() {
             return Ok(cur);
         }
         // After our own first index, remaining keys recurse through the
         // intermediate's OWN `dig` (real Ruby's rule) -- a non-diggable there
         // raises TypeError rather than being indexed via some unrelated `[]`.
-        crate::dispatch::obj_dig(cur, &args[1..])
+        crate::dispatch::obj_dig(cur, rest)
     }
     def "fetch" cfunc (recv, arg1, arg2?, &block) {
         if block.is_some() && arg2.is_some() {

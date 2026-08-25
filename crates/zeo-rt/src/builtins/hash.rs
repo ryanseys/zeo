@@ -249,15 +249,14 @@ ruby_class! {
             &[("key", (*arg1).clone()), ("receiver", recv.clone())],
         ))
     }
-    def "dig" cfunc (recv, _key, *_rest, &_block) {
-        let args = __args;
-        let cur = crate::hash_get(rhash, &args[0]);
-        if args.len() == 1 {
+    def "dig" cfunc (recv, key, *rest, &_block) {
+        let cur = crate::hash_get(rhash, key);
+        if rest.is_empty() {
             return Ok(cur);
         }
         // Remaining keys recurse through the intermediate's OWN `dig`; a
         // non-diggable there raises TypeError, matching CRuby's `rb_obj_dig`.
-        crate::dispatch::obj_dig(cur, &args[1..])
+        crate::dispatch::obj_dig(cur, rest)
     }
     // `merge` (fresh hash) with an optional conflict block;
     // `merge!`/`update` write into the receiver.

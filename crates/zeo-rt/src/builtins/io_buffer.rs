@@ -665,7 +665,7 @@ ruby_class! {
 
     // `IO::Buffer.map(file, size = nil, offset = 0, flags = SHARED)` -- a
     // REAL mmap: a shared writable map writes through to the file.
-    def self."map"(_recv, file, size?, offset?, flags?) {
+    def self."map" cfunc (_recv, file, size?, offset?, flags?) {
         let fd = io_fd(file)?;
         let offset = match offset {
             None => 0i64,
@@ -993,7 +993,7 @@ ruby_class! {
         Ok(RubyValue::Str(crate::string_from_bytes(bytes, enc)))
     }
 
-    def "set_string"(recv, string, offset?, _length?, _string_offset?) {
+    def "set_string" cfunc (recv, string, offset?, _length?, _string_offset?) {
         let RubyValue::Str(s) = string else {
             return Err(type_error!(
                 "wrong argument type {} (expected String)",
@@ -1013,7 +1013,7 @@ ruby_class! {
         Ok(RubyValue::Int((offset + length) as i64))
     }
 
-    def "copy"(recv, source, offset?, length?, source_offset?) {
+    def "copy" cfunc (recv, source, offset?, length?, source_offset?) {
         let Some(src) = as_buffer(source) else {
             return Err(type_error!(
                 "wrong argument type {} (expected IO::Buffer)",
@@ -1133,7 +1133,7 @@ ruby_class! {
         Ok(recv.clone())
     }
 
-    def "each"(recv, buffer_type, offset?, count?, &block) {
+    def "each" cfunc (recv, buffer_type, offset?, count?, &block) {
         let block = block_or_enum!(recv, __args, block);
         let t = buf_type(buffer_type)?;
         let b = recv_buffer(recv);
@@ -1156,7 +1156,7 @@ ruby_class! {
         Ok(recv.clone())
     }
 
-    def "values"(recv, buffer_type, offset?, count?) {
+    def "values" cfunc (recv, buffer_type, offset?, count?) {
         let t = buf_type(buffer_type)?;
         let b = recv_buffer(recv);
         let (mut offset, count) = each_bounds(&b, offset, count, t)?;
@@ -1236,7 +1236,7 @@ ruby_class! {
         ))))
     }
 
-    def "read"(recv, io, length?, offset?) {
+    def "read" cfunc (recv, io, length?, offset?) {
         let fd = io_fd(io)?;
         let b = recv_buffer(recv);
         let st = b.state.lock();
@@ -1248,7 +1248,7 @@ ruby_class! {
         finish_io(n)
     }
 
-    def "write"(recv, io, length?, offset?) {
+    def "write" cfunc (recv, io, length?, offset?) {
         let fd = io_fd(io)?;
         let b = recv_buffer(recv);
         let st = b.state.lock();
@@ -1259,7 +1259,7 @@ ruby_class! {
         finish_io(n)
     }
 
-    def "pread"(recv, io, from, length?, offset?) {
+    def "pread" cfunc (recv, io, from, length?, offset?) {
         let fd = io_fd(io)?;
         let from = crate::builtins::arg_int!(from);
         let b = recv_buffer(recv);
@@ -1277,7 +1277,7 @@ ruby_class! {
         finish_io(n)
     }
 
-    def "pwrite"(recv, io, from, length?, offset?) {
+    def "pwrite" cfunc (recv, io, from, length?, offset?) {
         let fd = io_fd(io)?;
         let from = crate::builtins::arg_int!(from);
         let b = recv_buffer(recv);
