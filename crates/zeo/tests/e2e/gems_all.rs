@@ -6,15 +6,16 @@
 //! signal would be whichever golden happened to `require` that gem, or
 //! nothing at all for the seven gems no golden covers.
 //!
-//! Front end + codegen only (`compile_to_rust_with`, no `rustc`), so the whole
-//! sweep is seconds rather than the tens of minutes a link-and-run pass costs.
-//! That is the right depth for this check: "can zeo still compile this
-//! library" is a lowering question, and behaviour is already the goldens' job.
+//! Front end only (`check_program_with` -- parse, splice, analyze; no CLIF
+//! emission), so the whole sweep is seconds rather than the minutes a
+//! build-and-run pass costs. That is the right depth for this check: "does
+//! zeo still accept this library" is a front-end question, and behaviour is
+//! already the goldens' job.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 fn repo(rel: &str) -> PathBuf {
-    Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join(rel)
+    zeo_tests::golden::workspace_root().join(rel)
 }
 
 /// The feature name to `require`, when it is not the directory name.

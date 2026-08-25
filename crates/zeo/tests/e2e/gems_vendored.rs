@@ -9,13 +9,13 @@
 //! vendoring is intact,
 //! the whole require graph still reaches codegen, the classes that matter
 //! survive it, and the disclosure record tells the truth about all of it. Those
-//! are the failures that would otherwise show up only as a 30-minute `rustc`
-//! run ending in a diff.
+//! are the failures that would otherwise show up only as a long whole-gem
+//! compile ending in a diff.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 fn repo(rel: &str) -> PathBuf {
-    Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join(rel)
+    zeo_tests::golden::workspace_root().join(rel)
 }
 
 /// One gem's entry in `upstream.lock` -- the DERIVED manifest. `upstream.rb`

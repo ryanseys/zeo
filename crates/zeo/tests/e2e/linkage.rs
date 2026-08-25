@@ -51,16 +51,7 @@ fn link_program(source: &str) -> PathBuf {
 /// same cargo invocation as the `libzeo.a` the program links, so it is the
 /// reference for what that archive holds.
 fn zeo_cli() -> PathBuf {
-    let mut p = std::env::current_exe().expect("test binary path");
-    p.pop(); // deps/<test-bin> -> deps
-    p.pop(); // deps -> target/<profile>
-    p.push("zeo");
-    assert!(
-        p.is_file(),
-        "these tests need the zeo CLI at {} (run `cargo build -p zeo` first)",
-        p.display()
-    );
-    p
+    zeo_tests::golden::zeo_cli().unwrap_or_else(|e| panic!("{e}"))
 }
 
 fn read(path: &Path) -> Vec<u8> {

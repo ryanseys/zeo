@@ -9,18 +9,14 @@
   oracle (`tools/zeo-dev bless`); the committed snapshots cover ordinary runs.
 
 ```console
-$ make     # cargo build --workspace -- do this first, and after every compiler edit
+$ make     # cargo build --workspace
 ```
 
-**`cargo build` first, always.** It produces two things the test suites need
-and cannot build for themselves: the `zeo` binary the golden harness spawns,
-and `libzeo.a`, the runtime archive every compiled program links against.
-Nothing gives a test target a cargo dependency edge to a *binary* target, so a
-stale `zeo` would otherwise run yesterday's compiler over today's goldens and
-report green. The harness stats the compiler's sources against the binary and
-refuses instead — if a whole suite fails with *"the zeo CLI … is older than
-…"*, that is this, and `cargo build` is the fix. (`cargo nextest run
---workspace` rebuilds it for you; `cargo nextest run -p zeo-tests` does not.)
+The golden and e2e suites spawn the built `zeo` binary and link against
+`libzeo.a`. Both are products of the `zeo` package — and the suites live in
+`crates/zeo/tests/`, so cargo rebuilds both before any suite runs. There is
+no "build first" ritual: `cargo nextest run -p zeo --test examples` after a
+compiler edit tests the edited compiler.
 
 ## The one rule: oracle-verified, divergence-documented
 
@@ -50,9 +46,9 @@ $ make linux   # the container verification loop (needs podman)
 Targeted runs go through nextest directly:
 
 ```console
-$ cargo nextest run -p zeo-tests --test spinel      # the full ruby-oracle corpus
-$ cargo nextest run -p zeo-tests --test examples --test gaps
-$ cargo nextest run -p zeo-tests -P full            # + the whole-gem cases
+$ cargo nextest run -p zeo --test spinel      # the full ruby-oracle corpus
+$ cargo nextest run -p zeo --test examples --test gaps
+$ cargo nextest run -p zeo -P full            # + the whole-gem cases
 $ tools/zeo-dev bless <filter>              # re-record goldens from ruby
 $ tools/zeo-dev bench                       # perf vs bench/baseline.tsv
 $ tools/zeo-dev size                        # what each class table costs a binary
@@ -98,10 +94,10 @@ The oracle for correctness is `ruby` on `PATH`.
 The golden suites take two legs, and the e2e suite does too:
 
 ```console
-$ cargo nextest run -p zeo-tests --test examples                      # jit
-$ ZEO_GOLDEN_BACKEND=aot   cargo nextest run -p zeo-tests --test examples
-$ cargo nextest run -p zeo-tests --test e2e                           # jit child (default)
-$ ZEO_E2E_BACKEND=aot      cargo nextest run -p zeo-tests --test e2e  # link per test
+$ cargo nextest run -p zeo --test examples                      # jit
+$ ZEO_GOLDEN_BACKEND=aot   cargo nextest run -p zeo --test examples
+$ cargo nextest run -p zeo --test e2e                           # jit child (default)
+$ ZEO_E2E_BACKEND=aot      cargo nextest run -p zeo --test e2e  # link per test
 ```
 
 `crates/zeo/tests/clif.rs` holds insta snapshots of the emitted CLIF. They

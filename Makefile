@@ -47,18 +47,18 @@ ci-jit: all
 # case, which is exactly why the DEFAULT e2e tier is the JIT child and the
 # link tier lives here.
 ci-aot: all
-	ZEO_GOLDEN_BACKEND=aot $(NEXTEST) -p zeo-tests --test examples --test spinel --test gaps --no-fail-fast
-	ZEO_E2E_BACKEND=aot $(NEXTEST) -p zeo-tests --test e2e --no-fail-fast
+	ZEO_GOLDEN_BACKEND=aot $(NEXTEST) -p zeo --test examples --test spinel --test gaps --no-fail-fast
+	ZEO_E2E_BACKEND=aot $(NEXTEST) -p zeo --test e2e --no-fail-fast
 
 # The compiled-ownership ledger: a non-zero balance at exit is a leak or a
 # double-consume in the emitted lowering. Emitted code only, so golden corpora only.
 ci-leakcheck: all
-	ZEO_RT_LEAKCHECK=1 $(NEXTEST) -p zeo-tests --test examples --test spinel --test gaps --no-fail-fast
+	ZEO_RT_LEAKCHECK=1 $(NEXTEST) -p zeo --test examples --test spinel --test gaps --no-fail-fast
 
 # The cycle census: gates CHANGE against each program's `.gccheck` sidecar.
 # The whole-gem gemtests leg of this check lives in `gate`, not here.
 ci-gccheck: all
-	ZEO_GC=1 ZEO_RT_GCCHECK=1 $(NEXTEST) -p zeo-tests --test examples --test spinel --test gaps --no-fail-fast
+	ZEO_GC=1 ZEO_RT_GCCHECK=1 $(NEXTEST) -p zeo --test examples --test spinel --test gaps --no-fail-fast
 
 # The C extension surface is off by default and dead-strips; the workspace
 # leg cannot see its tests.
@@ -75,8 +75,8 @@ ci-doc: all
 # out of (`-P full`), plus gemtests under the cycle census, plus bench
 # (informational -- bench numbers are recorded, never a gate).
 gate: ci-jit ci-aot ci-leakcheck ci-gccheck ci-cext ci-doc
-	$(NEXTEST) -p zeo-tests -P full -E 'binary(gemtests) + test(every_bundled_gem_compiles)'
-	ZEO_GC=1 ZEO_RT_GCCHECK=1 $(NEXTEST) -p zeo-tests -P full --test gemtests
+	$(NEXTEST) -p zeo -P full -E 'binary(gemtests) + test(every_bundled_gem_compiles)'
+	ZEO_GC=1 ZEO_RT_GCCHECK=1 $(NEXTEST) -p zeo -P full --test gemtests
 	$(ZEO_DEV) bench
 
 bench:

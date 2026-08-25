@@ -4,56 +4,19 @@ version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-# The integration/golden test suites, split out of `zeo` so the published
-# crate carries no targets rooted at the repo's `tests/` corpus. Never
-# published; drives `zeo` through its public library API only.
+# The golden + e2e harness LIBRARY (src/golden.rs, src/e2e_support.rs).
+# The suite targets themselves live in crates/zeo/tests/, the package that
+# owns the `zeo` binary and `libzeo.a` -- cargo rebuilds both before any
+# suite runs, which is the freshness guarantee the harness once had to
+# police by hand. Never published; `zeo` dev-depends on this crate
+# (path-only, so the cycle is stripped from the .crate).
 publish = false
 
-# What `src/` (the shared golden + e2e harness the test targets import)
-# needs. `publish = false` makes real dependencies free here -- there is no
-# published crate to keep lean and no dependency cycle to fear.
 [dependencies]
 zeo.workspace = true
 # `setrlimit` on the golden child: see MAX_CHILD_ADDRESS_SPACE in src/golden.rs.
 libc.workspace = true
 datatest-stable.workspace = true
-
-[dev-dependencies]
-zeo-abi.workspace = true
-miette.workspace = true
-insta.workspace = true
-datatest-stable.workspace = true
-# The arity drift test re-parses the runtime's DSL declarations with the same
-# grammar the macro expands, so what it checks is what the runtime registers.
-# : the derived manifest gems_vendored.rs reads.
-serde_json.workspace = true
-# The link-ledger tests (e2e/linkage.rs) read a linked program's sections
-# and symbols; nothing else in the suite parses a binary.
-object.workspace = true
-gimli.workspace = true
-
-# Golden-file suites: one nextest case per `.rb`, comparing zeo's output to the
-# committed ruby-oracle `.expected` (see tests/support/golden.rs). `harness =
-# false` hands the target to datatest-stable. `tools/zeo-dev bless <filter>` rewrites goldens.
-[[test]]
-name = "gaps"
-path = "tests/gaps.rs"
-harness = false
-
-[[test]]
-name = "examples"
-path = "tests/examples.rs"
-harness = false
-
-[[test]]
-name = "gemtests"
-path = "tests/gemtests.rs"
-harness = false
-
-[[test]]
-name = "spinel"
-path = "tests/spinel.rs"
-harness = false
 
 [lints]
 workspace = true

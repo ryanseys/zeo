@@ -37,7 +37,7 @@ module ZeoDev
         puts "promoted tests/gaps/#{stem}.rb -> tests/ (#{moved.size} files: #{moved.join(" ")})"
 
         puts "verifying it passes in the examples suite ..."
-        ok = system("cargo", "nextest", "run", "-p", "zeo-tests", "--test", "examples",
+        ok = system("cargo", "nextest", "run", "-p", "zeo", "--test", "examples",
                     "-E", "test(#{stem})", chdir: ROOT)
         ok ? 0 : 1
       end

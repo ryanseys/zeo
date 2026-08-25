@@ -7,7 +7,7 @@
 //! `tests/gaps/`, or `tests/bench/` subdirectories (the first two are their
 //! own suites; `tests/bench/` holds compile-side INPUTS with no goldens --
 //! whole-gem programs are the gem probe's coverage, not this suite's, since
-//! each one costs minutes of rustc and bogged down every run).
+//! each one costs minutes of compile and bogged down every run).
 //!
 //! `tools/zeo-dev bless examples::` re-records the goldens from ruby.
 

@@ -21,7 +21,7 @@ golden = { max-threads = 10 }
 
 # The default run is the DEV loop and stays fast: everything that compiles a
 # whole gem's require graph is opted out here and runs only under `-P full`
-# -- `cargo nextest run -p zeo-tests -P full` is the full gate's spelling.
+# -- `cargo nextest run -p zeo -P full` is the full gate's spelling.
 # The gem probe owns broad whole-gem compile coverage; these two are the
 # survivors with assertions the probe can't make.
 [profile.default]

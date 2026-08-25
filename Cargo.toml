@@ -30,6 +30,11 @@ zeo-abi = { path = "crates/zeo-abi", version = "=0.1.0" }
 zeo-rt = { path = "crates/zeo-rt", version = "=0.1.0" }
 zeo-dsl = { path = "crates/zeo-dsl", version = "=0.1.0" }
 zeo-macros = { path = "crates/zeo-macros", version = "=0.1.0" }
+# The golden/e2e harness library, a dev-dependency of `zeo` (whose tests/
+# host the suites). Path-only, NO version: cargo strips a versionless path
+# dev-dependency from the published .crate, which is what keeps the
+# zeo <-> zeo-tests dev-cycle out of crates.io.
+zeo-tests = { path = "crates/zeo-tests" }
 
 # The Cranelift backend (plan decision 1): zeo lowers HIR to CLIF itself and
 # emits object files -- no rustc/LLVM in the compile path. Pinned to the

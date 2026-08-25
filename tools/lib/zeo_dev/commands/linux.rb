@@ -106,9 +106,9 @@ module ZeoDev
         # No env var = the default (jit) leg. The goldens spawn a child zeo
         # each and the watchdog caps them at 512 MiB.
         when "jit"
-          "cargo nextest run #{cargo_profile} -p zeo-tests --test-threads #{threads} --no-fail-fast"
+          "cargo nextest run #{cargo_profile} -p zeo --test-threads #{threads} --no-fail-fast"
         when "aot"
-          "ZEO_GOLDEN_BACKEND=aot cargo nextest run #{cargo_profile} -p zeo-tests " \
+          "ZEO_GOLDEN_BACKEND=aot cargo nextest run #{cargo_profile} -p zeo " \
             "--test-threads #{threads} --no-fail-fast --test examples --test spinel --test gaps"
         when "units"
           "cargo nextest run #{cargo_profile} -p zeo -p zeo-rt --test-threads #{threads}"
@@ -126,7 +126,7 @@ module ZeoDev
         when "dist" then "tools/zeo-dev dist"
         when "shell" then "exec bash"
         when "-E"
-          "cargo nextest run #{cargo_profile} -p zeo-tests --test-threads #{threads} " \
+          "cargo nextest run #{cargo_profile} -p zeo --test-threads #{threads} " \
             "--no-fail-fast -E '#{opts[:filter]}'"
         else raise Error, "unknown stage: #{name}"
         end

@@ -64,7 +64,7 @@ module ZeoDev
 
         before = changed_goldens
         warn "bless: re-recording goldens matching #{filter.inspect} from the ruby oracle"
-        # `-p zeo-tests` is load-bearing for SPEED, not scope: every reader of
+        # `-p zeo` is load-bearing for SPEED, not scope: every reader of
         # BLESS_VAR lives in that package, and an unscoped nextest resolves
         # features across the whole workspace, which invalidates the build
         # every time.
@@ -73,7 +73,7 @@ module ZeoDev
         # its golden and then asserts against the old one is not the contract.
         # What matters is what changed on disk.
         system({ BLESS_VAR => "1" },
-               "cargo", "nextest", "run", "-p", "zeo-tests",
+               "cargo", "nextest", "run", "-p", "zeo",
                "-E", "test(#{filter})", *passthrough, chdir: ROOT)
 
         report(before, changed_goldens, filter)

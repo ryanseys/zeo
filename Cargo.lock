@@ -2134,6 +2134,7 @@ dependencies = [
  "cranelift-module",
  "cranelift-native",
  "cranelift-object",
+ "datatest-stable",
  "flate2",
  "foldhash 0.1.5",
  "gimli 0.33.0",
@@ -2144,6 +2145,7 @@ dependencies = [
  "object 0.39.1",
  "proc-macro2",
  "ruby-prism",
+ "serde_json",
  "syn 2.0.118",
  "tar",
  "target-lexicon",
@@ -2154,6 +2156,7 @@ dependencies = [
  "zeo-abi",
  "zeo-dsl",
  "zeo-rt",
+ "zeo-tests",
 ]
 
 [[package]]
@@ -2223,14 +2226,8 @@ name = "zeo-tests"
 version = "0.1.0"
 dependencies = [
  "datatest-stable",
- "gimli 0.33.0",
- "insta",
  "libc",
- "miette",
- "object 0.39.1",
- "serde_json",
  "zeo",
- "zeo-abi",
 ]
 
 [[package]]

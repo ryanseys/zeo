@@ -445,12 +445,12 @@ fn golden_backend() -> String {
 
 /// The built `zeo` CLI beside this test binary's profile dir.
 ///
-/// Checked against the compiler's own sources, because nothing rebuilds it
-/// for us: a test target has no cargo dependency edge to a BINARY target,
-/// so a stale `zeo` would run yesterday's compiler over today's goldens and
-/// report green. Stat-only, and it never shells cargo -- it says what to run.
-/// Shared with the e2e harness's JIT-child runner.
-pub(crate) fn zeo_cli() -> Result<PathBuf, String> {
+/// Freshness is cargo's own guarantee now: the suite targets live in
+/// `crates/zeo/tests/`, and cargo rebuilds a package's binaries (and its
+/// staticlib, `libzeo.a`) before compiling or running its integration
+/// tests. The 420-syscall source-mtime walk that once policed this by hand
+/// is gone with the cross-package split that made it necessary.
+pub fn zeo_cli() -> Result<PathBuf, String> {
     let mut p = std::env::current_exe().map_err(|e| format!("test binary path: {e}"))?;
     p.pop(); // deps/<test-bin> -> deps
     p.pop(); // deps -> target/<profile>
@@ -461,48 +461,7 @@ pub(crate) fn zeo_cli() -> Result<PathBuf, String> {
             p.display()
         ));
     }
-    if let Some(source) = newer_compiler_source(&p) {
-        return Err(format!(
-            "the zeo CLI at {} is older than {} (run `cargo build -p zeo` first)",
-            p.display(),
-            source.display()
-        ));
-    }
     Ok(p)
-}
-
-/// The compiler crates whose sources build the `zeo` binary and `libzeo.a`.
-const COMPILER_CRATES: &[&str] = &["zeo", "zeo-rt", "zeo-abi", "zeo-macros", "zeo-dsl"];
-
-/// A compiler source newer than `binary`, if there is one. Walks exactly the
-/// inputs cargo would rebuild for -- the crates' `src`/`build.rs`/manifest
-/// plus the workspace manifest and lockfile -- and never the test corpus,
-/// which is not an input to the compiler.
-fn newer_compiler_source(binary: &Path) -> Option<PathBuf> {
-    let mtime = |p: &Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
-    let built = mtime(binary)?;
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent()?.parent()?;
-    let mut roots: Vec<PathBuf> = vec![root.join("Cargo.toml"), root.join("Cargo.lock")];
-    for name in COMPILER_CRATES {
-        let dir = root.join("crates").join(name);
-        roots.push(dir.join("src"));
-        roots.push(dir.join("build.rs"));
-        roots.push(dir.join("Cargo.toml"));
-    }
-    let mut stack = roots;
-    while let Some(path) = stack.pop() {
-        let Ok(meta) = std::fs::metadata(&path) else {
-            continue;
-        };
-        if meta.is_dir() {
-            if let Ok(entries) = std::fs::read_dir(&path) {
-                stack.extend(entries.flatten().map(|e| e.path()));
-            }
-        } else if meta.modified().is_ok_and(|m| m > built) {
-            return Some(path);
-        }
-    }
-    None
 }
 
 /// The Cranelift legs' runner: one spawned `zeo` child per golden, which

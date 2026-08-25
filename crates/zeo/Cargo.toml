@@ -8,13 +8,13 @@ homepage.workspace = true
 repository.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "An ahead-of-time Ruby compiler: compiles Ruby programs to self-contained native binaries by emitting Rust"
+description = "An ahead-of-time Ruby compiler: compiles Ruby programs to self-contained native binaries through Cranelift"
 readme = "../../README.md"
 default-run = "zeo"
-# Packaging whitelist: the integration/golden suites live in `zeo-tests`
-# (repo-rooted, unpublishable); the .crate ships only the compiler itself
-# plus the two publish-time artifacts `tools/zeo-dev stage-publish` stages
-# (the pregen class surface rides inside /src).
+# Packaging whitelist: the .crate ships only the compiler itself plus the
+# two publish-time artifacts `tools/zeo-dev stage-publish` stages (the
+# pregen class surface rides inside /src). /tests -- the golden and e2e
+# suites, rooted at the repo corpus -- is deliberately outside it.
 include = ["/src", "/build.rs", "/README.md", "/gems.pregen.tar.gz"]
 
 [dependencies]
@@ -62,8 +62,46 @@ tar.workspace = true
 flate2.workspace = true
 
 [dev-dependencies]
-# CLIF snapshot pinning (`tests/clif.rs`).
+# CLIF snapshot pinning (`tests/clif.rs`) and the diagnostic renderings
+# (`tests/repo_checks/diagnostics.rs`).
 insta.workspace = true
+# The golden + e2e harness library. The suites live HERE, in the package
+# that owns the `zeo` binary and the `libzeo.a` staticlib, so cargo itself
+# rebuilds both before any suite runs -- the staleness canary the harness
+# once carried is cargo's own dependency edge now. The dev-dep cycle
+# (zeo-tests depends on zeo) is the standard, cargo-sanctioned shape and is
+# stripped from the published .crate.
+zeo-tests.workspace = true
+zeo-abi.workspace = true
+datatest-stable.workspace = true
+# The derived manifest gems_vendored.rs reads.
+serde_json.workspace = true
+# diagnostics.rs renders compile errors the way the CLI does.
+miette.workspace = true
+
+# Golden-file suites: one nextest case per `.rb`, comparing zeo's output to
+# the committed ruby-oracle `.expected` (see zeo-tests/src/golden.rs).
+# `harness = false` hands the target to datatest-stable.
+# `tools/zeo-dev bless <filter>` rewrites goldens.
+[[test]]
+name = "gaps"
+path = "tests/gaps.rs"
+harness = false
+
+[[test]]
+name = "examples"
+path = "tests/examples.rs"
+harness = false
+
+[[test]]
+name = "gemtests"
+path = "tests/gemtests.rs"
+harness = false
+
+[[test]]
+name = "spinel"
+path = "tests/spinel.rs"
+harness = false
 
 [build-dependencies]
 # The build.rs projects the compiler's `CLASS_SURFACE` by re-parsing the

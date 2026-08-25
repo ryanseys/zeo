@@ -291,7 +291,7 @@ crates/
   zeo-abi     a dependency-free leaf: the ClassId numbers both sides agree on
   zeo-dsl     the shared `syn` grammar for the ruby_class! / ruby_module! DSL
   zeo-macros  the macro that expands that DSL into runtime code
-  zeo-tests   the integration and golden suites (not published)
+  zeo-tests   the golden/e2e harness library (the suites live in zeo's tests/; not published)
 ```
 
 - **`zeo`** — the driver. `parse/` and `lower/` resolve requires and lower the
@@ -368,9 +368,9 @@ programs, not a way to call Ruby from Rust.
 
 ```console
 $ cargo build -p zeo                                    # zeo + libzeo.a
-$ cargo nextest run -p zeo-tests --test-threads 4       # goldens, e2e, ratchets
-$ cargo nextest run -p zeo-tests -P full                # + whole-gem cases
-$ cargo nextest run -p zeo-tests --test spinel          # the conformance corpus
+$ cargo nextest run -p zeo --test-threads 4       # goldens, e2e, ratchets
+$ cargo nextest run -p zeo -P full                # + whole-gem cases
+$ cargo nextest run -p zeo --test spinel          # the conformance corpus
 $ tools/zeo-dev bless spinel::                  # re-record goldens from ruby
 $ tools/zeo-dev bench                           # the performance suite
 $ tools/zeo-dev size                            # what each class table costs

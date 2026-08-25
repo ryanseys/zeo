@@ -1,10 +1,11 @@
-//! In-process end-to-end tests via `support::run_ruby` (see its module docs).
-//! Compiles each snippet with `zeo` in-process, builds and runs the
-//! generated program, and asserts stdout/stderr/exit status separately, plus a
-//! zero-subprocess negative-path tier (`compile_project(...).unwrap_err()`) for
-//! compile errors. The `tests/*.rb` example programs with `.rb.expected` remain
-//! as a smaller ruby-oracle golden smoke suite (`cargo test --test examples`);
-//! this is the default place to add coverage.
+//! End-to-end tests via `support::run_ruby` (see its module docs). Each
+//! snippet is compiled and run -- a spawned JIT `zeo` child by default, a
+//! linked binary under `ZEO_E2E_BACKEND=aot` -- and stdout/stderr/exit
+//! status are asserted separately, plus an in-process negative-path tier
+//! (`compile_project(...).unwrap_err()`) for compile errors. The
+//! `tests/*.rb` example programs with `.rb.expected` remain as the
+//! ruby-oracle golden suite (`cargo test --test examples`); this is the
+//! default place to add coverage.
 //!
 //! Split by subject into the sibling modules below. This is ONE test binary --
 //! a `tests/e2e/` directory with `main.rs`, not a file per subject -- so the

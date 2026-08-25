@@ -27,26 +27,16 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
+    zeo_tests::golden::workspace_root()
         .canonicalize()
         .expect("the repo root is reachable from the manifest dir")
 }
 
-/// The `zeo` binary the harness spawns elsewhere. `cargo build --workspace`
-/// is what produces it; a missing one is a stale tree, not a skip.
+/// The `zeo` binary beside this test binary's profile dir -- unlike the
+/// old `target/{debug,release}` guess, this survives CARGO_TARGET_DIR and
+/// custom profiles.
 fn zeo_bin() -> PathBuf {
-    if let Some(p) = std::env::var_os("ZEO_BIN") {
-        return PathBuf::from(p);
-    }
-    let root = repo_root();
-    for profile in ["debug", "release"] {
-        let p = root.join("target").join(profile).join("zeo");
-        if p.is_file() {
-            return p;
-        }
-    }
-    panic!("no `zeo` binary under target/{{debug,release}} -- run `cargo build --workspace`");
+    zeo_tests::golden::zeo_cli().unwrap_or_else(|e| panic!("{e}"))
 }
 
 fn have(tool: &str) -> bool {
