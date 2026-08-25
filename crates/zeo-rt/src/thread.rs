@@ -94,6 +94,15 @@ pub struct ThreadData {
     is_main: bool,
     /// A pending `Thread#kill`/`#raise`, taken at the next checkpoint.
     interrupt: PlMutex<Option<InterruptKind>>,
+    /// Whether this thread's body has reached a checkpoint yet. CRuby has
+    /// NO checkpoint between thread start and the body's first back-edge
+    /// or call, so an interrupt posted before the body runs is always
+    /// delivered INSIDE the body's own protection (`Thread.new { begin
+    /// .. rescue .. end }` catches a pre-start `#raise`). zeo's block
+    /// prologue checkpoints before the first user statement, outside that
+    /// protection -- so the FIRST checkpoint a spawned thread reaches
+    /// only marks arrival, and delivery starts at the second.
+    body_entered: AtomicBool,
     /// This thread's scheduling ctx, registered by its first interruptible
     /// sleep -- lets `#kill`/`#raise` wake exactly this sleeper instead of
     /// waiting out the timeout.
@@ -166,6 +175,7 @@ impl ThreadData {
             tvars: PlMutex::new(HashMap::new()),
             is_main,
             interrupt: PlMutex::new(None),
+            body_entered: AtomicBool::new(is_main),
             ctx: PlMutex::new(None),
             was_killed: AtomicBool::new(false),
             frozen: AtomicBool::new(false),
@@ -468,6 +478,28 @@ pub fn check_interrupt() -> Result<(), Signal> {
     let t = CURRENT
         .with(|c| c.lock().clone())
         .unwrap_or_else(main_thread);
+    deliver_pending(&t)
+}
+
+/// The EMITTED checkpoint's delivery half (`check_ints`): identical to
+/// [`check_interrupt`], except a spawned thread's FIRST emitted checkpoint
+/// -- its body's prologue, before the first user statement, outside any
+/// `begin` the body opens -- only marks arrival, and delivery starts at
+/// the second. CRuby has no instruction checkpoint there, so an interrupt
+/// posted before the body runs is always delivered inside the body's own
+/// protection. Blocking primitives keep the raw [`check_interrupt`]: a
+/// `sleep` entry IS a delivery point in CRuby, first or not.
+pub fn emitted_checkpoint() -> Result<(), Signal> {
+    let t = CURRENT
+        .with(|c| c.lock().clone())
+        .unwrap_or_else(main_thread);
+    if !t.body_entered.swap(true, Ordering::AcqRel) {
+        return Ok(());
+    }
+    deliver_pending(&t)
+}
+
+fn deliver_pending(t: &RThread) -> Result<(), Signal> {
     let taken = t.interrupt.lock().take();
     if taken.is_some() {
         crate::gvl::note_consumed();
@@ -531,7 +563,10 @@ pub fn thread_stop_current() -> Result<RubyValue, Signal> {
     while t.stopped.load(Ordering::Relaxed) {
         // Before parking, for the reason `sleep_impl` documents: an interrupt
         // posted while this thread was starting up found no ctx to wake.
-        crate::check_ints()?;
+        // The RAW check, not the emitted-checkpoint wrapper -- a blocking
+        // primitive's entry delivers even a spawned thread's first pending
+        // interrupt (see `sleep_impl`).
+        check_interrupt()?;
         crate::gvl::process_gvl().without(|| ctx.sleep(None));
     }
     Ok(RubyValue::Nil)

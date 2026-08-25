@@ -234,7 +234,7 @@ pub fn check_ints() -> Result<(), Signal> {
         // After parking, so a thread the collector asked to stop does not
         // start a second collection of its own.
         gc::service_due();
-        thread::check_interrupt()?;
+        thread::emitted_checkpoint()?;
     }
     Ok(())
 }
