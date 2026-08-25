@@ -192,16 +192,19 @@ are gated on those extensions' maturity.
 `rubygems/platform`; `bundler/version`) rather than `require "rubygems"` /
 `require "bundler"`, and each header says why.
 
-Both recorded blockers have since landed — `Kernel#binding` (so
-`Gem::Specification`'s `eval <<-RUBY, binding, __FILE__, __LINE__ + 1` writer
-idiom works) and the method-body require hoist. **Re-probe before planning
-anything**; the remaining notes below may be stale too:
+Re-probed 2026-08-24: both umbrellas still fail, and the old blockers
+(`Gem.operating_system_defaults`, `Gem::Platform.local`) are superseded by
+EARLIER ones — the current shapes:
 
-- `Gem.operating_system_defaults` — `require "rubygems/specification"` died in
-  `config_file.rb:57` calling it, because it is defined in `rubygems/defaults.rb`
-  which `rubygems.rb` requires. Root cause was require order, which the hoist
-  fix addressed.
-- `Gem::Platform.local` reads `Gem.target_rbconfig`, defined in `rubygems.rb`.
+- `require "rubygems"` dies in `specification.rb:136` (`<class:Specification>`)
+  with `uninitialized constant Gem::Requirement` — `rubygems/requirement.rb`
+  is required by `rubygems.rb` before `specification`, so this reads as the
+  positional-require family (a class-body constant read landing before the
+  require that defines it was installed).
+- `require "bundler"` dies in `kernel_require.rb:37` with
+  `undefined method 'gem_original_require' for module Gem` — rubygems'
+  `alias_method :gem_original_require, :require` over the builtin `require`
+  does not install the alias.
 
 When it clears: switch each golden to the umbrella require, restore the
 `Gem::Specification` section (a full spec build with runtime and development
