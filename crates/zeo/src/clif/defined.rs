@@ -319,7 +319,7 @@ pub(super) fn lower_defined(fx: &mut Fx, site: NodeId, inner: NodeId) -> Result<
         // A scope-less write is keyed by its LEAF, so both spellings count;
         // matching one too many only costs the fold, never the answer.
         let unrun = {
-            let set = &fx.an.compiler.hir.unrun_unit_consts;
+            let set = &fx.an.compiler.hir.loader.unrun_unit_consts;
             set.contains(&name) || set.contains(&format!("{scope}::{name}"))
         };
         if unrun || crate::analyze::constfold::const_form_resolves(&env, inner) != Some(true) {
@@ -542,7 +542,7 @@ fn defined_rest(fx: &mut Fx, site: NodeId, inner: NodeId) -> Result<Operand, Str
                 // undefined until that file runs just the same.
                 .or_else(|| {
                     let leaf = crate::constpath::ConstPath::parse(&name).base().to_string();
-                    let set = &fx.an.compiler.hir.unrun_unit_consts;
+                    let set = &fx.an.compiler.hir.loader.unrun_unit_consts;
                     (set.contains(&leaf) || set.contains(&name)).then(|| {
                         (
                             fx.defining_class

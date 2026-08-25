@@ -45,13 +45,13 @@ pub struct Analyzed {
     /// method body, but for `main_statements` -- there's no `Scope` for the
     /// top level to hang this off of.
     pub main_local_types: FMap<String, TyKind>,
-    /// The compiled-in load path (see `Hir::feature_units`): each unit's
+    /// The compiled-in load path (see `LoaderState::feature_units`): each unit's
     /// top-level statements under EVERY feature name a `require` can spell
     /// for it. Walked exactly like `main_statements` -- their classes
     /// register at startup -- but emitted as a function the runtime calls on
     /// demand.
     pub feature_units: Vec<(Vec<String>, String, Vec<NodeId>)>,
-    /// Load-path files zeo could not lower -- see `Hir::declined_units`.
+    /// Load-path files zeo could not lower -- see `LoaderState::declined_units`.
     pub declined_units: Vec<(String, String, String)>,
 }
 
@@ -109,7 +109,7 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
     // `ActiveModel::Type::Value` to shell, and the unit was declined -- taking
     // most of the Rails corpus with it. Each unit body is its own top-level
     // scope in box 0, exactly as `process_top_stmt` walks it.
-    for unit in &compiler.hir.feature_units {
+    for unit in &compiler.hir.loader.feature_units {
         collect_shell_kinds(&compiler.hir, &unit.body, &[], 0, &mut shell_kinds);
     }
     compiler.shell_kinds = shell_kinds;
@@ -118,7 +118,7 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
     compiler.top_level_const_aliases = aliases;
     let mut scoped_aliases = FMap::default();
     collect_const_aliases(&compiler.hir, &statements, &[], 0, &mut scoped_aliases);
-    for unit in &compiler.hir.feature_units {
+    for unit in &compiler.hir.loader.feature_units {
         collect_const_aliases(&compiler.hir, &unit.body, &[], 0, &mut scoped_aliases);
     }
     compiler.const_aliases = scoped_aliases;
@@ -227,12 +227,12 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
     // instead of inlining. A `BEGIN` block inside a lazily-loaded file has no
     // sensible meaning (there is no "before the program" left to run at), so
     // its statements simply join the unit's body in place.
-    let mut declined_units = std::mem::take(&mut compiler.hir.declined_units);
+    let mut declined_units = std::mem::take(&mut compiler.hir.loader.declined_units);
     let mut feature_units = Vec::new();
     // Everything a unit's walk REGISTERS is registered-but-not-promised --
     // see `register_method`'s `runtime_conditional` marking.
     compiler.unit_walk = true;
-    for unit in std::mem::take(&mut compiler.hir.feature_units) {
+    for unit in std::mem::take(&mut compiler.hir.loader.feature_units) {
         let mut stmts = Vec::new();
         let mut unit_pre_exec = Vec::new();
         let mut failed = None;
@@ -1179,7 +1179,7 @@ fn narrow_runtime_eval(
         }
     };
     answered_by_user(Some(crate::compiler::OBJECT_CLASS), main_statements);
-    for unit in &hir.feature_units {
+    for unit in &hir.loader.feature_units {
         let body = unit.body.clone();
         answered_by_user(Some(crate::compiler::OBJECT_CLASS), &body);
     }

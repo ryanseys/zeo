@@ -1,8 +1,8 @@
 //! The process-wide FFI vocabulary a snippet's compile seeds from.
 //!
 //! An FFI field type has to resolve to a byte width and an OFFSET at lowering
-//! time, and the tables that resolve it (`Hir::ffi_types`,
-//! `Hir::ffi_struct_layouts`) belong to ONE compile. A snippet is its own
+//! time, and the tables that resolve it (`FfiVocab::ffi_types`,
+//! `FfiVocab::ffi_struct_layouts`) belong to ONE compile. A snippet is its own
 //! compile, so `eval "class Outer < FFI::Struct; layout :pt, Pt; end"` had
 //! never heard of a `Pt` an earlier snippet -- or the program itself --
 //! declared, even though the CLASS is right there at run time.
@@ -42,10 +42,14 @@ pub(crate) fn seed(hir: &mut Hir) {
         return;
     };
     for (k, t) in &v.types {
-        hir.ffi_types.entry(k.clone()).or_insert_with(|| t.clone());
+        hir.ffi
+            .ffi_types
+            .entry(k.clone())
+            .or_insert_with(|| t.clone());
     }
     for (k, l) in &v.layouts {
-        hir.ffi_struct_layouts
+        hir.ffi
+            .ffi_struct_layouts
             .entry(k.clone())
             .or_insert_with(|| l.clone());
     }
@@ -53,15 +57,15 @@ pub(crate) fn seed(hir: &mut Hir) {
 
 /// Record what `hir` declared, for the snippets that follow it.
 pub(crate) fn publish(hir: &Hir) {
-    if hir.ffi_types.is_empty() && hir.ffi_struct_layouts.is_empty() {
+    if hir.ffi.ffi_types.is_empty() && hir.ffi.ffi_struct_layouts.is_empty() {
         return;
     }
     let mut guard = VOCAB.lock().expect("the ffi vocabulary is never poisoned");
     let v = guard.get_or_insert_with(Vocab::default);
-    for (k, t) in &hir.ffi_types {
+    for (k, t) in &hir.ffi.ffi_types {
         v.types.insert(k.clone(), t.clone());
     }
-    for (k, l) in &hir.ffi_struct_layouts {
+    for (k, l) in &hir.ffi.ffi_struct_layouts {
         v.layouts.insert(k.clone(), l.clone());
     }
 }

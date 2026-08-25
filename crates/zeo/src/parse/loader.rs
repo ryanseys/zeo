@@ -180,7 +180,7 @@ pub(super) struct Loader {
     /// `ruby_features.rb` was the corpus case).
     in_unit_sweep: bool,
     /// Every single-file unit already made, `canonical path -> (index into
-    /// `Hir::feature_units`, the constants its body assigns)`. Demands for
+    /// `LoaderState::feature_units`, the constants its body assigns)`. Demands for
     /// one file arrive in DIFFERENT ROUNDS of the materialize loop -- rack's
     /// guarded `require_relative "../lib/rack/media_type"` in round one, and
     /// the `autoload :MediaType, "rack/media_type"` inside `rack.rb` only
@@ -311,8 +311,8 @@ pub(super) fn lower_main_file(
         None => None,
     };
     // The search roots, kept for the runtime's cosmetic `$LOAD_PATH` (see
-    // `Hir::search_roots`) -- as given, the way `ruby -I` reports them.
-    hir.search_roots = load_roots
+    // `LoaderState::search_roots`) -- as given, the way `ruby -I` reports them.
+    hir.loader.search_roots = load_roots
         .iter()
         .map(|p| p.to_string_lossy().into_owned())
         .collect();
@@ -496,13 +496,13 @@ pub(super) fn lower_main_file(
     // nothing is compiled in twice. A unit lowered here may itself demand more
     // (a gem whose lazily-loaded files compute targets of their own), so this
     // runs to fixpoint.
-    while !hir.unit_demand.is_empty() || !hir.single_unit_demand.is_empty() {
+    while !hir.loader.unit_demand.is_empty() || !hir.loader.single_unit_demand.is_empty() {
         loader.materialize_units(hir)?;
     }
     // Disclose the libraries no position outside a method body required, so
     // zeo left them out. `record_gem` is first-wins, and every real
     // satisfaction is already recorded, so only the truly absent ones land.
-    let mut deferred: Vec<&String> = hir.deferred_requires.iter().collect();
+    let mut deferred: Vec<&String> = hir.loader.deferred_requires.iter().collect();
     deferred.sort();
     for name in deferred {
         loader.record_gem(crate::gem_report::GemRecord {
@@ -560,7 +560,7 @@ impl Loader {
 
     /// Lowers one file's top-level statement list, splicing require/load
     /// targets in place. `file_idx` is `Some` for a spliced (non-main)
-    /// file: its index into `Hir::loaded_files`, which is also its
+    /// file: its index into `LoaderState::loaded_files`, which is also its
     /// local-rename namespace -- the main file's locals are never renamed
     /// (the merged `Program` scope IS the main file's scope).
     fn lower_file_statements(
@@ -615,7 +615,7 @@ impl Loader {
             if !self.require_resolvable(&feature)
                 && !(cwd_shape && resolve_require_relative(&feature, dir).is_ok())
             {
-                hir.unresolvable_requires.insert(feature);
+                hir.loader.unresolvable_requires.insert(feature);
             }
         }
         // A plain `require` only a METHOD BODY reaches: its target, when it
@@ -651,13 +651,13 @@ impl Loader {
                     name: feature.clone(),
                     by,
                 });
-                hir.single_unit_demand.insert((
+                hir.loader.single_unit_demand.insert((
                     package.or_else(|| hir.lowering_package.clone()),
                     path,
                     feature.clone(),
                 ));
             }
-            hir.deferred_requires.insert(feature);
+            hir.loader.deferred_requires.insert(feature);
         }
         // A `require_relative` of a NATIVE (.so/.bundle) feature names a
         // compiled extension zeo cannot load, protected or not: keep the
@@ -674,7 +674,8 @@ impl Loader {
             if is_native_feature(&feature)
                 && let Some(file) = hir.lowering_file
             {
-                hir.optional_require_sites
+                hir.loader
+                    .optional_require_sites
                     .insert((file, call.location().start_offset() as u32));
             }
         }
@@ -692,7 +693,8 @@ impl Loader {
             if resolve_require_relative(&feature, dir).is_err()
                 && let Some(file) = hir.lowering_file
             {
-                hir.optional_require_sites
+                hir.loader
+                    .optional_require_sites
                     .insert((file, call.location().start_offset() as u32));
             }
         }
@@ -725,18 +727,20 @@ impl Loader {
                 // it. A missing require_relative under a guard defers the
                 // same way (the guard may never pass).
                 if relative && let Some(file) = hir.lowering_file {
-                    hir.optional_require_sites
+                    hir.loader
+                        .optional_require_sites
                         .insert((file, call.location().start_offset() as u32));
                 }
                 continue;
             };
             if let Some(file) = hir.lowering_file {
-                hir.conditional_require_sites
+                hir.loader
+                    .conditional_require_sites
                     .insert((file, call.location().start_offset() as u32));
                 if let Ok(canonical) = path.canonicalize() {
                     self.unit_only_targets.insert(canonical);
                 }
-                hir.single_unit_demand.insert((
+                hir.loader.single_unit_demand.insert((
                     package.or_else(|| hir.lowering_package.clone()),
                     path,
                     feature,
@@ -789,25 +793,28 @@ impl Loader {
                 continue;
             };
             let registered = unit.as_ref().is_some_and(|(_, _, c)| {
-                hir.loaded_files
+                hir.loader
+                    .loaded_files
                     .iter()
                     .any(|lf| &lf.canonical == c && lf.is_unit)
             });
             match unit {
                 Some((feature, absolute, canonical)) if fresh || registered => {
                     if let Some(file) = hir.lowering_file {
-                        hir.conditional_require_sites
+                        hir.loader
+                            .conditional_require_sites
                             .insert((file, call.location().start_offset() as u32));
                     }
                     if fresh {
                         for lf in hir
+                            .loader
                             .loaded_files
                             .iter_mut()
                             .filter(|lf| lf.canonical == canonical)
                         {
                             lf.is_unit = true;
                         }
-                        hir.feature_units.push(crate::hir::FeatureUnit {
+                        hir.loader.feature_units.push(crate::hir::FeatureUnit {
                             feature,
                             aliases: Vec::new(),
                             absolute,
@@ -1010,12 +1017,14 @@ impl Loader {
                     // it, which is ruby's rule and the only one that puts the
                     // body at the right position for both.
                     if self.unit_only_targets.contains(&target) {
-                        hir.conditional_require_sites
+                        hir.loader
+                            .conditional_require_sites
                             .insert((file, call.location().start_offset() as u32));
                     }
                     here.push(target);
                     if again {
-                        hir.rerequire_sites
+                        hir.loader
+                            .rerequire_sites
                             .insert((file, call.location().start_offset() as u32));
                     }
                 }
@@ -1148,10 +1157,10 @@ impl Loader {
                     if let Some(name) = crate::lower::autoload_const_name(call) {
                         let mut full = scope.clone();
                         full.push(name);
-                        hir.autoload_consts.insert(full.join("::"));
-                        hir.autoload_features.insert(feature.clone());
+                        hir.loader.autoload_consts.insert(full.join("::"));
+                        hir.loader.autoload_features.insert(feature.clone());
                     }
-                    hir.single_unit_demand.insert((
+                    hir.loader.single_unit_demand.insert((
                         package.or_else(|| hir.lowering_package.clone()),
                         path,
                         feature,
@@ -1311,7 +1320,7 @@ impl Loader {
         // lowers it to a runtime `Kernel#require` (raising `LoadError`). A
         // missing `require_relative` is NOT in that set and still fails loudly
         // in `splice_feature` below (a missing project file is a real error).
-        if name == "require" && hir.unresolvable_requires.contains(&feature) {
+        if name == "require" && hir.loader.unresolvable_requires.contains(&feature) {
             return Ok(None);
         }
         // A SNIPPET (an `eval`, or a file the load path compiled at run
@@ -1329,8 +1338,8 @@ impl Loader {
         // call the same way -- its target is a unit the guard may load.
         if let Some(file) = hir.lowering_file {
             let key = (file, call.location().start_offset() as u32);
-            if (name == "require_relative" && hir.optional_require_sites.contains(&key))
-                || hir.conditional_require_sites.contains(&key)
+            if (name == "require_relative" && hir.loader.optional_require_sites.contains(&key))
+                || hir.loader.conditional_require_sites.contains(&key)
             {
                 return Ok(None);
             }
@@ -1356,7 +1365,8 @@ impl Loader {
             if let Some(target) = resolved.and_then(|p| p.canonicalize().ok())
                 && self.unit_only_targets.contains(&target)
             {
-                hir.conditional_require_sites
+                hir.loader
+                    .conditional_require_sites
                     .insert((file, call.location().start_offset() as u32));
                 return Ok(None);
             }
@@ -1417,10 +1427,13 @@ impl Loader {
             };
             if let Some((path, package, unit_feature)) = resolved {
                 if let Some(file) = hir.lowering_file {
-                    hir.conditional_require_sites
+                    hir.loader
+                        .conditional_require_sites
                         .insert((file, call.location().start_offset() as u32));
                 }
-                hir.single_unit_demand.insert((package, path, unit_feature));
+                hir.loader
+                    .single_unit_demand
+                    .insert((package, path, unit_feature));
                 return Ok(None);
             }
         }
@@ -1564,7 +1577,7 @@ impl Loader {
         // package's roots belongs to that package; `require_relative`/
         // `load` INHERIT the requiring file's package (a package's internal
         // files are part of the package, however they're reached).
-        let inherited = file_idx.and_then(|i| hir.loaded_files[i].package.clone());
+        let inherited = file_idx.and_then(|i| hir.loader.loaded_files[i].package.clone());
         let (path, package) = match name {
             // CRuby's `search_required` ORDER, and it is the inverse of the
             // obvious one: every load-path root is tried for `<feature>.rb`
@@ -1851,10 +1864,10 @@ impl Loader {
 
     /// Parses and lowers one resolved file into the arena, recording its
     /// provenance -- one `LoadedFile` per SPLICE INSTANCE (see
-    /// `Hir::loaded_files`' docs for why instance, not canonical file, is
+    /// `LoaderState::loaded_files`' docs for why instance, not canonical file, is
     /// the unit).
     /// Compiles in every `.rb` under the demanded load paths as a UNIT (see
-    /// `Hir::feature_units`), skipping the files already spliced.
+    /// `LoaderState::feature_units`), skipping the files already spliced.
     ///
     /// The demand comes from a file that computes a `require`/`autoload`
     /// target: zeo cannot know which string it will build, so the honest
@@ -1885,7 +1898,7 @@ impl Loader {
         // `Rack::MediaType.type` raised `uninitialized constant
         // SPLIT_PATTERN`.
         let mut grouped: Vec<(PathBuf, Option<String>, Vec<String>)> = Vec::new();
-        for (package, path, feature) in std::mem::take(&mut hir.single_unit_demand) {
+        for (package, path, feature) in std::mem::take(&mut hir.loader.single_unit_demand) {
             let Ok(canonical) = path.canonicalize() else {
                 continue;
             };
@@ -1909,7 +1922,7 @@ impl Loader {
             // A unit an EARLIER round already made: this round's spellings
             // join it rather than being dropped.
             if let Some(idx) = self.single_units.get(&canonical) {
-                let unit = &mut hir.feature_units[*idx];
+                let unit = &mut hir.loader.feature_units[*idx];
                 let fresh: Vec<String> = features
                     .into_iter()
                     .filter(|f| f != &unit.feature && !unit.aliases.contains(f))
@@ -1934,30 +1947,33 @@ impl Loader {
                         .filter(|k| !before.contains(*k))
                         .cloned()
                         .collect();
-                    hir.unrun_unit_consts.extend(fresh.iter().cloned());
+                    hir.loader.unrun_unit_consts.extend(fresh.iter().cloned());
                     for lf in hir
+                        .loader
                         .loaded_files
                         .iter_mut()
                         .filter(|lf| lf.canonical == canonical)
                     {
                         lf.is_unit = true;
                     }
-                    self.single_units.insert(canonical, hir.feature_units.len());
+                    self.single_units
+                        .insert(canonical, hir.loader.feature_units.len());
                     let feature = features.remove(0);
-                    hir.feature_units.push(crate::hir::FeatureUnit {
+                    hir.loader.feature_units.push(crate::hir::FeatureUnit {
                         feature,
                         aliases: features,
                         absolute,
                         body,
                     })
                 }
-                Err(e) => {
-                    hir.declined_units
-                        .push((features.remove(0), absolute, e.message().to_string()))
-                }
+                Err(e) => hir.loader.declined_units.push((
+                    features.remove(0),
+                    absolute,
+                    e.message().to_string(),
+                )),
             }
         }
-        for (package, dir) in std::mem::take(&mut hir.unit_demand) {
+        for (package, dir) in std::mem::take(&mut hir.loader.unit_demand) {
             let roots: Vec<PathBuf> = match &package {
                 // No package: the `-I` roots the program was given, plus the
                 // demanding file's own directory -- what a `__dir__`-relative
@@ -1996,13 +2012,14 @@ impl Loader {
                             // but it RUNS only when required -- mark it so
                             // `$LOADED_FEATURES` is not seeded with it.
                             for lf in hir
+                                .loader
                                 .loaded_files
                                 .iter_mut()
                                 .filter(|lf| lf.canonical == canonical)
                             {
                                 lf.is_unit = true;
                             }
-                            hir.feature_units.push(crate::hir::FeatureUnit {
+                            hir.loader.feature_units.push(crate::hir::FeatureUnit {
                                 feature,
                                 aliases: Vec::new(),
                                 absolute,
@@ -2011,10 +2028,11 @@ impl Loader {
                         }
                         // Never reached by a require -> never observed. Reached
                         // by one -> a LoadError naming the gap, at the require.
-                        Err(e) => {
-                            hir.declined_units
-                                .push((feature, absolute, e.message().to_string()))
-                        }
+                        Err(e) => hir.loader.declined_units.push((
+                            feature,
+                            absolute,
+                            e.message().to_string(),
+                        )),
                     }
                 }
             }
@@ -2058,8 +2076,8 @@ impl Loader {
         package: Option<String>,
         box_id: u32,
     ) -> PResult<Vec<NodeId>> {
-        let idx = hir.loaded_files.len();
-        hir.loaded_files.push(LoadedFile {
+        let idx = hir.loader.loaded_files.len();
+        hir.loader.loaded_files.push(LoadedFile {
             canonical: canonical.to_path_buf(),
             required_from,
             package,
@@ -2081,7 +2099,7 @@ impl Loader {
         // A VENDORED gem's warnings are not the user's to act on, and zeo's
         // vendored copy may not even be the one CRuby would have parsed --
         // so only files outside a package report.
-        if hir.loaded_files[idx].package.is_none() {
+        if hir.loader.loaded_files[idx].package.is_none() {
             collect_parse_warnings(hir, &result, &canonical.display().to_string(), &source);
         }
         self.splicing.push(canonical.to_path_buf());
@@ -2099,7 +2117,7 @@ impl Loader {
         // alongside rather than being looked up from `lowering_file`.
         let prev_package = std::mem::replace(
             &mut hir.lowering_package,
-            hir.loaded_files[idx].package.clone(),
+            hir.loader.loaded_files[idx].package.clone(),
         );
         let prev_dir = std::mem::replace(
             &mut hir.lowering_dir,
@@ -2414,7 +2432,7 @@ struct RequireCollector<'a> {
     /// requires it.
     lazy: Vec<ruby_prism::CallNode<'a>>,
     /// A plain `require` only a method BODY reaches. These are not spliced, but
-    /// their names are still wanted (see `Hir::deferred_requires`).
+    /// their names are still wanted (see `LoaderState::deferred_requires`).
     deferred: Vec<ruby_prism::CallNode<'a>>,
     /// `require_relative`s lexically inside a `begin` body whose rescue
     /// catches `LoadError` -- candidates for `Hir::optional_require_sites`

@@ -1393,7 +1393,7 @@ fn lower_call_node(
         //
         // Two kinds of require are NOT spliced and must keep their call: a
         // plain `require` the loader could not resolve, and one only a
-        // method body reaches (`Hir::deferred_requires`). Both fall through
+        // method body reaches (`LoaderState::deferred_requires`). Both fall through
         // to the runtime `Kernel#require`, which answers `false` for an
         // already-loaded feature and raises `LoadError` otherwise.
         if matches!(name.as_str(), "require" | "require_relative") {
@@ -1415,7 +1415,7 @@ fn lower_call_node(
                     return Ok(hir.push(HirNode::Seq(vec![marker, value])));
                 }
                 let unresolvable =
-                    name == "require" && hir.unresolvable_requires.contains(&feature);
+                    name == "require" && hir.loader.unresolvable_requires.contains(&feature);
                 // A rescued-and-missing `require_relative` keeps its call
                 // to raise the LoadError its rescue catches; a
                 // guard-gated site keeps its call to load its unit only
@@ -1431,15 +1431,17 @@ fn lower_call_node(
                 let site_kept = (hir.mode.is_eval() && name == "require_relative")
                     || hir.lowering_file.is_some_and(|file| {
                         let key = (file, call.location().start_offset() as u32);
-                        (name == "require_relative" && hir.optional_require_sites.contains(&key))
-                            || hir.conditional_require_sites.contains(&key)
+                        (name == "require_relative"
+                            && hir.loader.optional_require_sites.contains(&key))
+                            || hir.loader.conditional_require_sites.contains(&key)
                     });
-                if !unresolvable && !site_kept && !hir.deferred_requires.contains(&feature) {
+                if !unresolvable && !site_kept && !hir.loader.deferred_requires.contains(&feature) {
                     // FALSE when the loader marked this site as naming a file
                     // it had already spliced -- ruby's answer for a feature
                     // that is already loaded.
                     let again = hir.lowering_file.is_some_and(|file| {
-                        hir.rerequire_sites
+                        hir.loader
+                            .rerequire_sites
                             .contains(&(file, call.location().start_offset() as u32))
                     });
                     return Ok(hir.push(HirNode::BoolLit(!again)));
@@ -1456,7 +1458,9 @@ fn lower_call_node(
                 // whole directory (a demander at the tree root would sweep
                 // everything -- the webrick_not_bundled hazard), but a
                 // bounded subtree is its own tree.
-                hir.unit_demand.insert((hir.lowering_package.clone(), dir));
+                hir.loader
+                    .unit_demand
+                    .insert((hir.lowering_package.clone(), dir));
             } else {
                 // A COMPUTED target can name any file of the demanding
                 // package -- `Dir[...].each { |t| require t }` is how a

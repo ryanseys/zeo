@@ -291,7 +291,7 @@ fn analyze_on_this_thread(
             ),
         });
     }
-    hir.embedded_sources = embed::collect(&opts.embed_sources)?;
+    hir.loader.embedded_sources = embed::collect(&opts.embed_sources)?;
     let parse_lower = start.elapsed();
     if let Some(path) = &opts.gem_report {
         gem_report::write_report(&gem_records, path)

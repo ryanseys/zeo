@@ -97,27 +97,8 @@ pub struct Hir {
     proc_binding: std::sync::OnceLock<bool>,
     /// Per-node provenance, parallel to `nodes` -- see `Span`.
     spans: Vec<Span>,
-    /// Every FFI type name declared so far (`typedef`/`enum`/`callback`), so a
-    /// nested body can name one its ENCLOSING library declared -- sassc writes
-    /// `SassTag = enum(...)` in `module Native` and then `layout :tag, SassTag`
-    /// inside a struct class nested in it, which is a different class body and
-    /// a different alias map.
-    ///
-    /// A name redeclared to a DIFFERENT type is poisoned (`None`) rather than
-    /// overwritten: two libraries may legitimately use one name for two types,
-    /// and each still resolves it from its OWN map. Only this cross-body
-    /// fallback becomes unavailable, so the result is a clean "isn't a declared
-    /// FFI type" rejection instead of a silently wrong width.
-    pub ffi_types: crate::compiler::FMap<String, Option<FfiType>>,
-    /// Module paths that have been `extend FFI::Library`'d -- see
-    /// [`Hir::mark_ffi_library`].
-    ffi_library_crefs: crate::compiler::FSet<String>,
-    /// Leaf names of every `class X < FFI::Struct` the lowering has seen --
-    /// including ones whose `layout` never lowered (a DSL-built layout,
-    /// ffi_dry's `dsl_layout`). A SIGNATURE position only needs the
-    /// by-reference fact, so these enter the type table as [`FfiType::
-    /// StructRef`] when no layout/typedef claims the name.
-    ffi_struct_classes: crate::compiler::FSet<String>,
+    /// The FFI declaration vocabulary -- see [`FfiVocab`].
+    pub ffi: FfiVocab,
     /// Per-node boolean facts, one `u16` per node and parallel to
     /// `nodes`/`spans` -- see [`NodeFlag`] for what each bit means and
     /// [`Hir::set_flag`]/[`Hir::has_flag`] for the accessors.
@@ -204,6 +185,156 @@ pub struct Hir {
     /// the two are different questions -- so this cannot be folded into the
     /// node's span, which answers the second.
     call_message: crate::compiler::FMap<NodeId, u32>,
+    /// The `require`/loader state -- see [`LoaderState`].
+    pub loader: LoaderState,
+    /// In-tree `ext/` features (`zeo_abi::is_ext_feature`) whose `require`
+    /// fired anywhere in the program -- the set that makes a require-gated
+    /// builtin's constant REGISTER at all (`Compiler::resolve_class`'s feature
+    /// gate). Whole-program AOT, so this set is program-GLOBAL: a feature no
+    /// file requires registers nowhere. WHERE the constant starts existing is
+    /// the other question, and a positional one -- `HirNode::FeatureLoaded`
+    /// reveals it at the require's own line. See `activate_feature`.
+    pub activated_features: crate::compiler::FSet<String>,
+    /// The package owning the file currently lowering, `None` for the main
+    /// file and the `-I` roots, and that file's own directory -- the pair
+    /// `demand_feature_units` records. The directory is what a
+    /// `File.expand_path("x", __dir__)` target is relative to, which is how
+    /// stdlib and bundler spell a sibling autoload.
+    pub lowering_package: Option<String>,
+    pub lowering_dir: Option<std::path::PathBuf>,
+    /// How many of the root `Program`'s leading statements came from the
+    /// built-in exception classes (`parse::BUILTIN_EXCEPTIONS_RB`), set by
+    /// `parse_and_lower_with`. `analyze` marks the classes
+    /// those statements register as `is_bootstrap` -- the AOT analogue of
+    /// CRuby's "defined before any user program runs" set, which stays
+    /// visible inside every `Ruby::Box` (see `Compiler::resolve_class`'s
+    /// bootstrap fallback).
+    pub builtin_exceptions_len: usize,
+
+    /// What this compile is FOR (`CompileMode`). Every static
+    /// decision the emitter makes belongs to a whole PROGRAM, which owns
+    /// the class table it registers into; a snippet compiled for a
+    /// run-time `eval` arrives after that program is already running, so
+    /// its own `def`s and `class`es install through the runtime instead.
+    pub mode: crate::CompileMode,
+    /// How many `Ruby::Box`es the loader allocated -- box ids
+    /// run 1..=boxes (0 is the root program). `analyze` creates one
+    /// top-level surrogate `ClassInfo` per id.
+    pub boxes: u32,
+    /// The main file's script encoding as its `Encoding::` CONSTANT spelling
+    /// (`"ISO_8859_1"`), set from a `# encoding:` magic comment; `None` is
+    /// the UTF-8 default. Governs `__ENCODING__` and the encoding tag of
+    /// string literals.
+    pub script_encoding: Option<String>,
+    /// Set by a `# frozen_string_literal: true` magic comment: every
+    /// single-segment (non-interpolated) string literal is then emitted as
+    /// its interned, frozen twin. `false` (the default) keeps literals
+    /// mutable.
+    pub frozen_string_literal: bool,
+    /// How many flip-flops have been lowered -- see `HirNode::FlipFlop`. The
+    /// counter is per-PROGRAM, not per-file: `require` splices every file into
+    /// one arena, so per-file numbering would make two files' first flip-flops
+    /// share a latch.
+    pub flip_flops: u32,
+    /// The `class`/`module` bodies enclosing the statement being lowered,
+    /// outermost first, spelled as each definition site wrote them
+    /// (`class Net::SMTP` contributes the one entry `"Net::SMTP"`) -- CRuby's
+    /// cref chain. Empty means the statement is genuinely top-level; see
+    /// [`cvar_is_toplevel`](Self::cvar_is_toplevel) and
+    /// [`enclosing_class`](Self::enclosing_class).
+    cref_names: Vec<String>,
+    /// Whether the statement being lowered is a direct statement of a `class <<
+    /// self` body. A `class << self` among them opens the SURROGATE's own
+    /// singleton, one level beyond the enclosing-class retagging -- see
+    /// [`in_singleton_body`](Self::in_singleton_body).
+    in_singleton_body: bool,
+    /// How many `def` bodies enclose the node being lowered -- see
+    /// [`is_in_def_body`](Self::is_in_def_body).
+    def_depth: u32,
+    /// Every `class`/`module` definition lowered so far, under the FULLY
+    /// QUALIFIED name its site spells (`class Error` inside `module Citrus`
+    /// records `Citrus::Error`). A `ClassDef` node keeps only the name as
+    /// WRITTEN, so an arena scan for one cannot tell citrus's `Citrus::Error`
+    /// from a `TomlRB::Error` that is really a `Class.new` value -- and
+    /// answering that wrong sends a subclass down the wrong path. See
+    /// [`class_defined_in_scope`](Self::class_defined_in_scope).
+    class_def_paths: crate::compiler::FSet<String>,
+}
+
+/// [`Hir`]'s FFI declaration vocabulary -- what the FFI directives
+/// (`typedef`/`enum`/`layout`/`attach_function` and the const idioms)
+/// declare during lowering, read back when later directives resolve names.
+#[derive(Clone, Default)]
+pub struct FfiVocab {
+    /// Every FFI type name declared so far (`typedef`/`enum`/`callback`), so a
+    /// nested body can name one its ENCLOSING library declared -- sassc writes
+    /// `SassTag = enum(...)` in `module Native` and then `layout :tag, SassTag`
+    /// inside a struct class nested in it, which is a different class body and
+    /// a different alias map.
+    ///
+    /// A name redeclared to a DIFFERENT type is poisoned (`None`) rather than
+    /// overwritten: two libraries may legitimately use one name for two types,
+    /// and each still resolves it from its OWN map. Only this cross-body
+    /// fallback becomes unavailable, so the result is a clean "isn't a declared
+    /// FFI type" rejection instead of a silently wrong width.
+    pub ffi_types: crate::compiler::FMap<String, Option<FfiType>>,
+    /// Module paths that have been `extend FFI::Library`'d -- see
+    /// [`Hir::mark_ffi_library`].
+    ffi_library_crefs: crate::compiler::FSet<String>,
+    /// Leaf names of every `class X < FFI::Struct` the lowering has seen --
+    /// including ones whose `layout` never lowered (a DSL-built layout,
+    /// ffi_dry's `dsl_layout`). A SIGNATURE position only needs the
+    /// by-reference fact, so these enter the type table as [`FfiType::
+    /// StructRef`] when no layout/typedef claims the name.
+    ffi_struct_classes: crate::compiler::FSet<String>,
+    /// Every `FFI::Struct` subclass's computed layout, keyed by LEAF class
+    /// name like `ffi_types` -- how a later `attach_function` resolves a
+    /// struct passed by value. Source-order like the rest of the FFI table:
+    /// the struct's body must lower before the declaration that names it.
+    pub ffi_struct_layouts: crate::compiler::FMap<String, FfiStructLayout>,
+    /// Class-body `CONST = :symbol` / `CONST = <int>` writes, keyed by LEAF
+    /// name -- how an FFI layout in a NESTED class resolves the type/count
+    /// vocabulary its enclosing module spelled as constants (ffi-ncurses'
+    /// `NCURSES_ATTR_T = :int` ... `layout :attr, NCURSES_ATTR_T`). Same
+    /// poison-on-conflict rule as `ffi_types`: a leaf rebound to a DIFFERENT
+    /// value goes `None`, and the layout's own honest rejection stands.
+    pub ffi_symbol_consts: crate::compiler::FMap<String, Option<String>>,
+    /// The integer half of `ffi_symbol_consts`.
+    pub ffi_int_consts: crate::compiler::FMap<String, Option<i64>>,
+    /// Modules whose `def self.extended(host)` hook runs `host.extend
+    /// FFI::Library` (chef's Win32 API indirection), keyed by full cref path.
+    /// The value is the hook's flat `host.typedef :src, :alias` stream, which
+    /// an `extend <that module>` site replays into its own alias table before
+    /// its FFI directives lower. See `lower::ffi::ffi_extender_hook`.
+    pub ffi_extenders: crate::compiler::FMap<String, Vec<(String, String)>>,
+    /// Modules whose `def self.included(base)` hook runs `base.class_eval`
+    /// over a block containing a `layout`, keyed by full cref path. The value
+    /// is that block's SOURCE, which an `include <that module>` inside an
+    /// `FFI::Struct` body re-parses and lowers in place -- gssapi carries the
+    /// layout AND its two readers for every buffer struct in the gem this way.
+    /// Source rather than nodes: a prism `Node` is neither `Clone` nor
+    /// storable past its `ParseResult`. See `lower::ffi::ffi_layout_hook`.
+    pub ffi_layout_hooks: crate::compiler::FMap<String, String>,
+    /// How many DEFERRED `ffi_lib` slots the program has minted -- one per
+    /// `ffi_lib` statement whose candidates only the running process can
+    /// evaluate. The slot number ties that statement's runtime store
+    /// (`zeo_rt::ffi::ffi_lib_store`) to every `attach_function` site
+    /// lowered under it. See `FfiLib::Deferred`.
+    pub ffi_lib_slots: usize,
+    /// How many DEFERRED enum slots the program has minted -- one per `enum`
+    /// statement whose members only the running process can produce. See
+    /// [`FfiType::EnumSlot`].
+    pub ffi_enum_slots: usize,
+    /// Whether the inline-array proxy classes an `FFI::Struct` array field
+    /// reads back as have already been synthesized -- see
+    /// [`claim_ffi_inline_array_classes`](Hir::claim_ffi_inline_array_classes).
+    ffi_inline_array_classes: bool,
+}
+
+/// [`Hir`]'s loader state -- what `require` resolution spliced, what is
+/// compiled in as feature units, and what stays a runtime `require`.
+#[derive(Clone, Default)]
+pub struct LoaderState {
     /// Provenance of every `require`/`require_relative`/`load` SPLICE
     /// INSTANCE grafted into this arena, in splice order --
     /// the main file itself is NOT recorded (matching CRuby, where the main
@@ -220,14 +351,6 @@ pub struct Hir {
     /// were resolved at compile time, but code that READS the array (rspec's
     /// `RubyProject`) sees what `ruby -I` would show it.
     pub search_roots: Vec<String>,
-    /// In-tree `ext/` features (`zeo_abi::is_ext_feature`) whose `require`
-    /// fired anywhere in the program -- the set that makes a require-gated
-    /// builtin's constant REGISTER at all (`Compiler::resolve_class`'s feature
-    /// gate). Whole-program AOT, so this set is program-GLOBAL: a feature no
-    /// file requires registers nowhere. WHERE the constant starts existing is
-    /// the other question, and a positional one -- `HirNode::FeatureLoaded`
-    /// reveals it at the require's own line. See `activate_feature`.
-    pub activated_features: crate::compiler::FSet<String>,
     /// `--embed-sources`: `(load-path-relative spelling, text)` for every
     /// `.rb` under the named directories. The RUN TIME resolves a require
     /// against these before it looks at disk, which is what lets a hermetic
@@ -290,44 +413,6 @@ pub struct Hir {
     /// different case -- it is registered from startup, and
     /// [`autoload_consts`](Self::autoload_consts) gates the read of it.
     pub unrun_unit_consts: std::collections::BTreeSet<String>,
-    /// Every `FFI::Struct` subclass's computed layout, keyed by LEAF class
-    /// name like `ffi_types` -- how a later `attach_function` resolves a
-    /// struct passed by value. Source-order like the rest of the FFI table:
-    /// the struct's body must lower before the declaration that names it.
-    pub ffi_struct_layouts: crate::compiler::FMap<String, FfiStructLayout>,
-    /// Class-body `CONST = :symbol` / `CONST = <int>` writes, keyed by LEAF
-    /// name -- how an FFI layout in a NESTED class resolves the type/count
-    /// vocabulary its enclosing module spelled as constants (ffi-ncurses'
-    /// `NCURSES_ATTR_T = :int` ... `layout :attr, NCURSES_ATTR_T`). Same
-    /// poison-on-conflict rule as `ffi_types`: a leaf rebound to a DIFFERENT
-    /// value goes `None`, and the layout's own honest rejection stands.
-    pub ffi_symbol_consts: crate::compiler::FMap<String, Option<String>>,
-    /// The integer half of `ffi_symbol_consts`.
-    pub ffi_int_consts: crate::compiler::FMap<String, Option<i64>>,
-    /// Modules whose `def self.extended(host)` hook runs `host.extend
-    /// FFI::Library` (chef's Win32 API indirection), keyed by full cref path.
-    /// The value is the hook's flat `host.typedef :src, :alias` stream, which
-    /// an `extend <that module>` site replays into its own alias table before
-    /// its FFI directives lower. See `lower::ffi::ffi_extender_hook`.
-    pub ffi_extenders: crate::compiler::FMap<String, Vec<(String, String)>>,
-    /// Modules whose `def self.included(base)` hook runs `base.class_eval`
-    /// over a block containing a `layout`, keyed by full cref path. The value
-    /// is that block's SOURCE, which an `include <that module>` inside an
-    /// `FFI::Struct` body re-parses and lowers in place -- gssapi carries the
-    /// layout AND its two readers for every buffer struct in the gem this way.
-    /// Source rather than nodes: a prism `Node` is neither `Clone` nor
-    /// storable past its `ParseResult`. See `lower::ffi::ffi_layout_hook`.
-    pub ffi_layout_hooks: crate::compiler::FMap<String, String>,
-    /// How many DEFERRED `ffi_lib` slots the program has minted -- one per
-    /// `ffi_lib` statement whose candidates only the running process can
-    /// evaluate. The slot number ties that statement's runtime store
-    /// (`zeo_rt::ffi::ffi_lib_store`) to every `attach_function` site
-    /// lowered under it. See `FfiLib::Deferred`.
-    pub ffi_lib_slots: usize,
-    /// How many DEFERRED enum slots the program has minted -- one per `enum`
-    /// statement whose members only the running process can produce. See
-    /// [`FfiType::EnumSlot`].
-    pub ffi_enum_slots: usize,
     /// Load paths to compile in WHOLE, as callable units rather than splices --
     /// keyed by owning package name, `None` for the `-I`/main roots. A file
     /// lands here when it computes a `require`/`autoload` target zeo cannot
@@ -335,13 +420,6 @@ pub struct Hir {
     /// constant and calls `super`), so the only honest answer is to compile in
     /// everything that string could name. See `parse::loader::materialize_units`.
     pub unit_demand: std::collections::BTreeSet<(Option<String>, std::path::PathBuf)>,
-    /// The package owning the file currently lowering, `None` for the main
-    /// file and the `-I` roots, and that file's own directory -- the pair
-    /// `demand_feature_units` records. The directory is what a
-    /// `File.expand_path("x", __dir__)` target is relative to, which is how
-    /// stdlib and bundler spell a sibling autoload.
-    pub lowering_package: Option<String>,
-    pub lowering_dir: Option<std::path::PathBuf>,
     /// The materialized units, in discovery order: one file's top-level
     /// statements, under the feature name a `require` would spell. Codegen
     /// emits each as a function and registers it in `zeo_rt::features`.
@@ -361,70 +439,9 @@ pub struct Hir {
     /// file itself makes at top level, and dragged every lazy dependency into
     /// the binary.
     pub deferred_requires: crate::compiler::FSet<String>,
-    /// How many of the root `Program`'s leading statements came from the
-    /// built-in exception classes (`parse::BUILTIN_EXCEPTIONS_RB`), set by
-    /// `parse_and_lower_with`. `analyze` marks the classes
-    /// those statements register as `is_bootstrap` -- the AOT analogue of
-    /// CRuby's "defined before any user program runs" set, which stays
-    /// visible inside every `Ruby::Box` (see `Compiler::resolve_class`'s
-    /// bootstrap fallback).
-    pub builtin_exceptions_len: usize,
-
-    /// What this compile is FOR (`CompileMode`). Every static
-    /// decision the emitter makes belongs to a whole PROGRAM, which owns
-    /// the class table it registers into; a snippet compiled for a
-    /// run-time `eval` arrives after that program is already running, so
-    /// its own `def`s and `class`es install through the runtime instead.
-    pub mode: crate::CompileMode,
-    /// How many `Ruby::Box`es the loader allocated -- box ids
-    /// run 1..=boxes (0 is the root program). `analyze` creates one
-    /// top-level surrogate `ClassInfo` per id.
-    pub boxes: u32,
-    /// The main file's script encoding as its `Encoding::` CONSTANT spelling
-    /// (`"ISO_8859_1"`), set from a `# encoding:` magic comment; `None` is
-    /// the UTF-8 default. Governs `__ENCODING__` and the encoding tag of
-    /// string literals.
-    pub script_encoding: Option<String>,
-    /// Set by a `# frozen_string_literal: true` magic comment: every
-    /// single-segment (non-interpolated) string literal is then emitted as
-    /// its interned, frozen twin. `false` (the default) keeps literals
-    /// mutable.
-    pub frozen_string_literal: bool,
-    /// How many flip-flops have been lowered -- see `HirNode::FlipFlop`. The
-    /// counter is per-PROGRAM, not per-file: `require` splices every file into
-    /// one arena, so per-file numbering would make two files' first flip-flops
-    /// share a latch.
-    pub flip_flops: u32,
-    /// The `class`/`module` bodies enclosing the statement being lowered,
-    /// outermost first, spelled as each definition site wrote them
-    /// (`class Net::SMTP` contributes the one entry `"Net::SMTP"`) -- CRuby's
-    /// cref chain. Empty means the statement is genuinely top-level; see
-    /// [`cvar_is_toplevel`](Self::cvar_is_toplevel) and
-    /// [`enclosing_class`](Self::enclosing_class).
-    cref_names: Vec<String>,
-    /// Whether the statement being lowered is a direct statement of a `class <<
-    /// self` body. A `class << self` among them opens the SURROGATE's own
-    /// singleton, one level beyond the enclosing-class retagging -- see
-    /// [`in_singleton_body`](Self::in_singleton_body).
-    in_singleton_body: bool,
-    /// How many `def` bodies enclose the node being lowered -- see
-    /// [`is_in_def_body`](Self::is_in_def_body).
-    def_depth: u32,
-    /// Whether the inline-array proxy classes an `FFI::Struct` array field
-    /// reads back as have already been synthesized -- see
-    /// [`claim_ffi_inline_array_classes`](Self::claim_ffi_inline_array_classes).
-    ffi_inline_array_classes: bool,
-    /// Every `class`/`module` definition lowered so far, under the FULLY
-    /// QUALIFIED name its site spells (`class Error` inside `module Citrus`
-    /// records `Citrus::Error`). A `ClassDef` node keeps only the name as
-    /// WRITTEN, so an arena scan for one cannot tell citrus's `Citrus::Error`
-    /// from a `TomlRB::Error` that is really a `Class.new` value -- and
-    /// answering that wrong sends a subclass down the wrong path. See
-    /// [`class_defined_in_scope`](Self::class_defined_in_scope).
-    class_def_paths: crate::compiler::FSet<String>,
 }
 
-/// One compiled-in load-path file -- see `Hir::feature_units`. Its statements
+/// One compiled-in load-path file -- see `LoaderState::feature_units`. Its statements
 /// are NOT part of the main statement list: codegen emits them as a function
 /// the runtime calls when a `require` names `feature`. Registration is
 /// unaffected -- the classes it defines are in the dispatch tables from
@@ -448,7 +465,7 @@ pub struct FeatureUnit {
     pub body: Vec<NodeId>,
 }
 
-/// One splice instance -- see `Hir::loaded_files`.
+/// One splice instance -- see `LoaderState::loaded_files`.
 #[derive(Clone)]
 pub struct LoadedFile {
     /// Canonicalized (symlink-resolved) path, mirroring CRuby's separate
@@ -467,7 +484,7 @@ pub struct LoadedFile {
     /// candidate for `Ruby::Box` isolation (real box isolation is per
     /// require-graph subtree, and a package is exactly such a subtree).
     pub package: Option<String>,
-    /// Always 0 (the root box) for now -- see `Hir::loaded_files`.
+    /// Always 0 (the root box) for now -- see `LoaderState::loaded_files`.
     pub box_id: u32,
     /// Compiled in as a FEATURE UNIT (`materialize_units`), not spliced at a
     /// fixed position. A unit has NOT run at program start, so it must not be
@@ -479,15 +496,17 @@ pub struct LoadedFile {
 
 impl Hir {
     /// Records an FFI type name for the cross-body fallback -- see
-    /// [`Hir::ffi_types`]. Redeclaring one to a different type poisons it.
+    /// [`FfiVocab::ffi_types`]. Redeclaring one to a different type poisons it.
     pub fn declare_ffi_type(&mut self, name: &str, ty: &FfiType) {
-        match self.ffi_types.get(name) {
+        match self.ffi.ffi_types.get(name) {
             Some(Some(prev)) if prev == ty => {}
             Some(_) => {
-                self.ffi_types.insert(name.to_string(), None);
+                self.ffi.ffi_types.insert(name.to_string(), None);
             }
             None => {
-                self.ffi_types.insert(name.to_string(), Some(ty.clone()));
+                self.ffi
+                    .ffi_types
+                    .insert(name.to_string(), Some(ty.clone()));
             }
         }
     }
@@ -497,6 +516,7 @@ impl Hir {
     /// so a nested struct sees what the module above it declared.
     pub fn inherited_ffi_types(&self) -> crate::compiler::FMap<String, FfiType> {
         let mut types: crate::compiler::FMap<String, FfiType> = self
+            .ffi
             .ffi_types
             .iter()
             .filter_map(|(k, v)| v.clone().map(|t| (k.clone(), t)))
@@ -506,7 +526,7 @@ impl Hir {
         // reads it back as `StructRef` (ruby-ffi's by-reference semantics),
         // a layout field keeps the inline by-value struct; see
         // `ffi_type_node`. An explicit typedef of the same name wins.
-        for (k, layout) in &self.ffi_struct_layouts {
+        for (k, layout) in &self.ffi.ffi_struct_layouts {
             types
                 .entry(k.clone())
                 .or_insert_with(|| FfiType::Struct(layout.clone()));
@@ -514,7 +534,7 @@ impl Hir {
         // A struct class whose `layout` zeo never saw (DSL-built) still
         // NAMES a struct; the by-reference entry serves every signature
         // position. Last, so a real layout or an explicit typedef wins.
-        for k in &self.ffi_struct_classes {
+        for k in &self.ffi.ffi_struct_classes {
             types
                 .entry(k.clone())
                 .or_insert_with(|| FfiType::StructRef(k.clone()));
@@ -571,7 +591,7 @@ impl Hir {
     /// one after it. They are one pair of classes per program, and redefining
     /// them per struct would warn on every redefinition.
     pub(crate) fn claim_ffi_inline_array_classes(&mut self) -> bool {
-        !std::mem::replace(&mut self.ffi_inline_array_classes, true)
+        !std::mem::replace(&mut self.ffi.ffi_inline_array_classes, true)
     }
 
     /// Records that `recv` is a receiver zeo synthesized for a call ruby runs
@@ -647,17 +667,17 @@ impl Hir {
     /// The layout hook `name` names as seen from the cref being lowered:
     /// ruby's lexical search, innermost scope first, then the top level. A
     /// `::`-anchored name asks at the top level only. See
-    /// [`Hir::ffi_layout_hooks`].
+    /// [`FfiVocab::ffi_layout_hooks`].
     pub(crate) fn ffi_layout_hook_for(&self, name: &str) -> Option<&String> {
         if let Some(absolute) = name.strip_prefix("::") {
-            return self.ffi_layout_hooks.get(absolute);
+            return self.ffi.ffi_layout_hooks.get(absolute);
         }
         for depth in (0..=self.cref_names.len()).rev() {
             let qualified = match depth {
                 0 => name.to_string(),
                 _ => format!("{}::{name}", self.cref_names[..depth].join("::")),
             };
-            if let Some(source) = self.ffi_layout_hooks.get(&qualified) {
+            if let Some(source) = self.ffi.ffi_layout_hooks.get(&qualified) {
                 return Some(source);
             }
         }
@@ -682,17 +702,17 @@ impl Hir {
     /// Keyed by the FULL cref path, so two unrelated `Native` modules stay
     /// unrelated.
     pub(crate) fn mark_ffi_library(&mut self, path: &str) {
-        self.ffi_library_crefs.insert(path.to_string());
+        self.ffi.ffi_library_crefs.insert(path.to_string());
     }
 
     pub(crate) fn is_ffi_library(&self, path: &str) -> bool {
-        self.ffi_library_crefs.contains(path)
+        self.ffi.ffi_library_crefs.contains(path)
     }
 
     /// Records a `class X < FFI::Struct` by leaf name -- see
-    /// [`Hir::ffi_struct_classes`].
+    /// [`FfiVocab::ffi_struct_classes`].
     pub(crate) fn mark_ffi_struct_class(&mut self, leaf: &str) {
-        self.ffi_struct_classes.insert(leaf.to_string());
+        self.ffi.ffi_struct_classes.insert(leaf.to_string());
     }
 
     /// Whether `leaf` names a class already known to descend from
@@ -701,7 +721,7 @@ impl Hir {
     /// then declares every real struct against THAT, so nothing in the gem
     /// names `FFI::Struct` directly except the one intermediate.
     pub(crate) fn is_ffi_struct_class(&self, leaf: &str) -> bool {
-        self.ffi_struct_classes.contains(leaf)
+        self.ffi.ffi_struct_classes.contains(leaf)
     }
 
     /// Whether an already-lowered `class`/`module` definition binds `name` AS
@@ -895,7 +915,7 @@ impl Hir {
         let package = self.lowering_package.clone();
         let dir = self.lowering_dir.clone().unwrap_or_default();
         tracing::debug!(?package, ?dir, file = ?self.lowering_file, "demand_feature_units");
-        self.unit_demand.insert((package, dir));
+        self.loader.unit_demand.insert((package, dir));
     }
 
     /// The program's OWN file -- what a `<main>` frame names, what tells a

@@ -306,7 +306,7 @@ fn runtime_scope_const_read(
 /// resolves. Emitted only for a constant a literal `autoload` named, and the
 /// runtime call itself is one relaxed load when nothing is pending.
 fn emit_autoload_touch(fx: &mut Fx, cid: crate::compiler::ClassId) {
-    if fx.an.compiler.hir.autoload_consts.is_empty() {
+    if fx.an.compiler.hir.loader.autoload_consts.is_empty() {
         return;
     }
     // Every PREFIX, outermost first. `autoload :OpenSSL, "openssl"` names the
@@ -317,7 +317,7 @@ fn emit_autoload_touch(fx: &mut Fx, cid: crate::compiler::ClassId) {
     let parts: Vec<&str> = fq.split("::").collect();
     for i in 1..=parts.len() {
         let prefix = parts[..i].join("::");
-        if !fx.an.compiler.hir.autoload_consts.contains(&prefix) {
+        if !fx.an.compiler.hir.loader.autoload_consts.contains(&prefix) {
             continue;
         }
         let owner = match i {

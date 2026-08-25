@@ -146,8 +146,13 @@ pub(crate) fn const_form_resolves(env: &ConstEnv, id: NodeId) -> Option<bool> {
             // file runs, and a unit is not in any statement stream -- so
             // "written only later" and "written by a unit" look alike here
             // and mean opposite things. Ask the run time.
-            if env.compiler.hir.unrun_unit_consts.contains(path.base())
-                || env.compiler.hir.unrun_unit_consts.contains(name)
+            if env
+                .compiler
+                .hir
+                .loader
+                .unrun_unit_consts
+                .contains(path.base())
+                || env.compiler.hir.loader.unrun_unit_consts.contains(name)
             {
                 return None;
             }

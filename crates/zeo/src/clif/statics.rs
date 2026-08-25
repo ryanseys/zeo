@@ -1061,7 +1061,7 @@ pub(crate) fn define_desc(
     let redef_meta_table = define_meta_rows(em, redef_metas, "zeo_redef_metas")?;
     let class_table_ptrs = define_class_tables(em, analyzed)?;
     let unit_table = define_unit_rows(em, unit_rows)?;
-    let source_table = define_source_rows(em, &analyzed.compiler.hir.embedded_sources)?;
+    let source_table = define_source_rows(em, &analyzed.compiler.hir.loader.embedded_sources)?;
     let (cov_table, n_cov) = define_cov_rows(em, analyzed)?;
     let hir = &analyzed.compiler.hir;
     // Only what is loaded BEFORE the program's first line. Every feature the
@@ -1196,7 +1196,7 @@ pub(crate) fn define_desc(
     put_u64(
         &mut buf,
         std::mem::offset_of!(ProgramDesc, n_sources),
-        analyzed.compiler.hir.embedded_sources.len() as u64,
+        analyzed.compiler.hir.loader.embedded_sources.len() as u64,
     );
     put_u64(&mut buf, std::mem::offset_of!(ProgramDesc, n_cov), n_cov);
     // `DATA` -- only a script with an `__END__` carries the path, so every

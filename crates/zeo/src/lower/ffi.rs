@@ -133,7 +133,7 @@ pub(crate) fn prescan_layout(hir: &mut Hir, node: &Node<'_>, class_path: &str, u
     let Ok(layout) = ffi_struct_layout(class_path, &fields, union) else {
         return;
     };
-    hir.ffi_struct_layouts.insert(leaf.to_string(), layout);
+    hir.ffi.ffi_struct_layouts.insert(leaf.to_string(), layout);
 }
 
 /// `extend FFI::Library` -- the marker that turns a module into an FFI library
@@ -967,7 +967,7 @@ pub(crate) fn lower_ffi_directive(
     // `FFI.add_typedef(:uint32, :OM_uint32)` is `typedef` spelled on the FFI
     // module itself, same argument order. gssapi declares its whole C type
     // vocabulary that way, in a file above the structs that use it -- which the
-    // program-wide table (`Hir::ffi_types`) is what makes reachable.
+    // program-wide table (`FfiVocab::ffi_types`) is what makes reachable.
     let on_ffi_module = call
         .receiver()
         .and_then(|r| const_path_string(&r))
@@ -1014,8 +1014,8 @@ pub(crate) fn lower_ffi_directive(
                     // require-time `LoadError` at this very statement -- and
                     // every following `attach_function` resolves its symbol
                     // from the slot's handle.
-                    let slot = hir.ffi_lib_slots;
-                    hir.ffi_lib_slots += 1;
+                    let slot = hir.ffi.ffi_lib_slots;
+                    hir.ffi.ffi_lib_slots += 1;
                     let slot_lit = hir.push(HirNode::IntegerLit(slot as i64));
                     let mut call_args = vec![crate::hir::ArrayElem::Single(slot_lit)];
                     // Each argument rides as a (splat?, expr) pair: the gem
@@ -1200,8 +1200,8 @@ fn enum_declaration<'a>(
     if let Ok(members) = parse_enum_members(member_nodes, hir, out, class_body) {
         return Ok((tag, crate::hir::FfiType::Enum(members)));
     }
-    let slot = hir.ffi_enum_slots;
-    hir.ffi_enum_slots += 1;
+    let slot = hir.ffi.ffi_enum_slots;
+    hir.ffi.ffi_enum_slots += 1;
     let slot_lit = hir.push(HirNode::IntegerLit(slot as i64));
     let mut call_args = vec![crate::hir::ArrayElem::Single(slot_lit)];
     for m in member_nodes {
@@ -1364,6 +1364,7 @@ fn enum_int_literal(node: &Node<'_>, hir: &Hir, body_so_far: &[NodeId]) -> Optio
         && matches!(call.name().as_slice(), b"size" | b"alignment")
         && let Some(path) = const_path_string(&recv)
         && let Some(layout) = hir
+            .ffi
             .ffi_struct_layouts
             .get(path.rsplit("::").next().unwrap_or(&path))
     {
@@ -1615,8 +1616,8 @@ fn body_const_int(hir: &Hir, body_so_far: &[NodeId], node: &Node<'_>) -> Option<
     });
     // An ENCLOSING body's constant (ffi-ncurses spells its counts in the
     // module wrapping the struct) reaches here through the recorded side
-    // map -- see `Hir::ffi_int_consts` for the poison rule.
-    own.or_else(|| hir.ffi_int_consts.get(&wanted).copied().flatten())
+    // map -- see `FfiVocab::ffi_int_consts` for the poison rule.
+    own.or_else(|| hir.ffi.ffi_int_consts.get(&wanted).copied().flatten())
 }
 
 /// The leaf name of a bare (`LEN`) or QUALIFIED (`Limits::LEN`) constant read.
@@ -1642,7 +1643,7 @@ fn body_const_type_symbol(hir: &Hir, body_so_far: &[NodeId], node: &Node<'_>) ->
         },
         _ => None,
     });
-    own.or_else(|| hir.ffi_symbol_consts.get(&wanted).cloned().flatten())
+    own.or_else(|| hir.ffi.ffi_symbol_consts.get(&wanted).cloned().flatten())
 }
 
 /// The `FFI::MemoryPointer` accessor pair and C layout `(size, align)` for a
@@ -1925,7 +1926,7 @@ pub(crate) fn needs_inline_array_classes(fields: &[FfiField]) -> bool {
 
 /// The one place field offsets, total size and alignment are computed --
 /// consumed by the accessor synthesis below AND recorded as
-/// `Hir::ffi_struct_layouts` for by-value passing, so the two views of the
+/// `FfiVocab::ffi_struct_layouts` for by-value passing, so the two views of the
 /// same struct cannot disagree.
 pub(crate) fn ffi_struct_layout(
     class_path: &str,

@@ -42,7 +42,7 @@ pub enum FfiType {
     /// marshaling table waits for the class body to run. The `usize` ties this
     /// type to the statement's runtime store
     /// (`zeo_rt::ffi::enum_store`), exactly as [`FfiLib::Deferred`] does for a
-    /// library. See `Hir::ffi_enum_slots`.
+    /// library. See `FfiVocab::ffi_enum_slots`.
     EnumSlot(usize),
     /// A `callback :tag, [arg_types], ret_type` -- a C function-pointer type. As
     /// an argument, a Ruby Proc is marshaled into a libffi closure trampolining

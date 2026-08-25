@@ -605,7 +605,7 @@ pub(crate) fn lower_class_body(
     // Recorded even when no `layout` follows (an EMPTY body, or ffi_dry's
     // `dsl_layout` building one at runtime): a SIGNATURE naming this class
     // only needs the by-reference fact -- so this precedes the empty-body
-    // return below. See `Hir::ffi_struct_classes`.
+    // return below. See `FfiVocab::ffi_struct_classes`.
     if is_ffi_struct && let Some(name) = cref {
         let leaf = name.rsplit("::").next().unwrap_or(name);
         hir.mark_ffi_struct_class(leaf);
@@ -644,12 +644,12 @@ pub(crate) fn lower_class_body(
     if let Some(p) = &ffi_path {
         for stmt in &stmts {
             if let Some(pairs) = ffi_extender_hook(stmt) {
-                hir.ffi_extenders.insert(p.clone(), pairs);
+                hir.ffi.ffi_extenders.insert(p.clone(), pairs);
             }
             // The struct-side twin: a hook that installs a LAYOUT on whoever
-            // includes it. See `Hir::ffi_layout_hooks`.
+            // includes it. See `FfiVocab::ffi_layout_hooks`.
             if let Some(source) = crate::lower::ffi::ffi_layout_hook(result, stmt) {
-                hir.ffi_layout_hooks.insert(p.clone(), source);
+                hir.ffi.ffi_layout_hooks.insert(p.clone(), source);
             }
         }
     }
@@ -683,7 +683,7 @@ pub(crate) fn lower_class_body(
     // `attach_function` can name an alias the gem requires be declared first.
     // Seeded with what enclosing/earlier FFI libraries declared, so a struct
     // nested in a library module can name that module's `enum`/`typedef`
-    // types -- see `Hir::ffi_types`. Bodies lower in source order, so the
+    // types -- see `FfiVocab::ffi_types`. Bodies lower in source order, so the
     // declaration is already recorded by the time the nested body starts.
     let mut ffi_aliases: crate::compiler::FMap<String, crate::hir::FfiType> =
         hir.inherited_ffi_types();
@@ -791,7 +791,7 @@ struct LowerBodyStmt<'a> {
 fn ffi_extender_pairs(hir: &Hir, stmt: &Node<'_>) -> Option<Vec<(String, String)>> {
     let written = extend_target_path(stmt)?;
     let written = written.trim_start_matches("::");
-    hir.ffi_extenders.iter().find_map(|(recorded, pairs)| {
+    hir.ffi.ffi_extenders.iter().find_map(|(recorded, pairs)| {
         (recorded == written || recorded.ends_with(&format!("::{written}"))).then(|| pairs.clone())
     })
 }
@@ -843,20 +843,21 @@ fn lower_one_class_body_stmt<'a>(
         return lower_class_body_selected(result, hir, stmt, chosen, st, out);
     }
     // A class-body `CONST = :symbol` / `CONST = <int>` feeds the FFI
-    // vocabulary side maps (poison-on-conflict; see `Hir::ffi_symbol_consts`)
+    // vocabulary side maps (poison-on-conflict; see `FfiVocab::ffi_symbol_consts`)
     // and STILL lowers normally below -- a nested struct's `layout` resolves
     // its enclosing module's spelling through them.
     if let Some(write) = stmt.as_constant_write_node() {
         let name = String::from_utf8_lossy(write.name().as_slice()).into_owned();
         if let Some(sym) = write.value().as_symbol_node() {
             let val = String::from_utf8_lossy(sym.unescaped()).into_owned();
-            match hir.ffi_symbol_consts.get(&name) {
+            match hir.ffi.ffi_symbol_consts.get(&name) {
                 Some(Some(prev)) if *prev != val => {
-                    hir.ffi_symbol_consts.insert(name.clone(), None);
+                    hir.ffi.ffi_symbol_consts.insert(name.clone(), None);
                 }
                 Some(None) => {}
                 _ => {
-                    hir.ffi_symbol_consts
+                    hir.ffi
+                        .ffi_symbol_consts
                         .insert(name.clone(), Some(val.clone()));
                 }
             }
@@ -883,13 +884,13 @@ fn lower_one_class_body_stmt<'a>(
             // integer literal: `RTMP_BUFFER_CACHE_SIZE = (16*1024)` is an
             // inline array's element COUNT four lines below, and a count is
             // what decides where every following field starts.
-            match hir.ffi_int_consts.get(&name) {
+            match hir.ffi.ffi_int_consts.get(&name) {
                 Some(Some(prev)) if *prev != val => {
-                    hir.ffi_int_consts.insert(name, None);
+                    hir.ffi.ffi_int_consts.insert(name, None);
                 }
                 Some(None) => {}
                 _ => {
-                    hir.ffi_int_consts.insert(name, Some(val));
+                    hir.ffi.ffi_int_consts.insert(name, Some(val));
                 }
             }
         }
@@ -916,7 +917,7 @@ fn lower_one_class_body_stmt<'a>(
     }
     // `include <a module whose self.included hook class_evals a layout>` --
     // the layout, and every `def` beside it, belong to THIS struct. Replayed
-    // from the hook's recorded source (see `Hir::ffi_layout_hooks`): the
+    // from the hook's recorded source (see `FfiVocab::ffi_layout_hooks`): the
     // statements then take the ordinary struct-body path below, so the layout
     // synthesizes accessors and records offsets exactly as a written one does.
     if st.is_ffi_struct
@@ -964,7 +965,7 @@ fn lower_one_class_body_stmt<'a>(
         let source = synthesize_ffi_struct(&layout, classes)?;
         if let Some(name) = st.cref {
             let leaf = name.rsplit("::").next().unwrap_or(name);
-            hir.ffi_struct_layouts.insert(leaf.to_string(), layout);
+            hir.ffi.ffi_struct_layouts.insert(leaf.to_string(), layout);
         }
         // In a SNIPPET the accessors are never emitted: a class body inside
         // an `eval` runs as one more `class_eval` of its own source text,

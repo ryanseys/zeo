@@ -2008,7 +2008,7 @@ fn rescued_require_fold(
                     return None;
                 };
                 let feature = string_lit(compiler, *arg)?;
-                if !compiler.hir.unresolvable_requires.contains(&feature) {
+                if !compiler.hir.loader.unresolvable_requires.contains(&feature) {
                     return None;
                 }
                 raises = true;

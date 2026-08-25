@@ -665,6 +665,7 @@ fn the_root_gem_outranks_an_alphabetically_earlier_provider() {
     let loaded: Vec<_> = compiled
         .compiler
         .hir
+        .loader
         .loaded_files
         .iter()
         .map(|f| f.canonical.to_string_lossy().into_owned())
