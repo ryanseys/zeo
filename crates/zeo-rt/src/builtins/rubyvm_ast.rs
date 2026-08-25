@@ -476,8 +476,6 @@ mod translate {
     use super::*;
     use ruby_prism::Node as P;
 
-    /// The whole-parse context: source geometry, script retention, and the
-    /// post-order node counter.
     /// What a construct's grammar eats between its header and its first
     /// statement -- see [`Cx::leading_terminator`], which is where the
     /// measurements behind these three live.
@@ -494,6 +492,8 @@ mod translate {
         One,
     }
 
+    /// The whole-parse context: source geometry, script retention, and the
+    /// post-order node counter.
     struct Cx {
         line_starts: Vec<usize>,
         script: Option<Arc<ScriptSource>>,
@@ -792,18 +792,23 @@ mod translate {
     /// come from the caller -- and every statement context in this translator
     /// reaches its children through `statements_body`.
     fn translate_stmt(n: &P<'_>, cx: &mut Cx, in_block: bool) -> RubyValue {
-        if let Some(x) = n.as_begin_node() {
-            let loc = n.location();
-            return begin_body(
-                &x,
-                cx,
-                in_block,
-                loc.start_offset(),
-                loc.end_offset(),
-                false,
-            );
+        match n {
+            P::BeginNode { .. } => {
+                let x = n.as_begin_node().expect("matched");
+                let loc = n.location();
+                begin_body(
+                    &x,
+                    cx,
+                    in_block,
+                    loc.start_offset(),
+                    loc.end_offset(),
+                    false,
+                )
+            }
+            // Every other kind reads the same in both positions;
+            // [`translate`]'s own match stays the exhaustive one.
+            _ => translate(n, cx, in_block),
         }
-        translate(n, cx, in_block)
     }
 
     fn opt_statements(
@@ -847,8 +852,6 @@ mod translate {
         }
     }
 
-    /// An EMPTY body, which CRuby renders as a `BEGIN` node holding one nil
-    /// rather than as nothing.
     /// A body's statements, with the leading empty statement CRuby's grammar
     /// leaves ahead of an unabsorbed terminator -- see
     /// [`Cx::leading_terminator`], which decides whether there is one.
@@ -970,6 +973,8 @@ mod translate {
         node(cx, "IF", start, end, children)
     }
 
+    /// An EMPTY body, which CRuby renders as a `BEGIN` node holding one nil
+    /// rather than as nothing.
     fn empty_begin(cx: &mut Cx, at: usize) -> RubyValue {
         node(cx, "BEGIN", at, at, vec![RubyValue::Nil])
     }
@@ -2261,185 +2266,6 @@ mod translate {
         node(cx, "FOR", s, e, vec![collection, scope])
     }
 
-    /// One variable's read/write pair for the operator-assignment family:
-    /// the node kind that READS it and the one that WRITES it.
-    fn var_kinds(n: &P<'_>) -> Option<(&'static str, &'static str)> {
-        if n.as_local_variable_operator_write_node().is_some()
-            || n.as_local_variable_or_write_node().is_some()
-            || n.as_local_variable_and_write_node().is_some()
-        {
-            return Some(("LVAR", "LASGN"));
-        }
-        if n.as_instance_variable_operator_write_node().is_some()
-            || n.as_instance_variable_or_write_node().is_some()
-            || n.as_instance_variable_and_write_node().is_some()
-        {
-            return Some(("IVAR", "IASGN"));
-        }
-        if n.as_global_variable_operator_write_node().is_some()
-            || n.as_global_variable_or_write_node().is_some()
-            || n.as_global_variable_and_write_node().is_some()
-        {
-            return Some(("GVAR", "GASGN"));
-        }
-        if n.as_class_variable_operator_write_node().is_some()
-            || n.as_class_variable_or_write_node().is_some()
-            || n.as_class_variable_and_write_node().is_some()
-        {
-            return Some(("CVAR", "CVASGN"));
-        }
-        if n.as_constant_operator_write_node().is_some()
-            || n.as_constant_or_write_node().is_some()
-            || n.as_constant_and_write_node().is_some()
-        {
-            return Some(("CONST", "CDECL"));
-        }
-        None
-    }
-
-    /// The whole operator-assignment family, or `None` when `n` is not one.
-    ///
-    /// A binary `x += 1` desugars: the tree is the ordinary WRITE holding a
-    /// CALL of `+` on the READ. `||=` and `&&=` do not desugar -- they keep
-    /// `OP_ASGN_OR`/`OP_ASGN_AND`, whose three children are the read, the
-    /// operator's own symbol, and the write. The two call-shaped receivers
-    /// have their own kinds again: `OP_ASGN1` for `a[0] +=` and `OP_ASGN2`
-    /// for `a.b +=`, which carries a SAFE-NAVIGATION flag no other node does.
-    fn op_assign(n: &P<'_>, cx: &mut Cx, in_block: bool, s: usize, e: usize) -> Option<RubyValue> {
-        let sym = |t: &str| RubyValue::Symbol(crate::Symbol::intern(t));
-
-        // A binary operator on a plain variable.
-        macro_rules! binary {
-            ($m:ident) => {
-                if let Some(x) = n.$m() {
-                    let (read, write) = var_kinds(n)?;
-                    let nloc = x.name_loc();
-                    let name = sym_val(x.name().as_slice());
-                    let cur = node(
-                        cx,
-                        read,
-                        nloc.start_offset(),
-                        nloc.end_offset(),
-                        vec![name.clone()],
-                    );
-                    let rhs = translate(&x.value(), cx, in_block);
-                    let vloc = x.value().location();
-                    let arg = list_node(cx, vloc.start_offset(), vloc.end_offset(), vec![rhs]);
-                    let op = String::from_utf8_lossy(x.binary_operator().as_slice()).into_owned();
-                    let call = node(cx, "CALL", s, e, vec![cur, sym(&op), arg]);
-                    return Some(node(cx, write, s, e, vec![name, call]));
-                }
-            };
-        }
-        binary!(as_local_variable_operator_write_node);
-        binary!(as_instance_variable_operator_write_node);
-        binary!(as_global_variable_operator_write_node);
-        binary!(as_class_variable_operator_write_node);
-        binary!(as_constant_operator_write_node);
-
-        macro_rules! short_circuit {
-            ($m:ident, $kind:literal, $op:literal) => {
-                if let Some(x) = n.$m() {
-                    let (read, write) = var_kinds(n)?;
-                    let nloc = x.name_loc();
-                    let name = sym_val(x.name().as_slice());
-                    let cur = node(
-                        cx,
-                        read,
-                        nloc.start_offset(),
-                        nloc.end_offset(),
-                        vec![name.clone()],
-                    );
-                    let rhs = translate(&x.value(), cx, in_block);
-                    let asgn = node(cx, write, s, e, vec![name, rhs]);
-                    return Some(node(cx, $kind, s, e, vec![cur, sym($op), asgn]));
-                }
-            };
-        }
-        short_circuit!(as_local_variable_or_write_node, "OP_ASGN_OR", "||");
-        short_circuit!(as_instance_variable_or_write_node, "OP_ASGN_OR", "||");
-        short_circuit!(as_global_variable_or_write_node, "OP_ASGN_OR", "||");
-        short_circuit!(as_class_variable_or_write_node, "OP_ASGN_OR", "||");
-        short_circuit!(as_constant_or_write_node, "OP_ASGN_OR", "||");
-        short_circuit!(as_local_variable_and_write_node, "OP_ASGN_AND", "&&");
-        short_circuit!(as_instance_variable_and_write_node, "OP_ASGN_AND", "&&");
-        short_circuit!(as_global_variable_and_write_node, "OP_ASGN_AND", "&&");
-        short_circuit!(as_class_variable_and_write_node, "OP_ASGN_AND", "&&");
-        short_circuit!(as_constant_and_write_node, "OP_ASGN_AND", "&&");
-
-        // `a[0] op= v` -- OP_ASGN1[recv, op, index-list, value].
-        macro_rules! index_asgn {
-            ($m:ident, $op:expr) => {
-                if let Some(x) = n.$m() {
-                    let recv = opt_translate(x.receiver().as_ref(), cx, in_block);
-                    let args = x
-                        .arguments()
-                        .and_then(|a| {
-                            let al = a.location();
-                            let els: Vec<P<'_>> = a.arguments().iter().collect();
-                            arg_list(&els, al.start_offset(), al.end_offset(), cx, in_block)
-                        })
-                        .unwrap_or(RubyValue::Nil);
-                    let value = translate(&x.value(), cx, in_block);
-                    let op: RubyValue = $op(&x);
-                    return Some(node(cx, "OP_ASGN1", s, e, vec![recv, op, args, value]));
-                }
-            };
-        }
-        index_asgn!(
-            as_index_operator_write_node,
-            |x: &ruby_prism::IndexOperatorWriteNode<'_>| {
-                RubyValue::Symbol(crate::Symbol::intern(&String::from_utf8_lossy(
-                    x.binary_operator().as_slice(),
-                )))
-            }
-        );
-        index_asgn!(
-            as_index_or_write_node,
-            |_: &ruby_prism::IndexOrWriteNode<'_>| sym("||")
-        );
-        index_asgn!(
-            as_index_and_write_node,
-            |_: &ruby_prism::IndexAndWriteNode<'_>| sym("&&")
-        );
-
-        // `a.b op= v` -- OP_ASGN2[recv, safe?, name, op, value].
-        macro_rules! attr_asgn {
-            ($m:ident, $op:expr) => {
-                if let Some(x) = n.$m() {
-                    let recv = opt_translate(x.receiver().as_ref(), cx, in_block);
-                    let safe = RubyValue::Bool(x.is_safe_navigation());
-                    let name = sym_val(x.read_name().as_slice());
-                    let value = translate(&x.value(), cx, in_block);
-                    let op: RubyValue = $op(&x);
-                    return Some(node(
-                        cx,
-                        "OP_ASGN2",
-                        s,
-                        e,
-                        vec![recv, safe, name, op, value],
-                    ));
-                }
-            };
-        }
-        attr_asgn!(
-            as_call_operator_write_node,
-            |x: &ruby_prism::CallOperatorWriteNode<'_>| {
-                RubyValue::Symbol(crate::Symbol::intern(&String::from_utf8_lossy(
-                    x.binary_operator().as_slice(),
-                )))
-            }
-        );
-        attr_asgn!(as_call_or_write_node, |_: &ruby_prism::CallOrWriteNode<
-            '_,
-        >| sym("||"));
-        attr_asgn!(
-            as_call_and_write_node,
-            |_: &ruby_prism::CallAndWriteNode<'_>| sym("&&")
-        );
-        None
-    }
-
     /// A regexp literal's VALUE, with the encoding its flag forces.
     fn regexp_literal(cx: &Cx, x: &ruby_prism::RegularExpressionNode<'_>) -> RubyValue {
         let src = cx.slice(x.content_loc());
@@ -2467,48 +2293,6 @@ mod translate {
         .unwrap_or(RubyValue::Nil)
     }
 
-    /// `A::B op= v` -- `OP_CDECL[path, op, value]`. A constant PATH does not
-    /// go through [`op_assign`]'s read/write pair: there is no name to read,
-    /// so CRuby keeps the whole path and one kind for all three operators.
-    fn const_path_op_assign(
-        n: &P<'_>,
-        cx: &mut Cx,
-        in_block: bool,
-        s: usize,
-        e: usize,
-    ) -> Option<RubyValue> {
-        let sym = |t: &str| RubyValue::Symbol(crate::Symbol::intern(t));
-        macro_rules! path {
-            ($m:ident, $op:expr) => {
-                if let Some(x) = n.$m() {
-                    let target = x.target();
-                    let tloc = target.location();
-                    let path = const_path_of(&target, cx, tloc.start_offset(), tloc.end_offset());
-                    let value = translate(&x.value(), cx, in_block);
-                    let op: RubyValue = $op(&x);
-                    return Some(node(cx, "OP_CDECL", s, e, vec![path, op, value]));
-                }
-            };
-        }
-        path!(
-            as_constant_path_operator_write_node,
-            |x: &ruby_prism::ConstantPathOperatorWriteNode<'_>| {
-                RubyValue::Symbol(crate::Symbol::intern(&String::from_utf8_lossy(
-                    x.binary_operator().as_slice(),
-                )))
-            }
-        );
-        path!(
-            as_constant_path_or_write_node,
-            |_: &ruby_prism::ConstantPathOrWriteNode<'_>| sym("||")
-        );
-        path!(
-            as_constant_path_and_write_node,
-            |_: &ruby_prism::ConstantPathAndWriteNode<'_>| sym("&&")
-        );
-        None
-    }
-
     /// The `COLON2` a constant-path target reads as.
     fn const_path_of(
         target: &ruby_prism::ConstantPathNode<'_>,
@@ -2530,933 +2314,1268 @@ mod translate {
     fn translate(n: &P<'_>, cx: &mut Cx, in_block: bool) -> RubyValue {
         let loc = n.location();
         let (s, e) = (loc.start_offset(), loc.end_offset());
+        let sym = |t: &str| RubyValue::Symbol(crate::Symbol::intern(t));
 
-        if let Some(x) = n.as_integer_node() {
-            let value = x.value();
-            let (negative, digits) = value.to_u32_digits();
-            let v = crate::int_from_u32_digits(negative, digits);
-            return node(cx, "INTEGER", s, e, vec![v]);
+        // The operator-assignment family's shared bodies. A binary `x += 1`
+        // desugars: the tree is the ordinary WRITE holding a CALL of `+` on
+        // the READ. `||=` and `&&=` do not desugar -- they keep
+        // `OP_ASGN_OR`/`OP_ASGN_AND`, whose three children are the read, the
+        // operator's own symbol, and the write.
+        macro_rules! op_binary {
+            ($x:expr, $read:literal, $write:literal) => {{
+                let x = $x;
+                let nloc = x.name_loc();
+                let name = sym_val(x.name().as_slice());
+                let cur = node(
+                    cx,
+                    $read,
+                    nloc.start_offset(),
+                    nloc.end_offset(),
+                    vec![name.clone()],
+                );
+                let rhs = translate(&x.value(), cx, in_block);
+                let vloc = x.value().location();
+                let arg = list_node(cx, vloc.start_offset(), vloc.end_offset(), vec![rhs]);
+                let op = String::from_utf8_lossy(x.binary_operator().as_slice()).into_owned();
+                let call = node(cx, "CALL", s, e, vec![cur, sym(&op), arg]);
+                node(cx, $write, s, e, vec![name, call])
+            }};
         }
-        if let Some(x) = n.as_float_node() {
-            return node(cx, "FLOAT", s, e, vec![RubyValue::Float(x.value())]);
+        macro_rules! op_short_circuit {
+            ($x:expr, $read:literal, $write:literal, $kind:literal, $op:literal) => {{
+                let x = $x;
+                let nloc = x.name_loc();
+                let name = sym_val(x.name().as_slice());
+                let cur = node(
+                    cx,
+                    $read,
+                    nloc.start_offset(),
+                    nloc.end_offset(),
+                    vec![name.clone()],
+                );
+                let rhs = translate(&x.value(), cx, in_block);
+                let asgn = node(cx, $write, s, e, vec![name, rhs]);
+                node(cx, $kind, s, e, vec![cur, sym($op), asgn])
+            }};
         }
-        if let Some(x) = n.as_string_node() {
-            let v = RubyValue::Str(crate::string_new(
-                String::from_utf8_lossy(x.unescaped()).into_owned(),
-            ));
-            return node(cx, "STR", s, e, vec![v]);
+        // `a[0] op= v` -- OP_ASGN1[recv, op, index-list, value].
+        macro_rules! op_index {
+            ($x:expr, $op:expr) => {{
+                let x = $x;
+                let recv = opt_translate(x.receiver().as_ref(), cx, in_block);
+                let args = x
+                    .arguments()
+                    .and_then(|a| {
+                        let al = a.location();
+                        let els: Vec<P<'_>> = a.arguments().iter().collect();
+                        arg_list(&els, al.start_offset(), al.end_offset(), cx, in_block)
+                    })
+                    .unwrap_or(RubyValue::Nil);
+                let value = translate(&x.value(), cx, in_block);
+                let op: RubyValue = $op(&x);
+                node(cx, "OP_ASGN1", s, e, vec![recv, op, args, value])
+            }};
         }
-        // An INTERPOLATED literal: `DSTR [leading_text, first_part, rest]`,
-        // where `rest` is a LIST of everything after the first part and the
-        // leading text is a bare Ruby String -- `""` when the interpolation
-        // comes first. `:"..."` is DSYM, `/.../` DREGX, a backtick command
-        // DXSTR, all three the same three children.
-        // `"a" "b"` is one literal, and CRuby folds it: when every part is a
-        // plain string the answer is a STR spanning the FIRST part alone.
-        if let Some(x) = n.as_interpolated_string_node() {
-            let parts: Vec<P<'_>> = x.parts().iter().collect();
-            if !parts.is_empty() && parts.iter().all(|p| p.as_string_node().is_some()) {
-                let mut text = String::new();
-                for p in &parts {
-                    let sn = p.as_string_node().expect("checked");
-                    text.push_str(&String::from_utf8_lossy(sn.unescaped()));
-                }
-                let first = parts[0].location();
-                let v = RubyValue::Str(crate::string_new(text));
-                return node(cx, "STR", first.start_offset(), first.end_offset(), vec![v]);
+        // `a.b op= v` -- OP_ASGN2[recv, safe?, name, op, value], which
+        // carries a SAFE-NAVIGATION flag no other node does.
+        macro_rules! op_attr {
+            ($x:expr, $op:expr) => {{
+                let x = $x;
+                let recv = opt_translate(x.receiver().as_ref(), cx, in_block);
+                let safe = RubyValue::Bool(x.is_safe_navigation());
+                let name = sym_val(x.read_name().as_slice());
+                let value = translate(&x.value(), cx, in_block);
+                let op: RubyValue = $op(&x);
+                node(cx, "OP_ASGN2", s, e, vec![recv, safe, name, op, value])
+            }};
+        }
+        // `A::B op= v` -- OP_CDECL[path, op, value]. A constant PATH has no
+        // name to read, so CRuby keeps the whole path and one kind for all
+        // three operators.
+        macro_rules! op_cdecl {
+            ($x:expr, $op:expr) => {{
+                let x = $x;
+                let target = x.target();
+                let tloc = target.location();
+                let path = const_path_of(&target, cx, tloc.start_offset(), tloc.end_offset());
+                let value = translate(&x.value(), cx, in_block);
+                let op: RubyValue = $op(&x);
+                node(cx, "OP_CDECL", s, e, vec![path, op, value])
+            }};
+        }
+
+        // One exhaustive match over every prism node kind: a prism upgrade
+        // that ADDS a kind must fail the build here, not slip through a `_`
+        // arm.
+        match n {
+            P::IntegerNode { .. } => {
+                let x = n.as_integer_node().expect("matched");
+                let value = x.value();
+                let (negative, digits) = value.to_u32_digits();
+                let v = crate::int_from_u32_digits(negative, digits);
+                node(cx, "INTEGER", s, e, vec![v])
             }
-        }
-        if let Some(x) = n.as_interpolated_string_node() {
-            let parts = flat_parts(x.parts());
-            return dstr(cx, "DSTR", &parts, s, e, in_block);
-        }
-        if let Some(x) = n.as_interpolated_symbol_node() {
-            let parts = flat_parts(x.parts());
-            return dstr(cx, "DSYM", &parts, s, e, in_block);
-        }
-        if let Some(x) = n.as_interpolated_regular_expression_node() {
-            let parts = flat_parts(x.parts());
-            return dstr(cx, "DREGX", &parts, s, e, in_block);
-        }
-        if let Some(x) = n.as_interpolated_x_string_node() {
-            let parts = flat_parts(x.parts());
-            return dstr(cx, "DXSTR", &parts, s, e, in_block);
-        }
-        if let Some(x) = n.as_symbol_node() {
-            return node(cx, "SYM", s, e, vec![sym_val(x.unescaped())]);
-        }
-        if n.as_nil_node().is_some() {
-            return node(cx, "NIL", s, e, vec![]);
-        }
-        if n.as_true_node().is_some() {
-            return node(cx, "TRUE", s, e, vec![]);
-        }
-        if n.as_false_node().is_some() {
-            return node(cx, "FALSE", s, e, vec![]);
-        }
-        if n.as_self_node().is_some() {
-            return node(cx, "SELF", s, e, vec![]);
-        }
-        if let Some(x) = n.as_local_variable_read_node() {
-            let kind = if in_block { "DVAR" } else { "LVAR" };
-            return node(cx, kind, s, e, vec![sym_val(x.name().as_slice())]);
-        }
-        if let Some(x) = n.as_local_variable_write_node() {
-            let kind = if in_block { "DASGN" } else { "LASGN" };
-            let value = translate(&x.value(), cx, in_block);
-            return node(cx, kind, s, e, vec![sym_val(x.name().as_slice()), value]);
-        }
-        if let Some(x) = n.as_instance_variable_read_node() {
-            return node(cx, "IVAR", s, e, vec![sym_val(x.name().as_slice())]);
-        }
-        if let Some(x) = n.as_instance_variable_write_node() {
-            let value = translate(&x.value(), cx, in_block);
-            return node(cx, "IASGN", s, e, vec![sym_val(x.name().as_slice()), value]);
-        }
-        if let Some(x) = n.as_global_variable_read_node() {
-            return node(cx, "GVAR", s, e, vec![sym_val(x.name().as_slice())]);
-        }
-        if let Some(x) = n.as_global_variable_write_node() {
-            let value = translate(&x.value(), cx, in_block);
-            return node(cx, "GASGN", s, e, vec![sym_val(x.name().as_slice()), value]);
-        }
-        if let Some(x) = n.as_constant_read_node() {
-            return node(cx, "CONST", s, e, vec![sym_val(x.name().as_slice())]);
-        }
-        // `A::B` is COLON2 over its scope; a top-level `::A` is COLON3, which
-        // holds the NAME alone -- there is nothing to its left.
-        if let Some(x) = n.as_constant_path_node() {
-            let name = match x.name() {
-                Some(nm) => sym_val(nm.as_slice()),
-                None => RubyValue::Nil,
-            };
-            return match x.parent() {
-                Some(p) => {
-                    let scope = translate(&p, cx, in_block);
-                    node(cx, "COLON2", s, e, vec![scope, name])
-                }
-                None => node(cx, "COLON3", s, e, vec![name]),
-            };
-        }
-        // `__FILE__` carries the script name, which for a string parse is
-        // empty; `__LINE__` carries the line it sits on.
-        if n.as_source_file_node().is_some() {
-            let name = cx
-                .script
-                .as_ref()
-                .map_or_else(String::new, |_| String::new());
-            return node(
-                cx,
-                "FILE",
-                s,
-                e,
-                vec![RubyValue::Str(crate::string_new(name))],
-            );
-        }
-        if n.as_source_line_node().is_some() {
-            let (line, _) = cx.pos(s);
-            return node(cx, "LINE", s, e, vec![RubyValue::Int(line)]);
-        }
-        if n.as_source_encoding_node().is_some() {
-            let enc = crate::builtins::encoding::encoding_value(crate::encoding::UTF_8);
-            return node(cx, "ENCODING", s, e, vec![enc]);
-        }
-        if let Some(x) = n.as_constant_write_node() {
-            let value = translate(&x.value(), cx, in_block);
-            return node(cx, "CDECL", s, e, vec![sym_val(x.name().as_slice()), value]);
-        }
-        // `A::B = 1` -- a SCOPED write names its scope as well as its leaf,
-        // so the CDECL carries three children where a bare one carries two.
-        if let Some(x) = n.as_constant_path_write_node() {
-            let target = x.target();
-            let path = translate(&target.as_node(), cx, in_block);
-            let name = match target.name() {
-                Some(nm) => sym_val(nm.as_slice()),
-                None => RubyValue::Nil,
-            };
-            let value = translate(&x.value(), cx, in_block);
-            return node(cx, "CDECL", s, e, vec![path, name, value]);
-        }
-        if let Some(x) = n.as_array_node() {
-            let els: Vec<P<'_>> = x.elements().iter().collect();
-            // `[]` is its own kind in parse.y, with no children at all.
-            return arg_list(&els, s, e, cx, in_block)
-                .unwrap_or_else(|| node(cx, "ZLIST", s, e, vec![]));
-        }
-        if let Some(x) = n.as_hash_node() {
-            let els: Vec<P<'_>> = x.elements().iter().collect();
-            return hash_node(cx, &els, s, e, in_block);
-        }
-        // `foo(a: 1)` and `foo(**h)`: prism keeps a call's trailing keywords in
-        // their own node, which CRuby renders as an ordinary HASH argument.
-        if let Some(x) = n.as_keyword_hash_node() {
-            let els: Vec<P<'_>> = x.elements().iter().collect();
-            return hash_node(cx, &els, s, e, in_block);
-        }
-        if let Some(x) = n.as_range_node() {
-            let kind = if x.is_exclude_end() { "DOT3" } else { "DOT2" };
-            // A beginless or endless range still has both children: CRuby
-            // fills the absent side with a zero-width `NIL` node sited at the
-            // edge the operator does not reach.
-            let lo = match x.left() {
-                Some(l) => translate(&l, cx, in_block),
-                None => node(cx, "NIL", s, s, vec![]),
-            };
-            let hi = match x.right() {
-                Some(r) => translate(&r, cx, in_block),
-                None => node(cx, "NIL", e, e, vec![]),
-            };
-            return node(cx, kind, s, e, vec![lo, hi]);
-        }
-        if let Some(x) = n.as_flip_flop_node() {
-            let kind = if x.is_exclude_end() { "FLIP3" } else { "FLIP2" };
-            let lo = opt_translate(x.left().as_ref(), cx, in_block);
-            let hi = opt_translate(x.right().as_ref(), cx, in_block);
-            return node(cx, kind, s, e, vec![lo, hi]);
-        }
-        if let Some(x) = n.as_call_node() {
-            let name = String::from_utf8_lossy(x.name().as_slice()).into_owned();
-            // The block form wraps the bare call in ITER; the inner call's
-            // span EXCLUDES the block (its message/arguments only), and a
-            // blockful no-arg call is FCALL with nil args, never VCALL.
-            if let Some(block) = x.block().and_then(|b| b.as_block_node()) {
-                let call = call_for_iter(&x, &name, cx, in_block);
-                return iter_over(call, &block, s, e, cx);
+            P::FloatNode { .. } => {
+                let x = n.as_float_node().expect("matched");
+                node(cx, "FLOAT", s, e, vec![RubyValue::Float(x.value())])
             }
-            return call_without_block(&x, &name, cx, in_block);
-        }
-        if let Some(x) = n.as_def_node() {
-            let dloc = x.location();
-            let mut locals: Vec<RubyValue> =
-                x.locals().iter().map(|l| sym_val(l.as_slice())).collect();
-            let params = x.parameters();
-            let (ps, pe) = match (&params, x.lparen_loc(), x.rparen_loc()) {
-                (Some(p), _, _) => {
-                    let l = p.location();
-                    (l.start_offset(), l.end_offset())
-                }
-                // An EMPTY parameter list still has a span, and it is the
-                // opening paren alone.
-                (None, Some(lp), Some(_)) => (lp.start_offset(), lp.end_offset()),
-                // An endless `def m = 1` with no parens spans `def m`; a
-                // `def m; end` puts the zero-width ARGS after the name.
-                (None, None, _) => {
-                    let after = x.name_loc().end_offset();
-                    match x.equal_loc() {
-                        Some(_) => (dloc.start_offset(), after),
-                        None => (after, after),
+            P::StringNode { .. } => {
+                let x = n.as_string_node().expect("matched");
+                let v = RubyValue::Str(crate::string_new(
+                    String::from_utf8_lossy(x.unescaped()).into_owned(),
+                ));
+                node(cx, "STR", s, e, vec![v])
+            }
+            // An INTERPOLATED literal: `DSTR [leading_text, first_part, rest]`,
+            // where `rest` is a LIST of everything after the first part and the
+            // leading text is a bare Ruby String -- `""` when the interpolation
+            // comes first. `:"..."` is DSYM, `/.../` DREGX, a backtick command
+            // DXSTR, all three the same three children.
+            // `"a" "b"` is one literal, and CRuby folds it: when every part is a
+            // plain string the answer is a STR spanning the FIRST part alone.
+            P::InterpolatedStringNode { .. } => {
+                let x = n.as_interpolated_string_node().expect("matched");
+                let parts: Vec<P<'_>> = x.parts().iter().collect();
+                if !parts.is_empty() && parts.iter().all(|p| p.as_string_node().is_some()) {
+                    let mut text = String::new();
+                    for p in &parts {
+                        let sn = p.as_string_node().expect("checked");
+                        text.push_str(&String::from_utf8_lossy(sn.unescaped()));
                     }
+                    let first = parts[0].location();
+                    let v = RubyValue::Str(crate::string_new(text));
+                    node(cx, "STR", first.start_offset(), first.end_offset(), vec![v])
+                } else {
+                    let parts = flat_parts(x.parts());
+                    dstr(cx, "DSTR", &parts, s, e, in_block)
                 }
-                (None, Some(lp), None) => (lp.start_offset(), lp.end_offset()),
-            };
-            let args = args_node(params, ps, pe, cx, false, &mut locals);
-            // A `def` with its own `rescue`/`ensure` has a `begin` for a body.
-            // Its argument list takes ONE terminator, so only a SECOND
-            // separator (`def m; ; 1; end`) leaves the empty statement.
-            let after_header = x
-                .rparen_loc()
-                .map(|r| r.end_offset())
-                .unwrap_or_else(|| pe.max(x.name_loc().end_offset()));
-            // A PARENTHESISED argument list ends at its `)`, so the grammar
-            // has nothing left to take a `;` with -- only the paren-less form
-            // eats one. A newline is absorbed either way.
-            let absorb = match x.lparen_loc() {
-                Some(_) => Absorb::Newlines,
-                None => Absorb::One,
-            };
-            let body = match x.body() {
-                Some(b) => match b.as_statements_node() {
-                    // An EMPTY method body is nil, never the empty statement.
-                    Some(stmts) if stmts.body().iter().next().is_none() => RubyValue::Nil,
-                    Some(stmts) => body_after(Some(stmts), after_header, absorb, cx, false),
-                    // A rescue/ensure body is a BeginNode, and in a `def` it
-                    // is NOT the expression-position `BEGIN` wrapper.
-                    None => match b.as_begin_node() {
-                        Some(bg) => {
-                            let at = cx.body_start(after_header, absorb);
-                            begin_body(&bg, cx, false, at, dloc.end_offset(), false)
-                        }
-                        None => translate(&b, cx, false),
-                    },
-                },
-                None => RubyValue::Nil,
-            };
-            let scope = node(
-                cx,
-                "SCOPE",
-                dloc.start_offset(),
-                dloc.end_offset(),
-                vec![RubyValue::Array(crate::array_new(locals)), args, body],
-            );
-            let name = sym_val(x.name().as_slice());
-            return match x.receiver() {
-                Some(r) => {
-                    let recv = translate(&r, cx, in_block);
-                    node(cx, "DEFS", s, e, vec![recv, name, scope])
-                }
-                None => node(cx, "DEFN", s, e, vec![name, scope]),
-            };
-        }
-        // `case/when` -- CASE with a subject, CASE2 without. The whens are a
-        // CHAIN: each WHEN's third child is the NEXT one, and the last one's
-        // is the `else` body, which is how parse.y conses them up.
-        // The `case/in` PATTERN family. Each is a fixed-shape node CRuby
-        // builds in parse.y, and the shapes are not guessable: an absent
-        // part is `nil`, a NAMELESS `*` is the symbol
-        // `:NODE_SPECIAL_NO_NAME_REST`, and `**nil` is
-        // `:NODE_SPECIAL_NO_REST_KEYWORD`.
-        if let Some(x) = n.as_array_pattern_node() {
-            let konst = opt_translate(x.constant().as_ref(), cx, in_block);
-            let pre: Vec<P<'_>> = x.requireds().iter().collect();
-            let post: Vec<P<'_>> = x.posts().iter().collect();
-            let pre_list = pattern_list(&pre, cx, in_block);
-            let rest = splat_target(x.rest().as_ref(), cx);
-            let post_list = pattern_list(&post, cx, in_block);
-            // A NAMELESS `*` is a marker with no node, so its own text is the
-            // only thing that gives the pattern an extent.
-            let star = x
-                .rest()
-                .filter(|_| matches!(rest, RubyValue::Symbol(_)))
-                .map(|r| {
-                    let l = r.location();
-                    (l.start_offset(), l.end_offset())
-                });
-            let (ps, pe) =
-                pattern_span_with(x.location(), &[&konst, &pre_list, &rest, &post_list], star);
-            return node(cx, "ARYPTN", ps, pe, vec![konst, pre_list, rest, post_list]);
-        }
-        if let Some(x) = n.as_find_pattern_node() {
-            let konst = opt_translate(x.constant().as_ref(), cx, in_block);
-            let mid: Vec<P<'_>> = x.requireds().iter().collect();
-            let left = splat_target_of(x.left().expression(), cx);
-            let mid_list = pattern_list(&mid, cx, in_block);
-            let right = splat_target(Some(&x.right()), cx);
-            let (ps, pe) = pattern_span(x.location(), &[&konst, &left, &mid_list, &right]);
-            return node(cx, "FNDPTN", ps, pe, vec![konst, left, mid_list, right]);
-        }
-        if let Some(x) = n.as_hash_pattern_node() {
-            let konst = opt_translate(x.constant().as_ref(), cx, in_block);
-            let pairs: Vec<P<'_>> = x.elements().iter().collect();
-            let hash = if pairs.is_empty() {
-                RubyValue::Nil
-            } else {
-                let mut kids = Vec::with_capacity(pairs.len() * 2);
-                for a in &pairs {
-                    let Some(a) = a.as_assoc_node() else { continue };
-                    kids.push(translate(&a.key(), cx, in_block));
-                    let v = a.value();
-                    kids.push(match v.as_implicit_node() {
-                        // `{a:}` -- the value is the binding the key implies,
-                        // and it spans the KEY, colon included.
-                        Some(i) => {
-                            let inner = i.value();
-                            match inner.as_local_variable_target_node() {
-                                Some(t) => {
-                                    let l = a.location();
-                                    let errinfo = RubyValue::Nil;
-                                    node(
-                                        cx,
-                                        "LASGN",
-                                        l.start_offset(),
-                                        l.end_offset(),
-                                        vec![sym_val(t.name().as_slice()), errinfo],
-                                    )
-                                }
-                                None => translate(&inner, cx, in_block),
-                            }
-                        }
-                        None => translate(&v, cx, in_block),
-                    });
-                }
-                let lo = pairs[0].location().start_offset();
-                let hi = pairs[pairs.len() - 1].location().end_offset();
-                let list = list_node(cx, lo, hi, kids);
-                node(cx, "HASH", lo, hi, vec![list])
-            };
-            // A `**rest` stretches BOTH the hash and its own binding over the
-            // whole pattern, which is CRuby's own span and not the text each
-            // part covers.
-            let content = {
-                let lo = pairs
-                    .first()
-                    .map(|p| p.location().start_offset())
-                    .or_else(|| x.rest().map(|r| r.location().start_offset()));
-                let hi = x
-                    .rest()
-                    .map(|r| r.location().end_offset())
-                    .or_else(|| pairs.last().map(|p| p.location().end_offset()));
-                lo.zip(hi)
-            };
-            let named_rest = x
-                .rest()
-                .as_ref()
-                .and_then(|r| r.as_assoc_splat_node())
-                .and_then(|a| a.value())
-                .is_some();
-            let rest = match x.rest() {
-                // `**nil` -- "and no other keys", which is a marker, not a
-                // binding.
-                Some(r) if r.as_no_keywords_parameter_node().is_some() => {
-                    RubyValue::Symbol(crate::Symbol::intern("NODE_SPECIAL_NO_REST_KEYWORD"))
-                }
-                Some(r) => match r.as_assoc_splat_node().and_then(|a| a.value()) {
-                    Some(t) => {
-                        let from = content.map(|(lo, _)| lo);
-                        let mut b = asgn_node(&t, from, RubyValue::Nil, cx);
-                        if let Some((lo, hi)) = content {
-                            b = respan(b, cx, lo, hi);
-                        }
-                        b
-                    }
+            }
+            P::InterpolatedSymbolNode { .. } => {
+                let x = n.as_interpolated_symbol_node().expect("matched");
+                let parts = flat_parts(x.parts());
+                dstr(cx, "DSYM", &parts, s, e, in_block)
+            }
+            P::InterpolatedRegularExpressionNode { .. } => {
+                let x = n
+                    .as_interpolated_regular_expression_node()
+                    .expect("matched");
+                let parts = flat_parts(x.parts());
+                dstr(cx, "DREGX", &parts, s, e, in_block)
+            }
+            P::InterpolatedXStringNode { .. } => {
+                let x = n.as_interpolated_x_string_node().expect("matched");
+                let parts = flat_parts(x.parts());
+                dstr(cx, "DXSTR", &parts, s, e, in_block)
+            }
+            P::SymbolNode { .. } => {
+                let x = n.as_symbol_node().expect("matched");
+                node(cx, "SYM", s, e, vec![sym_val(x.unescaped())])
+            }
+            P::NilNode { .. } => node(cx, "NIL", s, e, vec![]),
+            P::TrueNode { .. } => node(cx, "TRUE", s, e, vec![]),
+            P::FalseNode { .. } => node(cx, "FALSE", s, e, vec![]),
+            P::SelfNode { .. } => node(cx, "SELF", s, e, vec![]),
+            P::LocalVariableReadNode { .. } => {
+                let x = n.as_local_variable_read_node().expect("matched");
+                let kind = if in_block { "DVAR" } else { "LVAR" };
+                node(cx, kind, s, e, vec![sym_val(x.name().as_slice())])
+            }
+            P::LocalVariableWriteNode { .. } => {
+                let x = n.as_local_variable_write_node().expect("matched");
+                let kind = if in_block { "DASGN" } else { "LASGN" };
+                let value = translate(&x.value(), cx, in_block);
+                node(cx, kind, s, e, vec![sym_val(x.name().as_slice()), value])
+            }
+            P::InstanceVariableReadNode { .. } => {
+                let x = n.as_instance_variable_read_node().expect("matched");
+                node(cx, "IVAR", s, e, vec![sym_val(x.name().as_slice())])
+            }
+            P::InstanceVariableWriteNode { .. } => {
+                let x = n.as_instance_variable_write_node().expect("matched");
+                let value = translate(&x.value(), cx, in_block);
+                node(cx, "IASGN", s, e, vec![sym_val(x.name().as_slice()), value])
+            }
+            P::GlobalVariableReadNode { .. } => {
+                let x = n.as_global_variable_read_node().expect("matched");
+                node(cx, "GVAR", s, e, vec![sym_val(x.name().as_slice())])
+            }
+            P::GlobalVariableWriteNode { .. } => {
+                let x = n.as_global_variable_write_node().expect("matched");
+                let value = translate(&x.value(), cx, in_block);
+                node(cx, "GASGN", s, e, vec![sym_val(x.name().as_slice()), value])
+            }
+            P::ConstantReadNode { .. } => {
+                let x = n.as_constant_read_node().expect("matched");
+                node(cx, "CONST", s, e, vec![sym_val(x.name().as_slice())])
+            }
+            // `A::B` is COLON2 over its scope; a top-level `::A` is COLON3, which
+            // holds the NAME alone -- there is nothing to its left.
+            P::ConstantPathNode { .. } => {
+                let x = n.as_constant_path_node().expect("matched");
+                let name = match x.name() {
+                    Some(nm) => sym_val(nm.as_slice()),
                     None => RubyValue::Nil,
-                },
-                None => RubyValue::Nil,
-            };
-            let hash = match (named_rest, content, &hash) {
-                (true, Some((lo, hi)), RubyValue::Object(_)) => respan(hash, cx, lo, hi),
-                _ => hash,
-            };
-            let (ps, pe) = pattern_span(x.location(), &[&konst, &hash, &rest]);
-            // `in **nil` says "and no other keys", which is a marker BESIDE an
-            // empty hash -- `in {}` is the one that holds nothing at all.
-            let hash = match (&hash, x.rest()) {
-                (RubyValue::Nil, Some(r)) if r.as_no_keywords_parameter_node().is_some() => {
-                    node(cx, "HASH", ps, pe, vec![RubyValue::Nil])
-                }
-                _ => hash,
-            };
-            return node(cx, "HSHPTN", ps, pe, vec![konst, hash, rest]);
-        }
-        if let Some(x) = n.as_alternation_pattern_node() {
-            let l = translate(&x.left(), cx, in_block);
-            let r = translate(&x.right(), cx, in_block);
-            return node(cx, "OR", s, e, vec![l, r]);
-        }
-        // `Integer => n` -- CRuby renders a capture as a two-element HASH of
-        // the pattern and the binding it feeds.
-        if let Some(x) = n.as_capture_pattern_node() {
-            let pat = translate(&x.value(), cx, in_block);
-            let target = x.target().as_node();
-            let bind = asgn_node(&target, None, RubyValue::Nil, cx);
-            let list = list_node(cx, s, e, vec![pat, bind]);
-            return node(cx, "HASH", s, e, vec![list]);
-        }
-        if let Some(x) = n.as_pinned_variable_node() {
-            return translate(&x.variable(), cx, in_block);
-        }
-        // A bare name in a pattern BINDS; every other target kind does too.
-        if n.as_local_variable_target_node().is_some()
-            || n.as_instance_variable_target_node().is_some()
-            || n.as_global_variable_target_node().is_some()
-            || n.as_class_variable_target_node().is_some()
-        {
-            return asgn_node(n, None, RubyValue::Nil, cx);
-        }
-        // `*x` outside an argument list -- a `when *y`, a splatted assignment
-        // right-hand side. One child: the expression.
-        if let Some(x) = n.as_splat_node() {
-            let inner = match x.expression() {
-                Some(v) => translate(&v, cx, in_block),
-                None => RubyValue::Nil,
-            };
-            return node(cx, "SPLAT", s, e, vec![inner]);
-        }
-        if let Some(x) = n.as_case_node() {
-            let subject = match x.predicate() {
-                Some(p) => translate(&p, cx, in_block),
-                None => RubyValue::Nil,
-            };
-            let kind = if x.predicate().is_some() {
-                "CASE"
-            } else {
-                "CASE2"
-            };
-            let els = else_body(x.else_clause().as_ref(), cx, in_block);
-            let arms: Vec<P<'_>> = x.conditions().iter().collect();
-            let chain = when_chain(&arms, 0, els, cx, in_block);
-            return node(cx, kind, s, e, vec![subject, chain]);
-        }
-        // `case/in` is a different node kind all the way down: CASE3 over IN
-        // arms, chained the same way.
-        if let Some(x) = n.as_case_match_node() {
-            let subject = match x.predicate() {
-                Some(p) => translate(&p, cx, in_block),
-                None => RubyValue::Nil,
-            };
-            let els = else_body(x.else_clause().as_ref(), cx, in_block);
-            let arms: Vec<P<'_>> = x.conditions().iter().collect();
-            let chain = in_chain(&arms, 0, els, cx, in_block);
-            return node(cx, "CASE3", s, e, vec![subject, chain]);
-        }
-        if let Some(x) = n.as_begin_node() {
-            return begin_body(&x, cx, in_block, s, e, true);
-        }
-        // `a rescue b` -- the modifier form is a RESCUE whose single RESBODY
-        // names no exception class and binds nothing.
-        if let Some(x) = n.as_rescue_modifier_node() {
-            let body = translate(&x.expression(), cx, in_block);
-            let handler = translate(&x.rescue_expression(), cx, in_block);
-            let resbody = node(
-                cx,
-                "RESBODY",
-                x.keyword_loc().start_offset(),
-                e,
-                vec![RubyValue::Nil, RubyValue::Nil, handler, RubyValue::Nil],
-            );
-            return node(cx, "RESCUE", s, e, vec![body, resbody, RubyValue::Nil]);
-        }
-        if let Some(x) = n.as_if_node() {
-            let cond = translate(&x.predicate(), cx, in_block);
-            // An arm with no statements is CRuby's zero-width empty statement,
-            // sited where its body would start.
-            let then = clause_body(
-                x.statements(),
-                x.then_keyword_loc()
-                    .map(|t| t.end_offset())
-                    .unwrap_or_else(|| x.predicate().location().end_offset()),
-                cx,
-                in_block,
-            );
-            let els = match x.subsequent() {
-                Some(sub) => match sub.as_else_node() {
-                    Some(e2) => else_clause_body(e2.statements(), &e2, cx, in_block),
-                    // An `elsif` runs to the terminator after its own last
-                    // part, not to the `end` that closes the whole chain.
-                    None => {
-                        let v = translate(&sub, cx, in_block);
-                        retrim_elsif(v, cx)
+                };
+                match x.parent() {
+                    Some(p) => {
+                        let scope = translate(&p, cx, in_block);
+                        node(cx, "COLON2", s, e, vec![scope, name])
                     }
-                },
-                None => RubyValue::Nil,
-            };
-            return node(cx, "IF", s, e, vec![cond, then, els]);
-        }
-        if let Some(x) = n.as_unless_node() {
-            let cond = translate(&x.predicate(), cx, in_block);
-            let then = clause_body(
-                x.statements(),
-                x.then_keyword_loc()
-                    .map(|t| t.end_offset())
-                    .unwrap_or_else(|| x.predicate().location().end_offset()),
-                cx,
-                in_block,
-            );
-            let els = match x.else_clause() {
-                Some(e2) => else_clause_body(e2.statements(), &e2, cx, in_block),
-                None => RubyValue::Nil,
-            };
-            return node(cx, "UNLESS", s, e, vec![cond, then, els]);
-        }
-        if let Some(x) = n.as_while_node() {
-            let cond = translate(&x.predicate(), cx, in_block);
-            let at = x
-                .do_keyword_loc()
-                .map(|d| d.end_offset())
-                .unwrap_or_else(|| x.predicate().location().end_offset());
-            let body = clause_body(x.statements(), at, cx, in_block);
-            let pre = RubyValue::Bool(!x.is_begin_modifier());
-            return node(cx, "WHILE", s, e, vec![cond, body, pre]);
-        }
-        if let Some(x) = n.as_until_node() {
-            let cond = translate(&x.predicate(), cx, in_block);
-            let at = x
-                .do_keyword_loc()
-                .map(|d| d.end_offset())
-                .unwrap_or_else(|| x.predicate().location().end_offset());
-            let body = clause_body(x.statements(), at, cx, in_block);
-            let pre = RubyValue::Bool(!x.is_begin_modifier());
-            return node(cx, "UNTIL", s, e, vec![cond, body, pre]);
-        }
-        if let Some(x) = n.as_break_node() {
-            let arg = jump_arg(x.arguments(), true, cx, in_block);
-            return node(cx, "BREAK", s, e, vec![arg]);
-        }
-        if let Some(x) = n.as_next_node() {
-            let arg = jump_arg(x.arguments(), false, cx, in_block);
-            return node(cx, "NEXT", s, e, vec![arg]);
-        }
-        if let Some(x) = n.as_return_node() {
-            let arg = jump_arg(x.arguments(), true, cx, in_block);
-            return node(cx, "RETURN", s, e, vec![arg]);
-        }
-        if let Some(x) = n.as_and_node() {
-            let l = translate(&x.left(), cx, in_block);
-            let r = translate(&x.right(), cx, in_block);
-            return node(cx, "AND", s, e, vec![l, r]);
-        }
-        if let Some(x) = n.as_or_node() {
-            let l = translate(&x.left(), cx, in_block);
-            let r = translate(&x.right(), cx, in_block);
-            return node(cx, "OR", s, e, vec![l, r]);
-        }
-        if let Some(x) = n.as_class_node() {
-            let cpath = x.constant_path();
-            let cloc = cpath.location();
-            let cpath_node = match cpath.as_constant_read_node() {
-                Some(c) => {
-                    let name = sym_val(c.name().as_slice());
-                    node(
-                        cx,
-                        "COLON2",
-                        cloc.start_offset(),
-                        cloc.end_offset(),
-                        vec![RubyValue::Nil, name],
-                    )
+                    None => node(cx, "COLON3", s, e, vec![name]),
                 }
-                None => translate(&cpath, cx, in_block),
-            };
-            let superclass = match x.superclass() {
-                Some(sc) => translate(&sc, cx, in_block),
-                None => RubyValue::Nil,
-            };
-            let body_end = x
-                .superclass()
-                .map(|sc| sc.location().end_offset())
-                .unwrap_or(cloc.end_offset());
-            // A superclass clause takes the terminator after it; with no
-            // clause nothing does, so even a newline leaves the empty
-            // statement CRuby's `stmts: none` reduces to. An empty body is
-            // that statement alone.
-            let absorb = match x.superclass() {
-                Some(_) => Absorb::One,
-                None => Absorb::None,
-            };
-            let body = match x.body().and_then(|b| b.as_statements_node()) {
-                Some(stmts) => body_after(Some(stmts), body_end, absorb, cx, false),
-                None => body_after(None, body_end, absorb, cx, false),
-            };
-            let body = match body {
-                RubyValue::Nil => {
-                    let at = cx.body_start(body_end, absorb);
-                    empty_begin(cx, at)
-                }
-                other => other,
-            };
-            let scope = node(
-                cx,
-                "SCOPE",
-                s,
-                e,
-                vec![
-                    RubyValue::Array(crate::array_new(vec![])),
-                    RubyValue::Nil,
-                    body,
-                ],
-            );
-            return node(cx, "CLASS", s, e, vec![cpath_node, superclass, scope]);
-        }
-        // `class << expr` -- SCLASS over the receiver and a SCOPE. The `<<`
-        // rule takes the terminator after the expression, so the body carries
-        // no leading empty statement.
-        if let Some(x) = n.as_singleton_class_node() {
-            let recv = translate(&x.expression(), cx, in_block);
-            let at = x.expression().location().end_offset();
-            let body = match body_after(
-                x.body().and_then(|b| b.as_statements_node()),
-                at,
-                Absorb::One,
-                cx,
-                false,
-            ) {
-                RubyValue::Nil => {
-                    let start = cx.body_start(at, Absorb::One);
-                    empty_begin(cx, start)
-                }
-                other => other,
-            };
-            let scope = node(
-                cx,
-                "SCOPE",
-                s,
-                e,
-                vec![
-                    RubyValue::Array(crate::array_new(vec![])),
-                    RubyValue::Nil,
-                    body,
-                ],
-            );
-            return node(cx, "SCLASS", s, e, vec![recv, scope]);
-        }
-        if let Some(x) = n.as_module_node() {
-            let cpath = x.constant_path();
-            let cloc = cpath.location();
-            let cpath_node = match cpath.as_constant_read_node() {
-                Some(c) => {
-                    let name = sym_val(c.name().as_slice());
-                    node(
-                        cx,
-                        "COLON2",
-                        cloc.start_offset(),
-                        cloc.end_offset(),
-                        vec![RubyValue::Nil, name],
-                    )
-                }
-                None => translate(&cpath, cx, in_block),
-            };
-            // A module body has no superclass clause to take the terminator
-            // -- see the `class` arm.
-            let at = cloc.end_offset();
-            let body = match body_after(
-                x.body().and_then(|b| b.as_statements_node()),
-                at,
-                Absorb::None,
-                cx,
-                false,
-            ) {
-                RubyValue::Nil => empty_begin(cx, cx.body_start(at, Absorb::None)),
-                other => other,
-            };
-            let scope = node(
-                cx,
-                "SCOPE",
-                s,
-                e,
-                vec![
-                    RubyValue::Array(crate::array_new(vec![])),
-                    RubyValue::Nil,
-                    body,
-                ],
-            );
-            return node(cx, "MODULE", s, e, vec![cpath_node, scope]);
-        }
-        // A parenthesised statements list is a `BLOCK` in CRuby, spanning the
-        // parens -- `x = (1)` is `LASGN[:x, BLOCK[INTEGER]]`.
-        if let Some(x) = n.as_parentheses_node() {
-            let at = x.opening_loc().end_offset();
-            let inner = match x.body().and_then(|b| b.as_statements_node()) {
-                Some(body) => body_after(Some(body), at, Absorb::Newlines, cx, in_block),
-                None => RubyValue::Nil,
-            };
-            let inner = match inner {
-                RubyValue::Nil => empty_begin(cx, at),
-                other => other,
-            };
-            return node(cx, "BLOCK", s, e, vec![inner]);
-        }
-        if let Some(x) = n.as_statements_node() {
-            return statements_body(&x, cx, in_block);
-        }
-
-        if let Some(x) = n.as_rational_node() {
-            let (num, den) = (x.numerator(), x.denominator());
-            let (nneg, ndig) = num.to_u32_digits();
-            let (dneg, ddig) = den.to_u32_digits();
-            let v = crate::builtins::rational::rational_new(
-                bigint_of(nneg, ndig),
-                bigint_of(dneg, ddig),
-            )
-            .unwrap_or(RubyValue::Nil);
-            return node(cx, "RATIONAL", s, e, vec![v]);
-        }
-        if let Some(x) = n.as_imaginary_node() {
-            let imag = numeric_value(&x.numeric());
-            let v = crate::builtins::complex::complex_new(RubyValue::Int(0), imag)
-                .unwrap_or(RubyValue::Nil);
-            return node(cx, "IMAGINARY", s, e, vec![v]);
-        }
-        if let Some(x) = n.as_x_string_node() {
-            let v = RubyValue::Str(crate::string_new(
-                String::from_utf8_lossy(x.unescaped()).into_owned(),
-            ));
-            return node(cx, "XSTR", s, e, vec![v]);
-        }
-        if let Some(x) = n.as_regular_expression_node() {
-            return node(cx, "REGX", s, e, vec![regexp_literal(cx, &x)]);
-        }
-        if let Some(x) = n.as_match_last_line_node() {
-            // A bare `/re/` in condition position matches against `$_`, and
-            // CRuby gives that its own kind.
-            let src = cx.slice(x.content_loc());
-            let v = crate::regexp::regexp_new(
-                &src,
-                x.is_ignore_case(),
-                x.is_extended(),
-                x.is_multi_line(),
-            )
-            .map(RubyValue::Regexp)
-            .unwrap_or(RubyValue::Nil);
-            return node(cx, "MATCH", s, e, vec![v]);
-        }
-        // `it` reads a parameter with a name no program can write.
-        if n.as_it_local_variable_read_node().is_some() {
-            let name = RubyValue::Symbol(crate::Symbol::intern("<it>"));
-            return node(cx, "DVAR", s, e, vec![name]);
-        }
-        if let Some(x) = n.as_yield_node() {
-            let args = x.arguments().and_then(|a| {
-                let al = a.location();
-                let els: Vec<P<'_>> = a.arguments().iter().collect();
-                arg_list(&els, al.start_offset(), al.end_offset(), cx, in_block)
-            });
-            return node(cx, "YIELD", s, e, vec![args.unwrap_or(RubyValue::Nil)]);
-        }
-        // `^(expr)` pins a computed value, which CRuby renders as the
-        // parenthesised expression it is.
-        if let Some(x) = n.as_pinned_expression_node() {
-            let inner = translate(&x.expression(), cx, in_block);
-            return node(cx, "BLOCK", s, e, vec![inner]);
-        }
-        // `A::B op= v` is its own kind, holding the PATH rather than a name.
-        if let Some(v) = const_path_op_assign(n, cx, in_block, s, e) {
-            return v;
-        }
-        if let Some(x) = n.as_class_variable_read_node() {
-            return node(cx, "CVAR", s, e, vec![sym_val(x.name().as_slice())]);
-        }
-        if let Some(x) = n.as_class_variable_write_node() {
-            let v = translate(&x.value(), cx, in_block);
-            return node(cx, "CVASGN", s, e, vec![sym_val(x.name().as_slice()), v]);
-        }
-        if let Some(x) = n.as_numbered_reference_read_node() {
-            let name = format!("${}", x.number());
-            let sym = RubyValue::Symbol(crate::Symbol::intern(&name));
-            return node(cx, "NTH_REF", s, e, vec![sym]);
-        }
-        if let Some(x) = n.as_back_reference_read_node() {
-            return node(cx, "BACK_REF", s, e, vec![sym_val(x.name().as_slice())]);
-        }
-        if let Some(x) = n.as_defined_node() {
-            let v = translate(&x.value(), cx, in_block);
-            return node(cx, "DEFINED", s, e, vec![v]);
-        }
-        if let Some(x) = n.as_forwarding_super_node() {
-            // `super` with no argument list forwards, and takes a block the
-            // same way any call does.
-            let call_e = match x.block() {
-                Some(ref b) => b.location().start_offset().max(s),
-                None => e,
-            };
-            // The keyword alone, with no trailing space: `super { }` is
-            // ZSUPER[0,5], not ZSUPER[0,9].
-            let call_e = cx.trim_trailing_space(s, call_e);
-            let zsuper = node(cx, "ZSUPER", s, call_e, vec![]);
-            return match x.block() {
-                Some(b) => iter_over(zsuper, &b, s, e, cx),
-                None => zsuper,
-            };
-        }
-        if let Some(x) = n.as_super_node() {
-            let args = x.arguments().and_then(|a| {
-                let al = a.location();
-                let els: Vec<P<'_>> = a.arguments().iter().collect();
-                arg_list(&els, al.start_offset(), al.end_offset(), cx, in_block)
-            });
-            let (call_s, call_e) = match x.block().as_ref().and_then(|b| b.as_block_node()) {
-                Some(b) => (
+            }
+            // `__FILE__` carries the script name, which for a string parse is
+            // empty; `__LINE__` carries the line it sits on.
+            P::SourceFileNode { .. } => {
+                let name = cx
+                    .script
+                    .as_ref()
+                    .map_or_else(String::new, |_| String::new());
+                node(
+                    cx,
+                    "FILE",
                     s,
-                    cx.trim_trailing_space(s, b.location().start_offset().max(s)),
-                ),
-                None => (s, e),
-            };
-            let sup = node(
-                cx,
-                "SUPER",
-                call_s,
-                call_e,
-                vec![args.unwrap_or(RubyValue::Nil)],
-            );
-            return match x.block().as_ref().and_then(|b| b.as_block_node()) {
-                Some(b) => iter_over(sup, &b, s, e, cx),
-                None => sup,
-            };
+                    e,
+                    vec![RubyValue::Str(crate::string_new(name))],
+                )
+            }
+            P::SourceLineNode { .. } => {
+                let (line, _) = cx.pos(s);
+                node(cx, "LINE", s, e, vec![RubyValue::Int(line)])
+            }
+            P::SourceEncodingNode { .. } => {
+                let enc = crate::builtins::encoding::encoding_value(crate::encoding::UTF_8);
+                node(cx, "ENCODING", s, e, vec![enc])
+            }
+            P::ConstantWriteNode { .. } => {
+                let x = n.as_constant_write_node().expect("matched");
+                let value = translate(&x.value(), cx, in_block);
+                node(cx, "CDECL", s, e, vec![sym_val(x.name().as_slice()), value])
+            }
+            // `A::B = 1` -- a SCOPED write names its scope as well as its leaf,
+            // so the CDECL carries three children where a bare one carries two.
+            P::ConstantPathWriteNode { .. } => {
+                let x = n.as_constant_path_write_node().expect("matched");
+                let target = x.target();
+                let path = translate(&target.as_node(), cx, in_block);
+                let name = match target.name() {
+                    Some(nm) => sym_val(nm.as_slice()),
+                    None => RubyValue::Nil,
+                };
+                let value = translate(&x.value(), cx, in_block);
+                node(cx, "CDECL", s, e, vec![path, name, value])
+            }
+            P::ArrayNode { .. } => {
+                let x = n.as_array_node().expect("matched");
+                let els: Vec<P<'_>> = x.elements().iter().collect();
+                // `[]` is its own kind in parse.y, with no children at all.
+                arg_list(&els, s, e, cx, in_block)
+                    .unwrap_or_else(|| node(cx, "ZLIST", s, e, vec![]))
+            }
+            P::HashNode { .. } => {
+                let x = n.as_hash_node().expect("matched");
+                let els: Vec<P<'_>> = x.elements().iter().collect();
+                hash_node(cx, &els, s, e, in_block)
+            }
+            // `foo(a: 1)` and `foo(**h)`: prism keeps a call's trailing keywords in
+            // their own node, which CRuby renders as an ordinary HASH argument.
+            P::KeywordHashNode { .. } => {
+                let x = n.as_keyword_hash_node().expect("matched");
+                let els: Vec<P<'_>> = x.elements().iter().collect();
+                hash_node(cx, &els, s, e, in_block)
+            }
+            P::RangeNode { .. } => {
+                let x = n.as_range_node().expect("matched");
+                let kind = if x.is_exclude_end() { "DOT3" } else { "DOT2" };
+                // A beginless or endless range still has both children: CRuby
+                // fills the absent side with a zero-width `NIL` node sited at the
+                // edge the operator does not reach.
+                let lo = match x.left() {
+                    Some(l) => translate(&l, cx, in_block),
+                    None => node(cx, "NIL", s, s, vec![]),
+                };
+                let hi = match x.right() {
+                    Some(r) => translate(&r, cx, in_block),
+                    None => node(cx, "NIL", e, e, vec![]),
+                };
+                node(cx, kind, s, e, vec![lo, hi])
+            }
+            P::FlipFlopNode { .. } => {
+                let x = n.as_flip_flop_node().expect("matched");
+                let kind = if x.is_exclude_end() { "FLIP3" } else { "FLIP2" };
+                let lo = opt_translate(x.left().as_ref(), cx, in_block);
+                let hi = opt_translate(x.right().as_ref(), cx, in_block);
+                node(cx, kind, s, e, vec![lo, hi])
+            }
+            P::CallNode { .. } => {
+                let x = n.as_call_node().expect("matched");
+                let name = String::from_utf8_lossy(x.name().as_slice()).into_owned();
+                // The block form wraps the bare call in ITER; the inner call's
+                // span EXCLUDES the block (its message/arguments only), and a
+                // blockful no-arg call is FCALL with nil args, never VCALL.
+                if let Some(block) = x.block().and_then(|b| b.as_block_node()) {
+                    let call = call_for_iter(&x, &name, cx, in_block);
+                    iter_over(call, &block, s, e, cx)
+                } else {
+                    call_without_block(&x, &name, cx, in_block)
+                }
+            }
+            P::DefNode { .. } => {
+                let x = n.as_def_node().expect("matched");
+                let dloc = x.location();
+                let mut locals: Vec<RubyValue> =
+                    x.locals().iter().map(|l| sym_val(l.as_slice())).collect();
+                let params = x.parameters();
+                let (ps, pe) = match (&params, x.lparen_loc(), x.rparen_loc()) {
+                    (Some(p), _, _) => {
+                        let l = p.location();
+                        (l.start_offset(), l.end_offset())
+                    }
+                    // An EMPTY parameter list still has a span, and it is the
+                    // opening paren alone.
+                    (None, Some(lp), Some(_)) => (lp.start_offset(), lp.end_offset()),
+                    // An endless `def m = 1` with no parens spans `def m`; a
+                    // `def m; end` puts the zero-width ARGS after the name.
+                    (None, None, _) => {
+                        let after = x.name_loc().end_offset();
+                        match x.equal_loc() {
+                            Some(_) => (dloc.start_offset(), after),
+                            None => (after, after),
+                        }
+                    }
+                    (None, Some(lp), None) => (lp.start_offset(), lp.end_offset()),
+                };
+                let args = args_node(params, ps, pe, cx, false, &mut locals);
+                // A `def` with its own `rescue`/`ensure` has a `begin` for a body.
+                // Its argument list takes ONE terminator, so only a SECOND
+                // separator (`def m; ; 1; end`) leaves the empty statement.
+                let after_header = x
+                    .rparen_loc()
+                    .map(|r| r.end_offset())
+                    .unwrap_or_else(|| pe.max(x.name_loc().end_offset()));
+                // A PARENTHESISED argument list ends at its `)`, so the grammar
+                // has nothing left to take a `;` with -- only the paren-less form
+                // eats one. A newline is absorbed either way.
+                let absorb = match x.lparen_loc() {
+                    Some(_) => Absorb::Newlines,
+                    None => Absorb::One,
+                };
+                let body = match x.body() {
+                    Some(b) => match b.as_statements_node() {
+                        // An EMPTY method body is nil, never the empty statement.
+                        Some(stmts) if stmts.body().iter().next().is_none() => RubyValue::Nil,
+                        Some(stmts) => body_after(Some(stmts), after_header, absorb, cx, false),
+                        // A rescue/ensure body is a BeginNode, and in a `def` it
+                        // is NOT the expression-position `BEGIN` wrapper.
+                        None => match b.as_begin_node() {
+                            Some(bg) => {
+                                let at = cx.body_start(after_header, absorb);
+                                begin_body(&bg, cx, false, at, dloc.end_offset(), false)
+                            }
+                            None => translate(&b, cx, false),
+                        },
+                    },
+                    None => RubyValue::Nil,
+                };
+                let scope = node(
+                    cx,
+                    "SCOPE",
+                    dloc.start_offset(),
+                    dloc.end_offset(),
+                    vec![RubyValue::Array(crate::array_new(locals)), args, body],
+                );
+                let name = sym_val(x.name().as_slice());
+                match x.receiver() {
+                    Some(r) => {
+                        let recv = translate(&r, cx, in_block);
+                        node(cx, "DEFS", s, e, vec![recv, name, scope])
+                    }
+                    None => node(cx, "DEFN", s, e, vec![name, scope]),
+                }
+            }
+            // `case/when` -- CASE with a subject, CASE2 without. The whens are a
+            // CHAIN: each WHEN's third child is the NEXT one, and the last one's
+            // is the `else` body, which is how parse.y conses them up.
+            // The `case/in` PATTERN family. Each is a fixed-shape node CRuby
+            // builds in parse.y, and the shapes are not guessable: an absent
+            // part is `nil`, a NAMELESS `*` is the symbol
+            // `:NODE_SPECIAL_NO_NAME_REST`, and `**nil` is
+            // `:NODE_SPECIAL_NO_REST_KEYWORD`.
+            P::ArrayPatternNode { .. } => {
+                let x = n.as_array_pattern_node().expect("matched");
+                let konst = opt_translate(x.constant().as_ref(), cx, in_block);
+                let pre: Vec<P<'_>> = x.requireds().iter().collect();
+                let post: Vec<P<'_>> = x.posts().iter().collect();
+                let pre_list = pattern_list(&pre, cx, in_block);
+                let rest = splat_target(x.rest().as_ref(), cx);
+                let post_list = pattern_list(&post, cx, in_block);
+                // A NAMELESS `*` is a marker with no node, so its own text is the
+                // only thing that gives the pattern an extent.
+                let star = x
+                    .rest()
+                    .filter(|_| matches!(rest, RubyValue::Symbol(_)))
+                    .map(|r| {
+                        let l = r.location();
+                        (l.start_offset(), l.end_offset())
+                    });
+                let (ps, pe) =
+                    pattern_span_with(x.location(), &[&konst, &pre_list, &rest, &post_list], star);
+                node(cx, "ARYPTN", ps, pe, vec![konst, pre_list, rest, post_list])
+            }
+            P::FindPatternNode { .. } => {
+                let x = n.as_find_pattern_node().expect("matched");
+                let konst = opt_translate(x.constant().as_ref(), cx, in_block);
+                let mid: Vec<P<'_>> = x.requireds().iter().collect();
+                let left = splat_target_of(x.left().expression(), cx);
+                let mid_list = pattern_list(&mid, cx, in_block);
+                let right = splat_target(Some(&x.right()), cx);
+                let (ps, pe) = pattern_span(x.location(), &[&konst, &left, &mid_list, &right]);
+                node(cx, "FNDPTN", ps, pe, vec![konst, left, mid_list, right])
+            }
+            P::HashPatternNode { .. } => {
+                let x = n.as_hash_pattern_node().expect("matched");
+                let konst = opt_translate(x.constant().as_ref(), cx, in_block);
+                let pairs: Vec<P<'_>> = x.elements().iter().collect();
+                let hash = if pairs.is_empty() {
+                    RubyValue::Nil
+                } else {
+                    let mut kids = Vec::with_capacity(pairs.len() * 2);
+                    for a in &pairs {
+                        let Some(a) = a.as_assoc_node() else { continue };
+                        kids.push(translate(&a.key(), cx, in_block));
+                        let v = a.value();
+                        kids.push(match v.as_implicit_node() {
+                            // `{a:}` -- the value is the binding the key implies,
+                            // and it spans the KEY, colon included.
+                            Some(i) => {
+                                let inner = i.value();
+                                match inner.as_local_variable_target_node() {
+                                    Some(t) => {
+                                        let l = a.location();
+                                        let errinfo = RubyValue::Nil;
+                                        node(
+                                            cx,
+                                            "LASGN",
+                                            l.start_offset(),
+                                            l.end_offset(),
+                                            vec![sym_val(t.name().as_slice()), errinfo],
+                                        )
+                                    }
+                                    None => translate(&inner, cx, in_block),
+                                }
+                            }
+                            None => translate(&v, cx, in_block),
+                        });
+                    }
+                    let lo = pairs[0].location().start_offset();
+                    let hi = pairs[pairs.len() - 1].location().end_offset();
+                    let list = list_node(cx, lo, hi, kids);
+                    node(cx, "HASH", lo, hi, vec![list])
+                };
+                // A `**rest` stretches BOTH the hash and its own binding over the
+                // whole pattern, which is CRuby's own span and not the text each
+                // part covers.
+                let content = {
+                    let lo = pairs
+                        .first()
+                        .map(|p| p.location().start_offset())
+                        .or_else(|| x.rest().map(|r| r.location().start_offset()));
+                    let hi = x
+                        .rest()
+                        .map(|r| r.location().end_offset())
+                        .or_else(|| pairs.last().map(|p| p.location().end_offset()));
+                    lo.zip(hi)
+                };
+                let named_rest = x
+                    .rest()
+                    .as_ref()
+                    .and_then(|r| r.as_assoc_splat_node())
+                    .and_then(|a| a.value())
+                    .is_some();
+                let rest = match x.rest() {
+                    // `**nil` -- "and no other keys", which is a marker, not a
+                    // binding.
+                    Some(r) if r.as_no_keywords_parameter_node().is_some() => {
+                        RubyValue::Symbol(crate::Symbol::intern("NODE_SPECIAL_NO_REST_KEYWORD"))
+                    }
+                    Some(r) => match r.as_assoc_splat_node().and_then(|a| a.value()) {
+                        Some(t) => {
+                            let from = content.map(|(lo, _)| lo);
+                            let mut b = asgn_node(&t, from, RubyValue::Nil, cx);
+                            if let Some((lo, hi)) = content {
+                                b = respan(b, cx, lo, hi);
+                            }
+                            b
+                        }
+                        None => RubyValue::Nil,
+                    },
+                    None => RubyValue::Nil,
+                };
+                let hash = match (named_rest, content, &hash) {
+                    (true, Some((lo, hi)), RubyValue::Object(_)) => respan(hash, cx, lo, hi),
+                    _ => hash,
+                };
+                let (ps, pe) = pattern_span(x.location(), &[&konst, &hash, &rest]);
+                // `in **nil` says "and no other keys", which is a marker BESIDE an
+                // empty hash -- `in {}` is the one that holds nothing at all.
+                let hash = match (&hash, x.rest()) {
+                    (RubyValue::Nil, Some(r)) if r.as_no_keywords_parameter_node().is_some() => {
+                        node(cx, "HASH", ps, pe, vec![RubyValue::Nil])
+                    }
+                    _ => hash,
+                };
+                node(cx, "HSHPTN", ps, pe, vec![konst, hash, rest])
+            }
+            P::AlternationPatternNode { .. } => {
+                let x = n.as_alternation_pattern_node().expect("matched");
+                let l = translate(&x.left(), cx, in_block);
+                let r = translate(&x.right(), cx, in_block);
+                node(cx, "OR", s, e, vec![l, r])
+            }
+            // `Integer => n` -- CRuby renders a capture as a two-element HASH of
+            // the pattern and the binding it feeds.
+            P::CapturePatternNode { .. } => {
+                let x = n.as_capture_pattern_node().expect("matched");
+                let pat = translate(&x.value(), cx, in_block);
+                let target = x.target().as_node();
+                let bind = asgn_node(&target, None, RubyValue::Nil, cx);
+                let list = list_node(cx, s, e, vec![pat, bind]);
+                node(cx, "HASH", s, e, vec![list])
+            }
+            P::PinnedVariableNode { .. } => {
+                let x = n.as_pinned_variable_node().expect("matched");
+                translate(&x.variable(), cx, in_block)
+            }
+            // A bare name in a pattern BINDS; every other target kind does too.
+            P::LocalVariableTargetNode { .. }
+            | P::InstanceVariableTargetNode { .. }
+            | P::GlobalVariableTargetNode { .. }
+            | P::ClassVariableTargetNode { .. } => asgn_node(n, None, RubyValue::Nil, cx),
+            // `*x` outside an argument list -- a `when *y`, a splatted assignment
+            // right-hand side. One child: the expression.
+            P::SplatNode { .. } => {
+                let x = n.as_splat_node().expect("matched");
+                let inner = match x.expression() {
+                    Some(v) => translate(&v, cx, in_block),
+                    None => RubyValue::Nil,
+                };
+                node(cx, "SPLAT", s, e, vec![inner])
+            }
+            P::CaseNode { .. } => {
+                let x = n.as_case_node().expect("matched");
+                let subject = match x.predicate() {
+                    Some(p) => translate(&p, cx, in_block),
+                    None => RubyValue::Nil,
+                };
+                let kind = if x.predicate().is_some() {
+                    "CASE"
+                } else {
+                    "CASE2"
+                };
+                let els = else_body(x.else_clause().as_ref(), cx, in_block);
+                let arms: Vec<P<'_>> = x.conditions().iter().collect();
+                let chain = when_chain(&arms, 0, els, cx, in_block);
+                node(cx, kind, s, e, vec![subject, chain])
+            }
+            // `case/in` is a different node kind all the way down: CASE3 over IN
+            // arms, chained the same way.
+            P::CaseMatchNode { .. } => {
+                let x = n.as_case_match_node().expect("matched");
+                let subject = match x.predicate() {
+                    Some(p) => translate(&p, cx, in_block),
+                    None => RubyValue::Nil,
+                };
+                let els = else_body(x.else_clause().as_ref(), cx, in_block);
+                let arms: Vec<P<'_>> = x.conditions().iter().collect();
+                let chain = in_chain(&arms, 0, els, cx, in_block);
+                node(cx, "CASE3", s, e, vec![subject, chain])
+            }
+            P::BeginNode { .. } => {
+                let x = n.as_begin_node().expect("matched");
+                begin_body(&x, cx, in_block, s, e, true)
+            }
+            // `a rescue b` -- the modifier form is a RESCUE whose single RESBODY
+            // names no exception class and binds nothing.
+            P::RescueModifierNode { .. } => {
+                let x = n.as_rescue_modifier_node().expect("matched");
+                let body = translate(&x.expression(), cx, in_block);
+                let handler = translate(&x.rescue_expression(), cx, in_block);
+                let resbody = node(
+                    cx,
+                    "RESBODY",
+                    x.keyword_loc().start_offset(),
+                    e,
+                    vec![RubyValue::Nil, RubyValue::Nil, handler, RubyValue::Nil],
+                );
+                node(cx, "RESCUE", s, e, vec![body, resbody, RubyValue::Nil])
+            }
+            P::IfNode { .. } => {
+                let x = n.as_if_node().expect("matched");
+                let cond = translate(&x.predicate(), cx, in_block);
+                // An arm with no statements is CRuby's zero-width empty statement,
+                // sited where its body would start.
+                let then = clause_body(
+                    x.statements(),
+                    x.then_keyword_loc()
+                        .map(|t| t.end_offset())
+                        .unwrap_or_else(|| x.predicate().location().end_offset()),
+                    cx,
+                    in_block,
+                );
+                let els = match x.subsequent() {
+                    Some(sub) => match sub.as_else_node() {
+                        Some(e2) => else_clause_body(e2.statements(), &e2, cx, in_block),
+                        // An `elsif` runs to the terminator after its own last
+                        // part, not to the `end` that closes the whole chain.
+                        None => {
+                            let v = translate(&sub, cx, in_block);
+                            retrim_elsif(v, cx)
+                        }
+                    },
+                    None => RubyValue::Nil,
+                };
+                node(cx, "IF", s, e, vec![cond, then, els])
+            }
+            P::UnlessNode { .. } => {
+                let x = n.as_unless_node().expect("matched");
+                let cond = translate(&x.predicate(), cx, in_block);
+                let then = clause_body(
+                    x.statements(),
+                    x.then_keyword_loc()
+                        .map(|t| t.end_offset())
+                        .unwrap_or_else(|| x.predicate().location().end_offset()),
+                    cx,
+                    in_block,
+                );
+                let els = match x.else_clause() {
+                    Some(e2) => else_clause_body(e2.statements(), &e2, cx, in_block),
+                    None => RubyValue::Nil,
+                };
+                node(cx, "UNLESS", s, e, vec![cond, then, els])
+            }
+            P::WhileNode { .. } => {
+                let x = n.as_while_node().expect("matched");
+                let cond = translate(&x.predicate(), cx, in_block);
+                let at = x
+                    .do_keyword_loc()
+                    .map(|d| d.end_offset())
+                    .unwrap_or_else(|| x.predicate().location().end_offset());
+                let body = clause_body(x.statements(), at, cx, in_block);
+                let pre = RubyValue::Bool(!x.is_begin_modifier());
+                node(cx, "WHILE", s, e, vec![cond, body, pre])
+            }
+            P::UntilNode { .. } => {
+                let x = n.as_until_node().expect("matched");
+                let cond = translate(&x.predicate(), cx, in_block);
+                let at = x
+                    .do_keyword_loc()
+                    .map(|d| d.end_offset())
+                    .unwrap_or_else(|| x.predicate().location().end_offset());
+                let body = clause_body(x.statements(), at, cx, in_block);
+                let pre = RubyValue::Bool(!x.is_begin_modifier());
+                node(cx, "UNTIL", s, e, vec![cond, body, pre])
+            }
+            P::BreakNode { .. } => {
+                let x = n.as_break_node().expect("matched");
+                let arg = jump_arg(x.arguments(), true, cx, in_block);
+                node(cx, "BREAK", s, e, vec![arg])
+            }
+            P::NextNode { .. } => {
+                let x = n.as_next_node().expect("matched");
+                let arg = jump_arg(x.arguments(), false, cx, in_block);
+                node(cx, "NEXT", s, e, vec![arg])
+            }
+            P::ReturnNode { .. } => {
+                let x = n.as_return_node().expect("matched");
+                let arg = jump_arg(x.arguments(), true, cx, in_block);
+                node(cx, "RETURN", s, e, vec![arg])
+            }
+            P::AndNode { .. } => {
+                let x = n.as_and_node().expect("matched");
+                let l = translate(&x.left(), cx, in_block);
+                let r = translate(&x.right(), cx, in_block);
+                node(cx, "AND", s, e, vec![l, r])
+            }
+            P::OrNode { .. } => {
+                let x = n.as_or_node().expect("matched");
+                let l = translate(&x.left(), cx, in_block);
+                let r = translate(&x.right(), cx, in_block);
+                node(cx, "OR", s, e, vec![l, r])
+            }
+            P::ClassNode { .. } => {
+                let x = n.as_class_node().expect("matched");
+                let cpath = x.constant_path();
+                let cloc = cpath.location();
+                let cpath_node = match cpath.as_constant_read_node() {
+                    Some(c) => {
+                        let name = sym_val(c.name().as_slice());
+                        node(
+                            cx,
+                            "COLON2",
+                            cloc.start_offset(),
+                            cloc.end_offset(),
+                            vec![RubyValue::Nil, name],
+                        )
+                    }
+                    None => translate(&cpath, cx, in_block),
+                };
+                let superclass = match x.superclass() {
+                    Some(sc) => translate(&sc, cx, in_block),
+                    None => RubyValue::Nil,
+                };
+                let body_end = x
+                    .superclass()
+                    .map(|sc| sc.location().end_offset())
+                    .unwrap_or(cloc.end_offset());
+                // A superclass clause takes the terminator after it; with no
+                // clause nothing does, so even a newline leaves the empty
+                // statement CRuby's `stmts: none` reduces to. An empty body is
+                // that statement alone.
+                let absorb = match x.superclass() {
+                    Some(_) => Absorb::One,
+                    None => Absorb::None,
+                };
+                let body = match x.body().and_then(|b| b.as_statements_node()) {
+                    Some(stmts) => body_after(Some(stmts), body_end, absorb, cx, false),
+                    None => body_after(None, body_end, absorb, cx, false),
+                };
+                let body = match body {
+                    RubyValue::Nil => {
+                        let at = cx.body_start(body_end, absorb);
+                        empty_begin(cx, at)
+                    }
+                    other => other,
+                };
+                let scope = node(
+                    cx,
+                    "SCOPE",
+                    s,
+                    e,
+                    vec![
+                        RubyValue::Array(crate::array_new(vec![])),
+                        RubyValue::Nil,
+                        body,
+                    ],
+                );
+                node(cx, "CLASS", s, e, vec![cpath_node, superclass, scope])
+            }
+            // `class << expr` -- SCLASS over the receiver and a SCOPE. The `<<`
+            // rule takes the terminator after the expression, so the body carries
+            // no leading empty statement.
+            P::SingletonClassNode { .. } => {
+                let x = n.as_singleton_class_node().expect("matched");
+                let recv = translate(&x.expression(), cx, in_block);
+                let at = x.expression().location().end_offset();
+                let body = match body_after(
+                    x.body().and_then(|b| b.as_statements_node()),
+                    at,
+                    Absorb::One,
+                    cx,
+                    false,
+                ) {
+                    RubyValue::Nil => {
+                        let start = cx.body_start(at, Absorb::One);
+                        empty_begin(cx, start)
+                    }
+                    other => other,
+                };
+                let scope = node(
+                    cx,
+                    "SCOPE",
+                    s,
+                    e,
+                    vec![
+                        RubyValue::Array(crate::array_new(vec![])),
+                        RubyValue::Nil,
+                        body,
+                    ],
+                );
+                node(cx, "SCLASS", s, e, vec![recv, scope])
+            }
+            P::ModuleNode { .. } => {
+                let x = n.as_module_node().expect("matched");
+                let cpath = x.constant_path();
+                let cloc = cpath.location();
+                let cpath_node = match cpath.as_constant_read_node() {
+                    Some(c) => {
+                        let name = sym_val(c.name().as_slice());
+                        node(
+                            cx,
+                            "COLON2",
+                            cloc.start_offset(),
+                            cloc.end_offset(),
+                            vec![RubyValue::Nil, name],
+                        )
+                    }
+                    None => translate(&cpath, cx, in_block),
+                };
+                // A module body has no superclass clause to take the terminator
+                // -- see the `class` arm.
+                let at = cloc.end_offset();
+                let body = match body_after(
+                    x.body().and_then(|b| b.as_statements_node()),
+                    at,
+                    Absorb::None,
+                    cx,
+                    false,
+                ) {
+                    RubyValue::Nil => empty_begin(cx, cx.body_start(at, Absorb::None)),
+                    other => other,
+                };
+                let scope = node(
+                    cx,
+                    "SCOPE",
+                    s,
+                    e,
+                    vec![
+                        RubyValue::Array(crate::array_new(vec![])),
+                        RubyValue::Nil,
+                        body,
+                    ],
+                );
+                node(cx, "MODULE", s, e, vec![cpath_node, scope])
+            }
+            // A parenthesised statements list is a `BLOCK` in CRuby, spanning the
+            // parens -- `x = (1)` is `LASGN[:x, BLOCK[INTEGER]]`.
+            P::ParenthesesNode { .. } => {
+                let x = n.as_parentheses_node().expect("matched");
+                let at = x.opening_loc().end_offset();
+                let inner = match x.body().and_then(|b| b.as_statements_node()) {
+                    Some(body) => body_after(Some(body), at, Absorb::Newlines, cx, in_block),
+                    None => RubyValue::Nil,
+                };
+                let inner = match inner {
+                    RubyValue::Nil => empty_begin(cx, at),
+                    other => other,
+                };
+                node(cx, "BLOCK", s, e, vec![inner])
+            }
+            P::StatementsNode { .. } => {
+                let x = n.as_statements_node().expect("matched");
+                statements_body(&x, cx, in_block)
+            }
+            P::RationalNode { .. } => {
+                let x = n.as_rational_node().expect("matched");
+                let (num, den) = (x.numerator(), x.denominator());
+                let (nneg, ndig) = num.to_u32_digits();
+                let (dneg, ddig) = den.to_u32_digits();
+                let v = crate::builtins::rational::rational_new(
+                    bigint_of(nneg, ndig),
+                    bigint_of(dneg, ddig),
+                )
+                .unwrap_or(RubyValue::Nil);
+                node(cx, "RATIONAL", s, e, vec![v])
+            }
+            P::ImaginaryNode { .. } => {
+                let x = n.as_imaginary_node().expect("matched");
+                let imag = numeric_value(&x.numeric());
+                let v = crate::builtins::complex::complex_new(RubyValue::Int(0), imag)
+                    .unwrap_or(RubyValue::Nil);
+                node(cx, "IMAGINARY", s, e, vec![v])
+            }
+            P::XStringNode { .. } => {
+                let x = n.as_x_string_node().expect("matched");
+                let v = RubyValue::Str(crate::string_new(
+                    String::from_utf8_lossy(x.unescaped()).into_owned(),
+                ));
+                node(cx, "XSTR", s, e, vec![v])
+            }
+            P::RegularExpressionNode { .. } => {
+                let x = n.as_regular_expression_node().expect("matched");
+                node(cx, "REGX", s, e, vec![regexp_literal(cx, &x)])
+            }
+            P::MatchLastLineNode { .. } => {
+                let x = n.as_match_last_line_node().expect("matched");
+                // A bare `/re/` in condition position matches against `$_`, and
+                // CRuby gives that its own kind.
+                let src = cx.slice(x.content_loc());
+                let v = crate::regexp::regexp_new(
+                    &src,
+                    x.is_ignore_case(),
+                    x.is_extended(),
+                    x.is_multi_line(),
+                )
+                .map(RubyValue::Regexp)
+                .unwrap_or(RubyValue::Nil);
+                node(cx, "MATCH", s, e, vec![v])
+            }
+            // `it` reads a parameter with a name no program can write.
+            P::ItLocalVariableReadNode { .. } => {
+                let name = RubyValue::Symbol(crate::Symbol::intern("<it>"));
+                node(cx, "DVAR", s, e, vec![name])
+            }
+            P::YieldNode { .. } => {
+                let x = n.as_yield_node().expect("matched");
+                let args = x.arguments().and_then(|a| {
+                    let al = a.location();
+                    let els: Vec<P<'_>> = a.arguments().iter().collect();
+                    arg_list(&els, al.start_offset(), al.end_offset(), cx, in_block)
+                });
+                node(cx, "YIELD", s, e, vec![args.unwrap_or(RubyValue::Nil)])
+            }
+            // `^(expr)` pins a computed value, which CRuby renders as the
+            // parenthesised expression it is.
+            P::PinnedExpressionNode { .. } => {
+                let x = n.as_pinned_expression_node().expect("matched");
+                let inner = translate(&x.expression(), cx, in_block);
+                node(cx, "BLOCK", s, e, vec![inner])
+            }
+            // `A::B op= v` is its own kind, holding the PATH rather than a name.
+            P::ConstantPathOperatorWriteNode { .. } => op_cdecl!(
+                n.as_constant_path_operator_write_node().expect("matched"),
+                |x: &ruby_prism::ConstantPathOperatorWriteNode<'_>| {
+                    RubyValue::Symbol(crate::Symbol::intern(&String::from_utf8_lossy(
+                        x.binary_operator().as_slice(),
+                    )))
+                }
+            ),
+            P::ConstantPathOrWriteNode { .. } => op_cdecl!(
+                n.as_constant_path_or_write_node().expect("matched"),
+                |_: &ruby_prism::ConstantPathOrWriteNode<'_>| sym("||")
+            ),
+            P::ConstantPathAndWriteNode { .. } => op_cdecl!(
+                n.as_constant_path_and_write_node().expect("matched"),
+                |_: &ruby_prism::ConstantPathAndWriteNode<'_>| sym("&&")
+            ),
+            P::ClassVariableReadNode { .. } => {
+                let x = n.as_class_variable_read_node().expect("matched");
+                node(cx, "CVAR", s, e, vec![sym_val(x.name().as_slice())])
+            }
+            P::ClassVariableWriteNode { .. } => {
+                let x = n.as_class_variable_write_node().expect("matched");
+                let v = translate(&x.value(), cx, in_block);
+                node(cx, "CVASGN", s, e, vec![sym_val(x.name().as_slice()), v])
+            }
+            P::NumberedReferenceReadNode { .. } => {
+                let x = n.as_numbered_reference_read_node().expect("matched");
+                let name = format!("${}", x.number());
+                node(cx, "NTH_REF", s, e, vec![sym(&name)])
+            }
+            P::BackReferenceReadNode { .. } => {
+                let x = n.as_back_reference_read_node().expect("matched");
+                node(cx, "BACK_REF", s, e, vec![sym_val(x.name().as_slice())])
+            }
+            P::DefinedNode { .. } => {
+                let x = n.as_defined_node().expect("matched");
+                let v = translate(&x.value(), cx, in_block);
+                node(cx, "DEFINED", s, e, vec![v])
+            }
+            P::ForwardingSuperNode { .. } => {
+                let x = n.as_forwarding_super_node().expect("matched");
+                // `super` with no argument list forwards, and takes a block the
+                // same way any call does.
+                let call_e = match x.block() {
+                    Some(ref b) => b.location().start_offset().max(s),
+                    None => e,
+                };
+                // The keyword alone, with no trailing space: `super { }` is
+                // ZSUPER[0,5], not ZSUPER[0,9].
+                let call_e = cx.trim_trailing_space(s, call_e);
+                let zsuper = node(cx, "ZSUPER", s, call_e, vec![]);
+                match x.block() {
+                    Some(b) => iter_over(zsuper, &b, s, e, cx),
+                    None => zsuper,
+                }
+            }
+            P::SuperNode { .. } => {
+                let x = n.as_super_node().expect("matched");
+                let args = x.arguments().and_then(|a| {
+                    let al = a.location();
+                    let els: Vec<P<'_>> = a.arguments().iter().collect();
+                    arg_list(&els, al.start_offset(), al.end_offset(), cx, in_block)
+                });
+                let (call_s, call_e) = match x.block().as_ref().and_then(|b| b.as_block_node()) {
+                    Some(b) => (
+                        s,
+                        cx.trim_trailing_space(s, b.location().start_offset().max(s)),
+                    ),
+                    None => (s, e),
+                };
+                let sup = node(
+                    cx,
+                    "SUPER",
+                    call_s,
+                    call_e,
+                    vec![args.unwrap_or(RubyValue::Nil)],
+                );
+                match x.block().as_ref().and_then(|b| b.as_block_node()) {
+                    Some(b) => iter_over(sup, &b, s, e, cx),
+                    None => sup,
+                }
+            }
+            P::LambdaNode { .. } => {
+                let x = n.as_lambda_node().expect("matched");
+                let scope = lambda_scope(&x, cx);
+                node(cx, "LAMBDA", s, e, vec![scope])
+            }
+            P::AliasMethodNode { .. } => {
+                let x = n.as_alias_method_node().expect("matched");
+                let new = translate(&x.new_name(), cx, in_block);
+                let old = translate(&x.old_name(), cx, in_block);
+                node(cx, "ALIAS", s, e, vec![new, old])
+            }
+            P::AliasGlobalVariableNode { .. } => {
+                let x = n.as_alias_global_variable_node().expect("matched");
+                // The global form names its two variables as bare symbols, where
+                // the method form holds two SYM nodes.
+                let name = |g: &P<'_>| -> RubyValue {
+                    let l = g.location();
+                    RubyValue::Symbol(crate::Symbol::intern(&cx_slice(cx, l)))
+                };
+                let new = name(&x.new_name());
+                let old = name(&x.old_name());
+                node(cx, "VALIAS", s, e, vec![new, old])
+            }
+            P::UndefNode { .. } => {
+                let x = n.as_undef_node().expect("matched");
+                // One ARRAY of SYM nodes, not a chain.
+                let names: Vec<RubyValue> = x
+                    .names()
+                    .iter()
+                    .map(|nm| translate(&nm, cx, in_block))
+                    .collect();
+                let list = RubyValue::Array(crate::array_new(names));
+                node(cx, "UNDEF", s, e, vec![list])
+            }
+            P::PostExecutionNode { .. } => {
+                let x = n.as_post_execution_node().expect("matched");
+                let body = match opt_statements(x.statements(), cx, in_block) {
+                    RubyValue::Nil => empty_begin(cx, x.opening_loc().end_offset()),
+                    other => other,
+                };
+                let scope = node(
+                    cx,
+                    "SCOPE",
+                    s,
+                    e,
+                    vec![
+                        RubyValue::Array(crate::array_new(vec![])),
+                        RubyValue::Nil,
+                        body,
+                    ],
+                );
+                node(cx, "POSTEXE", s, e, vec![scope])
+            }
+            P::ForNode { .. } => {
+                let x = n.as_for_node().expect("matched");
+                for_node(&x, cx, s, e)
+            }
+            P::MultiWriteNode { .. } => {
+                let x = n.as_multi_write_node().expect("matched");
+                let value = translate(&x.value(), cx, in_block);
+                masgn(cx, MultiParts::write(&x), Some(value), s, e)
+            }
+            P::MultiTargetNode { .. } => {
+                let x = n.as_multi_target_node().expect("matched");
+                masgn(cx, MultiParts::target(&x), None, s, e)
+            }
+            // `a => b` binds or raises; `a in b` answers a boolean. Both are a
+            // one-armed CASE3, and the boolean form says so by carrying TRUE and
+            // FALSE where the binding form carries nils.
+            P::MatchRequiredNode { .. } => {
+                let x = n.as_match_required_node().expect("matched");
+                let subject = translate(&x.value(), cx, in_block);
+                let pattern = translate(&x.pattern(), cx, in_block);
+                let (ps, pe) = {
+                    let l = x.pattern().location();
+                    (l.start_offset(), l.end_offset())
+                };
+                let arm = node(
+                    cx,
+                    "IN",
+                    ps,
+                    pe,
+                    vec![pattern, RubyValue::Nil, RubyValue::Nil],
+                );
+                node(cx, "CASE3", s, e, vec![subject, arm])
+            }
+            P::MatchPredicateNode { .. } => {
+                let x = n.as_match_predicate_node().expect("matched");
+                let subject = translate(&x.value(), cx, in_block);
+                let pattern = translate(&x.pattern(), cx, in_block);
+                let (ps, pe) = {
+                    let l = x.pattern().location();
+                    (l.start_offset(), l.end_offset())
+                };
+                let yes = node(cx, "TRUE", ps, pe, vec![]);
+                let no = node(cx, "FALSE", ps, pe, vec![]);
+                let arm = node(cx, "IN", ps, pe, vec![pattern, yes, no]);
+                node(cx, "CASE3", s, e, vec![subject, arm])
+            }
+            // The operator-assignment family, one arm per prism kind over the
+            // shared bodies above.
+            P::LocalVariableOperatorWriteNode { .. } => op_binary!(
+                n.as_local_variable_operator_write_node().expect("matched"),
+                "LVAR",
+                "LASGN"
+            ),
+            P::InstanceVariableOperatorWriteNode { .. } => op_binary!(
+                n.as_instance_variable_operator_write_node()
+                    .expect("matched"),
+                "IVAR",
+                "IASGN"
+            ),
+            P::GlobalVariableOperatorWriteNode { .. } => op_binary!(
+                n.as_global_variable_operator_write_node().expect("matched"),
+                "GVAR",
+                "GASGN"
+            ),
+            P::ClassVariableOperatorWriteNode { .. } => op_binary!(
+                n.as_class_variable_operator_write_node().expect("matched"),
+                "CVAR",
+                "CVASGN"
+            ),
+            P::ConstantOperatorWriteNode { .. } => op_binary!(
+                n.as_constant_operator_write_node().expect("matched"),
+                "CONST",
+                "CDECL"
+            ),
+            P::LocalVariableOrWriteNode { .. } => op_short_circuit!(
+                n.as_local_variable_or_write_node().expect("matched"),
+                "LVAR",
+                "LASGN",
+                "OP_ASGN_OR",
+                "||"
+            ),
+            P::InstanceVariableOrWriteNode { .. } => op_short_circuit!(
+                n.as_instance_variable_or_write_node().expect("matched"),
+                "IVAR",
+                "IASGN",
+                "OP_ASGN_OR",
+                "||"
+            ),
+            P::GlobalVariableOrWriteNode { .. } => op_short_circuit!(
+                n.as_global_variable_or_write_node().expect("matched"),
+                "GVAR",
+                "GASGN",
+                "OP_ASGN_OR",
+                "||"
+            ),
+            P::ClassVariableOrWriteNode { .. } => op_short_circuit!(
+                n.as_class_variable_or_write_node().expect("matched"),
+                "CVAR",
+                "CVASGN",
+                "OP_ASGN_OR",
+                "||"
+            ),
+            P::ConstantOrWriteNode { .. } => op_short_circuit!(
+                n.as_constant_or_write_node().expect("matched"),
+                "CONST",
+                "CDECL",
+                "OP_ASGN_OR",
+                "||"
+            ),
+            P::LocalVariableAndWriteNode { .. } => op_short_circuit!(
+                n.as_local_variable_and_write_node().expect("matched"),
+                "LVAR",
+                "LASGN",
+                "OP_ASGN_AND",
+                "&&"
+            ),
+            P::InstanceVariableAndWriteNode { .. } => op_short_circuit!(
+                n.as_instance_variable_and_write_node().expect("matched"),
+                "IVAR",
+                "IASGN",
+                "OP_ASGN_AND",
+                "&&"
+            ),
+            P::GlobalVariableAndWriteNode { .. } => op_short_circuit!(
+                n.as_global_variable_and_write_node().expect("matched"),
+                "GVAR",
+                "GASGN",
+                "OP_ASGN_AND",
+                "&&"
+            ),
+            P::ClassVariableAndWriteNode { .. } => op_short_circuit!(
+                n.as_class_variable_and_write_node().expect("matched"),
+                "CVAR",
+                "CVASGN",
+                "OP_ASGN_AND",
+                "&&"
+            ),
+            P::ConstantAndWriteNode { .. } => op_short_circuit!(
+                n.as_constant_and_write_node().expect("matched"),
+                "CONST",
+                "CDECL",
+                "OP_ASGN_AND",
+                "&&"
+            ),
+            P::IndexOperatorWriteNode { .. } => op_index!(
+                n.as_index_operator_write_node().expect("matched"),
+                |x: &ruby_prism::IndexOperatorWriteNode<'_>| {
+                    RubyValue::Symbol(crate::Symbol::intern(&String::from_utf8_lossy(
+                        x.binary_operator().as_slice(),
+                    )))
+                }
+            ),
+            P::IndexOrWriteNode { .. } => op_index!(
+                n.as_index_or_write_node().expect("matched"),
+                |_: &ruby_prism::IndexOrWriteNode<'_>| sym("||")
+            ),
+            P::IndexAndWriteNode { .. } => op_index!(
+                n.as_index_and_write_node().expect("matched"),
+                |_: &ruby_prism::IndexAndWriteNode<'_>| sym("&&")
+            ),
+            P::CallOperatorWriteNode { .. } => op_attr!(
+                n.as_call_operator_write_node().expect("matched"),
+                |x: &ruby_prism::CallOperatorWriteNode<'_>| {
+                    RubyValue::Symbol(crate::Symbol::intern(&String::from_utf8_lossy(
+                        x.binary_operator().as_slice(),
+                    )))
+                }
+            ),
+            P::CallOrWriteNode { .. } => op_attr!(
+                n.as_call_or_write_node().expect("matched"),
+                |_: &ruby_prism::CallOrWriteNode<'_>| sym("||")
+            ),
+            P::CallAndWriteNode { .. } => op_attr!(
+                n.as_call_and_write_node().expect("matched"),
+                |_: &ruby_prism::CallAndWriteNode<'_>| sym("&&")
+            ),
+            // The kinds with no mapping yet: an honest leaf, never a raise.
+            // Listed by name so a new prism kind cannot land here silently.
+            P::ArgumentsNode { .. }
+            | P::AssocNode { .. }
+            | P::AssocSplatNode { .. }
+            | P::BlockArgumentNode { .. }
+            | P::BlockLocalVariableNode { .. }
+            | P::BlockNode { .. }
+            | P::BlockParameterNode { .. }
+            | P::BlockParametersNode { .. }
+            | P::CallTargetNode { .. }
+            | P::ConstantPathTargetNode { .. }
+            | P::ConstantTargetNode { .. }
+            | P::ElseNode { .. }
+            | P::EmbeddedStatementsNode { .. }
+            | P::EmbeddedVariableNode { .. }
+            | P::EnsureNode { .. }
+            | P::ForwardingArgumentsNode { .. }
+            | P::ForwardingParameterNode { .. }
+            | P::ImplicitNode { .. }
+            | P::ImplicitRestNode { .. }
+            | P::IndexTargetNode { .. }
+            | P::InNode { .. }
+            | P::InterpolatedMatchLastLineNode { .. }
+            | P::ItParametersNode { .. }
+            | P::KeywordRestParameterNode { .. }
+            | P::MatchWriteNode { .. }
+            | P::MissingNode { .. }
+            | P::NoKeywordsParameterNode { .. }
+            | P::NumberedParametersNode { .. }
+            | P::OptionalKeywordParameterNode { .. }
+            | P::OptionalParameterNode { .. }
+            | P::ParametersNode { .. }
+            | P::PreExecutionNode { .. }
+            | P::ProgramNode { .. }
+            | P::RedoNode { .. }
+            | P::RequiredKeywordParameterNode { .. }
+            | P::RequiredParameterNode { .. }
+            | P::RescueNode { .. }
+            | P::RestParameterNode { .. }
+            | P::RetryNode { .. }
+            | P::ShareableConstantNode { .. }
+            | P::WhenNode { .. } => node(cx, "UNKNOWN", s, e, vec![]),
         }
-        if let Some(x) = n.as_lambda_node() {
-            let scope = lambda_scope(&x, cx);
-            return node(cx, "LAMBDA", s, e, vec![scope]);
-        }
-        if let Some(x) = n.as_alias_method_node() {
-            let new = translate(&x.new_name(), cx, in_block);
-            let old = translate(&x.old_name(), cx, in_block);
-            return node(cx, "ALIAS", s, e, vec![new, old]);
-        }
-        if let Some(x) = n.as_alias_global_variable_node() {
-            // The global form names its two variables as bare symbols, where
-            // the method form holds two SYM nodes.
-            let name = |g: &P<'_>| -> RubyValue {
-                let l = g.location();
-                RubyValue::Symbol(crate::Symbol::intern(&cx_slice(cx, l)))
-            };
-            let new = name(&x.new_name());
-            let old = name(&x.old_name());
-            return node(cx, "VALIAS", s, e, vec![new, old]);
-        }
-        if let Some(x) = n.as_undef_node() {
-            // One ARRAY of SYM nodes, not a chain.
-            let names: Vec<RubyValue> = x
-                .names()
-                .iter()
-                .map(|nm| translate(&nm, cx, in_block))
-                .collect();
-            let list = RubyValue::Array(crate::array_new(names));
-            return node(cx, "UNDEF", s, e, vec![list]);
-        }
-        if let Some(x) = n.as_post_execution_node() {
-            let body = match opt_statements(x.statements(), cx, in_block) {
-                RubyValue::Nil => empty_begin(cx, x.opening_loc().end_offset()),
-                other => other,
-            };
-            let scope = node(
-                cx,
-                "SCOPE",
-                s,
-                e,
-                vec![
-                    RubyValue::Array(crate::array_new(vec![])),
-                    RubyValue::Nil,
-                    body,
-                ],
-            );
-            return node(cx, "POSTEXE", s, e, vec![scope]);
-        }
-        if let Some(x) = n.as_for_node() {
-            return for_node(&x, cx, s, e);
-        }
-        if let Some(x) = n.as_multi_write_node() {
-            let value = translate(&x.value(), cx, in_block);
-            return masgn(cx, MultiParts::write(&x), Some(value), s, e);
-        }
-        if let Some(x) = n.as_multi_target_node() {
-            return masgn(cx, MultiParts::target(&x), None, s, e);
-        }
-        // `a => b` binds or raises; `a in b` answers a boolean. Both are a
-        // one-armed CASE3, and the boolean form says so by carrying TRUE and
-        // FALSE where the binding form carries nils.
-        if let Some(x) = n.as_match_required_node() {
-            let subject = translate(&x.value(), cx, in_block);
-            let pattern = translate(&x.pattern(), cx, in_block);
-            let (ps, pe) = {
-                let l = x.pattern().location();
-                (l.start_offset(), l.end_offset())
-            };
-            let arm = node(
-                cx,
-                "IN",
-                ps,
-                pe,
-                vec![pattern, RubyValue::Nil, RubyValue::Nil],
-            );
-            return node(cx, "CASE3", s, e, vec![subject, arm]);
-        }
-        if let Some(x) = n.as_match_predicate_node() {
-            let subject = translate(&x.value(), cx, in_block);
-            let pattern = translate(&x.pattern(), cx, in_block);
-            let (ps, pe) = {
-                let l = x.pattern().location();
-                (l.start_offset(), l.end_offset())
-            };
-            let yes = node(cx, "TRUE", ps, pe, vec![]);
-            let no = node(cx, "FALSE", ps, pe, vec![]);
-            let arm = node(cx, "IN", ps, pe, vec![pattern, yes, no]);
-            return node(cx, "CASE3", s, e, vec![subject, arm]);
-        }
-        // The operator-assignment family. `x += 1` is not one node in CRuby's
-        // tree but the READ, the call, and the WRITE spelled out; `||=` and
-        // `&&=` keep their own kinds because they short-circuit.
-        if let Some(v) = op_assign(n, cx, in_block, s, e) {
-            return v;
-        }
-        // A kind with no mapping yet: an honest leaf, never a raise.
-        node(cx, "UNKNOWN", s, e, vec![])
     }
 
     /// The ITER-wrapped inner call: FCALL/CALL spanning receiver-to-args
