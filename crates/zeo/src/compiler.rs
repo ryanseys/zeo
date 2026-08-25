@@ -837,6 +837,14 @@ pub struct Compiler {
     /// Set by `analyze`; `true` until then, which is what keeps a caller that
     /// asks too early safe.
     pub runtime_eval: bool,
+    /// The always-on builtin classes this program can reach, or `None` for
+    /// "every one of them".
+    ///
+    /// `None` is the safe answer, and the one a caller sees before `analyze`
+    /// fills this in; `analyze::class_reach` computes the narrowed one.
+    /// Require-GATED builtins are NOT in here -- their feature gate answers
+    /// the same question more precisely.
+    pub reachable_builtins: Option<FSet<ClassId>>,
     /// Whether the program calls `freeze` anywhere. A REOPEN of a frozen class
     /// is a `FrozenError` and its body never runs, so the definitions the
     /// compile-time tables carry for it have to be retractable -- which costs
@@ -1191,6 +1199,7 @@ impl Compiler {
             positional_redefs: Vec::new(),
             runtime_patches_any_name: false,
             runtime_eval: true,
+            reachable_builtins: None,
             program_freezes: false,
             class_index: std::cell::RefCell::new(FMap::default()),
             indexed_upto: std::cell::Cell::new(0),
@@ -1313,28 +1322,15 @@ impl Compiler {
         Some(self.class(cur).builtin_overlay.unwrap_or(cur))
     }
 
-    /// Whether `cid`'s constant is currently VISIBLE to name resolution: a
-    /// require-gated builtin (`feature_gate: Some(_)`) is invisible until its
-    /// feature has been activated by a `require` (see `ClassInfo::feature_gate`
-    /// and `Hir::activated_features`); every ungated class is always visible.
-    /// The gate is applied only on the BOOTSTRAP-fallback resolution paths
-    /// (`resolve_unqualified`), not on `class_in_scope`'s raw name lookup --
-    /// reopen detection must still SEE the gated slot to attach to it.
-    /// `pub(crate)` so codegen skips a gated-inactive builtin's runtime
-    /// `ClassRegistry` registration (nothing can reference it, so it's dead).
-    /// Whether an emitted program can reach a BUILTIN class at all -- what
-    /// decides if its method table is named in `ProgramDesc::class_tables`
-    /// and so kept in the binary. A class the compiler never registered has
-    /// no constant and no dispatch path.
     /// The `RubyVM` surfaces whose bodies PARSE at run time, and which no
     /// program can reach without naming `RubyVM`.
     ///
     /// They are the four prism-backed tables plus the iseq one, and together
-    /// they cost 187,008 bytes of a `puts 1` binary (`zeo-dev size`) --
-    /// `RUBYVM_AST_MODULE` alone is 152,784, the fourth-largest table there
-    /// is. `RubyVM` itself STAYS: ruby defines it in every program, and these
-    /// five are namespaced under it, so only `RubyVM.constants` can see them
-    /// go and that already names `RubyVM`.
+    /// they root the prism library itself -- the largest saving any single
+    /// group of tables carries (`zeo-dev size`). `RubyVM` itself STAYS: ruby
+    /// defines it in every program, and these five are namespaced under it,
+    /// so only `RubyVM.constants` can see them go and that already names
+    /// `RubyVM`.
     pub(crate) fn prism_surface_is_reachable(&self, id: ClassId) -> bool {
         const PRISM_BACKED: &[ClassId] = &[
             zeo_abi::RUBYVM_AST_MODULE,
@@ -1362,6 +1358,14 @@ impl Compiler {
         self.hir.activates_prism() || self.runtime_eval || self.hir.mentions_rubyvm_parser()
     }
 
+    /// Whether an emitted program can reach a BUILTIN class at all -- what
+    /// decides if its method table is named in `ProgramDesc::class_tables`
+    /// and so kept in the binary. A class the compiler never registered has
+    /// no constant and no dispatch path.
+    ///
+    /// Three gates, in narrowing order: a require-gated extension's feature,
+    /// the prism surfaces, and `analyze::class_reach`'s answer for an
+    /// always-on class.
     pub(crate) fn builtin_is_reachable(&self, id: zeo_abi::ClassId) -> bool {
         // A builtin's compiler ClassId IS its abi id -- the same identity
         // `classes.rs`'s registration loop relies on. Past the end is a class
@@ -1372,10 +1376,26 @@ impl Compiler {
         // one `register_builtins` covers, and dropping its table drops its
         // CONSTANTS with it -- `File::RDWR` went missing that way.
         let idx = id.0 as usize;
-        (idx >= self.classes.len()
-            || !zeo_abi::is_gated_builtin(ClassId(id.0))
-            || self.feature_active(ClassId(id.0)))
-            && self.prism_surface_is_reachable(ClassId(id.0))
+        if idx >= self.classes.len() {
+            return true;
+        }
+        let cid = ClassId(id.0);
+        if zeo_abi::is_gated_builtin(cid) {
+            // A gated class's feature gate is the more precise answer, and a
+            // gated extension reaches its own nested classes through Rust
+            // that no scan of the program can see.
+            return self.feature_active(cid) && self.prism_surface_is_reachable(cid);
+        }
+        // Only a CORE builtin id is narrowed. A per-box copy of one is a
+        // fresh id past the exception block -- `builtin_name` is what tells
+        // them apart -- and it carries the box's own rows, which no
+        // reachability rule about `String` speaks for.
+        self.prism_surface_is_reachable(cid)
+            && (zeo_abi::builtin_name(zeo_abi::ClassId(id.0)).is_none()
+                || self
+                    .reachable_builtins
+                    .as_ref()
+                    .is_none_or(|set| set.contains(&cid)))
     }
 
     pub(crate) fn feature_active(&self, cid: ClassId) -> bool {

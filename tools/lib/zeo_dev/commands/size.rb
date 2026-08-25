@@ -22,8 +22,9 @@ module ZeoDev
 
       # The committed number `--check` defends, in bytes of the whole binary.
       # Recorded 2026-08-24 on aarch64-apple-darwin, release profile, after
-      # the prism-backed `RubyVM` tables stopped being always-on (-528,800).
-      SIZE_BASELINE = 9_252_936
+      # `analyze::class_reach` narrowed the always-on tables to the set a
+      # program can reach.
+      SIZE_BASELINE = 7_493_552
 
       def self.summary = "what each builtin class table costs a linked binary"
 

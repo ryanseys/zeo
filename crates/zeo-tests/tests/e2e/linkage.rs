@@ -67,6 +67,43 @@ fn read(path: &Path) -> Vec<u8> {
     std::fs::read(path).unwrap_or_else(|e| panic!("reading {}: {e}", path.display()))
 }
 
+/// Asserts `tables` is a NARROWED set rather than the whole always-on one.
+///
+/// Set equality against an eval-free program is the wrong test: two narrowed
+/// programs reach different classes on purpose, and a spliced unit's own body
+/// legitimately adds its own. What must hold is that the program did not fall
+/// back to "everything" -- which is what carrying the compiler looks like
+/// through the symbol table.
+fn assert_narrowed(
+    tables: &std::collections::BTreeSet<String>,
+    eval_free: &std::collections::BTreeSet<String>,
+    what: &str,
+) {
+    let known = zeo::builtin_surface::CLASS_TABLE_SYMBOLS.len();
+    assert!(
+        tables.len() < known / 2,
+        "{what} named {} of {known} class tables -- it took the whole \
+         always-on set, which is what an eval-capable program does",
+        tables.len()
+    );
+    // The classes an eval-free program cannot reach either. Naming any of
+    // them means the narrowing stopped applying, not that this program
+    // reaches more.
+    for gone in [
+        "zeo_ctable_MARSHAL_MODULE",
+        "zeo_ctable_RACTOR_CLASS",
+        "zeo_ctable_TRACEPOINT_CLASS",
+    ] {
+        assert!(
+            !tables.contains(gone),
+            "{what} cannot reach {gone}, and an eval-free program does not \
+             name it either (it named {} tables against {})",
+            tables.len(),
+            eval_free.len()
+        );
+    }
+}
+
 /// The `zeo_ctable_*` symbols `binary` resolved -- one per builtin class
 /// table the program named, with the leading Mach-O underscore trimmed.
 fn ctable_symbols(binary: &Path) -> std::collections::BTreeSet<String> {
@@ -177,6 +214,68 @@ fn a_linked_program_keeps_the_tables_it_names() {
     );
 }
 
+/// An always-on builtin's table is carried only when the program can REACH
+/// the class.
+///
+/// The always-on set used to be unconditional -- `puts :ok` shipped `Ractor`,
+/// `Marshal`, `TracePoint` and `Pathname`. `analyze::class_reach` answers
+/// which of them a value can arrive as. `zeo-dev size --check` is the gate
+/// on what that saves.
+///
+/// Asserted through the exported `zeo_ctable_*` symbols rather than bytes,
+/// because that names WHICH class went.
+#[test]
+fn an_unreachable_always_on_class_leaves_its_table_behind() {
+    let plain = link_program("puts :ok\n");
+    let tables = ctable_symbols(&plain);
+    let _ = std::fs::remove_file(&plain);
+
+    for gone in [
+        "zeo_ctable_MARSHAL_MODULE",
+        "zeo_ctable_RACTOR_CLASS",
+        "zeo_ctable_TRACEPOINT_CLASS",
+        "zeo_ctable_PATHNAME_CLASS",
+        "zeo_ctable_TIME_CLASS",
+        "zeo_ctable_REGEXP_CLASS",
+        "zeo_ctable_MATH_CLASS",
+        "zeo_ctable_STRUCT_CLASS",
+    ] {
+        assert!(
+            !tables.contains(gone),
+            "`puts :ok` cannot reach {gone} -- carrying it is dead weight"
+        );
+    }
+
+    // Naming one is the plainest channel there is, and it brings the class's
+    // whole chain with it.
+    let timed = link_program("puts Time.at(0).year\n");
+    let named = ctable_symbols(&timed);
+    let _ = std::fs::remove_file(&timed);
+    assert!(named.contains("zeo_ctable_TIME_CLASS"));
+    assert!(named.contains("zeo_ctable_COMPARABLE_CLASS"));
+
+    // A class a called row RETURNS, with the program naming it nowhere.
+    let framed = link_program("p caller_locations(1, 1)\n");
+    let frames = ctable_symbols(&framed);
+    let _ = std::fs::remove_file(&framed);
+    assert!(
+        frames.contains("zeo_ctable_BACKTRACE_LOCATION_CLASS"),
+        "`caller_locations` hands back a class no scan of constants can see"
+    );
+
+    // And a give-everything hatch takes the lot back.
+    let reflective = link_program("p Marshal.load(Marshal.dump([1]))\n");
+    let all = ctable_symbols(&reflective);
+    let _ = std::fs::remove_file(&reflective);
+    assert!(
+        all.len() > tables.len() + 40,
+        "`Marshal.load` rebuilds an arbitrary graph, so it must keep every \
+         always-on table: it named {} against `puts :ok`'s {}",
+        all.len(),
+        tables.len()
+    );
+}
+
 /// The dead-strip half: a program that cannot `eval` does not carry the
 /// compiler. `libzeo.a` holds compiler and runtime alike (one staticlib,
 /// plan decision 9) and `-force_load`/`--whole-archive` pulls in every
@@ -211,7 +310,7 @@ fn an_eval_free_program_dead_strips_the_compiler() {
 ///
 /// The predicate that decides matched a call's NAME and nothing else, so
 /// `def load(x); load(1); end` shipped Cranelift and all 170 class tables --
-/// 14 MB, measured. A receiverless call resolves the way dispatch resolves
+/// every always-on table with it. A receiverless call resolves the way dispatch resolves
 /// it, and Kernel's row is unreachable from a class that defines its own.
 ///
 /// Measured against the eval-free program rather than an absolute size: what
@@ -235,11 +334,7 @@ fn a_program_with_its_own_load_dead_strips_the_compiler() {
          {ratio:.2}x an eval-free program's {baseline} -- it is carrying the \
          compiler. See `Compiler::runtime_eval`."
     );
-    assert_eq!(
-        tables, plain_tables,
-        "it should name the same class tables as an eval-free program, not \
-         the whole set an eval-capable one takes"
-    );
+    assert_narrowed(&tables, &plain_tables, "a program whose `load` is its own");
 }
 
 /// A `require` inside a method body, of a feature this compile emitted as a
@@ -248,7 +343,7 @@ fn a_program_with_its_own_load_dead_strips_the_compiler() {
 /// The call stays a runtime `Kernel#require` on purpose -- CRuby loads such a
 /// file when the method runs -- and `dynamic_require` asks
 /// `features::load_feature` before the on-disk tier that needs a compiler. So
-/// the unit answers it, and the 14 MB is not owed. It used to be: the
+/// the unit answers it, and the compiler is not owed. It used to be: the
 /// predicate matched the call's NAME, and this program linked Cranelift and
 /// all 170 class tables.
 ///
@@ -275,9 +370,10 @@ fn a_deferred_require_of_a_compiled_unit_dead_strips_the_compiler() {
          {ratio:.2}x an eval-free program's {baseline} -- it is carrying the \
          compiler. See `analyze::compiled_in_requires`."
     );
-    assert_eq!(
-        tables, plain_tables,
-        "it should name the same class tables as an eval-free program"
+    assert_narrowed(
+        &tables,
+        &plain_tables,
+        "a deferred require of a compiled-in unit",
     );
 
     // A feature no unit answers, and a COMPUTED target: both reach the
@@ -303,7 +399,7 @@ fn a_deferred_require_of_a_compiled_unit_dead_strips_the_compiler() {
 /// `RubyVM::AbstractSyntaxTree` and `RubyVM::InstructionSequence` PARSE at run
 /// time, and no program can reach either without naming `RubyVM` -- they are
 /// namespaced under it. So a program that never does carries neither, and
-/// with them goes the prism library they root: 528,800 bytes of a `puts 1`
+/// with them goes the prism library they root, out of a `puts 1`
 /// binary, measured with `zeo-dev size`.
 ///
 /// `RubyVM` itself stays. ruby defines it in every program, and only
@@ -327,10 +423,19 @@ fn a_program_that_never_names_rubyvm_drops_the_parser_tables() {
             "`puts :ok` cannot reach {gone} without naming RubyVM"
         );
     }
-    // `RubyVM` itself is always there, because ruby's is.
-    assert!(
-        plain_tables.contains("zeo_ctable_RUBYVM_CLASS"),
-        "RubyVM is a constant in every ruby program"
+    // `RubyVM` the CONSTANT is still there, because ruby's is -- a class's
+    // registration comes from the runtime's own builtin list, so dropping a
+    // table takes its rows and never its name.
+    let probe = link_program("p Object.const_defined?(:RubyVM)\n");
+    let out = std::process::Command::new(&probe)
+        .output()
+        .expect("running the probe");
+    let _ = std::fs::remove_file(&probe);
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "true\n",
+        "a program that carries no RubyVM table must still answer for the \
+         constant -- ruby defines it in every program"
     );
 
     // Naming it brings them all back, and the program is bigger for it.

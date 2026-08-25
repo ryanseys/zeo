@@ -70,24 +70,30 @@ pub(crate) fn debug(flag: DebugFlag) -> bool {
     bits & (1 << (flag as u32)) != 0
 }
 
-/// The one builtin class table `ZEO_DEBUG_DROP_TABLE` names, if any.
+/// The builtin class tables `ZEO_DEBUG_DROP_TABLE` names -- one symbol, or a
+/// comma-separated list.
 ///
 /// A VALUE rather than a bit, so it sits beside [`debug`] rather than in it.
 /// It exists for one job: `tools/zeo-dev size` links `puts 1` once per table
 /// with that table dropped and diffs the binary, which is exact per-table
 /// attribution and cannot be got any other way -- every size figure in the
-/// docs before this was prose.
+/// docs before this was prose. A LIST prices a whole set at once, which is
+/// the only way to see what the columns share: they overlap, because two
+/// tables can root the same code.
 ///
 /// Safe precisely because a missing table is now LOUD: `builtins::
 /// registered_table` aborts naming the class rather than answering
 /// `NoMethodError` for every row it has. Dropping one cannot produce a
 /// quietly wrong program.
-pub(crate) fn dropped_table() -> Option<&'static str> {
-    static NAME: OnceLock<Option<String>> = OnceLock::new();
-    NAME.get_or_init(|| {
+pub(crate) fn dropped_tables() -> &'static [String] {
+    static NAMES: OnceLock<Vec<String>> = OnceLock::new();
+    NAMES.get_or_init(|| {
         std::env::var("ZEO_DEBUG_DROP_TABLE")
-            .ok()
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
             .filter(|v| !v.is_empty())
+            .map(str::to_string)
+            .collect()
     })
-    .as_deref()
 }

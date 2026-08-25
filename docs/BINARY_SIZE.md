@@ -87,16 +87,49 @@ A require-gated extension registers per program, so a class the emitter's own
 takes OpenSSL, socket, zlib, StringIO, FFI and friends out of a program that
 never asks for them.
 
-An always-on class stays. A value of that kind can arrive without the program
-ever naming it — `1.to_s` needs String — so nothing syntactic rules one out.
-A program that can `eval` gets everything, because the embedded compiler can
-name any class at all.
-
 **Result: 15,553,816 → 13,061,176 bytes, −2.49 MB.** Three later passes
 (alias tables as named symbols, the residual hand-rolled `class_table` arms,
 and moving every bootstrap seeder into its class's own `install_constants`)
 took it to **9,764,552**, and narrowing the prism-backed `RubyVM` tables
 took it to **9,252,936**.
+
+### The always-on set
+
+An always-on class used to stay unconditionally, on the grounds that a value
+of that kind can arrive without the program naming it — `1.to_s` needs
+String. That is true of a couple of dozen classes and false of the rest:
+`puts 1` cannot reach `Ractor`, `Marshal`, `TracePoint` or `Pathname` by any
+route at all.
+
+`analyze::class_reach` answers which it can, over three channels:
+
+1. **The program names it** — a constant read, a superclass, an `include`.
+   Closed over the declared ancestry, because a class cannot answer a call
+   without the chain behind it.
+2. **A value arrives as one.** A hard seed set covers what every literal and
+   operator produces; a table keyed by METHOD NAME covers the rest, because a
+   builtin row can return an instance of a class nothing named —
+   `caller_locations` hands back a `Thread::Backtrace::Location`.
+3. **Reflection hands out every class there is.** `Marshal.load` rebuilds an
+   arbitrary graph, `ObjectSpace.each_object` walks the heap,
+   `Module#constants` enumerates every name, `RubyVM::AbstractSyntaxTree
+   .parse` answers with a literal of whatever the text says, and a `const_get`
+   or `send` with a COMPUTED argument names something no scan can read. Each
+   is a hatch: the answer becomes "everything".
+
+Narrowing is safe to be wrong in one direction only. A class kept for nothing
+costs bytes; a class dropped that the program does reach aborts at the first
+dispatch, naming itself. So every rule over-approximates on purpose — and
+that abort is what made the rules findable: the corpus reported each missing
+class by name, thirty-odd of them, until it did not.
+
+A dropped table takes its class's ROWS and never its name. Registration comes
+from the runtime's own builtin list, so `Object.const_defined?(:Marshal)`
+still answers `true` in a program with no Marshal table, exactly as CRuby
+does.
+
+**Result: 9,252,936 → 7,493,552 bytes, −1.76 MB.** `puts 1` names 33 class
+tables where it named 88.
 
 ### The prism-backed `RubyVM` surfaces
 

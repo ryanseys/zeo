@@ -10,6 +10,7 @@
 
 pub(crate) mod captures;
 pub(crate) mod class_query;
+pub(crate) mod class_reach;
 mod classes;
 pub(crate) mod constfold;
 pub(crate) mod coverage;
@@ -355,6 +356,9 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
     // sites codegen can fuse into native loops.
     mark_inline_iter_sites(compiler, &main_statements, &main_local_types);
     compiler.runtime_eval = narrow_runtime_eval(compiler, &main_statements, &feature_units);
+    // After `runtime_eval`: a program that compiles Ruby at run time can name
+    // any class at all, and this reads that answer.
+    compiler.reachable_builtins = class_reach::resolve(compiler);
 
     Ok(AnalyzedParts {
         main_statements,
