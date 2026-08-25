@@ -47,9 +47,8 @@ $ tools/zeo-dev size                        # what each class table costs a bina
 ```
 
 The default profile is the dev loop. `-P full` adds the cases that compile a
-whole gem's require graph (`gemtests`, `every_bundled_gem_compiles`,
-`rspec_end_to_end`, `prism_surface`); they belong to a phase gate, not to
-every run.
+whole gem's require graph (`gemtests`, `every_bundled_gem_compiles`); they
+belong to a phase gate, not to every run.
 
 - The golden suites live under `tests/` (examples + the spinel corpus + the
   XFAIL gaps tracker) and run as datatest-stable `cargo test`/nextest targets;

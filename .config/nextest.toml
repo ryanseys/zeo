@@ -22,10 +22,10 @@ golden = { max-threads = 10 }
 # The default run is the DEV loop and stays fast: everything that compiles a
 # whole gem's require graph is opted out here and runs only under `-P full`
 # -- `cargo nextest run -p zeo-tests -P full` is the full gate's spelling.
-# The gem probe owns broad whole-gem compile coverage; these four are the
+# The gem probe owns broad whole-gem compile coverage; these two are the
 # survivors with assertions the probe can't make.
 [profile.default]
-default-filter = "not (binary(gemtests) | test(every_bundled_gem_compiles) | test(rspec_end_to_end) | test(prism_surface))"
+default-filter = "not (binary(gemtests) | test(every_bundled_gem_compiles))"
 
 # The full gate: everything, including the whole-gem cases above.
 [profile.full]
@@ -40,25 +40,12 @@ default-filter = "all()"
 #
 # nextest resolves each setting from the first matching override, so these must
 # precede the blanket one below.
-[[profile.default.overrides]]
-filter = "binary(examples) & test(prism_surface)"
-slow-timeout = { period = "120s", terminate-after = 5 }
-
+#
 # A gemtests case compiles a whole gem's require graph and runs a full test
 # file; the harness's own cap stretches with it (ZEO_GOLDEN_RUN_DEADLINE=300
 # set by the suite), so nextest's deadline must sit above both.
 [[profile.default.overrides]]
 filter = "binary(gemtests)"
-test-group = "golden"
-slow-timeout = { period = "360s", terminate-after = 2 }
-
-# The rspec end-to-end golden splices the entire rspec stack (core,
-# expectations, mocks, support, diff-lcs) into one program -- minutes, like a
-# gemtests case, and nothing caches it -- every run is a cold compile.
-# No binary() anchor: it was born in gaps and lives in examples now, and an
-# anchored pattern goes silently stale on promotion.
-[[profile.default.overrides]]
-filter = "test(rspec_end_to_end)"
 test-group = "golden"
 slow-timeout = { period = "360s", terminate-after = 2 }
 

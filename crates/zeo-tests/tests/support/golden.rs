@@ -56,10 +56,9 @@ const MAX_CHILD_RSS: u64 = 512 << 20; // 512 MiB
 /// [`MAX_CHILD_RSS`], with an env override (`ZEO_GOLDEN_MAX_RSS`, in MiB)
 /// for the cases that legitimately need more, the same way
 /// `ZEO_GOLDEN_RUN_DEADLINE` stretches the clock for them. A case that
-/// compiles a whole gem's require graph in the child -- `rspec_end_to_end`
-/// splices core, expectations, mocks, support and diff-lcs into ONE
-/// program -- is doing real work at a scale the 512 MiB figure was never
-/// measured against (it is 40x the peak of an ORDINARY golden).
+/// compiles a whole gem's require graph in the child (a gemtests case) is
+/// doing real work at a scale the 512 MiB figure was never measured
+/// against.
 fn max_child_rss() -> u64 {
     static M: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
     *M.get_or_init(|| {

@@ -1133,8 +1133,8 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
         // was written: the holder module owns the methods and the
         // `Refinement` row says what they refine. It reaches statement
         // position only when the class-body walk kept the enclosing
-        // statement whole -- power_assert writes its refinements under a
-        // runtime `if`, which is what made `rspec_end_to_end` refuse. An
+        // statement whole -- power_assert (in the rspec stack) writes its
+        // refinements under a runtime `if`, which hit this refusal. An
         // UNregistered marker is a different thing and still refuses,
         // rather than losing the refinement silently.
         HirNode::Refine { .. } if fx.an.compiler.refinement_marker_registered(stmt) => Ok(()),

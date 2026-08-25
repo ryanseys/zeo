@@ -156,9 +156,8 @@ jobs:
       # an XPASS (promote it).
       #
       # NOT run here: the `-P full` profile's whole-gem cases (gemtests,
-      # every_bundled_gem_compiles, rspec_end_to_end, prism_surface). They
-      # compile entire require graphs and belong to the phase gate, not to
-      # every push.
+      # every_bundled_gem_compiles). They compile entire require graphs and
+      # belong to the phase gate, not to every push.
   msrv:
     name: MSRV check
     runs-on: ubuntu-latest
