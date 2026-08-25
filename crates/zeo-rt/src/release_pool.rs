@@ -25,7 +25,12 @@ pub struct PoolState {
     marks: Vec<usize>,
 }
 
-std::thread_local!(static POOL: RefCell<PoolState> = RefCell::new(PoolState::default()));
+std::thread_local!(static POOL: RefCell<PoolState> = const {
+    RefCell::new(PoolState {
+        vals: Vec::new(),
+        marks: Vec::new(),
+    })
+});
 
 /// Move `v` into the pool; it lives until the enclosing frame pops or the
 /// enclosing loop's latch resets to a mark below it.

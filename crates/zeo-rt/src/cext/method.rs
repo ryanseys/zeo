@@ -192,8 +192,12 @@ pub unsafe fn method_proc(f: MethodPtr, argc: c_int) -> Result<RProc, Signal> {
 /// `rb_get_alloc_func` is the only reader, and it answers null for a class
 /// that has none -- which is how a caller tells a C-allocated class from a
 /// plain Ruby one.
-static ALLOC_FUNCS: std::sync::Mutex<Option<std::collections::HashMap<u32, usize>>> =
-    std::sync::Mutex::new(None);
+static ALLOC_FUNCS: parking_lot::Mutex<Option<crate::FMap<u32, usize>>> =
+    parking_lot::Mutex::new(None);
+
+/// One relaxed load in front of the map: `c_allocate` sits on every `.new`,
+/// and a program with no C extension registers no allocator at all.
+static ANY_ALLOC_FUNC: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Run a class's C allocator, if it has one. `dispatch::allocate_of` asks.
 ///
@@ -201,10 +205,13 @@ static ALLOC_FUNCS: std::sync::Mutex<Option<std::collections::HashMap<u32, usize
 /// by the time it leaves `protect`, which is what a `rescue` around
 /// `Foo.new` expects.
 pub fn c_allocate(owner: ClassId) -> Option<RubyValue> {
+    if !ANY_ALLOC_FUNC.load(std::sync::atomic::Ordering::Relaxed) {
+        return None;
+    }
     let addr = ALLOC_FUNCS
         .lock()
-        .ok()
-        .and_then(|g| g.as_ref().and_then(|m| m.get(&owner.0).copied()))?;
+        .as_ref()
+        .and_then(|m| m.get(&owner.0).copied())?;
     let scope = Scope::enter();
     let this = to_value(&RubyValue::Class(owner)).ok()?;
     // SAFETY: the extension registered this function for exactly this call,
@@ -232,18 +239,19 @@ pub fn c_allocate(owner: ClassId) -> Option<RubyValue> {
 }
 
 fn remember_alloc_func(owner: ClassId, addr: usize) {
-    if let Ok(mut g) = ALLOC_FUNCS.lock() {
-        g.get_or_insert_with(std::collections::HashMap::new)
-            .insert(owner.0, addr);
-    }
+    ALLOC_FUNCS
+        .lock()
+        .get_or_insert_with(crate::FMap::default)
+        .insert(owner.0, addr);
+    ANY_ALLOC_FUNC.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// The allocator installed for `owner`, or null.
 pub(super) fn alloc_func_of(owner: ClassId) -> *const c_void {
     ALLOC_FUNCS
         .lock()
-        .ok()
-        .and_then(|g| g.as_ref().and_then(|m| m.get(&owner.0).copied()))
+        .as_ref()
+        .and_then(|m| m.get(&owner.0).copied())
         .map_or(std::ptr::null(), |a| a as *const c_void)
 }
 

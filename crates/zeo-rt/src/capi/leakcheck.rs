@@ -18,9 +18,24 @@ const N_TAGS: usize = 64;
 static LIVE: [AtomicI64; N_TAGS] = [const { AtomicI64::new(0) }; N_TAGS];
 const POISON_TAG: u8 = 0xFF;
 
+/// 0 = not asked yet, 1 = off, 2 = on. One relaxed load per ledger call --
+/// this gate sits inside every `created`/`consumed`, 2-3 times per send.
+static STATE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+#[inline]
 pub(crate) fn enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("ZEO_RT_LEAKCHECK").is_some_and(|v| !v.is_empty()))
+    match STATE.load(Ordering::Relaxed) {
+        0 => init_slow(),
+        s => s == 2,
+    }
+}
+
+/// The env read, once. A racing double-init stores the same answer twice.
+#[cold]
+fn init_slow() -> bool {
+    let on = std::env::var_os("ZEO_RT_LEAKCHECK").is_some_and(|v| !v.is_empty());
+    STATE.store(if on { 2 } else { 1 }, Ordering::Relaxed);
+    on
 }
 
 fn tag_of(v: &RubyValue) -> u8 {

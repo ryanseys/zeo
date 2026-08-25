@@ -308,7 +308,11 @@ pub fn synthetic_c_frame(method: &'static str) -> CFrameGuard {
         let (file, line) = if top != base && !top.is_null() {
             // SAFETY: `top > base`, so `top - 1` is the live innermost frame.
             let innermost = unsafe { &*top.sub(1) };
-            if innermost.method == method {
+            // Identity first (`ptr::eq` on `&str` covers address AND len):
+            // a repeat through one cached label is the common hit. Content
+            // eq stays as the fallback -- the boundary frame's label and a
+            // row's hand-placed one are equal strings from two sources.
+            if std::ptr::eq(innermost.method, method) || innermost.method == method {
                 // An EXACT repeat of the innermost frame: since the location
                 // is CLONED from that same frame, "same label, same location"
                 // reduces to a label match -- one logical C call shows one
@@ -406,10 +410,18 @@ pub(crate) fn frame_push_raw(file: &'static str, method: &'static str, line: u32
     // same install path also carries a genuine `define_method` block, whose
     // body keeps its own `block in ...` label in ruby -- overriding that one
     // renamed every such frame after its class. Taken either way, so the
-    // one-shot still expires.
-    let method = match PENDING_LABEL.with(|c| c.take()) {
-        Some(label) if method.starts_with("Object#") => label,
-        _ => method,
+    // one-shot still expires. The common path (no label armed) is one read,
+    // no write.
+    let method = match PENDING_LABEL.with(|c| c.get()) {
+        None => method,
+        Some(label) => {
+            PENDING_LABEL.with(|c| c.set(None));
+            if method.starts_with("Object#") {
+                label
+            } else {
+                method
+            }
+        }
     };
     std::mem::forget(FrameGuard::push(file, method, line, end_line));
 }

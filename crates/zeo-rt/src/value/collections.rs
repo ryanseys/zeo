@@ -573,6 +573,9 @@ thread_local! {
     /// first raise wins, and whoever takes it turns it back into an error.
     static PENDING_KEY_RAISE: std::cell::RefCell<Option<crate::Signal>> =
         const { std::cell::RefCell::new(None) };
+    /// Armed iff `PENDING_KEY_RAISE` holds a signal -- the one load every
+    /// dispatch's `check_key_raise` pays instead of a `RefCell` take.
+    static KEY_RAISE_ARMED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 fn park_key_raise(sig: crate::Signal) {
@@ -582,17 +585,22 @@ fn park_key_raise(sig: crate::Signal) {
             *slot = Some(sig);
         }
     });
+    KEY_RAISE_ARMED.with(|c| c.set(true));
 }
 
 /// The parked key-projection exception, if a user `hash` raised since the
 /// last check. Taken by every Ruby-visible operation that can project a key.
 pub(crate) fn key_raise_pending() -> bool {
-    PENDING_KEY_RAISE.with(|slot| slot.borrow().is_some())
+    KEY_RAISE_ARMED.with(|c| c.get())
 }
 
 /// The parked key-projection exception, if a user `hash` raised since the
 /// last check. Taken by every Ruby-visible operation that can project a key.
 pub fn take_key_raise() -> Option<crate::Signal> {
+    if !KEY_RAISE_ARMED.with(|c| c.get()) {
+        return None;
+    }
+    KEY_RAISE_ARMED.with(|c| c.set(false));
     PENDING_KEY_RAISE.with(|slot| slot.borrow_mut().take())
 }
 
