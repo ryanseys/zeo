@@ -557,12 +557,6 @@ impl ClassRegistry {
         }
     }
 
-    /// Registers a builtin-reopen method -- called from
-    /// generated `main()` right after the builtin's own `register`, one call
-    /// per `def` in a `class String ... end` reopen. `box_id` is the box the
-    /// reopen was written in (0 for the root program; a box's
-    /// overlay methods register under its id and are visible only from that
-    /// box's code). See `ValueMethodFn`'s docs for the precedence contract.
     /// Records `name` as PRIVATE on `id` -- emitted by codegen right after
     /// the method's own registration, for each `def` whose resolved
     /// visibility is private. See `ClassEntry::private_methods`.
@@ -631,6 +625,12 @@ impl ClassRegistry {
         })
     }
 
+    /// Registers a builtin-reopen method -- called from generated `main()`
+    /// right after the builtin's own `register`, one call per `def` in a
+    /// `class String ... end` reopen. `box_id` is the box the reopen was
+    /// written in (0 for the root program; a box's overlay methods register
+    /// under its id and are visible only from that box's code). See
+    /// `ValueMethodFn`'s docs for the precedence contract.
     pub fn define_value_method(
         &mut self,
         id: ClassId,
