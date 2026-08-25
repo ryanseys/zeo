@@ -38,7 +38,9 @@ jobs:
             target: aarch64-unknown-linux-gnu
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      # Reads rust-toolchain.toml -- a release must build with the pin, not
+      # whatever stable is the day the tag lands.
+      - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
 
       # zeo-rt's C dependencies. macOS gets these from the SDK already.
