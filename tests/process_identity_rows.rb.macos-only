@@ -1,0 +1,3 @@
+Recorded on macOS: the container leg runs as root, so the EPERM rows
+succeed there (CRuby as root prints the same nils) -- the output is
+UID-dependent, not portable.

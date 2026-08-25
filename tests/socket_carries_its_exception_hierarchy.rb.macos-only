@@ -1,0 +1,4 @@
+Recorded on macOS: the getaddrinfo failure text is the platform's
+gai_strerror -- glibc says "Name or service not known" where macOS says
+"nodename nor servname provided, or not known". Both sides pass the
+platform string through; the golden embeds the macOS one.
