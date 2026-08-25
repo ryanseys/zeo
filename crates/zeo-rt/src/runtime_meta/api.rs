@@ -994,10 +994,11 @@ pub fn runtime_alias_method(id: ClassId, new: Symbol, old: Symbol) -> Result<Rub
 /// of the frozen registry's own flags. Returns the arguments as passed: a
 /// lone name verbatim, several names as an Array (Ruby >= 3.1's shape).
 ///
-/// The ARGUMENT-LESS form (set the default visibility for subsequent defs
-/// in this scope) is accepted as a nil-returning no-op: the overlay has no
-/// per-scope default, and compiled `def`s took their visibility at compile
-/// time -- divergence limited to a bare `private` inside `class_eval`.
+/// The ARGUMENT-LESS form sets the default visibility for subsequent defs
+/// in the enclosing body: it writes the method-frame's `vis`, and for a
+/// rebound `class << self` body with no frame, the surrogate's overlay
+/// default. Pinned by
+/// `tests/a_runtime_directive_without_arguments_takes_effect.rb`.
 pub fn runtime_set_visibility(
     id: ClassId,
     args: &[RubyValue],
@@ -1335,7 +1336,8 @@ pub(crate) fn resolves_through_overlay(id: ClassId, name: Symbol) -> bool {
 /// (`extended_class_method`), so `Mod.name` and bare calls in class-method
 /// context resolve. The instance copy stays -- that is the `include`-mixin half
 /// of `module_function` -- but becomes PRIVATE, as in CRuby. The bare (no-arg)
-/// mode form has no runtime spelling here and is a documented nil no-op.
+/// mode form sets the frame's `module_function` flag, so subsequent `def`s in
+/// the body take the mode.
 pub fn runtime_module_function(id: ClassId, args: &[RubyValue]) -> Result<RubyValue, Signal> {
     if args.is_empty() {
         update_frame_for(id, |f| f.module_function = true);
@@ -1990,10 +1992,9 @@ fn prepend_into_class_singleton(owner: ClassId, module_val: &RubyValue) -> Resul
 /// compiled module's `emit_user_module_bridges` value-methods by id, and a
 /// runtime `Module.new`'s overlay methods).
 ///
-/// Only effective for a receiver whose ancestry lives in the overlay (a runtime
-/// `Class.new`/`Module.new`); a FROZEN compiled class's registry ancestry is
-/// immutable, so a runtime `include` on it is a documented no-op on dispatch
-/// (rare -- static `include` is the compiled path).
+/// Works on compiled classes too: the overlay ancestry shadows the frozen
+/// registry on dispatch. An explicitly `.freeze`d receiver raises
+/// FrozenError in `mix_in`.
 pub fn runtime_include(recv: &RubyValue, modules: &[RubyValue]) -> Result<RubyValue, Signal> {
     // `include A, B` inserts each right after self, so the LAST argument ends
     // up closest to self -- process right-to-left to reproduce that order.
