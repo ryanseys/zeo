@@ -20,9 +20,10 @@
 //! for them works.
 
 use super::convert::{to_value, value_of};
-use super::object::{cstr, send, wrong_type};
+use super::object::{cstr, send};
 use super::symbol::symbol_of;
 use super::value::Value;
+use crate::builtins::wrong_arg_type;
 use crate::{RubyValue, Signal};
 use num_bigint::{BigInt, Sign};
 use num_traits::{Signed, ToPrimitive, Zero};
@@ -38,7 +39,7 @@ unsafe fn as_big(v: Value) -> Result<BigInt, Signal> {
         RubyValue::Int(n) => Ok(BigInt::from(n)),
         RubyValue::BigInt(b) => Ok((*b).clone()),
         RubyValue::Float(f) => Ok(BigInt::from(f as i64)),
-        other => Err(wrong_type(&other, "Integer")),
+        other => Err(wrong_arg_type(&other, "Integer")),
     }
 }
 
@@ -355,7 +356,7 @@ crate::cext_fn! {
     fn rb_str_to_inum(v: Value, base: c_int, badcheck: c_int) -> Value {
         let s = unsafe { value_of(v) };
         let RubyValue::Str(s) = &s else {
-            return Err(wrong_type(&s, "String"));
+            return Err(wrong_arg_type(&s, "String"));
         };
         let text = s.lock().to_utf8_lossy().into_owned();
         to_value(&parse_int(&text, base, badcheck != 0)?)
@@ -368,7 +369,7 @@ crate::cext_fn! {
     fn rb_str_to_dbl(v: Value, badcheck: c_int) -> c_double {
         let s = unsafe { value_of(v) };
         let RubyValue::Str(s) = &s else {
-            return Err(wrong_type(&s, "String"));
+            return Err(wrong_arg_type(&s, "String"));
         };
         let text = s.lock().to_utf8_lossy().into_owned();
         parse_dbl(&text, badcheck != 0)
@@ -483,14 +484,14 @@ crate::cext_fn! {
         let limit = RubyValue::Int(1 << 32);
         match random_call("rand", &[limit])? {
             RubyValue::Int(n) => Ok(n as u32),
-            other => Err(wrong_type(&other, "Integer")),
+            other => Err(wrong_arg_type(&other, "Integer")),
         }
     }
 
     fn rb_genrand_real() -> c_double {
         match random_call("rand", &[])? {
             RubyValue::Float(f) => Ok(f),
-            other => Err(wrong_type(&other, "Float")),
+            other => Err(wrong_arg_type(&other, "Float")),
         }
     }
 
@@ -505,14 +506,14 @@ crate::cext_fn! {
         let limit = RubyValue::Int(1 << 32);
         match random_call_on(rng, "rand", &[limit])? {
             RubyValue::Int(n) => Ok(n as u32),
-            other => Err(wrong_type(&other, "Integer")),
+            other => Err(wrong_arg_type(&other, "Integer")),
         }
     }
 
     fn rb_random_real(rng: Value) -> c_double {
         match random_call_on(rng, "rand", &[])? {
             RubyValue::Float(f) => Ok(f),
-            other => Err(wrong_type(&other, "Float")),
+            other => Err(wrong_arg_type(&other, "Float")),
         }
     }
 
@@ -751,7 +752,7 @@ fn draw(rng: Option<Value>, exclusive: u64) -> Result<usize, Signal> {
     };
     match out {
         RubyValue::Int(n) => Ok(n as usize),
-        other => Err(wrong_type(&other, "Integer")),
+        other => Err(wrong_arg_type(&other, "Integer")),
     }
 }
 

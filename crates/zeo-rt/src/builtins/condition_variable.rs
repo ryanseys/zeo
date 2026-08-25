@@ -100,7 +100,7 @@ ruby_class! {
             Some(RubyValue::Int(i)) => Some(Duration::from_secs_f64(*i as f64)),
             Some(RubyValue::Float(f)) => Some(Duration::from_secs_f64(*f)),
             Some(other) => {
-                return Err(type_error!("no implicit conversion of {} into Float", crate::builtins::convert_name_of(other)));
+                return Err(crate::builtins::no_implicit(other, "Float"));
             }
         };
         let cv = cv_of(recv);

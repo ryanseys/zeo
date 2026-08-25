@@ -1576,10 +1576,7 @@ pub fn scanner_match(
         // so its refusal is the STRING conversion's, not the
         // regexp-expected `Check_Type` one every other pattern slot gives.
         other => {
-            return Err(crate::builtins::type_error!(
-                "no implicit conversion of {} into String",
-                crate::builtins::check_type_name(other)
-            ));
+            return Err(crate::builtins::no_implicit(other, "String"));
         }
     };
     Ok(Some(ScannerMatch {

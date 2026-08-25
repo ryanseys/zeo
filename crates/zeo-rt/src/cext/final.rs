@@ -15,9 +15,10 @@
 //! `ArgumentError` unless the rest-Hash was asked for.
 
 use super::convert::{to_value, value_of};
-use super::object::{args_of, cstr, send, wrong_type};
+use super::object::{args_of, cstr, send};
 use super::symbol::{Id, symbol_of};
 use super::value::{self, Value};
+use crate::builtins::wrong_arg_type;
 use crate::{RubyValue, Signal, Symbol};
 use std::ffi::{c_char, c_int, c_long, c_void};
 
@@ -144,7 +145,7 @@ crate::cext_fn! {
     fn rb_must_asciicompat(v: Value) -> () {
         let s = unsafe { value_of(v) };
         let RubyValue::Str(s) = &s else {
-            return Err(wrong_type(&s, "String"));
+            return Err(wrong_arg_type(&s, "String"));
         };
         let enc = s.lock().encoding();
         if !enc.ascii_compatible() {
@@ -230,7 +231,7 @@ crate::cext_fn! {
         let h = match unsafe { value_of(hash) } {
             RubyValue::Hash(h) => h,
             RubyValue::Nil => crate::value::collections::hash_new(Vec::new()),
-            other => return Err(wrong_type(&other, "Hash")),
+            other => return Err(wrong_arg_type(&other, "Hash")),
         };
         let rest_wanted = optional < 0;
         let opt = if rest_wanted { -optional - 1 } else { optional };
@@ -344,7 +345,7 @@ crate::cext_fn! {
                 RubyValue::Int(n) => *n as c_long,
                 other => match send(other, "to_int", &[])? {
                     RubyValue::Int(n) => n as c_long,
-                    _ => return Err(wrong_type(other, "Integer")),
+                    _ => return Err(wrong_arg_type(other, "Integer")),
                 },
             };
             // SAFETY: the caller's own reader; it range-checks itself, which
@@ -512,13 +513,7 @@ crate::cext_fn! {
 
     fn rb_unexpected_type(v: Value, want: c_int) -> () {
         let recv = unsafe { value_of(v) };
-        Err(crate::dispatch::raise_error(
-            "TypeError",
-            format!(
-                "wrong argument type {} (expected T_{want})",
-                crate::dispatch::class_name(recv.class_id()).unwrap_or("Object".into())
-            ),
-        ))
+        Err(wrong_arg_type(&recv, &format!("T_{want}")))
     }
 
     fn rb_scan_args_bad_format(fmt: *const c_char) -> () {
@@ -611,7 +606,7 @@ crate::cext_fn! {
         let args = unsafe { args_of(argc, argv) };
         match send(&class_named("Process")?, "spawn", &args)? {
             RubyValue::Int(n) => Ok(n as i32),
-            other => Err(wrong_type(&other, "Integer")),
+            other => Err(wrong_arg_type(&other, "Integer")),
         }
     }
 

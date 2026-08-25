@@ -63,10 +63,7 @@ pub fn convert(v: &RubyValue, target: &str, meth: &str) -> Result<RubyValue, Sig
     }
     match try_convert(v, target, meth)? {
         Some(converted) => Ok(converted),
-        None => Err(type_error!(
-            "no implicit conversion of {} into {target}",
-            convert_name_of(v)
-        )),
+        None => Err(crate::builtins::no_implicit(v, target)),
     }
 }
 
@@ -170,9 +167,6 @@ pub fn to_hash(v: &RubyValue) -> Result<RubyValue, Signal> {
     convert(v, "Hash", "to_hash")
 }
 
-// The one probe form without a caller yet -- kept so the protocol surface
-// stays complete alongside its three siblings.
-#[allow(dead_code)]
 pub fn check_to_hash(v: &RubyValue) -> Result<Option<RubyValue>, Signal> {
     check_convert(v, "Hash", "to_hash")
 }

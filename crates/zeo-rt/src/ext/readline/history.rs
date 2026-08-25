@@ -114,9 +114,7 @@ ruby_class! {
     // `include?`, ...). The snapshot up front keeps the lock out of the
     // block, which may itself touch HISTORY.
     def "each" (recv, &block) {
-        let Some(RubyValue::Proc(p)) = block else {
-            return Err(crate::dispatch::raise_no_block_yield());
-        };
+        let p = crate::builtins::need_block!(block);
         let snapshot = super::STATE.lock().history.clone();
         for line in &snapshot {
             p.call(&[str_value(line)])?;

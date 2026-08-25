@@ -117,10 +117,7 @@ mod box_class {
             let source = match src {
                 RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
                 other => {
-                    return Err(crate::builtins::type_error!(
-                        "no implicit conversion of {} into String",
-                        crate::builtins::convert_name_of(other)
-                    ));
+                    return Err(crate::builtins::no_implicit(other, "String"));
                 }
             };
             let box_id = boxes::box_of_surrogate(recv).unwrap_or(0);

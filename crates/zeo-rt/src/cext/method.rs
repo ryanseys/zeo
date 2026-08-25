@@ -256,13 +256,7 @@ pub(super) fn alloc_func_of(owner: ClassId) -> *const c_void {
 unsafe fn as_class(v: Value) -> Result<ClassId, Signal> {
     match unsafe { value_of(v) } {
         RubyValue::Class(cid) => Ok(cid),
-        other => Err(crate::dispatch::raise_error(
-            "TypeError",
-            format!(
-                "wrong argument type {} (expected Class/Module)",
-                crate::dispatch::class_name(other.class_id()).unwrap_or("Object".into())
-            ),
-        )),
+        other => Err(crate::builtins::wrong_arg_type(&other, "Class/Module")),
     }
 }
 

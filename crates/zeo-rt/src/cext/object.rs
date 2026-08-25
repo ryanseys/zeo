@@ -25,6 +25,7 @@
 use super::convert::{to_value, value_of};
 use super::symbol::{Id, symbol_of};
 use super::value::{self, Value};
+use crate::builtins::wrong_arg_type;
 use crate::dispatch::ClassId;
 use crate::{RubyValue, Signal, Symbol};
 use std::ffi::{c_char, c_int};
@@ -44,23 +45,13 @@ pub(super) unsafe fn cstr(p: *const c_char) -> String {
     unsafe { String::from_utf8_lossy(std::ffi::CStr::from_ptr(p).to_bytes()).into_owned() }
 }
 
-pub(super) fn wrong_type(v: &RubyValue, want: &str) -> Signal {
-    crate::dispatch::raise_error(
-        "TypeError",
-        format!(
-            "wrong argument type {} (expected {want})",
-            crate::dispatch::class_name(v.class_id()).unwrap_or("Object".into())
-        ),
-    )
-}
-
 /// # Safety
 ///
 /// `v` must be a live `VALUE`.
 pub(super) unsafe fn as_class(v: Value) -> Result<ClassId, Signal> {
     match unsafe { value_of(v) } {
         RubyValue::Class(cid) => Ok(cid),
-        other => Err(wrong_type(&other, "Class/Module")),
+        other => Err(wrong_arg_type(&other, "Class/Module")),
     }
 }
 
@@ -238,7 +229,7 @@ crate::cext_fn! {
         let m = send(&recv, "method", &[RubyValue::Symbol(symbol_of(id))])?;
         match send(&m, "arity", &[])? {
             RubyValue::Int(n) => Ok(n as c_int),
-            other => Err(wrong_type(&other, "Integer")),
+            other => Err(wrong_arg_type(&other, "Integer")),
         }
     }
 
@@ -366,7 +357,7 @@ crate::cext_fn! {
         let p = unsafe { value_of(path) };
         let name = match &p {
             RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
-            other => return Err(wrong_type(other, "String")),
+            other => return Err(wrong_arg_type(other, "String")),
         };
         to_value(&resolve_path(&name)?)
     }
@@ -421,7 +412,7 @@ crate::cext_fn! {
         let um = send(&mv, "instance_method", &[RubyValue::Symbol(symbol_of(id))])?;
         match send(&um, "arity", &[])? {
             RubyValue::Int(n) => Ok(n as c_int),
-            other => Err(wrong_type(&other, "Integer")),
+            other => Err(wrong_arg_type(&other, "Integer")),
         }
     }
 
@@ -626,7 +617,7 @@ crate::cext_fn! {
     fn rb_check_inheritable(klass: Value) -> () {
         let v = unsafe { value_of(klass) };
         let RubyValue::Class(cid) = v else {
-            return Err(wrong_type(&v, "Class"));
+            return Err(wrong_arg_type(&v, "Class"));
         };
         if crate::runtime_meta::singleton_class_owner(cid).is_some() {
             return Err(crate::dispatch::raise_error(
@@ -642,7 +633,7 @@ crate::cext_fn! {
     fn rb_check_safe_str(v: Value) -> () {
         let s = unsafe { value_of(v) };
         if !matches!(s, RubyValue::Str(_)) {
-            return Err(wrong_type(&s, "String"));
+            return Err(wrong_arg_type(&s, "String"));
         }
         Ok(())
     }
@@ -704,13 +695,7 @@ crate::cext_fn! {
         let recv = unsafe { value_of(v) };
         let got = unsafe { super::handles::type_tag(v) } as c_int;
         if got != want {
-            return Err(crate::dispatch::raise_error(
-                "TypeError",
-                format!(
-                    "wrong argument type {} (expected T_{want})",
-                    crate::dispatch::class_name(recv.class_id()).unwrap_or("Object".into())
-                ),
-            ));
+            return Err(wrong_arg_type(&recv, &format!("T_{want}")));
         }
         Ok(())
     }
@@ -736,7 +721,7 @@ crate::cext_fn! {
         let recv = unsafe { value_of(v) };
         match must_convert(&recv, "to_sym", "Symbol")? {
             RubyValue::Symbol(s) => Ok(s.to_u32() as Id),
-            other => Err(wrong_type(&other, "Symbol")),
+            other => Err(wrong_arg_type(&other, "Symbol")),
         }
     }
 
@@ -755,7 +740,7 @@ crate::cext_fn! {
         let name = match &v {
             RubyValue::Symbol(s) => s.name_str().to_string(),
             RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
-            other => return Err(wrong_type(other, "String or Symbol")),
+            other => return Err(wrong_arg_type(other, "String or Symbol")),
         };
         match Symbol::interned(&name) {
             Some(sym) => {

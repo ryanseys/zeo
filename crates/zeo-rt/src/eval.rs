@@ -685,10 +685,7 @@ pub fn eval_value_in_scope(
 ) -> Result<RubyValue, Signal> {
     let chosen = if binding.is_nil() { &scope } else { &binding };
     let Some(b) = crate::builtins::binding::as_binding(chosen) else {
-        return Err(crate::builtins::type_error!(
-            "wrong argument type {} (expected binding)",
-            crate::dispatch::class_name(binding.class_id()).unwrap_or_else(|| "Object".to_string())
-        ));
+        return Err(crate::builtins::wrong_arg_type(&binding, "binding"));
     };
     // Without an explicit binding the source runs in a CHILD of the caller's
     // frame: it reads and writes the caller's locals, but a name it introduces

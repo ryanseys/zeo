@@ -304,11 +304,7 @@ ruby_module! {
             ),
             Some(b) => {
                 let Some(b) = crate::builtins::binding::as_binding(b) else {
-                    return Err(type_error!(
-                        "wrong argument type {} (expected binding)",
-                        crate::dispatch::class_name(b.class_id())
-                            .unwrap_or_else(|| "Object".to_string())
-                    ));
+                    return Err(crate::builtins::wrong_arg_type(b, "binding"));
                 };
                 crate::eval::eval_with_binding(arg1, b, file, line, "Kernel#eval")
             }

@@ -23,9 +23,10 @@
 //! into a silently clamped one.
 
 use super::convert::{to_value, value_of};
-use super::object::{args_of, cstr, send, wrong_type};
+use super::object::{args_of, cstr, send};
 use super::symbol::{Id, symbol_of};
 use super::value::{self, Value};
+use crate::builtins::wrong_arg_type;
 use crate::{RubyValue, Signal, Symbol};
 use std::ffi::{c_char, c_int, c_long};
 
@@ -228,7 +229,7 @@ crate::cext_fn! {
     fn rb_set_class_path_string(klass: Value, under: Value, name: Value) -> () {
         let text = match unsafe { value_of(name) } {
             RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
-            other => return Err(wrong_type(&other, "String")),
+            other => return Err(wrong_arg_type(&other, "String")),
         };
         let cid = unsafe { as_class(klass)? };
         let home = if under == value::Q_NIL || under == 0 {
@@ -916,7 +917,7 @@ fn time_parts(v: Value) -> Result<(i64, i64), Signal> {
     let t = unsafe { value_of(v) };
     let sec = match send(&t, "to_i", &[])? {
         RubyValue::Int(n) => n,
-        other => return Err(wrong_type(&other, "Integer")),
+        other => return Err(wrong_arg_type(&other, "Integer")),
     };
     let nsec = match send(&t, "nsec", &[]) {
         Ok(RubyValue::Int(n)) => n,
@@ -934,7 +935,7 @@ fn interval_parts(v: Value) -> Result<(i64, i64), Signal> {
         RubyValue::Float(f) => *f,
         other => match send(other, "to_f", &[])? {
             RubyValue::Float(f) => f,
-            _ => return Err(wrong_type(other, "Numeric")),
+            _ => return Err(wrong_arg_type(other, "Numeric")),
         },
     };
     if secs < 0.0 {
@@ -972,7 +973,7 @@ fn endpoint(v: &RubyValue, default: c_long) -> Result<c_long, Signal> {
         RubyValue::Int(n) => Ok(*n as c_long),
         other => match send(other, "to_int", &[])? {
             RubyValue::Int(n) => Ok(n as c_long),
-            _ => Err(wrong_type(other, "Integer")),
+            _ => Err(wrong_arg_type(other, "Integer")),
         },
     }
 }

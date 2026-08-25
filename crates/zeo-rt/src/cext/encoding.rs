@@ -28,8 +28,9 @@
 
 use super::convert::{to_value, value_of};
 use super::misc::{Encoding, encoding_of};
-use super::object::{cstr, send, wrong_type};
+use super::object::{cstr, send};
 use super::value::Value;
+use crate::builtins::wrong_arg_type;
 use crate::encoding::EncodingId;
 use crate::{RubyValue, Signal};
 use std::ffi::{c_char, c_int, c_long, c_uint};
@@ -184,7 +185,7 @@ crate::cext_fn! {
     fn rb_enc_str_asciionly_p(v: Value) -> c_int {
         let s = unsafe { value_of(v) };
         let RubyValue::Str(s) = &s else {
-            return Err(wrong_type(&s, "String"));
+            return Err(wrong_arg_type(&s, "String"));
         };
         let only = s.lock().ascii_only();
         Ok(c_int::from(only))
@@ -196,7 +197,7 @@ crate::cext_fn! {
     fn rb_enc_str_coderange(v: Value) -> c_int {
         let s = unsafe { value_of(v) };
         let RubyValue::Str(s) = &s else {
-            return Err(wrong_type(&s, "String"));
+            return Err(wrong_arg_type(&s, "String"));
         };
         let g = s.lock();
         Ok(if g.ascii_only() {
@@ -357,7 +358,7 @@ crate::cext_fn! {
         let bytes = unsafe { super::string::borrow_bytes(p, len) };
         let s = unsafe { value_of(v) };
         let RubyValue::Str(s) = &s else {
-            return Err(wrong_type(&s, "String"));
+            return Err(wrong_arg_type(&s, "String"));
         };
         let mut g = s.lock();
         let mut all = g.bytes().to_vec();

@@ -217,7 +217,7 @@ ruby_class! {
                 }
             }
             other => {
-                return Err(type_error!("wrong argument type {} (expected Array)", crate::builtins::class_name_of(other)))
+                return Err(crate::builtins::wrong_arg_type(other, "Array"))
             }
         };
         Ok(RubyValue::Hash(crate::collections::hash_new(pairs)))

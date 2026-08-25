@@ -131,9 +131,7 @@ ruby_class! {
         Ok(str_val(argv_files().into_iter().next().unwrap_or_else(|| "-".to_string())))
     }
     def "each_line" | "each"(recv, _arg?, &blk) {
-        let Some(RubyValue::Proc(p)) = blk else {
-            return Err(crate::dispatch::raise_no_block_yield());
-        };
+        let p = crate::builtins::need_block!(blk);
         let argf = recv_argf(recv)?;
         for line in all_lines(argf)? {
             argf.lineno.fetch_add(1, Ordering::Relaxed);

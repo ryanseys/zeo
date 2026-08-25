@@ -641,6 +641,32 @@ pub(crate) fn convert_name_of(v: &RubyValue) -> String {
     }
 }
 
+/// CRuby's coercion TypeError, spelled once: `no implicit conversion of X
+/// into Y`, with X rendered by [`convert_name_of`] (nil/true/false as the
+/// literals, everything else as its class name). Only for sites producing
+/// EXACTLY this text -- the close variants ("no implicit conversion from nil
+/// to integer", "... into Integer for {who}") keep their own strings.
+pub(crate) fn no_implicit(v: &RubyValue, want: &str) -> Signal {
+    crate::dispatch::raise_error(
+        "TypeError",
+        format!(
+            "no implicit conversion of {} into {want}",
+            convert_name_of(v)
+        ),
+    )
+}
+
+/// The class-check TypeError, spelled once: `wrong argument type X (expected
+/// Y)`, with X the value's CLASS name ([`class_name_of`] -- nil reads as
+/// `NilClass` here). The sites rendering nil as the literal go through
+/// [`check_type_name`] and keep their own strings.
+pub(crate) fn wrong_arg_type(v: &RubyValue, want: &str) -> Signal {
+    crate::dispatch::raise_error(
+        "TypeError",
+        format!("wrong argument type {} (expected {want})", class_name_of(v)),
+    )
+}
+
 /// The typed error constructors: `type_error!("no implicit conversion...")`
 /// over `raise_error("TypeError", format!(...))`, so the class name is spelled
 /// once here (never typo-able per site) and call sites read as what they
@@ -769,10 +795,12 @@ pub(crate) fn kw_take(src: Option<&RubyValue>, name: &str) -> Option<RubyValue> 
 
 /// A REQUIRED keyword: ruby's `missing keyword: :k` when it is absent.
 ///
-/// Unreached by the builtin surface, and measured rather than assumed: ruby
-/// declares NO required keyword on any row reachable from `Object` (a live
-/// diff of `#parameters` over 3,526 of its own rows finds zero `keyreq`).
-/// Kept because the grammar is complete without an exception.
+/// No builtin row references this, but it is NOT an orphan: `ruby_class!`
+/// (zeo-macros/src/lib.rs, the required-keyword arm) emits a call to it for
+/// any def that declares a required keyword. No such row exists today --
+/// measured, not assumed: a live diff of `#parameters` over 3,526 of ruby's
+/// own rows finds zero `keyreq` -- hence the allow. Deleting this breaks
+/// that macro arm.
 #[allow(dead_code)]
 #[inline(always)]
 pub(crate) fn kw_required(src: Option<&RubyValue>, name: &str) -> Result<RubyValue, Signal> {
@@ -786,9 +814,11 @@ pub(crate) fn kw_required(src: Option<&RubyValue>, name: &str) -> Result<RubyVal
 /// The one allocation this design adds, and only for a def declaring both --
 /// a `**kwrest` on its own keeps borrowing the peeled Hash untouched.
 ///
-/// Also unreached today, for the same measured reason: no ruby builtin row
-/// declares named keywords AND a keyrest. The shapes that carry a keyrest all
-/// carry the ANONYMOUS forwarding trio (`*, **, &`) instead.
+/// Like [`kw_required`], referenced only by `ruby_class!`'s emission
+/// (zeo-macros/src/lib.rs, the keyrest arm), for a shape no row uses today:
+/// no ruby builtin row declares named keywords AND a keyrest -- the shapes
+/// that carry a keyrest all carry the ANONYMOUS forwarding trio (`*, **, &`)
+/// instead. Deleting this breaks that macro arm.
 #[allow(dead_code)]
 #[inline(always)]
 pub(crate) fn kw_rest(src: Option<&RubyValue>, taken: &[&str]) -> Option<RubyValue> {
@@ -900,6 +930,14 @@ pub(crate) use arg_int;
 /// `Str` fast path (an `Arc` bump), `to_str` duck types accepted, CRuby's
 /// TypeError for the rest.
 macro_rules! arg_str {
+    ($args:expr_2021, $i:literal) => {
+        match &$args[$i] {
+            crate::RubyValue::Str(s) => s.clone(),
+            other => crate::builtins::convert::to_rstr(other)?,
+        }
+    };
+    // The same, for a parameter the def named rather than an index into the
+    // raw slice.
     ($v:expr_2021) => {
         match $v {
             crate::RubyValue::Str(s) => s.clone(),

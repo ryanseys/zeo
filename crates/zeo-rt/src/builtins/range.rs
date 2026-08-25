@@ -926,7 +926,7 @@ ruby_class! {
                 }
                 if exclusive { f.ceil() as i64 - 1 } else { f.floor() as i64 }
             }
-            Some(other) => return Err(type_error!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(other))),
+            Some(other) => return Err(crate::builtins::no_implicit(other, "Integer")),
         };
         Ok(RubyValue::Int((last - s + 1).max(0)))
     }

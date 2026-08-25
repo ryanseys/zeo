@@ -34,9 +34,10 @@
 //! `Thread#raise` and `Thread#kill` exactly as sleeping Ruby is.
 
 use super::convert::{to_value, value_of};
-use super::object::{args_of, send, wrong_type};
+use super::object::{args_of, send};
 use super::symbol::{Id, symbol_of};
 use super::value::{self, Value};
+use crate::builtins::wrong_arg_type;
 use crate::{RubyValue, Signal, Symbol};
 use std::ffi::{c_int, c_void};
 
@@ -406,7 +407,7 @@ fn new_fiber(
 fn fiber_send(fiber: Value, meth: &str, argc: c_int, argv: *const Value) -> Result<Value, Signal> {
     let f = unsafe { value_of(fiber) };
     if crate::dispatch::class_name(f.class_id()).as_deref() != Some("Fiber") {
-        return Err(wrong_type(&f, "Fiber"));
+        return Err(wrong_arg_type(&f, "Fiber"));
     }
     let args = unsafe { args_of(argc, argv) };
     to_value(&send(&f, meth, &args)?)

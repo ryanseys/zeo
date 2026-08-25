@@ -141,13 +141,7 @@ pub(super) fn flush_pins() {
 unsafe fn as_str(v: Value) -> Result<RStr, crate::Signal> {
     match unsafe { value_of(v) } {
         RubyValue::Str(s) => Ok(s),
-        other => Err(crate::dispatch::raise_error(
-            "TypeError",
-            format!(
-                "wrong argument type {} (expected String)",
-                crate::dispatch::class_name(other.class_id()).unwrap_or("Object".into())
-            ),
-        )),
+        other => Err(crate::builtins::wrong_arg_type(&other, "String")),
     }
 }
 
@@ -364,7 +358,7 @@ crate::cext_fn! {
         let d = unsafe { value_of(dst) };
         let s = unsafe { value_of(src) };
         if !matches!(s, RubyValue::Str(_)) {
-            return Err(super::object::wrong_type(&s, "String"));
+            return Err(crate::builtins::wrong_arg_type(&s, "String"));
         }
         super::object::send(&d, "<<", &[s])?;
         Ok(dst)
@@ -745,7 +739,7 @@ fn string_value_in(slot: *mut Value) -> Result<Value, crate::Signal> {
     }
     let out = super::object::send(&v, "to_str", &[])?;
     if !matches!(out, RubyValue::Str(_)) {
-        return Err(super::object::wrong_type(&v, "String"));
+        return Err(crate::builtins::wrong_arg_type(&v, "String"));
     }
     let converted = to_value(&out)?;
     // SAFETY: the caller's own slot again.

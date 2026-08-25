@@ -837,10 +837,7 @@ ruby_class! {
     def "primitive_convert" cfunc (recv, src, dst, dst_offset?, dst_bytesize?, flags?) {
         let c = as_converter(recv)?;
         let RubyValue::Str(dst_str) = dst else {
-            return Err(type_error!(
-                "no implicit conversion of {} into String",
-                crate::builtins::convert_name_of(dst)
-            ));
+            return Err(crate::builtins::no_implicit(dst, "String"));
         };
         let input = match src {
             RubyValue::Nil => Vec::new(),

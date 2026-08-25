@@ -801,10 +801,7 @@ pub fn block_arg_to_proc(v: crate::RubyValue) -> Result<Option<crate::RubyValue>
                     )),
                 };
             }
-            Err(type_error!(
-                "no implicit conversion of {} into Proc",
-                crate::builtins::convert_name_of(&other)
-            ))
+            Err(crate::builtins::no_implicit(&other, "Proc"))
         }
     }
 }

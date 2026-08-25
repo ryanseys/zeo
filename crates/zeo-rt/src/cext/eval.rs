@@ -24,9 +24,10 @@
 //! only shows through an aliased C method asking about itself.
 
 use super::convert::{to_value, value_of};
-use super::object::{args_of, cstr, send, wrong_type};
+use super::object::{args_of, cstr, send};
 use super::symbol::{Id, symbol_of};
 use super::value::{self, Value};
+use crate::builtins::wrong_arg_type;
 use crate::{RubyValue, Signal, Symbol};
 use std::ffi::{c_char, c_int, c_void};
 
@@ -281,7 +282,7 @@ crate::cext_fn! {
         let proc = unsafe { value_of(p) };
         match send(&proc, "arity", &[])? {
             RubyValue::Int(n) => Ok(n as c_int),
-            other => Err(wrong_type(&other, "Integer")),
+            other => Err(wrong_arg_type(&other, "Integer")),
         }
     }
 

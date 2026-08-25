@@ -388,21 +388,21 @@ ruby_class! {
     // ENV. `reject!` is the same removal but answers nil when NOTHING changed
     // (CRuby's bang-method convention).
     def "delete_if"(recv, &block) {
-        remove_matching(&require_block(block)?, true)?;
+        remove_matching(&crate::builtins::need_block!(block), true)?;
         Ok(recv.clone())
     }
     def "reject!"(recv, &block) {
-        let changed = remove_matching(&require_block(block)?, true)?;
+        let changed = remove_matching(&crate::builtins::need_block!(block), true)?;
         Ok(if changed { recv.clone() } else { RubyValue::Nil })
     }
     // `ENV.keep_if { |k, v| }` -- remove every pair the block REJECTS; answers
     // ENV. `select!`/`filter!` answer nil when nothing changed.
     def "keep_if"(recv, &block) {
-        remove_matching(&require_block(block)?, false)?;
+        remove_matching(&crate::builtins::need_block!(block), false)?;
         Ok(recv.clone())
     }
     def "select!" | "filter!"(recv, &block) {
-        let changed = remove_matching(&require_block(block)?, false)?;
+        let changed = remove_matching(&crate::builtins::need_block!(block), false)?;
         Ok(if changed { recv.clone() } else { RubyValue::Nil })
     }
     // `ENV.shift` -- remove and return the first `[name, value]` pair, nil if
@@ -435,22 +435,11 @@ ruby_class! {
     }
 }
 
-/// The Proc a block-taking ENV mutator requires, or CRuby's LocalJumpError.
-fn require_block(block: Option<RubyValue>) -> Result<RubyValue, crate::Signal> {
-    match block {
-        Some(b @ RubyValue::Proc(_)) => Ok(b),
-        _ => Err(crate::dispatch::raise_no_block_yield()),
-    }
-}
-
 /// Remove every environment pair for which `block(key, value)`'s truth equals
 /// `remove_when` (`true` for `delete_if`/`reject!`, `false` for `keep_if`/
 /// `select!`). Returns whether anything was removed, which the bang variants
 /// use to answer nil-on-no-change.
-fn remove_matching(block: &RubyValue, remove_when: bool) -> Result<bool, crate::Signal> {
-    let RubyValue::Proc(p) = block else {
-        unreachable!("require_block returns a Proc")
-    };
+fn remove_matching(p: &crate::RProc, remove_when: bool) -> Result<bool, crate::Signal> {
     let mut changed = false;
     for (k, v) in pairs() {
         if p.call(&[str_val(k.clone()), str_val(v)])?.truthy() == remove_when {

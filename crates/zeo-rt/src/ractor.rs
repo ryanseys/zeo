@@ -1492,10 +1492,7 @@ zeo_macros::ruby_class! {
         let Some(p) = as_port(port) else {
             // CRuby 4.0.6 SEGFAULTS here ([BUG] in <internal:ractor>); a
             // TypeError is this runtime's strictly-better answer.
-            return Err(crate::builtins::type_error!(
-                "wrong argument type {} (expected Ractor::Port)",
-                crate::class_name_of_value(port)
-            ));
+            return Err(crate::builtins::wrong_arg_type(port, "Ractor::Port"));
         };
         Ok(RubyValue::Bool(ractor_monitor(&recv.as_ractor_unchecked(), &p)))
     }

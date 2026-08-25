@@ -453,13 +453,7 @@ mod patched {
     }
 
     fn wrong(v: &RubyValue) -> crate::Signal {
-        crate::dispatch::raise_error(
-            "TypeError",
-            format!(
-                "wrong argument type {} (expected T_DATA)",
-                crate::dispatch::class_name(v.class_id()).unwrap_or("Object".into())
-            ),
-        )
+        crate::builtins::wrong_arg_type(v, "T_DATA")
     }
 
     crate::cext_fn! {

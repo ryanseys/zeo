@@ -43,23 +43,13 @@ fn out_of_range(what: &str) -> Signal {
     crate::dispatch::raise_error("RangeError", format!("{what} out of range"))
 }
 
-fn wrong_type(v: &RubyValue, want: &str) -> Signal {
-    crate::dispatch::raise_error(
-        "TypeError",
-        format!(
-            "wrong argument type {} (expected {want})",
-            crate::dispatch::class_name(v.class_id()).unwrap_or("Object".into())
-        ),
-    )
-}
-
 /// # Safety
 ///
 /// `v` is an extension's own `VALUE`.
 unsafe fn as_class(v: Value) -> Result<crate::dispatch::ClassId, Signal> {
     match unsafe { value_of(v) } {
         RubyValue::Class(cid) => Ok(cid),
-        other => Err(wrong_type(&other, "Class")),
+        other => Err(crate::builtins::wrong_arg_type(&other, "Class")),
     }
 }
 
@@ -105,10 +95,10 @@ crate::cext_fn! {
     fn rb_check_typeddata(obj: Value, expected: *const DataType) -> *mut c_void {
         let v = unsafe { value_of(obj) };
         let RubyValue::Object(o) = &v else {
-            return Err(wrong_type(&v, "TypedData"));
+            return Err(crate::builtins::wrong_arg_type(&v, "TypedData"));
         };
         let Some(d) = o.as_any().downcast_ref::<CData>() else {
-            return Err(wrong_type(&v, "TypedData"));
+            return Err(crate::builtins::wrong_arg_type(&v, "TypedData"));
         };
         let mut actual = d.data_type();
         while !actual.is_null() {
@@ -119,7 +109,7 @@ crate::cext_fn! {
             // SAFETY: a descriptor is a static in the extension's image.
             actual = unsafe { (*actual).parent };
         }
-        Err(wrong_type(&v, "the expected TypedData"))
+        Err(crate::builtins::wrong_arg_type(&v, "the expected TypedData"))
     }
 
     fn rb_utf8_encoding() -> Encoding {
@@ -295,7 +285,7 @@ crate::cext_fn! {
     fn rb_str_resize(v: Value, len: c_long) -> Value {
         let sv = unsafe { value_of(v) };
         let RubyValue::Str(s) = &sv else {
-            return Err(wrong_type(&sv, "String"));
+            return Err(crate::builtins::wrong_arg_type(&sv, "String"));
         };
         let want = len.max(0) as usize;
         let mut g = s.lock();
@@ -317,7 +307,7 @@ crate::cext_fn! {
     ) -> Value {
         let hv = unsafe { value_of(h) };
         let RubyValue::Hash(hh) = &hv else {
-            return Err(wrong_type(&hv, "Hash"));
+            return Err(crate::builtins::wrong_arg_type(&hv, "Hash"));
         };
         // A snapshot, so the callback may touch the hash without the walk
         // reading a moved row.
@@ -339,7 +329,7 @@ crate::cext_fn! {
             RubyValue::Int(n) => Ok(n),
             RubyValue::BigInt(b) => i64::try_from(&*b)
                 .map_err(|_| out_of_range("bignum too big to convert into `long long'")),
-            other => Err(wrong_type(&other, "Integer")),
+            other => Err(crate::builtins::wrong_arg_type(&other, "Integer")),
         }
     }
 
@@ -349,7 +339,7 @@ crate::cext_fn! {
                 .map_err(|_| out_of_range("negative value into unsigned")),
             RubyValue::BigInt(b) => u64::try_from(&*b)
                 .map_err(|_| out_of_range("bignum too big to convert into `unsigned long long'")),
-            other => Err(wrong_type(&other, "Integer")),
+            other => Err(crate::builtins::wrong_arg_type(&other, "Integer")),
         }
     }
 
@@ -359,7 +349,7 @@ crate::cext_fn! {
         let bits = match unsafe { value_of(v) } {
             RubyValue::Int(n) => 64 - n.unsigned_abs().leading_zeros(),
             RubyValue::BigInt(b) => b.magnitude().bits() as u32,
-            other => return Err(wrong_type(&other, "Integer")),
+            other => return Err(crate::builtins::wrong_arg_type(&other, "Integer")),
         };
         let bytes = usize::try_from(bits.div_ceil(8)).unwrap_or(0).max(1);
         if !nlz_bits.is_null() {
@@ -456,7 +446,7 @@ crate::cext_fn! {
         let h = unsafe { value_of(h) };
         let key = unsafe { value_of(key) };
         let RubyValue::Hash(h) = &h else {
-            return Err(wrong_type(&h, "Hash"));
+            return Err(crate::builtins::wrong_arg_type(&h, "Hash"));
         };
         to_value(&crate::value::collections::hash_lookup(h, &key).unwrap_or(RubyValue::Nil))
     }
@@ -465,7 +455,7 @@ crate::cext_fn! {
         let hv = unsafe { value_of(h) };
         let key = unsafe { value_of(key) };
         let RubyValue::Hash(hh) = &hv else {
-            return Err(wrong_type(&hv, "Hash"));
+            return Err(crate::builtins::wrong_arg_type(&hv, "Hash"));
         };
         match crate::value::collections::hash_lookup(hh, &key) {
             Some(v) => to_value(&v),

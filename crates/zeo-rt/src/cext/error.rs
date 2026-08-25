@@ -19,8 +19,9 @@
 //! `SystemCallError` -- which is what CRuby answers too.
 
 use super::convert::{to_value, value_of};
-use super::object::{cstr, send, wrong_type};
+use super::object::{cstr, send};
 use super::value::Value;
+use crate::builtins::wrong_arg_type;
 use crate::{RubyValue, Signal};
 use std::ffi::{c_char, c_int, c_long};
 
@@ -57,7 +58,7 @@ unsafe fn text_of(v: Value) -> Result<String, Signal> {
     match unsafe { value_of(v) } {
         RubyValue::Str(s) => Ok(s.lock().to_utf8_lossy().into_owned()),
         RubyValue::Nil => Ok(String::new()),
-        other => Err(wrong_type(&other, "String")),
+        other => Err(wrong_arg_type(&other, "String")),
     }
 }
 
@@ -299,7 +300,7 @@ fn wait_module(waiting: c_int) -> Result<RubyValue, Signal> {
         crate::dispatch::raise_error("NameError", "uninitialized constant IO".into())
     })?;
     let RubyValue::Class(io) = io else {
-        return Err(wrong_type(&io, "Class"));
+        return Err(wrong_arg_type(&io, "Class"));
     };
     crate::constants::const_get(io.0, name).ok_or_else(|| {
         crate::dispatch::raise_error("NameError", format!("uninitialized constant IO::{name}"))

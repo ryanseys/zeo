@@ -2452,11 +2452,11 @@ ruby_class! {
                 }
                 None => total,
             };
-            (start, (end_i - start).max(0), convert::to_rstr(&args[1])?, start)
+            (start, (end_i - start).max(0), arg_str!(args, 1), start)
         } else {
             let orig = convert::to_index(&args[0])?;
             let start = if orig < 0 { orig + total } else { orig };
-            (start, convert::to_index(&args[1])?, convert::to_rstr(&args[2])?, orig)
+            (start, convert::to_index(&args[1])?, arg_str!(args, 2), orig)
         };
         // The REPLACEMENT's own byte window, when the caller gave one: a
         // trailing Range in the range form, a trailing (index, length) pair
@@ -3794,10 +3794,7 @@ fn sub_gsub(
             // A String replacement still processes replacement escapes (`\\`,
             // `\&`/`\0`, `\``, `\'`) per match, exactly like the Regexp form;
             // `\1`..`\9` insert nothing (a String pattern has no groups).
-            let template = convert::to_rstr(&args[1])?
-                .lock()
-                .to_utf8_lossy()
-                .into_owned();
+            let template = arg_str!(args, 1).lock().to_utf8_lossy().into_owned();
             // An empty pattern matches (emptily) at every character boundary and
             // at the end: gsub inserts the replacement before each char and at
             // the end (`"hi".gsub("", "-") == "-h-i-"`); sub only at the start.

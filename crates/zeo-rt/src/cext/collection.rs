@@ -37,23 +37,13 @@ pub(super) fn flush_projections() {
     PROJECTIONS.with_borrow_mut(|p| p.clear());
 }
 
-fn wrong_type(v: &RubyValue, want: &str) -> crate::Signal {
-    crate::dispatch::raise_error(
-        "TypeError",
-        format!(
-            "wrong argument type {} (expected {want})",
-            crate::dispatch::class_name(v.class_id()).unwrap_or("Object".into())
-        ),
-    )
-}
-
 /// # Safety
 ///
 /// `v` is an extension's own `VALUE`.
 unsafe fn as_ary(v: Value) -> Result<RArray, crate::Signal> {
     match unsafe { value_of(v) } {
         RubyValue::Array(a) => Ok(a),
-        other => Err(wrong_type(&other, "Array")),
+        other => Err(crate::builtins::wrong_arg_type(&other, "Array")),
     }
 }
 
@@ -63,7 +53,7 @@ unsafe fn as_ary(v: Value) -> Result<RArray, crate::Signal> {
 unsafe fn as_hash(v: Value) -> Result<RHash, crate::Signal> {
     match unsafe { value_of(v) } {
         RubyValue::Hash(h) => Ok(h),
-        other => Err(wrong_type(&other, "Hash")),
+        other => Err(crate::builtins::wrong_arg_type(&other, "Hash")),
     }
 }
 

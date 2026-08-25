@@ -204,13 +204,7 @@ crate::cext_fn! {
     fn rb_float_value(v: Value) -> c_double {
         match unsafe { value_of(v) } {
             RubyValue::Float(f) => Ok(f),
-            other => Err(crate::dispatch::raise_error(
-                "TypeError",
-                format!(
-                    "wrong argument type {} (expected Float)",
-                    crate::dispatch::class_name(other.class_id()).unwrap_or("Object".into())
-                ),
-            )),
+            other => Err(crate::builtins::wrong_arg_type(&other, "Float")),
         }
     }
 }
