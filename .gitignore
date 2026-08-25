@@ -31,6 +31,10 @@ crates/zeo/src/class_surface.pregen.rs
 .worktrees/
 compile_flags.txt
 
+# Local working notes (research records, follow-up plans) -- deliberately
+# out of the repo; see notes/golden-format-research.md for the shape.
+/notes/
+
 # Local environment and logs
 .env
 .env.*
