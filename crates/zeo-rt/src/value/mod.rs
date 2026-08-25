@@ -238,6 +238,17 @@ pub(crate) fn container_identity(v: &RubyValue) -> Option<usize> {
     }
 }
 
+/// The class-name half of a `Queue`'s renderings -- sized and plain queues
+/// share one variant, so `display_with` and `dup_value`'s error message
+/// make the same split (`class_id` makes it again, by id).
+fn queue_kind_name(q: &RQueue) -> &'static str {
+    if crate::thread::queue_is_sized(q) {
+        "Thread::SizedQueue"
+    } else {
+        "Thread::Queue"
+    }
+}
+
 /// [`RubyValue::class_id`] as dispatch OBSERVES it: a container husk left by
 /// a `Ractor` move (whose variant class id cannot change) answers
 /// `Ractor::MovedObject`, everything else its ordinary class. Gated on the
@@ -359,6 +370,92 @@ impl RubyValue {
         self.display_with(&mut Vec::new())
     }
 
+    /// The builtin-reopen probe `display_with`/`inspect_with` share: a
+    /// reopened `to_s`/`inspect` on a non-`Object` receiver wins over the
+    /// per-variant rendering (`Object` receivers keep their own registry
+    /// probe inside the match arms). The result's payload is taken directly
+    /// when it's a `Str` -- re-dispatching would re-probe the same override
+    /// forever for an identity-shaped `to_s`; anything else re-renders
+    /// through `display_with`. `None` means no override applies and the
+    /// caller's own match decides.
+    fn reopen_render(
+        &self,
+        name: Symbol,
+        seen: &mut Vec<usize>,
+    ) -> Option<Result<String, crate::Signal>> {
+        if matches!(self, RubyValue::Object(_))
+            || !crate::dispatch::has_display_reopen(self.class_id())
+        {
+            return None;
+        }
+        let f = crate::dispatch::value_method(self.class_id(), 0, name)?;
+        Some(match f.call(self, &[], None) {
+            Ok(RubyValue::Str(s)) => Ok(s.lock().to_utf8_lossy().into_owned()),
+            Ok(other) => other.display_with(seen),
+            Err(sig) => Err(sig),
+        })
+    }
+
+    /// The one `Array` rendering `#to_s` and `#inspect` share -- a
+    /// container renders its ELEMENTS in inspect form either way
+    /// (`[1, 2].to_s` IS `"[1, 2]"`, real Ruby). `seen` is the caller's
+    /// visited stack; a self-referential array answers CRuby's `[...]`
+    /// marker.
+    fn render_array_inspect(
+        &self,
+        a: &RArray,
+        seen: &mut Vec<usize>,
+    ) -> Result<String, crate::Signal> {
+        let ptr = container_identity(self).expect("Array is a container");
+        if seen.contains(&ptr) {
+            return Ok("[...]".to_string());
+        }
+        // Snapshot first: `seen` guards a container that contains ITSELF,
+        // but not an element whose `inspect` reaches back into this array.
+        // Holding the payload guard across that dispatch deadlocks a
+        // non-reentrant Mutex.
+        let items = crate::collections::array_snapshot(a);
+        seen.push(ptr);
+        let body = items
+            .iter()
+            .map(|e| e.inspect_with(seen))
+            .collect::<Result<Vec<_>, _>>();
+        seen.pop();
+        Ok(format!("[{}]", body?.join(", ")))
+    }
+
+    /// [`Self::render_array_inspect`]'s Hash twin -- ruby 3.4+ format:
+    /// symbol keys as `name: value`, everything else as `key => value`, no
+    /// brace padding, `{...}` for a cycle.
+    fn render_hash_inspect(
+        &self,
+        h: &RHash,
+        seen: &mut Vec<usize>,
+    ) -> Result<String, crate::Signal> {
+        let ptr = container_identity(self).expect("Hash is a container");
+        if seen.contains(&ptr) {
+            return Ok("{...}".to_string());
+        }
+        // Snapshot for the same reason as the Array twin.
+        let pairs = crate::collections::hash_pairs_snapshot(h);
+        seen.push(ptr);
+        let body = pairs
+            .iter()
+            .map(|(k, v)| {
+                Ok(match k {
+                    RubyValue::Symbol(s) => format!(
+                        "{}: {}",
+                        crate::builtins::symbol::hash_key(&s.name()),
+                        v.inspect_with(seen)?
+                    ),
+                    _ => format!("{} => {}", k.inspect_with(seen)?, v.inspect_with(seen)?),
+                })
+            })
+            .collect::<Result<Vec<_>, crate::Signal>>();
+        seen.pop();
+        Ok(format!("{{{}}}", body?.join(", ")))
+    }
+
     /// `to_display_string`'s recursive worker: `seen` is the traversal
     /// STACK of container identities (pushed on entry, popped on exit --
     /// not a permanent "already printed" set: a DAG that shares one array
@@ -370,21 +467,10 @@ impl RubyValue {
         // A builtin-reopen `to_s` override wins -- real Ruby's
         // behavior for `puts`/interpolation, oracle-verified (`class
         // Integer; def to_s; "int"; end` makes `puts 5`/`"v=#{5}"` print
-        // "int"). Object receivers keep their own registry probe in the
-        // match below; the result's payload is taken directly when it's a
-        // `Str` (re-dispatching would re-probe the same override forever
-        // for an identity-shaped `to_s`). A RAISING override propagates --
-        // `puts obj` with a raising `to_s` is a catchable exception in
-        // Ruby, not a crash.
-        if !matches!(self, RubyValue::Object(_))
-            && crate::dispatch::has_display_reopen(self.class_id())
-            && let Some(f) =
-                crate::dispatch::value_method(self.class_id(), 0, crate::symbol::wk::to_s())
-        {
-            return match f.call(self, &[], None)? {
-                RubyValue::Str(s) => Ok(s.lock().to_utf8_lossy().into_owned()),
-                other => other.display_with(seen),
-            };
+        // "int"). A RAISING override propagates -- `puts obj` with a
+        // raising `to_s` is a catchable exception in Ruby, not a crash.
+        if let Some(r) = self.reopen_render(crate::symbol::wk::to_s(), seen) {
+            return r;
         }
         Ok(match self {
             RubyValue::Nil => String::new(),
@@ -398,64 +484,14 @@ impl RubyValue {
             RubyValue::Float(f) => float_to_display_string(*f),
             RubyValue::Symbol(s) => s.name(),
             RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
-            // `puts` on an `Array` recursively flattens and prints each
-            // element on its own line (not `[1, 2, 3]`, which is `inspect`'s
-            // job, not `to_s`'s) -- real, verified CRuby behavior, not a
-            // simplification.
             // `Array#to_s` IS `#inspect` (`[1, 2]`), and so are `print`/
             // string interpolation of an Array. Only `puts` flattens onto
             // separate lines, and it does that in `io::render_puts`, never
             // through this display path.
-            RubyValue::Array(a) => {
-                let ptr = container_identity(self).expect("Array is a container");
-                if seen.contains(&ptr) {
-                    return Ok("[...]".to_string());
-                }
-                // Snapshot first: `seen` guards a container that contains
-                // ITSELF, but not an element whose `inspect` reaches back into
-                // this array. Holding the payload guard across that dispatch
-                // deadlocks a non-reentrant Mutex.
-                let items = crate::collections::array_snapshot(a);
-                seen.push(ptr);
-                let body = items
-                    .iter()
-                    .map(|e| e.inspect_with(seen))
-                    .collect::<Result<Vec<_>, _>>();
-                seen.pop();
-                format!("[{}]", body?.join(", "))
-            }
-            // An approximation of `Hash#inspect` (symbol keys as `key:
-            // value`, everything else as `key => value`) -- good enough for
-            // the `Int`/`Symbol`-keyed hashes the common cases use, but
-            // NOT a faithful `inspect` for nested `String`s (no quoting).
-            // Same posture as `Object`'s "#<Object>" placeholder above: a
-            // documented simplification, not silent wrongness.
-            RubyValue::Hash(h) => {
-                let ptr = container_identity(self).expect("Hash is a container");
-                if seen.contains(&ptr) {
-                    return Ok("{...}".to_string());
-                }
-                // Snapshot for the same reason as the Array arm above.
-                let pairs = crate::collections::hash_pairs_snapshot(h);
-                seen.push(ptr);
-                // `Hash#to_s` IS `#inspect`, so keys and values render in
-                // their inspect form (`{a: "x"}`, not `{a: x}`) here too.
-                let body = pairs
-                    .iter()
-                    .map(|(k, v)| {
-                        Ok(match k {
-                            RubyValue::Symbol(s) => format!(
-                                "{}: {}",
-                                crate::builtins::symbol::hash_key(&s.name()),
-                                v.inspect_with(seen)?
-                            ),
-                            _ => format!("{} => {}", k.inspect_with(seen)?, v.inspect_with(seen)?),
-                        })
-                    })
-                    .collect::<Result<Vec<_>, crate::Signal>>();
-                seen.pop();
-                format!("{{{}}}", body?.join(", "))
-            }
+            RubyValue::Array(a) => self.render_array_inspect(a, seen)?,
+            // `Hash#to_s` IS `#inspect` too, so keys and values render in
+            // their inspect form (`{a: "x"}`, not `{a: x}`) here as well.
+            RubyValue::Hash(h) => self.render_hash_inspect(h, seen)?,
             RubyValue::Range(r) => {
                 let (start, end, exclusive) = (&r.start, &r.end, r.exclusive);
                 let s = match start {
@@ -517,11 +553,7 @@ impl RubyValue {
                 format!("#<Thread::Mutex:0x{addr:016x}>")
             }
             RubyValue::Queue(q) => {
-                let kind = if crate::thread::queue_is_sized(q) {
-                    "Thread::SizedQueue"
-                } else {
-                    "Thread::Queue"
-                };
+                let kind = queue_kind_name(q);
                 let addr = std::sync::Arc::as_ptr(q) as *const () as usize;
                 format!("#<{kind}:0x{addr:016x}>")
             }
@@ -572,18 +604,10 @@ impl RubyValue {
         // propagates into CONTAINER rendering too (`[5].inspect` ->
         // `[I<5>]` with an `Integer#inspect` override -- real Ruby's
         // `rb_inspect` dispatches per element, oracle-verified), which this
-        // probe's position inside the recursive worker reproduces. Same
-        // `Str`-payload shortcut as `display_with`'s probe; a raising
+        // probe's position inside the recursive worker reproduces. A raising
         // override propagates.
-        if !matches!(self, RubyValue::Object(_))
-            && crate::dispatch::has_display_reopen(self.class_id())
-            && let Some(f) =
-                crate::dispatch::value_method(self.class_id(), 0, crate::symbol::wk::inspect())
-        {
-            return match f.call(self, &[], None)? {
-                RubyValue::Str(s) => Ok(s.lock().to_utf8_lossy().into_owned()),
-                other => other.display_with(seen),
-            };
+        if let Some(r) = self.reopen_render(crate::symbol::wk::inspect(), seen) {
+            return r;
         }
         Ok(match self {
             RubyValue::Nil => "nil".to_string(),
@@ -614,46 +638,8 @@ impl RubyValue {
             RubyValue::Complex(c) => crate::builtins::complex::cpx_format(c, true)?,
             RubyValue::Symbol(s) => crate::builtins::symbol::inspect_name(&s.name()),
             RubyValue::Str(s) => crate::encoding::inspect(&s.lock()),
-            RubyValue::Array(a) => {
-                let ptr = container_identity(self).expect("Array is a container");
-                if seen.contains(&ptr) {
-                    return Ok("[...]".to_string());
-                }
-                // Snapshot before recursing -- see the `display_with` twin.
-                let items = crate::collections::array_snapshot(a);
-                seen.push(ptr);
-                let body = items
-                    .iter()
-                    .map(|e| e.inspect_with(seen))
-                    .collect::<Result<Vec<_>, _>>();
-                seen.pop();
-                format!("[{}]", body?.join(", "))
-            }
-            // Ruby 3.4+ `Hash#inspect` format: `{a: 1, "k" => 2}` -- symbol
-            // keys as `name: value` with no braces-padding spaces.
-            RubyValue::Hash(h) => {
-                let ptr = container_identity(self).expect("Hash is a container");
-                if seen.contains(&ptr) {
-                    return Ok("{...}".to_string());
-                }
-                let pairs = crate::collections::hash_pairs_snapshot(h);
-                seen.push(ptr);
-                let body = pairs
-                    .iter()
-                    .map(|(k, v)| {
-                        Ok(match k {
-                            RubyValue::Symbol(s) => format!(
-                                "{}: {}",
-                                crate::builtins::symbol::hash_key(&s.name()),
-                                v.inspect_with(seen)?
-                            ),
-                            _ => format!("{} => {}", k.inspect_with(seen)?, v.inspect_with(seen)?),
-                        })
-                    })
-                    .collect::<Result<Vec<_>, crate::Signal>>();
-                seen.pop();
-                format!("{{{}}}", body?.join(", "))
-            }
+            RubyValue::Array(a) => self.render_array_inspect(a, seen)?,
+            RubyValue::Hash(h) => self.render_hash_inspect(h, seen)?,
             RubyValue::Range(r) => {
                 let (start, end, exclusive) = (&r.start, &r.end, r.exclusive);
                 // An absent endpoint renders as nothing (`..5`, `1..`) -- EXCEPT
@@ -1558,11 +1544,7 @@ impl RubyValue {
                 return Err(type_error!("allocator undefined for Thread"));
             }
             RubyValue::Queue(q) => {
-                let kind = if crate::thread::queue_is_sized(q) {
-                    "Thread::SizedQueue"
-                } else {
-                    "Thread::Queue"
-                };
+                let kind = queue_kind_name(q);
                 return Err(crate::builtins::no_method_error!(
                     "undefined method 'initialize_copy' for an instance of {kind}"
                 ));
