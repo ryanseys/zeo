@@ -143,18 +143,8 @@ end
 /// back explicitly rather than requiring callers to know it's always the
 /// last-pushed node.
 pub fn parse_and_lower(source: &str) -> Result<(Hir, NodeId), CompileError> {
-    let (hir, root, _gem_records) = parse_and_lower_with(
-        source,
-        None,
-        None,
-        0,
-        crate::CompileMode::Program,
-        &[],
-        &[],
-        &[],
-        None,
-        None,
-    )?;
+    let (hir, root, _gem_records) =
+        parse_and_lower_with(source, &crate::CompileOptions::default())?;
     Ok((hir, root))
 }
 
@@ -185,28 +175,16 @@ fn magic_encoding_comment(source: &str) -> Option<String> {
     (!name.is_empty()).then_some(name)
 }
 
-/// `parse_and_lower` plus the file context compile-time
-/// `require` resolution needs: `input_path` (the requiring-file directory
-/// for the main file's own `require_relative` calls -- `None` means any
-/// `require_relative` fails with CRuby's "cannot infer basepath") and the
-/// ordered `-I` search roots for plain `require`. The main file's
-/// statements go through `loader::lower_main_file` (which recognizes the
-/// require/load call shapes at top-level statement position and splices
-/// resolved files into this same arena); the exception prelude and `eval`
-/// bodies keep going through `parse_and_lower_into`, where those shapes are
-/// rejected by `lower_node` instead.
-#[allow(clippy::too_many_arguments)]
+/// `parse_and_lower` plus the file context compile-time `require`
+/// resolution needs -- see [`CompileOptions`](crate::CompileOptions). The
+/// main file's statements go through `loader::lower_main_file` (which
+/// recognizes the require/load call shapes at top-level statement position
+/// and splices resolved files into this same arena); the exception prelude
+/// and `eval` bodies keep going through `parse_and_lower_into`, where those
+/// shapes are rejected by `lower_node` instead.
 pub fn parse_and_lower_with(
     source: &str,
-    input_path: Option<&std::path::Path>,
-    file_name: Option<&std::path::Path>,
-    line_offset: u32,
-    mode: crate::CompileMode,
-    load_roots: &[std::path::PathBuf],
-    package_dirs: &[std::path::PathBuf],
-    gem_paths: &[std::path::PathBuf],
-    lockfile: Option<&std::path::Path>,
-    root_gem: Option<&crate::Gem>,
+    opts: &crate::CompileOptions,
 ) -> Result<(Hir, NodeId, Vec<crate::gem_report::GemRecord>), CompileError> {
     // The exception-class prefix is the same source for every compile, so it
     // is lowered ONCE into a template arena and cloned in, rather than
@@ -245,29 +223,17 @@ pub fn parse_and_lower_with(
     hir.frozen_string_literal = crate::hir::magic_frozen_string_literal(source);
     // Before a single statement lowers: what a compile is FOR decides a
     // handful of folds (see `Hir::cvar_is_toplevel`).
-    hir.mode = mode;
+    hir.mode = opts.mode;
     hir.builtin_exceptions_len = exceptions_len;
     // A snippet is its own compile and would otherwise have never heard of an
     // FFI type an earlier one -- or the program -- declared.
-    if mode.is_eval() {
+    if opts.mode.is_eval() {
         crate::ffi_vocab::seed(&mut hir);
     }
     // This is THE boundary where a located `LowerError` becomes a renderable
     // `CompileError`: the error and the `Hir::files` table it points into
     // are both in scope here and nowhere further out.
-    let (main_statements, gem_records) = match loader::lower_main_file(
-        &mut hir,
-        source,
-        input_path,
-        file_name,
-        line_offset,
-        mode,
-        load_roots,
-        package_dirs,
-        gem_paths,
-        lockfile,
-        root_gem,
-    ) {
+    let (main_statements, gem_records) = match loader::lower_main_file(&mut hir, source, opts) {
         Ok(v) => v,
         Err(e) => return Err(CompileError::lower(e, &hir.files)),
     };

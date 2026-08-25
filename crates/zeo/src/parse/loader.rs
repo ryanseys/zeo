@@ -256,23 +256,13 @@ pub fn read_source(path: &Path) -> Result<String, String> {
 /// user's own source (the exception prelude and `eval` bodies keep going
 /// through plain `parse_and_lower_into`, where the three call shapes are
 /// rejected by `lower_node` instead).
-#[allow(
-    clippy::too_many_arguments,
-    reason = "one parameter per resolution root the loader searches"
-)]
 pub(super) fn lower_main_file(
     hir: &mut Hir,
     source: &str,
-    input_path: Option<&Path>,
-    file_name: Option<&Path>,
-    line_offset: u32,
-    mode: crate::CompileMode,
-    load_roots: &[PathBuf],
-    package_dirs: &[PathBuf],
-    gem_paths: &[PathBuf],
-    lockfile: Option<&Path>,
-    root_gem: Option<&crate::Gem>,
+    opts: &crate::CompileOptions,
 ) -> PResult<(Vec<NodeId>, Vec<crate::gem_report::GemRecord>)> {
+    let input_path = opts.input_path.as_deref();
+    let line_offset = opts.line_offset;
     // The requiring-file directory for the main file's own require_relative
     // calls -- canonicalized so require_relative composes with the dedup
     // layer exactly like CRuby's realpath-of-the-requiring-iseq base.
@@ -288,13 +278,14 @@ pub(super) fn lower_main_file(
     };
     // The search roots, kept for the runtime's cosmetic `$LOAD_PATH` (see
     // `LoaderState::search_roots`) -- as given, the way `ruby -I` reports them.
-    hir.loader.search_roots = load_roots
+    hir.loader.search_roots = opts
+        .load_roots
         .iter()
         .map(|p| p.to_string_lossy().into_owned())
         .collect();
     let bundled_dir = bundled_gems_dir();
     let mut loader = Loader {
-        roots: load_roots.to_vec(),
+        roots: opts.load_roots.clone(),
         // The gems zeo itself ships are ALWAYS discoverable, appended
         // last so any caller-supplied dir shadows them (first-name-wins).
         // They are part of the compiler the way CRuby's rubylibdir is part of
@@ -303,7 +294,8 @@ pub(super) fn lower_main_file(
         // miss its Ruby half, which is how `StringScanner::Error` would go
         // missing and turn a raise into a panic.
         packages: discover_packages(
-            &package_dirs
+            &opts
+                .package_dirs
                 .iter()
                 .cloned()
                 .chain(bundled_dir.clone())
@@ -329,11 +321,11 @@ pub(super) fn lower_main_file(
     // gem it satisfies natively or can't provide. Store gems are APPENDED, so
     // a bundled zeo gem of the same name shadows them (first-name-wins), and
     // never override the compiler's own libraries.
-    if let Some(lock) = lockfile
-        && !gem_paths.is_empty()
+    if let Some(lock) = opts.lockfile.as_deref()
+        && !opts.gem_paths.is_empty()
     {
         let parsed = super::lockfile::parse_file(lock)?;
-        let resolution = super::gem_store::resolve(gem_paths, &parsed)?;
+        let resolution = super::gem_store::resolve(&opts.gem_paths, &parsed)?;
         for (name, roots) in resolution.roots {
             if !loader.packages.iter().any(|g| g.name == name) {
                 let version = parsed
@@ -385,7 +377,7 @@ pub(super) fn lower_main_file(
     // names its subject here, so a feature the subject squats resolves to
     // the gem actually under test rather than to an alphabetically earlier
     // dependency.
-    if let Some(root) = root_gem
+    if let Some(root) = &opts.root_gem
         && let Some(pos) = loader.packages.iter().position(|g| g.name == root.name())
     {
         let subject = loader.packages.remove(pos);
@@ -395,14 +387,14 @@ pub(super) fn lower_main_file(
     // What `__FILE__` and every span report. A source with no path on
     // disk can still have a NAME -- a run-time `eval`'s is
     // `(eval at f.rb:14)`, which is what its backtrace rows must say.
-    let named = file_name.or(input_path);
+    let named = opts.file_name.as_deref().or(input_path);
     let main_name = named.map_or_else(|| "-e".to_string(), |p| p.display().to_string());
     // A snippet is parsed in a method's context, so `yield` is valid there
     // -- CRuby says so by handing prism a scope, and prism's own check is
     // the one thing that changes (the node is built either way). Every
     // other jump keyword stays refused: CRuby refuses those in an `eval`
     // too.
-    let ignore = |m: &str| mode.is_eval() && m == "Invalid yield";
+    let ignore = |m: &str| opts.mode.is_eval() && m == "Invalid yield";
     if let Some(err) = result.errors().find(|e| !ignore(e.message())) {
         return Err(LowerError::syntax_reported(
             format!("parse error: {}", err.message()),

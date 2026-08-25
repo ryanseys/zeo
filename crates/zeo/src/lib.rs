@@ -264,18 +264,7 @@ fn analyze_on_this_thread(
 ) -> Result<(analyze::Analyzed, FrontEnd), CompileError> {
     let start = std::time::Instant::now();
     memguard::set_phase(memguard::Phase::ParseLower);
-    let (mut hir, root, gem_records) = parse::parse_and_lower_with(
-        source,
-        opts.input_path.as_deref(),
-        opts.file_name.as_deref(),
-        opts.line_offset,
-        opts.mode,
-        &opts.load_roots,
-        &opts.package_dirs,
-        &opts.gem_paths,
-        opts.lockfile.as_deref(),
-        opts.root_gem.as_ref(),
-    )?;
+    let (mut hir, root, gem_records) = parse::parse_and_lower_with(source, opts)?;
     // A `require`/`load` that SURVIVED lowering is one the loader could not
     // resolve. `--strict-static-require` makes that an error HERE rather
     // than a run-time question -- the same predicate
@@ -393,18 +382,7 @@ pub fn analyze_snippet(
     source: &str,
     opts: &CompileOptions,
 ) -> Result<analyze::Analyzed, CompileError> {
-    let (hir, root, _records) = parse::parse_and_lower_with(
-        source,
-        opts.input_path.as_deref(),
-        opts.file_name.as_deref(),
-        opts.line_offset,
-        opts.mode,
-        &opts.load_roots,
-        &opts.package_dirs,
-        &opts.gem_paths,
-        opts.lockfile.as_deref(),
-        opts.root_gem.as_ref(),
-    )?;
+    let (hir, root, _records) = parse::parse_and_lower_with(source, opts)?;
     analyze::analyze(hir, root)
 }
 
