@@ -10,7 +10,8 @@
 #
 # Only the constants naming a TYPE are listed. `FFI::Type` also carries four
 # naming a CLASS -- `Array`, `Function`, `Struct` and `Mapped`, for the
-# non-scalar type descriptors -- which zeo does not have yet.
+# non-scalar type descriptors -- pinned by
+# `tests/ffi_type_descriptor_classes.rb`.
 require "ffi"
 
 types = FFI::Type::Builtin.constants.sort.select do |name|

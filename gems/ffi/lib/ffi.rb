@@ -362,11 +362,22 @@ module FFI
     end
   end
 
+  # The gem names `Type::Function` twice more; the descriptor classes above
+  # are the canonical names (`FFI::ArrayType` and friends), as in the gem.
+  CallbackInfo = FunctionType
+
+  # Qualified on purpose: writing these inside a `class Type` body makes the
+  # compiler's FFI prescan misroute this file's later `class Struct` reopen
+  # (`layout` and friends vanish). Recorded in the overhaul plan backlog.
+  Type::Array = FFI::ArrayType
+  Type::Function = FFI::FunctionType
+  Type::Struct = FFI::StructByValue
+
   class Type
     # A type that converts on the way in and out -- what an `enum` field's
     # descriptor is. The conversion itself lives in the struct's generated
     # accessor; this records the native type underneath it.
-    class Mapped
+    class Mapped < Type
       attr_reader :native_type
 
       def initialize(native_type) = @native_type = native_type
