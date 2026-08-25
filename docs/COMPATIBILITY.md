@@ -66,15 +66,13 @@ replaces.
   (poisoning `$stdout` included); Zeo refuses with `can not move IO object.`
   A moved `Range` keeps its shell in Zeo (Range is an inline value here)
   where CRuby poisons it.
-- **`IO::Buffer.for(string)` copies.** Zeo strings are not stably
-  addressable, so the buffer copies the bytes in; the block form copies back
-  into the string at exit, which reproduces CRuby's observable end state.
-  What it cannot reproduce is a concurrent observer seeing mid-block writes.
 - **`IO::Buffer#resize` never invalidates a slice.** The backing grows in
   place and never shrinks, so a slice taken before a resize keeps answering
   (CRuby's slice also answers, over memory it happens not to have moved).
-- **`RubyVM::AbstractSyntaxTree` node ids are zeo-numbered.** Prism's
-  internal ids are not exposed through its Rust bindings. Types, locations,
+- **`RubyVM::AbstractSyntaxTree` node ids are zeo-numbered.** CRuby's AST
+  ids are a third numbering, neither prism's nor zeo's, so reproducing this
+  row means reproducing CRuby's own allocation order. Prism's real ids ARE
+  read, for `node_id_for_backtrace_location`. Types, locations,
   children orderings, `#source` and `#script_lines` match the oracle (pinned
   by `tests/rubyvm_ast.rb`); a construct outside the mapped tier answers an
   honest `:UNKNOWN` leaf rather than raising. `SyntaxError` messages carry

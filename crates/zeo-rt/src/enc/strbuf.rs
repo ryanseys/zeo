@@ -90,6 +90,18 @@ impl StrBuf {
         &self.bytes
     }
 
+    /// The bytes, writable IN PLACE -- the length cannot change, so no
+    /// caller can invalidate a window someone else holds.
+    ///
+    /// The coderange cache is dropped, because a byte write can turn a
+    /// 7-bit string into a broken one and nothing else here would notice.
+    /// `IO::Buffer.for` is the only caller: CRuby's buffer really aliases
+    /// its string's storage, and this is what lets zeo's share one too.
+    pub fn bytes_mut(&mut self) -> &mut [u8] {
+        self.coderange.set(CodeRange::Unknown);
+        &mut self.bytes
+    }
+
     pub fn bytesize(&self) -> usize {
         self.bytes.len()
     }

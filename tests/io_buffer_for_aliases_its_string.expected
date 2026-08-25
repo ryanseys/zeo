@@ -1,0 +1,8 @@
+"Zbcdef"
+"ZbcdeZ"
+"ZbcdeZ"
+"hello"
+true
+[:refused, IO::Buffer::AccessError]
+["Héllo", "UTF-8", true]
+"A\x00\x00\x00"

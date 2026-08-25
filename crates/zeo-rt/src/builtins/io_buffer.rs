@@ -50,7 +50,17 @@ const DEFAULT_SIZE: usize = 65536;
 /// owning mutex, which is what makes the raw pointer Send/Sync-safe here.
 enum Mem {
     Heap(Vec<u8>),
-    Map { ptr: usize, len: usize },
+    Map {
+        ptr: usize,
+        len: usize,
+    },
+    /// `IO::Buffer.for(string)`'s backing IS the string. CRuby's buffer
+    /// aliases the string's storage, so a write is visible through the
+    /// string before the block ends -- and holding the value here gives zeo
+    /// the same thing without a stable byte address, which its
+    /// `Arc<Mutex<StrBuf>>` strings do not have. The string's own mutex is
+    /// the lock CRuby models as "the string is locked for the duration".
+    Str(RubyValue),
 }
 
 struct Backing {
@@ -75,11 +85,19 @@ impl Backing {
         })
     }
 
+    /// A window onto a string's own bytes -- see [`Mem::Str`].
+    fn of_string(s: RubyValue) -> Arc<Backing> {
+        Arc::new(Backing {
+            mem: PlMutex::new(Mem::Str(s)),
+        })
+    }
+
     /// The address `#inspect` prints -- the storage base, like CRuby's.
     fn base_addr(&self) -> usize {
         match &*self.mem.lock() {
             Mem::Heap(v) => v.as_ptr() as usize,
             Mem::Map { ptr, .. } => *ptr,
+            Mem::Str(v) => str_of(v).lock().bytes().as_ptr() as usize,
         }
     }
 
@@ -89,6 +107,7 @@ impl Backing {
             Mem::Map { ptr, len } => {
                 f(unsafe { std::slice::from_raw_parts(*ptr as *const u8, *len) })
             }
+            Mem::Str(v) => f(str_of(v).lock().bytes()),
         }
     }
 
@@ -98,6 +117,7 @@ impl Backing {
             Mem::Map { ptr, len } => {
                 f(unsafe { std::slice::from_raw_parts_mut(*ptr as *mut u8, *len) })
             }
+            Mem::Str(v) => f(str_of(v).lock().bytes_mut()),
         }
     }
 
@@ -110,6 +130,15 @@ impl Backing {
         {
             v.resize(n, 0);
         }
+    }
+}
+
+/// The `RStr` inside a [`Mem::Str`] backing. Only `IO::Buffer.for` builds
+/// one, and only from a `RubyValue::Str`.
+fn str_of(v: &RubyValue) -> &crate::collections::RStr {
+    match v {
+        RubyValue::Str(s) => s,
+        _ => unreachable!("a Mem::Str backing is only ever built from a String"),
     }
 }
 
@@ -587,8 +616,9 @@ ruby_class! {
     const NETWORK_ENDIAN = RubyValue::Int(8);
 
     // `IO::Buffer.for(string)` -- readonly view without a block, writable
-    // with one (the block form copies back into the string at exit; see the
-    // module doc for the aliasing divergence).
+    // with one. Both share the STRING's own bytes rather than a copy, so a
+    // write is visible through the string before the block ends, as CRuby's
+    // aliasing buffer is.
     def self."for"(_recv, arg, &block) {
         let RubyValue::Str(s) = arg else {
             return Err(type_error!(
@@ -596,10 +626,9 @@ ruby_class! {
                 crate::builtins::check_type_name(arg)
             ));
         };
-        let bytes = s.lock().bytes().to_vec();
-        let len = bytes.len();
+        let len = s.lock().bytesize();
         let mut st = BufState {
-            backing: Some(Backing::heap(bytes)),
+            backing: Some(Backing::of_string(arg.clone())),
             offset: 0,
             len,
             flags: EXTERNAL | READONLY,
@@ -618,16 +647,12 @@ ruby_class! {
             unreachable!("a literal block is a Proc");
         };
         let result = p.call(std::slice::from_ref(&buf));
-        // Write back and detach, error or not (CRuby's ensure).
+        // Detach, error or not (CRuby's ensure). Nothing is copied back:
+        // the writes already landed in the string.
         let b = recv_buffer(&buf);
         let mut bst = b.state.lock();
-        if let (Some(RubyValue::Str(dst)), Some(backing)) = (bst.source.take(), bst.backing.take())
-        {
-            let bytes = backing.with(|all| all[bst.offset..bst.offset + bst.len].to_vec());
-            let mut d = dst.lock();
-            let enc = d.encoding();
-            d.replace_bytes(bytes, enc);
-        }
+        bst.source.take();
+        bst.backing.take();
         bst.len = 0;
         bst.offset = 0;
         drop(bst);
