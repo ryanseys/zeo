@@ -12,10 +12,10 @@ function u0:1(i64, i64) -> i32 ccall {
     sig1 = (i64, i64, i64, i64, i32, i32) -> i32 ccall
     sig2 = (i32) ccall
     sig3 = () ccall
-    fn0 = u0:2 sig0
-    fn1 = u0:3 sig1
-    fn2 = u0:4 sig2
-    fn3 = u0:5 sig3
+    fn0 = colocated u0:2 sig0
+    fn1 = colocated u0:3 sig1
+    fn2 = colocated u0:4 sig2
+    fn3 = colocated u0:5 sig3
 
 block0(v0: i64, v1: i64):
     v2 = symbol_value.i64 gv0
@@ -142,11 +142,11 @@ function u2:3(i64, i64, i64, i64, i64, i64) -> i32 ccall {
     sig2 = (i32) ccall
     sig3 = (i64) ccall
     sig4 = () ccall
-    fn0 = u0:3 sig0
-    fn1 = u0:19 sig1
-    fn2 = u0:4 sig2
-    fn3 = u0:6 sig3
-    fn4 = u0:5 sig4
+    fn0 = colocated u0:3 sig0
+    fn1 = colocated u0:19 sig1
+    fn2 = colocated u0:4 sig2
+    fn3 = colocated u0:6 sig3
+    fn4 = colocated u0:5 sig4
 
 block0(v0: i64, v1: i64, v2: i64, v3: i64, v4: i64, v5: i64):
     v6 = symbol_value.i64 gv0
@@ -220,11 +220,11 @@ function u2:4(i64, i64, i64, i64, i64, i64) -> i32 ccall {
     sig2 = (i32) ccall
     sig3 = (i64) ccall
     sig4 = () ccall
-    fn0 = u0:3 sig0
-    fn1 = u0:19 sig1
-    fn2 = u0:4 sig2
-    fn3 = u0:6 sig3
-    fn4 = u0:5 sig4
+    fn0 = colocated u0:3 sig0
+    fn1 = colocated u0:19 sig1
+    fn2 = colocated u0:4 sig2
+    fn3 = colocated u0:6 sig3
+    fn4 = colocated u0:5 sig4
 
 block0(v0: i64, v1: i64, v2: i64, v3: i64, v4: i64, v5: i64):
     v6 = symbol_value.i64 gv0
@@ -325,23 +325,23 @@ function u0:0(i64) -> i32 ccall {
     sig14 = (i64) ccall
     sig15 = (i64, i64, i64, i64, i64, i64) -> i32 ccall
     sig16 = () ccall
-    fn0 = u0:3 sig0
-    fn1 = u0:11 sig1
-    fn2 = u0:12 sig2
-    fn3 = u0:13 sig3
-    fn4 = u0:14 sig4
-    fn5 = u0:15 sig5
-    fn6 = u0:4 sig6
-    fn7 = u0:16 sig7
-    fn8 = u0:17 sig8
+    fn0 = colocated u0:3 sig0
+    fn1 = colocated u0:11 sig1
+    fn2 = colocated u0:12 sig2
+    fn3 = colocated u0:13 sig3
+    fn4 = colocated u0:14 sig4
+    fn5 = colocated u0:15 sig5
+    fn6 = colocated u0:4 sig6
+    fn7 = colocated u0:16 sig7
+    fn8 = colocated u0:17 sig8
     fn9 = colocated u0:18 sig9
-    fn10 = u0:20 sig10
-    fn11 = u0:21 sig11
-    fn12 = u0:22 sig12
-    fn13 = u0:23 sig13
-    fn14 = u0:24 sig14
+    fn10 = colocated u0:20 sig10
+    fn11 = colocated u0:21 sig11
+    fn12 = colocated u0:22 sig12
+    fn13 = colocated u0:23 sig13
+    fn14 = colocated u0:24 sig14
     fn15 = colocated u0:25 sig15
-    fn16 = u0:5 sig16
+    fn16 = colocated u0:5 sig16
 
 block0(v0: i64):
     v1 = symbol_value.i64 gv0

@@ -295,6 +295,14 @@ impl<'e, 'f> Fx<'e, 'f> {
         }
         let id = self.em.import(name);
         let f = self.em.module.declare_func_in_func(id, self.b.func);
+        // On the OBJECT path a capi call is direct (`bl` + linker
+        // relocation, with the linker's own range veneers as the escape):
+        // the import-linkage default went through the GOT -- an adrp+ldr
+        // pair per call on every hot path. The JIT keeps the default; its
+        // symbols resolve at runtime lookup, not by a static linker.
+        if matches!(self.em.module, super::module::ClifModule::Object(_)) {
+            self.b.func.dfg.ext_funcs[f].colocated = true;
+        }
         self.frefs.insert(name, f);
         f
     }
