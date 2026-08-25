@@ -1,6 +1,6 @@
-# `IO.select` is not implemented, so the program dies on line 2 before any of
-# the Dir-from-descriptor coverage runs.
-# IO.select / IO#wait_* / IO.for_fd / Dir.for_fd / Dir class-constant NoMethodError
+# IO readiness and Dir-from-descriptor coverage, all implemented: IO.select
+# over pipes with a zero timeout, IO#wait_readable/_writable/_priority/#wait,
+# IO.for_fd, Dir.for_fd/fchdir errors, and a Dir singleton NoMethodError.
 p IO.select(nil, nil, nil, 0)
 r, w = IO.pipe
 w.write("x")

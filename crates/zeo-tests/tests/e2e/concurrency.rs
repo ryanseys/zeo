@@ -821,17 +821,19 @@ fn thread_registry_and_kill_raise() {
         p Thread.list.size
 
         q = Queue.new
+        ready = Queue.new
         log = []
         t = Thread.new do
           begin
             log << :started
+            ready << :ok
             q.pop
             log << :unreached
           ensure
             log << :ensure_ran
           end
         end
-        Thread.pass
+        ready.pop
         t.kill
         t.join
         p log
@@ -840,13 +842,14 @@ fn thread_registry_and_kill_raise() {
         q2 = Queue.new
         r = Thread.new do
           begin
+            ready << :ok
             q2.pop
             "no"
           rescue => e
             "caught: #{e.message}"
           end
         end
-        Thread.pass
+        ready.pop
         r.raise("boom")
         p r.value
 

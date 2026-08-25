@@ -158,8 +158,15 @@ mod tests {
     /// The process's own image always opens, so a null path is the one
     /// `dlopen` call that must NOT be mistaken for a failure -- and zeo
     /// never makes it, because a null path means "this executable".
+    ///
+    /// The subject differs per OS: glibc refuses to `dlopen` a PIE
+    /// executable by path (every Rust test binary is one), so Linux opens
+    /// the C library the process already maps instead.
     #[test]
     fn the_loader_reports_success_as_a_handle() {
+        #[cfg(target_os = "linux")]
+        let me = CString::new("libc.so.6").expect("no NUL");
+        #[cfg(not(target_os = "linux"))]
         let me = CString::new(
             std::env::current_exe().map_or(String::new(), |p| p.to_string_lossy().into_owned()),
         )
