@@ -193,13 +193,16 @@ zeo_rt_send_class_cached ([Ptr, U32, Ptr, U32, Ptr, Usize, Ptr, U32, Ptr]) -> So
 zeo_rt_send_super_class_from_args ([U32, U32, U32, Ptr, U8, Ptr, Ptr, Ptr]) -> Some(I32)
 zeo_rt_send_super_dynamic_args ([Ptr, Ptr, U8, Ptr, Ptr, Ptr]) -> Some(I32)
 zeo_rt_send_super_from_args ([Ptr, U32, U32, Ptr, U8, Ptr, Ptr, Ptr]) -> Some(I32)
+zeo_rt_send_value_args_cached ([Ptr, U32, Ptr, U32, Ptr, U8, Ptr, Ptr, Ptr]) -> Some(I32)
 zeo_rt_send_value_args_in ([U32, Ptr, U32, Ptr, U8, Ptr, Ptr, Ptr]) -> Some(I32)
 zeo_rt_send_value_cached ([Ptr, U32, Ptr, U32, Ptr, Usize, Ptr, Ptr]) -> Some(I32)
 zeo_rt_send_value_explicit_args_in ([U32, Ptr, U32, Ptr, U8, Ptr, Ptr, U32, Ptr]) -> Some(I32)
 zeo_rt_send_value_explicit_in ([U32, Ptr, U32, Ptr, Usize, Ptr, U32, Ptr]) -> Some(I32)
 zeo_rt_send_value_explicit_kw_in ([U32, Ptr, U32, Ptr, Usize, Ptr, Ptr, U32, Ptr]) -> Some(I32)
 zeo_rt_send_value_in ([U32, Ptr, U32, Ptr, Usize, Ptr, Ptr]) -> Some(I32)
+zeo_rt_send_value_kw_cached ([Ptr, U32, Ptr, U32, Ptr, Usize, Ptr, Ptr, Ptr]) -> Some(I32)
 zeo_rt_send_value_kw_in ([U32, Ptr, U32, Ptr, Usize, Ptr, Ptr, Ptr]) -> Some(I32)
+zeo_rt_send_value_vcall_cached ([Ptr, U32, Ptr, U32, Ptr]) -> Some(I32)
 zeo_rt_send_value_vcall_in ([U32, Ptr, U32, Ptr]) -> Some(I32)
 zeo_rt_set_line ([U32]) -> None
 zeo_rt_signal_drop ([Ptr]) -> None

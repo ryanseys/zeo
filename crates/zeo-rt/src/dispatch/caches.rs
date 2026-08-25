@@ -105,6 +105,39 @@ pub fn send_value_cached(
     args: &[RubyValue],
     block: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
+    cached_send_core(site, box_id, recv, name, args, block, |block| {
+        send_value_explicit_in(box_id, recv, name, args, block, site.caller_class)
+    })
+}
+
+/// [`send_value_cached`] for a VCALL (`foo` bare, argument-less): the same
+/// cache, with the vcall MISS tail -- ruby's "undefined local variable or
+/// method" NameError instead of NoMethodError.
+pub fn send_value_vcall_cached(
+    site: &'static CallSite,
+    box_id: u32,
+    recv: &RubyValue,
+    name: Symbol,
+) -> Result<RubyValue, Signal> {
+    cached_send_core(site, box_id, recv, name, &[], None, |_block| {
+        send_value_vcall_in(box_id, recv, name)
+    })
+}
+
+/// The shared body of the value-cache entries: everything the cache can
+/// serve, with the route it cannot serve handed back to `miss` (which gets
+/// the untouched block). [`send_value_cached`]'s documentation covers the
+/// rules; the kw/splat capi twins reach here through their argument
+/// builders with the full trailing-hash argument list.
+fn cached_send_core(
+    site: &'static CallSite,
+    box_id: u32,
+    recv: &RubyValue,
+    name: Symbol,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+    miss: impl FnOnce(Option<RubyValue>) -> Result<RubyValue, Signal>,
+) -> Result<RubyValue, Signal> {
     // A cache HIT calls the target without ever reaching
     // `send_value_in_reason`, which is where the dynamic entry's stack
     // check lives -- so the check has to happen here too, or a recursion
@@ -213,7 +246,7 @@ pub fn send_value_cached(
     }
     // Every route the cache did not serve -- a `Class` receiver, a box, a live
     // overlay, a site that has already seen another class -- still has to ask.
-    send_value_explicit_in(box_id, recv, name, args, block, site.caller_class)
+    miss(block)
 }
 
 /// One CLASS-method call site's monomorphic inline cache -- `Math.sin(x)`,

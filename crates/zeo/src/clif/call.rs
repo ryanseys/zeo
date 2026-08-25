@@ -218,9 +218,12 @@ pub(crate) fn implicit_send(
         let zero_box = fx.box_v();
         let ss = fx.temp_slot();
         let out = fx.slot_addr(ss, 0);
+        // Implicit receiver = FCALL, so the site is always cacheable; the
+        // vcall entry only changes the MISS message.
+        let cache = fx.callsite_ptr(FCALL);
         let status = fx.call_status(
-            "zeo_rt_send_value_vcall_in",
-            &[zero_box, self_ptr, sym, out],
+            "zeo_rt_send_value_vcall_cached",
+            &[cache, zero_box, self_ptr, sym, out],
         );
         fx.fallible(status);
         fx.owned_created += 1;
@@ -478,8 +481,23 @@ pub(crate) fn splat_send(
     let blk_ptr = blk.open(fx, site)?;
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
-    let status = match recv.op {
-        Some(_) => {
+    // Same rule as `kw_send`: a statically known caller gets the cached
+    // entry, a dynamic-self body keeps the uncached pair.
+    let implicit_caller = match recv.op {
+        Some(_) => static_caller(fx, bypass),
+        None => Some(FCALL),
+    };
+    let status = match (implicit_caller, recv.op) {
+        (Some(caller), _) => {
+            let cache = fx.callsite_ptr(caller);
+            fx.call(
+                "zeo_rt_send_value_args_cached",
+                &[
+                    cache, zero_box, recv_ptr, sym, args_ptr, unmark, kw_ptr, blk_ptr, out,
+                ],
+            )
+        }
+        (None, Some(_)) => {
             let caller = caller_class(fx, bypass);
             fx.call(
                 "zeo_rt_send_value_explicit_args_in",
@@ -488,7 +506,7 @@ pub(crate) fn splat_send(
                 ],
             )
         }
-        None => fx.call(
+        (None, None) => fx.call(
             "zeo_rt_send_value_args_in",
             &[
                 zero_box, recv_ptr, sym, args_ptr, unmark, kw_ptr, blk_ptr, out,
@@ -541,8 +559,25 @@ pub(crate) fn kw_send(
     let blk_ptr = blk.open(fx, site)?;
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
-    let status = match recv.op {
-        Some(_) => {
+    // A statically known caller gets the CACHED kw entry (one entry for
+    // both shapes -- an implicit receiver rides FCALL in the site, the
+    // explicit one its caller class); a dynamic-self body keeps the
+    // uncached pair, `dynamic_send_argv`'s rule.
+    let implicit_caller = match recv.op {
+        Some(_) => static_caller(fx, bypass),
+        None => Some(FCALL),
+    };
+    let status = match (implicit_caller, recv.op) {
+        (Some(caller), _) => {
+            let cache = fx.callsite_ptr(caller);
+            fx.call(
+                "zeo_rt_send_value_kw_cached",
+                &[
+                    cache, zero_box, recv_ptr, sym, argv_ptr, argc_v, kw_ptr, blk_ptr, out,
+                ],
+            )
+        }
+        (None, Some(_)) => {
             let caller = caller_class(fx, bypass);
             fx.call(
                 "zeo_rt_send_value_explicit_kw_in",
@@ -551,7 +586,7 @@ pub(crate) fn kw_send(
                 ],
             )
         }
-        None => fx.call(
+        (None, None) => fx.call(
             "zeo_rt_send_value_kw_in",
             &[
                 zero_box, recv_ptr, sym, argv_ptr, argc_v, kw_ptr, blk_ptr, out,

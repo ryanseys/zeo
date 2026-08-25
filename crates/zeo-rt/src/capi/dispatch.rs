@@ -222,6 +222,92 @@ unsafe fn with_kw_args<R>(
     send(&full, block)
 }
 
+/// [`crate::dispatch::send_value_cached`] with call-site keywords: the
+/// keyword Hash is marked and appended exactly as the uncached kw twins
+/// do, then the full argument list goes through the ordinary value cache.
+/// One entry serves the implicit and the explicit shapes -- the site's
+/// own `caller_class` (`FCALL` for implicit) carries the visibility
+/// question, as it does for every cached send.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_send_value_kw_cached(
+    site: &'static crate::dispatch::CallSite,
+    box_id: u32,
+    recv: *const RubyValue,
+    sym: u32,
+    argv: *const RubyValue,
+    argc: usize,
+    kw: *const RubyValue,
+    blk: *mut RubyValue,
+    out: *mut RubyValue,
+) -> i32 {
+    let r = unsafe {
+        with_kw_args(argv, argc, kw, blk, |args, block| {
+            crate::dispatch::send_value_cached(
+                site,
+                box_id,
+                &*recv,
+                Symbol::from_u32(sym),
+                args,
+                block,
+            )
+        })
+    };
+    status_out(r, out)
+}
+
+/// [`crate::dispatch::send_value_cached`] with a runtime-built argument
+/// Array (a `*` splat site) -- [`zeo_rt_send_value_kw_cached`]'s splat
+/// sibling, over the same [`with_array_args`] convention as the uncached
+/// entries.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_send_value_args_cached(
+    site: &'static crate::dispatch::CallSite,
+    box_id: u32,
+    recv: *const RubyValue,
+    sym: u32,
+    args: *const RubyValue,
+    unmark: u8,
+    kw: *const RubyValue,
+    blk: *mut RubyValue,
+    out: *mut RubyValue,
+) -> i32 {
+    let r = unsafe {
+        with_array_args(args, unmark, kw, blk, |full, block| {
+            crate::dispatch::send_value_cached(
+                site,
+                box_id,
+                &*recv,
+                Symbol::from_u32(sym),
+                full,
+                block,
+            )
+        })
+    };
+    status_out(r, out)
+}
+
+/// [`crate::dispatch::send_value_vcall_cached`] -- the cached VCALL entry
+/// (bare identifier, zero arguments; only the MISS message differs from
+/// an ordinary send).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_send_value_vcall_cached(
+    site: &'static crate::dispatch::CallSite,
+    box_id: u32,
+    recv: *const RubyValue,
+    sym: u32,
+    out: *mut RubyValue,
+) -> i32 {
+    status_out(
+        crate::dispatch::send_value_vcall_cached(
+            site,
+            box_id,
+            unsafe { &*recv },
+            Symbol::from_u32(sym),
+        ),
+        out,
+    )
+}
+
 /// [`zeo_rt_send_value_in`] with call-site keywords.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zeo_rt_send_value_kw_in(

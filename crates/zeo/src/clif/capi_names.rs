@@ -995,6 +995,11 @@ pub const CAPI: &[CapiSig] = &[
         ret: Some(I32),
     },
     CapiSig {
+        name: "zeo_rt_send_value_args_cached",
+        params: &[Ptr, U32, Ptr, U32, Ptr, U8, Ptr, Ptr, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
         name: "zeo_rt_send_value_args_in",
         params: &[U32, Ptr, U32, Ptr, U8, Ptr, Ptr, Ptr],
         ret: Some(I32),
@@ -1025,8 +1030,18 @@ pub const CAPI: &[CapiSig] = &[
         ret: Some(I32),
     },
     CapiSig {
+        name: "zeo_rt_send_value_kw_cached",
+        params: &[Ptr, U32, Ptr, U32, Ptr, Usize, Ptr, Ptr, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
         name: "zeo_rt_send_value_kw_in",
         params: &[U32, Ptr, U32, Ptr, Usize, Ptr, Ptr, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
+        name: "zeo_rt_send_value_vcall_cached",
+        params: &[Ptr, U32, Ptr, U32, Ptr],
         ret: Some(I32),
     },
     CapiSig {
