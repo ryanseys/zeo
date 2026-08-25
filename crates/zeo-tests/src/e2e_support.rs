@@ -16,10 +16,41 @@ pub struct RunResult {
     pub status: std::process::ExitStatus,
 }
 
-/// Compile `source` with `opts` through the default backend, link the
-/// object into a throwaway binary, run it with `env`/`args`, and hand back
-/// what it printed. The one place the e2e tier builds a program.
+/// `ZEO_E2E_BACKEND`: which tier runs the e2e programs. Unset or
+/// `jit-child` spawns the built `zeo` CLI on the JIT (a ~20ms spawn);
+/// `aot` restores the link-a-binary path -- the one tier that shells `cc`
+/// per test, which is what made the suite cost minutes. CI's AOT leg runs
+/// the suite under `aot` so both tiers stay covered.
+fn e2e_backend() -> &'static str {
+    static B: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    B.get_or_init(|| match std::env::var("ZEO_E2E_BACKEND") {
+        Ok(v) if !v.is_empty() => v,
+        _ => "jit-child".to_string(),
+    })
+}
+
+/// Compile `source` with `opts` and run it with `env`/`args`, handing back
+/// what it printed. The one place the e2e tier builds a program; the
+/// backend is [`e2e_backend`]'s.
 pub fn compile_link_run(
+    source: &str,
+    opts: &zeo::CompileOptions,
+    env: &[(&str, &str)],
+    args: &[&str],
+) -> RunResult {
+    match e2e_backend() {
+        "aot" => compile_link_run_aot(source, opts, env, args),
+        "jit-child" => run_jit_child(source, opts, env, args),
+        other => panic!("unknown ZEO_E2E_BACKEND '{other}' (jit-child or aot)"),
+    }
+}
+
+/// The AOT tier: object-compile in process, link a throwaway binary, run
+/// it. What ships, and what the artifact-shape tests (`linkage.rs`,
+/// `debuginfo.rs`) reason about -- they build their own artifacts and never
+/// come through here, but the whole suite re-runs on this tier under CI's
+/// AOT leg.
+pub fn compile_link_run_aot(
     source: &str,
     opts: &zeo::CompileOptions,
     env: &[(&str, &str)],
@@ -43,6 +74,73 @@ pub fn compile_link_run(
         .output()
         .unwrap_or_else(|e| panic!("running compiled binary: {e}"));
     let _ = std::fs::remove_file(&bin);
+    RunResult {
+        stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+        status: out.status,
+    }
+}
+
+/// The JIT tier: spawn the built `zeo` CLI on the in-process JIT. The
+/// program's exit status -- and a death by signal -- IS the child's, so the
+/// `process_exit.rs` assertions keep their meaning, and an `-e` compile is
+/// named `-e` by the CLI exactly as the in-process harness named it.
+///
+/// The compiler is probed in process first, so a program zeo REJECTS stays
+/// a loud panic naming the error (the AOT tier's contract) instead of a
+/// nonzero child exit a test would misread as its program's.
+fn run_jit_child(
+    source: &str,
+    opts: &zeo::CompileOptions,
+    env: &[(&str, &str)],
+    args: &[&str],
+) -> RunResult {
+    // No silent drops: every option a test sets must reach the child as a
+    // flag, and these two have no consumer among compile_link_run's callers
+    // today -- a new caller must extend the forwarding, not lose the option.
+    assert!(
+        opts.gem_report.is_none() && opts.root_gem.is_none(),
+        "the jit-child tier does not forward gem_report/root_gem; extend run_jit_child"
+    );
+    zeo::check_program_with(source, opts)
+        .unwrap_or_else(|e| panic!("check_program_with failed: {}", String::from(e)));
+    let cli = crate::golden::zeo_cli().unwrap_or_else(|e| panic!("{e}"));
+    let mut cmd = std::process::Command::new(cli);
+    cmd.arg("--backend").arg("jit");
+    for root in &opts.load_roots {
+        cmd.arg("-I").arg(root);
+    }
+    for dir in &opts.package_dirs {
+        cmd.arg("--gems").arg(dir);
+    }
+    for root in &opts.embed_sources {
+        cmd.arg("--embed-sources").arg(root);
+    }
+    if opts.strict_static_require {
+        cmd.arg("--strict-static-require");
+    }
+    // The external gem store: the CLI requires the pair together, and a
+    // path that already IS a lockfile is taken as given by derive_lockfile.
+    for store in &opts.gem_paths {
+        cmd.arg("--gem-path").arg(store);
+    }
+    if let Some(lock) = &opts.lockfile {
+        cmd.arg("--bundle-gemfile").arg(lock);
+    }
+    match &opts.input_path {
+        Some(path) => cmd.arg(path),
+        None => cmd.arg("-e").arg(source),
+    };
+    // `--` first: the program's args are the PROGRAM's, not CLI options.
+    if !args.is_empty() {
+        cmd.arg("--").args(args);
+    }
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    let out = cmd
+        .output()
+        .unwrap_or_else(|e| panic!("spawning the zeo CLI: {e}"));
     RunResult {
         stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
         stderr: String::from_utf8_lossy(&out.stderr).into_owned(),

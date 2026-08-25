@@ -43,9 +43,12 @@ ci-jit: all
 	$(NEXTEST) --workspace --no-fail-fast
 
 # The same CLIF through an object file and a real link -- what ships.
-# Scoped to the golden corpora: it links a binary per case.
+# Scoped to the golden corpora plus the e2e suite: it links a binary per
+# case, which is exactly why the DEFAULT e2e tier is the JIT child and the
+# link tier lives here.
 ci-aot: all
 	ZEO_GOLDEN_BACKEND=aot $(NEXTEST) -p zeo-tests --test examples --test spinel --test gaps --no-fail-fast
+	ZEO_E2E_BACKEND=aot $(NEXTEST) -p zeo-tests --test e2e --no-fail-fast
 
 # The compiled-ownership ledger: a non-zero balance at exit is a leak or a
 # double-consume in the emitted lowering. Emitted code only, so golden corpora only.

@@ -445,7 +445,8 @@ fn golden_backend() -> String {
 /// for us: a test target has no cargo dependency edge to a BINARY target,
 /// so a stale `zeo` would run yesterday's compiler over today's goldens and
 /// report green. Stat-only, and it never shells cargo -- it says what to run.
-fn zeo_cli() -> Result<PathBuf, String> {
+/// Shared with the e2e harness's JIT-child runner.
+pub(crate) fn zeo_cli() -> Result<PathBuf, String> {
     let mut p = std::env::current_exe().map_err(|e| format!("test binary path: {e}"))?;
     p.pop(); // deps/<test-bin> -> deps
     p.pop(); // deps -> target/<profile>
