@@ -185,34 +185,6 @@ fn magic_encoding_comment(source: &str) -> Option<String> {
     (!name.is_empty()).then_some(name)
 }
 
-/// A `# frozen_string_literal: true` magic comment in the leading comment
-/// block (after an optional shebang). CRuby only honors it there, before any
-/// code; a blank or code line ends the region.
-fn magic_frozen_string_literal(source: &str) -> bool {
-    for (i, line) in source.lines().enumerate() {
-        let line = line.trim_start();
-        if i == 0 && line.starts_with("#!") {
-            continue;
-        }
-        if !line.starts_with('#') {
-            break;
-        }
-        let lower = line.to_ascii_lowercase();
-        if let Some(idx) = lower.find("frozen_string_literal") {
-            let rest = line[idx + "frozen_string_literal".len()..].trim_start();
-            if let Some(rest) = rest.strip_prefix(':') {
-                let value: String = rest
-                    .trim_start()
-                    .chars()
-                    .take_while(|c| c.is_ascii_alphanumeric())
-                    .collect();
-                return value.eq_ignore_ascii_case("true");
-            }
-        }
-    }
-    false
-}
-
 /// `parse_and_lower` plus the file context compile-time
 /// `require` resolution needs: `input_path` (the requiring-file directory
 /// for the main file's own `require_relative` calls -- `None` means any
@@ -270,7 +242,7 @@ pub fn parse_and_lower_with(
             Err(e) => return Err(CompileError::lower(e, &hir.files)),
         };
     }
-    hir.frozen_string_literal = magic_frozen_string_literal(source);
+    hir.frozen_string_literal = crate::hir::magic_frozen_string_literal(source);
     // Before a single statement lowers: what a compile is FOR decides a
     // handful of folds (see `Hir::cvar_is_toplevel`).
     hir.mode = mode;
