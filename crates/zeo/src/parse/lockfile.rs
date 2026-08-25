@@ -367,14 +367,14 @@ mod tests {
     /// including a native precompiled gem with a platform suffix and the
     /// `CHECKSUMS`/`BUNDLED WITH` sections.
     ///
-    /// The path leaves this crate on purpose: the fixture is one gem store
-    /// that the `zeo-tests` end-to-end suite also compiles against, and a
-    /// second copy here would drift from it. `zeo-tests` is the unpublished
-    /// crate, so the store stays out of the packaged `zeo`.
+    /// The fixture is the one gem store the e2e suite (tests/e2e/ffi.rs)
+    /// also compiles against; a second copy here would drift from it. It
+    /// lives under /tests, which the packaging whitelist excludes, so the
+    /// store stays out of the packaged `zeo`.
     #[test]
     fn parses_the_checked_in_fixture_lockfile() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../zeo-tests/tests/fixtures/gem_store/Gemfile.lock");
+            .join("tests/fixtures/gem_store/Gemfile.lock");
         let lock = parse_file(&path).unwrap();
         let gem = |n: &str| lock.gems.iter().find(|g| g.name == n).unwrap();
 
