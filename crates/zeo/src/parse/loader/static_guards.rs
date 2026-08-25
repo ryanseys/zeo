@@ -3,7 +3,8 @@
 //! `RUBY_ENGINE == 'jruby'`, ...) while FILES ARE STILL BEING LOADED, before
 //! any `Compiler` exists -- so it reads only constants the build bakes in.
 //! Deliberately much narrower than [`crate::guard_fold`], which runs later
-//! with the whole program in hand.
+//! with the whole program in hand. Distinct from `analyze/static_guards.rs`,
+//! which folds guards over the finished program with a `Compiler` in hand.
 
 /// A build-time-decidable platform guard's answer, or `None` for every other
 /// condition. Deliberately much narrower than [`crate::guard_fold`]: this runs

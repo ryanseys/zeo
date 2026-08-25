@@ -125,6 +125,20 @@ pub(super) fn resolve_or_create_lexical(
     None
 }
 
+/// Registers one `class`/`module` definition (or REOPENING) into the
+/// `Compiler`, recursively descending nested `ClassDef`s. `cref` is the
+/// ENCLOSING lexical chain (outermost first,
+/// `Compiler::cref_of`'s order) -- empty at the top level -- used to
+/// resolve the qualified-form prefix, the superclass, and
+/// include/extend/prepend targets, exactly as real Ruby resolves each of
+/// those in the scope ENCLOSING the definition.
+///
+/// `name` may be a qualified path (`"Store::Item"` -- the `class
+/// Store::Item ... end` form): the prefix must already resolve (real
+/// Ruby's own NameError posture), the leaf registers under it as
+/// namespace parent, and the class is marked `qualified_def` so its cref
+/// is just itself (see `ClassInfo::qualified_def`'s docs). A leading `::`
+/// anchors the definition at the top level from any nesting depth.
 // Every parameter is a distinct piece of the definition site (same
 // posture as `register_method`); `def_node` is the site's own `ClassDef`
 // marker for document-order body execution (`Compiler::class_body_sites`).
