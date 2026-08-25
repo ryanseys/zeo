@@ -1,8 +1,10 @@
 # Zeo
 
 Zeo compiles a whole Ruby program to native code. It reads the source with
-[Prism], analyzes the entire program at once, lowers it to [Cranelift] IR, and
-links a runtime that is already compiled. There is no interpreter to boot and
+[Prism], analyzes the entire program at once, lowers it to [Cranelift] IR,
+and links `libzeo.a` — Zeo's own Ruby runtime, written in Rust and compiled
+ahead of time: the object model, the core classes, the dispatcher, threads,
+fibers, and the reference-counted heap. There is no interpreter to boot and
 no JIT to warm up. The machine that runs the binary needs no Ruby.
 
 ```console
