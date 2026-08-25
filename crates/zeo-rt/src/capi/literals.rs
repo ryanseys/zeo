@@ -73,6 +73,39 @@ pub unsafe extern "C" fn zeo_rt_array_len(a: *const RubyValue) -> usize {
     }
 }
 
+/// `Array#[]` with a proven-Int index: ruby's own negative-from-end and
+/// out-of-range->nil (`array_get`). Infallible; emitted only under the
+/// emitter's Array-tag + Int-tag + gate guard.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_array_aref_int(a: *const RubyValue, i: i64, out: *mut RubyValue) {
+    let v = match unsafe { &*a } {
+        RubyValue::Array(arr) => crate::array_get(arr, i),
+        other => panic!("zeo_rt_array_aref_int on a non-array: {other:?}"),
+    };
+    super::leakcheck::created(&v);
+    unsafe { out.write(v) };
+}
+
+/// `Array#[]=` with a proven-Int index: the row's scalar branch (frozen
+/// check first, nil-pad growth, the too-small IndexError). `v` is
+/// BORROWED; the expression's value (`v` itself) writes to `out`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_array_aset_int(
+    a: *const RubyValue,
+    i: i64,
+    v: *const RubyValue,
+    out: *mut RubyValue,
+) -> i32 {
+    let (recv, value) = unsafe { (&*a, &*v) };
+    let r = match recv {
+        RubyValue::Array(arr) => {
+            crate::builtins::array::array_aset_int_checked(arr, recv, i, value)
+        }
+        other => panic!("zeo_rt_array_aset_int on a non-array: {other:?}"),
+    };
+    status_out(r, out)
+}
+
 /// One element, cloned out (`nil` past the end -- Ruby's `[]`).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zeo_rt_array_get(a: *const RubyValue, i: usize, out: *mut RubyValue) {

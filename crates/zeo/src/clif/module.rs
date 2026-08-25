@@ -127,6 +127,9 @@ pub(crate) struct Emitter {
     /// The runtime's `zeo_rt_pending_interrupts` counter (an import, not
     /// a program-local table) -- what `Fx::check_ints` loads inline.
     pub pending_id: DataId,
+    /// The runtime's `zeo_rt_gates` word: an emitter fast path loads it
+    /// inline, and only ZERO takes the guard-free arm.
+    pub gates_id: DataId,
     pub reopen_flags_id: DataId,
     /// `(builtin class id, method name)` -> its byte in `zeo_reopen_flags`.
     /// See [`super::names::REOPEN_FLAGS`]; empty for a program that reopens no
@@ -304,6 +307,9 @@ impl Emitter {
             .map_err(|e| {
                 CodegenError::internal(format!("declaring zeo_rt_pending_interrupts: {e}"))
             })?;
+        let gates_id = module
+            .declare_data("zeo_rt_gates", Linkage::Import, true, false)
+            .map_err(|e| CodegenError::internal(format!("declaring zeo_rt_gates: {e}")))?;
         Ok(Emitter {
             module,
             ptr,
@@ -318,6 +324,7 @@ impl Emitter {
             const_sites_id,
             const_sites: 0,
             pending_id,
+            gates_id,
             syms: super::statics::SymPool::default(),
             rodata: Vec::new(),
             rodata_offsets: HashMap::new(),

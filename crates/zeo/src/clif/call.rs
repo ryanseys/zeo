@@ -741,6 +741,132 @@ fn dynamic_send_argv(
     })
 }
 
+/// `a[i]` / `a[i] = v` under a run-time Array + Int guard: the aref/aset
+/// core called directly, with today's cached dynamic send as the other
+/// arm. `None` = the site does not qualify (wrong shape, or the program
+/// itself touches `Array#[]`/`#[]=`) and the caller lowers as before.
+///
+/// The guard is three questions. Receiver tag == Array and index tag ==
+/// Int prove the shapes; the gate word proves nothing in the process has
+/// ever armed a gate -- ZERO implies no runtime definition, no singleton,
+/// no ancestry splice, no Ractor move, no patched class. A nonzero word
+/// asks the real question (`iter_inline_ok_for`, which also checks the
+/// per-class patched set) before choosing an arm. Both rows sit in
+/// `SPECIALIZED` (no synthetic frame), so the frameless core is
+/// backtrace-identical.
+///
+/// Every operand is evaluated ONCE, in ruby's order, into the same argv
+/// both arms read -- the slow arm never re-lowers.
+pub(crate) fn indexed_send(
+    fx: &mut Fx,
+    site: NodeId,
+    recv: NodeId,
+    name: &str,
+    args: &[ArrayElem],
+) -> CResult<Option<Operand>> {
+    use cranelift_codegen::ir::MemFlagsData;
+    use cranelift_codegen::ir::condcodes::IntCC;
+    use zeo_abi::abi::{PAYLOAD_OFFSET, TAG_OFFSET, ValueTag};
+    let aset = match (name, args.len()) {
+        ("[]", 1) => false,
+        ("[]=", 2) => true,
+        _ => return Ok(None),
+    };
+    if args.iter().any(|a| matches!(a, ArrayElem::Splat(_))) {
+        return Ok(None);
+    }
+    // The program's own text touching the rows stands the whole site down:
+    // a document-position reopen applies POSITIONALLY, which only the real
+    // dispatch route honors.
+    let compiler = &fx.an.compiler;
+    if compiler
+        .method_in_chain(crate::compiler::ARRAY_CLASS, name)
+        .is_some()
+        || compiler.may_be_patched_at_runtime(name)
+    {
+        return Ok(None);
+    }
+
+    let bypass = super::expr::bypasses_visibility(fx, Some(recv));
+    let later = super::expr::later_nodes(args, &[], None);
+    let recv_op = lower_expr(fx, recv)?;
+    let recv_op = super::expr::park_reassignable(fx, Some(recv), recv_op, &later);
+    let recv_class = recv_op.class_id();
+    let recv_ptr = ownership::borrow_ptr(fx, &recv_op);
+    if recv_op.owned() {
+        ownership::pool_owned(fx, recv_ptr, recv_op.tag());
+    }
+    let argv_ptr = build_argv(fx, site, args)?;
+    super::stmt::stamp_call_line(fx, site);
+
+    let idx_chk = fx.b.create_block();
+    let gates_chk = fx.b.create_block();
+    let gate_ask = fx.b.create_block();
+    let fast = fx.b.create_block();
+    let slow = fx.b.create_block();
+    let join = fx.b.create_block();
+    let ss = fx.temp_slot();
+    let out = fx.slot_addr(ss, 0);
+    let fl = MemFlagsData::trusted();
+
+    let tag = fx.b.ins().load(types::I8, fl, recv_ptr, TAG_OFFSET as i32);
+    let is_arr =
+        fx.b.ins()
+            .icmp_imm_u(IntCC::Equal, tag, i64::from(ValueTag::Array as u8));
+    fx.b.ins().brif(is_arr, idx_chk, &[], slow, &[]);
+
+    fx.b.switch_to_block(idx_chk);
+    let itag = fx.b.ins().load(types::I8, fl, argv_ptr, TAG_OFFSET as i32);
+    let is_int =
+        fx.b.ins()
+            .icmp_imm_u(IntCC::Equal, itag, i64::from(ValueTag::Int as u8));
+    fx.b.ins().brif(is_int, gates_chk, &[], slow, &[]);
+
+    fx.b.switch_to_block(gates_chk);
+    let ggv = fx
+        .em
+        .module
+        .declare_data_in_func(fx.em.gates_id, fx.b.func);
+    let gbase = fx.b.ins().symbol_value(fx.em.ptr, ggv);
+    let gates = fx.b.ins().load(types::I16, fl, gbase, 0);
+    fx.b.ins().brif(gates, gate_ask, &[], fast, &[]);
+
+    fx.b.switch_to_block(gate_ask);
+    let box_v = fx.box_v();
+    let array_cid =
+        fx.b.ins()
+            .iconst(types::I32, i64::from(crate::compiler::ARRAY_CLASS.0));
+    let ok = fx.call_status("zeo_rt_iter_inline_ok_for", &[box_v, array_cid]);
+    fx.b.ins().brif(ok, fast, &[], slow, &[]);
+
+    fx.b.switch_to_block(fast);
+    let idx = fx
+        .b
+        .ins()
+        .load(types::I64, fl, argv_ptr, PAYLOAD_OFFSET as i32);
+    if aset {
+        let vptr = fx.b.ins().iadd_imm_u(argv_ptr, i64::from(VALUE_SIZE));
+        let status = fx.call_status("zeo_rt_array_aset_int", &[recv_ptr, idx, vptr, out]);
+        fx.fallible(status);
+    } else {
+        fx.call("zeo_rt_array_aref_int", &[recv_ptr, idx, out]);
+    }
+    fx.owned_created += 1;
+    fx.b.ins().jump(join, &[]);
+
+    fx.b.switch_to_block(slow);
+    let r = dynamic_send_argv(fx, recv_ptr, recv_class, name, argv_ptr, args.len(), bypass)?;
+    ownership::write_move_into(fx, &r, out);
+    fx.b.ins().jump(join, &[]);
+
+    fx.b.switch_to_block(join);
+    Ok(Some(Operand::Slot {
+        ss,
+        owned: true,
+        tag: TagInfo::Unknown,
+    }))
+}
+
 /// What a BARE `super` forwards: the enclosing method's parameters read by
 /// NAME at the moment it runs -- rest splatted in place, keywords gathered
 /// into one hash, and `unmark` saying whether a splatted tail keeps its

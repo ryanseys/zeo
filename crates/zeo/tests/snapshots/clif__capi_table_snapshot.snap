@@ -1,9 +1,11 @@
 ---
 source: crates/zeo/tests/clif.rs
-assertion_line: 330
+assertion_line: 362
 expression: rendered
 ---
 zeo_rt_alias_in_default_definee ([Ptr, Ptr, Ptr, Ptr, Ptr]) -> Some(I32)
+zeo_rt_array_aref_int ([Ptr, Usize, Ptr]) -> None
+zeo_rt_array_aset_int ([Ptr, Usize, Ptr, Ptr]) -> Some(I32)
 zeo_rt_array_get ([Ptr, Usize, Ptr]) -> None
 zeo_rt_array_len ([Ptr]) -> Some(Usize)
 zeo_rt_array_new ([Usize, Ptr]) -> None

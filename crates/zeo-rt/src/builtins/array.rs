@@ -1677,6 +1677,29 @@ pub fn array_push_checked(
     Ok(crate::array_push(arr, value))
 }
 
+/// The `[]=` row's scalar-Int branch exactly: frozen check FIRST
+/// (CRuby's `rb_ary_modify_check` order), nil-pad growth, and the
+/// too-small-negative `IndexError` with the row's own wording. The
+/// expression's value is `v` as written.
+pub fn array_aset_int_checked(
+    arr: &crate::collections::RArray,
+    recv: &RubyValue,
+    i: i64,
+    v: &RubyValue,
+) -> Result<RubyValue, crate::Signal> {
+    if arr.is_frozen() {
+        return Err(frozen_array_error(recv));
+    }
+    if crate::array_set(arr, i, v.clone()) {
+        Ok(v.clone())
+    } else {
+        Err(index_error!(
+            "index {i} too small for array; minimum: {}",
+            -(crate::array_len(arr) as i64)
+        ))
+    }
+}
+
 pub fn array_pop_checked(arr: &crate::collections::RArray) -> Result<RubyValue, crate::Signal> {
     check_frozen_handle(arr)?;
     Ok(arr.lock().pop().unwrap_or(RubyValue::Nil))

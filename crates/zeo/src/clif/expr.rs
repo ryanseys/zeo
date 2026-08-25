@@ -1658,7 +1658,10 @@ fn plain_call(
             };
             super::binop::binop(fx, id, &name, recv, *arg)
         }
-        Some(recv) => super::call::dynamic_send(fx, id, recv, &name, &args),
+        Some(recv) => match super::call::indexed_send(fx, id, recv, &name, &args)? {
+            Some(fast) => Ok(fast),
+            None => super::call::dynamic_send(fx, id, recv, &name, &args),
+        },
         None if let Some(folded) =
             super::boxes::inline_accessor(fx, id, &name, &args, &[], None, None) =>
         {

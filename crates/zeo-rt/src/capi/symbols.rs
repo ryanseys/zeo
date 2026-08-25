@@ -29,6 +29,8 @@ macro_rules! capi_symbols {
 
 capi_symbols!(
     dispatch::zeo_rt_alias_in_default_definee,
+    literals::zeo_rt_array_aref_int,
+    literals::zeo_rt_array_aset_int,
     literals::zeo_rt_array_get,
     literals::zeo_rt_array_len,
     literals::zeo_rt_array_new,
@@ -270,12 +272,13 @@ capi_symbols!(
 /// coerces fn items. Emitted code reads these inline (a load, not a
 /// call); the AOT link resolves them from the archive, the JIT from
 /// [`data_addr`].
-pub const DATA_NAMES: &[&str] = &["zeo_rt_pending_interrupts"];
+pub const DATA_NAMES: &[&str] = &["zeo_rt_gates", "zeo_rt_pending_interrupts"];
 
 /// The in-process address of exported data symbol `name`.
 #[must_use]
 pub fn data_addr(name: &str) -> Option<*const u8> {
     match name {
+        "zeo_rt_gates" => Some(&crate::runtime_meta::zeo_rt_gates as *const _ as *const u8),
         "zeo_rt_pending_interrupts" => {
             Some(&crate::gvl::zeo_rt_pending_interrupts as *const _ as *const u8)
         }

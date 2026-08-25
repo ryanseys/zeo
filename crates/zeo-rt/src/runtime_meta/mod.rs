@@ -360,7 +360,15 @@ struct OverlayMaps {
 /// As a second flag beside the first, the pending gate measured +2.6% on a
 /// loop whose body is nothing but a cached dynamic send; folded in here it
 /// is free -- the moved gate rides the same byte for the same reason.
-static GATES: AtomicU16 = AtomicU16::new(0);
+/// Exported as a DATA symbol: an emitter fast path loads the whole word
+/// inline, and only ZERO may take the guard-free arm -- zero means no
+/// gate has ever armed, which implies every masked question below
+/// answers "quiet". Nonzero falls back to asking the real question
+/// through capi. Rust-side readers keep their named accessors.
+#[unsafe(no_mangle)]
+#[allow(non_upper_case_globals)]
+pub static zeo_rt_gates: AtomicU16 = AtomicU16::new(0);
+use self::zeo_rt_gates as GATES;
 const GATE_OVERLAY: u16 = 1;
 const GATE_PENDING: u16 = 2;
 const GATE_MOVED: u16 = 4;

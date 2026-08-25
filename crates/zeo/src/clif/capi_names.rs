@@ -43,6 +43,16 @@ pub const CAPI: &[CapiSig] = &[
         ret: Some(I32),
     },
     CapiSig {
+        name: "zeo_rt_array_aref_int",
+        params: &[Ptr, Usize, Ptr],
+        ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_array_aset_int",
+        params: &[Ptr, Usize, Ptr, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
         name: "zeo_rt_array_get",
         params: &[Ptr, Usize, Ptr],
         ret: None,
@@ -1135,7 +1145,7 @@ pub const CAPI: &[CapiSig] = &[
 /// Function imports above are calls; these are loads. The archive
 /// exports them from `zeo-rt`'s data section and the JIT resolves them
 /// through `symbols::data_addr`.
-pub const CAPI_DATA: &[&str] = &["zeo_rt_pending_interrupts"];
+pub const CAPI_DATA: &[&str] = &["zeo_rt_gates", "zeo_rt_pending_interrupts"];
 
 /// The signature row for `name`.
 pub fn sig(name: &str) -> &'static CapiSig {
