@@ -38,6 +38,11 @@ pub(crate) struct LoopCtl {
     /// The `handling_depth` at loop entry: a jump out emits the
     /// difference in `handling_pop`s first (`$!` stays balanced).
     pub handling: usize,
+    /// Where the ITERATION's block value goes, for a fused loop whose
+    /// accumulator consumes it (`arr.count { .. }`): the body's tail and
+    /// every `next v` MOVE the value here, and the latch consumes it.
+    /// `None` = the value is discarded, every plain loop's rule.
+    pub next_value: Option<ir::Value>,
 }
 
 /// The lexical class chain a snippet's bare constant searches -- CRuby's
@@ -420,6 +425,25 @@ impl<'e, 'f> Fx<'e, 'f> {
             .declare_data_in_func(self.em.new_sites_id, self.b.func);
         let base = self.b.ins().symbol_value(self.em.ptr, gv);
         let off = (idx * zeo_abi::abi::NEW_SITE_SIZE) as i64;
+        if off == 0 {
+            base
+        } else {
+            self.b.ins().iadd_imm_u(base, off)
+        }
+    }
+
+    /// A fresh dynamic-caller cache slot in `zeo_dyn_sites`, as a
+    /// pointer. One per SITE, like [`Fx::callsite_ptr`]; the slot carries
+    /// no per-site constant (the caller rides in the call's arguments).
+    pub fn dyn_site_ptr(&mut self) -> ir::Value {
+        let idx = self.em.dyn_sites;
+        self.em.dyn_sites += 1;
+        let gv = self
+            .em
+            .module
+            .declare_data_in_func(self.em.dyn_sites_id, self.b.func);
+        let base = self.b.ins().symbol_value(self.em.ptr, gv);
+        let off = (idx * zeo_abi::abi::DYNCALLER_SITE_SIZE) as i64;
         if off == 0 {
             base
         } else {

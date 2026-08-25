@@ -403,48 +403,16 @@ fn build_closure_with(
     let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
     let null = fx.b.ins().iconst(ptr_ty, 0);
     let lex_blk = lexical_blk.unwrap_or(null);
-    let arity_v = fx.b.ins().iconst(types::I32, i64::from(arity));
     // PROC_LAMBDA = 1, PROC_HOME = 2 (the runtime's bits).
     let flag_bits = u32::from(is_lambda) | (u32::from(wants_home) << 1);
-    let flags = fx.b.ins().iconst(types::I32, i64::from(flag_bits));
-    // `Proc#parameters` and `#source_location` (the middle of `#inspect`):
-    // the shape is compile-time knowledge, handed over per construction as
-    // a stack-built row array whose names point into `.rodata`.
+    // `Proc#parameters`, `#arity`, `#source_location`, the Ractor
+    // outer-capture verdict: all compile-time constants, baked into ONE
+    // `ProcShapeC` row in `zeo_proc_shapes` instead of being rebuilt and
+    // handed over per creation.
     let entries = super::emit::param_entries(params, true);
-    let params_slot = (!entries.is_empty()).then(|| {
-        fx.b.create_sized_stack_slot(StackSlotData::new(
-            StackSlotKind::ExplicitSlot,
-            entries.len() as u32 * param_c_size(),
-            3,
-        ))
-    });
-    for (i, (kind, name)) in entries.iter().enumerate() {
-        let base = i as i32 * param_c_size() as i32;
-        let ss = params_slot.expect("entries non-empty");
-        let fl = MemFlagsData::trusted();
-        let k = fx.b.ins().iconst(types::I8, i64::from(*kind));
-        let at = fx.slot_addr(ss, base + kind_off());
-        fx.b.ins().store(fl, k, at, 0);
-        let off = fx.em.intern_rodata(name.as_bytes());
-        let p = fx.rod(off);
-        let at = fx.slot_addr(ss, base + name_ptr_off());
-        fx.b.ins().store(fl, p, at, 0);
-        let n = fx.b.ins().iconst(ptr_ty, name.len() as i64);
-        let at = fx.slot_addr(ss, base + name_len_off());
-        fx.b.ins().store(fl, n, at, 0);
-    }
-    let params_ptr = match params_slot {
-        Some(ss) => fx.slot_addr(ss, 0),
-        None => fx.b.ins().iconst(ptr_ty, 0),
-    };
-    let n_params = fx.b.ins().iconst(ptr_ty, entries.len() as i64);
     let (file, line) = fx
         .location(site)
         .map_or((String::new(), 0), |(f, l)| (f.to_string(), l));
-    let foff = fx.em.intern_rodata(file.as_bytes());
-    let file_ptr = fx.rod(foff);
-    let file_len = fx.b.ins().iconst(ptr_ty, file.len() as i64);
-    let line_v = fx.b.ins().iconst(types::I32, i64::from(line));
     // `Proc#binding` -- the scope the proc was BUILT in, captured here
     // because the block's own locals do not exist until it runs. Only a
     // program that can ask pays: `uses_proc_binding` is what promoted this
@@ -468,30 +436,36 @@ fn build_closure_with(
     // recorded -- ruby isolates such a proc fine, and its ivar reads fail
     // later, inside the ractor.
     let outer = outer_capture(fx, params, body);
-    let ooff = fx.em.intern_rodata(outer.as_bytes());
-    let outer_ptr = fx.rod(ooff);
-    let outer_len = fx.b.ins().iconst(ptr_ty, outer.len() as i64);
+    let shape_off = fx.em.proc_shapes_len;
+    fx.em.proc_shapes.push(super::statics::ProcShapeSpec {
+        offset: shape_off,
+        arity,
+        flags: flag_bits,
+        line,
+        file,
+        outer,
+        params: entries,
+    });
+    fx.em.proc_shapes_len = shape_off
+        + zeo_abi::abi::PROC_SHAPE_SIZE
+        + fx.em.proc_shapes.last().expect("just pushed").params.len()
+            * std::mem::size_of::<zeo_abi::abi::ParamC>();
+    let shapes_gv = fx
+        .em
+        .module
+        .declare_data_in_func(fx.em.proc_shapes_id, fx.b.func);
+    let shapes_base = fx.b.ins().symbol_value(ptr_ty, shapes_gv);
+    let shape_ptr = if shape_off == 0 {
+        shapes_base
+    } else {
+        fx.b.ins().iadd_imm_u(shapes_base, shape_off as i64)
+    };
     let proc_ss = fx.temp_slot();
     let proc_addr = fx.slot_addr(proc_ss, 0);
     fx.call(
-        "zeo_rt_proc_new",
+        "zeo_rt_proc_new_shaped",
         &[
-            f_addr,
-            cells_ptr,
-            n_cells,
-            self_ptr,
-            lex_blk,
-            binding_ptr,
-            arity_v,
-            flags,
-            params_ptr,
-            n_params,
-            file_ptr,
-            file_len,
-            line_v,
-            outer_ptr,
-            outer_len,
-            proc_addr,
+            f_addr, cells_ptr, n_cells, self_ptr, lex_blk, binding_ptr, shape_ptr, proc_addr,
         ],
     );
     // The proc is owned until a send/call consumes it (moved-in blk).
@@ -499,28 +473,6 @@ fn build_closure_with(
     Ok((proc_ss, names))
 }
 
-/// `ParamC`'s size and field offsets -- the stack rows a proc's parameter
-/// list is built into must match what the runtime reads back.
-fn param_c_size() -> u32 {
-    u32::try_from(std::mem::size_of::<zeo_abi::abi::ParamC>()).expect("ParamC fits a u32")
-}
-fn kind_off() -> i32 {
-    i32::try_from(std::mem::offset_of!(zeo_abi::abi::ParamC, kind)).expect("offset fits")
-}
-fn name_ptr_off() -> i32 {
-    i32::try_from(
-        std::mem::offset_of!(zeo_abi::abi::ParamC, name)
-            + std::mem::offset_of!(zeo_abi::abi::Str, ptr),
-    )
-    .expect("offset fits")
-}
-fn name_len_off() -> i32 {
-    i32::try_from(
-        std::mem::offset_of!(zeo_abi::abi::ParamC, name)
-            + std::mem::offset_of!(zeo_abi::abi::Str, len),
-    )
-    .expect("offset fits")
-}
 
 /// The block body as a `BlockFn`: env cells become (unowned) cell locals,
 /// params bind through `zeo_rt_bind_block_params` (ruby's lenient block
@@ -1306,11 +1258,14 @@ pub(crate) fn send_with_block_ptr_ops(
             )
         }
         None => {
+            // A dynamic caller still gets the receiver-keyed cache with
+            // the split vet -- `dynamic_send_argv`'s (None, None) arm.
+            let cache = fx.dyn_site_ptr();
             let caller = super::call::caller_class(fx, bypass);
             fx.call(
-                "zeo_rt_send_value_explicit_in",
+                "zeo_rt_send_value_dyn_cached",
                 &[
-                    zero_box, recv_ptr.0, sym, argv_ptr, argc_v, blk_ptr, caller, out,
+                    cache, zero_box, recv_ptr.0, sym, argv_ptr, argc_v, blk_ptr, caller, out,
                 ],
             )
         }

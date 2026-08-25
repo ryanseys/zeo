@@ -761,10 +761,15 @@ fn dynamic_send_argv(
             )
         }
         (None, None) => {
+            // A DYNAMIC caller: the receiver-keyed cache still serves the
+            // site (define_method bodies, instance_exec re-homed blocks),
+            // with the visibility vet split so the per-call caller is
+            // asked only its caller-dependent remainder.
+            let site = fx.dyn_site_ptr();
             let caller = caller_class(fx, bypass);
             fx.call(
-                "zeo_rt_send_value_explicit_in",
-                &[zero_box, recv_ptr, sym, argv_ptr, argc_v, null, caller, out],
+                "zeo_rt_send_value_dyn_cached",
+                &[site, zero_box, recv_ptr, sym, argv_ptr, argc_v, null, caller, out],
             )
         }
     }

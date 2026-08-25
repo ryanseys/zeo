@@ -1528,10 +1528,19 @@ fn literal_block_call(
     if args.is_empty()
         && super::iter::fusable_block(fx, blk)
         && let Some(r) = receiver
-        && fx.an.compiler.inline_iter_sites.get(&blk)
-            == Some(&crate::compiler::InlineIterKind::ArrayEach)
+        && let Some(acc) = match fx.an.compiler.inline_iter_sites.get(&blk) {
+            Some(crate::compiler::InlineIterKind::ArrayEach) => Some(super::iter::Acc::None),
+            Some(crate::compiler::InlineIterKind::ArrayCount) => Some(super::iter::Acc::Count),
+            Some(crate::compiler::InlineIterKind::ArrayAll) => Some(super::iter::Acc::All),
+            Some(crate::compiler::InlineIterKind::ArrayAny) => Some(super::iter::Acc::Any),
+            Some(crate::compiler::InlineIterKind::ArrayNone) => Some(super::iter::Acc::NonePred),
+            Some(crate::compiler::InlineIterKind::ArrayFind) => Some(super::iter::Acc::Find),
+            _ => None,
+        }
     {
-        return Ok(super::iter::lower_array_each(fx, id, r, blk, true)?
+        // The slow arm dispatches the NAME AS WRITTEN (`detect` stays
+        // `detect` -- a runtime singleton may define only one alias).
+        return Ok(super::iter::lower_array_each(fx, id, r, blk, true, acc, &name)?
             .expect("a wanted result is always built"));
     }
     if args.is_empty()
@@ -1549,7 +1558,7 @@ fn literal_block_call(
     {
         let ss = fx.temp_slot();
         let dst = fx.slot_addr(ss, 0);
-        super::iter::lower_counted(fx, id, &counted, blk, Some(dst))?;
+        super::iter::lower_counted(fx, id, &counted, blk, Some(dst), super::iter::Acc::None)?;
         fx.owned_created += 1;
         return Ok(Operand::Slot {
             ss,

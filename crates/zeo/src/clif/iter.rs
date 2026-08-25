@@ -44,6 +44,42 @@ pub(crate) enum Counted {
     TimesDyn { n: ir::Value },
 }
 
+/// What a fused loop DOES with each iteration's block value -- the
+/// accumulator seam. `None` discards it (`each`/`times`, the original
+/// shapes). A consuming kind routes the body's tail and every `next v`
+/// into a value slot ([`LoopCtl::next_value`]) and consumes it in the
+/// LATCH -- which `redo` skips, so a redone iteration cannot be counted
+/// twice, structurally.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Acc {
+    /// The value is discarded.
+    None,
+    /// `arr.count { |e| .. }`: +1 per truthy block value; the loop's
+    /// value is the count. No heap accumulator, so `break` has nothing
+    /// to release.
+    Count,
+    /// `arr.all? { .. }`: starts true, a falsy value answers false and
+    /// STOPS iterating (CRuby stops too).
+    All,
+    /// `arr.any? { .. }`: starts false, a truthy value answers true and
+    /// stops.
+    Any,
+    /// `arr.none? { .. }`: starts true, a truthy value answers false and
+    /// stops.
+    NonePred,
+    /// `arr.find { .. }` / `detect`: a truthy value answers the ORIGINAL
+    /// element (re-fetched by index -- a body that reassigns its param
+    /// still answers the element, CRuby's rule) and stops; exhaustion
+    /// answers nil.
+    Find,
+}
+
+impl Acc {
+    fn consumes_value(self) -> bool {
+        !matches!(self, Acc::None)
+    }
+}
+
 /// Whether `block` has the parameter shape a fused loop can bind: one
 /// required name at most, and nothing else.
 ///
@@ -67,13 +103,15 @@ pub(crate) fn fusable_block(fx: &Fx<'_, '_>, block: NodeId) -> bool {
 }
 
 /// Lower one fused counted loop. `result` = the loop's value slot when in
-/// value position (`None` = statement position, value discarded).
+/// value position (`None` = statement position, value discarded); `acc`
+/// = what each iteration's block value feeds (see [`Acc`]).
 pub(crate) fn lower_counted(
     fx: &mut Fx,
     site: NodeId,
     counted: &Counted,
     block: NodeId,
     result: Option<ir::Value>,
+    acc: Acc,
 ) -> CResult<()> {
     let HirNode::Block { params, body } = &fx.an.compiler.hir[block] else {
         return fx.unsupported(site, "a non-literal block");
@@ -181,6 +219,41 @@ pub(crate) fn lower_counted(
     let counter_addr = fx.slot_addr(counter, 0);
     fx.b.ins().store(fl, start_v, counter_addr, 0);
 
+    // The accumulator's storage: a raw value slot the body's tail (and
+    // every `next v`) MOVES into and the latch consumes -- raw rather
+    // than epilogue-registered, because the latch's release leaves it
+    // dead and the epilogue must not release it again. Plus the
+    // per-kind accumulator word: the count, or the boolean-answer flag
+    // (`all?`/`none?` start at 1, `any?` at 0; `find` uses no word --
+    // its answer is pre-written nil in the result slot, overwritten on
+    // a hit).
+    let acc_slots = acc.consumes_value().then(|| {
+        let val = fx.b.create_sized_stack_slot(StackSlotData::new(
+            StackSlotKind::ExplicitSlot,
+            zeo_abi::abi::VALUE_SIZE as u32,
+            3,
+        ));
+        let val_addr = fx.slot_addr(val, 0);
+        let zero = fx.b.ins().iconst(types::I64, 0);
+        fx.b.ins().store(fl, zero, val_addr, 0);
+        fx.b.ins().store(fl, zero, val_addr, 8);
+        fx.b.ins().store(fl, zero, val_addr, 16);
+        let count =
+            fx.b.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
+        let count_addr = fx.slot_addr(count, 0);
+        let init = match acc {
+            Acc::All | Acc::NonePred => fx.b.ins().iconst(types::I64, 1),
+            _ => zero,
+        };
+        fx.b.ins().store(fl, init, count_addr, 0);
+        if matches!(acc, Acc::Find)
+            && let Some(dst) = result
+        {
+            ownership::write_move_into(fx, &super::operand::Operand::Nil, dst);
+        }
+        (val_addr, count_addr)
+    });
+
     let head = fx.b.create_block();
     let body_blk = fx.b.create_block();
     let latch = fx.b.create_block();
@@ -241,12 +314,89 @@ pub(crate) fn lower_counted(
         result,
         depth: fx.ensure_depth,
         handling: fx.handling_depth,
+        next_value: acc_slots.map(|(val_addr, _)| val_addr),
     });
-    super::stmt::lower_stmts(fx, &body)?;
+    match acc_slots {
+        Some((val_addr, _)) => super::stmt::lower_value_body_into(fx, &body, val_addr)?,
+        None => super::stmt::lower_stmts(fx, &body)?,
+    }
     fx.loops.pop();
     fx.b.ins().jump(latch, &[]);
 
     fx.b.switch_to_block(latch);
+    // Consume the iteration's value into the accumulator FIRST -- `redo`
+    // re-enters the body without passing here, so a redone iteration is
+    // consumed exactly once.
+    if let Some((val_addr, count_addr)) = acc_slots {
+        let t = fx.b.ins().load(types::I8, fl, val_addr, TAG_OFFSET as i32);
+        let p = fx.b.ins().load(types::I8, fl, val_addr, PAYLOAD_OFFSET as i32);
+        let above_bool = fx.b.ins().icmp_imm_u(
+            IntCC::UnsignedGreaterThan,
+            t,
+            i64::from(ValueTag::Bool as u8),
+        );
+        let is_bool =
+            fx.b.ins()
+                .icmp_imm_u(IntCC::Equal, t, i64::from(ValueTag::Bool as u8));
+        let set = fx.b.ins().icmp_imm_u(IntCC::NotEqual, p, 0);
+        let true_bool = fx.b.ins().band(is_bool, set);
+        let truthy = fx.b.ins().bor(above_bool, true_bool);
+        ownership::release_if_heap(fx, val_addr);
+        match acc {
+            Acc::Count => {
+                let inc = fx.b.ins().uextend(types::I64, truthy);
+                let n = fx.b.ins().load(types::I64, fl, count_addr, 0);
+                let n1 = fx.b.ins().iadd(n, inc);
+                fx.b.ins().store(fl, n1, count_addr, 0);
+            }
+            // The short-circuit kinds: the deciding value flips the
+            // answer word and STOPS iterating -- the jump to the normal
+            // exit, where the word becomes the loop's value.
+            Acc::All | Acc::NonePred => {
+                let cont = fx.b.create_block();
+                let stop = fx.b.create_block();
+                let (on_truthy, on_falsy) = match acc {
+                    Acc::All => (cont, stop),
+                    _ => (stop, cont),
+                };
+                fx.b.ins().brif(truthy, on_truthy, &[], on_falsy, &[]);
+                fx.b.switch_to_block(stop);
+                let zero = fx.b.ins().iconst(types::I64, 0);
+                fx.b.ins().store(fl, zero, count_addr, 0);
+                fx.b.ins().jump(exit_normal, &[]);
+                fx.b.switch_to_block(cont);
+            }
+            Acc::Any => {
+                let cont = fx.b.create_block();
+                let stop = fx.b.create_block();
+                fx.b.ins().brif(truthy, stop, &[], cont, &[]);
+                fx.b.switch_to_block(stop);
+                let one = fx.b.ins().iconst(types::I64, 1);
+                fx.b.ins().store(fl, one, count_addr, 0);
+                fx.b.ins().jump(exit_normal, &[]);
+                fx.b.switch_to_block(cont);
+            }
+            // A hit re-fetches the ORIGINAL element at the current index
+            // into the (nil-prewritten) result slot and stops.
+            Acc::Find => {
+                let cont = fx.b.create_block();
+                let found = fx.b.create_block();
+                fx.b.ins().brif(truthy, found, &[], cont, &[]);
+                fx.b.switch_to_block(found);
+                if let Some(dst) = result {
+                    let Counted::ArrayEach { recv } = *counted else {
+                        unreachable!("Find pairs only with ArrayEach");
+                    };
+                    let c = fx.b.ins().load(types::I64, fl, counter_addr, 0);
+                    fx.call("zeo_rt_array_get", &[recv, c, dst]);
+                    fx.owned_created += 1;
+                }
+                fx.b.ins().jump(exit_normal, &[]);
+                fx.b.switch_to_block(cont);
+            }
+            Acc::None => unreachable!("acc_slots exist only for a consuming kind"),
+        }
+    }
     let c = fx.b.ins().load(types::I64, fl, counter_addr, 0);
     let c1 = fx.b.ins().iadd_imm_s(c, 1);
     fx.b.ins().store(fl, c1, counter_addr, 0);
@@ -254,7 +404,38 @@ pub(crate) fn lower_counted(
     fx.b.ins().jump(head, &[]);
 
     fx.b.switch_to_block(exit_normal);
-    if let Some(dst) = result {
+    if let Some(dst) = result
+        && let Some((_, count_addr)) = acc_slots
+    {
+        // A consuming kind's value is its ACCUMULATOR: the count, the
+        // boolean answer word, or -- for `find` -- the result slot as it
+        // stands (nil, or the element a hit already wrote).
+        match acc {
+            Acc::Count => {
+                let n = fx.b.ins().load(types::I64, fl, count_addr, 0);
+                let tag = fx.b.ins().iconst(types::I8, i64::from(ValueTag::Int as u8));
+                fx.b.ins().store(fl, tag, dst, TAG_OFFSET as i32);
+                fx.b.ins().store(fl, n, dst, PAYLOAD_OFFSET as i32);
+                // The site's owner of `dst` (the returned Slot) -- the
+                // ledger convention `ArrayEach`'s result arm set.
+                fx.owned_created += 1;
+            }
+            Acc::All | Acc::Any | Acc::NonePred => {
+                let n = fx.b.ins().load(types::I64, fl, count_addr, 0);
+                let bit = fx.b.ins().ireduce(types::I8, n);
+                let tag =
+                    fx.b.ins()
+                        .iconst(types::I8, i64::from(ValueTag::Bool as u8));
+                fx.b.ins().store(fl, tag, dst, TAG_OFFSET as i32);
+                fx.b.ins().store(fl, bit, dst, PAYLOAD_OFFSET as i32);
+                fx.owned_created += 1;
+            }
+            // `find`'s hit arm already counted its `array_get` write; the
+            // pre-written nil costs nothing.
+            Acc::Find => {}
+            Acc::None => unreachable!("acc_slots exist only for a consuming kind"),
+        }
+    } else if let Some(dst) = result {
         // The loop's value is its RECEIVER: the count for `times`, the range
         // itself for a range-`each`, the array itself for an array-`each`.
         // The range is rebuilt here from the same literal endpoints the
@@ -282,6 +463,11 @@ pub(crate) fn lower_counted(
                 let tag = fx.b.ins().iconst(types::I8, i64::from(ValueTag::Int as u8));
                 fx.b.ins().store(fl, tag, dst, TAG_OFFSET as i32);
                 fx.b.ins().store(fl, n, dst, PAYLOAD_OFFSET as i32);
+                // `lower_counted_int` counts nothing for its result --
+                // this arm owns the +1, as `ArrayEach`'s does. (`Times`/
+                // `Range` reach here from `counted_of` callers that count
+                // the result THEMSELVES, so their arms stay bare.)
+                fx.owned_created += 1;
             }
             Counted::Range {
                 start,
@@ -411,6 +597,8 @@ pub(crate) fn lower_array_each(
     recv_id: NodeId,
     block: NodeId,
     want_result: bool,
+    acc: Acc,
+    slow_name: &str,
 ) -> CResult<Option<super::operand::Operand>> {
     use super::operand::{Operand, TagInfo};
     // The receiver is evaluated ONCE and both arms borrow it.
@@ -451,6 +639,7 @@ pub(crate) fn lower_array_each(
         &Counted::ArrayEach { recv },
         block,
         result.map(|(_, dst)| dst),
+        acc,
     )?;
     fx.b.ins().jump(join, &[]);
 
@@ -460,7 +649,7 @@ pub(crate) fn lower_array_each(
         owned: false,
         tag: TagInfo::Unknown,
     };
-    let r = super::blocks::block_send_op(fx, site, borrowed, "each", &[], block)?;
+    let r = super::blocks::block_send_op(fx, site, borrowed, slow_name, &[], block)?;
     match result {
         Some((_, dst)) => {
             let owned = r.owned();
@@ -533,6 +722,7 @@ pub(crate) fn lower_counted_int(
         &Counted::TimesDyn { n },
         block,
         result.map(|(_, dst)| dst),
+        Acc::None,
     )?;
     fx.b.ins().jump(join, &[]);
 

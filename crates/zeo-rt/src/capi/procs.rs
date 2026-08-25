@@ -288,6 +288,47 @@ pub unsafe extern "C" fn zeo_rt_proc_new(
     unsafe { out.write(v) };
 }
 
+/// [`zeo_rt_proc_new`] with the compile-time constants read from ONE
+/// `.rodata` `ProcShapeC` row (`zeo_proc_shapes`) instead of nine call
+/// arguments and a stack-built row array per creation.
+///
+/// # Safety
+/// `shape` points at program data that lives for the process -- `.rodata`
+/// on the AOT path, JIT/eval data memory (never unloaded) otherwise.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_proc_new_shaped(
+    f: BlockFn,
+    cells: *const *mut Cell,
+    n_cells: usize,
+    self_: *const RubyValue,
+    lexical_blk: *const RubyValue,
+    binding: *const RubyValue,
+    shape: *const zeo_abi::abi::ProcShapeC,
+    out: *mut RubyValue,
+) {
+    let s = unsafe { &*shape };
+    unsafe {
+        zeo_rt_proc_new(
+            f,
+            cells,
+            n_cells,
+            self_,
+            lexical_blk,
+            binding,
+            s.arity,
+            s.flags,
+            s.params,
+            s.n_params as usize,
+            s.file.ptr,
+            s.file.len,
+            s.line,
+            s.outer.ptr,
+            s.outer.len,
+            out,
+        );
+    }
+}
+
 /// `&expr` at a call site: Ruby's `rb_block_arg_to_proc` -- a Proc passes
 /// through, a Symbol becomes its proc, nil means "no block", anything
 /// else duck-types through `to_proc` (`TypeError` otherwise). `out` gets

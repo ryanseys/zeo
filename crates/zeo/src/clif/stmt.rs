@@ -546,9 +546,19 @@ fn lower_stmt_inner(fx: &mut Fx, stmt: NodeId) -> CResult<()> {
             if ctl.depth != fx.ensure_depth {
                 return signal_jump(fx, value, zeo_abi::abi::SignalKind::Next);
             }
+            // A fused accumulator loop consumes each iteration's value in
+            // its latch, so `next v` MOVES v into the loop's value slot
+            // (and a bare `next` is a nil iteration value); every plain
+            // loop keeps discarding.
+            let next_value = fx.loops.last().and_then(|c| c.next_value);
             if let Some(v) = value {
                 let op = lower_expr(fx, v)?;
-                ownership::discard(fx, op);
+                match next_value {
+                    Some(dst) => ownership::write_move_into(fx, &op, dst),
+                    None => ownership::discard(fx, op),
+                }
+            } else if let Some(dst) = next_value {
+                ownership::write_move_into(fx, &super::operand::Operand::Nil, dst);
             }
             let ctl = fx.loops.last().expect("checked above");
             let (latch, handling) = (ctl.latch, ctl.handling);
@@ -1055,7 +1065,7 @@ fn lower_stmt_inner(fx: &mut Fx, stmt: NodeId) -> CResult<()> {
                 && fx.an.compiler.inline_iter_sites.get(&blk)
                     == Some(&crate::compiler::InlineIterKind::ArrayEach)
             {
-                super::iter::lower_array_each(fx, stmt, r, blk, false)?;
+                super::iter::lower_array_each(fx, stmt, r, blk, false, super::iter::Acc::None, "each")?;
                 return Ok(());
             }
             if args.is_empty()
@@ -1071,7 +1081,7 @@ fn lower_stmt_inner(fx: &mut Fx, stmt: NodeId) -> CResult<()> {
                 && super::iter::fusable_block(fx, blk)
                 && let Some(counted) = super::iter::counted_of(fx, receiver, &name, true)
             {
-                return super::iter::lower_counted(fx, stmt, &counted, blk, None);
+                return super::iter::lower_counted(fx, stmt, &counted, blk, None, super::iter::Acc::None);
             }
             let op = if receiver.is_none()
                 && let Some(decl) = fx.em.methods.get(&name)
@@ -1336,6 +1346,7 @@ fn lower_loop(
         result,
         depth: fx.ensure_depth,
         handling: fx.handling_depth,
+        next_value: None,
     });
     lower_stmts(fx, body)?;
     fx.loops.pop();
@@ -1424,6 +1435,7 @@ fn lower_for(
         result,
         depth: fx.ensure_depth,
         handling: fx.handling_depth,
+        next_value: None,
     });
     let r = lower_stmts(fx, body);
     fx.loops.pop();

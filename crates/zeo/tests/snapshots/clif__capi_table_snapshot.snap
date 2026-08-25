@@ -59,6 +59,7 @@ zeo_rt_defined_cvar ([U32, Ptr, Usize]) -> Some(I8)
 zeo_rt_defined_gvar ([U32, Ptr, Usize]) -> Some(I8)
 zeo_rt_defined_ivar ([Ptr, Ptr, Usize, Ptr]) -> Some(I32)
 zeo_rt_defined_method ([Ptr, U32, U8, Ptr]) -> None
+zeo_rt_dyncaller_sites_init ([Ptr, Usize]) -> None
 zeo_rt_eval_block_given ([]) -> Some(I8)
 zeo_rt_eval_class_body ([Ptr, Ptr, Ptr, Ptr, Ptr, U32, Ptr, Ptr, U32, Ptr, Ptr, Ptr]) -> Some(I32)
 zeo_rt_eval_class_open ([Ptr, Ptr, Ptr, Ptr, U8, Ptr]) -> Some(I32)
@@ -160,6 +161,7 @@ zeo_rt_pool_push ([Ptr]) -> None
 zeo_rt_pool_reset ([Usize]) -> None
 zeo_rt_proc_call_or_send ([Ptr, U32, Ptr, Usize, Ptr, U32, Ptr]) -> Some(I32)
 zeo_rt_proc_new ([Ptr, Ptr, Usize, Ptr, Ptr, Ptr, I32, U32, Ptr, Usize, Ptr, Usize, U32, Ptr, Usize, Ptr]) -> None
+zeo_rt_proc_new_shaped ([Ptr, Ptr, Usize, Ptr, Ptr, Ptr, Ptr, Ptr]) -> None
 zeo_rt_propagating_enter ([Ptr]) -> Some(U8)
 zeo_rt_propagating_leave ([U8]) -> None
 zeo_rt_ractor_new ([Ptr, Ptr, Usize, Ptr, Ptr, Usize, Ptr]) -> Some(I32)
@@ -196,6 +198,7 @@ zeo_rt_send_super_from_args ([Ptr, U32, U32, Ptr, U8, Ptr, Ptr, Ptr]) -> Some(I3
 zeo_rt_send_value_args_cached ([Ptr, U32, Ptr, U32, Ptr, U8, Ptr, Ptr, Ptr]) -> Some(I32)
 zeo_rt_send_value_args_in ([U32, Ptr, U32, Ptr, U8, Ptr, Ptr, Ptr]) -> Some(I32)
 zeo_rt_send_value_cached ([Ptr, U32, Ptr, U32, Ptr, Usize, Ptr, Ptr]) -> Some(I32)
+zeo_rt_send_value_dyn_cached ([Ptr, U32, Ptr, U32, Ptr, Usize, Ptr, U32, Ptr]) -> Some(I32)
 zeo_rt_send_value_explicit_args_in ([U32, Ptr, U32, Ptr, U8, Ptr, Ptr, U32, Ptr]) -> Some(I32)
 zeo_rt_send_value_explicit_in ([U32, Ptr, U32, Ptr, Usize, Ptr, U32, Ptr]) -> Some(I32)
 zeo_rt_send_value_explicit_kw_in ([U32, Ptr, U32, Ptr, Usize, Ptr, Ptr, U32, Ptr]) -> Some(I32)

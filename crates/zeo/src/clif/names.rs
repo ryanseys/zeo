@@ -36,6 +36,14 @@ pub const CONST_SITES: &str = "zeo_const_sites";
 /// slot per statically-constructed `Foo.new` (`construct_compiled`).
 /// Bulk-initialized like the const sites (no per-slot constant).
 pub const NEW_SITES: &str = "zeo_new_sites";
+/// The `.bss` array of dynamic-caller caches -- one `DynCallerSite` slot
+/// per send whose CALLER class is only a run-time fact (a dynamic-self
+/// body). Bulk-initialized like the const sites.
+pub const DYN_SITES: &str = "zeo_dyn_sites";
+/// The `.rodata` table of proc shapes -- one `ProcShapeC` (plus its
+/// `ParamC` rows) per block literal, so a proc creation hands over ONE
+/// pointer instead of rebuilding the constants per call.
+pub const PROC_SHAPES: &str = "zeo_proc_shapes";
 /// The `.bss` byte array of builtin-reopen flags -- one byte per
 /// `(builtin class, method name)` a program reopens at compile time.
 ///

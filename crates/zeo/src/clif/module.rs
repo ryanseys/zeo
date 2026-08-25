@@ -128,6 +128,17 @@ pub(crate) struct Emitter {
     /// How many compiled-construction cache slots the program needs; same
     /// index-is-the-slot rule as `cm_sites`.
     pub new_sites: usize,
+    pub dyn_sites_id: DataId,
+    /// How many dynamic-caller cache slots the program needs; same
+    /// index-is-the-slot rule as `cm_sites`.
+    pub dyn_sites: usize,
+    pub proc_shapes_id: DataId,
+    /// The proc shapes collected during lowering (`emit_proc_new`), laid
+    /// out interleaved -- each shape's `ParamC` rows follow it, so a
+    /// shape's byte offset is final the moment it is pushed.
+    pub proc_shapes: Vec<super::statics::ProcShapeSpec>,
+    /// The running byte length of `zeo_proc_shapes`.
+    pub proc_shapes_len: usize,
     /// The runtime's `zeo_rt_pending_interrupts` counter (an import, not
     /// a program-local table) -- what `Fx::check_ints` loads inline.
     pub pending_id: DataId,
@@ -303,6 +314,16 @@ impl Emitter {
             .map_err(|e| {
                 CodegenError::internal(format!("declaring {}: {e}", super::names::NEW_SITES))
             })?;
+        let dyn_sites_id = module
+            .declare_data(super::names::DYN_SITES, Linkage::Local, true, false)
+            .map_err(|e| {
+                CodegenError::internal(format!("declaring {}: {e}", super::names::DYN_SITES))
+            })?;
+        let proc_shapes_id = module
+            .declare_data(super::names::PROC_SHAPES, Linkage::Local, false, false)
+            .map_err(|e| {
+                CodegenError::internal(format!("declaring {}: {e}", super::names::PROC_SHAPES))
+            })?;
         let reopen_flags_id = module
             .declare_data(super::names::REOPEN_FLAGS, Linkage::Local, true, false)
             .map_err(|e| {
@@ -334,6 +355,11 @@ impl Emitter {
             const_sites: 0,
             new_sites_id,
             new_sites: 0,
+            dyn_sites_id,
+            dyn_sites: 0,
+            proc_shapes_id,
+            proc_shapes: Vec::new(),
+            proc_shapes_len: 0,
             pending_id,
             gates_id,
             syms: super::statics::SymPool::default(),

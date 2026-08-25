@@ -254,6 +254,31 @@ pub struct ParamC {
     pub name: Str,
 }
 
+/// One block literal's PROC SHAPE: every compile-time constant a proc
+/// creation used to hand over as nine separate call arguments (plus a
+/// stack-built [`ParamC`] array per creation), baked once into the
+/// program's `zeo_proc_shapes` table. `params` points at the shape's own
+/// rows inside the same table.
+#[repr(C)]
+pub struct ProcShapeC {
+    /// The block's arity (`Proc#arity`).
+    pub arity: i32,
+    /// The runtime's proc flag bits (lambda, wants-home).
+    pub flags: u32,
+    /// `#source_location`'s line.
+    pub line: u32,
+    pub n_params: u32,
+    /// The shape's [`ParamC`] rows (null when `n_params` is 0).
+    pub params: *const ParamC,
+    /// `#source_location`'s file ('' = no location).
+    pub file: Str,
+    /// The Ractor outer-capture verdict ('' = isolable).
+    pub outer: Str,
+}
+/// [`ProcShapeC`]'s size -- what the emitter offsets the table by.
+pub const PROC_SHAPE_SIZE: usize = 56;
+const _: () = assert!(size_of::<ProcShapeC>() == PROC_SHAPE_SIZE);
+
 /// `ParamDescC.rest`/`.kwrest` kinds: no `*` at all, an anonymous `*`
 /// (collects and DISCARDS -- no signature slot), or `*name` (one slot
 /// holding the runtime-built Array/Hash).

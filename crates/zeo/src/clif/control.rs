@@ -285,7 +285,10 @@ fn settle_target(fx: &Fx) -> Option<Settle> {
     if let Some(ctl) = fx.loops.last() {
         return (ctl.depth == fx.ensure_depth).then_some(Settle {
             brk: Some((ctl.exit, ctl.result)),
-            nxt: (ctl.latch, None),
+            // A fused accumulator loop's latch consumes the iteration
+            // value, so an ensure-crossing `next v` settles v into the
+            // loop's value slot on its way there.
+            nxt: (ctl.latch, ctl.next_value),
             rdo: Some(ctl.body),
             handling: ctl.handling,
         });

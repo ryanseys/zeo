@@ -323,6 +323,11 @@ pub const CAPI: &[CapiSig] = &[
         ret: None,
     },
     CapiSig {
+        name: "zeo_rt_dyncaller_sites_init",
+        params: &[Ptr, Usize],
+        ret: None,
+    },
+    CapiSig {
         name: "zeo_rt_eval_block_given",
         params: &[],
         ret: Some(I8),
@@ -830,6 +835,11 @@ pub const CAPI: &[CapiSig] = &[
         ret: None,
     },
     CapiSig {
+        name: "zeo_rt_proc_new_shaped",
+        params: &[Ptr, Ptr, Usize, Ptr, Ptr, Ptr, Ptr, Ptr],
+        ret: None,
+    },
+    CapiSig {
         name: "zeo_rt_propagating_enter",
         params: &[Ptr],
         ret: Some(U8),
@@ -1007,6 +1017,11 @@ pub const CAPI: &[CapiSig] = &[
     CapiSig {
         name: "zeo_rt_send_value_cached",
         params: &[Ptr, U32, Ptr, U32, Ptr, Usize, Ptr, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
+        name: "zeo_rt_send_value_dyn_cached",
+        params: &[Ptr, U32, Ptr, U32, Ptr, Usize, Ptr, U32, Ptr],
         ret: Some(I32),
     },
     CapiSig {

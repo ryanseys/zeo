@@ -119,6 +119,145 @@ pub(crate) fn define_new_sites(em: &mut Emitter) -> CResult<()> {
         .map_err(|e| CodegenError::internal(format!("defining {}: {e}", names::NEW_SITES)))
 }
 
+/// Define the `zeo_dyn_sites` array -- the dynamic-caller caches. Same
+/// zero-bytes-are-not-a-slot and one-bulk-call rules as
+/// [`define_const_sites`].
+pub(crate) fn define_dyn_sites(em: &mut Emitter) -> CResult<()> {
+    let mut data = DataDescription::new();
+    data.define_zeroinit(em.dyn_sites.max(1) * abi::DYNCALLER_SITE_SIZE);
+    data.set_align(8);
+    em.module
+        .define_data(em.dyn_sites_id, &data)
+        .map_err(|e| CodegenError::internal(format!("defining {}: {e}", names::DYN_SITES)))
+}
+
+/// One block literal's compile-time constants, headed for one
+/// `ProcShapeC` row (plus its `ParamC` rows) in `zeo_proc_shapes`.
+/// `offset` is the shape's byte offset in the table, fixed at push time
+/// (the rows interleave, so earlier shapes' row counts are already
+/// known).
+pub(crate) struct ProcShapeSpec {
+    pub offset: usize,
+    pub arity: i32,
+    pub flags: u32,
+    pub line: u32,
+    pub file: String,
+    pub outer: String,
+    pub params: Vec<(u8, String)>,
+}
+
+/// Define the `zeo_proc_shapes` table from the specs `emit_proc_new`
+/// collected: per spec, the `ProcShapeC` row then its `ParamC` rows,
+/// with `params` self-relocated into the same table and every string
+/// relocated into rodata.
+pub(crate) fn define_proc_shapes(em: &mut Emitter) -> CResult<()> {
+    use zeo_abi::abi::{PROC_SHAPE_SIZE, ParamC, ProcShapeC};
+    let param_size = std::mem::size_of::<ParamC>();
+    let mut bytes = vec![0u8; em.proc_shapes_len.max(1)];
+    // Interning may grow rodata; collect every offset first.
+    struct Interned {
+        file: u32,
+        outer: u32,
+        params: Vec<u32>,
+    }
+    let interned: Vec<Interned> = {
+        let specs = std::mem::take(&mut em.proc_shapes);
+        let rows = specs
+            .iter()
+            .map(|s| Interned {
+                file: em.intern_rodata(s.file.as_bytes()),
+                outer: em.intern_rodata(s.outer.as_bytes()),
+                params: s
+                    .params
+                    .iter()
+                    .map(|(_, n)| em.intern_rodata(n.as_bytes()))
+                    .collect(),
+            })
+            .collect();
+        em.proc_shapes = specs;
+        rows
+    };
+    let mut data = DataDescription::new();
+    for spec in &em.proc_shapes {
+        let base = spec.offset;
+        let scalar = |bytes: &mut [u8], field: usize, width: usize, v: u64| {
+            bytes[base + field..base + field + width].copy_from_slice(&v.to_le_bytes()[..width]);
+        };
+        scalar(
+            &mut bytes,
+            std::mem::offset_of!(ProcShapeC, arity),
+            4,
+            spec.arity as u32 as u64,
+        );
+        scalar(
+            &mut bytes,
+            std::mem::offset_of!(ProcShapeC, flags),
+            4,
+            u64::from(spec.flags),
+        );
+        scalar(
+            &mut bytes,
+            std::mem::offset_of!(ProcShapeC, line),
+            4,
+            u64::from(spec.line),
+        );
+        scalar(
+            &mut bytes,
+            std::mem::offset_of!(ProcShapeC, n_params),
+            4,
+            spec.params.len() as u64,
+        );
+        let str_len = |bytes: &mut [u8], field: usize, len: usize| {
+            let at = base + field + std::mem::offset_of!(Str, len);
+            bytes[at..at + 8].copy_from_slice(&(len as u64).to_le_bytes());
+        };
+        str_len(
+            &mut bytes,
+            std::mem::offset_of!(ProcShapeC, file),
+            spec.file.len(),
+        );
+        str_len(
+            &mut bytes,
+            std::mem::offset_of!(ProcShapeC, outer),
+            spec.outer.len(),
+        );
+        for (i, (kind, name)) in spec.params.iter().enumerate() {
+            let row = base + PROC_SHAPE_SIZE + i * param_size;
+            bytes[row + std::mem::offset_of!(ParamC, kind)] = *kind;
+            let at = row + std::mem::offset_of!(ParamC, name) + std::mem::offset_of!(Str, len);
+            bytes[at..at + 8].copy_from_slice(&(name.len() as u64).to_le_bytes());
+        }
+    }
+    data.define(bytes.into_boxed_slice());
+    data.set_align(8);
+    let rodata_gv = em.module.declare_data_in_data(em.rodata_id, &mut data);
+    let self_gv = em.module.declare_data_in_data(em.proc_shapes_id, &mut data);
+    for (spec, row) in em.proc_shapes.iter().zip(&interned) {
+        let base = spec.offset;
+        if !spec.params.is_empty() {
+            let at = (base + std::mem::offset_of!(ProcShapeC, params)) as u32;
+            data.write_data_addr(at, self_gv, (base + PROC_SHAPE_SIZE) as i64);
+        }
+        let str_ptr = |data: &mut DataDescription, field: usize, off: u32| {
+            let at = (base + field + std::mem::offset_of!(Str, ptr)) as u32;
+            data.write_data_addr(at, rodata_gv, i64::from(off));
+        };
+        str_ptr(&mut data, std::mem::offset_of!(ProcShapeC, file), row.file);
+        str_ptr(&mut data, std::mem::offset_of!(ProcShapeC, outer), row.outer);
+        for (i, off) in row.params.iter().enumerate() {
+            let at = (base
+                + PROC_SHAPE_SIZE
+                + i * param_size
+                + std::mem::offset_of!(ParamC, name)
+                + std::mem::offset_of!(Str, ptr)) as u32;
+            data.write_data_addr(at, rodata_gv, i64::from(*off));
+        }
+    }
+    em.module
+        .define_data(em.proc_shapes_id, &data)
+        .map_err(|e| CodegenError::internal(format!("defining {}: {e}", names::PROC_SHAPES)))
+}
+
 /// `zeo_unit_init`: intern every symbol name into `zeo_syms`, then hand
 /// every `zeo_callsites` slot its caller class and initialise every
 /// `zeo_cm_sites`, `zeo_const_sites` and `zeo_new_sites` slot. `None`
@@ -129,6 +268,7 @@ pub(crate) fn define_unit_init(em: &mut Emitter) -> CResult<Option<FuncId>> {
         && em.cm_sites == 0
         && em.const_sites == 0
         && em.new_sites == 0
+        && em.dyn_sites == 0
     {
         return Ok(None);
     }
@@ -156,6 +296,8 @@ pub(crate) fn define_unit_init(em: &mut Emitter) -> CResult<Option<FuncId>> {
     let n_const = em.const_sites;
     let f_new_init = em.import("zeo_rt_class_new_sites_init");
     let n_new = em.new_sites;
+    let f_dyn_init = em.import("zeo_rt_dyncaller_sites_init");
+    let n_dyn = em.dyn_sites;
 
     let mut func = ir::Function::with_name_signature(UserFuncName::user(0, 2), sig);
     let intern = em.module.declare_func_in_func(f_intern, &mut func);
@@ -169,6 +311,8 @@ pub(crate) fn define_unit_init(em: &mut Emitter) -> CResult<Option<FuncId>> {
     let const_init = em.module.declare_func_in_func(f_const_init, &mut func);
     let new_gv = em.module.declare_data_in_func(em.new_sites_id, &mut func);
     let new_init = em.module.declare_func_in_func(f_new_init, &mut func);
+    let dyn_gv = em.module.declare_data_in_func(em.dyn_sites_id, &mut func);
+    let dyn_init = em.module.declare_func_in_func(f_dyn_init, &mut func);
     let cfg = em.module.target_config();
     let mut fbc = FunctionBuilderContext::new();
     let mut b = FunctionBuilder::new(&mut func, &mut fbc);
@@ -222,6 +366,11 @@ pub(crate) fn define_unit_init(em: &mut Emitter) -> CResult<Option<FuncId>> {
         let base = b.ins().symbol_value(em.ptr, new_gv);
         let n_v = b.ins().iconst(em.ptr, n_new as i64);
         b.ins().call(new_init, &[base, n_v]);
+    }
+    if n_dyn > 0 {
+        let base = b.ins().symbol_value(em.ptr, dyn_gv);
+        let n_v = b.ins().iconst(em.ptr, n_dyn as i64);
+        b.ins().call(dyn_init, &[base, n_v]);
     }
     b.ins().return_(&[]);
     b.seal_all_blocks();

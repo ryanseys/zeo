@@ -222,6 +222,49 @@ unsafe fn with_kw_args<R>(
     send(&full, block)
 }
 
+/// [`crate::dispatch::send_value_dyn_cached`] -- the cached entry for a
+/// site whose CALLER class is a per-call fact (a shared body, a re-homed
+/// block): the receiver-keyed cache plus the split visibility vet, with
+/// the caller passed per call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_send_value_dyn_cached(
+    site: &'static crate::dispatch::DynCallerSite,
+    box_id: u32,
+    recv: *const RubyValue,
+    sym: u32,
+    argv: *const RubyValue,
+    argc: usize,
+    blk: *mut RubyValue,
+    caller: u32,
+    out: *mut RubyValue,
+) -> i32 {
+    let (args, block) = unsafe { call_views(argv, argc, blk) };
+    status_out(
+        crate::dispatch::send_value_dyn_cached(
+            site,
+            box_id,
+            unsafe { &*recv },
+            Symbol::from_u32(sym),
+            args,
+            block,
+            caller,
+        ),
+        out,
+    )
+}
+
+/// Initialize the whole `.bss` `zeo_dyn_sites` array in one call -- same
+/// no-per-slot-constant shape as [`zeo_rt_const_sites_init`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_dyncaller_sites_init(
+    base: *mut crate::dispatch::DynCallerSite,
+    n: usize,
+) {
+    for i in 0..n {
+        unsafe { base.add(i).write(crate::dispatch::DynCallerSite::new()) };
+    }
+}
+
 /// [`crate::dispatch::send_value_cached`] with call-site keywords: the
 /// keyword Hash is marked and appended exactly as the uncached kw twins
 /// do, then the full argument list goes through the ordinary value cache.
