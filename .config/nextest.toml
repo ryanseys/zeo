@@ -1,3 +1,9 @@
+# zeo-rt's unit tests require nextest's process-per-test execution model
+# (the default): they mutate process-global state (the GATES word, the
+# REGISTRY OnceLock, other set-once statics), and a fresh process per test
+# is the isolation. Do not add a shared-process runner for them -- a stale
+# gate from one test would make the next test's assertion a false pass.
+#
 # Every suite here compiles its `.rb` files and runs the result. That means
 # CRANELIFT -- in-process for a JIT golden, plus one `cc` link for an AOT or
 # e2e case. No `rustc` runs anywhere in the suite: the backend that shelled

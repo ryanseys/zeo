@@ -307,16 +307,53 @@ struct OverlayMaps {
     next_id: AtomicU32,
 }
 
-/// The gates the dispatch fast path reads, in ONE atomic:
+/// The gates the dispatch fast path reads, in ONE atomic word.
 ///
-/// * [`GATE_OVERLAY`] -- something has been defined at runtime, so the overlay
-///   may answer where the frozen tables would not.
-/// * [`GATE_PENDING`] -- a definition hook is running with names still ahead of
-///   it, so a resolved entry may not exist yet (see [`with_pending_defs`]).
-/// * [`GATE_MOVED`] -- some object was gutted by a `Ractor` move, so a
-///   dispatch receiver may be a husk that must raise `Ractor::MovedError`.
+/// The nine bits:
+///
+/// * [`GATE_OVERLAY`] (1) -- something was defined at runtime, so the overlay
+///   may answer where the frozen tables would not. Armed by `mark_live`,
+///   which every runtime definition calls.
+/// * [`GATE_PENDING`] (2) -- a definition hook is running with names still
+///   ahead of it, so a resolved entry may not exist yet (see
+///   [`with_pending_defs`]).
+/// * [`GATE_MOVED`] (4) -- a `Ractor` move gutted some object, so a dispatch
+///   receiver may be a husk that must raise `Ractor::MovedError`.
 ///   Deliberately NOT part of [`is_live`]'s mask: a move must not deopt the
 ///   inline caches or the overlay shortcuts, only arm the husk probes.
+/// * [`GATE_ARITY_DEBUG`] (8) -- `ZEO_ARITY_DEBUG` was set at startup
+///   ([`arm_arity_debug`]).
+/// * [`GATE_PATCHED_ANY`] (16) -- some FROZEN class id sits in the `PATCHED`
+///   set ([`patch_class`]); gates the set probe in [`class_maybe_patched`].
+/// * [`GATE_ANY_SINGLETONS`] (32) -- some object carries a per-object
+///   singleton method. Identity-keyed, so no class-id set can express it
+///   (INV-2 below).
+/// * [`GATE_ANCESTRY_MUTATED`] (64) -- a runtime `include`/`prepend` spliced
+///   some ancestry chain, so `PATCHED`'s downward closure (INV-1) can no
+///   longer be trusted per class.
+/// * [`GATE_ANY_EXTENDED`] (128) -- some receiver was `extend`ed at runtime;
+///   gates the identity-keyed extend maps ([`value_extends`]).
+/// * [`GATE_MRO_DUPLICATES`] (256) -- some chain holds a class TWICE. Part of
+///   [`GATE_LIVE_MASK`] on purpose: a cache hit skips the walk that publishes
+///   WHICH copy is running, and a `super` from the body would then resume
+///   past the wrong one.
+///
+/// The two masks: [`GATE_LIVE_MASK`] (OVERLAY | PENDING | MRO_DUPLICATES) is
+/// what turns the inline caches and the overlay shortcuts off;
+/// [`GATE_ITER_BLOCKED`] (ANY_SINGLETONS | ANCESTRY_MUTATED | MOVED) is what
+/// forbids a fused-iterator splice, apart from the receiver's own patched
+/// state.
+///
+/// EIGHT of the nine bits are monotone latches: a `fetch_or` sets one, and
+/// nothing ever clears it. [`GATE_PENDING`] is the one exception --
+/// `watermark.rs` depth-counts the live hook frames (`PENDING_DEPTH`) and
+/// clears the bit when the last hook returns, with a documented benign
+/// cross-thread race (see `PENDING_DEPTH`'s docs).
+///
+/// The gates are process-global and (PENDING aside) never reset, so every
+/// unit test that arms one depends on nextest's process-per-test isolation.
+/// A shared-process runner would make a stale flag look like a pass. Tests
+/// assert a gate false BEFORE arming it, so a stale flag fails loudly.
 ///
 /// One word rather than separate `AtomicBool`s because the fast-path readers
 /// must stay a single load (and, for [`is_live`], a single masked compare).
