@@ -4,13 +4,14 @@
 //! shape lives in a [`ClassLayout`] row -- ivar names in slot order plus the
 //! hidden `Struct`/`Data` member count -- installed into [`LAYOUTS`] by
 //! `register_program` (or [`register_layout`] directly, in unit tests).
-//! Ivar storage is [`IvarSlots`], the size-erased twin of `IvarCell`,
-//! so the lock discipline and sole-thread fast path are the same
-//! implementation.
+//! Ivar storage comes in two shapes over one implementation (same lock
+//! discipline, same sole-thread fast path): layouts of 8 slots or fewer
+//! ride an inline `IvarCell<N>` in the `Arc` block, and only wider
+//! layouts pay [`IvarSlots`], the size-erased boxed-slice twin.
 
 use crate::RubyValue;
 use crate::dispatch::{RObj, RubyObject};
-use crate::ivars::IvarSlots;
+use crate::ivars::{IvarCell, IvarSlots};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use zeo_abi::ClassId;
 
@@ -86,113 +87,160 @@ pub struct CompiledObject {
     ivars: IvarSlots,
 }
 
+/// The small-layout twin: the same object with its ivar storage INLINE in
+/// the `Arc` allocation (`IvarCell<N>`), so `.new` is one malloc instead of
+/// three. `N` is a ladder rung, not the exact slot count -- the factory
+/// rounds up, every access bound-checks against the LAYOUT, and a trailing
+/// never-assigned `Nil` costs nothing in `gc_visit`/`Drop`.
+struct CompiledObjN<const N: usize> {
+    class_id: AtomicU32,
+    frozen: AtomicBool,
+    layout: &'static ClassLayout,
+    ivars: IvarCell<N>,
+}
+
 impl CompiledObject {
     /// A fresh instance of `id`: every slot `Nil`/unassigned, unfrozen.
+    /// Small layouts get an inline-storage [`CompiledObjN`]; only a class
+    /// with more than 8 slots pays the size-erased boxed-slice shape.
     pub fn alloc(id: ClassId, layout: &'static ClassLayout) -> RObj {
-        let o: RObj = std::sync::Arc::new(CompiledObject {
-            class_id: AtomicU32::new(id.0),
-            frozen: AtomicBool::new(false),
-            layout,
-            ivars: IvarSlots::with_len(layout.slots()),
-        });
-        crate::gc::record_object(&o);
-        o
+        fn small<const N: usize>(id: ClassId, layout: &'static ClassLayout) -> RObj {
+            let o: RObj = std::sync::Arc::new(CompiledObjN::<N> {
+                class_id: AtomicU32::new(id.0),
+                frozen: AtomicBool::new(false),
+                layout,
+                ivars: IvarCell::new(),
+            });
+            crate::gc::record_object(&o);
+            o
+        }
+        match layout.slots() {
+            0 => small::<0>(id, layout),
+            1 => small::<1>(id, layout),
+            2 => small::<2>(id, layout),
+            3 => small::<3>(id, layout),
+            4 => small::<4>(id, layout),
+            5 | 6 => small::<6>(id, layout),
+            7 | 8 => small::<8>(id, layout),
+            n => {
+                let o: RObj = std::sync::Arc::new(CompiledObject {
+                    class_id: AtomicU32::new(id.0),
+                    frozen: AtomicBool::new(false),
+                    layout,
+                    ivars: IvarSlots::with_len(n),
+                });
+                crate::gc::record_object(&o);
+                o
+            }
+        }
     }
 }
 
-impl RubyObject for CompiledObject {
-    fn class_id(&self) -> ClassId {
-        ClassId(self.class_id.load(Ordering::Relaxed))
-    }
+/// One `RubyObject` body for both storage shapes -- the two structs are
+/// field-for-field identical and every `ivars` method is shared through
+/// `IvarCellCore`, so the impls must not be allowed to drift.
+macro_rules! compiled_object_impl {
+    ($({$($gen:tt)*})? $t:ty) => {
+        impl$(<$($gen)*>)? RubyObject for $t {
+            fn class_id(&self) -> ClassId {
+                ClassId(self.class_id.load(Ordering::Relaxed))
+            }
 
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
 
-    fn as_any_rc(self: std::sync::Arc<Self>) -> std::sync::Arc<dyn std::any::Any + Send + Sync> {
-        self
-    }
+            fn as_any_rc(
+                self: std::sync::Arc<Self>,
+            ) -> std::sync::Arc<dyn std::any::Any + Send + Sync> {
+                self
+            }
 
-    fn is_frozen(&self) -> bool {
-        self.frozen.load(Ordering::Relaxed)
-    }
+            fn is_frozen(&self) -> bool {
+                self.frozen.load(Ordering::Relaxed)
+            }
 
-    fn set_frozen(&self) {
-        self.frozen.store(true, Ordering::Relaxed);
-    }
+            fn set_frozen(&self) {
+                self.frozen.store(true, Ordering::Relaxed);
+            }
 
-    fn gc_visit(&self, out: &mut Vec<RubyValue>, take: bool) {
-        self.ivars.gc_visit(out, take);
-    }
+            fn gc_visit(&self, out: &mut Vec<RubyValue>, take: bool) {
+                self.ivars.gc_visit(out, take);
+            }
 
-    fn ivar_values(&self) -> Vec<RubyValue> {
-        self.ivars
-            .values(self.layout.hidden, self.layout.names.len())
-    }
+            fn ivar_values(&self) -> Vec<RubyValue> {
+                self.ivars
+                    .values(self.layout.hidden, self.layout.names.len())
+            }
 
-    fn ivar_pairs(&self) -> Vec<(String, RubyValue)> {
-        self.ivars.pairs(self.layout.hidden, self.layout.names)
-    }
+            fn ivar_pairs(&self) -> Vec<(String, RubyValue)> {
+                self.ivars.pairs(self.layout.hidden, self.layout.names)
+            }
 
-    fn ivar_get_named(&self, name: &str) -> Option<RubyValue> {
-        self.ivars
-            .get_named(self.layout.hidden, self.layout.names, name)
-    }
+            fn ivar_get_named(&self, name: &str) -> Option<RubyValue> {
+                self.ivars
+                    .get_named(self.layout.hidden, self.layout.names, name)
+            }
 
-    fn ivar_set_named(&self, name: &str, v: RubyValue) -> bool {
-        self.ivars
-            .set_named(self.layout.hidden, self.layout.names, name, v);
-        true
-    }
+            fn ivar_set_named(&self, name: &str, v: RubyValue) -> bool {
+                self.ivars
+                    .set_named(self.layout.hidden, self.layout.names, name, v);
+                true
+            }
 
-    fn ivar_remove_named(&self, name: &str) -> Option<RubyValue> {
-        self.ivars
-            .remove_named(self.layout.hidden, self.layout.names, name)
-    }
+            fn ivar_remove_named(&self, name: &str) -> Option<RubyValue> {
+                self.ivars
+                    .remove_named(self.layout.hidden, self.layout.names, name)
+            }
 
-    fn hidden_ivar_get(&self, i: usize) -> Option<RubyValue> {
-        (i < self.layout.hidden).then(|| self.ivars.get(i))
-    }
+            fn hidden_ivar_get(&self, i: usize) -> Option<RubyValue> {
+                (i < self.layout.hidden).then(|| self.ivars.get(i))
+            }
 
-    fn hidden_ivar_set(&self, i: usize, v: RubyValue) -> bool {
-        if i >= self.layout.hidden {
-            return false;
+            fn hidden_ivar_set(&self, i: usize, v: RubyValue) -> bool {
+                if i >= self.layout.hidden {
+                    return false;
+                }
+                self.ivars.set(i, v);
+                true
+            }
+
+            fn ivar_slot_get(&self, slot: usize) -> RubyValue {
+                if slot >= self.layout.slots() {
+                    return RubyValue::Nil;
+                }
+                self.ivars.get(slot)
+            }
+
+            fn ivar_slot_set(&self, slot: usize, value: RubyValue) {
+                if slot < self.layout.slots() {
+                    self.ivars.set(slot, value);
+                }
+            }
+
+            fn take_linked_ivars(&self, out: &mut Vec<RubyValue>) {
+                self.ivars.take_linked(out);
+            }
+
+            fn dup_object(&self, copy_frozen: bool) -> RObj {
+                let copy: RObj = std::sync::Arc::new(Self {
+                    class_id: AtomicU32::new(self.class_id.load(Ordering::Relaxed)),
+                    frozen: AtomicBool::new(copy_frozen && self.is_frozen()),
+                    layout: self.layout,
+                    ivars: self.ivars.duplicate(),
+                });
+                crate::gc::record_object(&copy);
+                copy
+            }
+
+            fn retag_moved(&self) -> bool {
+                self.class_id
+                    .store(zeo_abi::RACTOR_MOVED_OBJECT_CLASS.0, Ordering::Relaxed);
+                true
+            }
         }
-        self.ivars.set(i, v);
-        true
-    }
-
-    fn ivar_slot_get(&self, slot: usize) -> RubyValue {
-        if slot >= self.layout.slots() {
-            return RubyValue::Nil;
-        }
-        self.ivars.get(slot)
-    }
-
-    fn ivar_slot_set(&self, slot: usize, value: RubyValue) {
-        if slot < self.layout.slots() {
-            self.ivars.set(slot, value);
-        }
-    }
-
-    fn take_linked_ivars(&self, out: &mut Vec<RubyValue>) {
-        self.ivars.take_linked(out);
-    }
-
-    fn dup_object(&self, copy_frozen: bool) -> RObj {
-        let copy: RObj = std::sync::Arc::new(CompiledObject {
-            class_id: AtomicU32::new(self.class_id.load(Ordering::Relaxed)),
-            frozen: AtomicBool::new(copy_frozen && self.is_frozen()),
-            layout: self.layout,
-            ivars: self.ivars.duplicate(),
-        });
-        crate::gc::record_object(&copy);
-        copy
-    }
-
-    fn retag_moved(&self) -> bool {
-        self.class_id
-            .store(zeo_abi::RACTOR_MOVED_OBJECT_CLASS.0, Ordering::Relaxed);
-        true
-    }
+    };
 }
+
+compiled_object_impl!(CompiledObject);
+compiled_object_impl!({const N: usize} CompiledObjN<N>);
