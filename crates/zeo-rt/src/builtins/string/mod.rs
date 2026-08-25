@@ -654,16 +654,25 @@ ruby_class! {
     def "setbyte" (recv, arg1, arg2) {
         let (i, b) = (arg_int!(arg1), arg_int!(arg2));
         let s = rstr;
-        let len = s.lock().bytesize() as i64;
+        // ONE lock on the good path. The error paths drop the guard first:
+        // the frozen raise renders the receiver with `inspect`, which locks
+        // this same (non-reentrant) string.
+        let mut g = s.lock();
+        let len = g.bytesize() as i64;
         let idx = if i < 0 { i + len } else { i };
         if idx < 0 || idx >= len {
+            drop(g);
             return Err(index_error!("index {i} out of string"));
         }
         // AFTER the index conversion and range check -- CRuby's
         // `rb_str_setbyte` order (a frozen receiver still reports
         // TypeError/IndexError for bad arguments first, oracle-verified).
-        guard_str_frozen(recv)?;
-        s.lock().setbyte(idx as usize, (b & 0xff) as u8);
+        if s.is_frozen() {
+            drop(g);
+            guard_str_frozen(recv)?;
+            unreachable!("a frozen receiver raises above");
+        }
+        g.setbyte(idx as usize, (b & 0xff) as u8);
         Ok((*arg2).clone())
     }
     // `byteslice(offset[, len])` -- a substring cut on BYTE boundaries (one
@@ -1753,7 +1762,6 @@ ruby_class! {
             _ => None,
         };
         let s = rstr.lock();
-        let n = s.char_len() as i64;
         let wrap = |buf: Option<crate::encoding::StrBuf>| match buf {
             Some(b) => RubyValue::Str(crate::string_wrap(b)),
             None => RubyValue::Nil,
@@ -1764,6 +1772,10 @@ ruby_class! {
         }
         match index {
             RubyValue::Range(__rg) => {
+                // Only the Range arm needs the CHARACTER length (an O(bytes)
+                // count on multibyte strings); `s[i]` and `s[i, n]` never pay
+                // for it.
+                let n = s.char_len() as i64;
                 let exclusive = __rg.parts().2;
                 let (start, end) = range_bounds.expect("a Range index converts its bounds above");
                 let start_i = match start {

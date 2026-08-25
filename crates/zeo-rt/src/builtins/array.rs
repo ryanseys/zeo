@@ -222,6 +222,10 @@ ruby_class! {
             )));
         }
         match index {
+            // The plain-Int index FIRST: it is the hot shape, and putting it
+            // ahead of the arith-seq guard keeps that probe (a class walk)
+            // off every `arr[i]`.
+            RubyValue::Int(i) => Ok(crate::array_get(rary, *i)),
             // `arr[1..3]` -- Range slicing.
             RubyValue::Range(__rg) => {
                 let (start, end, exclusive) = __rg.parts();
@@ -285,15 +289,16 @@ ruby_class! {
             return Ok(second.clone());
         }
         let i = arg_int!(index);
-        match crate::array_set(rary, i, second.clone()) {
-            Some(v) => Ok(v),
+        if crate::array_set(rary, i, second.clone()) {
+            Ok(second.clone())
+        } else {
             // `minimum:` is the NUMBER `-len`, so an empty array reads
             // `minimum: 0` -- not a literal minus in front of the length,
             // which spelled it `-0` (CRuby's `rb_ary_store`).
-            None => Err(index_error!(
+            Err(index_error!(
                 "index {i} too small for array; minimum: {}",
                 -(crate::array_len(rary) as i64)
-            )),
+            ))
         }
     }
     def "<<" arity 1 | "push" | "append"(recv, *args, &_block) {
@@ -302,9 +307,15 @@ ruby_class! {
         // serves both.
         let arr = rary;
         check_frozen(arr, recv)?;
+        // ONE lock for the whole argument list, and no boxed per-element
+        // return: `array_push` re-locked and built a throwaway
+        // `RubyValue::Array` per element. Clones under the lock are Arc
+        // bumps only -- no user code can run.
+        let mut g = arr.lock();
         for a in args {
-            crate::array_push(arr, a.clone());
+            g.push(a.clone());
         }
+        drop(g);
         Ok(recv.clone())
     }
     def "length" | "size" (recv) {

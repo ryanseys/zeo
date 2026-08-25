@@ -1168,25 +1168,29 @@ pub fn array_get(arr: &RArray, index: i64) -> RubyValue {
 
 /// Ruby's `Array#[]=`: an index past the current end pads with `nil` up to
 /// it (`a = []; a[3] = :x` gives `[nil, nil, nil, :x]`); a negative index
-/// that's still out of range raises a real `IndexError` -- `None` here,
+/// that's still out of range raises a real `IndexError` -- `false` here,
 /// which `builtins::array`'s `[]=` row turns into a
 /// proper `Signal::Raise(IndexError.new(...))`. The actual message/exception
 /// CONSTRUCTION happens at the caller, which carries CRuby's exact
-/// message text.
+/// message text. The value moves in; the caller keeps its own handle for
+/// the expression result.
 #[inline]
-pub fn array_set(arr: &RArray, index: i64, value: RubyValue) -> Option<RubyValue> {
+pub fn array_set(arr: &RArray, index: i64, value: RubyValue) -> bool {
     let mut arr = arr.lock();
     let i = if index < 0 {
         let from_end = arr.len() as i64 + index;
-        usize::try_from(from_end).ok()?
+        match usize::try_from(from_end) {
+            Ok(i) => i,
+            Err(_) => return false,
+        }
     } else {
         index as usize
     };
     if i >= arr.len() {
         arr.resize(i + 1, RubyValue::Nil);
     }
-    arr[i] = value.clone();
-    Some(value)
+    arr[i] = value;
+    true
 }
 
 #[inline]
@@ -1423,7 +1427,16 @@ fn snapshot_key(key: RubyValue, by_identity: bool) -> RubyValue {
 /// [`snapshot_key`] a single edit rather than an audit.
 #[inline]
 pub fn hash_set(h: &RHash, key: RubyValue, value: RubyValue) -> RubyValue {
-    let mut g = h.lock();
+    hash_set_under(&mut h.lock(), key, value)
+}
+
+/// [`hash_set`]'s body under an already-held guard, so [`hash_set_checked`]
+/// reads `iterating` and writes under ONE lock acquisition.
+fn hash_set_under(
+    g: &mut FreezeGuard<'_, RHashData>,
+    key: RubyValue,
+    value: RubyValue,
+) -> RubyValue {
     if let RubyValue::Str(s) = &key
         && !g.compare_by_identity
     {
@@ -1467,12 +1480,19 @@ pub fn hash_set_checked(
     key: RubyValue,
     value: RubyValue,
 ) -> Result<RubyValue, crate::Signal> {
-    if h.lock().iterating > 0 && !hash_has_key(h, &key) {
-        return Err(crate::builtins::runtime_error!(
-            "can't add a new key into hash during iteration"
-        ));
+    let mut g = h.lock();
+    if g.iterating > 0 {
+        // Rare path (a live `each`): the existing-key probe can run a user
+        // `hash`, so it must not hold the receiver's lock.
+        drop(g);
+        if !hash_has_key(h, &key) {
+            return Err(crate::builtins::runtime_error!(
+                "can't add a new key into hash during iteration"
+            ));
+        }
+        return Ok(hash_set(h, key, value));
     }
-    Ok(hash_set(h, key, value))
+    Ok(hash_set_under(&mut g, key, value))
 }
 
 /// Marks `h` under iteration for the new-key guard, un-marking on drop

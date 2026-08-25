@@ -232,9 +232,20 @@ impl ProcBuilder {
         arity: i32,
         is_lambda: bool,
     ) -> ProcBuilder {
+        Self::from_fn(
+            Arc::new(move |_env, recv, args, block| f(recv, args, block)),
+            self_val,
+            arity,
+            is_lambda,
+        )
+    }
+
+    /// The shared core: an already-built [`ProcFn`] and the defaults every
+    /// builder starts from.
+    fn from_fn(f: ProcFn, self_val: RubyValue, arity: i32, is_lambda: bool) -> ProcBuilder {
         ProcBuilder(ProcData {
             class_id: zeo_abi::PROC_CLASS,
-            f: Arc::new(move |_env, recv, args, block| f(recv, args, block)),
+            f,
             self_val,
             arity,
             is_lambda,
@@ -266,11 +277,15 @@ impl ProcBuilder {
         arity: i32,
         is_lambda: bool,
     ) -> ProcBuilder {
-        let mut b = ProcBuilder::from_rust(|_, _, _| unreachable!(), self_val, arity, is_lambda);
-        b.0.f = Arc::new(move |env, recv, args, block| {
-            let env = env.expect("a compiled block always carries its environment");
-            crate::capi::procs::call_block_fn(f, env, recv, args, block)
-        });
+        let mut b = ProcBuilder::from_fn(
+            Arc::new(move |env, recv, args, block| {
+                let env = env.expect("a compiled block always carries its environment");
+                crate::capi::procs::call_block_fn(f, env, recv, args, block)
+            }),
+            self_val,
+            arity,
+            is_lambda,
+        );
         b.0.env = Some(env);
         // Every proc the emitter builds came from a block WRITTEN in the
         // source at a call site. `Kernel#lambda` reads it; the `&expr`
