@@ -1109,13 +1109,22 @@ impl RubyValue {
                     return true;
                 }
                 seen.push(pair);
-                let av: Vec<RubyValue> = a.lock().to_vec();
-                let bv: Vec<RubyValue> = b.lock().to_vec();
-                let eq = av.len() == bv.len()
-                    && av
-                        .iter()
-                        .zip(bv.iter())
-                        .all(|(x, y)| x.rb_eq_guarded(y, seen));
+                // Length first, then per-element lock ROUND-TRIPS (the
+                // `array_include` rule): an element's `==` can run user
+                // code, which must not hold either lock -- and the old
+                // whole-Vec snapshots allocated two Vecs per comparison.
+                let n = a.lock().len();
+                let eq = n == b.lock().len()
+                    && (0..n).all(|i| {
+                        let x = a.lock().get(i).cloned();
+                        let y = b.lock().get(i).cloned();
+                        match (x, y) {
+                            (Some(x), Some(y)) => x.rb_eq_guarded(&y, seen),
+                            // Shrunk mid-walk by another thread: the pair
+                            // no longer has this index on both sides.
+                            _ => false,
+                        }
+                    });
                 seen.pop();
                 eq
             }
@@ -1297,19 +1306,24 @@ impl RubyValue {
             // `Hash#sort` work, since the generic comparison drivers use
             // `rb_cmp` rather than dispatching `Array#<=>`.
             (RubyValue::Array(a), RubyValue::Array(b)) => {
-                // Sequential snapshots (the tuple form holds both guards to
-                // statement end -- opposite-order deadlock under parallel
-                // threads).
-                let a = a.lock().clone();
-                let b = b.lock().clone();
-                for (x, y) in a.iter().zip(b.iter()) {
-                    match x.rb_cmp(y) {
+                // Per-element lock round-trips: an element's `<=>` can run
+                // user code (never under a lock), and the old whole-array
+                // snapshots allocated two Vecs per comparison -- one per
+                // PAIR under a sort.
+                let (la, lb) = (a.lock().len(), b.lock().len());
+                for i in 0..la.min(lb) {
+                    let x = a.lock().get(i).cloned();
+                    let y = b.lock().get(i).cloned();
+                    // Shrunk mid-walk by another thread: fall through to
+                    // the length comparison.
+                    let (Some(x), Some(y)) = (x, y) else { break };
+                    match x.rb_cmp(&y) {
                         Some(0) => continue,
                         Some(c) => return Some(c),
                         None => return None,
                     }
                 }
-                Some((a.len() as i64 - b.len() as i64).signum())
+                Some((la as i64 - lb as i64).signum())
             }
             (RubyValue::Object(o), _) => {
                 match crate::dispatch::call_user_method(
