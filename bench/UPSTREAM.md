@@ -7,6 +7,11 @@ Many programs are in turn adaptations of classic Ruby benchmark corpora
 (the Computer Language Benchmarks Game shapes, yjit-bench-style micro
 benchmarks).
 
+Local workload divergence: `bm_tree_walker.rb`'s round count was reduced
+400 -> 100 (2026-08-25) so a 10-sample criterion bank stays affordable
+while zeo's dispatch-bound gap on it is still open; the polymorphic
+structure is unchanged.
+
 Each `bm_<name>.rb` prints deterministic output; `bm_<name>.rb.expected` is
 that output, oracle-verified against real `ruby`. The criterion harness
 (`crates/zeo/benches/programs.rs`, `make bench`) compiles each with

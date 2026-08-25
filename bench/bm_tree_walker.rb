@@ -70,7 +70,7 @@ interp = Interp.new(env)
 
 acc = 0
 r = 0
-while r < 400
+while r < 100
   i = 0
   while i < prog.length
     acc = (acc + interp.visit(prog[i])) % 1000003

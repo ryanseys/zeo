@@ -23,10 +23,12 @@
 //! critcmp before after                                   # cross-run compare
 //! ```
 //!
-//! Long programs (tens of seconds) exceed the 2s target time; criterion
-//! prints a warning and takes its 10 flat samples anyway -- that warning is
-//! expected, not a problem. Compilation happens lazily inside each
-//! benchmark, so a filtered run compiles only what it times.
+//! An unfiltered bank compiles and gates every program up front, and the
+//! gate run's duration sets that benchmark's target time -- so criterion's
+//! 10 flat samples always fit and its "unable to complete 10 samples"
+//! warning never fires. A FILTERED run keeps compilation lazy instead
+//! (only what it times), at the price of that cosmetic warning on long
+//! programs.
 //!
 //! The harness builds its OWN `zeo` + `libzeo.a` into an isolated target
 //! dir (`target/bench/`), snapshotted once at bench start -- so editing
@@ -86,6 +88,55 @@ fn programs(root: &Path) -> Vec<PathBuf> {
     v
 }
 
+/// Whether the criterion CLI carries a positional filter (or `--list`).
+/// With a filter present, eager setup would compile programs criterion
+/// then skips, so the harness compiles lazily instead. Value-taking flags
+/// are stepped over; `--flag=value` spellings and boolean flags fall to
+/// the `-` check.
+fn lazy_mode() -> bool {
+    const VALUE_FLAGS: &[&str] = &[
+        "-b",
+        "--baseline",
+        "-s",
+        "--save-baseline",
+        "--load-baseline",
+        "--sample-size",
+        "--warm-up-time",
+        "--measurement-time",
+        "--nresamples",
+        "--noise-threshold",
+        "--confidence-level",
+        "--significance-level",
+        "--profile-time",
+        "--color",
+        "--output-format",
+        "--plotting-backend",
+    ];
+    let mut args = std::env::args().skip(1);
+    while let Some(a) = args.next() {
+        if a == "--list" {
+            return true;
+        }
+        if VALUE_FLAGS.contains(&a.as_str()) {
+            let _ = args.next();
+            continue;
+        }
+        if a.starts_with('-') {
+            continue;
+        }
+        return true;
+    }
+    false
+}
+
+/// A per-benchmark target time the 10 flat samples always fit in, derived
+/// from the gate run's own duration. This never changes WHAT is measured
+/// -- a long benchmark still takes exactly 10 single-execution samples --
+/// it only sizes the plan so criterion stops warning about it.
+fn target_for(one_run: Duration) -> Duration {
+    (one_run * 12).max(Duration::from_secs(2))
+}
+
 /// The directory compiled programs land in -- beside the snapshot `zeo`
 /// inside the isolated bench target dir, so concurrent trees (a worktree
 /// control run beside the main tree) never collide on names.
@@ -100,7 +151,7 @@ fn scratch() -> PathBuf {
     d
 }
 
-/// The snapshot `zeo` binary [`main`] built, for the lazy per-benchmark
+/// The snapshot `zeo` binary [`main`] built, for the per-benchmark
 /// compiles.
 static ZEO: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 
@@ -123,16 +174,20 @@ fn compile(rb: &Path, name: &str) -> PathBuf {
 
 /// One gated run: stdout must match the committed `.expected` BYTES (some
 /// benchmarks print binary output, e.g. bm_ao_render's PPM image).
-fn gate(cmd: &mut Command, rb: &Path, what: &str) {
+/// Answers the run's wall time, the eager path's target-time estimate.
+fn gate(cmd: &mut Command, rb: &Path, what: &str) -> Duration {
     let expected = std::fs::read(rb.with_extension("rb.expected"))
         .unwrap_or_else(|e| panic!("{}.expected: {e}", rb.display()));
+    let t = Instant::now();
     let out = cmd.stderr(Stdio::null()).output().expect("spawn the benchmark");
+    let took = t.elapsed();
     assert!(out.status.success(), "{what} exited {:?} on {}", out.status, rb.display());
     assert!(
         out.stdout == expected,
         "{what} output mismatch vs .expected on {}",
         rb.display()
     );
+    took
 }
 
 /// Total wall time of `iters` silent executions of `cmd`.
@@ -151,29 +206,40 @@ fn time_runs(cmd: &mut Command, iters: u64) -> Duration {
     total
 }
 
-fn bench_zeo(c: &mut Criterion, corpus: &[PathBuf]) {
+fn bench_zeo(c: &mut Criterion, corpus: &[PathBuf], lazy: bool) {
     let mut g = c.benchmark_group("zeo");
     g.sampling_mode(SamplingMode::Flat).sample_size(10);
     for rb in corpus {
         let name = rb.file_stem().unwrap().to_string_lossy().into_owned();
         let id = name.clone();
         let rb = rb.clone();
-        // Compiled (and gated) on FIRST use, so a filtered run pays only
-        // for what it selects. The cell outlives warmup + measurement.
-        let compiled: OnceCell<PathBuf> = OnceCell::new();
-        g.bench_function(id, move |b| {
-            let bin = compiled.get_or_init(|| {
-                let bin = compile(&rb, &name);
-                gate(&mut Command::new(&bin), &rb, "zeo binary");
-                bin
+        if lazy {
+            // Compiled (and gated) on FIRST use, so a filtered run pays
+            // only for what it selects. The cell outlives warmup +
+            // measurement.
+            let compiled: OnceCell<PathBuf> = OnceCell::new();
+            g.bench_function(id, move |b| {
+                let bin = compiled.get_or_init(|| {
+                    let bin = compile(&rb, &name);
+                    gate(&mut Command::new(&bin), &rb, "zeo binary");
+                    bin
+                });
+                b.iter_custom(|iters| time_runs(&mut Command::new(bin), iters));
             });
-            b.iter_custom(|iters| time_runs(&mut Command::new(bin), iters));
-        });
+        } else {
+            let bin = compile(&rb, &name);
+            let one_run = gate(&mut Command::new(&bin), &rb, "zeo binary");
+            eprintln!("gate zeo/{name}: {:.3}s", one_run.as_secs_f64());
+            g.measurement_time(target_for(one_run));
+            g.bench_function(id, move |b| {
+                b.iter_custom(|iters| time_runs(&mut Command::new(&bin), iters));
+            });
+        }
     }
     g.finish();
 }
 
-fn bench_cruby(c: &mut Criterion, corpus: &[PathBuf]) {
+fn bench_cruby(c: &mut Criterion, corpus: &[PathBuf], lazy: bool) {
     let ruby =
         std::env::var("ZEO_BENCH_ORACLE_RUBY").unwrap_or_else(|_| "ruby".to_string());
     let mut g = c.benchmark_group("cruby");
@@ -182,15 +248,24 @@ fn bench_cruby(c: &mut Criterion, corpus: &[PathBuf]) {
         let name = rb.file_stem().unwrap().to_string_lossy().into_owned();
         let rb = rb.clone();
         let ruby = ruby.clone();
-        let gated: OnceCell<()> = OnceCell::new();
-        g.bench_function(name, move |b| {
-            // An oracle mismatch means the .expected snapshot is stale --
-            // fail loudly rather than banking a wrong comparison.
-            gated.get_or_init(|| {
-                gate(Command::new(&ruby).arg(&rb), &rb, "oracle ruby")
+        // An oracle mismatch means the .expected snapshot is stale -- fail
+        // loudly rather than banking a wrong comparison.
+        if lazy {
+            let gated: OnceCell<()> = OnceCell::new();
+            g.bench_function(name, move |b| {
+                gated.get_or_init(|| {
+                    gate(Command::new(&ruby).arg(&rb), &rb, "oracle ruby");
+                });
+                b.iter_custom(|iters| time_runs(Command::new(&ruby).arg(&rb), iters));
             });
-            b.iter_custom(|iters| time_runs(Command::new(&ruby).arg(&rb), iters));
-        });
+        } else {
+            let one_run = gate(Command::new(&ruby).arg(&rb), &rb, "oracle ruby");
+            eprintln!("gate cruby/{name}: {:.3}s", one_run.as_secs_f64());
+            g.measurement_time(target_for(one_run));
+            g.bench_function(name, move |b| {
+                b.iter_custom(|iters| time_runs(Command::new(&ruby).arg(&rb), iters));
+            });
+        }
     }
     g.finish();
 }
@@ -200,15 +275,16 @@ fn main() {
     ZEO.set(build_snapshot(&root)).expect("main runs once");
     let corpus = programs(&root);
     assert!(!corpus.is_empty(), "no programs under bench/");
+    let lazy = lazy_mode();
     // Defaults BEFORE configure_from_args, so criterion's own CLI flags
     // (--warm-up-time, --measurement-time, ...) still win.
     let mut c = Criterion::default()
         .warm_up_time(Duration::from_millis(500))
         .measurement_time(Duration::from_secs(2))
         .configure_from_args();
-    bench_zeo(&mut c, &corpus);
+    bench_zeo(&mut c, &corpus, lazy);
     if std::env::var_os("ZEO_BENCH_ORACLE").is_some_and(|v| v == "1") {
-        bench_cruby(&mut c, &corpus);
+        bench_cruby(&mut c, &corpus, lazy);
     }
     c.final_summary();
 }
