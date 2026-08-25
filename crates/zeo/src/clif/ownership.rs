@@ -5,6 +5,7 @@
 
 use super::ctx::{Fx, Local};
 use super::operand::{Operand, TagInfo};
+use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::{self, InstBuilder, MemFlagsData, types};
 use zeo_abi::abi::{FIRST_HEAP_TAG, PAYLOAD_OFFSET, TAG_OFFSET, ValueTag};
 
@@ -321,7 +322,38 @@ pub(crate) fn truthy(fx: &mut Fx, op: Operand) -> ir::Value {
                 }
                 // A Class immediate is truthy like any other non-nil.
                 TagInfo::Class(_) => fx.b.ins().iconst(types::I8, 1),
-                TagInfo::Known(_) | TagInfo::Unknown => fx.call_status("zeo_rt_truthy", &[addr]),
+                TagInfo::Known(t) if t == ValueTag::Nil as u8 => fx.b.ins().iconst(types::I8, 0),
+                TagInfo::Known(_) => {
+                    // Known Bool: its payload byte IS the answer (0 or 1).
+                    let fl = ir::MemFlagsData::trusted();
+                    let pb = fx.b.ins().load(
+                        types::I8,
+                        fl,
+                        addr,
+                        zeo_abi::abi::PAYLOAD_OFFSET as i32,
+                    );
+                    fx.b.ins().icmp_imm_u(IntCC::NotEqual, pb, 0)
+                }
+                TagInfo::Unknown => {
+                    // Inline ruby's truthiness over the ABI bytes: falsy is
+                    // Nil (tag 0) or Bool false (tag 1, payload byte 0) --
+                    // `zeo_rt_truthy` was a call per dynamic condition.
+                    let fl = ir::MemFlagsData::trusted();
+                    let t =
+                        fx.b.ins()
+                            .load(types::I8, fl, addr, zeo_abi::abi::TAG_OFFSET as i32);
+                    let pb = fx.b.ins().load(
+                        types::I8,
+                        fl,
+                        addr,
+                        zeo_abi::abi::PAYLOAD_OFFSET as i32,
+                    );
+                    let gt1 = fx.b.ins().icmp_imm_u(IntCC::UnsignedGreaterThan, t, 1);
+                    let is_bool = fx.b.ins().icmp_imm_u(IntCC::Equal, t, 1);
+                    let nz = fx.b.ins().icmp_imm_u(IntCC::NotEqual, pb, 0);
+                    let true_bool = fx.b.ins().band(is_bool, nz);
+                    fx.b.ins().bor(gt1, true_bool)
+                }
             }
         }
     }
