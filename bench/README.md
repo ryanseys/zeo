@@ -62,6 +62,11 @@ commit in a worktree before believing the number. Baselines live in
   programs exceed the 2 s target time; criterion warns and takes its 10
   samples anyway — that warning is expected.
 - **Lazy compilation.** A filtered run compiles only the programs it times.
+- **An isolated snapshot.** The harness builds its own `zeo` + `libzeo.a`
+  into `target/bench/` once at bench start and times only those artifacts —
+  editing code, running tests, or `cargo build` in the ordinary target dir
+  while a bank runs cannot touch what is being timed (though heavy parallel
+  builds still add scheduler noise to the numbers).
 - **The oracle is the pinned ruby.** Point `ZEO_BENCH_ORACLE_RUBY` at the
   `mise.toml` ruby (4.0.6); a bare `ruby` off `PATH` answers a different
   question.

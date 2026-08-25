@@ -27,6 +27,11 @@
 //! prints a warning and takes its 10 flat samples anyway -- that warning is
 //! expected, not a problem. Compilation happens lazily inside each
 //! benchmark, so a filtered run compiles only what it times.
+//!
+//! The harness builds its OWN `zeo` + `libzeo.a` into an isolated target
+//! dir (`target/bench/`), snapshotted once at bench start -- so editing
+//! code, running tests, or `cargo build` in the ordinary target dir while
+//! a bank runs cannot touch what is being timed.
 
 use std::cell::OnceCell;
 use std::path::{Path, PathBuf};
@@ -43,6 +48,31 @@ fn repo_root() -> PathBuf {
         .to_path_buf()
 }
 
+/// The harness's own `zeo` binary, built (with `libzeo.a` beside it) into
+/// an isolated `target/bench/` dir the ordinary builds never touch. Built
+/// ONCE at bench start: the whole bank times one source snapshot, however
+/// long it runs and whatever happens in the main target dir meanwhile.
+fn build_snapshot(root: &Path) -> PathBuf {
+    let outer = std::env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| root.join("target"));
+    let bench_target = outer.join("bench");
+    let status = Command::new(env!("CARGO"))
+        .args(["build", "--release", "-p", "zeo"])
+        .env("CARGO_TARGET_DIR", &bench_target)
+        .current_dir(root)
+        .status()
+        .expect("spawn cargo");
+    assert!(status.success(), "cargo build --release -p zeo failed");
+    let zeo = bench_target.join("release/zeo");
+    assert!(
+        bench_target.join("release/libzeo.a").exists(),
+        "libzeo.a missing beside {}",
+        zeo.display()
+    );
+    zeo
+}
+
 /// The corpus: every `.rb` directly under `bench/`, sorted by name.
 fn programs(root: &Path) -> Vec<PathBuf> {
     let mut v: Vec<PathBuf> = std::fs::read_dir(root.join("bench"))
@@ -56,17 +86,28 @@ fn programs(root: &Path) -> Vec<PathBuf> {
     v
 }
 
-/// The scratch directory compiled binaries land in.
+/// The directory compiled programs land in -- beside the snapshot `zeo`
+/// inside the isolated bench target dir, so concurrent trees (a worktree
+/// control run beside the main tree) never collide on names.
 fn scratch() -> PathBuf {
-    let d = std::env::temp_dir().join("zeo-criterion");
+    let d = ZEO
+        .get()
+        .expect("main built the snapshot")
+        .parent()
+        .expect("the binary sits in release/")
+        .join("programs");
     std::fs::create_dir_all(&d).expect("create the bench scratch dir");
     d
 }
 
-/// Compile `rb` with the release `zeo` and answer the binary path.
+/// The snapshot `zeo` binary [`main`] built, for the lazy per-benchmark
+/// compiles.
+static ZEO: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Compile `rb` with the snapshot `zeo` and answer the binary path.
 fn compile(rb: &Path, name: &str) -> PathBuf {
     let bin = scratch().join(name);
-    let out = Command::new(env!("CARGO_BIN_EXE_zeo"))
+    let out = Command::new(ZEO.get().expect("main built the snapshot"))
         .arg(rb)
         .args(["-o", bin.to_str().expect("utf-8 scratch path"), "-W0"])
         .output()
@@ -156,6 +197,7 @@ fn bench_cruby(c: &mut Criterion, corpus: &[PathBuf]) {
 
 fn main() {
     let root = repo_root();
+    ZEO.set(build_snapshot(&root)).expect("main runs once");
     let corpus = programs(&root);
     assert!(!corpus.is_empty(), "no programs under bench/");
     // Defaults BEFORE configure_from_args, so criterion's own CLI flags
