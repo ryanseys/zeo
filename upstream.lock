@@ -56,6 +56,12 @@
       "rev": "9907393a1f1dfc027e8e7f2a9f5fcc7c60632762"
     },
     {
+      "name": "error_highlight",
+      "github": "ruby/error_highlight",
+      "tag": "v0.7.2",
+      "rev": "d945ffd2aa4e6c36665195b6a5db8a73ac5339af"
+    },
+    {
       "name": "fileutils",
       "github": "ruby/fileutils",
       "tag": "v1.8.0",

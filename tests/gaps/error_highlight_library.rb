@@ -1,33 +1,55 @@
-# `error_highlight` is loaded by default in ruby, so `require` answers false
-# and the constant is already there. zeo vendors neither.
+# `error_highlight` is now VENDORED (`gems/error_highlight`, v0.7.2, byte-
+# identical to the oracle's own copy), and the three lines below pass. What
+# does not yet work is the thing the library is FOR: `detailed_message`
+# returns no code snippet.
 #
-# It is PURE RUBY and its one blocker is GONE. The primitive it reaches for,
-# `RubyVM::AbstractSyntaxTree.node_id_for_backtrace_location`, landed
-# 2026-08-24 -- see `tests/ast_node_id_for_backtrace_location.rb` for the
-# rule and the six shapes it is verified over. What remains is the vendoring
-# itself: 1,102 lines plus its `detailed_message` hook.
+# Two of its three blockers went 2026-08-24 and have goldens of their own:
 #
-# The safety valve the primitive ships with is what makes vendoring safe.
-# `spot` rescues `ArgumentError`, which is exactly what the primitive raises
-# when a location carries no callee, so a shape the rule misses degrades to a
-# plain message instead of breaking every `detailed_message` -- the seam
-# every report now renders through.
+#   the primitive        `node_id_for_backtrace_location` answers -- see
+#                        `tests/ast_node_id_for_backtrace_location.rb`.
+#   the refusal          `AST.of` now raises the "compiled by prism"
+#                        RuntimeError for a Method and a Location, which is
+#                        what the gem RESCUES to reach its prism path. It
+#                        answered nil, so the rescue never fired -- see
+#                        `tests/ast_of_refuses_what_ruby_refuses.rb`.
+#   the branch           `Exception.method_defined?(:detailed_message)`
+#                        folded FALSE, so the gem installed its pre-3.2
+#                        `to_s` branch -- see
+#                        `tests/method_defined_on_a_bootstrap_class.rb`.
 #
-# THE FIRST LINE IS NOT WHAT IT LOOKS LIKE, corrected 2026-08-21. A plain
-# `ruby` answers `false` to the require, because error_highlight is loaded by
-# default. The GOLDEN HARNESS is not a plain ruby: it runs the oracle with
-# `--disable-error_highlight --disable-did_you_mean`, so the library is NOT
-# loaded there and the require answers `true`. An earlier pass recorded the
-# plain-ruby value by hand and called it re-oracled; `cargo xtask bless
-# gap::` put the harness's own answer back.
+# WHAT IS LEFT is one line of the gem: `prism_find` opens with
+# `require "prism"`, and that require sits inside a METHOD BODY.
 #
-# So this file cannot demonstrate "loaded by default" at all -- the two lines
-# below it are the real gap: zeo has no `ErrorHighlight` to find. The
-# default-loaded behaviour is a `-e` question, and it belongs with the
-# vendoring work rather than here.
+# A deferred literal `require` of an in-tree `ext/` feature is folded to a
+# `FeatureLoaded` marker plus `true` -- "a builtin needs no splice". For
+# `prism` that is false. Its ext rows are ALL PRIVATE by design (they are the
+# native half of the vendored gem, `ext/prism.rs` says so), so the marker
+# activates an EMPTY module: `Prism.constants` is 0 and `Prism::VERSION`
+# raises. A TOP-LEVEL `require "prism"` is fine, because the loader splices
+# the gem before lowering ever sees the call. The same split exists for every
+# feature that is both a gated ext and a vendored gem -- 14 of them today.
 #
-# The lesson is the one `docs/GEM_TESTING.md` already records for gemtests: a
-# golden's oracle is the harness's invocation, not the one you type.
+# Making the deferred path load the gem is NOT a one-line change: probed
+# 2026-08-24, the unit then registers prism's node classes a second time and
+# `node.rb` raises `superclass mismatch for class ClassVariableAndWriteNode`.
+# That is the real work, and it is a loader question rather than an
+# error_highlight one.
+#
+# THE FIRST LINE IS NOT WHAT IT LOOKS LIKE. A plain `ruby` answers `false` to
+# the require, because error_highlight is loaded by default. The GOLDEN
+# HARNESS runs the oracle with `--disable-error_highlight`, so the library is
+# NOT loaded there and the require answers `true`. A golden's oracle is the
+# harness's invocation, not the one you type.
+
 p require("error_highlight")
 p defined?(ErrorHighlight)
 p ErrorHighlight.respond_to?(:spot)
+
+# The thing the library is FOR. `spot` needs `prism_find`, which needs a
+# deferred `require "prism"`.
+def boom
+  nil.nope
+rescue NoMethodError => e
+  puts e.detailed_message(highlight: false)
+end
+boom

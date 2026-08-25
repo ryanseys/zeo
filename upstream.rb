@@ -186,3 +186,7 @@ headers "ruby",
   tag: "v4.0.6",
   rev: "03b6d3f8898a28604fe6cb00eae3226b821168f4",
   subdir: "include"
+gem "error_highlight",
+  github: "ruby/error_highlight",
+  tag: "v0.7.2",
+  rev: "d945ffd2aa4e6c36665195b6a5db8a73ac5339af"
