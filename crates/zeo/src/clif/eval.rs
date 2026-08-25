@@ -15,7 +15,7 @@
 //! what keeps the snippet's backtrace identical to the interpreter's.
 
 use super::ctx::{Fx, Local};
-use super::emit::{ClifModule, Emitter};
+use super::module::{ClifModule, Emitter};
 use super::ownership;
 use super::{statics, verify};
 use crate::analyze::Analyzed;
@@ -179,7 +179,7 @@ fn define_entry(
             continue;
         }
         if captured.contains(&name) {
-            super::emit::init_cell_local(&mut fx, name, None);
+            super::body::init_cell_local(&mut fx, name, None);
         } else {
             let ss = fx.new_value_slot();
             fx.locals.insert(name, Local::Slot(ss));
@@ -189,7 +189,7 @@ fn define_entry(
     super::stmt::lower_value_body_into(&mut fx, stmts, out_ptr)?;
 
     let epilogue = |fx: &mut Fx, status: i64| {
-        super::emit::release_locals(fx);
+        super::body::release_locals(fx);
         let code = fx.b.ins().iconst(types::I32, status);
         fx.b.ins().return_(&[code]);
     };

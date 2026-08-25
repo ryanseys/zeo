@@ -4,109 +4,14 @@
 //! the compiled `<main>`, the emitted C `main`, and the statics (see
 //! `statics`).
 
-use super::capi_names::{self, CTy};
 use super::ctx::Fx;
-use super::{names, statics, stmt, verify};
+use super::module::{ClifModule, Emitter};
+use super::{statics, stmt};
 use crate::analyze::Analyzed;
-use cranelift_codegen::ir::{self, AbiParam, InstBuilder, MemFlagsData, UserFuncName, types};
-use cranelift_codegen::settings::{self, Configurable};
+use cranelift_codegen::ir::{self, AbiParam, InstBuilder, UserFuncName, types};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
-use cranelift_jit::{JITBuilder, JITModule};
-use cranelift_module::{
-    DataDescription, DataId, FuncId, Linkage, Module, ModuleDeclarations, ModuleReloc, ModuleResult,
-};
-use cranelift_object::{ObjectBuilder, ObjectModule};
-use std::collections::HashMap;
-
-/// The one module the emitter writes into. Both arms take the identical
-/// lowering -- the enum (not two emitters) is what makes "JIT runs the
-/// same code AOT links" a structural fact.
-#[allow(
-    clippy::large_enum_variant,
-    reason = "one ClifModule exists per compile; boxing would buy nothing"
-)]
-pub(crate) enum ClifModule {
-    Object(ObjectModule),
-    Jit(JITModule),
-}
-
-impl ClifModule {
-    fn as_dyn(&self) -> &dyn Module {
-        match self {
-            ClifModule::Object(m) => m,
-            ClifModule::Jit(m) => m,
-        }
-    }
-
-    fn as_dyn_mut(&mut self) -> &mut dyn Module {
-        match self {
-            ClifModule::Object(m) => m,
-            ClifModule::Jit(m) => m,
-        }
-    }
-}
-
-impl Module for ClifModule {
-    fn isa(&self) -> &dyn cranelift_codegen::isa::TargetIsa {
-        self.as_dyn().isa()
-    }
-
-    fn declarations(&self) -> &ModuleDeclarations {
-        self.as_dyn().declarations()
-    }
-
-    fn declare_function(
-        &mut self,
-        name: &str,
-        linkage: Linkage,
-        signature: &ir::Signature,
-    ) -> ModuleResult<FuncId> {
-        self.as_dyn_mut().declare_function(name, linkage, signature)
-    }
-
-    fn declare_anonymous_function(&mut self, signature: &ir::Signature) -> ModuleResult<FuncId> {
-        self.as_dyn_mut().declare_anonymous_function(signature)
-    }
-
-    fn declare_data(
-        &mut self,
-        name: &str,
-        linkage: Linkage,
-        writable: bool,
-        tls: bool,
-    ) -> ModuleResult<DataId> {
-        self.as_dyn_mut().declare_data(name, linkage, writable, tls)
-    }
-
-    fn declare_anonymous_data(&mut self, writable: bool, tls: bool) -> ModuleResult<DataId> {
-        self.as_dyn_mut().declare_anonymous_data(writable, tls)
-    }
-
-    fn define_function_with_control_plane(
-        &mut self,
-        func: FuncId,
-        ctx: &mut cranelift_codegen::Context,
-        ctrl_plane: &mut cranelift_codegen::control::ControlPlane,
-    ) -> ModuleResult<()> {
-        self.as_dyn_mut()
-            .define_function_with_control_plane(func, ctx, ctrl_plane)
-    }
-
-    fn define_function_bytes(
-        &mut self,
-        func_id: FuncId,
-        alignment: u64,
-        bytes: &[u8],
-        relocs: &[ModuleReloc],
-    ) -> ModuleResult<()> {
-        self.as_dyn_mut()
-            .define_function_bytes(func_id, alignment, bytes, relocs)
-    }
-
-    fn define_data(&mut self, data_id: DataId, data: &DataDescription) -> ModuleResult<()> {
-        self.as_dyn_mut().define_data(data_id, data)
-    }
-}
+use cranelift_jit::JITModule;
+use cranelift_module::{DataId, FuncId, Linkage, Module};
 
 /// Lower `analyzed` to one object file's bytes. `debuginfo` adds DWARF
 /// line tables (`-g`); see `clif::debuginfo`.
@@ -169,10 +74,10 @@ pub fn compile_jit(analyzed: &Analyzed) -> Result<Jitted, String> {
 /// mode-blind. Returns the emitted C `main`.
 fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String> {
     em.cov_active = crate::analyze::coverage::active(&analyzed.compiler);
-    collect_reopen_flags(em, analyzed);
-    let defs = collect_methods(em, analyzed)?;
+    super::collect::collect_reopen_flags(em, analyzed);
+    let defs = super::collect::collect_methods(em, analyzed)?;
     let collected = super::classes::collect_classes(em, analyzed)?;
-    let class_bodies = collect_class_bodies(em, analyzed)?;
+    let class_bodies = super::collect::collect_class_bodies(em, analyzed)?;
     let (
         class_specs,
         obj_methods,
@@ -224,7 +129,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
     }
     for def in &defs {
         let func = em.methods[&def.name].body;
-        let spec = BodyFnSpec {
+        let spec = super::body::BodyFnSpec {
             func,
             owner: zeo_abi::ClassId(0),
             owner_name: "Object",
@@ -245,11 +150,11 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             // A top-level `def` belongs to main.
             box_id: 0,
         };
-        define_method_body(em, analyzed, &spec)?;
+        super::body::define_method_body(em, analyzed, &spec)?;
     }
     for m in &obj_methods {
         if let Some(func) = m.body_fn {
-            let spec = BodyFnSpec {
+            let spec = super::body::BodyFnSpec {
                 func,
                 owner: m.owner,
                 owner_name: &m.owner_name,
@@ -268,11 +173,11 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
                 origin_name: m.alias_of.as_deref(),
                 box_id: analyzed.compiler.class(m.owner).box_id,
             };
-            define_method_body(em, analyzed, &spec)?;
+            super::body::define_method_body(em, analyzed, &spec)?;
         }
     }
     for m in &cm_methods {
-        let spec = BodyFnSpec {
+        let spec = super::body::BodyFnSpec {
             func: m.body_fn,
             owner: m.owner,
             owner_name: &m.owner_name,
@@ -291,10 +196,10 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             origin_name: m.alias_of.as_deref(),
             box_id: analyzed.compiler.class(m.owner).box_id,
         };
-        define_method_body(em, analyzed, &spec)?;
+        super::body::define_method_body(em, analyzed, &spec)?;
     }
     for m in &redefs {
-        let spec = BodyFnSpec {
+        let spec = super::body::BodyFnSpec {
             func: m.body_fn,
             owner: m.owner,
             owner_name: &m.owner_name,
@@ -315,10 +220,10 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             origin_name: None,
             box_id: analyzed.compiler.class(m.owner).box_id,
         };
-        define_method_body(em, analyzed, &spec)?;
+        super::body::define_method_body(em, analyzed, &spec)?;
     }
     for m in &mod_methods {
-        let spec = BodyFnSpec {
+        let spec = super::body::BodyFnSpec {
             func: m.body_fn,
             owner: m.owner,
             owner_name: &m.owner_name,
@@ -337,13 +242,13 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             origin_name: m.alias_of.as_deref(),
             box_id: analyzed.compiler.class(m.owner).box_id,
         };
-        define_method_body(em, analyzed, &spec)?;
+        super::body::define_method_body(em, analyzed, &spec)?;
     }
     let empty_params = crate::hir::Params::default();
     for cb in &class_bodies {
         let Some(func) = cb.call.func else { continue };
         let owner_name = analyzed.compiler.fq_name(cb.class);
-        let spec = BodyFnSpec {
+        let spec = super::body::BodyFnSpec {
             func,
             owner: cb.class,
             owner_name: &owner_name,
@@ -355,7 +260,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             ruby2_keywords: false,
             self_is_class: true,
             label_override: Some(cb.label.clone()),
-            discard_value: cb.call.tail != BodyTail::Own,
+            discard_value: cb.call.tail != super::collect::BodyTail::Own,
             dyn_ivars: false,
             defining_class: None,
             // A class body's OWN cref is its class; the surrogate case is
@@ -364,14 +269,14 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             origin_name: None,
             box_id: analyzed.compiler.class(cb.class).box_id,
         };
-        define_method_body(em, analyzed, &spec)?;
+        super::body::define_method_body(em, analyzed, &spec)?;
     }
     for def in &defs {
         let decl = &em.methods[&def.name];
         let (tramp, body, has_blk) = (decl.tramp, decl.body, decl.has_blk);
         let idx = em.next_fn_index();
         let (file, label, line, end_line) =
-            method_frame(analyzed, "Object", &def.name, def.node, false);
+            super::body::method_frame(analyzed, "Object", &def.name, def.node, false);
         let spec = super::params::TrampSpec {
             tramp,
             body,
@@ -392,8 +297,9 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             (Some((slot, kind, attr_generated)), None) => {
                 // A hand-written accessor body folded to a slot trampoline
                 // keeps its frame; an `attr_*`-generated one has none.
-                let framed = (!attr_generated)
-                    .then(|| method_frame(analyzed, &m.owner_name, &m.name, m.node, false));
+                let framed = (!attr_generated).then(|| {
+                    super::body::method_frame(analyzed, &m.owner_name, &m.name, m.node, false)
+                });
                 let frame = framed
                     .as_ref()
                     .map(|(file, label, line, end)| (file.as_deref(), label.as_str(), *line, *end));
@@ -401,7 +307,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             }
             (None, Some(body)) => {
                 let (file, label, line, end_line) =
-                    method_frame(analyzed, &m.owner_name, &m.name, m.node, false);
+                    super::body::method_frame(analyzed, &m.owner_name, &m.name, m.node, false);
                 let spec = super::params::TrampSpec {
                     tramp: m.tramp,
                     body,
@@ -427,7 +333,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
     for m in &redefs {
         let idx = em.next_fn_index();
         let (file, label, line, end_line) =
-            method_frame(analyzed, &m.owner_name, &m.name, m.node, false);
+            super::body::method_frame(analyzed, &m.owner_name, &m.name, m.node, false);
         let spec = super::params::TrampSpec {
             tramp: m.tramp,
             body: m.body_fn,
@@ -445,7 +351,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
     for m in &mod_methods {
         let idx = em.next_fn_index();
         let (file, label, line, end_line) =
-            method_frame(analyzed, &m.owner_name, &m.name, m.node, false);
+            super::body::method_frame(analyzed, &m.owner_name, &m.name, m.node, false);
         let spec = super::params::TrampSpec {
             tramp: m.tramp,
             body: m.body_fn,
@@ -466,7 +372,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
     for m in &cm_methods {
         let idx = em.next_fn_index();
         let (file, label, line, end_line) =
-            method_frame(analyzed, &m.owner_name, &m.name, m.node, true);
+            super::body::method_frame(analyzed, &m.owner_name, &m.name, m.node, true);
         let spec = super::params::TrampSpec {
             tramp: m.tramp,
             body: m.body_fn,
@@ -484,15 +390,15 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
         };
         super::params::define_trampoline(em, &spec, idx)?;
     }
-    let hoisted: Vec<ClassBodyCall> = class_bodies
+    let hoisted: Vec<super::collect::ClassBodyCall> = class_bodies
         .iter()
         .filter(|cb| !cb.inline)
         .map(|cb| cb.call.clone())
         .collect();
-    let toplevel = define_toplevel(
+    let toplevel = super::body::define_toplevel(
         em,
         analyzed,
-        &TopScope::Main { hoisted: &hoisted },
+        &super::body::TopScope::Main { hoisted: &hoisted },
         &analyzed.main_statements,
     )?;
     // One fn per compiled-in load-path file, registered under BOTH spellings
@@ -500,10 +406,10 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
     // absolute path `File.expand_path("x", __dir__)` produces.
     let mut unit_rows: Vec<(String, FuncId)> = Vec::new();
     for (i, (features, absolute, stmts)) in analyzed.feature_units.iter().enumerate() {
-        let f = define_toplevel(
+        let f = super::body::define_toplevel(
             em,
             analyzed,
-            &TopScope::Unit {
+            &super::body::TopScope::Unit {
                 index: i,
                 file: format!("{absolute}.rb"),
             },
@@ -793,7 +699,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
     // tables above register them.
     let mut meta_rows: Vec<statics::MetaRowSpec> = Vec::new();
     for d in &defs {
-        meta_rows.push(meta_row(
+        meta_rows.push(super::collect::meta_row(
             analyzed,
             0,
             false,
@@ -804,7 +710,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
         ));
     }
     for m in &obj_methods {
-        meta_rows.push(meta_row(
+        meta_rows.push(super::collect::meta_row(
             analyzed,
             m.owner.0,
             false,
@@ -815,7 +721,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
         ));
     }
     for m in &mod_methods {
-        meta_rows.push(meta_row(
+        meta_rows.push(super::collect::meta_row(
             analyzed,
             m.owner.0,
             false,
@@ -830,7 +736,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
     let redef_metas: Vec<statics::MetaRowSpec> = redefs
         .iter()
         .map(|m| {
-            meta_row(
+            super::collect::meta_row(
                 analyzed,
                 m.owner.0,
                 m.singleton,
@@ -855,7 +761,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
             .filter(|e| e.zsuper)
         {
             let scope = analyzed.compiler.scope(e.def);
-            meta_rows.push(meta_row(
+            meta_rows.push(super::collect::meta_row(
                 analyzed,
                 idx as u32,
                 false,
@@ -867,7 +773,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
         }
     }
     for m in cm_methods.iter().filter(|m| m.cm_row) {
-        meta_rows.push(meta_row(
+        meta_rows.push(super::collect::meta_row(
             analyzed,
             m.owner.0,
             true,
@@ -904,335 +810,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
     Ok(main)
 }
 
-/// Program-wide emission state: the module, the rodata blob, the symbol
-/// pool, and the capi import cache.
-pub(crate) struct Emitter {
-    pub module: ClifModule,
-    pub ptr: ir::Type,
-    pub rodata_id: DataId,
-    pub syms_id: DataId,
-    pub callsites_id: DataId,
-    /// One entry per emitted inline-cache slot: the caller class the site
-    /// is vetted against (`u32::MAX` = ruby's FCALL, no visibility
-    /// question). The index IS the slot index.
-    pub callsites: Vec<u32>,
-    pub cm_sites_id: DataId,
-    /// How many class-method cache slots the program needs; the index IS
-    /// the slot index, and a slot carries no per-site constant.
-    pub cm_sites: usize,
-    pub reopen_flags_id: DataId,
-    /// `(builtin class id, method name)` -> its byte in `zeo_reopen_flags`.
-    /// See [`names::REOPEN_FLAGS`]; empty for a program that reopens no
-    /// builtin, which is almost all of them.
-    pub reopen_flags: HashMap<(u32, String), u32>,
-    pub syms: statics::SymPool,
-    rodata: Vec<u8>,
-    rodata_offsets: HashMap<Vec<u8>, u32>,
-    imports: HashMap<&'static str, FuncId>,
-    /// Compiled methods by Ruby name -- what a receiverless call resolves
-    /// against for the direct path.
-    pub methods: HashMap<String, MethodDecl>,
-    /// Class-body sites by their INLINE `ClassDef` marker: what a marker
-    /// in statement position emits (a hoisted site's marker is absent --
-    /// its body already ran in the toplevel prelude).
-    pub class_bodies: HashMap<crate::hir::NodeId, ClassBodyCall>,
-    /// `(class, scope)` -> the trampoline that installs that body, for the
-    /// boot install and each positional `MethodRedefine`.
-    pub redef_tramps: HashMap<(u32, u32), FuncId>,
-    /// The same key's row in `ProgramDesc::redef_metas` -- what the install
-    /// at this body's document position registers so reflection answers the
-    /// body that is live rather than the last one written.
-    pub redef_metas: HashMap<(u32, u32), u32>,
-    fn_index: u32,
-    /// Regexp-literal site ids -- one cached frozen object per site
-    /// (`zeo_rt_regexp_lit`).
-    pub regexp_sites: u32,
-    /// `attach_function` call-site ids -- one resolved C symbol address
-    /// per site in the runtime.
-    pub ffi_sites: u32,
-    /// Whether this unit is a run-time `eval`. Both caches above live in the
-    /// RUNNING process, so a snippet's fresh counter would answer the
-    /// program's cached object; a snippet mints from the runtime instead.
-    pub eval_sites: bool,
-    /// Line coverage: whether the program activated it, and the statement
-    /// lines stamped so far (the `def` lines it never stamps come from
-    /// `analyze::coverage::def_lines`). Empty in a program without the
-    /// `require` -- the instrumentation is absent, not gated.
-    pub cov_active: bool,
-    pub cov_lines: std::collections::BTreeMap<String, std::collections::BTreeSet<u32>>,
-    /// When `Some`, every finished function's CLIF renders here (before
-    /// machine compilation -- the target-independent IR).
-    pub clif_text: Option<String>,
-    /// When `Some`, statements stamp a `SourceLoc` and the object carries
-    /// DWARF built from them (`-g`).
-    pub debug: Option<super::debuginfo::DebugInfo>,
-}
-
-/// One compiled method's declaration facts.
-pub(crate) struct MethodDecl {
-    pub body: FuncId,
-    pub tramp: FuncId,
-    /// Required-positional count (the direct-call gate compares it).
-    pub arity: usize,
-    /// Required positionals only -- a count-matched call site may go
-    /// direct; any richer shape routes through the dynamic send and the
-    /// bound trampoline.
-    pub plain: bool,
-    /// Callee keyword names in slot order when EVERY keyword is required
-    /// and nothing else complicates the signature -- see `Layout`.
-    pub kw_direct: Option<Vec<String>>,
-    pub has_blk: bool,
-}
-
-impl Emitter {
-    /// `jit`: emit into in-process code memory instead of an object file.
-    /// The only lowering-visible difference is `is_pic` (`JITModule`
-    /// requires non-PIC code); everything downstream is mode-blind.
-    pub(crate) fn new(jit: bool) -> Result<Emitter, String> {
-        let mut flags = settings::builder();
-        let set = |flags: &mut settings::Builder, k: &str, v: &str| {
-            flags
-                .set(k, v)
-                .map_err(|e| format!("cranelift setting {k}={v}: {e}"))
-        };
-        // `speed_and_size` was measured and is a NULL RESULT on both axes:
-        // fib/gcbench/nested_loop/loops_times all within noise, and hello
-        // 15,303,448 against 15,303,464 bytes -- an emitted program's size
-        // is `libzeo.a`, not its own code.
-        set(&mut flags, "opt_level", "speed")?;
-        set(&mut flags, "is_pic", if jit { "false" } else { "true" })?;
-        set(&mut flags, "preserve_frame_pointers", "true")?;
-        set(&mut flags, "enable_probestack", "false")?;
-        set(&mut flags, "unwind_info", "true")?;
-        set(&mut flags, "libcall_call_conv", "isa_default")?;
-        let verify = cfg!(debug_assertions) || std::env::var_os("ZEO_CLIF_VERIFY").is_some();
-        set(
-            &mut flags,
-            "enable_verifier",
-            if verify { "true" } else { "false" },
-        )?;
-        // An object file is a SHIPPED artifact, so it takes the triple's
-        // baseline and infers nothing. `cranelift_native::builder()` reads the
-        // BUILD machine's CPU -- AVX/AVX2/FMA/BMI1/BMI2/LZCNT on x86,
-        // lse/pauth/fp16/dotprod on aarch64 -- and a binary built with them
-        // executes an illegal instruction on an older chip. The JIT may
-        // legitimately infer: its code runs in this process, on this CPU.
-        let isa = cranelift_native::builder_with_options(jit)
-            .map_err(|e| format!("cranelift has no backend for this host: {e}"))?
-            .finish(settings::Flags::new(flags))
-            .map_err(|e| format!("building the target ISA: {e}"))?;
-        if isa.triple().endianness() != Ok(target_lexicon::Endianness::Little) {
-            return Err("the clif backend only serializes little-endian tables".to_string());
-        }
-        let mut module = if jit {
-            // Imports resolve against the runtime linked into THIS process:
-            // the capi table first (`zeo_rt_*` -- not exported, so dlsym
-            // cannot find them), then cranelift's dlsym fallback (libcalls:
-            // memcpy and friends from libc).
-            let mut builder = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
-            builder.symbols(zeo_rt::capi::symbols::NAMES.iter().map(|&name| {
-                let addr = zeo_rt::capi::symbols::addr(name)
-                    .expect("every listed capi symbol has an address");
-                (name, addr)
-            }));
-            ClifModule::Jit(JITModule::new(builder))
-        } else {
-            let elf = isa.triple().binary_format == target_lexicon::BinaryFormat::Elf;
-            let mut builder =
-                ObjectBuilder::new(isa, "zeo-p0", cranelift_module::default_libcall_names())
-                    .map_err(|e| format!("cranelift object builder: {e}"))?;
-            builder.per_function_section(true);
-            // `.eh_frame` is free on ELF; Mach-O emission panics in
-            // cranelift-object 0.134 and is not load-bearing (decision 13).
-            builder.unwind_info(elf);
-            ClifModule::Object(ObjectModule::new(builder))
-        };
-        let ptr = module.target_config().pointer_type();
-        let rodata_id = module
-            .declare_data(names::RODATA, Linkage::Local, false, false)
-            .map_err(|e| format!("declaring {}: {e}", names::RODATA))?;
-        let syms_id = module
-            .declare_data(names::SYMS, Linkage::Local, true, false)
-            .map_err(|e| format!("declaring {}: {e}", names::SYMS))?;
-        let callsites_id = module
-            .declare_data(names::CALLSITES, Linkage::Local, true, false)
-            .map_err(|e| format!("declaring {}: {e}", names::CALLSITES))?;
-        let cm_sites_id = module
-            .declare_data(names::CM_SITES, Linkage::Local, true, false)
-            .map_err(|e| format!("declaring {}: {e}", names::CM_SITES))?;
-        let reopen_flags_id = module
-            .declare_data(names::REOPEN_FLAGS, Linkage::Local, true, false)
-            .map_err(|e| format!("declaring {}: {e}", names::REOPEN_FLAGS))?;
-        Ok(Emitter {
-            module,
-            ptr,
-            rodata_id,
-            syms_id,
-            callsites_id,
-            reopen_flags_id,
-            reopen_flags: HashMap::new(),
-            callsites: Vec::new(),
-            cm_sites_id,
-            cm_sites: 0,
-            syms: statics::SymPool::default(),
-            rodata: Vec::new(),
-            rodata_offsets: HashMap::new(),
-            imports: HashMap::new(),
-            methods: HashMap::new(),
-            class_bodies: HashMap::new(),
-            redef_tramps: HashMap::new(),
-            redef_metas: HashMap::new(),
-            fn_index: 0,
-            regexp_sites: 0,
-            ffi_sites: 0,
-            eval_sites: false,
-            cov_active: false,
-            cov_lines: std::collections::BTreeMap::new(),
-            clif_text: None,
-            debug: None,
-        })
-    }
-
-    /// The next regexp-literal site id: the runtime's own space for a
-    /// snippet, this unit's dense counter otherwise.
-    pub(crate) fn mint_regexp_site(&mut self) -> u32 {
-        if self.eval_sites {
-            return zeo_rt::capi::literals::reserve_regexp_sites(1);
-        }
-        self.regexp_sites += 1;
-        self.regexp_sites - 1
-    }
-
-    /// [`Emitter::mint_regexp_site`]'s twin for an `attach_function` site.
-    pub(crate) fn mint_ffi_site(&mut self) -> u32 {
-        if self.eval_sites {
-            return zeo_rt::ffi::reserve_sym_sites(1);
-        }
-        self.ffi_sites += 1;
-        self.ffi_sites - 1
-    }
-
-    /// `bytes`' offset in the rodata blob (deduplicated).
-    pub(crate) fn intern_rodata(&mut self, bytes: &[u8]) -> u32 {
-        if let Some(&off) = self.rodata_offsets.get(bytes) {
-            return off;
-        }
-        let off = u32::try_from(self.rodata.len()).expect("rodata under 4GB");
-        self.rodata.extend_from_slice(bytes);
-        self.rodata_offsets.insert(bytes.to_vec(), off);
-        off
-    }
-
-    /// Like `intern_rodata`, but the offset is `align`-aligned (id arrays
-    /// the runtime reads as `&[u32]`). Not deduplicated -- alignment is
-    /// part of the identity and these tables are tiny.
-    pub(crate) fn intern_rodata_aligned(&mut self, bytes: &[u8], align: usize) -> u32 {
-        let pad = (align - (self.rodata.len() % align)) % align;
-        self.rodata.extend(std::iter::repeat_n(0u8, pad));
-        let off = u32::try_from(self.rodata.len()).expect("rodata under 4GB");
-        self.rodata.extend_from_slice(bytes);
-        off
-    }
-
-    pub(crate) fn take_rodata(&mut self) -> Vec<u8> {
-        std::mem::take(&mut self.rodata)
-    }
-
-    pub(crate) fn syms_len(&self) -> u32 {
-        self.syms_names().len() as u32
-    }
-
-    pub(crate) fn syms_names(&self) -> &[String] {
-        self.syms.names()
-    }
-
-    fn ctype(&self, t: CTy) -> ir::Type {
-        match t {
-            CTy::Ptr | CTy::Usize => self.ptr,
-            CTy::I32 | CTy::U32 => types::I32,
-            CTy::U8 | CTy::I8 => types::I8,
-            CTy::F64 => types::F64,
-        }
-    }
-
-    fn abi_param(&self, t: CTy) -> AbiParam {
-        match t {
-            // A sub-32-bit C ARGUMENT is the caller's to zero-extend (the
-            // Apple arm64 rule; a no-op elsewhere).
-            CTy::U8 => AbiParam::new(types::I8).uext(),
-            CTy::I8 => AbiParam::new(types::I8).sext(),
-            CTy::Ptr | CTy::Usize | CTy::I32 | CTy::U32 | CTy::F64 => AbiParam::new(self.ctype(t)),
-        }
-    }
-
-    /// Record `func`'s CLIF when `--emit-clif` asked for it, under its
-    /// exported symbol name.
-    pub(crate) fn record_clif(&mut self, name: &str, func: &ir::Function) {
-        if let Some(text) = &mut self.clif_text {
-            use std::fmt::Write as _;
-            let _ = writeln!(text, ";; {name}\n{}", func.display());
-        }
-    }
-
-    /// Take one just-compiled function's line rows, the `record_clif`
-    /// twin for DWARF. Must run while the context still holds the
-    /// `CompiledCode` -- i.e. right after `define_function`.
-    pub(crate) fn record_debug(
-        &mut self,
-        name: &str,
-        func: FuncId,
-        ctx: &cranelift_codegen::Context,
-    ) {
-        if let Some(debug) = &mut self.debug
-            && let Some(code) = ctx.compiled_code()
-        {
-            debug.record(func, name, code);
-        }
-    }
-
-    /// A fresh `UserFuncName` index (cosmetic; must be unique per module).
-    pub(crate) fn next_fn_index(&mut self) -> u32 {
-        self.fn_index += 1;
-        self.fn_index
-    }
-
-    /// The import `FuncId` for capi symbol `name` (declared once).
-    pub(crate) fn import(&mut self, name: &'static str) -> FuncId {
-        if let Some(&id) = self.imports.get(name) {
-            return id;
-        }
-        let row = capi_names::sig(name);
-        let mut sig = self.module.make_signature();
-        sig.params
-            .extend(row.params.iter().map(|&t| self.abi_param(t)));
-        if let Some(ret) = row.ret {
-            // Returns carry no extension claim -- only the low bits are
-            // read, at the value's own width.
-            sig.returns.push(AbiParam::new(self.ctype(ret)));
-        }
-        let id = self
-            .module
-            .declare_function(name, Linkage::Import, &sig)
-            .unwrap_or_else(|e| panic!("declaring capi import {name}: {e}"));
-        self.imports.insert(name, id);
-        id
-    }
-}
-
-/// One eligible top-level `def`'s facts (from `Compiler.classes[0]` --
-/// analyze hoists method scopes out of `main_statements`).
-pub(crate) struct DefSpec {
-    pub name: String,
-    hir_params: crate::hir::Params,
-    ruby2_keywords: bool,
-    body: Vec<crate::hir::NodeId>,
-    visibility: crate::hir::Visibility,
-    node: Option<crate::hir::NodeId>,
-    has_blk: bool,
-    alias_of: Option<String>,
-}
-
-/// The M1-1 parameter eligibility shared by top-level and class methods:
+/// The parameter eligibility shared by top-level and class methods:
 /// the full positional/keyword surface binds; destructures and the
 /// block-only trailing-comma rest are still refusals.
 pub(crate) fn check_params(p: &crate::hir::Params) -> Result<(), &'static str> {
@@ -1240,104 +818,6 @@ pub(crate) fn check_params(p: &crate::hir::Params) -> Result<(), &'static str> {
         return Err("an implicit-rest parameter");
     }
     Ok(())
-}
-
-/// Collect and DECLARE every top-level `def` the backend can compile
-/// (unconditional; no aliases or accessors). Prelude-native rows are the
-/// runtime's own, never emitted.
-fn collect_methods(em: &mut Emitter, analyzed: &Analyzed) -> Result<Vec<DefSpec>, String> {
-    let compiler = &analyzed.compiler;
-    let mut out = Vec::new();
-    for entry in &compiler.classes[0].methods {
-        let scope = compiler.scope(entry.def);
-        if scope.native_default {
-            continue;
-        }
-        let name = compiler.names.str(entry.name).to_string();
-        let at = scope
-            .def_node
-            .and_then(|n| crate::analyze::source::source_location(compiler, n))
-            .map(|(f, l)| format!(" ({f}:{l})"))
-            .unwrap_or_default();
-        let refuse = |what: &str| Err(format!("the CLIF backend cannot lower {what} yet{at}"));
-        if scope.runtime_conditional {
-            return refuse("a conditionally-defined method");
-        }
-        let params = &scope.params;
-        if let Err(what) = check_params(params) {
-            return refuse(what);
-        }
-        let layout = super::params::layout_of(params)?;
-        let has_blk = scope.needs_block_param();
-        let body_sig = super::params::body_sig(em, layout.n_slots, has_blk);
-        let body_id = em
-            .module
-            .declare_function(
-                &names::method_symbol("Object", &name),
-                Linkage::Local,
-                &body_sig,
-            )
-            .map_err(|e| format!("declaring {name}: {e}"))?;
-        let tramp_sig = super::params::value_fn_sig(em);
-        let tramp_id = em
-            .module
-            .declare_function(
-                &names::trampoline_symbol("Object", &name),
-                Linkage::Local,
-                &tramp_sig,
-            )
-            .map_err(|e| format!("declaring {name}'s trampoline: {e}"))?;
-        em.methods.insert(
-            name.clone(),
-            MethodDecl {
-                body: body_id,
-                tramp: tramp_id,
-                arity: params.required.len(),
-                plain: layout.plain,
-                kw_direct: layout.kw_direct.clone(),
-                has_blk,
-            },
-        );
-        out.push(DefSpec {
-            name,
-            hir_params: params.clone(),
-            ruby2_keywords: scope.ruby2_keywords,
-            body: scope.body.clone(),
-            visibility: scope.visibility,
-            node: scope.def_node,
-            has_blk,
-            alias_of: scope.alias_of.clone(),
-        });
-    }
-    Ok(out)
-}
-
-/// One method scope's reflection row: what ruby can ask back about a `def`
-/// that its function pointer cannot answer -- the signature
-/// (`#arity`/`#parameters`), the `def` keyword's own line
-/// (`#source_location`, and `#inspect`'s tail), and the name an alias
-/// copied from.
-fn meta_row(
-    analyzed: &Analyzed,
-    class: u32,
-    singleton: bool,
-    name: &str,
-    params: &crate::hir::Params,
-    node: Option<crate::hir::NodeId>,
-    alias_of: Option<&str>,
-) -> statics::MetaRowSpec {
-    let (file, line) = node
-        .and_then(|n| crate::analyze::source::source_location(&analyzed.compiler, n))
-        .map_or((String::new(), 0), |(f, l)| (f.to_string(), l));
-    statics::MetaRowSpec {
-        class,
-        singleton,
-        name: name.to_string(),
-        params: param_entries(params, false),
-        file,
-        line,
-        aliased_from: alias_of.unwrap_or_default().to_string(),
-    }
 }
 
 /// A method's parameters as ruby reports them (`Method#parameters`): the
@@ -1396,1198 +876,14 @@ pub(crate) fn param_entries(params: &crate::hir::Params, block: bool) -> Vec<(u8
 /// What runs at one class-body site: the declaration's
 /// `const_source_location` record, then the compiled body (absent when
 /// analyze consumed every statement -- the `class C; def a; end; end`
-/// shape).
-/// What a `class`/`module` marker EVALUATES to. A `class` is an
-/// expression in Ruby (`x = class C; 7; end` binds 7), and almost every
-/// site runs for effect -- so the body fn keeps its tail only where the
-/// tail is a value at all.
-#[derive(Clone, PartialEq)]
-pub(crate) enum BodyTail {
-    /// The body fn computes it: its last statement IS an expression.
-    Own,
-    /// Analyze CONSUMED the body's last source statement, so the emitted
-    /// statements no longer end where ruby's value comes from -- a `def`
-    /// answers its name, `private_constant` the module it hid it on.
-    Sym(String),
-    OwnClass,
-    /// A definition-level construct with no value zeo can name: nil in
-    /// tail position (where nothing necessarily reads it), a refusal in
-    /// expression position.
-    Unknown(&'static str),
-}
-
-#[derive(Clone)]
-pub(crate) struct ClassBodyCall {
-    pub class: u32,
-    pub func: Option<FuncId>,
-    /// `(owner, leaf, file, line)` -- recorded only by the DECLARING site.
-    pub const_loc: Option<(u32, String, String, u32)>,
-    /// `(owner, leaf)` -- the `const_added` this declaration announces, from
-    /// the DECLARING site only. `None` for a reopen, which creates nothing.
-    pub const_added: Option<(u32, String)>,
-    /// The superclass to announce this declaration to (`Super.inherited(C)`)
-    /// -- `None` unless this site DECLARES the class and the superclass
-    /// chain answers `inherited` by then.
-    pub inherited: Option<u32>,
-    /// Whether this site must REVEAL its runtime-conditional class: the
-    /// guarded definition just ran, so the constant exists from here on.
-    pub reveal: bool,
-    /// The FROZEN-REOPEN guard's name list: the methods THIS site would
-    /// install that no earlier site for the same class already did. Empty
-    /// when the program freezes nothing, when this is the class's first
-    /// site, or when the site installs nothing new.
-    pub freeze_guard: Vec<String>,
-    /// The site's Ruby value -- read only by a marker in value or tail
-    /// position; a statement marker discards it.
-    pub tail: BodyTail,
-    /// A trailing `if`/`unless` on the `class` keyword (`class Set ... end if
-    /// set_pp`). Ruby evaluates it in the ENCLOSING scope -- the oracle's
-    /// backtrace for a raise inside one says `<main>`, not `<class:Set>` --
-    /// so it stays OUT of the lifted body and runs at the marker, where the
-    /// enclosing locals it reads are in scope. `(cond, run_when)`: `unless`
-    /// puts the body in the else branch and runs when the condition is
-    /// FALSE. Everything the site registers rides inside the branch too: a
-    /// class whose guard failed was never defined.
-    pub guard: Option<(crate::hir::NodeId, bool)>,
-    /// Bytes in `zeo_reopen_flags` this site's `def`s own -- stored at the
-    /// site's own document position, which is what makes a reopen positional.
-    pub reopen_flags: Vec<u32>,
-}
-
-/// One compiled class body (a separate Ruby scope, lifted to its own
-/// function).
-pub(crate) struct ClassBodySpec {
-    pub call: ClassBodyCall,
-    pub class: zeo_abi::ClassId,
-    pub label: String,
-    pub stmts: Vec<crate::hir::NodeId>,
-    pub node: Option<crate::hir::NodeId>,
-    /// Marker reachable INLINE from the statement stream: the body runs at
-    /// its marker. Hoisted otherwise (a `class` inside a `def`): the body
-    /// runs once in the toplevel prelude.
-    pub inline: bool,
-}
-
-/// The markers whose class bodies run AT their document
-/// position: statement containers
-/// descend, a `def`'s body waits to be called (so its markers hoist),
-/// except a block-bodied `define_method` def, whose body is a block.
-fn inline_markers(
-    compiler: &crate::compiler::Compiler,
-    top_statements: &[&[crate::hir::NodeId]],
-) -> std::collections::HashSet<crate::hir::NodeId> {
-    use crate::hir::HirNode;
-    let site_stmts: HashMap<crate::hir::NodeId, &[crate::hir::NodeId]> = compiler
-        .class_body_sites
-        .iter()
-        .filter_map(|s| s.def_node.map(|n| (n, s.stmts.as_slice())))
-        .collect();
-    let mut seen = std::collections::HashSet::new();
-    let mut work: Vec<crate::hir::NodeId> = top_statements.concat();
-    for &def in compiler.hir.block_bodied_defs() {
-        if let HirNode::DefMethod { body, .. } = &compiler.hir[def] {
-            work.extend(body.iter().copied());
-        }
-    }
-    while let Some(n) = work.pop() {
-        match &compiler.hir[n] {
-            HirNode::ClassDef { .. } => {
-                if seen.insert(n)
-                    && let Some(stmts) = site_stmts.get(&n)
-                {
-                    work.extend(stmts.iter().copied());
-                }
-            }
-            HirNode::BoxScope { body, .. } => work.extend(body.iter().copied()),
-            HirNode::DefMethod { body, .. }
-                if compiler
-                    .hir
-                    .has_flag(n, crate::hir::NodeFlag::BLOCK_BODIED_DEF) =>
-            {
-                work.extend(body.iter().copied());
-            }
-            HirNode::DefMethod { .. } => {}
-            other => other.for_each_child(&mut |c| work.push(c)),
-        }
-    }
-    seen
-}
-
-/// Collect + declare every class-body site; refusals are loud. Mirrors
-/// `emit_class_body_site_lifted`'s head registrations: the shapes whose
-/// registrations the slice cannot emit yet (const_added/inherited hooks,
-/// the frozen-reopen guard) refuse rather than drop.
-fn collect_class_bodies(
-    em: &mut Emitter,
-    analyzed: &Analyzed,
-) -> Result<Vec<ClassBodySpec>, String> {
-    let compiler = &analyzed.compiler;
-    // Every TOP-LEVEL statement stream: main's, and each compiled-in
-    // feature unit's. A unit's `class` marker runs where it stands IN THE
-    // UNIT -- hoisting it into main's prelude would run a never-loaded
-    // unit's body at program start.
-    let mut tops: Vec<&[crate::hir::NodeId]> = vec![&analyzed.main_statements];
-    tops.extend(analyzed.feature_units.iter().map(|(_, _, s)| s.as_slice()));
-    let inline = inline_markers(compiler, &tops);
-    let mut specs = Vec::new();
-    for (i, site) in compiler.class_body_sites.iter().enumerate() {
-        let ci = compiler.class(site.class);
-        let name = compiler.fq_name(site.class);
-        let refuse = |what: &str| {
-            Err(format!(
-                "the CLIF backend cannot lower {what} yet (class {name})"
-            ))
-        };
-        // A BUILTIN reopen's body runs like any other -- but the class was
-        // never DECLARED by it (the constant pre-exists), so nothing below
-        // that hangs off "declares" (const-location record, const_added /
-        // inherited announcements) applies.
-        let builtin = ci.is_builtin || ci.is_bootstrap || site.class.0 == 0;
-        let mut reopen_flags: Vec<u32> = site
-            .installs
-            .iter()
-            .filter_map(|n| em.reopen_flags.get(&(site.class.0, n.clone())).copied())
-            .collect();
-        reopen_flags.sort_unstable();
-        reopen_flags.dedup();
-        if builtin && site.stmts.is_empty() && reopen_flags.is_empty() {
-            continue;
-        }
-        if builtin && !compiler.feature_active(site.class) {
-            return refuse("a require-gated builtin reopen body");
-        }
-        if site.def_node.is_none() {
-            if site.stmts.is_empty() {
-                continue;
-            }
-            return refuse("a synthetic class body");
-        }
-        let declares = !builtin
-            && compiler
-                .class_body_sites
-                .iter()
-                .find(|s| s.class == site.class)
-                .is_some_and(|s| std::ptr::eq(s, site));
-        // `class Foo; end` DEFINES a constant, so ruby announces it; a
-        // hook observing that announcement is not emitted yet.
-        let decl_owner = ci.lexical_parent.unwrap_or(crate::compiler::OBJECT_CLASS);
-        // `class Foo; end` DEFINES a constant, so ruby announces it on the
-        // lexically enclosing module -- only from the site that CREATES it.
-        let const_added = (declares
-            && (compiler.global_def_hooks.contains("const_added")
-                || compiler
-                    .class_method_in_chain(decl_owner, "const_added")
-                    .is_some_and(|(_, hook)| {
-                        crate::analyze::def_hooks::hook_installed_before(
-                            compiler,
-                            hook,
-                            site.def_node,
-                        )
-                    })))
-        .then(|| (decl_owner.0, compiler.leaf_name(site.class).to_string()));
-        // `Super.inherited(C)` fires when the class is CREATED, so only its
-        // FIRST site announces; a reopen creates nothing. A hook written
-        // BELOW this declaration is not installed yet and stays silent.
-        let inherited = declares
-            .then_some(ci.parent)
-            .flatten()
-            .filter(|&parent| {
-                compiler
-                    .class_method_in_chain(parent, "inherited")
-                    .is_some_and(|(_, hook)| {
-                        crate::analyze::def_hooks::hook_installed_before(
-                            compiler,
-                            hook,
-                            site.def_node,
-                        )
-                    })
-            })
-            .map(|parent| parent.0);
-        // The frozen-reopen guard: a REOPEN under a program that freezes
-        // classes raises `FrozenError` for the names it would newly
-        // install. Registration order IS document order, so "earlier" is
-        // simply the sites for this class before this one.
-        let freeze_guard = if compiler.program_freezes {
-            let earlier: Vec<&crate::compiler::ClassBodySite> = compiler.class_body_sites[..i]
-                .iter()
-                .filter(|s| s.class == site.class)
-                .collect();
-            if earlier.is_empty() {
-                Vec::new()
-            } else {
-                let mut names: Vec<String> = site
-                    .installs
-                    .iter()
-                    .filter(|n| !earlier.iter().any(|s| s.installs.contains(n)))
-                    .cloned()
-                    .collect();
-                names.sort_unstable();
-                names.dedup();
-                names
-            }
-        } else {
-            Vec::new()
-        };
-        let const_loc = (declares)
-            .then(|| {
-                site.def_node
-                    .and_then(|n| crate::analyze::source::source_location(compiler, n))
-                    .map(|(file, line)| {
-                        (
-                            decl_owner.0,
-                            compiler.leaf_name(site.class).to_string(),
-                            file.to_string(),
-                            line,
-                        )
-                    })
-            })
-            .flatten();
-        let tail = body_tail(compiler, site);
-        // A trailing `if`/`unless` on the `class` keyword arrives as the
-        // body's ONE statement, wrapping everything. It belongs to the
-        // ENCLOSING scope, so split it back out: the lifted body gets the
-        // taken branch, the marker gets the condition.
-        let (guard, body_stmts) = split_guard(compiler, &site.stmts);
-        let func = if body_stmts.is_empty() {
-            None
-        } else {
-            let sig = super::params::body_sig(em, 0, false);
-            Some(
-                em.module
-                    .declare_function(&format!("zeo_cb_{i}"), Linkage::Local, &sig)
-                    .map_err(|e| format!("declaring the {name} class body: {e}"))?,
-            )
-        };
-        let label = body_frame_label(compiler, site.class);
-        let call = ClassBodyCall {
-            class: site.class.0,
-            func,
-            const_loc,
-            const_added,
-            inherited,
-            reveal: ci.runtime_conditional || compiler.class_waits_for_its_unit(site.class),
-            freeze_guard,
-            tail,
-            guard,
-            reopen_flags,
-        };
-        let is_inline = site.def_node.is_some_and(|n| inline.contains(&n));
-        if is_inline && let Some(marker) = site.def_node {
-            em.class_bodies.insert(marker, call.clone());
-        }
-        specs.push(ClassBodySpec {
-            call,
-            class: site.class,
-            label,
-            stmts: body_stmts,
-            node: site.def_node,
-            inline: is_inline,
-        });
-    }
-    Ok(specs)
-}
-
-/// Allocate one `zeo_reopen_flags` byte per `(builtin class, method name)`
-/// this program reopens at COMPILE time.
-///
-/// A reopen's row registers at startup, so without a flag every call written
-/// ABOVE the `class Foo ... end` answers with the reopened body -- statically
-/// bound and dynamic sites alike. The class body stores 1 at its own document
-/// position and the reopened body reads it, forwarding to the row it replaced
-/// until then.
-///
-/// Runs before anything is emitted: a flagged body needs its caller's BLOCK to
-/// forward, so it takes a block parameter whether or not it names one, and the
-/// signature is decided in `collect_classes`.
-///
-/// Excluded: `Object` (a top-level `def` reopens nothing) and a BOOTSTRAP
-/// builtin (the exception prelude, whose bodies are the runtime's own).
-fn collect_reopen_flags(em: &mut Emitter, analyzed: &Analyzed) {
-    let compiler = &analyzed.compiler;
-    // A LAZY unit's file is excluded. Its body runs on require rather than at
-    // a document position this compile can point at, and a unit whose body
-    // never runs would leave the flag at zero for the whole program -- which
-    // would turn a working reopen into `undefined method`. Registering the row
-    // at startup is what those keep, exactly as before.
-    let unit_files: crate::compiler::FSet<String> = analyzed
-        .feature_units
-        .iter()
-        .map(|(_, absolute, _)| format!("{absolute}.rb"))
-        .collect();
-    for site in &compiler.class_body_sites {
-        if !compiler.class(site.class).is_builtin {
-            continue;
-        }
-        let in_unit = site.def_node.is_some_and(|n| {
-            crate::analyze::source::source_location(compiler, n)
-                .is_some_and(|(file, _)| unit_files.contains(file))
-        });
-        if in_unit {
-            continue;
-        }
-        let mut names: Vec<&String> = site.installs.iter().collect();
-        names.sort();
-        names.dedup();
-        for n in names {
-            let next = em.reopen_flags.len() as u32;
-            em.reopen_flags
-                .entry((site.class.0, n.clone()))
-                .or_insert(next);
-        }
-    }
-}
-
-/// A class body whose ONE statement is an `If` is a `class ... end if cond`
-/// (or `unless`): analyze wraps the whole body in the guard, but the
-/// condition's locals live in the ENCLOSING scope. CLIF lifts the body
-/// to its own function, so the condition has to
-/// come back out -- which is also where ruby runs it (the oracle's backtrace
-/// for a raise in one reads `<main>`, never `<class:X>`).
-///
-/// One branch of such an `If` is always empty: `if` fills the then branch,
-/// `unless` the else. Anything else is an ordinary `if` the body wrote, and
-/// stays in the body.
-fn split_guard(
-    compiler: &crate::compiler::Compiler,
-    stmts: &[crate::hir::NodeId],
-) -> (Option<(crate::hir::NodeId, bool)>, Vec<crate::hir::NodeId>) {
-    let keep = || (None, stmts.to_vec());
-    let [only] = stmts else { return keep() };
-    let crate::hir::HirNode::If {
-        cond,
-        then_body,
-        else_body,
-    } = &compiler.hir[*only]
-    else {
-        return keep();
-    };
-    match (then_body.is_empty(), else_body.is_empty()) {
-        (false, true) => (Some((*cond, true)), then_body.clone()),
-        (true, false) => (Some((*cond, false)), else_body.clone()),
-        // Both empty: nothing to run either way, but the condition still
-        // has to be evaluated. Both full: an ordinary `if` written as the
-        // body's only statement, which the body lowers itself.
-        (true, true) | (false, false) => keep(),
-    }
-}
-
-/// [`BodyTail`] for one site: what the body's LAST SOURCE statement is
-/// worth, split by value vs. statement position.
-fn body_tail(
-    compiler: &crate::compiler::Compiler,
-    site: &crate::compiler::ClassBodySite,
-) -> BodyTail {
-    use crate::hir::HirNode;
-    let last = site
-        .def_node
-        .and_then(|n| match &compiler.hir[n] {
-            HirNode::ClassDef { body, .. } => body.last().copied(),
-            _ => None,
-        })
-        .or_else(|| site.stmts.last().copied());
-    let Some(last) = last else {
-        return BodyTail::Own;
-    };
-    // Not the emitted tail: analyze consumed the source's last statement.
-    if site.stmts.last() != Some(&last) {
-        return match &compiler.hir[last] {
-            HirNode::DefMethod { name, .. } => BodyTail::Sym(name.clone()),
-            // `private_constant :Hidden` answers the module it hid the
-            // constant on, which is the body's own class.
-            HirNode::ConstantVisibility { .. } => BodyTail::OwnClass,
-            node => BodyTail::Unknown(crate::hir::definition_kind(node)),
-        };
-    }
-    // A definition-level construct that survived into the statement list
-    // runs for effect; everything else is an ordinary expression the tail
-    // lowering computes (and refuses loudly where it cannot).
-    match &compiler.hir[last] {
-        // `private_constant :Hidden` answers the module it hid the
-        // constant on -- and it RUNS where it is written, so it is an
-        // ordinary body statement whose value is the body's own class.
-        HirNode::ConstantVisibility { .. } => BodyTail::OwnClass,
-        HirNode::Program(_)
-        | HirNode::Refine { .. }
-        | HirNode::Using(_)
-        | HirNode::Undef(_)
-        | HirNode::ClassMethodUndef(_)
-        | HirNode::AliasMethod { .. }
-        | HirNode::MethodVisibility { .. }
-        | HirNode::ClassMethodVisibility { .. }
-        | HirNode::ModuleFunction(_)
-        | HirNode::MethodRedefine { .. }
-        | HirNode::DefHook { .. }
-        | HirNode::Include(_)
-        | HirNode::Extend(_)
-        | HirNode::Prepend(_)
-        | HirNode::ClassMethodPrepend(_) => {
-            BodyTail::Unknown(crate::hir::definition_kind(&compiler.hir[last]))
-        }
-        _ => BodyTail::Own,
-    }
-}
-
-pub(crate) struct BodyFnSpec<'a> {
-    pub func: FuncId,
-    pub owner: zeo_abi::ClassId,
-    pub owner_name: &'a str,
-    pub name: &'a str,
-    pub hir_params: &'a crate::hir::Params,
-    pub body: &'a [crate::hir::NodeId],
-    pub node: Option<crate::hir::NodeId>,
-    pub has_blk: bool,
-    pub ruby2_keywords: bool,
-    /// A class-method body: `self` is the Class value (frame label
-    /// `Owner.name`, ivars are civars).
-    pub self_is_class: bool,
-    /// A non-method frame label (`<class:Foo>` for a class body); `None`
-    /// derives the ordinary `Owner#name`/`Owner.name` label.
-    pub label_override: Option<String>,
-    /// The caller discards `out` (a class-body fn: the marker call pools
-    /// it unread), so the tail runs as a STATEMENT and `out` gets nil --
-    /// statement-only shapes (`include`, a nested `class`) may sit last.
-    pub discard_value: bool,
-    /// Ivars in this body are NAME-KEYED at runtime (a native-backed
-    /// owner has no compiled slot layout).
-    pub dyn_ivars: bool,
-    /// The class the `def` was WRITTEN in (a module method
-    /// keeps the module) -- None where `super` refuses.
-    pub defining_class: Option<zeo_abi::ClassId>,
-    /// The singleton-class SURROGATE this body was lexically written in,
-    /// when the `def` sat in a constant-bearing `class << self` body.
-    /// Everything LEXICAL resolves through it -- bare constants,
-    /// `Module.nesting` -- while the owner keeps dispatch and ivars. See
-    /// `Scope::lexical_home`.
-    pub lexical_home: Option<zeo_abi::ClassId>,
-    /// The name this body was DEFINED under, when an alias reaches it by
-    /// another one: `__method__` answers this, `__callee__` the name the
-    /// entry carries. `None` when the two are the same.
-    pub origin_name: Option<&'a str>,
-    /// The `Ruby::Box` this body was compiled in. Every dynamic send,
-    /// global and constant owner inside it is keyed by the box, which is
-    /// what makes a box's `String#blank?` reachable from the box's own
-    /// code and from nowhere else.
-    pub box_id: u32,
-}
-
-/// A method's frame facts: `(file, label, line, end_line)` -- shared by
-/// the body prologue and the trampoline's `ParamDescC`. `class_method`
-/// picks ruby's `.` label separator over `#`.
-/// CRuby's backtrace label for a class or module BODY frame -- `<class:Foo>`,
-/// `<module:M>`, and `singleton class` for a `class << self` body, whose
-/// surrogate carries a reserved name ruby cannot spell and must never show.
-fn body_frame_label(compiler: &crate::compiler::Compiler, cid: crate::compiler::ClassId) -> String {
-    if compiler.is_singleton_surrogate(cid) {
-        return "singleton class".to_string();
-    }
-    let kind = if compiler.class(cid).is_module {
-        "module"
-    } else {
-        "class"
-    };
-    format!("<{kind}:{}>", compiler.leaf_name(cid))
-}
-
-fn method_frame(
-    analyzed: &Analyzed,
-    owner_name: &str,
-    name: &str,
-    node: Option<crate::hir::NodeId>,
-    class_method: bool,
-) -> (Option<String>, String, u32, u32) {
-    let sep = if class_method { "." } else { "#" };
-    let label = format!("{owner_name}{sep}{name}");
-    let here = node.and_then(|n| crate::analyze::source::source_location(&analyzed.compiler, n));
-    let (line, end_line) = match node {
-        Some(node) => (
-            here.map_or(0, |(_, l)| l),
-            crate::analyze::source::source_end_line(&analyzed.compiler, node),
-        ),
-        None => (0, 0),
-    };
-    // The body's OWN file, not the program's first: a `require_relative`
-    // in a required file resolves against the frame's directory, so a
-    // spliced body that named the requiring file would look one directory
-    // up.
-    let file = here
-        .map(|(f, _)| f.to_string())
-        .or_else(|| analyzed.compiler.hir.entry_file_name().map(str::to_string));
-    (file, label, line, end_line)
-}
-
-/// An optional parameter whose binding waits for the frame: `ptr` null =
-/// run the default; else copy the given value. A `duplicate` slot (a
-/// repeated `_` name) has no storage of its own -- its default still runs
-/// for side effects and WRITES the owning local (CRuby compiles a default
-/// as an assignment to the local), but a given value is ignored.
-struct DeferredOpt {
-    name: String,
-    default: crate::hir::NodeId,
-    ptr: ir::Value,
-    duplicate: bool,
-}
-
-/// Phase A of param binding (pre-frame, no user code): always-present
-/// slots copy into their storage (cells when captured), optionals get
-/// nil storage and a [`DeferredOpt`], `&b` binds from the block channel.
-/// Only the FIRST slot of a repeated `_` name owns the readable local.
-fn bind_param_slots(
-    fx: &mut Fx,
-    p: &crate::hir::Params,
-    entry: &[ir::Value],
-    blk_ptr: Option<ir::Value>,
-    captured: &crate::compiler::FSet<String>,
-) -> Vec<DeferredOpt> {
-    let mut bound: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let mut deferred = Vec::new();
-    let mut s = 0usize;
-    let always =
-        |fx: &mut Fx, bound: &mut std::collections::HashSet<String>, name: &str, slot: usize| {
-            let ptr = entry[1 + slot];
-            if !bound.insert(name.to_string()) {
-                return; // a later duplicate slot binds nothing
-            }
-            let src = super::operand::Operand::Ptr {
-                addr: ptr,
-                owned: false,
-                tag: super::operand::TagInfo::Unknown,
-            };
-            if captured.contains(name) {
-                let seed = fx.temp_slot();
-                let seed_addr = fx.slot_addr(seed, 0);
-                super::ownership::write_move_into(fx, &src, seed_addr);
-                init_cell_local(fx, name.to_string(), Some(seed_addr));
-            } else {
-                let ss = fx.new_value_slot();
-                let dst = fx.slot_addr(ss, 0);
-                super::ownership::write_move_into(fx, &src, dst);
-                fx.locals
-                    .insert(name.to_string(), super::ctx::Local::Slot(ss));
-            }
-        };
-    let defer = |fx: &mut Fx,
-                 bound: &mut std::collections::HashSet<String>,
-                 deferred: &mut Vec<DeferredOpt>,
-                 name: &str,
-                 default: crate::hir::NodeId,
-                 slot: usize| {
-        let duplicate = !bound.insert(name.to_string());
-        if !duplicate {
-            if captured.contains(name) {
-                init_cell_local(fx, name.to_string(), None);
-            } else {
-                let ss = fx.new_value_slot();
-                fx.locals
-                    .insert(name.to_string(), super::ctx::Local::Slot(ss));
-            }
-        }
-        deferred.push(DeferredOpt {
-            name: name.to_string(),
-            default,
-            ptr: entry[1 + slot],
-            duplicate,
-        });
-    };
-
-    for name in &p.required {
-        always(fx, &mut bound, name, s);
-        s += 1;
-    }
-    for (name, default) in &p.optional {
-        defer(fx, &mut bound, &mut deferred, name, *default, s);
-        s += 1;
-    }
-    // An anonymous `*` has no slot.
-    if let Some(Some(name)) = &p.rest {
-        always(fx, &mut bound, name, s);
-        s += 1;
-    }
-    for name in &p.post {
-        always(fx, &mut bound, name, s);
-        s += 1;
-    }
-    for kw in &p.keywords {
-        match kw {
-            crate::hir::KeywordParam::Required(name) => always(fx, &mut bound, name, s),
-            crate::hir::KeywordParam::Optional(name, default) => {
-                defer(fx, &mut bound, &mut deferred, name, *default, s);
-            }
-        }
-        s += 1;
-    }
-    // An anonymous `**` has no slot.
-    if let Some(Some(name)) = &p.keyword_rest {
-        always(fx, &mut bound, name, s);
-        s += 1;
-    }
-    let _ = s;
-    // `&b`: nil when called blockless (real Ruby), else another reference
-    // to the moved-in block (the body's own is still released at exit).
-    if let (Some(Some(name)), Some(blk)) = (&p.block, blk_ptr)
-        && bound.insert(name.to_string())
-    {
-        if captured.contains(name) {
-            init_cell_local(fx, name.to_string(), None);
-        } else {
-            let ss = fx.new_value_slot();
-            fx.locals
-                .insert(name.to_string(), super::ctx::Local::Slot(ss));
-        }
-        let got =
-            fx.b.ins()
-                .icmp_imm_u(cranelift_codegen::ir::condcodes::IntCC::NotEqual, blk, 0);
-        let yes = fx.b.create_block();
-        let join = fx.b.create_block();
-        fx.b.ins().brif(got, yes, &[], join, &[]);
-        fx.b.switch_to_block(yes);
-        let src = super::operand::Operand::Ptr {
-            addr: blk,
-            owned: false,
-            tag: super::operand::TagInfo::Unknown,
-        };
-        super::ownership::write_local(fx, name, &src);
-        fx.b.ins().jump(join, &[]);
-        fx.b.switch_to_block(join);
-    }
-    deferred
-}
-
-/// Phase B (the frame exists): each deferred optional either copies its
-/// given value or evaluates its default -- user code, in declared order,
-/// so a later default reads every earlier binding.
-fn bind_deferred(fx: &mut Fx, deferred: &[DeferredOpt]) -> Result<(), String> {
-    for d in deferred {
-        let given = fx.b.create_block();
-        let absent = fx.b.create_block();
-        let join = fx.b.create_block();
-        let nonnull =
-            fx.b.ins()
-                .icmp_imm_u(cranelift_codegen::ir::condcodes::IntCC::NotEqual, d.ptr, 0);
-        fx.b.ins().brif(nonnull, given, &[], absent, &[]);
-        fx.b.switch_to_block(given);
-        if !d.duplicate {
-            let src = super::operand::Operand::Ptr {
-                addr: d.ptr,
-                owned: false,
-                tag: super::operand::TagInfo::Unknown,
-            };
-            super::ownership::write_local(fx, &d.name, &src);
-        }
-        fx.b.ins().jump(join, &[]);
-        fx.b.switch_to_block(absent);
-        let op = super::expr::lower_expr(fx, d.default)?;
-        super::ownership::write_local(fx, &d.name, &op);
-        fx.b.ins().jump(join, &[]);
-        fx.b.switch_to_block(join);
-    }
-    Ok(())
-}
-
-/// One compiled method body: `(self, p1..pn, out) -> i32`. Params are
-/// copied into owned slots (the M0 rule -- borrow-through is a perf-pass
-/// lever); the tail value moves into `out`; `return` jumps to the shared
-/// ok-exit.
-fn define_method_body(
-    em: &mut Emitter,
-    analyzed: &Analyzed,
-    def: &BodyFnSpec<'_>,
-) -> Result<(), String> {
-    let layout = super::params::layout_of(def.hir_params)?;
-    let sig = super::params::body_sig(em, layout.n_slots, def.has_blk);
-    let idx = em.next_fn_index();
-    // A module method materialized onto an includer keeps the MODULE in
-    // its frame label: CRuby names the DEFINING class (`M#mixed`, never
-    // `Bar#mixed`), read off `scope.defining_class`.
-    let label_owner = match def.defining_class {
-        Some(dc) if dc != def.owner && analyzed.compiler.class(dc).is_module => {
-            analyzed.compiler.fq_name(dc)
-        }
-        _ => def.owner_name.to_string(),
-    };
-    let (file, label, line, end_line) = method_frame(
-        analyzed,
-        &label_owner,
-        def.name,
-        def.node,
-        def.self_is_class,
-    );
-    // A body that came from a literal `define_method(:name) { .. }` rather
-    // than a `def`: a BARE `super` is an error in it, a `break` returns, and
-    // ruby labels its frame as the BLOCK it is (`block in <class:Named>`),
-    // never after the method it installs.
-    let define_method_body = def.node.is_some_and(|n| {
-        matches!(
-            &analyzed.compiler.hir[n],
-            crate::hir::HirNode::DefMethod { is_def: false, .. }
-        )
-    });
-    let base = define_method_body
-        .then(|| body_frame_label(&analyzed.compiler, def.defining_class.unwrap_or(def.owner)));
-    let label = match (def.label_override.clone(), &base) {
-        (Some(l), _) => l,
-        (None, Some(base)) => format!("block in {base}"),
-        (None, None) => label,
-    };
-
-    let mut func = ir::Function::with_name_signature(UserFuncName::user(0, idx), sig);
-    let cfg = em.module.target_config();
-    let mut fbc = FunctionBuilderContext::new();
-    let b = FunctionBuilder::new(&mut func, &mut fbc);
-    let mut fx = Fx::new(em, analyzed, b, |em, b| {
-        let entry = b.create_block();
-        b.append_block_params_for_function_params(entry);
-        b.switch_to_block(entry);
-        let rodata_gv = em.module.declare_data_in_func(em.rodata_id, b.func);
-        let syms_gv = em.module.declare_data_in_func(em.syms_id, b.func);
-        let rodata = b.ins().symbol_value(em.ptr, rodata_gv);
-        let syms = b.ins().symbol_value(em.ptr, syms_gv);
-        (rodata, syms)
-    });
-    let entry = fx.b.current_block().expect("entry is current");
-    let entry_params: Vec<ir::Value> = fx.b.block_params(entry).to_vec();
-    let self_ptr = entry_params[0];
-    let out_ptr = *entry_params.last().expect("out is the last param");
-    let blk_ptr = def.has_blk.then(|| entry_params[entry_params.len() - 2]);
-    fx.self_ptr = Some(self_ptr);
-    fx.method_class = Some(def.owner);
-    fx.box_id = def.box_id;
-    fx.defining_class = def.defining_class;
-    fx.lexical_home = def.lexical_home;
-    fx.define_method_body = define_method_body;
-    fx.method_name = (!def.name.is_empty()).then(|| def.name.to_string());
-    fx.method_origin = def.origin_name.map(str::to_string);
-    fx.method_params = Some(def.hir_params.clone());
-    fx.self_is_class = def.self_is_class;
-    fx.dyn_ivars = def.dyn_ivars;
-    // A block written inside this body counts from the scope ruby names:
-    // the class body a `define_method` sits in, one level up.
-    (fx.frame_label, fx.block_depth) = match base {
-        Some(base) => (base, 1),
-        None => (label.clone(), 0),
-    };
-    fx.blk_ptr = blk_ptr;
-    fx.ruby2_keywords = def.ruby2_keywords;
-    let ret_ok = fx.b.create_block();
-    fx.ret = Some((out_ptr, ret_ok));
-    // The non-local-return home: pushed when a Proc built in this body (or
-    // one running under a begin) can aim a `Signal::Return` here.
-    let needs_return_catch =
-        crate::analyze::captures::body_contains_escaping_return(&analyzed.compiler, def.body)
-            || crate::analyze::captures::body_contains_begin(&analyzed.compiler, def.body)
-            || crate::analyze::captures::body_contains_runtime_eval(&analyzed.compiler, def.body);
-
-    // Recursion guard BEFORE the frame exists: a failure returns without
-    // pops.
-    let status = fx.call_status("zeo_rt_stack_check", &[]);
-    let early = fx.b.create_block();
-    let cont = fx.b.create_block();
-    fx.b.ins().brif(status, early, &[], cont, &[]);
-    fx.b.switch_to_block(early);
-    let one = fx.b.ins().iconst(types::I32, 1);
-    fx.b.ins().return_(&[one]);
-    fx.b.switch_to_block(cont);
-    if needs_return_catch {
-        fx.call("zeo_rt_home_push", &[]);
-    }
-
-    // What escaping blocks capture becomes a cell instead of a slot -- and
-    // so does every local a `binding` taken here would report, because a
-    // cell is the only storage a binding can share. `binding_scope_names`
-    // adds them to the set and hands back the list the binding reports.
-    let mut caps = crate::analyze::captures::collect_escaping_captures(
-        &analyzed.compiler,
-        def.body,
-        def.hir_params,
-        Some(def.owner),
-    );
-    fx.binding_names = crate::analyze::captures::binding_scope_names(
-        &analyzed.compiler,
-        def.body,
-        def.hir_params,
-        &mut caps,
-        false,
-    );
-    let captured = caps.locals;
-    // Always-present params bind now (no user code); optionals get their
-    // storage and defer to after the frame exists (a default is user code
-    // that can raise, and CRuby attributes it to the method).
-    let deferred = bind_param_slots(&mut fx, def.hir_params, &entry_params, blk_ptr, &captured);
-    // The body's other locals, nil-initialized (cells when captured) --
-    // including what the DEFAULT expressions themselves assign.
-    let mut locals = crate::analyze::local_storage::Locals::default();
-    for &stmt in def.body {
-        crate::analyze::local_storage::collect_locals(&analyzed.compiler, stmt, &mut locals);
-    }
-    for id in def.hir_params.default_ids() {
-        crate::analyze::local_storage::collect_locals(&analyzed.compiler, id, &mut locals);
-    }
-    let mut hoisted_names = locals.names().to_vec();
-    for (_, group) in &def.hir_params.destructures {
-        group.collect_local_names(&mut hoisted_names);
-    }
-    for name in hoisted_names {
-        if fx.locals.contains_key(&name) {
-            continue;
-        }
-        if captured.contains(&name) {
-            init_cell_local(&mut fx, name, None);
-        } else {
-            let ss = fx.new_value_slot();
-            fx.locals.insert(name, super::ctx::Local::Slot(ss));
-        }
-    }
-
-    if let Some(file) = &file {
-        let off = fx.em.intern_rodata(file.as_bytes());
-        let label_off = fx.em.intern_rodata(label.as_bytes());
-        let file_ptr = fx.rod(off);
-        let file_len = fx.b.ins().iconst(fx.em.ptr, file.len() as i64);
-        let label_ptr = fx.rod(label_off);
-        let label_len = fx.b.ins().iconst(fx.em.ptr, label.len() as i64);
-        let line_v = fx.b.ins().iconst(types::I32, i64::from(line));
-        let end_v = fx.b.ins().iconst(types::I32, i64::from(end_line));
-        fx.call(
-            "zeo_rt_frame_push",
-            &[file_ptr, file_len, label_ptr, label_len, line_v, end_v],
-        );
-    }
-    // `$~` is frame-local: a scope that can touch the family gets its own
-    // svar scope, so a match it performs never reaches the caller's `$1`.
-    let needs_svar = crate::analyze::svars::body_mentions_svars(&analyzed.compiler, def.body);
-    if needs_svar {
-        fx.call("zeo_rt_svar_scope_push", &[]);
-    }
-    let status = fx.call_status("zeo_rt_check_ints", &[]);
-    fx.fallible(status);
-
-    bind_deferred(&mut fx, &deferred)?;
-    // Parenthesized destructuring params replay as the multi-assignments
-    // they are, after every slot is bound and before the body runs.
-    for (read, group) in &def.hir_params.destructures {
-        let op = super::expr::lower_expr(&mut fx, *read)?;
-        let tag = op.tag();
-        let ptr = super::ownership::borrow_ptr(&mut fx, &op);
-        if op.owned() {
-            super::ownership::pool_owned(&mut fx, ptr, tag);
-        }
-        super::multi::lower_multi_group(&mut fx, *read, group, ptr)?;
-    }
-    // A scope that lexically contains a run-time `eval` publishes what a
-    // snippet's `yield`, `block_given?` and bare `super` mean: CRuby reads
-    // those off the caller's control frame, and zeo has no equivalent, so
-    // the home rides on its own stack for the length of the call. A
-    // `define_method` body publishes no `super` target -- a bare `super`
-    // is an error in one, and the snippet must say so rather than forward
-    // the block's parameters.
-    // A CLASS BODY publishes nothing: it can never have a block, and CRuby
-    // refuses a `yield` written in an `eval` called from one outright
-    // (`Invalid yield`) rather than raising `LocalJumpError`. An empty
-    // name is what a class-body spec carries.
-    let publishes_eval_home = !def.name.is_empty()
-        && crate::analyze::captures::body_contains_runtime_eval(&analyzed.compiler, def.body);
-    if publishes_eval_home {
-        let params = def.hir_params.clone();
-        let (args, kw, unmark) = if define_method_body {
-            let null = fx.b.ins().iconst(fx.em.ptr, 0);
-            (null, null, false)
-        } else {
-            super::call::build_zsuper_args(&mut fx, &params)?
-        };
-        let unmark_v = fx.b.ins().iconst(types::I8, i64::from(unmark));
-        let blk = match blk_ptr {
-            Some(b) => b,
-            None => fx.b.ins().iconst(fx.em.ptr, 0),
-        };
-        let defining = def.defining_class.unwrap_or(def.owner);
-        let dc = fx.b.ins().iconst(types::I32, i64::from(defining.0));
-        let sym = fx.sym_id(def.name);
-        fx.call("zeo_rt_eval_home_push", &[blk, args, unmark_v, kw, dc, sym]);
-    }
-    if def.discard_value {
-        super::stmt::lower_stmts(&mut fx, def.body)?;
-        super::ownership::write_move_into(&mut fx, &super::operand::Operand::Nil, out_ptr);
-    } else {
-        super::stmt::lower_value_body_into(&mut fx, def.body, out_ptr)?;
-    }
-    fx.b.ins().jump(ret_ok, &[]);
-
-    let has_frame = file.is_some();
-    let epilogue = |fx: &mut Fx, status: i64| {
-        release_locals(fx);
-        if let Some(blk) = blk_ptr {
-            // The body owns the moved-in block; a null slot releases as a
-            // no-op inside the runtime? No -- guard it.
-            let got =
-                fx.b.ins()
-                    .icmp_imm_u(cranelift_codegen::ir::condcodes::IntCC::NotEqual, blk, 0);
-            let rel = fx.b.create_block();
-            let cont = fx.b.create_block();
-            fx.b.ins().brif(got, rel, &[], cont, &[]);
-            fx.b.switch_to_block(rel);
-            fx.call("zeo_rt_release", &[blk]);
-            fx.b.ins().jump(cont, &[]);
-            fx.b.switch_to_block(cont);
-        }
-        if has_frame {
-            fx.call("zeo_rt_frame_pop", &[]);
-        }
-        if needs_svar {
-            fx.call("zeo_rt_svar_scope_pop", &[]);
-        }
-        if needs_return_catch {
-            fx.call("zeo_rt_home_pop", &[]);
-        }
-        if publishes_eval_home {
-            fx.call("zeo_rt_eval_home_pop", &[]);
-        }
-        let code = fx.b.ins().iconst(types::I32, status);
-        fx.b.ins().return_(&[code]);
-    };
-    fx.b.switch_to_block(ret_ok);
-    epilogue(&mut fx, 0);
-    let land = fx.land;
-    fx.b.switch_to_block(land);
-    if needs_return_catch {
-        // A `Signal::Return` aimed at THIS activation (asked before the
-        // home pops) folds into the method's own value.
-        let kind = fx.call_status("zeo_rt_signal_kind", &[]);
-        let is_ret = fx.b.ins().icmp_imm_u(
-            cranelift_codegen::ir::condcodes::IntCC::Equal,
-            kind,
-            i64::from(zeo_abi::abi::SignalKind::Return as u8),
-        );
-        let ask = fx.b.create_block();
-        let normal = fx.b.create_block();
-        fx.b.ins().brif(is_ret, ask, &[], normal, &[]);
-        fx.b.switch_to_block(ask);
-        let mine = fx.call_status("zeo_rt_return_targets_here", &[]);
-        let fold = fx.b.create_block();
-        fx.b.ins().brif(mine, fold, &[], normal, &[]);
-        fx.b.switch_to_block(fold);
-        fx.call("zeo_rt_signal_take", &[out_ptr]);
-        fx.b.ins().jump(ret_ok, &[]);
-        fx.b.switch_to_block(normal);
-        epilogue(&mut fx, 1);
-    } else {
-        epilogue(&mut fx, 1);
-    }
-
-    fx.drain_slot_inits();
-    verify::check(&fx, &label);
-    let Fx { mut b, .. } = fx;
-    b.seal_all_blocks();
-    b.finalize(cfg);
-
-    em.record_clif(&label, &func);
-    let mut ctx = em.module.make_context();
-    ctx.func = func;
-    em.module
-        .define_function(def.func, &mut ctx)
-        .map_err(|e| format!("compiling {label}: {e}"))?;
-    em.record_debug(&label, def.func, &ctx);
-    Ok(())
-}
-
-/// The compiled `<main>` body, `UnitFn`-shaped: hoisted nil-initialized
-/// locals, the frame push, `check_ints`, the statements, then `Nil` out --
-/// with the ONE landing block releasing the locals and popping the frame
-/// (which drains the release pool) on the signal path.
-/// Which top-level scope a body fn is: the program's `<main>`, or one
-/// compiled-in load-path file the runtime runs when a `require` names it.
-/// A unit IS a top-level scope -- its own file-isolated locals, its own
-/// frame -- but none of main's once-per-program installs are its.
-enum TopScope<'a> {
-    Main { hoisted: &'a [ClassBodyCall] },
-    Unit { index: usize, file: String },
-}
-
-fn define_toplevel(
-    em: &mut Emitter,
-    analyzed: &Analyzed,
-    scope: &TopScope<'_>,
-    stmts: &[crate::hir::NodeId],
-) -> Result<FuncId, String> {
-    let mut sig = em.module.make_signature();
-    sig.params.push(AbiParam::new(em.ptr));
-    sig.returns.push(AbiParam::new(types::I32));
-    let (sym, label, frame, idx) = match scope {
-        TopScope::Main { .. } => (
-            names::TOPLEVEL.to_string(),
-            "<main>".to_string(),
-            analyzed.compiler.hir.entry_file_name().map(str::to_string),
-            0,
-        ),
-        TopScope::Unit { index, file } => (
-            format!("zeo_unit_{index}"),
-            "<top (required)>".to_string(),
-            Some(file.clone()),
-            em.next_fn_index(),
-        ),
-    };
-    let func_id = em
-        .module
-        .declare_function(&sym, Linkage::Local, &sig)
-        .map_err(|e| format!("declaring {sym}: {e}"))?;
-
-    let mut locals = crate::analyze::local_storage::Locals::default();
-    for &stmt in stmts {
-        crate::analyze::local_storage::collect_locals(&analyzed.compiler, stmt, &mut locals);
-    }
-
-    let mut func = ir::Function::with_name_signature(UserFuncName::user(0, idx), sig);
-    let cfg = em.module.target_config();
-    let mut fbc = FunctionBuilderContext::new();
-    let b = FunctionBuilder::new(&mut func, &mut fbc);
-    let mut fx = Fx::new(em, analyzed, b, |em, b| {
-        let entry = b.create_block();
-        b.append_block_params_for_function_params(entry);
-        b.switch_to_block(entry);
-        let rodata_gv = em.module.declare_data_in_func(em.rodata_id, b.func);
-        let syms_gv = em.module.declare_data_in_func(em.syms_id, b.func);
-        let rodata = b.ins().symbol_value(em.ptr, rodata_gv);
-        let syms = b.ins().symbol_value(em.ptr, syms_gv);
-        (rodata, syms)
-    });
-    let out_ptr = {
-        let entry = fx.b.current_block().expect("entry is current");
-        fx.b.block_params(entry)[0]
-    };
-
-    fx.frame_label = label.clone();
-    // Hoisted locals: an owned slot each, or a cell when an escaping block
-    // captures the name.
-    let empty_params = crate::hir::Params::default();
-    let mut caps = crate::analyze::captures::collect_escaping_captures(
-        &analyzed.compiler,
-        stmts,
-        &empty_params,
-        None,
-    );
-    // `TOPLEVEL_BINDING` IS the top-level frame's binding, so a program that
-    // can read it -- anywhere, including inside a required gem's method
-    // (erb's `new_toplevel`) -- deoptimizes the top level to cells exactly as
-    // a literal `binding` call there would.
-    // A UNIT never carries it: `TOPLEVEL_BINDING` names MAIN's frame, so a
-    // program that reads it deoptimizes main, not every file it requires. A
-    // unit that calls `binding` itself still deoptimizes -- the call is in
-    // its own statements.
-    let wants_toplevel_binding = matches!(scope, TopScope::Main { .. })
-        && analyzed
-            .compiler
-            .hir
-            .nodes()
-            .iter()
-            .any(|n| matches!(n, crate::hir::HirNode::ClassRef(c) if c == "TOPLEVEL_BINDING"));
-    fx.binding_names = crate::analyze::captures::binding_scope_names(
-        &analyzed.compiler,
-        stmts,
-        &empty_params,
-        &mut caps,
-        wants_toplevel_binding,
-    );
-    let captured = caps.locals;
-    for name in locals.names().to_vec() {
-        if captured.contains(&name) {
-            init_cell_local(&mut fx, name, None);
-        } else {
-            let ss = fx.new_value_slot();
-            fx.locals.insert(name, super::ctx::Local::Slot(ss));
-        }
-    }
-
-    if let Some(file) = &frame {
-        let off = fx.em.intern_rodata(file.as_bytes());
-        let main_off = fx.em.intern_rodata(label.as_bytes());
-        let file_ptr = fx.rod(off);
-        let file_len = fx.b.ins().iconst(fx.em.ptr, file.len() as i64);
-        let label_ptr = fx.rod(main_off);
-        let label_len = fx.b.ins().iconst(fx.em.ptr, label.len() as i64);
-        let zero = fx.b.ins().iconst(types::I32, 0);
-        fx.call(
-            "zeo_rt_frame_push",
-            &[file_ptr, file_len, label_ptr, label_len, zero, zero],
-        );
-    }
-    let status = fx.call_status("zeo_rt_check_ints", &[]);
-    fx.fallible(status);
-
-    // The toplevel's `self`: one pooled `main` handle, borrowed by every
-    // receiverless direct call.
-    let self_ss = fx.temp_slot();
-    let self_addr = fx.slot_addr(self_ss, 0);
-    fx.call("zeo_rt_main_object", &[self_addr]);
-    fx.owned_created += 1;
-    super::ownership::pool_owned(
-        &mut fx,
-        self_addr,
-        super::operand::TagInfo::Known(zeo_abi::abi::ValueTag::Object as u8),
-    );
-    fx.self_ptr = Some(self_addr);
-
-    if let TopScope::Main { hoisted } = scope {
-        main_installs(&mut fx, analyzed, hoisted)?;
-    }
-    // Defs registered through the row tables run nothing in statement
-    // position (registration precedes the
-    // body); a ClassDef marker runs its body site inline.
-    let runnable: Vec<crate::hir::NodeId> = stmts
-        .iter()
-        .copied()
-        .filter(|&s| {
-            !matches!(
-                analyzed.compiler.hir[s],
-                crate::hir::HirNode::DefMethod { .. }
-            )
-        })
-        .collect();
-    // The top level's frame lives for the whole program, so its temps
-    // die at their own statement instead.
-    fx.drain_temps = true;
-    stmt::lower_stmts(&mut fx, &runnable)?;
-    fx.drain_temps = false;
-
-    // Normal exit: release the locals, pop the frame (drains the pool),
-    // hand back Nil.
-    let epilogue = |fx: &mut Fx, status: i64| {
-        release_locals(fx);
-        if frame.is_some() {
-            fx.call("zeo_rt_frame_pop", &[]);
-        }
-        let code = fx.b.ins().iconst(types::I32, status);
-        fx.b.ins().return_(&[code]);
-    };
-    let z = fx.b.ins().iconst(types::I64, 0);
-    for off in [0, 8, 16] {
-        fx.b.ins().store(MemFlagsData::trusted(), z, out_ptr, off);
-    }
-    epilogue(&mut fx, 0);
-    let land = fx.land;
-    fx.b.switch_to_block(land);
-    epilogue(&mut fx, 1);
-
-    fx.drain_slot_inits();
-    verify::check(&fx, &sym);
-    let Fx { mut b, .. } = fx;
-    b.seal_all_blocks();
-    b.finalize(cfg);
-
-    em.record_clif(&sym, &func);
-    let mut ctx = em.module.make_context();
-    ctx.func = func;
-    em.module
-        .define_function(func_id, &mut ctx)
-        .map_err(|e| format!("compiling {sym}: {e}"))?;
-    em.record_debug(&sym, func_id, &ctx);
-    Ok(func_id)
-}
 
 /// The installs that belong to the PROGRAM, not to a top-level scope:
 /// alias validation for body-less classes, `TOPLEVEL_BINDING`, and the class
 /// bodies whose markers sit inside `def`s. A required file runs none of them.
-fn main_installs(
+pub(super) fn main_installs(
     fx: &mut Fx,
     analyzed: &Analyzed,
-    hoisted: &[ClassBodyCall],
+    hoisted: &[super::collect::ClassBodyCall],
 ) -> Result<(), String> {
     // Alias-carrying classes with no body of their own validate here
     // (`NameError` for a source resolving nowhere); a class WITH a body
@@ -2676,91 +972,4 @@ fn define_main(em: &mut Emitter, desc: DataId) -> Result<FuncId, String> {
         .map_err(|e| format!("compiling main: {e}"))?;
     em.record_debug("main", func_id, &ctx);
     Ok(func_id)
-}
-
-/// A fresh CAPTURED local: an owned cell (seeded from `seed`'s moved
-/// value, nil when `None`) whose pointer lives in an 8-byte slot.
-pub(crate) fn init_cell_local(fx: &mut Fx, name: String, seed: Option<ir::Value>) {
-    let init = match seed {
-        Some(p) => p,
-        None => fx.b.ins().iconst(fx.em.ptr, 0),
-    };
-    let cellp = fx.call_status("zeo_rt_cell_new", &[init]);
-    let ss = fx.new_cell_slot();
-    let dst = fx.slot_addr(ss, 0);
-    fx.b.ins().store(MemFlagsData::trusted(), cellp, dst, 0);
-    fx.locals
-        .insert(name, super::ctx::Local::Cell { ss, owned: true });
-}
-
-/// Release every local: slots drop their value, owned cells drop their
-/// reference (the proc's copies keep the cell alive).
-pub(crate) fn release_locals(fx: &mut Fx) {
-    let locals: Vec<super::ctx::Local> = fx.locals.values().copied().collect();
-    for l in locals {
-        match l {
-            super::ctx::Local::Slot(ss) => {
-                let addr = fx.slot_addr(ss, 0);
-                fx.call("zeo_rt_release", &[addr]);
-            }
-            super::ctx::Local::Cell { ss, owned: true } => {
-                let ptr = fx.cell_ptr(ss);
-                fx.call("zeo_rt_cell_release", &[ptr]);
-            }
-            super::ctx::Local::Cell { owned: false, .. } => {}
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use cranelift_module::Module;
-
-    /// Every ISA feature `cranelift_native::infer_native_flags` can turn on
-    /// by reading the build machine's CPU. A binary carrying one of these
-    /// runs only where that chip does.
-    const INFERRED: &[&str] = &[
-        "has_sse3",
-        "has_ssse3",
-        "has_sse41",
-        "has_sse42",
-        "has_avx",
-        "has_avx2",
-        "has_fma",
-        "has_avx512bitalg",
-        "has_avx512dq",
-        "has_avx512f",
-        "has_avx512vl",
-        "has_avx512vbmi",
-        "has_bmi1",
-        "has_bmi2",
-        "has_lzcnt",
-        "has_lse",
-        "has_pauth",
-        "has_fp16",
-        "has_dotprod",
-        "sign_return_address",
-        "sign_return_address_with_bkey",
-    ];
-
-    /// `zeo -o` emits for the triple's BASELINE. Inferring the build
-    /// machine's features ties the artifact to that microarchitecture and
-    /// SIGILLs on an older chip -- the JIT is the only mode allowed to infer,
-    /// because its code never leaves the process that built it.
-    #[test]
-    fn an_object_binary_is_not_tied_to_the_build_machine() {
-        let emitter = super::Emitter::new(false).expect("an ISA for this host");
-        let on: Vec<String> = emitter
-            .module
-            .isa()
-            .isa_flags()
-            .iter()
-            .filter(|v| INFERRED.contains(&v.name) && v.as_bool() == Some(true))
-            .map(|v| v.name.to_string())
-            .collect();
-        assert!(
-            on.is_empty(),
-            "the object path enabled host-inferred CPU features: {on:?}"
-        );
-    }
 }

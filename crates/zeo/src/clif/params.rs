@@ -7,7 +7,7 @@
 //! implementation, the runtime's), and the trampoline passes per-slot
 //! pointers (null = absent optional; its default runs in the body).
 
-use super::emit::Emitter;
+use super::module::Emitter;
 use crate::hir::{KeywordParam, Params};
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::{

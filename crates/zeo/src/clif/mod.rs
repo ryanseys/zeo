@@ -6,10 +6,12 @@
 
 pub(crate) mod binop;
 pub(crate) mod blocks;
+pub(crate) mod body;
 pub(crate) mod boxes;
 pub(crate) mod call;
 pub mod capi_names;
 pub(crate) mod classes;
+pub(crate) mod collect;
 pub(crate) mod consts;
 pub(crate) mod control;
 pub(crate) mod ctx;
@@ -21,6 +23,7 @@ pub(crate) mod expr;
 pub(crate) mod ffi;
 pub(crate) mod iter;
 pub(crate) mod ivars;
+pub(crate) mod module;
 pub(crate) mod multi;
 pub mod names;
 pub(crate) mod operand;

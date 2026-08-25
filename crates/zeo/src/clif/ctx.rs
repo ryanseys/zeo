@@ -2,7 +2,7 @@
 //! block, local slots, temp-slot recycling, loop targets, and the lazy
 //! import/rodata/symbol plumbing every lowering reaches through.
 
-use super::emit::Emitter;
+use super::module::Emitter;
 use crate::analyze::Analyzed;
 use cranelift_codegen::cursor::{Cursor, FuncCursor};
 use cranelift_codegen::ir::{self, InstBuilder, MemFlagsData, StackSlotData, StackSlotKind, types};

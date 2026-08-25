@@ -4,7 +4,7 @@
 //! (modules, mixins, class methods, runtime class bodies, non-Object
 //! superclass machinery).
 
-use super::emit::Emitter;
+use super::module::Emitter;
 use super::{names, params, statics};
 use crate::analyze::Analyzed;
 use crate::compiler::AccessorKind;

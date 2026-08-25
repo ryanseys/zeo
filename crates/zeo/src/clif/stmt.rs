@@ -1583,7 +1583,7 @@ fn stamp_line(fx: &mut Fx, stmt: NodeId) {
 /// value.
 pub(crate) fn emit_class_body_call(
     fx: &mut Fx,
-    call: &super::emit::ClassBodyCall,
+    call: &super::collect::ClassBodyCall,
 ) -> Result<(), String> {
     let op = class_body_site(fx, call)?;
     ownership::discard(fx, op);
@@ -1599,7 +1599,7 @@ pub(crate) fn class_body_value(
     site: NodeId,
     expression: bool,
 ) -> Result<super::operand::Operand, String> {
-    use super::emit::BodyTail;
+    use super::collect::BodyTail;
     let Some(call) = fx.em.class_bodies.get(&site).cloned() else {
         // A hoisted or statement-free site: its body already ran (or has
         // nothing to run), and ruby's value is the body's own tail.
@@ -1643,7 +1643,7 @@ pub(crate) fn class_body_value(
 /// so it announces nothing and reveals nothing, and the site's value is nil.
 fn class_body_site(
     fx: &mut Fx,
-    call: &super::emit::ClassBodyCall,
+    call: &super::collect::ClassBodyCall,
 ) -> Result<super::operand::Operand, String> {
     use cranelift_codegen::ir::InstBuilder;
     let Some((cond, run_when)) = call.guard else {
@@ -1679,7 +1679,7 @@ fn class_body_site(
 
 fn class_body_site_run(
     fx: &mut Fx,
-    call: &super::emit::ClassBodyCall,
+    call: &super::collect::ClassBodyCall,
 ) -> Result<super::operand::Operand, String> {
     use cranelift_codegen::ir::{InstBuilder, MemFlagsData, types};
     use cranelift_module::Module;

@@ -2,7 +2,7 @@
 //! (`zeo_syms` + `zeo_unit_init`), the `Str` tables, and the one
 //! `zeo_program_desc` the emitted `main` hands `zeo_rt_main`.
 
-use super::emit::Emitter;
+use super::module::Emitter;
 use super::names;
 use crate::analyze::Analyzed;
 use cranelift_codegen::ir::{self, InstBuilder, MemFlagsData, UserFuncName};
