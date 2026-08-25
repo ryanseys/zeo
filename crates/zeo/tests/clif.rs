@@ -1,6 +1,5 @@
-//! The Cranelift backend's M0-16 gates: CLIF snapshots for a small
-//! corpus, the capi-surface presence check against `libzeo.a`, and the
-//! deterministic-output golden.
+//! CLIF snapshots for a small corpus, the capi-surface presence check
+//! against `libzeo.a`, and the deterministic-output golden.
 
 use std::path::PathBuf;
 
@@ -97,6 +96,100 @@ fn clif_snapshot_fused_each_guards() {
 fn clif_snapshot_block_after_arguments() {
     insta::assert_snapshot!(clif_of(
         "def take(n)\n  yield n\nend\ndef arg\n  1\nend\ndef go\n  take(arg) { |x| p x }\nend\ngo\n",
+    ));
+}
+
+/// The floored-division and spaceship integer shapes: the sign-fix on
+/// `/` and `%`, the zero-divisor guard, and `<=>`'s three-way select.
+#[test]
+fn clif_snapshot_int_div_mod_spaceship() {
+    insta::assert_snapshot!(clif_of(
+        "def m(a, b)\n  p a / b\n  p a % b\n  p a <=> b\nend\nm(7, 2)\n",
+    ));
+}
+
+/// The bit-op integer shapes (`<<` with its overflow escape, `>>`, `&`,
+/// `|`, `^`) and the multiply-overflow arm.
+#[test]
+fn clif_snapshot_int_bits_and_mul() {
+    insta::assert_snapshot!(clif_of(
+        "def m(a, b)\n  p a << b\n  p a >> b\n  p a & b\n  p a | b\n  p a ^ b\n  p a * b\nend\nm(5, 2)\n",
+    ));
+}
+
+/// The float arms: plain arithmetic, the fallible `%`, and the float
+/// spaceship. `ARGV.length` keeps the operands out of the constant folder.
+#[test]
+fn clif_snapshot_float_binops() {
+    insta::assert_snapshot!(clif_of(
+        "x = ARGV.length + 1.5\ny = ARGV.length + 2.5\np x + y\np x * y\np x % y\np x <=> y\n",
+    ));
+}
+
+/// The `defined?` value forms: an ivar, a predefined global, a bare
+/// method probe, and a constant path.
+#[test]
+fn clif_snapshot_defined_forms() {
+    insta::assert_snapshot!(clif_of(
+        "p defined?(@x)\np defined?($~)\np defined?(puts)\np defined?(Math::PI)\n",
+    ));
+}
+
+/// `defined?(yield)` and `defined?(super)` -- the two forms that read the
+/// frame rather than a name.
+#[test]
+fn clif_snapshot_defined_yield_super() {
+    insta::assert_snapshot!(clif_of(
+        "class A\n  def go = p [defined?(yield), defined?(super)]\nend\nclass B < A\n  def go = super\nend\nB.new.go\n",
+    ));
+}
+
+/// A read of a `private_constant` name through `M::X`: the guard call
+/// ahead of the scoped read.
+#[test]
+fn clif_snapshot_private_constant_guard() {
+    insta::assert_snapshot!(clif_of(
+        "module M\n  X = 1\n  private_constant :X\nend\nbegin\n  p M::X\nrescue NameError => e\n  puts e.message\nend\n",
+    ));
+}
+
+/// A bare constant read from inside a nested module body: the cref walk,
+/// not a receiver-scoped read.
+#[test]
+fn clif_snapshot_const_cref_walk() {
+    insta::assert_snapshot!(clif_of(
+        "module A\n  module B\n    X = 1\n    def self.go = p X\n  end\nend\nA::B.go\n",
+    ));
+}
+
+/// `"lit".freeze` on a pristine `freeze`: folds to the pooled frozen
+/// string, no send.
+#[test]
+fn clif_snapshot_frozen_literal_fold() {
+    insta::assert_snapshot!(clif_of("p \"lit\".freeze\n"));
+}
+
+/// A safe-navigation send: the nil-test diamond around the send.
+#[test]
+fn clif_snapshot_safe_navigation() {
+    insta::assert_snapshot!(clif_of("x = ARGV[0]\np x&.length\n"));
+}
+
+/// A block-argument send (`&f`): the proc coercion path, not a literal
+/// block.
+#[test]
+fn clif_snapshot_block_arg_send() {
+    insta::assert_snapshot!(clif_of(
+        "def go\n  f = proc { |x| p x }\n  [1].each(&f)\nend\ngo\n",
+    ));
+}
+
+/// A keyword send onto a keyword-defaulted def: the kwargs packing and
+/// the callee's default fill.
+#[test]
+fn clif_snapshot_keyword_send() {
+    insta::assert_snapshot!(clif_of(
+        "def kw(a, k: 1)\n  p [a, k]\nend\nkw(2, k: 3)\nkw(4)\n",
     ));
 }
 
