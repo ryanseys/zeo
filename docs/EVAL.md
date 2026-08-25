@@ -64,12 +64,21 @@ saying the binary carries no compiler. Never silent wrong output.
 ### What zeo declines
 
 A snippet is held to the same contract a program is: CRuby-identical, or a
-`NotImplementedError` naming the shape. What it names today: a `refine` or
-`using` (refinements are a compile-time decision, and a snippet's call sites
-were decided before the `refine` ran), an `FFI::Library` declaration (analyze
-assembles that surface from markers), a `Ruby::Box`, and a bare `super` or
-`block_given?` at a snippet's own level (both need the enclosing method's
-arguments or block channel, which nothing hands a snippet).
+`NotImplementedError` naming the shape. What it names today
+(`eval.rs::scope_refusals` plus the bare-`super` check): a `Ruby::Box`, a
+singleton `prepend` (a snippet's compile registers nothing, so the prepend
+would be silently dropped), and a bare `super` where the `eval` is not
+written in the enclosing method itself (only that method's frame carries the
+arguments a bare `super` forwards). Two more refusal arms — a redefinition
+analyze resolved and a definition hook analyze spliced — are defensive:
+analyze registers nothing in a snippet, so neither can arise.
+
+`refine`/`using` now compile (each activation gets a run-time `using` slot),
+and an `FFI::Library` declaration's directives stay ordinary calls whose rows
+attach at run time — neither is declined any more. A `yield` at the snippet's
+own level is not a decline either: it is CRuby's own catchable `SyntaxError`
+(`Invalid yield`), raised before the snippet runs, and a `def` written in the
+snippet has a block channel of its own.
 
 A prism-walking interpreter answered here until 2026-08-21. It was the
 differential oracle every widening of the compiled path was measured against,

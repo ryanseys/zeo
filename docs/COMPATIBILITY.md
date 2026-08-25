@@ -81,17 +81,23 @@ replaces.
   `#to_binary` and the disassembly family raise `NotImplementedError` naming
   the reason: Zeo compiles ahead of time and has no YARV bytecode.
   `compile`/`#eval` are real (a prism parse check, then a compile).
-  `InstructionSequence.of` answers `nil` for every method — the same answer
-  CRuby gives for a C-defined method, and what irb's source finder expects.
+  `InstructionSequence.of` answers a real object naming the method and its
+  source site (`<RubyVM::InstructionSequence:m@file:line>`); only the
+  serialization rows on it refuse. The remaining refusals are recorded in
+  `tests/gaps/rubyvm_iseq_serialization.rb`, whose header reads the rows
+  apart (which are permanent absences, which are open work).
 - **`RubyVM::YJIT.enable` answers `false`.** There is no JIT to switch on.
   Every stats/log reader answers its disabled shape.
-- **`Ruby::Box` allocation is compile-time.** `box = Ruby::Box.new` as a
-  top-level statement allocates a box in the compiler; `box.eval` isolates
-  its top-level constants against the box (a dynamic
-  `box.eval("X = 1")` lands in the box, not on `Object`). A run-time
-  `Box.new`, `#require`, or `#load` raises `NotImplementedError` saying so.
-  `Ruby::Box.current` answers `nil` (the disabled-mode answer); box-scoped
-  code reaches its own box through the compile-time handle instead.
+- **`Ruby::Box` is real at run time.** `box = Ruby::Box.new` as a top-level
+  statement allocates a box in the compiler, and a computed (run-time)
+  `Box.new` allocates one too; `box.eval` isolates its top-level constants
+  against the box (a dynamic `box.eval("X = 1")` lands in the box, not on
+  `Object`). `Ruby::Box.current` answers the current box. `#require` and
+  `#load` are real, but a computed or box-side target can only reach sources
+  the binary embeds — `--embed-sources` is the opt-in (the decided
+  divergence in `tests/a_box_cannot_require_a_spliced_feature.rb`). Without
+  `RUBY_BOX=1`, `Box.new` raises the same disabled-mode `RuntimeError` ruby
+  raises.
 
 ## Satisfied, but divergent (a substitution)
 
@@ -656,8 +662,9 @@ the compiled Ruby ran **22.7x slower** than the Rust rows (0.359 s against
 8.148 s over 200,000 Pathname operations -- and CRuby itself runs the same
 source in 1.018 s), cost **3.5x the bytes**, and pulled a 14.48 MB embedded
 compiler in for one `eval`. It bought only the signatures, and those are now
-spelled in the DSL directly. `tests/gaps/a_row_ruby_writes_in_ruby_names_its_
-source.rb` records ruby's answer and the shape of a fix.
+spelled in the DSL directly. The `#source_location` residue is a DECIDED
+divergence now: `tests/a_row_ruby_writes_in_ruby_names_its_source.rb` (with
+its `.divergence` sidecar) pins zeo's `nil` answer and carries ruby's.
 
 ### `Pathname`
 
@@ -781,7 +788,7 @@ machinery. `require` raises `LoadError`, which is a divergence from ruby, but a
 settled one rather than a queued job.
 
 The `LoadError` **names the decision** where Zeo has one to state
-(`loader.rs::declined_reason`), so a caller can tell a decline from a typo or
+(`zeo_abi::declined_feature_reason`), so a caller can tell a decline from a typo or
 an unfinished feature.
 
 - **`continuation`** (`Kernel#callcc`) captures and restores the machine

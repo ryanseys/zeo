@@ -198,6 +198,12 @@ pub fn declined_feature_reason(name: &str) -> Option<&'static str> {
              event model, so there is nothing to bind. Use `require \"prism\"` for a \
              Ruby-level syntax tree. See docs/COMPATIBILITY.md.",
         ),
+        "continuation" => Some(
+            "declined. callcc captures and restores the machine stack, and a \
+             native-compiled program has no stack-copying runtime; an escape-only \
+             callcc would silently break re-entering callers. Use Fiber instead. \
+             See docs/COMPATIBILITY.md.",
+        ),
         _ => None,
     }
 }
