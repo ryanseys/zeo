@@ -1295,6 +1295,14 @@ fn builtin_provides_instance_method(
         match crate::builtin_surface::surface_for(c) {
             Some(s) if s.instance_methods.contains(&name) => return Some(true),
             Some(_) => {}
+            // A BOOTSTRAP class -- the exception hierarchy -- is written in
+            // ruby but carries HAND-REGISTERED native rows the projection
+            // cannot see (`exception.rs`'s `mark_owned_names`). Neither
+            // table holds them, so concluding "not found, fully projected"
+            // is a confident false about rows the class really has:
+            // `Exception.method_defined?(:detailed_message)` answered false
+            // and sent `error_highlight` down its pre-3.2 branch.
+            None if compiler.class(c).is_bootstrap => all_projected = false,
             // `Object` and compiled user classes have no projected surface and
             // need none: their methods are COMPILED `def`s, and
             // `method_in_chain` -- which the caller already asked -- is the
