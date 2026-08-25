@@ -25,7 +25,7 @@ NEXTEST ?= $(CARGO) nextest run
 ZEO_DEV ?= tools/zeo-dev
 
 .PHONY: all test check gate bench install linux clean \
-        ci-jit ci-aot ci-leakcheck ci-gccheck ci-cext ci-doc
+        ci-jit ci-aot ci-leakcheck ci-gccheck ci-doc ci-natlibs ci-anchor
 
 all:
 	$(CARGO) build --workspace
@@ -42,12 +42,13 @@ check:
 ci-jit: all
 	$(NEXTEST) --workspace --no-fail-fast
 
-# The same CLIF through an object file and a real link -- what ships.
-# Scoped to the golden corpora plus the e2e suite: it links a binary per
-# case, which is exactly why the DEFAULT e2e tier is the JIT child and the
-# link tier lives here.
+# The same CLIF through an object file and a real link -- what ships. A
+# SMOKE tier, not the whole corpus: JIT and AOT share the emitter, and
+# AOT-only bugs have been link/artifact-shaped, which the feature-diverse
+# zeo-authored examples plus the e2e suite catch. The full spinel corpus
+# takes this leg only in `make gate`.
 ci-aot: all
-	ZEO_GOLDEN_BACKEND=aot $(NEXTEST) -p zeo --test examples --test spinel --test gaps --no-fail-fast
+	ZEO_GOLDEN_BACKEND=aot $(NEXTEST) -p zeo --test examples --test gaps --no-fail-fast
 	ZEO_E2E_BACKEND=aot $(NEXTEST) -p zeo --test e2e --no-fail-fast
 
 # The compiled-ownership ledger: a non-zero balance at exit is a leak or a
@@ -60,21 +61,39 @@ ci-leakcheck: all
 ci-gccheck: all
 	ZEO_GC=1 ZEO_RT_GCCHECK=1 $(NEXTEST) -p zeo --test examples --test spinel --test gaps --no-fail-fast
 
-# The C extension surface is off by default and dead-strips; the workspace
-# leg cannot see its tests.
-ci-cext: all
-	$(NEXTEST) -p zeo-rt --features cext
-
 # nextest doesn't run doctests.
 ci-doc: all
 	$(CARGO) test --workspace --doc
 
+# The native-library table an AOT link names is HAND-WRITTEN
+# (backend/link.rs); this asks rustc for the live answer and diffs it.
+# Meaningful on Linux (where `-lcrypt` once went missing while macOS stayed
+# green). Ignored by default: it compiles the lib in a probe target dir.
+ci-natlibs: all
+	$(CARGO) test -p zeo --lib -- --ignored natlibs_table_matches_rustc --nocapture
+
+# `cargo install` ships no runtime archive; an installed zeo builds one on
+# first `zeo -o` through an anchor workspace, standing on undocumented
+# cargo behaviour. One platform is enough -- the claim is about cargo.
+ci-anchor: all
+	$(CARGO) test -p zeo --lib -- --ignored a_dependency_position_zeo --nocapture
+
 # --- The phase-boundary gate. ----------------------------------------------
 
+# The gate runs the OS-appropriate one of the two ignored unit tests above.
+UNAME := $(shell uname -s)
+ifeq ($(UNAME),Darwin)
+PLATFORM_CI_LEG := ci-anchor
+else
+PLATFORM_CI_LEG := ci-natlibs
+endif
+
 # Everything: the CI legs, plus the whole-gem cases the default profile opts
-# out of (`-P full`), plus gemtests under the cycle census, plus bench
+# out of (`-P full`), plus gemtests under the cycle census, plus the AOT leg
+# over the full spinel corpus (CI runs only the AOT smoke tier), plus bench
 # (informational -- bench numbers are recorded, never a gate).
-gate: ci-jit ci-aot ci-leakcheck ci-gccheck ci-cext ci-doc
+gate: ci-jit ci-aot ci-leakcheck ci-gccheck ci-doc $(PLATFORM_CI_LEG)
+	ZEO_GOLDEN_BACKEND=aot $(NEXTEST) -p zeo --test spinel --no-fail-fast
 	$(NEXTEST) -p zeo -P full -E 'binary(gemtests) + test(every_bundled_gem_compiles)'
 	ZEO_GC=1 ZEO_RT_GCCHECK=1 $(NEXTEST) -p zeo -P full --test gemtests
 	$(ZEO_DEV) bench

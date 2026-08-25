@@ -39,7 +39,7 @@ so the gate and CI cannot drift:
 ```console
 $ make test    # the dev loop: unit + e2e + all golden suites (default profile)
 $ make check   # clippy at CI's severity
-$ make gate    # everything: the CI legs + whole-gem cases + cext + doctests + bench
+$ make gate    # everything: the CI legs + whole-gem cases + full-corpus AOT + bench
 $ make linux   # the container verification loop (needs podman)
 ```
 
