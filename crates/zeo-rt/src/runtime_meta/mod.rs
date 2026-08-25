@@ -1409,4 +1409,144 @@ mod tests {
     fn a_box_never_fuses_however_narrow_the_latch() {
         assert!(!iter_inline_ok_for(1, ClassId(3)));
     }
+
+    // -- the gate word's transitions (see the GATES contract above) --------
+    //
+    // Eight bits are monotone latches: the arming call flips one and nothing
+    // clears it. GATE_PENDING is the exception, depth-counted by watermark.rs.
+    // Same posture as the narrowed-latch tests above: every gate is asserted
+    // false BEFORE its arming call, so a shared-process runner fails loudly.
+
+    fn gate(bit: u16) -> bool {
+        GATES.load(Ordering::Acquire) & bit != 0
+    }
+
+    #[test]
+    fn a_runtime_definition_arms_the_overlay_latch_for_good() {
+        assert!(!is_live());
+        runtime_define_method(ClassId(7), Symbol::intern("m"), nullary(1)).unwrap();
+        assert!(is_live());
+        assert!(gate(GATE_OVERLAY));
+        // Set-only: a second definition re-arms, never clears.
+        runtime_define_method(ClassId(8), Symbol::intern("m"), nullary(2)).unwrap();
+        assert!(is_live());
+    }
+
+    #[test]
+    fn a_runtime_definition_arms_the_patched_latch() {
+        assert!(!gate(GATE_PATCHED_ANY));
+        runtime_define_method(ClassId(7), Symbol::intern("m"), nullary(1)).unwrap();
+        assert!(gate(GATE_PATCHED_ANY));
+    }
+
+    #[test]
+    fn a_singleton_definition_arms_the_singletons_latch() {
+        let a: RObj = Arc::new(DynObject::new(ClassId(0)));
+        assert!(!gate(GATE_ANY_SINGLETONS));
+        assert!(iter_inline_ok_for(0, ClassId(3)));
+        runtime_define_singleton_method(
+            &RubyValue::Object(a.clone()),
+            Symbol::intern("m"),
+            nullary(1),
+        )
+        .unwrap();
+        assert!(gate(GATE_ANY_SINGLETONS));
+        // Part of GATE_ITER_BLOCKED: fusion stops process-wide.
+        assert!(!iter_inline_ok_for(0, ClassId(3)));
+    }
+
+    #[test]
+    fn a_ractor_move_arms_the_moved_latch_without_deopting_caches() {
+        assert!(!any_moved());
+        mark_moved();
+        assert!(any_moved());
+        // Not in the live mask: a move arms the husk probes and nothing else.
+        assert!(!is_live());
+        // Set-only; a second arm is a no-op.
+        mark_moved();
+        assert!(any_moved());
+    }
+
+    #[test]
+    fn arity_debug_arms_its_bit_outside_the_live_mask() {
+        assert!(!gates_arity_debug(gates()));
+        arm_arity_debug();
+        assert!(gates_arity_debug(gates()));
+        assert!(!is_live());
+    }
+
+    #[test]
+    fn a_runtime_extend_arms_the_extended_latch() {
+        let obj = RubyValue::Object(Arc::new(DynObject::new(ClassId(0))) as RObj);
+        let module = runtime_module_new(None).unwrap();
+        let RubyValue::Class(mid) = module else {
+            panic!()
+        };
+        assert!(!gate(GATE_ANY_EXTENDED));
+        assert!(!value_extends(&obj, mid));
+        runtime_extend(&obj, &module).unwrap();
+        assert!(gate(GATE_ANY_EXTENDED));
+        // The latch gates the identity-keyed map this records into.
+        assert!(value_extends(&obj, mid));
+    }
+
+    #[test]
+    fn a_runtime_include_arms_the_ancestry_latch() {
+        let class = runtime_class_new(None, None).unwrap();
+        let RubyValue::Class(cid) = class else {
+            panic!()
+        };
+        let module = runtime_module_new(None).unwrap();
+        let RubyValue::Class(mid) = module else {
+            panic!()
+        };
+        assert!(!gate(GATE_ANCESTRY_MUTATED));
+        runtime_include(&class, std::slice::from_ref(&module)).unwrap();
+        assert!(gate(GATE_ANCESTRY_MUTATED));
+        // The splice really landed: the overlay chain carries the module.
+        assert!(overlay_ancestors(cid).unwrap().contains(&mid));
+    }
+
+    #[test]
+    fn a_doubled_chain_arms_the_duplicates_latch() {
+        let a = ClassId(900_001);
+        let b = ClassId(900_002);
+        assert!(!mro_duplicates());
+        // A clean chain arms nothing.
+        crate::dispatch::note_chain(&[a, b]);
+        assert!(!mro_duplicates());
+        crate::dispatch::note_chain(&[a, b, a]);
+        assert!(mro_duplicates());
+        // Set-only: a later clean chain does not clear it.
+        crate::dispatch::note_chain(&[b]);
+        assert!(mro_duplicates());
+        // Part of the live mask: the inline caches must deopt.
+        assert!(is_live());
+    }
+
+    #[test]
+    fn pending_defs_begin_sets_and_a_balanced_end_clears() {
+        let name = Symbol::intern("later");
+        assert!(!any_pending());
+        pending_defs_begin(ClassId(7), &[name]);
+        assert!(any_pending());
+        // Part of the live mask while a hook runs.
+        assert!(is_live());
+        pending_defs_end();
+        assert!(!any_pending());
+        assert!(!is_live());
+    }
+
+    #[test]
+    fn nested_pending_defs_clear_only_at_depth_zero() {
+        let name = Symbol::intern("later");
+        assert!(!any_pending());
+        pending_defs_begin(ClassId(7), &[name]);
+        pending_defs_begin(ClassId(8), &[name]);
+        pending_defs_end();
+        // One frame is still on the stack: the gate must hold.
+        assert!(any_pending());
+        pending_defs_end();
+        assert!(!any_pending());
+    }
 }
