@@ -559,6 +559,19 @@ module FFI
       [name.to_s, FFI::LibraryPath.wrap(name.to_s).to_s].uniq.each do |candidate|
         return FFI::DynamicLibrary.open(candidate, flags)
       rescue LoadError => e
+        # glibc ships several `lib*.so` dev names as GNU ld SCRIPTS
+        # (`libm.so`, `libc.so`); dlopen refuses them, and ruby-ffi
+        # follows the script to its first real member. Same rule here:
+        # the refused path rides in the dlerror text.
+        script = e.message[/([^ \t():]+\.so[^ \t:()]*)/, 1]
+        if script && File.file?(script) &&
+           (member = File.binread(script)[/(?:GROUP|INPUT) *\( *([^ )]+)/, 1])
+          begin
+            return FFI::DynamicLibrary.open(member, flags)
+          rescue LoadError => e2
+            errors << e2.message
+          end
+        end
         errors << e.message
       end
       raise LoadError, "Could not open library '#{name}': #{errors.join('; ')}"

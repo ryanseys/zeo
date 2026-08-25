@@ -164,6 +164,17 @@ fn stage(src: &Path, dst: &Path) -> std::io::Result<()> {
 /// is what a developer working on a gem needs.
 pub fn content_key(dir: &Path) -> String {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    // The key also names the platform: the dev tree's cache dir can be
+    // shared across a container boundary (the Linux verification leg
+    // mounts the repo), and a macOS `.bundle` served to a Linux process
+    // is an "invalid ELF header" LoadError at require time.
+    for byte in std::env::consts::OS
+        .as_bytes()
+        .iter()
+        .chain(std::env::consts::ARCH.as_bytes())
+    {
+        hash = (hash ^ u64::from(*byte)).wrapping_mul(0x100_0000_01b3);
+    }
     let mut files = Vec::new();
     collect(dir, dir, &mut files);
     files.sort();

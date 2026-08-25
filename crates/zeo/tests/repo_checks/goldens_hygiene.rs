@@ -180,6 +180,8 @@ fn every_leg_skip_sidecar_is_acknowledged_here() {
         "errno_full_surface.rb",
         "ffi_lib_defers_runtime_candidates.rb",
         "ffi_platform_reports_the_hosts_c_abi.rb",
+        "process_identity_rows.rb",
+        "socket_carries_its_exception_hierarchy.rb",
         "fiddle.rb",
         "float_pow_negative_fractional.rb",
         "io_file_stat_rows.rb",
