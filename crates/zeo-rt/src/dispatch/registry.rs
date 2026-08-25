@@ -424,6 +424,27 @@ impl ClassRegistry {
         }
     }
 
+    /// [`construct_exception`](Self::construct_exception) addressed by id --
+    /// no by-name probe. The `SystemCallError`/`Errno::*` verbatim-message
+    /// rule keys off the entry's REGISTERED name, so an id-addressed
+    /// `SystemCallError` behaves exactly as the by-name channel. The panic
+    /// fallback names the class from the ABI table, matching the by-name
+    /// channel's `Class: msg` text.
+    pub fn construct_exception_id(&self, id: ClassId, msg: String) -> RubyValue {
+        match self.entries.get(&id.0) {
+            Some(entry) if entry.constructor.is_some() => {
+                let ctor = entry.constructor.expect("guarded by the arm");
+                let exc = ctor(id, &[RubyValue::Str(crate::string_new(msg.clone()))], None)
+                    .expect("Exception#initialize can't signal");
+                if entry.name == "SystemCallError" || entry.name.starts_with("Errno::") {
+                    crate::builtins::exception::set_verbatim_message(&exc, msg);
+                }
+                exc
+            }
+            _ => panic!("{}: {msg}", super::errors::exception_class_label(id)),
+        }
+    }
+
     /// Records `name` as DEFINED DIRECTLY on `id` (not inherited) -- emitted by
     /// codegen for each of the class's own `def`s, beside `mark_private`. See
     /// `ClassEntry::own_methods`.

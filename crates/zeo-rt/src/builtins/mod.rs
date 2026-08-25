@@ -671,51 +671,53 @@ pub(crate) fn wrong_arg_type(v: &RubyValue, want: &str) -> Signal {
 /// over `raise_error("TypeError", format!(...))`, so the class name is spelled
 /// once here (never typo-able per site) and call sites read as what they
 /// raise. Each takes `format!` arguments and yields a `Signal` -- wrap in
-/// `Err(...)` exactly as with `raise_error`. Classes raised from only one
-/// site (Errno::*, ext-specific classes) stay on `raise_error` directly.
+/// `Err(...)` exactly as with `raise_error`. Each expands to `raise_error_id`
+/// with the class's fixed `zeo_abi` id, skipping the registry's by-name
+/// String probe. Classes raised from only a few sites (Errno::*,
+/// ext-specific classes) stay on `raise_error` directly.
 /// (Written flat rather than macro-generated: `$$` meta-variable escaping is
 /// still unstable.)
 macro_rules! type_error {
-    ($($fmt:tt)*) => { crate::dispatch::raise_error("TypeError", format!($($fmt)*)) };
+    ($($fmt:tt)*) => { crate::dispatch::raise_error_id(zeo_abi::TYPE_ERROR_CLASS, format!($($fmt)*)) };
 }
 macro_rules! arg_error {
-    ($($fmt:tt)*) => { crate::dispatch::raise_error("ArgumentError", format!($($fmt)*)) };
+    ($($fmt:tt)*) => { crate::dispatch::raise_error_id(zeo_abi::ARGUMENT_ERROR_CLASS, format!($($fmt)*)) };
 }
 macro_rules! name_error {
-    ($($fmt:tt)*) => { crate::dispatch::raise_error("NameError", format!($($fmt)*)) };
+    ($($fmt:tt)*) => { crate::dispatch::raise_error_id(zeo_abi::NAME_ERROR_CLASS, format!($($fmt)*)) };
 }
 macro_rules! index_error {
-    ($($fmt:tt)*) => { crate::dispatch::raise_error("IndexError", format!($($fmt)*)) };
+    ($($fmt:tt)*) => { crate::dispatch::raise_error_id(zeo_abi::INDEX_ERROR_CLASS, format!($($fmt)*)) };
 }
 macro_rules! range_error {
-    ($($fmt:tt)*) => { crate::dispatch::raise_error("RangeError", format!($($fmt)*)) };
+    ($($fmt:tt)*) => { crate::dispatch::raise_error_id(zeo_abi::RANGE_ERROR_CLASS, format!($($fmt)*)) };
 }
 macro_rules! runtime_error {
-    ($($fmt:tt)*) => { crate::dispatch::raise_error("RuntimeError", format!($($fmt)*)) };
+    ($($fmt:tt)*) => { crate::dispatch::raise_error_id(zeo_abi::RUNTIME_ERROR_CLASS, format!($($fmt)*)) };
 }
 macro_rules! frozen_error {
-    ($($fmt:tt)*) => { crate::dispatch::raise_error("FrozenError", format!($($fmt)*)) };
+    ($($fmt:tt)*) => { crate::dispatch::raise_error_id(zeo_abi::FROZEN_ERROR_CLASS, format!($($fmt)*)) };
 }
 macro_rules! io_error {
-    ($($fmt:tt)*) => { crate::dispatch::raise_error("IOError", format!($($fmt)*)) };
+    ($($fmt:tt)*) => { crate::dispatch::raise_error_id(zeo_abi::IO_ERROR_CLASS, format!($($fmt)*)) };
 }
 macro_rules! eof_error {
-    ($($fmt:tt)*) => { crate::dispatch::raise_error("EOFError", format!($($fmt)*)) };
+    ($($fmt:tt)*) => { crate::dispatch::raise_error_id(zeo_abi::EOF_ERROR_CLASS, format!($($fmt)*)) };
 }
 macro_rules! thread_error {
-    ($($fmt:tt)*) => { crate::dispatch::raise_error("ThreadError", format!($($fmt)*)) };
+    ($($fmt:tt)*) => { crate::dispatch::raise_error_id(zeo_abi::THREAD_ERROR_CLASS, format!($($fmt)*)) };
 }
 macro_rules! regexp_error {
-    ($($fmt:tt)*) => { crate::dispatch::raise_error("RegexpError", format!($($fmt)*)) };
+    ($($fmt:tt)*) => { crate::dispatch::raise_error_id(zeo_abi::REGEXP_ERROR_CLASS, format!($($fmt)*)) };
 }
 macro_rules! local_jump_error {
-    ($($fmt:tt)*) => { crate::dispatch::raise_error("LocalJumpError", format!($($fmt)*)) };
+    ($($fmt:tt)*) => { crate::dispatch::raise_error_id(zeo_abi::LOCAL_JUMP_ERROR_CLASS, format!($($fmt)*)) };
 }
 macro_rules! float_domain_error {
-    ($($fmt:tt)*) => { crate::dispatch::raise_error("FloatDomainError", format!($($fmt)*)) };
+    ($($fmt:tt)*) => { crate::dispatch::raise_error_id(zeo_abi::FLOAT_DOMAIN_ERROR_CLASS, format!($($fmt)*)) };
 }
 macro_rules! not_impl_error {
-    ($($fmt:tt)*) => { crate::dispatch::raise_error("NotImplementedError", format!($($fmt)*)) };
+    ($($fmt:tt)*) => { crate::dispatch::raise_error_id(zeo_abi::NOT_IMPLEMENTED_ERROR_CLASS, format!($($fmt)*)) };
 }
 pub(crate) use {
     arg_error, eof_error, float_domain_error, frozen_error, index_error, io_error,

@@ -24,6 +24,35 @@ pub fn raise_error(class_name: &str, msg: String) -> Signal {
     }
 }
 
+/// [`raise_error`] addressed by a fixed [`zeo_abi`] exception id -- what the
+/// error macros expand to, skipping the registry's by-name String probe.
+/// Registry-less it panics with the same `Class: msg` text `raise_error`
+/// uses, naming the class from the ABI table (the macros only pass table
+/// ids, so the lookup cannot miss).
+pub fn raise_error_id(class: zeo_abi::ClassId, msg: String) -> Signal {
+    let msg = arity_debug_context(msg);
+    match REGISTRY.get() {
+        Some(reg) => {
+            let exc = reg.construct_exception_id(class, msg);
+            crate::builtins::exception::attach_cause(&exc);
+            crate::builtins::exception::attach_backtrace(&exc);
+            Signal::Raise(exc)
+        }
+        None => panic!("{}: {msg}", exception_class_label(class)),
+    }
+}
+
+/// The ABI-table name of a fixed exception id -- the panic label for the
+/// registry-less and unregistered cases, so an id-addressed raise reports
+/// itself exactly as the by-name channel does.
+#[cold]
+pub(super) fn exception_class_label(id: ClassId) -> &'static str {
+    zeo_abi::EXCEPTION_CLASSES
+        .iter()
+        .find(|e| e.id == id)
+        .map_or("Exception", |e| e.name)
+}
+
 /// [`arity_error`] for a signature whose expected count is a RANGE or an
 /// open-ended minimum -- `"1..3"`, `"2+"` -- already spelled by codegen.
 ///

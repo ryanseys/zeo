@@ -932,7 +932,6 @@ pub const SYSTEM_CALL_ERROR_CLASS: ClassId = exc_id(31);
 /// every [`ERRNO_ALIASES`] constant.
 pub const ERRNO_MODULE: ClassId = exc_id(32);
 
-/// `LocalJumpError` -- exposes `#reason`/`#exit_value`.
 /// `SyntaxError` -- carries `#path`, the file whose parse failed.
 pub const SYNTAX_ERROR_CLASS: ClassId = exc_id(34);
 /// `NoMatchingPatternKeyError` -- carries `#key` and `#matchee`, the Hash key
@@ -949,6 +948,7 @@ pub const UNDEFINED_CONVERSION_ERROR_CLASS: ClassId = exc_id(7);
 /// decode. Carries `#error_bytes`/`#readagain_bytes` and the encoding pair.
 pub const INVALID_BYTE_SEQUENCE_ERROR_CLASS: ClassId = exc_id(8);
 
+/// `LocalJumpError` -- exposes `#reason`/`#exit_value`.
 pub const LOCAL_JUMP_ERROR_CLASS: ClassId = exc_id(20);
 
 /// CRuby's internal `fatal`, raised when no thread can make progress. It
@@ -974,6 +974,20 @@ pub const SIGNAL_EXCEPTION_CLASS: ClassId = exc_id(37);
 
 /// `Interrupt` (a `SignalException`) -- fixed to `SIGINT` (signo 2).
 pub const INTERRUPT_CLASS: ClassId = exc_id(38);
+
+// The ids `zeo-rt`'s error macros raise by (`raise_error_id`), skipping the
+// registry's by-name probe. Each offset must stay in sync with its row below.
+pub const ARGUMENT_ERROR_CLASS: ClassId = exc_id(5);
+pub const IO_ERROR_CLASS: ClassId = exc_id(11);
+pub const EOF_ERROR_CLASS: ClassId = exc_id(12);
+pub const INDEX_ERROR_CLASS: ClassId = exc_id(13);
+pub const RANGE_ERROR_CLASS: ClassId = exc_id(18);
+pub const FLOAT_DOMAIN_ERROR_CLASS: ClassId = exc_id(19);
+pub const REGEXP_ERROR_CLASS: ClassId = exc_id(21);
+pub const FIBER_ERROR_CLASS: ClassId = exc_id(25);
+pub const THREAD_ERROR_CLASS: ClassId = exc_id(26);
+pub const TYPE_ERROR_CLASS: ClassId = exc_id(29);
+pub const NO_MEMORY_ERROR_CLASS: ClassId = exc_id(39);
 
 /// One row of the built-in exception hierarchy -- the shared source of truth
 /// for the ids both sides bake in.
@@ -1831,6 +1845,60 @@ mod tests {
                 "{} out of order",
                 c.name
             );
+        }
+    }
+
+    /// Every named `*_CLASS` const points at the row of the same name -- the
+    /// "keep the offset in sync with its row" promise, enforced.
+    #[test]
+    fn named_exception_consts_match_their_rows() {
+        let name_of = |id: ClassId| EXCEPTION_CLASSES.iter().find(|e| e.id == id).unwrap().name;
+        for (id, name) in [
+            (EXCEPTION_CLASS, "Exception"),
+            (NOT_IMPLEMENTED_ERROR_CLASS, "NotImplementedError"),
+            (LOAD_ERROR_CLASS, "LoadError"),
+            (ARGUMENT_ERROR_CLASS, "ArgumentError"),
+            (
+                UNDEFINED_CONVERSION_ERROR_CLASS,
+                "Encoding::UndefinedConversionError",
+            ),
+            (
+                INVALID_BYTE_SEQUENCE_ERROR_CLASS,
+                "Encoding::InvalidByteSequenceError",
+            ),
+            (IO_ERROR_CLASS, "IOError"),
+            (EOF_ERROR_CLASS, "EOFError"),
+            (INDEX_ERROR_CLASS, "IndexError"),
+            (KEY_ERROR_CLASS, "KeyError"),
+            (STOP_ITERATION_CLASS, "StopIteration"),
+            (NAME_ERROR_CLASS, "NameError"),
+            (NO_METHOD_ERROR_CLASS, "NoMethodError"),
+            (RANGE_ERROR_CLASS, "RangeError"),
+            (FLOAT_DOMAIN_ERROR_CLASS, "FloatDomainError"),
+            (LOCAL_JUMP_ERROR_CLASS, "LocalJumpError"),
+            (REGEXP_ERROR_CLASS, "RegexpError"),
+            (RUNTIME_ERROR_CLASS, "RuntimeError"),
+            (FROZEN_ERROR_CLASS, "FrozenError"),
+            (FIBER_ERROR_CLASS, "FiberError"),
+            (THREAD_ERROR_CLASS, "ThreadError"),
+            (TYPE_ERROR_CLASS, "TypeError"),
+            (ZERO_DIVISION_ERROR_CLASS, "ZeroDivisionError"),
+            (SYSTEM_CALL_ERROR_CLASS, "SystemCallError"),
+            (ERRNO_MODULE, "Errno"),
+            (SYNTAX_ERROR_CLASS, "SyntaxError"),
+            (UNCAUGHT_THROW_ERROR_CLASS, "UncaughtThrowError"),
+            (SYSTEM_EXIT_CLASS, "SystemExit"),
+            (SIGNAL_EXCEPTION_CLASS, "SignalException"),
+            (INTERRUPT_CLASS, "Interrupt"),
+            (NO_MEMORY_ERROR_CLASS, "NoMemoryError"),
+            (
+                NO_MATCHING_PATTERN_KEY_ERROR_CLASS,
+                "NoMatchingPatternKeyError",
+            ),
+            (RACTOR_REMOTE_ERROR_CLASS, "Ractor::RemoteError"),
+            (FATAL_CLASS, "fatal"),
+        ] {
+            assert_eq!(name_of(id), name, "{name}'s const has drifted off its row");
         }
     }
 
