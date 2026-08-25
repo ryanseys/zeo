@@ -298,11 +298,8 @@ ruby_class! {
         if name == native || name == "native" {
             return Ok(recv.clone());
         }
-        Err(crate::dispatch::raise_error(
-            "NotImplementedError",
-            format!("FFI::Pointer#order(:{name}) isn't supported yet (zeo limitation) -- \
-                     this target is {native}-endian and no byte-swapping view exists"),
-        ))
+        Err(crate::builtins::not_impl_error!("FFI::Pointer#order(:{name}) isn't supported yet (zeo limitation) -- \
+                     this target is {native}-endian and no byte-swapping view exists"))
     }
     // `read_string_length(len)` -- exactly `len` bytes, NULs included, unlike
     // `read_string`'s NUL-terminated read.

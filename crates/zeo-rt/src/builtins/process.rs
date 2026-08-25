@@ -79,7 +79,7 @@ ruby_module! {
     def self._fork(_recv) {
         let pid = unsafe { libc::fork() };
         if pid < 0 {
-            return Err(raise_error("SystemCallError", std::io::Error::last_os_error().to_string()));
+            return Err(crate::builtins::system_call_error!("{}", std::io::Error::last_os_error().to_string()));
         }
         Ok(RubyValue::Int(pid as i64))
     }
@@ -149,7 +149,7 @@ ruby_module! {
                     Some(libc::EPERM) => {
                         raise_error("Errno::EPERM", "Operation not permitted".to_string())
                     }
-                    _ => raise_error("SystemCallError", err.to_string()),
+                    _ => crate::builtins::system_call_error!("{}", err.to_string()),
                 });
             }
         }
@@ -818,16 +818,13 @@ fn sys_fail() -> Signal {
     let e = std::io::Error::last_os_error();
     match e.raw_os_error().and_then(zeo_abi::errno_class) {
         Some((_, row)) => raise_error(row.name, crate::builtins::exception::strerror(row.errno)),
-        None => raise_error("SystemCallError", "Unknown error".to_string()),
+        None => crate::builtins::system_call_error!("Unknown error"),
     }
 }
 
 /// CRuby's `rb_f_notimplement` message for a syscall this platform lacks.
 fn unimplemented_syscall(name: &str) -> Signal {
-    raise_error(
-        "NotImplementedError",
-        format!("{name}() function is unimplemented on this machine"),
-    )
+    crate::builtins::not_impl_error!("{name}() function is unimplemented on this machine")
 }
 
 fn issetugid_now() -> bool {
@@ -867,12 +864,8 @@ fn uid_arg(v: &RubyValue) -> Result<libc::uid_t, Signal> {
 /// names 'unsigned long'. A Float truncates and a negative wraps, both of
 /// which real callers use (`-1` is the "leave this one alone" id).
 fn id_num(v: &RubyValue) -> Result<u32, Signal> {
-    let too_big = || {
-        raise_error(
-            "RangeError",
-            "bignum too big to convert into 'unsigned long'".to_string(),
-        )
-    };
+    let too_big =
+        || crate::builtins::range_error!("bignum too big to convert into 'unsigned long'");
     let n = match v {
         RubyValue::Int(i) => *i,
         RubyValue::Float(f) => *f as i64,
@@ -1944,7 +1937,7 @@ pub fn system(
     // Gvl-released: the child can run arbitrarily long, and an armed
     // (`ZEO_GVL=1`) holder parked in wait(2) must not stall its siblings.
     let status = crate::gvl::without_gvl(|| child.wait())
-        .map_err(|e| raise_error("SystemCallError", e.to_string()))?;
+        .map_err(|e| crate::builtins::system_call_error!("{}", e.to_string()))?;
     set_last_child_status(new_status(pid, status.into_raw()));
     Ok(RubyValue::Bool(status.success()))
 }
@@ -1976,7 +1969,7 @@ pub fn backquote(
                 format!("No such file or directory - {raw_cmd}"),
             ));
         }
-        Err(e) => return Err(raise_error("SystemCallError", e.to_string())),
+        Err(e) => return Err(crate::builtins::system_call_error!("{}", e.to_string())),
     };
     let pid = child.id() as i64;
     let mut out = Vec::new();
@@ -1985,10 +1978,10 @@ pub fn backquote(
     if let Some(mut so) = child.stdout.take() {
         use std::io::Read;
         crate::gvl::without_gvl(|| so.read_to_end(&mut out))
-            .map_err(|e| raise_error("IOError", e.to_string()))?;
+            .map_err(|e| crate::builtins::io_error!("{}", e.to_string()))?;
     }
     let status = crate::gvl::without_gvl(|| child.wait())
-        .map_err(|e| raise_error("SystemCallError", e.to_string()))?;
+        .map_err(|e| crate::builtins::system_call_error!("{}", e.to_string()))?;
     set_last_child_status(new_status(pid, status.into_raw()));
     // Tagged with the default external encoding, as CRuby's backtick output is.
     Ok(RubyValue::Str(crate::string_from_bytes(

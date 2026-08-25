@@ -149,7 +149,7 @@ fn editor_read(prompt: &str) -> Result<Option<String>, Signal> {
         Some(e) => e,
         None => {
             let mut e = rustyline::Editor::new()
-                .map_err(|e| crate::dispatch::raise_error("RuntimeError", e.to_string()))?;
+                .map_err(|e| crate::builtins::runtime_error!("{}", e.to_string()))?;
             e.set_helper(Some(RlHelper));
             slot.insert(e)
         }
@@ -161,7 +161,7 @@ fn editor_read(prompt: &str) -> Result<Option<String>, Signal> {
             "Interrupt",
             "Interrupt".to_string(),
         )),
-        Err(e) => Err(crate::dispatch::raise_error("RuntimeError", e.to_string())),
+        Err(e) => Err(crate::builtins::runtime_error!("{}", e.to_string())),
     }
 }
 

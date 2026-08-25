@@ -586,9 +586,8 @@ impl Drop for FinishGuard {
         if self.armed {
             finish(
                 &self.r,
-                Err(raise_error(
-                    "RuntimeError",
-                    "ractor terminated by panic".to_string(),
+                Err(crate::builtins::runtime_error!(
+                    "ractor terminated by panic"
                 )),
                 true,
             );
@@ -613,12 +612,9 @@ pub fn ractor_new(
         None => None,
         Some(RubyValue::Str(s)) => Some(s.lock().to_utf8_lossy().into_owned()),
         Some(other) => {
-            return Err(raise_error(
-                "TypeError",
-                format!(
-                    "no implicit conversion of {} into String",
-                    crate::builtins::class_name_of(&other)
-                ),
+            return Err(crate::builtins::type_error!(
+                "no implicit conversion of {} into String",
+                crate::builtins::class_name_of(&other)
             ));
         }
     };
@@ -629,9 +625,8 @@ pub fn ractor_new(
     // arrives with the tag: codegen already rejected it at compile time
     // (the stricter-earlier check `emit_call`'s Ractor arm documents).
     if let Some(outer) = body.outer_capture() {
-        return Err(raise_error(
-            "ArgumentError",
-            format!("can not isolate a Proc because it accesses outer variables ({outer})."),
+        return Err(crate::builtins::arg_error!(
+            "can not isolate a Proc because it accesses outer variables ({outer})."
         ));
     }
     let crossed: Vec<RubyValue> = args
@@ -813,9 +808,8 @@ fn select_cleanup(entries: &[SelectEntry]) {
 /// `[ractor, value]` (an aborted ractor raises its `RemoteError` here).
 pub fn ractor_select(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     if args.is_empty() {
-        return Err(raise_error(
-            "ArgumentError",
-            "specify at least one Ractor::Port or Ractor".to_string(),
+        return Err(crate::builtins::arg_error!(
+            "specify at least one Ractor::Port or Ractor"
         ));
     }
     let me = current_ractor();
@@ -833,9 +827,8 @@ pub fn ractor_select(args: &[RubyValue]) -> Result<RubyValue, Signal> {
         }
         let Some(p) = as_port(a) else {
             select_cleanup(&entries);
-            return Err(raise_error(
-                "ArgumentError",
-                "should be Ractor::Port or Ractor".to_string(),
+            return Err(crate::builtins::arg_error!(
+                "should be Ractor::Port or Ractor"
             ));
         };
         if !Arc::ptr_eq(&p.target().creator, &me) {
@@ -1370,9 +1363,8 @@ fn shareable_callable(
         }
     }
     let Some(block) = block else {
-        return Err(raise_error(
-            "ArgumentError",
-            "tried to create Proc object without a block".to_string(),
+        return Err(crate::builtins::arg_error!(
+            "tried to create Proc object without a block"
         ));
     };
     let p = block.as_proc_unchecked();

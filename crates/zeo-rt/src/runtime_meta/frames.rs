@@ -228,10 +228,7 @@ pub fn bare_super_outside_a_method() -> Signal {
              define_method() is not supported. Specify all arguments explicitly."
         )
     } else {
-        crate::dispatch::raise_error(
-            "NoMethodError",
-            "super called outside of method".to_string(),
-        )
+        crate::builtins::no_method_error!("super called outside of method")
     }
 }
 
@@ -263,9 +260,8 @@ pub fn send_super_dynamic(
             // Ruby's own class for it (`vm_insnhelper.c` raises through
             // `rb_vm_call_super` with no cref), and the same one the
             // emitter's static twin uses when it can see there is no method.
-            None => Err(crate::dispatch::raise_error(
-                "NoMethodError",
-                "super called outside of method".to_string(),
+            None => Err(crate::builtins::no_method_error!(
+                "super called outside of method"
             )),
         },
     }

@@ -276,10 +276,7 @@ impl RIo {
     fn dup2_from(&self, src: libc::c_int, path: Option<String>) -> Result<(), Signal> {
         use std::os::fd::FromRawFd;
         let Some(dst) = self.raw_fd() else {
-            return Err(crate::dispatch::raise_error(
-                "IOError",
-                "closed stream".to_string(),
-            ));
+            return Err(crate::builtins::io_error!("closed stream"));
         };
         if src != dst {
             // SAFETY: both are live descriptors this process owns; `dup2`
@@ -1765,10 +1762,7 @@ ruby_class! {
     // here (`#nonblock?` is the reader), so a blockless call is a LocalJumpError.
     def "nonblock" (recv, mode?, &blk) {
         let Some(RubyValue::Proc(p)) = blk else {
-            return Err(crate::raise_error(
-                "LocalJumpError",
-                "no block given".to_string(),
-            ));
+            return Err(crate::builtins::local_jump_error!("no block given"));
         };
         let on = mode.is_none_or(|v| v.truthy());
         let Some(fd) = io_raw_fd(recv) else {
@@ -2634,8 +2628,7 @@ ruby_class! {
                 let path = other.path.lock().clone();
                 let fd = other
                     .raw_fd()
-                    .ok_or_else(|| crate::dispatch::raise_error(
-                        "IOError", "closed stream".to_string()))?;
+                    .ok_or_else(|| crate::builtins::io_error!("closed stream"))?;
                 io.dup2_from(fd, path)?;
             }
             None => {

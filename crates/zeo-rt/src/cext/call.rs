@@ -91,7 +91,7 @@ crate::cext_fn! {
     fn zeo_cext_raise_str(exc: Value, msg: *const c_char) -> Value {
         let msg = unsafe { cstr(msg) };
         if exc == 0 {
-            return Err(crate::dispatch::raise_error("RuntimeError", msg));
+            return Err(crate::builtins::runtime_error!("{}", msg));
         }
         Err(raise_with(&unsafe { value_of(exc) }, msg))
     }
@@ -202,7 +202,7 @@ crate::cext_fn! {
     /// left behind. An extension calls it to re-raise after cleaning up.
     fn rb_jump_tag(_state: c_int) -> Value {
         Err(ERRINFO.with_borrow_mut(Option::take).map_or_else(
-            || crate::dispatch::raise_error("RuntimeError", "rb_jump_tag with no pending exception".into()),
+            || crate::builtins::runtime_error!("rb_jump_tag with no pending exception"),
             Signal::Raise,
         ))
     }
@@ -389,12 +389,9 @@ fn raise_with(class: &RubyValue, msg: String) -> Signal {
         Ok(exc) => Signal::Raise(exc),
         // A class with neither `exception` nor `new` cannot be raised at all;
         // saying which class beats a bare RuntimeError.
-        Err(_) => crate::dispatch::raise_error(
-            "TypeError",
-            format!(
-                "exception class/object expected: {}",
-                crate::dispatch::class_name(class.class_id()).unwrap_or("Object".into())
-            ),
+        Err(_) => crate::builtins::type_error!(
+            "exception class/object expected: {}",
+            crate::dispatch::class_name(class.class_id()).unwrap_or("Object".into())
         ),
     }
 }
@@ -434,10 +431,7 @@ pub(super) fn yield_to_block(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     match current_block() {
         Some(RubyValue::Proc(p)) => p.call(args),
         Some(other) => crate::dispatch::send_value(&other, Symbol::intern("call"), args, None),
-        None => Err(crate::dispatch::raise_error(
-            "LocalJumpError",
-            "no block given (yield)".into(),
-        )),
+        None => Err(crate::builtins::local_jump_error!("no block given (yield)")),
     }
 }
 

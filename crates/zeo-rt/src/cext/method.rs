@@ -125,10 +125,7 @@ fn legal_argc(argc: c_int) -> bool {
 }
 
 fn bad_argc(argc: c_int) -> Signal {
-    crate::dispatch::raise_error(
-        "ArgumentError",
-        format!("arity out of range: {argc} for -2..{MAX_FIXED_ARITY}"),
-    )
+    crate::builtins::arg_error!("arity out of range: {argc} for -2..{MAX_FIXED_ARITY}")
 }
 
 /// The `RProc` zeo's dispatch installs for a C method body.
@@ -404,13 +401,8 @@ crate::cext_fn! {
         for name in ["allocate", "new"] {
             let refuse = crate::rproc::ProcBuilder::from_rust(
                 move |recv: &RubyValue, _a: &[RubyValue], _b: Option<RubyValue>| {
-                    Err(crate::dispatch::raise_error(
-                        "TypeError",
-                        format!(
-                            "allocator undefined for {}",
-                            crate::dispatch::class_name(recv.class_id()).unwrap_or("Class".into())
-                        ),
-                    ))
+                    Err(crate::builtins::type_error!("allocator undefined for {}",
+                            crate::dispatch::class_name(recv.class_id()).unwrap_or("Class".into())))
                 },
                 cls.clone(),
                 -1,

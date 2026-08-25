@@ -1151,13 +1151,10 @@ pub fn guard_public_class_method(cid: ClassId, name: Symbol) -> Result<(), Signa
     if !crate::runtime_meta::is_live() || !class_method_is_private(cid, name) {
         return Ok(());
     }
-    Err(raise_error(
-        "NoMethodError",
-        format!(
-            "private method '{}' called for class {}",
-            name.name(),
-            class_name(cid).unwrap_or_else(|| "?".to_string())
-        ),
+    Err(crate::builtins::no_method_error!(
+        "private method '{}' called for class {}",
+        name.name(),
+        class_name(cid).unwrap_or_else(|| "?".to_string())
     ))
 }
 

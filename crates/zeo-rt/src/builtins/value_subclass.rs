@@ -29,7 +29,7 @@ use zeo_abi::{ARRAY_CLASS, ClassId, HASH_CLASS, STRING_CLASS};
 
 use crate::dispatch::{
     ClassRegistry, ConstructorFn, RObj, RubyObject, ancestors_of_value, has_instance_method,
-    raise_error, run_initialize,
+    run_initialize,
 };
 use crate::signal::Signal;
 use crate::symbol::Symbol;
@@ -605,10 +605,7 @@ pub fn value_super(
         .expect("value subclass carries a payload");
     let table = crate::builtins::class_table(root).expect("value payload root has a class_table");
     let f = table(mname).ok_or_else(|| {
-        raise_error(
-            "NoMethodError",
-            format!("super: no superclass method '{mname}'"),
-        )
+        crate::builtins::no_method_error!("super: no superclass method '{mname}'")
     })?;
     let result = f(&payload, args, block)?;
     Ok(rewrap_self_return(result, &payload, &obj, mname))

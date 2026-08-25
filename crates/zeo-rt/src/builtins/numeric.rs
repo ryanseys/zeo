@@ -167,10 +167,7 @@ tower_binop!(
     num_div,
     int(x, y) => {
         if crate::builtins::integer::int_is_zero(y) {
-            Err(crate::dispatch::raise_error(
-                "ZeroDivisionError",
-                "divided by 0".to_string(),
-            ))
+            Err(crate::builtins::zero_division_error!("divided by 0"))
         } else {
             Ok(int_div(x, y))
         }
@@ -184,10 +181,7 @@ tower_binop!(
     num_mod,
     int(x, y) => {
         if crate::builtins::integer::int_is_zero(y) {
-            Err(crate::dispatch::raise_error(
-                "ZeroDivisionError",
-                "divided by 0".to_string(),
-            ))
+            Err(crate::builtins::zero_division_error!("divided by 0"))
         } else {
             Ok(int_mod(x, y))
         }
@@ -202,20 +196,14 @@ tower_binop!(
         // Float#% by zero raises ZeroDivisionError (either an int or float
         // divisor coerces into this lane), rather than answering NaN.
         if y == 0.0 {
-            Err(crate::dispatch::raise_error(
-                "ZeroDivisionError",
-                "divided by 0".to_string(),
-            ))
+            Err(crate::builtins::zero_division_error!("divided by 0"))
         } else {
             Ok(RubyValue::Float(crate::float_mod(x, y)))
         }
     },
     // Complex has no modulo -- the same NoMethodError real Ruby raises, and
     // rescuable, where a panic was not.
-    cpx(_x, _y) => Err(crate::dispatch::raise_error(
-        "NoMethodError",
-        "undefined method '%' for an instance of Complex".to_string(),
-    )),
+    cpx(_x, _y) => Err(crate::builtins::no_method_error!("undefined method '%' for an instance of Complex")),
 );
 
 tower_binop!(
@@ -660,15 +648,12 @@ ruby_class! {
             let x = num_to_f64_unchecked(recv);
             let y = num_to_f64_unchecked(arg);
             if y == 0.0 {
-                return Err(crate::dispatch::raise_error(
-                    "ZeroDivisionError",
-                    "divided by 0".to_string(),
-                ));
+                return Err(crate::builtins::zero_division_error!("divided by 0"));
             }
             let (div, m) = flo_divmod(x, y);
             if !div.is_finite() {
                 let msg = if div.is_nan() { "NaN" } else if div > 0.0 { "Infinity" } else { "-Infinity" };
-                return Err(crate::dispatch::raise_error("FloatDomainError", msg.to_string()));
+                return Err(crate::builtins::float_domain_error!("{}", msg.to_string()));
             }
             use num_traits::FromPrimitive;
             let q = crate::builtins::integer::int_value(
@@ -701,7 +686,7 @@ ruby_class! {
                 } else {
                     "-Infinity"
                 };
-                return Err(crate::dispatch::raise_error("FloatDomainError", msg.to_string()));
+                return Err(crate::builtins::float_domain_error!("{}", msg.to_string()));
             }
             // A Rational quotient floors to an Integer too (CRuby's divmod
             // quotient is always an Integer): `(7/2).divmod(1/3)` is
@@ -731,10 +716,7 @@ ruby_class! {
                 RubyValue::Int(_) | RubyValue::BigInt(_),
             ) => {
                 if crate::builtins::integer::int_is_zero(arg) {
-                    return Err(crate::dispatch::raise_error(
-                        "ZeroDivisionError",
-                        "divided by 0".to_string(),
-                    ));
+                    return Err(crate::builtins::zero_division_error!("divided by 0"));
                 }
                 let a = crate::builtins::integer::to_bigint(recv);
                 let b = crate::builtins::integer::to_bigint(arg);
@@ -759,10 +741,7 @@ ruby_class! {
                 // `flo_remainder` reaches `rb_num_zerodiv` rather than letting
                 // the IEEE division answer NaN.
                 if b == 0.0 {
-                    return Err(crate::dispatch::raise_error(
-                        "ZeroDivisionError",
-                        "divided by 0".to_string(),
-                    ));
+                    return Err(crate::builtins::zero_division_error!("divided by 0"));
                 }
                 Ok(RubyValue::Float(a - b * (a / b).trunc()))
             }
@@ -810,10 +789,7 @@ ruby_class! {
         // Without it a Float receiver divided to Infinity and then died in
         // `floor` with FloatDomainError, where ruby says ZeroDivisionError.
         if crate::dispatch::send_value(other, crate::Symbol::intern("=="), &[RubyValue::Int(0)], None)?.truthy() {
-            return Err(crate::dispatch::raise_error(
-                "ZeroDivisionError",
-                "divided by 0".to_string(),
-            ));
+            return Err(crate::builtins::zero_division_error!("divided by 0"));
         }
         let q = send(recv, "/", std::slice::from_ref(other))?;
         send(&q, "floor", &[])

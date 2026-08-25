@@ -513,9 +513,9 @@ crate::cext_fn! {
 fn check_writable(a: &RArray) -> Result<(), crate::Signal> {
     let v = RubyValue::Array(a.clone());
     if v.is_frozen() {
-        return Err(crate::dispatch::raise_error(
-            "FrozenError",
-            format!("can't modify frozen Array: {}", v.to_display_string()),
+        return Err(crate::builtins::frozen_error!(
+            "can't modify frozen Array: {}",
+            v.to_display_string()
         ));
     }
     Ok(())
@@ -524,9 +524,9 @@ fn check_writable(a: &RArray) -> Result<(), crate::Signal> {
 fn check_hash_writable(h: &RHash) -> Result<(), crate::Signal> {
     let v = RubyValue::Hash(h.clone());
     if v.is_frozen() {
-        return Err(crate::dispatch::raise_error(
-            "FrozenError",
-            format!("can't modify frozen Hash: {}", v.to_display_string()),
+        return Err(crate::builtins::frozen_error!(
+            "can't modify frozen Hash: {}",
+            v.to_display_string()
         ));
     }
     Ok(())

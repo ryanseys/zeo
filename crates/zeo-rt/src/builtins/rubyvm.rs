@@ -20,7 +20,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use parking_lot::Mutex as PlMutex;
 
 use crate::builtins::not_impl_error;
-use crate::dispatch::{RObj, RubyObject, raise_error};
+use crate::dispatch::{RObj, RubyObject};
 use crate::{RubyValue, Signal};
 use zeo_abi::{ClassId, RUBYVM_ISEQ_CLASS};
 use zeo_macros::{ruby_class, ruby_module};
@@ -239,7 +239,10 @@ fn recv_iseq(recv: &RubyValue) -> Arc<RIseq> {
 fn parse_check(src: &str) -> Result<(), Signal> {
     let result = ruby_prism::parse(src.as_bytes());
     match result.errors().next() {
-        Some(err) => Err(raise_error("SyntaxError", err.message().to_string())),
+        Some(err) => Err(crate::builtins::syntax_error!(
+            "{}",
+            err.message().to_string()
+        )),
         None => Ok(()),
     }
 }
@@ -425,7 +428,7 @@ mod iseq {
             Err(not_impl_error!("{}", NO_YARV))
         }
         def self."load_from_binary" | "load_from_binary_extra_data" (_recv, _data) {
-            Err(raise_error("RuntimeError", "broken binary format".to_string()))
+            Err(crate::builtins::runtime_error!("broken binary format"))
         }
 
         def "eval"(recv) {

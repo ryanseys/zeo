@@ -183,9 +183,8 @@ pub fn load_from_disk(feature: &str, box_id: u32, reload: bool) -> Option<Result
             Ok(s) => s,
             Err(e) => {
                 state().lock().disk_loading.remove(&key);
-                return Some(Err(crate::dispatch::raise_error(
-                    "LoadError",
-                    format!("cannot load such file -- {feature} ({e})"),
+                return Some(Err(crate::builtins::load_error!(
+                    "cannot load such file -- {feature} ({e})"
                 )));
             }
         },

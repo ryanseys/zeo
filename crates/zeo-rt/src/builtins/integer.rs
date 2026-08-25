@@ -258,10 +258,7 @@ pub fn int_pow(a: &RubyValue, b: &RubyValue) -> Result<RubyValue, Signal> {
         // a ** -n == Rational(1, a ** n).
         let base = to_bigint(a);
         if base.is_zero() {
-            return Err(crate::dispatch::raise_error(
-                "ZeroDivisionError",
-                "divided by 0".to_string(),
-            ));
+            return Err(crate::builtins::zero_division_error!("divided by 0"));
         }
         let pos = int_pow(a, &int_value(-exp))?;
         return crate::builtins::rational::rational_new(BigInt::from(1), to_bigint(&pos));
@@ -648,10 +645,7 @@ ruby_class! {
         }
         let b = int_mask_arg(arg)?;
         if b.is_zero() {
-            return Err(crate::dispatch::raise_error(
-                "ZeroDivisionError",
-                "divided by 0".to_string(),
-            ));
+            return Err(crate::builtins::zero_division_error!("divided by 0"));
         }
         let a = to_bigint(recv);
         Ok(int_value(-((-a).div_floor(&b))))
@@ -701,10 +695,7 @@ ruby_class! {
     // `fdiv` -- float division regardless of operand kinds.
     def "div" (recv, arg) {
         match arg {
-            RubyValue::Int(0) => Err(crate::dispatch::raise_error(
-                "ZeroDivisionError",
-                "divided by 0".to_string(),
-            )),
+            RubyValue::Int(0) => Err(crate::builtins::zero_division_error!("divided by 0")),
             RubyValue::Int(_) | RubyValue::BigInt(_) => Ok(int_div(recv, arg)),
             RubyValue::Float(f) => {
                 let a = match recv {
@@ -942,10 +933,7 @@ ruby_class! {
                 }
                 let m = to_bigint(modulo);
                 if m.is_zero() {
-                    return Err(crate::dispatch::raise_error(
-                        "ZeroDivisionError",
-                        "divided by 0".to_string(),
-                    ));
+                    return Err(crate::builtins::zero_division_error!("divided by 0"));
                 }
                 Ok(int_value(to_bigint(recv).modpow(&e, &m)))
             }

@@ -63,10 +63,7 @@ pub fn cvar_get_checked(owner_class_id: u32, name: &str) -> Result<RubyValue, cr
         } else {
             format!("@@{name}")
         };
-        crate::dispatch::raise_error(
-            "NameError",
-            format!("uninitialized class variable {sigiled} in {owner}"),
-        )
+        crate::builtins::name_error!("uninitialized class variable {sigiled} in {owner}")
     })
 }
 

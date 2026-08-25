@@ -43,8 +43,7 @@ fn load(path: &str, init: &str) -> Result<(), crate::Signal> {
 
 #[cfg(not(feature = "cext"))]
 fn load(path: &str, _init: &str) -> Result<(), crate::Signal> {
-    Err(crate::dispatch::raise_error(
-        "LoadError",
-        format!("cannot load such file -- {path}: this zeo was built without C extension support"),
+    Err(crate::builtins::load_error!(
+        "cannot load such file -- {path}: this zeo was built without C extension support"
     ))
 }

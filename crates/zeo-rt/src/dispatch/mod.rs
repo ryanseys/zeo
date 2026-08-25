@@ -1146,9 +1146,8 @@ fn rescue_class_matches(cls: &RubyValue, exc: &RubyValue) -> Result<bool, Signal
             }
             Ok(is_a(exc.as_object_unchecked().class_id(), *cid))
         }
-        _ => Err(raise_error(
-            "TypeError",
-            "class or module required for rescue clause".to_string(),
+        _ => Err(crate::builtins::type_error!(
+            "class or module required for rescue clause"
         )),
     }
 }

@@ -180,10 +180,7 @@ ruby_class! {
                 let kind = if is_module { "module" } else { "class" };
                 let n = crate::dispatch::class_name(cid)
                     .unwrap_or_else(|| format!("#<Class:{}>", cid.0));
-                Err(crate::dispatch::raise_error(
-                    "NoMethodError",
-                    format!("undefined method 'new' for {kind} {n}"),
-                ))
+                Err(crate::builtins::no_method_error!("undefined method 'new' for {kind} {n}"))
             }
         }
     }

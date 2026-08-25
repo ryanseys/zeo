@@ -15,7 +15,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::dispatch::{RObj, RubyObject, raise_error};
+use crate::dispatch::{RObj, RubyObject};
 use crate::{RubyValue, Signal};
 use zeo_abi::{ClassId, RUBYVM_AST_LOCATION_CLASS, RUBYVM_AST_NODE_CLASS};
 use zeo_macros::{ruby_class, ruby_module};
@@ -337,7 +337,7 @@ mod ast {
             if !has_iseq(what) {
                 return Ok(RubyValue::Nil);
             }
-            Err(raise_error("RuntimeError", PRISM_ERROR.to_string()))
+            Err(crate::builtins::runtime_error!("{}", PRISM_ERROR.to_string()))
         }
         def self."node_id_for_backtrace_location" params "backtrace_location"(_recv, loc) {
             node_id_for_location(loc)
@@ -649,7 +649,10 @@ mod translate {
     ) -> Result<RubyValue, Signal> {
         let result = ruby_prism::parse(src.as_bytes());
         if !error_tolerant && let Some(err) = result.errors().next() {
-            return Err(raise_error("SyntaxError", err.message().to_string()));
+            return Err(crate::builtins::syntax_error!(
+                "{}",
+                err.message().to_string()
+            ));
         }
         let mut line_starts = vec![0usize];
         for (i, b) in src.bytes().enumerate() {
@@ -681,10 +684,7 @@ mod translate {
         };
         let program = result.node();
         let Some(program) = program.as_program_node() else {
-            return Err(raise_error(
-                "SyntaxError",
-                "unexpected parse result".to_string(),
-            ));
+            return Err(crate::builtins::syntax_error!("unexpected parse result"));
         };
         let locals: Vec<RubyValue> = program
             .locals()

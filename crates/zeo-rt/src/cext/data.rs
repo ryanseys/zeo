@@ -485,24 +485,16 @@ mod patched {
         /// way to get one, and it is refused for the same reason -- so this
         /// refuses rather than answering a pointer that looks usable.
         fn rbimpl_zeo_regexp_ptr_slot(_re: Value) -> *mut *mut c_void {
-            Err(crate::dispatch::raise_error(
-                "NotImplementedError",
-                "RREGEXP_PTR reaches into the compiled pattern, which zeo's \
-                 regexp engine owns; use Regexp's own methods"
-                    .into(),
-            ))
+            Err(crate::builtins::not_impl_error!("RREGEXP_PTR reaches into the compiled pattern, which zeo's \
+                 regexp engine owns; use Regexp's own methods"))
         }
 
         /// `RMATCH_REGS(match)`: onig's `re_registers` for a MatchData.
         /// Refused for the reason `RREGEXP_PTR` is -- `MatchData#offset` and
         /// `#begin` answer the same numbers through the object.
         fn rbimpl_zeo_match_regs(_m: Value) -> *mut c_void {
-            Err(crate::dispatch::raise_error(
-                "NotImplementedError",
-                "RMATCH_REGS reaches into onig's register array, which zeo's \
-                 MatchData does not expose; use MatchData#begin and #offset"
-                    .into(),
-            ))
+            Err(crate::builtins::not_impl_error!("RMATCH_REGS reaches into onig's register array, which zeo's \
+                 MatchData does not expose; use MatchData#begin and #offset"))
         }
 
         /// Every other layout macro `patches/0001` could not answer. The
@@ -511,10 +503,7 @@ mod patched {
         /// find out what it asked for.
         fn rbimpl_zeo_unsupported_ptr(what: *const c_char) -> *mut c_void {
             let name = unsafe { crate::cext::object::cstr(what) };
-            Err(crate::dispatch::raise_error(
-                "NotImplementedError",
-                format!("{name} reads an object layout zeo does not have"),
-            ))
+            Err(crate::builtins::not_impl_error!("{name} reads an object layout zeo does not have"))
         }
     }
 }

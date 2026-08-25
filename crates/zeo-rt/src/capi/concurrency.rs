@@ -30,10 +30,7 @@ pub unsafe extern "C" fn zeo_rt_ractor_new(
         unsafe { std::ptr::read(blk) }
     };
     if !matches!(block, RubyValue::Proc(_)) {
-        crate::signal::set_pending(crate::raise_error(
-            "ArgumentError",
-            "must be called with a block".to_string(),
-        ));
+        crate::signal::set_pending(crate::builtins::arg_error!("must be called with a block"));
         return STATUS_SIGNAL;
     }
     let args: Vec<RubyValue> = if argc == 0 {

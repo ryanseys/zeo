@@ -44,7 +44,7 @@ unsafe fn as_big(v: Value) -> Result<BigInt, Signal> {
 }
 
 fn out_of_range(what: &str) -> Signal {
-    crate::dispatch::raise_error("RangeError", format!("{what} out of range"))
+    crate::builtins::range_error!("{what} out of range")
 }
 
 /// An integer narrowed to a C type, or a `RangeError` naming it. Truncating
@@ -71,12 +71,11 @@ impl Bad {
     fn signal(self, text: &str) -> Signal {
         match self {
             Bad::Radix(b) => {
-                crate::dispatch::raise_error("ArgumentError", format!("invalid radix {b}"))
+                crate::builtins::arg_error!("invalid radix {b}")
             }
-            Bad::Value(what) => crate::dispatch::raise_error(
-                "ArgumentError",
-                format!("invalid value for {what}(): \"{text}\""),
-            ),
+            Bad::Value(what) => {
+                crate::builtins::arg_error!("invalid value for {what}(): \"{text}\"")
+            }
         }
     }
 }
@@ -144,13 +143,10 @@ fn coerce_and_apply(x: Value, y: Value, op: &str, relop: bool) -> Result<Value, 
             if relop {
                 return Ok(super::value::Q_NIL);
             }
-            return Err(crate::dispatch::raise_error(
-                "TypeError",
-                format!(
-                    "{} can't be coerced into {}",
-                    crate::dispatch::class_name(yv.class_id()).unwrap_or("Object".into()),
-                    crate::dispatch::class_name(xv.class_id()).unwrap_or("Object".into())
-                ),
+            return Err(crate::builtins::type_error!(
+                "{} can't be coerced into {}",
+                crate::dispatch::class_name(yv.class_id()).unwrap_or("Object".into()),
+                crate::dispatch::class_name(xv.class_id()).unwrap_or("Object".into())
             ));
         }
     };
@@ -203,10 +199,7 @@ fn msbyte_first(flags: c_int) -> Option<bool> {
 }
 
 fn both_orders(what: &str) -> Signal {
-    crate::dispatch::raise_error(
-        "ArgumentError",
-        format!("both MS{what} and LS{what} order flags are set"),
-    )
+    crate::builtins::arg_error!("both MS{what} and LS{what} order flags are set")
 }
 
 /// The two order questions, answered together or refused together.
@@ -292,10 +285,7 @@ crate::cext_fn! {
 
     fn rb_dbl2big(d: c_double) -> Value {
         if !d.is_finite() {
-            return Err(crate::dispatch::raise_error(
-                "FloatDomainError",
-                RubyValue::Float(d).to_display_string(),
-            ));
+            return Err(crate::builtins::float_domain_error!("{}", RubyValue::Float(d).to_display_string()));
         }
         to_value(&crate::builtins::integer::int_value(
             BigInt::from(d.trunc() as i128),
@@ -398,14 +388,9 @@ crate::cext_fn! {
         if out == super::value::Q_NIL {
             let xv = unsafe { value_of(x) };
             let yv = unsafe { value_of(y) };
-            return Err(crate::dispatch::raise_error(
-                "ArgumentError",
-                format!(
-                    "comparison of {} with {} failed",
+            return Err(crate::builtins::arg_error!("comparison of {} with {} failed",
                     crate::dispatch::class_name(xv.class_id()).unwrap_or("Object".into()),
-                    yv.to_display_string()
-                ),
-            ));
+                    yv.to_display_string()));
         }
         Ok(out)
     }
@@ -547,10 +532,7 @@ crate::cext_fn! {
         flags: c_int,
     ) -> c_int {
         if nails != 0 {
-            return Err(crate::dispatch::raise_error(
-                "NotImplementedError",
-                "zeo's rb_integer_pack does not support nails".into(),
-            ));
+            return Err(crate::builtins::not_impl_error!("zeo's rb_integer_pack does not support nails"));
         }
         let n = unsafe { as_big(val)? };
         let sign = if n.is_negative() { -1 } else { c_int::from(!n.is_zero()) };
@@ -600,10 +582,7 @@ crate::cext_fn! {
         flags: c_int,
     ) -> Value {
         if nails != 0 {
-            return Err(crate::dispatch::raise_error(
-                "NotImplementedError",
-                "zeo's rb_integer_unpack does not support nails".into(),
-            ));
+            return Err(crate::builtins::not_impl_error!("zeo's rb_integer_unpack does not support nails"));
         }
         let total = numwords * wordsize;
         if words.is_null() || total == 0 {
@@ -660,10 +639,7 @@ pub(super) unsafe fn abs_is_power_of_two(v: Value) -> Result<bool, Signal> {
 /// `Integer#to_s(base)`, through the method rather than a second formatter./// `Integer#to_s(base)`, through the method rather than a second formatter.
 fn int_to_str(n: &BigInt, base: c_int) -> Result<RubyValue, Signal> {
     if !(2..=36).contains(&base) {
-        return Err(crate::dispatch::raise_error(
-            "ArgumentError",
-            format!("invalid radix {base}"),
-        ));
+        return Err(crate::builtins::arg_error!("invalid radix {base}"));
     }
     let v = crate::builtins::integer::int_value(n.clone());
     send(&v, "to_s", &[RubyValue::Int(base as i64)])
@@ -704,9 +680,8 @@ fn kernel_call(name: &str, args: &[Value]) -> Result<Value, Signal> {
 }
 
 fn complex_polar(abs: Value, arg: Value) -> Result<Value, Signal> {
-    let cls = crate::constants::const_get(zeo_abi::OBJECT_CLASS.0, "Complex").ok_or_else(|| {
-        crate::dispatch::raise_error("NameError", "uninitialized constant Complex".into())
-    })?;
+    let cls = crate::constants::const_get(zeo_abi::OBJECT_CLASS.0, "Complex")
+        .ok_or_else(|| crate::builtins::name_error!("uninitialized constant Complex"))?;
     let (a, b) = (unsafe { value_of(abs) }, unsafe { value_of(arg) });
     to_value(&send(&cls, "polar", &[a, b])?)
 }
@@ -714,9 +689,8 @@ fn complex_polar(abs: Value, arg: Value) -> Result<Value, Signal> {
 /// `Random.rand` / `Random::DEFAULT`, so a seeded program and a C extension
 /// draw from one stream.
 fn random_call(meth: &str, args: &[RubyValue]) -> Result<RubyValue, Signal> {
-    let cls = crate::constants::const_get(zeo_abi::OBJECT_CLASS.0, "Random").ok_or_else(|| {
-        crate::dispatch::raise_error("NameError", "uninitialized constant Random".into())
-    })?;
+    let cls = crate::constants::const_get(zeo_abi::OBJECT_CLASS.0, "Random")
+        .ok_or_else(|| crate::builtins::name_error!("uninitialized constant Random"))?;
     send(&cls, meth, args)
 }
 

@@ -114,10 +114,7 @@ enum Scope {
 
 fn missing_const(owner: ClassId, name: &str) -> Signal {
     let owner = crate::dispatch::class_name(owner).unwrap_or("Object".into());
-    crate::dispatch::raise_error(
-        "NameError",
-        format!("uninitialized constant {owner}::{name}"),
-    )
+    crate::builtins::name_error!("uninitialized constant {owner}::{name}")
 }
 
 /// # Safety
@@ -588,11 +585,8 @@ crate::cext_fn! {
                     _ => None,
                 })
                 .unwrap_or_else(|| "object".into());
-            return Err(crate::dispatch::raise_error(
-                "FrozenError",
-                format!("can't modify frozen {}: {what}",
-                    crate::dispatch::class_name(recv.class_id()).unwrap_or("Object".into())),
-            ));
+            return Err(crate::builtins::frozen_error!("can't modify frozen {}: {what}",
+                    crate::dispatch::class_name(recv.class_id()).unwrap_or("Object".into())));
         }
         Ok(())
     }
@@ -604,10 +598,7 @@ crate::cext_fn! {
         let a = unsafe { value_of(obj) };
         let b = unsafe { value_of(orig) };
         if a.class_id() != b.class_id() {
-            return Err(crate::dispatch::raise_error(
-                "TypeError",
-                "initialize_copy should take same class object".into(),
-            ));
+            return Err(crate::builtins::type_error!("initialize_copy should take same class object"));
         }
         Ok(())
     }
@@ -620,10 +611,7 @@ crate::cext_fn! {
             return Err(wrong_arg_type(&v, "Class"));
         };
         if crate::runtime_meta::singleton_class_owner(cid).is_some() {
-            return Err(crate::dispatch::raise_error(
-                "TypeError",
-                "can't make subclass of singleton class".into(),
-            ));
+            return Err(crate::builtins::type_error!("can't make subclass of singleton class"));
         }
         Ok(())
     }
@@ -838,10 +826,7 @@ crate::cext_fn! {
     /// `rb_gvar_readonly_setter`: MRI's setter for a variable it refuses to
     /// let anyone write. It is `noreturn` there and raises here.
     fn rb_gvar_readonly_setter(_val: Value, id: Id, _data: *mut Value) -> () {
-        Err(crate::dispatch::raise_error(
-            "NameError",
-            format!("{} is a read-only variable", symbol_of(id).name_str()),
-        ))
+        Err(crate::builtins::name_error!("{} is a read-only variable", symbol_of(id).name_str()))
     }
 }
 
@@ -878,13 +863,10 @@ fn resolve_path(path: &str) -> Result<RubyValue, Signal> {
         match &v {
             RubyValue::Class(cid) => owner = *cid,
             other => {
-                return Err(crate::dispatch::raise_error(
-                    "TypeError",
-                    format!(
-                        "{path} does not refer to class/module ({} is a {})",
-                        seg,
-                        crate::dispatch::class_name(other.class_id()).unwrap_or("value".into())
-                    ),
+                return Err(crate::builtins::type_error!(
+                    "{path} does not refer to class/module ({} is a {})",
+                    seg,
+                    crate::dispatch::class_name(other.class_id()).unwrap_or("value".into())
                 ));
             }
         }
@@ -905,24 +887,18 @@ fn try_convert(recv: &RubyValue, meth: &str) -> Option<RubyValue> {
 }
 
 fn conversion_error(recv: &RubyValue, meth: &str, tname: &str) -> Signal {
-    crate::dispatch::raise_error(
-        "TypeError",
-        format!(
-            "can't convert {} to {tname} ({}#{meth} gives the wrong type)",
-            crate::dispatch::class_name(recv.class_id()).unwrap_or("Object".into()),
-            crate::dispatch::class_name(recv.class_id()).unwrap_or("Object".into())
-        ),
+    crate::builtins::type_error!(
+        "can't convert {} to {tname} ({}#{meth} gives the wrong type)",
+        crate::dispatch::class_name(recv.class_id()).unwrap_or("Object".into()),
+        crate::dispatch::class_name(recv.class_id()).unwrap_or("Object".into())
     )
 }
 
 fn must_convert(recv: &RubyValue, meth: &str, tname: &str) -> Result<RubyValue, Signal> {
     try_convert(recv, meth).ok_or_else(|| {
-        crate::dispatch::raise_error(
-            "TypeError",
-            format!(
-                "no implicit conversion of {} into {tname}",
-                crate::dispatch::class_name(recv.class_id()).unwrap_or("Object".into())
-            ),
+        crate::builtins::type_error!(
+            "no implicit conversion of {} into {tname}",
+            crate::dispatch::class_name(recv.class_id()).unwrap_or("Object".into())
         )
     })
 }

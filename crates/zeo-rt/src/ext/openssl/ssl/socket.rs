@@ -6,7 +6,7 @@
 use super::context::{ctx_of, new_context};
 use super::{FdStream, RSslSocket, SockState, reason, ssl_error};
 use crate::builtins::convert;
-use crate::dispatch::{RObj, RubyObject, raise_error};
+use crate::dispatch::{RObj, RubyObject};
 use crate::ext::openssl::{bin_str, str, str_bytes};
 use crate::{ClassId, RubyValue, Signal};
 use openssl::ssl::{Ssl, SslStream};
@@ -343,7 +343,7 @@ ruby_class! {
         };
         let chunk = read_some(recv, len)?;
         if chunk.is_empty() && len > 0 {
-            return Err(raise_error("EOFError", "end of file reached".to_string()));
+            return Err(crate::builtins::eof_error!("end of file reached"));
         }
         Ok(bin_str(chunk))
     }
@@ -362,7 +362,7 @@ ruby_class! {
         };
         if chunk.is_empty() && len > 0 {
             return match exception {
-                true => Err(raise_error("EOFError", "end of file reached".to_string())),
+                true => Err(crate::builtins::eof_error!("end of file reached")),
                 false => Ok(RubyValue::Nil),
             };
         }

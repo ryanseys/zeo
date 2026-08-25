@@ -162,9 +162,8 @@ pub unsafe extern "C" fn zeo_rt_const_get_at(
             STATUS_OK
         }
         None => {
-            crate::signal::set_pending(crate::dispatch::raise_error(
-                "NameError",
-                format!("uninitialized constant {name}"),
+            crate::signal::set_pending(crate::builtins::name_error!(
+                "uninitialized constant {name}"
             ));
             STATUS_SIGNAL
         }
@@ -702,9 +701,9 @@ pub unsafe extern "C" fn zeo_rt_const_get_on_value(
     let name = unsafe { super::str_slice(name, name_len) };
     let scope = unsafe { &*scope };
     let RubyValue::Class(cid) = scope else {
-        crate::signal::set_pending(crate::dispatch::raise_error(
-            "TypeError",
-            format!("{} is not a class/module", scope.inspect_string()),
+        crate::signal::set_pending(crate::builtins::type_error!(
+            "{} is not a class/module",
+            scope.inspect_string()
         ));
         return STATUS_SIGNAL;
     };

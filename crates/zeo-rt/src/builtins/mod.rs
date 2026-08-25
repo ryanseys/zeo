@@ -647,12 +647,9 @@ pub(crate) fn convert_name_of(v: &RubyValue) -> String {
 /// EXACTLY this text -- the close variants ("no implicit conversion from nil
 /// to integer", "... into Integer for {who}") keep their own strings.
 pub(crate) fn no_implicit(v: &RubyValue, want: &str) -> Signal {
-    crate::dispatch::raise_error(
-        "TypeError",
-        format!(
-            "no implicit conversion of {} into {want}",
-            convert_name_of(v)
-        ),
+    crate::builtins::type_error!(
+        "no implicit conversion of {} into {want}",
+        convert_name_of(v)
     )
 }
 
@@ -661,10 +658,7 @@ pub(crate) fn no_implicit(v: &RubyValue, want: &str) -> Signal {
 /// `NilClass` here). The sites rendering nil as the literal go through
 /// [`check_type_name`] and keep their own strings.
 pub(crate) fn wrong_arg_type(v: &RubyValue, want: &str) -> Signal {
-    crate::dispatch::raise_error(
-        "TypeError",
-        format!("wrong argument type {} (expected {want})", class_name_of(v)),
-    )
+    crate::builtins::type_error!("wrong argument type {} (expected {want})", class_name_of(v))
 }
 
 /// The typed error constructors: `type_error!("no implicit conversion...")`
@@ -719,10 +713,38 @@ macro_rules! float_domain_error {
 macro_rules! not_impl_error {
     ($($fmt:tt)*) => { crate::dispatch::raise_error_id(zeo_abi::NOT_IMPLEMENTED_ERROR_CLASS, format!($($fmt)*)) };
 }
+macro_rules! zero_division_error {
+    ($($fmt:tt)*) => { crate::dispatch::raise_error_id(zeo_abi::ZERO_DIVISION_ERROR_CLASS, format!($($fmt)*)) };
+}
+macro_rules! load_error {
+    ($($fmt:tt)*) => { crate::dispatch::raise_error_id(zeo_abi::LOAD_ERROR_CLASS, format!($($fmt)*)) };
+}
+// `SystemCallError` composes its printed line at the raise site, so the
+// registry stamps the message VERBATIM onto the object -- the id channel
+// keys that off the entry's registered name, exactly as by-name does.
+macro_rules! system_call_error {
+    ($($fmt:tt)*) => { crate::dispatch::raise_error_id(zeo_abi::SYSTEM_CALL_ERROR_CLASS, format!($($fmt)*)) };
+}
+// The plain-message channel. A site that populates `NoMethodError`'s
+// `#name`/`#args`/`#receiver` goes through `raise_method_missing` or
+// `raise_error_details` instead.
+macro_rules! no_method_error {
+    ($($fmt:tt)*) => { crate::dispatch::raise_error_id(zeo_abi::NO_METHOD_ERROR_CLASS, format!($($fmt)*)) };
+}
+macro_rules! no_memory_error {
+    ($($fmt:tt)*) => { crate::dispatch::raise_error_id(zeo_abi::NO_MEMORY_ERROR_CLASS, format!($($fmt)*)) };
+}
+macro_rules! fiber_error {
+    ($($fmt:tt)*) => { crate::dispatch::raise_error_id(zeo_abi::FIBER_ERROR_CLASS, format!($($fmt)*)) };
+}
+macro_rules! syntax_error {
+    ($($fmt:tt)*) => { crate::dispatch::raise_error_id(zeo_abi::SYNTAX_ERROR_CLASS, format!($($fmt)*)) };
+}
 pub(crate) use {
-    arg_error, eof_error, float_domain_error, frozen_error, index_error, io_error,
-    local_jump_error, name_error, not_impl_error, range_error, regexp_error, runtime_error,
-    thread_error, type_error,
+    arg_error, eof_error, fiber_error, float_domain_error, frozen_error, index_error, io_error,
+    load_error, local_jump_error, name_error, no_memory_error, no_method_error, not_impl_error,
+    range_error, regexp_error, runtime_error, syntax_error, system_call_error, thread_error,
+    type_error, zero_division_error,
 };
 
 /// The argument-count guard the `ruby_class!` macro emits from a def's
@@ -806,9 +828,7 @@ pub(crate) fn kw_take(src: Option<&RubyValue>, name: &str) -> Option<RubyValue> 
 #[allow(dead_code)]
 #[inline(always)]
 pub(crate) fn kw_required(src: Option<&RubyValue>, name: &str) -> Result<RubyValue, Signal> {
-    kw_take(src, name).ok_or_else(|| {
-        crate::dispatch::raise_error("ArgumentError", format!("missing keyword: :{name}"))
-    })
+    kw_take(src, name).ok_or_else(|| crate::builtins::arg_error!("missing keyword: :{name}"))
 }
 
 /// Whatever keys a `**kwrest` gets after the NAMED keywords have been taken.
@@ -856,9 +876,9 @@ pub(crate) fn kw_check_unknown(src: Option<&RubyValue>, known: &[&str]) -> Resul
         return Ok(());
     }
     let plural = if list.len() == 1 { "" } else { "s" };
-    Err(crate::dispatch::raise_error(
-        "ArgumentError",
-        format!("unknown keyword{plural}: {}", list.join(", ")),
+    Err(crate::builtins::arg_error!(
+        "unknown keyword{plural}: {}",
+        list.join(", ")
     ))
 }
 
@@ -873,10 +893,7 @@ pub(crate) fn arity_err(given: usize, min: usize, max: Option<usize>) -> Signal 
         Some(hi) => format!("{min}..{hi}"),
         None => format!("{min}+"),
     };
-    crate::dispatch::raise_error(
-        "ArgumentError",
-        format!("wrong number of arguments (given {given}, expected {expected})"),
-    )
+    crate::builtins::arg_error!("wrong number of arguments (given {given}, expected {expected})")
 }
 
 /// Receiver unwrappers for the HELPER fns that take a raw `&RubyValue` and so

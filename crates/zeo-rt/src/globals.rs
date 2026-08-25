@@ -345,14 +345,10 @@ pub fn global_assign(box_id: u32, name: &str, value: RubyValue) -> Result<(), cr
         }
         Some(Special::ErrorPosition) => match crate::current_exception() {
             Some(exc) => crate::builtins::exception::apply_custom_backtrace(&exc, &value),
-            None => Err(crate::raise_error(
-                "ArgumentError",
-                "$! not set".to_string(),
-            )),
+            None => Err(crate::builtins::arg_error!("$! not set")),
         },
-        Some(_) => Err(crate::raise_error(
-            "NameError",
-            format!("{name} is a read-only variable"),
+        Some(_) => Err(crate::builtins::name_error!(
+            "{name} is a read-only variable"
         )),
     }
 }

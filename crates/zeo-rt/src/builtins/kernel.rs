@@ -1070,19 +1070,12 @@ ruby_module! {
                 Ok(arg.clone())
             }
             #[cfg(not(feature = "ext-tracepoint"))]
-            RubyValue::Proc(_) => Err(crate::dispatch::raise_error(
-                "NotImplementedError",
-                "set_trace_func is not supported: this build carries no trace hooks"
-                    .to_string(),
-            )),
+            RubyValue::Proc(_) => Err(crate::builtins::not_impl_error!("set_trace_func is not supported: this build carries no trace hooks")),
             _ => Err(type_error!("trace_func needs to be Proc")),
         }
     }
     module_function def "syscall" arity 0 (_recv, *_args) {
-        Err(crate::dispatch::raise_error(
-            "NotImplementedError",
-            "syscall() function is unimplemented on this machine".to_string(),
-        ))
+        Err(crate::builtins::not_impl_error!("syscall() function is unimplemented on this machine"))
     }
 
     // The caller-scope intrinsics. Every direct or literal-`send` spelling
@@ -1095,22 +1088,13 @@ ruby_module! {
     // loudly rather than answered wrongly (the `set_trace_func` rule; see
     // tests/gaps/kernel_scope_intrinsics_dynamic_send.rb).
     module_function def "block_given?" | "iterator?" (_recv) {
-        Err(crate::dispatch::raise_error(
-            "NotImplementedError",
-            "block_given? cannot be reached through a runtime-computed send: a method row cannot see the caller's block".to_string(),
-        ))
+        Err(crate::builtins::not_impl_error!("block_given? cannot be reached through a runtime-computed send: a method row cannot see the caller's block"))
     }
     module_function def "binding"(_recv) {
-        Err(crate::dispatch::raise_error(
-            "NotImplementedError",
-            "binding cannot be reached through a runtime-computed send: a method row cannot see the caller's scope".to_string(),
-        ))
+        Err(crate::builtins::not_impl_error!("binding cannot be reached through a runtime-computed send: a method row cannot see the caller's scope"))
     }
     module_function def "local_variables"(_recv) {
-        Err(crate::dispatch::raise_error(
-            "NotImplementedError",
-            "local_variables cannot be reached through a runtime-computed send: a method row cannot see the caller's scope".to_string(),
-        ))
+        Err(crate::builtins::not_impl_error!("local_variables cannot be reached through a runtime-computed send: a method row cannot see the caller's scope"))
     }
 }
 
@@ -1285,9 +1269,9 @@ pub(crate) fn integer_impl(args: &[RubyValue]) -> Result<RubyValue, Signal> {
                     num_bigint::BigInt::from(f.trunc() as i128),
                 ))
             } else {
-                Err(crate::dispatch::raise_error(
-                    "FloatDomainError",
-                    crate::RubyValue::Float(*f).to_display_string(),
+                Err(crate::builtins::float_domain_error!(
+                    "{}",
+                    crate::RubyValue::Float(*f).to_display_string()
                 ))
             }
         }
@@ -1621,10 +1605,7 @@ fn parse_rational_string(s: &str) -> Result<(num_bigint::BigInt, num_bigint::Big
         let num: BigInt = n.trim().parse().map_err(|_| convert_error(s))?;
         let den: BigInt = d.trim().parse().map_err(|_| convert_error(s))?;
         if den == BigInt::from(0) {
-            return Err(crate::dispatch::raise_error(
-                "ZeroDivisionError",
-                "divided by 0".to_string(),
-            ));
+            return Err(crate::builtins::zero_division_error!("divided by 0"));
         }
         Ok((num, den))
     } else if let Some((int_part, frac_part)) = t.split_once('.') {
@@ -1931,7 +1912,7 @@ pub(crate) fn missing_feature_error(path: &str) -> crate::Signal {
         Some(reason) => format!("cannot load such file -- {path}: {reason}"),
         None => format!("cannot load such file -- {path}"),
     };
-    let sig = crate::dispatch::raise_error("LoadError", msg);
+    let sig = crate::builtins::load_error!("{}", msg);
     if let crate::signal::Signal::Raise(exc) = &sig {
         crate::builtins::exception::set_load_error_path(exc, path);
     }
@@ -2217,9 +2198,9 @@ pub(crate) fn rand_impl(args: &[RubyValue]) -> Result<RubyValue, Signal> {
             // A non-finite bound has no Integer image: CRuby's `dbl2ival`
             // raises FloatDomainError named for the value ("Infinity"/"NaN").
             if !x.is_finite() {
-                return Err(crate::dispatch::raise_error(
-                    "FloatDomainError",
-                    RubyValue::Float(*x).to_display_string(),
+                return Err(crate::builtins::float_domain_error!(
+                    "{}",
+                    RubyValue::Float(*x).to_display_string()
                 ));
             }
             // CRuby's `Kernel#rand` truncates a Float bound to an Integer and

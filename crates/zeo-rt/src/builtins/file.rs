@@ -1300,7 +1300,7 @@ ruby_class! {
             .accessed()
             .map_err(|e| raise_errno(&e, "atime", &path))?
             .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|_| raise_error("SystemCallError", "atime before the epoch".to_string()))?;
+            .map_err(|_| crate::builtins::system_call_error!("atime before the epoch"))?;
         Ok(crate::builtins::time::time_from_parts(t.as_secs() as i64, t.subsec_nanos()))
     }
     // `File.ctime(path)` -- inode change time as a Time (st_ctime, which std
@@ -1327,7 +1327,7 @@ ruby_class! {
             .created()
             .map_err(|e| raise_errno(&e, "birthtime", &path))?
             .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|_| raise_error("SystemCallError", "birthtime before the epoch".to_string()))?;
+            .map_err(|_| crate::builtins::system_call_error!("birthtime before the epoch"))?;
         Ok(crate::builtins::time::time_from_parts(t.as_secs() as i64, t.subsec_nanos()))
     }
     // `File.link(old, new)` -- create a hard link; answers 0.
@@ -1626,7 +1626,7 @@ ruby_class! {
             .modified()
             .map_err(|e| raise_errno(&e, "rb_file_s_mtime", &path))?
             .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|_| raise_error("SystemCallError", "mtime before the epoch".to_string()))?;
+            .map_err(|_| crate::builtins::system_call_error!("mtime before the epoch"))?;
         Ok(crate::builtins::time::time_from_parts(
             t.as_secs() as i64,
             t.subsec_nanos(),

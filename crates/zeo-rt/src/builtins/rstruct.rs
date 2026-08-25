@@ -38,7 +38,7 @@ use zeo_abi::{ClassId, STRUCT_CLASS};
 use crate::builtins::{
     arg_error, block_or_enum, index_error, inherited_row, name_error, type_error,
 };
-use crate::dispatch::{MethodImpl, RObj, RubyObject, class_name, raise_error, send_in, send_value};
+use crate::dispatch::{MethodImpl, RObj, RubyObject, class_name, send_in, send_value};
 use crate::signal::Signal;
 use crate::symbol::Symbol;
 use crate::value::RubyValue;
@@ -801,8 +801,8 @@ pub(crate) fn bind_members(
         ));
     }
     if args.len() > n || (is_data && args.len() != n && !args.is_empty()) {
-        return Err(raise_error(
-            "ArgumentError",
+        return Err(crate::builtins::arg_error!(
+            "{}",
             if is_data {
                 format!(
                     "wrong number of arguments (given {}, expected {})",
@@ -811,7 +811,7 @@ pub(crate) fn bind_members(
                 )
             } else {
                 "struct size differs".to_string()
-            },
+            }
         ));
     }
     if is_data && args.is_empty() && n > 0 {

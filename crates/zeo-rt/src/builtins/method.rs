@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use crate::builtins::{inherited_row, name_error, type_error};
-use crate::dispatch::{RObj, RubyObject, raise_error};
+use crate::dispatch::{RObj, RubyObject};
 use crate::method_meta::MethodKind;
 use crate::signal::Signal;
 use crate::symbol::Symbol;
@@ -421,7 +421,7 @@ pub fn public_method_new(recv: &RubyValue, name_arg: &RubyValue) -> Result<RubyV
     } else {
         format!("undefined method '{}' for class '{}'", name.name(), class)
     };
-    Err(raise_error("NameError", msg))
+    Err(crate::builtins::name_error!("{}", msg))
 }
 
 /// If `v` is a `Method` or `UnboundMethod`, its source `(owning class, method

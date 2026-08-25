@@ -13,7 +13,6 @@
 
 use crate::RubyValue;
 use crate::boxes;
-use crate::dispatch::raise_error;
 use zeo_macros::{ruby_class, ruby_module};
 
 mod ruby_ns {
@@ -154,7 +153,7 @@ mod box_class {
         // the internal one codegen bakes.
         def "inspect"(recv) {
             let Some(bx) = boxes::box_of_surrogate(recv) else {
-                return Err(raise_error("TypeError", "not a box".to_string()));
+                return Err(crate::builtins::type_error!("not a box"));
             };
             Ok(RubyValue::Str(crate::string_new(boxes::describe(bx))))
         }

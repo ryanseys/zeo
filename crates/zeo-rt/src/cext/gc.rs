@@ -32,9 +32,8 @@ use std::ffi::{c_int, c_void};
 
 /// `GC`, or a `NameError` if the module is somehow absent.
 fn gc_module() -> Result<RubyValue, Signal> {
-    crate::constants::const_get(zeo_abi::OBJECT_CLASS.0, "GC").ok_or_else(|| {
-        crate::dispatch::raise_error("NameError", "uninitialized constant GC".into())
-    })
+    crate::constants::const_get(zeo_abi::OBJECT_CLASS.0, "GC")
+        .ok_or_else(|| crate::builtins::name_error!("uninitialized constant GC"))
 }
 
 crate::cext_fn! {
@@ -192,7 +191,7 @@ crate::cext_fn! {
 
     fn rb_alloc_tmp_buffer_with_count(store: *mut Value, size: usize, count: usize) -> *mut c_void {
         let total = size.checked_mul(count).ok_or_else(|| {
-            crate::dispatch::raise_error("NoMemoryError", "buffer size overflow".into())
+            crate::builtins::no_memory_error!("buffer size overflow")
         })?;
         tmp_buffer(store, total)
     }

@@ -23,10 +23,7 @@ ruby_class! {
     // hand is a by-value proc handle no re-init could rebind.
     private def "initialize"(_recv, &block) {
         if block.is_none() {
-            return Err(crate::dispatch::raise_error(
-                "LocalJumpError",
-                "no block given".to_string(),
-            ));
+            return Err(crate::builtins::local_jump_error!("no block given"));
         }
         Err(crate::builtins::not_impl_error!(
             "Enumerator::Yielder#initialize cannot rebind a zeo yielder handle"

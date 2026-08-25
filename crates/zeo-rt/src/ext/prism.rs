@@ -104,9 +104,8 @@ fn serialize(
 ) -> Result<RubyValue, Signal> {
     let (source, options) = args_bytes(args)?;
     let Some(mut buffer) = Buffer::new() else {
-        return Err(crate::dispatch::raise_error(
-            "NoMemoryError",
-            "failed to allocate a prism buffer".to_string(),
+        return Err(crate::builtins::no_memory_error!(
+            "failed to allocate a prism buffer"
         ));
     };
     unsafe {

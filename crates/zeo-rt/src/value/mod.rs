@@ -321,12 +321,9 @@ fn ivars_to_inspect_filter(
                 })
                 .collect(),
         )),
-        other => Err(crate::dispatch::raise_error(
-            "TypeError",
-            format!(
-                "Expected #instance_variables_to_inspect to return an Array or nil, but it returned {}",
-                crate::builtins::class_name_of(&other)
-            ),
+        other => Err(crate::builtins::type_error!(
+            "Expected #instance_variables_to_inspect to return an Array or nil, but it returned {}",
+            crate::builtins::class_name_of(&other)
         )),
     }
 }
@@ -1566,9 +1563,8 @@ impl RubyValue {
                 } else {
                     "Thread::Queue"
                 };
-                return Err(crate::dispatch::raise_error(
-                    "NoMethodError",
-                    format!("undefined method 'initialize_copy' for an instance of {kind}"),
+                return Err(crate::builtins::no_method_error!(
+                    "undefined method 'initialize_copy' for an instance of {kind}"
                 ));
             }
             RubyValue::Ractor(_) => {
@@ -1752,10 +1748,7 @@ pub fn range_checked(
         && x.rb_cmp(y).is_none()
         && !x.rb_eq(y)
     {
-        return Err(crate::dispatch::raise_error(
-            "ArgumentError",
-            "bad value for range".to_string(),
-        ));
+        return Err(crate::builtins::arg_error!("bad value for range"));
     }
     Ok(crate::builtins::range::range_value(b, e, exclusive))
 }
@@ -1768,10 +1761,7 @@ pub fn range_endpoint_error(first: bool) -> crate::Signal {
     } else {
         ("last", "endless")
     };
-    crate::dispatch::raise_error(
-        "RangeError",
-        format!("cannot get the {which} element of {side} range"),
-    )
+    crate::builtins::range_error!("cannot get the {which} element of {side} range")
 }
 
 pub fn case_eq(pattern: &RubyValue, subject: &RubyValue) -> Result<bool, crate::Signal> {

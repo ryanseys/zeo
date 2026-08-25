@@ -1385,10 +1385,7 @@ ruby_class! {
         // constructor itself, without the `(yield)` suffix.
         def self."new"(_recv, *_args, &block) {
             let Some(RubyValue::Proc(p)) = block else {
-                return Err(crate::dispatch::raise_error(
-                    "LocalJumpError",
-                    "no block given".to_string(),
-                ));
+                return Err(crate::builtins::local_jump_error!("no block given"));
             };
             Ok(generator_object(p))
         }
@@ -1404,10 +1401,7 @@ ruby_class! {
             let e = recv_enum(recv);
             check_reinit_frozen(e)?;
             let Some(RubyValue::Proc(p)) = block else {
-                return Err(crate::dispatch::raise_error(
-                    "LocalJumpError",
-                    "no block given".to_string(),
-                ));
+                return Err(crate::builtins::local_jump_error!("no block given"));
             };
             replace_core(e, EnumCore { source: EnumSource::Generator { block: p }, size_hint: None });
             Ok(recv.clone())
@@ -1615,10 +1609,7 @@ ruby_class! {
         def "last"(recv, n?) {
             let (begin, end, step, exclude_end) = arith_parts(recv);
             let Some(end) = end else {
-                return Err(crate::dispatch::raise_error(
-                    "RangeError",
-                    "cannot get the last element of endless arithmetic sequence".to_string(),
-                ));
+                return Err(crate::builtins::range_error!("cannot get the last element of endless arithmetic sequence"));
             };
             use crate::builtins::numeric::{num_cmp, step_hops, step_nth};
             let hops = step_hops(begin, end, step)?;

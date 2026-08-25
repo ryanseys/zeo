@@ -22,7 +22,7 @@ use value::BD;
 use zeo_macros::ruby_class;
 
 use crate::builtins::{arg_error, convert, type_error};
-use crate::dispatch::{RObj, RubyObject, raise_error};
+use crate::dispatch::{RObj, RubyObject};
 use crate::{RubyValue, Signal};
 
 pub(crate) struct RBigDecimal {
@@ -65,16 +65,12 @@ pub(crate) fn wrap(bd: BD) -> RubyValue {
 fn checked(bd: BD) -> Result<RubyValue, Signal> {
     let flags = arith::exception_flags();
     match &bd {
-        BD::NaN if flags & EXCEPTION_NAN != 0 => Err(raise_error(
-            "FloatDomainError",
-            "Computation results in 'NaN' (Not a Number)".to_string(),
+        BD::NaN if flags & EXCEPTION_NAN != 0 => Err(crate::builtins::float_domain_error!(
+            "Computation results in 'NaN' (Not a Number)"
         )),
-        BD::Inf(s) if flags & EXCEPTION_INFINITY != 0 => Err(raise_error(
-            "FloatDomainError",
-            format!(
-                "Computation results in '{}Infinity'",
-                if *s < 0 { "-" } else { "" }
-            ),
+        BD::Inf(s) if flags & EXCEPTION_INFINITY != 0 => Err(crate::builtins::float_domain_error!(
+            "Computation results in '{}Infinity'",
+            if *s < 0 { "-" } else { "" }
         )),
         _ => Ok(wrap(bd)),
     }
@@ -163,10 +159,7 @@ fn div2(a: &BD, b: &BD, ix: i64) -> Result<RubyValue, Signal> {
             return checked(BD::NaN);
         }
         if arith::exception_flags() & EXCEPTION_ZERODIVIDE != 0 {
-            return Err(raise_error(
-                "FloatDomainError",
-                "Divide by zero".to_string(),
-            ));
+            return Err(crate::builtins::float_domain_error!("Divide by zero"));
         }
         return checked(BD::Inf(a.sign_factor() * b.sign_factor()));
     }
@@ -190,7 +183,7 @@ fn do_divmod(a: &BD, b: &BD, truncate: bool) -> Result<(BD, BD), Signal> {
         return Ok((BD::NaN, BD::NaN));
     }
     if b.is_zero() {
-        return Err(raise_error("ZeroDivisionError", "divided by 0".to_string()));
+        return Err(crate::builtins::zero_division_error!("divided by 0"));
     }
     if let BD::Inf(sa) = a {
         let div = BD::Inf(sa * b.sign_factor());
@@ -221,16 +214,12 @@ fn do_divmod(a: &BD, b: &BD, truncate: bool) -> Result<(BD, BD), Signal> {
 
 fn to_integer(bd: &BD) -> Result<RubyValue, Signal> {
     match bd {
-        BD::NaN => Err(raise_error(
-            "FloatDomainError",
-            "Computation results in 'NaN' (Not a Number)".to_string(),
+        BD::NaN => Err(crate::builtins::float_domain_error!(
+            "Computation results in 'NaN' (Not a Number)"
         )),
-        BD::Inf(s) => Err(raise_error(
-            "FloatDomainError",
-            format!(
-                "Computation results in '{}Infinity'",
-                if *s < 0 { "-" } else { "" }
-            ),
+        BD::Inf(s) => Err(crate::builtins::float_domain_error!(
+            "Computation results in '{}Infinity'",
+            if *s < 0 { "-" } else { "" }
         )),
         BD::Zero(_) => Ok(RubyValue::Int(0)),
         BD::Fin { sign, coeff, exp } => {
@@ -410,7 +399,7 @@ fn with_restored<G: Fn() -> i64, S: Fn(i64)>(
     block: Option<&RubyValue>,
 ) -> Result<RubyValue, Signal> {
     let Some(RubyValue::Proc(p)) = block else {
-        return Err(raise_error("LocalJumpError", "no block given".to_string()));
+        return Err(crate::builtins::local_jump_error!("no block given"));
     };
     let saved = get();
     let result = p.call(&[]);
@@ -824,7 +813,7 @@ ruby_class! {
                 }
             }
             BD::Zero(_) => crate::builtins::rational::rational_new(BigInt::from(0), BigInt::from(1)),
-            _ => Err(raise_error("FloatDomainError", value::to_s(recv_bd(recv), "").to_string())),
+            _ => Err(crate::builtins::float_domain_error!("{}", value::to_s(recv_bd(recv), "").to_string())),
         }
     }
     def "to_s" (recv, arg?) {
@@ -852,12 +841,9 @@ fn compare(
 ) -> Result<RubyValue, Signal> {
     let a = recv_bd(recv);
     let b = operand_bd(other, coerce_prec(a, 0))?.ok_or_else(|| {
-        raise_error(
-            "ArgumentError",
-            format!(
-                "comparison of BigDecimal with {} failed",
-                crate::class_name_of_value(other)
-            ),
+        crate::builtins::arg_error!(
+            "comparison of BigDecimal with {} failed",
+            crate::class_name_of_value(other)
         )
     })?;
     match arith::cmp(a, &b) {

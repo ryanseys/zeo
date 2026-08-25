@@ -247,10 +247,7 @@ ruby_class! {
     def "birthtime"(recv) {
         match payload(recv)?.birth {
             Some((secs, nsec)) => Ok(stat_time(secs, nsec)),
-            None => Err(crate::dispatch::raise_error(
-                "NotImplementedError",
-                "birthtime() function is unimplemented on this machine".to_string(),
-            )),
+            None => Err(crate::builtins::not_impl_error!("birthtime() function is unimplemented on this machine")),
         }
     }
     def "mode"(recv) {

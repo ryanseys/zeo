@@ -677,10 +677,7 @@ crate::cext_fn! {
         let v = string_value_in(slot)?;
         let s = unsafe { as_str(v)? };
         if s.lock().bytes().contains(&0) {
-            return Err(crate::dispatch::raise_error(
-                "ArgumentError",
-                "string contains null byte".into(),
-            ));
+            return Err(crate::builtins::arg_error!("string contains null byte"));
         }
         Ok(pin_bytes(&s))
     }
@@ -690,9 +687,9 @@ crate::cext_fn! {
 fn check_writable(s: &RStr) -> Result<(), crate::Signal> {
     let v = RubyValue::Str(s.clone());
     if v.is_frozen() {
-        return Err(crate::dispatch::raise_error(
-            "FrozenError",
-            format!("can't modify frozen String: {}", v.to_display_string()),
+        return Err(crate::builtins::frozen_error!(
+            "can't modify frozen String: {}",
+            v.to_display_string()
         ));
     }
     Ok(())
@@ -725,9 +722,8 @@ fn byte_span(size: usize, beg: c_long, len: c_long) -> (usize, usize) {
 /// String, written back into the caller's own slot.
 fn string_value_in(slot: *mut Value) -> Result<Value, crate::Signal> {
     if slot.is_null() {
-        return Err(crate::dispatch::raise_error(
-            "TypeError",
-            "no implicit conversion of nil into String".into(),
+        return Err(crate::builtins::type_error!(
+            "no implicit conversion of nil into String"
         ));
     }
     // SAFETY: the caller's own `VALUE` slot; MRI's prototype says

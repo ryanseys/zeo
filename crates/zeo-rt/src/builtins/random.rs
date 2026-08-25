@@ -241,7 +241,7 @@ fn random_bytes(state: &Mutex<crate::mt::Mt>, n: usize) -> RubyValue {
 fn os_urandom(n: usize) -> Result<RubyValue, Signal> {
     let mut buf = vec![0u8; n];
     crate::gvl::without_gvl(|| getrandom::fill(&mut buf))
-        .map_err(|e| raise_error("RuntimeError", format!("failed to read random device: {e}")))?;
+        .map_err(|e| crate::builtins::runtime_error!("failed to read random device: {e}"))?;
     Ok(RubyValue::Str(crate::string_from_bytes(buf, ASCII_8BIT)))
 }
 
@@ -403,10 +403,7 @@ ruby_class! {
     private def "initialize_copy"(recv, orig) {
         let me = as_random(recv);
         if me.is_frozen() {
-            return Err(raise_error(
-                "FrozenError",
-                format!("can't modify frozen Random: {}", recv.try_display_string()?),
-            ));
+            return Err(crate::builtins::frozen_error!("can't modify frozen Random: {}", recv.try_display_string()?));
         }
         let ok = matches!(orig, RubyValue::Object(o) if downcast_robj::<RandomObj>(o).is_some());
         if !ok {

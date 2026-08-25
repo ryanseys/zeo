@@ -43,25 +43,17 @@ use std::ffi::{c_int, c_void};
 
 /// The class a top-level constant names, or a `NameError`.
 fn class_named(name: &str) -> Result<RubyValue, Signal> {
-    crate::constants::const_get(zeo_abi::OBJECT_CLASS.0, name).ok_or_else(|| {
-        crate::dispatch::raise_error("NameError", format!("uninitialized constant {name}"))
-    })
+    crate::constants::const_get(zeo_abi::OBJECT_CLASS.0, name)
+        .ok_or_else(|| crate::builtins::name_error!("uninitialized constant {name}"))
 }
 
 /// `Thread::Mutex`, `Thread::Queue` and friends live under `Thread`.
 fn nested(outer: &str, inner: &str) -> Result<RubyValue, Signal> {
     let RubyValue::Class(cid) = class_named(outer)? else {
-        return Err(crate::dispatch::raise_error(
-            "TypeError",
-            format!("{outer} is not a class"),
-        ));
+        return Err(crate::builtins::type_error!("{outer} is not a class"));
     };
-    crate::constants::const_get(cid.0, inner).ok_or_else(|| {
-        crate::dispatch::raise_error(
-            "NameError",
-            format!("uninitialized constant {outer}::{inner}"),
-        )
-    })
+    crate::constants::const_get(cid.0, inner)
+        .ok_or_else(|| crate::builtins::name_error!("uninitialized constant {outer}::{inner}"))
 }
 
 /// A `VALUE (*)(VALUE, VALUE, int, const VALUE *, VALUE)` body as a `Proc`.

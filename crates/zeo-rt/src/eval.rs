@@ -280,7 +280,7 @@ pub fn using_candidates(slots: &[u32]) -> Vec<(zeo_abi::ClassId, zeo_abi::ClassI
 /// different exception depending on which one ran it.
 #[must_use]
 pub fn syntax_error(message: String) -> Signal {
-    crate::dispatch::raise_error("SyntaxError", message)
+    crate::builtins::syntax_error!("{}", message)
 }
 
 /// A `SyntaxError` CRuby raises while COMPILING the snippet rather than
@@ -288,7 +288,7 @@ pub fn syntax_error(message: String) -> Signal {
 /// location alone, because no frame of the snippet ever ran.
 #[must_use]
 pub fn syntax_error_at(message: String, row: String) -> Signal {
-    let signal = crate::dispatch::raise_error("SyntaxError", message);
+    let signal = crate::builtins::syntax_error!("{}", message);
     if let Signal::Raise(exc) = &signal {
         crate::builtins::exception::set_backtrace_lines(exc, vec![row]);
     }
@@ -300,10 +300,7 @@ pub fn syntax_error_at(message: String, row: String) -> Signal {
 /// a snippet's compile is no different from a program's.
 #[must_use]
 pub fn not_compiled(what: String) -> Signal {
-    crate::dispatch::raise_error(
-        "NotImplementedError",
-        format!("zeo cannot compile this `eval`: {what}"),
-    )
+    crate::builtins::not_impl_error!("zeo cannot compile this `eval`: {what}")
 }
 
 /// The C signature a compiled snippet's entry function has: the status

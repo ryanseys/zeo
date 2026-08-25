@@ -23,13 +23,10 @@ use crate::{RubyValue, Signal};
 /// [`super::scope`] for why that is a scope rather than a stack scan.
 pub fn to_value(v: &RubyValue) -> Result<Value, Signal> {
     handles::pin(v).ok_or_else(|| {
-        crate::dispatch::raise_error(
-            "NotImplementedError",
-            format!(
-                "zeo cannot hand a {} to a C extension yet: it has no established \
+        crate::builtins::not_impl_error!(
+            "zeo cannot hand a {} to a C extension yet: it has no established \
                  RUBY_T_* tag, and guessing one would make RB_TYPE_P wrong",
-                crate::dispatch::class_name(v.class_id()).unwrap_or("value".into())
-            ),
+            crate::dispatch::class_name(v.class_id()).unwrap_or("value".into())
         )
     })
 }

@@ -188,9 +188,8 @@ pub fn global(name: &str) -> Option<usize> {
 
 /// Raise, naming the symbol the extension asked for.
 fn unimplemented(what: &'static str) -> ! {
-    crate::cext::jmp::raise(crate::dispatch::raise_error(
-        "NotImplementedError",
-        format!("{what} is not implemented by zeo"),
+    crate::cext::jmp::raise(crate::builtins::not_impl_error!(
+        "{what} is not implemented by zeo"
     ))
 }
 
@@ -198,9 +197,8 @@ fn unimplemented(what: &'static str) -> ! {
 /// reason travels with the raise, so a gem author reading the
 /// message learns what to reach for instead.
 fn refused(what: &'static str, why: &'static str) -> ! {
-    crate::cext::jmp::raise(crate::dispatch::raise_error(
-        "NotImplementedError",
-        format!("{what} is not supported by zeo: {why}"),
+    crate::cext::jmp::raise(crate::builtins::not_impl_error!(
+        "{what} is not supported by zeo: {why}"
     ))
 }
 

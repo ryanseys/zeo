@@ -105,12 +105,7 @@ fn arith_seq_slice(rary: &crate::RArray, seq: &RubyValue) -> Result<RubyValue, c
             -1
         }
     };
-    let out_of_range = || {
-        crate::dispatch::raise_error(
-            "RangeError",
-            format!("{} out of range", seq.inspect_string()),
-        )
-    };
+    let out_of_range = || crate::builtins::range_error!("{} out of range", seq.inspect_string());
     if b < 0 {
         b += n;
         if b < 0 {

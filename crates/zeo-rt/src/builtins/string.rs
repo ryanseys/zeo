@@ -632,7 +632,7 @@ fn decode_utf8_char(b: &[u8]) -> Option<(u32, usize)> {
 }
 
 fn runtime_err(msg: &str) -> Signal {
-    crate::dispatch::raise_error("RuntimeError", msg.to_string())
+    crate::builtins::runtime_error!("{}", msg.to_string())
 }
 
 /// `String#undump` (CRuby `str_undump`): the inverse of `dump`. Rejects a
@@ -1257,7 +1257,7 @@ fn index_set_impl(
     let mut chars: Vec<char> = handle.lock().char_vec();
     let n = chars.len() as i64;
     let norm = |i: i64| if i < 0 { i + n } else { i };
-    let index_err = |msg: String| crate::dispatch::raise_error("IndexError", msg);
+    let index_err = |msg: String| crate::builtins::index_error!("{}", msg);
 
     // Resolve the [start, end) character span to overwrite.
     let (start, end) = if let RubyValue::Regexp(re) = index {
@@ -1372,10 +1372,7 @@ fn crypt_impl(recv: &RubyValue, salt_arg: &RubyValue) -> Result<RubyValue, Signa
     let _guard = CRYPT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let res = unsafe { crypt(key_c.as_ptr(), salt_c.as_ptr()) };
     if res.is_null() {
-        return Err(crate::dispatch::raise_error(
-            "SystemCallError",
-            "crypt failed".to_string(),
-        ));
+        return Err(crate::builtins::system_call_error!("crypt failed"));
     }
     let bytes = unsafe { CStr::from_ptr(res) }.to_bytes().to_vec();
     Ok(RubyValue::Str(crate::string_from_bytes(

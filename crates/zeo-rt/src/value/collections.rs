@@ -1458,9 +1458,8 @@ pub fn hash_set_checked(
     value: RubyValue,
 ) -> Result<RubyValue, crate::Signal> {
     if h.lock().iterating > 0 && !hash_has_key(h, &key) {
-        return Err(crate::dispatch::raise_error(
-            "RuntimeError",
-            "can't add a new key into hash during iteration".to_string(),
+        return Err(crate::builtins::runtime_error!(
+            "can't add a new key into hash during iteration"
         ));
     }
     Ok(hash_set(h, key, value))

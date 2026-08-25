@@ -40,9 +40,8 @@ pub fn boxes_enabled() -> bool {
 
 /// CRuby's exact refusal for a disabled-mode `Ruby::Box.new`.
 pub fn disabled_error() -> crate::Signal {
-    crate::dispatch::raise_error(
-        "RuntimeError",
-        "Ruby Box is disabled. Set RUBY_BOX=1 environment variable to use Ruby::Box.".to_string(),
+    crate::builtins::runtime_error!(
+        "Ruby Box is disabled. Set RUBY_BOX=1 environment variable to use Ruby::Box."
     )
 }
 
@@ -127,9 +126,8 @@ pub fn handle_of(box_id: u32) -> Result<RubyValue, crate::Signal> {
         return inert_handle(box_id);
     }
     match surrogate_of(box_id) {
-        0 => Err(crate::dispatch::raise_error(
-            "RuntimeError",
-            format!("box {box_id} has no top level"),
+        0 => Err(crate::builtins::runtime_error!(
+            "box {box_id} has no top level"
         )),
         cid => Ok(RubyValue::Class(crate::ClassId(cid))),
     }

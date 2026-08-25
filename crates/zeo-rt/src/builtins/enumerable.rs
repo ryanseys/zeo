@@ -720,10 +720,7 @@ pub(crate) fn slice_size(args: &[RubyValue], method: &str) -> Result<usize, Sign
         } else {
             "invalid size"
         };
-        return Err(crate::dispatch::raise_error(
-            "ArgumentError",
-            msg.to_string(),
-        ));
+        return Err(crate::builtins::arg_error!("{}", msg.to_string()));
     }
     Ok(*n as usize)
 }

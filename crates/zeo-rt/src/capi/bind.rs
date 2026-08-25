@@ -373,10 +373,7 @@ unsafe fn bind_block(
             match &kw_source {
                 Some(h) if hash_has_key(h, &key) => f.fill(hash_get(h, &key)),
                 _ => {
-                    return Err(crate::dispatch::raise_error(
-                        "ArgumentError",
-                        format!("missing keyword: :{name}"),
-                    ));
+                    return Err(crate::builtins::arg_error!("missing keyword: :{name}"));
                 }
             }
         } else {

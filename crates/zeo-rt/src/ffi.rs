@@ -666,10 +666,7 @@ impl FfiSymSite {
             .get(&slot)
             .cloned()
             .ok_or_else(|| {
-                crate::raise_error(
-                    "LoadError",
-                    format!("`ffi_lib` did not run before `{sym}` was called"),
-                )
+                crate::builtins::load_error!("`ffi_lib` did not run before `{sym}` was called")
             })?;
         let cname = std::ffi::CString::new(sym)
             .map_err(|_| arg_error!("FFI symbol name contains a null byte"))?;
@@ -798,10 +795,7 @@ pub fn site_symbol_slot(site: u32, slot: usize, sym: &str) -> Result<*const c_vo
         .get(&slot)
         .cloned()
         .ok_or_else(|| {
-            crate::raise_error(
-                "LoadError",
-                format!("`ffi_lib` did not run before `{sym}` was called"),
-            )
+            crate::builtins::load_error!("`ffi_lib` did not run before `{sym}` was called")
         })?;
     for handle in handles {
         let addr = dlsym_in(handle as *mut c_void, sym)?;
@@ -952,9 +946,8 @@ fn dlopen_first(candidates: &[&str]) -> Result<*mut c_void, Signal> {
     } else {
         errors.join("; ")
     };
-    Err(crate::raise_error(
-        "LoadError",
-        format!("Could not open library: {detail}"),
+    Err(crate::builtins::load_error!(
+        "Could not open library: {detail}"
     ))
 }
 

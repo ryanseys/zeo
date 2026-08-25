@@ -17,7 +17,7 @@ use std::sync::Arc;
 use zeo_macros::ruby_class;
 
 use crate::builtins::{arg_error, type_error};
-use crate::dispatch::{RObj, RubyObject, raise_error};
+use crate::dispatch::{RObj, RubyObject};
 use crate::{RubyValue, Signal};
 use zeo_abi::{ClassId, TIME_CLASS};
 
@@ -198,7 +198,7 @@ fn recv_time(recv: &RubyValue) -> Result<&RTime, Signal> {
                 .downcast_ref::<RTime>()
                 .expect("Time table row dispatched on a non-Time receiver");
             if t.den.sign() == num_bigint::Sign::NoSign {
-                return Err(raise_error("TypeError", "uninitialized Time".to_string()));
+                return Err(crate::builtins::type_error!("uninitialized Time"));
             }
             Ok(t)
         }
@@ -921,9 +921,9 @@ fn shift(t: &RTime, delta: &RubyValue, sign: i64) -> Result<RubyValue, Signal> {
         }
         RubyValue::Float(f) if f.is_finite() => crate::builtins::float::float_exact_parts(*f),
         RubyValue::Float(f) => {
-            return Err(raise_error(
-                "FloatDomainError",
-                RubyValue::Float(*f).to_display_string(),
+            return Err(crate::builtins::float_domain_error!(
+                "{}",
+                RubyValue::Float(*f).to_display_string()
             ));
         }
         other => {
@@ -950,9 +950,9 @@ fn exact_seconds(v: &RubyValue) -> Result<(num_bigint::BigInt, num_bigint::BigIn
             Ok(crate::builtins::rational::as_ratio(v))
         }
         RubyValue::Float(f) if f.is_finite() => Ok(crate::builtins::float::float_exact_parts(*f)),
-        RubyValue::Float(f) => Err(raise_error(
-            "FloatDomainError",
-            RubyValue::Float(*f).to_display_string(),
+        RubyValue::Float(f) => Err(crate::builtins::float_domain_error!(
+            "{}",
+            RubyValue::Float(*f).to_display_string()
         )),
         // `Time.at(another_time)` copies its exact instant.
         RubyValue::Object(o) if o.as_any().downcast_ref::<RTime>().is_some() => {

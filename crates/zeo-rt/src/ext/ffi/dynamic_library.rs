@@ -15,7 +15,7 @@ use std::sync::atomic::AtomicBool;
 
 use super::wrap_address;
 use crate::builtins::{arg_error, convert::to_rstr};
-use crate::dispatch::{RObj, RubyObject, raise_error};
+use crate::dispatch::{RObj, RubyObject};
 use crate::{ClassId, RubyValue};
 use zeo_abi::FFI_DYNAMIC_LIBRARY_CLASS;
 use zeo_macros::ruby_class;
@@ -117,7 +117,7 @@ ruby_class! {
             )
         };
         if handle.is_null() {
-            return Err(raise_error("LoadError", dlerror_string()));
+            return Err(crate::builtins::load_error!("{}", dlerror_string()));
         }
         Ok(RubyValue::Object(Arc::new(RDynLib {
             handle,

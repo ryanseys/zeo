@@ -114,13 +114,8 @@ crate::cext_fn! {
     /// success would leave `Encoding.find` unable to resolve the name the
     /// caller believes it just made.
     fn rb_enc_alias(alias: *const c_char, _orig: *const c_char) -> c_int {
-        Err(crate::dispatch::raise_error(
-            "ArgumentError",
-            format!(
-                "zeo's encoding registry is generated and fixed; it cannot alias {}",
-                unsafe { cstr(alias) }
-            ),
-        ))
+        Err(crate::builtins::arg_error!("zeo's encoding registry is generated and fixed; it cannot alias {}",
+                unsafe { cstr(alias) }))
     }
 
     fn rb_enc_from_encoding(enc: Encoding) -> Value {
@@ -260,10 +255,7 @@ crate::cext_fn! {
     ) -> c_uint {
         let bytes = unsafe { span(p, e) };
         let Some((cp, n)) = first_codepoint(bytes, encoding_of(enc)) else {
-            return Err(crate::dispatch::raise_error(
-                "ArgumentError",
-                "empty string".into(),
-            ));
+            return Err(crate::builtins::arg_error!("empty string"));
         };
         if !len.is_null() {
             // SAFETY: the caller's own `int`.
@@ -296,10 +288,7 @@ crate::cext_fn! {
     fn rb_enc_codelen(code: c_int, enc: Encoding) -> c_int {
         let id = encoding_of(enc);
         let Some(bytes) = codepoint_bytes(code, id) else {
-            return Err(crate::dispatch::raise_error(
-                "RangeError",
-                format!("invalid codepoint 0x{code:X} in {}", id.name()),
-            ));
+            return Err(crate::builtins::range_error!("invalid codepoint 0x{code:X} in {}", id.name()));
         };
         Ok(bytes.len() as c_int)
     }
@@ -308,10 +297,7 @@ crate::cext_fn! {
     fn rb_enc_uint_chr(code: c_uint, enc: Encoding) -> Value {
         let id = encoding_of(enc);
         let Some(bytes) = codepoint_bytes(code as c_int, id) else {
-            return Err(crate::dispatch::raise_error(
-                "RangeError",
-                format!("invalid codepoint 0x{code:X} in {}", id.name()),
-            ));
+            return Err(crate::builtins::range_error!("invalid codepoint 0x{code:X} in {}", id.name()));
         };
         to_value(&RubyValue::Str(crate::string_from_bytes(bytes, id)))
     }
@@ -379,7 +365,7 @@ crate::cext_fn! {
         let bytes = unsafe { super::string::borrow_bytes(p, len) };
         let src = RubyValue::Str(crate::string_from_bytes(bytes, encoding_of(enc)));
         let cls = crate::constants::const_get(zeo_abi::OBJECT_CLASS.0, "Regexp").ok_or_else(|| {
-            crate::dispatch::raise_error("NameError", "uninitialized constant Regexp".into())
+            crate::builtins::name_error!("uninitialized constant Regexp")
         })?;
         to_value(&send(&cls, "new", &[src, RubyValue::Int(i64::from(options))])?)
     }
@@ -626,14 +612,12 @@ unsafe fn enc_arg(v: Value) -> Result<EncodingId, Signal> {
     let val = unsafe { value_of(v) };
     if let RubyValue::Str(s) = &val {
         let name = s.lock().to_utf8_lossy().into_owned();
-        return crate::encoding::find(&name).ok_or_else(|| {
-            crate::dispatch::raise_error("ArgumentError", format!("unknown encoding name - {name}"))
-        });
+        return crate::encoding::find(&name)
+            .ok_or_else(|| crate::builtins::arg_error!("unknown encoding name - {name}"));
     }
     let name = send(&val, "name", &[])?.to_display_string();
-    crate::encoding::find(&name).ok_or_else(|| {
-        crate::dispatch::raise_error("ArgumentError", format!("unknown encoding name - {name}"))
-    })
+    crate::encoding::find(&name)
+        .ok_or_else(|| crate::builtins::arg_error!("unknown encoding name - {name}"))
 }
 
 /// # Safety

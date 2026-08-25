@@ -401,8 +401,5 @@ fn enum_put(_slot: usize, _v: &RubyValue) -> Result<RubyValue, Signal> {
 
 #[cfg(not(feature = "ext-ffi"))]
 fn no_ffi() -> Signal {
-    crate::raise_error(
-        "NotImplementedError",
-        "this runtime was built without FFI support".to_string(),
-    )
+    crate::builtins::not_impl_error!("this runtime was built without FFI support")
 }

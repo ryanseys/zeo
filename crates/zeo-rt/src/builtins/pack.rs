@@ -89,7 +89,7 @@ fn parse_template(tmpl: &str) -> Result<Vec<Directive>, Signal> {
 }
 
 fn err(msg: impl Into<String>) -> Signal {
-    crate::dispatch::raise_error("ArgumentError", msg.into())
+    crate::builtins::arg_error!("{}", msg.into())
 }
 
 /// `Array#pack`'s result encoding: UTF-8 when EVERY directive is `U`,

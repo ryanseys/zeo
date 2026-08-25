@@ -82,9 +82,8 @@ pub unsafe fn xrealloc(p: *mut c_void, size: usize) -> *mut c_void {
 /// `NoMemoryError`; zeo raises the same, so a `rescue NoMemoryError` around
 /// a big allocation still works.
 fn no_memory(size: usize) -> ! {
-    crate::cext::jmp::raise(crate::dispatch::raise_error(
-        "NoMemoryError",
-        format!("failed to allocate {size} bytes"),
+    crate::cext::jmp::raise(crate::builtins::no_memory_error!(
+        "failed to allocate {size} bytes"
     ))
 }
 
@@ -146,9 +145,8 @@ alloc_fn! {
 fn checked(count: usize, size: usize) -> usize {
     match count.checked_mul(size) {
         Some(n) => n,
-        None => crate::cext::jmp::raise(crate::dispatch::raise_error(
-            "NoMemoryError",
-            format!("malloc: possible integer overflow ({count} * {size})"),
+        None => crate::cext::jmp::raise(crate::builtins::no_memory_error!(
+            "malloc: possible integer overflow ({count} * {size})"
         )),
     }
 }

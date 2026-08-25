@@ -55,7 +55,7 @@ fn narrow_to_int(n: i64) -> Option<i32> {
 }
 
 fn out_of_range(what: &str) -> crate::Signal {
-    crate::dispatch::raise_error("RangeError", format!("{what} out of range"))
+    crate::builtins::range_error!("{what} out of range")
 }
 
 /// # Safety
@@ -67,12 +67,9 @@ unsafe fn as_int(v: Value) -> Result<i64, crate::Signal> {
         RubyValue::Float(f) => Ok(f as i64),
         // A Bignum genuinely does not fit; saying so beats truncating.
         RubyValue::BigInt(_) => Err(out_of_range("bignum too big to convert into `long'")),
-        other => Err(crate::dispatch::raise_error(
-            "TypeError",
-            format!(
-                "no implicit conversion of {} into Integer",
-                crate::dispatch::class_name(other.class_id()).unwrap_or("Object".into())
-            ),
+        other => Err(crate::builtins::type_error!(
+            "no implicit conversion of {} into Integer",
+            crate::dispatch::class_name(other.class_id()).unwrap_or("Object".into())
         )),
     }
 }
@@ -99,13 +96,8 @@ crate::cext_fn! {
                 let (bytes, enc) = { let g = s.lock(); (g.bytes().to_vec(), g.encoding()) };
                 Ok(Symbol::intern_bytes(&bytes, enc).to_u32() as Id)
             }
-            other => Err(crate::dispatch::raise_error(
-                "TypeError",
-                format!(
-                    "{} is not a symbol nor a string",
-                    crate::dispatch::class_name(other.class_id()).unwrap_or("Object".into())
-                ),
-            )),
+            other => Err(crate::builtins::type_error!("{} is not a symbol nor a string",
+                    crate::dispatch::class_name(other.class_id()).unwrap_or("Object".into()))),
         }
     }
 
@@ -116,13 +108,8 @@ crate::cext_fn! {
     fn rb_sym2id(v: Value) -> Id {
         match unsafe { value_of(v) } {
             RubyValue::Symbol(s) => Ok(s.to_u32() as Id),
-            other => Err(crate::dispatch::raise_error(
-                "TypeError",
-                format!(
-                    "{} is not a symbol",
-                    crate::dispatch::class_name(other.class_id()).unwrap_or("Object".into())
-                ),
-            )),
+            other => Err(crate::builtins::type_error!("{} is not a symbol",
+                    crate::dispatch::class_name(other.class_id()).unwrap_or("Object".into()))),
         }
     }
 
@@ -140,13 +127,8 @@ crate::cext_fn! {
                 let str = crate::string_from_bytes(s.bytes().to_vec(), s.encoding());
                 to_value(&RubyValue::Str(str))
             }
-            other => Err(crate::dispatch::raise_error(
-                "TypeError",
-                format!(
-                    "{} is not a symbol",
-                    crate::dispatch::class_name(other.class_id()).unwrap_or("Object".into())
-                ),
-            )),
+            other => Err(crate::builtins::type_error!("{} is not a symbol",
+                    crate::dispatch::class_name(other.class_id()).unwrap_or("Object".into()))),
         }
     }
 
@@ -187,13 +169,8 @@ crate::cext_fn! {
         match unsafe { value_of(v) } {
             RubyValue::Float(f) => Ok(f),
             RubyValue::Int(n) => Ok(n as c_double),
-            other => Err(crate::dispatch::raise_error(
-                "TypeError",
-                format!(
-                    "can't convert {} into Float",
-                    crate::dispatch::class_name(other.class_id()).unwrap_or("Object".into())
-                ),
-            )),
+            other => Err(crate::builtins::type_error!("can't convert {} into Float",
+                    crate::dispatch::class_name(other.class_id()).unwrap_or("Object".into()))),
         }
     }
 

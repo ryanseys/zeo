@@ -64,8 +64,8 @@ pub(super) fn exception_class_label(id: ClassId) -> &'static str {
 /// activemodel -- so the machinery was multiplying through inheritance.
 #[cold]
 pub fn wrong_arity(given: usize, expected: &str) -> Signal {
-    raise_error(
-        "ArgumentError",
+    raise_error_id(
+        zeo_abi::ARGUMENT_ERROR_CLASS,
         format!("wrong number of arguments (given {given}, expected {expected})"),
     )
 }
@@ -73,8 +73,8 @@ pub fn wrong_arity(given: usize, expected: &str) -> Signal {
 /// The fixed-arity `ArgumentError` (`zeo_tramp!`'s error leg): one call in
 /// the generated program where a `format!` used to be.
 pub fn arity_error(given: usize, expected: usize) -> Signal {
-    raise_error(
-        "ArgumentError",
+    raise_error_id(
+        zeo_abi::ARGUMENT_ERROR_CLASS,
         format!("wrong number of arguments (given {given}, expected {expected})"),
     )
 }
@@ -373,8 +373,8 @@ pub fn coerce_raise_arg_with_message(
         if responds_to_value(&value, Symbol::intern("exception"), false) {
             return checked_exception_hook(&value, msg);
         }
-        return Err(raise_error(
-            "TypeError",
+        return Err(raise_error_id(
+            zeo_abi::TYPE_ERROR_CLASS,
             "exception class/object expected".to_string(),
         ));
     }
@@ -388,8 +388,8 @@ fn checked_exception_hook(value: &RubyValue, msg: &[RubyValue]) -> Result<RubyVa
     let built = send_value(value, Symbol::intern("exception"), msg, None)?;
     match &built {
         RubyValue::Object(o) if is_a(o.class_id(), zeo_abi::EXCEPTION_CLASS) => Ok(built),
-        _ => Err(raise_error(
-            "TypeError",
+        _ => Err(raise_error_id(
+            zeo_abi::TYPE_ERROR_CLASS,
             "exception object expected".to_string(),
         )),
     }

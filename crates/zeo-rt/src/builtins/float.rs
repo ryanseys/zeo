@@ -224,9 +224,9 @@ fn recv_f64(recv: &RubyValue) -> f64 {
 pub(crate) fn float_to_integer(f: f64) -> Result<RubyValue, Signal> {
     use num_traits::FromPrimitive;
     if !f.is_finite() {
-        return Err(crate::dispatch::raise_error(
-            "FloatDomainError",
-            RubyValue::Float(f).to_display_string(),
+        return Err(crate::builtins::float_domain_error!(
+            "{}",
+            RubyValue::Float(f).to_display_string()
         ));
     }
     Ok(crate::builtins::integer::int_value(
@@ -262,9 +262,9 @@ pub(crate) fn float_exact_parts(f: f64) -> (num_bigint::BigInt, num_bigint::BigI
 /// `Float#to_r`'s exact dyadic decomposition: f == mantissa * 2^exp.
 fn float_to_rational(f: f64) -> Result<RubyValue, Signal> {
     if !f.is_finite() {
-        return Err(crate::dispatch::raise_error(
-            "FloatDomainError",
-            RubyValue::Float(f).to_display_string(),
+        return Err(crate::builtins::float_domain_error!(
+            "{}",
+            RubyValue::Float(f).to_display_string()
         ));
     }
     let (num, den) = float_exact_parts(f);
@@ -347,9 +347,9 @@ fn float_rationalize(d: f64, eps: Option<&RubyValue>) -> Result<RubyValue, Signa
     use num_bigint::BigInt;
     use num_traits::{One, Zero};
     if !d.is_finite() {
-        return Err(crate::dispatch::raise_error(
-            "FloatDomainError",
-            RubyValue::Float(d).to_display_string(),
+        return Err(crate::builtins::float_domain_error!(
+            "{}",
+            RubyValue::Float(d).to_display_string()
         ));
     }
     let neg = d < 0.0;

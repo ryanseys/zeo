@@ -571,7 +571,7 @@ fn hexdump_lines(bytes: &[u8], base: usize, width: usize) -> String {
 /// io_buffer entry point does.
 fn io_fd(io: &RubyValue) -> Result<libc::c_int, Signal> {
     if crate::builtins::io::io_is_closed(io) {
-        return Err(raise_error("IOError", "closed stream".to_string()));
+        return Err(crate::builtins::io_error!("closed stream"));
     }
     crate::builtins::io::raw_fd(io)
 }
@@ -740,7 +740,7 @@ ruby_class! {
     def self."string"(_recv, arg, &block) {
         let n = crate::builtins::arg_int!(arg) as usize;
         let Some(RubyValue::Proc(p)) = block else {
-            return Err(raise_error("LocalJumpError", "no block given".to_string()));
+            return Err(crate::builtins::local_jump_error!("no block given"));
         };
         let buf = buffer_value(heap_state(n, INTERNAL));
         p.call(std::slice::from_ref(&buf))?;
@@ -827,7 +827,7 @@ ruby_class! {
         }
         let result = match &block {
             Some(RubyValue::Proc(p)) => p.call(std::slice::from_ref(recv)),
-            _ => Err(raise_error("LocalJumpError", "no block given".to_string())),
+            _ => Err(crate::builtins::local_jump_error!("no block given")),
         };
         b.state.lock().flags &= !LOCKED;
         result

@@ -27,10 +27,7 @@ pub type RRational = Arc<RRationalData>;
 /// denominator.
 pub fn rational_new(num: BigInt, den: BigInt) -> Result<RubyValue, Signal> {
     if den.is_zero() {
-        return Err(crate::dispatch::raise_error(
-            "ZeroDivisionError",
-            "divided by 0".to_string(),
-        ));
+        return Err(crate::builtins::zero_division_error!("divided by 0"));
     }
     let g = num.gcd(&den);
     let (mut n, mut d) = (num / &g, den / g);
@@ -508,20 +505,17 @@ fn eps_ratio(v: &RubyValue) -> Result<(BigInt, BigInt), Signal> {
         }
         RubyValue::Float(f) => {
             if !f.is_finite() {
-                return Err(crate::dispatch::raise_error(
-                    "FloatDomainError",
-                    RubyValue::Float(*f).to_display_string(),
+                return Err(crate::builtins::float_domain_error!(
+                    "{}",
+                    RubyValue::Float(*f).to_display_string()
                 ));
             }
             let (n, d) = crate::builtins::float::float_exact_parts(*f);
             Ok((n.abs(), d))
         }
-        other => Err(crate::dispatch::raise_error(
-            "NoMethodError",
-            format!(
-                "undefined method 'abs' for an instance of {}",
-                crate::builtins::class_name_of(other)
-            ),
+        other => Err(crate::builtins::no_method_error!(
+            "undefined method 'abs' for an instance of {}",
+            crate::builtins::class_name_of(other)
         )),
     }
 }

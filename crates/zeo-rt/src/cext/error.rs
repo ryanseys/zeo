@@ -100,11 +100,11 @@ crate::cext_fn! {
     }
 
     fn rb_memerror() -> () {
-        Err(crate::dispatch::raise_error("NoMemoryError", "failed to allocate memory".into()))
+        Err(crate::builtins::no_memory_error!("failed to allocate memory"))
     }
 
     fn rb_num_zerodiv() -> () {
-        Err(crate::dispatch::raise_error("ZeroDivisionError", "divided by 0".into()))
+        Err(crate::builtins::zero_division_error!("divided by 0"))
     }
 
     /// `rb_error_arity(argc, min, max)`. `max` is `UNLIMITED_ARGUMENTS` when
@@ -121,10 +121,7 @@ crate::cext_fn! {
     }
 
     fn rb_error_frozen(what: *const c_char) -> () {
-        Err(crate::dispatch::raise_error(
-            "FrozenError",
-            format!("can't modify frozen {}", unsafe { cstr(what) }),
-        ))
+        Err(crate::builtins::frozen_error!("can't modify frozen {}", unsafe { cstr(what) }))
     }
 
     fn rb_error_frozen_object(obj: Value) -> () {
@@ -132,31 +129,20 @@ crate::cext_fn! {
         let shown = send(&v, "inspect", &[])
             .ok()
             .map_or_else(String::new, |s| s.to_display_string());
-        Err(crate::dispatch::raise_error(
-            "FrozenError",
-            format!(
-                "can't modify frozen {}: {shown}",
-                crate::dispatch::class_name(v.class_id()).unwrap_or("Object".into())
-            ),
-        ))
+        Err(crate::builtins::frozen_error!("can't modify frozen {}: {shown}",
+                crate::dispatch::class_name(v.class_id()).unwrap_or("Object".into())))
     }
 
     /// `rb_invalid_str(str, type)`: what `Integer("0x")` raises.
     fn rb_invalid_str(text: *const c_char, kind: *const c_char) -> () {
         let (text, kind) = (unsafe { cstr(text) }, unsafe { cstr(kind) });
-        Err(crate::dispatch::raise_error(
-            "ArgumentError",
-            format!("invalid value for {kind}: \"{text}\""),
-        ))
+        Err(crate::builtins::arg_error!("invalid value for {kind}: \"{text}\""))
     }
 
     /// `rb_f_notimplement`: the body MRI installs for a method the platform
     /// does not have. It raises whatever it is called as.
     fn rb_f_notimplement(_argc: c_int, _argv: *const Value, _recv: Value, _marker: Value) -> Value {
-        Err(crate::dispatch::raise_error(
-            "NotImplementedError",
-            "the platform does not support this method".into(),
-        ))
+        Err(crate::builtins::not_impl_error!("the platform does not support this method"))
     }
 
     // ---- errno ---------------------------------------------------------
@@ -258,7 +244,7 @@ crate::cext_fn! {
         let shown = send(&v, "inspect", &[])
             .ok()
             .map_or_else(String::new, |s| s.to_display_string());
-        Err(crate::dispatch::raise_error("FrozenError", format!("{text}: {shown}")))
+        Err(crate::builtins::frozen_error!("{text}: {shown}"))
     }
 }
 
@@ -296,15 +282,13 @@ fn wait_module(waiting: c_int) -> Result<RubyValue, Signal> {
     } else {
         "WaitWritable"
     };
-    let io = crate::constants::const_get(zeo_abi::OBJECT_CLASS.0, "IO").ok_or_else(|| {
-        crate::dispatch::raise_error("NameError", "uninitialized constant IO".into())
-    })?;
+    let io = crate::constants::const_get(zeo_abi::OBJECT_CLASS.0, "IO")
+        .ok_or_else(|| crate::builtins::name_error!("uninitialized constant IO"))?;
     let RubyValue::Class(io) = io else {
         return Err(wrong_arg_type(&io, "Class"));
     };
-    crate::constants::const_get(io.0, name).ok_or_else(|| {
-        crate::dispatch::raise_error("NameError", format!("uninitialized constant IO::{name}"))
-    })
+    crate::constants::const_get(io.0, name)
+        .ok_or_else(|| crate::builtins::name_error!("uninitialized constant IO::{name}"))
 }
 
 /// `rb_warning_category_t` as the Symbol `Warning[]` accepts.

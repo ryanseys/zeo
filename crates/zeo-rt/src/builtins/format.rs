@@ -50,7 +50,7 @@ impl Rendered {
 }
 
 fn arg_error(msg: String) -> Signal {
-    crate::dispatch::raise_error("ArgumentError", msg)
+    crate::builtins::arg_error!("{}", msg)
 }
 
 /// `%d`-family conversion: CRuby's `rb_Integer` (`"%d" % "12"` parses,

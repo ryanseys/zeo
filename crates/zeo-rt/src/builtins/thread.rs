@@ -59,9 +59,8 @@ fn no_trace_func(arg: &RubyValue) -> Result<RubyValue, Signal> {
     if matches!(arg, RubyValue::Nil) {
         return Ok(RubyValue::Nil);
     }
-    Err(raise_error(
-        "NotImplementedError",
-        "Thread#set_trace_func is not supported; use TracePoint".to_string(),
+    Err(crate::builtins::not_impl_error!(
+        "Thread#set_trace_func is not supported; use TracePoint"
     ))
 }
 
@@ -76,7 +75,7 @@ ruby_class! {
     // three appear in `Thread.singleton_methods`.
     def self."new" | "start" | "fork" allocs (_recv, *args, &block) {
         let Some(block) = block else {
-            return Err(raise_error("ThreadError", "must be called with a block".to_string()));
+            return Err(crate::builtins::thread_error!("must be called with a block"));
         };
         Ok(thread::thread_new(block, args.to_vec()))
     }
@@ -201,7 +200,7 @@ ruby_class! {
             Some(loc) => format!("already initialized thread - {loc}"),
             None => "already initialized thread".to_string(),
         };
-        Err(crate::dispatch::raise_error("ThreadError", msg))
+        Err(crate::builtins::thread_error!("{}", msg))
     }
     def "alive?"(_recv) {
         Ok(RubyValue::Bool(thread_alive(t)))
@@ -331,7 +330,7 @@ ruby_class! {
     def "wakeup"(recv) {
         match thread::thread_wakeup(t) {
             Ok(()) => Ok(recv.clone()),
-            Err(msg) => Err(raise_error("ThreadError", msg.to_string())),
+            Err(msg) => Err(crate::builtins::thread_error!("{}", msg.to_string())),
         }
     }
     def "run"(recv) {
@@ -340,7 +339,7 @@ ruby_class! {
                 thread::thread_pass();
                 Ok(recv.clone())
             }
-            Err(msg) => Err(raise_error("ThreadError", msg.to_string())),
+            Err(msg) => Err(crate::builtins::thread_error!("{}", msg.to_string())),
         }
     }
     def "stop?"(_recv) {

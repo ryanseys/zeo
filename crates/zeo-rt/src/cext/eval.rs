@@ -237,10 +237,7 @@ crate::cext_fn! {
     fn rb_block_proc() -> Value {
         match super::call::current_block() {
             Some(b) => to_value(&b),
-            None => Err(crate::dispatch::raise_error(
-                "ArgumentError",
-                "tried to create Proc object without a block".into(),
-            )),
+            None => Err(crate::builtins::arg_error!("tried to create Proc object without a block")),
         }
     }
 
@@ -256,10 +253,7 @@ crate::cext_fn! {
     /// it first thing in a method that will `rb_yield`.
     fn rb_need_block() -> () {
         if super::call::current_block().is_none() {
-            return Err(crate::dispatch::raise_error(
-                "LocalJumpError",
-                "no block given (yield)".into(),
-            ));
+            return Err(crate::builtins::local_jump_error!("no block given (yield)"));
         }
         Ok(())
     }
@@ -591,7 +585,7 @@ crate::cext_fn! {
             None => RubyValue::Nil,
             Some(RubyValue::Str(s)) => {
                 let msg = s.lock().to_utf8_lossy().into_owned();
-                match crate::dispatch::raise_error("RuntimeError", msg) {
+                match crate::builtins::runtime_error!("{}", msg) {
                     Signal::Raise(e) => e,
                     other => return Err(other),
                 }

@@ -35,24 +35,18 @@ fn outcome(result: FiberResume) -> Result<RubyValue, Signal> {
     match result {
         FiberResume::Value(v) => Ok(v),
         FiberResume::RubyError(sig) => Err(sig),
-        FiberResume::Dead => Err(raise_error(
-            "FiberError",
-            "attempt to resume a terminated fiber".to_string(),
+        FiberResume::Dead => Err(crate::builtins::fiber_error!(
+            "attempt to resume a terminated fiber"
         )),
-        FiberResume::Uninitialized => {
-            Err(raise_error("FiberError", "uninitialized fiber".to_string()))
+        FiberResume::Uninitialized => Err(crate::builtins::fiber_error!("uninitialized fiber")),
+        FiberResume::DoubleResume => Err(crate::builtins::fiber_error!(
+            "attempt to resume a resumed fiber (double resume)"
+        )),
+        FiberResume::CrossThread => {
+            Err(crate::builtins::fiber_error!("fiber called across threads"))
         }
-        FiberResume::DoubleResume => Err(raise_error(
-            "FiberError",
-            "attempt to resume a resumed fiber (double resume)".to_string(),
-        )),
-        FiberResume::CrossThread => Err(raise_error(
-            "FiberError",
-            "fiber called across threads".to_string(),
-        )),
-        FiberResume::Unborn => Err(raise_error(
-            "FiberError",
-            "cannot raise exception on unborn fiber".to_string(),
+        FiberResume::Unborn => Err(crate::builtins::fiber_error!(
+            "cannot raise exception on unborn fiber"
         )),
     }
 }
@@ -118,10 +112,7 @@ ruby_class! {
     def self."new" cfunc (_recv, &block) {
         match block {
             Some(b) => Ok(fiber::fiber_new(b.clone())),
-            None => Err(raise_error(
-                "ArgumentError",
-                "tried to create Proc object without a block".to_string(),
-            )),
+            None => Err(crate::builtins::arg_error!("tried to create Proc object without a block")),
         }
     }
     def self."current"(_recv) {
@@ -141,10 +132,7 @@ ruby_class! {
         match fiber::fiber_yield(args.to_vec()) {
             crate::fiber::FiberYield::Value(v) => Ok(v),
             crate::fiber::FiberYield::Raise(e) => Err(Signal::Raise(e)),
-            crate::fiber::FiberYield::Root => Err(raise_error(
-                "FiberError",
-                "attempt to yield on a not resumed fiber".to_string(),
-            )),
+            crate::fiber::FiberYield::Root => Err(crate::builtins::fiber_error!("attempt to yield on a not resumed fiber")),
             crate::fiber::FiberYield::Terminate => Err(Signal::Terminate),
         }
     }
@@ -156,15 +144,12 @@ ruby_class! {
     }
     def self."set_scheduler"(_recv, scheduler) {
         if !scheduler.is_nil() {
-            return Err(raise_error(
-                "NotImplementedError",
-                "zeo has no fiber scheduler".to_string(),
-            ));
+            return Err(crate::builtins::not_impl_error!("zeo has no fiber scheduler"));
         }
         Ok(RubyValue::Nil)
     }
     def self."schedule" cfunc (_recv, *_args, &_block) {
-        Err(raise_error("RuntimeError", "No scheduler is available!".to_string()))
+        Err(crate::builtins::runtime_error!("No scheduler is available!"))
     }
     // `Fiber.blocking?` -- non-false while the ROOT fiber runs, which is the
     // one no scheduler created. CRuby answers the nesting count, and with no
@@ -181,7 +166,7 @@ ruby_class! {
     // whole method is the yield.
     def self."blocking"(_recv, &block) {
         let Some(block) = block else {
-            return Err(raise_error("LocalJumpError", "no block given".to_string()));
+            return Err(crate::builtins::local_jump_error!("no block given"));
         };
         block.as_proc_unchecked().call(&[fiber::fiber_current()])
     }

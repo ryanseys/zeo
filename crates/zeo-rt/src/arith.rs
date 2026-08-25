@@ -57,10 +57,7 @@ pub fn float_mod(a: f64, b: f64) -> f64 {
 /// error).
 pub fn float_mod_checked(a: f64, b: f64) -> Result<crate::RubyValue, crate::Signal> {
     if b == 0.0 {
-        Err(crate::dispatch::raise_error(
-            "ZeroDivisionError",
-            "divided by 0".to_string(),
-        ))
+        Err(crate::builtins::zero_division_error!("divided by 0"))
     } else {
         Ok(crate::RubyValue::Float(float_mod(a, b)))
     }

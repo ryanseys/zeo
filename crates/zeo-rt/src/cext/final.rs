@@ -27,9 +27,8 @@ fn a_string(text: &str) -> RubyValue {
 }
 
 fn class_named(name: &str) -> Result<RubyValue, Signal> {
-    crate::constants::const_get(zeo_abi::OBJECT_CLASS.0, name).ok_or_else(|| {
-        crate::dispatch::raise_error("NameError", format!("uninitialized constant {name}"))
-    })
+    crate::constants::const_get(zeo_abi::OBJECT_CLASS.0, name)
+        .ok_or_else(|| crate::builtins::name_error!("uninitialized constant {name}"))
 }
 
 crate::cext_fn! {
@@ -162,10 +161,7 @@ crate::cext_fn! {
     /// accepts the out-of-Unicode range its old 6-byte form allowed.
     fn rb_uv_to_utf8(buf: *mut c_char, uv: usize) -> c_int {
         let Some(ch) = u32::try_from(uv).ok().and_then(char::from_u32) else {
-            return Err(crate::dispatch::raise_error(
-                "RangeError",
-                format!("pack(U): value out of range: {uv}"),
-            ));
+            return Err(crate::builtins::range_error!("pack(U): value out of range: {uv}"));
         };
         let mut tmp = [0u8; 4];
         let bytes = ch.encode_utf8(&mut tmp).as_bytes();
@@ -248,10 +244,7 @@ crate::cext_fn! {
                 (Some(v), _) => to_value(&v)?,
                 // A missing REQUIRED key is an error naming it.
                 (None, true) => {
-                    return Err(crate::dispatch::raise_error(
-                        "ArgumentError",
-                        format!("missing keyword: :{}", sym.name_str()),
-                    ));
+                    return Err(crate::builtins::arg_error!("missing keyword: :{}", sym.name_str()));
                 }
                 (None, false) => value::Q_UNDEF,
             };
@@ -276,10 +269,7 @@ crate::cext_fn! {
             return Ok(named as c_int + 1);
         }
         if let Some((k, _)) = rest.first() {
-            return Err(crate::dispatch::raise_error(
-                "ArgumentError",
-                format!("unknown keyword: {}", k.to_display_string()),
-            ));
+            return Err(crate::builtins::arg_error!("unknown keyword: {}", k.to_display_string()));
         }
         Ok(named as c_int)
     }
@@ -498,17 +488,11 @@ crate::cext_fn! {
     // ---- the entries that only raise -------------------------------------
 
     fn rb_notimplement() -> () {
-        Err(crate::dispatch::raise_error(
-            "NotImplementedError",
-            "the platform does not support this method".into(),
-        ))
+        Err(crate::builtins::not_impl_error!("the platform does not support this method"))
     }
 
     fn rb_out_of_int(n: c_long) -> () {
-        Err(crate::dispatch::raise_error(
-            "RangeError",
-            format!("integer {n} too big to convert to `int'"),
-        ))
+        Err(crate::builtins::range_error!("integer {n} too big to convert to `int'"))
     }
 
     fn rb_unexpected_type(v: Value, want: c_int) -> () {
@@ -534,10 +518,7 @@ crate::cext_fn! {
     /// argument count does not match what the macro counted. MRI aborts;
     /// raising names the extension's own bug and lets a test see it.
     fn rb_varargs_bad_length(passed: c_int, expected: c_int) -> c_int {
-        Err(crate::dispatch::raise_error(
-            "ArgumentError",
-            format!("wrong number of arguments ({passed} for {expected})"),
-        ))
+        Err(crate::builtins::arg_error!("wrong number of arguments ({passed} for {expected})"))
     }
 
     /// `rb_debug_rstring_null_ptr(func)`: MRI's report for an
@@ -995,17 +976,11 @@ crate::cext_fn! {
     }
 
     fn ruby_malloc_size_overflow(count: usize, size: usize) -> () {
-        Err(crate::dispatch::raise_error(
-            "NoMemoryError",
-            format!("malloc: possible integer overflow ({count} * {size})"),
-        ))
+        Err(crate::builtins::no_memory_error!("malloc: possible integer overflow ({count} * {size})"))
     }
 
     fn ruby_malloc_add_size_overflow(a: usize, b: usize) -> () {
-        Err(crate::dispatch::raise_error(
-            "NoMemoryError",
-            format!("malloc: possible integer overflow ({a} + {b})"),
-        ))
+        Err(crate::builtins::no_memory_error!("malloc: possible integer overflow ({a} + {b})"))
     }
 
     // ---- Bignum magnitude ------------------------------------------------
@@ -1137,24 +1112,18 @@ pub struct ArithSeq {
 }
 
 fn no_conversion(recv: &RubyValue, tname: &str) -> Signal {
-    crate::dispatch::raise_error(
-        "TypeError",
-        format!(
-            "can't convert {} into {tname}",
-            crate::dispatch::class_name(recv.class_id()).unwrap_or("Object".into())
-        ),
+    crate::builtins::type_error!(
+        "can't convert {} into {tname}",
+        crate::dispatch::class_name(recv.class_id()).unwrap_or("Object".into())
     )
 }
 
 fn cmperr(a: Value, b: Value) -> Signal {
     let (x, y) = (unsafe { value_of(a) }, unsafe { value_of(b) });
-    crate::dispatch::raise_error(
-        "ArgumentError",
-        format!(
-            "comparison of {} with {} failed",
-            crate::dispatch::class_name(x.class_id()).unwrap_or("Object".into()),
-            y.to_display_string()
-        ),
+    crate::builtins::arg_error!(
+        "comparison of {} with {} failed",
+        crate::dispatch::class_name(x.class_id()).unwrap_or("Object".into()),
+        y.to_display_string()
     )
 }
 

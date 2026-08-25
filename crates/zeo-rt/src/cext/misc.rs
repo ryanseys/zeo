@@ -40,7 +40,7 @@ fn enc_of(e: Encoding) -> EncodingId {
 }
 
 fn out_of_range(what: &str) -> Signal {
-    crate::dispatch::raise_error("RangeError", format!("{what} out of range"))
+    crate::builtins::range_error!("{what} out of range")
 }
 
 /// # Safety

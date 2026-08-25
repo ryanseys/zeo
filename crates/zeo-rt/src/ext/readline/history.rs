@@ -5,7 +5,7 @@
 //! module, equally payload-free).
 
 use crate::builtins::convert;
-use crate::dispatch::{RObj, RubyObject, raise_error};
+use crate::dispatch::{RObj, RubyObject};
 use crate::{RubyValue, Signal};
 use std::sync::Arc;
 use zeo_macros::ruby_class;
@@ -48,7 +48,7 @@ pub(super) fn history_value() -> RubyValue {
 fn resolve(i: i64, len: usize) -> Result<usize, Signal> {
     let idx = if i < 0 { i + len as i64 } else { i };
     if idx < 0 || idx as usize >= len {
-        return Err(raise_error("IndexError", format!("invalid index ({i})")));
+        return Err(crate::builtins::index_error!("invalid index ({i})"));
     }
     Ok(idx as usize)
 }

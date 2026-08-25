@@ -41,26 +41,19 @@ pub fn load(path: &str, init: &str) -> Result<bool, Signal> {
         return Ok(false);
     }
 
-    let cpath = CString::new(path).map_err(|_| {
-        crate::dispatch::raise_error("LoadError", format!("path contains a null byte: {path}"))
-    })?;
-    let handle = open_library(&cpath).map_err(|why| {
-        crate::dispatch::raise_error(
-            "LoadError",
-            format!("cannot load such file -- {path}: {why}"),
-        )
-    })?;
+    let cpath = CString::new(path)
+        .map_err(|_| crate::builtins::load_error!("path contains a null byte: {path}"))?;
+    let handle = open_library(&cpath)
+        .map_err(|why| crate::builtins::load_error!("cannot load such file -- {path}: {why}"))?;
 
     let symbol = format!("Init_{init}");
-    let csym = CString::new(symbol.clone()).map_err(|_| {
-        crate::dispatch::raise_error("LoadError", format!("bad init name: {symbol}"))
-    })?;
+    let csym = CString::new(symbol.clone())
+        .map_err(|_| crate::builtins::load_error!("bad init name: {symbol}"))?;
     // SAFETY: a live handle and a NUL-terminated name; a miss answers null.
     let entry = unsafe { libc::dlsym(handle, csym.as_ptr()) };
     if entry.is_null() {
-        return Err(crate::dispatch::raise_error(
-            "LoadError",
-            format!("{path} has no {symbol} -- is this a Ruby extension?"),
+        return Err(crate::builtins::load_error!(
+            "{path} has no {symbol} -- is this a Ruby extension?"
         ));
     }
 

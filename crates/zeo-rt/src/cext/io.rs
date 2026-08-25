@@ -23,9 +23,8 @@ use crate::{RubyValue, Signal, Symbol};
 use std::ffi::{c_char, c_int, c_long};
 
 fn class_named(name: &str) -> Result<RubyValue, Signal> {
-    crate::constants::const_get(zeo_abi::OBJECT_CLASS.0, name).ok_or_else(|| {
-        crate::dispatch::raise_error("NameError", format!("uninitialized constant {name}"))
-    })
+    crate::constants::const_get(zeo_abi::OBJECT_CLASS.0, name)
+        .ok_or_else(|| crate::builtins::name_error!("uninitialized constant {name}"))
 }
 
 fn a_string(text: &str) -> RubyValue {
@@ -270,7 +269,7 @@ crate::cext_fn! {
 
     fn rb_env_clear() -> Value {
         let env = crate::constants::const_get(zeo_abi::OBJECT_CLASS.0, "ENV")
-            .ok_or_else(|| crate::dispatch::raise_error("NameError", "uninitialized constant ENV".into()))?;
+            .ok_or_else(|| crate::builtins::name_error!("uninitialized constant ENV"))?;
         to_value(&send(&env, "clear", &[])?)
     }
 
@@ -283,10 +282,7 @@ crate::cext_fn! {
     fn rb_cloexec_open(path: *const c_char, flags: c_int, mode: u16) -> c_int {
         let p = unsafe { cstr(path) };
         let Ok(c) = std::ffi::CString::new(p) else {
-            return Err(crate::dispatch::raise_error(
-                "ArgumentError",
-                "path contains a null byte".into(),
-            ));
+            return Err(crate::builtins::arg_error!("path contains a null byte"));
         };
         // SAFETY: a NUL-terminated path and the caller's own flags.
         let fd = unsafe { libc::open(c.as_ptr(), flags | libc::O_CLOEXEC, c_int::from(mode)) };

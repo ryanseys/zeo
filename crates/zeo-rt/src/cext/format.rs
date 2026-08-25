@@ -95,10 +95,7 @@ pub unsafe extern "C" fn zeo_cext_str_new_len(p: *const c_char, len: c_long) -> 
 pub unsafe extern "C" fn zeo_cext_str_cat_len(str: Value, p: *const c_char, len: c_long) -> Value {
     let bytes = unsafe { super::string::borrow_bytes(p, len) };
     let RubyValue::Str(s) = (unsafe { value_of(str) }) else {
-        super::jmp::raise(crate::dispatch::raise_error(
-            "TypeError",
-            "rb_str_catf needs a String".into(),
-        ))
+        super::jmp::raise(crate::builtins::type_error!("rb_str_catf needs a String"))
     };
     let mut g = s.lock();
     let mut all = g.bytes().to_vec();

@@ -916,10 +916,7 @@ fn zeo_rt_main_runs_the_toplevel_and_owns_argv() {
 
 unsafe extern "C" fn raising_toplevel(out: *mut abi::Value) -> i32 {
     let _ = out;
-    crate::signal::set_pending(crate::dispatch::raise_error(
-        "RuntimeError",
-        "boom from the toplevel".to_string(),
-    ));
+    crate::signal::set_pending(crate::builtins::runtime_error!("boom from the toplevel"));
     1
 }
 

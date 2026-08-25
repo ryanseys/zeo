@@ -31,9 +31,8 @@ use crate::{RubyValue, Signal, Symbol};
 use std::ffi::{c_char, c_int, c_long};
 
 fn class_named(name: &str) -> Result<RubyValue, Signal> {
-    crate::constants::const_get(zeo_abi::OBJECT_CLASS.0, name).ok_or_else(|| {
-        crate::dispatch::raise_error("NameError", format!("uninitialized constant {name}"))
-    })
+    crate::constants::const_get(zeo_abi::OBJECT_CLASS.0, name)
+        .ok_or_else(|| crate::builtins::name_error!("uninitialized constant {name}"))
 }
 
 fn a_string(text: &str) -> RubyValue {
@@ -567,10 +566,7 @@ crate::cext_fn! {
         let want = n.to_display_string();
         match names.iter().position(|v| v.to_display_string() == want) {
             Some(i) => Ok(i as c_int + 1),
-            None => Err(crate::dispatch::raise_error(
-                "IndexError",
-                format!("undefined group name reference: {want}"),
-            )),
+            None => Err(crate::builtins::index_error!("undefined group name reference: {want}")),
         }
     }
 
@@ -666,10 +662,7 @@ crate::cext_fn! {
         let mut start = if b < 0 { b + alen } else { b };
         if start < 0 || start > alen {
             if err != 0 {
-                return Err(crate::dispatch::raise_error(
-                    "RangeError",
-                    format!("{} out of range", r.to_display_string()),
-                ));
+                return Err(crate::builtins::range_error!("{} out of range", r.to_display_string()));
             }
             return Ok(value::Q_NIL);
         }
@@ -882,9 +875,8 @@ pub(super) fn slot_set(name: &str, v: Value) -> Result<bool, Signal> {
         return Ok(false);
     };
     if !writable {
-        return Err(crate::dispatch::raise_error(
-            "NameError",
-            format!("{name} is a read-only variable"),
+        return Err(crate::builtins::name_error!(
+            "{name} is a read-only variable"
         ));
     }
     let id = Symbol::intern(name).to_u32() as Id;
@@ -939,9 +931,8 @@ fn interval_parts(v: Value) -> Result<(i64, i64), Signal> {
         },
     };
     if secs < 0.0 {
-        return Err(crate::dispatch::raise_error(
-            "ArgumentError",
-            "time interval must not be negative".into(),
+        return Err(crate::builtins::arg_error!(
+            "time interval must not be negative"
         ));
     }
     Ok((secs.trunc() as i64, (secs.fract() * 1e9) as i64))
