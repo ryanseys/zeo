@@ -92,6 +92,12 @@ fn write_if_changed(path: &Path, content: &str) {
 /// are projected unconditionally of their cargo feature: the surface is
 /// folding-only (a miss falls back to runtime dispatch), and an un-required
 /// ext constant is unreachable regardless.
+///
+/// The built-in exception tree is deliberately ABSENT: `builtins/exception.rs`
+/// has no `ruby_class!` invocation for this scanner to find -- its rows are a
+/// runtime-installed table (`EXC_ROWS`), one shared implementation for all
+/// ~171 classes -- so the compiler stays surface-blind there and every
+/// exception-method call resolves through runtime dispatch.
 fn generate_class_surface(rt_src: &Path) -> String {
     let mut surfaces: Vec<Surface> = Vec::new();
     collect_from_dir(&rt_src.join("builtins"), &mut surfaces);
