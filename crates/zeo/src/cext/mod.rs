@@ -233,12 +233,32 @@ pub fn build_out_of_tree(
     if let Some(found) = product_of(&dir) {
         return Ok(found);
     }
-    // A partial build from an interrupted run would confuse mkmf's own
-    // freshness checks, so the directory starts clean.
-    let _ = std::fs::remove_dir_all(&dir);
-    stage(ext_dir, &dir).map_err(|e| format!("staging {gem}'s ext into {}: {e}", dir.display()))?;
-    configure(zeo, &dir, Path::new(extconf), &[])?;
-    build_extension(&dir, jobs())
+    // Two compiles may want the same extension at once -- parallel tests,
+    // or two zeo processes sharing one cache. Each builds in a private
+    // sibling and renames the finished directory into place, so `dir`
+    // either holds a COMPLETE product or nothing; a loser's rename fails
+    // and it uses the winner's product. (Building in `dir` directly let
+    // one process delete it out from under another mid-configure.)
+    let scratch = dir.with_file_name(format!(
+        "{}.build.{}",
+        dir.file_name().unwrap_or_default().to_string_lossy(),
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&scratch);
+    stage(ext_dir, &scratch)
+        .map_err(|e| format!("staging {gem}'s ext into {}: {e}", scratch.display()))?;
+    configure(zeo, &scratch, Path::new(extconf), &[])?;
+    build_extension(&scratch, jobs())?;
+    if std::fs::rename(&scratch, &dir).is_err() {
+        // The winner's directory is already there; ours is redundant.
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+    product_of(&dir).ok_or_else(|| {
+        format!(
+            "built {gem}'s extension but no shared object appeared in {}",
+            dir.display()
+        )
+    })
 }
 
 /// How many compiles to run at once.

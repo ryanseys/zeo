@@ -258,16 +258,16 @@ fn target_os() -> String {
     std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default()
 }
 
-/// Ruby names a few CPUs differently from Rust's `target_arch` (notably
-/// `aarch64` -> `arm64`); everything else passes through unchanged.
+/// Ruby names a few CPUs differently from Rust's `target_arch`, and one of
+/// them per-OS: Apple rubies say `arm64` (`arm64-darwin25`) while Linux
+/// rubies keep `aarch64` (`aarch64-linux`). Everything else passes through
+/// unchanged.
 fn ruby_arch() -> String {
-    match std::env::var("CARGO_CFG_TARGET_ARCH")
-        .unwrap_or_default()
-        .as_str()
-    {
-        "aarch64" => "arm64".to_string(),
-        "x86" => "i686".to_string(),
-        other => other.to_string(),
+    let arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
+    match (arch.as_str(), target_os().as_str()) {
+        ("aarch64", "macos" | "ios" | "tvos" | "watchos") => "arm64".to_string(),
+        ("x86", _) => "i686".to_string(),
+        _ => arch,
     }
 }
 
