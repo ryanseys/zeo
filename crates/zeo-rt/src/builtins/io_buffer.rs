@@ -579,12 +579,16 @@ fn io_fd(io: &RubyValue) -> Result<libc::c_int, Signal> {
 /// `read`/`write`/`pread`/`pwrite` share one shape: the syscall count is
 /// `size - buffer_offset` (the `length` argument only participates in the
 /// bounds validation -- io_buffer.c's observable behavior for files).
-fn io_args(st: &BufState, args: &[RubyValue], skip: usize) -> Result<usize, Signal> {
-    let length = match args.get(skip) {
+fn io_args(
+    st: &BufState,
+    length: Option<&RubyValue>,
+    offset: Option<&RubyValue>,
+) -> Result<usize, Signal> {
+    let length = match length {
         None | Some(RubyValue::Nil) => None,
         Some(v) => Some(crate::builtins::arg_int!(v)),
     };
-    let offset = match args.get(skip + 1) {
+    let offset = match offset {
         None => 0,
         Some(v) => crate::builtins::arg_int!(v),
     };
@@ -661,18 +665,17 @@ ruby_class! {
 
     // `IO::Buffer.map(file, size = nil, offset = 0, flags = SHARED)` -- a
     // REAL mmap: a shared writable map writes through to the file.
-    def self."map"(_recv, *args) {
-        crate::builtins::check_arity(args.len(), 1, Some(4))?;
-        let fd = io_fd(&args[0])?;
-        let offset = match args.get(2) {
+    def self."map"(_recv, file, size?, offset?, flags?) {
+        let fd = io_fd(file)?;
+        let offset = match offset {
             None => 0i64,
             Some(v) => crate::builtins::arg_int!(v),
         };
-        let flags = match args.get(3) {
+        let flags = match flags {
             None => SHARED,
             Some(v) => crate::builtins::arg_int!(v) as u32,
         };
-        let size = match args.get(1) {
+        let size = match size {
             None | Some(RubyValue::Nil) => {
                 let mut stat = unsafe { std::mem::zeroed::<libc::stat>() };
                 if unsafe { libc::fstat(fd, &mut stat) } != 0 {
@@ -886,15 +889,14 @@ ruby_class! {
         Ok(recv.clone())
     }
 
-    def "slice"(recv, *args) {
-        crate::builtins::check_arity(args.len(), 0, Some(2))?;
+    def "slice"(recv, offset?, length?) {
         let b = recv_buffer(recv);
         let st = b.state.lock();
-        let offset = match args.first() {
+        let offset = match offset {
             None => 0,
             Some(v) => crate::builtins::arg_int!(v),
         };
-        let length = match args.get(1) {
+        let length = match length {
             None => st.len as i64 - offset,
             Some(v) => crate::builtins::arg_int!(v),
         };
@@ -971,20 +973,19 @@ ruby_class! {
         Ok(RubyValue::Int(offset))
     }
 
-    def "get_string"(recv, *args) {
-        crate::builtins::check_arity(args.len(), 0, Some(3))?;
+    def "get_string"(recv, offset?, length?, encoding?) {
         let b = recv_buffer(recv);
         let st = b.state.lock();
-        let offset = match args.first() {
+        let offset = match offset {
             None => 0,
             Some(v) => crate::builtins::arg_int!(v),
         };
-        let length = match args.get(1) {
+        let length = match length {
             None | Some(RubyValue::Nil) => st.len as i64 - offset,
             Some(v) => crate::builtins::arg_int!(v),
         };
         let (offset, length) = check_range(&st, offset, length)?;
-        let enc = match args.get(2) {
+        let enc = match encoding {
             None => crate::encoding::ASCII_8BIT,
             Some(e) => crate::builtins::encoding::arg_encoding(e)?,
         };
@@ -992,16 +993,15 @@ ruby_class! {
         Ok(RubyValue::Str(crate::string_from_bytes(bytes, enc)))
     }
 
-    def "set_string"(recv, *args) {
-        crate::builtins::check_arity(args.len(), 1, Some(4))?;
-        let RubyValue::Str(s) = &args[0] else {
+    def "set_string"(recv, string, offset?, _length?, _string_offset?) {
+        let RubyValue::Str(s) = string else {
             return Err(type_error!(
                 "wrong argument type {} (expected String)",
-                crate::builtins::check_type_name(&args[0])
+                crate::builtins::check_type_name(string)
             ));
         };
         let src = s.lock().bytes().to_vec();
-        let offset = match args.get(1) {
+        let offset = match offset {
             None => 0,
             Some(v) => crate::builtins::arg_int!(v),
         };
@@ -1013,27 +1013,26 @@ ruby_class! {
         Ok(RubyValue::Int((offset + length) as i64))
     }
 
-    def "copy"(recv, *args) {
-        crate::builtins::check_arity(args.len(), 1, Some(4))?;
-        let Some(src) = as_buffer(&args[0]) else {
+    def "copy"(recv, source, offset?, length?, source_offset?) {
+        let Some(src) = as_buffer(source) else {
             return Err(type_error!(
                 "wrong argument type {} (expected IO::Buffer)",
-                crate::builtins::check_type_name(&args[0])
+                crate::builtins::check_type_name(source)
             ));
         };
         let src_bytes = window_bytes(&src.state.lock());
-        let dest_off = match args.get(1) {
+        let dest_off = match offset {
             None => 0,
             Some(v) => crate::builtins::arg_int!(v),
         };
-        let src_off = match args.get(3) {
+        let src_off = match source_offset {
             None => 0,
             Some(v) => crate::builtins::arg_int!(v),
         } as usize;
         if src_off > src_bytes.len() {
             return Err(range_error());
         }
-        let length = match args.get(2) {
+        let length = match length {
             None | Some(RubyValue::Nil) => (src_bytes.len() - src_off) as i64,
             Some(v) => crate::builtins::arg_int!(v),
         };
@@ -1050,20 +1049,19 @@ ruby_class! {
         Ok(RubyValue::Int(length as i64))
     }
 
-    def "clear"(recv, *args) {
-        crate::builtins::check_arity(args.len(), 0, Some(3))?;
-        let value = match args.first() {
+    def "clear"(recv, value?, offset?, length?) {
+        let value = match value {
             None => 0u8,
             Some(v) => crate::builtins::arg_int!(v) as u8,
         };
         let b = recv_buffer(recv);
         let st = b.state.lock();
         writable_guard(&st)?;
-        let offset = match args.get(1) {
+        let offset = match offset {
             None => 0,
             Some(v) => crate::builtins::arg_int!(v),
         };
-        let length = match args.get(2) {
+        let length = match length {
             None => st.len as i64 - offset,
             Some(v) => crate::builtins::arg_int!(v),
         };
@@ -1135,12 +1133,11 @@ ruby_class! {
         Ok(recv.clone())
     }
 
-    def "each"(recv, *args, &block) {
-        crate::builtins::check_arity(args.len(), 1, Some(3))?;
-        let block = block_or_enum!(recv, args, block);
-        let t = buf_type(&args[0])?;
+    def "each"(recv, buffer_type, offset?, count?, &block) {
+        let block = block_or_enum!(recv, __args, block);
+        let t = buf_type(buffer_type)?;
         let b = recv_buffer(recv);
-        let (mut offset, count) = each_bounds(&b, args, t)?;
+        let (mut offset, count) = each_bounds(&b, offset, count, t)?;
         let mut seen = 0usize;
         loop {
             if count.is_some_and(|c| seen >= c) {
@@ -1159,11 +1156,10 @@ ruby_class! {
         Ok(recv.clone())
     }
 
-    def "values"(recv, *args) {
-        crate::builtins::check_arity(args.len(), 1, Some(3))?;
-        let t = buf_type(&args[0])?;
+    def "values"(recv, buffer_type, offset?, count?) {
+        let t = buf_type(buffer_type)?;
         let b = recv_buffer(recv);
-        let (mut offset, count) = each_bounds(&b, args, t)?;
+        let (mut offset, count) = each_bounds(&b, offset, count, t)?;
         let mut out = Vec::new();
         loop {
             if count.is_some_and(|c| out.len() >= c) {
@@ -1196,19 +1192,18 @@ ruby_class! {
         Ok(recv.clone())
     }
 
-    def "hexdump"(recv, *args) {
-        crate::builtins::check_arity(args.len(), 0, Some(3))?;
+    def "hexdump"(recv, offset?, length?, width?) {
         let b = recv_buffer(recv);
         let st = b.state.lock();
-        let offset = match args.first() {
+        let offset = match offset {
             None => 0,
             Some(v) => crate::builtins::arg_int!(v),
         };
-        let length = match args.get(1) {
+        let length = match length {
             None => st.len as i64 - offset,
             Some(v) => crate::builtins::arg_int!(v),
         };
-        let width = match args.get(2) {
+        let width = match width {
             None => 16usize,
             Some(v) => (crate::builtins::arg_int!(v)).max(1) as usize,
         };
@@ -1241,39 +1236,36 @@ ruby_class! {
         ))))
     }
 
-    def "read"(recv, *args) {
-        crate::builtins::check_arity(args.len(), 1, Some(3))?;
-        let fd = io_fd(&args[0])?;
+    def "read"(recv, io, length?, offset?) {
+        let fd = io_fd(io)?;
         let b = recv_buffer(recv);
         let st = b.state.lock();
         writable_guard(&st)?;
-        let offset = io_args(&st, args, 1)?;
+        let offset = io_args(&st, length, offset)?;
         let n = with_window_mut(&st, |w| unsafe {
             libc::read(fd, w[offset..].as_mut_ptr() as *mut libc::c_void, w.len() - offset)
         });
         finish_io(n)
     }
 
-    def "write"(recv, *args) {
-        crate::builtins::check_arity(args.len(), 1, Some(3))?;
-        let fd = io_fd(&args[0])?;
+    def "write"(recv, io, length?, offset?) {
+        let fd = io_fd(io)?;
         let b = recv_buffer(recv);
         let st = b.state.lock();
-        let offset = io_args(&st, args, 1)?;
+        let offset = io_args(&st, length, offset)?;
         let n = with_window(&st, |w| unsafe {
             libc::write(fd, w[offset..].as_ptr() as *const libc::c_void, w.len() - offset)
         });
         finish_io(n)
     }
 
-    def "pread"(recv, *args) {
-        crate::builtins::check_arity(args.len(), 2, Some(4))?;
-        let fd = io_fd(&args[0])?;
-        let from = crate::builtins::arg_int!(&args[1]);
+    def "pread"(recv, io, from, length?, offset?) {
+        let fd = io_fd(io)?;
+        let from = crate::builtins::arg_int!(from);
         let b = recv_buffer(recv);
         let st = b.state.lock();
         writable_guard(&st)?;
-        let offset = io_args(&st, args, 2)?;
+        let offset = io_args(&st, length, offset)?;
         let n = with_window_mut(&st, |w| unsafe {
             libc::pread(
                 fd,
@@ -1285,13 +1277,12 @@ ruby_class! {
         finish_io(n)
     }
 
-    def "pwrite"(recv, *args) {
-        crate::builtins::check_arity(args.len(), 2, Some(4))?;
-        let fd = io_fd(&args[0])?;
-        let from = crate::builtins::arg_int!(&args[1]);
+    def "pwrite"(recv, io, from, length?, offset?) {
+        let fd = io_fd(io)?;
+        let from = crate::builtins::arg_int!(from);
         let b = recv_buffer(recv);
         let st = b.state.lock();
-        let offset = io_args(&st, args, 2)?;
+        let offset = io_args(&st, length, offset)?;
         let n = with_window(&st, |w| unsafe {
             libc::pwrite(
                 fd,
@@ -1331,15 +1322,16 @@ fn init_in_place(recv: &RubyValue, args: &[RubyValue]) -> Result<(), Signal> {
 /// `each`/`values` share the (type, offset, count) argument shape.
 fn each_bounds(
     b: &RBuffer,
-    args: &[RubyValue],
+    offset: Option<&RubyValue>,
+    count: Option<&RubyValue>,
     _t: BufType,
 ) -> Result<(usize, Option<usize>), Signal> {
     let st = b.state.lock();
-    let offset = match args.get(1) {
+    let offset = match offset {
         None => 0,
         Some(v) => crate::builtins::arg_int!(v),
     };
-    let count = match args.get(2) {
+    let count = match count {
         None => None,
         Some(v) => Some(crate::builtins::arg_int!(v) as usize),
     };
