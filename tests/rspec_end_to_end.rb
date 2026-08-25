@@ -31,7 +31,7 @@ end
 # `Struct` members, and `formatted_duration` reads its one from inside the
 # same class -- a self-call zeo inlines to the slot read, which no later
 # `define_method` reaches. That divergence has its own minimal repro in
-# `tests/gaps/an_inlined_accessor_ignores_a_later_redefinition.rb`; stubbing
+# `tests/an_inlined_accessor_ignores_a_later_redefinition.rb`; stubbing
 # one method further out keeps this golden measuring rspec rather than it.
 RSpec::Core::Notifications::SummaryNotification.class_eval do
   define_method(:formatted_duration) { "0 seconds" }

@@ -1,13 +1,7 @@
 # What a `require` answers, and where one may stand. Each line pins CRuby's
 # answer: true when this require is what loaded the library, false when it
-# was already there.
-#
-# zeo's divergence: `require "rational"` (and "complex") raises LoadError.
-# Both are default gems folded into core -- CRuby answers false because the
-# constants are always loaded -- but zeo's require resolver has no row for
-# the core-integrated names, so the run dies at line 11 and everything after
-# never executes. (Imported from spinel, whose bug here was different:
-# parse-time splicing skipped non-margin requires.)
+# was already there -- including `require "rational"`/"complex", the default
+# gems folded into core, which answer false. (Imported from spinel.)
 r1 = require 'stringio'
 p r1
 p r1.class

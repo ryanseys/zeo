@@ -1,6 +1,5 @@
 # A `def` inside instance_exec defines a singleton method on the receiver
-# at runtime (CRuby). zeo cannot lower runtime method definition in this
-# position yet -- tracked divergence (eval-VM/M8 territory).
+# at runtime (CRuby), and zeo matches.
 class Box
   def initialize(v)
     @v = v

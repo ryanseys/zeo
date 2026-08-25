@@ -334,7 +334,7 @@ fn every_shape_an_eval_once_declined_now_compiles() {
         eval "class EvalStruct < FFI::Struct; layout :a, :int, :b, :int; end"
         p EvalStruct.size
         # `refine`/`using` at run time. (A `Ruby::Box` closed with them and
-        # is pinned by `tests/gaps/a_snippet_mints_no_compile_time_box.rb`,
+        # is pinned by `tests/a_snippet_mints_no_compile_time_box.rb`,
         # which the golden harness runs with `RUBY_BOX=1`.)
         eval "module EvalRef; refine(String) { def shout = upcase + '!' }; end"
         p eval("using EvalRef; 'hi'.shout")
