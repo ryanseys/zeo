@@ -1449,3 +1449,150 @@ pub fn register_io_buffer(registry: &mut crate::dispatch::ClassRegistry) {
         Some(buffer_construct as crate::dispatch::ConstructorFn),
     );
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Each test runs in its own nextest process -- see the crate README for
+    // the with_core() bootstrap pattern.
+    fn install_core() {
+        crate::dispatch::install_class_registry(crate::dispatch::ClassRegistry::with_core());
+    }
+
+    fn buffer(size: i64) -> RubyValue {
+        crate::dispatch::send_value(
+            &RubyValue::Class(IO_BUFFER_CLASS),
+            crate::Symbol::intern("new"),
+            &[RubyValue::Int(size)],
+            None,
+        )
+        .expect("IO::Buffer.new succeeds")
+    }
+
+    fn call(recv: &RubyValue, name: &str, args: &[RubyValue]) -> Result<RubyValue, Signal> {
+        crate::dispatch::send_value(recv, crate::Symbol::intern(name), args, None)
+    }
+
+    fn int(r: Result<RubyValue, Signal>) -> i64 {
+        match r {
+            Ok(RubyValue::Int(n)) => n,
+            _ => panic!("expected an Int result"),
+        }
+    }
+
+    fn text(r: Result<RubyValue, Signal>) -> String {
+        match r {
+            Ok(RubyValue::Str(s)) => s.lock().to_utf8_lossy().into_owned(),
+            _ => panic!("expected a String result"),
+        }
+    }
+
+    fn sym(name: &str) -> RubyValue {
+        RubyValue::Symbol(crate::Symbol::intern(name))
+    }
+
+    fn rstr(s: &str) -> RubyValue {
+        RubyValue::Str(crate::string_new(s.to_string()))
+    }
+
+    #[test]
+    fn a_new_buffer_is_zeroed_and_sized() {
+        install_core();
+        let b = buffer(8);
+        assert_eq!(int(call(&b, "size", &[])), 8);
+        assert!(matches!(call(&b, "null?", &[]), Ok(RubyValue::Bool(false))));
+        assert_eq!(text(call(&b, "get_string", &[])), "\0".repeat(8));
+    }
+
+    #[test]
+    fn set_string_then_get_string_round_trips() {
+        install_core();
+        let b = buffer(8);
+        call(&b, "set_string", &[rstr("abc")]).expect("set_string succeeds");
+        assert_eq!(
+            text(call(
+                &b,
+                "get_string",
+                &[RubyValue::Int(0), RubyValue::Int(3)]
+            )),
+            "abc"
+        );
+        assert_eq!(
+            text(call(
+                &b,
+                "get_string",
+                &[RubyValue::Int(1), RubyValue::Int(2)]
+            )),
+            "bc"
+        );
+    }
+
+    #[test]
+    fn get_and_set_value_respect_width_and_endianness() {
+        install_core();
+        let b = buffer(8);
+        // A big-endian U16 write lands bytes [0x01, 0x02] at offset 0, and
+        // set_value answers the offset AFTER the write.
+        let after = call(
+            &b,
+            "set_value",
+            &[sym("U16"), RubyValue::Int(0), RubyValue::Int(0x0102)],
+        );
+        assert_eq!(int(after), 2);
+        assert_eq!(
+            int(call(&b, "get_value", &[sym("U16"), RubyValue::Int(0)])),
+            0x0102
+        );
+        // The little-endian read of the same bytes flips them.
+        assert_eq!(
+            int(call(&b, "get_value", &[sym("u16"), RubyValue::Int(0)])),
+            0x0201
+        );
+        assert_eq!(
+            int(call(&b, "get_value", &[sym("U8"), RubyValue::Int(0)])),
+            1
+        );
+        assert_eq!(
+            int(call(&b, "get_value", &[sym("U8"), RubyValue::Int(1)])),
+            2
+        );
+    }
+
+    #[test]
+    fn an_out_of_range_access_is_refused() {
+        install_core();
+        let b = buffer(8);
+        // offset + length beyond the window.
+        assert!(call(&b, "get_string", &[RubyValue::Int(6), RubyValue::Int(5)]).is_err());
+        // A typed read whose width crosses the end.
+        assert!(call(&b, "get_value", &[sym("U64"), RubyValue::Int(4)]).is_err());
+        // A negative offset.
+        assert!(call(&b, "get_string", &[RubyValue::Int(-1)]).is_err());
+    }
+
+    #[test]
+    fn a_slice_shares_the_backing() {
+        install_core();
+        let b = buffer(8);
+        call(&b, "set_string", &[rstr("abcdefgh")]).expect("set_string succeeds");
+        let s = call(&b, "slice", &[RubyValue::Int(1), RubyValue::Int(3)]).expect("slice succeeds");
+        assert_eq!(int(call(&s, "size", &[])), 3);
+        assert_eq!(text(call(&s, "get_string", &[])), "bcd");
+        // A write through the slice is visible in the parent's window.
+        call(&s, "set_string", &[rstr("XYZ")]).expect("slice write succeeds");
+        assert_eq!(text(call(&b, "get_string", &[])), "aXYZefgh");
+    }
+
+    #[test]
+    fn a_blockless_for_view_is_readonly() {
+        install_core();
+        let b = call(&RubyValue::Class(IO_BUFFER_CLASS), "for", &[rstr("ro")])
+            .expect("IO::Buffer.for succeeds");
+        assert!(matches!(
+            call(&b, "readonly?", &[]),
+            Ok(RubyValue::Bool(true))
+        ));
+        assert!(call(&b, "set_string", &[rstr("x")]).is_err());
+    }
+}

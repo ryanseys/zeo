@@ -1264,3 +1264,136 @@ fn parse_marshal_float(s: &str) -> f64 {
         _ => s.parse().unwrap_or(0.0),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Each test runs in its own nextest process -- see the crate README for
+    // the with_core() bootstrap pattern and why `cargo test` is unsupported.
+    fn install_core() {
+        crate::dispatch::install_class_registry(crate::dispatch::ClassRegistry::with_core());
+    }
+
+    fn dump(v: &RubyValue) -> Vec<u8> {
+        let out = send_value(
+            &RubyValue::Class(zeo_abi::MARSHAL_MODULE),
+            Symbol::intern("dump"),
+            std::slice::from_ref(v),
+            None,
+        )
+        .expect("Marshal.dump succeeds");
+        match out {
+            RubyValue::Str(s) => s.lock().bytes().to_vec(),
+            _ => panic!("Marshal.dump answers a String"),
+        }
+    }
+
+    fn load_bytes(bytes: Vec<u8>) -> Result<RubyValue, Signal> {
+        let s = RubyValue::Str(string_from_bytes(bytes, ASCII_8BIT));
+        send_value(
+            &RubyValue::Class(zeo_abi::MARSHAL_MODULE),
+            Symbol::intern("load"),
+            &[s],
+            None,
+        )
+    }
+
+    fn round_trip(v: &RubyValue) -> RubyValue {
+        load_bytes(dump(v)).expect("Marshal.load succeeds")
+    }
+
+    fn raised_class(r: Result<RubyValue, Signal>) -> crate::ClassId {
+        let Err(Signal::Raise(exc)) = r else {
+            panic!("expected a raised exception");
+        };
+        exc.as_object_unchecked().class_id()
+    }
+
+    #[test]
+    fn a_dump_starts_with_the_v48_header() {
+        install_core();
+        let bytes = dump(&RubyValue::Nil);
+        assert_eq!(&bytes, &[MAJOR, MINOR, b'0']);
+    }
+
+    #[test]
+    fn core_scalars_round_trip() {
+        install_core();
+        let cases = [
+            RubyValue::Nil,
+            RubyValue::Bool(true),
+            RubyValue::Bool(false),
+            RubyValue::Int(0),
+            RubyValue::Int(42),
+            RubyValue::Int(-1),
+            RubyValue::Int(123_456_789),
+            RubyValue::Int(i64::MIN + 1),
+            RubyValue::Float(1.5),
+            RubyValue::Str(crate::string_new("h\u{e9}llo".to_string())),
+        ];
+        for v in &cases {
+            assert_eq!(round_trip(v).inspect_string(), v.inspect_string());
+        }
+    }
+
+    #[test]
+    fn a_symbol_round_trips_as_a_symbol() {
+        install_core();
+        let sym = Symbol::intern("zeo");
+        let loaded = round_trip(&RubyValue::Symbol(sym));
+        assert!(matches!(loaded, RubyValue::Symbol(s) if s == sym));
+    }
+
+    #[test]
+    fn arrays_and_hashes_round_trip() {
+        install_core();
+        let arr = RubyValue::Array(array_new(vec![
+            RubyValue::Int(1),
+            RubyValue::Str(crate::string_new("two".to_string())),
+            RubyValue::Nil,
+        ]));
+        assert_eq!(round_trip(&arr).inspect_string(), arr.inspect_string());
+
+        let hash = RubyValue::Hash(hash_new(vec![
+            (RubyValue::Symbol(Symbol::intern("a")), RubyValue::Int(1)),
+            (
+                RubyValue::Str(crate::string_new("b".to_string())),
+                RubyValue::Int(2),
+            ),
+        ]));
+        assert_eq!(round_trip(&hash).inspect_string(), hash.inspect_string());
+    }
+
+    #[test]
+    fn a_shared_reference_loads_as_one_object() {
+        install_core();
+        // The object-link table (`@`): the second occurrence dumps as a link,
+        // so the load answers ONE string reachable twice.
+        let s = RubyValue::Str(crate::string_new("shared".to_string()));
+        let arr = RubyValue::Array(array_new(vec![s.clone(), s]));
+        let RubyValue::Array(loaded) = round_trip(&arr) else {
+            panic!("expected an Array back");
+        };
+        let elems = loaded.lock().to_vec();
+        let (RubyValue::Str(a), RubyValue::Str(b)) = (&elems[0], &elems[1]) else {
+            panic!("expected two Strings back");
+        };
+        assert!(Arc::ptr_eq(a, b));
+    }
+
+    #[test]
+    fn a_wrong_version_is_refused() {
+        install_core();
+        let err = load_bytes(vec![MAJOR - 1, MINOR, b'0']);
+        assert_eq!(raised_class(err), zeo_abi::TYPE_ERROR_CLASS);
+    }
+
+    #[test]
+    fn a_truncated_stream_is_refused() {
+        install_core();
+        // A string tag with no length byte behind it.
+        let err = load_bytes(vec![MAJOR, MINOR, b'"']);
+        assert_eq!(raised_class(err), zeo_abi::ARGUMENT_ERROR_CLASS);
+    }
+}
