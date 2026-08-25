@@ -1,5 +1,9 @@
 //! The public runtime API: what the builtins and codegen call to define,
 //! alias, undef, and mint classes/methods at run time.
+//!
+//! Argument slices are read raw here on purpose: these are extern-facing
+//! entry points with no `ruby_class!` header, outside the builtin
+//! argument-macro kit (see `builtins::check_arity`'s survivor note).
 
 use super::*;
 

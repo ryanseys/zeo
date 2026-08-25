@@ -18,6 +18,10 @@
 //!   per-coroutine pending slot (`crate::signal`).
 //! * Everything is single-coroutine state; callers never share a pointer
 //!   across threads.
+//!
+//! Argument slices stay raw `(ptr, len)` reads throughout: an extern-C
+//! boundary has no `ruby_class!` header, so the builtin argument-macro kit
+//! does not apply here (see `builtins::check_arity`'s survivor note).
 #![allow(
     clippy::missing_safety_doc,
     reason = "one boundary contract for the whole surface, documented on the module -- per-function repetition of the same pointer terms would drown the real signatures"

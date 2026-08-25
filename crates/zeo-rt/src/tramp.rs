@@ -8,7 +8,9 @@
 //! signature keeps the long-form closure those emitters build. The expansion
 //! here is token-for-token what the long form produces for the same
 //! signature: exact-count arity check (raising inside the callee's frame when
-//! the def has a location), then positional clones.
+//! the def has a location), then positional clones. `args.len()` is read raw
+//! here on purpose: the trampoline IS the arity guard, not a caller of the
+//! builtin kit's `check_arity`.
 //!
 //! Heads: `inst` downcasts to a generated struct and calls its inherent
 //! method; `pass` forwards the receiver `RubyValue` to a free function (a

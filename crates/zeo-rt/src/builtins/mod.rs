@@ -754,6 +754,29 @@ pub(crate) use {
 /// message is only ever built on the failing path, and LLVM otherwise lays that
 /// path ahead of the hot body, so a four-line builtin spends its first cache
 /// line on error construction.
+///
+/// WHERE RAW `args` HANDLING REMAINS ON PURPOSE -- the survivor classes of
+/// the macro-kit sweep, so the next sweep does not re-litigate them:
+/// (1) arity-DISPATCH bodies, where `args.len()` selects a behavior no one
+///     parameter list expresses (`Enumerable#first`/`#inject`/`#count`/`#sum`,
+///     `Hash.[]`, `String#[]=`, `Array#fill`/`#insert`, `SystemExit.new`);
+/// (2) shared free helpers serving several defs or a raw constructor
+///     boundary, which take the slice itself (enumerable's cores, Kernel's
+///     `*_impl` family, `io_buffer::init_in_place`, time's civil-field
+///     parsers, process's command builders, exception.rs's hand-registered
+///     rows, io_console's forwarded rows);
+/// (3) rows whose hand-rolled message `check_arity` cannot produce
+///     (`find_index` and `Range#first`/`#last` say "expected 1" while also
+///     accepting zero arguments);
+/// (4) the sanctioned `__args` channel: a body forwarding its whole slice to
+///     a helper or into an enumerator capture;
+/// (5) `RProc` closure bodies, whose `args` are the yielded values, not a
+///     method's argument list.
+/// tramp.rs and the capi/runtime_meta extern boundaries stay raw by design;
+/// their module docs say so. Unguarded probes that IGNORE surplus arguments
+/// (`Enumerable#tally`/`#cycle`, `Queue#initialize`) also survive: giving
+/// them a header would add the raise CRuby has, which is a behavior change,
+/// not a refactor.
 #[inline(always)]
 pub(crate) fn check_arity(given: usize, min: usize, max: Option<usize>) -> Result<(), Signal> {
     if given < min || max.is_some_and(|hi| given > hi) {
