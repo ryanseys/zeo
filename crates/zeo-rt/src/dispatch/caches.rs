@@ -494,6 +494,10 @@ pub fn send_value_dyn_cached(
     block: Option<RubyValue>,
     caller_class: u32,
 ) -> Result<RubyValue, Signal> {
+    // Same rule as `send_value_cached`: a hit never reaches the dynamic
+    // entry's stack check, so recursion carried by this cache must be
+    // checked here or it aborts instead of raising SystemStackError.
+    crate::stack_guard::stack_check()?;
     let gates = crate::runtime_meta::gates();
     if crate::runtime_meta::gates_moved(gates) && value_moved(recv) {
         return Err(crate::ractor::moved_object_error());
