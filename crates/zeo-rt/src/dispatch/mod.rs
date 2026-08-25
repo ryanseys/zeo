@@ -3190,10 +3190,9 @@ pub fn define_in_default_definee(
 }
 
 /// [`define_in_default_definee`] carrying the enclosing body's RUNNING
-/// visibility default, applied to whatever definee is resolved. The rustc
-/// emitter stamps that mark itself, at sites where the definee is a
-/// compile-time fact; the CLIF emitter hands it here, because a `def` in a
-/// `Class.new` body installs on a class only the run time can name.
+/// visibility default, applied to whatever definee is resolved. The
+/// emitter hands it here rather than stamping it itself, because a `def`
+/// in a `Class.new` body installs on a class only the run time can name.
 /// Install an eval'd `def` -- see `capi::objects::zeo_rt_eval_define`.
 /// `mode` is `eval::EvalMode` as a byte (0 Caller, 1 ClassEval,
 /// 2 InstanceEval).

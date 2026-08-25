@@ -217,12 +217,10 @@ pub(crate) fn implicit_send(
         let zero_box = fx.box_v();
         let ss = fx.temp_slot();
         let out = fx.slot_addr(ss, 0);
-        let status = fx
-            .call(
-                "zeo_rt_send_value_vcall_in",
-                &[zero_box, self_ptr, sym, out],
-            )
-            .expect("send returns a status");
+        let status = fx.call_status(
+            "zeo_rt_send_value_vcall_in",
+            &[zero_box, self_ptr, sym, out],
+        );
         fx.fallible(status);
         fx.owned_created += 1;
         return Ok(Operand::Slot {
@@ -255,12 +253,10 @@ pub(crate) fn implicit_send_ptr(
     // vetted against FCALL -- `send_value_cached` with that caller is
     // `send_value_in` with a monomorphic cache in front.
     let cache = fx.callsite_ptr(FCALL);
-    let status = fx
-        .call(
-            "zeo_rt_send_value_cached",
-            &[cache, zero_box, self_ptr, sym, argv_ptr, argc_v, null, out],
-        )
-        .expect("send returns a status");
+    let status = fx.call_status(
+        "zeo_rt_send_value_cached",
+        &[cache, zero_box, self_ptr, sym, argv_ptr, argc_v, null, out],
+    );
     fx.fallible(status);
     fx.owned_created += 1;
     Ok(Operand::Slot {
@@ -324,12 +320,10 @@ pub(crate) fn construct_compiled(
     let argc_v = fx.b.ins().iconst(fx.em.ptr, args.len() as i64);
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
-    let status = fx
-        .call(
-            "zeo_rt_class_new_instance",
-            &[cid_v, argv_ptr, argc_v, blk_ptr, out],
-        )
-        .expect("class_new_instance returns a status");
+    let status = fx.call_status(
+        "zeo_rt_class_new_instance",
+        &[cid_v, argv_ptr, argc_v, blk_ptr, out],
+    );
     fx.fallible(status);
     fx.owned_created += 1;
     Ok(Operand::Slot {
@@ -362,9 +356,7 @@ pub(crate) fn build_hash(
                 let kptr = ownership::move_ptr(fx, &kop);
                 let vop = lower_expr(fx, *v)?;
                 let vptr = ownership::move_ptr(fx, &vop);
-                let status = fx
-                    .call("zeo_rt_hash_set", &[out, kptr, vptr])
-                    .expect("hash_set returns a status");
+                let status = fx.call_status("zeo_rt_hash_set", &[out, kptr, vptr]);
                 fx.fallible(status);
             }
             crate::hir::KwArg::DoubleSplat(e) => {
@@ -373,9 +365,7 @@ pub(crate) fn build_hash(
                 if op.owned() {
                     ownership::pool_owned(fx, p, op.tag());
                 }
-                let status = fx
-                    .call("zeo_rt_kw_splat_into", &[out, p])
-                    .expect("kw_splat_into returns a status");
+                let status = fx.call_status("zeo_rt_kw_splat_into", &[out, p]);
                 fx.fallible(status);
             }
         }
@@ -410,9 +400,7 @@ pub(crate) fn build_array(
                 if op.owned() {
                     ownership::pool_owned(fx, p, op.tag());
                 }
-                let status = fx
-                    .call("zeo_rt_array_push_splat", &[out, p])
-                    .expect("push_splat returns a status");
+                let status = fx.call_status("zeo_rt_array_push_splat", &[out, p]);
                 fx.fallible(status);
             }
         }
@@ -620,9 +608,7 @@ pub(crate) fn caller_class(fx: &mut Fx, bypass: bool) -> cranelift_codegen::ir::
     // refused. Ask `self` instead, per call.
     if fx.self_is_dynamic {
         let slf = fx.self_ptr.expect("self_ptr is set in the prologue");
-        return fx
-            .call("zeo_rt_class_of", &[slf])
-            .expect("class_of answers a class id");
+        return fx.call_status("zeo_rt_class_of", &[slf]);
     }
     let cid = fx.method_class.map_or(0, |c| i64::from(c.0));
     fx.b.ins().iconst(types::I32, cid)
@@ -800,9 +786,7 @@ pub(crate) fn build_zsuper_args(
         if op.owned() {
             ownership::pool_owned(fx, p, op.tag());
         }
-        let status = fx
-            .call("zeo_rt_array_push_splat", &[out, p])
-            .expect("push_splat returns a status");
+        let status = fx.call_status("zeo_rt_array_push_splat", &[out, p]);
         fx.fallible(status);
     }
     for name in &params.post {
@@ -828,9 +812,7 @@ pub(crate) fn build_zsuper_args(
             fx.owned_consumed += 1; // hash_set moves the key temp
             let vop = ownership::read_local(fx, &key).expect("a param is always bound");
             let vp = ownership::move_ptr(fx, &vop);
-            let status = fx
-                .call("zeo_rt_hash_set", &[kw, sptr, vp])
-                .expect("hash_set returns a status");
+            let status = fx.call_status("zeo_rt_hash_set", &[kw, sptr, vp]);
             fx.fallible(status);
         }
         if let Some(Some(krest)) = &params.keyword_rest {
@@ -839,9 +821,7 @@ pub(crate) fn build_zsuper_args(
             if op.owned() {
                 ownership::pool_owned(fx, p, op.tag());
             }
-            let status = fx
-                .call("zeo_rt_kw_splat_into", &[kw, p])
-                .expect("kw_splat_into returns a status");
+            let status = fx.call_status("zeo_rt_kw_splat_into", &[kw, p]);
             fx.fallible(status);
         }
         kw
@@ -885,9 +865,7 @@ pub(crate) fn lower_super(
             i64::from(zeo_abi::RUNTIME_ERROR_CLASS.0),
         );
         let (mptr, mlen) = super::expr::rodata_name(fx, msg);
-        let status = fx
-            .call("zeo_rt_raise_error", &[cid, mptr, mlen])
-            .expect("raise_error returns a status");
+        let status = fx.call_status("zeo_rt_raise_error", &[cid, mptr, mlen]);
         fx.fallible(status);
         return Ok(Operand::Nil);
     }
@@ -906,9 +884,7 @@ pub(crate) fn lower_super(
             let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
             let ss = fx.temp_slot();
             let out = fx.slot_addr(ss, 0);
-            let status = fx
-                .call("zeo_rt_eval_super", &[self_ptr, out])
-                .expect("eval_super returns a status");
+            let status = fx.call_status("zeo_rt_eval_super", &[self_ptr, out]);
             fx.fallible(status);
             fx.owned_created += 1;
             return Ok(Operand::Slot {
@@ -925,9 +901,7 @@ pub(crate) fn lower_super(
         // cannot, and the run time picks which of the two refusals ruby
         // gives.
         None if zsuper => {
-            let status = fx
-                .call("zeo_rt_bare_super_outside_a_method", &[])
-                .expect("bare_super_outside_a_method returns a status");
+            let status = fx.call_status("zeo_rt_bare_super_outside_a_method", &[]);
             fx.fallible(status);
             return Ok(Operand::Nil);
         }
@@ -965,9 +939,7 @@ pub(crate) fn lower_super(
             }
             let conv_ss = fx.temp_slot();
             let conv = fx.slot_addr(conv_ss, 0);
-            let status = fx
-                .call("zeo_rt_block_arg_to_proc", &[vp, conv])
-                .expect("block_arg_to_proc returns a status");
+            let status = fx.call_status("zeo_rt_block_arg_to_proc", &[vp, conv]);
             fx.fallible(status);
             let fl = cranelift_codegen::ir::MemFlagsData::trusted();
             let tag =
@@ -1011,12 +983,10 @@ pub(crate) fn lower_super(
         let unmark_v =
             fx.b.ins()
                 .iconst(cranelift_codegen::ir::types::I8, i64::from(unmark));
-        let status = fx
-            .call(
-                "zeo_rt_send_super_dynamic_args",
-                &[self_ptr, args_ptr, unmark_v, kw_ptr, blk_ptr, out],
-            )
-            .expect("send_super_dynamic_args returns a status");
+        let status = fx.call_status(
+            "zeo_rt_send_super_dynamic_args",
+            &[self_ptr, args_ptr, unmark_v, kw_ptr, blk_ptr, out],
+        );
         fx.fallible(status);
         fx.owned_created += 1;
         return Ok(Operand::Slot {
@@ -1065,23 +1035,21 @@ pub(crate) fn lower_super(
                 let mi =
                     fx.b.ins()
                         .iconst(cranelift_codegen::ir::types::I8, i64::from(module_instance));
-                fx.call(
+                fx.call_status(
                     "zeo_rt_call_singleton_super_target_args",
                     &[
                         t_v, mi, recv_v, sym, args_ptr, unmark_v, kw_ptr, blk_ptr, out,
                     ],
                 )
-                .expect("call_singleton_super_target_args returns a status")
             }
             None => {
                 let def_v =
                     fx.b.ins()
                         .iconst(cranelift_codegen::ir::types::I32, i64::from(resume.0));
-                fx.call(
+                fx.call_status(
                     "zeo_rt_send_super_class_from_args",
                     &[recv_v, def_v, sym, args_ptr, unmark_v, kw_ptr, blk_ptr, out],
                 )
-                .expect("send_super_class_from_args returns a status")
             }
         };
         fx.fallible(status);
@@ -1118,25 +1086,23 @@ pub(crate) fn lower_super(
             .iconst(cranelift_codegen::ir::types::I8, i64::from(unmark));
     let status = if value_channel {
         let (nptr, nlen) = super::expr::rodata_name(fx, &mname);
-        fx.call(
+        fx.call_status(
             "zeo_rt_value_super_args",
             &[
                 self_ptr, nptr, nlen, args_ptr, unmark_v, kw_ptr, blk_ptr, out,
             ],
         )
-        .expect("value_super_args returns a status")
     } else {
         let def_v =
             fx.b.ins()
                 .iconst(cranelift_codegen::ir::types::I32, i64::from(def_class.0));
         let sym = fx.sym_id(&mname);
-        fx.call(
+        fx.call_status(
             "zeo_rt_send_super_from_args",
             &[
                 self_ptr, def_v, sym, args_ptr, unmark_v, kw_ptr, blk_ptr, out,
             ],
         )
-        .expect("send_super_from_args returns a status")
     };
     fx.fallible(status);
     fx.owned_created += 1;
@@ -1157,9 +1123,7 @@ fn super_outside_a_method(fx: &mut Fx) -> Result<Operand, String> {
         i64::from(zeo_abi::NO_METHOD_ERROR_CLASS.0),
     );
     let (mptr, mlen) = super::expr::rodata_name(fx, "super called outside of method");
-    let status = fx
-        .call("zeo_rt_raise_error", &[cid, mptr, mlen])
-        .expect("raise_error returns a status");
+    let status = fx.call_status("zeo_rt_raise_error", &[cid, mptr, mlen]);
     fx.fallible(status);
     Ok(Operand::Nil)
 }

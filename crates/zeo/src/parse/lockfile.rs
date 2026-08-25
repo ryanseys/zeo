@@ -373,8 +373,8 @@ mod tests {
     /// store stays out of the packaged `zeo`.
     #[test]
     fn parses_the_checked_in_fixture_lockfile() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/gem_store/Gemfile.lock");
+        let path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/gem_store/Gemfile.lock");
         let lock = parse_file(&path).unwrap();
         let gem = |n: &str| lock.gems.iter().find(|g| g.name == n).unwrap();
 

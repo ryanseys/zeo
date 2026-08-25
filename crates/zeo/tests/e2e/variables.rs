@@ -210,9 +210,9 @@ fn a_module_class_variable_is_shared_across_every_including_class() {
     // MODULE's own body is genuinely owned by the module itself -- every
     // class that includes it (even two entirely unrelated classes) shares
     // the SAME storage, not one copy per includer. Exercises
-    // `codegen::expr::cvar_owner_id` consulting `Ctx.defining_class`
+    // `clif::expr::cvar_owner` consulting `Fx.defining_class`
     // (the module a materialized method's body actually came from), not
-    // `Ctx.current_class` (whichever class it's materialized onto).
+    // `Fx.method_class` (whichever class it's materialized onto).
     let result = run_ruby(
         r#"
         module Shared
@@ -702,8 +702,8 @@ fn class_shift_self_constants_are_visible_to_the_singletons_class_methods() {
 #[test]
 fn reading_the_same_ivar_or_captured_local_twice_in_one_expression_does_not_deadlock() {
     // CRITICAL bug, found via the operator-method test above (`@x * @x`
-    // inside `Vector#<=>`): `codegen::expr`'s `IvarRead` and
-    // `codegen::hoisting`'s captured-`LocalRead` both emitted a bare,
+    // inside `Vector#<=>`): the old emitter's `IvarRead` and
+    // captured-`LocalRead` lowerings both emitted a bare,
     // UNNAMED `#expr.lock().clone()` -- Rust's temporary-lifetime rule
     // keeps an unnamed `.lock()` guard alive until the end of the
     // ENCLOSING STATEMENT (confirmed via a minimal, standalone
@@ -766,7 +766,7 @@ fn or_assign_on_a_never_before_defined_constant_quietly_defines_it() {
 #[test]
 fn compound_assignment_on_a_plain_non_class_constant_dispatches_correctly() {
     // A real, previously-undetected bug, found alongside the `||=` fix
-    // above: `codegen::call::emit_call` treated ANY `HirNode::ClassRef`
+    // above: the compiler's call lowering treated ANY `HirNode::ClassRef`
     // receiver as a `ClassName.foo(...)` class-method call, UNCONDITIONALLY
     // -- but `ClassRef` is also how an ordinary bare constant read lowers
     // (see its own docs). So `MAX += 1` (desugared to `MAX.+(1)`, where

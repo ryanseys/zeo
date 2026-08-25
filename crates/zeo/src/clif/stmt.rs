@@ -28,10 +28,9 @@ pub(crate) fn lower_stmts(fx: &mut Fx, stmts: &[NodeId]) -> Result<(), String> {
             continue;
         }
         let mark = fx.stmt_mark();
-        let pool = fx.drain_temps.then(|| {
-            fx.call("zeo_rt_pool_mark", &[])
-                .expect("pool_mark returns the watermark")
-        });
+        let pool = fx
+            .drain_temps
+            .then(|| fx.call_status("zeo_rt_pool_mark", &[]));
         lower_stmt(fx, stmts[i])?;
         if let Some(pool) = pool {
             fx.call("zeo_rt_pool_reset", &[pool]);
@@ -215,9 +214,7 @@ fn name_keyed_ivar_read(fx: &mut Fx, name: &str) -> Result<super::operand::Opera
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
     let (nptr, nlen) = super::expr::rodata_name(fx, name);
-    let status = fx
-        .call("zeo_rt_ivar_get_dyn", &[recv, nptr, nlen, out])
-        .expect("ivar_get_dyn returns a status");
+    let status = fx.call_status("zeo_rt_ivar_get_dyn", &[recv, nptr, nlen, out]);
     fx.fallible(status);
     fx.owned_created += 1;
     Ok(super::operand::Operand::Slot {
@@ -249,9 +246,7 @@ pub(crate) fn ivar_write_op(
             ownership::pool_owned(fx, ptr, tag);
         }
         let (nptr, nlen) = super::expr::rodata_name(fx, name);
-        let status = fx
-            .call("zeo_rt_ivar_set_dyn", &[recv, nptr, nlen, ptr])
-            .expect("ivar_set_dyn returns a status");
+        let status = fx.call_status("zeo_rt_ivar_set_dyn", &[recv, nptr, nlen, ptr]);
         fx.fallible(status);
         return Ok(());
     }
@@ -260,9 +255,7 @@ pub(crate) fn ivar_write_op(
         let slot = slot.expect("the slotless case took the name-keyed path");
         let ptr = ownership::move_ptr(fx, &op);
         let slot_v = fx.b.ins().iconst(fx.em.ptr, slot as i64);
-        let status = fx
-            .call("zeo_rt_ivar_set_slot", &[self_ptr, slot_v, ptr])
-            .expect("ivar_set_slot returns a status");
+        let status = fx.call_status("zeo_rt_ivar_set_slot", &[self_ptr, slot_v, ptr]);
         fx.fallible(status);
     }
     Ok(())
@@ -298,9 +291,7 @@ pub(crate) fn lower_multi_group(
     let nb = fx.b.ins().iconst(fx.em.ptr, n_before as i64);
     let hs = fx.b.ins().iconst(types::I8, i64::from(has_splat));
     let na = fx.b.ins().iconst(fx.em.ptr, n_after as i64);
-    let status = fx
-        .call("zeo_rt_multi_split", &[value_ptr, nb, hs, na, slots_ptr])
-        .expect("multi_split returns a status");
+    let status = fx.call_status("zeo_rt_multi_split", &[value_ptr, nb, hs, na, slots_ptr]);
     fx.fallible(status);
     fx.owned_created += n_out;
     let mut s = 0usize;
@@ -380,9 +371,7 @@ fn write_multi_target(
             let owner = super::expr::cvar_owner(fx, name);
             let owner_v = fx.b.ins().iconst(types::I32, i64::from(owner));
             let (nptr, nlen) = name_pair(fx, name);
-            let status = fx
-                .call("zeo_rt_cvar_set", &[owner_v, nptr, nlen, addr])
-                .expect("cvar_set returns a status");
+            let status = fx.call_status("zeo_rt_cvar_set", &[owner_v, nptr, nlen, addr]);
             fx.fallible(status);
             fx.call("zeo_rt_release", &[addr]);
             fx.owned_consumed += 1;
@@ -391,9 +380,7 @@ fn write_multi_target(
         MultiTarget::Global(name) => {
             let bx = fx.box_v();
             let (nptr, nlen) = name_pair(fx, name);
-            let status = fx
-                .call("zeo_rt_gvar_assign", &[bx, nptr, nlen, addr])
-                .expect("gvar_assign returns a status");
+            let status = fx.call_status("zeo_rt_gvar_assign", &[bx, nptr, nlen, addr]);
             fx.fallible(status);
             fx.call("zeo_rt_release", &[addr]);
             fx.owned_consumed += 1;
@@ -634,7 +621,7 @@ fn lower_tail_expr(fx: &mut Fx, tail: NodeId) -> Result<super::operand::Operand,
             eval_mixin_send_value(fx, tail, &module, verb)
         }
         other => {
-            let what = format!("this tail expression ({})", statement_kind(other));
+            let what = format!("this tail expression ({})", super::expr::node_kind(other));
             fx.unsupported(tail, &what)
         }
     }
@@ -971,9 +958,8 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
                     ownership::pool_owned(fx, cause_ptr, cause_op.tag());
                 }
                 let argc = fx.b.ins().iconst(fx.em.ptr, args.len() as i64);
-                let status = fx
-                    .call("zeo_rt_raise_with_explicit_cause", &[argv, argc, cause_ptr])
-                    .expect("raise_with_explicit_cause returns a status");
+                let status =
+                    fx.call_status("zeo_rt_raise_with_explicit_cause", &[argv, argc, cause_ptr]);
                 fx.fallible(status);
                 return Ok(());
             }
@@ -1155,9 +1141,7 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
             let slot_v =
                 fx.b.ins()
                     .iconst(types::I32, i64::from(fx.using_base + slot));
-            let status = fx
-                .call("zeo_rt_eval_using", &[ptr, slot_v])
-                .expect("eval_using returns a status");
+            let status = fx.call_status("zeo_rt_eval_using", &[ptr, slot_v]);
             fx.fallible(status);
             Ok(())
         }
@@ -1278,12 +1262,10 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
             let zero_box = fx.box_v();
             let argc = fx.b.ins().iconst(fx.em.ptr, 1);
             let null = fx.b.ins().iconst(fx.em.ptr, 0);
-            let status = fx
-                .call(
-                    "zeo_rt_send_value_in",
-                    &[zero_box, recv_ptr, sym, argv, argc, null, out],
-                )
-                .expect("send returns a status");
+            let status = fx.call_status(
+                "zeo_rt_send_value_in",
+                &[zero_box, recv_ptr, sym, argv, argc, null, out],
+            );
             if pending.is_empty() {
                 fx.fallible(status);
             } else {
@@ -1415,7 +1397,7 @@ pub(crate) fn lower_stmt(fx: &mut Fx, stmt: NodeId) -> Result<(), String> {
             Ok(())
         }
         other => {
-            let what = format!("this statement ({})", statement_kind(other));
+            let what = format!("this statement ({})", super::expr::node_kind(other));
             fx.unsupported(stmt, &what)
         }
     }
@@ -1569,12 +1551,10 @@ pub(crate) fn eval_class_def(fx: &mut Fx, stmt: NodeId) -> Result<super::operand
     let is_module_v = fx.b.ins().iconst(types::I8, i64::from(u8::from(is_module)));
     let class_ss = fx.temp_slot();
     let class_ptr = fx.slot_addr(class_ss, 0);
-    let status = fx
-        .call(
-            "zeo_rt_eval_class_open",
-            &[owner_ptr, nptr, nlen, super_ptr, is_module_v, class_ptr],
-        )
-        .expect("eval_class_open returns a status");
+    let status = fx.call_status(
+        "zeo_rt_eval_class_open",
+        &[owner_ptr, nptr, nlen, super_ptr, is_module_v, class_ptr],
+    );
     fx.fallible(status);
     fx.owned_created += 1;
     ownership::pool_owned(
@@ -1604,14 +1584,12 @@ pub(crate) fn eval_class_def(fx: &mut Fx, stmt: NodeId) -> Result<super::operand
     let n_outer = fx.b.ins().iconst(fx.em.ptr, outer.len() as i64);
     let out_ss = fx.temp_slot();
     let out = fx.slot_addr(out_ss, 0);
-    let status = fx
-        .call(
-            "zeo_rt_eval_class_body",
-            &[
-                class_ptr, sptr, slen, fptr, flen, line_v, lptr, llen, bx, outer_ptr, n_outer, out,
-            ],
-        )
-        .expect("eval_class_body returns a status");
+    let status = fx.call_status(
+        "zeo_rt_eval_class_body",
+        &[
+            class_ptr, sptr, slen, fptr, flen, line_v, lptr, llen, bx, outer_ptr, n_outer, out,
+        ],
+    );
     fx.fallible(status);
     fx.owned_created += 1;
     Ok(Operand::Slot {
@@ -1732,9 +1710,7 @@ fn eval_definee(fx: &mut Fx, singleton: bool) -> Result<super::operand::Operand,
     let mode_v = fx.b.ins().iconst(types::I8, i64::from(mode));
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
-    let status = fx
-        .call("zeo_rt_eval_definee", &[mode_v, self_ptr, out])
-        .expect("eval_definee returns a status");
+    let status = fx.call_status("zeo_rt_eval_definee", &[mode_v, self_ptr, out]);
     fx.fallible(status);
     fx.owned_created += 1;
     let definee = Operand::Slot {
@@ -1805,12 +1781,10 @@ fn eval_definee_call(
     let null = fx.b.ins().iconst(fx.em.ptr, 0);
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
-    let status = fx
-        .call(
-            "zeo_rt_send_value_in",
-            &[bx, recv, sym, argv, argc_v, null, out],
-        )
-        .expect("send returns a status");
+    let status = fx.call_status(
+        "zeo_rt_send_value_in",
+        &[bx, recv, sym, argv, argc_v, null, out],
+    );
     fx.fallible(status);
     fx.owned_created += 1;
     Ok(Operand::Slot {
@@ -1845,12 +1819,10 @@ fn mixin_hook_send(fx: &mut Fx, module: &str, hook: &str) -> Result<(), String> 
     let zero_box = fx.box_v();
     let argc = fx.b.ins().iconst(fx.em.ptr, 1);
     let null = fx.b.ins().iconst(fx.em.ptr, 0);
-    let status = fx
-        .call(
-            "zeo_rt_send_value_in",
-            &[zero_box, recv_ptr, sym, argv, argc, null, out],
-        )
-        .expect("send returns a status");
+    let status = fx.call_status(
+        "zeo_rt_send_value_in",
+        &[zero_box, recv_ptr, sym, argv, argc, null, out],
+    );
     fx.fallible(status);
     fx.owned_created += 1;
     ownership::discard(
@@ -1865,15 +1837,6 @@ fn mixin_hook_send(fx: &mut Fx, module: &str, hook: &str) -> Result<(), String> 
 }
 
 /// A short label for the refusal message.
-fn statement_kind(node: &HirNode) -> String {
-    match node {
-        HirNode::ClassDef { .. } => "a class definition".to_string(),
-        HirNode::DefMethod { .. } => "a method definition".to_string(),
-        HirNode::Begin { .. } => "a begin/rescue/ensure".to_string(),
-        other => format!("the node kind `{}`", super::expr::variant_name(other)),
-    }
-}
-
 /// `puts` with arbitrary slice-lowerable arguments: a contiguous argv
 /// array of borrowed copies (owned temps hand their value to the pool
 /// first), then the status-protocol call.
@@ -1907,9 +1870,7 @@ fn lower_puts(fx: &mut Fx, stmt: NodeId, args: &[ArrayElem]) -> Result<(), Strin
     let argc_v = fx.b.ins().iconst(fx.em.ptr, argc as i64);
     let out_ss = fx.temp_slot();
     let out = fx.slot_addr(out_ss, 0);
-    let status = fx
-        .call("zeo_rt_kernel_puts", &[argv_ptr, argc_v, out])
-        .expect("kernel_puts returns a status");
+    let status = fx.call_status("zeo_rt_kernel_puts", &[argv_ptr, argc_v, out]);
     fx.fallible(status);
     // `puts` answers nil -- an immediate, nothing to release.
     Ok(())
@@ -1925,9 +1886,7 @@ fn lower_loop(
     post: bool,
     result: Option<cranelift_codegen::ir::Value>,
 ) -> Result<(), String> {
-    let mark = fx
-        .call("zeo_rt_pool_mark", &[])
-        .expect("pool_mark returns the watermark");
+    let mark = fx.call_status("zeo_rt_pool_mark", &[]);
     let head = fx.b.create_block();
     let body_blk = fx.b.create_block();
     let latch = fx.b.create_block();
@@ -1955,9 +1914,7 @@ fn lower_loop(
     }
 
     fx.b.switch_to_block(body_blk);
-    let status = fx
-        .call("zeo_rt_check_ints", &[])
-        .expect("check_ints status");
+    let status = fx.call_status("zeo_rt_check_ints", &[]);
     fx.fallible(status);
     fx.loops.push(LoopCtl {
         exit,
@@ -2018,14 +1975,10 @@ fn lower_for(
     ));
     let state = fx.slot_addr(state_ss, 0);
     let packed_v = fx.b.ins().iconst(types::I8, i64::from(packed));
-    let status = fx
-        .call("zeo_rt_for_begin", &[coll_ptr, packed_v, state])
-        .expect("for_begin returns a status");
+    let status = fx.call_status("zeo_rt_for_begin", &[coll_ptr, packed_v, state]);
     fx.fallible(status);
 
-    let mark = fx
-        .call("zeo_rt_pool_mark", &[])
-        .expect("pool_mark returns the watermark");
+    let mark = fx.call_status("zeo_rt_pool_mark", &[]);
     let head = fx.b.create_block();
     let body_blk = fx.b.create_block();
     let latch = fx.b.create_block();
@@ -2049,9 +2002,7 @@ fn lower_for(
     fx.b.switch_to_block(body_blk);
     fx.owned_created += 1;
     write_multi_target(fx, site, target, elem)?;
-    let status = fx
-        .call("zeo_rt_check_ints", &[])
-        .expect("check_ints status");
+    let status = fx.call_status("zeo_rt_check_ints", &[]);
     fx.land = end_land;
     fx.fallible(status);
     fx.loops.push(LoopCtl {
@@ -2342,9 +2293,7 @@ fn class_body_site_run(
         let names: Vec<&str> = call.freeze_guard.iter().map(String::as_str).collect();
         let (ptr, n) = super::statics::str_array(fx, &names);
         let cid = fx.b.ins().iconst(types::I32, i64::from(call.class));
-        let st = fx
-            .call("zeo_rt_guard_class_reopen", &[cid, ptr, n])
-            .expect("guard_class_reopen returns a status");
+        let st = fx.call_status("zeo_rt_guard_class_reopen", &[cid, ptr, n]);
         fx.fallible(st);
     }
     // The reopen is POSITIONAL: from here on the reopened bodies answer for
@@ -2397,12 +2346,10 @@ fn class_body_site_run(
         let zero_box = fx.box_v();
         let argc = fx.b.ins().iconst(fx.em.ptr, 1);
         let null = fx.b.ins().iconst(fx.em.ptr, 0);
-        let status = fx
-            .call(
-                "zeo_rt_send_value_in",
-                &[zero_box, recv_ptr, sym, argv, argc, null, out],
-            )
-            .expect("send returns a status");
+        let status = fx.call_status(
+            "zeo_rt_send_value_in",
+            &[zero_box, recv_ptr, sym, argv, argc, null, out],
+        );
         fx.fallible(status);
         fx.owned_created += 1;
         ownership::discard(
@@ -2424,9 +2371,7 @@ fn class_body_site_run(
             .is_empty();
         if has {
             let cid = fx.b.ins().iconst(types::I32, i64::from(call.class));
-            let st = fx
-                .call("zeo_rt_validate_class_aliases", &[cid])
-                .expect("validate_class_aliases returns a status");
+            let st = fx.call_status("zeo_rt_validate_class_aliases", &[cid]);
             fx.fallible(st);
         }
     };
@@ -2445,7 +2390,8 @@ fn class_body_site_run(
     let tag =
         fx.b.ins()
             .iconst(types::I8, i64::from(zeo_abi::abi::ValueTag::Class as u8));
-    fx.b.ins().store(fl, tag, self_addr, 0);
+    fx.b.ins()
+        .store(fl, tag, self_addr, zeo_abi::abi::TAG_OFFSET as i32);
     let cid = fx.b.ins().iconst(types::I32, i64::from(call.class));
     fx.b.ins()
         .store(fl, cid, self_addr, zeo_abi::abi::PAYLOAD_OFFSET as i32);
@@ -2497,7 +2443,7 @@ fn apply_visibility(
                 .iconst(cranelift_codegen::ir::types::I8, i64::from(v)),
         );
     }
-    let status = fx.call(entry, &args).expect("the entry returns a status");
+    let status = fx.call_status(entry, &args);
     fx.fallible(status);
     Ok(())
 }

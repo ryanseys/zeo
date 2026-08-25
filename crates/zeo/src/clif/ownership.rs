@@ -6,7 +6,7 @@
 use super::ctx::{Fx, Local};
 use super::operand::{Operand, TagInfo};
 use cranelift_codegen::ir::{self, InstBuilder, MemFlagsData, types};
-use zeo_abi::abi::{FIRST_HEAP_TAG, PAYLOAD_OFFSET, ValueTag};
+use zeo_abi::abi::{FIRST_HEAP_TAG, PAYLOAD_OFFSET, TAG_OFFSET, ValueTag};
 
 /// Write `op`'s tag+payload to memory at `dst` (no ownership transfer --
 /// the raw store both `write_borrow` and `move_into` build on).
@@ -24,7 +24,7 @@ fn store_bits(fx: &mut Fx, op: &Operand, dst: ir::Value) {
         }
         Operand::Int(v) => {
             let tag = fx.b.ins().iconst(types::I8, i64::from(ValueTag::Int as u8));
-            fx.b.ins().store(fl, tag, dst, 0);
+            fx.b.ins().store(fl, tag, dst, TAG_OFFSET as i32);
             let v = *v;
             fx.b.ins().store(fl, v, dst, payload);
         }
@@ -32,7 +32,7 @@ fn store_bits(fx: &mut Fx, op: &Operand, dst: ir::Value) {
             let tag =
                 fx.b.ins()
                     .iconst(types::I8, i64::from(ValueTag::Float as u8));
-            fx.b.ins().store(fl, tag, dst, 0);
+            fx.b.ins().store(fl, tag, dst, TAG_OFFSET as i32);
             let v = *v;
             fx.b.ins().store(fl, v, dst, payload);
         }
@@ -40,7 +40,7 @@ fn store_bits(fx: &mut Fx, op: &Operand, dst: ir::Value) {
             let tag =
                 fx.b.ins()
                     .iconst(types::I8, i64::from(ValueTag::Bool as u8));
-            fx.b.ins().store(fl, tag, dst, 0);
+            fx.b.ins().store(fl, tag, dst, TAG_OFFSET as i32);
             let v = *v;
             fx.b.ins().store(fl, v, dst, payload);
         }
@@ -135,7 +135,7 @@ pub(crate) fn pool_owned(fx: &mut Fx, addr: ir::Value, tag: TagInfo) {
         Some(false) => {}
         None => {
             let fl = MemFlagsData::trusted();
-            let t = fx.b.ins().load(types::I8, fl, addr, 0);
+            let t = fx.b.ins().load(types::I8, fl, addr, TAG_OFFSET as i32);
             let is_heap = fx.b.ins().icmp_imm_u(
                 ir::condcodes::IntCC::UnsignedGreaterThanOrEqual,
                 t,
@@ -160,7 +160,7 @@ pub(crate) fn pool_owned(fx: &mut Fx, addr: ir::Value, tag: TagInfo) {
 /// boundary, so a double release still reaches the runtime's check.
 pub(crate) fn release_if_heap(fx: &mut Fx, addr: ir::Value) {
     let fl = MemFlagsData::trusted();
-    let t = fx.b.ins().load(types::I8, fl, addr, 0);
+    let t = fx.b.ins().load(types::I8, fl, addr, TAG_OFFSET as i32);
     let is_heap = fx.b.ins().icmp_imm_u(
         ir::condcodes::IntCC::UnsignedGreaterThanOrEqual,
         t,
@@ -178,7 +178,7 @@ pub(crate) fn release_if_heap(fx: &mut Fx, addr: ir::Value) {
 /// Retain the value at `addr` iff its runtime tag is a heap tag.
 pub(crate) fn retain_if_heap(fx: &mut Fx, addr: ir::Value) {
     let fl = MemFlagsData::trusted();
-    let t = fx.b.ins().load(types::I8, fl, addr, 0);
+    let t = fx.b.ins().load(types::I8, fl, addr, TAG_OFFSET as i32);
     let is_heap = fx.b.ins().icmp_imm_u(
         ir::condcodes::IntCC::UnsignedGreaterThanOrEqual,
         t,
@@ -298,9 +298,7 @@ pub(crate) fn truthy(fx: &mut Fx, op: Operand) -> ir::Value {
                 }
                 // A Class immediate is truthy like any other non-nil.
                 TagInfo::Class(_) => fx.b.ins().iconst(types::I8, 1),
-                TagInfo::Known(_) | TagInfo::Unknown => fx
-                    .call("zeo_rt_truthy", &[addr])
-                    .expect("truthy returns i8"),
+                TagInfo::Known(_) | TagInfo::Unknown => fx.call_status("zeo_rt_truthy", &[addr]),
             }
         }
     }

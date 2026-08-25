@@ -529,7 +529,7 @@ mod tests {
     }
 
     /// Two different CLASSES are different types for this purpose -- the
-    /// exact shape that broke: each has its own generated Rust struct, so a
+    /// exact shape that broke: each has its own instance layout, so a
     /// single `Object(cid)` entry can't describe both.
     #[test]
     fn a_local_reassigned_to_a_different_class_widens_to_poly() {
@@ -576,11 +576,10 @@ mod tests {
         assert_eq!(ty_of("puts(y = 1)", "y"), TyKind::Int);
     }
 
-    /// A `begin` body compiles inside its own Rust closure while the rescue
-    /// chain, the `ensure`, and everything after it compile outside it -- so an
-    /// object-typed local, whose `let` comes from its own assignment, would be
-    /// confined to that closure. `Poly` puts it in the hoisting prelude, where
-    /// one binding spans every clause.
+    /// A `begin` body's clauses lower as separate regions, and the body may
+    /// stop partway -- so a type proven only by an assignment inside it
+    /// must not narrow the rescue chain, the `ensure`, or the code after.
+    /// `Poly` keeps one conservative binding spanning every clause.
     #[test]
     fn a_local_assigned_inside_a_begin_widens_to_poly() {
         let src = "class A; end\nbegin\n  x = A.new\nensure\n  nil\nend\n";

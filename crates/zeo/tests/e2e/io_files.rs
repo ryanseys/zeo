@@ -166,11 +166,7 @@ fn multiple_modules_in_one_include_statement_resolve_in_given_order() {
 fn case_in_class_check_pattern_binds_and_statically_narrows_to_int() {
     // `Integer => n` both binds `n` AND statically narrows its type for the
     // rest of the arm's body -- `n + 1` should take the native `Int`
-    // arithmetic fast path, not a runtime Poly fallback (verified indirectly:
-    // if narrowing were broken this would still print `6`, but a fast-path
-    // regression would show up as a `zeo` panic on `+` instead, since a
-    // Poly local has no runtime `+` fallback for a non-builtin-typed operand
-    // -- see `codegen::call::dispatch`'s docs).
+    // arithmetic fast path, not a runtime Poly fallback.
     let result = run_ruby("case 5\nin Integer => n\n  puts n + 1\nend\n");
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "6\n");

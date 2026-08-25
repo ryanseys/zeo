@@ -27,15 +27,14 @@ use std::sync::atomic::{AtomicU8, Ordering};
 /// data rather than as a separate registry. `lock()` is deliberately an
 /// inherent method with the exact signature `Mutex::lock` had when
 /// `RArray`/`RHash`/`RStr` were bare `Arc<Mutex<_>>` aliases, so every
-/// pre-existing call site -- including every codegen-EMITTED `.lock()` in
-/// generated programs -- keeps compiling unchanged.
+/// pre-existing call site keeps compiling unchanged.
 ///
 /// `Ordering::Relaxed` is sufficient for the flags: freezing only needs to
 /// prevent FUTURE mutations observed through ordinary program order (CRuby's
 /// own flag is a plain bit with no fence either); it synchronizes nothing
-/// else. The frozen CHECK itself lives in codegen-emitted guards, not here
-/// -- only codegen can construct the `FrozenError` to raise (same division
-/// of labor as `array_set`'s `IndexError` contract below).
+/// else. The frozen CHECK itself lives in the callers' guards
+/// (`builtins::check_frozen`), which construct the `FrozenError` to raise
+/// (same division of labor as `array_set`'s `IndexError` contract below).
 ///
 /// One `AtomicU8` rather than two bools: FROZEN and MOVED (a `Ractor` move's
 /// poison bit -- see `ractor::cross_graph`) share the byte, so every probe

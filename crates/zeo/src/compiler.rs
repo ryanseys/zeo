@@ -2058,20 +2058,20 @@ impl Compiler {
         &self.classes[id.0 as usize]
     }
 
-    /// Whether this class's methods emit as free functions over a boxed
-    /// `__self: RubyValue` receiver (the builtin-reopen shape)
-    /// rather than `self: Arc<Concrete>` struct methods. True for every
+    /// Whether this class's methods run over a boxed
+    /// `RubyValue` receiver (the builtin-reopen shape)
+    /// rather than a concrete per-class layout. True for every
     /// builtin placeholder AND for `Object` itself: top-level `def`s live
     /// on `Object` (real Ruby's private-on-Object rule), whose instances --
     /// the `main` object, and any value at all once dispatch reaches the
-    /// MRO tail -- are `RubyValue`s, never a generated struct.
+    /// MRO tail -- are `RubyValue`s, never a compiled layout.
     pub fn value_backed(&self, cid: ClassId) -> bool {
         self.class(cid).is_builtin || cid == OBJECT_CLASS
     }
 
-    /// Whether `cid` has a generated Rust struct in the program, so codegen may
-    /// name its type -- `#ident::new_handle(...)`, an unboxed `Arc<Concrete>`, a
-    /// static `(recv).method()` call. False for the four kinds that have none,
+    /// Whether `cid` has a compiled instance layout of its own, so the
+    /// emitter may treat its instances
+    /// statically. False for the kinds that have none,
     /// each of which is instead a boxed `RubyValue` dispatched dynamically:
     /// MODULES (no instances), BUILT-INs (their repr is a `RubyValue` variant),
     /// `Object` (the runtime root, name-keyed ivars), BOOTSTRAP classes (the
@@ -2079,13 +2079,13 @@ impl Compiler {
     /// NATIVE-BACKED user subclass: an exception subclass (`class MyErr <
     /// StandardError`, the native `RubyException`) or a value-builtin subclass
     /// (`class Stack < Array`, the native `ValueSubclass`), both constructed via
-    /// `construct_by_class_id` rather than a per-class struct. The single source
-    /// of truth for "is there a struct here?", which several `TyKind::Object`
+    /// `construct_by_class_id` rather than a per-class layout. The single source
+    /// of truth for "is there a layout here?", which several `TyKind::Object`
     /// and `.new` sites gate on.
     /// Whether any class in the program inherits from `cid` -- a whole-program
     /// fact, and the guard on every fold that treats an instance's RUNTIME
-    /// class as its statically-known one. An inherited method compiles to ONE
-    /// shared body (`__sh*`) serving the base and every subclass, so `self`
+    /// class as its statically-known one. An inherited method's body
+    /// serves the base and every subclass, so `self`
     /// there is typed as the base while its real class may be any descendant.
     pub fn has_subclass(&self, cid: ClassId) -> bool {
         self.classes.iter().any(|c| c.parent == Some(cid))
@@ -2101,8 +2101,8 @@ impl Compiler {
             && !self.is_value_subclass(cid)
             && !self.is_immediate_subclass(cid)
             // A `class X < Module` instance is a `RubyValue::Class`. Typing
-            // `X.new` as `TyKind::Object(X)` bakes `X::new_handle` calls to a
-            // struct codegen never emits -- the exact failure the comment
+            // `X.new` as `TyKind::Object(X)` bakes static constructor calls to a
+            // layout codegen never emits -- the exact failure the comment
             // below describes, hit while wiring this shape up.
             && !self.is_module_subclass(cid)
             // A WeakMap subclass's instances are the native `WeakMap` RObj,
@@ -2121,7 +2121,7 @@ impl Compiler {
     /// answer correctly DURING registration too -- `register_method` runs
     /// local-type inference as each class body is walked, and typing an
     /// exception/value subclass's `.new` as `TyKind::Object` there baked
-    /// `new_handle` calls to structs codegen (correctly) never emits.
+    /// static constructor calls to layouts codegen (correctly) never emits.
     /// Superclass-chain membership is equivalent to the linearized test for
     /// every predicate here: each targets CLASS ids, which only ever enter
     /// an ancestry through `< Super`, never through a mixin.
@@ -2149,7 +2149,7 @@ impl Compiler {
     /// (`class MyErr < StandardError`). Such a class has NO generated struct --
     /// its instances are allocated by `zeo-rt`'s `exception_construct` and
     /// its ivars are name-keyed -- so codegen emits its user methods as
-    /// `RubyValue`-self free functions (`__exc_<id>`) `define_method`'d onto the
+    /// `RubyValue`-self bodies `define_method`'d onto the
     /// class id, over the native defaults `register_exceptions` already installed.
     /// `is_module` guards the `Errno` namespace (a module, never instantiated).
     pub fn is_exception_backed(&self, cid: ClassId) -> bool {
@@ -2511,34 +2511,6 @@ impl Compiler {
         self.lookup_class_method(class, name)
             .map(|e| (e.defined_class(self), e.def))
     }
-}
-
-/// The methods `BasicObject` itself defines -- the ENTIRE surface a blank
-/// slate answers before the user adds anything.
-///
-/// Taken from CRuby's own `Init` functions rather than inferred: `object.c`
-/// (`initialize`, `==`, `equal?`, `!`, `!=`, and the three
-/// `singleton_method_*` hooks), `vm_eval.c` (`instance_eval`,
-/// `instance_exec`, `method_missing`, `__send__`), and `gc.c` (`__id__`).
-/// Thirteen in total, and notably NOT `send` or `public_send` -- those live
-/// on `Kernel` (`vm_eval.c:2961`), which a BasicObject subclass never sees.
-pub fn is_basic_object_method(name: &str) -> bool {
-    matches!(
-        name,
-        "initialize"
-            | "=="
-            | "equal?"
-            | "!"
-            | "!="
-            | "__id__"
-            | "__send__"
-            | "instance_eval"
-            | "instance_exec"
-            | "method_missing"
-            | "singleton_method_added"
-            | "singleton_method_removed"
-            | "singleton_method_undefined"
-    )
 }
 
 /// The walks over `parent`/`lexical_parent` must terminate on a CYCLE.

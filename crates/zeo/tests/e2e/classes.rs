@@ -670,7 +670,7 @@ fn implicit_self_call_between_sibling_class_methods_dispatches_correctly() {
     // `None` inside a class method's own `Ctx` (no concrete `self` receiver
     // exists there), so a no-receiver call to a SIBLING class method
     // (`def self.a; b; end` calling `def self.b`) always panicked --
-    // `codegen::call::emit_call`'s implicit-self branch only ever consulted
+    // the compiler's implicit-self call lowering only ever consulted
     // `current_class`. Fixed by also checking `defining_class` against
     // `Compiler::class_method_in_chain`, dispatching as a direct
     // associated-function call, same as `ClassName.foo(...)`.

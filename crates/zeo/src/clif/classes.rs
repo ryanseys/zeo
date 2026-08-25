@@ -62,15 +62,13 @@ pub(crate) struct ObjMethodSpec {
     pub is_own: bool,
     /// An own method SHADOWED by a `prepend` winner: its body compiles and
     /// its `REG_SUPER_TARGET_VALUE` row registers, but no `ObjRow` -- the
-    /// object channel carries the module's materialized copy (rustc's
-    /// `__own_` bridge shape).
+    /// object channel carries the module's materialized copy.
     pub super_target_only: bool,
 }
 
 /// One class method (`def self.x`) to compile -- a `CmRow` on the
 /// class-method channel. The body ALWAYS receives the runtime receiver as
-/// `self` (rustc's `__dynself` twin behavior; its receiverless `Drop` mode
-/// is an optimization for self-free bodies, not a semantic difference), so
+/// `self`, so
 /// a subclass inheriting the method runs under its own `self`.
 pub(crate) struct CmMethodSpec {
     /// `false` = a singleton-super-target-only body (a shadowed `extend`
@@ -161,8 +159,8 @@ pub(crate) struct ModMethodSpec {
 pub(crate) struct CollectedClasses {
     pub classes: Vec<ClassSpec>,
     pub methods: Vec<ObjMethodSpec>,
-    /// A module's OWN methods as VALUE-channel rows on the module id --
-    /// rustc's `__um_` bridges. An includer dispatches through its own
+    /// A module's OWN methods as VALUE-channel rows on the module
+    /// id. An includer dispatches through its own
     /// materialized object-channel copies first; these rows are what a
     /// dynamic receiver (and the ancestor walk) finds.
     pub module_methods: Vec<ModMethodSpec>,
@@ -242,8 +240,8 @@ pub(crate) fn collect_classes(
     let mut redefs: Vec<RedefSpec> = Vec::new();
     let mut set_ancestors: Vec<(u32, Vec<u32>)> = Vec::new();
     let mut register_builtin: Vec<(u32, String, bool, Vec<u32>)> = Vec::new();
-    // Builtin-source alias rows, every class including the toplevel (rustc's
-    // `alias_registration_rows`; the boxed-overlay target case is refused
+    // Builtin-source alias rows, every class including the toplevel (the
+    // boxed-overlay target case is refused
     // with its class). A require-gated builtin whose feature never fired
     // registers nothing, aliases included.
     for (idx, class) in compiler.classes.iter().enumerate() {
@@ -263,7 +261,7 @@ pub(crate) fn collect_classes(
         }
     }
 
-    // Builtin registry patches, rustc's two emission points:
+    // Builtin registry patches, two emission points:
     //
     // - a BOOTSTRAP (exception) class whose own mixin changed its chain
     //   patches it; one whose computed chain merely differs keeps what
@@ -306,7 +304,7 @@ pub(crate) fn collect_classes(
         }
     }
 
-    // REOPENED builtins first (rustc's builtin-registration loop): a
+    // REOPENED builtins first: a
     // non-bootstrap builtin's user methods ride the VALUE channel on the
     // builtin's own id (they dispatch FIRST, before the native table); a
     // BOOTSTRAP (exception) reopen's ride the OBJECT channel as deltas
@@ -322,8 +320,8 @@ pub(crate) fn collect_classes(
         }
         // The entries this id will actually carry. A BOOTSTRAP (exception)
         // reopen keeps only its DELTAS -- a body defined on a native-backed
-        // class, or on a module mixed in ABOVE Object (rustc's
-        // `emit_exception_deltas` filter); a top-level `include M` reaches
+        // class, or on a module mixed in ABOVE
+        // Object; a top-level `include M` reaches
         // every exception through Object and is deliberately nobody's
         // delta. Guards below fire only when something will emit.
         let deltas: Vec<&crate::compiler::MethodEntry> = class
@@ -364,11 +362,11 @@ pub(crate) fn collect_classes(
         let name = compiler.fq_name(crate::compiler::ClassId(idx as u32));
         // A per-BOX class shares its ruby name with the main-box one, so
         // the symbols it declares carry the box; the frame label keeps the
-        // ruby name (rustc's `class_ident` draws the same line).
+        // ruby name.
         let sym = super::names::boxed_owner(&name, class.box_id);
         // A require-gated builtin whose feature never fired: no code can
-        // resolve its constant, so its rows would be dead weight -- rustc
-        // skips it entirely (the register-only-enabled-features rule).
+        // resolve its constant, so its rows would be dead weight -- it is
+        // skipped entirely (the register-only-enabled-features rule).
         if !compiler.builtin_is_reachable(zeo_abi::ClassId(idx as u32)) {
             continue;
         }
@@ -381,9 +379,9 @@ pub(crate) fn collect_classes(
         let target = class
             .builtin_overlay
             .map_or(crate::compiler::ClassId(idx as u32), |root| root);
-        // No `mark_own_rows` here: a VALUE row self-records ownership at
-        // insert (`own_value_names`), and a bootstrap delta's object-channel
-        // row follows rustc, which marks nothing for reopens either.
+        // No separate own-row marking here: a VALUE row self-records
+        // ownership at insert (`own_value_names`), and a bootstrap delta's
+        // object-channel row marks nothing for a reopen either.
         for entry in deltas {
             let scope = compiler.scope(entry.def);
             let mname = compiler.names.str(entry.name).to_string();
@@ -530,8 +528,7 @@ pub(crate) fn collect_classes(
                 // A `def` written in a `class << self` body was written in
                 // the SINGLETON, so that is its cref -- which is where a
                 // `def` nested inside it installs, and what its bare
-                // constants and `Module.nesting` resolve through (rustc's
-                // `lexical` binding for a class-method body).
+                // constants and `Module.nesting` resolve through.
                 defining_class: scope.lexical_home.unwrap_or(scope.defining_class),
                 lexical_home: scope.lexical_home,
                 owner: target,
@@ -580,7 +577,7 @@ pub(crate) fn collect_classes(
         let name = compiler.fq_name(crate::compiler::ClassId(idx as u32));
         // A per-BOX class shares its ruby name with the main-box one, so
         // the symbols it declares carry the box; the frame label keeps the
-        // ruby name (rustc's `class_ident` draws the same line).
+        // ruby name.
         let sym = super::names::boxed_owner(&name, class.box_id);
         let refuse = |what: &str| {
             Err(format!(
@@ -597,8 +594,7 @@ pub(crate) fn collect_classes(
             conceal.push(idx as u32);
         }
         // A `class << self` body is homed on a surrogate module; seeding
-        // the runtime mint is what makes `Owner.singleton_class` answer it
-        // (rustc's `register_singleton_surrogate` block).
+        // the runtime mint is what makes `Owner.singleton_class` answer it.
         if compiler.is_singleton_surrogate(crate::compiler::ClassId(idx as u32))
             && let Some(owner) = class.lexical_parent
         {
@@ -624,11 +620,11 @@ pub(crate) fn collect_classes(
         // The registrar this class needs. An exception subclass's chain
         // holds builtin superclasses BY DESIGN -- the registrar installs
         // the native default method set and the class's own defs layer
-        // over it as deltas (rustc's `register_exception_subclass` arm).
+        // over it as deltas.
         let cid = ClassId(idx as u32);
         let native_backed = compiler.is_native_backed(cid);
         let immediate = compiler.is_immediate_subclass(cid);
-        // rustc's registrar chain, in its order.
+        // The registrar chain, in its order.
         let kind = if class.is_module {
             zeo_abi::abi::CLASS_MODULE
         } else if compiler.is_exception_backed(cid) {
@@ -651,8 +647,8 @@ pub(crate) fn collect_classes(
         // before the class), so a prepend that shadows NOTHING needs no
         // emission of its own whatever the registrar. Only a SHADOWED own
         // def does, and on a native-backed class its body cannot register
-        // as an object-channel bridge -- that shape wants rustc's
-        // `promote_own_impl` twin, not built yet.
+        // as an object-channel bridge -- that shape needs an own-impl
+        // promotion pass, not built yet.
         if class.has_prepends() && kind != zeo_abi::abi::CLASS_PLAIN {
             let winners: std::collections::HashSet<crate::compiler::ScopeId> =
                 class.methods.iter().map(|e| e.def).collect();
@@ -679,8 +675,8 @@ pub(crate) fn collect_classes(
             let plain_spine = matches!(a.0, 0 | 24 | 25);
             // The two ordinary-object builtins from the payload-root
             // DENYLIST that no other registrar claims (`Numeric`,
-            // `WeakRef`): rustc emits the plain generated struct for a
-            // subclass and inherited behavior comes from the walk probing
+            // `WeakRef`): a subclass registers as a plain class, and
+            // inherited behavior comes from the walk probing
             // their builtin tables at MRO position (`Date::Infinity <
             // Numeric` is the corpus shape).
             // `Struct`/`Data` are on the payload-root denylist for the same
@@ -722,7 +718,7 @@ pub(crate) fn collect_classes(
             kind,
         });
         // What this class's own body wrote -- `instance_methods(false)` /
-        // `Method#owner` truth, exactly the rustc `mark_own_rows` list.
+        // `Method#owner` truth.
         // A conditional `def` is left out: `instance_methods(false)` must
         // report what the class HAS, and whether it has this one is settled
         // at run time by the row its install writes.
@@ -823,8 +819,8 @@ pub(crate) fn collect_classes(
             }
         }
 
-        // An immediate-builtin subclass has NO instances -- rustc emits no
-        // method rows for it (the definition is allowed, `.new` raises).
+        // An immediate-builtin subclass has NO instances -- no method rows
+        // are emitted for it (the definition is allowed, `.new` raises).
         let module_subclass = kind == zeo_abi::abi::CLASS_MODULE_SUBCLASS;
         for entry in class
             .methods
@@ -854,8 +850,7 @@ pub(crate) fn collect_classes(
             }
             let layout = super::params::layout_of(p)?;
             // A native-backed instance has NO slots: its accessor runs as
-            // an ordinary body (a lone name-keyed ivar read/write), the
-            // rustc delta shape.
+            // an ordinary body (a lone name-keyed ivar read/write).
             let accessor = match (
                 compiler.accessor_shape(ClassId(idx as u32), scope),
                 native_backed,
@@ -907,7 +902,7 @@ pub(crate) fn collect_classes(
             if module_subclass {
                 // A `class X < Module` instance is a `RubyValue::Class`: the
                 // object channel never sees it, so X's defs register as VALUE
-                // rows on X's id (rustc's `define_value_method` arm); ivars
+                // rows on X's id; ivars
                 // resolve through `ivar_set_dyn`'s Class arm (civars).
                 module_methods.push(ModMethodSpec {
                     dyn_ivars: true,
@@ -950,8 +945,7 @@ pub(crate) fn collect_classes(
         }
         // An own method a `prepend` SHADOWED never won its name in the
         // materialized table -- its body still compiles, reachable ONLY
-        // through the module copy's `super` (rustc's `__own_` bridge +
-        // `define_super_target_value`).
+        // through the module copy's `super`.
         if class.has_prepends() && !class.is_module && !immediate {
             let winners: std::collections::HashSet<crate::compiler::ScopeId> =
                 class.methods.iter().map(|e| e.def).collect();
@@ -1080,8 +1074,7 @@ pub(crate) fn collect_classes(
                     &sig,
                 )
                 .map_err(|e| format!("declaring {name}.{mname}: {e}"))?;
-            // Only Private gets a row (verb 3) -- exactly the rustc
-            // `emit_class_method_visibility_rows` rule.
+            // Only Private gets a row (verb 3).
             if entry.visibility == crate::hir::Visibility::Private {
                 vis.push(statics::VisRowSpec {
                     class: idx as u32,
@@ -1096,8 +1089,7 @@ pub(crate) fn collect_classes(
                 // A `def` written in a `class << self` body was written in
                 // the SINGLETON, so that is its cref -- which is where a
                 // `def` nested inside it installs, and what its bare
-                // constants and `Module.nesting` resolve through (rustc's
-                // `lexical` binding for a class-method body).
+                // constants and `Module.nesting` resolve through.
                 defining_class: scope.lexical_home.unwrap_or(scope.defining_class),
                 lexical_home: scope.lexical_home,
                 owner: ClassId(idx as u32),
@@ -1112,8 +1104,8 @@ pub(crate) fn collect_classes(
                 ruby2_keywords: scope.ruby2_keywords,
             });
         }
-        // Every body of a method with an observable redefinition timeline
-        // (rustc's `__redef_<id>` containers): the superseded ones AND the
+        // Every body of a method with an observable redefinition
+        // timeline: the superseded ones AND the
         // final one, each installed at its own document position.
         for &(sid, singleton) in &class.redef_scopes {
             let scope = compiler.scope(sid);
@@ -1179,7 +1171,7 @@ pub(crate) fn collect_classes(
     // Visibility overrides (`private :m` retagging an inherited method) and
     // `undef` marks, every class including the toplevel. Vis rows apply in
     // order, and this pass runs after every per-method stamp above, so the
-    // override wins -- rustc's append-after-the-loop rule.
+    // override wins.
     let mut undef_rows: Vec<(u32, String)> = Vec::new();
     for (idx, class) in compiler.classes.iter().enumerate() {
         if (class.is_builtin || class.is_bootstrap)
@@ -1258,8 +1250,8 @@ pub(crate) fn collect_classes(
     })
 }
 
-/// A class's singleton-chain super targets (rustc's `__sst_` containers +
-/// winner reuse): every `(module, def)` pair in `singleton_super_targets`,
+/// A class's singleton-chain super
+/// targets: every `(module, def)` pair in `singleton_super_targets`,
 /// deduped. A pair whose def IS a materialized winner reuses that `CmRow`
 /// trampoline (every CLIF class-method body is receiver-generic); a
 /// shadowed copy gets its own body under a per-(class,module) symbol.

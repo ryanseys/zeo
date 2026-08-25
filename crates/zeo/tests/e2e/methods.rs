@@ -202,7 +202,7 @@ fn endless_method_definition() {
 fn arithmetic_on_a_plain_method_parameter_works() {
     // Method params are always statically `Poly` (zeo never infers a
     // param's type from call sites) -- this exercises the runtime-checked
-    // fallback in `codegen::call::dispatch`, not just literal/local `Int`
+    // numeric fallback in `clif::expr`, not just literal/local `Int`
     // operands.
     let result = run_ruby(
         r#"
@@ -1205,7 +1205,7 @@ fn an_alias_of_the_inherited_builtin_raise_works_in_every_call_shape() {
     // `alias_method :raise!, :raise` / `alias __raise__ raise` (ostruct's and
     // delegate's shapes): the source is Kernel's BUILTIN raise -- no user
     // `Scope` exists, so this used to be a compile error. Statically-resolved
-    // sites substitute into `emit_raise` (including the bare re-raise and the
+    // sites substitute into the raise lowering (including the bare re-raise and the
     // 3-arg form, whose custom-backtrace argument is evaluated and dropped);
     // all outputs oracle-verified.
     let result = run_ruby(
@@ -1586,7 +1586,7 @@ fn a_param_referenced_only_inside_an_escaping_block_is_captured() {
 
 #[test]
 fn new_binds_optional_initialize_params() {
-    // The emit_new fix: one `initialize(items = nil)` serving both
+    // The `.new` binding fix: one `initialize(items = nil)` serving both
     // `Bag.new` and `Bag.new([1])` (oracle: 0, 1).
     let result = run_ruby(
         r#"
@@ -2295,7 +2295,7 @@ fn block_params_are_reassignable() {
 #[test]
 fn a_block_auto_splats_a_lone_array_across_its_positional_params() {
     // CRuby's `has_lead && !ambiguous_param0` rule -- see
-    // `codegen::params::auto_splats`, whose unit tests cover every shape.
+    // `clif::params::auto_splats`.
     let result = run_ruby(
         r#"
         def one(v)
@@ -2519,7 +2519,7 @@ fn method_params_destructure() {
 /// A lone Array argument spreads across a block's positional params -- but a
 /// block with exactly ONE plain param receives it whole (`ambiguous_param0`,
 /// the `each { |pair| }` idiom), and so does a lone optional. Oracle-derived;
-/// see `codegen::params::auto_splats` for the full truth table.
+/// see `clif::params::auto_splats` for the full truth table.
 #[test]
 fn block_auto_splat_follows_the_ambiguous_param0_rule() {
     let result = run_ruby(

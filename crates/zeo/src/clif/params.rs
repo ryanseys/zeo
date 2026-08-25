@@ -103,7 +103,7 @@ pub(crate) struct ParamDescSpec<'a> {
     pub end_line: u32,
 }
 
-/// The rustc emitter's static auto-splat decision, verbatim: a single
+/// The static auto-splat decision: a single
 /// ambiguous leading param never auto-splats; anything with real
 /// positional structure does (non-lambda blocks only).
 pub(crate) fn auto_splats(params: &Params) -> bool {
@@ -114,8 +114,8 @@ pub(crate) fn auto_splats(params: &Params) -> bool {
     !ambiguous_param0 && (lead + post > 0 || opt > 1)
 }
 
-/// `Proc#arity`'s value for a block/lambda of this shape (the rustc
-/// emitter's rule, verbatim; a trailing comma's rest is not signature).
+/// `Proc#arity`'s value for a block/lambda of this
+/// shape (a trailing comma's rest is not signature).
 pub(crate) fn proc_arity(params: &Params, is_lambda: bool) -> i32 {
     let lead = params.required.len() as i32;
     let opt = params.optional.len() as i32;
@@ -189,8 +189,7 @@ pub(crate) fn body_sig(em: &Emitter, arity: usize, has_blk: bool) -> ir::Signatu
 /// The callee frame a trampoline's own raises run under. A trampoline
 /// raises BEFORE the body pushes anything -- a wrong-arity call, a frozen
 /// receiver on an accessor -- and CRuby attributes both to the callee, so
-/// the frame is pushed around the raise (rustc's `zeo_tramp!` puts its
-/// `$frame` guard in the raising scope for exactly this).
+/// the frame is pushed around the raise.
 struct CalleeFrame {
     push: ir::FuncRef,
     pop: ir::FuncRef,
@@ -554,7 +553,7 @@ fn define_plain_trampoline(
 }
 
 /// An `attr_reader`/`attr_writer` trampoline -- the slot access IS the
-/// method (no body fn; the rustc backend's `zeo_tramp!(rd/wr)` heads).
+/// method (no body fn).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn define_accessor(
     em: &mut Emitter,
@@ -642,7 +641,7 @@ pub(crate) fn define_accessor(
             b.ins().return_(&[zero]);
         }
         crate::compiler::AccessorKind::Writer => {
-            // Frozen first (the rustc writer's order); then TWO fresh
+            // Frozen check first; then TWO fresh
             // references off the caller's borrowed argv[0]: one moves into
             // the slot, one is the returned value.
             let frozen = frozen.expect("writer imports frozen_check");

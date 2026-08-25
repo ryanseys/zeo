@@ -205,7 +205,7 @@ pub(crate) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Locals) 
                 // the block (which this same traversal will still find,
                 // since it walks the rest of the method) ends up hoisted
                 // here. `.times` stays inline (unchanged): its block is
-                // spliced directly into whichever Rust scope encloses it,
+                // spliced directly into whichever function scope encloses it,
                 // so its locals still need to be part of THAT hoisting pass.
                 if is_spliced_block_body(
                     compiler,

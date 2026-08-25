@@ -192,24 +192,20 @@ pub fn infer_type_with_locals(
         // inside `module Store` types as the nested `Store::Item`.
         HirNode::New { class_name, .. } => {
             match compiler.resolve_class(class_name, &compiler.cref_of(defining), box_id) {
-                // `TyKind::Object(cid)` means "an unboxed `Arc<GeneratedStruct>`",
-                // so it is only correct when a generated struct actually
-                // exists. Three kinds have none, and all stay Poly (a plain
-                // `RubyValue`), matching what `emit_new_with_arg_tokens`
-                // emits for each:
+                // `TyKind::Object(cid)` means "an instance with a compiled
+                // layout", so it is only correct when such a layout actually
+                // exists. The kinds with none all stay Poly (a plain
+                // `RubyValue`), matching what `.new` lowers
+                // to for each:
                 //   - a MODULE: `M.new` routes to the dynamic path (which
                 //     raises NoMethodError);
                 //   - `Object.new`: the sentinel idiom, a boxed
                 //     `zeo_rt::Object`;
-                //   - a BUILT-IN (`Time.new`, plan P-B): answered by the
+                //   - a BUILT-IN (`Time.new`): answered by the
                 //     runtime's own class-method table, as a `RubyValue`.
-                //     Typing it `Object(TIME_CLASS)` made codegen try to box
-                //     the result through a `__bm_Time::new_handle` that does
-                //     not exist.
-                //   - a BOOTSTRAP exception class: its structs moved into
-                //     `zeo-rt`, so a `raise ArgumentError.new(...)` is a
-                //     boxed `RubyValue` built by `construct_by_class_id`, not
-                //     an unboxed `Arc<ArgumentError>` (there is no such struct).
+                //   - a BOOTSTRAP exception class: a `raise
+                //     ArgumentError.new(...)` is a
+                //     boxed `RubyValue` built by `construct_by_class_id`.
                 //   - a class with its OWN `def self.new`: the call routes to
                 //     that class method, which answers a `RubyValue` and is
                 //     free to return anything at all (rubygems'
@@ -217,11 +213,11 @@ pub fn infer_type_with_locals(
                 //     form).
                 //   - a program where a runtime site may (re)define
                 //     `initialize`/`new` (a lazily-loaded unit's class, a
-                //     computed `define_method`): `emit_new` dispatches
+                //     computed `define_method`): `.new` dispatches
                 //     dynamically for the same reason every other call site
                 //     does (`may_be_patched_at_runtime`), and the result is
                 //     a `RubyValue`.
-                //   - a RUNTIME-CONDITIONAL class: `emit_new` always takes
+                //   - a RUNTIME-CONDITIONAL class: `.new` always takes
                 //     the dynamic arm (concealment check + overlay rows), so
                 //     the value is a `RubyValue` here too.
                 Some(cid)

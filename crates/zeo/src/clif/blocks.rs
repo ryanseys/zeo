@@ -18,8 +18,7 @@ use cranelift_module::Module;
 use zeo_abi::abi::SignalKind;
 
 /// Whether `body` can raise a `Signal::Return` at its own level --
-/// nested blocks/lambdas recurse, `def`/`class` bodies stop (the rustc
-/// emitter's rule, verbatim).
+/// nested blocks/lambdas recurse, `def`/`class` bodies stop.
 fn body_contains_return(hir: &crate::hir::Hir, body: &[NodeId]) -> bool {
     fn scan(hir: &crate::hir::Hir, id: NodeId) -> bool {
         match &hir[id] {
@@ -70,9 +69,7 @@ fn captured_names(
     // A `binding` taken INSIDE the block reports the enclosing scope's
     // locals too, and CLIF lifts a block to its own function -- so a name
     // the binding names has to be captured even where nothing else in the
-    // body reads it. The rustc backend needs no equivalent: its block is a
-    // Rust closure written inside the enclosing function, where every outer
-    // cell is already in scope by name.
+    // body reads it.
     let binding_reach: std::collections::BTreeSet<String> =
         match body_takes_a_binding(fx, params, body) {
             true => fx
@@ -196,7 +193,7 @@ pub(crate) fn build_proc_rehomed(
     // A computed-name `define_method` block IS a method body at run time:
     // `super` inside it reads the frame stack and a bare one raises ruby's
     // define_method refusal -- the two markers the literal `DefMethod` form
-    // carries (rustc's `DYNAMIC_DEFINE_METHOD_BLOCK` arm).
+    // carries (`NodeFlag::DYNAMIC_DEFINE_METHOD_BLOCK`).
     if fx
         .an
         .compiler
@@ -757,9 +754,7 @@ fn define_block_fn(
         }
         if body_captured.contains(&name) {
             let null = bfx.b.ins().iconst(ptr_ty, 0);
-            let cellp = bfx
-                .call("zeo_rt_cell_new", &[null])
-                .expect("cell_new returns the cell");
+            let cellp = bfx.call_status("zeo_rt_cell_new", &[null]);
             let ss = bfx.new_cell_slot();
             let dst = bfx.slot_addr(ss, 0);
             bfx.b.ins().store(fl, cellp, dst, 0);
@@ -783,9 +778,7 @@ fn define_block_fn(
             &[file_ptr, file_len, label_ptr, label_len, line_v, line_v],
         );
     }
-    let status = bfx
-        .call("zeo_rt_check_ints", &[])
-        .expect("check_ints returns a status");
+    let status = bfx.call_status("zeo_rt_check_ints", &[]);
     bfx.fallible(status);
     // What a run-time `eval` written in this body reads for `yield` and
     // `block_given?`: a `def` body installed at run time owns its own
@@ -812,7 +805,7 @@ fn define_block_fn(
     }
 
     // The binding head: `redo` re-enters here (the bindings re-run,
-    // ruby's rule -- rustc's 'redo loop starts at the same point).
+    // ruby's rule).
     let redo_head = bfx.b.create_block();
     bfx.b.ins().jump(redo_head, &[]);
     bfx.b.switch_to_block(redo_head);
@@ -843,12 +836,10 @@ fn define_block_fn(
     // BLOCK_BIND_AUTO_SPLAT = 1, BLOCK_BIND_LAMBDA = 2 (the runtime's bits).
     let bind_flags = u8::from(auto_splat) | (u8::from(is_lambda) << 1);
     let flags_v = bfx.b.ins().iconst(types::I8, i64::from(bind_flags));
-    let status = bfx
-        .call(
-            "zeo_rt_bind_block_params",
-            &[desc_ptr, flags_v, argv, argc, slots_ptr, present_ptr],
-        )
-        .expect("bind_block_params returns a status");
+    let status = bfx.call_status(
+        "zeo_rt_bind_block_params",
+        &[desc_ptr, flags_v, argv, argc, slots_ptr, present_ptr],
+    );
     bfx.fallible(status);
     for s in 0..n_slots {
         let ss = slots_ss.expect("n_slots > 0 when slots exist");
@@ -1043,7 +1034,7 @@ fn define_block_fn(
         // A lambda folds a propagating `Return`/`Break` (a nested block's)
         // into its own normal return -- the value lands in `out` and the
         // ok-epilogue runs.
-        let kind = bfx.call("zeo_rt_signal_kind", &[]).expect("kind answers");
+        let kind = bfx.call_status("zeo_rt_signal_kind", &[]);
         let is_ret =
             bfx.b
                 .ins()
@@ -1080,8 +1071,8 @@ fn define_block_fn(
 }
 
 /// A dynamic send carrying a literal block: build the proc, pass it moved,
-/// and catch a Break -- the Break value IS the send's value (rustc's
-/// `catch_break`).
+/// and catch a Break -- the Break value IS the send's value (see
+/// [`catch_break`]).
 /// [`block_send`] with the receiver ALREADY lowered -- what a `Foo.new
 /// { .. }` needs, whose receiver is a Class immediate rather than a HIR
 /// node.
@@ -1178,12 +1169,12 @@ pub(crate) fn block_arg_ptr(fx: &mut Fx, block_arg: NodeId) -> Result<ir::Value,
     }
     let conv_ss = fx.temp_slot();
     let conv = fx.slot_addr(conv_ss, 0);
-    let status = fx
-        .call("zeo_rt_block_arg_to_proc", &[vp, conv])
-        .expect("block_arg_to_proc returns a status");
+    let status = fx.call_status("zeo_rt_block_arg_to_proc", &[vp, conv]);
     fx.fallible(status);
     let fl = MemFlagsData::trusted();
-    let tag = fx.b.ins().load(types::I8, fl, conv, 0);
+    let tag =
+        fx.b.ins()
+            .load(types::I8, fl, conv, zeo_abi::abi::TAG_OFFSET as i32);
     let is_nil = fx.b.ins().icmp_imm_u(IntCC::Equal, tag, 0);
     let null = fx.b.ins().iconst(fx.em.ptr, 0);
     let blk_ptr = fx.b.ins().select(is_nil, null, conv);
@@ -1343,7 +1334,7 @@ pub(crate) fn catch_break(fx: &mut Fx, status: ir::Value, out: ir::Value) {
     let signalled = fx.b.create_block();
     fx.b.ins().brif(status, signalled, &[], ok, &[]);
     fx.b.switch_to_block(signalled);
-    let kind = fx.call("zeo_rt_signal_kind", &[]).expect("kind answers");
+    let kind = fx.call_status("zeo_rt_signal_kind", &[]);
     let is_break =
         fx.b.ins()
             .icmp_imm_u(IntCC::Equal, kind, i64::from(SignalKind::Break as u8));

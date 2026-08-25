@@ -13,8 +13,8 @@
 //! per including/inheriting class -- onto the concrete class that will
 //! actually call it. This is DRY at the Ruby-source/HIR level (one
 //! `NodeId`, safely referenced from multiple `Scope`s) even though the
-//! generated Rust text ends up with one copy per class, exactly the same
-//! trade a generic Rust function already makes via monomorphization.
+//! emitted code ends up with one copy per class, exactly the
+//! trade monomorphization already makes.
 
 use crate::analyze_error::AnalyzeError;
 use crate::compiler::{ClassId, Compiler, MethodEntry, NameId, OBJECT_CLASS, ScopeId};
@@ -631,9 +631,7 @@ fn materialize_methods(
         }
         // A BUILTIN class never materializes `Object`'s methods (top-level
         // `def`s / `Object` reopens): re-emitting each body per builtin
-        // would multiply generated code ~30x and re-type `self` as every
-        // builtin kind (a body fine on the class it's actually called on
-        // could fail rustc when typed as, say, `Str`). Dynamic dispatch
+        // would multiply generated code ~30x. Dynamic dispatch
         // still finds them -- `send_value_in`/`send_in`'s MRO walk probes
         // `value_method(ancestor)` per ancestor, and Object's methods are
         // registered as value methods on `ClassId(0)`, the tail every

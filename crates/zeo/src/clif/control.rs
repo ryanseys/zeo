@@ -114,7 +114,7 @@ pub(crate) fn lower_begin(
     // inside the ensure's reach, so it lands on the bracket, not outside.
     fx.b.switch_to_block(begin_land);
     fx.land = propagate;
-    let kind = fx.call("zeo_rt_signal_kind", &[]).expect("kind answers");
+    let kind = fx.call_status("zeo_rt_signal_kind", &[]);
     let is_raise =
         fx.b.ins()
             .icmp_imm_u(IntCC::Equal, kind, i64::from(SignalKind::Raise as u8));
@@ -212,9 +212,7 @@ pub(crate) fn lower_begin(
         // the whole point of the teardown signal is that only releases run.
         {
             use cranelift_codegen::ir::condcodes::IntCC;
-            let kind = fx
-                .call("zeo_rt_signal_kind", &[])
-                .expect("signal_kind answers");
+            let kind = fx.call_status("zeo_rt_signal_kind", &[]);
             let is_terminate = fx.b.ins().icmp_imm_u(
                 IntCC::Equal,
                 kind,
@@ -225,9 +223,7 @@ pub(crate) fn lower_begin(
             fx.b.switch_to_block(run);
         }
         let saved = fx.call("zeo_rt_signal_save", &[]).expect("saved handle");
-        let pushed = fx
-            .call("zeo_rt_propagating_enter", &[saved])
-            .expect("enter answers");
+        let pushed = fx.call_status("zeo_rt_propagating_enter", &[saved]);
         let efail = fx.b.create_block();
         let saved_land = fx.land;
         fx.land = efail;
@@ -307,7 +303,7 @@ fn settle_target(fx: &Fx) -> Option<Settle> {
 /// a real unwind and passes through.
 fn lower_settle(fx: &mut Fx, settle: ir::Block, outer_land: ir::Block, target: Settle) {
     fx.b.switch_to_block(settle);
-    let kind = fx.call("zeo_rt_signal_kind", &[]).expect("kind answers");
+    let kind = fx.call_status("zeo_rt_signal_kind", &[]);
     let arm = |fx: &mut Fx, k: SignalKind| {
         let taken = fx.b.create_block();
         let rest = fx.b.create_block();
@@ -394,9 +390,7 @@ fn clause_match(
         let off = fx.em.intern_rodata_aligned(&id_bytes, 4);
         let ids_ptr = fx.rod(off);
         let n = fx.b.ins().iconst(fx.em.ptr, ids.len() as i64);
-        let m = fx
-            .call("zeo_rt_rescue_matches", &[exc, ids_ptr, n])
-            .expect("rescue_matches answers");
+        let m = fx.call_status("zeo_rt_rescue_matches", &[exc, ids_ptr, n]);
         let next = fx.b.create_block();
         fx.b.ins().brif(m, hit, &[], next, &[]);
         fx.b.switch_to_block(next);
@@ -416,9 +410,7 @@ fn clause_match(
         }
         let m_ss = fx.temp_slot();
         let m_ptr = fx.slot_addr(m_ss, 0);
-        let status = fx
-            .call("zeo_rt_rescue_matches_any", &[exc, ptr, m_ptr])
-            .expect("rescue_matches_any returns a status");
+        let status = fx.call_status("zeo_rt_rescue_matches_any", &[exc, ptr, m_ptr]);
         fx.fallible(status);
         let m = fx.b.ins().load(types::I8, fl, m_ptr, 0);
         let next = fx.b.create_block();

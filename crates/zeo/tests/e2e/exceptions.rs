@@ -57,7 +57,7 @@ fn raise_with_a_bare_class_defaults_the_message_to_the_class_name() {
     // Assert the UNCAUGHT path here (see the `rescue` tests below for the
     // caught path): an unhandled `raise MyError` (no explicit message) exits 1 with the
     // class's own name as the message (no runtime `self.class` reflection
-    // needed -- see `codegen::expr::emit_raise_value`'s docs).
+    // needed -- see the emitter's raise lowering in `clif::stmt`).
     let result = run_ruby(
         r#"
         class MyError < StandardError
@@ -129,8 +129,8 @@ fn bare_raise_with_no_active_rescue_constructs_a_runtime_error() {
     // Bare `raise` (re-raise) outside any active `rescue` clause -- real
     // Ruby constructs a fresh `RuntimeError` with an EMPTY message rather
     // than erroring (oracle-verified: `ruby -e 'begin; raise; rescue => e;
-    // puts "[#{e.message}]"; end'` -> `"[]"`) -- see
-    // `codegen::expr::emit_raise`'s docs. This used to be a clean codegen
+    // puts "[#{e.message}]"; end'` -> `"[]"`) -- see the emitter's raise
+    // lowering in `clif::stmt`. This used to be a clean compiler
     // panic before the `zeo_rt::current_exception` fallback shipped.
     let result = run_ruby(
         r#"
@@ -265,11 +265,9 @@ fn case_in_with_no_matching_arm_and_no_else_raises() {
 // hierarchies), oracle-verified against real `ruby` first. `e`'s method
 // calls (`e.message`) always go through `.send(:message)` -- a rescue
 // binding is deliberately never narrowed to a concrete class (unlike a
-// pattern's `Integer => n`): unlike a builtin primitive's runtime tag check,
-// dispatch there is Rust `downcast::<T>()`-based, which only succeeds
-// against the EXACT concrete struct, and `rescue StandardError => e` must
-// also match any raised SUBCLASS instance -- see
-// `codegen::exceptions::emit_rescue_chain`'s docs.
+// pattern's `Integer => n`): `rescue StandardError => e` must
+// also match any raised SUBCLASS instance, so the binding stays
+// dynamically typed -- see `clif::control::lower_begin`.
 
 #[test]
 fn begin_rescue_catches_and_ensure_always_runs() {
@@ -740,7 +738,7 @@ fn break_next_from_inside_begin_rescue_nested_in_a_real_escaping_block_works() {
     // A custom `yield`-based method attaches a real escaping block here
     // directly, exercising the same closure boundary `Array#each` would.
     // The begin/rescue
-    // closure boundary (see `codegen::exceptions`'s module docs) needs no
+    // lowering (see `clif::control::lower_begin`) needs no
     // special handling: the block passed to `each_num` is ALREADY a real
     // escaping `Proc` (its own closure boundary, `in_real_proc` already
     // true), so a `next` inside the nested `begin`'s rescue clause raises
@@ -779,7 +777,7 @@ fn break_inside_begin_rescue_targets_the_enclosing_native_loop() {
     // targeting a native loop OUTSIDE the `begin`. The `begin`
     // expression is spliced INLINE in the loop body, so its final settling
     // translates the bubbled `Signal` into the loop's own literal jump -- no
-    // loop-body closure needed (see `codegen::exceptions`'s module docs). A
+    // loop-body closure needed (see `clif::control::lower_begin`). A
     // loop written INSIDE the `begin` is unaffected (the previous test).
     let result = run_ruby(
         r#"
@@ -915,11 +913,10 @@ fn return_from_ensure_overrides_return_from_the_begin_body() {
     // Real, tricky Ruby semantic: a `return` inside `ensure` wins over a
     // `return` already in flight from `begin`'s own body -- not just "ensure
     // runs afterward", it actually REPLACES the method's return value.
-    // Falls out for free here: `ensure`'s own statements are ordinary Rust
-    // code (not wrapped in the begin/rescue closure boundary -- see
-    // `codegen::exceptions`'s module docs), so a literal `return` inside it
-    // exits the enclosing method directly, superseding whatever `__final`
-    // already held.
+    // Falls out for free here: `ensure`'s own statements lower inline
+    // (see `clif::control::lower_begin`), so a `return` inside it
+    // exits the enclosing method directly, superseding the return value
+    // already in flight.
     let result = run_ruby(
         r#"
         class M
@@ -1143,7 +1140,7 @@ fn times_loop_containing_begin_rescue_with_no_crossing_control_flow_still_works(
 
 #[test]
 fn class_method_begin_rescue_ensure_with_return() {
-    // Exercises `codegen::mod::emit_class_method_fn`'s own `Signal::Return`
+    // Exercises the class-method body lowering's own `Signal::Return`
     // catch (added specifically for `Begin` nodes inside a class method --
     // class methods can't contain an escaping block at all, so `Begin` was
     // the only possible trigger there).
@@ -1282,7 +1279,7 @@ fn poly_receiver_call_with_unknown_keyword_raises_at_runtime() {
 #[test]
 fn respond_to_on_a_poly_typed_rescue_binding() {
     // `e` (a rescue clause's exception binding) is never narrowed to a
-    // concrete class (see `codegen::exceptions`'s docs) -- exercises
+    // concrete class (see `clif::control::lower_begin`) -- exercises
     // `respond_to?`'s runtime `class_id()` fallback path, not the
     // statically-known-class one the test above exercises.
     let result = run_ruby(
@@ -1933,8 +1930,8 @@ fn in_tree_base64_over_two_args_raises_argument_error_at_runtime() {
 #[test]
 fn new_with_the_wrong_arity_raises_a_rescuable_runtime_error() {
     // Was a COMPILE-TIME panic, from `.new`'s own hand-rolled argument
-    // binding. Now that `.new` binds through the same `emit_call_args_to`
-    // every other call site uses, it inherits that machinery's posture,
+    // binding. Now that `.new` binds through the same call-argument
+    // lowering every other call site uses, it inherits that posture,
     // which is real Ruby's: arity resolves at RUNTIME, the error is
     // rescuable, and a never-executed bad call compiles fine. Both lines
     // oracle-verified, message included.

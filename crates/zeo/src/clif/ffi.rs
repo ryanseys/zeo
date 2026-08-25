@@ -1,11 +1,11 @@
 //! `attach_function` wrapper bodies: resolve the C symbol, marshal the
 //! arguments, call, wrap the result.
 //!
-//! The rustc backend has four tiers (a fn-local `extern "C"` block for a
-//! build-time-linkable library, a libffi call for a runtime-resolved one, a
-//! variadic CIF, a `#[repr(C)]` mirror for a by-value aggregate). Cranelift
+//! The lowering distinguishes four tiers (a build-time-linkable library, a
+//! runtime-resolved one, a
+//! variadic call, a by-value aggregate). Cranelift
 //! can declare neither a link directive nor an aggregate ABI, so EVERY tier
-//! here goes through the runtime's libffi engine: one `.rodata`
+//! goes through the runtime's libffi engine: one `.rodata`
 //! [`zeo_abi::abi::FfiCallC`] describing the whole signature, one
 //! `zeo_rt_ffi_invoke` per call. A library named at build time is simply
 //! one whose symbol may also come from the process image -- which is what
@@ -77,9 +77,7 @@ pub(crate) fn lower_ffi_call(fx: &mut Fx, site: NodeId, call: &FfiCall) -> Resul
 
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
-    let status = fx
-        .call("zeo_rt_ffi_invoke", &[desc, addr, argv, argc, out])
-        .expect("ffi_invoke returns a status");
+    let status = fx.call_status("zeo_rt_ffi_invoke", &[desc, addr, argv, argc, out]);
     fx.fallible(status);
     fx.owned_created += 1;
     Ok(Operand::Slot {
@@ -90,18 +88,20 @@ pub(crate) fn lower_ffi_call(fx: &mut Fx, site: NodeId, call: &FfiCall) -> Resul
 }
 
 /// The C symbol's address for this site, resolved once per site and cached
-/// in the runtime (the CLIF twin of the rustc backend's `.bss`
-/// `FfiSymSite`).
+/// in the runtime.
 fn resolve_symbol(fx: &mut Fx, call: &FfiCall) -> cranelift_codegen::ir::Value {
     use zeo_abi::abi::{FFI_SYM_LIB, FFI_SYM_LIB_OR_PROCESS, FFI_SYM_PROCESS};
     let id = fx.em.mint_ffi_site();
     let site_v = fx.b.ins().iconst(types::I32, i64::from(id));
     let (sym_ptr, sym_len) = super::expr::rodata_name(fx, &call.symbol);
+    // One pointer-sized, pointer-aligned out-slot for the resolved address.
+    const PTR_SIZE: u32 = size_of::<usize>() as u32;
+    const PTR_ALIGN_LOG2: u8 = PTR_SIZE.ilog2() as u8;
     let addr_ss =
         fx.b.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(
             cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
-            8,
-            3,
+            PTR_SIZE,
+            PTR_ALIGN_LOG2,
         ));
     let addr_out = fx.slot_addr(addr_ss, 0);
     let status = match &call.lib {
@@ -243,7 +243,7 @@ fn clone_spec(t: &TySpec) -> TySpec {
 }
 
 /// One type's C scalar. A platform typedef resolves to the width it has on
-/// the HOST -- the rustc backend could leave it to the build machine, but
+/// the HOST --
 /// a Cranelift signature is decided here (`lower::ffi::platform_scalar_of`
 /// is the same table struct layouts already resolve against).
 fn scalar_of(ty: &FfiType) -> Result<CScalar, String> {
@@ -371,7 +371,7 @@ fn call_out(
     let out = fx.slot_addr(ss, 0);
     let mut all = args.to_vec();
     all.push(out);
-    let status = fx.call(name, &all).expect("the entry returns a status");
+    let status = fx.call_status(name, &all);
     fx.fallible(status);
     fx.owned_created += 1;
     Ok(Operand::Slot {

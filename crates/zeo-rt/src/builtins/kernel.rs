@@ -117,10 +117,9 @@ ruby_module! {
     // implementation, as `rb_f_send` does in CRuby.
     //
     // `send` is deliberately visibility-blind. `public_send` is not: its gate
-    // is `dispatch::send_value_public_in`. The rustc backend folds that gate
-    // into the call site and so reaches this row only where it did not fold;
-    // the CLIF backend has no such fold and reaches it always -- so the rule
-    // lives HERE, where both find it.
+    // is `dispatch::send_value_public_in`. The emitter has no call-site
+    // fold for that gate and reaches this row always -- so the rule
+    // lives HERE.
     def "send"(recv, *args, &block) {
         crate::builtins::basic_object::dynamic_send(recv, args, block)
     }
@@ -339,7 +338,7 @@ ruby_module! {
     // `send(:raise, ...)` and by builtin-alias rewrites (`alias_method
     // :raise!, :raise`). Statically-written `raise` never comes here (parse
     // lowers it to `HirNode::Raise`); this is the dynamic mirror of
-    // codegen's `emit_raise`, following CRuby's `rb_make_exception`: the
+    // the emitter's raise lowering, following CRuby's `rb_make_exception`: the
     // operand's own `exception` method constructs the value (running a user
     // subclass's `initialize`), a String implies `RuntimeError`, an
     // exception OBJECT with no message raises as-is, anything else is

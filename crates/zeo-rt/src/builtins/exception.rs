@@ -435,8 +435,8 @@ pub fn attach_backtrace(exc_value: &RubyValue) {
 
 /// [`attach_backtrace`]'s stamp without the `:raise` event, for the one
 /// caller that is not a raise: `stamp_backtrace`, which runs at exception
-/// CONSTRUCTION (codegen's `emit_boxed_new`) just before the raise path
-/// stamps -- and fires -- for the same exception.
+/// CONSTRUCTION just before the raise path stamps -- and fires -- for the
+/// same exception.
 pub(crate) fn attach_backtrace_quiet(exc_value: &RubyValue) {
     let RubyValue::Object(o) = exc_value else {
         return;

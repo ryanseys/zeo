@@ -71,7 +71,7 @@ fn lower_statement_list(
 /// local belonging to a scope OUTSIDE itself.
 ///
 /// The desugar to a plain `DefMethod` turns the block into a method the class
-/// owns, and a method is a Rust function of its own -- it cannot reach a local
+/// owns, and a method is a compiled function of its own -- it cannot reach a local
 /// living on the enclosing class-body (or top-level) frame. rubygems writes
 /// exactly that shape:
 ///

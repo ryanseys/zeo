@@ -98,8 +98,8 @@ pub(crate) struct Fx<'e, 'f> {
     /// This body's owner is NATIVE-BACKED (an exception subclass): ivars
     /// are name-keyed at runtime, not compiled slots.
     pub dyn_ivars: bool,
-    /// The class this body's `def` was WRITTEN in (rustc's
-    /// `cx.defining_class`) -- where a `super` walk resumes from. A module
+    /// The class this body's `def` was WRITTEN
+    /// in -- where a `super` walk resumes from. A module
     /// method's materialized copy keeps the MODULE here while
     /// `method_class` names the includer.
     pub defining_class: Option<zeo_abi::ClassId>,
@@ -116,8 +116,7 @@ pub(crate) struct Fx<'e, 'f> {
     pub method_params: Option<crate::hir::Params>,
     /// This body is a RUNTIME-installed method (a `def`/`define_method`
     /// the analyzer could not register), so its defining class is minted
-    /// at run time and a `super` reads it off the method-frame stack --
-    /// rustc's `runtime_method_body_params` (`Some` = this flag).
+    /// at run time and a `super` reads it off the method-frame stack.
     pub runtime_method_body: bool,
     /// ...and it came from a literal `define_method`, where ruby refuses
     /// a BARE `super` at dispatch: a block-shaped body has no parameter
@@ -126,8 +125,7 @@ pub(crate) struct Fx<'e, 'f> {
     /// This scope's `self` is only known at run time -- a runtime-installed
     /// method body, or a block `instance_eval`/`instance_exec` re-homes. The
     /// class a `protected` check compares against is then whatever `self`
-    /// turns out to be, not the lexically enclosing class (rustc's
-    /// `Ctx::self_is_dynamic`).
+    /// turns out to be, not the lexically enclosing class.
     pub self_is_dynamic: bool,
     /// Lowering a run-time `eval` snippet whose constants resolve against
     /// classes only the RUN TIME knows (`zeo::eval`) -- see [`EvalCref`].
@@ -301,6 +299,15 @@ impl<'e, 'f> Fx<'e, 'f> {
         self.b.func.dfg.inst_results(inst).first().copied()
     }
 
+    /// [`call`](Self::call) for a capi that returns a value (the status
+    /// protocol and friends). A returning import with no result is a
+    /// compiler bug -- the panic derives its message from `name`, so no
+    /// call site hand-writes the symbol twice.
+    pub fn call_status(&mut self, name: &'static str, args: &[ir::Value]) -> ir::Value {
+        self.call(name, args)
+            .unwrap_or_else(|| panic!("{name} returns a value"))
+    }
+
     /// A pointer to rodata offset `off`.
     pub fn rod(&mut self, off: u32) -> ir::Value {
         if off == 0 {
@@ -328,8 +335,8 @@ impl<'e, 'f> Fx<'e, 'f> {
     /// One slot per SITE, never shared: the cache is monomorphic, so two
     /// sites sharing one would thrash each other. The base is
     /// re-materialised per site rather than hoisted to the entry block --
-    /// it is an `adrp`/`add` pair the same shape rustc's `&__CS_n[i]`
-    /// compiles to, and hoisting it would need the value to dominate every
+    /// it is a cheap `adrp`/`add`
+    /// pair, and hoisting it would need the value to dominate every
     /// block that sends.
     pub fn callsite_ptr(&mut self, caller: u32) -> ir::Value {
         let idx = self.em.callsites.len();

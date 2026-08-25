@@ -20,7 +20,7 @@
 //! CONTEXT state, and every Ruby `Thread` is its own OS thread, so plain
 //! TLS is exactly per-context.
 //!
-//! `Fiber` needs one more twist (also this phase): CRuby gives each fiber
+//! `Fiber` needs one more twist: CRuby gives each fiber
 //! its OWN execution context (`fiber->cont.saved_ec.errinfo` -- rescue
 //! state inside a fiber is invisible to its resumer and vice versa), but a
 //! fiber here runs ON its resumer's coroutine. The fiber ec-swap

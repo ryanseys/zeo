@@ -3,8 +3,7 @@
 //!
 //! The LITERAL `n.times { |i| }` and `(a..b).each { |i| }` shapes take
 //! `analyze::fastpath`'s predicates: a literal receiver cannot be
-//! redefined at run time, so no gate and no dynamic fallback, exactly the
-//! rustc emitter's rule.
+//! redefined at run time, so no gate and no dynamic fallback.
 //!
 //! `arr.each { |e| }` on a statically-`Array` local is the guarded shape:
 //! the receiver's class is a compile-time BELIEF, and `Array#each` can be
@@ -12,16 +11,14 @@
 //! `zeo_rt_iter_inline_ok_for` before it may splice -- with a real `Proc`
 //! and an ordinary block send on the other arm. The body is lowered twice
 //! for that reason (spliced inline, and again as the proc's own
-//! function), which is what the rustc emitter's `match recv { Array(a) if
-//! .. => 'iter: loop {..}, other => catch_break(send_value_in(..)) }`
-//! also does.
+//! function).
 
 use super::ctx::{Fx, LoopCtl};
 use super::ownership;
 use crate::hir::{HirNode, NodeId};
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::{self, InstBuilder, MemFlagsData, StackSlotData, StackSlotKind, types};
-use zeo_abi::abi::{PAYLOAD_OFFSET, ValueTag};
+use zeo_abi::abi::{PAYLOAD_OFFSET, TAG_OFFSET, ValueTag};
 
 /// The two fused shapes' bounds.
 pub(crate) enum Counted {
@@ -101,7 +98,7 @@ pub(crate) fn lower_counted(
     // frame of its own, so those names cannot live in a plain slot: ruby
     // binds a block parameter per invocation, and two closures built in two
     // iterations must not share one storage. They get a cell each iteration
-    // instead -- rustc's "cell-wrapped fresh" splice.
+    // instead.
     let escaping = crate::analyze::captures::collect_escaping_captures(
         &fx.an.compiler,
         body,
@@ -138,8 +135,8 @@ pub(crate) fn lower_counted(
         Counted::ArrayEach { .. } => (0, 0, IntCC::SignedGreaterThanOrEqual),
     };
 
-    // The block parameter SHADOWS any enclosing local of the same name
-    // (rustc splices a fresh `let`); the shadow registers under a synthetic
+    // The block parameter SHADOWS any enclosing local of the same
+    // name; the shadow registers under a synthetic
     // key so the epilogue/landing releases it, and the visible name maps to
     // it only for the loop's extent. A name a closure escapes with is a cell
     // (replaced per iteration below); everything else is a plain slot, which
@@ -170,9 +167,7 @@ pub(crate) fn lower_counted(
 
     let counter =
         fx.b.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
-    let mark = fx
-        .call("zeo_rt_pool_mark", &[])
-        .expect("pool_mark returns the watermark");
+    let mark = fx.call_status("zeo_rt_pool_mark", &[]);
     let fl = MemFlagsData::trusted();
     let start_v = fx.b.ins().iconst(types::I64, start);
     let counter_addr = fx.slot_addr(counter, 0);
@@ -189,9 +184,7 @@ pub(crate) fn lower_counted(
     let c = fx.b.ins().load(types::I64, fl, counter_addr, 0);
     let done = match *counted {
         Counted::ArrayEach { recv } => {
-            let len = fx
-                .call("zeo_rt_array_len", &[recv])
-                .expect("array_len answers the length");
+            let len = fx.call_status("zeo_rt_array_len", &[recv]);
             fx.b.ins().icmp(IntCC::SignedGreaterThanOrEqual, c, len)
         }
         _ => fx.b.ins().icmp_imm_s(end_cc, c, end),
@@ -199,9 +192,7 @@ pub(crate) fn lower_counted(
     fx.b.ins().brif(done, exit_normal, &[], body_blk, &[]);
 
     fx.b.switch_to_block(body_blk);
-    let status = fx
-        .call("zeo_rt_check_ints", &[])
-        .expect("check_ints returns a status");
+    let status = fx.call_status("zeo_rt_check_ints", &[]);
     fx.fallible(status);
     // Each iteration binds fresh storage for every escaping name, so a
     // closure built last time keeps the value it captured.
@@ -276,7 +267,7 @@ pub(crate) fn lower_counted(
             Counted::Times { n } => {
                 let n_v = fx.b.ins().iconst(types::I64, n);
                 let tag = fx.b.ins().iconst(types::I8, i64::from(ValueTag::Int as u8));
-                fx.b.ins().store(fl, tag, dst, 0);
+                fx.b.ins().store(fl, tag, dst, TAG_OFFSET as i32);
                 fx.b.ins().store(fl, n_v, dst, PAYLOAD_OFFSET as i32);
             }
             Counted::Range {
@@ -293,16 +284,14 @@ pub(crate) fn lower_counted(
                     let addr = fx.slot_addr(ss, 0);
                     let tag = fx.b.ins().iconst(types::I8, i64::from(ValueTag::Int as u8));
                     let n = fx.b.ins().iconst(types::I64, v);
-                    fx.b.ins().store(fl, tag, addr, 0);
+                    fx.b.ins().store(fl, tag, addr, TAG_OFFSET as i32);
                     fx.b.ins().store(fl, n, addr, PAYLOAD_OFFSET as i32);
                     addr
                 };
                 let a = int_slot(fx, start);
                 let b = int_slot(fx, end);
                 let excl = fx.b.ins().iconst(types::I8, i64::from(exclusive));
-                let status = fx
-                    .call("zeo_rt_range_new", &[a, b, excl, dst])
-                    .expect("range_new returns a status");
+                let status = fx.call_status("zeo_rt_range_new", &[a, b, excl, dst]);
                 fx.fallible(status);
             }
         }
@@ -367,9 +356,7 @@ pub(crate) fn counted_of(
 /// A fresh owned cell in a slot of its own, ready to hold one binding.
 fn new_cell_local(fx: &mut Fx) -> super::ctx::Local {
     let null = fx.b.ins().iconst(fx.em.ptr, 0);
-    let cellp = fx
-        .call("zeo_rt_cell_new", &[null])
-        .expect("cell_new returns the cell");
+    let cellp = fx.call_status("zeo_rt_cell_new", &[null]);
     let ss = fx.new_cell_slot();
     let dst = fx.slot_addr(ss, 0);
     fx.b.ins().store(MemFlagsData::trusted(), cellp, dst, 0);
@@ -385,9 +372,7 @@ fn replace_cell(fx: &mut Fx, name: &str) {
     };
     let old = fx.cell_ptr(ss);
     let null = fx.b.ins().iconst(fx.em.ptr, 0);
-    let fresh = fx
-        .call("zeo_rt_cell_new", &[null])
-        .expect("cell_new returns the cell");
+    let fresh = fx.call_status("zeo_rt_cell_new", &[null]);
     let dst = fx.slot_addr(ss, 0);
     fx.b.ins().store(MemFlagsData::trusted(), fresh, dst, 0);
     fx.call("zeo_rt_cell_release", &[old]);
@@ -432,7 +417,7 @@ pub(crate) fn lower_array_each(
     let join = fx.b.create_block();
 
     let fl = MemFlagsData::trusted();
-    let tag = fx.b.ins().load(types::I8, fl, recv, 0);
+    let tag = fx.b.ins().load(types::I8, fl, recv, TAG_OFFSET as i32);
     let is_array =
         fx.b.ins()
             .icmp_imm_u(IntCC::Equal, tag, i64::from(ValueTag::Array as u8));
@@ -443,9 +428,7 @@ pub(crate) fn lower_array_each(
     let array_cid =
         fx.b.ins()
             .iconst(types::I32, i64::from(crate::compiler::ARRAY_CLASS.0));
-    let ok = fx
-        .call("zeo_rt_iter_inline_ok_for", &[box_v, array_cid])
-        .expect("iter_inline_ok_for answers a flag");
+    let ok = fx.call_status("zeo_rt_iter_inline_ok_for", &[box_v, array_cid]);
     fx.b.ins().brif(ok, fast, &[], slow, &[]);
 
     fx.b.switch_to_block(fast);

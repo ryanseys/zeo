@@ -590,8 +590,8 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
     }));
     // Own-`super`-target rows: every OWN instance method's trampoline is
     // already receiver-generic, so it doubles as the class's per-position
-    // contribution to a `super` walk (rustc emits dedicated dynamic-self
-    // bridges for the same rows; here the trampoline IS one).
+    // contribution to a `super` walk (the trampoline IS the
+    // dynamic-self bridge such a row needs).
     reg_rows.extend(
         obj_methods
             .iter()
@@ -843,7 +843,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> Result<FuncId, String>
         .collect();
     // A re-scoped inherited method reflects on THIS class: after `private
     // :x`, ruby answers the subclass for `instance_method(:x).owner` while
-    // still running the ancestor's body (rustc's `zsuper` meta pass).
+    // still running the ancestor's body.
     for (idx, class) in analyzed.compiler.classes.iter().enumerate() {
         if idx == 0 || class.is_builtin || class.is_bootstrap {
             continue;
@@ -945,10 +945,10 @@ pub(crate) struct Emitter {
     pub redef_metas: HashMap<(u32, u32), u32>,
     fn_index: u32,
     /// Regexp-literal site ids -- one cached frozen object per site
-    /// (`zeo_rt_regexp_lit`), the rustc per-site `RegexpSite` twin.
+    /// (`zeo_rt_regexp_lit`).
     pub regexp_sites: u32,
     /// `attach_function` call-site ids -- one resolved C symbol address
-    /// per site in the runtime, the rustc per-site `FfiSymSite` twin.
+    /// per site in the runtime.
     pub ffi_sites: u32,
     /// Whether this unit is a run-time `eval`. Both caches above live in the
     /// RUNNING process, so a snippet's fresh counter would answer the
@@ -1455,7 +1455,7 @@ pub(crate) struct ClassBodyCall {
 }
 
 /// One compiled class body (a separate Ruby scope, lifted to its own
-/// function exactly as the rustc backend lifts it).
+/// function).
 pub(crate) struct ClassBodySpec {
     pub call: ClassBodyCall,
     pub class: zeo_abi::ClassId,
@@ -1464,12 +1464,12 @@ pub(crate) struct ClassBodySpec {
     pub node: Option<crate::hir::NodeId>,
     /// Marker reachable INLINE from the statement stream: the body runs at
     /// its marker. Hoisted otherwise (a `class` inside a `def`): the body
-    /// runs once in the toplevel prelude, the rustc backend's rule.
+    /// runs once in the toplevel prelude.
     pub inline: bool,
 }
 
-/// The markers whose class bodies run AT their document position -- the
-/// rustc backend's `inline_class_markers` walk: statement containers
+/// The markers whose class bodies run AT their document
+/// position: statement containers
 /// descend, a `def`'s body waits to be called (so its markers hoist),
 /// except a block-bodied `define_method` def, whose body is a block.
 fn inline_markers(
@@ -1606,8 +1606,7 @@ fn collect_class_bodies(
         // The frozen-reopen guard: a REOPEN under a program that freezes
         // classes raises `FrozenError` for the names it would newly
         // install. Registration order IS document order, so "earlier" is
-        // simply the sites for this class before this one (rustc's
-        // `emit_frozen_reopen_guard`).
+        // simply the sites for this class before this one.
         let freeze_guard = if compiler.program_freezes {
             let earlier: Vec<&crate::compiler::ClassBodySite> = compiler.class_body_sites[..i]
                 .iter()
@@ -1739,9 +1738,9 @@ fn collect_reopen_flags(em: &mut Emitter, analyzed: &Analyzed) {
 }
 
 /// A class body whose ONE statement is an `If` is a `class ... end if cond`
-/// (or `unless`): analyze wraps the whole body in the guard, because the
-/// rustc backend splices the body inline where the condition's locals are in
-/// scope. CLIF lifts the body to its own function, so the condition has to
+/// (or `unless`): analyze wraps the whole body in the guard, but the
+/// condition's locals live in the ENCLOSING scope. CLIF lifts the body
+/// to its own function, so the condition has to
 /// come back out -- which is also where ruby runs it (the oracle's backtrace
 /// for a raise in one reads `<main>`, never `<class:X>`).
 ///
@@ -1773,7 +1772,7 @@ fn split_guard(
 }
 
 /// [`BodyTail`] for one site: what the body's LAST SOURCE statement is
-/// worth (rustc's `consumed_tail_value` plus its value/statement split).
+/// worth, split by value vs. statement position.
 fn body_tail(
     compiler: &crate::compiler::Compiler,
     site: &crate::compiler::ClassBodySite,
@@ -1851,8 +1850,8 @@ pub(crate) struct BodyFnSpec<'a> {
     /// Ivars in this body are NAME-KEYED at runtime (a native-backed
     /// owner has no compiled slot layout).
     pub dyn_ivars: bool,
-    /// The class the `def` was WRITTEN in (rustc's `cx.defining_class`;
-    /// a module method keeps the module) -- None where `super` refuses.
+    /// The class the `def` was WRITTEN in (a module method
+    /// keeps the module) -- None where `super` refuses.
     pub defining_class: Option<zeo_abi::ClassId>,
     /// The singleton-class SURROGATE this body was lexically written in,
     /// when the `def` sat in a constant-bearing `class << self` body.
@@ -2098,7 +2097,7 @@ fn define_method_body(
     let idx = em.next_fn_index();
     // A module method materialized onto an includer keeps the MODULE in
     // its frame label: CRuby names the DEFINING class (`M#mixed`, never
-    // `Bar#mixed`), which is what rustc reads off `scope.defining_class`.
+    // `Bar#mixed`), read off `scope.defining_class`.
     let label_owner = match def.defining_class {
         Some(dc) if dc != def.owner && analyzed.compiler.class(dc).is_module => {
             analyzed.compiler.fq_name(dc)
@@ -2171,18 +2170,15 @@ fn define_method_body(
     let ret_ok = fx.b.create_block();
     fx.ret = Some((out_ptr, ret_ok));
     // The non-local-return home: pushed when a Proc built in this body (or
-    // one running under a begin) can aim a `Signal::Return` here -- the
-    // same predicate as the rustc wrapper's needs_return_catch.
+    // one running under a begin) can aim a `Signal::Return` here.
     let needs_return_catch =
         crate::analyze::captures::body_contains_escaping_return(&analyzed.compiler, def.body)
             || crate::analyze::captures::body_contains_begin(&analyzed.compiler, def.body)
             || crate::analyze::captures::body_contains_runtime_eval(&analyzed.compiler, def.body);
 
     // Recursion guard BEFORE the frame exists: a failure returns without
-    // pops (mirrors the rustc prologue's `stack_check()?` position).
-    let status = fx
-        .call("zeo_rt_stack_check", &[])
-        .expect("stack_check returns a status");
+    // pops.
+    let status = fx.call_status("zeo_rt_stack_check", &[]);
     let early = fx.b.create_block();
     let cont = fx.b.create_block();
     fx.b.ins().brif(status, early, &[], cont, &[]);
@@ -2261,9 +2257,7 @@ fn define_method_body(
     if needs_svar {
         fx.call("zeo_rt_svar_scope_push", &[]);
     }
-    let status = fx
-        .call("zeo_rt_check_ints", &[])
-        .expect("check_ints returns a status");
+    let status = fx.call_status("zeo_rt_check_ints", &[]);
     fx.fallible(status);
 
     bind_deferred(&mut fx, &deferred)?;
@@ -2356,7 +2350,7 @@ fn define_method_body(
     if needs_return_catch {
         // A `Signal::Return` aimed at THIS activation (asked before the
         // home pops) folds into the method's own value.
-        let kind = fx.call("zeo_rt_signal_kind", &[]).expect("kind answers");
+        let kind = fx.call_status("zeo_rt_signal_kind", &[]);
         let is_ret = fx.b.ins().icmp_imm_u(
             cranelift_codegen::ir::condcodes::IntCC::Equal,
             kind,
@@ -2366,9 +2360,7 @@ fn define_method_body(
         let normal = fx.b.create_block();
         fx.b.ins().brif(is_ret, ask, &[], normal, &[]);
         fx.b.switch_to_block(ask);
-        let mine = fx
-            .call("zeo_rt_return_targets_here", &[])
-            .expect("targets answers");
+        let mine = fx.call_status("zeo_rt_return_targets_here", &[]);
         let fold = fx.b.create_block();
         fx.b.ins().brif(mine, fold, &[], normal, &[]);
         fx.b.switch_to_block(fold);
@@ -2516,9 +2508,7 @@ fn define_toplevel(
             &[file_ptr, file_len, label_ptr, label_len, zero, zero],
         );
     }
-    let status = fx
-        .call("zeo_rt_check_ints", &[])
-        .expect("check_ints returns a status");
+    let status = fx.call_status("zeo_rt_check_ints", &[]);
     fx.fallible(status);
 
     // The toplevel's `self`: one pooled `main` handle, borrowed by every
@@ -2538,8 +2528,8 @@ fn define_toplevel(
         main_installs(&mut fx, analyzed, hoisted)?;
     }
     // Defs registered through the row tables run nothing in statement
-    // position (the rustc backend's shape: registration precedes the
-    // body); a ClassDef marker now runs its body site inline.
+    // position (registration precedes the
+    // body); a ClassDef marker runs its body site inline.
     let runnable: Vec<crate::hir::NodeId> = stmts
         .iter()
         .copied()
@@ -2601,7 +2591,7 @@ fn main_installs(
 ) -> Result<(), String> {
     // Alias-carrying classes with no body of their own validate here
     // (`NameError` for a source resolving nowhere); a class WITH a body
-    // site validates at its body's end instead -- rustc's split.
+    // site validates at its body's end instead.
     let unbodied: Vec<u32> = analyzed
         .compiler
         .classes
@@ -2619,9 +2609,7 @@ fn main_installs(
         .collect();
     for id in unbodied {
         let cid = fx.b.ins().iconst(types::I32, i64::from(id));
-        let st = fx
-            .call("zeo_rt_validate_class_aliases", &[cid])
-            .expect("validate_class_aliases returns a status");
+        let st = fx.call_status("zeo_rt_validate_class_aliases", &[cid]);
         fx.fallible(st);
     }
     // `TOPLEVEL_BINDING`, installed UNCONDITIONALLY so `Object.constants`
@@ -2642,8 +2630,7 @@ fn main_installs(
         );
     }
     // Class bodies whose markers sit inside `def`s run ONCE here, before
-    // the main body, in document order -- the rustc backend hoists them
-    // the same way (`inline_class_markers`'s complement).
+    // the main body, in document order (`inline_markers`'s complement).
     for call in hoisted {
         stmt::emit_class_body_call(fx, call)?;
     }
@@ -2698,9 +2685,7 @@ pub(crate) fn init_cell_local(fx: &mut Fx, name: String, seed: Option<ir::Value>
         Some(p) => p,
         None => fx.b.ins().iconst(fx.em.ptr, 0),
     };
-    let cellp = fx
-        .call("zeo_rt_cell_new", &[init])
-        .expect("cell_new returns the cell");
+    let cellp = fx.call_status("zeo_rt_cell_new", &[init]);
     let ss = fx.new_cell_slot();
     let dst = fx.slot_addr(ss, 0);
     fx.b.ins().store(MemFlagsData::trusted(), cellp, dst, 0);

@@ -88,8 +88,8 @@ fn a_block_escaping_from_inside_another_escaping_block_works() {
 fn a_nested_block_captures_the_outer_blocks_own_local() {
     // The INNER block reads the OUTER block's own param `n`. The outer
     // block promotes `n` to a shared `Arc<Mutex>` cell (see
-    // `codegen::call::emit_proc_or_lambda_value`'s `nested_captured`), so the
-    // inner `move` closure clone-captures it -- previously a clean rejection,
+    // `analyze::captures` and `clif::blocks::build_proc`), so the
+    // inner closure captures it -- previously a clean rejection,
     // now the real Ruby behavior. Oracle: n=1 -> 3+1,4+1; n=2 -> 3+2,4+2.
     let result = run_ruby(
         r#"
@@ -112,8 +112,8 @@ fn yield_inside_a_nested_block_literal_drives_the_enclosing_methods_block() {
     // `yield`/`block_given?` lexically inside a block literal refers to the
     // ENCLOSING METHOD's own block (a block has no implicit block of its
     // own): `analyze::scan_bare_block_use` counts it, so the method gets its
-    // `__blk` parameter, and the emitted closure clone-captures it (see
-    // `codegen::call::emit_proc_or_lambda_value`). Oracle-verified.
+    // `__blk` parameter, and the emitted block captures it (see
+    // `clif::blocks::build_proc`). Oracle-verified.
     let result = run_ruby(
         r#"
         class Foo

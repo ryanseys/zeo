@@ -116,9 +116,12 @@ pub(crate) fn refined_call(fx: &mut Fx, site: NodeId) -> Result<Option<Operand>,
     let b_nil = fx.b.create_block();
     let b_call = fx.b.create_block();
     let join = fx.b.create_block();
-    let tv =
-        fx.b.ins()
-            .load(types::I8, MemFlagsData::trusted(), recv_ptr, 0);
+    let tv = fx.b.ins().load(
+        types::I8,
+        MemFlagsData::trusted(),
+        recv_ptr,
+        zeo_abi::abi::TAG_OFFSET as i32,
+    );
     let is_nil = fx.b.ins().icmp_imm_u(IntCC::Equal, tv, 0);
     fx.b.ins().brif(is_nil, b_nil, &[], b_call, &[]);
     fx.b.switch_to_block(b_nil);
@@ -343,14 +346,12 @@ fn lower_reflect(
     let blk_ptr = blk.unwrap_or_else(|| fx.b.ins().iconst(fx.em.ptr, 0));
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
-    let status = fx
-        .call(
-            active.reflect_entry(),
-            &[
-                zero_box, recv_ptr, entry_v, argv, argc, blk_ptr, ids_ptr, n_ids, out,
-            ],
-        )
-        .expect("reflect_dispatch_in returns a status");
+    let status = fx.call_status(
+        active.reflect_entry(),
+        &[
+            zero_box, recv_ptr, entry_v, argv, argc, blk_ptr, ids_ptr, n_ids, out,
+        ],
+    );
     if blk.is_some() {
         super::blocks::catch_break(fx, status, out);
     } else {

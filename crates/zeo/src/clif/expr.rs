@@ -8,7 +8,7 @@ use super::ownership;
 use crate::hir::{ArrayElem, HirNode, NodeId, StrPart};
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::{InstBuilder, MemFlagsData, types};
-use zeo_abi::abi::{PAYLOAD_OFFSET, ValueTag};
+use zeo_abi::abi::{PAYLOAD_OFFSET, TAG_OFFSET, ValueTag};
 
 /// `EncodingId(1)` = UTF-8, every plain source literal's encoding.
 const ENC_UTF8: i64 = 1;
@@ -234,9 +234,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                         if op.owned() {
                             ownership::pool_owned(fx, p, op.tag());
                         }
-                        let status = fx
-                            .call("zeo_rt_str_append_value", &[dst, p])
-                            .expect("append_value returns a status");
+                        let status = fx.call_status("zeo_rt_str_append_value", &[dst, p]);
                         fx.fallible(status);
                     }
                 }
@@ -476,12 +474,10 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             }
             let ss = fx.temp_slot();
             let out = fx.slot_addr(ss, 0);
-            let status = fx
-                .call(
-                    "zeo_rt_alias_in_default_definee",
-                    &[cref_ptr, self_ptr, new_ptr, old_ptr, out],
-                )
-                .expect("alias_in_default_definee returns a status");
+            let status = fx.call_status(
+                "zeo_rt_alias_in_default_definee",
+                &[cref_ptr, self_ptr, new_ptr, old_ptr, out],
+            );
             fx.fallible(status);
             fx.owned_created += 1;
             Ok(Operand::Slot {
@@ -519,9 +515,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             let (library, init) = (library.clone(), init.clone());
             let (lptr, llen) = rodata_name(fx, &library);
             let (iptr, ilen) = rodata_name(fx, &init);
-            let status = fx
-                .call("zeo_rt_cext_load", &[lptr, llen, iptr, ilen])
-                .expect("cext_load returns a status");
+            let status = fx.call_status("zeo_rt_cext_load", &[lptr, llen, iptr, ilen]);
             // A dlopen failure and a raise from inside `Init_` both travel,
             // which is why this is fallible where `FeatureLoaded` is not.
             fx.fallible(status);
@@ -606,9 +600,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             } else {
                 "zeo_rt_scope_const_get"
             };
-            let status = fx
-                .call(entry, &[ptr, nptr, nlen, out])
-                .expect("scope_const_get returns a status");
+            let status = fx.call_status(entry, &[ptr, nptr, nlen, out]);
             fx.fallible(status);
             fx.owned_created += 1;
             Ok(Operand::Slot {
@@ -636,9 +628,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             let (nptr, nlen) = rodata_name(fx, &name);
             let ss = fx.temp_slot();
             let out = fx.slot_addr(ss, 0);
-            let status = fx
-                .call("zeo_rt_scope_const_set", &[sptr, nptr, nlen, vptr, out])
-                .expect("scope_const_set returns a status");
+            let status = fx.call_status("zeo_rt_scope_const_set", &[sptr, nptr, nlen, vptr, out]);
             fx.fallible(status);
             fx.owned_created += 1;
             Ok(Operand::Slot {
@@ -727,9 +717,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 };
                 let ss = fx.temp_slot();
                 let out = fx.slot_addr(ss, 0);
-                let status = fx
-                    .call("zeo_rt_yield_args", &[blk, arr, kw, out])
-                    .expect("yield_args returns a status");
+                let status = fx.call_status("zeo_rt_yield_args", &[blk, arr, kw, out]);
                 fx.fallible(status);
                 fx.owned_created += 1;
                 return Ok(Operand::Slot {
@@ -749,11 +737,9 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             // A snippet's OWN level has no block channel; the block it
             // means is the enclosing method's, which that method published.
             let status = if fx.blk_ptr.is_none() && fx.eval_mode.is_some() {
-                fx.call("zeo_rt_eval_yield", &[argv_ptr, argc_v, out])
-                    .expect("eval_yield returns a status")
+                fx.call_status("zeo_rt_eval_yield", &[argv_ptr, argc_v, out])
             } else {
-                fx.call("zeo_rt_yield", &[blk, argv_ptr, argc_v, out])
-                    .expect("yield returns a status")
+                fx.call_status("zeo_rt_yield", &[blk, argv_ptr, argc_v, out])
             };
             fx.fallible(status);
             fx.owned_created += 1;
@@ -773,9 +759,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             // A snippet carries no block channel of its own; the one it
             // means is the enclosing method's, published for the call.
             None if fx.eval_mode.is_some() => {
-                let given = fx
-                    .call("zeo_rt_eval_block_given", &[])
-                    .expect("eval_block_given answers");
+                let given = fx.call_status("zeo_rt_eval_block_given", &[]);
                 Ok(Operand::Bool(given))
             }
             None => Ok(Operand::Bool(fx.b.ins().iconst(types::I8, 0))),
@@ -1070,7 +1054,9 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             let b_nil = fx.b.create_block();
             let b_call = fx.b.create_block();
             let join = fx.b.create_block();
-            let tv = fx.b.ins().load(types::I8, MemFlagsData::trusted(), ptr, 0);
+            let tv =
+                fx.b.ins()
+                    .load(types::I8, MemFlagsData::trusted(), ptr, TAG_OFFSET as i32);
             let is_nil = fx.b.ins().icmp_imm_u(IntCC::Equal, tv, 0);
             fx.b.ins().brif(is_nil, b_nil, &[], b_call, &[]);
             fx.b.switch_to_block(b_nil);
@@ -1440,9 +1426,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             let excl = fx.b.ins().iconst(types::I8, i64::from(exclusive));
             let ss = fx.temp_slot();
             let out = fx.slot_addr(ss, 0);
-            let status = fx
-                .call("zeo_rt_range_new", &[s_ptr, e_ptr, excl, out])
-                .expect("range_new returns a status");
+            let status = fx.call_status("zeo_rt_range_new", &[s_ptr, e_ptr, excl, out]);
             fx.fallible(status);
             fx.owned_created += 1;
             Ok(Operand::Slot {
@@ -1505,9 +1489,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             }
             let (nptr, nlen) = rodata_name(fx, &name);
             let bx = fx.box_v();
-            let status = fx
-                .call("zeo_rt_gvar_assign", &[bx, nptr, nlen, ptr])
-                .expect("gvar_assign returns a status");
+            let status = fx.call_status("zeo_rt_gvar_assign", &[bx, nptr, nlen, ptr]);
             fx.fallible(status);
             Ok(Operand::Ptr {
                 addr: ptr,
@@ -1532,9 +1514,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             {
                 fx.call("zeo_rt_cvar_get", &[owner_v, nptr, nlen, out]);
             } else {
-                let status = fx
-                    .call("zeo_rt_cvar_get_checked", &[owner_v, nptr, nlen, out])
-                    .expect("cvar_get_checked returns a status");
+                let status = fx.call_status("zeo_rt_cvar_get_checked", &[owner_v, nptr, nlen, out]);
                 fx.fallible(status);
             }
             fx.owned_created += 1;
@@ -1580,9 +1560,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             }
             let owner_v = fx.b.ins().iconst(types::I32, i64::from(owner));
             let (nptr, nlen) = rodata_name(fx, &name);
-            let status = fx
-                .call("zeo_rt_cvar_set", &[owner_v, nptr, nlen, ptr])
-                .expect("cvar_set returns a status");
+            let status = fx.call_status("zeo_rt_cvar_set", &[owner_v, nptr, nlen, ptr]);
             fx.fallible(status);
             Ok(Operand::Ptr {
                 addr: ptr,
@@ -1752,26 +1730,51 @@ fn block_channel(
 }
 
 /// A short human label for refusal messages.
-fn node_kind(node: &HirNode) -> String {
+pub(crate) fn node_kind(node: &HirNode) -> String {
     // One `match` would be 80 arms of labels nothing else needs; the
     // refusal text only has to orient, not classify -- so a kind without a
     // hand-written phrase names its HIR VARIANT, which is what a triage
-    // histogram over the corpus reads.
+    // histogram over the corpus reads. The phrase arms only fire where the
+    // node actually gets refused (an `if` never reaches a statement
+    // refusal, so its value-position phrase cannot mislead there).
     match node {
         HirNode::Call { .. } => "a method call".to_string(),
         HirNode::If { .. } => "an `if` in value position".to_string(),
         HirNode::While { .. } => "a loop in value position".to_string(),
+        HirNode::ClassDef { .. } => "a class definition".to_string(),
+        HirNode::DefMethod { .. } => "a method definition".to_string(),
+        HirNode::Begin { .. } => "a begin/rescue/ensure".to_string(),
         other => format!("the node kind `{}`", variant_name(other)),
     }
 }
 
-/// The bare variant name of a node (`Debug`'s leading identifier).
+/// The bare variant name of a node -- `Debug`'s leading identifier,
+/// captured WITHOUT formatting the node's whole subtree: the writer
+/// stops the walk at the first delimiter, so a deep node costs nothing.
 pub(crate) fn variant_name(node: &HirNode) -> String {
-    let text = format!("{node:?}");
-    text.split(['(', ' ', '{'])
-        .next()
-        .unwrap_or("Unknown")
-        .to_string()
+    use std::fmt::Write as _;
+    struct Prefix(String);
+    impl std::fmt::Write for Prefix {
+        fn write_str(&mut self, s: &str) -> std::fmt::Result {
+            match s.find(['(', ' ', '{']) {
+                Some(i) => {
+                    self.0.push_str(&s[..i]);
+                    Err(std::fmt::Error) // the name is complete; stop the walk
+                }
+                None => {
+                    self.0.push_str(s);
+                    Ok(())
+                }
+            }
+        }
+    }
+    let mut w = Prefix(String::new());
+    let _ = write!(w, "{node:?}");
+    if w.0.is_empty() {
+        "Unknown".to_string()
+    } else {
+        w.0
+    }
 }
 
 /// A baked `u32` array in rodata, 4-aligned (the runtime reads it as
@@ -1827,9 +1830,7 @@ pub(crate) fn box_handle(fx: &mut Fx, box_id: u32) -> Result<Operand, String> {
     let bx = fx.b.ins().iconst(types::I32, i64::from(box_id));
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
-    let status = fx
-        .call("zeo_rt_box_handle", &[bx, out])
-        .expect("box_handle returns a status");
+    let status = fx.call_status("zeo_rt_box_handle", &[bx, out]);
     fx.fallible(status);
     fx.owned_created += 1;
     Ok(Operand::Slot {
@@ -1875,9 +1876,7 @@ fn guarded_fold(
     fast: impl FnOnce(&mut Fx) -> Result<Operand, String>,
     slow: impl FnOnce(&mut Fx) -> Result<Operand, String>,
 ) -> Result<Operand, String> {
-    let live = fx
-        .call("zeo_rt_is_live", &[])
-        .expect("is_live answers a flag");
+    let live = fx.call_status("zeo_rt_is_live", &[]);
     let ss = fx.temp_slot();
     let dst = fx.slot_addr(ss, 0);
     let b_fast = fx.b.create_block();
@@ -2056,9 +2055,7 @@ fn method_capture_intrinsic(
     }
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
-    let status = fx
-        .call("zeo_rt_method_capture_inherited", &[recv_ptr, sym_ptr, out])
-        .expect("method_capture_inherited returns a status");
+    let status = fx.call_status("zeo_rt_method_capture_inherited", &[recv_ptr, sym_ptr, out]);
     fx.fallible(status);
     fx.owned_created += 1;
     Ok(Some(Operand::Slot {
@@ -2170,12 +2167,10 @@ fn const_cref_call(
     let hook_v = fx.b.ins().iconst(types::I8, i64::from(flags));
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
-    let status = fx
-        .call(
-            "zeo_rt_const_get_cref",
-            &[ids_ptr, n_ids, nptr, nlen, qptr, qlen, hook_v, out],
-        )
-        .expect("const_get_cref returns a status");
+    let status = fx.call_status(
+        "zeo_rt_const_get_cref",
+        &[ids_ptr, n_ids, nptr, nlen, qptr, qlen, hook_v, out],
+    );
     fx.fallible(status);
     fx.owned_created += 1;
     Ok(Operand::Slot {
@@ -2227,9 +2222,7 @@ fn emit_private_constant_guard(fx: &mut Fx, scope_cid: crate::compiler::ClassId,
     let path = format!("{}::{name}", compiler.fq_name(owner_cid));
     let owner_v = fx.b.ins().iconst(types::I32, i64::from(owner_cid.0));
     let (nptr, nlen) = rodata_name(fx, name);
-    let private = fx
-        .call("zeo_rt_const_private", &[owner_v, nptr, nlen])
-        .expect("const_private answers");
+    let private = fx.call_status("zeo_rt_const_private", &[owner_v, nptr, nlen]);
     let hidden = fx.b.create_block();
     let go = fx.b.create_block();
     fx.b.ins().brif(private, hidden, &[], go, &[]);
@@ -2237,12 +2230,10 @@ fn emit_private_constant_guard(fx: &mut Fx, scope_cid: crate::compiler::ClassId,
     let owner_v = fx.b.ins().iconst(types::I32, i64::from(owner_cid.0));
     let (nptr, nlen) = rodata_name(fx, name);
     let (pptr, plen) = rodata_name(fx, &path);
-    let st = fx
-        .call(
-            "zeo_rt_raise_private_constant",
-            &[owner_v, nptr, nlen, pptr, plen],
-        )
-        .expect("raise_private_constant returns a status");
+    let st = fx.call_status(
+        "zeo_rt_raise_private_constant",
+        &[owner_v, nptr, nlen, pptr, plen],
+    );
     fx.fallible(st);
     fx.b.ins().jump(go, &[]);
     fx.b.switch_to_block(go);
@@ -2294,12 +2285,10 @@ fn scoped_const_read(fx: &mut Fx, id: NodeId, scope: &str, name: &str) -> Result
     let hook_v = fx.b.ins().iconst(types::I8, i64::from(hook));
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
-    let status = fx
-        .call(
-            "zeo_rt_const_get_scoped",
-            &[owner_v, nptr, nlen, qptr, qlen, hook_v, out],
-        )
-        .expect("const_get_scoped returns a status");
+    let status = fx.call_status(
+        "zeo_rt_const_get_scoped",
+        &[owner_v, nptr, nlen, qptr, qlen, hook_v, out],
+    );
     fx.fallible(status);
     fx.owned_created += 1;
     Ok(Operand::Slot {
@@ -2347,12 +2336,10 @@ fn runtime_scope_const_read(
     let (qptr, qlen) = rodata_name(fx, &qualified);
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
-    let status = fx
-        .call(
-            "zeo_rt_const_get_on_value",
-            &[sptr, nptr, nlen, qptr, qlen, out],
-        )
-        .expect("const_get_on_value returns a status");
+    let status = fx.call_status(
+        "zeo_rt_const_get_on_value",
+        &[sptr, nptr, nlen, qptr, qlen, out],
+    );
     fx.fallible(status);
     fx.owned_created += 1;
     Ok(Operand::Slot {
@@ -2386,9 +2373,7 @@ fn flip_flop(
     let off_blk = fx.b.create_block();
     let join = fx.b.create_block();
     let state_v = fx.b.ins().iconst(types::I32, i64::from(state));
-    let on = fx
-        .call("zeo_rt_flip_flop_on", &[state_v])
-        .expect("flip_flop_on answers");
+    let on = fx.call_status("zeo_rt_flip_flop_on", &[state_v]);
     fx.b.ins().brif(on, on_blk, &[], test_left, &[]);
 
     // Already on: the right operand decides whether this is the last true.
@@ -2514,9 +2499,7 @@ fn emit_autoload_touch(fx: &mut Fx, cid: crate::compiler::ClassId) {
         let leaf = parts[i - 1].to_string();
         let owner_v = fx.b.ins().iconst(types::I32, i64::from(owner.0));
         let (nptr, nlen) = rodata_name(fx, &leaf);
-        let st = fx
-            .call("zeo_rt_autoload_touch", &[owner_v, nptr, nlen])
-            .expect("autoload_touch returns a status");
+        let st = fx.call_status("zeo_rt_autoload_touch", &[owner_v, nptr, nlen]);
         fx.fallible(st);
     }
 }
@@ -2547,12 +2530,10 @@ fn class_value_of(
         let cid_v = fx.b.ins().iconst(types::I32, i64::from(cid.0));
         let (nptr, nlen) = rodata_name(fx, &fq);
         let owner_v = fx.b.ins().iconst(types::I32, i64::from(owner.0));
-        let st = fx
-            .call(
-                "zeo_rt_conditional_class_ref",
-                &[cid_v, nptr, nlen, owner_v, dst],
-            )
-            .expect("conditional_class_ref returns a status");
+        let st = fx.call_status(
+            "zeo_rt_conditional_class_ref",
+            &[cid_v, nptr, nlen, owner_v, dst],
+        );
         fx.fallible(st);
         return Ok(Operand::Slot {
             ss,
@@ -2590,7 +2571,7 @@ pub(crate) fn class_immediate(fx: &mut Fx, cid: crate::compiler::ClassId) -> Ope
     let tag =
         fx.b.ins()
             .iconst(types::I8, i64::from(ValueTag::Class as u8));
-    fx.b.ins().store(fl, tag, dst, 0);
+    fx.b.ins().store(fl, tag, dst, TAG_OFFSET as i32);
     let cid_v = fx.b.ins().iconst(types::I32, i64::from(cid.0));
     fx.b.ins().store(fl, cid_v, dst, PAYLOAD_OFFSET as i32);
     Operand::Slot {
@@ -2600,10 +2581,10 @@ pub(crate) fn class_immediate(fx: &mut Fx, cid: crate::compiler::ClassId) -> Ope
     }
 }
 
-/// The operator set lowered inline -- the rustc emitter's
-/// `INT_BINARY_OPS`/`FLOAT_BINARY_OPS` tables, which the boxed three-arm
-/// shape below serves from ONE site each (rustc needs a statically known
-/// operand pair; the tag test asks at run time instead).
+/// The operator set lowered inline (see `types.rs`'s
+/// `INT_RESULT_BINARY_OPS`/`FLOAT_RESULT_BINARY_OPS`), which the boxed
+/// three-arm shape below serves from ONE site each -- the tag test asks
+/// at run time, so no statically known operand pair is needed.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum BinOp {
     Add,
@@ -2769,7 +2750,7 @@ fn operator_fast_path(fx: &Fx, name: &str) -> bool {
 fn store_int(fx: &mut Fx, v: cranelift_codegen::ir::Value, dst: cranelift_codegen::ir::Value) {
     let fl = MemFlagsData::trusted();
     let tag = fx.b.ins().iconst(types::I8, i64::from(ValueTag::Int as u8));
-    fx.b.ins().store(fl, tag, dst, 0);
+    fx.b.ins().store(fl, tag, dst, TAG_OFFSET as i32);
     fx.b.ins().store(fl, v, dst, PAYLOAD_OFFSET as i32);
 }
 
@@ -2778,7 +2759,7 @@ fn store_bool_tag(fx: &mut Fx, v: cranelift_codegen::ir::Value, dst: cranelift_c
     let tag =
         fx.b.ins()
             .iconst(types::I8, i64::from(ValueTag::Bool as u8));
-    fx.b.ins().store(fl, tag, dst, 0);
+    fx.b.ins().store(fl, tag, dst, TAG_OFFSET as i32);
     fx.b.ins().store(fl, v, dst, payload_off());
 }
 
@@ -2957,7 +2938,7 @@ fn float_arm(
             let tag =
                 fx.b.ins()
                     .iconst(types::I8, i64::from(ValueTag::Float as u8));
-            fx.b.ins().store(fl, tag, dst, 0);
+            fx.b.ins().store(fl, tag, dst, TAG_OFFSET as i32);
             fx.b.ins().store(fl, v, dst, payload);
         }
         FloatShape::Spaceship => {
@@ -3000,8 +2981,8 @@ fn boxed_binop(
     let b_dyn = fx.b.create_block();
     let join = fx.b.create_block();
 
-    let ta = fx.b.ins().load(types::I8, fl, pa, 0);
-    let tb = fx.b.ins().load(types::I8, fl, pb, 0);
+    let ta = fx.b.ins().load(types::I8, fl, pa, TAG_OFFSET as i32);
+    let tb = fx.b.ins().load(types::I8, fl, pb, TAG_OFFSET as i32);
     let int_tag = i64::from(ValueTag::Int as u8);
     let a_int = fx.b.ins().icmp_imm_u(IntCC::Equal, ta, int_tag);
     let b_int_p = fx.b.ins().icmp_imm_u(IntCC::Equal, tb, int_tag);
@@ -3068,9 +3049,7 @@ fn boxed_binop(
         let zero = fx.b.ins().iconst(types::I32, 0);
         let one = fx.b.ins().iconst(fx.em.ptr, 1);
         let null = fx.b.ins().iconst(fx.em.ptr, 0);
-        let status = fx
-            .call("zeo_rt_send_value_in", &[zero, pa, sym, pb, one, null, dst])
-            .expect("send returns a status");
+        let status = fx.call_status("zeo_rt_send_value_in", &[zero, pa, sym, pb, one, null, dst]);
         fx.fallible(status);
         fx.b.ins().jump(join, &[]);
     }
@@ -3146,12 +3125,10 @@ fn regexp_lit(
         let (ic, ext, ml, enc) = flag_vals(fx);
         let ss = fx.temp_slot();
         let out = fx.slot_addr(ss, 0);
-        let status = fx
-            .call(
-                "zeo_rt_regexp_lit",
-                &[site_v, ptr, len_v, ic, ext, ml, enc, out],
-            )
-            .expect("regexp_lit returns a status");
+        let status = fx.call_status(
+            "zeo_rt_regexp_lit",
+            &[site_v, ptr, len_v, ic, ext, ml, enc, out],
+        );
         fx.fallible(status);
         fx.owned_created += 1;
         return Ok(Operand::Slot {
@@ -3194,9 +3171,7 @@ fn regexp_lit(
                 if op.owned() {
                     ownership::pool_owned(fx, p, op.tag());
                 }
-                let status = fx
-                    .call("zeo_rt_str_append_value", &[pat, p])
-                    .expect("append_value returns a status");
+                let status = fx.call_status("zeo_rt_str_append_value", &[pat, p]);
                 fx.fallible(status);
             }
         }
@@ -3204,9 +3179,7 @@ fn regexp_lit(
     let (ic, ext, ml, enc) = flag_vals(fx);
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
-    let status = fx
-        .call("zeo_rt_regexp_interp", &[pat, ic, ext, ml, enc, out])
-        .expect("regexp_interp returns a status");
+    let status = fx.call_status("zeo_rt_regexp_interp", &[pat, ic, ext, ml, enc, out]);
     fx.fallible(status);
     fx.owned_created += 1;
     Ok(Operand::Slot {
@@ -3266,7 +3239,7 @@ fn defined_all_or_nil(fx: &mut Fx, site: NodeId, nodes: &[NodeId]) -> Result<Ope
             ownership::pool_owned(fx, p, op.tag());
         }
         let fl = cranelift_codegen::ir::MemFlagsData::trusted();
-        let tag = fx.b.ins().load(types::I8, fl, p, 0);
+        let tag = fx.b.ins().load(types::I8, fl, p, TAG_OFFSET as i32);
         let defined = fx.b.ins().icmp_imm_u(
             cranelift_codegen::ir::condcodes::IntCC::NotEqual,
             tag,
@@ -3351,9 +3324,7 @@ fn lower_defined(fx: &mut Fx, site: NodeId, inner: NodeId) -> Result<Operand, St
         // A snippet's own level has no channel; the one it means is the
         // enclosing method's, published for the call.
         if fx.blk_ptr.is_none() && fx.eval_mode.is_some() {
-            let hit = fx
-                .call("zeo_rt_eval_block_given", &[])
-                .expect("eval_block_given answers");
+            let hit = fx.call_status("zeo_rt_eval_block_given", &[]);
             return Ok(defined_cond(fx, hit, "yield"));
         }
         return Ok(match fx.blk_ptr {
@@ -3403,18 +3374,14 @@ fn lower_defined(fx: &mut Fx, site: NodeId, inner: NodeId) -> Result<Operand, St
         let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
         let dc_v = fx.b.ins().iconst(types::I32, i64::from(target.0));
         let sym = fx.sym_id(&m);
-        let hit = fx
-            .call("zeo_rt_super_defined", &[self_ptr, dc_v, sym])
-            .expect("super_defined answers");
+        let hit = fx.call_status("zeo_rt_super_defined", &[self_ptr, dc_v, sym]);
         return Ok(defined_cond(fx, hit, "super"));
     }
     // The same probe at a SNIPPET's own level, where the target is the
     // enclosing method's rather than this scope's.
     if matches!(&fx.an.compiler.hir[inner], HirNode::SuperCall { .. }) && fx.eval_mode.is_some() {
         let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
-        let hit = fx
-            .call("zeo_rt_eval_super_defined", &[self_ptr])
-            .expect("eval_super_defined answers");
+        let hit = fx.call_status("zeo_rt_eval_super_defined", &[self_ptr]);
         return Ok(defined_cond(fx, hit, "super"));
     }
     // A scope with no method NAME of its own is either outside any method --
@@ -3427,9 +3394,7 @@ fn lower_defined(fx: &mut Fx, site: NodeId, inner: NodeId) -> Result<Operand, St
     // where there was none.
     if matches!(&fx.an.compiler.hir[inner], HirNode::SuperCall { .. }) && fx.method_name.is_none() {
         let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
-        let hit = fx
-            .call("zeo_rt_super_defined_dynamic", &[self_ptr])
-            .expect("super_defined_dynamic answers");
+        let hit = fx.call_status("zeo_rt_super_defined_dynamic", &[self_ptr]);
         return Ok(defined_cond(fx, hit, "super"));
     }
     // Inside a RUN-TIME eval a bare name that IS one of the caller's
@@ -3548,9 +3513,7 @@ fn lower_defined(fx: &mut Fx, site: NodeId, inner: NodeId) -> Result<Operand, St
             };
             let sid = fx.b.ins().iconst(types::I32, i64::from(scope_id.0));
             let (nptr, nlen) = rodata_name(fx, &name);
-            let private = fx
-                .call("zeo_rt_const_private", &[sid, nptr, nlen])
-                .expect("const_private answers");
+            let private = fx.call_status("zeo_rt_const_private", &[sid, nptr, nlen]);
             let hidden = fx.b.create_block();
             let probe = fx.b.create_block();
             let merge = fx.b.create_block();
@@ -3563,9 +3526,7 @@ fn lower_defined(fx: &mut Fx, site: NodeId, inner: NodeId) -> Result<Operand, St
             fx.b.switch_to_block(probe);
             let sid2 = fx.b.ins().iconst(types::I32, i64::from(scope_id.0));
             let (nptr2, nlen2) = rodata_name(fx, &name);
-            let hit = fx
-                .call("zeo_rt_defined_const_in", &[sid2, nptr2, nlen2])
-                .expect("defined_const_in answers");
+            let hit = fx.call_status("zeo_rt_defined_const_in", &[sid2, nptr2, nlen2]);
             let yes = fx.b.create_block();
             let no = fx.b.create_block();
             fx.b.ins().brif(hit, yes, &[], no, &[]);
@@ -3622,9 +3583,7 @@ fn defined_const_under_runtime_scope(
             ownership::pool_owned(fx, p, op.tag());
         }
         let (nptr, nlen) = rodata_name(fx, name);
-        let hit = fx
-            .call("zeo_rt_scope_const_defined", &[p, nptr, nlen])
-            .expect("scope_const_defined answers");
+        let hit = fx.call_status("zeo_rt_scope_const_defined", &[p, nptr, nlen]);
         let yes = fx.b.create_block();
         let no = fx.b.create_block();
         fx.b.ins().brif(hit, yes, &[], no, &[]);
@@ -3665,9 +3624,7 @@ fn defined_rest(fx: &mut Fx, site: NodeId, inner: NodeId) -> Result<Operand, Str
         }
         let bx = fx.box_v();
         let (nptr, nlen) = rodata_name(fx, &name);
-        let hit = fx
-            .call("zeo_rt_defined_gvar", &[bx, nptr, nlen])
-            .expect("defined_gvar answers");
+        let hit = fx.call_status("zeo_rt_defined_gvar", &[bx, nptr, nlen]);
         return Ok(defined_cond(fx, hit, "global-variable"));
     }
     if let HirNode::LastMatchRef(which) = &fx.an.compiler.hir[inner] {
@@ -3690,7 +3647,7 @@ fn defined_rest(fx: &mut Fx, site: NodeId, inner: NodeId) -> Result<Operand, Str
         fx.owned_created += 1;
         ownership::pool_owned(fx, mout, TagInfo::Unknown);
         let fl = cranelift_codegen::ir::MemFlagsData::trusted();
-        let tag = fx.b.ins().load(types::I8, fl, mout, 0);
+        let tag = fx.b.ins().load(types::I8, fl, mout, TAG_OFFSET as i32);
         return Ok(defined_cond(fx, tag, "global-variable"));
     }
     // An array/hash literal answers "expression" only if EVERY element is
@@ -3721,9 +3678,7 @@ fn defined_rest(fx: &mut Fx, site: NodeId, inner: NodeId) -> Result<Operand, Str
         let (nptr, nlen) = rodata_name(fx, &name);
         let hit_ss = fx.temp_slot();
         let hit_ptr = fx.slot_addr(hit_ss, 0);
-        let status = fx
-            .call("zeo_rt_defined_ivar", &[self_ptr, nptr, nlen, hit_ptr])
-            .expect("defined_ivar returns a status");
+        let status = fx.call_status("zeo_rt_defined_ivar", &[self_ptr, nptr, nlen, hit_ptr]);
         fx.fallible(status);
         let fl = cranelift_codegen::ir::MemFlagsData::trusted();
         let hit = fx.b.ins().load(types::I8, fl, hit_ptr, 0);
@@ -3734,9 +3689,7 @@ fn defined_rest(fx: &mut Fx, site: NodeId, inner: NodeId) -> Result<Operand, Str
         let owner = cvar_owner(fx, &name);
         let ov = fx.b.ins().iconst(types::I32, i64::from(owner));
         let (nptr, nlen) = rodata_name(fx, &name);
-        let hit = fx
-            .call("zeo_rt_defined_cvar", &[ov, nptr, nlen])
-            .expect("defined_cvar answers");
+        let hit = fx.call_status("zeo_rt_defined_cvar", &[ov, nptr, nlen]);
         return Ok(defined_cond(fx, hit, "class variable"));
     }
     // A bare constant naming a RUNTIME-CONDITIONAL class: registered but
@@ -3780,9 +3733,7 @@ fn defined_rest(fx: &mut Fx, site: NodeId, inner: NodeId) -> Result<Operand, Str
             if let Some((owner, leaf)) = positional {
                 let sid = fx.b.ins().iconst(types::I32, i64::from(owner.0));
                 let (nptr, nlen) = rodata_name(fx, &leaf);
-                let hit = fx
-                    .call("zeo_rt_defined_const_in", &[sid, nptr, nlen])
-                    .expect("defined_const_in answers");
+                let hit = fx.call_status("zeo_rt_defined_const_in", &[sid, nptr, nlen]);
                 return Ok(defined_cond(fx, hit, "constant"));
             }
         }
@@ -3895,12 +3846,10 @@ pub(crate) fn const_added_announce(fx: &mut Fx, owner: u32, name: &str) -> Resul
     let zero_box = fx.box_v();
     let argc = fx.b.ins().iconst(fx.em.ptr, 1);
     let null = fx.b.ins().iconst(fx.em.ptr, 0);
-    let status = fx
-        .call(
-            "zeo_rt_send_value_in",
-            &[zero_box, recv_ptr, sym, argv, argc, null, out],
-        )
-        .expect("send returns a status");
+    let status = fx.call_status(
+        "zeo_rt_send_value_in",
+        &[zero_box, recv_ptr, sym, argv, argc, null, out],
+    );
     fx.fallible(status);
     fx.owned_created += 1;
     ownership::discard(
@@ -3992,9 +3941,7 @@ fn case_when(
                     if op.owned() {
                         ownership::pool_owned(fx, p, tag);
                     }
-                    let status = fx
-                        .call("zeo_rt_case_eq", &[p, s, hit_ptr])
-                        .expect("case_eq returns a status");
+                    let status = fx.call_status("zeo_rt_case_eq", &[p, s, hit_ptr]);
                     fx.fallible(status);
                     fx.b.ins()
                         .load(types::I8, MemFlagsData::trusted(), hit_ptr, 0)
@@ -4006,9 +3953,7 @@ fn case_when(
                     if op.owned() {
                         ownership::pool_owned(fx, p, tag);
                     }
-                    let status = fx
-                        .call("zeo_rt_case_eq_any", &[p, s, hit_ptr])
-                        .expect("case_eq_any returns a status");
+                    let status = fx.call_status("zeo_rt_case_eq_any", &[p, s, hit_ptr]);
                     fx.fallible(status);
                     fx.b.ins()
                         .load(types::I8, MemFlagsData::trusted(), hit_ptr, 0)
@@ -4267,9 +4212,7 @@ fn box_current(
     let bx = fx.box_v();
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
-    let status = fx
-        .call("zeo_rt_box_current", &[bx, out])
-        .expect("box_current returns a status");
+    let status = fx.call_status("zeo_rt_box_current", &[bx, out]);
     fx.fallible(status);
     fx.owned_created += 1;
     Ok(Some(Operand::Slot {
@@ -4388,12 +4331,10 @@ fn runtime_def(
         let vis = fx.b.ins().iconst(types::I8, i64::from(vis));
         let out_ss = fx.temp_slot();
         let out = fx.slot_addr(out_ss, 0);
-        let status = fx
-            .call(
-                "zeo_rt_eval_define",
-                &[mode_v, self_ptr, sym, proc_addr, vis, out],
-            )
-            .expect("eval_define returns a status");
+        let status = fx.call_status(
+            "zeo_rt_eval_define",
+            &[mode_v, self_ptr, sym, proc_addr, vis, out],
+        );
         fx.owned_consumed += 1;
         fx.fallible(status);
         fx.owned_created += 1;
@@ -4457,7 +4398,7 @@ fn runtime_def(
         let tag =
             fx.b.ins()
                 .iconst(types::I8, i64::from(ValueTag::Class as u8));
-        fx.b.ins().store(fl, tag, cref, 0);
+        fx.b.ins().store(fl, tag, cref, TAG_OFFSET as i32);
         let cid = fx.b.ins().iconst(types::I32, i64::from(cref_cid.0));
         fx.b.ins()
             .store(fl, cid, cref, zeo_abi::abi::PAYLOAD_OFFSET as i32);
@@ -4477,12 +4418,10 @@ fn runtime_def(
     let body_vis = fx.b.ins().iconst(types::I8, i64::from(body_vis));
     let out_ss = fx.temp_slot();
     let out = fx.slot_addr(out_ss, 0);
-    let status = fx
-        .call(
-            "zeo_rt_define_in_default_definee",
-            &[cref, self_ptr, sym, proc_addr, private, body_vis, out],
-        )
-        .expect("define_in_default_definee returns a status");
+    let status = fx.call_status(
+        "zeo_rt_define_in_default_definee",
+        &[cref, self_ptr, sym, proc_addr, private, body_vis, out],
+    );
     // The proc's reference moved into the runtime.
     fx.owned_consumed += 1;
     fx.fallible(status);
@@ -4570,12 +4509,10 @@ fn ractor_new(fx: &mut Fx, id: NodeId) -> Result<Option<Operand>, String> {
     let argc = fx.b.ins().iconst(fx.em.ptr, args.len() as i64);
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
-    let status = fx
-        .call(
-            "zeo_rt_ractor_new",
-            &[blk, argv, argc, name_ptr, loc_ptr, loc_len, out],
-        )
-        .expect("ractor_new returns a status");
+    let status = fx.call_status(
+        "zeo_rt_ractor_new",
+        &[blk, argv, argc, name_ptr, loc_ptr, loc_len, out],
+    );
     fx.fallible(status);
     fx.owned_created += 1;
     Ok(Some(Operand::Slot {
@@ -4677,12 +4614,10 @@ fn runtime_eval(
         let args_ptr = super::call::build_array(fx, args)?;
         let ss = fx.temp_slot();
         let out = fx.slot_addr(ss, 0);
-        let status = fx
-            .call(
-                "zeo_rt_eval_value_in_scope_argv",
-                &[args_ptr, scope_ptr, out],
-            )
-            .expect("eval_value_in_scope_argv returns a status");
+        let status = fx.call_status(
+            "zeo_rt_eval_value_in_scope_argv",
+            &[args_ptr, scope_ptr, out],
+        );
         fx.fallible(status);
         fx.owned_created += 1;
         return Ok(Some(Operand::Slot {
@@ -4706,12 +4641,10 @@ fn runtime_eval(
     }
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
-    let status = fx
-        .call(
-            "zeo_rt_eval_value_in_scope",
-            &[ptrs[0], scope_ptr, ptrs[1], ptrs[2], ptrs[3], out],
-        )
-        .expect("eval_value_in_scope returns a status");
+    let status = fx.call_status(
+        "zeo_rt_eval_value_in_scope",
+        &[ptrs[0], scope_ptr, ptrs[1], ptrs[2], ptrs[3], out],
+    );
     fx.fallible(status);
     fx.owned_created += 1;
     Ok(Some(Operand::Slot {
@@ -4775,12 +4708,10 @@ fn block_param_call(fx: &mut Fx, id: NodeId) -> Result<Option<Operand>, String> 
     let caller = super::call::caller_class(fx, false);
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
-    let status = fx
-        .call(
-            "zeo_rt_proc_call_or_send",
-            &[recv_ptr, sym, argv, argc, null, caller, out],
-        )
-        .expect("proc_call_or_send returns a status");
+    let status = fx.call_status(
+        "zeo_rt_proc_call_or_send",
+        &[recv_ptr, sym, argv, argc, null, caller, out],
+    );
     fx.fallible(status);
     fx.owned_created += 1;
     Ok(Some(Operand::Slot {
@@ -4822,9 +4753,7 @@ fn runtime_scope_const_write(
     let (nptr, nlen) = rodata_name(fx, name);
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
-    let status = fx
-        .call("zeo_rt_scope_const_set", &[sptr, nptr, nlen, vptr, out])
-        .expect("scope_const_set returns a status");
+    let status = fx.call_status("zeo_rt_scope_const_set", &[sptr, nptr, nlen, vptr, out]);
     fx.fallible(status);
     fx.owned_created += 1;
     Ok(Operand::Slot {

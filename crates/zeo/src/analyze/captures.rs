@@ -25,7 +25,7 @@ pub struct Captures {
     /// The subset of `locals` that is ASSIGNED somewhere in the walked
     /// subtree (`LocalWrite`, a multi-assign/`for` target, a pattern's
     /// bound name, a rescue binding) -- as opposed to only ever read.
-    /// `emit_proc_or_lambda_value`'s nested-Proc guard consumes this: a
+    /// `clif::blocks::outer_capture`'s nested-Proc guard consumes this: a
     /// name a nested block assigns is (at worst) that block's own fresh
     /// local, while a name NOBODY under this block assigns can only be a
     /// read of some enclosing block's plain (non-cell) per-invocation
@@ -41,7 +41,7 @@ pub struct Captures {
     ///
     /// Those parameters are read by the generated code but appear NOWHERE in
     /// the block's HIR -- the forwarding argument list is synthesized at emit
-    /// time (`call::super_calls`) -- so the ordinary local-read walk cannot
+    /// time (`clif::call::build_zsuper_args`) -- so the ordinary local-read walk cannot
     /// see them and they were captured by no one. The block's `move` closure
     /// then consumed the enclosing parameter outright, and any later use in
     /// the method was a borrow-after-move: 14 rustc errors on
@@ -111,7 +111,7 @@ fn scope_nodes(params: &Params, body: &[NodeId]) -> Vec<NodeId> {
 /// argument. Verified against real Ruby both ways: the parameter IS shared
 /// enclosing-scope state, while `proc { |x| tmp ||= 0; tmp += x }.call`
 /// genuinely resets `tmp` per call (NOT a capture when nothing outside the
-/// block uses the name; see `hoisting::collect_locals`'s `Call` arm, which
+/// block uses the name; see `local_storage::collect_locals`'s `Call` arm, which
 /// does not descend into an escaping block's body, making its result
 /// exactly "names used outside any escaping block").
 /// `self` has no such distinction (an ivar always means the same object),

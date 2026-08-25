@@ -998,9 +998,14 @@ pub(super) fn transform_runtime_class_body(
             _ => Rewrite::Keep,
         };
         let node = match rewrite {
-            Rewrite::Nested(name, superclass, inner, is_module) => {
-                runtime_nested_class(hir, name, superclass, inner, is_module, NestedTarget::OnSelf)?
-            }
+            Rewrite::Nested(name, superclass, inner, is_module) => runtime_nested_class(
+                hir,
+                name,
+                superclass,
+                inner,
+                is_module,
+                NestedTarget::OnSelf,
+            )?,
             Rewrite::Cond(cond, then_body, else_body) => {
                 let then_body = transform_runtime_class_body(hir, then_body)?;
                 let else_body = transform_runtime_class_body(hir, else_body)?;

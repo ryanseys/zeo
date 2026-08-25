@@ -206,7 +206,11 @@ fn every_leg_skip_sidecar_is_acknowledged_here() {
     let mut unlisted: Vec<String> = found
         .iter()
         .filter(|(stem, kind)| {
-            let list = if *kind == "macos" { MACOS_ONLY } else { JIT_ONLY };
+            let list = if *kind == "macos" {
+                MACOS_ONLY
+            } else {
+                JIT_ONLY
+            };
             !list.contains(&stem.as_str())
         })
         .map(|(stem, kind)| format!("{stem} ({kind})"))

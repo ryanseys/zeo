@@ -1,17 +1,16 @@
 //! `case/in`, `expr in pattern` and `expr => pattern` -- Ruby's pattern
 //! matching, lowered as branching control flow.
 //!
-//! The rustc emitter builds one boolean expression per pattern out of
-//! `&&`/`||` and labeled breaks; the shape here is its direct twin, with a
-//! FAILURE BLOCK threaded through instead of a label: every sub-check
+//! A pattern lowers to a chain of sub-checks with one shared
+//! FAILURE BLOCK threaded through: every sub-check
 //! jumps there on mismatch and falls through on a match, so a pattern is
 //! "reached the end without jumping". Bindings are side effects along the
 //! way and survive a later sub-check's failure, exactly as they do in
-//! ruby (and in the rustc backend).
+//! ruby.
 //!
-//! Every leaf test and every failure record calls the same runtime helper
-//! the rustc backend calls inline (`crates/zeo-rt/src/capi/patterns.rs`),
-//! so the two backends' `NoMatchingPatternError` messages cannot drift.
+//! Every leaf test and every failure record calls the runtime helpers in
+//! `crates/zeo-rt/src/capi/patterns.rs`,
+//! so compiled and runtime `NoMatchingPatternError` messages cannot drift.
 
 use super::ctx::Fx;
 use super::operand::{Operand, TagInfo};
@@ -19,7 +18,7 @@ use super::ownership;
 use crate::hir::{HashPatternRest, NodeId, Pattern, PatternArm};
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::{self, InstBuilder, MemFlagsData, types};
-use zeo_abi::abi::ValueTag;
+use zeo_abi::abi::{TAG_OFFSET, ValueTag};
 
 /// `case subject; in ...; end` in value position: the arms' value lands in
 /// `dst`.
@@ -40,7 +39,7 @@ pub(crate) fn lower_case_in(
         ownership::pool_owned(fx, subj, subject_op.tag());
     }
     // Arming the key-miss record costs a thread-local write, so only the
-    // shape that will READ one pays for clearing it (rustc's rule).
+    // shape that will READ one pays for clearing it.
     let single = arms.len() == 1;
     if single {
         fx.call("zeo_rt_pat_key_miss_clear", &[]);
@@ -81,7 +80,7 @@ pub(crate) fn lower_case_in(
             } else {
                 "zeo_rt_pat_match_error_bare"
             };
-            let st = fx.call(f, &[subj]).expect("a raise returns a status");
+            let st = fx.call_status(f, &[subj]);
             fx.fallible(st);
             // The raise never returns; keep the block well formed.
             ownership::write_move_into(fx, &Operand::Nil, dst);
@@ -138,9 +137,7 @@ pub(crate) fn lower_match_required(
     match_pattern(fx, site, pattern, subj, fail)?;
     fx.b.ins().jump(ok, &[]);
     fx.b.switch_to_block(fail);
-    let st = fx
-        .call("zeo_rt_pat_match_error", &[subj])
-        .expect("a raise returns a status");
+    let st = fx.call_status("zeo_rt_pat_match_error", &[subj]);
     fx.fallible(st);
     fx.b.ins().jump(ok, &[]);
     fx.b.switch_to_block(ok);
@@ -245,9 +242,7 @@ fn case_eq_check(
 ) -> Result<(), String> {
     let out = fx.temp_slot();
     let dst = fx.slot_addr(out, 0);
-    let st = fx
-        .call("zeo_rt_case_eq", &[pat, scrut, dst])
-        .expect("case_eq returns a status");
+    let st = fx.call_status("zeo_rt_case_eq", &[pat, scrut, dst]);
     fx.fallible(st);
     let fl = MemFlagsData::trusted();
     let matched = fx.b.ins().load(types::I8, fl, dst, 0);
@@ -263,9 +258,9 @@ fn case_eq_check(
 
 /// `in Integer` / `in SomeClass` (also an Array/Hash/Find pattern's
 /// optional constant guard). A statically resolvable class is an `is_a?`
-/// over the linearized ancestry; a builtin primitive NAME is the runtime
-/// tag test rustc emits for a `Poly` scrutinee (which every CLIF value
-/// is); anything else reads the constant and matches by `===`, so a
+/// over the linearized ancestry; a builtin primitive NAME is a runtime
+/// tag test on the scrutinee (every CLIF value is
+/// dynamic); anything else reads the constant and matches by `===`, so a
 /// runtime class bound to a constant (`Struct.new`) still works and an
 /// unset one raises `NameError` from the read.
 fn class_check(
@@ -277,7 +272,7 @@ fn class_check(
 ) -> Result<(), String> {
     if let Some(tag) = builtin_tag(name) {
         let fl = MemFlagsData::trusted();
-        let t = fx.b.ins().load(types::I8, fl, scrut, 0);
+        let t = fx.b.ins().load(types::I8, fl, scrut, TAG_OFFSET as i32);
         let matched = match tag {
             // `TrueClass`/`FalseClass` share the Bool tag: the payload
             // byte decides.
@@ -298,9 +293,7 @@ fn class_check(
     }
     if let Some(cid) = super::expr::resolve_class_here(fx, name) {
         let id = fx.b.ins().iconst(types::I32, i64::from(cid.0));
-        let matched = fx
-            .call("zeo_rt_pat_is_a", &[scrut, id])
-            .expect("pat_is_a returns a bool");
+        let matched = fx.call_status("zeo_rt_pat_is_a", &[scrut, id]);
         return record_class_miss(fx, name, matched, scrut, fail);
     }
     // Not a statically-known class: read the constant and match by `===`.
@@ -338,7 +331,7 @@ fn record_class_miss(
         let tag =
             fx.b.ins()
                 .iconst(types::I8, i64::from(ValueTag::Class as u8));
-        fx.b.ins().store(fl, tag, addr, 0);
+        fx.b.ins().store(fl, tag, addr, TAG_OFFSET as i32);
         let id = fx.b.ins().iconst(types::I32, i64::from(cid.0));
         fx.b.ins()
             .store(fl, id, addr, zeo_abi::abi::PAYLOAD_OFFSET as i32);
@@ -363,7 +356,7 @@ fn class_of_name(fx: &Fx, name: &str) -> Option<zeo_abi::ClassId> {
 }
 
 /// The builtin primitive names a pattern position may name, as the runtime
-/// TAG test the rustc emitter uses for a `Poly` scrutinee.
+/// TAG test used for the scrutinee.
 enum BuiltinTag {
     Tag(u8),
     Bool(bool),
@@ -414,9 +407,7 @@ fn range_value(
     let excl = fx.b.ins().iconst(types::I8, i64::from(u8::from(exclusive)));
     let ss = fx.temp_slot();
     let dst = fx.slot_addr(ss, 0);
-    let st = fx
-        .call("zeo_rt_range_new", &[a, b, excl, dst])
-        .expect("range_new returns a status");
+    let st = fx.call_status("zeo_rt_range_new", &[a, b, excl, dst]);
     fx.fallible(st);
     fx.owned_created += 1;
     ownership::pool_owned(fx, dst, TagInfo::Unknown);
@@ -443,9 +434,7 @@ fn array_pattern(
         class_check(fx, site, name, scrut, fail)?;
     }
     let arr = deconstruct(fx, scrut, Protocol::Array, fail)?;
-    let len = fx
-        .call("zeo_rt_pat_array_len", &[arr])
-        .expect("array_len returns a length");
+    let len = fx.call_status("zeo_rt_pat_array_len", &[arr]);
     let min = pre.len() + post.len();
     let open = rest.is_some();
     let cc = if open {
@@ -505,9 +494,7 @@ fn find_pattern(
         class_check(fx, site, name, scrut, fail)?;
     }
     let arr = deconstruct(fx, scrut, Protocol::Array, fail)?;
-    let len = fx
-        .call("zeo_rt_pat_array_len", &[arr])
-        .expect("array_len returns a length");
+    let len = fx.call_status("zeo_rt_pat_array_len", &[arr]);
     let width = mid.len() as i64;
     // The search loop carries its window offset as a block parameter.
     let head = fx.b.create_block();
@@ -598,9 +585,7 @@ fn hash_pattern(
     // `in {}` is NOT the lenient form: an EMPTY hash pattern asks for an
     // empty hash, ruby's one exception to hash-pattern leniency.
     if pairs.is_empty() && matches!(rest, HashPatternRest::None) {
-        let n = fx
-            .call("zeo_rt_pat_hash_len", &[h])
-            .expect("hash_len returns a length");
+        let n = fx.call_status("zeo_rt_pat_hash_len", &[h]);
         let empty = fx.b.ins().icmp_imm_u(IntCC::Equal, n, 0);
         let ok = fx.b.create_block();
         let bad = fx.b.create_block();
@@ -614,9 +599,7 @@ fn hash_pattern(
     // `**nil` asks that nothing else remain; ruby words it differently
     // from the empty-pattern case and names the LEFTOVERS.
     if matches!(rest, HashPatternRest::NoMoreKeys) {
-        let n = fx
-            .call("zeo_rt_pat_hash_len", &[h])
-            .expect("hash_len returns a length");
+        let n = fx.call_status("zeo_rt_pat_hash_len", &[h]);
         let exact = fx.b.ins().icmp_imm_u(IntCC::Equal, n, pairs.len() as i64);
         let ok = fx.b.create_block();
         let bad = fx.b.create_block();
@@ -635,9 +618,7 @@ fn hash_pattern(
     }
     for (key, pat) in pairs {
         let sym = fx.sym_id(key);
-        let present = fx
-            .call("zeo_rt_pat_hash_has_key", &[h, sym])
-            .expect("has_key returns a bool");
+        let present = fx.call_status("zeo_rt_pat_hash_has_key", &[h, sym]);
         let ok = fx.b.create_block();
         let missing = fx.b.create_block();
         fx.b.ins().brif(present, ok, &[], missing, &[]);

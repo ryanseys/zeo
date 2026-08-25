@@ -139,12 +139,10 @@ fn loop_do_end_with_break_value() {
 
 #[test]
 fn for_loop_over_range_and_array() {
-    // Arithmetic on the Range case works because `for`'s index variable is
-    // provably `Int` (see `codegen::loops::emit_for`'s `Ctx::for_var_override`
-    // use); an `Array`'s elements aren't tracked per-element (`Poly`), so the
-    // array case just displays each value -- arithmetic on a `Poly`-typed
-    // value is an existing, documented gap (see `codegen::call`'s
-    // `INT_BINARY_OPS` docs), not something this test exercises.
+    // Arithmetic on the Range case works through the emitter's numeric
+    // lowering and its runtime-checked fallback (`clif::expr`); an
+    // `Array`'s elements aren't tracked per-element (`Poly`), so the
+    // array case just displays each value.
     let result = run_ruby(
         r#"
         sum = 0

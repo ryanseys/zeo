@@ -364,10 +364,9 @@ fn case_in_object_deconstruct_keys_with_constant_guard() {
 
 #[test]
 fn case_in_object_with_no_deconstruct_falls_through_to_else() {
-    // A statically-provable-never-matches array pattern (this class simply
-    // has no `#deconstruct`) is resolved entirely at CODEGEN time (a
-    // compile-time-constant `false`, no runtime call attempted at all) --
-    // see `codegen::patterns::emit_array_binding`'s docs.
+    // An array pattern asks `#deconstruct` at run time; a class without
+    // one simply does not match (no raise), so the `else` arm runs --
+    // see `clif::patterns`' array-pattern lowering.
     let result = run_ruby(
         r#"
         class Plain

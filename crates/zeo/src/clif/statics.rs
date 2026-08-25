@@ -1133,8 +1133,8 @@ fn define_vis_rows(em: &mut Emitter, rows: &[VisRowSpec]) -> Result<Option<DataI
     Ok(Some(id))
 }
 
-/// `zeo_program_desc` + the `Str` tables: the loaded-features seed (the
-/// same list the rustc backend emits) and the parse warnings.
+/// `zeo_program_desc` + the `Str` tables: the loaded-features seed
+/// and the parse warnings.
 #[allow(
     clippy::too_many_arguments,
     reason = "the desc is the one table of tables; every parameter is one of its sections"

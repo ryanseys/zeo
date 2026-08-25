@@ -1,4 +1,4 @@
-//! One `eval` snippet, compiled and JITted on its own (plan G6).
+//! One `eval` snippet, compiled and JITted on its own.
 //!
 //! A whole program emits a `ProgramDesc` full of tables the runtime
 //! registers at boot; a snippet emits ONE function and the statics it

@@ -48,7 +48,7 @@ fn process_top_stmt_inner(
     main_statements: &mut Vec<NodeId>,
     pre_exec: &mut Vec<NodeId>,
 ) -> Result<(), AnalyzeError> {
-    // An `eval` snippet REGISTERS NOTHING (plan G6): the program whose
+    // An `eval` snippet REGISTERS NOTHING: the program whose
     // class table these rows would join is already running, so a `def`
     // here has to install at its own document position through the
     // runtime -- which is exactly what the emitter does for a `def`
