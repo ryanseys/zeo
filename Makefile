@@ -8,8 +8,13 @@
 #                   a cargo dependency edge to a binary, so build first)
 # `make test`       the dev loop: unit + e2e + golden suites, default profile
 # `make check`      clippy at CI's severity
-# `make gate`       everything: the four CI legs, the whole-gem cases,
-#                   the cext surface, doctests, bench
+# `make check-batch` the mid-tier between batches inside a phase: the
+#                   workspace suites, the AOT smoke tier, and one
+#                   instrumented corpus pass (~4 min)
+# `make gate`       the boundary: every CI leg, the whole-gem cases,
+#                   doctests, and the full-spinel AOT corpus. Bench is
+#                   NOT in the gate -- numbers are recorded on their own
+#                   cadence (`make bench`), never a gate
 # `make linux`      the Linux container verification loop (needs podman)
 #
 # Suites spawn compile children and the golden group bounds their memory;
@@ -24,8 +29,8 @@ CARGO ?= cargo
 NEXTEST ?= $(CARGO) nextest run
 ZEO_DEV ?= tools/zeo-dev
 
-.PHONY: all test check gate bench install linux clean \
-        ci-jit ci-aot ci-leakcheck ci-gccheck ci-doc ci-natlibs ci-anchor
+.PHONY: all test check check-batch gate bench install linux clean \
+        ci-jit ci-aot ci-memcheck ci-doc ci-natlibs ci-anchor
 
 all:
 	$(CARGO) build --workspace
@@ -36,6 +41,11 @@ test: all
 
 check:
 	$(CARGO) clippy --workspace --all-targets --all-features -- -D warnings
+
+# The mid-tier for batch boundaries INSIDE a phase: cheaper than the gate,
+# broader than `make test`. One workspace pass, the AOT smoke tier, one
+# instrumented corpus pass.
+check-batch: ci-jit ci-aot ci-memcheck
 
 # --- The CI legs. ci.yml calls these; `make gate` composes them. -----------
 
@@ -52,15 +62,14 @@ ci-aot: all
 	ZEO_GOLDEN_BACKEND=aot $(NEXTEST) -p zeo --test examples --test gaps --no-fail-fast
 	ZEO_E2E_BACKEND=aot $(NEXTEST) -p zeo --test e2e --no-fail-fast
 
-# The compiled-ownership ledger: a non-zero balance at exit is a leak or a
-# double-consume in the emitted lowering. Emitted code only, so golden corpora only.
-ci-leakcheck: all
-	ZEO_RT_LEAKCHECK=1 $(NEXTEST) -p zeo --test examples --test spinel --test gaps --no-fail-fast
-
-# The cycle census: gates CHANGE against each program's `.gccheck` sidecar.
-# The whole-gem gemtests leg of this check lives in `gate`, not here.
-ci-gccheck: all
-	ZEO_GC=1 ZEO_RT_GCCHECK=1 $(NEXTEST) -p zeo --test examples --test spinel --test gaps --no-fail-fast
+# ONE instrumented corpus pass carrying both memory checks -- the
+# compiled-ownership ledger (a non-zero balance at exit is a leak or a
+# double-consume in the emitted lowering) AND the cycle census (gates
+# CHANGE against each program's `.gccheck` sidecar). The two compose:
+# verified 4,393/4,393 with both armed, 2026-08-25. Emitted code only,
+# so golden corpora only. The whole-gem gemtests half lives in `gate`.
+ci-memcheck: all
+	ZEO_RT_LEAKCHECK=1 ZEO_GC=1 ZEO_RT_GCCHECK=1 $(NEXTEST) -p zeo --test examples --test spinel --test gaps --no-fail-fast
 
 # nextest doesn't run doctests.
 ci-doc: all
@@ -89,15 +98,15 @@ else
 PLATFORM_CI_LEG := ci-natlibs
 endif
 
-# Everything: the CI legs, plus the whole-gem cases the default profile opts
-# out of (`-P full`), plus gemtests under the cycle census, plus the AOT leg
-# over the full spinel corpus (CI runs only the AOT smoke tier), plus bench
-# (informational -- bench numbers are recorded, never a gate).
-gate: ci-jit ci-aot ci-leakcheck ci-gccheck ci-doc $(PLATFORM_CI_LEG)
+# The boundary gate: the CI legs, the whole-gem cases the default profile
+# opts out of (`-P full`), gemtests under both memory checks, and the AOT
+# leg over the full spinel corpus (CI runs only the AOT smoke tier).
+# Bench is deliberately NOT here: perf numbers are recorded on their own
+# cadence (`make bench` after perf commits and at re-banks), never gated.
+gate: ci-jit ci-aot ci-memcheck ci-doc $(PLATFORM_CI_LEG)
 	ZEO_GOLDEN_BACKEND=aot $(NEXTEST) -p zeo --test spinel --no-fail-fast
 	$(NEXTEST) -p zeo -P full -E 'binary(gemtests) + test(every_bundled_gem_compiles)'
-	ZEO_GC=1 ZEO_RT_GCCHECK=1 $(NEXTEST) -p zeo -P full --test gemtests
-	$(ZEO_DEV) bench
+	ZEO_RT_LEAKCHECK=1 ZEO_GC=1 ZEO_RT_GCCHECK=1 $(NEXTEST) -p zeo -P full --test gemtests
 
 bench:
 	$(ZEO_DEV) bench

@@ -23,7 +23,7 @@ module ZeoDev
     # out -- do not bless it away.
     class Linux < Cli
       DEFAULT_STAGES = %w[build jit aot units natlibs valgrind].freeze
-      STAGES = (DEFAULT_STAGES + %w[cross dist shell all]).freeze
+      STAGES = (DEFAULT_STAGES + %w[aot-full cross dist shell all]).freeze
 
       def self.summary = "run the suites in the linux container"
 
@@ -33,7 +33,8 @@ module ZeoDev
         stages:
           build     cargo build --workspace
           jit       the default golden legs
-          aot       the same corpora, linked binaries
+          aot       the AOT smoke tier (examples+gaps+e2e), linked binaries
+          aot-full  the full corpus incl. spinel, linked (release boundaries)
           units     zeo + zeo-rt unit suites
           natlibs   diff link.rs's glibc table against rustc
           valgrind  leak-check a linked program
@@ -107,7 +108,16 @@ module ZeoDev
         # each and the watchdog caps them at 512 MiB.
         when "jit"
           "cargo nextest run #{cargo_profile} -p zeo --test-threads #{threads} --no-fail-fast"
+        # The SMOKE tier, matching macOS ci-aot: the feature-diverse examples
+        # plus gaps and e2e under a real link. The full spinel corpus takes
+        # the linked path only in `aot-full` (release boundaries) -- it is
+        # the container loop's dominant cost and JIT already runs it here.
         when "aot"
+          "ZEO_GOLDEN_BACKEND=aot cargo nextest run #{cargo_profile} -p zeo " \
+            "--test-threads #{threads} --no-fail-fast --test examples --test gaps && " \
+            "ZEO_E2E_BACKEND=aot cargo nextest run #{cargo_profile} -p zeo " \
+            "--test-threads #{threads} --no-fail-fast --test e2e"
+        when "aot-full"
           "ZEO_GOLDEN_BACKEND=aot cargo nextest run #{cargo_profile} -p zeo " \
             "--test-threads #{threads} --no-fail-fast --test examples --test spinel --test gaps"
         when "units"

@@ -92,14 +92,12 @@ jobs:
       # The same CLIF through an object file and a real link -- what SHIPS.
       - run: make ci-aot
 
-      # The compiled-ownership ledger over the golden corpora.
-      - run: make ci-leakcheck
-
-      # The cycle census: gates CHANGE against the `.gccheck` sidecars. The
-      # whole-gem gemtests leg of this check belongs to `make gate` (the
+      # One instrumented corpus pass: the compiled-ownership ledger AND the
+      # cycle census together (the two compose; verified 2026-08-25). The
+      # whole-gem gemtests half of the census belongs to `make gate` (the
       # nextest default-filter excludes `binary(gemtests)`, so listing it
       # here would silently run nothing -- which is exactly what happened).
-      - run: make ci-gccheck
+      - run: make ci-memcheck
 
       # The hand-written native-library table vs rustc's live answer.
       # Linux only: it is where the table was wrong (`-lcrypt` missing)
