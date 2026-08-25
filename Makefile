@@ -32,6 +32,7 @@ all:
 
 test: all
 	$(NEXTEST) --workspace
+	-$(ZEO_DEV) test-times test
 
 check:
 	$(CARGO) clippy --workspace --all-targets --all-features -- -D warnings

@@ -43,6 +43,7 @@ module ZeoDev
     cext
     check-env-vars
     size
+    test-times
     linux
     stage-publish
     dist

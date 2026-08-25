@@ -27,6 +27,12 @@ golden = { max-threads = 10 }
 [profile.default]
 default-filter = "not (binary(gemtests) | test(every_bundled_gem_compiles))"
 
+# Per-binary wall-clock lands in target/nextest/<profile>/junit.xml;
+# `tools/zeo-dev test-times <label>` folds the most recent report into the
+# gitignored measurements/test-times.tsv ledger (`make test` does this).
+[profile.default.junit]
+path = "junit.xml"
+
 # The full gate: everything, including the whole-gem cases above.
 [profile.full]
 default-filter = "all()"
