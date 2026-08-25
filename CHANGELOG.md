@@ -53,6 +53,14 @@ The first public release, not yet cut.
   run-time `eval`'s `NotImplementedError` keeps its `(file:line)` suffix
   unchanged.
 
+### Fixed
+
+- `Proc#==`/`#eql?` invoked through `send` with no argument raised the
+  correct `ArgumentError` instead of crashing the process. The fix came out
+  of the runtime-wide sweep that moved builtin argument handling onto the
+  shared macro kit (declared parameter lists, `check_arity`, `arg_int!`,
+  `arg_str!`).
+
 ### Compatibility
 
 - Targets **CRuby 4.0.6**. `zeo-abi` is the single source of that version, so
