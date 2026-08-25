@@ -262,9 +262,13 @@ fn guard_pattern(node: &Node<'_>) -> Option<crate::guard_fold::LiteralPattern> {
     let src = String::from_utf8(re.unescaped().to_vec()).ok()?;
     crate::guard_fold::LiteralPattern::parse(
         &src,
-        re.is_ignore_case(),
-        re.is_extended(),
-        re.is_multi_line(),
+        &crate::hir::RegexpFlags {
+            ignore_case: re.is_ignore_case(),
+            extended: re.is_extended(),
+            multiline: re.is_multi_line(),
+            // Ignored by `parse`; `Source` is the flagless spelling.
+            encoding: zeo_abi::RegexpEncoding::Source,
+        },
     )
 }
 

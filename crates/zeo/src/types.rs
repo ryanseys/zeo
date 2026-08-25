@@ -74,12 +74,6 @@ pub const INT_RESULT_BINARY_OPS: &[&str] = &["+", "-", "*", "/", "%", "&", "|", 
 /// value-result table doesn't type.
 pub const FLOAT_RESULT_BINARY_OPS: &[&str] = &["+", "-", "*", "/", "%", "**"];
 
-/// An empty locals map, for callers that have no per-scope local-type
-/// context available (or don't need it) -- see `infer_type`.
-fn no_locals() -> FMap<String, TyKind> {
-    FMap::default()
-}
-
 /// Whether a REOPENED builtin class overrides `name` for a
 /// receiver of static type `recv_ty` -- the guard every builtin-receiver
 /// result-narrowing arm below must consult: `class String; def length;
@@ -137,18 +131,6 @@ pub(crate) fn builtin_override(
                     .any(|&sid| compiler.scope(sid).name == name)
                     || c.methods.iter().any(|e| compiler.names.str(e.name) == name))
         })
-}
-
-/// Context-free type inference: given a node, what's its static type,
-/// ignoring any local variable bindings in scope? Mirrors `infer_type`/
-/// `infer_uncached` (`analyze_infer.c:4771`/`4225`), simplified: no
-/// memoization cache (`c->ntype[id]`) because nothing here is expensive or
-/// mutually recursive yet. Prefer `infer_type_with_locals` wherever a
-/// per-scope local-type map is available (almost everywhere in `codegen` and
-/// `analyze::locals`) -- this thin wrapper exists only for the few call
-/// sites (e.g. resolving a `New` receiver's class) that don't need one.
-pub fn infer_type(compiler: &Compiler, id: NodeId) -> TyKind {
-    infer_type_with_locals(compiler, None, 0, &no_locals(), id)
 }
 
 /// Real (if still one-pass, non-fixpoint) type inference: given a node and

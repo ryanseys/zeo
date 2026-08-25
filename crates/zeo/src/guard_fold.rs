@@ -959,13 +959,11 @@ impl LiteralPattern {
     /// literal was found -- HIR (`literal_pattern`) and the lower-stage
     /// class-body guard hand their own literal's pieces to this one parser,
     /// so the two folds can never disagree about what a pattern admits.
-    pub(crate) fn parse(
-        src: &str,
-        ignore_case: bool,
-        extended: bool,
-        multiline: bool,
-    ) -> Option<LiteralPattern> {
-        if extended || multiline {
+    /// The encoding flag is ignored: it changes what BYTES the pattern
+    /// matches, not what the literal fold below can admit.
+    pub(crate) fn parse(src: &str, flags: &crate::hir::RegexpFlags) -> Option<LiteralPattern> {
+        let ignore_case = flags.ignore_case;
+        if flags.extended || flags.multiline {
             return None;
         }
         let mut src = src;
@@ -1068,7 +1066,7 @@ fn literal_pattern(compiler: &Compiler, node: NodeId) -> Option<LiteralPattern> 
     let [StrPart::Lit(src)] = parts.as_slice() else {
         return None;
     };
-    LiteralPattern::parse(src, flags.ignore_case, flags.extended, flags.multiline)
+    LiteralPattern::parse(src, flags)
 }
 
 /// `Gem.win_platform?`'s build-time answer, derived from the baked
