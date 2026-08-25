@@ -18,6 +18,14 @@ enum Cached {
     /// flattened one-probe walk, with the row's synthetic-frame label so a
     /// cached hit shows the same backtrace as the uncached resolution.
     Value(ValueImpl, Option<&'static str>),
+    /// An attr-GENERATED reader on the cached class: the hit reads the
+    /// ivar slot directly, skipping the trampoline (block release, arity
+    /// compare, capi hop). Frameless like the trampoline (iseq-less in
+    /// CRuby). A wrong arity falls through to the full send for its
+    /// ArgumentError.
+    IvarRead(u32),
+    /// The writer twin: frozen check, slot store, the value answered.
+    IvarWrite(u32),
 }
 
 /// One dynamic call site's monomorphic inline cache.
@@ -138,8 +146,19 @@ pub fn send_value_cached(
                     (Cached::Value(f, label), _) => {
                         with_c_frame(*label, || f.call(recv, args, block))
                     }
-                    // A class id cannot be both shapes, so this is unreachable
-                    // in practice; falling through is still the right answer.
+                    // The block, if any, is dropped -- an accessor ignores
+                    // it, exactly as the trampoline released it.
+                    (Cached::IvarRead(slot), RubyValue::Object(o)) if args.is_empty() => {
+                        Ok(o.ivar_slot_get(*slot as usize))
+                    }
+                    (Cached::IvarWrite(slot), RubyValue::Object(o)) if args.len() == 1 => {
+                        crate::builtins::check_frozen(recv)?;
+                        o.ivar_slot_set(*slot as usize, args[0].clone());
+                        Ok(args[0].clone())
+                    }
+                    // A class id cannot be both shapes (and a wrong-arity
+                    // accessor call needs the real ArgumentError), so fall
+                    // through to the full send.
                     _ => send_value_in(box_id, recv, name, args, block),
                 };
             }
@@ -164,7 +183,17 @@ pub fn send_value_cached(
                         // every compiled-object call uncached.
                         Some(MethodImpl::CValue(f)) => {
                             note_dispatch_gated(gates, name);
-                            let _ = site.hit.set((id.0, Cached::CObj(*f)));
+                            // A generated accessor of exactly this class
+                            // caches its SLOT; the first call still runs
+                            // the trampoline (arity truth), hits ride the
+                            // slot from then on.
+                            let cached = match REGISTRY.get().and_then(|r| r.accessor_slot(id, name))
+                            {
+                                Some((slot, true)) => Cached::IvarWrite(slot),
+                                Some((slot, false)) => Cached::IvarRead(slot),
+                                None => Cached::CObj(*f),
+                            };
+                            let _ = site.hit.set((id.0, cached));
                             return crate::capi::dispatch::call_value_fn(*f, recv, args, block);
                         }
                         Some(MethodImpl::Dynamic(_)) | None => {}

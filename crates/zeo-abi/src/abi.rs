@@ -362,6 +362,13 @@ pub const REG_EXTENDS: u8 = 4;
 /// what `call_singleton_super_target` consults. `f` carries the trampoline.
 pub const REG_SINGLETON_SUPER_TARGET: u8 = 5;
 
+/// `RegRow.kind`: `a` on `class` is an attr-GENERATED accessor over ivar
+/// slot `ids[0]` (`flag` = 1 for the writer half). The value CallSite's
+/// fill consults this to cache the slot itself instead of the accessor
+/// trampoline -- registration data, never dispatch truth: the method
+/// table still carries the trampoline.
+pub const REG_ACCESSOR_SLOT: u8 = 18;
+
 /// `RegRow.kind`: a NAME-indirection alias whose source is a builtin
 /// method (`a` = new name, `b` = old/terminal name) -- the send miss paths
 /// rewrite through it; `validate_class_aliases` raises `NameError` for a

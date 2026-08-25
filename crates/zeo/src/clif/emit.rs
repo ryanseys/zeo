@@ -514,6 +514,25 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> CResult<FuncId> {
                 flag: 0,
             }),
     );
+    // Accessor slot rows: `(class, name) -> (slot, writer)` so the value
+    // CallSite's fill can cache the SLOT instead of the trampoline.
+    // attr-GENERATED rows only -- a hand-written accessor's trampoline
+    // carries a frame the slot access would not.
+    reg_rows.extend(obj_methods.iter().filter_map(|m| {
+        let (slot, kind, attr_generated) = m.accessor?;
+        if !attr_generated {
+            return None;
+        }
+        Some(statics::RegRowSpec {
+            kind: zeo_abi::abi::REG_ACCESSOR_SLOT,
+            class: m.owner.0,
+            a: m.name.clone(),
+            b: String::new(),
+            f: None,
+            ids: vec![slot as u32],
+            flag: u8::from(matches!(kind, crate::compiler::AccessorKind::Writer)),
+        })
+    }));
     // `extend M` rows: the modules on each class's singleton chain.
     reg_rows.extend(extends.iter().map(|(class, mods)| statics::RegRowSpec {
         kind: zeo_abi::abi::REG_EXTENDS,

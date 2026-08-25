@@ -234,11 +234,29 @@ pub struct ClassRegistry {
     /// generated program installing a name->constructor factory. Populated by
     /// `register` alongside `entries`. See `construct_exception`.
     pub(super) by_name: FMap<String, u32>,
+    /// `(class, name)` -> `(ivar slot, is-writer)` for attr-GENERATED
+    /// accessors (`REG_ACCESSOR_SLOT` rows). Registration data the value
+    /// CallSite's fill consults to cache the slot instead of the
+    /// trampoline; the method tables still carry the trampoline, and a
+    /// name this misses just keeps it.
+    pub(super) accessor_slots: FMap<(u32, Symbol), (u32, bool)>,
 }
 
 impl ClassRegistry {
     pub fn new() -> ClassRegistry {
         ClassRegistry::default()
+    }
+
+    /// One `REG_ACCESSOR_SLOT` row -- see [`ClassRegistry::accessor_slots`].
+    pub fn register_accessor_slot(&mut self, id: ClassId, name: Symbol, slot: u32, writer: bool) {
+        self.accessor_slots.insert((id.0, name), (slot, writer));
+    }
+
+    /// The cached-slot answer for `(id, name)`, when the resolved method
+    /// is a generated accessor of `id` ITSELF (a subclass id misses and
+    /// keeps the trampoline -- slower, never wrong).
+    pub(super) fn accessor_slot(&self, id: ClassId, name: Symbol) -> Option<(u32, bool)> {
+        self.accessor_slots.get(&(id.0, name)).copied()
     }
 
     /// Mirrors declaring a class's place in the hierarchy -- called once per

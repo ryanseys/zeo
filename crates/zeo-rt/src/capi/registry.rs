@@ -306,6 +306,14 @@ pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
             abi::REG_MARK_OWN_ROWS => {
                 registry.mark_own_rows(ClassId(r.class), &[text(r.a)]);
             }
+            abi::REG_ACCESSOR_SLOT => {
+                registry.register_accessor_slot(
+                    ClassId(r.class),
+                    Symbol::intern(text(r.a)),
+                    unsafe { *r.ids },
+                    r.flag == 1,
+                );
+            }
             k => panic!("register_program: unknown RegRow kind {k}"),
         }
     }
