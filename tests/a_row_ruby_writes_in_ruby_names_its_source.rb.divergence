@@ -1,0 +1,27 @@
+zeo answers this differently ON PURPOSE, so `.expected` records ZEO's output
+and this file records why -- with ruby's own answer below it.
+
+CRuby implements 329 method rows across 21 `<internal:>` files -- Ruby it
+compiles into the interpreter -- and each answers a real
+`["<internal:nilclass>", 36]` from `#source_location`. Zeo implements all of
+them in Rust, which answers `nil`, exactly as ruby answers `nil` for its own
+C rows. Only `#source_location` and the `file:line` tail of `Method#inspect`
+differ; `#parameters`, `#arity`, `#owner`, visibility and behaviour agree row
+for row (`tests/builtin_rows_report_rubys_signature.rb`).
+
+The vendored-Ruby alternative was BUILT and MEASURED, then dropped
+2026-08-24 (user-directed): 22.7x slower, 3.5x bigger, plus a 14.48 MB
+embedded compiler for one `eval` -- it bought only these signatures. The fix
+shape, if ever worth it: a per-def `at "<internal:nilclass>", 36` directive
+in `ruby_class!` feeding a builtin source table (~16 bytes/row, no run-time
+work), generated from the oracle.
+
+--- ruby 4.0.6 answers ---
+NilClass#to_i: ["<internal:nilclass>", 36]
+NilClass#to_f: ["<internal:nilclass>", 48]
+NilClass#to_r: ["<internal:nilclass>", 60]
+NilClass#to_c: ["<internal:nilclass>", 24]
+NilClass#rationalize: ["<internal:nilclass>", 12]
+Pathname#basename: ["<internal:pathname_builtin>", 972]
+Method#inspect: #<UnboundMethod: NilClass#to_i() <internal:nilclass>:36>
+String#upcase: nil

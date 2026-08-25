@@ -34,12 +34,10 @@ p Reader::Engine
 p Reader::LABEL
 
 # ---- DELIBERATE DIVERGENCE; the lines below are ZEO's answers, not ruby
-# 4.0.6's. A class written in a `class << self` body belongs to the SINGLETON
-# class, so the oracle says `false` / `[]` / raises `uninitialized constant
-# Color::Visitor`. Zeo hands the definition to the enclosing module, which
-# keeps the property the code depends on -- the singleton methods beside it
-# reach it by bare name, as `paint` does above -- and pays for it by also
-# answering the qualified lookup. See `docs/COMPATIBILITY.md`.
+# 4.0.6's. Ruby puts the class on the singleton class (`true` / `[]` /
+# raises `uninitialized constant Color::Visitor`); zeo hands it to the
+# enclosing module (`false` / `[:Visitor]` / `"<blue>"`). The `.divergence`
+# sidecar records why, and `docs/COMPATIBILITY.md` carries the section.
 p Color.singleton_class.const_defined?(:Visitor)
 p Color.constants
 p Color::Visitor.new("blue").render

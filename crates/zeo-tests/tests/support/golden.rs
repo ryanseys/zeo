@@ -726,6 +726,7 @@ pub fn run_golden_env(
     if cfg!(not(target_os = "macos"))
         && std::fs::metadata(format!("{}.macos-only", rb.display())).is_ok()
     {
+        eprintln!("golden skipped (.macos-only): {}", rb.display());
         return Ok(());
     }
 
@@ -737,6 +738,7 @@ pub fn run_golden_env(
     if std::env::var("ZEO_GOLDEN_BACKEND").is_ok_and(|b| b != "jit")
         && std::fs::metadata(format!("{}.jit-only", rb.display())).is_ok()
     {
+        eprintln!("golden skipped (.jit-only): {}", rb.display());
         return Ok(());
     }
 

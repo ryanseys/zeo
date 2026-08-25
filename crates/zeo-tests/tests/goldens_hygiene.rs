@@ -134,3 +134,95 @@ fn every_divergence_sidecar_describes_a_committed_zeo_golden() {
     }
     assert!(wrong.is_empty(), "divergence sidecars: {wrong:#?}");
 }
+
+/// The reverse direction of the check above: a golden whose HEADER claims a
+/// deliberate divergence must carry the `.divergence` sidecar, or `bless`
+/// records the oracle over zeo's own answers and destroys the golden. Found
+/// the hard way: `singleton_body_class_and_self_path.rb` said "DELIBERATE
+/// DIVERGENCE" for weeks with no sidecar protecting it.
+#[test]
+fn every_divergence_claim_carries_its_sidecar() {
+    let mut unprotected: Vec<String> = Vec::new();
+    for dir in suite_dirs() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for path in entries
+            .filter_map(Result::ok)
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|e| e == "rb"))
+        {
+            let text = std::fs::read_to_string(&path).unwrap_or_default();
+            if text.contains("DELIBERATE DIVERGENCE")
+                && !Path::new(&format!("{}.divergence", path.display())).exists()
+            {
+                unprotected.push(path.display().to_string());
+            }
+        }
+    }
+    assert!(
+        unprotected.is_empty(),
+        "goldens claiming a deliberate divergence with no `.divergence` sidecar \
+         (bless would record the oracle over zeo's answers):\n{}",
+        unprotected.join("\n")
+    );
+}
+
+/// A `.macos-only` or `.jit-only` sidecar silently REMOVES a golden from a
+/// leg (`run_golden_env` returns Ok before running anything). Pin the exact
+/// set so adding one is a deliberate two-file change, never an accident that
+/// hides a red.
+#[test]
+fn every_leg_skip_sidecar_is_acknowledged_here() {
+    const MACOS_ONLY: &[&str] = &[
+        "an_ffi_type_is_one_object_per_canonical_name.rb",
+        "core_long_tail_rows.rb",
+        "errno_full_surface.rb",
+        "ffi_lib_defers_runtime_candidates.rb",
+        "ffi_platform_reports_the_hosts_c_abi.rb",
+        "fiddle.rb",
+        "float_pow_negative_fractional.rb",
+        "io_file_stat_rows.rb",
+    ];
+    const JIT_ONLY: &[&str] = &["an_ffi_type_crosses_between_snippets.rb"];
+    let mut found: Vec<(String, &'static str)> = Vec::new();
+    for dir in suite_dirs() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for path in entries.filter_map(Result::ok).map(|e| e.path()) {
+            let name = path.to_string_lossy().to_string();
+            for (suffix, kind) in [(".macos-only", "macos"), (".jit-only", "jit")] {
+                if let Some(stem) = name.strip_suffix(suffix) {
+                    let stem = Path::new(stem)
+                        .file_name()
+                        .map(|f| f.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    found.push((stem, kind));
+                }
+            }
+        }
+    }
+    let mut unlisted: Vec<String> = found
+        .iter()
+        .filter(|(stem, kind)| {
+            let list = if *kind == "macos" { MACOS_ONLY } else { JIT_ONLY };
+            !list.contains(&stem.as_str())
+        })
+        .map(|(stem, kind)| format!("{stem} ({kind})"))
+        .collect();
+    let mut missing: Vec<String> = MACOS_ONLY
+        .iter()
+        .map(|s| (*s, "macos"))
+        .chain(JIT_ONLY.iter().map(|s| (*s, "jit")))
+        .filter(|(s, kind)| !found.iter().any(|(f, k)| f == s && k == kind))
+        .map(|(s, kind)| format!("{s} ({kind})"))
+        .collect();
+    unlisted.sort();
+    missing.sort();
+    assert!(
+        unlisted.is_empty() && missing.is_empty(),
+        "leg-skip sidecars must be acknowledged in this test's lists.\n\
+         unacknowledged on disk: {unlisted:?}\nlisted but gone: {missing:?}"
+    );
+}

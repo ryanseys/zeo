@@ -26,17 +26,12 @@ divergence does** also belongs in a passing test, and gets one — see
 Read a gap's header for which one it is; the difference decides whether it is
 work or a permanent absence.
 
-**A bug or an unbuilt mechanism.** The default, and most of the directory:
-run-time boxes (`a_box_*`, `a_class_written_in_a_box_escapes_it`,
-`a_top_level_def_in_a_box_escapes_it`), the cycle collector and heap
-enumeration (`a_reference_cycle_is_never_reclaimed`,
-`there_is_no_heap_enumeration`), the singleton chain's missing linearization
-(`a_doubled_module_in_a_singleton_chain`, `remove_method_on_a_mixed_in_module`),
-reflection surfaces
-(`builtin_method_parameter_names`, `a_require_gated_builtin_row_is_always_present`,
-`a_struct_backed_builtin_class_is_not_a_struct`,
-`the_ast_translator_answers_unknown_for_some_shapes`), and the two prism-id
-files. Each names its mechanism and, where one exists, the phase that owns it.
+**A bug or an unbuilt mechanism.** The default: the box write channel on a
+shared owner (`a_box_write_on_a_shared_class_reaches_main`), the literal
+`box.eval` splice (`a_box_literal_eval_is_spliced`), the dual-homed
+ext-and-gem require fold (`error_highlight_library`), `Time.new`'s
+class-method row (`time_new_is_a_class_method_row`), and rows of
+`object_identity_and_allocation_tracing`. Each names its mechanism.
 
 **A PERMANENT absence.** `rubyvm_iseq_serialization`'s `to_a`/`to_binary`/
 `disasm` rows: zeo compiles ahead of time and has no bytecode, so a faithful
@@ -58,7 +53,7 @@ The sidecar means: **`.expected` records ZEO's own output**, deliberately, and
 the sidecar states why and carries ruby's answer verbatim — so the divergence
 stays executable evidence rather than prose. `tools/zeo-dev bless` reads it and
 records zeo instead of the oracle, which keeps these goldens machine-recorded
-like every other one. Seven files moved out on 2026-08-22:
+like every other one.
 
 | file | why zeo answers differently |
 |---|---|
@@ -66,7 +61,10 @@ like every other one. Seven files moved out on 2026-08-22:
 | `ractor_move_traversal_accidents`, `ractor_move_io_and_range` | CRuby guts objects as it walks, so a REFUSED move has already destroyed the source and a duplicated reference husks; zeo validates the whole graph first. Its IO handles are `Arc`-shared and its Range is an inline value, so neither can husk. |
 | `a_proc_isolation_message_lists_every_outer_variable` | the variable list's order is the enclosing iseq's local table, and its membership is what CRuby's peephole left behind. |
 | `kernel_scope_intrinsics_dynamic_send` | a method row cannot see its caller's block or locals, and widening `Frame` to carry them taxes every call. |
-| `a_computed_require_of_a_bundled_gem` | a computed target is opaque, so the automatic answer is "embed every gem the program can see". `--embed-sources` is the deliberate opt-in. |
+| `a_computed_require_of_a_bundled_gem`, `a_box_cannot_require_a_spliced_feature` | a computed or box-side target is opaque to the splice, so the automatic answer is "embed every gem the program can see". `--embed-sources` is the deliberate opt-in. |
+| `singleton_body_class_and_self_path` | a class written in a `class << self` body goes to the enclosing module, not the singleton class, so its singleton methods reach it by bare name. |
+| `an_eval_singleton_prepend_is_refused` | a snippet's compile registers nothing, so a singleton `prepend` inside `eval` is refused loudly instead of dropped silently. |
+| `a_row_ruby_writes_in_ruby_names_its_source` | rows CRuby writes in `<internal:>` Ruby answer a real `#source_location`; zeo's Rust rows answer `nil` (the vendored-Ruby alternative measured 22.7x slower). |
 
 ## The XFAIL contract
 
@@ -83,8 +81,7 @@ in **`Mode::Xfail`**:
   ```
 
   Promote to **`tests/`**, not `tests/spinel/` — that dir mirrors the vendored
-  spinel corpus, and a spinel-origin gap re-promotes on its own the next time
-  the spinel importer triaged it (now deleted).
+  spinel corpus and only the sync tool writes there.
 
   A promoted file's goldens carry its OLD path (`gaps/foo.rb:12`), and output
   that embeds the file's own relative path (an rspec backtrace, a seed-driven
@@ -111,8 +108,7 @@ tools/zeo-dev bless foo     # one gap
 
 Drop in `foo.rb`, then `tools/zeo-dev bless foo` to
 capture its golden. If zeo already matches ruby, the test will tell you it's not
-a gap — put it in the corpus instead. New gaps usually arrive via
-the spinel importer (deleted).
+a gap — put it in the corpus instead.
 
 Keep at least one gap here: `datatest-stable` panics rather than reporting zero
 cases, so an empty directory breaks the suite. If the last one is ever fixed,

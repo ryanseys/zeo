@@ -1,0 +1,14 @@
+zeo answers this differently ON PURPOSE, so `.expected` records ZEO's output
+and this file records why -- with ruby's own answer below it.
+
+A snippet's compile registers nothing, so a `class << self; prepend M; end`
+inside an eval'd class body has no singleton-prepend splice to attach to.
+Compiling it anyway would drop the prepend silently; zeo refuses the snippet
+with a catchable `NotImplementedError` instead
+(`crates/zeo/src/eval.rs::scope_refusals`). This golden pins the refusal
+message; the sibling arms of `scope_refusals` (`MethodRedefine`, `DefHook`)
+are defensive -- analyze splices those nodes only in whole-program mode, so
+no snippet can reach them.
+
+--- ruby 4.0.6 answers ---
+decorated
