@@ -786,10 +786,10 @@ fn stream_of(recv: &RubyValue) -> Option<StdStream> {
 /// -- the same libc-over-`io_fileno` shape as `io_winsize`.
 fn io_wait_for(
     recv: &RubyValue,
-    args: &[RubyValue],
+    timeout: Option<&RubyValue>,
     events: libc::c_short,
 ) -> Result<RubyValue, Signal> {
-    let timeout_ms = wait_timeout_ms(args.first());
+    let timeout_ms = wait_timeout_ms(timeout);
     let mut pfd = libc::pollfd {
         fd: raw_fd(recv)?,
         events,
@@ -1785,22 +1785,19 @@ ruby_class! {
         Ok(RubyValue::Bool(on))
     }
 
-    def "wait_readable" cfunc (recv, _timeout?, &_blk) {
-        let args = __args;
-        io_wait_for(recv, args, libc::POLLIN)
+    def "wait_readable" cfunc (recv, timeout?, &_blk) {
+        io_wait_for(recv, timeout, libc::POLLIN)
     }
 
-    def "wait_writable" cfunc (recv, _timeout?, &_blk) {
-        let args = __args;
-        io_wait_for(recv, args, libc::POLLOUT)
+    def "wait_writable" cfunc (recv, timeout?, &_blk) {
+        io_wait_for(recv, timeout, libc::POLLOUT)
     }
 
     // `wait_priority(timeout = nil)` -- out-of-band data only, which is why a
     // pipe carrying ordinary bytes answers nil. Goes through `select(2)`, not
     // `poll(2)`; see [`select_ready`].
-    def "wait_priority" cfunc (recv, _timeout?, &_blk) {
-        let args = __args;
-        let (_, _, e) = select_ready(&[], &[], &[raw_fd(recv)?], wait_timeout_ms(args.first()))?;
+    def "wait_priority" cfunc (recv, timeout?, &_blk) {
+        let (_, _, e) = select_ready(&[], &[], &[raw_fd(recv)?], wait_timeout_ms(timeout))?;
         Ok(if e.first() == Some(&true) {
             recv.clone()
         } else {
@@ -1827,7 +1824,7 @@ ruby_class! {
         if events == 0 {
             events = libc::POLLIN;
         }
-        io_wait_for(recv, &args[..args.len().min(1)], events)
+        io_wait_for(recv, args.first(), events)
     }
 
     // `IO#to_s` is NOT `#inspect`: CRuby leaves `to_s` as `Object`'s address
@@ -1903,12 +1900,11 @@ ruby_class! {
     // optionally read INTO an existing String `buf` (returned in place of a fresh
     // one). At EOF, a LENGTHED read answers nil while a whole-rest read answers
     // `""` (real Ruby's asymmetry, and the thing a read loop tests).
-    def "read" cfunc (recv, _length?, _outbuf?, &blk) {
-        let args = __args;
-        let result = io_read_val(recv, args, blk)?;
+    def "read" cfunc (recv, _length?, outbuf?, &blk) {
+        let result = io_read_val(recv, __args, blk)?;
         // 2-arg `read(length, buffer)`: fill the caller's String and answer it (or
         // nil at EOF, having emptied it).
-        if let Some(RubyValue::Str(buf)) = args.get(1) {
+        if let Some(RubyValue::Str(buf)) = outbuf {
             match &result {
                 RubyValue::Str(s) => {
                     let txt = s.lock().to_utf8_lossy().into_owned();
@@ -2045,14 +2041,16 @@ ruby_class! {
 
     // `readpartial(maxlen)` / `sysread(maxlen)` -- read up to `maxlen` bytes,
     // blocking for at least one; `EOFError` at EOF (unlike `read(n)`'s nil).
-    def "readpartial" | "sysread" cfunc (recv, _maxlen, _outbuf?, &_blk) {
-        let args = __args;
-        let RubyValue::Int(max) = args.first().cloned().unwrap_or(RubyValue::Nil) else {
+    def "readpartial" | "sysread" cfunc (recv, maxlen, outbuf?, &_blk) {
+        let RubyValue::Int(max) = maxlen else {
             return Err(arg_error!("length must be an Integer"));
         };
-        let outbuf = match args.get(1) {
+        let max = *max;
+        // The original argument rides along: CRuby answers the very object the
+        // caller passed, not the String its `to_str` gave.
+        let outbuf = match outbuf {
             None | Some(RubyValue::Nil) => None,
-            Some(v) => Some(crate::builtins::convert::to_rstr(v)?),
+            Some(v) => Some((v, crate::builtins::convert::to_rstr(v)?)),
         };
         let bytes = with_file(recv, |f, path| {
             let mut buf = vec![0u8; max.max(0) as usize];
@@ -2064,7 +2062,7 @@ ruby_class! {
         if bytes.is_empty() && max > 0 {
             // CRuby empties the buffer before raising, so a rescued EOF leaves no
             // stale bytes from the previous read.
-            if let Some(buf) = &outbuf {
+            if let Some((_, buf)) = &outbuf {
                 buf.lock().replace_utf8(String::new());
             }
             return Err(eof_error!("end of file reached"));
@@ -2074,9 +2072,9 @@ ruby_class! {
         // returns that same object, so the caller may read the bytes back out of
         // it or compare with `equal?`.
         match outbuf {
-            Some(buf) => {
+            Some((orig, buf)) => {
                 buf.lock().replace_utf8(text);
-                Ok(args[1].clone())
+                Ok(orig.clone())
             }
             None => Ok(RubyValue::Str(crate::collections::string_new(text))),
         }
@@ -2163,10 +2161,9 @@ ruby_class! {
     }
 
     // `seek(offset, whence = IO::SEEK_SET)` -- answers 0, like real Ruby.
-    def "seek" cfunc (recv, _offset, _whence?, &_blk) {
-        let args = __args;
-        let off = offset_of(args.first().unwrap_or(&RubyValue::Nil))?;
-        let whence = match args.get(1) {
+    def "seek" cfunc (recv, offset, whence?, &_blk) {
+        let off = offset_of(offset)?;
+        let whence = match whence {
             None => 0,
             Some(w) => whence_of(w)?,
         };
@@ -2186,10 +2183,9 @@ ruby_class! {
 
     // `sysseek(offset, whence = SEEK_SET)` -- seek, answering the new absolute
     // position (unlike `seek`, which answers 0).
-    def "sysseek" cfunc (recv, _offset, _whence?, &_blk) {
-        let args = __args;
-        let off = offset_of(args.first().unwrap_or(&RubyValue::Nil))?;
-        let whence = match args.get(1) {
+    def "sysseek" cfunc (recv, offset, whence?, &_blk) {
+        let off = offset_of(offset)?;
+        let whence = match whence {
             None => 0,
             Some(w) => whence_of(w)?,
         };
@@ -2219,8 +2215,8 @@ ruby_class! {
     }
 
     // `pos=` -- seek to an absolute byte offset.
-    def "pos=" (recv, _pos, &_blk) {
-        let n = offset_of(__args.first().unwrap_or(&RubyValue::Nil))?;
+    def "pos=" (recv, pos, &_blk) {
+        let n = offset_of(pos)?;
         with_file(recv, |f, path| {
             use std::io::Seek;
             f.seek(std::io::SeekFrom::Start(n.max(0) as u64))
@@ -2275,9 +2271,9 @@ ruby_class! {
 
     // `#fcntl(cmd[, arg])` -- the raw `fcntl(2)`; answers its integer result
     // (e.g. `fcntl(F_GETFD)` reads the close-on-exec flag). `arg` defaults to 0.
-    def "fcntl" cfunc (recv, _cmd, _arg?, &_blk) {
-        let cmd = int_of(&__args[0])? as libc::c_int;
-        let arg = match __args.get(1) {
+    def "fcntl" cfunc (recv, cmd, arg?, &_blk) {
+        let cmd = int_of(cmd)? as libc::c_int;
+        let arg = match arg {
             Some(v) => int_of(v)? as libc::c_int,
             None => 0,
         };
@@ -2438,7 +2434,7 @@ ruby_class! {
     // `#set_encoding(ext[, int])` -- record the pair and answer the receiver. A
     // single `"EXT:INT"` string names both. zeo's IO reads bytes and tags them,
     // so this is what the tag comes from; no transcoding happens on the way in.
-    def "set_encoding" cfunc (recv, _external, _internal?, &_blk) {
+    def "set_encoding" cfunc (recv, external, internal?, &_blk) {
         let Some(io) = as_rio(recv) else {
             return Ok(recv.clone());
         };
@@ -2449,8 +2445,8 @@ ruby_class! {
             }
         };
         // The combined `"UTF-8:BINARY"` spelling, which only a String can carry.
-        if __args.len() == 1
-            && let RubyValue::Str(sp) = &__args[0] {
+        if internal.is_none()
+            && let RubyValue::Str(sp) = external {
                 let spec = sp.lock().to_utf8_lossy().into_owned();
                 if let Some((ext, int)) = spec.split_once(':') {
                     let ext = crate::builtins::encoding::arg_encoding(&RubyValue::Str(
@@ -2463,8 +2459,8 @@ ruby_class! {
                     return Ok(recv.clone());
                 }
             }
-        let ext = parse(&__args[0])?;
-        let int = match __args.get(1) {
+        let ext = parse(external)?;
+        let int = match internal {
             Some(v) => parse(v)?,
             None => None,
         };
@@ -2497,17 +2493,17 @@ ruby_class! {
         Ok(RubyValue::Bool(true))
     }
 
-    def "close_on_exec=" (_recv, _close_on_exec, &_blk) {
-        Ok(__args[0].clone())
+    def "close_on_exec=" (_recv, close_on_exec, &_blk) {
+        Ok(close_on_exec.clone())
     }
 
     // `#advise(kind[, offset, len])` -- a hint to the kernel about access
     // patterns. Validated against the known symbols, then a no-op answering nil
     // (`posix_fadvise` is best-effort and unobservable from Ruby).
-    def "advise" cfunc (recv, _advice, _offset?, _len?, &_blk) {
+    def "advise" cfunc (recv, advice, _offset?, _len?, &_blk) {
         // Not a conversion site: CRuby's io_advise requires a bare Symbol
         // ("advice must be a Symbol", oracle-verified).
-        let kind = match &__args[0] {
+        let kind = match advice {
             RubyValue::Symbol(s) => s.name().to_string(),
             _ => return Err(type_error!("advice must be a Symbol")),
         };
@@ -2523,12 +2519,12 @@ ruby_class! {
 
     // `#ungetbyte(int_or_str)` -- push bytes back so the next read returns them
     // first. Recorded on the IO's unget stack (see `getbyte_value`).
-    def "ungetbyte" | "ungetc" (recv, _byte, &_blk) {
+    def "ungetbyte" | "ungetc" (recv, byte, &_blk) {
         let Some(io) = as_rio(recv) else {
             return Err(io_error!("not a file"));
         };
         let mut ug = io.unget.lock();
-        match &__args[0] {
+        match byte {
             RubyValue::Int(i) => ug.push((*i & 0xff) as u8),
             // Push in reverse so the string's bytes read back in order (the stack
             // is LIFO).
@@ -2565,9 +2561,9 @@ ruby_class! {
     // `#pread(maxlen, offset[, buffer])` -- read at a fixed offset WITHOUT moving
     // the position (`pread(2)`). Answers a new String, or fills `buffer` when
     // given and answers it. EOFError when nothing is available at `offset`.
-    def "pread" cfunc (recv, _maxlen, _offset, _buffer?, &_blk) {
-        let count = int_of(&__args[0])?.max(0) as usize;
-        let offset = offset_of(&__args[1])?.max(0) as u64;
+    def "pread" cfunc (recv, maxlen, offset, buffer?, &_blk) {
+        let count = int_of(maxlen)?.max(0) as usize;
+        let offset = offset_of(offset)?.max(0) as u64;
         let data = with_file(recv, |f, path| {
             use std::os::unix::fs::FileExt;
             let mut buf = vec![0u8; count];
@@ -2581,7 +2577,7 @@ ruby_class! {
             Ok(buf)
         })?;
         let text = String::from_utf8_lossy(&data).into_owned();
-        match __args.get(2) {
+        match buffer {
             Some(RubyValue::Str(buf)) => {
                 buf.lock().replace_utf8(text);
                 Ok(RubyValue::Str(buf.clone()))
@@ -2592,12 +2588,12 @@ ruby_class! {
 
     // `#pwrite(string, offset)` -- write at a fixed offset WITHOUT moving the
     // position; answers the number of bytes written.
-    def "pwrite" (recv, _buffer, _offset, &_blk) {
-        let bytes = match &__args[0] {
+    def "pwrite" (recv, buffer, offset, &_blk) {
+        let bytes = match buffer {
             RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned().into_bytes(),
             other => other.try_display_string()?.into_bytes(),
         };
-        let offset = offset_of(&__args[1])?.max(0) as u64;
+        let offset = offset_of(offset)?.max(0) as u64;
         with_file(recv, |f, path| {
             use std::os::unix::fs::FileExt;
             let n = f
@@ -2616,14 +2612,14 @@ ruby_class! {
     // Opening the target FIRST is what the mode argument is for -- `"w"`
     // implies `O_CREAT|O_TRUNC`, so a missing path is created rather than
     // ENOENT. Answers self.
-    def "reopen" cfunc (recv, _target, _mode?, &_blk) {
+    def "reopen" cfunc (recv, target, mode?, &_blk) {
         use std::os::fd::AsRawFd;
         let Some(io) = as_rio(recv) else {
             return Ok(recv.clone());
         };
         // The IO-to-IO form duplicates the OTHER IO's live descriptor; the
         // path form opens one, honouring the mode.
-        match as_rio(&__args[0]) {
+        match as_rio(target) {
             Some(other) => {
                 let path = other.path.lock().clone();
                 let fd = other
@@ -2632,14 +2628,14 @@ ruby_class! {
                 io.dup2_from(fd, path)?;
             }
             None => {
-                let path = crate::builtins::file::path_arg(&__args[0], "reopen")?;
+                let path = crate::builtins::file::path_arg(target, "reopen")?;
                 // With no mode of its own the call INHERITS the receiver's --
                 // `File.open(x, "w").reopen(y)` writes `y`, where a default
                 // of "r" would answer EBADF on the first write.
                 let inherited = io.open_mode.lock().clone().map(|m| {
                     RubyValue::Str(crate::collections::string_new(m))
                 });
-                let mode = __args.get(1).or(inherited.as_ref());
+                let mode = mode.or(inherited.as_ref());
                 let f = crate::builtins::file::open_options_for(mode, None)?
                     .open(&path)
                     .map_err(|e| crate::builtins::file::raise_errno(&e, "reopen", &path))?;
@@ -2821,9 +2817,9 @@ ruby_class! {
     // `IO.copy_stream(src, dst)` -- copy `src` to `dst`, answering the byte count.
     // Each end is either an IO-like object (read from / written to at its current
     // position, via `read`/`write`) or a filename (String/`to_path`).
-    def self."copy_stream" cfunc (_recv, _src, _dst, _copy_length?, _src_offset?, &_blk) {
-        let bytes = if is_io_object(&__args[0]) {
-            match crate::dispatch::send_value(&__args[0], crate::Symbol::intern("read"), &[], None)? {
+    def self."copy_stream" cfunc (_recv, src, dst, _copy_length?, _src_offset?, &_blk) {
+        let bytes = if is_io_object(src) {
+            match crate::dispatch::send_value(src, crate::Symbol::intern("read"), &[], None)? {
                 RubyValue::Str(s) => s.lock().bytes().to_vec(),
                 RubyValue::Nil => Vec::new(), // EOF
                 other => crate::builtins::convert::to_rstr(&other)?
@@ -2832,17 +2828,17 @@ ruby_class! {
                     .to_vec(),
             }
         } else {
-            let src = crate::builtins::file::path_arg(&__args[0], "copy_stream")?;
+            let src = crate::builtins::file::path_arg(src, "copy_stream")?;
             crate::gvl::without_gvl(|| std::fs::read(&src))
                 .map_err(|e| crate::builtins::file::raise_errno(&e, "copy_stream", &src))?
         };
         let n = bytes.len();
 
-        if is_io_object(&__args[1]) {
+        if is_io_object(dst) {
             let s = RubyValue::Str(crate::string_from_bytes(bytes, crate::encoding::ASCII_8BIT));
-            crate::dispatch::send_value(&__args[1], crate::Symbol::intern("write"), &[s], None)?;
+            crate::dispatch::send_value(dst, crate::Symbol::intern("write"), &[s], None)?;
         } else {
-            let dst = crate::builtins::file::path_arg(&__args[1], "copy_stream")?;
+            let dst = crate::builtins::file::path_arg(dst, "copy_stream")?;
             crate::gvl::without_gvl(|| std::fs::write(&dst, &bytes))
                 .map_err(|e| crate::builtins::file::raise_errno(&e, "copy_stream", &dst))?;
         }
@@ -2854,10 +2850,10 @@ ruby_class! {
     // through the same helper: this row used to open READ-ONLY whatever it was
     // asked for, so an `IO.new(fd, "w")` over the result raised EBADF on the
     // first write.
-    def self."sysopen" cfunc (_recv, _path, _mode?, _perm?, &_blk) {
+    def self."sysopen" cfunc (_recv, path, mode?, perm?, &_blk) {
         use std::os::fd::IntoRawFd;
-        let path = crate::builtins::file::path_arg(&__args[0], "sysopen")?;
-        let opts = crate::builtins::file::open_options_for(__args.get(1), __args.get(2))?;
+        let path = crate::builtins::file::path_arg(path, "sysopen")?;
+        let opts = crate::builtins::file::open_options_for(mode, perm)?;
         // Gvl-released for the reason `File.open` releases it: open(2) blocks
         // on a FIFO with no peer.
         let f = crate::gvl::without_gvl(|| opts.open(&path))
@@ -2870,19 +2866,19 @@ ruby_class! {
     // timeout expires first. One `poll(2)` over every listed descriptor; a handle
     // may appear in more than one list and is polled once per appearance, so the
     // answer keeps each list's own order.
-    def self."select" (_recv, _read?, _write?, _error?, _timeout?, &_blk) {
-        let list = |i: usize| -> Result<Vec<RubyValue>, Signal> {
-            match __args.get(i) {
+    def self."select" (_recv, read?, write?, error?, timeout?, &_blk) {
+        let list = |v: Option<&RubyValue>| -> Result<Vec<RubyValue>, Signal> {
+            match v {
                 None | Some(RubyValue::Nil) => Ok(Vec::new()),
                 Some(v) => Ok(crate::builtins::convert::to_rary(v)?.lock().to_vec()),
             }
         };
         let sets = [
-            (list(0)?, libc::POLLIN),
-            (list(1)?, libc::POLLOUT),
-            (list(2)?, libc::POLLPRI),
+            (list(read)?, libc::POLLIN),
+            (list(write)?, libc::POLLOUT),
+            (list(error)?, libc::POLLPRI),
         ];
-        let timeout_ms = wait_timeout_ms(__args.get(3));
+        let timeout_ms = wait_timeout_ms(timeout);
 
         if sets.iter().all(|(ios, _)| ios.is_empty()) {
             // Nothing to watch: CRuby still honours the timeout, then answers nil.
@@ -2918,21 +2914,21 @@ ruby_class! {
 
     // `IO.try_convert(obj)`: `obj` if it is already an IO, its `to_io` if it
     // defines one, else nil.
-    def self."try_convert" (_recv, _object, &_blk) {
-        if as_rio(&__args[0]).is_some() {
-            return Ok(__args[0].clone());
+    def self."try_convert" (_recv, object, &_blk) {
+        if as_rio(object).is_some() {
+            return Ok(object.clone());
         }
         let sym = crate::Symbol::intern("to_io");
-        if !crate::dispatch::responds_to_value(&__args[0], sym, true) {
+        if !crate::dispatch::responds_to_value(object, sym, true) {
             return Ok(RubyValue::Nil);
         }
-        let answer = crate::dispatch::send_value(&__args[0], sym, &[], None)?;
+        let answer = crate::dispatch::send_value(object, sym, &[], None)?;
         if answer.is_nil() || as_rio(&answer).is_some() {
             return Ok(answer);
         }
         Err(crate::builtins::type_error!(
             "can't convert {0} to IO ({0}#to_io gives {1})",
-            crate::builtins::convert_name_of(&__args[0]),
+            crate::builtins::convert_name_of(object),
             crate::builtins::class_name_of(&answer)
         ))
     }
@@ -2940,12 +2936,12 @@ ruby_class! {
     // `IO.new(fd)` / `IO.open(fd)` -- wrap an existing descriptor. `IO.for_fd` is
     // the same. The fd is adopted (closing the IO closes it) unless
     // `autoclose: false` says otherwise.
-    def self."new" | "open" | "for_fd" cfunc (_recv, _fd, _mode?, &block) {
+    def self."new" | "open" | "for_fd" cfunc (_recv, fd, mode?, &block) {
         use std::os::fd::FromRawFd;
-        let fd = &convert::to_index(&__args[0])?;
+        let fd = convert::to_index(fd)?;
         // An fd that names no open descriptor is CRuby's `Errno::EBADF`, raised
         // here rather than left to fail on the first read.
-        if unsafe { libc::fcntl(*fd as libc::c_int, libc::F_GETFD) } < 0 {
+        if unsafe { libc::fcntl(fd as libc::c_int, libc::F_GETFD) } < 0 {
             return Err(crate::dispatch::raise_error(
                 "Errno::EBADF",
                 "Bad file descriptor".to_string(),
@@ -2953,8 +2949,8 @@ ruby_class! {
         }
         // SAFETY: the fd was just confirmed open, and the caller vouches it is
         // theirs to adopt.
-        let io = pipe_value(unsafe { std::fs::File::from_raw_fd(*fd as libc::c_int) });
-        if let Some(RubyValue::Hash(opts)) = __args.get(1) {
+        let io = pipe_value(unsafe { std::fs::File::from_raw_fd(fd as libc::c_int) });
+        if let Some(RubyValue::Hash(opts)) = mode {
             let key = RubyValue::Symbol(crate::Symbol::intern("autoclose"));
             if !crate::collections::hash_get(opts, &key).truthy() {
                 set_autoclose(&io, &RubyValue::Bool(false));
@@ -2974,13 +2970,12 @@ ruby_class! {
     // starts over. The previous descriptor is RELEASED, not closed -- re-init
     // closes nothing -- and the File-vs-pipe shape is kept so `#class` stays
     // what it was.
-    private def "initialize" cfunc (recv, *args, &_block) {
+    private def "initialize" cfunc (recv, fd, _mode?, _opts?, &_block) {
         use std::os::fd::FromRawFd;
-        crate::builtins::check_arity(args.len(), 1, Some(3))?;
         let Some(io) = as_rio(recv) else {
             return Err(crate::builtins::type_error!("not an IO"));
         };
-        let fd = convert::to_index(&args[0])?;
+        let fd = convert::to_index(fd)?;
         if unsafe { libc::fcntl(fd as libc::c_int, libc::F_GETFD) } < 0 {
             return Err(crate::dispatch::raise_error(
                 "Errno::EBADF",
@@ -3000,7 +2995,9 @@ ruby_class! {
             };
         }
         reset_handle_state(io);
-        if let Some(RubyValue::Hash(opts)) = args.last() {
+        // The opts Hash rides in the LAST slot, whichever of the two optional
+        // positions it landed in.
+        if let Some(RubyValue::Hash(opts)) = __args.last() {
             let key = RubyValue::Symbol(crate::Symbol::intern("autoclose"));
             let v = crate::collections::hash_get(opts, &key);
             if !v.is_nil() && !v.truthy() {
