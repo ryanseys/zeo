@@ -1,0 +1,14 @@
+# Generated Rust: each file names its generator in its module header and
+# says "do not edit". linguist-generated collapses them in GitHub diffs and
+# keeps them out of language stats; a change to one should be reviewed as
+# "the generator or its input moved", not line by line.
+crates/zeo-rt/src/cext/api.rs linguist-generated
+crates/zeo-rt/src/cext/stubs.rs linguist-generated
+crates/zeo-rt/src/cext/forward.rs linguist-generated
+crates/zeo-rt/src/enc/registry.rs linguist-generated
+crates/zeo-rt/src/enc/single_byte.rs linguist-generated
+crates/zeo-rt/src/enc/casefold.rs linguist-generated
+crates/zeo-rt/src/enc/printable.rs linguist-generated
+
+# Derived from upstream.rb by `tools/zeo-dev gem` (Manifest#write_lock!).
+upstream.lock linguist-generated
