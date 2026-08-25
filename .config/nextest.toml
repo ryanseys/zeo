@@ -11,13 +11,16 @@
 # bound that matters is how many children are alive in the whole run, and
 # two groups of eight is sixteen.
 #
-# The width below was chosen when a test could launch a rustc, and has NOT
-# been re-measured against the Cranelift path -- it is a ceiling nobody has
-# shown is the right one, and now certainly a generous one. Re-measuring belongs to the perf pass, not to a
-# correctness run. In practice the gate is run at `--test-threads 4` on a
-# 16 GB machine, which sits under it anyway.
+# The width is MEASURED (2026-08-24, spinel x2 per width, aarch64-darwin
+# 16GB, on the single-compile harness):
+#
+#   width   6      10     14     20
+#   secs    39.5   28.1   23.6   27.8   (20's second run hit 31.8: pressure)
+#
+# 14 is the knee: past it the extra children fight the machine instead of
+# filling it. Re-measure after any change to what a golden child costs.
 [test-groups]
-golden = { max-threads = 10 }
+golden = { max-threads = 14 }
 
 # The default run is the DEV loop and stays fast: everything that compiles a
 # whole gem's require graph is opted out here and runs only under `-P full`
