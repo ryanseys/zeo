@@ -1025,6 +1025,12 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 ),
             }
         }
+        // The send shapes, in match order. The marker arms above
+        // (`__zeo_alias_keyword`, the pristine `"lit".freeze` fold, the
+        // FFI markers) must win first; these four are then disjoint by
+        // (safe, block, block_arg, kwargs), and each body is the named
+        // fn the arm forwards to.
+        //
         // `recv&.m(args) { blk }`: the receiver is evaluated ONCE and a nil
         // one answers nil without evaluating the arguments or building the
         // block -- oracle-verified (`nil&.push(*a, f())` never calls `f`),
@@ -1046,72 +1052,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 *block,
                 *block_arg,
             );
-            let op = lower_expr(fx, recv)?;
-            let tag = op.tag();
-            let ptr = ownership::borrow_ptr(fx, &op);
-            if op.owned() {
-                ownership::pool_owned(fx, ptr, tag);
-            }
-            let ss = fx.temp_slot();
-            let dst = fx.slot_addr(ss, 0);
-            let b_nil = fx.b.create_block();
-            let b_call = fx.b.create_block();
-            let join = fx.b.create_block();
-            let tv =
-                fx.b.ins()
-                    .load(types::I8, MemFlagsData::trusted(), ptr, TAG_OFFSET as i32);
-            let is_nil = fx.b.ins().icmp_imm_u(IntCC::Equal, tv, 0);
-            fx.b.ins().brif(is_nil, b_nil, &[], b_call, &[]);
-            fx.b.switch_to_block(b_nil);
-            ownership::write_move_into(fx, &Operand::Nil, dst);
-            fx.b.ins().jump(join, &[]);
-            fx.b.switch_to_block(b_call);
-            let recv_op = Operand::Ptr {
-                addr: ptr,
-                owned: false,
-                tag,
-            };
-            let blk = block_channel(fx, id, block, block_arg)?;
-            // `self&.x` reaches a private `x` exactly as `self.x` does: the
-            // safe part is the nil test, and it changes no visibility rule.
-            let through = self_receiver(fx, Some(recv)).map(|_| recv_op);
-            let bypass = bypasses_visibility(fx, Some(recv));
-            let res = if args.iter().any(|a| matches!(a, ArrayElem::Splat(_))) {
-                super::call::splat_send(
-                    fx,
-                    id,
-                    super::call::Recv::maybe(through, bypass),
-                    &name,
-                    &args,
-                    &kwargs,
-                    blk,
-                )?
-            } else if !kwargs.is_empty() {
-                super::call::kw_send(
-                    fx,
-                    id,
-                    super::call::Recv::maybe(through, bypass),
-                    &name,
-                    &args,
-                    &kwargs,
-                    blk,
-                )?
-            } else if blk.is_open() {
-                super::blocks::send_with_block_ptr_ops(fx, id, through, &name, &args, blk, bypass)?
-            } else if let Some(op) = through {
-                super::call::dynamic_send_value(fx, id, op, &name, &args, bypass)?
-            } else {
-                super::call::implicit_send(fx, id, &name, &args)?
-            };
-            ownership::write_move_into(fx, &res, dst);
-            fx.b.ins().jump(join, &[]);
-            fx.b.switch_to_block(join);
-            fx.owned_created += 1;
-            Ok(Operand::Slot {
-                ss,
-                owned: true,
-                tag: TagInfo::Unknown,
-            })
+            safe_nav_call(fx, id, recv, name, args, kwargs, block, block_arg)
         }
         HirNode::Call {
             receiver,
@@ -1128,63 +1069,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 args.clone(),
                 *blk,
             );
-            // A typed-receiver `arr.each` (`Compiler::inline_iter_sites`):
-            // fused under a runtime guard, with the ordinary block send on
-            // the other arm. The literal shapes below never nominate --
-            // their receivers are not locals -- so the order is free.
-            if args.is_empty()
-                && super::iter::fusable_block(fx, blk)
-                && let Some(r) = receiver
-                && fx.an.compiler.inline_iter_sites.get(&blk)
-                    == Some(&crate::compiler::InlineIterKind::ArrayEach)
-            {
-                return Ok(super::iter::lower_array_each(fx, id, r, blk, true)?
-                    .expect("a wanted result is always built"));
-            }
-            if args.is_empty()
-                && super::iter::fusable_block(fx, blk)
-                && let Some(counted) = super::iter::counted_of(fx, receiver, &name, true)
-            {
-                let ss = fx.temp_slot();
-                let dst = fx.slot_addr(ss, 0);
-                super::iter::lower_counted(fx, id, &counted, blk, Some(dst))?;
-                fx.owned_created += 1;
-                return Ok(Operand::Slot {
-                    ss,
-                    owned: true,
-                    tag: TagInfo::Unknown,
-                });
-            }
-            // A receiverless block call naming a compiled method goes
-            // direct; everything else is a block-passing dynamic send.
-            if receiver.is_none()
-                && let Some(decl) = fx.em.methods.get(&name)
-                && decl.plain
-                && decl.arity == args.len()
-                && !args.iter().any(|a| matches!(a, ArrayElem::Splat(_)))
-                && !method_class_shadows(fx, &name)
-            {
-                return super::call::direct_call(fx, id, &name, &args, Some(blk));
-            }
-            // A splatted argument list builds its Array in the runtime, so
-            // it takes the args entry with the block on the same channel.
-            if args.iter().any(|a| matches!(a, ArrayElem::Splat(_))) {
-                let recv = match receiver {
-                    Some(r) => Some(lower_expr(fx, r)?),
-                    None => None,
-                };
-                let bypass = bypasses_visibility(fx, receiver);
-                return super::call::splat_send(
-                    fx,
-                    id,
-                    super::call::Recv::maybe(recv, bypass),
-                    &name,
-                    &args,
-                    &[],
-                    super::blocks::BlockChannel::Literal(blk),
-                );
-            }
-            super::blocks::block_send(fx, id, receiver, &name, &args, blk)
+            literal_block_call(fx, id, receiver, name, args, blk)
         }
         HirNode::Call {
             receiver,
@@ -1196,89 +1081,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             safe: false,
         } if kwargs.is_empty() => {
             let (receiver, name, args) = (self_receiver(fx, *receiver), name.clone(), args.clone());
-            if let Some(op) = super::boxes::module_nesting(fx, receiver, &name, &args)? {
-                return Ok(op);
-            }
-            if let Some(op) = super::boxes::box_current(fx, receiver, &name, &args)? {
-                return Ok(op);
-            }
-            // `__method__`/`__callee__` under an ALIAS: `__method__` is the
-            // name the body was DEFINED under, `__callee__` the name it was
-            // reached through, and the runtime row -- which reads the frame
-            // -- can only ever see the latter. Folded only where the
-            // emitter knows the enclosing method; everywhere else (a
-            // top-level scope, a body installed at run time) the row's
-            // frame read is the better answer and this falls through.
-            if receiver.is_none()
-                && args.is_empty()
-                && name == "__method__"
-                && let Some(origin) = fx.method_origin.clone()
-            {
-                return super::consts::symbol_value(fx, &origin);
-            }
-            if let Some(op) = method_capture_intrinsic(fx, receiver, &name, &args, &[], None, None)?
-            {
-                return Ok(op);
-            }
-            if receiver.is_none()
-                && name == "binding"
-                && args.is_empty()
-                && let Some(op) = binding_value(fx, id)?
-            {
-                return Ok(op);
-            }
-            if let Some(op) = runtime_eval(fx, id, receiver, &name, &args)? {
-                return Ok(op);
-            }
-            if args.iter().any(|a| matches!(a, ArrayElem::Splat(_))) {
-                let later = later_nodes(&args, &[], None);
-                let recv = match receiver {
-                    Some(r) => {
-                        let op = lower_expr(fx, r)?;
-                        Some(park_reassignable(fx, Some(r), op, &later))
-                    }
-                    None => None,
-                };
-                let bypass = bypasses_visibility(fx, receiver);
-                return super::call::splat_send(
-                    fx,
-                    id,
-                    super::call::Recv::maybe(recv, bypass),
-                    &name,
-                    &args,
-                    &[],
-                    super::blocks::BlockChannel::None,
-                );
-            }
-            match receiver {
-                Some(recv) if super::binop::operator_fast_path(fx, &name) && args.len() == 1 => {
-                    let [ArrayElem::Single(arg)] = args.as_slice() else {
-                        return fx.unsupported(id, "a splat operand");
-                    };
-                    super::binop::binop(fx, &name, recv, *arg)
-                }
-                Some(recv) => super::call::dynamic_send(fx, id, recv, &name, &args),
-                None if let Some(folded) =
-                    super::boxes::inline_accessor(fx, id, &name, &args, &[], None, None) =>
-                {
-                    folded
-                }
-                None => match fx.em.methods.get(&name) {
-                    Some(decl)
-                        if decl.plain
-                            && decl.arity == args.len()
-                            && !args.iter().any(|a| matches!(a, ArrayElem::Splat(_)))
-                            && !method_class_shadows(fx, &name) =>
-                    {
-                        super::call::direct_call(fx, id, &name, &args, None)
-                    }
-                    // Unknown names and arity mismatches go through the
-                    // implicit-self dynamic send (the runtime raises the
-                    // NoMethodError/ArgumentError, exactly where rustc's
-                    // fallback does).
-                    Some(_) | None => super::call::implicit_send(fx, id, &name, &args),
-                },
-            }
+            plain_call(fx, id, receiver, name, args)
         }
         // A `&expr` block argument (no literal block, no keywords).
         HirNode::Call {
@@ -1319,67 +1122,7 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
                 *block,
                 *block_arg,
             );
-            if let Some(op) =
-                method_capture_intrinsic(fx, receiver, &name, &args, &kwargs, block, block_arg)?
-            {
-                return Ok(op);
-            }
-            // A receiverless keyword call naming a compiled method whose
-            // keywords are ALL required, covered exactly by literal keys,
-            // fills the slots itself: no Hash, no dynamic send, no binder.
-            // The deleted rustc backend routed this shape statically all
-            // along; CLIF once sent every keyword call the long way round.
-            if receiver.is_none()
-                && block_arg.is_none()
-                && !args.iter().any(|a| matches!(a, ArrayElem::Splat(_)))
-                && !method_class_shadows(fx, &name)
-                && fx
-                    .em
-                    .methods
-                    .get(&name)
-                    .is_some_and(|d| d.arity == args.len())
-                && let Some(order) = super::call::kw_direct_order(fx, &name, &kwargs)
-            {
-                return super::call::direct_call_kw(
-                    fx,
-                    id,
-                    &name,
-                    &args,
-                    Some((&kwargs, &order)),
-                    block,
-                );
-            }
-            let later = later_nodes(&args, &kwargs, block_arg);
-            let recv = match receiver {
-                Some(r) => {
-                    let op = lower_expr(fx, r)?;
-                    Some(park_reassignable(fx, Some(r), op, &later))
-                }
-                None => None,
-            };
-            let blk = block_channel(fx, id, block, block_arg)?;
-            let bypass = bypasses_visibility(fx, receiver);
-            if args.iter().any(|a| matches!(a, ArrayElem::Splat(_))) {
-                super::call::splat_send(
-                    fx,
-                    id,
-                    super::call::Recv::maybe(recv, bypass),
-                    &name,
-                    &args,
-                    &kwargs,
-                    blk,
-                )
-            } else {
-                super::call::kw_send(
-                    fx,
-                    id,
-                    super::call::Recv::maybe(recv, bypass),
-                    &name,
-                    &args,
-                    &kwargs,
-                    blk,
-                )
-            }
+            keyword_call(fx, id, receiver, name, args, kwargs, block, block_arg)
         }
         HirNode::RangeLit {
             start,
@@ -1672,6 +1415,322 @@ pub(crate) fn lower_expr(fx: &mut Fx, id: NodeId) -> Result<Operand, String> {
             let what = format!("this expression ({})", node_kind(other));
             fx.unsupported(id, &what)
         }
+    }
+}
+
+/// `recv&.name(...)`: the nil-test diamond. A nil receiver answers nil
+/// without evaluating the arguments or building the block (ruby's rule,
+/// oracle-verified) -- so the whole argument build sits in the call arm.
+#[allow(clippy::too_many_arguments)]
+fn safe_nav_call(
+    fx: &mut Fx,
+    id: NodeId,
+    recv: NodeId,
+    name: String,
+    args: Vec<ArrayElem>,
+    kwargs: Vec<crate::hir::KwArg>,
+    block: Option<NodeId>,
+    block_arg: Option<NodeId>,
+) -> Result<Operand, String> {
+    let op = lower_expr(fx, recv)?;
+    let tag = op.tag();
+    let ptr = ownership::borrow_ptr(fx, &op);
+    if op.owned() {
+        ownership::pool_owned(fx, ptr, tag);
+    }
+    let ss = fx.temp_slot();
+    let dst = fx.slot_addr(ss, 0);
+    let b_nil = fx.b.create_block();
+    let b_call = fx.b.create_block();
+    let join = fx.b.create_block();
+    let tv =
+        fx.b.ins()
+            .load(types::I8, MemFlagsData::trusted(), ptr, TAG_OFFSET as i32);
+    let is_nil = fx.b.ins().icmp_imm_u(IntCC::Equal, tv, 0);
+    fx.b.ins().brif(is_nil, b_nil, &[], b_call, &[]);
+    fx.b.switch_to_block(b_nil);
+    ownership::write_move_into(fx, &Operand::Nil, dst);
+    fx.b.ins().jump(join, &[]);
+    fx.b.switch_to_block(b_call);
+    let recv_op = Operand::Ptr {
+        addr: ptr,
+        owned: false,
+        tag,
+    };
+    let blk = block_channel(fx, id, block, block_arg)?;
+    // `self&.x` reaches a private `x` exactly as `self.x` does: the
+    // safe part is the nil test, and it changes no visibility rule.
+    let through = self_receiver(fx, Some(recv)).map(|_| recv_op);
+    let bypass = bypasses_visibility(fx, Some(recv));
+    let res = if args.iter().any(|a| matches!(a, ArrayElem::Splat(_))) {
+        super::call::splat_send(
+            fx,
+            id,
+            super::call::Recv::maybe(through, bypass),
+            &name,
+            &args,
+            &kwargs,
+            blk,
+        )?
+    } else if !kwargs.is_empty() {
+        super::call::kw_send(
+            fx,
+            id,
+            super::call::Recv::maybe(through, bypass),
+            &name,
+            &args,
+            &kwargs,
+            blk,
+        )?
+    } else if blk.is_open() {
+        super::blocks::send_with_block_ptr_ops(fx, id, through, &name, &args, blk, bypass)?
+    } else if let Some(op) = through {
+        super::call::dynamic_send_value(fx, id, op, &name, &args, bypass)?
+    } else {
+        super::call::implicit_send(fx, id, &name, &args)?
+    };
+    ownership::write_move_into(fx, &res, dst);
+    fx.b.ins().jump(join, &[]);
+    fx.b.switch_to_block(join);
+    fx.owned_created += 1;
+    Ok(Operand::Slot {
+        ss,
+        owned: true,
+        tag: TagInfo::Unknown,
+    })
+}
+
+/// A literal-block send (`x.each { .. }`): the fused-iterator shapes
+/// first, then the direct call for a compiled receiverless name, then
+/// the block-passing dynamic sends.
+fn literal_block_call(
+    fx: &mut Fx,
+    id: NodeId,
+    receiver: Option<NodeId>,
+    name: String,
+    args: Vec<ArrayElem>,
+    blk: NodeId,
+) -> Result<Operand, String> {
+    // A typed-receiver `arr.each` (`Compiler::inline_iter_sites`):
+    // fused under a runtime guard, with the ordinary block send on
+    // the other arm. The literal shapes below never nominate --
+    // their receivers are not locals -- so the order is free.
+    if args.is_empty()
+        && super::iter::fusable_block(fx, blk)
+        && let Some(r) = receiver
+        && fx.an.compiler.inline_iter_sites.get(&blk)
+            == Some(&crate::compiler::InlineIterKind::ArrayEach)
+    {
+        return Ok(super::iter::lower_array_each(fx, id, r, blk, true)?
+            .expect("a wanted result is always built"));
+    }
+    if args.is_empty()
+        && super::iter::fusable_block(fx, blk)
+        && let Some(counted) = super::iter::counted_of(fx, receiver, &name, true)
+    {
+        let ss = fx.temp_slot();
+        let dst = fx.slot_addr(ss, 0);
+        super::iter::lower_counted(fx, id, &counted, blk, Some(dst))?;
+        fx.owned_created += 1;
+        return Ok(Operand::Slot {
+            ss,
+            owned: true,
+            tag: TagInfo::Unknown,
+        });
+    }
+    // A receiverless block call naming a compiled method goes
+    // direct; everything else is a block-passing dynamic send.
+    if receiver.is_none()
+        && let Some(decl) = fx.em.methods.get(&name)
+        && decl.plain
+        && decl.arity == args.len()
+        && !args.iter().any(|a| matches!(a, ArrayElem::Splat(_)))
+        && !method_class_shadows(fx, &name)
+    {
+        return super::call::direct_call(fx, id, &name, &args, Some(blk));
+    }
+    // A splatted argument list builds its Array in the runtime, so
+    // it takes the args entry with the block on the same channel.
+    if args.iter().any(|a| matches!(a, ArrayElem::Splat(_))) {
+        let recv = match receiver {
+            Some(r) => Some(lower_expr(fx, r)?),
+            None => None,
+        };
+        let bypass = bypasses_visibility(fx, receiver);
+        return super::call::splat_send(
+            fx,
+            id,
+            super::call::Recv::maybe(recv, bypass),
+            &name,
+            &args,
+            &[],
+            super::blocks::BlockChannel::Literal(blk),
+        );
+    }
+    super::blocks::block_send(fx, id, receiver, &name, &args, blk)
+}
+
+/// A plain send (no block, no keywords): the compile-time folds
+/// (`Module.nesting`, `Ruby::Box.current`, `__method__`, method
+/// captures, `binding`, `eval`), then the splat entry, the operator
+/// fast path, the direct call, and the dynamic sends.
+fn plain_call(
+    fx: &mut Fx,
+    id: NodeId,
+    receiver: Option<NodeId>,
+    name: String,
+    args: Vec<ArrayElem>,
+) -> Result<Operand, String> {
+    if let Some(op) = super::boxes::module_nesting(fx, receiver, &name, &args)? {
+        return Ok(op);
+    }
+    if let Some(op) = super::boxes::box_current(fx, receiver, &name, &args)? {
+        return Ok(op);
+    }
+    // `__method__`/`__callee__` under an ALIAS: `__method__` is the
+    // name the body was DEFINED under, `__callee__` the name it was
+    // reached through, and the runtime row -- which reads the frame
+    // -- can only ever see the latter. Folded only where the
+    // emitter knows the enclosing method; everywhere else (a
+    // top-level scope, a body installed at run time) the row's
+    // frame read is the better answer and this falls through.
+    if receiver.is_none()
+        && args.is_empty()
+        && name == "__method__"
+        && let Some(origin) = fx.method_origin.clone()
+    {
+        return super::consts::symbol_value(fx, &origin);
+    }
+    if let Some(op) = method_capture_intrinsic(fx, receiver, &name, &args, &[], None, None)? {
+        return Ok(op);
+    }
+    if receiver.is_none()
+        && name == "binding"
+        && args.is_empty()
+        && let Some(op) = binding_value(fx, id)?
+    {
+        return Ok(op);
+    }
+    if let Some(op) = runtime_eval(fx, id, receiver, &name, &args)? {
+        return Ok(op);
+    }
+    if args.iter().any(|a| matches!(a, ArrayElem::Splat(_))) {
+        let later = later_nodes(&args, &[], None);
+        let recv = match receiver {
+            Some(r) => {
+                let op = lower_expr(fx, r)?;
+                Some(park_reassignable(fx, Some(r), op, &later))
+            }
+            None => None,
+        };
+        let bypass = bypasses_visibility(fx, receiver);
+        return super::call::splat_send(
+            fx,
+            id,
+            super::call::Recv::maybe(recv, bypass),
+            &name,
+            &args,
+            &[],
+            super::blocks::BlockChannel::None,
+        );
+    }
+    match receiver {
+        Some(recv) if super::binop::operator_fast_path(fx, &name) && args.len() == 1 => {
+            let [ArrayElem::Single(arg)] = args.as_slice() else {
+                return fx.unsupported(id, "a splat operand");
+            };
+            super::binop::binop(fx, &name, recv, *arg)
+        }
+        Some(recv) => super::call::dynamic_send(fx, id, recv, &name, &args),
+        None if let Some(folded) =
+            super::boxes::inline_accessor(fx, id, &name, &args, &[], None, None) =>
+        {
+            folded
+        }
+        None => match fx.em.methods.get(&name) {
+            Some(decl)
+                if decl.plain
+                    && decl.arity == args.len()
+                    && !args.iter().any(|a| matches!(a, ArrayElem::Splat(_)))
+                    && !method_class_shadows(fx, &name) =>
+            {
+                super::call::direct_call(fx, id, &name, &args, None)
+            }
+            // Unknown names and arity mismatches go through the
+            // implicit-self dynamic send (the runtime raises the
+            // NoMethodError/ArgumentError, exactly where rustc's
+            // fallback does).
+            Some(_) | None => super::call::implicit_send(fx, id, &name, &args),
+        },
+    }
+}
+
+/// A keyword-carrying send: the all-required direct-fill shape first,
+/// then the kw/splat entries with the block on its usual channel.
+#[allow(clippy::too_many_arguments)]
+fn keyword_call(
+    fx: &mut Fx,
+    id: NodeId,
+    receiver: Option<NodeId>,
+    name: String,
+    args: Vec<ArrayElem>,
+    kwargs: Vec<crate::hir::KwArg>,
+    block: Option<NodeId>,
+    block_arg: Option<NodeId>,
+) -> Result<Operand, String> {
+    if let Some(op) =
+        method_capture_intrinsic(fx, receiver, &name, &args, &kwargs, block, block_arg)?
+    {
+        return Ok(op);
+    }
+    // A receiverless keyword call naming a compiled method whose
+    // keywords are ALL required, covered exactly by literal keys,
+    // fills the slots itself: no Hash, no dynamic send, no binder.
+    // The deleted rustc backend routed this shape statically all
+    // along; CLIF once sent every keyword call the long way round.
+    if receiver.is_none()
+        && block_arg.is_none()
+        && !args.iter().any(|a| matches!(a, ArrayElem::Splat(_)))
+        && !method_class_shadows(fx, &name)
+        && fx
+            .em
+            .methods
+            .get(&name)
+            .is_some_and(|d| d.arity == args.len())
+        && let Some(order) = super::call::kw_direct_order(fx, &name, &kwargs)
+    {
+        return super::call::direct_call_kw(fx, id, &name, &args, Some((&kwargs, &order)), block);
+    }
+    let later = later_nodes(&args, &kwargs, block_arg);
+    let recv = match receiver {
+        Some(r) => {
+            let op = lower_expr(fx, r)?;
+            Some(park_reassignable(fx, Some(r), op, &later))
+        }
+        None => None,
+    };
+    let blk = block_channel(fx, id, block, block_arg)?;
+    let bypass = bypasses_visibility(fx, receiver);
+    if args.iter().any(|a| matches!(a, ArrayElem::Splat(_))) {
+        super::call::splat_send(
+            fx,
+            id,
+            super::call::Recv::maybe(recv, bypass),
+            &name,
+            &args,
+            &kwargs,
+            blk,
+        )
+    } else {
+        super::call::kw_send(
+            fx,
+            id,
+            super::call::Recv::maybe(recv, bypass),
+            &name,
+            &args,
+            &kwargs,
+            blk,
+        )
     }
 }
 
