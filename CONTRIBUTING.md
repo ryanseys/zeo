@@ -95,11 +95,13 @@ reached parity, then the differential oracle during the bring-up, and it was
 retired on 2026-08-21. The branch `archive/rustc-backend` keeps it readable.
 The oracle for correctness is `ruby` on `PATH`.
 
-The golden suites take two legs:
+The golden suites take two legs, and the e2e suite does too:
 
 ```console
 $ cargo nextest run -p zeo-tests --test examples                      # jit
 $ ZEO_GOLDEN_BACKEND=aot   cargo nextest run -p zeo-tests --test examples
+$ cargo nextest run -p zeo-tests --test e2e                           # jit child (default)
+$ ZEO_E2E_BACKEND=aot      cargo nextest run -p zeo-tests --test e2e  # link per test
 ```
 
 `crates/zeo/tests/clif.rs` holds insta snapshots of the emitted CLIF. They
