@@ -1033,11 +1033,35 @@ ruby_class! {
                 // encoding-compatibility rule -- see `"+"` just above.
                 other => {
                     let addition = convert::to_rstr(other)?;
-                    let addition = addition.lock().clone();
-                    let mut g = s.lock();
-                    if g.push_buf(&addition).is_err() {
-                        let signal = concat_incompat(&g, &addition);
-                        return Err(signal);
+                    if std::sync::Arc::ptr_eq(s, &addition) {
+                        // Self-append (`s << s`): the one shape that must
+                        // snapshot -- both sides are one non-reentrant lock.
+                        let snapshot = s.lock().clone();
+                        let mut g = s.lock();
+                        if g.push_buf(&snapshot).is_err() {
+                            return Err(concat_incompat(&g, &snapshot));
+                        }
+                    } else {
+                        // Distinct strings: hold BOTH locks, acquired in
+                        // ADDRESS order (the rb_eq rule, so a concurrent
+                        // `b << a` cannot deadlock this `a << b`), and
+                        // append borrowed bytes. The old shape cloned the
+                        // whole argument on every append.
+                        let (s_ptr, a_ptr) = (
+                            std::sync::Arc::as_ptr(s) as usize,
+                            std::sync::Arc::as_ptr(&addition) as usize,
+                        );
+                        let (mut g, ag);
+                        if s_ptr < a_ptr {
+                            g = s.lock();
+                            ag = addition.lock();
+                        } else {
+                            ag = addition.lock();
+                            g = s.lock();
+                        }
+                        if g.push_buf(&ag).is_err() {
+                            return Err(concat_incompat(&g, &ag));
+                        }
                     }
                 }
             }
