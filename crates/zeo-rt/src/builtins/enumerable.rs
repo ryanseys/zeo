@@ -1410,9 +1410,8 @@ ruby_module! {
         collect_to_a(Src::sending(recv))
     }
     // `==`-based membership (`rb_equal`, enum.c:2960) with break-on-hit.
-    def "include?" arity 1 | "member?" arity 1 (recv, *args, &_block) {
-        crate::builtins::check_arity(args.len(), 1, Some(1))?;
-        let needle = args[0].clone();
+    def "include?" | "member?" (recv, needle, &_block) {
+        let needle = needle.clone();
         let found = Arc::new(Mutex::new(false));
         let found2 = found.clone();
         for_each(Src::sending(recv), move |yielded| {
@@ -1760,10 +1759,9 @@ ruby_module! {
         // The block form answers the receiver (Ruby 3.1+), not nil.
         Ok(recv.clone())
     }
-    def "each_with_object" arity 1 (recv, *args, &block) {
-        check_arity(args.len(), 1, Some(1))?;
-        let blk = block_or_enum!(recv, args, block);
-        let memo = args[0].clone();
+    def "each_with_object" (recv, memo, &block) {
+        let blk = block_or_enum!(recv, __args, block);
+        let memo = memo.clone();
         // Drive the receiver's own `each` (rather than collect-then-iterate) so
         // the block runs INSIDE that `each` frame: a block-raised exception then
         // shows both the receiver's `each` C-frame and this

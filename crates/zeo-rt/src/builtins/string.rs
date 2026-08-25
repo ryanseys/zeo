@@ -3453,11 +3453,7 @@ pub(crate) fn match_haystack(
 fn charset_specs(
     args: &[RubyValue],
 ) -> Result<Vec<(std::collections::HashSet<char>, bool)>, Signal> {
-    if args.is_empty() {
-        return Err(arg_error!(
-            "wrong number of arguments (given 0, expected 1+)"
-        ));
-    }
+    crate::builtins::check_arity(args.len(), 1, None)?;
     args.iter()
         .map(|a| {
             let spec = convert::to_rstr(a)?.lock().to_utf8_lossy().into_owned();

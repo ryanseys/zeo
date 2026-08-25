@@ -1192,10 +1192,7 @@ ruby_class! {
                     }
                 }
                 _ => {
-                    return Err(arg_error!(
-                        "wrong number of arguments (given {}, expected 0)",
-                        args.len()
-                    ));
+                    return Err(crate::builtins::arity_err(args.len(), 0, Some(0)));
                 }
             };
             return match block {

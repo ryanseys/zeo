@@ -550,12 +550,9 @@ fn push(
             let bucket: Arc<Mutex<Vec<RubyValue>>> = Arc::new(Mutex::new(Vec::new()));
             let sink_bucket = bucket.clone();
             let collector = crate::RProc::new(move |args: &[RubyValue]| {
-                let v = match args.len() {
-                    0 => RubyValue::Nil,
-                    1 => args[0].clone(),
-                    _ => RubyValue::Array(array_new(args.to_vec())),
-                };
-                sink_bucket.lock().push(v);
+                sink_bucket
+                    .lock()
+                    .push(crate::builtins::enumerable::pack(args));
                 Ok(RubyValue::Nil)
             });
             p.call(&[RubyValue::Yielder(collector), val])?;
@@ -798,12 +795,7 @@ fn each_group(
 /// explicit per-element body as the chain's first link. The size hint is
 /// accepted and unused (`#size` derives from the source here).
 fn lazy_new_core(args: &[RubyValue], block: Option<RubyValue>) -> Result<LazyCore, Signal> {
-    if args.is_empty() || args.len() > 2 {
-        return Err(arg_error!(
-            "wrong number of arguments (given {}, expected 1..2)",
-            args.len()
-        ));
-    }
+    crate::builtins::check_arity(args.len(), 1, Some(2))?;
     let Some(RubyValue::Proc(p)) = &block else {
         return Err(arg_error!("tried to call lazy new without a block"));
     };

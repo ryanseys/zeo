@@ -1136,10 +1136,7 @@ fn uncaught_throw_initialize(
     // (0 or 1 non-String arg) is the ArgumentError CRuby raises.
     let internal_msg_only = matches!(args, [RubyValue::Str(_)]);
     if !internal_msg_only && !(2..=3).contains(&args.len()) {
-        return Err(arg_error!(
-            "wrong number of arguments (given {}, expected 2..3)",
-            args.len()
-        ));
+        return Err(crate::builtins::arity_err(args.len(), 2, Some(3)));
     }
     if args.len() >= 2 {
         e.set_detail("tag", args[0].clone());
@@ -1611,10 +1608,7 @@ fn signal_exception_initialize(
         }
         Some(name @ (RubyValue::Str(_) | RubyValue::Symbol(_))) => {
             if args.len() > 1 {
-                return Err(arg_error!(
-                    "wrong number of arguments (given {}, expected 1)",
-                    args.len()
-                ));
+                return Err(crate::builtins::arity_err(args.len(), 1, Some(1)));
             }
             let spelled = match name {
                 RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),

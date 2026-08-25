@@ -2061,11 +2061,8 @@ pub fn kernel_p(args: &[RubyValue]) -> Result<RubyValue, Signal> {
         crate::builtins::io::write_str(&crate::builtins::io::current_stdout(), &buf)?;
     }
     rendered?;
-    Ok(match args.len() {
-        0 => RubyValue::Nil,
-        1 => args[0].clone(),
-        _ => RubyValue::Array(crate::array_new(args.to_vec())),
-    })
+    // `p one` answers the one value, `p a, b` the Array -- `pack`'s rule.
+    Ok(crate::builtins::enumerable::pack(args))
 }
 
 /// `Kernel#pp` -- for this runtime's value shapes, `p`'s rendering.
