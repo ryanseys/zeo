@@ -1,19 +1,17 @@
 # `error_highlight` is loaded by default in ruby, so `require` answers false
 # and the constant is already there. zeo vendors neither.
 #
-# It is PURE RUBY and its only blocker is one primitive:
-# `RubyVM::AbstractSyntaxTree.node_id_for_backtrace_location`, which its
-# `prism_find` reaches for exactly because zeo already raises the
-# "compiled by prism" RuntimeError that sends it there. See
-# `ast_node_id_for_backtrace_location.rb` for the rule (exact, and free at
-# run time) and for what actually blocks it -- the CALLEE, which a
-# `Thread::Backtrace::Location` does not carry. (Not prism's `node_id`: that
-# field is reachable through the `Node` enum's variants.)
+# It is PURE RUBY and its one blocker is GONE. The primitive it reaches for,
+# `RubyVM::AbstractSyntaxTree.node_id_for_backtrace_location`, landed
+# 2026-08-24 -- see `tests/ast_node_id_for_backtrace_location.rb` for the
+# rule and the six shapes it is verified over. What remains is the vendoring
+# itself: 1,102 lines plus its `detailed_message` hook.
 #
-# Vendoring it WITHOUT the primitive would be worse than not vendoring it:
-# `spot` rescues only around `AbstractSyntaxTree.of`, so every NameError's
-# `detailed_message` -- which is now the seam every report renders through --
-# would raise instead of describing the error.
+# The safety valve the primitive ships with is what makes vendoring safe.
+# `spot` rescues `ArgumentError`, which is exactly what the primitive raises
+# when a location carries no callee, so a shape the rule misses degrades to a
+# plain message instead of breaking every `detailed_message` -- the seam
+# every report now renders through.
 #
 # THE FIRST LINE IS NOT WHAT IT LOOKS LIKE, corrected 2026-08-21. A plain
 # `ruby` answers `false` to the require, because error_highlight is loaded by

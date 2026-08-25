@@ -19,6 +19,18 @@ pub struct BacktraceLocation {
     path: String,
     lineno: i64,
     label: String,
+    /// The method this frame INVOKED, when the builder could determine it.
+    ///
+    /// No Ruby row reads it, and CRuby's `Location` has none either -- a
+    /// public row here would be a census divergence. It exists for
+    /// `RubyVM::AbstractSyntaxTree.node_id_for_backtrace_location`, whose
+    /// rule needs it: a location's node is the CALL at (path, lineno) whose
+    /// NAME is the method that location invoked, and a location alone cannot
+    /// say which call on its line that is.
+    ///
+    /// `None` for a builder that cannot answer, and the primitive raises
+    /// `ArgumentError` there rather than guessing.
+    callee: Option<String>,
     frozen: AtomicBool,
 }
 
@@ -46,6 +58,7 @@ impl RubyObject for BacktraceLocation {
             path: self.path.clone(),
             lineno: self.lineno,
             label: self.label.clone(),
+            callee: self.callee.clone(),
             frozen: AtomicBool::new(copy_frozen && self.is_frozen()),
         })
     }
@@ -54,12 +67,79 @@ impl RubyObject for BacktraceLocation {
 /// One location from a frame triple -- the only way these are minted (there is
 /// no `Location.new` in Ruby either).
 pub fn location_new(path: &str, lineno: u32, label: &str) -> RubyValue {
+    location_with_callee(path, lineno, label, None)
+}
+
+/// The same, carrying the method this frame invoked -- see
+/// [`BacktraceLocation::callee`].
+pub fn location_with_callee(
+    path: &str,
+    lineno: u32,
+    label: &str,
+    callee: Option<String>,
+) -> RubyValue {
     RubyValue::Object(Arc::new(BacktraceLocation {
         path: path.to_string(),
         lineno: i64::from(lineno),
         label: label.to_string(),
+        callee,
         frozen: AtomicBool::new(false),
     }))
+}
+
+/// The method name inside a frame LABEL: `Object#inner` and `Foo.bar` name
+/// `inner` and `bar`, `block in outer` names `outer`, and `<main>` or
+/// `<class:Foo>` name nothing a call site can be written as.
+pub fn label_method(label: &str) -> Option<String> {
+    let label = label.rsplit("block in ").next().unwrap_or(label);
+    let name = label
+        .rsplit_once(['#', '.'])
+        .map_or(label, |(_, name)| name)
+        .trim();
+    (!name.is_empty() && !name.starts_with('<')).then(|| name.to_string())
+}
+
+/// The callee a location carries, if its builder knew one.
+pub fn callee_of(v: &RubyValue) -> Option<String> {
+    match v {
+        RubyValue::Object(o) => o
+            .as_any()
+            .downcast_ref::<BacktraceLocation>()
+            .and_then(|l| l.callee.clone()),
+        _ => None,
+    }
+}
+
+/// `(path, lineno)` of a location, for a caller that is not a Ruby row.
+pub fn place_of(v: &RubyValue) -> Option<(String, i64)> {
+    match v {
+        RubyValue::Object(o) => o
+            .as_any()
+            .downcast_ref::<BacktraceLocation>()
+            .map(|l| (l.path.clone(), l.lineno)),
+        _ => None,
+    }
+}
+
+/// Fills in each location's callee from the list itself: location `i`'s
+/// callee is the method named by location `i-1`'s label -- the frame it
+/// called into. `first` is location 0's, which the list cannot supply.
+///
+/// Oracle-verified against ruby 4.0.6 over `def outer = inner` /
+/// `def inner = raise`, `[1,2].fetch(9)` (whose cfunc location and its
+/// caller name the same call) and `Integer("zz")`.
+pub fn thread_callees(rows: &[(String, u32, String)], first: Option<String>) -> Vec<RubyValue> {
+    rows.iter()
+        .enumerate()
+        .map(|(i, (path, lineno, label))| {
+            let callee = if i == 0 {
+                first.clone()
+            } else {
+                label_method(&rows[i - 1].2)
+            };
+            location_with_callee(path, *lineno, label, callee)
+        })
+        .collect()
 }
 
 fn loc_of(recv: &RubyValue) -> &BacktraceLocation {

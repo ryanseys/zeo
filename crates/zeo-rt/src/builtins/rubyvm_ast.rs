@@ -145,6 +145,107 @@ fn recv_location(recv: &RubyValue) -> Arc<RAstLocation> {
     }
 }
 
+/// prism's own `node_id` for the call a backtrace location names -- the one
+/// primitive `error_highlight` asks of a prism-compiled program.
+///
+/// THE RULE, oracle-verified against ruby 4.0.6: a location's node is the
+/// CALL at `(path, lineno)` whose NAME is the method that location invoked.
+/// The name is not on the Location -- `BacktraceLocation::callee` carries it,
+/// filled by whichever builder made the list, because only the whole list
+/// knows it: location `i`'s callee is location `i-1`'s method.
+///
+/// When no callee reached here, this raises `ArgumentError` rather than
+/// guessing at a line with several calls on it. `ErrorHighlight.spot`
+/// rescues exactly that into "no spot", so a shape the rule misses degrades
+/// to a plain message instead of breaking every `detailed_message`.
+///
+/// `node_id` is assigned at ALLOCATION during the parse, so it is neither
+/// pre- nor post-order over the finished tree and cannot be recomputed by
+/// walking -- it is read off `pm_node_t` through the raw bindings. zeo's own
+/// `RubyVM::AbstractSyntaxTree` numbering is a different scheme and cannot
+/// serve.
+fn node_id_for_location(loc: &RubyValue) -> Result<RubyValue, Signal> {
+    use crate::builtins::backtrace_location as bl;
+
+    let Some((path, lineno)) = bl::place_of(loc) else {
+        return Err(crate::builtins::type_error!(
+            "wrong argument type (expected Thread::Backtrace::Location)"
+        ));
+    };
+    let Some(callee) = bl::callee_of(loc) else {
+        return Err(crate::builtins::arg_error!(
+            "cannot determine the callee of {path}:{lineno} -- zeo answers a \
+             node id only where the backtrace names the method the frame \
+             invoked"
+        ));
+    };
+    let Ok(src) = std::fs::read(&path) else {
+        return Err(crate::builtins::arg_error!("cannot read {path}"));
+    };
+    let result = ruby_prism::parse(&src);
+    let mut find = FindCall {
+        src: &src,
+        lineno: lineno.max(0) as usize,
+        callee: &callee,
+        pending: None,
+        found: None,
+    };
+    ruby_prism::Visit::visit(&mut find, &result.node());
+    match find.found {
+        Some(id) => Ok(RubyValue::Int(i64::from(id))),
+        None => Err(crate::builtins::arg_error!(
+            "no `{callee}` call at {path}:{lineno}"
+        )),
+    }
+}
+
+/// Finds the first call named `callee` that STARTS on `lineno`, in visit
+/// order -- which is allocation order, so the shallowest match wins exactly
+/// as CRuby's does.
+///
+/// The name and the extent come off the safe `CallNode`; the id comes off the
+/// enum, whose variant fields are public where the concrete node's `pointer`
+/// is not. `visit_branch_node_enter` fires immediately before
+/// `visit_call_node` for the same node, so the two halves meet.
+struct FindCall<'a> {
+    src: &'a [u8],
+    lineno: usize,
+    callee: &'a str,
+    pending: Option<u32>,
+    found: Option<u32>,
+}
+
+impl<'pr> ruby_prism::Visit<'pr> for FindCall<'_> {
+    fn visit_branch_node_enter(&mut self, node: ruby_prism::Node<'pr>) {
+        if let ruby_prism::Node::CallNode { pointer, .. } = node {
+            // SAFETY: the pointer is prism's own, alive for the parse this
+            // walk runs inside, and every node struct begins with the
+            // `pm_node_t` header this reads (`@extends pm_node_t`).
+            self.pending = Some(unsafe { (*pointer.cast::<ruby_prism_sys::pm_node_t>()).node_id });
+        }
+    }
+
+    fn visit_call_node(&mut self, node: &ruby_prism::CallNode<'pr>) {
+        if self.found.is_none()
+            && node.name().as_slice() == self.callee.as_bytes()
+            && line_at(self.src, node.location().start_offset()) == self.lineno
+        {
+            self.found = self.pending;
+        }
+        if self.found.is_none() {
+            ruby_prism::visit_call_node(self, node);
+        }
+    }
+}
+
+/// The 1-based line a byte offset falls on.
+fn line_at(src: &[u8], offset: usize) -> usize {
+    1 + src[..offset.min(src.len())]
+        .iter()
+        .filter(|&&b| b == b'\n')
+        .count()
+}
+
 const PRISM_ERROR: &str = "cannot get AST for ISEQ compiled by prism";
 
 mod ast {
@@ -183,8 +284,8 @@ mod ast {
                 _ => Ok(RubyValue::Nil),
             }
         }
-        def self."node_id_for_backtrace_location" params "backtrace_location"(_recv, _loc) {
-            Err(raise_error("RuntimeError", PRISM_ERROR.to_string()))
+        def self."node_id_for_backtrace_location" params "backtrace_location"(_recv, loc) {
+            node_id_for_location(loc)
         }
     }
 }

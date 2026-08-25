@@ -383,10 +383,14 @@ ruby_class! {
             return Ok(RubyValue::Nil);
         }
         let frames = if is_current(t) { crate::frames::caller_frames(0) } else { Vec::new() };
-        let locations = frames
+        let rows: Vec<(String, u32, String)> = frames
             .iter()
-            .map(|(f, l, m)| crate::builtins::backtrace_location::location_new(f, *l, m))
+            .map(|(f, l, m)| ((*f).to_string(), *l, (*m).to_string()))
             .collect();
+        let locations = crate::builtins::backtrace_location::thread_callees(
+            &rows,
+            Some("backtrace_locations".to_string()),
+        );
         Ok(RubyValue::Array(crate::array_new(locations)))
     }
 

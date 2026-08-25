@@ -615,6 +615,32 @@ pub fn set_exception_detail(exc_value: &RubyValue, key: &'static str, v: RubyVal
 }
 
 /// `NameError#name`/`NoMethodError#name` -- the missing name, `nil` if unset.
+/// The name a `NameError`/`NoMethodError` records for the lookup that failed
+/// -- the callee of the frame it was raised in. Every other exception class
+/// carries no such detail.
+fn name_of_name_error(recv: &RObj) -> Option<String> {
+    match exc(recv).detail("name") {
+        RubyValue::Symbol(s) => Some(s.name_str().to_string()),
+        RubyValue::Str(s) => Some(s.lock().to_utf8_lossy().into_owned()),
+        _ => None,
+    }
+}
+
+/// Marks an exception as raised by an explicit `raise`/`fail`, so
+/// `backtrace_locations` can say what the innermost frame CALLED. The frame's
+/// own label names the method it is IN, which is a different thing and has no
+/// call on that line.
+///
+/// A hidden detail slot: no Ruby row reads it, exactly like the `receiver`
+/// and `name` slots beside it.
+pub fn mark_explicitly_raised(exc: &RubyValue, verb: &'static str) {
+    if let RubyValue::Object(o) = exc
+        && let Some(e) = o.as_any().downcast_ref::<RubyException>()
+    {
+        e.set_detail("zeo_raise_verb", RubyValue::Symbol(Symbol::intern(verb)));
+    }
+}
+
 fn exc_name(
     recv: &RObj,
     _args: &[RubyValue],
@@ -871,7 +897,7 @@ fn exc_backtrace_locations(
     let Some(lines) = exc(recv).backtrace.lock().clone() else {
         return Ok(RubyValue::Nil);
     };
-    let locations = lines
+    let rows: Vec<(String, u32, String)> = lines
         .iter()
         .map(|line| {
             // `<path>:<lineno>:in '<label>'`, and a path may itself contain a
@@ -884,9 +910,24 @@ fn exc_backtrace_locations(
                 Some((p, n)) => (p, n.parse::<u32>().unwrap_or(0)),
                 None => (head, 0),
             };
-            crate::builtins::backtrace_location::location_new(path, lineno, label)
+            (path.to_string(), lineno, label.to_string())
         })
         .collect();
+    // Location 0's callee is whatever RAISED. A `NameError` names it
+    // (`nil.nope` -> the `nope` call); otherwise the innermost frame's own
+    // label serves, which is exact for a cfunc frame (`Kernel#Integer` ->
+    // the `Integer` call) and empty for a Ruby frame that called `raise`,
+    // where the primitive then declines rather than guessing.
+    let first = name_of_name_error(recv)
+        .or_else(|| match exc(recv).detail("zeo_raise_verb") {
+            RubyValue::Symbol(s) => Some(s.name_str().to_string()),
+            _ => None,
+        })
+        .or_else(|| {
+            rows.first()
+                .and_then(|(_, _, label)| crate::builtins::backtrace_location::label_method(label))
+        });
+    let locations = crate::builtins::backtrace_location::thread_callees(&rows, first);
     Ok(RubyValue::Array(array_new(locations)))
 }
 

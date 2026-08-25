@@ -248,10 +248,14 @@ ruby_class! {
         Ok(RubyValue::Array(crate::array_new(lines)))
     }
     def "backtrace_locations" cfunc (_recv, *_args) {
-        let locations = own_frames(f)
+        let rows: Vec<(String, u32, String)> = own_frames(f)
             .iter()
-            .map(|(file, line, m)| crate::builtins::backtrace_location::location_new(file, *line, m))
+            .map(|(file, line, m)| ((*file).to_string(), *line, (*m).to_string()))
             .collect();
+        let locations = crate::builtins::backtrace_location::thread_callees(
+            &rows,
+            Some("backtrace_locations".to_string()),
+        );
         Ok(RubyValue::Array(crate::array_new(locations)))
     }
     def "inspect" | "to_s"(_recv) {

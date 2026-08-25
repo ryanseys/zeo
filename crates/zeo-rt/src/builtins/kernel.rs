@@ -356,6 +356,9 @@ ruby_module! {
             .collect();
         let exc = build_raise_exception(&args)?;
         let exc = crate::dispatch::raise_with_cause(exc);
+        // The innermost frame's label names the method this raise is IN, and
+        // that name has no call on the raise's own line. The verb does.
+        crate::builtins::exception::mark_explicitly_raised(&exc, "raise");
         // After the stamp, so the custom lines WIN over the real stack.
         if let Some(bt) = backtrace {
             crate::builtins::exception::apply_custom_backtrace(&exc, bt)?;
@@ -408,10 +411,20 @@ ruby_module! {
         if start > all.len() {
             return Ok(RubyValue::Nil);
         }
-        let mut window: Vec<RubyValue> = all[start..]
+        // Callees come off the WHOLE list before the window is cut: a
+        // windowed location 0 still calls into the frame ahead of it, and
+        // only the full list names that. The full list's own location 0 is
+        // the frame that called `caller_locations`, so what it invoked is
+        // this row.
+        let rows: Vec<(String, u32, String)> = all
             .iter()
-            .map(|(f, l, m)| crate::builtins::backtrace_location::location_new(f, *l, m))
+            .map(|(f, l, m)| ((*f).to_string(), *l, (*m).to_string()))
             .collect();
+        let mut window = crate::builtins::backtrace_location::thread_callees(
+            &rows,
+            Some("caller_locations".to_string()),
+        );
+        window.drain(..start);
         if let Some(l) = length {
             window.truncate(l);
         }

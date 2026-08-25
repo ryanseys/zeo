@@ -2206,6 +2206,7 @@ dependencies = [
  "parking_lot",
  "regex",
  "ruby-prism",
+ "ruby-prism-sys",
  "rustyline",
  "serde_json",
  "sha1",

@@ -58,6 +58,7 @@ linkme.workspace = true
 # snippet, and the compiler links its own copy. Not optional -- the shipped
 # runtime is one variant.
 ruby-prism.workspace = true
+ruby-prism-sys.workspace = true
 parking_lot.workspace = true
 indexmap.workspace = true
 foldhash.workspace = true

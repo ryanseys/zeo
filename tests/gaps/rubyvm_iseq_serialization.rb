@@ -9,9 +9,22 @@
 #
 # Read the four rows apart -- they are not one gap:
 #
-#   to_a / to_binary / disasm   PERMANENT. There is no bytecode to serialize.
-#                               A faithful answer would mean emitting YARV
-#                               zeo never runs.
+#   to_a / to_binary / disasm   PERMANENT -- a verdict, with its cost.
+#                               `to_binary` is CRuby's version-stamped
+#                               internal IBF and stays refused on those
+#                               grounds alone: a format keyed to a VM zeo
+#                               does not have cannot be answered honestly.
+#                               `to_a` and `disasm` are the real question,
+#                               and the answer is no. Both would mean
+#                               EMITTING YARV that zeo never runs -- a whole
+#                               second backend whose only consumer is
+#                               reflection, kept correct against a bytecode
+#                               format that changes every ruby release, with
+#                               no test that a program's behaviour depends
+#                               on. The refusal names that reality; a
+#                               plausible-looking fake would be worse than
+#                               the NotImplementedError, because a caller
+#                               reading it has no way to tell.
 #   InstructionSequence.of      FIXED. It answers a real handle for a Ruby
 #                               callable and nil for a C-defined one, with the
 #                               location rows exact -- see
@@ -45,8 +58,11 @@
 #                               which is the same work as completing the
 #                               translator -- see
 #                               `the_ast_translator_answers_unknown_for_some_shapes.rb`.
-#                               prism's real ids are wanted elsewhere, by
-#                               `ast_node_id_for_backtrace_location.rb`.
+#                               prism's real ids ARE read now, for
+#                               `node_id_for_backtrace_location` -- see
+#                               `tests/ast_node_id_for_backtrace_location.rb`.
+#                               They cannot serve this row, because CRuby's
+#                               AST ids are a third numbering again.
 $stderr.reopen(IO::NULL)
 
 iseq = RubyVM::InstructionSequence.compile("40 + 2")

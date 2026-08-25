@@ -46,6 +46,10 @@ target-lexicon = "0.13"
 
 # The parser: prism, CRuby's own default parser since 3.4.
 ruby-prism = "1.9.0"
+# The same parser's raw bindings, for the one field the safe crate does not
+# expose: `pm_node_t.node_id`, which `RubyVM::AbstractSyntaxTree
+# .node_id_for_backtrace_location` answers with.
+ruby-prism-sys = "1.9.0"
 
 # Diagnostics: typed compile errors, rendered as annotated source excerpts
 # by the CLI ("fancy" = the graphical handler, which auto-degrades for
