@@ -455,6 +455,31 @@ impl<'e, 'f> Fx<'e, 'f> {
         self.b.switch_to_block(next);
     }
 
+    /// The interruption checkpoint: an inline load of the runtime's
+    /// pending counter, with the delivery call on a cold branch. A plain
+    /// load matches the Rust fast path's Relaxed read -- a checkpoint that
+    /// races a post sees it at the next checkpoint, same as the called
+    /// form did.
+    pub fn check_ints(&mut self) {
+        let gv = self
+            .em
+            .module
+            .declare_data_in_func(self.em.pending_id, self.b.func);
+        let base = self.b.ins().symbol_value(self.em.ptr, gv);
+        let pending = self
+            .b
+            .ins()
+            .load(types::I32, MemFlagsData::trusted(), base, 0);
+        let cold = self.b.create_block();
+        let cont = self.b.create_block();
+        self.b.set_cold_block(cold);
+        self.b.ins().brif(pending, cold, &[], cont, &[]);
+        self.b.switch_to_block(cold);
+        let status = self.call_status("zeo_rt_check_ints", &[]);
+        self.b.ins().brif(status, self.land, &[], cont, &[]);
+        self.b.switch_to_block(cont);
+    }
+
     /// After an unconditional jump: continue lowering in a fresh (possibly
     /// unreachable) block, so dead statements after `break`/`next` still
     /// lower without tripping the "block already terminated" rule.

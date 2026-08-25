@@ -429,7 +429,7 @@ pub(super) fn define_method_body(
     // the svar-free common case takes the fused call -- this prologue runs
     // per method CALL.
     let needs_svar = crate::analyze::svars::body_mentions_svars(&analyzed.compiler, def.body);
-    let status = if let Some(file) = &file {
+    if let Some(file) = &file {
         let off = fx.em.intern_rodata(file.as_bytes());
         let label_off = fx.em.intern_rodata(label.as_bytes());
         let file_ptr = fx.rod(off);
@@ -442,17 +442,17 @@ pub(super) fn define_method_body(
         if needs_svar {
             fx.call("zeo_rt_frame_push", &args);
             fx.call("zeo_rt_svar_scope_push", &[]);
-            fx.call_status("zeo_rt_check_ints", &[])
+            fx.check_ints();
         } else {
-            fx.call_status("zeo_rt_frame_enter", &args)
+            let status = fx.call_status("zeo_rt_frame_enter", &args);
+            fx.fallible(status);
         }
     } else {
         if needs_svar {
             fx.call("zeo_rt_svar_scope_push", &[]);
         }
-        fx.call_status("zeo_rt_check_ints", &[])
-    };
-    fx.fallible(status);
+        fx.check_ints();
+    }
 
     bind_deferred(&mut fx, &deferred)?;
     // Parenthesized destructuring params replay as the multi-assignments
@@ -696,7 +696,7 @@ pub(super) fn define_toplevel(
 
     // Frame push and interrupt checkpoint fused into one call when a frame
     // exists.
-    let status = if let Some(file) = &frame {
+    if let Some(file) = &frame {
         let off = fx.em.intern_rodata(file.as_bytes());
         let main_off = fx.em.intern_rodata(label.as_bytes());
         let file_ptr = fx.rod(off);
@@ -704,14 +704,14 @@ pub(super) fn define_toplevel(
         let label_ptr = fx.rod(main_off);
         let label_len = fx.b.ins().iconst(fx.em.ptr, label.len() as i64);
         let zero = fx.b.ins().iconst(types::I32, 0);
-        fx.call_status(
+        let status = fx.call_status(
             "zeo_rt_frame_enter",
             &[file_ptr, file_len, label_ptr, label_len, zero, zero],
-        )
+        );
+        fx.fallible(status);
     } else {
-        fx.call_status("zeo_rt_check_ints", &[])
-    };
-    fx.fallible(status);
+        fx.check_ints();
+    }
 
     // The toplevel's `self`: one pooled `main` handle, borrowed by every
     // receiverless direct call.

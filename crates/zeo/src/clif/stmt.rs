@@ -1319,8 +1319,7 @@ fn lower_loop(
     }
 
     fx.b.switch_to_block(body_blk);
-    let status = fx.call_status("zeo_rt_check_ints", &[]);
-    fx.fallible(status);
+    fx.check_ints();
     fx.loops.push(LoopCtl {
         exit,
         latch,
@@ -1407,9 +1406,8 @@ fn lower_for(
     fx.b.switch_to_block(body_blk);
     fx.owned_created += 1;
     super::multi::write_multi_target(fx, site, target, elem)?;
-    let status = fx.call_status("zeo_rt_check_ints", &[]);
     fx.land = end_land;
-    fx.fallible(status);
+    fx.check_ints();
     fx.loops.push(LoopCtl {
         exit,
         latch,

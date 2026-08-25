@@ -1131,6 +1131,12 @@ pub const CAPI: &[CapiSig] = &[
     },
 ];
 
+/// Every runtime DATA symbol emitted code reads inline, alphabetical.
+/// Function imports above are calls; these are loads. The archive
+/// exports them from `zeo-rt`'s data section and the JIT resolves them
+/// through `symbols::data_addr`.
+pub const CAPI_DATA: &[&str] = &["zeo_rt_pending_interrupts"];
+
 /// The signature row for `name`.
 pub fn sig(name: &str) -> &'static CapiSig {
     CAPI.iter()
@@ -1151,6 +1157,13 @@ mod tests {
                 pair[0].name,
                 pair[1].name
             );
+        }
+    }
+
+    #[test]
+    fn the_data_table_is_sorted_and_unique() {
+        for pair in CAPI_DATA.windows(2) {
+            assert!(pair[0] < pair[1], "{} must sort before {}", pair[0], pair[1]);
         }
     }
 }

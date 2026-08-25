@@ -265,6 +265,24 @@ capi_symbols!(
     procs::zeo_rt_yield_args,
 );
 
+/// Exported DATA symbols, alphabetical (tested). Separate from the
+/// function table because the macro's `$m::$f as *const u8` cast only
+/// coerces fn items. Emitted code reads these inline (a load, not a
+/// call); the AOT link resolves them from the archive, the JIT from
+/// [`data_addr`].
+pub const DATA_NAMES: &[&str] = &["zeo_rt_pending_interrupts"];
+
+/// The in-process address of exported data symbol `name`.
+#[must_use]
+pub fn data_addr(name: &str) -> Option<*const u8> {
+    match name {
+        "zeo_rt_pending_interrupts" => {
+            Some(&crate::gvl::zeo_rt_pending_interrupts as *const _ as *const u8)
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -287,5 +305,21 @@ mod tests {
             assert!(addr(name).is_some(), "{name} has no address");
         }
         assert!(addr("zeo_rt_no_such_symbol").is_none());
+    }
+
+    #[test]
+    fn data_names_are_sorted_unique_and_resolve() {
+        for pair in DATA_NAMES.windows(2) {
+            assert!(
+                pair[0] < pair[1],
+                "capi data table out of order: {} then {}",
+                pair[0],
+                pair[1]
+            );
+        }
+        for name in DATA_NAMES {
+            assert!(data_addr(name).is_some(), "{name} has no address");
+        }
+        assert!(data_addr("zeo_rt_no_such_symbol").is_none());
     }
 }

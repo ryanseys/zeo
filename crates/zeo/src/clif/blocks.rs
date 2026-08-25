@@ -768,7 +768,7 @@ fn define_block_fn(
 
     // Frame push and interrupt checkpoint fused into one call when a frame
     // exists -- this prologue runs per block CALL.
-    let status = if let Some(file) = &file {
+    if let Some(file) = &file {
         let off = bfx.em.intern_rodata(file.as_bytes());
         let label_off = bfx.em.intern_rodata(label.as_bytes());
         let file_ptr = bfx.rod(off);
@@ -776,14 +776,14 @@ fn define_block_fn(
         let label_ptr = bfx.rod(label_off);
         let label_len = bfx.b.ins().iconst(ptr_ty, label.len() as i64);
         let line_v = bfx.b.ins().iconst(types::I32, i64::from(line));
-        bfx.call_status(
+        let status = bfx.call_status(
             "zeo_rt_frame_enter",
             &[file_ptr, file_len, label_ptr, label_len, line_v, line_v],
-        )
+        );
+        bfx.fallible(status);
     } else {
-        bfx.call_status("zeo_rt_check_ints", &[])
-    };
-    bfx.fallible(status);
+        bfx.check_ints();
+    }
     // What a run-time `eval` written in this body reads for `yield` and
     // `block_given?`: a `def` body installed at run time owns its own
     // channel; every other block means the enclosing method's, which the

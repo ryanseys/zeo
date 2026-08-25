@@ -32,7 +32,15 @@ use std::time::{Duration, Instant};
 /// [`ThreadCtx`], decremented when that bit is consumed, so it is exactly
 /// the number of set bits across all live contexts: zero means every
 /// thread's fast path can skip the slow path with one relaxed load.
-static PENDING_GLOBAL: AtomicU32 = AtomicU32::new(0);
+///
+/// Exported as a DATA symbol: emitted code loads it inline at loop
+/// back-edges and only a nonzero value calls `zeo_rt_check_ints`. The
+/// inline load is plain (the Rust reader is Relaxed too); a checkpoint
+/// that races a post sees it on the next iteration, same as today.
+#[unsafe(no_mangle)]
+#[allow(non_upper_case_globals)]
+pub static zeo_rt_pending_interrupts: AtomicU32 = AtomicU32::new(0);
+use self::zeo_rt_pending_interrupts as PENDING_GLOBAL;
 
 /// Whether any Ruby thread or Ractor has ever been spawned. Monotone in the
 /// SAFE direction: it is only ever set, never cleared, so a program that

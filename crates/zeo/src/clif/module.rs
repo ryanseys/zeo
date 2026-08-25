@@ -124,6 +124,9 @@ pub(crate) struct Emitter {
     /// How many constant-read cache slots the program needs; same
     /// index-is-the-slot rule as `cm_sites`.
     pub const_sites: usize,
+    /// The runtime's `zeo_rt_pending_interrupts` counter (an import, not
+    /// a program-local table) -- what `Fx::check_ints` loads inline.
+    pub pending_id: DataId,
     pub reopen_flags_id: DataId,
     /// `(builtin class id, method name)` -> its byte in `zeo_reopen_flags`.
     /// See [`super::names::REOPEN_FLAGS`]; empty for a program that reopens no
@@ -243,6 +246,11 @@ impl Emitter {
                     .expect("every listed capi symbol has an address");
                 (name, addr)
             }));
+            builder.symbols(zeo_rt::capi::symbols::DATA_NAMES.iter().map(|&name| {
+                let addr = zeo_rt::capi::symbols::data_addr(name)
+                    .expect("every listed capi data symbol has an address");
+                (name, addr)
+            }));
             ClifModule::Jit(JITModule::new(builder))
         } else {
             let elf = isa.triple().binary_format == target_lexicon::BinaryFormat::Elf;
@@ -288,6 +296,14 @@ impl Emitter {
             .map_err(|e| {
                 CodegenError::internal(format!("declaring {}: {e}", super::names::REOPEN_FLAGS))
             })?;
+        // The runtime's pending-interrupt counter, read inline at loop
+        // checkpoints. Import linkage: the archive defines it on the AOT
+        // path, `symbols::data_addr` on the JIT path.
+        let pending_id = module
+            .declare_data("zeo_rt_pending_interrupts", Linkage::Import, true, false)
+            .map_err(|e| {
+                CodegenError::internal(format!("declaring zeo_rt_pending_interrupts: {e}"))
+            })?;
         Ok(Emitter {
             module,
             ptr,
@@ -301,6 +317,7 @@ impl Emitter {
             cm_sites: 0,
             const_sites_id,
             const_sites: 0,
+            pending_id,
             syms: super::statics::SymPool::default(),
             rodata: Vec::new(),
             rodata_offsets: HashMap::new(),

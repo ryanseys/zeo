@@ -248,6 +248,20 @@ fn capi_surface_is_exported_by_the_archive() {
             row.name
         );
     }
+    // Data symbols live in data/bss sections, never text -- the " T "
+    // filter above would pass vacuously for them.
+    let defined_data: std::collections::HashSet<&str> = nm
+        .lines()
+        .filter(|l| l.contains(" D ") || l.contains(" S ") || l.contains(" B "))
+        .filter_map(|l| l.rsplit(' ').next())
+        .map(|s| s.strip_prefix('_').unwrap_or(s))
+        .collect();
+    for name in zeo::clif::capi_names::CAPI_DATA {
+        assert!(
+            defined_data.contains(name),
+            "capi_names data row `{name}` is not a defined data symbol in libzeo.a"
+        );
+    }
 }
 
 /// `CLASS_TABLE_SYMBOLS` names EVERY `zeo_ctable_*` the archive defines, and
@@ -312,6 +326,12 @@ fn capi_surface_resolves_in_process() {
             zeo::zeo_rt::capi::symbols::addr(row.name).is_some(),
             "capi_names row `{}` has no in-process address (add it to zeo-rt capi/symbols.rs)",
             row.name
+        );
+    }
+    for name in zeo::clif::capi_names::CAPI_DATA {
+        assert!(
+            zeo::zeo_rt::capi::symbols::data_addr(name).is_some(),
+            "capi_names data row `{name}` has no in-process address (add it to zeo-rt capi/symbols.rs)"
         );
     }
 }

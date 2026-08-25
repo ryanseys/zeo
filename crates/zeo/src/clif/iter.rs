@@ -193,8 +193,7 @@ pub(crate) fn lower_counted(
     fx.b.ins().brif(done, exit_normal, &[], body_blk, &[]);
 
     fx.b.switch_to_block(body_blk);
-    let status = fx.call_status("zeo_rt_check_ints", &[]);
-    fx.fallible(status);
+    fx.check_ints();
     // Each iteration binds fresh storage for every escaping name, so a
     // closure built last time keeps the value it captured.
     for name in &per_iteration_cells {
