@@ -37,6 +37,11 @@ pub(crate) enum Counted {
     /// does: a body that pushes to the array it is walking keeps walking.
     /// `recv` is a borrowed pointer to the receiver value.
     ArrayEach { recv: ir::Value },
+    /// `n.times` on a guarded typed-Int receiver: `n` is the receiver's
+    /// i64 payload, loaded ONCE at entry -- an Int is immutable, and
+    /// CRuby fixes the bound at entry too. A negative `n` runs zero
+    /// iterations; the loop's value is the receiver.
+    TimesDyn { n: ir::Value },
 }
 
 /// Whether `block` has the parameter shape a fused loop can bind: one
@@ -133,7 +138,9 @@ pub(crate) fn lower_counted(
                 IntCC::SignedGreaterThan
             },
         ),
-        Counted::ArrayEach { .. } => (0, 0, IntCC::SignedGreaterThanOrEqual),
+        Counted::ArrayEach { .. } | Counted::TimesDyn { .. } => {
+            (0, 0, IntCC::SignedGreaterThanOrEqual)
+        }
     };
 
     // The block parameter SHADOWS any enclosing local of the same
@@ -188,6 +195,7 @@ pub(crate) fn lower_counted(
             let len = fx.call_status("zeo_rt_array_len", &[recv]);
             fx.b.ins().icmp(IntCC::SignedGreaterThanOrEqual, c, len)
         }
+        Counted::TimesDyn { n } => fx.b.ins().icmp(IntCC::SignedGreaterThanOrEqual, c, n),
         _ => fx.b.ins().icmp_imm_s(end_cc, c, end),
     };
     fx.b.ins().brif(done, exit_normal, &[], body_blk, &[]);
@@ -269,6 +277,11 @@ pub(crate) fn lower_counted(
                 let tag = fx.b.ins().iconst(types::I8, i64::from(ValueTag::Int as u8));
                 fx.b.ins().store(fl, tag, dst, TAG_OFFSET as i32);
                 fx.b.ins().store(fl, n_v, dst, PAYLOAD_OFFSET as i32);
+            }
+            Counted::TimesDyn { n } => {
+                let tag = fx.b.ins().iconst(types::I8, i64::from(ValueTag::Int as u8));
+                fx.b.ins().store(fl, tag, dst, TAG_OFFSET as i32);
+                fx.b.ins().store(fl, n, dst, PAYLOAD_OFFSET as i32);
             }
             Counted::Range {
                 start,
@@ -448,6 +461,88 @@ pub(crate) fn lower_array_each(
         tag: TagInfo::Unknown,
     };
     let r = super::blocks::block_send_op(fx, site, borrowed, "each", &[], block)?;
+    match result {
+        Some((_, dst)) => {
+            let owned = r.owned();
+            ownership::write_move_into(fx, &r, dst);
+            if !owned {
+                fx.owned_created += 1;
+            }
+        }
+        None => ownership::discard(fx, r),
+    }
+    fx.b.ins().jump(join, &[]);
+
+    fx.b.switch_to_block(join);
+    Ok(result.map(|(ss, _)| Operand::Slot {
+        ss,
+        owned: true,
+        tag: TagInfo::Unknown,
+    }))
+}
+
+/// `n.times { |i| .. }` on a statically-`Int` receiver: the same guarded
+/// two-arm shape as [`lower_array_each`] -- a tag test proves the belief,
+/// `iter_inline_ok_for` proves `Integer#times` is untouched, and the
+/// other arm is an ordinary block send. A Bignum receiver fails the tag
+/// test and dispatches; a reopened `Integer#times` fails the gate.
+pub(crate) fn lower_counted_int(
+    fx: &mut Fx,
+    site: NodeId,
+    recv_id: NodeId,
+    block: NodeId,
+    want_result: bool,
+) -> CResult<Option<super::operand::Operand>> {
+    use super::operand::{Operand, TagInfo};
+    // The receiver is evaluated ONCE and both arms borrow it.
+    let op = super::expr::lower_expr(fx, recv_id)?;
+    let recv = ownership::borrow_ptr(fx, &op);
+    if op.owned() {
+        ownership::pool_owned(fx, recv, op.tag());
+    }
+    let result = want_result.then(|| {
+        let ss = fx.temp_slot();
+        (ss, fx.slot_addr(ss, 0))
+    });
+
+    let gate = fx.b.create_block();
+    let fast = fx.b.create_block();
+    let slow = fx.b.create_block();
+    let join = fx.b.create_block();
+
+    let fl = MemFlagsData::trusted();
+    let tag = fx.b.ins().load(types::I8, fl, recv, TAG_OFFSET as i32);
+    let is_int =
+        fx.b.ins()
+            .icmp_imm_u(IntCC::Equal, tag, i64::from(ValueTag::Int as u8));
+    fx.b.ins().brif(is_int, gate, &[], slow, &[]);
+
+    fx.b.switch_to_block(gate);
+    let box_v = fx.box_v();
+    let int_cid =
+        fx.b.ins()
+            .iconst(types::I32, i64::from(crate::compiler::INTEGER_CLASS.0));
+    let ok = fx.call_status("zeo_rt_iter_inline_ok_for", &[box_v, int_cid]);
+    fx.b.ins().brif(ok, fast, &[], slow, &[]);
+
+    fx.b.switch_to_block(fast);
+    let n = fx.b.ins().load(types::I64, fl, recv, PAYLOAD_OFFSET as i32);
+    lower_counted(
+        fx,
+        site,
+        &Counted::TimesDyn { n },
+        block,
+        result.map(|(_, dst)| dst),
+    )?;
+    fx.b.ins().jump(join, &[]);
+
+    fx.b.switch_to_block(slow);
+    let borrowed = Operand::Ptr {
+        addr: recv,
+        owned: false,
+        tag: TagInfo::Unknown,
+    };
+    let r = super::blocks::block_send_op(fx, site, borrowed, "times", &[], block)?;
     match result {
         Some((_, dst)) => {
             let owned = r.owned();

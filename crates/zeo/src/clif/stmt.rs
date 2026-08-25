@@ -1060,6 +1060,15 @@ fn lower_stmt_inner(fx: &mut Fx, stmt: NodeId) -> CResult<()> {
             }
             if args.is_empty()
                 && super::iter::fusable_block(fx, blk)
+                && let Some(r) = receiver
+                && fx.an.compiler.inline_iter_sites.get(&blk)
+                    == Some(&crate::compiler::InlineIterKind::TimesInt)
+            {
+                super::iter::lower_counted_int(fx, stmt, r, blk, false)?;
+                return Ok(());
+            }
+            if args.is_empty()
+                && super::iter::fusable_block(fx, blk)
                 && let Some(counted) = super::iter::counted_of(fx, receiver, &name, true)
             {
                 return super::iter::lower_counted(fx, stmt, &counted, blk, None);

@@ -1534,6 +1534,15 @@ fn literal_block_call(
     }
     if args.is_empty()
         && super::iter::fusable_block(fx, blk)
+        && let Some(r) = receiver
+        && fx.an.compiler.inline_iter_sites.get(&blk)
+            == Some(&crate::compiler::InlineIterKind::TimesInt)
+    {
+        return Ok(super::iter::lower_counted_int(fx, id, r, blk, true)?
+            .expect("a wanted result is always built"));
+    }
+    if args.is_empty()
+        && super::iter::fusable_block(fx, blk)
         && let Some(counted) = super::iter::counted_of(fx, receiver, &name, true)
     {
         let ss = fx.temp_slot();

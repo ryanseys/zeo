@@ -83,6 +83,18 @@ fn clif_snapshot_fused_each_guards() {
     ));
 }
 
+/// The typed-Int twin of the guarded `each`: `n.times` on a local analyze
+/// types as an Int. The Int tag test, `iter_inline_ok_for` on
+/// `Integer#times`, the payload load feeding the counted loop, and the
+/// dynamic fallback arm (which is what a Bignum or a reopened `times`
+/// takes).
+#[test]
+fn clif_snapshot_fused_times_guards() {
+    insta::assert_snapshot!(clif_of(
+        "def times_of\n  n = 3\n  t = 0\n  n.times { |i| t = t + i }\n  p t\nend\ntimes_of\n",
+    ));
+}
+
 /// A send whose argument list runs before its literal block: the argument
 /// is lowered, and only then does `zeo_rt_proc_new` build the proc.
 ///
