@@ -174,7 +174,9 @@ impl Strong {
     }
 
     /// A weak handle to this node -- what the collector's self-check holds
-    /// while it lets go of the strong ones.
+    /// while it lets go of the strong ones. The self-check (and so this
+    /// helper) exists only in debug builds.
+    #[cfg(debug_assertions)]
     pub(crate) fn downgrade(&self) -> Node {
         match self {
             Strong::Array(a) => Node::Array(std::sync::Arc::downgrade(a)),
