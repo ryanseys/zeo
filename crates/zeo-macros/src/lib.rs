@@ -83,6 +83,9 @@ struct Entry {
     /// See `zeo_dsl::MethodDef::inherits` -- the row dispatches here, but ruby
     /// names an ancestor as its owner.
     inherits: bool,
+    /// See `zeo_dsl::MethodDef::gate` -- the arming key (`Gate::key`) for a
+    /// require/env-gated row, `None` for the always-on majority.
+    gate: Option<String>,
     /// `protected def` -- reachable only from a receiver the caller is a kind
     /// of. Never set by `module_function`, which splits private/public only.
     is_protected: bool,
@@ -229,6 +232,7 @@ fn expand(spec: &ClassSpec) -> TokenStream2 {
                 // Per-name OR def-wide: `Regexp.new` is Class's while
                 // `Regexp.compile` is Regexp's own, and both share one body.
                 inherits: method.inherits || name.inherits,
+                gate: method.gate.as_ref().map(zeo_dsl::Gate::key),
             };
             if method.is_module_function {
                 // CRuby's `module_function` splits the visibility: the instance
@@ -269,6 +273,7 @@ fn expand(spec: &ClassSpec) -> TokenStream2 {
                     is_protected: t.is_protected,
                     allocs: t.allocs,
                     inherits: t.inherits,
+                    gate: t.gate.clone(),
                 };
                 // Mirror the target's bucket.
                 if class.iter().any(|e| e.ruby == alias.old_name) {
@@ -634,6 +639,30 @@ fn gen_method_table(
         let (ruby, attrs) = (&e.ruby, &e.attrs);
         quote! { #( #attrs )* #ruby => true, }
     });
+    // Only a `gated` row gets an arm; a table that marks none -- nearly all
+    // of them -- compiles to a single `None` body, and its `has_gated: false`
+    // lets the projections skip the gate question entirely. See
+    // `zeo_dsl::MethodDef::gate`.
+    let has_gated = entries.iter().any(|e| e.gate.is_some());
+    let gate_fn = format_ident!("{lookup}_gate");
+    let gate_arms = entries.iter().filter(|e| e.gate.is_some()).map(|e| {
+        let (ruby, attrs) = (&e.ruby, &e.attrs);
+        let key = e.gate.as_deref().expect("filtered");
+        quote! { #( #attrs )* #ruby => Some(#key), }
+    });
+    let gate_body = if has_gated {
+        quote! {
+            match name {
+                #( #gate_arms )*
+                _ => None,
+            }
+        }
+    } else {
+        quote! {
+            let _ = name;
+            None
+        }
+    };
 
     let items = quote! {
         pub(crate) fn #lookup_fn(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
@@ -688,6 +717,10 @@ fn gen_method_table(
                 _ => false,
             }
         }
+        #[allow(dead_code)]
+        pub(crate) fn #gate_fn(name: &str) -> Option<&'static str> {
+            #gate_body
+        }
     };
     let table = quote! {
         Some(crate::builtins::MethodTable {
@@ -699,6 +732,8 @@ fn gen_method_table(
             is_protected: #protected_fn,
             allocs: #allocs_fn,
             inherits: #inherits_fn,
+            gate: #gate_fn,
+            has_gated: #has_gated,
         })
     };
     (items, table)

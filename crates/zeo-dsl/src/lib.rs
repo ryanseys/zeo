@@ -281,8 +281,38 @@ pub struct MethodDef {
     /// direction: an unmarked new row claims ownership rather than silently
     /// disappearing from the class's own surface.
     pub inherits: bool,
+    /// `gated "io/console"` / `gated env "boxes"`: ruby only grows this row
+    /// when the named feature is required (or the named switch is on), so
+    /// the runtime hides it until then -- `respond_to?(:getch)` is how a
+    /// library asks whether the console extension is there at all. The
+    /// macro bakes the marker into the table's `gate` fn; the runtime's
+    /// `builtins::gate` maps each name to the switch that arms it. `None`
+    /// -- the default -- is an always-on row.
+    pub gate: Option<Gate>,
     /// The `{ ... }` body -- real Rust, kept verbatim for the proc-macro.
     pub body: TokenStream,
+}
+
+/// A [`MethodDef::gate`]'s payload: the switch that reveals the row.
+pub struct Gate {
+    /// `gated env "..."` -- armed by a process-wide switch read at startup
+    /// rather than by a `require`.
+    pub env: bool,
+    /// The feature (`"io/console"`) or switch (`"boxes"`) name.
+    pub feature: String,
+}
+
+impl Gate {
+    /// The one string the generated table carries: the feature name, with
+    /// the env-armed kind prefixed `env:` so the runtime's gate map can
+    /// tell the two arming kinds apart without a second column.
+    pub fn key(&self) -> String {
+        if self.env {
+            format!("env:{}", self.feature)
+        } else {
+            self.feature.clone()
+        }
+    }
 }
 
 /// One positional parameter of a `def`.
@@ -973,7 +1003,11 @@ fn parse_def(
     // round must not become a parse error at the def, far from any explanation.
     // ...and `inherits`: ruby owns this one further up the ancestry, so
     // reflection must not report this class (see `MethodDef::inherits`).
+    // ...and `gated "feature"` / `gated env "switch"`: the row only exists
+    // once its feature is required / its switch is on (see
+    // `MethodDef::gate`).
     let (mut cfunc, mut allocs, mut inherits) = (false, false, false);
+    let mut gate = None;
     loop {
         if !cfunc && peek_ident(input, "cfunc") {
             input.parse::<Ident>()?;
@@ -984,6 +1018,17 @@ fn parse_def(
         } else if !inherits && peek_ident(input, "inherits") {
             input.parse::<Ident>()?;
             inherits = true;
+        } else if gate.is_none() && peek_ident(input, "gated") {
+            input.parse::<Ident>()?; // `gated`
+            let env = peek_ident(input, "env");
+            if env {
+                input.parse::<Ident>()?;
+            }
+            let lit: syn::LitStr = input.parse()?;
+            gate = Some(Gate {
+                env,
+                feature: lit.value(),
+            });
         } else {
             break;
         }
@@ -1016,6 +1061,7 @@ fn parse_def(
         cfunc,
         allocs,
         inherits,
+        gate,
         body,
     })
 }

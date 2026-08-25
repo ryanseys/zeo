@@ -98,17 +98,23 @@ mod box_class {
             }
             boxes::handle_of(boxes::MAIN)
         }
-        def self."main"(_recv) { boxes::handle_of(boxes::MAIN) }
-        def self."root"(_recv) { boxes::handle_of(boxes::ROOT) }
-        def self."master"(_recv) { boxes::handle_of(boxes::MASTER) }
+        def self."main" gated env "boxes" (_recv) { boxes::handle_of(boxes::MAIN) }
+        def self."root" gated env "boxes" (_recv) { boxes::handle_of(boxes::ROOT) }
+        def self."master" gated env "boxes" (_recv) { boxes::handle_of(boxes::MASTER) }
         // `Ruby::Box.new` runs the CONSTRUCTOR (`box_construct`), which
         // mints; `initialize` exists so the row set matches CRuby's.
         private def "initialize"(_recv) {
             Ok(RubyValue::Nil)
         }
-        def "main?"(recv) { Ok(RubyValue::Bool(box_kind_is(recv, boxes::MAIN))) }
-        def "root?"(recv) { Ok(RubyValue::Bool(box_kind_is(recv, boxes::ROOT))) }
-        def "master?"(recv) { Ok(RubyValue::Bool(box_kind_is(recv, boxes::MASTER))) }
+        def "main?" gated env "boxes" (recv) {
+            Ok(RubyValue::Bool(box_kind_is(recv, boxes::MAIN)))
+        }
+        def "root?" gated env "boxes" (recv) {
+            Ok(RubyValue::Bool(box_kind_is(recv, boxes::ROOT)))
+        }
+        def "master?" gated env "boxes" (recv) {
+            Ok(RubyValue::Bool(box_kind_is(recv, boxes::MASTER)))
+        }
         def "eval"(recv, src) {
             // `StringValue`, not `Check_Type`: CRuby's box eval coerces, so a
             // non-String is "no implicit conversion of X into String".

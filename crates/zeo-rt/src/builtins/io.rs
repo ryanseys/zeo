@@ -1732,7 +1732,7 @@ ruby_class! {
     // `IO#winsize` (from `require "io/console"`) -- `[rows, columns]`, or
     // `Errno::ENOTTY` when the stream isn't a terminal, as CRuby answers. The
     // rest of the console surface is in `io_console.rs`; this row predates it.
-    def "winsize" (recv, &_blk) {
+    def "winsize" gated "io/console" (recv, &_blk) {
         let fd = raw_fd(recv)?;
         let mut ws: libc::winsize = unsafe { std::mem::zeroed() };
         if unsafe { libc::ioctl(fd, libc::TIOCGWINSZ, &mut ws) } != 0 {
@@ -1746,7 +1746,7 @@ ruby_class! {
 
     // `IO#nonblock?` -- the descriptor's own `O_NONBLOCK`, from
     // `require "io/nonblock"`.
-    def "nonblock?" (recv, &_blk) {
+    def "nonblock?" gated "io/nonblock" (recv, &_blk) {
         let Some(fd) = io_raw_fd(recv) else {
             return Ok(RubyValue::Bool(false));
         };
@@ -1760,7 +1760,7 @@ ruby_class! {
     // `IO#nonblock(flag = true) { ... }` -- sets the flag for the block only and
     // restores it after, answering the block's value. CRuby REQUIRES the block
     // here (`#nonblock?` is the reader), so a blockless call is a LocalJumpError.
-    def "nonblock" (recv, mode?, &blk) {
+    def "nonblock" gated "io/nonblock" (recv, mode?, &blk) {
         let Some(RubyValue::Proc(p)) = blk else {
             return Err(crate::builtins::local_jump_error!("no block given"));
         };
@@ -1776,7 +1776,7 @@ ruby_class! {
     }
 
     // `IO#nonblock = flag` -- the plain setter, answering the flag it set.
-    def "nonblock=" (recv, nonblock, &_blk) {
+    def "nonblock=" gated "io/nonblock" (recv, nonblock, &_blk) {
         let on = nonblock.truthy();
         let Some(fd) = io_raw_fd(recv) else {
             return Err(io_error!("closed stream"));
@@ -3067,137 +3067,137 @@ ruby_class! {
     // of IO's surface, because one class owns one table; the termios work they
     // stand on earns its own file. Unconditional -- the `require` is ceremony.
 
-    def "winsize=" (recv, _size) {
+    def "winsize=" gated "io/console" (recv, _size) {
         super::io_console::winsize_set(recv, __args, __block)
     }
 
-    def "raw" (recv, *_args) {
+    def "raw" gated "io/console" (recv, *_args) {
         super::io_console::raw(recv, __args, __block)
     }
 
-    def "raw!" (recv, *_args) {
+    def "raw!" gated "io/console" (recv, *_args) {
         super::io_console::raw_bang(recv, __args, __block)
     }
 
-    def "cooked" (recv) {
+    def "cooked" gated "io/console" (recv) {
         super::io_console::cooked(recv, __args, __block)
     }
 
-    def "cooked!" (recv) {
+    def "cooked!" gated "io/console" (recv) {
         super::io_console::cooked_bang(recv, __args, __block)
     }
 
-    def "echo?" (recv) {
+    def "echo?" gated "io/console" (recv) {
         super::io_console::echo_p(recv, __args, __block)
     }
 
-    def "echo=" (recv, _echo) {
+    def "echo=" gated "io/console" (recv, _echo) {
         super::io_console::echo_set(recv, __args, __block)
     }
 
-    def "noecho" (recv) {
+    def "noecho" gated "io/console" (recv) {
         super::io_console::noecho(recv, __args, __block)
     }
 
-    def "getch" (recv, *_args) {
+    def "getch" gated "io/console" (recv, *_args) {
         super::io_console::getch(recv, __args, __block)
     }
 
-    def "getpass" (recv, *_args) {
+    def "getpass" gated "io/console" (recv, *_args) {
         super::io_console::getpass(recv, __args, __block)
     }
 
-    def "iflush" (recv) {
+    def "iflush" gated "io/console" (recv) {
         super::io_console::iflush(recv, __args, __block)
     }
 
-    def "oflush" (recv) {
+    def "oflush" gated "io/console" (recv) {
         super::io_console::oflush(recv, __args, __block)
     }
 
-    def "ioflush" (recv) {
+    def "ioflush" gated "io/console" (recv) {
         super::io_console::ioflush(recv, __args, __block)
     }
 
-    def "ttyname" (recv) {
+    def "ttyname" gated "io/console" (recv) {
         super::io_console::ttyname(recv, __args, __block)
     }
 
-    def "console_mode" (recv) {
+    def "console_mode" gated "io/console" (recv) {
         super::io_console::console_mode(recv, __args, __block)
     }
 
-    def "console_mode=" (recv, _mode) {
+    def "console_mode=" gated "io/console" (recv, _mode) {
         super::io_console::console_mode_set(recv, __args, __block)
     }
 
-    def "pressed?" (recv) {
+    def "pressed?" gated "io/console" (recv) {
         super::io_console::pressed_p(recv, __args, __block)
     }
 
-    def "check_winsize_changed" (recv) {
+    def "check_winsize_changed" gated "io/console" (recv) {
         super::io_console::check_winsize_changed(recv, __args, __block)
     }
 
-    def "beep" (recv) {
+    def "beep" gated "io/console" (recv) {
         super::io_console::beep(recv, __args, __block)
     }
 
-    def "clear_screen" (recv) {
+    def "clear_screen" gated "io/console" (recv) {
         super::io_console::clear_screen(recv, __args, __block)
     }
 
-    def "erase_line" (recv, _mode) {
+    def "erase_line" gated "io/console" (recv, _mode) {
         super::io_console::erase_line(recv, __args, __block)
     }
 
-    def "erase_screen" (recv, _mode) {
+    def "erase_screen" gated "io/console" (recv, _mode) {
         super::io_console::erase_screen(recv, __args, __block)
     }
 
-    def "goto" (recv, _line, _column) {
+    def "goto" gated "io/console" (recv, _line, _column) {
         super::io_console::goto(recv, __args, __block)
     }
 
-    def "goto_column" (recv, _column) {
+    def "goto_column" gated "io/console" (recv, _column) {
         super::io_console::goto_column(recv, __args, __block)
     }
 
-    def "cursor" (recv) {
+    def "cursor" gated "io/console" (recv) {
         super::io_console::cursor(recv, __args, __block)
     }
 
-    def "cursor=" (recv, _position) {
+    def "cursor=" gated "io/console" (recv, _position) {
         super::io_console::cursor_set(recv, __args, __block)
     }
 
-    def "cursor_up" (recv, _n) {
+    def "cursor_up" gated "io/console" (recv, _n) {
         super::io_console::cursor_up(recv, __args, __block)
     }
 
-    def "cursor_down" (recv, _n) {
+    def "cursor_down" gated "io/console" (recv, _n) {
         super::io_console::cursor_down(recv, __args, __block)
     }
 
-    def "cursor_left" (recv, _n) {
+    def "cursor_left" gated "io/console" (recv, _n) {
         super::io_console::cursor_left(recv, __args, __block)
     }
 
-    def "cursor_right" (recv, _n) {
+    def "cursor_right" gated "io/console" (recv, _n) {
         super::io_console::cursor_right(recv, __args, __block)
     }
 
-    def "scroll_forward" (recv, _n) {
+    def "scroll_forward" gated "io/console" (recv, _n) {
         super::io_console::scroll_forward(recv, __args, __block)
     }
 
-    def "scroll_backward" (recv, _n) {
+    def "scroll_backward" gated "io/console" (recv, _n) {
         super::io_console::scroll_backward(recv, __args, __block)
     }
 
 
     // `IO.console` -- the controlling terminal, from `io/console`.
-    def self."console" cfunc (recv) {
+    def self."console" cfunc gated "io/console" (recv) {
         super::io_console::io_class_console(recv, __args, __block)
     }
 

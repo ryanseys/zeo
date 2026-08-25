@@ -141,6 +141,14 @@ pub struct MethodTable {
     /// Whether ruby names an ANCESTOR as this row's owner, so reflection must
     /// look past this class -- see `zeo_dsl::MethodDef::inherits`.
     pub inherits: fn(&str) -> bool,
+    /// The arming key of the require/env gate covering this name
+    /// (`"io/console"`, `"env:boxes"`), `None` for an always-on row -- see
+    /// `zeo_dsl::MethodDef::gate` and [`gate`], which maps each key to the
+    /// switch that opens it.
+    pub gate: fn(&str) -> Option<&'static str>,
+    /// Whether ANY row of this table is gated -- the cheap pre-question the
+    /// table projections ask before taking [`gate`]'s filtering view.
+    pub has_gated: bool,
 }
 
 /// One builtin class/module's tables, registered by the `ruby_class!`/
@@ -362,10 +370,7 @@ pub(crate) fn allocator_of(id: ClassId) -> Option<fn() -> crate::RubyValue> {
 /// that `include`s them, exactly like every other builtin module.
 pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMethodFn>> {
     if gate::gated(id) {
-        return Some(match id {
-            zeo_abi::RUBY_BOX_CLASS => gate::box_lookup,
-            _ => gate::io_lookup,
-        });
+        return Some(gate::views(id).lookup);
     }
     side_of(id, Side::Instance).map(|m| m.lookup)
 }
@@ -376,10 +381,7 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
 /// the receiver's ancestry so an inherited builtin resolves against its owner.
 pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> {
     if gate::gated(id) {
-        return Some(match id {
-            zeo_abi::RUBY_BOX_CLASS => gate::box_arity,
-            _ => gate::io_arity,
-        });
+        return Some(gate::views(id).arity);
     }
     side_of(id, Side::Instance).map(|m| m.arity)
 }
@@ -391,10 +393,7 @@ pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> 
 /// still does.
 pub(crate) fn class_params_table(id: ClassId) -> Option<fn(&str) -> Option<ParamRows>> {
     if gate::gated(id) {
-        return Some(match id {
-            zeo_abi::RUBY_BOX_CLASS => gate::box_params,
-            _ => gate::io_params,
-        });
+        return Some(gate::views(id).params);
     }
     Some(side_of(id, Side::Instance)?.params)
 }
@@ -402,10 +401,7 @@ pub(crate) fn class_params_table(id: ClassId) -> Option<fn(&str) -> Option<Param
 /// `class_params_table`'s CLASS-METHOD counterpart.
 pub(crate) fn class_method_params_table(id: ClassId) -> Option<fn(&str) -> Option<ParamRows>> {
     if gate::gated(id) {
-        return Some(match id {
-            zeo_abi::RUBY_BOX_CLASS => gate::box_class_params,
-            _ => gate::io_class_params,
-        });
+        return Some(gate::views(id).class_params);
     }
     Some(side_of(id, Side::Class)?.params)
 }
@@ -427,10 +423,7 @@ pub(crate) fn class_method_params_table(id: ClassId) -> Option<fn(&str) -> Optio
 /// it keeps the `BuiltinMethodFn` ABI uniform with `class_table`'s.
 pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMethodFn>> {
     if gate::gated(id) {
-        return Some(match id {
-            zeo_abi::RUBY_BOX_CLASS => gate::box_class_lookup,
-            _ => gate::io_class_lookup,
-        });
+        return Some(gate::views(id).class_lookup);
     }
     side_of(id, Side::Class).map(|m| m.lookup)
 }
@@ -439,10 +432,7 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
 /// for a builtin class method, the singleton mirror of [`class_arity_table`].
 pub(crate) fn class_method_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> {
     if gate::gated(id) {
-        return Some(match id {
-            zeo_abi::RUBY_BOX_CLASS => gate::box_class_arity,
-            _ => gate::io_class_arity,
-        });
+        return Some(gate::views(id).class_arity);
     }
     side_of(id, Side::Class).map(|m| m.arity)
 }
@@ -495,21 +485,13 @@ pub(crate) fn builtin_row_inherits(id: ClassId, name: &str, class_side: bool) ->
 /// `class_table`'s reflection companion: the instance-method NAMES a builtin
 /// class exposes (for `instance_methods`/`methods`).
 pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
-    if gate::gated(id) {
-        return gate::names(id, Side::Instance);
-    }
-    side_of(id, Side::Instance)
-        .map(|m| (m.names)())
-        .unwrap_or(&[])
+    gate::names(id, Side::Instance)
 }
 
 /// `class_method_table`'s reflection companion: the CLASS-method NAMES a
 /// builtin exposes (for `SomeClass.singleton_methods` / `.methods`).
 pub(crate) fn class_method_table_names(id: ClassId) -> &'static [&'static str] {
-    if gate::gated(id) {
-        return gate::names(id, Side::Class);
-    }
-    side_of(id, Side::Class).map(|m| (m.names)()).unwrap_or(&[])
+    gate::names(id, Side::Class)
 }
 
 /// Registry-FREE ancestor chains for the builtin classes, computed once
@@ -1193,7 +1175,8 @@ mod tests {
     }
 }
 
-/// Rows a builtin's table declares that ruby only grows at a `require`.
+/// Rows a builtin's table declares that ruby only grows at a `require` (or
+/// under a startup switch).
 ///
 /// CRuby ships `io/console` and `io/nonblock` as require-gated extensions;
 /// zeo implements them natively, so their rows sit in `IO`'s own table --
@@ -1201,59 +1184,19 @@ mod tests {
 /// is observable beyond reflection: `respond_to?(:getch)` is how a library
 /// decides whether the console extension is there at all.
 ///
-/// The gate is armed by the `require` itself, at its own document position
-/// (`features::feature_loaded`), so the rows appear where CRuby's do rather
-/// than from line 1. It is asked only for `IO`.
+/// WHICH rows are gated is the table's own knowledge: each row carries a
+/// `gated "feature"` marker in its `ruby_class!` def (see
+/// `zeo_dsl::MethodDef::gate`), and the generated table answers through its
+/// `gate` fn. This module only maps each gate KEY to the switch that arms
+/// it. A require-armed gate is flipped by the `require` itself, at its own
+/// document position (`features::feature_loaded`), so a program that
+/// requires `io/console` on its last line does not answer `getch` on its
+/// first.
 pub(crate) mod gate {
     use std::sync::atomic::{AtomicU8, Ordering};
     use zeo_abi::ClassId;
 
-    /// `IO`'s `io/console` rows, in the order the table declares them.
-    const IO_CONSOLE: &[&str] = &[
-        "beep",
-        "check_winsize_changed",
-        "clear_screen",
-        "console_mode",
-        "console_mode=",
-        "cooked",
-        "cooked!",
-        "cursor",
-        "cursor=",
-        "cursor_down",
-        "cursor_left",
-        "cursor_right",
-        "cursor_up",
-        "echo=",
-        "echo?",
-        "erase_line",
-        "erase_screen",
-        "getch",
-        "getpass",
-        "goto",
-        "goto_column",
-        "iflush",
-        "ioflush",
-        "noecho",
-        "oflush",
-        "pressed?",
-        "raw",
-        "raw!",
-        "scroll_backward",
-        "scroll_forward",
-        "ttyname",
-        "winsize",
-        "winsize=",
-    ];
-
-    /// `IO`'s `io/nonblock` rows.
-    const IO_NONBLOCK: &[&str] = &["nonblock", "nonblock=", "nonblock?"];
-
-    /// `IO`'s only gated CLASS method.
-    const IO_CONSOLE_CLASS: &[&str] = &["console"];
-
-    /// 0 = not required yet, 1 = required. Flipped by [`activate`] at the
-    /// `require`'s own document position, so a program that requires
-    /// `io/console` on its last line does not answer `getch` on its first.
+    /// 0 = not required yet, 1 = required. Flipped by [`activate`].
     ///
     /// Deliberately NOT read back out of `$LOADED_FEATURES`: that array is a
     /// mutable Ruby value a program may push anything into, and the question
@@ -1277,99 +1220,110 @@ pub(crate) mod gate {
         NAME_CACHE.write().unwrap().take();
     }
 
-    /// `Ruby::Box`'s gate-only rows -- CRuby defines these six only under
-    /// `RUBY_BOX=1`, so without it the class carries six fewer methods and
-    /// calling one is a `NoMethodError`. zeo's rows are in a static table
-    /// built at compile time, so the GATE has to hide them.
-    const BOX_ENABLED: &[&str] = &["main?", "master?", "root?"];
-    const BOX_ENABLED_CLASS: &[&str] = &["main", "master", "root"];
+    /// Whether the gate named by `key` is open -- the one place each
+    /// `gated` marker's key binds to the switch that arms it. The `env:`
+    /// keys are startup switches (`Ruby::Box`'s six rows exist only under
+    /// `RUBY_BOX=1`), the rest are requires.
+    ///
+    /// An UNKNOWN key stays closed: leaking the row would answer a require
+    /// ruby never saw. `every_gate_key_is_wired_to_a_switch` pins the set.
+    fn armed(key: &str) -> bool {
+        match key {
+            "io/console" => required(&CONSOLE),
+            "io/nonblock" => required(&NONBLOCK),
+            "env:boxes" => crate::boxes::boxes_enabled(),
+            _ => false,
+        }
+    }
 
     /// Whether a name in `id`'s instance table is answerable yet.
     pub(crate) fn instance_ok(id: ClassId, name: &str) -> bool {
-        if id == zeo_abi::RUBY_BOX_CLASS && BOX_ENABLED.contains(&name) {
-            return crate::boxes::boxes_enabled();
+        match super::side_of(id, super::Side::Instance).and_then(|m| (m.gate)(name)) {
+            Some(key) => armed(key),
+            None => true,
         }
-        if id != zeo_abi::IO_CLASS {
-            return true;
-        }
-        if IO_CONSOLE.binary_search(&name).is_ok() {
-            return required(&CONSOLE);
-        }
-        if IO_NONBLOCK.contains(&name) {
-            return required(&NONBLOCK);
-        }
-        true
     }
 
     /// `instance_ok`'s class-method twin.
     pub(crate) fn class_ok(id: ClassId, name: &str) -> bool {
-        if id == zeo_abi::RUBY_BOX_CLASS && BOX_ENABLED_CLASS.contains(&name) {
-            return crate::boxes::boxes_enabled();
+        match super::side_of(id, super::Side::Class).and_then(|m| (m.gate)(name)) {
+            Some(key) => armed(key),
+            None => true,
         }
-        if id != zeo_abi::IO_CLASS || !IO_CONSOLE_CLASS.contains(&name) {
-            return true;
-        }
-        required(&CONSOLE)
     }
 
-    /// Whether `id` has gated rows at all -- the one question the six table
+    /// Whether `id` has gated rows at all -- the one question the table
     /// projections ask before taking the filtering view.
     pub(crate) fn gated(id: ClassId) -> bool {
-        id == zeo_abi::IO_CLASS || id == zeo_abi::RUBY_BOX_CLASS
+        super::side_of(id, super::Side::Instance).is_some_and(|m| m.has_gated)
+            || super::side_of(id, super::Side::Class).is_some_and(|m| m.has_gated)
     }
 
-    /// The gated instance/class views: the class's own table with the rows
-    /// the gate hides taken out. Plain `fn` items because the projections
-    /// hand back fn POINTERS, so the class id rides in the name each one
-    /// consults rather than in a capture -- hence one pair per gated class.
-    macro_rules! gated_views {
-        ($lookup:ident, $arity:ident, $params:ident,
-         $clookup:ident, $carity:ident, $cparams:ident, $id:expr) => {
-            pub(crate) fn $lookup(name: &str) -> Option<super::BuiltinMethodFn> {
-                instance_ok($id, name).then(|| ())?;
-                (super::side_of($id, super::Side::Instance)?.lookup)(name)
-            }
-            pub(crate) fn $arity(name: &str) -> Option<i64> {
-                instance_ok($id, name).then(|| ())?;
-                (super::side_of($id, super::Side::Instance)?.arity)(name)
-            }
-            pub(crate) fn $params(name: &str) -> Option<super::ParamRows> {
-                instance_ok($id, name).then(|| ())?;
-                (super::side_of($id, super::Side::Instance)?.params)(name)
-            }
-            pub(crate) fn $clookup(name: &str) -> Option<super::BuiltinMethodFn> {
-                class_ok($id, name).then(|| ())?;
-                (super::side_of($id, super::Side::Class)?.lookup)(name)
-            }
-            pub(crate) fn $carity(name: &str) -> Option<i64> {
-                class_ok($id, name).then(|| ())?;
-                (super::side_of($id, super::Side::Class)?.arity)(name)
-            }
-            pub(crate) fn $cparams(name: &str) -> Option<super::ParamRows> {
-                class_ok($id, name).then(|| ())?;
-                (super::side_of($id, super::Side::Class)?.params)(name)
-            }
-        };
+    /// One gated class's six filtered fn-pointer views: the class's own
+    /// table with the rows the gate hides taken out.
+    pub(crate) struct Views {
+        pub(crate) lookup: fn(&str) -> Option<super::BuiltinMethodFn>,
+        pub(crate) arity: fn(&str) -> Option<i64>,
+        pub(crate) params: fn(&str) -> Option<super::ParamRows>,
+        pub(crate) class_lookup: fn(&str) -> Option<super::BuiltinMethodFn>,
+        pub(crate) class_arity: fn(&str) -> Option<i64>,
+        pub(crate) class_params: fn(&str) -> Option<super::ParamRows>,
     }
 
-    gated_views!(
-        io_lookup,
-        io_arity,
-        io_params,
-        io_class_lookup,
-        io_class_arity,
-        io_class_params,
-        zeo_abi::IO_CLASS
-    );
-    gated_views!(
-        box_lookup,
-        box_arity,
-        box_params,
-        box_class_lookup,
-        box_class_arity,
-        box_class_params,
-        zeo_abi::RUBY_BOX_CLASS
-    );
+    fn v_lookup<const ID: u32>(name: &str) -> Option<super::BuiltinMethodFn> {
+        instance_ok(ClassId(ID), name).then_some(())?;
+        (super::side_of(ClassId(ID), super::Side::Instance)?.lookup)(name)
+    }
+    fn v_arity<const ID: u32>(name: &str) -> Option<i64> {
+        instance_ok(ClassId(ID), name).then_some(())?;
+        (super::side_of(ClassId(ID), super::Side::Instance)?.arity)(name)
+    }
+    fn v_params<const ID: u32>(name: &str) -> Option<super::ParamRows> {
+        instance_ok(ClassId(ID), name).then_some(())?;
+        (super::side_of(ClassId(ID), super::Side::Instance)?.params)(name)
+    }
+    fn v_class_lookup<const ID: u32>(name: &str) -> Option<super::BuiltinMethodFn> {
+        class_ok(ClassId(ID), name).then_some(())?;
+        (super::side_of(ClassId(ID), super::Side::Class)?.lookup)(name)
+    }
+    fn v_class_arity<const ID: u32>(name: &str) -> Option<i64> {
+        class_ok(ClassId(ID), name).then_some(())?;
+        (super::side_of(ClassId(ID), super::Side::Class)?.arity)(name)
+    }
+    fn v_class_params<const ID: u32>(name: &str) -> Option<super::ParamRows> {
+        class_ok(ClassId(ID), name).then_some(())?;
+        (super::side_of(ClassId(ID), super::Side::Class)?.params)(name)
+    }
+
+    const fn views_of<const ID: u32>() -> Views {
+        Views {
+            lookup: v_lookup::<ID>,
+            arity: v_arity::<ID>,
+            params: v_params::<ID>,
+            class_lookup: v_class_lookup::<ID>,
+            class_arity: v_class_arity::<ID>,
+            class_params: v_class_params::<ID>,
+        }
+    }
+
+    /// The views for one gated class. The projections hand back fn
+    /// POINTERS, which cannot capture the id, so each gated class needs its
+    /// own const-generic instantiations -- this match is the one per-class
+    /// list left, and `every_gated_class_has_a_fn_pointer_view` keeps it
+    /// honest.
+    pub(crate) fn views(id: ClassId) -> &'static Views {
+        static IO: Views = views_of::<{ zeo_abi::IO_CLASS.0 }>();
+        static BOX: Views = views_of::<{ zeo_abi::RUBY_BOX_CLASS.0 }>();
+        match id {
+            zeo_abi::IO_CLASS => &IO,
+            zeo_abi::RUBY_BOX_CLASS => &BOX,
+            other => unreachable!(
+                "class {} has gated rows but no fn-pointer view instantiation -- \
+                 add one beside gate::views' existing pair",
+                other.0
+            ),
+        }
+    }
 
     /// The name lists, filtered once per `(class, side)` -- [`names`]'
     /// memo. Dropped by [`activate`]: the filtered list is an
@@ -1382,6 +1336,12 @@ pub(crate) mod gate {
     static NAME_CACHE: std::sync::RwLock<Option<NameMemo>> = std::sync::RwLock::new(None);
 
     pub(crate) fn names(id: ClassId, side: super::Side) -> &'static [&'static str] {
+        let all = super::side_of(id, side).map(|m| (m.names)()).unwrap_or(&[]);
+        // The static list IS the answer for the ungated majority -- no memo,
+        // no leak.
+        if !gated(id) {
+            return all;
+        }
         let key = (id.0, matches!(side, super::Side::Instance));
         if let Some(hit) = NAME_CACHE
             .read()
@@ -1391,7 +1351,6 @@ pub(crate) mod gate {
         {
             return hit;
         }
-        let all = super::side_of(id, side).map(|m| (m.names)()).unwrap_or(&[]);
         let kept: Vec<&'static str> = all
             .iter()
             .copied()
@@ -1413,11 +1372,35 @@ pub(crate) mod gate {
     mod tests {
         use super::*;
 
+        /// `views` panics for a gated class nobody instantiated -- surface
+        /// that here, not on a program's first `IO`-shaped question.
         #[test]
-        fn the_gated_row_list_is_sorted_for_the_binary_search() {
-            let mut sorted = IO_CONSOLE.to_vec();
-            sorted.sort_unstable();
-            assert_eq!(sorted.as_slice(), IO_CONSOLE);
+        fn every_gated_class_has_a_fn_pointer_view() {
+            for t in crate::builtins::all_tables() {
+                if gated(t.id) {
+                    let _ = views(t.id);
+                }
+            }
+        }
+
+        /// Every gate key some table carries must be one [`armed`] knows --
+        /// an unwired key would hide its rows FOREVER (the require could
+        /// never reveal them). Set equality also catches a wired key no row
+        /// uses any more.
+        #[test]
+        fn every_gate_key_is_wired_to_a_switch() {
+            let mut keys: Vec<&str> = Vec::new();
+            for t in crate::builtins::all_tables() {
+                for m in [t.instance.as_ref(), t.class.as_ref()]
+                    .into_iter()
+                    .flatten()
+                {
+                    keys.extend((m.names)().iter().filter_map(|n| (m.gate)(n)));
+                }
+            }
+            keys.sort_unstable();
+            keys.dedup();
+            assert_eq!(keys, ["env:boxes", "io/console", "io/nonblock"]);
         }
     }
 }

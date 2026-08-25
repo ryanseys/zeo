@@ -51,6 +51,8 @@ const fn alias_table(id: ClassId) -> BuiltinClassTable {
             is_protected: algorithm::lookup_is_protected,
             allocs: algorithm::lookup_allocs,
             inherits: algorithm::lookup_inherits,
+            gate: algorithm::lookup_gate,
+            has_gated: false,
         }),
         class: Some(MethodTable {
             lookup: algorithm::lookup_class,
@@ -61,6 +63,8 @@ const fn alias_table(id: ClassId) -> BuiltinClassTable {
             is_protected: algorithm::lookup_class_is_protected,
             allocs: algorithm::lookup_class_allocs,
             inherits: algorithm::lookup_class_inherits,
+            gate: algorithm::lookup_class_gate,
+            has_gated: false,
         }),
         install_constants: None,
         // An alias never allocates: it is another class's table under a
