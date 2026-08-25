@@ -9,7 +9,7 @@
   oracle (`tools/zeo-dev bless`); the committed snapshots cover ordinary runs.
 
 ```console
-$ cargo build --workspace     # do this first, and after every compiler edit
+$ make     # cargo build --workspace -- do this first, and after every compiler edit
 ```
 
 **`cargo build` first, always.** It produces two things the test suites need
@@ -36,8 +36,20 @@ Zeo's house style is *approximation is fine, silent wrongness is not*:
 
 ## Workflow
 
+The Makefile is the front door, and it is what CI runs -- the test legs in
+`.github/workflows/ci.yml` call the same `ci-*` targets `make gate` composes,
+so the gate and CI cannot drift:
+
 ```console
-$ cargo nextest run --workspace                     # unit + e2e + all golden suites
+$ make test    # the dev loop: unit + e2e + all golden suites (default profile)
+$ make check   # clippy at CI's severity
+$ make gate    # everything: the CI legs + whole-gem cases + cext + doctests + bench
+$ make linux   # the container verification loop (needs podman)
+```
+
+Targeted runs go through nextest directly:
+
+```console
 $ cargo nextest run -p zeo-tests --test spinel      # the full ruby-oracle corpus
 $ cargo nextest run -p zeo-tests --test examples --test gaps
 $ cargo nextest run -p zeo-tests -P full            # + the whole-gem cases
@@ -48,7 +60,7 @@ $ tools/zeo-dev size                        # what each class table costs a bina
 
 The default profile is the dev loop. `-P full` adds the cases that compile a
 whole gem's require graph (`gemtests`, `every_bundled_gem_compiles`); they
-belong to a phase gate, not to every run.
+belong to `make gate`, not to every run.
 
 - The golden suites live under `tests/` (examples + the spinel corpus + the
   XFAIL gaps tracker) and run as datatest-stable `cargo test`/nextest targets;
