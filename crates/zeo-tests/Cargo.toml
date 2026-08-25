@@ -9,16 +9,17 @@ license.workspace = true
 # published; drives `zeo` through its public library API only.
 publish = false
 
+# What `src/` (the shared golden + e2e harness the test targets import)
+# needs. `publish = false` makes real dependencies free here -- there is no
+# published crate to keep lean and no dependency cycle to fear.
 [dependencies]
-# Deliberately empty: everything lives in dev-dependencies -- this package
-# exists only for its `tests/` targets (the stub src/lib.rs satisfies cargo's
-# at-least-one-target rule).
+zeo.workspace = true
+# `setrlimit` on the golden child: see MAX_CHILD_ADDRESS_SPACE in src/golden.rs.
+libc.workspace = true
+datatest-stable.workspace = true
 
 [dev-dependencies]
-zeo.workspace = true
 zeo-abi.workspace = true
-# `setrlimit` on the golden child: see MAX_ADDRESS_SPACE in tests/support/golden.rs.
-libc.workspace = true
 miette.workspace = true
 insta.workspace = true
 datatest-stable.workspace = true

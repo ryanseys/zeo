@@ -14,8 +14,7 @@
 //! `test/` as a load root on BOTH sides, and `vendor/gemtests/` as a zeo
 //! package dir (the stub gemspec makes each tree a requirable package).
 
-#[path = "support/golden.rs"]
-mod golden;
+use zeo_tests::golden;
 
 use std::path::Path;
 

@@ -6,7 +6,7 @@
 # What the group still bounds is therefore MEMORY, not toolchain processes:
 # each golden spawns a child `zeo` that holds a compile arena, and the
 # harness caps a child at 512 MiB of RSS (`run_bounded` in
-# tests/support/golden.rs) because an allocating-but-silent child once ate
+# crates/zeo-tests/src/golden.rs) because an allocating-but-silent child once ate
 # 6.9 GB in 5.5 s. ONE group across all the suites, not one per suite: the
 # bound that matters is how many children are alive in the whole run, and
 # two groups of eight is sixteen.

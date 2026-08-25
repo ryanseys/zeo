@@ -11,8 +11,7 @@
 //!
 //! `tools/zeo-dev bless examples::` re-records the goldens from ruby.
 
-#[path = "support/golden.rs"]
-mod golden;
+use zeo_tests::golden;
 
 use std::path::Path;
 

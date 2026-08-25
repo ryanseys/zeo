@@ -11,8 +11,7 @@
 //!
 //! `tools/zeo-dev bless gaps::` re-records each gap's golden from ruby.
 
-#[path = "support/golden.rs"]
-mod golden;
+use zeo_tests::golden;
 
 use std::path::Path;
 

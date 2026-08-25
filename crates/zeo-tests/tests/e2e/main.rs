@@ -12,8 +12,7 @@
 //! found, and added next to its neighbours, in what was a single 21,000-line
 //! file.
 
-#[path = "../support/mod.rs"]
-mod support;
+use zeo_tests::e2e_support as support;
 
 /// The compiler repo's own bundled packages/ dir, as the test-project
 /// harness's package-dir argument (absolute, so the temp-dir join is a

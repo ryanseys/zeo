@@ -1,16 +1,14 @@
-//! In-process test harness: compiles Ruby source through the DEFAULT
-//! backend (Cranelift, to an object file) directly -- no subprocess spawn
-//! for the compiler itself -- links a throwaway binary and runs it,
-//! capturing stdout/stderr/exit status separately so tests can assert on
-//! each independently. This is the default tier for zeo test coverage;
-//! `tests/*.rb` + `.expected` remains as the "real CLI + real `ruby`-oracle"
-//! golden suite.
+//! In-process e2e harness: compiles Ruby source through Cranelift to an
+//! object file directly -- no subprocess spawn for the compiler itself --
+//! links a throwaway binary and runs it, capturing stdout/stderr/exit
+//! status separately so tests can assert on each independently. This is the
+//! default tier for zeo test coverage; `tests/*.rb` + `.expected` remains
+//! as the "real CLI + real `ruby`-oracle" golden suite.
 //!
-//! The compile-only negative-path checks scattered through `e2e/` still ask
-//! `compile_to_rust*`: they assert front-end and loader POLICY (a `require`
-//! that must not resolve, a form that must be rejected), which both backends
-//! share, and the rustc emitter stays reachable until M3. Nothing here
-//! BUILDS through rustc any more.
+//! The compile-only negative-path helpers (`compile_project` and friends)
+//! ask `check_program_with`: they assert front-end and loader POLICY (a
+//! `require` that must not resolve, a form that must be rejected) without
+//! building anything.
 
 pub struct RunResult {
     pub stdout: String,
@@ -59,13 +57,11 @@ pub fn run_ruby(source: &str) -> RunResult {
 /// [`run_ruby`] under CRuby's own box gate. `RUBY_BOX=1` is a RUN-TIME
 /// flag both ruby and zeo read, so a program that allocates a box is run
 /// under it -- and one that pins the DISABLED shape deliberately is not.
-#[allow(dead_code)] // each test binary compiles its own copy of this module
 pub fn run_ruby_boxed(source: &str) -> RunResult {
     run_ruby_configured(source, &[("RUBY_BOX", "1")], &[])
 }
 
 /// [`run_ruby_project`] under the box gate -- see [`run_ruby_boxed`].
-#[allow(dead_code)]
 pub fn run_ruby_project_boxed(files: &[(&str, &str)], entry: &str, roots: &[&str]) -> RunResult {
     let (_dir, source, opts) = write_project(files, entry, roots, &[]);
     compile_link_run(&source, &opts, &[("RUBY_BOX", "1")], &[])
@@ -77,14 +73,12 @@ pub fn run_ruby_project_boxed(files: &[(&str, &str)], entry: &str, roots: &[&str
 /// dir itself as the requiring-file base and `roots` (relative to the
 /// project dir) as `-I` search roots, then builds and runs it like
 /// `run_ruby`. The temp tree is removed afterwards.
-#[allow(dead_code)] // each test binary compiles its own copy of this module
 pub fn run_ruby_project(files: &[(&str, &str)], entry: &str, roots: &[&str]) -> RunResult {
     run_ruby_packages(files, entry, roots, &[])
 }
 
 /// `run_ruby_project` plus `.gemspec` gem directories,
 /// also relative to the temp project dir.
-#[allow(dead_code)]
 pub fn run_ruby_packages(
     files: &[(&str, &str)],
     entry: &str,
@@ -97,7 +91,6 @@ pub fn run_ruby_packages(
 
 /// `run_ruby_project` with `--embed-sources` roots -- the ruby source that
 /// travels INSIDE the program, for a require only the run time can resolve.
-#[allow(dead_code)]
 pub fn run_ruby_project_embedded(
     files: &[(&str, &str)],
     entry: &str,
@@ -111,7 +104,6 @@ pub fn run_ruby_project_embedded(
 }
 
 /// `compile_project` under `--strict-static-require`.
-#[allow(dead_code)]
 pub fn compile_project_strict(
     files: &[(&str, &str)],
     entry: &str,
@@ -129,7 +121,6 @@ pub fn compile_project_strict(
 /// negative-path tests can assert on the compile error without a build.
 /// Returns the generated Rust plus the temp project dir (caller cleans up
 /// on the success path; the error path cleans up here).
-#[allow(dead_code)]
 pub fn compile_project(
     files: &[(&str, &str)],
     entry: &str,
@@ -139,7 +130,6 @@ pub fn compile_project(
 }
 
 /// `compile_project` plus package directories -- see `run_ruby_packages`.
-#[allow(dead_code)]
 pub fn compile_packages(
     files: &[(&str, &str)],
     entry: &str,
@@ -207,7 +197,6 @@ fn write_project(
 /// own invocation -- backs the scheduler-config tests
 /// (`ZEO_THREADS=N` / `--no-gvl` must change nothing observable for a
 /// well-behaved program).
-#[allow(dead_code)] // each test binary compiles its own copy of this module
 pub fn run_ruby_configured(source: &str, env: &[(&str, &str)], args: &[&str]) -> RunResult {
     compile_link_run(source, &Default::default(), env, args)
 }

@@ -1,11 +1,12 @@
 //! Shared golden-file test helper for the datatest-stable suites
-//! (`tests/gaps.rs`, `tests/examples.rs`, `tests/spinel.rs`).
+//! (`tests/gaps.rs`, `tests/examples.rs`, `tests/spinel.rs`,
+//! `tests/gemtests.rs`).
 //!
-//! One function, [`run_golden`], drives every `.rb` the same way the e2e
-//! `run_ruby` helper does -- `zeo::compile_to_rust_with` ->
-//! `zeo::backend::build_binary` (content-addressed cache) -> spawn -- then diffs
-//! stdout/stderr against the committed **ruby-oracle** golden `.expected`
-//! (+ `.err.expected`/`.args`/`.stdin` sidecars).
+//! One function, [`run_golden`], drives every `.rb`: probe the emitter in
+//! process (so a rejection stays distinguishable), spawn the built `zeo`
+//! CLI on the chosen backend, then diff stdout/stderr against the committed
+//! **ruby-oracle** golden `.expected` (+ `.err.expected`/`.args`/`.stdin`
+//! sidecars).
 //!
 //! - `Mode::Pass` (corpus, examples): zeo must MATCH the golden.
 //! - `Mode::CompileFail` (`analyze_fail/`): zeo must REJECT the program.
@@ -20,8 +21,6 @@
 //! `tools/zeo-dev bless <filter>` re-records the goldens from the real `ruby` oracle
 //! (`--disable-error_highlight --disable-did_you_mean`, resolved via `mise`)
 //! instead of asserting. This is the single golden writer.
-
-#![allow(dead_code)] // each test target includes its own copy; not all use every item.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
