@@ -531,6 +531,9 @@ pub(crate) fn min_max(
     block: Option<RubyValue>,
     want_min: bool,
 ) -> Result<RubyValue, Signal> {
+    // One optional count. Checked here rather than per row, so `Array#min`,
+    // `Enumerable#min` and the `max` twins all raise the same way.
+    check_arity(args.len(), 0, Some(1))?;
     // `min(n)`/`max(n)`: the n smallest/largest, as an Array -- sorted
     // ascending for `min`, descending for `max` (CRuby's nsmallest/
     // nlargest). Collect-then-sort (not a bounded heap): honest for the
@@ -705,6 +708,9 @@ fn min_max_by(
 }
 
 pub(crate) fn slice_size(args: &[RubyValue], method: &str) -> Result<usize, Signal> {
+    // Exactly one, both directions: a surplus argument was ignored, so
+    // `each_slice(1, 2)` sliced by 1 where ruby raises.
+    check_arity(args.len(), 1, Some(1))?;
     // Through the conversion protocol, not a panic: a non-Integer here is
     // ruby's ordinary `no implicit conversion` TypeError, and anything with a
     // `to_int` is accepted. This used to take the process down.
@@ -1155,6 +1161,9 @@ pub(crate) fn count_own(
         }
         Ok(())
     };
+    // The match's fallthrough arm reported "expected 1"; ruby's own bound is
+    // 0..1, since the no-argument form counts everything.
+    check_arity(args.len(), 0, Some(1))?;
     let n = match (args.len(), block) {
         (0, None) => fold_each(src, 0i64, |_| Ok(true), bump)?,
         (0, Some(RubyValue::Proc(blk))) => {
@@ -1842,6 +1851,9 @@ ruby_module! {
         })
     }
     def "tally"(recv, *args, &_block) {
+        // Before the conversion, or a surplus argument reports the FIRST
+        // one's type instead of the count ruby names.
+        check_arity(args.len(), 0, Some(1))?;
         // Optional accumulator hash: counts add onto its existing values and the
         // same hash is returned (Enumerable#tally(hash)). No arg -> a fresh
         // hash.
