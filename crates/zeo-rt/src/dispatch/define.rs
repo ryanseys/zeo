@@ -215,6 +215,25 @@ pub(super) fn builtin_row(id: ClassId, name: Symbol) -> Option<crate::builtins::
     crate::builtins::class_table(id)?(name.name_str())
 }
 
+/// [`builtin_row`], widened to the whole ancestor chain: the closest ancestor
+/// whose native table carries `name`, with that ancestor's id for the frame
+/// label.
+///
+/// The own-class form above cannot see a UNIVERSAL: `alias orig_p p` written
+/// in `module Kernel` is asked against an `Object` receiver, whose own table
+/// has no `p`, so the alias fell back to re-dispatching the NAME and a later
+/// `def p` captured it. Callers that need the value-subclass payload bridge
+/// take [`builtin_row`] on the payload root first and reach this only after.
+pub(super) fn builtin_row_in_chain(
+    id: ClassId,
+    name: Symbol,
+) -> Option<(ClassId, crate::builtins::BuiltinMethodFn)> {
+    let n = name.name_str();
+    crate::dispatch::ancestors_of_value(id)
+        .iter()
+        .find_map(|&anc| Some((anc, crate::builtins::class_table(anc)?(n)?)))
+}
+
 /// [`builtin_row`]'s singleton-side twin.
 pub(super) fn builtin_class_row(
     id: ClassId,

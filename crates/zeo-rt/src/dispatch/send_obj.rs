@@ -268,6 +268,12 @@ fn send_in_reason_inner(
                 old.name_str(),
             ));
         }
+        // No payload to bridge: bind the body from the chain, so a later
+        // `def old` cannot capture the alias.
+        if let Some((owner, f)) = builtin_row_in_chain(id, old) {
+            let boxed = RubyValue::Object(recv.clone());
+            return with_c_frame_ids(owner, old, '#', || f(&boxed, args, block));
+        }
         return send_in_reason(box_id, recv, old, args, block, reason);
     }
     method_missing_or_raise(recv, id, name, args, block, reason)

@@ -261,6 +261,41 @@ pub fn observed_class_id(v: &RubyValue) -> zeo_abi::ClassId {
     v.class_id()
 }
 
+/// `Kernel#inspect` AS A METHOD BODY -- CRuby's `rb_obj_inspect`, which
+/// DESCRIBES the object instead of asking it.
+///
+/// The generic renderer ([`RubyValue::try_inspect_string`]) probes the
+/// receiver's own `inspect` first, which is right for `p obj`, for
+/// interpolation and for a container's elements. It is wrong for this row:
+/// `def inspect = "W:" + super` reached Kernel's body and Kernel's body
+/// called the override back, until the stack ran out. An `alias` of the
+/// primitive took the same path.
+pub(crate) fn default_inspect(v: &RubyValue) -> Result<String, crate::Signal> {
+    let RubyValue::Object(o) = v else {
+        return v.try_inspect_string();
+    };
+    let seen = &mut Vec::new();
+    match o.builtin_payload() {
+        Some(p) => p.inspect_with(seen),
+        None if crate::builtins::rstruct::meta_of(o.class_id()).is_some() => {
+            crate::builtins::rstruct::build_inspect(v)?.display_with(seen)
+        }
+        None => default_object_repr(o, true, seen),
+    }
+}
+
+/// [`default_inspect`]'s `to_s` twin -- CRuby's `rb_any_to_s`.
+pub(crate) fn default_to_s(v: &RubyValue) -> Result<String, crate::Signal> {
+    let RubyValue::Object(o) = v else {
+        return v.try_display_string();
+    };
+    let seen = &mut Vec::new();
+    match o.builtin_payload() {
+        Some(p) => p.display_with(seen),
+        None => default_object_repr(o, false, seen),
+    }
+}
+
 /// The default `#<Class:0xADDR ...>` rendering for a user object that defines
 /// no `to_s`/`inspect` override -- CRuby's `rb_any_to_s`/`rb_obj_inspect`.
 /// `to_s` (`with_ivars=false`) is just `#<Class:0xADDR>`; `inspect` lists the

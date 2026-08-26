@@ -1,50 +1,53 @@
-# An alias of a builtin binds the BODY it names, not the name. A later `def`
-# of the source must not capture it -- that made the standard wrap idiom
-# recurse. Eleven shapes: the two spellings, no redefinition, a class-method
-# alias, a subclass receiver (the payload bridge), a module method, reflection,
-# an alias of an alias, and the two indirect call forms.
+# `alias new old` captures the METHOD, not the name: a later `def old`
+# replaces the original without disturbing the alias.
+#
+# The alias of a builtin used to be a name indirection resolved at call
+# time, so the standard wrap idiom -- alias the primitive away, redefine
+# it, call the alias from the new body -- recursed until the stack ran
+# out. It is how rubygems installs its own `Kernel#require`.
 
-class String
-  alias_method :s_old, :upcase
-  def upcase = "w(#{s_old})"
-end
-class Array
-  alias a_old first
-  def first(*) = "replaced"
-end
-class Hash
-  alias_method :h_old, :size
-end
-class Foo
-  class << self
-    alias mk new
+module Kernel
+  alias orig_p p
+  def p(*a)
+    orig_p(:wrapped, *a)
   end
 end
-class MyStr < String
-  alias_method :m_old, :length
-  def length = 99
-end
-module Mixin
-  def mixed = "mixed"
-end
-class Bar
-  include Mixin
-  alias_method :b_old, :mixed
-  def mixed = "w(#{b_old})"
-end
-class Float
-  alias_method :f1, :round
-  alias_method :f2, :f1
-end
+p 1
 
-puts "a: #{'ab'.upcase} / #{'ab'.s_old}"
-puts "b: #{[1,2].first.inspect} / #{[1,2].a_old.inspect}"
-puts "c: #{({x: 1}).h_old}"
-puts "d: #{Foo.mk.class}"
-puts "e: #{MyStr.new('hi').length} / #{MyStr.new('hi').m_old}"
-puts "f: #{Bar.new.mixed} / #{Bar.new.b_old}"
-puts "g: #{'x'.respond_to?(:s_old)} / #{String.method_defined?(:s_old)}"
-puts "h: #{String.instance_method(:s_old).arity}"
-puts "i: #{1.7.f2}"
-puts "j: #{'ab'.method(:s_old).call}"
-puts "k: #{'ab'.send(:s_old)}"
+# The same shape across two bodies, where the redefinition cannot even be
+# seen from the body that wrote the alias.
+module Kernel
+  alias orig_pr print
+end
+module Kernel
+  def print(*a)
+    orig_pr("[", *a, "]\n")
+  end
+end
+print "two bodies"
+
+# A builtin CLASS, reached through an instance rather than a universal.
+class String
+  alias orig_upcase upcase
+  def upcase = "shout(#{orig_upcase})"
+end
+puts "hi".upcase
+
+# A user class, whose aliased primitive comes from an ancestor's table
+# rather than its own.
+class Widget
+  alias orig_inspect inspect
+  def inspect = "Widget!"
+end
+w = Widget.new
+puts w.inspect
+puts w.orig_inspect.start_with?("#<Widget:0x")
+
+# The control: an alias of a USER method already bound its body.
+class Counter
+  def tick = "first"
+  alias orig_tick tick
+  def tick = "second"
+end
+puts Counter.new.tick
+puts Counter.new.orig_tick

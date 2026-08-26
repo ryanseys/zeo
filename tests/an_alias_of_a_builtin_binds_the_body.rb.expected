@@ -1,11 +1,8 @@
-a: w(AB) / AB
-b: "replaced" / 1
-c: 1
-d: Foo
-e: 99 / 2
-f: w(mixed) / mixed
-g: true / true
-h: -1
-i: 2
-j: AB
-k: AB
+:wrapped
+1
+[two bodies]
+shout(HI)
+Widget!
+true
+second
+first

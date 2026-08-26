@@ -640,10 +640,10 @@ ruby_module! {
     def "to_s" (recv) {
         // Fallible: `[obj].to_s` re-enters a user `inspect` per element,
         // and a raising one propagates (catchable, CRuby's rule).
-        Ok(RubyValue::Str(crate::string_new(recv.try_display_string()?)))
+        Ok(RubyValue::Str(crate::string_new(crate::value::default_to_s(recv)?)))
     }
     def "inspect" (recv) {
-        Ok(RubyValue::Str(crate::string_new(recv.try_inspect_string()?)))
+        Ok(RubyValue::Str(crate::string_new(crate::value::default_inspect(recv)?)))
     }
     // Kernel's default `===` is `==` (case subjects fall back to equality).
     def "==="(recv, other) {

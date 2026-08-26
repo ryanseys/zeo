@@ -728,8 +728,8 @@ fn send_value_in_reason_inner(
     // method missed. See `builtin_row` for why it binds the body, not the name.
     if let Some(old) = alias_target(recv.class_id(), name) {
         let cid = recv.class_id();
-        if let Some(f) = builtin_row(cid, old) {
-            return with_c_frame_ids(cid, old, '#', || f(recv, args, block));
+        if let Some((owner, f)) = builtin_row_in_chain(cid, old) {
+            return with_c_frame_ids(owner, old, '#', || f(recv, args, block));
         }
         return send_value_in_reason(box_id, recv, old, args, block, reason);
     }
