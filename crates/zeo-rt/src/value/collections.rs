@@ -682,6 +682,16 @@ pub(crate) fn hash_key(v: &RubyValue) -> HashKey {
     hash_key_in(v, false)
 }
 
+/// CRuby's `ary_make_hash`: a list of values as the key set every SET
+/// operation compares through -- `eql?` plus `hash`, never `==`. It is one
+/// half of a split ruby makes and zeo used to miss: `[1.0] - [1]` answers
+/// `[1.0]` because a set operation asks `eql?`, while `[1.0].include?(1)`
+/// answers true because a SEARCH asks `==`. Building the set once also
+/// makes the operations linear rather than quadratic.
+pub(crate) fn eql_key_set(items: &[RubyValue]) -> crate::FSet<HashKey> {
+    items.iter().map(hash_key).collect()
+}
+
 /// The container pointers on the current projection path. Empty (and so
 /// allocation-free) for every non-recursive value, which is all of them
 /// outside a deliberately cyclic structure.

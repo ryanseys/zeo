@@ -282,24 +282,25 @@ ruby_class! {
         Ok(RubyValue::Array(crate::array_new(out)))
     }
     // `slice(*keys)` / `except(*keys)`: a new Hash keeping (resp. dropping)
-    // the named keys, preserving the receiver's insertion order.
+    // the named keys. Both LOOK THE KEY UP -- `eql?` plus `hash`, never `==`,
+    // so `{1.0 => :x}.slice(1)` is empty. And the two orders differ: `slice`
+    // walks the ARGUMENTS (`{a: 1, b: 2}.slice(:b, :a)` is `{b: 2, a: 1}`),
+    // `except` walks the receiver.
     def "slice"(recv, *args, &_block) {
         let src = rhash;
-        let pairs = src
-            .lock()
-            .values()
-            .filter(|(k, _)| args.iter().any(|a| a.rb_eq(k)))
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
+        let mut pairs: Vec<(RubyValue, RubyValue)> = Vec::new();
+        for a in args {
+            if crate::hash_has_key(src, a) {
+                pairs.push((a.clone(), crate::hash_get(src, a)));
+            }
+        }
         Ok(RubyValue::Hash(crate::hash_new(pairs)))
     }
     def "except"(recv, *args, &_block) {
-        let src = rhash;
-        let pairs = src
-            .lock()
-            .values()
-            .filter(|(k, _)| !args.iter().any(|a| a.rb_eq(k)))
-            .map(|(k, v)| (k.clone(), v.clone()))
+        let drop = crate::collections::eql_key_set(args);
+        let pairs = crate::collections::hash_pairs(rhash)
+            .into_iter()
+            .filter(|(k, _)| !drop.contains(&crate::collections::hash_key(k)))
             .collect();
         Ok(RubyValue::Hash(crate::hash_new(pairs)))
     }

@@ -1,0 +1,46 @@
+include?	true
+index	0
+rindex	0
+count	1
+delete	1.0
+assoc	[1.0, :x]
+rassoc	[:x, 1.0]
+ary ==	true
+hash value?	true
+hash key	:a
+hash ==	true
+hash <=	true
+enum count	1
+enum index	0
+enum incl?	true
+-	[1.0]
+&	[]
+|	[1.0, 1]
+intersection	[]
+difference	[1.0]
+union	[1.0, 1]
+intersect?	false
+uniq	[1.0, 1]
+enum uniq	[1.0, 1]
+ary eql?	false
+hash eql?	false
+hash slice	{}
+hash except	{1.0 => :x}
+slice order	{b: 2, a: 1}
+except order	{a: 1, b: 2}
+slice absent	{}
+struct ==	true
+struct eql?	false
+user include?	true
+user count	1
+user -	[OnlyEq(1)]
+user &	[]
+user |	[OnlyEq(1), OnlyEq(1)]
+user uniq	2
+both uniq	2
+both hash	2
+both -	[Both(2)]
+both &	[Both(1)]
+both |	[Both(1), Both(2)]
+both slice	{Both(1) => 1}
+both except	{Both(2) => 2}

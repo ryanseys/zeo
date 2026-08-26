@@ -531,6 +531,25 @@ pub(crate) fn struct_equal(recv: &RubyValue, other: &RubyValue) -> bool {
             .all(|(x, y)| crate::builtins::basic_object::value_identity(x, y) || x.rb_eq(y))
 }
 
+/// `Struct#eql?` -- the same class and the same members BY `eql?`.
+fn struct_eql(recv: &RubyValue, other: &RubyValue) -> bool {
+    let RubyValue::Object(o) = other else {
+        return false;
+    };
+    if meta_of(o.class_id()).is_none() || recv_class_id(recv) != o.class_id() {
+        return false;
+    }
+    if crate::builtins::basic_object::value_identity(recv, other) {
+        return true;
+    }
+    let a = slots_of(recv);
+    let b = slots_of(other);
+    a.len() == b.len()
+        && a.iter().zip(b.iter()).all(|(x, y)| {
+            crate::collections::hash_key(x) == crate::collections::hash_key(y)
+        })
+}
+
 pub(crate) fn deconstruct_keys(recv: &RubyValue, keys: &RubyValue) -> Result<RubyValue, Signal> {
     if matches!(keys, RubyValue::Nil) {
         return Ok(build_to_h(recv));
@@ -666,8 +685,12 @@ ruby_class! {
     def "=="(recv, other) {
         Ok(RubyValue::Bool(struct_equal(recv, other)))
     }
+    // `rb_struct_eql`: `eql?` per member, NOT `==`, so a Float member never
+    // equals an Integer one (`S.new(1.0).eql?(S.new(1))` is false while
+    // `==` is true). It projects through the key `Hash` uses, exactly as
+    // `Array#eql?` does.
     def "eql?"(recv, arg) {
-        Ok(RubyValue::Bool(struct_equal(recv, arg)))
+        Ok(RubyValue::Bool(struct_eql(recv, arg)))
     }
     def "hash"(recv) {
         let arr = RubyValue::Array(array_new(slots_of(recv)));

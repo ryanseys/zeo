@@ -1896,9 +1896,12 @@ ruby_module! {
     def "uniq" arity 0 (recv, *args, &_block) {
         reject_args(args)?;
         let items = collect_packed(Src::sending(recv))?;
+        // `eql?`/`hash`, like `Array#uniq` -- not `==`, so `[1.0, 1]` keeps
+        // both.
+        let mut seen = crate::FSet::default();
         let mut out: Vec<RubyValue> = Vec::new();
         for e in items {
-            if !out.iter().any(|x| e.rb_eq(x)) {
+            if seen.insert(crate::collections::hash_key(&e)) {
                 out.push(e);
             }
         }

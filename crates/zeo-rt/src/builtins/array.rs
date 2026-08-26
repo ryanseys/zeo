@@ -372,12 +372,10 @@ ruby_class! {
     }
     def "-" (recv, other) {
         let other = &convert::to_rary(other)?;
-        let exclude = other.lock().clone();
-        let out = rary
-            .lock()
-            .iter()
-            .filter(|e| !exclude.iter().any(|x| e.rb_eq(x)))
-            .cloned()
+        let exclude = crate::collections::eql_key_set(&crate::collections::array_snapshot(other));
+        let out = crate::collections::array_snapshot(rary)
+            .into_iter()
+            .filter(|e| !exclude.contains(&crate::collections::hash_key(e)))
             .collect();
         Ok(RubyValue::Array(crate::array_new(out)))
     }
@@ -400,11 +398,13 @@ ruby_class! {
     }
     def "&" (recv, other) {
         let other = &convert::to_rary(other)?;
-        let keep = other.lock().clone();
+        let keep = crate::collections::eql_key_set(&crate::collections::array_snapshot(other));
+        let mut seen = crate::FSet::default();
         let mut out: Vec<RubyValue> = Vec::new();
-        for e in rary.lock().iter() {
-            if keep.iter().any(|x| e.rb_eq(x)) && !out.iter().any(|x| e.rb_eq(x)) {
-                out.push(e.clone());
+        for e in crate::collections::array_snapshot(rary) {
+            let k = crate::collections::hash_key(&e);
+            if keep.contains(&k) && seen.insert(k) {
+                out.push(e);
             }
         }
         Ok(RubyValue::Array(crate::array_new(out)))
@@ -413,23 +413,25 @@ ruby_class! {
     // present in EVERY argument (uniq'd); `difference` keeps self's elements
     // absent from ALL arguments (duplicates preserved, like `-`).
     def "intersection"(recv, *args, &_block) {
-        let others = set_op_args(args)?;
+        let others: Vec<_> = set_op_args(args)?.iter().map(|o| crate::collections::eql_key_set(o)).collect();
+        let mut seen = crate::FSet::default();
         let mut out: Vec<RubyValue> = Vec::new();
-        for e in rary.lock().iter() {
-            let in_all = others.iter().all(|o| o.iter().any(|x| e.rb_eq(x)));
-            if in_all && !out.iter().any(|x| e.rb_eq(x)) {
-                out.push(e.clone());
+        for e in crate::collections::array_snapshot(rary) {
+            let k = crate::collections::hash_key(&e);
+            if others.iter().all(|o| o.contains(&k)) && seen.insert(k) {
+                out.push(e);
             }
         }
         Ok(RubyValue::Array(crate::array_new(out)))
     }
     def "difference"(recv, *args, &_block) {
-        let others = set_op_args(args)?;
-        let out: Vec<RubyValue> = rary
-            .lock()
-            .iter()
-            .filter(|e| !others.iter().any(|o| o.iter().any(|x| e.rb_eq(x))))
-            .cloned()
+        let others: Vec<_> = set_op_args(args)?.iter().map(|o| crate::collections::eql_key_set(o)).collect();
+        let out: Vec<RubyValue> = crate::collections::array_snapshot(rary)
+            .into_iter()
+            .filter(|e| {
+                let k = crate::collections::hash_key(e);
+                !others.iter().any(|o| o.contains(&k))
+            })
             .collect();
         Ok(RubyValue::Array(crate::array_new(out)))
     }
@@ -1431,10 +1433,11 @@ ruby_class! {
     // same `rb_eq` membership as `&`/`intersection`, no result array built).
     def "intersect?" (recv, arg) {
         let other = &convert::to_rary(arg)?;
-        let mine = rary.lock().clone();
-        let theirs = other.lock().clone();
+        let theirs = crate::collections::eql_key_set(&crate::collections::array_snapshot(other));
         Ok(RubyValue::Bool(
-            mine.iter().any(|e| theirs.iter().any(|x| e.rb_eq(x))),
+            crate::collections::array_snapshot(rary)
+                .iter()
+                .any(|e| theirs.contains(&crate::collections::hash_key(e))),
         ))
     }
     // No `chain` row: ruby owns it on Enumerable alone, and the body here was
@@ -1625,14 +1628,17 @@ fn set_op_args(args: &[RubyValue]) -> Result<Vec<Vec<RubyValue>>, crate::Signal>
 /// The uniq'd concatenation `self ++ others...`, first occurrence winning --
 /// shared by `|` (binary) and `union` (variadic).
 fn union_of(recv: &crate::collections::RArray, others: &[Vec<RubyValue>]) -> Vec<RubyValue> {
+    let mine = crate::collections::array_snapshot(recv);
+    let mut seen = crate::FSet::default();
     let mut out: Vec<RubyValue> = Vec::new();
-    for e in recv.lock().iter().chain(others.iter().flatten()) {
-        if !out.iter().any(|x| e.rb_eq(x)) {
-            out.push(e.clone());
+    for e in mine.into_iter().chain(others.iter().flatten().cloned()) {
+        if seen.insert(crate::collections::hash_key(&e)) {
+            out.push(e);
         }
     }
     out
 }
+
 
 /// A random index in `0..bound`, from the supplied RNG (`random.rand(bound)`)
 /// or the shared PRNG. `bound` is assumed nonzero by the callers.
