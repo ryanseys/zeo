@@ -503,9 +503,14 @@ pub(crate) fn coerce_method_name(arg: Option<&RubyValue>) -> Result<Symbol, Sign
     match arg {
         Some(RubyValue::Symbol(s)) => Ok(*s),
         Some(RubyValue::Str(s)) => Ok(Symbol::intern(&s.lock().to_utf8_lossy())),
-        _ => Err(type_error!(
-            "expected a Symbol or String for the method name"
+        // CRuby's `rb_to_id` message, which INSPECTS the value: `1 is not a
+        // symbol nor a string`, the same shape the ivar and constant
+        // coercions already use.
+        Some(other) => Err(type_error!(
+            "{} is not a symbol nor a string",
+            other.inspect_string()
         )),
+        None => Err(type_error!("nil is not a symbol nor a string")),
     }
 }
 

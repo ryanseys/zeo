@@ -537,10 +537,50 @@ fn cruby_regex_error(source: &str, raw: &str) -> String {
         "target of repeat operator is not specified"
     } else if raw.contains("repetition quantifier expects a valid decimal") {
         "invalid repeat range"
+    } else if raw.contains("Unknown property name")
+        || raw.contains("unknown property")
+        || raw.contains("property not found")
+        // Onig's own wording, reached when the pattern went to Onig first.
+        || raw.contains("invalid character property name")
+    {
+        // The NAME comes off the source rather than out of the engine's
+        // text, so the message survives whatever wording the engine
+        // chooses. CRuby's own check is a lookup table; the property list
+        // is far too long to carry one here just to name what failed, and
+        // the source always has the answer.
+        let name = property_name_in(source).unwrap_or_default();
+        return format!("invalid character property name {{{name}}}: /{source}/");
+    } else if raw.contains("Invalid group name in back reference")
+        || raw.contains("unknown group name")
+    {
+        let name = backref_name_in(source).unwrap_or_default();
+        return format!("undefined name <{name}> reference: /{source}/");
+    } else if raw.contains("Invalid back reference") || raw.contains("invalid backref") {
+        "invalid backref number/name"
     } else {
-        return raw.to_string();
+        // Every remaining engine message is MULTI-LINE (the `regex` crate
+        // renders a caret diagram), and ruby's are one line. Keep the first
+        // line so a message never spills across the page.
+        return raw.lines().next().unwrap_or(raw).trim_end().to_string();
     };
     format!("{reason}: /{source}/")
+}
+
+/// The name inside the first `\\p{...}` of `source`, `^` negation stripped --
+/// what CRuby's message quotes.
+fn property_name_in(source: &str) -> Option<String> {
+    let at = source.find(r"\p{").or_else(|| source.find(r"\P{"))?;
+    let rest = &source[at + 3..];
+    let end = rest.find('}')?;
+    Some(rest[..end].trim_start_matches('^').to_string())
+}
+
+/// The name inside the first `\\k<...>` of `source`.
+fn backref_name_in(source: &str) -> Option<String> {
+    let at = source.find(r"\k<")?;
+    let rest = &source[at + 3..];
+    let end = rest.find('>')?;
+    Some(rest[..end].to_string())
 }
 
 /// `/a{2,1}/` -- a repeat range whose upper bound is below its lower. CRuby

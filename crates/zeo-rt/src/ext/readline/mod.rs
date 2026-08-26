@@ -241,7 +241,7 @@ ruby_module! {
     }
     def self."completion_proc=" cfunc (_recv, arg) {
         if !matches!(arg, RubyValue::Nil | RubyValue::Proc(_)) {
-            return Err(crate::builtins::type_error!("argument must respond to `call'"));
+            return Err(crate::builtins::type_error!("argument must respond to 'call'"));
         }
         STATE.lock().completion_proc = (*arg).clone();
         Ok((*arg).clone())

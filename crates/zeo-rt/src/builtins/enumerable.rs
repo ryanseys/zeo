@@ -679,12 +679,21 @@ fn min_max_by(
         // Ascending by key for min_by, descending for max_by; ties are
         // order-unspecified in CRuby (a heap), and the corpus uses distinct
         // keys, so a stable sort on the comparison is faithful enough.
+        let mut failed: Option<(RubyValue, RubyValue)> = None;
         keyed.sort_by(|a, b| {
-            let ord =
-                a.0.rb_cmp(&b.0)
-                    .map_or(std::cmp::Ordering::Equal, |c| c.cmp(&0));
+            let ord = match a.0.rb_cmp(&b.0) {
+                Some(c) => c.cmp(&0),
+                None => {
+                    // `(b, a)`: see the note in `sort_by`.
+                    failed.get_or_insert_with(|| (b.0.clone(), a.0.clone()));
+                    std::cmp::Ordering::Equal
+                }
+            };
             if min { ord } else { ord.reverse() }
         });
+        if let Some((x, y)) = failed {
+            return Err(crate::value::cmp_error(&x, &y));
+        }
         let out = keyed.into_iter().take(n).map(|(_, e)| e).collect();
         return Ok(RubyValue::Array(array_new(out)));
     }
@@ -695,9 +704,12 @@ fn min_max_by(
         let e = e.packed;
         let better = match &best {
             None => true,
+            // An incomparable pair RAISES here, naming both operands.
+            // Answering `false` made `[1, "a"].min_by { |x| x }` succeed
+            // and hand back whichever element came first.
             Some((bk, _)) => match key.rb_cmp(bk) {
                 Some(c) => (min && c < 0) || (!min && c > 0),
-                None => false,
+                None => return Err(crate::value::cmp_error(&key, bk)),
             },
         };
         if better {
@@ -1609,16 +1621,23 @@ ruby_module! {
             let key = blk.call(e.raw())?;
             decorated.push((key, e.packed));
         }
-        let mut failure = false;
+        // The OPERANDS are load-bearing, and so is their ORDER. Rust's
+        // insertion sort calls the comparator as `(v[i], v[i-1])`, so the
+        // pair is recorded as `(b, a)` -- naming them the other way round
+        // reports `comparison of Float with 1.0 failed` where ruby says
+        // `... with NaN failed`. Plain `sort` already went through
+        // `cmp_error`; these three said "comparison failed" with no
+        // operands at all.
+        let mut failed: Option<(RubyValue, RubyValue)> = None;
         decorated.sort_by(|a, b| match a.0.rb_cmp(&b.0) {
             Some(c) => c.cmp(&0),
             None => {
-                failure = true;
+                failed.get_or_insert_with(|| (b.0.clone(), a.0.clone()));
                 std::cmp::Ordering::Equal
             }
         });
-        if failure {
-            return Err(arg_error!("comparison failed"));
+        if let Some((x, y)) = failed {
+            return Err(crate::value::cmp_error(&x, &y));
         }
         Ok(RubyValue::Array(array_new(
             decorated.into_iter().map(|(_, e)| e).collect(),

@@ -481,19 +481,32 @@ pub fn apply_custom_backtrace(exc_value: &RubyValue, bt: &RubyValue) -> Result<(
             for v in a.lock().iter() {
                 match v {
                     RubyValue::Str(s) => lines.push(s.lock().to_utf8_lossy().into_owned()),
-                    _ => {
-                        return Err(type_error!("backtrace must be an Array of String"));
+                    // A `Thread::Backtrace::Location` array is equally
+                    // valid -- `set_backtrace(caller_locations)` is the
+                    // common spelling -- and renders through the location's
+                    // own `to_s`.
+                    RubyValue::Object(o)
+                        if crate::dispatch::class_name(o.class_id()).as_deref()
+                            == Some("Thread::Backtrace::Location") =>
+                    {
+                        lines.push(v.try_display_string()?);
                     }
+                    _ => return Err(type_error!("{BACKTRACE_TYPE}")),
                 }
             }
             set_backtrace_lines(exc_value, lines);
             Ok(())
         }
-        _ => Err(type_error!(
-            "backtrace must be an Array of String or a single String"
-        )),
+        _ => Err(type_error!("{BACKTRACE_TYPE}")),
     }
 }
+
+/// `set_backtrace`'s TypeError text. Ruby 4 names what it ACCEPTS, and a
+/// single String is accepted without being listed -- the older message here
+/// offered "a single String" and omitted the Location array, which is the
+/// form `set_backtrace(caller_locations)` passes.
+const BACKTRACE_TYPE: &str =
+    "backtrace must be an Array of String or an Array of Thread::Backtrace::Location";
 
 /// The top-level uncaught-exception report, CRuby's exact shape:
 ///
@@ -1464,7 +1477,7 @@ fn signal_exception_initialize(
             };
             let signo = crate::builtins::signal::signo_from_name(&spelled).ok_or_else(|| {
                 let bare = spelled.strip_prefix("SIG").unwrap_or(&spelled);
-                arg_error!("unsupported signal `SIG{bare}'")
+                arg_error!("unsupported signal 'SIG{bare}'")
             })?;
             let canonical = crate::builtins::signal::name_from_signo(signo).unwrap_or(&spelled);
             (

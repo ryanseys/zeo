@@ -89,7 +89,7 @@ pub fn bind_dynamic_kwargs<'a>(
         if has_kwrest {
             rest_pairs.push((k.clone(), v.clone()));
         } else {
-            return Err(arg_error!("wrong number of arguments (in `{method}')"));
+            return Err(arg_error!("wrong number of arguments (in '{method}')"));
         }
     }
     if !unknown.is_empty() {

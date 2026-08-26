@@ -112,7 +112,7 @@ pub(crate) fn resolve_signal_arg(arg: &RubyValue) -> Result<i32, Signal> {
 fn resolve_signal_name(name: &str) -> Result<i32, Signal> {
     signo_from_name(name).ok_or_else(|| {
         let bare = name.strip_prefix("SIG").unwrap_or(name);
-        arg_error!("unsupported signal `SIG{bare}'")
+        arg_error!("unsupported signal 'SIG{bare}'")
     })
 }
 

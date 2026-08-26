@@ -1213,11 +1213,31 @@ pub fn runtime_class_new(
     superclass: Option<RubyValue>,
     body: Option<RProc>,
 ) -> Result<RubyValue, Signal> {
+    // CRuby's `rb_check_inheritable`, in its order. Note what is LEGAL:
+    // `Class.new(Module)` and `Class.new(BasicObject)` both work -- `Module`
+    // is a Class, it is just not a module INSTANCE. Only `Class` itself and
+    // a singleton class are refused, and both were minted here before.
     let super_id = match &superclass {
         None => ClassId(0), // default super is Object
-        Some(RubyValue::Class(cid)) => *cid,
-        Some(_) => {
-            return Err(type_error!("superclass must be a Class"));
+        Some(RubyValue::Class(cid)) => {
+            if crate::dispatch::class_is_module(*cid).unwrap_or(false) {
+                return Err(type_error!(
+                    "superclass must be an instance of Class (given an instance of Module)"
+                ));
+            }
+            if *cid == zeo_abi::CLASS_CLASS {
+                return Err(type_error!("can't make subclass of Class"));
+            }
+            if singleton_owner_value(*cid).is_some() {
+                return Err(type_error!("can't make subclass of singleton class"));
+            }
+            *cid
+        }
+        Some(other) => {
+            return Err(type_error!(
+                "superclass must be an instance of Class (given an instance of {})",
+                crate::builtins::class_name_of(other)
+            ));
         }
     };
 

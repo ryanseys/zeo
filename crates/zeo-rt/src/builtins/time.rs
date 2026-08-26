@@ -1023,18 +1023,21 @@ fn int_parts(args: &[RubyValue], take: usize) -> Result<Vec<i64>, Signal> {
 /// / hour 25 / min 60 are `ArgumentError`. `parts` is `[year, mon, day, hour,
 /// min, sec]`, any trailing entries absent.
 fn validate_civil_parts(parts: &[i64]) -> Result<(), Signal> {
+    // The FIELD is named, as CRuby names it -- `mon out of range`, not the
+    // generic text every field used to share. `mday` and `mon` are CRuby's
+    // own spellings, not `day` and `month`.
     let ranges = [
-        (1usize, 1, 12),
-        (2, 1, 31),
-        (3, 0, 23),
-        (4, 0, 59),
-        (5, 0, 60),
+        (1usize, "mon", 1, 12),
+        (2, "mday", 1, 31),
+        (3, "hour", 0, 23),
+        (4, "min", 0, 59),
+        (5, "sec", 0, 60),
     ];
-    for (i, lo, hi) in ranges {
+    for (i, field, lo, hi) in ranges {
         if let Some(&v) = parts.get(i)
             && (v < lo || v > hi)
         {
-            return Err(arg_error!("argument out of range"));
+            return Err(arg_error!("{field} out of range"));
         }
     }
     Ok(())
@@ -1877,6 +1880,13 @@ ruby_class! {
     // `t + n` -> a Time n seconds later; `t - other_time` -> a Float count of
     // seconds BETWEEN them, but `t - n` -> a Time. The argument's type picks.
     def "+" (recv, other) {
+        // CRuby's own wording for the one operand that is nearly right:
+        // adding two Times is meaningless, and it says so rather than
+        // reporting a failed conversion.
+        if let RubyValue::Object(o) = other
+            && o.as_any().downcast_ref::<RTime>().is_some() {
+                return Err(type_error!("time + time?"));
+            }
         shift(recv_time(recv)?, other, 1)
     }
     def "-" (recv, other) {

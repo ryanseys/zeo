@@ -114,15 +114,23 @@ fn is_const_path(name: &str) -> bool {
     let mut any = false;
     for seg in segments {
         any = true;
-        let mut chars = seg.chars();
-        if !chars.next().is_some_and(|c| c.is_ascii_uppercase()) {
-            return false;
-        }
-        if !chars.all(|c| c.is_alphanumeric() || c == '_') {
+        // One rule, two callers: `const_get` takes a PATH and `const_set` a
+        // single segment, and both mean the same thing by "segment".
+        if !crate::dispatch::names::is_const_segment(seg) {
             return false;
         }
     }
     any
+}
+
+/// A module's name for a message, with CRuby's anonymous rendering.
+///
+/// `class_name` answers `None` for an anonymous module, and the caller that
+/// substituted `"Object"` for it made every anonymous module report as
+/// `Object` -- which is a second, quieter bug in the same place.
+fn module_label(cid: crate::ClassId) -> String {
+    crate::dispatch::class_name(cid)
+        .unwrap_or_else(|| RubyValue::Class(cid).inspect_string())
 }
 
 /// A class or module that IS `owner`'s constant `name` but was never written
@@ -484,6 +492,19 @@ ruby_class! {
                 return Err(type_error!("{} is not a symbol nor a string", other.inspect_string()))
             }
         };
+        // A single SEGMENT, unlike `const_get`'s path: `const_set("A::B")` is
+        // `wrong constant name A::B` in ruby, not a nested write. `const_get`
+        // already validated and this did not, so a lowercase constant was
+        // simply set.
+        if !crate::dispatch::names::is_const_segment(&name) {
+            return Err(crate::Signal::Raise(crate::dispatch::stamp_backtrace(
+                crate::dispatch::make_name_error(
+                    format!("wrong constant name {name}"),
+                    &name,
+                    recv.clone(),
+                ),
+            )));
+        }
         // A run-time assignment is located at the line that made it, exactly
         // as a written one is -- and a builtin has no frame of its own, so the
         // top of the stack IS the caller.
@@ -579,8 +600,11 @@ ruby_class! {
     private def "remove_const" (recv, arg) {
         let cid = recv_cid(recv);
         let name = const_name_arg(arg)?;
-        crate::constants::const_remove(cid.0, &name)
-            .ok_or_else(|| name_error!("constant {name} not defined"))
+        // The message is QUALIFIED, as ruby's is: `constant Foo::Nope not
+        // defined`, with an anonymous module rendering as `#<Module:0x..>`.
+        crate::constants::const_remove(cid.0, &name).ok_or_else(|| {
+            name_error!("constant {}::{name} not defined", module_label(cid))
+        })
     }
     def "constants" (recv, inherit?) {
         let cid = recv_cid(recv);
@@ -728,17 +752,17 @@ ruby_class! {
     // each is marked `inherits` and reflection reports Kernel, which the
     // ancestry reaches and which declares all four itself.
     def "instance_variable_get" inherits (recv, arg) {
-        let name = ivar_name_arg(arg)?;
+        let name = crate::dispatch::ivars::ivar_name_arg(arg)?;
         Ok(crate::civars::class_ivar_get(recv_cid(recv).0, &name))
     }
     def "instance_variable_set" inherits (recv, arg1, arg2) {
-        let name = ivar_name_arg(arg1)?;
+        let name = crate::dispatch::ivars::ivar_name_arg(arg1)?;
         crate::civars::class_ivar_set(recv_cid(recv).0, &name, (*arg2).clone())?;
         // Answers the VALUE, not the receiver -- oracle-checked.
         Ok((*arg2).clone())
     }
     def "instance_variable_defined?" inherits (recv, arg) {
-        let name = ivar_name_arg(arg)?;
+        let name = crate::dispatch::ivars::ivar_name_arg(arg)?;
         Ok(RubyValue::Bool(
             crate::civars::class_ivar_names(recv_cid(recv).0).contains(&name),
         ))
@@ -1285,6 +1309,20 @@ ruby_class! {
     // dynamically dispatched `using` has no lexical range to rewrite, so it
     // refuses loudly rather than activate nothing.
     private def "using" (_recv, _module) {
+        // `main.using` inside a METHOD is ruby's own RuntimeError, and it is
+        // the reason this row is reached at all: the compile-time rewrite
+        // covers a lexical `using`, so a call that lands here either came
+        // from a method body -- which ruby refuses too -- or through a
+        // dynamic send, which has no lexical range to rewrite.
+        //
+        // A frame label starting with `<` is a genuine toplevel or class
+        // body (`<main>`, `<class:K>`); anything else is a method.
+        if crate::frames::current_frame_label().is_some_and(|l| !l.starts_with('<')) {
+            return Err(crate::dispatch::raise_error(
+                "RuntimeError",
+                "main.using is permitted only at toplevel".to_string(),
+            ));
+        }
         Err(not_impl_error!(
             "Module#using cannot be reached through a runtime send: zeo activates refinements at compile time"
         ))
@@ -1372,29 +1410,6 @@ fn cvar_name_arg(v: &RubyValue) -> Result<String, crate::Signal> {
 /// keys a static class-ivar access on, which is `safe_ident`'s output over
 /// an already-`@`-less HIR name.
 ///
-/// Both a Symbol and a String are accepted (real Ruby takes either), and a
-/// name without the leading `@` is a NameError rather than a silent miss --
-/// oracle-verified, message shape included:
-/// `K.instance_variable_get(:a)` => `'a' is not allowed as an instance
-/// variable name`.
-fn ivar_name_arg(v: &RubyValue) -> Result<String, crate::Signal> {
-    let raw = match v {
-        RubyValue::Symbol(s) => s.name().to_string(),
-        RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
-        _ => {
-            return Err(type_error!(
-                "{} is not a symbol nor a string",
-                v.inspect_string()
-            ));
-        }
-    };
-    match raw.strip_prefix('@') {
-        Some(name) => Ok(name.to_string()),
-        None => Err(name_error!(
-            "'{raw}' is not allowed as an instance variable name"
-        )),
-    }
-}
 
 #[cfg(test)]
 mod tests {

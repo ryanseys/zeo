@@ -4,10 +4,16 @@
 use super::*;
 
 /// The bare ivar name (`x`) from a `:@x`/`"@x"` reflection argument. A
-/// non-symbol/string is a `TypeError`; a name without the leading `@` is a
-/// `NameError` -- both mirroring CRuby's own messages. Shared by the
-/// universal `Object#instance_variable_*` helpers below (the class-object
-/// table in `builtins::class_module` keeps its own parallel copy).
+/// non-symbol/string is a `TypeError`; anything that is not a valid ivar
+/// name is a `NameError` -- both mirroring CRuby's own messages. Shared by
+/// the universal `Object#instance_variable_*` helpers below (the
+/// class-object table in `builtins::class_module` keeps its own parallel
+/// copy).
+///
+/// The WHOLE name is checked, not just the leading `@`: `"@@bad"` is the
+/// class-variable spelling and `"@1x"` starts with a digit, and both used to
+/// pass here and answer nil for a get. The message quotes the raw name with
+/// its `@`, which is what ruby prints.
 pub fn ivar_name_arg(v: &RubyValue) -> Result<String, Signal> {
     // A symbol's text is already interned and `'static`, so the strip happens
     // before any allocation: `instance_variable_get(:@x)`, which is how this
@@ -15,9 +21,9 @@ pub fn ivar_name_arg(v: &RubyValue) -> Result<String, Signal> {
     // symbol's text, once for the `@`-stripped tail).
     if let RubyValue::Symbol(s) = v {
         let raw = s.name_str();
-        return match raw.strip_prefix('@') {
-            Some(name) => Ok(name.to_string()),
-            None => Err(name_error!(
+        return match crate::dispatch::names::is_ivar_name(raw) {
+            true => Ok(raw[1..].to_string()),
+            false => Err(name_error!(
                 "'{raw}' is not allowed as an instance variable name"
             )),
         };
@@ -31,9 +37,9 @@ pub fn ivar_name_arg(v: &RubyValue) -> Result<String, Signal> {
             ));
         }
     };
-    match raw.strip_prefix('@') {
-        Some(name) => Ok(name.to_string()),
-        None => Err(name_error!(
+    match crate::dispatch::names::is_ivar_name(&raw) {
+        true => Ok(raw[1..].to_string()),
+        false => Err(name_error!(
             "'{raw}' is not allowed as an instance variable name"
         )),
     }

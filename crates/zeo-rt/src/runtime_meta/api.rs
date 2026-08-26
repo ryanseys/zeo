@@ -254,10 +254,20 @@ pub enum AttrKind {
 /// total across every receiver kind -- a `DynObject`, a generated struct's
 /// typed field or `__overflow` map, a `ValueSubclass` -- so one implementation
 /// serves a runtime class and a `class_eval` over a compiled one alike.
-pub fn runtime_attr(id: ClassId, args: &[RubyValue], kind: AttrKind) -> Result<RubyValue, Signal> {
-    if crate::dispatch::class_frozen(id) {
-        return Err(crate::dispatch::frozen_class_error(id));
+/// CRuby's `rb_check_id`+`rb_is_local_id` guard on an accessor name, with
+/// its own message shape. `attr_accessor :"1bad"` used to mint a `:"1bad"`
+/// row that then showed up in `instance_methods`.
+fn check_attr_name(name: Symbol) -> Result<(), Signal> {
+    if crate::dispatch::names::is_local_or_const_name(name.name_str()) {
+        return Ok(());
     }
+    Err(crate::dispatch::raise_error(
+        "NameError",
+        format!("invalid attribute name '{}'", name.name_str()),
+    ))
+}
+
+pub fn runtime_attr(id: ClassId, args: &[RubyValue], kind: AttrKind) -> Result<RubyValue, Signal> {
     // An attr defined on a SINGLETON class is a singleton attr on its owner,
     // reading that owner's own ivars -- not an instance method of a shared
     // class. `runtime_define_method` redirects the same way, and for the same
@@ -270,6 +280,15 @@ pub fn runtime_attr(id: ClassId, args: &[RubyValue], kind: AttrKind) -> Result<R
     let mut defined = Vec::new();
     for arg in args {
         let name = coerce_method_name(Some(arg))?;
+        // NAME before FROZEN, and per ARGUMENT rather than once up front --
+        // both observable, both probe-verified. A frozen class given a bad
+        // name raises NameError, not FrozenError; and `attr_accessor(:ok,
+        // "1bad")` defines `:ok` and THEN raises, so the check cannot be
+        // hoisted out of the loop.
+        check_attr_name(name)?;
+        if crate::dispatch::class_frozen(id) {
+            return Err(crate::dispatch::frozen_class_error(id));
+        }
         if kind != AttrKind::Writer {
             let key: Arc<str> = Arc::from(name.name().as_str());
             let getter =
@@ -329,6 +348,12 @@ fn singleton_attr(
     let mut defined = Vec::new();
     for arg in args {
         let name = coerce_method_name(Some(arg))?;
+        // NAME before FROZEN, and per ARGUMENT rather than once up front --
+        // both observable, both probe-verified. A frozen class given a bad
+        // name raises NameError, not FrozenError; and `attr_accessor(:ok,
+        // "1bad")` defines `:ok` and THEN raises, so the check cannot be
+        // hoisted out of the loop.
+        check_attr_name(name)?;
         if kind != AttrKind::Writer {
             let key: Arc<str> = Arc::from(name.name().as_str());
             let getter = RProc::with_self(
@@ -1731,6 +1756,9 @@ pub fn runtime_extend(recv: &RubyValue, module_val: &RubyValue) -> Result<RubyVa
 /// own `extend_object` when it overrides one, the default splice otherwise.
 /// Shared with the singleton-class path, which sends a different hook.
 fn extend_object_or_primitive(recv: &RubyValue, module_val: &RubyValue) -> Result<(), Signal> {
+    // `extend` IS `singleton_class.include`, so it takes the same guard: a
+    // Class passes the `RubyValue::Class` test and used to be accepted.
+    check_module_arg(module_val)?;
     let RubyValue::Class(mid) = module_val else {
         return Err(type_error!(
             "wrong argument type {} (expected Module)",
@@ -2019,6 +2047,38 @@ pub(super) enum Placement {
     After,
 }
 
+/// CRuby's `rb_include_module` type guard. A CLASS passes the
+/// `RubyValue::Class` test -- classes and modules share the variant -- so
+/// the check has to ask what KIND it is, which is why `include String` used
+/// to be spliced silently.
+fn check_module_arg(module_val: &RubyValue) -> Result<(), Signal> {
+    let is_module = matches!(module_val, RubyValue::Class(mid)
+        if crate::dispatch::class_is_module(*mid).unwrap_or(false));
+    if is_module {
+        return Ok(());
+    }
+    Err(type_error!(
+        "wrong argument type {} (expected Module)",
+        crate::builtins::check_type_name(module_val)
+    ))
+}
+
+/// CRuby's `cyclic include detected`: including a module that already has
+/// the target in its own chain -- `m.include(m)` included.
+fn check_mixin_cycle(cid: ClassId, module_val: &RubyValue) -> Result<(), Signal> {
+    let RubyValue::Class(mid) = module_val else {
+        return Ok(());
+    };
+    let cycles = *mid == cid
+        || crate::dispatch::ancestors_of_value(*mid)
+            .iter()
+            .any(|&a| a == cid);
+    match cycles {
+        true => Err(arg_error!("cyclic include detected")),
+        false => Ok(()),
+    }
+}
+
 fn mix_in(
     recv: &RubyValue,
     modules: &[RubyValue],
@@ -2069,8 +2129,19 @@ fn mix_in(
         }
         return Ok(recv.clone());
     }
+    // CRuby validates EVERY argument in one loop and splices in a second,
+    // which is observable: `include(SomeModule, SomeClass)` splices nothing
+    // at all. Frozen sits BETWEEN the type check and the cycle check, which
+    // is observable too -- a frozen class given a Class raises TypeError and
+    // given a Module raises FrozenError.
+    for module_val in modules {
+        check_module_arg(module_val)?;
+    }
     if crate::dispatch::class_frozen(*cid) {
         return Err(crate::dispatch::frozen_class_error(*cid));
+    }
+    for module_val in modules {
+        check_mixin_cycle(*cid, module_val)?;
     }
     // ONE multi-argument call keeps its arguments in source order --
     // `include A, B` is `[self, A, B]` and `prepend A, B` is `[A, B, self]`

@@ -208,6 +208,26 @@ ruby_module! {
     module_function def "require_relative" (_recv, arg1) {
         dynamic_require_relative(arg1)
     }
+    // `main.using` inside a METHOD is ruby's RuntimeError, and it is the
+    // only way this row is reached: the compile-time rewrite covers a
+    // lexical `using`, so a call landing here came from a method body --
+    // which ruby refuses too -- or from a dynamic send, which has no
+    // lexical range to rewrite. Without the row at all, the method-body
+    // case answered `NoMethodError: undefined method 'using' for main`.
+    //
+    // A frame label starting with `<` is a genuine toplevel or class body
+    // (`<main>`, `<class:K>`); anything else is a method.
+    private def "using" (_recv, _module) {
+        if crate::frames::current_frame_label().is_some_and(|l| !l.starts_with('<')) {
+            return Err(crate::dispatch::raise_error(
+                "RuntimeError",
+                "main.using is permitted only at toplevel".to_string(),
+            ));
+        }
+        Err(crate::builtins::not_impl_error!(
+            "Kernel#using cannot be reached through a runtime send: zeo activates refinements at compile time"
+        ))
+    }
     private def "pp" params "*objs" (_recv, *args, &_block) {
         kernel_pp(args)
     }
@@ -1295,6 +1315,13 @@ pub(crate) fn sleep_impl(args: &[RubyValue]) -> Result<RubyValue, Signal> {
         Some(RubyValue::Int(n)) if *n >= 0 => Some(*n as f64),
         Some(RubyValue::Float(f)) if *f >= 0.0 => Some(*f),
         None => None,
+        // A NEGATIVE number is an ArgumentError about the interval, not a
+        // TypeError about the type: the value converted fine, it is just
+        // out of range. Folded in with the non-numeric arm, it reported
+        // `can't convert Integer into time interval` for `sleep(-1)`.
+        Some(RubyValue::Int(_) | RubyValue::Float(_)) => {
+            return Err(arg_error!("time interval must not be negative"));
+        }
         Some(other) => {
             return Err(type_error!(
                 "can't convert {} into time interval",
