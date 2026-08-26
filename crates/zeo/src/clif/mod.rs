@@ -21,6 +21,7 @@ pub mod emit;
 pub(crate) mod eval;
 pub(crate) mod expr;
 pub(crate) mod ffi;
+pub(crate) mod frames;
 pub(crate) mod iter;
 pub(crate) mod ivars;
 pub(crate) mod module;

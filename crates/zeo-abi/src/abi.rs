@@ -133,6 +133,11 @@ pub const FRAME_POOL_MARK: usize = 40;
 /// `Frame.pool_mark`'s "no pool scope" sentinel.
 pub const FRAME_NO_MARK: u32 = u32::MAX;
 
+/// The `zeo_rt_gates` bit emitted frame prologues test
+/// (`GATE_FRAMES_INDIRECT` in `zeo-rt`): set = frame push/pop/set_line
+/// must go through capi (trace events, pending-label handover).
+pub const GATE_FRAMES_INDIRECT_BIT: u16 = 512;
+
 // --- The C-side program description -----------------------------------------
 //
 // Everything below crosses the boundary as `.rodata` tables pointed to by one

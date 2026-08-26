@@ -728,11 +728,10 @@ fn define_block_fn(
         let label_ptr = bfx.rod(label_off);
         let label_len = bfx.b.ins().iconst(ptr_ty, label.len() as i64);
         let line_v = bfx.b.ins().iconst(types::I32, i64::from(line));
-        let status = bfx.call_status(
-            "zeo_rt_frame_enter",
+        super::frames::emit_frame_enter(
+            &mut bfx,
             &[file_ptr, file_len, label_ptr, label_len, line_v, line_v],
         );
-        bfx.fallible(status);
     } else {
         bfx.check_ints();
     }
@@ -974,7 +973,7 @@ fn define_block_fn(
         bfx.b.ins().jump(cont, &[]);
         bfx.b.switch_to_block(cont);
         if has_frame {
-            bfx.call("zeo_rt_frame_pop", &[]);
+            super::frames::emit_frame_pop(bfx);
         }
         if publishes_eval_home {
             bfx.call("zeo_rt_eval_home_pop", &[]);

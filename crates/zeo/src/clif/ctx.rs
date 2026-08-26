@@ -91,6 +91,12 @@ pub(crate) struct Fx<'e, 'f> {
     /// node answers its condition bit directly instead of boxing a Bool.
     /// Keyed by id so routing stays in `lower_expr` and nothing can drift.
     pub branch_cond: Option<crate::hir::NodeId>,
+    /// The thread's `FrameHot` header address (`zeo_rt_frame_hot`), fetched
+    /// once in the prologue by `frames::fetch_frame_hot`; `None` in a
+    /// function whose prologue pushed no frame -- the inline frame
+    /// sequences then fall back to their capi calls (a mid-function fetch
+    /// would not dominate its other users).
+    pub frame_hot: Option<ir::Value>,
     pub prev_line: Option<u32>,
     /// The stamped statement's FILE, tracked beside `prev_line` for line
     /// coverage: a statement that begins a spliced file is what marks the
@@ -252,6 +258,7 @@ impl<'e, 'f> Fx<'e, 'f> {
             temp_taken: Vec::new(),
             loops: Vec::new(),
             branch_cond: None,
+            frame_hot: None,
             prev_line: None,
             prev_file: None,
             self_ptr: None,

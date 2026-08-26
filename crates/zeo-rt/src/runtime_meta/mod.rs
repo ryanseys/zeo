@@ -401,8 +401,9 @@ const GATE_MRO_DUPLICATES: u16 = 256;
 /// path deliberately skips. Monotone like the others; a program that
 /// traces once keeps callee-framed prologues, which is the price of
 /// tracing, not of the fast path. NOT in [`GATE_LIVE_MASK`]: frames are
-/// orthogonal to dispatch caching.
-const GATE_FRAMES_INDIRECT: u16 = 512;
+/// orthogonal to dispatch caching. The VALUE is ABI -- the emitter bakes
+/// the same bit into every prologue's test.
+const GATE_FRAMES_INDIRECT: u16 = zeo_abi::abi::GATE_FRAMES_INDIRECT_BIT;
 const GATE_LIVE_MASK: u16 = GATE_OVERLAY | GATE_PENDING | GATE_MRO_DUPLICATES;
 /// What forbids a fused-iterator splice, apart from the receiver's own
 /// patched state.

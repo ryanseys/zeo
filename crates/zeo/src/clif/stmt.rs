@@ -70,10 +70,7 @@ fn singleton_frame(
     let llen = fx.b.ins().iconst(fx.em.ptr, label.len() as i64);
     let line_v = fx.b.ins().iconst(types::I32, i64::from(line));
     let end_v = fx.b.ins().iconst(types::I32, i64::from(end_line));
-    fx.call(
-        "zeo_rt_frame_push",
-        &[fptr, flen, lptr, llen, line_v, end_v],
-    );
+    super::frames::emit_frame_push(fx, &[fptr, flen, lptr, llen, line_v, end_v]);
     // The error path pops this frame before the enclosing landing runs.
     let outer_land = fx.land;
     let pop_land = fx.b.create_block();
@@ -85,11 +82,11 @@ fn singleton_frame(
     fx.land = outer_land;
     fx.prev_line = saved_line;
     r?;
-    fx.call("zeo_rt_frame_pop", &[]);
+    super::frames::emit_frame_pop(fx);
     let after = fx.b.create_block();
     fx.b.ins().jump(after, &[]);
     fx.b.switch_to_block(pop_land);
-    fx.call("zeo_rt_frame_pop", &[]);
+    super::frames::emit_frame_pop(fx);
     fx.b.ins().jump(outer_land, &[]);
     fx.b.switch_to_block(after);
     Ok(())
@@ -1577,7 +1574,7 @@ pub(crate) fn stamp_call_line(fx: &mut Fx, site: NodeId) {
     }
     fx.prev_line = Some(line);
     let v = fx.b.ins().iconst(types::I32, i64::from(line));
-    fx.call("zeo_rt_set_line", &[v]);
+    super::frames::emit_set_line(fx, v);
 }
 
 /// Stamp a `set_line` only when the statement's line differs from the
@@ -1614,7 +1611,7 @@ fn stamp_line(fx: &mut Fx, stmt: NodeId) {
     fx.prev_line = Some(line);
     fx.prev_file = Some(file.clone());
     let v = fx.b.ins().iconst(types::I32, i64::from(line));
-    fx.call("zeo_rt_set_line", &[v]);
+    super::frames::emit_set_line(fx, v);
     // Line coverage's one hit per stamped statement -- a program without
     // the `require` emits nothing here at all.
     if fx.em.cov_active {

@@ -440,12 +440,12 @@ pub(super) fn define_method_body(
         let end_v = fx.b.ins().iconst(types::I32, i64::from(end_line));
         let args = [file_ptr, file_len, label_ptr, label_len, line_v, end_v];
         if needs_svar {
-            fx.call("zeo_rt_frame_push", &args);
+            super::frames::fetch_frame_hot(&mut fx);
+            super::frames::emit_frame_push(&mut fx, &args);
             fx.call("zeo_rt_svar_scope_push", &[]);
             fx.check_ints();
         } else {
-            let status = fx.call_status("zeo_rt_frame_enter", &args);
-            fx.fallible(status);
+            super::frames::emit_frame_enter(&mut fx, &args);
         }
     } else {
         if needs_svar {
@@ -523,7 +523,7 @@ pub(super) fn define_method_body(
             fx.b.switch_to_block(cont);
         }
         if has_frame {
-            fx.call("zeo_rt_frame_pop", &[]);
+            super::frames::emit_frame_pop(fx);
         }
         if needs_svar {
             fx.call("zeo_rt_svar_scope_pop", &[]);
@@ -704,11 +704,10 @@ pub(super) fn define_toplevel(
         let label_ptr = fx.rod(main_off);
         let label_len = fx.b.ins().iconst(fx.em.ptr, label.len() as i64);
         let zero = fx.b.ins().iconst(types::I32, 0);
-        let status = fx.call_status(
-            "zeo_rt_frame_enter",
+        super::frames::emit_frame_enter(
+            &mut fx,
             &[file_ptr, file_len, label_ptr, label_len, zero, zero],
         );
-        fx.fallible(status);
     } else {
         fx.check_ints();
     }
@@ -753,7 +752,7 @@ pub(super) fn define_toplevel(
     let epilogue = |fx: &mut Fx, status: i64| {
         release_locals(fx);
         if frame.is_some() {
-            fx.call("zeo_rt_frame_pop", &[]);
+            super::frames::emit_frame_pop(fx);
         }
         let code = fx.b.ins().iconst(types::I32, status);
         fx.b.ins().return_(&[code]);
