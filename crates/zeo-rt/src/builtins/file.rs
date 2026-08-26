@@ -24,6 +24,26 @@ pub fn raise_errno(e: &std::io::Error, syscall: &str, path: &str) -> Signal {
     raise_error(class, format!("{desc} @ {syscall} - {path}"))
 }
 
+/// The whole-file read helpers' site: CRuby OPENS (`rb_sysopen`) and then
+/// READS (`io_fread`), and only the second step can answer `EISDIR`. One
+/// Rust call covers both, so the site is picked from the errno -- otherwise
+/// `File.read(a_directory)` blamed the open, which succeeded.
+pub fn raise_read_errno(e: &std::io::Error, path: &str) -> Signal {
+    let site = match e.raw_os_error() == Some(libc::EISDIR) {
+        true => "io_fread",
+        false => "rb_sysopen",
+    };
+    raise_errno(e, site, path)
+}
+
+/// [`raise_errno`]'s two-path shape: CRuby prints BOTH operands,
+/// parenthesised -- `... @ rb_file_s_rename - (from, to)`. A rename that
+/// blamed only one of them named the wrong file half the time.
+pub fn raise_errno_pair(e: &std::io::Error, syscall: &str, a: &str, b: &str) -> Signal {
+    let (class, desc) = errno_class_and_desc(e);
+    raise_error(class, format!("{desc} @ {syscall} - ({a}, {b})"))
+}
+
 /// The same mapping with CRuby's OTHER message shape: the bare strerror, no
 /// `@ syscall - path` suffix. That is what a failing `close(2)` reports --
 /// `Errno::EBADF, "Bad file descriptor"` -- because the operation names no
@@ -650,7 +670,7 @@ pub(crate) fn expand_path_of(path: &str, base: Option<&str>) -> Result<String, S
             std::env::var("HOME").unwrap_or_default()
         } else {
             return Err(arg_error!(
-                "can't find user {}",
+                "user {} doesn't exist",
                 rest.split('/').next().unwrap_or("")
             ));
         }
@@ -813,7 +833,7 @@ fn world_perm(path: &str, bit: libc::mode_t) -> RubyValue {
 /// symlink (`lstat`), as CRuby's fixed strings.
 fn ftype_string(path: &str) -> Result<&'static str, Signal> {
     use std::os::unix::fs::FileTypeExt;
-    let md = std::fs::symlink_metadata(path).map_err(|e| raise_errno(&e, "lstat", path))?;
+    let md = std::fs::symlink_metadata(path).map_err(|e| raise_errno(&e, "rb_file_s_lstat", path))?;
     let ft = md.file_type();
     Ok(if ft.is_symlink() {
         "link"
@@ -1033,7 +1053,7 @@ ruby_class! {
     def self."read" cfunc (_recv, path, length?, offset?, opt?) {
         let path = path_arg(path, "read")?;
         let mut bytes = crate::gvl::without_gvl(|| std::fs::read(&path))
-            .map_err(|e| raise_errno(&e, "rb_sysopen", &path))?;
+            .map_err(|e| raise_read_errno(&e, &path))?;
         // `File.read(path, length, offset)`: drop `offset` leading bytes, then
         // cap at `length` (an Integer positional; a trailing Hash is options).
         if let Some(RubyValue::Int(off)) = offset {
@@ -1050,7 +1070,7 @@ ruby_class! {
     def self."binread" cfunc (_recv, path, length?, offset?) {
         let path = path_arg(path, "binread")?;
         let mut bytes = crate::gvl::without_gvl(|| std::fs::read(&path))
-            .map_err(|e| raise_errno(&e, "rb_sysopen", &path))?;
+            .map_err(|e| raise_read_errno(&e, &path))?;
         // Same window as `File.read`: skip `offset` bytes, then cap at
         // `length`. An offset past the end answers nil rather than "".
         let past_end = matches!(offset, Some(RubyValue::Int(off)) if (*off).max(0) as usize >= bytes.len());
@@ -1076,7 +1096,7 @@ ruby_class! {
     def self."readlines" cfunc (_recv, path, sep?, opt?) {
         let path = path_arg(path, "readlines")?;
         let bytes = crate::gvl::without_gvl(|| std::fs::read(&path))
-            .map_err(|e| raise_errno(&e, "rb_sysopen", &path))?;
+            .map_err(|e| raise_read_errno(&e, &path))?;
         // A String positional after the path is the record separator (default
         // "\n"); `chomp: true` (trailing Hash) strips it.
         let chomp = kwarg_truthy(opt.or(sep), "chomp");
@@ -1092,7 +1112,7 @@ ruby_class! {
         let path = path_arg(path, "foreach")?;
         let p = block_or_enum!(recv, __args, block);
         let bytes = crate::gvl::without_gvl(|| std::fs::read(&path))
-            .map_err(|e| raise_errno(&e, "rb_sysopen", &path))?;
+            .map_err(|e| raise_read_errno(&e, &path))?;
         let chomp = kwarg_truthy(opt.or(sep), "chomp");
         // Through the same (sep, limit) reader `readlines` uses: this used to
         // split on newlines unconditionally, so an explicit separator was
@@ -1126,8 +1146,8 @@ ruby_class! {
             v => crate::builtins::convert::to_index(v)?,
         };
         let f = std::fs::OpenOptions::new().write(true).open(&path)
-            .map_err(|e| raise_errno(&e, "truncate", &path))?;
-        f.set_len((*len).max(0) as u64).map_err(|e| raise_errno(&e, "truncate", &path))?;
+            .map_err(|e| raise_errno(&e, "rb_file_s_truncate", &path))?;
+        f.set_len((*len).max(0) as u64).map_err(|e| raise_errno(&e, "rb_file_s_truncate", &path))?;
         Ok(RubyValue::Int(0))
     }
     // `File.absolute_path(path [, base])` -- like `expand_path` but WITHOUT
@@ -1295,10 +1315,10 @@ ruby_class! {
     // `File.atime(path)` -- last access time as a Time.
     def self."atime" (_recv, arg) {
         let path = path_arg(arg, "atime")?;
-        let m = std::fs::metadata(&path).map_err(|e| raise_errno(&e, "atime", &path))?;
+        let m = std::fs::metadata(&path).map_err(|e| raise_errno(&e, "rb_file_s_atime", &path))?;
         let t = m
             .accessed()
-            .map_err(|e| raise_errno(&e, "atime", &path))?
+            .map_err(|e| raise_errno(&e, "rb_file_s_atime", &path))?
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|_| crate::builtins::system_call_error!("atime before the epoch"))?;
         Ok(crate::builtins::time::time_from_parts(t.as_secs() as i64, t.subsec_nanos()))
@@ -1308,7 +1328,7 @@ ruby_class! {
     def self."ctime" (_recv, arg) {
         use std::os::unix::fs::MetadataExt;
         let path = path_arg(arg, "ctime")?;
-        let m = std::fs::metadata(&path).map_err(|e| raise_errno(&e, "ctime", &path))?;
+        let m = std::fs::metadata(&path).map_err(|e| raise_errno(&e, "rb_file_s_ctime", &path))?;
         Ok(crate::builtins::time::time_from_parts(m.ctime(), m.ctime_nsec() as u32))
     }
     // `File.world_readable?`/`world_writable?` -- the low permission bits
@@ -1322,10 +1342,10 @@ ruby_class! {
     // `File.birthtime(path)` -- the creation time as a Time (st_birthtime).
     def self."birthtime" (_recv, arg) {
         let path = path_arg(arg, "birthtime")?;
-        let m = std::fs::metadata(&path).map_err(|e| raise_errno(&e, "birthtime", &path))?;
+        let m = std::fs::metadata(&path).map_err(|e| raise_errno(&e, "rb_file_s_birthtime", &path))?;
         let t = m
             .created()
-            .map_err(|e| raise_errno(&e, "birthtime", &path))?
+            .map_err(|e| raise_errno(&e, "rb_file_s_birthtime", &path))?
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|_| crate::builtins::system_call_error!("birthtime before the epoch"))?;
         Ok(crate::builtins::time::time_from_parts(t.as_secs() as i64, t.subsec_nanos()))
@@ -1334,14 +1354,14 @@ ruby_class! {
     def self."link" (_recv, arg1, arg2) {
         let old = path_arg(arg1, "link")?;
         let new = path_arg(arg2, "link")?;
-        std::fs::hard_link(&old, &new).map_err(|e| raise_errno(&e, "link", &new))?;
+        std::fs::hard_link(&old, &new).map_err(|e| raise_errno(&e, "syserr_fail2_in", &new))?;
         Ok(RubyValue::Int(0))
     }
     // `File.realpath(path [, dir])` -- the absolute, symlink-resolved path.
     // Every component, the last one included, must exist.
     def self."realpath" cfunc (_recv, path, dir?) {
         let joined = realpath_join(path, dir, "realpath")?;
-        let real = std::fs::canonicalize(&joined).map_err(|e| raise_errno(&e, "realpath", &joined))?;
+        let real = std::fs::canonicalize(&joined).map_err(|e| raise_errno(&e, "rb_check_realpath_internal", &joined))?;
         Ok(str_val(real.to_string_lossy().into_owned()))
     }
     // `File.realdirpath(path [, dir])` -- `realpath` where only the DIRECTORY
@@ -1370,7 +1390,7 @@ ruby_class! {
     def self."symlink" (_recv, arg1, arg2) {
         let target = path_arg(arg1, "symlink")?;
         let link = path_arg(arg2, "symlink")?;
-        std::os::unix::fs::symlink(&target, &link).map_err(|e| raise_errno(&e, "symlink", &link))?;
+        std::os::unix::fs::symlink(&target, &link).map_err(|e| raise_errno(&e, "syserr_fail2_in", &link))?;
         Ok(RubyValue::Int(0))
     }
     def self."symlink?" (_recv, arg) {
@@ -1401,7 +1421,7 @@ ruby_class! {
     // `File.readlink(link)` -- the path a symlink points to.
     def self."readlink" (_recv, arg) {
         let p = path_arg(arg, "readlink")?;
-        let target = std::fs::read_link(&p).map_err(|e| raise_errno(&e, "readlink", &p))?;
+        let target = std::fs::read_link(&p).map_err(|e| raise_errno(&e, "rb_readlink", &p))?;
         Ok(str_val(target.to_string_lossy().into_owned()))
     }
     // `File.utime(atime, mtime, *paths)` -- set each file's access and
@@ -1419,7 +1439,7 @@ ruby_class! {
                 .map_err(|_| arg_error!("string contains null byte"))?;
             // SAFETY: `c` is a valid NUL-terminated path, `tv` a 2-element array.
             if unsafe { libc::utimes(c.as_ptr(), tv.as_ptr()) } != 0 {
-                return Err(raise_errno(&std::io::Error::last_os_error(), "utime", &path));
+                return Err(raise_errno(&std::io::Error::last_os_error(), "apply2files", &path));
             }
         }
         Ok(RubyValue::Int(paths.len() as i64))
@@ -1441,7 +1461,7 @@ ruby_class! {
                 libc::utimensat(libc::AT_FDCWD, c.as_ptr(), tv.as_ptr(), libc::AT_SYMLINK_NOFOLLOW)
             };
             if rc != 0 {
-                return Err(raise_errno(&std::io::Error::last_os_error(), "lutime", &path));
+                return Err(raise_errno(&std::io::Error::last_os_error(), "apply2files", &path));
             }
         }
         Ok(RubyValue::Int(paths.len() as i64))
@@ -1457,7 +1477,7 @@ ruby_class! {
                 .map_err(|_| arg_error!("string contains null byte"))?;
             // SAFETY: `c` is a valid NUL-terminated path.
             if unsafe { libc::chown(c.as_ptr(), uid, gid) } != 0 {
-                return Err(raise_errno(&std::io::Error::last_os_error(), "chown", &path));
+                return Err(raise_errno(&std::io::Error::last_os_error(), "apply2files", &path));
             }
         }
         Ok(RubyValue::Int(paths.len() as i64))
@@ -1471,7 +1491,7 @@ ruby_class! {
                 .map_err(|_| arg_error!("string contains null byte"))?;
             // SAFETY: `c` is a valid NUL-terminated path.
             if unsafe { libc::lchown(c.as_ptr(), uid, gid) } != 0 {
-                return Err(raise_errno(&std::io::Error::last_os_error(), "lchown", &path));
+                return Err(raise_errno(&std::io::Error::last_os_error(), "apply2files", &path));
             }
         }
         Ok(RubyValue::Int(paths.len() as i64))
@@ -1486,7 +1506,7 @@ ruby_class! {
             let c = std::ffi::CString::new(path.clone())
                 .map_err(|_| arg_error!("string contains null byte"))?;
             if !lchmod_at(&c, mode) {
-                return Err(raise_errno(&std::io::Error::last_os_error(), "lchmod", &path));
+                return Err(raise_errno(&std::io::Error::last_os_error(), "apply2files", &path));
             }
         }
         Ok(RubyValue::Int(paths.len() as i64))
@@ -1525,7 +1545,7 @@ ruby_class! {
         for p in paths {
             let path = path_arg(p, "chmod")?;
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(*mode as u32))
-                .map_err(|e| raise_errno(&e, "chmod", &path))?;
+                .map_err(|e| raise_errno(&e, "apply2files", &path))?;
         }
         Ok(RubyValue::Int(paths.len() as i64))
     }
@@ -1538,7 +1558,7 @@ ruby_class! {
         let mut n = 0;
         for a in args {
             let path = path_arg(a, "delete")?;
-            std::fs::remove_file(&path).map_err(|e| raise_errno(&e, "unlink", &path))?;
+            std::fs::remove_file(&path).map_err(|e| raise_errno(&e, "apply2files", &path))?;
             n += 1;
         }
         Ok(RubyValue::Int(n))
@@ -1546,7 +1566,8 @@ ruby_class! {
     def self."rename" (_recv, arg1, arg2) {
         let from = path_arg(arg1, "rename")?;
         let to = path_arg(arg2, "rename")?;
-        std::fs::rename(&from, &to).map_err(|e| raise_errno(&e, "rename", &from))?;
+        std::fs::rename(&from, &to)
+            .map_err(|e| raise_errno_pair(&e, "rb_file_s_rename", &from, &to))?;
         Ok(RubyValue::Int(0))
     }
     // --- The pure-path family: string work, never touches the disk --------
@@ -1673,7 +1694,7 @@ ruby_class! {
         crate::builtins::io::with_file(recv, |f, path| {
             // SAFETY: `f` owns a valid fd for the call's duration.
             if unsafe { libc::fchown(f.as_raw_fd(), uid, gid) } != 0 {
-                return Err(raise_errno(&std::io::Error::last_os_error(), "chown", path));
+                return Err(raise_errno(&std::io::Error::last_os_error(), "apply2files", path));
             }
             Ok(RubyValue::Int(0))
         })
@@ -1686,7 +1707,7 @@ ruby_class! {
         crate::builtins::io::with_file(recv, |f, path| {
             // SAFETY: `f` owns a valid fd for the call's duration.
             if unsafe { libc::fchmod(f.as_raw_fd(), mode as libc::mode_t) } != 0 {
-                return Err(raise_errno(&std::io::Error::last_os_error(), "chmod", path));
+                return Err(raise_errno(&std::io::Error::last_os_error(), "apply2files", path));
             }
             Ok(RubyValue::Int(0))
         })
@@ -1697,7 +1718,7 @@ ruby_class! {
         let len = crate::builtins::io::offset_of(length)?;
         crate::builtins::io::with_file(recv, |f, path| {
             f.set_len(len.max(0) as u64)
-                .map_err(|e| raise_errno(&e, "truncate", path))?;
+                .map_err(|e| raise_errno(&e, "rb_file_s_truncate", path))?;
             Ok(RubyValue::Int(0))
         })
     }

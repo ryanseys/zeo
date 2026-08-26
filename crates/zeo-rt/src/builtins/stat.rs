@@ -127,7 +127,12 @@ fn payload_from_path(path: &str, follow: bool) -> Result<StatPayload, Signal> {
         }
     };
     if rc != 0 {
-        let syscall = if follow { "stat" } else { "lstat" };
+        // CRuby's own C function, which is what an Errno message names.
+        let syscall = if follow {
+            "rb_file_s_stat"
+        } else {
+            "rb_file_s_lstat"
+        };
         return Err(crate::builtins::file::raise_errno(
             &std::io::Error::last_os_error(),
             syscall,

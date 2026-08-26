@@ -637,14 +637,18 @@ ruby_class! {
         };
         // The block form restores the previous directory afterwards, even if
         // the block raises -- CRuby's own contract.
+        // The two forms name DIFFERENT C functions in their Errno message --
+        // `dir_chdir0` with a block, `chdir_path` without -- so the two arms
+        // cannot share one site name.
         if let Some(RubyValue::Proc(p)) = block {
             let prev = std::env::current_dir().map_err(|e| raise_errno(&e, "getcwd", "."))?;
-            std::env::set_current_dir(&target).map_err(|e| raise_errno(&e, "chdir", &target))?;
+            std::env::set_current_dir(&target)
+                .map_err(|e| raise_errno(&e, "dir_chdir0", &target))?;
             let r = p.call(&[str_val(target)]);
             let _ = std::env::set_current_dir(prev);
             return r;
         }
-        std::env::set_current_dir(&target).map_err(|e| raise_errno(&e, "chdir", &target))?;
+        std::env::set_current_dir(&target).map_err(|e| raise_errno(&e, "chdir_path", &target))?;
         Ok(RubyValue::Int(0))
     }
     // `entries` INCLUDES `.` and `..`; `children` excludes them.

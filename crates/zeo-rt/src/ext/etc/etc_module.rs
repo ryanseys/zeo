@@ -69,7 +69,12 @@ ruby_module! {
         let _g = PWDB_LOCK.lock();
         let pw = unsafe { libc::getpwnam(name.as_ptr()) };
         if pw.is_null() {
-            return Err(arg_error!("can't find user for {}", (*arg).inspect_string()));
+            // The NAME, not its inspect: ruby prints `can't find user for
+            // nobody`, without quotes around it.
+            return Err(arg_error!(
+                "can't find user for {}",
+                name.to_string_lossy()
+            ));
         }
         Ok(unsafe { passwd_from(pw) })
     }
