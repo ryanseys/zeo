@@ -1145,56 +1145,6 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
                 ruby2_keywords: scope.ruby2_keywords,
             });
         }
-        // Every body of a method with an observable redefinition
-        // timeline: the superseded ones AND the
-        // final one, each installed at its own document position.
-        for &(sid, singleton) in &class.redef_scopes {
-            let scope = compiler.scope(sid);
-            let mname = scope.name.clone();
-            let refuse_r = |what: &str| {
-                Err(CodegenError::unsupported(
-                    format!("the CLIF backend cannot lower {what} yet ({name}#{mname})"),
-                    scope.def_node.and_then(|n| compiler.hir.span(n)),
-                ))
-            };
-            let p = &scope.params;
-            if let Err(what) = super::emit::check_params(p) {
-                return refuse_r(what);
-            }
-            let layout = super::params::layout_of(p)?;
-            let has_blk = scope.needs_block_param();
-            let suffix = format!("__redef_{}_{mname}", sid.0);
-            let tramp = em
-                .module
-                .declare_function(
-                    &names::trampoline_symbol(&sym, &suffix),
-                    Linkage::Local,
-                    &params::value_fn_sig(em),
-                )
-                .map_err(|e| CodegenError::internal(format!("declaring {name}#{mname}: {e}")))?;
-            let body_fn = em
-                .module
-                .declare_function(
-                    &names::method_symbol(&sym, &suffix),
-                    Linkage::Local,
-                    &params::body_sig(em, layout.n_slots, has_blk),
-                )
-                .map_err(|e| CodegenError::internal(format!("declaring {name}#{mname}: {e}")))?;
-            redefs.push(RedefSpec {
-                owner: ClassId(idx as u32),
-                owner_name: name.clone(),
-                scope: sid,
-                name: mname,
-                body: scope.body.clone(),
-                node: scope.def_node,
-                tramp,
-                body_fn,
-                hir_params: p.clone(),
-                has_blk,
-                ruby2_keywords: scope.ruby2_keywords,
-                singleton,
-            });
-        }
         emit_singleton_super_targets(
             compiler,
             em,
@@ -1214,6 +1164,14 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
     // `undef` marks, every class including the toplevel. Vis rows apply in
     // order, and this pass runs after every per-method stamp above, so the
     // override wins.
+    for (idx, class) in compiler.classes.iter().enumerate() {
+        if class.redef_scopes.is_empty() {
+            continue;
+        }
+        let name = compiler.fq_name(crate::compiler::ClassId(idx as u32));
+        let sym = super::names::boxed_owner(&name, class.box_id);
+        collect_redef_scopes(compiler, em, class, idx, &name, &sym, &mut redefs)?;
+    }
     let mut undef_rows: Vec<(u32, String)> = Vec::new();
     for (idx, class) in compiler.classes.iter().enumerate() {
         if (class.is_builtin || class.is_bootstrap)
@@ -1302,6 +1260,75 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
 /// builtin extended with a module needs exactly the same rows, and
 /// `minitest` reopens `Warning` that way.
 #[allow(clippy::too_many_arguments)]
+
+/// Declare a trampoline and body function for every body of a method with
+/// an observable redefinition timeline -- the superseded ones AND the final
+/// one, each installed at its own document position by a spliced
+/// `MethodRedefine`.
+///
+/// A pass of its own rather than a block inside the per-class emission loop,
+/// because that loop skips a BUILTIN outright and a builtin reopened twice
+/// needs these too. Everything else a builtin reopen needs is already
+/// emitted elsewhere; this is the one part it shares with a user class.
+fn collect_redef_scopes(
+    compiler: &crate::compiler::Compiler,
+    em: &mut Emitter,
+    class: &crate::compiler::ClassInfo,
+    idx: usize,
+    name: &str,
+    sym: &str,
+    redefs: &mut Vec<RedefSpec>,
+) -> CResult<()> {
+    for &(sid, singleton) in &class.redef_scopes {
+        let scope = compiler.scope(sid);
+        let mname = scope.name.clone();
+        let refuse_r = |what: &str| {
+            Err(CodegenError::unsupported(
+                format!("the CLIF backend cannot lower {what} yet ({name}#{mname})"),
+                scope.def_node.and_then(|n| compiler.hir.span(n)),
+            ))
+        };
+        let p = &scope.params;
+        if let Err(what) = super::emit::check_params(p) {
+            return refuse_r(what);
+        }
+        let layout = super::params::layout_of(p)?;
+        let has_blk = scope.needs_block_param();
+        let suffix = format!("__redef_{}_{mname}", sid.0);
+        let tramp = em
+            .module
+            .declare_function(
+                &names::trampoline_symbol(&sym, &suffix),
+                Linkage::Local,
+                &params::value_fn_sig(em),
+            )
+            .map_err(|e| CodegenError::internal(format!("declaring {name}#{mname}: {e}")))?;
+        let body_fn = em
+            .module
+            .declare_function(
+                &names::method_symbol(&sym, &suffix),
+                Linkage::Local,
+                &params::body_sig(em, layout.n_slots, has_blk),
+            )
+            .map_err(|e| CodegenError::internal(format!("declaring {name}#{mname}: {e}")))?;
+        redefs.push(RedefSpec {
+            owner: ClassId(idx as u32),
+            owner_name: name.to_string(),
+            scope: sid,
+            name: mname,
+            body: scope.body.clone(),
+            node: scope.def_node,
+            tramp,
+            body_fn,
+            hir_params: p.clone(),
+            has_blk,
+            ruby2_keywords: scope.ruby2_keywords,
+            singleton,
+        });
+    }
+    Ok(())
+}
+
 fn emit_singleton_super_targets(
     compiler: &crate::compiler::Compiler,
     em: &mut Emitter,

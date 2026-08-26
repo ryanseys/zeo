@@ -164,6 +164,22 @@ pub fn runtime_replace_method(id: ClassId, name: Symbol, f: crate::dispatch::Met
 /// `ValueFn`, so the overlay entry is a `CValue`.
 pub fn runtime_replace_method_c(id: ClassId, name: Symbol, f: crate::capi::ValueFn) {
     replace_method_impl(id, name, crate::dispatch::MethodImpl::CValue(f));
+    // A BUILTIN's instances dispatch through `value_bodies`, not `methods` --
+    // the two overlay maps serve the two receiver shapes, and `define_method`
+    // has always written both. Without this half a positional redefinition of
+    // a builtin method installed a row nothing read, so `"x".shout` kept
+    // answering the static row (the LAST body) from program start.
+    if zeo_abi::builtin_name(id).is_some() {
+        let body = RProc::with_self_and_block(
+            crate::dispatch::ValueImpl::C(f).into_fn(),
+            RubyValue::Nil,
+            -1,
+            true,
+        );
+        let mut w = maps().classes.write().unwrap();
+        let e = w.entry(id.0).or_insert_with(OverlayEntry::delta);
+        e.value_bodies.insert(name, body);
+    }
 }
 
 /// [`runtime_replace_method_c`]'s CLASS-METHOD twin: `f` becomes `id`'s

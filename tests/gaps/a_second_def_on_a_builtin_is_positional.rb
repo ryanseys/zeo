@@ -1,27 +1,27 @@
-# A SECOND `def` of the same name on a builtin class or module is not
-# positional: the last body answers from program start, so a call written
-# between the two reopens gets the wrong one. Wrong values, clean exit.
+# A second `def` of the same name on a MODULE is not positional. The class
+# case is fixed -- `class Array` and `class String` below both answer their
+# first body in the window between the two reopens, and ruby's answer for
+# the whole Array and String halves matches. What is left is `Kernel`.
 #
-# The first `def` over a builtin already IS positional --
-# `tests/a_later_def_on_a_builtin_reaches_back.rb` records that mechanism:
-# one `.bss` byte per `(builtin class, method name)` in `zeo_reopen_flags`,
-# stored where the reopen stands, read by a prologue that forwards to the
-# native row it replaced while the byte is zero. Only ONE flag exists per
-# pair, and only the LAST body reaches the static tables, so the first
-# user body has nowhere to live.
+# WHY THE MODULE IS DIFFERENT, measured 2026-08-26. `analyze::redefs` now
+# admits a builtin, splices a `MethodRedefine` for EVERY body (a builtin's
+# first body must not install at boot -- the reopen flag keeps the native
+# row answering until the reopen stands), and the install runs at exactly
+# the right position. The class case works because a value receiver's walk
+# probes the overlay per ancestor before that ancestor's registered row.
 #
-# The shape of the fix: make the byte a COUNT rather than a boolean. Each
-# reopen stores its own 1-based ordinal at its position; body `k` runs when
-# the count is above `k` and otherwise forwards to body `k-1` (to the
-# native row for `k == 0`), which means the superseded bodies have to be
-# emitted as well. `analyze::redefs` already knows how to find them --
-# `compiler.scopes` is append-only -- but it skips `is_builtin` classes,
-# and its `counts >= 2` test is the right one to reuse.
+# A MODULE's rows are MATERIALIZED onto every class that includes it: `def
+# helper` in `module Kernel` emits `Object#helper` and 29 more copies, one
+# per including class. The walk reaches `Object`'s own copy before it ever
+# probes `Kernel`, so the overlay row the install writes is never read.
 #
-# `analyze::redefs`' own mechanism (a runtime overlay install per position)
-# is the wrong one to borrow here: it calls `mark_live()`, the global gate
-# that takes every send in the program onto the per-ancestor walk. The
-# reopen-flag design exists precisely to avoid that.
+# The fix shape: a runtime replacement on a MODULE has to reach the
+# materialized copies, the way `refresh_extended_copies` already reaches
+# the rows a per-object `extend` copied. It cannot simply overwrite every
+# descendant -- a class with its OWN `def helper` keeps its own body, so
+# the refresh must know which copies came from THIS module.
+#
+# Ruby's answer: each body answers between its own reopen and the next.
 
 class Array
   def size = 1

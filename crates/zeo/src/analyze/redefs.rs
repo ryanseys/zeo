@@ -39,10 +39,10 @@ pub fn resolve(compiler: &mut Compiler) {
     let mut candidates: Vec<(ClassId, String, bool)> = Vec::new();
     for (idx, ci) in compiler.classes.iter().enumerate() {
         let cid = ClassId(idx as u32);
-        // Plain generated-struct classes only -- the one registration shape
-        // whose methods are reachable as inherent fns for a trampoline.
+        // Plain generated-struct classes, plus a BUILTIN reopened twice --
+        // the shapes whose methods are reachable as inherent fns for a
+        // trampoline. The other builtin-backed registrations are not.
         if idx == 0
-            || ci.is_builtin
             || ci.is_bootstrap
             || compiler.is_exception_backed(cid)
             || compiler.is_value_subclass(cid)
@@ -129,9 +129,18 @@ pub fn resolve(compiler: &mut Compiler) {
         }
 
         compiler.runtime_patches.insert(name.clone());
-        compiler
-            .positional_redefs
-            .push((cid, name.clone(), rows[0].1, singleton));
+        // A BUILTIN's first body does not install at boot. Before its own
+        // `class Array ... end` runs, the name must still answer the NATIVE
+        // row -- which the reopen flag already arranges, since the static
+        // row forwards while the byte reads zero. So a builtin splices an
+        // install for EVERY body, the first included, and the window above
+        // the first reopen keeps the row it was born with.
+        let builtin = compiler.class(cid).is_builtin;
+        if !builtin {
+            compiler
+                .positional_redefs
+                .push((cid, name.clone(), rows[0].1, singleton));
+        }
         // Every body, the final one included: even the last redefinition
         // re-installs at its position, and all installs go through the
         // receiver-generic free-function emission.
@@ -146,7 +155,7 @@ pub fn resolve(compiler: &mut Compiler) {
         // Bump every later-or-equal `at` in the site so `def_hooks`' splice
         // -- which reads these same records afterwards -- puts the
         // redefinition's own hook AFTER its install.
-        for k in 1..rows.len() {
+        for k in usize::from(!builtin)..rows.len() {
             let (si, di, _) = defs[k];
             let (def_at, def_seq) = {
                 let d = &compiler.class_body_sites[si].defs[di];
