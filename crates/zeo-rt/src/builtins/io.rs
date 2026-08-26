@@ -545,6 +545,11 @@ pub fn current_stderr() -> RubyValue {
 /// `to_utf8_lossy` promotes `0xB4` to `0xC2 0xB4`, which corrupted every
 /// binary-image benchmark's output; see `write_value`).
 fn write_rio(io: &RIo, bytes: &[u8]) -> Result<(), Signal> {
+    // BEFORE the descriptor is touched: a read-only handle written to is an
+    // `IOError` in ruby, not the kernel's `EBADF`.
+    if matches!(access_mode(io), Some((_, false))) {
+        return Err(io_error!("not opened for writing"));
+    }
     // Gvl-released like `with_file`: a write to a full pipe blocks until
     // the reader drains it, and an armed holder must not stall siblings
     // behind that.
@@ -899,6 +904,47 @@ fn select_ready(
 /// siblings behind it. The whole lock-op-unlock section releases as one
 /// unit; contention on the SAME IO still serializes on its backend lock
 /// (CRuby serializes per-fd operations too).
+/// Which directions this descriptor is open for, read off `fcntl(F_GETFL)`.
+///
+/// The DESCRIPTOR, not a remembered mode string: only a mode string that was
+/// NAMED was ever recorded, so `File.open(path)`, integer flags, `IO.new(fd)`,
+/// a pipe end and a socket all had nothing to check against. `F_GETFL`
+/// answers for all of them, including after a `reopen`'s dup2.
+fn access_mode(io: &RIo) -> Option<(bool, bool)> {
+    use std::os::fd::AsRawFd;
+    let fd = match &*io.backend.lock() {
+        IoBackend::File(Some(f)) | IoBackend::Pipe(Some(f)) => f.as_raw_fd(),
+        _ => return None,
+    };
+    // SAFETY: a plain query on a descriptor this handle owns.
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    if flags < 0 {
+        return None;
+    }
+    match flags & libc::O_ACCMODE {
+        libc::O_RDONLY => Some((true, false)),
+        libc::O_WRONLY => Some((false, true)),
+        _ => Some((true, true)),
+    }
+}
+
+/// CRuby checks the mode BEFORE touching the descriptor, so a write-only
+/// handle read from is an `IOError`, not the kernel's `EBADF`.
+pub(crate) fn check_readable(recv: &RubyValue) -> Result<(), Signal> {
+    match as_rio(recv).and_then(access_mode) {
+        Some((false, _)) => Err(io_error!("not opened for reading")),
+        _ => Ok(()),
+    }
+}
+
+/// [`check_readable`]'s twin.
+pub(crate) fn check_writable(recv: &RubyValue) -> Result<(), Signal> {
+    match as_rio(recv).and_then(access_mode) {
+        Some((_, false)) => Err(io_error!("not opened for writing")),
+        _ => Ok(()),
+    }
+}
+
 pub(crate) fn with_file<T>(
     recv: &RubyValue,
     f: impl FnOnce(&mut std::fs::File, &str) -> Result<T, Signal>,
@@ -1119,6 +1165,7 @@ fn io_read_val(
     let read_enc = as_rio(recv)
         .and_then(|io| io.encodings.lock().0)
         .unwrap_or(crate::encoding::UTF_8);
+    check_readable(recv)?;
     with_file(recv, |f, path| {
         // A socket peer that closes with unread data sends RST, so a read can
         // return ECONNRESET AFTER delivering the bytes already buffered; CRuby
