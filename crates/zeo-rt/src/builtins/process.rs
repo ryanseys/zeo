@@ -1608,7 +1608,7 @@ pub(crate) fn spawn_pid(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     let mut cmd = build_spawn_command(args)?;
     match cmd.spawn() {
         Ok(child) => Ok(RubyValue::Int(child.id() as i64)),
-        Err(e) => Err(spawn_error(&e)),
+        Err(e) => Err(spawn_error_for(&e, &launch_target(args))),
     }
 }
 
@@ -1909,24 +1909,68 @@ fn open_redirect_file(spec: &RubyValue, write: bool) -> Result<std::fs::File, Si
 /// `Errno` exception, CRuby's own behaviour (a missing program is
 /// `Errno::ENOENT`).
 pub(crate) fn spawn_error(e: &std::io::Error) -> Signal {
-    crate::builtins::file::raise_errno(e, "exec", "")
+    spawn_error_for(e, "")
+}
+
+/// A launch failure NAMES the program, and in CRuby's BARE shape --
+/// `No such file or directory - prog`, with no `@ syscall` at all. The
+/// `@ exec - ` form here passed an empty path, so the message named
+/// nothing and ended in a dangling dash.
+pub(crate) fn spawn_error_for(e: &std::io::Error, program: &str) -> Signal {
+    crate::builtins::file::raise_bare_errno_named(e, program)
+}
+
+/// The program a launch error should blame: the FIRST element of the
+/// two-element form, else the command string itself.
+pub(crate) fn launch_target(args: &[RubyValue]) -> String {
+    let (_, args, _) = peel_hashes(args);
+    match args.first() {
+        Some(RubyValue::Array(a)) => a
+            .lock()
+            .first()
+            .map(|v| v.to_display_string())
+            .unwrap_or_default(),
+        Some(v) => v.to_display_string(),
+        None => String::new(),
+    }
 }
 
 /// `Kernel#system` -- runs the command with stdout/stderr inherited, sets `$?`,
 /// and answers `true` (exit 0) / `false` (any other exit or a signal) / `nil`
 /// (the command could not be executed). Does not raise on a nonzero exit.
+/// How a child failed, in CRuby's two wordings: `exit N` for an ordinary
+/// non-zero status, and `SIGNAME (signal N)` for a death by signal.
+fn failure_shape(status: &std::process::ExitStatus) -> String {
+    use std::os::unix::process::ExitStatusExt;
+    match status.signal() {
+        Some(sig) => {
+            let name = crate::builtins::signal::name_from_signo(sig).unwrap_or_default();
+            format!("SIG{name} (signal {sig})")
+        }
+        None => format!("exit {}", status.code().unwrap_or(-1)),
+    }
+}
+
 pub fn system(
     _recv: &RubyValue,
     args: &[RubyValue],
     _block: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
     set_last_child_status(RubyValue::Nil);
+    // `exception: true` turns both failure modes into raises: a command that
+    // could not START keeps its Errno, and one that ran and FAILED becomes a
+    // RuntimeError naming how. Absent, both answer as before -- nil and
+    // false -- which is why the option cannot be read after the fact.
+    let (_, _, opts) = peel_hashes(args);
+    let raising = matches!(opts, Some(RubyValue::Hash(h))
+        if crate::hash_get(h, &RubyValue::Symbol(crate::Symbol::intern("exception"))).truthy());
     let Some(mut cmd) = build_command(args)? else {
         return Ok(RubyValue::Bool(false));
     };
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         // Couldn't even start it (e.g. ENOENT on a direct exec) -> nil.
+        Err(e) if raising => return Err(spawn_error_for(&e, &launch_target(args))),
         Err(_) => return Ok(RubyValue::Nil),
     };
     let pid = child.id() as i64;
@@ -1935,6 +1979,12 @@ pub fn system(
     let status = crate::gvl::without_gvl(|| child.wait())
         .map_err(|e| crate::builtins::system_call_error!("{}", e.to_string()))?;
     set_last_child_status(new_status(pid, status.into_raw()));
+    if raising && !status.success() {
+        return Err(raise_error(
+            "RuntimeError",
+            format!("Command failed with {}: {}", failure_shape(&status), launch_target(args)),
+        ));
+    }
     Ok(RubyValue::Bool(status.success()))
 }
 

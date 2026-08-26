@@ -225,6 +225,12 @@ ruby_class! {
     }
     // `#recv(maxlen, flags = 0)` -- read up to `maxlen` bytes (ASCII-8BIT).
     def "recv" cfunc (recv, arg1, arg2?) {
+        // `recv` goes straight to the descriptor, so it cannot see bytes the
+        // IO layer has already buffered -- an `eof?` peek, or a read-ahead.
+        // CRuby refuses rather than losing them, and says so.
+        if crate::builtins::io::has_buffered_bytes(recv) {
+            return Err(crate::builtins::io_error!("recv for buffered IO"));
+        }
         let fd = fd_of(recv)?;
         let maxlen = int_arg(arg1)?.max(0) as usize;
         let flags = match arg2 {

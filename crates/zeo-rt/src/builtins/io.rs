@@ -940,16 +940,25 @@ fn with_buffered_file<T>(
 
 /// Rewind the descriptor over bytes [`ReadBuf`] read ahead, and drop them.
 ///
-/// Infallible by construction: the buffer is only ever filled after `fill`
-/// proved the descriptor seeks, so the seek back cannot be the first one to
-/// fail. Should it fail anyway the buffer is still cleared, which loses the
-/// read-ahead rather than serving it at a position it no longer matches.
+/// Infallible by construction on a SEEKABLE descriptor: the read-ahead is
+/// only ever filled after the seek was proved to work, so the seek back
+/// cannot be the first one to fail.
+///
+/// A NON-seekable one keeps its bytes instead of dropping them. There is
+/// nowhere to give them back to -- that is what makes it non-seekable --
+/// and `eof?` parks exactly one byte there to answer at all. Clearing it
+/// here consumed that byte and handed the next reader the one after.
 fn unread(io: &RIo, f: &mut std::fs::File) {
     let mut buf = io.rbuf.lock();
     let pending = buf.pending();
-    if pending > 0 {
-        use std::io::Seek;
-        let _ = f.seek(std::io::SeekFrom::Current(-(pending as i64)));
+    if pending == 0 {
+        buf.data.clear();
+        buf.pos = 0;
+        return;
+    }
+    use std::io::Seek;
+    if f.seek(std::io::SeekFrom::Current(-(pending as i64))).is_err() {
+        return;
     }
     buf.data.clear();
     buf.pos = 0;
@@ -993,6 +1002,38 @@ fn buffered_byte(io: &RIo, f: &mut std::fs::File) -> std::io::Result<Option<u8>>
     let b = buf.data[buf.pos];
     buf.pos += 1;
     Ok(Some(b))
+}
+
+/// Whether this IO holds bytes the descriptor no longer has -- an `eof?`
+/// peek, or read-ahead. A row that bypasses the buffer (`BasicSocket#recv`)
+/// has to refuse rather than skip them.
+pub(crate) fn has_buffered_bytes(recv: &RubyValue) -> bool {
+    as_rio(recv).is_some_and(|io| io.rbuf.lock().pending() > 0)
+}
+
+/// [`blocking_read`] with the peek buffer served FIRST.
+///
+/// `eof?` on a non-seekable descriptor has to consume a byte to answer, and
+/// that byte belongs to whoever reads next -- through `read`, `gets`,
+/// `readpartial`, `sysread` or `each_codepoint` alike. Serving it from one
+/// place is what makes "peek" different from "lose a byte": a per-row
+/// unget stack would only have been drained by the one row that knows
+/// about it.
+fn peeked_read(io: Option<&RIo>, f: &mut std::fs::File, buf: &mut [u8]) -> std::io::Result<usize> {
+    if let Some(io) = io {
+        let mut rb = io.rbuf.lock();
+        let pending = rb.pending();
+        if pending > 0 && !buf.is_empty() {
+            let n = pending.min(buf.len());
+            buf[..n].copy_from_slice(&rb.data[rb.pos..rb.pos + n]);
+            rb.pos += n;
+            // A short answer is legal for every caller here -- `read(n)` loops
+            // and the rest are arrival-shaped -- so the peek is handed back
+            // on its own rather than topped up with a second syscall.
+            return Ok(n);
+        }
+    }
+    blocking_read(f, buf)
 }
 
 /// Park until `fd` is ready for `events`, the way CRuby's `rb_io_wait_readable`
@@ -1090,7 +1131,7 @@ fn io_read_val(
                 let mut buf = Vec::new();
                 let mut chunk = [0u8; 8192];
                 loop {
-                    match blocking_read(f, &mut chunk) {
+                    match peeked_read(as_rio(recv), f, &mut chunk) {
                         Ok(0) => break,
                         Ok(k) => buf.extend_from_slice(&chunk[..k]),
                         Err(e) if e.kind() == ConnectionReset => break,
@@ -1110,7 +1151,7 @@ fn io_read_val(
                 // `read` can answer short without being at EOF; loop until
                 // the request is filled or the file genuinely ends.
                 while got < n {
-                    match blocking_read(f, &mut buf[got..]) {
+                    match peeked_read(as_rio(recv), f, &mut buf[got..]) {
                         Ok(0) => break,
                         Ok(k) => got += k,
                         Err(e) if e.kind() == ConnectionReset => break,
@@ -2054,7 +2095,7 @@ ruby_class! {
         };
         let bytes = with_file(recv, |f, path| {
             let mut buf = vec![0u8; max.max(0) as usize];
-            let got = blocking_read(f, &mut buf)
+            let got = peeked_read(as_rio(recv), f, &mut buf)
                 .map_err(|e| crate::builtins::file::raise_errno(&e, "read", path))?;
             buf.truncate(got);
             Ok(buf)
@@ -2234,6 +2275,12 @@ ruby_class! {
         })
     }
 
+    // Two implementations, because there are two kinds of descriptor.
+    //
+    // A SEEKABLE one compares the position against the end, which is exact
+    // and costs nothing. On a PIPE or SOCKET that is `ESPIPE` -- which is
+    // what this row used to raise for every one of them -- so those PEEK one
+    // byte instead and park it where the readers already look.
     def "eof?" | "eof" (recv, &_blk) {
         // stdin can't seek; peek the shared buffered reader instead. `fill_buf`
         // is non-destructive -- an empty buffer means end-of-input.
@@ -2249,18 +2296,35 @@ ruby_class! {
             });
             return Ok(RubyValue::Bool(empty));
         }
-        with_file(recv, |f, path| {
+        with_buffered_file(recv, |io, f, path| {
+            // Anything already read ahead means there IS more to come, on
+            // either kind of descriptor.
+            if io.rbuf.lock().pending() > 0 {
+                return Ok(RubyValue::Bool(false));
+            }
             use std::io::Seek;
-            let pos = f
-                .stream_position()
+            if let Ok(pos) = f.stream_position() {
+                let end = f
+                    .seek(std::io::SeekFrom::End(0))
+                    .map_err(|e| crate::builtins::file::raise_errno(&e, "eof?", path))?;
+                // Peeking at the end MOVES the position -- put it back.
+                f.seek(std::io::SeekFrom::Start(pos))
+                    .map_err(|e| crate::builtins::file::raise_errno(&e, "eof?", path))?;
+                return Ok(RubyValue::Bool(pos >= end));
+            }
+            // Not seekable: read one byte and keep it. `peeked_read` hands it
+            // to whichever reader comes next, so nothing is lost.
+            let mut one = [0u8; 1];
+            let got = blocking_read(f, &mut one)
                 .map_err(|e| crate::builtins::file::raise_errno(&e, "eof?", path))?;
-            let end = f
-                .seek(std::io::SeekFrom::End(0))
-                .map_err(|e| crate::builtins::file::raise_errno(&e, "eof?", path))?;
-            // Peeking at the end MOVES the position -- put it back.
-            f.seek(std::io::SeekFrom::Start(pos))
-                .map_err(|e| crate::builtins::file::raise_errno(&e, "eof?", path))?;
-            Ok(RubyValue::Bool(pos >= end))
+            if got == 1 {
+                let mut buf = io.rbuf.lock();
+                let consumed = buf.pos;
+                buf.data.drain(..consumed);
+                buf.pos = 0;
+                buf.data.push(one[0]);
+            }
+            Ok(RubyValue::Bool(got == 0))
         })
     }
 
@@ -2653,7 +2717,7 @@ ruby_class! {
             let mut buf = Vec::new();
             let mut chunk = [0u8; 8192];
             loop {
-                match blocking_read(f, &mut chunk)
+                match peeked_read(as_rio(recv), f, &mut chunk)
                     .map_err(|e| crate::builtins::file::raise_errno(&e, "each_codepoint", path))?
                 {
                     0 => break,

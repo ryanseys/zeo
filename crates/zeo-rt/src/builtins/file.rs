@@ -44,6 +44,13 @@ pub fn raise_errno_pair(e: &std::io::Error, syscall: &str, a: &str, b: &str) -> 
     raise_error(class, format!("{desc} @ {syscall} - ({a}, {b})"))
 }
 
+/// A third shape: the strerror and a TARGET, with no `@ syscall` at all --
+/// what a launch failure reports (`No such file or directory - prog`).
+pub fn raise_bare_errno_named(e: &std::io::Error, target: &str) -> Signal {
+    let (class, desc) = errno_class_and_desc(e);
+    raise_error(class, format!("{desc} - {target}"))
+}
+
 /// The same mapping with CRuby's OTHER message shape: the bare strerror, no
 /// `@ syscall - path` suffix. That is what a failing `close(2)` reports --
 /// `Errno::EBADF, "Bad file descriptor"` -- because the operation names no

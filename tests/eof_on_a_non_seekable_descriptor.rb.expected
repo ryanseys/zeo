@@ -1,0 +1,21 @@
+"ab"
+false
+"c"
+100
+""
+true
+"hello"
+true
+true
+""
+"ab"
+false
+IOError: recv for buffered IO
+"cdef"
+true
+false
+"ab"
+false
+"cd"
+true
+4
