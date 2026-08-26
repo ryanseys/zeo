@@ -315,6 +315,22 @@ pub(super) fn lower_main_file(
         require_memo: std::cell::RefCell::new(HashMap::new()),
         ambiguous_features: std::cell::RefCell::new(HashMap::new()),
     };
+    // Which gated builtins ALSO have a vendored Ruby half. Probed once here
+    // rather than asked per call site, because the answer is a property of
+    // the tree and the question is asked from three places -- the deferred
+    // loop, the splice, and the fold in `lower::calls`, which has no
+    // resolver of its own.
+    //
+    // `tmpdir` is the shape: the ext supplies the gated constants and the
+    // GEM supplies `Dir::Tmpname`, so a program that requires it from a
+    // method body needs BOTH, and folding the call away left the second
+    // half unloaded. A PURE builtin (`digest`) resolves to nothing and is
+    // not here, so its require still folds.
+    for feature in crate::lower::features::builtin_feature_names() {
+        if matches!(loader.resolve_require(feature), Ok(Some(_))) {
+            hir.loader.dual_homed_requires.insert(feature.to_string());
+        }
+    }
     // The external gem store: store dirs (`--gem-path`/`GEM_PATH`) plus a
     // lockfile (via `--bundle-gemfile`/`BUNDLE_GEMFILE`) add the pure-Ruby
     // gems zeo can compile as extra roots, and record a disclosure for every
@@ -600,9 +616,17 @@ impl Loader {
             let Some(feature) = literal_feature(result, hir, call)? else {
                 continue;
             };
-            if is_builtin_feature(&feature) {
-                continue;
-            }
+            // NOT exempt for a builtin any more. `splice_feature` resolves
+            // a plain `require` FILESYSTEM-FIRST and only falls back to the
+            // static ext, precisely so a gem's Ruby half can sit on top of a
+            // native one -- and this loop skipped that order entirely, so a
+            // DUAL-HOMED feature's gem half was never compiled as a unit.
+            // `tmpdir` is the case: the ext gives the constants, the gem
+            // gives `Dir::Tmpname`.
+            //
+            // A builtin with no gem half resolves to nothing here and falls
+            // through unchanged, so the exemption it used to need is now
+            // just what happens.
             if let Ok(Some((path, package))) = self.resolve_require(&feature) {
                 // Disclosed as satisfied (first-wins preempts the
                 // "not compiled in" record the deferred set would
@@ -624,6 +648,14 @@ impl Loader {
                     path,
                     feature.clone(),
                 ));
+                // A feature that is BOTH a gated builtin and a resolvable
+                // gem: the ext half must still activate, and the call must
+                // still stand to load the gem half. `is_builtin_feature`
+                // alone cannot say this -- a pure builtin like `digest`
+                // resolves to nothing here and must keep folding.
+                if is_builtin_feature(&feature) {
+                    hir.loader.dual_homed_requires.insert(feature.clone());
+                }
             }
             hir.loader.deferred_requires.insert(feature);
         }

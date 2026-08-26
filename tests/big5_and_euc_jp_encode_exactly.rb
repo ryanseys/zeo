@@ -19,7 +19,10 @@ require "digest"
 
 %w[Big5 EUC-JP].each do |enc|
   ok = []
-  (0..0x10FFFF).each do |cp|
+  # Bounded at U+2FFFF rather than U+10FFFF: neither family maps anything
+  # above it, so the tail is a million iterations that answer nothing --
+  # and the whole sweep runs twice, once per engine, on every suite run.
+  (0..0x2FFFF).each do |cp|
     next if cp.between?(0xD800, 0xDFFF)
     s = begin
       cp.chr(Encoding::UTF_8)

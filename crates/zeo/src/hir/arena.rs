@@ -439,6 +439,16 @@ pub struct LoaderState {
     /// file itself makes at top level, and dragged every lazy dependency into
     /// the binary.
     pub deferred_requires: crate::compiler::FSet<String>,
+    /// Deferred features that are BOTH a gated builtin and a resolvable gem
+    /// -- `tmpdir` and `time` are the shape: the ext half supplies the
+    /// constants, the GEM half supplies the Ruby code (`Dir::Tmpname`).
+    ///
+    /// Both halves are needed, so the builtin fold in `lower::calls` must
+    /// not eat the call: the ext activates positionally and the call stands
+    /// as a real runtime require that loads the gem. A PURE builtin is not
+    /// here, and keeps folding -- which is the difference
+    /// `is_builtin_feature` alone cannot see.
+    pub dual_homed_requires: crate::compiler::FSet<String>,
 }
 
 /// One compiled-in load-path file -- see `LoaderState::feature_units`. Its statements

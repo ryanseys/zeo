@@ -180,6 +180,21 @@ pub fn is_ext_feature(name: &str) -> bool {
     BUILTINS.iter().any(|b| b.feature == Some(name))
 }
 
+/// Every distinct extension feature name, for a caller that needs the LIST
+/// rather than the predicate -- the loader probes each once to find which
+/// are also backed by a vendored gem.
+pub fn ext_feature_names() -> impl Iterator<Item = &'static str> {
+    let mut seen: Vec<&'static str> = Vec::new();
+    for b in BUILTINS {
+        if let Some(f) = b.feature
+            && !seen.contains(&f)
+        {
+            seen.push(f);
+        }
+    }
+    seen.into_iter()
+}
+
 /// Why a stdlib feature zeo DECLINES is missing -- appended to its
 /// `LoadError` so a caller can tell a settled decision from a typo or an
 /// unfinished feature. `None` for everything else, which keeps CRuby's bare

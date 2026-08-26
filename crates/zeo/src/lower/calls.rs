@@ -1361,7 +1361,32 @@ fn lower_require_call(
         // already-loaded feature and raises `LoadError` otherwise.
         if matches!(name, "require" | "require_relative") {
             if let Some(feature) = single_literal_string_arg(result, hir, &call)? {
-                if name == "require" && features::is_builtin_feature(&feature) {
+                // A DUAL-HOMED feature -- one that is both a gated builtin and
+                // a vendored gem -- must not fold when the loader kept its
+                // call. `tmpdir` is the shape: the ext half supplies the
+                // constants, the GEM half supplies `Dir::Tmpname`, and the
+                // loader had already demanded that half as its own unit and
+                // recorded a site so the call would survive. Folding here
+                // erased the call and the unit never ran.
+                //
+                // The ext half still activates, positionally and
+                // idempotently, so the gated constants resolve inside the
+                // unit body; the call then stands as a real runtime require
+                // that loads the gem half and does its own `$LOADED_FEATURES`
+                // bookkeeping -- recording the GEM file's path, which is what
+                // CRuby lists.
+                // Only where the loader ALREADY kept the call: a top-level
+                // require of a dual-homed feature is spliced normally and
+                // must still fold, or the same file loads twice and the
+                // second require answers true where ruby says false.
+                let kept_by_loader = hir.loader.dual_homed_requires.contains(&feature)
+                    && (hir.loader.deferred_requires.contains(&feature)
+                        || hir.lowering_file.is_some_and(|file| {
+                            let key = (file, call.location().start_offset() as u32);
+                            hir.loader.optional_require_sites.contains(&key)
+                                || hir.loader.conditional_require_sites.contains(&key)
+                        }));
+                if name == "require" && features::is_builtin_feature(&feature) && !kept_by_loader {
                     let canonical = features::canonical_ext_feature(&feature).to_string();
                     let newly_loaded = hir.activated_features.insert(canonical.clone());
                     let first = newly_loaded && !features::is_preloaded_at_boot(&feature);

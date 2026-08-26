@@ -97,3 +97,28 @@ pub fn is_builtin_feature(feature: &str) -> bool {
             | "pathname"
     ) || zeo_abi::is_ext_feature(canonical_ext_feature(feature))
 }
+
+/// Every feature `is_builtin_feature` answers true for that also NAMES a
+/// file -- the candidates for being DUAL-HOMED.
+///
+/// The predicate above answers a question, not a list, and the loader needs
+/// the list: it probes each name once at startup and records the ones that
+/// really resolve, because only those need their `require` call kept.
+pub fn builtin_feature_names() -> impl Iterator<Item = &'static str> {
+    const NAMED: &[&str] = &[
+        "tmpdir",
+        "set",
+        "time",
+        "io/console",
+        "io/wait",
+        "io/nonblock",
+        "objspace",
+        "fiber",
+        "thread",
+        "rational",
+        "complex",
+        "random/formatter",
+        "pathname",
+    ];
+    NAMED.iter().copied().chain(zeo_abi::ext_feature_names())
+}
