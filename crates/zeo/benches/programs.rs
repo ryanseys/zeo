@@ -21,6 +21,7 @@
 //! cargo bench -p zeo --bench programs -- --save-baseline before
 //! cargo bench -p zeo --bench programs -- --baseline before
 //! critcmp before after                                   # cross-run compare
+//! ZEO_BENCH_DIST=pgo cargo bench -p zeo --bench programs # ship config
 //! ```
 //!
 //! An unfiltered bank compiles and gates every program up front, and the
@@ -54,11 +55,24 @@ fn repo_root() -> PathBuf {
 /// an isolated `target/bench/` dir the ordinary builds never touch. Built
 /// ONCE at bench start: the whole bank times one source snapshot, however
 /// long it runs and whatever happens in the main target dir meanwhile.
+///
+/// `ZEO_BENCH_DIST=pgo` swaps the snapshot for the SHIPPED configuration:
+/// the full `zeo-dev dist --pgo` pipeline (instrument, train, profile-use
+/// rebuild) staged inside the same isolated dir. It costs ~15 minutes of
+/// setup, so the everyday bank stays on release -- and a dist-mode bank
+/// never rewrites the committed `bench/results.tsv` (that file is the
+/// release-profile diff chain); compare dist banks with
+/// `--save-baseline` + `critcmp` instead.
 fn build_snapshot(root: &Path) -> PathBuf {
     let outer = std::env::var_os("CARGO_TARGET_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| root.join("target"));
     let bench_target = outer.join("bench");
+    match std::env::var("ZEO_BENCH_DIST") {
+        Err(_) => {}
+        Ok(v) if v == "pgo" => return build_dist_snapshot(root, &bench_target),
+        Ok(v) => panic!("ZEO_BENCH_DIST={v} is not a mode (only \"pgo\")"),
+    }
     let status = Command::new(env!("CARGO"))
         .args(["build", "--release", "-p", "zeo"])
         .env("CARGO_TARGET_DIR", &bench_target)
@@ -72,6 +86,33 @@ fn build_snapshot(root: &Path) -> PathBuf {
         "libzeo.a missing beside {}",
         zeo.display()
     );
+    zeo
+}
+
+/// The `ZEO_BENCH_DIST=pgo` snapshot: `zeo-dev dist --pgo` staged into
+/// the isolated bench target dir, so its builds and training profiles
+/// never touch the ordinary target dir either. `--no-smoke` because the
+/// bank's own `.expected` gate is the stronger check.
+fn build_dist_snapshot(root: &Path, bench_target: &Path) -> PathBuf {
+    let stage = bench_target.join("dist-stage");
+    let status = Command::new(root.join("tools/zeo-dev"))
+        .args(["dist", "--pgo", "--no-smoke", "-o"])
+        .arg(&stage)
+        .env("CARGO_TARGET_DIR", bench_target)
+        .current_dir(root)
+        .status()
+        .expect("spawn zeo-dev dist");
+    assert!(status.success(), "zeo-dev dist --pgo failed");
+    let tree = std::fs::read_dir(&stage)
+        .expect("the dist stage exists")
+        .filter_map(|e| {
+            let p = e.expect("readable stage entry").path();
+            p.is_dir().then_some(p)
+        })
+        .next()
+        .expect("the stage holds one zeo-<version>-<triple> tree");
+    let zeo = tree.join("bin/zeo");
+    assert!(zeo.exists(), "no staged binary at {}", zeo.display());
     zeo
 }
 
@@ -367,9 +408,14 @@ fn main() {
         bench_cruby(&mut c, &corpus, lazy, &mut done, total);
     }
     c.final_summary();
-    // A filtered run measured a subset; only a full bank rewrites the
-    // committed record.
+    // A filtered run measured a subset, and a dist-mode bank measured a
+    // different profile than the committed release chain records; only a
+    // full RELEASE bank rewrites the committed record.
     if !lazy {
-        export_results(&root, oracle);
+        if std::env::var_os("ZEO_BENCH_DIST").is_some() {
+            eprintln!("dist-mode bank: bench/results.tsv (release chain) left untouched");
+        } else {
+            export_results(&root, oracle);
+        }
     }
 }

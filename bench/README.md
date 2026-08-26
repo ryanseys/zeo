@@ -19,10 +19,20 @@ $ cargo bench -p zeo --bench programs            # the same, spelled out
 $ cargo bench -p zeo --bench programs -- 'zeo/bm_fib$'   # one benchmark (regex)
 $ ZEO_BENCH_ORACLE=1 ZEO_BENCH_ORACLE_RUBY="$(mise which ruby)" \
     cargo bench -p zeo --bench programs -- 'cruby/'      # time the CRuby oracle
+$ ZEO_BENCH_DIST=pgo cargo bench -p zeo --bench programs # the SHIPPED config
 ```
 
 Everything after `--` is criterion's own CLI: name filters are regexes over
 the benchmark id (`zeo/<name>` or `cruby/<name>`).
+
+The everyday bank measures the release profile. `ZEO_BENCH_DIST=pgo`
+instead snapshots the shipped configuration — the full `zeo-dev dist
+--pgo` pipeline (instrumented build, training on this corpus, profile-use
+rebuild), staged inside the isolated bench target dir. It adds ~15
+minutes of setup, so it is for release-boundary measurements, not the dev
+loop. A dist-mode bank never rewrites the committed `bench/results.tsv`
+(that file is the release-profile diff chain); compare dist banks with
+`--save-baseline` + `critcmp`.
 
 ### Comparing runs (baselines)
 
