@@ -101,6 +101,13 @@ $ cargo nextest run -p zeo --test e2e                           # jit child (def
 $ ZEO_E2E_BACKEND=aot      cargo nextest run -p zeo --test e2e  # link per test
 ```
 
+A third leg is the typed differential oracle (`make ci-typed`, or
+`ZEO_GOLDEN_DIFF_TYPED=1` on any golden suite): every case compiles and
+runs twice -- once as-is, once with `ZEO_DEBUG=no-typed-calls` turning
+every TyKind-driven emission off -- and the two zeo outputs must agree
+byte-for-byte. Run it on any change to typed emission; a wrong static
+type is a miscompile, and this leg is what catches one.
+
 `crates/zeo/tests/clif.rs` holds insta snapshots of the emitted CLIF. They
 record emitter *shape*, which no golden can see, so **run `cargo nextest run
 -p zeo` after any `clif/` change**. Each snapshot is its own `#[test]`, so

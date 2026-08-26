@@ -355,18 +355,59 @@ fn normalize_source_path(bytes: Vec<u8>, source: &Path, run_cwd: &Path) -> Vec<u
 /// existing convention) keep working -- their output has no address left in
 /// it by the time it gets here.
 fn normalize_addresses(bytes: Vec<u8>) -> Vec<u8> {
-    const WIDTH: usize = 16;
+    // 8..=16 hex digits: a 16-digit run is ruby's own `#<Object:0x...>`
+    // rendering; 9-12 digit runs are the ASLR'd frame addresses a Rust
+    // abort backtrace prints (the typed-diff leg compares two zeo RUNS,
+    // where those differ per process). Anything shorter stays -- a
+    // program legitimately printing `0x1f` keeps its value.
+    const MIN: usize = 8;
+    const MAX: usize = 16;
     let is_hex = |b: u8| b.is_ascii_digit() || (b'a'..=b'f').contains(&b);
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
-        let addr = bytes[i..].starts_with(b"0x")
-            && bytes.len() >= i + 2 + WIDTH
-            && bytes[i + 2..i + 2 + WIDTH].iter().all(|&b| is_hex(b))
-            && !bytes.get(i + 2 + WIDTH).is_some_and(|&b| is_hex(b));
-        if addr {
-            out.extend_from_slice(b"0xADDR");
-            i += 2 + WIDTH;
+        if bytes[i..].starts_with(b"0x") {
+            let run = bytes[i + 2..].iter().take_while(|&&b| is_hex(b)).count();
+            if (MIN..=MAX).contains(&run) {
+                out.extend_from_slice(b"0xADDR");
+                i += 2 + run;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    out
+}
+
+/// `thread 'ruby-main' (156051069) panicked` -> the id becomes `TID`.
+/// Rust's panic header embeds the OS thread id, which differs per process
+/// -- the typed-diff leg compares two zeo RUNS, and a committed golden
+/// that embedded one would be flaky already, so scrubbing is pure gain.
+fn normalize_thread_ids(bytes: Vec<u8>) -> Vec<u8> {
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let tid = bytes[i..].starts_with(b"' (")
+            && bytes[i + 3..]
+                .iter()
+                .take_while(|b| b.is_ascii_digit())
+                .count()
+                > 0
+            && {
+                let n = bytes[i + 3..]
+                    .iter()
+                    .take_while(|b| b.is_ascii_digit())
+                    .count();
+                bytes.get(i + 3 + n) == Some(&b')')
+            };
+        if tid {
+            let n = bytes[i + 3..]
+                .iter()
+                .take_while(|b| b.is_ascii_digit())
+                .count();
+            out.extend_from_slice(b"' (TID)");
+            i += 3 + n + 1;
             continue;
         }
         out.push(bytes[i]);
@@ -376,11 +417,11 @@ fn normalize_addresses(bytes: Vec<u8>) -> Vec<u8> {
 }
 
 fn norm(bytes: &[u8], source: &Path, run_cwd: &Path) -> Vec<u8> {
-    normalize_addresses(normalize_source_path(
+    normalize_thread_ids(normalize_addresses(normalize_source_path(
         normalize_crlf(bytes),
         source,
         run_cwd,
-    ))
+    )))
 }
 
 // ---- sidecars ----
@@ -477,9 +518,22 @@ fn run_via_cli(
     args: &[String],
     stdin: Option<&[u8]>,
     run_cwd: &Path,
+    typed_off: bool,
 ) -> Result<(Vec<u8>, Vec<u8>), String> {
     let mut cmd = Command::new(zeo_cli()?);
     cmd.arg("--backend").arg(backend);
+    // The differential-oracle child: the same compile with every
+    // TyKind-driven emission off. APPENDS to an ambient ZEO_DEBUG so the
+    // leg composes with other debug flags.
+    if typed_off {
+        let ambient = std::env::var("ZEO_DEBUG").unwrap_or_default();
+        let joined = if ambient.is_empty() {
+            "no-typed-calls".to_string()
+        } else {
+            format!("{ambient},no-typed-calls")
+        };
+        cmd.env("ZEO_DEBUG", joined);
+    }
     for root in &opts.load_roots {
         cmd.arg("-I").arg(root);
     }
@@ -527,13 +581,36 @@ fn compile_and_run(
     run_cwd: &Path,
     env: &SuiteEnv,
 ) -> Result<(Vec<u8>, Vec<u8>), String> {
+    compile_and_run_typed(rb, source, args, stdin, run_cwd, env, false)
+}
+
+/// [`compile_and_run`] with the typed-emission kill switch exposed -- the
+/// differential-oracle leg's second child.
+fn compile_and_run_typed(
+    rb: &Path,
+    source: &str,
+    args: &[String],
+    stdin: Option<&[u8]>,
+    run_cwd: &Path,
+    env: &SuiteEnv,
+    typed_off: bool,
+) -> Result<(Vec<u8>, Vec<u8>), String> {
     let opts = zeo::CompileOptions {
         input_path: Some(rb.to_path_buf()),
         package_dirs: env.package_dirs.clone(),
         load_roots: env.load_roots.clone(),
         ..Default::default()
     };
-    run_via_cli(&golden_backend(), rb, source, &opts, args, stdin, run_cwd)
+    run_via_cli(
+        &golden_backend(),
+        rb,
+        source,
+        &opts,
+        args,
+        stdin,
+        run_cwd,
+        typed_off,
+    )
 }
 
 // ---- ruby oracle (bless) ----
@@ -678,6 +755,52 @@ pub fn run_golden_env(
 
     // Pass / Xfail: build + run, then diff against the golden.
     let actual = compile_and_run(rb, &source, &sc.args, sc.stdin.as_deref(), run_cwd, env);
+
+    // `ZEO_GOLDEN_DIFF_TYPED=1`: the zeo-vs-zeo differential oracle. The
+    // same program compiles and runs a SECOND time with every
+    // TyKind-driven emission off (`ZEO_DEBUG=no-typed-calls`), and the
+    // two zeo outputs must agree byte-for-byte after normalization. Ruby
+    // is not consulted: this catches a typed fold changing ANY observable
+    // behavior, including behavior the CRuby oracle could not
+    // distinguish. Runs for Pass and Xfail alike -- a gap's divergence
+    // from ruby must still be the SAME divergence with the folds off. A
+    // program zeo cannot build at all is skipped here (that failure is
+    // already the case's own divergence).
+    if std::env::var_os("ZEO_GOLDEN_DIFF_TYPED").is_some_and(|v| v == "1")
+        && let Ok((on_out, on_err)) = &actual
+    {
+        let (off_out, off_err) = compile_and_run_typed(
+            rb,
+            &source,
+            &sc.args,
+            sc.stdin.as_deref(),
+            run_cwd,
+            env,
+            true,
+        )
+        .map_err(|e| format!("{}: typed-off compile/run failed where typed-on ran: {e}", rb.display()))?;
+        if norm(on_out, rb, run_cwd) != norm(&off_out, rb, run_cwd)
+            || norm(on_err, rb, run_cwd) != norm(&off_err, rb, run_cwd)
+        {
+            return Err(format!(
+                "{}: TYPED-EMISSION DIVERGENCE -- the same program answers                  differently with TyKind folds on vs off (a wrong static type                  is a miscompile).
+--- typed-on stdout ---
+{}
+--- typed-off                  stdout ---
+{}
+--- typed-on stderr ---
+{}
+--- typed-off                  stderr ---
+{}",
+                rb.display(),
+                String::from_utf8_lossy(&norm(on_out, rb, run_cwd)),
+                String::from_utf8_lossy(&norm(&off_out, rb, run_cwd)),
+                String::from_utf8_lossy(&norm(on_err, rb, run_cwd)),
+                String::from_utf8_lossy(&norm(&off_err, rb, run_cwd)),
+            )
+            .into());
+        }
+    }
 
     // Under the `ZEO_RT_GCCHECK` leg the runtime writes one census line to
     // stderr at exit. Take it out of the ordinary comparison and gate it on
@@ -829,25 +952,43 @@ fn check_gccheck_census(rb: &Path, census: &str) -> datatest_stable::Result<()> 
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_addresses;
+    use super::{normalize_addresses, normalize_thread_ids};
 
     fn scrub(s: &str) -> String {
         String::from_utf8(normalize_addresses(s.as_bytes().to_vec())).unwrap()
     }
 
     #[test]
-    fn only_full_width_object_addresses_are_scrubbed() {
+    fn pointer_width_hex_runs_are_scrubbed() {
         assert_eq!(
             scrub("#<Thread:0x0000000102cf6310 t.rb:4 run>"),
             "#<Thread:0xADDR t.rb:4 run>"
         );
         assert_eq!(scrub("a 0xdeadbeefcafef00d b"), "a 0xADDR b");
+        // A Rust abort backtrace prints ASLR'd frame addresses without the
+        // leading zeros -- 8..=16 digits all scrub (the typed-diff leg
+        // compares two zeo RUNS, where these differ per process).
+        assert_eq!(scrub("19: 0x1066f30d0 - zeo_rt_x"), "19: 0xADDR - zeo_rt_x");
         // `%x`/`%a` formatting is shorter, and a longer run isn't an address.
         assert_eq!(scrub("0xff / 010"), "0xff / 010");
+        assert_eq!(scrub("0x1234567 short"), "0x1234567 short");
         assert_eq!(scrub("\"0x1.ffp+7\""), "\"0x1.ffp+7\"");
         assert_eq!(scrub("0x00000001234567890"), "0x00000001234567890");
         // Uppercase hex is `%X` output, never an address rendering.
         assert_eq!(scrub("0xDEADBEEFCAFEF00D"), "0xDEADBEEFCAFEF00D");
+    }
+
+    #[test]
+    fn panic_thread_ids_are_scrubbed() {
+        let n = |s: &str| {
+            String::from_utf8(normalize_thread_ids(s.as_bytes().to_vec())).unwrap()
+        };
+        assert_eq!(
+            n("thread 'ruby-main' (156051069) panicked"),
+            "thread 'ruby-main' (TID) panicked"
+        );
+        // A parenthesized number NOT after a quote stays.
+        assert_eq!(n("count (42) stays"), "count (42) stays");
     }
 }
 

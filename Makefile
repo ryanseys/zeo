@@ -29,7 +29,7 @@ CARGO ?= cargo
 NEXTEST ?= $(CARGO) nextest run
 ZEO_DEV ?= tools/zeo-dev
 
-.PHONY: all test check check-batch gate bench pgo install linux clean \
+.PHONY: all test check check-batch gate bench pgo install linux clean ci-typed \
         ci-jit ci-aot ci-memcheck ci-doc ci-natlibs ci-anchor
 
 all:
@@ -70,6 +70,15 @@ ci-aot: all
 # so golden corpora only. The whole-gem gemtests half lives in `gate`.
 ci-memcheck: all
 	ZEO_RT_LEAKCHECK=1 ZEO_GC=1 ZEO_RT_GCCHECK=1 $(NEXTEST) -p zeo --test examples --test spinel --test gaps --no-fail-fast
+
+# The typed differential oracle: every golden compiles and runs TWICE --
+# once as-is, once with every TyKind-driven emission off
+# (ZEO_DEBUG=no-typed-calls) -- and the two zeo outputs must agree
+# byte-for-byte. Ruby is not consulted; this catches a typed fold
+# changing ANY observable behavior, including behavior the CRuby oracle
+# could not distinguish. Run it on any change to typed emission.
+ci-typed: all
+	ZEO_GOLDEN_DIFF_TYPED=1 $(NEXTEST) -p zeo --test examples --test spinel --test gaps --no-fail-fast
 
 # nextest doesn't run doctests.
 ci-doc: all

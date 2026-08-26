@@ -20,6 +20,12 @@ pub(crate) enum DebugFlag {
     /// `verify-class-index`: shadow-compare every `class_in_scope` answer
     /// against the linear scan it replaced.
     VerifyClassIndex,
+    /// `no-typed-calls`: turn off every TyKind-driven emission (typed
+    /// direct calls, unboxed locals) -- the differential-oracle kill
+    /// switch. Reserved ahead of the folds so the oracle leg is proven
+    /// green BEFORE the first fold lands; a wrong static type is a
+    /// miscompile, and this flag is what the on-vs-off diff toggles.
+    NoTypedCalls,
 }
 
 const NAMES: &[(&str, DebugFlag)] = &[
@@ -29,6 +35,7 @@ const NAMES: &[(&str, DebugFlag)] = &[
         DebugFlag::StrictAmbiguousRequire,
     ),
     ("verify-class-index", DebugFlag::VerifyClassIndex),
+    ("no-typed-calls", DebugFlag::NoTypedCalls),
 ];
 
 /// Whether `flag` was named in `ZEO_DEBUG`.
