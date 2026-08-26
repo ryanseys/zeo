@@ -29,7 +29,7 @@ CARGO ?= cargo
 NEXTEST ?= $(CARGO) nextest run
 ZEO_DEV ?= tools/zeo-dev
 
-.PHONY: all test check check-batch gate bench install linux clean \
+.PHONY: all test check check-batch gate bench pgo install linux clean \
         ci-jit ci-aot ci-memcheck ci-doc ci-natlibs ci-anchor
 
 all:
@@ -110,6 +110,13 @@ gate: ci-jit ci-aot ci-memcheck ci-doc $(PLATFORM_CI_LEG)
 
 bench:
 	$(CARGO) bench -p zeo --bench programs
+
+# The shipped-configuration bank: the same corpus timed against a full
+# `zeo-dev dist --pgo` snapshot (~15 min of setup). Release-boundary
+# measurements only; never rewrites the committed bench/results.tsv --
+# compare runs with --save-baseline + critcmp.
+pgo:
+	ZEO_BENCH_DIST=pgo $(CARGO) bench -p zeo --bench programs
 
 install:
 	$(CARGO) install --path crates/zeo

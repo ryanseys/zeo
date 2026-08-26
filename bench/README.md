@@ -19,7 +19,7 @@ $ cargo bench -p zeo --bench programs            # the same, spelled out
 $ cargo bench -p zeo --bench programs -- 'zeo/bm_fib$'   # one benchmark (regex)
 $ ZEO_BENCH_ORACLE=1 ZEO_BENCH_ORACLE_RUBY="$(mise which ruby)" \
     cargo bench -p zeo --bench programs -- 'cruby/'      # time the CRuby oracle
-$ ZEO_BENCH_DIST=pgo cargo bench -p zeo --bench programs # the SHIPPED config
+$ make pgo    # the SHIPPED config (ZEO_BENCH_DIST=pgo spelled out)
 ```
 
 Everything after `--` is criterion's own CLI: name filters are regexes over
