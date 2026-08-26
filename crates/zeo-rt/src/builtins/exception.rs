@@ -1872,7 +1872,16 @@ fn exc_class_to_tty(
 /// come from the single core-class linearizer (`declared_ancestors`), so
 /// `rescue`/`is_a?` agree with the compiler's own materialized `ancestors`.
 pub fn register_exceptions(registry: &mut ClassRegistry) {
+    // The `Errno::*` block is DEFERRED: ~107 classes sharing one row set
+    // were ~62% of this loop's work, and almost every program touches
+    // none of them. Names register eagerly (raise-by-name, constants);
+    // the entries materialize on first touch (`register_errno_class`).
+    let mut errno: Vec<(ClassId, &'static str)> = Vec::new();
     for row in EXCEPTION_CLASSES {
+        if !row.is_module && row.name.starts_with("Errno::") {
+            errno.push((row.id, row.name));
+            continue;
+        }
         let ancestors = declared_ancestors(row.id);
         if row.is_module {
             // The `Errno` namespace: a module (no constructor, ancestors = self).
@@ -1881,8 +1890,19 @@ pub fn register_exceptions(registry: &mut ClassRegistry) {
         }
         register_exception_subclass(registry, row.id, row.name, ancestors);
     }
+    registry.defer_errno_block(&errno);
     // A guard for future edits: `Exception` must be the first exception id.
     debug_assert_eq!(EXCEPTION_CLASSES[0].id, EXCEPTION_CLASS);
+}
+
+/// Install ONE deferred `Errno::*` class -- the lazy half of the deferral
+/// above, called by the registry's first-touch materialization. Runs the
+/// exact same [`register_exception_subclass`] path an eager boot ran, so
+/// the two can never drift.
+pub(crate) fn register_errno_class(registry: &mut ClassRegistry, id: ClassId) {
+    let row = &EXCEPTION_CLASSES[(id.0 - zeo_abi::FIRST_EXCEPTION_ID) as usize];
+    debug_assert_eq!(row.id, id, "exception rows are id-contiguous");
+    register_exception_subclass(registry, id, row.name, declared_ancestors(id));
 }
 
 /// One dispatch row of the built-in exception method set -- the declarative

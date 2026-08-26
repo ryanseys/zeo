@@ -236,22 +236,64 @@ pub(super) struct FlatHit {
 /// probe sites read unchanged; iteration yields ids BY VALUE and in id
 /// order, which the sorted-output sites rely on maps never providing.
 #[derive(Default)]
-pub(super) struct Entries(Vec<Option<ClassEntry>>);
+pub(super) struct Entries {
+    slots: Vec<Option<ClassEntry>>,
+    /// The lazily-materialized `Errno::*` block -- ~107 near-identical
+    /// exception classes that were ~62% of boot registry work. Boot
+    /// records only the block's shape here; the first TOUCH of an errno
+    /// id (a raise, a rescue match, reflection) builds its entry through
+    /// the real registration path. Index `i` holds id `errno_base + i`.
+    /// A pre-materialization MUTATION (`get_mut`) moves the entry into
+    /// `slots`, which every reader checks first, so the dense slot
+    /// shadows the cell from then on.
+    errno: Box<[std::sync::OnceLock<ClassEntry>]>,
+    errno_base: u32,
+}
 
 impl Entries {
     #[inline(always)]
     pub(super) fn get(&self, id: &u32) -> Option<&ClassEntry> {
-        self.0.get(*id as usize).and_then(|e| e.as_ref())
+        if let Some(e) = self.slots.get(*id as usize).and_then(|e| e.as_ref()) {
+            return Some(e);
+        }
+        self.errno_get(*id)
     }
 
-    #[inline(always)]
+    /// The dense-slot miss tail: an errno id materializes on first touch;
+    /// anything else (a runtime-minted id, an unregistered id) is a miss.
+    fn errno_get(&self, id: u32) -> Option<&ClassEntry> {
+        let i = id.checked_sub(self.errno_base)? as usize;
+        let cell = self.errno.get(i)?;
+        Some(cell.get_or_init(|| materialize_errno(id)))
+    }
+
     pub(super) fn get_mut(&mut self, id: &u32) -> Option<&mut ClassEntry> {
-        self.0.get_mut(*id as usize).and_then(|e| e.as_mut())
+        let at = *id as usize;
+        // An errno id mutated before (or after) its first read shadows
+        // its lazy cell into the dense slot; `take` moves an initialized
+        // cell so no stale twin survives.
+        if self.slots.get(at).is_none_or(|e| e.is_none())
+            && let Some(i) = id.checked_sub(self.errno_base).map(|i| i as usize)
+            && i < self.errno.len()
+        {
+            let e = self.errno[i]
+                .take()
+                .unwrap_or_else(|| materialize_errno(*id));
+            if at >= self.slots.len() {
+                self.slots.resize_with(at + 1, || None);
+            }
+            self.slots[at] = Some(e);
+        }
+        self.slots.get_mut(at).and_then(|e| e.as_mut())
     }
 
     #[inline(always)]
     pub(super) fn contains_key(&self, id: &u32) -> bool {
-        self.get(id).is_some()
+        // Existence never materializes: an errno id in range IS registered.
+        self.slots.get(*id as usize).is_some_and(|e| e.is_some())
+            || id
+                .checked_sub(self.errno_base)
+                .is_some_and(|i| (i as usize) < self.errno.len())
     }
 
     pub(super) fn insert(&mut self, id: u32, e: ClassEntry) {
@@ -260,22 +302,65 @@ impl Entries {
             "runtime-minted ids never enter the frozen registry"
         );
         let at = id as usize;
-        if at >= self.0.len() {
-            self.0.resize_with(at + 1, || None);
+        if at >= self.slots.len() {
+            self.slots.resize_with(at + 1, || None);
         }
-        self.0[at] = Some(e);
+        self.slots[at] = Some(e);
+    }
+
+    /// Record the deferred errno block's shape -- see the field docs.
+    pub(super) fn set_errno_block(&mut self, base: u32, n: usize) {
+        debug_assert!(self.errno.is_empty(), "one errno block per registry");
+        self.errno_base = base;
+        self.errno = (0..n).map(|_| std::sync::OnceLock::new()).collect();
     }
 
     pub(super) fn keys(&self) -> impl Iterator<Item = u32> + '_ {
         self.iter().map(|(id, _)| id)
     }
 
+    /// Every entry, the deferred errno block INCLUDED -- enumeration
+    /// (subclass listings, class-id walks) must see the whole hierarchy,
+    /// so any still-lazy errno entry materializes first. Cold surfaces
+    /// only; a boot-path walk belongs on [`Entries::iter_eager`].
     pub(super) fn iter(&self) -> impl Iterator<Item = (u32, &ClassEntry)> + '_ {
-        self.0
+        for i in 0..self.errno.len() {
+            let id = self.errno_base + i as u32;
+            if self.slots.get(id as usize).is_some_and(|e| e.is_some()) {
+                continue; // shadowed into the dense slots by a mutation
+            }
+            let _ = self.errno[i].get_or_init(|| materialize_errno(id));
+        }
+        self.iter_eager().chain(
+            self.errno
+                .iter()
+                .enumerate()
+                .filter_map(move |(i, c)| c.get().map(|e| (self.errno_base + i as u32, e))),
+        )
+    }
+
+    /// Only the entries that already exist -- skips any errno entry still
+    /// deferred (each is provably identical to the template until touched,
+    /// so a scan for something no template row has may skip them). The
+    /// boot-path install scan uses this; materializing 107 classes there
+    /// would undo the deferral.
+    pub(super) fn iter_eager(&self) -> impl Iterator<Item = (u32, &ClassEntry)> + '_ {
+        self.slots
             .iter()
             .enumerate()
             .filter_map(|(i, e)| e.as_ref().map(|e| (i as u32, e)))
     }
+}
+
+/// Build one errno class's entry through the REAL registration path
+/// (`register_exception_subclass` against a scratch registry), so the lazy
+/// copy can never drift from what an eager boot would have installed.
+fn materialize_errno(id: u32) -> ClassEntry {
+    let mut scratch = ClassRegistry::default();
+    crate::builtins::exception::register_errno_class(&mut scratch, ClassId(id));
+    scratch.entries.slots[id as usize]
+        .take()
+        .expect("register_errno_class installs the entry")
 }
 
 #[derive(Default)]
@@ -315,6 +400,21 @@ impl ClassRegistry {
     /// class from that class's generated `__register` (or directly from
     /// generated `main()` for modules/builtins, which have no struct), with
     /// `ancestors` already fully linearized at zeo compile time.
+    /// Defer the `ERRNO_CLASSES` block: every name resolves eagerly
+    /// (raise-by-name, the `Errno::` constants), but the ~107
+    /// near-identical entries materialize on first touch through
+    /// [`Entries::get`]. `rows` must be the contiguous id block.
+    pub fn defer_errno_block(&mut self, rows: &[(ClassId, &'static str)]) {
+        let Some(&(ClassId(base), _)) = rows.first() else {
+            return;
+        };
+        for (i, (id, name)) in rows.iter().enumerate() {
+            debug_assert_eq!(id.0, base + i as u32, "errno block must be contiguous");
+            self.by_name.insert((*name).to_string(), id.0);
+        }
+        self.entries.set_errno_block(base, rows.len());
+    }
+
     pub fn register(
         &mut self,
         id: ClassId,
@@ -1203,7 +1303,10 @@ pub fn install_class_registry(registry: ClassRegistry) {
     let to_s = crate::symbol::wk::to_s();
     let inspect = crate::symbol::wk::inspect();
     let mut reopens = crate::FSet::default();
-    for (id, entry) in registry.entries.iter() {
+    // `iter_eager`: a deferred errno entry has no value_methods (no
+    // template row is one), so the reopen scan may skip the lazy block --
+    // a full iter here would materialize all 107 at every boot.
+    for (id, entry) in registry.entries.iter_eager() {
         if entry
             .value_methods
             .keys()
