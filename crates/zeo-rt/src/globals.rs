@@ -457,10 +457,6 @@ pub fn seed_load_path(paths: &[&str]) {
 /// Appends one feature to `$LOADED_FEATURES` -- what a unit loaded at RUNTIME
 /// records, so a second `require` of it answers `false` (see
 /// [`crate::features::load_feature`]).
-pub fn append_loaded_feature(name: &str) {
-    append_loaded_feature_in(0, name);
-}
-
 /// Whether this box's `$LOADED_FEATURES` already names `entry` -- what makes
 /// a second `require` of one feature record nothing.
 pub fn loaded_feature_recorded(box_id: u32, entry: &str) -> bool {

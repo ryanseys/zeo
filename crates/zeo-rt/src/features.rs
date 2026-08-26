@@ -308,9 +308,19 @@ pub fn load_feature(feature: &str) -> Option<Result<bool, Signal>> {
         // The guard drops HERE, before the drain below re-locks the state --
         // holding it across `drain_autoload_queue` was a self-deadlock.
     };
-    if matches!(outcome, Some(Ok(true))) {
-        crate::globals::append_loaded_feature(name);
-    }
+    // `$LOADED_FEATURES` is NOT recorded here. The unit's own body leads with
+    // the `FeatureLoaded` marker every spliced file carries
+    // (`parse::loader::splice`), which records the file's CANONICAL ABSOLUTE
+    // PATH -- and records it BEFORE the body runs, which is CRuby's own order
+    // (`rb_provide_feature` precedes evaluation, and that is what makes a
+    // require cycle answer false rather than recurse).
+    //
+    // Appending again here wrote a SECOND entry for one load, under the
+    // spelling the require asked with rather than the file it reached. Ruby
+    // lists one entry per file, and real libraries read that list as paths:
+    // rubygems' `already_loaded?` compares `"#{load_path_entry}/#{file}"`
+    // against it, and bundler's `shared_helpers` asks each entry
+    // `start_with?(resolved_path)`. A bare feature name satisfies neither.
     if outermost {
         drain_autoload_queue();
     }
