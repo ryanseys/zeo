@@ -30,14 +30,15 @@ module ZeoDev
       def self.summary = "assemble the relocatable distribution"
 
       def self.banner
-        "usage: zeo-dev dist [--target <triple>] [--no-smoke] " \
+        "usage: zeo-dev dist [--target <triple>] [--pgo] [--no-smoke] " \
           "[--stage-only] [-o <dir>]"
       end
 
-      def defaults = { target: nil, smoke: true, stage_only: false, out: nil }
+      def defaults = { target: nil, pgo: false, smoke: true, stage_only: false, out: nil }
 
       def options(o)
         o.on("--target TRIPLE", "build for TRIPLE instead of the host") { |v| opts[:target] = v }
+        o.on("--pgo", "profile-guided optimization (trains on the bench corpus)") { opts[:pgo] = true }
         o.on("--no-smoke", "skip the smoke test") { opts[:smoke] = false }
         o.on("--stage-only", "stage and check coherence; build no binary") { opts[:stage_only] = true }
         o.on("-o DIR", "stage into DIR instead of target/dist") { |v| opts[:out] = v }
@@ -117,6 +118,8 @@ module ZeoDev
       # `["rlib", "staticlib"]`, so the binary and `libzeo.a` come out of the
       # same profile directory and cannot be from different sources.
       def stage_binary(stage, payload, triple)
+        return stage_binary_pgo(stage, payload, triple) if opts[:pgo]
+
         build = %w[build --profile dist -p zeo]
         build.push("--target", opts[:target]) if opts[:target]
         cargo!(ROOT, build)
@@ -125,6 +128,10 @@ module ZeoDev
                 else
                   File.join(cargo_target_root, "dist")
                 end
+        stage_built(stage, payload, triple, built)
+      end
+
+      def stage_built(stage, payload, triple, built)
         FileUtils.mkdir_p(File.join(stage, "bin"))
         FileUtils.cp(File.join(built, "zeo"), File.join(stage, "bin", "zeo"))
         archive = File.join(built, "libzeo.a")
@@ -133,6 +140,121 @@ module ZeoDev
         lib = File.join(payload, "lib", triple)
         FileUtils.mkdir_p(lib)
         FileUtils.cp(archive, File.join(lib, "libzeo.a"))
+      end
+
+      # PGO, three phases: an instrumented dist build, a training pass over
+      # the bench corpus, and a clean profile-use rebuild. RUSTFLAGS ride an
+      # EXPLICIT --target so they never reach build scripts or proc-macros
+      # (cargo only scopes RUSTFLAGS away from the host when a target is
+      # named). The flag change alone re-fingerprints every crate, so no
+      # `cargo clean` is needed between the phases.
+      def stage_binary_pgo(stage, payload, triple)
+        if opts[:target] && opts[:target] != host_triple
+          raise Error, "--pgo trains on this machine; a cross build cannot run the corpus"
+        end
+
+        prof_dir = File.join(cargo_target_root, "pgo-profiles")
+        FileUtils.rm_rf(prof_dir)
+        FileUtils.mkdir_p(prof_dir)
+        built = File.join(cargo_target_root, triple, "dist")
+        build = ["build", "--profile", "dist", "-p", "zeo", "--target", triple]
+        puts "dist: pgo phase 1 -- instrumented build"
+        cargo!(ROOT, build, env: { "RUSTFLAGS" => "-Cprofile-generate=#{prof_dir}" })
+        inject_profiler_runtime(built)
+        puts "dist: pgo phase 2 -- training on the bench corpus"
+        train_pgo(File.join(built, "zeo"), prof_dir)
+        merged = File.join(prof_dir, "merged.profdata")
+        merge_profiles(prof_dir, merged)
+        puts "dist: pgo phase 3 -- profile-use rebuild"
+        cargo!(ROOT, build, env: { "RUSTFLAGS" => "-Cprofile-use=#{merged}" })
+        stage_built(stage, payload, triple, built)
+      end
+
+      # Compile and RUN every bench program with the instrumented toolchain.
+      # The compiled programs link the instrumented libzeo.a, so their runs
+      # are what teaches the profile the runtime's hot paths -- the compiler's
+      # own profile falls out of the compiles for free. Output is checked
+      # against each program's .expected: training on a wrong answer would
+      # bake a miscompile's shape into the shipped profile.
+      def train_pgo(zeo, prof_dir)
+        benches = Dir[File.join(ROOT, "bench", "bm_*.rb")].sort
+        raise Error, "no bench corpus at bench/bm_*.rb" if benches.empty?
+
+        profile_env = { "LLVM_PROFILE_FILE" => File.join(prof_dir, "train-%p.profraw") }
+        Dir.mktmpdir("zeo-pgo-train") do |work|
+          benches.each do |rb|
+            name = File.basename(rb, ".rb")
+            bin = File.join(work, name)
+            res = Exec.run([zeo, "-o", bin, rb], chdir: work, env: profile_env, capture_stdout: true)
+            raise Error, "pgo training: compiling #{name} failed:
+#{res.stderr}" unless res.success?
+
+            res = Exec.run([bin], chdir: work, env: profile_env, capture_stdout: true)
+            raise Error, "pgo training: #{name} exited #{res.code.inspect}:
+#{res.stderr}" unless res.success?
+
+            expected = "#{rb}.expected"
+            # binread: Exec drains stdout as BINARY, and a string with
+            # non-ASCII bytes never == its UTF-8 twin however equal the
+            # bytes are (ao_render's image output found this).
+            if File.file?(expected) && res.stdout != File.binread(expected)
+              raise Error, "pgo training: #{name} diverged from its .expected -- " \
+                           "refusing to train on a wrong answer"
+            end
+            puts "dist: pgo trained on #{name}"
+          end
+        end
+      end
+
+      # rustc bundles std into a staticlib but NOT profiler_builtins, so the
+      # instrumented libzeo.a references ___llvm_profile_instrument_* it
+      # cannot resolve and every training link dies. Merge the TOOLCHAIN's
+      # own profiler runtime objects into the instrumented archive -- the
+      # same LLVM the .profraw format is locked to, where clang's
+      # -fprofile-generate runtime may not be. The phase-3 profile-use
+      # rebuild regenerates the archive, so nothing injected ships.
+      def inject_profiler_runtime(built)
+        rlib = Dir[File.join(toolchain_sysroot, "lib", "rustlib", "*", "lib",
+                             "libprofiler_builtins-*.rlib")].first
+        raise Error, "the toolchain ships no profiler_builtins rlib" if rlib.nil?
+
+        archive = File.join(built, "libzeo.a")
+        Dir.mktmpdir("zeo-pgo-rt") do |work|
+          res = Exec.run(["ar", "x", rlib], chdir: work, capture_stdout: true)
+          raise Error, "ar x #{rlib} failed:
+#{res.stderr}" unless res.success?
+
+          objs = Dir[File.join(work, "*.o")]
+          raise Error, "#{rlib} held no objects" if objs.empty?
+
+          res = Exec.run(["ar", "qs", archive, *objs], capture_stdout: true)
+          raise Error, "ar qs #{archive} failed:
+#{res.stderr}" unless res.success?
+        end
+      end
+
+      def toolchain_sysroot
+        sysroot = `rustc --print sysroot 2>/dev/null`.strip
+        raise Error, "rustc --print sysroot answered nothing" if sysroot.empty?
+
+        sysroot
+      end
+
+      # The TOOLCHAIN's llvm-profdata (the llvm-tools component pinned in
+      # rust-toolchain.toml), never a system one: profraw formats are
+      # LLVM-version-locked.
+      def merge_profiles(prof_dir, merged)
+        tool = Dir[File.join(toolchain_sysroot, "lib", "rustlib", "*", "bin", "llvm-profdata")].first
+        if tool.nil?
+          raise Error, "the toolchain carries no llvm-profdata -- " \
+                       "run `rustup component add llvm-tools`"
+        end
+        raws = Dir[File.join(prof_dir, "*.profraw")]
+        raise Error, "training produced no .profraw files" if raws.empty?
+
+        res = Exec.run([tool, "merge", "-o", merged, *raws], capture_stdout: true)
+        raise Error, "llvm-profdata merge failed:
+#{res.stderr}" unless res.success?
       end
 
       # The staged tree must work with no help from the environment: a temp
@@ -196,8 +318,8 @@ module ZeoDev
                      "(the repo root is the usual choice)."
       end
 
-      def cargo!(dir, args, quiet: false)
-        res = Exec.run(["cargo", *args], chdir: dir, capture_stdout: quiet)
+      def cargo!(dir, args, quiet: false, env: {})
+        res = Exec.run(["cargo", *args], chdir: dir, env: env, capture_stdout: quiet)
         # Not quiet: cargo's own progress belongs on the terminal. Quiet
         # swallows stdout because `metadata` dumps megabytes.
         raise Error, "cargo #{args.join(" ")} exited with #{res.code.inspect}" unless res.success?
