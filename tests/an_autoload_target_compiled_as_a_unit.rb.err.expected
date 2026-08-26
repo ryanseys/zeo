@@ -1,0 +1,2 @@
+an_autoload_target_compiled_as_a_unit.rb:16:in 'Kernel#require': cannot load such file -- demo (LoadError)
+	from an_autoload_target_compiled_as_a_unit.rb:16:in '<main>'

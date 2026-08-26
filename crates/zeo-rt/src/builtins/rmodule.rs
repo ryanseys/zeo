@@ -371,11 +371,20 @@ fn peek_autoload_target(owner: u32, name: &str) -> Option<String> {
 /// loaded" is exactly its state, and `load_feature` leaves the unit
 /// retryable so a program that reaches the constant again still sees the
 /// error.
+///
+/// The target resolves through the SAME chain a `require` walks
+/// (`kernel::load::dynamic_require`): the compiled-in unit table, then the
+/// load path. An `autoload` is a deferred `require` and nothing about it
+/// narrows where the file may live -- resolving it against the unit table
+/// alone left a target the compiler never saw silently unloaded, and the read
+/// then raised `NameError` for a file sitting on `$LOAD_PATH`.
 pub fn run_pending_autoload(owner: u32, name: &str) -> Result<(), crate::Signal> {
     let Some(path) = peek_autoload_target(owner, name) else {
         return Ok(());
     };
-    match crate::features::load_feature(&path) {
+    let loaded = crate::features::load_feature(&path)
+        .or_else(|| crate::features::load_from_disk(&path, 0, false));
+    match loaded {
         // Loaded: the registration is spent, and `autoload?` answers nil.
         Some(Ok(_)) => {
             take_autoload_target(owner, name);
