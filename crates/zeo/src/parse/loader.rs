@@ -740,7 +740,7 @@ impl Loader {
             } else {
                 self.resolve_require(&feature).ok().flatten()
             };
-            let Some((path, package)) = resolved else {
+            let Some((path, _)) = resolved else {
                 // Unresolvable: the call stays and raises at runtime; for a
                 // plain require the resolvability pre-scan already recorded
                 // it. A missing require_relative under a guard defers the
@@ -759,11 +759,17 @@ impl Loader {
                 if let Ok(canonical) = path.canonicalize() {
                     self.unit_only_targets.insert(canonical);
                 }
-                hir.loader.single_unit_demand.insert((
-                    package.or_else(|| hir.lowering_package.clone()),
-                    path,
-                    feature,
-                ));
+                // This is the site that MAKES the file unit-only, so the
+                // demand it records goes through the same helper every other
+                // site uses -- one canonical path, and a `require_relative`
+                // under its absolute spelling. Recording the bare feature
+                // here made two sibling `require_relative "version"`s claim
+                // one global unit name.
+                let name = match relative {
+                    true => "require_relative",
+                    false => "require",
+                };
+                self.claim_unit_only_site(hir, call, name, &feature, dir);
             }
         }
         // ... and the requiring file's OWN declarations are recorded before

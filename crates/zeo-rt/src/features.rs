@@ -243,20 +243,28 @@ fn state() -> &'static parking_lot::Mutex<LoadState> {
 /// Installs the program's units. Emitted once, at startup, before `main`'s
 /// first statement -- a require in the very first line must already see them.
 pub fn install_feature_units(rows: &'static [(&'static str, UnitFn)]) {
-    let _ = UNITS.set(
-        rows.iter()
-            .map(|&(name, f)| (name, UnitImpl::Rust(f)))
-            .collect(),
-    );
+    let _ = UNITS.set(collect_units(rows.iter().map(|&(n, f)| (n, UnitImpl::Rust(f)))));
 }
 
 /// [`install_feature_units`] for a Cranelift-emitted program.
 pub fn install_feature_units_c(rows: &'static [(&'static str, CUnitFn)]) {
-    let _ = UNITS.set(
-        rows.iter()
-            .map(|&(name, f)| (name, UnitImpl::C(f)))
-            .collect(),
-    );
+    let _ = UNITS.set(collect_units(rows.iter().map(|&(n, f)| (n, UnitImpl::C(f)))));
+}
+
+/// The FIRST row claiming a spelling wins. Rows arrive in demand order, so
+/// first-wins is the earliest require's answer -- and it is what makes the
+/// compiler's collision warning true (`analyze::warn_on_colliding_unit_features`
+/// names the loser). Collecting straight into the map silently let the LAST
+/// row win instead, which is how pub_grub's `rubygems.rb` came to answer
+/// `require "rubygems"`.
+fn collect_units(
+    rows: impl Iterator<Item = (&'static str, UnitImpl)>,
+) -> HashMap<&'static str, UnitImpl> {
+    let mut map: HashMap<&'static str, UnitImpl> = HashMap::new();
+    for (name, imp) in rows {
+        map.entry(name).or_insert(imp);
+    }
+    map
 }
 
 /// The key a feature string resolves under: the `.rb` suffix is optional in

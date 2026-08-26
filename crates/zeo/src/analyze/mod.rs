@@ -304,6 +304,7 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
         }
     }
     compiler.unit_walk = false;
+    warn_on_colliding_unit_features(compiler, &feature_units);
 
     // Stage C invariant: the ids the compiler just assigned the built-in
     // exceptions MUST match `zeo-abi`'s table, because `zeo-rt`'s
@@ -381,6 +382,49 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
         feature_units,
         declined_units,
     })
+}
+
+/// Two units claiming ONE feature spelling is a silent wrong answer, and it
+/// has to be loud. `zeo_rt::features::UNITS` is a map, so a duplicate key used
+/// to last-win without a word: `pub_grub/static_package_source.rb`'s
+/// `require_relative 'rubygems'` registered the bare spelling `rubygems` for
+/// pub_grub's own file, and a later `require "rubygems"` therefore ran that
+/// file, answered TRUE, and recorded the feature loaded -- so no second
+/// require could recover and `Gem` stayed undefined. Eight files are named
+/// `version.rb` across the two vendored trees alone.
+///
+/// The registration order is the demand order, so the FIRST claim wins (see
+/// `features::install_feature_units_c`) and the later one is what the warning
+/// names. The demand recording is the real bug whenever this fires;
+/// `repo_checks` asserts the bundled gems produce none.
+fn warn_on_colliding_unit_features(
+    compiler: &mut Compiler,
+    feature_units: &[(Vec<String>, String, Vec<NodeId>)],
+) {
+    let mut claimed: FMap<&str, &str> = FMap::default();
+    let mut collisions: Vec<(String, String, String)> = Vec::new();
+    for (names, absolute, _) in feature_units {
+        for name in names {
+            match claimed.get(name.as_str()) {
+                Some(&winner) if winner != absolute.as_str() => {
+                    collisions.push((name.clone(), winner.to_string(), absolute.clone()));
+                }
+                Some(_) => {}
+                None => {
+                    claimed.insert(name.as_str(), absolute.as_str());
+                }
+            }
+        }
+    }
+    for (feature, winner, loser) in collisions {
+        compiler.hir.warnings.push(crate::diagnostics::CompileWarning {
+            file: format!("{loser}.rb"),
+            line: 0,
+            message: format!(
+                "`require \"{feature}\"` is claimed by two compiled-in files ({winner}.rb and {loser}.rb); it loads the first"
+            ),
+        });
+    }
 }
 
 /// Fills [`Compiler::inline_iter_sites`]: every block call whose receiver is

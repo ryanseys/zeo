@@ -88,8 +88,13 @@ fn every_bundled_gem_compiles() {
             continue;
         }
         let source = format!("require {:?}\n", entry_point(gem));
-        match zeo::check_program_with(&source, &opts) {
-            Ok(_) => compiled += 1,
+        match zeo::analyze_program(&source, &opts) {
+            Ok(a) => {
+                compiled += 1;
+                failures.extend(colliding_unit_features(&a).into_iter().map(|c| {
+                    format!("  {gem}: two compiled-in files claim `require \"{}\"` -- {} and {}\n    (the demand recording is the bug: one of them registered a spelling that is not its own)", c.0, c.1, c.2)
+                }));
+            }
             Err(e) => failures.push(format!("  {gem}: {e}")),
         }
     }
@@ -101,6 +106,37 @@ fn every_bundled_gem_compiles() {
         compiled + failures.len(),
         failures.join("\n")
     );
+}
+
+/// Every feature spelling two of this program's units both claim.
+///
+/// `zeo_rt::features::UNITS` is a map, so a duplicate key means one file
+/// silently answers a `require` written for another -- and the require
+/// reports SUCCESS and records the feature loaded, so no later require can
+/// recover. `pub_grub/static_package_source.rb`'s `require_relative
+/// 'rubygems'` claimed the global spelling `rubygems` this way and left
+/// `Gem` undefined behind a `require "rubygems"` that answered true.
+///
+/// Checked over the bundled gems because that is where the shape lives:
+/// eight files are named `version.rb` across the vendored rubygems and
+/// bundler trees alone.
+fn colliding_unit_features(a: &zeo::analyze::Analyzed) -> Vec<(String, String, String)> {
+    let mut claimed: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
+    let mut hits = Vec::new();
+    for (names, absolute, _) in &a.feature_units {
+        for name in names {
+            match claimed.get(name.as_str()) {
+                Some(&winner) if winner != absolute.as_str() => {
+                    hits.push((name.clone(), winner.to_string(), absolute.clone()));
+                }
+                Some(_) => {}
+                None => {
+                    claimed.insert(name, absolute);
+                }
+            }
+        }
+    }
+    hits
 }
 
 /// A skip entry naming a gem that no longer exists would drop that gem out of
