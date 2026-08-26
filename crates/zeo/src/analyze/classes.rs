@@ -575,7 +575,14 @@ fn create_class(
     // can tell a bare opening (parent defaulted to Object) from a real
     // declaration -- see the reopen arm above.
     ci.explicit_superclass = superclass.is_some();
-    ci.bare_definition = superclass.is_none() && !is_module;
+    // A bare `class X` FIXES the superclass at Object -- but only where the
+    // order is known. In a lazily-loaded unit it is not: a gem that writes
+    // `class X < Node` in one file and bare-reopens `class X` in an
+    // autoload target registers both at analyze time, and which unit RUNS
+    // first is a run-time fact. Registering the bare one first then made
+    // the real declaration a `superclass mismatch`. Prism is the shape that
+    // does it; the hazard belongs to every gem written that way.
+    ci.bare_definition = superclass.is_none() && !is_module && !compiler.unit_walk;
     ci.lexical_parent = target.lexical_parent;
     ci.qualified_def = target.qualified_def;
     // The scope this definition is WRITTEN in, which is the naming
