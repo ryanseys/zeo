@@ -387,6 +387,17 @@ fn header_end(src: &str, at: usize) -> Option<usize> {
     None
 }
 
+/// A node's variant name, for a refusal that has to say WHICH statement it
+/// could not place. `Debug` is derived on every variant, and the name runs to
+/// the first delimiter, so this needs no second table to drift out of step.
+fn node_kind(node: &crate::hir::HirNode) -> String {
+    let text = format!("{node:?}");
+    let end = text
+        .find(|c: char| !c.is_alphanumeric() && c != '_')
+        .unwrap_or(text.len());
+    format!("`{}`", &text[..end])
+}
+
 /// The SOURCE TEXT of a body written inside a snippet, sliced from the
 /// statements' own spans -- plus the file and first line they report, so a
 /// backtrace row raised inside it names the same place the snippet does.
@@ -403,8 +414,12 @@ fn eval_body_source(fx: &Fx, stmt: NodeId, body: &[NodeId]) -> CResult<(String, 
         return Ok((String::new(), file, line));
     };
     let (Some(a), Some(b)) = (hir.span(*first), hir.span(*last)) else {
+        let blame = if hir.span(*first).is_none() { first } else { last };
         return Err(CodegenError::unsupported(
-            "a span-less statement in a `class` inside an `eval`",
+            format!(
+                "a span-less {} in a `class` inside an `eval`",
+                node_kind(&hir[*blame])
+            ),
             None,
         ));
     };
@@ -483,7 +498,13 @@ fn eval_body_source(fx: &Fx, stmt: NodeId, body: &[NodeId]) -> CResult<(String, 
         };
     for id in body {
         let span = hir.span(*id).and_then(|s| s.known()).ok_or_else(|| {
-            CodegenError::unsupported("a span-less statement in a `class` inside an `eval`", None)
+            CodegenError::unsupported(
+                format!(
+                    "a span-less {} in a `class` inside an `eval`",
+                    node_kind(&hir[*id])
+                ),
+                None,
+            )
         })?;
         run = match run {
             Some((f, start, end)) if f == span.file && span.start >= end => {

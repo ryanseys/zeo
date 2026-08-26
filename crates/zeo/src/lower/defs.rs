@@ -1181,7 +1181,13 @@ fn lower_class_body_statement(
             )
         };
         if inner.iter().any(|&n| bare_vis(hir, n)) {
-            hir.push_span(crate::hir::Span::SYNTH);
+            // The `class << self` keyword's own span, like every other node
+            // synthesized here. A span-less statement in a class body cannot
+            // be re-emitted as SOURCE TEXT, which is how a body written inside
+            // a run-time `eval` runs (`clif::eval::eval_body_source`), so a
+            // `class << self` holding a bare `private` refused the whole
+            // compile -- rubygems' `platform.rb` is the corpus case.
+            hir.push_span(crate::lower::span_of(hir, node));
             let reset = hir.push(HirNode::Call {
                 receiver: None,
                 name: "public".to_string(),
