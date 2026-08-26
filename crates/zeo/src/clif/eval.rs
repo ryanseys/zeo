@@ -362,6 +362,31 @@ pub(crate) fn eval_class_def(fx: &mut Fx, stmt: NodeId) -> CResult<super::operan
     })
 }
 
+/// One past the end of a `class`/`module` HEADER that starts at `at` -- the
+/// first `\n` or `;` outside a quote, which is where the body begins.
+///
+/// A superclass expression cannot span a line here, so the first newline is
+/// the header's end; the quote tracking is for the `;` case, where
+/// `class X < Struct.new("a;b")` would otherwise cut the header in half.
+fn header_end(src: &str, at: usize) -> Option<usize> {
+    let bytes = src.as_bytes();
+    let mut quote: Option<u8> = None;
+    let mut i = at;
+    while i < bytes.len() {
+        let b = bytes[i];
+        match quote {
+            Some(_) if b == b'\\' => i += 1,
+            Some(q) if b == q => quote = None,
+            Some(_) => {}
+            None if b == b'"' || b == b'\'' => quote = Some(b),
+            None if b == b'\n' || b == b';' => return Some(i + 1),
+            None => {}
+        }
+        i += 1;
+    }
+    None
+}
+
 /// The SOURCE TEXT of a body written inside a snippet, sliced from the
 /// statements' own spans -- plus the file and first line they report, so a
 /// backtrace row raised inside it names the same place the snippet does.
@@ -405,8 +430,16 @@ fn eval_body_source(fx: &Fx, stmt: NodeId, body: &[NodeId]) -> CResult<(String, 
             .checked_sub(3)
             .filter(|&at| src.source.get(at..at + 3) == Some("end"))
             .filter(|&at| at >= b.end as usize);
+        // From the end of the class HEADER, not from the first statement.
+        // The same splice that loses the closing `end` also loses the
+        // OPENER: with a constant inside `class << self` the first statement
+        // is the one written INSIDE the singleton body, so a slice starting
+        // there produced a body with one `end` too many and prism refused
+        // the whole snippet. Slicing the header off instead hands back
+        // exactly the text the program wrote, openers included.
+        let start = header_end(&src.source, own.start as usize).unwrap_or(a.start as usize);
         let (start, end) = (
-            a.start as usize,
+            start.min(a.start as usize),
             closing.unwrap_or(b.end as usize).min(src.source.len()),
         );
         if start > end {
@@ -414,7 +447,7 @@ fn eval_body_source(fx: &Fx, stmt: NodeId, body: &[NodeId]) -> CResult<(String, 
                 "a `class` body whose statements run backwards",
             ));
         }
-        line = src.line_at(a.start);
+        line = src.line_at(start as u32);
         return Ok((src.source[start..end].trim_end().to_string(), file, line));
     }
     // A body analyze REWROTE reaches here: some of its statements are

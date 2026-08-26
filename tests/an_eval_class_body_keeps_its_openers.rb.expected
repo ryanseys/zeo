@@ -1,0 +1,8 @@
+const in a singleton body	ok
+escape	a_b
+a multi-line brace block	ok
+pairs	{1 => 1, 2 => 2}
+a one-line class header	ok
+under	[1, 2, 3]
+a plain body raising	ok
+frame	s.rb:3:in 'E4.boom'
