@@ -436,16 +436,27 @@ fn maps() -> &'static OverlayMaps {
 /// compare-against-zero it was when the overlay was the only gate.
 #[inline(always)]
 pub fn is_live() -> bool {
-    GATES.load(Ordering::Acquire) & GATE_LIVE_MASK != 0
+    GATES.load(Ordering::Relaxed) & GATE_LIVE_MASK != 0
 }
 
 /// The whole gate byte in one load, for the callers that ask more than one
 /// gate question per dispatch ([`crate::dispatch::send_value_cached`]) --
 /// same single atomic load `is_live` costs, split by [`gates_live`]/
 /// [`gates_moved`] with plain register tests.
+///
+/// Every GATES read in this module is `Relaxed`, and that is an argument,
+/// not an oversight. The bits are monotone latches (PENDING excepted, whose
+/// benign race watermark.rs documents), and no reader dereferences data
+/// through the bit alone: a set bit only licenses a PROBE of the overlay
+/// maps, whose own `RwLock` supplies the happens-before edge to whatever the
+/// arming thread published. A reader that observes a stale zero behaves as
+/// if it ran before the arm -- the same outcome `Acquire` permits, since
+/// acquire adds ordering, never freshness. GATE_MOVED's husk flag protocol
+/// is already relaxed-plus-container-mutex on its own side. Writes keep
+/// `Release` so the latch itself is cheap insurance, not load-bearing.
 #[inline(always)]
 pub(crate) fn gates() -> u16 {
-    GATES.load(Ordering::Acquire)
+    GATES.load(Ordering::Relaxed)
 }
 
 #[inline(always)]
@@ -481,7 +492,7 @@ pub(crate) fn arm_frames_indirect() {
 /// in front of every husk probe off the dispatch fast path.
 #[inline(always)]
 pub fn any_moved() -> bool {
-    GATES.load(Ordering::Acquire) & GATE_MOVED != 0
+    GATES.load(Ordering::Relaxed) & GATE_MOVED != 0
 }
 
 /// Arm the moved gate -- once per `move: true` send that actually poisoned
@@ -512,7 +523,7 @@ pub(crate) fn mark_moved() {
 // form pays one extra load only because its other gates live outside GATES.
 #[inline(always)]
 pub fn iter_inline_ok(box_id: u32) -> bool {
-    box_id == 0 && GATES.load(Ordering::Acquire) == 0
+    box_id == 0 && GATES.load(Ordering::Relaxed) == 0
 }
 
 #[inline(always)]
@@ -521,7 +532,7 @@ pub fn iter_inline_ok_for(box_id: u32, recv: ClassId) -> bool {
         return false;
     }
     // ONE load, then masks -- see `GATE_PATCHED_ANY`.
-    let g = GATES.load(Ordering::Acquire);
+    let g = GATES.load(Ordering::Relaxed);
     g & GATE_ITER_BLOCKED == 0 && !class_maybe_patched_gated(g, recv)
 }
 
@@ -559,7 +570,7 @@ static PATCHED: OnceLock<RwLock<FSet<u32>>> = OnceLock::new();
 
 #[inline(always)]
 pub fn class_maybe_patched(id: ClassId) -> bool {
-    class_maybe_patched_gated(GATES.load(Ordering::Acquire), id)
+    class_maybe_patched_gated(GATES.load(Ordering::Relaxed), id)
 }
 
 #[inline(always)]
@@ -601,7 +612,7 @@ pub fn mark_mro_duplicates() {
 /// Whether any chain in this process holds a class twice.
 #[inline]
 pub fn mro_duplicates() -> bool {
-    GATES.load(Ordering::Acquire) & GATE_MRO_DUPLICATES != 0
+    GATES.load(Ordering::Relaxed) & GATE_MRO_DUPLICATES != 0
 }
 
 fn mark_live() {
@@ -811,7 +822,7 @@ pub(crate) fn extended_modules(recv: &RubyValue) -> Vec<ClassId> {
         RubyValue::Class(cid) => crate::dispatch::class_extends(*cid).to_vec(),
         _ => Vec::new(),
     };
-    if GATES.load(Ordering::Acquire) & GATE_ANY_EXTENDED == 0 {
+    if GATES.load(Ordering::Relaxed) & GATE_ANY_EXTENDED == 0 {
         return mods;
     }
     let Some(key) = extend_key(recv) else {
@@ -848,7 +859,7 @@ pub fn value_extends(recv: &RubyValue, target: ClassId) -> bool {
     {
         return true;
     }
-    if GATES.load(Ordering::Acquire) & GATE_ANY_EXTENDED == 0 {
+    if GATES.load(Ordering::Relaxed) & GATE_ANY_EXTENDED == 0 {
         return false;
     }
     // A module PREPENDED into a singleton class is in that chain too, and it
@@ -1446,7 +1457,7 @@ mod tests {
     // false BEFORE its arming call, so a shared-process runner fails loudly.
 
     fn gate(bit: u16) -> bool {
-        GATES.load(Ordering::Acquire) & bit != 0
+        GATES.load(Ordering::Relaxed) & bit != 0
     }
 
     #[test]

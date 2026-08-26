@@ -68,7 +68,7 @@ pub fn pending_defs_end() {
 /// gate every truncation site reads before touching the thread-local.
 #[inline(always)]
 pub fn any_pending() -> bool {
-    GATES.load(Ordering::Acquire) & GATE_PENDING != 0
+    GATES.load(Ordering::Relaxed) & GATE_PENDING != 0
 }
 
 /// Whether `name` is a method of `class` that the definition hook now running
