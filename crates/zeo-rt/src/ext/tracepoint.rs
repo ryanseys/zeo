@@ -236,7 +236,7 @@ pub fn fire_line(line: u32) {
         bit: LINE,
         path: fr.file,
         lineno: line,
-        label: fr.method,
+        label: fr.method(),
         raised: None,
         slf: RubyValue::Nil,
     });
@@ -262,14 +262,14 @@ pub fn fire_entry(file: &'static str, label: &'static str, line: u32) {
 #[cold]
 pub fn fire_exit(fr: &crate::frames::Frame) {
     dispatch(Snapshot {
-        bit: if fr.method.starts_with('<') {
+        bit: if fr.method().starts_with('<') {
             END
         } else {
             RETURN
         },
         path: fr.file,
         lineno: fr.end_line,
-        label: fr.method,
+        label: fr.method(),
         raised: None,
         slf: RubyValue::Nil,
     });
@@ -343,7 +343,7 @@ pub fn fire_raise(exc: &RubyValue) {
         bit: RAISE,
         path: fr.file,
         lineno: fr.line,
-        label: fr.method,
+        label: fr.method(),
         raised: Some(exc.clone()),
         slf: RubyValue::Nil,
     });

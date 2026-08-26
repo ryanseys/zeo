@@ -519,7 +519,7 @@ pub unsafe extern "C" fn zeo_rt_native_row_call(
         });
     let r = match row {
         Some((anc, f)) => {
-            crate::dispatch::with_c_frame(crate::dispatch::c_frame_label(anc, name, '#'), || {
+            crate::dispatch::with_c_frame_ids(anc, name, '#', || {
                 f(recv, args, block)
             })
         }

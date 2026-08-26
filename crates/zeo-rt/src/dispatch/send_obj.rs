@@ -224,7 +224,6 @@ fn send_in_reason_inner(
                 if let Some(table) = crate::builtins::class_table(anc)
                     && let Some(f) = table(n)
                 {
-                    let label = c_frame_label(anc, name, '#');
                     // At the payload root, run against the wrapped value
                     // and re-wrap a self-return (`push`/`<<`) back to the
                     // subclass.
@@ -235,12 +234,12 @@ fn send_in_reason_inner(
                         if let Some(k) = crate::builtins::value_subclass::wrapper_row(name) {
                             return k(&boxed, args, block);
                         }
-                        let result = with_c_frame(label, || f(p, args, block))?;
+                        let result = with_c_frame_ids(anc, name, '#', || f(p, args, block))?;
                         return Ok(crate::builtins::value_subclass::rewrap_self_return(
                             result, p, recv, n,
                         ));
                     }
-                    return with_c_frame(label, || f(&boxed, args, block));
+                    return with_c_frame_ids(anc, name, '#', || f(&boxed, args, block));
                 }
             }
         }
@@ -257,7 +256,7 @@ fn send_in_reason_inner(
             && let Some(ref p) = payload
             && let Some(f) = builtin_row(root, old)
         {
-            let r = with_c_frame(c_frame_label(root, old, '#'), || f(p, args, block))?;
+            let r = with_c_frame_ids(root, old, '#', || f(p, args, block))?;
             return Ok(crate::builtins::value_subclass::rewrap_self_return(
                 r,
                 p,

@@ -48,7 +48,15 @@ use std::ptr;
 #[repr(C)]
 pub struct Frame {
     pub file: &'static str,
-    pub method: &'static str,
+    /// The METHOD text, in one of two states. `method_ptr` non-null: a
+    /// real `&'static str` in (ptr, len) halves -- what emitted
+    /// prologues store. Null: the cold builtin-dispatch boundary's
+    /// (owner class, symbol, separator) packed into `method_len`
+    /// ([`Frame::pack_ids`]) -- the label is materialized only when the
+    /// frame is READ (a capture, a trace event), which is what lets
+    /// `with_c_frame_ids` skip the label intern's mutex per call.
+    method_ptr: *const u8,
+    method_len: usize,
     pub line: u32,
     /// The scope's `end` keyword line, `TracePoint`'s `:return`/`:end`
     /// lineno. 0 marks a frame that never fires entry/exit trace events
@@ -62,17 +70,135 @@ pub struct Frame {
     pub pool_mark: u32,
 }
 
+// SAFETY: `method_ptr` is null or points into process-lifetime text
+// (`.rodata`, an interner leak); frames cross threads only inside the
+// fiber ec-swap's `Vec<Frame>`.
+unsafe impl Send for Frame {}
+unsafe impl Sync for Frame {}
+
+/// A frame method's two spellings, for the pushes that can carry either.
+#[derive(Clone, Copy)]
+pub(crate) enum FrameMethod {
+    Label(&'static str),
+    /// Owner class id + method symbol + "class method" (a `.` label
+    /// rather than `#`).
+    Ids(crate::ClassId, crate::Symbol, bool),
+}
+
 impl Frame {
     /// `pool_mark`'s "no pool scope" sentinel.
     pub const NO_MARK: u32 = zeo_abi::abi::FRAME_NO_MARK;
 
-    const EMPTY: Frame = Frame {
-        file: "",
-        line: 0,
-        method: "",
-        end_line: 0,
-        pool_mark: Frame::NO_MARK,
+    const EMPTY: Frame = Frame::with_label("", "", 0, 0, Frame::NO_MARK);
+
+    const fn with_label(
+        file: &'static str,
+        method: &'static str,
+        line: u32,
+        end_line: u32,
+        pool_mark: u32,
+    ) -> Frame {
+        Frame {
+            file,
+            method_ptr: method.as_ptr(),
+            method_len: method.len(),
+            line,
+            end_line,
+            pool_mark,
+        }
+    }
+
+    /// The ids state's packing: owner in the high half, the symbol
+    /// shifted over the separator bit. A symbol id above 2^31 would
+    /// collide with the owner half; the interner never gets there.
+    fn pack_ids(owner: crate::ClassId, sym: crate::Symbol, class_sep: bool) -> usize {
+        let s = sym.to_u32();
+        debug_assert!(s < 1 << 31, "symbol id overflows the frame packing");
+        ((owner.0 as usize) << 32) | ((s as usize) << 1) | usize::from(class_sep)
+    }
+
+    fn of(method: FrameMethod, file: &'static str, line: u32, end_line: u32) -> Frame {
+        match method {
+            FrameMethod::Label(l) => Frame::with_label(file, l, line, end_line, Frame::NO_MARK),
+            FrameMethod::Ids(owner, sym, class_sep) => Frame {
+                file,
+                method_ptr: std::ptr::null(),
+                method_len: Frame::pack_ids(owner, sym, class_sep),
+                line,
+                end_line,
+                pool_mark: Frame::NO_MARK,
+            },
+        }
+    }
+
+    fn ids_of(&self) -> Option<(crate::ClassId, crate::Symbol, bool)> {
+        if !self.method_ptr.is_null() {
+            return None;
+        }
+        let owner = crate::ClassId((self.method_len >> 32) as u32);
+        let sym = crate::Symbol::from_u32(((self.method_len >> 1) & 0x7FFF_FFFF) as u32);
+        Some((owner, sym, self.method_len & 1 == 1))
+    }
+
+    /// The method text, materializing an ids-state frame's label through
+    /// the intern cache (a READ is a capture or a trace event -- cold).
+    pub fn method(&self) -> &'static str {
+        match self.ids_of() {
+            None => {
+                // SAFETY: non-null ptr/len came from a real &'static str.
+                unsafe {
+                    std::str::from_utf8_unchecked(std::slice::from_raw_parts(
+                        self.method_ptr,
+                        self.method_len,
+                    ))
+                }
+            }
+            Some((owner, sym, class_sep)) => {
+                let sep = if class_sep { '.' } else { '#' };
+                // The push-side NOFRAME/SPECIALIZED checks passed (or no
+                // frame would exist), and both sets are static, so the
+                // label materializes deterministically.
+                crate::dispatch::c_frame_label(owner, sym, sep).unwrap_or("?")
+            }
+        }
+    }
+
+    /// Whether this frame's method IS `method`, across the two states --
+    /// the synthetic-frame dedupe's question, answered without
+    /// materializing a label (the cross-state arm compares piecewise).
+    fn method_is(&self, method: FrameMethod) -> bool {
+        match (self.ids_of(), method) {
+            (None, FrameMethod::Label(l)) => {
+                // Identity first (`ptr::eq` on the halves covers address
+                // AND len): a repeat through one cached label is the
+                // common hit. Content eq stays as the fallback.
+                (std::ptr::eq(self.method_ptr, l.as_ptr()) && self.method_len == l.len())
+                    || self.method() == l
+            }
+            (Some((o, s, c)), FrameMethod::Ids(o2, s2, c2)) => o == o2 && s == s2 && c == c2,
+            (Some((o, s, c)), FrameMethod::Label(l)) => ids_match_label(o, s, c, l),
+            (None, FrameMethod::Ids(o, s, c)) => ids_match_label(o, s, c, self.method()),
+        }
+    }
+}
+
+/// The cross-state dedupe compare: does `'Owner#name'` (or `'Owner.name'`)
+/// spell exactly these ids? Piecewise -- no label materializes.
+fn ids_match_label(
+    owner: crate::ClassId,
+    sym: crate::Symbol,
+    class_sep: bool,
+    label: &str,
+) -> bool {
+    let name = sym.name_str();
+    let sep = if class_sep { '.' } else { '#' };
+    let Some(rest) = label.strip_suffix(name) else {
+        return false;
     };
+    let Some(cls) = rest.strip_suffix(sep) else {
+        return false;
+    };
+    crate::dispatch::class_name(owner).is_some_and(|n| n == cls)
 }
 
 /// The per-thread HOT header: the frame-stack trio and the release-pool
@@ -268,15 +394,9 @@ impl FrameGuard {
     // hint (and an optimized generated build) each is a cross-crate call.
     #[inline]
     pub fn push(file: &'static str, method: &'static str, line: u32, end_line: u32) -> FrameGuard {
-        push_frame(Frame {
-            file,
-            line,
-            method,
-            end_line,
-            // A Rust-side guard brackets no pool scope (RAII drops own its
-            // temporaries); the pop skips the drain.
-            pool_mark: Frame::NO_MARK,
-        });
+        // A Rust-side guard brackets no pool scope (RAII drops own its
+        // temporaries); the pop skips the drain.
+        push_frame(Frame::with_label(file, method, line, end_line, Frame::NO_MARK));
         #[cfg(feature = "ext-tracepoint")]
         if end_line != 0 && crate::ext::tracepoint::tracing() {
             crate::ext::tracepoint::fire_entry(file, method, line);
@@ -337,6 +457,21 @@ fn traced_pop() -> u32 {
 /// (`dispatch::with_c_frame`) -- without the dedupe every such call showed
 /// twice in a backtrace.
 pub fn synthetic_c_frame(method: &'static str) -> CFrameGuard {
+    synthetic_c_frame_of(FrameMethod::Label(method))
+}
+
+/// [`synthetic_c_frame`] in the ids state: the cold dispatch boundary
+/// pushes (owner, symbol, separator) verbatim and NO label materializes
+/// unless something reads the frame -- see `Frame::method_ptr`'s docs.
+pub(crate) fn synthetic_c_frame_ids(
+    owner: crate::ClassId,
+    sym: crate::Symbol,
+    class_sep: bool,
+) -> CFrameGuard {
+    synthetic_c_frame_of(FrameMethod::Ids(owner, sym, class_sep))
+}
+
+fn synthetic_c_frame_of(method: FrameMethod) -> CFrameGuard {
     // ONE thread-local access for the whole sequence -- read the innermost
     // frame (caller location + dedupe), write, bump. The original spelling
     // (current_location + a dedupe scan + push_frame) paid four TLS
@@ -349,42 +484,27 @@ pub fn synthetic_c_frame(method: &'static str) -> CFrameGuard {
         let (file, line) = if top != base && !top.is_null() {
             // SAFETY: `top > base`, so `top - 1` is the live innermost frame.
             let innermost = unsafe { &*top.sub(1) };
-            // Identity first (`ptr::eq` on `&str` covers address AND len):
-            // a repeat through one cached label is the common hit. Content
-            // eq stays as the fallback -- the boundary frame's label and a
-            // row's hand-placed one are equal strings from two sources.
-            if std::ptr::eq(innermost.method, method) || innermost.method == method {
-                // An EXACT repeat of the innermost frame: since the location
-                // is CLONED from that same frame, "same label, same location"
-                // reduces to a label match -- one logical C call shows one
-                // frame. See the doc above.
+            // An EXACT repeat of the innermost frame: since the location
+            // is CLONED from that same frame, "same label, same location"
+            // reduces to a method match -- one logical C call shows one
+            // frame. The boundary frame's method and a row's hand-placed
+            // one can spell the same row from two sources (and now in two
+            // STATES; `method_is` compares across them).
+            if innermost.method_is(method) {
                 return false;
             }
             (innermost.file, innermost.line)
         } else {
             ("", 0)
         };
+        let fr = Frame::of(method, file, line, 0);
         if top == s.end.get() {
             // Full (or the null initial state): take the slow path outside.
-            grow_and_push(Frame {
-                file,
-                line,
-                method,
-                end_line: 0,
-                pool_mark: Frame::NO_MARK,
-            });
+            grow_and_push(fr);
             return true;
         }
         // SAFETY: `top < end`, a live slot.
-        unsafe {
-            top.write(Frame {
-                file,
-                line,
-                method,
-                end_line: 0,
-                pool_mark: Frame::NO_MARK,
-            })
-        };
+        unsafe { top.write(fr) };
         s.top.set(unsafe { top.add(1) });
         true
     });
@@ -481,13 +601,7 @@ pub(crate) fn frame_push_raw(
             }
         }
     };
-    push_frame(Frame {
-        file,
-        line,
-        method,
-        end_line,
-        pool_mark,
-    });
+    push_frame(Frame::with_label(file, method, line, end_line, pool_mark));
     #[cfg(feature = "ext-tracepoint")]
     if end_line != 0 && crate::ext::tracepoint::tracing() {
         crate::ext::tracepoint::fire_entry(file, method, line);
@@ -560,7 +674,7 @@ pub fn current_frame_method() -> Option<&'static str> {
         // A block's label names the method it was written in
         // (`block (2 levels) in Object#m`), and that is the name ruby answers
         // from inside it -- so take everything after the last ` in `.
-        let label = f.last()?.method;
+        let label = f.last()?.method();
         let owner = label.rsplit(" in ").next().unwrap_or(label);
         if owner.starts_with('<') {
             return None;
@@ -606,12 +720,12 @@ pub fn intern_path(path: &str) -> &'static str {
 /// `<main>`) -- what an `eval` under a Binding captured here reports as its
 /// own frame, since CRuby runs the snippet in the captured scope's name.
 pub fn current_frame_label() -> Option<&'static str> {
-    with_frames(|f| Some(f.last()?.method))
+    with_frames(|f| Some(f.last()?.method()))
 }
 
 /// `FILE:LINE:in 'METHOD'` -- CRuby's backtrace-entry shape.
 fn format_frame(fr: &Frame) -> String {
-    format!("{}:{}:in '{}'", fr.file, fr.line, fr.method)
+    format!("{}:{}:in '{}'", fr.file, fr.line, fr.method())
 }
 
 /// The current stack as formatted backtrace lines, INNERMOST FIRST --
@@ -636,7 +750,7 @@ pub fn caller_frames(start: usize) -> Vec<(&'static str, u32, &'static str)> {
         f.iter()
             .rev()
             .skip(start)
-            .map(|fr| (fr.file, fr.line, fr.method))
+            .map(|fr| (fr.file, fr.line, fr.method()))
             .collect()
     })
 }
@@ -661,7 +775,8 @@ mod layout_tests {
         assert_eq!(std::mem::offset_of!(FrameHot, pool_base), a::FRAMEHOT_POOL_BASE);
         assert_eq!(std::mem::offset_of!(FrameHot, pool_end), a::FRAMEHOT_POOL_END);
         assert_eq!(std::mem::offset_of!(Frame, file), a::FRAME_FILE_PTR);
-        assert_eq!(std::mem::offset_of!(Frame, method), a::FRAME_METHOD_PTR);
+        assert_eq!(std::mem::offset_of!(Frame, method_ptr), a::FRAME_METHOD_PTR);
+        assert_eq!(std::mem::offset_of!(Frame, method_len), a::FRAME_METHOD_LEN);
         assert_eq!(std::mem::offset_of!(Frame, line), a::FRAME_LINE);
         assert_eq!(std::mem::offset_of!(Frame, end_line), a::FRAME_END_LINE);
         assert_eq!(std::mem::offset_of!(Frame, pool_mark), a::FRAME_POOL_MARK);
@@ -691,7 +806,7 @@ mod layout_tests {
             p.add(a::FRAME_POOL_MARK).cast::<u32>().write_unaligned(3);
             let fr: Frame = std::ptr::read_unaligned(p.cast());
             assert_eq!(fr.file, "file.rb");
-            assert_eq!(fr.method, "Object#m");
+            assert_eq!(fr.method(), "Object#m");
             assert_eq!(fr.line, 7);
             assert_eq!(fr.end_line, 9);
             assert_eq!(fr.pool_mark, 3);

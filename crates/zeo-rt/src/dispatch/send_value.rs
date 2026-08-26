@@ -503,7 +503,7 @@ fn send_value_in_reason_inner(
                 return crate::runtime_meta::call_value_body(owner, name, &p, recv, args, block);
             }
             if let Some(f) = extended_class_method_body(owner, name) {
-                return with_c_frame(c_frame_label(owner, name, '#'), || {
+                return with_c_frame_ids(owner, name, '#', || {
                     f.call(recv, args, block)
                 });
             }
@@ -576,16 +576,16 @@ fn send_value_in_reason_inner(
                 }
             });
             if let Some((anc, f)) = flattened {
-                return with_c_frame(c_frame_label(anc, name, '.'), || f.call(recv, args, block));
+                return with_c_frame_ids(anc, name, '.', || f.call(recv, args, block));
             }
             if let Some(f) = class_method_fn(*cid, name) {
-                return with_c_frame(c_frame_label(*cid, name, '.'), || f.call(recv, args, block));
+                return with_c_frame_ids(*cid, name, '.', || f.call(recv, args, block));
             }
         }
         if let Some(lookup) = crate::builtins::class_method_table(*cid)
             && let Some(f) = lookup(name.name_str())
         {
-            return with_c_frame(c_frame_label(*cid, name, '.'), || f(recv, args, block));
+            return with_c_frame_ids(*cid, name, '.', || f(recv, args, block));
         }
         // The same table on a VALUE SUBCLASS's payload ROOT -- `DOSTime.local`,
         // `IOBuffer.open`. Nothing copies a builtin's class-method rows onto a
@@ -612,7 +612,7 @@ fn send_value_in_reason_inner(
                 && let Some(f) = lookup(n)
                 && !crate::builtins::builtin_class_method_is_private(root, n)
             {
-                return with_c_frame(c_frame_label(root, name, '.'), || f(recv, args, block));
+                return with_c_frame_ids(root, name, '.', || f(recv, args, block));
             }
         }
         // An ANCESTOR's runtime class method -- what a `Base.extend Store` or a
@@ -661,7 +661,7 @@ fn send_value_in_reason_inner(
                 if let Some(table) = crate::builtins::class_table(anc)
                     && let Some(f) = table(n)
                 {
-                    return with_c_frame(c_frame_label(anc, name, '#'), || f(recv, args, block));
+                    return with_c_frame_ids(anc, name, '#', || f(recv, args, block));
                 }
             }
         }
@@ -703,7 +703,7 @@ fn send_value_in_reason_inner(
             if let Some(table) = crate::builtins::class_table(anc)
                 && let Some(f) = table(n)
             {
-                return with_c_frame(c_frame_label(anc, name, '#'), || f(recv, args, block));
+                return with_c_frame_ids(anc, name, '#', || f(recv, args, block));
             }
         }
     }
@@ -715,7 +715,7 @@ fn send_value_in_reason_inner(
         && let Some(old) = class_alias_target(*cid, name)
     {
         if let Some(f) = builtin_class_row(*cid, old) {
-            return with_c_frame(c_frame_label(*cid, old, '.'), || f(recv, args, block));
+            return with_c_frame_ids(*cid, old, '.', || f(recv, args, block));
         }
         return send_value_in_reason(box_id, recv, old, args, block, reason);
     }
@@ -724,7 +724,7 @@ fn send_value_in_reason_inner(
     if let Some(old) = alias_target(recv.class_id(), name) {
         let cid = recv.class_id();
         if let Some(f) = builtin_row(cid, old) {
-            return with_c_frame(c_frame_label(cid, old, '#'), || f(recv, args, block));
+            return with_c_frame_ids(cid, old, '#', || f(recv, args, block));
         }
         return send_value_in_reason(box_id, recv, old, args, block, reason);
     }

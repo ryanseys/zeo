@@ -146,6 +146,30 @@ pub(crate) fn with_c_frame(
     crate::value::collections::check_key_raise(r)
 }
 
+/// [`with_c_frame`] straight from the row's ids: the frame carries
+/// (owner, name, separator) verbatim and the label materializes only if
+/// something READS it -- the cold MRO-walk paths asked
+/// [`c_frame_label`]'s mutex-backed intern on every call for a string
+/// that a no-raise call never looks at. The [`NOFRAME`]/[`SPECIALIZED`]
+/// verdicts (frameless rows) are the same sets the label path consults.
+#[inline]
+pub(crate) fn with_c_frame_ids(
+    owner: ClassId,
+    name: Symbol,
+    sep: char,
+    f: impl FnOnce() -> Result<RubyValue, Signal>,
+) -> Result<RubyValue, Signal> {
+    let n = name.name_str();
+    let frameless = NOFRAME.contains(&n) || (sep == '#' && SPECIALIZED.contains(&(owner, n)));
+    let r = if frameless {
+        f()
+    } else {
+        let _frame = crate::frames::synthetic_c_frame_ids(owner, name, sep == '.');
+        f()
+    };
+    crate::value::collections::check_key_raise(r)
+}
+
 /// Every registered class that has `id` in its ancestry, `id` itself excluded
 /// -- the descendants a change to `id` can be seen through. One scan of the
 /// registry, called only from `runtime_meta::patch_class` on a real runtime
