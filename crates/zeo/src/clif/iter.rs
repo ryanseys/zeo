@@ -42,6 +42,16 @@ pub(crate) enum Counted {
     /// CRuby fixes the bound at entry too. A negative `n` runs zero
     /// iterations; the loop's value is the receiver.
     TimesDyn { n: ir::Value },
+    /// `n.upto(m)` / `n.downto(m)` on guarded typed-Int receiver AND
+    /// argument payloads, both fixed at entry (CRuby's rule). The
+    /// counter runs from `n` through `limit` INCLUSIVE, stepping by the
+    /// direction; a start already past the limit runs zero iterations.
+    /// The loop's value is the receiver.
+    UpDown {
+        n: ir::Value,
+        limit: ir::Value,
+        down: bool,
+    },
 }
 
 /// What a fused loop DOES with each iteration's block value -- the
@@ -252,7 +262,7 @@ pub(crate) fn lower_counted(
                 IntCC::SignedGreaterThan
             },
         ),
-        Counted::ArrayEach { .. } | Counted::TimesDyn { .. } => {
+        Counted::ArrayEach { .. } | Counted::TimesDyn { .. } | Counted::UpDown { .. } => {
             (0, 0, IntCC::SignedGreaterThanOrEqual)
         }
     };
@@ -291,7 +301,11 @@ pub(crate) fn lower_counted(
         fx.b.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
     let mark = fx.call_status("zeo_rt_pool_mark", &[]);
     let fl = MemFlagsData::trusted();
-    let start_v = fx.b.ins().iconst(types::I64, start);
+    let start_v = match *counted {
+        // The counter begins at the RECEIVER for `upto`/`downto`.
+        Counted::UpDown { n, .. } => n,
+        _ => fx.b.ins().iconst(types::I64, start),
+    };
     let counter_addr = fx.slot_addr(counter, 0);
     fx.b.ins().store(fl, start_v, counter_addr, 0);
 
@@ -414,6 +428,14 @@ pub(crate) fn lower_counted(
             fx.b.ins().icmp(IntCC::SignedGreaterThanOrEqual, c, len)
         }
         Counted::TimesDyn { n } => fx.b.ins().icmp(IntCC::SignedGreaterThanOrEqual, c, n),
+        Counted::UpDown { limit, down, .. } => {
+            let cc = if down {
+                IntCC::SignedLessThan
+            } else {
+                IntCC::SignedGreaterThan
+            };
+            fx.b.ins().icmp(cc, c, limit)
+        }
         _ => fx.b.ins().icmp_imm_s(end_cc, c, end),
     };
     fx.b.ins().brif(done, exit_normal, &[], body_blk, &[]);
@@ -629,7 +651,11 @@ pub(crate) fn lower_counted(
         }
     }
     let c = fx.b.ins().load(types::I64, fl, counter_addr, 0);
-    let c1 = fx.b.ins().iadd_imm_s(c, 1);
+    let step = match *counted {
+        Counted::UpDown { down: true, .. } => -1,
+        _ => 1,
+    };
+    let c1 = fx.b.ins().iadd_imm_s(c, step);
     fx.b.ins().store(fl, c1, counter_addr, 0);
     fx.call("zeo_rt_pool_reset", &[mark]);
     fx.b.ins().jump(head, &[]);
@@ -719,14 +745,15 @@ pub(crate) fn lower_counted(
                 fx.b.ins().store(fl, tag, dst, TAG_OFFSET as i32);
                 fx.b.ins().store(fl, n_v, dst, PAYLOAD_OFFSET as i32);
             }
-            Counted::TimesDyn { n } => {
+            Counted::TimesDyn { n } | Counted::UpDown { n, .. } => {
                 let tag = fx.b.ins().iconst(types::I8, i64::from(ValueTag::Int as u8));
                 fx.b.ins().store(fl, tag, dst, TAG_OFFSET as i32);
                 fx.b.ins().store(fl, n, dst, PAYLOAD_OFFSET as i32);
-                // `lower_counted_int` counts nothing for its result --
-                // this arm owns the +1, as `ArrayEach`'s does. (`Times`/
-                // `Range` reach here from `counted_of` callers that count
-                // the result THEMSELVES, so their arms stay bare.)
+                // `lower_counted_int`/`lower_up_down_int` count nothing
+                // for their result -- this arm owns the +1, as
+                // `ArrayEach`'s does. (`Times`/`Range` reach here from
+                // `counted_of` callers that count the result THEMSELVES,
+                // so their arms stay bare.)
                 fx.owned_created += 1;
             }
             Counted::Range {
@@ -1008,6 +1035,126 @@ pub(crate) fn lower_counted_int(
         tag: TagInfo::Unknown,
     };
     let r = super::blocks::block_send_op(fx, site, borrowed, "times", &[], block)?;
+    match result {
+        Some((_, dst)) => {
+            let owned = r.owned();
+            ownership::write_move_into(fx, &r, dst);
+            if !owned {
+                fx.owned_created += 1;
+            }
+        }
+        None => ownership::discard(fx, r),
+    }
+    fx.b.ins().jump(join, &[]);
+
+    fx.b.switch_to_block(join);
+    Ok(result.map(|(ss, _)| Operand::Slot {
+        ss,
+        owned: true,
+        tag: TagInfo::Unknown,
+    }))
+}
+
+/// `n.upto(m)` / `n.downto(m)` on a statically-Int receiver: the guarded
+/// two-arm shape of [`lower_counted_int`], with the LIMIT argument
+/// tag-tested too -- a Float or Bignum bound takes the dynamic row.
+///
+/// The argument is lowered in the guarded arm (payload read) AND
+/// re-lowered by the dynamic arm's send -- and the failing-tag path runs
+/// BOTH. That is why the hook fuses only an IntegerLit/FloatLit/
+/// LocalRead argument: re-lowering those is observationally identical,
+/// so the double evaluation cannot be seen.
+pub(crate) fn lower_up_down_int(
+    fx: &mut Fx,
+    site: NodeId,
+    recv_id: NodeId,
+    arg: &crate::hir::ArrayElem,
+    block: NodeId,
+    want_result: bool,
+    down: bool,
+    slow_name: &str,
+) -> CResult<Option<super::operand::Operand>> {
+    use super::operand::{Operand, TagInfo};
+    let crate::hir::ArrayElem::Single(arg_id) = *arg else {
+        unreachable!("the hook fuses only a plain single argument");
+    };
+    // The receiver is evaluated ONCE and both arms borrow it.
+    let op = super::expr::lower_expr(fx, recv_id)?;
+    let recv = ownership::borrow_ptr(fx, &op);
+    if op.owned() {
+        ownership::pool_owned(fx, recv, op.tag());
+    }
+    let result = want_result.then(|| {
+        let ss = fx.temp_slot();
+        (ss, fx.slot_addr(ss, 0))
+    });
+
+    let gate = fx.b.create_block();
+    let arg_test = fx.b.create_block();
+    let fast = fx.b.create_block();
+    let slow = fx.b.create_block();
+    let join = fx.b.create_block();
+
+    let fl = MemFlagsData::trusted();
+    let tag = fx.b.ins().load(types::I8, fl, recv, TAG_OFFSET as i32);
+    let is_int =
+        fx.b.ins()
+            .icmp_imm_u(IntCC::Equal, tag, i64::from(ValueTag::Int as u8));
+    fx.b.ins().brif(is_int, gate, &[], slow, &[]);
+
+    fx.b.switch_to_block(gate);
+    let box_v = fx.box_v();
+    let int_cid =
+        fx.b.ins()
+            .iconst(types::I32, i64::from(crate::compiler::INTEGER_CLASS.0));
+    let ok = fx.call_status("zeo_rt_iter_inline_ok_for", &[box_v, int_cid]);
+    fx.b.ins().brif(ok, arg_test, &[], slow, &[]);
+
+    // The limit: lowered in THIS arm, pooled if owned, and tag-tested.
+    fx.b.switch_to_block(arg_test);
+    let arg_op = super::expr::lower_expr(fx, arg_id)?;
+    let arg_ptr = ownership::borrow_ptr(fx, &arg_op);
+    if arg_op.owned() {
+        ownership::pool_owned(fx, arg_ptr, arg_op.tag());
+    }
+    let atag = fx.b.ins().load(types::I8, fl, arg_ptr, TAG_OFFSET as i32);
+    let arg_int =
+        fx.b.ins()
+            .icmp_imm_u(IntCC::Equal, atag, i64::from(ValueTag::Int as u8));
+    fx.b.ins().brif(arg_int, fast, &[], slow, &[]);
+
+    fx.b.switch_to_block(fast);
+    let n = fx.b.ins().load(types::I64, fl, recv, PAYLOAD_OFFSET as i32);
+    let limit = fx
+        .b
+        .ins()
+        .load(types::I64, fl, arg_ptr, PAYLOAD_OFFSET as i32);
+    lower_counted(
+        fx,
+        site,
+        &Counted::UpDown { n, limit, down },
+        block,
+        result.map(|(_, dst)| dst),
+        Acc::None,
+        Bind::Element,
+        None,
+    )?;
+    fx.b.ins().jump(join, &[]);
+
+    fx.b.switch_to_block(slow);
+    let borrowed = Operand::Ptr {
+        addr: recv,
+        owned: false,
+        tag: TagInfo::Unknown,
+    };
+    let r = super::blocks::block_send_op(
+        fx,
+        site,
+        borrowed,
+        slow_name,
+        std::slice::from_ref(arg),
+        block,
+    )?;
     match result {
         Some((_, dst)) => {
             let owned = r.owned();

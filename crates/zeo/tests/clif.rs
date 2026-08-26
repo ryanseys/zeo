@@ -117,6 +117,18 @@ fn clif_snapshot_fused_times_guards() {
     ));
 }
 
+/// `n.upto(m)` on typed-Int locals: the receiver guard, then the LIMIT's
+/// own tag test (a Float bound takes the dynamic row -- and that arm
+/// re-lowers the argument, which is why only literal/local args fuse),
+/// then the counted loop from the receiver's payload through the
+/// limit's, inclusive.
+#[test]
+fn clif_snapshot_fused_upto_guards() {
+    insta::assert_snapshot!(clif_of(
+        "def upto_of\n  n = 2\n  m = 5\n  t = 0\n  n.upto(m) { |i| t = t + i }\n  p t\nend\nupto_of\n",
+    ));
+}
+
 /// The accumulator seam's heap kind: `arr.map` under the same guards as
 /// the fused `each`, with the Array accumulator in an epilogue-registered
 /// slot (its zeroing store sits in the entry block with the locals'),

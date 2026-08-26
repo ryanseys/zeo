@@ -1591,6 +1591,29 @@ fn literal_block_call(
         return Ok(super::iter::lower_counted_int(fx, id, r, blk, true)?
             .expect("a wanted result is always built"));
     }
+    if super::iter::fusable_block(fx, blk, 1)
+        && let Some(r) = receiver
+        && let Some(down) = match fx.an.compiler.inline_iter_sites.get(&blk) {
+            Some(crate::compiler::InlineIterKind::UptoInt) => Some(false),
+            Some(crate::compiler::InlineIterKind::DowntoInt) => Some(true),
+            _ => None,
+        }
+        && let [arg] = args.as_slice()
+        && matches!(
+            arg,
+            ArrayElem::Single(a) if matches!(
+                fx.an.compiler.hir[*a],
+                crate::hir::HirNode::IntegerLit(_)
+                    | crate::hir::HirNode::FloatLit(_)
+                    | crate::hir::HirNode::LocalRead(_)
+            )
+        )
+    {
+        return Ok(
+            super::iter::lower_up_down_int(fx, id, r, arg, blk, true, down, &name)?
+                .expect("a wanted result is always built"),
+        );
+    }
     if args.is_empty()
         && super::iter::fusable_block(fx, blk, 1)
         && let Some(counted) = super::iter::counted_of(fx, receiver, &name, true)
