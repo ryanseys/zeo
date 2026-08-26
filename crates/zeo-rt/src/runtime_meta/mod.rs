@@ -309,7 +309,7 @@ struct OverlayMaps {
 
 /// The gates the dispatch fast path reads, in ONE atomic word.
 ///
-/// The nine bits:
+/// The ten bits:
 ///
 /// * [`GATE_OVERLAY`] (1) -- something was defined at runtime, so the overlay
 ///   may answer where the frozen tables would not. Armed by `mark_live`,
@@ -337,6 +337,9 @@ struct OverlayMaps {
 ///   [`GATE_LIVE_MASK`] on purpose: a cache hit skips the walk that publishes
 ///   WHICH copy is running, and a `super` from the body would then resume
 ///   past the wrong one.
+/// * [`GATE_FRAMES_INDIRECT`] (512) -- emitted frame prologues must call
+///   instead of storing inline: `TracePoint` armed, or a pending frame
+///   label handed over ([`crate::frames::set_pending_frame_label`]).
 ///
 /// The two masks: [`GATE_LIVE_MASK`] (OVERLAY | PENDING | MRO_DUPLICATES) is
 /// what turns the inline caches and the overlay shortcuts off;
@@ -344,7 +347,7 @@ struct OverlayMaps {
 /// forbids a fused-iterator splice, apart from the receiver's own patched
 /// state.
 ///
-/// EIGHT of the nine bits are monotone latches: a `fetch_or` sets one, and
+/// NINE of the ten bits are monotone latches: a `fetch_or` sets one, and
 /// nothing ever clears it. [`GATE_PENDING`] is the one exception --
 /// `watermark.rs` depth-counts the live hook frames (`PENDING_DEPTH`) and
 /// clears the bit when the last hook returns, with a documented benign
@@ -392,6 +395,14 @@ const GATE_ANY_EXTENDED: u16 = 128;
 /// publishes WHICH copy is running and a `super` from the body would then
 /// resume past the wrong one.
 const GATE_MRO_DUPLICATES: u16 = 256;
+/// Emitted frame prologues must take the CALL path instead of their
+/// inline stores: a `TracePoint` is (or was) armed, or a runtime method
+/// install handed over a pending frame label -- both are work the inline
+/// path deliberately skips. Monotone like the others; a program that
+/// traces once keeps callee-framed prologues, which is the price of
+/// tracing, not of the fast path. NOT in [`GATE_LIVE_MASK`]: frames are
+/// orthogonal to dispatch caching.
+const GATE_FRAMES_INDIRECT: u16 = 512;
 const GATE_LIVE_MASK: u16 = GATE_OVERLAY | GATE_PENDING | GATE_MRO_DUPLICATES;
 /// What forbids a fused-iterator splice, apart from the receiver's own
 /// patched state.
@@ -455,6 +466,14 @@ pub(crate) fn gates_arity_debug(g: u16) -> bool {
 /// startup ([`crate::exec::run_main`]) when the variable is set.
 pub(crate) fn arm_arity_debug() {
     GATES.fetch_or(GATE_ARITY_DEBUG, Ordering::Release);
+}
+
+/// Arm the indirect-frames bit ([`GATE_FRAMES_INDIRECT`]) -- a
+/// `TracePoint` enable, or a pending frame label handover. Emitted
+/// prologues that see it take the call path, which fires the events and
+/// consumes the label; the inline stores do neither.
+pub(crate) fn arm_frames_indirect() {
+    GATES.fetch_or(GATE_FRAMES_INDIRECT, Ordering::Release);
 }
 
 /// Whether any `Ractor` move has ever poisoned an object -- the cheap gate

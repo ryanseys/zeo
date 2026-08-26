@@ -18,8 +18,9 @@ pub unsafe extern "C" fn zeo_rt_stack_check() -> i32 {
     }
 }
 
-/// Push a call frame (`.rodata` file/label text) and record the release-
-/// pool watermark the matching [`zeo_rt_frame_pop`] drains to.
+/// Push a call frame (`.rodata` file/label text), stamping the release-
+/// pool watermark the matching [`zeo_rt_frame_pop`] drains to into the
+/// frame itself (`Frame::pool_mark`).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zeo_rt_frame_push(
     file: *const u8,
@@ -31,15 +32,29 @@ pub unsafe extern "C" fn zeo_rt_frame_push(
 ) {
     let file = unsafe { super::static_str(file, file_len) };
     let label = unsafe { super::static_str(label, label_len) };
-    crate::release_pool::push_frame_mark();
-    crate::frames::frame_push_raw(file, label, line, end_line);
+    let mark = crate::release_pool::mark() as u32;
+    crate::frames::frame_push_raw(file, label, line, end_line, mark);
 }
 
-/// Pop the frame and release its pooled temporaries.
+/// Pop the frame and release its pooled temporaries (drains to the
+/// popped frame's own `pool_mark`; a markless frame drains nothing).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zeo_rt_frame_pop() {
-    crate::frames::frame_pop_raw();
-    crate::release_pool::pop_frame_mark();
+    let mark = crate::frames::frame_pop_raw();
+    if mark != crate::frames::Frame::NO_MARK {
+        crate::release_pool::reset(mark as usize);
+    }
+}
+
+/// The address of this thread's hot frame/pool header
+/// ([`crate::frames::FrameHot`]) -- emitted prologues fetch it once per
+/// function and then push, pop, stamp lines and pool temporaries through
+/// plain loads and stores (offsets pinned in `zeo_abi::abi::FRAMEHOT_*`).
+/// The address is stable for the thread's lifetime; fibers swap the
+/// CONTENTS through this same header, never the address.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_frame_hot() -> *mut crate::frames::FrameHot {
+    crate::frames::STACK.with(|s| s as *const crate::frames::FrameHot as *mut _)
 }
 
 /// Stamp the innermost frame's current line (emitted when the source line

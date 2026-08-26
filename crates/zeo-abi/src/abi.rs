@@ -105,6 +105,34 @@ pub const FFISYM_SITE_SIZE: usize = 16;
 /// The common alignment of every site struct above.
 pub const SITE_ALIGN: usize = 8;
 
+// --- The per-thread frame/pool hot header ------------------------------------
+//
+// `zeo_rt_frame_hot()` answers the address of the thread's `FrameHot`
+// header (stable for the thread's lifetime); emitted prologues push and
+// pop call frames, stamp lines and pool temporaries through these
+// offsets. Pinned by `zeo-rt`'s `frame_hot_layout` test -- including the
+// `&str` (ptr, len) fat-pointer layout the two text fields assume.
+
+/// `FrameHot` field offsets: the frame trio, then the pool trio.
+pub const FRAMEHOT_TOP: usize = 0;
+pub const FRAMEHOT_BASE: usize = 8;
+pub const FRAMEHOT_END: usize = 16;
+pub const FRAMEHOT_POOL_TOP: usize = 24;
+pub const FRAMEHOT_POOL_BASE: usize = 32;
+pub const FRAMEHOT_POOL_END: usize = 40;
+
+/// One `Frame`'s size and field offsets.
+pub const FRAME_SIZE: usize = 48;
+pub const FRAME_FILE_PTR: usize = 0;
+pub const FRAME_FILE_LEN: usize = 8;
+pub const FRAME_METHOD_PTR: usize = 16;
+pub const FRAME_METHOD_LEN: usize = 24;
+pub const FRAME_LINE: usize = 32;
+pub const FRAME_END_LINE: usize = 36;
+pub const FRAME_POOL_MARK: usize = 40;
+/// `Frame.pool_mark`'s "no pool scope" sentinel.
+pub const FRAME_NO_MARK: u32 = u32::MAX;
+
 // --- The C-side program description -----------------------------------------
 //
 // Everything below crosses the boundary as `.rodata` tables pointed to by one

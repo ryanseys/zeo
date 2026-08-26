@@ -55,9 +55,10 @@ pub struct Ec {
     pending: Option<crate::Signal>,
     catch_tags: Vec<RubyValue>,
     /// The frame-scoped release pool (`release_pool`): compiled-code heap
-    /// temporaries drain with their own coroutine's frames, so the pool and
-    /// its per-frame watermarks swap as one slice.
-    pool: crate::release_pool::PoolState,
+    /// temporaries drain with their own coroutine's frames, so the pool
+    /// swaps as one slice (the per-frame watermarks ride the frames
+    /// themselves, `Frame::pool_mark`).
+    pool: Vec<RubyValue>,
     frames: Vec<crate::frames::Frame>,
     /// The stack-overflow check floor (`stack_guard`) -- each fiber runs on
     /// its own coroutine stack with its own floor. `0` (a fresh context) =
@@ -95,7 +96,7 @@ impl Default for Ec {
             return_target: None,
             pending: None,
             catch_tags: Vec::new(),
-            pool: crate::release_pool::PoolState::default(),
+            pool: Vec::new(),
             frames: Vec::new(),
             stack_floor: 0,
             fiber_locals: Some(std::sync::Arc::default()),

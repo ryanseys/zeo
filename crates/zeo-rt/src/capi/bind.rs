@@ -47,9 +47,15 @@ pub unsafe extern "C" fn zeo_rt_bind_params(
     // way -- the body pushes its own.
     let file = unsafe { super::static_str(desc.file.ptr, desc.file.len) };
     let label = unsafe { super::static_str(desc.label.ptr, desc.label.len) };
-    crate::frames::frame_push_raw(file, label, desc.line, desc.end_line);
+    crate::frames::frame_push_raw(
+        file,
+        label,
+        desc.line,
+        desc.end_line,
+        crate::frames::Frame::NO_MARK,
+    );
     let result = unsafe { bind(desc, n_slots, args, slots, present) };
-    crate::frames::frame_pop_raw();
+    let _ = crate::frames::frame_pop_raw();
     match result {
         Ok(()) => STATUS_OK,
         Err(sig) => {

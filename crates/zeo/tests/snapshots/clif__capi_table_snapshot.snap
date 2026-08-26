@@ -94,6 +94,7 @@ zeo_rt_for_end ([Ptr]) -> None
 zeo_rt_for_next ([Ptr, Ptr, Ptr]) -> None
 zeo_rt_for_result ([Ptr, Ptr]) -> None
 zeo_rt_frame_enter ([Ptr, Usize, Ptr, Usize, U32, U32]) -> Some(I32)
+zeo_rt_frame_hot ([]) -> Some(Ptr)
 zeo_rt_frame_pop ([]) -> None
 zeo_rt_frame_push ([Ptr, Usize, Ptr, Usize, U32, U32]) -> None
 zeo_rt_frozen_check ([Ptr]) -> Some(I32)

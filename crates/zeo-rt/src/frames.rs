@@ -38,37 +38,60 @@ use std::cell::{Cell, RefCell};
 use std::ptr;
 
 /// One executing method activation -- everything a backtrace line needs.
+///
+/// `repr(C)`: emitted prologues write frames DIRECTLY through
+/// [`zeo_rt_frame_hot`](crate::capi::frames::zeo_rt_frame_hot)'s pointer,
+/// so the field offsets are ABI (`zeo_abi::abi::FRAME_*`), pinned by
+/// `frame_hot_layout` below. The `&'static str` fields assume the (ptr,
+/// len) fat-pointer layout; the same test pins that assumption loudly.
 #[derive(Clone, Copy)]
+#[repr(C)]
 pub struct Frame {
     pub file: &'static str,
-    pub line: u32,
     pub method: &'static str,
+    pub line: u32,
     /// The scope's `end` keyword line, `TracePoint`'s `:return`/`:end`
     /// lineno. 0 marks a frame that never fires entry/exit trace events
-    /// (`<main>`, blocks, synthetic C frames). Fills what was padding, so
-    /// a `Frame` stays 40 bytes.
+    /// (`<main>`, blocks, synthetic C frames).
     pub end_line: u32,
+    /// The release-pool watermark this frame's pop drains to, or
+    /// [`Frame::NO_MARK`] for a frame that brackets no pool scope (a
+    /// synthetic C frame, a Rust-side `FrameGuard`). Rode a parallel
+    /// `marks` stack while the rustc backend shared the frame struct;
+    /// that constraint died with the backend.
+    pub pool_mark: u32,
 }
 
 impl Frame {
+    /// `pool_mark`'s "no pool scope" sentinel.
+    pub const NO_MARK: u32 = zeo_abi::abi::FRAME_NO_MARK;
+
     const EMPTY: Frame = Frame {
         file: "",
         line: 0,
         method: "",
         end_line: 0,
+        pool_mark: Frame::NO_MARK,
     };
 }
 
-/// The hot half: `base <= top <= end` into [`OWNER`]'s buffer, all three
-/// null before the first push. Deliberately owns nothing -- see the module
-/// docs for the measurement that forces this.
-struct Stack {
-    top: Cell<*mut Frame>,
-    base: Cell<*mut Frame>,
-    end: Cell<*mut Frame>,
+/// The per-thread HOT header: the frame-stack trio and the release-pool
+/// value trio, `base <= top <= end` into [`OWNER`]'s buffers, all null
+/// before the first push. Deliberately owns nothing -- see the module
+/// docs for the measurement that forces this. `repr(C)` because emitted
+/// code addresses it directly (offsets in `zeo_abi::abi::FRAMEHOT_*`);
+/// `Cell<*mut T>` has `*mut T`'s layout.
+#[repr(C)]
+pub struct FrameHot {
+    pub(crate) top: Cell<*mut Frame>,
+    pub(crate) base: Cell<*mut Frame>,
+    pub(crate) end: Cell<*mut Frame>,
+    pub(crate) pool_top: Cell<*mut crate::RubyValue>,
+    pub(crate) pool_base: Cell<*mut crate::RubyValue>,
+    pub(crate) pool_end: Cell<*mut crate::RubyValue>,
 }
 
-impl Stack {
+impl FrameHot {
     #[inline]
     fn len(&self) -> usize {
         let base = self.base.get();
@@ -86,15 +109,20 @@ impl Stack {
     }
 }
 
-std::thread_local!(static STACK: Stack = const {
-    Stack {
+std::thread_local!(pub(crate) static STACK: FrameHot = const {
+    FrameHot {
         top: Cell::new(ptr::null_mut()),
         base: Cell::new(ptr::null_mut()),
         end: Cell::new(ptr::null_mut()),
+        pool_top: Cell::new(ptr::null_mut()),
+        pool_base: Cell::new(ptr::null_mut()),
+        pool_end: Cell::new(ptr::null_mut()),
     }
 });
 
 /// The cold half: owns the frame buffer so a finished thread frees it.
+/// (The pool half's owner lives in `release_pool` and detaches its own
+/// trio the same way.)
 struct Owner(Vec<Frame>);
 
 impl Drop for Owner {
@@ -103,7 +131,7 @@ impl Drop for Owner {
         // the hot pointers loose before the buffer goes. A push after this
         // point then finds an empty stack and is dropped (see `grow`)
         // rather than writing into freed memory.
-        let _ = STACK.try_with(Stack::detach);
+        let _ = STACK.try_with(FrameHot::detach);
     }
 }
 
@@ -176,18 +204,23 @@ fn grow_and_push(fr: Frame) {
     });
 }
 
-/// Pop without reading the frame back. The old code's `Drop` moved the
-/// popped `Frame` out unconditionally and that cost bm_fib ~8%; only the
-/// tracing path actually needs the value.
+/// Pop, reading back only the popped frame's `pool_mark` (or
+/// [`Frame::NO_MARK`] on an empty stack). The old code's `Drop` moved the
+/// whole popped `Frame` out unconditionally and that cost bm_fib ~8%;
+/// only the tracing path needs more than the mark.
 #[inline]
-fn pop_frame_discard() {
+fn pop_frame_discard() -> u32 {
     STACK.with(|s| {
         let top = s.top.get();
         if top != s.base.get() {
             // SAFETY: `top > base`, so `top - 1` is a live slot.
-            s.top.set(unsafe { top.sub(1) });
+            let top = unsafe { top.sub(1) };
+            s.top.set(top);
+            unsafe { (*top).pool_mark }
+        } else {
+            Frame::NO_MARK
         }
-    });
+    })
 }
 
 /// The live frames as a slice, outermost first.
@@ -240,6 +273,9 @@ impl FrameGuard {
             line,
             method,
             end_line,
+            // A Rust-side guard brackets no pool scope (RAII drops own its
+            // temporaries); the pop skips the drain.
+            pool_mark: Frame::NO_MARK,
         });
         #[cfg(feature = "ext-tracepoint")]
         if end_line != 0 && crate::ext::tracepoint::tracing() {
@@ -253,21 +289,24 @@ impl Drop for FrameGuard {
     #[inline]
     fn drop(&mut self) {
         // The tracing gate comes FIRST so the untraced path pops in place.
+        // A guard frame's mark is NO_MARK, so discarding it drains nothing.
         #[cfg(feature = "ext-tracepoint")]
         if crate::ext::tracepoint::tracing() {
-            return traced_pop();
+            traced_pop();
+            return;
         }
         pop_frame_discard();
     }
 }
 
 /// The pop while tracing is on: `:return`/`:end` for an event-bearing
-/// frame. `#[cold]`-outlined so `Drop`'s inlined fast path stays small.
-/// The frame is read out BEFORE the handler runs, since the handler runs
-/// Ruby code that pushes frames of its own.
+/// frame; answers the popped frame's `pool_mark` like
+/// [`pop_frame_discard`]. `#[cold]`-outlined so `Drop`'s inlined fast
+/// path stays small. The frame is read out BEFORE the handler runs, since
+/// the handler runs Ruby code that pushes frames of its own.
 #[cfg(feature = "ext-tracepoint")]
 #[cold]
-fn traced_pop() {
+fn traced_pop() -> u32 {
     let popped = STACK.with(|s| {
         let top = s.top.get();
         if top == s.base.get() {
@@ -277,11 +316,13 @@ fn traced_pop() {
         s.top.set(top);
         Some(unsafe { *top })
     });
-    if let Some(fr) = popped
-        && fr.end_line != 0
-    {
+    let Some(fr) = popped else {
+        return Frame::NO_MARK;
+    };
+    if fr.end_line != 0 {
         crate::ext::tracepoint::fire_exit(&fr);
     }
+    fr.pool_mark
 }
 
 /// A frame for a C-implemented callee: CRuby shows such frames at the
@@ -330,6 +371,7 @@ pub fn synthetic_c_frame(method: &'static str) -> CFrameGuard {
                 line,
                 method,
                 end_line: 0,
+                pool_mark: Frame::NO_MARK,
             });
             return true;
         }
@@ -340,6 +382,7 @@ pub fn synthetic_c_frame(method: &'static str) -> CFrameGuard {
                 line,
                 method,
                 end_line: 0,
+                pool_mark: Frame::NO_MARK,
             })
         };
         s.top.set(unsafe { top.add(1) });
@@ -382,7 +425,14 @@ thread_local! {
 /// Hand `label` to the next frame push on this thread. Answers the previous
 /// value so the caller can restore it -- a body that pushes no frame of its
 /// own must not leak the label to whatever pushes next.
+///
+/// Arming a label also latches `GATE_FRAMES_INDIRECT`: an emitted inline
+/// prologue never consults the handover, so from here on prologues must
+/// CALL their pushes.
 pub fn set_pending_frame_label(label: Option<&'static str>) -> Option<&'static str> {
+    if label.is_some() {
+        crate::runtime_meta::arm_frames_indirect();
+    }
     PENDING_LABEL.with(|c| c.replace(label))
 }
 
@@ -405,7 +455,15 @@ pub fn intern_label(label: &str) -> &'static str {
 /// [`FrameGuard::push`] without the guard -- the capi push/pop twins call
 /// these so Cranelift-compiled code (which has no Rust drops) brackets a
 /// frame explicitly while the traced-pop logic stays in one place.
-pub(crate) fn frame_push_raw(file: &'static str, method: &'static str, line: u32, end_line: u32) {
+/// `pool_mark` is the release-pool watermark this frame's pop drains to
+/// ([`Frame::NO_MARK`] = no pool scope).
+pub(crate) fn frame_push_raw(
+    file: &'static str,
+    method: &'static str,
+    line: u32,
+    end_line: u32,
+    pool_mark: u32,
+) {
     // The handover replaces only the emitter's UNKNOWN-OWNER fallback. The
     // same install path also carries a genuine `define_method` block, whose
     // body keeps its own `block in ...` label in ruby -- overriding that one
@@ -423,12 +481,27 @@ pub(crate) fn frame_push_raw(file: &'static str, method: &'static str, line: u32
             }
         }
     };
-    std::mem::forget(FrameGuard::push(file, method, line, end_line));
+    push_frame(Frame {
+        file,
+        line,
+        method,
+        end_line,
+        pool_mark,
+    });
+    #[cfg(feature = "ext-tracepoint")]
+    if end_line != 0 && crate::ext::tracepoint::tracing() {
+        crate::ext::tracepoint::fire_entry(file, method, line);
+    }
 }
 
-/// The explicit pop matching [`frame_push_raw`].
-pub(crate) fn frame_pop_raw() {
-    drop(FrameGuard(()));
+/// The explicit pop matching [`frame_push_raw`]: answers the popped
+/// frame's `pool_mark` so the capi pop can drain the release pool to it.
+pub(crate) fn frame_pop_raw() -> u32 {
+    #[cfg(feature = "ext-tracepoint")]
+    if crate::ext::tracepoint::tracing() {
+        return traced_pop();
+    }
+    pop_frame_discard()
 }
 
 /// [`synthetic_c_frame`] without the guard: answers whether a frame was
@@ -569,15 +642,73 @@ pub fn caller_frames(start: usize) -> Vec<(&'static str, u32, &'static str)> {
 }
 
 #[cfg(test)]
+mod layout_tests {
+    use super::*;
+    use zeo_abi::abi as a;
+
+    /// The emitted-code contract behind `zeo_rt_frame_hot`: `FrameHot` and
+    /// `Frame` offsets, including the `&str` (ptr, len) fat-pointer layout
+    /// the two text fields assume. If a toolchain ever changes that
+    /// layout, this fails loudly before any emitted store corrupts a
+    /// frame.
+    #[test]
+    fn frame_hot_layout() {
+        assert_eq!(std::mem::size_of::<Frame>(), a::FRAME_SIZE);
+        assert_eq!(std::mem::offset_of!(FrameHot, top), a::FRAMEHOT_TOP);
+        assert_eq!(std::mem::offset_of!(FrameHot, base), a::FRAMEHOT_BASE);
+        assert_eq!(std::mem::offset_of!(FrameHot, end), a::FRAMEHOT_END);
+        assert_eq!(std::mem::offset_of!(FrameHot, pool_top), a::FRAMEHOT_POOL_TOP);
+        assert_eq!(std::mem::offset_of!(FrameHot, pool_base), a::FRAMEHOT_POOL_BASE);
+        assert_eq!(std::mem::offset_of!(FrameHot, pool_end), a::FRAMEHOT_POOL_END);
+        assert_eq!(std::mem::offset_of!(Frame, file), a::FRAME_FILE_PTR);
+        assert_eq!(std::mem::offset_of!(Frame, method), a::FRAME_METHOD_PTR);
+        assert_eq!(std::mem::offset_of!(Frame, line), a::FRAME_LINE);
+        assert_eq!(std::mem::offset_of!(Frame, end_line), a::FRAME_END_LINE);
+        assert_eq!(std::mem::offset_of!(Frame, pool_mark), a::FRAME_POOL_MARK);
+
+        // The fat-pointer internals: write a frame the way an emitted
+        // prologue does (raw stores at the ABI offsets), read it back
+        // through the struct.
+        let file = "file.rb";
+        let method = "Object#m";
+        let mut buf = [0u8; a::FRAME_SIZE];
+        let p = buf.as_mut_ptr();
+        unsafe {
+            p.add(a::FRAME_FILE_PTR)
+                .cast::<*const u8>()
+                .write_unaligned(file.as_ptr());
+            p.add(a::FRAME_FILE_LEN)
+                .cast::<usize>()
+                .write_unaligned(file.len());
+            p.add(a::FRAME_METHOD_PTR)
+                .cast::<*const u8>()
+                .write_unaligned(method.as_ptr());
+            p.add(a::FRAME_METHOD_LEN)
+                .cast::<usize>()
+                .write_unaligned(method.len());
+            p.add(a::FRAME_LINE).cast::<u32>().write_unaligned(7);
+            p.add(a::FRAME_END_LINE).cast::<u32>().write_unaligned(9);
+            p.add(a::FRAME_POOL_MARK).cast::<u32>().write_unaligned(3);
+            let fr: Frame = std::ptr::read_unaligned(p.cast());
+            assert_eq!(fr.file, "file.rb");
+            assert_eq!(fr.method, "Object#m");
+            assert_eq!(fr.line, 7);
+            assert_eq!(fr.end_line, 9);
+            assert_eq!(fr.pool_mark, 3);
+        }
+    }
+}
+
+#[cfg(test)]
 mod pending_label_tests {
     use super::*;
 
     /// Push a frame the way an emitted body does, and read back the label it
     /// landed under.
     fn push_and_read(baked: &'static str) -> &'static str {
-        frame_push_raw("t.rb", baked, 1, 0);
+        frame_push_raw("t.rb", baked, 1, 0, Frame::NO_MARK);
         let got = current_frame_label().expect("a frame was pushed");
-        frame_pop_raw();
+        let _ = frame_pop_raw();
         got
     }
 

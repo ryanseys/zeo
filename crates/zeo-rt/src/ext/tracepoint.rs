@@ -435,6 +435,9 @@ pub fn set_legacy_hook(hook: Option<RProc>) {
     *LEGACY.lock().unwrap() = hook;
     if armed {
         TRACING.store(true, Ordering::Relaxed);
+        // Emitted prologues must start CALLING their frame pushes so the
+        // events actually fire (the inline stores skip them).
+        crate::runtime_meta::arm_frames_indirect();
     } else {
         TRACING.store(!ACTIVE.lock().unwrap().is_empty(), Ordering::Relaxed);
     }
@@ -462,6 +465,8 @@ fn register(tp: &RubyValue) {
         active.push(tp.clone());
     }
     TRACING.store(true, Ordering::Relaxed);
+    // See `set_legacy_hook`: inline frame prologues skip the events.
+    crate::runtime_meta::arm_frames_indirect();
 }
 
 fn unregister(tp: &RubyValue) {
