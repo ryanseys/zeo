@@ -269,30 +269,34 @@ A compiled program starts in **under a millisecond**; CRuby needs roughly
 correct output, and the criterion bench harness (`make bench`) verifies the
 output before it times anything.
 
-Measured 2026-08-25, Zeo and CRuby 4.0.6 timed in the same run:
+Measured 2026-08-25 on one machine, against CRuby 4.0.6 (the Zeo rows from
+that day's full run; the CRuby rows from a combined Zeo + Ruby run earlier
+the same day — the committed [`bench/results.tsv`](bench/results.tsv) is
+the record):
 
 | | geomean |
 |---|---|
-| all 61 benchmarks | **1.01× — parity with CRuby** |
-| the 40 where CRuby takes ≥ 0.10 s | **0.62× — slower** |
+| all 61 benchmarks | **1.77× — faster than CRuby** |
+| the 40 where CRuby takes ≥ 0.10 s | **1.19× — faster** |
 
-Read the second row. The first is inflated by process startup: about a third
-of the programs finish inside CRuby's ~30 ms of boot, where a native binary
-starts instantly. That is a real advantage of shipping a binary. It is not a
-claim about generated code.
+The first row is inflated by process startup: about a third of the programs
+finish inside CRuby's ~30 ms of boot, where a native binary starts
+instantly. That is a real advantage of shipping a binary, but the second
+row is the claim about generated code: on the compute-bound set Zeo wins
+22 of 40 (`range_each` 8.0×, `so_mandelbrot` 4.9×, `nested_loop` 4.0×,
+`matmul` 3.0×, `sieve` 2.4×). Release builds made with `zeo-dev dist
+--pgo` (profile-guided optimization, what the shipped artifacts use) run
+another ~10% faster than the release profile these numbers were taken on.
 
-**The Cranelift backend is correctness-complete and its performance pass is
-not finished.** Two optimization waves have run — measured 2026-08-20 at
-**+52.3%** over the Rust-emitting backend they replaced (that backend is no
-longer in the tree, so the figure is history, not reproducible) — and on
-compute-bound work Zeo is still behind CRuby. It wins where the emitter has a
-fused loop or an inline cache (`range_each` 3.28×, `so_mandelbrot` 2.16×,
-`attr_accessor` 1.26×) and loses where it does not (`rbtree` 0.24×,
-`send_rubyfunc_block` 0.30×, `life` 0.31×). The losses are a ranked list of
-unbuilt levers, not a mystery: typed iterator splices, a class-level ivar
-site, a direct call for a statically-known receiver class.
-[`bench/README.md`](bench/README.md) has the method;
-[`docs/ROADMAP.md`](docs/ROADMAP.md) has the levers.
+The losses that remain cluster in two shapes, and both are named, ranked
+levers rather than mysteries. Programs whose hot receiver the compiler
+cannot statically type (`tree_walker` 0.07×, `linked_list` 0.38×,
+`rbtree` 0.62× — pointer-chasing object graphs) are waiting on wider type
+inference: the typed direct call that took `send_rubyfunc_block` from
+0.30× to 1.2× only fires where the receiver's class is proven at
+compile time. And `getivar_module` (0.39×) waits on a class-level ivar
+cache the emitter does not yet emit. [`bench/README.md`](bench/README.md)
+has the method; [`docs/ROADMAP.md`](docs/ROADMAP.md) has the levers.
 
 ---
 
