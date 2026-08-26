@@ -1047,6 +1047,22 @@ impl Loader {
                             .insert((file, call.location().start_offset() as u32));
                     }
                 }
+                // A METHOD-BODY `require_relative` naming a unit-only file has
+                // to claim its site HERE. The trailing pass below reaches it
+                // eventually, but `lower_node` has folded the call to `true` by
+                // then, so the method ran and loaded nothing: rubygems'
+                // `specification.rb` reached `requirement.rb` through exactly
+                // this shape, and only an autoload row naming the same file
+                // hid it. Under load-faithful packages most package files have
+                // no autoload naming them, and there are 131 of these sites
+                // across rubygems and bundler.
+                for call in &nested.lazy {
+                    let cname = String::from_utf8_lossy(call.name().as_slice()).into_owned();
+                    let Some(feature) = literal_feature(result, hir, call)? else {
+                        continue;
+                    };
+                    self.claim_unit_only_site(hir, call, &cname, &feature, dir);
+                }
             }
             let id = lower_node(result, hir, &n)?;
             // A require this statement CONTAINS rather than IS, and that
@@ -1258,6 +1274,79 @@ impl Loader {
         Ok(combined)
     }
 
+    /// A file some GUARDED site requires is a UNIT, and so is every other site
+    /// that names it -- whichever runs first loads it. Splicing an unguarded
+    /// site inline instead runs the body THERE, at a position the guarded site
+    /// may already have passed: `abbrev` is required from inside a block and
+    /// again at top level in `tests/require_from_a_block_and_top_level.rb`, and
+    /// the block runs first.
+    ///
+    /// Answers whether this site was CLAIMED -- the call stays live and the
+    /// target's unit is demanded under this site's own spelling. Called from
+    /// two places, because the two arrive at different times: a statement-
+    /// position require claims itself as it lowers, while a METHOD-BODY
+    /// `require_relative` has to claim its site in the pre-pass, before
+    /// `lower_node` reaches the `def` and folds the call to `true`.
+    fn claim_unit_only_site(
+        &mut self,
+        hir: &mut Hir,
+        call: &ruby_prism::CallNode<'_>,
+        name: &str,
+        feature: &str,
+        dir: Option<&Path>,
+    ) -> bool {
+        if name == "load" {
+            return false;
+        }
+        let Some(file) = hir.lowering_file else {
+            return false;
+        };
+        // The owning PACKAGE travels with the path: it decides which roots
+        // the file's own requires resolve against, and whose parse warnings
+        // are the user's to act on. Every sibling demand site does
+        // `package.or_else(|| lowering_package)`; dropping it here handed an
+        // entry require (`lowering_package` is None at the main file) to the
+        // unguarded `-I`-roots sweep.
+        let resolved = match name {
+            "require_relative" => resolve_require_relative(feature, dir).ok().map(|p| (p, None)),
+            _ => self.resolve_require(feature).ok().flatten(),
+        };
+        let Some((target, package)) = resolved
+            .and_then(|(p, pkg)| Some((p.canonicalize().ok()?, pkg)))
+            .filter(|(p, _)| self.unit_only_targets.contains(p))
+        else {
+            return false;
+        };
+        hir.loader
+            .conditional_require_sites
+            .insert((file, call.location().start_offset() as u32));
+        // ... and THIS spelling has to reach the unit. Demands are grouped by
+        // canonical file, so recording it here makes it an alias of the same
+        // unit rather than a second one. Without it the unit answered only to
+        // the spelling that demanded it -- bundler's `require
+        // "rubygems/source"` raised `cannot load such file` for a unit
+        // rubygems.rb had demanded under its `File.expand_path` spelling.
+        //
+        // A `require_relative` registers under its ABSOLUTE spelling, exactly
+        // as the `in_unit_sweep` arm does and for the same reason it states: a
+        // bare relative name recurs in every gem, and a unit table keyed by one
+        // is a COLLISION rather than an alias.
+        // `pub_grub/static_package_source.rb`'s `require_relative 'rubygems'`
+        // claimed the global spelling `rubygems` and silently shadowed RubyGems
+        // itself, so a guarded `require "rubygems"` ran pub_grub's file and
+        // answered true.
+        let spelling = match name {
+            "require_relative" => target.with_extension("").to_string_lossy().into_owned(),
+            _ => feature.to_string(),
+        };
+        hir.loader.single_unit_demand.insert((
+            package.or_else(|| hir.lowering_package.clone()),
+            target,
+            spelling,
+        ));
+        true
+    }
+
     /// One recognized require/require_relative/load statement: validate the
     /// shape, resolve the target, splice (or skip, for a deduped require).
     #[allow(clippy::too_many_arguments)] // one context param per resolution
@@ -1337,63 +1426,8 @@ impl Loader {
                 return Ok(None);
             }
         }
-        // A file some GUARDED site requires is a UNIT, and so is every other
-        // site that names it -- whichever runs first loads it. Splicing an
-        // unguarded site inline instead runs the body THERE, at a position
-        // the guarded site may already have passed: `abbrev` is required
-        // from inside a block and again at top level in
-        // `tests/require_from_a_block_and_top_level.rb`, and the block runs
-        // first.
-        if name != "load"
-            && let Some(file) = hir.lowering_file
-        {
-            // The owning PACKAGE travels with the path: it decides which roots
-            // the file's own requires resolve against, and whose parse
-            // warnings are the user's to act on. Every sibling demand site
-            // does `package.or_else(|| lowering_package)`; dropping it here
-            // handed an entry require (`lowering_package` is None at the main
-            // file) to the unguarded `-I`-roots sweep.
-            let resolved = match name {
-                "require_relative" => resolve_require_relative(&feature, dir)
-                    .ok()
-                    .map(|p| (p, None)),
-                _ => self.resolve_require(&feature).ok().flatten(),
-            };
-            if let Some((target, package)) = resolved
-                .and_then(|(p, pkg)| Some((p.canonicalize().ok()?, pkg)))
-                && self.unit_only_targets.contains(&target)
-            {
-                hir.loader
-                    .conditional_require_sites
-                    .insert((file, call.location().start_offset() as u32));
-                // ... and THIS spelling has to reach the unit. Demands are
-                // grouped by canonical file, so recording it here makes it an
-                // alias of the same unit rather than a second one. Without it
-                // the unit answered only to the spelling that demanded it --
-                // bundler's `require "rubygems/source"` raised `cannot load
-                // such file` for a unit rubygems.rb had demanded under its
-                // `File.expand_path` spelling.
-                //
-                // A `require_relative` registers under its ABSOLUTE spelling,
-                // exactly as the `in_unit_sweep` arm below does and for the
-                // same reason it states: a bare relative name recurs in every
-                // gem, and a unit table keyed by one is a COLLISION rather
-                // than an alias. `pub_grub/static_package_source.rb`'s
-                // `require_relative 'rubygems'` claimed the global spelling
-                // `rubygems` and silently shadowed RubyGems itself, so a
-                // guarded `require "rubygems"` ran pub_grub's file and
-                // answered true.
-                let spelling = match name {
-                    "require_relative" => target.with_extension("").to_string_lossy().into_owned(),
-                    _ => feature.clone(),
-                };
-                hir.loader.single_unit_demand.insert((
-                    package.or_else(|| hir.lowering_package.clone()),
-                    target,
-                    spelling,
-                ));
-                return Ok(None);
-            }
+        if self.claim_unit_only_site(hir, call, name, &feature, dir) {
+            return Ok(None);
         }
         // `require "./x"` / `require "../x"`: CRuby resolves these against
         // the runtime cwd. The compile-time analogue is the requiring
