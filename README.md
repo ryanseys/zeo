@@ -264,8 +264,8 @@ For what does not match yet, read
 
 ## Performance
 
-A compiled program starts in **under a millisecond**; CRuby needs roughly
-30 ms before the first line runs. `bench/` holds 61 programs, each with its
+A compiled program starts in **under a millisecond**. `bench/` holds 61
+programs, each with its
 correct output, and the criterion bench harness (`make bench`) verifies the
 output before it times anything.
 
@@ -280,8 +280,8 @@ the record):
 | the 40 where CRuby takes ≥ 0.10 s | **1.19× — faster** |
 
 The first row is inflated by process startup: about a third of the programs
-finish inside CRuby's ~30 ms of boot, where a native binary starts
-instantly. That is a real advantage of shipping a binary, but the second
+finish before CRuby's interpreter is done booting, where a native binary
+starts instantly. That is a real advantage of shipping a binary, but the second
 row is the claim about generated code: on the compute-bound set Zeo wins
 22 of 40 (`range_each` 8.0×, `so_mandelbrot` 4.9×, `nested_loop` 4.0×,
 `matmul` 3.0×, `sieve` 2.4×). Release builds made with `zeo-dev dist
@@ -300,8 +300,8 @@ has the method; [`docs/ROADMAP.md`](docs/ROADMAP.md) has the levers.
 
 ### The full table
 
-Sorted fastest-relative-to-Ruby first. Rows marked \* finish inside
-CRuby's ~30 ms startup, so they mostly measure a native binary starting
+Sorted fastest-relative-to-Ruby first. Rows marked \* finish within
+CRuby's startup time, so they mostly measure a native binary starting
 instantly, not generated code.
 
 | benchmark | Zeo (s) | Ruby (s) | vs Ruby |
