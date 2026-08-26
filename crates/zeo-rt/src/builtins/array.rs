@@ -1857,6 +1857,42 @@ fn count_arg(v: Option<&RubyValue>) -> Result<Option<usize>, crate::Signal> {
 /// rather than falling through, because a numeric result is truthy, so
 /// treating it as the boolean mode would silently answer the wrong element
 /// instead of failing.
+/// Which of `bsearch`'s two modes the block's answer selects, and whether it
+/// selects one at all.
+///
+/// `Some(ordering)` is the comparator protocol (find-any); `None` is
+/// find-minimum, which ONLY `nil`, `true` and `false` reach. Anything else
+/// is neither mode and CRuby raises rather than guessing -- a `_ => None`
+/// arm made `[1, 2, 3].bsearch { "x" }` answer an element.
+///
+/// A NaN is numeric, so it belongs to the comparator protocol and raises a
+/// comparison failure rather than driving the search upward.
+///
+/// One function for all four call sites: `Array#bsearch`/`#bsearch_index`
+/// and `Range#bsearch`'s integer, bignum and float arms each carried their
+/// own copy, and a copy is where the next divergence comes from.
+pub(crate) fn bsearch_classify(r: &RubyValue) -> Result<Option<std::cmp::Ordering>, crate::Signal> {
+    Ok(match r {
+        RubyValue::Int(n) => Some(n.cmp(&0)),
+        RubyValue::Float(f) => match f.partial_cmp(&0.0) {
+            Some(o) => Some(o),
+            None => return Err(crate::value::cmp_error(r, &RubyValue::Int(0))),
+        },
+        RubyValue::BigInt(_) | RubyValue::Rational(_) => {
+            crate::builtins::numeric::num_cmp(r, &RubyValue::Int(0))
+                .flatten()
+                .map(|c| c.cmp(&0))
+        }
+        RubyValue::Nil | RubyValue::Bool(_) => None,
+        other => {
+            return Err(crate::builtins::type_error!(
+                "wrong argument type {} (must be numeric, true, false or nil)",
+                crate::builtins::class_name_of(other)
+            ));
+        }
+    })
+}
+
 /// The shared binary search behind `bsearch`/`bsearch_index` for a sorted
 /// slice, covering both CRuby modes selected by the block's return type:
 ///
@@ -1879,11 +1915,7 @@ fn bsearch_find(
     while lo < hi {
         let mid = lo + (hi - lo) / 2;
         let r = p.call(&[items[mid].clone()])?;
-        let cmp = match r {
-            RubyValue::Int(n) => Some(n.cmp(&0)),
-            RubyValue::Float(f) => f.partial_cmp(&0.0),
-            _ => None,
-        };
+        let cmp = bsearch_classify(&r)?;
         match cmp {
             Some(std::cmp::Ordering::Equal) => return Ok(Some(mid)),
             Some(std::cmp::Ordering::Less) => {

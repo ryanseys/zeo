@@ -1187,6 +1187,54 @@ pub fn queue_pop(q: &RQueue) -> Result<RubyValue, Signal> {
     crate::gvl::process_gvl().without(|| queue_pop_locked(q))
 }
 
+/// `Queue#pop(true)` -- take a queued value or raise, never wait.
+///
+/// An EMPTY queue is `ThreadError: queue empty` whether it is closed or
+/// not, which is the one place the non-blocking form differs from the
+/// blocking one (that answers nil for a closed empty queue).
+pub fn queue_pop_nonblock(q: &RQueue) -> Result<RubyValue, WaitFailure> {
+    check_interrupt().map_err(|_| WaitFailure::Thread("queue empty"))?;
+    let mut inner = q.inner.lock();
+    match inner.items.pop_front() {
+        Some(v) => {
+            q.not_full.notify_one();
+            Ok(v)
+        }
+        None => Err(WaitFailure::Thread("queue empty")),
+    }
+}
+
+/// `Queue#pop(timeout: n)` -- wait at most `limit`, then answer `None`.
+pub fn queue_pop_timeout(q: &RQueue, limit: Duration) -> Result<Option<RubyValue>, Signal> {
+    check_interrupt()?;
+    let deadline = std::time::Instant::now() + limit;
+    crate::gvl::process_gvl().without(|| {
+        let mut inner = q.inner.lock();
+        loop {
+            if let Some(v) = inner.items.pop_front() {
+                q.not_full.notify_one();
+                return Ok(Some(v));
+            }
+            if inner.closed {
+                return Ok(None);
+            }
+            let now = std::time::Instant::now();
+            if now >= deadline {
+                return Ok(None);
+            }
+            q.waiting.fetch_add(1, Ordering::Relaxed);
+            let slice = Duration::from_millis(2).min(deadline - now);
+            let _ = q.not_empty.wait_for(&mut inner, slice);
+            q.waiting.fetch_sub(1, Ordering::Relaxed);
+            if interrupt_pending() {
+                drop(inner);
+                check_interrupt()?;
+                inner = q.inner.lock();
+            }
+        }
+    })
+}
+
 fn queue_pop_locked(q: &RQueue) -> Result<RubyValue, Signal> {
     // Only another Ruby thread can end this wait, so it counts toward the
     // deadlock verdict for as long as it lasts.

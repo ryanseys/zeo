@@ -694,11 +694,7 @@ ruby_class! {
                 while lo < hi {
                     let mid: num_bigint::BigInt = &lo + (&hi - &lo) / 2;
                     let r = p.call(&[crate::builtins::integer::int_value(mid.clone())])?;
-                    let cmp = match r {
-                        RubyValue::Int(n) => Some(n.cmp(&0)),
-                        RubyValue::Float(f) => f.partial_cmp(&0.0),
-                        _ => None,
-                    };
+                    let cmp = crate::builtins::array::bsearch_classify(&r)?;
                     match cmp {
                         Some(std::cmp::Ordering::Equal) => {
                             found = Some(mid);
@@ -739,11 +735,7 @@ ruby_class! {
                         return Ok(RubyValue::Nil);
                     };
                     let r = p.call(&[RubyValue::Int(cand)])?;
-                    let cmp = match r {
-                        RubyValue::Int(n) => Some(n.cmp(&0)),
-                        RubyValue::Float(f) => f.partial_cmp(&0.0),
-                        _ => None,
-                    };
+                    let cmp = crate::builtins::array::bsearch_classify(&r)?;
                     match cmp {
                         Some(std::cmp::Ordering::Equal) => return Ok(RubyValue::Int(cand)),
                         Some(std::cmp::Ordering::Less) => hi = Some(cand),
@@ -766,11 +758,7 @@ ruby_class! {
         while lo < hi {
             let mid = lo + (hi - lo) / 2;
             let r = p.call(&[RubyValue::Int(mid)])?;
-            let cmp = match r {
-                RubyValue::Int(n) => Some(n.cmp(&0)),
-                RubyValue::Float(f) => f.partial_cmp(&0.0),
-                _ => None,
-            };
+            let cmp = crate::builtins::array::bsearch_classify(&r)?;
             match cmp {
                 Some(std::cmp::Ordering::Equal) => { found = Some(mid); break; }
                 Some(std::cmp::Ordering::Less) => hi = mid,

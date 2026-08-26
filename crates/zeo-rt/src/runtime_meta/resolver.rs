@@ -527,7 +527,17 @@ pub(crate) fn coerce_method_body(
     if let Some(RubyValue::Proc(p)) = body {
         return Ok(p.clone());
     }
-    Err(arg_error!("tried to create Proc object without a block"))
+    // A body that is present but WRONG is a TypeError naming what the row
+    // takes; only an absent one is the "without a block" ArgumentError.
+    // (`Method`/`UnboundMethod` never reach here -- `define_method` peels
+    // them off first.)
+    match body {
+        Some(other) => Err(crate::builtins::type_error!(
+            "wrong argument type {} (expected Proc/Method/UnboundMethod)",
+            crate::builtins::class_name_of(other)
+        )),
+        None => Err(arg_error!("tried to create Proc object without a block")),
+    }
 }
 
 pub(super) fn immediate_kind(v: &RubyValue) -> &'static str {

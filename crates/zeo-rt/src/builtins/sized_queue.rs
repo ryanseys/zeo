@@ -11,12 +11,22 @@ use crate::builtins::inherited_row;
 use crate::thread::{queue_max, queue_set_max, sized_queue_new};
 use zeo_macros::ruby_class;
 
+/// A bound of zero or less has no meaning -- nothing could ever be pushed --
+/// and CRuby refuses it at both entry points rather than minting a queue
+/// that deadlocks on its first push.
+fn positive_size(n: i64) -> Result<i64, crate::Signal> {
+    match n > 0 {
+        true => Ok(n),
+        false => Err(crate::builtins::arg_error!("queue size must be positive")),
+    }
+}
+
 ruby_class! {
     SizedQueue = zeo_abi::SIZED_QUEUE_CLASS < zeo_abi::QUEUE_CLASS;
 
     // `SizedQueue.new(n)` -- the bounded constructor.
     def self."new" cfunc (_recv, arg) {
-        Ok(sized_queue_new(arg_int!(arg)))
+        Ok(sized_queue_new(positive_size(arg_int!(arg))?))
     }
 
     // The bound. `Queue` shares the payload field but not these rows, so
@@ -33,7 +43,7 @@ ruby_class! {
         })
     }
     def "max="(recv, arg) {
-        queue_set_max(&recv.as_queue_unchecked(), arg_int!(arg));
+        queue_set_max(&recv.as_queue_unchecked(), positive_size(arg_int!(arg))?);
         Ok((*arg).clone())
     }
     // CRuby defines `clear` and `num_waiting` on BOTH Queue and SizedQueue,

@@ -452,6 +452,10 @@ fn recv_method(recv: &RubyValue) -> &RMethod {
 /// Shared body of `>>`/`<<`: both sides go through `#call`, so a Method, a
 /// Proc, or any object answering `call` composes uniformly.
 fn compose(recv: &RubyValue, other: &RubyValue, forward: bool) -> Result<RubyValue, Signal> {
+    // At COMPOSE time, as `Proc#>>` does -- the two share ruby's rule.
+    if !crate::dispatch::responds_to(other.class_id(), crate::symbol::wk::call(), true) {
+        return Err(crate::builtins::type_error!("callable object is expected"));
+    }
     let this = recv.clone();
     let other = other.clone();
     let call = Symbol::intern("call");

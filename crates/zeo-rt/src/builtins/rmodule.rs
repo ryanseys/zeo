@@ -505,6 +505,10 @@ ruby_class! {
                 ),
             )));
         }
+        // After the NAME check, as everywhere else in this family.
+        if crate::dispatch::class_frozen(cid) {
+            return Err(crate::dispatch::frozen_class_error(cid));
+        }
         // A run-time assignment is located at the line that made it, exactly
         // as a written one is -- and a builtin has no frame of its own, so the
         // top of the stack IS the caller.

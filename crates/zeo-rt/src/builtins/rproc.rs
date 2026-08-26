@@ -9,6 +9,21 @@ use crate::builtins::arg_error;
 use crate::builtins::inherited_row;
 use zeo_macros::ruby_class;
 
+/// `Proc#>>`/`#<<` compose with anything that answers `call`, and refuse
+/// anything else AT COMPOSE TIME -- CRuby's `proc_compose` check.
+///
+/// A Symbol does NOT auto-`to_proc` here, which is the surprising half:
+/// `pr >> :to_s` is a TypeError in ruby, not a composition. Deferring the
+/// check to the call meant `pr >> 7` built a proc that failed later, at a
+/// site with no useful frame.
+fn check_callable(other: &RubyValue) -> Result<(), crate::Signal> {
+    let call = crate::symbol::wk::call();
+    if crate::dispatch::responds_to(other.class_id(), call, true) {
+        return Ok(());
+    }
+    Err(crate::builtins::type_error!("callable object is expected"))
+}
+
 fn recv_proc(recv: &RubyValue) -> &crate::RProc {
     match recv {
         RubyValue::Proc(p) => p,
@@ -214,6 +229,7 @@ ruby_class! {
     // callable (Proc, Method, ...), invoked through its own `call`; the
     // result is a var-args lambda.
     def ">>"(recv, other) {
+        check_callable(other)?;
         let f = recv_proc(recv).clone();
         // The composed proc's lambda-ness follows the FIRST function to run:
         // for `f >> g` that is the receiver `f` (CRuby's proc_compose).
@@ -229,6 +245,7 @@ ruby_class! {
         )))
     }
     def "<<"(recv, other) {
+        check_callable(other)?;
         let f = recv_proc(recv).clone();
         let g = (*other).clone();
         // For `f << g`, `g` runs first, so the composition follows the

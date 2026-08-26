@@ -501,7 +501,13 @@ pub fn unpack(bytes: &[u8], template: &str) -> Result<Vec<RubyValue>, Signal> {
                 }
                 pos = n;
             }
-            other => return Err(err(format!("unsupported unpack directive: {other}"))),
+            // CRuby quotes the directive AND echoes the whole template, so a
+            // long format says which character failed.
+            other => {
+                return Err(err(format!(
+                    "unknown unpack directive '{other}' in '{template}'"
+                )));
+            }
         }
     }
     Ok(out)
