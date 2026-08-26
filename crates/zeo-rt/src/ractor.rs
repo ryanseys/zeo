@@ -447,6 +447,13 @@ fn port_receive_locked(port: &RPort) -> Result<RubyValue, Signal> {
         r.status.store(STATUS_BLOCKING, Ordering::SeqCst);
         let _ = r.recv_cv.wait_for(&mut table, Duration::from_millis(2));
         r.status.store(STATUS_RUNNING, Ordering::SeqCst);
+        // POLLED but never REGISTERED, on purpose. The verdict needs
+        // `BLOCKED >= live_thread_count`, so a pure-ractor deadlock can
+        // never reach it -- and it should not: ruby 4.0.6 hangs on exactly
+        // this program (two ractors each waiting on the other) rather than
+        // raising, so registering here would raise where ruby does not.
+        // The poll stays because a ractor waiting while every THREAD is
+        // blocked is a verdict ruby does reach.
         if crate::gvl::deadlock::no_progress_possible() {
             drop(table);
             return Err(crate::gvl::deadlock::signal());
