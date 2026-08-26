@@ -72,22 +72,88 @@ pub(crate) enum Acc {
     /// still answers the element, CRuby's rule) and stops; exhaustion
     /// answers nil.
     Find,
+    /// `arr.map { .. }` / `collect`: every block value is MOVED into a
+    /// heap Array accumulator; the loop's value is the array.
+    Map,
+    /// `arr.select { .. }` / `filter` / `find_all`: a truthy value adds
+    /// the ORIGINAL element (re-fetched by index, like `Find`).
+    Select,
+    /// `arr.reject { .. }`: `Select` with the test inverted.
+    Reject,
+    /// `arr.sum { .. }`: every value folds through `Enumerable#sum`'s
+    /// own `SumAcc` ladder (`zeo_rt_sum_step`) -- one definition of
+    /// the arithmetic, Kahan compensation and all. The running value
+    /// rides the registered slot; the compensation and sticky-generic
+    /// flag ride a raw 16-byte state slot beside it.
+    Sum,
+    /// `arr.inject(init) { |a, e| .. }` / `reduce`: the block's value
+    /// REPLACES the accumulator each iteration; the loop's value is the
+    /// final accumulator (the seed, for an empty array). The explicit
+    /// seed is the nomination's own rule -- the no-argument form skips
+    /// the first element, which a splice cannot.
+    Inject,
+}
+
+/// How the splice binds the block's required names each iteration.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Bind {
+    /// At most one name: the element (`ArrayEach`) or the counter.
+    Element,
+    /// `each_with_index`: the element, then the plain counter.
+    ElementIndex,
+    /// `inject`: the running accumulator, then the element.
+    AccElement,
+}
+
+impl Bind {
+    fn max_params(self) -> usize {
+        match self {
+            Bind::Element => 1,
+            Bind::ElementIndex | Bind::AccElement => 2,
+        }
+    }
 }
 
 impl Acc {
     fn consumes_value(self) -> bool {
         !matches!(self, Acc::None)
     }
+
+    /// The kinds whose accumulator is (or can become) a heap value. It
+    /// lives in an epilogue-registered value slot (nil at entry), so a
+    /// `break` or a raise mid-body frees the half-built accumulator
+    /// through the ordinary epilogue/landing release, with no explicit
+    /// edge.
+    fn slot_acc(self) -> bool {
+        matches!(
+            self,
+            Acc::Map | Acc::Select | Acc::Reject | Acc::Sum | Acc::Inject
+        )
+    }
 }
 
-/// Whether `block` has the parameter shape a fused loop can bind: one
-/// required name at most, and nothing else.
+/// A consuming kind's storage, all as slot ADDRESSES.
+#[derive(Clone, Copy)]
+struct AccStore {
+    /// The raw value slot the body's tail (and every `next v`) MOVES
+    /// into; the latch consumes it.
+    val: ir::Value,
+    /// The accumulator: the count/answer word, or -- for the
+    /// [`Acc::slot_acc`] kinds -- the registered value slot.
+    acc: ir::Value,
+    /// `sum` only: the compensation + sticky-generic state.
+    state: Option<ir::Value>,
+}
+
+/// Whether `block` has the parameter shape a fused loop can bind: at most
+/// `max_required` names (1, or 2 for the kinds that yield two values --
+/// `InlineIterKind::max_fused_params`), and nothing else.
 ///
 /// Asked by the DECISION to splice, not by the splice. Ruby binds every other
 /// shape happily -- `3.times { |a, b| }` gives `b` nil -- so a block this
 /// answers false for takes the ordinary block send, which binds through the
 /// runtime binder and gets it right.
-pub(crate) fn fusable_block(fx: &Fx<'_, '_>, block: NodeId) -> bool {
+pub(crate) fn fusable_block(fx: &Fx<'_, '_>, block: NodeId, max_required: usize) -> bool {
     let HirNode::Block { params, .. } = &fx.an.compiler.hir[block] else {
         return false;
     };
@@ -99,12 +165,15 @@ pub(crate) fn fusable_block(fx: &Fx<'_, '_>, block: NodeId) -> bool {
         && params.keywords.is_empty()
         && params.keyword_rest.is_none()
         && params.block.is_none()
-        && params.required.len() <= 1
+        && params.required.len() <= max_required
 }
 
 /// Lower one fused counted loop. `result` = the loop's value slot when in
 /// value position (`None` = statement position, value discarded); `acc`
-/// = what each iteration's block value feeds (see [`Acc`]).
+/// = what each iteration's block value feeds (see [`Acc`]); `bind` = how
+/// the block's required names bind (see [`Bind`]); `init` = `inject`'s
+/// explicit seed, lowered HERE so each execution evaluates it exactly
+/// once (the slow arm lowers its own copy as the send argument).
 pub(crate) fn lower_counted(
     fx: &mut Fx,
     site: NodeId,
@@ -112,15 +181,22 @@ pub(crate) fn lower_counted(
     block: NodeId,
     result: Option<ir::Value>,
     acc: Acc,
+    bind: Bind,
+    init: Option<NodeId>,
 ) -> CResult<()> {
     let HirNode::Block { params, body } = &fx.an.compiler.hir[block] else {
         return fx.unsupported(site, "a non-literal block");
     };
     debug_assert!(
-        fusable_block(fx, block),
+        fusable_block(fx, block, bind.max_params()),
         "the splice decision checks the parameter shape first"
     );
-    let param = params.required.first().cloned();
+    let bound: Vec<String> = params
+        .required
+        .iter()
+        .take(bind.max_params())
+        .cloned()
+        .collect();
     // A name first-assigned INSIDE the block is fresh on every invocation
     // in ruby. This splice shares the enclosing scope, where the name was
     // hoisted once, so each iteration resets it -- a conditional first
@@ -150,7 +226,7 @@ pub(crate) fn lower_counted(
         fx.method_class,
     )
     .locals;
-    let per_iteration_cells: Vec<String> = param
+    let per_iteration_cells: Vec<String> = bound
         .iter()
         .chain(implicit_locals.iter())
         .chain(block_locals.iter())
@@ -202,7 +278,7 @@ pub(crate) fn lower_counted(
             }
             restore.push((name.to_string(), old));
         };
-    if let Some(name) = param.clone() {
+    for name in bound.clone() {
         bind_shadow(fx, &mut restore, &name);
     }
     for name in implicit_locals.iter().chain(block_locals.iter()) {
@@ -223,11 +299,12 @@ pub(crate) fn lower_counted(
     // every `next v`) MOVES into and the latch consumes -- raw rather
     // than epilogue-registered, because the latch's release leaves it
     // dead and the epilogue must not release it again. Plus the
-    // per-kind accumulator word: the count, or the boolean-answer flag
-    // (`all?`/`none?` start at 1, `any?` at 0; `find` uses no word --
-    // its answer is pre-written nil in the result slot, overwritten on
-    // a hit).
-    let acc_slots = acc.consumes_value().then(|| {
+    // per-kind accumulator: the count word, or the boolean-answer flag
+    // (`all?`/`none?` start at 1, `any?` at 0; `find` uses none -- its
+    // answer is pre-written nil in the result slot, overwritten on a
+    // hit), or -- for the heap-accumulator kinds -- a fresh Array in an
+    // epilogue-registered slot (see [`Acc::heap_acc`]).
+    let acc_slots = if acc.consumes_value() {
         let val = fx.b.create_sized_stack_slot(StackSlotData::new(
             StackSlotKind::ExplicitSlot,
             zeo_abi::abi::VALUE_SIZE as u32,
@@ -238,21 +315,89 @@ pub(crate) fn lower_counted(
         fx.b.ins().store(fl, zero, val_addr, 0);
         fx.b.ins().store(fl, zero, val_addr, 8);
         fx.b.ins().store(fl, zero, val_addr, 16);
-        let count =
-            fx.b.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
-        let count_addr = fx.slot_addr(count, 0);
-        let init = match acc {
-            Acc::All | Acc::NonePred => fx.b.ins().iconst(types::I64, 1),
-            _ => zero,
+        let acc_addr = if acc.slot_acc() {
+            let ss = fx.new_value_slot();
+            // The synthetic key registers the slot with the epilogue,
+            // the way a block-param shadow does. The key survives the
+            // loop, so every exit -- normal, break, raise -- releases
+            // whatever the slot holds (nil once the normal exit has
+            // moved the accumulator out; nil on the slow arm, which
+            // never builds one).
+            let key = format!("#acc{}", fx.locals.len());
+            fx.locals.insert(key, super::ctx::Local::Slot(ss));
+            let addr = fx.slot_addr(ss, 0);
+            // A `break` abandons the accumulator IN the slot; a site
+            // inside an enclosing loop re-enters here with it still
+            // live, so the write is an assignment, not a fresh store.
+            ownership::release_if_heap(fx, addr);
+            match acc {
+                // The running sum starts as Int 0 (`Enumerable#sum`'s
+                // default init).
+                Acc::Sum => {
+                    let tag = fx.b.ins().iconst(types::I8, i64::from(ValueTag::Int as u8));
+                    fx.b.ins().store(fl, tag, addr, TAG_OFFSET as i32);
+                    fx.b.ins().store(fl, zero, addr, PAYLOAD_OFFSET as i32);
+                }
+                // `inject`'s explicit seed. A borrowed operand is
+                // retained in; an owned one's consumption pairs with
+                // its own creation -- the exit's move-out owns the
+                // ledger +1 either way.
+                Acc::Inject => {
+                    let seed = init.expect("Inject carries its seed");
+                    let op = super::expr::lower_expr(fx, seed)?;
+                    ownership::write_move_into(fx, &op, addr);
+                }
+                _ => {
+                    let cap = match (acc, counted) {
+                        // `map` answers exactly the receiver's length.
+                        (Acc::Map, Counted::ArrayEach { recv }) => {
+                            fx.call_status("zeo_rt_array_len", &[*recv])
+                        }
+                        _ => zero,
+                    };
+                    // Created here, consumed by the exit's move into the
+                    // result (which owns the ledger +1) or by the
+                    // epilogue -- neither of which counts, so neither
+                    // does this.
+                    fx.call("zeo_rt_array_new", &[cap, addr]);
+                }
+            }
+            addr
+        } else {
+            let count = fx
+                .b
+                .create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
+            let count_addr = fx.slot_addr(count, 0);
+            let init = match acc {
+                Acc::All | Acc::NonePred => fx.b.ins().iconst(types::I64, 1),
+                _ => zero,
+            };
+            fx.b.ins().store(fl, init, count_addr, 0);
+            count_addr
         };
-        fx.b.ins().store(fl, init, count_addr, 0);
+        let state = (acc == Acc::Sum).then(|| {
+            let ss = fx
+                .b
+                .create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 16, 3));
+            let addr = fx.slot_addr(ss, 0);
+            // Zero bytes = compensation 0.0 on the starting Int lane.
+            fx.b.ins().store(fl, zero, addr, 0);
+            fx.b.ins().store(fl, zero, addr, 8);
+            addr
+        });
         if matches!(acc, Acc::Find)
             && let Some(dst) = result
         {
             ownership::write_move_into(fx, &super::operand::Operand::Nil, dst);
         }
-        (val_addr, count_addr)
-    });
+        Some(AccStore {
+            val: val_addr,
+            acc: acc_addr,
+            state,
+        })
+    } else {
+        None
+    };
 
     let head = fx.b.create_block();
     let body_blk = fx.b.create_block();
@@ -280,7 +425,12 @@ pub(crate) fn lower_counted(
     for name in &per_iteration_cells {
         replace_cell(fx, name);
     }
-    if let Some(name) = &param {
+    // What each required name binds this iteration. The ELEMENT binding
+    // (an `array_get` clone, or the counter itself) serves the first
+    // name -- except under `inject`, whose first name is the running
+    // accumulator (borrowed from its slot, retained into the shadow)
+    // and whose SECOND name is the element.
+    let bind_element = |fx: &mut Fx, name: &String| {
         let c = fx.b.ins().load(types::I64, fl, counter_addr, 0);
         match *counted {
             Counted::ArrayEach { recv } => {
@@ -297,9 +447,32 @@ pub(crate) fn lower_counted(
             }
             _ => ownership::write_local(fx, name, &super::operand::Operand::Int(c)),
         }
-    } else if let Counted::ArrayEach { .. } = *counted {
-        // A parameterless block still consumes each element -- nothing to
-        // fetch, the counter alone drives the walk.
+    };
+    match bind {
+        Bind::Element | Bind::ElementIndex => {
+            if let Some(name) = bound.first() {
+                bind_element(fx, name);
+            }
+            if let Some(name) = bound.get(1) {
+                // `each_with_index`'s second name: the plain counter.
+                let c = fx.b.ins().load(types::I64, fl, counter_addr, 0);
+                ownership::write_local(fx, name, &super::operand::Operand::Int(c));
+            }
+        }
+        Bind::AccElement => {
+            let s = acc_slots.expect("inject consumes its values");
+            if let Some(name) = bound.first() {
+                let cur = super::operand::Operand::Ptr {
+                    addr: s.acc,
+                    owned: false,
+                    tag: super::operand::TagInfo::Unknown,
+                };
+                ownership::write_local(fx, name, &cur);
+            }
+            if let Some(name) = bound.get(1) {
+                bind_element(fx, name);
+            }
+        }
     }
     for name in implicit_locals.iter().chain(block_locals.iter()) {
         // A cell was just replaced; a plain slot resets to nil.
@@ -314,10 +487,10 @@ pub(crate) fn lower_counted(
         result,
         depth: fx.ensure_depth,
         handling: fx.handling_depth,
-        next_value: acc_slots.map(|(val_addr, _)| val_addr),
+        next_value: acc_slots.map(|s| s.val),
     });
     match acc_slots {
-        Some((val_addr, _)) => super::stmt::lower_value_body_into(fx, &body, val_addr)?,
+        Some(s) => super::stmt::lower_value_body_into(fx, &body, s.val)?,
         None => super::stmt::lower_stmts(fx, &body)?,
     }
     fx.loops.pop();
@@ -327,7 +500,37 @@ pub(crate) fn lower_counted(
     // Consume the iteration's value into the accumulator FIRST -- `redo`
     // re-enters the body without passing here, so a redone iteration is
     // consumed exactly once.
-    if let Some((val_addr, count_addr)) = acc_slots {
+    if let Some(s) = acc_slots
+        && acc == Acc::Map
+    {
+        // Every value lands in the accumulator; the push MOVES it, which
+        // is this latch's consumption of the iteration value.
+        fx.call("zeo_rt_array_push", &[s.acc, s.val]);
+    } else if let Some(s) = acc_slots
+        && acc == Acc::Sum
+    {
+        // The step MOVES the value into the fold; a raise from a
+        // generic `+` unwinds through the landing, which releases the
+        // registered accumulator slot.
+        let state = s.state.expect("Sum carries its state slot");
+        let status = fx.call_status("zeo_rt_sum_step", &[s.acc, state, s.val]);
+        fx.fallible(status);
+    } else if let Some(s) = acc_slots
+        && acc == Acc::Inject
+    {
+        // The block's value REPLACES the accumulator: release the old,
+        // move the new bits in (the value slot is dead after).
+        ownership::release_if_heap(fx, s.acc);
+        for off in [0i32, 8, 16] {
+            let w = fx.b.ins().load(types::I64, fl, s.val, off);
+            fx.b.ins().store(fl, w, s.acc, off);
+        }
+    } else if let Some(AccStore {
+        val: val_addr,
+        acc: count_addr,
+        ..
+    }) = acc_slots
+    {
         let t = fx.b.ins().load(types::I8, fl, val_addr, TAG_OFFSET as i32);
         let p = fx.b.ins().load(types::I8, fl, val_addr, PAYLOAD_OFFSET as i32);
         let above_bool = fx.b.ins().icmp_imm_u(
@@ -394,7 +597,35 @@ pub(crate) fn lower_counted(
                 fx.b.ins().jump(exit_normal, &[]);
                 fx.b.switch_to_block(cont);
             }
-            Acc::None => unreachable!("acc_slots exist only for a consuming kind"),
+            // A kept element is re-fetched by index, like `Find`: the
+            // ORIGINAL element, whatever the body did to its param.
+            Acc::Select | Acc::Reject => {
+                let take = fx.b.create_block();
+                let cont = fx.b.create_block();
+                let (on_truthy, on_falsy) = match acc {
+                    Acc::Select => (take, cont),
+                    _ => (cont, take),
+                };
+                fx.b.ins().brif(truthy, on_truthy, &[], on_falsy, &[]);
+                fx.b.switch_to_block(take);
+                let Counted::ArrayEach { recv } = *counted else {
+                    unreachable!("Select/Reject pair only with ArrayEach");
+                };
+                let c = fx.b.ins().load(types::I64, fl, counter_addr, 0);
+                let tmp = fx.temp_slot();
+                let tmp_addr = fx.slot_addr(tmp, 0);
+                fx.call("zeo_rt_array_get", &[recv, c, tmp_addr]);
+                // The get creates, the push moves it straight in --
+                // net zero, so neither counts in the ledger.
+                fx.call("zeo_rt_array_push", &[count_addr, tmp_addr]);
+                fx.b.ins().jump(cont, &[]);
+                fx.b.switch_to_block(cont);
+            }
+            Acc::Map | Acc::Sum | Acc::Inject | Acc::None => {
+                unreachable!(
+                    "Map/Sum/Inject consumed above; acc_slots exist only for a consuming kind"
+                )
+            }
         }
     }
     let c = fx.b.ins().load(types::I64, fl, counter_addr, 0);
@@ -405,7 +636,11 @@ pub(crate) fn lower_counted(
 
     fx.b.switch_to_block(exit_normal);
     if let Some(dst) = result
-        && let Some((_, count_addr)) = acc_slots
+        && let Some(AccStore {
+            acc: count_addr,
+            state,
+            ..
+        }) = acc_slots
     {
         // A consuming kind's value is its ACCUMULATOR: the count, the
         // boolean answer word, or -- for `find` -- the result slot as it
@@ -433,6 +668,31 @@ pub(crate) fn lower_counted(
             // `find`'s hit arm already counted its `array_get` write; the
             // pre-written nil costs nothing.
             Acc::Find => {}
+            // The array's bits MOVE into the result and nil replaces
+            // them, so the epilogue's unconditional release of the
+            // registered slot frees something only on the break and
+            // raise paths -- exactly-once, structurally.
+            Acc::Map | Acc::Select | Acc::Reject | Acc::Inject => {
+                for off in [0i32, 8, 16] {
+                    let w = fx.b.ins().load(types::I64, fl, count_addr, off);
+                    fx.b.ins().store(fl, w, dst, off);
+                }
+                let z = fx.b.ins().iconst(types::I64, 0);
+                for off in [0i32, 8, 16] {
+                    fx.b.ins().store(fl, z, count_addr, off);
+                }
+                // The site's owner of `dst` -- the same convention as
+                // `Count`'s arm.
+                fx.owned_created += 1;
+            }
+            // The finish MOVES the accumulator into the result (folding
+            // the float lane's compensation in) and nils the slot for
+            // the epilogue.
+            Acc::Sum => {
+                let state = state.expect("Sum carries its state slot");
+                fx.call("zeo_rt_sum_finish", &[count_addr, state, dst]);
+                fx.owned_created += 1;
+            }
             Acc::None => unreachable!("acc_slots exist only for a consuming kind"),
         }
     } else if let Some(dst) = result {
@@ -598,9 +858,20 @@ pub(crate) fn lower_array_each(
     block: NodeId,
     want_result: bool,
     acc: Acc,
+    bind: Bind,
+    args: &[crate::hir::ArrayElem],
     slow_name: &str,
 ) -> CResult<Option<super::operand::Operand>> {
     use super::operand::{Operand, TagInfo};
+    // `inject`'s seed rides the argument list; each ARM lowers its own
+    // copy, and only one arm runs -- one evaluation per execution.
+    let init = match acc {
+        Acc::Inject => match args {
+            [crate::hir::ArrayElem::Single(id)] => Some(*id),
+            other => unreachable!("inject fuses with exactly one plain argument, got {other:?}"),
+        },
+        _ => None,
+    };
     // The receiver is evaluated ONCE and both arms borrow it.
     let op = super::expr::lower_expr(fx, recv_id)?;
     let recv = ownership::borrow_ptr(fx, &op);
@@ -640,6 +911,8 @@ pub(crate) fn lower_array_each(
         block,
         result.map(|(_, dst)| dst),
         acc,
+        bind,
+        init,
     )?;
     fx.b.ins().jump(join, &[]);
 
@@ -649,7 +922,7 @@ pub(crate) fn lower_array_each(
         owned: false,
         tag: TagInfo::Unknown,
     };
-    let r = super::blocks::block_send_op(fx, site, borrowed, slow_name, &[], block)?;
+    let r = super::blocks::block_send_op(fx, site, borrowed, slow_name, args, block)?;
     match result {
         Some((_, dst)) => {
             let owned = r.owned();
@@ -723,6 +996,8 @@ pub(crate) fn lower_counted_int(
         block,
         result.map(|(_, dst)| dst),
         Acc::None,
+        Bind::Element,
+        None,
     )?;
     fx.b.ins().jump(join, &[]);
 

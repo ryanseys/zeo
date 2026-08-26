@@ -470,10 +470,35 @@ fn mark_inline_iter_sites(
             && params.required.iter().all(|p| !p.starts_with("__destr"))
     }
 
+    /// The literal (or frozen-literal) type a value node pins, for the
+    /// constant-receiver nomination below.
+    fn literal_ty(compiler: &Compiler, id: NodeId) -> Option<TyKind> {
+        match &compiler.hir[id] {
+            HirNode::ArrayLit(..) => Some(TyKind::Array),
+            HirNode::HashLit(..) => Some(TyKind::Hash),
+            HirNode::IntegerLit(..) => Some(TyKind::Int),
+            HirNode::RangeLit { .. } => Some(TyKind::Range),
+            // `[...].freeze` -- the idiomatic constant spelling.
+            HirNode::Call {
+                receiver: Some(r),
+                name,
+                args,
+                kwargs,
+                block: None,
+                block_arg: None,
+                ..
+            } if name == "freeze" && args.is_empty() && kwargs.is_empty() => {
+                literal_ty(compiler, *r)
+            }
+            _ => None,
+        }
+    }
+
     fn scan(
         compiler: &Compiler,
         id: NodeId,
         locals: &FMap<String, TyKind>,
+        const_types: &FMap<String, TyKind>,
         out: &mut FMap<NodeId, InlineIterKind>,
     ) {
         if let HirNode::Call {
@@ -486,10 +511,18 @@ fn mark_inline_iter_sites(
             ..
         } = &compiler.hir[id]
             && kwargs.is_empty()
-            && let (HirNode::LocalRead(rn), HirNode::Block { params, .. }) =
-                (&compiler.hir[*recv], &compiler.hir[*block])
+            && let HirNode::Block { params, .. } = &compiler.hir[*block]
             && plain_positional(params)
-            && let Some(&ty) = locals.get(rn)
+            // A local the scope types, or a constant a single top-level
+            // literal assignment types. Both are BELIEFS the emitted
+            // guard re-checks per execution -- a wrong one costs size,
+            // never correctness (the tag test and `iter_inline_ok_for`
+            // fall back to the dynamic row).
+            && let Some(ty) = match &compiler.hir[*recv] {
+                HirNode::LocalRead(rn) => locals.get(rn).copied(),
+                HirNode::ClassRef(cn) => const_types.get(cn).copied(),
+                _ => None,
+            }
             && let Some(f) = FUSED.iter().find(|f| {
                 f.ty == ty
                     && f.names.contains(&name.as_str())
@@ -499,7 +532,70 @@ fn mark_inline_iter_sites(
         {
             out.insert(*block, f.kind);
         }
-        compiler.hir[id].for_each_child(&mut |n| scan(compiler, n, locals, out));
+        compiler.hir[id].for_each_child(&mut |n| scan(compiler, n, locals, const_types, out));
+    }
+
+    // Constant receivers (`OFFSETS.each { .. }`): a bare constant written
+    // EXACTLY once, anywhere, with a literal value types its readers. A
+    // second write -- or a scoped/dynamic one under the same name --
+    // disqualifies the name rather than guessing which write wins.
+    let mut const_types: FMap<String, TyKind> = FMap::default();
+    let mut const_disqualified: FSet<String> = FSet::default();
+    {
+        let record = |compiler: &Compiler,
+                          const_types: &mut FMap<String, TyKind>,
+                          const_disqualified: &mut FSet<String>,
+                          id: NodeId| {
+            match &compiler.hir[id] {
+                HirNode::ConstWrite {
+                    scope: None,
+                    name,
+                    value,
+                } => {
+                    let dup = const_types.contains_key(name);
+                    match (dup, literal_ty(compiler, *value)) {
+                        (false, Some(ty)) => {
+                            const_types.insert(name.clone(), ty);
+                        }
+                        _ => {
+                            const_disqualified.insert(name.clone());
+                        }
+                    }
+                }
+                HirNode::ConstWrite {
+                    scope: Some(_),
+                    name,
+                    ..
+                }
+                | HirNode::DynConstWrite { name, .. }
+                | HirNode::ConstReadOrNil(_, name) => {
+                    const_disqualified.insert(name.clone());
+                }
+                _ => {}
+            }
+        };
+        fn walk(
+            compiler: &Compiler,
+            id: NodeId,
+            f: &mut impl FnMut(&Compiler, NodeId),
+        ) {
+            f(compiler, id);
+            compiler.hir[id].for_each_child(&mut |n| walk(compiler, n, f));
+        }
+        let mut f = |c: &Compiler, id: NodeId| {
+            record(c, &mut const_types, &mut const_disqualified, id)
+        };
+        for scope in &compiler.scopes {
+            for &n in &scope.body {
+                walk(compiler, n, &mut f);
+            }
+        }
+        for &n in main_statements {
+            walk(compiler, n, &mut f);
+        }
+    }
+    for name in &const_disqualified {
+        const_types.remove(name);
     }
 
     // A user REDEFINITION of the builtin iterator wins at every call site --
@@ -550,11 +646,11 @@ fn mark_inline_iter_sites(
     let mut sites = FMap::default();
     for scope in &compiler.scopes {
         for &n in &scope.body {
-            scan(compiler, n, &scope.local_types, &mut sites);
+            scan(compiler, n, &scope.local_types, &const_types, &mut sites);
         }
     }
     for &n in main_statements {
-        scan(compiler, n, main_local_types, &mut sites);
+        scan(compiler, n, main_local_types, &const_types, &mut sites);
     }
     sites.retain(|_, k| !suppressed(k));
     compiler.inline_iter_sites = sites;

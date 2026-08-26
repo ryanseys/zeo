@@ -221,6 +221,8 @@ zeo_rt_str_append_value ([Ptr, Ptr]) -> Some(I32)
 zeo_rt_str_lit ([Ptr, Ptr, U8, Ptr]) -> None
 zeo_rt_str_lit_ro ([Ptr, Usize, U8, Ptr]) -> None
 zeo_rt_str_new ([Ptr, Usize, U8, Ptr]) -> None
+zeo_rt_sum_finish ([Ptr, Ptr, Ptr]) -> None
+zeo_rt_sum_step ([Ptr, Ptr, Ptr]) -> Some(I32)
 zeo_rt_super_defined ([Ptr, U32, U32]) -> Some(I8)
 zeo_rt_super_defined_dynamic ([Ptr]) -> Some(I8)
 zeo_rt_svar_scope_pop ([]) -> None

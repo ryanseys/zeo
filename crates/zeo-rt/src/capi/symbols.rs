@@ -260,6 +260,8 @@ capi_symbols!(
     literals::zeo_rt_str_lit,
     literals::zeo_rt_str_lit_ro,
     literals::zeo_rt_str_new,
+    literals::zeo_rt_sum_finish,
+    literals::zeo_rt_sum_step,
     dispatch::zeo_rt_super_defined,
     dispatch::zeo_rt_super_defined_dynamic,
     signals::zeo_rt_svar_scope_pop,

@@ -65,19 +65,20 @@ pub fn is_inline_block_fast_path(
     kwargs_empty: bool,
     block: NodeId,
 ) -> bool {
-    fusable_block_params(compiler, block)
+    fusable_block_params(compiler, block, 1)
         && (is_times_fast_path(compiler, receiver, name, kwargs_empty)
             || is_range_each_fast_path(compiler, receiver, name, kwargs_empty))
 }
 
-/// Whether `block` has the parameter shape a fused loop can bind: at most one
-/// required name, and nothing else.
+/// Whether `block` has the parameter shape a fused loop can bind: at most
+/// `max_required` names (1, or 2 for the kinds that yield two values --
+/// `InlineIterKind::max_fused_params`), and nothing else.
 ///
 /// Ruby binds every other shape happily -- `3.times { |a, b| }` gives `b` nil
 /// -- so a block this answers false for takes the ordinary block send. That
 /// makes it a real `Proc`, which is why the CAPTURE scans have to ask the
 /// same question: a shared outer local must escape into a cell.
-pub fn fusable_block_params(compiler: &Compiler, block: NodeId) -> bool {
+pub fn fusable_block_params(compiler: &Compiler, block: NodeId, max_required: usize) -> bool {
     let HirNode::Block { params, .. } = &compiler.hir[block] else {
         return false;
     };
@@ -89,7 +90,7 @@ pub fn fusable_block_params(compiler: &Compiler, block: NodeId) -> bool {
         && params.keywords.is_empty()
         && params.keyword_rest.is_none()
         && params.block.is_none()
-        && params.required.len() <= 1
+        && params.required.len() <= max_required
 }
 
 /// The DESCEND decision for the hoisting/exception scans: any spliced block
@@ -105,6 +106,8 @@ pub fn is_spliced_block_body(
     block: NodeId,
 ) -> bool {
     is_inline_block_fast_path(compiler, receiver, name, kwargs_empty, block)
-        || (compiler.inline_iter_sites.contains_key(&block)
-            && fusable_block_params(compiler, block))
+        || compiler
+            .inline_iter_sites
+            .get(&block)
+            .is_some_and(|k| fusable_block_params(compiler, block, k.max_fused_params()))
 }

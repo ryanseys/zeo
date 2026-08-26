@@ -520,6 +520,21 @@ pub enum InlineIterKind {
     HashEach,
 }
 
+impl InlineIterKind {
+    /// How many required block parameters the kind's splice can BIND --
+    /// the cap `fusable_block` (and its analyze twin) applies per site.
+    /// Two only for the kinds that yield two values; every other kind
+    /// stays at one, so `3.times { |a, b| }` keeps its dynamic row.
+    pub fn max_fused_params(self) -> usize {
+        match self {
+            InlineIterKind::ArrayEachWithIndex
+            | InlineIterKind::ArrayInject
+            | InlineIterKind::HashEach => 2,
+            _ => 1,
+        }
+    }
+}
+
 /// The compiler-internal hash policy: fast, not DoS-resistant -- these sets
 /// only ever hold program identifiers.
 pub(crate) type FSet<T> = std::collections::HashSet<T, foldhash::fast::RandomState>;

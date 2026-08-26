@@ -133,6 +133,86 @@ pub unsafe extern "C" fn zeo_rt_array_aset_int(
     status_out(r, out)
 }
 
+/// The fused `sum` loop's state beside its RubyValue accumulator: the
+/// Kahan-Babuska compensation for the float lane, and the sticky-generic
+/// flag -- [`SumAcc::Generic`] never leaves the generic lane, which the
+/// value alone cannot encode (a generic `+` may answer a plain Int).
+/// Zero bytes = the starting Int lane, so the emitter zero-inits it.
+#[repr(C)]
+pub struct SumState {
+    comp: f64,
+    generic: u8,
+}
+
+use crate::builtins::enumerable::SumAcc;
+
+fn sum_acc_of(v: RubyValue, st: &SumState) -> SumAcc {
+    match (st.generic, v) {
+        (0, RubyValue::Int(n)) => SumAcc::Int(n),
+        (0, RubyValue::Float(f)) => SumAcc::Float {
+            sum: f,
+            compensation: st.comp,
+        },
+        (_, other) => SumAcc::Generic(other),
+    }
+}
+
+/// One step of the fused `arr.sum { .. }` loop: fold the block value
+/// (MOVED from `v`) into the accumulator through the very [`SumAcc`]
+/// ladder `Enumerable#sum` uses -- one definition of the arithmetic,
+/// compensation and all. On an error (a generic `+` raised) the
+/// accumulator slot is left untouched.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_sum_step(
+    acc: *mut RubyValue,
+    st: *mut SumState,
+    v: *mut RubyValue,
+) -> i32 {
+    super::leakcheck::consumed(unsafe { &*v });
+    let val = unsafe { std::ptr::read(v) };
+    let state = unsafe { &mut *st };
+    // Clone, not move: `add` consumes its receiver, and the slot must
+    // still hold a live value if the generic leg raises.
+    let cur = sum_acc_of(unsafe { (*acc).clone() }, state);
+    match cur.add(val) {
+        Ok(next) => {
+            super::leakcheck::consumed(unsafe { &*acc });
+            unsafe { std::ptr::drop_in_place(acc) };
+            let (value, comp, generic) = match next {
+                SumAcc::Int(n) => (RubyValue::Int(n), 0.0, 0),
+                SumAcc::Float { sum, compensation } => (RubyValue::Float(sum), compensation, 0),
+                SumAcc::Generic(g) => (g, 0.0, 1),
+            };
+            super::leakcheck::created(&value);
+            unsafe { acc.write(value) };
+            state.comp = comp;
+            state.generic = generic;
+            zeo_abi::abi::STATUS_OK
+        }
+        Err(sig) => {
+            crate::signal::set_pending(sig);
+            zeo_abi::abi::STATUS_SIGNAL
+        }
+    }
+}
+
+/// Finish the fused `sum`: the accumulator (MOVED from `acc`, which is
+/// nil'd for the epilogue's unconditional release) becomes the loop's
+/// value -- the float lane folds its compensation in here, CRuby's rule.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_sum_finish(
+    acc: *mut RubyValue,
+    st: *const SumState,
+    out: *mut RubyValue,
+) {
+    super::leakcheck::consumed(unsafe { &*acc });
+    let cur = unsafe { std::ptr::read(acc) };
+    unsafe { acc.write(RubyValue::Nil) };
+    let v = sum_acc_of(cur, unsafe { &*st }).finish();
+    super::leakcheck::created(&v);
+    unsafe { out.write(v) };
+}
+
 /// One element, cloned out (`nil` past the end -- Ruby's `[]`).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zeo_rt_array_get(a: *const RubyValue, i: usize, out: *mut RubyValue) {

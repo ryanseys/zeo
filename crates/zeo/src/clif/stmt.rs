@@ -1060,16 +1060,35 @@ fn lower_stmt_inner(fx: &mut Fx, stmt: NodeId) -> CResult<()> {
             // where most of them are written, since `each`'s value is
             // rarely wanted.
             if args.is_empty()
-                && super::iter::fusable_block(fx, blk)
+                && let Some(kind) = fx.an.compiler.inline_iter_sites.get(&blk)
+                && super::iter::fusable_block(fx, blk, kind.max_fused_params())
                 && let Some(r) = receiver
-                && fx.an.compiler.inline_iter_sites.get(&blk)
-                    == Some(&crate::compiler::InlineIterKind::ArrayEach)
+                && let Some(bind) = match kind {
+                    crate::compiler::InlineIterKind::ArrayEach => {
+                        Some(super::iter::Bind::Element)
+                    }
+                    crate::compiler::InlineIterKind::ArrayEachWithIndex => {
+                        Some(super::iter::Bind::ElementIndex)
+                    }
+                    _ => None,
+                }
             {
-                super::iter::lower_array_each(fx, stmt, r, blk, false, super::iter::Acc::None, "each")?;
+                // The slow arm dispatches the name as written.
+                super::iter::lower_array_each(
+                    fx,
+                    stmt,
+                    r,
+                    blk,
+                    false,
+                    super::iter::Acc::None,
+                    bind,
+                    &[],
+                    &name,
+                )?;
                 return Ok(());
             }
             if args.is_empty()
-                && super::iter::fusable_block(fx, blk)
+                && super::iter::fusable_block(fx, blk, 1)
                 && let Some(r) = receiver
                 && fx.an.compiler.inline_iter_sites.get(&blk)
                     == Some(&crate::compiler::InlineIterKind::TimesInt)
@@ -1078,10 +1097,19 @@ fn lower_stmt_inner(fx: &mut Fx, stmt: NodeId) -> CResult<()> {
                 return Ok(());
             }
             if args.is_empty()
-                && super::iter::fusable_block(fx, blk)
+                && super::iter::fusable_block(fx, blk, 1)
                 && let Some(counted) = super::iter::counted_of(fx, receiver, &name, true)
             {
-                return super::iter::lower_counted(fx, stmt, &counted, blk, None, super::iter::Acc::None);
+                return super::iter::lower_counted(
+                    fx,
+                    stmt,
+                    &counted,
+                    blk,
+                    None,
+                    super::iter::Acc::None,
+                    super::iter::Bind::Element,
+                    None,
+                );
             }
             let op = if receiver.is_none()
                 && let Some(decl) = fx.em.methods.get(&name)

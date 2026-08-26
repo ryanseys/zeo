@@ -117,6 +117,48 @@ fn clif_snapshot_fused_times_guards() {
     ));
 }
 
+/// The accumulator seam's heap kind: `arr.map` under the same guards as
+/// the fused `each`, with the Array accumulator in an epilogue-registered
+/// slot (its zeroing store sits in the entry block with the locals'),
+/// `zeo_rt_array_push` consuming each iteration value in the latch, and
+/// the bit-move + nil at the normal exit.
+#[test]
+fn clif_snapshot_fused_map_acc() {
+    insta::assert_snapshot!(clif_of(
+        "def map_of\n  a = [1, 2]\n  p a.map { |x| x * 2 }\nend\nmap_of\n",
+    ));
+}
+
+/// `arr.sum { .. }`: the Int-0 seed, the raw compensation/generic state
+/// slot, `zeo_rt_sum_step` consuming each value in the latch (fallible --
+/// a generic `+` can raise), and `zeo_rt_sum_finish` at the normal exit.
+#[test]
+fn clif_snapshot_fused_sum_acc() {
+    insta::assert_snapshot!(clif_of(
+        "def sum_of\n  a = [1, 2]\n  p a.sum { |x| x * 2 }\nend\nsum_of\n",
+    ));
+}
+
+/// `arr.inject(init) { |acc, e| .. }`: the seed lowered in the fast arm
+/// only (the slow arm lowers its own copy as the send argument), the
+/// accumulator borrowed into the first param's shadow each iteration, and
+/// the block value replacing it in the latch.
+#[test]
+fn clif_snapshot_fused_inject_acc() {
+    insta::assert_snapshot!(clif_of(
+        "def inject_of\n  a = [1, 2]\n  p a.inject(0) { |acc, e| acc + e }\nend\ninject_of\n",
+    ));
+}
+
+/// `arr.each_with_index { |e, i| .. }`: the two-name bind -- the element
+/// fetch, then the plain counter as an Int.
+#[test]
+fn clif_snapshot_fused_each_with_index() {
+    insta::assert_snapshot!(clif_of(
+        "def ewi_of\n  a = [1, 2]\n  a.each_with_index { |e, i| p [e, i] }\nend\newi_of\n",
+    ));
+}
+
 /// A send whose argument list runs before its literal block: the argument
 /// is lowered, and only then does `zeo_rt_proc_new` build the proc.
 ///

@@ -1525,26 +1525,65 @@ fn literal_block_call(
     // fused under a runtime guard, with the ordinary block send on
     // the other arm. The literal shapes below never nominate --
     // their receivers are not locals -- so the order is free.
-    if args.is_empty()
-        && super::iter::fusable_block(fx, blk)
+    if let Some(kind) = fx.an.compiler.inline_iter_sites.get(&blk)
+        && super::iter::fusable_block(fx, blk, kind.max_fused_params())
         && let Some(r) = receiver
-        && let Some(acc) = match fx.an.compiler.inline_iter_sites.get(&blk) {
-            Some(crate::compiler::InlineIterKind::ArrayEach) => Some(super::iter::Acc::None),
-            Some(crate::compiler::InlineIterKind::ArrayCount) => Some(super::iter::Acc::Count),
-            Some(crate::compiler::InlineIterKind::ArrayAll) => Some(super::iter::Acc::All),
-            Some(crate::compiler::InlineIterKind::ArrayAny) => Some(super::iter::Acc::Any),
-            Some(crate::compiler::InlineIterKind::ArrayNone) => Some(super::iter::Acc::NonePred),
-            Some(crate::compiler::InlineIterKind::ArrayFind) => Some(super::iter::Acc::Find),
+        && match kind {
+            // `inject` fuses with exactly its explicit seed argument.
+            crate::compiler::InlineIterKind::ArrayInject => {
+                matches!(args.as_slice(), [ArrayElem::Single(_)])
+            }
+            _ => args.is_empty(),
+        }
+        && let Some((acc, bind)) = match kind {
+            crate::compiler::InlineIterKind::ArrayEach => {
+                Some((super::iter::Acc::None, super::iter::Bind::Element))
+            }
+            crate::compiler::InlineIterKind::ArrayEachWithIndex => {
+                Some((super::iter::Acc::None, super::iter::Bind::ElementIndex))
+            }
+            crate::compiler::InlineIterKind::ArrayCount => {
+                Some((super::iter::Acc::Count, super::iter::Bind::Element))
+            }
+            crate::compiler::InlineIterKind::ArrayAll => {
+                Some((super::iter::Acc::All, super::iter::Bind::Element))
+            }
+            crate::compiler::InlineIterKind::ArrayAny => {
+                Some((super::iter::Acc::Any, super::iter::Bind::Element))
+            }
+            crate::compiler::InlineIterKind::ArrayNone => {
+                Some((super::iter::Acc::NonePred, super::iter::Bind::Element))
+            }
+            crate::compiler::InlineIterKind::ArrayFind => {
+                Some((super::iter::Acc::Find, super::iter::Bind::Element))
+            }
+            crate::compiler::InlineIterKind::ArrayMap => {
+                Some((super::iter::Acc::Map, super::iter::Bind::Element))
+            }
+            crate::compiler::InlineIterKind::ArraySelect => {
+                Some((super::iter::Acc::Select, super::iter::Bind::Element))
+            }
+            crate::compiler::InlineIterKind::ArrayReject => {
+                Some((super::iter::Acc::Reject, super::iter::Bind::Element))
+            }
+            crate::compiler::InlineIterKind::ArraySum => {
+                Some((super::iter::Acc::Sum, super::iter::Bind::Element))
+            }
+            crate::compiler::InlineIterKind::ArrayInject => {
+                Some((super::iter::Acc::Inject, super::iter::Bind::AccElement))
+            }
             _ => None,
         }
     {
         // The slow arm dispatches the NAME AS WRITTEN (`detect` stays
         // `detect` -- a runtime singleton may define only one alias).
-        return Ok(super::iter::lower_array_each(fx, id, r, blk, true, acc, &name)?
-            .expect("a wanted result is always built"));
+        return Ok(
+            super::iter::lower_array_each(fx, id, r, blk, true, acc, bind, &args, &name)?
+                .expect("a wanted result is always built"),
+        );
     }
     if args.is_empty()
-        && super::iter::fusable_block(fx, blk)
+        && super::iter::fusable_block(fx, blk, 1)
         && let Some(r) = receiver
         && fx.an.compiler.inline_iter_sites.get(&blk)
             == Some(&crate::compiler::InlineIterKind::TimesInt)
@@ -1553,12 +1592,21 @@ fn literal_block_call(
             .expect("a wanted result is always built"));
     }
     if args.is_empty()
-        && super::iter::fusable_block(fx, blk)
+        && super::iter::fusable_block(fx, blk, 1)
         && let Some(counted) = super::iter::counted_of(fx, receiver, &name, true)
     {
         let ss = fx.temp_slot();
         let dst = fx.slot_addr(ss, 0);
-        super::iter::lower_counted(fx, id, &counted, blk, Some(dst), super::iter::Acc::None)?;
+        super::iter::lower_counted(
+            fx,
+            id,
+            &counted,
+            blk,
+            Some(dst),
+            super::iter::Acc::None,
+            super::iter::Bind::Element,
+            None,
+        )?;
         fx.owned_created += 1;
         return Ok(Operand::Slot {
             ss,

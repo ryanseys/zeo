@@ -1135,6 +1135,16 @@ pub const CAPI: &[CapiSig] = &[
         ret: None,
     },
     CapiSig {
+        name: "zeo_rt_sum_finish",
+        params: &[Ptr, Ptr, Ptr],
+        ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_sum_step",
+        params: &[Ptr, Ptr, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
         name: "zeo_rt_super_defined",
         params: &[Ptr, U32, U32],
         ret: Some(I8),
