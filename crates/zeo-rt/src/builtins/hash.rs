@@ -387,17 +387,19 @@ ruby_class! {
     // `assoc(key)` / `rassoc(value)`: the `[key, value]` pair matched by key
     // (resp. value), or nil.
     def "assoc" (recv, arg) {
-        for (k, v) in rhash.lock().values() {
-            if k.rb_eq(arg) {
-                return Ok(RubyValue::Array(crate::array_new(vec![k.clone(), v.clone()])));
+        // A SNAPSHOT: `rb_equal` can run a user `==`, which must not see the
+        // receiver's (non-reentrant) payload lock held.
+        for (k, v) in crate::collections::hash_pairs(rhash) {
+            if crate::builtins::basic_object::rb_equal(&k, arg)? {
+                return Ok(RubyValue::Array(crate::array_new(vec![k, v])));
             }
         }
         Ok(RubyValue::Nil)
     }
     def "rassoc" (recv, arg) {
-        for (k, v) in rhash.lock().values() {
-            if v.rb_eq(arg) {
-                return Ok(RubyValue::Array(crate::array_new(vec![k.clone(), v.clone()])));
+        for (k, v) in crate::collections::hash_pairs(rhash) {
+            if crate::builtins::basic_object::rb_equal(&v, arg)? {
+                return Ok(RubyValue::Array(crate::array_new(vec![k, v])));
             }
         }
         Ok(RubyValue::Nil)
@@ -563,19 +565,20 @@ ruby_class! {
         Ok(RubyValue::Hash(crate::hash_new(pairs)))
     }
     def "key" (recv, arg) {
-        for (k, v) in rhash.lock().values() {
-            if v.rb_eq(arg) {
-                return Ok(k.clone());
+        for (k, v) in crate::collections::hash_pairs(rhash) {
+            if crate::builtins::basic_object::rb_equal(&v, arg)? {
+                return Ok(k);
             }
         }
         Ok(RubyValue::Nil)
     }
     def "value?" | "has_value?" (recv, arg) {
-        let found = rhash
-            .lock()
-            .values()
-            .any(|(_, v)| v.rb_eq(arg));
-        Ok(RubyValue::Bool(found))
+        for (_, v) in crate::collections::hash_pairs(rhash) {
+            if crate::builtins::basic_object::rb_equal(&v, arg)? {
+                return Ok(RubyValue::Bool(true));
+            }
+        }
+        Ok(RubyValue::Bool(false))
     }
     def "each_key" (recv, &block) {
         let p = block_or_enum!(recv, &[], block);
@@ -829,11 +832,14 @@ fn hash_subset(a: &RubyValue, b: &RubyValue, proper: bool) -> Result<bool, crate
     if proper && crate::hash_len(small) >= crate::hash_len(big) {
         return Ok(false);
     }
-    let contained = small
-        .lock()
-        .values()
-        .all(|(k, v)| crate::hash_has_key(big, k) && crate::hash_get(big, k).rb_eq(v));
-    Ok(contained)
+    for (k, v) in crate::collections::hash_pairs(small) {
+        if !crate::hash_has_key(big, &k)
+            || !crate::builtins::basic_object::rb_equal(&crate::hash_get(big, &k), &v)?
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 fn merge_into(

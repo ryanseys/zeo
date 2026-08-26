@@ -583,19 +583,22 @@ ruby_class! {
         // is still held deadlocks a non-reentrant Mutex. `product` below has
         // taken this shape all along.
         for e in crate::collections::array_snapshot(rary) {
-            if let RubyValue::Array(inner) = &e
-                && inner.lock().first().is_some_and(|k| k.rb_eq(arg)) {
-                    return Ok(e);
-                }
+            let RubyValue::Array(inner) = &e else { continue };
+            // Cloned out of the guard: `rb_equal` can run a user `==`.
+            let Some(k) = inner.lock().first().cloned() else { continue };
+            if crate::builtins::basic_object::rb_equal(&k, arg)? {
+                return Ok(e);
+            }
         }
         Ok(RubyValue::Nil)
     }
     def "rassoc" (recv, arg) {
         for e in crate::collections::array_snapshot(rary) {
-            if let RubyValue::Array(inner) = &e
-                && inner.lock().get(1).is_some_and(|v| v.rb_eq(arg)) {
-                    return Ok(e);
-                }
+            let RubyValue::Array(inner) = &e else { continue };
+            let Some(v) = inner.lock().get(1).cloned() else { continue };
+            if crate::builtins::basic_object::rb_equal(&v, arg)? {
+                return Ok(e);
+            }
         }
         Ok(RubyValue::Nil)
     }
@@ -811,7 +814,7 @@ ruby_class! {
                 Some(e) => e,
                 None => continue,
             };
-            if e.rb_eq(needle) {
+            if crate::builtins::basic_object::rb_equal(&e, needle)? {
                 return Ok(RubyValue::Int(i as i64));
             }
         }

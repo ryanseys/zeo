@@ -513,13 +513,22 @@ pub(crate) fn struct_equal(recv: &RubyValue, other: &RubyValue) -> bool {
     if meta_of(o.class_id()).is_none() || recv_class_id(recv) != o.class_id() {
         return false;
     }
+    // `rb_struct_equal` answers true for the SAME instance before it reads a
+    // single member, so a NaN member does not make `s == s` false.
+    if crate::builtins::basic_object::value_identity(recv, other) {
+        return true;
+    }
     // Each side snapshot separately rather than both guards held at once:
-    // `s == s` aliases the SAME instance, so locking the second while the
-    // first is still held would deadlock a non-reentrant `Mutex`. Comparing
-    // the cloned values keeps a NaN member making `s == s` false, as CRuby.
+    // an aliased pair would lock the second while the first is still held
+    // and deadlock a non-reentrant `Mutex`.
     let a = slots_of(recv);
     let b = slots_of(other);
-    a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.rb_eq(y))
+    // `rb_equal` per member, identity first -- what makes two structs built
+    // from the SAME NaN compare equal, as CRuby.
+    a.len() == b.len()
+        && a.iter()
+            .zip(b.iter())
+            .all(|(x, y)| crate::builtins::basic_object::value_identity(x, y) || x.rb_eq(y))
 }
 
 pub(crate) fn deconstruct_keys(recv: &RubyValue, keys: &RubyValue) -> Result<RubyValue, Signal> {

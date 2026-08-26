@@ -1046,8 +1046,29 @@ impl RubyValue {
     /// `Object#==` default: reference identity. Backs `case`/`when`'s
     /// value-matching desugar, `Array#include?`, `send_value`'s universal
     /// `==`, and the codegen operator fallback.
+    ///
+    /// It has NO identity short-circuit, deliberately: this is the `==`
+    /// OPERATOR, and `Float::NAN == Float::NAN` is false. The element rule
+    /// inside a container is [`RubyValue::rb_equal_guarded`], which takes
+    /// that step -- see its docs for why the two must stay apart.
     pub fn rb_eq(&self, other: &RubyValue) -> bool {
         self.rb_eq_guarded(other, &mut Vec::new())
+    }
+
+    /// CRuby's `rb_equal` -- the rule an ELEMENT inside a container compares
+    /// by: the same object is equal to itself without `==` being asked at
+    /// all. It disagrees with [`RubyValue::rb_eq`] for exactly two shapes,
+    /// and both are real: `Float::NAN` (so `[n] == [n]` is TRUE while
+    /// `n == n` is false), and a user `==` that answers false for its own
+    /// receiver. The `==` operator itself must NOT take this step, which is
+    /// why it stays a separate entry.
+    ///
+    /// The dispatching sibling in `basic_object::rb_equal` is the one a
+    /// SEARCH row uses; this one is the infallible worker the structural
+    /// walk below recurses through.
+    fn rb_equal_guarded(&self, other: &RubyValue, seen: &mut Vec<(usize, usize)>) -> bool {
+        crate::builtins::basic_object::value_identity(self, other)
+            || self.rb_eq_guarded(other, seen)
     }
 
     /// `rb_eq`'s recursive worker: `seen` holds PAIRS of container
@@ -1126,7 +1147,7 @@ impl RubyValue {
                      y: &Option<RubyValue>,
                      seen: &mut Vec<(usize, usize)>| match (x, y) {
                         (None, None) => true,
-                        (Some(x), Some(y)) => x.rb_eq_guarded(y, seen),
+                        (Some(x), Some(y)) => x.rb_equal_guarded(y, seen),
                         _ => false,
                     };
                 a.exclusive == b.exclusive
@@ -1155,7 +1176,7 @@ impl RubyValue {
                         let x = a.lock().get(i).cloned();
                         let y = b.lock().get(i).cloned();
                         match (x, y) {
-                            (Some(x), Some(y)) => x.rb_eq_guarded(&y, seen),
+                            (Some(x), Some(y)) => x.rb_equal_guarded(&y, seen),
                             // Shrunk mid-walk by another thread: the pair
                             // no longer has this index on both sides.
                             _ => false,
@@ -1182,7 +1203,8 @@ impl RubyValue {
                 let pairs: Vec<(RubyValue, RubyValue)> = a.lock().values().cloned().collect();
                 let eq = crate::hash_len(a) == crate::hash_len(b)
                     && pairs.iter().all(|(k, va)| {
-                        crate::hash_has_key(b, k) && va.rb_eq_guarded(&crate::hash_get(b, k), seen)
+                        crate::hash_has_key(b, k)
+                            && va.rb_equal_guarded(&crate::hash_get(b, k), seen)
                     });
                 seen.pop();
                 eq

@@ -1192,7 +1192,7 @@ pub(crate) fn count_own(
             fold_each(
                 src,
                 0i64,
-                move |yielded| Ok(pack(yielded).rb_eq(&item)),
+                move |yielded| crate::builtins::basic_object::rb_equal(&pack(yielded), &item),
                 bump,
             )?
         }
@@ -1436,7 +1436,7 @@ ruby_module! {
         let found = Arc::new(Mutex::new(false));
         let found2 = found.clone();
         for_each(Src::sending(recv), move |yielded| {
-            if pack(yielded).rb_eq(&needle) {
+            if crate::builtins::basic_object::rb_equal(&pack(yielded), &needle)? {
                 *found2.lock() = true;
                 return Err(Signal::Break(RubyValue::Nil));
             }
@@ -1850,7 +1850,10 @@ ruby_module! {
             let found = match &blk {
                 Some(p) => yield_block(p, yielded, &brk2)?.truthy(),
                 // The valueless form is rejected above, so `needle` is Some here.
-                None => pack(yielded).rb_eq(needle.as_ref().expect("a value or a block")),
+                None => crate::builtins::basic_object::rb_equal(
+                    &pack(yielded),
+                    needle.as_ref().expect("a value or a block"),
+                )?,
             };
             let mut i = idx2.lock();
             if found {
@@ -2004,7 +2007,11 @@ ruby_module! {
             }
             // `:_alone` never merges, even with an adjacent `:_alone`.
             let alone = sym && matches!(&key, RubyValue::Symbol(s) if s.name() == "_alone");
-            let same = !alone && cur_key.as_ref().is_some_and(|k| k.rb_eq(&key));
+            let same = !alone
+                && match cur_key.as_ref() {
+                    Some(k) => crate::builtins::basic_object::rb_equal(k, &key)?,
+                    None => false,
+                };
             if !same {
                 flush(cur_key.take(), &mut cur, &mut out);
                 cur_key = Some(key);

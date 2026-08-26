@@ -1536,7 +1536,9 @@ ruby_class! {
             let (Some(a), Some(b)) = (arith_seq_parts(recv), arith_seq_parts(other)) else {
                 return Ok(RubyValue::Bool(false));
             };
-            let eq = |x: &RubyValue, y: &RubyValue| x.rb_eq(y);
+            let eq = |x: &RubyValue, y: &RubyValue| {
+                crate::builtins::basic_object::value_identity(x, y) || x.rb_eq(y)
+            };
             let ends = match (a.1, b.1) {
                 (Some(x), Some(y)) => eq(x, y),
                 (None, None) => true,
