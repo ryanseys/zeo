@@ -69,25 +69,75 @@ ruby_module! {
     // `module_function`, not `def self.`: CRuby gives `dump` alone a private
     // instance copy (`Marshal.private_instance_methods` is `[:dump]`), while
     // `load`/`restore` are singleton-only -- the pair is asymmetric.
-    module_function def "dump" cfunc (_recv, arg1, _arg2?) {
-        let mut w = Writer::default();
+    module_function def "dump" params "obj, anIO = nil, limit = nil" cfunc (_recv, arg1, arg2?, arg3?) {
+        // The second argument is a PORT or a LIMIT, and ruby tells them
+        // apart by type: an Integer is the depth limit, anything else must
+        // answer `write`. Ignoring it entirely meant `dump(obj, io)` wrote
+        // nothing and answered the string, silently.
+        let (port, limit) = match (arg2, arg3) {
+            (None, _) | (Some(RubyValue::Nil), None) => (None, None),
+            (Some(RubyValue::Int(n)), None) => (None, Some(*n)),
+            (Some(io), None) => (Some(io), None),
+            (Some(io), Some(n)) => (
+                (!io.is_nil()).then_some(io),
+                Some(crate::builtins::convert::to_index(n)?),
+            ),
+        };
+        if let Some(io) = port
+            && !responds_to(io.class_id(), Symbol::intern("write"), true)
+        {
+            return Err(type_error!("instance of IO needed"));
+        }
+        let mut w = Writer { limit, ..Writer::default() };
         w.out.push(MAJOR);
         w.out.push(MINOR);
         w.write(arg1)?;
         let s = crate::string_from_bytes(w.out, crate::encoding::ASCII_8BIT);
-        Ok(RubyValue::Str(s))
+        // With a port, the bytes go THERE and the PORT comes back -- callers
+        // chain on it.
+        match port {
+            Some(io) => {
+                send_value(io, Symbol::intern("write"), &[RubyValue::Str(s)], None)?;
+                Ok(io.clone())
+            }
+            None => Ok(RubyValue::Str(s)),
+        }
     }
 
     // `Marshal.load(str)` -> the deserialized object.
     // `Marshal.restore` is CRuby's own alias of `.load`.
-    def self."load" params "source, proc = nil, freeze: nil" | "restore" params "source, proc = nil, freeze: nil" (_recv, arg1, _arg2?) {
-        let RubyValue::Str(s) = arg1 else {
-            return Err(type_error!("instance of IO needed"));
+    def self."load" params "source, proc = nil, freeze: nil"
+        | "restore" params "source, proc = nil, freeze: nil" (_recv, arg1, arg2?, **opts) {
+        // A SOURCE is a String or anything that answers `read` -- an IO, a
+        // StringIO, a socket. Only the String form was accepted.
+        let bytes = match arg1 {
+            RubyValue::Str(s) => s.lock().bytes().to_vec(),
+            other if responds_to(other.class_id(), Symbol::intern("read"), true) => {
+                match send_value(other, Symbol::intern("read"), &[], None)? {
+                    RubyValue::Str(s) => s.lock().bytes().to_vec(),
+                    _ => return Err(type_error!("instance of IO needed")),
+                }
+            }
+            _ => return Err(type_error!("instance of IO needed")),
         };
-        let bytes = s.lock().bytes().to_vec();
-        let mut r = Reader { bytes: &bytes, pos: 0, symbols: Vec::new(), objects: Vec::new() };
-        if r.byte()? != MAJOR || r.byte()? != MINOR {
-            return Err(type_error!("incompatible marshal file format"));
+        let visitor = arg2.filter(|v| !v.is_nil()).cloned();
+        let freeze = matches!(opts, Some(RubyValue::Hash(h))
+            if crate::hash_get(h, &RubyValue::Symbol(Symbol::intern("freeze"))).truthy());
+        let mut r = Reader {
+            bytes: &bytes,
+            pos: 0,
+            symbols: Vec::new(),
+            objects: Vec::new(),
+            visitor,
+            freeze,
+        };
+        let (major, minor) = (r.byte()?, r.byte()?);
+        if major != MAJOR || minor > MINOR {
+            // The DETAIL line is ruby's, and it is what tells a reader which
+            // way the mismatch went.
+            return Err(type_error!(
+                "incompatible marshal file format (can't be read)\n\tformat version {MAJOR}.{MINOR} required; {major}.{minor} given"
+            ));
         }
         r.read()
     }
@@ -167,10 +217,30 @@ struct Writer {
     /// so a repeated non-standard encoding dedups like CRuby's shared name.
     enc_links: HashMap<String, usize>,
     next_link: usize,
+    /// `Marshal.dump(obj, limit)`'s depth cap -- `None` for no limit.
+    /// Counted DOWN as the walk descends, and a negative reading refuses.
+    limit: Option<i64>,
+    /// How deep the walk currently is, against `limit`.
+    depth: i64,
 }
 
 impl Writer {
     fn write(&mut self, v: &RubyValue) -> Result<(), Signal> {
+        // The depth cap is counted at every VALUE, so it bounds the whole
+        // graph rather than one container's nesting. Ignoring it let
+        // `dump(obj, 1)` serialize an arbitrarily deep structure.
+        if let Some(limit) = self.limit
+            && self.depth > limit
+        {
+            return Err(arg_error!("exceed depth limit"));
+        }
+        self.depth += 1;
+        let out = self.write_inner(v);
+        self.depth -= 1;
+        out
+    }
+
+    fn write_inner(&mut self, v: &RubyValue) -> Result<(), Signal> {
         match v {
             RubyValue::Nil => self.out.push(b'0'),
             RubyValue::Bool(true) => self.out.push(b'T'),
@@ -710,6 +780,11 @@ struct Reader<'a> {
     pos: usize,
     symbols: Vec<String>,
     objects: Vec<RubyValue>,
+    /// `Marshal.load(src, proc)`'s visitor: called with EVERY object as it
+    /// is read, and its answer replaces the value.
+    visitor: Option<RubyValue>,
+    /// `freeze: true` -- every loaded object comes back frozen.
+    freeze: bool,
 }
 
 impl Reader<'_> {
@@ -724,7 +799,18 @@ impl Reader<'_> {
 
     fn read(&mut self) -> Result<RubyValue, Signal> {
         let tag = self.byte()?;
-        self.read_tag(tag)
+        let v = self.read_tag(tag)?;
+        // `freeze:` and the visitor apply to EVERY object as it is read, not
+        // only to the outermost one -- which is what makes
+        // `freeze: true` reach a nested String, and what lets a proc see the
+        // whole graph.
+        if self.freeze {
+            let _ = send_value(&v, Symbol::intern("freeze"), &[], None);
+        }
+        match self.visitor.clone() {
+            Some(p) => send_value(&p, Symbol::intern("call"), std::slice::from_ref(&v), None),
+            None => Ok(v),
+        }
     }
 
     fn read_tag(&mut self, tag: u8) -> Result<RubyValue, Signal> {
