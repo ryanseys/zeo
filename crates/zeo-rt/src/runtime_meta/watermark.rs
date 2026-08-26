@@ -436,9 +436,17 @@ pub fn overlay_instance_method_names(
         // `OverlayEntry::inherited_names`.
         .filter(|n| !e.undefs.contains(n) && !e.inherited_names.contains(n))
         .collect();
-    e.undefs
-        .iter()
-        .map(|&n| (n, None))
+    // Intern-id order: hash-set order is RANDOM PER PROCESS (found by the
+    // typed-diff leg -- two runs of one program listed `attr_accessor`'s
+    // pair both ways), and first-intern order is definition order for
+    // runtime-defined names, which is CRuby's listing order.
+    let mut named: Vec<Symbol> = named.into_iter().collect();
+    named.sort_unstable_by_key(|s| s.to_u32());
+    let mut undefs: Vec<Symbol> = e.undefs.iter().copied().collect();
+    undefs.sort_unstable_by_key(|s| s.to_u32());
+    undefs
+        .into_iter()
+        .map(|n| (n, None))
         .chain(named.into_iter().map(|n| {
             let vis = e.methods_vis.get(&n).copied();
             let vis = vis.unwrap_or(crate::dispatch::MethodVisibility::Public);
