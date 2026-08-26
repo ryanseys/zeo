@@ -46,15 +46,11 @@ fn hot_of(fx: &Fx) -> Option<ir::Value> {
 
 /// `gates & GATE_FRAMES_INDIRECT`, as a branchable value.
 fn indirect_bit(fx: &mut Fx) -> ir::Value {
-    let gv = fx
-        .em
-        .module
-        .declare_data_in_func(fx.em.gates_id, fx.b.func);
+    let gv = fx.em.module.declare_data_in_func(fx.em.gates_id, fx.b.func);
     let base = fx.b.ins().symbol_value(fx.em.ptr, gv);
-    let g = fx
-        .b
-        .ins()
-        .load(types::I16, MemFlagsData::trusted(), base, 0);
+    let g =
+        fx.b.ins()
+            .load(types::I16, MemFlagsData::trusted(), base, 0);
     fx.b.ins()
         .band_imm_u(g, i64::from(a::GATE_FRAMES_INDIRECT_BIT))
 }
@@ -63,14 +59,8 @@ fn indirect_bit(fx: &mut Fx) -> ir::Value {
 /// grows), the five field stores plus the pool watermark, the bump.
 fn push_stores(fx: &mut Fx, hot: ir::Value, args: &[ir::Value; 6]) {
     let fl = MemFlagsData::trusted();
-    let top = fx
-        .b
-        .ins()
-        .load(fx.em.ptr, fl, hot, a::FRAMEHOT_TOP as i32);
-    let end = fx
-        .b
-        .ins()
-        .load(fx.em.ptr, fl, hot, a::FRAMEHOT_END as i32);
+    let top = fx.b.ins().load(fx.em.ptr, fl, hot, a::FRAMEHOT_TOP as i32);
+    let end = fx.b.ins().load(fx.em.ptr, fl, hot, a::FRAMEHOT_END as i32);
     let full = fx.b.ins().icmp(IntCC::Equal, top, end);
     let grow = fx.b.create_block();
     let store = fx.b.create_block();
@@ -84,26 +74,24 @@ fn push_stores(fx: &mut Fx, hot: ir::Value, args: &[ir::Value; 6]) {
 
     fx.b.switch_to_block(store);
     let [file_ptr, file_len, label_ptr, label_len, line_v, end_v] = *args;
-    fx.b.ins().store(fl, file_ptr, top, a::FRAME_FILE_PTR as i32);
-    fx.b.ins().store(fl, file_len, top, a::FRAME_FILE_LEN as i32);
-    fx.b
-        .ins()
+    fx.b.ins()
+        .store(fl, file_ptr, top, a::FRAME_FILE_PTR as i32);
+    fx.b.ins()
+        .store(fl, file_len, top, a::FRAME_FILE_LEN as i32);
+    fx.b.ins()
         .store(fl, label_ptr, top, a::FRAME_METHOD_PTR as i32);
-    fx.b
-        .ins()
+    fx.b.ins()
         .store(fl, label_len, top, a::FRAME_METHOD_LEN as i32);
     fx.b.ins().store(fl, line_v, top, a::FRAME_LINE as i32);
     fx.b.ins().store(fl, end_v, top, a::FRAME_END_LINE as i32);
     // The pool watermark: the value COUNT between the pool trio's base
     // and top (both null before the first pooled value = count 0).
-    let pt = fx
-        .b
-        .ins()
-        .load(fx.em.ptr, fl, hot, a::FRAMEHOT_POOL_TOP as i32);
-    let pb = fx
-        .b
-        .ins()
-        .load(fx.em.ptr, fl, hot, a::FRAMEHOT_POOL_BASE as i32);
+    let pt =
+        fx.b.ins()
+            .load(fx.em.ptr, fl, hot, a::FRAMEHOT_POOL_TOP as i32);
+    let pb =
+        fx.b.ins()
+            .load(fx.em.ptr, fl, hot, a::FRAMEHOT_POOL_BASE as i32);
     let bytes = fx.b.ins().isub(pt, pb);
     let count = fx.b.ins().udiv_imm_u(bytes, a::VALUE_SIZE as i64);
     let mark = fx.b.ins().ireduce(types::I32, count);
@@ -193,14 +181,8 @@ pub(crate) fn emit_frame_pop(fx: &mut Fx) {
 
     fx.b.switch_to_block(fast);
     let fl = MemFlagsData::trusted();
-    let top = fx
-        .b
-        .ins()
-        .load(fx.em.ptr, fl, hot, a::FRAMEHOT_TOP as i32);
-    let base = fx
-        .b
-        .ins()
-        .load(fx.em.ptr, fl, hot, a::FRAMEHOT_BASE as i32);
+    let top = fx.b.ins().load(fx.em.ptr, fl, hot, a::FRAMEHOT_TOP as i32);
+    let base = fx.b.ins().load(fx.em.ptr, fl, hot, a::FRAMEHOT_BASE as i32);
     let empty = fx.b.ins().icmp(IntCC::Equal, top, base);
     let pop = fx.b.create_block();
     fx.b.ins().brif(empty, done, &[], pop, &[]);
@@ -208,24 +190,21 @@ pub(crate) fn emit_frame_pop(fx: &mut Fx) {
     fx.b.switch_to_block(pop);
     let lowered = fx.b.ins().iadd_imm_s(top, -(a::FRAME_SIZE as i64));
     fx.b.ins().store(fl, lowered, hot, a::FRAMEHOT_TOP as i32);
-    let mark = fx
-        .b
-        .ins()
-        .load(types::I32, fl, lowered, a::FRAME_POOL_MARK as i32);
+    let mark =
+        fx.b.ins()
+            .load(types::I32, fl, lowered, a::FRAME_POOL_MARK as i32);
     // NO_MARK (a frame that brackets no pool scope) drains nothing.
     let no_mark = fx.b.ins().icmp_imm_s(IntCC::Equal, mark, -1);
     let check = fx.b.create_block();
     fx.b.ins().brif(no_mark, done, &[], check, &[]);
 
     fx.b.switch_to_block(check);
-    let pt = fx
-        .b
-        .ins()
-        .load(fx.em.ptr, fl, hot, a::FRAMEHOT_POOL_TOP as i32);
-    let pb = fx
-        .b
-        .ins()
-        .load(fx.em.ptr, fl, hot, a::FRAMEHOT_POOL_BASE as i32);
+    let pt =
+        fx.b.ins()
+            .load(fx.em.ptr, fl, hot, a::FRAMEHOT_POOL_TOP as i32);
+    let pb =
+        fx.b.ins()
+            .load(fx.em.ptr, fl, hot, a::FRAMEHOT_POOL_BASE as i32);
     let bytes = fx.b.ins().isub(pt, pb);
     let count = fx.b.ins().udiv_imm_u(bytes, a::VALUE_SIZE as i64);
     let mark_w = fx.b.ins().uextend(types::I64, mark);
@@ -262,14 +241,8 @@ pub(crate) fn emit_set_line(fx: &mut Fx, line_v: ir::Value) {
 
     fx.b.switch_to_block(fast);
     let fl = MemFlagsData::trusted();
-    let top = fx
-        .b
-        .ins()
-        .load(fx.em.ptr, fl, hot, a::FRAMEHOT_TOP as i32);
-    let base = fx
-        .b
-        .ins()
-        .load(fx.em.ptr, fl, hot, a::FRAMEHOT_BASE as i32);
+    let top = fx.b.ins().load(fx.em.ptr, fl, hot, a::FRAMEHOT_TOP as i32);
+    let base = fx.b.ins().load(fx.em.ptr, fl, hot, a::FRAMEHOT_BASE as i32);
     let empty = fx.b.ins().icmp(IntCC::Equal, top, base);
     let stamp = fx.b.create_block();
     fx.b.ins().brif(empty, done, &[], stamp, &[]);

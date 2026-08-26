@@ -144,7 +144,13 @@ impl BinOp {
 /// the result is a fresh owned slot -- or, when this call IS the condition
 /// a branch site is lowering (`fx.branch_cond`) and the operator is a
 /// comparison, the bare condition bit as `Operand::Bool`.
-pub(super) fn binop(fx: &mut Fx, id: NodeId, name: &str, recv: NodeId, arg: NodeId) -> CResult<Operand> {
+pub(super) fn binop(
+    fx: &mut Fx,
+    id: NodeId,
+    name: &str,
+    recv: NodeId,
+    arg: NodeId,
+) -> CResult<Operand> {
     let op = BinOp::of(name).expect("operator_fast_path guarded");
     // Branch mode only for the six relationals: their Int AND Float arms
     // are compares, and a dynamic result's truthiness is what the branch

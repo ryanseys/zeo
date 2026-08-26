@@ -918,20 +918,17 @@ impl Compiler {
             // a Ractor move, which [`Compiler::moved_receiver_possible`]
             // gates separately -- every fold that asks this question must
             // ask that one too.
-            (0..self.classes.len() as u32)
-                .map(ClassId)
-                .any(|cid| {
-                    cid != BASIC_OBJECT_CLASS
-                        && cid != zeo_abi::RACTOR_MOVED_OBJECT_CLASS
-                        && self.is_blank_slate(cid)
-                })
-                || self.hir.iter().any(|n| match n {
-                    crate::hir::HirNode::ClassRef(name) => name == "BasicObject",
-                    crate::hir::HirNode::QualifiedConstRead(_, name)
-                    | crate::hir::HirNode::ConstReadOrNil(_, name) => name == "BasicObject",
-                    crate::hir::HirNode::DynConstRead { .. } => true,
-                    _ => false,
-                })
+            (0..self.classes.len() as u32).map(ClassId).any(|cid| {
+                cid != BASIC_OBJECT_CLASS
+                    && cid != zeo_abi::RACTOR_MOVED_OBJECT_CLASS
+                    && self.is_blank_slate(cid)
+            }) || self.hir.iter().any(|n| match n {
+                crate::hir::HirNode::ClassRef(name) => name == "BasicObject",
+                crate::hir::HirNode::QualifiedConstRead(_, name)
+                | crate::hir::HirNode::ConstReadOrNil(_, name) => name == "BasicObject",
+                crate::hir::HirNode::DynConstRead { .. } => true,
+                _ => false,
+            })
         })
     }
 

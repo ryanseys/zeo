@@ -543,9 +543,9 @@ fn mark_inline_iter_sites(
     let mut const_disqualified: FSet<String> = FSet::default();
     {
         let record = |compiler: &Compiler,
-                          const_types: &mut FMap<String, TyKind>,
-                          const_disqualified: &mut FSet<String>,
-                          id: NodeId| {
+                      const_types: &mut FMap<String, TyKind>,
+                      const_disqualified: &mut FSet<String>,
+                      id: NodeId| {
             match &compiler.hir[id] {
                 HirNode::ConstWrite {
                     scope: None,
@@ -574,17 +574,12 @@ fn mark_inline_iter_sites(
                 _ => {}
             }
         };
-        fn walk(
-            compiler: &Compiler,
-            id: NodeId,
-            f: &mut impl FnMut(&Compiler, NodeId),
-        ) {
+        fn walk(compiler: &Compiler, id: NodeId, f: &mut impl FnMut(&Compiler, NodeId)) {
             f(compiler, id);
             compiler.hir[id].for_each_child(&mut |n| walk(compiler, n, f));
         }
-        let mut f = |c: &Compiler, id: NodeId| {
-            record(c, &mut const_types, &mut const_disqualified, id)
-        };
+        let mut f =
+            |c: &Compiler, id: NodeId| record(c, &mut const_types, &mut const_disqualified, id);
         for scope in &compiler.scopes {
             for &n in &scope.body {
                 walk(compiler, n, &mut f);
@@ -675,12 +670,7 @@ fn mark_accessor_sites(
 ) {
     use crate::compiler::{AccessorKind, AccessorSite, ClassId};
 
-    fn site_of(
-        compiler: &Compiler,
-        cid: ClassId,
-        name: &str,
-        argc: usize,
-    ) -> Option<AccessorSite> {
+    fn site_of(compiler: &Compiler, cid: ClassId, name: &str, argc: usize) -> Option<AccessorSite> {
         let (_owner, scope_id) = compiler.method_in_chain(cid, name)?;
         let scope = compiler.scope(scope_id);
         if scope.visibility != crate::hir::Visibility::Public {

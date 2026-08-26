@@ -326,12 +326,9 @@ pub(crate) fn truthy(fx: &mut Fx, op: Operand) -> ir::Value {
                 TagInfo::Known(_) => {
                     // Known Bool: its payload byte IS the answer (0 or 1).
                     let fl = ir::MemFlagsData::trusted();
-                    let pb = fx.b.ins().load(
-                        types::I8,
-                        fl,
-                        addr,
-                        zeo_abi::abi::PAYLOAD_OFFSET as i32,
-                    );
+                    let pb =
+                        fx.b.ins()
+                            .load(types::I8, fl, addr, zeo_abi::abi::PAYLOAD_OFFSET as i32);
                     fx.b.ins().icmp_imm_u(IntCC::NotEqual, pb, 0)
                 }
                 TagInfo::Unknown => {
@@ -342,12 +339,9 @@ pub(crate) fn truthy(fx: &mut Fx, op: Operand) -> ir::Value {
                     let t =
                         fx.b.ins()
                             .load(types::I8, fl, addr, zeo_abi::abi::TAG_OFFSET as i32);
-                    let pb = fx.b.ins().load(
-                        types::I8,
-                        fl,
-                        addr,
-                        zeo_abi::abi::PAYLOAD_OFFSET as i32,
-                    );
+                    let pb =
+                        fx.b.ins()
+                            .load(types::I8, fl, addr, zeo_abi::abi::PAYLOAD_OFFSET as i32);
                     let gt1 = fx.b.ins().icmp_imm_u(IntCC::UnsignedGreaterThan, t, 1);
                     let is_bool = fx.b.ins().icmp_imm_u(IntCC::Equal, t, 1);
                     let nz = fx.b.ins().icmp_imm_u(IntCC::NotEqual, pb, 0);

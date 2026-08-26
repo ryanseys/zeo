@@ -465,14 +465,20 @@ fn build_closure_with(
     fx.call(
         "zeo_rt_proc_new_shaped",
         &[
-            f_addr, cells_ptr, n_cells, self_ptr, lex_blk, binding_ptr, shape_ptr, proc_addr,
+            f_addr,
+            cells_ptr,
+            n_cells,
+            self_ptr,
+            lex_blk,
+            binding_ptr,
+            shape_ptr,
+            proc_addr,
         ],
     );
     // The proc is owned until a send/call consumes it (moved-in blk).
     fx.owned_created += 1;
     Ok((proc_ss, names))
 }
-
 
 /// The block body as a `BlockFn`: env cells become (unowned) cell locals,
 /// params bind through `zeo_rt_bind_block_params` (ruby's lenient block
@@ -766,53 +772,88 @@ fn define_block_fn(
     bfx.b.switch_to_block(redo_head);
     bfx.block_redo = Some(redo_head);
 
-    // Bind through the runtime (the full block rules); slot values are
-    // POOLED (a default can raise mid-sequence -- the pool keeps the
-    // error edge clean; under `redo` the pool grows per iteration until
-    // frame pop, an accepted rarity).
-    let n_slots = layout.n_slots;
-    let slots_ss = (n_slots > 0).then(|| {
-        bfx.b.create_sized_stack_slot(StackSlotData::new(
-            StackSlotKind::ExplicitSlot,
-            n_slots as u32 * VALUE_SIZE,
-            3,
-        ))
-    });
-    let present_ss =
-        bfx.b
-            .create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
-    let slots_ptr = match slots_ss {
-        Some(ss) => bfx.slot_addr(ss, 0),
-        None => bfx.b.ins().iconst(ptr_ty, 0),
-    };
-    let present_ptr = bfx.slot_addr(present_ss, 0);
-    let desc_gv = bfx.em.module.declare_data_in_func(desc_id, bfx.b.func);
-    let desc_ptr = bfx.b.ins().symbol_value(ptr_ty, desc_gv);
-    // BLOCK_BIND_AUTO_SPLAT = 1, BLOCK_BIND_LAMBDA = 2 (the runtime's bits).
-    let bind_flags = u8::from(auto_splat) | (u8::from(is_lambda) << 1);
-    let flags_v = bfx.b.ins().iconst(types::I8, i64::from(bind_flags));
-    let status = bfx.call_status(
-        "zeo_rt_bind_block_params",
-        &[desc_ptr, flags_v, argv, argc, slots_ptr, present_ptr],
-    );
-    bfx.fallible(status);
-    for s in 0..n_slots {
-        let ss = slots_ss.expect("n_slots > 0 when slots exist");
-        let addr = bfx.slot_addr(ss, s as i32 * 24);
-        bfx.owned_created += 1;
-        ownership::pool_owned(&mut bfx, addr, TagInfo::Unknown);
-    }
-    let present = (n_slots > 0).then(|| bfx.b.ins().load(types::I64, fl, present_ptr, 0));
+    // A required-only 0/1-name NON-LAMBDA block binds inline: ruby's
+    // lenient rules reduce to "args[0], or nil when the yield brought
+    // nothing" (a single required name never auto-splats), and a proc
+    // raises no arity error -- so the runtime binder has nothing left to
+    // decide. Everything else takes the full call below.
+    let simple_bind = !is_lambda
+        && params.required.len() <= 1
+        && params.optional.is_empty()
+        && params.rest.is_none()
+        && !params.implicit_rest
+        && params.post.is_empty()
+        && params.keywords.is_empty()
+        && params.keyword_rest.is_none()
+        && params.block.is_none()
+        && params.destructures.is_empty();
+    if simple_bind {
+        if let Some(name) = params.required.first().cloned() {
+            let has = bfx.b.ins().icmp_imm_u(IntCC::NotEqual, argc, 0);
+            let take = bfx.b.create_block();
+            let none = bfx.b.create_block();
+            let join = bfx.b.create_block();
+            bfx.b.ins().brif(has, take, &[], none, &[]);
+            bfx.b.switch_to_block(take);
+            let op = Operand::Ptr {
+                addr: argv,
+                owned: false,
+                tag: TagInfo::Unknown,
+            };
+            ownership::write_local(&mut bfx, &name, &op);
+            bfx.b.ins().jump(join, &[]);
+            bfx.b.switch_to_block(none);
+            ownership::write_local(&mut bfx, &name, &Operand::Nil);
+            bfx.b.ins().jump(join, &[]);
+            bfx.b.switch_to_block(join);
+        }
+    } else {
+        let n_slots = layout.n_slots;
+        let slots_ss = (n_slots > 0).then(|| {
+            bfx.b.create_sized_stack_slot(StackSlotData::new(
+                StackSlotKind::ExplicitSlot,
+                n_slots as u32 * VALUE_SIZE,
+                3,
+            ))
+        });
+        let present_ss =
+            bfx.b
+                .create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
+        let slots_ptr = match slots_ss {
+            Some(ss) => bfx.slot_addr(ss, 0),
+            None => bfx.b.ins().iconst(ptr_ty, 0),
+        };
+        let present_ptr = bfx.slot_addr(present_ss, 0);
+        let desc_gv = bfx.em.module.declare_data_in_func(desc_id, bfx.b.func);
+        let desc_ptr = bfx.b.ins().symbol_value(ptr_ty, desc_gv);
+        // BLOCK_BIND_AUTO_SPLAT = 1, BLOCK_BIND_LAMBDA = 2 (the runtime's bits).
+        let bind_flags = u8::from(auto_splat) | (u8::from(is_lambda) << 1);
+        let flags_v = bfx.b.ins().iconst(types::I8, i64::from(bind_flags));
+        let status = bfx.call_status(
+            "zeo_rt_bind_block_params",
+            &[desc_ptr, flags_v, argv, argc, slots_ptr, present_ptr],
+        );
+        bfx.fallible(status);
+        for s in 0..n_slots {
+            let ss = slots_ss.expect("n_slots > 0 when slots exist");
+            let addr = bfx.slot_addr(ss, s as i32 * 24);
+            bfx.owned_created += 1;
+            ownership::pool_owned(&mut bfx, addr, TagInfo::Unknown);
+        }
+        let present = (n_slots > 0).then(|| bfx.b.ins().load(types::I64, fl, present_ptr, 0));
 
-    // Copy the bound slots into their locals, in declared order; absent
-    // optionals run their defaults (user code, frame already up).
-    {
-        let mut bound: std::collections::HashSet<String> = std::collections::HashSet::new();
-        let mut s = 0usize;
-        let slot_addr =
-            |bfx: &mut Fx, s: usize| bfx.slot_addr(slots_ss.expect("slots exist"), s as i32 * 24);
-        let always =
-            |bfx: &mut Fx, bound: &mut std::collections::HashSet<String>, name: &str, s: usize| {
+        // Copy the bound slots into their locals, in declared order; absent
+        // optionals run their defaults (user code, frame already up).
+        {
+            let mut bound: std::collections::HashSet<String> = std::collections::HashSet::new();
+            let mut s = 0usize;
+            let slot_addr = |bfx: &mut Fx, s: usize| {
+                bfx.slot_addr(slots_ss.expect("slots exist"), s as i32 * 24)
+            };
+            let always = |bfx: &mut Fx,
+                          bound: &mut std::collections::HashSet<String>,
+                          name: &str,
+                          s: usize| {
                 if !bound.insert(name.to_string()) {
                     return;
                 }
@@ -824,70 +865,73 @@ fn define_block_fn(
                 };
                 ownership::write_local(bfx, name, &op);
             };
-        let optional = |bfx: &mut Fx,
-                        bound: &mut std::collections::HashSet<String>,
-                        name: &str,
-                        default: NodeId,
-                        s: usize|
-         -> CResult<()> {
-            let duplicate = !bound.insert(name.to_string());
-            let p = present.expect("optionals imply slots");
-            let bit = bfx.b.ins().band_imm_u(p, (1u64 << s) as i64);
-            let got = bfx.b.ins().icmp_imm_u(IntCC::NotEqual, bit, 0);
-            let given = bfx.b.create_block();
-            let absent = bfx.b.create_block();
-            let join = bfx.b.create_block();
-            bfx.b.ins().brif(got, given, &[], absent, &[]);
-            bfx.b.switch_to_block(given);
-            if !duplicate {
-                let addr = slot_addr(bfx, s);
-                let op = Operand::Ptr {
-                    addr,
-                    owned: false,
-                    tag: TagInfo::Unknown,
-                };
-                ownership::write_local(bfx, name, &op);
-            }
-            bfx.b.ins().jump(join, &[]);
-            bfx.b.switch_to_block(absent);
-            let op = super::expr::lower_expr(bfx, default)?;
-            ownership::write_local(bfx, name, &op);
-            bfx.b.ins().jump(join, &[]);
-            bfx.b.switch_to_block(join);
-            Ok(())
-        };
-        for name in &params.required {
-            always(&mut bfx, &mut bound, name, s);
-            s += 1;
-        }
-        for (name, default) in &params.optional {
-            optional(&mut bfx, &mut bound, name, *default, s)?;
-            s += 1;
-        }
-        if let Some(Some(name)) = &params.rest {
-            always(&mut bfx, &mut bound, name, s);
-            s += 1;
-        } else if matches!(params.rest, Some(None)) {
-            // anonymous `*`: no slot
-        }
-        for name in &params.post {
-            always(&mut bfx, &mut bound, name, s);
-            s += 1;
-        }
-        for kw in &params.keywords {
-            match kw {
-                crate::hir::KeywordParam::Required(name) => always(&mut bfx, &mut bound, name, s),
-                crate::hir::KeywordParam::Optional(name, default) => {
-                    optional(&mut bfx, &mut bound, name, *default, s)?;
+            let optional = |bfx: &mut Fx,
+                            bound: &mut std::collections::HashSet<String>,
+                            name: &str,
+                            default: NodeId,
+                            s: usize|
+             -> CResult<()> {
+                let duplicate = !bound.insert(name.to_string());
+                let p = present.expect("optionals imply slots");
+                let bit = bfx.b.ins().band_imm_u(p, (1u64 << s) as i64);
+                let got = bfx.b.ins().icmp_imm_u(IntCC::NotEqual, bit, 0);
+                let given = bfx.b.create_block();
+                let absent = bfx.b.create_block();
+                let join = bfx.b.create_block();
+                bfx.b.ins().brif(got, given, &[], absent, &[]);
+                bfx.b.switch_to_block(given);
+                if !duplicate {
+                    let addr = slot_addr(bfx, s);
+                    let op = Operand::Ptr {
+                        addr,
+                        owned: false,
+                        tag: TagInfo::Unknown,
+                    };
+                    ownership::write_local(bfx, name, &op);
                 }
+                bfx.b.ins().jump(join, &[]);
+                bfx.b.switch_to_block(absent);
+                let op = super::expr::lower_expr(bfx, default)?;
+                ownership::write_local(bfx, name, &op);
+                bfx.b.ins().jump(join, &[]);
+                bfx.b.switch_to_block(join);
+                Ok(())
+            };
+            for name in &params.required {
+                always(&mut bfx, &mut bound, name, s);
+                s += 1;
             }
-            s += 1;
+            for (name, default) in &params.optional {
+                optional(&mut bfx, &mut bound, name, *default, s)?;
+                s += 1;
+            }
+            if let Some(Some(name)) = &params.rest {
+                always(&mut bfx, &mut bound, name, s);
+                s += 1;
+            } else if matches!(params.rest, Some(None)) {
+                // anonymous `*`: no slot
+            }
+            for name in &params.post {
+                always(&mut bfx, &mut bound, name, s);
+                s += 1;
+            }
+            for kw in &params.keywords {
+                match kw {
+                    crate::hir::KeywordParam::Required(name) => {
+                        always(&mut bfx, &mut bound, name, s)
+                    }
+                    crate::hir::KeywordParam::Optional(name, default) => {
+                        optional(&mut bfx, &mut bound, name, *default, s)?;
+                    }
+                }
+                s += 1;
+            }
+            if let Some(Some(name)) = &params.keyword_rest {
+                always(&mut bfx, &mut bound, name, s);
+                s += 1;
+            }
+            debug_assert_eq!(s, n_slots);
         }
-        if let Some(Some(name)) = &params.keyword_rest {
-            always(&mut bfx, &mut bound, name, s);
-            s += 1;
-        }
-        debug_assert_eq!(s, n_slots);
     }
     // Destructured params replay as multi-assignments.
     for (read, group) in &params.destructures {

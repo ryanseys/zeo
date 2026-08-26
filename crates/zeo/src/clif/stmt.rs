@@ -1061,9 +1061,7 @@ fn lower_stmt_inner(fx: &mut Fx, stmt: NodeId) -> CResult<()> {
                 && super::iter::fusable_block(fx, blk, kind.max_fused_params())
                 && let Some(r) = receiver
                 && let Some(bind) = match kind {
-                    crate::compiler::InlineIterKind::ArrayEach => {
-                        Some(super::iter::Bind::Element)
-                    }
+                    crate::compiler::InlineIterKind::ArrayEach => Some(super::iter::Bind::Element),
                     crate::compiler::InlineIterKind::ArrayEachWithIndex => {
                         Some(super::iter::Bind::ElementIndex)
                     }

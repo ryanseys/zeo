@@ -1740,15 +1740,11 @@ fn plain_call(
             };
             super::binop::binop(fx, id, &name, recv, *arg)
         }
-        Some(recv) if name == "nil?" && args.is_empty() => {
-            match nil_p_call(fx, id, recv)? {
-                Some(fold) => Ok(fold),
-                None => super::call::dynamic_send(fx, id, recv, &name, &args),
-            }
-        }
-        Some(recv)
-            if let Some(site) = fx.an.compiler.accessor_sites.get(&id).copied() =>
-        {
+        Some(recv) if name == "nil?" && args.is_empty() => match nil_p_call(fx, id, recv)? {
+            Some(fold) => Ok(fold),
+            None => super::call::dynamic_send(fx, id, recv, &name, &args),
+        },
+        Some(recv) if let Some(site) = fx.an.compiler.accessor_sites.get(&id).copied() => {
             super::boxes::explicit_accessor(fx, id, recv, &name, &args, site)
         }
         Some(recv) => match super::call::indexed_send(fx, id, recv, &name, &args)? {
@@ -1939,10 +1935,7 @@ fn keyword_call(
 /// lowers normally and reduces through `ownership::truthy`. The flag is
 /// keyed by node id and consumed only by the binop arm, so routing stays
 /// in `lower_expr` and cannot drift.
-pub(super) fn lower_condition(
-    fx: &mut Fx,
-    cond: NodeId,
-) -> CResult<cranelift_codegen::ir::Value> {
+pub(super) fn lower_condition(fx: &mut Fx, cond: NodeId) -> CResult<cranelift_codegen::ir::Value> {
     let saved = fx.branch_cond.replace(cond);
     let r = lower_expr(fx, cond);
     fx.branch_cond = saved;

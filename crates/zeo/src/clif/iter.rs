@@ -378,9 +378,8 @@ pub(crate) fn lower_counted(
             }
             addr
         } else {
-            let count = fx
-                .b
-                .create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
+            let count =
+                fx.b.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
             let count_addr = fx.slot_addr(count, 0);
             let init = match acc {
                 Acc::All | Acc::NonePred => fx.b.ins().iconst(types::I64, 1),
@@ -390,9 +389,11 @@ pub(crate) fn lower_counted(
             count_addr
         };
         let state = (acc == Acc::Sum).then(|| {
-            let ss = fx
-                .b
-                .create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 16, 3));
+            let ss = fx.b.create_sized_stack_slot(StackSlotData::new(
+                StackSlotKind::ExplicitSlot,
+                16,
+                3,
+            ));
             let addr = fx.slot_addr(ss, 0);
             // Zero bytes = compensation 0.0 on the starting Int lane.
             fx.b.ins().store(fl, zero, addr, 0);
@@ -554,7 +555,9 @@ pub(crate) fn lower_counted(
     }) = acc_slots
     {
         let t = fx.b.ins().load(types::I8, fl, val_addr, TAG_OFFSET as i32);
-        let p = fx.b.ins().load(types::I8, fl, val_addr, PAYLOAD_OFFSET as i32);
+        let p =
+            fx.b.ins()
+                .load(types::I8, fl, val_addr, PAYLOAD_OFFSET as i32);
         let above_bool = fx.b.ins().icmp_imm_u(
             IntCC::UnsignedGreaterThan,
             t,
@@ -1125,10 +1128,9 @@ pub(crate) fn lower_up_down_int(
 
     fx.b.switch_to_block(fast);
     let n = fx.b.ins().load(types::I64, fl, recv, PAYLOAD_OFFSET as i32);
-    let limit = fx
-        .b
-        .ins()
-        .load(types::I64, fl, arg_ptr, PAYLOAD_OFFSET as i32);
+    let limit =
+        fx.b.ins()
+            .load(types::I64, fl, arg_ptr, PAYLOAD_OFFSET as i32);
     lower_counted(
         fx,
         site,

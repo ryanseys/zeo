@@ -243,7 +243,11 @@ pub(crate) fn define_proc_shapes(em: &mut Emitter) -> CResult<()> {
             data.write_data_addr(at, rodata_gv, i64::from(off));
         };
         str_ptr(&mut data, std::mem::offset_of!(ProcShapeC, file), row.file);
-        str_ptr(&mut data, std::mem::offset_of!(ProcShapeC, outer), row.outer);
+        str_ptr(
+            &mut data,
+            std::mem::offset_of!(ProcShapeC, outer),
+            row.outer,
+        );
         for (i, off) in row.params.iter().enumerate() {
             let at = (base
                 + PROC_SHAPE_SIZE

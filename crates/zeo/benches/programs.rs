@@ -179,9 +179,17 @@ fn gate(cmd: &mut Command, rb: &Path, what: &str) -> Duration {
     let expected = std::fs::read(rb.with_extension("rb.expected"))
         .unwrap_or_else(|e| panic!("{}.expected: {e}", rb.display()));
     let t = Instant::now();
-    let out = cmd.stderr(Stdio::null()).output().expect("spawn the benchmark");
+    let out = cmd
+        .stderr(Stdio::null())
+        .output()
+        .expect("spawn the benchmark");
     let took = t.elapsed();
-    assert!(out.status.success(), "{what} exited {:?} on {}", out.status, rb.display());
+    assert!(
+        out.status.success(),
+        "{what} exited {:?} on {}",
+        out.status,
+        rb.display()
+    );
     assert!(
         out.stdout == expected,
         "{what} output mismatch vs .expected on {}",
@@ -252,8 +260,7 @@ fn bench_zeo(c: &mut Criterion, corpus: &[PathBuf], lazy: bool, done: &mut usize
 }
 
 fn bench_cruby(c: &mut Criterion, corpus: &[PathBuf], lazy: bool, done: &mut usize, total: usize) {
-    let ruby =
-        std::env::var("ZEO_BENCH_ORACLE_RUBY").unwrap_or_else(|_| "ruby".to_string());
+    let ruby = std::env::var("ZEO_BENCH_ORACLE_RUBY").unwrap_or_else(|_| "ruby".to_string());
     let mut g = c.benchmark_group("cruby");
     g.sampling_mode(SamplingMode::Flat).sample_size(10);
     for rb in corpus {
@@ -312,7 +319,11 @@ fn export_results(root: &Path, _oracle: bool) {
             let ns = v["median"]["point_estimate"]
                 .as_f64()
                 .expect("a median point estimate");
-            let name = p.file_name().expect("a benchmark dir").to_string_lossy().into_owned();
+            let name = p
+                .file_name()
+                .expect("a benchmark dir")
+                .to_string_lossy()
+                .into_owned();
             rows.push((group, name, ns / 1e9));
         }
     }

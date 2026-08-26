@@ -1243,7 +1243,12 @@ mod tests {
     #[test]
     fn the_data_table_is_sorted_and_unique() {
         for pair in CAPI_DATA.windows(2) {
-            assert!(pair[0] < pair[1], "{} must sort before {}", pair[0], pair[1]);
+            assert!(
+                pair[0] < pair[1],
+                "{} must sort before {}",
+                pair[0],
+                pair[1]
+            );
         }
     }
 }

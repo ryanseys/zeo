@@ -769,7 +769,9 @@ fn dynamic_send_argv(
             let caller = caller_class(fx, bypass);
             fx.call(
                 "zeo_rt_send_value_dyn_cached",
-                &[site, zero_box, recv_ptr, sym, argv_ptr, argc_v, null, caller, out],
+                &[
+                    site, zero_box, recv_ptr, sym, argv_ptr, argc_v, null, caller, out,
+                ],
             )
         }
     }
@@ -865,10 +867,7 @@ pub(crate) fn indexed_send(
     fx.b.ins().brif(is_int, gates_chk, &[], slow, &[]);
 
     fx.b.switch_to_block(gates_chk);
-    let ggv = fx
-        .em
-        .module
-        .declare_data_in_func(fx.em.gates_id, fx.b.func);
+    let ggv = fx.em.module.declare_data_in_func(fx.em.gates_id, fx.b.func);
     let gbase = fx.b.ins().symbol_value(fx.em.ptr, ggv);
     let gates = fx.b.ins().load(types::I16, fl, gbase, 0);
     fx.b.ins().brif(gates, gate_ask, &[], fast, &[]);
@@ -882,10 +881,9 @@ pub(crate) fn indexed_send(
     fx.b.ins().brif(ok, fast, &[], slow, &[]);
 
     fx.b.switch_to_block(fast);
-    let idx = fx
-        .b
-        .ins()
-        .load(types::I64, fl, argv_ptr, PAYLOAD_OFFSET as i32);
+    let idx =
+        fx.b.ins()
+            .load(types::I64, fl, argv_ptr, PAYLOAD_OFFSET as i32);
     if aset {
         let vptr = fx.b.ins().iadd_imm_u(argv_ptr, i64::from(VALUE_SIZE));
         let status = fx.call_status("zeo_rt_array_aset_int", &[recv_ptr, idx, vptr, out]);
