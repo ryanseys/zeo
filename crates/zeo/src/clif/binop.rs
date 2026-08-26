@@ -462,9 +462,7 @@ fn boxed_binop(
     let float_t = ValueTag::Float as u8;
     // Some(true/false) = statically decided; None = ask at run time.
     let s_int = |k: Option<u8>| k.map(|t| t == int_t);
-    let s_float = |k: Option<u8>| k.map(|t| t == float_t);
     let (sa_int, sb_int) = (s_int(ka), s_int(kb));
-    let (sa_f, sb_f) = (s_float(ka), s_float(kb));
 
     // BOTH statically Int: the int arm IS the operation.
     if sa_int == Some(true) && sb_int == Some(true) {
