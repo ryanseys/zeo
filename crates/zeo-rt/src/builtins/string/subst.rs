@@ -411,6 +411,26 @@ pub(super) fn sub_gsub(
             }
         },
     };
+    // A STRING pattern has to be encoding-compatible with the receiver --
+    // CRuby's `rb_enc_check`, the same test `+` makes. Without it the
+    // pattern's bytes were reinterpreted under the receiver's encoding and
+    // could MATCH, so a substitution happened where ruby raises.
+    if let RubyValue::Str(pat) = &pattern_arg {
+        let recv_str = recv_str!(recv);
+        let (a, b) = (recv_str.lock(), pat.lock());
+        if crate::encoding::compat_concat_enc(&a, &b).is_none() {
+            let (left, right) = (a.encoding(), b.encoding());
+            drop((a, b));
+            return Err(crate::dispatch::raise_error(
+                "Encoding::CompatibilityError",
+                format!(
+                    "incompatible character encodings: {} and {}",
+                    left.inspect_name(),
+                    right.inspect_name()
+                ),
+            ));
+        }
+    }
     // Re-encoded at the single exit rather than per arm: the Regexp arms hand
     // back whatever the engine built, and it works in decoded UTF-8. The
     // String arms already build in `enc`, and re-encoding those is a no-op.

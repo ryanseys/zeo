@@ -347,6 +347,13 @@ fn char_values(s: &crate::collections::RStr) -> Vec<RubyValue> {
         .collect()
 }
 
+/// Whether two strings' encodings can be case-compared -- CRuby's
+/// `rb_enc_compatible`, which is the same test `+` makes.
+fn case_comparable(a: &crate::RStr, b: &crate::RStr) -> bool {
+    let (ga, gb) = (a.lock(), b.lock());
+    crate::encoding::compat_concat_enc(&ga, &gb).is_some()
+}
+
 /// CRuby's `rb_str_modify` guard: a frozen receiver can't be mutated in place.
 /// Shared by the mutators that don't route through `str_bang_replace`
 /// (`insert`/`prepend`/`replace`), so a `frozen_string_literal` literal raises
@@ -1879,14 +1886,24 @@ ruby_class! {
     // BYTES and folds only `A-Z`); `casecmp?` below is the Unicode one,
     // which case-folds both sides first. That split is why the two exist,
     // and folding here made `"Ä".casecmp("ä")` answer 0 where ruby says -1.
+    // Both answer NIL for an operand whose encoding cannot be compared with
+    // the receiver's, exactly as they do for a non-String -- comparing the
+    // bytes anyway reported an ordering between strings ruby says nothing
+    // about.
     def "casecmp" (recv, arg) {
         let RubyValue::Str(o) = arg else { return Ok(RubyValue::Nil) };
+        if !case_comparable(rstr, o) {
+            return Ok(RubyValue::Nil);
+        }
         let (a, b) = (rstr.lock().bytes().to_vec(), o.lock().bytes().to_vec());
         Ok(RubyValue::Int(ascii_casecmp(&a, &b) as i64))
     }
     def "casecmp?" (recv, arg) {
         guard_valid_case(recv)?;
         let RubyValue::Str(o) = arg else { return Ok(RubyValue::Nil) };
+        if !case_comparable(rstr, o) {
+            return Ok(RubyValue::Nil);
+        }
         let a = rstr.lock().to_utf8_lossy().to_lowercase();
         let b = o.lock().to_utf8_lossy().to_lowercase();
         Ok(RubyValue::Bool(a == b))
