@@ -61,6 +61,18 @@ pub unsafe extern "C" fn zeo_rt_sym_intern(ptr: *const u8, len: usize) -> u32 {
     Symbol::intern(unsafe { super::str_slice(ptr, len) }).to_u32()
 }
 
+/// Intern the unit's whole symbol table in one call: `rows` is a rodata
+/// `Str` table, `out` the `.bss` `zeo_syms` id array `zeo_unit_init` used
+/// to fill with one `zeo_rt_sym_intern` call per name.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_syms_init(rows: *const zeo_abi::abi::Str, n: usize, out: *mut u32) {
+    for i in 0..n {
+        let row = unsafe { rows.add(i).read() };
+        let id = Symbol::intern(unsafe { super::str_slice(row.ptr, row.len) }).to_u32();
+        unsafe { out.add(i).write(id) };
+    }
+}
+
 /// A `Symbol` value from its interned id.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zeo_rt_sym_value(id: u32, out: *mut RubyValue) {

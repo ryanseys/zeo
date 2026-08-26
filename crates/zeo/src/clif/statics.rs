@@ -6,7 +6,7 @@ use super::module::Emitter;
 use super::names;
 use crate::analyze::Analyzed;
 use crate::codegen_error::{CResult, CodegenError};
-use cranelift_codegen::ir::{self, InstBuilder, MemFlagsData, UserFuncName};
+use cranelift_codegen::ir::{self, InstBuilder, UserFuncName};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module};
 use std::collections::HashMap;
@@ -266,6 +266,10 @@ pub(crate) fn define_proc_shapes(em: &mut Emitter) -> CResult<()> {
 /// every `zeo_callsites` slot its caller class and initialise every
 /// `zeo_cm_sites`, `zeo_const_sites` and `zeo_new_sites` slot. `None`
 /// when the program has none of them.
+///
+/// Every array goes through ONE bulk capi call over a rodata table --
+/// the old per-symbol/per-site unrolled bodies were the largest cold
+/// text in small programs (~4 instructions per symbol).
 pub(crate) fn define_unit_init(em: &mut Emitter) -> CResult<Option<FuncId>> {
     if em.syms.is_empty()
         && em.callsites.is_empty()
@@ -281,7 +285,6 @@ pub(crate) fn define_unit_init(em: &mut Emitter) -> CResult<Option<FuncId>> {
         .module
         .declare_function(names::UNIT_INIT, Linkage::Local, &sig)
         .map_err(|e| CodegenError::internal(format!("declaring {}: {e}", names::UNIT_INIT)))?;
-    let f_intern = em.import("zeo_rt_sym_intern");
 
     // Interning may grow rodata, so collect (offset, len) rows first.
     let rows: Vec<(u32, usize)> = {
@@ -291,10 +294,64 @@ pub(crate) fn define_unit_init(em: &mut Emitter) -> CResult<Option<FuncId>> {
             .map(|n| (em.intern_rodata(n.as_bytes()), n.len()))
             .collect()
     };
+    // The `Str` table `zeo_rt_syms_init` walks: len as a scalar, ptr
+    // relocated into rodata per row.
+    let sym_rows_id = if rows.is_empty() {
+        None
+    } else {
+        let id = em
+            .module
+            .declare_data(names::SYM_ROWS, Linkage::Local, false, false)
+            .map_err(|e| CodegenError::internal(format!("declaring {}: {e}", names::SYM_ROWS)))?;
+        let str_size = std::mem::size_of::<Str>();
+        let mut bytes = vec![0u8; rows.len() * str_size];
+        for (i, (_, len)) in rows.iter().enumerate() {
+            let at = i * str_size + std::mem::offset_of!(Str, len);
+            bytes[at..at + 8].copy_from_slice(&(*len as u64).to_le_bytes());
+        }
+        let mut data = DataDescription::new();
+        data.define(bytes.into_boxed_slice());
+        data.set_align(8);
+        let rodata_gv = em.module.declare_data_in_data(em.rodata_id, &mut data);
+        for (i, (off, _)) in rows.iter().enumerate() {
+            let at = (i * str_size + std::mem::offset_of!(Str, ptr)) as u32;
+            data.write_data_addr(at, rodata_gv, i64::from(*off));
+        }
+        em.module
+            .define_data(id, &data)
+            .map_err(|e| CodegenError::internal(format!("defining {}: {e}", names::SYM_ROWS)))?;
+        Some(id)
+    };
+    let n_syms = rows.len();
 
-    let f_site_init = em.import("zeo_rt_callsite_init");
     let callers: Vec<u32> = em.callsites.clone();
-    let f_cm_init = em.import("zeo_rt_classmethod_site_init");
+    // The caller-class blob `zeo_rt_callsites_init` reads alongside the
+    // `.bss` sites.
+    let callers_id = if callers.is_empty() {
+        None
+    } else {
+        let id = em
+            .module
+            .declare_data(names::CALLSITE_CALLERS, Linkage::Local, false, false)
+            .map_err(|e| {
+                CodegenError::internal(format!("declaring {}: {e}", names::CALLSITE_CALLERS))
+            })?;
+        let mut bytes = Vec::with_capacity(callers.len() * 4);
+        for c in &callers {
+            bytes.extend_from_slice(&c.to_le_bytes());
+        }
+        let mut data = DataDescription::new();
+        data.define(bytes.into_boxed_slice());
+        data.set_align(4);
+        em.module.define_data(id, &data).map_err(|e| {
+            CodegenError::internal(format!("defining {}: {e}", names::CALLSITE_CALLERS))
+        })?;
+        Some(id)
+    };
+
+    let f_syms_init = em.import("zeo_rt_syms_init");
+    let f_site_init = em.import("zeo_rt_callsites_init");
+    let f_cm_init = em.import("zeo_rt_cm_sites_init");
     let n_cm = em.cm_sites;
     let f_const_init = em.import("zeo_rt_const_sites_init");
     let n_const = em.const_sites;
@@ -304,9 +361,10 @@ pub(crate) fn define_unit_init(em: &mut Emitter) -> CResult<Option<FuncId>> {
     let n_dyn = em.dyn_sites;
 
     let mut func = ir::Function::with_name_signature(UserFuncName::user(0, 2), sig);
-    let intern = em.module.declare_func_in_func(f_intern, &mut func);
+    let syms_init = em.module.declare_func_in_func(f_syms_init, &mut func);
     let site_init = em.module.declare_func_in_func(f_site_init, &mut func);
-    let rodata_gv = em.module.declare_data_in_func(em.rodata_id, &mut func);
+    let sym_rows_gv = sym_rows_id.map(|id| em.module.declare_data_in_func(id, &mut func));
+    let callers_gv = callers_id.map(|id| em.module.declare_data_in_func(id, &mut func));
     let syms_gv = em.module.declare_data_in_func(em.syms_id, &mut func);
     let sites_gv = em.module.declare_data_in_func(em.callsites_id, &mut func);
     let cm_gv = em.module.declare_data_in_func(em.cm_sites_id, &mut func);
@@ -322,44 +380,22 @@ pub(crate) fn define_unit_init(em: &mut Emitter) -> CResult<Option<FuncId>> {
     let mut b = FunctionBuilder::new(&mut func, &mut fbc);
     let entry = b.create_block();
     b.switch_to_block(entry);
-    let rodata = b.ins().symbol_value(em.ptr, rodata_gv);
-    let syms = b.ins().symbol_value(em.ptr, syms_gv);
-    let fl = MemFlagsData::trusted();
-    for (i, (off, len)) in rows.into_iter().enumerate() {
-        let ptr = if off == 0 {
-            rodata
-        } else {
-            b.ins().iadd_imm_u(rodata, i64::from(off))
-        };
-        let len_v = b.ins().iconst(em.ptr, len as i64);
-        let call = b.ins().call(intern, &[ptr, len_v]);
-        let id = b.func.dfg.inst_results(call)[0];
-        b.ins().store(fl, id, syms, (i * 4) as i32);
+    if let Some(rows_gv) = sym_rows_gv {
+        let rows_v = b.ins().symbol_value(em.ptr, rows_gv);
+        let n_v = b.ins().iconst(em.ptr, n_syms as i64);
+        let syms = b.ins().symbol_value(em.ptr, syms_gv);
+        b.ins().call(syms_init, &[rows_v, n_v, syms]);
     }
-    if !callers.is_empty() {
+    if let Some(callers_gv) = callers_gv {
         let sites = b.ins().symbol_value(em.ptr, sites_gv);
-        for (i, caller) in callers.into_iter().enumerate() {
-            let off = (i * abi::CALLSITE_SIZE) as i64;
-            let slot = if off == 0 {
-                sites
-            } else {
-                b.ins().iadd_imm_u(sites, off)
-            };
-            let caller_v = b.ins().iconst(ir::types::I32, i64::from(caller));
-            b.ins().call(site_init, &[slot, caller_v]);
-        }
+        let callers_v = b.ins().symbol_value(em.ptr, callers_gv);
+        let n_v = b.ins().iconst(em.ptr, callers.len() as i64);
+        b.ins().call(site_init, &[sites, callers_v, n_v]);
     }
     if n_cm > 0 {
         let cm = b.ins().symbol_value(em.ptr, cm_gv);
-        for i in 0..n_cm {
-            let off = (i * abi::CLASSMETHOD_SITE_SIZE) as i64;
-            let slot = if off == 0 {
-                cm
-            } else {
-                b.ins().iadd_imm_u(cm, off)
-            };
-            b.ins().call(cm_init, &[slot]);
-        }
+        let n_v = b.ins().iconst(em.ptr, n_cm as i64);
+        b.ins().call(cm_init, &[cm, n_v]);
     }
     if n_const > 0 {
         let base = b.ins().symbol_value(em.ptr, const_gv);

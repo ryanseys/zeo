@@ -21,7 +21,7 @@ zeo_rt_block_arg_to_proc ([Ptr, Ptr]) -> Some(I32)
 zeo_rt_box_current ([U32, Ptr]) -> Some(I32)
 zeo_rt_box_handle ([U32, Ptr]) -> Some(I32)
 zeo_rt_call_singleton_super_target_args ([U32, U8, U32, U32, Ptr, U8, Ptr, Ptr, Ptr]) -> Some(I32)
-zeo_rt_callsite_init ([Ptr, U32]) -> None
+zeo_rt_callsites_init ([Ptr, Ptr, Usize]) -> None
 zeo_rt_case_eq ([Ptr, Ptr, Ptr]) -> Some(I32)
 zeo_rt_case_eq_any ([Ptr, Ptr, Ptr]) -> Some(I32)
 zeo_rt_cell_load ([Ptr, Ptr]) -> None
@@ -34,7 +34,7 @@ zeo_rt_class_new_instance ([U32, Ptr, Usize, Ptr, Ptr]) -> Some(I32)
 zeo_rt_class_new_instance_cached ([Ptr, U32, Ptr, Usize, Ptr, Ptr]) -> Some(I32)
 zeo_rt_class_new_sites_init ([Ptr, Usize]) -> None
 zeo_rt_class_of ([Ptr]) -> Some(U32)
-zeo_rt_classmethod_site_init ([Ptr]) -> None
+zeo_rt_cm_sites_init ([Ptr, Usize]) -> None
 zeo_rt_complex_lit ([Ptr, Ptr]) -> None
 zeo_rt_conceal_class ([U32]) -> None
 zeo_rt_conditional_class_ref ([U32, Ptr, Usize, U32, Ptr]) -> Some(I32)
@@ -230,6 +230,7 @@ zeo_rt_svar_scope_pop ([]) -> None
 zeo_rt_svar_scope_push ([]) -> None
 zeo_rt_sym_intern ([Ptr, Usize]) -> Some(U32)
 zeo_rt_sym_value ([U32, Ptr]) -> None
+zeo_rt_syms_init ([Ptr, Usize, Ptr]) -> None
 zeo_rt_truthy ([Ptr]) -> Some(U8)
 zeo_rt_validate_class_aliases ([U32]) -> Some(I32)
 zeo_rt_value_super_args ([Ptr, Ptr, Usize, Ptr, U8, Ptr, Ptr, Ptr]) -> Some(I32)

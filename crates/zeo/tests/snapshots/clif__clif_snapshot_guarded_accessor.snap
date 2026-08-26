@@ -2095,12 +2095,13 @@ function u0:2() ccall {
     gv1 = symbol colocated userextname3
     gv2 = symbol colocated userextname4
     gv3 = symbol colocated userextname5
-    gv4 = symbol colocated userextname7
-    gv5 = symbol colocated userextname9
-    gv6 = symbol colocated userextname11
-    sig0 = (i64, i64) -> i32 ccall
-    sig1 = (i64, i32) ccall
-    sig2 = (i64) ccall
+    gv4 = symbol colocated userextname6
+    gv5 = symbol colocated userextname8
+    gv6 = symbol colocated userextname10
+    gv7 = symbol colocated userextname12
+    sig0 = (i64, i64, i64) ccall
+    sig1 = (i64, i64, i64) ccall
+    sig2 = (i64, i64) ccall
     sig3 = (i64, i64) ccall
     sig4 = (i64, i64) ccall
     sig5 = (i64, i64) ccall
@@ -2113,53 +2114,19 @@ function u0:2() ccall {
 
 block0:
     v0 = symbol_value.i64 gv0
-    v1 = symbol_value.i64 gv1
-    v2 = iconst.i64 101
-    v3 = iadd v0, v2  ; v2 = 101
-    v4 = iconst.i64 1
-    v5 = call fn0(v3, v4)  ; v4 = 1
-    store notrap aligned v5, v1
-    v6 = iconst.i64 102
-    v7 = iadd v0, v6  ; v6 = 102
-    v8 = iconst.i64 13
-    v9 = call fn0(v7, v8)  ; v8 = 13
-    store notrap aligned v9, v1+4
-    v10 = iconst.i64 115
-    v11 = iadd v0, v10  ; v10 = 115
-    v12 = iconst.i64 10
-    v13 = call fn0(v11, v12)  ; v12 = 10
-    store notrap aligned v13, v1+8
-    v14 = iconst.i64 125
-    v15 = iadd v0, v14  ; v14 = 125
-    v16 = iconst.i64 4
-    v17 = call fn0(v15, v16)  ; v16 = 4
-    store notrap aligned v17, v1+12
-    v18 = iconst.i64 129
-    v19 = iadd v0, v18  ; v18 = 129
-    v20 = iconst.i64 10
-    v21 = call fn0(v19, v20)  ; v20 = 10
-    store notrap aligned v21, v1+16
-    v22 = symbol_value.i64 gv2
-    v23 = iconst.i32 -1
-    call fn1(v22, v23)  ; v23 = -1
-    v24 = iconst.i64 56
-    v25 = iadd v22, v24  ; v24 = 56
-    v26 = iconst.i32 0
-    call fn1(v25, v26)  ; v26 = 0
-    v27 = iconst.i64 112
-    v28 = iadd v22, v27  ; v27 = 112
-    v29 = iconst.i32 0
-    call fn1(v28, v29)  ; v29 = 0
-    v30 = iconst.i64 168
-    v31 = iadd v22, v30  ; v30 = 168
-    v32 = iconst.i32 0
-    call fn1(v31, v32)  ; v32 = 0
-    v33 = symbol_value.i64 gv5
-    v34 = iconst.i64 1
-    call fn4(v33, v34)  ; v34 = 1
-    v35 = symbol_value.i64 gv6
-    v36 = iconst.i64 1
-    call fn5(v35, v36)  ; v36 = 1
+    v1 = iconst.i64 5
+    v2 = symbol_value.i64 gv2
+    call fn0(v0, v1, v2)  ; v1 = 5
+    v3 = symbol_value.i64 gv3
+    v4 = symbol_value.i64 gv1
+    v5 = iconst.i64 4
+    call fn1(v3, v4, v5)  ; v5 = 4
+    v6 = symbol_value.i64 gv6
+    v7 = iconst.i64 1
+    call fn4(v6, v7)  ; v7 = 1
+    v8 = symbol_value.i64 gv7
+    v9 = iconst.i64 1
+    call fn5(v8, v9)  ; v9 = 1
     return
 }
 

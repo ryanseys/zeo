@@ -306,12 +306,13 @@ function u0:2() ccall {
     gv1 = symbol colocated userextname3
     gv2 = symbol colocated userextname4
     gv3 = symbol colocated userextname5
-    gv4 = symbol colocated userextname7
-    gv5 = symbol colocated userextname9
-    gv6 = symbol colocated userextname11
-    sig0 = (i64, i64) -> i32 ccall
-    sig1 = (i64, i32) ccall
-    sig2 = (i64) ccall
+    gv4 = symbol colocated userextname6
+    gv5 = symbol colocated userextname8
+    gv6 = symbol colocated userextname10
+    gv7 = symbol colocated userextname12
+    sig0 = (i64, i64, i64) ccall
+    sig1 = (i64, i64, i64) ccall
+    sig2 = (i64, i64) ccall
     sig3 = (i64, i64) ccall
     sig4 = (i64, i64) ccall
     sig5 = (i64, i64) ccall
@@ -324,15 +325,13 @@ function u0:2() ccall {
 
 block0:
     v0 = symbol_value.i64 gv0
-    v1 = symbol_value.i64 gv1
-    v2 = iconst.i64 27
-    v3 = iadd v0, v2  ; v2 = 27
-    v4 = iconst.i64 1
-    v5 = call fn0(v3, v4)  ; v4 = 1
-    store notrap aligned v5, v1
-    v6 = symbol_value.i64 gv2
-    v7 = iconst.i32 -1
-    call fn1(v6, v7)  ; v7 = -1
+    v1 = iconst.i64 1
+    v2 = symbol_value.i64 gv2
+    call fn0(v0, v1, v2)  ; v1 = 1
+    v3 = symbol_value.i64 gv3
+    v4 = symbol_value.i64 gv1
+    v5 = iconst.i64 1
+    call fn1(v3, v4, v5)  ; v5 = 1
     return
 }
 

@@ -133,8 +133,8 @@ pub const CAPI: &[CapiSig] = &[
         ret: Some(I32),
     },
     CapiSig {
-        name: "zeo_rt_callsite_init",
-        params: &[Ptr, U32],
+        name: "zeo_rt_callsites_init",
+        params: &[Ptr, Ptr, Usize],
         ret: None,
     },
     CapiSig {
@@ -198,8 +198,8 @@ pub const CAPI: &[CapiSig] = &[
         ret: Some(U32),
     },
     CapiSig {
-        name: "zeo_rt_classmethod_site_init",
-        params: &[Ptr],
+        name: "zeo_rt_cm_sites_init",
+        params: &[Ptr, Usize],
         ret: None,
     },
     CapiSig {
@@ -1177,6 +1177,11 @@ pub const CAPI: &[CapiSig] = &[
     CapiSig {
         name: "zeo_rt_sym_value",
         params: &[U32, Ptr],
+        ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_syms_init",
+        params: &[Ptr, Usize, Ptr],
         ret: None,
     },
     CapiSig {

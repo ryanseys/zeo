@@ -642,17 +642,31 @@ pub unsafe extern "C" fn zeo_rt_send_class_cached(
     )
 }
 
-/// Initialize one `.bss` `CallSite` slot -- `zeo_unit_init` writes every
-/// site explicitly; zero bytes are never assumed valid.
+/// Initialize the whole `.bss` `zeo_callsites` array in one call --
+/// `callers` is the unit's rodata blob, one caller-class `u32` per site.
+/// Zero bytes are never assumed valid, so this runs before any statement.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn zeo_rt_callsite_init(slot: *mut crate::dispatch::CallSite, caller: u32) {
-    unsafe { slot.write(crate::dispatch::CallSite::new(caller)) };
+pub unsafe extern "C" fn zeo_rt_callsites_init(
+    base: *mut crate::dispatch::CallSite,
+    callers: *const u32,
+    n: usize,
+) {
+    for i in 0..n {
+        let caller = unsafe { callers.add(i).read() };
+        unsafe { base.add(i).write(crate::dispatch::CallSite::new(caller)) };
+    }
 }
 
-/// Initialize one `.bss` `ClassMethodSite` slot.
+/// Initialize the whole `.bss` `zeo_cm_sites` array in one call -- same
+/// no-per-slot-constant shape as [`zeo_rt_const_sites_init`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn zeo_rt_classmethod_site_init(slot: *mut crate::dispatch::ClassMethodSite) {
-    unsafe { slot.write(crate::dispatch::ClassMethodSite::new()) };
+pub unsafe extern "C" fn zeo_rt_cm_sites_init(
+    base: *mut crate::dispatch::ClassMethodSite,
+    n: usize,
+) {
+    for i in 0..n {
+        unsafe { base.add(i).write(crate::dispatch::ClassMethodSite::new()) };
+    }
 }
 
 /// Initialize the whole `.bss` `zeo_const_sites` array in one call -- the
