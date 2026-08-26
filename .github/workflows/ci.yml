@@ -109,6 +109,15 @@ jobs:
       - run: make ci-anchor
         if: runner.os == 'macOS'
 
+      # The umbrella entry points, one named case each (tests/milestones/).
+      # `require "rubygems"` working is the point of a whole effort, so a
+      # regression must name itself here rather than arrive as one line inside
+      # a bigger suite. Each case splices a whole library's require graph, so
+      # this is minutes rather than seconds and the nextest default-filter
+      # excludes the binary -- the leg passes `-P full` for exactly that
+      # reason, the same trap `make ci-memcheck` fell into with gemtests.
+      - run: make ci-milestones
+
       # nextest doesn't run doctests; keep them covered.
       - run: make ci-doc
 
@@ -119,9 +128,11 @@ jobs:
       # (.config/nextest.toml) caps their concurrency. A fixed gap fails CI as
       # an XPASS (promote it).
       #
-      # NOT run here: the `-P full` profile's whole-gem cases (gemtests,
-      # every_bundled_gem_compiles). They compile entire require graphs and
-      # belong to the phase gate -- `make gate` runs them.
+      # NOT run here: the rest of the `-P full` profile's whole-gem cases
+      # (gemtests, every_bundled_gem_compiles). They compile entire require
+      # graphs and belong to the phase gate -- `make gate` runs them. The
+      # milestones leg above is the exception, and deliberately so: it is the
+      # one whole-graph suite whose subject is a headline claim.
   msrv:
     name: MSRV check
     runs-on: ubuntu-latest

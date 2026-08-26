@@ -101,6 +101,13 @@ name = "gemtests"
 path = "tests/gemtests.rs"
 harness = false
 
+# The umbrella entry points, one named case each -- see tests/milestones.rs.
+# Opted out of the default nextest profile with the other whole-graph suites.
+[[test]]
+name = "milestones"
+path = "tests/milestones.rs"
+harness = false
+
 [[test]]
 name = "spinel"
 path = "tests/spinel.rs"

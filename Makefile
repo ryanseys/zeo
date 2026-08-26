@@ -12,9 +12,10 @@
 #                   workspace suites, the AOT smoke tier, and one
 #                   instrumented corpus pass (~4 min)
 # `make gate`       the boundary: every CI leg, the whole-gem cases,
-#                   doctests, and the full-spinel AOT corpus. Bench is
-#                   NOT in the gate -- numbers are recorded on their own
-#                   cadence (`make bench`), never a gate
+#                   doctests, the milestone entry points, and the
+#                   full-spinel AOT corpus. Bench is NOT in the gate --
+#                   numbers are recorded on their own cadence
+#                   (`make bench`), never a gate
 # `make linux`      the Linux container verification loop (needs podman)
 #
 # Suites spawn compile children and the golden group bounds their memory;
@@ -30,7 +31,7 @@ NEXTEST ?= $(CARGO) nextest run
 ZEO_DEV ?= tools/zeo-dev
 
 .PHONY: all test check check-batch gate bench pgo install linux clean ci-typed \
-        ci-jit ci-aot ci-memcheck ci-doc ci-natlibs ci-anchor
+        ci-jit ci-aot ci-memcheck ci-doc ci-natlibs ci-anchor ci-milestones
 
 all:
 	$(CARGO) build --workspace
@@ -80,6 +81,14 @@ ci-memcheck: all
 ci-typed: all
 	ZEO_GOLDEN_DIFF_TYPED=1 $(NEXTEST) -p zeo --test examples --test spinel --test gaps --no-fail-fast
 
+# The umbrella entry points, one named case each (tests/milestones/). Each
+# splices a whole library's require graph, so this is minutes rather than
+# seconds and the default profile opts the binary out; it gets its own leg
+# instead of slowing the dev loop. A `pending/` case is an XFAIL and says so
+# the day it starts matching ruby.
+ci-milestones: all
+	$(NEXTEST) -p zeo -P full --test milestones --no-fail-fast
+
 # nextest doesn't run doctests.
 ci-doc: all
 	$(CARGO) test --workspace --doc
@@ -112,7 +121,7 @@ endif
 # leg over the full spinel corpus (CI runs only the AOT smoke tier).
 # Bench is deliberately NOT here: perf numbers are recorded on their own
 # cadence (`make bench` after perf commits and at re-banks), never gated.
-gate: ci-jit ci-aot ci-memcheck ci-doc $(PLATFORM_CI_LEG)
+gate: ci-jit ci-aot ci-memcheck ci-doc ci-milestones $(PLATFORM_CI_LEG)
 	ZEO_GOLDEN_BACKEND=aot $(NEXTEST) -p zeo --test spinel --no-fail-fast
 	$(NEXTEST) -p zeo -P full -E 'binary(gemtests) + test(every_bundled_gem_compiles)'
 	ZEO_RT_LEAKCHECK=1 ZEO_GC=1 ZEO_RT_GCCHECK=1 $(NEXTEST) -p zeo -P full --test gemtests

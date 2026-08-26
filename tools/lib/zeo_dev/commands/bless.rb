@@ -72,13 +72,26 @@ module ZeoDev
         # its golden and then asserts against the old one is not the contract.
         # What matters is what changed on disk.
         system({ BLESS_VAR => "1" },
-               "cargo", "nextest", "run", "-p", "zeo",
+               "cargo", "nextest", "run", "-p", "zeo", *profile(filter, passthrough),
                "-E", "test(#{filter})", *passthrough, chdir: ROOT)
 
         report(before, changed_goldens, filter)
       end
 
       private
+
+      # The suites the DEFAULT nextest profile opts out of (see
+      # `.config/nextest.toml`). A bless whose filter names one has to ask for
+      # `-P full` or nextest reports "0 tests run" and the goldens are never
+      # written -- a silent no-op the caller reads as "wrong filter".
+      OPTED_OUT = %w[milestone:: gemtest:: every_bundled_gem_compiles].freeze
+
+      def profile(filter, passthrough)
+        return [] if passthrough.any? { |a| a.start_with?("-P", "--profile") }
+        return [] unless OPTED_OUT.any? { |name| name.include?(filter) || filter.include?(name) }
+
+        %w[--profile full]
+      end
 
       # Everything before a bare `--` is the filter; a flag anywhere and
       # everything after `--` goes to nextest.
@@ -103,7 +116,11 @@ module ZeoDev
       end
 
       def changed_goldens
-        out = Exec.run(%w[git status --porcelain --] + WATCHED, chdir: ROOT, capture_stdout: true)
+        # `-uall`, because git COLLAPSES an untracked directory to one entry:
+        # a whole new golden dir read as a single unchanged line before and
+        # after, so a bless that wrote its first goldens reported nothing.
+        out = Exec.run(%w[git status --porcelain -uall --] + WATCHED, chdir: ROOT,
+                                                                      capture_stdout: true)
         return [] unless out.success?
 
         out.stdout.lines(chomp: true).filter_map do |l|

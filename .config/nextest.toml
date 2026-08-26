@@ -34,7 +34,7 @@ golden = { max-threads = 14 }
 # The gem probe owns broad whole-gem compile coverage; these two are the
 # survivors with assertions the probe can't make.
 [profile.default]
-default-filter = "not (binary(gemtests) | test(every_bundled_gem_compiles))"
+default-filter = "not (binary(gemtests) | binary(milestones) | test(every_bundled_gem_compiles))"
 
 # Per-binary wall-clock lands in target/nextest/<profile>/junit.xml;
 # `tools/zeo-dev test-times <label>` folds the most recent report into the
@@ -61,6 +61,13 @@ default-filter = "all()"
 # set by the suite), so nextest's deadline must sit above both.
 [[profile.default.overrides]]
 filter = "binary(gemtests)"
+test-group = "golden"
+slow-timeout = { period = "360s", terminate-after = 2 }
+
+# A milestone splices a whole library's require graph into one program, so it
+# costs what a gemtests case costs and gets the same room.
+[[profile.default.overrides]]
+filter = "binary(milestones)"
 test-group = "golden"
 slow-timeout = { period = "360s", terminate-after = 2 }
 
