@@ -26,16 +26,12 @@ Every test compares Zeo's output with real Ruby 4.0.6, byte for byte.
 
 ## Status
 
-Zeo is **experimental** and moving fast. What is measured today:
-
-| Gate | Result |
-|---|---|
-| Conformance corpus (`tests/spinel/`) | 3,010 / 3,010 |
-| Example goldens (`tests/*.rb`) | 1,307 / 1,307 |
-| End-to-end suite (`crates/zeo/tests/e2e/`) | 1,110 / 1,110 |
-
-Each gate compares stdout, stderr, and the exit status with real Ruby, byte
-for byte. [`tests/gaps/`](tests/gaps) holds the programs that still
+Zeo is **experimental** and moving fast. Three golden suites — the
+conformance corpus ([`tests/spinel/`](tests/spinel)), the example goldens
+([`tests/*.rb`](tests)), and the end-to-end suite
+(`crates/zeo/tests/e2e/`) — run green in CI, each case comparing stdout,
+stderr, and the exit status with real Ruby, byte for byte.
+[`tests/gaps/`](tests/gaps) holds the programs that still
 diverge. Each one **must** fail until it is fixed.
 
 Every module, method, constant, and visibility that Ruby 4.0.6 reaches has a
