@@ -31,10 +31,10 @@ pub(crate) fn lower_stmts(fx: &mut Fx, stmts: &[NodeId]) -> CResult<()> {
         let mark = fx.stmt_mark();
         let pool = fx
             .drain_temps
-            .then(|| fx.call_status("zeo_rt_pool_mark", &[]));
+            .then(|| super::frames::emit_pool_mark(fx));
         lower_stmt(fx, stmts[i])?;
         if let Some(pool) = pool {
-            fx.call("zeo_rt_pool_reset", &[pool]);
+            super::frames::emit_pool_reset(fx, pool);
         }
         fx.end_stmt(mark);
         i += 1;
@@ -1355,7 +1355,7 @@ fn lower_loop(
     post: bool,
     result: Option<cranelift_codegen::ir::Value>,
 ) -> CResult<()> {
-    let mark = fx.call_status("zeo_rt_pool_mark", &[]);
+    let mark = super::frames::emit_pool_mark(fx);
     let head = fx.b.create_block();
     let body_blk = fx.b.create_block();
     let latch = fx.b.create_block();
@@ -1397,7 +1397,7 @@ fn lower_loop(
     fx.b.ins().jump(latch, &[]);
 
     fx.b.switch_to_block(latch);
-    fx.call("zeo_rt_pool_reset", &[mark]);
+    super::frames::emit_pool_reset(fx, mark);
     fx.b.ins().jump(head, &[]);
 
     // Ran-to-completion (condition went false): a loop's own value is nil;
@@ -1409,7 +1409,7 @@ fn lower_loop(
     fx.b.ins().jump(exit, &[]);
 
     fx.b.switch_to_block(exit);
-    fx.call("zeo_rt_pool_reset", &[mark]);
+    super::frames::emit_pool_reset(fx, mark);
     Ok(())
 }
 
@@ -1446,7 +1446,7 @@ fn lower_for(
     let status = fx.call_status("zeo_rt_for_begin", &[coll_ptr, packed_v, state]);
     fx.fallible(status);
 
-    let mark = fx.call_status("zeo_rt_pool_mark", &[]);
+    let mark = super::frames::emit_pool_mark(fx);
     let head = fx.b.create_block();
     let body_blk = fx.b.create_block();
     let latch = fx.b.create_block();
@@ -1488,7 +1488,7 @@ fn lower_for(
     fx.b.ins().jump(latch, &[]);
 
     fx.b.switch_to_block(latch);
-    fx.call("zeo_rt_pool_reset", &[mark]);
+    super::frames::emit_pool_reset(fx, mark);
     fx.b.ins().jump(head, &[]);
 
     // Ran to completion: the loop answers the collection it walked.
@@ -1506,7 +1506,7 @@ fn lower_for(
 
     fx.b.switch_to_block(exit);
     fx.call("zeo_rt_for_end", &[state]);
-    fx.call("zeo_rt_pool_reset", &[mark]);
+    super::frames::emit_pool_reset(fx, mark);
     Ok(())
 }
 

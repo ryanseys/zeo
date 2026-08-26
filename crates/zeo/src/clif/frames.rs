@@ -220,6 +220,58 @@ pub(crate) fn emit_frame_pop(fx: &mut Fx) {
     fx.b.switch_to_block(done);
 }
 
+/// The release-pool watermark, inline when a prologue fetched the
+/// `FrameHot` header: `(pool_top - pool_base) / VALUE_SIZE`. Falls back
+/// to the capi call without one. No gate test: the pool trio is plain
+/// TLS data and the mark fires no events.
+pub(crate) fn emit_pool_mark(fx: &mut Fx) -> ir::Value {
+    let Some(hot) = hot_of(fx) else {
+        return fx.call_status("zeo_rt_pool_mark", &[]);
+    };
+    let fl = MemFlagsData::trusted();
+    let pt =
+        fx.b.ins()
+            .load(fx.em.ptr, fl, hot, a::FRAMEHOT_POOL_TOP as i32);
+    let pb =
+        fx.b.ins()
+            .load(fx.em.ptr, fl, hot, a::FRAMEHOT_POOL_BASE as i32);
+    let bytes = fx.b.ins().isub(pt, pb);
+    fx.b.ins().udiv_imm_u(bytes, a::VALUE_SIZE as i64)
+}
+
+/// Drain the release pool to `mark` IF anything sits above it -- the
+/// early-out inline (a loop latch that pooled nothing skips the call
+/// entirely), the drain itself staying the capi call because it
+/// releases values. Falls back to the plain call without a header.
+/// Skipping an empty drain is behaviorally identical: the runtime's
+/// own `drain_to` starts with the same test.
+pub(crate) fn emit_pool_reset(fx: &mut Fx, mark: ir::Value) {
+    let Some(hot) = hot_of(fx) else {
+        fx.call("zeo_rt_pool_reset", &[mark]);
+        return;
+    };
+    let fl = MemFlagsData::trusted();
+    let pt =
+        fx.b.ins()
+            .load(fx.em.ptr, fl, hot, a::FRAMEHOT_POOL_TOP as i32);
+    let pb =
+        fx.b.ins()
+            .load(fx.em.ptr, fl, hot, a::FRAMEHOT_POOL_BASE as i32);
+    let bytes = fx.b.ins().isub(pt, pb);
+    let count = fx.b.ins().udiv_imm_u(bytes, a::VALUE_SIZE as i64);
+    let above = fx.b.ins().icmp(IntCC::UnsignedGreaterThan, count, mark);
+    let drain = fx.b.create_block();
+    let done = fx.b.create_block();
+    fx.b.set_cold_block(drain);
+    fx.b.ins().brif(above, drain, &[], done, &[]);
+
+    fx.b.switch_to_block(drain);
+    fx.call("zeo_rt_pool_reset", &[mark]);
+    fx.b.ins().jump(done, &[]);
+
+    fx.b.switch_to_block(done);
+}
+
 /// A line stamp: store to the innermost frame's `line` field. Falls back
 /// to the call under the gate (the traced stamp fires `:line` events) or
 /// without a fetched header.

@@ -299,7 +299,7 @@ pub(crate) fn lower_counted(
 
     let counter =
         fx.b.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
-    let mark = fx.call_status("zeo_rt_pool_mark", &[]);
+    let mark = super::frames::emit_pool_mark(fx);
     let fl = MemFlagsData::trusted();
     let start_v = match *counted {
         // The counter begins at the RECEIVER for `upto`/`downto`.
@@ -660,7 +660,7 @@ pub(crate) fn lower_counted(
     };
     let c1 = fx.b.ins().iadd_imm_s(c, step);
     fx.b.ins().store(fl, c1, counter_addr, 0);
-    fx.call("zeo_rt_pool_reset", &[mark]);
+    super::frames::emit_pool_reset(fx, mark);
     fx.b.ins().jump(head, &[]);
 
     fx.b.switch_to_block(exit_normal);
@@ -788,7 +788,7 @@ pub(crate) fn lower_counted(
     fx.b.ins().jump(exit, &[]);
 
     fx.b.switch_to_block(exit);
-    fx.call("zeo_rt_pool_reset", &[mark]);
+    super::frames::emit_pool_reset(fx, mark);
     // Lexical shadowing ends with the loop.
     for (name, old) in restore {
         fx.shadowed.remove(&name);
