@@ -78,9 +78,10 @@ pub struct ProcData {
     /// `[[kind, name], ...]` order and kinds (a proc reports required
     /// positionals as `:opt`, a lambda as `:req`). Empty for a runtime-internal
     /// proc (`RProc::new`), matching CRuby's `[[:rest]]`-ish C-proc reporting
-    /// only where codegen supplied it. `Cow`: codegen shares one per-signature
-    /// static table across every construction of that signature
-    /// (`with_params_static`), so building a proc allocates nothing here.
+    /// only where codegen supplied it. `Cow`: the shaped construction entry
+    /// shares one materialized-once table per `.rodata` shape across every
+    /// construction of that signature (`params_static`), so building a proc
+    /// allocates nothing here.
     params: std::borrow::Cow<'static, [ProcParamMeta]>,
     /// The method activation this block/lambda was constructed inside (see
     /// `crate::signal::home_current`). A non-lambda Proc's `return` unwinds to
@@ -298,6 +299,14 @@ impl ProcBuilder {
     /// block/lambda's signature.
     pub fn params(mut self, params: Vec<ProcParamMeta>) -> ProcBuilder {
         self.0.params = std::borrow::Cow::Owned(params);
+        self
+    }
+
+    /// [`ProcBuilder::params`] for a table materialized once per `.rodata`
+    /// shape and shared by every construction of that signature -- the
+    /// shaped entry's allocation-free path.
+    pub fn params_static(mut self, params: &'static [ProcParamMeta]) -> ProcBuilder {
+        self.0.params = std::borrow::Cow::Borrowed(params);
         self
     }
 

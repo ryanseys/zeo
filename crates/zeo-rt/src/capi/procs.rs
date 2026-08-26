@@ -209,11 +209,10 @@ pub unsafe extern "C" fn zeo_rt_cell_store(cell: *mut Cell, v: *mut RubyValue) {
     drop(old);
 }
 
-/// Build a real `Proc` around a compiled block body. `cells` (retained:
-/// the proc takes its own reference to each), `self_` / `lexical_blk` /
-/// `binding` are borrowed (cloned; the latter two may be null).
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn zeo_rt_proc_new(
+/// The shared head of the two construction entries: the retained cells,
+/// the borrowed views, the env, the `#binding` capture and the home.
+/// Params/location/outer differ per entry and are added by the caller.
+unsafe fn proc_builder_of(
     f: BlockFn,
     cells: *const *mut Cell,
     n_cells: usize,
@@ -222,15 +221,7 @@ pub unsafe extern "C" fn zeo_rt_proc_new(
     binding: *const RubyValue,
     arity: i32,
     flags: u32,
-    params: *const zeo_abi::abi::ParamC,
-    n_params: usize,
-    file: *const u8,
-    file_len: usize,
-    line: u32,
-    outer: *const u8,
-    outer_len: usize,
-    out: *mut RubyValue,
-) {
+) -> crate::rproc::ProcBuilder {
     let owned: Box<[LocalCell]> = (0..n_cells)
         .map(|i| {
             let raw = unsafe { *cells.add(i) }.cast_const();
@@ -263,17 +254,43 @@ pub unsafe extern "C" fn zeo_rt_proc_new(
     if flags & PROC_HOME != 0 {
         b = b.home();
     }
+    b
+}
+
+fn finish_proc(b: crate::rproc::ProcBuilder, out: *mut RubyValue) {
+    let v = RubyValue::Proc(b.build());
+    super::leakcheck::created(&v);
+    unsafe { out.write(v) };
+}
+
+/// Build a real `Proc` around a compiled block body. `cells` (retained:
+/// the proc takes its own reference to each), `self_` / `lexical_blk` /
+/// `binding` are borrowed (cloned; the latter two may be null).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_proc_new(
+    f: BlockFn,
+    cells: *const *mut Cell,
+    n_cells: usize,
+    self_: *const RubyValue,
+    lexical_blk: *const RubyValue,
+    binding: *const RubyValue,
+    arity: i32,
+    flags: u32,
+    params: *const zeo_abi::abi::ParamC,
+    n_params: usize,
+    file: *const u8,
+    file_len: usize,
+    line: u32,
+    outer: *const u8,
+    outer_len: usize,
+    out: *mut RubyValue,
+) {
+    let mut b = unsafe {
+        proc_builder_of(f, cells, n_cells, self_, lexical_blk, binding, arity, flags)
+    };
     if n_params > 0 {
         let rows = unsafe { std::slice::from_raw_parts(params, n_params) };
-        b = b.params(
-            rows.iter()
-                .map(|p| crate::ProcParamMeta {
-                    kind: proc_param_kind(p.kind),
-                    name: (p.name.len > 0)
-                        .then(|| unsafe { super::str_slice(p.name.ptr, p.name.len) }),
-                })
-                .collect(),
-        );
+        b = b.params(rows.iter().map(param_meta_of).collect());
     }
     if file_len > 0 {
         b = b.location(unsafe { super::str_slice(file, file_len) }, line);
@@ -283,14 +300,43 @@ pub unsafe extern "C" fn zeo_rt_proc_new(
     if outer_len > 0 {
         b = b.outer_capture(unsafe { super::static_str(outer, outer_len) });
     }
-    let v = RubyValue::Proc(b.build());
-    super::leakcheck::created(&v);
-    unsafe { out.write(v) };
+    finish_proc(b, out);
+}
+
+fn param_meta_of(p: &zeo_abi::abi::ParamC) -> crate::ProcParamMeta {
+    crate::ProcParamMeta {
+        kind: proc_param_kind(p.kind),
+        name: (p.name.len > 0).then(|| unsafe { super::str_slice(p.name.ptr, p.name.len) }),
+    }
+}
+
+/// One `Proc#parameters` table per `.rodata` shape, materialized on the
+/// FIRST construction from that shape and leaked (the shape itself lives
+/// for the process); every later construction borrows it, which is what
+/// keeps the shaped entry allocation-free per proc.
+static SHAPE_PARAMS: std::sync::Mutex<
+    Option<crate::FMap<usize, &'static [crate::ProcParamMeta]>>,
+> = std::sync::Mutex::new(None);
+
+fn shape_param_rows(s: &zeo_abi::abi::ProcShapeC) -> &'static [crate::ProcParamMeta] {
+    let key = s.params as usize;
+    let mut g = SHAPE_PARAMS.lock().expect("shape-param cache poisoned");
+    let map = g.get_or_insert_with(crate::FMap::default);
+    if let Some(rows) = map.get(&key) {
+        return rows;
+    }
+    let rows = unsafe { std::slice::from_raw_parts(s.params, s.n_params as usize) };
+    let table: &'static [crate::ProcParamMeta] =
+        Box::leak(rows.iter().map(param_meta_of).collect::<Vec<_>>().into_boxed_slice());
+    map.insert(key, table);
+    table
 }
 
 /// [`zeo_rt_proc_new`] with the compile-time constants read from ONE
 /// `.rodata` `ProcShapeC` row (`zeo_proc_shapes`) instead of nine call
-/// arguments and a stack-built row array per creation.
+/// arguments and a stack-built row array per creation. The
+/// `Proc#parameters` table is materialized once per shape
+/// ([`SHAPE_PARAMS`]), so a construction allocates nothing for it.
 ///
 /// # Safety
 /// `shape` points at program data that lives for the process -- `.rodata`
@@ -307,26 +353,21 @@ pub unsafe extern "C" fn zeo_rt_proc_new_shaped(
     out: *mut RubyValue,
 ) {
     let s = unsafe { &*shape };
-    unsafe {
-        zeo_rt_proc_new(
-            f,
-            cells,
-            n_cells,
-            self_,
-            lexical_blk,
-            binding,
-            s.arity,
-            s.flags,
-            s.params,
-            s.n_params as usize,
-            s.file.ptr,
-            s.file.len,
-            s.line,
-            s.outer.ptr,
-            s.outer.len,
-            out,
-        );
+    let mut b = unsafe {
+        proc_builder_of(
+            f, cells, n_cells, self_, lexical_blk, binding, s.arity, s.flags,
+        )
+    };
+    if s.n_params > 0 {
+        b = b.params_static(shape_param_rows(s));
     }
+    if s.file.len > 0 {
+        b = b.location(unsafe { super::str_slice(s.file.ptr, s.file.len) }, s.line);
+    }
+    if s.outer.len > 0 {
+        b = b.outer_capture(unsafe { super::static_str(s.outer.ptr, s.outer.len) });
+    }
+    finish_proc(b, out);
 }
 
 /// `&expr` at a call site: Ruby's `rb_block_arg_to_proc` -- a Proc passes
