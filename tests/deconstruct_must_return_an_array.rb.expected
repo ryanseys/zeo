@@ -1,0 +1,8 @@
+deconstruct must return Array
+deconstruct_keys must return Hash
+deconstruct must return Array
+[1, 2]
+[1, 2]
+from deconstruct
+[1, 2]
+1

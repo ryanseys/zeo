@@ -31,9 +31,23 @@ pub unsafe extern "C" fn zeo_rt_pat_deconstruct(
         }
         other if crate::dispatch::responds_to(other.class_id(), dec, false) => {
             match crate::dispatch::send_value(other, dec, &[], None) {
-                Ok(arr) => {
+                // The protocol's return value is CHECKED here, where it
+                // arrives. Written through unconditionally, `matched = 1`
+                // sent a non-Array on to `zeo_rt_pat_array_len`, whose
+                // `as_array_ref` panics -- and this is an `extern "C"`
+                // boundary, so the panic ended the process instead of
+                // raising. CRuby raises rather than falling through to the
+                // next `in` clause.
+                Ok(RubyValue::Array(a)) => {
                     unsafe { matched.write(1) };
-                    status_out(Ok(arr), out)
+                    status_out(Ok(RubyValue::Array(a)), out)
+                }
+                Ok(_) => {
+                    crate::signal::set_pending(crate::dispatch::raise_error(
+                        "TypeError",
+                        "deconstruct must return Array".to_string(),
+                    ));
+                    zeo_abi::abi::STATUS_SIGNAL
                 }
                 Err(sig) => {
                     crate::signal::set_pending(sig);
@@ -84,9 +98,19 @@ pub unsafe extern "C" fn zeo_rt_pat_deconstruct_keys(
         }
         other if crate::dispatch::responds_to(other.class_id(), dec, false) => {
             match crate::dispatch::send_value(other, dec, &[named], None) {
-                Ok(h) => {
+                // Checked where it arrives, as the array twin above is, and
+                // for the same reason: a non-Hash reached an accessor that
+                // panics on a non-unwinding boundary.
+                Ok(RubyValue::Hash(h)) => {
                     unsafe { matched.write(1) };
-                    status_out(Ok(h), out)
+                    status_out(Ok(RubyValue::Hash(h)), out)
+                }
+                Ok(_) => {
+                    crate::signal::set_pending(crate::dispatch::raise_error(
+                        "TypeError",
+                        "deconstruct_keys must return Hash".to_string(),
+                    ));
+                    zeo_abi::abi::STATUS_SIGNAL
                 }
                 Err(sig) => {
                     crate::signal::set_pending(sig);

@@ -736,7 +736,12 @@ ruby_class! {
         };
         let elems = rary.lock().clone();
         let mut out = crate::string_new(String::new()).lock().clone();
-        join_into(&mut out, &elems, sep.as_ref())?;
+        // The receiver joins the traversal stack before its elements are
+        // walked, so an element that IS the receiver reads as its own
+        // ancestor rather than being descended into.
+        let mut seen = crate::value::recursion::Visited::default();
+        seen.with(recv, |seen| join_into(&mut out, &elems, sep.as_ref(), seen))
+            .unwrap_or_else(|| Err(recursive_join_error()))?;
         Ok(RubyValue::Str(crate::collections::string_wrap(out)))
     }
     def "index" | "find_index" cfunc (recv, arg?, &block) {
@@ -1728,10 +1733,16 @@ fn check_frozen_handle(arr: &crate::collections::RArray) -> Result<(), crate::Si
 ///
 /// Byte-faithful: a String element contributes its own bytes under its own
 /// encoding, and only a non-String goes through `to_s`.
+/// CRuby's `rb_ary_join` message for an array that contains itself.
+fn recursive_join_error() -> crate::Signal {
+    crate::dispatch::raise_error("ArgumentError", "recursive array join".to_string())
+}
+
 fn join_into(
     out: &mut crate::enc::StrBuf,
     elems: &[RubyValue],
     sep: Option<&crate::enc::StrBuf>,
+    seen: &mut crate::value::recursion::Visited,
 ) -> Result<(), crate::Signal> {
     for (i, e) in elems.iter().enumerate() {
         if i > 0
@@ -1740,7 +1751,15 @@ fn join_into(
             push_or_raise(out, sep)?;
         }
         match e {
-            RubyValue::Array(inner) => join_into(out, &inner.lock().clone(), sep)?,
+            RubyValue::Array(inner) => {
+                // The clone is HOISTED out of the recursive call's argument
+                // list. Held there, the receiver's lock was still taken when
+                // the nested join re-entered it -- which is the abort, and is
+                // the soundness half of this fix rather than the guard.
+                let nested = inner.lock().clone();
+                seen.with(e, |seen| join_into(out, &nested, sep, seen))
+                    .unwrap_or_else(|| Err(recursive_join_error()))?;
+            }
             RubyValue::Str(s) => push_or_raise(out, &s.lock().clone())?,
             other => {
                 let text = crate::string_new(other.to_display_string());

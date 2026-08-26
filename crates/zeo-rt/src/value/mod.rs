@@ -22,6 +22,7 @@
 
 pub(crate) mod collections;
 pub(crate) mod ivars;
+pub(crate) mod recursion;
 pub(crate) mod value_ivars;
 
 use crate::builtins::{arg_error, type_error};
@@ -1309,6 +1310,22 @@ impl RubyValue {
     /// anything else is incomparable. Consumed by `Enumerable#min`/`#max`
     /// and `comparable`'s table rows (and the `sort` family).
     pub fn rb_cmp(&self, other: &RubyValue) -> Option<i64> {
+        self.rb_cmp_guarded(other, &mut recursion::VisitedPair::default())
+    }
+
+    /// `rb_cmp`'s recursive worker, mirroring [`rb_eq_guarded`]: `seen`
+    /// holds the PAIRS currently being compared, CRuby's
+    /// `rb_exec_recursive_paired`.
+    ///
+    /// A revisited pair does NOT answer `0`. CRuby's `recursive_cmp`
+    /// returns `Qundef` and `rb_ary_cmp` falls through to the LENGTH
+    /// comparison, so the two agree for equal-length arrays and differ for
+    /// `[1, a]` against `[1, b, 3]` -- which the golden pins.
+    fn rb_cmp_guarded(
+        &self,
+        other: &RubyValue,
+        seen: &mut recursion::VisitedPair,
+    ) -> Option<i64> {
         // Every numeric pair orders through the ONE tower matrix:
         // exact Int/Bignum/Rational lanes, Float promotion,
         // NaN -> nil, Complex -> nil.
@@ -1345,20 +1362,36 @@ impl RubyValue {
                 // user code (never under a lock), and the old whole-array
                 // snapshots allocated two Vecs per comparison -- one per
                 // PAIR under a sort.
-                let (la, lb) = (a.lock().len(), b.lock().len());
-                for i in 0..la.min(lb) {
-                    let x = a.lock().get(i).cloned();
-                    let y = b.lock().get(i).cloned();
-                    // Shrunk mid-walk by another thread: fall through to
-                    // the length comparison.
-                    let (Some(x), Some(y)) = (x, y) else { break };
-                    match x.rb_cmp(&y) {
-                        Some(0) => continue,
-                        Some(c) => return Some(c),
-                        None => return None,
-                    }
+                // Same array both sides: 0, without a walk. CRuby answers
+                // 0 here even for elements that do not compare at all
+                // (`a = [Object.new]; a <=> a`), and it is also what keeps
+                // the two `lock()`s below from being the SAME lock -- a
+                // re-entrant access, which on the sole-thread fast path
+                // would alias `&mut`. The `Str` arm above makes the same
+                // check for the same reason.
+                if std::sync::Arc::ptr_eq(a, b) {
+                    return Some(0);
                 }
-                Some((la as i64 - lb as i64).signum())
+                let (la, lb) = (a.lock().len(), b.lock().len());
+                let by_length = Some((la as i64 - lb as i64).signum());
+                // A pair already being compared falls through to the length
+                // comparison, which is what `rb_ary_cmp` does with the
+                // `Qundef` its recursion guard hands back.
+                let walked = seen.with(self, other, |seen| {
+                    for i in 0..la.min(lb) {
+                        let x = a.lock().get(i).cloned();
+                        let y = b.lock().get(i).cloned();
+                        // Shrunk mid-walk by another thread: fall through to
+                        // the length comparison.
+                        let (Some(x), Some(y)) = (x, y) else { break };
+                        match x.rb_cmp_guarded(&y, seen) {
+                            Some(0) => continue,
+                            other => return other,
+                        }
+                    }
+                    by_length
+                });
+                walked.unwrap_or(by_length)
             }
             (RubyValue::Object(o), _) => {
                 match crate::dispatch::call_user_method(
