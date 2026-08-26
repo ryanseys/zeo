@@ -1,0 +1,14 @@
+a lone colon	{nil => nil}
+a bare document end	false
+a tab alone	false
+a tab-indented mapping	{"a" => 1}
+a nested tab indent	Psych::SyntaxError
+an invalid utf-8 byte	{"v" => "ÿ"}
+an embedded nul	{"v" => "a"}
+an alias as a key	Psych::SyntaxError
+a byte-order mark	{"﻿v" => 1}
+an empty literal block	"\n"
+an omap of scalars	{}
+nested 500 deep	Psych::SyntaxError
+nested 2000 deep	Psych::SyntaxError
+nested 100000 deep	Psych::SyntaxError

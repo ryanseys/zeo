@@ -19,7 +19,21 @@ module Psych
   class BadAlias < Exception; end
   class AliasesNotEnabled < BadAlias; end
   class AnchorNotDefined < BadAlias; end
+
+  # `!!set` loads as one of these. CRuby's is a Hash subclass, so a set
+  # answers like the mapping it is written as -- and naming it is what a
+  # caller does to permit it (`permitted_classes: [Psych::Set]`).
+  class Set < ::Hash; end
+
+  # `!!omap` loads as one of these, which is why an ordered map answers
+  # like the Hash it already is.
+  class Omap < ::Hash; end
 end
+
+# A date or timestamp scalar builds a real Date or Time, so the loader
+# needs both defined -- CRuby's psych requires `date` for exactly this.
+require "date"
+require "time" 
 
 # psych's `core_ext.rb`: every object can dump itself. Ruby spells it as
 # `psych_to_yaml` with `to_yaml` aliased onto it, so a library that wants the
