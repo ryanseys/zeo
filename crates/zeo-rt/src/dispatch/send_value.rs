@@ -546,12 +546,6 @@ fn send_value_in_reason_inner(
         // Placed before the builtin `Class`/`Module` table below because that
         // is ruby's order: an ancestor's singleton sits nearer than `Class`.
         //
-        // One known divergence stays: the ancestor's compiled body carries the
-        // ANCESTOR's class id, so a class-level `@x` read through an inherited
-        // class method reaches the ancestor's storage where ruby gives the
-        // receiver its own. Materialization avoids that by emitting a copy per
-        // subclass, which a runtime class has no compile-time site for.
-        //
         // ...and never for a name the receiver's OWN constructor serves.
         // `new`/`allocate` are `Class`'s methods parameterized by the receiver,
         // not an ancestor's singleton method, but a builtin root publishes its

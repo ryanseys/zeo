@@ -1220,9 +1220,8 @@ fn const_struct_matches_the_oracle() {
 /// The constant form is the SAME runtime mint as the anonymous form (no
 /// compile-time Struct synthesis), so the runtime `Struct.new("Name", :a)`
 /// accepts the legacy string-name argument instead of rejecting it at compile
-/// time. zeo names the class `Name`; CRuby's legacy
-/// behaviour namespaces it `Struct::Name` -- a known divergence shared with the
-/// anonymous path, not worth reintroducing a compile-time special case for.
+/// time. The runtime names it `Struct::Name`, CRuby's own namespacing --
+/// pinned by `tests/five_recorded_divergences_that_are_not.rb`.
 #[test]
 fn struct_new_string_name_at_const_mints_at_runtime() {
     assert!(zeo::check_program("P = Struct.new(\"Name\", :a)\n").is_ok());

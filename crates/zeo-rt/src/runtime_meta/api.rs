@@ -1424,9 +1424,9 @@ pub fn runtime_define_method_from_method(
     // Snapshot the method as resolved for the TARGET class's own instances,
     // not the owner's: zeo materializes each class's own layout-correct copy
     // of an inherited method, and the owner's compiled impl would panic on a
-    // subclass-layout receiver. (For the common case where the target doesn't
-    // override the name, this is the same behavior; a target that DOES
-    // override it binds its own version -- a documented AOT divergence.)
+    // subclass-layout receiver. It is the OWNER's body either way -- a copy
+    // of it -- so a target that overrides the name still binds the owner's,
+    // which is ruby's rule.
     // A module owner outside the target's chain resolves nothing on the
     // target, so the module's own receiver-generic body answers instead.
     let m = snapshot_instance_method(id, src_name)

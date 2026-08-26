@@ -16,16 +16,11 @@
 //! are the only per-class methods: native `MethodImpl::Dynamic` closures that
 //! index a captured slot, installed on the minted class's overlay entry.
 //!
-//! DIVERGENCE: because a struct class is a RUNTIME value rather than a
-//! compile-time class, it cannot be a STATIC superclass. A two-step
-//! `Point = Struct.new(:x, :y); class Foo < Point` fails to compile
-//! (`unknown superclass Point`). The commoner inline idiom
-//! `class Foo < Struct.new(...)` was never
-//! supported anyway (a superclass expression isn't statically resolvable), and
-//! runtime struct subclasses (`class Bar < baz` for a runtime `baz`) inherit
-//! members correctly via `meta_of`'s ancestor walk. Full compile-time
-//! subclassing of a struct constant would need runtime class definition with a
-//! dynamic superclass -- a separate feature.
+//! A struct constant IS a static superclass, in both spellings: the two-step
+//! `Point = Struct.new(:x, :y); class Foo < Point` and the inline
+//! `class Foo < Struct.new(...)`. Members reach the subclass through
+//! `meta_of`'s ancestor walk, which is also what a runtime superclass
+//! (`class Bar < baz`) uses.
 
 use std::any::Any;
 use std::collections::HashMap;

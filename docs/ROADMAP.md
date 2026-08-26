@@ -257,11 +257,6 @@ measurement rather than from a guess, ranked by the gap they close.
   suspended Fibers and Enumerators routinely. With the `panic_abort` runtime
   linked, that forced unwind aborts the process. Revisit only if fibers ever
   move off unwinding entirely.
-- **Mixed Integer/Float comparison exactness** — a pre-existing divergence:
-  `num_cmp`'s Flo lane converts via `as f64`, lossy past 2^53
-  (`9007199254740993 == 9007199254740992.0` answers true; CRuby compares
-  exactly and answers false). A fix must update `num_cmp` AND the one
-  inline-arm codegen site together. Conformance work, not perf.
 
 ## Docs
 

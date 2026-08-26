@@ -53,7 +53,21 @@ use std::sync::{LazyLock, OnceLock};
 /// removes a class-level ivar -- `remove_instance_variable` on a class writes
 /// `nil` rather than unbinding -- so the leak is bounded by the number of
 /// distinct `(class, name)` pairs the program mentions.
-pub struct CivarSlot(Mutex<Option<RubyValue>>);
+pub struct CivarSlot {
+    value: Mutex<Option<RubyValue>>,
+    /// When this slot was FIRST written, in program-wide order; `0` = never.
+    ///
+    /// `Class#instance_variables` reports first-assignment order, and the
+    /// intern table cannot supply it: a name is interned the first time any
+    /// emitted site MENTIONS it, which for a read-only `@x` happens before --
+    /// possibly instead of -- a write. One relaxed load on the write path
+    /// buys the order; the counter itself only ever moves on a first write.
+    first_write: std::sync::atomic::AtomicU64,
+}
+
+/// Hands out [`CivarSlot::first_write`] stamps. Starts at 1 so `0` can mean
+/// "never written".
+static CIVAR_WRITE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 impl CivarSlot {
     #[inline]
@@ -63,23 +77,36 @@ impl CivarSlot {
             // instance's slots. No other thread can reach this one while
             // `sole_thread` holds, and the borrow ends before the clone
             // returns -- nothing here calls Ruby, so nothing re-enters.
-            return unsafe { (*self.0.data_ptr()).clone().unwrap_or(RubyValue::Nil) };
+            return unsafe { (*self.value.data_ptr()).clone().unwrap_or(RubyValue::Nil) };
         }
-        self.0.lock().clone().unwrap_or(RubyValue::Nil)
+        self.value.lock().clone().unwrap_or(RubyValue::Nil)
     }
 
     #[inline]
     fn put(&self, value: RubyValue) {
+        use std::sync::atomic::Ordering;
+        if self.first_write.load(Ordering::Relaxed) == 0 {
+            let seq = CIVAR_WRITE_SEQ.fetch_add(1, Ordering::Relaxed);
+            // A racing second writer keeps the stamp the first one won.
+            let _ = self
+                .first_write
+                .compare_exchange(0, seq, Ordering::Relaxed, Ordering::Relaxed);
+        }
         if crate::gvl::sole_thread() {
             // SAFETY: as in `get`.
-            unsafe { *self.0.data_ptr() = Some(value) };
+            unsafe { *self.value.data_ptr() = Some(value) };
             return;
         }
-        *self.0.lock() = Some(value);
+        *self.value.lock() = Some(value);
     }
 
-    fn assigned(&self) -> bool {
-        self.0.lock().is_some()
+    /// The write stamp, or `None` for a slot interned by a READ and never
+    /// assigned -- ruby reports only assigned names.
+    fn write_seq(&self) -> Option<u64> {
+        match self.first_write.load(std::sync::atomic::Ordering::Relaxed) {
+            0 => None,
+            n => Some(n),
+        }
     }
 }
 
@@ -93,7 +120,10 @@ fn intern(class_id: u32, name: &str) -> &'static CivarSlot {
     if let Some(slot) = table.get(&class_id).and_then(|m| m.get(name)) {
         return slot;
     }
-    let slot: &'static CivarSlot = Box::leak(Box::new(CivarSlot(Mutex::new(None))));
+    let slot: &'static CivarSlot = Box::leak(Box::new(CivarSlot {
+        value: Mutex::new(None),
+        first_write: std::sync::atomic::AtomicU64::new(0),
+    }));
     table
         .entry(class_id)
         .or_default()
@@ -169,30 +199,25 @@ pub fn class_ivar_set(class_id: u32, name: &str, value: RubyValue) -> Result<(),
     Ok(())
 }
 
-/// The class-level ivar names with a value, in sorted order -- backs
-/// `Class#instance_variables`. Sorted rather than definition-ordered: the
-/// `HashMap` has no insertion order to report, and a stable answer beats a
-/// nondeterministic one. Real Ruby answers in first-assignment order, so a
-/// class assigning `@b` before `@a` reports `[:@b, :@a]` where this reports
-/// `[:@a, :@b]` -- a documented divergence, not worth a second side table
-/// until something needs it.
+/// The class-level ivar names with a value, in FIRST-ASSIGNMENT order --
+/// backs `Class#instance_variables`, which is what ruby reports.
 ///
-/// Filtered on the slot actually holding a value: a name is interned the first
-/// time any emitted site MENTIONS it, which for a read-only `@x` happens before
-/// -- possibly instead of -- a write, and Ruby reports only assigned names.
+/// The intern table cannot supply that order, so each slot stamps its own
+/// first write ([`CivarSlot::first_write`]) and this sorts on the stamp. A
+/// slot interned by a READ and never assigned has no stamp and is skipped,
+/// which is also ruby's rule.
 pub fn class_ivar_names(class_id: u32) -> Vec<String> {
-    let mut names: Vec<String> = CIVARS
+    let mut rows: Vec<(u64, String)> = CIVARS
         .lock()
         .get(&class_id)
         .map(|m| {
             m.iter()
-                .filter(|(_, slot)| slot.assigned())
-                .map(|(name, _)| name.to_string())
+                .filter_map(|(name, slot)| Some((slot.write_seq()?, name.to_string())))
                 .collect()
         })
         .unwrap_or_default();
-    names.sort();
-    names
+    rows.sort();
+    rows.into_iter().map(|(_, name)| name).collect()
 }
 
 #[cfg(test)]
@@ -231,7 +256,9 @@ mod tests {
         class_ivar_set(903, "b", RubyValue::Int(1)).unwrap();
         class_ivar_set(903, "a", RubyValue::Int(2)).unwrap();
         class_ivar_set(904, "z", RubyValue::Int(3)).unwrap();
-        assert_eq!(class_ivar_names(903), vec!["a", "b"]);
+        // First-assignment order, which is what ruby reports -- `b` was
+        // written first, so it comes first however the names sort.
+        assert_eq!(class_ivar_names(903), vec!["b", "a"]);
         assert_eq!(class_ivar_names(904), vec!["z"]);
     }
 }
