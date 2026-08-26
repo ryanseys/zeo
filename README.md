@@ -165,6 +165,7 @@ replacement for any removed spelling.
 | `--bundle-gemfile <path>` | The Gemfile whose lockfile selects versions in the store. Defaults to `BUNDLE_GEMFILE`. |
 | `--report[=<path>]` | Write the `zeo-gems.json` disclosure record (default: beside the artifact). Off by default. |
 | `--emit-clif[=<path>]` | Print the Cranelift IR and stop. |
+| `--dump=<kind>` | Inspect instead of building, then stop. `clif` is `--emit-clif` to stdout; `syntax` prints `Syntax OK` (`-c` is the short spelling); `units` prints the compiled-in load path. `insns` and `parsetree` are refused. |
 | `-w`, `-W[0-2]`, `-W:[no-]<category>` | Accepted in Ruby's shapes. Zeo emits no warnings of its own, so they change nothing. |
 | `-v`, `--version`, `-h`, `--help` | Print and stop. |
 

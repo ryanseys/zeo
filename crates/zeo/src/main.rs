@@ -76,6 +76,9 @@ struct Args {
     emit_clif: Option<EmitTarget>,
     /// `--dump=syntax` (and `-c`): parse, print `Syntax OK`, and stop.
     check_syntax: bool,
+    /// `--dump=units`: run the front end, print the compiled-in load path,
+    /// and stop.
+    dump_units: bool,
     /// `--backend <aot|jit>`: which Cranelift mode builds the program
     /// (`ZEO_BACKEND` is the env spelling; the flag wins). `None` = the
     /// default for the mode, which `Backend::select` decides.
@@ -175,10 +178,12 @@ options:
                         lowering) instead of building; bare prints to stdout
   --dump=<kind>         inspect instead of building. `clif` is --emit-clif
                         to stdout; `syntax` parses and prints `Syntax OK`
-                        (`-c` is the short spelling). `insns` and
-                        `parsetree` are REFUSED rather than warned about:
-                        zeo emits no bytecode, and the prism tree has no
-                        printer on the Rust side
+                        (`-c` is the short spelling); `units` prints the
+                        compiled-in load path -- every file that became a
+                        feature unit, with the spellings a require can use
+                        for it. `insns` and `parsetree` are REFUSED rather
+                        than warned about: zeo emits no bytecode, and the
+                        prism tree has no printer on the Rust side
   -c                    --dump=syntax, ruby's short spelling
   --backend <aot|jit>   which mode the Cranelift backend runs in: the
                         in-process JIT (the default in run mode) or the AOT
@@ -254,6 +259,7 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
     let mut output = None;
     let mut emit_clif: Option<EmitTarget> = None;
     let mut check_syntax = false;
+    let mut dump_units = false;
     // The env spelling is read once here so the flag and the variable can
     // never disagree downstream.
     let mut debuginfo = std::env::var_os("ZEO_DEBUGINFO").is_some_and(|v| v != "0");
@@ -369,6 +375,12 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
                 "dump" => match inline.as_deref() {
                     Some("clif") => emit_clif = Some(EmitTarget::Stdout),
                     Some("syntax") => check_syntax = true,
+                    // zeo's own, beside `clif`: the compiled-in load path a
+                    // program ends up with. Which files became feature units
+                    // and under which spellings is the fact every require
+                    // diagnosis needs, and reading it off a 55-second probe
+                    // was how three wrong diagnoses in a row got written.
+                    Some("units") => dump_units = true,
                     Some("insns") => {
                         return Err("--dump=insns has no answer here: zeo compiles ahead of \
                                     time and emits no bytecode (--dump=clif shows the IR it \
@@ -384,7 +396,7 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
                     Some(other) => {
                         return Err(format!(
                             "--dump={other} is not a dump zeo knows \
-                             (clif, syntax; insns and parsetree are refused)"
+                             (clif, syntax, units; insns and parsetree are refused)"
                         ));
                     }
                     None => return Err("--dump needs a kind, e.g. --dump=clif".to_string()),
@@ -466,10 +478,13 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
     // Both inspect instead of building, so neither has an artifact to name
     // or a backend to pick -- and honouring one silently while ignoring the
     // other is exactly the silent drop this CLI refuses.
-    if emit_clif.is_some() && check_syntax {
-        return Err("--dump=syntax and --dump=clif each stop before the other runs; \
-                    ask for one"
-            .to_string());
+    if [emit_clif.is_some(), check_syntax, dump_units]
+        .iter()
+        .filter(|on| **on)
+        .count()
+        > 1
+    {
+        return Err("each --dump kind stops before the others run; ask for one".to_string());
     }
     for (flag, set) in [
         ("-o", output.is_some()),
@@ -490,10 +505,16 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
                 "--dump=syntax stops after parsing, so {flag} would be ignored"
             ));
         }
+        if dump_units {
+            return Err(format!(
+                "--dump=units stops after the front end, so {flag} would be ignored"
+            ));
+        }
     }
     // Trailing args are ARGV, which only an immediately-run program has.
     // (Both dump kinds inspect instead of running, so neither has any.)
-    let runs_now = output.is_none() && !compile && emit_clif.is_none() && !check_syntax;
+    let runs_now =
+        output.is_none() && !compile && emit_clif.is_none() && !check_syntax && !dump_units;
     if !program_args.is_empty() && !runs_now {
         return Err(format!("unexpected argument `{}`", program_args[0]));
     }
@@ -562,6 +583,7 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
         program_args,
         emit_clif,
         check_syntax,
+        dump_units,
         debuginfo,
         backend,
     })))
@@ -720,6 +742,31 @@ fn run() -> Result<(), MainError> {
     if args.check_syntax {
         zeo::check_syntax(&source)?;
         println!("Syntax OK");
+        return Ok(());
+    }
+    // The compiled-in load path, before anything is emitted. Which file
+    // became a unit, and under which spellings, is the fact every require
+    // diagnosis needs -- and it is a front-end answer, so it costs the
+    // analyze pass and nothing more.
+    if args.dump_units {
+        let analyzed = zeo::analyze_program(&source, &opts)?;
+        for (features, absolute, stmts) in &analyzed.feature_units {
+            println!("{absolute}.rb");
+            for f in features {
+                println!("  require {f:?}");
+            }
+            println!("  {} statement(s)", stmts.len());
+        }
+        for (feature, absolute, reason) in &analyzed.declined_units {
+            println!("{absolute}.rb");
+            println!("  require {feature:?}");
+            println!("  DECLINED: {reason}");
+        }
+        println!(
+            "{} unit(s), {} declined",
+            analyzed.feature_units.len(),
+            analyzed.declined_units.len()
+        );
         return Ok(());
     }
     if let Some(target) = &args.emit_clif {
@@ -1126,7 +1173,15 @@ mod tests {
         }
         assert!(err(&["--dump=clif", "--dump=syntax", "t.rb"]).contains("ask for one"));
 
-        // Neither takes program ARGV.
+        // `units` is zeo's own kind, and behaves like the other inspect
+        // modes: no artifact, no ARGV, and not combinable.
+        assert!(ok(&["--dump=units", "t.rb"]).dump_units);
+        assert!(!ok(&["t.rb"]).dump_units);
+        assert!(err(&["--dump=units", "-o", "out", "t.rb"]).contains("would be ignored"));
+        assert!(err(&["--dump=units", "--dump=clif", "t.rb"]).contains("ask for one"));
+        assert!(err(&["--dump=units", "t.rb", "arg"]).contains("unexpected argument"));
+
+        // None of them takes program ARGV.
         assert!(err(&["-c", "t.rb", "arg"]).contains("unexpected argument"));
     }
 }
