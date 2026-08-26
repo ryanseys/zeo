@@ -1,0 +1,9 @@
+r:UTF-8                       "UTF-8"
+r:UTF-8:UTF-16                ["UTF-8", "UTF-16"]
+rb:UTF-8                      [true, "UTF-8"]
+rb                            [true, "ASCII-8BIT"]
+r:bom|utf-8                   "UTF-8"
+named twice                   [ArgumentError, "encoding specified twice"]
+bad access mode               [ArgumentError, "invalid access mode zz"]
+mode: keyword tail            "UTF-8"
+the bytes still read          "hello\n"

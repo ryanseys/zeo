@@ -159,8 +159,57 @@ fn read_encodings(
     ),
     Signal,
 > {
+    read_encodings_with(trailing, None)
+}
+
+/// [`read_encodings`], plus the `:extenc[:intenc]` tail of a POSITIONAL mode
+/// string, which the options Hash cannot carry.
+///
+/// Naming an encoding in both places is CRuby's `ArgumentError: encoding
+/// specified twice`, not a silent precedence rule -- and an encoding NAME the
+/// tail does not know warns and falls back, where the `encoding:` option
+/// raises. Both asymmetries are CRuby's; neither is derivable from the other
+/// side.
+#[allow(clippy::type_complexity)]
+fn read_encodings_with(
+    trailing: Option<&RubyValue>,
+    mode_enc: Option<&str>,
+) -> Result<
+    (
+        crate::encoding::EncodingId,
+        Option<crate::encoding::EncodingId>,
+    ),
+    Signal,
+> {
     let mut ext = crate::encoding::default_external();
     let mut int = None;
+    let named_in_hash = matches!(trailing, Some(RubyValue::Hash(h))
+        if ["encoding", "external_encoding", "internal_encoding"].iter().any(|k| {
+            !crate::collections::hash_get(h, &RubyValue::Symbol(crate::Symbol::intern(k))).is_nil()
+        }));
+    // A `mode:` keyword carries the same tail a positional mode string does.
+    let from_kwarg = kwarg_str(trailing, "mode")
+        .and_then(|m| split_mode(&m).1.map(str::to_string));
+    let mode_enc = mode_enc.map(str::to_string).or(from_kwarg);
+    if let Some(spec) = mode_enc.as_deref() {
+        if named_in_hash {
+            return Err(arg_error!("encoding specified twice"));
+        }
+        let (e, i) = mode_encoding_names(spec);
+        match crate::encoding::find(e) {
+            Some(id) => ext = id,
+            None => crate::builtins::warning::rb_warn(&format!("Unsupported encoding {e} ignored")),
+        }
+        if let Some(i) = i {
+            match crate::encoding::find(i) {
+                Some(id) => int = Some(id),
+                None => crate::builtins::warning::rb_warn(&format!(
+                    "Unsupported encoding {i} ignored"
+                )),
+            }
+        }
+        return Ok((ext, int));
+    }
     let Some(RubyValue::Hash(h)) = trailing else {
         return Ok((ext, int));
     };
@@ -171,7 +220,7 @@ fn read_encodings(
         crate::encoding::find(name).ok_or_else(|| arg_error!("unknown encoding name - {name}"))
     };
     if let RubyValue::Str(m) = get("mode")
-        && m.lock().to_utf8_lossy().contains('b')
+        && split_mode(&m.lock().to_utf8_lossy()).0.contains('b')
     {
         ext = crate::encoding::ASCII_8BIT;
     }
@@ -765,7 +814,25 @@ fn mode_has_binary(mode: Option<&RubyValue>) -> bool {
         },
         _ => return false,
     };
-    spec.contains('b')
+    split_mode(&spec).0.contains('b')
+}
+
+/// The `(external, internal)` names a mode string's `:extenc[:intenc]` tail
+/// carries, with the `bom|` request stripped off the external name.
+///
+/// zeo reads the BOM on demand (`#set_encoding_by_bom`) rather than at open,
+/// so the prefix decides nothing here; CRuby answers `UTF-8` for
+/// `"r:bom|utf-8"` either way.
+fn mode_encoding_names(spec: &str) -> (&str, Option<&str>) {
+    let (ext, int) = match spec.split_once(':') {
+        Some((e, i)) => (e, Some(i)),
+        None => (spec, None),
+    };
+    let ext = ext
+        .strip_prefix("bom|")
+        .or_else(|| ext.strip_prefix("BOM|"))
+        .unwrap_or(ext);
+    (ext, int)
 }
 
 /// A whole-second `timespec` -- what `utimensat` takes where `utimes` takes a
@@ -896,10 +963,28 @@ fn open_options_int(flags: i64) -> std::fs::OpenOptions {
     o
 }
 
+/// A mode string's ACCESS part and its `:extenc[:intenc]` encoding spec --
+/// CRuby's `rb_io_extract_modeenc`, where everything after the first `:` names
+/// encodings rather than access.
+///
+/// Splitting is not cosmetic: `"r:big5"` holds a `b`, so a scan of the whole
+/// string for the binary flag called it binmode, and the access matcher saw a
+/// mode it had never heard of and refused the open outright.
+pub(crate) fn split_mode(mode: &str) -> (&str, Option<&str>) {
+    match mode.split_once(':') {
+        Some((access, enc)) => (access, Some(enc)),
+        None => (mode, None),
+    }
+}
+
 /// A `File.open` mode string (`"r"`, `"w"`, `"a"`, `"r+"`, ... with an
-/// optional `b`/`t` suffix, which only matter once encodings exist).
+/// optional `b`/`t` suffix, and an optional `:extenc[:intenc]` tail).
 fn open_options(mode: &str) -> Result<std::fs::OpenOptions, Signal> {
-    let base: String = mode.chars().filter(|c| *c != 'b' && *c != 't').collect();
+    let base: String = split_mode(mode)
+        .0
+        .chars()
+        .filter(|c| *c != 'b' && *c != 't')
+        .collect();
     let mut o = std::fs::OpenOptions::new();
     match base.as_str() {
         "r" => o.read(true),
@@ -1038,9 +1123,20 @@ ruby_class! {
         // `encoding:`. Recorded on the handle only when it differs from the
         // default, so an ordinary text open leaves the slot unset and
         // `set_encoding_by_bom` can still claim it.
-        let (ext, int) = read_encodings(trailing)?;
-        let binary = mode_has_binary(mode);
-        if binary || ext != crate::encoding::default_external() || int.is_some() {
+        let mode_str = match mode {
+            Some(RubyValue::Str(s)) => Some(s.lock().to_utf8_lossy().into_owned()),
+            _ => None,
+        };
+        let mode_enc = mode_str.as_deref().and_then(|m| split_mode(m).1);
+        let (ext, int) = read_encodings_with(trailing, mode_enc)?;
+        // `b` forces ASCII-8BIT only when nothing NAMED an encoding: CRuby
+        // answers `UTF-8` for `"rb:UTF-8"` and still reports `#binmode?`.
+        let binary = mode_has_binary(mode) && mode_enc.is_none();
+        // A NAMED encoding is recorded even when it matches the default: the
+        // `binmode` send above has already claimed the slot for ASCII-8BIT,
+        // and `"rb:UTF-8"` reports `#binmode?` true with a UTF-8 external.
+        if binary || mode_enc.is_some() || ext != crate::encoding::default_external() || int.is_some()
+        {
             let ext = match binary {
                 true => crate::encoding::ASCII_8BIT,
                 false => ext,
