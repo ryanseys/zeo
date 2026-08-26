@@ -597,12 +597,32 @@ pub(super) fn encode_impl(
         _ => (args, None),
     };
     let src = recv_str!(recv);
+    // `encode`'s refusal is about the CONVERTER, not the name: an unknown
+    // encoding here is `Encoding::ConverterNotFoundError` naming the PAIR,
+    // with both sides printed RAW as given and the source first. Resolution
+    // is therefore deferred until both are known -- raising on the first
+    // unknown name reported an ArgumentError about it alone.
+    //
+    // `Encoding.find` keeps its own ArgumentError, and a Symbol argument its
+    // TypeError, so the change is scoped to this row.
+    let name_of = |v: &RubyValue| -> String {
+        match v {
+            RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
+            other => other.to_display_string(),
+        }
+    };
+    let from_raw = positional.get(1).map(|v| name_of(v));
+    let to_raw = positional.first().map(|v| name_of(v));
     let from_enc = match positional.get(1) {
-        Some(v) => crate::builtins::encoding::arg_encoding(v)?,
+        Some(v) => crate::builtins::encoding::arg_encoding(v).map_err(|e| {
+            converter_not_found(&e, from_raw.as_deref(), to_raw.as_deref(), &src)
+        })?,
         None => src.lock().encoding(),
     };
     let to_enc = match positional.first() {
-        Some(v) => crate::builtins::encoding::arg_encoding(v)?,
+        Some(v) => crate::builtins::encoding::arg_encoding(v).map_err(|e| {
+            converter_not_found(&e, from_raw.as_deref(), to_raw.as_deref(), &src)
+        })?,
         None => encoding::default_internal().unwrap_or_else(|| src.lock().encoding()),
     };
     let opts = parse_encode_opts(opts_hash.as_ref())?;
@@ -675,16 +695,70 @@ pub(super) fn parse_encode_opts(
         RubyValue::Symbol(s) if s.name() == "attr" => Some(XmlMode::Attr),
         _ => None,
     };
-    opts.newline = if get("cr_newline").truthy() {
-        Some(NewlineMode::Cr)
-    } else if get("crlf_newline").truthy() {
-        Some(NewlineMode::Crlf)
-    } else if get("universal_newline").truthy() {
-        Some(NewlineMode::Universal)
-    } else {
-        None
+    // `newline:` names the mode as a SYMBOL; the three boolean spellings are
+    // the older per-mode flags. The symbol form was simply absent, so
+    // `encode(newline: :crlf)` converted nothing.
+    //
+    // Its errors are asymmetric, and copied that way: a bad SYMBOL is named
+    // in the message, a non-symbol value is not.
+    opts.newline = match get("newline") {
+        RubyValue::Nil => None,
+        RubyValue::Symbol(s) => match s.name_str() {
+            "universal" => Some(NewlineMode::Universal),
+            "crlf" => Some(NewlineMode::Crlf),
+            "cr" => Some(NewlineMode::Cr),
+            "lf" => None,
+            other => {
+                return Err(crate::builtins::arg_error!(
+                    "unexpected value for newline option: {other}"
+                ));
+            }
+        },
+        _ => {
+            return Err(crate::builtins::arg_error!(
+                "unexpected value for newline option"
+            ));
+        }
     };
+    if opts.newline.is_none() {
+        opts.newline = if get("cr_newline").truthy() {
+            Some(NewlineMode::Cr)
+        } else if get("crlf_newline").truthy() {
+            Some(NewlineMode::Crlf)
+        } else if get("universal_newline").truthy() {
+            Some(NewlineMode::Universal)
+        } else {
+            None
+        };
+    }
     Ok(opts)
+}
+
+/// An unknown encoding name inside `encode` is a CONVERTER failure naming
+/// both ends, source first -- both raw as written, since neither resolved.
+/// A non-name TypeError (a Symbol argument) passes through untouched.
+fn converter_not_found(
+    original: &Signal,
+    from_raw: Option<&str>,
+    to_raw: Option<&str>,
+    src: &crate::RStr,
+) -> Signal {
+    let Signal::Raise(exc) = original else {
+        return original.clone();
+    };
+    if crate::builtins::class_name_of(exc) != "ArgumentError" {
+        return original.clone();
+    }
+    let from = from_raw
+        .map(str::to_string)
+        .unwrap_or_else(|| src.lock().encoding().name().to_string());
+    let to = to_raw
+        .map(str::to_string)
+        .unwrap_or_else(|| src.lock().encoding().name().to_string());
+    crate::dispatch::raise_error(
+        "Encoding::ConverterNotFoundError",
+        format!("code converter not found ({from} to {to})"),
+    )
 }
 
 /// The template argument of `unpack`/`unpack1` as a `String` (through the

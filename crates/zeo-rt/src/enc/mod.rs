@@ -50,7 +50,7 @@ pub use transcode::{
     TranscodeRun, TranscodeState, XmlMode, converter_not_found, encode_scalar, self_describing_bom,
     transcode, transcode_run,
 };
-pub(crate) use transcode::{Unit, decode};
+pub(crate) use transcode::{Unit, decode, decode_spans};
 
 #[cfg(test)]
 mod tests;

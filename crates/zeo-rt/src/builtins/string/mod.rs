@@ -800,6 +800,10 @@ ruby_class! {
     // `force_encoding` re-TAGS the bytes without touching them; `b` COPIES
     // them under ASCII-8BIT. Both return a value the caller can chain.
     def "force_encoding" (recv, arg) {
+        // Before the argument is even read: CRuby refuses a frozen receiver
+        // even when the new encoding EQUALS the current one, so the guard
+        // cannot sit behind a comparison.
+        guard_str_frozen(recv)?;
         let id = crate::builtins::encoding::arg_encoding(arg)?;
         rstr.lock().set_encoding(id);
         Ok(recv.clone())
@@ -878,35 +882,68 @@ ruby_class! {
         let vals = crate::builtins::pack::unpack(&bytes[start..], &template)?;
         Ok(vals.into_iter().next().unwrap_or(RubyValue::Nil))
     }
-    def "scrub"(recv, arg?) {
-        // Rewrite every invalid byte sequence to the replacement (an explicit
-        // String argument, else U+FFFD for a Unicode encoding / "?" otherwise).
-        let s = rstr.lock();
+    def "scrub"(recv, arg?, &block) {
+        // Walked over `decode_spans` rather than transcoded, for two
+        // reasons. A BLOCK has nowhere to go through a transcode -- it is
+        // handed each invalid run and its answer is spliced in, which is
+        // the whole point of the form. And a transcode re-encodes every
+        // VALID character on the way, so a valid-but-unmapped one would be
+        // replaced too; scrub only ever touches invalid bytes.
+        let (bytes, enc) = {
+            let s = rstr.lock();
+            (s.bytes().to_vec(), s.encoding())
+        };
         let repl = match arg {
-            Some(RubyValue::Str(r)) => Some(r.lock().to_utf8_lossy().into_owned()),
+            Some(RubyValue::Str(r)) => Some(r.lock().bytes().to_vec()),
+            Some(v) if !v.is_nil() => Some(convert::to_rstr(v)?.lock().bytes().to_vec()),
             // Default: U+FFFD for a Unicode encoding (the replacement
             // character, 3 bytes in UTF-8), "?" otherwise -- CRuby's rule.
-            _ => matches!(
-                s.encoding().kind(),
-                crate::encoding::EncKind::Utf8
-                    | crate::encoding::EncKind::Utf16 { .. }
-                    | crate::encoding::EncKind::Utf32 { .. }
-            )
-            .then(|| "\u{FFFD}".to_string()),
+            _ => Some(
+                match matches!(
+                    enc.kind(),
+                    crate::encoding::EncKind::Utf8
+                        | crate::encoding::EncKind::Utf16 { .. }
+                        | crate::encoding::EncKind::Utf32 { .. }
+                ) {
+                    true => "\u{FFFD}".as_bytes().to_vec(),
+                    false => b"?".to_vec(),
+                },
+            ),
         };
-        let mut opts = crate::encoding::TranscodeOptions { invalid_replace: true, ..Default::default() };
-        opts.replace = repl;
-        // Scrub = transcode to self's own encoding, replacing invalids.
-        let out = crate::encoding::transcode(s.bytes(), s.encoding(), s.encoding(), &opts, None)
-            .map_err(crate::encoding::transcode_signal)?;
-        Ok(RubyValue::Str(crate::string_from_bytes(out, s.encoding())))
+        let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+        let mut at = 0usize;
+        for (unit, span) in crate::encoding::decode_spans(&bytes, enc) {
+            let raw = &bytes[at..(at + span).min(bytes.len())];
+            at += span;
+            match unit {
+                crate::encoding::Unit::Invalid(bad, _) => match &block {
+                    // The block sees the invalid run in the RECEIVER's own
+                    // encoding, and its answer replaces it verbatim.
+                    Some(RubyValue::Proc(p)) => {
+                        let arg = RubyValue::Str(crate::string_from_bytes(bad, enc));
+                        let r = p.call(&[arg])?;
+                        let r = convert::to_rstr(&r)?;
+                        out.extend_from_slice(r.lock().bytes());
+                    }
+                    _ => out.extend_from_slice(repl.as_deref().unwrap_or_default()),
+                },
+                _ => out.extend_from_slice(raw),
+            }
+        }
+        Ok(RubyValue::Str(crate::string_from_bytes(out, enc)))
     }
     // `scrub!` scrubs in place and ALWAYS answers the receiver (unlike the
     // other bang mutators, which answer nil when nothing changed).
-    def "scrub!"(recv, replacement?) {
+    def "scrub!"(recv, replacement?, &block) {
         let forwarded = replacement.map(std::slice::from_ref).unwrap_or(&[]);
-        let scrubbed =
-            crate::dispatch::send_value(recv, crate::Symbol::intern("scrub"), forwarded, None)?;
+        // The BLOCK travels with the forward -- dropped, `scrub!` silently
+        // fell back to the default replacement.
+        let scrubbed = crate::dispatch::send_value(
+            recv,
+            crate::Symbol::intern("scrub"),
+            forwarded,
+            block.clone(),
+        )?;
         let s = rstr;
         if s.is_frozen() {
             return Err(crate::dispatch::raise_error_details(
@@ -2287,7 +2324,7 @@ ruby_class! {
         let md = match match_haystack(&text, arg2)? {
             // The groups are slices of the receiver's own text, so they come
             // back in the receiver's encoding.
-            Some(h) => crate::regexp::regexp_match_in(&re, &h, enc),
+            Some(at) => crate::regexp::regexp_match_in_at(&re, &text, at, enc),
             None => RubyValue::Nil,
         };
         // The block form runs on a match, answering the block's value; a miss
@@ -2303,8 +2340,10 @@ ruby_class! {
         guard_valid(recv)?;
         let re = to_regexp(arg1)?;
         let text = rstr.lock().to_utf8_lossy().into_owned();
+        // `match?` sets no `$~`, so it asks the engine directly at the
+        // offset rather than building a MatchData to throw away.
         Ok(RubyValue::Bool(match match_haystack(&text, arg2)? {
-            Some(h) => crate::regexp_is_match(&re, &h),
+            Some(at) => crate::regexp::regexp_is_match_at(&re, &text, at),
             None => false,
         }))
     }

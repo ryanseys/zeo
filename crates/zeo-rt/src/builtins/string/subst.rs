@@ -285,16 +285,18 @@ pub(super) fn to_regexp(v: &RubyValue) -> Result<crate::regexp::RRegexp, Signal>
     }
 }
 
-/// The haystack a `match`/`match?` engine should run over given an optional
-/// start position (char offset, end-relative when negative). `None` means
-/// the position lands outside the string -- the caller reports "no match"
-/// without running the engine.
-pub(crate) fn match_haystack(
-    text: &str,
-    pos: Option<&RubyValue>,
-) -> Result<Option<String>, Signal> {
+/// The BYTE offset a `match`/`match?` engine should start at, given an
+/// optional start position (char offset, end-relative when negative).
+/// `None` means the position lands outside the string -- the caller reports
+/// "no match" without running the engine.
+///
+/// An offset, not a SLICE. A MatchData built from a slice reports its
+/// offsets relative to that slice, so `.begin(0)` and `pre_match` were both
+/// wrong for every positioned match; the engine takes a start offset
+/// directly, which is what CRuby's `rb_reg_search(str, re, pos, 0)` uses.
+pub(crate) fn match_haystack(text: &str, pos: Option<&RubyValue>) -> Result<Option<usize>, Signal> {
     let Some(v) = pos else {
-        return Ok(Some(text.to_string()));
+        return Ok(Some(0));
     };
     let clen = text.chars().count() as i64;
     let start = match convert::to_index(v)? {
@@ -304,7 +306,11 @@ pub(crate) fn match_haystack(
     if start < 0 || start > clen {
         return Ok(None);
     }
-    Ok(Some(text.chars().skip(start as usize).collect()))
+    Ok(Some(
+        text.char_indices()
+            .nth(start as usize)
+            .map_or(text.len(), |(b, _)| b),
+    ))
 }
 
 /// Expands the replacement-string escapes CRuby honors for a String-pattern

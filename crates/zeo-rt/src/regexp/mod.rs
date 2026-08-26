@@ -382,6 +382,38 @@ impl MatchDataInner {
     }
 }
 
+/// Whether `re` matches at or after `byte_start` -- `match?`'s question,
+/// which sets no `$~` and so builds no MatchData.
+pub fn regexp_is_match_at(re: &RRegexp, haystack: &str, byte_start: usize) -> bool {
+    re.engine.captures_at(haystack, byte_start).is_some()
+}
+
+/// [`regexp_match_in`] starting at a BYTE offset, over the whole haystack.
+///
+/// `String#match(pattern, pos)` cannot slice: the MatchData built from a
+/// slice reports offsets relative to it, so `.begin(0)` answered 1 where
+/// ruby says 4, and `pre_match` lost everything before `pos`. The engine
+/// already takes a start offset -- this is CRuby's `rb_reg_search(str, re,
+/// pos, 0)`, which is anchored the same way.
+pub fn regexp_match_in_at(
+    re: &RRegexp,
+    haystack: &str,
+    byte_start: usize,
+    enc: crate::encoding::EncodingId,
+) -> RubyValue {
+    match re.engine.captures_at(haystack, byte_start) {
+        Some(caps) => {
+            let m = build_match_data(re, haystack, &caps, enc);
+            crate::lastmatch::set_last_match(Some(m.clone()));
+            RubyValue::MatchData(m)
+        }
+        None => {
+            crate::lastmatch::set_last_match(None);
+            RubyValue::Nil
+        }
+    }
+}
+
 fn build_match_data(
     re: &RRegexp,
     haystack: &str,
