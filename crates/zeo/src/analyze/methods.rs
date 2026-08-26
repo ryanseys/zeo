@@ -70,8 +70,19 @@ pub(crate) fn add_own_method_at(
     // require -- so walk order inverts execution order. A spec file's
     // stub over a lazily-required rspec class is the corpus case.
     let yields = replaced.is_some_and(|i| {
-        (compiler.scope(sid).runtime_conditional && !compiler.scope(list[i]).runtime_conditional)
-            || (compiler.unit_walk && !compiler.unit_scopes.contains(&list[i]))
+        let mine_conditional = compiler.scope(sid).runtime_conditional;
+        let theirs_conditional = compiler.scope(list[i]).runtime_conditional;
+        // ... and the unit rule does NOT apply over a CONDITIONAL incumbent.
+        // The two rules meet in bundler: rubygems' `def initialize` is in a
+        // unit, bundler reopens the class and redefines it under a guard zeo
+        // cannot decide. Yielding to the guarded body left the name answering
+        // NOTHING whenever the guard was false -- `undefined method` for a
+        // method the unit plainly defines. An unconditional body is the one
+        // that always ran, whichever walk found it.
+        (mine_conditional && !theirs_conditional)
+            || (compiler.unit_walk
+                && !compiler.unit_scopes.contains(&list[i])
+                && !theirs_conditional)
     });
     let ci = &mut compiler.classes[class_id.0 as usize];
     let (list, index) = if is_class_method {
