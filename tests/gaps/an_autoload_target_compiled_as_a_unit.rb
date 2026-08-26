@@ -24,6 +24,14 @@
 # reproducer passed and proved nothing. RubyGems writes
 # `File.expand_path("rubygems/requirement", __dir__)`, and so does this.
 #
+# WHERE THE NEXT ATTEMPT SHOULD START. `autoload_consts` really does get
+# `Demo::Thing` -- the collection was traced and it fires with the right
+# name and scope. But `scoped_const_read`, which is where the touch is
+# emitted, is NEVER REACHED for either read below: `Demo::Thing::VALUE`
+# and the bare `Thing` inside `class Spec` both take some earlier
+# constant-path branch. Find that branch first; a touch added to
+# `scoped_const_read` is dead code for this shape.
+#
 # Ruby's answer: reading the constant loads the file, whichever spelling
 # named it, and whether or not anything else ever requires it.
 
