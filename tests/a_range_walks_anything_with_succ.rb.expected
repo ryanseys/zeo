@@ -1,0 +1,17 @@
+3
+[1, 2, 3]
+[1, 2]
+true
+2
+[T1, T2, T3, T4]
+[T1, T2, T3]
+[1, 2, 3, 4]
+[]
+can't iterate from Float
+can't iterate from NilClass
+[1, 2, 3, 4]
+["a", "b", "c", "d"]
+[:a, :b, :c, :d]
+3
+Enumerator
+can't iterate from NilClass

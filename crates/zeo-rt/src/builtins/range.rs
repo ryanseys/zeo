@@ -565,6 +565,49 @@ fn int_in_range(i: i64, end: Option<&RubyValue>, exclusive: bool) -> bool {
     }
 }
 
+/// Whether `v` answers `succ` -- CRuby's `range_each` fallback test, and the
+/// whole reason a Date range iterates.
+fn responds_to_succ(v: &&RubyValue) -> bool {
+    crate::dispatch::responds_to(v.class_id(), crate::Symbol::intern("succ"), false)
+}
+
+/// The `succ`-driven walk: yield `begin`, then its `succ`, until `<=>` says
+/// the end is passed. An endless range walks forever, which is what ruby
+/// does too.
+///
+/// A `succ` that stops advancing would spin, so the walk stops when `succ`
+/// answers something that no longer orders BEFORE the previous value --
+/// CRuby relies on the same `<=>` and simply loops, but a guard costs
+/// nothing here and turns a broken `succ` into a stop rather than a hang.
+fn succ_each(
+    begin: &RubyValue,
+    end: Option<&RubyValue>,
+    exclusive: bool,
+    f: &mut dyn FnMut(RubyValue) -> Result<(), crate::Signal>,
+) -> Result<(), crate::Signal> {
+    let succ = crate::Symbol::intern("succ");
+    let mut cur = begin.clone();
+    loop {
+        if let Some(e) = end {
+            let Some(c) = cur.rb_cmp(e) else {
+                return Err(type_error!(
+                    "can't iterate from {}",
+                    crate::builtins::class_name_of(begin)
+                ));
+            };
+            if c > 0 || (exclusive && c == 0) {
+                return Ok(());
+            }
+        }
+        f(cur.clone())?;
+        let next = crate::dispatch::send_value(&cur, succ, &[], None)?;
+        if next.rb_cmp(&cur).is_none_or(|c| c <= 0) {
+            return Ok(());
+        }
+        cur = next;
+    }
+}
+
 ruby_class! {
     Range = zeo_abi::RANGE_CLASS < zeo_abi::OBJECT_CLASS;
     include zeo_abi::ENUMERABLE_CLASS;
@@ -655,15 +698,23 @@ ruby_class! {
                     p.call(&[RubyValue::Symbol(crate::Symbol::intern(v))]).map(|_| ())
                 })?;
             }
-            // A beginless range, or a non-iterable element type (Float, ...),
-            // can't be walked forward -- CRuby names the begin's class:
+            // ANY value that answers `succ` walks -- CRuby's `range_each`
+            // falls through to exactly that test, which is what makes a
+            // Date range iterable and what a user class with `succ` and
+            // `<=>` gets for free.
+            //
+            // A beginless range, or a value with no `succ` (Float), still
+            // cannot be walked forward, and CRuby names the begin's class:
             // `(1.0..2.0).each` is "can't iterate from Float".
             _ => {
-                let ty = match start {
-                    Some(v) => crate::builtins::class_name_of(v),
-                    None => "NilClass".to_string(),
+                let Some(begin) = start.filter(responds_to_succ) else {
+                    let ty = match start {
+                        Some(v) => crate::builtins::class_name_of(v),
+                        None => "NilClass".to_string(),
+                    };
+                    return Err(type_error!("can't iterate from {ty}"));
                 };
-                return Err(type_error!("can't iterate from {ty}"));
+                succ_each(begin, end, exclusive, &mut |v| p.call(&[v]).map(|_| ()))?;
             }
         }
         Ok(recv.clone())
@@ -1199,7 +1250,12 @@ ruby_class! {
     // which materializes and so raises the same errors `each` does.
     def "reverse_each" arity 0 (recv, *_args, &block) {
         let (start, end, exclusive) = range_parts(recv);
+        // The refusal is LAZY: blockless, ruby answers an Enumerator and
+        // raises only when it is walked. Raising at the call meant
+        // `(1..).reverse_each` died where ruby hands back an object.
         if end.is_none() {
+            let p = block_or_enum!(recv, __args, block);
+            let _ = p;
             return Err(type_error!("can't iterate from NilClass"));
         }
         if start.is_none()

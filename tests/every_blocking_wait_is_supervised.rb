@@ -88,8 +88,16 @@ attempt("contended lock hands over") do
 end
 attempt("value") { Thread.new { 7 }.value }
 attempt("stop and wake") do
-  t = Thread.new { Thread.stop; :woke }
-  sleep 0.01 until t.status == "sleep"
+  # A rendezvous rather than a spin on `#status`: under load the status
+  # poll is a race, and what this row is about is the park and the wake.
+  ready = Queue.new
+  t = Thread.new do
+    ready << :parking
+    Thread.stop
+    :woke
+  end
+  ready.pop
+  t.run until t.status == false || t.stop?
   t.run
   t.value
 end
