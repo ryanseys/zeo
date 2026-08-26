@@ -1347,20 +1347,51 @@ impl Loader {
         if name != "load"
             && let Some(file) = hir.lowering_file
         {
+            // The owning PACKAGE travels with the path: it decides which roots
+            // the file's own requires resolve against, and whose parse
+            // warnings are the user's to act on. Every sibling demand site
+            // does `package.or_else(|| lowering_package)`; dropping it here
+            // handed an entry require (`lowering_package` is None at the main
+            // file) to the unguarded `-I`-roots sweep.
             let resolved = match name {
-                "require_relative" => resolve_require_relative(&feature, dir).ok(),
-                _ => self
-                    .resolve_require(&feature)
+                "require_relative" => resolve_require_relative(&feature, dir)
                     .ok()
-                    .flatten()
-                    .map(|(p, _)| p),
+                    .map(|p| (p, None)),
+                _ => self.resolve_require(&feature).ok().flatten(),
             };
-            if let Some(target) = resolved.and_then(|p| p.canonicalize().ok())
+            if let Some((target, package)) = resolved
+                .and_then(|(p, pkg)| Some((p.canonicalize().ok()?, pkg)))
                 && self.unit_only_targets.contains(&target)
             {
                 hir.loader
                     .conditional_require_sites
                     .insert((file, call.location().start_offset() as u32));
+                // ... and THIS spelling has to reach the unit. Demands are
+                // grouped by canonical file, so recording it here makes it an
+                // alias of the same unit rather than a second one. Without it
+                // the unit answered only to the spelling that demanded it --
+                // bundler's `require "rubygems/source"` raised `cannot load
+                // such file` for a unit rubygems.rb had demanded under its
+                // `File.expand_path` spelling.
+                //
+                // A `require_relative` registers under its ABSOLUTE spelling,
+                // exactly as the `in_unit_sweep` arm below does and for the
+                // same reason it states: a bare relative name recurs in every
+                // gem, and a unit table keyed by one is a COLLISION rather
+                // than an alias. `pub_grub/static_package_source.rb`'s
+                // `require_relative 'rubygems'` claimed the global spelling
+                // `rubygems` and silently shadowed RubyGems itself, so a
+                // guarded `require "rubygems"` ran pub_grub's file and
+                // answered true.
+                let spelling = match name {
+                    "require_relative" => target.with_extension("").to_string_lossy().into_owned(),
+                    _ => feature.clone(),
+                };
+                hir.loader.single_unit_demand.insert((
+                    package.or_else(|| hir.lowering_package.clone()),
+                    target,
+                    spelling,
+                ));
                 return Ok(None);
             }
         }
