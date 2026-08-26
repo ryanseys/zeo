@@ -785,6 +785,135 @@ fn dynamic_send_argv(
     })
 }
 
+/// A TYPED direct call: `obj.m(a, b)` where analyze proved the
+/// receiver's static class (`Compiler::typed_call_sites`) and the
+/// emitter holds that class's compiled body (`Emitter::typed_methods`).
+/// `None` = the site does not qualify and the caller lowers as before.
+///
+/// The guard is three questions, `indexed_send`'s ladder: the receiver
+/// tag must be Object; the GATE WORD must be zero (any armed gate --
+/// a runtime definition, a singleton, an ancestry splice, a Ractor
+/// move, a patched class, tracing -- routes to the dispatch arm for
+/// good, the CallSite-bypass posture); and `zeo_rt_class_of` must
+/// answer the nominated class EXACTLY -- a subclass instance takes the
+/// slow arm, so a wrong static type is a slow path, never a wrong
+/// answer. Visibility needs no runtime half: nomination proved the
+/// method compile-time public, and a runtime `private :m` arms the
+/// overlay gate, which the zero test already routes away.
+///
+/// Every operand is evaluated ONCE, in ruby's order, into the same
+/// argv both arms read -- the slow arm never re-lowers. The body pushes
+/// its own frame (every compiled body's prologue does), so backtraces
+/// are call-path-identical.
+pub(crate) fn typed_direct_send(
+    fx: &mut Fx,
+    site: NodeId,
+    recv: NodeId,
+    name: &str,
+    args: &[ArrayElem],
+) -> CResult<Option<Operand>> {
+    use cranelift_codegen::ir::MemFlagsData;
+    use cranelift_codegen::ir::condcodes::IntCC;
+    use zeo_abi::abi::{TAG_OFFSET, ValueTag};
+    if crate::debug_flags::debug(crate::debug_flags::DebugFlag::NoTypedCalls) {
+        return Ok(None);
+    }
+    let Some(&cid) = fx.an.compiler.typed_call_sites.get(&site) else {
+        return Ok(None);
+    };
+    // A box may carry its own overlay patch; boxed callers keep dispatch.
+    if fx.box_id != 0 {
+        return Ok(None);
+    }
+    let Some(decl) = fx.em.typed_methods.get(&(cid.0, name.to_string())) else {
+        return Ok(None);
+    };
+    // Plain positional bodies only, count-matched -- the receiverless
+    // direct path's own gate. An arity MISMATCH must raise through
+    // dispatch (the runtime owns the error), not bind wrong.
+    if !decl.plain || decl.arity != args.len() || decl.kw_direct.is_some() {
+        return Ok(None);
+    }
+    let (body_id, has_blk) = (decl.body, decl.has_blk);
+    if args.iter().any(|a| matches!(a, ArrayElem::Splat(_))) {
+        return Ok(None);
+    }
+
+    let bypass = super::expr::bypasses_visibility(fx, Some(recv));
+    let later = super::expr::later_nodes(args, &[], None);
+    let recv_op = lower_expr(fx, recv)?;
+    let recv_op = super::expr::park_reassignable(fx, Some(recv), recv_op, &later);
+    let recv_class = recv_op.class_id();
+    let recv_ptr = ownership::borrow_ptr(fx, &recv_op);
+    if recv_op.owned() {
+        ownership::pool_owned(fx, recv_ptr, recv_op.tag());
+    }
+    let argv_ptr = build_argv(fx, site, args)?;
+    super::stmt::stamp_call_line(fx, site);
+
+    let gates_chk = fx.b.create_block();
+    let class_chk = fx.b.create_block();
+    let fast = fx.b.create_block();
+    let slow = fx.b.create_block();
+    let join = fx.b.create_block();
+    let ss = fx.temp_slot();
+    let out = fx.slot_addr(ss, 0);
+    let fl = MemFlagsData::trusted();
+
+    let tag = fx.b.ins().load(types::I8, fl, recv_ptr, TAG_OFFSET as i32);
+    let is_obj =
+        fx.b.ins()
+            .icmp_imm_u(IntCC::Equal, tag, i64::from(ValueTag::Object as u8));
+    fx.b.ins().brif(is_obj, gates_chk, &[], slow, &[]);
+
+    fx.b.switch_to_block(gates_chk);
+    let ggv = fx.em.module.declare_data_in_func(fx.em.gates_id, fx.b.func);
+    let gbase = fx.b.ins().symbol_value(fx.em.ptr, ggv);
+    let gates = fx.b.ins().load(types::I16, fl, gbase, 0);
+    fx.b.ins().brif(gates, slow, &[], class_chk, &[]);
+
+    fx.b.switch_to_block(class_chk);
+    let live_cid = fx.call_status("zeo_rt_class_of", &[recv_ptr]);
+    let hit =
+        fx.b.ins()
+            .icmp_imm_u(IntCC::Equal, live_cid, i64::from(cid.0));
+    fx.b.ins().brif(hit, fast, &[], slow, &[]);
+
+    fx.b.switch_to_block(fast);
+    let fref = fx.em.module.declare_func_in_func(body_id, fx.b.func);
+    let mut call_args = Vec::with_capacity(args.len() + 3);
+    call_args.push(recv_ptr);
+    for i in 0..args.len() {
+        let p = if i == 0 {
+            argv_ptr
+        } else {
+            fx.b.ins().iadd_imm_u(argv_ptr, i64::from(i as u32 * VALUE_SIZE))
+        };
+        call_args.push(p);
+    }
+    if has_blk {
+        call_args.push(fx.b.ins().iconst(fx.em.ptr, 0));
+    }
+    call_args.push(out);
+    let inst = fx.b.ins().call(fref, &call_args);
+    let status = fx.b.func.dfg.inst_results(inst)[0];
+    fx.fallible(status);
+    fx.owned_created += 1;
+    fx.b.ins().jump(join, &[]);
+
+    fx.b.switch_to_block(slow);
+    let r = dynamic_send_argv(fx, recv_ptr, recv_class, name, argv_ptr, args.len(), bypass)?;
+    ownership::write_move_into(fx, &r, out);
+    fx.b.ins().jump(join, &[]);
+
+    fx.b.switch_to_block(join);
+    Ok(Some(Operand::Slot {
+        ss,
+        owned: true,
+        tag: TagInfo::Unknown,
+    }))
+}
+
 /// `a[i]` / `a[i] = v` under a run-time Array + Int guard: the aref/aset
 /// core called directly, with today's cached dynamic send as the other
 /// arm. `None` = the site does not qualify (wrong shape, or the program

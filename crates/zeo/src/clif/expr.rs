@@ -1747,6 +1747,12 @@ fn plain_call(
         Some(recv) if let Some(site) = fx.an.compiler.accessor_sites.get(&id).copied() => {
             super::boxes::explicit_accessor(fx, id, recv, &name, &args, site)
         }
+        Some(recv) if fx.an.compiler.typed_call_sites.contains_key(&id) => {
+            match super::call::typed_direct_send(fx, id, recv, &name, &args)? {
+                Some(fast) => Ok(fast),
+                None => super::call::dynamic_send(fx, id, recv, &name, &args),
+            }
+        }
         Some(recv) => match super::call::indexed_send(fx, id, recv, &name, &args)? {
             Some(fast) => Ok(fast),
             None => super::call::dynamic_send(fx, id, recv, &name, &args),

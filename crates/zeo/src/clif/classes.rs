@@ -935,6 +935,26 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
                 });
                 continue;
             }
+            // The typed direct-call table: a plain compiled body on a
+            // main-box class. Accessor rows (no body) fold elsewhere;
+            // native-backed instances keep dispatch (their bodies read
+            // name-keyed ivars); a boxed class may carry its own patches.
+            if let Some(body) = body_fn
+                && !native_backed
+                && class.box_id == 0
+            {
+                em.typed_methods.insert(
+                    (idx as u32, mname.clone()),
+                    super::module::MethodDecl {
+                        body,
+                        tramp,
+                        arity: p.required.len(),
+                        plain: layout.plain,
+                        kw_direct: layout.kw_direct.clone(),
+                        has_blk,
+                    },
+                );
+            }
             methods.push(ObjMethodSpec {
                 is_own: class.own_methods.contains(&entry.def),
                 super_target_only: false,

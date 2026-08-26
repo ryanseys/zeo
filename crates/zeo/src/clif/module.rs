@@ -157,6 +157,13 @@ pub(crate) struct Emitter {
     /// Compiled methods by Ruby name -- what a receiverless call resolves
     /// against for the direct path.
     pub methods: HashMap<String, MethodDecl>,
+    /// Compiled INSTANCE-method bodies by `(class id, ruby name)` -- what
+    /// a typed direct call resolves against. Materialization emits an
+    /// inherited body per class, so a subclass receiver's copy is its own
+    /// row. Plain main-box user-class bodies only: accessor rows fold
+    /// through `zeo_rt_attr_read`, and builtin reopens, module rows and
+    /// boxed classes keep the dispatch path.
+    pub typed_methods: HashMap<(u32, String), MethodDecl>,
     /// Class-body sites by their INLINE `ClassDef` marker: what a marker
     /// in statement position emits (a hoisted site's marker is absent --
     /// its body already ran in the toplevel prelude).
@@ -367,6 +374,7 @@ impl Emitter {
             rodata_offsets: HashMap::new(),
             imports: HashMap::new(),
             methods: HashMap::new(),
+            typed_methods: HashMap::new(),
             class_bodies: HashMap::new(),
             redef_tramps: HashMap::new(),
             redef_metas: HashMap::new(),

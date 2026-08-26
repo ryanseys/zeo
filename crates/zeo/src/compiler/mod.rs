@@ -438,6 +438,14 @@ pub struct Compiler {
     /// Purely a hint, like `inline_iter_sites`: the runtime entry's own
     /// guard decides per call and its slow arm is the full explicit send.
     pub accessor_sites: FMap<crate::hir::NodeId, AccessorSite>,
+    /// Explicit-receiver call nodes whose receiver is a local statically
+    /// typed `Object(cid)` and whose name resolves in cid's MATERIALIZED
+    /// chain to a plain PUBLIC compiled body -- candidates for the typed
+    /// direct call (`clif::call::typed_direct_send`). Like the accessor
+    /// fold, nomination only: the emitted site re-checks the gate word and
+    /// the receiver's exact class per call, so a wrong static type costs a
+    /// slow path, never a wrong answer. See `analyze::mark_typed_call_sites`.
+    pub typed_call_sites: FMap<crate::hir::NodeId, ClassId>,
     /// A compile-time reopen of `Integer#times` / `Range#each` anywhere in
     /// Integer's/Range's ancestry (`analyze::mark_inline_iter_sites` computes
     /// both): the LITERAL fast paths (`3.times`, `(1..9).each`) must then
@@ -639,6 +647,7 @@ impl Compiler {
             eval_activations: Vec::new(),
             inline_iter_sites: FMap::default(),
             accessor_sites: FMap::default(),
+            typed_call_sites: FMap::default(),
             times_literal_suppressed: false,
             range_each_literal_suppressed: false,
             traces_calls: std::cell::OnceCell::new(),

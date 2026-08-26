@@ -369,6 +369,7 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
     // sites codegen can fuse into native loops.
     mark_inline_iter_sites(compiler, &main_statements, &main_local_types);
     mark_accessor_sites(compiler, &main_statements, &main_local_types);
+    mark_typed_call_sites(compiler, &main_statements, &main_local_types);
     compiler.runtime_eval = narrow_runtime_eval(compiler, &main_statements, &feature_units);
     // After `runtime_eval`: a program that compiles Ruby at run time can name
     // any class at all, and this reads that answer.
@@ -728,6 +729,88 @@ fn mark_accessor_sites(
         scan(compiler, n, main_local_types, &mut sites);
     }
     compiler.accessor_sites = sites;
+}
+
+/// Nominate explicit-receiver calls on statically-classed locals
+/// (`obj.step(a, b)`) for the typed DIRECT call. The receiver is a
+/// `LocalRead` typed `Object(cid)` -- node-keyed, so a block parameter
+/// shadowing the name (invisible to `local_types`) can never mis-type a
+/// site: the nomination names THIS node, and a shadowed body's reads are
+/// different nodes scanned under the same (outer) map, where the guard's
+/// class compare simply misses. The name must resolve in cid's
+/// MATERIALIZED chain (which excludes `runtime_conditional` defs by
+/// design) to a PUBLIC non-accessor scope, and no ancestor may carry a
+/// runtime `undef` of it (`may_be_undefined_at_runtime` -- the documented
+/// direct-call precondition).
+///
+/// No patched/runtime suppression, the accessor precedent: the emitted
+/// site re-checks the whole gate word (any armed gate routes to the
+/// dispatch arm) and the receiver's EXACT class per call, so a wrong
+/// nomination costs size and a slow path, never a wrong answer. The
+/// emitter separately requires a compiled `(cid, name)` body of plain
+/// shape (`Emitter::typed_methods`) and stands down under
+/// `ZEO_DEBUG=no-typed-calls`.
+fn mark_typed_call_sites(
+    compiler: &mut Compiler,
+    main_statements: &[NodeId],
+    main_local_types: &FMap<String, TyKind>,
+) {
+    use crate::compiler::ClassId;
+
+    fn site_of(compiler: &Compiler, cid: ClassId, name: &str) -> Option<ClassId> {
+        let (_owner, scope_id) = compiler.method_in_chain(cid, name)?;
+        let scope = compiler.scope(scope_id);
+        if scope.visibility != crate::hir::Visibility::Public {
+            return None;
+        }
+        // Accessor rows have their own guarded fold (`accessor_sites`).
+        if compiler.accessor_shape(cid, scope).is_some() {
+            return None;
+        }
+        if compiler.may_be_undefined_at_runtime(cid, name) {
+            return None;
+        }
+        Some(cid)
+    }
+
+    fn scan(
+        compiler: &Compiler,
+        id: NodeId,
+        locals: &FMap<String, TyKind>,
+        out: &mut FMap<NodeId, ClassId>,
+    ) {
+        if let HirNode::Call {
+            receiver: Some(recv),
+            name,
+            args,
+            kwargs,
+            block: None,
+            block_arg: None,
+            safe: false,
+        } = &compiler.hir[id]
+            && kwargs.is_empty()
+            && args
+                .iter()
+                .all(|a| matches!(a, crate::hir::ArrayElem::Single(_)))
+            && let HirNode::LocalRead(rn) = &compiler.hir[*recv]
+            && let Some(TyKind::Object(cid)) = locals.get(rn).copied()
+            && let Some(cid) = site_of(compiler, cid, name)
+        {
+            out.insert(id, cid);
+        }
+        compiler.hir[id].for_each_child(&mut |n| scan(compiler, n, locals, out));
+    }
+
+    let mut sites = FMap::default();
+    for scope in &compiler.scopes {
+        for &n in &scope.body {
+            scan(compiler, n, &scope.local_types, &mut sites);
+        }
+    }
+    for &n in main_statements {
+        scan(compiler, n, main_local_types, &mut sites);
+    }
+    compiler.typed_call_sites = sites;
 }
 
 #[cfg(test)]

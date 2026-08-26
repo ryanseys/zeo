@@ -39,6 +39,22 @@ fn clif_snapshot_guarded_accessor() {
     ));
 }
 
+/// A typed direct call: the receiver tag test, the gate-word zero test,
+/// the `zeo_rt_class_of` exact-class compare, the direct body call on the
+/// fast arm and the cached dynamic send on the other -- all over ONE
+/// lowered argv.
+///
+/// A golden cannot see which arm the site took -- both answer the same
+/// while nothing is live. The snapshot pins that the guard ladder is
+/// EMITTED, and only where analyze nominated: `u.step(1)` reads an
+/// UNTYPED receiver (a parameter) and keeps the plain dynamic send.
+#[test]
+fn clif_snapshot_typed_direct_call() {
+    insta::assert_snapshot!(clif_of(
+        "class N\n  def initialize(v)\n    @v = v\n  end\n  def step(a) = @v + a\nend\ndef via(u) = u.step(1)\nn = N.new(1)\nputs n.step(2)\nputs via(n)\n",
+    ));
+}
+
 /// A builtin reopen under its positional flag: the `zeo_reopen_flags` load,
 /// the forward to the row it replaced on one arm and the reopened body on the
 /// other, and the store at the `class Array ... end` marker.
