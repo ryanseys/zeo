@@ -1,36 +1,27 @@
-# An `autoload` whose target is compiled as a UNIT never runs it: the
-# constant read raises where ruby loads the file.
+# An `autoload` written inside a file that is itself compiled as a LOAD-PATH
+# UNIT never runs its target: the constant read raises where ruby loads the
+# file.
 #
-# This is RubyGems blocker 1, reduced from a 55-second compile to this.
-# `require "rubygems"` dies with `uninitialized constant Gem::Requirement`
-# at `specification.rb:136`, and pre-requiring `rubygems/requirement` by
-# hand walks straight past it.
+# THE NARROW REMAINDER of RubyGems blocker 1, which is otherwise FIXED --
+# `require "rubygems"` works, and `tests/an_autoload_target_is_a_unit_only_
+# target.rb` pins the shape that mattered. Two things had to change for that:
+# an autoload target became a UNIT-ONLY target (so a plain splice elsewhere
+# no longer claims its slot), and the emitter learned to gate a read that
+# resolves to no compile-time class.
 #
-# WHAT IS TRUE, measured 2026-08-26 -- and the recorded diagnosis was wrong
-# on two counts, so read this one before following it.
+# WHAT IS STILL BROKEN, measured 2026-08-26. A `$LOAD_PATH.unshift` of a
+# computed directory makes zeo compile that whole directory as UNITS, each
+# with its OWN compiler and its own `autoload_consts` name set. The
+# `autoload` here is seen by demo.rb's unit compile; the read is emitted by
+# the MAIN program's compile, whose set is empty -- so the read is folded to
+# a Class immediate with no touch beside it. The two runtime-lookup arms ask
+# unconditionally now and are fine; the compile-time FOLD cannot, because
+# emitting a touch beside every class-immediate read would tax the hot path.
 #
-#   * The demand IS recorded. `single_unit_demand` gets `thing.rb`, the
-#     dedup does NOT drop it, and a unit is compiled for it. The recorded
-#     claim that a positional splice claims the dedup slot and drops the
-#     demand does not reproduce.
-#   * The autoload TOUCH is what is missing. `emit_autoload_touch` fires
-#     only for a constant the compiler RESOLVED to a class id, and a read
-#     of `Demo::Thing` resolves to nothing here -- so no touch is emitted,
-#     no unit runs, and the runtime lookup raises.
-#
-# The FEATURE SPELLING matters and is why this file uses ruby's own. With a
-# bare `autoload :Thing, "thing"` the target is eagerly spliced by some
-# other require and the constant simply exists, which is why a first
-# reproducer passed and proved nothing. RubyGems writes
-# `File.expand_path("rubygems/requirement", __dir__)`, and so does this.
-#
-# WHERE THE NEXT ATTEMPT SHOULD START. `autoload_consts` really does get
-# `Demo::Thing` -- the collection was traced and it fires with the right
-# name and scope. But `scoped_const_read`, which is where the touch is
-# emitted, is NEVER REACHED for either read below: `Demo::Thing::VALUE`
-# and the bare `Thing` inside `class Spec` both take some earlier
-# constant-path branch. Find that branch first; a touch added to
-# `scoped_const_read` is dead code for this shape.
+# WHERE THE NEXT ATTEMPT SHOULD START. The name set has to be shared across
+# the compiles of one program, or the fold has to know that the class it
+# resolved belongs to a unit that has not run. The second is the narrower
+# question and the compiler already tracks `LoadedFile::is_unit`.
 #
 # Ruby's answer: reading the constant loads the file, whichever spelling
 # named it, and whether or not anything else ever requires it.

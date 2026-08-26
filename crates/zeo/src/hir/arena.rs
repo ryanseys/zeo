@@ -395,14 +395,24 @@ pub struct LoaderState {
     /// known.
     pub single_unit_demand:
         std::collections::BTreeSet<(Option<String>, std::path::PathBuf, String)>,
-    /// Every constant a literal `autoload` names whose target is compiled in
-    /// as a unit, spelled as the FULL path a read resolves to (`Gem::Platform`,
-    /// or a bare `Platform` for a top-level one).
+    /// The LEAF name of every constant a literal `autoload` names whose
+    /// target is compiled in as a unit -- `Platform` for
+    /// `Gem::Platform`.
     ///
     /// Such a constant is in the tables from startup, so a read never misses
     /// and no hook can run the unit. The emitter gates the read itself: see
     /// `zeo_rt_autoload_touch`. Without the gate the row had to load at the
     /// DECLARATION, which ran a target before the statements above it.
+    ///
+    /// The LEAF, not the qualified path, and deliberately. The lexical scope
+    /// an `autoload` was written in is not always recoverable: a unit is
+    /// compiled from a SLICE of its file, so the same declaration is seen
+    /// once as `Gem::Platform` and once as a bare `Platform`, and a
+    /// path-keyed set then missed the read that mattered. The name alone is
+    /// enough to be safe because the runtime decides: `zeo_rt_autoload_touch`
+    /// looks the exact `(owner, name)` pair up and does nothing when no
+    /// autoload is pending for it. So this set only has to be an
+    /// OVER-approximation, and the cost of a spare entry is one relaxed load.
     pub autoload_consts: std::collections::BTreeSet<String>,
     /// The features those constants' targets name -- how `materialize_units`
     /// tells an autoload unit from any other single-file demand.

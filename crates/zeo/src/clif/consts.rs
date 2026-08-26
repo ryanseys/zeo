@@ -106,6 +106,13 @@ fn const_cref_call(
     qualified: &str,
     hook: bool,
 ) -> CResult<Operand> {
+    // A bare `Thing` written inside `module Demo` names `Demo::Thing`, and
+    // that may be an `autoload` target whose unit has not run. The walk
+    // below cannot miss to ask -- a cref hit is what it is looking for --
+    // so every scope it is about to consult gets its touch first.
+    for &scope in chain {
+        emit_named_autoload_touch(fx, crate::compiler::ClassId(scope), name);
+    }
     let bytes: Vec<u8> = chain.iter().flat_map(|c| c.to_le_bytes()).collect();
     let ids_off = fx.em.intern_rodata_aligned(&bytes, 4);
     let ids_ptr = fx.rod(ids_off);
@@ -237,6 +244,23 @@ pub(super) fn scoped_const_read(
     } else {
         format!("{scope}::{name}")
     };
+    // The path named an `autoload` target the compiler could NOT resolve to
+    // a class id -- its class lives in a lazily-compiled unit. The fold
+    // above never ran, so `class_value_of`'s touch never ran either, and
+    // without one here the read reaches the runtime lookup with the unit
+    // still unrun and raises `uninitialized constant`.
+    //
+    // UNCONDITIONAL, and that is the point: the `autoload` may have been
+    // seen by a DIFFERENT compilation of this program (a file reached only
+    // through a run-time `$LOAD_PATH` is compiled as its own unit, with its
+    // own name set), so this compile's set proves nothing. The runtime knows
+    // precisely -- it looks the exact `(owner, name)` pair up -- and the call
+    // is one relaxed load when no autoload is pending anywhere. This arm is a
+    // full run-time constant lookup already.
+    let owner_touch = fx.b.ins().iconst(types::I32, i64::from(scope_cid.0));
+    let (tnptr, tnlen) = super::expr::rodata_name(fx, name);
+    let st = fx.call_status("zeo_rt_autoload_touch", &[owner_touch, tnptr, tnlen]);
+    fx.fallible(st);
     let owner_v = fx.b.ins().iconst(types::I32, i64::from(scope_cid.0));
     let (nptr, nlen) = super::expr::rodata_name(fx, name);
     let (qptr, qlen) = super::expr::rodata_name(fx, &qualified);
@@ -287,6 +311,12 @@ fn runtime_scope_const_read(fx: &mut Fx, id: NodeId, scope: &str, name: &str) ->
     }
     let (nptr, nlen) = super::expr::rodata_name(fx, name);
     let (qptr, qlen) = super::expr::rodata_name(fx, &qualified);
+    // The scope is a VALUE here, so the touch is too. This is the arm an
+    // autoload target compiled as a unit actually lands on: neither the
+    // scope nor the leaf is a compile-time class, so both id-keyed touches
+    // above are unreachable and the read raised with the unit unrun.
+    let st = fx.call_status("zeo_rt_autoload_touch_value", &[sptr, nptr, nlen]);
+    fx.fallible(st);
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
     let status = fx.call_status(
@@ -300,6 +330,28 @@ fn runtime_scope_const_read(fx: &mut Fx, id: NodeId, scope: &str, name: &str) ->
         owned: true,
         tag: TagInfo::Unknown,
     })
+}
+
+/// [`emit_autoload_touch`]'s name-keyed half: the touch for `owner::leaf`
+/// when a literal `autoload` named that path and the compiler resolved it
+/// to no class id at all.
+///
+/// The id-keyed form can only fire for a constant the compiler already
+/// found, which is exactly the case that needs it LEAST -- a compiled-in
+/// class is in the tables from startup. An autoload whose target is
+/// compiled as its own UNIT registers nothing until the unit runs, so the
+/// read has only the written name to go on.
+fn emit_named_autoload_touch(fx: &mut Fx, owner: crate::compiler::ClassId, leaf: &str) {
+    if fx.an.compiler.hir.loader.autoload_consts.is_empty() {
+        return;
+    }
+    if !fx.an.compiler.hir.loader.autoload_consts.contains(leaf) {
+        return;
+    }
+    let owner_v = fx.b.ins().iconst(types::I32, i64::from(owner.0));
+    let (nptr, nlen) = super::expr::rodata_name(fx, leaf);
+    let st = fx.call_status("zeo_rt_autoload_touch", &[owner_v, nptr, nlen]);
+    fx.fallible(st);
 }
 
 /// Runs the `autoload` target `cid`'s constant still owes, before the read
@@ -316,8 +368,14 @@ fn emit_autoload_touch(fx: &mut Fx, cid: crate::compiler::ClassId) {
     let fq = fx.an.compiler.fq_name(cid);
     let parts: Vec<&str> = fq.split("::").collect();
     for i in 1..=parts.len() {
-        let prefix = parts[..i].join("::");
-        if !fx.an.compiler.hir.loader.autoload_consts.contains(&prefix) {
+        if !fx
+            .an
+            .compiler
+            .hir
+            .loader
+            .autoload_consts
+            .contains(parts[i - 1])
+        {
             continue;
         }
         let owner = match i {

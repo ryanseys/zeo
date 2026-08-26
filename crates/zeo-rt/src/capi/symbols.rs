@@ -40,6 +40,7 @@ capi_symbols!(
     objects::zeo_rt_attr_read,
     objects::zeo_rt_attr_write,
     objects::zeo_rt_autoload_touch,
+    objects::zeo_rt_autoload_touch_value,
     dispatch::zeo_rt_bare_super_outside_a_method,
     values::zeo_rt_bignum_from_decimal,
     bind::zeo_rt_bind_block_params,

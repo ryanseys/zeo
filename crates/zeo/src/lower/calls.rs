@@ -1423,6 +1423,31 @@ fn lower_require_call(
                             && hir.loader.optional_require_sites.contains(&key))
                             || hir.loader.conditional_require_sites.contains(&key)
                     });
+                // A KEPT `require_relative` resolves at RUN time against the
+                // calling file, which the frame carries -- and a spliced
+                // file's top-level statement has no frame of its own, so the
+                // frame names the main script and the target resolves beside
+                // the wrong file. The compiler knows the right directory
+                // here, so it writes the absolute spelling in: an absolute
+                // argument makes the run-time resolution a plain `require`,
+                // which finds the unit under the name it registered.
+                if site_kept
+                    && name == "require_relative"
+                    && !feature.starts_with('/')
+                    && let Some(dir) = hir.lowering_dir.clone()
+                {
+                    let abs = crate::parse::absolutize_feature(&dir, &feature);
+                    let arg = hir.push(HirNode::StringLit(vec![crate::hir::StrPart::Lit(abs)]));
+                    return Ok(Some(hir.push(HirNode::Call {
+                        receiver: None,
+                        name: "require_relative".to_string(),
+                        args: vec![crate::hir::ArrayElem::Single(arg)],
+                        kwargs: Vec::new(),
+                        block: None,
+                        block_arg: None,
+                        safe: false,
+                    })));
+                }
                 if !unresolvable && !site_kept && !hir.loader.deferred_requires.contains(&feature) {
                     // FALSE when the loader marked this site as naming a file
                     // it had already spliced -- ruby's answer for a feature

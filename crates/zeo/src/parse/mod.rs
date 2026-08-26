@@ -9,6 +9,7 @@ pub mod gem_compat;
 mod gem_store;
 mod gemspec;
 mod loader;
+pub use loader::absolutize_feature;
 mod lockfile;
 pub(crate) mod syntax_report;
 

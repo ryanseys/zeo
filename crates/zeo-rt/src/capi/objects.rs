@@ -312,6 +312,37 @@ pub unsafe extern "C" fn zeo_rt_autoload_touch(
     }
 }
 
+/// [`zeo_rt_autoload_touch`]'s value-keyed twin: the scope is a VALUE the
+/// program just computed, not a class id the compiler resolved.
+///
+/// A read like `Demo::Thing::VALUE` whose scope is no compile-time class
+/// reaches the runtime with the scope in hand and nothing else, so the
+/// id-keyed form has nothing to be given. A non-class scope is not an
+/// error here -- the read below reports it -- so this quietly does
+/// nothing for one.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_autoload_touch_value(
+    scope: *const RubyValue,
+    name: *const u8,
+    name_len: usize,
+) -> i32 {
+    if !crate::builtins::rmodule::ANY_PENDING_AUTOLOAD.load(std::sync::atomic::Ordering::Relaxed) {
+        return STATUS_OK;
+    }
+    let RubyValue::Class(owner) = (unsafe { &*scope }) else {
+        return STATUS_OK;
+    };
+    let name = unsafe { super::str_slice(name, name_len) };
+
+    match crate::builtins::rmodule::run_pending_autoload(owner.0, name) {
+        Ok(()) => STATUS_OK,
+        Err(sig) => {
+            crate::signal::set_pending(sig);
+            STATUS_SIGNAL
+        }
+    }
+}
+
 /// A global variable read (`$foo`) from box `box_id`'s table. Never-assigned
 /// = nil (Ruby's rule), so this is infallible. The `$!`/`$?` specials read
 /// dedicated runtime slots and have their own entries below.

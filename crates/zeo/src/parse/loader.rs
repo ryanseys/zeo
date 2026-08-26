@@ -219,6 +219,25 @@ type ResolvedRequire = Option<(PathBuf, Option<String>)>;
 /// invalid byte. That is lossless for the compile: prism accepting it is
 /// proof every one of those bytes sat in a comment. The placeholder is a
 /// single byte so every prism span offset still addresses the same character.
+/// `dir` joined with a relative feature, `.`/`..` folded LEXICALLY -- the
+/// spelling a compiled-in unit registers under, and what a kept
+/// `require_relative` is rewritten to so its run-time resolution does not
+/// depend on which frame happens to be innermost.
+pub fn absolutize_feature(dir: &Path, feature: &str) -> String {
+    use std::path::Component;
+    let mut out = std::path::PathBuf::new();
+    for component in dir.join(feature).components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out.display().to_string()
+}
+
 pub fn read_source(path: &Path) -> Result<String, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("reading {}: {e}", path.display()))?;
     let bytes = match String::from_utf8(bytes) {
@@ -1129,7 +1148,7 @@ impl Loader {
             // hoisted differ.rb ahead of the whole module statement.
             let mut autoloads = Vec::new();
             collect_autoloads(&n, &mut autoloads);
-            for Autoload { call, scope } in &autoloads {
+            for Autoload { call, .. } in &autoloads {
                 // Only a target this pass can NAME is registered. A computed
                 // one -- including the one-argument form an `autoload` DSL
                 // defines over `Module#autoload` -- is left to run: its
@@ -1155,10 +1174,23 @@ impl Loader {
                     // run the unit, and it cannot miss to ask -- so record
                     // the path the emitter gates.
                     if let Some(name) = crate::lower::autoload_const_name(call) {
-                        let mut full = scope.clone();
-                        full.push(name);
-                        hir.loader.autoload_consts.insert(full.join("::"));
+                        // The LEAF alone -- see `autoload_consts`'s docs for
+                        // why the lexical scope is not trusted here.
+                        hir.loader.autoload_consts.insert(name);
                         hir.loader.autoload_features.insert(feature.clone());
+                    }
+                    // An autoload target is a UNIT-ONLY target, exactly as a
+                    // guarded require's is: every other site that names the
+                    // file keeps its call and loads the unit, and whichever
+                    // runs first runs the body once. Without this a plain
+                    // splice elsewhere claimed the dedup slot, no unit was
+                    // built, and the constant read that should have run the
+                    // target found nothing to run -- `require "rubygems"`
+                    // died on `Gem::Requirement`, whose file specification.rb
+                    // reaches through a method-body `require_relative` that
+                    // zeo splices at the file tail.
+                    if let Ok(canonical) = path.canonicalize() {
+                        self.unit_only_targets.insert(canonical);
                     }
                     hir.loader.single_unit_demand.insert((
                         package.or_else(|| hir.lowering_package.clone()),
