@@ -973,6 +973,11 @@ fn with_buffered_file<T>(
     recv: &RubyValue,
     f: impl FnOnce(&RIo, &mut std::fs::File, &str) -> Result<T, Signal>,
 ) -> Result<T, Signal> {
+    // The READ funnel, so the mode question is asked once here rather than
+    // remembered at each of its rows. Without it `getc` on a write-only
+    // handle answered "\u0000" and `getbyte` answered 0 -- a made-up byte,
+    // not an error.
+    check_readable(recv)?;
     let Some(io) = as_rio(recv) else {
         return Err(io_error!("not a file"));
     };
@@ -1520,6 +1525,7 @@ fn is_io_object(v: &RubyValue) -> bool {
 /// `#gets`'s value, shared with the rows that drain through it
 /// (`readline`, `readlines`, `each_line`).
 fn gets_value(recv: &RubyValue, args: &[RubyValue]) -> Result<RubyValue, Signal> {
+    check_readable(recv)?;
     let opts = line_opts(args);
     if matches!(stream_of(recv), Some(StdStream::Stdin)) {
         let mut line = String::new();
@@ -2130,6 +2136,7 @@ ruby_class! {
     // `readpartial(maxlen)` / `sysread(maxlen)` -- read up to `maxlen` bytes,
     // blocking for at least one; `EOFError` at EOF (unlike `read(n)`'s nil).
     def "readpartial" | "sysread" cfunc (recv, maxlen, outbuf?, &_blk) {
+        check_readable(recv)?;
         let RubyValue::Int(max) = maxlen else {
             return Err(arg_error!("length must be an Integer"));
         };
@@ -2173,6 +2180,7 @@ ruby_class! {
     // as CRuby leaves it; every blocking row here already parks in `poll(2)` on
     // `EAGAIN`, so an ordinary `#gets` on the same handle still blocks.
     def "read_nonblock" params "len, buf = nil, exception: nil" (recv, maxlen, buffer?, **opts, &_blk) {
+        check_readable(recv)?;
         let raises = nonblock_raises(opts);
         let max = convert::to_index(maxlen)?.max(0) as usize;
         let outbuf = match buffer {
@@ -2230,6 +2238,7 @@ ruby_class! {
     // waits, answering the count it managed. A partial write is the caller's to
     // resume, which is the whole point of the method.
     def "write_nonblock" params "buf, exception: nil" (recv, buffer, **opts, &_blk) {
+        check_writable(recv)?;
         let raises = nonblock_raises(opts);
         let bytes = convert::to_rstr(buffer)?.lock().bytes().to_vec();
         set_fd_nonblock(raw_fd(recv)?, true)?;
@@ -2329,6 +2338,7 @@ ruby_class! {
     // what this row used to raise for every one of them -- so those PEEK one
     // byte instead and park it where the readers already look.
     def "eof?" | "eof" (recv, &_blk) {
+        check_readable(recv)?;
         // stdin can't seek; peek the shared buffered reader instead. `fill_buf`
         // is non-destructive -- an empty buffer means end-of-input.
         if matches!(stream_of(recv), Some(StdStream::Stdin)) {
@@ -2759,6 +2769,7 @@ ruby_class! {
     // `#each_codepoint { |cp| ... }` -- yield each remaining character's codepoint;
     // answers self.
     def "each_codepoint" (recv, &blk) {
+        check_readable(recv)?;
         let p = crate::builtins::block_or_enum!(recv, __args, blk);
         let content = with_file(recv, |f, path| {
             let mut buf = Vec::new();

@@ -1726,6 +1726,7 @@ ruby_class! {
 
     // `#truncate(len)` -- resize the open file to `len` bytes; answers 0.
     def "truncate" (recv, length, &_blk) {
+        crate::builtins::io::check_writable(recv)?;
         let len = crate::builtins::io::offset_of(length)?;
         crate::builtins::io::with_file(recv, |f, path| {
             f.set_len(len.max(0) as u64)
