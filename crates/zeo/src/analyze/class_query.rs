@@ -20,6 +20,29 @@ pub(crate) fn shadows_kernel(compiler: &Compiler, cid: Option<ClassId>, name: &s
     cid.is_some_and(|cid| cid != OBJECT_CLASS && compiler.method_in_chain(cid, name).is_some())
 }
 
+/// Whether the program gives `name` a definition every receiver-less call
+/// sees -- a `def` on `Object`, on `Kernel`, or on a module included into
+/// `Object`.
+///
+/// [`shadows_kernel`] answers the ENCLOSING class's question and says no for
+/// `Object` on purpose. This asks the universal one, which is what a fold
+/// that replaces a Kernel primitive with a direct call has to consult:
+/// `module Kernel; def puts; end; end` made every folded `puts` in the
+/// program keep printing the builtin's output.
+pub(crate) fn overrides_kernel_universal(compiler: &Compiler, name: &str) -> bool {
+    compiler
+        .class(OBJECT_CLASS)
+        .ancestors
+        .iter()
+        .any(|&anc| {
+            compiler
+                .class(anc)
+                .own_methods
+                .iter()
+                .any(|&s| compiler.scope(s).name == name)
+        })
+}
+
 /// The ancestor whose SINGLETON-chain slot holds `defining_class`: the class
 /// itself when a `def self.x` defines the method, or the class that `extend`s
 /// (or singleton-prepends) it when a module does. `None` when the receiver's

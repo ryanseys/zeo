@@ -381,7 +381,8 @@ fn lower_stmt_inner(fx: &mut Fx, stmt: NodeId) -> CResult<()> {
             safe: false,
         } if name == "puts"
             && kwargs.is_empty()
-            && !args.iter().any(|a| matches!(a, ArrayElem::Splat(_))) =>
+            && !args.iter().any(|a| matches!(a, ArrayElem::Splat(_)))
+            && !crate::analyze::class_query::overrides_kernel_universal(&fx.an.compiler, "puts") =>
         {
             let args = args.clone();
             lower_puts(fx, stmt, &args)
