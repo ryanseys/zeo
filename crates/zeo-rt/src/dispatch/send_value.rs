@@ -173,8 +173,8 @@ fn call_refined(
 /// VISIBILITY refusal to either answers "undefined method" where ruby says
 /// "private method". Only a row the program wrote may intercept.
 fn user_method_missing(recv: &RubyValue, mm: Symbol) -> bool {
-    if crate::runtime_meta::is_live() && crate::runtime_meta::object_has_singleton_method(recv, mm)
-    {
+    let live = crate::runtime_meta::is_live();
+    if live && crate::runtime_meta::object_has_singleton_method(recv, mm) {
         return true;
     }
     let Some(owner) = method_owner(recv.class_id(), mm) else {
@@ -188,7 +188,7 @@ fn user_method_missing(recv: &RubyValue, mm: Symbol) -> bool {
     if !zeo_abi::is_core_class(owner) {
         return true;
     }
-    crate::runtime_meta::is_live() && crate::runtime_meta::overlay_has_instance_method(owner, mm)
+    live && crate::runtime_meta::overlay_has_instance_method(owner, mm)
 }
 
 /// A refusal that must still go through the `method_missing` protocol.
@@ -363,12 +363,17 @@ fn send_value_in_reason_inner(
     // self-forwarding, builtin-row cycles) still deepens the native stack --
     // check here as the prologues do.
     crate::stack_guard::stack_check()?;
+    // ONE gates load for the whole walk. Every bit asked below is a monotone
+    // latch, so a snapshot at entry answers exactly what per-site reloads
+    // could -- a flip mid-send was already invisible between two adjacent
+    // loads -- and the uncached walk asked up to a dozen times.
+    let g = crate::runtime_meta::gates();
     // The husk probe: EVERY send to a moved object -- `equal?`, `!`,
     // `__id__`, `class`, all of them -- raises `Ractor::MovedError`. A
     // container husk's class word cannot say so (Str/Array/Hash have none),
     // hence the flags probe; an object husk would resolve through its
     // retagged id anyway, this just makes the raise uniform.
-    if crate::runtime_meta::any_moved() && value_moved(recv) {
+    if crate::runtime_meta::gates_moved(g) && value_moved(recv) {
         return Err(crate::ractor::moved_object_error());
     }
     if let RubyValue::Object(o) = recv {
@@ -397,7 +402,7 @@ fn send_value_in_reason_inner(
     // is closer than anything its class offers, so it is probed first -- and,
     // like every other overlay probe, only once something was defined at
     // runtime, so the ordinary path is untouched.
-    if crate::runtime_meta::is_live()
+    if crate::runtime_meta::gates_live(g)
         && let Some(m) = crate::runtime_meta::value_singleton_method(recv, name)
     {
         // Through the frame pusher, not `call_with_self_and_block` directly:
@@ -405,7 +410,7 @@ fn send_value_in_reason_inner(
         // has no `MethodImpl` wrapper to push one.
         return crate::runtime_meta::call_value_singleton(&m, recv, name, args, block);
     }
-    note_dispatch(name);
+    note_dispatch_gated(g, name);
     // The flat one-probe path below -- almost every send in almost every
     // program -- resolves on the `Symbol` alone, so the text is fetched only
     // where a by-NAME builtin table is actually consulted, never up front.
@@ -421,7 +426,7 @@ fn send_value_in_reason_inner(
         // Retired by an `undef` inside `class << self` -- checked before any
         // table, so an ancestor's still-live `def self.x` cannot answer past
         // it. See `OverlayEntry::class_undefs`.
-        if crate::runtime_meta::is_live() && crate::runtime_meta::class_method_undefined(*cid, name)
+        if crate::runtime_meta::gates_live(g) && crate::runtime_meta::class_method_undefined(*cid, name)
         {
             return Err(raise_method_missing(recv, &name.to_string(), args, reason));
         }
@@ -430,7 +435,7 @@ fn send_value_in_reason_inner(
         // over both the frozen `def self.x` and the builtin `Class#new`/`#name`,
         // matching Ruby's "closest singleton" placement. Runs under the class
         // value itself. Only probed once something is defined at runtime.
-        if crate::runtime_meta::is_live()
+        if crate::runtime_meta::gates_live(g)
             && let Some(p) = crate::runtime_meta::overlay_class_method(*cid, name)
         {
             // The caller's block must ride along: `def M.wrap; yield; end`
@@ -449,7 +454,7 @@ fn send_value_in_reason_inner(
         // singleton chain runs through its parent's, so the module sits ahead
         // of the parent's own `def self.x` -- which is what the flat probe
         // below would otherwise answer with.
-        if crate::runtime_meta::is_live()
+        if crate::runtime_meta::gates_live(g)
             && let Some(p) = crate::runtime_meta::inherited_singleton_prepend(*cid, name)
         {
             return p.call_with_self_and_block(recv, args, block);
@@ -464,7 +469,7 @@ fn send_value_in_reason_inner(
         // Only for a name the receiver does not define ITSELF, and the walk
         // stops at the first ancestor that really defines one, so a nearer
         // `def self.x` still wins -- ruby's placement rule, unchanged.
-        if crate::runtime_meta::is_live()
+        if crate::runtime_meta::gates_live(g)
             && !crate::dispatch::class_method_defined_here(*cid, name)
             && let Some((anc, p)) = crate::runtime_meta::inherited_overlay_class_method(*cid, name)
         {
@@ -479,7 +484,7 @@ fn send_value_in_reason_inner(
         // This probe is FLAT, so the receiver's row is still sitting in it;
         // skipping the position is what lets an ancestor's `def self.x`
         // answer, which is the whole difference from an `undef`.
-        let class_removed_here = crate::runtime_meta::is_live()
+        let class_removed_here = crate::runtime_meta::gates_live(g)
             && crate::runtime_meta::overlay_class_removed(*cid, name);
         if !class_removed_here
             && let Some((f, label)) = REGISTRY.get().and_then(|r| r.flat_class_hit(*cid, name))
@@ -497,7 +502,7 @@ fn send_value_in_reason_inner(
             // the OWNER and then no body at all. Probed first because the
             // overlay REPLACES within one owner, the rule the ancestor walk
             // further down already applies per ancestor.
-            if crate::runtime_meta::is_live()
+            if crate::runtime_meta::gates_live(g)
                 && let Some(p) = crate::runtime_meta::overlay_value_body(owner, name)
             {
                 return crate::runtime_meta::call_value_body(owner, name, &p, recv, args, block);
@@ -555,7 +560,7 @@ fn send_value_in_reason_inner(
         // `String` for `.class` and failed `is_a?(Tagged)`. `runtime_class_new`
         // had already chosen the right constructor for the minted class; this
         // just stops the walk from answering ahead of it.
-        if crate::runtime_meta::is_live()
+        if crate::runtime_meta::gates_live(g)
             && REGISTRY
                 .get()
                 .is_some_and(|r| !r.entries.contains_key(&cid.0))
@@ -626,7 +631,7 @@ fn send_value_in_reason_inner(
         // at run time). The ANCESTOR is the defining class and is pushed as
         // the method frame: an overlay body has no compile-time defining class
         // of its own, so a `super` in it reads the frame.
-        if crate::runtime_meta::is_live()
+        if crate::runtime_meta::gates_live(g)
             && let Some((anc, p)) = crate::runtime_meta::inherited_overlay_class_method(*cid, name)
         {
             return crate::runtime_meta::call_value_body(anc, name, &p, recv, args, block);
@@ -646,7 +651,7 @@ fn send_value_in_reason_inner(
     // (`flat_value_hit`); a per-box patch or live overlay keeps the full
     // walk, whose per-ancestor `(box, name)` probe it needs.
     let cid = recv.class_id();
-    if box_id == 0 && !crate::runtime_meta::is_live() {
+    if box_id == 0 && !crate::runtime_meta::gates_live(g) {
         if let Some(hit) = REGISTRY.get().and_then(|r| r.flat_value_hit(cid, name)) {
             if let Some(hit) = hit {
                 return with_c_frame(hit.frame_label, || hit.f.call(recv, args, block));
@@ -669,7 +674,7 @@ fn send_value_in_reason_inner(
         // `Math`'s module functions reach here too when `Math` is mixed in
         // (`include Math` -> a private `sqrt(x)`), as an ordinary `class_table`
         // hit on its registered instance table -- no special arm needed.
-        let live = crate::runtime_meta::is_live();
+        let live = crate::runtime_meta::gates_live(g);
         let n = name.name_str();
         for &anc in ancestors_of_value(cid) {
             // An `undef` at this position TERMINATES the walk, before any
@@ -757,14 +762,13 @@ fn send_value_in_reason_inner(
 /// Module ancestors past the receiver itself contribute nothing to a
 /// singleton chain and are skipped, as `singleton_walk` skips them.
 pub(super) fn class_defines_user_hook(recv_class: ClassId, name: Symbol) -> bool {
+    let live = crate::runtime_meta::is_live();
     for &anc in ancestors_of_value(recv_class) {
         let entry = registry().entries.get(&anc.0);
         if anc != recv_class && entry.is_some_and(|e| e.is_module) {
             continue;
         }
-        if crate::runtime_meta::is_live()
-            && crate::runtime_meta::overlay_class_method(anc, name).is_some()
-        {
+        if live && crate::runtime_meta::overlay_class_method(anc, name).is_some() {
             return true;
         }
         if entry.is_some_and(|e| e.class_methods.contains_key(&name)) {

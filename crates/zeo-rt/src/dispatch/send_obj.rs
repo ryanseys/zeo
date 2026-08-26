@@ -59,7 +59,11 @@ fn send_in_reason_inner(
     if id == zeo_abi::RACTOR_MOVED_OBJECT_CLASS {
         return Err(crate::ractor::moved_object_error());
     }
-    note_dispatch(name);
+    // ONE gates load for the whole walk -- every bit below is a monotone
+    // latch, so a snapshot at entry answers what per-site reloads could
+    // (the twin in `send_value_in_reason_inner` says why).
+    let g = crate::runtime_meta::gates();
+    note_dispatch_gated(g, name);
     // A definition hook sees the class only as far as it has been built, and
     // that governs DISPATCH as well as reflection: a method written below the
     // `def` the hook is reporting is not installed yet. Resolution therefore
@@ -78,7 +82,7 @@ fn send_in_reason_inner(
     // methods -- probed first (Ruby: a runtime `define_method` REPLACES), but
     // only once anything has been defined at runtime (`is_live`), so the frozen
     // lock-free fast path below is untouched for all existing code.
-    if crate::runtime_meta::is_live()
+    if crate::runtime_meta::gates_live(g)
         && let Some(m) = crate::runtime_meta::resolve_dynamic(recv, id, name)
     {
         return m.call(recv, args, block);
@@ -87,7 +91,7 @@ fn send_in_reason_inner(
     // still defines it, so every walk below would answer -- the tombstone is
     // what stops them, and `method_missing` gets its turn exactly as it does
     // for a name nothing ever defined.
-    if crate::runtime_meta::is_live() {
+    if crate::runtime_meta::gates_live(g) {
         let boxed = RubyValue::Object(recv.clone());
         if crate::runtime_meta::object_method_undefined(&boxed, name) {
             return method_missing_or_raise(recv, id, name, args, block, MissingReason::NoEntry);
@@ -151,7 +155,7 @@ fn send_in_reason_inner(
     // Same flat-vs-walk split as `send_value_in_reason`: box 0 with a
     // dormant overlay takes the one-probe flattened walk; anything else
     // keeps the per-ancestor probes it needs.
-    let flat = if box_id == 0 && !crate::runtime_meta::is_live() {
+    let flat = if box_id == 0 && !crate::runtime_meta::gates_live(g) {
         REGISTRY.get().and_then(|r| r.flat_value_hit(id, name))
     } else {
         None
@@ -183,7 +187,7 @@ fn send_in_reason_inner(
         Some(None) => {}
         None => {
             let n = name.name_str();
-            let live = crate::runtime_meta::is_live();
+            let live = crate::runtime_meta::gates_live(g);
             for &anc in ancestors_of_value(id) {
                 // An `undef_method` at this position TERMINATES the walk,
                 // before this ancestor's own NATIVE table -- the tombstone is

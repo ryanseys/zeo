@@ -122,7 +122,8 @@ pub fn run_initialize(
     // `def initialize`, registered but not promised -- lives ONLY there, and
     // the registry walk below would fall through to `BasicObject#initialize`'s
     // zero-arity reject.
-    if crate::runtime_meta::is_live()
+    let live = crate::runtime_meta::is_live();
+    if live
         && let Some(f) =
             crate::runtime_meta::snapshot_instance_method(class, crate::symbol::wk::initialize())
     {
@@ -136,10 +137,10 @@ pub fn run_initialize(
     // Ruby (`WeakRef`, defined in the vendored gem) was walked straight past
     // into its SUPERCLASS's `initialize`.
     for &anc in ancestors_of_value(class) {
-        if crate::runtime_meta::is_live() && crate::runtime_meta::overlay_is_undefined(anc, init) {
+        if live && crate::runtime_meta::overlay_is_undefined(anc, init) {
             break;
         }
-        if crate::runtime_meta::is_live() && crate::runtime_meta::overlay_is_removed(anc, init) {
+        if live && crate::runtime_meta::overlay_is_removed(anc, init) {
             continue;
         }
         if let Some(f) = registry().lookup(anc, init) {
@@ -155,7 +156,7 @@ pub fn run_initialize(
     // all, so the walk above cannot even reach its ancestors. Its chain lives in
     // the overlay, which is where a caller holding a bare class -- rather than a
     // receiver `send_in` could resolve from -- has to ask.
-    if crate::runtime_meta::is_live()
+    if live
         && let Some(f) =
             crate::runtime_meta::runtime_class_method(class, crate::symbol::wk::initialize())
     {
@@ -194,20 +195,12 @@ thread_local! {
 static ARITY_DEBUG: std::sync::LazyLock<bool> =
     std::sync::LazyLock::new(|| std::env::var_os("ZEO_ARITY_DEBUG").is_some());
 
-/// Record the method being dispatched (for `ZEO_ARITY_DEBUG`). The guard bit
-/// rides in the gate byte the dispatch path already loads
+/// Record the method being dispatched (for `ZEO_ARITY_DEBUG`), for a caller
+/// that already has the gates byte in a register -- every dispatch path loads
+/// the byte once at entry now. The guard bit rides in that byte
 /// (`runtime_meta::gates_arity_debug`, armed once at startup) -- the old
 /// `LazyLock<bool>` was a second hot-path flag word, the exact shape that
 /// once measured 2.6% on dispatch.
-#[inline]
-pub(super) fn note_dispatch(name: Symbol) {
-    note_dispatch_gated(crate::runtime_meta::gates(), name);
-}
-
-/// [`note_dispatch`] for a caller that already has the gates byte in a
-/// register. The two cached send paths load it once at entry to decide the
-/// fast route and then called `note_dispatch`, which loaded it again -- an
-/// atomic re-read per hit on the hottest path in every generated program.
 #[inline]
 pub(super) fn note_dispatch_gated(gates: u16, name: Symbol) {
     if crate::runtime_meta::gates_arity_debug(gates) {
