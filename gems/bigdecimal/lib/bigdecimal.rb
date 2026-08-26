@@ -394,3 +394,18 @@ module BigMath
     y.mult(1, prec)
   end
 end
+
+# `BigDecimal.new` was REMOVED in ruby 2.7 -- `BigDecimal("1.5")` is the only
+# constructor. Undefining it is what makes `BigDecimal.respond_to?(:new)`
+# answer false, which the json gem's `decimal_class:` protocol branches on: it
+# tries `try_convert`, then `new`, and only then the bare Kernel method of the
+# same name. Without this, `JSON.parse(text, decimal_class: BigDecimal)` took
+# the `new` arm and raised.
+#
+# Written `class << BigDecimal` rather than `class << self` inside the class
+# body ON PURPOSE: the two spellings are the same Ruby, and zeo answers
+# `respond_to?` correctly for only one of them -- see
+# `tests/gaps/an_undef_in_a_singleton_body_is_invisible_to_respond_to.rb`.
+class << BigDecimal
+  undef_method :new
+end

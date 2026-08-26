@@ -1,0 +1,102 @@
+truncated "{"	JSON::ParserError: expected object key, got EOF at line 1 column 2
+truncated "}"	JSON::ParserError: unexpected character: '}' at line 1 column 1
+truncated "["	JSON::ParserError: unexpected end of input at line 1 column 2
+truncated "]"	JSON::ParserError: unexpected character: ']' at line 1 column 1
+truncated "\""	JSON::ParserError: unexpected end of input, expected closing " at line 1 column 2
+truncated ","	JSON::ParserError: unexpected character: ',' at line 1 column 1
+truncated ":"	JSON::ParserError: unexpected character: ':' at line 1 column 1
+truncated "{\""	JSON::ParserError: unexpected end of input, expected closing " at line 1 column 3
+truncated "{\"a"	JSON::ParserError: unexpected end of input, expected closing " at line 1 column 4
+truncated "{\"a\""	JSON::ParserError: expected ':' after object key at line 1 column 5
+truncated "{\"a\":"	JSON::ParserError: unexpected end of input at line 1 column 6
+truncated "{\"a\":1"	JSON::ParserError: expected ',' or '}' after object value, got: EOF at line 1 column 7
+truncated "[1"	JSON::ParserError: expected ',' or ']' after array value at line 1 column 3
+truncated "[1,"	JSON::ParserError: unexpected end of input at line 1 column 4
+truncated "[\""	JSON::ParserError: unexpected end of input, expected closing " at line 1 column 3
+truncated "\"\\\\"	JSON::ParserError: unexpected end of input, expected closing " at line 1 column 4
+truncated "\"\\\\u"	JSON::ParserError: unexpected end of input, expected closing " at line 1 column 5
+truncated "\"\\\\u0"	JSON::ParserError: unexpected end of input, expected closing " at line 1 column 6
+truncated "\"\\\\ud8"	JSON::ParserError: unexpected end of input, expected closing " at line 1 column 7
+truncated "-"	JSON::ParserError: invalid number: '-' at line 1 column 1
+truncated "0."	JSON::ParserError: invalid number: '0.' at line 1 column 1
+truncated "1e"	JSON::ParserError: invalid number: '1e' at line 1 column 1
+truncated "1e+"	JSON::ParserError: invalid number: '1e+' at line 1 column 1
+truncated "1E-"	JSON::ParserError: invalid number: '1E-' at line 1 column 1
+truncated "0x"	JSON::ParserError: unexpected token at end of stream 'x' at line 1 column 2
+truncated "tr"	JSON::ParserError: unexpected token 'tr' at line 1 column 1
+truncated "fal"	JSON::ParserError: unexpected token 'fal' at line 1 column 1
+truncated "nul"	JSON::ParserError: unexpected token 'nul' at line 1 column 1
+empty	JSON::ParserError: unexpected end of input at line 1 column 1
+space only	JSON::ParserError: unexpected end of input at line 2 column 3
+comment only	JSON::ParserError: unexpected end of input at line 2 column 1
+block comment only	JSON::ParserError: unexpected end of input at line 1 column 14
+unterminated block comment	JSON::ParserError: unterminated comment, expected closing '*/' at line 1 column 5
+nul byte	JSON::ParserError: unexpected token at end of stream  at line 1 column 4
+bom	JSON::ParserError: unexpected character: '﻿[1]' at line 1 column 1
+huge exponent	Infinity
+huge negative exponent	0.0
+absurd exponent	Infinity
+absurd negative exponent	0.0
+exponent overflows i32	Infinity
+long integer	400
+long fraction	0.1111111111111111
+i64 min	-9223372036854775808
+i64 min minus one	-9223372036854775809
+i64 max plus one	9223372036854775808
+negative zero	0
+negative zero float	-0.0
+leading zero	JSON::ParserError: invalid number: '01]' at line 1 column 2
+leading zero float	JSON::ParserError: invalid number: '01.5]' at line 1 column 2
+bare minus	JSON::ParserError: invalid number: '-]' at line 1 column 2
+bare dot	JSON::ParserError: unexpected character: '.5]' at line 1 column 2
+trailing dot	JSON::ParserError: invalid number: '1.]' at line 1 column 2
+plus sign	JSON::ParserError: unexpected character: '+1]' at line 1 column 2
+two dots	JSON::ParserError: expected ',' or ']' after array value at line 1 column 5
+hex	JSON::ParserError: expected ',' or ']' after array value at line 1 column 3
+infinity word	JSON::ParserError: unexpected token 'Infinity]' at line 1 column 2
+nan word	JSON::ParserError: unexpected token 'NaN]' at line 1 column 2
+negative infinity	JSON::ParserError: invalid number: '-Infinity]' at line 1 column 2
+bad escape	JSON::ParserError: invalid escape character in string: '\q"' at line 1 column 2
+short unicode escape	JSON::ParserError: incomplete unicode character escape sequence at '\u12"' at line 1 column 2
+non-hex unicode escape	JSON::ParserError: incomplete unicode character escape sequence at '\uZZZZ"' at line 1 column 2
+lone high surrogate	JSON::ParserError: incomplete surrogate pair at '\ud800"' at line 1 column 2
+lone low surrogate	"\xED\xB0\x80"
+reversed surrogates	JSON::ParserError: incomplete surrogate pair at '\ud800"' at line 1 column 8
+valid surrogate pair	"😀"
+high surrogate then escape	JSON::ParserError: incomplete surrogate pair at '\ud800\n"' at line 1 column 2
+escaped nul	[0]
+raw control byte	JSON::ParserError: invalid ASCII control character in string: '"' at line 1 column 2
+escaped solidus	"/"
+long string	100000
+deep escapes	10000
+duplicate keys	{"a" => 2}
+non-string key	JSON::ParserError: expected object key, got '1:2}' at line 1 column 2
+missing colon	JSON::ParserError: expected ':' after object key at line 1 column 6
+missing value	JSON::ParserError: unexpected character: '}' at line 1 column 6
+double comma	JSON::ParserError: unexpected character: ',2]' at line 1 column 4
+leading comma	JSON::ParserError: unexpected character: ',1]' at line 1 column 2
+trailing comma off	JSON::ParserError: unexpected character: ']' at line 1 column 4
+trailing comma on	[1]
+object trailing comma on	{"a" => 1}
+only a comma on	JSON::ParserError: unexpected character: ',]' at line 1 column 2
+mismatched close	JSON::ParserError: expected ',' or ']' after array value at line 1 column 3
+extra close	JSON::ParserError: unexpected token at end of stream ']' at line 1 column 4
+two documents	JSON::ParserError: unexpected token at end of stream '[2]' at line 1 column 4
+empty containers	[[], {}, [{}]]
+deep but legal	0
+one past the default	[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]
+max_nesting 0	Array
+max_nesting nil	Array
+max_nesting negative	JSON::NestingError: nesting of 1 is too deep
+symbolize deep	{a: {b: 1}}
+freeze deep	[true, true, true, true]
+object_class refusing	NoMethodError: undefined method 'new' for class Integer
+array_class refusing	NoMethodError: undefined method 'new' for class Integer
+decimal_class refusing	[nil]
+invalid utf-8	["\xFF"]
+truncated utf-8	["\xE3\x81"]
+bare true	true
+bare null	nil
+bare number	42
+bare string	"x"
+bare word	JSON::ParserError: unexpected token 'nope' at line 1 column 1
