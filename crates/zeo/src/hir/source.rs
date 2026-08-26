@@ -65,8 +65,9 @@ pub struct SourceFile {
     /// What to add to a line counted from this file's own start. Zero for
     /// every file on disk; a run-time `eval` snippet numbers its first
     /// line from the `line` argument CRuby gives it, and every span,
-    /// frame and `__LINE__` in it must agree.
-    line_offset: u32,
+    /// frame and `__LINE__` in it must agree. Signed -- see
+    /// [`crate::CompileOptions::line_offset`].
+    line_offset: i32,
 }
 
 impl SourceFile {
@@ -75,7 +76,11 @@ impl SourceFile {
     /// scan produced (a start `s = i + 1` satisfies `s <= byte` iff the
     /// newline at `i` sits strictly before `byte`).
     pub fn line_at(&self, byte: u32) -> u32 {
-        self.line_offset + self.line_starts.partition_point(|&s| s <= byte) as u32
+        let counted = self.line_starts.partition_point(|&s| s <= byte) as i64;
+        // A line at or below zero is ruby's own "no line number" frame:
+        // `eval(src, b, "f.rb", 0)` renders `f.rb:in '<main>'` for the
+        // first line, and zero is already that marker downstream.
+        (counted + i64::from(self.line_offset)).max(0) as u32
     }
 }
 
@@ -124,7 +129,7 @@ impl Hir {
         &mut self,
         name: impl Into<String>,
         source: impl Into<std::sync::Arc<str>>,
-        line_offset: u32,
+        line_offset: i32,
     ) -> FileId {
         let source = source.into();
         let frozen_string_literal = magic_frozen_string_literal(&source);

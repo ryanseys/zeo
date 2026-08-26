@@ -114,7 +114,11 @@ pub struct CompileOptions {
     /// What the source's FIRST line is numbered. Zero for a file on disk;
     /// a run-time `eval` given a `line` argument numbers from it, and
     /// every span, backtrace row and `__LINE__` follows.
-    pub line_offset: u32,
+    ///
+    /// SIGNED, because ruby allows a zero or negative `line`: ERB passes
+    /// `0` for a source whose first line is its own `#coding` preamble, so
+    /// the template's line 1 must number 1 and the preamble line 0.
+    pub line_offset: i32,
     /// What this compile is FOR -- see [`CompileMode`].
     pub mode: CompileMode,
     /// Ordered `-I` search roots for plain `require "feature"`.

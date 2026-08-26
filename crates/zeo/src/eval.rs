@@ -197,7 +197,7 @@ fn build(req: &EvalRequest<'_>, scope_names: &[String]) -> Result<Compiled, Refu
     // the line it gave, so the snippet is lowered under both.
     let opts = crate::CompileOptions {
         file_name: Some(std::path::PathBuf::from(req.file)),
-        line_offset: req.line.saturating_sub(1),
+        line_offset: req.line as i32 - 1,
         mode: crate::CompileMode::Eval {
             cref: cref.is_some(),
         },

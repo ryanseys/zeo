@@ -418,7 +418,7 @@ pub(super) fn lower_main_file(
                 source,
                 &result,
                 &main_name,
-                line_offset as i32 + 1,
+                line_offset + 1,
                 &ignore,
             ),
         ));

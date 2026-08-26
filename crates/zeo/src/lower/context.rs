@@ -35,7 +35,7 @@ thread_local! {
     /// numbered (0 for a file that starts at 1). Only a run-time `eval`
     /// snippet carries an offset -- CRuby numbers one from the `line`
     /// argument, and `__LINE__` has to answer that.
-    static SOURCE_FILE: RefCell<Vec<(PathBuf, u32)>> = const { RefCell::new(Vec::new()) };
+    static SOURCE_FILE: RefCell<Vec<(PathBuf, i32)>> = const { RefCell::new(Vec::new()) };
 }
 
 /// The box bound to local `name` in the file currently being lowered, if
@@ -53,7 +53,7 @@ pub fn current_source_file() -> Option<PathBuf> {
 
 /// What to add to a line counted from the current file's own start --
 /// see [`SOURCE_FILE`].
-pub fn current_line_offset() -> u32 {
+pub fn current_line_offset() -> i32 {
     SOURCE_FILE.with(|f| f.borrow().last().map_or(0, |(_, o)| *o))
 }
 
@@ -61,7 +61,7 @@ pub fn current_line_offset() -> u32 {
 /// Same RAII shape as `BindingsFrame`.
 pub struct SourceFileFrame;
 impl SourceFileFrame {
-    pub fn push(path: Option<&Path>, line_offset: u32) -> Option<SourceFileFrame> {
+    pub fn push(path: Option<&Path>, line_offset: i32) -> Option<SourceFileFrame> {
         let path = path?;
         SOURCE_FILE.with(|f| f.borrow_mut().push((path.to_path_buf(), line_offset)));
         Some(SourceFileFrame)
