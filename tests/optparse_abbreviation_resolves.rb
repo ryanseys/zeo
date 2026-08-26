@@ -1,8 +1,9 @@
 # OptionParser resolves a unique long-option PREFIX (`--verb` finds
 # `--verbose`) and raises AmbiguousOption when two candidates share it.
-# zeo raises InvalidOption for both -- and optparse is vendored Ruby, so
-# zeo is mis-running the gem's own `complete` machinery. (Found by the
-# 2026-08-24 probe sweep.)
+#
+# Both rows once answered InvalidOption, because optparse collects its
+# candidates through `method(:each).to_proc` and that proc dropped its
+# block -- see a_method_to_proc_carries_its_block.rb for the primitive.
 require "optparse"
 got = nil
 OptionParser.new { |o| o.on("--verbose") { got = :v } }.parse(["--verb"])

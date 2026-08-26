@@ -534,8 +534,12 @@ ruby_class! {
         let (target, name) = (m.recv.clone(), m.name);
         let arity = crate::method_meta::arity(m.meta.as_ref(), Some(&m.recv), m.home, m.kind, m.name).unwrap_or(-1) as i32;
         let b = crate::rproc::ProcBuilder::from_rust(
-            move |_self: &RubyValue, args: &[RubyValue], _block| {
-                crate::dispatch::send_value(&target, name, args, None)
+            // The block travels with the call: `m.to_proc.call { .. }` and
+            // `f(&method(:each))` both reach the method WITH their block, so a
+            // block-taking method runs its block instead of answering an
+            // Enumerator.
+            move |_self: &RubyValue, args: &[RubyValue], block| {
+                crate::dispatch::send_value(&target, name, args, block)
             },
             RubyValue::Nil,
             arity,

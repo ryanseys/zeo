@@ -290,22 +290,29 @@ fn curried(target: crate::RProc, collected: Vec<RubyValue>, want: usize) -> Ruby
     // A curried proc keeps the target's lambda-ness (`proc{}.curry.lambda?` is
     // false, `lambda{}.curry.lambda?` is true -- oracle-verified).
     let is_lambda = target.is_lambda();
-    RubyValue::Proc(crate::RProc::with_meta(
-        move |args: &[RubyValue]| {
-            let mut have = collected.clone();
-            have.extend(args.iter().cloned());
-            if have.len() >= want {
-                return target.call(&have);
-            }
-            Ok(curried(target.clone(), have, want))
-        },
-        // Every curry STEP reports var-args arity, not the count still
-        // outstanding: CRuby builds each one with `rb_proc_new` over a C
-        // function taking `*args` (`make_curry_proc`), so `.curry.arity`
-        // and `.curry[1].arity` are both -1 -- oracle-verified.
-        -1,
-        is_lambda,
-    ))
+    // Built block-aware rather than through `RProc::with_meta` (which is this
+    // same call with the block discarded), so a block given to the step that
+    // completes the application reaches the target.
+    RubyValue::Proc(
+        crate::rproc::ProcBuilder::from_rust(
+            move |_self: &RubyValue, args: &[RubyValue], block| {
+                let mut have = collected.clone();
+                have.extend(args.iter().cloned());
+                if have.len() >= want {
+                    return target.call_with_block(&have, block);
+                }
+                Ok(curried(target.clone(), have, want))
+            },
+            RubyValue::Nil,
+            // Every curry STEP reports var-args arity, not the count still
+            // outstanding: CRuby builds each one with `rb_proc_new` over a C
+            // function taking `*args` (`make_curry_proc`), so `.curry.arity`
+            // and `.curry[1].arity` are both -1 -- oracle-verified.
+            -1,
+            is_lambda,
+        )
+        .build(),
+    )
 }
 
 #[cfg(test)]
