@@ -470,7 +470,19 @@ fn check_reopen_compatibility(
             //
             // A genuine `class Sub < A` then `class Sub < B` errors on
             // `explicit_superclass` before either.
-            if compiler.class(cid).explicit_superclass || compiler.class(cid).bare_definition {
+            // A bare definition does NOT conflict when the declaration
+            // carrying the superclass is inside a UNIT. Which of the two runs
+            // first is a runtime fact the compiler cannot know -- the same
+            // reason a bare class in a unit does not fix the superclass (see
+            // `bare_definition`'s own `!unit_walk`) -- so the declaration that
+            // NAMES a parent is the real one and establishes the link.
+            // bundler is the case: its `module Gem; class StubSpecification`
+            // reopen registers bare, and rubygems' own
+            // `class Gem::StubSpecification < Gem::BasicSpecification` arrives
+            // from a unit, which read as a mismatch and killed
+            // `require "bundler"`.
+            let bare_conflict = compiler.class(cid).bare_definition && !compiler.unit_walk;
+            if compiler.class(cid).explicit_superclass || bare_conflict {
                 return Err(superclass_mismatch(compiler, def_node, name));
             }
             // ... and establishing one that already descends from THIS
