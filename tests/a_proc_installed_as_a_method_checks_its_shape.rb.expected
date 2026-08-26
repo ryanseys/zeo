@@ -1,0 +1,23 @@
+ArgumentError: wrong number of arguments (given 1, expected 2)
+[1, 2]
+ArgumentError: wrong number of arguments (given 3, expected 2)
+[1, :d]
+[1, 2]
+ArgumentError: wrong number of arguments (given 0, expected 1..2)
+[1, []]
+[1, [2, 3]]
+ArgumentError: wrong number of arguments (given 0, expected 1+)
+ArgumentError: wrong number of arguments (given 1, expected 2)
+ArgumentError: unknown keyword: :b
+ArgumentError: unknown keyword: :z
+ArgumentError: unknown keyword: :q
+1
+ArgumentError: missing keyword: :a
+[1, {b: 2}]
+[{k: 1}]
+[1, {k: 2}]
+{k: 1}
+ArgumentError: wrong number of arguments (given 1, expected 0; required keyword: a)
+"x"
+["1", "2"]
+[3]

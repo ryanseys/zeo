@@ -17,6 +17,7 @@ use super::*;
 /// `defining`. See [`send_super_dynamic`].
 pub fn dynamic_from_proc(defining: ClassId, name: Symbol, body: RProc) -> MethodImpl {
     MethodImpl::Dynamic(Arc::new(move |recv: &RObj, args: &[RubyValue], block| {
+        check_method_call_shape(&body, name, args)?;
         let self_val = RubyValue::Object(recv.clone());
         push_method_frame(defining, name);
         // The body was lifted to a top-level method before being installed
@@ -31,6 +32,112 @@ pub fn dynamic_from_proc(defining: ClassId, name: Symbol, body: RProc) -> Method
         pop_method_frame();
         out
     }))
+}
+
+/// METHOD arity, applied to a body that is physically a Proc.
+///
+/// `define_method` hardens proc semantics: the installed method arity-checks
+/// like a `def`, and an undeclared keyword is an error. The block binder
+/// underneath is lenient on both counts -- it pads missing positionals with
+/// nil and drops an unknown keyword -- so the shape is checked HERE, before
+/// the body runs.
+///
+/// The descriptor stores parameter kinds canonically, LAMBDA-style (the
+/// proc-style demotion happens only at the reflection site), so `{ |a, b| }`
+/// reads as two required parameters and produces exactly
+/// `wrong number of arguments (given 1, expected 2)`.
+///
+/// A runtime-INTERNAL proc -- an Enumerator shuttle, `Symbol#to_proc` --
+/// declares no parameters and takes var-args; it is skipped, because it has
+/// no Ruby-level shape to check against.
+fn check_method_call_shape(body: &RProc, name: Symbol, args: &[RubyValue]) -> Result<(), Signal> {
+    // A body with no Ruby SOURCE was built by the runtime -- an accessor
+    // installed by `attr_accessor`, an Enumerator shuttle, `Symbol#to_proc`
+    // -- and has no Ruby-level shape to check against. Its `parameters()`
+    // is empty for the same reason, so checking it reported an arity error
+    // for every `obj.tag = x` a singleton accessor served.
+    let params = body.parameters();
+    if body.location().is_none() {
+        return Ok(());
+    }
+
+    let (mut req, mut opt, mut rest) = (0usize, 0usize, false);
+    let (mut keys, mut keyrest) = (Vec::new(), false);
+    for pm in params {
+        match pm.kind {
+            "req" => req += 1,
+            "opt" => opt += 1,
+            "rest" => rest = true,
+            "keyreq" | "key" => keys.push(pm.name.unwrap_or_default()),
+            "keyrest" => keyrest = true,
+            _ => {}
+        }
+    }
+    // A trailing kw-marked Hash is only KEYWORDS when the callee declares
+    // some. `def f(*a); end; f(k: 1)` puts the hash in `a` -- which is also
+    // exactly how a `ruby2_keywords` splat forwards one, so treating it as
+    // keywords made every such forward an unknown-keyword error.
+    //
+    // Only a MARKED hash counts even then: the block binder's "any trailing
+    // Hash" rule is the one NOT to copy, since it would peel a genuine
+    // positional Hash and then report the wrong arity for it.
+    let accepts_kw = !keys.is_empty() || keyrest;
+    let (positional, kw) = match args.split_last() {
+        Some((RubyValue::Hash(h), head)) if accepts_kw && crate::collections::hash_is_kwargs(h) => {
+            (head, Some(h.clone()))
+        }
+        _ => (args, None),
+    };
+    let given = positional.len();
+    let over = !rest && given > req + opt;
+    if given < req || over {
+        let max = (!rest).then_some(req + opt);
+        let err = crate::builtins::arity_err(given, req, max);
+        // A callee with REQUIRED keywords names them, so a positional Hash
+        // handed to `def kw(a:)` says what it was missing rather than only
+        // that the count was wrong.
+        let required: Vec<&str> = params
+            .iter()
+            .filter(|pm| pm.kind == "keyreq")
+            .filter_map(|pm| pm.name)
+            .collect();
+        if required.is_empty() {
+            return Err(err);
+        }
+        let label = if required.len() == 1 { "keyword" } else { "keywords" };
+        let max = match max {
+            Some(hi) if hi == req => format!("{req}"),
+            Some(hi) => format!("{req}..{hi}"),
+            None => format!("{req}+"),
+        };
+        return Err(crate::builtins::arg_error!(
+            "wrong number of arguments (given {given}, expected {max}; required {label}: {})",
+            required.join(", ")
+        ));
+    }
+    if let Some(h) = kw
+        && !keyrest
+    {
+        let unknown: Vec<String> = h
+            .lock()
+            .values()
+            .filter_map(|(k, _)| match k {
+                RubyValue::Symbol(s) if !keys.contains(&s.name_str()) => {
+                    Some(format!(":{}", s.name_str()))
+                }
+                _ => None,
+            })
+            .collect();
+        if !unknown.is_empty() {
+            let label = if unknown.len() == 1 { "keyword" } else { "keywords" };
+            let _ = name;
+            return Err(crate::builtins::arg_error!(
+                "unknown {label}: {}",
+                unknown.join(", ")
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// `Owner#name` for a runtime-installed body, or `None` to keep the label the
