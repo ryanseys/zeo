@@ -338,6 +338,11 @@ pub const DIGEST_MD5_CLASS: ClassId = ClassId(51);
 pub const DIGEST_SHA1_CLASS: ClassId = ClassId(52);
 pub const DIGEST_SHA256_CLASS: ClassId = ClassId(53);
 pub const DIGEST_SHA512_CLASS: ClassId = ClassId(54);
+/// `Digest::SHA384`, and `Digest::SHA2` -- the BIT-LENGTH-parameterized
+/// class, which is a real class of its own rather than an alias for one of
+/// the fixed-width rows.
+pub const DIGEST_SHA384_CLASS: ClassId = ClassId(179);
+pub const DIGEST_SHA2_CLASS: ClassId = ClassId(180);
 /// `json`: the `JSON` module (parser/generator). Scaffolded (see docs/EXTENSIONS.md).
 pub const JSON_MODULE: ClassId = ClassId(55);
 /// `date`: `Date`/`DateTime`. Scaffolded.

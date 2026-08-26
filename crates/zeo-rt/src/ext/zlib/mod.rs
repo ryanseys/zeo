@@ -155,7 +155,7 @@ ruby_module! {
     // `Zlib.deflate(str, level = DEFAULT_COMPRESSION)` -- zlib-format
     // compressed bytes (ASCII-8BIT).
     def self."deflate" cfunc (_recv, string, level?) {
-        codec::one_shot_deflate(&bytes_arg(Some(string))?, level_of(level), codec::Wrap::Zlib)
+        codec::one_shot_deflate(&bytes_arg(Some(string))?, level_of(level)?, codec::Wrap::Zlib)
     }
     // `Zlib.inflate(str)` -- decompress a zlib stream.
     def self."inflate" (_recv, string) {
@@ -163,8 +163,30 @@ ruby_module! {
     }
     // `Zlib.gzip(str, level: nil, strategy: nil)` -- a whole gzip member.
     def self."gzip" cfunc (_recv, string, **opts) {
-        let level = level_of(kw(&opts.cloned(), "level").as_ref());
+        let level = level_of(kw(&opts.cloned(), "level").as_ref())?;
         gzip::gzip_string(&bytes_arg(Some(string))?, level)
+    }
+    // `Zlib.zlib_version` / `Zlib::VERSION` -- the format version this
+    // implements. zeo compresses through flate2's miniz backend rather than
+    // zlib itself, so the string names what it implements, which is what a
+    // caller comparing against `"1.2"` is asking about.
+    def self."zlib_version" (_recv) {
+        Ok(RubyValue::Str(crate::string_new(ZLIB_VERSION.to_string())))
+    }
+    // `Zlib.crc32_combine(crc1, crc2, len2)` -- the CRC of the two inputs
+    // concatenated, from the two CRCs and the SECOND length, without
+    // re-reading either.
+    def self."crc32_combine" (_recv, crc1, crc2, len2) {
+        let a = crate::builtins::convert::to_index(crc1)? as u32;
+        let b = crate::builtins::convert::to_index(crc2)? as u32;
+        let n = crate::builtins::convert::to_index(len2)?.max(0) as u64;
+        Ok(RubyValue::Int(crc32_combine(a, b, n) as i64))
+    }
+    def self."adler32_combine" (_recv, a1, a2, len2) {
+        let a = crate::builtins::convert::to_index(a1)? as u32;
+        let b = crate::builtins::convert::to_index(a2)? as u32;
+        let n = crate::builtins::convert::to_index(len2)?.max(0) as u64;
+        Ok(RubyValue::Int(adler32_combine(a, b, n) as i64))
     }
     // `Zlib.gunzip(str)` -- decompress a gzip member, footer checked.
     def self."gunzip" (_recv, string) {
@@ -174,12 +196,114 @@ ruby_module! {
 
 /// A compression level from Ruby's optional argument: 0..9, or `nil`/-1
 /// (`DEFAULT_COMPRESSION`) for the library default.
-pub(super) fn level_of(v: Option<&RubyValue>) -> flate2::Compression {
+pub(super) fn level_of(v: Option<&RubyValue>) -> Result<flate2::Compression, crate::Signal> {
     match v {
-        Some(RubyValue::Int(n)) if (0..=9).contains(n) => flate2::Compression::new(*n as u32),
-        Some(RubyValue::Int(n)) if *n > 9 => flate2::Compression::best(),
-        _ => flate2::Compression::default(),
+        Some(RubyValue::Int(n)) if (0..=9).contains(n) => Ok(flate2::Compression::new(*n as u32)),
+        // -1 IS the default; anything else out of range is refused BEFORE
+        // anything is compressed. Clamping to `best()` compressed happily at
+        // a level the caller never asked for.
+        Some(RubyValue::Int(-1)) | None | Some(RubyValue::Nil) => {
+            Ok(flate2::Compression::default())
+        }
+        Some(RubyValue::Int(_)) => Err(crate::dispatch::raise_error(
+            "Zlib::StreamError",
+            "stream error".to_string(),
+        )),
+        _ => Ok(flate2::Compression::default()),
     }
+}
+
+/// `Zlib.zlib_version` / `Zlib::VERSION` -- the version string CRuby reports
+/// for the library it links. zeo compresses through flate2's miniz backend
+/// rather than zlib itself, so this names the format version it implements,
+/// which is what a caller comparing against `"1.2"` is asking about.
+pub(super) const ZLIB_VERSION: &str = "1.3.1";
+
+/// `Zlib.adler32_combine`, zlib's own algorithm: Adler-32 is two rolling
+/// sums, so combining is arithmetic on them rather than a matrix walk.
+pub(super) fn adler32_combine(adler1: u32, adler2: u32, len2: u64) -> u32 {
+    const BASE: u64 = 65521;
+    let rem = len2 % BASE;
+    let sum1 = (adler1 & 0xffff) as u64;
+    let mut sum2 = rem * sum1 % BASE;
+    let mut s1 = sum1 + (adler2 & 0xffff) as u64 + BASE - 1;
+    sum2 += ((adler1 >> 16) & 0xffff) as u64
+        + ((adler2 >> 16) & 0xffff) as u64
+        + BASE
+        - rem;
+    if s1 >= BASE {
+        s1 -= BASE;
+    }
+    if s1 >= BASE {
+        s1 -= BASE;
+    }
+    if sum2 >= BASE << 1 {
+        sum2 -= BASE << 1;
+    }
+    if sum2 >= BASE {
+        sum2 -= BASE;
+    }
+    (s1 | (sum2 << 16)) as u32
+}
+
+/// `Zlib.crc32_combine(crc1, crc2, len2)` -- the CRC of the two inputs
+/// concatenated, computed from the two CRCs and the SECOND length without
+/// re-reading either. zlib's own `crc32_combine`, ported.
+pub(super) fn crc32_combine(crc1: u32, crc2: u32, len2: u64) -> u32 {
+    // GF(2) matrix operations over the CRC polynomial, which is what makes
+    // combining possible at all.
+    fn times(mat: &[u32; 32], vec: u32) -> u32 {
+        let mut sum = 0u32;
+        let mut vec = vec;
+        let mut i = 0;
+        while vec != 0 {
+            if vec & 1 != 0 {
+                sum ^= mat[i];
+            }
+            vec >>= 1;
+            i += 1;
+        }
+        sum
+    }
+    fn square(square: &mut [u32; 32], mat: &[u32; 32]) {
+        for n in 0..32 {
+            square[n] = times(mat, mat[n]);
+        }
+    }
+    if len2 == 0 {
+        return crc1;
+    }
+    let mut even = [0u32; 32];
+    let mut odd = [0u32; 32];
+    odd[0] = 0xedb8_8320;
+    let mut row = 1u32;
+    for n in 1..32 {
+        odd[n] = row;
+        row <<= 1;
+    }
+    square(&mut even, &odd);
+    square(&mut odd, &even);
+    let mut crc1 = crc1;
+    let mut len2 = len2;
+    loop {
+        square(&mut even, &odd);
+        if len2 & 1 != 0 {
+            crc1 = times(&even, crc1);
+        }
+        len2 >>= 1;
+        if len2 == 0 {
+            break;
+        }
+        square(&mut odd, &even);
+        if len2 & 1 != 0 {
+            crc1 = times(&odd, crc1);
+        }
+        len2 >>= 1;
+        if len2 == 0 {
+            break;
+        }
+    }
+    crc1 ^ crc2
 }
 
 /// One keyword out of a call's trailing Hash. An explicit `nil` reads as

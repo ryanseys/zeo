@@ -19,6 +19,10 @@ pub struct RSet {
     /// `hash_keys` recovers the original element values in insertion order.
     hash: RHash,
     frozen: AtomicBool,
+    /// This set's class -- `Set` unless a SUBCLASS made it. A binary
+    /// operation answers the receiver's class, so `MySet[1] | Set[2]` is a
+    /// `MySet`; a hardcoded `SET_CLASS` lost the subclass on every one.
+    class: std::sync::atomic::AtomicU32,
 }
 
 impl RSet {
@@ -58,7 +62,7 @@ impl RSet {
 
 impl RubyObject for RSet {
     fn class_id(&self) -> crate::ClassId {
-        SET_CLASS
+        crate::ClassId(self.class.load(std::sync::atomic::Ordering::Relaxed))
     }
     fn as_any(&self) -> &dyn std::any::Any {
         self
@@ -76,9 +80,11 @@ impl RubyObject for RSet {
         Vec::new()
     }
     fn dup_object(&self, copy_frozen: bool) -> RObj {
+        // A copy keeps the ORIGINAL's class: `MySet[1].dup` is a `MySet`.
         let dup = RSet {
             hash: crate::hash_new(vec![]),
             frozen: AtomicBool::new(copy_frozen),
+            class: std::sync::atomic::AtomicU32::new(self.class_id().0),
         };
         for e in self.elements() {
             dup.insert(e);
@@ -87,11 +93,24 @@ impl RubyObject for RSet {
     }
 }
 
+/// An empty set wearing the class the CONSTRUCTOR was called on -- `Set` for
+/// `Set.new`, the subclass for `MySet.new`.
+fn tagged_empty(recv: &RubyValue) -> RubyValue {
+    let out = empty_set();
+    if let (RubyValue::Object(o), RubyValue::Class(cid)) = (&out, recv)
+        && let Some(set) = o.as_any().downcast_ref::<RSet>()
+    {
+        set.class.store(cid.0, std::sync::atomic::Ordering::Relaxed);
+    }
+    out
+}
+
 /// A fresh empty Set value.
 fn empty_set() -> RubyValue {
     RubyValue::Object(Arc::new(RSet {
         hash: crate::hash_new(vec![]),
         frozen: AtomicBool::new(false),
+        class: std::sync::atomic::AtomicU32::new(SET_CLASS.0),
     }))
 }
 
@@ -106,10 +125,27 @@ pub(crate) fn backing_hash(recv: &RubyValue) -> Option<crate::RHash> {
 }
 
 /// A Set value seeded with `elements` (deduplicated by the insert path).
+/// [`set_from`] wearing the RECEIVER's class -- what `|`, `&`, `-`, `^`,
+/// `flatten` and `dup` answer for a Set SUBCLASS.
+///
+/// `select`/`reject`/`map` do NOT: probed, ruby answers a plain Array for
+/// those, because they come from Enumerable rather than from Set.
+fn set_like(recv: &RubyValue, elements: impl IntoIterator<Item = RubyValue>) -> RubyValue {
+    let out = set_from(elements);
+    if let (RubyValue::Object(o), RubyValue::Object(r)) = (&out, recv)
+        && let Some(set) = o.as_any().downcast_ref::<RSet>()
+    {
+        set.class
+            .store(r.class_id().0, std::sync::atomic::Ordering::Relaxed);
+    }
+    out
+}
+
 pub(crate) fn set_from(elements: impl IntoIterator<Item = RubyValue>) -> RubyValue {
     let s = RSet {
         hash: crate::hash_new(vec![]),
         frozen: AtomicBool::new(false),
+        class: std::sync::atomic::AtomicU32::new(SET_CLASS.0),
     };
     for e in elements {
         s.insert(e);
@@ -156,7 +192,7 @@ fn check_frozen(recv: &RubyValue) -> Result<(), Signal> {
     if set_of(recv).is_frozen() {
         return Err(crate::dispatch::raise_error_details(
             "FrozenError",
-            "can't modify frozen Set".to_string(),
+            format!("can't modify frozen Set: {}", recv.inspect_string()),
             &[("receiver", recv.clone())],
         ));
     }
@@ -288,15 +324,23 @@ ruby_class! {
     // is a core class in ruby 4, so `class Set; def initialize; @a = []; end`
     // is an ordinary reopen, and building the members inline skipped the
     // user's override entirely (its `add` then found `@a` nil).
-    def self."new" allocs (_recv, arg?, &block) {
-        let out = empty_set();
+    // Both constructors wear the RECEIVER's class, so `MySet.new` and
+    // `MySet[1]` answer a `MySet`. Building a plain `Set` and handing it back
+    // lost the subclass at CONSTRUCTION -- which is where it was lost, not at
+    // the binary operations that then carried the wrong class forward.
+    def self."new" allocs (recv, arg?, &block) {
+        let out = tagged_empty(recv);
         let args: Vec<RubyValue> = arg.into_iter().cloned().collect();
         crate::dispatch::send_value(&out, crate::Symbol::intern("initialize"), &args, block)?;
         Ok(out)
     }
     // `Set[a, b, c]` -- every argument is a member (deduplicated).
-    def self."[]" allocs (_recv, *args, &_block) {
-        Ok(set_from(args.iter().cloned()))
+    def self."[]" allocs (recv, *args, &_block) {
+        let out = tagged_empty(recv);
+        for e in args {
+            set_of(&out).insert(e.clone());
+        }
+        Ok(out)
     }
 
     // A Set IS its backing Hash's key set, so both rows are that Hash's,
@@ -401,7 +445,7 @@ ruby_class! {
     def "flatten" (recv) {
         let mut out = Vec::new();
         flatten_into(set_of(recv), &mut out);
-        Ok(set_from(out))
+        Ok(set_like(recv, out))
     }
     // `flatten!` -- flattens in place; self if it held any nested Set, else
     // nil (nothing to flatten).
@@ -539,7 +583,7 @@ ruby_class! {
     def "|" | "union" | "+"(recv, other) {
         let mut out = set_of(recv).elements();
         out.extend(arg_elements(other)?);
-        Ok(set_from(out))
+        Ok(set_like(recv, out))
     }
     // ENUMERATES THE OPERAND and consults the receiver, so the result follows
     // the OPERAND's order: `Set[1, 2] & [2, 1]` is [2, 1]. Ruby's `Set#&`
@@ -555,7 +599,7 @@ ruby_class! {
             .into_iter()
             .filter(|e| set_of(&mine).contains(e))
             .collect();
-        Ok(set_from(keep))
+        Ok(set_like(recv, keep))
     }
     def "-" | "difference" (recv, other) {
         let other = set_from(arg_elements(other)?);
@@ -564,7 +608,7 @@ ruby_class! {
             .into_iter()
             .filter(|e| !set_of(&other).contains(e))
             .collect();
-        Ok(set_from(keep))
+        Ok(set_like(recv, keep))
     }
     def "^" (recv, other) {
         let recv_elems = set_of(recv).elements();
@@ -578,7 +622,7 @@ ruby_class! {
                 out.push(e);
             }
         }
-        Ok(set_from(out))
+        Ok(set_like(recv, out))
     }
     // `Set#hash` delegates to the internal Hash in CRuby, whose hash is
     // order-independent; XOR-folding the element hashes reproduces that, so two

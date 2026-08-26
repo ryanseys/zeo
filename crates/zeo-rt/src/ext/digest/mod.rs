@@ -26,14 +26,19 @@ use digest::Digest as _;
 use parking_lot::Mutex;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use zeo_abi::{DIGEST_MD5_CLASS, DIGEST_SHA1_CLASS, DIGEST_SHA256_CLASS, DIGEST_SHA512_CLASS};
+use zeo_abi::{
+    DIGEST_MD5_CLASS, DIGEST_SHA1_CLASS, DIGEST_SHA2_CLASS, DIGEST_SHA256_CLASS,
+    DIGEST_SHA384_CLASS, DIGEST_SHA512_CLASS,
+};
 
 // `Digest::MD5` self-registers its (shared) table through `algorithm.rs`'s
 // `ruby_class!`; SHA1/SHA256/SHA512 are the same table under a different id.
 crate::alias_class_tables! {
     SHA1_TABLE = zeo_abi::DIGEST_SHA1_CLASS,
     SHA256_TABLE = zeo_abi::DIGEST_SHA256_CLASS,
+    SHA384_TABLE = zeo_abi::DIGEST_SHA384_CLASS,
     SHA512_TABLE = zeo_abi::DIGEST_SHA512_CLASS,
+    SHA2_TABLE = zeo_abi::DIGEST_SHA2_CLASS,
 }
 
 /// One of the SHA algorithm classes, routed at `id` to the shared MD5-carried
@@ -78,6 +83,7 @@ pub(crate) enum Algo {
     Md5,
     Sha1,
     Sha256,
+    Sha384,
     Sha512,
 }
 
@@ -87,7 +93,11 @@ impl Algo {
             DIGEST_MD5_CLASS => Algo::Md5,
             DIGEST_SHA1_CLASS => Algo::Sha1,
             DIGEST_SHA256_CLASS => Algo::Sha256,
+            DIGEST_SHA384_CLASS => Algo::Sha384,
             DIGEST_SHA512_CLASS => Algo::Sha512,
+            // `Digest::SHA2` defaults to 256 bits; `SHA2.new(n)` re-tags
+            // the instance to the fixed-width class for `n`.
+            DIGEST_SHA2_CLASS => Algo::Sha256,
             _ => unreachable!("the Digest table only dispatches on algorithm classes"),
         }
     }
@@ -96,6 +106,7 @@ impl Algo {
             Algo::Md5 => DIGEST_MD5_CLASS,
             Algo::Sha1 => DIGEST_SHA1_CLASS,
             Algo::Sha256 => DIGEST_SHA256_CLASS,
+            Algo::Sha384 => DIGEST_SHA384_CLASS,
             Algo::Sha512 => DIGEST_SHA512_CLASS,
         }
     }
@@ -105,6 +116,7 @@ impl Algo {
             Algo::Md5 => md5::Md5::digest(data).to_vec(),
             Algo::Sha1 => sha1::Sha1::digest(data).to_vec(),
             Algo::Sha256 => sha2::Sha256::digest(data).to_vec(),
+            Algo::Sha384 => sha2::Sha384::digest(data).to_vec(),
             Algo::Sha512 => sha2::Sha512::digest(data).to_vec(),
         }
     }
@@ -114,6 +126,7 @@ impl Algo {
             Algo::Md5 => 16,
             Algo::Sha1 => 20,
             Algo::Sha256 => 32,
+            Algo::Sha384 => 48,
             Algo::Sha512 => 64,
         }
     }
@@ -121,7 +134,7 @@ impl Algo {
     fn block_length(self) -> i64 {
         match self {
             Algo::Md5 | Algo::Sha1 | Algo::Sha256 => 64,
-            Algo::Sha512 => 128,
+            Algo::Sha384 | Algo::Sha512 => 128,
         }
     }
 }
@@ -279,6 +292,17 @@ pub(crate) fn finalize(recv: &RubyValue, data: Option<&RubyValue>) -> Result<Vec
 /// A fresh streaming digest object for `algo` (the shared `.new` body).
 pub(crate) fn new_digest(algo: Algo) -> RubyValue {
     RubyValue::Object(Arc::new(RDigest::new(algo)))
+}
+
+/// The algorithm an INSTANCE carries, and the digest of what it holds --
+/// what `#inspect` needs, and the two things `digest_of` guards.
+pub(crate) fn algo_of_instance(recv: &RubyValue) -> Algo {
+    digest_of(recv).algo
+}
+
+pub(crate) fn digest_of_instance(recv: &RubyValue) -> Vec<u8> {
+    let d = digest_of(recv);
+    d.algo.raw(&d.buf.lock())
 }
 
 pub(crate) fn digest_length_of(recv: &RubyValue) -> i64 {

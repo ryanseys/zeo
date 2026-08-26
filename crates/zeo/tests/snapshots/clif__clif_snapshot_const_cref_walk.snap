@@ -408,13 +408,13 @@ block17:
     jump block16
 
 block16:
-    v40 = iconst.i32 403
+    v40 = iconst.i32 405
     v41 = iconst.i64 42
     v42 = iadd.i64 v2, v41  ; v41 = 42
     v43 = iconst.i64 1
     v44 = iconst.i64 2
     v45 = iconst.i32 2
-    call fn6(v40, v42, v43, v2, v44, v45)  ; v40 = 403, v43 = 1, v44 = 2, v45 = 2
+    call fn6(v40, v42, v43, v2, v44, v45)  ; v40 = 405, v43 = 1, v44 = 2, v45 = 2
     v46 = stack_addr.i64 ss0
     v47 = iconst.i64 0
     store notrap aligned v47, v46  ; v47 = 0
@@ -422,8 +422,8 @@ block16:
     store notrap aligned v47, v46+16  ; v47 = 0
     v48 = iconst.i8 5
     store notrap aligned v48, v46  ; v48 = 5
-    v49 = iconst.i32 404
-    store notrap aligned v49, v46+8  ; v49 = 404
+    v49 = iconst.i32 406
+    store notrap aligned v49, v46+8  ; v49 = 406
     v50 = stack_addr.i64 ss1
     v51 = call fn7(v46, v50)
     brif v51, block1, block18
@@ -676,13 +676,13 @@ block16:
     v42 = iconst.i8 2
     store notrap aligned v42, v41  ; v42 = 2
     store notrap aligned v40, v41+8  ; v40 = 1
-    v43 = iconst.i32 404
+    v43 = iconst.i32 406
     v44 = iconst.i64 24
     v45 = iadd.i64 v2, v44  ; v44 = 24
     v46 = iconst.i64 1
     v47 = iconst.i64 2
     v48 = iconst.i32 3
-    call fn6(v43, v45, v46, v41, v2, v47, v48)  ; v43 = 404, v46 = 1, v47 = 2, v48 = 3
+    call fn6(v43, v45, v46, v41, v2, v47, v48)  ; v43 = 406, v46 = 1, v47 = 2, v48 = 3
     v49 = iconst.i64 0
     store notrap aligned v49, v1  ; v49 = 0
     store notrap aligned v49, v1+8  ; v49 = 0
@@ -1010,8 +1010,8 @@ block15:
     store notrap aligned v71, v70+16  ; v71 = 0
     v72 = iconst.i8 5
     store notrap aligned v72, v70  ; v72 = 5
-    v73 = iconst.i32 403
-    store notrap aligned v73, v70+8  ; v73 = 403
+    v73 = iconst.i32 405
+    store notrap aligned v73, v70+8  ; v73 = 405
     v74 = stack_addr.i64 ss5
     v75 = call fn10(v70, v74)
     brif v75, block1, block17
@@ -1075,8 +1075,8 @@ block24:
     store notrap aligned v100, v99+16  ; v100 = 0
     v101 = iconst.i8 5
     store notrap aligned v101, v99  ; v101 = 5
-    v102 = iconst.i32 404
-    store notrap aligned v102, v99+8  ; v102 = 404
+    v102 = iconst.i32 406
+    store notrap aligned v102, v99+8  ; v102 = 406
     v103 = stack_addr.i64 ss5
     v104 = iconst.i64 0
     v105 = load.i32 notrap aligned v2+4
@@ -1085,9 +1085,9 @@ block24:
     v108 = iconst.i64 0
     v109 = stack_addr.i64 ss4
     v110 = symbol_value.i64 gv6
-    v111 = iconst.i32 404
+    v111 = iconst.i32 406
     v112 = iconst.i32 0
-    v113 = call fn12(v110, v111, v103, v105, v104, v107, v108, v112, v109)  ; v111 = 404, v104 = 0, v107 = 0, v108 = 0, v112 = 0
+    v113 = call fn12(v110, v111, v103, v105, v104, v107, v108, v112, v109)  ; v111 = 406, v104 = 0, v107 = 0, v108 = 0, v112 = 0
     brif v113, block1, block26
 
 block26:

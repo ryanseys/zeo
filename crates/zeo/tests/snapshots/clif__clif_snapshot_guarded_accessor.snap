@@ -1770,10 +1770,10 @@ block21:
     v89 = iconst.i64 0
     v90 = iconst.i64 0
     v91 = symbol_value.i64 gv6
-    v92 = iconst.i32 403
+    v92 = iconst.i32 405
     v93 = iconst.i64 0
     v94 = stack_addr.i64 ss5
-    v95 = call fn11(v91, v92, v89, v93, v90, v94)  ; v92 = 403, v89 = 0, v93 = 0, v90 = 0
+    v95 = call fn11(v91, v92, v89, v93, v90, v94)  ; v92 = 405, v89 = 0, v93 = 0, v90 = 0
     brif v95, block1, block23
 
 block23:
@@ -1842,8 +1842,8 @@ block30:
     store notrap aligned v124, v123+16  ; v124 = 0
     v125 = iconst.i8 5
     store notrap aligned v125, v123  ; v125 = 5
-    v126 = iconst.i32 403
-    store notrap aligned v126, v123+8  ; v126 = 403
+    v126 = iconst.i32 405
+    store notrap aligned v126, v123+8  ; v126 = 405
     v127 = stack_addr.i64 ss5
     v128 = iconst.i64 0
     v129 = func_addr.i64 fn13
@@ -1943,8 +1943,8 @@ block43:
 
 block44:
     v181 = call fn18(v173)
-    v182 = iconst.i32 403
-    v183 = icmp eq v181, v182  ; v182 = 403
+    v182 = iconst.i32 405
+    v183 = icmp eq v181, v182  ; v182 = 405
     brif v183, block45, block46
 
 block45:
@@ -2058,8 +2058,8 @@ block59:
 
 block60:
     v238 = call fn18(v230)
-    v239 = iconst.i32 403
-    v240 = icmp eq v238, v239  ; v239 = 403
+    v239 = iconst.i32 405
+    v240 = icmp eq v238, v239  ; v239 = 405
     brif v240, block61, block62
 
 block61:

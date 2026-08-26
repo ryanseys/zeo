@@ -17,7 +17,7 @@ ruby_class! {
     // accepted and ignored -- it sizes zlib's internal tables, which the
     // pure-Rust backend fixes.
     def self."new" (_recv, arg1?, arg2?, _arg3?, arg4?) {
-        let level = super::level_of(arg1);
+        let level = super::level_of(arg1)?;
         let wrap = match arg2 {
             None | Some(RubyValue::Nil) => Wrap::Zlib,
             Some(v) => wrap_of(convert::to_index(v)?, false)?,
@@ -31,7 +31,7 @@ ruby_class! {
 
     // `Deflate.deflate(string, level)` -- a whole stream in one call.
     def self."deflate" cfunc (_recv, string, level?) {
-        codec::one_shot_deflate(&bytes_of(Some(string))?, super::level_of(level), Wrap::Zlib)
+        codec::one_shot_deflate(&bytes_of(Some(string))?, super::level_of(level)?, Wrap::Zlib)
     }
 
     // `#deflate(string, flush = NO_FLUSH)` -- feed input, take back whatever
@@ -65,7 +65,7 @@ ruby_class! {
     // `Zlib::StreamError` in both natural call shapes and segfaults in a third
     // (ruby 4.0.5, `rb_deflate_params`), so nothing depends on it working.
     def "params" (recv, level, strategy) {
-        let level = super::level_of(Some(level));
+        let level = super::level_of(Some(level))?;
         let strategy = convert::to_index(strategy)?;
         let st = &mut *ready(recv)?;
         let codec::Codec::Deflate(d) = &mut st.codec else {

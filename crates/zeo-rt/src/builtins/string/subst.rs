@@ -110,13 +110,42 @@ pub(super) fn slice_bang_impl(
     };
     let removed: String = chars[start..end].iter().collect();
     chars.drain(start..end);
-    handle.lock().replace_utf8(chars.into_iter().collect());
+    write_back(&handle, chars);
     Ok(str_value(removed))
 }
 
 /// The `String#[]=` engine (CRuby `rb_str_aset_m`): resolves the target
 /// character span for every index shape, then splices in the replacement.
 /// Returns the assigned value, matching Ruby's index-assignment expression.
+/// Write a character vector back into `handle` under its OWN encoding.
+///
+/// `replace_utf8` re-encodes, which is silent corruption for a BINARY
+/// string: every byte above 0x7F becomes a two-byte UTF-8 sequence, so a
+/// 21-byte gzip member came back 28 bytes long and no longer parsed. The
+/// characters of a byte-encoded string ARE its bytes, so writing them back
+/// as bytes is both faithful and cheap.
+fn write_back(handle: &crate::collections::RStr, chars: Vec<char>) {
+    let enc = handle.lock().encoding();
+    if enc == crate::encoding::UTF_8 {
+        handle.lock().replace_utf8(chars.into_iter().collect());
+        return;
+    }
+    // A character that does not fit one byte cannot have come from this
+    // string, so it came from the REPLACEMENT -- encode it, and let the
+    // ordinary compatibility rules apply to what results.
+    let mut bytes = Vec::with_capacity(chars.len());
+    for c in chars {
+        match u8::try_from(c as u32) {
+            Ok(b) => bytes.push(b),
+            Err(_) => {
+                let mut buf = [0u8; 4];
+                bytes.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+            }
+        }
+    }
+    handle.lock().replace_bytes(bytes, enc);
+}
+
 pub(super) fn index_set_impl(
     recv: &RubyValue,
     index: &RubyValue,
@@ -222,7 +251,7 @@ pub(super) fn index_set_impl(
     };
     let repl_chars: Vec<char> = repl.lock().to_utf8_lossy().chars().collect();
     chars.splice(start..end, repl_chars);
-    handle.lock().replace_utf8(chars.into_iter().collect());
+    write_back(&handle, chars);
     Ok(val.clone())
 }
 

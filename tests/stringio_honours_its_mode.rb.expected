@@ -1,0 +1,15 @@
+"abcd"
+IOError: not opened for reading
+""
+"z"
+IOError: not opened for writing
+"abc"
+"zbc"
+["abcd", "abcd"]
+#<StringIO:0xADDR>
+"frozen"
+IOError: not opened for writing
+IOError: not opened for writing
+IOError: not opened for writing
+IOError: not opened for writing
+"zbc"

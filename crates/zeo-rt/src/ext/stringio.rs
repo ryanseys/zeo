@@ -44,6 +44,26 @@ struct State {
     /// shuts both.
     closed_read: bool,
     closed_write: bool,
+    /// What the MODE string allows. Probed in full against ruby: `"a"` is
+    /// NOT readable, `"w"` truncates on open, and append IGNORES `pos`
+    /// entirely -- every write goes to the end.
+    readable: bool,
+    writable: bool,
+    append: bool,
+}
+
+/// A mode string's three answers. CRuby reads the first character and then
+/// a `+`; anything else in the string (`b`, `t`, an `:encoding` tail) does
+/// not change the direction.
+fn mode_bits(mode: &str) -> (bool, bool, bool) {
+    let head = mode.split(':').next().unwrap_or(mode);
+    let plus = head.contains('+');
+    match head.chars().next() {
+        Some('r') => (true, plus, false),
+        Some('w') => (plus, true, false),
+        Some('a') => (plus, true, true),
+        _ => (true, true, false),
+    }
 }
 
 pub struct RStringIO {
@@ -61,6 +81,9 @@ impl RStringIO {
                 lineno: 0,
                 closed_read: false,
                 closed_write: false,
+                readable: true,
+                writable: true,
+                append: false,
             }),
             frozen: AtomicBool::new(false),
         }
@@ -192,14 +215,16 @@ fn partial_read(
 /// Only the I/O surface is guarded. `string`, `pos` and `size` keep answering
 /// on a fully closed StringIO, because they read the OBJECT, not the stream.
 fn check_readable(recv: &RubyValue) -> Result<(), crate::Signal> {
-    if io_of(recv).state.lock().closed_read {
+    let st = io_of(recv).state.lock();
+    if st.closed_read || !st.readable {
         return Err(crate::builtins::io_error!("not opened for reading"));
     }
     Ok(())
 }
 
 fn check_writable(recv: &RubyValue) -> Result<(), crate::Signal> {
-    if io_of(recv).state.lock().closed_write {
+    let st = io_of(recv).state.lock();
+    if st.closed_write || !st.writable {
         return Err(crate::builtins::io_error!("not opened for writing"));
     }
     Ok(())
@@ -228,6 +253,11 @@ fn set_buffer(recv: &RubyValue, arg: &RubyValue) {
 }
 
 fn write_at(state: &mut State, data: &[u8]) {
+    // Append IGNORES the position: every write lands at the end, which is
+    // what makes `"a"` append rather than overwrite from 0.
+    if state.append {
+        state.pos = state.bytes.len();
+    }
     let end = state.pos + data.len();
     if state.bytes.len() < end {
         state.bytes.resize(end, 0);
@@ -804,9 +834,9 @@ ruby_class! {
         Ok(RubyValue::Int(0))
     }
 
-    // `mode` is ignored for now. A block is not `new`'s to run -- CRuby
-    // warns and ignores it, naming the caller's line (`rb_warn`'s shape).
-    def self."new" allocs (_recv, string?, _mode?, &block) {
+    // A block is not `new`'s to run -- CRuby warns and ignores it, naming
+    // the caller's line (`rb_warn`'s shape).
+    def self."new" allocs (_recv, string?, mode?, &block) {
         if block.is_some() {
             let mut buf = Vec::new();
             if let Some(&(file, line, _)) = crate::frames::caller_frames(0).first() {
@@ -817,13 +847,13 @@ ruby_class! {
             );
             crate::builtins::io::write_bytes(&crate::builtins::io::current_stderr(), &buf)?;
         }
-        new_stringio(string)
+        new_stringio(string, mode)
     }
     // `File.open`'s contract: with a block, yield the new io, answer the
     // BLOCK's value, and close the io on every exit path -- run, stash,
     // close, then propagate.
-    def self."open" allocs (_recv, string?, _mode?, &block) {
-        let io = new_stringio(string)?;
+    def self."open" allocs (_recv, string?, mode?, &block) {
+        let io = new_stringio(string, mode)?;
         let Some(RubyValue::Proc(p)) = block else {
             return Ok(io);
         };
@@ -835,8 +865,11 @@ ruby_class! {
 
 /// The shared `StringIO.new`/`.open` constructor: an empty `StringIO.new` is
 /// UTF-8, as the `""` it stands in for is.
-fn new_stringio(string: Option<&RubyValue>) -> Result<RubyValue, crate::Signal> {
-    let (bytes, enc) = match string {
+fn new_stringio(
+    string: Option<&RubyValue>,
+    mode: Option<&RubyValue>,
+) -> Result<RubyValue, crate::Signal> {
+    let (mut bytes, enc) = match string {
         None | Some(RubyValue::Nil) => (Vec::new(), crate::encoding::UTF_8),
         Some(v) => {
             let s = crate::builtins::convert::to_rstr(v)?;
@@ -844,9 +877,33 @@ fn new_stringio(string: Option<&RubyValue>) -> Result<RubyValue, crate::Signal> 
             (s.bytes().to_vec(), s.encoding())
         }
     };
-    Ok(RubyValue::Object(Arc::new(RStringIO::with_bytes(
-        bytes, enc,
-    ))))
+    let (readable, writable, append) = match mode {
+        None | Some(RubyValue::Nil) => (true, true, false),
+        Some(v) => mode_bits(&crate::builtins::convert::to_rstr(v)?.lock().to_utf8_lossy()),
+    };
+    // A FROZEN source with a writable mode is `Errno::EACCES` -- the buffer
+    // would have to be modified in place, and it cannot be.
+    if writable
+        && let Some(RubyValue::Str(s)) = string
+        && s.is_frozen()
+    {
+        return Err(raise_error(
+            "Errno::EACCES",
+            "Permission denied".to_string(),
+        ));
+    }
+    // `"w"` TRUNCATES on open, before anything is written.
+    if writable && !readable && !append {
+        bytes.clear();
+    }
+    let io = RStringIO::with_bytes(bytes, enc);
+    {
+        let mut st = io.state.lock();
+        st.readable = readable;
+        st.writable = writable;
+        st.append = append;
+    }
+    Ok(RubyValue::Object(Arc::new(io)))
 }
 
 /// How many bytes the character starting with `lead` occupies in `enc`. Only

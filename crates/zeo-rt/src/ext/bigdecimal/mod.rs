@@ -657,9 +657,12 @@ ruby_class! {
                 n = convert::to_index(v)?;
                 to_int = n < 1;
             }
+            // The TWO-argument form always answers a BigDecimal, however
+            // small the digit count -- only the zero-arg form and a one-arg
+            // Integer below 1 convert. `round(0, :half_up)` answered `2`
+            // where ruby answers `0.2e1`.
             [v, m] => {
                 n = convert::to_index(v)?;
-                to_int = n < 1;
                 mode = rounding_mode_option(m)?;
             }
             _ => unreachable!("arity checked above"),

@@ -1590,4 +1590,20 @@ pub const BUILTINS: &[BuiltinClass] = &[
         includes: &[],
         feature: Some("cgi/escape"),
     },
+    BuiltinClass {
+        id: DIGEST_SHA384_CLASS,
+        name: "Digest::SHA384",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[],
+        feature: Some("digest"),
+    },
+    BuiltinClass {
+        id: DIGEST_SHA2_CLASS,
+        name: "Digest::SHA2",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[],
+        feature: Some("digest"),
+    },
 ];

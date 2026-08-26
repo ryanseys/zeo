@@ -1447,10 +1447,10 @@ block21:
     v92 = stack_addr.i64 ss5
     v93 = iconst.i64 0
     v94 = symbol_value.i64 gv6
-    v95 = iconst.i32 403
+    v95 = iconst.i32 405
     v96 = iconst.i64 1
     v97 = stack_addr.i64 ss6
-    v98 = call fn11(v94, v95, v92, v96, v93, v97)  ; v95 = 403, v96 = 1, v93 = 0
+    v98 = call fn11(v94, v95, v92, v96, v93, v97)  ; v95 = 405, v96 = 1, v93 = 0
     brif v98, block1, block23
 
 block23:
@@ -1532,8 +1532,8 @@ block32:
 
 block33:
     v137 = call fn13(v126)
-    v138 = iconst.i32 403
-    v139 = icmp eq v137, v138  ; v138 = 403
+    v138 = iconst.i32 405
+    v139 = icmp eq v137, v138  ; v138 = 405
     brif v139, block34, block35
 
 block34:

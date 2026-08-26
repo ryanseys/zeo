@@ -386,8 +386,17 @@ ruby_class! {
         Ok(RubyValue::Int(st.string[..st.pos].chars().count() as i64))
     }
     def "pos=" | "pointer=" (recv, arg) {
-        let n = &crate::builtins::convert::to_index(arg)?;
-        sc_of(recv).state.lock().pos = (*n).max(0) as usize;
+        let n = crate::builtins::convert::to_index(arg)?;
+        let mut st = sc_of(recv).state.lock();
+        let len = st.string.len() as i64;
+        // A NEGATIVE position counts from the end, and anything outside the
+        // subject RAISES. Clamping silently put the scanner somewhere the
+        // program did not ask for.
+        let at = if n < 0 { n + len } else { n };
+        if at < 0 || at > len {
+            return Err(crate::builtins::range_error!("index out of range"));
+        }
+        st.pos = at as usize;
         Ok((*arg).clone())
     }
     def "reset" (recv) {
@@ -599,9 +608,14 @@ ruby_class! {
         }
         let (from, to) = (st.pos, st.pos + 1);
         st.consumed(from, to);
-        // A single raw byte -- lossily UTF-8 for a continuation byte, matching
-        // this runtime's Str model (documented divergence, like the rest here).
-        Ok(str_val(&String::from_utf8_lossy(&st.string.as_bytes()[from..to])))
+        // ONE byte, tagged with the subject's own encoding. Through
+        // `from_utf8_lossy` a continuation byte became U+FFFD -- three bytes
+        // where ruby answers one, and never the byte that is actually there.
+        let byte = st.string.as_bytes()[from];
+        Ok(RubyValue::Str(crate::string_from_bytes(
+            vec![byte],
+            crate::encoding::UTF_8,
+        )))
     }
     // `scan_byte`/`peek_byte` -- `get_byte`/`peek(1)` as an INTEGER, which is
     // what a byte-level lexer actually wants.

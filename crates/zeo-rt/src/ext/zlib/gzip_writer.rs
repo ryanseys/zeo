@@ -17,7 +17,7 @@ ruby_class! {
 
     // `GzipWriter.new(io, level = nil, strategy = nil)`.
     def self."new" arity -1 (_recv, arg1, arg2?, _arg3?) {
-        Ok(writer((*arg1).clone(), super::level_of(arg2), false))
+        Ok(writer((*arg1).clone(), super::level_of(arg2)?, false))
     }
 
     // `GzipWriter.open(path, level = nil) { |gz| … }` -- opens the file
@@ -29,13 +29,13 @@ ruby_class! {
             &[(*arg1).clone(), RubyValue::Str(crate::string_new("wb".to_string()))],
             None,
         )?;
-        let gz = writer(file, super::level_of(arg2), true);
+        let gz = writer(file, super::level_of(arg2)?, true);
         with_block(gz, block)
     }
 
     // `GzipWriter.wrap(io) { |gz| … }` -- same, over an IO the caller owns.
     def self."wrap" arity -1 (_recv, arg1, arg2?, _arg3?, &block) {
-        let gz = writer((*arg1).clone(), super::level_of(arg2), false);
+        let gz = writer((*arg1).clone(), super::level_of(arg2)?, false);
         with_block(gz, block)
     }
 
