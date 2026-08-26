@@ -35,7 +35,7 @@ Zeo is **experimental** and moving fast. What is measured today:
 | End-to-end suite (`crates/zeo/tests/e2e/`) | 1,110 / 1,110 |
 
 Each gate compares stdout, stderr, and the exit status with real Ruby, byte
-for byte. [`tests/gaps/`](tests/gaps) holds the 76 programs that still
+for byte. [`tests/gaps/`](tests/gaps) holds the programs that still
 diverge. Each one **must** fail until it is fixed.
 
 Every module, method, constant, and visibility that Ruby 4.0.6 reaches has a
@@ -115,7 +115,7 @@ $ zeo -e "puts eval('1 + 1 + (\"hello\" * 8).length')"
 
 ### Compile an app against its locked gems
 
-Zeo ships 67 gems in [`gems/`](gems) — `bundler` and `rubygems` included. A
+Zeo ships its bundled gems in [`gems/`](gems) — `bundler` and `rubygems` included. A
 program that requires `csv` gets the copy in this repository, with no
 `Gemfile` at all. `gems/UPSTREAM.md` records each gem's origin, version, and
 license; `upstream.lock` pins the ones tracked from git.
