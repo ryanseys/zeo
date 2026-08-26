@@ -210,7 +210,7 @@ pub fn refinements_of(module: ClassId) -> Vec<ClassId> {
         .entries
         .iter()
         .filter(|(_, e)| e.refinement_of.is_some_and(|(m, _)| m == module))
-        .map(|(&id, _)| ClassId(id))
+        .map(|(id, _)| ClassId(id))
         .collect();
     holders.sort_by_key(|c| c.0);
     // Runtime-minted holders come after every compiled one -- their ids are

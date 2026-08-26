@@ -185,7 +185,7 @@ pub(crate) fn classes_with_ancestor(id: ClassId) -> Vec<u32> {
     reg.entries
         .iter()
         .filter(|(_, e)| e.ancestors.contains(&id))
-        .map(|(&cid, _)| cid)
+        .map(|(cid, _)| cid)
         .collect()
 }
 
@@ -204,10 +204,10 @@ pub fn class_ids(modules_too: bool) -> Vec<ClassId> {
         .entries
         .iter()
         .filter(|(_, e)| modules_too || !e.is_module)
-        .map(|(&cid, _)| ClassId(cid))
+        .map(|(cid, _)| ClassId(cid))
         .collect();
-    // The registry is a hash; a program that prints what it yields must not
-    // see a different order per run.
+    // Dense iteration is already id-ordered; the sort keeps the printed
+    // order an explicit contract rather than a storage accident.
     ids.sort_unstable_by_key(|c| c.0);
     ids
 }
@@ -374,7 +374,7 @@ pub fn direct_subclasses(cid: ClassId) -> Vec<ClassId> {
     r.entries
         .iter()
         .filter(|(_, e)| !e.is_module)
-        .filter_map(|(&id, e)| {
+        .filter_map(|(id, e)| {
             let self_id = ClassId(id);
             if self_id == cid {
                 return None;

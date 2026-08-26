@@ -226,9 +226,61 @@ pub(super) struct FlatHit {
     pub(super) frame_label: Option<&'static str>,
 }
 
+/// The frozen per-class table, DENSE by class id: compile-time ids are
+/// allocated contiguously from zero, so a bounds-checked Vec probe
+/// replaces the hash walk every uncached dispatch op used to pay.
+/// Runtime-minted ids (>= `RUNTIME_CLASS_ID_BASE`) never enter the
+/// frozen registry (the overlay owns them), so the vec never grows
+/// toward the runtime band -- `insert` asserts it. The accessors keep
+/// the map's call shapes (`get(&id)`, `contains_key`, ...) so the ~80
+/// probe sites read unchanged; iteration yields ids BY VALUE and in id
+/// order, which the sorted-output sites rely on maps never providing.
+#[derive(Default)]
+pub(super) struct Entries(Vec<Option<ClassEntry>>);
+
+impl Entries {
+    #[inline(always)]
+    pub(super) fn get(&self, id: &u32) -> Option<&ClassEntry> {
+        self.0.get(*id as usize).and_then(|e| e.as_ref())
+    }
+
+    #[inline(always)]
+    pub(super) fn get_mut(&mut self, id: &u32) -> Option<&mut ClassEntry> {
+        self.0.get_mut(*id as usize).and_then(|e| e.as_mut())
+    }
+
+    #[inline(always)]
+    pub(super) fn contains_key(&self, id: &u32) -> bool {
+        self.get(id).is_some()
+    }
+
+    pub(super) fn insert(&mut self, id: u32, e: ClassEntry) {
+        debug_assert!(
+            id < zeo_abi::RUNTIME_CLASS_ID_BASE,
+            "runtime-minted ids never enter the frozen registry"
+        );
+        let at = id as usize;
+        if at >= self.0.len() {
+            self.0.resize_with(at + 1, || None);
+        }
+        self.0[at] = Some(e);
+    }
+
+    pub(super) fn keys(&self) -> impl Iterator<Item = u32> + '_ {
+        self.iter().map(|(id, _)| id)
+    }
+
+    pub(super) fn iter(&self) -> impl Iterator<Item = (u32, &ClassEntry)> + '_ {
+        self.0
+            .iter()
+            .enumerate()
+            .filter_map(|(i, e)| e.as_ref().map(|e| (i as u32, e)))
+    }
+}
+
 #[derive(Default)]
 pub struct ClassRegistry {
-    pub(super) entries: FMap<u32, ClassEntry>,
+    pub(super) entries: Entries,
     /// Fully-qualified class NAME -> id, so the runtime can construct an
     /// exception by name (`raise_error("ArgumentError", ...)`) without the
     /// generated program installing a name->constructor factory. Populated by
@@ -1151,13 +1203,13 @@ pub fn install_class_registry(registry: ClassRegistry) {
     let to_s = crate::symbol::wk::to_s();
     let inspect = crate::symbol::wk::inspect();
     let mut reopens = crate::FSet::default();
-    for (id, entry) in &registry.entries {
+    for (id, entry) in registry.entries.iter() {
         if entry
             .value_methods
             .keys()
             .any(|&(b, s)| b == 0 && (s == to_s || s == inspect))
         {
-            reopens.insert(*id);
+            reopens.insert(id);
         }
     }
     let _ = DISPLAY_REOPENS.set(reopens);

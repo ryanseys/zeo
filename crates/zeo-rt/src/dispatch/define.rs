@@ -278,7 +278,7 @@ pub fn validate_aliases() -> Result<(), Signal> {
     let Some(r) = REGISTRY.get() else {
         return Ok(());
     };
-    let mut ids: Vec<u32> = r.entries.keys().copied().collect();
+    let mut ids: Vec<u32> = r.entries.keys().collect();
     ids.sort_unstable();
     for id in ids {
         validate_class_aliases(ClassId(id))?;
