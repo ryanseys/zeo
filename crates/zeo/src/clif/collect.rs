@@ -18,6 +18,10 @@ pub(crate) struct DefSpec {
     pub(super) node: Option<crate::hir::NodeId>,
     pub(super) has_blk: bool,
     pub(super) alias_of: Option<String>,
+    /// Where the `def` was WRITTEN. Object's table holds the rows a module
+    /// materialized onto it, so a `def require` in `module Kernel` arrives
+    /// here -- and it needs Kernel's reopen flag, not none at all.
+    pub(super) defining_class: crate::compiler::ClassId,
 }
 
 /// Collect and DECLARE every top-level `def` the backend can compile
@@ -66,6 +70,12 @@ pub(super) fn collect_methods(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
                 &tramp_sig,
             )
             .map_err(|e| CodegenError::internal(format!("declaring {name}'s trampoline: {e}")))?;
+        // `collect_reopen_flags` ran first, so the answer is already known:
+        // this row REPLACES a builtin body and its guard lives in the
+        // trampoline, which a direct call would jump straight past.
+        let reopen_flagged = em
+            .reopen_flags
+            .contains_key(&(scope.defining_class.0, name.clone()));
         em.methods.insert(
             name.clone(),
             super::module::MethodDecl {
@@ -75,6 +85,7 @@ pub(super) fn collect_methods(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
                 plain: layout.plain,
                 kw_direct: layout.kw_direct.clone(),
                 has_blk,
+                reopen_flagged,
             },
         );
         out.push(DefSpec {
@@ -86,6 +97,7 @@ pub(super) fn collect_methods(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
             node: scope.def_node,
             has_blk,
             alias_of: scope.alias_of.clone(),
+            defining_class: scope.defining_class,
         });
     }
     Ok(out)
@@ -430,11 +442,18 @@ pub(super) fn collect_class_bodies(
 /// builtin (the exception prelude, whose bodies are the runtime's own).
 pub(super) fn collect_reopen_flags(em: &mut Emitter, analyzed: &Analyzed) {
     let compiler = &analyzed.compiler;
-    // A LAZY unit's file is excluded. Its body runs on require rather than at
-    // a document position this compile can point at, and a unit whose body
-    // never runs would leave the flag at zero for the whole program -- which
-    // would turn a working reopen into `undefined method`. Registering the row
-    // at startup is what those keep, exactly as before.
+    // A LAZY unit's file gets a flag too, MARKED as a unit's. Its body runs
+    // on require rather than at a document position this compile can point
+    // at, so a unit that is never required leaves the byte at zero for the
+    // whole program. That used to turn a working reopen into `undefined
+    // method`, which is why the flag was skipped -- and skipping it made
+    // rubygems' `def require` live from BOOT, before the `module Kernel`
+    // body that declares the constant it reads.
+    //
+    // A unit's flag reads the other way instead: at zero, forward to the
+    // native row IF THERE IS ONE, and otherwise run the body. A name the
+    // unit ADDS keeps answering as before; a name it REPLACES answers
+    // natively until the unit runs, which is ruby's own order.
     let unit_files: crate::compiler::FSet<String> = analyzed
         .feature_units
         .iter()
@@ -448,17 +467,18 @@ pub(super) fn collect_reopen_flags(em: &mut Emitter, analyzed: &Analyzed) {
             crate::analyze::source::source_location(compiler, n)
                 .is_some_and(|(file, _)| unit_files.contains(file))
         });
-        if in_unit {
-            continue;
-        }
         let mut names: Vec<&String> = site.installs.iter().collect();
         names.sort();
         names.dedup();
         for n in names {
             let next = em.reopen_flags.len() as u32;
-            em.reopen_flags
+            let idx = *em
+                .reopen_flags
                 .entry((site.class.0, n.clone()))
                 .or_insert(next);
+            if in_unit {
+                em.unit_reopen_flags.insert(idx);
+            }
         }
     }
 }

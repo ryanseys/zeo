@@ -171,6 +171,10 @@ pub(crate) struct Emitter {
     /// `(class, scope)` -> the trampoline that installs that body, for the
     /// boot install and each positional `MethodRedefine`.
     pub redef_tramps: HashMap<(u32, u32), FuncId>,
+    /// Which `reopen_flags` indices belong to a LAZY UNIT's reopen -- see
+    /// `collect_reopen_flags`. Their guard falls through to the body when
+    /// the builtin has no native row of that name.
+    pub unit_reopen_flags: std::collections::HashSet<u32>,
     /// The same key's row in `ProgramDesc::redef_metas` -- what the install
     /// at this body's document position registers so reflection answers the
     /// body that is live rather than the last one written.
@@ -214,6 +218,11 @@ pub(crate) struct MethodDecl {
     /// and nothing else complicates the signature -- see `Layout`.
     pub kw_direct: Option<Vec<String>>,
     pub has_blk: bool,
+    /// Whether this row REPLACES a builtin body and so carries a positional
+    /// reopen guard. The guard lives in the TRAMPOLINE, so a direct call
+    /// would jump straight past it -- and the row would answer from program
+    /// start, which is the thing the guard exists to prevent.
+    pub reopen_flagged: bool,
 }
 
 impl Emitter {
@@ -377,6 +386,7 @@ impl Emitter {
             typed_methods: HashMap::new(),
             class_bodies: HashMap::new(),
             redef_tramps: HashMap::new(),
+            unit_reopen_flags: std::collections::HashSet::new(),
             redef_metas: HashMap::new(),
             fn_index: 0,
             regexp_sites: 0,

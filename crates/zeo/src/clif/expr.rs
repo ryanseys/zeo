@@ -1642,6 +1642,7 @@ fn literal_block_call(
     if receiver.is_none()
         && let Some(decl) = fx.em.methods.get(&name)
         && decl.plain
+        && !decl.reopen_flagged
         && decl.arity == args.len()
         && !args.iter().any(|a| matches!(a, ArrayElem::Splat(_)))
         && !method_class_shadows(fx, &name)
@@ -1765,6 +1766,7 @@ fn plain_call(
         None => match fx.em.methods.get(&name) {
             Some(decl)
                 if decl.plain
+                && !decl.reopen_flagged
                     && decl.arity == args.len()
                     && !args.iter().any(|a| matches!(a, ArrayElem::Splat(_)))
                     && !method_class_shadows(fx, &name) =>

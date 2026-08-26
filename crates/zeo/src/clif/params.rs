@@ -153,6 +153,11 @@ pub(crate) struct TrampSpec<'a> {
     /// frame is pushed -- so the raise for a name that does not exist yet
     /// lands at the CALL, exactly where ruby's does.
     pub reopen_flag: Option<u32>,
+    /// Whether [`Self::reopen_flag`] belongs to a LAZY UNIT's reopen. Such a
+    /// byte can stay zero for the whole program (the unit is never
+    /// required), so at zero the guard forwards to the native row only when
+    /// there IS one and otherwise runs the body.
+    pub reopen_unit: bool,
     /// The Ruby method name (binder error text).
     pub name: &'a str,
     /// The callee frame the binder's raises run under.
@@ -306,8 +311,6 @@ fn emit_reopen_guard(
     let deferred = b.create_block();
     b.ins().brif(ready, installed, &[], deferred, &[]);
     b.switch_to_block(deferred);
-    let f_id = em.import("zeo_rt_native_row_call");
-    let native = em.module.declare_func_in_func(f_id, b.func);
     let slot = em.syms.intern(spec.name);
     let syms_gv = em.module.declare_data_in_func(em.syms_id, b.func);
     let syms = b.ins().symbol_value(em.ptr, syms_gv);
@@ -317,6 +320,20 @@ fn emit_reopen_guard(
         syms,
         (slot * 4) as i32,
     );
+    // A UNIT's reopen: with no native row to forward to, the body IS the
+    // only answer, and forwarding would raise `undefined method` for a name
+    // the unit ADDS. Asked here, in the cold arm, and only for a unit.
+    if spec.reopen_unit {
+        let e_id = em.import("zeo_rt_native_row_exists");
+        let exists_fn = em.module.declare_func_in_func(e_id, b.func);
+        let call = b.ins().call(exists_fn, &[recv, sym_id]);
+        let exists = b.func.dfg.inst_results(call)[0];
+        let forward = b.create_block();
+        b.ins().brif(exists, forward, &[], installed, &[]);
+        b.switch_to_block(forward);
+    }
+    let f_id = em.import("zeo_rt_native_row_call");
+    let native = em.module.declare_func_in_func(f_id, b.func);
     let call = b.ins().call(native, &[recv, sym_id, argv, argc, blk, out]);
     let status = b.func.dfg.inst_results(call)[0];
     b.ins().return_(&[status]);

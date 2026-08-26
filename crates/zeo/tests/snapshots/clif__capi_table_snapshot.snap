@@ -135,6 +135,7 @@ zeo_rt_main_object ([Ptr]) -> None
 zeo_rt_method_capture_inherited ([Ptr, Ptr, Ptr]) -> Some(I32)
 zeo_rt_multi_split ([Ptr, Usize, U8, Usize, Ptr]) -> Some(I32)
 zeo_rt_native_row_call ([Ptr, U32, Ptr, Usize, Ptr, Ptr]) -> Some(I32)
+zeo_rt_native_row_exists ([Ptr, U32]) -> Some(I32)
 zeo_rt_object_new_sentinel ([Ptr]) -> None
 zeo_rt_pat_array_get ([Ptr, Usize, Ptr]) -> None
 zeo_rt_pat_array_len ([Ptr]) -> Some(Usize)

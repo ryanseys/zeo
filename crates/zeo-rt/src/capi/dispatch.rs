@@ -497,6 +497,27 @@ pub unsafe extern "C" fn zeo_rt_send_value_explicit_args_in(
 ///
 /// A name the builtin never had answers ruby's plain `undefined method`: the
 /// reopen has not run, so nothing defines it yet.
+/// Whether the receiver's ancestry holds a NATIVE row for `sym` -- asked by
+/// a lazy unit's reopen guard while its byte still reads zero.
+///
+/// A unit's `class String ... end` runs on require, not at a document
+/// position, so a unit that is never required leaves the byte zero forever.
+/// For a name the unit REPLACES that is right: the native row answers, which
+/// is what ruby does before the file loads. For a name the unit ADDS there is
+/// nothing to forward to, and raising would turn a working program into
+/// `undefined method` -- so the guard asks first and runs the body instead.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_native_row_exists(recv: *const RubyValue, sym: u32) -> i32 {
+    let recv = unsafe { &*recv };
+    let n = Symbol::from_u32(sym).name_str();
+    let found = crate::dispatch::ancestors_of_value(recv.class_id())
+        .iter()
+        .any(|&anc| {
+            crate::builtins::class_table(anc).is_some_and(|lookup| lookup(n).is_some())
+        });
+    i32::from(found)
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zeo_rt_native_row_call(
     recv: *const RubyValue,

@@ -278,12 +278,22 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> CResult<FuncId> {
         let idx = em.next_fn_index();
         let (file, label, line, end_line) =
             super::body::method_frame(analyzed, "Object", &def.name, def.node, false);
+        // Object's table holds what a module MATERIALIZED onto it, so a
+        // `def require` written in `module Kernel` arrives here -- and it
+        // needs Kernel's reopen flag. With none it was live from BOOT, which
+        // is how rubygems' `def require` ran before the `module Kernel` body
+        // that declares the constant it reads.
+        let reopen_flag = em
+            .reopen_flags
+            .get(&(def.defining_class.0, def.name.clone()))
+            .copied();
         let spec = super::params::TrampSpec {
             tramp,
             body,
             params: &def.hir_params,
             has_blk,
-            reopen_flag: None,
+            reopen_flag,
+            reopen_unit: reopen_flag.is_some_and(|i| em.unit_reopen_flags.contains(&i)),
             name: &def.name,
             file: file.as_deref(),
             label: &label,
@@ -318,6 +328,10 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> CResult<FuncId> {
                         .reopen_flags
                         .get(&(m.defining_class.0, m.name.clone()))
                         .copied(),
+                    reopen_unit: em
+                        .reopen_flags
+                        .get(&(m.defining_class.0, m.name.clone()))
+                        .is_some_and(|i| em.unit_reopen_flags.contains(i)),
                     name: &m.name,
                     file: file.as_deref(),
                     label: &label,
@@ -341,6 +355,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> CResult<FuncId> {
             params: &m.hir_params,
             has_blk: m.has_blk,
             reopen_flag: None,
+            reopen_unit: false,
             name: &m.name,
             file: file.as_deref(),
             label: &label,
@@ -362,6 +377,10 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> CResult<FuncId> {
                 .reopen_flags
                 .get(&(m.defining_class.0, m.name.clone()))
                 .copied(),
+            reopen_unit: em
+                .reopen_flags
+                .get(&(m.defining_class.0, m.name.clone()))
+                .is_some_and(|i| em.unit_reopen_flags.contains(i)),
             name: &m.name,
             file: file.as_deref(),
             label: &label,
@@ -383,6 +402,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> CResult<FuncId> {
             // is reached through the singleton chain, not the value channel
             // the forward walks.
             reopen_flag: None,
+            reopen_unit: false,
             name: &m.name,
             file: file.as_deref(),
             label: &label,

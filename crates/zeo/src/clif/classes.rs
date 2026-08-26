@@ -952,6 +952,7 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
                         plain: layout.plain,
                         kw_direct: layout.kw_direct.clone(),
                         has_blk,
+                        reopen_flagged: false,
                     },
                 );
             }

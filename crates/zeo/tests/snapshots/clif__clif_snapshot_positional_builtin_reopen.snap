@@ -235,7 +235,7 @@ block26:
 function u1:2(i64, i64, i64, i64, i64) -> i32 ccall {
     gv0 = symbol colocated userextname5
     gv1 = symbol colocated userextname6
-    gv2 = symbol colocated userextname8
+    gv2 = symbol colocated userextname7
     sig0 = (i64, i64) -> i32 ccall
     sig1 = (i64) ccall
     sig2 = (i64, i64, i64) -> i32 ccall

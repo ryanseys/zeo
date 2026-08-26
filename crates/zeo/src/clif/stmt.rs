@@ -1138,6 +1138,7 @@ fn lower_stmt_inner(fx: &mut Fx, stmt: NodeId) -> CResult<()> {
                 // (minitest's `describe(desc, additional_desc = nil, &blk)`
                 // written as a statement).
                 && decl.plain
+                && !decl.reopen_flagged
                 && decl.arity == args.len()
                 && !args.iter().any(|a| matches!(a, ArrayElem::Splat(_)))
                 && !super::expr::method_class_shadows(fx, &name)
