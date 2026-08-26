@@ -802,11 +802,12 @@ pub(super) fn map_class_self_items(
             HirNode::ConstWrite { .. } => Item::Passthrough,
             // A `class`/`module` written here belongs to the SINGLETON class
             // (`IRB::Color`'s `class << self; class ColorizeVisitor <
-            // Prism::Visitor`). zeo hands it to the enclosing class instead,
-            // which gets the property that matters -- the singleton methods
-            // beside it reach it by bare name -- at the cost of also
-            // answering `Color::ColorizeVisitor`, where real Ruby raises.
-            // See `docs/COMPATIBILITY.md`.
+            // Prism::Visitor`). It passes through unchanged and the caller
+            // wraps it in the surrogate reopen, exactly as it wraps a
+            // constant -- `homes_on_the_singleton` names the pair. The
+            // singleton methods beside it still reach it by bare name (the
+            // surrogate is their lexical home), and `M::ColorizeVisitor`
+            // raises, which is what ruby answers.
             HirNode::ClassDef { .. } => Item::Passthrough,
             // A `@@x` inside `class << self` belongs to the ENCLOSING class,
             // not the singleton: cvar lookup walks past singleton crefs (see

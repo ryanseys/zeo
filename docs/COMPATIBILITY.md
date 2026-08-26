@@ -909,15 +909,23 @@ module Color
 end
 ```
 
-Real Ruby puts `Visitor` on `Color.singleton_class`: the singleton methods
-beside it see it by bare name, `Color.constants` is empty, and `Color::Visitor`
-raises `NameError`. Zeo hands the definition to the enclosing module instead.
-The bare-name lookup -- the only reason such a class is ever written there --
-works; the divergence is that `Color::Visitor` also answers, and `Visitor`
-shows up in `Color.constants`.
+`Visitor` belongs to `Color.singleton_class`, exactly as a constant written
+there does -- a `class X` IS a constant write with a body. The singleton
+methods beside it see it by bare name, `Color.constants` is empty, and
+`Color::Visitor` raises `NameError`. All of that now matches.
 
-`tests/singleton_body_class_and_self_path.rb` pins the behaviour, with the
-oracle's answers recorded beside Zeo's.
+One thing does not: `Visitor.name`. Real Ruby answers
+`"#<Class:0x00007f...>::Visitor"`, an address nobody can reproduce; zeo
+answers `nil`, because the qualified name it builds is `#<Class:Color>::Visitor`
+and `Module#name` reports nothing for a name no constant path can spell. The
+class itself is identical either way.
+
+A body compiled at RUN time (`eval` / `class_eval`) still hands both the
+constant and the class to the enclosing module -- there is no compile-time
+surrogate to file them on. See
+`tests/gaps/an_eval_singleton_body_constant_lands_on_the_module.rb`.
+
+`tests/singleton_body_class_and_self_path.rb` pins the behaviour.
 
 ## A top-level `return` inside a required file
 

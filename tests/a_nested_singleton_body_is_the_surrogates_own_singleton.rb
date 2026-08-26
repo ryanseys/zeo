@@ -81,9 +81,9 @@ class Outer
         def who = :inners_class_method
       end
     end
-    # `Inner` by bare name -- ruby scopes it to the singleton class, zeo to
-    # the enclosing one, and both resolve it from here. (`Outer::Inner` is
-    # where the two part company; see docs/COMPATIBILITY.md.)
+    # `Inner` by bare name -- it belongs to the singleton class, which is
+    # this method's lexical home, so the bare read resolves while
+    # `Outer::Inner` raises.
     def outer_side = Inner.who
   end
 end

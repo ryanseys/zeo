@@ -1122,13 +1122,12 @@ fn lower_class_body_statement(
     // nested `def`s all work exactly as they would directly in the class
     // body), then each result is mapped onto the ENCLOSING class:
     //   - a `def`     -> retagged as a class method (`set_method_is_class_method`);
-    //   - a constant  -> spliced onto the enclosing class. Real Ruby scopes a
-    //     `class << self` constant to the SINGLETON class (so `C::NAME`
-    //     NameErrors), but its only common use is lexical reference from the
-    //     singleton's own methods -- which are now the enclosing class's class
-    //     methods, and those resolve the enclosing class's constants (verified
-    //     against the oracle). Documented divergence: external `C::NAME`
-    //     resolves here where CRuby raises.
+    //   - a constant, and a nested `class`/`module` -> wrapped in the
+    //     SINGLETON SURROGATE at its own position (`homes_on_the_singleton`),
+    //     which is where ruby files both: `C::NAME` raises and
+    //     `C.singleton_class.const_defined?(:NAME)` is true. The singleton's
+    //     own methods still read it by bare name, the surrogate being their
+    //     lexical home;
     //   - `include M` -> `extend M` on the enclosing class (M's instance
     //     methods become class methods either way -- same effect).
     //   - `prepend M`/`undef`/`private :m` -> their class-method halves
@@ -1212,7 +1211,7 @@ fn lower_class_body_statement(
             let mut body_items = Vec::with_capacity(mapped.len());
             let mut rest = Vec::new();
             for n in mapped {
-                if !matches!(hir[n], HirNode::ConstWrite { .. }) {
+                if !homes_on_the_singleton(hir, n) {
                     rest.push(n);
                     body_items.push(n);
                     continue;
@@ -1271,7 +1270,7 @@ fn lower_class_body_statement(
                 ordered.push(n);
                 continue;
             }
-            if !matches!(hir[n], HirNode::ConstWrite { .. }) {
+            if !homes_on_the_singleton(hir, n) {
                 rest.push(n);
                 ordered.push(n);
                 continue;
@@ -1450,6 +1449,29 @@ fn lower_class_body_statement(
     }
     push_body_statement(hir, id, *module_function, out);
     Ok(())
+}
+
+/// Whether a `class << self` statement names something ruby files on the
+/// SINGLETON class rather than on the enclosing one -- a constant, or a
+/// nested `class`/`module`. Each such statement is wrapped in its own
+/// surrogate reopen, spliced at its own position.
+///
+/// A nested class is the same fact as a constant, because a `class X` IS a
+/// constant write with a body: `class << self; class Visitor; end; end`
+/// leaves `M.singleton_class.const_defined?(:Visitor)` true and `M::Visitor`
+/// raising. The two used to be classified apart, so the class landed on the
+/// enclosing module and answered a lookup ruby refuses.
+///
+/// A surrogate is NOT one of these. It is the wrapper itself -- a residual
+/// statement's own mint, or a nested `class << self`'s reopen -- and
+/// wrapping it again would file a three-deep singleton body one level too
+/// far out.
+fn homes_on_the_singleton(hir: &Hir, id: NodeId) -> bool {
+    match &hir[id] {
+        HirNode::ConstWrite { .. } => true,
+        HirNode::ClassDef { name, .. } => name != SINGLETON_SURROGATE,
+        _ => false,
+    }
 }
 
 /// Push one class-body statement, and behind it the promotion a run-time

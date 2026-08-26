@@ -2,6 +2,12 @@
 # both straight out of irb: a nested `class` (color.rb's `class
 # ColorizeVisitor < Prism::Visitor`), and a constant path rooted at `self`
 # (input-method.rb's `self::Readline::HISTORY`).
+#
+# A class written here belongs to the SINGLETON class, exactly as a constant
+# written here does -- `class X` IS a constant write with a body. Both are
+# wrapped in the singleton surrogate at their own position, so the singleton
+# methods beside them still reach them by bare name while the enclosing
+# module answers for neither.
 module Color
   class << self
     class Visitor
@@ -16,6 +22,25 @@ module Color
 end
 
 puts Color.paint("red")
+
+# The class is the singleton's, not the module's.
+p Color.singleton_class.const_defined?(:Visitor)
+p Color.constants
+p(begin; Color::Visitor; rescue NameError => e; e.message; end)
+p Color.singleton_class::Visitor.new("blue").render
+
+# A constant beside it takes the same route, and the two list together.
+module Sized
+  class << self
+    MAX = 5
+    class Box; end
+    def cap = MAX
+  end
+end
+p Sized.cap
+p Sized.singleton_class.constants.sort
+p Sized.constants
+p(begin; Sized::MAX; rescue NameError => e; e.message; end)
 
 # `self::Engine.name` -- a constant path whose ROOT is dynamic but whose outer
 # node is still a path, which is what the old "is the immediate PARENT a
@@ -32,12 +57,3 @@ end
 Reader.setup
 p Reader::Engine
 p Reader::LABEL
-
-# ---- DELIBERATE DIVERGENCE; the lines below are ZEO's answers, not ruby
-# 4.0.6's. Ruby puts the class on the singleton class (`true` / `[]` /
-# raises `uninitialized constant Color::Visitor`); zeo hands it to the
-# enclosing module (`false` / `[:Visitor]` / `"<blue>"`). The `.divergence`
-# sidecar records why, and `docs/COMPATIBILITY.md` carries the section.
-p Color.singleton_class.const_defined?(:Visitor)
-p Color.constants
-p Color::Visitor.new("blue").render

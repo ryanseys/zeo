@@ -328,22 +328,28 @@ impl Compiler {
         {
             return name.clone();
         }
-        // A singleton-class surrogate (a constant-bearing `class << self`
-        // body -- see `lower::defs`) displays as CRuby's `#<Class:M>`, not a
-        // `M::...` path: it is not reachable as a constant at all.
-        if self.class(cid).name == SINGLETON_SURROGATE
-            && let Some(p) = self.class(cid).lexical_parent
-        {
-            return format!("#<Class:{}>", self.fq_name(p));
-        }
-        let mut segments = vec![self.class(cid).name.clone()];
-        let mut cur = self.class(cid).lexical_parent;
-        while let Some(p) = cur {
-            segments.push(self.class(p).name.clone());
+        let mut segments = Vec::new();
+        let mut cur = Some(cid);
+        while let Some(c) = cur {
+            // A singleton-class surrogate (a `class << self` body -- see
+            // `lower::defs`) displays as CRuby's `#<Class:M>`, not a `M::...`
+            // path: it is not reachable as a constant at all. It ENDS the
+            // walk, because that rendering already carries its own parent --
+            // and a class nested inside the body has to take the same prefix
+            // or `Module#constants` cannot match its qualified name against
+            // the surrogate's (which is what hid such a class from
+            // `M.singleton_class.constants`).
+            if self.class(c).name == SINGLETON_SURROGATE
+                && let Some(p) = self.class(c).lexical_parent
+            {
+                segments.push(format!("#<Class:{}>", self.fq_name(p)));
+                break;
+            }
+            segments.push(self.class(c).name.clone());
             if segments.len() > MAX_NESTING {
                 break;
             }
-            cur = self.class(p).lexical_parent;
+            cur = self.class(c).lexical_parent;
         }
         segments.reverse();
         segments.join("::")
