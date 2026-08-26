@@ -448,6 +448,25 @@ pub(crate) fn lower_counted(
     for name in &per_iteration_cells {
         replace_cell(fx, name);
     }
+    // A COUNTER bind into a plain slot the body never reassigns: the
+    // slot only ever holds the entry nil and Ints, so the release test
+    // on the old value is statically dead (`write_move_into`). A body
+    // that assigns the name -- or a cell -- keeps the full write.
+    let bind_int = |fx: &mut Fx, name: &String, c: ir::Value| {
+        let fresh = matches!(fx.locals.get(name), Some(super::ctx::Local::Slot(_)))
+            && !body
+                .iter()
+                .any(|&n| crate::analyze::class_query::assigns_local(&fx.an.compiler, n, name));
+        if fresh {
+            let Some(super::ctx::Local::Slot(ss)) = fx.locals.get(name).copied() else {
+                unreachable!("just matched a slot");
+            };
+            let dst = fx.slot_addr(ss, 0);
+            ownership::write_move_into(fx, &super::operand::Operand::Int(c), dst);
+        } else {
+            ownership::write_local(fx, name, &super::operand::Operand::Int(c));
+        }
+    };
     // What each required name binds this iteration. The ELEMENT binding
     // (an `array_get` clone, or the counter itself) serves the first
     // name -- except under `inject`, whose first name is the running
@@ -468,7 +487,7 @@ pub(crate) fn lower_counted(
                 };
                 ownership::write_local(fx, name, &elem);
             }
-            _ => ownership::write_local(fx, name, &super::operand::Operand::Int(c)),
+            _ => bind_int(fx, name, c),
         }
     };
     match bind {
@@ -479,7 +498,7 @@ pub(crate) fn lower_counted(
             if let Some(name) = bound.get(1) {
                 // `each_with_index`'s second name: the plain counter.
                 let c = fx.b.ins().load(types::I64, fl, counter_addr, 0);
-                ownership::write_local(fx, name, &super::operand::Operand::Int(c));
+                bind_int(fx, name, c);
             }
         }
         Bind::AccElement => {
