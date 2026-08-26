@@ -18,7 +18,7 @@ $ make bench                                     # the whole bank
 $ cargo bench -p zeo --bench programs            # the same, spelled out
 $ cargo bench -p zeo --bench programs -- 'zeo/bm_fib$'   # one benchmark (regex)
 $ ZEO_BENCH_ORACLE=1 ZEO_BENCH_ORACLE_RUBY="$(mise which ruby)" \
-    cargo bench -p zeo --bench programs -- 'cruby/'      # time the CRuby oracle
+    cargo bench -p zeo --bench programs -- 'cruby/'      # also time plain CRuby
 $ make pgo    # the SHIPPED config (ZEO_BENCH_DIST=pgo spelled out)
 ```
 
@@ -65,8 +65,9 @@ commit in a worktree before believing the number. Baselines live in
   the binary links the RELEASE runtime, statically — what a user would
   actually run, not the `-O0` dynamic build the test harness uses.
 - **Correctness first.** Each program's first run must match its
-  `.expected` byte for byte (the oracle group checks `ruby`'s output too, so
-  a stale snapshot fails loudly). Timing a wrong answer is meaningless.
+  `.expected` byte for byte (a combined run checks `ruby`'s output too,
+  so a stale snapshot fails loudly). Timing a wrong answer is
+  meaningless.
 - **Flat sampling, 10 samples.** Whole-program subprocess timings are
   criterion `iter_custom` measurements under `SamplingMode::Flat`. Long
   programs exceed the 2 s target time; criterion warns and takes its 10
@@ -77,9 +78,9 @@ commit in a worktree before believing the number. Baselines live in
   editing code, running tests, or `cargo build` in the ordinary target dir
   while a bank runs cannot touch what is being timed (though heavy parallel
   builds still add scheduler noise to the numbers).
-- **The oracle is the pinned ruby.** Point `ZEO_BENCH_ORACLE_RUBY` at the
-  `mise.toml` ruby (4.0.6); a bare `ruby` off `PATH` answers a different
-  question.
+- **Compare against the pinned ruby.** Point `ZEO_BENCH_ORACLE_RUBY` at
+  the `mise.toml` ruby (4.0.6); a bare `ruby` off `PATH` answers a
+  different question.
 
 ## Profiling a benchmark
 
@@ -110,8 +111,9 @@ bank. Every full release-profile bank overwrites the `zeo` rows and
 commits the file, so `git log -p bench/results.tsv` is the progress
 record — and each bank commit's message carries the full per-bench diff
 against both the previous bank and the standing CRuby rows. The `cruby`
-rows update only when the oracle group runs (`ZEO_BENCH_ORACLE=1`),
-which pins both engines in the same run on the same machine.
+rows update only on a COMBINED run (`ZEO_BENCH_ORACLE=1`, which also
+times plain CRuby on the same programs), so every Zeo-vs-Ruby ratio
+comes from one sitting on one machine.
 
 Read any ratio as a shape, not a portable claim: one laptop, one OS
 state. Per-benchmark lever attribution — which planned optimization
