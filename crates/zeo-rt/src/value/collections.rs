@@ -430,15 +430,20 @@ pub enum HashKey {
     /// identity, exactly real Ruby's `Class#hash`/`#eql?` (two references
     /// to the same class are one key).
     Class(u32),
-    /// An Object key whose class defines its own `hash`: the
-    /// projection of that method's RESULT. Wrapped (not flattened into the
-    /// result's own variant) so a user-hashed object never collides with a
-    /// plain value that happens to equal its hash. Documented
-    /// approximation: two keys with `hash`-equal results are ONE key here
-    /// even if their `eql?` would disagree (this table has no second
-    /// eql?-verification pass); in practice classes define the two
-    /// consistently.
-    Computed(Box<HashKey>),
+    /// An Object key whose class defines its own `hash`: the projection of
+    /// that method's RESULT, plus the receiver so `eql?` can decide.
+    ///
+    /// Wrapped (not flattened into the result's own variant) so a
+    /// user-hashed object never collides with a plain value that happens to
+    /// equal its hash.
+    ///
+    /// The projection is a BUCKET, not an identity. `hash` is not required
+    /// to be unique in ruby -- two distinct keys may collide and still be
+    /// distinct -- so the table hashes the projection and then asks `eql?`,
+    /// which is what CRuby does. Treating the projection alone as the key
+    /// lost entries: a `Hash` given two colliding keys held ONE, and read
+    /// back the other key's value.
+    Computed(Box<HashKey>, EqlProbe),
     Identity(usize),
     /// The numeric-tower keys -- `BigInt` never overlaps
     /// `Int` (demotion invariant), `Rational` is always reduced, `Complex`
@@ -459,6 +464,60 @@ pub enum HashKey {
     /// which keeps the derived `PartialEq` correct without hand-writing one
     /// for the whole enum, on the hottest equality surface in this module.
     Hash(Vec<(HashKey, HashKey)>),
+}
+
+/// The receiver behind a [`HashKey::Computed`], carried so the table can ask
+/// `eql?` when two keys land in the same bucket.
+///
+/// Hashes as NOTHING: the projection beside it is the whole bucket key, and
+/// two keys that must compare equal have to share a bucket first. Comparing
+/// is therefore the only thing this does, and it only runs on a real
+/// collision -- pointer-equal keys short-circuit, and distinct buckets never
+/// meet.
+#[derive(Clone)]
+pub struct EqlProbe(pub(crate) crate::RObj);
+
+impl PartialEq for EqlProbe {
+    fn eq(&self, other: &Self) -> bool {
+        if std::sync::Arc::ptr_eq(&self.0, &other.0) {
+            return true;
+        }
+        let arg = RubyValue::Object(other.0.clone());
+        match crate::dispatch::call_user_method(&self.0, crate::symbol::wk::eql_p(), &[arg]) {
+            Some(Ok(v)) => v.truthy(),
+            // An `eql?` that raises has no return channel here, exactly as a
+            // raising `hash` has none: park it and answer "different", so the
+            // enclosing row reports the exception one dispatch from where
+            // ruby raises it.
+            Some(Err(sig)) => {
+                park_key_raise(sig);
+                false
+            }
+            // No user `eql?`: ruby's default is identity, already answered.
+            None => false,
+        }
+    }
+}
+
+impl Eq for EqlProbe {}
+
+/// By POINTER. `HashKey`'s ordering exists only to put a Hash-as-key's pairs
+/// in a canonical order; ruby reads no meaning into it.
+impl Ord for EqlProbe {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        (std::sync::Arc::as_ptr(&self.0) as *const () as usize)
+            .cmp(&(std::sync::Arc::as_ptr(&other.0) as *const () as usize))
+    }
+}
+
+impl PartialOrd for EqlProbe {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl std::hash::Hash for EqlProbe {
+    fn hash<H: std::hash::Hasher>(&self, _: &mut H) {}
 }
 
 /// `HashKey::Str`'s hash tag -- shared with [`StrProbe`], whose whole point
@@ -521,7 +580,9 @@ impl std::hash::Hash for HashKey {
                 state.write_u8(8);
                 c.hash(state);
             }
-            HashKey::Computed(k) => {
+            // The probe beside `k` contributes nothing, so two colliding
+            // keys share a bucket and `eql?` separates them there.
+            HashKey::Computed(k, _) => {
                 state.write_u8(9);
                 k.hash(state);
             }
@@ -734,7 +795,10 @@ fn hash_key_rec(v: &RubyValue, by_identity: bool, seen: &mut Seen) -> HashKey {
         // dispatch away from where ruby raises it.
         RubyValue::Object(o) => {
             match crate::dispatch::call_user_method(o, crate::symbol::wk::hash(), &[]) {
-                Some(Ok(v)) => HashKey::Computed(Box::new(hash_key_rec(&v, false, seen))),
+                Some(Ok(v)) => HashKey::Computed(
+                    Box::new(hash_key_rec(&v, false, seen)),
+                    EqlProbe(o.clone()),
+                ),
                 Some(Err(sig)) => {
                     park_key_raise(sig);
                     HashKey::Identity(Arc::as_ptr(o) as *const () as usize)

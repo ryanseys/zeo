@@ -239,6 +239,7 @@ pub(crate) mod wk {
         dig => "dig",
         each => "each",
         eq => "==",
+        eql_p => "eql?",
         hash => "hash",
         initialize => "initialize",
         inspect => "inspect",
