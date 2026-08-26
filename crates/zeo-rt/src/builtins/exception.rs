@@ -621,6 +621,18 @@ pub fn set_explicit_cause(exc_value: &RubyValue, cause: RubyValue) -> Result<(),
 /// `KeyError#key`/`#receiver`, `NameError#name`/`#receiver`,
 /// `NoMethodError#args`, `UncaughtThrowError#tag`/`#value`. A no-op for a
 /// non-native exception value, so a raise site can call it unconditionally.
+/// Write the hidden `mesg` slot directly -- what `Marshal.load` needs, since
+/// a dumped exception carries its message as the ivar `mesg` and there is no
+/// public writer for it (`#message` only reads).
+pub fn set_exception_message(exc_value: &RubyValue, msg: RubyValue) {
+    let RubyValue::Object(o) = exc_value else {
+        return;
+    };
+    if let Some(e) = downcast_robj::<RubyException>(o) {
+        *e.mesg.lock() = msg;
+    }
+}
+
 pub fn set_exception_detail(exc_value: &RubyValue, key: &'static str, v: RubyValue) {
     let RubyValue::Object(o) = exc_value else {
         return;

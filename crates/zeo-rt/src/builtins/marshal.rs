@@ -40,7 +40,17 @@ use zeo_macros::ruby_module;
 /// plain `Object` carrying ivars is exactly that case, so dumping one and
 /// loading it back raised `allocator undefined for Object`.
 fn marshal_allocate(cid: crate::ClassId) -> Option<RubyValue> {
-    crate::builtins::rclass::builtin_allocate(cid).or_else(|| allocate_of(cid))
+    if let Some(v) = crate::builtins::rclass::builtin_allocate(cid) {
+        return Some(v);
+    }
+    // An EXCEPTION carries a native payload every `Exception` method reads,
+    // so a blank one is the native constructor with no arguments -- the arm
+    // `Class#allocate` already has. Without it, loading ANY dumped exception
+    // reported `allocator undefined`.
+    if crate::dispatch::ancestors_of_value(cid).contains(&zeo_abi::EXCEPTION_CLASS) {
+        return crate::builtins::exception::exception_construct(cid, &[], None).ok();
+    }
+    allocate_of(cid)
 }
 
 const MAJOR: u8 = 4;
@@ -185,7 +195,16 @@ impl Writer {
                 if self.check_link(ptr_of(v)) {
                     return Ok(());
                 }
-                let ivars: Vec<Iv> = encoding_ivar(rs.lock().encoding()).into_iter().collect();
+                let mut ivars: Vec<Iv> = encoding_ivar(rs.lock().encoding()).into_iter().collect();
+                // A String's OWN ivars travel too. Collecting only the
+                // encoding lost them on every round trip -- and fixing the
+                // load side alone would not have helped, because they were
+                // never written.
+                for n in crate::value::value_ivars::names(v) {
+                    if let Some(iv) = crate::value::value_ivars::get(v, &n) {
+                        ivars.push(Iv::Named(format!("@{n}"), iv));
+                    }
+                }
                 if !ivars.is_empty() {
                     self.out.push(b'I');
                 }
@@ -315,12 +334,59 @@ impl Writer {
         Ok(())
     }
 
-    /// Serialize a heap object, choosing CRuby's tag by protocol: `marshal_dump`
+    /// What `Marshal.dump` refuses, and why -- both were silently DUMPED before,
+/// losing the very thing that made them undumpable.
+///
+/// A SINGLETON METHOD cannot round-trip: the body has no name in the stream.
+/// The test is on the METHODS, not on having a singleton class, because
+/// `obj.extend(M)` gives an object a singleton class and IS dumpable (the
+/// `e` records carry it).
+///
+/// A stream, a directory handle, a Method and a Binding all wrap process
+/// state that means nothing in another process. The class named is the
+/// RECEIVER's own -- a `File` says `can't dump File`, not `IO`.
+fn refuse_undumpable(v: &RubyValue, cid: crate::ClassId) -> Result<(), Signal> {
+    // A method from an EXTENDED module is not an own singleton method:
+    // zeo's `extend` COPIES the module's methods into the singleton table,
+    // so they show up here, and `obj.extend(M)` IS dumpable -- the `e`
+    // records carry it. Only a body with no name in the stream refuses.
+    let from_modules: Vec<Symbol> = crate::runtime_meta::extended_modules(v)
+        .into_iter()
+        .flat_map(|mid| {
+            crate::dispatch::instance_method_names(mid, crate::dispatch::VisFilter::All, true)
+        })
+        .collect();
+    if crate::runtime_meta::singleton_method_names(v)
+        .iter()
+        .any(|m| !from_modules.contains(m))
+    {
+        return Err(type_error!("singleton can't be dumped"));
+    }
+    const UNDUMPABLE: &[zeo_abi::ClassId] = &[
+        zeo_abi::IO_CLASS,
+        zeo_abi::FILE_CLASS,
+        zeo_abi::DIR_CLASS,
+        zeo_abi::METHOD_CLASS,
+        zeo_abi::UNBOUND_METHOD_CLASS,
+        zeo_abi::BINDING_CLASS,
+    ];
+    let chain = crate::dispatch::ancestors_of_value(cid);
+    if chain.iter().any(|a| UNDUMPABLE.contains(a)) {
+        return Err(type_error!(
+            "can't dump {}",
+            crate::dispatch::class_name(cid).unwrap_or_default()
+        ));
+    }
+    Ok(())
+}
+
+/// Serialize a heap object, choosing CRuby's tag by protocol: `marshal_dump`
     /// -> `U`, else `_dump` -> `u`, else a Struct -> `S`, else a value-builtin
     /// subclass -> `C`, else a plain `o` with inline ivars.
     fn write_object(&mut self, v: &RubyValue, o: &RObj) -> Result<(), Signal> {
         let cid = o.class_id();
         let name = nameable(cid)?;
+        Self::refuse_undumpable(v, cid)?;
 
         // `Time` -> `Iu` with the zone/offset/nano ivars CRuby hangs on the
         // dump string -- native, because the `_dump` row's answer (a zeo
@@ -431,10 +497,29 @@ impl Writer {
         if self.check_link(ptr_of(v)) {
             return Ok(());
         }
+        // `extend`ed modules ride along as `e` records, one per module,
+        // written BEFORE the body -- CRuby re-extends on load. Dropping them
+        // meant a loaded object had lost every method it was extended with.
+        for mid in crate::runtime_meta::extended_modules(v) {
+            if let Some(mname) = crate::dispatch::class_name(mid) {
+                self.out.push(b'e');
+                self.write_symbol(&mname);
+            }
+        }
         self.register_link(ptr_of(v));
         self.out.push(b'o');
         self.write_symbol(&name);
-        let ivars = o.ivar_pairs();
+        let mut ivars = o.ivar_pairs();
+        // An exception's message and backtrace live in its NATIVE payload,
+        // not in an ivar bag, so `ivar_pairs` finds nothing and a dumped
+        // exception loaded back with its class name for a message. CRuby
+        // writes them as the ivars `mesg` and `bt`, in that order.
+        if crate::dispatch::ancestors_of_value(cid).contains(&zeo_abi::EXCEPTION_CLASS) {
+            let mesg = send_value(v, Symbol::intern("message"), &[], None)?;
+            let bt = send_value(v, Symbol::intern("backtrace"), &[], None)?;
+            ivars.insert(0, ("mesg".to_string(), mesg));
+            ivars.insert(1, ("bt".to_string(), bt));
+        }
         self.write_long(ivars.len() as i64);
         for (iname, ival) in ivars {
             self.write_symbol(&iname);
@@ -713,6 +798,20 @@ impl Reader<'_> {
             b'U' => self.read_user_marshal(),
             b'u' => self.read_userdef(false),
             b'o' => self.read_object(),
+            // `e<module><value>`: the value, then `extend`ed with the module.
+            b'e' => {
+                let mname = self.read_symbol_name()?;
+                let inner = self.read()?;
+                if let Some(mid) = class_id_by_name(&mname) {
+                    let _ = send_value(
+                        &inner,
+                        Symbol::intern("extend"),
+                        &[RubyValue::Class(mid)],
+                        None,
+                    );
+                }
+                Ok(inner)
+            }
             b'I' => self.read_ivar(),
             other => Err(arg_error!("dump format error (0x{other:x})")),
         }
@@ -748,10 +847,24 @@ impl Reader<'_> {
                         }
                     }
                 }
+                // The exception payload's two fields, by the names ruby
+                // writes them under.
+                "mesg" => {
+                    crate::builtins::exception::set_exception_message(v, val);
+                }
+                "bt" if !val.is_nil() => {
+                    let _ = send_value(v, Symbol::intern("set_backtrace"), &[val], None);
+                }
+                "bt" => {}
                 other => {
-                    if let RubyValue::Object(o) = v {
-                        o.ivar_set_named(other.trim_start_matches('@'), val);
-                    }
+                    // Not only an `Object`: an Array, Hash, String or Regexp
+                    // carries ivars too, and writing them back only for the
+                    // object case dropped every one of them.
+                    let name = other.trim_start_matches('@');
+                    let _ = match v {
+                        RubyValue::Object(o) => o.ivar_set_named(name, val),
+                        _ => crate::value::value_ivars::set(v, name, val),
+                    };
                 }
             }
         }
@@ -995,6 +1108,22 @@ impl Reader<'_> {
             for _ in 0..count {
                 let iname = self.read_symbol_name()?;
                 let value = self.read()?;
+                // An exception's message and backtrace arrive as the ivars
+                // `mesg` and `bt`, but live in its NATIVE payload -- storing
+                // them in the ivar bag left `#message` answering the class
+                // name, which is what a message-less exception reports.
+                match iname.as_str() {
+                    "mesg" => {
+                        crate::builtins::exception::set_exception_message(&obj, value);
+                        continue;
+                    }
+                    "bt" if !value.is_nil() => {
+                        let _ = send_value(&obj, Symbol::intern("set_backtrace"), &[value], None);
+                        continue;
+                    }
+                    "bt" => continue,
+                    _ => {}
+                }
                 // ivar names arrive `@`-prefixed; the by-name setter keys on the
                 // bare name.
                 o.ivar_set_named(iname.trim_start_matches('@'), value);
