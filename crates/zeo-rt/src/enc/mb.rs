@@ -192,7 +192,20 @@ pub(crate) fn mb_decode_seq(family: MbFamily, seq: &[u8]) -> Option<char> {
 }
 
 /// Encodes one scalar into the family's bytes, `None` when unrepresentable.
+///
+/// The DELTA is consulted before the backend, in CRuby's order: a denied
+/// scalar is refused however encoding_rs maps it, then an allowed one takes
+/// the bytes CRuby gives, then the backend answers. See
+/// `enc::mb_encode_delta` for why the two disagree at all.
 pub(crate) fn mb_encode_char(family: MbFamily, c: char) -> Option<Vec<u8>> {
+    if let Some((deny, allow)) = encode_delta(family) {
+        if deny.binary_search(&c).is_ok() {
+            return None;
+        }
+        if let Ok(i) = allow.binary_search_by_key(&c, |(k, _)| *k) {
+            return Some(allow[i].1.to_vec());
+        }
+    }
     let mut buf = [0u8; 4];
     let s: &str = c.encode_utf8(&mut buf);
     let (bytes, _, had_errors) = family.backend().encode(s);
@@ -200,6 +213,18 @@ pub(crate) fn mb_encode_char(family: MbFamily, c: char) -> Option<Vec<u8>> {
         None
     } else {
         Some(bytes.into_owned())
+    }
+}
+
+/// The `(deny, allow)` delta for the two families whose WHATWG encode table
+/// disagrees with CRuby's. The vendor rows riding a family's walk share its
+/// delta, exactly as they share its backend.
+fn encode_delta(family: MbFamily) -> Option<(&'static [char], &'static [(char, &'static [u8])])> {
+    use crate::enc::mb_encode_delta as d;
+    match family {
+        MbFamily::Big5 => Some((d::BIG5_DENY, d::BIG5_ALLOW)),
+        MbFamily::EucJp => Some((d::EUC_JP_DENY, d::EUC_JP_ALLOW)),
+        _ => None,
     }
 }
 

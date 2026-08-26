@@ -50,6 +50,8 @@ pub use transcode::{
     TranscodeRun, TranscodeState, XmlMode, converter_not_found, encode_scalar, self_describing_bom,
     transcode, transcode_run,
 };
+pub(crate) mod mb_encode_delta;
+pub(crate) mod titlecase;
 pub(crate) use transcode::{Unit, decode, decode_spans};
 
 #[cfg(test)]

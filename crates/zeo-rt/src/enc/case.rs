@@ -165,20 +165,22 @@ pub(crate) fn case_unicode_opts(s: &str, mode: CaseMode, opts: CaseOptions) -> S
             CaseMode::Down => s.to_lowercase(),
             CaseMode::Swap => s
                 .chars()
-                .flat_map(|c| {
-                    if c.is_uppercase() {
-                        c.to_lowercase().collect::<Vec<_>>()
-                    } else {
-                        c.to_uppercase().collect()
-                    }
+                .map(|c| match swapcase_exception(c) {
+                    // A TITLECASE character swaps per HALF (`Dz` -> `dZ`),
+                    // which is not "the other case" of anything -- see
+                    // `enc::titlecase`.
+                    Some(t) => t.to_string(),
+                    None if c.is_uppercase() => c.to_lowercase().collect(),
+                    None => c.to_uppercase().collect(),
                 })
                 .collect(),
             CaseMode::Cap => {
                 let mut chars = s.chars();
                 match chars.next() {
-                    Some(c) => {
-                        c.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase()
-                    }
+                    // The first character TITLECASES, which is not the same
+                    // as uppercasing it: `\u{1f3}` capitalizes to `\u{1f2}`
+                    // and upcases to `\u{1f1}`.
+                    Some(c) => titlecase(c) + &chars.as_str().to_lowercase(),
                     None => String::new(),
                 }
             }
@@ -193,9 +195,32 @@ pub(crate) fn case_unicode_opts(s: &str, mode: CaseMode, opts: CaseOptions) -> S
                 CaseMode::Swap => !c.is_uppercase(),
                 CaseMode::Cap => i == 0,
             };
+            if up && matches!(mode, CaseMode::Cap) && i == 0 && opts.is_plain() {
+                return titlecase(c);
+            }
             case_char(c, up, opts)
         })
         .collect()
+}
+
+/// `c`'s TITLECASE, which is not its uppercase for the Dz/Lj/Nj digraphs or
+/// the Greek iota-subscript forms -- Rust's standard library has no mapping
+/// for the third member of Unicode's case triple, so the deltas are a
+/// generated table (`enc::titlecase`).
+pub(crate) fn titlecase(c: char) -> String {
+    match crate::enc::titlecase::TITLECASE.binary_search_by_key(&c, |(k, _)| *k) {
+        Ok(i) => crate::enc::titlecase::TITLECASE[i].1.to_string(),
+        Err(_) => c.to_uppercase().collect(),
+    }
+}
+
+/// `c`'s swap when it is not simply the other case -- a titlecase character
+/// swaps per HALF (`Dz` -> `dZ`), which no per-char mapping can express.
+fn swapcase_exception(c: char) -> Option<&'static str> {
+    crate::enc::titlecase::SWAPCASE_EXCEPTIONS
+        .binary_search_by_key(&c, |(k, _)| *k)
+        .ok()
+        .map(|i| crate::enc::titlecase::SWAPCASE_EXCEPTIONS[i].1)
 }
 
 /// CRuby's `check_case_options`, term for term -- the acceptance set is not

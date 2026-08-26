@@ -1,0 +1,11 @@
+Big5	14029	5e276003a8f8676f
+EUC-JP	13137	9be5fe3c47147a0e
+big5 cyrillic	Encoding::UndefinedConversionError
+big5 ok	a4a4
+euc jis0212	8fabb1
+euc roundtrip	true
+euc kana	a4a2
+euc ascii	61
+big5 decode	中
+euc decode	あ
+euc decode ss3	é

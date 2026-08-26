@@ -21,16 +21,22 @@ are exact. Known divergences:
   both rows.
 - **Big5 pairs that WHATWG maps to two-scalar sequences** (a handful of
   HKSCS combining forms) are treated as unmapped (undefined conversion)
-  rather than decoded.
+  rather than decoded. DECODE only: Big5's ENCODE repertoire matches CRuby
+  exactly, scalar for scalar and byte for byte, pinned by
+  `tests/big5_and_euc_jp_encode_exactly.rb`.
 - **ISO-2022-JP undefined-conversion messages are simpler than CRuby's.**
   The dummy ISO-2022-JP row transcodes for real (the stateful escape codec
   in `enc/iso2022jp.rs`), and the representable repertoire matches -- but a
   character it refuses reports `U+XXXX from UTF-8 to ISO-2022-JP` where
   CRuby narrates its internal pivot chain (`"\x8F\xAB\xB1" to
   stateless-ISO-2022-JP in conversion from UTF-8 to EUC-JP to ...`).
-  Halfwidth katakana are refused (as CRuby refuses them), and JIS X 0212
-  characters CRuby reaches through its EUC-JP pivot are refused too (the
-  EUC-JP row's encoder is JIS X 0208-only, per the CP932 note above).
+  Halfwidth katakana are refused (as CRuby refuses them), and so are the
+  JIS X 0212 characters CRuby reaches through its EUC-JP pivot -- CRuby
+  refuses those too, it just names the pivot while doing so. (The
+  parenthetical here until 2026-08-26 said the EUC-JP encoder is JIS X
+  0208-only. It no longer is: EUC-JP reaches the SS3 plane, and
+  ISO-2022-JP's repertoire did not change with it, because ISO-2022-JP
+  has no room for those characters either way.)
 - **The dummy UTF-16/UTF-32 rows always write a big-endian BOM** when
   encoding TO them, and reading FROM them requires one (no BOM is an
   invalid sequence) -- both CRuby-observed; the difference is only that
