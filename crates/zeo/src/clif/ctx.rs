@@ -219,8 +219,9 @@ pub(crate) struct Fx<'e, 'f> {
     /// The enclosing `def` carries the `ruby2_keywords` directive: a splat
     /// forwarding its `*rest` keeps the keyword mark on a trailing hash.
     pub ruby2_keywords: bool,
-    /// Inside a block fn: the binding head `redo` jumps to (re-running the
-    /// param bindings, ruby's rule) -- set once the bindings exist.
+    /// Inside a block fn: the BODY head `redo` jumps to. Past the bindings,
+    /// because ruby does not re-yield -- the parameters and block-locals
+    /// keep whatever the body assigned to them.
     pub block_redo: Option<ir::Block>,
     /// The function's entry block. Every slot's initialization is emitted
     /// here by [`Fx::drain_slot_inits`], never where the slot was created.

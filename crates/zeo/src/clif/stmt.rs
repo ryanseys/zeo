@@ -567,8 +567,9 @@ fn lower_stmt_inner(fx: &mut Fx, stmt: NodeId) -> CResult<()> {
         }
         HirNode::Redo => {
             let Some(ctl) = fx.loops.last() else {
-                // `redo` in a block re-runs the block from its binding head
-                // (the bindings re-run too -- they sit inside the loop).
+                // `redo` in a block re-runs the BODY, past the bindings:
+                // ruby does not re-yield, so the parameters keep what the
+                // body assigned to them.
                 let Some(head) = fx.block_redo else {
                     return fx.unsupported(stmt, "`redo` outside a loop");
                 };

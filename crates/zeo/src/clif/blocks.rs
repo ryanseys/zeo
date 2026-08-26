@@ -765,12 +765,6 @@ fn define_block_fn(
         );
     }
 
-    // The binding head: `redo` re-enters here (the bindings re-run,
-    // ruby's rule).
-    let redo_head = bfx.b.create_block();
-    bfx.b.ins().jump(redo_head, &[]);
-    bfx.b.switch_to_block(redo_head);
-    bfx.block_redo = Some(redo_head);
 
     // A required-only 0/1-name NON-LAMBDA block binds inline: ruby's
     // lenient rules reduce to "args[0], or nil when the yield brought
@@ -977,6 +971,16 @@ fn define_block_fn(
         bfx.b.ins().jump(join, &[]);
         bfx.b.switch_to_block(join);
     }
+
+    // `redo` re-enters the BODY, past every binding -- ruby does not
+    // re-yield, so the parameters and block-locals keep the values the body
+    // gave them (`|a; b|`'s `b` survives a redo too, probe-verified). The
+    // label used to sit at the binding HEAD, which re-bound both and
+    // discarded whatever the body had assigned.
+    let redo_head = bfx.b.create_block();
+    bfx.b.ins().jump(redo_head, &[]);
+    bfx.b.switch_to_block(redo_head);
+    bfx.block_redo = Some(redo_head);
 
     let ret_ok = bfx.b.create_block();
     bfx.block_next = Some((out, ret_ok));
