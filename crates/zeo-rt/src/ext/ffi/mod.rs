@@ -20,11 +20,13 @@
 //! advances the address, exactly like the gem. Reads/writes are raw unaligned
 //! accesses, so the same code serves an owned Ruby buffer and foreign C memory.
 //!
-//! Documented divergences from CRuby+ffi: (1) an unsigned 64-bit read whose top
-//! bit is set wraps to a negative `Integer` -- this runtime's `Integer` is
-//! `i64`, with no Bignum tier (the same limit the scalar `attach_function`
-//! marshaling has). (2) `#address`/`#inspect` expose a real heap address for an
-//! owned buffer, so they are non-deterministic and never golden-tested.
+//! The unsigned 64-bit boundary is a filed gap, not a decision:
+//! `tests/gaps/ffi_unsigned_64_bit_values.rb`. Integer HAS a Bignum tier
+//! now, so the old note's reason ("no Bignum tier, so it wraps negative")
+//! no longer holds -- and the write side does not wrap, it refuses.
+//!
+//! `#address`/`#inspect` expose a real heap address for an owned buffer, so
+//! they are non-deterministic and never golden-tested.
 
 mod auto_pointer;
 mod dynamic_library;
