@@ -1030,6 +1030,7 @@ pub fn mutex_unlock(m: &RMutex) -> Result<(), &'static str> {
     }
     *owner = None;
     drop(owner);
+    crate::gvl::deadlock::note_progress();
     m.freed.notify_one();
     Ok(())
 }
@@ -1127,6 +1128,7 @@ pub fn queue_set_max(q: &RQueue, n: i64) {
     let mut inner = q.inner.lock();
     inner.max = Some(n.max(0) as usize);
     drop(inner);
+    crate::gvl::deadlock::note_progress();
     q.not_full.notify_all();
 }
 
@@ -1170,6 +1172,7 @@ fn queue_push_locked(q: &RQueue, value: RubyValue) -> Result<(), WaitFailure> {
         }
     }
     inner.items.push_back(value);
+    crate::gvl::deadlock::note_progress();
     q.not_empty.notify_one();
     Ok(())
 }
@@ -1197,6 +1200,7 @@ pub fn queue_pop_nonblock(q: &RQueue) -> Result<RubyValue, WaitFailure> {
     let mut inner = q.inner.lock();
     match inner.items.pop_front() {
         Some(v) => {
+            crate::gvl::deadlock::note_progress();
             q.not_full.notify_one();
             Ok(v)
         }
@@ -1212,6 +1216,7 @@ pub fn queue_pop_timeout(q: &RQueue, limit: Duration) -> Result<Option<RubyValue
         let mut inner = q.inner.lock();
         loop {
             if let Some(v) = inner.items.pop_front() {
+                crate::gvl::deadlock::note_progress();
                 q.not_full.notify_one();
                 return Ok(Some(v));
             }
@@ -1243,6 +1248,7 @@ fn queue_pop_locked(q: &RQueue) -> Result<RubyValue, Signal> {
     loop {
         if let Some(v) = inner.items.pop_front() {
             // A freed slot may unblock a `SizedQueue` pusher.
+            crate::gvl::deadlock::note_progress();
             q.not_full.notify_one();
             return Ok(v);
         }
@@ -1278,6 +1284,7 @@ pub fn queue_num_waiting(q: &RQueue) -> i64 {
 /// pusher through. Answers nothing; the caller returns the queue.
 pub fn queue_clear(q: &RQueue) {
     q.inner.lock().items.clear();
+    crate::gvl::deadlock::note_progress();
     q.not_full.notify_all();
 }
 
@@ -1285,6 +1292,7 @@ pub fn queue_close(q: &RQueue) {
     let mut inner = q.inner.lock();
     inner.closed = true;
     // Every parked popper must wake to observe closure (and drain or nil).
+    crate::gvl::deadlock::note_progress();
     q.not_empty.notify_all();
 }
 

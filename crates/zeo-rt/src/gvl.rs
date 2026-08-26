@@ -594,6 +594,23 @@ pub mod deadlock {
         }
     }
 
+    /// A wake that can end another thread's wait -- every queue push, queue
+    /// pop, mutex unlock and ractor send calls this beside its `notify`.
+    ///
+    /// A woken thread is still PARKED for as long as the scheduler takes to
+    /// run it, and it stays in `BLOCKED` that whole time. Counting it as
+    /// blocked is how a BUSY MACHINE turned a working program into a
+    /// deadlock verdict: `SizedQueue(1)` with a producer and a consumer
+    /// reads as "both blocked" in the gap between the pop that frees a slot
+    /// and the producer actually running again.
+    ///
+    /// So a wake resets the streak. Under a real deadlock nobody wakes
+    /// anybody, the streak builds, and the verdict still lands in
+    /// milliseconds.
+    pub fn note_progress() {
+        STREAK.store(0, Ordering::SeqCst);
+    }
+
     /// Called once per poll from inside a wait. `true` means nothing in this
     /// process can make progress.
     ///
@@ -612,8 +629,18 @@ pub mod deadlock {
             STREAK.store(0, Ordering::SeqCst);
             return false;
         }
-        STREAK.fetch_add(1, Ordering::SeqCst) >= 1
+        STREAK.fetch_add(1, Ordering::SeqCst) >= STREAK_VERDICT
     }
+
+    /// Consecutive all-blocked polls with no wake in between before the
+    /// verdict lands -- `STREAK_VERDICT * SLICE`, so about 16ms.
+    ///
+    /// One poll was enough to be wrong, and two were enough to be wrong on a
+    /// loaded machine: a thread woken by another's push can sit unscheduled
+    /// for several milliseconds while sixteen test jobs run. A deadlock has
+    /// nobody to wake it ever, so waiting longer costs a real verdict
+    /// nothing and costs a false one everything.
+    const STREAK_VERDICT: u32 = 8;
 
     /// How long one supervised park lasts before the verdict is re-polled.
     /// Short enough that a deadlock is reported promptly, long enough that a

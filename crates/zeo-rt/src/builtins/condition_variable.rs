@@ -133,6 +133,7 @@ ruby_class! {
     def "signal"(recv) {
         let cv = cv_of(recv);
         let _g = cv.lock.lock();
+        crate::gvl::deadlock::note_progress();
         cv.cond.notify_one();
         Ok(recv.clone())
     }
@@ -140,6 +141,7 @@ ruby_class! {
     def "broadcast"(recv) {
         let cv = cv_of(recv);
         let _g = cv.lock.lock();
+        crate::gvl::deadlock::note_progress();
         cv.cond.notify_all();
         Ok(recv.clone())
     }
