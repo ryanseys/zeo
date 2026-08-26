@@ -49,7 +49,22 @@ pub fn lower_box_eval(
         .as_string_node()
         .map(|sn| String::from_utf8_lossy(sn.unescaped()).into_owned())
     {
-        let body = parse_and_lower_into(hir, &src).map_err(|e| {
+        // The snippet is a FILE of its own, named the way the runtime path
+        // already names one (`BOX_EVAL_FILE`). Without this every span in
+        // the spliced body pointed at the enclosing program, so `__FILE__`
+        // and every backtrace row named the caller's file and the caller's
+        // line -- a computed `box.eval` reports `eval:1` for the same
+        // source. Costs nothing at run time: it is one arena row.
+        let file = hir.add_file(zeo_abi::BOX_EVAL_FILE, src.clone());
+        let prev_file = hir.lowering_file.replace(file);
+        let frame = super::context::SourceFileFrame::push(
+            Some(std::path::Path::new(zeo_abi::BOX_EVAL_FILE)),
+            0,
+        );
+        let lowered = parse_and_lower_into(hir, &src);
+        drop(frame);
+        hir.lowering_file = prev_file;
+        let body = lowered.map_err(|e| {
             crate::lower_error::LowerError::unsupported(format!("Ruby::Box#eval: {e}"))
         })?;
         if !allow_defs {

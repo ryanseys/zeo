@@ -1764,6 +1764,12 @@ pub const SOCKET_CONSTANT_NAMES: &[&str] = &[
     "TCP_MAXSEG",
 ];
 
+/// What a `Ruby::Box#eval` snippet calls its file, in EITHER tier: the
+/// runtime `eval` entry names its frames this, and the compiler registers
+/// a literal snippet under the same name when it splices one. A backtrace
+/// must not say which tier ran the code.
+pub const BOX_EVAL_FILE: &str = "eval";
+
 #[cfg(test)]
 mod tests {
     use super::*;

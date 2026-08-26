@@ -578,8 +578,11 @@ pub fn eval_string_in_box(
     )
 }
 
-/// What a box's snippet calls its file and its top-level scope.
-const BOX_EVAL_FILE: &str = "eval";
+use zeo_abi::BOX_EVAL_FILE;
+
+/// What a box's snippet calls its top-level scope. The file half lives in
+/// `zeo-abi` because the COMPILER names it too -- a literal `box.eval` is
+/// spliced at compile time and registers the same file.
 const BOX_EVAL_SCOPE: &str = "<compiled>";
 
 fn eval_string_entered(
