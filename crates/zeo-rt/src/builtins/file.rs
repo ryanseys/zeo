@@ -60,6 +60,10 @@ pub fn raise_bare_errno(e: &std::io::Error) -> Signal {
     raise_error(class, desc)
 }
 
+pub(crate) fn errno_class_and_desc_of(e: &std::io::Error) -> (&'static str, String) {
+    errno_class_and_desc(e)
+}
+
 fn errno_class_and_desc(e: &std::io::Error) -> (&'static str, String) {
     // `raw_os_error` is the whole answer wherever the OS gave one, and
     // `zeo_abi::ERRNO_CLASSES` names a class for every errno this platform

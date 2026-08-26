@@ -157,7 +157,24 @@ pub(crate) fn accept_nonblock_fd(
 }
 
 pub(crate) fn map_io_err(e: &std::io::Error, ctx: &str) -> Signal {
-    raise_error("Errno::ECONNREFUSED", format!("{ctx}: {e}"))
+    map_io_err_for(e, ctx, "")
+}
+
+/// [`map_io_err`] naming the TARGET, in CRuby's shape:
+/// `Connection refused - connect(2) for "127.0.0.1" port 8080`.
+///
+/// Both halves of the old version were wrong. It hardcoded `ECONNREFUSED`,
+/// so a TIMEOUT also reported "connection refused"; and it interpolated
+/// Rust's own text, which is where `(os error 61)` leaked from. The class
+/// comes from the errno and the description from the shared strerror the
+/// file layer already builds.
+pub(crate) fn map_io_err_for(e: &std::io::Error, ctx: &str, target: &str) -> Signal {
+    let (class, desc) = crate::builtins::file::errno_class_and_desc_of(e);
+    let suffix = match target.is_empty() {
+        true => String::new(),
+        false => format!(" for {target}"),
+    };
+    raise_error(class, format!("{desc} - {ctx}{suffix}"))
 }
 
 /// A `libc` syscall failure as the matching `Errno::*` exception (by raw errno),
@@ -179,12 +196,53 @@ pub(crate) fn errno_error(ctx: &str) -> Signal {
         Some(libc::EPIPE) => "Errno::EPIPE",
         _ => "SystemCallError",
     };
-    raise_error(class, format!("{ctx} - {e}"))
+    let (_, desc) = crate::builtins::file::errno_class_and_desc_of(&e);
+    raise_error(class, format!("{desc} - {ctx}"))
 }
 
 // ---------------------------------------------------------------------------
 // sockaddr <-> SocketAddr marshalling (libc, platform-exact)
 // ---------------------------------------------------------------------------
+
+/// `Socket.sockaddr_un(path)`'s bytes: this platform's `sockaddr_un`, with
+/// the leading `sa_len` byte where the BSDs have one.
+pub(crate) fn pack_un_sockaddr(path: &str) -> Result<Vec<u8>, Signal> {
+    let mut sa: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+    sa.sun_family = libc::AF_UNIX as _;
+    let bytes = path.as_bytes();
+    if bytes.len() >= sa.sun_path.len() {
+        return Err(crate::builtins::arg_error!(
+            "too long unix socket path ({} bytes given but {} bytes max)",
+            bytes.len(),
+            sa.sun_path.len() - 1
+        ));
+    }
+    for (slot, b) in sa.sun_path.iter_mut().zip(bytes) {
+        *slot = *b as _;
+    }
+    // The LENGTH is the header plus the path plus its NUL, not the whole
+    // struct -- which is what ruby packs and what `bind(2)` wants.
+    let len = std::mem::size_of::<libc::sockaddr_un>() - sa.sun_path.len() + bytes.len() + 1;
+    // SAFETY: reading `len` initialized bytes of a live `sockaddr_un`.
+    let raw = unsafe { std::slice::from_raw_parts((&raw const sa).cast::<u8>(), len) };
+    let mut out = raw.to_vec();
+    if HAS_SA_LEN {
+        out[0] = len as u8;
+    }
+    Ok(out)
+}
+
+/// [`pack_un_sockaddr`]'s inverse.
+pub(crate) fn unpack_un_sockaddr(bytes: &[u8]) -> Result<String, Signal> {
+    let head = std::mem::size_of::<libc::sockaddr_un>()
+        - unsafe { std::mem::zeroed::<libc::sockaddr_un>() }.sun_path.len();
+    if bytes.len() < head {
+        return Err(crate::builtins::arg_error!("not an AF_UNIX sockaddr"));
+    }
+    let tail = &bytes[head..];
+    let end = tail.iter().position(|&b| b == 0).unwrap_or(tail.len());
+    Ok(String::from_utf8_lossy(&tail[..end]).into_owned())
+}
 
 /// True on platforms whose `sockaddr` carries a leading `sa_len` byte (the BSDs,
 /// macOS) -- so the packed `sockaddr_in`/`sockaddr_in6` and `ss_family` handling

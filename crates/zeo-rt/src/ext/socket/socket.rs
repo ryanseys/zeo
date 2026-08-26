@@ -151,7 +151,7 @@ ruby_class! {
             Some(t) => std::net::TcpStream::connect_timeout(&addr, t),
             None => std::net::TcpStream::connect(addr),
         })
-        .map_err(|e| super::map_io_err(&e, "connect(2)"))?;
+        .map_err(|e| super::map_io_err_for(&e, "connect(2)", &format!("{host:?} port {port}")))?;
         // SAFETY: `into_raw_fd` yields a fresh, solely-owned descriptor.
         let sock = unsafe {
             crate::builtins::io::socket_from_raw_fd(
@@ -214,6 +214,24 @@ ruby_class! {
             .map(|ip| std::net::SocketAddr::new(ip, port))
             .or_else(|_| resolve_one(&host, port))?;
         Ok(binary_string(pack_ip_sockaddr(&ip)))
+    }
+    // `Socket.pack_sockaddr_un(path)` (aka `sockaddr_un`) -- the UNIX-domain
+    // twin, packed to this platform's `sockaddr_un` layout (the leading
+    // `sa_len` byte on the BSDs included).
+    def self."pack_sockaddr_un" | "sockaddr_un"(_recv, arg) {
+        let path = (*arg).to_display_string();
+        Ok(binary_string(super::pack_un_sockaddr(&path)?))
+    }
+    // `Socket.unpack_sockaddr_un(sockaddr)` -- the path back out.
+    def self."unpack_sockaddr_un"(_recv, arg) {
+        let bytes = match arg {
+            RubyValue::Str(s) => s.lock().bytes().to_vec(),
+            other => return Err(type_error!(
+                "no implicit conversion of {} into String",
+                crate::builtins::class_name_of(other)
+            )),
+        };
+        Ok(str_val(super::unpack_un_sockaddr(&bytes)?))
     }
     // `Socket.unpack_sockaddr_in(sockaddr)` -- `[port, ip_string]`.
     def self."unpack_sockaddr_in"(_recv, arg) {

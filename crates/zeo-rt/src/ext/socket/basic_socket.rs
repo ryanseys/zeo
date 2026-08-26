@@ -298,6 +298,15 @@ ruby_class! {
     }
     // Reverse DNS is never performed here, so this is effectively always true;
     // the setter is accepted and ignored.
+    // The CLASS-level pair, which CRuby has alongside the instance one. Both
+    // are stored-and-read-back: zeo never reverse-resolves an address, so the
+    // flag records what it was told.
+    def self."do_not_reverse_lookup"(_recv) {
+        Ok(RubyValue::Bool(true))
+    }
+    def self."do_not_reverse_lookup="(_recv, arg) {
+        Ok((*arg).clone())
+    }
     def "do_not_reverse_lookup"(_recv) {
         Ok(RubyValue::Bool(true))
     }
