@@ -305,8 +305,22 @@ impl Loader {
                         continue;
                     };
                     let absolute = canonical.with_extension("").to_string_lossy().into_owned();
+                    // Same constant bookkeeping as the single-file arm above,
+                    // and for the same reason: a unit's constants do not exist
+                    // until it runs. Only that arm recorded them, so a file
+                    // reached by a DIRECTORY sweep left every constant it
+                    // assigns foldable -- and `defined?` folded them to false,
+                    // answering nil where the read beside it answered a value.
+                    let before: std::collections::BTreeSet<String> =
+                        hir.const_write_names().cloned().collect();
                     match self.splice_file(hir, &canonical, None, package.clone(), 0) {
                         Ok(body) => {
+                            let fresh: Vec<String> = hir
+                                .const_write_names()
+                                .filter(|k| !before.contains(*k))
+                                .cloned()
+                                .collect();
+                            hir.loader.unrun_unit_consts.extend(fresh);
                             // The file was lowered through the splice path,
                             // but it RUNS only when required -- mark it so
                             // `$LOADED_FEATURES` is not seeded with it.
@@ -318,6 +332,12 @@ impl Loader {
                             {
                                 lf.is_unit = true;
                             }
+                            // Joined to `single_units` too, so a spelling that
+                            // arrives in a LATER round merges as an alias
+                            // (`:223-231`) instead of hitting the `required`
+                            // dedup above and being dropped.
+                            self.single_units
+                                .insert(canonical.clone(), hir.loader.feature_units.len());
                             hir.loader.feature_units.push(crate::hir::FeatureUnit {
                                 feature,
                                 aliases: Vec::new(),

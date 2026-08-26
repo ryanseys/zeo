@@ -526,6 +526,12 @@ fn defined_rest(fx: &mut Fx, site: NodeId, inner: NodeId) -> CResult<Operand> {
             box_id: 0,
         };
         if crate::analyze::constfold::const_form_resolves(&env, inner).is_none() {
+            // A positional CLASS answers the scope operator's question -- the
+            // name is looked up IN its lexical parent. A value constant a
+            // unit assigns answers the BARE one, which reaches a top-level
+            // name the scoped search excludes; the entry point differs with
+            // it (`zeo_rt_defined_const_bare`).
+            let mut bare = false;
             let positional = super::boxes::resolve_class_here(fx, &name)
                 .filter(|&cid| fx.an.compiler.constant_is_positional(cid))
                 .map(|cid| {
@@ -545,6 +551,7 @@ fn defined_rest(fx: &mut Fx, site: NodeId, inner: NodeId) -> CResult<Operand> {
                     let leaf = crate::constpath::ConstPath::parse(&name).base().to_string();
                     let set = &fx.an.compiler.hir.loader.unrun_unit_consts;
                     (set.contains(&leaf) || set.contains(&name)).then(|| {
+                        bare = true;
                         (
                             fx.defining_class
                                 .or(fx.method_class)
@@ -556,7 +563,11 @@ fn defined_rest(fx: &mut Fx, site: NodeId, inner: NodeId) -> CResult<Operand> {
             if let Some((owner, leaf)) = positional {
                 let sid = fx.b.ins().iconst(types::I32, i64::from(owner.0));
                 let (nptr, nlen) = super::expr::rodata_name(fx, &leaf);
-                let hit = fx.call_status("zeo_rt_defined_const_in", &[sid, nptr, nlen]);
+                let entry = match bare {
+                    true => "zeo_rt_defined_const_bare",
+                    false => "zeo_rt_defined_const_in",
+                };
+                let hit = fx.call_status(entry, &[sid, nptr, nlen]);
                 return Ok(defined_cond(fx, hit, "constant"));
             }
         }

@@ -303,6 +303,11 @@ pub const CAPI: &[CapiSig] = &[
         ret: Some(I32),
     },
     CapiSig {
+        name: "zeo_rt_defined_const_bare",
+        params: &[U32, Ptr, Usize],
+        ret: Some(I8),
+    },
+    CapiSig {
         name: "zeo_rt_defined_const_in",
         params: &[U32, Ptr, Usize],
         ret: Some(I8),

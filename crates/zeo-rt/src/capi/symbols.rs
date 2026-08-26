@@ -84,6 +84,7 @@ capi_symbols!(
     objects::zeo_rt_cvar_get_checked,
     objects::zeo_rt_cvar_set,
     objects::zeo_rt_define_in_default_definee,
+    dispatch::zeo_rt_defined_const_bare,
     dispatch::zeo_rt_defined_const_in,
     dispatch::zeo_rt_defined_cvar,
     dispatch::zeo_rt_defined_gvar,

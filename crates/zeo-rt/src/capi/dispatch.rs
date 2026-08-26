@@ -1001,6 +1001,16 @@ pub unsafe extern "C" fn zeo_rt_defined_const_in(scope: u32, name: *const u8, le
     ))
 }
 
+/// The BARE-name twin of [`zeo_rt_defined_const_in`] -- see
+/// `rmodule::const_defined_bare` for why the two searches differ.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_defined_const_bare(scope: u32, name: *const u8, len: usize) -> i8 {
+    i8::from(crate::builtins::rmodule::const_defined_bare(
+        zeo_abi::ClassId(scope),
+        unsafe { super::str_slice(name, len) },
+    ))
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zeo_rt_const_private(scope: u32, name: *const u8, len: usize) -> i8 {
     i8::from(crate::constants::const_is_private(scope, unsafe {

@@ -218,6 +218,19 @@ pub fn const_defined_in(cid: crate::ClassId, name: &str) -> bool {
     const_lookup(cid, name, Search::Scoped).is_some()
 }
 
+/// `defined?(NAME)`'s membership test for a BARE name codegen could not fold
+/// -- a constant a compiled-in unit assigns, which does not exist until that
+/// unit runs.
+///
+/// `Search::Inherited`, not [`const_defined_in`]'s `Scoped`, and the
+/// difference is the whole point: a bare read reaches a top-level constant and
+/// the scope operator does not. Asking the scoped question here answered nil
+/// for every constant a unit assigned at ITS top level, while the read beside
+/// it answered the value.
+pub fn const_defined_bare(cid: crate::ClassId, name: &str) -> bool {
+    const_lookup(cid, name, Search::Inherited).is_some()
+}
+
 /// The scope operator's own receiver check, for the DYNAMIC form (`obj::NAME`,
 /// where the compiler could not name the scope). CRuby evaluates the left side
 /// first and demands a class or module of it, whichever way the constant is
