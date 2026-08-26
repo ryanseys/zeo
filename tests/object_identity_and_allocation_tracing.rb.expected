@@ -5,6 +5,6 @@ ObjectSpace.count_objects	true
 ObjectSpace.each_object	true
 ObjectSpace.memsize_of	true
 ObjectSpace.memsize_of_all	true
-ObjectSpace._id2ref	true
-ObjectSpace.dump	true
-ObjectSpace.trace_object_allocations_start	true
+ObjectSpace._id2ref	NotImplementedError
+ObjectSpace.dump	NotImplementedError
+ObjectSpace.trace_object_allocations_start	NotImplementedError

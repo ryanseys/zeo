@@ -1,0 +1,5 @@
+to_a	NotImplementedError
+to_binary	NotImplementedError
+disasm	NotImplementedError
+false
+9
