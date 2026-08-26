@@ -30,6 +30,7 @@ module ZeoDev
   COMMANDS = %w[
     bless
     diff
+    probe
     promote-gap
     bench
     gem

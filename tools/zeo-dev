@@ -16,6 +16,7 @@ USAGE = <<~TEXT
   commands:
     bless           re-record golden `.expected` files from the ruby oracle
     diff            compare a snippet across ruby and zeo, and file a gap
+    probe           run a differential probe matrix across ruby and zeo
     promote-gap     move a fixed gap into the passing suite
     bench           the runtime performance suite under `bench/`
     gem             manage the vendored upstream gems
