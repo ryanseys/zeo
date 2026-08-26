@@ -358,7 +358,21 @@ fn emit_named_autoload_touch(fx: &mut Fx, owner: crate::compiler::ClassId, leaf:
 /// resolves. Emitted only for a constant a literal `autoload` named, and the
 /// runtime call itself is one relaxed load when nothing is pending.
 fn emit_autoload_touch(fx: &mut Fx, cid: crate::compiler::ClassId) {
-    if fx.an.compiler.hir.loader.autoload_consts.is_empty() {
+    // A class DEFINED IN A UNIT is registered from program start while its
+    // body has not run, so a read of it must ask even when THIS compile
+    // never saw the `autoload` that names it -- a unit is compiled by its
+    // own compiler, with its own name set. rubygems is the case:
+    // specification.rb's unit reads `Gem::Requirement`, whose `autoload`
+    // lives in rubygems.rb.
+    //
+    // Narrow by construction: `unit` is `None` for every class in a program
+    // that compiles no units at all, so nothing is emitted there.
+    let in_unit = fx
+        .an
+        .compiler
+        .class_opt(cid)
+        .is_some_and(|c| c.unit.is_some());
+    if fx.an.compiler.hir.loader.autoload_consts.is_empty() && !in_unit {
         return;
     }
     // Every PREFIX, outermost first. `autoload :OpenSSL, "openssl"` names the
@@ -368,14 +382,16 @@ fn emit_autoload_touch(fx: &mut Fx, cid: crate::compiler::ClassId) {
     let fq = fx.an.compiler.fq_name(cid);
     let parts: Vec<&str> = fq.split("::").collect();
     for i in 1..=parts.len() {
-        if !fx
+        // The LAST segment IS `cid`, so a unit-defined class asks for its own
+        // name even when this compile never saw the declaration.
+        let named = fx
             .an
             .compiler
             .hir
             .loader
             .autoload_consts
-            .contains(parts[i - 1])
-        {
+            .contains(parts[i - 1]);
+        if !named && !(in_unit && i == parts.len()) {
             continue;
         }
         let owner = match i {
