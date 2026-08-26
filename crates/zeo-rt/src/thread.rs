@@ -307,6 +307,12 @@ fn is_current_thread(t: &RThread) -> bool {
     })
 }
 
+/// [`is_current_thread`] for the builtin rows -- `Thread#raise` at yourself
+/// delivers synchronously, and `Thread#join` on yourself is a `ThreadError`.
+pub fn is_current_thread_pub(t: &RThread) -> bool {
+    is_current_thread(t)
+}
+
 /// The map a `Thread#[]`-family call on `t` reads: the RUNNING fiber's map
 /// when `t` is the current thread (seeded from the root map outside any
 /// fiber), `t`'s root map cross-thread.
@@ -551,6 +557,16 @@ pub fn thread_set_priority(t: &RThread, v: i64) {
 /// it. The park is the same interruptible sleep `Kernel#sleep` uses, so a
 /// `#kill`/`#raise` still reaches a stopped thread.
 pub fn thread_stop_current() -> Result<RubyValue, Signal> {
+    // CRuby's `rb_thread_alone()` check, and NOT a deadlock verdict: only
+    // another thread can call `#wakeup`, so with no other thread there is
+    // nothing to wait for, and ruby says so before parking rather than
+    // after. The two-line message is verbatim.
+    if live_thread_count() <= 1 {
+        return Err(crate::dispatch::raise_error(
+            "ThreadError",
+            "stopping only thread\n\tnote: use sleep to stop forever".to_string(),
+        ));
+    }
     let t = CURRENT
         .with(|c| c.lock().clone())
         .unwrap_or_else(main_thread);
@@ -844,6 +860,61 @@ pub fn thread_outcome(t: &RThread) -> Result<RubyValue, Signal> {
     }
 }
 
+/// `Thread#join(limit = nil)`.
+///
+/// `Ok(false)` = the limit expired with the thread still running, which is
+/// CRuby's `nil` return. A finished thread re-raises whatever it stored,
+/// through `thread_outcome`.
+///
+/// Joining YOURSELF is a `ThreadError`, not a wait: nobody is left to
+/// finish the thread being waited on, and `Thread.main.join` from the main
+/// thread is the same statement said differently. Both used to park forever.
+pub fn thread_join(t: &RThread, limit: Option<std::time::Duration>) -> Result<bool, Signal> {
+    if is_current_thread(t) {
+        return Err(crate::dispatch::raise_error(
+            "ThreadError",
+            "Target thread must not be current thread".to_string(),
+        ));
+    }
+    let Some(limit) = limit else {
+        thread_outcome(t)?;
+        return Ok(true);
+    };
+    // A limited join polls rather than blocking: the outcome has to be
+    // re-raised the moment it exists, and the deadline has to be honoured
+    // even when it never does.
+    let deadline = std::time::Instant::now() + limit;
+    loop {
+        // `thread_alive` is the wrong test here: the state stays `Running`
+        // until somebody CONSUMES the handle, so a finished thread still
+        // reads alive and every limited join answered nil.
+        if thread_finished(t) {
+            thread_outcome(t)?;
+            return Ok(true);
+        }
+        if std::time::Instant::now() >= deadline {
+            return Ok(false);
+        }
+        check_interrupt()?;
+        let slice = std::time::Duration::from_millis(1)
+            .min(deadline.saturating_duration_since(std::time::Instant::now()));
+        crate::gvl::process_gvl().without(|| std::thread::sleep(slice));
+    }
+}
+
+/// Whether the thread's body has RUN OUT, which `thread_alive` cannot
+/// answer: the state stays `Running` until a joiner consumes the handle, so
+/// a thread that has finished still reads alive there.
+fn thread_finished(t: &RThread) -> bool {
+    match &*t.state.lock() {
+        Some(ThreadState::Done(_)) => true,
+        Some(ThreadState::Running(h)) => h.is_finished(),
+        // Another joiner holds the handle and will store `Done`; that
+        // joiner's own wait is what decides.
+        None => false,
+    }
+}
+
 /// Whether the thread is still running (`Thread#alive?`) -- a peek at the
 /// state that, unlike `thread_outcome`, never joins or consumes the handle.
 pub fn thread_alive(t: &RThread) -> bool {
@@ -887,9 +958,39 @@ pub fn mutex_new() -> RubyValue {
     }))
 }
 
-/// `Err` carries the exact CRuby `ThreadError` message; construction of the
-/// exception itself is codegen's job.
-pub fn mutex_lock(m: &RMutex) -> Result<(), &'static str> {
+/// Why a blocking primitive gave up.
+///
+/// The runtime carries the REASON and the row builds the exception -- the
+/// split every other primitive here already makes, and the reason these
+/// stay testable without a registry installed.
+#[derive(Debug, PartialEq, Eq)]
+pub enum WaitFailure {
+    /// CRuby's `ThreadError`, with its exact text.
+    Thread(&'static str),
+    /// CRuby's `ClosedQueueError`.
+    Closed,
+    /// Nothing left running could end this wait -- CRuby's `fatal`.
+    Deadlock,
+}
+
+impl WaitFailure {
+    #[must_use]
+    pub fn signal(self) -> Signal {
+        match self {
+            WaitFailure::Thread(msg) => {
+                crate::dispatch::raise_error("ThreadError", msg.to_string())
+            }
+            WaitFailure::Closed => {
+                crate::dispatch::raise_error("ClosedQueueError", "queue closed".to_string())
+            }
+            WaitFailure::Deadlock => crate::gvl::deadlock::signal(),
+        }
+    }
+}
+
+/// A `ThreadError` on recursive locking, and CRuby's `fatal` when nothing
+/// left running could ever unlock it.
+pub fn mutex_lock(m: &RMutex) -> Result<(), WaitFailure> {
     let me = execution_id();
     // The whole potentially-blocking section runs with an armed Gvl
     // released (free otherwise) -- a waiter holding the scheduling lock
@@ -898,10 +999,19 @@ pub fn mutex_lock(m: &RMutex) -> Result<(), &'static str> {
     crate::gvl::process_gvl().without(|| {
         let mut owner = m.owner.lock();
         if *owner == Some(me) {
-            return Err("deadlock; recursive locking");
+            return Err(WaitFailure::Thread("deadlock; recursive locking"));
         }
+        // The uncontended path is straight-line and builds nothing: a lock
+        // that is free must not pay for a wait it never enters.
+        if owner.is_none() {
+            *owner = Some(me);
+            return Ok(());
+        }
+        let wait = crate::gvl::deadlock::SupervisedWait::enter();
         while owner.is_some() {
-            m.freed.wait(&mut owner);
+            if !wait.slice(&m.freed, &mut owner) {
+                return Err(WaitFailure::Deadlock);
+            }
         }
         *owner = Some(me);
         Ok(())
@@ -1020,9 +1130,9 @@ pub fn queue_set_max(q: &RQueue, n: i64) {
     q.not_full.notify_all();
 }
 
-/// `Err` = `ClosedQueueError: "queue closed"` (message via codegen, as
-/// always).
-pub fn queue_push(q: &RQueue, value: RubyValue) -> Result<(), &'static str> {
+/// `Err` = `ClosedQueueError` for a closed queue, or CRuby's `fatal` when a
+/// `SizedQueue`'s back-pressure can never be relieved.
+pub fn queue_push(q: &RQueue, value: RubyValue) -> Result<(), WaitFailure> {
     // The WHOLE lock-wait-store section runs with an armed Gvl released
     // (plain call-through otherwise). The release must wrap the queue's
     // own mutex region, not sit inside it: re-acquiring the Gvl while
@@ -1032,19 +1142,29 @@ pub fn queue_push(q: &RQueue, value: RubyValue) -> Result<(), &'static str> {
     crate::gvl::process_gvl().without(|| queue_push_locked(q, value))
 }
 
-fn queue_push_locked(q: &RQueue, value: RubyValue) -> Result<(), &'static str> {
+fn queue_push_locked(q: &RQueue, value: RubyValue) -> Result<(), WaitFailure> {
     let mut inner = q.inner.lock();
+    // Built lazily: an unbounded queue, or one with room, never blocks and
+    // must not pay for the registration.
+    let mut wait: Option<crate::gvl::deadlock::SupervisedWait> = None;
     loop {
         if inner.closed {
-            return Err("queue closed");
+            return Err(WaitFailure::Closed);
         }
         // A `SizedQueue` at capacity back-pressures until a `pop` frees a
         // slot; an unbounded `Queue` (`max` = None) never waits.
         match inner.max {
             Some(m) if inner.items.len() >= m => {
+                let w = wait.get_or_insert_with(crate::gvl::deadlock::SupervisedWait::enter);
                 q.waiting.fetch_add(1, Ordering::Relaxed);
-                q.not_full.wait(&mut inner);
+                // Supervised: with every other thread blocked, no pop can
+                // free the slot this push waits for, and CRuby raises
+                // rather than hanging.
+                let progress = w.slice(&q.not_full, &mut inner);
                 q.waiting.fetch_sub(1, Ordering::Relaxed);
+                if !progress {
+                    return Err(WaitFailure::Deadlock);
+                }
             }
             _ => break,
         }
@@ -1165,7 +1285,10 @@ mod tests {
         mutex_lock(m).unwrap();
         assert!(mutex_locked(m));
         assert!(mutex_owned(m));
-        assert_eq!(mutex_lock(m).unwrap_err(), "deadlock; recursive locking");
+        assert_eq!(
+            mutex_lock(m).unwrap_err(),
+            WaitFailure::Thread("deadlock; recursive locking")
+        );
         mutex_unlock(m).unwrap();
         assert!(!mutex_locked(m));
     }

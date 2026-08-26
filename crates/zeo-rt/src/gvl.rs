@@ -615,6 +615,50 @@ pub mod deadlock {
         STREAK.fetch_add(1, Ordering::SeqCst) >= 1
     }
 
+    /// How long one supervised park lasts before the verdict is re-polled.
+    /// Short enough that a deadlock is reported promptly, long enough that a
+    /// contended wait is not a spin.
+    const SLICE: std::time::Duration = std::time::Duration::from_millis(2);
+
+    /// The supervised half of a blocking wait: registration, plus the
+    /// verdict.
+    ///
+    /// Construct it once you know you are about to block, then park through
+    /// [`SupervisedWait::slice`] instead of an untimed `wait`. Registration
+    /// becomes a property of the PRIMITIVE rather than something each site
+    /// remembers -- which is the whole point. One of six blocking waits
+    /// registered; the other five hung forever where CRuby raises, and the
+    /// sixth was the only one anybody had noticed.
+    ///
+    /// Deliberately NOT constructed on an uncontended fast path: a
+    /// `Mutex#lock` that takes a free lock must not pay an atomic for a wait
+    /// it never enters.
+    pub struct SupervisedWait {
+        _waiting: Waiting,
+    }
+
+    impl SupervisedWait {
+        #[must_use]
+        pub fn enter() -> SupervisedWait {
+            SupervisedWait {
+                _waiting: Waiting::enter(),
+            }
+        }
+
+        /// Parks on `cv` for one slice, then answers whether the program can
+        /// still make progress. `false` means every live Ruby thread is
+        /// blocked on another and none can be the one to wake it -- CRuby's
+        /// `fatal`, not a hang.
+        pub fn slice<T>(
+            &self,
+            cv: &parking_lot::Condvar,
+            guard: &mut parking_lot::MutexGuard<'_, T>,
+        ) -> bool {
+            let _ = cv.wait_for(guard, SLICE);
+            !no_progress_possible()
+        }
+    }
+
     /// The `fatal` CRuby raises. Its message is the FIRST LINE of CRuby's,
     /// which is the part that describes the program rather than the VM: the
     /// rest is a thread dump of native addresses and `rb_thread_t` pointers

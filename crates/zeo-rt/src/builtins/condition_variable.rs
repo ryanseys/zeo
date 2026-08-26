@@ -122,9 +122,7 @@ ruby_class! {
             }
             drop(guard);
         });
-        if let Err(msg) = crate::thread::mutex_lock(rm) {
-            return Err(thread_error!("{msg}"));
-        }
+        crate::thread::mutex_lock(rm).map_err(crate::thread::WaitFailure::signal)?;
         Ok(recv.clone())
     }
     // Wake at most one waiter; returns self.

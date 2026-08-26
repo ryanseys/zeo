@@ -53,7 +53,7 @@ impl RMonitor {
     /// Acquire, blocking unless this execution already owns it.
     fn enter(&self) -> Result<(), crate::Signal> {
         if !mutex_owned(&self.mutex) {
-            mutex_lock(&self.mutex).map_err(thread_error)?;
+            mutex_lock(&self.mutex).map_err(crate::thread::WaitFailure::signal)?;
         }
         self.count.fetch_add(1, Ordering::Relaxed);
         Ok(())

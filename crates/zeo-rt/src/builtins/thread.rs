@@ -179,13 +179,32 @@ ruby_class! {
         b.as_proc_unchecked().call(&[])
     }
 
-    // `Thread#join(limit = nil)` -- block until the thread finishes, re-raising
-    // a stored exception in the caller, then answer the thread itself. A
-    // timeout argument is accepted and ignored; the join always waits for
-    // completion.
-    def "join" cfunc (recv, _limit?) {
-        thread_outcome(t)?;
-        Ok(recv.clone())
+    // `Thread#join(limit = nil)` -- block until the thread finishes,
+    // re-raising a stored exception in the caller, then answer the thread
+    // itself. With a limit, answer nil if it expires first.
+    def "join" cfunc (recv, limit?) {
+        let limit = match limit {
+            None | Some(RubyValue::Nil) => None,
+            // A non-positive limit polls once and answers, ruby's own
+            // reading of a timeout already past.
+            Some(RubyValue::Int(n)) => {
+                Some(std::time::Duration::from_secs_f64((*n as f64).max(0.0)))
+            }
+            Some(RubyValue::Float(f)) => Some(std::time::Duration::from_secs_f64(f.max(0.0))),
+            // `Float`, not "time interval": `thread_join_m` runs the
+            // argument through `rb_num2dbl`, where `Kernel#sleep`'s own
+            // converter names the interval instead. Probe-verified.
+            Some(other) => {
+                return Err(type_error!(
+                    "can't convert {} into Float",
+                    crate::builtins::class_name_of(other)
+                ));
+            }
+        };
+        match crate::thread::thread_join(t, limit)? {
+            true => Ok(recv.clone()),
+            false => Ok(RubyValue::Nil),
+        }
     }
     // `Thread#value` -- join, then answer the BLOCK's result (vs `join`'s thread).
     def "value"(_recv) {
@@ -323,6 +342,15 @@ ruby_class! {
             }
         };
         thread_raise(t, exc);
+        // Raising at YOURSELF is delivered now, not at some later
+        // checkpoint. CRuby's `thread_raise_m` posts and then immediately
+        // runs `RUBY_VM_CHECK_INTS` when the target is self -- without that
+        // line a single-threaded program emits few or no checkpoints, the
+        // first delivery per thread is deliberately swallowed, and the
+        // exception simply never happened.
+        if crate::thread::is_current_thread_pub(t) {
+            crate::thread::check_interrupt()?;
+        }
         Ok(RubyValue::Nil)
     }
     // `Thread#wakeup` -- clear the stop flag and wake the target; `#run` also

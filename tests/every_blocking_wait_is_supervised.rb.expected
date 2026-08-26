@@ -1,0 +1,18 @@
+self join	ThreadError: Target thread must not be current thread
+main join	ThreadError: Target thread must not be current thread
+stop alone	ThreadError: stopping only thread
+recursive lock	ThreadError: deadlock; recursive locking
+sized queue back-pressure	fatal: No live threads left. Deadlock?
+join(0.05) on a slow thread	nil
+join(0) on a slow thread	nil
+join(1) on a fast thread	Thread
+join(nil) on a fast thread	Thread
+join(bad)	TypeError: can't convert Symbol into Float
+current raise	ArgumentError: now
+current raise class only	TypeError: TypeError
+mutex synchronize	42
+uncontended lock	false
+contended lock hands over	[:first, :second]
+value	7
+stop and wake	:woke
+sized queue drains	[0, 1, 2]

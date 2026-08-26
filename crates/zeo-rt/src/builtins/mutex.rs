@@ -8,7 +8,7 @@
 use crate::RubyValue;
 use crate::builtins::{need_block, thread_error};
 use crate::thread::{
-    mutex_lock, mutex_locked, mutex_new, mutex_owned, mutex_try_lock, mutex_unlock,
+    WaitFailure, mutex_lock, mutex_locked, mutex_new, mutex_owned, mutex_try_lock, mutex_unlock,
 };
 use zeo_macros::ruby_class;
 
@@ -30,7 +30,7 @@ ruby_class! {
     // `ThreadError` carrying the runtime's message verbatim.
     def "lock"(recv) {
         let m = recv.as_mutex_unchecked();
-        mutex_lock(&m).map_err(thread_error)?;
+        mutex_lock(&m).map_err(WaitFailure::signal)?;
         Ok(RubyValue::Mutex(m))
     }
     def "unlock"(recv) {
@@ -47,7 +47,7 @@ ruby_class! {
             Some(v) if !v.is_nil() => std::slice::from_ref(v),
             _ => &[],
         });
-        mutex_lock(&m).map_err(thread_error)?;
+        mutex_lock(&m).map_err(WaitFailure::signal)?;
         // CRuby answers nil, not the elapsed seconds `Kernel#sleep` gives.
         slept.map(|_| RubyValue::Nil)
     }
@@ -71,7 +71,7 @@ ruby_class! {
     def "synchronize"(recv, &block) {
         let blk = need_block!(block);
         let m = recv.as_mutex_unchecked();
-        mutex_lock(&m).map_err(thread_error)?;
+        mutex_lock(&m).map_err(WaitFailure::signal)?;
         let r = crate::catch_break(blk.call(&[]));
         let _ = mutex_unlock(&m);
         r

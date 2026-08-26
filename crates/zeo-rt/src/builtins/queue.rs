@@ -11,7 +11,6 @@
 use crate::builtins::inherited_row;
 
 use crate::RubyValue;
-use crate::dispatch::raise_error;
 use crate::thread::{queue_close, queue_closed, queue_len, queue_new, queue_pop, queue_push};
 use zeo_macros::ruby_class;
 
@@ -26,10 +25,12 @@ ruby_class! {
     // closed queue is a `ClosedQueueError`.
     def "push" | "<<" | "enq" (recv, other) {
         let q = recv.as_queue_unchecked();
-        match queue_push(&q, (*other).clone()) {
-            Ok(()) => Ok(RubyValue::Queue(q)),
-            Err(_) => Err(raise_error("ClosedQueueError", "queue closed".to_string())),
-        }
+        // The signal is PROPAGATED, not re-labelled: `queue_push` can also
+        // answer CRuby's `fatal` when a SizedQueue's back-pressure can never
+        // be relieved, and swallowing that reported "queue closed" for a
+        // queue nobody had closed.
+        queue_push(&q, (*other).clone()).map_err(crate::thread::WaitFailure::signal)?;
+        Ok(RubyValue::Queue(q))
     }
     // `pop`/`shift`/`deq` -- block (yielding) while empty and open; a closed
     // empty queue pops `nil`.
@@ -74,9 +75,7 @@ ruby_class! {
                 ));
             };
             for v in items.lock().iter() {
-                if queue_push(&q, v.clone()).is_err() {
-                    return Err(raise_error("ClosedQueueError", "queue closed".to_string()));
-                }
+                queue_push(&q, v.clone()).map_err(crate::thread::WaitFailure::signal)?;
             }
         }
         Ok(recv.clone())
