@@ -335,6 +335,26 @@ fn compile_object_on_this_thread(
     })
 }
 
+/// Ruby's `-c` / `--dump=syntax`: does this source PARSE?
+///
+/// Deliberately not `check_program_with`. Ruby's syntax check stops at the
+/// parser -- it resolves no `require`, and a program it cannot otherwise
+/// run still answers `Syntax OK` -- so anything zeo rejects LATER (an
+/// unsupported construct, an unresolvable feature) must not be reported
+/// here, or the two tools disagree about what "syntax" means.
+pub fn check_syntax(source: &str) -> Result<(), CompileError> {
+    let result = ruby_prism::parse(source.as_bytes());
+    match result.errors().next() {
+        None => Ok(()),
+        // No `files` to resolve a span against: the check runs before any
+        // arena exists, and prism's own message already names the place.
+        Some(err) => Err(CompileError::lower(
+            lower_error::LowerError::syntax(format!("parse error: {}", err.message())),
+            &[],
+        )),
+    }
+}
+
 /// `analyze_program` reduced to its verdict: `Ok(())` if zeo accepts this
 /// program, the typed error if it does not. For an accept/reject check that
 /// has no use for the analysis itself.

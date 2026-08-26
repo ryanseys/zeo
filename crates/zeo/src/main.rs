@@ -70,9 +70,12 @@ struct Args {
     /// positionals and everything after `--`, exactly ruby's
     /// `[--] [args...]` shape.
     program_args: Vec<String>,
-    /// `--emit-clif[=<path>]`: emit the Cranelift IR instead of building --
-    /// to the attached path or stdout when bare. Implies the aot pipeline.
+    /// `--emit-clif[=<path>]` / `--dump=clif`: emit the Cranelift IR instead
+    /// of building -- to the attached path or stdout when bare. Implies the
+    /// aot pipeline.
     emit_clif: Option<EmitTarget>,
+    /// `--dump=syntax` (and `-c`): parse, print `Syntax OK`, and stop.
+    check_syntax: bool,
     /// `--backend <aot|jit>`: which Cranelift mode builds the program
     /// (`ZEO_BACKEND` is the env spelling; the flag wins). `None` = the
     /// default for the mode, which `Backend::select` decides.
@@ -170,6 +173,13 @@ options:
   --compile             write the default-named binary instead of running
   --emit-clif[=<path>]  emit the Cranelift IR (the aot backend's own
                         lowering) instead of building; bare prints to stdout
+  --dump=<kind>         inspect instead of building. `clif` is --emit-clif
+                        to stdout; `syntax` parses and prints `Syntax OK`
+                        (`-c` is the short spelling). `insns` and
+                        `parsetree` are REFUSED rather than warned about:
+                        zeo emits no bytecode, and the prism tree has no
+                        printer on the Rust side
+  -c                    --dump=syntax, ruby's short spelling
   --backend <aot|jit>   which mode the Cranelift backend runs in: the
                         in-process JIT (the default in run mode) or the AOT
                         object-file path (the default with -o)
@@ -243,6 +253,7 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
     let mut eval: Option<String> = None;
     let mut output = None;
     let mut emit_clif: Option<EmitTarget> = None;
+    let mut check_syntax = false;
     // The env spelling is read once here so the flag and the variable can
     // never disagree downstream.
     let mut debuginfo = std::env::var_os("ZEO_DEBUGINFO").is_some_and(|v| v != "0");
@@ -350,6 +361,34 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
                         None => EmitTarget::Stdout,
                     });
                 }
+                // ruby's own spelling for the same family. Where CRuby WARNS
+                // for a kind it cannot serve and keeps running, zeo errors:
+                // running while printing nothing is the silent drop the
+                // project forbids, and the CLI already refuses flags on
+                // purpose (`-S`, `--nowarn`).
+                "dump" => match inline.as_deref() {
+                    Some("clif") => emit_clif = Some(EmitTarget::Stdout),
+                    Some("syntax") => check_syntax = true,
+                    Some("insns") => {
+                        return Err("--dump=insns has no answer here: zeo compiles ahead of \
+                                    time and emits no bytecode (--dump=clif shows the IR it \
+                                    does emit)"
+                            .to_string());
+                    }
+                    Some("parsetree") => {
+                        return Err("--dump=parsetree is not implemented: ruby renders prism's \
+                                    tree from its Ruby side, and zeo parses through the Rust \
+                                    bindings, which carry no printer"
+                            .to_string());
+                    }
+                    Some(other) => {
+                        return Err(format!(
+                            "--dump={other} is not a dump zeo knows \
+                             (clif, syntax; insns and parsetree are refused)"
+                        ));
+                    }
+                    None => return Err("--dump needs a kind, e.g. --dump=clif".to_string()),
+                },
                 _ => {
                     return Err(format!(
                         "invalid option: {arg} (-h will show valid options)"
@@ -378,6 +417,8 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
                     load_roots.push(PathBuf::from(iter.next().ok_or("-I requires a directory")?));
                 }
                 "-g" => debuginfo = true,
+                // ruby's short spelling of `--dump=syntax`.
+                "-c" => check_syntax = true,
                 "-h" => return Ok(Parsed::Help),
                 "-v" => return Ok(Parsed::Version),
                 _ => {
@@ -422,9 +463,37 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
     if compile && matches!(source, Source::Eval(_)) {
         return Err("--compile with -e has no input filename to name the binary; use -o".into());
     }
+    // Both inspect instead of building, so neither has an artifact to name
+    // or a backend to pick -- and honouring one silently while ignoring the
+    // other is exactly the silent drop this CLI refuses.
+    if emit_clif.is_some() && check_syntax {
+        return Err("--dump=syntax and --dump=clif each stop before the other runs; \
+                    ask for one"
+            .to_string());
+    }
+    for (flag, set) in [
+        ("-o", output.is_some()),
+        ("--compile", compile),
+        ("--backend", backend.is_some()),
+        ("-g", debuginfo),
+    ] {
+        if !set {
+            continue;
+        }
+        if emit_clif.is_some() {
+            return Err(format!(
+                "--dump=clif inspects instead of building, so {flag} would be ignored"
+            ));
+        }
+        if check_syntax {
+            return Err(format!(
+                "--dump=syntax stops after parsing, so {flag} would be ignored"
+            ));
+        }
+    }
     // Trailing args are ARGV, which only an immediately-run program has.
-    // (`--emit-clif` inspects instead of running, so it has none.)
-    let runs_now = output.is_none() && !compile && emit_clif.is_none();
+    // (Both dump kinds inspect instead of running, so neither has any.)
+    let runs_now = output.is_none() && !compile && emit_clif.is_none() && !check_syntax;
     if !program_args.is_empty() && !runs_now {
         return Err(format!("unexpected argument `{}`", program_args[0]));
     }
@@ -492,6 +561,7 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
         lockfile: gemfile.map(derive_lockfile),
         program_args,
         emit_clif,
+        check_syntax,
         debuginfo,
         backend,
     })))
@@ -644,6 +714,14 @@ fn run() -> Result<(), MainError> {
         embed_sources: args.embed_sources.clone(),
         strict_static_require: args.strict_static_require,
     };
+    // Parse only, then say so -- ruby's `Syntax OK`, byte for byte. A syntax
+    // error reports itself the way every other compile error does, so the
+    // exit status separates the two.
+    if args.check_syntax {
+        zeo::check_syntax(&source)?;
+        println!("Syntax OK");
+        return Ok(());
+    }
     if let Some(target) = &args.emit_clif {
         let text = zeo::compile_to_clif_text(&source, &opts)?;
         match target {
@@ -1011,6 +1089,44 @@ mod tests {
         // The retired Rust emitter's flags are gone, and say so.
         assert!(err(&["--emit-rust", "t.rb"]).contains("invalid option"));
         assert!(err(&["--pretty", "t.rb"]).contains("invalid option"));
-        assert!(err(&["--dump=rust", "t.rb"]).contains("invalid option"));
+        assert!(err(&["--dump=rust", "t.rb"]).contains("not a dump zeo knows"));
+    }
+
+    #[test]
+    fn dump_is_the_ruby_spelling_of_the_inspect_modes() {
+        assert!(matches!(
+            ok(&["--dump=clif", "t.rb"]).emit_clif,
+            Some(EmitTarget::Stdout)
+        ));
+        assert!(ok(&["--dump=syntax", "t.rb"]).check_syntax);
+        assert!(ok(&["-c", "t.rb"]).check_syntax);
+        assert!(!ok(&["t.rb"]).check_syntax);
+
+        // Refused rather than warned about: running while printing nothing
+        // is the silent drop this CLI exists to avoid.
+        assert!(err(&["--dump=insns", "t.rb"]).contains("emits no bytecode"));
+        assert!(err(&["--dump=parsetree", "t.rb"]).contains("carry no printer"));
+        assert!(err(&["--dump", "t.rb"]).contains("needs a kind"));
+
+        // An inspect mode has no artifact, so a flag describing one is an
+        // error rather than something quietly dropped.
+        for flag in [
+            vec!["--dump=clif", "-o", "out", "t.rb"],
+            vec!["--dump=clif", "--compile", "t.rb"],
+            vec!["--dump=clif", "--backend", "jit", "t.rb"],
+            vec!["--dump=clif", "-g", "t.rb"],
+        ] {
+            assert!(err(&flag).contains("would be ignored"), "{flag:?}");
+        }
+        for flag in [
+            vec!["-c", "-o", "out", "t.rb"],
+            vec!["-c", "--backend", "aot", "t.rb"],
+        ] {
+            assert!(err(&flag).contains("would be ignored"), "{flag:?}");
+        }
+        assert!(err(&["--dump=clif", "--dump=syntax", "t.rb"]).contains("ask for one"));
+
+        // Neither takes program ARGV.
+        assert!(err(&["-c", "t.rb", "arg"]).contains("unexpected argument"));
     }
 }
