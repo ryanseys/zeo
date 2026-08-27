@@ -55,6 +55,7 @@ zeo_rt_cvar_get ([U32, Ptr, Usize, Ptr]) -> None
 zeo_rt_cvar_get_checked ([U32, Ptr, Usize, Ptr]) -> Some(I32)
 zeo_rt_cvar_set ([U32, Ptr, Usize, Ptr]) -> Some(I32)
 zeo_rt_define_in_default_definee ([Ptr, Ptr, U32, Ptr, U8, U8, Ptr]) -> Some(I32)
+zeo_rt_defined_const_bare ([U32, Ptr, Usize]) -> Some(I8)
 zeo_rt_defined_const_in ([U32, Ptr, Usize]) -> Some(I8)
 zeo_rt_defined_cvar ([U32, Ptr, Usize]) -> Some(I8)
 zeo_rt_defined_gvar ([U32, Ptr, Usize]) -> Some(I8)
