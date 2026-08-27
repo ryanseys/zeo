@@ -294,6 +294,36 @@ pub(crate) fn new_digest(algo: Algo) -> RubyValue {
     RubyValue::Object(Arc::new(RDigest::new(algo)))
 }
 
+/// `Digest(name)` -- the function-shaped algorithm lookup CRuby writes in
+/// `digest.rb` as a private method of `Object`. `pstore` picks its checksum
+/// with `%w[SHA512 ... MD5].each { break Digest(algo) rescue LoadError }`, so
+/// the LoadError is load-bearing, not just a message.
+///
+/// CRuby reaches the class through `Digest.const_missing`, which requires
+/// `digest/<name.downcase>` and then answers the constant. Every algorithm
+/// zeo has is registered already, so the lookup IS the answer, and a name
+/// with no class gets the message that `const_missing` would have raised.
+pub(crate) fn kernel_digest(name: &RubyValue) -> Result<RubyValue, Signal> {
+    // `name.to_sym` is what CRuby writes, so a String spells the same lookup.
+    let name = match name {
+        RubyValue::Symbol(s) => s.name(),
+        RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
+        other => {
+            return Err(crate::builtins::no_method_error!(
+                "undefined method 'to_sym' for {}",
+                crate::dispatch::describe_receiver(other)
+            ));
+        }
+    };
+    if let Some(found) = crate::constants::const_get(zeo_abi::DIGEST_MODULE.0, &name) {
+        return Ok(found);
+    }
+    let file = name.to_lowercase();
+    Err(crate::builtins::load_error!(
+        "library not found for class Digest::{name} -- digest/{file}"
+    ))
+}
+
 /// The algorithm an INSTANCE carries, and the digest of what it holds --
 /// what `#inspect` needs, and the two things `digest_of` guards.
 pub(crate) fn algo_of_instance(recv: &RubyValue) -> Algo {
