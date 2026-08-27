@@ -1,0 +1,30 @@
+IO.open owner	"#<Class:IO>"
+File.open owner	"#<Class:IO>"
+IO.new owner	"#<Class:IO>"
+File.new owner	"#<Class:IO>"
+IO.for_fd owner	"#<Class:IO>"
+File.for_fd owner	"#<Class:IO>"
+IO.sysopen owner	"#<Class:IO>"
+File.sysopen owner	"#<Class:IO>"
+File declares open	false
+IO declares open	true
+File responds to open	true
+one method, not two	true
+IO.new range	ArgumentError: wrong number of arguments (given 0, expected 1..2)
+File.new range	ArgumentError: wrong number of arguments (given 0, expected 1..3)
+IO.open range	ArgumentError: wrong number of arguments (given 0, expected 1..2)
+File.open range	ArgumentError: wrong number of arguments (given 0, expected 1..3)
+IO#initialize owner	"IO"
+File#initialize owner	"File"
+File.open takes a path	["File", "hello"]
+IO.new takes a path	TypeError: no implicit conversion of String into Integer
+File.new takes an fd	["File", "hello"]
+File.for_fd takes an fd	["File", "hello"]
+File.sysopen answers an fd	"hello"
+named File subclass	"Journal"
+named subclass new	"Journal"
+anonymous subclass	true
+named IO subclass	"Wire"
+File.for_fd subclass	"Journal"
+["File", "hello"]
+ran to the end

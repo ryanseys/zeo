@@ -450,7 +450,11 @@ fn file_call(
     args: &[RubyValue],
     block: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    let f = crate::builtins::file::lookup_class(meth).expect("a File class method");
+    // File's own table first, then IO's -- `open`/`new`/`for_fd`/`sysopen` are
+    // IO's rows, which File inherits, exactly as CRuby has them.
+    let f = crate::builtins::file::lookup_class(meth)
+        .or_else(|| crate::builtins::io::lookup_class(meth))
+        .expect("a File or IO class method");
     f(&RubyValue::Class(zeo_abi::FILE_CLASS), args, block)
 }
 

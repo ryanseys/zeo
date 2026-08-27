@@ -614,6 +614,59 @@ fn send_value_in_reason_inner(
                 return with_c_frame_ids(root, name, '.', || f(recv, args, block));
             }
         }
+        // A builtin superclass's own class-method table. CRuby defines
+        // `open`/`new`/`for_fd`/`sysopen` on IO ALONE and File reaches them
+        // through its singleton class's ancestry; nothing flattens a builtin's
+        // rows onto a builtin subclass the way materialization flattens a user
+        // `def self.x`, so this walk is the only place they are found. It sits
+        // after the payload-root probes above (which re-tag the result for a
+        // value subclass) and before `Kernel#open`, which is ruby's own order:
+        // `#<Class:IO>` is nearer the receiver than `Kernel`.
+        //
+        // Two bounds keep it to a real builtin hierarchy.
+        //
+        // It stops at the UNIVERSAL TAIL -- `Object`, `Class`, `Module`,
+        // `BasicObject`. Their tables hold rows that are class methods of
+        // themselves (`Module.constants` is the top-level constant list), not
+        // singleton methods every class inherits, so letting them answer here
+        // made `Sing.constants` report the whole program's constants.
+        //
+        // And `new`/`allocate` belong to `Class#new` and `constructor_of`,
+        // never to an ancestor's table: `Process::Waiter` is a Thread subclass
+        // whose `new` CRuby undefs, and `Name.new` over `class Name < String`
+        // must reach the subclass constructor rather than `String.new`, which
+        // would hand back a plain String. The IO family is the exception --
+        // its rows read the receiver themselves, so `Managed.new(path)` over
+        // `class Managed < File` reaches IO's row, which opens the path and
+        // tags the handle `Managed`, where the generic subclass constructor
+        // would build an empty payload with no descriptor behind it. A
+        // subclass that writes its OWN `initialize` still goes through
+        // `Class#new`, which is the only route that runs it.
+        {
+            let n = name.name_str();
+            let chain = ancestors_of_value(*cid);
+            let constructs = matches!(n, "new" | "allocate")
+                && !(chain.contains(&zeo_abi::IO_CLASS)
+                    && !class_defines_own_instance_method(*cid, crate::symbol::wk::initialize()));
+            let inherited = (!constructs)
+                .then(|| {
+                    chain
+                        .iter()
+                        .skip(1)
+                        .take_while(|&&anc| !is_universal_tail(anc))
+                        .find_map(|&anc| {
+                            let f = crate::builtins::class_method_table(anc)?(n)?;
+                            match crate::builtins::builtin_class_method_is_private(anc, n) {
+                                true => None,
+                                false => Some((anc, f)),
+                            }
+                        })
+                })
+                .flatten();
+            if let Some((anc, f)) = inherited {
+                return with_c_frame_ids(anc, name, '.', || f(recv, args, block));
+            }
+        }
         // An ANCESTOR's runtime class method -- what a `Base.extend Store` or a
         // `define_singleton_method` on a superclass installs. A subclass's
         // singleton class inherits its parent's in ruby, so `Sub.tag` answers;

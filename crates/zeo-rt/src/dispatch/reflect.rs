@@ -170,6 +170,22 @@ pub(crate) fn obj_dig(cur: RubyValue, rest: &[RubyValue]) -> Result<RubyValue, S
     send_value(&cur, dig, rest, None)
 }
 
+/// The tail every ancestry ends in. A builtin class-method table on one of
+/// these holds rows that are class methods OF that class (`Module.constants`
+/// is the top-level constant list, `Class.new` mints a class), not singleton
+/// methods every class inherits -- so a walk looking for an inherited builtin
+/// class method has to stop here.
+pub(crate) fn is_universal_tail(id: ClassId) -> bool {
+    matches!(
+        id,
+        zeo_abi::OBJECT_CLASS
+            | zeo_abi::BASIC_OBJECT_CLASS
+            | zeo_abi::CLASS_CLASS
+            | zeo_abi::MODULE_CLASS
+            | zeo_abi::KERNEL_CLASS
+    )
+}
+
 /// Whether a class/module VALUE responds to `name` via a class-method source
 /// (runtime singleton overlay, registered `def self.x`/`module_function`/
 /// `class << self` methods, a builtin class-method table, or a native struct
@@ -213,7 +229,23 @@ pub(super) fn class_receiver_responds(cid: ClassId, name: Symbol) -> bool {
         }
     }
     let n = name.name_str();
+    // The ANCESTRY here too: a builtin class inherits its superclass's
+    // class-method rows (`File.open` is IO's), and nothing flattens a builtin
+    // table onto a builtin subclass. The predicate cannot say no to a name
+    // `send_value_in`'s matching walk would answer -- so it stops where that
+    // walk stops, before `Object`, whose table holds Kernel module functions
+    // ruby's singleton chain never reaches.
     if crate::builtins::class_method_table(cid).is_some_and(|lookup| lookup(n).is_some()) {
+        return true;
+    }
+    if ancestors_of_value(cid)
+        .iter()
+        .skip(1)
+        .take_while(|&&anc| !is_universal_tail(anc))
+        .any(|&anc| {
+            crate::builtins::class_method_table(anc).is_some_and(|lookup| lookup(n).is_some())
+        })
+    {
         return true;
     }
     // A module the class EXTENDED answers too -- the same edge dispatch runs

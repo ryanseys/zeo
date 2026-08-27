@@ -166,7 +166,9 @@ ruby_module! {
     // form is out of scope); delegates to `File.open` so the block-closes-file
     // contract and mode handling are shared, never divergent.
     module_function def "open"(_recv, *args, &block) {
-        crate::builtins::file::lookup_class("open").unwrap()(
+        // `open` is IO's row, which File inherits (CRuby defines it on IO
+        // alone). Handing it a File receiver is what selects the path form.
+        crate::builtins::io::lookup_class("open").unwrap()(
             &RubyValue::Class(zeo_abi::FILE_CLASS),
             args,
             block,

@@ -302,6 +302,14 @@ pub fn root_class_method_target(class_id: ClassId, name: &str) -> Option<ClassId
     if crate::builtins::builtin_class_method_is_private(root, name) {
         return None;
     }
+    // The IO family reads the RECEIVER itself -- `open`/`for_fd` ask whether it
+    // descends from File to decide whether the first argument is a path or a
+    // descriptor, and tag the handle with it. This path substitutes the root as
+    // the receiver, which would answer the wrong question, so they are left to
+    // the builtin-ancestry walk that passes the real receiver through.
+    if root == zeo_abi::IO_CLASS && matches!(name, "open" | "for_fd") {
+        return None;
+    }
     crate::builtins::class_method_table(root)
         .and_then(|lookup| lookup(name))
         .map(|_| root)
