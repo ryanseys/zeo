@@ -168,10 +168,10 @@ fn every_divergence_claim_carries_its_sidecar() {
     );
 }
 
-/// A `.macos-only` or `.jit-only` sidecar silently REMOVES a golden from a
-/// leg (`run_golden_env` returns Ok before running anything). Pin the exact
-/// set so adding one is a deliberate two-file change, never an accident that
-/// hides a red.
+/// `tests/macos/` and `tests/jit/` silently REMOVE their goldens from every
+/// other leg. Pin the exact membership so moving a file in is a deliberate
+/// two-place change, never an accident that hides a red on the legs that no
+/// longer run it.
 #[test]
 fn every_leg_skip_sidecar_is_acknowledged_here() {
     const MACOS_ONLY: &[&str] = &[
@@ -188,20 +188,13 @@ fn every_leg_skip_sidecar_is_acknowledged_here() {
     ];
     const JIT_ONLY: &[&str] = &["an_ffi_type_crosses_between_snippets.rb"];
     let mut found: Vec<(String, &'static str)> = Vec::new();
-    for dir in suite_dirs() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
+    for (sub, kind) in [("macos", "macos"), ("jit", "jit")] {
+        let Ok(entries) = std::fs::read_dir(repo_root().join("tests").join(sub)) else {
             continue;
         };
         for path in entries.filter_map(Result::ok).map(|e| e.path()) {
-            let name = path.to_string_lossy().to_string();
-            for (suffix, kind) in [(".macos-only", "macos"), (".jit-only", "jit")] {
-                if let Some(stem) = name.strip_suffix(suffix) {
-                    let stem = Path::new(stem)
-                        .file_name()
-                        .map(|f| f.to_string_lossy().to_string())
-                        .unwrap_or_default();
-                    found.push((stem, kind));
-                }
+            if path.extension().is_some_and(|e| e == "rb") {
+                found.push((path.file_name().unwrap().to_string_lossy().to_string(), kind));
             }
         }
     }
@@ -228,7 +221,8 @@ fn every_leg_skip_sidecar_is_acknowledged_here() {
     missing.sort();
     assert!(
         unlisted.is_empty() && missing.is_empty(),
-        "leg-skip sidecars must be acknowledged in this test's lists.\n\
+        "every golden under tests/macos/ and tests/jit/ must be acknowledged in \
+         this test's lists.\n\
          unacknowledged on disk: {unlisted:?}\nlisted but gone: {missing:?}"
     );
 }
