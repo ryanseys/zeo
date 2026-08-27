@@ -1,6 +1,3 @@
-LoadError
-"cannot load such file -- webrick"
-"webrick"
-nil
+"constant"
 ["net-telnet", "cannot load such file -- net-telnet"]
 ["sdbm", "cannot load such file -- sdbm"]

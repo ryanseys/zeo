@@ -3,3 +3,7 @@ past it	JSON::NestingError
 far past it	JSON::NestingError
 parse! past it	JSON::NestingError
 in a thread	JSON::NestingError
+in a fiber	JSON::NestingError
+generate past it	JSON::NestingError
+just under	1
+the gem's own default still applies	JSON::NestingError
