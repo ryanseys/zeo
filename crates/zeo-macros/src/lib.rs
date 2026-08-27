@@ -444,7 +444,7 @@ fn gen_preamble(method: &zeo_dsl::MethodDef) -> TokenStream2 {
         // A def that NAMES its keywords requires the caller's keyword mark, so
         // `f(h)` and `f(**h)` stay the different calls ruby treats them as.
         // A `**kwrest`-only def keeps the looser rule it has always had.
-        let peel_fn = if has_kw {
+        let peel_fn = if has_kw || method.kwrest_strict {
             quote! { peel_keywords }
         } else {
             quote! { peel_kwargs }

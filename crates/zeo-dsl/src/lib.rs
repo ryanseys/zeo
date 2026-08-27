@@ -236,6 +236,15 @@ pub struct MethodDef {
     /// `**kwrest` -- the trailing options Hash, which CRuby counts as exactly
     /// one extra positional slot.
     pub kwrest: Option<Ident>,
+    /// `**kwrest!` -- peel only a Hash the CALLER marked as keywords.
+    ///
+    /// The plain `**kwrest` takes ANY trailing Hash, which is right for a row
+    /// whose options CRuby reads with `rb_scan_args`' old-style `:`. A row
+    /// reading them with `rb_scan_args_kw` and the caller's own semantics does
+    /// not: `IO.new(fd, {external_encoding: "x"})` hands the MODE slot a Hash
+    /// and is a TypeError, while `IO.new(fd, external_encoding: "x")` is
+    /// options. Only the mark tells the two apart.
+    pub kwrest_strict: bool,
     /// `&block`. A block never affects arity.
     pub block: Option<Ident>,
     /// CRuby implements this method as a C function that threw its signature
@@ -1037,7 +1046,7 @@ fn parse_def(
     let buf;
     parenthesized!(buf in input);
     let recv: Ident = buf.parse()?;
-    let (params, rest, keywords, kwrest, block) = parse_params(&buf)?;
+    let (params, rest, keywords, kwrest, kwrest_strict, block) = parse_params(&buf)?;
 
     // The body block, captured verbatim (braces stripped) as real Rust.
     let body_buf;
@@ -1057,6 +1066,7 @@ fn parse_def(
         keywords,
         ruby_sig,
         kwrest,
+        kwrest_strict,
         block,
         cfunc,
         allocs,
@@ -1081,12 +1091,14 @@ fn parse_params(
     Option<Ident>,
     Vec<KwParam>,
     Option<Ident>,
+    bool,
     Option<Ident>,
 )> {
     let mut params: Vec<Param> = Vec::new();
     let mut rest = None;
     let mut keywords: Vec<KwParam> = Vec::new();
     let mut kwrest = None;
+    let mut kwrest_strict = false;
     let mut block = None;
 
     while input.peek(Token![,]) {
@@ -1107,6 +1119,12 @@ fn parse_params(
             input.parse::<Token![*]>()?;
             input.parse::<Token![*]>()?;
             let name: Ident = input.parse()?;
+            // A trailing `!` asks for the strict peel -- see
+            // `MethodDef::kwrest_strict`.
+            if input.peek(Token![!]) {
+                input.parse::<Token![!]>()?;
+                kwrest_strict = true;
+            }
             if kwrest.replace(name).is_some() {
                 return Err(input.error("a def takes at most one `**kwrest`"));
             }
@@ -1176,7 +1194,7 @@ fn parse_params(
         params.push(Param { name, kind });
     }
 
-    Ok((params, rest, keywords, kwrest, block))
+    Ok((params, rest, keywords, kwrest, kwrest_strict, block))
 }
 
 /// A Ruby method/alias name: either a string literal (operators, `?`/`!`
