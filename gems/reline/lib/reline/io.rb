@@ -1,11 +1,4 @@
 
-# zeo: `reline/io/ansi` is required at the top rather than inside
-# `decide_io_gate`. A whole-program AOT compile does not load a library a
-# method body alone requires, and this is the gate every non-dumb terminal
-# goes through. The Windows require below stays where it is: that branch is
-# unreachable on the platforms zeo builds for.
-require 'reline/io/ansi'
-
 module Reline
   class IO
     RESET_COLOR = "\e[0m"
@@ -14,16 +7,24 @@ module Reline
       if ENV['TERM'] == 'dumb'
         Reline::Dumb.new
       else
+        require 'reline/io/ansi'
+
         case RbConfig::CONFIG['host_os']
-        when /mswin|msys|mingw|cygwin|bccwin|wince|emc/
+        when /mswin|mingw|bccwin|wince|emc/
           require 'reline/io/windows'
           io = Reline::Windows.new
-          if io.msys_tty?
+          if io.msys_tty? || !STDIN.tty?
+            # In either case stdin is not a console (a Cygwin/MSYS pty pipe such
+            # as mintty, or a redirect), so the Win32 console input API cannot
+            # read it.
             Reline::ANSI.new
           else
             io
           end
         else
+          # Ruby built with the msys/cygwin runtime also reaches here. Its tty layer
+          # speaks ANSI in any terminal (mintty pty or Windows console), so the
+          # Win32 console API must not be used. https://github.com/ruby/reline/issues/903
           Reline::ANSI.new
         end
       end

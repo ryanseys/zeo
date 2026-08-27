@@ -13,6 +13,7 @@ class Reline::LineEditor
   attr_accessor :prompt_proc
   attr_accessor :auto_indent_proc
   attr_accessor :dig_perfect_match_proc
+  attr_accessor :rprompt
 
   VI_MOTIONS = %i{
     ed_prev_char
@@ -43,7 +44,6 @@ class Reline::LineEditor
   RenderedScreen = Struct.new(:base_y, :lines, :cursor_y, keyword_init: true)
 
   CompletionJourneyState = Struct.new(:line_index, :pre, :target, :post, :list, :pointer)
-  NullActionState = [nil, nil].freeze
 
   class MenuInfo
     attr_reader :list
@@ -223,7 +223,7 @@ class Reline::LineEditor
 
   def reset_variables(prompt = '')
     @prompt = prompt.gsub("\n", "\\n")
-    @mark_pointer = nil
+    @mark_position = nil
     @is_multiline = false
     @finished = false
     @history_pointer = nil
@@ -253,8 +253,8 @@ class Reline::LineEditor
     @undo_redo_history = [[[""], 0, 0]]
     @undo_redo_index = 0
     @restoring = false
-    @prev_action_state = NullActionState
-    @next_action_state = NullActionState
+    @prev_action_state = {}
+    @next_action_state = {}
     reset_line
   end
 
@@ -476,6 +476,20 @@ class Reline::LineEditor
       prompt_width = Reline::Unicode.calculate_width(prompt, true)
       [[0, prompt_width, prompt], [prompt_width, Reline::Unicode.calculate_width(line, true), line]]
     end
+
+    # Add rprompt to the first visible line if set and there's room
+    if @rprompt && !@rprompt.empty? && new_lines[0]
+      rprompt_width = Reline::Unicode.calculate_width(@rprompt, true)
+      right_col = screen_width - rprompt_width
+      first_line = new_lines[0]
+      # Calculate the end of the current content (prompt + input)
+      content_end = first_line.sum { |_, width, _| width }
+      # Only show rprompt if there's at least 1 char gap between content and rprompt
+      if right_col > content_end
+        first_line << [right_col, rprompt_width, @rprompt]
+      end
+    end
+
     if @menu_info
       @menu_info.lines(screen_width).each do |item|
         new_lines << [[0, Reline::Unicode.calculate_width(item), item]]
@@ -491,8 +505,8 @@ class Reline::LineEditor
         next if row < 0 || row >= screen_height
 
         dialog_rows = new_lines[row] ||= []
-        # index 0 is for prompt, index 1 is for line, index 2.. is for dialog
-        dialog_rows[index + 2] = [x_range.begin, dialog.width, dialog.contents[row - y_range.begin]]
+        # index 0 is for prompt, index 1 is for line, index 2 is for rprompt, index 3.. is for dialog
+        dialog_rows[index + 3] = [x_range.begin, dialog.width, dialog.contents[row - y_range.begin]]
       end
     end
 
@@ -1022,7 +1036,7 @@ class Reline::LineEditor
       @byte_pointer -= byte_size
     end
 
-    @prev_action_state, @next_action_state = @next_action_state, NullActionState
+    @prev_action_state, @next_action_state = @next_action_state, {}
 
     unless @completion_occurs
       @completion_state = CompletionState::NORMAL
@@ -1779,17 +1793,24 @@ class Reline::LineEditor
 
   private def em_yank(key)
     yanked = @kill_ring.yank
-    insert_text(yanked) if yanked
+    return unless yanked
+
+    before_cursor = current_line.byteslice(0, @byte_pointer)
+    after_cursor = current_line.byteslice(@byte_pointer, current_line.bytesize)
+    set_current_line(before_cursor + yanked + after_cursor, before_cursor.bytesize + yanked.bytesize)
+    set_next_action_state(:em_yank_line, [before_cursor, after_cursor])
   end
   alias_method :yank, :em_yank
 
   private def em_yank_pop(key)
-    yanked, prev_yank = @kill_ring.yank_pop
-    if yanked
-      line, = byteslice!(current_line, @byte_pointer - prev_yank.bytesize, prev_yank.bytesize)
-      set_current_line(line, @byte_pointer - prev_yank.bytesize)
-      insert_text(yanked)
-    end
+    before_cursor, after_cursor = prev_action_state_value(:em_yank_line)
+    return unless before_cursor and after_cursor
+
+    yanked, = @kill_ring.yank_pop
+    return unless yanked
+
+    set_current_line(before_cursor + yanked + after_cursor, before_cursor.bytesize + yanked.bytesize)
+    set_next_action_state(:em_yank_line, [before_cursor, after_cursor])
   end
   alias_method :yank_pop, :em_yank_pop
 
@@ -2303,15 +2324,22 @@ class Reline::LineEditor
   end
 
   private def em_set_mark(key)
-    @mark_pointer = [@byte_pointer, @line_index]
+    cursor_column = Reline::Unicode.calculate_width(current_line.byteslice(0, @byte_pointer))
+    @mark_position = [@line_index, cursor_column]
   end
   alias_method :set_mark, :em_set_mark
 
   private def em_exchange_mark(key)
-    return unless @mark_pointer
-    new_pointer = [@byte_pointer, @line_index]
-    @byte_pointer, @line_index = @mark_pointer
-    @mark_pointer = new_pointer
+    return unless @mark_position
+    line_index, cursor_column = @mark_position
+    em_set_mark(key)
+    if @buffer_of_lines.size <= line_index
+      @line_index = @buffer_of_lines.size - 1
+      @byte_pointer = current_line.bytesize
+    else
+      @line_index = line_index
+      calculate_nearest_cursor(cursor_column)
+    end
   end
   alias_method :exchange_point_and_mark, :em_exchange_mark
 
@@ -2343,11 +2371,11 @@ class Reline::LineEditor
   end
 
   private def prev_action_state_value(type)
-    @prev_action_state[0] == type ? @prev_action_state[1] : nil
+    @prev_action_state[type]
   end
 
   private def set_next_action_state(type, value)
-    @next_action_state = [type, value]
+    @next_action_state[type] = value
   end
 
   private def re_read_init_file(_key)
