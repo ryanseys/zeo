@@ -127,7 +127,7 @@ the Linux leg runs.
 
 ## Debug info
 
-`zeo -g file.rb -o prog` (or `ZEO_DEBUGINFO=1`) puts DWARF line tables in
+`zeo -g -o prog file.rb` (or `ZEO_DEBUGINFO=1`) puts DWARF line tables in
 the emitted object, built from the same statement boundaries
 `zeo_rt_set_line` marks — so what a debugger says and what `caller` says
 cannot drift apart. Zeo's own backtraces never read it; this is for

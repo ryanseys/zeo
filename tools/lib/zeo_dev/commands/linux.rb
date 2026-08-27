@@ -148,7 +148,7 @@ module ZeoDev
           cd /tmp && printf "%s\\n" "class P; def initialize(n) = @n = n; def to_s = \\"P(\#{@n})\\"; end" \\
             "10.times { |i| puts P.new(i) }" "a = (1..50).map { |i| i * i }; puts a.sum" \\
             "begin; raise ArgumentError, \\"x\\"; rescue => e; puts e.message; end" > vg.rb
-          /target/#{target_dir}/zeo vg.rb -o vg
+          /target/#{target_dir}/zeo -o vg vg.rb
           valgrind --error-exitcode=9 --leak-check=full --errors-for-leak-kinds=definite ./vg
         SH
       end

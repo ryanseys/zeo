@@ -996,7 +996,7 @@ run `gem-probe` — see [`GEM_TESTING.md`](GEM_TESTING.md).
 
 ## The per-compile record
 
-`zeo app.rb -o app --report` writes `zeo-gems.json` next to the artifact, one
+`zeo -o app --report app.rb` writes `zeo-gems.json` next to the artifact, one
 object per library the program required (`--report=<path>` picks the path):
 
 ```json

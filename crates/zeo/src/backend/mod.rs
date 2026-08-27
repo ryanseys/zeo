@@ -98,7 +98,7 @@ pub fn run_program(
     }
 }
 
-/// Artifact mode (`zeo file.rb -o app`, `--compile`): produce the SHIPPED
+/// Artifact mode (`zeo -o app file.rb`, `--compile`): produce the SHIPPED
 /// binary at `output` for `compiled`.
 pub fn build_artifact(compiled: &CompiledProgram<'_>, output: &Path) -> Result<(), String> {
     match compiled {

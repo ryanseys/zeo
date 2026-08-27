@@ -89,7 +89,7 @@ commit in a worktree before believing the number. Baselines live in
 `flamegraph` binary wraps any command, not just cargo targets:
 
 ```console
-$ target/release/zeo bench/bm_fib.rb -o /tmp/bm_fib
+$ target/release/zeo -o /tmp/bm_fib bench/bm_fib.rb
 $ flamegraph -o fib.svg -- /tmp/bm_fib     # dtrace-based on macOS (may need sudo)
 ```
 

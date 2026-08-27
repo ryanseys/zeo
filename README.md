@@ -12,7 +12,7 @@ $ cat hello.rb
 puts [1, 2, 3].map { |x| x * 2 }.sum
 $ zeo hello.rb          # runs it, like `ruby hello.rb`
 12
-$ zeo hello.rb -o hello # or write a native binary
+$ zeo -o hello hello.rb # or write a native binary
 $ ./hello
 12
 ```
@@ -86,8 +86,8 @@ compiles **and runs**; a binary artifact is the opt-in (`-o` / `--compile`).
 $ zeo hello.rb
 
 # Write a native binary instead of running.
-$ zeo hello.rb -o build/hello
-$ zeo hello.rb --compile          # writes ./hello
+$ zeo -o build/hello hello.rb
+$ zeo --compile hello.rb          # writes ./hello
 
 # Inline code, like `ruby -e`. Works with -o too.
 $ zeo -e 'puts "hello, world"'
@@ -96,8 +96,8 @@ $ zeo -e 'puts :ok' -o my_bin
 # A test file, like `ruby -Itest test/foo_test.rb`.
 $ zeo -Itest test/foo_test.rb
 
-# Program arguments go after `--`.
-$ zeo test/foo_test.rb -- --seed 42
+# Everything after the file name is the program's ARGV, as in ruby.
+$ zeo test/foo_test.rb --seed 42 --verbose
 ```
 
 Every `eval` is a real run-time compile: the embedded compiler ships inside
@@ -120,7 +120,7 @@ To compile against your own locked dependencies instead:
 
 ```console
 $ bundle install                                  # real Bundler, one time
-$ zeo app.rb -o app --gem-path "$(gem env gemdir)" --bundle-gemfile Gemfile
+$ zeo -o app --gem-path "$(gem env gemdir)" --bundle-gemfile Gemfile app.rb
 ```
 
 Bundler already exports `BUNDLE_GEMFILE` and `GEM_PATH`, so under
@@ -144,7 +144,7 @@ naming the gem and the fix (install the ruby-platform variant). See
 ## Command-line reference
 
 ```
-usage: zeo [options] [--] (<input.rb> | -e <code>) [args...]
+usage: zeo [options] (<input.rb> [args...] | -e <code> [--] [args...])
 ```
 
 Run `zeo --help` for the authoritative list. Every long option also accepts
@@ -153,7 +153,7 @@ replacement for any removed spelling.
 
 | Option | Function |
 |---|---|
-| `<input.rb>` | Compile and run immediately. Trailing arguments become `ARGV`; put option-shaped ones after `--`. |
+| `<input.rb>` | Compile and run immediately. Option parsing **stops here**, as in ruby: everything after the file name becomes `ARGV`, so `zeo test.rb --seed 42` works. Zeo's own options go **before** the file. |
 | `-e <code>` | Compile and run inline code (repeatable; joined with newlines). With `-o`, writes a binary instead. |
 | `-o <output>` | Write a native binary here instead of running. |
 | `--compile` | Write a native binary at the input path minus its extension. |
@@ -165,7 +165,7 @@ replacement for any removed spelling.
 | `--bundle-gemfile <path>` | The Gemfile whose lockfile selects versions in the store. Defaults to `BUNDLE_GEMFILE`. |
 | `--report[=<path>]` | Write the `zeo-gems.json` disclosure record (default: beside the artifact). Off by default. |
 | `--emit-clif[=<path>]` | Print the Cranelift IR and stop. |
-| `--dump=<kind>` | Inspect instead of building, then stop. `clif` is `--emit-clif` to stdout; `syntax` prints `Syntax OK` (`-c` is the short spelling); `units` prints the compiled-in load path. `insns` and `parsetree` are refused. |
+| `--dump=<kind>` | Inspect instead of building, then stop. `clif` is `--emit-clif` to stdout; `syntax` prints `Syntax OK` (`-c` is the short spelling); `units` prints the compiled-in load path; `classes` prints every class with the body sites that reveal it. `insns` and `parsetree` are refused. |
 | `-w`, `-W[0-2]`, `-W:[no-]<category>` | Accepted in Ruby's shapes. Zeo emits no warnings of its own, so they change nothing. |
 | `-v`, `--version`, `-h`, `--help` | Print and stop. |
 

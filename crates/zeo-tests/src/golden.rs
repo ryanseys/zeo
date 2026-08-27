@@ -540,13 +540,11 @@ fn run_via_cli(
     for dir in &opts.package_dirs {
         cmd.arg("--gems").arg(dir);
     }
-    // `--` first: a golden's own args are the PROGRAM's (`--seed 42` for a
-    // minitest driver), and without the separator the CLI reads them as its
-    // own options.
-    cmd.arg(rb);
-    if !args.is_empty() {
-        cmd.arg("--").args(args);
-    }
+    // Exactly what the oracle gets: the file, then the golden's own args.
+    // Option parsing stops at the file name on both sides now, so a `--seed
+    // 42` reaches the program without a separator -- and adding one would
+    // hand the program a literal `"--"` as `ARGV[0]`, which ruby does too.
+    cmd.arg(rb).args(args);
     // `RUBY_BOX=1` is a RUN-TIME flag both sides read, so the child gets
     // exactly what the oracle gets (see `run_oracle`).
     if source.contains("Ruby::Box.new") {

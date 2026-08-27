@@ -165,14 +165,15 @@ impl Env {
 const HELP: &str = "\
 zeo -- compile Ruby to a native binary, or run it like ruby
 
-usage: zeo [options] [--] (<input.rb> | -e <code>) [args...]
+usage: zeo [options] (<input.rb> [args...] | -e <code> [--] [args...])
 
 modes:
   <input.rb>            compile the file and RUN it immediately, like ruby:
                         stdout/stderr and the exit status are forwarded, and
-                        trailing [args...] become the program's ARGV. Options
-                        are still parsed after the file name, so ARGV entries
-                        that look like options go after a `--`
+                        everything after the file name becomes the program's
+                        ARGV. Option parsing STOPS there, ruby's own rule, so
+                        `zeo test.rb --seed 42 -v` passes all three on;
+                        zeo's own options go BEFORE the file name
   <input.rb> -o <path>  compile the file to a native binary at <path>
                         instead of running it
   <input.rb> --compile  compile to the default output path (the input path
@@ -474,11 +475,18 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
             collecting_argv = true;
         } else if input.is_none() {
             input = Some(PathBuf::from(arg));
-        } else {
-            // Everything after the script name is the program's ARGV, ruby's
-            // shape -- rejected below if nothing runs (an artifact mode).
-            program_args.push(arg);
+            // Option parsing STOPS at the script name -- ruby's own rule, and
+            // the only one under which a program can have flags of its own.
+            // `ruby test.rb --seed 42 -v` hands all four to ARGV, and zeo has
+            // to as well: `--seed`, `--verbose`, `-n`, `--format` are how
+            // every test framework is driven, and reading them as zeo's own
+            // made `zeo test.rb --seed 42` an "invalid option" error.
+            //
+            // Options still come BEFORE the file (`zeo -o bin test.rb`), which
+            // is where ruby wants them too.
             collecting_argv = true;
+        } else {
+            program_args.push(arg);
         }
     }
 
@@ -931,23 +939,34 @@ mod tests {
         // opt-in now -- `-o <path>`, or `--compile` for the default name.
         let a = ok(&["t.rb"]);
         assert!(!a.compile && a.output.is_none());
-        assert!(ok(&["t.rb", "--compile"]).compile);
+        assert!(ok(&["--compile", "t.rb"]).compile);
         assert!(ok(&["--compile", "t.rb"]).compile);
         // --compile can't name a binary for -e.
         assert!(err(&["-e", "1", "--compile"]).contains("use -o"));
         // The old opt-in spelling is gone with the rest of the dead flags.
-        assert!(err(&["t.rb", "--run"]).contains("invalid option"));
+        // BEFORE the file name, where zeo's own options live -- after it,
+        // `--run` would be the program's ARGV.
+        assert!(err(&["--run", "t.rb"]).contains("invalid option"));
     }
 
     #[test]
     fn a_run_file_takes_argv_but_a_compiled_one_does_not() {
         let a = ok(&["t.rb", "alpha", "beta"]);
         assert_eq!(a.program_args, vec!["alpha", "beta"]);
-        assert_eq!(ok(&["t.rb", "--", "-W0"]).program_args, vec!["-W0"]);
+        // Ruby-verified: once the script name is seen, `--` is ARGV like
+        // anything else (`ruby t.rb -- -W0` gives `["--", "-W0"]`). It is only
+        // an option terminator BEFORE a script name, which is where `-e` uses
+        // it.
+        assert_eq!(ok(&["t.rb", "--", "-W0"]).program_args, vec!["--", "-W0"]);
         // An artifact or inspect mode runs nothing, so there is no ARGV.
-        assert!(err(&["t.rb", "--compile", "alpha"]).contains("unexpected argument `alpha`"));
+        assert!(err(&["--compile", "t.rb", "alpha"]).contains("unexpected argument `alpha`"));
         assert!(err(&["-o", "app", "t.rb", "alpha"]).contains("unexpected argument `alpha`"));
         assert!(err(&["--emit-clif", "t.rb", "alpha"]).contains("unexpected argument `alpha`"));
+        // ...and zeo's own flags after the file name are the PROGRAM's, which
+        // is the whole point: `--compile` here is ARGV, so the file RUNS.
+        let a = ok(&["t.rb", "--compile", "-o", "app"]);
+        assert!(!a.compile && a.output.is_none());
+        assert_eq!(a.program_args, vec!["--compile", "-o", "app"]);
     }
 
     #[test]
@@ -1052,10 +1071,10 @@ mod tests {
     fn report_is_opt_in_and_only_the_attached_form_takes_a_path() {
         assert!(matches!(ok(&["t.rb"]).report, Report::Off));
         assert!(matches!(
-            ok(&["t.rb", "--compile", "--report"]).report,
+            ok(&["--compile", "--report", "t.rb"]).report,
             Report::DefaultPath
         ));
-        match ok(&["t.rb", "--report=out.json"]).report {
+        match ok(&["--report=out.json", "t.rb"]).report {
             Report::Path(p) => assert_eq!(p, PathBuf::from("out.json")),
             _ => panic!("expected Report::Path"),
         }
@@ -1066,7 +1085,7 @@ mod tests {
         // Bare --report has no artifact dir to land in when the program runs
         // immediately instead of leaving a binary behind.
         assert!(err(&["-e", "1", "--report"]).contains("--report=<path>"));
-        assert!(err(&["t.rb", "--report"]).contains("--report=<path>"));
+        assert!(err(&["--report", "t.rb"]).contains("--report=<path>"));
         assert!(parse(&["-e", "1", "-o", "bin", "--report"]).is_ok());
     }
 
@@ -1078,8 +1097,9 @@ mod tests {
         assert!(a.output.is_none());
         let a = ok(&["-e", "p ARGV", "--", "-x", "b"]);
         assert_eq!(a.program_args, vec!["-x", "b"]);
-        // File mode runs too now, so `--` hands it option-looking ARGV.
-        assert_eq!(ok(&["t.rb", "--", "x"]).program_args, vec!["x"]);
+        // In FILE mode the script name already stopped option parsing, so
+        // `--` is just another ARGV entry -- ruby's own answer.
+        assert_eq!(ok(&["t.rb", "--", "x"]).program_args, vec!["--", "x"]);
         // An -e compile (-o given) has no ARGV to give.
         assert!(err(&["-e", "1", "-o", "bin", "x"]).contains("unexpected argument"));
     }

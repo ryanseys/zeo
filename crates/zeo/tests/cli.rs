@@ -56,14 +56,20 @@ fn a_bare_file_runs_with_argv_and_exit_status() {
     );
     assert_eq!(out.status.code(), Some(7));
 
-    // Option-looking ARGV goes after `--` (before any positional, `-n` would
-    // otherwise be parsed as a zeo option and rejected).
+    // Option-looking ARGV needs no separator: option parsing stops at the
+    // file name, ruby's rule, which is what lets `zeo test.rb --seed 42`
+    // drive a test framework. A literal `--` after the file is ARGV too --
+    // also ruby's answer.
+    let out = zeo().arg(&rb).args(["-n", "x"]).output().expect("spawn zeo");
+    assert_eq!(stdout_of(&out), "[\"-n\", \"x\"]\n");
+    assert_eq!(out.status.code(), Some(7));
+
     let out = zeo()
         .arg(&rb)
-        .args(["--", "-n", "x"])
+        .args(["--", "-n"])
         .output()
         .expect("spawn zeo");
-    assert_eq!(stdout_of(&out), "[\"-n\", \"x\"]\n");
+    assert_eq!(stdout_of(&out), "[\"--\", \"-n\"]\n");
     assert_eq!(out.status.code(), Some(7));
 }
 

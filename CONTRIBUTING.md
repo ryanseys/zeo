@@ -84,7 +84,7 @@ compiler; `crates/zeo/src/clif/` is where it lives.
 | Spelling | Backend | What it does |
 |---|---|---|
 | `zeo file.rb`, `zeo -e` | **jit** (default) | finalizes the CLIF into this process and runs it in place |
-| `zeo file.rb -o app` | **aot** (default) | writes an object file and links it against `libzeo.a` |
+| `zeo -o app file.rb` | **aot** (default) | writes an object file and links it against `libzeo.a` |
 
 There was a second, older backend: `crates/zeo/src/codegen/` emitted Rust
 source text and handed it to `rustc`. It was the only backend until Cranelift
