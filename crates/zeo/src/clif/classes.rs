@@ -159,6 +159,10 @@ pub(crate) struct ModMethodSpec {
     /// constants, `Module.nesting` -- resolve through it. See
     /// `Scope::lexical_home`.
     pub lexical_home: Option<ClassId>,
+    /// This row REUSES the body and trampoline the DEFINING module already
+    /// emits. The registration is real; the emission is somebody else's, so
+    /// `emit` must not compile a second copy or define the trampoline twice.
+    pub shared: bool,
 }
 
 /// What `collect_classes` hands back: the class table plus its method and
@@ -427,6 +431,80 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
             }
             let layout = super::params::layout_of(p)?;
             let has_blk = scope.needs_block_param();
+            // A FOREIGN row -- a module method materialized onto this
+            // builtin -- names the module's one body when it touches no
+            // ivar. Both are name-keyed (`dyn_ivars: true` below and on the
+            // module's own row), so there is nothing per-carrier left.
+            //
+            // This is where `Kernel#URI` was costing 85 copies: the spine
+            // lookup only covers TOP-LEVEL defs, and every builtin carrier
+            // of a `def` written inside `module Kernel` took its own. It
+            // must sit BEFORE the declarations below -- a declared-but-
+            // undefined local function does not link.
+            if dc != target
+                && class.box_id == 0
+                && !scope_names_an_ivar(compiler, entry.def)
+                && let Some(shared) = shared_bodies.get(&entry.def.0).copied()
+            {
+                match scope.visibility {
+                    crate::hir::Visibility::Private => vis.push(statics::VisRowSpec {
+                        class: target.0,
+                        name: mname.clone(),
+                        verb: 0,
+                    }),
+                    crate::hir::Visibility::Protected => vis.push(statics::VisRowSpec {
+                        class: target.0,
+                        name: mname.clone(),
+                        verb: 1,
+                    }),
+                    crate::hir::Visibility::Public => {}
+                }
+                // A BOOTSTRAP carrier (an exception class) takes the object
+                // channel, everything else the value channel -- the same
+                // split the ordinary rows below make.
+                if class.is_bootstrap {
+                    methods.push(ObjMethodSpec {
+                        is_own: false,
+                        super_target_only: false,
+                        dyn_ivars: true,
+                        alias_of: scope.alias_of.clone(),
+                        defining_class: scope.defining_class,
+                        lexical_home: scope.lexical_home,
+                        owner: target,
+                        owner_name: name.clone(),
+                        name: mname,
+                        body: scope.body.clone(),
+                        node: scope.def_node,
+                        tramp: shared,
+                        accessor: None,
+                        body_fn: None,
+                        hir_params: p.clone(),
+                        has_blk,
+                        ruby2_keywords: scope.ruby2_keywords,
+                        shared: true,
+                    });
+                } else {
+                    module_methods.push(ModMethodSpec {
+                        dyn_ivars: true,
+                        box_id: class.box_id,
+                        alias_of: scope.alias_of.clone(),
+                        defining_class: scope.defining_class,
+                        lexical_home: scope.lexical_home,
+                        owner: target,
+                        owner_name: name.clone(),
+                        name: mname,
+                        body: scope.body.clone(),
+                        node: scope.def_node,
+                        tramp: shared,
+                        body_fn: shared,
+                        hir_params: p.clone(),
+                        has_blk,
+                        ruby2_keywords: scope.ruby2_keywords,
+                        shared: true,
+                    });
+                }
+                continue;
+            }
             let tramp = em
                 .module
                 .declare_function(
@@ -452,6 +530,14 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
                     verb: 1,
                 }),
                 crate::hir::Visibility::Public => {}
+            }
+            // The builtin's OWN write is what a carrier reuses. `Kernel#URI`
+            // -- a gem reopening `Kernel` -- reached 85 classes and every
+            // one took a copy: the spine lookup asks `em.methods`, which
+            // `collect::collect_methods` fills from TOP-LEVEL defs only, so
+            // a `def` written inside `module Kernel` was never in it.
+            if dc == target {
+                shared_bodies.insert(entry.def.0, tramp);
             }
             if class.is_bootstrap {
                 // An exception reopen: an OBJECT-channel delta.
@@ -493,6 +579,7 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
                     hir_params: p.clone(),
                     has_blk,
                     ruby2_keywords: scope.ruby2_keywords,
+                shared: false,
                 });
             }
         }
@@ -843,6 +930,7 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
                     hir_params: p.clone(),
                     has_blk,
                     ruby2_keywords: scope.ruby2_keywords,
+                shared: false,
                 });
             }
         }
@@ -948,7 +1036,14 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
             // `an_inherited_frame_names_the_defining_class`); with it fixed
             // the copies differ only in per-site cache offsets.
             let shared_tramp = if universal_spine.contains(&scope.defining_class) {
-                em.methods.get(&mname).map(|d| d.tramp)
+                // By NAME for a top-level `def` (what `collect_methods`
+                // emits), then by scope for one written inside
+                // `module Kernel` -- the second spelling never reaches the
+                // first map.
+                em.methods
+                    .get(&mname)
+                    .map(|d| d.tramp)
+                    .or_else(|| shared_bodies.get(&entry.def.0).copied())
             } else if !scope_names_an_ivar(compiler, entry.def) {
                 shared_bodies.get(&entry.def.0).copied()
             } else {
@@ -1056,6 +1151,7 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
                     hir_params: p.clone(),
                     has_blk,
                     ruby2_keywords: scope.ruby2_keywords,
+                shared: false,
                 });
                 continue;
             }
