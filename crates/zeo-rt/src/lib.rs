@@ -65,6 +65,8 @@ mod signal;
 mod stack_guard;
 mod symbol;
 mod thread;
+#[macro_use]
+mod trace;
 mod tramp;
 mod value;
 pub(crate) use value::{collections, ivars, value_ivars};

@@ -308,6 +308,12 @@ pub fn reveal_class(id: u32) {
     if !concealed.remove(&id) {
         return;
     }
+    crate::trace::trace!(
+        crate::trace::Topic::Class,
+        0,
+        "reveal {}",
+        crate::trace::class_label(id)
+    );
     if concealed.is_empty() {
         ANY_CONCEALED.store(false, Ordering::Release);
     }
@@ -352,10 +358,22 @@ pub fn conditional_class_ref(
         // concealed class is exactly the shape one targets: registered for
         // dispatch, no constant yet. Run it, then ask again -- the unit's
         // body reveals the class.
+        crate::trace::trace!(
+            crate::trace::Topic::Class,
+            0,
+            "read {fq_name} -> CONCEALED {}, asking {} for autoload {leaf:?}",
+            crate::trace::class_label(id.0),
+            crate::trace::class_label(owner.0)
+        );
         crate::builtins::rmodule::run_pending_autoload(owner.0, leaf)?;
         if !class_concealed(id.0) {
             return Ok(RubyValue::Class(id));
         }
+        crate::trace::trace!(
+            crate::trace::Topic::Class,
+            0,
+            "read {fq_name} -> STILL CONCEALED after the autoload; raising"
+        );
         Err(crate::Signal::Raise(crate::dispatch::stamp_backtrace(
             crate::dispatch::make_name_error(
                 format!("uninitialized constant {fq_name}"),

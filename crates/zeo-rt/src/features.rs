@@ -280,15 +280,33 @@ fn key(feature: &str) -> &str {
 /// loaded (or one loading further up the stack: a cycle).
 pub fn load_feature(feature: &str) -> Option<Result<bool, Signal>> {
     let name = key(feature);
-    let unit = *UNITS.get()?.get(name)?;
+    let Some(&unit) = UNITS.get()?.get(name) else {
+        crate::trace::trace!(
+            crate::trace::Topic::Unit,
+            state().lock().depth,
+            "no unit for {name:?}"
+        );
+        return None;
+    };
     let identity = unit.identity();
-    {
+    let depth = {
         let mut st = state().lock();
         if st.loaded.contains(&identity) || !st.loading.insert(identity) {
+            crate::trace::trace!(
+                crate::trace::Topic::Unit,
+                st.depth,
+                "{name:?} -> false (already {})",
+                match st.loaded.contains(&identity) {
+                    true => "loaded",
+                    false => "loading: a cycle",
+                }
+            );
             return Some(Ok(false));
         }
         st.depth += 1;
-    }
+        st.depth - 1
+    };
+    crate::trace::trace!(crate::trace::Topic::Unit, depth, "run {name:?}");
     let result = unit.call();
     let outermost;
     let outcome = {
@@ -299,9 +317,13 @@ pub fn load_feature(feature: &str) -> Option<Result<bool, Signal>> {
         match result {
             // A unit that raised is NOT loaded: CRuby leaves the feature out
             // of `$LOADED_FEATURES` so a later require retries it.
-            Err(e) => Some(Err(e)),
+            Err(e) => {
+                crate::trace::trace!(crate::trace::Topic::Unit, st.depth, "{name:?} RAISED");
+                Some(Err(e))
+            }
             Ok(_) => {
                 st.loaded.insert(identity);
+                crate::trace::trace!(crate::trace::Topic::Unit, st.depth, "{name:?} -> true");
                 Some(Ok(true))
             }
         }

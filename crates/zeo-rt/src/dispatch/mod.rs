@@ -21,7 +21,7 @@ mod impls;
 mod invoke;
 pub(crate) mod ivars;
 mod kwargs;
-mod lookup;
+pub(crate) mod lookup;
 pub(crate) mod names;
 mod object;
 mod reflect;

@@ -342,6 +342,12 @@ pub static ANY_PENDING_AUTOLOAD: std::sync::atomic::AtomicBool =
 
 /// Records `path` as the target of `owner::name`, and arms the gate.
 pub fn register_autoload(owner: u32, name: String, path: String) {
+    crate::trace::trace!(
+        crate::trace::Topic::Autoload,
+        0,
+        "register {}::{name} -> {path:?}",
+        crate::trace::class_label(owner)
+    );
     pending_autoloads().lock().insert((owner, name), path);
     ANY_PENDING_AUTOLOAD.store(true, std::sync::atomic::Ordering::Relaxed);
 }
@@ -393,13 +399,31 @@ fn peek_autoload_target(owner: u32, name: &str) -> Option<String> {
 /// then raised `NameError` for a file sitting on `$LOAD_PATH`.
 pub fn run_pending_autoload(owner: u32, name: &str) -> Result<(), crate::Signal> {
     let Some(path) = peek_autoload_target(owner, name) else {
+        crate::trace::trace!(
+            crate::trace::Topic::Autoload,
+            0,
+            "touch {}::{name} -- nothing pending",
+            crate::trace::class_label(owner)
+        );
         return Ok(());
     };
+    crate::trace::trace!(
+        crate::trace::Topic::Autoload,
+        0,
+        "touch {}::{name} -> loading {path:?}",
+        crate::trace::class_label(owner)
+    );
     let loaded = crate::features::load_feature(&path)
         .or_else(|| crate::features::load_from_disk(&path, 0, false));
     match loaded {
         // Loaded: the registration is spent, and `autoload?` answers nil.
-        Some(Ok(_)) => {
+        Some(Ok(ran)) => {
+            crate::trace::trace!(
+                crate::trace::Topic::Autoload,
+                0,
+                "touch {}::{name} -> loaded (body ran: {ran})",
+                crate::trace::class_label(owner)
+            );
             take_autoload_target(owner, name);
             Ok(())
         }
