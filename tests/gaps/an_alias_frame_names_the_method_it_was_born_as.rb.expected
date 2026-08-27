@@ -1,0 +1,6 @@
+[:real, :real, 1]
+[:real, :nick, 2]
+[:real, :nick2, 3]
+[:real, :nick]
+gaps/an_alias_frame_names_the_method_it_was_born_as.rb:27:in 'Al#boom'
+["Mixin#base", "Mixin#base"]
