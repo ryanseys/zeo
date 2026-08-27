@@ -8,7 +8,7 @@ Pending: (Failures listed here are expected and do not affect your suite's statu
 
      RuntimeError:
        still broken
-     # ./milestones/an_rspec_suite_runs.rb:63:in 'block (2 levels) in <main>'
+     # ./milestones/an_rspec_suite_runs.rb:56:in 'block (2 levels) in <main>'
 
 Failures:
 
@@ -19,12 +19,12 @@ Failures:
             got: 1
 
        (compared using ==)
-     # ./milestones/an_rspec_suite_runs.rb:58:in 'block (2 levels) in <main>'
+     # ./milestones/an_rspec_suite_runs.rb:51:in 'block (2 levels) in <main>'
 
 Finished in <time>
 9 examples, 1 failure, 1 pending
 
 Failed examples:
 
-rspec ./milestones/an_rspec_suite_runs.rb:57 # arithmetic reports a failure
+rspec ./milestones/an_rspec_suite_runs.rb:50 # arithmetic reports a failure
 

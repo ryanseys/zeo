@@ -1,1 +1,0 @@
-Fiddle RTLD_* dlopen flag values are per-platform (RTLD_GLOBAL is 8 on macOS, 256 on Linux).

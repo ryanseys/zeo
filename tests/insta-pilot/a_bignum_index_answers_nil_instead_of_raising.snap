@@ -1,8 +1,0 @@
----
-source: crates/zeo/tests/insta_pilot.rs
----
---- stdout ---
-[:ary, RangeError, "bignum too big to convert into 'long'"]
-[:str, RangeError, "bignum too big to convert into 'long'"]
---- stderr ---
-insta-pilot/a_bignum_index_answers_nil_instead_of_raising.rb:34:in '<main>': bignum too big to convert into 'long' (RangeError)

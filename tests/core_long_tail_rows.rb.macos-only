@@ -1,1 +1,0 @@
-Dir.chroot on a missing path: macOS checks privilege first (EPERM); Linux resolves the path first (ENOENT). Linux CRuby matches Linux zeo, not this macOS-blessed expected.

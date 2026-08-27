@@ -1,5 +1,0 @@
----
-source: crates/zeo/tests/insta_pilot.rs
----
---- stdout ---
-ok

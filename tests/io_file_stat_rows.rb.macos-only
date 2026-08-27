@@ -1,1 +1,0 @@
-Line 70 hardcodes the macOS FIONREAD ioctl request number (0x4004667F); Linux uses 0x541B, so Linux ruby raises ENOTTY exactly as zeo does.

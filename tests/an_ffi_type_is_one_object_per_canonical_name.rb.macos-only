@@ -1,7 +1,0 @@
-`long double` is not one width. On aarch64-linux-gnu it is IEEE
-binary128 (size 16, alignment 16); on aarch64-darwin it is `double`
-(size 8, alignment 8), which is what the committed macOS-oracle
-`.expected` records for `FFI::Type::Builtin::LONGDOUBLE`.
-
-Everything else in the file is platform-independent, so this sidecar
-costs the Linux leg one type row out of thirty-six.

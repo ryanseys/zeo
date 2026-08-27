@@ -2,19 +2,16 @@
 # zeo and reports what rspec reports -- passes, failures, pending, doubles,
 # hooks, the counts and the exit status.
 #
-# Both engines load the SAME rspec, the copy zeo vendors, put on the load path
-# below. That makes this a true differential rather than a recording: the
-# reference ruby has no rspec installed of its own, and comparing zeo against
-# nothing would prove nothing.
+# Both engines read the SAME rspec, from `vendor/gemstore` -- a plain `gem
+# install --install-dir` tree that `tools/zeo-dev gemstore` builds. zeo reads
+# it with `--gem-path` and the oracle with `GEM_PATH`, which the `.gemstore`
+# sidecar beside this file arranges. That makes this a true differential
+# rather than a recording: neither engine has rspec of its own, and comparing
+# zeo against nothing would prove nothing.
 #
-# Every failing example used to die IN THE FORMATTER. rspec asks
-# `RubyFeatures.ripper_supported?`, which upstream infers from the engine name
-# -- it opts out only for rbx, jruby and truffleruby -- and then does a bare
-# `require "ripper"` with no rescue. zeo embeds prism rather than CRuby's
-# parse.y and declines that require. rspec already has a ripper-less branch
-# (`NoSnippetExtractor`, the path a JRuby user gets); the vendored copy now
-# PROBES for ripper instead of guessing, so that branch is reachable. See
-# `gems/UPSTREAM.md`.
+# rspec is deliberately NOT vendored under `gems/`. Everything there is a
+# library ruby itself ships, so a `require` reaches the same code on both
+# sides; vendoring rspec would make zeo answer a require ruby refuses.
 #
 # rspec prints a duration that cannot match across two engines, so an
 # `at_exit` registered BEFORE rspec's rewrites that one line -- handlers are
@@ -22,10 +19,6 @@
 # byte.
 #
 # Shapes, never versions -- see `tests/milestones.rs`.
-
-%w[rspec-core rspec-support rspec-expectations rspec-mocks diff-lcs].each do |gem|
-  $LOAD_PATH.unshift(File.expand_path("../../gems/#{gem}/lib", __dir__))
-end
 
 require "stringio"
 real_stdout = $stdout
