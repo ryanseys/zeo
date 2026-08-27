@@ -871,10 +871,13 @@ impl ClassRegistry {
     /// The NEW names `id`'s own builtin-alias rows define -- what reflection
     /// has to list, since an alias is a name indirection here rather than a
     /// copied method entry. Empty for an unregistered or aliasless id.
-    pub(super) fn alias_names(&self, id: ClassId) -> Vec<Symbol> {
+    /// An alias takes the visibility of what it aliases, so each new name
+    /// comes back with its SOURCE beside it -- reflection has to know which
+    /// row to ask about.
+    pub(super) fn alias_rows(&self, id: ClassId) -> Vec<(Symbol, Symbol)> {
         self.entries
             .get(&id.0)
-            .map(|e| e.aliases.keys().copied().collect())
+            .map(|e| e.aliases.iter().map(|(&n, &o)| (n, o)).collect())
             .unwrap_or_default()
     }
 

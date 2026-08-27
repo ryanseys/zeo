@@ -987,6 +987,17 @@ pub fn runtime_alias_method(id: ClassId, new: Symbol, old: Symbol) -> Result<Rub
                 ))
             })
     });
+    // A bare MODULE has no ancestors to inherit from, so `alias ruby_load
+    // load` in one would find nothing -- and CRuby's `rb_alias` retries the
+    // lookup on `Object` for exactly that case (`vm_method.c`: "if
+    // (!RB_TYPE_P(klass, T_MODULE)) ... rb_print_undef"). That is how a module
+    // aliases a `Kernel` row; irb's `IRB::IrbLoader` opens with two of them.
+    let snapshot = snapshot.or_else(|| {
+        crate::dispatch::class_is_module(id)
+            .unwrap_or(false)
+            .then(|| snapshot_instance_method(zeo_abi::OBJECT_CLASS, old))
+            .flatten()
+    });
     let Some(m) = snapshot else {
         let kind = if crate::dispatch::class_is_module(id).unwrap_or(false) {
             "module"

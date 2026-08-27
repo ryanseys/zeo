@@ -72,7 +72,7 @@ use static_guards::{baked_subject, eval_static_guard, literal_when_match};
 /// -- 110 autoloads, 295 method-body requires, 12 `defined?`-guarded requires
 /// and an `eval File.read` that installs the `Kernel#require` monkeypatch --
 /// so the compile-time splice cannot reproduce their order and must not try.
-const LOAD_FAITHFUL: &[&str] = &["rubygems", "bundler"];
+const LOAD_FAITHFUL: &[&str] = &["rubygems", "bundler", "irb"];
 
 /// One gem: a named directory with a `.gemspec`, contributing one or more
 /// `require` search roots.

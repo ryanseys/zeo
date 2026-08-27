@@ -829,6 +829,34 @@ impl VisFilter {
 /// `object.c`'s `rb_obj_dummy`) is the load-bearing case: `super` from any
 /// `initialize` must reach it, but `obj.initialize` must raise. Kernel's
 /// print family is the same shape.
+/// The visibility a builtin ALIAS inherits: that of the row it names,
+/// searched from `from` outward and -- for a bare module, whose ancestry is
+/// itself alone -- through `Object`, exactly where `rb_alias` found it.
+/// Public when nothing is found; the row still exists as a name indirection.
+fn builtin_row_visibility(from: ClassId, old: Symbol) -> MethodVisibility {
+    let n = old.name_str();
+    let chain = crate::dispatch::ancestors_of_value(from);
+    let owners = chain
+        .iter()
+        .copied()
+        .chain(crate::dispatch::ancestors_of_value(zeo_abi::OBJECT_CLASS).iter().copied());
+    for anc in owners {
+        let has = crate::builtins::class_table(anc).is_some_and(|t| t(n).is_some())
+            || crate::runtime_meta::overlay_own_method(anc, old).is_some();
+        if !has {
+            continue;
+        }
+        if crate::builtins::class_method_is_private(anc, n) || is_hidden_builtin_private(anc, n) {
+            return MethodVisibility::Private;
+        }
+        if crate::builtins::class_method_is_protected(anc, n) {
+            return MethodVisibility::Protected;
+        }
+        return MethodVisibility::Public;
+    }
+    MethodVisibility::Public
+}
+
 fn is_hidden_builtin_private(owner: ClassId, name: &str) -> bool {
     // Private on EVERY class, wherever a table defines one -- except
     // `Ractor::MovedObject`, whose whole raising surface (`method_missing`
@@ -980,11 +1008,17 @@ pub fn instance_method_names(class: ClassId, filter: VisFilter, inherit: bool) -
         // A builtin alias is stored as a NAME INDIRECTION rather than a copied
         // entry (see `ClassInfo::builtin_aliases`), so nothing above lists it --
         // but `alias_method :gems, :specs` defines `gems` as far as Ruby is
-        // concerned, and reflection has to say so. Aliases are public.
-        if filter.matches(MethodVisibility::Public)
-            && let Some(r) = reg
-        {
-            for new in r.alias_names(anc) {
+        // concerned, and reflection has to say so.
+        //
+        // An alias takes the visibility of what it ALIASES: `alias ruby_load
+        // load` in a module is a PRIVATE row, because `Kernel#load` is one.
+        // Listing every alias as public put irb's two into
+        // `instance_methods` and left `private_instance_methods` empty.
+        if let Some(r) = reg {
+            for (new, old) in r.alias_rows(anc) {
+                if !filter.matches(builtin_row_visibility(anc, old)) {
+                    continue;
+                }
                 if seen.insert(new) {
                     out.push(new);
                 }

@@ -328,12 +328,22 @@ pub fn validate_class_aliases(id: ClassId) -> Result<(), Signal> {
         if PARSE_SPECIAL_KERNEL.contains(&n) {
             continue;
         }
-        let resolves = ancestors_of_value(id).iter().any(|&anc| {
+        let has = |anc: ClassId| {
             r.lookup(anc, old).is_some()
                 || r.lookup_value_method(anc, 0, old).is_some()
                 || crate::builtins::class_table(anc).is_some_and(|t| t(n).is_some())
                 || crate::runtime_meta::overlay_own_method(anc, old).is_some()
-        });
+        };
+        // A bare MODULE's ancestry is itself alone, so a `Kernel` row is not
+        // in it -- and CRuby's `rb_alias` retries the lookup on `Object` for
+        // exactly that case (`vm_method.c`: the `RB_TYPE_P(klass, T_MODULE)`
+        // branch before `rb_print_undef`). That is how a module aliases
+        // `load`/`require`, which is what irb's `IRB::IrbLoader` opens with.
+        let resolves = ancestors_of_value(id).iter().any(|&anc| has(anc))
+            || (entry.is_module
+                && ancestors_of_value(zeo_abi::OBJECT_CLASS)
+                    .iter()
+                    .any(|&anc| has(anc)));
         if !resolves {
             let kind = if entry.is_module { "module" } else { "class" };
             return Err(crate::builtins::name_error!(
