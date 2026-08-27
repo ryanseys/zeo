@@ -76,6 +76,23 @@ pub(crate) fn dynamic_require_relative(arg1: &RubyValue) -> Result<RubyValue, cr
     if let Some(result) = crate::features::load_feature(&abs) {
         return result.map(RubyValue::Bool);
     }
+    // ... and the same file with its symlinks resolved. The join above is
+    // LEXICAL and starts from `__FILE__`, which carries the path the program
+    // was invoked with, while a unit registers under the CANONICAL spelling
+    // -- so a directory reached through a symlink asks under a name no unit
+    // holds. On macOS every temp dir is one (`/var` is `/private/var`), and
+    // the miss was silent: the target was compiled in, the require answered
+    // as though it were absent, and the file's module was rebuilt at run time
+    // -- so an `autoload` registered on that second module while the read
+    // went to the concealed first one.
+    if let Some(real) = canonical_feature(&abs) {
+        if feature_already_loaded(&real) {
+            return Ok(RubyValue::Bool(false));
+        }
+        if let Some(result) = crate::features::load_feature(&real) {
+            return result.map(RubyValue::Bool);
+        }
+    }
     // The as-written spelling second: a unit registered under its bare
     // feature name (`require_relative "version"` next to a load-path root)
     // still resolves, matching the compiler's own root-relative fallback.
@@ -91,6 +108,20 @@ pub(crate) fn dynamic_require_relative(arg1: &RubyValue) -> Result<RubyValue, cr
         return result.map(RubyValue::Bool);
     }
     Err(missing_feature_error(&abs))
+}
+
+/// A unit key spelling with its symlinks resolved, or `None` when the file is
+/// not on this machine -- which is the ordinary case for a compiled-in unit,
+/// and why this is only ever asked after a lookup has already missed.
+///
+/// The `.rb` is appended rather than set: a feature is keyed WITHOUT its
+/// extension, and `Path::with_extension` would eat the tail of a name like
+/// `net.http`.
+fn canonical_feature(feature: &str) -> Option<String> {
+    let real = std::path::Path::new(&format!("{feature}.rb"))
+        .canonicalize()
+        .ok()?;
+    Some(real.with_extension("").to_string_lossy().into_owned())
 }
 
 /// `dir` + `rel`, normalized LEXICALLY (`.`/`..` folded without touching the
