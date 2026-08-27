@@ -281,11 +281,24 @@ pub(super) fn define_method_body(
     let layout = super::params::layout_of(def.hir_params)?;
     let sig = super::params::body_sig(em, layout.n_slots, def.has_blk);
     let idx = em.next_fn_index();
-    // A module method materialized onto an includer keeps the MODULE in
-    // its frame label: CRuby names the DEFINING class (`M#mixed`, never
-    // `Bar#mixed`), read off `scope.defining_class`.
+    // A method materialized onto a carrier keeps its DEFINING class in the
+    // frame label: CRuby names where the `def` was written (`M#mixed`,
+    // never `Bar#mixed`), read off `scope.defining_class`.
+    //
+    // A SUPERCLASS is the same rule and used to be excluded, so every
+    // backtrace through an inherited method named the receiver's class:
+    // `S1#boom` where ruby says `Base#boom`. That also made two carriers'
+    // copies of one body differ in nothing but this string.
+    // Only a real ANCESTOR renames the label. A `def self.x` written in a
+    // `class << self` body has the singleton SURROGATE as its defining
+    // class, and ruby still calls that frame `Config.direct` -- the
+    // surrogate is an internal name no user can write. It is not in the
+    // owner's ancestry, so this test excludes it and the module and
+    // superclass cases both keep working.
     let label_owner = match def.defining_class {
-        Some(dc) if dc != def.owner && analyzed.compiler.class(dc).is_module => {
+        Some(dc)
+            if dc != def.owner && analyzed.compiler.class(def.owner).ancestors.contains(&dc) =>
+        {
             analyzed.compiler.fq_name(dc)
         }
         _ => def.owner_name.to_string(),

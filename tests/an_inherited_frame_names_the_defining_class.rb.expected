@@ -1,0 +1,6 @@
+["Base#where", "Base#where", "Base#where"]
+["Mixed#mixed_where", "Mixed#mixed_where"]
+"Leaf#own_where"
+an_inherited_frame_names_the_defining_class.rb:17:in 'Base#boom'
+"Config.direct"
+an_inherited_frame_names_the_defining_class.rb:53:in 'Override#boom'
