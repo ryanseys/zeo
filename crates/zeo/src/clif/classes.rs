@@ -1085,11 +1085,10 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
             // lookup is lexical from the module, so neither depends on the
             // carrier.
             // A SUPERCLASS is the same argument as a module. Its own body is
-            // emitted against its own slots, and the ivar-prefix property
-            // `analyze::mro` maintains means a subclass agrees about every
-            // slot the parent declared -- but a body that names no ivar
-            // settles it without needing that. What used to differ was the
-            // frame label, and that named the wrong class (see
+            // emitted against ITS OWN slots, so a carrier may name it only
+            // where the two agree about every `@x` the body touches --
+            // which `ivar_slots_agree` decides per body. What used to differ
+            // was the frame label, and that named the wrong class (see
             // `an_inherited_frame_names_the_defining_class`); with it fixed
             // the copies differ only in per-site cache offsets.
             let shared_tramp = if universal_spine.contains(&scope.defining_class) {
@@ -1101,7 +1100,12 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
                     .get(&mname)
                     .map(|d| d.tramp)
                     .or_else(|| shared_bodies.get(&entry.def.0).copied())
-            } else if !scope_names_an_ivar(compiler, entry.def) {
+            } else if ivar_slots_agree(
+                compiler,
+                scope.defining_class,
+                ClassId(idx as u32),
+                entry.def,
+            ) {
                 shared_bodies.get(&entry.def.0).copied()
             } else {
                 None
@@ -1704,6 +1708,14 @@ pub(crate) fn scope_names_an_ivar(
     compiler: &crate::compiler::Compiler,
     sid: crate::compiler::ScopeId,
 ) -> bool {
+    !scope_ivar_names(compiler, sid).is_empty()
+}
+
+/// Every `@x` a body reads or writes, its parameter defaults included.
+fn scope_ivar_names(
+    compiler: &crate::compiler::Compiler,
+    sid: crate::compiler::ScopeId,
+) -> Vec<String> {
     let scope = compiler.scope(sid);
     let mut names = Vec::new();
     for &n in &scope.body {
@@ -1712,5 +1724,45 @@ pub(crate) fn scope_names_an_ivar(
     for id in scope.params.default_ids() {
         crate::analyze::collect_ivars(&compiler.hir, id, &mut names);
     }
-    !names.is_empty()
+    names
+}
+
+/// The slot `@name` compiles to in a body whose `method_class` is `class`,
+/// mirroring `clif::ivars::ivar_slot_of`. `None` is the NAME-keyed capi,
+/// which reaches the same storage on any receiver.
+fn body_ivar_slot(
+    compiler: &crate::compiler::Compiler,
+    class: crate::compiler::ClassId,
+    name: &str,
+) -> Option<usize> {
+    let info = compiler.class(class);
+    if class == crate::compiler::OBJECT_CLASS || info.is_builtin || info.is_bootstrap {
+        return None;
+    }
+    crate::analyze::class_query::slot_of(compiler, class, name)
+}
+
+/// Whether one emitted body can serve `owner` and `carrier` both.
+///
+/// The body indexes `@x` by the slot it has on the OWNER, so the carrier
+/// must agree about every name it touches. A name the owner reaches
+/// name-keyed needs no agreement -- that access is receiver-independent.
+///
+/// `analyze::mro` lays a class out as `ivars(parent) ++ its own new names`,
+/// which makes this hold for an ordinary subclass. It is CHECKED rather
+/// than assumed because the layout has two documented exceptions: a builtin
+/// skips `Object`'s names, and a `Struct`'s members are counted ahead of
+/// the ordinary ivars.
+fn ivar_slots_agree(
+    compiler: &crate::compiler::Compiler,
+    owner: crate::compiler::ClassId,
+    carrier: crate::compiler::ClassId,
+    sid: crate::compiler::ScopeId,
+) -> bool {
+    scope_ivar_names(compiler, sid).iter().all(|name| {
+        match body_ivar_slot(compiler, owner, name) {
+            None => true,
+            slot => slot == body_ivar_slot(compiler, carrier, name),
+        }
+    })
 }

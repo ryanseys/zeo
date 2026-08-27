@@ -496,3 +496,27 @@ fn an_included_module_emits_one_body_for_every_carrier() {
         "an included module's body must be emitted once, not once per carrier"
     );
 }
+
+/// A subclass names its parent's body rather than copying it, even where
+/// the body touches an ivar -- `analyze::mro` lays a class out as
+/// `ivars(parent) ++ its own new names`, so the parent's slots hold on
+/// every descendant. Copying these was 51% of the emitted CLIF on a program
+/// that only requires uri.
+#[test]
+fn a_subclass_names_its_parents_body_even_when_it_touches_an_ivar() {
+    // Neither body may be accessor-shaped, or it lowers to a slot access
+    // with no body to share in the first place.
+    let src = "class Parent\n  def write(v); @x = \"<#{v}>\"; nil; end\n\
+               \x20 def read; @x.nil? ? \"unset\" : @x.upcase; end\nend\n\
+               class A < Parent; end\n\
+               class B < Parent\n  def own; @b = 1; end\nend\n\
+               class C < B; end\n\
+               [Parent, A, B, C].each { |k| o = k.new; o.write(k.name); p o.read }\n";
+    for body in ["Parent#read", "Parent#write"] {
+        assert_eq!(
+            bodies_named(src, body),
+            1,
+            "{body} must be emitted once for the whole hierarchy"
+        );
+    }
+}
