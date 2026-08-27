@@ -77,6 +77,7 @@ pub fn compile(analyzed: &Analyzed, spec: &EvalSpec<'_>) -> CResult<EvalProgram>
     statics::define_dyn_sites(&mut em)?;
     statics::define_proc_shapes(&mut em)?;
     statics::define_rodata(&mut em)?;
+    em.flush_pending()?;
     let ClifModule::Jit(mut module) = em.module else {
         unreachable!("Emitter::new(true) builds a JIT module")
     };

@@ -104,6 +104,48 @@ impl Module for ClifModule {
     }
 }
 
+/// How many functions queue up before the backend runs over them. Big enough
+/// to keep every core busy, small enough that the queue's own memory stays
+/// beside the noise: a program requiring rubygems lowers about 207,000
+/// functions, and holding them all would cost more than the compile.
+const PARALLEL_BATCH: usize = 2048;
+
+/// How many threads the backend runs on. `ZEO_CODEGEN_THREADS` overrides it,
+/// which is what makes the parallel and the one-core path comparable on the
+/// same binary; `1` turns the queue off entirely.
+fn codegen_threads() -> usize {
+    static N: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *N.get_or_init(|| {
+        std::env::var("ZEO_CODEGEN_THREADS")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|n| *n > 0)
+            .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()))
+    })
+}
+
+/// One lowered function waiting for the backend.
+struct PendingFn {
+    id: FuncId,
+    func: ir::Function,
+    label: String,
+    debug_rows: bool,
+}
+
+/// One compiled function waiting to be defined into the module. The context
+/// travels with it because both halves of the serial step read it: the
+/// relocations name its function, and DWARF reads its machine buffer.
+struct PendingCode {
+    id: FuncId,
+    label: String,
+    debug_rows: bool,
+    /// The buffer's alignment, or why the function did not compile. Reported
+    /// on the serial side so the failure names one function rather than
+    /// arriving from a thread.
+    alignment: Result<u64, String>,
+    ctx: cranelift_codegen::Context,
+}
+
 /// Program-wide emission state: the module, the rodata blob, the symbol
 /// pool, and the capi import cache.
 pub(crate) struct Emitter {
@@ -187,6 +229,15 @@ pub(crate) struct Emitter {
     /// cost of the lowering that feeds it.
     pub codegen_nanos: u64,
     pub codegen_fns: u32,
+    /// Functions lowered but not yet handed to Cranelift, when the backend
+    /// may run on more than one core. Flushed in batches rather than at the
+    /// end: a program that requires rubygems lowers about 207,000 functions,
+    /// and holding every one of them would cost more memory than the whole
+    /// compile.
+    pending: Vec<PendingFn>,
+    /// Whether the backend may run on more than one core -- see
+    /// [`Emitter::define`].
+    parallel: bool,
     /// Regexp-literal site ids -- one cached frozen object per site
     /// (`zeo_rt_regexp_lit`).
     pub regexp_sites: u32,
@@ -276,6 +327,11 @@ impl Emitter {
                 "the clif backend only serializes little-endian tables",
             ));
         }
+        // Only an ELF object carries `.eh_frame`, and only the context-taking
+        // `define_function` writes it -- so ELF is the one configuration whose
+        // backend must stay on one core. See [`Emitter::define`].
+        let elf = isa.triple().binary_format == target_lexicon::BinaryFormat::Elf;
+        let parallel = jit || !elf;
         let mut module = if jit {
             // Imports resolve against the runtime linked into THIS process:
             // the capi table first (`zeo_rt_*` -- not exported, so dlsym
@@ -294,7 +350,6 @@ impl Emitter {
             }));
             ClifModule::Jit(JITModule::new(builder))
         } else {
-            let elf = isa.triple().binary_format == target_lexicon::BinaryFormat::Elf;
             let mut builder =
                 ObjectBuilder::new(isa, "zeo-p0", cranelift_module::default_libcall_names())
                     .map_err(|e| {
@@ -398,6 +453,8 @@ impl Emitter {
             fn_index: 0,
             codegen_nanos: 0,
             codegen_fns: 0,
+            pending: Vec::new(),
+            parallel: parallel && codegen_threads() > 1,
             regexp_sites: 0,
             ffi_sites: 0,
             eval_sites: false,
@@ -510,12 +567,43 @@ impl Emitter {
     /// Every emitted function goes through here -- bodies, class bodies,
     /// blocks, trampolines, accessors, units, `main`. One door is what makes
     /// the backend's cost measurable against the lowering above it, and it is
-    /// the single place a parallel backend has to intercept.
+    /// the single place the parallel backend intercepts.
+    ///
+    /// Lowering builds the CLIF against shared emitter state (the rodata
+    /// blob, the symbol pool, the site counters), so it stays on one thread.
+    /// Turning that CLIF into machine code needs nothing but the function and
+    /// the target, and it is 92% of a compile -- so it queues here and runs on
+    /// every core, in batches.
     ///
     /// `debug_rows` asks for the function's DWARF line rows. Only a real Ruby
     /// body carries them; a trampoline is generated code with no source line
     /// of its own.
     pub(crate) fn define(
+        &mut self,
+        id: FuncId,
+        func: ir::Function,
+        label: &str,
+        debug_rows: bool,
+    ) -> CResult<()> {
+        if !self.parallel {
+            return self.define_now(id, func, label, debug_rows);
+        }
+        self.pending.push(PendingFn {
+            id,
+            func,
+            label: label.to_string(),
+            debug_rows,
+        });
+        if self.pending.len() >= PARALLEL_BATCH {
+            self.flush_pending()?;
+        }
+        Ok(())
+    }
+
+    /// [`Emitter::define`] on this thread, which is what a configuration
+    /// carrying unwind information must use: only the context-taking
+    /// `define_function` writes `.eh_frame`.
+    fn define_now(
         &mut self,
         id: FuncId,
         func: ir::Function,
@@ -532,6 +620,89 @@ impl Emitter {
         if debug_rows {
             self.record_debug(label, id, &ctx);
         }
+        Ok(())
+    }
+
+    /// Compile every queued function, then define them IN THE ORDER THEY WERE
+    /// QUEUED.
+    ///
+    /// The ordering is not a detail: `per_function_section` gives each
+    /// function its own section, so defining in completion order would lay the
+    /// object out differently on every run and no two builds of one program
+    /// would match.
+    pub(crate) fn flush_pending(&mut self) -> CResult<()> {
+        if self.pending.is_empty() {
+            return Ok(());
+        }
+        let batch = std::mem::take(&mut self.pending);
+        let count = batch.len() as u32;
+        let started = std::time::Instant::now();
+
+        // Compiled functions, paired with the position they were queued at.
+        // The isa borrow ends with this block, which is what lets the serial
+        // half below take `&mut self` again.
+        let mut compiled: Vec<(usize, PendingCode)> = {
+            let isa = self.module.isa();
+            let queue = std::sync::Mutex::new(batch.into_iter().enumerate());
+            let done = std::sync::Mutex::new(Vec::with_capacity(count as usize));
+            std::thread::scope(|scope| {
+                for _ in 0..codegen_threads() {
+                    scope.spawn(|| {
+                        // One control plane per worker: it is a deterministic
+                        // fuzzing dial, and the default makes no choices.
+                        let mut ctrl = cranelift_codegen::control::ControlPlane::default();
+                        loop {
+                            let next = queue.lock().expect("the work queue is not poisoned").next();
+                            let Some((at, item)) = next else { break };
+                            let mut ctx = cranelift_codegen::Context::new();
+                            ctx.func = item.func;
+                            let alignment = ctx
+                                .compile(isa, &mut ctrl)
+                                .map(|code| code.buffer.alignment as u64)
+                                .map_err(|e| format!("compiling {}: {}", item.label, e.inner));
+                            done.lock()
+                                .expect("the result list is not poisoned")
+                                .push((
+                                    at,
+                                    PendingCode {
+                                        id: item.id,
+                                        label: item.label,
+                                        debug_rows: item.debug_rows,
+                                        alignment,
+                                        ctx,
+                                    },
+                                ));
+                        }
+                    });
+                }
+            });
+            done.into_inner().expect("every worker has finished")
+        };
+        compiled.sort_by_key(|(at, _)| *at);
+
+        for (_, one) in compiled {
+            let alignment = one.alignment.map_err(CodegenError::internal)?;
+            let code = one
+                .ctx
+                .compiled_code()
+                .expect("a function that compiled has code");
+            let relocs: Vec<ModuleReloc> = code
+                .buffer
+                .relocs()
+                .iter()
+                .map(|reloc| ModuleReloc::from_mach_reloc(reloc, &one.ctx.func, one.id))
+                .collect();
+            self.module
+                .define_function_bytes(one.id, alignment, code.buffer.data(), &relocs)
+                .map_err(|e| {
+                    CodegenError::internal(format!("defining {}: {e}", one.label))
+                })?;
+            if one.debug_rows {
+                self.record_debug(&one.label, one.id, &one.ctx);
+            }
+        }
+        self.codegen_nanos += started.elapsed().as_nanos() as u64;
+        self.codegen_fns += count;
         Ok(())
     }
 

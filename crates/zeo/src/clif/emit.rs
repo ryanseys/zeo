@@ -35,6 +35,7 @@ fn compile_inner(
     em.debug = debuginfo.then(super::debuginfo::DebugInfo::default);
     let started = std::time::Instant::now();
     emit_program(&mut em, analyzed)?;
+    em.flush_pending()?;
     report_codegen_time(&em, started);
     let clif = em.clif_text.take();
     let debug = em.debug.take();
@@ -82,6 +83,7 @@ pub fn compile_jit(analyzed: &Analyzed) -> CResult<Jitted> {
     let mut em = Emitter::new(true)?;
     let started = std::time::Instant::now();
     let main = emit_program(&mut em, analyzed)?;
+    em.flush_pending()?;
     report_codegen_time(&em, started);
     let ClifModule::Jit(mut module) = em.module else {
         unreachable!("Emitter::new(true) builds a JIT module")
