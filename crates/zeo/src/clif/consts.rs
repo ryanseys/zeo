@@ -402,6 +402,10 @@ fn emit_autoload_touch(fx: &mut Fx, cid: crate::compiler::ClassId) {
             },
         };
         let leaf = parts[i - 1].to_string();
+        // The one line worth keeping at `--log-level debug`: whether a read
+        // ASKS for its autoload is the first question a "constant that should
+        // exist does not" investigation has, and it is invisible otherwise.
+        tracing::debug!(%fq, owner = owner.0, %leaf, "clif: autoload touch emitted");
         let owner_v = fx.b.ins().iconst(types::I32, i64::from(owner.0));
         let (nptr, nlen) = super::expr::rodata_name(fx, &leaf);
         let st = fx.call_status("zeo_rt_autoload_touch", &[owner_v, nptr, nlen]);

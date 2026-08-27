@@ -211,41 +211,14 @@ fn inline_markers(
     compiler: &crate::compiler::Compiler,
     top_statements: &[&[crate::hir::NodeId]],
 ) -> std::collections::HashSet<crate::hir::NodeId> {
-    use crate::hir::HirNode;
-    let site_stmts: std::collections::HashMap<crate::hir::NodeId, &[crate::hir::NodeId]> = compiler
-        .class_body_sites
-        .iter()
-        .filter_map(|s| s.def_node.map(|n| (n, s.stmts.as_slice())))
-        .collect();
-    let mut seen = std::collections::HashSet::new();
-    let mut work: Vec<crate::hir::NodeId> = top_statements.concat();
-    for &def in compiler.hir.block_bodied_defs() {
-        if let HirNode::DefMethod { body, .. } = &compiler.hir[def] {
-            work.extend(body.iter().copied());
-        }
-    }
-    while let Some(n) = work.pop() {
-        match &compiler.hir[n] {
-            HirNode::ClassDef { .. } => {
-                if seen.insert(n)
-                    && let Some(stmts) = site_stmts.get(&n)
-                {
-                    work.extend(stmts.iter().copied());
-                }
-            }
-            HirNode::BoxScope { body, .. } => work.extend(body.iter().copied()),
-            HirNode::DefMethod { body, .. }
-                if compiler
-                    .hir
-                    .has_flag(n, crate::hir::NodeFlag::BLOCK_BODIED_DEF) =>
-            {
-                work.extend(body.iter().copied());
-            }
-            HirNode::DefMethod { .. } => {}
-            other => other.for_each_child(&mut |c| work.push(c)),
-        }
-    }
-    seen
+    // The reachability walk itself is `Compiler::class_marker_streams`, which
+    // also records WHICH stream reached each marker -- what `--dump=classes`
+    // reports. One walk, so the dump can never describe a program codegen
+    // laid out differently.
+    compiler
+        .class_marker_streams(top_statements)
+        .into_keys()
+        .collect()
 }
 
 /// Collect + declare every class-body site; refusals are loud. Mirrors
@@ -410,6 +383,15 @@ pub(super) fn collect_class_bodies(
             reopen_flags,
         };
         let is_inline = site.def_node.is_some_and(|n| inline.contains(&n));
+        tracing::debug!(
+            class = site.class.0,
+            fq = %compiler.fq_name(site.class),
+            reveal = call.reveal,
+            has_body = call.func.is_some(),
+            is_inline,
+            def_node = ?site.def_node,
+            "class body site"
+        );
         if is_inline && let Some(marker) = site.def_node {
             em.class_bodies.insert(marker, call.clone());
         }

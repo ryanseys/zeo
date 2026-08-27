@@ -13,7 +13,7 @@ pub(crate) use class_info::MAX_NESTING;
 pub use class_info::{ClassInfo, MethodEntry};
 pub use names::{NameId, Names, SINGLETON_SURROGATE};
 pub(crate) use sites::{Activation, EvalActivation, Refinement};
-pub use sites::{ClassBodySite, DefEvent, SiteDef};
+pub use sites::{ClassBodySite, DefEvent, MarkerStream, SiteDef};
 
 use crate::hir::{Hir, NodeId, Params, Visibility};
 use crate::types::TyKind;

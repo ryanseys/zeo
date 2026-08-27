@@ -48,6 +48,20 @@ pub(crate) struct EvalActivation {
     pub end: u32,
 }
 
+/// Which statement stream runs a class-body marker -- see
+/// [`Compiler::class_marker_streams`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum MarkerStream {
+    /// The main program's statements.
+    Main,
+    /// `feature_units[k]`'s statements: the body runs when that unit loads.
+    Unit(usize),
+    /// The body of a `define_method` written with a block, which the walk
+    /// seeds unconditionally because the block runs when the method is
+    /// called rather than at any fixed position.
+    BlockDef,
+}
+
 /// See [`Compiler::class_body_sites`].
 pub struct ClassBodySite {
     pub def_node: Option<crate::hir::NodeId>,
@@ -122,6 +136,79 @@ impl DefEvent {
 }
 
 impl Compiler {
+    /// Which statement STREAM runs each class-body marker.
+    ///
+    /// A `class`/`module` keyword registers its class at startup; what runs
+    /// its BODY is the marker, and a marker runs only where some statement
+    /// stream reaches it. `tops` is those streams in order -- main first,
+    /// then each feature unit -- and the walk descends through statement
+    /// containers and through the bodies of markers it has already reached,
+    /// which is how a nested `class` inside a `class` is found. It does NOT
+    /// descend into a `def`, whose body waits to be called; a block-bodied
+    /// `define_method` is the exception and is seeded separately.
+    ///
+    /// A marker in NO stream is the finding this exists to surface: the
+    /// class is registered for dispatch, its body never executes, so it is
+    /// never revealed and every read of its constant raises for a class the
+    /// program plainly defines. Nothing else in the pipeline says so.
+    pub fn class_marker_streams(
+        &self,
+        tops: &[&[crate::hir::NodeId]],
+    ) -> FMap<crate::hir::NodeId, MarkerStream> {
+        use crate::hir::HirNode;
+        let site_stmts: FMap<crate::hir::NodeId, &[crate::hir::NodeId]> = self
+            .class_body_sites
+            .iter()
+            .filter_map(|s| s.def_node.map(|n| (n, s.stmts.as_slice())))
+            .collect();
+        let mut seen: FMap<crate::hir::NodeId, MarkerStream> = FMap::default();
+        let seeds = tops
+            .iter()
+            .enumerate()
+            .map(|(i, stmts)| {
+                let stream = match i {
+                    0 => MarkerStream::Main,
+                    k => MarkerStream::Unit(k - 1),
+                };
+                (stream, stmts.to_vec())
+            })
+            .chain(std::iter::once((
+                MarkerStream::BlockDef,
+                self.hir
+                    .block_bodied_defs()
+                    .iter()
+                    .filter_map(|&def| match &self.hir[def] {
+                        HirNode::DefMethod { body, .. } => Some(body.clone()),
+                        _ => None,
+                    })
+                    .flatten()
+                    .collect(),
+            )));
+        for (stream, roots) in seeds {
+            let mut work = roots;
+            while let Some(n) = work.pop() {
+                match &self.hir[n] {
+                    HirNode::ClassDef { .. } => {
+                        if seen.insert(n, stream).is_none()
+                            && let Some(stmts) = site_stmts.get(&n)
+                        {
+                            work.extend(stmts.iter().copied());
+                        }
+                    }
+                    HirNode::BoxScope { body, .. } => work.extend(body.iter().copied()),
+                    HirNode::DefMethod { body, .. }
+                        if self.hir.has_flag(n, crate::hir::NodeFlag::BLOCK_BODIED_DEF) =>
+                    {
+                        work.extend(body.iter().copied());
+                    }
+                    HirNode::DefMethod { .. } => {}
+                    other => other.for_each_child(&mut |c| work.push(c)),
+                }
+            }
+        }
+        seen
+    }
+
     /// The `(target, holder)` pairs a call site at `node` must consult
     /// before ordinary dispatch, MOST RECENTLY activated first -- real
     /// Ruby's own precedence when two `using`s refine the same class.
