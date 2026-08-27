@@ -119,14 +119,25 @@ pub struct Hir {
     /// scanning the whole arena. Push order also makes that walk deterministic,
     /// which iterating a `HashSet` never was.
     block_bodied_def_list: Vec<NodeId>,
-    /// Every constant SPELLING the program assigns, mapped to the value nodes
-    /// assigned to it -- see [`Hir::const_write_values`].
+    /// Every constant PATH the program assigns, mapped to the value nodes
+    /// assigned to it -- see [`Hir::const_write_values_in_scope`].
     ///
-    /// The key is the spelling as written: `"M::D"` for an explicit
-    /// `M::D = ...`, the bare leaf otherwise. That is what the three
-    /// "is this constant assigned?" predicates in `lower::defs` matched by
-    /// hand, each sweeping the WHOLE arena per `class` statement and
-    /// `format!`-ing the scoped spelling per visited `ConstWrite` to do it.
+    /// The key is the FULL cref path a scope-less write lands on
+    /// (`"Bundler::Settings::Path"` for a `Path = ...` inside `class
+    /// Settings`), and the written spelling for an explicit `M::D = ...`.
+    /// It used to be the bare leaf, and that was a whole-program collision:
+    /// bundler's `Bundler::Settings::Path = Struct.new(...) do ... end` made
+    /// every `class X < Path` ANYWHERE in the program look like a subclass of
+    /// a runtime-minted class, so `class Git < Path` in
+    /// `bundler/source/git.rb` was silently rewritten to `Git =
+    /// Class.new(Path)`. The compile-time class was then never declared and
+    /// never revealed, while the runtime one answered `const_get` -- two
+    /// classes under one name, and `Bundler::Source::Git` raised
+    /// `uninitialized constant` in a program that defines it.
+    ///
+    /// [`Hir::record_class_def`] has always keyed by the cref path and
+    /// [`Hir::class_defined_in_scope`] has always searched lexically; this is
+    /// the same rule for the assignment half, and the two are read together.
     ///
     /// Filled during lowering rather than in one sweep afterwards, and that is
     /// load-bearing rather than incidental: those predicates ask what is
@@ -814,8 +825,14 @@ impl Hir {
     fn index_const_write(&mut self, node: &HirNode) {
         if let HirNode::ConstWrite { scope, name, value } = node {
             let key = match scope {
+                // An explicit `M::D = ...` keys by its written spelling: what
+                // `M` resolves to is a lexical question lowering cannot
+                // answer, and the lexical SEARCH below reaches this key at its
+                // outermost candidate.
                 Some(s) => format!("{s}::{name}"),
-                None => name.clone(),
+                // A scope-less write lands on the enclosing cref, so that is
+                // its path -- the same rule `record_class_def` uses.
+                None => self.cref_path(name),
             };
             self.const_writes.entry(key).or_default().push(*value);
         }
@@ -827,9 +844,35 @@ impl Hir {
         self.const_writes.keys()
     }
 
-    /// The values assigned to the constant spelled `name` so far, in push
-    /// order -- empty when nothing lowered yet assigns it. See
-    /// [`const_writes`](Self::const_writes) for what "spelled" means.
+    /// The values assigned so far to the constant `name` names FROM THE CREF
+    /// BEING LOWERED -- Ruby's lexical search, innermost scope first, then the
+    /// top level; a `::`-anchored name asks at the top level only.
+    ///
+    /// The exact twin of [`class_defined_in_scope`](Self::class_defined_in_scope),
+    /// and read together with it: the two answer "is this name a value-holding
+    /// constant?" and "is it a compile-time class?", and a definition is
+    /// routed to the runtime path only when the first says yes and the second
+    /// says no. Asking the first WITHOUT the scope walk is what made
+    /// `Bundler::Settings::Path` answer for `Bundler::Source::Path` -- see
+    /// [`const_writes`](Self::const_writes).
+    pub fn const_write_values_in_scope(&self, name: &str) -> &[NodeId] {
+        if let Some(absolute) = name.strip_prefix("::") {
+            return self.const_write_values(absolute);
+        }
+        (0..=self.cref_names.len())
+            .rev()
+            .map(|depth| match depth {
+                0 => name.to_string(),
+                _ => format!("{}::{name}", self.cref_names[..depth].join("::")),
+            })
+            .find_map(|candidate| self.const_writes.get(&candidate))
+            .map_or(&[], Vec::as_slice)
+    }
+
+    /// The values assigned to the exact key `name`, in push order -- empty
+    /// when nothing lowered yet assigns it. Callers that ask about a name a
+    /// program WROTE want [`const_write_values_in_scope`](Self::const_write_values_in_scope);
+    /// this is the raw table access behind it.
     pub fn const_write_values(&self, name: &str) -> &[NodeId] {
         self.const_writes.get(name).map_or(&[], Vec::as_slice)
     }

@@ -9,13 +9,13 @@ use super::*;
 /// constant rather than the name of a compile-time class. "Already lowered" is
 /// the point: the assignment is lowered before any later statement that reads
 /// it, which is the same "defined earlier in the file" rule
-/// `Compiler::resolve_class` applies, and `Hir::const_write_values` is
-/// maintained as writes are pushed so it keeps that property.
+/// `Compiler::resolve_class` applies, and `Hir::const_write_values_in_scope`
+/// is maintained as writes are pushed so it keeps that property.
 ///
-/// `scope` is folded into the key so a namespaced `M::D` is matched exactly,
-/// never by its leaf alone.
+/// Asked FROM THE CREF BEING LOWERED, so a same-named constant in an unrelated
+/// namespace does not answer -- see `Hir::const_writes`.
 pub(crate) fn const_is_assigned(hir: &Hir, name: &str) -> bool {
-    !hir.const_write_values(name).is_empty()
+    !hir.const_write_values_in_scope(name).is_empty()
 }
 
 /// Whether every statement in a class body can be expressed as the BLOCK the
@@ -104,7 +104,7 @@ pub(crate) fn runtime_class_body_keeps_its_scope(body: Option<Node<'_>>) -> bool
 /// (a bare `C = 7` inside `module B`, which lowers to a scope-less `ConstWrite`)
 /// does not misroute a fresh nested `class C` onto the runtime-reopen path.
 pub(crate) fn const_holds_runtime_class(hir: &Hir, name: &str) -> bool {
-    hir.const_write_values(name)
+    hir.const_write_values_in_scope(name)
         .iter()
         .any(|&v| value_mints_runtime_class(hir, v))
 }
@@ -450,60 +450,6 @@ fn value_mints_runtime_class(hir: &Hir, value: NodeId) -> bool {
     )
 }
 
-/// A QUALIFIED reference (`Aws::EmptyStructure`) to a constant that was written
-/// unqualified inside its own module.
-///
-/// `class EmptyStructure < Struct.new(...)` inside `module Aws` lowers to a
-/// bare `EmptyStructure = Class.new(...)`: the module nesting is the body's
-/// context, not part of the name. A later `class Output < Aws::EmptyStructure`
-/// spells it in full, so [`const_is_assigned`]'s exact match misses and the
-/// subclass takes the static path, where the name resolves to nothing.
-///
-/// Matching on the LEAF alone is safe only because the value must mint a
-/// class: an ordinary `X = 7` in some unrelated scope cannot misroute a
-/// subclass onto the runtime path.
-pub(crate) fn qualified_const_mints_runtime_class(hir: &Hir, name: &str) -> bool {
-    let Some(leaf) = name.rsplit("::").next() else {
-        return false;
-    };
-    if leaf == name {
-        return false;
-    }
-    // The leaf keys `const_write_values` exactly the SCOPE-LESS writes: an
-    // explicit `M::D = ...` is filed under `"M::D"`, which no leaf equals.
-    hir.const_write_values(leaf)
-        .iter()
-        .any(|&v| value_mints_runtime_class(hir, v))
-}
-
-/// [`const_is_assigned`] for a QUALIFIED path, asked of its leaf.
-///
-/// The twin of [`qualified_const_mints_runtime_class`], and needed for the
-/// same reason: `const_write_values` keys the SCOPE-LESS writes by their leaf,
-/// so `IMPL = Backend` written inside `module Collection` is filed under
-/// `"IMPL"` and the path `Collection::IMPL` never matched it. concurrent-ruby
-/// writes exactly that pair --
-///
-/// ```text
-/// MapImplementation = case ... MriMapBackend ... end
-/// class Map < Collection::MapImplementation
-/// ```
-///
-/// -- so `Map` was judged to have a compile-time superclass, went down the
-/// static path, and was DROPPED when nothing there could resolve the name.
-/// `Concurrent::Map` then did not exist and i18n could not build its cache.
-///
-/// Answering true too often costs an optimization, not a result: the runtime
-/// path evaluates the superclass expression and mints the class, which is
-/// always correct. `const_is_class_def` is what keeps a real `class Ns::Base`
-/// on the static path.
-pub(crate) fn qualified_const_is_assigned(hir: &Hir, name: &str) -> bool {
-    let Some(leaf) = name.rsplit("::").next() else {
-        return false;
-    };
-    leaf != name && const_is_assigned(hir, leaf)
-}
-
 /// Whether an already-lowered `class`/`module` DEFINES this name HERE, making
 /// it a compile-time class even if some later statement also assigns the
 /// constant.
@@ -616,8 +562,7 @@ pub(super) fn runtime_scoped_definition(hir: &Hir, name: &str) -> bool {
     let Some(prefix) = crate::constpath::ConstPath::parse(name).scope() else {
         return false;
     };
-    (const_holds_runtime_class(hir, prefix) || qualified_const_mints_runtime_class(hir, prefix))
-        && !const_is_class_def(hir, prefix)
+    const_holds_runtime_class(hir, prefix) && !const_is_class_def(hir, prefix)
 }
 
 /// `class D ... end` REOPENING a constant that holds a runtime class

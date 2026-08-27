@@ -1682,12 +1682,13 @@ pub(crate) fn try_lower_definition(
                 // compile-time one -- the subclass has to be built at runtime
                 // for the same reason. A name that is also a `class`
                 // definition stays on the static path.
-                Ok(n) => {
-                    (const_is_assigned(hir, &n)
-                        || crate::lower::defs::qualified_const_mints_runtime_class(hir, &n)
-                        || crate::lower::defs::qualified_const_is_assigned(hir, &n))
-                        && !const_is_class_def(hir, &n)
-                }
+                //
+                // Both halves ask FROM THIS CREF, which is what makes them
+                // agree: they used to be a lexical search against a bare-leaf
+                // table, so a constant of the same leaf in an unrelated
+                // namespace answered the first and not the second, and the
+                // definition was silently rewritten into a runtime one.
+                Ok(n) => const_is_assigned(hir, &n) && !const_is_class_def(hir, &n),
             };
             if runtime_parent {
                 return lower_runtime_class(result, hir, &name, Some(&sc), class.body()).map(Some);

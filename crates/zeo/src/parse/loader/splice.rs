@@ -241,11 +241,7 @@ impl Loader {
                 hir.const_write_names().cloned().collect();
             match self.splice_file(hir, &canonical, None, package.clone(), 0) {
                 Ok(body) => {
-                    let fresh: Vec<String> = hir
-                        .const_write_names()
-                        .filter(|k| !before.contains(*k))
-                        .cloned()
-                        .collect();
+                    let fresh = fresh_unit_consts(hir, &before);
                     hir.loader.unrun_unit_consts.extend(fresh.iter().cloned());
                     for lf in hir
                         .loader
@@ -315,11 +311,7 @@ impl Loader {
                         hir.const_write_names().cloned().collect();
                     match self.splice_file(hir, &canonical, None, package.clone(), 0) {
                         Ok(body) => {
-                            let fresh: Vec<String> = hir
-                                .const_write_names()
-                                .filter(|k| !before.contains(*k))
-                                .cloned()
-                                .collect();
+                            let fresh = fresh_unit_consts(hir, &before);
                             hir.loader.unrun_unit_consts.extend(fresh);
                             // The file was lowered through the splice path,
                             // but it RUNS only when required -- mark it so
@@ -487,4 +479,23 @@ impl Loader {
         );
         Ok(statements)
     }
+}
+
+/// The constants a unit's body just added, both as full paths and as bare
+/// LEAVES -- what [`LoaderState::unrun_unit_consts`] records.
+///
+/// Both spellings on purpose. The set is consulted by `defined?` and by the
+/// constant fold to decide whether to ASK the run time, and those two ask
+/// under the spelling their own site wrote -- sometimes `M::X`, sometimes a
+/// bare `X` resolved through a cref they do not carry here. Matching one name
+/// too many costs a fold, never an answer; missing one answers `nil` for a
+/// constant the program does have.
+fn fresh_unit_consts(hir: &Hir, before: &std::collections::BTreeSet<String>) -> Vec<String> {
+    hir.const_write_names()
+        .filter(|k| !before.contains(*k))
+        .flat_map(|k| match k.rsplit_once("::") {
+            Some((_, leaf)) => vec![k.clone(), leaf.to_string()],
+            None => vec![k.clone()],
+        })
+        .collect()
 }
