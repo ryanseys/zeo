@@ -267,3 +267,55 @@ fn disabling_rubyopt_stops_it_being_read() {
         .expect("spawn zeo");
     assert_eq!(stdout_of(&out), "1\n", "stderr: {}", stderr_of(&out));
 }
+
+#[test]
+fn a_library_named_in_the_runtime_load_dial_loads_at_run_time() {
+    // The isolation dial. The SAME source compiles both ways -- once with the
+    // library spliced in, once with the require surviving to `Kernel#require`
+    // -- so a difference in what the program prints is a difference in the
+    // loader, which is the whole question the dial exists to answer.
+    let dir = scratch("runtime-load");
+    write(&dir, "lib/greet.rb", "require \"greet/name\"\nmodule Greet\n  def self.hello = \"hi #{NAME}\"\nend\n");
+    write(&dir, "lib/greet/name.rb", "module Greet\n  NAME = \"there\"\nend\n");
+    let rb = write(
+        &dir,
+        "t.rb",
+        "$LOAD_PATH.unshift File.expand_path(\"lib\", __dir__)\nrequire \"greet\"\nputs Greet.hello\n",
+    );
+
+    let compiled_in = zeo().arg(&rb).output().expect("spawn zeo");
+    assert_eq!(stdout_of(&compiled_in), "hi there\n", "stderr: {}", stderr_of(&compiled_in));
+
+    let at_run_time = zeo()
+        .env("ZEO_DEBUG_RUNTIME_LOAD", "greet")
+        .arg(&rb)
+        .output()
+        .expect("spawn zeo");
+    assert_eq!(stdout_of(&at_run_time), "hi there\n", "stderr: {}", stderr_of(&at_run_time));
+
+    // A name the dial does NOT hold is untouched, so the dial cannot quietly
+    // move a library nobody asked about.
+    let other = zeo()
+        .env("ZEO_DEBUG_RUNTIME_LOAD", "greeting")
+        .arg(&rb)
+        .output()
+        .expect("spawn zeo");
+    assert_eq!(stdout_of(&other), "hi there\n", "stderr: {}", stderr_of(&other));
+
+    // `irb` names `irb/init` too -- a library defers WHOLE, or the run
+    // measures a mixture of the two loaders rather than either one. A BUNDLED
+    // gem is what makes the deferral observable: its roots are deliberately
+    // not searchable at run time, so a sub-file that reached the runtime
+    // loader says so out loud. (A `-I` root is searchable both ways, which is
+    // why the fixture above cannot tell the two apart.)
+    let sub_file = zeo()
+        .env("ZEO_DEBUG_RUNTIME_LOAD", "irb")
+        .args(["-e", "require \"irb/init\""])
+        .output()
+        .expect("spawn zeo");
+    assert!(
+        stderr_of(&sub_file).contains("cannot load such file -- irb/init"),
+        "a sub-file of a deferred library must defer too -- stderr: {}",
+        stderr_of(&sub_file)
+    );
+}

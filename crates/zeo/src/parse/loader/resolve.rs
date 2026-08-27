@@ -82,6 +82,13 @@ impl Loader {
     /// to say at compile time and defers to a runtime `Kernel#require` (raising
     /// `LoadError`). Mirrors `splice_feature`'s `require` resolution.
     pub(super) fn require_resolvable(&self, feature: &str) -> bool {
+        // The isolation dial. A library named in `ZEO_DEBUG_RUNTIME_LOAD` has
+        // no compile-time verdict on purpose, so every route below -- splice,
+        // unit, static ext -- is refused in one place and the require lands on
+        // the runtime loader instead.
+        if crate::debug_flags::loads_at_runtime(feature) {
+            return false;
+        }
         match self.resolve_require(feature) {
             // Resolves to a file on a load-path/gem root.
             Ok(Some(_)) => true,

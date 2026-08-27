@@ -87,3 +87,42 @@ pub(crate) fn dropped_tables() -> &'static [String] {
             .collect()
     })
 }
+
+/// The libraries `ZEO_DEBUG_RUNTIME_LOAD` names -- one feature, or a
+/// comma-separated list.
+///
+/// A VALUE rather than a bit, for the same reason as [`dropped_tables`]: a
+/// bit has no room for a name.
+///
+/// It answers one question, and it is the question every loader bug in this
+/// area has had to answer first: is the failure the COMPILER's or the
+/// LIBRARY's? A named feature gets no compile-time verdict, so its require
+/// survives lowering and loads through `Kernel#require` at run time, against
+/// the `$LOAD_PATH` the running program actually holds. If the library then
+/// works, the compile-time loader is what to fix; if it fails the same way,
+/// the runtime or the library is, and no amount of splice-order work will
+/// help.
+///
+/// The whole library goes, not just the entry file: nothing demands its
+/// units, so none of its files is compiled in at all.
+pub(crate) fn loads_at_runtime(feature: &str) -> bool {
+    static NAMES: OnceLock<Vec<String>> = OnceLock::new();
+    let names = NAMES.get_or_init(|| {
+        std::env::var("ZEO_DEBUG_RUNTIME_LOAD")
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(str::to_string)
+            .collect()
+    });
+    // `rubygems` names `rubygems/version` too. A library is deferred whole or
+    // not at all: deferring the entry file while compiling its parts in would
+    // measure neither half.
+    names.iter().any(|n| {
+        feature == n
+            || feature
+                .strip_prefix(n.as_str())
+                .is_some_and(|rest| rest.starts_with('/'))
+    })
+}
