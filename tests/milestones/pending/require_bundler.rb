@@ -1,19 +1,23 @@
 # MILESTONE (pending): `require "bundler"` STANDALONE, with nothing requiring
 # rubygems first.
 #
-# `require "rubygems"` then `require "bundler"` already works. This ordering
-# does not, and the two failures are different bugs:
+# The require itself now SUCCEEDS. `bundler.rb:3`'s unguarded
+# `require_relative "bundler/rubygems_ext"` used to splice that file into the
+# main stream, where its `module Gem` was created with `ClassInfo::unit` None
+# and therefore never concealed -- so `defined?(Gem)` was truthy from boot, the
+# `require "rubygems" unless defined?(Gem)` on its own line 3 SKIPPED, and
+# specification.rb's class body raised on `Gem::Requirement`.
 #
-#   `bundler.rb:3`'s `require_relative "bundler/rubygems_ext"` is unguarded, so
-#   that file is SPLICED into the main stream. Its `module Gem` is created
-#   during the main walk, where `ClassInfo::unit` is None, so the class is
-#   never concealed and `defined?(Gem)` is truthy from boot. The
-#   `require "rubygems" unless defined?(Gem)` on its own line 3 therefore
-#   SKIPS, rubygems.rb never runs, none of its 22 autoload rows is registered,
-#   and specification.rb's class body raises on `Gem::Requirement`.
+# Load-faithful packages fixed that: no file of rubygems or bundler is spliced,
+# so `module Gem` is created under `unit_walk`, concealed at boot, and revealed
+# at its own body site. The guard fires and rubygems loads. The general rule
+# behind the old failure is worth keeping: a spliced file publishes its
+# constants at a compile-time position earlier than CRuby's, and
+# `unless defined?(X)` reads exactly that.
 #
-# The general rule: a spliced file publishes its constants at a compile-time
-# position earlier than CRuby's, and `unless defined?(X)` reads exactly that.
+# What is left is one autoload: `lockfile_parser.rb:184` reads
+# `Bundler::Source::Git`, whose unit does not run. Everything above that line
+# already matches ruby.
 #
 # Shapes, never versions -- see `tests/milestones.rs`.
 

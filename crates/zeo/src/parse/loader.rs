@@ -65,6 +65,15 @@ use scan::*;
 use shims::*;
 use static_guards::{baked_subject, eval_static_guard, literal_when_match};
 
+/// Packages loaded exactly the way CRuby loads them: no file of theirs is
+/// ever spliced positionally. See `Loader::seed_load_faithful_packages`.
+///
+/// These two are not a user preference. Their loading protocol IS their API
+/// -- 110 autoloads, 295 method-body requires, 12 `defined?`-guarded requires
+/// and an `eval File.read` that installs the `Kernel#require` monkeypatch --
+/// so the compile-time splice cannot reproduce their order and must not try.
+const LOAD_FAITHFUL: &[&str] = &["rubygems", "bundler"];
+
 /// One gem: a named directory with a `.gemspec`, contributing one or more
 /// `require` search roots.
 ///
@@ -418,6 +427,10 @@ pub(super) fn lower_main_file(
         let subject = loader.packages.remove(pos);
         loader.packages.insert(0, subject);
     }
+    // The last point at which `packages` is final -- discovery, the external
+    // store append, the precedence sort and the root promotion have all run,
+    // and the main file has not parsed yet.
+    loader.seed_load_faithful_packages();
     let result = ruby_prism::parse(source.as_bytes());
     // What `__FILE__` and every span report. A source with no path on
     // disk can still have a NAME -- a run-time `eval`'s is
@@ -1278,6 +1291,46 @@ impl Loader {
         }
         combined.append(&mut trailing);
         Ok(combined)
+    }
+
+    /// Marks every `.rb` file of a LOAD-FAITHFUL package unit-only, so none of
+    /// them is ever spliced positionally.
+    ///
+    /// A splice is an optimization, valid only where the compiler can prove
+    /// the static order equals the dynamic one. RubyGems and Bundler defeat
+    /// that proof, and the way they defeat it is not a corner case -- it is
+    /// their loading protocol. A spliced file publishes its constants at a
+    /// compile-time position EARLIER than CRuby's, and `unless defined?(X)`
+    /// reads exactly that. `bundler.rb`'s unguarded `require_relative
+    /// "bundler/rubygems_ext"` spliced a `module Gem` into the main walk, so
+    /// `rubygems_ext.rb`'s own `require "rubygems" unless defined?(Gem)`
+    /// skipped and rubygems never loaded at all.
+    ///
+    /// As a unit, that same `module Gem` is created under `unit_walk`,
+    /// concealed at boot, and revealed at its own body site -- so the guard
+    /// fires and the file loads in CRuby's order.
+    ///
+    /// The mechanism is entirely the one `unit_only_targets` already carries;
+    /// only the seeding is new. Nothing here is auto-detected: flipping a gem
+    /// into unit mode changes its `$LOADED_FEATURES` entries, its `defined?`
+    /// answers, its constant folding and its binary layout, so a heuristic
+    /// that reclassified a gem on a version bump would move goldens with no
+    /// diff to point at.
+    fn seed_load_faithful_packages(&mut self) {
+        let roots: Vec<PathBuf> = self
+            .packages
+            .iter()
+            .filter(|g| LOAD_FAITHFUL.contains(&g.name.as_str()))
+            .flat_map(|g| g.roots.iter().cloned())
+            .collect();
+        for root in &roots {
+            let mut files = Vec::new();
+            collect_rb_files(root, &mut files);
+            // Canonical, because that is the spelling `unit_only_targets` is
+            // compared against everywhere it is read.
+            self.unit_only_targets
+                .extend(files.iter().filter_map(|p| p.canonicalize().ok()));
+        }
     }
 
     /// A file some GUARDED site requires is a UNIT, and so is every other site
