@@ -3,7 +3,8 @@
 //! regression names itself rather than arriving as one line inside a bigger
 //! suite. `require "rubygems"` is the headline.
 //!
-//! Two tiers, the same contract `tests/` and `tests/gaps/` already carry:
+//! Two tiers, each a DIRECTORY, carrying the same contract `tests/` and
+//! `tests/gaps/` already do:
 //!
 //! - `tests/milestones/*.rb` runs in `Mode::Pass` -- it works, and it must
 //!   keep working.
@@ -49,7 +50,16 @@ fn milestone(rb: &Path) -> datatest_stable::Result<()> {
         true => golden::Mode::Xfail,
         false => golden::Mode::Pass,
     };
-    golden::run_golden(rb, mode, &golden::tests_run_cwd())
+    // `an_rspec_suite_runs.rb` needs rspec, which ruby does not ship and zeo
+    // deliberately does not vendor. The oracle finds it in `vendor/gemstore`
+    // like any other gem it can see; zeo needs `-I` on each gem's `lib/`.
+    // Reading the store rather than naming versions keeps the pins out of the
+    // program. `tools/zeo-dev gemstore` builds it and `make` depends on that.
+    let env = golden::SuiteEnv {
+        load_roots: golden::gemstore_libs(),
+        ..Default::default()
+    };
+    golden::run_golden_env(rb, mode, &golden::tests_run_cwd(), &env)
 }
 
 datatest_stable::harness! {

@@ -49,6 +49,7 @@ fn gemtest(rb: &Path) -> datatest_stable::Result<()> {
         package_dirs: vec![vendor.clone()],
         load_roots: vec![gem_root.join("test")],
         oracle_includes: vec![gem_root.join("lib"), gem_root.join("test")],
+        ..Default::default()
     };
     golden::run_golden_env(&rb, golden::Mode::Pass, &gem_root, &env)
 }

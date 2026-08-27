@@ -7,9 +7,19 @@
 //! **ruby-oracle** golden `.expected` (+ `.err.expected`/`.args`/`.stdin`
 //! sidecars).
 //!
-//! - `Mode::Pass` (corpus, examples): zeo must MATCH the golden.
-//! - `Mode::Xfail` (gaps): zeo must DIVERGE from the golden -- a match means the
-//!   gap is fixed and the test FAILS with a "promote" message.
+//! **A golden's contract is its DIRECTORY**, which is what the suite passes
+//! in as a [`Mode`]:
+//!
+//! - `Mode::Pass` (`tests/`, `tests/spinel/`, ...): zeo must MATCH the golden.
+//! - `Mode::Xfail` (`tests/gaps/`): zeo must DIVERGE from the golden -- a match
+//!   means the gap is fixed and the test FAILS with a "promote" message.
+//! - `Mode::Divergence` (`tests/divergences/`): zeo must MATCH, but the golden
+//!   records ZEO's own output, because answering differently there is a
+//!   decision.
+//!
+//! A directory that only runs on one platform or one backend (`tests/macos/`,
+//! `tests/jit/`) is skipped by its own suite entry. Nothing about a golden's
+//! contract is decided per file.
 //!
 //! A program zeo REJECTS is a divergence like any other: the child prints
 //! the compiler's own error on stderr and the comparison fails on it. (A
@@ -275,6 +285,13 @@ pub enum Mode {
     Pass,
     /// The program is a known failure: it must NOT match the golden yet.
     Xfail,
+    /// `tests/divergences/`: zeo answers differently ON PURPOSE, so the
+    /// golden records ZEO's own output rather than the oracle's. It must
+    /// still MATCH -- what changes is only which engine `bless` reads.
+    ///
+    /// The DIRECTORY says so. A per-file sidecar used to, which meant the
+    /// contract of a golden was invisible from its name.
+    Divergence,
 }
 
 /// The repo root (this crate's `../..`), for deriving per-suite run
@@ -431,17 +448,6 @@ struct Sidecars {
     stdin: Option<Vec<u8>>,
     expected_out: Option<PathBuf>,
     expected_err: Option<PathBuf>,
-    /// A `.divergence` sidecar marks a golden whose `.expected` records
-    /// **zeo's own** output rather than the oracle's, because zeo has DECIDED
-    /// to answer differently -- reproducing ruby here would make zeo's
-    /// behaviour worse (an unstable sort, a `move:` that destroys the source
-    /// before it refuses) or cost more than the divergence does.
-    ///
-    /// The file states the reason and carries the oracle's output verbatim, so
-    /// the divergence stays executable evidence rather than prose. `bless`
-    /// reads it and records zeo instead of ruby, which is what keeps these
-    /// goldens machine-recorded like every other.
-    divergence: Option<PathBuf>,
 }
 
 /// Resolve `<rb>.args` / `<rb>.stdin` / `<rb>.expected` / `<rb>.err.expected`
@@ -467,7 +473,6 @@ fn sidecars(rb: &Path) -> std::io::Result<Sidecars> {
         stdin,
         expected_out: side(".expected"),
         expected_err: side(".err.expected"),
-        divergence: side(".divergence"),
     })
 }
 
@@ -481,6 +486,13 @@ fn golden_backend() -> String {
         Ok(v) if !v.is_empty() => v,
         _ => "jit".to_string(),
     }
+}
+
+/// Whether this leg runs goldens through a linked binary rather than the
+/// in-process JIT. `tests/jit/` needs the compiler and the program to share
+/// one process, so that directory is skipped here.
+pub fn backend_is_aot() -> bool {
+    golden_backend() != "jit"
 }
 
 /// The built `zeo` CLI beside this test binary's profile dir.
@@ -632,6 +644,47 @@ fn resolve_ruby(cwd: &Path) -> PathBuf {
     PathBuf::from("ruby")
 }
 
+/// Point the oracle at the two generated gem stores, and at nothing else.
+///
+/// It used to run against whatever was installed on the machine, and that
+/// quietly decided what a golden recorded: reline 0.7.0 and webrick 1.9.2 sat
+/// in this machine's store, so two goldens claimed ruby 4.0.6 shipped them.
+///
+/// `vendor/oracle-gems` mirrors what ruby itself ships, `vendor/gemstore`
+/// holds the gems it does not (`ffi`, `rspec`), and `tools/zeo-dev gemstore`
+/// builds both -- which `make` depends on. Ruby then resolves them the
+/// ordinary way, so nothing here keeps a list of gem names.
+fn point_oracle_at_the_stores(cmd: &mut Command) {
+    let mirror = workspace_root().join("vendor").join("oracle-gems");
+    cmd.env("GEM_HOME", &mirror).env(
+        "GEM_PATH",
+        std::env::join_paths([mirror, gemstore_dir()]).expect("no store path holds a colon"),
+    );
+}
+
+/// The gem store built by `tools/zeo-dev gemstore`: the gems ruby does NOT
+/// ship -- rspec and its dependencies -- so neither `gems/` nor the machine's
+/// own store has to hold them. Gitignored and fetched on demand, so a fresh
+/// clone still builds offline.
+pub fn gemstore_dir() -> PathBuf {
+    workspace_root().join("vendor").join("gemstore")
+}
+
+/// Every `lib/` in that store, for the zeo side of a suite that needs the
+/// gems themselves (rspec). Reading the directory keeps the pinned versions
+/// out of the harness and out of the golden.
+pub fn gemstore_libs() -> Vec<PathBuf> {
+    let mut libs: Vec<PathBuf> = std::fs::read_dir(gemstore_dir().join("gems"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path().join("lib"))
+        .filter(|p| p.is_dir())
+        .collect();
+    libs.sort();
+    libs
+}
+
 /// Run the ruby oracle for `rb` and return its `(stdout, stderr)`.
 fn run_oracle(
     rb: &Path,
@@ -645,6 +698,7 @@ fn run_oracle(
     let mut cmd = Command::new(&ruby);
     cmd.arg("--disable-error_highlight")
         .arg("--disable-did_you_mean");
+    point_oracle_at_the_stores(&mut cmd);
     for inc in &env.oracle_includes {
         cmd.arg("-I").arg(inc);
     }
@@ -673,23 +727,25 @@ fn bless(
     rb: &Path,
     source: &str,
     sc: &Sidecars,
+    mode: Mode,
     run_cwd: &Path,
     env: &SuiteEnv,
 ) -> datatest_stable::Result<()> {
-    // A `.divergence` golden records ZEO's output on purpose -- see
-    // `Sidecars::divergence`. Recording the oracle's here would replace the
-    // golden with the very answer the file exists to differ from, and the
-    // test would then fail for a reason nobody could read.
-    let (stdout, stderr) = match &sc.divergence {
-        Some(_) => compile_and_run(rb, source, &sc.args, sc.stdin.as_deref(), run_cwd, env)
+    // A `tests/divergences/` golden records ZEO's output on purpose.
+    // Recording the oracle's here would replace the golden with the very
+    // answer the program exists to differ from, and the test would then fail
+    // for a reason nobody could read.
+    let (stdout, stderr) = match mode {
+        Mode::Divergence => compile_and_run(rb, source, &sc.args, sc.stdin.as_deref(), run_cwd, env)
             .map_err(|e| {
                 format!(
-                    "{}: this golden records zeo's own output ({}), and zeo failed: {e}",
-                    rb.display(),
-                    sc.divergence.as_ref().expect("just matched").display()
+                    "{}: a decided divergence records zeo's own output, and zeo failed: {e}",
+                    rb.display()
                 )
             })?,
-        None => run_oracle(rb, source, &sc.args, sc.stdin.as_deref(), run_cwd, env)?,
+        Mode::Pass | Mode::Xfail => {
+            run_oracle(rb, source, &sc.args, sc.stdin.as_deref(), run_cwd, env)?
+        }
     };
     let out = norm(&stdout, rb, run_cwd);
     std::fs::write(format!("{}.expected", rb.display()), &out)?;
@@ -740,15 +796,11 @@ pub fn run_golden_env(
     // `current_dir(run_cwd)`, and so source-path normalization matches.
     let rb = &std::fs::canonicalize(rb).unwrap_or_else(|_| rb.to_path_buf());
 
-    if leg_skipped(rb) {
-        return Ok(());
-    }
-
     let source = std::fs::read_to_string(rb)?;
     let sc = sidecars(rb)?;
 
     if std::env::var_os("ZEO_BLESS_FROM_TOOL").is_some() {
-        return bless(rb, &source, &sc, run_cwd, env);
+        return bless(rb, &source, &sc, mode, run_cwd, env);
     }
 
     // Pass / Xfail: build + run, then diff against the golden.
@@ -837,8 +889,8 @@ pub fn run_golden_env(
     };
 
     match mode {
-        Mode::Pass if matched => Ok(()),
-        Mode::Pass => {
+        Mode::Pass | Mode::Divergence if matched => Ok(()),
+        Mode::Pass | Mode::Divergence => {
             Err(mismatch_message(rb, &actual, &expected_out, &expected_err, run_cwd).into())
         }
         Mode::Xfail if matched => Err(format!(
@@ -988,107 +1040,4 @@ mod tests {
         // A parenthesized number NOT after a quote stays.
         assert_eq!(n("count (42) stays"), "count (42) stays");
     }
-}
-
-/// The platform/leg skip sidecars, shared by [`run_golden_env`] and the
-/// insta pilot.
-///
-/// `.macos-only` marks a golden whose source or expected output is
-/// inherently macOS-specific (a hardcoded ioctl number, the errno constant
-/// surface, per-platform dlopen flag values) -- Linux CRuby would diverge
-/// from the committed macOS-oracle golden exactly as zeo does. `.jit-only`
-/// marks one that depends on the COMPILER and the program sharing one
-/// process, which only the JIT does. Each file's content states the reason.
-fn leg_skipped(rb: &Path) -> bool {
-    if cfg!(not(target_os = "macos"))
-        && std::fs::metadata(format!("{}.macos-only", rb.display())).is_ok()
-    {
-        eprintln!("golden skipped (.macos-only): {}", rb.display());
-        return true;
-    }
-    if std::env::var("ZEO_GOLDEN_BACKEND").is_ok_and(|b| b != "jit")
-        && std::fs::metadata(format!("{}.jit-only", rb.display())).is_ok()
-    {
-        eprintln!("golden skipped (.jit-only): {}", rb.display());
-        return true;
-    }
-    false
-}
-
-// ---- the insta pilot (tests/insta-pilot/) ----
-//
-// The pilot suite stores its goldens as insta .snap files instead of
-// .expected sidecars; these two functions expose the ENGINE (sidecars,
-// skips, the spawned child, normalization, census gating, oracle) so the
-// pilot target owns only the assert/bless tail. insta itself stays out of
-// this crate: the test target holds it.
-
-/// One combined snapshot body. The stderr section is ABSENT when stderr is
-/// empty -- the same "no `.err.expected` means stderr must be empty" rule
-/// the sidecar system enforces, kept structural so a diff shows a stream
-/// appearing, not just changing.
-fn pilot_body(stdout: &[u8], stderr: &[u8], rb: &Path, run_cwd: &Path) -> String {
-    let out = String::from_utf8_lossy(&norm(stdout, rb, run_cwd)).into_owned();
-    let err = String::from_utf8_lossy(&norm(stderr, rb, run_cwd)).into_owned();
-    let mut body = format!("--- stdout ---\n{out}");
-    if !err.is_empty() {
-        body.push_str(&format!("--- stderr ---\n{err}"));
-    }
-    body
-}
-
-/// Run one pilot case through zeo and hand back its combined body, or
-/// `None` when a platform/leg sidecar skips it. Shares every stage with
-/// [`run_golden`]; the `.gccheck` census is gated HERE and stays outside
-/// the snapshot.
-pub fn pilot_run(rb: &Path, run_cwd: &Path) -> datatest_stable::Result<Option<String>> {
-    let rb = &std::fs::canonicalize(rb).unwrap_or_else(|_| rb.to_path_buf());
-    if leg_skipped(rb) {
-        return Ok(None);
-    }
-    let source = std::fs::read_to_string(rb)?;
-    let sc = sidecars(rb)?;
-    let (stdout, stderr) = compile_and_run(
-        rb,
-        &source,
-        &sc.args,
-        sc.stdin.as_deref(),
-        run_cwd,
-        suite_env_default(),
-    )
-    .map_err(|e| format!("{}: zeo failed to compile/run it: {e}", rb.display()))?;
-    let (stderr, census) = match std::env::var_os("ZEO_RT_GCCHECK") {
-        Some(_) => {
-            let (kept, census) = split_gccheck(&stderr);
-            (kept, Some(census))
-        }
-        None => (stderr, None),
-    };
-    if let Some(census) = census {
-        check_gccheck_census(rb, &census)?;
-    }
-    Ok(Some(pilot_body(&stdout, &stderr, rb, run_cwd)))
-}
-
-/// What the pilot's snapshot SHOULD hold: the ruby oracle's body -- or
-/// zeo's own for a `.divergence` case, exactly as [`bless`] records
-/// `.expected` files. Used by the bless tail and by the live-oracle
-/// fallback for a case with no committed snapshot.
-pub fn pilot_reference(rb: &Path, run_cwd: &Path) -> datatest_stable::Result<String> {
-    let rb = &std::fs::canonicalize(rb).unwrap_or_else(|_| rb.to_path_buf());
-    let source = std::fs::read_to_string(rb)?;
-    let sc = sidecars(rb)?;
-    let env = suite_env_default();
-    let (stdout, stderr) = match &sc.divergence {
-        Some(_) => compile_and_run(rb, &source, &sc.args, sc.stdin.as_deref(), run_cwd, env)
-            .map_err(|e| format!("{}: divergence case, and zeo failed: {e}", rb.display()))?,
-        None => run_oracle(rb, &source, &sc.args, sc.stdin.as_deref(), run_cwd, env)?,
-    };
-    // The reference never carries a census line: the oracle is CRuby, and a
-    // divergence case re-run under the gccheck leg sheds its line here.
-    let stderr = match std::env::var_os("ZEO_RT_GCCHECK") {
-        Some(_) => split_gccheck(&stderr).0,
-        None => stderr,
-    };
-    Ok(pilot_body(&stdout, &stderr, rb, run_cwd))
 }

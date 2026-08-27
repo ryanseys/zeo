@@ -16,12 +16,16 @@ module ZeoDev
     class PromoteGap < Cli
       # EVERY suffix the harness recognizes (golden.rs is the reference).
       # This list once knew only five of them, and promoting a gap that
-      # carried a `.gccheck`, `.gc`, `.leakcheck`, `.divergence` or a
-      # platform/leg skip silently left the sidecar behind in tests/gaps/ --
-      # changing the promoted test's behavior and orphaning a file.
+      # carried a `.gccheck`, `.gc` or `.leakcheck` silently left the sidecar
+      # behind in tests/gaps/ -- changing the promoted test's behavior and
+      # orphaning a file.
+      #
+      # What a golden IS -- a divergence, macOS-only, JIT-only -- is its
+      # DIRECTORY, not a suffix, so a promotion that changes the kind is a
+      # move to a different directory and nothing here has to know about it.
       SIDECARS = %w[
-        rb rb.expected rb.err.expected rb.args rb.stdin rb.divergence
-        rb.gc rb.leakcheck rb.gccheck rb.macos-only rb.jit-only
+        rb rb.expected rb.err.expected rb.args rb.stdin
+        rb.gc rb.leakcheck rb.gccheck
       ].freeze
 
       def self.summary = "move a fixed gap into the passing suite"
