@@ -7,15 +7,25 @@ module ZeoDev
     #
     # Blessing used to be `ZEO_BLESS=1 cargo test`, and the missing word there
     # is WHICH. An unfiltered run rewrote, created and DELETED goldens across
-    # the whole suite in one go, and encoded one machine's gem store into the
-    # ones it touched. Nothing about the spelling suggested that: `ZEO_BLESS=1`
-    # reads like a mode, not like "and apply it to all 5000 of them".
+    # the whole suite in one go. Nothing about the spelling suggested that:
+    # `ZEO_BLESS=1` reads like a mode, not like "and apply it to all 5000 of
+    # them". The filter below is that guard, and it is still required.
     #
-    # The guard cannot live in the test binary. `zeo-tests` sets
-    # `harness = false` and its goldens are datatest-stable cases, so under
-    # nextest each case runs in its own process -- a case cannot see whether
-    # the user narrowed the run, only that it is itself running. So the filter
-    # is owned by whatever spells the invocation, which is this command.
+    # Recording runs HERE rather than inside the test binary. Driving it
+    # through `cargo nextest` cost ~53 seconds to write one file -- the whole
+    # of it cargo, since the dev loop builds `release` and the test profile is
+    # `debug`, so every bless after a build paid for a fresh debug compile of
+    # zeo and its test binaries. The test itself took 0.18s.
+    #
+    # Nothing here needs the compiler: recording a golden is "run the oracle,
+    # write what it said", and the check that the recording was RIGHT is the
+    # suite, which is where it belongs.
+    #
+    # `norm` is still ported, for a reason that is not correctness: the
+    # harness normalizes both sides at compare time, so an unscrubbed
+    # recording passes -- but object addresses and thread ids are
+    # process-random, so it would rewrite those goldens with fresh noise
+    # every run. A bless has to be a no-op when nothing changed.
     #
     # There is deliberately no `--allow-delete`. Removing `<rb>.err.expected`
     # is part of a CORRECT bless -- an absent file is how a golden says
@@ -23,29 +33,38 @@ module ZeoDev
     # single-test case this exists to make easy. The filter bounds the blast
     # radius; the summary is what makes a deletion impossible to miss.
     class Bless < Cli
-      # The handshake `zeo-tests` looks for, named for its only legitimate
-      # source -- so a bare `ZEO_BLESS=1 cargo test` does nothing and the
-      # spelling says where to go instead.
-      BLESS_VAR = "ZEO_BLESS_FROM_TOOL"
-
       # Everything a bless can write.
       WATCHED = %w[tests].freeze
+
+      # The golden suites, as `datatest_stable::harness!` declares them: the
+      # name prefix a filter matches against, the root, and whether cases may
+      # sit in a subdirectory. Kept in step with `crates/zeo/tests/*.rs`.
+      SUITES = [
+        { prefix: "example", root: "tests", glob: "*.rb" },
+        { prefix: "gap", root: "tests/gaps", glob: "*.rb" },
+        { prefix: "spinel", root: "tests/spinel", glob: "*.rb" },
+        { prefix: "milestone", root: "tests/milestones", glob: "{,pending/}*.rb" },
+        { prefix: "gemtest", root: "tests/gemtests", glob: "*/*.rb" },
+      ].freeze
 
       def self.summary = "re-record golden .expected files from the ruby oracle"
 
       def self.banner = <<~TEXT
-        usage: zeo-dev bless <filter> [-- <nextest args>]
+        usage: zeo-dev bless <filter>
 
-        <filter> is a nextest substring match on the test name, and it is
-        required: blessing everything at once is what this command exists to
-        prevent. Examples:
+        <filter> is a substring of the test name -- `<suite>::<path>`, the
+        same spelling nextest reports -- and it is required: blessing
+        everything at once is what this command exists to prevent. Examples:
 
           tools/zeo-dev bless forward_args
           tools/zeo-dev bless spinel::yield_
+          tools/zeo-dev bless gap::
+
+        A `.divergence` golden records ZEO's output instead of the oracle's,
+        and needs a built `target/release/zeo` (or `ZEO_BIN`).
       TEXT
 
-      # Filters that would defeat the point. nextest's `test()` matcher is a
-      # substring, so the empty string selects everything.
+      # Filters that would defeat the point.
       def self.too_broad(filter)
         case filter.strip
         when "" then "an empty filter selects every test"
@@ -54,65 +73,146 @@ module ZeoDev
       end
 
       def run
-        filter, passthrough = split_args
+        filter = args.reject { |a| a.start_with?("-") }.first
         raise Error, self.class.banner if filter.nil?
 
         if (why = self.class.too_broad(filter))
           raise Error, "bless: refusing #{filter.inspect} -- #{why}"
         end
 
-        before = changed_goldens
-        warn "bless: re-recording goldens matching #{filter.inspect} from the ruby oracle"
-        # `-p zeo` is load-bearing for SPEED, not scope: every reader of
-        # BLESS_VAR lives in that package, and an unscoped nextest resolves
-        # features across the whole workspace, which invalidates the build
-        # every time.
-        #
-        # A blessing run is EXPECTED to report failures: a case that rewrites
-        # its golden and then asserts against the old one is not the contract.
-        # What matters is what changed on disk.
-        system({ BLESS_VAR => "1" },
-               "cargo", "nextest", "run", "-p", "zeo", *profile(filter, passthrough),
-               "-E", "test(#{filter})", *passthrough, chdir: ROOT)
+        cases = select_cases(filter)
+        if cases.empty?
+          warn "bless: no golden matches #{filter.inspect}"
+          return 0
+        end
 
+        before = changed_goldens
+        warn "bless: re-recording #{cases.size} golden(s) matching #{filter.inspect}"
+        # Each case is one oracle process writing its own two files, so the
+        # work is subprocess-bound and shares nothing. Recording the whole
+        # examples suite serially is ~52s of ruby startup; at core width it
+        # is a few seconds.
+        Jobs.new.each_parallel(cases) { |rb| record(rb) }
         report(before, changed_goldens, filter)
       end
 
       private
 
-      # The suites the DEFAULT nextest profile opts out of (see
-      # `.config/nextest.toml`). A bless whose filter names one has to ask for
-      # `-P full` or nextest reports "0 tests run" and the goldens are never
-      # written -- a silent no-op the caller reads as "wrong filter".
-      OPTED_OUT = %w[milestone:: gemtest:: every_bundled_gem_compiles].freeze
-
-      def profile(filter, passthrough)
-        return [] if passthrough.any? { |a| a.start_with?("-P", "--profile") }
-        return [] unless OPTED_OUT.any? { |name| name.include?(filter) || filter.include?(name) }
-
-        %w[--profile full]
+      # Every golden whose `<suite>::<relative path>` name contains `filter`.
+      def select_cases(filter)
+        SUITES.flat_map { |s|
+          root = File.join(ROOT, s[:root])
+          Dir.glob(s[:glob], base: root).sort.filter_map do |rel|
+            "#{s[:prefix]}::#{rel}".include?(filter) ? File.join(root, rel) : nil
+          end
+        }.uniq
       end
 
-      # Everything before a bare `--` is the filter; a flag anywhere and
-      # everything after `--` goes to nextest.
-      def split_args
-        filter = nil
-        passthrough = []
-        rest = args.dup
-        until rest.empty?
-          a = rest.shift
-          if a == "--"
-            passthrough.concat(rest)
-            break
-          elsif a.start_with?("-")
-            passthrough << a
-          elsif filter.nil?
-            filter = a
-          else
-            raise Error, "bless: unexpected second filter #{a.inspect}"
-          end
+      # Goldens run with the tests directory as cwd (`golden::tests_run_cwd`),
+      # which is what a relative path inside one resolves against.
+      def run_cwd = File.join(ROOT, "tests")
+
+      # The program is given the ABSOLUTE path, exactly as the harness gives
+      # it, and `norm` rewrites that back to the run-cwd-relative form.
+      #
+      # Handing it the relative path instead looks equivalent and is not:
+      # what a program derives from `__FILE__`/`$0` changes with it. rspec
+      # prints `./milestones/foo.rb` from an absolute argument and
+      # `milestones/foo.rb` from a relative one, so the shortcut silently
+      # rewrote that golden.
+      def rel_path(rb) = rb.delete_prefix("#{run_cwd}/")
+
+      def record(rb)
+        source = File.read(rb)
+        argv = sidecar(rb, ".args")&.split || []
+        stdin = sidecar_bytes(rb, ".stdin")
+        out, err = if File.exist?("#{rb}.divergence")
+                     run_zeo(rb, source, argv, stdin)
+                   else
+                     run_oracle(rb, source, argv, stdin)
+                   end
+        File.binwrite("#{rb}.expected", out)
+        err_path = "#{rb}.err.expected"
+        # An absent `.err.expected` is a real assertion: "stderr must be
+        # empty". So an empty capture DELETES rather than writing nothing.
+        if err.empty?
+          File.delete(err_path) if File.exist?(err_path)
+        else
+          File.binwrite(err_path, err)
         end
-        [filter, passthrough]
+      end
+
+      def sidecar(rb, suffix)
+        p = "#{rb}#{suffix}"
+        File.read(p) if File.exist?(p)
+      end
+
+      def sidecar_bytes(rb, suffix)
+        p = "#{rb}#{suffix}"
+        File.binread(p) if File.exist?(p)
+      end
+
+      # The oracle invocation the harness uses, flag for flag: no
+      # error_highlight or did_you_mean (zeo implements neither), and the
+      # experimental-namespace flags a `Ruby::Box` example needs -- naming the
+      # class is not enough, because CRuby's disabled-mode surface is a
+      # smaller one.
+      def run_oracle(rb, source, argv, stdin)
+        cmd = Ruby.oracle_argv
+        cmd << "-W:no-experimental" if source.include?("Ruby::Box")
+        env = source.include?("Ruby::Box.new") ? { "RUBY_BOX" => "1" } : {}
+        capture(env, [*cmd, rb, *argv], stdin, rb)
+      end
+
+      # A `.divergence` golden records zeo's own answer on purpose. Recording
+      # the oracle's would replace the golden with the very output the file
+      # exists to differ from.
+      #
+      # The run-time dials the harness gives zeo have to be given here too,
+      # or the recording is of a program that refused to start: without
+      # `RUBY_BOX` the box goldens record "Ruby Box is disabled" as their
+      # stderr, which then asserts that forever.
+      def run_zeo(rb, source, argv, stdin)
+        bin = Ruby.zeo
+        unless File.executable?(bin)
+          raise Error, "bless: #{rb} is a `.divergence` golden and records zeo, but " \
+                       "#{bin} is not built -- `cargo build --release -p zeo` first"
+        end
+
+        env = {}
+        env["RUBY_BOX"] = "1" if source.include?("Ruby::Box.new")
+        env["ZEO_GC"] = "1" if File.exist?("#{rb}.gc")
+        env["ZEO_RT_LEAKCHECK"] = "1" if File.exist?("#{rb}.leakcheck")
+        capture(env, [bin, rb, *argv], stdin, rb)
+      end
+
+      # `Exec.run` always captures stderr; stdout needs asking for.
+      def capture(env, argv, stdin, rb)
+        res = Exec.run(argv, env: env, chdir: run_cwd, stdin: stdin, capture_stdout: true)
+        [norm(res.stdout.to_s, rb), norm(res.stderr.to_s, rb)]
+      end
+
+      # `golden::norm`, ported. The harness applies it to BOTH sides at
+      # compare time, so recording without it still PASSES -- but object
+      # addresses and thread ids are process-random, so an unscrubbed
+      # recording rewrites those goldens with fresh noise on every run. A
+      # bless has to be a no-op when nothing changed, which is what makes
+      # its summary readable.
+      def norm(s, rb)
+        s = s.gsub("\r\n", "\n")
+        # Both engines embed the absolute source path in `__FILE__` and in
+        # backtraces; the committed form is run-cwd-relative so a golden is
+        # portable.
+        s = s.gsub(rb, rel_path(rb))
+        # `0x` + 8..16 hex digits: ruby's own `#<Object:0x...>` (16) and the
+        # ASLR'd frame addresses a Rust abort prints (9-12). The run must END
+        # there -- a LONGER run is a value, not an address, and taking its
+        # first 16 digits turned `0x400000000000000000` into `0xADDR00`.
+        # Shorter runs stay too: a program printing `0x1f` keeps its value.
+        s = s.gsub(/0x[0-9a-f]{8,16}(?![0-9a-f])/, "0xADDR")
+        # `thread 'ruby-main' (156051069) panicked` -- the OS thread id
+        # differs per process.
+        s.gsub(/' \(\d+\) panicked/, "' (TID) panicked")
       end
 
       def changed_goldens
@@ -133,7 +233,7 @@ module ZeoDev
       def report(before, after, filter)
         changed = after - before
         if changed.empty?
-          warn "bless: no golden changed -- was #{filter.inspect} the name you meant?"
+          warn "bless: no golden changed -- #{filter.inspect} already records the oracle"
           return 0
         end
         warn "bless: #{changed.size} golden(s) changed:"
