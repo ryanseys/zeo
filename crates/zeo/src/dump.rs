@@ -238,8 +238,26 @@ pub fn methods(a: &Analyzed, top: usize) -> String {
         // those entries are real dispatch rows that cost no code, and counting
         // them as copies is what turns this report into a wrong number.
         let emits = !(info.is_builtin || info.is_bootstrap || i == 0);
-        for entry in info.methods.iter().chain(&info.class_methods) {
-            if !emits {
+        // An INSTANCE method is skipped again for a module (no instances to
+        // dispatch on) and for an immediate-builtin subclass (`.new` raises,
+        // so no instance ever reaches a row) -- `clif::classes` filters
+        // `class.methods` on exactly these two. Class methods take their own
+        // path and neither test applies to them.
+        let instances = !(info.is_module || compiler.is_immediate_subclass(cid));
+        let n_instance = info.methods.len();
+        for (k, entry) in info.methods.iter().chain(&info.class_methods).enumerate() {
+            if !emits || (k < n_instance && !instances) {
+                carried += 1;
+                continue;
+            }
+            let scope = compiler.scope(entry.def);
+            // A pristine builtin row and a conditional `def` emit no static
+            // body either: the first is the native default the runtime
+            // already carries, the second installs at its document position
+            // out of the body's statements. `clif::classes` skips both, and
+            // not mirroring them here is what made `Exception` report 1,819
+            // copies that do not exist.
+            if scope.native_default || scope.runtime_conditional {
                 carried += 1;
                 continue;
             }
@@ -248,7 +266,6 @@ pub fn methods(a: &Analyzed, top: usize) -> String {
             // costs no code either (`clif::classes`). Mirrors that guard;
             // `accessor_shape` is the one arm it cannot ask about here, and an
             // accessor on Object is a shape no bundled gem writes.
-            let scope = compiler.scope(entry.def);
             if !info.own_methods.contains(&entry.def)
                 && universal.contains(&scope.defining_class)
                 && info.box_id == 0
