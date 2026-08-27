@@ -1065,11 +1065,7 @@ fn define_block_fn(
     b.seal_all_blocks();
     b.finalize(cfg);
     em.record_clif(&label, &func);
-    let mut ctx = em.module.make_context();
-    ctx.func = func;
-    em.module
-        .define_function(f_id, &mut ctx)
-        .map_err(|e| CodegenError::internal(format!("compiling {label}: {e}")))?;
+    em.define(f_id, func, &label, false)?;
     Ok(f_id)
 }
 

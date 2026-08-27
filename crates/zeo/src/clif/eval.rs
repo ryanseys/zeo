@@ -210,11 +210,7 @@ fn define_entry(
     b.finalize(cfg);
 
     em.record_clif(ENTRY, &func);
-    let mut ctx = em.module.make_context();
-    ctx.func = func;
-    em.module
-        .define_function(func_id, &mut ctx)
-        .map_err(|e| CodegenError::internal(format!("compiling {ENTRY}: {e}")))?;
+    em.define(func_id, func, ENTRY, false)?;
     Ok(func_id)
 }
 

@@ -68,6 +68,7 @@ mod ffi_vocab;
 mod guard_fold;
 pub(crate) mod names;
 pub mod parse;
+pub mod ruby_features;
 pub mod types;
 
 /// What a compile is FOR.
@@ -163,6 +164,13 @@ pub struct CompileOptions {
     /// it to the run-time loader. What a build that wants to know its whole
     /// dependency graph statically asks for.
     pub strict_static_require: bool,
+    /// Libraries to require BEFORE the program's first line, in the order
+    /// given -- ruby's `-r`, repeatable.
+    ///
+    /// Spliced rather than prepended to the source: prepending would shift
+    /// every line number the program reports, and ruby's own `-r` runs in a
+    /// file of its own.
+    pub required_libraries: Vec<String>,
 }
 
 /// A gem named by the caller -- the public identity type `CompileOptions`

@@ -35,6 +35,9 @@ struct Args {
     output: Option<PathBuf>,
     /// `-I` roots, then RUBYOPT's `-I` roots, then RUBYLIB -- ruby's order.
     load_roots: Vec<PathBuf>,
+    /// `-r <lib>`: libraries required before the program's first line, in the
+    /// order given (repeatable).
+    required_libraries: Vec<String>,
     /// `--gems <dir>`: vendored-gem directories (repeatable).
     package_dirs: Vec<PathBuf>,
     /// `--embed-sources <dir>`: directories whose `.rb` files travel INSIDE
@@ -114,6 +117,21 @@ enum Source {
     /// AND runs immediately, forwarding stdout/stderr and the exit status --
     /// the shape the `ruby`-differential harness drives.
     Eval(String),
+    /// Bare `zeo` on an interactive terminal: the irb shell.
+    Irb,
+}
+
+/// The program a bare `zeo` runs. `IRB.start` reads the terminal itself, so
+/// this is the whole of it -- the same two lines irb's own binstub writes.
+const IRB_DRIVER: &str = "require \"irb\"\nIRB.start\n";
+
+/// Whether zeo was invoked from an interactive terminal, which is what makes
+/// a bare `zeo` a shell rather than an error. Both ends are asked: a piped
+/// stdin has a program to read, and a redirected stdout has nothing to draw a
+/// prompt on.
+fn interactive_terminal() -> bool {
+    // SAFETY: `isatty` reads a descriptor number and touches nothing else.
+    unsafe { libc::isatty(0) == 1 && libc::isatty(1) == 1 }
 }
 
 /// The `zeo-gems.json` disclosure record: off unless `--report` asked for it.
@@ -182,6 +200,8 @@ modes:
                         (repeatable; snippets are joined with newlines);
                         trailing [args...] become the program's ARGV;
                         with -o, write the binary instead of running it
+  (no arguments)        open an irb shell, when there is a terminal to talk
+                        to; piping or redirecting zeo is unaffected
 
 options:
   -o <output>           where to write the compiled binary
@@ -206,6 +226,9 @@ options:
                         file and line (ZEO_DEBUGINFO=1 is the env spelling)
   -I <dir>              add a `require` search root, like ruby's -I
                         (repeatable; `-I<dir>` and `-I=<dir>` also accepted)
+  -r <library>          require a library before the program's first line,
+                        like ruby's -r (repeatable, in the order given;
+                        `-r<library>` also accepted)
   --gems <dir>          add a directory of vendored gems: every subdirectory
                         with a `.gemspec` is discovered as a gem (repeatable)
   --embed-sources <dir> carry this directory's `.rb` files INSIDE the program,
@@ -229,6 +252,11 @@ options:
                         needs a store via --gem-path
   --report[=<path>]     write the `zeo-gems.json` disclosure record
                         (default path: next to the output artifact)
+  --enable=<features>   turn on what the program starts with, before its own
+  --disable=<features>  first line -- ruby's own names, comma-separated, plus
+                        `all`. `--enable-gems` is accepted too, and so is
+                        either spelling of a name. The features, and where
+                        this build leaves each one, are listed below
   -w, -W[0-2]           accepted, ruby's shapes; zeo warns from neither
   -W:[no-]<category>    accepted for ruby's categories (deprecated,
                         experimental, performance, strict_unused_block)
@@ -286,30 +314,8 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
     let mut compile = false;
     let mut backend: Option<zeo::backend::Backend> = None;
     let mut program_args: Vec<String> = Vec::new();
-
-    // RUBYOPT first, so the command line wins wherever both touch the same
-    // dial (ruby's precedence: `RUBYOPT=-W0 ruby -W2` is verbose). Only the
-    // option subset that can't smuggle in a program is allowed, like ruby.
-    let mut rubyopt_roots = Vec::new();
-    if let Some(opt) = &env.rubyopt {
-        let mut toks = opt.split_whitespace();
-        while let Some(tok) = toks.next() {
-            if tok == "-I" {
-                let dir = toks.next().ok_or("-I in RUBYOPT requires a directory")?;
-                rubyopt_roots.push(PathBuf::from(dir));
-            } else if let Some(dir) = tok
-                .strip_prefix("-I")
-                .map(|d| d.strip_prefix('=').unwrap_or(d))
-                .filter(|d| !d.is_empty())
-            {
-                rubyopt_roots.push(PathBuf::from(dir));
-            } else if tok == "-w" || tok.starts_with("-W") {
-                warn_flag(tok)?;
-            } else {
-                return Err(format!("illegal switch in RUBYOPT: {tok}"));
-            }
-        }
-    }
+    let mut required_libraries: Vec<String> = Vec::new();
+    let mut features = zeo::ruby_features::RubyFeatures::default();
 
     let mut iter = argv.into_iter();
     let mut after_dashdash = false;
@@ -348,9 +354,26 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
                     None => iter.next().ok_or(format!("{flag} requires a value")),
                 }
             };
+            // ruby's two spellings for the same dial: `--disable=gems` and
+            // `--disable-gems`. Both reach the same table.
+            let feature_switch = match (name, &inline) {
+                ("enable", Some(list)) => Some((list.clone(), true)),
+                ("disable", Some(list)) => Some((list.clone(), false)),
+                _ => name
+                    .strip_prefix("enable-")
+                    .map(|f| (f.to_string(), true))
+                    .or_else(|| name.strip_prefix("disable-").map(|f| (f.to_string(), false))),
+            };
+            if let Some((list, on)) = feature_switch {
+                features.set(&list, on)?;
+                continue;
+            }
             match name {
                 "help" => return Ok(Parsed::Help),
                 "version" => return Ok(Parsed::Version),
+                "enable" | "disable" => {
+                    return Err(format!("--{name} needs a feature, e.g. --{name}=gems"));
+                }
                 "compile" => compile = true,
                 "backend" => backend = Some(zeo::backend::Backend::parse(&value("--backend")?)?),
                 "gems" => package_dirs.push(PathBuf::from(value("--gems")?)),
@@ -446,6 +469,11 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
                 "-I" => {
                     load_roots.push(PathBuf::from(iter.next().ok_or("-I requires a directory")?));
                 }
+                // Require a library before the program's first line, like
+                // ruby's own -r (repeatable, in the order given).
+                "-r" => {
+                    required_libraries.push(iter.next().ok_or("-r requires a library name")?);
+                }
                 "-g" => debuginfo = true,
                 // ruby's short spelling of `--dump=syntax`.
                 "-c" => check_syntax = true,
@@ -461,6 +489,13 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
                         .filter(|d| !d.is_empty())
                     {
                         load_roots.push(PathBuf::from(dir));
+                    } else if let Some(lib) = arg
+                        .strip_prefix("-r")
+                        .map(|l| l.strip_prefix('=').unwrap_or(l))
+                        .filter(|l| !l.is_empty())
+                    {
+                        // Attached `-rjson`, ruby's own spelling.
+                        required_libraries.push(lib.to_string());
                     } else if arg == "-w" || arg.starts_with("-W") {
                         warn_flag(&arg)?;
                     } else {
@@ -490,10 +525,63 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
         }
     }
 
+    // RUBYOPT is read AFTER the command line, because `--disable=rubyopt` is
+    // on the command line and has to be able to turn it off. Its roots still
+    // sit behind the `-I` roots in the final order, which is ruby's
+    // precedence: the command line wins wherever both touch one dial.
+    // Only the option subset that can't smuggle in a program is allowed.
+    let mut rubyopt_roots = Vec::new();
+    if let Some(opt) = env.rubyopt.as_ref().filter(|_| features.is_on("rubyopt")) {
+        let mut toks = opt.split_whitespace();
+        while let Some(tok) = toks.next() {
+            if tok == "-I" {
+                let dir = toks.next().ok_or("-I in RUBYOPT requires a directory")?;
+                rubyopt_roots.push(PathBuf::from(dir));
+            } else if let Some(dir) = tok
+                .strip_prefix("-I")
+                .map(|d| d.strip_prefix('=').unwrap_or(d))
+                .filter(|d| !d.is_empty())
+            {
+                rubyopt_roots.push(PathBuf::from(dir));
+            } else if tok == "-w" || tok.starts_with("-W") {
+                warn_flag(tok)?;
+            } else {
+                return Err(format!("illegal switch in RUBYOPT: {tok}"));
+            }
+        }
+    }
+
+    // What the build (and `--enable=`) put in front of the program, ahead of
+    // anything `-r` named: RubyGems has to be there before a `-r` of a gem
+    // can find it.
+    let mut required_libraries = {
+        let mut all = features.ambient_libraries();
+        all.extend(required_libraries);
+        all
+    };
+    required_libraries.dedup();
+
     let source = match (eval, input) {
         (Some(_), Some(_)) => return Err("cannot combine -e with a file argument".to_string()),
         (Some(code), None) => Source::Eval(code),
         (None, Some(path)) => Source::File(path),
+        // Bare `zeo` opens a shell when there is a terminal to talk to. Ruby
+        // reads a program from stdin instead, so the test is both ends of the
+        // pipe: a piped or redirected `zeo` behaves as it did.
+        //
+        // Only when nothing else was asked for: `zeo -o out` names an
+        // artifact and has no program to put in it, which stays the error it
+        // has always been rather than becoming a shell.
+        (None, None)
+            if interactive_terminal()
+                && output.is_none()
+                && !compile
+                && emit_clif.is_none()
+                && !check_syntax
+                && dump_front_end.is_none() =>
+        {
+            Source::Irb
+        }
         (None, None) => return Ok(Parsed::NoInput),
     };
     // `--compile` names the binary after the input file, which `-e` lacks.
@@ -591,6 +679,7 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
         source,
         output,
         compile,
+        required_libraries,
         load_roots: {
             let mut roots = load_roots;
             roots.extend(rubyopt_roots);
@@ -680,11 +769,22 @@ fn default_package_dirs(input: Option<&std::path::Path>) -> Vec<PathBuf> {
     dirs
 }
 
+/// The help message, plus the `--enable`/`--disable` table rendered from the
+/// dials themselves -- so what it says a build starts with is what that build
+/// actually starts with.
+fn print_help() {
+    print!("{HELP}");
+    println!("\nfeatures (--enable=<name> / --disable=<name>):");
+    for line in zeo::ruby_features::help_lines() {
+        println!("  {line}");
+    }
+}
+
 fn run() -> Result<(), MainError> {
     let mut args = match parse_args()? {
         Parsed::Run(args) => args,
         Parsed::Help => {
-            print!("{HELP}");
+            print_help();
             return Ok(());
         }
         Parsed::Version => {
@@ -692,7 +792,7 @@ fn run() -> Result<(), MainError> {
             return Ok(());
         }
         Parsed::NoInput => {
-            print!("{HELP}");
+            print_help();
             std::process::exit(1);
         }
     };
@@ -703,6 +803,7 @@ fn run() -> Result<(), MainError> {
     let (source, input_path) = match &args.source {
         Source::File(path) => (zeo::parse::read_source(path)?, Some(path.clone())),
         Source::Eval(code) => (code.clone(), None),
+        Source::Irb => (IRB_DRIVER.to_string(), None),
     };
     // Armed before the compile, not inside it: the ceiling covers the whole
     // compile, emission, and link. The
@@ -712,6 +813,7 @@ fn run() -> Result<(), MainError> {
     zeo::memguard::arm(&match &args.source {
         Source::File(path) => path.display().to_string(),
         Source::Eval(_) => "-e".to_string(),
+        Source::Irb => "irb".to_string(),
     });
 
     let mut package_dirs = args.package_dirs.clone();
@@ -760,6 +862,7 @@ fn run() -> Result<(), MainError> {
         root_gem: args.root_gem.clone().map(zeo::Gem::named),
         embed_sources: args.embed_sources.clone(),
         strict_static_require: args.strict_static_require,
+        required_libraries: args.required_libraries.clone(),
     };
     // Parse only, then say so -- ruby's `Syntax OK`, byte for byte. A syntax
     // error reports itself the way every other compile error does, so the
@@ -823,6 +926,7 @@ fn run() -> Result<(), MainError> {
         let program_name = match &args.source {
             Source::File(path) => path.display().to_string(),
             Source::Eval(_) => "-e".to_string(),
+            Source::Irb => "irb".to_string(),
         };
         match zeo::run_jit_with(&source, &opts, &program_name, &args.program_args)? {}
     }
@@ -845,7 +949,9 @@ fn run() -> Result<(), MainError> {
     let output = args.output.unwrap_or_else(|| {
         let mut p = match &args.source {
             Source::File(path) => path.clone(),
-            Source::Eval(_) => unreachable!("an -e artifact always has -o"),
+            Source::Eval(_) | Source::Irb => {
+                unreachable!("a pathless source always has -o")
+            }
         };
         p.set_extension("");
         p

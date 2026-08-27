@@ -180,6 +180,13 @@ pub(crate) struct Emitter {
     /// body that is live rather than the last one written.
     pub redef_metas: HashMap<(u32, u32), u32>,
     fn_index: u32,
+    /// How long Cranelift's own backend has taken, and over how many
+    /// functions -- see [`Emitter::define`], the one door every emitted
+    /// function goes through. `--log-level info` reports both at the end of
+    /// a compile, which is what separates the cost of the backend from the
+    /// cost of the lowering that feeds it.
+    pub codegen_nanos: u64,
+    pub codegen_fns: u32,
     /// Regexp-literal site ids -- one cached frozen object per site
     /// (`zeo_rt_regexp_lit`).
     pub regexp_sites: u32,
@@ -389,6 +396,8 @@ impl Emitter {
             unit_reopen_flags: std::collections::HashSet::new(),
             redef_metas: HashMap::new(),
             fn_index: 0,
+            codegen_nanos: 0,
+            codegen_fns: 0,
             regexp_sites: 0,
             ffi_sites: 0,
             eval_sites: false,
@@ -494,6 +503,36 @@ impl Emitter {
         {
             debug.record(func, name, code);
         }
+    }
+
+    /// Hand one finished function to Cranelift's backend.
+    ///
+    /// Every emitted function goes through here -- bodies, class bodies,
+    /// blocks, trampolines, accessors, units, `main`. One door is what makes
+    /// the backend's cost measurable against the lowering above it, and it is
+    /// the single place a parallel backend has to intercept.
+    ///
+    /// `debug_rows` asks for the function's DWARF line rows. Only a real Ruby
+    /// body carries them; a trampoline is generated code with no source line
+    /// of its own.
+    pub(crate) fn define(
+        &mut self,
+        id: FuncId,
+        func: ir::Function,
+        label: &str,
+        debug_rows: bool,
+    ) -> CResult<()> {
+        let mut ctx = self.module.make_context();
+        ctx.func = func;
+        let started = std::time::Instant::now();
+        let outcome = self.module.define_function(id, &mut ctx);
+        self.codegen_nanos += started.elapsed().as_nanos() as u64;
+        self.codegen_fns += 1;
+        outcome.map_err(|e| CodegenError::internal(format!("compiling {label}: {e}")))?;
+        if debug_rows {
+            self.record_debug(label, id, &ctx);
+        }
+        Ok(())
     }
 
     /// A fresh `UserFuncName` index (cosmetic; must be unique per module).

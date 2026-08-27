@@ -762,6 +762,7 @@ fn empty_desc(toplevel: abi::UnitFn) -> abi::ProgramDesc {
         n_loaded: 0,
         load_path: std::ptr::null(),
         n_load_path: 0,
+        n_load_path_search: 0,
         parse_warnings: std::ptr::null(),
         n_warnings: 0,
         sources: std::ptr::null(),

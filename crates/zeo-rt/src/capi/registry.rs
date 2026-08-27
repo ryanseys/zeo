@@ -382,7 +382,7 @@ pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
             .iter()
             .map(|&s| text(s))
             .collect();
-        crate::globals::seed_load_path(&paths);
+        crate::globals::seed_load_path(&paths, desc.n_load_path_search);
     }
     // Each COMPILE-TIME box gets its own copy of what main was just
     // seeded with. A run-time box seeds itself when it is minted; both go

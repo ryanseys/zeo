@@ -466,11 +466,7 @@ fn define_bound_trampoline(
     b.seal_all_blocks();
     b.finalize(cfg);
     em.record_clif("trampoline", &func);
-    let mut ctx = em.module.make_context();
-    ctx.func = func;
-    em.module
-        .define_function(spec.tramp, &mut ctx)
-        .map_err(|e| CodegenError::internal(format!("compiling a trampoline: {e}")))
+    em.define(spec.tramp, func, "a trampoline", false)
 }
 
 /// The lean trampoline for a required-params-only method.
@@ -563,11 +559,7 @@ fn define_plain_trampoline(
     b.seal_all_blocks();
     b.finalize(cfg);
     em.record_clif("trampoline", &func);
-    let mut ctx = em.module.make_context();
-    ctx.func = func;
-    em.module
-        .define_function(tramp, &mut ctx)
-        .map_err(|e| CodegenError::internal(format!("compiling a trampoline: {e}")))
+    em.define(tramp, func, "a trampoline", false)
 }
 
 /// An `attr_reader`/`attr_writer` trampoline -- the slot access IS the
@@ -702,9 +694,5 @@ pub(crate) fn define_accessor(
     b.seal_all_blocks();
     b.finalize(cfg);
     em.record_clif("trampoline", &func);
-    let mut ctx = em.module.make_context();
-    ctx.func = func;
-    em.module
-        .define_function(tramp, &mut ctx)
-        .map_err(|e| CodegenError::internal(format!("compiling an accessor: {e}")))
+    em.define(tramp, func, "an accessor", false)
 }

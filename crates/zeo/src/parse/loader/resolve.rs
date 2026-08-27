@@ -191,6 +191,7 @@ impl Loader {
             0 => Ok(None),
             1 => {
                 let (path, pkg) = hits.remove(0);
+                self.activate(pkg);
                 Ok(Some((path, Some(pkg.name.clone()))))
             }
             // Multiple providers: the FIRST wins, because `packages` is in
@@ -217,9 +218,37 @@ impl Loader {
                     .borrow_mut()
                     .insert(feature.to_string(), providers);
                 let (path, pkg) = hits.remove(0);
+                self.activate(pkg);
                 Ok(Some((path, Some(pkg.name.clone()))))
             }
         }
+    }
+
+    /// Record that a `require` reached `pkg`, so its roots join `$LOAD_PATH`.
+    /// Once per package, in resolution order -- CRuby's activation order.
+    fn activate(&self, pkg: &Gem) {
+        let mut seen = self.activated.borrow_mut();
+        if !seen.iter().any(|n| n == &pkg.name) {
+            seen.push(pkg.name.clone());
+        }
+    }
+
+    /// What `$LOAD_PATH` holds at run time: the `-I` roots as given, then the
+    /// roots of every package a `require` actually activated.
+    ///
+    /// COSMETIC for resolution -- every compile-time require was already
+    /// resolved -- but load-bearing for code that READS `$:` and expects a
+    /// file to be there. `IRB::Locale#load` searches it with `File.readable?`
+    /// and dies without it, and `Kernel#load` resolves against it at run time.
+    pub(super) fn load_path(&self) -> Vec<String> {
+        let mut out: Vec<String> = self.roots.iter().map(|p| p.display().to_string()).collect();
+        for name in self.activated.borrow().iter() {
+            let Some(pkg) = self.packages.iter().find(|g| &g.name == name) else {
+                continue;
+            };
+            out.extend(pkg.roots.iter().map(|p| p.display().to_string()));
+        }
+        out
     }
 
     /// `load "path"`: no `.rb` appending, ever (CRuby's `rb_find_file` has

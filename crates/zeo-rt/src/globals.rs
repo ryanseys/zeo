@@ -440,18 +440,39 @@ pub fn seed_loaded_features(paths: &[&str]) {
     );
 }
 
-/// Fills `$LOAD_PATH` with the compile-time require-search roots (`-I` +
-/// `RUBYLIB`, as given) -- called once from generated `main()`, after
-/// `seed_default_globals`. COSMETICS, not resolution: every require was
-/// resolved at compile time, but code that READS the array (rspec's
-/// `RubyProject.add_to_load_path` neighborhood) sees what `ruby -I` shows.
-/// Stays a real mutable Array; pushes still affect nothing.
-pub fn seed_load_path(paths: &[&str]) {
+/// Fills `$LOAD_PATH` -- called once from generated `main()`, after
+/// `seed_default_globals`.
+///
+/// The first `n_search` entries are the compile-time require-search roots
+/// (`-I` + `RUBYLIB`, as given); the rest are the roots of the gems zeo
+/// compiled in, which CRuby's `$LOAD_PATH` also names once RubyGems activates
+/// them. Code that READS the array needs real directories in it -- rspec's
+/// `RubyProject` inspects it, and `IRB::Locale#find` scans it for a file it
+/// then loads.
+///
+/// The tail is recorded as NOT SEARCHABLE by a run-time require (see
+/// [`load_path_is_searchable`]): a bundled gem's Ruby half is already linked,
+/// so compiling it again from disk would build a second, half-native copy.
+/// Stays a real mutable Array, and a path a program pushes IS searchable.
+pub fn seed_load_path(paths: &[&str], n_search: usize) {
     let values = paths
         .iter()
         .map(|p| RubyValue::Str(crate::string_new((*p).to_string())))
         .collect();
     global_set(0, "$LOAD_PATH", RubyValue::Array(crate::array_new(values)));
+    let _ = BUNDLED_ROOTS.set(paths[n_search.min(paths.len())..].iter().map(|p| (*p).to_string()).collect());
+}
+
+/// The `$LOAD_PATH` entries a run-time `require` must skip -- see
+/// [`seed_load_path`]. Empty for a program with no bundled gems, and empty in
+/// this crate's own tests, where nothing seeds it.
+static BUNDLED_ROOTS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+
+/// Whether a run-time require may search `root`.
+pub fn load_path_is_searchable(root: &str) -> bool {
+    BUNDLED_ROOTS
+        .get()
+        .is_none_or(|skip| !skip.iter().any(|r| r == root))
 }
 
 /// Appends one feature to `$LOADED_FEATURES` -- what a unit loaded at RUNTIME

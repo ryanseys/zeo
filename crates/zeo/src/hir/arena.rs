@@ -364,11 +364,20 @@ pub struct LoaderState {
     /// flip on `LoadedFile` plus `(box_id, path)`-keyed dedup instead of a
     /// loader rework (see `parse::loader`).
     pub loaded_files: Vec<LoadedFile>,
-    /// The compile-time require-search roots (`-I` + `RUBYLIB`), in search
-    /// order -- seeded into the runtime `$LOAD_PATH` as COSMETICS: requires
-    /// were resolved at compile time, but code that READS the array (rspec's
-    /// `RubyProject`) sees what `ruby -I` would show it.
+    /// What the runtime `$LOAD_PATH` holds: the compile-time require-search
+    /// roots (`-I` + `RUBYLIB`) in search order, then the roots of every gem a
+    /// `require` actually activated -- CRuby's own rule, where RubyGems adds a
+    /// gem's lib directory when it activates it.
+    ///
+    /// Mostly cosmetic, since every require was resolved at compile time, but
+    /// code that READS the array needs real directories in it: rspec's
+    /// `RubyProject` inspects it, and `IRB::Locale#find` scans it with
+    /// `File.readable?` for a file it then `Kernel.load`s.
     pub search_roots: Vec<String>,
+    /// How many leading `search_roots` entries a RUN-TIME require may search
+    /// (see `zeo_abi::ProgramDesc::n_load_path_search`). The `-I` roots are
+    /// searchable; the bundled-gem roots after them are not.
+    pub search_root_count: usize,
     /// `--embed-sources`: `(load-path-relative spelling, text)` for every
     /// `.rb` under the named directories. The RUN TIME resolves a require
     /// against these before it looks at disk, which is what lets a hermetic

@@ -604,6 +604,13 @@ pub struct ProgramDesc {
     pub n_loaded: usize,
     pub load_path: *const Str,
     pub n_load_path: usize,
+    /// How many leading `load_path` entries a RUN-TIME `require` may search.
+    /// The `-I` roots come first and are searchable; the roots of the gems
+    /// zeo itself compiled in follow and are not -- their Ruby half is
+    /// already linked, so loading it again from disk would build a second,
+    /// half-native copy. `$LOAD_PATH` still names them, because that is what
+    /// CRuby shows and what code reading `$:` for a real file needs.
+    pub n_load_path_search: usize,
     pub parse_warnings: *const Str,
     pub n_warnings: usize,
     /// The `--embed-sources` pack: ruby source the RUN TIME may need for a

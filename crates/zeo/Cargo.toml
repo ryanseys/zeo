@@ -130,6 +130,22 @@ name = "programs"
 path = "benches/programs.rs"
 harness = false
 
+[features]
+default = []
+
+# What a zeo-built program starts with, before its own first line. Each one
+# is the DEFAULT of the matching `--enable=`/`--disable=` dial in
+# `src/ruby_features.rs`, so a build decides what its binaries carry and a
+# command line still overrides it either way.
+#
+# All three are off in the stock build, for one reason: an ambient
+# `require "rubygems"` compiles 241 files into every program, whether that
+# program names `Gem` or not. `--enable=gems` asks for it today, and the
+# default flips once those files are compiled once instead of per program.
+ambient-gems = []
+ambient-did-you-mean = []
+ambient-error-highlight = []
+
 [build-dependencies]
 # The build.rs projects the compiler's `CLASS_SURFACE` by re-parsing the
 # runtime's ruby_class!/ruby_module! headers with the SAME grammar the macro

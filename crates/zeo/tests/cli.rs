@@ -145,3 +145,125 @@ fn a_failing_minitest_run_exits_nonzero() {
     );
     assert_eq!(out.status.code(), Some(1), "a failing suite must exit 1");
 }
+
+fn stderr_of(out: &Output) -> String {
+    String::from_utf8_lossy(&out.stderr).into_owned()
+}
+
+#[test]
+fn dash_r_requires_a_library_before_the_first_line() {
+    let dir = scratch("dash-r");
+    write(&dir, "lib/greet.rb", "GREETING = \"hi\"\n");
+    let rb = write(&dir, "t.rb", "puts GREETING\n");
+
+    // The spaced spelling, and the attached one ruby also takes.
+    for spelling in [vec!["-r", "greet"], vec!["-rgreet"]] {
+        let out = zeo()
+            .arg("-I")
+            .arg(dir.join("lib"))
+            .args(&spelling)
+            .arg(&rb)
+            .output()
+            .expect("spawn zeo");
+        assert_eq!(
+            stdout_of(&out),
+            "hi\n",
+            "{spelling:?} -- stderr: {}",
+            stderr_of(&out)
+        );
+    }
+}
+
+#[test]
+fn several_dash_r_run_in_the_order_given() {
+    let dir = scratch("dash-r-order");
+    write(&dir, "lib/one.rb", "puts \"one\"\n");
+    write(&dir, "lib/two.rb", "puts \"two\"\n");
+    let rb = write(&dir, "t.rb", "puts \"main\"\n");
+
+    let out = zeo()
+        .arg("-I")
+        .arg(dir.join("lib"))
+        .args(["-r", "two", "-r", "one"])
+        .arg(&rb)
+        .output()
+        .expect("spawn zeo");
+    assert_eq!(
+        stdout_of(&out),
+        "two\none\nmain\n",
+        "stderr: {}",
+        stderr_of(&out)
+    );
+}
+
+#[test]
+fn dash_r_of_a_missing_library_is_reported() {
+    let dir = scratch("dash-r-missing");
+    let rb = write(&dir, "t.rb", "puts 1\n");
+
+    let out = zeo()
+        .args(["-r", "no_such_library_anywhere"])
+        .arg(&rb)
+        .output()
+        .expect("spawn zeo");
+    assert_ne!(out.status.code(), Some(0), "a missing -r must not succeed");
+    let said = format!("{}{}", stdout_of(&out), stderr_of(&out));
+    assert!(
+        said.contains("no_such_library_anywhere"),
+        "the failure must name the library: {said}"
+    );
+}
+
+#[test]
+fn an_unknown_feature_lists_the_ones_that_exist() {
+    let out = zeo()
+        .args(["--disable=teleport", "-e", "puts 1"])
+        .output()
+        .expect("spawn zeo");
+    let err = stderr_of(&out);
+    assert!(err.contains("gems"), "{err}");
+    assert!(err.contains("rubyopt"), "{err}");
+}
+
+#[test]
+fn enabling_a_feature_zeo_has_nothing_behind_reports_why() {
+    let out = zeo()
+        .args(["--enable=syntax_suggest", "-e", "puts 1"])
+        .output()
+        .expect("spawn zeo");
+    assert_ne!(out.status.code(), Some(0));
+    assert!(stderr_of(&out).contains("syntax_suggest"), "{}", stderr_of(&out));
+
+    // Turning it off names the state already in force, so it runs.
+    let out = zeo()
+        .args(["--disable=syntax_suggest", "-e", "puts 1"])
+        .output()
+        .expect("spawn zeo");
+    assert_eq!(stdout_of(&out), "1\n", "stderr: {}", stderr_of(&out));
+}
+
+#[test]
+fn both_of_rubys_spellings_reach_one_dial() {
+    for flag in ["--disable=gems", "--disable-gems", "--disable=all"] {
+        let out = zeo().args([flag, "-e", "puts 1"]).output().expect("spawn zeo");
+        assert_eq!(stdout_of(&out), "1\n", "{flag} -- stderr: {}", stderr_of(&out));
+    }
+}
+
+#[test]
+fn disabling_rubyopt_stops_it_being_read() {
+    // An illegal switch in RUBYOPT is an error -- unless the dial that reads
+    // RUBYOPT at all has been turned off.
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_zeo"));
+    cmd.env_remove("RUBYLIB").env("RUBYOPT", "-Q");
+    let out = cmd.args(["-e", "puts 1"]).output().expect("spawn zeo");
+    assert_ne!(out.status.code(), Some(0), "RUBYOPT is read by default");
+
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_zeo"));
+    cmd.env_remove("RUBYLIB").env("RUBYOPT", "-Q");
+    let out = cmd
+        .args(["--disable=rubyopt", "-e", "puts 1"])
+        .output()
+        .expect("spawn zeo");
+    assert_eq!(stdout_of(&out), "1\n", "stderr: {}", stderr_of(&out));
+}

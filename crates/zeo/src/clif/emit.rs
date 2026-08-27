@@ -33,7 +33,9 @@ fn compile_inner(
     let mut em = Emitter::new(false)?;
     em.clif_text = collect_clif.then(String::new);
     em.debug = debuginfo.then(super::debuginfo::DebugInfo::default);
+    let started = std::time::Instant::now();
     emit_program(&mut em, analyzed)?;
+    report_codegen_time(&em, started);
     let clif = em.clif_text.take();
     let debug = em.debug.take();
     let ClifModule::Object(module) = em.module else {
@@ -49,6 +51,24 @@ fn compile_inner(
     Ok((bytes, clif))
 }
 
+/// Split one emission into the two halves that cost anything: the lowering
+/// that builds each function's CLIF, and Cranelift's own backend turning that
+/// CLIF into machine code. Only the second half can be run on more than one
+/// core, so the split is what says whether doing so is worth anything.
+fn report_codegen_time(em: &Emitter, started: std::time::Instant) {
+    let whole = started.elapsed().as_secs_f64();
+    let backend = em.codegen_nanos as f64 / 1e9;
+    tracing::info!(
+        functions = em.codegen_fns,
+        "emission {whole:.2}s: cranelift {backend:.2}s ({:.0}%), lowering {:.2}s",
+        match whole > 0.0 {
+            true => backend / whole * 100.0,
+            false => 0.0,
+        },
+        whole - backend,
+    );
+}
+
 /// A JIT-compiled program: finalized in-process code plus the emitted C
 /// `main`'s address. The module OWNS the code memory -- it must outlive
 /// every call into `main`.
@@ -60,7 +80,9 @@ pub struct Jitted {
 /// Lower `analyzed` straight into executable memory (`--backend jit`).
 pub fn compile_jit(analyzed: &Analyzed) -> CResult<Jitted> {
     let mut em = Emitter::new(true)?;
+    let started = std::time::Instant::now();
     let main = emit_program(&mut em, analyzed)?;
+    report_codegen_time(&em, started);
     let ClifModule::Jit(mut module) = em.module else {
         unreachable!("Emitter::new(true) builds a JIT module")
     };
@@ -1013,11 +1035,6 @@ fn define_main(em: &mut Emitter, desc: DataId) -> CResult<FuncId> {
     b.finalize(cfg);
 
     em.record_clif("main", &func);
-    let mut ctx = em.module.make_context();
-    ctx.func = func;
-    em.module
-        .define_function(func_id, &mut ctx)
-        .map_err(|e| CodegenError::internal(format!("compiling main: {e}")))?;
-    em.record_debug("main", func_id, &ctx);
+    em.define(func_id, func, "main", true)?;
     Ok(func_id)
 }

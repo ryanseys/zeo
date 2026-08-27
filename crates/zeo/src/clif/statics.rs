@@ -417,11 +417,7 @@ pub(crate) fn define_unit_init(em: &mut Emitter) -> CResult<Option<FuncId>> {
     b.finalize(cfg);
 
     em.record_clif(names::UNIT_INIT, &func);
-    let mut ctx = em.module.make_context();
-    ctx.func = func;
-    em.module
-        .define_function(func_id, &mut ctx)
-        .map_err(|e| CodegenError::internal(format!("compiling {}: {e}", names::UNIT_INIT)))?;
+    em.define(func_id, func, names::UNIT_INIT, false)?;
     Ok(Some(func_id))
 }
 
@@ -1314,11 +1310,15 @@ pub(crate) fn define_desc(
             .map(|f| format!("<zeo-builtin>/{f}.rb")),
     );
     let warnings: Vec<String> = hir.warnings.iter().map(ToString::to_string).collect();
+    // `$LOAD_PATH`: the `-I` roots, then the roots of every gem a require
+    // actually activated. See `Loader::load_path`.
+    let load_path = &hir.loader.search_roots;
 
-    // One Str-array object: loaded features first, then warnings.
+    // One Str-array object: loaded features, then warnings, then `$LOAD_PATH`.
     let entries: Vec<(u32, usize)> = loaded
         .iter()
         .chain(warnings.iter())
+        .chain(load_path.iter())
         .map(|s| (em.intern_rodata(s.as_bytes()), s.len()))
         .collect();
     let str_size = std::mem::size_of::<Str>();
@@ -1369,6 +1369,16 @@ pub(crate) fn define_desc(
         &mut buf,
         std::mem::offset_of!(ProgramDesc, n_warnings),
         warnings.len() as u64,
+    );
+    put_u64(
+        &mut buf,
+        std::mem::offset_of!(ProgramDesc, n_load_path),
+        load_path.len() as u64,
+    );
+    put_u64(
+        &mut buf,
+        std::mem::offset_of!(ProgramDesc, n_load_path_search),
+        hir.loader.search_root_count as u64,
     );
     put_u64(
         &mut buf,
@@ -1473,6 +1483,13 @@ pub(crate) fn define_desc(
             std::mem::offset_of!(ProgramDesc, parse_warnings) as u32,
             tables_gv,
             (loaded.len() * str_size) as i64,
+        );
+    }
+    if !load_path.is_empty() {
+        desc.write_data_addr(
+            std::mem::offset_of!(ProgramDesc, load_path) as u32,
+            tables_gv,
+            ((loaded.len() + warnings.len()) * str_size) as i64,
         );
     }
     if let Some(cov) = cov_table {

@@ -212,6 +212,14 @@ pub(super) struct Loader {
     /// drained into a compile warning at the require statement that splices
     /// the feature (the site that owns a file/line to warn at).
     ambiguous_features: std::cell::RefCell<HashMap<String, Vec<String>>>,
+    /// Packages a `require` actually resolved into, in resolution order --
+    /// what `$LOAD_PATH` reports at run time.
+    ///
+    /// CRuby's `$LOAD_PATH` grows a gem's lib directory when RubyGems
+    /// ACTIVATES it, so a program that never required a gem never sees its
+    /// root. Recorded here rather than derived from `packages`, which lists
+    /// every gem zeo ships whether the program reached it or not.
+    activated: std::cell::RefCell<Vec<String>>,
 }
 
 /// `resolve_require`'s success shape: the found path plus the owning
@@ -304,13 +312,8 @@ pub(super) fn lower_main_file(
         ),
         None => None,
     };
-    // The search roots, kept for the runtime's cosmetic `$LOAD_PATH` (see
-    // `LoaderState::search_roots`) -- as given, the way `ruby -I` reports them.
-    hir.loader.search_roots = opts
-        .load_roots
-        .iter()
-        .map(|p| p.to_string_lossy().into_owned())
-        .collect();
+    // `LoaderState::search_roots` is filled at the END of lowering, once the
+    // set of gems a require actually activated is final.
     let bundled_dir = bundled_gems_dir();
     let mut loader = Loader {
         roots: opts.load_roots.clone(),
@@ -342,6 +345,7 @@ pub(super) fn lower_main_file(
         gem_names: std::collections::HashSet::new(),
         require_memo: std::cell::RefCell::new(HashMap::new()),
         ambiguous_features: std::cell::RefCell::new(HashMap::new()),
+        activated: std::cell::RefCell::new(Vec::new()),
     };
     // Which gated builtins ALSO have a vendored Ruby half. Probed once here
     // rather than asked per call site, because the answer is a property of
@@ -501,6 +505,14 @@ pub(super) fn lower_main_file(
             } else {
                 Vec::new()
             };
+            // `-r`, in the order given and BEFORE the program's first line,
+            // which is where ruby's own `require_libraries` puts them. Spliced
+            // here rather than prepended to the source, so the program's line
+            // numbers are its own.
+            for feature in &opts.required_libraries {
+                let spliced = loader.splice_feature(hir, feature, "require", None, None, 0)?;
+                all.extend(spliced);
+            }
             all.extend(main_stmts);
             Ok(all)
         });
@@ -531,6 +543,10 @@ pub(super) fn lower_main_file(
             },
         });
     }
+    // AFTER every resolution, so the activated set is final: a gem joins
+    // `$LOAD_PATH` when a require reaches it, which is CRuby's own rule.
+    hir.loader.search_root_count = loader.roots.len();
+    hir.loader.search_roots = loader.load_path();
     Ok((lowered, loader.gem_records))
 }
 

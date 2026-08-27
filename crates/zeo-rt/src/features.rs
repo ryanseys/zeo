@@ -120,6 +120,11 @@ pub fn resolve_on_disk(feature: &str, box_id: u32, append_rb: bool) -> Option<st
         .collect();
     roots
         .into_iter()
+        // A bundled gem's root is on `$LOAD_PATH` for code that READS it, but
+        // a require must not reach it: that gem is already linked in, and
+        // compiling its Ruby half again would build a second, half-native
+        // copy. See `globals::seed_load_path`.
+        .filter(|root| crate::globals::load_path_is_searchable(root))
         .find_map(|root| first_readable(spellings(std::path::Path::new(&root).join(feature))))
 }
 
