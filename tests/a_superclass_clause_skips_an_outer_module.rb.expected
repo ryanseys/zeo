@@ -1,0 +1,7 @@
+Mini::Probe
+"mini-probe"
+"bench"
+["Mini::Bench", "Mini::Probe"]
+Module
+Class
+"BasicObject"

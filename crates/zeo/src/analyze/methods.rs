@@ -394,8 +394,28 @@ pub(super) fn resolve_superclass(
     };
     let mut scopes = cref;
     loop {
-        let found = compiler
-            .resolve_class(superclass, scopes, box_id)
+        let registered = compiler.resolve_class(superclass, scopes, box_id);
+        let found = registered
+            // A superclass clause names a CLASS. A MODULE of that name in an
+            // OUTER scope is not what the clause means, so the search
+            // continues rather than stopping on it -- and the inner scope,
+            // which the program does define as a class, is reached.
+            //
+            // minitest is the case: `class Benchmark < Test` inside `module
+            // Minitest` found test-unit's TOP-LEVEL `module Test` whenever
+            // `minitest/test.rb` had not been walked yet, so the definition
+            // was refused with "superclass must be an instance of Class
+            // (given an instance of Module)" and `Minitest::Benchmark` became
+            // a class the program defines and no read can find. Ruby resolves
+            // `Test` at that line to `Minitest::Test`.
+            //
+            // Narrow on purpose. Preferring the inner scope OUTRIGHT was
+            // tried and is wrong: rspec-mocks writes `class BasicObject`
+            // under an `unless defined?(BasicObject)` that never runs, and
+            // `class FluentInterfaceProxy < BasicObject` beneath it means the
+            // BUILTIN. An outer candidate that is already a class stays the
+            // answer.
+            .filter(|&c| !compiler.class(c).is_module)
             // A superclass defined LATER in the flattened list (a hoisted
             // deferred require whose subclass precedes its base, e.g. `class
             // MismatchedChecksumError < Error` before `class Error`): create
@@ -409,7 +429,11 @@ pub(super) fn resolve_superclass(
             })
             // A superclass named through a constant ALIAS (`Base =
             // Some::Other::Class`) is that class.
-            .or_else(|| resolve_const_alias(compiler, superclass, scopes, box_id));
+            .or_else(|| resolve_const_alias(compiler, superclass, scopes, box_id))
+            // Nothing better than the module: hand it back so the caller
+            // raises ruby's own TypeError, which is what ruby does for a
+            // clause that really does name one.
+            .or(registered);
         match found {
             Some(cid) if !scopes.is_empty() && compiler.fq_name(cid) == defining => {
                 scopes = &scopes[..scopes.len() - 1];
