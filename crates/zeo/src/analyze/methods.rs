@@ -416,6 +416,15 @@ pub(super) fn resolve_superclass(
             // BUILTIN. An outer candidate that is already a class stays the
             // answer.
             .filter(|&c| !compiler.class(c).is_module)
+            // Ruby's own second half of a bare constant lookup: after the
+            // lexical scopes' own tables, the ANCESTORS of the innermost cref
+            // (`rb_const_search`). rake writes `class Scope < LinkedList` and
+            // nests `class EmptyScope < EmptyLinkedList` in it, where
+            // `EmptyLinkedList` is a constant of `LinkedList` -- the enclosing
+            // class's superclass. Without this the clause resolved to nothing,
+            // the definition was rewritten to a runtime class, and the very
+            // next line's `EmptyScope.new` raised.
+            .or_else(|| resolve_in_ancestry(compiler, superclass, scopes, box_id, &defining))
             // A superclass defined LATER in the flattened list (a hoisted
             // deferred require whose subclass precedes its base, e.g. `class
             // MismatchedChecksumError < Error` before `class Error`): create
@@ -441,6 +450,41 @@ pub(super) fn resolve_superclass(
             other => return other,
         }
     }
+}
+
+/// `name` as a constant of the innermost enclosing class's ANCESTRY -- the
+/// second half of ruby's bare-constant search, after the lexical scopes' own
+/// tables have all missed.
+///
+/// Walks the DECLARED `parent` edges rather than `ClassInfo::ancestors`, which
+/// `mro::materialize` fills only after this whole walk: reading it here would
+/// see an empty chain. `defining` is the path this very definition binds and
+/// can never be its own superclass.
+fn resolve_in_ancestry(
+    compiler: &Compiler,
+    name: &str,
+    cref: &[ClassId],
+    box_id: u32,
+    defining: &str,
+) -> Option<ClassId> {
+    let mut at = cref.last().copied();
+    let mut seen = 0;
+    while let Some(owner) = at {
+        // A cycle in the declared edges is a compile error elsewhere; bound
+        // the walk so it is not a hang here.
+        seen += 1;
+        if seen > 64 {
+            return None;
+        }
+        let path = format!("{}::{name}", compiler.fq_name(owner));
+        if let Some(found) = compiler.resolve_class(&path, &[], box_id)
+            && compiler.fq_name(found) != defining
+        {
+            return Some(found);
+        }
+        at = compiler.class(owner).parent;
+    }
+    None
 }
 
 /// Whether `name` is a constant ALIAS naming another constant path -- true even
