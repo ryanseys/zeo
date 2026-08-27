@@ -23,6 +23,22 @@
 use crate::dispatch::raise_error;
 use crate::{RubyValue, Signal};
 
+/// The depth this emit refuses at NO MATTER what `max_nesting` says.
+///
+/// A DIVERGENCE, deliberately, and the reason is a CYCLE rather than a deep
+/// document: this generator walks the structure recursively, so a
+/// self-referential one has no bound but the machine stack. Ruby has none
+/// either -- `JSON.generate(a, max_nesting: false)` on `a = []; a << a`
+/// raises `SystemStackError` there. A loud `JSON::NestingError` the program
+/// can rescue beats an abort with no line of output.
+///
+/// The parser used to share this number and no longer needs one: it keeps
+/// its open containers on an explicit stack, so its depth costs heap. Doing
+/// the same here would retire this constant too.
+/// `tests/divergences/json_nesting_is_bounded_by_the_stack.rb` records what
+/// is left.
+pub(super) const CYCLE_CEILING: i64 = 2_000;
+
 /// Every generator option, plus the depth this emit has reached.
 pub(super) struct State {
     pub indent: String,
@@ -69,17 +85,12 @@ impl State {
 
     fn enter(&mut self) -> Result<(), Signal> {
         self.depth += 1;
-        // The ceiling the PARSER carries, for the same reason: `max_nesting:
-        // false` must not be able to end the process. Ruby raises
-        // `SystemStackError` here; this raises the error the option family
-        // already means.
-        if self.depth > super::parser::STACK_CEILING {
+        if self.depth > CYCLE_CEILING {
             return Err(raise_error(
                 "JSON::NestingError",
                 format!(
-                    "nesting of {} is too deep. Did you try to serialize objects with \
-                     circular references?",
-                    super::parser::STACK_CEILING
+                    "nesting of {CYCLE_CEILING} is too deep. Did you try to serialize objects \
+                     with circular references?"
                 ),
             ));
         }
@@ -428,17 +439,21 @@ mod tests {
         assert!(refuses(RubyValue::Hash(h), State::default()));
     }
 
-    /// `max_nesting: false` must not be able to end the process: the stack
+    /// `max_nesting: false` must not be able to end the process: the cycle
     /// ceiling refuses first.
-    /// Runs on a stack far larger than any this could need -- see the
-    /// parser's `on_a_big_stack` for why.
+    ///
+    /// This runs on a stack far larger than any real one, because the test is
+    /// about the CEILING and not about the host: a test thread's stack is
+    /// small, doubly so in a debug build where every frame is several times
+    /// its release size, and without the room the process would die before
+    /// the assertion ran -- which is the very thing the ceiling prevents.
     #[test]
-    fn the_stack_ceiling_bounds_an_unbounded_generate() {
+    fn the_cycle_ceiling_bounds_an_unbounded_generate() {
         std::thread::Builder::new()
             .stack_size(64 * 1024 * 1024)
             .spawn(|| {
                 let mut inner = crate::collections::array_new(vec![RubyValue::Int(1)]);
-                for _ in 0..crate::ext::json::parser::STACK_CEILING + 1 {
+                for _ in 0..CYCLE_CEILING + 1 {
                     inner = crate::collections::array_new(vec![RubyValue::Array(inner)]);
                 }
                 assert!(refuses(

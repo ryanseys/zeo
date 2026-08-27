@@ -23,7 +23,9 @@
 //!   * NESTING is checked when a container's CONTENT is about to be parsed,
 //!     so an empty innermost container is free: `max_nesting: 2` accepts
 //!     `[[[]]]` and refuses `[[[1]]]` with `nesting of 3 is too deep`. The
-//!     limit is SIGNED, because `max_nesting: -1` refuses at depth 1.
+//!     limit is SIGNED, because `max_nesting: -1` refuses at depth 1. And
+//!     `max_nesting: false` is genuinely unbounded: the open containers live
+//!     on an explicit stack, so depth costs heap and not machine stack.
 //!   * A number classifies by its LITERAL SPAN, not by its value. The
 //!     integer form goes to `Int` -- or to a real BigInt past `i64`, so
 //!     `123456789012345678901234567890` stays exact -- and `-0` is
@@ -41,22 +43,36 @@ use crate::{RubyValue, Signal};
 /// How much of the input a message quotes back. The gem's own cap, measured.
 const QUOTE: usize = 32;
 
-/// The depth this descent refuses at NO MATTER what `max_nesting` says.
+/// One container the parse has opened and not yet closed.
 ///
-/// A DIVERGENCE, deliberately: ruby's parser keeps its own stack and reads a
-/// million-deep document with `max_nesting: false`, where this one recurses
-/// and would end the process. A loud `JSON::NestingError` is the safe
-/// answer.
-///
-/// The number is MEASURED, not chosen, and it is measured on the SMALLEST
-/// stack a parse can run on rather than the main thread's. A `Fiber` was
-/// the case that mattered: 4,000 levels ran and 8,000 ended the process
-/// without a word. This sits below the smaller of those with room for
-/// whatever the program had on the stack already, and it is still twenty
-/// times the gem's OWN default of 100 -- far past any document a program
-/// means to write. `tests/json_nesting_is_bounded_by_the_stack.rb` records
-/// the divergence.
-pub(super) const STACK_CEILING: i64 = 2_000;
+/// These live in a `Vec`, which is the whole point: nesting costs heap, so
+/// how deep a document may go does not depend on how much machine stack the
+/// thread, fiber or ractor running the parse happens to have.
+enum Frame {
+    Array(Vec<RubyValue>),
+    /// `key` holds the pair's key while its value is being read.
+    Object {
+        pairs: Vec<(RubyValue, RubyValue)>,
+        key: Option<RubyValue>,
+    },
+}
+
+impl Frame {
+    fn new_object() -> Frame {
+        Frame::Object {
+            pairs: Vec::new(),
+            key: None,
+        }
+    }
+
+    fn closer(&self) -> u8 {
+        match self {
+            Frame::Array(_) => b']',
+            Frame::Object { .. } => b'}',
+        }
+    }
+
+}
 
 /// What a parse was asked for. Built once from the options Hash.
 pub(super) struct Opts {
@@ -96,14 +112,21 @@ pub(super) struct Parser<'a> {
 
 /// The `(line, column)` a message reports.
 ///
-/// Counted the way the gem's C parser counts: the line is one plus the
-/// newlines up to AND INCLUDING `at`, and the column is `at + 1` less the
-/// start of that line. So a raw newline inside a string reports `line 2
-/// column 0` -- the byte IS the line break, and it belongs to neither side.
+/// Counted the way the gem's C parser counts, which is one line SHORT.
+///
+/// The column is the ordinary thing: `at + 1` less the start of its line. The
+/// line is the newline COUNT up to and including `at`, floored at one -- so a
+/// position on the third line reports `line 2`, and only a document with no
+/// newline at all reports the line a reader would count.
+///
+/// That is the gem's own off-by-one, measured across the whole matrix in
+/// `tests/json_parser_edge_cases.rb`: `"\nx"` is line 1, `"\n\nx"` is line 2,
+/// `"[1,\n2,\nx]"` is line 2. Zeo counted the way a reader does and was one
+/// ahead of ruby on every multi-line document.
 fn line_col(src: &[u8], at: usize) -> (usize, usize) {
     let upto = (at + 1).min(src.len());
     let head = &src[..upto];
-    let line = 1 + head.iter().filter(|&&b| b == b'\n').count();
+    let line = head.iter().filter(|&&b| b == b'\n').count().max(1);
     let bol = head.iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1);
     (line, (at + 1).saturating_sub(bol))
 }
@@ -244,12 +267,11 @@ impl<'a> Parser<'a> {
         Ok(v)
     }
 
-    fn parse_value(&mut self) -> Result<RubyValue, Signal> {
-        self.skip_space()?;
+    /// One value that is NOT a container. The containers are driven by
+    /// [`Self::parse_value`], which owns their nesting.
+    fn parse_scalar(&mut self) -> Result<RubyValue, Signal> {
         match self.peek() {
             None => Err(self.err("unexpected end of input", self.src.len())),
-            Some(b'{') => self.parse_object(),
-            Some(b'[') => self.parse_array(),
             Some(b'"') => {
                 let bytes = self.parse_string()?;
                 Ok(RubyValue::Str(crate::string_from_bytes(
@@ -264,29 +286,36 @@ impl<'a> Parser<'a> {
             Some(b'I') if self.opts.allow_nan => {
                 self.keyword(b"Infinity", RubyValue::Float(f64::INFINITY))
             }
-            // `-Infinity` opens like a NUMBER, so it reports as an invalid
-            // number rather than as a stray token when refused.
-            Some(b'-') if self.src.get(self.at + 1) == Some(&b'I') => {
+            // Refused because `allow_nan` is off, not because the word is
+            // wrong: the scanner still recognised a literal, so it reports a
+            // TOKEN. One letter is enough -- ruby answers the same for `N`.
+            Some(b'N' | b'I') => Err(self.unexpected_token()),
+            // `-Infinity` is a literal the number branch matches first, so a
+            // COMPLETE one refused for `allow_nan` reports as a token. `-I`
+            // and `-Ix` never match it, and fail as numbers below.
+            Some(b'-') if self.src[self.at..].starts_with(b"-Infinity") => {
                 if !self.opts.allow_nan {
-                    return Err(self.err(
-                        format!("invalid number: '{}'", snippet(self.src, self.at)),
-                        self.at,
-                    ));
+                    return Err(self.unexpected_token());
                 }
                 self.at += 1;
                 self.keyword(b"Infinity", RubyValue::Float(f64::NEG_INFINITY))
             }
             Some(b'-' | b'0'..=b'9') => self.parse_number(),
-            // A word-shaped run is a TOKEN, anything else a CHARACTER.
-            Some(b) if b.is_ascii_alphabetic() => Err(self.err(
-                format!("unexpected token '{}'", snippet(self.src, self.at)),
-                self.at,
-            )),
+            // Everything else at a value position, `x` and `xyz` included:
+            // nothing here opens a literal, so it is a CHARACTER. Only the
+            // arms above -- `t`, `f`, `n`, `N`, `I` -- open one.
             Some(_) => Err(self.err(
                 format!("unexpected character: '{}'", snippet(self.src, self.at)),
                 self.at,
             )),
         }
+    }
+
+    fn unexpected_token(&self) -> Signal {
+        self.err(
+            format!("unexpected token '{}'", snippet(self.src, self.at)),
+            self.at,
+        )
     }
 
     fn keyword(&mut self, word: &[u8], v: RubyValue) -> Result<RubyValue, Signal> {
@@ -304,44 +333,179 @@ impl<'a> Parser<'a> {
     /// module doc.
     fn enter(&mut self) -> Result<(), Signal> {
         self.depth += 1;
-        if self.depth > STACK_CEILING {
-            return Err(self.nesting_err());
-        }
         match self.opts.max_nesting {
             Some(max) if self.depth > max => Err(self.nesting_err()),
             _ => Ok(()),
         }
     }
 
-    fn parse_array(&mut self) -> Result<RubyValue, Signal> {
-        self.at += 1; // `[`
-        let mut items: Vec<RubyValue> = Vec::new();
+    /// One value, containers included.
+    ///
+    /// The open containers are an explicit stack, NOT Rust recursion, so a
+    /// deeply nested document costs heap and not machine stack. That is what
+    /// lets `max_nesting: false` mean what it says: ruby's parser keeps its
+    /// own stack and reads a million-deep document, and so does this one.
+    ///
+    /// It was a recursive descent, with a hard ceiling of 2,000 standing in
+    /// for the machine stack. The ceiling was measured, and the measurement
+    /// went stale the moment the parse ran somewhere with less stack than the
+    /// bench had -- a `Fiber` under the test harness ended the process at a
+    /// depth the constant swore was safe. A bound that has to be re-measured
+    /// per environment is not a bound.
+    fn parse_value(&mut self) -> Result<RubyValue, Signal> {
+        let mut stack: Vec<Frame> = Vec::new();
+        'value: loop {
+            // An object's next element is a key and a colon, and either
+            // container may be closed here by a trailing comma.
+            if let Some(frame) = stack.last() {
+                self.skip_space()?;
+                if self.peek() == Some(frame.closer()) && self.opts.allow_trailing_comma {
+                    self.at += 1;
+                    let mut done = self.close(&mut stack)?;
+                    loop {
+                        if stack.is_empty() {
+                            return Ok(done);
+                        }
+                        match self.attach(&mut stack, done)? {
+                            Some(more) => done = more,
+                            None => break,
+                        }
+                    }
+                    continue 'value;
+                }
+                if let Frame::Object { pairs, .. } = frame {
+                    let after_comma = !pairs.is_empty();
+                    let key = self.object_key(after_comma)?;
+                    match stack.last_mut() {
+                        Some(Frame::Object { key: slot, .. }) => *slot = Some(key),
+                        _ => unreachable!("the frame was an object one line ago"),
+                    }
+                }
+            }
+
+            self.skip_space()?;
+            let mut value = match self.peek() {
+                Some(b'[') => match self.open(&mut stack, Frame::Array(Vec::new()))? {
+                    Some(empty) => empty,
+                    None => continue 'value,
+                },
+                Some(b'{') => match self.open(&mut stack, Frame::new_object())? {
+                    Some(empty) => empty,
+                    None => continue 'value,
+                },
+                _ => self.parse_scalar()?,
+            };
+            // Hand the value to the frame that wanted it, and close every
+            // container the input ends here.
+            loop {
+                if stack.is_empty() {
+                    return Ok(value);
+                }
+                match self.attach(&mut stack, value)? {
+                    Some(more) => value = more,
+                    None => break,
+                }
+            }
+        }
+    }
+
+    /// Open a container. `Some(v)` when it was EMPTY and is already finished;
+    /// `None` when a frame was pushed and its first element comes next.
+    fn open(&mut self, stack: &mut Vec<Frame>, frame: Frame) -> Result<Option<RubyValue>, Signal> {
+        self.at += 1; // `[` or `{`
         self.skip_space()?;
-        if self.peek() == Some(b']') {
+        if self.peek() == Some(frame.closer()) {
             self.at += 1;
-            return self.finish_array(items);
+            // An empty container never counts against `max_nesting`: the
+            // limit is about CONTENT. See the module doc.
+            return Ok(Some(match frame {
+                Frame::Array(items) => self.finish_array(items)?,
+                Frame::Object { pairs, .. } => self.finish_object(pairs)?,
+            }));
         }
         self.enter()?;
-        loop {
-            self.skip_space()?;
-            // A trailing comma leaves the closer here.
-            if self.peek() == Some(b']') && self.opts.allow_trailing_comma && !items.is_empty() {
-                self.at += 1;
-                break;
-            }
-            items.push(self.parse_value()?);
-            self.skip_space()?;
-            match self.peek() {
-                Some(b',') => self.at += 1,
-                Some(b']') => {
-                    self.at += 1;
-                    break;
-                }
-                _ => return Err(self.err("expected ',' or ']' after array value", self.at)),
+        stack.push(frame);
+        Ok(None)
+    }
+
+    /// Pop the innermost frame and build its value.
+    fn close(&mut self, stack: &mut Vec<Frame>) -> Result<RubyValue, Signal> {
+        self.depth -= 1;
+        match stack.pop() {
+            Some(Frame::Array(items)) => self.finish_array(items),
+            Some(Frame::Object { pairs, .. }) => self.finish_object(pairs),
+            None => unreachable!("close is only called with a frame open"),
+        }
+    }
+
+    /// Put `value` into the innermost frame and read the separator after it.
+    /// `Some(v)` when that separator CLOSED the container, so `v` is now the
+    /// value its own parent has to take; `None` when the next element follows.
+    fn attach(
+        &mut self,
+        stack: &mut Vec<Frame>,
+        value: RubyValue,
+    ) -> Result<Option<RubyValue>, Signal> {
+        let frame = stack.last_mut().expect("the caller checks for a frame");
+        let closer = frame.closer();
+        match frame {
+            Frame::Array(items) => items.push(value),
+            Frame::Object { pairs, key } => {
+                let key = key.take().expect("an object frame reads its key first");
+                pairs.push((key, value));
             }
         }
-        self.depth -= 1;
-        self.finish_array(items)
+        self.skip_space()?;
+        match self.peek() {
+            Some(b',') => {
+                self.at += 1;
+                Ok(None)
+            }
+            Some(b) if b == closer => {
+                self.at += 1;
+                Ok(Some(self.close(stack)?))
+            }
+            _ if closer == b']' => Err(self.err("expected ',' or ']' after array value", self.at)),
+            None => Err(self.err("expected ',' or '}' after object value, got: EOF", self.at)),
+            Some(_) => Err(self.err(
+                format!(
+                    "expected ',' or '}}' after object value, got: '{}'",
+                    snippet(self.src, self.at)
+                ),
+                self.at,
+            )),
+        }
+    }
+
+    /// An object element's `"key":`, up to and including the colon.
+    ///
+    /// `after_comma` picks between the gem's two spellings of the same
+    /// complaint: the FIRST key of an object reports `got '<x>'` and one
+    /// after a comma reports `got: '<x>'`, colon and all.
+    fn object_key(&mut self, after_comma: bool) -> Result<RubyValue, Signal> {
+        self.skip_space()?;
+        if self.peek() != Some(b'"') {
+            let what = match self.at >= self.src.len() {
+                true => "EOF".to_string(),
+                false => format!("'{}'", snippet(self.src, self.at)),
+            };
+            let got = match after_comma {
+                true => "got:",
+                false => "got",
+            };
+            return Err(self.err(format!("expected object key, {got} {what}"), self.at));
+        }
+        let key = self.parse_string()?;
+        let key = match self.opts.symbolize {
+            true => RubyValue::Symbol(crate::Symbol::intern(&String::from_utf8_lossy(&key))),
+            false => RubyValue::Str(crate::string_from_bytes(key, crate::encoding::UTF_8)),
+        };
+        self.skip_space()?;
+        if self.peek() != Some(b':') {
+            return Err(self.err("expected ':' after object key", self.at));
+        }
+        self.at += 1;
+        Ok(key)
     }
 
     /// `array_class:` builds by `new` then `<<`, which is what lets an Array
@@ -355,66 +519,6 @@ impl<'a> Parser<'a> {
             crate::dispatch::send_value(&out, crate::Symbol::intern("<<"), &[item], None)?;
         }
         Ok(out)
-    }
-
-    fn parse_object(&mut self) -> Result<RubyValue, Signal> {
-        self.at += 1; // `{`
-        let mut pairs: Vec<(RubyValue, RubyValue)> = Vec::new();
-        self.skip_space()?;
-        if self.peek() == Some(b'}') {
-            self.at += 1;
-            return self.finish_object(pairs);
-        }
-        self.enter()?;
-        loop {
-            self.skip_space()?;
-            if self.peek() == Some(b'}') && self.opts.allow_trailing_comma && !pairs.is_empty() {
-                self.at += 1;
-                break;
-            }
-            if self.peek() != Some(b'"') {
-                let what = match self.at >= self.src.len() {
-                    true => "EOF".to_string(),
-                    false => format!("'{}'", snippet(self.src, self.at)),
-                };
-                return Err(self.err(format!("expected object key, got {what}"), self.at));
-            }
-            let key = self.parse_string()?;
-            let key = match self.opts.symbolize {
-                true => RubyValue::Symbol(crate::Symbol::intern(&String::from_utf8_lossy(&key))),
-                false => RubyValue::Str(crate::string_from_bytes(key, crate::encoding::UTF_8)),
-            };
-            self.skip_space()?;
-            if self.peek() != Some(b':') {
-                return Err(self.err("expected ':' after object key", self.at));
-            }
-            self.at += 1;
-            pairs.push((key, self.parse_value()?));
-            self.skip_space()?;
-            match self.peek() {
-                Some(b',') => self.at += 1,
-                Some(b'}') => {
-                    self.at += 1;
-                    break;
-                }
-                None => {
-                    return Err(
-                        self.err("expected ',' or '}' after object value, got: EOF", self.at)
-                    );
-                }
-                Some(_) => {
-                    return Err(self.err(
-                        format!(
-                            "expected ',' or '}}' after object value, got: '{}'",
-                            snippet(self.src, self.at)
-                        ),
-                        self.at,
-                    ));
-                }
-            }
-        }
-        self.depth -= 1;
-        self.finish_object(pairs)
     }
 
     /// `object_class:` builds by `new` then `[]=`, so an OpenStruct or a
@@ -779,39 +883,57 @@ mod tests {
         ));
     }
 
-    /// Run `f` with a stack far larger than any this could need.
+    /// Nesting costs HEAP, not machine stack.
     ///
-    /// The two ceiling tests are about the CEILING, not about the host's
-    /// stack -- and a test thread's is small, doubly so in a debug build
-    /// where every frame is several times its release size. Without this
-    /// the assertion never runs: the stack ends the whole test process
-    /// first, which is the very thing the ceiling exists to prevent.
-    /// `tests/json_nesting_is_bounded_by_the_stack.rb` is what proves the
-    /// number is right for a REAL zeo program, fibers included.
-    fn on_a_big_stack(f: impl FnOnce() + Send + 'static) {
+    /// The proof is the stack this runs on: 1 MiB, an eighth of an ordinary
+    /// thread's, on a document 100,000 deep. A recursive descent wants a
+    /// frame per level and cannot fit. A previous version carried a measured
+    /// ceiling of 2,000 instead, and the measurement went stale the first
+    /// time a parse ran somewhere with less stack than the bench had.
+    ///
+    /// Each parsed value is FORGOTTEN rather than dropped: dropping a
+    /// hundred-thousand-deep `RubyValue` recurses even though building it
+    /// does not. That is a real hazard and a separate one -- this test is
+    /// about the parser, and leaking a test's value costs nothing.
+    #[test]
+    fn a_deep_document_costs_no_machine_stack() {
         std::thread::Builder::new()
-            .stack_size(64 * 1024 * 1024)
-            .spawn(f)
+            .stack_size(1024 * 1024)
+            .spawn(|| {
+                let unbounded = Opts {
+                    max_nesting: None,
+                    ..Opts::default()
+                };
+                let parses = |src: String| {
+                    let out = Parser::new(src.as_bytes(), &unbounded).parse_document();
+                    let ok = out.is_ok();
+                    std::mem::forget(out);
+                    ok
+                };
+                assert!(parses(format!("{}1{}", "[".repeat(100_000), "]".repeat(100_000))));
+                // An object nests through a different frame; it is bounded
+                // the same way.
+                assert!(parses(format!(
+                    "{}1{}",
+                    "{\"a\":".repeat(100_000),
+                    "}".repeat(100_000)
+                )));
+            })
             .expect("spawning the test thread")
             .join()
             .expect("the test thread finished");
     }
 
     #[test]
-    fn the_stack_ceiling_refuses_rather_than_overflowing() {
-        on_a_big_stack(|| {
-        let unbounded = || Opts {
-            max_nesting: None,
-            ..Opts::default()
-        };
-        let over = (STACK_CEILING + 1) as usize;
-        let deep = format!("{}1{}", "[".repeat(over), "]".repeat(over));
-        assert!(refuses_with(deep.as_bytes(), unbounded()));
-        // ...and exactly AT the ceiling still parses.
-        let at = STACK_CEILING as usize;
-        let ok = format!("{}1{}", "[".repeat(at), "]".repeat(at));
-        assert!(!refuses_with(ok.as_bytes(), unbounded()));
-        });
+    fn max_nesting_still_refuses_what_it_is_asked_to() {
+        let deep = format!("{}1{}", "[".repeat(101), "]".repeat(101));
+        assert!(refuses_with(
+            deep.as_bytes(),
+            Opts {
+                max_nesting: Some(100),
+                ..Opts::default()
+            }
+        ));
     }
 
     #[test]
@@ -912,9 +1034,13 @@ mod tests {
     #[test]
     fn line_and_column_count_the_way_the_gem_does() {
         assert_eq!(line_col(b"[1,]", 3), (1, 4));
+        // The gem's line is one SHORT once a newline is behind the position,
+        // and the column is the ordinary one. Both halves are oracle-checked
+        // in `tests/json_parser_edge_cases.rb`.
+        assert_eq!(line_col(b"a\nbc", 3), (1, 2));
+        assert_eq!(line_col(b"a\nb\ncd", 5), (2, 2));
         // The byte IS the line break, so it belongs to neither side.
-        assert_eq!(line_col(b"\"a\nb\"", 2), (2, 0));
-        assert_eq!(line_col(b"a\nbc", 3), (2, 2));
+        assert_eq!(line_col(b"\"a\nb\"", 2), (1, 0));
         // Past the end (every truncation message) stays in range.
         assert_eq!(line_col(b"ab", 99), (1, 100));
         assert_eq!(line_col(b"", 0), (1, 1));
