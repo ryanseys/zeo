@@ -94,6 +94,9 @@ fn every_bundled_gem_compiles() {
                 failures.extend(colliding_unit_features(&a).into_iter().map(|c| {
                     format!("  {gem}: two compiled-in files claim `require \"{}\"` -- {} and {}\n    (the demand recording is the bug: one of them registered a spelling that is not its own)", c.0, c.1, c.2)
                 }));
+                failures.extend(zeo::dump::unrevealable_classes(&a).into_iter().map(|name| {
+                    format!("  {gem}: `{name}` can never be revealed -- no class body site that any statement stream runs\n    (`zeo --dump=classes={name}` shows the sites and the stream each belongs to)")
+                }));
             }
             Err(e) => failures.push(format!("  {gem}: {e}")),
         }

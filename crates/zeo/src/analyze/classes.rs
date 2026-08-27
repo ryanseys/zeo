@@ -163,6 +163,12 @@ pub(super) fn register_class(
     compiler: &mut Compiler,
     reg: &ClassRegistration<'_>,
 ) -> Result<(), String> {
+    tracing::trace!(
+        class = reg.name,
+        superclass = reg.superclass,
+        at = ?reg.def_node.and_then(|n| crate::analyze::source::source_location(compiler, n)),
+        "analyze: registering"
+    );
     let Some(target) = resolve_definition_target(compiler, reg)? else {
         // Deferred to a runtime constant read -- nothing registered.
         return Ok(());
@@ -234,6 +240,19 @@ fn resolve_definition_target(
         && resolved_superclass.is_none()
         && !compiler.assigns_const_path(s)
     {
+        // Loud at `--log-level debug`, because this DISCARDS a whole
+        // definition -- body, nested classes and all -- and the program
+        // then behaves as if the `class` keyword were a bare constant read.
+        // When the guess is right that is exactly ruby (irb's `class
+        // CallTracer < ::CallTracer` after a failed require); when it is
+        // wrong the class is silently missing, and nothing else says so.
+        tracing::debug!(
+            class = name,
+            superclass = s,
+            unit_walk = compiler.unit_walk,
+            at = ?crate::analyze::source::source_location(compiler, def_node),
+            "analyze: definition DROPPED -- superclass resolves to nothing"
+        );
         defer_unresolved_directive(compiler, def_node, s);
         return Ok(None);
     }

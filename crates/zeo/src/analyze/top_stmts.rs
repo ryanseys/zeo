@@ -588,6 +588,20 @@ pub(super) fn register_class_or_raise(
     reg: &ClassRegistration<'_>,
 ) -> Result<(), String> {
     let registered = register_class(compiler, reg);
+    if let Err(e) = &registered {
+        // Loud at `--log-level debug`: either branch below REPLACES a whole
+        // definition -- body, nested classes and all. When the verdict is
+        // right that is exactly ruby; when it is wrong the class is silently
+        // missing, and nothing else in the pipeline says so.
+        tracing::debug!(
+            class = reg.name,
+            superclass = reg.superclass,
+            unit_walk = compiler.unit_walk,
+            at = ?reg.def_node.and_then(|n| crate::analyze::source::source_location(compiler, n)),
+            reason = %e,
+            "analyze: definition REFUSED"
+        );
+    }
     if let Err(e) = registered
         && !raise_instead_of_defining(compiler)
     {
