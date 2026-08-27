@@ -87,6 +87,17 @@ constants with a `const_set` loop). The `Importer` DSL files
 (`import`/`struct`/`types`/`pack`/`value`/`cparser`) are not vendored --
 `Importer` builds methods with `module_eval` on computed strings.
 
+`rspec-support/` carries one marked deviation, tagged `zeo:` in-file:
+`ruby_features.rb` PROBES for `ripper` (`begin; require "ripper"; rescue
+LoadError`) instead of inferring it from `RUBY_ENGINE`. Upstream opts out only
+for rbx, jruby and truffleruby, so every other implementation is assumed to
+have ripper -- and `Source#ast` then does a bare `require "ripper"` with no
+rescue. zeo embeds prism rather than CRuby's parse.y and declines that
+require, so every FAILING example died in the formatter instead of printing
+its failure. rspec already carries a ripper-less branch under that same
+predicate (`NoSnippetExtractor`, the path a JRuby user gets); the deviation
+only makes the question answerable.
+
 `reline/` carries one marked deviation, tagged `zeo:` in-file: `io.rb`
 requires `reline/io/ansi` at the top rather than inside `decide_io_gate`,
 since a whole-program AOT compile does not load a library that only a method

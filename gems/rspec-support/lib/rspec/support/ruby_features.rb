@@ -142,6 +142,26 @@ module RSpec
       # TruffleRuby disables ripper due to low performance
       ripper_requirements.push(false) if Ruby.truffleruby?
 
+      # zeo: PROBE for ripper instead of inferring it from the engine name.
+      #
+      # Upstream opts out only for rbx, jruby and truffleruby, so any other
+      # implementation is assumed to have ripper -- and `Source#ast` then does
+      # a bare `require 'ripper'` with no rescue. zeo embeds prism rather than
+      # CRuby's parse.y and declines that require, so EVERY failing example
+      # died in the formatter instead of printing its failure.
+      #
+      # rspec already handles a ripper-less Ruby: `SnippetExtractor` has a
+      # `NoSnippetExtractor` branch under this same predicate, and it is the
+      # path a JRuby user gets. This only makes the question answerable.
+      ripper_requirements.push(
+        begin
+          require 'ripper'
+          true
+        rescue LoadError, StandardError
+          false
+        end
+      )
+
       if ripper_requirements.all?
         def ripper_supported?
           true
