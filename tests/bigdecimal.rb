@@ -3,7 +3,9 @@
 # modes, mode/limit state, conversions, and the error shapes.
 require "bigdecimal"
 
-p BigDecimal::VERSION
+# The SHAPE, not the number: zeo tracks bigdecimal's latest upstream release
+# and the oracle reads the copy ruby 4.0.6 ships (`gems/UPSTREAM.md`).
+p BigDecimal::VERSION.match?(/\A\d+\.\d+\.\d+\z/)
 p [BigDecimal::BASE, BigDecimal.double_fig]
 p [BigDecimal::ROUND_MODE, BigDecimal.mode(BigDecimal::ROUND_MODE), BigDecimal.mode(BigDecimal::EXCEPTION_ALL), BigDecimal.limit]
 
